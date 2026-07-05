@@ -257,6 +257,14 @@ fn collect_spec_only_variants(category: &syn::Ident, language: &LanguageDef) -> 
 
     // 1. Spec-defined rules from language.terms (includes guarded constructors)
     for rule in language.terms.iter().filter(|r| r.category == *category) {
+        // Skip internal-only rules whose surface begins with a `__`-prefixed
+        // terminal (CommWhere `__comm_where`, GuardThen `__guard_then`,
+        // PParInternal `__ppar`): they have no user-facing surface, so generating
+        // them as random terms yields Display strings the parser cannot re-parse.
+        // They still PARSE (for internal AST round-tripping) — just not generated.
+        if rule_has_internal_surface(rule) {
+            continue;
+        }
         variants.push(rule_to_variant_kind(rule, language));
     }
 
@@ -291,6 +299,23 @@ fn collect_spec_only_variants(category: &syn::Ident, language: &LanguageDef) -> 
     // Display output (^v.{...}, $$cat(...)) that the parser cannot re-parse.
 
     variants
+}
+
+/// Whether `rule`'s surface begins with an internal-only `__`-prefixed terminal
+/// (the project convention for non-surface rules). Checks the FIRST literal in
+/// the syntax pattern, so a param-led rule whose first terminal is `__…` is also
+/// covered; rules with no literal (pure casts) are not internal.
+fn rule_has_internal_surface(rule: &mettail_ast::grammar::GrammarRule) -> bool {
+    use mettail_ast::grammar::SyntaxExpr;
+    rule.syntax_pattern
+        .as_ref()
+        .and_then(|sp| {
+            sp.iter().find_map(|e| match e {
+                SyntaxExpr::Literal(s) => Some(s.starts_with("__")),
+                _ => None,
+            })
+        })
+        .unwrap_or(false)
 }
 
 fn classify_variants(category: &syn::Ident, language: &LanguageDef) -> VariantClassification {
@@ -360,6 +385,20 @@ fn classify_variants(category: &syn::Ident, language: &LanguageDef) -> VariantCl
 
                 if !has_recursive_field || fields.is_empty() {
                     // Treat as leaf (unknown category fields)
+                    continue;
+                }
+
+                // Exclude variants that recurse into a RUNTIME-ONLY opaque native
+                // (e.g. `CastReadZipper . z:ReadZipper |- z`): such a field can
+                // only be filled by an unparseable opaque-native arb leaf, so the
+                // whole variant's Display has no parse. Skipping it keeps
+                // `arb_<cat>` surface-faithful (fixes e.g. `proc_display_parse_roundtrip`
+                // embedding `readZipper@0`). Spec-derived via the single-source
+                // predicate.
+                if fields
+                    .iter()
+                    .any(|f| crate::gen::category_is_runtime_only_native(&f.category, language))
+                {
                     continue;
                 }
 
@@ -577,6 +616,26 @@ fn generate_literal_build_code(
             cat = cat,
             label = label,
         ),
+        // Rholang 1.4 (main) collection / wrapper leaves: generate empty/default
+        // values rather than the broken `reader.next_i32() as _` fallback (i32 does
+        // not cast to these wrapper types). `Set`→`HashSetLit`, `Pathmap`→`PathMapLit`,
+        // and the zipper categories carry an `Arc<…ZipperLit>` native type (last path
+        // segment `Arc`); all implement `Default`.
+        "HashSetLit" => format!(
+            "AnyTerm::Wrap{cat}({cat}::{label}(mettail_runtime::HashSetLit::new()))",
+            cat = cat,
+            label = label,
+        ),
+        "PathMapLit" => format!(
+            "AnyTerm::Wrap{cat}({cat}::{label}(mettail_runtime::PathMapLit::new()))",
+            cat = cat,
+            label = label,
+        ),
+        "Arc" => format!(
+            "AnyTerm::Wrap{cat}({cat}::{label}(::core::default::Default::default()))",
+            cat = cat,
+            label = label,
+        ),
         // Canonical numeric wrappers: use From<i32> or Default
         nt if nt.ends_with("BigInt") || nt.ends_with("CanonicalBigInt") => format!(
             "AnyTerm::Wrap{cat}({cat}::{label}(mettail_runtime::CanonicalBigInt::from(num_bigint::BigInt::from(reader.next_i32()))))",
@@ -662,7 +721,8 @@ fn generate_collection_build_code(
 ) -> String {
     let coll_type_str = match coll_type {
         mettail_ast::types::CollectionType::HashBag
-        | mettail_ast::types::CollectionType::HashMap => "HashBag",
+        | mettail_ast::types::CollectionType::HashMap
+        | mettail_ast::types::CollectionType::PathMap => "HashBag",
         mettail_ast::types::CollectionType::HashSet => "HashSet",
         mettail_ast::types::CollectionType::Vec => "Vec",
     };
@@ -904,7 +964,8 @@ fn generate_direct_recursive_build(
                             field_exprs.push(format!("f{}", i));
                         },
                         // Phase 4 #5b (2026-05-12): Optional-HashMap.
-                        mettail_ast::types::CollectionType::HashMap => {
+                        mettail_ast::types::CollectionType::HashMap
+                        | mettail_ast::types::CollectionType::PathMap => {
                             code.push_str(&format!(
                                 "            let f{i} = if reader.next_byte() & 1 == 0 {{ None }} else {{\n\
                                                  let num_elems = (reader.next_byte() % 4) as usize;\n\
@@ -973,7 +1034,8 @@ fn generate_direct_recursive_build(
                         // Phase 4 #5b (2026-05-12): HashMap binder field —
                         // tape-driven construction produces `HashMapLit::default()`,
                         // then inserts pairs (each key + value from tape).
-                        mettail_ast::types::CollectionType::HashMap => {
+                        mettail_ast::types::CollectionType::HashMap
+                        | mettail_ast::types::CollectionType::PathMap => {
                             code.push_str(&format!(
                                 "            let num_elems_{i} = (reader.next_byte() % 4) as usize;\n\
                                              let mut coll_{i} = mettail_runtime::HashMapLit::default();\n\
@@ -1070,7 +1132,8 @@ fn generate_direct_recursive_build(
 
             match coll_type {
                 mettail_ast::types::CollectionType::HashBag
-                | mettail_ast::types::CollectionType::HashMap => {
+                | mettail_ast::types::CollectionType::HashMap
+                | mettail_ast::types::CollectionType::PathMap => {
                     format!(
                         "            let num_elems = (reader.next_byte() % 4) as usize;\n\
                                      let mut bag = mettail_runtime::HashBag::new();\n\
@@ -1171,7 +1234,8 @@ fn generate_binder_direct_build(
             });
             match coll_type {
                 mettail_ast::types::CollectionType::HashBag
-                | mettail_ast::types::CollectionType::HashMap => {
+                | mettail_ast::types::CollectionType::HashMap
+                | mettail_ast::types::CollectionType::PathMap => {
                     code.push_str(&format!(
                         "            let pre_{i} = if reader.next_byte() & 1 == 0 {{ None }} else {{\n\
                                          let num_elems = (reader.next_byte() % 4) as usize;\n\
@@ -1336,6 +1400,12 @@ fn generate_proptest_blocks(language: &LanguageDef, out: &mut String) {
     for lang_type in &language.types {
         let cat = lang_type.name.to_string();
         let cat_lower = cat.to_lowercase();
+        // Runtime-only opaque natives (e.g. ReadZipper/WriteZipper) have no
+        // surface syntax, so a Display→parse roundtrip is ill-posed for them
+        // (their Display, e.g. `readZipper@0`, is unparseable by construction).
+        // Skip ONLY the parse-involving tests (4 & 5) for them; the non-parse
+        // tests (debug/display/clone) stay, so `arb_<cat>` keeps a referent.
+        let is_runtime_only = crate::gen::category_is_runtime_only_native(&lang_type.name, language);
 
         // Test 1: Generated terms can be Debug-formatted without panic
         out.push_str(&format!(
@@ -1366,11 +1436,20 @@ fn generate_proptest_blocks(language: &LanguageDef, out: &mut String) {
         ));
 
         // Test 4: Display round-trip (parse(display(term)) == term for ground terms)
-        // Only if the category has a parse method — all categories do via PraTTaIL
+        // Only if the category has a parse method — all categories do via PraTTaIL.
+        // Skipped for runtime-only opaque natives (no surface form to parse).
+        if !is_runtime_only {
         out.push_str(&format!(
             "    #[test]\n\
              \x20   fn {cat_lower}_display_parse_roundtrip(term in arb_{cat_lower}(3)) {{\n\
+             \x20       // GRIND diagnostic (gated on env GRIND_DIAG): print the AST and its\n\
+             \x20       // display + time the parse, so slow / unparseable shapes surface\n\
+             \x20       // directly (the generated test file is regenerated on every build,\n\
+             \x20       // so this diagnostic lives in the emitter — macros/.../strategies.rs).\n\
+             \x20       let __grind_diag = std::env::var(\"GRIND_DIAG\").is_ok();\n\
+             \x20       if __grind_diag {{ eprintln!(\"GRIND-{cat}-GEN ast={{:?}}\", term); }}\n\
              \x20       let displayed = format!(\"{{}}\", term);\n\
+             \x20       if __grind_diag {{ eprintln!(\"GRIND-{cat}-DISP disp={{:?}}\", displayed); }}\n\
              \x20       // Skip terms whose display is too long (parser may overflow)\n\
              \x20       if displayed.len() > 500 {{\n\
              \x20           return Ok(());\n\
@@ -1384,10 +1463,12 @@ fn generate_proptest_blocks(language: &LanguageDef, out: &mut String) {
              \x20       // Canonical-form idempotence:\n\
              \x20       //   Parse(Display(Parse(s))) ≡ Parse(s) for any s that\n\
              \x20       //   the generator emits.\n\
+             \x20       let __grind_t0 = std::time::Instant::now();\n\
              \x20       let parsed = {cat}::parse(&displayed)\n\
              \x20           .unwrap_or_else(|e| panic!(\n\
              \x20               \"arb_{cat_lower} produced unparseable surface term {{:?}}: {{:?}}\",\n\
              \x20               displayed, e));\n\
+             \x20       if __grind_diag {{ eprintln!(\"GRIND-{cat}-PARSE-OK elapsed={{:?}} disp={{:?}}\", __grind_t0.elapsed(), displayed); }}\n\
              \x20       let canonical = format!(\"{{}}\", parsed);\n\
              \x20       if canonical.len() > 500 {{ return Ok(()); }}\n\
              \x20       let reparsed = {cat}::parse(&canonical).unwrap_or_else(|e| panic!(\n\
@@ -1401,6 +1482,7 @@ fn generate_proptest_blocks(language: &LanguageDef, out: &mut String) {
             cat_lower = cat_lower,
             cat = cat,
         ));
+        }
 
         // Test 5 (Group F): Strong roundtrip canonical stability.
         // Some grammars intentionally canonicalize display surfaces at parse time
@@ -1411,7 +1493,7 @@ fn generate_proptest_blocks(language: &LanguageDef, out: &mut String) {
         // Uses depth 1 and limits displayed string length to avoid stack
         // overflow during parsing or PartialEq comparison of nested terms.
         let cat_has_binders = category_has_binders(&lang_type.name, language);
-        if !cat_has_binders {
+        if !cat_has_binders && !is_runtime_only {
             out.push_str(&format!(
                 "    #[test]\n\
                  \x20   fn {cat_lower}_strong_roundtrip(term in arb_{cat_lower}(1)) {{\n\
@@ -1473,7 +1555,9 @@ fn generate_proptest_blocks(language: &LanguageDef, out: &mut String) {
             "    #[test]\n\
              \x20   fn {cat_lower}_parse_determinism(term in arb_{cat_lower}(2)) {{\n\
              \x20       mettail_runtime::clear_var_cache();\n\
+             \x20       let __grind_diag = std::env::var(\"GRIND_DIAG\").is_ok();\n\
              \x20       let displayed = format!(\"{{}}\", term);\n\
+             \x20       if __grind_diag {{ eprintln!(\"GRIND-{cat}-DET-DISP ast={{:?}} disp={{:?}}\", term, displayed); }}\n\
              \x20       // Skip terms whose display is too long (parser may overflow)\n\
              \x20       if displayed.len() > 500 {{\n\
              \x20           return Ok(());\n\

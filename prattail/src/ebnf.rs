@@ -869,6 +869,7 @@ fn format_syntax_item(item: &SyntaxItemSpec) -> String {
                 CollectionKind::HashSet => "HashSet",
                 CollectionKind::Vec => "Vec",
                 CollectionKind::HashMap => "HashMap",
+                CollectionKind::PathMap => "PathMap",
             };
             format!("{{ {} / \"{}\" }}  (* {} *)", element_category, separator, kind_str)
         },
@@ -994,6 +995,7 @@ fn format_rule_annotation(
                 CollectionKind::HashSet => "HashSet",
                 CollectionKind::Vec => "Vec",
                 CollectionKind::HashMap => "HashMap",
+                CollectionKind::PathMap => "PathMap",
             })
             .unwrap_or("collection");
         parts.push(kind.to_string());
@@ -1431,6 +1433,7 @@ mod tests {
                     is_postfix: r.is_postfix,
                     is_mixfix,
                     mixfix_parts,
+                    nullary_literals: Vec::new(),
                 }
             })
             .collect();
@@ -1620,6 +1623,7 @@ mod tests {
                         param_name: param_name.clone(),
                         preceding_terminals: Vec::new(),
                         following_terminals: Vec::new(),
+                        repetition: None,
                     });
                 },
                 SyntaxItemSpec::Terminal(t) if after_trigger => {

@@ -152,25 +152,18 @@ pub(crate) fn build_per_category_rules(
         let Some(coll_kind) = type_def.collection_kind.as_ref() else {
             continue;
         };
-        let (open, close, sep, kind, label_str) = match coll_kind {
-            CollectionCategory::List(d) => {
-                (d.open.clone(), d.close.clone(), d.sep.clone(), CollectionType::Vec, "ListLit")
-            },
-            CollectionCategory::Bag(d) => (
-                d.open.clone(),
-                d.close.clone(),
-                d.sep.clone(),
-                CollectionType::HashBag,
-                "BagLit",
-            ),
-            CollectionCategory::Map(d) => (
-                d.open.clone(),
-                d.close.clone(),
-                d.sep.clone(),
-                CollectionType::HashMap,
-                "MapLit",
-            ),
+        // Stage 2 (2026-06-27): read the delimiters through the single
+        // delimiters() accessor; only the irreducible variant → (kind, label)
+        // mapping stays a per-variant match.
+        let d = coll_kind.delimiters();
+        let (kind, label_str) = match coll_kind {
+            CollectionCategory::List(_) => (CollectionType::Vec, "ListLit"),
+            CollectionCategory::Bag(_) => (CollectionType::HashBag, "BagLit"),
+            CollectionCategory::Map(_) => (CollectionType::HashMap, "MapLit"),
+            CollectionCategory::Set(_) => (CollectionType::HashSet, "SetLit"),
+            CollectionCategory::Pathmap(_) => (CollectionType::PathMap, "PathmapLit"),
         };
+        let (open, close, sep) = (d.open.clone(), d.close.clone(), d.sep.clone());
         // Resolve element category from the collection's payload type.
         let element_cat_str = language
             .collection_element_type_for_category(&type_def.name)

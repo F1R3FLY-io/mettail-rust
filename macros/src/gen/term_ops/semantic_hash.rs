@@ -63,14 +63,68 @@
 //! - `semantic_hash_iterative<H: Hasher>(&mut Vec<SemanticHashTask>, &mut H)`
 //! - `impl Cat { pub fn semantic_hash<H>(&self, &mut H) }` for each category
 
-use crate::gen::runtime::wpda_codegen::builtin_metadata::classify_simple_projection_shape;
+use crate::gen::runtime::wpda_codegen::builtin_metadata::{
+    classify_fold_alias_shape, classify_simple_projection_shape,
+};
 use crate::gen::term_ops::subst::{collect_category_variants, FieldInfo, VariantKind};
 use mettail_ast::language::LanguageDef;
 use mettail_ast::types::CollectionType;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use syn::Ident;
+
+/// A reconstruction recipe for a fold-alias (sugar) variant's `semantic_hash`
+/// arm. Keyed by label in the `fold_alias_map`; see [`build_fold_alias_arm`].
+struct FoldAliasArm {
+    /// The fold action's parameter idents in `term_context` order — a 1:1 map
+    /// to the variant's boxed fields (`f0`, `f1`, …). Bound to `&Cat` borrows so
+    /// the spliced body consumes them via `.clone()`.
+    params: Vec<Ident>,
+    /// The `fold` action body (`rule.rust_code.code`) — a PURE constructor
+    /// re-wrap (verified by `classify_fold_alias_shape`) that rebuilds the
+    /// canonical node from the params.
+    body: syn::Expr,
+}
+
+/// Build a [`FoldAliasArm`] for a rule iff it is a fold-alias whose params are
+/// all BOXED CATEGORY fields (non-native, non-collection), so the `&**field`
+/// deref in the generated arm is well-typed. Returns `None` otherwise.
+///
+/// `classify_fold_alias_shape` (the ast-crate structural classifier) guarantees
+/// the body is a pure re-wrap and the params are `Simple { Base }`; this adds
+/// the macro-side check that each param category is stored boxed (a Proc/Name
+/// category, not an inline native `i64`/collection) — the only extra fact the
+/// `LanguageDef` carries that the ast crate cannot see.
+fn build_fold_alias_arm(rule: &mettail_ast::grammar::GrammarRule, language: &LanguageDef) -> Option<FoldAliasArm> {
+    use mettail_ast::grammar::TermParam;
+    use mettail_ast::types::TypeExpr;
+
+    classify_fold_alias_shape(rule)?;
+
+    let tc = rule.term_context.as_ref()?;
+    let mut params: Vec<Ident> = Vec::with_capacity(tc.len());
+    for p in tc {
+        match p {
+            TermParam::Simple { name, ty: TypeExpr::Base(cat) } => {
+                let lt = language.get_type(cat);
+                let is_boxed_category = lt
+                    .map(|t| t.native_type.is_none() && t.collection_kind.is_none())
+                    .unwrap_or(false);
+                if !is_boxed_category {
+                    return None;
+                }
+                params.push(name.clone());
+            },
+            // classify_fold_alias_shape already rejects non-Simple params; this
+            // is a defensive re-check that keeps the field↔param mapping 1:1.
+            _ => return None,
+        }
+    }
+
+    let body = rule.rust_code.as_ref()?.code.clone();
+    Some(FoldAliasArm { params, body })
+}
 
 pub fn generate_semantic_hash(language: &LanguageDef) -> TokenStream {
     // Compute the set of transparent-projection labels via the existing
@@ -84,8 +138,21 @@ pub fn generate_semantic_hash(language: &LanguageDef) -> TokenStream {
         .map(|r| r.label.to_string())
         .collect();
 
+    // Fold-alias sugar canonicalization (2026-06-29). A sugar `fold` rule whose
+    // action is a pure constructor re-wrap (`POutputShort → POutput(NQuote(p),
+    // q)`, `NQuoteShort → NQuote(p)`, `NQuoteNil → NQuote(PZero)`) hashes its
+    // RECONSTRUCTED canonical node, so the realize-dedup collapses the sugar
+    // reading with its (eval-identical) fold target. Keyed by variant label.
+    let fold_alias_map: HashMap<String, FoldAliasArm> = language
+        .terms
+        .iter()
+        .filter_map(|rule| {
+            build_fold_alias_arm(rule, language).map(|arm| (rule.label.to_string(), arm))
+        })
+        .collect();
+
     let task_enum = generate_semantic_task_enum(language);
-    let engine = generate_semantic_engine(language, &transparent_labels);
+    let engine = generate_semantic_engine(language, &transparent_labels, &fold_alias_map);
     let impls = generate_semantic_impls(language);
 
     quote! {
@@ -144,12 +211,17 @@ fn generate_semantic_task_enum(language: &LanguageDef) -> TokenStream {
 fn generate_semantic_engine(
     language: &LanguageDef,
     transparent_labels: &HashSet<String>,
+    fold_alias_map: &HashMap<String, FoldAliasArm>,
 ) -> TokenStream {
     let helper_fns: Vec<TokenStream> = language
         .types
         .iter()
         .map(|t| {
             let cat = &t.name;
+            // The category's declared native Rust type drives numeric-leaf
+            // canonicalization in the `Literal` arm (threaded to
+            // `generate_semantic_variant_arm`).
+            let native_type = t.native_type.as_ref();
             let cat_str = cat.to_string().to_lowercase();
             let helper_fn = format_ident!("semantic_hash_handle_{}", cat_str);
             let variants = collect_category_variants(cat, language);
@@ -170,7 +242,15 @@ fn generate_semantic_engine(
                 .iter()
                 .enumerate()
                 .map(|(idx, v)| {
-                    generate_semantic_variant_arm(cat, idx as u8, v, transparent_labels, language)
+                    generate_semantic_variant_arm(
+                        cat,
+                        idx as u8,
+                        v,
+                        transparent_labels,
+                        language,
+                        native_type,
+                        fold_alias_map,
+                    )
                 })
                 .collect();
             quote! {
@@ -260,7 +340,7 @@ fn semantic_hash_collection(
         CollectionType::HashBag => quote! {
             #coll_expr.semantic_hash_into(state, |__e, __h| #element_cat::semantic_hash(__e, __h));
         },
-        CollectionType::HashMap => quote! {
+        CollectionType::HashMap | CollectionType::PathMap => quote! {
             #coll_expr.semantic_hash_into(
                 state,
                 |__k, __h| #element_cat::semantic_hash(__k, __h),
@@ -273,18 +353,218 @@ fn semantic_hash_collection(
     }
 }
 
+/// Numeric-leaf canonicalization (2026-06-29) — collapse the cast-promotion
+/// tower so the realize-dedup sees ONE representative per numeric *value*.
+///
+/// ## Problem
+///
+/// A numeric literal the lexer read from a single source token can reach a
+/// category through several *transparent* lossless promotion casts
+/// (`Int → BigInt`, `UInt32 → Int → BigInt`, `Fixed → BigRat`, …). After the
+/// transparent-wrapper collapse (see `generate_semantic_regular_arm`) those reps
+/// all reduce to hashing their *leaf* literal — but the leaves live in different
+/// categories (`Int`/`BigInt`/`UInt32`/…) with different per-category
+/// `variant_idx` AND different native-value encodings, so equal mathematical
+/// values hash *differently*. With `k` literals each gaining `m` transparent
+/// reps the cohort blows up to `m^k` (the measured `3^4 = 81` for the chained
+/// `Map().set(1,10).set(2,20)` case), overflowing the realize frontier budget.
+///
+/// ## Fix
+///
+/// Rewrite a NUMERIC leaf's hash to a FAMILY-TAGGED CANONICAL value that depends
+/// only on the mathematical value and its family — never on the source category
+/// or native width:
+///   - integer family (`NativeType::is_integer()`): `NUMERIC_INT_TAG` followed
+///     by `CanonicalBigInt::to_canonical_bytes()` (minimal two's-complement LE).
+///     Primitive widths promote losslessly through `num_bigint::BigInt`
+///     (mirrors `native::lossless_coercion` codegen); `CanonicalBigInt` is
+///     already canonical.
+///   - rational family (`CanonicalBigRat` / `CanonicalFixedPoint`):
+///     `NUMERIC_RAT_TAG` followed by `to_canonical_bytes()` — the length-framed
+///     reduced `(numer, denom)` of the value's rational form. The two wrappers
+///     emit the SAME framed format, so a fixed-point and a big-rational of equal
+///     value hash identically.
+///
+/// The two distinct family tags keep the integer `1` and the rational `1/1`
+/// observationally apart (they ARE distinct under the evaluator).
+///
+/// ## Why `to_canonical_bytes()` and not `Hash::hash`
+///
+/// `num_rational::Ratio::hash` hashes the *continued-fraction* expansion
+/// (`div_mod_floor` recursion), so `CanonicalBigRat(3/2)::hash` writes `[1,2,0]`
+/// while `CanonicalFixedPoint(1.5)::hash` (manual `numer.hash();denom.hash();`)
+/// writes `[3,2]` — `Hash::hash` would NOT unify the two rational wrappers.
+/// `to_canonical_bytes()` is the documented `Eq`-agreeing canonical form (the
+/// same key the Dovetail op-enum uses) and is identical across wrappers, so it
+/// unifies them by construction. The bytes are written through `Hasher::write`
+/// behind an explicit `write_usize(len)` frame so the leaf is self-delimiting
+/// for ANY `Hasher` (the dedup's `FramedSemanticKeyHasher` already frames
+/// `write`, but the framing keeps the stream unambiguous regardless).
+///
+/// ## Soundness
+///
+/// The realize-dedup only ever compares alternatives spanning the SAME source
+/// tokens — i.e. the SAME lexed value — so collapsing them keeps the
+/// minimum-weight representative of one value and never merges two values.
+///
+/// Returns `None` for non-numeric leaves (`Bool`/`Str`/`Float`/collection/
+/// other), whose arm is left byte-identical to the pre-change behavior.
+fn semantic_hash_numeric_literal_body(native_type: &syn::Type) -> Option<TokenStream> {
+    use crate::gen::native::NativeType;
+
+    // High sentinels distinct from any realistic per-category `variant_idx`
+    // (the engine asserts <= 255 variants, and a numeric token never derives a
+    // non-numeric structural variant, so an idx==tag collision is unreachable in
+    // the same-span dedup comparison).
+    const NUMERIC_INT_TAG: u8 = 0xFE;
+    const NUMERIC_RAT_TAG: u8 = 0xFD;
+
+    let nt = NativeType::from_syn_type(native_type);
+
+    if nt.is_integer() {
+        // `CanonicalBigInt` is already canonical; primitives promote losslessly
+        // via `num_bigint::BigInt::from(_)` (every fixed integer width has a
+        // `From` impl, exactly as `lossless_coercion.rs` emits).
+        let canon_bytes = if matches!(nt, NativeType::CanonicalBigInt) {
+            quote! { v.to_canonical_bytes() }
+        } else {
+            quote! {
+                ::mettail_runtime::CanonicalBigInt::from(::num_bigint::BigInt::from(*v))
+                    .to_canonical_bytes()
+            }
+        };
+        return Some(quote! {
+            state.write_u8(#NUMERIC_INT_TAG);
+            let __numeric_canon: ::std::vec::Vec<u8> = #canon_bytes;
+            state.write_usize(__numeric_canon.len());
+            state.write(__numeric_canon.as_slice());
+        });
+    }
+
+    if matches!(nt, NativeType::CanonicalBigRat | NativeType::CanonicalFixedPoint) {
+        return Some(quote! {
+            state.write_u8(#NUMERIC_RAT_TAG);
+            let __numeric_canon: ::std::vec::Vec<u8> = v.to_canonical_bytes();
+            state.write_usize(__numeric_canon.len());
+            state.write(__numeric_canon.as_slice());
+        });
+    }
+
+    None
+}
+
+/// The constructor label of any `VariantKind` (all variants carry one).
+fn variant_label(variant: &VariantKind) -> &Ident {
+    match variant {
+        VariantKind::Var { label }
+        | VariantKind::Literal { label }
+        | VariantKind::Nullary { label }
+        | VariantKind::Regular { label, .. }
+        | VariantKind::Collection { label, .. }
+        | VariantKind::Binder { label, .. }
+        | VariantKind::MultiBinder { label, .. } => label,
+    }
+}
+
+/// Emit the `semantic_hash` arm for a fold-alias (sugar) variant: bind each
+/// param to a `&Cat` borrow of the corresponding boxed field, run the rule's own
+/// `fold` action to RECONSTRUCT the canonical node, and recurse `semantic_hash`
+/// on it. This makes `semantic_hash(POutputShort(p, q))` byte-identical to
+/// `semantic_hash(POutput(NQuote(p), q))`, so the realize-dedup collapses the
+/// sugar reading with its fold target.
+///
+/// ## Soundness & termination
+///
+/// The spliced body IS the evaluator's own fold action, so the reconstructed
+/// node is observationally equal to the sugar node by construction — only
+/// sugar≡target is merged, never two distinct sends (their params, hence
+/// hashes, differ). `classify_fold_alias_shape` forbids a self-reconstruction
+/// (root variant ≠ rule label); since each fold target is a normal-form
+/// canonical constructor (not itself a fold-alias in practice), the nested
+/// `semantic_hash` does not re-enter this arm — reconstruction terminates with
+/// the fold relation (which terminates because it is the evaluator's).
+///
+/// ## Cost
+///
+/// Reconstruction clones the sugar node's subtree once and runs a (re-entrant,
+/// TLS-pooled) nested `semantic_hash`. Sugar nodes are rare and shallow, so the
+/// extra clone is negligible; correctness of the dedup fingerprint is the goal.
+fn generate_fold_alias_arm(
+    category: &Ident,
+    variant: &VariantKind,
+    arm: &FoldAliasArm,
+) -> TokenStream {
+    let body = &arm.body;
+    match variant {
+        VariantKind::Nullary { label } => {
+            // Zero-param sugar, e.g. `NQuoteNil → NQuote(PZero)`.
+            quote! {
+                #category::#label => {
+                    let __canonical: #category = #body;
+                    __canonical.semantic_hash(state);
+                }
+            }
+        },
+        VariantKind::Regular { label, fields } => {
+            let field_names: Vec<Ident> =
+                (0..fields.len()).map(|i| format_ident!("f{}", i)).collect();
+            debug_assert_eq!(
+                arm.params.len(),
+                fields.len(),
+                "fold-alias {} param/field arity mismatch ({} params, {} fields)",
+                label,
+                arm.params.len(),
+                fields.len(),
+            );
+            // Bind each fold param (term_context order) to a `&Cat` borrow of the
+            // corresponding boxed field; the spliced body consumes them via
+            // `.clone()` (which yields an owned `Cat`) to rebuild the canonical node.
+            let bindings: Vec<TokenStream> = arm
+                .params
+                .iter()
+                .zip(field_names.iter())
+                .map(|(p, f)| quote! { let #p = &**#f; })
+                .collect();
+            quote! {
+                #category::#label(#(ref #field_names),*) => {
+                    #(#bindings)*
+                    let __canonical: #category = #body;
+                    __canonical.semantic_hash(state);
+                }
+            }
+        },
+        // `build_fold_alias_arm` only admits Nullary / all-Simple Regular variants.
+        _ => unreachable!("fold-alias variant must be Nullary or Regular"),
+    }
+}
+
 /// Generate match arms for a specific variant in the semantic_hash engine.
 ///
 /// Key difference from iterative_hash: each arm decides whether to emit a
 /// discriminant. Transparent wrappers skip the discriminant AND skip the
 /// variant tag, delegating directly to the inner child.
+///
+/// `native_type` is the *category's* declared native Rust type (threaded from
+/// `LangType::native_type`); it drives the numeric-leaf canonicalization in the
+/// `Literal` arm and is unused by the other arms.
 fn generate_semantic_variant_arm(
     category: &Ident,
     variant_idx: u8,
     variant: &VariantKind,
     transparent_labels: &HashSet<String>,
     language: &LanguageDef,
+    native_type: Option<&syn::Type>,
+    fold_alias_map: &HashMap<String, FoldAliasArm>,
 ) -> TokenStream {
+    // Fold-alias sugar canonicalization (takes precedence over the structural
+    // arms below): hash the RECONSTRUCTED canonical node so the sugar reading
+    // dedups with its (eval-identical) fold target. Only Nullary / all-Simple-
+    // CATEGORY-param Regular variants are admitted (see `build_fold_alias_arm`),
+    // so the field↔param mapping is a trivial 1:1.
+    if let Some(arm) = fold_alias_map.get(&variant_label(variant).to_string()) {
+        return generate_fold_alias_arm(category, variant, arm);
+    }
+
     // Phase F.13 Stage 2.3.6 (2026-05-23): per-variant u8 discriminator
     // replaces (kind_tag + label.as_bytes()). Unique within category;
     // combined with the inner-enum category tag, globally unique. Matches
@@ -299,18 +579,56 @@ fn generate_semantic_variant_arm(
         },
 
         VariantKind::Literal { label } => {
+            // NUMERIC leaves (integer / rational families) get a family-tagged
+            // canonical-value hash so cast-promotion-tower reps of one value
+            // collapse (see `semantic_hash_numeric_literal_body`). Non-numeric
+            // leaves (Bool/Str/Float/collection/other) fall through to the
+            // original `(variant_idx, native value)` form — byte-identical.
+            let body = native_type
+                .and_then(semantic_hash_numeric_literal_body)
+                .unwrap_or_else(|| {
+                    quote! {
+                        state.write_u8(#variant_idx);
+                        std::hash::Hash::hash(v, state);
+                    }
+                });
             quote! {
                 #category::#label(v) => {
-                    state.write_u8(#variant_idx);
-                    std::hash::Hash::hash(v, state);
+                    #body
                 }
             }
         },
 
         VariantKind::Var { label } => {
+            // Free-variable cast-tower canonicalization (2026-06-29, "Arm B") —
+            // sibling of the numeric-leaf canon (`semantic_hash_numeric_literal_body`).
+            //
+            // A single source identifier reaches a category through several
+            // *transparent* lossless promotion casts and so realizes as a TOWER of
+            // typed-var leaves of the SAME source variable — e.g. `a:Proc` becomes
+            // `PVar(a)`, `CastBigRat(BVar(a))`, `CastBigRat(IntToBigRat(IVar(a)))`, …
+            // (5 reps; verified by probe), all with the SAME `OrdVar` identity
+            // (free `unique_id` / bound de-Bruijn). The transparent-wrapper collapse
+            // (`generate_semantic_regular_arm`) strips the casts, so each rep bottoms
+            // out at a Var arm whose only difference is the per-category `variant_idx`
+            // — hashing 5 *different* keys for one variable. `realize_packing_call`'s
+            // cartesian product multiplies that m-way tower across every operand of a
+            // chain (`a | b | c | d`: m^k), overflowing `REALIZE_CAP` on bare infix
+            // `|` (the braced-bag and numeric-literal paths are already canonicalized).
+            //
+            // Fix: write a UNIFORM var tag (independent of the source category's
+            // `variant_idx`) followed by the unchanged `OrdVar` hash, so every
+            // type-reading of one identifier collapses to ONE realize-dedup key while
+            // DISTINCT variables (distinct `OrdVar`) stay distinct. Sound by the same
+            // same-span argument as the numeric canon: the realize-dedup only compares
+            // alternatives spanning the SAME source token, i.e. the SAME variable.
+            // `0xFB` is a high sentinel distinct from the numeric tags (`0xFE`/`0xFD`)
+            // and from any realistic per-category `variant_idx`; even a first-byte
+            // brush with idx `0xFB` is harmless because the framed `OrdVar` hash that
+            // follows disambiguates the full key.
             quote! {
                 #category::#label(v) => {
-                    state.write_u8(#variant_idx);
+                    state.write_u8(0xFBu8);
                     std::hash::Hash::hash(v, state);
                 }
             }

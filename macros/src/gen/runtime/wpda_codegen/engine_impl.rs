@@ -62,24 +62,27 @@ pub(crate) fn emit_engine_impl_full(
     // bootstrap, and element_src_idx lookup for Unwinding-CollectionMarker.
     let collection_loop_body =
         super::collection::emit_collection_loop_arm(language, categories, per_cat);
-    let collection_close_lookup =
-        super::collection::emit_collection_close_lookup(language, per_cat);
-    // Plan B (F5 close/sep filter, 2026-05-11): per-rule (close, sep)
-    // lookup used by InfixLoop's CollectionMarker filter.
-    let collection_close_sep_lookup =
-        super::collection::emit_collection_close_sep_lookup(language, per_cat);
-    // Phase 4 #5b (2026-05-12): per-(src, rule, slot_idx) lookup for
-    // HashMap collection slots' key/value separator. Yields the body
-    // of `kv_separator_for_collection` (returns `Option<&'static str>`).
-    let kv_separator_for_collection_lookup =
-        super::collection::emit_kv_separator_for_collection(language, per_cat);
-    let collection_element_src_lookup =
-        super::collection::emit_collection_element_src_lookup(language, categories, per_cat);
+    // Stage 2 consolidation (2026-06-27): the single per-(result_src_idx,
+    // rule_idx, slot_idx) → CollectionSpec table. Supersedes the former
+    // collection_close_lookup / collection_close_sep_lookup /
+    // kv_separator_for_collection_lookup / collection_element_src_lookup (and
+    // the inline 4-tuple the CollectionLoop arm built). Every consumer reads
+    // the field it needs off the one CollectionSpec record via the engine's
+    // `collection_spec(src, rule, slot)` method.
+    let collection_spec_table =
+        super::collection::emit_collection_spec_table(language, categories, per_cat);
     // B9 / Class 2 (2026-05-08): per-rule lookup for Class-2 binder rules'
     // internal collection slots. Used by the walker's CollectionMarker-pop
     // arm to suppress the default FireAction.
     let is_binder_internal_collection_lookup =
-        super::collection::emit_is_binder_internal_collection_lookup(per_cat);
+        super::collection::emit_is_binder_internal_collection_lookup(language, per_cat);
+    // Trigger-ownership soundness (2026-07-02): per-rule predicate — does the
+    // rule's surface pattern begin with a structural literal trigger? Gates the
+    // `emit_fire_action` walk-back `pos_match` fallback so an operand-leading
+    // rule cannot claim a foreign-owned leading TriggerTerminal at its
+    // frame-start position (the `@Nil!!(…)`→`NVar("Nil")` phantom).
+    let rule_has_leading_structural_trigger_lookup =
+        super::collection::emit_rule_has_leading_structural_trigger_lookup(language, per_cat);
     // Phase 5: BinderRule state body (multi-step state machine per rule).
     // Literal-leading binder/prefix entry arms are emitted by
     // prefix::emit_prefix_arms_for_category so they share one ambiguity bucket
@@ -91,32 +94,36 @@ pub(crate) fn emit_engine_impl_full(
     // `cur_bp: 0` per the legacy default.
     let prefix_bp_map = super::binder::build_prefix_bp_map(language, per_cat);
     let binder_rule_body =
-        super::binder::emit_binder_rule_body(categories, per_cat, &prefix_bp_map);
+        super::binder::emit_binder_rule_body(language, categories, per_cat, &prefix_bp_map);
     // Phase 5b: BinderListLoop body for multi-binder list (^[xs]).
-    let binder_list_loop_body = super::binder::emit_binder_list_loop_body(categories, per_cat);
+    let binder_list_loop_body =
+        super::binder::emit_binder_list_loop_body(language, categories, per_cat);
     // B8 / Issue A' (2026-05-09): per-rule lookup for outer-slot
     // coordinates (marker_pos, next_pos, body_src_idx) used at
     // Unwinding-BinderListLoopAt routing for Class 3 rules.
-    let binderlist_inner_metadata = super::binder::emit_binderlist_inner_metadata(per_cat);
+    let binderlist_inner_metadata =
+        super::binder::emit_binderlist_inner_metadata(language, per_cat);
     // B8 / Issue D (2026-05-09); Phase 4 #2 (2026-05-12): per-(src, rule,
     // slot_idx) predicate for Class 3 CollectionMarker pushes that should
     // also open a BinderScope. Per-slot variant is required for rules
     // with a Class-3 BinderListLoop AND a Class-2 SimpleCollection
     // sibling (e.g. PInputsTagged) — the per-rule predicate (pre-Phase-4-#2)
     // incorrectly opened a BinderScope for the Class-2 sibling too.
-    let is_class3_collection_lookup = super::binder::emit_is_class3_collection_per_slot(per_cat);
+    let is_class3_collection_lookup =
+        super::binder::emit_is_class3_collection_per_slot(language, per_cat);
     // Compatibility predicate retained for the WpdaEngine trait. Runtime
     // routing no longer depends on it: Class-3 binder walks use
     // BinderListLoopAt while real `*opt(...)` groups use OptionalGroupAt.
     let is_class3_inner_marker_lookup =
-        super::binder::emit_is_class3_inner_marker_per_subpos(per_cat);
+        super::binder::emit_is_class3_inner_marker_per_subpos(language, per_cat);
     // B8 / Issue C (2026-05-09): per-(rule, sub_pos) splice lookup
     // for Class 3 inner walk Name-parse return points.
     let binderlist_inner_post_splice_lookup =
-        super::binder::emit_binderlist_inner_post_splice_lookup(per_cat);
+        super::binder::emit_binderlist_inner_post_splice_lookup(language, per_cat);
     // Opt-Group (2026-04-29): per-rule per-group OptionalGroup state
     // dispatch — FIRST-set peek + inner-position walk + finalize.
-    let optional_group_body = super::binder::emit_optional_group_body(categories, per_cat);
+    let optional_group_body =
+        super::binder::emit_optional_group_body(language, categories, per_cat);
     // B7 Pattern 2: paren-grouping arms in PrefixDispatch — backend
     // emission of `(`-grouping for every parseable category, satisfying
     // the user mandate "no per-grammar order; backend change". Emitted
@@ -144,6 +151,39 @@ pub(crate) fn emit_engine_impl_full(
     // count consumed by the realize-time soundness filter.
     let min_terminal_span_body =
         semantic_actions::emit_min_terminal_span_body(categories, &per_cat_indexed);
+    // AT_QUOTED_BIND_GATE realize-backstop (option B, 2026-07-03): the two
+    // grammar-derived engine helper methods are emitted ONLY when the codegen
+    // realize kill-switch is on (in lock-step with the walker-side
+    // `AT_QUOTED_BIND_REALIZE_GATE`). Baseline (off) ⇒ EMPTY ⇒ the trait
+    // defaults (`false`) apply ⇒ generated engine impl byte-identical.
+    let at_quoted_bind_realize_methods: proc_macro2::TokenStream =
+        if super::forks::AT_QUOTED_BIND_REALIZE_GATE {
+            let overgen_body = semantic_actions::emit_sigil_quoted_bind_overgen_rule_body(
+                &per_cat_indexed,
+            );
+            let atom_body = semantic_actions::emit_sigil_quoted_source_atom_rule_body(
+                categories,
+                &per_cat_indexed,
+                language,
+            );
+            quote! {
+                fn sigil_quoted_bind_overgen_rule(&self, src_idx: u16, rule_idx: u16) -> bool {
+                    // AT_QUOTED_BIND_GATE realize-backstop drop-set (option B):
+                    // generic whole-source bind rules subsumed by a sigil-quoted
+                    // sibling. Grammar-derived (see
+                    // emit_sigil_quoted_bind_overgen_rule_body).
+                    #overgen_body
+                }
+                fn sigil_quoted_source_atom_rule(&self, src_idx: u16, rule_idx: u16) -> bool {
+                    // AT_QUOTED_BIND_GATE realize-backstop sigil-atom set
+                    // (option B): source-cat rules whose leading sigil also
+                    // triggers a rule in another (result) category.
+                    #atom_body
+                }
+            }
+        } else {
+            quote! {}
+        };
     // Sig-B Blocker-3 §2.3 (2026-06-01, pgmcp experiment #9): grammar
     // single-hop coercion table (`(from_cat, to_cat) -> &[(target_cat,
     // rule_idx)]`). Mirrors the live Pass-2a/Pass-2c synthesis rule set
@@ -189,6 +229,13 @@ pub(crate) fn emit_engine_impl_full(
     // lookup body, consumed by the walker's
     // `GroupingClosePreservingInner` sentinel resolution.
     let cat_of_type_name_body = emit_cat_of_type_name(language, categories);
+    // GEN-1 goal-gate (2026-06-28): the `cat_can_reach(from, goal)` body —
+    // reflexive-transitive closure of the post-built cross-cat extension graph
+    // (cross-cat infix/postfix/mixfix LHS edges ∪ transparent projections;
+    // prefix edges EXCLUDED). Emitted into a sibling inherent impl so the
+    // InfixLoop's goal filter can call `Self::cat_can_reach`.
+    let cat_can_reach_body =
+        super::kind_dispatch::emit_cat_can_reach(language, per_cat, categories);
     // L-substrate Piece #6 (2026-05-13): lex-fork dispatch block,
     // emitted at the top of the WpdaState::PrefixDispatch arm.
     let lex_fork_dispatch = super::forks::emit_lex_fork_at_prefix_dispatch(primary_src_idx);
@@ -202,8 +249,53 @@ pub(crate) fn emit_engine_impl_full(
     let lex_alt_rule_for_fn =
         super::kind_dispatch::emit_lex_alt_rule_for_fn(language, per_cat, categories);
 
+    // SPPF-realize observational-dedup (2026-06-28): the
+    // `WpdaEngine::semantic_fingerprint` override. Probe the realized
+    // `Arc<dyn Any>` against each declared category; on the (unique) match,
+    // emit `category_discriminant ‖ term.semantic_hash(..)` through the
+    // module-scope `__MettailWpdaSemanticKeyHasher` — the SAME byte key the
+    // facade root-dedup consumes. The discriminant (category source index)
+    // is constant within any single SPPF node's realization (one category
+    // per node), so it never changes a dedup partition; it only prevents a
+    // cross-category collision. A non-category term yields `None` (kept
+    // distinct). This makes per-node dedup byte-for-byte equivalent to
+    // root-only dedup (the output-identity theorem).
+    let semantic_fingerprint_arms: Vec<TokenStream> = categories
+        .iter()
+        .enumerate()
+        .map(|(i, cat_name)| {
+            let cat_ident = quote::format_ident!("{}", cat_name);
+            let cat_disc = i as u16;
+            quote! {
+                if let Some(__t) = (&**term).downcast_ref::<#cat_ident>() {
+                    let mut __hasher = __MettailWpdaSemanticKeyHasher::default();
+                    std::hash::Hasher::write_u16(&mut __hasher, #cat_disc);
+                    __t.semantic_hash(&mut __hasher);
+                    return Some(__hasher.into_key());
+                }
+            }
+        })
+        .collect();
+
     quote! {
         #lex_alt_rule_for_fn
+
+        // GEN-1 goal-gate (2026-06-28): sibling inherent impl carrying the
+        // pure `cat_can_reach` predicate. Lives outside the `WpdaEngine` trait
+        // impl (the trait fixes its method set) yet is reachable as
+        // `Self::cat_can_reach` from the trait impl's `step` method because
+        // `Self == #engine_ident` there and inherent associated fns resolve
+        // through `Self::`. `from == goal` short-circuits reflexivity; the
+        // emitted `matches!` enumerates only the non-reflexive RTC pairs.
+        #[allow(dead_code)]
+        impl #engine_ident {
+            fn cat_can_reach(from: u16, goal: u16) -> bool {
+                if from == goal {
+                    return true;
+                }
+                #cat_can_reach_body
+            }
+        }
 
         #[allow(unused_variables, unused_braces)]
         impl mettail_prattail::wpda_walker::WpdaEngine<
@@ -219,6 +311,11 @@ pub(crate) fn emit_engine_impl_full(
                 frontier_top: Option<&mettail_prattail::gss::WpdaGssNode>,
                 _pos: usize,
                 tokens: &dyn mettail_prattail::wpda_runtime::WpdaTokenSource,
+                // Stage 4 (Lever-1 emit-both): innermost-collection structural
+                // delimiters, computed by the walker. Consulted by the
+                // InfixLoop/PrefixDispatch lex-fork to add a CollectionMarker
+                // yield ALONGSIDE the operator branches on an ambiguous close.
+                frame_ctx: mettail_prattail::wpda_runtime::FrameCtx,
             ) -> mettail_prattail::wpda_walker::WpdaStepAction<
                 mettail_prattail::automata::lex_weight::LexicographicWeight,
             > {
@@ -232,7 +329,9 @@ pub(crate) fn emit_engine_impl_full(
                 // imports deleted alongside the C10 W revert. The M11.4 weight
                 // wrappers no longer carry a snapshot — `lex_w`/`lex_w_alt`/
                 // `lex_one` directly construct LexicographicWeight values.
-                use mettail_prattail::wpda_runtime::{lex_w, lex_w_alt, lex_one};
+                use mettail_prattail::wpda_runtime::{
+                    lex_w, lex_w_alt, lex_w_alt_with_len, lex_w_with_len, lex_one,
+                };
                 // Phase 3.1.7 (C10, 2026-05-15): walker `W` is plain
                 // `LexicographicWeight` — SPPF arena carries derivation
                 // ambiguity; W carries only path-cost tiebreak.
@@ -300,7 +399,9 @@ pub(crate) fn emit_engine_impl_full(
                                 // runtime accumulator ids flow separately
                                 // through the CollectionId action argument.
                                 let slot_idx = node.symbol.bp.unwrap_or(0u8);
-                                let close_lookup: Option<&'static str> = #collection_close_lookup;
+                                let close_lookup: Option<&'static str> = self
+                                    .collection_spec(result_src_idx, rule_idx, slot_idx)
+                                    .map(|__s| __s.close);
                                 let token_text = tokens.peek_text(*pos).unwrap_or("");
                                 // #307 ROOT-F G1 site-2 (2026-06-11): the
                                 // empty-collection close detection is edge
@@ -315,12 +416,9 @@ pub(crate) fn emit_engine_impl_full(
                                             .iter()
                                             .any(|a| a.text == cl)
                                     });
-                                let element_src_lookup: Option<u16> = {
-                                    let result_src_idx = result_src_idx;
-                                    let rule_idx = rule_idx;
-                                    let slot_idx = slot_idx;
-                                    #collection_element_src_lookup
-                                };
+                                let element_src_lookup: Option<u16> = self
+                                    .collection_spec(result_src_idx, rule_idx, slot_idx)
+                                    .and_then(|__s| __s.element_src_idx);
                                 let redirect_src_idx =
                                     element_src_lookup.filter(|&esi| esi != result_src_idx);
                                 if token_is_close || redirect_src_idx.is_some() {
@@ -374,7 +472,18 @@ pub(crate) fn emit_engine_impl_full(
                                     if let Some(element_src_idx) = redirect_src_idx {
                                         __branches.push(
                                             mettail_prattail::wpda_walker::ForkBranch {
-                                                symbol: StackSymbolV2::category_entry(
+                                                // GEN-1 goal-gate G2 (2026-06-28):
+                                                // strict GOAL = the collection
+                                                // element's category. For a
+                                                // polyadic bind `a,b,c <- x`
+                                                // (Vec<Name> elements, result
+                                                // InputBind) each element parses
+                                                // with goal=Name, so the
+                                                // InputBindPolyadic `,`
+                                                // (Name→InputBind) is dropped and
+                                                // the CollectionLoop owns the
+                                                // separator — enabling 3+ elems.
+                                                symbol: StackSymbolV2::category_entry_goal(
                                                     element_src_idx,
                                                 ),
                                                 weight: lex_w(
@@ -642,12 +751,9 @@ pub(crate) fn emit_engine_impl_full(
                                     // constructors; cursor-aware walker
                                     // paths treat it as non-authoritative.
                                     let accumulator_id = slot_idx;
-                                    let element_src_lookup: Option<u16> = {
-                                        let result_src_idx = result_src_idx;
-                                        let rule_idx = rule_idx;
-                                        let slot_idx = slot_idx;
-                                        #collection_element_src_lookup
-                                    };
+                                    let element_src_lookup: Option<u16> = self
+                                        .collection_spec(result_src_idx, rule_idx, slot_idx)
+                                        .and_then(|__s| __s.element_src_idx);
                                     let element_src_idx = element_src_lookup.unwrap_or(result_src_idx);
                                     // str-cast collection-infix fix (2026-06-18):
                                     // recover the Pratt dispatch bp captured on the
@@ -1013,12 +1119,9 @@ pub(crate) fn emit_engine_impl_full(
                                     let result_src_idx = node.symbol.category_src_idx;
                                     let rule_idx = node.symbol.rule_index_in_category;
                                     let slot_idx = node.symbol.bp.unwrap_or(0u8);
-                                    let close_sep: Option<(&'static str, &'static str)> = {
-                                        let result_src_idx = result_src_idx;
-                                        let rule_idx = rule_idx;
-                                        let slot_idx = slot_idx;
-                                        #collection_close_sep_lookup
-                                    };
+                                    let close_sep: Option<(&'static str, &'static str)> = self
+                                        .collection_spec(result_src_idx, rule_idx, slot_idx)
+                                        .map(|__s| (__s.close, __s.sep));
                                     if let Some((close, sep)) = close_sep {
                                         // #307 ROOT-F G2 site-3 (2026-06-11):
                                         // close/sep DETECTION is edge
@@ -1060,9 +1163,92 @@ pub(crate) fn emit_engine_impl_full(
                         // ConsumeAndPush directly to preserve zero-overhead
                         // dispatch for the deterministic case (one tier
                         // matches at l_bp >= cur_bp).
-                        let state_cat_src_idx: u16 = frontier_top
-                            .map(|n| n.symbol.category_src_idx)
-                            .unwrap_or(#primary_src_idx);
+                        // Gap-2 collection-element InfixLoop category redirect
+                        // (2026-07-03): when the InfixLoop frontier is a
+                        // `CollectionMarker` whose declared `element_src_idx`
+                        // differs from the marker's own (result) category — a
+                        // CROSS-CATEGORY collection literal (rhocalc `[…]` List
+                        // (cat 10) / `#{…}#` Bag (11) / `{|…|}` Pathmap (14),
+                        // each carrying `Vec<Proc>`/`HashBag<Proc>`/… i.e.
+                        // `element_src_idx = Proc(0)`) — the operator-dispatch
+                        // category MUST be the ELEMENT category, not the marker's
+                        // result category. A completed element sits on the SPPF
+                        // stack in the element category (e.g. `Map()` = MapEmpty :
+                        // Proc), and an operator extending it (`* c`, `.values()`,
+                        // `== c`) is an ELEMENT-category (Proc) operator. Reading
+                        // `state_cat_src_idx` straight off the marker selects the
+                        // marker's category (List) whose infix/postfix/mixfix
+                        // tables are EMPTY, so the operator is never dispatched and
+                        // the element is spliced prematurely at its first-completion
+                        // (the Gap-2 bug: `[Map() * c]` strands `*`). Same-category
+                        // collections (PPar `{…}` : Proc with Proc elements,
+                        // `element_src_idx == result`) are unaffected — the redirect
+                        // is a no-op there (byte-identical). Grammar-derived from
+                        // `CollectionSpec.element_src_idx`; no per-rule/keyword
+                        // hardcode. `COLL_ELEMENT_INFIX_CAT_REDIRECT_ENABLED` +
+                        // `PRATTAIL_NO_COLL_ELEM_INFIX_REDIRECT` are the LIFO
+                        // kill-switch (OFF ⇒ pre-fix behavior). NOTE: the
+                        // close/sep detection above already reads the marker's
+                        // `collection_spec` directly, so the redirect changes ONLY
+                        // the operator-dispatch category, never the close/sep
+                        // routing — an element with no operator continuation still
+                        // falls through to Unwinding-CollectionMarker exactly as
+                        // before.
+                        const COLL_ELEMENT_INFIX_CAT_REDIRECT_ENABLED: bool = true;
+                        let state_cat_src_idx: u16 = {
+                            let __raw = frontier_top
+                                .map(|n| n.symbol.category_src_idx)
+                                .unwrap_or(#primary_src_idx);
+                            if COLL_ELEMENT_INFIX_CAT_REDIRECT_ENABLED
+                                && std::env::var("PRATTAIL_NO_COLL_ELEM_INFIX_REDIRECT").is_err()
+                            {
+                                match frontier_top {
+                                    Some(__ft)
+                                        if __ft.symbol.kind
+                                            == mettail_prattail::wpda_runtime::SymbolKind::CollectionMarker =>
+                                    {
+                                        let __rs = __ft.symbol.category_src_idx;
+                                        let __ri = __ft.symbol.rule_index_in_category;
+                                        let __slot = __ft.symbol.bp.unwrap_or(0u8);
+                                        match self
+                                            .collection_spec(__rs, __ri, __slot)
+                                            .and_then(|__s| __s.element_src_idx)
+                                        {
+                                            Some(__e) if __e != __rs => __e,
+                                            _ => __raw,
+                                        }
+                                    }
+                                    _ => __raw,
+                                }
+                            } else {
+                                __raw
+                            }
+                        };
+                        // GEN-1 goal-gate (2026-06-28): read the STRICT goal off
+                        // the frontier-top symbol (Some only for a
+                        // `category_entry_goal` pushed at a cross-cat operand /
+                        // element site). `__goal_admits(r)` drops an
+                        // infix/postfix/mixfix candidate whose RESULT category
+                        // `r` provably cannot reach the goal `g`
+                        // (`!cat_can_reach(r, g)`) — bounding the operand to its
+                        // category so a cross-cat-out operator cannot
+                        // over-extend it. `None` goal (top-level CrossCatLhs,
+                        // every legacy `category_entry`) admits all candidates ⇒
+                        // the gate is inert (G0 byte-identical). `GOAL_GATE_ENABLED`
+                        // is the compile-time kill-switch (LIFO-revert: flip to
+                        // `false`).
+                        const GOAL_GATE_ENABLED: bool = true;
+                        let __goal = frontier_top.and_then(|n| n.symbol.goal_src_idx);
+                        let __goal_admits = |result_src: u16| -> bool {
+                            if !GOAL_GATE_ENABLED {
+                                true
+                            } else {
+                                match __goal {
+                                    None => true,
+                                    Some(g) => Self::cat_can_reach(result_src, g),
+                                }
+                            }
+                        };
                         #lex_fork_infix_dispatch
                         let token_text = tokens.peek_text(_pos).unwrap_or("");
                         let _ = token_text;
@@ -1074,10 +1260,15 @@ pub(crate) fn emit_engine_impl_full(
                         > = Vec::new();
 
                         // Infix tier (BP_TIER_INFIX = 0.00).
-                        if let Some((l_bp, r_bp, result_src, rule_idx)) =
-                            #infix_loop_dispatch
-                        {
-                            if l_bp >= *cur_bp {
+                        // GEN-1 B-2 (Stage S0) §2.3: PER-RULE gating. Iterate the
+                        // infix-tier slice (≤ GEN1_MAX_SLICE elems; 1 at S0 ⇒ this
+                        // runs at most once on the legacy single-winner) and gate
+                        // each rule individually on `l_bp >= cur_bp`. Identical
+                        // ForkBranch shape/weight/state as the pre-slice path.
+                        let __infix_slice: &'static [(u8, u8, u16, u16)] =
+                            #infix_loop_dispatch;
+                        for &(l_bp, r_bp, result_src, rule_idx) in __infix_slice {
+                            if l_bp >= *cur_bp && __goal_admits(result_src) {
                                 let new_state =
                                     if result_src != state_cat_src_idx {
                                         // D-strings fix (2026-05-13): pass r_bp
@@ -1126,10 +1317,11 @@ pub(crate) fn emit_engine_impl_full(
                         // pops the Return → fires the action → transitions to
                         // InfixLoop { cur_bp: outer_bp } via the standard Return-pop path
                         // at engine_impl.rs:357-360.
-                        if let Some((l_bp, result_src, rule_idx)) =
-                            #postfix_dispatch
-                        {
-                            if l_bp >= *cur_bp {
+                        // GEN-1 B-2 (Stage S0) §2.3: PER-RULE gating, postfix tier.
+                        let __postfix_slice: &'static [(u8, u16, u16)] =
+                            #postfix_dispatch;
+                        for &(l_bp, result_src, rule_idx) in __postfix_slice {
+                            if l_bp >= *cur_bp && __goal_admits(result_src) {
                                 __cands.push(
                                     mettail_prattail::wpda_walker::ForkBranch {
                                         symbol: StackSymbolV2::rule_at(
@@ -1163,10 +1355,105 @@ pub(crate) fn emit_engine_impl_full(
                         // ConsumeAndPush, engine Fork{consume_trigger:true},
                         // lex-fork next_pos child allocation) advances
                         // cursor.pos past the trigger BEFORE it activates.
-                        if let Some((l_bp, result_src, rule_idx)) =
-                            #mixfix_dispatch
-                        {
-                            if l_bp >= *cur_bp {
+                        // GEN-1 B-2 (Stage S0) §2.3: PER-RULE gating, mixfix tier.
+                        let __mixfix_slice: &'static [(u8, u16, u16)] =
+                            #mixfix_dispatch;
+                        // ─────────────────────────────────────────────────────────
+                        // Fix-B (2026-06-28): METHOD-NAME PRE-FORK PRUNE.
+                        //
+                        // The `.`-method mixfix slice shares ONE trigger across ~40
+                        // rules (`m "." "get" "(" …`, `m "." "set" "(" …`, `m "."
+                        // "size" "(" ")"`, …). Under S1 (`GEN1_MAX_SLICE` uncapped)
+                        // EVERY `.` forks the WHOLE slice; the wrong ~39 die ONE step
+                        // later at their method-name literal-run
+                        // (`__checked_literal_consume!` → 0-edge `Error`). The
+                        // transient ×40 peak per `.` COMPOUNDS across an N-method chain
+                        // and overflows the 4096 ambiguity budget (ESS≈0.000 — pure
+                        // dead-weight, not genuine ambiguity).
+                        //
+                        // This prunes that dead-weight ONE STEP EARLIER, at the fork
+                        // point, using the SAME evidence the literal-run already uses:
+                        // a rule's FIRST post-trigger literal `L` (= its method name —
+                        // `mixfix_part(rs,ri,0).preceding[0]` for an arg method,
+                        // `mixfix_nullary_literals(rs,ri)[0]` for a 0-arg method; `None`
+                        // for an operand-/rep-leading part-0 such as ternary or
+                        // ForRow's `&`-join, which is ALWAYS kept). A method-name rule
+                        // is admitted iff `L` matches the post-trigger token EXACTLY as
+                        // `__mixfix_literal_targets` (the literal-run's first step)
+                        // would: primary `peek_text` OR any lattice alternative.
+                        //
+                        // SOUNDNESS (observational equivalence — NO-LOSS, NO-SPURIOUS):
+                        // a dropped rule has `L` mismatching the post-trigger token, so
+                        // after consuming the trigger it would enter
+                        // `MixfixLiteralRun { kind:2, sub_pos:0 }` and its FIRST step
+                        // `__checked_literal_consume!(L)` yields an EMPTY target set ⇒
+                        // `Error` ⇒ the cursor drops, realizing NO AST. The post-prune
+                        // cursor set therefore equals the post-1-step set ⇒ realized
+                        // AST unchanged. Genuine ambiguity is preserved: if >1 rule
+                        // shares the same method name, ALL of them match `L` and STILL
+                        // fork (only provably-non-matching names are dropped). This is
+                        // maximal-munch on a TERMINAL (the method-name literal), NOT
+                        // operand commitment — it does NOT disambiguate early.
+                        //
+                        // FALLBACK: if the prune would empty an OTHERWISE-non-empty
+                        // mixfix contribution AND no infix/postfix candidate exists
+                        // (`__cands` empty), restore the full slice. This keeps the
+                        // trigger-consumption decision byte-identical to pre-Fix-B in
+                        // the degenerate all-mismatch case (where unpruned would
+                        // consume-the-trigger-then-die rather than unwind); it never
+                        // fires on the chained-method hot path (which always has a
+                        // matching method). `METHOD_NAME_PRUNE_ENABLED=false` is the
+                        // LIFO kill-switch (reverts to exact pre-Fix-B behavior).
+                        // The `&'static` slice is NEVER mutated — this is a runtime
+                        // evidence filter, so the GEN-1 NO-LOSS slice-multiset
+                        // invariant is untouched.
+                        const METHOD_NAME_PRUNE_ENABLED: bool = true;
+                        // Position the literal-run inspects after the trigger is
+                        // consumed (`advance_cursor_pos` is alt-0-hardwired — mirror it).
+                        let __post_trigger_pos = tokens.next_pos(_pos, 0);
+                        let __method_name_admits = |result_src: u16, rule_idx: u16| -> bool {
+                            if !METHOD_NAME_PRUNE_ENABLED {
+                                true
+                            } else {
+                                let __lit: Option<&'static str> =
+                                    match mixfix_part(result_src, rule_idx, 0) {
+                                        Some((_, preceding, _)) => preceding.first().copied(),
+                                        None => mixfix_nullary_literals(result_src, rule_idx)
+                                            .and_then(|l| l.first().copied()),
+                                    };
+                                match (__lit, __post_trigger_pos) {
+                                    // No distinguishing method-name literal
+                                    // (operand-/rep-leading part-0) OR no token after
+                                    // the trigger (EOF) ⇒ cannot prove dead; KEEP.
+                                    (None, _) | (Some(_), None) => true,
+                                    // Method-name rule: KEEP iff its literal matches the
+                                    // post-trigger token (= __mixfix_literal_targets
+                                    // non-empty: primary text OR any lattice alternative).
+                                    (Some(l), Some(p)) => {
+                                        tokens.peek_text(p) == Some(l)
+                                            || tokens
+                                                .peek_alternatives(p)
+                                                .iter()
+                                                .any(|a| a.text == l)
+                                    }
+                                }
+                            }
+                        };
+                        let __mixfix_no_survivor = !__mixfix_slice.iter().any(
+                            |&(l_bp, result_src, rule_idx)| {
+                                l_bp >= *cur_bp
+                                    && __goal_admits(result_src)
+                                    && __method_name_admits(result_src, rule_idx)
+                            },
+                        );
+                        let __mixfix_fallback_full =
+                            __mixfix_no_survivor && __cands.is_empty();
+                        for &(l_bp, result_src, rule_idx) in __mixfix_slice {
+                            if l_bp >= *cur_bp
+                                && __goal_admits(result_src)
+                                && (__mixfix_fallback_full
+                                    || __method_name_admits(result_src, rule_idx))
+                            {
                                 __cands.push(
                                     mettail_prattail::wpda_walker::ForkBranch {
                                         symbol: StackSymbolV2::mixfix_marker(
@@ -1218,10 +1505,14 @@ pub(crate) fn emit_engine_impl_full(
                         // `right_recursive_tail` + exact-shape gate in
                         // `is_iterative_candidate` restricts eligibility to
                         // Tern-shaped ops — so they are bit-identical).
-                        if let Some((_pmx_l_bp, _pmx_result_src, _pmx_rule_idx)) =
-                            #mixfix_dispatch
+                        // GEN-1 B-2 (Stage S0) §2.4: pre-fork absorption reads the
+                        // LEADING (rule_idx-min) mixfix candidate via `.first()`.
+                        // Inert when the slice has >1 elem (S1+); at S0 the slice
+                        // is ≤1 ⇒ identical to the legacy `Some(..)` head.
+                        if let Some(&(_pmx_l_bp, _pmx_result_src, _pmx_rule_idx)) =
+                            #mixfix_dispatch.first()
                         {
-                            if _pmx_l_bp >= *cur_bp {
+                            if _pmx_l_bp >= *cur_bp && __goal_admits(_pmx_result_src) {
                                 let symbol_rs = _pmx_result_src;
                                 let symbol_ri = _pmx_rule_idx;
                                 let _pmx_spec: Option<mettail_prattail::binding_power::IterAbsorbSpec> =
@@ -1282,10 +1573,14 @@ pub(crate) fn emit_engine_impl_full(
                         // short-chain workloads bit-identical). LEFT-assoc
                         // (AddInt) is NOT routed here — it keeps the existing
                         // singleton path (minimal blast radius).
-                        if let Some((_pf_l_bp, _pf_r_bp, _pf_result_src, _pf_rule_idx)) =
-                            #infix_loop_dispatch
+                        // GEN-1 B-2 (Stage S0) §2.4: pre-fork absorption reads the
+                        // LEADING (rule_idx-min) infix candidate via `.first()`.
+                        // Inert when the slice has >1 elem (S1+); at S0 the slice
+                        // is ≤1 ⇒ identical to the legacy `Some(..)` head.
+                        if let Some(&(_pf_l_bp, _pf_r_bp, _pf_result_src, _pf_rule_idx)) =
+                            #infix_loop_dispatch.first()
                         {
-                            if _pf_l_bp >= *cur_bp {
+                            if _pf_l_bp >= *cur_bp && __goal_admits(_pf_result_src) {
                                 let symbol_rs = _pf_result_src;
                                 let symbol_ri = _pf_rule_idx;
                                 let _pf_spec: Option<mettail_prattail::binding_power::IterAbsorbSpec> =
@@ -1491,7 +1786,14 @@ pub(crate) fn emit_engine_impl_full(
                                         *rule_idx,
                                         *completed_idx,
                                     ),
-                                    push_symbol: StackSymbolV2::category_entry(
+                                    // GEN-1 goal-gate G1 (2026-06-28): strict
+                                    // GOAL = the operand's category, so a
+                                    // cross-cat Name operand (e.g. InputBindQuery
+                                    // `n`) cannot over-extend past Name via `!`
+                                    // (POutput Name→Proc) — Proc cannot reach
+                                    // Name (prefix `@` edge excluded), so it is
+                                    // dropped and the mixfix continuation matches.
+                                    push_symbol: StackSymbolV2::category_entry_goal(
                                         operand_src_idx,
                                     ),
                                     weight: lex_one(),
@@ -1661,8 +1963,14 @@ pub(crate) fn emit_engine_impl_full(
                                     // pattern) — closes the latent
                                     // wrong-category hole; the marker is NOT
                                     // bumped (bp counts completed operands).
+                                    // GEN-1 goal-gate G1 (2026-06-28): strict
+                                    // GOAL = the cross-cat operand's category
+                                    // (e.g. InputBindQuery `lhs`:Name) so it
+                                    // cannot over-extend past its category via a
+                                    // cross-cat-out operator that cannot reach
+                                    // back to the goal.
                                     WpdaStepAction::Push {
-                                        symbol: StackSymbolV2::category_entry(
+                                        symbol: StackSymbolV2::category_entry_goal(
                                             operand_src_idx,
                                         ),
                                         weight: lex_one(),
@@ -1707,6 +2015,101 @@ pub(crate) fn emit_engine_impl_full(
                                     )
                                 }
                             }
+                            // GEN-1 B-3 (Stage S3): POST-REPETITION. The just-
+                            // completed part `completed_idx` was a `*sep` rep whose
+                            // CollectionLoop already consumed its close and popped
+                            // the CollectionMarker via Unwinding (leaving the
+                            // CollectionId in THIS marker's args). `mixfix_part` is
+                            // None for a rep slot, so we land here. The rep owns its
+                            // close (no `following` of its own): if it was the last
+                            // part, Pop the marker → FireAction (drains the
+                            // CollectionId); otherwise advance to kind=1 to set up
+                            // the next operand.
+                            (0, None)
+                                if mixfix_rep(
+                                    *result_src_idx, *rule_idx, *completed_idx,
+                                )
+                                .is_some() =>
+                            {
+                                if *completed_idx + 1 == parts_len {
+                                    WpdaStepAction::Pop {
+                                        weight: lex_one(),
+                                        new_state: WpdaState::InfixLoop { cur_bp: 0 },
+                                    }
+                                } else {
+                                    WpdaStepAction::Advance(
+                                        WpdaState::MixfixLiteralRun {
+                                            result_src_idx: *result_src_idx,
+                                            rule_idx: *rule_idx,
+                                            completed_idx: *completed_idx,
+                                            kind: 1,
+                                            sub_pos: 0,
+                                        },
+                                    )
+                                }
+                            }
+                            // GEN-1 B-3 (Stage S3): the repetition operand is PART 0
+                            // (the FIRST part, e.g. InputBindPolyadic
+                            // `lhs "," lhss.*sep(",") "<-" n`). The initial marker
+                            // push lands here (kind=2, completed_idx=0) and
+                            // `mixfix_part(.., 0)` is None. Enter the rep loop (see
+                            // the kind=1 rep arm below for the field rationale).
+                            (2, None)
+                                if mixfix_rep(
+                                    *result_src_idx, *rule_idx, *completed_idx,
+                                )
+                                .is_some() =>
+                            {
+                                let rep_idx = *completed_idx;
+                                WpdaStepAction::ReplaceAndPush {
+                                    replace_symbol: StackSymbolV2::mixfix_marker(
+                                        *result_src_idx, *rule_idx, rep_idx,
+                                    ),
+                                    push_symbol: StackSymbolV2::collection_marker(
+                                        *result_src_idx, *rule_idx, rep_idx, 0u8,
+                                    ),
+                                    weight: lex_one(),
+                                    new_state: WpdaState::PrefixDispatch {
+                                        pos: _pos,
+                                        cur_bp: 0,
+                                    },
+                                }
+                            }
+                            // GEN-1 B-3 (Stage S3): the NEXT part is a `*sep`
+                            // repetition (e.g. POutput2Plus's `bs` after `a`). A rep
+                            // part's preceding literals are EMPTY for every shipped
+                            // rep rule (literals before a rep are absorbed into the
+                            // PRIOR part's `following`), so the between-operand run
+                            // goes straight into the rep entry. Bump the marker to
+                            // the rep part index and push its CollectionMarker — the
+                            // runtime's `emit_push_side_effects` allocates the
+                            // accumulator and pushes the `CollectionId` arg into THIS
+                            // marker's frame; the rule action drains it when the
+                            // marker pops. PrefixDispatch (under a CollectionMarker
+                            // top) handles the empty rep (token == close →
+                            // ConsumeAtAndPop) and the first element (self- or
+                            // cross-cat) via the per-slot `collection_spec`.
+                            (1, _)
+                                if mixfix_rep(
+                                    *result_src_idx, *rule_idx, *completed_idx + 1,
+                                )
+                                .is_some() =>
+                            {
+                                let rep_idx = *completed_idx + 1;
+                                WpdaStepAction::ReplaceAndPush {
+                                    replace_symbol: StackSymbolV2::mixfix_marker(
+                                        *result_src_idx, *rule_idx, rep_idx,
+                                    ),
+                                    push_symbol: StackSymbolV2::collection_marker(
+                                        *result_src_idx, *rule_idx, rep_idx, 0u8,
+                                    ),
+                                    weight: lex_one(),
+                                    new_state: WpdaState::PrefixDispatch {
+                                        pos: _pos,
+                                        cur_bp: 0,
+                                    },
+                                }
+                            }
                             (1, _) => {
                                 let next_part = mixfix_part(
                                     *result_src_idx, *rule_idx, *completed_idx + 1,
@@ -1729,13 +2132,20 @@ pub(crate) fn emit_engine_impl_full(
                                         } else {
                                             // All literals consumed; push the next
                                             // operand's CategoryEntry.
+                                            // GEN-1 goal-gate G1 (2026-06-28):
+                                            // strict GOAL = the next operand's
+                                            // category so a cross-cat Name operand
+                                            // (InputBindQuery `n`) stays bounded to
+                                            // Name and the `!?(` mixfix
+                                            // continuation matches instead of `!`
+                                            // (POutput) over-extending it.
                                             WpdaStepAction::ReplaceAndPush {
                                                 replace_symbol: StackSymbolV2::mixfix_marker(
                                                     *result_src_idx,
                                                     *rule_idx,
                                                     *completed_idx + 1,
                                                 ),
-                                                push_symbol: StackSymbolV2::category_entry(
+                                                push_symbol: StackSymbolV2::category_entry_goal(
                                                     operand_src_idx,
                                                 ),
                                                 weight: lex_one(),
@@ -1750,6 +2160,40 @@ pub(crate) fn emit_engine_impl_full(
                                         "mixfix part {} not found for (result={}, rule={})",
                                         completed_idx + 1, result_src_idx, rule_idx,
                                     )),
+                                }
+                            }
+                            // GEN-1 B-1 (Stage S2): 0-operand (nullary) mixfix
+                            // literal run. `part` is None (no inner operands)
+                            // and `parts_len == 0` distinguishes this from a
+                            // suppressed `*sep` repetition slot (parts_len >= 1,
+                            // which falls to the catch-all Error below until the
+                            // S3 handling lands). Consume the post-trigger
+                            // literals (`("`, `)"` for POutputEmpty; `size ( )`
+                            // for `.size()`) via membership-checked steps; when
+                            // exhausted, Pop the marker — firing the arity-1
+                            // (LHS-only) action (e.g. POutputEmpty(n), MSize(m)).
+                            (2, None) if parts_len == 0 => {
+                                let lits = mixfix_nullary_literals(
+                                    *result_src_idx, *rule_idx,
+                                )
+                                .unwrap_or(&[]);
+                                if (*sub_pos as usize) < lits.len() {
+                                    let expected = lits[*sub_pos as usize];
+                                    __checked_literal_consume!(
+                                        expected,
+                                        WpdaState::MixfixLiteralRun {
+                                            result_src_idx: *result_src_idx,
+                                            rule_idx: *rule_idx,
+                                            completed_idx: *completed_idx,
+                                            kind: 2,
+                                            sub_pos: sub_pos + 1,
+                                        }
+                                    )
+                                } else {
+                                    WpdaStepAction::Pop {
+                                        weight: lex_one(),
+                                        new_state: WpdaState::InfixLoop { cur_bp: 0 },
+                                    }
                                 }
                             }
                             _ => WpdaStepAction::Error(format!(
@@ -1941,6 +2385,18 @@ pub(crate) fn emit_engine_impl_full(
                 #action_for_body
             }
 
+            // SPPF-realize observational-dedup (2026-06-28): per-node dedup key.
+            // INERT until the walker's realize wiring calls it behind
+            // `PRATTAIL_REALIZE_DEDUP`; emitted now so the hook compiles against
+            // the concrete category types.
+            fn semantic_fingerprint(
+                &self,
+                term: &std::sync::Arc<dyn std::any::Any + Send + Sync>,
+            ) -> Option<Vec<u8>> {
+                #(#semantic_fingerprint_arms)*
+                None
+            }
+
             fn chain_atom_rules_for_token(
                 &self,
                 cat_src_idx: u16,
@@ -1997,6 +2453,15 @@ pub(crate) fn emit_engine_impl_full(
                 #is_binder_internal_collection_lookup
             }
 
+            fn rule_has_leading_structural_trigger(
+                &self,
+                result_src_idx: u16,
+                rule_idx: u16,
+            ) -> bool {
+                let _ = (result_src_idx, rule_idx);
+                #rule_has_leading_structural_trigger_lookup
+            }
+
             fn is_class3_collection_per_slot(
                 &self,
                 src_idx: u16,
@@ -2021,20 +2486,31 @@ pub(crate) fn emit_engine_impl_full(
                 #is_class3_inner_marker_lookup
             }
 
+            fn collection_spec(
+                &self,
+                result_src_idx: u16,
+                rule_idx: u16,
+                slot_idx: u8,
+            ) -> Option<mettail_prattail::wpda_runtime::CollectionSpec> {
+                // Stage 2 consolidation (2026-06-27): the single per-slot
+                // CollectionSpec table. kv_separator_for_collection /
+                // collection_element_src_idx and the InfixLoop / PrefixDispatch
+                // / CollectionLoop close gates all project their field off this
+                // one record.
+                #collection_spec_table
+            }
+
             fn kv_separator_for_collection(
                 &self,
                 result_src_idx: u16,
                 rule_idx: u16,
                 slot_idx: u8,
             ) -> Option<&'static str> {
-                // Phase 4 #5b (2026-05-12): per-(src, rule, slot_idx)
-                // lookup. Returns `Some(":")` (or user-overridden
-                // literal) for HashMap collection slots and `None`
-                // for Vec/HashBag/HashSet slots or unknown tuples.
-                // Consumed by the walker's `set_cursor_inner_state`
-                // to patch `WpdaState::CollectionLoop.kv_phase` from
-                // cursor.collection_stack[acc_id].len() parity.
-                #kv_separator_for_collection_lookup
+                // Stage 2: projected off the consolidated CollectionSpec
+                // (was the per-(src, rule, slot_idx) kv-separator lookup —
+                // `Some(":")` for kv-maps, `None` otherwise).
+                self.collection_spec(result_src_idx, rule_idx, slot_idx)
+                    .and_then(|__s| __s.kv_sep)
             }
 
             fn collection_element_src_idx(
@@ -2043,14 +2519,11 @@ pub(crate) fn emit_engine_impl_full(
                 rule_idx: u16,
                 slot_idx: u8,
             ) -> Option<u16> {
-                // #307 TR ghost (2026-06-17): the declared element-category
-                // src_idx per (result_src_idx, rule_idx, slot_idx). Reuses the
-                // same per-rule lookup the CollectionLoop/CollectionOpenParen
-                // arms use for cross-cat element redirect, now exposed to the
-                // collection-element splice gate so a pre-wrap raw cross-cat
-                // element Symbol is refuted at the source.
-                let _ = (result_src_idx, rule_idx, slot_idx);
-                #collection_element_src_lookup
+                // Stage 2: projected off the consolidated CollectionSpec
+                // (was the per-(src, rule, slot_idx) element-src lookup; the
+                // #307 TR ghost splice gate reads it here).
+                self.collection_spec(result_src_idx, rule_idx, slot_idx)
+                    .and_then(|__s| __s.element_src_idx)
             }
 
             fn cat_of_type_name(&self, name: &str) -> Option<u16> {
@@ -2076,6 +2549,11 @@ pub(crate) fn emit_engine_impl_full(
                 // fabricated-cast derivations on evidence (yield != span).
                 #min_terminal_span_body
             }
+
+            // AT_QUOTED_BIND_GATE realize-backstop (option B, 2026-07-03):
+            // emitted ONLY when the codegen realize kill-switch is on;
+            // byte-identical (nothing) at baseline.
+            #at_quoted_bind_realize_methods
 
             fn single_hop_coercion(&self, from_cat: u16, to_cat: u16) -> &[(u16, u16)] {
                 // Sig-B Blocker-3 §2.3 (2026-06-01): grammar single-hop
@@ -2275,9 +2753,11 @@ fn emit_cat_of_type_name(language: &LanguageDef, categories: &[String]) -> Token
 }
 
 /// Emit the InfixLoop dispatch expression — a `match state_cat_src_idx`
-/// that calls the per-category `infix_bp_<cat>(text)` lookup helper. The
-/// expression evaluates to `Option<(u8, u8, u16, u16)>` (l_bp, r_bp,
-/// result_src, rule_idx) per the BP table emission.
+/// that calls the per-category `infix_bp_<cat>(text)` lookup helper. GEN-1 B-2
+/// (Stage S0): evaluates to `&'static [(u8, u8, u16, u16)]` (l_bp, r_bp,
+/// result_src, rule_idx) — a slice of every infix rule sharing the trigger,
+/// capped to `GEN1_MAX_SLICE` at codegen (1 at S0 ⇒ at most the legacy
+/// single-winner element). `_ => &[]` for unknown categories.
 fn emit_infix_loop_dispatch(categories: &[String]) -> TokenStream {
     let arms = categories.iter().enumerate().map(|(i, cat)| {
         let i_u16 = i as u16;
@@ -2288,7 +2768,7 @@ fn emit_infix_loop_dispatch(categories: &[String]) -> TokenStream {
         {
             match state_cat_src_idx {
                 #(#arms)*
-                _ => None,
+                _ => &[],
             }
         }
     }
@@ -2335,9 +2815,9 @@ fn emit_category_recognizes_token_dispatch(categories: &[String]) -> TokenStream
         let mixfix_fn = quote::format_ident!("mixfix_bp_{}", cat.to_lowercase());
         quote! {
             #i_u16 => {
-                #infix_fn(next_tok).is_some()
-                    || #postfix_fn(next_tok).is_some()
-                    || #mixfix_fn(next_tok).is_some()
+                !#infix_fn(next_tok).is_empty()
+                    || !#postfix_fn(next_tok).is_empty()
+                    || !#mixfix_fn(next_tok).is_empty()
             }
         }
     });
@@ -2364,9 +2844,9 @@ fn emit_category_recognizes_operator_body(categories: &[String]) -> TokenStream 
         let mixfix_fn = quote::format_ident!("mixfix_bp_{}", cat.to_lowercase());
         quote! {
             #i_u16 => {
-                #infix_fn(token_text).is_some()
-                    || #postfix_fn(token_text).is_some()
-                    || #mixfix_fn(token_text).is_some()
+                !#infix_fn(token_text).is_empty()
+                    || !#postfix_fn(token_text).is_empty()
+                    || !#mixfix_fn(token_text).is_empty()
             }
         }
     });
@@ -2392,15 +2872,9 @@ fn emit_category_accepts_operator_at_floor_body(categories: &[String]) -> TokenS
         let mixfix_fn = quote::format_ident!("mixfix_bp_{}", cat.to_lowercase());
         quote! {
             #i_u16 => {
-                #infix_fn(token_text)
-                    .map(|(left_bp, _, _, _)| left_bp >= floor)
-                    .unwrap_or(false)
-                    || #postfix_fn(token_text)
-                        .map(|(left_bp, _, _)| left_bp >= floor)
-                        .unwrap_or(false)
-                    || #mixfix_fn(token_text)
-                        .map(|(left_bp, _, _)| left_bp >= floor)
-                        .unwrap_or(false)
+                #infix_fn(token_text).iter().any(|&(left_bp, ..)| left_bp >= floor)
+                    || #postfix_fn(token_text).iter().any(|&(left_bp, ..)| left_bp >= floor)
+                    || #mixfix_fn(token_text).iter().any(|&(left_bp, ..)| left_bp >= floor)
             }
         }
     });
@@ -2412,6 +2886,9 @@ fn emit_category_accepts_operator_at_floor_body(categories: &[String]) -> TokenS
     }
 }
 
+/// GEN-1 B-2 (Stage S0): evaluates to `&'static [(u8, u16, u16)]`
+/// (l_bp, result_src, rule_idx) — a slice of every postfix rule sharing the
+/// trigger, capped to `GEN1_MAX_SLICE` at codegen. `_ => &[]` for unknown cats.
 fn emit_postfix_dispatch(categories: &[String]) -> TokenStream {
     let arms = categories.iter().enumerate().map(|(i, cat)| {
         let i_u16 = i as u16;
@@ -2422,7 +2899,7 @@ fn emit_postfix_dispatch(categories: &[String]) -> TokenStream {
         {
             match state_cat_src_idx {
                 #(#arms)*
-                _ => None,
+                _ => &[],
             }
         }
     }
@@ -2430,9 +2907,10 @@ fn emit_postfix_dispatch(categories: &[String]) -> TokenStream {
 
 /// B7 Pattern 1: emit the per-category mixfix BP dispatch — `match
 /// state_cat_src_idx` calling the per-category `mixfix_bp_<cat>(text)`
-/// lookup. Evaluates to `Option<(u8, u16, u16)>` (left_bp, result_src,
-/// rule_idx) for any mixfix trigger keyword whose left operand is in
-/// the dispatched category.
+/// lookup. GEN-1 B-2 (Stage S0): evaluates to `&'static [(u8, u16, u16)]`
+/// (left_bp, result_src, rule_idx) — a slice of every mixfix trigger keyword
+/// (sharing the trigger) whose left operand is in the dispatched category,
+/// capped to `GEN1_MAX_SLICE` at codegen. `_ => &[]` for unknown categories.
 fn emit_mixfix_dispatch(categories: &[String]) -> TokenStream {
     let arms = categories.iter().enumerate().map(|(i, cat)| {
         let i_u16 = i as u16;
@@ -2443,7 +2921,7 @@ fn emit_mixfix_dispatch(categories: &[String]) -> TokenStream {
         {
             match state_cat_src_idx {
                 #(#arms)*
-                _ => None,
+                _ => &[],
             }
         }
     }

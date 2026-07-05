@@ -17,7 +17,7 @@ use crate::gen::syntax::parser::prattail_bridge::language_def_to_spec;
 use crate::gen::{generate_literal_label, generate_var_label, is_literal_rule, is_var_rule};
 use mettail_ast::{
     grammar::{GrammarItem, GrammarRule, NonTerminalKind, PatternOp, SyntaxExpr, TermParam},
-    grammar_shapes::classify_simple_projection_shape,
+    grammar_shapes::{classify_simple_projection_shape, classify_unary_prefix_shape},
     language::LanguageDef,
     types::TypeExpr,
 };
@@ -121,6 +121,7 @@ fn build_bp_lookup(language: &LanguageDef) -> BpLookup {
                 is_postfix: r.is_postfix,
                 is_mixfix,
                 mixfix_parts,
+                nullary_literals: Vec::new(),
             })
         })
         .collect();
@@ -237,6 +238,7 @@ fn extract_mixfix_parts_for_display(syntax: &[SyntaxItemSpec]) -> (bool, Vec<BpM
                     param_name: param_name.clone(),
                     preceding_terminals: Vec::new(),
                     following_terminals: Vec::new(),
+                    repetition: None,
                 });
             },
             SyntaxItemSpec::Terminal(t) if after_trigger => {
@@ -268,11 +270,13 @@ pub fn generate_display(language: &LanguageDef) -> TokenStream {
     let task_enum = generate_display_task_enum(language);
     let iterative_engine = generate_iterative_engine(language, &bp_lookup);
     let display_impls = generate_display_impls(language);
+    let at_sigil_wrap_predicate = generate_at_sigil_wrap_predicate(language);
 
     quote! {
         #task_enum
         #iterative_engine
         #display_impls
+        #at_sigil_wrap_predicate
     }
 }
 
@@ -780,6 +784,333 @@ fn is_delimited_projection_surface_pattern(
     has_left_literal && has_right_literal
 }
 
+/// Element category of a collection-typed `Simple` param `param` on `rule`
+/// (e.g. `Proc` for `ps:HashBag(Proc)`), read from the rule's term context.
+fn collection_param_element_category(rule: &GrammarRule, param: &str) -> Option<String> {
+    let term_context = rule.term_context.as_ref()?;
+    term_context.iter().find_map(|p| match p {
+        TermParam::Simple { name, ty: TypeExpr::Collection { element, .. } }
+            if name.to_string() == param =>
+        {
+            match element.as_ref() {
+                TypeExpr::Base(cat) => Some(cat.to_string()),
+                _ => None,
+            }
+        },
+        _ => None,
+    })
+}
+
+/// True when `rule` is the bare-infix twin of an associative collection: a
+/// same-category binary infix operator `a OP b : C` whose operator token `OP`
+/// is also the element separator of a collection rule producing `C` over
+/// elements of category `C`.
+///
+/// Example (rhocalc): `PParInfix . a:Proc, b:Proc |- a "|" b : Proc` mirrors
+/// the parallel-composition collection
+/// `PPar . ps:HashBag(Proc) |- "{" ps.*sep("|") "}" : Proc`.
+///
+/// Such an operator is the loosest-binding combinator for its category — the
+/// collection is flat and associative, so nothing ever needs parenthesizing
+/// beneath it. Its operands must therefore be displayed exactly like the
+/// collection twin renders its elements: at `min_bp == 0` (bare). Otherwise a
+/// cross-category projection operand (e.g. `CastBigInt`) borrows a
+/// projection-surface wrapper in operand position and `1 | 2` mis-renders as
+/// `@Nil!(1) | @Nil!(2)` (the projection-surface arm only renders the bare
+/// source when `min_bp == 0`). Arithmetic/relational operators (`+`, `==`, …)
+/// are NOT collection mirrors, so they keep their operand binding powers and
+/// their disambiguating projection-surface wrapping.
+///
+/// Operator token and operand/element categories are read from
+/// `syntax_pattern` + `term_context` — NOT `rule.items`, whose terminal tokens
+/// are dropped and whose collection separator is a hard-coded `"|"` default
+/// (see `convert_term_context_to_items`).
+/// Compile-time gate for the `@`-prefix display disambiguation (the RhoCalc
+/// `@`-quote round-trip fix). Flip to `false` to restore the prior bare emission.
+const AT_QUOTE_DISAMBIGUATION: bool = true;
+
+/// Whether `param` is the **operand directly following a leading sigil terminal**
+/// of a sigil-prefix rule whose operand is parsed under a prefix binding-power cap
+/// (the RhoCalc `prefix(220)` on `NQuoteShort`, `POutputShort`,
+/// `PPersistOutputShort`).
+///
+/// Grammar shape (structural, per-rule):
+///   1. the rule's FIRST syntax item is a `Literal` sigil (`@`) and `param` is the
+///      immediately following `Param` operand (a base-category nonterminal), and
+///   2. the rule is NOT a `classify_unary_prefix_shape` rule.
+///
+/// The unary-prefix exclusion separates the SUGAR sigils that need this rescue
+/// from ordinary same-category unary prefixes:
+///   • `NQuoteShort . p:Proc |- "@" p : Name` (operand cat ≠ rule cat → not a
+///     unary prefix), `POutputShort . p:Proc, q:Proc |- "@" p "!" "(" q ")" : Proc`
+///     and its `!!` twin (four syntax items → not a unary prefix): the unary-prefix
+///     classifier rejects all three, so they render their operand at `child_bp = 0`
+///     with no precedence protection → INCLUDED (need the structural wrap).
+///   • `NegProc . a:Proc |- "-" a : Proc`, `BitNot`, `Not`, `PDrop`'s `"*" n`:
+///     these ARE `classify_unary_prefix_shape` rules that already receive a real
+///     `child_bp = prefix_bp` → EXCLUDED (a bare `@-a` / `@bitnot a` already
+///     round-trips; wrapping would only cost byte-identity).
+///
+/// When true, the operand is rendered bare (`min_bp == 0`, so a cast stays bare as
+/// `{|1:2|}` — the projection-surface arm renders the bare source only at
+/// `min_bp == 0`) and then conditionally wrapped `@(…)` by the STRUCTURAL runtime
+/// predicate `<Cat>::__at_sigil_operand_needs_wrap` (see
+/// [`generate_at_sigil_wrap_predicate`]) — never by a fragile string scan.
+/// Returns `false` for every non-sigil rule, so languages without these shapes
+/// (calculator / ambient / class2*) are unaffected.
+fn is_sigil_prefix_operand(rule: &GrammarRule, param: &str) -> bool {
+    let Some(sp) = rule.syntax_pattern.as_ref() else {
+        return false;
+    };
+    // Ordinary same-category unary prefixes (`-`, `bitnot`, `not`, `*`) already
+    // carry a real `child_bp = prefix_bp` and parenthesize through the ordinary
+    // prefix path — a bare `@-a` / `@bitnot a` already round-trips, so excluding
+    // them keeps their emission byte-identical.
+    if classify_unary_prefix_shape(rule).is_some() {
+        return false;
+    }
+    // The sigil operand must itself be a base-category nonterminal (`p:Proc`).
+    let is_base_operand = rule.term_context.as_ref().map_or(false, |tc| {
+        tc.iter().any(|p| {
+            matches!(p,
+                TermParam::Simple { name, ty: TypeExpr::Base(_) } if name.to_string() == param)
+        })
+    });
+    if !is_base_operand {
+        return false;
+    }
+    // Leading sigil terminal immediately followed by this operand param.
+    matches!(
+        (sp.first(), sp.get(1)),
+        (Some(SyntaxExpr::Literal(_)), Some(SyntaxExpr::Param(p))) if p.to_string() == param
+    )
+}
+
+/// Whether a term whose top constructor is `rule` must be wrapped `(…)` when it
+/// appears as the operand of a cross-category sigil prefix (the `@`-operand). This
+/// is the GRAMMAR-DERIVED, per-rule structural core of
+/// [`generate_at_sigil_wrap_predicate`].
+///
+/// A sigil prefix parses its operand under a very high binding-power cap (RhoCalc
+/// `prefix(220)`), so the operand parser accepts ONLY a self-delimiting primary:
+/// an atom / variable, a cast rendered bare, a bracket-delimited literal
+/// (`{ … }`, `{| … |}`), a keyword-prefixed call (`int( … )`, `str( … )`), or a
+/// terminal-leading prefix (`@ …`-send sugar, `- …`, `bitnot …`, `* …`).  It does
+/// NOT re-consume a top-level operator, so an **operand-leading** rule — one whose
+/// surface begins with a nonterminal operand and then continues with a terminal —
+/// loses its tail unless wrapped.  That single structural test
+///
+/// > first syntax item is a `Param` (nonterminal operand) AND the rule carries at
+/// > least one `Literal` terminal
+///
+/// captures exactly the wrap set, verified against parser-truth for every RhoCalc
+/// `Proc` rule:
+///   • binary infix     `a "|" b`, `a "+" b`, `a "==" b`, …  → WRAP
+///   • postfix method   `m "." "size" "(" ")"`, …            → WRAP
+///   • plain-channel send `n "!" "(" q ")"`, `n "!!" …`       → WRAP
+/// and excludes (first item is a `Literal`, or param-only):
+///   • casts / projections `m : Proc` (param-only, no terminal)  → bare
+///   • vars / nullary atoms (`Nil`, `error`)                     → bare
+///   • keyword / sigil-leading rules (`int( … )`, `@ p "!" …`,
+///     `- a`, `bitnot a`, `* n`, `{ … }`)                        → bare
+///
+/// The predicate is independent of the concrete sigil, operator token set, and
+/// category, so it generalizes to any language with a cross-category sigil prefix.
+fn rule_is_sigil_operand_wrap_shape(rule: &GrammarRule) -> bool {
+    let Some(sp) = rule.syntax_pattern.as_ref() else {
+        return false;
+    };
+    // Param-only rules (casts / projections / bare identity) never need a wrap.
+    if classify_simple_projection_shape(rule).is_some() {
+        return false;
+    }
+    let first_is_operand = matches!(sp.first(), Some(SyntaxExpr::Param(_)));
+    let has_terminal = sp.iter().any(|e| matches!(e, SyntaxExpr::Literal(_)));
+    first_is_operand && has_terminal
+}
+
+/// Whether `rule` is a param-only projection `CastX . x:X |- x : Cat` whose SOURCE
+/// category `X` is a native collection whose declared literal opener is a
+/// KEYWORD-CALL (`Set(`, `list(`, …) rather than a self-delimiting BRACKET
+/// (`{`, `[`, `{|`, `#{`).  Such a projection renders its bare surface as
+/// `Set( … )` — a keyword-prefixed call.  Placed BARE as the operand of a
+/// cross-category sigil prefix `@` (which parses its operand under the very high
+/// `prefix(220)` bp cap), that `Set( … )` surface is NOT reachable (the cross-cat
+/// projection is not in the sigil operand's dispatch set at that cap), so `@Set()`
+/// fails to re-parse while `@(Set())` succeeds — hence it must be wrapped `@(…)`.
+///
+/// This is the missing companion to [`rule_is_sigil_operand_wrap_shape`]: that one
+/// wraps OPERAND-LEADING rules (infix/postfix/send); this one wraps the ONE class
+/// of param-only PROJECTION that also fails bare — a keyword-led collection cast.
+/// Bracket-opened collection casts (rhocalc `CastMap`→`{…}`, `CastList`→`[…]`,
+/// `CastBag`→`#{…}#`, `CastPathmap`→`{|…|}`) are self-delimiting primaries reachable
+/// at the cap, and their EMPTY forms additionally have direct `Proc` rules
+/// (`MapEmpty`/`PathmapEmpty`), so they do NOT need wrapping — the opener's leading
+/// character (alphanumeric ⟹ keyword-call; punctuation ⟹ bracket) is the exact,
+/// grammar-derived discriminator.  Generalises to any language with a keyword-call
+/// collection projection under a cross-category sigil prefix.
+fn rule_projection_source_is_keyword_led_collection(
+    rule: &GrammarRule,
+    language: &LanguageDef,
+) -> bool {
+    let Some(shape) = classify_simple_projection_shape(rule) else {
+        return false;
+    };
+    language.types.iter().any(|t| {
+        t.name.to_string() == shape.source_category
+            && t.collection_kind.as_ref().is_some_and(|ck| {
+                ck.delimiters()
+                    .open
+                    .chars()
+                    .next()
+                    .is_some_and(|c| c.is_alphanumeric())
+            })
+    })
+}
+
+/// Generate, for every base category, a structural runtime predicate
+/// `impl Cat { fn __at_sigil_operand_needs_wrap(&self) -> bool }` that returns
+/// `true` iff `self`'s top constructor is an operand-leading rule
+/// ([`rule_is_sigil_operand_wrap_shape`]) — i.e. a term that, placed bare after a
+/// cross-category sigil prefix (`@`), would lose its tail to the prefix
+/// binding-power cap and so must be wrapped `@(…)`.
+///
+/// One arm per operand-leading variant returns `true`; a `_ => false` catch-all
+/// covers atoms, casts, keyword/sigil-leading forms, and every other category's
+/// variants.  The predicate is emitted for a category only when it actually
+/// appears as a cross-category sigil operand in the grammar, so languages without
+/// such a shape gain no code.
+fn generate_at_sigil_wrap_predicate(language: &LanguageDef) -> TokenStream {
+    // Categories that appear as a sigil-prefix operand anywhere.
+    let mut sigil_operand_cats: HashSet<String> = HashSet::new();
+    for rule in &language.terms {
+        if let Some(tc) = rule.term_context.as_ref() {
+            for p in tc {
+                if let TermParam::Simple { name, ty: TypeExpr::Base(cat) } = p {
+                    if is_sigil_prefix_operand(rule, &name.to_string()) {
+                        sigil_operand_cats.insert(cat.to_string());
+                    }
+                }
+            }
+        }
+    }
+    if sigil_operand_cats.is_empty() {
+        return quote! {};
+    }
+
+    let impls: Vec<TokenStream> = language
+        .types
+        .iter()
+        .filter(|t| sigil_operand_cats.contains(&t.name.to_string()))
+        .map(|lang_type| {
+            let cat = &lang_type.name;
+            let wrap_arms: Vec<TokenStream> = language
+                .terms
+                .iter()
+                .filter(|rule| rule.category.to_string() == cat.to_string())
+                .filter(|rule| {
+                    // Wrap operand-leading rules (infix/postfix/send) AND the one
+                    // class of param-only projection that also fails bare under the
+                    // `@` sigil cap: a keyword-led collection cast (`CastSet`→`Set(…)`).
+                    rule_is_sigil_operand_wrap_shape(rule)
+                        || rule_projection_source_is_keyword_led_collection(rule, language)
+                })
+                .map(|rule| {
+                    let label = &rule.label;
+                    quote! { #cat::#label(..) => true, }
+                })
+                .collect();
+            quote! {
+                impl #cat {
+                    /// Grammar-derived: `true` iff this term, placed BARE as the
+                    /// operand of a cross-category sigil prefix (`@`), would fail
+                    /// to round-trip (its top rule is operand-leading — a
+                    /// top-level infix, a postfix method, or a plain-channel send)
+                    /// and so must be wrapped `@(…)`.  Generated by
+                    /// `generate_at_sigil_wrap_predicate`.
+                    #[allow(dead_code)]
+                    pub fn __at_sigil_operand_needs_wrap(&self) -> bool {
+                        match self {
+                            #(#wrap_arms)*
+                            _ => false,
+                        }
+                    }
+                }
+            }
+        })
+        .collect();
+
+    quote! { #(#impls)* }
+}
+
+fn is_collection_mirror_infix(rule: &GrammarRule, language: &LanguageDef) -> bool {
+    let Some(syntax_pattern) = rule.syntax_pattern.as_ref() else {
+        return false;
+    };
+    // Exactly one operator literal and exactly two operand params.
+    let mut operator: Option<&str> = None;
+    let mut param_count = 0usize;
+    for expr in syntax_pattern {
+        match expr {
+            SyntaxExpr::Literal(token) => {
+                if operator.is_some() {
+                    return false; // more than one terminal: not a simple binary infix
+                }
+                operator = Some(token.as_str());
+            },
+            SyntaxExpr::Param(_) => param_count += 1,
+            // Sep/Zip/Map/Opt/Var: this rule is itself a collection/complex
+            // form, not a bare binary infix.
+            SyntaxExpr::Op(_) => return false,
+        }
+    }
+    let Some(operator) = operator else {
+        return false;
+    };
+    if param_count != 2 {
+        return false;
+    }
+    let result_cat = rule.category.to_string();
+    // Both operands must be Simple base params of the result category.
+    let operand_categories: Vec<String> = rule
+        .term_context
+        .as_ref()
+        .map(|tc| {
+            tc.iter()
+                .filter_map(|p| match p {
+                    TermParam::Simple { ty: TypeExpr::Base(cat), .. } => Some(cat.to_string()),
+                    _ => None,
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    if operand_categories.len() != 2 || operand_categories.iter().any(|cat| *cat != result_cat) {
+        return false;
+    }
+    // A same-category collection rule whose element separator is this operator
+    // and whose elements are themselves of the result category.
+    language.terms.iter().any(|collection_rule| {
+        if collection_rule.category.to_string() != result_cat {
+            return false;
+        }
+        let Some(collection_syntax) = collection_rule.syntax_pattern.as_ref() else {
+            return false;
+        };
+        collection_syntax.iter().any(|expr| match expr {
+            SyntaxExpr::Op(PatternOp::Sep { collection, separator, .. }) => {
+                separator == operator
+                    && collection_param_element_category(
+                        collection_rule,
+                        &collection.to_string(),
+                    )
+                    .as_deref()
+                        == Some(result_cat.as_str())
+            },
+            _ => false,
+        })
+    })
+}
+
 fn simple_literal_param_pattern_ops(
     syntax_pattern: &[SyntaxExpr],
     param_name: &str,
@@ -1053,7 +1384,8 @@ fn generate_engine_regular_arm(
                             }).collect();
                             items.sort();
                         },
-                        mettail_ast::types::CollectionType::HashMap => quote! {
+                        mettail_ast::types::CollectionType::HashMap
+                        | mettail_ast::types::CollectionType::PathMap => quote! {
                             // HashMap display path is handled separately;
                             // defensive fallback that yields each entry's
                             // Display form. Pilot grammars do not exercise
@@ -1492,7 +1824,17 @@ fn generate_engine_syntax_pattern_arm(
     // Compute a map from param name -> child min_bp for infix/prefix rules
     let child_bp_map: HashMap<String, u8> = if let Some(info) = infix_info {
         let mut map = HashMap::new();
-        if info.is_postfix {
+        if is_collection_mirror_infix(rule, _language) {
+            // Collection-mirror infix (e.g. `PParInfix` `|` mirrors the `PPar`
+            // bag): the loosest-binding associative combinator. Render its
+            // operands bare (min_bp 0) exactly like the collection twin's
+            // elements — otherwise a cross-category projection operand (e.g.
+            // `CastBigInt`) borrows a projection-surface wrapper in operand
+            // position and `1 | 2` mis-renders as `@Nil!(1) | @Nil!(2)`.
+            for name in &base_cat_params {
+                map.insert(name.clone(), 0u8);
+            }
+        } else if info.is_postfix {
             // Postfix: single operand gets left_bp
             if let Some(name) = base_cat_params.first() {
                 map.insert(name.clone(), info.left_bp);
@@ -1540,6 +1882,38 @@ fn generate_engine_syntax_pattern_arm(
                     .map(|e| matches!(e, SyntaxExpr::Param(_)));
                 let prev_param =
                     i > 0 && matches!(syntax_pattern.get(i - 1), Some(SyntaxExpr::Param(_)));
+                // Roundtrip fix (2026-07-01): a pattern-op element
+                // (`SyntaxExpr::Op` — a repeated-with-separator `bs.*sep("&")`,
+                // or a `#map`/`#zip` chain) emits PARAM VALUES as its leading /
+                // trailing tokens, and those values can be identifiers. For the
+                // WORD-adjacency spacing decision below (does a keyword-literal
+                // risk glomming with an adjacent emitted identifier?), an `Op`
+                // neighbour is therefore exactly as word-adjacent as a bare
+                // `Param`. Treat them uniformly.
+                //
+                // Bug fixed: `ForRowWhere = b "&" bs.*sep("&") "where" cond`
+                // displayed `<a>where <cond>` — no space BEFORE the `where`
+                // keyword — because the element preceding `"where"` is an `Op`
+                // (`bs.*sep("&")`), not a `Param`, so the old `prev_param` guard
+                // was false and the leading space was dropped. The result
+                // `@Nil <= @Nil&awhere error` then re-lexes `awhere` as ONE
+                // identifier (the lexer's `is_alphanumeric()||'_'` keyword rule)
+                // and fails to parse — a Display/parse roundtrip break surfaced
+                // nondeterministically by `arb_*` (a persistent/plain `where`
+                // row with a var immediately before `where`). Only ADDS a space
+                // where a word-literal abuts a param-value-emitting neighbour, so
+                // it can never introduce a glom; it never removes a space.
+                //
+                // NOTE: the `next_word_adjacent` (SUFFIX) half only concerns a
+                // word-literal FOLLOWED by an `Op` whose first emitted token is
+                // an identifier. That case is rare and, when the Op's first token
+                // is a delimiter (`(`,`{`,`[`) rather than an identifier, adding a
+                // trailing space is unnecessary (harmless but perturbs canonical
+                // display). We restrict the ADDED behavior to the PREFIX side (a
+                // word-literal PRECEDED by an Op) which is the exact `where`-glom
+                // bug; the suffix side stays as the pre-existing behavior.
+                let prev_op_adjacent = i > 0
+                    && matches!(syntax_pattern.get(i - 1), Some(SyntaxExpr::Op(_)));
                 // Stage 3.3 (2026-04-30): broaden `is_word` to mirror the
                 // lexer's keyword-recognition rule
                 // (`prattail/src/lexer.rs:523`): `is_alphanumeric() || '_'`,
@@ -1555,14 +1929,86 @@ fn generate_engine_syntax_pattern_arm(
                 let (prefix, suffix) = if prev_param && next_param.unwrap_or(false) {
                     (" ", " ")
                 } else if next_param == Some(true) && is_word {
-                    ("", " ")
+                    // Word-literal FOLLOWED by a param (existing behavior: space
+                    // after). PLUS: when the PRECEDING element is an `Op`
+                    // (repeated-param that emits identifier values), also add a
+                    // LEADING space — the exact `where`-glom fix (`bs.*sep("&")
+                    // "where" cond`). This is the ONLY added case; it strictly
+                    // adds a space (never removes one) between an identifier-
+                    // emitting Op and a following keyword.
+                    if prev_op_adjacent { (" ", " ") } else { ("", " ") }
+                } else if is_word && prev_op_adjacent {
+                    // Word-literal keyword directly after an `Op` (no following
+                    // param, e.g. a trailing keyword): add the leading space so
+                    // the keyword cannot glom with the Op's last emitted
+                    // identifier.
+                    (" ", "")
                 } else {
                     ("", "")
                 };
                 let raw = format!("{}{}{}", prefix, s, suffix);
-                forward_ops.push(quote! {
-                    stack.push(DisplayTask::WriteString(#raw.to_string()));
-                });
+                // Roundtrip fix (2026-07-01): a MANDATORY separator literal that
+                // immediately precedes a matching `.*sep(S)` rest-list which is the
+                // LAST element of the production (the trailing one-or-more idiom
+                // `… X S bs.*sep(S)` with NOTHING after it — e.g. ForRow's
+                // `b "&" bs.*sep("&")` and `lhs "<=" n "&" bs.*sep("&")`) is
+                // UNPARSEABLE when the rest-list is empty: `b "&" <empty>` displays
+                // `b&`, but with nothing following the `&` the grammar requires `bs`
+                // non-empty (the parser has no way to know the list ended). Such an
+                // empty-rest-list AST (`ForRowNoWhere(b, [])`) is degenerate — the
+                // parser never produces it (it produces the `Single*` variant with
+                // NO separator) — but the term generator can, and the roundtrip
+                // contract (`Proc::parse(display(t))` must succeed for ANY generated
+                // `t`) then breaks. FIX: emit the trailing mandatory separator only
+                // when the rest-list is NON-EMPTY, so the degenerate AST displays as
+                // its parseable equivalent (`b` alone, which re-parses to the
+                // `Single*` variant).
+                //
+                // CRUCIAL SCOPE (verified empirically, control C1): this applies
+                // ONLY when the `.*sep` op is the LAST syntax element. When a
+                // mandatory token FOLLOWS the rest-list (`"where" cond`, `")"`,
+                // `"<-" n`, …), the empty-rest-list form is SELF-CONSISTENT — it
+                // displays with a "dangling" separator (`@Nil,<-@Nil`, `@Nil!(Nil,)`,
+                // `@Nil <- @Nil& where Nil`) that PARSES BACK to the same empty-list
+                // variant (the following token delimits the empty list), so dropping
+                // the separator there would BREAK the roundtrip (regressed
+                // `unit_rhocalc_inputbind_inputbindpolyadic` etc.). So we gate on the
+                // op being the final element. Spec-derived from the syntax pattern
+                // (no per-rule hardcoding); preserves Display for every non-degenerate
+                // AST and for every self-consistent trailing-token rule.
+                let sep_op_is_last = matches!(
+                    syntax_pattern.get(i + 1),
+                    Some(SyntaxExpr::Op(PatternOp::Sep { .. }))
+                ) && syntax_pattern.get(i + 2).is_none();
+                let mandatory_sep_before_trailing_restlist = if sep_op_is_last {
+                    syntax_pattern.get(i + 1).and_then(|nxt| match nxt {
+                        SyntaxExpr::Op(PatternOp::Sep {
+                            collection,
+                            separator,
+                            source: None,
+                        }) if separator == s => Some(collection.clone()),
+                        _ => None,
+                    })
+                } else {
+                    None
+                };
+                match mandatory_sep_before_trailing_restlist {
+                    Some(coll_ident) => {
+                        // Guard the trailing separator on the rest-list being
+                        // non-empty. `.iter().next().is_some()` works for every
+                        // collection wrapper (Vec / HashBag / HashSet / HashMapLit).
+                        forward_ops.push(quote! {
+                            if #coll_ident.iter().next().is_some() {
+                                stack.push(DisplayTask::WriteString(#raw.to_string()));
+                            }
+                        });
+                    },
+                    None => {
+                        forward_ops.push(quote! {
+                            stack.push(DisplayTask::WriteString(#raw.to_string()));
+                        });
+                    },
+                }
             },
             SyntaxExpr::Param(id) => {
                 let name = id.to_string();
@@ -1606,9 +2052,34 @@ fn generate_engine_syntax_pattern_arm(
                                 } else {
                                     quote! { #child_bp }
                                 };
-                                forward_ops.push(quote! {
-                                    stack.push(DisplayTask::#task_variant(&**#field_ident as *const _, #child_bp));
-                                });
+                                if AT_QUOTE_DISAMBIGUATION
+                                    && is_sigil_prefix_operand(rule, &name)
+                                {
+                                    // Cross-category sigil-prefix operand (the `@`-operand of
+                                    // NQuoteShort / POutputShort / PPersistOutputShort). The
+                                    // operand is rendered BARE (min_bp == 0, so a cast stays bare
+                                    // as `{|1:2|}` — the projection-surface arm only renders the
+                                    // bare source at min_bp == 0), then conditionally wrapped
+                                    // `@(…)` by the GRAMMAR-DERIVED structural predicate when its
+                                    // top rule is operand-leading (a top-level infix, a postfix
+                                    // method, or a plain-channel send) and would otherwise lose
+                                    // its tail to the prefix binding-power cap. This is the
+                                    // trampolined (stack-based) analogue of the projection-
+                                    // surface wrap: `)` is pushed first so it pops LAST.
+                                    forward_ops.push(quote! {
+                                        if #field_ident.__at_sigil_operand_needs_wrap() {
+                                            stack.push(DisplayTask::WriteString(")".to_string()));
+                                            stack.push(DisplayTask::#task_variant(&**#field_ident as *const _, 0u8));
+                                            stack.push(DisplayTask::WriteString("(".to_string()));
+                                        } else {
+                                            stack.push(DisplayTask::#task_variant(&**#field_ident as *const _, 0u8));
+                                        }
+                                    });
+                                } else {
+                                    forward_ops.push(quote! {
+                                        stack.push(DisplayTask::#task_variant(&**#field_ident as *const _, #child_bp));
+                                    });
+                                }
                             },
                             TypeExpr::Collection { .. } => {
                                 // Collection param without #sep - format inline
@@ -1839,7 +2310,8 @@ fn generate_engine_pattern_op(
                         }
                         parts.sort();
                     },
-                    Some(mettail_ast::types::CollectionType::HashMap) => quote! {
+                    Some(mettail_ast::types::CollectionType::HashMap)
+                    | Some(mettail_ast::types::CollectionType::PathMap) => quote! {
                         // HashMap: pair-wise iteration with `:` between
                         // K and V — matches the parse-side `:` consumption
                         // in walker phase 1 (`emit_collection_loop_arm`).
@@ -2037,7 +2509,8 @@ fn generate_engine_pattern_op(
                                     }
                                     parts.sort();
                                 },
-                                Some(mettail_ast::types::CollectionType::HashMap) => quote! {
+                                Some(mettail_ast::types::CollectionType::HashMap)
+                                | Some(mettail_ast::types::CollectionType::PathMap) => quote! {
                                     for (k, v) in #inner_var.iter() {
                                         parts.push(format!("{} : {}", k, v));
                                     }
@@ -2242,17 +2715,29 @@ fn generate_engine_auto_literal_arm(
                 ));
             }
         }
-    } else if nt.is_collection() {
+    } else if collection_kind.is_some() || nt.is_collection() {
         // Collection payloads. Wrap with the keyword prefix from
         // `CollectionDelimiters` (default: `list(`, `bag(`, `map(`) so
         // Display → parse roundtrip holds. Without this wrapping the
         // generated parser's auto-synthesized `ListLit`/`BagLit`/`MapLit`
         // rules would reject the Display output.
+        //
+        // Gate fix (2026-06-30): enter the collection block whenever the
+        // language DECLARED this category as a collection (`collection_kind`),
+        // not only when the native wrapper's NAME is in `NativeType`'s
+        // hardcoded allowlist (Vec/HashBag/HashSet/HashMap[Lit]). Native
+        // wrappers like `PathMapLit`/`HashSetLit` map to `NativeType::Other`
+        // (`is_collection()==false`) and previously fell through to the scalar
+        // `format!("{}", v)` arm, which delegates to the wrapper's own Display
+        // (e.g. `PathMapLit` → `HashMapLit` → hardcoded `{}`) and ignores the
+        // declared `{| |}` / `Set(` `)` delimiters, breaking Display→parse.
         let (open, close, sep, kv_sep): (String, String, String, Option<String>) =
             match collection_kind {
                 Some(mettail_ast::language::CollectionCategory::List(d))
                 | Some(mettail_ast::language::CollectionCategory::Bag(d))
-                | Some(mettail_ast::language::CollectionCategory::Map(d)) => {
+                | Some(mettail_ast::language::CollectionCategory::Map(d))
+                | Some(mettail_ast::language::CollectionCategory::Set(d))
+                | Some(mettail_ast::language::CollectionCategory::Pathmap(d)) => {
                     (d.open.clone(), d.close.clone(), d.sep.clone(), d.key_val_sep.clone())
                 },
                 None => ("".to_string(), "".to_string(), ", ".to_string(), None),
@@ -2272,7 +2757,33 @@ fn generate_engine_auto_literal_arm(
         let elem_display_task = elem_ident.as_ref().map(|c| format_ident!("Display{}", c));
         let value_display_task = value_ident.as_ref().map(|c| format_ident!("Display{}", c));
 
-        match nt {
+        // Re-key the per-shape emitter on the DECLARED collection category
+        // (general) rather than the `NativeType` name allowlist. Each declared
+        // category maps to the existing emitter body whose iteration shape it
+        // shares — so List/Bag/Map produce BYTE-IDENTICAL output to before, Set
+        // routes through the sorted-seq (HashSet) body, and Map/Pathmap through
+        // the key-value (HashMap) body. The delimiters/sep/kv_sep already come
+        // from the declared `d` above, so Pathmap emits its `{| |}` correctly.
+        // When no category was declared (a bare `![Vec<_>]` with no `as List`),
+        // fall back to the `NativeType` heuristic (`nt`) for back-compat.
+        let effective_nt = match collection_kind {
+            Some(mettail_ast::language::CollectionCategory::List(_)) => {
+                crate::gen::native::NativeType::VecCollection
+            },
+            Some(mettail_ast::language::CollectionCategory::Bag(_)) => {
+                crate::gen::native::NativeType::HashBagCollection
+            },
+            Some(mettail_ast::language::CollectionCategory::Map(_))
+            | Some(mettail_ast::language::CollectionCategory::Pathmap(_)) => {
+                crate::gen::native::NativeType::HashMapLitCollection
+            },
+            Some(mettail_ast::language::CollectionCategory::Set(_)) => {
+                crate::gen::native::NativeType::HashSetCollection
+            },
+            None => nt,
+        };
+
+        match effective_nt {
             crate::gen::native::NativeType::VecCollection => {
                 let Some(elem_task) = elem_display_task.clone() else {
                     // Fallback for unknown element category — keep old

@@ -191,4 +191,62 @@ Section CohortSnapshotObservationalDedup.
     - destruct (existsb (consumed_eqb x) (dedup_by r)); simpl; lia.
   Qed.
 
+  (* ════════════════════════════════════════════════════════════════════════
+     ROOT-B (2026-06-27): the source-committed delegate collection dispatch.
+     The ROOT-B fix routes a multi-length lex-ambiguous collection open (`{|`)
+     INSIDE its CrossCatDelegate to the SINGLE source-collection arm (one
+     consumed-Op snapshot stream) instead of re-projecting across ~6 numeric
+     cats (the SnapshotDuplicate storm that tipped saturated keys past
+     MAX_WORKER_SNAPSHOTS_PER_KEY). When every snapshot of the dispatch shares
+     the consumed Op (one arm), the consumed-key dedup collapses them to ≤ 1,
+     hence ≤ cap for any cap ≥ 1 — no snapshot explosion.
+     ════════════════════════════════════════════════════════════════════════ *)
+
+  (* Every snapshot of a single source-collection dispatch shares the consumed
+     observation (the same inner_state/output_cat/pending_packing_weight of the
+     one cat-14 arm). *)
+  Definition all_same_consumed (l : list Snapshot) : Prop :=
+    forall a b, In a l -> In b l -> consumed_eqb a b = true.
+
+  (* A consumed-uniform snapshot stream dedups to AT MOST ONE slot. *)
+  Lemma dedup_all_same_consumed_le_one :
+    forall l, all_same_consumed l -> length (dedup_by l) <= 1.
+  Proof.
+    induction l as [| x r IH]; intro Hall; simpl.
+    - lia.
+    - destruct (existsb (consumed_eqb x) (dedup_by r)) eqn:E.
+      + apply IH. unfold all_same_consumed in *. intros a b Ha Hb.
+        apply Hall; right; assumption.
+      + (* x is kept; show dedup_by r = [] so the result has length 1. *)
+        assert (Hr : dedup_by r = []).
+        { destruct (dedup_by r) as [| y r'] eqn:Edr; [reflexivity |].
+          exfalso.
+          assert (Hyd : In y (dedup_by r)). { rewrite Edr. left. reflexivity. }
+          assert (Hyr : In y r). { apply dedup_included. exact Hyd. }
+          assert (Hxy : consumed_eqb x y = true).
+          { apply Hall; [left; reflexivity | right; exact Hyr]. }
+          assert (Hex : existsb (consumed_eqb x) (dedup_by r) = true).
+          { apply existsb_exists. exists y. split; [exact Hyd | exact Hxy]. }
+          (* `destruct (dedup_by r) eqn:Edr` rewrote E to the `y :: r'` form;
+             Edr bridges Hex (dedup_by r form) and E for congruence. *)
+          congruence. }
+        rewrite Hr. simpl. lia.
+  Qed.
+
+  (* The cap obligation: a source-committed delegate collection dispatch never
+     exceeds the per-key snapshot cap (cap ≥ 1). Bounded — no explosion. *)
+  Theorem delegate_collection_dispatch_snapshots_le_cap :
+    forall l cap,
+      all_same_consumed l -> 1 <= cap -> length (dedup_by l) <= cap.
+  Proof.
+    intros l cap Hall Hcap.
+    apply Nat.le_trans with (m := 1).
+    - apply dedup_all_same_consumed_le_one. exact Hall.
+    - exact Hcap.
+  Qed.
+
 End CohortSnapshotObservationalDedup.
+
+(* ═════════════════ Assumption audit (ROOT-B extension) — must print
+   "Closed under the global context" ═════════════════ *)
+Print Assumptions delegate_collection_dispatch_snapshots_le_cap.

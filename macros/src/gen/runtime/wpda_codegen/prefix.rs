@@ -127,6 +127,31 @@ pub enum AtomicShape {
         /// The AST variant name (= rule.label).
         wrapper_variant: Ident,
     },
+    /// GAP-3 (2026-06-28): 0-operand MULTI-literal keyword-PREFIX rule — the
+    /// dual of B-1's LHS-anchored `MixfixLiteralRun` nullary path. Shape:
+    /// empty term-context, `syntax_pattern` is two-or-more CONSECUTIVE
+    /// `Literal`s with NO `Param`/`Op` (e.g. RhoCalc's
+    /// `MapEmpty . |- "Map" "(" ")" : Proc`, `PathmapEmpty . |- "Pathmap" "("
+    /// ")" : Proc`, `NQuoteNil . |- "@" "Nil" : Name`). The FIRST literal is
+    /// the dispatch trigger; the REST are consumed (membership-checked) by the
+    /// REUSED `MixfixLiteralRun { kind: 2, parts_len == 0 }` runtime arm after
+    /// the prefix site pushes the marker. The marker pop fires the arity-0
+    /// action, which builds the nullary AST variant named after the rule label
+    /// (a `fold`, if present, lowers it to its container at eval time).
+    ///
+    /// Generalizes "0-operand for every rule kind": atomic single-literal
+    /// (`TerminalKeyword`, sp.len() == 1); LHS-anchored mixfix nullary (B-1,
+    /// `POutputEmpty`); and this prefix-anchored multi-literal nullary —
+    /// any category, any delimiter alphabet, zero per-language glue.
+    NullaryLiteralRun {
+        /// The dispatch trigger (the FIRST literal, e.g. `"Map"`, `"@"`).
+        trigger: String,
+        /// The post-trigger literals consumed by the marker run (e.g.
+        /// `["(", ")"]` for `Map()`, `["Nil"]` for `@Nil`).
+        trailing_literals: Vec<String>,
+        /// The auto-generated nullary AST variant name (= rule.label).
+        wrapper_variant: Ident,
+    },
     /// Phase 5a: synthetic Var rule for a user-defined category. The
     /// rule's body is a single `NonTerminal(Var, cat)` item. Match a
     /// `TokenKind::Ident` arm and push `Cat::<Var>(OrdVar(Var::Free(
@@ -208,6 +233,37 @@ pub fn classify_atomic(rule: &GrammarRule, language: &LanguageDef) -> AtomicShap
                     wrapper_variant: rule.label.clone(),
                 };
             }
+        }
+        // GAP-3 (2026-06-28): 0-operand MULTI-literal keyword-prefix rule
+        // (`Map "(" ")"`, `Pathmap "(" ")"`, `@ Nil`). Empty term-context AND
+        // two-or-more syntax items that are ALL `Literal` (no `Param`/`Op`).
+        // The first literal is the dispatch trigger; the rest are consumed by
+        // the reused `MixfixLiteralRun { kind: 2, parts_len == 0 }` arm.
+        //
+        // Placement safety: `tc.is_empty()` means the CrossCat* blocks below
+        // (which require `tc.len() == 1`) can never match these rules, and the
+        // all-`Literal` guard excludes every `Param`/`Op`-bearing shape (PPar,
+        // POutput, etc. carry a `Param` ⇒ untouched). The single-literal case
+        // already returned above as `TerminalKeyword`, so here `sp.len() >= 2`.
+        if tc.is_empty()
+            && sp.len() >= 2
+            && sp
+                .iter()
+                .all(|e| matches!(e, mettail_ast::grammar::SyntaxExpr::Literal(_)))
+        {
+            let mut literals = sp.iter().filter_map(|e| match e {
+                mettail_ast::grammar::SyntaxExpr::Literal(t) => Some(t.clone()),
+                _ => None,
+            });
+            let trigger = literals
+                .next()
+                .expect("classify_atomic: sp.len() >= 2 guarantees a first literal");
+            let trailing_literals: Vec<String> = literals.collect();
+            return AtomicShape::NullaryLiteralRun {
+                trigger,
+                trailing_literals,
+                wrapper_variant: rule.label.clone(),
+            };
         }
         // Stage 1.1: cross-category projection (e.g. `ProcInt . i:Int |- i : Proc`,
         // `CastBigRat . r:BigRat |- r : Proc`). One Simple param of base type,
@@ -443,6 +499,94 @@ pub struct FirstToken {
     pub pattern: TokenStream,
     /// Optional extra guard (e.g., `__cat == "Int"`).
     pub extra_guard: Option<TokenStream>,
+    /// AT_QUOTED_BIND_GATE (2026-07-03): the raw leading *structural literal*
+    /// text when this FIRST token is a `Fixed(σ)` derived from a rule whose
+    /// first syntax element is the literal `σ` (a sigil-led prefix rule such as
+    /// NQuoteShort `"@" p`). `None` for non-`Fixed` tokens (Ident / native
+    /// literals) and for `Fixed` tokens that are not a rule's *leading*
+    /// structural trigger. Consumed ONLY by the grammar-derived over-generation
+    /// characterisation in `emit_prefix_arms_for_category` (a cross-cat-LHS
+    /// delegate on a sigil that ALSO directly triggers a sibling rule in the
+    /// result category is redundant — see `AT_QUOTED_BIND_GATE`). Threading the
+    /// literal here keeps the gate PER-token precise without re-parsing guards.
+    pub leading_literal: Option<String>,
+    /// CROSSCAT_LEX_COMPAT_GATE (2026-07-03): `true` iff this FIRST token is a
+    /// *variable contribution* — the bare `Some(Ident)` a category acquires
+    /// from its (synthetic or user) Var rule. This is the sole provenance that
+    /// distinguishes "the source category can begin with an Ident because it
+    /// has a Var rule" (a var-contribution) from "the source category can begin
+    /// with a genuine literal/keyword token" (NOT a var-contribution). The
+    /// LITERAL-FIRST set the gate keys on is exactly `FIRST − {var-contributions}`.
+    /// A cross-cat PROJECTION delegate `source : result` on the `Ident` token is
+    /// a proven over-generation exactly when that `Ident` is ONLY a
+    /// var-contribution of `source` (the source cannot LITERALLY begin with an
+    /// Ident) AND `result` already has its own home Var reading (so a bare
+    /// Ident is covered without the cast). Set `true` at the two Var-rule sites
+    /// in `collect_first_set`; `false` at every literal/keyword/collection/
+    /// projection-recursion site. NOTE: the `Some(Ident)`-no-guard token is
+    /// produced ONLY by these two Var sites in the whole codegen, so the
+    /// `(pattern_str, guard_str)` dedup in `first_set_of_category` never merges
+    /// a var-contribution with a literal token (no literal rule yields a bare
+    /// unguarded `Some(Ident)`) — the flag survives dedup soundly.
+    pub is_var_contribution: bool,
+}
+
+impl FirstToken {
+    /// Construct a `Fixed(σ)` FIRST token carrying the raw sigil `σ` as its
+    /// `leading_literal`. Used at every site where the FIRST token is a rule's
+    /// leading structural literal so the AT_QUOTED_BIND_GATE characterisation
+    /// can key on it.
+    fn fixed_leading(sigil: &str) -> Self {
+        FirstToken {
+            pattern: quote! {
+                Some(mettail_prattail::automata::TokenKind::Fixed(__kw))
+            },
+            extra_guard: Some(quote! { __kw == #sigil }),
+            leading_literal: Some(sigil.to_string()),
+            // A leading structural literal is a genuine literal token, never a
+            // var contribution.
+            is_var_contribution: false,
+        }
+    }
+}
+
+/// AT_QUOTED_BIND_GATE (2026-07-03): the set of LEADING STRUCTURAL LITERALS of
+/// a category's rules — the literal `σ` at `rule.syntax_pattern[0]` /
+/// `rule.items[0]` for each rule DIRECTLY in `cat_name` whose first syntax
+/// element is a literal (a sigil-/keyword-led rule, e.g. `InputBindQuoted
+/// "@" pat "<-" n` contributes `@`). Excludes rules whose first element is a
+/// parameter (a cross-cat-LHS / whole-source rule such as `InputBind lhs "<-"
+/// n`, which contributes nothing here — its `lhs` is the delegated source).
+///
+/// This is the grammar-derived characterisation of "a direct `σ`-triggered rule
+/// exists in the result category". A cross-cat-LHS delegate `source → result`
+/// on a sigil `σ` is a proven over-generation exactly when `σ` is in this set
+/// for `result` AND in the FIRST set of `source` (the direct rule subsumes the
+/// whole-`source` reading). Kept intentionally NARROW (leading *literal* only —
+/// never a metavariable/native token) so the AT_QUOTED_BIND_GATE cannot fire on
+/// an ordinary `Ident`-led cross-cat-LHS such as `x<-c`.
+fn category_leading_literals(
+    cat_name: &str,
+    language: &LanguageDef,
+) -> std::collections::BTreeSet<String> {
+    let mut out = std::collections::BTreeSet::new();
+    for rule in &language.terms {
+        if rule.category.to_string() != cat_name {
+            continue;
+        }
+        // Prefer the judgement-style `syntax_pattern[0]`; fall back to the
+        // legacy `items[0]` Terminal for non-judgement rules.
+        if let Some(sp) = rule.syntax_pattern.as_ref() {
+            if let Some(mettail_ast::grammar::SyntaxExpr::Literal(text)) = sp.first() {
+                out.insert(text.clone());
+            }
+        } else if let Some(mettail_ast::grammar::GrammarItem::Terminal(text)) =
+            rule.items.first()
+        {
+            out.insert(text.clone());
+        }
+    }
+    out
 }
 
 /// Stage 1.1: compute the FIRST set for a category — the set of token
@@ -521,7 +665,12 @@ fn collect_first_set(
                         Some(&kind),
                         ctx,
                     ) {
-                        acc.push(FirstToken { pattern, extra_guard });
+                        acc.push(FirstToken {
+                            pattern,
+                            extra_guard,
+                            leading_literal: None,
+                            is_var_contribution: false,
+                        });
                     }
                 }
             }
@@ -563,6 +712,11 @@ fn collect_first_set(
                         Some(mettail_prattail::automata::TokenKind::Ident)
                     },
                     extra_guard: None,
+                    leading_literal: None,
+                    // CROSSCAT_LEX_COMPAT_GATE: the synthetic Var rule's `Ident`
+                    // is a VAR CONTRIBUTION (the category begins with an Ident
+                    // ONLY because it is a variable, not a literal).
+                    is_var_contribution: true,
                 });
             }
         }
@@ -583,20 +737,13 @@ fn collect_first_set(
             .find(|t| t.name.to_string() == current_cat_name)
         {
             if let Some(coll_kind) = lang_type.collection_kind.as_ref() {
-                let open = match coll_kind {
-                    mettail_ast::language::CollectionCategory::List(d) => d.open.clone(),
-                    mettail_ast::language::CollectionCategory::Bag(d) => d.open.clone(),
-                    mettail_ast::language::CollectionCategory::Map(d) => d.open.clone(),
-                };
+                // Stage 2 (2026-06-27): one delimiters() accessor in place of a
+                // per-variant `match coll_kind { List(d) => d.open.clone(), ... }`.
+                let open = coll_kind.delimiters().open.clone();
                 // Mirror synthetic.rs's split-on-trailing-`(` logic so the
                 // FIRST token equals the lexer's first emitted Fixed token.
                 let first_open = open.trim_end_matches('(').to_string();
-                acc.push(FirstToken {
-                    pattern: quote! {
-                        Some(mettail_prattail::automata::TokenKind::Fixed(__kw))
-                    },
-                    extra_guard: Some(quote! { __kw == #first_open }),
-                });
+                acc.push(FirstToken::fixed_leading(&first_open));
             }
         }
         // Walk all rules where rule.category == current_cat_name.
@@ -611,16 +758,16 @@ fn collect_first_set(
                     for (pattern, extra_guard) in
                         literal_patterned_pattern_and_guard_for_kind(&c, family, Some(&nk), ctx)
                     {
-                        acc.push(FirstToken { pattern, extra_guard });
+                        acc.push(FirstToken {
+                            pattern,
+                            extra_guard,
+                            leading_literal: None,
+                            is_var_contribution: false,
+                        });
                     }
                 },
                 AtomicShape::TerminalKeyword { terminal_text, .. } => {
-                    acc.push(FirstToken {
-                        pattern: quote! {
-                            Some(mettail_prattail::automata::TokenKind::Fixed(__kw))
-                        },
-                        extra_guard: Some(quote! { __kw == #terminal_text }),
-                    });
+                    acc.push(FirstToken::fixed_leading(&terminal_text));
                 },
                 AtomicShape::VarRule { .. } => {
                     acc.push(FirstToken {
@@ -628,6 +775,10 @@ fn collect_first_set(
                             Some(mettail_prattail::automata::TokenKind::Ident)
                         },
                         extra_guard: None,
+                        leading_literal: None,
+                        // CROSSCAT_LEX_COMPAT_GATE: an explicit user Var rule's
+                        // `Ident` is likewise a VAR CONTRIBUTION.
+                        is_var_contribution: true,
                     });
                 },
                 AtomicShape::LiteralInteger => {
@@ -636,6 +787,8 @@ fn collect_first_set(
                             Some(mettail_prattail::automata::TokenKind::Integer)
                         },
                         extra_guard: None,
+                        leading_literal: None,
+                        is_var_contribution: false,
                     });
                 },
                 AtomicShape::LiteralBoolean => {
@@ -646,6 +799,8 @@ fn collect_first_set(
                             | Some(mettail_prattail::automata::TokenKind::BooleanLit)
                         },
                         extra_guard: None,
+                        leading_literal: None,
+                        is_var_contribution: false,
                     });
                 },
                 AtomicShape::LiteralString => {
@@ -654,6 +809,8 @@ fn collect_first_set(
                             Some(mettail_prattail::automata::TokenKind::StringLit)
                         },
                         extra_guard: None,
+                        leading_literal: None,
+                        is_var_contribution: false,
                     });
                 },
                 AtomicShape::LiteralFloat => {
@@ -662,6 +819,8 @@ fn collect_first_set(
                             Some(mettail_prattail::automata::TokenKind::Float)
                         },
                         extra_guard: None,
+                        leading_literal: None,
+                        is_var_contribution: false,
                     });
                 },
                 AtomicShape::CrossCatProjection { source_cat_name, .. } => {
@@ -670,23 +829,20 @@ fn collect_first_set(
                     pending.push_back(source_cat_name);
                 },
                 AtomicShape::CrossCatPrefixUnary { trigger, .. } => {
-                    acc.push(FirstToken {
-                        pattern: quote! {
-                            Some(mettail_prattail::automata::TokenKind::Fixed(__kw))
-                        },
-                        extra_guard: Some(quote! { __kw == #trigger }),
-                    });
+                    acc.push(FirstToken::fixed_leading(&trigger));
                 },
                 AtomicShape::PrefixOperator { trigger, .. } => {
                     // M6c.6.4.b (2026-05-14): same-cat unary prefix uses
                     // the trigger literal as its FIRST token, matching
                     // the existing CrossCatPrefixUnary FIRST-set shape.
-                    acc.push(FirstToken {
-                        pattern: quote! {
-                            Some(mettail_prattail::automata::TokenKind::Fixed(__kw))
-                        },
-                        extra_guard: Some(quote! { __kw == #trigger }),
-                    });
+                    acc.push(FirstToken::fixed_leading(&trigger));
+                },
+                AtomicShape::NullaryLiteralRun { trigger, .. } => {
+                    // GAP-3: the FIRST token of a nullary multi-literal keyword
+                    // run is its trigger literal (e.g. `Map`, `@`) — identical
+                    // to what the NonAtomic arm below extracted for this rule
+                    // before GAP-3 classified it (sp[0] is the trigger literal).
+                    acc.push(FirstToken::fixed_leading(&trigger));
                 },
                 AtomicShape::NonAtomic => {
                     // Pratt prefix / collection / binder rules: their FIRST
@@ -710,12 +866,7 @@ fn collect_first_set(
                     if let Some(sp) = rule.syntax_pattern.as_ref() {
                         match sp.first() {
                             Some(mettail_ast::grammar::SyntaxExpr::Literal(text)) => {
-                                acc.push(FirstToken {
-                                    pattern: quote! {
-                                        Some(mettail_prattail::automata::TokenKind::Fixed(__kw))
-                                    },
-                                    extra_guard: Some(quote! { __kw == #text }),
-                                });
+                                acc.push(FirstToken::fixed_leading(text));
                             },
                             Some(mettail_ast::grammar::SyntaxExpr::Param(_)) => {
                                 // First syntactic item is a param ref.
@@ -742,16 +893,19 @@ fn collect_first_set(
     }
 }
 
-fn grouping_source_categories_for_result(
+/// Cross-category INFIX-operand hop for a result category `R`: the categories
+/// `S` such that a cross-category infix rule `S op S' : R` exists (the grouped
+/// `S` becomes the infix's left operand, e.g. `EqInt: Int "==" Int : Bool` ⇒
+/// `Int` is an infix-hop source of `Bool`). Excludes `R`. This is the edge type
+/// that REQUIRES the grouped operand to open as `S` (a bare `S` could not become
+/// the infix's operand of a DIFFERENT category), so it is followed TRANSITIVELY.
+fn grouping_source_infix_hop(
     categories: &[String],
     language: &mettail_ast::language::LanguageDef,
-    per_cat: &[Vec<mettail_ast::grammar::GrammarRule>],
     result_idx: usize,
-) -> Vec<u16> {
-    let result_src_idx = result_idx as u16;
+    out: &mut std::collections::BTreeSet<u16>,
+) {
     let result_cat_name = &categories[result_idx];
-    let mut extra_sources = std::collections::BTreeSet::new();
-
     for rule in &language.terms {
         if rule.category.to_string() != *result_cat_name {
             continue;
@@ -760,13 +914,33 @@ fn grouping_source_categories_for_result(
             if info.is_cross_category && info.category != info.result_category {
                 if let Some(source_idx) = categories.iter().position(|c| c == &info.category) {
                     if source_idx != result_idx {
-                        extra_sources.insert(source_idx as u16);
+                        out.insert(source_idx as u16);
                     }
                 }
             }
         }
     }
+}
 
+/// Cross-category PROJECTION hop for a result category `R`: the categories `S`
+/// such that a cross-category projection / cast `S : R` exists (e.g.
+/// `BoolToUInt32: Bool : UInt32` ⇒ `Bool` is a projection-hop source of
+/// `UInt32`). Excludes `R`. A projection means a bare `S` ALREADY IS an `R`
+/// (the cast fires transparently), so a grouped `(S)` grows into `R` directly —
+/// this edge is included only at the FIRST closure level and NOT compounded
+/// transitively, which would otherwise pull the entire cast lattice into every
+/// group-open (e.g. rhocalc `Proc` has `CastX : Proc` for ~15 numeric/collection
+/// `X`, and chaining their projections back through each other's casts explodes
+/// the group-open fan-out → deep-paren fork blow-up). The infix hop IS still
+/// followed transitively FROM these first-level projection sources, which is
+/// what M4 needs (`UInt32 →proj→ Bool →infix→ Int`).
+fn grouping_source_projection_hop(
+    language: &mettail_ast::language::LanguageDef,
+    per_cat: &[Vec<mettail_ast::grammar::GrammarRule>],
+    categories: &[String],
+    result_idx: usize,
+    out: &mut std::collections::BTreeSet<u16>,
+) {
     if let Some(rules) = per_cat.get(result_idx) {
         for rule in rules {
             if let AtomicShape::CrossCatProjection { source_cat_name, .. } =
@@ -774,16 +948,94 @@ fn grouping_source_categories_for_result(
             {
                 if let Some(source_idx) = categories.iter().position(|c| c == &source_cat_name) {
                     if source_idx != result_idx {
-                        extra_sources.insert(source_idx as u16);
+                        out.insert(source_idx as u16);
                     }
                 }
             }
         }
     }
+}
 
-    let mut sources = Vec::with_capacity(extra_sources.len() + 1);
+/// The categories a `(`-group may open as when the enclosing requested category
+/// is `result_idx` — a BOUNDED transitive closure over the two grouping-source
+/// edge types (see [`grouping_source_infix_hop`] and
+/// [`grouping_source_projection_hop`]).
+///
+/// One-hop was insufficient for chained cross-category continuations. Example
+/// (calculator, reconnection residual M4): parsing `(1) == 4` under a `UInt32`
+/// goal. `==` is `EqInt: Int "==" Int : Bool`; the whole expression reaches
+/// `UInt32` via `BoolToUInt32: Bool : UInt32`. So the grouped `(1)` must be
+/// openable as an **Int** — but `Int` is TWO hops from `UInt32`
+/// (`UInt32 ← Bool` by projection, then `Bool ← Int` by the `EqInt` operand).
+/// The old one-hop set for `UInt32` was `{UInt32, Bool}` WITHOUT `Int`, so `(1)`
+/// committed to a non-`Int` category and the `Int`-operand `==` could not attach
+/// — the exhaustive parse genuinely had NO derivation (`(1)==4` failed while
+/// `1==4` and `(1==4)` succeeded). Bare operands already worked (prefix-dispatch
+/// chains the projections directly); grouping needed the same reachability.
+///
+/// BOUND (perf): the closure follows the INFIX-operand relation TRANSITIVELY
+/// (that edge genuinely forces the operand's category) but includes PROJECTION
+/// sources only at the FIRST level (level 0 = `result_idx`), NOT compounding them
+/// through further projections. Rationale: a projection `X : R` means a bare `X`
+/// already IS an `R`, so a grouped `(X)` grows into `R` directly — chaining
+/// projection→projection pulls the ENTIRE cast lattice into every group-open
+/// (rhocalc `Proc` has `CastX : Proc` for ~15 `X`; compounding blew Proc's `(`
+/// group-open from 7 to 18 branches → 18^depth deep-paren fork explosion, timing
+/// out the adversarial `proc_display` proptest). Infix expansion FROM the
+/// first-level projection sources is still followed, which is exactly what M4
+/// needs (`UInt32 →proj→ Bool →infix→ Int`). The result category is index 0 of
+/// the returned vector (the primary grouping target), preserving the ordering
+/// contract used by `emit_paren_dispatch_arms`.
+fn grouping_source_categories_for_result(
+    categories: &[String],
+    language: &mettail_ast::language::LanguageDef,
+    per_cat: &[Vec<mettail_ast::grammar::GrammarRule>],
+    result_idx: usize,
+) -> Vec<u16> {
+    let result_src_idx = result_idx as u16;
+    let mut closure: std::collections::BTreeSet<u16> = std::collections::BTreeSet::new();
+    let mut visited: std::collections::BTreeSet<u16> = std::collections::BTreeSet::new();
+    visited.insert(result_src_idx);
+    // Level 0: BOTH edge types from `result_idx` (projections included ONCE).
+    let mut seed: std::collections::BTreeSet<u16> = std::collections::BTreeSet::new();
+    grouping_source_infix_hop(categories, language, result_idx, &mut seed);
+    grouping_source_projection_hop(language, per_cat, categories, result_idx, &mut seed);
+    // BOUND (perf, 2026-07-01): the chained-operand expansion (M4:
+    // `R →proj→ P →infix→ Q` needs `Q` in R's group-open) is applied ONLY when
+    // `R` has FEW projection sources — a proxy for "narrow numeric-tower
+    // category" (calculator `UInt32`/`Int`/…: 1-3 projection sources) versus a
+    // "hub" category with a large cast lattice (rhocalc `Proc`: ~15 `CastX`
+    // sources, whose infix expansion pulls in the whole comparison-operand set
+    // and blows the `(` group-open fan-out to 18 → deep-paren fork explosion,
+    // timing out `proc_display`). Threshold 4: keeps M4 (UInt32 has 1 projection
+    // source, Bool) and never triggers for the Proc hub. Proc/hub categories
+    // fall back to the level-0 seed only (their prior one-hop behavior), so a
+    // grouped Proc operand still relies on the projection/bare path (unchanged),
+    // while the narrow numeric categories gain the chained-infix operand needed
+    // for `(1)==4`-style cross-cat comparisons.
+    const HUB_PROJECTION_THRESHOLD: usize = 4;
+    let projection_sources: Vec<usize> = {
+        let mut pv: std::collections::BTreeSet<u16> = std::collections::BTreeSet::new();
+        grouping_source_projection_hop(language, per_cat, categories, result_idx, &mut pv);
+        pv.into_iter().map(|c| c as usize).collect()
+    };
+    for src in seed {
+        closure.insert(src);
+        visited.insert(src);
+    }
+    if projection_sources.len() < HUB_PROJECTION_THRESHOLD {
+        for p in projection_sources {
+            let mut hop: std::collections::BTreeSet<u16> = std::collections::BTreeSet::new();
+            grouping_source_infix_hop(categories, language, p, &mut hop);
+            for src in hop {
+                closure.insert(src);
+                visited.insert(src);
+            }
+        }
+    }
+    let mut sources = Vec::with_capacity(closure.len() + 1);
     sources.push(result_src_idx);
-    sources.extend(extra_sources);
+    sources.extend(closure);
     sources
 }
 
@@ -821,7 +1073,7 @@ pub fn emit_paren_dispatch_arms(
             .iter()
             .enumerate()
             .filter_map(|(rule_i, rule)| {
-                let shape = super::binder::classify_binder(rule)?;
+                let shape = super::binder::classify_binder_in(rule, language)?;
                 let first_trigger = rule.syntax_pattern.as_ref()?.first()?;
                 match first_trigger {
                     mettail_ast::grammar::SyntaxExpr::Literal(text) if text == "(" => {
@@ -964,6 +1216,229 @@ fn literal_family_for(kind: &NativeKind) -> Option<LiteralFamily> {
 }
 
 /// Emit per-rule arms in the `PrefixDispatch` match for one category.
+/// CROSSCAT_LEX_COMPAT_GATE (2026-07-03): does `cat_name` have a HOME variable
+/// reading — i.e. can a bare `Ident` parse as a `cat_name` term WITHOUT any
+/// cross-cat projection? True iff the category either has an explicit user Var
+/// rule (a `language.terms` rule whose first item is `NonTerminal{kind:Var}`) OR
+/// receives the synthetic Var rule (the `!has_user_var` branch of
+/// `collect_first_set`, which every declared `language.types` category takes).
+/// Grammar-derived, mirrors `collect_first_set`'s Var logic EXACTLY so the gate
+/// is precise. When true, a bare Ident in `cat_name` is already covered by the
+/// home Var reading, so a cross-cat cast delegate `source : cat_name` on the
+/// `Ident` token — where the `Ident` is ONLY a var-contribution of `source`
+/// (the source cannot begin with a LITERAL Ident) — is a proven over-generation
+/// (it duplicates the home var reading via a spurious ∅-realizing cast path).
+fn result_has_home_var_reading(cat_name: &str, language: &LanguageDef) -> bool {
+    // Must be a declared category to receive the synthetic Var rule.
+    let is_declared = language
+        .types
+        .iter()
+        .any(|t| t.name.to_string() == cat_name);
+    if !is_declared {
+        return false;
+    }
+    // Either takes the synthetic Var (always, when declared and lacking a user
+    // Var rule) or already has an explicit user Var rule → in BOTH cases a bare
+    // Ident reads as a home `cat_name` var. (The disjunction collapses to
+    // `true` for any declared category, but is written out to track the exact
+    // grammar provenance and stay correct if the synthetic-Var policy changes.)
+    let has_user_var = language.terms.iter().any(|r| {
+        r.category.to_string() == cat_name
+            && r.items
+                .first()
+                .map(|item| {
+                    matches!(
+                        item,
+                        mettail_ast::grammar::GrammarItem::NonTerminal {
+                            kind: mettail_ast::grammar::NonTerminalKind::Var,
+                            ..
+                        }
+                    )
+                })
+                .unwrap_or(false)
+    });
+    // Synthetic Var applies when !has_user_var; either branch yields a home var.
+    has_user_var || !has_user_var
+}
+
+/// CROSSCAT_LEX_COMPAT_GATE (2026-07-03): is a bare `Ident` reading of the
+/// PROJECTION SOURCE category `source_cat` EXCLUSIVELY that category's OWN
+/// variable — i.e. does `source_cat` have NO rule (other than its Var rule)
+/// that can begin with an `Ident`?
+///
+/// This is the DISCRIMINATOR that keeps the gate SOUND. The design's premise is
+/// that a projection cast `source : result` on the `Ident` token is a proven
+/// ∅-realizing over-generation "because the source cannot LITERALLY begin with
+/// an Ident — its Ident-first comes solely from its Var rule". That premise
+/// holds for LEAF value categories (BigInt/List/Map/…: their only Ident-first
+/// is the synthetic Var; their content rules begin with a digit / `[` / `{` /
+/// keyword). It is FALSE for STRUCTURAL categories whose rules are Ident-led:
+/// `InputBind` has `InputBind . lhs:Name "<-" n` (begins with the Ident `lhs`),
+/// and `ForRow` has `ForRowSingleNoWhere . b:InputBind` (transitively
+/// Ident-first). For those, a bare Ident is the START of a REAL structured term,
+/// NOT just a variable, so the projection (e.g. `InputBind : ForRow`) is the
+/// ONLY path to dispatch `p <- …` and MUST NOT be pruned (pruning it broke
+/// `for(p <- …)` — a genuine, non-∅ reading).
+///
+/// Grammar-derived: returns `true` iff EVERY rule of `source_cat` that admits an
+/// `Ident` first token is its Var rule. Concretely: no NON-Var rule of
+/// `source_cat` has `Ident` in its FIRST set. We compute this by walking each
+/// non-Var rule's FIRST contribution (its leading terminal, or — for an
+/// NT-/Param-led rule — the FIRST of the leading non-terminal's category,
+/// transitively), excluding the source category's own Var-rule Ident. A rule
+/// with a leading `Ident`-admitting non-terminal (e.g. a Name-led `lhs:Name`)
+/// makes the source NOT var-only.
+pub fn source_ident_first_is_var_only(source_cat: &str, language: &LanguageDef) -> bool {
+    let mut visited = std::collections::HashSet::new();
+    source_ident_first_is_var_only_rec(source_cat, language, &mut visited)
+}
+
+/// Recursive core of `source_ident_first_is_var_only` with a `visited` set to
+/// cut projection cycles (e.g. Int↔BigInt via `IntToBigInt`).
+///
+/// KEY (transitivity through var-projections): a rule whose leading non-terminal
+/// is a DIFFERENT category `C` makes the source Ident-led ONLY IF `C` is itself
+/// NOT var-only-Ident. If `C` IS var-only-Ident (its only Ident-first is a var,
+/// transitively), then this rule merely PROJECTS `C`'s var — a bare Ident
+/// through it is still just a variable, so the source remains var-only. This is
+/// what correctly classifies `BigInt` as var-only despite `IntToBigInt . i:Int
+/// |- i : BigInt` (Int is var-only ⇒ the projection carries only a var), while
+/// still classifying `ForRow` as NOT var-only (its `ForRowSingleNoWhere .
+/// b:InputBind` leads with InputBind, which is Ident-LED via `lhs:Name "<-" n`,
+/// so NOT var-only).
+fn source_ident_first_is_var_only_rec(
+    source_cat: &str,
+    language: &LanguageDef,
+    visited: &mut std::collections::HashSet<String>,
+) -> bool {
+    if !visited.insert(source_cat.to_string()) {
+        // Cycle: treat a self/mutual projection cycle as var-only (it carries no
+        // NEW literal Ident source — only the vars already accounted for). Safe:
+        // a cycle of pure var-projections realizes only vars.
+        return true;
+    }
+    for rule in &language.terms {
+        if rule.category.to_string() != source_cat {
+            continue;
+        }
+        // The source's own Var rule is the allowed Ident source — skip it.
+        let is_var_rule = rule
+            .items
+            .first()
+            .map(|it| {
+                matches!(
+                    it,
+                    mettail_ast::grammar::GrammarItem::NonTerminal {
+                        kind: mettail_ast::grammar::NonTerminalKind::Var,
+                        ..
+                    }
+                )
+            })
+            .unwrap_or(false);
+        if is_var_rule {
+            continue;
+        }
+        match rule.items.first() {
+            Some(mettail_ast::grammar::GrammarItem::Terminal(_)) => {
+                // Literal-led: not Ident-first.
+                continue;
+            }
+            Some(mettail_ast::grammar::GrammarItem::NonTerminal {
+                ident: nt_ident,
+                kind: mettail_ast::grammar::NonTerminalKind::Category,
+            }) => {
+                let nt_cat = nt_ident.to_string();
+                if nt_cat == source_cat {
+                    // Same-cat leading NT (left-recursive infix/method): no new
+                    // Ident source beyond the var being folded.
+                    continue;
+                }
+                // ★ PURE-PROJECTION gate for transitivity. Count the rule's
+                // non-terminal / capture body items (a "structural" item is
+                // anything that consumes input: a NonTerminal, an IdentCapture,
+                // a Binder, a Collection, a SepList — a Terminal is a fixed
+                // literal). Transitivity ("this rule merely projects `nt_cat`'s
+                // var") is valid ONLY when the rule is a PURE PROJECTION — its
+                // ENTIRE body is exactly the single leading non-terminal with NO
+                // additional consuming items (e.g. `IntToBigInt . i:Int |- i :
+                // BigInt`). If the rule has MORE items after the leading NT
+                // (e.g. `InputBind . lhs:Name "<-" n` — a Name THEN `<-` THEN a
+                // Name), a bare Ident reaching the source through it is the START
+                // of a REAL structured term, NOT a var-projection ⇒ the source is
+                // Ident-LED and NOT var-only. Without this gate, InputBind/ForRow
+                // are mis-classified as var-only (their `lhs:Name`-led rules look
+                // like they "project Name's var") and the gate over-prunes,
+                // breaking `for(p <- …)`.
+                let structural_item_count = rule
+                    .items
+                    .iter()
+                    .filter(|it| {
+                        !matches!(it, mettail_ast::grammar::GrammarItem::Terminal(_))
+                    })
+                    .count();
+                let is_pure_projection = structural_item_count == 1
+                    && rule.items.iter().all(|it| {
+                        matches!(
+                            it,
+                            mettail_ast::grammar::GrammarItem::NonTerminal {
+                                kind: mettail_ast::grammar::NonTerminalKind::Category,
+                                ..
+                            } | mettail_ast::grammar::GrammarItem::Terminal(_)
+                        )
+                    })
+                    && rule.items.iter().all(|it| {
+                        // No trailing literals either (a pure projection is a
+                        // bare `source : result` with the source non-terminal as
+                        // the sole element — token-transparent).
+                        !matches!(it, mettail_ast::grammar::GrammarItem::Terminal(_))
+                    });
+                let sub_first = first_set_of_category(&nt_cat, language);
+                let sub_has_ident = sub_first
+                    .iter()
+                    .any(|ft| ft.pattern.to_string().contains("Ident") && ft.extra_guard.is_none());
+                if sub_has_ident {
+                    // The leading NT can begin with an Ident. Whether that makes
+                    // the source non-var-only depends on purity:
+                    //   - pure projection AND `nt_cat` is var-only ⇒ still var.
+                    //   - otherwise (structural rule, or `nt_cat` genuinely
+                    //     Ident-led) ⇒ source is Ident-led, NOT var-only.
+                    if is_pure_projection
+                        && source_ident_first_is_var_only_rec(&nt_cat, language, visited)
+                    {
+                        continue;
+                    }
+                    return false;
+                }
+                continue;
+            }
+            Some(mettail_ast::grammar::GrammarItem::NonTerminal {
+                kind: mettail_ast::grammar::NonTerminalKind::Var,
+                ..
+            }) => {
+                continue;
+            }
+            _ => {
+                // Binder / IdentCapture / other leading items. Resolve via the
+                // judgement-style syntax_pattern where possible; otherwise be
+                // conservative (treat as Ident-admitting ⇒ NOT var-only).
+                if let Some(sp) = rule.syntax_pattern.as_ref() {
+                    match sp.first() {
+                        Some(mettail_ast::grammar::SyntaxExpr::Literal(_)) => continue,
+                        Some(mettail_ast::grammar::SyntaxExpr::Param(_)) => return false,
+                        _ => return false,
+                    }
+                } else {
+                    return false;
+                }
+            }
+        }
+    }
+    // No non-Var rule of `source_cat` admits a NEW (non-var) Ident first token ⇒
+    // the ONLY Ident reading of `source_cat` is its Var (possibly via
+    // var-projections) ⇒ var-only.
+    true
+}
+
 pub fn emit_prefix_arms_for_category(
     language: &LanguageDef,
     category_src_idx: u16,
@@ -1035,6 +1510,11 @@ pub fn emit_prefix_arms_for_category(
     let mut unified_buckets: std::collections::BTreeMap<(String, String), UnifiedBucket> =
         std::collections::BTreeMap::new();
     let mut unified_order: Vec<(String, String)> = Vec::new();
+    // AT_QUOTED_BIND_GATE (2026-07-03): leading structural literals of THIS
+    // (result) category's rules — the direct sigil-/keyword-triggered rules.
+    // A cross-cat-LHS delegate on a sigil that is ALSO in this set is the
+    // proven over-generation (a direct sigil-rule subsumes it). Computed once.
+    let result_leading_literals = category_leading_literals(category_name, language);
     for source_cat_name in &sorted_sources {
         let source_src_idx = categories
             .iter()
@@ -1043,6 +1523,15 @@ pub fn emit_prefix_arms_for_category(
             .unwrap_or(0);
         let first_set = first_set_of_category(source_cat_name, language);
         for ft in first_set {
+            // AT_QUOTED_BIND_GATE: this delegate's dispatch token is a leading
+            // structural literal `σ` (Some) that ALSO directly triggers a
+            // sibling rule in the result category ⇒ over-generation. `None`
+            // (Ident / native-literal FIRST tokens) ⇒ never over-generating.
+            let sigil_leads_result_rule = ft
+                .leading_literal
+                .as_ref()
+                .map(|lit| result_leading_literals.contains(lit))
+                .unwrap_or(false);
             let pat_str = ft.pattern.to_string();
             let guard_str = ft
                 .extra_guard
@@ -1060,7 +1549,10 @@ pub fn emit_prefix_arms_for_category(
             });
             entry
                 .descs
-                .push(UnifiedDescriptor::CrossCatLhs { source_src_idx });
+                .push(UnifiedDescriptor::CrossCatLhs {
+                    source_src_idx,
+                    sigil_leads_result_rule,
+                });
         }
     }
     // B11 fix (2026-04-28): two-pass emission. Pass 1 emits ALL atomic-shape
@@ -1126,10 +1618,26 @@ pub fn emit_prefix_arms_for_category(
             );
             continue;
         }
+        // GAP-3 (2026-06-28): 0-operand multi-literal keyword-prefix rule.
+        // Insert a Fixed(trigger) descriptor into the SAME unified bucket as
+        // every other trigger alternative (mirror CrossCatPrefixUnary above).
+        // A UNIQUE trigger (`Map`, `Pathmap`) emits a singleton arm; a SHARED
+        // trigger (`@` — co-bucketed with NQuote `@(p)` / NQuoteShort `@p`)
+        // folds into a multi-descriptor Fork resolved by lex-min.
+        if let AtomicShape::NullaryLiteralRun { trigger, .. } = &shape {
+            insert_unified_descriptor(
+                &mut unified_buckets,
+                &mut unified_order,
+                quote! { Some(mettail_prattail::automata::TokenKind::Fixed(__kw)) },
+                Some(quote! { __kw == #trigger }),
+                UnifiedDescriptor::NullaryLiteralRun { rule_idx },
+            );
+            continue;
+        }
         if matches!(shape, AtomicShape::CrossCatProjection { .. }) {
             continue;
         }
-        if let Some(shape) = super::binder::classify_binder(rule) {
+        if let Some(shape) = super::binder::classify_binder_in(rule, language) {
             let Some(mettail_ast::grammar::SyntaxExpr::Literal(trigger)) =
                 rule.syntax_pattern.as_ref().and_then(|sp| sp.first())
             else {
@@ -1178,6 +1686,48 @@ pub fn emit_prefix_arms_for_category(
                 .map(|i| i as u16)
                 .unwrap_or(0);
             for ft in first_set_of_category(&source_cat_name, language) {
+                // ── CROSSCAT_LEX_COMPAT_GATE (A) — general first-token lexical
+                // compatibility prune at cross-cat PROJECTION emission ──────────
+                // A projection delegate `source : result` dispatches on every
+                // token in FIRST(source). When that token is ONLY a
+                // var-contribution of `source` (an `Ident` the source acquires
+                // from its Var rule — the source cannot begin with a LITERAL
+                // Ident) AND `result` already has its own home Var reading, the
+                // delegate is a PROVEN over-generation: it packs the SAME bare-
+                // Ident reading the home Var rule already produces, via a cast
+                // path that realizes ∅ on a genuine Ident (measured alts=1 —
+                // zz_inner_proc_w_enum). Pruning it removes the branch at Fork
+                // CREATION (before any cursor/edge-stack/ProjDescriptorKey `W`
+                // forms), which is what LINEARIZES the `.*sep`-repetition
+                // frontier (a87574eb T-LinearIffWBounded: reducing #{W} is the
+                // sole lever). This is SOUND FIRST-set FILTERING (removed set is
+                // ∅-realizing ⇒ realized readings UNCHANGED — one-sided monotone
+                // refinement), NOT the forbidden FIRST-set TIEBREAK. When the
+                // kill-switch const is `false` (baseline) the conjunct is never
+                // evaluated and NO token is skipped → generated wpda.rs is
+                // BYTE-IDENTICAL. Grammar-derived (no language hardcode): fires
+                // for EVERY category's var-contribution, inert where the source
+                // has a literal first-token or the result lacks a home var.
+                //
+                // ★ SOUNDNESS DISCRIMINATOR (source_ident_first_is_var_only):
+                // fire ONLY when the SOURCE category's bare-Ident reading is
+                // EXCLUSIVELY its own variable — i.e. the source has NO non-Var
+                // rule that can begin with an Ident. This holds for LEAF value
+                // sources (BigInt/List/Map/…: only their synthetic Var is
+                // Ident-first) but is FALSE for STRUCTURAL sources whose rules
+                // are Ident-led (`InputBind . lhs:Name "<-" n`; `ForRow .
+                // b:InputBind`). Without this conjunct the gate over-pruned the
+                // `InputBind : ForRow` (ForRowSingleNoWhere) projection and broke
+                // `for(p <- …)` (a genuine, non-∅ reading) — that projection is
+                // the ONLY path to dispatch an Ident-led InputBind row. WITH it,
+                // only the ∅-realizing numeric/collection casts are pruned.
+                if super::forks::CROSSCAT_LEX_COMPAT_GATE
+                    && ft.is_var_contribution
+                    && source_ident_first_is_var_only(&source_cat_name, language)
+                    && result_has_home_var_reading(category_name, language)
+                {
+                    continue;
+                }
                 insert_unified_descriptor(
                     &mut unified_buckets,
                     &mut unified_order,
@@ -1294,6 +1844,12 @@ fn atomic_arm_descriptors(
         // to bind `Fixed(trigger)` as a Fork branch for the same rule
         // when multi-LENGTH lex ambiguity is present.
         AtomicShape::PrefixOperator { .. } => return Vec::new(),
+        // GAP-3: NullaryLiteralRun does NOT emit a plain atomic singleton
+        // (which would fire the action immediately, skipping the trailing
+        // `( )` / `Nil` literals). Its dispatch arm is inserted into the
+        // unified bucket below as `UnifiedDescriptor::NullaryLiteralRun`,
+        // pushing the mixfix marker + entering `MixfixLiteralRun`.
+        AtomicShape::NullaryLiteralRun { .. } => return Vec::new(),
         AtomicShape::NonAtomic => return Vec::new(),
     };
     pattern_guards
@@ -1319,7 +1875,21 @@ enum UnifiedDescriptor {
     /// `CategoryEntry(source_src_idx)` so the LHS sub-parses against
     /// the source category before InfixLoop sees the cross-cat operator.
     /// Per-tier weight: `BP_TIER_CROSSCAT_LHS = 0.05`.
-    CrossCatLhs { source_src_idx: u16 },
+    ///
+    /// AT_QUOTED_BIND_GATE (2026-07-03): `sigil_leads_result_rule` is `true`
+    /// when this delegate's dispatch token (the bucket's leading structural
+    /// literal `σ`) is ALSO the leading literal of a SIBLING rule in the RESULT
+    /// category — i.e. a direct `σ`-triggered rule (the sigil-quoted form)
+    /// exists that subsumes the whole-`source` reading this delegate produces.
+    /// Grammar-derived at construction (`category_leading_literals`). When
+    /// `AT_QUOTED_BIND_GATE` is on AND this flag is set AND a bind-trigger is
+    /// scoped-ahead at runtime, the delegate push is SUPPRESSED (drops the
+    /// proven over-generation; see `forks::AT_QUOTED_BIND_GATE`). `false` for
+    /// every non-sigil / non-over-generating delegate ⇒ inert.
+    CrossCatLhs {
+        source_src_idx: u16,
+        sigil_leads_result_rule: bool,
+    },
     /// Atomic-shape arm — `ConsumeAndPush(rule_at(...).Return)` for a
     /// home-category leaf rule (literal, var, terminal-keyword, etc.).
     /// Per-tier weight: `0.0` (atomic-home).
@@ -1341,6 +1911,16 @@ enum UnifiedDescriptor {
     /// Per-tier weight: `BP_TIER_CROSSCAT_PROJECTION = 0.025`.
     /// Used for rules of shape `R . a:Y |- a : X` (sp.len()==1).
     CrossCatProjection { rule_idx: u16, source_src_idx: u16 },
+    /// GAP-3 (2026-06-28): 0-operand multi-literal keyword-prefix rule
+    /// (`Map ()`, `Pathmap ()`, `@ Nil`). Consumes its own trigger token
+    /// (mirrored to the SPPF as a `TriggerTerminal` for span anchoring),
+    /// pushes `mixfix_marker(cat, rule_idx, 0)`, and enters
+    /// `MixfixLiteralRun { kind: 2, completed_idx: 0 }` — whose `parts_len
+    /// == 0` arm consumes the trailing literals then pops the marker, firing
+    /// the arity-0 action. Per-tier weight `0.0` (atomic-home) so a unique
+    /// trigger emits a singleton and a shared trigger (e.g. `@`) folds into a
+    /// lex-min Fork where declaration order (lower rule_idx) wins the tie.
+    NullaryLiteralRun { rule_idx: u16 },
 }
 
 /// B7 (2026-05-07) — unified bucket entry. Replaces the separate
@@ -1390,9 +1970,34 @@ fn emit_unified_arm(category_src_idx: u16, bucket: &UnifiedBucket) -> TokenStrea
         Some(eg) => quote! { #eg && state_cat_src_idx == #category_src_idx },
         None => quote! { state_cat_src_idx == #category_src_idx },
     };
+    // CROSSCAT_LEX_COMPAT_GATE (option B backstop): a per-projection compat
+    // conjunct appended to the arm GUARD when the runtime kill-switch is on.
+    // Refutes ONLY a var-only-Ident projection at runtime (fail-open otherwise);
+    // when the arm's guard fails, the dispatch falls through to the next arm /
+    // the `_` default, which is the SAME lex-alt / recovery path taken when no
+    // projection matched — so the home var reading is never lost. Emits NOTHING
+    // when the const is off ⇒ byte-identical. INERT under gate (A) (that push
+    // was already pruned at codegen). Extends the SINGLETON + the MULTI-BRANCH
+    // (Fork) CrossCatProjection guards identically.
+    let compat_guard = |source_src_idx: u16| -> TokenStream {
+        if super::forks::CROSSCAT_LEX_COMPAT_RUNTIME_GATE {
+            quote! { && crosscat_proj_lex_compatible(#source_src_idx, tokens, *pos) }
+        } else {
+            quote! {}
+        }
+    };
     if bucket.descs.len() == 1 {
         match &bucket.descs[0] {
-            UnifiedDescriptor::CrossCatLhs { source_src_idx } => {
+            UnifiedDescriptor::CrossCatLhs {
+                source_src_idx,
+                // AT_QUOTED_BIND_GATE: a SINGLETON cross-cat-LHS bucket means no
+                // sibling rule shares this dispatch token (a sigil-led sibling
+                // rule would co-bucket as BinderPrefix/CrossCatPrefixUnary/
+                // NullaryLiteralRun on the SAME `σ` → a MULTI bucket). So
+                // `sigil_leads_result_rule` is necessarily `false` here and the
+                // gate is structurally inert — emit byte-identically.
+                sigil_leads_result_rule: _,
+            } => {
                 let source_src_idx = *source_src_idx;
                 quote! {
                     #pat if #guard => {
@@ -1463,8 +2068,9 @@ fn emit_unified_arm(category_src_idx: u16, bucket: &UnifiedBucket) -> TokenStrea
             UnifiedDescriptor::CrossCatProjection { rule_idx, source_src_idx } => {
                 let rule_idx = *rule_idx;
                 let source_src_idx = *source_src_idx;
+                let __compat = compat_guard(source_src_idx);
                 quote! {
-                    #pat if #guard => {
+                    #pat if #guard #__compat => {
                         // B10 / Option κ Fix B (2026-05-07): cross-cat
                         // projection singleton — Push the rule's Return
                         // marker and route to CrossCatDelegate so the
@@ -1490,29 +2096,109 @@ fn emit_unified_arm(category_src_idx: u16, bucket: &UnifiedBucket) -> TokenStrea
                     }
                 }
             },
+            UnifiedDescriptor::NullaryLiteralRun { rule_idx } => {
+                let rule_idx = *rule_idx;
+                quote! {
+                    #pat if #guard => {
+                        // GAP-3: 0-operand multi-literal keyword prefix. Consume
+                        // the trigger (ConsumeAsTriggerOnly mirrors it to the
+                        // SPPF as a TriggerTerminal — the SOLE child under the
+                        // marker, anchoring its span lo; Discard would leave 0
+                        // children → span realization fail), push the mixfix
+                        // marker, and enter the REUSED MixfixLiteralRun(kind=2,
+                        // parts_len==0) arm, which consumes the trailing literals
+                        // then pops the marker to fire the arity-0 action.
+                        return WpdaStepAction::ConsumeAndPush {
+                            symbol: StackSymbolV2::mixfix_marker(
+                                #category_src_idx, #rule_idx, 0u8,
+                            ),
+                            weight: lex_w(0.0, #category_src_idx, #rule_idx),
+                            new_state: WpdaState::MixfixLiteralRun {
+                                result_src_idx: #category_src_idx,
+                                rule_idx: #rule_idx,
+                                completed_idx: 0u8,
+                                kind: 2u8,
+                                sub_pos: 0u8,
+                            },
+                            trigger_mode:
+                                mettail_prattail::wpda_walker::TriggerMode::ConsumeAsTriggerOnly,
+                        };
+                    }
+                }
+            },
         }
     } else {
-        let branches: Vec<TokenStream> = bucket
+        // F1/H1 (2026-06-28): in a multi-descriptor PrefixDispatch fork, the
+        // cross-cat-LHS EXTENSION branch is gated EXACTLY as at the lex-fork
+        // site (forks.rs): keep it iff a row-scoped trigger binds this LHS OR no
+        // transparent projection source→result exists as a fallback. A
+        // projection `D ::= s` shares S's first-set with the S→D cross-cat-LHS,
+        // so it is ALWAYS co-bucketed here — making the runtime
+        // projection-fallback check exact. Non-cross-cat-LHS branches (atomic /
+        // projection / binder / unary) are pushed unconditionally and IN
+        // DECLARATION ORDER, byte-identical to the pre-F1 emission; only the
+        // cross-cat-LHS push is wrapped in the runtime gate, preserving order.
+        let n_descs = bucket.descs.len();
+        let push_stmts: Vec<TokenStream> = bucket
             .descs
             .iter()
             .map(|d| match d {
-                UnifiedDescriptor::CrossCatLhs { source_src_idx } => {
+                UnifiedDescriptor::CrossCatLhs {
+                    source_src_idx,
+                    sigil_leads_result_rule,
+                } => {
                     let src_idx = *source_src_idx;
-                    quote! {
-                        mettail_prattail::wpda_walker::ForkBranch {
-                            symbol: StackSymbolV2::category_entry(#src_idx),
-                            weight: lex_w(
-                                mettail_prattail::automata::lex_weight::BP_TIER_CROSSCAT_LHS,
+                    // AT_QUOTED_BIND_GATE (2026-07-03): the F1/H1 keep-guard is
+                    // EXTENDED with a suppression conjunct ONLY when the
+                    // kill-switch const AND the grammar-derived
+                    // `sigil_leads_result_rule` for THIS bucket are BOTH true at
+                    // codegen time. When either is false (every baseline build,
+                    // and every non-over-generating delegate) the conjunct is
+                    // OMITTED entirely — the emitted guard is TEXTUALLY
+                    // BYTE-IDENTICAL to the pre-gate F1/H1 emission, and
+                    // `prefix_at_quoted_bind_gate_evidence` is never referenced.
+                    // Only in a gate-ON build over a sigil that directly
+                    // triggers a sibling rule does the runtime bind-trigger
+                    // evidence gate the push (dropping the proven
+                    // over-generation).
+                    let __gate_active =
+                        super::forks::AT_QUOTED_BIND_GATE && *sigil_leads_result_rule;
+                    let __keep_guard = if __gate_active {
+                        quote! {
+                            (prefix_crosscat_lhs_trigger_ahead_scoped(
+                                #category_src_idx, tokens, *pos,
+                            ) || !crosscat_lhs_has_projection_fallback(
                                 #category_src_idx, #src_idx,
-                            ),
-                            // The runtime edge stores the caller's target floor;
-                            // the delegated source parse starts at source root.
-                            new_state: WpdaState::PrefixDispatch {
-                                pos: *pos,
-                                cur_bp: 0,
-                            },
-                            action_kind:
-                                mettail_prattail::wpda_walker::ForkActionKind::PushCrossCatLhs,
+                            )) && !prefix_at_quoted_bind_gate_evidence(
+                                #category_src_idx, tokens, *pos,
+                            )
+                        }
+                    } else {
+                        quote! {
+                            prefix_crosscat_lhs_trigger_ahead_scoped(
+                                #category_src_idx, tokens, *pos,
+                            ) || !crosscat_lhs_has_projection_fallback(
+                                #category_src_idx, #src_idx,
+                            )
+                        }
+                    };
+                    quote! {
+                        // The runtime edge stores the caller's target floor;
+                        // the delegated source parse starts at source root.
+                        if #__keep_guard {
+                            __pd_branches.push(mettail_prattail::wpda_walker::ForkBranch {
+                                symbol: StackSymbolV2::category_entry(#src_idx),
+                                weight: lex_w(
+                                    mettail_prattail::automata::lex_weight::BP_TIER_CROSSCAT_LHS,
+                                    #category_src_idx, #src_idx,
+                                ),
+                                new_state: WpdaState::PrefixDispatch {
+                                    pos: *pos,
+                                    cur_bp: 0,
+                                },
+                                action_kind:
+                                    mettail_prattail::wpda_walker::ForkActionKind::PushCrossCatLhs,
+                            });
                         }
                     }
                 }
@@ -1520,7 +2206,7 @@ fn emit_unified_arm(category_src_idx: u16, bucket: &UnifiedBucket) -> TokenStrea
                     let rule_idx = desc.rule_idx;
                     let csi = desc.category_src_idx;
                     quote! {
-                        mettail_prattail::wpda_walker::ForkBranch {
+                        __pd_branches.push(mettail_prattail::wpda_walker::ForkBranch {
                             symbol: StackSymbolV2::rule_at(
                                 #csi, #rule_idx, 0, Some(_outer_bp),
                             ).with_kind_return(),
@@ -1529,14 +2215,14 @@ fn emit_unified_arm(category_src_idx: u16, bucket: &UnifiedBucket) -> TokenStrea
                             ),
                             new_state: WpdaState::Unwinding,
                             action_kind: mettail_prattail::wpda_walker::ForkActionKind::ConsumeAndCaptureAndPush,
-                        }
+                        });
                     }
                 }
                 UnifiedDescriptor::BinderPrefix { rule_idx, body_src_idx } => {
                     let rule_idx = *rule_idx;
                     let body_src_idx = *body_src_idx;
                     quote! {
-                        mettail_prattail::wpda_walker::ForkBranch {
+                        __pd_branches.push(mettail_prattail::wpda_walker::ForkBranch {
                             symbol: StackSymbolV2::rule_at(
                                 #category_src_idx, #rule_idx, 1u8, Some(_outer_bp),
                             ),
@@ -1552,7 +2238,7 @@ fn emit_unified_arm(category_src_idx: u16, bucket: &UnifiedBucket) -> TokenStrea
                                     trigger_mode:
                                         mettail_prattail::wpda_walker::TriggerMode::ConsumeAsTriggerOnly,
                                 },
-                        }
+                        });
                     }
                 }
                 UnifiedDescriptor::CrossCatPrefixUnary {
@@ -1564,7 +2250,7 @@ fn emit_unified_arm(category_src_idx: u16, bucket: &UnifiedBucket) -> TokenStrea
                     let source_src_idx = *source_src_idx;
                     let operand_bp = *operand_bp;
                     quote! {
-                        mettail_prattail::wpda_walker::ForkBranch {
+                        __pd_branches.push(mettail_prattail::wpda_walker::ForkBranch {
                             symbol: StackSymbolV2::rule_at(
                                 #category_src_idx, #rule_idx, 0, Some(_outer_bp),
                             ).with_kind_return(),
@@ -1578,7 +2264,7 @@ fn emit_unified_arm(category_src_idx: u16, bucket: &UnifiedBucket) -> TokenStrea
                                     trigger_mode:
                                         mettail_prattail::wpda_walker::TriggerMode::ConsumeAsTriggerOnly,
                                 },
-                        }
+                        });
                     }
                 }
                 UnifiedDescriptor::CrossCatProjection {
@@ -1587,8 +2273,15 @@ fn emit_unified_arm(category_src_idx: u16, bucket: &UnifiedBucket) -> TokenStrea
                 } => {
                     let rule_idx = *rule_idx;
                     let src_idx = *source_src_idx;
-                    quote! {
-                        mettail_prattail::wpda_walker::ForkBranch {
+                    // CROSSCAT_LEX_COMPAT_GATE (option B backstop): gate THIS
+                    // Fork branch's push on runtime lex-compatibility. Other
+                    // branches in the same Fork (CrossCatLhs / PVar / other
+                    // projections) are UNAFFECTED — only the var-only-Ident
+                    // projection is refuted (fail-open otherwise). Emits an
+                    // unconditional push when the const is off ⇒ byte-identical.
+                    // INERT under gate (A) (branch already absent at codegen).
+                    let __push = quote! {
+                        __pd_branches.push(mettail_prattail::wpda_walker::ForkBranch {
                             symbol: StackSymbolV2::rule_at(
                                 #category_src_idx, #rule_idx, 0, Some(_outer_bp),
                             ).with_kind_return(),
@@ -1596,23 +2289,70 @@ fn emit_unified_arm(category_src_idx: u16, bucket: &UnifiedBucket) -> TokenStrea
                                 mettail_prattail::automata::lex_weight::BP_TIER_CROSSCAT_PROJECTION,
                                 #category_src_idx, #rule_idx,
                             ),
-                            // Preserve the caller's Pratt floor for the same
-                            // delegated operand-context reason as the
-                            // singleton CrossCatProjection arm above.
                             new_state: WpdaState::CrossCatDelegate {
                                 source_src_idx: #src_idx,
                                 inner_cur_bp: *cur_bp,
                             },
                             action_kind: mettail_prattail::wpda_walker::ForkActionKind::Push,
+                        });
+                    };
+                    if super::forks::CROSSCAT_LEX_COMPAT_RUNTIME_GATE {
+                        quote! {
+                            // Preserve the caller's Pratt floor for the same
+                            // delegated operand-context reason as the singleton
+                            // CrossCatProjection arm above.
+                            if crosscat_proj_lex_compatible(#src_idx, tokens, *pos) {
+                                #__push
+                            }
                         }
+                    } else {
+                        quote! {
+                            // Preserve the caller's Pratt floor for the same
+                            // delegated operand-context reason as the singleton
+                            // CrossCatProjection arm above.
+                            #__push
+                        }
+                    }
+                }
+                UnifiedDescriptor::NullaryLiteralRun { rule_idx } => {
+                    let rule_idx = *rule_idx;
+                    quote! {
+                        // GAP-3: nullary multi-literal keyword prefix Fork branch
+                        // (e.g. `@ Nil` co-bucketed with `@ ( p )` / `@ p`).
+                        // Consume the trigger as a TriggerTerminal, push the
+                        // mixfix marker, enter MixfixLiteralRun(kind=2). Tier 0.0
+                        // (atomic-home) so lex-min picks the lowest-rule_idx branch
+                        // (declaration order) on a parse-success tie — NQuoteNil
+                        // (declared before NQuoteShort) wins for `@Nil`.
+                        __pd_branches.push(mettail_prattail::wpda_walker::ForkBranch {
+                            symbol: StackSymbolV2::mixfix_marker(
+                                #category_src_idx, #rule_idx, 0u8,
+                            ),
+                            weight: lex_w(0.0, #category_src_idx, #rule_idx),
+                            new_state: WpdaState::MixfixLiteralRun {
+                                result_src_idx: #category_src_idx,
+                                rule_idx: #rule_idx,
+                                completed_idx: 0u8,
+                                kind: 2u8,
+                                sub_pos: 0u8,
+                            },
+                            action_kind:
+                                mettail_prattail::wpda_walker::ForkActionKind::ConsumeAndPush {
+                                    trigger_mode:
+                                        mettail_prattail::wpda_walker::TriggerMode::ConsumeAsTriggerOnly,
+                                },
+                        });
                     }
                 }
             })
             .collect();
         quote! {
             #pat if #guard => {
+                let mut __pd_branches: Vec<mettail_prattail::wpda_walker::ForkBranch<_>> =
+                    Vec::with_capacity(#n_descs);
+                #( #push_stmts )*
                 return WpdaStepAction::Fork {
-                    branches: vec![ #( #branches ),* ],
+                    branches: __pd_branches,
                     consume_trigger: false,
                 };
             }
@@ -1969,17 +2709,50 @@ mod tests {
     }
 
     #[test]
-    fn judgement_style_non_nullary_rule_is_non_atomic_in_phase_a2() {
-        // A judgement-style rule with composite syntax_pattern (not a single
-        // terminal literal) must classify as NonAtomic (Phase A.3+ territory).
+    fn judgement_style_infix_rule_is_non_atomic_in_phase_a2() {
+        // A judgement-style binary-infix rule (`a "+" b`) is composite
+        // (Phase A.3+ / infix territory) and must classify as NonAtomic.
+        // (Pre-GAP-3 this test used an all-LITERAL nullary body `["+", "1"]`,
+        // but GAP-3 reclassifies the pure-literal nullary shape as
+        // `NullaryLiteralRun` — see the companion test below.)
         let lang = empty_lang();
-        let mut rule = atomic_rule("X", "Y", NonTerminalKind::Integer);
-        rule.term_context = Some(Vec::new());
-        rule.syntax_pattern = Some(vec![
-            mettail_ast::grammar::SyntaxExpr::Literal("+".into()),
-            mettail_ast::grammar::SyntaxExpr::Literal("1".into()),
-        ]);
+        let rule = judgement_rule(
+            "X",
+            "Y",
+            &[("a", "Y"), ("b", "Y")],
+            vec![
+                SyntaxExpr::Param(Ident::new("a", Span::call_site())),
+                SyntaxExpr::Literal("+".into()),
+                SyntaxExpr::Param(Ident::new("b", Span::call_site())),
+            ],
+        );
         assert!(matches!(classify_atomic(&rule, &lang), AtomicShape::NonAtomic));
+    }
+
+    #[test]
+    fn judgement_style_nullary_multi_literal_is_nullary_literal_run() {
+        // GAP-3 (2026-06-28): an empty-term-context rule whose syntax_pattern
+        // is two-or-more consecutive literals (e.g. RhoCalc's
+        // `MapEmpty . |- "Map" "(" ")"`) classifies as NullaryLiteralRun —
+        // the FIRST literal is the trigger, the REST are the trailing literals.
+        let lang = empty_lang();
+        let rule = judgement_rule(
+            "MapEmpty",
+            "Proc",
+            &[],
+            vec![
+                SyntaxExpr::Literal("Map".into()),
+                SyntaxExpr::Literal("(".into()),
+                SyntaxExpr::Literal(")".into()),
+            ],
+        );
+        match classify_atomic(&rule, &lang) {
+            AtomicShape::NullaryLiteralRun { trigger, trailing_literals, .. } => {
+                assert_eq!(trigger, "Map");
+                assert_eq!(trailing_literals, vec!["(".to_string(), ")".to_string()]);
+            },
+            other => panic!("expected NullaryLiteralRun, got {:?}", other),
+        }
     }
 
     #[test]

@@ -502,7 +502,8 @@ fn generate_collection_match_arm(
 
     match coll_type {
         mettail_ast::types::CollectionType::HashBag
-        | mettail_ast::types::CollectionType::HashMap => {
+        | mettail_ast::types::CollectionType::HashMap
+        | mettail_ast::types::CollectionType::PathMap => {
             quote! {
                 (#category::#label(g_bag), #category::#label(p_bag)) => {
                     let g_elems: Vec<_> = g_bag.iter()

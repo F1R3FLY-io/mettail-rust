@@ -30,6 +30,7 @@ use std::collections::HashMap;
 use syn::Ident;
 
 use super::builtin_metadata::classify_unary_prefix_shape;
+use super::collection::kv_sep_for;
 
 /// Stage 3.27d (G-PREFIX-BP, 2026-04-30): map from `(category_src_idx,
 /// rule_idx)` to the unary-prefix binding power, for rules whose shape
@@ -260,12 +261,29 @@ pub enum ActionArgKind {
 
 /// Try to classify a `GrammarRule` as a multi-step rule (binder, multi-Param,
 /// or guard-bearing).
-pub(crate) fn classify_binder(rule: &GrammarRule) -> Option<BinderShape> {
+pub(crate) fn classify_binder_in(
+    rule: &GrammarRule,
+    language: &LanguageDef,
+) -> Option<BinderShape> {
     let tc = rule.term_context.as_ref()?;
     let sp = rule.syntax_pattern.as_ref()?;
     if sp.is_empty() {
         return None;
     }
+    // Stage 3 (2026-06-27): the declared collection delimiters for THIS rule's
+    // result category, if it is declared as a collection category (`as List`/
+    // `Bag`/`Map`/`Set`/`Pathmap`). For binder rules — whose category is a host
+    // category like `Proc`/`Name`, never a declared collection — this resolves to
+    // `None`, so the kv-separator resolver falls to the per-type default
+    // (`HashMap` ⇒ `":"`), byte-identical to the former hardcode. It is threaded
+    // through `language` so the inline-binder kv-source reads through the SAME
+    // `kv_sep_for` resolver as the declared-category and lexer-terminal sources.
+    let declared_delims = language
+        .types
+        .iter()
+        .find(|t| t.name == rule.category)
+        .and_then(|t| t.collection_kind.as_ref())
+        .map(|c| c.delimiters());
     // Position 0 must be a Literal trigger (otherwise it's an infix/prefix
     // Pratt rule handled by Phase 3).
     if !matches!(&sp[0], SyntaxExpr::Literal(_)) {
@@ -609,10 +627,10 @@ pub(crate) fn classify_binder(rule: &GrammarRule) -> Option<BinderShape> {
                         // key_val_separator only for HashMap; None for
                         // Vec/HashBag/HashSet. HashMap syntax uses `":"`,
                         // matching ast/src/language.rs::map_defaults.
-                        let key_val_separator = match coll_kind {
-                            CollectionType::HashMap => Some(":".to_string()),
-                            _ => None,
-                        };
+                        // Stage 3 (2026-06-27): routed through `kv_sep_for`
+                        // (inline binder param ⇒ `declared_delims` is `None`
+                        // for binder host categories ⇒ per-type default).
+                        let key_val_separator = kv_sep_for(coll_kind, declared_delims);
                         // Phase 4 #1.B (2026-05-11): stamp the rule-
                         // global slot_idx and increment for the next
                         // SimpleCollection push. The CollectionMarker
@@ -846,10 +864,11 @@ pub(crate) fn classify_binder(rule: &GrammarRule) -> Option<BinderShape> {
                                         Some(SyntaxExpr::Literal(text)) => text.clone(),
                                         _ => return None,
                                     };
-                                    let key_val_separator = match coll_kind {
-                                        CollectionType::HashMap => Some(":".to_string()),
-                                        _ => None,
-                                    };
+                                    // Stage 3 (2026-06-27): same `kv_sep_for`
+                                    // resolver as the top-level Sep arm —
+                                    // `*opt(...)`-nested inline binder collection.
+                                    let key_val_separator =
+                                        kv_sep_for(coll_kind, declared_delims);
                                     let slot_idx_here = collection_slots_so_far;
                                     collection_slots_so_far += 1;
                                     inner_positions.push(BinderPosition::ParamParse {
@@ -1035,7 +1054,7 @@ pub(crate) fn binder_initial_body_cat(shape: &BinderShape) -> Option<&str> {
 /// fulfills `feedback_use_wpds_disambiguation_not_heuristics.md`.)
 #[allow(dead_code)]
 pub(crate) fn emit_binder_prefix_arms(
-    _language: &mettail_ast::language::LanguageDef,
+    language: &mettail_ast::language::LanguageDef,
     categories: &[String],
     per_cat: &[Vec<GrammarRule>],
 ) -> TokenStream {
@@ -1059,7 +1078,7 @@ pub(crate) fn emit_binder_prefix_arms(
     let mut groups: BTreeMap<(String, u16), Vec<RuleEntry>> = BTreeMap::new();
     for (cat_i, rules) in per_cat.iter().enumerate() {
         for (rule_i, rule) in rules.iter().enumerate() {
-            let Some(shape) = classify_binder(rule) else {
+            let Some(shape) = classify_binder_in(rule, language) else {
                 continue;
             };
             let trigger = match rule.syntax_pattern.as_ref().and_then(|sp| sp.first()) {
@@ -1184,6 +1203,7 @@ pub(crate) fn emit_binder_prefix_arms(
 /// preventing lower-precedence trailing infix from stealing the prefix's
 /// child. Non-prefix rules continue to use `cur_bp: 0`.
 pub(crate) fn emit_binder_rule_body(
+    language: &LanguageDef,
     categories: &[String],
     per_cat: &[Vec<GrammarRule>],
     prefix_bp_map: &HashMap<(u16, u16), u8>,
@@ -1191,7 +1211,7 @@ pub(crate) fn emit_binder_rule_body(
     let mut arms = Vec::new();
     for (cat_i, rules) in per_cat.iter().enumerate() {
         for (rule_i, rule) in rules.iter().enumerate() {
-            let Some(shape) = classify_binder(rule) else {
+            let Some(shape) = classify_binder_in(rule, language) else {
                 continue;
             };
             let result_src_idx = cat_i as u16;
@@ -1710,12 +1730,13 @@ pub(crate) fn emit_binder_rule_body(
 /// — at sub_pos=2 the prior step (inner_positions[0]) was the Name
 /// parse, so splice into accumulator 0.
 pub(crate) fn emit_binderlist_inner_post_splice_lookup(
+    language: &LanguageDef,
     per_cat: &[Vec<GrammarRule>],
 ) -> TokenStream {
     let mut arms = Vec::new();
     for (cat_i, rules) in per_cat.iter().enumerate() {
         for (rule_i, rule) in rules.iter().enumerate() {
-            let Some(shape) = classify_binder(rule) else {
+            let Some(shape) = classify_binder_in(rule, language) else {
                 continue;
             };
             for position in shape.positions.iter() {
@@ -1780,11 +1801,14 @@ pub(crate) fn emit_binderlist_inner_post_splice_lookup(
 /// future): returns true ONLY at sub_pos values within the
 /// inner_positions range; false at OptionalGroup-internal sub_pos
 /// values.
-pub(crate) fn emit_is_class3_inner_marker_per_subpos(per_cat: &[Vec<GrammarRule>]) -> TokenStream {
+pub(crate) fn emit_is_class3_inner_marker_per_subpos(
+    language: &LanguageDef,
+    per_cat: &[Vec<GrammarRule>],
+) -> TokenStream {
     let mut arms = Vec::new();
     for (cat_i, rules) in per_cat.iter().enumerate() {
         for (rule_i, rule) in rules.iter().enumerate() {
-            let Some(shape) = classify_binder(rule) else {
+            let Some(shape) = classify_binder_in(rule, language) else {
                 continue;
             };
             for position in shape.positions.iter() {
@@ -1839,11 +1863,14 @@ pub(crate) fn emit_is_class3_inner_marker_per_subpos(per_cat: &[Vec<GrammarRule>
 /// The per-slot variant keys on slot_idx (now preserved in the
 /// CollectionMarker symbol's `bp` field via Phase 4 #1) so only the
 /// Class-3 slot opens the scope.
-pub(crate) fn emit_is_class3_collection_per_slot(per_cat: &[Vec<GrammarRule>]) -> TokenStream {
+pub(crate) fn emit_is_class3_collection_per_slot(
+    language: &LanguageDef,
+    per_cat: &[Vec<GrammarRule>],
+) -> TokenStream {
     let mut arms = Vec::new();
     for (cat_i, rules) in per_cat.iter().enumerate() {
         for (rule_i, rule) in rules.iter().enumerate() {
-            let Some(shape) = classify_binder(rule) else {
+            let Some(shape) = classify_binder_in(rule, language) else {
                 continue;
             };
             for position in shape.positions.iter() {
@@ -1884,11 +1911,14 @@ pub(crate) fn emit_is_class3_collection_per_slot(per_cat: &[Vec<GrammarRule>]) -
 /// Returns `(0u8, 0u8, 0u16)` for non-Class-3 rules; the engine arm
 /// only consults this lookup when `is_binderlist_inner` returns true,
 /// so the default branch is unreachable in practice.
-pub(crate) fn emit_binderlist_inner_metadata(per_cat: &[Vec<GrammarRule>]) -> TokenStream {
+pub(crate) fn emit_binderlist_inner_metadata(
+    language: &LanguageDef,
+    per_cat: &[Vec<GrammarRule>],
+) -> TokenStream {
     let mut arms = Vec::new();
     for (cat_i, rules) in per_cat.iter().enumerate() {
         for (rule_i, rule) in rules.iter().enumerate() {
-            let Some(shape) = classify_binder(rule) else {
+            let Some(shape) = classify_binder_in(rule, language) else {
                 continue;
             };
             for (idx, position) in shape.positions.iter().enumerate() {
@@ -1936,13 +1966,14 @@ pub(crate) fn emit_binderlist_inner_metadata(per_cat: &[Vec<GrammarRule>]) -> To
 /// PLUS a wrap arm at sub_pos=inner_positions.len()+1 that loops back
 /// to sub_pos=0.
 pub(crate) fn emit_binder_list_loop_body(
+    language: &LanguageDef,
     categories: &[String],
     per_cat: &[Vec<GrammarRule>],
 ) -> TokenStream {
     let mut arms = Vec::new();
     for (cat_i, rules) in per_cat.iter().enumerate() {
         for (rule_i, rule) in rules.iter().enumerate() {
-            let Some(shape) = classify_binder(rule) else {
+            let Some(shape) = classify_binder_in(rule, language) else {
                 continue;
             };
             for (idx, position) in shape.positions.iter().enumerate() {
@@ -2375,6 +2406,7 @@ pub(crate) fn emit_binder_list_loop_body(
 ///     OptionalGroupAt marker, finalize the inner-arg scope, and advance
 ///     the outer RuleAt to next_outer_pos.
 pub(crate) fn emit_optional_group_body(
+    language: &LanguageDef,
     categories: &[String],
     per_cat: &[Vec<GrammarRule>],
 ) -> TokenStream {
@@ -2382,7 +2414,7 @@ pub(crate) fn emit_optional_group_body(
 
     for (cat_i, rules) in per_cat.iter().enumerate() {
         for (rule_i, rule) in rules.iter().enumerate() {
-            let Some(shape) = classify_binder(rule) else {
+            let Some(shape) = classify_binder_in(rule, language) else {
                 continue;
             };
             let result_src_idx = cat_i as u16;
@@ -2972,7 +3004,7 @@ pub(crate) fn emit_binder_action_entry(
                                             None => None,
                                         };
                                 },
-                                CollectionType::HashMap => quote! {
+                                CollectionType::HashMap | CollectionType::PathMap => quote! {
                                     let #inner_var: Option<mettail_runtime::HashMapLit<#elem_id, #elem_id>> =
                                         match #opt_var.as_mut() {
                                             Some(inner_iter) => match inner_iter.next() {
@@ -3056,7 +3088,7 @@ pub(crate) fn emit_binder_action_entry(
                         .filter_map(|a| a.into_term::<#elem_id>())
                 );
             },
-            CollectionType::HashMap => quote! {
+            CollectionType::HashMap | CollectionType::PathMap => quote! {
                 let mut iter_drained = drained.into_iter();
                 let mut container = mettail_runtime::HashMapLit::<
                     #elem_id, #elem_id,
@@ -3233,7 +3265,8 @@ mod tests {
 
     #[test]
     fn classifies_lambda_lam_rule() {
-        let shape = classify_binder(&lambda_lam_rule()).expect("Lam should classify");
+        let shape = classify_binder_in(&lambda_lam_rule(), &synthetic_lang_for_lambda_test())
+            .expect("Lam should classify");
         assert_eq!(shape.label, "Lam");
         assert!(!shape.is_multi);
         assert!(shape.has_binder);
@@ -3242,7 +3275,8 @@ mod tests {
 
     #[test]
     fn classifies_fraction_multi_param_rule() {
-        let shape = classify_binder(&fraction_rule()).expect("Fraction should classify");
+        let shape = classify_binder_in(&fraction_rule(), &synthetic_lang_for_lambda_test())
+            .expect("Fraction should classify");
         assert_eq!(shape.label, "Fraction");
         assert!(!shape.is_multi);
         assert!(!shape.has_binder);
@@ -3364,7 +3398,8 @@ mod tests {
         let categories = vec!["Term".to_string()];
         let per_cat = vec![vec![lambda_lam_rule()]];
         let prefix_bp_map = std::collections::HashMap::new();
-        let ts = emit_binder_rule_body(&categories, &per_cat, &prefix_bp_map);
+        let ts =
+            emit_binder_rule_body(&synthetic_lang_for_lambda_test(), &categories, &per_cat, &prefix_bp_map);
         let s = ts.to_string();
         // Phase 3.B.3 (2026-05-11): single-binder rules are unified
         // into the BinderListLoop dispatch with allow_empty=false,
@@ -3384,7 +3419,8 @@ mod tests {
         let categories = vec!["BigInt".to_string(), "BigRat".to_string()];
         let per_cat = vec![Vec::new(), vec![fraction_rule()]];
         let prefix_bp_map = std::collections::HashMap::new();
-        let ts = emit_binder_rule_body(&categories, &per_cat, &prefix_bp_map);
+        let ts =
+            emit_binder_rule_body(&synthetic_lang_for_lambda_test(), &categories, &per_cat, &prefix_bp_map);
         let s = ts.to_string();
         // "fraction" is the trigger consumed at open; positions 1+ are
         // "(", a (ParamParse), ",", b (ParamParse), ")". Verify the

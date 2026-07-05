@@ -94,6 +94,12 @@ pub fn generate_ast_enums(language: &LanguageDef) -> TokenStream {
                         CollectionCategory::Map(_) => {
                             quote! { mettail_runtime::HashMapLit<#elem_type, #elem_type> }
                         }
+                        CollectionCategory::Set(_) => {
+                            quote! { mettail_runtime::HashSetLit<#elem_type> }
+                        }
+                        CollectionCategory::Pathmap(_) => {
+                            quote! { mettail_runtime::PathMapLit<#elem_type, #elem_type> }
+                        }
                     })
                 };
                 if let (Some(payload_type), false) = (payload_opt, has_literal_rule) {
@@ -101,6 +107,8 @@ pub fn generate_ast_enums(language: &LanguageDef) -> TokenStream {
                         CollectionCategory::List(_) => quote::format_ident!("ListLit"),
                         CollectionCategory::Bag(_) => quote::format_ident!("BagLit"),
                         CollectionCategory::Map(_) => quote::format_ident!("MapLit"),
+                        CollectionCategory::Set(_) => quote::format_ident!("SetLit"),
+                        CollectionCategory::Pathmap(_) => quote::format_ident!("PathmapLit"),
                     };
                     variants.push(quote! {
                         #literal_label(#payload_type)
@@ -303,7 +311,7 @@ fn generate_variant(rule: &GrammarRule, language: &LanguageDef) -> TokenStream {
             FieldType::Collection { coll_type, element_type } => {
                 // Single collection field
                 let coll_type_ident = match coll_type {
-                    CollectionType::HashBag | CollectionType::HashMap => {
+                    CollectionType::HashBag | CollectionType::HashMap | CollectionType::PathMap => {
                         quote! { mettail_runtime::HashBag }
                     },
                     CollectionType::HashSet => quote! { std::collections::HashSet },
@@ -325,7 +333,7 @@ fn generate_variant(rule: &GrammarRule, language: &LanguageDef) -> TokenStream {
                 },
                 FieldType::Collection { coll_type, element_type } => {
                     let coll_type_ident = match coll_type {
-                        CollectionType::HashBag | CollectionType::HashMap => {
+                        CollectionType::HashBag | CollectionType::HashMap | CollectionType::PathMap => {
                             quote! { mettail_runtime::HashBag }
                         },
                         CollectionType::HashSet => quote! { std::collections::HashSet },
@@ -512,7 +520,7 @@ fn generate_binder_variant(rule: &GrammarRule) -> TokenStream {
                 GrammarItem::Collection { coll_type, element_type, .. } => {
                     // Collection becomes a field with the appropriate collection type
                     let coll_type_ident = match coll_type {
-                        CollectionType::HashBag | CollectionType::HashMap => {
+                        CollectionType::HashBag | CollectionType::HashMap | CollectionType::PathMap => {
                             quote! { mettail_runtime::HashBag }
                         },
                         CollectionType::HashSet => quote! { std::collections::HashSet },
@@ -566,7 +574,7 @@ fn type_expr_to_field_type(
         TypeExpr::Collection { coll_type, element } => {
             let elem_type = type_expr_to_rust_type(element);
             match coll_type {
-                CollectionType::HashBag | CollectionType::HashMap => {
+                CollectionType::HashBag | CollectionType::HashMap | CollectionType::PathMap => {
                     quote! { mettail_runtime::HashBag<#elem_type> }
                 },
                 CollectionType::HashSet => quote! { std::collections::HashSet<#elem_type> },
@@ -612,7 +620,7 @@ fn type_expr_to_rust_type(ty: &TypeExpr) -> TokenStream {
         TypeExpr::Collection { coll_type, element } => {
             let elem_type = type_expr_to_rust_type(element);
             match coll_type {
-                CollectionType::HashBag | CollectionType::HashMap => {
+                CollectionType::HashBag | CollectionType::HashMap | CollectionType::PathMap => {
                     quote! { mettail_runtime::HashBag<#elem_type> }
                 },
                 CollectionType::HashSet => quote! { std::collections::HashSet<#elem_type> },

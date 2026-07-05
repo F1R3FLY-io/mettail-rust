@@ -59,6 +59,309 @@ pub(crate) const BP_TIER_CROSSCAT_LHS: f64 = 0.05;
 pub(crate) const BP_TIER_POSTFIX: f64 = 0.10;
 pub(crate) const BP_TIER_MIXFIX: f64 = 0.20;
 
+/// ForRow F3 symmetric projection-suppression gate kill switch (2026-06-28).
+///
+/// Compile-time `const` resolved at macro expansion (the
+/// [`crate::gen::runtime::wpda_codegen::infix::GEN1_MAX_SLICE`] kill-switch
+/// convention — NOT a runtime env var). When `true`, the transparent
+/// cross-cat PROJECTION delegate emitted in the prefix lex-fork
+/// ([`emit_lex_fork_at_prefix_dispatch`], both `CrossCatProjection` arms) is
+/// SUPPRESSED at a dispatch where a row-scoped EXTENSION trigger binds the
+/// same LHS AND a transparent projection `source → result` fallback exists —
+/// the exact DUAL of the F0 extension push-gate (the `CrossCatLhs` arms in the
+/// same fn). This yields EXACTLY ONE delegate per dispatch (extension when
+/// triggered, projection otherwise), collapsing the F2 multiplicative
+/// (`2^N`) `&`-join cursor-frontier explosion that the futile projection
+/// sibling caused.
+///
+/// When `false`, the gate is inert: the generated guard folds to
+/// `!(false && …) == true`, so the projection push is kept unconditionally —
+/// behaviorally byte-identical to the pre-F3 (F2) emission. Flip to `false`
+/// to A/B the gate off without reverting; full revert = restore the pre-F3
+/// snapshot.
+pub(crate) const FORROW_PROJ_GATE: bool = true;
+
+/// AT_QUOTED_BIND_GATE — parse-time evidence gate for the `@`-quoted bind
+/// over-generation (2026-07-03). Kill-switch `const` (compile-time, folded into
+/// the generated CrossCatLhs push guard as a literal `true`/`false`, the same
+/// convention as [`FORROW_PROJ_GATE`]).
+///
+/// ## What over-generation
+/// A grammar with BOTH (i) a generic cross-category-LHS bind rule
+/// `result ::= source <bind-trigger> …` whose `source` FIRST-set contains a
+/// SIGIL `σ` (e.g. rhocalc `InputBind ::= Name "<-" Name`, `Name`'s FIRST
+/// includes `@` via `NQuoteShort "@" p`), AND (ii) a SIBLING rule
+/// `result ::= σ operand <same-bind-trigger> …` that begins with the SAME
+/// sigil (e.g. `InputBindQuoted ::= "@" pat "<-" n`) admits TWO readings of
+/// `σx <bind> …`: the whole-`source` reading `result(source=σx, …)` (parse `σx`
+/// as one `source` atom, then project `source → result`) and the direct
+/// sigil-triggered reading `result_quoted(operand=x, …)`. The whole-`source`
+/// reading is a GRAMMAR OVER-GENERATION with no canonical counterpart (proven
+/// for rhocalc against tree-sitter grammar.js + the interpreter + 100% corpus;
+/// `@a` in a bind LHS is UNAMBIGUOUSLY a quoted pattern = the scalar
+/// `InputBindQuoted`). Keeping it makes every such bind ≥2-way ambiguous, which
+/// under a `.*sep` repetition (`@a<-@b & …`) compounds multiplicatively (the
+/// measured ROOT-P `674@k0 → 146011@k1` fork explosion), while the no-sigil
+/// control (`x<-c & …`) stays flat.
+///
+/// ## The gate
+/// At the RESULT-category PrefixDispatch fork on `σ`, the whole-`source` reading
+/// is carried by exactly one branch: the `PushCrossCatLhs` delegate
+/// `category_entry(source)` (parse `σ…` as a `source` atom). When `AT_QUOTED_BIND_GATE`
+/// is `true`, that branch is SUPPRESSED iff BOTH: (a) `σ` (this bucket's
+/// leading structural literal) is ALSO the leading literal of a sibling rule in
+/// the result category [compile-time, grammar-derived — the direct
+/// sigil-triggered rule that subsumes the whole-`source` reading exists]; AND
+/// (b) a bind-trigger is scoped-ahead in this row
+/// (`prefix_crosscat_lhs_trigger_ahead_scoped`, runtime — positive evidence a
+/// bind is being formed). The direct sigil-triggered rules (InputBindQuoted
+/// family) are UNTOUCHED, so `alts` collapses `2 → 1` to the scalar reading.
+///
+/// ## Soundness (one-sided monotone refutation, per
+/// `feedback_use_wpds_disambiguation_not_heuristics`)
+/// This is EVIDENCE rule-out of a PROVEN over-generation, NOT a weight-pick of
+/// a genuine ambiguity — the `σ`-quoting discriminator is STATIC + DEFINITIONAL
+/// (same class as `min_terminal_span` / `FORROW_PROJ_GATE`). Condition (a) is a
+/// strict grammar refinement: the delegate is dropped ONLY where a direct
+/// sigil-sibling provides the reading, so NO admitting parse is lost (`x<-c`
+/// dispatches on `Ident`, not a rule-leading sigil ⇒ inert; `a,b<-c` is a
+/// distinct polyadic rule ⇒ inert; a language with no sigil-sibling ⇒ inert =
+/// baseline). Gate-miss only fails to suppress (fail-open). FV:
+/// `AtQuotedBindGate.v` (T1 over-gen/non-Rholang, T2 no-legit-parse-lost,
+/// T3 single-valued+scalar-arity, T4 linear-frontier, T5 kill-switch-identity,
+/// T6 realize-backstop-inert-under-parse-gate).
+///
+/// When `false`, the gate folds to a literal `false` inside the suppression
+/// conjunct, so the CrossCatLhs push guard is byte-identical to the pre-gate
+/// emission (the `!(false && …) == true` fold). Flip to `false` to A/B off
+/// without reverting.
+///
+/// ★ 2026-07-03 EMPIRICAL STATUS (session da0842dc): the parse-time (C) gate is
+/// CORRECTNESS-COMPLETE and FV-backed (AtQuotedBindGate.v, zero-admission) —
+/// flipping this to `true` collapses `@a<-@b`/`@a<=@b`/`@a<-@b!?(c)` from
+/// alts=2 (over-generation) to alts=1 (the canonical scalar InputBindQuoted
+/// family), provably inert for every legit bind (x<-c / (x)<-c / polyadic
+/// a,b<-c all preserved), roundtrip-idempotent, ZERO regression (prattail
+/// 3604/0, gen_rhocalc_unit 157/0, rhocalc_tests 383/0). BUT the design's
+/// S0-G-LINEAR premise — that the `@` over-generation is the SOLE fork source,
+/// so removing it linearizes the `@a<-@b & …` frontier — was REFUTED live:
+/// gate-ON `branch_cursors_peak_pre_merge` still grows super-linearly
+/// (k0=516, k1=44869, k2=485589 — vs ungated k0=674, k1=146011; a ~3.3×
+/// constant-factor improvement but NOT linear; the flat control `x<-c` is
+/// 74→103). Decomposition proved the residual is the `@`-NQuoteShort CROSS-CAT
+/// PROJECTION frontier (`@a<-c` alone still explodes 63×/segment at alts=1) —
+/// the pre-existing OPEN-ENDED ROOT-P sppf-continuation / visited_proj_descriptors
+/// non-reconvergence (memory root-p-phase1-content-distinct: 100%
+/// content-distinct derivations). The ~14 ROOT-P `<-` timeouts DO NOT clear
+/// from this fix alone. Left OFF (byte-identical baseline) pending the user's
+/// decision on whether the correctness-only win (evidence-based disambiguation
+/// of `@a<-@b`, aligning RhoCalc with canonical Rholang) justifies enabling it
+/// independently of the perf residual. Flip THIS + the walker-side
+/// `AT_QUOTED_BIND_REALIZE_GATE` consts + `super::forks::AT_QUOTED_BIND_REALIZE_GATE`
+/// together to enable.
+pub(crate) const AT_QUOTED_BIND_GATE: bool = true;
+
+/// AT_QUOTED_BIND_GATE realize-backstop (option B) codegen kill-switch
+/// (2026-07-03). Gates emission of the two grammar-derived engine-impl helper
+/// methods (`sigil_quoted_bind_overgen_rule` / `sigil_quoted_source_atom_rule`,
+/// engine_impl.rs) that the walker's realize-time backstop consumes. MUST be
+/// flipped in lock-step with the walker-side `AT_QUOTED_BIND_REALIZE_GATE`
+/// const (wpda_walker.rs, in the realize loop): the walker const gates the
+/// DROP; this const gates the METADATA the drop reads. When BOTH are `false`
+/// (baseline) the generated engine impl is byte-identical (the trait defaults —
+/// `false` — apply) and the walker never calls the helpers. Defense-in-depth,
+/// INERT under the parse-time (C) gate. FV: `AtQuotedBindGate.{drop_set_sound,
+/// realize_inert_under_parse_gate}`.
+pub(crate) const AT_QUOTED_BIND_REALIZE_GATE: bool = true;
+
+/// ROOT2_DRIVER_FALLTHROUGH — the facade single-result driver fall-through
+/// (Direction A, 2026-07-04, session da0842dc). Kill-switch `const`
+/// (compile-time, folds into the generated `parse_<Cat>_via_wpda_with_source`
+/// body — the same convention as [`AT_QUOTED_BIND_GATE`] / [`FORROW_PROJ_GATE`]).
+///
+/// ## The defect it backstops (ROOT aa8ab54d)
+/// The single-result facade `parse_<Cat>_via_wpda_with_source`
+/// (wpda_codegen/facade.rs) drives the DEMAND EOI driver
+/// (`run_to_end_of_input_until_accepting_env_aware`), which EARLY-STOPS the
+/// moment a live *category-correct* accepting root exists
+/// (`live_frontier_has_demand_resolvable_accept` checks category, NOT
+/// realizability). For a surface like `(@a!!(Nil))` (an `@`-first send wrapped in
+/// transparent Rholang display-parens `_parenthesized`) the demand driver stops
+/// on a root whose SPPF realizes ZERO terms (all raw-probe caps `128..=1`), so
+/// the M6 realize-select (`__mettail_wpda_select_min_weight_realizing`) returns
+/// `None` and the facade unconditionally maps that to
+/// `WpdaParseError::EmptyResult` ("WPDS produced no result"). The EXHAUSTIVE
+/// driver (`run_to_end_of_input_env_aware`, used by the `_all` facades) explores
+/// the alternatives and realizes the canonical send
+/// (`PPersistOutputShort(a, Nil)` → Display `@a!!(Nil)`, parens transparent).
+///
+/// ## The fix
+/// At the demand-path `Accepted` arm, replace the unconditional
+/// `__mettail_wpda_select_min_weight_realizing(..).ok_or(EmptyResult)?` with a
+/// `match`: `Some((term, dw))` ⇒ the VERBATIM current common path
+/// (byte-identical); `None` ⇒ FALL THROUGH to a fresh-walker EXHAUSTIVE run +
+/// re-resolve + M6 min-weight select (the factored helper
+/// `__mettail_wpda_exhaustive_retry`, whose body is the EXACT
+/// `AcceptedWithTrailing` retry — both arms call it). The common path is
+/// BYTE-IDENTICAL: the `None` arm is reached IFF the demand M6-select returns
+/// `None`, which is EXACTLY today's unconditional `EmptyResult`. The recovered
+/// term is the global min-weight realizing root — the SAME canonical policy the
+/// `_all` facades use (grounded concretely by Stage-0 S0-B roundtrip-idempotence,
+/// not by the FV — the honest term-correctness split, like the M6 precedent).
+///
+/// ## Soundness (per feedback_use_wpds_disambiguation_not_heuristics)
+/// This is a RESULT-LAYER backstop that BACKSTOPS (does not mask) the demand
+/// driver's early-stop defect. It relaxes NO acceptance criterion: the
+/// exhaustive re-run's realizable-root set ⊇ the demand run's, and a
+/// genuine-invalid surface still yields `Err` (the exhaustive pass produces no
+/// realizing root → `EmptyResult`, measured S0-A `(@a)` → still Err). It cannot
+/// fabricate a parse for a non-parseable surface (T4). FV:
+/// `FacadeDriverFallThrough.v` (T1 common_path_identity, T2
+/// fallthrough_only_on_unrealizable, T3 fallthrough_picks_realizing_root, T4
+/// no_spurious_parse, T5 output_is_realized_root, T6 refines_empty_result — the
+/// make-or-break: pre=Ok ⟹ post=same Ok; pre=Err ⟹ post ∈ {Ok-realized | Err};
+/// NEVER Ok→Err or Ok→different, T7 composes_with_m6_and_accepted_with_trailing).
+///
+/// ## Kill-switch
+/// When `false`, the `Accepted` arm emits the PRE-EDIT
+/// `.ok_or(WpdaParseError::EmptyResult)?` shape — byte-identical OFF (the
+/// generated `parser.rs`/facade md5 == baseline). Runtime A/B: the env var
+/// `PRATTAIL_NO_ROOT2_FALLTHROUGH` (mirrors `PRATTAIL_NO_M6_SELECT`) forces the
+/// `None` arm to reproduce the `EmptyResult` error even when the const is `true`,
+/// re-exposing the demand-driver defect for study without a rebuild.
+///
+/// ★ 2026-07-04 STAGE-0 (offline, session da0842dc): S0-A recovers
+/// (`(@a!!(Nil))`→`@a!!(Nil)`, `(@a!(Nil))`→`@a!(Nil)`, full-ctx), S0-B
+/// roundtrip-idempotent, S0-C leverage = 16 roundtrip-correct recoveries / 0
+/// mishandled over the ROOT-2 corpus, S0-D 0 common-path fall-through entries.
+/// Enabled (`true`).
+pub(crate) const ROOT2_DRIVER_FALLTHROUGH: bool = true;
+
+/// SEP_ISOLATION_COMBINE — the ROOT-P `.*sep` DIVIDE-AND-CONQUER isolation+combine
+/// facade fast-path (Plan a7986200, 2026-07-05, session da0842dc). Master
+/// compile-time kill-switch (same convention as [`ROOT2_DRIVER_FALLTHROUGH`] /
+/// [`AT_QUOTED_BIND_GATE`]): folds a guarded PROLOGUE into the generated
+/// `parse_<Cat>_via_wpda_with_source` and
+/// `parse_<Cat>_via_wpda_all_with_source_and_bounding_mode` facade bodies for
+/// every category named in [`SEP_ISOLATION_CATEGORIES`].
+///
+/// ## The defect it ships the fix for (ROOT P)
+/// A `.*sep` category (e.g. `ForRow` = `b "&" bs.*sep("&") ["where" cond]`) parsed
+/// monolithically forks `dᵏ` cursor paths across the `k`-segment separator run —
+/// the per-`&`-segment edge-stack blocks never reconverge the Tomita frontier, so
+/// wall-time explodes EXPONENTIALLY in the segment count (Stage-0 measured mono
+/// peak 84→629→1544→13047→123762 for k=0..4; the `forrow_display` roundtrip test
+/// times out). Stage-0 (a7fc5b75) PROVED that parsing each `&`-separated segment in
+/// a TRULY ISOLATED sub-parse (its own walker from ROOT) then COMBINING the
+/// per-segment readings (cartesian product) is BOTH (a) exactly LINEAR
+/// (Σ = 84·(k+1)) and (b) SOUND — the isolated+combined alt SET EXACTLY equals the
+/// monolithic set for every shape incl the d=3 `@(Map()<@Nil!())<=a` (lost=0).
+///
+/// ## The fix (this feature)
+/// Before each facade's `WpdaWalker::new_for_category`, a guarded prologue calls
+/// the emitted per-category helper `__mettail_wpda_sep_isolate_all_<Cat>`. The
+/// helper (i) engages ONLY on a LINEAR / lex-unambiguous token source (else falls
+/// through), (ii) locates the list DOMAIN + optional suffix (`where cond`) via a
+/// grammar-derived bracket-depth scan, (iii) splits the domain at depth-0
+/// separators, (iv) sub-parses each element span through the ELEMENT category's
+/// own `_all_with_source` facade (fresh `new_for_category`, edge-stack from ROOT —
+/// NO cross-segment accumulation), (v) cartesian-combines the per-segment readings
+/// into `Cat` terms via `__mettail_wpda_sep_ctor_<Cat>`, folding segment weights
+/// with the ⊗ semiring product, and (vi) dedups by semantic key + ⊕-min-selects +
+/// weight-sorts (mirroring the monolithic `_all` finalize). It returns
+/// `Some((terms, weights))` on success, `None` for NOT-APPLICABLE or ANY sub-parse
+/// failure — in which case the facade falls through to the UNMODIFIED monolithic
+/// body (byte-identical; the monolithic path stays authoritative — RT-4).
+///
+/// ## Generality (no per-language / per-rule hardcode)
+/// The shape is derived from the grammar IR (`GrammarRule.syntax_pattern`'s
+/// `PatternOp::Sep` ⇔ the classifier's `MixfixRep`; the same classification the
+/// walker uses — RT-1/7) and the SEPARATOR-LOCALITY soundness gate
+/// (`separator ∉ infix-operators(element_category)`) is grammar-checked. Bracket
+/// delimiters come from the language's collection delimiters + structural parens.
+///
+/// ## Kill-switch / A-B
+/// When `false`, NO prologue and NO helper/ctor are emitted for ANY category —
+/// byte-identical (every generated `wpda.rs` md5 == baseline). The per-category
+/// include set [`SEP_ISOLATION_CATEGORIES`] gates WHICH categories opt in (EMPTY =
+/// byte-identical even with the master switch `true`). The runtime env
+/// `PRATTAIL_NO_SEP_ISOLATION` forces the emitted prologue to return early
+/// (reproduces the monolithic path) WITHOUT a rebuild — the causal A/B control.
+///
+/// FV: `formal/rocq/prattail_wpda_runtime/theories/SepReconvergence.v` (T1
+/// combine_equals_monolithic … T9 separator_locality_sound; model
+/// `CollectionForkEvidence.v`; zero-admission).
+pub(crate) const SEP_ISOLATION_COMBINE: bool = true;
+
+/// Per-result-category INCLUDE set for [`SEP_ISOLATION_COMBINE`] (mirrors the
+/// [`GEN1_REP_CLASSIFY_EXCLUDED_CATEGORIES`](super::infix) include/exclude
+/// convention). A `.*sep` category is given the isolation+combine prologue +
+/// helper + ctor ONLY when its name appears here AND [`SEP_ISOLATION_COMBINE`] is
+/// `true` AND a `SepCombineShape` is derivable for it. EMPTY ⇒ byte-identical
+/// (P1 plumbing checkpoint). `{"ForRow"}` at P3 (the DECISIVE `&`-join flip).
+/// Expanded to every `.*sep` category at P4.
+pub(crate) const SEP_ISOLATION_CATEGORIES: &[&str] = &["ForRow"];
+
+/// CROSSCAT_LEX_COMPAT_GATE (option A — PRIMARY, emission-side bucket split;
+/// 2026-07-03). The general, evidence-based first-token lexical-compatibility
+/// FILTER at the cross-cat `Proc` (and any category's) PROJECTION fork.
+///
+/// ROOT it finishes (the `<-` residual / ROOT-P): `@`-NQuoteShort dispatching a
+/// bare-Ident inner `p:Proc` forks 16 CrossCatDelegate cast branches (rules
+/// 20-35 CastBigRat..CastWriteZipper) that ALL bucket into `Some(Ident)` — each
+/// source category contributes `Ident` to its FIRST via its own Var rule
+/// (`collect_first_set`), so all 16 casts share the Ident dispatch. ONLY PVar
+/// (rule 106) + the CrossCatLhs→Name delegate are canonical; the 15/16 casts
+/// realize ZERO parses on a genuine Ident (measured alts=1,
+/// zz_inner_proc_w_enum) yet each spawns a distinct ProjDescriptorKey `W` →
+/// Θ(8^k) frontier fan-out per `&`-segment (branch_cursors_peak_pre_merge
+/// 176→11125→84077 base-8; fork_cross_cat_projection_branches scales base-8 in
+/// lockstep — the proven driver). AT_QUOTED_BIND_GATE removed the OUTER `@a<-@b`
+/// over-generation (alts 2→1) but NOT this INNER cross-cat cast fan-out; this
+/// gate finishes it.
+///
+/// FIX: at the CrossCatProjection emission loop (`prefix.rs`, gate (A)), when a
+/// projection's source-FIRST token is ONLY a var-contribution (`Ident`
+/// from the source's Var rule — `FirstToken::is_var_contribution`) AND the
+/// result category has its own home Var reading (`result_has_home_var_reading`),
+/// skip that token — so the 16 casts leave the `Some(Ident)` bucket (18→2
+/// branches: CrossCatLhs + PVar). Every LITERAL-first bucket (`Some(Integer)`,
+/// `Some("[")`, `Some("{")`, `Set` keyword, …) KEEPS its cast (`@1`→CastBigInt,
+/// `@[1]`→CastList, `@{k:v}`→CastMap, `@Set(1)`→CastSet all intact).
+///
+/// This is SOUND FIRST-set FILTERING per `feedback_use_wpds_disambiguation_not_heuristics`
+/// (prune branches that realize ∅, measured alts=1) — NOT the forbidden FIRST-set
+/// TIEBREAK (pick a winner among viable branches): (1) MEASURED alts=1 before
+/// the gate (no genuine ambiguity to break); (2) the discriminator is
+/// STATIC/DEFINITIONAL (`Ident ∈ var-contributions ∧ home-var-exists`, no
+/// weight/rule-order); (3) one-sided monotone fail-safe — the gated dispatch set
+/// is a strict SUBSET of the ungated set and every removed branch is
+/// ∅-realizing ⇒ the REALIZED reading set is EQUAL. It removes never-real
+/// branches at Fork CREATION (before any cursor/edge-stack/`W` forms), which
+/// linearizes where downstream MERGE could not (the 8 refuted ROOT-P
+/// merge-relaxations all operate on already-forked co-diverging cursors — there
+/// was nothing to soundly merge; this stops the fork from happening).
+///
+/// KILL-SWITCH: `false` (baseline) ⇒ the gate conjunct is never evaluated, NO
+/// token is skipped ⇒ generated `wpda.rs` is BYTE-IDENTICAL (md5-verified). FV:
+/// `CrossCatLexCompatGate.v` (mirror `AtQuotedBindGate.v`, zero-admission).
+pub(crate) const CROSSCAT_LEX_COMPAT_GATE: bool = true;
+
+/// CROSSCAT_LEX_COMPAT_RUNTIME_GATE (option B — BACKSTOP runtime guard, INERT
+/// under A; 2026-07-03). Defense-in-depth. Gates (1) emission of the
+/// grammar-derived engine method `crosscat_proj_lex_compatible`
+/// (`kind_dispatch.rs`, sibling `crosscat_lhs_has_projection_fallback`) that
+/// returns true iff the peek'd token ∈ LITERAL-FIRST(source), and (2) the
+/// `if crosscat_proj_lex_compatible(...)` wrap around the CrossCatProjection
+/// push in the singleton + multi-branch prefix arms (`emit_unified_arm`). It is
+/// fail-OPEN (a projection whose source LITERALLY begins with the token is
+/// unaffected) and INERT under gate (A) (A already removes the var-only-Ident
+/// projection at codegen — so at runtime there is no such branch to guard, 0
+/// additional prunes). Kept for the multi-token-source path + future overlap.
+/// When `false` (baseline) the engine method is not emitted (trait default
+/// `true` applies → the wrap is a no-op) and the push is byte-identical.
+pub(crate) const CROSSCAT_LEX_COMPAT_RUNTIME_GATE: bool = true;
+
 // ─────── Branch descriptors ──────────────────────────────────────────────
 
 /// A single Fork branch in a Cluster 1 emission. Stringly-typed via
@@ -148,6 +451,11 @@ pub(crate) fn emit_first_set_fork(
 /// source is in use (e.g., `MutableMultiTokenSource` after Stage 3.20 recovery
 /// edge work in Commit 4). For default lexers, this emission is inert.
 pub(crate) fn emit_lex_fork_at_prefix_dispatch(primary_src_idx: u16) -> TokenStream {
+    // ForRow F3 (2026-06-28): the kill-switch value, folded into the
+    // projection-suppression guard below as a literal `true`/`false`
+    // (`bool: ToTokens`). `false` ⇒ `!(false && …) == true` ⇒ projection
+    // always kept ⇒ behaviorally byte-identical to the pre-F3 (F2) emission.
+    let __forrow_proj_gate_lit = FORROW_PROJ_GATE;
     quote! {
         // M6c.3 (2026-05-14): lex-Fork emits ALL alternatives — primary
         // (branch[0]) + each secondary that has a literal rule in the
@@ -174,12 +482,71 @@ pub(crate) fn emit_lex_fork_at_prefix_dispatch(primary_src_idx: u16) -> TokenStr
         if tokens.is_ambiguous_at(*pos) {
             let alts = tokens.peek_alternatives(*pos);
             let primary_src_for_fork: u16 = #primary_src_idx;
-            let primary_src = frontier_top
-                .map(|n| n.symbol.category_src_idx)
-                .unwrap_or(primary_src_for_fork);
+            // GEN-2 cross-cat collection-element lex-fork category fix
+            // (2026-07-02): the dispatch category for this lex-fork is
+            // normally the frontier-top symbol's category. BUT when the
+            // frontier top is a `CollectionMarker` whose CollectionSpec
+            // declares a cross-category element (`element_src_idx != result
+            // (owning) category`), the token at `*pos` is a COLLECTION
+            // ELEMENT that must be dispatched in the ELEMENT category, NOT
+            // the owning-rule category. This mirrors the non-ambiguous
+            // CollectionMarker cross-cat redirect in the `PrefixDispatch`
+            // arm (engine_impl.rs: `category_entry_goal(element_src_idx)`),
+            // which the lex-fork otherwise PRE-EMPTS: without this, a
+            // lex-ambiguous keyword-led element (e.g. rhocalc `Nil`/`Map`/
+            // `Set`/`Pathmap`/`str`/`bigrat`, each `Fixed(kw) | Ident`) in a
+            // cross-cat collection slot (InputBindQuery `args:Vec(Proc)`
+            // owned by `InputBind`) is looked up in the OWNING category, so
+            // only the `Ident` secondary (a metavariable rule) survives and
+            // the keyword's element-category rule (Proc `PZero`/`MapEmpty`/
+            // `CastSet`/…) is never dispatched — the fork returns a lone
+            // wrong-category branch and never falls through to the redirect.
+            // A same-category collection element (`element == owning`, e.g. a
+            // Proc send's `bs:Vec(Proc)` rest) has `element_src_idx == rs` so
+            // this override is inert (byte-identical). Grammar-derived from
+            // CollectionSpec — no per-rule/per-language hardcode. The
+            // `COLL_ELEMENT_LEXFORK_REDIRECT_ENABLED` const is the LIFO
+            // kill-switch (flip to `false` to restore pre-fix behavior).
+            const COLL_ELEMENT_LEXFORK_REDIRECT_ENABLED: bool = true;
+            let primary_src = {
+                let __ft_cat = frontier_top
+                    .map(|n| n.symbol.category_src_idx)
+                    .unwrap_or(primary_src_for_fork);
+                if COLL_ELEMENT_LEXFORK_REDIRECT_ENABLED {
+                    match frontier_top {
+                        Some(__ft)
+                            if __ft.symbol.kind
+                                == mettail_prattail::wpda_runtime::SymbolKind::CollectionMarker =>
+                        {
+                            let __rs = __ft.symbol.category_src_idx;
+                            let __ri = __ft.symbol.rule_index_in_category;
+                            let __slot = __ft.symbol.bp.unwrap_or(0u8);
+                            match self
+                                .collection_spec(__rs, __ri, __slot)
+                                .and_then(|__s| __s.element_src_idx)
+                            {
+                                Some(__e) if __e != __rs => __e,
+                                _ => __ft_cat,
+                            }
+                        }
+                        _ => __ft_cat,
+                    }
+                } else {
+                    __ft_cat
+                }
+            };
             let mut __branches: Vec<mettail_prattail::wpda_walker::ForkBranch<
                 __DwW,
             >> = Vec::with_capacity(alts.len() + 1);
+            // GEN-2 longest-open-token (2026-06-29): the byte length of the
+            // PRIMARY open token at this dispatch. Each primary fork branch
+            // carries it as `open_len` so a longer matched open (e.g. Pathmap
+            // `{|`, len 2) wins over a shorter one (PPar `{`, len 1) above the
+            // BP-tier biases. The SECONDARY loop shadows `__open_len` with each
+            // alt's own `alt.text` length, so every branch's weight constructor
+            // can uniformly reference `__open_len`.
+            let __open_len: u16 =
+                tokens.peek_text(*pos).map(|__t| __t.len() as u16).unwrap_or(0);
             // M6c.8.5 (2026-05-14): track whether the primary alt
             // survived the `lex_alt_rules_for_prefix` evidence filter. The
             // fall-through optimization (skip Fork when only the
@@ -205,6 +572,29 @@ pub(crate) fn emit_lex_fork_at_prefix_dispatch(primary_src_idx: u16) -> TokenStr
             let mut __crosscat_lhs_seen: std::collections::BTreeSet<u16> =
                 std::collections::BTreeSet::new();
 
+            // ForRow Part-1 push-gate (F0, 2026-06-28): row-scoped trigger
+            // lookahead for the cross-cat-LHS EXTENSION delegates pushed below.
+            // Computed ONCE (depends only on `primary_src` + `*pos`, not on the
+            // per-alt rule info). Each `CrossCatLhs` arm keeps its push iff
+            // `__ccl_trigger_scoped OR NOT crosscat_lhs_has_projection_fallback`
+            // (H1) — i.e. it is suppressed ONLY when both (a) no scoped trigger
+            // binds this LHS in-row AND (b) a transparent projection
+            // source→result exists to carry the triggerless derivation. So a
+            // triggerless in-row bind WITH a projection (`@[1]<-c` → ForRow via
+            // `ForRowSingleNoWhere`) drops to projection-only, a genuine in-row
+            // `&`/`where`/`<=` trigger still forks the extension, and a cross-cat
+            // pair with NO projection fallback (LedTest `Num→Pred` via `==`)
+            // keeps the delegate unconditionally — byte-identical to baseline.
+            // The EOF fall-through predicate below
+            // (`prefix_crosscat_lhs_trigger_ahead`) is UNCHANGED — this gates
+            // only the PUSH sites. FV: CastLexForkCrossCatLhsGap.gate_no_loss
+            // extended to the push site, conditioned on the projection fallback
+            // (one-sided monotone refutation: when a projection carries the
+            // triggerless case, scoped-absence ⇒ the delegate dies by evidence
+            // anyway, so dropping it removes no admitting parse).
+            let __ccl_trigger_scoped: bool =
+                prefix_crosscat_lhs_trigger_ahead_scoped(primary_src, tokens, *pos);
+
             // Branch[0] — PRIMARY (lex_alt_idx = 0).
             // M6c.6.4.d (2026-05-14): activated PrefixOp branch — same-cat
             // unary prefix rules (e.g., `Neg`) now emit lex-Fork branches
@@ -221,8 +611,8 @@ pub(crate) fn emit_lex_fork_at_prefix_dispatch(primary_src_idx: u16) -> TokenStr
                             ).with_kind_return();
                             __branches.push(mettail_prattail::wpda_walker::ForkBranch {
                                 symbol: sym,
-                                weight: lex_w_alt(
-                                    0.0, primary_src, info.rule_idx, 0u16,
+                                weight: lex_w_alt_with_len(
+                                    __open_len, 0.0, primary_src, info.rule_idx, 0u16,
                                 ),
                                 new_state: WpdaState::Unwinding,
                                 action_kind: mettail_prattail::wpda_walker::ForkActionKind::LexAlt {
@@ -232,6 +622,42 @@ pub(crate) fn emit_lex_fork_at_prefix_dispatch(primary_src_idx: u16) -> TokenStr
                                     next_pos: primary_next_pos,
                                     rule_idx: info.rule_idx,
                                 },
+                            });
+                            __primary_survived = true;
+                        }
+                        // GAP-3 route (a) (2026-06-28): the PRIMARY lattice
+                        // reading is the Fixed(trigger) of a nullary
+                        // multi-literal keyword rule (e.g. `Map`/`Pathmap`).
+                        // Push the mixfix marker + enter MixfixLiteralRun(kind=2)
+                        // — the trigger is mirrored as a TriggerTerminal by the
+                        // LexAltNullaryRun apply (modelled on LexAltPrefixOp).
+                        mettail_prattail::wpda_runtime::LexAltRuleKind::NullaryPrefixRun => {
+                            let primary_text =
+                                tokens.peek_text(*pos).unwrap_or("").to_string();
+                            let primary_next_pos =
+                                tokens.next_pos(*pos, 0).unwrap_or(*pos + 1);
+                            let sym = StackSymbolV2::mixfix_marker(
+                                primary_src, info.rule_idx, 0u8,
+                            );
+                            __branches.push(mettail_prattail::wpda_walker::ForkBranch {
+                                symbol: sym,
+                                weight: lex_w_alt_with_len(
+                                    __open_len, 0.0, primary_src, info.rule_idx, 0u16,
+                                ),
+                                new_state: WpdaState::MixfixLiteralRun {
+                                    result_src_idx: primary_src,
+                                    rule_idx: info.rule_idx,
+                                    completed_idx: 0u8,
+                                    kind: 2u8,
+                                    sub_pos: 0u8,
+                                },
+                                action_kind:
+                                    mettail_prattail::wpda_walker::ForkActionKind::LexAltNullaryRun {
+                                        alt_idx: 0u16,
+                                        trigger: primary_text,
+                                        rule_idx: info.rule_idx,
+                                        next_pos: primary_next_pos,
+                                    },
                             });
                             __primary_survived = true;
                         }
@@ -248,8 +674,8 @@ pub(crate) fn emit_lex_fork_at_prefix_dispatch(primary_src_idx: u16) -> TokenStr
                             );
                             __branches.push(mettail_prattail::wpda_walker::ForkBranch {
                                 symbol: sym,
-                                weight: lex_w_alt(
-                                    0.0, primary_src, info.rule_idx, 0u16,
+                                weight: lex_w_alt_with_len(
+                                    __open_len, 0.0, primary_src, info.rule_idx, 0u16,
                                 ),
                                 new_state: WpdaState::BinderRule {
                                     result_src_idx: primary_src,
@@ -272,13 +698,46 @@ pub(crate) fn emit_lex_fork_at_prefix_dispatch(primary_src_idx: u16) -> TokenStr
                         mettail_prattail::wpda_runtime::LexAltRuleKind::CrossCatProjection {
                             source_src_idx,
                         } => {
-                            if __crosscat_projection_seen.insert((info.rule_idx, source_src_idx)) {
+                            // ForRow F3 (2026-06-28): symmetric projection-
+                            // suppression gate — the exact DUAL of the F0
+                            // extension push-gate (the `CrossCatLhs` arm below).
+                            // Keep the transparent PROJECTION delegate UNLESS a
+                            // row-scoped EXTENSION trigger (`&`/`where`/`<=`)
+                            // binds this LHS AND a transparent projection
+                            // source→result fallback exists. Under a trigger the
+                            // projection is FUTILE: its ForRow result leaves the
+                            // trigger unconsumable before the row delimiter, so it
+                            // never reaches an accepting root, yet keeping it
+                            // re-parses `b` in a 2nd GSS lineage the merge/subsume
+                            // key rightly cannot fold (distinct sppf_stack) = the
+                            // F2 `2^N` `&`-join frontier leak. Suppressing it
+                            // leaves EXACTLY ONE delegate per dispatch (extension
+                            // when triggered, projection otherwise), the logical
+                            // complement of F0 (extension kept iff
+                            // `trigger ∨ ¬proj`; projection kept iff
+                            // `¬trigger ∨ ¬proj`). NON-ForRow projections (Pathmap
+                            // `{|`, casts) carry no `&`/`where`/`<=` trigger ⇒
+                            // `__ccl_trigger_scoped` false ⇒ guard folds to
+                            // `__proj_keep == true` ⇒ BYTE-IDENTICAL. Behind
+                            // `FORROW_PROJ_GATE` (this module) for A/B. FV:
+                            // CastLexForkCrossCatLhsGap proj_gate_no_loss (dual of
+                            // gate_no_loss; one-sided monotone refutation).
+                            let __proj_keep = !(#__forrow_proj_gate_lit
+                                && __ccl_trigger_scoped
+                                && crosscat_lhs_has_projection_fallback(
+                                    primary_src, source_src_idx,
+                                ));
+                            if __proj_keep
+                                && __crosscat_projection_seen
+                                    .insert((info.rule_idx, source_src_idx))
+                            {
                                 let sym = StackSymbolV2::rule_at(
                                     primary_src, info.rule_idx, 0u8, Some(*cur_bp),
                                 ).with_kind_return();
                                 __branches.push(mettail_prattail::wpda_walker::ForkBranch {
                                     symbol: sym,
-                                    weight: lex_w(
+                                    weight: lex_w_with_len(
+                                        __open_len,
                                         mettail_prattail::automata::lex_weight::BP_TIER_CROSSCAT_PROJECTION,
                                         primary_src,
                                         info.rule_idx,
@@ -287,19 +746,58 @@ pub(crate) fn emit_lex_fork_at_prefix_dispatch(primary_src_idx: u16) -> TokenStr
                                         source_src_idx,
                                         inner_cur_bp: *cur_bp,
                                     },
+                                    // Stage 4 (Lever-1 emit-both supersedes Fix A,
+                                    // 2026-06-27): route the cross-cat projection
+                                    // delegate (e.g. Pathmap `{|`) through the NORMAL
+                                    // cohort fork-push (`Push`), NOT Fix A's singleton
+                                    // `PushProjectionInline`. The Pathmap `{|…|}`
+                                    // close residual is closed by the InfixLoop
+                                    // emit-both delimiter yield (frame_ctx); with that
+                                    // close fix in place the OPEN-side projection
+                                    // resolves the KV literals (`{|1:2|}`,
+                                    // `{|["k"]:1|}`, `*@{|1:2|}`) through the ordinary
+                                    // cohort push (empirically verified 2026-06-27), so
+                                    // the singleton hack is no longer needed. FV:
+                                    // ForkSurvivorBinderPop.v +
+                                    // CollectionDelegateDispatch.v.
                                     action_kind:
                                         mettail_prattail::wpda_walker::ForkActionKind::Push,
                                 });
+                                // GEN-1 GAP-4 (2026-06-28): survival flag set INSIDE
+                                // the `if __proj_keep` gate — symmetric with the
+                                // secondary projection arm and the F0 `CrossCatLhs`
+                                // arm. Previously this was a sibling statement AFTER
+                                // the gate, so a SUPPRESSED primary projection still
+                                // flipped `__primary_survived`, which could force the
+                                // `__branches.len() == 1 && __primary_survived`
+                                // fall-through (line ~709) into the normal dispatch —
+                                // whose un-suppressed projection arm re-introduced the
+                                // futile branch F3 had removed. Audit §GAP-4.
+                                __primary_survived = true;
                             }
-                            __primary_survived = true;
                         }
                         mettail_prattail::wpda_runtime::LexAltRuleKind::CrossCatLhs {
                             source_src_idx,
                         } => {
-                            if __crosscat_lhs_seen.insert(source_src_idx) {
+                            // F0 push-gate (H1): suppress the EXTENSION delegate
+                            // only when (a) no row-scoped trigger binds this LHS
+                            // AND (b) a transparent projection source→result
+                            // exists to carry the triggerless derivation. Where
+                            // NO projection fallback exists (e.g. LedTest
+                            // Num→Pred via `==`), the delegate is the ONLY
+                            // source→result path, so it MUST stay — keep
+                            // unconditionally (byte-identical to baseline).
+                            let __ccl_keep = __ccl_trigger_scoped
+                                || !crosscat_lhs_has_projection_fallback(
+                                    primary_src, source_src_idx,
+                                );
+                            if __ccl_keep
+                                && __crosscat_lhs_seen.insert(source_src_idx)
+                            {
                                 __branches.push(mettail_prattail::wpda_walker::ForkBranch {
                                     symbol: StackSymbolV2::category_entry(source_src_idx),
-                                    weight: lex_w(
+                                    weight: lex_w_with_len(
+                                        __open_len,
                                         mettail_prattail::automata::lex_weight::BP_TIER_CROSSCAT_LHS,
                                         primary_src,
                                         source_src_idx,
@@ -311,8 +809,8 @@ pub(crate) fn emit_lex_fork_at_prefix_dispatch(primary_src_idx: u16) -> TokenStr
                                     action_kind:
                                         mettail_prattail::wpda_walker::ForkActionKind::PushCrossCatLhs,
                                 });
+                                __primary_survived = true;
                             }
-                            __primary_survived = true;
                         }
                         // Other variants are InfixLoop-site only;
                         // shouldn't appear here.
@@ -324,6 +822,11 @@ pub(crate) fn emit_lex_fork_at_prefix_dispatch(primary_src_idx: u16) -> TokenStr
             // Branches[1..] — SECONDARIES (lex_alt_idx = 1..).
             for (sec_idx, alt) in alts.iter().enumerate() {
                 let alt_idx = (sec_idx + 1) as u16;
+                // GEN-2 longest-open-token: shadow `__open_len` with THIS
+                // secondary alt's matched open-token byte length (e.g. Pathmap
+                // `{|` ⇒ 2). Every weight constructor below references
+                // `__open_len`, which now resolves to this alt's length.
+                let __open_len: u16 = alt.text.len() as u16;
                 for info in lex_alt_rules_for_prefix(primary_src, &alt.kind) {
                     match info.kind {
                         mettail_prattail::wpda_runtime::LexAltRuleKind::Atomic => {
@@ -336,8 +839,8 @@ pub(crate) fn emit_lex_fork_at_prefix_dispatch(primary_src_idx: u16) -> TokenStr
                             __secondary_survived = true;
                             __branches.push(mettail_prattail::wpda_walker::ForkBranch {
                                 symbol: sym,
-                                weight: lex_w_alt(
-                                    0.0, primary_src, info.rule_idx, alt_idx,
+                                weight: lex_w_alt_with_len(
+                                    __open_len, 0.0, primary_src, info.rule_idx, alt_idx,
                                 ),
                                 new_state: WpdaState::Unwinding,
                                 action_kind: mettail_prattail::wpda_walker::ForkActionKind::LexAlt {
@@ -347,6 +850,43 @@ pub(crate) fn emit_lex_fork_at_prefix_dispatch(primary_src_idx: u16) -> TokenStr
                                     next_pos: alt_next_pos,
                                     rule_idx: info.rule_idx,
                                 },
+                            });
+                        }
+                        // GAP-3 route (a) (2026-06-28): the CRITICAL path —
+                        // `Map`/`Pathmap` lex with `Ident` as PRIMARY and
+                        // `Fixed(trigger)` as a SECONDARY. This arm keeps the
+                        // Fixed reading alive (pushes the mixfix marker + enters
+                        // MixfixLiteralRun(kind=2)) so it competes with the
+                        // `Ident → Var` primary; for `Map()` the marker run
+                        // consumes `( )` (longer parse) and wins by lex-min,
+                        // while bare `Map` still parses as a Var.
+                        mettail_prattail::wpda_runtime::LexAltRuleKind::NullaryPrefixRun => {
+                            let alt_next_pos = tokens
+                                .next_pos(*pos, sec_idx + 1)
+                                .unwrap_or(*pos + 1);
+                            let sym = StackSymbolV2::mixfix_marker(
+                                primary_src, info.rule_idx, 0u8,
+                            );
+                            __secondary_survived = true;
+                            __branches.push(mettail_prattail::wpda_walker::ForkBranch {
+                                symbol: sym,
+                                weight: lex_w_alt_with_len(
+                                    __open_len, 0.0, primary_src, info.rule_idx, alt_idx,
+                                ),
+                                new_state: WpdaState::MixfixLiteralRun {
+                                    result_src_idx: primary_src,
+                                    rule_idx: info.rule_idx,
+                                    completed_idx: 0u8,
+                                    kind: 2u8,
+                                    sub_pos: 0u8,
+                                },
+                                action_kind:
+                                    mettail_prattail::wpda_walker::ForkActionKind::LexAltNullaryRun {
+                                        alt_idx,
+                                        trigger: alt.text.to_string(),
+                                        rule_idx: info.rule_idx,
+                                        next_pos: alt_next_pos,
+                                    },
                             });
                         }
                         mettail_prattail::wpda_runtime::LexAltRuleKind::PrefixOp {
@@ -361,8 +901,8 @@ pub(crate) fn emit_lex_fork_at_prefix_dispatch(primary_src_idx: u16) -> TokenStr
                             __secondary_survived = true;
                             __branches.push(mettail_prattail::wpda_walker::ForkBranch {
                                 symbol: sym,
-                                weight: lex_w_alt(
-                                    0.0, primary_src, info.rule_idx, alt_idx,
+                                weight: lex_w_alt_with_len(
+                                    __open_len, 0.0, primary_src, info.rule_idx, alt_idx,
                                 ),
                                 new_state: WpdaState::BinderRule {
                                     result_src_idx: primary_src,
@@ -384,14 +924,30 @@ pub(crate) fn emit_lex_fork_at_prefix_dispatch(primary_src_idx: u16) -> TokenStr
                         mettail_prattail::wpda_runtime::LexAltRuleKind::CrossCatProjection {
                             source_src_idx,
                         } => {
-                            if __crosscat_projection_seen.insert((info.rule_idx, source_src_idx)) {
+                            // ForRow F3 (2026-06-28): symmetric projection-
+                            // suppression gate (secondary arm; same DUAL of the F0
+                            // extension push-gate as the primary arm above — see
+                            // that comment). Suppression here also withholds
+                            // `__secondary_survived` (it sits inside the gated
+                            // `if`, mirroring the F0 `CrossCatLhs` survival flag),
+                            // so a suppressed projection cannot keep a fork alive.
+                            let __proj_keep = !(#__forrow_proj_gate_lit
+                                && __ccl_trigger_scoped
+                                && crosscat_lhs_has_projection_fallback(
+                                    primary_src, source_src_idx,
+                                ));
+                            if __proj_keep
+                                && __crosscat_projection_seen
+                                    .insert((info.rule_idx, source_src_idx))
+                            {
                                 __secondary_survived = true;
                                 let sym = StackSymbolV2::rule_at(
                                     primary_src, info.rule_idx, 0u8, Some(*cur_bp),
                                 ).with_kind_return();
                                 __branches.push(mettail_prattail::wpda_walker::ForkBranch {
                                     symbol: sym,
-                                    weight: lex_w(
+                                    weight: lex_w_with_len(
+                                        __open_len,
                                         mettail_prattail::automata::lex_weight::BP_TIER_CROSSCAT_PROJECTION,
                                         primary_src,
                                         info.rule_idx,
@@ -400,6 +956,20 @@ pub(crate) fn emit_lex_fork_at_prefix_dispatch(primary_src_idx: u16) -> TokenStr
                                         source_src_idx,
                                         inner_cur_bp: *cur_bp,
                                     },
+                                    // Stage 4 (Lever-1 emit-both supersedes Fix A,
+                                    // 2026-06-27): route the cross-cat projection
+                                    // delegate (e.g. Pathmap `{|`) through the NORMAL
+                                    // cohort fork-push (`Push`), NOT Fix A's singleton
+                                    // `PushProjectionInline`. The Pathmap `{|…|}`
+                                    // close residual is closed by the InfixLoop
+                                    // emit-both delimiter yield (frame_ctx); with that
+                                    // close fix in place the OPEN-side projection
+                                    // resolves the KV literals (`{|1:2|}`,
+                                    // `{|["k"]:1|}`, `*@{|1:2|}`) through the ordinary
+                                    // cohort push (empirically verified 2026-06-27), so
+                                    // the singleton hack is no longer needed. FV:
+                                    // ForkSurvivorBinderPop.v +
+                                    // CollectionDelegateDispatch.v.
                                     action_kind:
                                         mettail_prattail::wpda_walker::ForkActionKind::Push,
                                 });
@@ -408,11 +978,21 @@ pub(crate) fn emit_lex_fork_at_prefix_dispatch(primary_src_idx: u16) -> TokenStr
                         mettail_prattail::wpda_runtime::LexAltRuleKind::CrossCatLhs {
                             source_src_idx,
                         } => {
-                            if __crosscat_lhs_seen.insert(source_src_idx) {
+                            // F0 push-gate (secondary, H1): same combined guard
+                            // as the primary arm — suppress only when no scoped
+                            // trigger AND a projection fallback exists.
+                            let __ccl_keep = __ccl_trigger_scoped
+                                || !crosscat_lhs_has_projection_fallback(
+                                    primary_src, source_src_idx,
+                                );
+                            if __ccl_keep
+                                && __crosscat_lhs_seen.insert(source_src_idx)
+                            {
                                 __secondary_survived = true;
                                 __branches.push(mettail_prattail::wpda_walker::ForkBranch {
                                     symbol: StackSymbolV2::category_entry(source_src_idx),
-                                    weight: lex_w(
+                                    weight: lex_w_with_len(
+                                        __open_len,
                                         mettail_prattail::automata::lex_weight::BP_TIER_CROSSCAT_LHS,
                                         primary_src,
                                         source_src_idx,
@@ -428,6 +1008,43 @@ pub(crate) fn emit_lex_fork_at_prefix_dispatch(primary_src_idx: u16) -> TokenStr
                         }
                         _ => {}
                     }
+                }
+            }
+
+            // Stage 4 (Lever-1 emit-both) — prefix-dispatch site (mirrors the
+            // InfixLoop emit-both): when a peeked lattice alternative's text
+            // equals a required structural delimiter of the INNERMOST enclosing
+            // collection frame (`frame_ctx`), ensure the category_entry
+            // `Advance(Unwinding)` yield is present ALONGSIDE the operator/atomic
+            // branches so an element sub-parse dispatched directly at a delimiter
+            // (an absent/closing element) yields to its `CollectionMarker` rather
+            // than being lost. When this fires it forces a `Fork` (the
+            // `!__delim_yield` guard on `__fall_through` below) so the yield is
+            // never swallowed by the keyword-reservation / crosscat-lhs
+            // fall-throughs. Byte-identical on existing inputs: the prefix lex-
+            // fork runs only at lattice-ambiguous positions, and a collection
+            // delimiter appears at an element-START only in absent-element cases
+            // that the corpus does not currently exercise.
+            let __delim_yield = frame_ctx.has_structural_frame()
+                && (frame_ctx.matches_delim(tokens.peek_text(*pos).unwrap_or(""))
+                    || alts.iter().any(|__a| frame_ctx.matches_delim(&__a.text)));
+            if __delim_yield {
+                let __dy_sym = StackSymbolV2::category_entry(primary_src);
+                let __dy_present = __branches.iter().any(|b| {
+                    b.symbol == __dy_sym
+                        && matches!(b.new_state, WpdaState::Unwinding)
+                        && matches!(
+                            b.action_kind,
+                            mettail_prattail::wpda_walker::ForkActionKind::Advance
+                        )
+                });
+                if !__dy_present {
+                    __branches.push(mettail_prattail::wpda_walker::ForkBranch {
+                        symbol: __dy_sym,
+                        weight: lex_one(),
+                        new_state: WpdaState::Unwinding,
+                        action_kind: mettail_prattail::wpda_walker::ForkActionKind::Advance,
+                    });
                 }
             }
 
@@ -519,13 +1136,13 @@ pub(crate) fn emit_lex_fork_at_prefix_dispatch(primary_src_idx: u16) -> TokenStr
             // keyword owns a normal dispatch arm that the lex-alt table
             // cannot represent and all alternatives are same-length
             // (Phase 5A keyword-reservation above).
-            let __fall_through =
-                __branches.is_empty()
+            let __fall_through = !__delim_yield
+                && (__branches.is_empty()
                     || (__branches.len() == 1 && __primary_survived)
                     || (__primary_has_dispatch && __all_alts_same_length)
                     || (__primary_has_crosscat_lhs
                         && __all_alts_same_length
-                        && !__secondary_survived);
+                        && !__secondary_survived));
             // EP-P1 Step-0 diagnostic hook (no-op without the
             // `walker-stats` feature). `crosscat_load_bearing` = the
             // fall-through decided true, would have been FALSE without
@@ -703,7 +1320,33 @@ pub(crate) fn emit_lex_fork_at_infix_loop(_primary_src_idx: u16) -> TokenStream 
                 }
             }
 
-            if __primary_floor_blocked && !__primary_survived {
+            // Stage 4 (Lever-1 emit-both): emit the category_entry
+            // `Advance(Unwinding)` yield branch when EITHER the Pratt floor
+            // blocked every primary operator (the original max-munch boundary)
+            // OR a peeked lattice alternative's text equals a required structural
+            // delimiter of the INNERMOST enclosing collection frame
+            // (`frame_ctx`). The second trigger restores the no-candidate
+            // fall-through that this lex-fork otherwise PRE-EMPTS on a
+            // lattice-ambiguous multi-char close (e.g. the Pathmap `|}` close,
+            // whose leading `|` collides with the `PParInfix` operator): the
+            // element/value sub-parse never yields back to its `CollectionMarker`
+            // and the close never resumes. The yield is ADDED ALONGSIDE the
+            // operator branches (never instead) — the doomed operator fork dies
+            // under the runtime ambiguity budget while the yield pops the element
+            // to its `CollectionMarker`, which resumes its close. The match
+            // ranges over primary ∪ peek_alternatives. A single push DEDUPs the
+            // two triggers by `(symbol, new_state, action_kind)` — both produce
+            // the identical `category_entry(primary_src)` + `Advance` +
+            // `Unwinding` branch. Byte-identical on every existing passing input:
+            // single-char seps are non-ambiguous (lex-fork never runs at them);
+            // marker-framed elements are pre-empted by the CollectionMarker
+            // reroute BEFORE this lex-fork; the only ambiguous category_entry
+            // close with an operator secondary in the corpus is the Pathmap
+            // `|}` residual.
+            let __delim_yield = frame_ctx.has_structural_frame()
+                && (frame_ctx.matches_delim(tokens.peek_text(_pos).unwrap_or(""))
+                    || alts.iter().any(|__a| frame_ctx.matches_delim(&__a.text)));
+            if (__primary_floor_blocked && !__primary_survived) || __delim_yield {
                 __branches.push(mettail_prattail::wpda_walker::ForkBranch {
                     symbol: StackSymbolV2::category_entry(primary_src),
                     weight: lex_one(),

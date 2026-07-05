@@ -21,6 +21,8 @@ use proptest::strategy::BoxedStrategy;
 enum AnyTerm {
     WrapProc(Proc),
     WrapName(Name),
+    WrapInputBind(InputBind),
+    WrapForRow(ForRow),
     WrapInt(Int),
     WrapUInt32(UInt32),
     WrapBigInt(BigInt),
@@ -29,9 +31,14 @@ enum AnyTerm {
     WrapFloat(Float),
     WrapBool(Bool),
     WrapStr(Str),
+    WrapBytes(Bytes),
     WrapList(List),
     WrapBag(Bag),
     WrapMap(Map),
+    WrapSet(Set),
+    WrapPathmap(Pathmap),
+    WrapReadZipper(ReadZipper),
+    WrapWriteZipper(WriteZipper),
 }
 
 impl AnyTerm {
@@ -50,6 +57,26 @@ impl AnyTerm {
         match self {
             AnyTerm::WrapName(v) => v,
             _ => panic!("AnyTerm::unwrap_name: wrong variant"),
+        }
+    }
+}
+
+impl AnyTerm {
+    #[allow(dead_code)]
+    fn unwrap_inputbind(self) -> InputBind {
+        match self {
+            AnyTerm::WrapInputBind(v) => v,
+            _ => panic!("AnyTerm::unwrap_inputbind: wrong variant"),
+        }
+    }
+}
+
+impl AnyTerm {
+    #[allow(dead_code)]
+    fn unwrap_forrow(self) -> ForRow {
+        match self {
+            AnyTerm::WrapForRow(v) => v,
+            _ => panic!("AnyTerm::unwrap_forrow: wrong variant"),
         }
     }
 }
@@ -136,6 +163,16 @@ impl AnyTerm {
 
 impl AnyTerm {
     #[allow(dead_code)]
+    fn unwrap_bytes(self) -> Bytes {
+        match self {
+            AnyTerm::WrapBytes(v) => v,
+            _ => panic!("AnyTerm::unwrap_bytes: wrong variant"),
+        }
+    }
+}
+
+impl AnyTerm {
+    #[allow(dead_code)]
     fn unwrap_list(self) -> List {
         match self {
             AnyTerm::WrapList(v) => v,
@@ -164,6 +201,46 @@ impl AnyTerm {
     }
 }
 
+impl AnyTerm {
+    #[allow(dead_code)]
+    fn unwrap_set(self) -> Set {
+        match self {
+            AnyTerm::WrapSet(v) => v,
+            _ => panic!("AnyTerm::unwrap_set: wrong variant"),
+        }
+    }
+}
+
+impl AnyTerm {
+    #[allow(dead_code)]
+    fn unwrap_pathmap(self) -> Pathmap {
+        match self {
+            AnyTerm::WrapPathmap(v) => v,
+            _ => panic!("AnyTerm::unwrap_pathmap: wrong variant"),
+        }
+    }
+}
+
+impl AnyTerm {
+    #[allow(dead_code)]
+    fn unwrap_readzipper(self) -> ReadZipper {
+        match self {
+            AnyTerm::WrapReadZipper(v) => v,
+            _ => panic!("AnyTerm::unwrap_readzipper: wrong variant"),
+        }
+    }
+}
+
+impl AnyTerm {
+    #[allow(dead_code)]
+    fn unwrap_writezipper(self) -> WriteZipper {
+        match self {
+            AnyTerm::WrapWriteZipper(v) => v,
+            _ => panic!("AnyTerm::unwrap_writezipper: wrong variant"),
+        }
+    }
+}
+
 /// Work item for the tape-based iterative term builder.
 #[allow(dead_code)]
 enum BuildTask {
@@ -171,6 +248,10 @@ enum BuildTask {
     BuildProc { depth: u32, slot: usize },
     /// Build a Name term at the given depth, storing result in the given slot.
     BuildName { depth: u32, slot: usize },
+    /// Build a InputBind term at the given depth, storing result in the given slot.
+    BuildInputBind { depth: u32, slot: usize },
+    /// Build a ForRow term at the given depth, storing result in the given slot.
+    BuildForRow { depth: u32, slot: usize },
     /// Build a Int term at the given depth, storing result in the given slot.
     BuildInt { depth: u32, slot: usize },
     /// Build a UInt32 term at the given depth, storing result in the given slot.
@@ -187,12 +268,22 @@ enum BuildTask {
     BuildBool { depth: u32, slot: usize },
     /// Build a Str term at the given depth, storing result in the given slot.
     BuildStr { depth: u32, slot: usize },
+    /// Build a Bytes term at the given depth, storing result in the given slot.
+    BuildBytes { depth: u32, slot: usize },
     /// Build a List term at the given depth, storing result in the given slot.
     BuildList { depth: u32, slot: usize },
     /// Build a Bag term at the given depth, storing result in the given slot.
     BuildBag { depth: u32, slot: usize },
     /// Build a Map term at the given depth, storing result in the given slot.
     BuildMap { depth: u32, slot: usize },
+    /// Build a Set term at the given depth, storing result in the given slot.
+    BuildSet { depth: u32, slot: usize },
+    /// Build a Pathmap term at the given depth, storing result in the given slot.
+    BuildPathmap { depth: u32, slot: usize },
+    /// Build a ReadZipper term at the given depth, storing result in the given slot.
+    BuildReadZipper { depth: u32, slot: usize },
+    /// Build a WriteZipper term at the given depth, storing result in the given slot.
+    BuildWriteZipper { depth: u32, slot: usize },
 }
 
 /// Helper to consume bytes from the tape.
@@ -294,10 +385,14 @@ impl<'a> TapeReader<'a> {
 #[allow(dead_code, unused_variables, clippy::let_and_return)]
 fn build_proc_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Proc {
     if depth == 0 {
-        let choice = (reader.next_byte() as usize) % 3;
+        let choice = (reader.next_byte() as usize) % 7;
         let result = match choice {
             0 => AnyTerm::WrapProc(Proc::PZero),
-            1 => AnyTerm::WrapProc(Proc::Err),
+            1 => AnyTerm::WrapProc(Proc::POutputNilEmpty),
+            2 => AnyTerm::WrapProc(Proc::PPersistOutputNilEmpty),
+            3 => AnyTerm::WrapProc(Proc::Err),
+            4 => AnyTerm::WrapProc(Proc::MapEmpty),
+            5 => AnyTerm::WrapProc(Proc::PathmapEmpty),
             _ => {
                 let _ = reader.next_byte(); // consume tape byte for replay determinism
                 AnyTerm::WrapProc(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
@@ -308,23 +403,27 @@ fn build_proc_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Proc {
         return result.unwrap_proc();
     }
 
-    let choice = (reader.next_byte() as usize) % 60;
+    let choice = (reader.next_byte() as usize) % 112;
     let child_depth = depth - 1;
     match choice {
         0 => AnyTerm::WrapProc(Proc::PZero).unwrap_proc(),
-        1 => AnyTerm::WrapProc(Proc::Err).unwrap_proc(),
-        2 => {
+        1 => AnyTerm::WrapProc(Proc::POutputNilEmpty).unwrap_proc(),
+        2 => AnyTerm::WrapProc(Proc::PPersistOutputNilEmpty).unwrap_proc(),
+        3 => AnyTerm::WrapProc(Proc::Err).unwrap_proc(),
+        4 => AnyTerm::WrapProc(Proc::MapEmpty).unwrap_proc(),
+        5 => AnyTerm::WrapProc(Proc::PathmapEmpty).unwrap_proc(),
+        6 => {
             let _ = reader.next_byte(); // consume tape byte for replay determinism
             AnyTerm::WrapProc(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
                 mettail_runtime::get_or_create_var("a"),
             ))))
         }
         .unwrap_proc(),
-        3 => {
+        7 => {
             let f0 = std::sync::Arc::new(build_name_from_tape(reader, child_depth));
             Proc::PDrop(f0)
         },
-        4 => {
+        8 => {
             let num_elems = (reader.next_byte() % 4) as usize;
             let mut bag = mettail_runtime::HashBag::new();
             for _ in 0..num_elems {
@@ -332,28 +431,129 @@ fn build_proc_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Proc {
             }
             Proc::PPar(bag)
         },
-        5 => {
+        9 => {
             let f0 = std::sync::Arc::new(build_name_from_tape(reader, child_depth));
             let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
             Proc::POutput(f0, f1)
         },
-        6 => {
-            let n_0 = (reader.next_byte() % 3) as usize;
-            let pre_0: Vec<_> = (0..n_0)
-                .map(|_| build_name_from_tape(reader, child_depth))
-                .collect();
-            let num_binders = ((reader.next_byte() % 3) + 1) as usize;
-            let binders: Vec<mettail_runtime::Binder<String>> = (0..num_binders)
-                .map(|j| {
-                    let name = format!("a{}", j);
-                    mettail_runtime::Binder(mettail_runtime::get_or_create_var(&name))
-                })
-                .collect();
-            let body = build_proc_from_tape(reader, child_depth);
-            let scope = mettail_runtime::Scope::new(binders, std::sync::Arc::new(body));
-            Proc::PInputs(pre_0, scope)
+        10 => {
+            let f0 = std::sync::Arc::new(build_name_from_tape(reader, child_depth));
+            let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            Proc::PPersistOutput(f0, f1)
         },
-        7 => {
+        11 => {
+            let f0 = std::sync::Arc::new(build_name_from_tape(reader, child_depth));
+            Proc::POutputEmpty(f0)
+        },
+        12 => {
+            let f0 = std::sync::Arc::new(build_name_from_tape(reader, child_depth));
+            Proc::PPersistOutputEmpty(f0)
+        },
+        13 => {
+            let f0 = std::sync::Arc::new(build_name_from_tape(reader, child_depth));
+            let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            let num_elems_2 = (reader.next_byte() % 4) as usize;
+            let coll_2: Vec<_> = (0..num_elems_2)
+                .map(|_| build_proc_from_tape(reader, child_depth))
+                .collect();
+            Proc::POutput2Plus(f0, f1, coll_2)
+        },
+        14 => {
+            let f0 = std::sync::Arc::new(build_name_from_tape(reader, child_depth));
+            let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            let num_elems_2 = (reader.next_byte() % 4) as usize;
+            let coll_2: Vec<_> = (0..num_elems_2)
+                .map(|_| build_proc_from_tape(reader, child_depth))
+                .collect();
+            Proc::PPersistOutput2Plus(f0, f1, coll_2)
+        },
+        15 => {
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            Proc::POutputNil(f0)
+        },
+        16 => {
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            Proc::PPersistOutputNil(f0)
+        },
+        17 => {
+            let f0 = std::sync::Arc::new(build_name_from_tape(reader, child_depth));
+            let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            Proc::POutputQuoted(f0, f1)
+        },
+        18 => {
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            Proc::POutputShort(f0, f1)
+        },
+        19 => {
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            Proc::PPersistOutputShort(f0, f1)
+        },
+        20 => {
+            let f0 = std::sync::Arc::new(build_name_from_tape(reader, child_depth));
+            Proc::POutputQuotedEmpty(f0)
+        },
+        21 => {
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            Proc::POutputShortEmpty(f0)
+        },
+        22 => {
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            Proc::PPersistOutputShortEmpty(f0)
+        },
+        23 => {
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            let num_elems_1 = (reader.next_byte() % 4) as usize;
+            let coll_1: Vec<_> = (0..num_elems_1)
+                .map(|_| build_proc_from_tape(reader, child_depth))
+                .collect();
+            Proc::POutputNil2Plus(f0, coll_1)
+        },
+        24 => {
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            let num_elems_1 = (reader.next_byte() % 4) as usize;
+            let coll_1: Vec<_> = (0..num_elems_1)
+                .map(|_| build_proc_from_tape(reader, child_depth))
+                .collect();
+            Proc::PPersistOutputNil2Plus(f0, coll_1)
+        },
+        25 => {
+            let f0 = std::sync::Arc::new(build_name_from_tape(reader, child_depth));
+            let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            let num_elems_2 = (reader.next_byte() % 4) as usize;
+            let coll_2: Vec<_> = (0..num_elems_2)
+                .map(|_| build_proc_from_tape(reader, child_depth))
+                .collect();
+            Proc::POutputQuoted2Plus(f0, f1, coll_2)
+        },
+        26 => {
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            let num_elems_2 = (reader.next_byte() % 4) as usize;
+            let coll_2: Vec<_> = (0..num_elems_2)
+                .map(|_| build_proc_from_tape(reader, child_depth))
+                .collect();
+            Proc::POutputShort2Plus(f0, f1, coll_2)
+        },
+        27 => {
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            let num_elems_2 = (reader.next_byte() % 4) as usize;
+            let coll_2: Vec<_> = (0..num_elems_2)
+                .map(|_| build_proc_from_tape(reader, child_depth))
+                .collect();
+            Proc::PPersistOutputShort2Plus(f0, f1, coll_2)
+        },
+        28 => {
+            let num_elems_0 = (reader.next_byte() % 4) as usize;
+            let coll_0: Vec<_> = (0..num_elems_0)
+                .map(|_| build_forrow_from_tape(reader, child_depth))
+                .collect();
+            let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            Proc::PForUser(coll_0, f1)
+        },
+        29 => {
             let num_binders = ((reader.next_byte() % 3) + 1) as usize;
             let binders: Vec<mettail_runtime::Binder<String>> = (0..num_binders)
                 .map(|j| {
@@ -365,239 +565,374 @@ fn build_proc_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Proc {
             let scope = mettail_runtime::Scope::new(binders, std::sync::Arc::new(body));
             Proc::PNew(scope)
         },
-        8 => {
+        30 => {
             let f0 = std::sync::Arc::new(build_bigrat_from_tape(reader, child_depth));
             Proc::CastBigRat(f0)
         },
-        9 => {
+        31 => {
             let f0 = std::sync::Arc::new(build_fixed_from_tape(reader, child_depth));
             Proc::CastFixed(f0)
         },
-        10 => {
+        32 => {
             let f0 = std::sync::Arc::new(build_float_from_tape(reader, child_depth));
             Proc::CastFloat(f0)
         },
-        11 => {
+        33 => {
             let f0 = std::sync::Arc::new(build_bigint_from_tape(reader, child_depth));
             Proc::CastBigInt(f0)
         },
-        12 => {
+        34 => {
             let f0 = std::sync::Arc::new(build_uint32_from_tape(reader, child_depth));
             Proc::CastUInt32(f0)
         },
-        13 => {
+        35 => {
             let f0 = std::sync::Arc::new(build_int_from_tape(reader, child_depth));
             Proc::CastInt(f0)
         },
-        14 => {
+        36 => {
             let f0 = std::sync::Arc::new(build_bool_from_tape(reader, child_depth));
             Proc::CastBool(f0)
         },
-        15 => {
+        37 => {
             let f0 = std::sync::Arc::new(build_str_from_tape(reader, child_depth));
             Proc::CastStr(f0)
         },
-        16 => {
+        38 => {
+            let f0 = std::sync::Arc::new(build_bytes_from_tape(reader, child_depth));
+            Proc::CastBytes(f0)
+        },
+        39 => {
             let f0 = std::sync::Arc::new(build_list_from_tape(reader, child_depth));
             Proc::CastList(f0)
         },
-        17 => {
+        40 => {
             let f0 = std::sync::Arc::new(build_bag_from_tape(reader, child_depth));
             Proc::CastBag(f0)
         },
-        18 => {
+        41 => {
             let f0 = std::sync::Arc::new(build_map_from_tape(reader, child_depth));
             Proc::CastMap(f0)
         },
-        19 => {
+        42 => {
+            let f0 = std::sync::Arc::new(build_set_from_tape(reader, child_depth));
+            Proc::CastSet(f0)
+        },
+        43 => {
+            let f0 = std::sync::Arc::new(build_pathmap_from_tape(reader, child_depth));
+            Proc::CastPathmap(f0)
+        },
+        44 => {
             let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
             let f1 = std::sync::Arc::new(build_int_from_tape(reader, child_depth));
             Proc::IntBinProc(f0, f1)
         },
-        20 => {
+        45 => {
             let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
             let f1 = std::sync::Arc::new(build_int_from_tape(reader, child_depth));
             Proc::UIntBinProc(f0, f1)
         },
-        21 => {
+        46 => {
             let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
             let f1 = std::sync::Arc::new(build_int_from_tape(reader, child_depth));
             Proc::FloatBinProc(f0, f1)
         },
-        22 => {
+        47 => {
             let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
             let f1 = std::sync::Arc::new(build_int_from_tape(reader, child_depth));
             Proc::FixedBinProc(f0, f1)
         },
-        23 => {
+        48 => {
             let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
             Proc::BigintCastProc(f0)
         },
-        24 => {
-            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
-            Proc::BigratCastProc(f0)
-        },
-        25 => {
-            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
-            let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
-            Proc::FractionProc(f0, f1)
-        },
-        26 => {
-            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
-            let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
-            Proc::Or(f0, f1)
-        },
-        27 => {
-            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
-            let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
-            Proc::And(f0, f1)
-        },
-        28 => {
-            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
-            let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
-            Proc::BitOr(f0, f1)
-        },
-        29 => {
-            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
-            let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
-            Proc::BitAnd(f0, f1)
-        },
-        30 => {
-            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
-            Proc::BitNot(f0)
-        },
-        31 => {
-            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
-            let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
-            Proc::Eq(f0, f1)
-        },
-        32 => {
-            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
-            let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
-            Proc::Ne(f0, f1)
-        },
-        33 => {
-            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
-            let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
-            Proc::Gt(f0, f1)
-        },
-        34 => {
-            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
-            let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
-            Proc::Lt(f0, f1)
-        },
-        35 => {
-            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
-            let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
-            Proc::GtEq(f0, f1)
-        },
-        36 => {
-            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
-            let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
-            Proc::LtEq(f0, f1)
-        },
-        37 => {
-            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
-            let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
-            Proc::Add(f0, f1)
-        },
-        38 => {
-            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
-            let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
-            Proc::Sub(f0, f1)
-        },
-        39 => {
-            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
-            let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
-            Proc::Mul(f0, f1)
-        },
-        40 => {
-            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
-            let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
-            Proc::Div(f0, f1)
-        },
-        41 => {
-            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
-            let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
-            Proc::Mod(f0, f1)
-        },
-        42 => {
-            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
-            Proc::NegProc(f0)
-        },
-        43 => {
-            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
-            let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
-            Proc::ConcatList(f0, f1)
-        },
-        44 => {
-            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
-            let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
-            Proc::ElemList(f0, f1)
-        },
-        45 => {
-            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
-            let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
-            Proc::DeleteList(f0, f1)
-        },
-        46 => {
-            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
-            let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
-            Proc::UnionBag(f0, f1)
-        },
-        47 => {
-            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
-            let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
-            Proc::RemoveBag(f0, f1)
-        },
-        48 => {
-            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
-            let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
-            Proc::DiffBag(f0, f1)
-        },
         49 => {
             let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
-            let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
-            Proc::GetMap(f0, f1)
+            Proc::BigratCastProc(f0)
         },
         50 => {
             let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
             let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
-            let f2 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
-            Proc::PutMap(f0, f1, f2)
+            Proc::FractionProc(f0, f1)
         },
         51 => {
             let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
             let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
-            Proc::DeleteMap(f0, f1)
+            Proc::PParInfix(f0, f1)
         },
         52 => {
             let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
             let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
-            Proc::MergeMap(f0, f1)
+            Proc::Or(f0, f1)
         },
         53 => {
             let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
             let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
-            Proc::HasMap(f0, f1)
+            Proc::And(f0, f1)
         },
         54 => {
             let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
-            Proc::KeysMap(f0)
+            let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            Proc::BitOr(f0, f1)
         },
         55 => {
             let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
-            Proc::ValuesMap(f0)
+            let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            Proc::BitAnd(f0, f1)
         },
         56 => {
             let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
-            Proc::Not(f0)
+            Proc::BitNot(f0)
         },
         57 => {
             let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
-            Proc::Len(f0)
+            let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            Proc::Eq(f0, f1)
         },
         58 => {
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            Proc::Ne(f0, f1)
+        },
+        59 => {
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            Proc::Gt(f0, f1)
+        },
+        60 => {
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            Proc::Lt(f0, f1)
+        },
+        61 => {
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            Proc::GtEq(f0, f1)
+        },
+        62 => {
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            Proc::LtEq(f0, f1)
+        },
+        63 => {
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            Proc::Add(f0, f1)
+        },
+        64 => {
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            Proc::Sub(f0, f1)
+        },
+        65 => {
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            Proc::Mul(f0, f1)
+        },
+        66 => {
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            Proc::Div(f0, f1)
+        },
+        67 => {
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            Proc::Mod(f0, f1)
+        },
+        68 => {
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            Proc::NegProc(f0)
+        },
+        69 => {
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            Proc::MGet(f0, f1)
+        },
+        70 => {
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            let f2 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            Proc::MSet(f0, f1, f2)
+        },
+        71 => {
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            Proc::MContains(f0, f1)
+        },
+        72 => {
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            Proc::MDelete(f0, f1)
+        },
+        73 => {
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            Proc::MUnion(f0, f1)
+        },
+        74 => {
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            Proc::MSize(f0)
+        },
+        75 => {
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            Proc::MToByteArray(f0)
+        },
+        76 => {
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            Proc::MKeys(f0)
+        },
+        77 => {
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            Proc::MValues(f0)
+        },
+        78 => {
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            Proc::LLength(f0)
+        },
+        79 => {
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            Proc::LNth(f0, f1)
+        },
+        80 => {
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            Proc::LConcat(f0, f1)
+        },
+        81 => {
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            Proc::BCount(f0, f1)
+        },
+        82 => {
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            Proc::BDiff(f0, f1)
+        },
+        83 => {
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            Proc::BRemove(f0, f1)
+        },
+        84 => {
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            Proc::PRestrict(f0, f1)
+        },
+        85 => {
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            Proc::PSubtract(f0, f1)
+        },
+        86 => {
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            Proc::PMeet(f0, f1)
+        },
+        87 => {
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            Proc::PGetSubtrie(f0)
+        },
+        88 => {
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            Proc::PGetSubtrieAt(f0, f1)
+        },
+        89 => {
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            Proc::PReadZipper(f0)
+        },
+        90 => {
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            Proc::PReadZipperAt(f0, f1)
+        },
+        91 => {
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            Proc::PWriteZipper(f0)
+        },
+        92 => {
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            Proc::PWriteZipperAt(f0, f1)
+        },
+        93 => {
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            Proc::RZGetLeaf(f0)
+        },
+        94 => {
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            Proc::RZDescendTo(f0, f1)
+        },
+        95 => {
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            Proc::RZChildCount(f0)
+        },
+        96 => {
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            Proc::RZDescendFirst(f0)
+        },
+        97 => {
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            Proc::RZToNextSibling(f0)
+        },
+        98 => {
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            Proc::RZToPrevSibling(f0)
+        },
+        99 => {
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            Proc::RZDescendIndexedBranch(f0, f1)
+        },
+        100 => {
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            Proc::RZAscendOne(f0)
+        },
+        101 => {
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            Proc::RZAscend(f0, f1)
+        },
+        102 => {
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            let f2 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            Proc::WZSetLeaf(f0, f1, f2)
+        },
+        103 => {
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            Proc::WZSetSubtrie(f0, f1)
+        },
+        104 => {
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            Proc::WZRemoveLeaf(f0)
+        },
+        105 => {
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            Proc::WZRemoveBranches(f0)
+        },
+        106 => {
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            Proc::WZGraft(f0, f1)
+        },
+        107 => {
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            Proc::WZJoinInto(f0, f1)
+        },
+        108 => {
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            Proc::SAdd(f0, f1)
+        },
+        109 => {
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            Proc::Not(f0)
+        },
+        110 => {
             let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
             Proc::ToBool(f0)
         },
@@ -616,28 +951,199 @@ fn build_proc_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Proc {
 #[allow(dead_code, unused_variables, clippy::let_and_return)]
 fn build_name_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Name {
     if depth == 0 {
-        let result = {
-            let _ = reader.next_byte(); // consume tape byte for replay determinism
-            AnyTerm::WrapName(Name::NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
-                mettail_runtime::get_or_create_var("a"),
-            ))))
+        let choice = (reader.next_byte() as usize) % 2;
+        let result = match choice {
+            0 => AnyTerm::WrapName(Name::NQuoteNil),
+            _ => {
+                let _ = reader.next_byte(); // consume tape byte for replay determinism
+                AnyTerm::WrapName(Name::NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+                    mettail_runtime::get_or_create_var("a"),
+                ))))
+            },
         };
         return result.unwrap_name();
     }
 
-    let choice = (reader.next_byte() as usize) % 2;
+    let choice = (reader.next_byte() as usize) % 5;
     let child_depth = depth - 1;
     match choice {
-        0 => {
+        0 => AnyTerm::WrapName(Name::NQuoteNil).unwrap_name(),
+        1 => {
             let _ = reader.next_byte(); // consume tape byte for replay determinism
             AnyTerm::WrapName(Name::NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
                 mettail_runtime::get_or_create_var("a"),
             ))))
         }
         .unwrap_name(),
-        _ => {
+        2 => {
             let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
             Name::NQuote(f0)
+        },
+        3 => {
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            Name::NQuoteShort(f0)
+        },
+        _ => {
+            let f0 = std::sync::Arc::new(build_name_from_tape(reader, child_depth));
+            Name::NParen(f0)
+        },
+    }
+}
+
+/// Build a `InputBind` term from an instruction tape.
+///
+/// Consumes bytes from the tape to choose constructors.
+/// At depth 0, only leaf constructors (nullary, literal, var) are chosen.
+/// At depth > 0, recursive constructors are also available.
+#[allow(dead_code, unused_variables, clippy::let_and_return)]
+fn build_inputbind_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> InputBind {
+    if depth == 0 {
+        let result = {
+            let _ = reader.next_byte(); // consume tape byte for replay determinism
+            AnyTerm::WrapInputBind(InputBind::IVar(mettail_runtime::OrdVar(
+                mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a")),
+            )))
+        };
+        return result.unwrap_inputbind();
+    }
+
+    let choice = (reader.next_byte() as usize) % 12;
+    let child_depth = depth - 1;
+    match choice {
+        0 => {
+            let _ = reader.next_byte(); // consume tape byte for replay determinism
+            AnyTerm::WrapInputBind(InputBind::IVar(mettail_runtime::OrdVar(
+                mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a")),
+            )))
+        }
+        .unwrap_inputbind(),
+        1 => {
+            let f0 = std::sync::Arc::new(build_name_from_tape(reader, child_depth));
+            let f1 = std::sync::Arc::new(build_name_from_tape(reader, child_depth));
+            let num_elems_2 = (reader.next_byte() % 4) as usize;
+            let coll_2: Vec<_> = (0..num_elems_2)
+                .map(|_| build_proc_from_tape(reader, child_depth))
+                .collect();
+            InputBind::InputBindQuery(f0, f1, coll_2)
+        },
+        2 => {
+            let f0 = std::sync::Arc::new(build_name_from_tape(reader, child_depth));
+            let num_elems_1 = (reader.next_byte() % 4) as usize;
+            let coll_1: Vec<_> = (0..num_elems_1)
+                .map(|_| build_proc_from_tape(reader, child_depth))
+                .collect();
+            InputBind::InputBindEmptyQuery(f0, coll_1)
+        },
+        3 => {
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            let f1 = std::sync::Arc::new(build_name_from_tape(reader, child_depth));
+            let num_elems_2 = (reader.next_byte() % 4) as usize;
+            let coll_2: Vec<_> = (0..num_elems_2)
+                .map(|_| build_proc_from_tape(reader, child_depth))
+                .collect();
+            InputBind::InputBindQuotedQuery(f0, f1, coll_2)
+        },
+        4 => {
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            let f1 = std::sync::Arc::new(build_name_from_tape(reader, child_depth));
+            InputBind::InputBindQuoted(f0, f1)
+        },
+        5 => {
+            let f0 = std::sync::Arc::new(build_name_from_tape(reader, child_depth));
+            let num_elems_1 = (reader.next_byte() % 4) as usize;
+            let coll_1: Vec<_> = (0..num_elems_1)
+                .map(|_| build_name_from_tape(reader, child_depth))
+                .collect();
+            let f2 = std::sync::Arc::new(build_name_from_tape(reader, child_depth));
+            InputBind::InputBindPolyadic(f0, coll_1, f2)
+        },
+        6 => {
+            let f0 = std::sync::Arc::new(build_name_from_tape(reader, child_depth));
+            let num_elems_1 = (reader.next_byte() % 4) as usize;
+            let coll_1: Vec<_> = (0..num_elems_1)
+                .map(|_| build_name_from_tape(reader, child_depth))
+                .collect();
+            let f2 = std::sync::Arc::new(build_name_from_tape(reader, child_depth));
+            InputBind::InputBindPersistentPolyadic(f0, coll_1, f2)
+        },
+        7 => {
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            let f1 = std::sync::Arc::new(build_name_from_tape(reader, child_depth));
+            InputBind::InputBindQuotedPersistent(f0, f1)
+        },
+        8 => {
+            let f0 = std::sync::Arc::new(build_name_from_tape(reader, child_depth));
+            let f1 = std::sync::Arc::new(build_name_from_tape(reader, child_depth));
+            InputBind::InputBind(f0, f1)
+        },
+        9 => {
+            let f0 = std::sync::Arc::new(build_name_from_tape(reader, child_depth));
+            let f1 = std::sync::Arc::new(build_name_from_tape(reader, child_depth));
+            InputBind::InputBindPersistent(f0, f1)
+        },
+        10 => {
+            let f0 = std::sync::Arc::new(build_name_from_tape(reader, child_depth));
+            InputBind::InputBindEmpty(f0)
+        },
+        _ => {
+            let f0 = std::sync::Arc::new(build_name_from_tape(reader, child_depth));
+            InputBind::InputBindEmptyPersistent(f0)
+        },
+    }
+}
+
+/// Build a `ForRow` term from an instruction tape.
+///
+/// Consumes bytes from the tape to choose constructors.
+/// At depth 0, only leaf constructors (nullary, literal, var) are chosen.
+/// At depth > 0, recursive constructors are also available.
+#[allow(dead_code, unused_variables, clippy::let_and_return)]
+fn build_forrow_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> ForRow {
+    if depth == 0 {
+        let result = {
+            let _ = reader.next_byte(); // consume tape byte for replay determinism
+            AnyTerm::WrapForRow(ForRow::FVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+                mettail_runtime::get_or_create_var("a"),
+            ))))
+        };
+        return result.unwrap_forrow();
+    }
+
+    let choice = (reader.next_byte() as usize) % 5;
+    let child_depth = depth - 1;
+    match choice {
+        0 => {
+            let _ = reader.next_byte(); // consume tape byte for replay determinism
+            AnyTerm::WrapForRow(ForRow::FVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+                mettail_runtime::get_or_create_var("a"),
+            ))))
+        }
+        .unwrap_forrow(),
+        1 => {
+            let f0 = std::sync::Arc::new(build_inputbind_from_tape(reader, child_depth));
+            let num_elems_1 = (reader.next_byte() % 4) as usize;
+            let coll_1: Vec<_> = (0..num_elems_1)
+                .map(|_| build_inputbind_from_tape(reader, child_depth))
+                .collect();
+            let f2 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            ForRow::ForRowWhere(f0, coll_1, f2)
+        },
+        2 => {
+            let f0 = std::sync::Arc::new(build_inputbind_from_tape(reader, child_depth));
+            let num_elems_1 = (reader.next_byte() % 4) as usize;
+            let coll_1: Vec<_> = (0..num_elems_1)
+                .map(|_| build_inputbind_from_tape(reader, child_depth))
+                .collect();
+            ForRow::ForRowNoWhere(f0, coll_1)
+        },
+        3 => {
+            let f0 = std::sync::Arc::new(build_inputbind_from_tape(reader, child_depth));
+            let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            ForRow::ForRowSingleWhere(f0, f1)
+        },
+        _ => {
+            let f0 = std::sync::Arc::new(build_inputbind_from_tape(reader, child_depth));
+            ForRow::ForRowSingleNoWhere(f0)
         },
     }
 }
@@ -655,7 +1161,7 @@ fn build_int_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Int {
         return result.unwrap_int();
     }
 
-    let choice = (reader.next_byte() as usize) % 5;
+    let choice = (reader.next_byte() as usize) % 4;
     let child_depth = depth - 1;
     match choice {
         0 => AnyTerm::WrapInt(Int::NumLit((reader.next_i64().unsigned_abs() as i64) & i64::MAX))
@@ -665,11 +1171,6 @@ fn build_int_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Int {
             Int::NegInt(f0)
         },
         2 => {
-            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
-            let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
-            Int::CountBag(f0, f1)
-        },
-        3 => {
             let f0 = std::sync::Arc::new(build_bool_from_tape(reader, child_depth));
             Int::BoolToInt(f0)
         },
@@ -857,6 +1358,22 @@ fn build_str_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Str {
     build_str_from_tape(reader, 0)
 }
 
+/// Build a `Bytes` term from an instruction tape.
+///
+/// Consumes bytes from the tape to choose constructors.
+/// At depth 0, only leaf constructors (nullary, literal, var) are chosen.
+/// At depth > 0, recursive constructors are also available.
+#[allow(dead_code, unused_variables, clippy::let_and_return)]
+fn build_bytes_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Bytes {
+    if depth == 0 {
+        let result = AnyTerm::WrapBytes(Bytes::StringLit(reader.next_string()));
+        return result.unwrap_bytes();
+    }
+
+    // No recursive constructors, fall back to leaf
+    build_bytes_from_tape(reader, 0)
+}
+
 /// Build a `List` term from an instruction tape.
 ///
 /// Consumes bytes from the tape to choose constructors.
@@ -905,6 +1422,71 @@ fn build_map_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Map {
     build_map_from_tape(reader, 0)
 }
 
+/// Build a `Set` term from an instruction tape.
+///
+/// Consumes bytes from the tape to choose constructors.
+/// At depth 0, only leaf constructors (nullary, literal, var) are chosen.
+/// At depth > 0, recursive constructors are also available.
+#[allow(dead_code, unused_variables, clippy::let_and_return)]
+fn build_set_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Set {
+    if depth == 0 {
+        let result = AnyTerm::WrapSet(Set::SetLit(mettail_runtime::HashSetLit::new()));
+        return result.unwrap_set();
+    }
+
+    // No recursive constructors, fall back to leaf
+    build_set_from_tape(reader, 0)
+}
+
+/// Build a `Pathmap` term from an instruction tape.
+///
+/// Consumes bytes from the tape to choose constructors.
+/// At depth 0, only leaf constructors (nullary, literal, var) are chosen.
+/// At depth > 0, recursive constructors are also available.
+#[allow(dead_code, unused_variables, clippy::let_and_return)]
+fn build_pathmap_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Pathmap {
+    if depth == 0 {
+        let result = AnyTerm::WrapPathmap(Pathmap::PathmapLit(mettail_runtime::PathMapLit::new()));
+        return result.unwrap_pathmap();
+    }
+
+    // No recursive constructors, fall back to leaf
+    build_pathmap_from_tape(reader, 0)
+}
+
+/// Build a `ReadZipper` term from an instruction tape.
+///
+/// Consumes bytes from the tape to choose constructors.
+/// At depth 0, only leaf constructors (nullary, literal, var) are chosen.
+/// At depth > 0, recursive constructors are also available.
+#[allow(dead_code, unused_variables, clippy::let_and_return)]
+fn build_readzipper_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> ReadZipper {
+    if depth == 0 {
+        let result = AnyTerm::WrapReadZipper(ReadZipper::Lit(::core::default::Default::default()));
+        return result.unwrap_readzipper();
+    }
+
+    // No recursive constructors, fall back to leaf
+    build_readzipper_from_tape(reader, 0)
+}
+
+/// Build a `WriteZipper` term from an instruction tape.
+///
+/// Consumes bytes from the tape to choose constructors.
+/// At depth 0, only leaf constructors (nullary, literal, var) are chosen.
+/// At depth > 0, recursive constructors are also available.
+#[allow(dead_code, unused_variables, clippy::let_and_return)]
+fn build_writezipper_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> WriteZipper {
+    if depth == 0 {
+        let result =
+            AnyTerm::WrapWriteZipper(WriteZipper::Lit(::core::default::Default::default()));
+        return result.unwrap_writezipper();
+    }
+
+    // No recursive constructors, fall back to leaf
+    build_writezipper_from_tape(reader, 0)
+}
+
 /// Generate an arbitrary `Proc` term with bounded depth.
 ///
 /// Uses a flat `Vec<u8>` tape interpreted by `build_proc_from_tape`.
@@ -933,6 +1515,38 @@ fn arb_name(max_depth: u32) -> BoxedStrategy<Name> {
         .prop_map(move |tape| {
             let mut reader = TapeReader::new(&tape);
             build_name_from_tape(&mut reader, max_depth)
+        })
+        .boxed()
+}
+
+/// Generate an arbitrary `InputBind` term with bounded depth.
+///
+/// Uses a flat `Vec<u8>` tape interpreted by `build_inputbind_from_tape`.
+/// Proptest shrinking produces shorter tapes = simpler terms.
+#[allow(dead_code)]
+fn arb_inputbind(max_depth: u32) -> BoxedStrategy<InputBind> {
+    // Tape size scales with depth: deeper terms need more bytes
+    let max_tape = (10 * (max_depth as usize + 1)).max(20);
+    proptest::collection::vec(any::<u8>(), 1..max_tape)
+        .prop_map(move |tape| {
+            let mut reader = TapeReader::new(&tape);
+            build_inputbind_from_tape(&mut reader, max_depth)
+        })
+        .boxed()
+}
+
+/// Generate an arbitrary `ForRow` term with bounded depth.
+///
+/// Uses a flat `Vec<u8>` tape interpreted by `build_forrow_from_tape`.
+/// Proptest shrinking produces shorter tapes = simpler terms.
+#[allow(dead_code)]
+fn arb_forrow(max_depth: u32) -> BoxedStrategy<ForRow> {
+    // Tape size scales with depth: deeper terms need more bytes
+    let max_tape = (10 * (max_depth as usize + 1)).max(20);
+    proptest::collection::vec(any::<u8>(), 1..max_tape)
+        .prop_map(move |tape| {
+            let mut reader = TapeReader::new(&tape);
+            build_forrow_from_tape(&mut reader, max_depth)
         })
         .boxed()
 }
@@ -1065,6 +1679,22 @@ fn arb_str(max_depth: u32) -> BoxedStrategy<Str> {
         .boxed()
 }
 
+/// Generate an arbitrary `Bytes` term with bounded depth.
+///
+/// Uses a flat `Vec<u8>` tape interpreted by `build_bytes_from_tape`.
+/// Proptest shrinking produces shorter tapes = simpler terms.
+#[allow(dead_code)]
+fn arb_bytes(max_depth: u32) -> BoxedStrategy<Bytes> {
+    // Tape size scales with depth: deeper terms need more bytes
+    let max_tape = (10 * (max_depth as usize + 1)).max(20);
+    proptest::collection::vec(any::<u8>(), 1..max_tape)
+        .prop_map(move |tape| {
+            let mut reader = TapeReader::new(&tape);
+            build_bytes_from_tape(&mut reader, max_depth)
+        })
+        .boxed()
+}
+
 /// Generate an arbitrary `List` term with bounded depth.
 ///
 /// Uses a flat `Vec<u8>` tape interpreted by `build_list_from_tape`.
@@ -1113,6 +1743,70 @@ fn arb_map(max_depth: u32) -> BoxedStrategy<Map> {
         .boxed()
 }
 
+/// Generate an arbitrary `Set` term with bounded depth.
+///
+/// Uses a flat `Vec<u8>` tape interpreted by `build_set_from_tape`.
+/// Proptest shrinking produces shorter tapes = simpler terms.
+#[allow(dead_code)]
+fn arb_set(max_depth: u32) -> BoxedStrategy<Set> {
+    // Tape size scales with depth: deeper terms need more bytes
+    let max_tape = (10 * (max_depth as usize + 1)).max(20);
+    proptest::collection::vec(any::<u8>(), 1..max_tape)
+        .prop_map(move |tape| {
+            let mut reader = TapeReader::new(&tape);
+            build_set_from_tape(&mut reader, max_depth)
+        })
+        .boxed()
+}
+
+/// Generate an arbitrary `Pathmap` term with bounded depth.
+///
+/// Uses a flat `Vec<u8>` tape interpreted by `build_pathmap_from_tape`.
+/// Proptest shrinking produces shorter tapes = simpler terms.
+#[allow(dead_code)]
+fn arb_pathmap(max_depth: u32) -> BoxedStrategy<Pathmap> {
+    // Tape size scales with depth: deeper terms need more bytes
+    let max_tape = (10 * (max_depth as usize + 1)).max(20);
+    proptest::collection::vec(any::<u8>(), 1..max_tape)
+        .prop_map(move |tape| {
+            let mut reader = TapeReader::new(&tape);
+            build_pathmap_from_tape(&mut reader, max_depth)
+        })
+        .boxed()
+}
+
+/// Generate an arbitrary `ReadZipper` term with bounded depth.
+///
+/// Uses a flat `Vec<u8>` tape interpreted by `build_readzipper_from_tape`.
+/// Proptest shrinking produces shorter tapes = simpler terms.
+#[allow(dead_code)]
+fn arb_readzipper(max_depth: u32) -> BoxedStrategy<ReadZipper> {
+    // Tape size scales with depth: deeper terms need more bytes
+    let max_tape = (10 * (max_depth as usize + 1)).max(20);
+    proptest::collection::vec(any::<u8>(), 1..max_tape)
+        .prop_map(move |tape| {
+            let mut reader = TapeReader::new(&tape);
+            build_readzipper_from_tape(&mut reader, max_depth)
+        })
+        .boxed()
+}
+
+/// Generate an arbitrary `WriteZipper` term with bounded depth.
+///
+/// Uses a flat `Vec<u8>` tape interpreted by `build_writezipper_from_tape`.
+/// Proptest shrinking produces shorter tapes = simpler terms.
+#[allow(dead_code)]
+fn arb_writezipper(max_depth: u32) -> BoxedStrategy<WriteZipper> {
+    // Tape size scales with depth: deeper terms need more bytes
+    let max_tape = (10 * (max_depth as usize + 1)).max(20);
+    proptest::collection::vec(any::<u8>(), 1..max_tape)
+        .prop_map(move |tape| {
+            let mut reader = TapeReader::new(&tape);
+            build_writezipper_from_tape(&mut reader, max_depth)
+        })
+        .boxed()
+}
+
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(100))]
 
@@ -1134,7 +1828,14 @@ proptest! {
 
     #[test]
     fn proc_display_parse_roundtrip(term in arb_proc(3)) {
+        // GRIND diagnostic (gated on env GRIND_DIAG): print the AST and its
+        // display + time the parse, so slow / unparseable shapes surface
+        // directly (the generated test file is regenerated on every build,
+        // so this diagnostic lives in the emitter — macros/.../strategies.rs).
+        let __grind_diag = std::env::var("GRIND_DIAG").is_ok();
+        if __grind_diag { eprintln!("GRIND-Proc-GEN ast={:?}", term); }
         let displayed = format!("{}", term);
+        if __grind_diag { eprintln!("GRIND-Proc-DISP disp={:?}", displayed); }
         // Skip terms whose display is too long (parser may overflow)
         if displayed.len() > 500 {
             return Ok(());
@@ -1148,10 +1849,12 @@ proptest! {
         // Canonical-form idempotence:
         //   Parse(Display(Parse(s))) ≡ Parse(s) for any s that
         //   the generator emits.
+        let __grind_t0 = std::time::Instant::now();
         let parsed = Proc::parse(&displayed)
             .unwrap_or_else(|e| panic!(
                 "arb_proc produced unparseable surface term {:?}: {:?}",
                 displayed, e));
+        if __grind_diag { eprintln!("GRIND-Proc-PARSE-OK elapsed={:?} disp={:?}", __grind_t0.elapsed(), displayed); }
         let canonical = format!("{}", parsed);
         if canonical.len() > 500 { return Ok(()); }
         let reparsed = Proc::parse(&canonical).unwrap_or_else(|e| panic!(
@@ -1188,7 +1891,9 @@ proptest! {
     #[test]
     fn proc_parse_determinism(term in arb_proc(2)) {
         mettail_runtime::clear_var_cache();
+        let __grind_diag = std::env::var("GRIND_DIAG").is_ok();
         let displayed = format!("{}", term);
+        if __grind_diag { eprintln!("GRIND-Proc-DET-DISP ast={:?} disp={:?}", term, displayed); }
         // Skip terms whose display is too long (parser may overflow)
         if displayed.len() > 500 {
             return Ok(());
@@ -1230,7 +1935,14 @@ proptest! {
 
     #[test]
     fn name_display_parse_roundtrip(term in arb_name(3)) {
+        // GRIND diagnostic (gated on env GRIND_DIAG): print the AST and its
+        // display + time the parse, so slow / unparseable shapes surface
+        // directly (the generated test file is regenerated on every build,
+        // so this diagnostic lives in the emitter — macros/.../strategies.rs).
+        let __grind_diag = std::env::var("GRIND_DIAG").is_ok();
+        if __grind_diag { eprintln!("GRIND-Name-GEN ast={:?}", term); }
         let displayed = format!("{}", term);
+        if __grind_diag { eprintln!("GRIND-Name-DISP disp={:?}", displayed); }
         // Skip terms whose display is too long (parser may overflow)
         if displayed.len() > 500 {
             return Ok(());
@@ -1244,10 +1956,12 @@ proptest! {
         // Canonical-form idempotence:
         //   Parse(Display(Parse(s))) ≡ Parse(s) for any s that
         //   the generator emits.
+        let __grind_t0 = std::time::Instant::now();
         let parsed = Name::parse(&displayed)
             .unwrap_or_else(|e| panic!(
                 "arb_name produced unparseable surface term {:?}: {:?}",
                 displayed, e));
+        if __grind_diag { eprintln!("GRIND-Name-PARSE-OK elapsed={:?} disp={:?}", __grind_t0.elapsed(), displayed); }
         let canonical = format!("{}", parsed);
         if canonical.len() > 500 { return Ok(()); }
         let reparsed = Name::parse(&canonical).unwrap_or_else(|e| panic!(
@@ -1284,7 +1998,9 @@ proptest! {
     #[test]
     fn name_parse_determinism(term in arb_name(2)) {
         mettail_runtime::clear_var_cache();
+        let __grind_diag = std::env::var("GRIND_DIAG").is_ok();
         let displayed = format!("{}", term);
+        if __grind_diag { eprintln!("GRIND-Name-DET-DISP ast={:?} disp={:?}", term, displayed); }
         // Skip terms whose display is too long (parser may overflow)
         if displayed.len() > 500 {
             return Ok(());
@@ -1293,6 +2009,220 @@ proptest! {
         let p1 = Name::parse(&displayed);
         mettail_runtime::clear_var_cache();
         let p2 = Name::parse(&displayed);
+        match (p1, p2) {
+            (Ok(t1), Ok(t2)) => {
+                let d1 = format!("{}", t1);
+                let d2 = format!("{}", t2);
+                prop_assert_eq!(d1, d2,
+                    "Parse determinism failed: two parses of the same string differ");
+            }
+            (Err(_), Err(_)) => { /* Both failed — consistent */ }
+            (Ok(_), Err(e)) | (Err(e), Ok(_)) => {
+                prop_assert!(false,
+                    "Parse determinism failed: one parse succeeded, other failed: {}", e);
+            }
+        }
+    }
+
+    #[test]
+    fn inputbind_debug_does_not_panic(term in arb_inputbind(4)) {
+        let _ = format!("{:?}", term);
+    }
+
+    #[test]
+    fn inputbind_display_does_not_panic(term in arb_inputbind(4)) {
+        let _ = format!("{}", term);
+    }
+
+    #[test]
+    fn inputbind_clone_eq(term in arb_inputbind(4)) {
+        let cloned = term.clone();
+        prop_assert_eq!(term, cloned);
+    }
+
+    #[test]
+    fn inputbind_display_parse_roundtrip(term in arb_inputbind(3)) {
+        // GRIND diagnostic (gated on env GRIND_DIAG): print the AST and its
+        // display + time the parse, so slow / unparseable shapes surface
+        // directly (the generated test file is regenerated on every build,
+        // so this diagnostic lives in the emitter — macros/.../strategies.rs).
+        let __grind_diag = std::env::var("GRIND_DIAG").is_ok();
+        if __grind_diag { eprintln!("GRIND-InputBind-GEN ast={:?}", term); }
+        let displayed = format!("{}", term);
+        if __grind_diag { eprintln!("GRIND-InputBind-DISP disp={:?}", displayed); }
+        // Skip terms whose display is too long (parser may overflow)
+        if displayed.len() > 500 {
+            return Ok(());
+        }
+        // GRAMMAR-AWARE ROUNDTRIP CONTRACT (strengthened from
+        // silent-skip): the literal-build codegen now projects
+        // tape values onto the language's admitted literal
+        // domain (see rust_code_rewrite + automaton_walk::classify).
+        // Any parse failure here is a real regression — the
+        // generator emitted something the grammar does not admit.
+        // Canonical-form idempotence:
+        //   Parse(Display(Parse(s))) ≡ Parse(s) for any s that
+        //   the generator emits.
+        let __grind_t0 = std::time::Instant::now();
+        let parsed = InputBind::parse(&displayed)
+            .unwrap_or_else(|e| panic!(
+                "arb_inputbind produced unparseable surface term {:?}: {:?}",
+                displayed, e));
+        if __grind_diag { eprintln!("GRIND-InputBind-PARSE-OK elapsed={:?} disp={:?}", __grind_t0.elapsed(), displayed); }
+        let canonical = format!("{}", parsed);
+        if canonical.len() > 500 { return Ok(()); }
+        let reparsed = InputBind::parse(&canonical).unwrap_or_else(|e| panic!(
+            "Parse(Display(Parse(s))) should succeed for canonical form {:?}: {:?}",
+            canonical, e));
+        let recanonical = format!("{}", reparsed);
+        prop_assert_eq!(canonical, recanonical,
+            "Display should be idempotent after canonicalization: \
+             display(parse(display(parse(display(t))))) == display(parse(display(t)))");
+    }
+
+    #[test]
+    fn inputbind_strong_roundtrip(term in arb_inputbind(1)) {
+        mettail_runtime::clear_var_cache();
+        let displayed = format!("{}", term);
+        // Skip terms whose display is too long (parser may overflow)
+        if displayed.len() > 500 {
+            return Ok(());
+        }
+        mettail_runtime::clear_var_cache();
+        if let Ok(parsed) = InputBind::parse(&displayed) {
+            let canonical = format!("{}", parsed);
+            if canonical.len() > 500 { return Ok(()); }
+            mettail_runtime::clear_var_cache();
+            let reparsed = InputBind::parse(&canonical).unwrap_or_else(|e| panic!(
+                "Strong roundtrip: canonical form {:?} did not parse: {:?}",
+                canonical, e));
+            let recanonical = format!("{}", reparsed);
+            prop_assert_eq!(&canonical, &recanonical,
+                "Strong roundtrip: canonical display not stable after double parse");
+        }
+    }
+
+    #[test]
+    fn inputbind_parse_determinism(term in arb_inputbind(2)) {
+        mettail_runtime::clear_var_cache();
+        let __grind_diag = std::env::var("GRIND_DIAG").is_ok();
+        let displayed = format!("{}", term);
+        if __grind_diag { eprintln!("GRIND-InputBind-DET-DISP ast={:?} disp={:?}", term, displayed); }
+        // Skip terms whose display is too long (parser may overflow)
+        if displayed.len() > 500 {
+            return Ok(());
+        }
+        mettail_runtime::clear_var_cache();
+        let p1 = InputBind::parse(&displayed);
+        mettail_runtime::clear_var_cache();
+        let p2 = InputBind::parse(&displayed);
+        match (p1, p2) {
+            (Ok(t1), Ok(t2)) => {
+                let d1 = format!("{}", t1);
+                let d2 = format!("{}", t2);
+                prop_assert_eq!(d1, d2,
+                    "Parse determinism failed: two parses of the same string differ");
+            }
+            (Err(_), Err(_)) => { /* Both failed — consistent */ }
+            (Ok(_), Err(e)) | (Err(e), Ok(_)) => {
+                prop_assert!(false,
+                    "Parse determinism failed: one parse succeeded, other failed: {}", e);
+            }
+        }
+    }
+
+    #[test]
+    fn forrow_debug_does_not_panic(term in arb_forrow(4)) {
+        let _ = format!("{:?}", term);
+    }
+
+    #[test]
+    fn forrow_display_does_not_panic(term in arb_forrow(4)) {
+        let _ = format!("{}", term);
+    }
+
+    #[test]
+    fn forrow_clone_eq(term in arb_forrow(4)) {
+        let cloned = term.clone();
+        prop_assert_eq!(term, cloned);
+    }
+
+    #[test]
+    fn forrow_display_parse_roundtrip(term in arb_forrow(3)) {
+        // GRIND diagnostic (gated on env GRIND_DIAG): print the AST and its
+        // display + time the parse, so slow / unparseable shapes surface
+        // directly (the generated test file is regenerated on every build,
+        // so this diagnostic lives in the emitter — macros/.../strategies.rs).
+        let __grind_diag = std::env::var("GRIND_DIAG").is_ok();
+        if __grind_diag { eprintln!("GRIND-ForRow-GEN ast={:?}", term); }
+        let displayed = format!("{}", term);
+        if __grind_diag { eprintln!("GRIND-ForRow-DISP disp={:?}", displayed); }
+        // Skip terms whose display is too long (parser may overflow)
+        if displayed.len() > 500 {
+            return Ok(());
+        }
+        // GRAMMAR-AWARE ROUNDTRIP CONTRACT (strengthened from
+        // silent-skip): the literal-build codegen now projects
+        // tape values onto the language's admitted literal
+        // domain (see rust_code_rewrite + automaton_walk::classify).
+        // Any parse failure here is a real regression — the
+        // generator emitted something the grammar does not admit.
+        // Canonical-form idempotence:
+        //   Parse(Display(Parse(s))) ≡ Parse(s) for any s that
+        //   the generator emits.
+        let __grind_t0 = std::time::Instant::now();
+        let parsed = ForRow::parse(&displayed)
+            .unwrap_or_else(|e| panic!(
+                "arb_forrow produced unparseable surface term {:?}: {:?}",
+                displayed, e));
+        if __grind_diag { eprintln!("GRIND-ForRow-PARSE-OK elapsed={:?} disp={:?}", __grind_t0.elapsed(), displayed); }
+        let canonical = format!("{}", parsed);
+        if canonical.len() > 500 { return Ok(()); }
+        let reparsed = ForRow::parse(&canonical).unwrap_or_else(|e| panic!(
+            "Parse(Display(Parse(s))) should succeed for canonical form {:?}: {:?}",
+            canonical, e));
+        let recanonical = format!("{}", reparsed);
+        prop_assert_eq!(canonical, recanonical,
+            "Display should be idempotent after canonicalization: \
+             display(parse(display(parse(display(t))))) == display(parse(display(t)))");
+    }
+
+    #[test]
+    fn forrow_strong_roundtrip(term in arb_forrow(1)) {
+        mettail_runtime::clear_var_cache();
+        let displayed = format!("{}", term);
+        // Skip terms whose display is too long (parser may overflow)
+        if displayed.len() > 500 {
+            return Ok(());
+        }
+        mettail_runtime::clear_var_cache();
+        if let Ok(parsed) = ForRow::parse(&displayed) {
+            let canonical = format!("{}", parsed);
+            if canonical.len() > 500 { return Ok(()); }
+            mettail_runtime::clear_var_cache();
+            let reparsed = ForRow::parse(&canonical).unwrap_or_else(|e| panic!(
+                "Strong roundtrip: canonical form {:?} did not parse: {:?}",
+                canonical, e));
+            let recanonical = format!("{}", reparsed);
+            prop_assert_eq!(&canonical, &recanonical,
+                "Strong roundtrip: canonical display not stable after double parse");
+        }
+    }
+
+    #[test]
+    fn forrow_parse_determinism(term in arb_forrow(2)) {
+        mettail_runtime::clear_var_cache();
+        let __grind_diag = std::env::var("GRIND_DIAG").is_ok();
+        let displayed = format!("{}", term);
+        if __grind_diag { eprintln!("GRIND-ForRow-DET-DISP ast={:?} disp={:?}", term, displayed); }
+        // Skip terms whose display is too long (parser may overflow)
+        if displayed.len() > 500 {
+            return Ok(());
+        }
+        mettail_runtime::clear_var_cache();
+        let p1 = ForRow::parse(&displayed);
+        mettail_runtime::clear_var_cache();
+        let p2 = ForRow::parse(&displayed);
         match (p1, p2) {
             (Ok(t1), Ok(t2)) => {
                 let d1 = format!("{}", t1);
@@ -1326,7 +2256,14 @@ proptest! {
 
     #[test]
     fn int_display_parse_roundtrip(term in arb_int(3)) {
+        // GRIND diagnostic (gated on env GRIND_DIAG): print the AST and its
+        // display + time the parse, so slow / unparseable shapes surface
+        // directly (the generated test file is regenerated on every build,
+        // so this diagnostic lives in the emitter — macros/.../strategies.rs).
+        let __grind_diag = std::env::var("GRIND_DIAG").is_ok();
+        if __grind_diag { eprintln!("GRIND-Int-GEN ast={:?}", term); }
         let displayed = format!("{}", term);
+        if __grind_diag { eprintln!("GRIND-Int-DISP disp={:?}", displayed); }
         // Skip terms whose display is too long (parser may overflow)
         if displayed.len() > 500 {
             return Ok(());
@@ -1340,10 +2277,12 @@ proptest! {
         // Canonical-form idempotence:
         //   Parse(Display(Parse(s))) ≡ Parse(s) for any s that
         //   the generator emits.
+        let __grind_t0 = std::time::Instant::now();
         let parsed = Int::parse(&displayed)
             .unwrap_or_else(|e| panic!(
                 "arb_int produced unparseable surface term {:?}: {:?}",
                 displayed, e));
+        if __grind_diag { eprintln!("GRIND-Int-PARSE-OK elapsed={:?} disp={:?}", __grind_t0.elapsed(), displayed); }
         let canonical = format!("{}", parsed);
         if canonical.len() > 500 { return Ok(()); }
         let reparsed = Int::parse(&canonical).unwrap_or_else(|e| panic!(
@@ -1380,7 +2319,9 @@ proptest! {
     #[test]
     fn int_parse_determinism(term in arb_int(2)) {
         mettail_runtime::clear_var_cache();
+        let __grind_diag = std::env::var("GRIND_DIAG").is_ok();
         let displayed = format!("{}", term);
+        if __grind_diag { eprintln!("GRIND-Int-DET-DISP ast={:?} disp={:?}", term, displayed); }
         // Skip terms whose display is too long (parser may overflow)
         if displayed.len() > 500 {
             return Ok(());
@@ -1422,7 +2363,14 @@ proptest! {
 
     #[test]
     fn uint32_display_parse_roundtrip(term in arb_uint32(3)) {
+        // GRIND diagnostic (gated on env GRIND_DIAG): print the AST and its
+        // display + time the parse, so slow / unparseable shapes surface
+        // directly (the generated test file is regenerated on every build,
+        // so this diagnostic lives in the emitter — macros/.../strategies.rs).
+        let __grind_diag = std::env::var("GRIND_DIAG").is_ok();
+        if __grind_diag { eprintln!("GRIND-UInt32-GEN ast={:?}", term); }
         let displayed = format!("{}", term);
+        if __grind_diag { eprintln!("GRIND-UInt32-DISP disp={:?}", displayed); }
         // Skip terms whose display is too long (parser may overflow)
         if displayed.len() > 500 {
             return Ok(());
@@ -1436,10 +2384,12 @@ proptest! {
         // Canonical-form idempotence:
         //   Parse(Display(Parse(s))) ≡ Parse(s) for any s that
         //   the generator emits.
+        let __grind_t0 = std::time::Instant::now();
         let parsed = UInt32::parse(&displayed)
             .unwrap_or_else(|e| panic!(
                 "arb_uint32 produced unparseable surface term {:?}: {:?}",
                 displayed, e));
+        if __grind_diag { eprintln!("GRIND-UInt32-PARSE-OK elapsed={:?} disp={:?}", __grind_t0.elapsed(), displayed); }
         let canonical = format!("{}", parsed);
         if canonical.len() > 500 { return Ok(()); }
         let reparsed = UInt32::parse(&canonical).unwrap_or_else(|e| panic!(
@@ -1476,7 +2426,9 @@ proptest! {
     #[test]
     fn uint32_parse_determinism(term in arb_uint32(2)) {
         mettail_runtime::clear_var_cache();
+        let __grind_diag = std::env::var("GRIND_DIAG").is_ok();
         let displayed = format!("{}", term);
+        if __grind_diag { eprintln!("GRIND-UInt32-DET-DISP ast={:?} disp={:?}", term, displayed); }
         // Skip terms whose display is too long (parser may overflow)
         if displayed.len() > 500 {
             return Ok(());
@@ -1518,7 +2470,14 @@ proptest! {
 
     #[test]
     fn bigint_display_parse_roundtrip(term in arb_bigint(3)) {
+        // GRIND diagnostic (gated on env GRIND_DIAG): print the AST and its
+        // display + time the parse, so slow / unparseable shapes surface
+        // directly (the generated test file is regenerated on every build,
+        // so this diagnostic lives in the emitter — macros/.../strategies.rs).
+        let __grind_diag = std::env::var("GRIND_DIAG").is_ok();
+        if __grind_diag { eprintln!("GRIND-BigInt-GEN ast={:?}", term); }
         let displayed = format!("{}", term);
+        if __grind_diag { eprintln!("GRIND-BigInt-DISP disp={:?}", displayed); }
         // Skip terms whose display is too long (parser may overflow)
         if displayed.len() > 500 {
             return Ok(());
@@ -1532,10 +2491,12 @@ proptest! {
         // Canonical-form idempotence:
         //   Parse(Display(Parse(s))) ≡ Parse(s) for any s that
         //   the generator emits.
+        let __grind_t0 = std::time::Instant::now();
         let parsed = BigInt::parse(&displayed)
             .unwrap_or_else(|e| panic!(
                 "arb_bigint produced unparseable surface term {:?}: {:?}",
                 displayed, e));
+        if __grind_diag { eprintln!("GRIND-BigInt-PARSE-OK elapsed={:?} disp={:?}", __grind_t0.elapsed(), displayed); }
         let canonical = format!("{}", parsed);
         if canonical.len() > 500 { return Ok(()); }
         let reparsed = BigInt::parse(&canonical).unwrap_or_else(|e| panic!(
@@ -1572,7 +2533,9 @@ proptest! {
     #[test]
     fn bigint_parse_determinism(term in arb_bigint(2)) {
         mettail_runtime::clear_var_cache();
+        let __grind_diag = std::env::var("GRIND_DIAG").is_ok();
         let displayed = format!("{}", term);
+        if __grind_diag { eprintln!("GRIND-BigInt-DET-DISP ast={:?} disp={:?}", term, displayed); }
         // Skip terms whose display is too long (parser may overflow)
         if displayed.len() > 500 {
             return Ok(());
@@ -1614,7 +2577,14 @@ proptest! {
 
     #[test]
     fn bigrat_display_parse_roundtrip(term in arb_bigrat(3)) {
+        // GRIND diagnostic (gated on env GRIND_DIAG): print the AST and its
+        // display + time the parse, so slow / unparseable shapes surface
+        // directly (the generated test file is regenerated on every build,
+        // so this diagnostic lives in the emitter — macros/.../strategies.rs).
+        let __grind_diag = std::env::var("GRIND_DIAG").is_ok();
+        if __grind_diag { eprintln!("GRIND-BigRat-GEN ast={:?}", term); }
         let displayed = format!("{}", term);
+        if __grind_diag { eprintln!("GRIND-BigRat-DISP disp={:?}", displayed); }
         // Skip terms whose display is too long (parser may overflow)
         if displayed.len() > 500 {
             return Ok(());
@@ -1628,10 +2598,12 @@ proptest! {
         // Canonical-form idempotence:
         //   Parse(Display(Parse(s))) ≡ Parse(s) for any s that
         //   the generator emits.
+        let __grind_t0 = std::time::Instant::now();
         let parsed = BigRat::parse(&displayed)
             .unwrap_or_else(|e| panic!(
                 "arb_bigrat produced unparseable surface term {:?}: {:?}",
                 displayed, e));
+        if __grind_diag { eprintln!("GRIND-BigRat-PARSE-OK elapsed={:?} disp={:?}", __grind_t0.elapsed(), displayed); }
         let canonical = format!("{}", parsed);
         if canonical.len() > 500 { return Ok(()); }
         let reparsed = BigRat::parse(&canonical).unwrap_or_else(|e| panic!(
@@ -1668,7 +2640,9 @@ proptest! {
     #[test]
     fn bigrat_parse_determinism(term in arb_bigrat(2)) {
         mettail_runtime::clear_var_cache();
+        let __grind_diag = std::env::var("GRIND_DIAG").is_ok();
         let displayed = format!("{}", term);
+        if __grind_diag { eprintln!("GRIND-BigRat-DET-DISP ast={:?} disp={:?}", term, displayed); }
         // Skip terms whose display is too long (parser may overflow)
         if displayed.len() > 500 {
             return Ok(());
@@ -1710,7 +2684,14 @@ proptest! {
 
     #[test]
     fn fixed_display_parse_roundtrip(term in arb_fixed(3)) {
+        // GRIND diagnostic (gated on env GRIND_DIAG): print the AST and its
+        // display + time the parse, so slow / unparseable shapes surface
+        // directly (the generated test file is regenerated on every build,
+        // so this diagnostic lives in the emitter — macros/.../strategies.rs).
+        let __grind_diag = std::env::var("GRIND_DIAG").is_ok();
+        if __grind_diag { eprintln!("GRIND-Fixed-GEN ast={:?}", term); }
         let displayed = format!("{}", term);
+        if __grind_diag { eprintln!("GRIND-Fixed-DISP disp={:?}", displayed); }
         // Skip terms whose display is too long (parser may overflow)
         if displayed.len() > 500 {
             return Ok(());
@@ -1724,10 +2705,12 @@ proptest! {
         // Canonical-form idempotence:
         //   Parse(Display(Parse(s))) ≡ Parse(s) for any s that
         //   the generator emits.
+        let __grind_t0 = std::time::Instant::now();
         let parsed = Fixed::parse(&displayed)
             .unwrap_or_else(|e| panic!(
                 "arb_fixed produced unparseable surface term {:?}: {:?}",
                 displayed, e));
+        if __grind_diag { eprintln!("GRIND-Fixed-PARSE-OK elapsed={:?} disp={:?}", __grind_t0.elapsed(), displayed); }
         let canonical = format!("{}", parsed);
         if canonical.len() > 500 { return Ok(()); }
         let reparsed = Fixed::parse(&canonical).unwrap_or_else(|e| panic!(
@@ -1764,7 +2747,9 @@ proptest! {
     #[test]
     fn fixed_parse_determinism(term in arb_fixed(2)) {
         mettail_runtime::clear_var_cache();
+        let __grind_diag = std::env::var("GRIND_DIAG").is_ok();
         let displayed = format!("{}", term);
+        if __grind_diag { eprintln!("GRIND-Fixed-DET-DISP ast={:?} disp={:?}", term, displayed); }
         // Skip terms whose display is too long (parser may overflow)
         if displayed.len() > 500 {
             return Ok(());
@@ -1806,7 +2791,14 @@ proptest! {
 
     #[test]
     fn float_display_parse_roundtrip(term in arb_float(3)) {
+        // GRIND diagnostic (gated on env GRIND_DIAG): print the AST and its
+        // display + time the parse, so slow / unparseable shapes surface
+        // directly (the generated test file is regenerated on every build,
+        // so this diagnostic lives in the emitter — macros/.../strategies.rs).
+        let __grind_diag = std::env::var("GRIND_DIAG").is_ok();
+        if __grind_diag { eprintln!("GRIND-Float-GEN ast={:?}", term); }
         let displayed = format!("{}", term);
+        if __grind_diag { eprintln!("GRIND-Float-DISP disp={:?}", displayed); }
         // Skip terms whose display is too long (parser may overflow)
         if displayed.len() > 500 {
             return Ok(());
@@ -1820,10 +2812,12 @@ proptest! {
         // Canonical-form idempotence:
         //   Parse(Display(Parse(s))) ≡ Parse(s) for any s that
         //   the generator emits.
+        let __grind_t0 = std::time::Instant::now();
         let parsed = Float::parse(&displayed)
             .unwrap_or_else(|e| panic!(
                 "arb_float produced unparseable surface term {:?}: {:?}",
                 displayed, e));
+        if __grind_diag { eprintln!("GRIND-Float-PARSE-OK elapsed={:?} disp={:?}", __grind_t0.elapsed(), displayed); }
         let canonical = format!("{}", parsed);
         if canonical.len() > 500 { return Ok(()); }
         let reparsed = Float::parse(&canonical).unwrap_or_else(|e| panic!(
@@ -1860,7 +2854,9 @@ proptest! {
     #[test]
     fn float_parse_determinism(term in arb_float(2)) {
         mettail_runtime::clear_var_cache();
+        let __grind_diag = std::env::var("GRIND_DIAG").is_ok();
         let displayed = format!("{}", term);
+        if __grind_diag { eprintln!("GRIND-Float-DET-DISP ast={:?} disp={:?}", term, displayed); }
         // Skip terms whose display is too long (parser may overflow)
         if displayed.len() > 500 {
             return Ok(());
@@ -1902,7 +2898,14 @@ proptest! {
 
     #[test]
     fn bool_display_parse_roundtrip(term in arb_bool(3)) {
+        // GRIND diagnostic (gated on env GRIND_DIAG): print the AST and its
+        // display + time the parse, so slow / unparseable shapes surface
+        // directly (the generated test file is regenerated on every build,
+        // so this diagnostic lives in the emitter — macros/.../strategies.rs).
+        let __grind_diag = std::env::var("GRIND_DIAG").is_ok();
+        if __grind_diag { eprintln!("GRIND-Bool-GEN ast={:?}", term); }
         let displayed = format!("{}", term);
+        if __grind_diag { eprintln!("GRIND-Bool-DISP disp={:?}", displayed); }
         // Skip terms whose display is too long (parser may overflow)
         if displayed.len() > 500 {
             return Ok(());
@@ -1916,10 +2919,12 @@ proptest! {
         // Canonical-form idempotence:
         //   Parse(Display(Parse(s))) ≡ Parse(s) for any s that
         //   the generator emits.
+        let __grind_t0 = std::time::Instant::now();
         let parsed = Bool::parse(&displayed)
             .unwrap_or_else(|e| panic!(
                 "arb_bool produced unparseable surface term {:?}: {:?}",
                 displayed, e));
+        if __grind_diag { eprintln!("GRIND-Bool-PARSE-OK elapsed={:?} disp={:?}", __grind_t0.elapsed(), displayed); }
         let canonical = format!("{}", parsed);
         if canonical.len() > 500 { return Ok(()); }
         let reparsed = Bool::parse(&canonical).unwrap_or_else(|e| panic!(
@@ -1956,7 +2961,9 @@ proptest! {
     #[test]
     fn bool_parse_determinism(term in arb_bool(2)) {
         mettail_runtime::clear_var_cache();
+        let __grind_diag = std::env::var("GRIND_DIAG").is_ok();
         let displayed = format!("{}", term);
+        if __grind_diag { eprintln!("GRIND-Bool-DET-DISP ast={:?} disp={:?}", term, displayed); }
         // Skip terms whose display is too long (parser may overflow)
         if displayed.len() > 500 {
             return Ok(());
@@ -1998,7 +3005,14 @@ proptest! {
 
     #[test]
     fn str_display_parse_roundtrip(term in arb_str(3)) {
+        // GRIND diagnostic (gated on env GRIND_DIAG): print the AST and its
+        // display + time the parse, so slow / unparseable shapes surface
+        // directly (the generated test file is regenerated on every build,
+        // so this diagnostic lives in the emitter — macros/.../strategies.rs).
+        let __grind_diag = std::env::var("GRIND_DIAG").is_ok();
+        if __grind_diag { eprintln!("GRIND-Str-GEN ast={:?}", term); }
         let displayed = format!("{}", term);
+        if __grind_diag { eprintln!("GRIND-Str-DISP disp={:?}", displayed); }
         // Skip terms whose display is too long (parser may overflow)
         if displayed.len() > 500 {
             return Ok(());
@@ -2012,10 +3026,12 @@ proptest! {
         // Canonical-form idempotence:
         //   Parse(Display(Parse(s))) ≡ Parse(s) for any s that
         //   the generator emits.
+        let __grind_t0 = std::time::Instant::now();
         let parsed = Str::parse(&displayed)
             .unwrap_or_else(|e| panic!(
                 "arb_str produced unparseable surface term {:?}: {:?}",
                 displayed, e));
+        if __grind_diag { eprintln!("GRIND-Str-PARSE-OK elapsed={:?} disp={:?}", __grind_t0.elapsed(), displayed); }
         let canonical = format!("{}", parsed);
         if canonical.len() > 500 { return Ok(()); }
         let reparsed = Str::parse(&canonical).unwrap_or_else(|e| panic!(
@@ -2052,7 +3068,9 @@ proptest! {
     #[test]
     fn str_parse_determinism(term in arb_str(2)) {
         mettail_runtime::clear_var_cache();
+        let __grind_diag = std::env::var("GRIND_DIAG").is_ok();
         let displayed = format!("{}", term);
+        if __grind_diag { eprintln!("GRIND-Str-DET-DISP ast={:?} disp={:?}", term, displayed); }
         // Skip terms whose display is too long (parser may overflow)
         if displayed.len() > 500 {
             return Ok(());
@@ -2061,6 +3079,113 @@ proptest! {
         let p1 = Str::parse(&displayed);
         mettail_runtime::clear_var_cache();
         let p2 = Str::parse(&displayed);
+        match (p1, p2) {
+            (Ok(t1), Ok(t2)) => {
+                let d1 = format!("{}", t1);
+                let d2 = format!("{}", t2);
+                prop_assert_eq!(d1, d2,
+                    "Parse determinism failed: two parses of the same string differ");
+            }
+            (Err(_), Err(_)) => { /* Both failed — consistent */ }
+            (Ok(_), Err(e)) | (Err(e), Ok(_)) => {
+                prop_assert!(false,
+                    "Parse determinism failed: one parse succeeded, other failed: {}", e);
+            }
+        }
+    }
+
+    #[test]
+    fn bytes_debug_does_not_panic(term in arb_bytes(4)) {
+        let _ = format!("{:?}", term);
+    }
+
+    #[test]
+    fn bytes_display_does_not_panic(term in arb_bytes(4)) {
+        let _ = format!("{}", term);
+    }
+
+    #[test]
+    fn bytes_clone_eq(term in arb_bytes(4)) {
+        let cloned = term.clone();
+        prop_assert_eq!(term, cloned);
+    }
+
+    #[test]
+    fn bytes_display_parse_roundtrip(term in arb_bytes(3)) {
+        // GRIND diagnostic (gated on env GRIND_DIAG): print the AST and its
+        // display + time the parse, so slow / unparseable shapes surface
+        // directly (the generated test file is regenerated on every build,
+        // so this diagnostic lives in the emitter — macros/.../strategies.rs).
+        let __grind_diag = std::env::var("GRIND_DIAG").is_ok();
+        if __grind_diag { eprintln!("GRIND-Bytes-GEN ast={:?}", term); }
+        let displayed = format!("{}", term);
+        if __grind_diag { eprintln!("GRIND-Bytes-DISP disp={:?}", displayed); }
+        // Skip terms whose display is too long (parser may overflow)
+        if displayed.len() > 500 {
+            return Ok(());
+        }
+        // GRAMMAR-AWARE ROUNDTRIP CONTRACT (strengthened from
+        // silent-skip): the literal-build codegen now projects
+        // tape values onto the language's admitted literal
+        // domain (see rust_code_rewrite + automaton_walk::classify).
+        // Any parse failure here is a real regression — the
+        // generator emitted something the grammar does not admit.
+        // Canonical-form idempotence:
+        //   Parse(Display(Parse(s))) ≡ Parse(s) for any s that
+        //   the generator emits.
+        let __grind_t0 = std::time::Instant::now();
+        let parsed = Bytes::parse(&displayed)
+            .unwrap_or_else(|e| panic!(
+                "arb_bytes produced unparseable surface term {:?}: {:?}",
+                displayed, e));
+        if __grind_diag { eprintln!("GRIND-Bytes-PARSE-OK elapsed={:?} disp={:?}", __grind_t0.elapsed(), displayed); }
+        let canonical = format!("{}", parsed);
+        if canonical.len() > 500 { return Ok(()); }
+        let reparsed = Bytes::parse(&canonical).unwrap_or_else(|e| panic!(
+            "Parse(Display(Parse(s))) should succeed for canonical form {:?}: {:?}",
+            canonical, e));
+        let recanonical = format!("{}", reparsed);
+        prop_assert_eq!(canonical, recanonical,
+            "Display should be idempotent after canonicalization: \
+             display(parse(display(parse(display(t))))) == display(parse(display(t)))");
+    }
+
+    #[test]
+    fn bytes_strong_roundtrip(term in arb_bytes(1)) {
+        mettail_runtime::clear_var_cache();
+        let displayed = format!("{}", term);
+        // Skip terms whose display is too long (parser may overflow)
+        if displayed.len() > 500 {
+            return Ok(());
+        }
+        mettail_runtime::clear_var_cache();
+        if let Ok(parsed) = Bytes::parse(&displayed) {
+            let canonical = format!("{}", parsed);
+            if canonical.len() > 500 { return Ok(()); }
+            mettail_runtime::clear_var_cache();
+            let reparsed = Bytes::parse(&canonical).unwrap_or_else(|e| panic!(
+                "Strong roundtrip: canonical form {:?} did not parse: {:?}",
+                canonical, e));
+            let recanonical = format!("{}", reparsed);
+            prop_assert_eq!(&canonical, &recanonical,
+                "Strong roundtrip: canonical display not stable after double parse");
+        }
+    }
+
+    #[test]
+    fn bytes_parse_determinism(term in arb_bytes(2)) {
+        mettail_runtime::clear_var_cache();
+        let __grind_diag = std::env::var("GRIND_DIAG").is_ok();
+        let displayed = format!("{}", term);
+        if __grind_diag { eprintln!("GRIND-Bytes-DET-DISP ast={:?} disp={:?}", term, displayed); }
+        // Skip terms whose display is too long (parser may overflow)
+        if displayed.len() > 500 {
+            return Ok(());
+        }
+        mettail_runtime::clear_var_cache();
+        let p1 = Bytes::parse(&displayed);
+        mettail_runtime::clear_var_cache();
+        let p2 = Bytes::parse(&displayed);
         match (p1, p2) {
             (Ok(t1), Ok(t2)) => {
                 let d1 = format!("{}", t1);
@@ -2094,7 +3219,14 @@ proptest! {
 
     #[test]
     fn list_display_parse_roundtrip(term in arb_list(3)) {
+        // GRIND diagnostic (gated on env GRIND_DIAG): print the AST and its
+        // display + time the parse, so slow / unparseable shapes surface
+        // directly (the generated test file is regenerated on every build,
+        // so this diagnostic lives in the emitter — macros/.../strategies.rs).
+        let __grind_diag = std::env::var("GRIND_DIAG").is_ok();
+        if __grind_diag { eprintln!("GRIND-List-GEN ast={:?}", term); }
         let displayed = format!("{}", term);
+        if __grind_diag { eprintln!("GRIND-List-DISP disp={:?}", displayed); }
         // Skip terms whose display is too long (parser may overflow)
         if displayed.len() > 500 {
             return Ok(());
@@ -2108,10 +3240,12 @@ proptest! {
         // Canonical-form idempotence:
         //   Parse(Display(Parse(s))) ≡ Parse(s) for any s that
         //   the generator emits.
+        let __grind_t0 = std::time::Instant::now();
         let parsed = List::parse(&displayed)
             .unwrap_or_else(|e| panic!(
                 "arb_list produced unparseable surface term {:?}: {:?}",
                 displayed, e));
+        if __grind_diag { eprintln!("GRIND-List-PARSE-OK elapsed={:?} disp={:?}", __grind_t0.elapsed(), displayed); }
         let canonical = format!("{}", parsed);
         if canonical.len() > 500 { return Ok(()); }
         let reparsed = List::parse(&canonical).unwrap_or_else(|e| panic!(
@@ -2148,7 +3282,9 @@ proptest! {
     #[test]
     fn list_parse_determinism(term in arb_list(2)) {
         mettail_runtime::clear_var_cache();
+        let __grind_diag = std::env::var("GRIND_DIAG").is_ok();
         let displayed = format!("{}", term);
+        if __grind_diag { eprintln!("GRIND-List-DET-DISP ast={:?} disp={:?}", term, displayed); }
         // Skip terms whose display is too long (parser may overflow)
         if displayed.len() > 500 {
             return Ok(());
@@ -2190,7 +3326,14 @@ proptest! {
 
     #[test]
     fn bag_display_parse_roundtrip(term in arb_bag(3)) {
+        // GRIND diagnostic (gated on env GRIND_DIAG): print the AST and its
+        // display + time the parse, so slow / unparseable shapes surface
+        // directly (the generated test file is regenerated on every build,
+        // so this diagnostic lives in the emitter — macros/.../strategies.rs).
+        let __grind_diag = std::env::var("GRIND_DIAG").is_ok();
+        if __grind_diag { eprintln!("GRIND-Bag-GEN ast={:?}", term); }
         let displayed = format!("{}", term);
+        if __grind_diag { eprintln!("GRIND-Bag-DISP disp={:?}", displayed); }
         // Skip terms whose display is too long (parser may overflow)
         if displayed.len() > 500 {
             return Ok(());
@@ -2204,10 +3347,12 @@ proptest! {
         // Canonical-form idempotence:
         //   Parse(Display(Parse(s))) ≡ Parse(s) for any s that
         //   the generator emits.
+        let __grind_t0 = std::time::Instant::now();
         let parsed = Bag::parse(&displayed)
             .unwrap_or_else(|e| panic!(
                 "arb_bag produced unparseable surface term {:?}: {:?}",
                 displayed, e));
+        if __grind_diag { eprintln!("GRIND-Bag-PARSE-OK elapsed={:?} disp={:?}", __grind_t0.elapsed(), displayed); }
         let canonical = format!("{}", parsed);
         if canonical.len() > 500 { return Ok(()); }
         let reparsed = Bag::parse(&canonical).unwrap_or_else(|e| panic!(
@@ -2244,7 +3389,9 @@ proptest! {
     #[test]
     fn bag_parse_determinism(term in arb_bag(2)) {
         mettail_runtime::clear_var_cache();
+        let __grind_diag = std::env::var("GRIND_DIAG").is_ok();
         let displayed = format!("{}", term);
+        if __grind_diag { eprintln!("GRIND-Bag-DET-DISP ast={:?} disp={:?}", term, displayed); }
         // Skip terms whose display is too long (parser may overflow)
         if displayed.len() > 500 {
             return Ok(());
@@ -2286,7 +3433,14 @@ proptest! {
 
     #[test]
     fn map_display_parse_roundtrip(term in arb_map(3)) {
+        // GRIND diagnostic (gated on env GRIND_DIAG): print the AST and its
+        // display + time the parse, so slow / unparseable shapes surface
+        // directly (the generated test file is regenerated on every build,
+        // so this diagnostic lives in the emitter — macros/.../strategies.rs).
+        let __grind_diag = std::env::var("GRIND_DIAG").is_ok();
+        if __grind_diag { eprintln!("GRIND-Map-GEN ast={:?}", term); }
         let displayed = format!("{}", term);
+        if __grind_diag { eprintln!("GRIND-Map-DISP disp={:?}", displayed); }
         // Skip terms whose display is too long (parser may overflow)
         if displayed.len() > 500 {
             return Ok(());
@@ -2300,10 +3454,12 @@ proptest! {
         // Canonical-form idempotence:
         //   Parse(Display(Parse(s))) ≡ Parse(s) for any s that
         //   the generator emits.
+        let __grind_t0 = std::time::Instant::now();
         let parsed = Map::parse(&displayed)
             .unwrap_or_else(|e| panic!(
                 "arb_map produced unparseable surface term {:?}: {:?}",
                 displayed, e));
+        if __grind_diag { eprintln!("GRIND-Map-PARSE-OK elapsed={:?} disp={:?}", __grind_t0.elapsed(), displayed); }
         let canonical = format!("{}", parsed);
         if canonical.len() > 500 { return Ok(()); }
         let reparsed = Map::parse(&canonical).unwrap_or_else(|e| panic!(
@@ -2340,7 +3496,9 @@ proptest! {
     #[test]
     fn map_parse_determinism(term in arb_map(2)) {
         mettail_runtime::clear_var_cache();
+        let __grind_diag = std::env::var("GRIND_DIAG").is_ok();
         let displayed = format!("{}", term);
+        if __grind_diag { eprintln!("GRIND-Map-DET-DISP ast={:?} disp={:?}", term, displayed); }
         // Skip terms whose display is too long (parser may overflow)
         if displayed.len() > 500 {
             return Ok(());
@@ -2349,6 +3507,354 @@ proptest! {
         let p1 = Map::parse(&displayed);
         mettail_runtime::clear_var_cache();
         let p2 = Map::parse(&displayed);
+        match (p1, p2) {
+            (Ok(t1), Ok(t2)) => {
+                let d1 = format!("{}", t1);
+                let d2 = format!("{}", t2);
+                prop_assert_eq!(d1, d2,
+                    "Parse determinism failed: two parses of the same string differ");
+            }
+            (Err(_), Err(_)) => { /* Both failed — consistent */ }
+            (Ok(_), Err(e)) | (Err(e), Ok(_)) => {
+                prop_assert!(false,
+                    "Parse determinism failed: one parse succeeded, other failed: {}", e);
+            }
+        }
+    }
+
+    #[test]
+    fn set_debug_does_not_panic(term in arb_set(4)) {
+        let _ = format!("{:?}", term);
+    }
+
+    #[test]
+    fn set_display_does_not_panic(term in arb_set(4)) {
+        let _ = format!("{}", term);
+    }
+
+    #[test]
+    fn set_clone_eq(term in arb_set(4)) {
+        let cloned = term.clone();
+        prop_assert_eq!(term, cloned);
+    }
+
+    #[test]
+    fn set_display_parse_roundtrip(term in arb_set(3)) {
+        // GRIND diagnostic (gated on env GRIND_DIAG): print the AST and its
+        // display + time the parse, so slow / unparseable shapes surface
+        // directly (the generated test file is regenerated on every build,
+        // so this diagnostic lives in the emitter — macros/.../strategies.rs).
+        let __grind_diag = std::env::var("GRIND_DIAG").is_ok();
+        if __grind_diag { eprintln!("GRIND-Set-GEN ast={:?}", term); }
+        let displayed = format!("{}", term);
+        if __grind_diag { eprintln!("GRIND-Set-DISP disp={:?}", displayed); }
+        // Skip terms whose display is too long (parser may overflow)
+        if displayed.len() > 500 {
+            return Ok(());
+        }
+        // GRAMMAR-AWARE ROUNDTRIP CONTRACT (strengthened from
+        // silent-skip): the literal-build codegen now projects
+        // tape values onto the language's admitted literal
+        // domain (see rust_code_rewrite + automaton_walk::classify).
+        // Any parse failure here is a real regression — the
+        // generator emitted something the grammar does not admit.
+        // Canonical-form idempotence:
+        //   Parse(Display(Parse(s))) ≡ Parse(s) for any s that
+        //   the generator emits.
+        let __grind_t0 = std::time::Instant::now();
+        let parsed = Set::parse(&displayed)
+            .unwrap_or_else(|e| panic!(
+                "arb_set produced unparseable surface term {:?}: {:?}",
+                displayed, e));
+        if __grind_diag { eprintln!("GRIND-Set-PARSE-OK elapsed={:?} disp={:?}", __grind_t0.elapsed(), displayed); }
+        let canonical = format!("{}", parsed);
+        if canonical.len() > 500 { return Ok(()); }
+        let reparsed = Set::parse(&canonical).unwrap_or_else(|e| panic!(
+            "Parse(Display(Parse(s))) should succeed for canonical form {:?}: {:?}",
+            canonical, e));
+        let recanonical = format!("{}", reparsed);
+        prop_assert_eq!(canonical, recanonical,
+            "Display should be idempotent after canonicalization: \
+             display(parse(display(parse(display(t))))) == display(parse(display(t)))");
+    }
+
+    #[test]
+    fn set_strong_roundtrip(term in arb_set(1)) {
+        mettail_runtime::clear_var_cache();
+        let displayed = format!("{}", term);
+        // Skip terms whose display is too long (parser may overflow)
+        if displayed.len() > 500 {
+            return Ok(());
+        }
+        mettail_runtime::clear_var_cache();
+        if let Ok(parsed) = Set::parse(&displayed) {
+            let canonical = format!("{}", parsed);
+            if canonical.len() > 500 { return Ok(()); }
+            mettail_runtime::clear_var_cache();
+            let reparsed = Set::parse(&canonical).unwrap_or_else(|e| panic!(
+                "Strong roundtrip: canonical form {:?} did not parse: {:?}",
+                canonical, e));
+            let recanonical = format!("{}", reparsed);
+            prop_assert_eq!(&canonical, &recanonical,
+                "Strong roundtrip: canonical display not stable after double parse");
+        }
+    }
+
+    #[test]
+    fn set_parse_determinism(term in arb_set(2)) {
+        mettail_runtime::clear_var_cache();
+        let __grind_diag = std::env::var("GRIND_DIAG").is_ok();
+        let displayed = format!("{}", term);
+        if __grind_diag { eprintln!("GRIND-Set-DET-DISP ast={:?} disp={:?}", term, displayed); }
+        // Skip terms whose display is too long (parser may overflow)
+        if displayed.len() > 500 {
+            return Ok(());
+        }
+        mettail_runtime::clear_var_cache();
+        let p1 = Set::parse(&displayed);
+        mettail_runtime::clear_var_cache();
+        let p2 = Set::parse(&displayed);
+        match (p1, p2) {
+            (Ok(t1), Ok(t2)) => {
+                let d1 = format!("{}", t1);
+                let d2 = format!("{}", t2);
+                prop_assert_eq!(d1, d2,
+                    "Parse determinism failed: two parses of the same string differ");
+            }
+            (Err(_), Err(_)) => { /* Both failed — consistent */ }
+            (Ok(_), Err(e)) | (Err(e), Ok(_)) => {
+                prop_assert!(false,
+                    "Parse determinism failed: one parse succeeded, other failed: {}", e);
+            }
+        }
+    }
+
+    #[test]
+    fn pathmap_debug_does_not_panic(term in arb_pathmap(4)) {
+        let _ = format!("{:?}", term);
+    }
+
+    #[test]
+    fn pathmap_display_does_not_panic(term in arb_pathmap(4)) {
+        let _ = format!("{}", term);
+    }
+
+    #[test]
+    fn pathmap_clone_eq(term in arb_pathmap(4)) {
+        let cloned = term.clone();
+        prop_assert_eq!(term, cloned);
+    }
+
+    #[test]
+    fn pathmap_display_parse_roundtrip(term in arb_pathmap(3)) {
+        // GRIND diagnostic (gated on env GRIND_DIAG): print the AST and its
+        // display + time the parse, so slow / unparseable shapes surface
+        // directly (the generated test file is regenerated on every build,
+        // so this diagnostic lives in the emitter — macros/.../strategies.rs).
+        let __grind_diag = std::env::var("GRIND_DIAG").is_ok();
+        if __grind_diag { eprintln!("GRIND-Pathmap-GEN ast={:?}", term); }
+        let displayed = format!("{}", term);
+        if __grind_diag { eprintln!("GRIND-Pathmap-DISP disp={:?}", displayed); }
+        // Skip terms whose display is too long (parser may overflow)
+        if displayed.len() > 500 {
+            return Ok(());
+        }
+        // GRAMMAR-AWARE ROUNDTRIP CONTRACT (strengthened from
+        // silent-skip): the literal-build codegen now projects
+        // tape values onto the language's admitted literal
+        // domain (see rust_code_rewrite + automaton_walk::classify).
+        // Any parse failure here is a real regression — the
+        // generator emitted something the grammar does not admit.
+        // Canonical-form idempotence:
+        //   Parse(Display(Parse(s))) ≡ Parse(s) for any s that
+        //   the generator emits.
+        let __grind_t0 = std::time::Instant::now();
+        let parsed = Pathmap::parse(&displayed)
+            .unwrap_or_else(|e| panic!(
+                "arb_pathmap produced unparseable surface term {:?}: {:?}",
+                displayed, e));
+        if __grind_diag { eprintln!("GRIND-Pathmap-PARSE-OK elapsed={:?} disp={:?}", __grind_t0.elapsed(), displayed); }
+        let canonical = format!("{}", parsed);
+        if canonical.len() > 500 { return Ok(()); }
+        let reparsed = Pathmap::parse(&canonical).unwrap_or_else(|e| panic!(
+            "Parse(Display(Parse(s))) should succeed for canonical form {:?}: {:?}",
+            canonical, e));
+        let recanonical = format!("{}", reparsed);
+        prop_assert_eq!(canonical, recanonical,
+            "Display should be idempotent after canonicalization: \
+             display(parse(display(parse(display(t))))) == display(parse(display(t)))");
+    }
+
+    #[test]
+    fn pathmap_strong_roundtrip(term in arb_pathmap(1)) {
+        mettail_runtime::clear_var_cache();
+        let displayed = format!("{}", term);
+        // Skip terms whose display is too long (parser may overflow)
+        if displayed.len() > 500 {
+            return Ok(());
+        }
+        mettail_runtime::clear_var_cache();
+        if let Ok(parsed) = Pathmap::parse(&displayed) {
+            let canonical = format!("{}", parsed);
+            if canonical.len() > 500 { return Ok(()); }
+            mettail_runtime::clear_var_cache();
+            let reparsed = Pathmap::parse(&canonical).unwrap_or_else(|e| panic!(
+                "Strong roundtrip: canonical form {:?} did not parse: {:?}",
+                canonical, e));
+            let recanonical = format!("{}", reparsed);
+            prop_assert_eq!(&canonical, &recanonical,
+                "Strong roundtrip: canonical display not stable after double parse");
+        }
+    }
+
+    #[test]
+    fn pathmap_parse_determinism(term in arb_pathmap(2)) {
+        mettail_runtime::clear_var_cache();
+        let __grind_diag = std::env::var("GRIND_DIAG").is_ok();
+        let displayed = format!("{}", term);
+        if __grind_diag { eprintln!("GRIND-Pathmap-DET-DISP ast={:?} disp={:?}", term, displayed); }
+        // Skip terms whose display is too long (parser may overflow)
+        if displayed.len() > 500 {
+            return Ok(());
+        }
+        mettail_runtime::clear_var_cache();
+        let p1 = Pathmap::parse(&displayed);
+        mettail_runtime::clear_var_cache();
+        let p2 = Pathmap::parse(&displayed);
+        match (p1, p2) {
+            (Ok(t1), Ok(t2)) => {
+                let d1 = format!("{}", t1);
+                let d2 = format!("{}", t2);
+                prop_assert_eq!(d1, d2,
+                    "Parse determinism failed: two parses of the same string differ");
+            }
+            (Err(_), Err(_)) => { /* Both failed — consistent */ }
+            (Ok(_), Err(e)) | (Err(e), Ok(_)) => {
+                prop_assert!(false,
+                    "Parse determinism failed: one parse succeeded, other failed: {}", e);
+            }
+        }
+    }
+
+    #[test]
+    fn readzipper_debug_does_not_panic(term in arb_readzipper(4)) {
+        let _ = format!("{:?}", term);
+    }
+
+    #[test]
+    fn readzipper_display_does_not_panic(term in arb_readzipper(4)) {
+        let _ = format!("{}", term);
+    }
+
+    #[test]
+    fn readzipper_clone_eq(term in arb_readzipper(4)) {
+        let cloned = term.clone();
+        prop_assert_eq!(term, cloned);
+    }
+
+    #[test]
+    fn readzipper_strong_roundtrip_via_display(term in arb_readzipper(1)) {
+        mettail_runtime::clear_var_cache();
+        let displayed = format!("{}", term);
+        // Skip terms whose display is too long (parser may overflow)
+        if displayed.len() > 500 {
+            return Ok(());
+        }
+        mettail_runtime::clear_var_cache();
+        if let Ok(parsed) = ReadZipper::parse(&displayed) {
+            let canonical = format!("{}", parsed);
+            if canonical.len() > 500 { return Ok(()); }
+            mettail_runtime::clear_var_cache();
+            let reparsed = ReadZipper::parse(&canonical).unwrap_or_else(|e| panic!(
+                "Strong roundtrip (display proxy): canonical form {:?} did not parse: {:?}",
+                canonical, e));
+            let recanonical = format!("{}", reparsed);
+            prop_assert_eq!(&canonical, &recanonical,
+                "Strong roundtrip (display proxy): canonical display not stable after double parse");
+        }
+    }
+
+    #[test]
+    fn readzipper_parse_determinism(term in arb_readzipper(2)) {
+        mettail_runtime::clear_var_cache();
+        let __grind_diag = std::env::var("GRIND_DIAG").is_ok();
+        let displayed = format!("{}", term);
+        if __grind_diag { eprintln!("GRIND-ReadZipper-DET-DISP ast={:?} disp={:?}", term, displayed); }
+        // Skip terms whose display is too long (parser may overflow)
+        if displayed.len() > 500 {
+            return Ok(());
+        }
+        mettail_runtime::clear_var_cache();
+        let p1 = ReadZipper::parse(&displayed);
+        mettail_runtime::clear_var_cache();
+        let p2 = ReadZipper::parse(&displayed);
+        match (p1, p2) {
+            (Ok(t1), Ok(t2)) => {
+                let d1 = format!("{}", t1);
+                let d2 = format!("{}", t2);
+                prop_assert_eq!(d1, d2,
+                    "Parse determinism failed: two parses of the same string differ");
+            }
+            (Err(_), Err(_)) => { /* Both failed — consistent */ }
+            (Ok(_), Err(e)) | (Err(e), Ok(_)) => {
+                prop_assert!(false,
+                    "Parse determinism failed: one parse succeeded, other failed: {}", e);
+            }
+        }
+    }
+
+    #[test]
+    fn writezipper_debug_does_not_panic(term in arb_writezipper(4)) {
+        let _ = format!("{:?}", term);
+    }
+
+    #[test]
+    fn writezipper_display_does_not_panic(term in arb_writezipper(4)) {
+        let _ = format!("{}", term);
+    }
+
+    #[test]
+    fn writezipper_clone_eq(term in arb_writezipper(4)) {
+        let cloned = term.clone();
+        prop_assert_eq!(term, cloned);
+    }
+
+    #[test]
+    fn writezipper_strong_roundtrip_via_display(term in arb_writezipper(1)) {
+        mettail_runtime::clear_var_cache();
+        let displayed = format!("{}", term);
+        // Skip terms whose display is too long (parser may overflow)
+        if displayed.len() > 500 {
+            return Ok(());
+        }
+        mettail_runtime::clear_var_cache();
+        if let Ok(parsed) = WriteZipper::parse(&displayed) {
+            let canonical = format!("{}", parsed);
+            if canonical.len() > 500 { return Ok(()); }
+            mettail_runtime::clear_var_cache();
+            let reparsed = WriteZipper::parse(&canonical).unwrap_or_else(|e| panic!(
+                "Strong roundtrip (display proxy): canonical form {:?} did not parse: {:?}",
+                canonical, e));
+            let recanonical = format!("{}", reparsed);
+            prop_assert_eq!(&canonical, &recanonical,
+                "Strong roundtrip (display proxy): canonical display not stable after double parse");
+        }
+    }
+
+    #[test]
+    fn writezipper_parse_determinism(term in arb_writezipper(2)) {
+        mettail_runtime::clear_var_cache();
+        let __grind_diag = std::env::var("GRIND_DIAG").is_ok();
+        let displayed = format!("{}", term);
+        if __grind_diag { eprintln!("GRIND-WriteZipper-DET-DISP ast={:?} disp={:?}", term, displayed); }
+        // Skip terms whose display is too long (parser may overflow)
+        if displayed.len() > 500 {
+            return Ok(());
+        }
+        mettail_runtime::clear_var_cache();
+        let p1 = WriteZipper::parse(&displayed);
+        mettail_runtime::clear_var_cache();
+        let p2 = WriteZipper::parse(&displayed);
         match (p1, p2) {
             (Ok(t1), Ok(t2)) => {
                 let d1 = format!("{}", t1);
@@ -2385,18 +3891,18 @@ fn sim_rhocalc_normal_form_reachability() {
     let runner = SimulationRunner::new(lang_ref, config);
 
     let test_inputs: Vec<&str> = vec![
-        "int ( 0 , 1 )",
-        "uint ( 0 , 1 )",
-        "float ( 0 , 1 )",
-        "fixed ( 0 , 1 )",
-        "bigint ( 0 )",
-        "bigrat ( 0 )",
-        "- 1",
-        "fraction ( 0 , 0 )",
-        "0 or 0",
-        "0 and 0",
-        "0 bitor 0",
-        "0 bitand 0",
+        "0 ! ( )",
+        "0 !! ( )",
+        "@ Nil ! ( 0 )",
+        "@ Nil !! ( 0 )",
+        "@ 0 ! ( 0 )",
+        "@ 0 !! ( 0 )",
+        "@ Nil ! ( )",
+        "@ Nil !! ( )",
+        "@ 0 ! ( )",
+        "@ 0 !! ( )",
+        "__guard_then ( 0 , 0 )",
+        "@ 0 <- 0",
         "1",
         "1.0",
         "true",
@@ -2454,18 +3960,18 @@ fn sim_rhocalc_roundtrip_under_rewrite() {
 
     // Test a set of concrete expressions for rewrite roundtrip.
     let test_inputs: Vec<&str> = vec![
-        "int ( 0 , 1 )",
-        "uint ( 0 , 1 )",
-        "float ( 0 , 1 )",
-        "fixed ( 0 , 1 )",
-        "bigint ( 0 )",
-        "bigrat ( 0 )",
-        "- 1",
-        "fraction ( 0 , 0 )",
-        "0 or 0",
-        "0 and 0",
-        "0 bitor 0",
-        "0 bitand 0",
+        "0 ! ( )",
+        "0 !! ( )",
+        "@ Nil ! ( 0 )",
+        "@ Nil !! ( 0 )",
+        "@ 0 ! ( 0 )",
+        "@ 0 !! ( 0 )",
+        "@ Nil ! ( )",
+        "@ Nil !! ( )",
+        "@ 0 ! ( )",
+        "@ 0 !! ( )",
+        "__guard_then ( 0 , 0 )",
+        "@ 0 <- 0",
         "1",
         "1.0",
         "true",
@@ -2533,18 +4039,18 @@ fn sim_rhocalc_morphology_bounded() {
     let runner = SimulationRunner::new(lang_ref, config);
 
     let test_inputs: Vec<&str> = vec![
-        "int ( 0 , 1 )",
-        "uint ( 0 , 1 )",
-        "float ( 0 , 1 )",
-        "fixed ( 0 , 1 )",
-        "bigint ( 0 )",
-        "bigrat ( 0 )",
-        "- 1",
-        "fraction ( 0 , 0 )",
-        "0 or 0",
-        "0 and 0",
-        "0 bitor 0",
-        "0 bitand 0",
+        "0 ! ( )",
+        "0 !! ( )",
+        "@ Nil ! ( 0 )",
+        "@ Nil !! ( 0 )",
+        "@ 0 ! ( 0 )",
+        "@ 0 !! ( 0 )",
+        "@ Nil ! ( )",
+        "@ Nil !! ( )",
+        "@ 0 ! ( )",
+        "@ 0 !! ( )",
+        "__guard_then ( 0 , 0 )",
+        "@ 0 <- 0",
         "1",
         "1.0",
         "true",
@@ -2585,18 +4091,18 @@ fn sim_rhocalc_eval_determinism() {
     let lang_ref: &dyn mettail_runtime::Language = &lang;
 
     let test_inputs: Vec<&str> = vec![
-        "int ( 0 , 1 )",
-        "uint ( 0 , 1 )",
-        "float ( 0 , 1 )",
-        "fixed ( 0 , 1 )",
-        "bigint ( 0 )",
-        "bigrat ( 0 )",
-        "- 1",
-        "fraction ( 0 , 0 )",
-        "0 or 0",
-        "0 and 0",
-        "0 bitor 0",
-        "0 bitand 0",
+        "0 ! ( )",
+        "0 !! ( )",
+        "@ Nil ! ( 0 )",
+        "@ Nil !! ( 0 )",
+        "@ 0 ! ( 0 )",
+        "@ 0 !! ( 0 )",
+        "@ Nil ! ( )",
+        "@ Nil !! ( )",
+        "@ 0 ! ( )",
+        "@ 0 !! ( )",
+        "__guard_then ( 0 , 0 )",
+        "@ 0 <- 0",
         "1",
         "1.0",
         "true",

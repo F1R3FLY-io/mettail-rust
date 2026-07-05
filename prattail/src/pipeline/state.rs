@@ -309,6 +309,7 @@ pub(crate) fn extract_from_spec(spec: &LanguageSpec) -> (LexerBundle, ParserBund
                 is_postfix: r.is_postfix,
                 is_mixfix,
                 mixfix_parts,
+                nullary_literals: Vec::new(),
             }
         })
         .collect();
@@ -626,6 +627,7 @@ fn extract_mixfix_parts(syntax: &[SyntaxItemSpec]) -> (bool, Vec<MixfixPart>) {
                     param_name: param_name.clone(),
                     preceding_terminals: Vec::new(),
                     following_terminals: Vec::new(), // filled below
+                    repetition: None,
                 });
             },
             SyntaxItemSpec::Terminal(t) if after_trigger => {

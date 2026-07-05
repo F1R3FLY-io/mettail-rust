@@ -513,7 +513,7 @@ fn generate_subst_task_enum(language: &LanguageDef) -> TokenStream {
         let category = &lang_type.name;
         let variants = collect_category_variants(category, language);
         for v in &variants {
-            if let Some(asm) = generate_assemble_variant_decl(category, v) {
+            if let Some(asm) = generate_assemble_variant_decl(category, v, language) {
                 assemble_variants.push(asm);
             }
         }
@@ -530,10 +530,43 @@ fn generate_subst_task_enum(language: &LanguageDef) -> TokenStream {
 }
 
 /// Emit one Assemble variant declaration for a non-leaf constructor.
-/// Returns `None` for leaf variants (Var, Literal, Nullary).
-fn generate_assemble_variant_decl(category: &Ident, variant: &VariantKind) -> Option<TokenStream> {
+/// Returns `None` for leaf variants (Var, opaque Literal, Nullary).
+///
+/// GROUP B (2026-06-30): a `Literal` variant whose category is a *collection*
+/// literal (List/Bag/Set/Map/Pathmap) is no longer a leaf — it emits a
+/// per-wrapper `Assemble{Cat}_{Label}Lit` task-variant decl so its element
+/// results can be reassembled. Opaque literals still return `None`.
+fn generate_assemble_variant_decl(
+    category: &Ident,
+    variant: &VariantKind,
+    language: &LanguageDef,
+) -> Option<TokenStream> {
     match variant {
-        VariantKind::Var { .. } | VariantKind::Literal { .. } | VariantKind::Nullary { .. } => None,
+        VariantKind::Var { .. } | VariantKind::Nullary { .. } => None,
+
+        VariantKind::Literal { label } => {
+            let (coll_type, _element_cat) = collection_literal_info(category, language)?;
+            let variant_name = format_ident!("Assemble{}_{}Lit", category, label);
+            match coll_type {
+                // HashBag carries per-distinct-element multiplicities.
+                CollectionType::HashBag => Some(quote! {
+                    #variant_name {
+                        slot: usize,
+                        elements_start: usize,
+                        elements_count: usize,
+                        counts_vec: Vec<usize>,
+                    }
+                }),
+                // Vec / HashSet / HashMap / PathMap: (start, count) only.
+                _ => Some(quote! {
+                    #variant_name {
+                        slot: usize,
+                        elements_start: usize,
+                        elements_count: usize,
+                    }
+                }),
+            }
+        },
 
         VariantKind::Regular { label, fields } => {
             let variant_name = format_ident!("Assemble{}_{}", category, label);
@@ -735,7 +768,7 @@ fn generate_subst_driver(language: &LanguageDef) -> TokenStream {
         let category = &lang_type.name;
         let variants = collect_category_variants(category, language);
         for v in &variants {
-            if let Some(arm) = generate_assemble_arm_for_variant(category, v) {
+            if let Some(arm) = generate_assemble_arm_for_variant(category, v, language) {
                 assemble_arms.push(arm);
             }
         }
@@ -837,32 +870,186 @@ fn generate_visit_variant_arm(
     }
 }
 
+/// GROUP B (2026-06-30): classify a category as a *collection literal* for the
+/// substitution engine.
+///
+/// Collection-literal categories (List/Bag/Set/Map/Pathmap) are declared as
+/// native-type aliases (`![Vec<Proc>] as List`, …) with NO grammar rule, so
+/// `collect_category_variants` classifies each as the auto-`Literal` fallback.
+/// The default `Literal` handling clones the wrapper *whole* and never recurses
+/// into the element terms — a real semantic no-op bug: `subst([a,b,c],
+/// a:=1,b:=2,c:=3)` returns `[a,b,c]` unchanged.
+///
+/// Rather than reclassify these categories to `VariantKind::Collection` (which
+/// is the SHARED classifier imported by ~14 other generators — flipping the
+/// discriminant regresses depth/ground/normalize/semantic_hash/…), we detect
+/// them *locally* here and emit recursing visit/assemble arms confined to the
+/// three subst-internal functions the importers never call.
+///
+/// Returns `Some((coll_type, element_cat))` for a collection-literal category,
+/// where `coll_type` selects the wrapper's iterator/rebuild shape and
+/// `element_cat` is the category of the element terms (e.g. `Proc`). Returns
+/// `None` for opaque native literals (Int/Bool/Str/Float/Fixed/BigInt/BigRat/
+/// ReadZipper/WriteZipper), which keep their byte-identical `v.clone()` body.
+fn collection_literal_info(cat: &Ident, language: &LanguageDef) -> Option<(CollectionType, Ident)> {
+    let coll_type = language.get_type(cat).and_then(|t| t.collection_kind.as_ref())?.coll_type();
+    let element_cat = language.collection_element_type_for_category(cat)?;
+    Some((coll_type, element_cat))
+}
+
 /// Literal arm: just wrap the cloned literal value. Native literals
 /// (i32/String/etc.) may be Copy or Clone.
+///
+/// GROUP B (2026-06-30): collection-literal categories (List/Bag/Set/Map/
+/// Pathmap) get a *recursing* visit arm (modeled on `generate_collection_visit_
+/// arm`) that visits each element term under the same op and defers reassembly
+/// to a per-wrapper `Assemble{Cat}_{Label}Lit` task. Opaque literals keep the
+/// `v.clone()` body below unchanged.
 fn generate_literal_visit_arm(cat: &Ident, label: &Ident, language: &LanguageDef) -> TokenStream {
     let wrap = format_ident!("Wrap{}", cat);
 
-    // Clone for non-Copy, copy for Copy.
-    // Conservative: just clone — works for both.
-    let lit_expr = language
-        .types
-        .iter()
-        .find(|t| &t.name == cat)
-        .and_then(|t| t.native_type.as_ref())
-        .map(|ty| {
-            let nt = crate::gen::native::NativeType::from_syn_type(ty);
-            if nt.is_string() || nt.is_collection() {
-                quote! { #cat::#label(v.clone()) }
-            } else {
-                quote! { #cat::#label(*v) }
-            }
-        })
-        .unwrap_or_else(|| quote! { #cat::#label(v.clone()) });
+    // GROUP B: collection-literal wrappers recurse into their element terms.
+    if let Some((coll_type, element_cat)) = collection_literal_info(cat, language) {
+        return generate_collection_literal_visit_arm(cat, label, &element_cat, &coll_type);
+    }
+
+    // `v` is bound by reference (`#cat::#label(v)` on a borrowed term), so the
+    // payload must be cloned out. Always clone: `v.clone()` resolves to the
+    // payload type's `Clone` (not `&T`'s) and is correct for every native type —
+    // Copy primitives (i32/bool/…), string/collection wrappers (HashBag,
+    // HashSetLit, PathMapLit), and non-Copy structs (Arc<…ZipperLit>) alike.
+    // For Copy types the clone compiles to a bitwise copy, so there is no cost.
+    let lit_expr = quote! { #cat::#label(v.clone()) };
 
     quote! {
         #cat::#label(v) => {
             results[slot] = Some(AnySubstTerm::#wrap(#lit_expr));
         }
+    }
+}
+
+/// GROUP B (2026-06-30): the recursing Visit arm for a collection-literal
+/// wrapper. Allocates result slots for the element terms, pushes an
+/// `Assemble{Cat}_{Label}Lit` task, then pushes a `Visit{ElemCat}` task per
+/// element (under the *unfiltered* op — collection literals introduce no
+/// binders). Mirrors `generate_collection_visit_arm` but iterates the literal
+/// wrapper's own container and carries the wrapper label in the assemble task
+/// name.
+///
+/// Per-wrapper slot layout:
+/// - `Vec` (List)     : N slots, one `Visit{Elem}` per element (reverse order,
+///   matching the Vec collection-field template); carries (start, count=N).
+/// - `HashBag` (Bag)  : one slot per DISTINCT element + a `counts_vec` of
+///   multiplicities; iterate `(&elem, count)`; carries (start, count, counts_vec).
+/// - `HashSet` (Set)  : N slots, one `Visit{Elem}` per element; (start, count=N).
+/// - `HashMap` (Map)  : 2N slots interleaved key,value; one `Visit{Elem}` each;
+///   iterate `(&k, &v)`; carries (start, count=2N).
+/// - `PathMap` (Pathmap): identical to `HashMap` (PathMapLit Derefs to HashMapLit).
+fn generate_collection_literal_visit_arm(
+    cat: &Ident,
+    label: &Ident,
+    element_cat: &Ident,
+    coll_type: &CollectionType,
+) -> TokenStream {
+    let assemble_variant = format_ident!("Assemble{}_{}Lit", cat, label);
+    let visit_task = format_ident!("Visit{}", element_cat);
+
+    match coll_type {
+        CollectionType::Vec => quote! {
+            #cat::#label(ref coll) => {
+                let elements_start = results.len();
+                for _ in 0..coll.len() {
+                    results.push(None);
+                }
+                let elements_count = coll.len();
+                stack.push(SubstTask::#assemble_variant {
+                    slot,
+                    elements_start,
+                    elements_count,
+                });
+                for (idx, elem) in coll.iter().enumerate().rev() {
+                    stack.push(SubstTask::#visit_task {
+                        src: elem as *const _,
+                        slot: elements_start + idx,
+                        op_idx,
+                    });
+                }
+            }
+        },
+        CollectionType::HashSet => quote! {
+            #cat::#label(ref coll) => {
+                let elements_start = results.len();
+                for _ in 0..coll.len() {
+                    results.push(None);
+                }
+                let elements_count = coll.len();
+                stack.push(SubstTask::#assemble_variant {
+                    slot,
+                    elements_start,
+                    elements_count,
+                });
+                for (elem_idx, elem) in coll.iter().enumerate() {
+                    stack.push(SubstTask::#visit_task {
+                        src: elem as *const _,
+                        slot: elements_start + elem_idx,
+                        op_idx,
+                    });
+                }
+            }
+        },
+        CollectionType::HashBag => quote! {
+            #cat::#label(ref coll) => {
+                let elements_start = results.len();
+                let mut counts_vec: Vec<usize> = Vec::new();
+                for (_elem, count) in coll.iter() {
+                    results.push(None);
+                    counts_vec.push(count);
+                }
+                let elements_count = results.len() - elements_start;
+                stack.push(SubstTask::#assemble_variant {
+                    slot,
+                    elements_start,
+                    elements_count,
+                    counts_vec,
+                });
+                for (elem_idx, (elem, _count)) in coll.iter().enumerate() {
+                    stack.push(SubstTask::#visit_task {
+                        src: elem as *const _,
+                        slot: elements_start + elem_idx,
+                        op_idx,
+                    });
+                }
+            }
+        },
+        // Map / Pathmap: interleave key,value into 2N slots (key at even
+        // offsets, value at odd). Both key and value are `element_cat` (Proc).
+        CollectionType::HashMap | CollectionType::PathMap => quote! {
+            #cat::#label(ref coll) => {
+                let elements_start = results.len();
+                for _ in 0..coll.len() {
+                    results.push(None); // key slot
+                    results.push(None); // value slot
+                }
+                let elements_count = results.len() - elements_start;
+                stack.push(SubstTask::#assemble_variant {
+                    slot,
+                    elements_start,
+                    elements_count,
+                });
+                for (pair_idx, (k, v)) in coll.iter().enumerate() {
+                    stack.push(SubstTask::#visit_task {
+                        src: k as *const _,
+                        slot: elements_start + pair_idx * 2,
+                        op_idx,
+                    });
+                    stack.push(SubstTask::#visit_task {
+                        src: v as *const _,
+                        slot: elements_start + pair_idx * 2 + 1,
+                        op_idx,
+                    });
+                }
+            }
+        },
     }
 }
 
@@ -1080,7 +1267,7 @@ fn generate_regular_visit_arm(cat: &Ident, label: &Ident, fields: &[FieldInfo]) 
                 },
                 // Phase 4 #5b (2026-05-12): HashMap stores 2*N flat
                 // slots (K, V, K, V, ...) — same shape as normalize.rs.
-                CollectionType::HashMap => {
+                CollectionType::HashMap | CollectionType::PathMap => {
                     alloc_stmts.push(quote! {
                         let #start_name = results.len();
                         for _ in 0..#name.len() {
@@ -1183,7 +1370,7 @@ fn generate_collection_visit_arm(
     let visit_task = format_ident!("Visit{}", element_cat);
 
     match coll_type {
-        CollectionType::HashBag | CollectionType::HashMap => {
+        CollectionType::HashBag | CollectionType::HashMap | CollectionType::PathMap => {
             quote! {
                 #cat::#label(ref coll) => {
                     let elements_start = results.len();
@@ -1465,7 +1652,7 @@ fn emit_pre_field_visit_alloc(
             let count_name = format_ident!("pf{}_count", i);
 
             match field.coll_type.as_ref().unwrap_or(&CollectionType::Vec) {
-                CollectionType::HashBag | CollectionType::HashMap => {
+                CollectionType::HashBag | CollectionType::HashMap | CollectionType::PathMap => {
                     let counts_name = format_ident!("pf{}_counts", i);
                     alloc_stmts.push(quote! {
                         let #start_name = results.len();
@@ -1552,9 +1739,21 @@ fn emit_pre_field_visit_alloc(
 
 /// Dispatch per-variant Assemble arm emission. Leaf variants don't need
 /// Assemble arms (they write to results directly during Visit).
-fn generate_assemble_arm_for_variant(cat: &Ident, variant: &VariantKind) -> Option<TokenStream> {
+///
+/// GROUP B (2026-06-30): a `Literal` whose category is a *collection* literal
+/// gets a recursing Assemble arm that drains its element slots and rebuilds the
+/// wrapper via the container's own constructor. Opaque literals return `None`.
+fn generate_assemble_arm_for_variant(
+    cat: &Ident,
+    variant: &VariantKind,
+    language: &LanguageDef,
+) -> Option<TokenStream> {
     match variant {
-        VariantKind::Var { .. } | VariantKind::Literal { .. } | VariantKind::Nullary { .. } => None,
+        VariantKind::Var { .. } | VariantKind::Nullary { .. } => None,
+        VariantKind::Literal { label } => {
+            let (coll_type, element_cat) = collection_literal_info(cat, language)?;
+            Some(generate_collection_literal_assemble_arm(cat, label, &element_cat, &coll_type))
+        },
         VariantKind::Regular { label, fields } => {
             Some(generate_regular_assemble_arm(cat, label, fields))
         },
@@ -1566,6 +1765,176 @@ fn generate_assemble_arm_for_variant(cat: &Ident, variant: &VariantKind) -> Opti
         },
         VariantKind::MultiBinder { label, pre_scope_fields, body_cat, .. } => {
             Some(generate_multi_binder_assemble_arm(cat, label, pre_scope_fields, body_cat))
+        },
+    }
+}
+
+/// GROUP B (2026-06-30): the recursing Assemble arm for a collection-literal
+/// wrapper. Drains the element result slots (already-substituted `Proc`s) and
+/// rebuilds the wrapper with the container's OWN constructor, then wraps as
+/// `AnySubstTerm::Wrap{Cat}(#cat::#label(rebuilt))`.
+///
+/// Body wrapped in the established `#[inline(never)]` inner-fn peel idiom
+/// (shared with `generate_collection_assemble_arm`) so per-arm builder locals
+/// live in this helper's frame rather than bloating `subst_iterative`.
+///
+/// Runtime constructors (all VERIFIED to exist — see runtime/src/*):
+/// - Vec      → `Vec::with_capacity` + `push`                        → `List::ListLit`
+/// - HashBag  → `HashBag::new()` + `insert_n(v, count)`              → `Bag::BagLit`
+/// - HashSet  → `HashSetLit::new()` + `insert(v)`                    → `Set::SetLit`
+/// - HashMap  → `HashMapLit::default()` + `insert(k, v)`             → `Map::MapLit`
+/// - PathMap  → build `HashMapLit` then `PathMapLit(map)`            → `Pathmap::PathmapLit`
+fn generate_collection_literal_assemble_arm(
+    cat: &Ident,
+    label: &Ident,
+    element_cat: &Ident,
+    coll_type: &CollectionType,
+) -> TokenStream {
+    let assemble_variant = format_ident!("Assemble{}_{}Lit", cat, label);
+    let wrap = format_ident!("Wrap{}", cat);
+    let elem_wrap = format_ident!("Wrap{}", element_cat);
+
+    match coll_type {
+        CollectionType::Vec => quote! {
+            SubstTask::#assemble_variant { slot, elements_start, elements_count } => {
+                #[inline(never)]
+                #[allow(dead_code, unused_variables, non_snake_case)]
+                fn assemble(
+                    results: &mut Vec<Option<AnySubstTerm>>,
+                    slot: usize,
+                    elements_start: usize,
+                    elements_count: usize,
+                ) {
+                    let mut out = Vec::with_capacity(elements_count);
+                    for idx in 0..elements_count {
+                        match results[elements_start + idx].take()
+                            .expect("iterative subst: missing list-literal element")
+                        {
+                            AnySubstTerm::#elem_wrap(v) => out.push(v),
+                            _ => unreachable!("iterative subst: wrong category in list-literal slot"),
+                        }
+                    }
+                    results[slot] = Some(AnySubstTerm::#wrap(#cat::#label(out)));
+                }
+                assemble(results, slot, elements_start, elements_count);
+            }
+        },
+        CollectionType::HashSet => quote! {
+            SubstTask::#assemble_variant { slot, elements_start, elements_count } => {
+                #[inline(never)]
+                #[allow(dead_code, unused_variables, non_snake_case)]
+                fn assemble(
+                    results: &mut Vec<Option<AnySubstTerm>>,
+                    slot: usize,
+                    elements_start: usize,
+                    elements_count: usize,
+                ) {
+                    let mut out = mettail_runtime::HashSetLit::new();
+                    for idx in 0..elements_count {
+                        match results[elements_start + idx].take()
+                            .expect("iterative subst: missing set-literal element")
+                        {
+                            AnySubstTerm::#elem_wrap(v) => { out.insert(v); },
+                            _ => unreachable!("iterative subst: wrong category in set-literal slot"),
+                        }
+                    }
+                    results[slot] = Some(AnySubstTerm::#wrap(#cat::#label(out)));
+                }
+                assemble(results, slot, elements_start, elements_count);
+            }
+        },
+        CollectionType::HashBag => quote! {
+            SubstTask::#assemble_variant { slot, elements_start, elements_count, counts_vec } => {
+                #[inline(never)]
+                #[allow(dead_code, unused_variables, non_snake_case)]
+                fn assemble(
+                    results: &mut Vec<Option<AnySubstTerm>>,
+                    slot: usize,
+                    elements_start: usize,
+                    elements_count: usize,
+                    counts_vec: Vec<usize>,
+                ) {
+                    let mut out = mettail_runtime::HashBag::new();
+                    for (idx, count) in counts_vec.iter().enumerate() {
+                        match results[elements_start + idx].take()
+                            .expect("iterative subst: missing bag-literal element")
+                        {
+                            AnySubstTerm::#elem_wrap(v) => out.insert_n(v, *count),
+                            _ => unreachable!("iterative subst: wrong category in bag-literal slot"),
+                        }
+                    }
+                    results[slot] = Some(AnySubstTerm::#wrap(#cat::#label(out)));
+                }
+                assemble(results, slot, elements_start, elements_count, counts_vec);
+            }
+        },
+        CollectionType::HashMap => quote! {
+            SubstTask::#assemble_variant { slot, elements_start, elements_count } => {
+                #[inline(never)]
+                #[allow(dead_code, unused_variables, non_snake_case)]
+                fn assemble(
+                    results: &mut Vec<Option<AnySubstTerm>>,
+                    slot: usize,
+                    elements_start: usize,
+                    elements_count: usize,
+                ) {
+                    let mut out = mettail_runtime::HashMapLit::default();
+                    let mut idx = 0;
+                    while idx < elements_count {
+                        let k = match results[elements_start + idx].take()
+                            .expect("iterative subst: missing map-literal key")
+                        {
+                            AnySubstTerm::#elem_wrap(v) => v,
+                            _ => unreachable!("iterative subst: wrong category in map-literal key slot"),
+                        };
+                        let v = match results[elements_start + idx + 1].take()
+                            .expect("iterative subst: missing map-literal value")
+                        {
+                            AnySubstTerm::#elem_wrap(v) => v,
+                            _ => unreachable!("iterative subst: wrong category in map-literal value slot"),
+                        };
+                        out.insert(k, v);
+                        idx += 2;
+                    }
+                    results[slot] = Some(AnySubstTerm::#wrap(#cat::#label(out)));
+                }
+                assemble(results, slot, elements_start, elements_count);
+            }
+        },
+        CollectionType::PathMap => quote! {
+            SubstTask::#assemble_variant { slot, elements_start, elements_count } => {
+                #[inline(never)]
+                #[allow(dead_code, unused_variables, non_snake_case)]
+                fn assemble(
+                    results: &mut Vec<Option<AnySubstTerm>>,
+                    slot: usize,
+                    elements_start: usize,
+                    elements_count: usize,
+                ) {
+                    let mut inner = mettail_runtime::HashMapLit::default();
+                    let mut idx = 0;
+                    while idx < elements_count {
+                        let k = match results[elements_start + idx].take()
+                            .expect("iterative subst: missing pathmap-literal key")
+                        {
+                            AnySubstTerm::#elem_wrap(v) => v,
+                            _ => unreachable!("iterative subst: wrong category in pathmap-literal key slot"),
+                        };
+                        let v = match results[elements_start + idx + 1].take()
+                            .expect("iterative subst: missing pathmap-literal value")
+                        {
+                            AnySubstTerm::#elem_wrap(v) => v,
+                            _ => unreachable!("iterative subst: wrong category in pathmap-literal value slot"),
+                        };
+                        inner.insert(k, v);
+                        idx += 2;
+                    }
+                    results[slot] = Some(AnySubstTerm::#wrap(
+                        #cat::#label(mettail_runtime::PathMapLit(inner))
+                    ));
+                }
+                assemble(results, slot, elements_start, elements_count);
+            }
         },
     }
 }
@@ -1684,7 +2053,9 @@ fn optional_collection_field_type_subst(field: &FieldInfo) -> TokenStream {
         CollectionType::Vec => quote! { Option<Vec<#cat>> },
         CollectionType::HashBag => quote! { Option<mettail_runtime::HashBag<#cat>> },
         CollectionType::HashSet => quote! { Option<std::collections::HashSet<#cat>> },
-        CollectionType::HashMap => quote! { Option<mettail_runtime::HashMapLit<#cat, #cat>> },
+        CollectionType::HashMap | CollectionType::PathMap => {
+            quote! { Option<mettail_runtime::HashMapLit<#cat, #cat>> }
+        },
     }
 }
 
@@ -1741,7 +2112,7 @@ fn emit_field_extract(i: usize, field: &FieldInfo) -> TokenStream {
                 }
             },
             // Phase 4 #5b (2026-05-12): HashMap — 2*N flat slots.
-            CollectionType::HashMap => {
+            CollectionType::HashMap | CollectionType::PathMap => {
                 quote! {
                     let mut #result_ident =
                         mettail_runtime::HashMapLit::default();
@@ -1822,7 +2193,7 @@ fn generate_collection_assemble_arm(
     let elem_wrap = format_ident!("Wrap{}", element_cat);
 
     match coll_type {
-        CollectionType::HashBag | CollectionType::HashMap => {
+        CollectionType::HashBag | CollectionType::HashMap | CollectionType::PathMap => {
             quote! {
                 SubstTask::#assemble_variant { slot, elements_start, elements_count, counts_vec } => {
                     #[inline(never)]
@@ -2029,7 +2400,7 @@ fn emit_pre_field_extracts(pre_scope_fields: &[FieldInfo]) -> Vec<TokenStream> {
                 let start_name = format_ident!("pf{}_start", i);
                 let count_name = format_ident!("pf{}_count", i);
                 match field.coll_type.as_ref().unwrap_or(&CollectionType::Vec) {
-                    CollectionType::HashBag | CollectionType::HashMap => {
+                    CollectionType::HashBag | CollectionType::HashMap | CollectionType::PathMap => {
                         let counts_name = format_ident!("pf{}_counts", i);
                         quote! {
                             let mut #result_ident = mettail_runtime::HashBag::new();
@@ -2361,7 +2732,23 @@ pub(crate) fn collect_category_variants(
         variants.push(VariantKind::Var { label: generate_var_label(category) });
     }
 
-    // Auto-generated Literal variant (for native types)
+    // Auto-generated Literal variant (for native types).
+    //
+    // NOTE (GROUP B, 2026-06-30): collection-literal categories (List/Bag/Set/
+    // Map/Pathmap) are classified `Literal` here, so `subst`/`normalize`/etc.
+    // CLONE the wrapper whole and do NOT recurse into the element terms — i.e.
+    // `subst([a,b,c], a:=1,b:=2,c:=3)` returns `[a,b,c]` unchanged (a real
+    // semantic no-op bug). The natural fix (reclassify them to
+    // `VariantKind::Collection` so the term ops recurse) was attempted and
+    // REVERTED: the existing `generate_collection_visit_arm`/`_assemble_arm`
+    // branches were authored for CATEGORY-DIRECT collection fields (e.g.
+    // `PPar . ps:HashBag(Proc)`), NOT for the literal wrappers — Set/Bag fail to
+    // compile (`HashSetLit` is not the iterable `HashSet`; no `insert_into_baglit`),
+    // and even List (`Vec`) compiles but changes List's depth/ground/normalize/
+    // semantic-hash semantics, regressing zipper/map tests while NOT fixing the
+    // polyadic target. A correct fix needs literal-wrapper-aware collection arms
+    // (a dedicated `VariantKind` for native collection literals); deferred to a
+    // re-designed GROUP B. See [[empty-receiver-polyadic-cluster-roots]].
     if let Some(lang_type) = language.get_type(category) {
         if let Some(native_type) = &lang_type.native_type {
             let has_lit = variants

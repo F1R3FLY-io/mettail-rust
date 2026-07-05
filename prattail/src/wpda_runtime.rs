@@ -41,6 +41,137 @@ use crate::automata::TokenKind;
 use crate::gss::GssNodeId;
 
 // ══════════════════════════════════════════════════════════════════════════════
+// Collection slot spec (Stage 2 consolidation, 2026-06-27)
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// One collection slot's compile-time descriptor, keyed at runtime by
+/// `(result_src_idx, rule_idx, slot_idx)` through
+/// [`crate::wpda_walker::WpdaEngine::collection_spec`].
+///
+/// This single record supersedes the five former per-field lookups the
+/// codegen emitted (close, `(close, sep)`, element-src, kv-separator, and the
+/// inline `(close, sep, kv_sep, is_binder_internal)` tuple the
+/// `CollectionLoop` arm built). Each consumer now reads the field it needs:
+///
+/// - `close` / `sep` — always present for a collection slot.
+/// - `kv_sep` — `Some(..)` iff the slot is a key/value map (`HashMap` /
+///   `PathMap`), else `None`.
+/// - `element_src_idx` — the element category's `src_idx`, `Some(..)` iff it
+///   resolves to a declared category, else `None`.
+/// - `close_resumes_via_unwinding` — `true` for binder-internal collection
+///   slots (their close resumes the binder continuation via `Unwinding`),
+///   `false` for Class-5 Pratt-primary literals (their close resumes the
+///   enclosing `InfixLoop`). This is the former loop-arm `is_binder_internal`
+///   selector; it is distinct from the 2-tuple
+///   [`crate::wpda_walker::WpdaEngine::is_binder_internal_collection`]
+///   FireAction-suppression query, which is keyed `(src, rule)` without a slot.
+/// - `open` / `has_synth_paren` — the Class-5 open delimiter (the first
+///   `Fixed` token, and whether a synthetic `(` follows). Binder-internal
+///   slots carry `""` / `false`; their open side is driven by the binder rule
+///   machinery, not this record.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CollectionSpec {
+    /// First-token slice of the open delimiter (Class-5 literals only;
+    /// `""` for binder-internal slots).
+    pub open: &'static str,
+    /// Whether a synthetic `"("` token follows the open keyword (Class-5
+    /// 4-element default form; `false` for binder-internal slots).
+    pub has_synth_paren: bool,
+    /// Close delimiter literal.
+    pub close: &'static str,
+    /// Element/pair separator literal.
+    pub sep: &'static str,
+    /// Key/value separator for kv-maps (`Some(":")`), else `None`.
+    pub kv_sep: Option<&'static str>,
+    /// Whether the per-entry value is OPTIONAL for this kv-collection
+    /// (Pathmap set-form `{| k |}` ≡ `{| k : k |}`, value = key). `true`
+    /// ONLY for Pathmap; `false` for HashMap (whose values are mandatory)
+    /// and for every non-kv container. When `true`, a `kv_phase == 1` entry
+    /// whose next token is the close/separator (not the `kv_sep`) is
+    /// finalized as a bare path with value = key instead of erroring.
+    pub kv_value_optional: bool,
+    /// The element category's `src_idx`, when it resolves to a declared
+    /// category; `None` otherwise.
+    pub element_src_idx: Option<u16>,
+    /// `true` ⇒ close resumes via `Unwinding` (binder-internal); `false` ⇒
+    /// close resumes the enclosing `InfixLoop` (Class-5 Pratt primary).
+    pub close_resumes_via_unwinding: bool,
+}
+
+/// Stage 4 (Lever-1, "emit-both" delimiter precedence): the structural-delimiter
+/// context of the **innermost enclosing collection frame**, computed by the
+/// walker from a cursor/shell's incoming-edge stack and threaded into
+/// [`crate::wpda_walker::WpdaEngine::step`].
+///
+/// ## Why it exists
+/// A collection element/value is parsed by a *fresh* sub-parse (`CategoryEntry`
+/// frame on top of the GSS), whose `InfixLoop` does not, by itself, know the
+/// delimiters of the collection frame **below** it. On a lattice-ambiguous
+/// multi-char close (e.g. the Pathmap close `|}`, whose leading `|` collides
+/// with the `PParInfix` operator), the lex-fork
+/// ([`crate::wpda_walker`]-emitted `emit_lex_fork_at_infix_loop`) forks the
+/// colliding operator branch and *pre-empts* the no-candidate
+/// `Advance(Unwinding)` fall-through that a non-ambiguous close would have taken
+/// — so the element never yields back to the `CollectionMarker` and the close
+/// never resumes. `FrameCtx` carries the innermost collection's
+/// `close`/`sep`/`kv_sep` so the lex-fork can re-add that yield branch
+/// **alongside** (never instead of) the operator branches ("emit-both"): the
+/// doomed operator fork dies under the ambiguity budget, the yield pops the
+/// element, and the `CollectionMarker` resumes its close.
+///
+/// ## Faithfulness contract (red-team RT3-MINOR7)
+/// `FrameCtx` describes the **innermost** frame only — never the union of all
+/// enclosing frames. The existence-only union fast-reject lives in the
+/// `EdgeStackScopeFlags::STRUCTURAL_DELIM` bit; the *delimiter values* here come
+/// from the nearest `CollectionMarker`'s [`CollectionSpec`]. Keeping it
+/// innermost-only is what makes the forward sub-parse member-independent (the
+/// `parse_pure` read-set argument): cohort members of one worker share the
+/// innermost structural frame, so this may be computed once per merged frontier
+/// and broadcast.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct FrameCtx {
+    /// Innermost enclosing collection's close delimiter (`""` when there is no
+    /// enclosing collection frame — see [`FrameCtx::has_frame`]).
+    pub close: &'static str,
+    /// Innermost enclosing collection's element/pair separator (`""` when none).
+    pub sep: &'static str,
+    /// Innermost enclosing collection's key/value separator (`Some(":")` for
+    /// kv-maps), `None` otherwise.
+    pub kv_sep: Option<&'static str>,
+    /// `true` iff there is an enclosing structural (collection) frame. When
+    /// `false`, the delimiter fields are inert and the lex-fork emits no yield.
+    pub has_frame: bool,
+}
+
+impl FrameCtx {
+    /// The empty context: no enclosing structural frame.
+    pub const EMPTY: FrameCtx = FrameCtx {
+        close: "",
+        sep: "",
+        kv_sep: None,
+        has_frame: false,
+    };
+
+    /// Whether there is an enclosing structural (collection) frame (the
+    /// existence-only fast-reject result).
+    #[inline]
+    pub fn has_structural_frame(&self) -> bool {
+        self.has_frame
+    }
+
+    /// `true` iff `text` equals one of the innermost frame's required structural
+    /// delimiters (`close` / `sep` / `kv_sep`). Always `false` when there is no
+    /// enclosing frame, so it is safe to call unconditionally.
+    #[inline]
+    pub fn matches_delim(&self, text: &str) -> bool {
+        self.has_frame
+            && (text == self.close
+                || text == self.sep
+                || self.kv_sep.is_some_and(|k| k == text))
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
 // Stack symbols (M5: WPDS rule emission carries category + rule index + BP)
 // ══════════════════════════════════════════════════════════════════════════════
 
@@ -140,6 +271,23 @@ pub struct StackSymbolV2 {
     /// does (mirrors `GroupingMarker`'s `bp`-as-outer_bp, on a distinct slot
     /// because `bp` already carries the collection's static slot_idx).
     pub coll_dispatch_bp: Option<u8>,
+    /// Cross-cat operand/element GOAL category: `Some(g)` for a STRICT
+    /// `category_entry_goal(g)` symbol — the source category index that the
+    /// sub-parse rooted at this `CategoryEntry` must ultimately yield. `None`
+    /// for every other symbol kind and for every non-strict `category_entry`,
+    /// so it never alters their `Eq`/`Hash`/`Ord`/GSS identity (None == None).
+    ///
+    /// Consumed by the engine's `InfixLoop`: when the frontier-top symbol
+    /// carries `Some(g)`, an infix/postfix/mixfix candidate whose RESULT
+    /// category `r` provably cannot reach `g` in the post-built cross-cat
+    /// extension graph (`cat_can_reach(r, g) == false`) is dropped BEFORE
+    /// weighting — bounding an operand to its goal category so a cross-cat-out
+    /// operator (`POutput` `Name → Proc`, `InputBindPolyadic` `Name →
+    /// InputBind`, …) cannot over-extend a Name operand past `Name`. A `None`
+    /// goal (top-level `CrossCatLhs`, all legacy ctors) admits every candidate
+    /// ⇒ the gate is inert. See `category_entry_goal` and the goal-gate design
+    /// (`scratchpad/crosscat-operand-design.md`).
+    pub goal_src_idx: Option<u16>,
 }
 
 impl StackSymbolV2 {
@@ -151,6 +299,27 @@ impl StackSymbolV2 {
             bp: None,
             kind: SymbolKind::CategoryEntry,
             coll_dispatch_bp: None,
+            goal_src_idx: None,
+        }
+    }
+
+    /// Construct a STRICT category-entry symbol that carries a GOAL category
+    /// (`goal_src_idx = Some(category_src_idx)`). Identical to
+    /// [`Self::category_entry`] in every other field, so a strict symbol is
+    /// `Eq`/`Hash`/`Ord`-distinct from the corresponding non-strict
+    /// `category_entry(c)` ONLY by the goal slot (the GSS therefore treats a
+    /// goal-bounded operand frame as its own node — intended: the goal changes
+    /// which InfixLoop candidates are admissible). Pushed at cross-cat operand
+    /// (mixfix) and element (collection) sites so the operand sub-parse is
+    /// bounded to category `c`; see `goal_src_idx`.
+    pub fn category_entry_goal(category_src_idx: u16) -> Self {
+        StackSymbolV2 {
+            category_src_idx,
+            rule_index_in_category: 0,
+            bp: None,
+            kind: SymbolKind::CategoryEntry,
+            coll_dispatch_bp: None,
+            goal_src_idx: Some(category_src_idx),
         }
     }
 
@@ -167,6 +336,7 @@ impl StackSymbolV2 {
             bp,
             kind: SymbolKind::RuleAt(position),
             coll_dispatch_bp: None,
+            goal_src_idx: None,
         }
     }
 
@@ -178,6 +348,7 @@ impl StackSymbolV2 {
             bp: Some(bp),
             kind: SymbolKind::InfixContinuation,
             coll_dispatch_bp: None,
+            goal_src_idx: None,
         }
     }
 
@@ -201,6 +372,7 @@ impl StackSymbolV2 {
             bp: Some(slot_idx),
             kind: SymbolKind::CollectionMarker,
             coll_dispatch_bp: Some(dispatch_bp),
+            goal_src_idx: None,
         }
     }
 
@@ -215,6 +387,7 @@ impl StackSymbolV2 {
             bp: Some(outer_bp),
             kind: SymbolKind::GroupingMarker,
             coll_dispatch_bp: None,
+            goal_src_idx: None,
         }
     }
 
@@ -232,6 +405,7 @@ impl StackSymbolV2 {
             bp: Some(operands_completed),
             kind: SymbolKind::MixfixMarker,
             coll_dispatch_bp: None,
+            goal_src_idx: None,
         }
     }
 
@@ -251,6 +425,7 @@ impl StackSymbolV2 {
             bp: Some(outer_bp),
             kind: SymbolKind::OptionalGroupAt(sub_pos),
             coll_dispatch_bp: None,
+            goal_src_idx: None,
         }
     }
 
@@ -270,6 +445,7 @@ impl StackSymbolV2 {
             bp: Some(outer_bp),
             kind: SymbolKind::BinderListLoopAt(sub_pos),
             coll_dispatch_bp: None,
+            goal_src_idx: None,
         }
     }
 
@@ -281,6 +457,7 @@ impl StackSymbolV2 {
             bp: None,
             kind: SymbolKind::Return,
             coll_dispatch_bp: None,
+            goal_src_idx: None,
         }
     }
 
@@ -1169,6 +1346,18 @@ pub enum LexAltRuleKind {
     /// InfixLoop dispatch; subsequent triggers are handled by
     /// `MixfixLiteralRun` state machine).
     MixfixFirstTrigger { l_bp: u8, result_src_idx: u16 },
+    /// GAP-3 (2026-06-28) — 0-operand multi-literal keyword-PREFIX rule
+    /// (`MapEmpty . |- "Map" "(" ")"`, `PathmapEmpty`, `NQuoteNil`) whose
+    /// trigger ALSO lexes as an identifier (collection category names lex as
+    /// a `{Fixed(trigger), Ident}` lattice). At a PrefixDispatch lex-fork the
+    /// `Fixed(trigger)` lattice reading binds here so it is NOT dropped in
+    /// favour of the `Ident → Var` reading. The walker apply (modelled on
+    /// `LexAltPrefixOp`) mirrors the trigger as a `TriggerTerminal`, pushes
+    /// `mixfix_marker(cat, rule_idx, 0)`, and transitions to
+    /// `MixfixLiteralRun { kind: 2, parts_len == 0 }` — the SAME runtime arm
+    /// the singleton/unified-Fork prefix dispatch uses for non-lattice
+    /// triggers. `rule_idx` is carried by the enclosing `LexAltRuleInfo`.
+    NullaryPrefixRun,
 }
 
 /// M6c.6.4: dispatch-site discriminator for `lex_alt_rule_for_*`
@@ -3407,6 +3596,42 @@ pub fn lex_w_alt(
     )
 }
 
+/// GEN-2 longest-open-token (2026-06-29): construct a `LexicographicWeight`
+/// carrying the byte length of the OPEN token a prefix lex-fork branch matched.
+/// A LONGER open wins over a shorter one (maximal munch), above the BP-tier
+/// biases in `cost`. Used by the prefix lex-fork emission (`emit_lex_fork_at_
+/// prefix_dispatch`) so e.g. the Pathmap `{|` (len 2) branch beats the PPar `{`
+/// (len 1) branch for the empty-collection ambiguity `{||}`. With `open_len`
+/// equal across branches the comparison falls through to `cost` unchanged.
+#[inline]
+pub fn lex_w_with_len(
+    open_len: u16,
+    cost: f64,
+    src_idx: u16,
+    rule_idx: u16,
+) -> crate::automata::lex_weight::LexicographicWeight {
+    crate::automata::lex_weight::LexicographicWeight::from_cost(cost, src_idx, rule_idx)
+        .with_open_len(open_len)
+}
+
+/// GEN-2 longest-open-token (2026-06-29): the `lex_w_alt` counterpart that also
+/// carries the matched open-token byte length. Used by secondary lex-fork
+/// branches (which need an explicit `lex_alt_idx`) so they participate in the
+/// longest-open ordering identically to the primary branch.
+#[inline]
+pub fn lex_w_alt_with_len(
+    open_len: u16,
+    cost: f64,
+    src_idx: u16,
+    rule_idx: u16,
+    lex_alt_idx: u16,
+) -> crate::automata::lex_weight::LexicographicWeight {
+    crate::automata::lex_weight::LexicographicWeight::from_cost_with_lex(
+        cost, src_idx, rule_idx, lex_alt_idx,
+    )
+    .with_open_len(open_len)
+}
+
 /// Construct the multiplicative identity `LexicographicWeight::one()`.
 ///
 /// Imported via `use mettail_prattail::wpda_runtime::lex_one;` in the
@@ -3554,9 +3779,18 @@ mod tests {
         // The str-cast collection-infix fix (2026-06-18) added the
         // `coll_dispatch_bp: Option<u8>` carrier (the Pratt dispatch bp at which
         // a finalized Class-5 collection resumes InfixLoop), taking the struct
-        // from 8 to 10 bytes. Assert it does not regress beyond that.
+        // from 8 to 10 bytes.
+        //
+        // GEN-1 goal-gate G0 (2026-06-28) added `goal_src_idx: Option<u16>`
+        // (the cross-cat operand/element goal category). `Option<u16>` has no
+        // niche (all u16 bit patterns are valid), so it occupies 4 bytes
+        // (1 discriminant byte + 1 pad + 2 payload, struct align 2), taking the
+        // struct from 10 to 14 bytes. The growth is the deliberate cost of
+        // threading the goal onto the GSS symbol (mirrors the `coll_dispatch_bp`
+        // precedent); it is `None` for every non-strict symbol so GSS identity
+        // is preserved. Assert it does not regress beyond 14 bytes.
         // (Actual size depends on enum layout; assert it stays small.)
-        assert!(std::mem::size_of::<StackSymbolV2>() <= 10);
+        assert!(std::mem::size_of::<StackSymbolV2>() <= 14);
     }
 
     #[test]

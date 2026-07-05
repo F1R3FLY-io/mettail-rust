@@ -25,9 +25,630 @@
 //! `parse_<Cat>_via_wpda_recovering` entry point keeps the walker's default
 //! recovery config and returns the committed recovery trail.
 
+use mettail_ast::grammar::{PatternOp, SyntaxExpr, TermParam};
 use mettail_ast::language::LanguageDef;
+use mettail_ast::types::TypeExpr;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
+
+/// Emit the generated-module-scope `__MettailWpdaSemanticKeyHasher` ONCE
+/// (2026-06-28, SPPF-realize observational-dedup).
+///
+/// This was previously a function-local struct duplicated inside every
+/// per-category facade parser. It is hoisted to module scope so BOTH the
+/// facade's root-dedup (`__mettail_wpda_semantic_key`) AND the engine's
+/// per-node `WpdaEngine::semantic_fingerprint` override consume the SAME
+/// INJECTIVE-up-to-observational-equivalence byte key
+/// (`term.semantic_hash(..)` → `into_key()`): the FULL tagged
+/// length-prefixed byte stream (NOT `finish() -> u64`). Sharing one key
+/// definition is what makes per-node dedup byte-for-byte equivalent to the
+/// facade's root-only dedup (the output-identity theorem).
+pub(crate) fn emit_semantic_key_hasher() -> TokenStream {
+    quote! {
+        #[derive(Default)]
+        struct __MettailWpdaSemanticKeyHasher {
+            bytes: Vec<u8>,
+        }
+        impl __MettailWpdaSemanticKeyHasher {
+            fn into_key(self) -> Vec<u8> {
+                self.bytes
+            }
+            fn push_raw(&mut self, tag: u8, payload: &[u8]) {
+                self.bytes.push(tag);
+                self.bytes.extend_from_slice(&(payload.len() as u64).to_le_bytes());
+                self.bytes.extend_from_slice(payload);
+            }
+            fn push_fixed(&mut self, tag: u8, payload: &[u8]) {
+                self.bytes.push(tag);
+                self.bytes.extend_from_slice(payload);
+            }
+        }
+        impl std::hash::Hasher for __MettailWpdaSemanticKeyHasher {
+            fn finish(&self) -> u64 {
+                let mut h = 0xcbf29ce484222325u64;
+                for b in &self.bytes {
+                    h ^= *b as u64;
+                    h = h.wrapping_mul(0x100000001b3);
+                }
+                h
+            }
+            fn write(&mut self, bytes: &[u8]) {
+                self.push_raw(0, bytes);
+            }
+            fn write_u8(&mut self, i: u8) {
+                self.push_fixed(1, &[i]);
+            }
+            fn write_u16(&mut self, i: u16) {
+                self.push_fixed(2, &i.to_le_bytes());
+            }
+            fn write_u32(&mut self, i: u32) {
+                self.push_fixed(3, &i.to_le_bytes());
+            }
+            fn write_u64(&mut self, i: u64) {
+                self.push_fixed(4, &i.to_le_bytes());
+            }
+            fn write_u128(&mut self, i: u128) {
+                self.push_fixed(5, &i.to_le_bytes());
+            }
+            fn write_usize(&mut self, i: usize) {
+                self.push_fixed(6, &(i as u128).to_le_bytes());
+            }
+            fn write_i8(&mut self, i: i8) {
+                self.push_fixed(7, &i.to_le_bytes());
+            }
+            fn write_i16(&mut self, i: i16) {
+                self.push_fixed(8, &i.to_le_bytes());
+            }
+            fn write_i32(&mut self, i: i32) {
+                self.push_fixed(9, &i.to_le_bytes());
+            }
+            fn write_i64(&mut self, i: i64) {
+                self.push_fixed(10, &i.to_le_bytes());
+            }
+            fn write_i128(&mut self, i: i128) {
+                self.push_fixed(11, &i.to_le_bytes());
+            }
+            fn write_isize(&mut self, i: isize) {
+                self.push_fixed(12, &(i as i128).to_le_bytes());
+            }
+        }
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════
+// P2 ISOLATION+COMBINE CODEGEN (Plan a7986200, 2026-07-05) — ships the ROOT-P
+// `.*sep` divide-and-conquer linearization into the generated facade.
+// Gate: `super::forks::SEP_ISOLATION_COMBINE` + `SEP_ISOLATION_CATEGORIES`.
+// ════════════════════════════════════════════════════════════════════════
+
+/// One labeled AST variant a `.*sep` category builds, with the suffix
+/// operand-groups AFTER the list (e.g. the `"where" cond:Proc` of
+/// `ForRowWhere`). The bare list variant (e.g. `ForRowNoWhere`) has
+/// `operand_groups` empty.
+struct SepOperandGroup {
+    /// The literal that introduces the group at depth 0 (e.g. `"where"`).
+    lead: String,
+    /// Operand category (e.g. `"Proc"`) — parsed via its own `_all` facade.
+    category: String,
+}
+
+struct SepVariant {
+    /// Constructor label (e.g. `"ForRowNoWhere"` / `"ForRowWhere"`).
+    label: String,
+    /// Suffix operand-groups (currently at most one supported; a shape with
+    /// more is not isolation-eligible — see `derive_sep_combine_shape`).
+    operand_groups: Vec<SepOperandGroup>,
+}
+
+/// Grammar-derived shape of a `head sep list.*sep(sep) [suffix]` category that
+/// the isolation helper linearizes. Derived from the SAME grammar IR the walker
+/// classifies (`GrammarRule.syntax_pattern`'s `PatternOp::Sep` — RT-1/7); NO
+/// per-language / per-rule hardcode.
+///
+/// Currently accepts the top-level head+list form (list starting at token 0, no
+/// prefix framing/operands, `Vec<Element>` list field, ≤1 suffix operand-group
+/// per variant) — this is `ForRow` / `ForRowPersistent*`. Framed-list /
+/// prefix-operand shapes (sends, polyadic binds, braced collections) return
+/// `None` here (they fall through to the monolithic body — byte-identical,
+/// sound) until the derivation is extended for them.
+pub(crate) struct SepCombineShape {
+    /// Element category parsed per segment (e.g. `"InputBind"`) — re-lexed +
+    /// sub-parsed via its own `parse_via_wpda_all_with_weights` string entry.
+    element_category: String,
+    /// Depth-0 element separator text (e.g. `"&"`). A single ASCII byte for every
+    /// shipped `.*sep` — enforced by `derive_sep_combine_shape`.
+    separator: String,
+    /// `src_idx` of the RESULT category (this `.*sep` category).
+    result_src_idx: u16,
+    /// Labeled variants, ordered most-specific first (more operand-groups first),
+    /// so the scan elects the suffix variant when its lead literal is present.
+    variants: Vec<SepVariant>,
+}
+
+/// Extract a base category name from a `TypeExpr::Base`.
+fn sep_base_ty(ty: &TypeExpr) -> Option<String> {
+    match ty {
+        TypeExpr::Base(id) => Some(id.to_string()),
+        _ => None,
+    }
+}
+
+/// Derive the [`SepCombineShape`] for `cat_name`, or `None` when the category is
+/// not an isolation-eligible `.*sep` shape (grammar-derived — the single source
+/// of truth for the emitted helper + prologues).
+fn derive_sep_combine_shape(
+    language: &LanguageDef,
+    cat_name: &str,
+    categories: &[String],
+) -> Option<SepCombineShape> {
+    let src_idx_of =
+        |name: &str| -> Option<u16> { categories.iter().position(|c| c == name).map(|i| i as u16) };
+    let result_src_idx = src_idx_of(cat_name)?;
+
+    let mut element_category: Option<String> = None;
+    let mut separator: Option<String> = None;
+    let mut variants: Vec<SepVariant> = Vec::new();
+
+    for rule in &language.terms {
+        if rule.category.to_string() != cat_name {
+            continue;
+        }
+        let mut normalized = rule.clone();
+        mettail_ast::grammar::convert_items_to_term_context(&mut normalized);
+        let (Some(tc), Some(sp)) = (&normalized.term_context, &normalized.syntax_pattern) else {
+            continue;
+        };
+        // Exactly one `.*sep` operand in the pattern.
+        let sep_positions: Vec<usize> = sp
+            .iter()
+            .enumerate()
+            .filter_map(|(i, e)| matches!(e, SyntaxExpr::Op(PatternOp::Sep { .. })).then_some(i))
+            .collect();
+        if sep_positions.len() != 1 {
+            continue;
+        }
+        let sep_idx = sep_positions[0];
+        let SyntaxExpr::Op(PatternOp::Sep { collection, separator: rule_sep, .. }) = &sp[sep_idx]
+        else {
+            continue;
+        };
+        // Head+list form ONLY: `[Param(head), Literal(sep), Op(Sep(list)), …]`
+        // with the list at token 0 (no prefix framing / prefix operands).
+        if sep_idx != 2 {
+            continue;
+        }
+        let SyntaxExpr::Param(_) = &sp[0] else { continue };
+        let SyntaxExpr::Literal(head_sep) = &sp[1] else { continue };
+        // SEPARATOR-LOCALITY at the head: the head↔list join literal must equal
+        // the list separator (uniform list — a genuine `.*sep`).
+        if head_sep != rule_sep {
+            continue;
+        }
+        // Element category = the inner type of the `Vec(elem)` list param.
+        let elem_cat = tc.iter().find_map(|p| match p {
+            TermParam::Simple { name, ty } if name == collection => match ty {
+                TypeExpr::Collection { element, .. } => sep_base_ty(element),
+                _ => None,
+            },
+            _ => None,
+        })?;
+        // Suffix operand-groups: `[Literal(lead), Param(op)]*` after the `.*sep`.
+        let mut groups: Vec<SepOperandGroup> = Vec::new();
+        let mut j = sep_idx + 1;
+        let mut shape_ok = true;
+        while j < sp.len() {
+            let SyntaxExpr::Literal(lead) = &sp[j] else {
+                shape_ok = false;
+                break;
+            };
+            let Some(SyntaxExpr::Param(op)) = sp.get(j + 1) else {
+                shape_ok = false;
+                break;
+            };
+            let op_cat = tc.iter().find_map(|p| match p {
+                TermParam::Simple { name, ty } if name == op => sep_base_ty(ty),
+                _ => None,
+            });
+            let Some(op_cat) = op_cat else {
+                shape_ok = false;
+                break;
+            };
+            groups.push(SepOperandGroup { lead: lead.clone(), category: op_cat });
+            j += 2;
+        }
+        if !shape_ok {
+            continue;
+        }
+        // At most one suffix operand-group per variant (the shipped `where cond`);
+        // richer suffixes are not isolation-eligible yet.
+        if groups.len() > 1 {
+            return None;
+        }
+        // Uniform element category + separator across all variants of this cat.
+        match &element_category {
+            None => element_category = Some(elem_cat.clone()),
+            Some(e) if *e == elem_cat => {},
+            Some(_) => return None,
+        }
+        match &separator {
+            None => separator = Some(rule_sep.clone()),
+            Some(s) if s == rule_sep => {},
+            Some(_) => return None,
+        }
+        variants.push(SepVariant { label: normalized.label.to_string(), operand_groups: groups });
+    }
+
+    let element_category = element_category?;
+    let separator = separator?;
+    // The STRING-level depth split matches the separator as a single ASCII byte
+    // (every shipped `.*sep` — `&`/`,`/`;`/`|`). Non-single-byte separators are
+    // not isolation-eligible here.
+    if separator.len() != 1 || !separator.is_ascii() {
+        return None;
+    }
+    // Need the bare list variant (no suffix) plus at least one variant.
+    if variants.is_empty() || !variants.iter().any(|v| v.operand_groups.is_empty()) {
+        return None;
+    }
+
+    // SEPARATOR-LOCALITY soundness gate (T9): the separator must NOT be able to
+    // occur at depth 0 WITHIN a single element — i.e. no rule BUILDS an element
+    // using the separator (`… sep … : Element`). Else a depth-0 split would DROP
+    // the readings where the separator binds as an element-internal operator
+    // (never-disambiguate-early). We test `result_category == element_category`
+    // (the separator PRODUCES an element); we deliberately do NOT test
+    // `category == element_category` (the separator merely CONSUMES an element as
+    // LHS) — that is exactly the `.*sep` rule we are handling (`b "&" … : ForRow`
+    // has LHS category `InputBind`) and must not disqualify it. Mirrors the
+    // spirit of C3 `category_recognizes_operator`.
+    let infix_rules = super::infix::extract_infix_rules(language);
+    let sep_builds_element = infix_rules
+        .iter()
+        .any(|r| r.terminal == separator && r.result_category == element_category);
+    if sep_builds_element {
+        return None;
+    }
+
+    // Order variants most-specific first (more operand-groups first).
+    variants.sort_by(|a, b| b.operand_groups.len().cmp(&a.operand_groups.len()));
+
+    Some(SepCombineShape { element_category, separator, result_src_idx, variants })
+}
+
+/// The module-scope identifier of the isolation helper for `cat_name`.
+pub(crate) fn sep_isolation_helper_ident(cat_name: &str) -> proc_macro2::Ident {
+    format_ident!("__mettail_wpda_sep_isolate_all_{}", cat_name)
+}
+
+/// The gated `.*sep` isolation shape for `cat_name`: `Some` iff the master
+/// switch is ON, the category is in the include set, AND a shape is derivable.
+/// The SINGLE source of truth shared by the helper emitter (facade) and the
+/// string-entry prologue emitter (mod.rs).
+pub(crate) fn sep_isolation_shape(
+    language: &LanguageDef,
+    cat_name: &str,
+    categories: &[String],
+) -> Option<SepCombineShape> {
+    if super::forks::SEP_ISOLATION_COMBINE
+        && super::forks::SEP_ISOLATION_CATEGORIES.contains(&cat_name)
+    {
+        derive_sep_combine_shape(language, cat_name, categories)
+    } else {
+        None
+    }
+}
+
+/// Which string parse entry a prologue is emitted into.
+pub(crate) enum SepSeam {
+    /// `Cat::parse_via_wpda(input) -> Result<Cat, ParseError>` (single winner).
+    Single,
+    /// `Cat::parse_via_wpda_all_with_weights(input) -> Result<(Vec<Cat>, Vec<W>), ParseError>`.
+    All,
+}
+
+/// Emit the guarded string-entry prologue that calls the isolation helper with
+/// the RAW input string (before `lex_dag`). Runtime A/B: `PRATTAIL_NO_SEP_ISOLATION`
+/// forces the monolithic path without a rebuild.
+pub(crate) fn emit_sep_isolation_prologue(
+    helper_name: &proc_macro2::Ident,
+    seam: SepSeam,
+) -> TokenStream {
+    match seam {
+        SepSeam::Single => quote! {
+            // P2 ISOLATION+COMBINE prologue (Plan a7986200) — single winner.
+            if std::env::var_os("PRATTAIL_NO_SEP_ISOLATION").is_none() {
+                if let Some((__iso_terms, __iso_weights)) = #helper_name(input) {
+                    if let Some((__t, _)) = __iso_terms
+                        .into_iter()
+                        .zip(__iso_weights.into_iter())
+                        .min_by(|(_, __a), (_, __b)| __a.cmp(__b))
+                    {
+                        return Ok(__t);
+                    }
+                }
+            }
+        },
+        SepSeam::All => quote! {
+            // P2 ISOLATION+COMBINE prologue (Plan a7986200) — full alt set.
+            if std::env::var_os("PRATTAIL_NO_SEP_ISOLATION").is_none() {
+                if let Some(__iso) = #helper_name(input) {
+                    return Ok(__iso);
+                }
+            }
+        },
+    }
+}
+
+/// Emit the shared per-category STRING-level isolation helper
+/// `__mettail_wpda_sep_isolate_all_<Cat>(input: &str)`.
+///
+/// It mirrors the Stage-0-VALIDATED probe EXACTLY at the STRING level: a
+/// bracket-depth-aware char split of the raw input (NOT the post-lex token
+/// source — that is an ambiguous LATTICE for these surfaces, which is precisely
+/// why the monolithic parse forks `dᵏ`), then a TRULY ISOLATED re-lex+parse of
+/// each segment through the ELEMENT category's own `parse_via_wpda_all_with_weights`
+/// string entry, then a cartesian combine (⊗-folded weights) + dedup + sort.
+/// `None` ⇒ NOT-APPLICABLE or ANY sub-parse failure ⇒ the caller falls through to
+/// the UNMODIFIED monolithic body (byte-identical; monolithic authoritative — RT-4).
+fn emit_sep_isolation(cat_ident: &proc_macro2::Ident, shape: &SepCombineShape) -> TokenStream {
+    let helper_name = sep_isolation_helper_ident(&cat_ident.to_string());
+    let elem_ident = format_ident!("{}", shape.element_category);
+    let result_src_idx = shape.result_src_idx;
+    // Separator is a single ASCII byte for every shipped `.*sep` (`&`/`,`/`;`/`|`)
+    // — `derive_sep_combine_shape` enforces this.
+    let sep_byte = shape.separator.as_bytes()[0];
+
+    // Per-variant: the depth-0 suffix-lead detection + the construction arm.
+    let mut lead_checks: Vec<TokenStream> = Vec::new();
+    let mut construct_arms: Vec<TokenStream> = Vec::new();
+    let mut bare_variant_idx: usize = 0;
+    for (vi, variant) in shape.variants.iter().enumerate() {
+        let vi_lit = vi;
+        let label_ident = format_ident!("{}", variant.label);
+        if variant.operand_groups.is_empty() {
+            // The bare list variant — `Cat::Label(Arc(elems[0]), elems[1..])`.
+            // (Scalar HEAD is `Arc<Element>` — mirrors the walker `into_term_arc`;
+            // the `.*sep` list field is a plain `Vec<Element>` — mirrors the drain.)
+            bare_variant_idx = vi;
+            construct_arms.push(quote! {
+                #vi_lit => {
+                    for (__elems, __w) in __element_combos {
+                        __candidates.push((
+                            #cat_ident::#label_ident(
+                                std::sync::Arc::new(__elems[0].clone()),
+                                __elems[1..].to_vec(),
+                            ),
+                            __w,
+                        ));
+                    }
+                }
+            });
+        } else {
+            // A suffix variant — one operand-group `lead op:Cat`.
+            let group = &variant.operand_groups[0];
+            let lead = &group.lead;
+            let lead_len = group.lead.len();
+            let op_ident = format_ident!("{}", group.category);
+            // Depth-0 word-bounded lead detection over the raw bytes.
+            lead_checks.push(quote! {
+                if __i + #lead_len <= __n
+                    && &__bytes[__i..__i + #lead_len] == #lead.as_bytes()
+                    && (__i == 0 || !__is_word(__bytes[__i - 1]))
+                    && (__i + #lead_len == __n || !__is_word(__bytes[__i + #lead_len]))
+                {
+                    __variant = #vi_lit;
+                    __domain_end = __i;
+                    __op_start = __i + #lead_len;
+                    break 'scan;
+                }
+            });
+            construct_arms.push(quote! {
+                #vi_lit => {
+                    let __suffix = input[__op_start..].trim();
+                    if __suffix.is_empty() {
+                        return None;
+                    }
+                    let (__op_terms, __op_weights) =
+                        match #op_ident::parse_via_wpda_all_with_weights(__suffix) {
+                            Ok(__v) => __v,
+                            Err(_) => return None,
+                        };
+                    if __op_terms.is_empty() {
+                        return None;
+                    }
+                    for (__elems, __we) in &__element_combos {
+                        for (__op, __wo) in __op_terms.iter().zip(__op_weights.iter()) {
+                            if __candidates.len() >= __REALIZE_CAP {
+                                return None;
+                            }
+                            __candidates.push((
+                                #cat_ident::#label_ident(
+                                    std::sync::Arc::new(__elems[0].clone()),
+                                    __elems[1..].to_vec(),
+                                    std::sync::Arc::new(__op.clone()),
+                                ),
+                                Semiring::times(__we, __wo),
+                            ));
+                        }
+                    }
+                }
+            });
+        }
+    }
+    let bare_variant_idx_lit = bare_variant_idx;
+
+    quote! {
+        /// P2 ISOLATION+COMBINE (Plan a7986200): STRING-level divide-and-conquer
+        /// `.*sep` linearizer for the `#cat_ident` category. See
+        /// `emit_sep_isolation` in the macro for the full rationale.
+        #[allow(
+            non_snake_case,
+            unused_assignments,
+            unused_variables,
+            clippy::needless_range_loop,
+            clippy::manual_is_ascii_check
+        )]
+        fn #helper_name(
+            input: &str,
+        ) -> Option<(
+            Vec<#cat_ident>,
+            Vec<mettail_prattail::automata::lex_weight::LexicographicWeight>,
+        )> {
+            use mettail_prattail::automata::semiring::Semiring;
+            type __W = mettail_prattail::automata::lex_weight::LexicographicWeight;
+            const __REALIZE_CAP: usize = 64;
+            fn __is_word(c: u8) -> bool {
+                c.is_ascii_alphanumeric() || c == b'_'
+            }
+            let __bytes = input.as_bytes();
+            let __n = __bytes.len();
+            if __n == 0 {
+                return None;
+            }
+
+            // (1) Locate the depth-0 SUFFIX (optional `lead op` group) via a
+            //     bracket-depth char scan. Standard ASCII brackets `([{` / `)]}`
+            //     track depth; multi-char collection delimiters (`#{`/`{|`/…)
+            //     balance via their `{`/`}` component (Stage-0-validated). This
+            //     is the char-level analogue of the probe `split_amp_depth0`.
+            let mut __variant: usize = #bare_variant_idx_lit;
+            let mut __domain_end: usize = __n;
+            #[allow(unused_assignments)]
+            let mut __op_start: usize = __n;
+            {
+                let mut __depth: i32 = 0;
+                let mut __i = 0usize;
+                'scan: while __i < __n {
+                    match __bytes[__i] {
+                        b'(' | b'[' | b'{' => __depth += 1,
+                        b')' | b']' | b'}' => __depth -= 1,
+                        _ => {
+                            if __depth == 0 {
+                                #(#lead_checks)*
+                            }
+                        }
+                    }
+                    __i += 1;
+                }
+            }
+
+            // (2) SPLIT the domain `[0, __domain_end)` at depth-0 separator bytes.
+            let mut __seg_ranges: Vec<(usize, usize)> = Vec::new();
+            {
+                let mut __depth: i32 = 0;
+                let mut __start = 0usize;
+                let mut __i = 0usize;
+                while __i < __domain_end {
+                    match __bytes[__i] {
+                        b'(' | b'[' | b'{' => __depth += 1,
+                        b')' | b']' | b'}' => __depth -= 1,
+                        __c if __depth == 0 && __c == #sep_byte => {
+                            __seg_ranges.push((__start, __i));
+                            __start = __i + 1;
+                        }
+                        _ => {}
+                    }
+                    __i += 1;
+                }
+                __seg_ranges.push((__start, __domain_end));
+            }
+            // 0 separators ⇒ single element ⇒ fall through (the monolithic single
+            // variant is already fast; no `dᵏ` fork to linearize).
+            if __seg_ranges.len() < 2 {
+                return None;
+            }
+
+            // (3) ISOLATED per-segment RE-LEX + parse via the ELEMENT category's
+            //     own string entry (fresh lex + walker from ROOT — NO
+            //     cross-segment accumulation). Any Err / empty ⇒ None (RT-4). A
+            //     `_all` string entry consumes the WHOLE segment or errors, so
+            //     no partial-consume check is needed.
+            let mut __per_seg: Vec<(Vec<#elem_ident>, Vec<__W>)> =
+                Vec::with_capacity(__seg_ranges.len());
+            for &(__s, __e) in &__seg_ranges {
+                let __seg = input[__s..__e].trim();
+                if __seg.is_empty() {
+                    return None;
+                }
+                let (__terms, __weights) =
+                    match #elem_ident::parse_via_wpda_all_with_weights(__seg) {
+                        Ok(__v) => __v,
+                        Err(_) => return None,
+                    };
+                if __terms.is_empty() {
+                    return None;
+                }
+                __per_seg.push((__terms, __weights));
+            }
+
+            // (4) CARTESIAN COMBINE over segments (⊗-folded weights, cap 64).
+            let mut __element_combos: Vec<(Vec<#elem_ident>, __W)> =
+                vec![(Vec::new(), <__W as Semiring>::one())];
+            for (__alts, __ws) in &__per_seg {
+                let mut __next: Vec<(Vec<#elem_ident>, __W)> =
+                    Vec::with_capacity(__element_combos.len() * __alts.len().max(1));
+                for (__prefix, __pw) in &__element_combos {
+                    for (__a, __aw) in __alts.iter().zip(__ws.iter()) {
+                        if __next.len() >= __REALIZE_CAP {
+                            return None;
+                        }
+                        let mut __v = __prefix.clone();
+                        __v.push(__a.clone());
+                        __next.push((__v, Semiring::times(__pw, __aw)));
+                    }
+                }
+                __element_combos = __next;
+            }
+            // Fold in the framing weight (cost 0.0 ⇒ absorbed under ⊗; provenance
+            // leg = the result category's) so the winner is the product of
+            // per-segment minima = the monolithic minimum (T5).
+            let __framing = __W::from_cost(0.0, #result_src_idx, 0);
+            for __c in __element_combos.iter_mut() {
+                __c.1 = Semiring::times(&__framing, &__c.1);
+            }
+
+            // (5) Construct per elected variant (specialized `emit_infix_action_entry`).
+            let mut __candidates: Vec<(#cat_ident, __W)> = Vec::new();
+            match __variant {
+                #(#construct_arms)*
+                _ => return None,
+            }
+            if __candidates.is_empty() {
+                return None;
+            }
+
+            // (6) FINALIZE like the monolithic `_all`: dedup by semantic key,
+            //     ⊕-min representative, weight-sort.
+            let mut __seen: std::collections::HashMap<Vec<u8>, usize> =
+                std::collections::HashMap::with_capacity(__candidates.len());
+            let mut __out_terms: Vec<#cat_ident> = Vec::new();
+            let mut __out_weights: Vec<__W> = Vec::new();
+            for (__term, __w) in __candidates {
+                let __key = {
+                    let mut __h = __MettailWpdaSemanticKeyHasher::default();
+                    __term.semantic_hash(&mut __h);
+                    __h.into_key()
+                };
+                if let Some(&__idx) = __seen.get(&__key) {
+                    if __w < __out_weights[__idx] {
+                        __out_terms[__idx] = __term;
+                        __out_weights[__idx] = __w;
+                    }
+                } else {
+                    __seen.insert(__key, __out_terms.len());
+                    __out_terms.push(__term);
+                    __out_weights.push(__w);
+                }
+            }
+            let mut __paired: Vec<_> =
+                __out_terms.into_iter().zip(__out_weights.into_iter()).collect();
+            __paired.sort_by(|(_, __a), (_, __b)| __a.cmp(__b));
+            let (__out_terms, __out_weights): (Vec<_>, Vec<_>) =
+                __paired.into_iter().unzip();
+            Some((__out_terms, __out_weights))
+        }
+    }
+}
 
 /// Emit per-category `parse_<Cat>_via_wpda` wrappers plus the shared
 /// `WpdaParseError` type.
@@ -60,7 +681,258 @@ pub(crate) fn emit_parse_fns(
         let surface_exact_fn_name = format_ident!("parse_{}_via_wpda_surface_exact", cat_name);
         let all_fn_name = format_ident!("parse_{}_via_wpda_all", cat_name);
         let cat_src_idx_u16 = cat_src_idx as u16;
+
+        // ── P2 ISOLATION+COMBINE (Plan a7986200, 2026-07-05) ──
+        //
+        // When this category is an isolation-enabled `.*sep` shape, emit the
+        // module-scope STRING-level helper `__mettail_wpda_sep_isolate_all_<Cat>`.
+        // The guarded PROLOGUES that call it live at the STRING parse entries
+        // (`Cat::parse_via_wpda` / `Cat::parse_via_wpda_all_with_weights` in
+        // `gen/mod.rs`) — that is where the raw input string (not the ambiguous
+        // post-lex LATTICE) is available. OFF / not-in-set / no-shape ⇒ empty ⇒
+        // BYTE-IDENTICAL.
+        let sep_helper_fns = match sep_isolation_shape(language, cat_name, categories) {
+            Some(shape) => emit_sep_isolation(&cat_ident, &shape),
+            None => quote! {},
+        };
+
+        // ── ROOT2_DRIVER_FALLTHROUGH (2026-07-04, session da0842dc) ──
+        //
+        // Three kill-switch-gated token streams interpolated into the
+        // single-result `parse_<Cat>_via_wpda_with_source` facade. When the
+        // const is OFF the emitted body is the EXACT pre-edit shape
+        // (byte-identical); when ON it factors the `AcceptedWithTrailing` retry
+        // into `__mettail_wpda_exhaustive_retry` and adds the demand-`Accepted`
+        // `None` fall-through that calls it.
+        let root2_fallthrough_on = super::forks::ROOT2_DRIVER_FALLTHROUGH;
+
+        // (1) The factored helper — emitted ONLY when ON. Its body is the exact
+        //     (pre-edit) inlined `AcceptedWithTrailing` retry.
+        let exhaustive_retry_helper: TokenStream = if root2_fallthrough_on {
+            quote! {
+                // The EXACT body of the historical `AcceptedWithTrailing` retry
+                // (a fresh `WpdaWalker::new_for_category` with
+                // `max_recovery_depth = 0`, the EXHAUSTIVE
+                // `run_to_end_of_input_env_aware` driver, resolve, and the M6
+                // min-weight realize-select over all 5 `WpdaResolveResult`
+                // variants). BOTH the `AcceptedWithTrailing` arm AND the new
+                // demand-`Accepted`-`None` fall-through arm call it (dedups
+                // ~60 lines — Boy-Scout). It sets `*pos` and returns the
+                // single-result `(term, weight)` OR the mapped error.
+                //
+                // The demand driver
+                // (`run_to_end_of_input_until_accepting_env_aware`) EARLY-STOPS
+                // on a category-correct but UNREALIZABLE accepting root (ROOT
+                // aa8ab54d), yielding a `None` M6-select → `EmptyResult`. The
+                // EXHAUSTIVE driver here explores the alternatives and realizes
+                // the canonical term (e.g. `(@a!!(Nil))` →
+                // `PPersistOutputShort`). Genuine-invalid surfaces still error
+                // (the exhaustive pass realizes no root → `EmptyResult`), so no
+                // spurious parse is fabricated (FV T4).
+                //
+                // NOTE: nested `fn` item — does NOT inherit the enclosing body's
+                // `use`/`type DW`, so every path is fully qualified.
+                #[allow(non_snake_case)]
+                fn __mettail_wpda_exhaustive_retry(
+                    source: &dyn mettail_prattail::wpda_runtime::WpdaTokenSource,
+                    pos: &mut usize,
+                    min_bp: u8,
+                    max_steps: usize,
+                ) -> Result<
+                    (
+                        #cat_ident,
+                        mettail_prattail::automata::lex_weight::LexicographicWeight,
+                    ),
+                    WpdaParseError,
+                > {
+                    use mettail_prattail::wpda_runtime::WpdaResolveResult;
+                    use mettail_prattail::wpda_walker::WpdaWalker;
+                    type __DW = mettail_prattail::automata::lex_weight::LexicographicWeight;
+                    let mut walker = WpdaWalker::<__DW, _>::new_for_category(
+                        #engine_ident::default(),
+                        #cat_src_idx_u16,
+                        min_bp,
+                    );
+                    let mut recovery_config =
+                        mettail_prattail::recovery::RecoveryConfig::default();
+                    recovery_config.max_recovery_depth = 0;
+                    walker.set_recovery_config(recovery_config);
+                    match walker.run_to_end_of_input_env_aware(max_steps, source) {
+                        Ok(()) => match walker.resolve_at_end_of_input(source) {
+                            WpdaResolveResult::Accepted { roots, .. } => {
+                                *pos = walker.position();
+                                // M6 realize-selection belt: iterate all
+                                // full-span roots + global min-weight that
+                                // actually realizes.
+                                let (term, dw) =
+                                    __mettail_wpda_select_min_weight_realizing(&walker, &roots)
+                                        .ok_or(WpdaParseError::EmptyResult)?;
+                                let arc = std::sync::Arc::downcast::<#cat_ident>(term)
+                                    .map_err(|_| WpdaParseError::EmptyResult)?;
+                                let typed = std::sync::Arc::try_unwrap(arc)
+                                    .unwrap_or_else(|arc| (*arc).clone());
+                                Ok((typed, dw))
+                            }
+                            WpdaResolveResult::AcceptedWithTrailing {
+                                roots,
+                                position,
+                                ..
+                            } => {
+                                *pos = position;
+                                // M6 realize-selection belt (see helper above).
+                                let (term, dw) =
+                                    __mettail_wpda_select_min_weight_realizing(&walker, &roots)
+                                        .ok_or(WpdaParseError::EmptyResult)?;
+                                let arc = std::sync::Arc::downcast::<#cat_ident>(term)
+                                    .map_err(|_| WpdaParseError::EmptyResult)?;
+                                let typed = std::sync::Arc::try_unwrap(arc)
+                                    .unwrap_or_else(|arc| (*arc).clone());
+                                Ok((typed, dw))
+                            }
+                            WpdaResolveResult::ParseError { message, position } => {
+                                Err(WpdaParseError::ParseFailed {
+                                    message,
+                                    position,
+                                    attempts: Vec::new(),
+                                })
+                            }
+                            WpdaResolveResult::MaxStepsExceeded { position } => {
+                                Err(WpdaParseError::Incomplete { position })
+                            }
+                            WpdaResolveResult::AmbiguityBudget { budget, actual, position, frontier_ess_x1000 } => {
+                                Err(WpdaParseError::AmbiguityBudget { budget, actual, position, frontier_ess_x1000 })
+                            }
+                        },
+                        Err(exceeded) => Err(WpdaParseError::Incomplete {
+                            position: exceeded.position,
+                        }),
+                    }
+                }
+            }
+        } else {
+            quote! {}
+        };
+
+        // (2) The demand-`Accepted` arm body. OFF = the pre-edit unconditional
+        //     `.ok_or(EmptyResult)?`. ON = Some(verbatim common path) / None
+        //     (fall through to the exhaustive retry). Env
+        //     `PRATTAIL_NO_ROOT2_FALLTHROUGH` forces the OFF behavior at
+        //     RUNTIME (re-exposes the demand-driver defect without a rebuild).
+        let accepted_arm_body: TokenStream = if root2_fallthrough_on {
+            quote! {
+                match __mettail_wpda_select_min_weight_realizing(&walker, &roots) {
+                    // Common path — BYTE-IDENTICAL to the pre-edit behavior.
+                    Some((term, dw)) => {
+                        let arc = std::sync::Arc::downcast::<#cat_ident>(term)
+                            .map_err(|_| WpdaParseError::EmptyResult)?;
+                        let typed = std::sync::Arc::try_unwrap(arc)
+                            .unwrap_or_else(|arc| (*arc).clone());
+                        Ok((typed, dw))
+                    }
+                    // Fall-through: the demand driver early-stopped on a
+                    // category-correct but UNREALIZABLE accepting root (ROOT
+                    // aa8ab54d). Re-run the EXHAUSTIVE driver + M6 select. The
+                    // `None` arm is reached IFF the demand M6-select returned
+                    // `None` — EXACTLY today's unconditional `EmptyResult` — so
+                    // the common path is untouched.
+                    None => {
+                        if std::env::var_os("PRATTAIL_NO_ROOT2_FALLTHROUGH").is_some() {
+                            // Runtime A/B: reproduce the pre-fix behavior.
+                            return Err(WpdaParseError::EmptyResult);
+                        }
+                        __mettail_wpda_exhaustive_retry(source, pos, min_bp, MAX_STEPS)
+                    }
+                }
+            }
+        } else {
+            // Pre-edit shape — byte-identical.
+            quote! {
+                let (term, dw) =
+                    __mettail_wpda_select_min_weight_realizing(&walker, &roots)
+                        .ok_or(WpdaParseError::EmptyResult)?;
+                let arc = std::sync::Arc::downcast::<#cat_ident>(term)
+                    .map_err(|_| WpdaParseError::EmptyResult)?;
+                let typed = std::sync::Arc::try_unwrap(arc)
+                    .unwrap_or_else(|arc| (*arc).clone());
+                Ok((typed, dw))
+            }
+        };
+
+        // (3) The `AcceptedWithTrailing` arm body. OFF = the pre-edit inlined
+        //     retry (byte-identical). ON = a call to the factored helper (same
+        //     behavior). `MAX_STEPS` and `min_bp`/`source`/`pos` are in scope.
+        let accepted_with_trailing_arm_body: TokenStream = if root2_fallthrough_on {
+            quote! {
+                __mettail_wpda_exhaustive_retry(source, pos, min_bp, MAX_STEPS)
+            }
+        } else {
+            // Pre-edit shape — byte-identical.
+            quote! {
+                let mut walker = WpdaWalker::<DW, _>::new_for_category(
+                    #engine_ident::default(),
+                    #cat_src_idx_u16,
+                    min_bp,
+                );
+                let mut recovery_config =
+                    mettail_prattail::recovery::RecoveryConfig::default();
+                recovery_config.max_recovery_depth = 0;
+                walker.set_recovery_config(recovery_config);
+                match walker.run_to_end_of_input_env_aware(MAX_STEPS, source) {
+                    Ok(()) => match walker.resolve_at_end_of_input(source) {
+                        WpdaResolveResult::Accepted { roots, .. } => {
+                            *pos = walker.position();
+                            let (term, dw) =
+                                __mettail_wpda_select_min_weight_realizing(&walker, &roots)
+                                    .ok_or(WpdaParseError::EmptyResult)?;
+                            let arc = std::sync::Arc::downcast::<#cat_ident>(term)
+                                .map_err(|_| WpdaParseError::EmptyResult)?;
+                            let typed = std::sync::Arc::try_unwrap(arc)
+                                .unwrap_or_else(|arc| (*arc).clone());
+                            Ok((typed, dw))
+                        }
+                        WpdaResolveResult::AcceptedWithTrailing {
+                            roots,
+                            position,
+                            ..
+                        } => {
+                            *pos = position;
+                            let (term, dw) =
+                                __mettail_wpda_select_min_weight_realizing(&walker, &roots)
+                                    .ok_or(WpdaParseError::EmptyResult)?;
+                            let arc = std::sync::Arc::downcast::<#cat_ident>(term)
+                                .map_err(|_| WpdaParseError::EmptyResult)?;
+                            let typed = std::sync::Arc::try_unwrap(arc)
+                                .unwrap_or_else(|arc| (*arc).clone());
+                            Ok((typed, dw))
+                        }
+                        WpdaResolveResult::ParseError { message, position } => {
+                            Err(WpdaParseError::ParseFailed {
+                                message,
+                                position,
+                                attempts: Vec::new(),
+                            })
+                        }
+                        WpdaResolveResult::MaxStepsExceeded { position } => {
+                            Err(WpdaParseError::Incomplete { position })
+                        }
+                        WpdaResolveResult::AmbiguityBudget { budget, actual, position, frontier_ess_x1000 } => {
+                            Err(WpdaParseError::AmbiguityBudget { budget, actual, position, frontier_ess_x1000 })
+                        }
+                    },
+                    Err(exceeded) => Err(WpdaParseError::Incomplete {
+                        position: exceeded.position,
+                    }),
+                }
+            }
+        };
+
         fns.push(quote! {
+            // P2 ISOLATION+COMBINE (Plan a7986200): the per-category
+            // `__mettail_wpda_sep_isolate_all_<Cat>` helper (+ its specialized
+            // constructor arms). Emitted ONLY when this category is a `.*sep`
+            // category in `SEP_ISOLATION_CATEGORIES`; empty otherwise.
+            #sep_helper_fns
+
             /// WPDS-runtime parser for the `#cat_ident` category.
             ///
             /// Runs the walker to saturation and extracts the resulting AST
@@ -110,6 +982,105 @@ pub(crate) fn emit_parse_fns(
                 // — the M11.6b D5 break is undone.
                 use mettail_prattail::automata::semiring::SemiringRef;
                 type DW = LexicographicWeight;
+
+                // M6 realize-selection belt (2026-07-04, session da0842dc):
+                // choose the single-result representative by iterating ALL
+                // full-span accepting roots (they are full-span by
+                // construction), realizing each, and returning the GLOBAL
+                // min-weight `(term, weight)` among all realizing roots — not
+                // just `roots.first()`.
+                //
+                // WHY (root-caused, Stage-0 measured — $SCRATCH/M6_STAGE0_FINDINGS.md):
+                // committing to `roots.first()` (or even the min-weight root at
+                // the fixed cap 128) is UNSOUND for a class of full-span roots
+                // whose SPPF carries a self-cyclic packing (e.g. an @-first
+                // polyadic bind-LHS `@a,b<-c` cross-cat re-entry). At the fixed
+                // raw-probe cap 128 the LAZY realizer descends into the cyclic
+                // packing and aborts (`RealizeLazyAbort::Cycle`); the EAGER
+                // fallback's Tarjan/Newton cycle-discard then yields ZERO terms
+                // for that SPPF — even though a SMALLER cap stops after the
+                // first (correct, token-sound, min-weight) packing and realizes
+                // the ORIGINAL term (measured: cap=1 → the correct term;
+                // cap>=2 → 0; roundtrip-idempotent).
+                //
+                // So per root we probe a DESCENDING cap ladder [128,64,…,1] and
+                // take the FIRST cap that yields >=1 term for THAT root. This is
+                // INERT on the common path: cap 128 is tried first, so any root
+                // that already realizes at 128 (every currently-passing input)
+                // is byte-identical (same term, same weight, same min-weight
+                // winner). The ladder is reached ONLY when the fixed cap yields
+                // 0 for a root, exactly the cyclic-SPPF parse-gap. Preserves the
+                // existing min-weight disambiguation (LexicographicWeight ⊕ is
+                // lex-min; the winner is the global min over all realizing
+                // roots). GENERAL: no per-category/per-language special-casing.
+                //
+                // Mirrors `__mettail_wpda_find_surface_exact` below, which
+                // already iterates all accepted SPPF roots.
+                // NOTE: this is a nested `fn` item — it does NOT inherit the
+                // enclosing body's `use`/`type DW` — so every path is fully
+                // qualified.
+                fn __mettail_wpda_select_min_weight_realizing(
+                    walker: &mettail_prattail::wpda_walker::WpdaWalker<
+                        mettail_prattail::automata::lex_weight::LexicographicWeight,
+                        #engine_ident,
+                    >,
+                    roots: &[mettail_prattail::sppf::SppfId],
+                ) -> Option<(
+                    std::sync::Arc<dyn std::any::Any + Send + Sync>,
+                    mettail_prattail::automata::lex_weight::LexicographicWeight,
+                )> {
+                    type __W = mettail_prattail::automata::lex_weight::LexicographicWeight;
+                    // The facade's historical single-result raw-probe cap. The
+                    // ladder descends from here so the common path is
+                    // byte-identical.
+                    const RAW_PROBE_CAPS: &[usize] = &[128, 64, 32, 16, 8, 4, 2, 1];
+                    // Kill-switch / A-B control: `PRATTAIL_NO_M6_SELECT=1`
+                    // reproduces the PRE-M6 behavior EXACTLY — commit to
+                    // `roots.first()` and realize it once at the fixed cap 128,
+                    // taking that root's min-weight term. Used to prove the M6
+                    // belt is causal for the polyadic-forrow parse-gap and inert
+                    // elsewhere. Default (unset) = the M6 belt.
+                    if std::env::var_os("PRATTAIL_NO_M6_SELECT").is_some() {
+                        let root = roots.first().copied()?;
+                        return walker
+                            .realize_root_to_terms_with_weights(root, Some(128))
+                            .into_iter()
+                            .min_by(|(_, a), (_, b)| a.cmp(b));
+                    }
+                    let mut best: Option<(std::sync::Arc<dyn std::any::Any + Send + Sync>, __W)> = None;
+                    for &root in roots {
+                        // First cap that ACTUALLY realizes this root wins for
+                        // this root; its own min-weight term is the candidate.
+                        let mut per_root: Option<(std::sync::Arc<dyn std::any::Any + Send + Sync>, __W)> = None;
+                        for &cap in RAW_PROBE_CAPS {
+                            let realized = walker.realize_root_to_terms_with_weights(root, Some(cap));
+                            if let Some((term, w)) = realized
+                                .into_iter()
+                                .min_by(|(_, a), (_, b)| a.cmp(b))
+                            {
+                                per_root = Some((term, w));
+                                break;
+                            }
+                        }
+                        if let Some((term, w)) = per_root {
+                            let take = match &best {
+                                None => true,
+                                Some((_, bw)) => w.cmp(bw) == std::cmp::Ordering::Less,
+                            };
+                            if take {
+                                best = Some((term, w));
+                            }
+                        }
+                    }
+                    best
+                }
+
+                // ROOT2_DRIVER_FALLTHROUGH (2026-07-04, session da0842dc): the
+                // factored EXHAUSTIVE retry helper (emitted ONLY when the
+                // kill-switch const is ON — byte-identical OFF). See
+                // `#exhaustive_retry_helper` construction below.
+                #exhaustive_retry_helper
+
                 // Stage 6 G6+ (2026-05-02): default 1M; PRATTAIL_MAX_STEPS env
                 // var overrides via the env-aware runner. The single-result
                 // facade is demand-sensitive: it stops once a live accepting
@@ -130,28 +1101,13 @@ pub(crate) fn emit_parse_fns(
                             *pos = walker.position();
                             // Single-result representative extraction stays
                             // bounded and lazy, but no longer depends on SPPF
-                            // packing insertion order. Probe a finite raw
-                            // prefix of the accepted root and choose the
-                            // minimum derivation weight; ambiguity-preserving
-                            // callers still use the `_all`/`_prefix` APIs.
-                            let root = roots
-                                .first()
-                                .copied()
-                                .ok_or(WpdaParseError::EmptyResult)?;
-                            const SINGLE_RESULT_RAW_PROBE_CAP: usize = 128;
-                            let (term, dw) = walker
-                                .realize_root_to_terms_with_weights(
-                                    root,
-                                    Some(SINGLE_RESULT_RAW_PROBE_CAP),
-                                )
-                                .into_iter()
-                                .min_by(|(_, a), (_, b)| a.cmp(b))
-                                .ok_or(WpdaParseError::EmptyResult)?;
-                            let arc = std::sync::Arc::downcast::<#cat_ident>(term)
-                                .map_err(|_| WpdaParseError::EmptyResult)?;
-                            let typed = std::sync::Arc::try_unwrap(arc)
-                                .unwrap_or_else(|arc| (*arc).clone());
-                            Ok((typed, dw))
+                            // packing insertion order NOR on `roots.first()`.
+                            // Iterate ALL full-span accepting roots and choose
+                            // the global min-weight term that ACTUALLY realizes
+                            // (M6 realize-selection belt above); ambiguity-
+                            // preserving callers still use the `_all`/`_prefix`
+                            // APIs.
+                            #accepted_arm_body
                         }
                         // Demand-sensitive parsing can discover a valid
                         // prefix before slower alternatives have produced a
@@ -166,81 +1122,7 @@ pub(crate) fn emit_parse_fns(
                         WpdaResolveResult::AcceptedWithTrailing {
                             ..
                         } => {
-                            let mut walker = WpdaWalker::<DW, _>::new_for_category(
-                                #engine_ident::default(),
-                                #cat_src_idx_u16,
-                                min_bp,
-                            );
-                            let mut recovery_config =
-                                mettail_prattail::recovery::RecoveryConfig::default();
-                            recovery_config.max_recovery_depth = 0;
-                            walker.set_recovery_config(recovery_config);
-                            match walker.run_to_end_of_input_env_aware(MAX_STEPS, source) {
-                                Ok(()) => match walker.resolve_at_end_of_input(source) {
-                                    WpdaResolveResult::Accepted { roots, .. } => {
-                                        *pos = walker.position();
-                                        let root = roots
-                                            .first()
-                                            .copied()
-                                            .ok_or(WpdaParseError::EmptyResult)?;
-                                        const SINGLE_RESULT_RAW_PROBE_CAP: usize = 128;
-                                        let (term, dw) = walker
-                                            .realize_root_to_terms_with_weights(
-                                                root,
-                                                Some(SINGLE_RESULT_RAW_PROBE_CAP),
-                                            )
-                                            .into_iter()
-                                            .min_by(|(_, a), (_, b)| a.cmp(b))
-                                            .ok_or(WpdaParseError::EmptyResult)?;
-                                        let arc = std::sync::Arc::downcast::<#cat_ident>(term)
-                                            .map_err(|_| WpdaParseError::EmptyResult)?;
-                                        let typed = std::sync::Arc::try_unwrap(arc)
-                                            .unwrap_or_else(|arc| (*arc).clone());
-                                        Ok((typed, dw))
-                                    }
-                                    WpdaResolveResult::AcceptedWithTrailing {
-                                        roots,
-                                        position,
-                                        ..
-                                    } => {
-                                        *pos = position;
-                                        let root = roots
-                                            .first()
-                                            .copied()
-                                            .ok_or(WpdaParseError::EmptyResult)?;
-                                        const SINGLE_RESULT_RAW_PROBE_CAP: usize = 128;
-                                        let (term, dw) = walker
-                                            .realize_root_to_terms_with_weights(
-                                                root,
-                                                Some(SINGLE_RESULT_RAW_PROBE_CAP),
-                                            )
-                                            .into_iter()
-                                            .min_by(|(_, a), (_, b)| a.cmp(b))
-                                            .ok_or(WpdaParseError::EmptyResult)?;
-                                        let arc = std::sync::Arc::downcast::<#cat_ident>(term)
-                                            .map_err(|_| WpdaParseError::EmptyResult)?;
-                                        let typed = std::sync::Arc::try_unwrap(arc)
-                                            .unwrap_or_else(|arc| (*arc).clone());
-                                        Ok((typed, dw))
-                                    }
-                                    WpdaResolveResult::ParseError { message, position } => {
-                                        Err(WpdaParseError::ParseFailed {
-                                            message,
-                                            position,
-                                            attempts: Vec::new(),
-                                        })
-                                    }
-                                    WpdaResolveResult::MaxStepsExceeded { position } => {
-                                        Err(WpdaParseError::Incomplete { position })
-                                    }
-                                    WpdaResolveResult::AmbiguityBudget { budget, actual, position, frontier_ess_x1000 } => {
-                                        Err(WpdaParseError::AmbiguityBudget { budget, actual, position, frontier_ess_x1000 })
-                                    }
-                                },
-                                Err(exceeded) => Err(WpdaParseError::Incomplete {
-                                    position: exceeded.position,
-                                }),
-                            }
+                            #accepted_with_trailing_arm_body
                         }
                         WpdaResolveResult::ParseError { message, position } => {
                             Err(WpdaParseError::ParseFailed {
@@ -532,73 +1414,10 @@ pub(crate) fn emit_parse_fns(
                 use mettail_prattail::automata::lex_weight::LexicographicWeight;
                 use std::collections::HashMap;
                 type DW = LexicographicWeight;
-                #[derive(Default)]
-                struct __MettailWpdaSemanticKeyHasher {
-                    bytes: Vec<u8>,
-                }
-                impl __MettailWpdaSemanticKeyHasher {
-                    fn into_key(self) -> Vec<u8> {
-                        self.bytes
-                    }
-                    fn push_raw(&mut self, tag: u8, payload: &[u8]) {
-                        self.bytes.push(tag);
-                        self.bytes.extend_from_slice(&(payload.len() as u64).to_le_bytes());
-                        self.bytes.extend_from_slice(payload);
-                    }
-                    fn push_fixed(&mut self, tag: u8, payload: &[u8]) {
-                        self.bytes.push(tag);
-                        self.bytes.extend_from_slice(payload);
-                    }
-                }
-                impl std::hash::Hasher for __MettailWpdaSemanticKeyHasher {
-                    fn finish(&self) -> u64 {
-                        let mut h = 0xcbf29ce484222325u64;
-                        for b in &self.bytes {
-                            h ^= *b as u64;
-                            h = h.wrapping_mul(0x100000001b3);
-                        }
-                        h
-                    }
-                    fn write(&mut self, bytes: &[u8]) {
-                        self.push_raw(0, bytes);
-                    }
-                    fn write_u8(&mut self, i: u8) {
-                        self.push_fixed(1, &[i]);
-                    }
-                    fn write_u16(&mut self, i: u16) {
-                        self.push_fixed(2, &i.to_le_bytes());
-                    }
-                    fn write_u32(&mut self, i: u32) {
-                        self.push_fixed(3, &i.to_le_bytes());
-                    }
-                    fn write_u64(&mut self, i: u64) {
-                        self.push_fixed(4, &i.to_le_bytes());
-                    }
-                    fn write_u128(&mut self, i: u128) {
-                        self.push_fixed(5, &i.to_le_bytes());
-                    }
-                    fn write_usize(&mut self, i: usize) {
-                        self.push_fixed(6, &(i as u128).to_le_bytes());
-                    }
-                    fn write_i8(&mut self, i: i8) {
-                        self.push_fixed(7, &i.to_le_bytes());
-                    }
-                    fn write_i16(&mut self, i: i16) {
-                        self.push_fixed(8, &i.to_le_bytes());
-                    }
-                    fn write_i32(&mut self, i: i32) {
-                        self.push_fixed(9, &i.to_le_bytes());
-                    }
-                    fn write_i64(&mut self, i: i64) {
-                        self.push_fixed(10, &i.to_le_bytes());
-                    }
-                    fn write_i128(&mut self, i: i128) {
-                        self.push_fixed(11, &i.to_le_bytes());
-                    }
-                    fn write_isize(&mut self, i: isize) {
-                        self.push_fixed(12, &(i as i128).to_le_bytes());
-                    }
-                }
+                // `__MettailWpdaSemanticKeyHasher` is lifted to generated-module
+                // scope (emitted once by `emit_semantic_key_hasher`) so the
+                // facade root-dedup AND the engine's `semantic_fingerprint`
+                // (per-node SPPF-realize dedup) share ONE byte-key definition.
                 fn __mettail_wpda_semantic_key(term: &#cat_ident) -> Vec<u8> {
                     let mut hasher = __MettailWpdaSemanticKeyHasher::default();
                     term.semantic_hash(&mut hasher);
@@ -784,73 +1603,10 @@ pub(crate) fn emit_parse_fns(
                 // Phase 3.1.7 (C10, 2026-05-15): walker W = LexicographicWeight.
                 // SPPF arena owns derivation ambiguity; W owns path cost.
                 type DW = LexicographicWeight;
-                #[derive(Default)]
-                struct __MettailWpdaSemanticKeyHasher {
-                    bytes: Vec<u8>,
-                }
-                impl __MettailWpdaSemanticKeyHasher {
-                    fn into_key(self) -> Vec<u8> {
-                        self.bytes
-                    }
-                    fn push_raw(&mut self, tag: u8, payload: &[u8]) {
-                        self.bytes.push(tag);
-                        self.bytes.extend_from_slice(&(payload.len() as u64).to_le_bytes());
-                        self.bytes.extend_from_slice(payload);
-                    }
-                    fn push_fixed(&mut self, tag: u8, payload: &[u8]) {
-                        self.bytes.push(tag);
-                        self.bytes.extend_from_slice(payload);
-                    }
-                }
-                impl std::hash::Hasher for __MettailWpdaSemanticKeyHasher {
-                    fn finish(&self) -> u64 {
-                        let mut h = 0xcbf29ce484222325u64;
-                        for b in &self.bytes {
-                            h ^= *b as u64;
-                            h = h.wrapping_mul(0x100000001b3);
-                        }
-                        h
-                    }
-                    fn write(&mut self, bytes: &[u8]) {
-                        self.push_raw(0, bytes);
-                    }
-                    fn write_u8(&mut self, i: u8) {
-                        self.push_fixed(1, &[i]);
-                    }
-                    fn write_u16(&mut self, i: u16) {
-                        self.push_fixed(2, &i.to_le_bytes());
-                    }
-                    fn write_u32(&mut self, i: u32) {
-                        self.push_fixed(3, &i.to_le_bytes());
-                    }
-                    fn write_u64(&mut self, i: u64) {
-                        self.push_fixed(4, &i.to_le_bytes());
-                    }
-                    fn write_u128(&mut self, i: u128) {
-                        self.push_fixed(5, &i.to_le_bytes());
-                    }
-                    fn write_usize(&mut self, i: usize) {
-                        self.push_fixed(6, &(i as u128).to_le_bytes());
-                    }
-                    fn write_i8(&mut self, i: i8) {
-                        self.push_fixed(7, &i.to_le_bytes());
-                    }
-                    fn write_i16(&mut self, i: i16) {
-                        self.push_fixed(8, &i.to_le_bytes());
-                    }
-                    fn write_i32(&mut self, i: i32) {
-                        self.push_fixed(9, &i.to_le_bytes());
-                    }
-                    fn write_i64(&mut self, i: i64) {
-                        self.push_fixed(10, &i.to_le_bytes());
-                    }
-                    fn write_i128(&mut self, i: i128) {
-                        self.push_fixed(11, &i.to_le_bytes());
-                    }
-                    fn write_isize(&mut self, i: isize) {
-                        self.push_fixed(12, &(i as i128).to_le_bytes());
-                    }
-                }
+                // `__MettailWpdaSemanticKeyHasher` is lifted to generated-module
+                // scope (emitted once by `emit_semantic_key_hasher`) so the
+                // facade root-dedup AND the engine's `semantic_fingerprint`
+                // (per-node SPPF-realize dedup) share ONE byte-key definition.
                 fn __mettail_wpda_semantic_key(term: &#cat_ident) -> Vec<u8> {
                     let mut hasher = __MettailWpdaSemanticKeyHasher::default();
                     term.semantic_hash(&mut hasher);

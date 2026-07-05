@@ -134,7 +134,7 @@ async fn observe_runtime_values(payload: Proc) -> Vec<RuntimeObservationValue> {
 
 #[tokio::test]
 async fn single_channel_comm_executes_payload_process() {
-    let source = r#"{ (@("c")?x).{*(x)} | @("c")!(@("OUT")!("p")) }"#;
+    let source = r#"{ for(x <- @("c")){*(x)} | @("c")!(@("OUT")!("p")) }"#;
 
     assert_eq!(read_strings(source).await, vec!["p".to_string()]);
 }
@@ -199,7 +199,7 @@ fn rhocalc_language_default_report_observes_runtime_values() {
     //   sender `@("c")!(@("OUT")!("p"))` transmits the process `@("OUT")!("p")`.
     // After the rendezvous, `*(x)` runs that process, emitting "p" on OUT.
     let term = language
-        .parse_term(r#"{ (@("c")?x).{*(x)} | @("c")!(@("OUT")!("p")) }"#)
+        .parse_term(r#"{ for(x <- @("c")){*(x)} | @("c")!(@("OUT")!("p")) }"#)
         .expect("rhocalc source must parse through the generated language");
 
     // Lower the parsed term to `rhoapi::Par` and run it on the Rholang interpreter,
@@ -228,7 +228,7 @@ fn rhocalc_language_default_report_executes_parsed_process_as_ast_call() {
         .expect("dynamic RhoCalc plan should install through the public AST helper");
     // Reuse the single-channel COMM example; it reduces to "p" on OUT.
     let term = language
-        .parse_term(r#"{ (@("c")?x).{*(x)} | @("c")!(@("OUT")!("p")) }"#)
+        .parse_term(r#"{ for(x <- @("c")){*(x)} | @("c")!(@("OUT")!("p")) }"#)
         .expect("rhocalc source must parse through the generated language");
 
     // The generated language must declare (and support) the Rho machine as its
@@ -260,7 +260,7 @@ fn held_fold_over_comm_received_value_execs_to_the_folded_value() {
     let language =
         dovetail_rho_backed_rhocalc("OUT").expect("the dovetail+Rho RhoCalc wrapper installs");
     let term = language
-        .parse_term(r#"{ (@("c")?x).{ @("OUT")!(int(*(x), 8)) } | @("c")!(int(5,8)) }"#)
+        .parse_term(r#"{ for(x <- @("c")){ @("OUT")!(int(*(x), 8)) } | @("c")!(int(5,8)) }"#)
         .expect("the held-fold-in-send term parses");
     let report = language
         .run_default_backend_report(term.as_ref())
@@ -348,7 +348,7 @@ async fn runtime_value_observation_preserves_rhocalc_list_map_and_bag_payloads()
 #[tokio::test]
 async fn multi_channel_comm_runs_as_one_atomic_join() {
     let source = r#"{
-        (@("left")?x,@("right")?y).{{*(x)|*(y)}}
+        for(x <- @("left") & y <- @("right")){{*(x)|*(y)}}
         | @("left")!(@("OUT")!("p"))
         | @("right")!(@("OUT")!("q"))
     }"#;
@@ -359,9 +359,9 @@ async fn multi_channel_comm_runs_as_one_atomic_join() {
 #[tokio::test]
 async fn received_name_can_be_reused_as_channel() {
     let source = r#"{
-        (@("c")?x).{x!(@("OUT")!("routed"))}
+        for(x <- @("c")){x!(@("OUT")!("routed"))}
         | @("c")!(*(@("sink")))
-        | (@("sink")?y).{*(y)}
+        | for(y <- @("sink")){*(y)}
     }"#;
 
     assert_eq!(read_strings(source).await, vec!["routed".to_string()]);
@@ -393,7 +393,7 @@ async fn new_name_scope_lowers_to_private_rho_binding() {
 
 #[test]
 fn lowered_comm_is_normalized_ast_with_receive_and_send_members() {
-    let par = parse_lower(r#"{ (@("c")?x).{*(x)} | @("c")!(@("OUT")!("p")) }"#);
+    let par = parse_lower(r#"{ for(x <- @("c")){*(x)} | @("c")!(@("OUT")!("p")) }"#);
 
     assert_eq!(par.receives.len(), 1);
     assert_eq!(par.sends.len(), 1);

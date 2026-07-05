@@ -827,6 +827,7 @@ fn g10_fires_on_mixed_associativity() {
         is_postfix: false,
         is_mixfix: false,
         mixfix_parts: vec![],
+        nullary_literals: vec![],
     });
     b.bp_table.operators.push(InfixOperator {
         terminal: "-".to_string(),
@@ -839,6 +840,7 @@ fn g10_fires_on_mixed_associativity() {
         is_postfix: false,
         is_mixfix: false,
         mixfix_parts: vec![],
+        nullary_literals: vec![],
     });
 
     let mut diags = Vec::new();
@@ -863,6 +865,7 @@ fn g10_does_not_fire_on_same_associativity() {
         is_postfix: false,
         is_mixfix: false,
         mixfix_parts: vec![],
+        nullary_literals: vec![],
     });
     b.bp_table.operators.push(InfixOperator {
         terminal: "-".to_string(),
@@ -875,6 +878,7 @@ fn g10_does_not_fire_on_same_associativity() {
         is_postfix: false,
         is_mixfix: false,
         mixfix_parts: vec![],
+        nullary_literals: vec![],
     });
 
     let mut diags = Vec::new();
@@ -4836,6 +4840,7 @@ fn make_infix_op(terminal: &str, category: &str) -> InfixOperator {
         is_postfix: false,
         is_mixfix: false,
         mixfix_parts: Vec::new(),
+        nullary_literals: Vec::new(),
     }
 }
 

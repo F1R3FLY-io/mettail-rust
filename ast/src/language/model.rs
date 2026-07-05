@@ -811,12 +811,16 @@ pub struct CollectionDelimiters {
     pub key_val_sep: Option<String>,
 }
 
-/// Collection category kind (List, Bag, Map) with optional delimiters.
+/// Collection category kind (List, Bag, Map, Set, Pathmap) with optional delimiters.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CollectionCategory {
     List(CollectionDelimiters),
     Bag(CollectionDelimiters),
     Map(CollectionDelimiters),
+    /// Rholang 1.4 (main): `as Set` → `mettail_runtime::HashSetLit`.
+    Set(CollectionDelimiters),
+    /// Rholang 1.4 (main): `as Pathmap` → `mettail_runtime::PathMapLit`.
+    Pathmap(CollectionDelimiters),
 }
 
 impl CollectionCategory {
@@ -845,6 +849,62 @@ impl CollectionCategory {
             close: ")".to_string(),
             sep: ",".to_string(),
             key_val_sep: Some(":".to_string()),
+        }
+    }
+    /// Default delimiters for Set: `Set(`, `)`, `,`
+    pub fn set_defaults() -> CollectionDelimiters {
+        CollectionDelimiters {
+            open: "Set(".to_string(),
+            close: ")".to_string(),
+            sep: ",".to_string(),
+            key_val_sep: None,
+        }
+    }
+    /// Default delimiters for Pathmap: `pathmap(`, `)`, `,`, `:`
+    pub fn pathmap_defaults() -> CollectionDelimiters {
+        CollectionDelimiters {
+            open: "pathmap(".to_string(),
+            close: ")".to_string(),
+            sep: ",".to_string(),
+            key_val_sep: Some(":".to_string()),
+        }
+    }
+
+    /// Accessor (Stage 2, 2026-06-27): the declared delimiters of this
+    /// collection category, regardless of variant. Every `CollectionCategory`
+    /// variant carries a `CollectionDelimiters`, so this single match replaces
+    /// the per-variant dispatch sites — `match coll_kind { List(d) => &d.open,
+    /// ... }` in the prefix FIRST-set, the open-collision fork, and the
+    /// rule-synthesis emitters — so a new collection container shape needs no
+    /// new per-variant delimiter match.
+    pub fn delimiters(&self) -> &CollectionDelimiters {
+        match self {
+            CollectionCategory::List(d)
+            | CollectionCategory::Bag(d)
+            | CollectionCategory::Map(d)
+            | CollectionCategory::Set(d)
+            | CollectionCategory::Pathmap(d) => d,
+        }
+    }
+
+    /// Accessor (Stage 3, 2026-06-27): the backing [`crate::types::CollectionType`]
+    /// of this collection category. Mirrors the inline collection-type spelling
+    /// the term context uses (`Vec`/`HashBag`/`HashMap`/`HashSet`/`PathMap`), so a
+    /// declared `as List`/`Bag`/`Map`/`Set`/`Pathmap` category and an inline
+    /// `Vec(T)`/`HashBag(T)`/… annotation resolve to the SAME `CollectionType`.
+    ///
+    /// Introduced so the single key/value-separator resolver
+    /// (`kv_sep_for(coll_type, declared)`) can be driven uniformly from either a
+    /// declared category (this accessor) or an inline term-context type — the two
+    /// then provably read the same separator for every collection slot.
+    pub fn coll_type(&self) -> crate::types::CollectionType {
+        use crate::types::CollectionType;
+        match self {
+            CollectionCategory::List(_) => CollectionType::Vec,
+            CollectionCategory::Bag(_) => CollectionType::HashBag,
+            CollectionCategory::Map(_) => CollectionType::HashMap,
+            CollectionCategory::Set(_) => CollectionType::HashSet,
+            CollectionCategory::Pathmap(_) => CollectionType::PathMap,
         }
     }
 }
@@ -1740,13 +1800,15 @@ impl LanguageDef {
     /// whose grammar contains a Collection item.
     pub fn collection_element_type_for_category(&self, category: &Ident) -> Option<Ident> {
         let cat_str = category.to_string();
-        if cat_str == "List" || cat_str == "Bag" || cat_str == "Map" {
+        if matches!(cat_str.as_str(), "List" | "Bag" | "Map" | "Set" | "Pathmap") {
             if let Some(lang_type) = self.types.iter().find(|t| &t.name == category) {
                 if lang_type.collection_kind.is_some() {
-                    // Map is implicitly HashMap<Proc, Proc> for Phase 1, so element type is always Proc.
-                    if cat_str == "Map" {
+                    // Map/Pathmap are implicitly key/value over Proc, so element type is always Proc.
+                    if cat_str == "Map" || cat_str == "Pathmap" {
                         return Some(quote::format_ident!("Proc"));
                     }
+                    // List/Bag/Set carry their element in the native type
+                    // (`Vec<Proc>` / `HashBag<Proc>` / `HashSetLit<Proc>`).
                     if let Some(native_type) = lang_type.native_type.as_ref() {
                         if let Some(elem) = element_ident_from_native_type(native_type) {
                             return Some(elem);

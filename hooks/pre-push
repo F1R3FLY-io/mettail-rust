@@ -1,0 +1,44 @@
+#!/bin/sh
+# MeTTaIL pre-push hook
+# Install: git config core.hooksPath hooks/
+set -e
+
+# Require the configured linker (.cargo/config.toml).
+case "$(uname -s)" in
+    Darwin)
+        if ! command -v lld >/dev/null 2>&1; then
+            echo "ERROR: lld not found. Required by .cargo/config.toml"
+            echo "  brew install llvm"
+            echo "  export PATH=\"/opt/homebrew/opt/llvm/bin:\$PATH\""
+            exit 1
+        fi
+        ;;
+    Linux)
+        if ! command -v mold >/dev/null 2>&1; then
+            echo "ERROR: mold not found. Required by .cargo/config.toml"
+            echo "  sudo apt install mold"
+            exit 1
+        fi
+        ;;
+esac
+
+# ls-remote race guard: skip if local HEAD already matches remote.
+_qc_local_head=$(git rev-parse HEAD)
+_qc_remote_head=$(git ls-remote origin "$(git symbolic-ref HEAD)" 2>/dev/null | awk '{print $1}')
+if [ -n "$_qc_remote_head" ] && [ "$_qc_local_head" = "$_qc_remote_head" ]; then
+    echo "Already up to date with remote. Skipping pre-push checks."
+    exit 0
+fi
+
+echo "=== pre-push: cargo test ==="
+_test_output=$(cargo test --all-features --workspace -q 2>&1) || { echo "$_test_output"; exit 1; }
+_passed=$(echo "$_test_output" | grep -oE '[0-9]+ passed' | awk '{s+=$1} END{print s+0}')
+_failed=$(echo "$_test_output" | grep -oE '[0-9]+ failed' | awk '{s+=$1} END{print s+0}')
+if [ "$_failed" -gt 0 ]; then
+    echo "$_test_output"
+    exit 1
+fi
+echo "ok. ${_passed} passed"
+
+echo "=== pre-push: cargo build --release ==="
+cargo build --release

@@ -420,7 +420,8 @@ fn construct_leaf_value(field: &FieldInfo, language: &LanguageDef) -> Option<Str
             },
             // Phase 4 #5b (2026-05-12): HashMap binder field — use
             // HashMapLit::default() for empty construction.
-            Some(mettail_ast::types::CollectionType::HashMap) => {
+            Some(mettail_ast::types::CollectionType::HashMap)
+            | Some(mettail_ast::types::CollectionType::PathMap) => {
                 Some(format!("mettail_runtime::HashMapLit::default()"))
             },
             Some(mettail_ast::types::CollectionType::HashSet) => {

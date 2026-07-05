@@ -31,16 +31,17 @@ language! {
         }
         Int {
             // Int (i32) literals; unsuffixed defaults to i32. Leading `-?`
-            // preserves atomic negative lexing (`-3` is one token, not Minus+Int) —
-            // efficiency: no runtime negation.
-            pattern: r"-?(0b[01](_?[01])*|0o[0-7](_?[0-7])*|0x[0-9A-Fa-f](_?[0-9A-Fa-f])*|[0-9](_?[0-9])*)(i32)?";
+            // No leading `-?`: aligned with main/Rholang (unary minus is an operator,
+            // not a signed literal) — merge decision "prefer main's regexes".
+            pattern: r"(0b[01](_?[01])*|0o[0-7](_?[0-7])*|0x[0-9A-Fa-f](_?[0-9A-Fa-f])*|[0-9](_?[0-9])*)(i32)?";
             eval: ![ {
                 mettail_prattail::parse_int_lit(text, Some(mettail_prattail::Suffix::I32)).map_err(|_| ())
             } ]
         }
         BigInt {
-            // Optional `n` suffix. Leading `-?` for atomic negative lexing.
-            pattern: r"-?(0b[01](_?[01])*|0o[0-7](_?[0-7])*|0x[0-9A-Fa-f](_?[0-9A-Fa-f])*|[0-9](_?[0-9])*)n?";
+            // Required `n` suffix (aligned with main: bare `1` is not a BigInt).
+            // Leading `-?` retained for BigInt (matches main's BigInt regex).
+            pattern: r"-?(0b[01](_?[01])*|0o[0-7](_?[0-7])*|0x[0-9A-Fa-f](_?[0-9A-Fa-f])*|[0-9](_?[0-9])*)n";
             eval: ![ {
                 mettail_prattail::parse_int_lit(text, None).map_err(|_| ())
             } ]
@@ -52,7 +53,9 @@ language! {
         // Negative-on-second-side (`-1r/-2r`) is intentionally NOT supported —
         // splits into three tokens; users write `-(1r/2r)` for that case.
         BigRat {
-            pattern: r"-?(0b[01](_?[01])*|0o[0-7](_?[0-7])*|0x[0-9A-Fa-f](_?[0-9A-Fa-f])*|[0-9](_?[0-9])*)r(/(0b[01](_?[01])*|0o[0-7](_?[0-7])*|0x[0-9A-Fa-f](_?[0-9A-Fa-f])*|[0-9](_?[0-9])*)r)?";
+            // No leading `-?` (aligned with main); the `Nr/Dr` composite-rational form
+            // is THIS branch's superseding feature, retained per merge decision.
+            pattern: r"(0b[01](_?[01])*|0o[0-7](_?[0-7])*|0x[0-9A-Fa-f](_?[0-9A-Fa-f])*|[0-9](_?[0-9])*)r(/(0b[01](_?[01])*|0o[0-7](_?[0-7])*|0x[0-9A-Fa-f](_?[0-9A-Fa-f])*|[0-9](_?[0-9])*)r)?";
             eval: ![ {
                 mettail_prattail::parse_rational_lit(text).map_err(|_| ())
             } ]

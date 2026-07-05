@@ -12,6 +12,7 @@
 use std::collections::HashSet;
 
 use crate::gen::native::native_type_to_full_string;
+use crate::gen::runtime::wpda_codegen::collection::kv_sep_for;
 use mettail_ast::{
     grammar::{GrammarItem, GrammarRule, NonTerminalKind, PatternOp, SyntaxExpr, TermParam},
     language::{AttributeValue, LanguageDef},
@@ -70,32 +71,27 @@ pub fn language_def_to_spec(language: &LanguageDef) -> LanguageSpec {
         let Some(ref ck) = lt.collection_kind else {
             continue;
         };
-        let (open, close, sep, kv, kind, label) = match ck {
-            mettail_ast::language::CollectionCategory::List(d) => (
-                d.open.clone(),
-                d.close.clone(),
-                d.sep.clone(),
-                d.key_val_sep.clone(),
-                CollectionKind::Vec,
-                "ListLit",
-            ),
-            mettail_ast::language::CollectionCategory::Bag(d) => (
-                d.open.clone(),
-                d.close.clone(),
-                d.sep.clone(),
-                d.key_val_sep.clone(),
-                CollectionKind::HashBag,
-                "BagLit",
-            ),
-            mettail_ast::language::CollectionCategory::Map(d) => (
-                d.open.clone(),
-                d.close.clone(),
-                d.sep.clone(),
-                d.key_val_sep.clone(),
-                CollectionKind::HashMap,
-                "MapLit",
-            ),
+        // Stage 2 (2026-06-27): read the delimiters through the single
+        // delimiters() accessor; only the irreducible variant → (kind, label)
+        // mapping stays a per-variant match.
+        let d = ck.delimiters();
+        let (kind, label) = match ck {
+            mettail_ast::language::CollectionCategory::List(_) => (CollectionKind::Vec, "ListLit"),
+            mettail_ast::language::CollectionCategory::Bag(_) => {
+                (CollectionKind::HashBag, "BagLit")
+            },
+            mettail_ast::language::CollectionCategory::Map(_) => {
+                (CollectionKind::HashMap, "MapLit")
+            },
+            mettail_ast::language::CollectionCategory::Set(_) => {
+                (CollectionKind::HashSet, "SetLit")
+            },
+            mettail_ast::language::CollectionCategory::Pathmap(_) => {
+                (CollectionKind::PathMap, "PathmapLit")
+            },
         };
+        let (open, close, sep, kv) =
+            (d.open.clone(), d.close.clone(), d.sep.clone(), d.key_val_sep.clone());
         // Resolve element category from the collection's payload type.
         // For Vec<Proc>/HashBag<Proc>, that's Proc; for HashMap<K, V>
         // the element is the key category — the map's `key_val_separator`
@@ -989,7 +985,9 @@ fn convert_grammar_items(
                 delimiters,
             } => {
                 let kind = match coll_type {
-                    CollectionType::HashBag | CollectionType::HashMap => CollectionKind::HashBag,
+                    CollectionType::HashBag
+                    | CollectionType::HashMap
+                    | CollectionType::PathMap => CollectionKind::HashBag,
                     CollectionType::HashSet => CollectionKind::HashSet,
                     CollectionType::Vec => CollectionKind::Vec,
                 };
@@ -1055,22 +1053,32 @@ fn find_collection_info(
                 if let TypeExpr::Collection { coll_type, element, .. } = ty {
                     let elem_cat = extract_base_category(element);
                     let kind = match coll_type {
-                        CollectionType::HashBag | CollectionType::HashMap => {
+                        CollectionType::HashBag
+                        | CollectionType::HashMap
+                        | CollectionType::PathMap => {
                             CollectionKind::HashBag
                         },
                         CollectionType::HashSet => CollectionKind::HashSet,
                         CollectionType::Vec => CollectionKind::Vec,
                     };
-                    let kv = match coll_type {
-                        CollectionType::HashMap => Some(":".to_string()),
-                        _ => None,
-                    };
+                    // Stage 3 (2026-06-27): lexer-terminal kv-source routed
+                    // through the single `kv_sep_for` resolver. An inline term-
+                    // context collection type carries no declared delimiters, so
+                    // `declared = None` ⇒ per-type default (`HashMap`/`PathMap`
+                    // ⇒ `":"`, else `None`) — byte-identical to the former match.
+                    let kv = kv_sep_for(coll_type, None);
                     return (elem_cat, kind, kv);
                 }
                 if let TypeExpr::Map { value, .. } = ty {
                     // Phase 4 #5b (2026-05-12): `HashMap(K, V)` Map type.
+                    // Stage 3 (2026-06-27): kv via `kv_sep_for(HashMap, None)` ⇒
+                    // `Some(":")`, byte-identical to the former literal.
                     let elem_cat = extract_base_category(value);
-                    return (elem_cat, CollectionKind::HashBag, Some(":".to_string()));
+                    return (
+                        elem_cat,
+                        CollectionKind::HashBag,
+                        kv_sep_for(&CollectionType::HashMap, None),
+                    );
                 }
             }
         }

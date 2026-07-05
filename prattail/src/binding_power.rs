@@ -86,6 +86,15 @@ pub struct InfixOperator {
     /// Parts of a mixfix operator: the operand-separator pairs after the trigger.
     /// Empty for regular infix/postfix.
     pub mixfix_parts: Vec<MixfixPart>,
+    /// GEN-1 B-1 (Stage S2): for a 0-operand ("nullary") mixfix rule — one
+    /// whose only Simple param is the LHS and whose pattern is
+    /// `LHS trigger lit lit …` with NO inner operand (e.g. POutputEmpty
+    /// `n "!" "(" ")"`, or a zero-arg method `.size()`) — this carries the
+    /// literal sequence consumed AFTER the trigger (`["(", ")"]`). `mixfix_parts`
+    /// is empty for such a rule; the walker consumes `nullary_literals` then
+    /// pops the marker and fires the LHS-only (arity-1) action. Empty for all
+    /// other operators.
+    pub nullary_literals: Vec<String>,
 }
 
 /// A part of a mixfix operator after the trigger terminal.
@@ -134,6 +143,42 @@ pub struct MixfixPart {
     /// vector; for trailing closers like `)` the last part carries
     /// multi-element vectors.
     pub following_terminals: Vec<String>,
+    /// GEN-1 B-3 (Stage S2/S3): when `Some`, this part is a REPETITION
+    /// operand `xs.*sep(s)` — a zero-or-more list of `operand_category`
+    /// elements separated by `repetition.separator`, terminated by
+    /// `repetition.close`. The walker drives it through the existing
+    /// `CollectionLoop` machinery (S3); the drained `Vec<elem>` is
+    /// delivered to the rule action as an `ActionArg::CollectionId`.
+    /// `None` for ordinary single-operand parts.
+    pub repetition: Option<MixfixRep>,
+}
+
+/// GEN-1 B-3 (Stage S2/S3): the descriptor for a mixfix repetition operand
+/// produced by `xs.*sep(s)` in a Param-prefixed (infix/mixfix-classified)
+/// rule, e.g. POutput2Plus `n "!" "(" a "," bs.*sep(",") ")"`.
+///
+/// The repetition accumulates zero-or-more elements of the enclosing
+/// `MixfixPart.operand_category` separated by `separator`. The repetition is
+/// terminated by `close` — the literal(s) that follow the `*sep` in the
+/// grammar pattern (e.g. `")"` for POutput2Plus, `"<-"` for the polyadic
+/// bind, `"where"` for the where-guarded for-row, or `[]` for the open-ended
+/// `&`-join `ForRowNoWhere` where the loop stops when the next token is not
+/// the separator). The CLOSE belongs to the repetition (the loop owns it),
+/// NOT to `following_terminals`, so the per-element loop can decide when to
+/// finalize without colliding with the surrounding mixfix literal run.
+#[derive(Debug, Clone)]
+pub struct MixfixRep {
+    /// Element separator (e.g. `","` for sends, `"&"` for joins).
+    pub separator: String,
+    /// Minimum element count. Always `0` for `*sep` (Kleene star); the
+    /// required leading operand (e.g. POutput2Plus's `a`) is a SEPARATE
+    /// normal `MixfixPart` that precedes this repetition part.
+    pub min: u8,
+    /// Literal(s) that terminate (and are consumed by) the repetition. Empty
+    /// for open-ended repetitions whose terminator is "next token is not the
+    /// separator" (e.g. `ForRowNoWhere`). At most one token in every shipped
+    /// rule; modeled as a `Vec` for generality.
+    pub close: Vec<String>,
 }
 
 impl InfixOperator {
@@ -591,6 +636,7 @@ pub fn analyze_binding_powers(rules: &[InfixRuleInfo]) -> BindingPowerTable {
                 is_postfix: false,
                 is_mixfix: rule.is_mixfix,
                 mixfix_parts: rule.mixfix_parts.clone(),
+                nullary_literals: rule.nullary_literals.clone(),
             });
         }
 
@@ -613,6 +659,7 @@ pub fn analyze_binding_powers(rules: &[InfixRuleInfo]) -> BindingPowerTable {
                 is_postfix: true,
                 is_mixfix: false,
                 mixfix_parts: Vec::new(),
+                nullary_literals: Vec::new(),
             });
             postfix_prec += 2;
         }
@@ -643,6 +690,11 @@ pub struct InfixRuleInfo {
     pub is_mixfix: bool,
     /// Mixfix parts (operand-separator pairs after the trigger). Empty for non-mixfix.
     pub mixfix_parts: Vec<MixfixPart>,
+    /// GEN-1 B-1 (Stage S2): post-trigger literal sequence for a 0-operand
+    /// (nullary) mixfix rule (e.g. POutputEmpty `n "!" "(" ")"` ⇒
+    /// `["(", ")"]`). Empty for every operand-bearing rule. See
+    /// [`InfixOperator::nullary_literals`].
+    pub nullary_literals: Vec<String>,
 }
 
 #[cfg(test)]
@@ -666,6 +718,7 @@ mod tests {
             is_postfix: false,
             is_mixfix: false,
             mixfix_parts: Vec::new(),
+            nullary_literals: Vec::new(),
         }
     }
 
@@ -692,6 +745,7 @@ mod tests {
             is_postfix,
             is_mixfix,
             mixfix_parts: Vec::new(),
+            nullary_literals: Vec::new(),
         }
     }
 
@@ -906,12 +960,14 @@ mod tests {
                 param_name: "b".to_string(),
                 preceding_terminals: vec![],
                 following_terminals: vec![":".to_string()],
+                repetition: None,
             },
             MixfixPart {
                 operand_category: "Int".to_string(),
                 param_name: "c".to_string(),
                 preceding_terminals: vec![],
                 following_terminals: vec![],
+                repetition: None,
             },
         ];
         table.operators.push(ternary);
@@ -1070,6 +1126,7 @@ mod tests {
             is_postfix: false,
             is_mixfix: false,
             mixfix_parts: Vec::new(),
+            nullary_literals: Vec::new(),
         };
         assert_eq!(left_op.associativity(), Associativity::Left);
 
@@ -1084,6 +1141,7 @@ mod tests {
             is_postfix: false,
             is_mixfix: false,
             mixfix_parts: Vec::new(),
+            nullary_literals: Vec::new(),
         };
         assert_eq!(right_op.associativity(), Associativity::Right);
 
@@ -1099,6 +1157,7 @@ mod tests {
             is_postfix: false,
             is_mixfix: false,
             mixfix_parts: Vec::new(),
+            nullary_literals: Vec::new(),
         };
         assert_eq!(equal_op.associativity(), Associativity::Right);
     }
@@ -1169,6 +1228,7 @@ mod tests {
                 is_postfix: true,
                 is_mixfix: false,
                 mixfix_parts: Vec::new(),
+                nullary_literals: Vec::new(),
             },
         ];
         let table = analyze_binding_powers(&rules);

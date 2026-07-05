@@ -259,6 +259,12 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
         "wpda_categories must mirror language.types — check wpda_codegen::collect_category_names_with_literals",
     );
 
+    // P2 ISOLATION+COMBINE (Plan a7986200): src_idx-ordered category names
+    // (`language.types` order, matching the WPDS facade's `categories`), for
+    // deriving the `.*sep` isolation shape at the STRING parse entries.
+    let sep_categories_ordered: Vec<String> =
+        language.types.iter().map(|t| t.name.to_string()).collect();
+
     let impls: Vec<TokenStream> = language
         .types
         .iter()
@@ -270,6 +276,38 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                 "category `{}` missing from wpda_categories",
                 cat_str,
             );
+
+            // P2 ISOLATION+COMBINE (Plan a7986200): if this category is an
+            // isolation-enabled `.*sep` shape, emit the guarded string-entry
+            // prologues. They call the module-scope helper
+            // `__mettail_wpda_sep_isolate_all_<Cat>` with the RAW input string
+            // (BEFORE `lex_dag` — that is where the string is available; the
+            // post-lex source is an ambiguous LATTICE for these surfaces). OFF /
+            // not-in-set / no-shape ⇒ empty ⇒ BYTE-IDENTICAL.
+            let sep_helper_ident =
+                runtime::wpda_codegen::facade::sep_isolation_helper_ident(&cat_str);
+            let sep_enabled = runtime::wpda_codegen::facade::sep_isolation_shape(
+                language,
+                &cat_str,
+                &sep_categories_ordered,
+            )
+            .is_some();
+            let sep_prologue_single = if sep_enabled {
+                runtime::wpda_codegen::facade::emit_sep_isolation_prologue(
+                    &sep_helper_ident,
+                    runtime::wpda_codegen::facade::SepSeam::Single,
+                )
+            } else {
+                quote! {}
+            };
+            let sep_prologue_all = if sep_enabled {
+                runtime::wpda_codegen::facade::emit_sep_isolation_prologue(
+                    &sep_helper_ident,
+                    runtime::wpda_codegen::facade::SepSeam::All,
+                )
+            } else {
+                quote! {}
+            };
             let parse_fn = format_ident!("parse_{}", cat);
             let _parse_fn_recovering = format_ident!("parse_{}_recovering", cat);
 
@@ -421,6 +459,7 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                 /// existing token-slice path.
                 pub fn parse_via_wpda(input: &str) -> Result<#cat, ParseError> {
                     mettail_prattail::hang_dump::install_hang_dump_handler();
+                    #sep_prologue_single
                     let dag = lex_dag(input).map_err(ParseError::from)?;
                     if dag.has_ambiguity() {
                         let source = mettail_prattail::wpda_runtime::LatticeTokenSource::new(dag);
@@ -671,6 +710,7 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                     ParseError,
                 > {
                     mettail_prattail::hang_dump::install_hang_dump_handler();
+                    #sep_prologue_all
                     // M6c.4 + M6c.7.2 (2026-05-14): route through
                     // LatticeTokenSource when dag.has_ambiguity().
                     // Post-M6c.7.1 (lex_dag soft-fail), `lex_dag(input)?`
@@ -1511,6 +1551,35 @@ pub fn category_emits_parseable_auto_literal(category: &Ident, language: &Langua
     !has_explicit_literal
 }
 
+/// Spec-derived: is this category a RUNTIME-ONLY opaque native — one with a
+/// `native_type` but NO surface syntax to construct it from tokens?
+///
+/// A native wrapper is surface-writable when it maps to a known `NativeType`
+/// (numeric / `bool` / `str`/`String` → lexable literal families) OR was
+/// declared as a collection category (`List`/`Bag`/`Map`/`Set`/`Pathmap` →
+/// writable via its delimiters, even when the wrapper itself maps to
+/// `NativeType::Other`, e.g. `PathMapLit`/`HashSetLit`). The ONLY remaining
+/// case — an UNKNOWN wrapper (`NativeType::Other`) with NO declared collection
+/// category — is opaque and runtime-only: e.g. `![Arc<…ReadZipperLit>] as
+/// ReadZipper`, which is produced solely by method-call folds and projected
+/// into `Proc` by a pure cast, never lexed/parsed from source.
+///
+/// Such categories must be excluded from the term generators' surface-roundtrip
+/// tests (their Display has no parse), and `arb_<other>` must not recurse into
+/// them through casts. This is the single source of truth for that exclusion.
+pub fn category_is_runtime_only_native(category: &Ident, language: &LanguageDef) -> bool {
+    let Some(type_def) = language.types.iter().find(|t| t.name == *category) else {
+        return false;
+    };
+    let Some(native) = type_def.native_type.as_ref() else {
+        return false; // non-native categories are surface-defined by their rules
+    };
+    matches!(
+        crate::gen::native::NativeType::from_syn_type(native),
+        crate::gen::native::NativeType::Other(_)
+    ) && type_def.collection_kind.is_none()
+}
+
 /// Sample-set purpose passed to `spec_admitted_integer_samples` to
 /// describe which slice of the spec-admitted domain the caller wants.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1818,6 +1887,11 @@ pub fn generate_literal_label(native_type: &syn::Type) -> Ident {
         NativeType::HashMapLitCollection | NativeType::HashMapCollection => {
             quote::format_ident!("MapLit")
         },
+        // Rholang 1.4 (main) collection wrappers — distinct surface kinds whose
+        // variant labels must match enums.rs (CollectionCategory::Set/Pathmap →
+        // "SetLit"/"PathmapLit"). These wrappers parse as `NativeType::Other`.
+        NativeType::Other(ref s) if s == "HashSetLit" => quote::format_ident!("SetLit"),
+        NativeType::Other(ref s) if s == "PathMapLit" => quote::format_ident!("PathmapLit"),
         NativeType::Other(_) => quote::format_ident!("Lit"), // Generic fallback
         // Unreachable: `is_integer()` above already returned for these.
         NativeType::Int8

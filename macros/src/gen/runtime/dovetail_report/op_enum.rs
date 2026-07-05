@@ -70,9 +70,12 @@ fn literal_payload_type(language: &LanguageDef, category: &Ident) -> Option<Toke
         let elem = collection_element_type(native_type).unwrap_or_else(|| quote! { #native_type });
         return Some(match collection_kind {
             CollectionCategory::List(_) => quote! { #native_type },
-            CollectionCategory::Bag(_) => quote! { #native_type },
+            CollectionCategory::Bag(_) | CollectionCategory::Set(_) => quote! { #native_type },
             CollectionCategory::Map(_) => {
                 quote! { ::mettail_runtime::HashMapLit<#elem, #elem> }
+            },
+            CollectionCategory::Pathmap(_) => {
+                quote! { ::mettail_runtime::PathMapLit<#elem, #elem> }
             },
         });
     }
@@ -103,7 +106,10 @@ fn literal_payload_write_content(language: &LanguageDef, category: &Ident) -> To
                 ::dovetail::key::write_framed(out, format!("{:?}", __p).as_bytes());
             },
             // Unordered: HashBag/HashMapLit Display is SORTED (Eq-agreeing); Debug is NOT.
-            CollectionCategory::Bag(_) | CollectionCategory::Map(_) => quote! {
+            CollectionCategory::Bag(_)
+            | CollectionCategory::Map(_)
+            | CollectionCategory::Set(_)
+            | CollectionCategory::Pathmap(_) => quote! {
                 ::dovetail::key::write_framed(out, format!("{}", __p).as_bytes());
             },
         };

@@ -359,7 +359,9 @@ fn generate_regular_push_arm(
                                 }
                             }
                         },
-                        CollectionType::HashBag | CollectionType::HashMap => quote! {
+                        CollectionType::HashBag
+                        | CollectionType::HashMap
+                        | CollectionType::PathMap => quote! {
                             if let Some(__c) = #name.take() {
                                 for (elem, _count) in __c.into_iter() {
                                     stack.push(DropTask::#task_variant(elem));
@@ -403,7 +405,7 @@ fn generate_regular_push_arm(
                             }
                         }
                     },
-                    CollectionType::HashMap => {
+                    CollectionType::HashMap | CollectionType::PathMap => {
                         // Phase 4 #5b (2026-05-12): HashMap field — HashMapLit
                         // is a key-value store, not a multiset. `take` swaps
                         // the field with a fresh empty HashMapLit (via
@@ -479,7 +481,7 @@ fn generate_collection_push_arm(
                 }
             }
         },
-        CollectionType::HashBag | CollectionType::HashMap => {
+        CollectionType::HashBag | CollectionType::HashMap | CollectionType::PathMap => {
             quote! {
                 #category::#label(ref mut coll) => {
                     for (elem, _count) in std::mem::take(coll).into_iter() {
@@ -546,7 +548,7 @@ fn generate_binder_push_arm(
                         }
                     });
                 },
-                CollectionType::HashBag | CollectionType::HashMap => {
+                CollectionType::HashBag | CollectionType::HashMap | CollectionType::PathMap => {
                     push_stmts.push(quote! {
                         if let Some(__c) = #name.take() {
                             for (elem, _count) in __c.into_iter() {
@@ -568,7 +570,7 @@ fn generate_binder_push_arm(
                         }
                     });
                 },
-                CollectionType::HashBag | CollectionType::HashMap => {
+                CollectionType::HashBag | CollectionType::HashMap | CollectionType::PathMap => {
                     push_stmts.push(quote! {
                         for (elem, _count) in std::mem::take(#name).into_iter() {
                             stack.push(DropTask::#task_variant(elem));
@@ -663,7 +665,7 @@ fn generate_multi_binder_push_arm(
                         }
                     });
                 },
-                CollectionType::HashBag | CollectionType::HashMap => {
+                CollectionType::HashBag | CollectionType::HashMap | CollectionType::PathMap => {
                     push_stmts.push(quote! {
                         if let Some(__c) = #name.take() {
                             for (elem, _count) in __c.into_iter() {
@@ -685,7 +687,7 @@ fn generate_multi_binder_push_arm(
                         }
                     });
                 },
-                CollectionType::HashBag | CollectionType::HashMap => {
+                CollectionType::HashBag | CollectionType::HashMap | CollectionType::PathMap => {
                     push_stmts.push(quote! {
                         for (elem, _count) in std::mem::take(#name).into_iter() {
                             stack.push(DropTask::#task_variant(elem));

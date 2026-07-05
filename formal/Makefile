@@ -27,7 +27,7 @@ CREUSOT_XDG_CONFIG_HOME ?= $(FORMAL_TMPDIR)/xdg-config
 
 .PHONY: check check-inner check-uncapped check-capped check-memory-cap require-capped clean prepare-tmp
 .PHONY: prattail-wpda rocq-support
-.PHONY: tla-prattail-wpda tla-prattail-wpda-expected-fail rust-prattail-wpda
+.PHONY: tla-prattail-wpda tla-prattail-wpda-expected-fail tla-prattail-wpda-binder-broadcast-expected-fail rust-prattail-wpda
 .PHONY: rust-wpda-codegen rust-wpda-generated-smoke
 .PHONY: rocq-prattail-wpda rocq-trampoline rocq-advanced-automata
 .PHONY: rocq-ascent-optimizations rocq-codegen-optimizations rocq-egraph rocq-dovetail rocq-dovetail-refinement rocq-dovetail-requirements rocq-dovetail-cyclic-boundary rocq-critical-zero-admission
@@ -274,6 +274,9 @@ tla-prattail-wpda: require-capped
 
 tla-prattail-wpda-expected-fail: require-capped
 	$(MAKE) -C tla/prattail_wpda expected-fail
+
+tla-prattail-wpda-binder-broadcast-expected-fail: require-capped
+	$(MAKE) -C tla/prattail_wpda binder-broadcast-expected-fail
 
 rust-prattail-wpda: require-capped
 	cd .. && CARGO_INCREMENTAL=0 CARGO_BUILD_JOBS="$(FORMAL_CARGO_BUILD_JOBS)" cargo test -j1 -p mettail-prattail --features walker-stats wpda_walker --lib

@@ -341,7 +341,14 @@ proptest! {
 
     #[test]
     fn proc_display_parse_roundtrip(term in arb_proc(3)) {
+        // GRIND diagnostic (gated on env GRIND_DIAG): print the AST and its
+        // display + time the parse, so slow / unparseable shapes surface
+        // directly (the generated test file is regenerated on every build,
+        // so this diagnostic lives in the emitter — macros/.../strategies.rs).
+        let __grind_diag = std::env::var("GRIND_DIAG").is_ok();
+        if __grind_diag { eprintln!("GRIND-Proc-GEN ast={:?}", term); }
         let displayed = format!("{}", term);
+        if __grind_diag { eprintln!("GRIND-Proc-DISP disp={:?}", displayed); }
         // Skip terms whose display is too long (parser may overflow)
         if displayed.len() > 500 {
             return Ok(());
@@ -355,10 +362,12 @@ proptest! {
         // Canonical-form idempotence:
         //   Parse(Display(Parse(s))) ≡ Parse(s) for any s that
         //   the generator emits.
+        let __grind_t0 = std::time::Instant::now();
         let parsed = Proc::parse(&displayed)
             .unwrap_or_else(|e| panic!(
                 "arb_proc produced unparseable surface term {:?}: {:?}",
                 displayed, e));
+        if __grind_diag { eprintln!("GRIND-Proc-PARSE-OK elapsed={:?} disp={:?}", __grind_t0.elapsed(), displayed); }
         let canonical = format!("{}", parsed);
         if canonical.len() > 500 { return Ok(()); }
         let reparsed = Proc::parse(&canonical).unwrap_or_else(|e| panic!(
@@ -395,7 +404,9 @@ proptest! {
     #[test]
     fn proc_parse_determinism(term in arb_proc(2)) {
         mettail_runtime::clear_var_cache();
+        let __grind_diag = std::env::var("GRIND_DIAG").is_ok();
         let displayed = format!("{}", term);
+        if __grind_diag { eprintln!("GRIND-Proc-DET-DISP ast={:?} disp={:?}", term, displayed); }
         // Skip terms whose display is too long (parser may overflow)
         if displayed.len() > 500 {
             return Ok(());
@@ -437,7 +448,14 @@ proptest! {
 
     #[test]
     fn name_display_parse_roundtrip(term in arb_name(3)) {
+        // GRIND diagnostic (gated on env GRIND_DIAG): print the AST and its
+        // display + time the parse, so slow / unparseable shapes surface
+        // directly (the generated test file is regenerated on every build,
+        // so this diagnostic lives in the emitter — macros/.../strategies.rs).
+        let __grind_diag = std::env::var("GRIND_DIAG").is_ok();
+        if __grind_diag { eprintln!("GRIND-Name-GEN ast={:?}", term); }
         let displayed = format!("{}", term);
+        if __grind_diag { eprintln!("GRIND-Name-DISP disp={:?}", displayed); }
         // Skip terms whose display is too long (parser may overflow)
         if displayed.len() > 500 {
             return Ok(());
@@ -451,10 +469,12 @@ proptest! {
         // Canonical-form idempotence:
         //   Parse(Display(Parse(s))) ≡ Parse(s) for any s that
         //   the generator emits.
+        let __grind_t0 = std::time::Instant::now();
         let parsed = Name::parse(&displayed)
             .unwrap_or_else(|e| panic!(
                 "arb_name produced unparseable surface term {:?}: {:?}",
                 displayed, e));
+        if __grind_diag { eprintln!("GRIND-Name-PARSE-OK elapsed={:?} disp={:?}", __grind_t0.elapsed(), displayed); }
         let canonical = format!("{}", parsed);
         if canonical.len() > 500 { return Ok(()); }
         let reparsed = Name::parse(&canonical).unwrap_or_else(|e| panic!(
@@ -491,7 +511,9 @@ proptest! {
     #[test]
     fn name_parse_determinism(term in arb_name(2)) {
         mettail_runtime::clear_var_cache();
+        let __grind_diag = std::env::var("GRIND_DIAG").is_ok();
         let displayed = format!("{}", term);
+        if __grind_diag { eprintln!("GRIND-Name-DET-DISP ast={:?} disp={:?}", term, displayed); }
         // Skip terms whose display is too long (parser may overflow)
         if displayed.len() > 500 {
             return Ok(());
@@ -533,7 +555,14 @@ proptest! {
 
     #[test]
     fn int_display_parse_roundtrip(term in arb_int(3)) {
+        // GRIND diagnostic (gated on env GRIND_DIAG): print the AST and its
+        // display + time the parse, so slow / unparseable shapes surface
+        // directly (the generated test file is regenerated on every build,
+        // so this diagnostic lives in the emitter — macros/.../strategies.rs).
+        let __grind_diag = std::env::var("GRIND_DIAG").is_ok();
+        if __grind_diag { eprintln!("GRIND-Int-GEN ast={:?}", term); }
         let displayed = format!("{}", term);
+        if __grind_diag { eprintln!("GRIND-Int-DISP disp={:?}", displayed); }
         // Skip terms whose display is too long (parser may overflow)
         if displayed.len() > 500 {
             return Ok(());
@@ -547,10 +576,12 @@ proptest! {
         // Canonical-form idempotence:
         //   Parse(Display(Parse(s))) ≡ Parse(s) for any s that
         //   the generator emits.
+        let __grind_t0 = std::time::Instant::now();
         let parsed = Int::parse(&displayed)
             .unwrap_or_else(|e| panic!(
                 "arb_int produced unparseable surface term {:?}: {:?}",
                 displayed, e));
+        if __grind_diag { eprintln!("GRIND-Int-PARSE-OK elapsed={:?} disp={:?}", __grind_t0.elapsed(), displayed); }
         let canonical = format!("{}", parsed);
         if canonical.len() > 500 { return Ok(()); }
         let reparsed = Int::parse(&canonical).unwrap_or_else(|e| panic!(
@@ -587,7 +618,9 @@ proptest! {
     #[test]
     fn int_parse_determinism(term in arb_int(2)) {
         mettail_runtime::clear_var_cache();
+        let __grind_diag = std::env::var("GRIND_DIAG").is_ok();
         let displayed = format!("{}", term);
+        if __grind_diag { eprintln!("GRIND-Int-DET-DISP ast={:?} disp={:?}", term, displayed); }
         // Skip terms whose display is too long (parser may overflow)
         if displayed.len() > 500 {
             return Ok(());
