@@ -19,28 +19,26 @@ language! {
     name: RhoCalc,
 
     options {
-        // PIECE 3: keyword reservation is currently held at `none` for RhoCalc.
+        // Grammar-derived keyword reservation (2026-07-06). Reserving `Nil` (and
+        // `error`) removes the over-generated send-on-a-channel-*named*-`Nil`
+        // reading (`POutputQuoted(NVar(Free("Nil")), q)`), collapsing the scalar
+        // `@Nil!(q)` cohort 2→1. Two fixes make the flip sound:
         //
-        // Measurement (S0-kw-no-break): flipping to `auto` DOES achieve the
-        // intended over-generation collapse — `@Nil!(q)` goes 2→1 readings
-        // (the spurious `POutputQuoted(NVar(Free("Nil")), q)` — a send on a
-        // channel *named* `Nil` — is removed, leaving only `POutputNil(q)`),
-        // and `@Nil!(a,b)` goes 4→2. HOWEVER it also HALTS: reserving `Nil`
-        // breaks the nullary `PZero` rule (`|- "Nil" : Proc`) in *prefix /
-        // operand* position — `*x | Nil`, `for(@a<-a){Nil}`, `@Nil!(Nil)` all
-        // fail to parse, regressing 6 `rhocalc_tests`. The WPDA lex-fork's
-        // cursor management for a nullary keyword whose spelling has an
-        // identifier-shaped proper prefix (`N`→`Ni`→`Nil`) depends on the
-        // `Ident` co-accept that reservation removes; this is a parser-side
-        // dependency beyond the lexer-local reservation mechanism.
-        //
-        // The mechanism itself is complete and unit-tested; the reserve mode
-        // is demonstrated (green) by `ReservedModel` (`reserved_model.rs`),
-        // whose keyword sits in a non-prefix position (like `@Nil`, which
-        // parses correctly). Flipping RhoCalc to `auto` is a documented
-        // follow-up once the WPDA prefix-dispatch of nullary keyword rules no
-        // longer relies on the `Ident` co-accept.
-        reserved_keywords: none,
+        //   1. `NULLARY_KEYWORD_LEXFORK_SEED` (`kind_dispatch.rs`): seeds the
+        //      reserved nullary keyword's own `Fixed(kw)` reading into the
+        //      PrefixDispatch lex-Fork, so `PZero`/`Err` still parse in
+        //      prefix/operand position (`*x | Nil`, `@Nil!(Nil)`) once the `Ident`
+        //      co-accept is dropped by reservation.
+        //   2. `@`-send-sugar canonicalization (`runtime.rs`:
+        //      `normalize_send_sugar_canon`, gate `PRATTAIL_NO_SEND_SUGAR_CANON`):
+        //      the number-as-process `@Nil!(n)` projection surface reads as any of
+        //      `POutputNil(q)` / `POutputShort(PZero, q)` / `POutput(NQuoteNil, q)`
+        //      — all eval-equal to `POutput(NQuote(PZero), q)` but elected
+        //      non-deterministically across parse contexts. term_eq now deeply
+        //      canonicalizes every `@`-send sugar to its channel-first fold target,
+        //      so `query_receive_sugar_with_arithmetic_guard` / `_with_string_guard`
+        //      unify regardless of which reading each context elects.
+        reserved_keywords: auto,
     },
 
     types {

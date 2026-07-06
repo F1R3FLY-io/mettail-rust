@@ -1717,16 +1717,88 @@ fn emit_prefix_pushes_for_shape(
                 }
             });
         },
-        // TerminalKeyword's `Fixed(text)` is never a lex-DAG ambiguity producer
-        // (terminals are exact byte matches); CrossCat* delegate via cross-cat
-        // dispatch; NonAtomic literal-leading binders go through
-        // `emit_binder_prefix_pushes_for_rule` below.
-        AtomicShape::TerminalKeyword { .. }
-        | AtomicShape::CrossCatProjection { .. }
+        // (2026-07-06) Nullary terminal-keyword atom (e.g. rhocalc `PZero . |-
+        // "Nil" : Proc`; calculator `Err . |- "error" : …`). PRE-RESERVATION a
+        // keyword terminal was "never a lex-DAG ambiguity producer" (an exact
+        // byte match, single alt), so the PrefixDispatch lex-Fork never needed a
+        // rule for it — the standard `Fixed(kw) → ConsumeAndPush(rule)` dispatch
+        // arm handled it through the walker's
+        // `__primary_has_dispatch && __all_alts_same_length` fall-through.
+        //
+        // Keyword RESERVATION invalidates that invariant. `subset.rs::
+        // resolve_accept` drops the generic `Ident` co-accept at the keyword's
+        // MAXIMAL DFA state, so the DAG lexer's longest-per-kind emission
+        // (`runtime_types.rs::expand_lex_node`) falls the longest surviving
+        // `Ident` accept back to a PROPER PREFIX of the keyword run
+        // (`Nil`(len 3) → `Ni`(len 2)), fabricating a SHORTER `Ident` alt. The
+        // token is now multi-alt (`is_ambiguous_at` = true) with DIFFERENT
+        // lengths, so `__all_alts_same_length` is false, the fall-through is
+        // BLOCKED, and the walker enters the lex-Fork. Lacking a rule for the
+        // keyword's own `Fixed(kw)` reading, the lex-Fork seeded ONLY the
+        // spurious `Ident → Var` prefix branch, which consumed the truncated
+        // prefix and left trailing input ⇒ the reserved nullary keyword failed
+        // to parse (the tracked `Nil`/`error` prefix/operand regressions).
+        //
+        // Emitting an `Atomic` rule here seeds the keyword's OWN `Fixed(kw)`
+        // reading in the lex-Fork PRIMARY branch: forks.rs's `Atomic` arm builds
+        // `rule_at(cat, rule_idx, 0).with_kind_return()` + `Unwinding` + a
+        // `LexAlt` action — byte-for-byte the shape of the standard
+        // `CaptureForBuilder` dispatch arm (walker's `LexAlt` apply "mirrors
+        // ConsumeAndCaptureAndPush"), so the nullary AST is constructed
+        // identically. The nullary cursor then competes on evidence and wins by
+        // MAXIMAL MUNCH — it consumes the full keyword span (reaching the
+        // downstream position / EOI), whereas the truncated `Ident` prefix
+        // cursor leaves trailing input and dies. This PROPAGATES the ambiguity to
+        // the WPDS fork (never disambiguating early in the lexer) — the parser
+        // elects the reading with parse evidence.
+        //
+        // Grammar-derived, NO per-keyword hardcode: keyed on the rule's own
+        // `TerminalKeyword` classification + terminal text. BYTE-IDENTICAL
+        // without reservation: the keyword stays single-alt, `__all_alts_same_
+        // length` holds, the fall-through fires FIRST, and `__branches` (hence
+        // this rule) is never consulted. `NULLARY_KEYWORD_LEXFORK_SEED` is the
+        // A/B kill-switch (flip to `false` + rebuild to reproduce the pre-fix
+        // reserved-keyword failure with reservation still ON); the umbrella
+        // `PRATTAIL_NO_KW_RESERVE` reverts reservation itself.
+        AtomicShape::TerminalKeyword { terminal_text, .. } => {
+            // Kill-switch `false` ⇒ pre-fix skip (byte-identical to the historical
+            // no-op arm); reservation-off ⇒ inert regardless (fall-through
+            // pre-empts the lex-Fork). See `NULLARY_KEYWORD_LEXFORK_SEED`.
+            if NULLARY_KEYWORD_LEXFORK_SEED {
+                let terminal_lit = terminal_text.as_str();
+                prefix_pushes.push(quote! {
+                    match (cat_src_idx, kind) {
+                        (#cat_src_idx, mettail_prattail::automata::TokenKind::Fixed(__t))
+                            if __t == #terminal_lit => out.push(
+                                mettail_prattail::wpda_runtime::LexAltRuleInfo {
+                                    rule_idx: #rule_idx,
+                                    kind: mettail_prattail::wpda_runtime::LexAltRuleKind::Atomic,
+                                }
+                            ),
+                        _ => {},
+                    }
+                });
+            }
+        },
+        // CrossCat* delegate via cross-cat dispatch; NonAtomic literal-leading
+        // binders go through `emit_binder_prefix_pushes_for_rule` below.
+        AtomicShape::CrossCatProjection { .. }
         | AtomicShape::CrossCatPrefixUnary { .. }
         | AtomicShape::NonAtomic => {},
     }
 }
+
+/// A/B kill-switch for the reserved nullary-keyword lex-Fork seeding fix
+/// (2026-07-06; see the `AtomicShape::TerminalKeyword` arm in
+/// [`emit_prefix_pushes_for_shape`]). Default `true` (fix ON). Flip to `false`
+/// and rebuild to reproduce the pre-fix behavior — a reserved nullary keyword
+/// (`Nil`, `error`) fails to parse in prefix/operand position because the
+/// lex-Fork carries no rule for its own `Fixed(kw)` reading — WITH reservation
+/// still enabled, isolating this fix from the umbrella `PRATTAIL_NO_KW_RESERVE`
+/// (which reverts reservation itself). Inert without reservation regardless
+/// (the fall-through pre-empts the lex-Fork), so a `false` build is byte-
+/// identical to a `true` build for every non-reserving language.
+pub(crate) const NULLARY_KEYWORD_LEXFORK_SEED: bool = true;
 
 fn emit_binder_prefix_pushes_for_rule(
     language: &LanguageDef,

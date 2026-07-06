@@ -187,31 +187,34 @@ fn reserved_set_is_grammar_derived() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// RhoCalc is unregressed at the shipped `reserved_keywords: none`
+// RhoCalc is unregressed at the shipped `reserved_keywords: auto`
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// RhoCalc ships at `none` (see the S0-kw-no-break measurement in
-/// `rhocalc.rs`): fundamental forms parse, and — because `Nil` is NOT reserved
-/// — `@Nil!(q)` retains its full (unreserved) ambiguity set. This guards
-/// against an accidental flip to `auto` regressing the corpus.
+/// RhoCalc ships at `auto` (2026-07-06 flip): `Nil` is reserved, so the
+/// over-generated `@Nil!(q)`-as-send-on-a-channel-variable-named-`Nil`
+/// (`POutputQuoted(NVar(Free("Nil")), q)`) reading is removed — the scalar
+/// `@Nil!(q)` cohort collapses 2→1 — while nullary `Nil` in prefix/operand
+/// position still parses (the `NULLARY_KEYWORD_LEXFORK_SEED` lex-Fork seed
+/// restores it under reservation). Guards against a regression of either the
+/// flip (over-generation returns) or the lex-Fork seed (nullary `Nil` breaks).
 #[cfg(feature = "rhocalc")]
 #[test]
-fn rhocalc_default_none_unregressed() {
+fn rhocalc_auto_reserved_unregressed() {
     use mettail_languages::rhocalc as r;
 
-    // Nullary `Nil` in prefix/operand position parses (this is exactly what a
-    // premature flip to `auto` would break).
-    assert!(r::Proc::parse("*x | Nil").is_ok(), "`*x | Nil` must parse at `none`");
-    assert!(r::Proc::parse("@Nil!(Nil)").is_ok(), "`@Nil!(Nil)` must parse at `none`");
+    // Nullary `Nil` in prefix/operand position still parses under reservation
+    // (this is exactly what the pre-`NULLARY_KEYWORD_LEXFORK_SEED` flip broke).
+    assert!(r::Proc::parse("*x | Nil").is_ok(), "`*x | Nil` must parse at `auto`");
+    assert!(r::Proc::parse("@Nil!(Nil)").is_ok(), "`@Nil!(Nil)` must parse at `auto`");
 
-    // Under `none`, `@Nil!(q)` keeps BOTH readings (keyword send + send on a
-    // channel variable named `Nil`) — the over-generation reservation would
-    // remove. Documented here as the measured baseline.
+    // Under `auto`, `Nil` is reserved: `@Nil!(q)` keeps ONLY the null-process
+    // channel reading (the spurious send-on-variable-`Nil` reading is gone), so
+    // the scalar cohort is a single reading (2→1 over-generation collapse).
     let readings = r::Proc::parse_via_wpda_all("@Nil!(q)")
-        .expect("`@Nil!(q)` should parse at `none`");
+        .expect("`@Nil!(q)` should parse at `auto`");
     assert_eq!(
         readings.len(),
-        2,
-        "at `none`, `@Nil!(q)` retains 2 readings (the unreserved baseline); got {readings:?}"
+        1,
+        "at `auto`, `@Nil!(q)` collapses to 1 reading (Nil reserved); got {readings:?}"
     );
 }
