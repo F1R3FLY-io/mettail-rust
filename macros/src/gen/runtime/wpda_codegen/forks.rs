@@ -513,6 +513,86 @@ pub(crate) const METHOD_FRAME_ISOLATION: bool = true;
 /// literal boundary WITHOUT a rebuild (causal A/B — reproduces the pre-fix decline).
 pub(crate) const PROJ_ISO_LITERAL_RUN_ANCHOR: bool = true;
 
+/// INFIX_ISOLATION_COMBINE — the PRECEDENCE-AWARE BINARY-INFIX operand
+/// DIVIDE-AND-CONQUER isolation+combine facade fast-path (ROOT-2 `or`/PParInfix
+/// locus, 2026-07-06). Master compile-time kill-switch (same convention as
+/// [`SEP_ISOLATION_COMBINE`] / [`PROJ_ISOLATION_COMBINE`]): folds a guarded
+/// PROLOGUE into the generated `parse_<Cat>_via_wpda*` string entries for every
+/// category named in [`INFIX_ISOLATION_CATEGORIES`]. It is the THIRD sibling of
+/// the `.*sep` (P2) and `@`-projection (P1) isolators — those linearize LIST /
+/// FRAME operands; THIS linearizes the two operands of a top-level BINARY INFIX.
+///
+/// ## The defect it ships the fix for (ROOT 2, `or` locus)
+/// A binary-infix composition whose LEFT operand is a POLYADIC persistent send
+/// carrying a division-containing arg — `@Nil!!(true, @Nil!() / @Nil!()) or X` —
+/// parsed MONOLITHICALLY dies with "no accepting branch reached end of input": the
+/// GLR frontier does not RECONVERGE across the infix-operand boundary (the same
+/// edge-stack / cross-cat non-reconvergence as the `.*sep` / `@`-projection loci,
+/// but at the binary-infix-operand level). Each operand parses in ISOLATION
+/// (`@Nil!!(true,@Nil!() / @Nil!())` → Ok in ~6 ms via proj-iso; the RHS send → Ok)
+/// and simpler `or`s parse; only the composition of a complex LEFT send with a
+/// second send explodes. `proc_display_parse_roundtrip` @CASES=100 fails on it.
+///
+/// ## The fix (this feature)
+/// Before each facade's monolithic body, a guarded prologue calls the emitted
+/// per-category helper `__mettail_wpda_infix_isolate_all_<Cat>`. The helper (i)
+/// scans the raw input at bracket-depth 0 for the category's binary-infix operator
+/// terminals (grammar-derived from the SAME binding-power table the walker uses —
+/// [`build_bp_table`](super::infix::build_bp_table)), (ii) elects the ROOT split:
+/// the LOOSEST-precedence (min `left_bp.min(right_bp)`) depth-0 operator; among its
+/// occurrences the RIGHTMOST for left-assoc (`left_bp < right_bp`) / LEFTMOST for
+/// right-assoc — the exact Pratt root, so `a or b / c` splits at `or` and
+/// `a or b or c` at the rightmost `or`, (iii) sub-parses the LEFT and RIGHT operand
+/// spans through the OPERAND category's own string entry (fresh walker from ROOT —
+/// RECURSES through ALL prologues incl proj/sep/infix, so nested infix + framed
+/// sends both linearize), (iv) combines via the operator's binary ctor
+/// `Cat::Label(Arc(l), Arc(r))`, ⊗-folding operand weights, (v) dedups by semantic
+/// key + ⊕-min + weight-sort (the monolithic `_all` finalize). It returns
+/// `Some((terms, weights))` on success, `None` for NOT-APPLICABLE (no depth-0
+/// binary infix — a pure frame/atom, handled by proj/sep/monolithic) or ANY
+/// sub-parse failure ⇒ the facade falls through to the UNMODIFIED monolithic body
+/// (byte-identical — the monolithic path stays authoritative). Wired AFTER the
+/// proj + sep prologues (mutually-exclusive by shape: proj/sep consume a WHOLE
+/// frame/list; infix needs a depth-0 operator with BOTH operands present).
+///
+/// ## Generality (no per-language / per-rule hardcode)
+/// The operator set, precedence, and associativity are read from the binding-power
+/// table (`InfixOperator{terminal,left_bp,right_bp,label,category,result_category}`)
+/// — the SAME classification the walker's InfixLoop consumes. Only HOMOGENEOUS
+/// same-category binary infix (`category == result_category == cat`, `!postfix`,
+/// `!mixfix`) is admitted; cross-category comparisons (`Int×Int→Bool`) are NOT
+/// chainable at one category and fall to the monolithic path (sound). Maximal-munch
+/// (`>=` beats `>`) + word-boundary (alpha `or`/`and`/`bitor`) + a leading-operand
+/// guard (the char before the operator is an operand terminal, not another operator
+/// / open bracket) exclude unary `-`/`*` in operator position.
+///
+/// ## Kill-switch / A-B
+/// When `false`, NO prologue and NO helper are emitted for ANY category —
+/// byte-identical (every generated `wpda.rs` md5 == baseline). The per-category
+/// include set [`INFIX_ISOLATION_CATEGORIES`] gates WHICH categories opt in (EMPTY
+/// = byte-identical even with the master switch `true`). The runtime env
+/// `PRATTAIL_NO_INFIX_ISOLATION` forces the emitted prologue to return early
+/// (reproduces the monolithic path) WITHOUT a rebuild — the causal A/B control.
+///
+/// FV: `formal/rocq/prattail_wpda_runtime/theories/InfixReconvergence.v`
+/// (precedence-root split == monolithic Pratt parse, combine set-eq, linearity,
+/// fallback refinement; zero-admission).
+///
+/// Byte-identical-OFF VERIFIED (2026-07-06): with this `false`, the generated
+/// rhocalc `parser.rs`/`wpda.rs` differ from the `true` build by EXACTLY the infix
+/// helper + the two prologues (0 OFF-only non-whitespace lines); calculator (not in
+/// the include set) is md5-unchanged.
+pub(crate) const INFIX_ISOLATION_COMBINE: bool = true;
+
+/// Per-result-category INCLUDE set for [`INFIX_ISOLATION_COMBINE`] (mirrors the
+/// [`SEP_ISOLATION_CATEGORIES`] / [`PROJ_ISOLATION_CATEGORIES`] convention). A
+/// category is given the binary-infix isolation prologue + helper ONLY when its
+/// name appears here AND [`INFIX_ISOLATION_COMBINE`] is `true` AND an
+/// `InfixIsoShape` is derivable for it (≥1 homogeneous binary-infix operator).
+/// EMPTY ⇒ byte-identical (plumbing checkpoint). `{"Proc"}` ships the `or` locus
+/// (rhocalc's 16 `Proc×Proc→Proc` operators).
+pub(crate) const INFIX_ISOLATION_CATEGORIES: &[&str] = &["Proc"];
+
 /// CROSSCAT_LEX_COMPAT_GATE (option A — PRIMARY, emission-side bucket split;
 /// 2026-07-03). The general, evidence-based first-token lexical-compatibility
 /// FILTER at the cross-cat `Proc` (and any category's) PROJECTION fork.

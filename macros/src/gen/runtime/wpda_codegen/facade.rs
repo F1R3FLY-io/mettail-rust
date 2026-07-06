@@ -2109,6 +2109,450 @@ fn emit_projection_isolation(cat_ident: &proc_macro2::Ident, shape: &ProjIsoShap
     }
 }
 
+// ════════════════════════════════════════════════════════════════════════
+// P3 PRECEDENCE-AWARE BINARY-INFIX OPERAND ISOLATION+COMBINE CODEGEN
+// (ROOT-2 `or`/PParInfix locus, 2026-07-06) — the THIRD sibling of the P2
+// `.*sep` (list) and P1 `@`-projection (frame) isolators. Where those linearize
+// LIST / FRAME operands, this linearizes the two operands of a TOP-LEVEL BINARY
+// INFIX operator. Gate: `super::forks::INFIX_ISOLATION_COMBINE` +
+// `INFIX_ISOLATION_CATEGORIES`.
+//
+// The root defect: `@Nil!!(true, @Nil!() / @Nil!()) or X` (a polyadic persistent
+// send with a division-arg as the LEFT operand of `or`) dies monolithically ("no
+// accepting branch reached end of input") — the GLR frontier does not RECONVERGE
+// across the infix-operand boundary, though each operand parses in isolation and
+// simpler `or`s parse. Stage-0 (2026-07-06) PROVED that splitting at the
+// PRECEDENCE-correct root operator, parsing each operand in TRUE ISOLATION (its own
+// walker from ROOT — recurses through proj/sep/infix), and combining via the
+// operator's binary ctor is (a) SOUND (== monolithic on every case monolithic
+// handles: 11/11 + 10/10 precedence/associativity) and (b) LINEAR (~const per
+// operand vs the monolithic explosion; recovered BOTH counterexamples).
+// ════════════════════════════════════════════════════════════════════════
+
+/// One homogeneous binary-infix operator a category admits, with the precedence +
+/// associativity read from the binding-power table (the SAME source the walker's
+/// InfixLoop consumes — `build_bp_table`). `left_bp`/`right_bp` encode precedence
+/// (`min(left_bp,right_bp)` = the Pratt level, LOWER = looser) and associativity
+/// (`left_bp < right_bp` ⇒ left-assoc ⇒ split at the RIGHTMOST occurrence;
+/// `left_bp > right_bp` ⇒ right-assoc ⇒ LEFTMOST).
+struct InfixOp {
+    /// Operator terminal text (e.g. `"or"`, `"|"`, `"<="`).
+    terminal: String,
+    /// Constructor label (e.g. `"Or"`, `"PParInfix"`, `"LtEq"`).
+    label: String,
+    left_bp: u8,
+    right_bp: u8,
+}
+
+/// Grammar-derived shape of a category's HOMOGENEOUS (`operand == result == cat`)
+/// binary-infix operator set that the isolation helper root-splits. Cross-category
+/// comparisons (`Int×Int→Bool`) are NOT admitted (not chainable at one category —
+/// they fall to the monolithic path, sound). Derived from `build_bp_table` — no
+/// per-language / per-rule hardcode.
+pub(crate) struct InfixIsoShape {
+    /// `src_idx` of the RESULT category (== operand category — homogeneous).
+    result_src_idx: u16,
+    /// The admitted operators, in ORIGINAL binding-power (declaration) order — the
+    /// index into this vec is the stable `op_idx` the ctor `match` dispatches on.
+    ops: Vec<InfixOp>,
+}
+
+/// Derive the [`InfixIsoShape`] for `cat_name`, or `None` when the category has no
+/// homogeneous binary-infix operator (grammar-derived — the single source of truth
+/// for the emitted helper + prologues). Reads the binding-power table (same as the
+/// walker) and keeps only `!postfix && !mixfix` operators whose operand AND result
+/// category are `cat_name` (homogeneous, chainable).
+fn derive_infix_iso_shape(
+    language: &LanguageDef,
+    cat_name: &str,
+    categories: &[String],
+) -> Option<InfixIsoShape> {
+    let src_idx_of =
+        |name: &str| -> Option<u16> { categories.iter().position(|c| c == name).map(|i| i as u16) };
+    let result_src_idx = src_idx_of(cat_name)?;
+
+    let bp_table = super::infix::build_bp_table(language);
+    let mut ops: Vec<InfixOp> = Vec::new();
+    for op in &bp_table.operators {
+        // Homogeneous, chainable binary infix ONLY: operand category == result
+        // category == this category, and not a postfix / mixfix operator.
+        if op.is_postfix || op.is_mixfix {
+            continue;
+        }
+        if op.category != cat_name || op.result_category != cat_name {
+            continue;
+        }
+        // A binary infix has distinct left/right bp (left-assoc `<`, right-assoc
+        // `>`); equal bp would be a degenerate/postfix entry — skip.
+        if op.left_bp == op.right_bp {
+            continue;
+        }
+        ops.push(InfixOp {
+            terminal: op.terminal.clone(),
+            label: op.label.clone(),
+            left_bp: op.left_bp,
+            right_bp: op.right_bp,
+        });
+    }
+    if ops.is_empty() {
+        return None;
+    }
+    Some(InfixIsoShape { result_src_idx, ops })
+}
+
+/// The module-scope identifier of the binary-infix isolation helper for `cat_name`.
+pub(crate) fn infix_isolation_helper_ident(cat_name: &str) -> proc_macro2::Ident {
+    format_ident!("__mettail_wpda_infix_isolate_all_{}", cat_name)
+}
+
+/// The gated binary-infix isolation shape for `cat_name`: `Some` iff the master
+/// switch is ON, the category is in the include set, AND a shape is derivable.
+/// The SINGLE source of truth shared by the helper emitter (facade) and the
+/// string-entry prologue emitter (mod.rs).
+pub(crate) fn infix_iso_shape(
+    language: &LanguageDef,
+    cat_name: &str,
+    categories: &[String],
+) -> Option<InfixIsoShape> {
+    if super::forks::INFIX_ISOLATION_COMBINE
+        && super::forks::INFIX_ISOLATION_CATEGORIES.contains(&cat_name)
+    {
+        derive_infix_iso_shape(language, cat_name, categories)
+    } else {
+        None
+    }
+}
+
+/// Emit the guarded string-entry prologue that calls the binary-infix isolation
+/// helper with the RAW input string (before `lex_dag`). Runtime A/B:
+/// `PRATTAIL_NO_INFIX_ISOLATION` forces the monolithic path without a rebuild.
+/// Wired AFTER the proj + sep prologues (mutually-exclusive by input shape: proj /
+/// sep consume a WHOLE frame / list; infix needs a depth-0 operator with BOTH
+/// operands present — a pure frame/atom finds no depth-0 infix ⇒ declines here).
+pub(crate) fn emit_infix_isolation_prologue(
+    helper_name: &proc_macro2::Ident,
+    seam: SepSeam,
+) -> TokenStream {
+    match seam {
+        SepSeam::Single => quote! {
+            // P3 INFIX ISOLATION prologue (ROOT-2 `or`) — single winner.
+            // `true` ⇒ compose per-operand SINGLE-winners (== monolithic single
+            // result; operands are precedence-delimited ⇒ LOCAL disambiguation ⇒
+            // compositional — Stage-0 sound 11/11).
+            if std::env::var_os("PRATTAIL_NO_INFIX_ISOLATION").is_none() {
+                if let Some((__iiso_terms, __iiso_weights)) = #helper_name(input, true) {
+                    if let Some((__t, _)) = __iiso_terms
+                        .into_iter()
+                        .zip(__iiso_weights.into_iter())
+                        .min_by(|(_, __a), (_, __b)| __a.cmp(__b))
+                    {
+                        return Ok(__t);
+                    }
+                }
+            }
+        },
+        SepSeam::All => quote! {
+            // P3 INFIX ISOLATION prologue (ROOT-2 `or`) — full alt set.
+            // `false` ⇒ ambiguity-preserving all-path per operand (cartesian).
+            if std::env::var_os("PRATTAIL_NO_INFIX_ISOLATION").is_none() {
+                if let Some(__iiso) = #helper_name(input, false) {
+                    return Ok(__iiso);
+                }
+            }
+        },
+    }
+}
+
+/// Emit the shared per-category STRING-level binary-infix isolation helper
+/// `__mettail_wpda_infix_isolate_all_<Cat>(input, single_winner)`.
+///
+/// It elects the PRECEDENCE-correct ROOT operator (loosest depth-0 operator; among
+/// its occurrences rightmost for left-assoc / leftmost for right-assoc), sub-parses
+/// the LEFT and RIGHT operand spans through this category's own string entry (fresh
+/// lex + walker from ROOT — RECURSES through every prologue incl proj/sep/infix),
+/// wraps the cartesian-combined readings in the operator's binary ctor, then dedups
+/// by semantic key + ⊕-min + weight-sort (the monolithic `_all` finalize). `None` ⇒
+/// NOT-APPLICABLE (no depth-0 binary infix with both operands present) or ANY
+/// sub-parse failure ⇒ the caller falls through to the UNMODIFIED monolithic body.
+fn emit_infix_isolation(cat_ident: &proc_macro2::Ident, shape: &InfixIsoShape) -> TokenStream {
+    let helper_name = infix_isolation_helper_ident(&cat_ident.to_string());
+    let result_src_idx = shape.result_src_idx;
+
+    // Runtime operator table entries `(terminal, prec, assoc_right, op_idx)`, ordered
+    // by terminal LENGTH DESCENDING so the scan does MAXIMAL MUNCH (`>=` beats `>`,
+    // `<=` beats `<`) — the first byte-match at a position is the longest operator.
+    // `prec = min(left_bp,right_bp)` (LOWER = looser); `assoc_right = left_bp > right_bp`.
+    let mut ordered: Vec<(usize, &InfixOp)> = shape.ops.iter().enumerate().collect();
+    ordered.sort_by(|(_, a), (_, b)| b.terminal.len().cmp(&a.terminal.len()));
+    let op_entries: Vec<TokenStream> = ordered
+        .iter()
+        .map(|(idx, op)| {
+            let term = &op.terminal;
+            let prec = op.left_bp.min(op.right_bp);
+            let assoc_right = op.left_bp > op.right_bp;
+            let idx_lit = *idx;
+            quote! { (#term, #prec, #assoc_right, #idx_lit) }
+        })
+        .collect();
+
+    // The ctor `match op_idx { … }` — each admitted operator's binary constructor.
+    let ctor_arms: Vec<TokenStream> = shape
+        .ops
+        .iter()
+        .enumerate()
+        .map(|(idx, op)| {
+            let label = format_ident!("{}", op.label);
+            quote! {
+                #idx => #cat_ident::#label(
+                    std::sync::Arc::new(__l.clone()),
+                    std::sync::Arc::new(__r.clone()),
+                ),
+            }
+        })
+        .collect();
+
+    quote! {
+        /// P3 PRECEDENCE-AWARE BINARY-INFIX ISOLATION+COMBINE (ROOT-2 `or`):
+        /// STRING-level divide-and-conquer infix linearizer for the `#cat_ident`
+        /// category. See `emit_infix_isolation` in the macro for the full rationale.
+        #[allow(
+            non_snake_case,
+            unused_assignments,
+            unused_variables,
+            clippy::needless_range_loop,
+            clippy::manual_is_ascii_check
+        )]
+        fn #helper_name(
+            input: &str,
+            __single_winner: bool,
+        ) -> Option<(
+            Vec<#cat_ident>,
+            Vec<mettail_prattail::automata::lex_weight::LexicographicWeight>,
+        )> {
+            use mettail_prattail::automata::semiring::Semiring;
+            type __W = mettail_prattail::automata::lex_weight::LexicographicWeight;
+            const __REALIZE_CAP: usize = 64;
+            const __RESULT_SRC_IDX: u16 = #result_src_idx;
+            // Operator table (maximal-munch order): `(terminal, prec, assoc_right, op_idx)`.
+            const __OPS: &[(&str, u8, bool, usize)] = &[ #(#op_entries),* ];
+            fn __is_word(c: u8) -> bool {
+                c.is_ascii_alphanumeric() || c == b'_'
+            }
+            let __GRIND_DIAG = std::env::var_os("GRIND_DIAG").is_some();
+
+            let input = input.trim();
+            let __bytes = input.as_bytes();
+            let __n = __bytes.len();
+            if __n == 0 {
+                return None;
+            }
+
+            // (1) Elect the ROOT operator: scan at bracket-depth 0 for operator
+            //     terminals; keep the LOOSEST (min prec). Among equal-precedence
+            //     occurrences: left-assoc (`!assoc_right`) ⇒ RIGHTMOST (later wins),
+            //     right-assoc ⇒ LEFTMOST (earliest wins) — the exact Pratt root.
+            //     A candidate is valid only with BOTH operands present AND a real
+            //     LEFT operand (its last non-ws char is an operand terminal — word
+            //     or close bracket — not another operator / open bracket; excludes a
+            //     unary `-`/`*` sitting in operator position).
+            let mut __best: Option<(u8, usize, usize, usize)> = None; // (prec, start, end, op_idx)
+            {
+                let mut __depth: i32 = 0;
+                // STRING-LITERAL state: operator terminals inside a `"…"` string
+                // literal (e.g. a `CastStr("a or b")` operand) are CONTENT, NOT
+                // splits — skip them. A `"` toggles the state UNLESS escaped (an ODD
+                // run of immediately-preceding backslashes; the display escapes an
+                // inner `"` as `\"`). Brackets are also inert inside a string.
+                let mut __in_str = false;
+                let mut __i = 0usize;
+                while __i < __n {
+                    let __c = __bytes[__i];
+                    if __c == b'"' {
+                        let mut __bs = 0usize;
+                        while __bs < __i && __bytes[__i - 1 - __bs] == b'\\' {
+                            __bs += 1;
+                        }
+                        if __bs % 2 == 0 {
+                            __in_str = !__in_str;
+                        }
+                        __i += 1;
+                        continue;
+                    }
+                    if __in_str {
+                        __i += 1;
+                        continue;
+                    }
+                    match __c {
+                        b'(' | b'[' | b'{' => {
+                            __depth += 1;
+                            __i += 1;
+                            continue;
+                        }
+                        b')' | b']' | b'}' => {
+                            __depth -= 1;
+                            __i += 1;
+                            continue;
+                        }
+                        _ => {}
+                    }
+                    if __depth == 0 {
+                        let mut __matched: Option<(usize, u8, bool, usize)> = None; // (oplen, prec, assoc_right, op_idx)
+                        for &(__term, __prec, __assoc_right, __op_idx) in __OPS {
+                            let __tb = __term.as_bytes();
+                            if __i + __tb.len() > __n || &__bytes[__i..__i + __tb.len()] != __tb {
+                                continue;
+                            }
+                            // Word-boundary for identifier-shaped terminals (`or`, `and`,
+                            // `bitor`) so `or` does not match inside `error`/`for`.
+                            if __tb.iter().all(|&c| __is_word(c)) {
+                                let __before_ok = __i == 0 || !__is_word(__bytes[__i - 1]);
+                                let __after_ok = __i + __tb.len() == __n
+                                    || !__is_word(__bytes[__i + __tb.len()]);
+                                if !(__before_ok && __after_ok) {
+                                    continue;
+                                }
+                            }
+                            __matched = Some((__tb.len(), __prec, __assoc_right, __op_idx));
+                            break; // maximal munch: longest terminal first
+                        }
+                        if let Some((__oplen, __prec, __assoc_right, __op_idx)) = __matched {
+                            let __left = input[..__i].trim();
+                            let __right = input[__i + __oplen..].trim();
+                            let __left_is_operand = __left
+                                .as_bytes()
+                                .last()
+                                // Operand terminal: identifier/number char, a closing
+                                // bracket, or a closing string quote (`"foo"` operand).
+                                .map(|&c| __is_word(c) || matches!(c, b')' | b']' | b'}' | b'"'))
+                                .unwrap_or(false);
+                            if !__left.is_empty() && !__right.is_empty() && __left_is_operand {
+                                let __take = match __best {
+                                    None => true,
+                                    Some((__bp, _, _, _)) => {
+                                        if __prec < __bp {
+                                            true
+                                        } else if __prec > __bp {
+                                            false
+                                        } else {
+                                            // equal precedence: left-assoc ⇒ rightmost
+                                            // (later replaces); right-assoc ⇒ leftmost.
+                                            !__assoc_right
+                                        }
+                                    }
+                                };
+                                if __take {
+                                    __best = Some((__prec, __i, __i + __oplen, __op_idx));
+                                }
+                            }
+                            __i += __oplen;
+                            continue;
+                        }
+                    }
+                    __i += 1;
+                }
+            }
+            let (_, __s0, __e0, __op_idx) = __best?;
+            if __GRIND_DIAG {
+                eprintln!(
+                    "[IISO] {} input={:?} split op_idx={} at [{},{}) left={:?} right={:?}",
+                    stringify!(#cat_ident), input, __op_idx, __s0, __e0,
+                    &input[..__s0], &input[__e0..],
+                );
+            }
+
+            // (2) ISOLATED sub-parse of the LEFT + RIGHT operand spans via this
+            //     category's own string entry (fresh lex + walker from ROOT —
+            //     RECURSES through every prologue). Any Err / empty ⇒ None (fall to
+            //     monolithic). SINGLE-RESULT seam composes per-operand single-winners
+            //     (== monolithic); ALL seam keeps the ambiguity-preserving all-path.
+            let __left = input[..__s0].trim();
+            let __right = input[__e0..].trim();
+            if __left.is_empty() || __right.is_empty() {
+                return None;
+            }
+            let (__lt, __lw): (Vec<#cat_ident>, Vec<__W>) = if __single_winner {
+                match #cat_ident::parse_via_wpda(__left) {
+                    Ok(__one) => (vec![__one], vec![<__W as Semiring>::one()]),
+                    Err(_) => return None,
+                }
+            } else {
+                match #cat_ident::parse_via_wpda_all_with_weights(__left) {
+                    Ok(__v) => __v,
+                    Err(_) => return None,
+                }
+            };
+            let (__rt, __rw): (Vec<#cat_ident>, Vec<__W>) = if __single_winner {
+                match #cat_ident::parse_via_wpda(__right) {
+                    Ok(__one) => (vec![__one], vec![<__W as Semiring>::one()]),
+                    Err(_) => return None,
+                }
+            } else {
+                match #cat_ident::parse_via_wpda_all_with_weights(__right) {
+                    Ok(__v) => __v,
+                    Err(_) => return None,
+                }
+            };
+            if __lt.is_empty() || __rt.is_empty() {
+                return None;
+            }
+
+            // (3) CARTESIAN COMBINE over the two operands (⊗-folded weights, cap 64),
+            //     wrapped in the elected operator's binary ctor. Framing cost 0.0 is
+            //     absorbed under ⊗ so the winner is the product of per-operand minima
+            //     = the monolithic minimum.
+            let __framing = __W::from_cost(0.0, __RESULT_SRC_IDX, __op_idx as u16);
+            let mut __candidates: Vec<(#cat_ident, __W)> = Vec::new();
+            for (__l, __wl) in __lt.iter().zip(__lw.iter()) {
+                for (__r, __wr) in __rt.iter().zip(__rw.iter()) {
+                    if __candidates.len() >= __REALIZE_CAP {
+                        return None;
+                    }
+                    let __term = match __op_idx {
+                        #(#ctor_arms)*
+                        _ => return None,
+                    };
+                    __candidates.push((
+                        __term,
+                        Semiring::times(&Semiring::times(&__framing, __wl), __wr),
+                    ));
+                }
+            }
+            if __candidates.is_empty() {
+                return None;
+            }
+
+            // (4) FINALIZE like the monolithic `_all`: dedup by semantic key,
+            //     ⊕-min representative, weight-sort.
+            let mut __seen: std::collections::HashMap<Vec<u8>, usize> =
+                std::collections::HashMap::with_capacity(__candidates.len());
+            let mut __out_terms: Vec<#cat_ident> = Vec::new();
+            let mut __out_weights: Vec<__W> = Vec::new();
+            for (__term, __w) in __candidates {
+                let __key = {
+                    let mut __h = __MettailWpdaSemanticKeyHasher::default();
+                    __term.semantic_hash(&mut __h);
+                    __h.into_key()
+                };
+                if let Some(&__idx) = __seen.get(&__key) {
+                    if __w < __out_weights[__idx] {
+                        __out_terms[__idx] = __term;
+                        __out_weights[__idx] = __w;
+                    }
+                } else {
+                    __seen.insert(__key, __out_terms.len());
+                    __out_terms.push(__term);
+                    __out_weights.push(__w);
+                }
+            }
+            let mut __paired: Vec<_> =
+                __out_terms.into_iter().zip(__out_weights.into_iter()).collect();
+            __paired.sort_by(|(_, __a), (_, __b)| __a.cmp(__b));
+            let (__out_terms, __out_weights): (Vec<_>, Vec<_>) = __paired.into_iter().unzip();
+            Some((__out_terms, __out_weights))
+        }
+    }
+}
+
 /// Emit per-category `parse_<Cat>_via_wpda` wrappers plus the shared
 /// `WpdaParseError` type.
 pub(crate) fn emit_parse_fns(
@@ -2165,6 +2609,19 @@ pub(crate) fn emit_parse_fns(
         // no-shape ⇒ empty ⇒ BYTE-IDENTICAL.
         let proj_helper_fns = match projection_iso_shape(language, cat_name, categories) {
             Some(shape) => emit_projection_isolation(&cat_ident, &shape),
+            None => quote! {},
+        };
+
+        // ── P3 BINARY-INFIX ISOLATION+COMBINE (ROOT-2 `or`, 2026-07-06) ──
+        //
+        // The THIRD sibling of the `.*sep` / `@`-projection helpers: when this
+        // category has ≥1 homogeneous binary-infix operator AND opts in via
+        // `INFIX_ISOLATION_CATEGORIES`, emit the module-scope helper
+        // `__mettail_wpda_infix_isolate_all_<Cat>`. Its guarded PROLOGUES live at
+        // the same STRING parse entries (`gen/mod.rs`), wired AFTER the proj + sep
+        // prologues. OFF / not-in-set / no-shape ⇒ empty ⇒ BYTE-IDENTICAL.
+        let infix_helper_fns = match infix_iso_shape(language, cat_name, categories) {
+            Some(shape) => emit_infix_isolation(&cat_ident, &shape),
             None => quote! {},
         };
 
@@ -2410,6 +2867,12 @@ pub(crate) fn emit_parse_fns(
             // category is an `@`-projection category in `PROJ_ISOLATION_CATEGORIES`;
             // empty otherwise.
             #proj_helper_fns
+
+            // P3 BINARY-INFIX ISOLATION+COMBINE (ROOT-2 `or`, 2026-07-06): the
+            // per-category `__mettail_wpda_infix_isolate_all_<Cat>` helper. Emitted
+            // ONLY when this category is in `INFIX_ISOLATION_CATEGORIES` with ≥1
+            // homogeneous binary-infix operator; empty otherwise.
+            #infix_helper_fns
 
             /// WPDS-runtime parser for the `#cat_ident` category.
             ///

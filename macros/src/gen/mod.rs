@@ -338,6 +338,36 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
             } else {
                 quote! {}
             };
+
+            // P3 BINARY-INFIX ISOLATION (ROOT-2 `or`, 2026-07-06): the THIRD
+            // sibling. Wired AFTER the proj + sep prologues at both string entries
+            // (mutually-exclusive by input shape: proj/sep consume a WHOLE
+            // frame/list; infix needs a depth-0 binary operator with BOTH operands
+            // present). OFF / not-in-set / no-shape ⇒ empty ⇒ BYTE-IDENTICAL.
+            let infix_helper_ident =
+                runtime::wpda_codegen::facade::infix_isolation_helper_ident(&cat_str);
+            let infix_enabled = runtime::wpda_codegen::facade::infix_iso_shape(
+                language,
+                &cat_str,
+                &sep_categories_ordered,
+            )
+            .is_some();
+            let infix_prologue_single = if infix_enabled {
+                runtime::wpda_codegen::facade::emit_infix_isolation_prologue(
+                    &infix_helper_ident,
+                    runtime::wpda_codegen::facade::SepSeam::Single,
+                )
+            } else {
+                quote! {}
+            };
+            let infix_prologue_all = if infix_enabled {
+                runtime::wpda_codegen::facade::emit_infix_isolation_prologue(
+                    &infix_helper_ident,
+                    runtime::wpda_codegen::facade::SepSeam::All,
+                )
+            } else {
+                quote! {}
+            };
             let parse_fn = format_ident!("parse_{}", cat);
             let _parse_fn_recovering = format_ident!("parse_{}_recovering", cat);
 
@@ -491,6 +521,7 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                     mettail_prattail::hang_dump::install_hang_dump_handler();
                     #proj_prologue_single
                     #sep_prologue_single
+                    #infix_prologue_single
                     let dag = lex_dag(input).map_err(ParseError::from)?;
                     if dag.has_ambiguity() {
                         let source = mettail_prattail::wpda_runtime::LatticeTokenSource::new(dag);
@@ -743,6 +774,7 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                     mettail_prattail::hang_dump::install_hang_dump_handler();
                     #proj_prologue_all
                     #sep_prologue_all
+                    #infix_prologue_all
                     // M6c.4 + M6c.7.2 (2026-05-14): route through
                     // LatticeTokenSource when dag.has_ambiguity().
                     // Post-M6c.7.1 (lex_dag soft-fail), `lex_dag(input)?`
