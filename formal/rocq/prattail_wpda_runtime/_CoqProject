@@ -55,3 +55,5 @@ theories/ChannelFirstPolyadicSendRules.v
 theories/FacadeDriverFallThrough.v
 theories/ChannelFirstReceiverReconnect.v
 theories/SepReconvergence.v
+theories/ProjectionIsolation.v
+theories/KeywordReservation.v
