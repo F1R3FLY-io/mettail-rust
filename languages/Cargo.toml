@@ -32,6 +32,8 @@ all-languages = [
     "class3multi",
     "class3opt",
     "composition",
+    "fortran_model",
+    "reserved_model",
     "guarded-rho",
     "lambda",
     "led-test",
@@ -49,6 +51,8 @@ class2smoke = []
 class3multi = []
 class3opt = []
 composition = ["calculator", "lambda"]
+fortran_model = []
+reserved_model = []
 guarded-rho = []
 lambda = []
 led-test = []

@@ -18,6 +18,31 @@ pub(crate) mod zipper;
 language! {
     name: RhoCalc,
 
+    options {
+        // PIECE 3: keyword reservation is currently held at `none` for RhoCalc.
+        //
+        // Measurement (S0-kw-no-break): flipping to `auto` DOES achieve the
+        // intended over-generation collapse — `@Nil!(q)` goes 2→1 readings
+        // (the spurious `POutputQuoted(NVar(Free("Nil")), q)` — a send on a
+        // channel *named* `Nil` — is removed, leaving only `POutputNil(q)`),
+        // and `@Nil!(a,b)` goes 4→2. HOWEVER it also HALTS: reserving `Nil`
+        // breaks the nullary `PZero` rule (`|- "Nil" : Proc`) in *prefix /
+        // operand* position — `*x | Nil`, `for(@a<-a){Nil}`, `@Nil!(Nil)` all
+        // fail to parse, regressing 6 `rhocalc_tests`. The WPDA lex-fork's
+        // cursor management for a nullary keyword whose spelling has an
+        // identifier-shaped proper prefix (`N`→`Ni`→`Nil`) depends on the
+        // `Ident` co-accept that reservation removes; this is a parser-side
+        // dependency beyond the lexer-local reservation mechanism.
+        //
+        // The mechanism itself is complete and unit-tested; the reserve mode
+        // is demonstrated (green) by `ReservedModel` (`reserved_model.rs`),
+        // whose keyword sits in a non-prefix position (like `@Nil`, which
+        // parses correctly). Flipping RhoCalc to `auto` is a documented
+        // follow-up once the WPDA prefix-dispatch of nullary keyword rules no
+        // longer relies on the `Ident` co-accept.
+        reserved_keywords: none,
+    },
+
     types {
         Proc
         Name

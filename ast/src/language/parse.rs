@@ -1962,11 +1962,41 @@ fn parse_options(input: ParseStream) -> SynResult<HashMap<String, AttributeValue
                     ));
                 },
             },
+            // PIECE 3: keyword reservation. `auto` reserves every
+            // identifier-shaped literal terminal as a keyword (the "reserved
+            // words" modeling, e.g. `Nil`/`true`/`Map` cannot also be a
+            // variable named after the keyword); `none` retains full
+            // ambiguity (Fortran-style languages with no reserved words,
+            // where `IF`/`DO`/`THEN` may double as identifiers). Grammar-
+            // derived: the reserved set is exactly the identifier-shaped
+            // terminals — no per-language hardcoded list.
+            "reserved_keywords" => match &value {
+                AttributeValue::Keyword(kw) => match kw.as_str() {
+                    "auto" | "none" => {},
+                    _ => {
+                        return Err(syn::Error::new(
+                            key_ident.span(),
+                            format!(
+                                "reserved_keywords: invalid keyword '{}'. \
+                                 Use 'auto' (reserve identifier-shaped keywords) \
+                                 or 'none' (retain full ambiguity)",
+                                kw
+                            ),
+                        ));
+                    },
+                },
+                _ => {
+                    return Err(syn::Error::new(
+                        key_ident.span(),
+                        "reserved_keywords must be a keyword: 'auto' or 'none'",
+                    ));
+                },
+            },
             unknown => {
                 return Err(syn::Error::new(
                     key_ident.span(),
                     format!(
-                        "unknown option '{}'. Valid options are: beam_width, log_semiring_model_path, dispatch, emit_tests, emit_blockly, emit_simulator, case_insensitive, unicode_normalization",
+                        "unknown option '{}'. Valid options are: beam_width, log_semiring_model_path, dispatch, emit_tests, emit_blockly, emit_simulator, case_insensitive, unicode_normalization, reserved_keywords",
                         unknown
                     ),
                 ));

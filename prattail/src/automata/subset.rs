@@ -25,7 +25,7 @@ use super::{
     nfa::{epsilon_closure, epsilon_closure_reuse},
     partition::AlphabetPartition,
     semiring::{Semiring, TropicalWeight},
-    ClassId, Dfa, DfaState, Nfa, StateId, TokenKind, DEAD_STATE,
+    ClassId, Dfa, DfaState, Nfa, ReservedKeywords, StateId, TokenKind, DEAD_STATE,
 };
 
 thread_local! {
@@ -46,6 +46,23 @@ thread_local! {
 /// so transition tables are compact. Transitions are stored as dense arrays
 /// indexed by class ID for O(1) lookup.
 pub fn subset_construction(nfa: &Nfa, partition: &AlphabetPartition) -> Dfa {
+    // No reservation: byte-identical to the pre-reservation behavior. Every
+    // existing caller (tests, mode DFAs) routes through here unchanged.
+    subset_construction_with_reserved(nfa, partition, &ReservedKeywords::none())
+}
+
+/// Convert an NFA to a DFA using subset construction, applying **keyword
+/// reservation** (PIECE 3) against `reserved`.
+///
+/// Identical to [`subset_construction`] except that, at each DFA accept state
+/// whose primary token kind is a reserved keyword, the generic `Ident`
+/// co-accept is dropped (see [`resolve_accept`]). When `reserved` is empty
+/// (the default) this is byte-for-byte identical to the non-reserving path.
+pub fn subset_construction_with_reserved(
+    nfa: &Nfa,
+    partition: &AlphabetPartition,
+    reserved: &ReservedKeywords,
+) -> Dfa {
     let num_classes = partition.num_classes;
     let n = nfa.states.len();
     let mut dfa = Dfa::new(num_classes);
@@ -81,7 +98,7 @@ pub fn subset_construction(nfa: &Nfa, partition: &AlphabetPartition) -> Dfa {
     // Start state: epsilon-closure of NFA start (uses original epsilon_closure
     // for the initial set since we need an owned Vec for state_map insertion)
     let start_set = epsilon_closure(nfa, &[nfa.start]);
-    let resolved = resolve_accept(nfa, &start_set);
+    let resolved = resolve_accept(nfa, &start_set, reserved);
     dfa.states[0].accept = resolved.kind;
     dfa.states[0].weight = resolved.weight;
     dfa.states[0].alt_accepts = resolved.alt_accepts;
@@ -119,7 +136,7 @@ pub fn subset_construction(nfa: &Nfa, partition: &AlphabetPartition) -> Dfa {
             let target_dfa_state = if let Some(&existing) = state_map.get(ec_closure.as_slice()) {
                 existing
             } else {
-                let resolved = resolve_accept(nfa, &ec_closure);
+                let resolved = resolve_accept(nfa, &ec_closure, reserved);
                 let new_state = dfa.add_state(DfaState {
                     transitions: vec![DEAD_STATE; num_classes],
                     accept: resolved.kind,
@@ -166,7 +183,7 @@ pub(crate) struct ResolvedAccept {
 /// `alt_accepts` is populated only when 2+ distinct token kinds exist. The
 /// generated lexer uses `alt_accepts` to attempt multiple candidates in
 /// priority order with per-candidate `eval` fallback.
-fn resolve_accept(nfa: &Nfa, states: &[StateId]) -> ResolvedAccept {
+fn resolve_accept(nfa: &Nfa, states: &[StateId], reserved: &ReservedKeywords) -> ResolvedAccept {
     // Collect all accepting (kind, weight) pairs, keeping the best weight per kind.
     let mut by_kind: std::collections::BTreeMap<TokenKind, TropicalWeight> =
         std::collections::BTreeMap::new();
@@ -197,6 +214,21 @@ fn resolve_accept(nfa: &Nfa, states: &[StateId]) -> ResolvedAccept {
     // Sort alternatives by weight (ascending = best first)
     let mut alts: Vec<(TokenKind, TropicalWeight)> = by_kind.into_iter().collect();
     alts.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+
+    // ── Keyword reservation (PIECE 3) ────────────────────────────────────
+    // If the primary (highest-priority) accept is a reserved keyword and the
+    // generic `Ident` pattern also accepts here, drop the `Ident` co-accept.
+    // Keywords carry a strictly higher priority than `Ident` (see
+    // `TokenKind::priority`), so `alts[0]` is always the keyword when both are
+    // present; removing `Ident` cannot change the primary winner. When
+    // `reserved` is empty this branch is never taken → byte-identical.
+    //
+    // Only the generic `Ident` reading is removed: any other genuine
+    // co-accepts (e.g. an overlapping literal pattern) are preserved, so this
+    // strictly refines an over-generation, not a real ambiguity.
+    if !reserved.is_empty() && reserved.contains(&alts[0].0) {
+        alts.retain(|(k, _)| !matches!(k, TokenKind::Ident));
+    }
 
     let kind = alts[0].0.clone();
     let weight = alts[0].1;
@@ -357,6 +389,124 @@ mod tests {
         assert!(
             dfa_state.alt_accepts[0].1 <= dfa_state.alt_accepts[1].1,
             "alt_accepts should be sorted by weight ascending"
+        );
+    }
+
+    #[test]
+    fn test_reserved_keyword_drops_ident_co_accept() {
+        // S0-kw-collapses (DFA level): "error" is both a keyword and a valid
+        // identifier. WITHOUT reservation the state after "error" is ambiguous
+        // (Fixed("error") + Ident). WITH "error" reserved, the Ident co-accept
+        // is dropped → keyword-only, unambiguous.
+        let terminals = vec![TerminalPattern {
+            text: "error".to_string(),
+            kind: TokenKind::Fixed("error".to_string()),
+            is_keyword: true,
+        }];
+        let needs = BuiltinNeeds {
+            ident: true,
+            integer: false,
+            float: false,
+            string_lit: false,
+            boolean: false,
+            rational: false,
+            fixed_point: false,
+        };
+        let nfa = build_nfa(&terminals, &needs, &LiteralPatterns::default());
+        let partition = compute_equivalence_classes(&nfa);
+
+        // Baseline (no reservation): ambiguous.
+        let dfa_off = subset_construction(&nfa, &partition);
+        // Reserve "error".
+        let mut kinds = std::collections::HashSet::new();
+        kinds.insert(TokenKind::Fixed("error".to_string()));
+        let reserved = crate::automata::ReservedKeywords::from_kinds(kinds);
+        let dfa_on = super::subset_construction_with_reserved(&nfa, &partition, &reserved);
+
+        let walk = |dfa: &Dfa| -> u32 {
+            let mut state = dfa.start;
+            for &byte in b"error" {
+                let class = partition.classify(byte);
+                state = dfa.transition(state, class);
+                assert_ne!(state, super::DEAD_STATE);
+            }
+            state
+        };
+        let s_off = walk(&dfa_off);
+        let s_on = walk(&dfa_on);
+
+        // OFF: ambiguous (keyword + ident). ON: unambiguous (keyword only).
+        assert!(
+            dfa_off.states[s_off as usize].is_ambiguous(),
+            "OFF: state after 'error' should be ambiguous (keyword + ident)"
+        );
+        assert!(
+            !dfa_on.states[s_on as usize].is_ambiguous(),
+            "ON: reserving 'error' should drop the Ident co-accept (unambiguous)"
+        );
+        // Primary winner unchanged in BOTH modes.
+        assert_eq!(
+            dfa_on.states[s_on as usize].accept,
+            Some(TokenKind::Fixed("error".to_string())),
+        );
+        // The identifier reading is gone under reservation.
+        assert!(
+            dfa_on.states[s_on as usize]
+                .alt_accepts
+                .iter()
+                .all(|(k, _)| *k != TokenKind::Ident),
+            "ON: no Ident should remain in alt_accepts",
+        );
+    }
+
+    #[test]
+    fn test_reserved_keyword_leaves_non_reserved_ident_ambiguous() {
+        // A keyword that is NOT in the reserved set keeps its Ident co-accept
+        // (the reserved set is per-keyword, grammar-derived, not global).
+        let terminals = vec![
+            TerminalPattern {
+                text: "error".to_string(),
+                kind: TokenKind::Fixed("error".to_string()),
+                is_keyword: true,
+            },
+            TerminalPattern {
+                text: "warn".to_string(),
+                kind: TokenKind::Fixed("warn".to_string()),
+                is_keyword: true,
+            },
+        ];
+        let needs = BuiltinNeeds {
+            ident: true,
+            integer: false,
+            float: false,
+            string_lit: false,
+            boolean: false,
+            rational: false,
+            fixed_point: false,
+        };
+        let nfa = build_nfa(&terminals, &needs, &LiteralPatterns::default());
+        let partition = compute_equivalence_classes(&nfa);
+        // Reserve ONLY "error".
+        let mut kinds = std::collections::HashSet::new();
+        kinds.insert(TokenKind::Fixed("error".to_string()));
+        let reserved = crate::automata::ReservedKeywords::from_kinds(kinds);
+        let dfa = super::subset_construction_with_reserved(&nfa, &partition, &reserved);
+
+        let walk = |bytes: &[u8]| -> u32 {
+            let mut state = dfa.start;
+            for &byte in bytes {
+                let class = partition.classify(byte);
+                state = dfa.transition(state, class);
+                assert_ne!(state, super::DEAD_STATE);
+            }
+            state
+        };
+        // "error" reserved → unambiguous.
+        assert!(!dfa.states[walk(b"error") as usize].is_ambiguous());
+        // "warn" NOT reserved → still ambiguous (keyword + ident).
+        assert!(
+            dfa.states[walk(b"warn") as usize].is_ambiguous(),
+            "non-reserved keyword 'warn' must keep its Ident co-accept",
         );
     }
 

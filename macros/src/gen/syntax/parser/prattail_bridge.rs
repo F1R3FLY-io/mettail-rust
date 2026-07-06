@@ -21,8 +21,8 @@ use mettail_ast::{
 use mettail_prattail::{
     binding_power::Associativity, grammar::ir::CollectionKind, BeamWidthConfig, CategorySpec,
     CustomTokenSpec, LanguageSpec, LexerModeSpec, LiteralPatterns, RefinementPredKind,
-    RefinementTypeSpec, RuleSpecInput, SyncConstraintSpec, SyncSpec, SyntaxItemSpec,
-    TreeInvariantSpec,
+    RefinementTypeSpec, ReservationPolicy, RuleSpecInput, SyncConstraintSpec, SyncSpec,
+    SyntaxItemSpec, TreeInvariantSpec,
 };
 
 /// Convert a `LanguageDef` to a PraTTaIL `LanguageSpec`.
@@ -56,6 +56,15 @@ pub fn language_def_to_spec(language: &LanguageDef) -> LanguageSpec {
         .iter()
         .map(|rule| convert_rule(rule, &cat_names))
         .collect();
+
+    // PIECE 3 (keyword reservation): collect the *ident-shaped* collection-open
+    // delimiters (e.g. `Set` from a `Set( … )` literal, as opposed to bracket
+    // openers like `[`, `{`, `#{`). Such an opener is a grammar keyword AND the
+    // constructor token of a collection literal; the collection-literal parser
+    // needs it to remain lexable as an identifier, so reserving it would break
+    // `Set( … )`. These are escalated to the reservation policy's `contextual`
+    // opt-out set — grammar-derived, general, no per-language hardcode.
+    let mut contextual_collection_openers: HashSet<String> = HashSet::new();
 
     // Synthesize collection-literal rules (`ListLit`, `BagLit`, `MapLit`)
     // for every `![Vec<T>] as Cat` / `![HashBag<T>] as Cat` /
@@ -108,6 +117,15 @@ pub fn language_def_to_spec(language: &LanguageDef) -> LanguageSpec {
         // making empty `[]` and non-default delimiters unparseable.
         let trimmed_open = open.trim_end_matches('(').to_string();
         let needs_synth_paren = open != trimmed_open;
+        // If the opener is lexically an identifier (e.g. `Set`), it collides
+        // with the identifier pattern and would be reserved under `auto`;
+        // record it as a contextual opt-out so the collection literal keeps
+        // parsing (grammar-derived; bracket openers like `[`/`{` are skipped).
+        if !trimmed_open.is_empty()
+            && trimmed_open.chars().all(|c| c.is_alphanumeric() || c == '_')
+        {
+            contextual_collection_openers.insert(trimmed_open.clone());
+        }
         let mut syntax = Vec::with_capacity(4);
         syntax.push(SyntaxItemSpec::Terminal(trimmed_open));
         if needs_synth_paren {
@@ -155,6 +173,29 @@ pub fn language_def_to_spec(language: &LanguageDef) -> LanguageSpec {
                 AttributeValue::Str(s) => s.clone(),
                 _ => unreachable!("log_semiring_model_path type validated at parse time"),
             });
+
+    // PIECE 3: keyword-reservation policy. `auto` reserves identifier-shaped
+    // keyword terminals (default-reserve modeling); `none` (the default when
+    // the option is absent) retains full ambiguity for Fortran-style
+    // languages. Validated at parse time (ast/language/parse.rs).
+    //
+    // Under `auto`, ident-shaped collection-open delimiters (e.g. `Set`) are
+    // escalated to the `contextual` opt-out so `Set( … )` literals keep
+    // parsing — the grammar-derived global-vs-contextual decision (see the
+    // S0-kw-no-break measurement: reserving `Set` broke `Set(1,2,3).size()`
+    // et al. while every bracket-delimited collection was unaffected).
+    let reservation_policy = match language.options.get("reserved_keywords") {
+        Some(AttributeValue::Keyword(kw)) => match kw.as_str() {
+            "auto" => ReservationPolicy {
+                mode: mettail_prattail::ReservationMode::Auto,
+                contextual: contextual_collection_openers,
+            },
+            "none" => ReservationPolicy::none(),
+            _ => unreachable!("reserved_keywords keyword validated at parse time"),
+        },
+        None => ReservationPolicy::none(),
+        _ => unreachable!("reserved_keywords type validated at parse time"),
+    };
 
     let semantic_dependency_groups = collect_semantic_dependency_groups(language);
 
@@ -376,6 +417,7 @@ pub fn language_def_to_spec(language: &LanguageDef) -> LanguageSpec {
     spec.modes = modes;
     spec.sync = sync;
     spec.tree_invariants = tree_invariants;
+    spec.reservation_policy = reservation_policy;
 
     // Convert refinement type definitions from the macros AST to the pipeline spec.
     spec.refinement_types = language

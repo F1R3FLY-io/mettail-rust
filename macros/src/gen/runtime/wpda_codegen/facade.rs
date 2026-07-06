@@ -138,6 +138,20 @@ struct SepVariant {
     /// Suffix operand-groups (currently at most one supported; a shape with
     /// more is not isolation-eligible — see `derive_sep_combine_shape`).
     operand_groups: Vec<SepOperandGroup>,
+    /// SINGLE-ELEMENT TWIN (bug 2318): the label of the grammar rule that is this
+    /// variant with the `.*sep` LIST removed — a bare scalar head plus the same
+    /// suffix (e.g. `ForRowWhere . b "&" bs.*sep("&") "where" cond` ↦ twin
+    /// `ForRowSingleWhere . b "where" cond`). When a `.*sep` category is fed a
+    /// domain with only ONE element (no separator), the `.*sep` rule cannot
+    /// construct (its list is empty ⇒ a spurious `&`); the twin is the correct
+    /// constructor. Isolating the single-element case matters because it lets the
+    /// SUFFIX operand (a ForRow `where`-cond `Proc`) be sub-parsed in ISOLATION —
+    /// so `where p == @Nil!(q)` composes the cond's single-winner (`POutputNil`),
+    /// matching monolithic, instead of the walker's whole-ForRow reading (which,
+    /// with a query-bind head, elects the spurious channel-named-`Nil`
+    /// `POutputQuoted` on the `open_len` tie). `None` when no such twin exists
+    /// (then a single-element domain still declines to the walker — unchanged).
+    single_twin: Option<String>,
 }
 
 /// Grammar-derived shape of a `head sep list.*sep(sep) [suffix]` category that
@@ -171,6 +185,70 @@ fn sep_base_ty(ty: &TypeExpr) -> Option<String> {
         TypeExpr::Base(id) => Some(id.to_string()),
         _ => None,
     }
+}
+
+/// Find the SINGLE-ELEMENT TWIN of a `.*sep` variant (bug 2318): a rule in
+/// `cat_name` whose syntax is a BARE scalar head of `element_category` followed
+/// by EXACTLY the same suffix operand-`groups` (each a `Literal(lead) Param(op)`
+/// pair), with NO `.*sep` list and NO extra literals. Returns its label.
+///
+/// Example: for `ForRowWhere . b:InputBind, bs:Vec(InputBind), cond:Proc |-
+/// b "&" bs.*sep("&") "where" cond` (element `InputBind`, groups `[where:Proc]`),
+/// the twin is `ForRowSingleWhere . b:InputBind, cond:Proc |- b "where" cond`.
+/// For the bare `ForRowNoWhere` (no groups) the twin is `ForRowSingleNoWhere .
+/// b:InputBind |- b`. The twin is what the isolation helper CONSTRUCTS when a
+/// `.*sep` domain carries only one element, so the single-element case can also
+/// isolate its suffix operand.
+fn find_single_element_twin(
+    language: &LanguageDef,
+    cat_name: &str,
+    element_category: &str,
+    groups: &[SepOperandGroup],
+) -> Option<String> {
+    'rule: for rule in &language.terms {
+        if rule.category.to_string() != cat_name {
+            continue;
+        }
+        let mut normalized = rule.clone();
+        mettail_ast::grammar::convert_items_to_term_context(&mut normalized);
+        let (Some(tc), Some(sp)) = (&normalized.term_context, &normalized.syntax_pattern) else {
+            continue;
+        };
+        // The twin carries NO `.*sep` list operand.
+        if sp.iter().any(|e| matches!(e, SyntaxExpr::Op(PatternOp::Sep { .. }))) {
+            continue;
+        }
+        // Expected shape: Param(head) then (Literal(lead), Param(op)) per group.
+        if sp.len() != 1 + 2 * groups.len() {
+            continue;
+        }
+        let cat_of = |name: &str| -> Option<String> {
+            tc.iter().find_map(|p| match p {
+                TermParam::Simple { name: n, ty } if n == name => sep_base_ty(ty),
+                _ => None,
+            })
+        };
+        // Slot 0: the scalar head of `element_category`.
+        let SyntaxExpr::Param(head) = &sp[0] else { continue };
+        match cat_of(&head.to_string()) {
+            Some(c) if c == element_category => {},
+            _ => continue,
+        }
+        // Each group: Literal(lead) then Param of the group's operand category.
+        for (gi, group) in groups.iter().enumerate() {
+            match &sp[1 + 2 * gi] {
+                SyntaxExpr::Literal(l) if *l == group.lead => {},
+                _ => continue 'rule,
+            }
+            let SyntaxExpr::Param(op) = &sp[2 + 2 * gi] else { continue 'rule };
+            match cat_of(&op.to_string()) {
+                Some(c) if c == group.category => {},
+                _ => continue 'rule,
+            }
+        }
+        return Some(normalized.label.to_string());
+    }
+    None
 }
 
 /// Derive the [`SepCombineShape`] for `cat_name`, or `None` when the category is
@@ -275,7 +353,12 @@ fn derive_sep_combine_shape(
             Some(s) if s == rule_sep => {},
             Some(_) => return None,
         }
-        variants.push(SepVariant { label: normalized.label.to_string(), operand_groups: groups });
+        let single_twin = find_single_element_twin(language, cat_name, &elem_cat, &groups);
+        variants.push(SepVariant {
+            label: normalized.label.to_string(),
+            operand_groups: groups,
+            single_twin,
+        });
     }
 
     let element_category = element_category?;
@@ -356,8 +439,10 @@ pub(crate) fn emit_sep_isolation_prologue(
     match seam {
         SepSeam::Single => quote! {
             // P2 ISOLATION+COMBINE prologue (Plan a7986200) — single winner.
+            // `true` ⇒ per-segment/suffix SINGLE-winner composition (== monolithic
+            // single result; bug 2318 — avoids the all-path `open_len` divergence).
             if std::env::var_os("PRATTAIL_NO_SEP_ISOLATION").is_none() {
-                if let Some((__iso_terms, __iso_weights)) = #helper_name(input) {
+                if let Some((__iso_terms, __iso_weights)) = #helper_name(input, true) {
                     if let Some((__t, _)) = __iso_terms
                         .into_iter()
                         .zip(__iso_weights.into_iter())
@@ -370,8 +455,9 @@ pub(crate) fn emit_sep_isolation_prologue(
         },
         SepSeam::All => quote! {
             // P2 ISOLATION+COMBINE prologue (Plan a7986200) — full alt set.
+            // `false` ⇒ ambiguity-preserving all-path per segment (cartesian).
             if std::env::var_os("PRATTAIL_NO_SEP_ISOLATION").is_none() {
-                if let Some(__iso) = #helper_name(input) {
+                if let Some(__iso) = #helper_name(input, false) {
                     return Ok(__iso);
                 }
             }
@@ -429,6 +515,34 @@ fn emit_sep_isolation(cat_ident: &proc_macro2::Ident, shape: &SepCombineShape) -
             let lead = &group.lead;
             let lead_len = group.lead.len();
             let op_ident = format_ident!("{}", group.category);
+            // Bug 2318: build the SINGLE-ELEMENT TWIN (`ForRowSingleWhere`) when the
+            // `.*sep` domain has exactly one element, so a single-bind `where`-cond
+            // is still isolated (the `.*sep` rule cannot construct a 1-element list).
+            let build_suffix_term = if let Some(twin) = &variant.single_twin {
+                let twin_ident = format_ident!("{}", twin);
+                quote! {
+                    if __elems.len() == 1 {
+                        #cat_ident::#twin_ident(
+                            std::sync::Arc::new(__elems[0].clone()),
+                            std::sync::Arc::new(__op.clone()),
+                        )
+                    } else {
+                        #cat_ident::#label_ident(
+                            std::sync::Arc::new(__elems[0].clone()),
+                            __elems[1..].to_vec(),
+                            std::sync::Arc::new(__op.clone()),
+                        )
+                    }
+                }
+            } else {
+                quote! {
+                    #cat_ident::#label_ident(
+                        std::sync::Arc::new(__elems[0].clone()),
+                        __elems[1..].to_vec(),
+                        std::sync::Arc::new(__op.clone()),
+                    )
+                }
+            };
             // Depth-0 word-bounded lead detection over the raw bytes.
             lead_checks.push(quote! {
                 if __i + #lead_len <= __n
@@ -448,11 +562,23 @@ fn emit_sep_isolation(cat_ident: &proc_macro2::Ident, shape: &SepCombineShape) -
                     if __suffix.is_empty() {
                         return None;
                     }
-                    let (__op_terms, __op_weights) =
+                    // SINGLE-RESULT seam (bug 2318): the suffix operand (e.g. a
+                    // ForRow `where`-cond Proc) composes its single-winner (==
+                    // monolithic), so the isolated `where p == @Nil!(q)` cond does
+                    // not inherit the all-path `open_len` maximal-munch that ranks
+                    // the spurious channel-named-`Nil` `POutputQuoted` first. ALL
+                    // seam keeps the ambiguity-preserving all-path.
+                    let (__op_terms, __op_weights): (Vec<#op_ident>, Vec<__W>) = if __single_winner {
+                        match #op_ident::parse_via_wpda(__suffix) {
+                            Ok(__one) => (vec![__one], vec![<__W as Semiring>::one()]),
+                            Err(_) => return None,
+                        }
+                    } else {
                         match #op_ident::parse_via_wpda_all_with_weights(__suffix) {
                             Ok(__v) => __v,
                             Err(_) => return None,
-                        };
+                        }
+                    };
                     if __op_terms.is_empty() {
                         return None;
                     }
@@ -462,11 +588,7 @@ fn emit_sep_isolation(cat_ident: &proc_macro2::Ident, shape: &SepCombineShape) -
                                 return None;
                             }
                             __candidates.push((
-                                #cat_ident::#label_ident(
-                                    std::sync::Arc::new(__elems[0].clone()),
-                                    __elems[1..].to_vec(),
-                                    std::sync::Arc::new(__op.clone()),
-                                ),
+                                #build_suffix_term,
                                 Semiring::times(__we, __wo),
                             ));
                         }
@@ -476,6 +598,23 @@ fn emit_sep_isolation(cat_ident: &proc_macro2::Ident, shape: &SepCombineShape) -
         }
     }
     let bare_variant_idx_lit = bare_variant_idx;
+
+    // Bug 2318: variant indices whose SINGLE-element domain is isolation-eligible
+    // — a SUFFIX variant (a `where`-cond to isolate) that has a single-element
+    // TWIN constructor. A bare single element (`p <- r`, no suffix) stays on the
+    // walker (no cond to isolate; declining keeps behavior unchanged there).
+    let single_allowed_vis: Vec<usize> = shape
+        .variants
+        .iter()
+        .enumerate()
+        .filter(|(_, v)| !v.operand_groups.is_empty() && v.single_twin.is_some())
+        .map(|(vi, _)| vi)
+        .collect();
+    let allow_single_expr = if single_allowed_vis.is_empty() {
+        quote! { false }
+    } else {
+        quote! { matches!(__variant, #(#single_allowed_vis)|*) }
+    };
 
     quote! {
         /// P2 ISOLATION+COMBINE (Plan a7986200): STRING-level divide-and-conquer
@@ -490,6 +629,7 @@ fn emit_sep_isolation(cat_ident: &proc_macro2::Ident, shape: &SepCombineShape) -
         )]
         fn #helper_name(
             input: &str,
+            __single_winner: bool,
         ) -> Option<(
             Vec<#cat_ident>,
             Vec<mettail_prattail::automata::lex_weight::LexicographicWeight>,
@@ -552,9 +692,21 @@ fn emit_sep_isolation(cat_ident: &proc_macro2::Ident, shape: &SepCombineShape) -
                 }
                 __seg_ranges.push((__start, __domain_end));
             }
-            // 0 separators ⇒ single element ⇒ fall through (the monolithic single
-            // variant is already fast; no `dᵏ` fork to linearize).
-            if __seg_ranges.len() < 2 {
+            // 0 separators ⇒ single element. Fall through to the monolithic single
+            // variant (already fast; no `dᵏ` fork to linearize) UNLESS the elected
+            // variant is a SUFFIX variant with a single-element twin — then isolate
+            // the single element + its suffix `where`-cond via the twin ctor (bug
+            // 2318: keeps the single-bind `where p == @Nil!(q)` cond's isolated
+            // single-winner `POutputNil` == monolithic).
+            if __seg_ranges.is_empty() {
+                return None;
+            }
+            // The single-element twin isolation runs ONLY in the single-result seam
+            // (`__single_winner`): it exists to make the single-bind `where`-cond's
+            // ISOLATED single-winner == monolithic (bug 2318). In the ALL seam a
+            // single-element domain still declines to the walker, so the
+            // ambiguity-preserving alt-SET is byte-identical to the pre-2318 helper.
+            if __seg_ranges.len() < 2 && !(__single_winner && (#allow_single_expr)) {
                 return None;
             }
 
@@ -570,11 +722,20 @@ fn emit_sep_isolation(cat_ident: &proc_macro2::Ident, shape: &SepCombineShape) -
                 if __seg.is_empty() {
                     return None;
                 }
-                let (__terms, __weights) =
+                // SINGLE-RESULT seam (bug 2318): compose per-element single-winners
+                // (== monolithic) rather than the all-path min; ALL seam keeps the
+                // ambiguity-preserving all-path. See the proj helper's note.
+                let (__terms, __weights): (Vec<#elem_ident>, Vec<__W>) = if __single_winner {
+                    match #elem_ident::parse_via_wpda(__seg) {
+                        Ok(__one) => (vec![__one], vec![<__W as Semiring>::one()]),
+                        Err(_) => return None,
+                    }
+                } else {
                     match #elem_ident::parse_via_wpda_all_with_weights(__seg) {
                         Ok(__v) => __v,
                         Err(_) => return None,
-                    };
+                    }
+                };
                 if __terms.is_empty() {
                     return None;
                 }
@@ -887,8 +1048,10 @@ pub(crate) fn emit_projection_isolation_prologue(
     match seam {
         SepSeam::Single => quote! {
             // P1 `@`-PROJECTION ISOLATION prologue (Plan a8b32275) — single winner.
+            // `true` ⇒ compose per-operand SINGLE-winners (== monolithic single
+            // result; see the helper's scalar-operand note, bug 2318).
             if std::env::var_os("PRATTAIL_NO_PROJ_ISOLATION").is_none() {
-                if let Some((__piso_terms, __piso_weights)) = #helper_name(input) {
+                if let Some((__piso_terms, __piso_weights)) = #helper_name(input, true) {
                     if let Some((__t, _)) = __piso_terms
                         .into_iter()
                         .zip(__piso_weights.into_iter())
@@ -901,8 +1064,9 @@ pub(crate) fn emit_projection_isolation_prologue(
         },
         SepSeam::All => quote! {
             // P1 `@`-PROJECTION ISOLATION prologue (Plan a8b32275) — full alt set.
+            // `false` ⇒ ambiguity-preserving all-path per operand (cartesian).
             if std::env::var_os("PRATTAIL_NO_PROJ_ISOLATION").is_none() {
-                if let Some(__piso) = #helper_name(input) {
+                if let Some(__piso) = #helper_name(input, false) {
                     return Ok(__piso);
                 }
             }
@@ -976,14 +1140,41 @@ fn emit_proj_variant_arm(
                                 #variant_idx_lit, #label_str, #oi, #ocat_str, __seg);
                         }
                         if __seg.is_empty() { break '__variant; }
-                        let (__t, __w) = match #ocat::parse_via_wpda_all_with_weights(__seg) {
-                            Ok(__v) => __v,
-                            Err(_) => {
-                                if __GRIND_DIAG {
-                                    eprintln!("[PISO]   v{} {} op{} SUBPARSE-ERR ⇒ decline",
-                                        #variant_idx_lit, #label_str, #oi);
+                        // SINGLE-RESULT seam (bug 2318): compose the operand's OWN
+                        // single-winner (`parse_via_wpda` → the same M6 min-weight
+                        // representative the monolithic parser elects), NOT the
+                        // all-path min. The all-path `_all_with_weights` min can
+                        // differ from the single-winner (e.g. a nested `@Nil!(q)`
+                        // whose all-set ranks the spurious channel-named-`Nil`
+                        // `POutputQuoted` first on the `open_len` maximal-munch tie
+                        // while `parse_via_wpda` elects `POutputNil`), so a
+                        // divide-and-conquer single result built from all-path
+                        // per-operand mins diverges from monolithic. Composing
+                        // per-operand single-winners keeps the proj-iso single
+                        // result == monolithic (proj-iso operands are bracket-
+                        // delimited ⇒ their disambiguation is LOCAL ⇒ compositional).
+                        // The ALL seam keeps the ambiguity-preserving all-path.
+                        let (__t, __w): (Vec<#ocat>, Vec<__W>) = if __single_winner {
+                            match #ocat::parse_via_wpda(__seg) {
+                                Ok(__one) => (vec![__one], vec![<__W as Semiring>::one()]),
+                                Err(_) => {
+                                    if __GRIND_DIAG {
+                                        eprintln!("[PISO]   v{} {} op{} SUBPARSE-ERR(single) ⇒ decline",
+                                            #variant_idx_lit, #label_str, #oi);
+                                    }
+                                    break '__variant;
                                 }
-                                break '__variant;
+                            }
+                        } else {
+                            match #ocat::parse_via_wpda_all_with_weights(__seg) {
+                                Ok(__v) => __v,
+                                Err(_) => {
+                                    if __GRIND_DIAG {
+                                        eprintln!("[PISO]   v{} {} op{} SUBPARSE-ERR ⇒ decline",
+                                            #variant_idx_lit, #label_str, #oi);
+                                    }
+                                    break '__variant;
+                                }
                             }
                         };
                         if __t.is_empty() { break '__variant; }
@@ -1032,7 +1223,21 @@ fn emit_proj_variant_arm(
                         for &(__rs, __re) in &__seg_ranges {
                             let __eseg = __region[__rs..__re].trim();
                             if __eseg.is_empty() { break '__variant; }
-                            let (__et, __ew) =
+                            // SINGLE-RESULT seam (bug 2318): per-element single-winner
+                            // (see the scalar-operand note above). Keeps the framed-
+                            // list single result == monolithic; ALL seam stays all-path.
+                            let (__et, __ew): (Vec<#ecat>, Vec<__W>) = if __single_winner {
+                                match #ecat::parse_via_wpda(__eseg) {
+                                    Ok(__one) => (vec![__one], vec![<__W as Semiring>::one()]),
+                                    Err(_) => {
+                                        if __GRIND_DIAG {
+                                            eprintln!("[PISO]   v{} {} op{} SEP-ELEM-ERR(single) seg={:?} ⇒ decline",
+                                                #variant_idx_lit, #label_str, #oi, __eseg);
+                                        }
+                                        break '__variant;
+                                    }
+                                }
+                            } else {
                                 match #ecat::parse_via_wpda_all_with_weights(__eseg) {
                                     Ok(__v) => __v,
                                     Err(_) => {
@@ -1042,7 +1247,8 @@ fn emit_proj_variant_arm(
                                         }
                                         break '__variant;
                                     }
-                                };
+                                }
+                            };
                             if __et.is_empty() { break '__variant; }
                             __per_seg.push((__et, __ew));
                         }
@@ -1100,11 +1306,53 @@ fn emit_proj_variant_arm(
         let wa = format_ident!("__wa{}", oi);
         weight_expr = quote! { Semiring::times(&#weight_expr, #wa) };
     }
+    // Per-operand HOLE cost on the framing PRIMARY (bug 2318). Each cross-cat
+    // operand a variant covers is a parse "hole"; the monolithic walker charges
+    // a cross-cat dispatch cost for every hole and matches a fixed literal for
+    // FREE. So among variants that cover the SAME span, the one with FEWER holes
+    // (MORE fixed literals) — the more-SPECIFIC reading — must win the single-
+    // result min, matching monolithic's specific-rule preference. Canonical
+    // case: `@Nil!(q)` is BOTH `POutputNil(q)` (skeleton `@ Nil ! ( ⟨q⟩ )`,
+    // 1 hole, the `Nil` keyword a LITERAL) and `POutputQuoted(NVar("Nil"), q)`
+    // (skeleton `@ ⟨n⟩ ! ( ⟨q⟩ )`, 2 holes, `Nil` parsed as a channel-named-Nil
+    // NVar operand) — semantically DISTINCT (`NQuote(PZero)` vs `NQuote(PVar
+    // "Nil")`), so they never dedup; the winner must be the specific reading.
+    //
+    // The old `from_cost(0.0, …)` framing was tropical `one()` (primary 0.0), so
+    // `Semiring::times`' identity short-circuit DROPPED the `variant_idx`
+    // tiebreak and the winner fell to the (incommensurate) operand sub-parse
+    // weights — which, on a primary tie, elected `POutputQuoted` by `src_idx`
+    // (Name < Proc). Through the `parse_structured` display-fixpoint reparse of
+    // `@Nil!(q)` this locked in the spurious channel-named-`Nil` send (bug 2318:
+    // `query_receive_sugar_with_{arithmetic,string}_guard`).
+    //
+    // A tiny per-hole ε (≪ any BP-tier cost so it never overrides a genuine
+    // operand cost difference; ≫ the f64 tropical-sum noise floor ~1e-6 so it
+    // is not swamped) charges the extra hole on the PRIMARY *and* makes the
+    // framing NON-identity, so on a primary tie `variant_idx` (the most-
+    // specific-first sort order) is the operative tiebreak.
+    //
+    // APPLIED ONLY IN THE SINGLE-RESULT SEAM (`__single_winner`). In the ALL
+    // seam the framing MUST stay tropical `one()` (cost 0.0) so the ⊕-min dedup
+    // representative and weight-sort are BYTE-IDENTICAL to the pre-2318 helper —
+    // otherwise the ε perturbs which eval-equal representative each semantic key
+    // keeps, diverging the ambiguity-preserving alt-SET from the monolithic
+    // `_all` (the `atproj_flip_soundness_ab` ON≡OFF gate). The single seam
+    // composes per-operand SINGLE-winners (operand weights are `one()`), so the
+    // framing is the ONLY discriminator there and MUST be non-identity to elect
+    // the fewest-holes (most-specific) variant; the all seam keeps the genuine
+    // per-operand weights and needs no framing bias.
+    const PROJ_HOLE_EPSILON: f64 = 1e-5;
+    let hole_cost: f64 = n_ops as f64 * PROJ_HOLE_EPSILON;
     let mut body = quote! {
         if __candidates.len() >= __REALIZE_CAP {
             return None;
         }
-        let __framing = __W::from_cost(0.0, __RESULT_SRC_IDX, #variant_idx_lit);
+        let __framing = if __single_winner {
+            __W::from_cost(#hole_cost, __RESULT_SRC_IDX, #variant_idx_lit)
+        } else {
+            __W::from_cost(0.0, __RESULT_SRC_IDX, #variant_idx_lit)
+        };
         __candidates.push((
             #cat_ident::#label_ident( #(#ctor_args),* ),
             #weight_expr,
@@ -1180,6 +1428,7 @@ fn emit_projection_isolation(cat_ident: &proc_macro2::Ident, shape: &ProjIsoShap
         )]
         fn #helper_name(
             input: &str,
+            __single_winner: bool,
         ) -> Option<(
             Vec<#cat_ident>,
             Vec<mettail_prattail::automata::lex_weight::LexicographicWeight>,

@@ -79,6 +79,7 @@ fn calculator_spec() -> LanguageSpec {
         tree_invariants: Vec::new(),
         refinement_types: Vec::new(),
         guard_config: None,
+        reservation_policy: crate::ReservationPolicy::default(),
     }
 }
 
@@ -853,6 +854,7 @@ mod wfst_lexer_weight_tests {
             tree_invariants: Vec::new(),
             refinement_types: Vec::new(),
             guard_config: None,
+            reservation_policy: crate::ReservationPolicy::default(),
         };
 
         let (_code, analysis) = crate::generate_parser_with_analysis(&spec);

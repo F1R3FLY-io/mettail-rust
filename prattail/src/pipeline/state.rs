@@ -18,6 +18,10 @@ pub struct LexerBundle {
     pub(crate) custom_tokens: Vec<crate::CustomTokenSpec>,
     /// Named lexer modes from the `tokens { ... }` block.
     pub(crate) modes: Vec<crate::LexerModeSpec>,
+    /// Keyword-reservation policy (PIECE 3). Drives which identifier-shaped
+    /// keyword terminals get their `Ident` co-accept dropped during subset
+    /// construction. Default [`crate::ReservationMode::None`] → byte-identical.
+    pub(crate) reservation_policy: crate::ReservationPolicy,
 }
 
 /// Category metadata for the parser pipeline. Send+Sync.
@@ -265,6 +269,7 @@ pub(crate) fn extract_from_spec(spec: &LanguageSpec) -> (LexerBundle, ParserBund
         literal_patterns: spec.literal_patterns.clone(),
         custom_tokens: spec.custom_tokens.clone(),
         modes: spec.modes.clone(),
+        reservation_policy: spec.reservation_policy.clone(),
     };
 
     // ── Parser bundle ──

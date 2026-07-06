@@ -666,6 +666,96 @@ pub struct TreeInvariantSpec {
     pub formula: String,
 }
 
+/// Keyword-reservation mode for a language (PIECE 3).
+///
+/// Controls whether grammar-declared identifier-shaped literal terminals are
+/// treated as *reserved words* (a keyword spelled like an identifier cannot
+/// also lex as a variable of that name).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReservationMode {
+    /// Reserve every identifier-shaped literal terminal (`Nil`, `true`,
+    /// `Map`, …) as a keyword. The generic `Ident` co-accept is dropped at
+    /// each such keyword's DFA accept state, collapsing the spurious
+    /// "variable literally named after a keyword" over-generation.
+    Auto,
+    /// Reserve nothing — full ambiguity is retained (e.g. Fortran-style
+    /// languages with no reserved words, where `IF`/`DO`/`THEN` may be used
+    /// as identifiers). Byte-identical to the pre-reservation lexer.
+    None,
+}
+
+/// Keyword-reservation policy for a language (PIECE 3).
+///
+/// The reserved set is **grammar-derived** — it is not a per-language
+/// hardcoded list. Under [`ReservationMode::Auto`], every literal terminal
+/// that is lexically an identifier (`is_keyword`) is reserved, EXCEPT those
+/// explicitly opted out via `contextual` (per-terminal escape hatch for
+/// contextual keywords such as method names that should still be usable as
+/// variables).
+///
+/// The default is [`ReservationMode::None`] (no reservation), so a language
+/// that does not opt in is byte-identical to the pre-reservation behavior;
+/// a language enables reservation via `options { reserved_keywords: auto }`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReservationPolicy {
+    /// Whether identifier-shaped keywords are reserved.
+    pub mode: ReservationMode,
+    /// Per-terminal opt-out: terminal texts that are NOT reserved even under
+    /// `Auto` (contextual keywords). Grammar-derived escape hatch used when a
+    /// legitimate program names a variable after a keyword at a shared
+    /// grammar position. Empty for both bundled test languages.
+    pub contextual: std::collections::HashSet<String>,
+}
+
+impl Default for ReservationPolicy {
+    /// No reservation by default. Enabling reservation is an explicit,
+    /// per-language opt-in (`options { reserved_keywords: auto }`), which
+    /// keeps every existing language's generated lexer byte-identical.
+    fn default() -> Self {
+        ReservationPolicy { mode: ReservationMode::None, contextual: std::collections::HashSet::new() }
+    }
+}
+
+impl ReservationPolicy {
+    /// Reserve every identifier-shaped keyword (no per-terminal opt-outs).
+    pub fn auto() -> Self {
+        ReservationPolicy { mode: ReservationMode::Auto, contextual: std::collections::HashSet::new() }
+    }
+
+    /// Reserve nothing (full ambiguity retained).
+    pub fn none() -> Self {
+        ReservationPolicy::default()
+    }
+
+    /// Whether this policy reserves anything at all.
+    pub fn reserves(&self) -> bool {
+        matches!(self.mode, ReservationMode::Auto)
+    }
+
+    /// Derive the reserved token-kind set from the language's terminals.
+    ///
+    /// A terminal is reserved iff (a) the policy mode is `Auto`, (b) the
+    /// terminal is `is_keyword` (lexically an identifier — this automatically
+    /// excludes operators/punctuation like `@`, `<-`, `!`, `{`), and (c) its
+    /// text is not in the `contextual` opt-out set. This is the single,
+    /// grammar-derived source of truth for what "reserved" means; the
+    /// `reserved_set_is_grammar_derived` test asserts exactly this.
+    pub fn reserved_kinds(
+        &self,
+        terminals: &[crate::automata::TerminalPattern],
+    ) -> crate::automata::ReservedKeywords {
+        if !self.reserves() {
+            return crate::automata::ReservedKeywords::none();
+        }
+        let kinds: std::collections::HashSet<crate::automata::TokenKind> = terminals
+            .iter()
+            .filter(|t| t.is_keyword && !self.contextual.contains(&t.text))
+            .map(|t| t.kind.clone())
+            .collect();
+        crate::automata::ReservedKeywords::from_kinds(kinds)
+    }
+}
+
 /// Language definition input for the parser generator.
 ///
 /// This is a simplified, serializable representation of the grammar,
@@ -726,6 +816,10 @@ pub struct LanguageSpec {
     /// overrides. When `None`, the pipeline falls back to heuristic
     /// keyword/structural inference.
     pub guard_config: Option<GuardConfigSpec>,
+    /// Keyword-reservation policy (PIECE 3). Default:
+    /// [`ReservationMode::None`] — no reservation, byte-identical lexer.
+    /// Set from `options { reserved_keywords: auto | none }`.
+    pub reservation_policy: ReservationPolicy,
 }
 
 /// Lowered guard configuration for pipeline consumption.
@@ -1074,6 +1168,7 @@ impl LanguageSpec {
             tree_invariants: Vec::new(),
             refinement_types: Vec::new(),
             guard_config: None,
+            reservation_policy: ReservationPolicy::default(),
         }
     }
 }
