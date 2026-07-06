@@ -496,19 +496,52 @@ fn emit_sep_isolation(cat_ident: &proc_macro2::Ident, shape: &SepCombineShape) -
             // (Scalar HEAD is `Arc<Element>` — mirrors the walker `into_term_arc`;
             // the `.*sep` list field is a plain `Vec<Element>` — mirrors the drain.)
             bare_variant_idx = vi;
-            construct_arms.push(quote! {
-                #vi_lit => {
-                    for (__elems, __w) in __element_combos {
-                        __candidates.push((
-                            #cat_ident::#label_ident(
-                                std::sync::Arc::new(__elems[0].clone()),
-                                __elems[1..].to_vec(),
-                            ),
-                            __w,
-                        ));
+            // GROUP-A single-bare-element fix (2026-07-06, `SEP_ISOLATION_SINGLE_BARE`):
+            // when the `.*sep` domain carries EXACTLY ONE element the bare list rule
+            // (`ForRowNoWhere . b, bs`) cannot construct a 1-element list (its `bs`
+            // would be empty ⇒ a trailing dangling `&`), so build the SINGLE-element
+            // TWIN (`ForRowSingleNoWhere . b:InputBind |- b`) instead. Mirrors the
+            // suffix-variant `build_suffix_term` twin logic (bug 2318). Const-gated so
+            // that `SEP_ISOLATION_SINGLE_BARE == false` emits the EXACT pre-fix arm
+            // (byte-identical) — the single-element path never engages then anyway.
+            let bare_twin = if super::forks::SEP_ISOLATION_SINGLE_BARE {
+                variant.single_twin.as_ref()
+            } else {
+                None
+            };
+            let bare_construct = if let Some(twin) = bare_twin {
+                let twin_ident = format_ident!("{}", twin);
+                quote! {
+                    #vi_lit => {
+                        for (__elems, __w) in __element_combos {
+                            let __term = if __elems.len() == 1 {
+                                #cat_ident::#twin_ident(std::sync::Arc::new(__elems[0].clone()))
+                            } else {
+                                #cat_ident::#label_ident(
+                                    std::sync::Arc::new(__elems[0].clone()),
+                                    __elems[1..].to_vec(),
+                                )
+                            };
+                            __candidates.push((__term, __w));
+                        }
                     }
                 }
-            });
+            } else {
+                quote! {
+                    #vi_lit => {
+                        for (__elems, __w) in __element_combos {
+                            __candidates.push((
+                                #cat_ident::#label_ident(
+                                    std::sync::Arc::new(__elems[0].clone()),
+                                    __elems[1..].to_vec(),
+                                ),
+                                __w,
+                            ));
+                        }
+                    }
+                }
+            };
+            construct_arms.push(bare_construct);
         } else {
             // A suffix variant — one operand-group `lead op:Cat`.
             let group = &variant.operand_groups[0];
@@ -599,21 +632,52 @@ fn emit_sep_isolation(cat_ident: &proc_macro2::Ident, shape: &SepCombineShape) -
     }
     let bare_variant_idx_lit = bare_variant_idx;
 
-    // Bug 2318: variant indices whose SINGLE-element domain is isolation-eligible
-    // — a SUFFIX variant (a `where`-cond to isolate) that has a single-element
-    // TWIN constructor. A bare single element (`p <- r`, no suffix) stays on the
-    // walker (no cond to isolate; declining keeps behavior unchanged there).
-    let single_allowed_vis: Vec<usize> = shape
+    // Bug 2318: SUFFIX variants (a `where`-cond to isolate) whose SINGLE-element
+    // domain is isolation-eligible via a single-element TWIN constructor. Always
+    // on (the original bug-2318 fix).
+    let suffix_allowed_vis: Vec<usize> = shape
         .variants
         .iter()
         .enumerate()
         .filter(|(_, v)| !v.operand_groups.is_empty() && v.single_twin.is_some())
         .map(|(vi, _)| vi)
         .collect();
-    let allow_single_expr = if single_allowed_vis.is_empty() {
-        quote! { false }
+    // GROUP-A single-bare-element fix (2026-07-06): also allow the BARE variant
+    // (`ForRowNoWhere`, no suffix) whose single-element TWIN is `ForRowSingleNoWhere`
+    // to isolate its ONE `InputBind` and wrap it (closes the monolithic
+    // `<-@Nil!?(Set(),send)` gap). Compile-time gated by `SEP_ISOLATION_SINGLE_BARE`
+    // (OFF ⇒ the `allow_single_expr` is EMITTED BYTE-IDENTICALLY to the pre-fix
+    // suffix-only helper) and runtime gated by `PRATTAIL_NO_SEP_SINGLE_BARE` (causal
+    // A/B, no rebuild).
+    let allow_single_expr = if super::forks::SEP_ISOLATION_SINGLE_BARE {
+        let bare_allowed_vis: Vec<usize> = shape
+            .variants
+            .iter()
+            .enumerate()
+            .filter(|(_, v)| v.operand_groups.is_empty() && v.single_twin.is_some())
+            .map(|(vi, _)| vi)
+            .collect();
+        let suffix_allow_expr = if suffix_allowed_vis.is_empty() {
+            quote! { false }
+        } else {
+            quote! { matches!(__variant, #(#suffix_allowed_vis)|*) }
+        };
+        let bare_allow_expr = if bare_allowed_vis.is_empty() {
+            quote! { false }
+        } else {
+            quote! {
+                (matches!(__variant, #(#bare_allowed_vis)|*)
+                    && std::env::var_os("PRATTAIL_NO_SEP_SINGLE_BARE").is_none())
+            }
+        };
+        quote! { ((#suffix_allow_expr) || (#bare_allow_expr)) }
     } else {
-        quote! { matches!(__variant, #(#single_allowed_vis)|*) }
+        // Const OFF: EXACT pre-fix tokens (suffix-only, bug-2318).
+        if suffix_allowed_vis.is_empty() {
+            quote! { false }
+        } else {
+            quote! { matches!(__variant, #(#suffix_allowed_vis)|*) }
+        }
     };
 
     quote! {

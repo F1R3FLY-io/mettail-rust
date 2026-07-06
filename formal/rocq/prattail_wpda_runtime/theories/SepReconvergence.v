@@ -47,10 +47,23 @@
  *                                       and an engaged combine loses nothing
  *                                       (byte-identical result set — RT-4).
  *   T7 inert_when_single_segment     — a 0-separator (single-element) list is
- *                                       NOT-APPLICABLE (helper returns None) ⇒
- *                                       monolithic ⇒ byte-identical; and the
- *                                       construction is GENERAL over the abstract
- *                                       `seg_readings` (no per-language hardcode).
+ *                                       NOT-APPLICABLE UNDER THE `2 <= len` gate
+ *                                       (helper returns None) ⇒ monolithic ⇒
+ *                                       byte-identical; and the construction is
+ *                                       GENERAL over the abstract `seg_readings`
+ *                                       (no per-language hardcode).
+ *   T7 single_segment_bijective      — SOUNDNESS of the GROUP-A single-bare-element
+ *                                       fix (`SEP_ISOLATION_SINGLE_BARE`, facade.rs):
+ *                                       when the bare variant's single-element case
+ *                                       IS engaged (2026-07-06), the isolated
+ *                                       cartesian of one segment = that segment's
+ *                                       readings wrapped as singletons — a BIJECTION
+ *                                       with the monolithic single-element readings
+ *                                       (no loss, no gain). So engaging isolation on
+ *                                       a single bare element is == monolithic when
+ *                                       monolithic SUCCEEDS, and a strict
+ *                                       superset-recovery (no spurious readings) when
+ *                                       monolithic FAILS (the closed gap).
  *   T8 composes_with_fallback        — composing the isolation with any
  *                                       downstream monolithic transform `g` and
  *                                       taking `None`⇒g leaves `g`'s behavior
@@ -269,23 +282,35 @@ Section GeneralAndInert.
 
   Variable Reading : Type.
 
-  (* ── T7 (inert): a list with FEWER than 2 segments (0 separators — a single
-     element) is NOT-APPLICABLE: the emitted helper returns None (`__seg_ranges.len()
-     < 2 ⇒ None`), so the facade falls through to the monolithic single-variant
-     path — byte-identical. We model the applicability predicate and prove the
-     single-segment case is inert (delegates to the monolithic, which is the
-     cartesian of one segment = that segment's readings, so nothing changes). ── *)
+  (* ── T7 (inert UNDER THE `2 <= len` GATE): a list with FEWER than 2 segments
+     (0 separators — a single element) is NOT-APPLICABLE under the pure length gate:
+     the pre-fix helper returns None (`__seg_ranges.len() < 2 ⇒ None`), so the facade
+     falls through to the monolithic single-variant path — byte-identical. We model
+     the `2 <= len` applicability predicate and prove the single-segment case is
+     inert UNDER IT (delegates to the monolithic, which is the cartesian of one
+     segment = that segment's readings, so nothing changes).
+
+     GROUP-A single-bare-element fix (2026-07-06, `SEP_ISOLATION_SINGLE_BARE`): the
+     ACTUAL helper now relaxes this gate for the BARE list variant when it has a
+     single-element TWIN (`ForRowNoWhere`→`ForRowSingleNoWhere`), in the
+     single-result seam only — so a single bare element IS engaged (no longer
+     inert). `T7_single_segment_bijective` below proves that engagement SOUND (the
+     isolated result == the monolithic single-element reading set, a bijection); the
+     const/env kill-switch reproduces the inert (`2 <= len`) behavior byte-identically.
+     The `applicable` predicate here is the PURE-LENGTH model (the suffix-only, bug-
+     2318 baseline); it is not the full guard, which also admits bare+twin. ── *)
   Definition applicable (segs : list (list Reading)) : Prop := 2 <= length segs.
 
   Theorem T7_inert_when_single_segment :
     forall s : list Reading, ~ applicable [s].
   Proof. intro s. unfold applicable. simpl. lia. Qed.
 
-  (* Even if it were (counterfactually) engaged on one segment, the cartesian of
-     a single segment is that segment's readings wrapped as singletons — a
-     bijection with the monolithic single-element readings (no loss, no gain);
-     the helper simply declines it as an optimization (the monolithic is already
-     linear for one element). *)
+  (* When the single bare element IS engaged (the GROUP-A fix), the cartesian of a
+     single segment is that segment's readings wrapped as singletons — a BIJECTION
+     with the monolithic single-element readings (no loss, no gain). This is the
+     soundness of engaging isolation on one bare element: identical to the
+     monolithic when the monolithic succeeds, and (since it never fabricates a
+     reading) a strict recovery — no spurious parse — when the monolithic fails. *)
   Theorem T7_single_segment_bijective :
     forall (s : list Reading) tup,
       In tup (cartesian Reading [s]) <-> exists r, In r s /\ tup = [r].

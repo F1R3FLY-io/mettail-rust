@@ -302,6 +302,37 @@ pub(crate) const SEP_ISOLATION_COMBINE: bool = true;
 /// Expanded to every `.*sep` category at P4.
 pub(crate) const SEP_ISOLATION_CATEGORIES: &[&str] = &["ForRow"];
 
+/// SEP_ISOLATION_SINGLE_BARE — GROUP-A `<-@Nil!?(…)` fix (2026-07-06, session
+/// da0842dc). Extends the bug-2318 single-element isolation from SUFFIX variants
+/// (`ForRowWhere`→`ForRowSingleWhere`) to the BARE list variant
+/// (`ForRowNoWhere`→`ForRowSingleNoWhere`), in the SINGLE-RESULT seam only.
+///
+/// ## The defect it ships the fix for
+/// The MONOLITHIC ForRow WPDA parse FAILS to form the `InputBindEmptyQuery`
+/// reading when the `!?`-query `args.*sep(",")` list holds an AMBIGUOUS
+/// keyword-collection (`Set`/`Bag`/`List` — which ALSO lex as a bare `PVar`,
+/// unlike the reserved `Map`/`Pathmap`) in a NON-LAST position FOLLOWED by a
+/// SEND element, under the `ForRow`→`InputBind` `CrossCatProjection` frame: the
+/// args collection-element dispatch grabs the bare-`PVar` reading of the keyword
+/// and drops the `CastSet` reading, so the whole `InputBindEmptyQuery` cursor
+/// dies and only `InputBindEmpty` (`<-n`) survives → the `!?` tail is stranded
+/// (`TrailingTokens` at `!`). `InputBind::parse` (NO ForRow frame) forms both
+/// readings correctly. Because `ForRowSingleNoWhere . b:InputBind |- b` is a
+/// DEFINITIONAL projection, isolating the single `InputBind` and wrapping it is
+/// == the monolithic result for every PASSING single-bind (Stage-0 S0-SOUND
+/// 32/0, S0-ALL 32/0) and RECOVERS the failing ones. The single-result seam
+/// engages it (line 709 `__single_winner &&`), so the ambiguity-preserving
+/// `_all` alt-set stays byte-identical (declines single-element, unchanged).
+///
+/// ## Kill-switch / A-B
+/// `false` ⇒ the bare variant is EXCLUDED from `single_allowed_vis` → a
+/// single-element bare domain declines to the walker → generated code
+/// byte-identical to the pre-fix (suffix-only) helper. Runtime env
+/// `PRATTAIL_NO_SEP_SINGLE_BARE` forces the bare single-element path to decline
+/// WITHOUT a rebuild (causal A/B), while keeping the suffix single-element
+/// (bug-2318) path intact.
+pub(crate) const SEP_ISOLATION_SINGLE_BARE: bool = true;
+
 /// PROJ_ISOLATION_COMBINE — the `@`-PROJECTION DIVIDE-AND-CONQUER isolation+combine
 /// facade fast-path (Plan a8b32275, 2026-07-05, session da0842dc). Master
 /// compile-time kill-switch (same convention as [`SEP_ISOLATION_COMBINE`]): folds a
