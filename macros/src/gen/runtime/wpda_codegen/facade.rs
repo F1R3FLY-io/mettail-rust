@@ -1779,6 +1779,98 @@ fn emit_projection_isolation(cat_ident: &proc_macro2::Ident, shape: &ProjIsoShap
         quote! {}
     };
 
+    // PROJ_ISO_LITERAL_RUN_ANCHOR (2026-07-06): the InputBind query-frame
+    // `@@`-CHANNEL fix. When ON, emit the `__match_lit_run` helper + a per-call A/B
+    // env read + anchor each operand's right boundary on the FULL consecutive
+    // literal run (not just the single next literal). When OFF, all three pieces
+    // fold away ⇒ the emitted matcher is BYTE-IDENTICAL to the pre-fix single-
+    // literal boundary. See `super::forks::PROJ_ISO_LITERAL_RUN_ANCHOR`.
+    let run_anchor_on = super::forks::PROJ_ISO_LITERAL_RUN_ANCHOR;
+    let run_anchor_helper: TokenStream = if run_anchor_on {
+        quote! {
+            /// Match the MAXIMAL run of consecutive `Lit` slots of `skel` starting
+            /// at slot `ks`, from byte `p0` (whitespace-flexible, with the SAME
+            /// word-boundary rule as the main `Lit` arm), returning the byte
+            /// position AFTER the last matched literal, or `None` if any literal in
+            /// the run fails. Anchors an operand's right boundary on the FULL fixed-
+            /// literal frame (not just the first literal) so an operand that itself
+            /// contains the first delimiter char at depth 0 (`@@Nil!()` — the
+            /// channel's own send `!`) is not split early. The run stops at the next
+            /// `Op` slot.
+            fn __match_lit_run(
+                bytes: &[u8],
+                n: usize,
+                skel: &[__Slot],
+                ks: usize,
+                p0: usize,
+            ) -> Option<usize> {
+                let mut p = p0;
+                let mut k = ks;
+                while k < skel.len() {
+                    match &skel[k] {
+                        __Slot::Lit(l) => {
+                            while p < n && bytes[p].is_ascii_whitespace() {
+                                p += 1;
+                            }
+                            let lb = l.as_bytes();
+                            if p + lb.len() > n || &bytes[p..p + lb.len()] != lb {
+                                return None;
+                            }
+                            if lb.iter().all(|&c| __is_word(c)) {
+                                let before_ok = p == 0 || !__is_word(bytes[p - 1]);
+                                let after_ok =
+                                    p + lb.len() == n || !__is_word(bytes[p + lb.len()]);
+                                if !(before_ok && after_ok) {
+                                    return None;
+                                }
+                            }
+                            p += lb.len();
+                            k += 1;
+                        }
+                        __Slot::Op => break,
+                    }
+                }
+                Some(p)
+            }
+        }
+    } else {
+        quote! {}
+    };
+    let run_anchor_env: TokenStream = if run_anchor_on {
+        quote! {
+            // Per-call A/B (`PRATTAIL_NO_PROJ_RUN_ANCHOR`): when set, reproduce the
+            // pre-fix single-literal boundary. The matcher runs O(variants)/parse
+            // (the non-hot isolation prologue), so a per-call read is negligible.
+            let __no_run_anchor =
+                std::env::var_os("PRATTAIL_NO_PROJ_RUN_ANCHOR").is_some();
+        }
+    } else {
+        quote! {}
+    };
+    // The `if wb { … }` boundary-accept block: ON anchors on the full literal run;
+    // OFF is the verbatim pre-fix single-literal accept (byte-identical).
+    let run_anchor_wb_guard: TokenStream = if run_anchor_on {
+        quote! {
+            // Accept this depth-0 delimiter position ONLY when the FULL literal run
+            // (all `Lit` slots after this `Op`) also matches here — so a channel
+            // whose own send `!` sits at depth 0 (`@@Nil!()`) is not split at that
+            // `!` (which is followed by `(`, not the query run `! ? (`).
+            let __run_ok = __no_run_anchor
+                || __match_lit_run(bytes, n, skel, k + 1, j).is_some();
+            if wb && __run_ok {
+                found = Some(j);
+                #found_break
+            }
+        }
+    } else {
+        quote! {
+            if wb {
+                found = Some(j);
+                #found_break
+            }
+        }
+    };
+
     quote! {
         /// P1 `@`-PROJECTION ISOLATION+COMBINE (Plan a8b32275): STRING-level
         /// divide-and-conquer `@`-projection linearizer for the `#cat_ident`
@@ -1816,6 +1908,7 @@ fn emit_projection_isolation(cat_ident: &proc_macro2::Ident, shape: &ProjIsoShap
             fn __is_word(c: u8) -> bool {
                 c.is_ascii_alphanumeric() || c == b'_'
             }
+            #run_anchor_helper
             /// Match `skel` against `bytes[0..n]`, returning the byte-range of each
             /// `Op` slot, or `None` if the skeleton does not match. Operands are
             /// delimited by the NEXT literal at bracket-depth 0 (standard ASCII
@@ -1829,6 +1922,7 @@ fn emit_projection_isolation(cat_ident: &proc_macro2::Ident, shape: &ProjIsoShap
                 skel: &[__Slot],
                 #recv_param
             ) -> Option<Vec<(usize, usize)>> {
+                #run_anchor_env
                 let mut i = 0usize;
                 let mut ops: Vec<(usize, usize)> = Vec::new();
                 let mut k = 0usize;
@@ -1891,14 +1985,13 @@ fn emit_projection_isolation(cat_ident: &proc_macro2::Ident, shape: &ProjIsoShap
                                                 || ((j == 0 || !__is_word(bytes[j - 1]))
                                                     && (j + lb.len() == n
                                                         || !__is_word(bytes[j + lb.len()])));
-                                            if wb {
-                                                found = Some(j);
-                                                // greedy-first breaks here; greedy-last
-                                                // keeps scanning for a LATER depth-0
-                                                // delimiter (the delimiter char is not a
-                                                // bracket ⇒ depth unaffected below).
-                                                #found_break
-                                            }
+                                            // greedy-first breaks here; greedy-last keeps
+                                            // scanning for a LATER depth-0 delimiter (the
+                                            // delimiter char is not a bracket ⇒ depth
+                                            // unaffected below). PROJ_ISO_LITERAL_RUN_ANCHOR
+                                            // gates whether the boundary anchors on the full
+                                            // literal run.
+                                            #run_anchor_wb_guard
                                         }
                                         match c {
                                             b'(' | b'[' | b'{' => depth += 1,

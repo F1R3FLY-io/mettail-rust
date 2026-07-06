@@ -449,6 +449,70 @@ pub(crate) const PROJ_ISOLATION_CATEGORIES: &[&str] =
 /// (combine_equals_monolithic … receiver_gate_declines_nonprimary; zero-admission).
 pub(crate) const METHOD_FRAME_ISOLATION: bool = true;
 
+/// PROJ_ISO_LITERAL_RUN_ANCHOR — the InputBind query-frame `@@`-CHANNEL fix
+/// (session da0842dc, 2026-07-06). Compile-time kill-switch (sibling of
+/// [`METHOD_FRAME_ISOLATION`] / [`PROJ_ISOLATION_COMBINE`]); OFF ⇒ the emitted
+/// `__proj_skeleton_match` matcher ([`super::facade::emit_projection_isolation`])
+/// is BYTE-IDENTICAL to the pre-fix single-next-literal boundary.
+///
+/// ## The defect it ships the fix for (the last on-path `forrow_display` residual)
+/// The `@`-PROJECTION / framed-list isolation matcher delimits each cross-cat
+/// OPERAND by the FIRST depth-0 occurrence of the SINGLE next fixed literal. For a
+/// query bind whose CHANNEL is itself a quoted SEND — the rule
+/// `InputBindEmptyQuery . n:Name, args:Vec(Proc) |- "<-" n "!" "?" "(" args.*sep(",") ")"`
+/// on the surface `<-@@Nil!()!?(true, Pathmap() <= @Nil!!())` — the channel operand
+/// `@@Nil!()` (a VALID Name = `NQuoteShort(POutputNilEmpty)`) CONTAINS a depth-0 `!`
+/// from its OWN send `!()`. The post-channel delimiter literal is `!` (the first
+/// char of the query run `! ? (`), so the greedy-first depth-0 scan matches the
+/// channel-INTERNAL `!` (pos 7) BEFORE the query `!` (pos 10); the very-next literal
+/// `?` then mismatches the channel's `(` ⇒ the matcher returns `None` ⇒ the helper
+/// declines ⇒ the facade falls through to the monolithic body, which ALSO cannot
+/// form the reading for the complex multi-arg query (0 alts) ⇒ `InputBind::parse` /
+/// `ForRow::parse` return `Err`. Each piece parses in isolation
+/// (`Name::parse("@@Nil!()")` OK, each `Proc::parse(arg)` OK); ONLY the frame match
+/// at the InputBind level fails. This is the SAME divide-and-conquer isolation locus
+/// as the polyadic-send / method-arg framing, applied to the InputBind query rules;
+/// the gap is the MATCHER, not the shape (the three query variants are already
+/// derived + emitted as framed-list projection variants — verified in the emitted
+/// helper).
+///
+/// ## The fix (this feature)
+/// Anchor each operand's RIGHT boundary on the MAXIMAL consecutive LITERAL RUN after
+/// its `Op` slot (all `Lit` slots up to the next `Op`), not just the single next
+/// literal: accept a depth-0 delimiter position ONLY when the WHOLE run
+/// (whitespace-flexible, same word-boundary rule as the main Lit arm — via the
+/// emitted `__match_lit_run`) matches there. The channel's internal `!` is followed
+/// by `(`, not the query run `! ? (`, so it is skipped; the run `!?(` matches only
+/// at the genuine query frame ⇒ the channel operand recovers as `@@Nil!()` and the
+/// args region as `true, Pathmap() <= @Nil!!()` (both then sub-parse + combine).
+///
+/// ## Soundness (strict monotone improvement — measured, pure-logic Stage-0a)
+/// The run is GRAMMAR-DERIVED (the skeleton's fixed literals, which the grammar
+/// REQUIRES consecutively after the operand), so the TRUE operand boundary ALWAYS
+/// has the full run matching there — anchoring on it never SKIPS the true boundary.
+/// It only removes SPURIOUS early splits (a position where the first literal matches
+/// but the rest of the run does not — where the pre-fix matcher then mismatched the
+/// next literal and returned `None`). So per operand the anchored scan is a strict
+/// refinement of the boundary set: where the pre-fix matcher returned `Some(ranges)`
+/// it returns the IDENTICAL ranges (the true boundary has the full run; any earlier
+/// full-run match would have been taken by BOTH — greedy-first); where it returned
+/// `None` from a false-early split it now returns the correct `Some`. Pure-logic
+/// Stage-0a confirmed: OLD `None` / NEW correct for every `@@`-channel query surface;
+/// OLD == NEW (byte-identical ranges) for every passing form (`<-a!?(x)`,
+/// `<-@Nil!?(Set(),@Nil!!())`, method frames `.get(`/`.keys(`). The query run `!?(`
+/// is UNIQUE to the query at the Name/Proc level (no `!?(` production), so no false
+/// frame match. FV:
+/// `formal/rocq/prattail_wpda_runtime/theories/ProjectionIsolation.v`
+/// (`literal_run_anchor_*`: anchored-boundary ⊆ single-literal boundary set,
+/// true-boundary preserved, none→some-only; zero-admission).
+///
+/// ## Kill-switch / A-B
+/// `false` ⇒ NO `__match_lit_run` helper, NO env read, the pre-fix `if wb { … }`
+/// single-literal boundary ⇒ BYTE-IDENTICAL (every generated `wpda.rs` md5 ==
+/// baseline). Runtime env `PRATTAIL_NO_PROJ_RUN_ANCHOR` reproduces the single-
+/// literal boundary WITHOUT a rebuild (causal A/B — reproduces the pre-fix decline).
+pub(crate) const PROJ_ISO_LITERAL_RUN_ANCHOR: bool = true;
+
 /// CROSSCAT_LEX_COMPAT_GATE (option A — PRIMARY, emission-side bucket split;
 /// 2026-07-03). The general, evidence-based first-token lexical-compatibility
 /// FILTER at the cross-cat `Proc` (and any category's) PROJECTION fork.

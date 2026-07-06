@@ -500,6 +500,247 @@ Section Seam.
 
 End Seam.
 
+(* ════════════════════════════════════════════════════════════════════════
+   LITERAL-RUN ANCHOR (PROJ_ISO_LITERAL_RUN_ANCHOR, 2026-07-06): the InputBind
+   query-frame `@@`-CHANNEL fix (this session's spec, session da0842dc).
+
+   THE DEFECT: `__proj_skeleton_match` delimits an operand at the FIRST depth-0
+   position where the SINGLE next literal matches (the pre-fix `if wb {…}`). When
+   the operand itself contains that literal's first char at depth 0 — a channel
+   `@@Nil!()` whose OWN send `!` sits at depth 0, with the post-channel delimiter
+   `!` (the first char of the query run `! ? (`) — the FALSE-EARLY position is
+   taken; the very-next literal of the run (`?`) then mismatches the channel's
+   `(`, so the whole match returns None ⇒ the helper declines ⇒ the facade falls
+   through to the monolithic body, which ALSO fails to form the reading for the
+   complex multi-arg query (0 alts) ⇒ `InputBind::parse` / `ForRow::parse` Err.
+
+   THE FIX: anchor the boundary on the FULL literal RUN (`if wb && __run_ok {…}`,
+   via the emitted `__match_lit_run`): accept a depth-0 position ONLY when EVERY
+   literal of the run matches there. The channel's internal `!` is followed by `(`
+   (not `?(`), so it is skipped; the query run `!?(` matches only at the genuine
+   frame ⇒ the channel operand recovers as `@@Nil!()` and the args region as
+   `true, Pathmap() <= @Nil!!()` (both then sub-parse + combine).
+
+   MODEL: a candidate scan position carries its per-run-literal match profile
+   `bs : list bool` (bit i = run-literal i matches here; NON-EMPTY — the run has
+   ≥1 literal, the delimiter). `fc_of` = the FIRST literal matches (the pre-fix
+   `wb`); `run_of` = ALL literals match (the fix). A scan is the position list
+   `list (list bool)`; a boundary is the FIRST position satisfying its predicate.
+
+   Theorems (all admission-free — audited below):
+     LRA1 run_implies_fc          — run_of ⇒ fc_of (the run STARTS with the
+                                    delimiter): anchored candidates ⊆ single-lit.
+     LRA2 no_false_frame          — the anchored boundary is ALWAYS a genuine
+                                    frame (run_of holds there): never fabricates.
+     LRA3 anchored_never_earlier  — the anchored boundary is never EARLIER than the
+                                    single-lit boundary: it removes only false-early
+                                    splits (passing ranges are unchanged).
+     LRA4 identical_when_valid    — when the single-lit boundary ALREADY carries the
+                                    full run (the PASSING forms), the anchored
+                                    boundary is IDENTICAL (byte-identical ranges).
+     LRA5 never_worse             — pre-fix SUCCESS ⇒ anchored SUCCESS with the SAME
+                                    boundary (the strict-improvement lower bound).
+     LRA6 recovers_when_single_fails — pre-fix FAILURE but a true frame exists ⇒
+                                    anchored SUCCEEDS (None → Some — the strict gain
+                                    that recovers `<-@@Nil!()!?(…)`).
+   ════════════════════════════════════════════════════════════════════════ *)
+Section LiteralRunAnchor.
+
+  (* `fc_of` — the SINGLE next literal (the delimiter's first char) matches: the
+     pre-fix `wb`. `run_of` — the WHOLE consecutive literal run matches: the fix. *)
+  Definition fc_of (bs : list bool) : bool := hd false bs.
+  Definition run_of (bs : list bool) : bool := forallb (fun b => b) bs.
+
+  (* LRA1: the FULL run matching implies the FIRST literal (the delimiter) matches
+     — so every anchored candidate position is a single-literal candidate (⊆). *)
+  Lemma LRA1_run_implies_fc :
+    forall bs, bs <> [] -> run_of bs = true -> fc_of bs = true.
+  Proof.
+    intros [| b rest] Hne H.
+    - contradiction.
+    - unfold run_of in H. simpl in H. unfold fc_of. simpl.
+      destruct b; [reflexivity | simpl in H; discriminate].
+  Qed.
+
+  (* The generated matcher's boundary = the FIRST position satisfying its predicate
+     (pre-fix `fc_of`, fix `run_of`) — `__proj_skeleton_match`'s greedy-first scan. *)
+  Fixpoint find_first (f : list bool -> bool) (l : list (list bool)) : option nat :=
+    match l with
+    | [] => None
+    | p :: rest => if f p then Some 0 else option_map S (find_first f rest)
+    end.
+
+  Definition single_boundary := find_first fc_of.
+  Definition anchored_boundary := find_first run_of.
+
+  Lemma find_first_some :
+    forall f l k, find_first f l = Some k ->
+      exists x, nth_error l k = Some x /\ f x = true.
+  Proof.
+    intros f l. induction l as [| p rest IH]; intros k H; simpl in H.
+    - discriminate.
+    - destruct (f p) eqn:Hp.
+      + injection H as H; subst k. exists p. split; [reflexivity | exact Hp].
+      + destruct (find_first f rest) as [k'|] eqn:Hf; simpl in H; try discriminate.
+        (* `destruct … eqn:Hf` rewrote `find_first f rest` to `Some k'` inside IH,
+           so IH's premise is now `Some k' = Some k`; discharge it by reflexivity. *)
+        injection H as H; subst k. simpl. apply IH. reflexivity.
+  Qed.
+
+  Lemma find_first_minimal :
+    forall f l k, find_first f l = Some k ->
+      forall j y, j < k -> nth_error l j = Some y -> f y = false.
+  Proof.
+    intros f l. induction l as [| p rest IH]; intros k H j y Hjk Hj; simpl in H.
+    - discriminate.
+    - destruct (f p) eqn:Hp.
+      + injection H as H; subst k. lia.
+      + destruct (find_first f rest) as [k'|] eqn:Hf; simpl in H; try discriminate.
+        injection H as H; subst k.
+        destruct j as [| j'].
+        * simpl in Hj. injection Hj as Hj; subst y. exact Hp.
+        * (* IH's `find_first f rest` premise was rewritten to `Some k'` by the
+             `eqn:Hf` destruct, so pass `eq_refl` for `Some k' = Some k'`. *)
+          simpl in Hj. apply (IH k' eq_refl j' y); [lia | exact Hj].
+  Qed.
+
+  Lemma find_first_le :
+    forall f l k x, nth_error l k = Some x -> f x = true ->
+      exists i, find_first f l = Some i /\ i <= k.
+  Proof.
+    intros f l. induction l as [| p rest IH]; intros k x Hk Hx; simpl.
+    - destruct k; simpl in Hk; discriminate.
+    - destruct (f p) eqn:Hp.
+      + exists 0. split; [reflexivity | lia].
+      + destruct k as [| k'].
+        * simpl in Hk. injection Hk as Hk; subst x. rewrite Hx in Hp. discriminate.
+        * simpl in Hk. specialize (IH k' x Hk Hx). destruct IH as [i [Hi Hle]].
+          rewrite Hi. simpl. exists (S i). split; [reflexivity | lia].
+  Qed.
+
+  (* LRA2: the anchored boundary is ALWAYS a genuine frame (run_of holds there):
+     the run-anchor never fabricates a boundary where the fixed frame is absent. *)
+  Theorem LRA2_no_false_frame :
+    forall l k, anchored_boundary l = Some k ->
+      exists bs, nth_error l k = Some bs /\ run_of bs = true.
+  Proof. intros l k H. apply find_first_some. exact H. Qed.
+
+  (* LRA3: the anchored boundary is never EARLIER than the single-lit boundary
+     (it removes only FALSE-EARLY splits — a passing form's range is unchanged). *)
+  Theorem LRA3_anchored_never_earlier :
+    forall l k,
+      (forall bs, In bs l -> bs <> []) ->
+      anchored_boundary l = Some k ->
+      exists i, single_boundary l = Some i /\ i <= k.
+  Proof.
+    intros l k Hne H.
+    destruct (find_first_some run_of l k H) as [bs [Hk Hrun]].
+    assert (Hin : In bs l) by (eapply nth_error_In; exact Hk).
+    assert (Hfc : fc_of bs = true)
+      by (apply LRA1_run_implies_fc; [apply Hne; exact Hin | exact Hrun]).
+    apply (find_first_le fc_of l k bs Hk Hfc).
+  Qed.
+
+  (* LRA4: when the single-lit boundary ALREADY carries the full run (a passing
+     form — the operand does NOT contain the delimiter early), the anchored
+     boundary is IDENTICAL. This is the byte-identical-ranges property (OLD==NEW). *)
+  Theorem LRA4_identical_when_valid :
+    forall l s bs,
+      (forall b, In b l -> b <> []) ->
+      single_boundary l = Some s ->
+      nth_error l s = Some bs ->
+      run_of bs = true ->
+      anchored_boundary l = Some s.
+  Proof.
+    intros l s bs Hne Hs Hnth Hrun.
+    destruct (find_first_le run_of l s bs Hnth Hrun) as [i [Hi Hle]].
+    assert (i = s).
+    { destruct (Nat.lt_ge_cases i s) as [Hlt | Hge].
+      - exfalso.
+        destruct (find_first_some run_of l i Hi) as [bi [Hbi Hruni]].
+        assert (Hini : In bi l) by (eapply nth_error_In; exact Hbi).
+        assert (Hfci : fc_of bi = true)
+          by (apply LRA1_run_implies_fc; [apply Hne; exact Hini | exact Hruni]).
+        pose proof (find_first_minimal fc_of l s Hs i bi Hlt Hbi) as Hc.
+        rewrite Hfci in Hc. discriminate.
+      - lia. }
+    subst i. exact Hi.
+  Qed.
+
+  (* The matcher OUTCOME. The pre-fix matcher SUCCEEDS at this operand iff its
+     (single-lit) boundary exists AND the full run holds there — else the very-next
+     literal after the operand mismatches and the whole match returns None. The
+     anchored matcher succeeds iff ANY run position exists. *)
+  Definition single_succeeds (l : list (list bool)) : Prop :=
+    exists s bs,
+      single_boundary l = Some s /\ nth_error l s = Some bs /\ run_of bs = true.
+  Definition anchored_succeeds (l : list (list bool)) : Prop :=
+    anchored_boundary l <> None.
+
+  (* LRA5 (never worse): pre-fix SUCCESS ⇒ anchored SUCCESS with the SAME boundary. *)
+  Theorem LRA5_never_worse :
+    forall l,
+      (forall b, In b l -> b <> []) ->
+      single_succeeds l ->
+      anchored_succeeds l /\ anchored_boundary l = single_boundary l.
+  Proof.
+    intros l Hne [s [bs [Hs [Hnth Hrun]]]].
+    pose proof (LRA4_identical_when_valid l s bs Hne Hs Hnth Hrun) as Hanch.
+    split.
+    - unfold anchored_succeeds. rewrite Hanch. discriminate.
+    - rewrite Hanch, Hs. reflexivity.
+  Qed.
+
+  (* LRA6 (strict gain): pre-fix FAILURE but a true frame exists ⇒ anchored
+     SUCCEEDS (None → Some — the recovery of `<-@@Nil!()!?(…)`). The `~single`
+     premise is the recovery context; the anchored success follows from the frame. *)
+  Theorem LRA6_recovers_when_single_fails :
+    forall l,
+      ~ single_succeeds l ->
+      (exists s bs, nth_error l s = Some bs /\ run_of bs = true) ->
+      anchored_succeeds l.
+  Proof.
+    intros l _ [s [bs [Hnth Hrun]]].
+    unfold anchored_succeeds, anchored_boundary.
+    destruct (find_first_le run_of l s bs Hnth Hrun) as [i [Hi _]].
+    rewrite Hi. discriminate.
+  Qed.
+
+End LiteralRunAnchor.
+
+(* Non-vacuity — the `@@`-channel scan `<-@@Nil!()  !?(…)`: position 0 = the
+   channel-internal `!` (first char `!` matches, but the run `!?(` does not — the
+   next char is `(`), position 1 = the query `!?(` (full run matches). The pre-fix
+   matcher takes position 0, mismatches, and FAILS (`~single_succeeds`); the run-
+   anchor skips it and SUCCEEDS at position 1. The STRICT gain, witnessed. *)
+Example LRA_strict_gain_witness :
+  single_boundary [ [true; false]; [true; true] ] = Some 0
+  /\ ~ single_succeeds [ [true; false]; [true; true] ]
+  /\ anchored_boundary [ [true; false]; [true; true] ] = Some 1
+  /\ anchored_succeeds [ [true; false]; [true; true] ].
+Proof.
+  refine (conj _ (conj _ (conj _ _))).
+  - reflexivity.
+  - intros [s [bs [Hs [Hnth Hrun]]]].
+    unfold single_boundary in Hs. simpl in Hs. injection Hs as Hs; subst s.
+    simpl in Hnth. injection Hnth as Hnth; subst bs. simpl in Hrun. discriminate.
+  - reflexivity.
+  - unfold anchored_succeeds. simpl. discriminate.
+Qed.
+
+(* Non-vacuity — a PASSING scan (channel with NO internal delimiter): the first
+   position already carries the full run, so single and anchored AGREE (Some 0). *)
+Example LRA_passing_identical_witness :
+  single_boundary [ [true; true] ] = Some 0
+  /\ single_succeeds [ [true; true] ]
+  /\ anchored_boundary [ [true; true] ] = Some 0.
+Proof.
+  refine (conj _ (conj _ _)).
+  - reflexivity.
+  - exists 0, [true; true]. refine (conj _ (conj _ _)); reflexivity.
+  - reflexivity.
+Qed.
+
 (* ══════════════ Non-vacuity witnesses (concrete finite instantiations for the
    key theorems — the models are inhabited and the statements are not vacuous). ══════════════ *)
 
@@ -575,3 +816,11 @@ Print Assumptions T5b_fewest_holes_primary.
 Print Assumptions T6_ambiguity_not_collapsed.
 Print Assumptions T6_cardinality_matches_product.
 Print Assumptions T10_seam_separation.
+Print Assumptions LRA1_run_implies_fc.
+Print Assumptions LRA2_no_false_frame.
+Print Assumptions LRA3_anchored_never_earlier.
+Print Assumptions LRA4_identical_when_valid.
+Print Assumptions LRA5_never_worse.
+Print Assumptions LRA6_recovers_when_single_fails.
+Print Assumptions LRA_strict_gain_witness.
+Print Assumptions LRA_passing_identical_witness.
