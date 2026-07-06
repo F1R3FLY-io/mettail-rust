@@ -1906,6 +1906,21 @@ fn parse_options(input: ParseStream) -> SynResult<HashMap<String, AttributeValue
                     ));
                 },
             },
+            // `parse_only: true` declares a language as a syntax-only test/demo
+            // fixture with no reduction semantics — it is excluded from the
+            // production LanguageDefInventory (the dovetail/ast inventory
+            // invariant tests). Fail-closed: a real language is inventoried
+            // unless it explicitly opts out here, and the inventory tests guard
+            // that a parse_only language carries no equations/rewrites/logic.
+            "parse_only" => match &value {
+                AttributeValue::Bool(_) => {},
+                _ => {
+                    return Err(syn::Error::new(
+                        key_ident.span(),
+                        "parse_only must be a boolean (true or false)",
+                    ));
+                },
+            },
             "emit_blockly" => match &value {
                 AttributeValue::Bool(_) => {},
                 _ => {
@@ -1996,7 +2011,7 @@ fn parse_options(input: ParseStream) -> SynResult<HashMap<String, AttributeValue
                 return Err(syn::Error::new(
                     key_ident.span(),
                     format!(
-                        "unknown option '{}'. Valid options are: beam_width, log_semiring_model_path, dispatch, emit_tests, emit_blockly, emit_simulator, case_insensitive, unicode_normalization, reserved_keywords",
+                        "unknown option '{}'. Valid options are: beam_width, log_semiring_model_path, dispatch, emit_tests, emit_blockly, emit_simulator, case_insensitive, unicode_normalization, reserved_keywords, parse_only",
                         unknown
                     ),
                 ));

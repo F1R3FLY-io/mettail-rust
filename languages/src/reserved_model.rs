@@ -36,6 +36,10 @@ language! {
         emit_tests: false,
         emit_simulator: false,
         emit_blockly: false,
+        // Syntax-only reservation demonstration: no reduction semantics, so it
+        // is excluded from the production LanguageDefInventory (see the
+        // dovetail/ast inventory invariant tests + their parse_only guard).
+        parse_only: true,
     },
 
     types {

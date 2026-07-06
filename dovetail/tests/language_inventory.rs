@@ -26,6 +26,12 @@ struct DiscoveredLanguage {
     rocq_name: String,
     source_path: PathBuf,
     requirements: BTreeSet<Requirement>,
+    /// `options { parse_only: true }` — a syntax/lex-only fixture excluded from
+    /// the production LanguageDefInventory (see `declared_parse_only`).
+    parse_only: bool,
+    /// Whether the source declares any reduction semantics — the anti-loophole
+    /// guard: a `parse_only` language must have none (see `has_reduction_semantics`).
+    has_reduction: bool,
 }
 
 fn repo_root() -> PathBuf {
@@ -80,6 +86,64 @@ fn declared_language_names(source: &str) -> Vec<String> {
         }
     }
     names
+}
+
+/// Whether the `language!` source declares `options { parse_only: true }`.
+fn declared_parse_only(source: &str) -> bool {
+    source.lines().any(|line| {
+        line.trim()
+            .strip_prefix("parse_only:")
+            .map(|rest| rest.trim().trim_end_matches(',').trim() == "true")
+            .unwrap_or(false)
+    })
+}
+
+/// Textual detection of reduction semantics — the dovetail-side mirror of the AST
+/// test's structural guard. A `parse_only` language must have NONE: no non-empty
+/// `equations`/`rewrites`/`logic`/`guards` block. Empty `equations {}`/`rewrites {}`
+/// (which some thin smoke languages carry) do NOT count, matching the AST side's
+/// `!def.equations.is_empty()`.
+fn has_reduction_semantics(source: &str) -> bool {
+    nonempty_block(source, "equations")
+        || nonempty_block(source, "rewrites")
+        || nonempty_block(source, "logic")
+        || nonempty_block(source, "guards")
+}
+
+/// Whether `source` contains a `<name> { … }` block with any non-blank,
+/// non-comment content between its braces (whitespace-tolerant).
+fn nonempty_block(source: &str, name: &str) -> bool {
+    let inline_open = format!("{name} {{");
+    let inline_open_tight = format!("{name}{{");
+    let mut lines = source.lines();
+    while let Some(line) = lines.next() {
+        let trimmed = line.trim();
+        let is_open =
+            trimmed == name || trimmed.starts_with(&inline_open) || trimmed.starts_with(&inline_open_tight);
+        if !is_open {
+            continue;
+        }
+        // Inline form: `equations { <maybe content> }` on one line (possibly with
+        // a trailing comma). Content is strictly between the braces.
+        if let Some(open_idx) = trimmed.find('{') {
+            let after = &trimmed[open_idx + 1..];
+            if let Some(close_idx) = after.find('}') {
+                if after[..close_idx].trim().is_empty() {
+                    continue; // inline empty block `{}`
+                }
+                return true; // inline non-empty block
+            }
+        }
+        // Multi-line: the first meaningful line is not the closing brace.
+        for next in lines.by_ref() {
+            let nt = next.trim();
+            if nt.is_empty() || nt.starts_with("//") {
+                continue;
+            }
+            return !nt.starts_with('}');
+        }
+    }
+    false
 }
 
 fn rocq_inventory_names(source: &str) -> BTreeSet<String> {
@@ -158,12 +222,16 @@ fn discover_language_sources() -> Vec<DiscoveredLanguage> {
                 repo_relative(&path)
             );
             let requirements = classify_source(&source);
+            let parse_only = declared_parse_only(&source);
+            let has_reduction = has_reduction_semantics(&source);
             display_names
                 .into_iter()
                 .map(|display_name| DiscoveredLanguage {
                     rocq_name: display_name.to_ascii_lowercase(),
                     source_path: path.clone(),
                     requirements: requirements.clone(),
+                    parse_only,
+                    has_reduction,
                 })
                 .collect::<Vec<_>>()
         })
@@ -438,18 +506,41 @@ fn source_language_inventory_matches_rocq_inventory_and_taxonomy() {
         "no in-repo language! macro sources discovered"
     );
 
-    let discovered_names = discovered_languages
+    // Anti-loophole guard: a parse_only language must declare NO reduction
+    // semantics, else fail loudly — a real reduction language cannot hide behind
+    // the flag to escape the formal rewrite inventory.
+    for language in &discovered_languages {
+        if language.parse_only {
+            assert!(
+                !language.has_reduction,
+                "{} is marked `parse_only: true` but declares reduction semantics \
+                 (equations/rewrites/logic/guards); parse_only is for syntax-only fixtures",
+                repo_relative(&language.source_path)
+            );
+        }
+    }
+
+    // Parse-only fixtures (syntax/lex demonstrations that declare
+    // `options { parse_only: true }`, e.g. the keyword-reservation FortranModel/
+    // ReservedModel) are excluded from the production LanguageDefInventory.
+    // Fail-closed: a language is inventoried unless it explicitly opts out.
+    let production = discovered_languages
+        .iter()
+        .filter(|language| !language.parse_only)
+        .collect::<Vec<_>>();
+
+    let discovered_names = production
         .iter()
         .map(|language| language.rocq_name.clone())
         .collect::<BTreeSet<_>>();
     assert_eq!(
         discovered_names, rocq_names,
-        "Rocq LanguageDefInventory must exactly match discovered language! sources"
+        "Rocq LanguageDefInventory must exactly match discovered production language! sources"
     );
 
     let mut aggregate = BTreeSet::new();
 
-    for language in &discovered_languages {
+    for language in &production {
         assert!(
             !language.requirements.is_empty(),
             "{} did not classify any Dovetail rewrite requirement",
