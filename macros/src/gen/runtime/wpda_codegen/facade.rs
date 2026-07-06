@@ -847,12 +847,31 @@ enum ProjSlot {
 
 /// One `σ`-led frame-variant the projection helper linearizes: a surface enum
 /// constructor whose syntax begins with a NON-ident sigil literal and contains
-/// ≥1 cross-cat operand.
+/// ≥1 cross-cat operand. ROOT-D (2026-07-06) also admits RECEIVER-LED POSTFIX
+/// (method-call) frames whose slot 0 is an OPERAND (the receiver) — those set
+/// `leading_receiver_gated`.
 struct ProjVariant {
-    /// Surface enum-constructor label (e.g. `"POutputNil"` / `"NQuoteShort"`).
+    /// Surface enum-constructor label (e.g. `"POutputNil"` / `"NQuoteShort"` /
+    /// `"MGet"`).
     label: String,
-    /// The grammar-derived Literal/Operand skeleton (source order), slot 0 = σ.
+    /// The grammar-derived Literal/Operand skeleton (source order), slot 0 = σ
+    /// (sigil-led / framed-list) OR the receiver operand (method frame).
     slots: Vec<ProjSlot>,
+    /// ROOT-D: slot 0 is a `.`-left-recursive RECEIVER operand (a method-call
+    /// frame like `m:Proc "." "get" "(" k ")"`). When set, the leading operand is
+    /// matched GREEDY-LAST (rightmost depth-0 delimiter — the method `.` is unique
+    /// there, so left-assoc CHAINS recover) and the receiver is soundness-gated (a
+    /// depth-0-whitespace STRING pre-filter + the AST decline of
+    /// `receiver_decline_labels`). FALSE for sigil-led (slot 0 = Literal) and
+    /// framed-list (slot 0 = a channel Name that is NOT left-recursive via its
+    /// delimiter) variants — those keep greedy-first / no gate (byte-identical).
+    leading_receiver_gated: bool,
+    /// Decline-set top-ctor labels for the gated receiver's category (empty unless
+    /// `leading_receiver_gated`): binary-infix / prefix rules producing that
+    /// category. A sub-parsed receiver whose top ctor is one of these is NOT the
+    /// whole receiver (`Map() % @X` → `Mod`, `-Nil` → `NegProc`) ⇒ the AST gate
+    /// drops it ⇒ the frame declines ⇒ monolithic (sound).
+    receiver_decline_labels: Vec<String>,
 }
 
 /// Grammar-derived shape of an `@`-projection category: the σ-led frame-variants.
@@ -865,10 +884,90 @@ pub(crate) struct ProjIsoShape {
     variants: Vec<ProjVariant>,
 }
 
+/// ROOT-D: is `cat` LEFT-RECURSIVE via the literal `delim`? I.e. does the grammar
+/// have a rule producing `cat` whose syntax pattern begins with a `Param` of
+/// category `cat` IMMEDIATELY followed by `Literal(delim)` (`cat delim … : cat`)?
+/// This is precisely what lets a receiver-led operand's delimiter (the method `.`)
+/// occur at depth 0 WITHIN the operand (method chains `a.b().c()`), so the leading
+/// operand must be matched GREEDY-LAST rather than greedy-first. FALSE for a send
+/// channel (`Name "!" …` — no `Name "!" … : Name` rule) ⇒ those keep greedy-first
+/// (byte-identical). GRAMMAR-DERIVED, no hardcode.
+fn category_left_recursive_via(language: &LanguageDef, cat: &str, delim: &str) -> bool {
+    for rule in &language.terms {
+        if rule.category.to_string() != cat {
+            continue;
+        }
+        let mut normalized = rule.clone();
+        mettail_ast::grammar::convert_items_to_term_context(&mut normalized);
+        let (Some(tc), Some(sp)) = (&normalized.term_context, &normalized.syntax_pattern) else {
+            continue;
+        };
+        let (Some(SyntaxExpr::Param(p)), Some(SyntaxExpr::Literal(l))) = (sp.first(), sp.get(1))
+        else {
+            continue;
+        };
+        if l != delim {
+            continue;
+        }
+        let p_cat = tc.iter().find_map(|tp| match tp {
+            TermParam::Simple { name, ty } if name == p => sep_base_ty(ty),
+            _ => None,
+        });
+        if p_cat.as_deref() == Some(cat) {
+            return true;
+        }
+    }
+    false
+}
+
+/// ROOT-D: the DECLINE-set labels for a receiver of category `cat` — rules
+/// producing `cat` whose syntax pattern is a BINARY INFIX (`[Param, Literal,
+/// Param]`) or a UNARY PREFIX (`[Literal, Param]`). A method-frame receiver whose
+/// sub-parsed top ctor is one of these binds LOOSER than (`Mod`, `NegProc`) — or is
+/// ambiguity-prone w.r.t. — the postfix `.`, so it is NOT the whole receiver span
+/// (Stage-0 S0-SOUND: `Map() % @X . concat` = `Mod`, `-Nil . concat` = `NegProc`).
+/// The AST gate DROPS such readings ⇒ the frame declines ⇒ monolithic (sound).
+/// GRAMMAR-DERIVED (pure syntax-shape), no operator-token hardcode.
+fn compute_receiver_decline_labels(language: &LanguageDef, cat: &str) -> Vec<String> {
+    let mut labels = Vec::new();
+    for rule in &language.terms {
+        if rule.category.to_string() != cat {
+            continue;
+        }
+        let mut normalized = rule.clone();
+        mettail_ast::grammar::convert_items_to_term_context(&mut normalized);
+        let Some(sp) = &normalized.syntax_pattern else { continue };
+        let is_binary_infix = sp.len() == 3
+            && matches!(
+                (&sp[0], &sp[1], &sp[2]),
+                (SyntaxExpr::Param(_), SyntaxExpr::Literal(_), SyntaxExpr::Param(_))
+            );
+        let is_unary_prefix = sp.len() == 2
+            && matches!((&sp[0], &sp[1]), (SyntaxExpr::Literal(_), SyntaxExpr::Param(_)));
+        if is_binary_infix || is_unary_prefix {
+            labels.push(normalized.label.to_string());
+        }
+    }
+    labels
+}
+
+/// ROOT-D: is `sp` a RECEIVER-LED POSTFIX (method-call) frame — slot 0 an OPERAND
+/// (`Param`), the LAST slot a closing-bracket `Literal`? The closing-bracket tail
+/// EXCLUDES binary-infix (`a OP b` ends in a `Param`); a `Literal`-first prefix has
+/// slot 0 = Literal (not Param) so is excluded too. So this admits `m . get ( k )`
+/// / `m . keys ( )` / sends (`n ! ( a , bs )`, already covered by the framed-list
+/// clause — same variant, harmless) but not `a | b` / `- a`. GRAMMAR-DERIVED.
+fn is_receiver_led_postfix_frame(sp: &[SyntaxExpr]) -> bool {
+    let Some(SyntaxExpr::Param(_)) = sp.first() else { return false };
+    matches!(sp.last(), Some(SyntaxExpr::Literal(l)) if matches!(l.as_str(), ")" | "]" | "}"))
+}
+
 /// Derive the [`ProjIsoShape`] for `cat_name`, or `None` when the category has no
 /// isolation-eligible `@`-projection rule (grammar-derived — single source of
 /// truth). Accepts every rule whose syntax pattern is a pure Literal/Param
-/// sequence beginning with a NON-ident sigil and carrying ≥1 `Base`-typed Param.
+/// sequence beginning with a NON-ident sigil and carrying ≥1 `Base`-typed Param,
+/// OR (ROOT-D, gated by `METHOD_FRAME_ISOLATION`) a RECEIVER-LED POSTFIX method
+/// frame (slot 0 = Operand, last slot = closing bracket).
 /// Rules with a `.*sep`/`#opt`/binder operand (`Op`/non-`Simple` param) are NOT
 /// projection shapes (they fall through to the monolithic body / the sep helper).
 fn derive_projection_iso_shape(
@@ -933,7 +1032,17 @@ fn derive_projection_iso_shape(
         // for ForRow, unchanged). This keeps the two helpers disjoint (proj runs
         // first, declines, sep handles it) and avoids double-handling the `&`-list.
         let sep_owned = super::forks::SEP_ISOLATION_CATEGORIES.contains(&cat_name);
-        if !(sigil_led || (vec_sep_count == 1 && !sep_owned)) {
+        //   (c) ROOT-D (gated by `METHOD_FRAME_ISOLATION`): a RECEIVER-LED POSTFIX
+        //       (method-call) frame — slot 0 an OPERAND, the LAST slot a closing
+        //       bracket (`m "." "get" "(" k ")"`, `m "." "keys" "(" ")"`). Its
+        //       leading receiver is matched greedy-last + soundness-gated below.
+        //       The tail bracket excludes binary-infix (ends in a Param); a prefix
+        //       has slot 0 = Literal (caught by (a)). Sends match here too but are
+        //       already covered by (b) — same variant, and their leading channel is
+        //       NOT `.`-left-recursive so the gate flag stays false (byte-identical).
+        let method_frame =
+            super::forks::METHOD_FRAME_ISOLATION && is_receiver_led_postfix_frame(sp);
+        if !(sigil_led || (vec_sep_count == 1 && !sep_owned) || method_frame) {
             continue;
         }
         // Build the Literal / scalar-Operand / SepList skeleton; any `Opt` op or
@@ -998,7 +1107,26 @@ fn derive_projection_iso_shape(
         if !shape_ok || operand_count == 0 {
             continue;
         }
-        variants.push(ProjVariant { label: normalized.label.to_string(), slots });
+        // ROOT-D: a method frame's leading receiver operand needs greedy-last +
+        // the soundness gate iff slot 0 is an Operand whose category is
+        // LEFT-RECURSIVE via the slot-1 delimiter literal (so the delimiter — the
+        // method `.` — can recur at depth 0 inside it: `a.b().c()`). Sends
+        // (channel Name, delimiter `!`, no `Name "!" … : Name` rule) get `false`
+        // ⇒ greedy-first / no gate, unchanged.
+        let (leading_receiver_gated, receiver_decline_labels) = match (slots.first(), slots.get(1)) {
+            (Some(ProjSlot::Operand { category }), Some(ProjSlot::Lit(delim)))
+                if category_left_recursive_via(language, category, delim) =>
+            {
+                (true, compute_receiver_decline_labels(language, category))
+            }
+            _ => (false, Vec::new()),
+        };
+        variants.push(ProjVariant {
+            label: normalized.label.to_string(),
+            slots,
+            leading_receiver_gated,
+            receiver_decline_labels,
+        });
     }
 
     if variants.is_empty() {
@@ -1082,6 +1210,7 @@ fn emit_proj_variant_arm(
     cat_ident: &proc_macro2::Ident,
     variant: &ProjVariant,
     variant_idx: usize,
+    has_method: bool,
 ) -> TokenStream {
     let label_ident = format_ident!("{}", variant.label);
     let variant_idx_lit = variant_idx as u16;
@@ -1120,6 +1249,35 @@ fn emit_proj_variant_arm(
     let n_ops = op_slots.len();
 
     let label_str = variant.label.clone();
+
+    // ROOT-D method-frame gate pieces (empty for sigil-led / framed-list variants).
+    let gated = variant.leading_receiver_gated;
+    // The gated receiver's category (slot 0 = the first Operand) + the AST
+    // decline pattern (`Cat::Add(..) | Cat::Mod(..) | Cat::NegProc(..) | …`).
+    let decline_pat: Option<TokenStream> =
+        if gated && !variant.receiver_decline_labels.is_empty() {
+            variant
+                .slots
+                .iter()
+                .find_map(|s| match s {
+                    ProjSlot::Operand { category } => Some(format_ident!("{}", category)),
+                    _ => None,
+                })
+                .map(|rcat| {
+                    let arms: Vec<TokenStream> = variant
+                        .receiver_decline_labels
+                        .iter()
+                        .map(|lbl| {
+                            let l = format_ident!("{}", lbl);
+                            quote! { #rcat::#l(..) }
+                        })
+                        .collect();
+                    quote! { #(#arms)|* }
+                })
+        } else {
+            None
+        };
+
     // Bind each operand: a `Scalar` sub-parses the whole region; a `Sep` splits
     // the region at the depth-0 separator, sub-parses each element, and cartesian-
     // combines into `Vec<Element>` combos. Both bind a `__op{oi}` : Vec<(value,
@@ -1127,10 +1285,67 @@ fn emit_proj_variant_arm(
     let mut parse_binds: Vec<TokenStream> = Vec::with_capacity(n_ops);
     for (oi, slot) in op_slots.iter().enumerate() {
         let pairs_id = format_ident!("__op{}", oi);
+        // The gated receiver is the FIRST operand of a method frame.
+        let is_gated_receiver = gated && oi == 0;
         match slot {
             OpKind::Scalar(cat) => {
                 let ocat = format_ident!("{}", cat);
                 let ocat_str = cat.to_string();
+                // ROOT-D receiver STRING pre-filter: decline (cheaply, before the
+                // sub-parse) when the receiver span has depth-0 whitespace — a
+                // space-surrounded infix/prefix operator at the top (`a % b`,
+                // `not a`) means the method `.` is NOT the whole receiver.
+                // Primaries have NO depth-0 whitespace (args are bracketed).
+                let recv_ws_gate: TokenStream = if is_gated_receiver {
+                    quote! {
+                        {
+                            let __rb = __seg.as_bytes();
+                            let mut __d: i32 = 0;
+                            let mut __has_ws = false;
+                            for &__c in __rb {
+                                match __c {
+                                    b'(' | b'[' | b'{' => __d += 1,
+                                    b')' | b']' | b'}' => __d -= 1,
+                                    _ if __d == 0 && __c.is_ascii_whitespace() => {
+                                        __has_ws = true;
+                                        break;
+                                    }
+                                    _ => {}
+                                }
+                            }
+                            if __has_ws {
+                                if __GRIND_DIAG {
+                                    eprintln!("[PISO]   v{} {} RECV-WS-DECLINE seg={:?}",
+                                        #variant_idx_lit, #label_str, __seg);
+                                }
+                                break '__variant;
+                            }
+                        }
+                    }
+                } else {
+                    quote! {}
+                };
+                // ROOT-D receiver AST gate: drop sub-parsed receiver readings whose
+                // top ctor is a binary-infix / prefix (NOT the whole receiver —
+                // e.g. `-Nil` → `NegProc`). If none survive ⇒ decline the frame.
+                let recv_ast_filter: TokenStream = match (is_gated_receiver, &decline_pat) {
+                    (true, Some(pat)) => quote! {
+                        let __pairs: Vec<(#ocat, __W)> = __t
+                            .into_iter()
+                            .zip(__w.into_iter())
+                            .filter(|(__r, _)| !matches!(__r, #pat))
+                            .collect();
+                        if __pairs.is_empty() {
+                            if __GRIND_DIAG {
+                                eprintln!("[PISO]   v{} {} RECV-NONPRIMARY-DECLINE",
+                                    #variant_idx_lit, #label_str);
+                            }
+                            break '__variant;
+                        }
+                        __pairs
+                    },
+                    _ => quote! { __t.into_iter().zip(__w.into_iter()).collect() },
+                };
                 parse_binds.push(quote! {
                     let #pairs_id: Vec<(#ocat, __W)> = {
                         let (__s, __e) = __ops[#oi];
@@ -1140,6 +1355,7 @@ fn emit_proj_variant_arm(
                                 #variant_idx_lit, #label_str, #oi, #ocat_str, __seg);
                         }
                         if __seg.is_empty() { break '__variant; }
+                        #recv_ws_gate
                         // SINGLE-RESULT seam (bug 2318): compose the operand's OWN
                         // single-winner (`parse_via_wpda` → the same M6 min-weight
                         // representative the monolithic parser elects), NOT the
@@ -1178,7 +1394,7 @@ fn emit_proj_variant_arm(
                             }
                         };
                         if __t.is_empty() { break '__variant; }
-                        __t.into_iter().zip(__w.into_iter()).collect()
+                        #recv_ast_filter
                     };
                 });
             }
@@ -1371,12 +1587,34 @@ fn emit_proj_variant_arm(
         };
     }
 
+    // ROOT-D: the leading receiver of a method frame matches GREEDY-LAST; and the
+    // whole method-frame arm is skippable at runtime (causal A/B) via
+    // `PRATTAIL_NO_METHOD_ISOLATION`. The matcher's greedy-last param exists ONLY
+    // when this category has method frames (`has_method`) — otherwise the call is
+    // byte-identical to the pre-ROOT-D `__proj_skeleton_match(bytes, n, skel)`.
+    let skel_match_call: TokenStream = if has_method {
+        let greedy_last_lit = gated;
+        quote! { __proj_skeleton_match(__bytes, __n, __SKEL, #greedy_last_lit) }
+    } else {
+        quote! { __proj_skeleton_match(__bytes, __n, __SKEL) }
+    };
+    let method_ab_gate: TokenStream = if gated {
+        quote! {
+            if __no_method_iso {
+                break '__variant;
+            }
+        }
+    } else {
+        quote! {}
+    };
+
     quote! {
         {
             // Match this variant's skeleton; extract operand ranges.
             const __SKEL: &[__Slot] = &[ #(#slot_exprs),* ];
             '__variant: {
-                let Some(__ops) = __proj_skeleton_match(__bytes, __n, __SKEL) else {
+                #method_ab_gate
+                let Some(__ops) = #skel_match_call else {
                     if __GRIND_DIAG {
                         eprintln!("[PISO]   v{} {} SKEL no-match", #variant_idx_lit, #label_str);
                     }
@@ -1407,12 +1645,75 @@ fn emit_proj_variant_arm(
 fn emit_projection_isolation(cat_ident: &proc_macro2::Ident, shape: &ProjIsoShape) -> TokenStream {
     let helper_name = proj_isolation_helper_ident(&cat_ident.to_string());
     let result_src_idx = shape.result_src_idx;
+    // ROOT-D: this category carries method frames iff ANY variant is a gated
+    // receiver-led frame. When it does NOT (every non-`Proc` rhocalc category, and
+    // EVERY calculator category, and EVERY category when `METHOD_FRAME_ISOLATION`
+    // is OFF), the matcher/`__no_method_iso` additions are elided ⇒ the emitted
+    // helper is BYTE-IDENTICAL to the pre-ROOT-D baseline.
+    let has_method = shape.variants.iter().any(|v| v.leading_receiver_gated);
     let variant_arms: Vec<TokenStream> = shape
         .variants
         .iter()
         .enumerate()
-        .map(|(vi, v)| emit_proj_variant_arm(cat_ident, v, vi))
+        .map(|(vi, v)| emit_proj_variant_arm(cat_ident, v, vi, has_method))
         .collect();
+
+    // The greedy-last matcher param + the `__no_method_iso` A/B read exist ONLY
+    // when the category has method frames (byte-identical otherwise).
+    let no_method_binding: TokenStream = if has_method {
+        quote! {
+            // ROOT-D causal A/B — read ONCE per helper call (NOT per method arm; a
+            // per-arm `env::var_os` would be a hot-path regression). When set, every
+            // method-frame variant arm short-circuits, reproducing the pre-ROOT-D
+            // (monolithic) path without a rebuild.
+            let __no_method_iso =
+                std::env::var_os("PRATTAIL_NO_METHOD_ISOLATION").is_some();
+        }
+    } else {
+        quote! {}
+    };
+    // Matcher signature + the greedy-last fragments, elided when !has_method.
+    let recv_param: TokenStream =
+        if has_method { quote! { leading_greedy_last: bool, } } else { quote! {} };
+    let greedy_last_decl: TokenStream = if has_method {
+        quote! { let greedy_last = k == 0 && leading_greedy_last; }
+    } else {
+        quote! {}
+    };
+    // In the "delimiter found" block: greedy-first always breaks; greedy-last keeps
+    // scanning for a LATER depth-0 delimiter.
+    let found_break: TokenStream = if has_method {
+        quote! { if !greedy_last { break; } }
+    } else {
+        quote! { break; }
+    };
+    // On a depth-0 (unbalanced) close: greedy-first ⇒ no match; greedy-last ⇒ stop
+    // and use the last delimiter found so far.
+    let unbalanced_close: TokenStream = if has_method {
+        quote! {
+            if greedy_last {
+                break;
+            }
+            return None;
+        }
+    } else {
+        quote! { return None; }
+    };
+    // The matcher's greedy-last doc paragraph — emitted ONLY with method frames so
+    // the OFF / non-method matcher doc is byte-identical to the pre-ROOT-D baseline.
+    let matcher_rootd_doc: TokenStream = if has_method {
+        quote! {
+            ///
+            /// ROOT-D: when `leading_greedy_last` is set, the FIRST slot (`k == 0`,
+            /// a method-frame RECEIVER operand) is delimited by the RIGHTMOST
+            /// depth-0 occurrence of its delimiter (the method `.` — which is the
+            /// unique rightmost depth-0 `.` since the args are bracketed), so a
+            /// left-assoc method CHAIN (`a.b().c()`) binds the WHOLE prefix
+            /// `a.b()` as the receiver. All other operands stay greedy-first.
+        }
+    } else {
+        quote! {}
+    };
 
     quote! {
         /// P1 `@`-PROJECTION ISOLATION+COMBINE (Plan a8b32275): STRING-level
@@ -1441,6 +1742,7 @@ fn emit_projection_isolation(cat_ident: &proc_macro2::Ident, shape: &ProjIsoShap
             // unset. Traces helper entry, per-variant skeleton match, per-operand
             // sub-parse segment, and the return disposition.
             let __GRIND_DIAG = std::env::var_os("GRIND_DIAG").is_some();
+            #no_method_binding
 
             // One skeleton slot: a fixed literal token or a cross-cat operand hole.
             enum __Slot {
@@ -1456,10 +1758,12 @@ fn emit_projection_isolation(cat_ident: &proc_macro2::Ident, shape: &ProjIsoShap
             /// brackets `([{`/`)]}`; multi-char collection delimiters balance via
             /// their `{`/`}` component). A depth-0 close that is NOT the delimiter
             /// ⇒ unbalanced ⇒ `None` (this variant does not match).
+            #matcher_rootd_doc
             fn __proj_skeleton_match(
                 bytes: &[u8],
                 n: usize,
                 skel: &[__Slot],
+                #recv_param
             ) -> Option<Vec<(usize, usize)>> {
                 let mut i = 0usize;
                 let mut ops: Vec<(usize, usize)> = Vec::new();
@@ -1503,6 +1807,10 @@ fn emit_projection_isolation(cat_ident: &proc_macro2::Ident, shape: &ProjIsoShap
                                 Some(l) => {
                                     let lb = l.as_bytes();
                                     let identish = lb.iter().all(|&c| __is_word(c));
+                                    // ROOT-D: the leading receiver of a method frame
+                                    // (`k == 0`) takes the RIGHTMOST depth-0
+                                    // delimiter; every other operand the first.
+                                    #greedy_last_decl
                                     let mut depth: i32 = 0;
                                     let mut j = start;
                                     let mut found: Option<usize> = None;
@@ -1521,16 +1829,24 @@ fn emit_projection_isolation(cat_ident: &proc_macro2::Ident, shape: &ProjIsoShap
                                                         || !__is_word(bytes[j + lb.len()])));
                                             if wb {
                                                 found = Some(j);
-                                                break;
+                                                // greedy-first breaks here; greedy-last
+                                                // keeps scanning for a LATER depth-0
+                                                // delimiter (the delimiter char is not a
+                                                // bracket ⇒ depth unaffected below).
+                                                #found_break
                                             }
                                         }
                                         match c {
                                             b'(' | b'[' | b'{' => depth += 1,
                                             b')' | b']' | b'}' => {
                                                 if depth == 0 {
-                                                    // Unbalanced close before the
-                                                    // delimiter ⇒ no match.
-                                                    return None;
+                                                    // Unbalanced depth-0 close: for
+                                                    // greedy-first no valid delimiter
+                                                    // precedes it (`None`); for
+                                                    // greedy-last the operand cannot
+                                                    // extend past it ⇒ stop and use
+                                                    // the last delimiter found so far.
+                                                    #unbalanced_close
                                                 }
                                                 depth -= 1;
                                             }

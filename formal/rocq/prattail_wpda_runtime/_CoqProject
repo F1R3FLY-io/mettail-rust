@@ -57,3 +57,4 @@ theories/ChannelFirstReceiverReconnect.v
 theories/SepReconvergence.v
 theories/ProjectionIsolation.v
 theories/KeywordReservation.v
+theories/MethodFrameIsolation.v

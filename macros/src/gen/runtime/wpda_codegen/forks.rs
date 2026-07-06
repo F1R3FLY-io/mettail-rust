@@ -373,6 +373,51 @@ pub(crate) const PROJ_ISOLATION_COMBINE: bool = true;
 pub(crate) const PROJ_ISOLATION_CATEGORIES: &[&str] =
     &["Name", "Proc", "InputBind", "ForRow"];
 
+/// METHOD_FRAME_ISOLATION — extend the `@`-PROJECTION isolation (above) to the
+/// RECEIVER-LED POSTFIX (method-call) frames (ROOT-D, session da0842dc,
+/// 2026-07-06). Compile-time kill-switch (sibling of [`PROJ_ISOLATION_COMBINE`]);
+/// OFF ⇒ [`derive_projection_iso_shape`] does NOT admit method frames ⇒ the
+/// generated facade is BYTE-IDENTICAL to the pre-ROOT-D baseline.
+///
+/// ## The defect it ships the fix for (ROOT D)
+/// A method rule (`m:Proc "." "get" "(" k:Proc ")"`, …) begins with an OPERAND
+/// (the `m:Proc` receiver), not a sigil, and has NO `.*sep` list, so the proj-iso
+/// eligibility (sigil-led ∨ framed-list) DECLINES it. A deep-`@` operand inside a
+/// method-call arg (`Nil.concat(@Nil!(@Nil!(…)))`) then parses MONOLITHICALLY —
+/// EXPONENTIAL (Stage-0 measured `Nil.concat(@^d Nil)` = 23→55→269→1568→7546→
+/// 34666 ms for d=1..6, base~5), while the SAME `@`-nest parsed as an ISOLATED arg
+/// is the linear proj-iso base-2 floor (2→5→10→21→45→86 ms). `proc_display` times
+/// out at CASES=100.
+///
+/// ## The fix (this feature)
+/// Admit a "receiver-led postfix frame" (slot 0 = Param, LAST slot = closing-
+/// bracket Literal — excludes binary-infix which ends in a Param) as a projection
+/// variant. Its LEADING receiver operand is matched GREEDY-LAST (the method `.` is
+/// the unique rightmost depth-0 `.`; args are bracketed) so left-assoc method
+/// CHAINS (`a.b().c()`) recover; its receiver is soundness-gated (a depth-0-
+/// whitespace STRING pre-filter + an AST decline of binary-infix / prefix top-
+/// ctors) so a low-precedence receiver (`Map() % @X` → `Mod`, `-Nil` → `NegProc`)
+/// DECLINES the frame (falls to the monolithic body — sound; the method `.` binds
+/// tighter than every infix and than `-`, so those are NOT the whole receiver).
+/// Args + receiver are sub-parsed through the operand facade (RECURSES through the
+/// proj-iso prologue ⇒ deep-`@` args linearize) and wrapped in the method ctor.
+///
+/// ## Generality
+/// GRAMMAR-DERIVED, no per-language/per-rule hardcode: eligibility is the
+/// slot-shape; the greedy-last flag is "slot0.category is left-recursive via the
+/// slot1 literal" (∃ `cat <delim> … : cat`); the decline-set is "rules producing
+/// the receiver category with syntax `[Param,Lit,Param]` or `[Lit,Param]`".
+/// Calculator has no method rules ⇒ no method frames ⇒ byte-identical.
+///
+/// ## Kill-switch / A-B
+/// `false` ⇒ no method variants for ANY category ⇒ byte-identical. The runtime env
+/// `PRATTAIL_NO_METHOD_ISOLATION` makes the emitted method-variant arms return
+/// early WITHOUT a rebuild — the causal A/B control.
+///
+/// FV: `formal/rocq/prattail_wpda_runtime/theories/MethodFrameIsolation.v`
+/// (combine_equals_monolithic … receiver_gate_declines_nonprimary; zero-admission).
+pub(crate) const METHOD_FRAME_ISOLATION: bool = true;
+
 /// CROSSCAT_LEX_COMPAT_GATE (option A — PRIMARY, emission-side bucket split;
 /// 2026-07-03). The general, evidence-based first-token lexical-compatibility
 /// FILTER at the cross-cat `Proc` (and any category's) PROJECTION fork.
