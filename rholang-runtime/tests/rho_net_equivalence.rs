@@ -454,6 +454,57 @@ async fn m1_matches_swap_in_rho_and_fires_the_rewrite() {
     );
 }
 
+/// Compile the SwapStep LHS `Swap(x, y)` into its in-Rho `sa:`-receiver network,
+/// wired to the SwapStep σ-receiver's own source channel (coherence).
+fn swap_step_network(fingerprint: &str) -> models::rhoapi::Par {
+    let source = SwapDemoLanguage.metadata().definition_source().unwrap();
+    let def = reconstruct_language_def(source).unwrap();
+    let site = rho_net_injection_sites(&def)
+        .into_iter()
+        .find(|site| site.rule_label == "SwapStep")
+        .expect("the SwapStep base rewrite has a σ-receiver site");
+    let automaton = SetAutomaton::compile_structural([(
+        PatternId(0),
+        Pattern::app("Swap".to_string(), vec![Pattern::var("x"), Pattern::var("y")]),
+    )])
+    .expect("Swap(x, y) compiles");
+    automaton_receiver_network_par(&automaton.view(), "site0", &site.channel, "OUT", fingerprint)
+        .expect("the automaton serializes")
+}
+
+/// Stage 1 M1: no false-positive matches. The Swap automaton over a `Pair(A, B)`
+/// subject must NOT accept — the root `Match` dispatches on the head tag, and
+/// `Pair` ≠ `Swap`, so no accept send is emitted, the σ-receiver never fires, and
+/// OUT stays empty. This is the negative half of the in-Rho match relation.
+#[tokio::test]
+async fn m1_does_not_match_a_non_matching_head_in_rho() {
+    mettail_runtime::clear_var_cache();
+    let (backend, fingerprint) = swap_demo_backend();
+
+    let network = swap_step_network(&fingerprint);
+    // The subject is Pair(A, B) — same arity as Swap(x, y), but a different head.
+    let subject = spread_term_par(
+        &GroundTerm::new(
+            "Pair",
+            vec![GroundTerm::new("A", Vec::new()), GroundTerm::new("B", Vec::new())],
+        ),
+        &fingerprint,
+        "site0",
+    );
+    let call = network.append(subject);
+    let observation = backend
+        .run_rho_net_with_call_and_observe_runtime_values(&call, "OUT")
+        .await
+        .expect("the composition executes even when nothing matches");
+
+    assert_eq!(
+        observation.observed_count(),
+        0,
+        "a non-matching head (Pair ≠ Swap) must not fire the rewrite (got {:?})",
+        observation.values
+    );
+}
+
 #[test]
 fn swap_demo_exposes_its_rho_net_program_directly() {
     // Epic 6 #2030: a generated language exposes its RhoNet planning artifact —
