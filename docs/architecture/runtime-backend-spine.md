@@ -273,8 +273,9 @@ parse/introspection substrate. Selection happens in three layers:
    image of `RhoBackendFlipGate.v`), fail-closed on four blockers — coverage, artifact
    validation, channel deadlocks, and guard-quality;
 2. a **wiring-time wrapper** that overrides `runtime_backend_capabilities()` per language;
-3. a **per-term run-time router**, `run_backend_report`, whose `DeferToDovetailReport`
-   discharge rule chooses Dovetail-versus-Rho for each term.
+3. a **per-term run-time router**, `run_backend_report`, whose discharge rule routes
+   each term to the Rho machine (folds run on Rho via extension E2), deferring only
+   semantic predicates to Dovetail (`DeferToDovetailSemanticPredicate`).
 
 ![Runtime backend selection: from the macro to a per-term route](figures/backend-selection.svg)
 
@@ -286,7 +287,7 @@ The three operational categories, and where each bundled language lands:
 | Category | Languages | What it means |
 |---|---|---|
 | pure Dovetail | Lambda, Ambient | every redex reduced in-engine by `saturate_with_native`; no host |
-| hybrid | Calculator, RhoCalc | RhoMachine default + Dovetail fallback; `DeferToDovetailReport` routes each term |
+| hybrid | Calculator, RhoCalc | RhoMachine default; folds run on Rho via E2, only semantic predicates defer to Dovetail (`DeferToDovetailSemanticPredicate`) |
 | host-routed | GuardedRho | a guard over external relations forces `RhoNativeJoin` (no `rhoapi::Par` form) |
 
 `RuntimeBackend::Ascent` is a fail-closed reference oracle only — never a production

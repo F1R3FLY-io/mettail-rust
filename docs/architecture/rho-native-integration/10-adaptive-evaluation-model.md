@@ -32,8 +32,9 @@ Tier 3 is the new mechanism and is the subject of §4.
 ## 1. Tier 1 — sequential (byte-for-byte unchanged)
 
 The static "detection" *is* the existing `lower_rhocalc_term` to `lower_proc`
-recursion (`rholang-runtime/src/rhocalc_ast.rs`): a pure-fold term lowers to a
-`DeferToDovetailReport`; a pure-COMM or mixed-with-statically-present-folds term
+recursion (`rholang-runtime/src/rhocalc_ast.rs`): a pure-fold term fold-normalizes
+(extension E2) and lowers to a `Par` run on the Rho machine; a pure-COMM or
+mixed-with-statically-present-folds term
 pre-folds the ground folds in place and lowers the rest to a `Par` the Rho machine
 runs. General Rholang is **all-Rho** (the host reduces its own `EPlus` / `match` /
 `if` / `new` inline); MeTTaIL-native folds pre-reduce in the Dovetail D-stage. The

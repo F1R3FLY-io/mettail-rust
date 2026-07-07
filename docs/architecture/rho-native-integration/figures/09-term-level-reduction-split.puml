@@ -39,13 +39,14 @@ end note
 (folds converge; acyclic
 => no cycle-cut);
 
-if (does T contain COMM?\n(POutput / PInputs / PNew / PDrop)) then (no — pure fold)
-  |#E8F5E9|Dovetail rewrite engine (native folds)|
-  :F-stage returns
-  DeferToDovetailReport;
-  |#F3E5F5|Observation|
-  :RuntimeBackendOutput::Dovetail
-  (the fold-normal value);
+if (does T contain COMM?\n(POutput / PInputs / PNew)) then (no — pure fold)
+  |#FFF3E0|MeTTaIL (compile-time, one-way)|
+  :F-stage fold-normalizes (E2)
+  and wraps the pure value
+  as @"OUT"!(value);
+  |#E3F2FD|Rholang / Rho machine (RhoRuntime + RSpace)|
+  :run on Rho; read @"OUT"
+  back as the observation;
   stop
 else (yes — COMM or mixed)
   |#FFF3E0|MeTTaIL (compile-time, one-way)|

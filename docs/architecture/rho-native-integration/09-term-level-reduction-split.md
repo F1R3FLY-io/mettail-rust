@@ -88,16 +88,24 @@ For one input term `T`:
    cycle cut (`dovetail/src/extract.rs`). `checked_complete_dovetail_report`
    (`backend.rs`) asserts this completeness *before* the next stage.
 
-2. **F stage — route the whole term.**
-   `F(T, report)` inspects `T`:
-   - **pure fold** (no `POutput`/`PInputs`/`PNew`/`PDrop`): return
-     `RhoBackendInvocation::DeferToDovetailReport`. The fold-normal value *is* the
-     answer; the wrapper surfaces it as `RuntimeBackendOutput::Dovetail`. The Rho
-     machine is not used.
-   - **contains COMM**: take the **fold-normal** term (the folds reduced in step 1,
-     the COMM structure preserved), `lower_rhocalc_term` it to `rhoapi::Par` — which
-     now succeeds, because every fold sub-term has become a literal — and return a
-     Rho invocation.
+2. **F stage — lower the whole term and run it on the Rho machine.**
+   `F(T, report)` lowers `T` for RSpace execution — *every lowerable term runs on Rho*
+   (extension E2); there is no off-Rho fold disposition:
+   - **lower the original term first** (`lower_rhocalc_term`): the AST mapper handles
+     COMM (`POutput`/`PInputs`/`PNew`) directly and reduces `int(..)`-cast embedded
+     folds via `try_eval`, so e.g. `@("OUT")!(int(1+2,8))` lowers to `@("OUT")!(3)`.
+   - **only if the original cannot lower** (an un-reduced Proc-level fold) does F
+     fold-normalize via Dovetail (`dovetail_normal_term`, extension E2) and lower the
+     fold-normal term — every fold sub-term is now a literal the lowerer accepts.
+   - **a closed pure value/fold with no Rho effects** is wrapped as `@"OUT"!(value)`
+     so the observable result is still produced by RSpace, not surfaced off-Rho.
+   - **a stuck term** (e.g. a pure-COMM whose receive does not reduce in Dovetail,
+     where `dovetail_normal_term` errors) **fails the invocation with a hard error** —
+     there is *no silent fallback to a Dovetail backend report* (the "No silent host
+     fallback" invariant, [12 — Runtime Invocation Migration](12-runtime-invocation-migration.md)).
+   The result is always a `RhoBackendInvocation` on the real Rho machine. The removed
+   `DeferToDovetailReport` catch-all is superseded: the ONLY off-Rho disposition is the
+   semantic-predicate deferral `DeferToDovetailSemanticPredicate` (doc 12).
 
 3. **Rho stage — COMM on the host.**
    The wrapper injects the `Par` into an in-memory `RhoRuntime`/RSpace
@@ -118,10 +126,10 @@ backward.
 ### 4.1 Pure fold — `int(1+2,8)`
 
 D stage saturates: the inner `Add(1,2)` fires (`1+2 → 3`), then the `int`
-cast fires (`int(3,8) → 3`). `T` has no COMM, so F returns
-`DeferToDovetailReport`; the result is the Dovetail value `3`. (Proven:
+cast fires (`int(3,8) → 3`). `T` has no COMM, so F lowers the fold to the literal
+`3`, wraps it as `@"OUT"!(3)` (a pure value with no Rho effects), and runs it on the
+Rho machine — `3` is read back from RSpace as the observation. (Proven:
 `languages/tests/rhocalc_dovetail_fold.rs::nested_int_cast_folds_via_saturation`.)
-The Rho machine is never invoked.
 
 ### 4.2 Pure COMM — `{ (@("c")?x).{*(x)} | @("c")!(@("OUT")!("p")) }`
 
@@ -210,7 +218,8 @@ It is deliberately **rejected**:
   `rholang-runtime/tests/rho_rhocalc_ast.rs`;
   `LinearCommCorrespondence.v`, `RhocalcAstLowering.v`.
 - Term routing: `rholang-runtime/src/backend.rs`
-  (`DovetailRhoRuntimeBackedLanguage`, `RhoBackendInvocation::DeferToDovetailReport`);
+  (`DovetailRhoRuntimeBackedLanguage`, `RhoBackendInvocation::RhoMachine`; only
+  semantic predicates use `DeferToDovetailSemanticPredicate`);
   [03 — Dovetail Rewrite Semantics](03-dovetail-rewrite-semantics.md),
   [07 — Verification and Rollout](07-verification-and-rollout.md).
 
