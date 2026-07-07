@@ -209,6 +209,20 @@ impl<'a, L> SetAutomatonView<'a, L> {
     pub fn variable_root_entries(&self) -> &'a [usize] {
         self.automaton.variable_roots.as_slice()
     }
+
+    /// The [`PatternId`] of the `entry`-th compiled pattern — which rewrite rule it
+    /// is. A multi-pattern serializer routes each accepting match to the correct
+    /// rule's σ-receiver channel by this id.
+    pub fn entry_id(&self, entry: usize) -> PatternId {
+        self.automaton.entries[entry].id
+    }
+
+    /// The number of interned states. Because structurally-equal sub-patterns share
+    /// one state (the `[optimal]` O1/O3 quotient the interner computes), this is the
+    /// count of distinct `sa:` receivers a full multi-pattern serialization emits.
+    pub fn state_count(&self) -> usize {
+        self.automaton.states.len()
+    }
 }
 
 impl<L: Clone + Eq + Hash> SetAutomaton<L> {
@@ -498,6 +512,31 @@ mod tests {
             entry0_child, entry1_root,
             "the shared pair(x, y) sub-pattern interns to one StateId"
         );
+    }
+
+    #[test]
+    fn view_exposes_entry_ids_and_state_count() {
+        // entry_id round-trips the PatternId (which rewrite rule an entry is), so a
+        // multi-pattern serializer can route each accept to the right rule; state_count
+        // reports the interned-DAG size it walks. Swap(x, y) and Pair(a, b) share no
+        // sub-structure (distinct ops AND distinct var names), so each contributes one
+        // App + two Var states = 6.
+        let automaton = SetAutomaton::compile_structural([
+            (
+                PatternId(7),
+                Pattern::app("Swap".to_string(), vec![Pattern::var("x"), Pattern::var("y")]),
+            ),
+            (
+                PatternId(3),
+                Pattern::app("Pair".to_string(), vec![Pattern::var("a"), Pattern::var("b")]),
+            ),
+        ])
+        .expect("patterns compile");
+        let view = automaton.view();
+        assert_eq!(view.entry_count(), 2);
+        assert_eq!(view.entry_id(0), PatternId(7), "entry_id returns the id, not the index");
+        assert_eq!(view.entry_id(1), PatternId(3));
+        assert_eq!(view.state_count(), 6, "2 App roots + 4 distinct Var leaves");
     }
 
     #[test]
