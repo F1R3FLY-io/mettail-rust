@@ -108,3 +108,67 @@ Stage 0 introduces no new formal-verification obligation (it reuses the proven
 per-step base-rewrite correspondence). The `O1` symbol-once matching, its
 correctness proofs, and the in-Rho `sa:`/`eq:` compilation are the subject of the
 following stages.
+
+## 3. Stage 1 — matching in Rho
+
+Stage 1 moves the MATCHING onto the interpreter: the host `SetAutomaton` is
+compiled into a network of `sa:` receivers that consume a *spread* subject and, on
+an accepting match, hand the substitution to the Stage 0 firing layer. Recognizing
+a redex is now itself a sequence of Rho COMMs (the internal, `$\tau$`-labelled
+symbol inspections), not a host computation. The flow is shown in
+Figure [15-1](figures/15-in-rho-matching-flow.svg).
+
+### 3.1 The spread subject (M0)
+
+A ground subject term is spread across per-location channels
+(`spread_term_par`, `rholang-codegen/src/rho_net_lower.rs`):
+
+$$ \llbracket f(t_1,\dots,t_n) \rrbracket_\ell \;=\; c(\ell)!\bigl(\underline{f}\bigr) \;\Big|\; \prod_{i} \llbracket t_i \rrbracket_{\ell\cdot(f,i)} $$
+
+Each node publishes ONLY its head tag `$\underline{f}$` on its deterministic quoted
+location channel `$c(\ell)$`; the child locations `$\ell\cdot(f,i)$` are derived,
+never carried in the message. The scheme is `$\nu$`-free (INV-7): a flat parallel
+composition of ground sends — no `New`, no `BoundVar` — the resolved Option-B of
+the design, faithful to `def:loc` and `rem:fresh`.
+
+### 3.2 The automaton network (M1)
+
+`automaton_receiver_network_par` (`rholang-codegen/src/rho_net_automaton.rs`)
+serializes a single App-rooted, linear `SetAutomaton` into the receiver network.
+Each interned state becomes ONE `for`-receive — the `$\tau$` symbol inspection of
+the two set-automaton papers — over its location channel; the received head tag is
+`Match`-dispatched on the state's constructor; and the accepting configuration
+sends the substitution tuple on the rule's channel:
+
+$$ \mathtt{for}\bigl(h \Leftarrow c(\ell)\bigr)\bigl\{\; \mathtt{match}\ h\ \{\; \underline{f} \Rightarrow \dots \Rightarrow c!(\sigma_0,\dots,\sigma_{k-1}, @\mathit{out}) \;\} \;\bigr\} $$
+
+The accept send is byte-identical to the message the Stage 0 `$\sigma$`-injection
+builds, so the EXISTING persistent `$\sigma$`-receiver fires unchanged and lands
+`$\llbracket R \rrbracket\sigma$`. The De Bruijn frame is exact: the accept is free
+in `$\{0,\dots,k-1\}$`, each `for`-wrap shifts the free set under its binder, the
+`Match` re-adds its `$\mathrm{BoundVar}(0)$` target, and the root `for` closes the
+network; the substitution slot for the `$i$`-th argument is
+`$\mathrm{EList}[\mathrm{BoundVar}(k-1-i)]$`.
+
+The interned-state key is the `O1`/`O3` quotient: structurally-equal sub-patterns
+share one `StateId`, hence (Stage 1 M2) one `sa:` receiver — the `[optimal]`
+scheme's channel sharing, already computed by the host interner. Out-of-scope
+shapes fail closed (`AutomatonUnsupported`): multi-pattern, non-linear variables,
+nested-App / non-nullary Var subtrees, and bare-variable roots each route to a
+later slice rather than emitting an incorrect network.
+
+### 3.3 Validated in Rho
+
+`m1_matches_swap_in_rho_and_fires_the_rewrite` (`rho_net_equivalence.rs`): the
+compiled automaton matches `Swap(A, B)` ON the interpreter (the `$\tau$` `sa:`
+COMMs over the spread — the host does NOT inject the substitution) and fires the
+rewrite to `Pair(B, A)`. Because `Swap(A, B)` differs from `Pair(B, A)`, a positive
+`OUT` is non-vacuous evidence the match happened in Rho, and the RSpace reducer
+validates the De Bruijn / `locally_free` frame end-to-end — which a structural test
+alone cannot. The negative case `m1_does_not_match_a_non_matching_head_in_rho`
+confirms a wrong head (`Pair` vs `Swap`) does not accept: no false-positive match.
+
+The `O1`/`O3` channel sharing (M2), the `sa:`/`eq:`-as-`$\tau$` same-CLTS discharge
+(M3 — the `rem:nonopt` weak bisimulation), and the Phase-A correctness proofs
+(`SymbolOnceInjective`, `InRhoMatchPositional`, `InRhoReuseDeterminism`) build on
+this validated matching core.

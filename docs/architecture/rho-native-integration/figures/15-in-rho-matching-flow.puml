@@ -1,0 +1,38 @@
+@startuml
+' Figure 15-1: In-Rho set-automaton matching + firing (Stage 1).
+' The compiled automaton matches the spread subject ON the Rholang interpreter
+' (the internal tau-labelled sa: COMMs), then hands the substitution to the
+' Stage 0 sigma-receiver, which fires the rewrite.
+skinparam backgroundColor #FEFEFE
+skinparam defaultFontName sans
+skinparam sequenceMessageAlign center
+skinparam ParticipantPadding 18
+skinparam BoxPadding 14
+
+title In-Rho Set-Automaton Matching + Firing (Stage 1)
+
+participant "Spread ⟦t⟧\n(M0, the subject)" as S #E8F0FE
+participant "sa: automaton network\n(M1, in-Rho matching)" as A #E6F4EA
+participant "σ-receiver\n(Stage 0 firing)" as R #FCE8E6
+participant "@OUT" as O #FEF7E0
+
+== recognize the redex (internal τ COMMs) ==
+S -> A : c(ℓ)!(f̲)   ' head tag on the root location
+activate A #E6F4EA
+A -> A : match f̲   (τ symbol inspection)
+S -> A : c(ℓ·(f,i))!(child tag)   ' per child, in L order
+A -> A : recurse per child,\nbind σ = EList[BoundVar(k−1−i)]
+note over A #E6F4EA
+  ν-free quoted location channels;
+  one for-receive per state = O1 symbol-once.
+  wrong head ⇒ no accept (no false positive).
+end note
+
+== fire the rewrite (one atomic c(ℓ) COMM) ==
+A -> R : c!(σ₀,…,σ_{k−1}, @OUT)\n(accept = the σ-injection message)
+deactivate A
+activate R #FCE8E6
+R -> O : ⟦R⟧σ   ' e.g. Swap(A,B) ↦ Pair(B,A)
+deactivate R
+
+@enduml
