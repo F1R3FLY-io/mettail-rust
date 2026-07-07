@@ -29,7 +29,7 @@ CREUSOT_XDG_CONFIG_HOME ?= $(FORMAL_TMPDIR)/xdg-config
 .PHONY: prattail-wpda rocq-support
 .PHONY: tla-prattail-wpda tla-prattail-wpda-expected-fail tla-prattail-wpda-binder-broadcast-expected-fail rust-prattail-wpda
 .PHONY: rust-wpda-codegen rust-wpda-generated-smoke
-.PHONY: rocq-prattail-wpda rocq-trampoline rocq-advanced-automata
+.PHONY: rocq-prattail-wpda rocq-trampoline rocq-advanced-automata rocq-advanced-automata-inrho
 .PHONY: rocq-ascent-optimizations rocq-codegen-optimizations rocq-egraph rocq-dovetail rocq-dovetail-refinement rocq-dovetail-requirements rocq-dovetail-cyclic-boundary rocq-critical-zero-admission
 .PHONY: rocq-rho-bridge rocq-rho-bridge-artifact-boundary rocq-rho-bridge-rejected-coverage rocq-rho-bridge-delta1 rocq-rho-bridge-delta1-matching rocq-rho-bridge-flip-gate rocq-rho-bridge-lowering-boundary rocq-rho-bridge-schedule-family rocq-rho-bridge-cbn-budget rocq-rho-bridge-escrow-settlement rocq-rho-bridge-purse-determinism
 .PHONY: rocq-lattice rocq-logict rocq-mathematical-analyses
@@ -108,6 +108,14 @@ rocq-trampoline: require-capped
 
 rocq-advanced-automata: require-capped
 	$(MAKE) -C rocq/advanced_automata
+
+# Focused: build only the in-Rho set-automaton matching Phase A theories (Stage 1
+# M1), authored ii -> i -> x. Fast iteration; the full rocq-advanced-automata and
+# rocq-critical-zero-admission targets also cover them via _CoqProject.
+rocq-advanced-automata-inrho: require-capped
+	$(MAKE) -C rocq/advanced_automata theories/SymbolOnceInjective.vo
+	$(MAKE) -C rocq/advanced_automata theories/InRhoMatchPositional.vo
+	$(MAKE) -C rocq/advanced_automata theories/InRhoReuseDeterminism.vo
 
 rocq-ascent-optimizations: require-capped
 	$(MAKE) -C rocq/ascent_optimizations

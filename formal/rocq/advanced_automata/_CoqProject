@@ -40,3 +40,14 @@ theories/TraceLtlCheckSound.v
 # exact equality; the HM01 mismatch lint fires only on genuinely-differing sorts).
 # Self-contained over the Mono/Arrow restriction of UnificationSoundness.v.
 theories/HindleyMilnerWiringSound.v
+# In-Rho set-automaton matching, Phase A (Stage 1 M1) — verifies the serializer
+# rholang-codegen/src/rho_net_automaton.rs::automaton_receiver_network_par.
+# (ii) O1 symbol-once: the position -> sa:-receive map is a bijection. Reuses Pat.
+theories/SymbolOnceInjective.v
+# (i) the sa:-chain accept = the recursive positional matcher (sound + complete on
+# the M1 all-leaf scope). Reuses pmatch / index_never_drops_match /
+# app_match_requires_root_agreement from PositionalSetAutomatonSound.
+theories/InRhoMatchPositional.v
+# (x) compile-once / reuse determinism: the in-Rho verdict is a function of
+# (op, arity). Extends reuse_is_per_node_deterministic.
+theories/InRhoReuseDeterminism.v
