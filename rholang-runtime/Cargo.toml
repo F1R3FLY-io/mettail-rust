@@ -100,6 +100,9 @@ syn = { workspace = true }
 # Property-based testing of the Stage 0 multi-firing replay (arbitrary SwapDemo
 # terms: replay observations must equal the Dovetail report's per-firing RHS[σ]).
 proptest = "1"
+# The set automaton, to compile a pattern into the positional automaton the Stage 1
+# in-Rho matching test (`rho_net_equivalence`) serializes and runs on the interpreter.
+dovetail = { package = "dovetail", path = "../dovetail" }
 
 [[test]]
 name = "rho_rhocalc_ast"

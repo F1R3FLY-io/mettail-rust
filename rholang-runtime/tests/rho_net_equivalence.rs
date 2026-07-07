@@ -27,11 +27,14 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use dovetail::rules::Pattern;
+use dovetail::set_automaton::{PatternId, SetAutomaton};
 use mettail_languages::swapdemo::{Proc, SwapDemoLanguage, SwapDemoTerm};
 use mettail_rholang_codegen::{
-    lower_language_def, plan_rho_default_backend, reconstruct_language_def,
-    suggest_rejected_rule_dispositions, RhoCoverageEvidence, RhoDefaultBackendRequirements,
-    RhoGuardCoverageEvidence, RhoNetRuleKind,
+    automaton_receiver_network_par, lower_language_def, plan_rho_default_backend,
+    reconstruct_language_def, rho_net_injection_sites, spread_term_par,
+    suggest_rejected_rule_dispositions, GroundTerm, RhoCoverageEvidence,
+    RhoDefaultBackendRequirements, RhoGuardCoverageEvidence, RhoNetRuleKind,
 };
 use mettail_rholang_runtime::{
     build_rho_net_injection_invocation_from_contract,
@@ -373,6 +376,81 @@ async fn injection_fails_closed_when_no_rewrite_fires() {
     assert!(
         error.contains("no rewrite justification at firing index"),
         "the fail-closed error must name the missing justification, got: {error}"
+    );
+}
+
+/// Stage 1 M1c: the first genuine IN-RHO match. The SwapStep LHS `Swap(x, y)` is
+/// compiled to the positional set automaton, serialized to an `sa:`-receiver
+/// network, and composed with the σ-receiver program and the spread subject
+/// `Swap(A, B)`. The automaton matches the spread ON THE RHOLANG INTERPRETER (the
+/// τ `sa:` COMMs) — the host does NOT inject σ here — and on accept fires the
+/// σ-receiver, landing `Pair(B, A)` on OUT. Because `Swap(A, B) ≠ Pair(B, A)`, a
+/// positive OUT is non-vacuous evidence the match + firing happened in Rho, and
+/// (the point of this test) the RSpace reducer validates the automaton's De Bruijn
+/// / `locally_free` frame end-to-end.
+#[tokio::test]
+async fn m1_matches_swap_in_rho_and_fires_the_rewrite() {
+    mettail_runtime::clear_var_cache();
+    let (backend, fingerprint) = swap_demo_backend();
+
+    // The SwapStep σ-receiver SOURCE channel; the automaton's accept channel MUST
+    // equal it, sourced from the SAME rho_net_injection_sites derivation (coherence).
+    let source = SwapDemoLanguage
+        .metadata()
+        .definition_source()
+        .expect("SwapDemo exposes its definition source");
+    let def = reconstruct_language_def(source).expect("SwapDemo def reconstructs");
+    let site = rho_net_injection_sites(&def)
+        .into_iter()
+        .find(|site| site.rule_label == "SwapStep")
+        .expect("the SwapStep base rewrite has a σ-receiver site");
+
+    // Compile the SwapStep LHS `Swap(x, y)` into the positional automaton, then
+    // serialize it to its in-Rho `sa:`-receiver network.
+    let automaton = SetAutomaton::compile_structural([(
+        PatternId(0),
+        Pattern::app("Swap".to_string(), vec![Pattern::var("x"), Pattern::var("y")]),
+    )])
+    .expect("Swap(x, y) compiles to a positional automaton");
+    let network =
+        automaton_receiver_network_par(&automaton.view(), "site0", &site.channel, "OUT", &fingerprint)
+            .expect("the automaton serializes to a receiver network");
+
+    // The subject `Swap(A, B)` spread across per-location channels (M0).
+    let subject = spread_term_par(
+        &GroundTerm::new(
+            "Swap",
+            vec![GroundTerm::new("A", Vec::new()), GroundTerm::new("B", Vec::new())],
+        ),
+        &fingerprint,
+        "site0",
+    );
+
+    // σ-receiver ∥ (automaton ∥ subject): the automaton matches the spread IN RHO
+    // and on accept fires the σ-receiver. run_rho_net_with_call composes the
+    // installed σ-receiver program with this call.
+    let call = network.append(subject);
+    let observation = backend
+        .run_rho_net_with_call_and_observe_runtime_values(&call, "OUT")
+        .await
+        .expect("the in-Rho match + firing must execute on the Rho runtime");
+
+    assert_eq!(
+        observation.observed_count(),
+        1,
+        "the in-Rho automaton must match Swap(A, B) and fire exactly once (got {:?})",
+        observation.values
+    );
+    let pair_b_a = RuntimeObservationValue::Term {
+        constructor: "Pair".to_string(),
+        children: vec![
+            RuntimeObservationValue::Term { constructor: "B".to_string(), children: Vec::new() },
+            RuntimeObservationValue::Term { constructor: "A".to_string(), children: Vec::new() },
+        ],
+    };
+    assert_eq!(
+        observation.values[0], pair_b_a,
+        "Swap(A, B) matched IN RHO and fired the rewrite → Pair(B, A)"
     );
 }
 

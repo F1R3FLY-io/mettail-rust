@@ -571,7 +571,7 @@ pub(crate) fn lower_rhs(
 /// `(language_fingerprint, constructor_label)`. Being carried by a `GPrivate`
 /// unforgeable (not a `GString`), it is collision-free with any user `GString`
 /// term data. Mirrors the rhocalc bag ABI tag ([`crate::RHOCALC_BAG_ABI_TAG`]).
-fn reflect_tag(language_fingerprint: &str, constructor_label: &str) -> String {
+pub(crate) fn reflect_tag(language_fingerprint: &str, constructor_label: &str) -> String {
     format!(
         "{}{language_fingerprint}.{constructor_label}",
         crate::REFLECTED_TERM_ABI_PREFIX

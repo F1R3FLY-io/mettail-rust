@@ -19,6 +19,10 @@ name = "mettail_rholang_codegen"
 mettail-ast = { package = "ast", path = "../ast" }
 syn = { workspace = true }
 models = { workspace = true }
+# The set automaton (positional matcher) whose interned pattern DAG the Stage 1
+# in-Rho lowering serializes into an sa:-receiver network. codegen → dovetail is
+# acyclic (dovetail does not depend on rholang-codegen).
+dovetail = { package = "dovetail", path = "../dovetail" }
 
 [dev-dependencies]
 # Property-based tests of the Stage 1 term-spread encoding (arbitrary ground terms
