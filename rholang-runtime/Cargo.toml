@@ -97,6 +97,9 @@ mettail-ast = { package = "ast", path = "../ast" }
 mettail-dovetail-runtime = { package = "dovetail-runtime", path = "../dovetail-runtime" }
 mettail-rholang-adapter = { package = "rholang-adapter", path = "../rholang-adapter" }
 syn = { workspace = true }
+# Property-based testing of the Stage 0 multi-firing replay (arbitrary SwapDemo
+# terms: replay observations must equal the Dovetail report's per-firing RHS[σ]).
+proptest = "1"
 
 [[test]]
 name = "rho_rhocalc_ast"

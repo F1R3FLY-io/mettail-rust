@@ -221,6 +221,7 @@ runtime values are normalized AST artifacts, and the executable form is
 | [12 — Runtime Invocation Migration](12-runtime-invocation-migration.md) | How do downstream crates migrate from the legacy `RhoBackendInvocation` constructors to the `RhoMachineInvocation` / `RhoBackendInvocation` split? |
 | [13 — Knotted-Topoi Operational Invariants](13-knotted-topoi-operational-invariants.md) | Which operational invariants does the north-star paper require, and is host-side matching plus Rho injection a faithful realization? |
 | [14 — Completion Audit](14-completion-audit.md) | The final completion audit (plan #1956 Epic 1 #2078): change classification (#1970) + per-epic requirement-to-evidence matrix (#1972/#1973), verifying the persistent goal against current code. |
+| [15 — In-Rho Set-Automaton Matching Integration](15-in-rho-set-automaton-matching.md) | How is Greg Meredith's set-automaton matching integration finished — compiling the set automaton into Rho for O1-optimal in-Rho matching, with every non-semantic-predicate rewrite firing as a COMM? Authored one campaign stage per section (Stage 0: the multi-firing replay firing driver). |
 | [References](references.md) | Which papers, docs, and formal artifacts support the design? |
 | [Validation Script](validate.sh) | How are the documentation structure checks reproduced locally? |
 

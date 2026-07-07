@@ -395,3 +395,82 @@ fn swap_demo_exposes_its_rho_net_program_directly() {
     );
     assert!(!program.channels.is_empty(), "the program plans at least one channel");
 }
+
+/// Property-based Stage 0 verification: the replay driver faithfully reproduces
+/// the Dovetail report's per-firing `RHS[σ]` for ARBITRARY well-formed SwapDemo
+/// terms — however many redexes a term has (including zero), every one executes
+/// as its own atomic COMM and lands exactly its report-derived normal form, with
+/// no spurious value. This exercises the σ-reflection/injection round-trip across
+/// the full space of σ shapes (nested terms ⇒ nested σ), not just one example.
+mod replay_property {
+    use super::*;
+    use proptest::prelude::*;
+
+    /// A bounded strategy for well-formed SwapDemo `Proc` terms: `A`/`B` leaves and
+    /// binary `Swap`/`Pair` nodes, to `max_depth` levels.
+    fn arb_swap_proc(max_depth: u32) -> impl Strategy<Value = Proc> {
+        let leaf = prop_oneof![Just(Proc::A), Just(Proc::B)];
+        leaf.prop_recursive(max_depth, 32, 2, |inner| {
+            prop_oneof![
+                (inner.clone(), inner.clone())
+                    .prop_map(|(l, r)| Proc::Swap(Arc::new(l), Arc::new(r))),
+                (inner.clone(), inner).prop_map(|(l, r)| Proc::Pair(Arc::new(l), Arc::new(r))),
+            ]
+        })
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig { cases: 24, ..ProptestConfig::default() })]
+
+        #[test]
+        fn replay_observations_equal_report_rhs_for_arbitrary_swap_terms(
+            proc in arb_swap_proc(3),
+        ) {
+            mettail_runtime::clear_var_cache();
+            let (backend, _fingerprint) = swap_demo_backend();
+            let term = SwapDemoTerm(proc);
+
+            let report = SwapDemoLanguage::dovetail_report_for(&term, 512, 8_000_000)
+                .expect("SwapDemo report must compile");
+            prop_assert!(report.is_complete(), "the acyclic Swap→Pair reduction must complete");
+
+            // The report-derived expected observation per firing, in firing order.
+            let expected: Vec<RuntimeObservationValue> = report
+                .rewrite_justifications
+                .iter()
+                .map(|justification| {
+                    let sigma: HashMap<&str, &RuntimeReflectedSubterm> = justification
+                        .sigma
+                        .iter()
+                        .map(|(name, subterm)| (name.as_str(), subterm))
+                        .collect();
+                    RuntimeObservationValue::Term {
+                        constructor: "Pair".to_string(),
+                        children: vec![
+                            reflected_to_observation(sigma["y"]),
+                            reflected_to_observation(sigma["x"]),
+                        ],
+                    }
+                })
+                .collect();
+
+            let injections =
+                SwapDemoLanguage::rho_net_replay_invocation_from_dovetail_to(&term, &report, "OUT")
+                    .expect("generated replay wiring must build one injection per firing");
+            prop_assert_eq!(injections.len(), expected.len());
+
+            let firings = match build_rho_net_replay_invocation_from_contracts(injections) {
+                RhoMachineInvocation::RunRhoNetReplayAndObserveRuntimeValues { firings } => firings,
+                other => panic!("replay bridge must map to RunRhoNetReplay…, got {other:?}"),
+            };
+
+            let runtime =
+                tokio::runtime::Runtime::new().expect("tokio runtime for the replay property");
+            let observation = runtime
+                .block_on(backend.run_rho_net_replay_and_observe_runtime_values(&firings))
+                .expect("the replay must execute on the Rho runtime");
+
+            prop_assert_eq!(observation.values, expected);
+        }
+    }
+}
