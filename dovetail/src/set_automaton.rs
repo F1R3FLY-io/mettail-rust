@@ -86,7 +86,17 @@ struct PatternEntry<L> {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-struct StateId(usize);
+pub struct StateId(usize);
+
+impl StateId {
+    /// The dense index of this interned automaton state (`0..state_count`). The
+    /// in-Rho lowering keys a state's `sa:` receiver by this index — structurally
+    /// equal sub-patterns share one `StateId` (the `[optimal]` O1/O3 quotient the
+    /// interner already computes), so they will share one receiver.
+    pub fn index(self) -> usize {
+        self.0
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 enum StateKey<L> {
@@ -150,6 +160,55 @@ pub struct SetAutomaton<L> {
     states: Vec<PatternState<L>>,
     variable_roots: Vec<usize>,
     app_roots: HashMap<RootKey<L>, Vec<usize>>,
+}
+
+/// A read-only view over a compiled [`SetAutomaton`]'s interned pattern DAG, for
+/// serializing it into an in-Rho `sa:`-receiver network (Stage 1). Additive: it
+/// exposes the automaton's structure without changing any matching behavior.
+pub struct SetAutomatonView<'a, L> {
+    automaton: &'a SetAutomaton<L>,
+}
+
+/// One interned automaton state seen through a [`SetAutomatonView`]: a pattern
+/// variable (an accept/bind leaf) or a constructor application that dispatches on
+/// `op`/arity into its argument states.
+pub enum AutomatonNode<'a, L> {
+    Var(&'a str),
+    App { op: &'a L, args: &'a [StateId] },
+}
+
+impl<L> SetAutomaton<L> {
+    /// A read-only view over the interned pattern DAG — the Stage 1 in-Rho lowering
+    /// input.
+    pub fn view(&self) -> SetAutomatonView<'_, L> {
+        SetAutomatonView { automaton: self }
+    }
+}
+
+impl<'a, L> SetAutomatonView<'a, L> {
+    /// The number of compiled pattern entries (one per LHS pattern).
+    pub fn entry_count(&self) -> usize {
+        self.automaton.entries.len()
+    }
+
+    /// The root state of the `entry`-th compiled pattern.
+    pub fn entry_root_state(&self, entry: usize) -> StateId {
+        self.automaton.entries[entry].root_state
+    }
+
+    /// The interned node at `state` — the `Var`/`App` shape the serializer walks.
+    pub fn node(&self, state: StateId) -> AutomatonNode<'a, L> {
+        let automaton = self.automaton;
+        match &automaton.states[state.0] {
+            PatternState::Var(name) => AutomatonNode::Var(name.as_str()),
+            PatternState::App { op, args } => AutomatonNode::App { op, args: args.as_slice() },
+        }
+    }
+
+    /// The entry indices whose root pattern is a bare variable (match-anything).
+    pub fn variable_root_entries(&self) -> &'a [usize] {
+        self.automaton.variable_roots.as_slice()
+    }
 }
 
 impl<L: Clone + Eq + Hash> SetAutomaton<L> {
@@ -375,6 +434,70 @@ mod tests {
 
         let err = compiled.expect_err("AC patterns must stay on the lazy AC path");
         assert_eq!(err.unsupported_patterns(), &[PatternId(7)]);
+    }
+
+    #[test]
+    fn view_exposes_the_interned_pattern_dag() {
+        // Swap(x, y): one App-rooted entry over two distinct Var leaves.
+        let automaton = SetAutomaton::compile_structural([(
+            PatternId(0),
+            Pattern::app("Swap".to_string(), vec![Pattern::var("x"), Pattern::var("y")]),
+        )])
+        .expect("a linear App pattern compiles");
+        let view = automaton.view();
+
+        assert_eq!(view.entry_count(), 1);
+        assert!(view.variable_root_entries().is_empty(), "an App-rooted pattern has no variable root");
+
+        let root = view.entry_root_state(0);
+        match view.node(root) {
+            AutomatonNode::App { op, args } => {
+                assert_eq!(op, "Swap");
+                assert_eq!(args.len(), 2, "Swap is binary");
+                assert!(matches!(view.node(args[0]), AutomatonNode::Var("x")));
+                assert!(matches!(view.node(args[1]), AutomatonNode::Var("y")));
+            },
+            AutomatonNode::Var(_) => panic!("Swap(x, y) root must be an App state"),
+        }
+    }
+
+    #[test]
+    fn view_shares_one_state_for_structurally_equal_subpatterns() {
+        // `pair(x, y)` occurs both as entry 1 and as `wrap`'s child in entry 0. The
+        // interner is the [optimal] O1/O3 quotient: both share ONE StateId, so the
+        // in-Rho lowering (which keys sa: receivers by StateId) shares one receiver.
+        let automaton = SetAutomaton::compile_structural([
+            (
+                PatternId(0),
+                Pattern::app(
+                    "wrap".to_string(),
+                    vec![Pattern::app(
+                        "pair".to_string(),
+                        vec![Pattern::var("x"), Pattern::var("y")],
+                    )],
+                ),
+            ),
+            (
+                PatternId(1),
+                Pattern::app("pair".to_string(), vec![Pattern::var("x"), Pattern::var("y")]),
+            ),
+        ])
+        .expect("patterns compile");
+        let view = automaton.view();
+        assert_eq!(view.entry_count(), 2);
+
+        let entry1_root = view.entry_root_state(1);
+        let entry0_child = match view.node(view.entry_root_state(0)) {
+            AutomatonNode::App { op, args } => {
+                assert_eq!(op, "wrap");
+                args[0]
+            },
+            AutomatonNode::Var(_) => panic!("wrap(...) root must be an App state"),
+        };
+        assert_eq!(
+            entry0_child, entry1_root,
+            "the shared pair(x, y) sub-pattern interns to one StateId"
+        );
     }
 
     #[test]
