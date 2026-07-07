@@ -7555,20 +7555,6 @@ where
         // trailing candidates, and the premature-filter survivor count. This
         // tells us WHICH resolution arm fires (0/1/multi accepting, or the
         // premature-zeroed → resolve_prefix_with_trailing path).
-        if trace_actions_enabled() {
-            eprintln!(
-                "[wpds-action] EOI-SNAPSHOT accepting={} prefix_trailing={} logical_count={} survived_premature={} accepting_roots={:?}",
-                snapshot.accepting.len(),
-                snapshot.prefix_trailing_candidates.len(),
-                snapshot.logical_count,
-                snapshot.surviving_after_premature_filter,
-                snapshot
-                    .accepting
-                    .iter()
-                    .map(|c| (c.root, c.cursor.pos))
-                    .collect::<Vec<_>>(),
-            );
-        }
         // EP-P2 (Stage B) Step-0: flush the EOI shadow accumulators
         // (gathered in the `&self` snapshot pass) into `self.stats` now
         // that we hold `&mut self`. Per-slot OR-add preserves the
@@ -7887,14 +7873,6 @@ where
             None => self.realize_root_to_terms_with_weights_eager(root, limit),
         };
         // #307 ROOT-F diagnostics (2026-06-11).
-        if trace_actions_enabled() {
-            eprintln!(
-                "[wpds-action] realize-root root={} limit={:?} results={}",
-                root,
-                limit,
-                __res.len(),
-            );
-        }
         __res
     }
 
@@ -10364,12 +10342,6 @@ where
             && !self.engine.category_accepts_operator_at_floor(cat, tok, cur_bp)
             && self.engine.category_accepts_operator_at_floor(cat, tok, 0)
         {
-            if trace_actions_enabled() {
-                eprintln!(
-                    "[wpds-action] XCAT-FLOOR-RESET cat={} tok={:?} cur_bp={} -> 0 pos={}",
-                    cat, tok, cur_bp, pos
-                );
-            }
             return Some(WpdaState::InfixLoop { cur_bp: 0 });
         }
         None
@@ -11495,15 +11467,6 @@ where
         if self.transparent_source_reentry_keys.insert(key) {
             TransparentSourceReentryDecision::Reenter(reentry)
         } else {
-            if trace_actions_enabled() {
-                eprintln!(
-                    "[wpds-action] transparent-source reentry skipped: duplicate source={} target={} pos={} child={}",
-                    reentry.source_src_idx,
-                    reentry.target_src_idx,
-                    cursor.pos,
-                    self.sppf_trace_summary(reentry.child_symbol_id),
-                );
-            }
             TransparentSourceReentryDecision::AlreadyQueued
         }
     }
@@ -12031,12 +11994,6 @@ where
                 || matches!(kind, crate::gss::EdgeKind::CollectionElement { .. }))
                 && std::env::var("PRATTAIL_NO_BOUNDARY_STOP").is_err()
             {
-                if trace_actions_enabled() {
-                    eprintln!(
-                        "[wpds-action] PROJ-BOUNDARY-STOP pos={} at_frame={:?} (operand re-scoped by enclosing rule; no outer projection handoff)",
-                        cursor.pos, kind
-                    );
-                }
                 return None;
             }
             let boundary = (|edge_id: crate::gss::GssEdgeId,
@@ -12058,19 +12015,6 @@ where
                 );
                 let source_accepts_at_source_floor =
                     self.category_accepts_operator_at_floor(source_cat, cursor, fallback_bp, tokens);
-                if trace_actions_enabled() {
-                    eprintln!(
-                        "[wpds-action] crosscat target-boundary source={} target={} pos={} source_floor={} target_floor={} lookahead={:?} source_accepts={} target_accepts={}",
-                        source_cat,
-                        target_cat,
-                        cursor.pos,
-                        fallback_bp,
-                        target_floor,
-                        token_text,
-                        source_accepts_at_source_floor,
-                        target_accepts_at_projection_floor,
-                    );
-                }
                 Some(ProjectionTargetBoundary {
                     source_src_idx: source_cat,
                     target_src_idx: target_cat,
@@ -12322,12 +12266,6 @@ where
             let has_direct_category_change =
                 Self::action_contains_category_changing_infix_from(&action, source_src_idx);
             if has_direct_category_change {
-                if trace_actions_enabled() {
-                    eprintln!(
-                        "[wpds-action] cross-cat-lhs hosted boundary source={} pos={}",
-                        source_src_idx, cursor.pos
-                    );
-                }
             }
             if let Some(primary_text) = tokens.peek_text(cursor.pos) {
                 if !has_direct_category_change
@@ -12338,12 +12276,6 @@ where
                         tokens,
                     )
                 {
-                    if trace_actions_enabled() {
-                        eprintln!(
-                            "[wpds-action] cross-cat-lhs lex boundary source={} pos={} primary={:?}",
-                            source_src_idx, cursor.pos, primary_text
-                        );
-                    }
                     return WpdaStepAction::Advance(WpdaState::Unwinding);
                 }
             }
@@ -12409,15 +12341,6 @@ where
                     )
                 });
                 if branches.len() != before {
-                    if trace_actions_enabled() {
-                        eprintln!(
-                            "[wpds-action] suppress category-changing infix branches kept={} removed={} pos={} evidence={:?}",
-                            branches.len(),
-                            before.saturating_sub(branches.len()),
-                            cursor.pos,
-                            lhs_evidence
-                        );
-                    }
                     if branches.is_empty() {
                         return WpdaStepAction::Advance(WpdaState::Unwinding);
                     }
@@ -12490,12 +12413,6 @@ where
         match action {
             WpdaStepAction::ConsumeAndPush { .. }
             | WpdaStepAction::IterativeChainAbsorb { .. } => {
-                if trace_actions_enabled() {
-                    eprintln!(
-                        "[wpds-action] COLLSEP-REFUTE-CAP pos={} sep={:?} (bag separator; refuse same-cat infix consume)",
-                        cursor.pos, sep
-                    );
-                }
                 WpdaStepAction::Advance(WpdaState::Unwinding)
             },
             WpdaStepAction::Fork { mut branches, consume_trigger } => {
@@ -12669,15 +12586,6 @@ where
                     ) {
                         TransparentSourceReentryDecision::Reenter(reentry) => {
                             self.reenter_transparent_projection_source(cursor, reentry, cur_bp);
-                            if trace_actions_enabled() {
-                                eprintln!(
-                                    "[wpds-action] transparent-source reentry source={} target={} pos={} lookahead={:?}",
-                                    reentry.source_src_idx,
-                                    reentry.target_src_idx,
-                                    cursor.pos,
-                                    token_text
-                                );
-                            }
                             return self.cursor_resolution_check(cursor);
                         },
                         TransparentSourceReentryDecision::AlreadyQueued => {
@@ -12701,12 +12609,6 @@ where
         if let Some(source_src_idx) = self.cast_result_hosting_reentry_source(cursor, &action) {
             self.synthesize_cross_cat_lhs_reentry(cursor, source_src_idx);
             self.set_cursor_inner_state(cursor, WpdaState::InfixLoop { cur_bp: 0 });
-            if trace_actions_enabled() {
-                eprintln!(
-                    "[wpds-action] cast-host synth reentry source={} pos={}",
-                    source_src_idx, cursor.pos
-                );
-            }
             return self.cursor_resolution_check(cursor);
         }
         let action = self.guard_crosscat_projection_target_boundary(cursor, action, tokens);
@@ -14211,20 +14113,6 @@ where
                             || __under_crosscat_channel_first_receiver)
                             && !__already_has_unwind
                         {
-                            if trace_actions_enabled() {
-                                eprintln!(
-                                    "[wpds-action] BINDER-SLOT-UNWIND-INJECT node={:?} coll_elem={} infix_rhs={} chan_first={} branches_before={}",
-                                    self.gss.node(cursor.node).map(|n| (
-                                        n.symbol.category_src_idx,
-                                        n.symbol.rule_index_in_category,
-                                        n.symbol.kind
-                                    )),
-                                    __under_crosscat_collection_element,
-                                    __under_crosscat_infix_rhs,
-                                    __under_crosscat_channel_first_receiver,
-                                    branches.len()
-                                );
-                            }
                             let __unwind_symbol = self
                                 .gss
                                 .node(cursor.node)
@@ -16483,22 +16371,13 @@ where
                             // branches dropped" via the standard pathway).
                             let peek = tokens.peek_text(pos_after).unwrap_or("");
                             if peek != expected_text.as_str() {
-                                if trace_actions_enabled() && branch.symbol.category_src_idx == 1 {
-                                    eprintln!("[wpds-action] GUARD-DIE-peek symbol={:?} expected={:?} peek={:?} pos_after={}", branch.symbol, expected_text, peek, pos_after);
-                                }
                                 continue;
-                            }
-                            if trace_actions_enabled() && branch.symbol.category_src_idx == 1 {
-                                eprintln!("[wpds-action] GUARD-peek-ok symbol={:?} expected={:?} required_top_cat={:?}", branch.symbol, expected_text, required_top_cat);
                             }
                             let stack_rewrites: Vec<Option<crate::sppf::SppfId>> =
                                 if let Some(required_top_cat) = required_top_cat {
                                     let Some(top_sid) =
                                         self.sppf_stack_arena.top(cursor.sppf_stack_id)
                                     else {
-                                        if trace_actions_enabled() && branch.symbol.category_src_idx == 1 {
-                                            eprintln!("[wpds-action] GUARD-DIE-notop symbol={:?} required={}", branch.symbol, required_top_cat);
-                                        }
                                         continue;
                                     };
                                     let top_cat = match self.sppf.node(top_sid) {
@@ -16507,15 +16386,9 @@ where
                                             ..
                                         }) => *non_terminal_tag as u16,
                                         _ => {
-                                            if trace_actions_enabled() && branch.symbol.category_src_idx == 1 {
-                                                eprintln!("[wpds-action] GUARD-DIE-topkind symbol={:?}", branch.symbol);
-                                            }
                                             continue;
                                         },
                                     };
-                                    if trace_actions_enabled() && branch.symbol.category_src_idx == 1 {
-                                        eprintln!("[wpds-action] GUARD-topcat symbol={:?} top_cat={} required={}", branch.symbol, top_cat, required_top_cat);
-                                    }
                                     if top_cat == required_top_cat {
                                         vec![None]
                                     } else {
@@ -16528,9 +16401,6 @@ where
                                             .single_hop_coercion(top_cat, required_top_cat)
                                             .to_vec();
                                         if coercions.is_empty() {
-                                            if trace_actions_enabled() && branch.symbol.category_src_idx == 1 {
-                                                eprintln!("[wpds-action] GUARD-DIE-nocoerce symbol={:?} top_cat={} required={}", branch.symbol, top_cat, required_top_cat);
-                                            }
                                             continue;
                                         }
                                         let mut rewrites = Vec::with_capacity(coercions.len());
@@ -18181,15 +18051,6 @@ where
                                         reentry,
                                         cur_bp,
                                     );
-                                    if trace_actions_enabled() {
-                                        eprintln!(
-                                            "[wpds-action] transparent-source cohort reentry source={} target={} pos={} lookahead={:?}",
-                                            reentry.source_src_idx,
-                                            reentry.target_src_idx,
-                                            cursor.pos,
-                                            token_text
-                                        );
-                                    }
                                     match self.cursor_resolution_check(&cursor) {
                                         CursorOutcome::Drop => {},
                                         CursorOutcome::Alive => {
@@ -22354,12 +22215,6 @@ where
             _ => return None,
         };
         if !visiting.insert(symbol_id) {
-            if trace_actions_enabled() {
-                eprintln!(
-                    "[wpds-action] witness symbol sid={} nt={} reason=cycle",
-                    symbol_id, non_terminal_tag
-                );
-            }
             return None;
         }
         let packings: Vec<crate::sppf::SppfId> = self.sppf.packings_of(symbol_id).to_vec();
@@ -22369,53 +22224,17 @@ where
                 self.sppf.node(packing_id)
             {
                 if !self.packing_satisfies_min_terminal_span(*rule_idx, children, sym_lo, sym_hi) {
-                    if trace_actions_enabled() {
-                        eprintln!(
-                            "[wpds-action] witness symbol sid={} nt={} packing={} reject=min-span node={}",
-                            symbol_id,
-                            non_terminal_tag,
-                            packing_id,
-                            self.sppf_trace_summary(packing_id)
-                        );
-                    }
                     continue;
                 }
             }
-            if trace_actions_enabled() {
-                eprintln!(
-                    "[wpds-action] witness symbol sid={} nt={} try packing={} node={}",
-                    symbol_id,
-                    non_terminal_tag,
-                    packing_id,
-                    self.sppf_trace_summary(packing_id)
-                );
-            }
             let Some(term) = self.realize_packing_term_witness(cursor, packing_id, visiting) else {
-                if trace_actions_enabled() {
-                    eprintln!(
-                        "[wpds-action] witness symbol sid={} nt={} packing={} result=none",
-                        symbol_id, non_terminal_tag, packing_id
-                    );
-                }
                 continue;
             };
             if term
                 .output_cat
                 .is_some_and(|cat| cat as u32 != non_terminal_tag)
             {
-                if trace_actions_enabled() {
-                    eprintln!(
-                        "[wpds-action] witness symbol sid={} nt={} packing={} reject=output-cat output_cat={:?}",
-                        symbol_id, non_terminal_tag, packing_id, term.output_cat
-                    );
-                }
                 continue;
-            }
-            if trace_actions_enabled() {
-                eprintln!(
-                    "[wpds-action] witness symbol sid={} nt={} packing={} result=some output_cat={:?}",
-                    symbol_id, non_terminal_tag, packing_id, term.output_cat
-                );
             }
             found = Some(term);
             break;
@@ -23035,15 +22854,6 @@ where
         let collection_ids = Self::collection_ids_in_args(&args);
         Self::preallocate_collection_slots(&mut sb, &collection_ids);
         // #307 ROOT-F diagnostics (2026-06-11): fire-time arena contents.
-        if trace_actions_enabled() && !collection_ids.is_empty() {
-            eprintln!(
-                "[wpds-action] fire-arena pos={} ids={:?} arena={:?} seps={:?}",
-                cursor.pos,
-                collection_ids,
-                cursor.sppf_collection_arena,
-                cursor.collection_sep_counts,
-            );
-        }
         // #307 ROOT-F coverage backstop (2026-06-11): ENFORCEMENT REVERTED
         // pending #313 (root-f-ghost-coverage-backstop-completion). The
         // accounting identity (CollectionForkEvidence: items = seps + 1;
@@ -23472,15 +23282,6 @@ where
                                     body_origins,
                                     false,
                                 );
-                                if trace_actions_enabled() {
-                                    eprintln!(
-                                        "[wpds-action] intern reuse cat={} rule={} token_sound=true symbol={} packing={}",
-                                        cat_src_idx,
-                                        local_rule_idx,
-                                        self.sppf_trace_summary(symbol_id),
-                                        self.sppf_trace_summary(packing_id)
-                                    );
-                                }
                                 return;
                             }
                         }
@@ -23506,15 +23307,6 @@ where
                 cursor.sppf_stack_id = self
                     .sppf_stack_arena
                     .intern_push(cursor.sppf_stack_id, symbol_id);
-                if trace_actions_enabled() {
-                    eprintln!(
-                        "[wpds-action] intern reuse no-action cat={} rule={} symbol={} packing={}",
-                        cat_src_idx,
-                        local_rule_idx,
-                        self.sppf_trace_summary(symbol_id),
-                        self.sppf_trace_summary(packing_id)
-                    );
-                }
                 return;
             }
             let transient_result = self.fire_action_via_transient(cursor, symbol, &children);
@@ -23594,16 +23386,6 @@ where
                             .intern_packing(global_rule_idx, children, packing_weight);
                     let symbol_id = self.sppf.intern_symbol(cat_src_idx as u32, lo_pos, hi_pos);
                     self.sppf.link_packing_to_symbol(symbol_id, packing_id);
-                    if trace_actions_enabled() {
-                        eprintln!(
-                            "[wpds-action] intern success cat={} rule={} token_sound={} symbol={} packing={}",
-                            cat_src_idx,
-                            local_rule_idx,
-                            token_sound,
-                            self.sppf_trace_summary(symbol_id),
-                            self.sppf_trace_summary(packing_id)
-                        );
-                    }
                     // Phase F.13 chain_10000 Plan D E3 Substage 2 (2026-05-26):
                     // arena.intern_push replaces Arc::make_mut(&mut sppf_stack).push.
                     cursor.sppf_stack_id = self
@@ -23651,15 +23433,6 @@ where
                 .intern_packing(global_rule_idx, children, packing_weight);
             let symbol_id = self.sppf.intern_symbol(cat_src_idx as u32, lo_pos, hi_pos);
             self.sppf.link_packing_to_symbol(symbol_id, packing_id);
-            if trace_actions_enabled() {
-                eprintln!(
-                    "[wpds-action] intern no-action cat={} rule={} symbol={} packing={}",
-                    cat_src_idx,
-                    local_rule_idx,
-                    self.sppf_trace_summary(symbol_id),
-                    self.sppf_trace_summary(packing_id)
-                );
-            }
             // Phase F.13 chain_10000 Plan D E3 Substage 2 (2026-05-26):
             // arena.intern_push replaces Arc::make_mut(&mut sppf_stack).push.
             cursor.sppf_stack_id = self
@@ -23873,15 +23646,6 @@ where
                 }
                 // #307 ROOT-F diagnostics (2026-06-11): actions-trace the
                 // splice so arena divergence across lineages is observable.
-                if trace_actions_enabled() {
-                    eprintln!(
-                        "[wpds-action] splice slot={} pos={} item={:?} arena_now={:?}",
-                        id,
-                        cursor.pos,
-                        top,
-                        cursor.sppf_collection_arena.get(id as usize),
-                    );
-                }
             }
         }
         // push_to_collection silently no-ops on out-of-bounds id.
@@ -25935,12 +25699,6 @@ where
                             // distinct too: this projection is a genuine rule-operand
                             // that must not merge with a chain-interior worker.)
                             if registrant != Some(disc) {
-                                if trace_actions_enabled() {
-                                    eprintln!(
-                                        "[wpds-action] CROSSCAT-PROJ-UNCACHED pos_after={} source={} wrap=({},{}) disc={} registrant={:?} (collision, DISTINCT frame; allocated independently)",
-                                        pos_after, s, wrap_cat, wrap_rule, disc, registrant
-                                    );
-                                }
                                 return vec![self.allocate_uncached_push_child(
                                     parent,
                                     branch,
@@ -26782,51 +26540,21 @@ where
         let Some((frame_cat, frame_rule, body_start_pos, pred, stack_below_prefix, resume_bp)) =
             self.enclosing_prefix_rule_frame(cursor)
         else {
-            if trace_actions_enabled() {
-                eprintln!(
-                    "[wpds-action] direct prefix waiter skipped: no enclosing frame c_out={} rule={} body_cat={} pos={}",
-                    c_out, cast_rule, body_cat, cursor.pos
-                );
-            }
             return;
         };
         if frame_cat != c_out || frame_rule != cast_rule || body_start_pos != cursor.pos {
-            if trace_actions_enabled() {
-                eprintln!(
-                    "[wpds-action] direct prefix waiter skipped: frame mismatch frame=({},{}) body_start={} expected=({},{}) pos={}",
-                    frame_cat, frame_rule, body_start_pos, c_out, cast_rule, cursor.pos
-                );
-            }
             return;
         }
         let Some((keyword, trigger_lo)) = self.enclosing_prefix_trigger(cursor, c_out, cast_rule)
         else {
-            if trace_actions_enabled() {
-                eprintln!(
-                    "[wpds-action] direct prefix waiter skipped: no trigger c_out={} rule={} pos={}",
-                    c_out, cast_rule, cursor.pos
-                );
-            }
             return;
         };
         if !self.trigger_unary_wrapper_rule_matches(body_cat, c_out, cast_rule, &keyword) {
-            if trace_actions_enabled() {
-                eprintln!(
-                    "[wpds-action] direct prefix waiter skipped: wrapper mismatch frame_kw={:?} c_out={} rule={} body_cat={}",
-                    keyword, c_out, cast_rule, body_cat
-                );
-            }
             return;
         }
         let Some(stack_below_trigger) =
             self.sppf_stack_below_prefix_trigger(cursor, c_out, cast_rule, trigger_lo)
         else {
-            if trace_actions_enabled() {
-                eprintln!(
-                    "[wpds-action] direct prefix waiter skipped: trigger not on stack c_out={} rule={} trigger_lo={} pos={}",
-                    c_out, cast_rule, trigger_lo, cursor.pos
-                );
-            }
             return;
         };
 
@@ -26845,12 +26573,6 @@ where
             resume_bp,
             outer_frame: outer,
         });
-        if trace_actions_enabled() {
-            eprintln!(
-                "[wpds-action] direct prefix waiter parked: body_cat={} start={} c_out={} rule={} trigger_lo={} resume_bp={}",
-                body_cat, body_start_pos, c_out, cast_rule, trigger_lo, resume_bp
-            );
-        }
     }
 
     /// RC-B (2026-06-17): stage a prefix-cast wrap synthesis job at the
@@ -27002,12 +26724,6 @@ where
             return;
         };
         let cast_rules = self.trigger_unary_wrapper_rules_for_keyword(body_cat, c_out, &keyword);
-        if trace_actions_enabled() {
-            eprintln!(
-                "[wpds-action] BODY-WRAP-CASTRULES c_out={} outer_rule={} keyword={:?} body_cat={} cast_rules={:?}",
-                c_out, outer_rule, keyword, body_cat, cast_rules
-            );
-        }
         if cast_rules.is_empty() {
             return;
         }
@@ -27335,7 +27051,9 @@ where
         tokens: &dyn WpdaTokenSource,
         pos: usize,
         count: usize,
-        job: &PrefixCastWrapJob<W>,
+        // `job` is retained for API symmetry with the other cast-wrap helpers;
+        // its sole use was a PRATTAIL_TRACE=actions diagnostic (now stripped).
+        _job: &PrefixCastWrapJob<W>,
     ) -> Vec<usize> {
         if count == 0 {
             return vec![pos];
@@ -27353,12 +27071,6 @@ where
                 continue;
             }
             let successors = self.structural_delimiter_successors(tokens, cur, false);
-            if successors.is_empty() && trace_actions_enabled() {
-                eprintln!(
-                    "[wpds-action] RC-B prefix-cast wrap skipped: no close edge at pos {} for body=sid{} ({},{})",
-                    cur, job.body_sid, job.c_out, job.cast_rule
-                );
-            }
             for next in successors {
                 stack.push((next, consumed.saturating_add(1)));
             }
@@ -27448,12 +27160,6 @@ where
                 }
             }
             if emitted_close_his.is_empty() {
-                if trace_actions_enabled() {
-                    eprintln!(
-                        "[wpds-action] RC-B prefix-cast wrap skipped: no structural close completion for body=sid{} ({},{})",
-                        job.body_sid, job.c_out, job.cast_rule
-                    );
-                }
             }
         }
         out
@@ -27495,12 +27201,6 @@ where
         let children = vec![trigger_sid, job.body_sid];
         // +0-cursor "unfired" guard: bail if this exact cast packing exists.
         if self.sppf.packing_exists(global_rule_idx, &children) {
-            if trace_actions_enabled() {
-                eprintln!(
-                    "[wpds-action] RC-B prefix-cast wrap skipped: packing exists ({},{}) body=sid{} span=[{},{}]",
-                    job.c_out, job.cast_rule, job.body_sid, lo, hi
-                );
-            }
             return None;
         }
         // Token-soundness was proved by `drain_prefix_cast_wrap_jobs` using
@@ -27516,12 +27216,6 @@ where
         {
             Some(value) => value,
             None => {
-                if trace_actions_enabled() {
-                    eprintln!(
-                            "[wpds-action] RC-B prefix-cast wrap skipped: action failed ({},{}) body=sid{}",
-                            job.c_out, job.cast_rule, job.body_sid
-                        );
-                }
                 return None;
             },
         };
@@ -27599,15 +27293,6 @@ where
         if self.sppf.packing_exists(global_rule_idx, &children) {
             if let Some(wrapped_symbol_id) = self.sppf.symbol_id(coercion_cat as u32, lo, hi) {
                 if self.sppf_symbol_terms.contains_key(&wrapped_symbol_id) {
-                    if trace_actions_enabled() {
-                        eprintln!(
-                            "[wpds-action] coercion reuse cat={} rule={} body={} symbol={}",
-                            coercion_cat,
-                            coercion_rule,
-                            self.sppf_trace_summary(body_symbol_id),
-                            self.sppf_trace_summary(wrapped_symbol_id),
-                        );
-                    }
                     return Some(wrapped_symbol_id);
                 }
             }
@@ -27766,16 +27451,6 @@ where
         if self.category_can_satisfy_expected(rhs_cat, expected_rhs_cat) {
             return true;
         }
-        if trace_actions_enabled() {
-            eprintln!(
-                "[wpds-action] iterative-chain rhs reject cat={} rule={} expected={} produced={} rhs={}",
-                symbol.category_src_idx,
-                symbol.rule_index_in_category,
-                expected_rhs_cat,
-                rhs_cat,
-                self.sppf_trace_summary(rhs_sid),
-            );
-        }
         false
     }
 
@@ -27816,13 +27491,6 @@ where
                 })
                 .unwrap_or(false);
         if transparent_unary_self_wrapper {
-            if trace_actions_enabled() {
-                eprintln!(
-                    "[wpds-action] crosscat projection wrapper elided: body already in host cat={} symbol={}",
-                    wrap_cat,
-                    self.sppf_trace_summary(body_symbol_id)
-                );
-            }
             return None;
         }
         if self.action_accepts_single_body_category(*wrap_cat, *wrap_rule, body_cat) {
@@ -27843,16 +27511,6 @@ where
             })
             .min_by_key(|(_, coercion_rule)| *coercion_rule);
         if let Some((coercion_cat, coercion_rule)) = rebound {
-            if trace_actions_enabled() {
-                eprintln!(
-                    "[wpds-action] crosscat projection wrapper rebound: body_cat={} host_cat={} old_rule={} new_rule={} symbol={}",
-                    body_cat,
-                    coercion_cat,
-                    wrap_rule,
-                    coercion_rule,
-                    self.sppf_trace_summary(body_symbol_id)
-                );
-            }
             return Some(
                 StackSymbolV2::rule_at(coercion_cat, coercion_rule, 0, symbol.bp)
                     .with_kind_return(),
@@ -28035,20 +27693,6 @@ where
             .incoming_edge_stack_arena
             .len(cursor.incoming_edge_stack_id) as u32;
         cursor.inner_state = snap.worker_inner_state.clone();
-        if trace_actions_enabled() {
-            eprintln!(
-                "[wpds-action] cohort revive key=pos:{} src:{} bp:{} wrap=({},{}) dispatch_pos={} hi={} symbol={} state={:?}",
-                pos_at_dispatch,
-                source_src_idx,
-                inner_cur_bp,
-                wrap_cat,
-                wrap_rule,
-                pos_at_dispatch,
-                hi_pos,
-                self.sppf_trace_summary(symbol_id),
-                cursor.inner_state
-            );
-        }
         // Stage 1.5.3R-d: observability counter.
         self.dispatch_cohort_cache.cohort_cursors_emitted_total += 1;
         // Stage 1.5.3R-d: invariant — origin is set IFF depth is set.
@@ -28942,12 +28586,6 @@ where
                     );
                     self.record_crosscat_lhs_resume_on_cursor_top(cursor, target_resume_bp);
                     effective_new_state = WpdaState::InfixLoop { cur_bp: target_resume_bp };
-                    if trace_actions_enabled() {
-                        eprintln!(
-                            "[wpds-action] crosscat lhs result reenters produced category: source={} produced={} pred={} bp={}",
-                            source_src_idx, produced_cat, pred_id, target_resume_bp
-                        );
-                    }
                 } else if trace_actions_enabled() {
                     eprintln!(
                         "[wpds-action] crosscat lhs result exits source: source={} produced={} pred={} state={:?}",
@@ -29425,19 +29063,6 @@ where
                                 dispatch_pos_usize,
                                 snap,
                             );
-                            if trace_actions_enabled() {
-                                eprintln!(
-                                    "[wpds-action] cohort resolve key=pos:{} src:{} bp:{} wrap=({},{}) hi={} symbol={} outcome={:?}",
-                                    dispatch_pos_usize,
-                                    source_src_idx,
-                                    inner_cur_bp,
-                                    wrap_cat,
-                                    wrap_rule,
-                                    cursor.pos,
-                                    self.sppf_trace_summary(symbol_id),
-                                    outcome
-                                );
-                            }
                             match outcome {
                                 crate::dispatch_cohort::ResolveOutcome::FirstResolve => {
                                     self.pending_cohort_drain_keys.insert(key);

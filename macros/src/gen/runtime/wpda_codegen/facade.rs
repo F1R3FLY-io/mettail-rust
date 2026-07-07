@@ -1378,10 +1378,6 @@ fn emit_proj_variant_arm(
                                 }
                             }
                             if __has_ws {
-                                if __GRIND_DIAG {
-                                    eprintln!("[PISO]   v{} {} RECV-WS-DECLINE seg={:?}",
-                                        #variant_idx_lit, #label_str, __seg);
-                                }
                                 break '__variant;
                             }
                         }
@@ -1400,10 +1396,6 @@ fn emit_proj_variant_arm(
                             .filter(|(__r, _)| !matches!(__r, #pat))
                             .collect();
                         if __pairs.is_empty() {
-                            if __GRIND_DIAG {
-                                eprintln!("[PISO]   v{} {} RECV-NONPRIMARY-DECLINE",
-                                    #variant_idx_lit, #label_str);
-                            }
                             break '__variant;
                         }
                         __pairs
@@ -1414,10 +1406,6 @@ fn emit_proj_variant_arm(
                     let #pairs_id: Vec<(#ocat, __W)> = {
                         let (__s, __e) = __ops[#oi];
                         let __seg = input[__s..__e].trim();
-                        if __GRIND_DIAG {
-                            eprintln!("[PISO]   v{} {} op{}:{} scalar seg={:?}",
-                                #variant_idx_lit, #label_str, #oi, #ocat_str, __seg);
-                        }
                         if __seg.is_empty() { break '__variant; }
                         #recv_ws_gate
                         // SINGLE-RESULT seam (bug 2318): compose the operand's OWN
@@ -1438,10 +1426,6 @@ fn emit_proj_variant_arm(
                             match #ocat::parse_via_wpda(__seg) {
                                 Ok(__one) => (vec![__one], vec![<__W as Semiring>::one()]),
                                 Err(_) => {
-                                    if __GRIND_DIAG {
-                                        eprintln!("[PISO]   v{} {} op{} SUBPARSE-ERR(single) ⇒ decline",
-                                            #variant_idx_lit, #label_str, #oi);
-                                    }
                                     break '__variant;
                                 }
                             }
@@ -1449,10 +1433,6 @@ fn emit_proj_variant_arm(
                             match #ocat::parse_via_wpda_all_with_weights(__seg) {
                                 Ok(__v) => __v,
                                 Err(_) => {
-                                    if __GRIND_DIAG {
-                                        eprintln!("[PISO]   v{} {} op{} SUBPARSE-ERR ⇒ decline",
-                                            #variant_idx_lit, #label_str, #oi);
-                                    }
                                     break '__variant;
                                 }
                             }
@@ -1470,10 +1450,6 @@ fn emit_proj_variant_arm(
                     let #pairs_id: Vec<(Vec<#ecat>, __W)> = {
                         let (__s, __e) = __ops[#oi];
                         let __region = input[__s..__e].trim();
-                        if __GRIND_DIAG {
-                            eprintln!("[PISO]   v{} {} op{}:{}.*sep region={:?}",
-                                #variant_idx_lit, #label_str, #oi, #ecat_str, __region);
-                        }
                         if __region.is_empty() { break '__variant; }
                         let __rb = __region.as_bytes();
                         let __rn = __rb.len();
@@ -1510,10 +1486,6 @@ fn emit_proj_variant_arm(
                                 match #ecat::parse_via_wpda(__eseg) {
                                     Ok(__one) => (vec![__one], vec![<__W as Semiring>::one()]),
                                     Err(_) => {
-                                        if __GRIND_DIAG {
-                                            eprintln!("[PISO]   v{} {} op{} SEP-ELEM-ERR(single) seg={:?} ⇒ decline",
-                                                #variant_idx_lit, #label_str, #oi, __eseg);
-                                        }
                                         break '__variant;
                                     }
                                 }
@@ -1521,10 +1493,6 @@ fn emit_proj_variant_arm(
                                 match #ecat::parse_via_wpda_all_with_weights(__eseg) {
                                     Ok(__v) => __v,
                                     Err(_) => {
-                                        if __GRIND_DIAG {
-                                            eprintln!("[PISO]   v{} {} op{} SEP-ELEM-ERR seg={:?} ⇒ decline",
-                                                #variant_idx_lit, #label_str, #oi, __eseg);
-                                        }
                                         break '__variant;
                                     }
                                 }
@@ -1559,10 +1527,6 @@ fn emit_proj_variant_arm(
         }
         parse_binds.push(quote! {
             if #pairs_id.is_empty() {
-                if __GRIND_DIAG {
-                    eprintln!("[PISO]   v{} {} op{} EMPTY ⇒ decline",
-                        #variant_idx_lit, #label_str, #oi);
-                }
                 break '__variant;
             }
         });
@@ -1679,15 +1643,8 @@ fn emit_proj_variant_arm(
             '__variant: {
                 #method_ab_gate
                 let Some(__ops) = #skel_match_call else {
-                    if __GRIND_DIAG {
-                        eprintln!("[PISO]   v{} {} SKEL no-match", #variant_idx_lit, #label_str);
-                    }
                     break '__variant;
                 };
-                if __GRIND_DIAG {
-                    eprintln!("[PISO]   v{} {} SKEL matched ops={:?}",
-                        #variant_idx_lit, #label_str, __ops);
-                }
                 #(#parse_binds)*
                 #body
             }
@@ -1894,10 +1851,6 @@ fn emit_projection_isolation(cat_ident: &proc_macro2::Ident, shape: &ProjIsoShap
             type __W = mettail_prattail::automata::lex_weight::LexicographicWeight;
             const __REALIZE_CAP: usize = 64;
             const __RESULT_SRC_IDX: u16 = #result_src_idx;
-            // Throwaway runtime diagnostic gate (env `GRIND_DIAG`); zero-cost when
-            // unset. Traces helper entry, per-variant skeleton match, per-operand
-            // sub-parse segment, and the return disposition.
-            let __GRIND_DIAG = std::env::var_os("GRIND_DIAG").is_some();
             #no_method_binding
 
             // One skeleton slot: a fixed literal token or a cross-cat operand hole.
@@ -2045,30 +1998,12 @@ fn emit_projection_isolation(cat_ident: &proc_macro2::Ident, shape: &ProjIsoShap
             if __n == 0 {
                 return None;
             }
-            if __GRIND_DIAG {
-                eprintln!(
-                    "[PISO] ENTER {} n={} input={:?}",
-                    stringify!(#cat_ident), __n, input,
-                );
-            }
 
             let mut __candidates: Vec<(#cat_ident, __W)> = Vec::new();
             #(#variant_arms)*
 
             if __candidates.is_empty() {
-                if __GRIND_DIAG {
-                    eprintln!(
-                        "[PISO] RETURN None {} input={:?} (no variant produced a reading ⇒ fall through to monolithic)",
-                        stringify!(#cat_ident), input,
-                    );
-                }
                 return None;
-            }
-            if __GRIND_DIAG {
-                eprintln!(
-                    "[PISO] {} input={:?} raw_candidates={}",
-                    stringify!(#cat_ident), input, __candidates.len(),
-                );
             }
 
             // FINALIZE like the monolithic `_all`: dedup by semantic key,
@@ -2098,12 +2033,6 @@ fn emit_projection_isolation(cat_ident: &proc_macro2::Ident, shape: &ProjIsoShap
                 __out_terms.into_iter().zip(__out_weights.into_iter()).collect();
             __paired.sort_by(|(_, __a), (_, __b)| __a.cmp(__b));
             let (__out_terms, __out_weights): (Vec<_>, Vec<_>) = __paired.into_iter().unzip();
-            if __GRIND_DIAG {
-                eprintln!(
-                    "[PISO] RETURN Some {} input={:?} readings={}",
-                    stringify!(#cat_ident), input, __out_terms.len(),
-                );
-            }
             Some((__out_terms, __out_weights))
         }
     }
@@ -2338,7 +2267,6 @@ fn emit_infix_isolation(cat_ident: &proc_macro2::Ident, shape: &InfixIsoShape) -
             fn __is_word(c: u8) -> bool {
                 c.is_ascii_alphanumeric() || c == b'_'
             }
-            let __GRIND_DIAG = std::env::var_os("GRIND_DIAG").is_some();
 
             let input = input.trim();
             let __bytes = input.as_bytes();
@@ -2452,13 +2380,6 @@ fn emit_infix_isolation(cat_ident: &proc_macro2::Ident, shape: &InfixIsoShape) -
                 }
             }
             let (_, __s0, __e0, __op_idx) = __best?;
-            if __GRIND_DIAG {
-                eprintln!(
-                    "[IISO] {} input={:?} split op_idx={} at [{},{}) left={:?} right={:?}",
-                    stringify!(#cat_ident), input, __op_idx, __s0, __e0,
-                    &input[..__s0], &input[__e0..],
-                );
-            }
 
             // (2) ISOLATED sub-parse of the LEFT + RIGHT operand spans via this
             //     category's own string entry (fresh lex + walker from ROOT —

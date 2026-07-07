@@ -685,6 +685,11 @@ fn inv1_inv5_noloss(lang: &LanguageDef) -> Result<(), String> {
         }
     }
     // No slice truncation: the per-tier cap must cover the largest tier group.
+    // `GEN1_MAX_SLICE` is currently `usize::MAX` (uncapped), so this defensive
+    // INV-1 guard is vacuously false today. It is retained (and the
+    // clippy::absurd_extreme_comparisons lint allowed) so it still fires if the
+    // slice cap is ever reduced below a real tier-group size.
+    #[allow(clippy::absurd_extreme_comparisons)]
     if max_group_tier > super::infix::GEN1_MAX_SLICE {
         return Err(format!(
             "INV-1 slice truncation: GEN1_MAX_SLICE={} < largest tier group {max_group_tier}",

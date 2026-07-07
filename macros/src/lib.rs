@@ -98,6 +98,11 @@ pub fn language(input: TokenStream) -> TokenStream {
     // semantics undefined, so this is a hard error (STRAT01).
     let strat_report = logic::stratification::analyze(&language_def);
     if strat_report.has_violations() {
+        // `abort!` diverges on the first violation, so this loop intentionally
+        // never completes a second iteration — the emit-first-then-abort
+        // proc-macro idiom. Allow the clippy::never_loop false-positive rather
+        // than restructure the diagnostic-emission loop.
+        #[allow(clippy::never_loop)]
         for (_id, msg) in strat_report.diagnostics() {
             abort!(language_def.name.span(), "{}", msg);
         }
