@@ -783,11 +783,13 @@ fn generate_dovetail_normal_term(language: &LanguageDef, struct_slack: usize) ->
             // singleton, `Ambiguous` for 2+). Mirrors `lower_proc_alternatives`.
             let mut __seen: ::std::collections::BTreeSet<Vec<u8>> = ::std::collections::BTreeSet::new();
             let mut __alts: Vec<#inner_enum> = Vec::new();
+            // One extractor reused across all category-alternative roots (same rationale as the
+            // main report path): the O(classes) inside weights are computed once and memoized,
+            // not re-run per root. This is the alternatives path where cross-category numeric
+            // ambiguity yields the most roots, so the per-root inside recompute hurt most here.
+            let mut __extractor = ::dovetail::extract::Extractor::new(&eg, __weigh);
             for (__root, __cat_idx) in __roots {
-                let __extracted = {
-                    let mut __extractor = ::dovetail::extract::Extractor::new(&eg, __weigh);
-                    __extractor.funded_best(eg.find(__root))
-                };
+                let __extracted = __extractor.funded_best(eg.find(__root));
                 if __extracted.completeness
                     == ::dovetail::extract::ExtractionCompleteness::BoundedByCycleCut
                 {
@@ -831,11 +833,14 @@ fn generate_dovetail_normal_term(language: &LanguageDef, struct_slack: usize) ->
         let reconstruct = quote! {
             let mut __seen: ::std::collections::BTreeSet<Vec<u8>> = ::std::collections::BTreeSet::new();
             let mut __results: Vec<#primary_cat> = Vec::new();
+            // One extractor reused across all roots (same rationale as the main report path):
+            // `funded_best` computes the O(classes) inside weights once and memoizes, rather than
+            // re-running them per root with a discarded memo. Behaviorally identical here — the
+            // loop returns `Err` on the first cycle-cut root under either the per-root or the
+            // cumulative completeness.
+            let mut __extractor = ::dovetail::extract::Extractor::new(&eg, __weigh);
             for __root in __roots {
-                let __extracted = {
-                    let mut __extractor = ::dovetail::extract::Extractor::new(&eg, __weigh);
-                    __extractor.funded_best(eg.find(__root))
-                };
+                let __extracted = __extractor.funded_best(eg.find(__root));
                 if __extracted.completeness
                     == ::dovetail::extract::ExtractionCompleteness::BoundedByCycleCut
                 {
@@ -1590,8 +1595,18 @@ pub(crate) fn generate_typed_dovetail_report(language: &LanguageDef) -> TokenStr
 
                 let mut __derivations = Vec::new();
                 let mut __completeness = ::dovetail::extract::ExtractionCompleteness::Complete;
+                // One extractor reused across ALL roots. `funded_best` lazily computes the
+                // per-class inside weights (`wta::compute_inside_closed` = acyclic fixpoint +
+                // Tarjan SCC + Newton closure) ONCE into `self.inside` and memoizes the per-class
+                // best derivation; a fresh extractor per root re-ran that whole O(classes)
+                // computation `roots` times, discarding the memo — the dominant report-path cost
+                // when cross-category numeric ambiguity yields many equivalent roots. Correctness
+                // is preserved: the inside weights are a property of the immutable, post-saturation
+                // e-graph (identical for every root), `funded_best(root)` still returns THAT root's
+                // own funded-best derivation, and the cumulative cycle-cut completeness aggregates
+                // to the same final verdict the per-root `BoundedByCycleCut` check produced.
+                let mut extractor = ::dovetail::extract::Extractor::new(&eg, __weigh);
                 for __root in __roots {
-                    let mut extractor = ::dovetail::extract::Extractor::new(&eg, __weigh);
                     let __extracted = extractor.funded_best(eg.find(__root));
                     if __extracted.completeness
                         == ::dovetail::extract::ExtractionCompleteness::BoundedByCycleCut
