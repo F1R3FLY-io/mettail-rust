@@ -711,3 +711,81 @@ mod replay_property {
         }
     }
 }
+
+/// Stage 1 M1 — the executable oracle for obligation (i): the in-Rho match set equals
+/// the positional matching relation. For a random single linear App pattern
+/// `op(x_0,…,x_{k-1})` and a nullary-leaf subject `op(l_0,…,l_{k-1})`, the compiled
+/// automaton matched ON the interpreter must bind σ = `[⟦l_0⟧,…,⟦l_{k-1}⟧]` — the
+/// positional σ. This generalizes the fixed-shape `m1_matches_swap` / ternary examples
+/// across random constructors and arities 1..3, the property-based floor under the
+/// forthcoming `InRhoMatchPositional` Rocq theorem.
+mod in_rho_match_property {
+    use super::*;
+    use proptest::prelude::*;
+
+    fn observation_key(value: &RuntimeObservationValue) -> String {
+        match value {
+            RuntimeObservationValue::Term { constructor, .. } => constructor.clone(),
+            _ => "?".to_string(),
+        }
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig { cases: 24, ..ProptestConfig::default() })]
+
+        #[test]
+        fn in_rho_match_binds_the_positional_sigma_for_random_linear_patterns(
+            op in "[A-Z][a-z]{1,4}",
+            leaves in prop::collection::vec("[A-Z][a-z]{0,3}", 1..4),
+        ) {
+            mettail_runtime::clear_var_cache();
+            let (_backend, fingerprint) = swap_demo_backend();
+            let arity = leaves.len();
+
+            // The pattern op(x_0,…,x_{k-1}) with distinct linear variables.
+            let pattern_args: Vec<Pattern<String>> =
+                (0..arity).map(|i| Pattern::var(format!("x{i}"))).collect();
+            let automaton = SetAutomaton::compile_structural([(
+                PatternId(0),
+                Pattern::app(op.clone(), pattern_args),
+            )])
+            .expect("a linear App pattern compiles");
+            let network = automaton_receiver_network_par(
+                &automaton.view(),
+                "site0",
+                "MATCH",
+                "OUT",
+                &fingerprint,
+            )
+            .expect("the automaton serializes");
+
+            // The subject op(l_0,…,l_{k-1}) with nullary leaves.
+            let subject_children: Vec<GroundTerm> =
+                leaves.iter().map(|l| GroundTerm::new(l, Vec::new())).collect();
+            let subject =
+                spread_term_par(&GroundTerm::new(&op, subject_children), &fingerprint, "site0");
+
+            let echo = sigma_echo_receiver("MATCH", arity);
+            let program = echo.append(network).append(subject);
+
+            let runtime =
+                tokio::runtime::Runtime::new().expect("tokio runtime for the match property");
+            let mut observed = runtime
+                .block_on(run_normalized_par_for_oracle_and_read_runtime_values(&program, "OUT"))
+                .expect("the in-Rho match must execute");
+
+            // The echo's parallel sends land on OUT in nondeterministic order; compare as
+            // a multiset by constructor label.
+            observed.sort_by_key(observation_key);
+            let mut expected: Vec<RuntimeObservationValue> = leaves
+                .iter()
+                .map(|l| RuntimeObservationValue::Term {
+                    constructor: l.clone(),
+                    children: Vec::new(),
+                })
+                .collect();
+            expected.sort_by_key(observation_key);
+            prop_assert_eq!(observed, expected);
+        }
+    }
+}
