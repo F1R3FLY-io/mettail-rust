@@ -476,7 +476,7 @@ pub fn generate_rho_net_invocation(language: &LanguageDef) -> TokenStream {
                     #language_lit, status,
                 )
             })?;
-            let _ = (term, out_channel);
+            let _ = (term, out_channel, firing_index);
             ::core::result::Result::Err(::std::format!(
                 "language {} has no Rho-net σ-receiver injection sites",
                 #language_lit,
@@ -534,14 +534,19 @@ pub fn generate_rho_net_invocation(language: &LanguageDef) -> TokenStream {
                 )
             })?;
 
-            // MVP: the first (single) rewrite firing. A term with no firing has
-            // nothing to inject.
-            let __justification = report.rewrite_justifications.first().ok_or_else(|| {
-                ::std::format!(
-                    "Rho-net injection for language {} has no rewrite justification to fire",
-                    #language_lit,
-                )
-            })?;
+            // The rewrite firing at `firing_index` in the report's ordered
+            // justification list. Stage 0 multi-firing: the replay driver fires
+            // each firing as its own atomic COMM (distinct out channel per firing).
+            // An out-of-range index has nothing to inject there.
+            let __justification = report
+                .rewrite_justifications
+                .get(firing_index)
+                .ok_or_else(|| {
+                    ::std::format!(
+                        "Rho-net injection for language {} has no rewrite justification at firing index {}",
+                        #language_lit, firing_index,
+                    )
+                })?;
 
             let (__channel, __var_order): (&str, &[&str]) =
                 match __justification.rule_label.as_str() {
@@ -588,17 +593,39 @@ pub fn generate_rho_net_invocation(language: &LanguageDef) -> TokenStream {
     quote! {
         #[cfg(feature = "rho-codegen")]
         impl #language_struct {
-            /// Build a Rho-net σ-injection from an already complete, shape-validated
-            /// Dovetail report: read the first rewrite firing's justification, reorder
-            /// its σ into the fired σ-receiver's first-occurrence LHS variable order,
-            /// reflect each matched sub-term to a ground `Par`, and assemble the
-            /// injection `call` the runtime runs against the installed σ-receiver
-            /// program (`installed_rho_net_program_par() ∥ call`).
+            /// Build a Rho-net σ-injection for the rewrite firing at `firing_index`
+            /// in an already complete, shape-validated Dovetail report: read that
+            /// firing's justification, reorder its σ into the fired σ-receiver's
+            /// first-occurrence LHS variable order, reflect each matched sub-term to
+            /// a ground `Par`, and assemble the injection `call` the runtime runs
+            /// against the installed σ-receiver program
+            /// (`installed_rho_net_program_par() ∥ call`).
             ///
-            /// Rho-net analogue of
-            /// [`Self::rho_fold_dataflow_invocation_from_dovetail_to`]; returns codegen
-            /// types (`RhoNetInjectionInvocation`) so the language crate takes no Rho
+            /// Stage 0 multi-firing surface: the replay driver
+            /// (`run_rho_net_replay_report`) calls this once per firing in
+            /// `report.rewrite_justifications`, each with its own out channel, so a
+            /// multi-redex term replays every firing as its own atomic COMM. The
+            /// single-firing [`Self::rho_net_invocation_from_dovetail_to`] delegates
+            /// here with `firing_index = 0`. Returns codegen types
+            /// (`RhoNetInjectionInvocation`) so the language crate takes no Rho
             /// runtime dependency.
+            pub fn rho_net_invocation_from_dovetail_to_firing(
+                term: &dyn mettail_runtime::Term,
+                report: &mettail_runtime::RuntimeDovetailRunReport,
+                out_channel: impl ::core::convert::AsRef<str>,
+                firing_index: usize,
+            ) -> ::core::result::Result<
+                ::mettail_rholang_codegen::RhoNetInjectionInvocation,
+                ::std::string::String,
+            > {
+                #body
+            }
+
+            /// Build a Rho-net σ-injection from the FIRST rewrite firing of an
+            /// already complete, shape-validated Dovetail report — convenience over
+            /// [`Self::rho_net_invocation_from_dovetail_to_firing`] with
+            /// `firing_index = 0`. Rho-net analogue of
+            /// [`Self::rho_fold_dataflow_invocation_from_dovetail_to`].
             pub fn rho_net_invocation_from_dovetail_to(
                 term: &dyn mettail_runtime::Term,
                 report: &mettail_runtime::RuntimeDovetailRunReport,
@@ -607,7 +634,7 @@ pub fn generate_rho_net_invocation(language: &LanguageDef) -> TokenStream {
                 ::mettail_rholang_codegen::RhoNetInjectionInvocation,
                 ::std::string::String,
             > {
-                #body
+                Self::rho_net_invocation_from_dovetail_to_firing(term, report, out_channel, 0)
             }
 
             /// The RhoNet planning artifact for this generated language — its
