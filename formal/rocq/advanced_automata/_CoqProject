@@ -51,3 +51,11 @@ theories/InRhoMatchPositional.v
 # (x) compile-once / reuse determinism: the in-Rho verdict is a function of
 # (op, arity). Extends reuse_is_per_node_deterministic.
 theories/InRhoReuseDeterminism.v
+# In-Rho Phase B (Stage 1 M2) — channel-naming quotient + prune-preserves-work.
+# (viii) injective + coarsest-sound tc(K) = ⌜StateId trace⌝ (O3, R_op); @hd(K) too
+# coarse (hd_violates_O3), @K coincides with the quotient at depth-1. Reuses
+# m1_pattern / Pat.
+theories/TcChannelNamingQuotient.v
+# (O2) prune-preserves-work: pruning below p adds no for-receive outside p. Reuses
+# positions / chan / chan_injective_on_positions from SymbolOnceInjective.
+theories/PrunePreservesWork.v
