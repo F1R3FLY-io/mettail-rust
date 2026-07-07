@@ -316,4 +316,45 @@ mod tests {
         assert_eq!(elist_boundvar(&send.data[1]), Some(0), "σ[y] = EList[BoundVar(0)]");
         assert_eq!(gstring(&send.data[2]), Some("OUT"), "out channel appended last");
     }
+
+    #[test]
+    fn serializes_a_ternary_pattern_with_the_arity_general_frame() {
+        // Triple(x, y, z): three nested Var fors; the accept's σ slots follow the
+        // general frame σ_i = EList[BoundVar(arity-1-i)] = EList[BoundVar(2-i)].
+        let automaton = SetAutomaton::compile_structural([(
+            PatternId(0),
+            Pattern::app(
+                "Triple".to_string(),
+                vec![Pattern::var("x"), Pattern::var("y"), Pattern::var("z")],
+            ),
+        )])
+        .expect("Triple(x, y, z) compiles");
+        let network =
+            automaton_receiver_network_par(&automaton.view(), "site0", "sa:acc", "OUT", "fp")
+                .expect("the ternary automaton serializes");
+
+        // Descend root for → Match → for x → for y → for z → accept.
+        let r_x = network.receives[0].body.as_ref().unwrap().matches[0].cases[0]
+            .source
+            .as_ref()
+            .unwrap();
+        assert_eq!(gstring(r_x.receives[0].binds[0].source.as_ref().unwrap()), Some("loc:site0/Triple.0"));
+        let r_y = r_x.receives[0].body.as_ref().unwrap();
+        assert_eq!(gstring(r_y.receives[0].binds[0].source.as_ref().unwrap()), Some("loc:site0/Triple.1"));
+        let r_z = r_y.receives[0].body.as_ref().unwrap();
+        assert_eq!(gstring(r_z.receives[0].binds[0].source.as_ref().unwrap()), Some("loc:site0/Triple.2"));
+        let accept = r_z.receives[0].body.as_ref().unwrap();
+
+        let send = &accept.sends[0];
+        assert_eq!(send.data.len(), 4, "σ_x, σ_y, σ_z, @out");
+        let elist_boundvar = |p: &Par| -> Option<i32> {
+            match p.exprs.first()?.expr_instance.as_ref()? {
+                ExprInstance::EListBody(l) => boundvar_index(&l.ps[0]),
+                _ => None,
+            }
+        };
+        assert_eq!(elist_boundvar(&send.data[0]), Some(2), "σ[x] = EList[BoundVar(2)]");
+        assert_eq!(elist_boundvar(&send.data[1]), Some(1), "σ[y] = EList[BoundVar(1)]");
+        assert_eq!(elist_boundvar(&send.data[2]), Some(0), "σ[z] = EList[BoundVar(0)]");
+    }
 }
