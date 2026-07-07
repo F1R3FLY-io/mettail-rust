@@ -1442,14 +1442,7 @@ fn generate_proptest_blocks(language: &LanguageDef, out: &mut String) {
         out.push_str(&format!(
             "    #[test]\n\
              \x20   fn {cat_lower}_display_parse_roundtrip(term in arb_{cat_lower}(3)) {{\n\
-             \x20       // GRIND diagnostic (gated on env GRIND_DIAG): print the AST and its\n\
-             \x20       // display + time the parse, so slow / unparseable shapes surface\n\
-             \x20       // directly (the generated test file is regenerated on every build,\n\
-             \x20       // so this diagnostic lives in the emitter — macros/.../strategies.rs).\n\
-             \x20       let __grind_diag = std::env::var(\"GRIND_DIAG\").is_ok();\n\
-             \x20       if __grind_diag {{ eprintln!(\"GRIND-{cat}-GEN ast={{:?}}\", term); }}\n\
              \x20       let displayed = format!(\"{{}}\", term);\n\
-             \x20       if __grind_diag {{ eprintln!(\"GRIND-{cat}-DISP disp={{:?}}\", displayed); }}\n\
              \x20       // Skip terms whose display is too long (parser may overflow)\n\
              \x20       if displayed.len() > 500 {{\n\
              \x20           return Ok(());\n\
@@ -1463,12 +1456,10 @@ fn generate_proptest_blocks(language: &LanguageDef, out: &mut String) {
              \x20       // Canonical-form idempotence:\n\
              \x20       //   Parse(Display(Parse(s))) ≡ Parse(s) for any s that\n\
              \x20       //   the generator emits.\n\
-             \x20       let __grind_t0 = std::time::Instant::now();\n\
              \x20       let parsed = {cat}::parse(&displayed)\n\
              \x20           .unwrap_or_else(|e| panic!(\n\
              \x20               \"arb_{cat_lower} produced unparseable surface term {{:?}}: {{:?}}\",\n\
              \x20               displayed, e));\n\
-             \x20       if __grind_diag {{ eprintln!(\"GRIND-{cat}-PARSE-OK elapsed={{:?}} disp={{:?}}\", __grind_t0.elapsed(), displayed); }}\n\
              \x20       let canonical = format!(\"{{}}\", parsed);\n\
              \x20       if canonical.len() > 500 {{ return Ok(()); }}\n\
              \x20       let reparsed = {cat}::parse(&canonical).unwrap_or_else(|e| panic!(\n\
@@ -1555,9 +1546,7 @@ fn generate_proptest_blocks(language: &LanguageDef, out: &mut String) {
             "    #[test]\n\
              \x20   fn {cat_lower}_parse_determinism(term in arb_{cat_lower}(2)) {{\n\
              \x20       mettail_runtime::clear_var_cache();\n\
-             \x20       let __grind_diag = std::env::var(\"GRIND_DIAG\").is_ok();\n\
              \x20       let displayed = format!(\"{{}}\", term);\n\
-             \x20       if __grind_diag {{ eprintln!(\"GRIND-{cat}-DET-DISP ast={{:?}} disp={{:?}}\", term, displayed); }}\n\
              \x20       // Skip terms whose display is too long (parser may overflow)\n\
              \x20       if displayed.len() > 500 {{\n\
              \x20           return Ok(());\n\

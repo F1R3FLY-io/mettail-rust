@@ -767,80 +767,6 @@ pub struct WalkerStats {
     pub p5_eoi_cursors_examined: u64,
     pub p5_eoi_dead_cursors: u64,
 
-    // ── GSS node-identity coarsening SHADOW (Plan a0ddad66, Stage 0) ──────
-    //    Measure-only; the REAL merge/subsume bucketing is UNTOUCHED. These
-    //    count what the frontier WOULD collapse to under the coarsened
-    //    ConfigKey axis (node→node_class, incoming_edge→edge_merge_key),
-    //    keeping every other field (incl. the full incoming_edge_stack +
-    //    sppf_stack handles) — the FAITHFUL "node-coarsening alone"
-    //    simulation the design's S0-G2 crux demands. Gated by
-    //    `PRATTAIL_COARSEN_SHADOW=1` (env) at the merge tier.
-    /// Peak distinct COARSE ConfigKey buckets at `merge_equivalent_cursors`
-    /// entry (Site-2 tier simulation). Compare against
-    /// `branch_cursors_peak_pre_merge`: linear-in-chain-length ⇒ the
-    /// coarsening collapses the frontier (S0-G2 PASS); super-linear ⇒ the
-    /// obstruction is the edge-STACK divergence (S0-G2 HALT).
-    pub coarsen_shadow_peak_configkey: u64,
-    /// Peak distinct COARSE SubsumeConfigKey buckets (Site-3 tier
-    /// simulation) — the MISSED tier. Same interpretation.
-    pub coarsen_shadow_peak_subsume: u64,
-    /// Running sum of coarse ConfigKey bucket counts per merge call
-    /// (average = sum / merge_shadow_calls).
-    pub coarsen_shadow_configkey_sum: u64,
-    /// Number of merge-tier shadow evaluations (denominator for the average).
-    pub coarsen_shadow_calls: u64,
-    /// Baseline peak distinct STRICT ConfigKey buckets computed in the same
-    /// shadow pass (sanity: must equal the real post-merge frontier — proves
-    /// the shadow key mirrors the real key exactly before coarsening).
-    pub coarsen_shadow_peak_strict: u64,
-    /// S0-G4 pop-target soundness: count of would-NEWLY-merge cursor pairs
-    /// (same COARSE ConfigKey but DISTINCT strict node) observed. Paired with
-    /// `coarsen_shadow_pop_target_conflicts` below.
-    pub coarsen_shadow_newly_merged_pairs: u64,
-    /// S0-G4: of the would-newly-merge pairs, how many pop to a DIFFERENT
-    /// predecessor (distinct incoming_edge top edge_target). MUST be 0 —
-    /// any non-zero is the cycle-3 wrong-body condition, caught pre-build.
-    pub coarsen_shadow_pop_target_conflicts: u64,
-    /// S0-G6 U_i: count of would-newly-merge pairs whose ProjDescriptorKey
-    /// (with coarse gss_node but retained cat_src/sppf_stack/pos/cur_bp)
-    /// would COLLIDE — i.e. a descriptor that runs once today would be
-    /// wrongly suppressed / run twice under coarsening. Reported for audit.
-    pub coarsen_shadow_projdesc_collisions: u64,
-    /// S0-G6 U_i: of those, how many are BENIGN (the two cursors are at
-    /// genuinely the same (pos, sppf_stack, cur_bp) so a shared descriptor is
-    /// correct). `collisions - benign` = the residual risk.
-    pub coarsen_shadow_projdesc_benign: u64,
-    /// S0-G2 OBSTRUCTION-NAMING (the DECISIVE bisection). Peak distinct
-    /// buckets under a DEEPER coarse key that ALSO projects the full
-    /// incoming_edge_STACK element-wise via `edge_merge_key` (keeping the
-    /// sppf_stack handle). If this collapses to linear while
-    /// `coarsen_shadow_peak_configkey` does NOT, the obstruction is EXACTLY
-    /// the edge-stack divergence (as the design's honest crux predicts).
-    pub coarsen_shadow_peak_deep_edge: u64,
-    /// S0-G2 OBSTRUCTION-NAMING. Peak distinct buckets under the DEEPEST
-    /// coarse key that projects BOTH the full edge-stack AND the full
-    /// sppf-stack element-wise (edge via `edge_merge_key`, sppf via its
-    /// Symbol non_terminal_tag). If even THIS stays super-linear, the
-    /// obstruction is deeper than the edge/sppf stacks.
-    pub coarsen_shadow_peak_deep_edge_sppf: u64,
-    /// S0-G2 AXIS-BISECTION (which remaining axis carries the explosion).
-    /// deep_edge_sppf key with the `sppf_stack` axis ADDITIONALLY DROPPED
-    /// (set to a constant). If this linearizes, the sppf-stack IS the carrier.
-    pub coarsen_shadow_peak_drop_sppf: u64,
-    /// deep_edge_sppf key with `cohort_origin` DROPPED.
-    pub coarsen_shadow_peak_drop_cohort: u64,
-    /// deep_edge_sppf key with `state` collapsed to its `wpda_state_class`
-    /// discriminant only (drops per-state payloads like cur_bp).
-    pub coarsen_shadow_peak_drop_statepayload: u64,
-    /// deep_edge_sppf key with the lex-provenance axes
-    /// (lex_alt_idx/weight_src/weight_rule/lex_fork_stamp) DROPPED.
-    pub coarsen_shadow_peak_drop_lexprov: u64,
-    /// deep_edge_sppf with ALL of the above dropped simultaneously (the
-    /// floor: node_class + edge-stack-proj + pos + collection_depth only).
-    /// If THIS is still super-linear, the carrier is `pos`/`collection_depth`
-    /// or the edge-stack projection is itself derivation-carrying.
-    pub coarsen_shadow_peak_floor: u64,
-
     // ─── BCC shadow (Batched Cross-cat delegate + Continuation-descriptor ───
     //     sharing, Plan afde9c48, Stage 0). Gated PRATTAIL_BCC_SHADOW=1.
     //     Distinct from the node-coarsening COARSEN-SHADOW above: BCC models the
@@ -963,66 +889,6 @@ pub struct WalkerStats {
     /// crosscat_count-key soundness denominator: co-located pairs whose concrete
     /// pop-targets AGREE (a sound share).
     pub dw_count_agreements: u64,
-}
-
-/// D&C `.*sep` reconvergence Stage-0 (ROOT-P `<-` linearization, Plan ad4b660e,
-/// session da0842dc, 2026-07-05) — MEASURE-ONLY isolation-peak sink.
-///
-/// Unlike the BCC/DW shadows (which fold a merge-key PROJECTION of the *monolithic*
-/// frontier and were all refuted), the D&C Stage-0 measures a GENUINELY NEW quantity:
-/// the cost of parsing each `.*sep` segment in a TRULY ISOLATED sub-parse (its own
-/// `WpdaWalker::new_for_category`, edge-stack from `EDGE_STACK_ID_ROOT`, no
-/// accumulation possible). Each top-level parse (facade → `resolve_at_end_of_input`)
-/// pushes its final `branch_cursors_peak_pre_merge` here so a throwaway probe can
-/// read the per-segment ISOLATED sub-parse peaks (S0-A) and their composite Σ (S0-B)
-/// WITHOUT parsing stderr.
-///
-/// Byte-identical when `PRATTAIL_DC_SHADOW` is unset (the push is behind the env
-/// check) and zero-cost in non-`walker-stats` builds (the whole module is
-/// cfg-gated). Gated `PRATTAIL_DC_SHADOW=1`.
-#[cfg(feature = "walker-stats")]
-pub mod dc_shadow {
-    use std::sync::Mutex;
-
-    /// Process-global FIFO of per-top-level-parse peaks. `const fn Mutex::new`
-    /// (stable ≥1.63) permits a plain `static`; tests drive parses serially so a
-    /// single mutex is contention-free and order-preserving.
-    static DC_PEAK_SINK: Mutex<Vec<u64>> = Mutex::new(Vec::new());
-
-    /// True iff `PRATTAIL_DC_SHADOW=1`. Cached-per-call (cheap `var_os`); the sink
-    /// is only ever touched by the Stage-0 probe, never on the production hot path.
-    pub fn dc_shadow_enabled() -> bool {
-        std::env::var_os("PRATTAIL_DC_SHADOW")
-            .map(|v| v == "1")
-            .unwrap_or(false)
-    }
-
-    /// Record one top-level parse's `branch_cursors_peak_pre_merge`. No-op unless
-    /// `PRATTAIL_DC_SHADOW=1` (byte-identical OFF). Called from
-    /// `resolve_at_end_of_input` — once per top-level facade parse.
-    pub fn record_peak(peak: u64) {
-        if dc_shadow_enabled() {
-            if let Ok(mut sink) = DC_PEAK_SINK.lock() {
-                sink.push(peak);
-            }
-        }
-    }
-
-    /// Drain and return every recorded peak in order (the probe reads these after
-    /// each measurement window, then the sink is empty again).
-    pub fn drain_peaks() -> Vec<u64> {
-        DC_PEAK_SINK
-            .lock()
-            .map(|mut sink| std::mem::take(&mut *sink))
-            .unwrap_or_default()
-    }
-
-    /// Reset the sink (the probe clears before opening a measurement window).
-    pub fn clear_peaks() {
-        if let Ok(mut sink) = DC_PEAK_SINK.lock() {
-            sink.clear();
-        }
-    }
 }
 
 /// Phase F.13 chain_10000 Lazy redesign L2 prep-2 (2026-05-27): bucket
@@ -1728,44 +1594,6 @@ impl fmt::Display for WalkerStats {
             self.branch_cursors_peak_post_merge,
             self.branch_cursors_sum,
         )?;
-        // GSS node-coarsening SHADOW (Plan a0ddad66, Stage 0) — prints only
-        // when PRATTAIL_COARSEN_SHADOW populated something.
-        if self.coarsen_shadow_calls > 0 {
-            let avg = self.coarsen_shadow_configkey_sum as f64
-                / self.coarsen_shadow_calls.max(1) as f64;
-            writeln!(
-                f,
-                "  COARSEN-SHADOW: peak_configkey={} peak_subsume={} peak_strict={} avg_configkey={:.2} calls={}",
-                self.coarsen_shadow_peak_configkey,
-                self.coarsen_shadow_peak_subsume,
-                self.coarsen_shadow_peak_strict,
-                avg,
-                self.coarsen_shadow_calls,
-            )?;
-            writeln!(
-                f,
-                "  COARSEN-SHADOW: newly_merged_pairs={} pop_target_CONFLICTS={} projdesc_collisions={} projdesc_benign={}",
-                self.coarsen_shadow_newly_merged_pairs,
-                self.coarsen_shadow_pop_target_conflicts,
-                self.coarsen_shadow_projdesc_collisions,
-                self.coarsen_shadow_projdesc_benign,
-            )?;
-            writeln!(
-                f,
-                "  COARSEN-SHADOW: peak_DEEP_edge={} peak_DEEP_edge_sppf={}  (obstruction bisection: if these linearize but peak_configkey does not, obstruction = edge/sppf STACK)",
-                self.coarsen_shadow_peak_deep_edge,
-                self.coarsen_shadow_peak_deep_edge_sppf,
-            )?;
-            writeln!(
-                f,
-                "  COARSEN-SHADOW AXIS-BISECT (from deepest, drop ONE axis): drop_sppf={} drop_cohort={} drop_statepayload={} drop_lexprov={} FLOOR={}",
-                self.coarsen_shadow_peak_drop_sppf,
-                self.coarsen_shadow_peak_drop_cohort,
-                self.coarsen_shadow_peak_drop_statepayload,
-                self.coarsen_shadow_peak_drop_lexprov,
-                self.coarsen_shadow_peak_floor,
-            )?;
-        }
         // BCC SHADOW (Plan afde9c48, Stage 0 — the DECISIVE S0-G-LINEAR + the
         // gravest S0-G-Cont). Prints only when PRATTAIL_BCC_SHADOW populated it.
         if self.bcc_shadow_calls > 0 {
