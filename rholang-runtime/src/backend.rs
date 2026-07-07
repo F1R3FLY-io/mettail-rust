@@ -438,6 +438,46 @@ impl PlannedRhoBackend {
                 .await?;
         Ok(RhoObservationReport::planned(self.artifact_kind(), out_channel, values))
     }
+
+    /// Stage 0 multi-firing replay: install the Rho-net σ-receiver program ONCE,
+    /// then run it composed with each firing's σ-injection `call` (each on its own
+    /// out channel) and collect every firing's observed closed Rho ground values
+    /// into one report.
+    ///
+    /// Each firing is an independent atomic COMM against the installed σ-receivers
+    /// — the host Dovetail report already computed every firing's σ, so a
+    /// multi-redex reduction replays as one `c(ℓ)` COMM per redex, and the whole
+    /// reduction's non-semantic-predicate rewrites all execute as COMMs. The
+    /// combined report's `out_channel` records the per-firing channels (joined),
+    /// and its values are every firing's observed `⟦R⟧σ` in firing order.
+    ///
+    /// Fail-closed BEFORE any Rho reduction (`installed_rho_net_program_par`): an
+    /// unsupported lowering surfaces at the install boundary, never as a silent
+    /// runtime no-op.
+    #[cfg(feature = "runtime-report")]
+    pub async fn run_rho_net_replay_and_observe_runtime_values(
+        &self,
+        firings: &[(Par, String)],
+    ) -> Result<RhoObservationReport<RuntimeObservationValue>, String> {
+        let installed = self
+            .plan()
+            .installed_rho_net_program_par()
+            .map_err(|err| err.to_string())?;
+        let mut values = Vec::new();
+        let mut out_channels = Vec::with_capacity(firings.len());
+        for (call, out_channel) in firings {
+            let firing_values = run_installed_program_with_call_and_read_runtime_values(
+                &installed,
+                call,
+                out_channel,
+            )
+            .await?;
+            values.extend(firing_values);
+            out_channels.push(out_channel.as_str());
+        }
+        let combined_out = out_channels.join(",");
+        Ok(RhoObservationReport::planned(self.artifact_kind(), &combined_out, values))
+    }
 }
 
 /// Executable M-RHO.2 call-by-need thunk selected by the need planner.
@@ -573,6 +613,18 @@ pub enum RhoMachineInvocation {
     /// `installed_rho_net_program_par()` so a Dovetail-report-derived σ injection
     /// actually fires its receiver and lands the reflected RHS on the out channel.
     RunRhoNetWithCallAndObserveRuntimeValues { call: Par, out_channel: String },
+    /// Stage 0 multi-firing replay: run this backend's INSTALLED Rho-net program
+    /// (`installed_rho_net_program_par`) once per rewrite firing, each composed
+    /// with that firing's σ-injection `call` on its own out channel, and collect
+    /// every firing's observed closed Rho ground values.
+    ///
+    /// A multi-redex term's Dovetail report yields one firing per redex; the
+    /// replay driver fires each as its own atomic COMM against the same installed
+    /// σ-receiver program (the host report already computed every firing's σ), so
+    /// the whole reduction's rewrites all execute as `c(ℓ)` COMMs. Each element is
+    /// `(call, out_channel)` from
+    /// `<Lang>::rho_net_invocation_from_dovetail_to_firing`.
+    RunRhoNetReplayAndObserveRuntimeValues { firings: Vec<(Par, String)> },
     /// Run a generated-language call-by-need thunk plan and report the
     /// spec-named value/evaluation channels.
     RunCallByNeedThunk { plan: Box<CallByNeedThunkPlan> },
@@ -848,7 +900,8 @@ impl RhoMachineInvocation {
             | RhoMachineInvocation::RunRhoNetWithCallAndObserveRuntimeValues { out_channel, .. } => {
                 Some(out_channel)
             },
-            RhoMachineInvocation::RunCallByNeedThunk { .. } => None,
+            RhoMachineInvocation::RunRhoNetReplayAndObserveRuntimeValues { .. }
+            | RhoMachineInvocation::RunCallByNeedThunk { .. } => None,
         }
     }
 
@@ -918,6 +971,17 @@ impl RhoMachineInvocation {
                     .try_into_runtime_backend_report()
                     .map_err(|err| {
                         format!("failed to convert Rho runtime value observation report: {err:?}")
+                    })
+            },
+            RhoMachineInvocation::RunRhoNetReplayAndObserveRuntimeValues { firings } => {
+                // Stage 0 multi-firing replay: install the σ-receiver program once
+                // and fire every firing as its own atomic COMM against it.
+                backend
+                    .run_rho_net_replay_and_observe_runtime_values(&firings)
+                    .await?
+                    .try_into_runtime_backend_report()
+                    .map_err(|err| {
+                        format!("failed to convert Rho runtime value replay report: {err:?}")
                     })
             },
             RhoMachineInvocation::RunCallByNeedThunk { plan } => {

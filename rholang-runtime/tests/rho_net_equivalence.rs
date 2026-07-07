@@ -191,6 +191,89 @@ async fn dovetail_report_semantics_match_rho_machine_execution_for_swap() {
     );
 }
 
+/// Stage 0 multi-firing replay: a multi-redex term (`Pair(Swap(A, B), Swap(B, A))`)
+/// yields TWO distinct base-rewrite firings in one Dovetail report, and the replay
+/// driver fires each as its own atomic COMM against the same installed σ-receiver
+/// program, observing both `⟦R⟧σ`. This generalizes the single-firing bridge above:
+/// every non-semantic-predicate rewrite of a multi-step reduction executes as a
+/// `c(ℓ)` COMM on the Rho machine.
+#[tokio::test]
+async fn multi_firing_replay_fires_each_redex_as_its_own_comm() {
+    mettail_runtime::clear_var_cache();
+    let (backend, _fingerprint) = swap_demo_backend();
+
+    // Two DISTINCT redexes — structurally-equal Swaps would hash-cons to one
+    // e-class and fire once, so use `Swap(A, B)` and `Swap(B, A)`.
+    let term = SwapDemoTerm(Proc::Pair(
+        Arc::new(Proc::Swap(Arc::new(Proc::A), Arc::new(Proc::B))),
+        Arc::new(Proc::Swap(Arc::new(Proc::B), Arc::new(Proc::A))),
+    ));
+
+    let report = SwapDemoLanguage::dovetail_report_for(&term, 64, 1_000_000)
+        .expect("SwapDemo multi-redex Dovetail report must compile");
+    assert!(report.is_complete(), "the acyclic multi-redex reduction must report Complete");
+    assert_eq!(
+        report.rewrite_justifications.len(),
+        2,
+        "Pair(Swap(A,B), Swap(B,A)) fires two distinct SwapSteps, got {:?}",
+        report.rewrite_justifications
+    );
+
+    // One σ-injection per firing (distinct out channel each), plus the report-derived
+    // expected `RHS(SwapStep) = Pair(σ[y], σ[x])` for that firing's own σ.
+    let mut firings = Vec::new();
+    let mut expected = Vec::new();
+    for i in 0..report.rewrite_justifications.len() {
+        let out = format!("OUT{i}");
+        let invocation =
+            SwapDemoLanguage::rho_net_invocation_from_dovetail_to_firing(&term, &report, &out, i)
+                .expect("per-firing σ-injection must assemble from the complete report");
+        assert_eq!(invocation.out_channel, out, "each firing keeps its own out channel");
+        let sigma: HashMap<&str, &RuntimeReflectedSubterm> = report.rewrite_justifications[i]
+            .sigma
+            .iter()
+            .map(|(name, subterm)| (name.as_str(), subterm))
+            .collect();
+        expected.push(RuntimeObservationValue::Term {
+            constructor: "Pair".to_string(),
+            children: vec![
+                reflected_to_observation(sigma["y"]),
+                reflected_to_observation(sigma["x"]),
+            ],
+        });
+        firings.push((invocation.call, invocation.out_channel));
+    }
+
+    // Replay: install the σ-receiver program ONCE, fire each firing as its own atomic
+    // COMM, and observe every firing's `⟦R⟧σ` in firing order.
+    let observation = backend
+        .run_rho_net_replay_and_observe_runtime_values(&firings)
+        .await
+        .expect("the multi-firing replay must execute on the Rho runtime");
+
+    assert_eq!(
+        observation.observed_count(),
+        2,
+        "each firing lands exactly one value on its out channel — both must fire (got {:?})",
+        observation.values
+    );
+    assert_eq!(
+        observation.values, expected,
+        "each replayed firing must land Pair(σ[y], σ[x]) for its own σ, in firing order"
+    );
+
+    // Concretely: Swap(A,B) → Pair(B,A) and Swap(B,A) → Pair(A,B), non-vacuous.
+    let pair = |a: &str, b: &str| RuntimeObservationValue::Term {
+        constructor: "Pair".to_string(),
+        children: vec![
+            RuntimeObservationValue::Term { constructor: a.to_string(), children: Vec::new() },
+            RuntimeObservationValue::Term { constructor: b.to_string(), children: Vec::new() },
+        ],
+    };
+    assert!(observation.values.contains(&pair("B", "A")), "Swap(A,B) replayed to Pair(B,A)");
+    assert!(observation.values.contains(&pair("A", "B")), "Swap(B,A) replayed to Pair(A,B)");
+}
+
 #[tokio::test]
 async fn injection_fails_closed_when_no_rewrite_fires() {
     mettail_runtime::clear_var_cache();
@@ -212,7 +295,7 @@ async fn injection_fails_closed_when_no_rewrite_fires() {
     let error = SwapDemoLanguage::rho_net_invocation_from_dovetail_to(&term, &report, "OUT")
         .expect_err("with no firing the injection must fail closed");
     assert!(
-        error.contains("no rewrite justification to fire"),
+        error.contains("no rewrite justification at firing index"),
         "the fail-closed error must name the missing justification, got: {error}"
     );
 }
