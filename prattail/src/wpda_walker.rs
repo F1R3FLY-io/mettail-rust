@@ -6607,25 +6607,6 @@ where
                 // the EARLY-STOP fired. Log walker pos/state + the live
                 // frontier's (pos, eoi?) so we can see if a PREFIX accept
                 // (pos<eof) prematurely halts the run before IntBinProc@EOF.
-                if trace_actions_enabled() {
-                    let __frontier: Vec<(usize, bool)> = self
-                        .branch_cursors
-                        .iter()
-                        .filter_map(|f| match f {
-                            crate::cohort_lazy::Frame::Concrete(c) => {
-                                Some((c.pos, self.is_logical_eoi(c.pos, tokens)))
-                            },
-                            _ => None,
-                        })
-                        .collect();
-                    eprintln!(
-                        "[wpds-action] EARLY-STOP-A walker_pos={} det={} state={:?} frontier(pos,eoi)={:?}",
-                        self.pos,
-                        self.deterministic,
-                        std::mem::discriminant(&self.state),
-                        __frontier
-                    );
-                }
                 return Ok(());
             }
             if matches!(self.state, WpdaState::AmbiguityFanout { .. }) {
@@ -6633,22 +6614,6 @@ where
                     if stop_when_accepting
                         && self.live_frontier_has_demand_resolvable_accept(tokens)
                     {
-                        if trace_actions_enabled() {
-                            let __frontier: Vec<(usize, bool)> = self
-                                .branch_cursors
-                                .iter()
-                                .filter_map(|f| match f {
-                                    crate::cohort_lazy::Frame::Concrete(c) => {
-                                        Some((c.pos, self.is_logical_eoi(c.pos, tokens)))
-                                    },
-                                    _ => None,
-                                })
-                                .collect();
-                            eprintln!(
-                                "[wpds-action] EARLY-STOP-B walker_pos={} det={} frontier(pos,eoi)={:?}",
-                                self.pos, self.deterministic, __frontier
-                            );
-                        }
                         return Ok(());
                     }
                     match self.revive_orphaned_cohort_members_once(tokens) {
@@ -7056,30 +7021,6 @@ where
         // cursor — pos, inner_state, accepting?, logical_eoi?, sppf root + its
         // category — so we can see whether the full IntBinProc@EOF cursor even
         // reaches resolution (vs being dropped mid-walk by a keep-one merge).
-        if trace_actions_enabled() {
-            let __root = self.cursor_sppf_root(&cursor);
-            let __rcat = if __root != crate::sppf::SPPF_ID_NONE {
-                self.sppf_symbol_category(__root)
-            } else {
-                None
-            };
-            let __accepting = self.is_accepting_config(&cursor, tokens);
-            eprintln!(
-                "[wpds-action] EOI-CAND pos={} inner_state={:?} eoi={} prefix={} accepting={} root={:?} root_cat={:?} node={:?}",
-                cursor.pos,
-                std::mem::discriminant(&cursor.inner_state),
-                at_logical_eoi,
-                prefix_trailing_pos,
-                __accepting,
-                __root,
-                __rcat,
-                self.gss.node(cursor.node).map(|n| (
-                    n.symbol.category_src_idx,
-                    n.symbol.rule_index_in_category,
-                    n.symbol.kind
-                )),
-            );
-        }
         snapshot.logical_count = snapshot.logical_count.saturating_add(1);
         snapshot.max_dead_pos = snapshot.max_dead_pos.max(cursor.pos);
         if !matches!(cursor.inner_state, WpdaState::Accepted)
@@ -9035,20 +8976,6 @@ where
                 continue;
             }
             // #307 ROOT-F diagnostics (2026-06-11): realize-side combo fire.
-            if trace_actions_enabled() && !collection_ids.is_empty() {
-                let item_dump: Vec<Vec<crate::sppf::SppfId>> = collection_ids
-                    .iter()
-                    .map(|id| {
-                        self.collection_items_for_action_children(&action_children, *id)
-                            .unwrap_or(&[])
-                            .to_vec()
-                    })
-                    .collect();
-                eprintln!(
-                    "[wpds-action] realize-fire rule={:#x} ids={:?} items={:?}",
-                    rule_idx, collection_ids, item_dump,
-                );
-            }
             // Push args one-by-one. The push semantics must match what
             // the walker's emit-helpers would have done so the action's
             // pop_args call shape is preserved.
@@ -12150,20 +12077,6 @@ where
                     // log projection-boundary suppression of a ConsumeAndPush so
                     // we can see WHICH cursor (its immediate edge + enclosing
                     // frame) loses its operator to the projection target.
-                    if trace_actions_enabled() {
-                        let __edge = self
-                            .incoming_edge_stack_arena
-                            .top(cursor.incoming_edge_stack_id)
-                            .and_then(|e| self.gss.edge_kind(e));
-                        eprintln!(
-                            "[wpds-action] PROJ-SUPPRESS-CAP pos={} src={} tgt={} sat={} edge={:?}",
-                            cursor.pos,
-                            boundary.source_src_idx,
-                            boundary.target_src_idx,
-                            satisfies_projection_target,
-                            __edge
-                        );
-                    }
                     return WpdaStepAction::Advance(WpdaState::Unwinding);
                 }
                 WpdaStepAction::Fork {
@@ -12292,20 +12205,6 @@ where
                         source_src_idx,
                         result_src_idx,
                     ) {
-                        if trace_actions_enabled() {
-                            let __edge = self
-                                .incoming_edge_stack_arena
-                                .top(cursor.incoming_edge_stack_id)
-                                .and_then(|e| self.gss.edge_kind(e));
-                            eprintln!(
-                                "[wpds-action] suppress category-changing infix source={} result={} pos={} evidence={:?} edge={:?}",
-                                source_src_idx,
-                                symbol.category_src_idx,
-                                cursor.pos,
-                                lhs_evidence,
-                                __edge
-                            );
-                        }
                         return WpdaStepAction::Advance(WpdaState::Unwinding);
                     }
                     if boundary_source == Some(source_src_idx) {
@@ -12416,17 +12315,7 @@ where
                 WpdaStepAction::Advance(WpdaState::Unwinding)
             },
             WpdaStepAction::Fork { mut branches, consume_trigger } => {
-                let before = branches.len();
                 branches.retain(|b| !Self::fork_branch_consumes_current_token(b));
-                if branches.len() != before && trace_actions_enabled() {
-                    eprintln!(
-                        "[wpds-action] COLLSEP-REFUTE-FORK pos={} sep={:?} kept={} removed={}",
-                        cursor.pos,
-                        sep,
-                        branches.len(),
-                        before - branches.len()
-                    );
-                }
                 if branches.is_empty() {
                     return WpdaStepAction::Advance(WpdaState::Unwinding);
                 }
@@ -12457,50 +12346,6 @@ where
         // (InputBindEmptyQuery, result_src=1 rule=1) slot-1 (ReplaceAndPush) →
         // slot-2 (Fork) progression is visible: does it step slot-1 then lose its
         // return-edge (no slot-2), or never step at all (dropped pre-step)?
-        if trace_actions_enabled() {
-            let st = match &cursor.inner_state {
-                WpdaState::BinderRule { rule_idx, result_src_idx, .. } => {
-                    format!("BinderRule(c{}:r{})", result_src_idx, rule_idx)
-                },
-                WpdaState::PrefixDispatch { cur_bp, .. } => format!("PrefixDispatch(bp{})", cur_bp),
-                WpdaState::Unwinding => "Unwinding".to_string(),
-                WpdaState::InfixLoop { cur_bp } => format!("InfixLoop(bp{})", cur_bp),
-                WpdaState::CrossCatDelegate { source_src_idx, inner_cur_bp } => {
-                    format!("CrossCatDelegate(s{},bp{})", source_src_idx, inner_cur_bp)
-                },
-                WpdaState::Error { .. } => "Error".to_string(),
-                other => format!("{:?}", std::mem::discriminant(other)),
-            };
-            let act = match &action {
-                WpdaStepAction::ConsumeAndPush { .. } => "ConsumeAndPush",
-                WpdaStepAction::ReplaceAndPush { .. } => "ReplaceAndPush",
-                WpdaStepAction::Pop { .. } => "Pop",
-                WpdaStepAction::Fork { .. } => "Fork",
-                other => {
-                    let _ = other;
-                    "other"
-                },
-            };
-            let edge = self
-                .incoming_edge_stack_arena
-                .top(cursor.incoming_edge_stack_id)
-                .and_then(|e| self.gss.edge_kind(e));
-            let node_sym = self
-                .gss
-                .node(cursor.node)
-                .map(|n| (n.symbol.category_src_idx, n.symbol.rule_index_in_category));
-            // DIAG (2026-07-01, gated; REMOVE after GROUP-A SPPF root-cause):
-            // surface the cursor's sppf_stack_id + its top sid + top cat, so we
-            // can see WHICH sppf_stack a resumed branch carries (Branch1 LONG
-            // should carry the raw Name cat3; if it carries the wrapped
-            // InputBind cat1 the shared-pop entangled the SPPF data).
-            let top_sid = self.sppf_stack_arena.top(cursor.sppf_stack_id);
-            let top_cat = top_sid.and_then(|s| self.sppf_symbol_category(s));
-            eprintln!(
-                "[wpds-action] STEP st={} node={:?} pos={} action={} edge={:?} sppf_stack={:?} top_sid={:?} top_cat={:?}",
-                st, node_sym, cursor.pos, act, edge, cursor.sppf_stack_id, top_sid, top_cat
-            );
-        }
         // EP-P5 (Stage D) ENTRY-GATE: increment BOTH per-cursor step counters
         // at the canonical apply_action entry (one per cursor-step, exactly
         // mirroring `apply_action_calls`). NON-cfg (the field rides every
@@ -14570,44 +14415,6 @@ where
                         .source_priority
                         .saturating_mul(branches_count)
                         .saturating_add(branch_idx as u32);
-                    // DIAG (2026-06-30, gated PRATTAIL_TRACE=actions; REMOVE after
-                    // GROUP-A root-cause): log every InputBind fork branch's target
-                    // symbol so Branch 1 (InputBindEmptyQuery rule_at(1,1,*)) progression
-                    // through the dispatch + per-slot forks is visible.
-                    // DIAG (2026-07-01, gated; REMOVE after GROUP-A SPPF root):
-                    // include the parent cursor's sppf_stack top so we can see
-                    // what the fork children will inherit. Fire for cat-1 forks
-                    // AND for any fork whose parent cursor's incoming edge is the
-                    // LONG rule's slot-2 resume (`PrefixRuleEntry{cat:1,rule:1,
-                    // item_pos:2}`) so we can see the InfixLoop-on-Name fork that
-                    // is losing the LONG-rule continuation.
-                    let __parent_inc = self
-                        .incoming_edge_stack_arena
-                        .top(cursor.incoming_edge_stack_id)
-                        .and_then(|e| self.gss.edge_kind(e));
-                    let __is_long_resume = matches!(
-                        __parent_inc,
-                        Some(crate::gss::EdgeKind::PrefixRuleEntry {
-                            cat_src: 1,
-                            rule_idx: 1,
-                            item_pos: 2,
-                        })
-                    );
-                    if trace_actions_enabled()
-                        && (branch.symbol.category_src_idx == 1 || __is_long_resume)
-                    {
-                        let __ts = self.sppf_stack_arena.top(cursor.sppf_stack_id);
-                        let __tc = __ts.and_then(|s| self.sppf_symbol_category(s));
-                        let __pn = self
-                            .gss
-                            .node(cursor.node)
-                            .map(|n| (n.symbol.category_src_idx, n.symbol.rule_index_in_category, n.symbol.kind));
-                        eprintln!(
-                            "[wpds-action] FORK-BRANCH idx={} symbol={:?} parent_node={:?} parent_inc={:?} parent_sppf_stack={:?} parent_top_sid={:?} parent_top_cat={:?} branch_state={:?}",
-                            branch_idx, branch.symbol, __pn, __parent_inc, cursor.sppf_stack_id, __ts, __tc,
-                            std::mem::discriminant(&branch.new_state)
-                        );
-                    }
                     // Stage 3.12 / Class A.i (2026-05-01): dispatch on
                     // branch.action_kind. `Push` is the existing path;
                     // `OptGroupAbsent` mirrors `apply_action::OptGroupAbsent`
@@ -21992,19 +21799,6 @@ where
     // arena post-commit, truncating/emptying collections belonging to other
     // (non-winner) derivations in an `Ambiguous([...])` result.
 
-    fn action_arg_trace_shape(arg: &ActionArg) -> &'static str {
-        match arg {
-            ActionArg::Token { .. } => "Token",
-            ActionArg::Ident { .. } => "Ident",
-            ActionArg::Term { type_name, .. } => *type_name,
-            ActionArg::BinderScope(_) => "BinderScope",
-            ActionArg::Collection { type_name, .. } => *type_name,
-            ActionArg::CollectionId(_) => "CollectionId",
-            ActionArg::Predicate(_) => "Predicate",
-            ActionArg::Optional(_) => "Optional",
-        }
-    }
-
     fn sppf_trace_summary(&self, sid: crate::sppf::SppfId) -> String {
         match self.sppf.node(sid) {
             Some(crate::sppf::SppfNode::Symbol { non_terminal_tag, lo_pos, hi_pos, .. }) => {
@@ -22096,36 +21890,16 @@ where
                 // HashMap lookup replaces the per-cursor Vec scan; the
                 // `cursor` parameter is unused for this arm.
                 let _ = cursor;
-                let trace_symbol = trace_actions_enabled();
                 if let Some(term) = self.sppf_symbol_terms.get(&sid) {
                     if !term
                         .output_cat
                         .is_some_and(|cat| cat as u32 != *non_terminal_tag)
                     {
-                        if trace_symbol {
-                            eprintln!(
-                                "[wpds-action] reconstruct symbol sid={} nt={} source=memo output_cat={:?}",
-                                sid, non_terminal_tag, term.output_cat
-                            );
-                        }
                         return Some(ActionArg::Term {
                             value: Arc::clone(&term.value),
                             type_name: "F3c2Reconstructed",
                         });
                     }
-                    if trace_symbol {
-                        eprintln!(
-                            "[wpds-action] reconstruct symbol sid={} nt={} memo-cat-mismatch output_cat={:?}",
-                            sid, non_terminal_tag, term.output_cat
-                        );
-                    }
-                } else if trace_symbol {
-                    eprintln!(
-                        "[wpds-action] reconstruct symbol sid={} nt={} source=witness packings={:?}",
-                        sid,
-                        non_terminal_tag,
-                        self.sppf.packings_of(sid)
-                    );
                 }
                 self.realize_symbol_term_witness(cursor, sid, visiting)
                     .and_then(|term| {
@@ -22133,20 +21907,8 @@ where
                             .output_cat
                             .is_some_and(|cat| cat as u32 != *non_terminal_tag)
                         {
-                            if trace_symbol {
-                                eprintln!(
-                                    "[wpds-action] reconstruct symbol sid={} nt={} witness-cat-mismatch output_cat={:?}",
-                                    sid, non_terminal_tag, term.output_cat
-                                );
-                            }
                             None
                         } else {
-                            if trace_symbol {
-                                eprintln!(
-                                    "[wpds-action] reconstruct symbol sid={} nt={} source=witness output_cat={:?}",
-                                    sid, non_terminal_tag, term.output_cat
-                                );
-                            }
                             Some(ActionArg::Term {
                                 value: term.value,
                                 type_name: "F3c2Witness",
@@ -22260,7 +22022,6 @@ where
         }
         let cat = (rule_idx >> 16) as u16;
         let local_rule_idx = (rule_idx & 0xFFFF) as u16;
-        let trace_this = trace_actions_enabled();
         let entry = self.engine.action_for(cat, local_rule_idx)?;
         let arity = entry.arity as usize;
         let action_children: Vec<crate::sppf::SppfId> = children
@@ -22271,17 +22032,6 @@ where
             })
             .collect();
         if action_children.len() != arity || entry.expected_input_cats.len() != arity {
-            if trace_this {
-                eprintln!(
-                    "[wpds-action] witness packing={} reject=arity cat={} rule={} action_children={} arity={} expected_len={}",
-                    packing_id,
-                    cat,
-                    local_rule_idx,
-                    action_children.len(),
-                    arity,
-                    entry.expected_input_cats.len()
-                );
-            }
             return None;
         }
         for (&sid, &expected_cat) in action_children.iter().zip(entry.expected_input_cats.iter()) {
@@ -22292,17 +22042,6 @@ where
                 Some(crate::sppf::SppfNode::Symbol { non_terminal_tag, .. })
                     if *non_terminal_tag == expected_cat as u32 => {},
                 _ => {
-                    if trace_this {
-                        eprintln!(
-                            "[wpds-action] witness packing={} reject=expected-cat cat={} rule={} sid={} expected={} node={}",
-                            packing_id,
-                            cat,
-                            local_rule_idx,
-                            sid,
-                            expected_cat,
-                            self.sppf_trace_summary(sid)
-                        );
-                    }
                     return None;
                 },
             }
@@ -22312,14 +22051,6 @@ where
             .map(|&sid| self.reconstruct_action_arg_inner(cursor, sid, visiting))
             .collect();
         let args = args?;
-        if trace_this {
-            let arg_shapes: Vec<&'static str> =
-                args.iter().map(Self::action_arg_trace_shape).collect();
-            eprintln!(
-                "[wpds-action] witness packing={} args cat={} rule={} shapes={:?}",
-                packing_id, cat, local_rule_idx, arg_shapes
-            );
-        }
 
         let mut sb = SemanticBuilder::new();
         let collection_ids = Self::collection_ids_in_args(&args);
@@ -22367,12 +22098,6 @@ where
         }
         let pre_len = sb.len();
         if pre_len < arity {
-            if trace_this {
-                eprintln!(
-                    "[wpds-action] witness packing={} reject=pre-underflow cat={} rule={} pre_len={} arity={}",
-                    packing_id, cat, local_rule_idx, pre_len, arity
-                );
-            }
             return None;
         }
         let pre_collection_len = sb.collection_stack_len();
@@ -22380,16 +22105,6 @@ where
         (entry.action_fn)(&mut sb, popped);
         let expected_len = pre_len.saturating_sub(arity).saturating_add(1);
         if sb.len() != expected_len {
-            if trace_this {
-                eprintln!(
-                    "[wpds-action] witness packing={} reject=post-len cat={} rule={} post_len={} expected={}",
-                    packing_id,
-                    cat,
-                    local_rule_idx,
-                    sb.len(),
-                    expected_len
-                );
-            }
             return None;
         }
         let output_cat = sb
@@ -22397,12 +22112,6 @@ where
             .and_then(|tn| self.engine.cat_of_type_name(tn));
         let drains_count = pre_collection_len.saturating_sub(sb.collection_stack_len());
         let value = sb.take_dyn_result()?;
-        if trace_this {
-            eprintln!(
-                "[wpds-action] witness packing={} success cat={} rule={} output_cat={:?}",
-                packing_id, cat, local_rule_idx, output_cat
-            );
-        }
         Some(SppfSymbolTerm { value, output_cat, drains_count })
     }
 
@@ -22479,9 +22188,8 @@ where
         &mut self,
         sid: crate::sppf::SppfId,
         expected_cat: u16,
-        cat_src_idx: u16,
-        local_rule_idx: u16,
-        trace_this_action: bool,
+        _cat_src_idx: u16,
+        _local_rule_idx: u16,
     ) -> Option<crate::sppf::SppfId> {
         if expected_cat == crate::wpda_runtime::ANY_CAT {
             return Some(sid);
@@ -22491,16 +22199,6 @@ where
                 *non_terminal_tag as u16
             },
             _ => {
-                if trace_this_action {
-                    eprintln!(
-                        "[wpds-action] transient reject cat={} rule={} reason=expected-cat sid={} expected={} node={}",
-                        cat_src_idx,
-                        local_rule_idx,
-                        sid,
-                        expected_cat,
-                        self.sppf_trace_summary(sid),
-                    );
-                }
                 return None;
             },
         };
@@ -22523,43 +22221,9 @@ where
             })
             .min_by_key(|(_, coercion_rule)| *coercion_rule);
         let Some((coercion_cat, coercion_rule)) = coercion else {
-            if trace_this_action {
-                eprintln!(
-                    "[wpds-action] transient reject cat={} rule={} reason=expected-cat sid={} expected={} node={}",
-                    cat_src_idx,
-                    local_rule_idx,
-                    sid,
-                    expected_cat,
-                    self.sppf_trace_summary(sid),
-                );
-            }
             return None;
         };
         let wrapped = self.intern_coercion_over_body(sid, coercion_cat, coercion_rule);
-        if trace_this_action {
-            match wrapped {
-                Some(wrapped_sid) => eprintln!(
-                    "[wpds-action] transient child coercion cat={} rule={} child={} produced={} expected={} via=({}, {}) wrapped={}",
-                    cat_src_idx,
-                    local_rule_idx,
-                    self.sppf_trace_summary(sid),
-                    produced_cat,
-                    expected_cat,
-                    coercion_cat,
-                    coercion_rule,
-                    self.sppf_trace_summary(wrapped_sid),
-                ),
-                None => eprintln!(
-                    "[wpds-action] transient reject cat={} rule={} reason=coercion-materialize sid={} expected={} via=({}, {})",
-                    cat_src_idx,
-                    local_rule_idx,
-                    sid,
-                    expected_cat,
-                    coercion_cat,
-                    coercion_rule,
-                ),
-            }
-        }
         wrapped
     }
 
@@ -22569,7 +22233,6 @@ where
         expected_input_cats: &[u16],
         cat_src_idx: u16,
         local_rule_idx: u16,
-        trace_this_action: bool,
     ) -> Option<Vec<crate::sppf::SppfId>> {
         let mut rewritten = Vec::with_capacity(children.len());
         let mut expected_idx = 0usize;
@@ -22579,14 +22242,6 @@ where
                 continue;
             }
             let Some(&expected_cat) = expected_input_cats.get(expected_idx) else {
-                if trace_this_action {
-                    eprintln!(
-                        "[wpds-action] transient reject cat={} rule={} reason=arity action_children>{}",
-                        cat_src_idx,
-                        local_rule_idx,
-                        expected_input_cats.len(),
-                    );
-                }
                 return None;
             };
             let rewritten_sid = self.coerce_action_child_for_expected_category(
@@ -22594,21 +22249,11 @@ where
                 expected_cat,
                 cat_src_idx,
                 local_rule_idx,
-                trace_this_action,
             )?;
             rewritten.push(rewritten_sid);
             expected_idx += 1;
         }
         if expected_idx != expected_input_cats.len() {
-            if trace_this_action {
-                eprintln!(
-                    "[wpds-action] transient reject cat={} rule={} reason=arity action_children={} expected={}",
-                    cat_src_idx,
-                    local_rule_idx,
-                    expected_idx,
-                    expected_input_cats.len(),
-                );
-            }
             return None;
         }
         Some(rewritten)
@@ -22722,14 +22367,12 @@ where
         let arity = entry.arity as usize;
         let action_fn = entry.action_fn;
         let expected_input_cats = entry.expected_input_cats;
-        let trace_this_action = trace_actions_enabled();
         let fire_children = if allow_child_coercions {
             self.coerce_children_for_expected_categories(
                 children,
                 expected_input_cats,
                 cat_src_idx,
                 local_rule_idx,
-                trace_this_action,
             )?
         } else {
             children.to_vec()
@@ -22738,13 +22381,6 @@ where
         // Filter TriggerTerminal children — same filter as
         // `realize_packing_call` (line 3739-3746). TriggerTerminals
         // contribute NO ActionArg to action_fn.
-        let action_children: Vec<crate::sppf::SppfId> = children
-            .iter()
-            .copied()
-            .filter(|&c| {
-                !matches!(self.sppf.node(c), Some(crate::sppf::SppfNode::TriggerTerminal { .. }))
-            })
-            .collect();
         let fire_action_children: Vec<crate::sppf::SppfId> = fire_children
             .iter()
             .copied()
@@ -22752,47 +22388,9 @@ where
                 !matches!(self.sppf.node(c), Some(crate::sppf::SppfNode::TriggerTerminal { .. }))
             })
             .collect();
-        if trace_this_action {
-            let child_summaries: Vec<String> = children
-                .iter()
-                .map(|&sid| self.sppf_trace_summary(sid))
-                .collect();
-            let action_child_summaries: Vec<String> = action_children
-                .iter()
-                .map(|&sid| self.sppf_trace_summary(sid))
-                .collect();
-            let fire_child_summaries: Vec<String> = fire_children
-                .iter()
-                .map(|&sid| self.sppf_trace_summary(sid))
-                .collect();
-            let fire_action_child_summaries: Vec<String> = fire_action_children
-                .iter()
-                .map(|&sid| self.sppf_trace_summary(sid))
-                .collect();
-            eprintln!(
-                "[wpds-action] transient start cat={} rule={} pos={} arity={} children={:?} action_children={:?} fire_children={:?} fire_action_children={:?}",
-                cat_src_idx,
-                local_rule_idx,
-                cursor.pos,
-                arity,
-                child_summaries,
-                action_child_summaries,
-                fire_child_summaries,
-                fire_action_child_summaries,
-            );
-        }
         if fire_action_children.len() != arity {
             // Arity mismatch — action would fail; mirror persistent
             // path's behavior by returning None.
-            if trace_this_action {
-                eprintln!(
-                    "[wpds-action] transient reject cat={} rule={} reason=arity action_children={} expected={}",
-                    cat_src_idx,
-                    local_rule_idx,
-                    fire_action_children.len(),
-                    arity,
-                );
-            }
             return None;
         }
         for (&sid, &expected_cat) in fire_action_children.iter().zip(expected_input_cats.iter()) {
@@ -22803,16 +22401,6 @@ where
                 Some(crate::sppf::SppfNode::Symbol { non_terminal_tag, .. })
                     if *non_terminal_tag == expected_cat as u32 => {},
                 _ => {
-                    if trace_this_action {
-                        eprintln!(
-                            "[wpds-action] transient reject cat={} rule={} reason=expected-cat sid={} expected={} node={}",
-                            cat_src_idx,
-                            local_rule_idx,
-                            sid,
-                            expected_cat,
-                            self.sppf_trace_summary(sid),
-                        );
-                    }
                     return None;
                 },
             }
@@ -22826,25 +22414,9 @@ where
         let args = match args {
             Some(args) => args,
             None => {
-                if trace_this_action {
-                    eprintln!(
-                        "[wpds-action] transient reject cat={} rule={} reason=reconstruct action_children={:?}",
-                        cat_src_idx,
-                        local_rule_idx,
-                        fire_action_children
-                    );
-                }
                 return None;
             },
         };
-        if trace_this_action {
-            let arg_shapes: Vec<&'static str> =
-                args.iter().map(Self::action_arg_trace_shape).collect();
-            eprintln!(
-                "[wpds-action] transient args cat={} rule={} shapes={:?}",
-                cat_src_idx, local_rule_idx, arg_shapes
-            );
-        }
 
         // Build transient SB. Pre-allocate collection slots for every
         // CollectionId reachable in the action args. CollectionId can be
@@ -22914,38 +22486,15 @@ where
         // Fire. Mirror fire_action_for_on_builder's pre/post check.
         let pre_len = sb.len();
         if pre_len < arity {
-            if trace_this_action {
-                eprintln!(
-                    "[wpds-action] transient reject cat={} rule={} reason=pre-underflow pre_len={} arity={}",
-                    cat_src_idx, local_rule_idx, pre_len, arity
-                );
-            }
             return None;
         }
         let pre_collection_len = sb.collection_stack_len();
         let pre_action_len = sb.len();
         let popped = sb.pop_args(arity);
-        if trace_this_action {
-            let popped_shapes: Vec<&'static str> =
-                popped.iter().map(Self::action_arg_trace_shape).collect();
-            eprintln!(
-                "[wpds-action] transient pop cat={} rule={} popped={:?}",
-                cat_src_idx, local_rule_idx, popped_shapes
-            );
-        }
         action_fn(&mut sb, popped);
         let expected_len = pre_action_len.saturating_sub(arity).saturating_add(1);
         if sb.len() != expected_len {
             // Action elided (cross-cat-incompatible arg). Return None.
-            if trace_this_action {
-                eprintln!(
-                    "[wpds-action] transient reject cat={} rule={} reason=post-len post_len={} expected={}",
-                    cat_src_idx,
-                    local_rule_idx,
-                    sb.len(),
-                    expected_len,
-                );
-            }
             return None;
         }
         let post_collection_len = sb.collection_stack_len();
@@ -22958,12 +22507,6 @@ where
         // builder.stack as an Arc<dyn Any>. Mirror semantic with
         // realize_packing_call line 3955+.
         let result_arc = sb.take_dyn_result()?;
-        if trace_this_action {
-            eprintln!(
-                "[wpds-action] transient success cat={} rule={} output_cat={:?} drains={}",
-                cat_src_idx, local_rule_idx, output_cat, drains_count
-            );
-        }
         Some((result_arc, output_cat, drains_count, fire_children))
     }
 
@@ -23228,13 +22771,11 @@ where
                 .is_some();
             if let Some(action_entry) = self.engine.action_for(cat_src_idx, local_rule_idx).copied()
             {
-                let trace_this_action = trace_actions_enabled();
                 if let Some(mut reuse_children) = self.coerce_children_for_expected_categories(
                     &children,
                     action_entry.expected_input_cats,
                     cat_src_idx,
                     local_rule_idx,
-                    trace_this_action,
                 ) {
                     for child in &mut reuse_children {
                         *child = self.snapshot_collection_ids_in_child(*child, cursor);
@@ -26648,16 +26189,6 @@ where
         // ("the cast's own delegate lineage" / "+0-cursors"). Genuine RC-B
         // (`int(...)`) has `outer_rule == cast_rule`, so this is transparent there.
         // DIAG (2026-07-01, gated; REMOVE before commit).
-        if trace_actions_enabled() {
-            let __out_node = self
-                .gss
-                .node(outer.node)
-                .map(|n| (n.symbol.category_src_idx, n.symbol.rule_index_in_category, n.symbol.kind));
-            eprintln!(
-                "[wpds-action] RC-B STAGE-PROJ c_in={} c_out={} outer_rule={} cast_rules={:?} -> outer_node={:?}",
-                c_in, c_out, outer_rule, cast_rules, __out_node
-            );
-        }
         let cast_rules: Vec<u16> =
             cast_rules.into_iter().filter(|&r| r == outer_rule).collect();
         if cast_rules.is_empty() {
@@ -26701,18 +26232,6 @@ where
         // the unary-wrapper cast_rules for the keyword. Proves whether the
         // POutput arg-body reconnects to the IntBinProc(rule36) frame.
         let __encl = self.enclosing_prefix_rule_frame(cursor);
-        if trace_actions_enabled() {
-            let __bsid = self.sppf_symbol_category(body_symbol_id);
-            let __span = self
-                .sppf
-                .span_lo(body_symbol_id)
-                .zip(self.sppf.span_hi(body_symbol_id));
-            eprintln!(
-                "[wpds-action] BODY-WRAP-TRY body_sid={} body_cat={:?} span={:?} enclosing_frame={:?}",
-                body_symbol_id, __bsid, __span,
-                __encl.map(|(c, r, bsp, _, _, rb)| (c, r, bsp, rb)),
-            );
-        }
         let Some((c_out, outer_rule, body_start_pos, pred, stack_below_prefix, resume_bp)) = __encl
         else {
             return;
@@ -26894,20 +26413,6 @@ where
             let mut outer = waiter.outer_frame.clone();
             outer.weight = outer.weight.times_ref(&body_weight);
             // DIAG (2026-07-01, gated; REMOVE after GROUP-A SPPF root):
-            if trace_actions_enabled() {
-                let __out_node = self
-                    .gss
-                    .node(outer.node)
-                    .map(|n| (n.symbol.category_src_idx, n.symbol.rule_index_in_category, n.symbol.kind));
-                let __out_inc = self
-                    .incoming_edge_stack_arena
-                    .top(outer.incoming_edge_stack_id)
-                    .and_then(|e| self.gss.edge_kind(e));
-                eprintln!(
-                    "[wpds-action] RC-B STAGE-PARKED body_cat={} c_out={} rule={} -> outer_node={:?} outer_inc={:?}",
-                    body_cat, waiter.c_out, waiter.cast_rule, __out_node, __out_inc
-                );
-            }
             staged.push(PrefixCastWrapJob {
                 body_sid: body_symbol_id,
                 body_start_pos: waiter.body_start_pos,
@@ -26923,18 +26428,6 @@ where
                 resume_bp: waiter.resume_bp,
                 outer_frame: outer,
             });
-            if trace_actions_enabled() {
-                let waiter = &self.parked_prefix_cast_waiters[idx];
-                eprintln!(
-                    "[wpds-action] direct prefix waiter matched: body={} body_cat={} span=[{},{}] c_out={} rule={}",
-                    self.sppf_trace_summary(body_symbol_id),
-                    body_cat,
-                    body_lo,
-                    body_hi,
-                    waiter.c_out,
-                    waiter.cast_rule
-                );
-            }
         }
         for job in staged {
             self.push_prefix_cast_wrap_job_once(job);
@@ -27244,31 +26737,6 @@ where
         acc.pos = job.close_hi;
         acc.inner_state = WpdaState::InfixLoop { cur_bp: job.resume_bp };
         acc.last_action_output_cat = output_cat.or(Some(job.c_out));
-        if trace_actions_enabled() {
-            let __acc_node_sym = self
-                .gss
-                .node(acc.node)
-                .map(|n| (n.symbol.category_src_idx, n.symbol.rule_index_in_category, n.symbol.kind));
-            let __acc_inc_edge = self
-                .incoming_edge_stack_arena
-                .top(acc.incoming_edge_stack_id)
-                .and_then(|e| self.gss.edge_kind(e));
-            eprintln!(
-                "[wpds-action] RC-B prefix-cast wrap: fired ({},{}) over body=sid{} -> {} span=[{},{}] resume_bp={} acc_node={:?} acc_node_sym={:?} acc_inc_edge={:?} acc_sppf_stack={:?} outer_frame_sppf_stack={:?}",
-                job.c_out,
-                job.cast_rule,
-                job.body_sid,
-                self.sppf_trace_summary(wrapped_symbol_id),
-                lo,
-                hi,
-                job.resume_bp,
-                acc.node,
-                __acc_node_sym,
-                __acc_inc_edge,
-                acc.sppf_stack_id,
-                job.outer_frame.sppf_stack_id,
-            );
-        }
         Some(acc)
     }
 
@@ -28447,22 +27915,6 @@ where
                 // DIAG (2026-06-30, gated PRATTAIL_TRACE=actions; REMOVE after
                 // GROUP-A verify): confirm the CategoryEntry-pop recompute chose the
                 // resume state for an InputBind (cat 1) predecessor.
-                if trace_actions_enabled() {
-                    if let Some(ps) = self.gss.node(pred_id).map(|n| n.symbol) {
-                        if ps.category_src_idx == 1 {
-                            let st = match &effective_new_state {
-                                WpdaState::BinderRule { .. } => "BinderRule",
-                                WpdaState::Unwinding => "Unwinding",
-                                WpdaState::InfixLoop { .. } => "InfixLoop",
-                                _ => "other",
-                            };
-                            eprintln!(
-                                "[wpds-action] CATENTRY-POP-RECOMPUTE pred=cat{}:rule{} kind={:?} -> {}",
-                                ps.category_src_idx, ps.rule_index_in_category, ps.kind, st
-                            );
-                        }
-                    }
-                }
             }
         }
         // DIAG (2026-07-01, gated; REMOVE after GROUP-A SPPF root): trace EVERY
@@ -28470,29 +27922,6 @@ where
         // or pred symbol involves cat 3 (Name) — to see why Branch1's Name
         // Return pop lands in InfixLoop (forks into mixfix) while Branch2's lands
         // in Unwinding (pops cleanly).
-        if trace_actions_enabled() {
-            let __pk = popped_symbol.map(|s| (s.category_src_idx, s.rule_index_in_category, s.kind));
-            let __predk = self.gss.node(pred_id).map(|n| (n.symbol.category_src_idx, n.symbol.rule_index_in_category, n.symbol.kind));
-            let involves_name = matches!(__pk, Some((3, _, _))) || matches!(__predk, Some((3, _, _)))
-                || matches!(__pk, Some((1, _, _))) || matches!(__predk, Some((1, _, _)));
-            if involves_name {
-                let st = match &effective_new_state {
-                    WpdaState::BinderRule { rule_idx, result_src_idx, .. } => format!("BinderRule(c{}:r{})", result_src_idx, rule_idx),
-                    WpdaState::Unwinding => "Unwinding".to_string(),
-                    WpdaState::InfixLoop { cur_bp } => format!("InfixLoop(bp{})", cur_bp),
-                    WpdaState::PrefixDispatch { cur_bp, .. } => format!("PrefixDispatch(bp{})", cur_bp),
-                    WpdaState::CrossCatDelegate { inner_cur_bp, .. } => format!("CrossCatDelegate(bp{})", inner_cur_bp),
-                    WpdaState::Error { .. } => "Error".to_string(),
-                    _ => "other".to_string(),
-                };
-                eprintln!(
-                    "[wpds-action] POP-STATE popped={:?} pred={:?} edge={:?} sppf_top_cat={:?} -> {}",
-                    __pk, __predk, popped_edge_kind,
-                    self.sppf_stack_arena.top(cursor.sppf_stack_id).and_then(|s| self.sppf_symbol_category(s)),
-                    st
-                );
-            }
-        }
         if let Some(message) = transparent_reentry_error {
             effective_new_state = WpdaState::Error { message };
         }
@@ -28586,11 +28015,6 @@ where
                     );
                     self.record_crosscat_lhs_resume_on_cursor_top(cursor, target_resume_bp);
                     effective_new_state = WpdaState::InfixLoop { cur_bp: target_resume_bp };
-                } else if trace_actions_enabled() {
-                    eprintln!(
-                        "[wpds-action] crosscat lhs result exits source: source={} produced={} pred={} state={:?}",
-                        source_src_idx, produced_cat, pred_id, effective_new_state
-                    );
                 }
             }
         }
@@ -29729,13 +29153,12 @@ const TRACE_STEPS: u8 = 1;
 const TRACE_CURSORS: u8 = 2;
 const TRACE_MERGES: u8 = 4;
 const TRACE_DROPS: u8 = 8;
-const TRACE_ACTIONS: u8 = 16;
-const TRACE_ALL: u8 = TRACE_STEPS | TRACE_CURSORS | TRACE_MERGES | TRACE_DROPS | TRACE_ACTIONS;
+const TRACE_ALL: u8 = TRACE_STEPS | TRACE_CURSORS | TRACE_MERGES | TRACE_DROPS;
 
 /// Reads `PRATTAIL_TRACE` env var on construction:
 /// - empty/unset → all bits 0, no output (still cheap-skips).
 /// - `"1"` or `"all"` → all bits set.
-/// - comma list `"steps,cursors,merges,drops,actions"` → bitwise OR of named flags.
+/// - comma list `"steps,cursors,merges,drops"` → bitwise OR of named flags.
 fn parse_trace_env() -> u8 {
     let raw = std::env::var("PRATTAIL_TRACE").unwrap_or_default();
     if raw.is_empty() {
@@ -29751,17 +29174,10 @@ fn parse_trace_env() -> u8 {
             "cursors" => bits |= TRACE_CURSORS,
             "merges" => bits |= TRACE_MERGES,
             "drops" => bits |= TRACE_DROPS,
-            "actions" => bits |= TRACE_ACTIONS,
             _ => {},
         }
     }
     bits
-}
-
-#[inline]
-fn trace_actions_enabled() -> bool {
-    static GATE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *GATE.get_or_init(|| (parse_trace_env() & TRACE_ACTIONS) != 0)
 }
 
 /// ROOT-P Layer-S entry gate (throwaway diagnostic, `GRIND_SPLICE=1`): trace
