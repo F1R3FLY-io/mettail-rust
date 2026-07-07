@@ -47,7 +47,10 @@ binder reconstruction; E3 needs E2's `dovetail_normal_term`).
 - AC-bag multiplicity **is** carried (`HashBag::iter_elements` flat-maps `repeat_n(k,count)`,
   `hashbag.rs:269`; `typed_lowering.rs:57`). Binder identity erased = FIX-A `BinderArity(n)`
   (`typed_lowering.rs:165`); body keeps positional de-Bruijn `BoundVar`.
-- `RhoBackendInvocation::DeferToDovetailReport` exists (`backend.rs:545`, consumed `:1475`).
+- The former `RhoBackendInvocation::DeferToDovetailReport` catch-all has since been REMOVED —
+  superseded by `DeferToDovetailSemanticPredicate` (semantic-predicate blocks) plus
+  `RhoFoldDataflowDisposition::Defer` for non-Rho-lowerable folds (`dataflow.rs:103`); folds otherwise
+  fold-normalize (E2) and run on Rho (see doc 12 + rho-native-integration doc 09).
 - AC-collection metapattern LHS rejected on typed path (`dovetail_report.rs:415-420`) → RhoCalc
   `Comm` stays inert.
 
@@ -131,12 +134,13 @@ Validate under `RhoAstValidationProfile::CallByNeedThunk` (`lower.rs:131`). Resu
 
 **E3.3 `/0`,`%0` (MF6):** scalar path maps `/`→`EDiv`,`%`→`EMod` unguarded (`lower.rs:370`); Dovetail
 defers via `safe_div` (`typed_report.rs:392`). E3 **rejects** a residual constant-zero-divisor op
-(and free-var/non-scalar/Big/Float/collection ops) → `DeferToDovetailReport` rather than emitting raw
+(and free-var/non-scalar/Big/Float/collection ops) → `RhoFoldDataflowDisposition::Defer` (not fully
+Rho-lowerable; the residual falls back to the E2 fold-normal path, run on Rho) rather than emitting raw
 Rholang `EDiv`/`EMod`.
 
 **E3.4 wrapper:** `DovetailRhoRuntimeBackedLanguage` invocation compiler `F` (`backend.rs:1386/1462`)
 for fold-bearing langs: `dovetail_normal_term` → `lower_fold_expr_to_dataflow` on the residual →
-`RunWithCallAndObserve*` or `DeferToDovetailReport`. Fingerprint/install path unchanged. RhoCalc
+`RunWithCallAndObserve*` or `RhoFoldDataflowDisposition::Defer`. Fingerprint/install path unchanged. RhoCalc
 structural `Proc` lowering (`rhocalc_ast.rs`) stays hand-written (generalizing *structural process*
 lowering is out of scope).
 
@@ -149,7 +153,7 @@ lowering is out of scope).
   (MF5); **MF4 negative:** RhoCalc `Comm` not detected; synthetic `AppSubst` + cross-cat `[Name->Proc]`
   binder languages reduce (generality).
 - **E3:** `(2+3)*(4-1)`→`15` on RhoRuntime; `((10-4)+1)==7`→`true`; `"a"++"b"++"c"`→`"abc"`; BigInt →
-  `DeferToDovetailReport`; `int(1/0,8)` → `DeferToDovetailReport` (MF6).
+  `Defer`; `int(1/0,8)` → `Defer` (MF6).
 
 ## Progress ledger
 - [x] Design (Plan agent) + red-team (NO-GO/7 must-fixes) + converge (this doc).

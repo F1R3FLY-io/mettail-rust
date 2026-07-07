@@ -43,8 +43,8 @@ the dependency (do NOT widen the MF7 gate).
    safe-eval value is also a **cross-check**: the Rho-observed result must equal it.
 4. **3-valued disposition** (MED-6): the emitter returns `Result<RhoFoldDataflowDisposition, String>` where
    `Disposition = Run(RhoFoldDataflowInvocation) | Defer`; `backend.rs` maps `Run → RunWithCallAndObserve
-   {Ints,Bools,Strings}` (by root `result_type`), `Defer → DeferToDovetailReport` (`backend.rs:545,1468-1484`,
-   never reaches `execute`). The fictional `Disposition` enum/2-valued return in §10 is dropped.
+   {Ints,Bools,Strings}` (by root `result_type`), `Defer`, meaning the residual is not fully Rho-lowerable — it fold-normalizes via E2 and runs on
+   Rho (the former `Defer → DeferToDovetailReport` mapping was removed; see doc 12). The fictional `Disposition` enum/2-valued return in §10 is dropped.
 5. **Single-op = strict subset.** The depth-1 dataflow == `rho_scalar_contract_invocation_to`
    (`run_calculator.rs` proves it); once E3 is verified, route the single-op path through the N-node method to
    remove divergence (do this only AFTER E3 is green — don't destabilize the working single-op path first).
@@ -119,7 +119,7 @@ existing single-op emitter `macros/src/gen/runtime/rho_invocation.rs` ("one cont
 - **CHANGE `rholang-runtime/src/backend.rs`**: `build_fold_dataflow_invocation_from_contract(inv) ->
   RhoBackendInvocation` (result-type → `RunWithCallAndObserve{Ints,Bools,Strings}`; mirrors
   `build_scalar_contract_invocation_from_contract:696`). NO change to `RhoBackendInvocation`/`execute`/
-  `run_with_call_and_observe_*`/the `DeferToDovetailReport` intercept (`:1475`). The dataflow rides the
+  `run_with_call_and_observe_*` (the former `DeferToDovetailReport` intercept has since been removed). The dataflow rides the
   EXISTING `RunWithCallAndObserve*` variants → `evaluate_par(&par.append(call.clone()))` (`run.rs:378`)
   composes the call with the persistent `ScalarContracts` program for free.
 - **NO change to `RhoAstValidationProfile`** — emit a bare `call: Par` (§5).
@@ -166,16 +166,17 @@ term, all sources `new`-bound, each `for` `free_count==1`, root → `@"OUT"`) re
 `FoldDataflow` profile is the designated future extension point (`RhoAstValidationProfile` is
 `#[non_exhaustive]`).
 
-## 6. `/0`,`%0` / non-scalar / free-var → `DeferToDovetailReport` (MF6)
+## 6. `/0`,`%0` / non-scalar / free-var → `Defer` (MF6)
 The Rho contract path is unguarded for `/`,`%` (→`EDiv`/`EMod`, no zero check). Three decidable Defer classes
 in the collector, BEFORE building any node:
 1. constant-zero divisor (right operand collects to `Leaf(Int(0))` for a `/`/`%`-terminal rule);
 2. non-scalar/Big/Float/collection/cast/ternary/etc. (label ∉ the `plan_scalar_invocations` lowerable set);
 3. free vars / non-ground leaves (a `Var` leaf the `literal_extractor` rejects).
 Defer is TOTAL (a Defer at ANY node Defers the whole term — can't soundly splice a Dovetail subresult as a
-Rho channel value). Maps to `RhoBackendInvocation::DeferToDovetailReport`, intercepted at `backend.rs:1475`
-(never reaches `execute`). This is the "every op runs somewhere" semantics — flat/all-scalar trees run fully
-on Rho; trees containing a non-Rho op route wholesale to Dovetail. NOT the rejected flat-op-only shortcut.
+Rho channel value). Maps to `RhoFoldDataflowDisposition::Defer` (the former `DeferToDovetailReport`
+intercept was removed — see doc 12). This is the "every op runs somewhere" semantics — flat/all-scalar
+trees run fully on Rho; a tree containing a non-Rho-lowerable op Defers wholesale, and the outer F-stage
+then fold-normalizes it (E2) and runs it on Rho. NOT the rejected flat-op-only shortcut.
 
 ## 7. Soundness + generality
 - Per-op = the existing M-RHO differential oracle (`@"<Label>"` contract ≡ the scalar rule, checked by the
@@ -217,7 +218,7 @@ glue, uniform across fold langs:
     report.assert_complete()?;
     let nf = <Lang>Language::dovetail_normal_term(term, MAX_ITERS, MAX_NODES)?;   // E2.2
     match <Lang>Language::rho_fold_dataflow_invocation_from_dovetail_to(nf.as_ref(), report, OUT)? {
-        Disposition::Defer    => Ok(RhoBackendInvocation::DeferToDovetailReport),
+        Disposition::Defer    => /* fall back to E2 fold-normal, run on Rho; DeferToDovetailReport removed (doc 12) */
         Disposition::Run(inv) => build_fold_dataflow_invocation_from_contract(inv).map_err(|e| e.to_string()),
     }
 }
