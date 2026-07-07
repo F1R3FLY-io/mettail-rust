@@ -637,6 +637,46 @@ pub fn generate_rho_net_invocation(language: &LanguageDef) -> TokenStream {
                 Self::rho_net_invocation_from_dovetail_to_firing(term, report, out_channel, 0)
             }
 
+            /// Build the FULL multi-firing σ-injection sequence from an already
+            /// complete, shape-validated Dovetail report: one
+            /// [`RhoNetInjectionInvocation`](mettail_rholang_codegen::RhoNetInjectionInvocation)
+            /// per rewrite firing in `report.rewrite_justifications`, each on a
+            /// distinct out channel `{out_channel_prefix}{i}`.
+            ///
+            /// The Stage 0 replay driver
+            /// (`PlannedRhoBackend::run_rho_net_replay_and_observe_runtime_values`)
+            /// fires each of these as its own atomic COMM against the installed
+            /// σ-receiver program, so a multi-redex reduction replays every rewrite
+            /// as a `c(ℓ)` COMM. An EMPTY result is a valid, non-error state: the
+            /// term is already a normal form (no redex fired). If a firing exists
+            /// but the language has no σ-receiver for its rule, this fails closed
+            /// (via `rho_net_invocation_from_dovetail_to_firing`).
+            pub fn rho_net_replay_invocation_from_dovetail_to(
+                term: &dyn mettail_runtime::Term,
+                report: &mettail_runtime::RuntimeDovetailRunReport,
+                out_channel_prefix: impl ::core::convert::AsRef<str>,
+            ) -> ::core::result::Result<
+                ::std::vec::Vec<::mettail_rholang_codegen::RhoNetInjectionInvocation>,
+                ::std::string::String,
+            > {
+                report.assert_complete().map_err(|status| {
+                    ::std::format!(
+                        "Rho-net replay for language {} requires a complete Dovetail report, got {}",
+                        #language_lit, status,
+                    )
+                })?;
+                let __prefix = out_channel_prefix.as_ref();
+                let mut __invocations =
+                    ::std::vec::Vec::with_capacity(report.rewrite_justifications.len());
+                for __i in 0..report.rewrite_justifications.len() {
+                    let __out = ::std::format!("{}{}", __prefix, __i);
+                    __invocations.push(Self::rho_net_invocation_from_dovetail_to_firing(
+                        term, report, __out, __i,
+                    )?);
+                }
+                ::core::result::Result::Ok(__invocations)
+            }
+
             /// The RhoNet planning artifact for this generated language — its
             /// planned channels, rule identities, RHS-template fingerprints, and
             /// semantic-predicate obligations

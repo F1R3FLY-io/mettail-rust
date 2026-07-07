@@ -34,7 +34,8 @@ use mettail_rholang_codegen::{
     RhoGuardCoverageEvidence, RhoNetRuleKind,
 };
 use mettail_rholang_runtime::{
-    build_rho_net_injection_invocation_from_contract, PlannedRhoBackend, RhoMachineInvocation,
+    build_rho_net_injection_invocation_from_contract,
+    build_rho_net_replay_invocation_from_contracts, PlannedRhoBackend, RhoMachineInvocation,
 };
 use mettail_runtime::{Language, RuntimeObservationValue, RuntimeReflectedSubterm};
 
@@ -272,6 +273,81 @@ async fn multi_firing_replay_fires_each_redex_as_its_own_comm() {
     };
     assert!(observation.values.contains(&pair("B", "A")), "Swap(A,B) replayed to Pair(B,A)");
     assert!(observation.values.contains(&pair("A", "B")), "Swap(B,A) replayed to Pair(A,B)");
+}
+
+/// Stage 0 default-wire: the GENERATED replay wiring end-to-end. The generated
+/// `rho_net_replay_invocation_from_dovetail_to` builds one σ-injection per firing,
+/// `build_rho_net_replay_invocation_from_contracts` maps them to the replay
+/// invocation, and the driver fires each as its own atomic COMM. This is the
+/// production wiring a multi-redex reduction runs through — capability-gated by
+/// the installed σ-receiver program (fail-closed at `installed_rho_net_program_par`).
+#[tokio::test]
+async fn generated_replay_wiring_fires_every_firing_as_a_comm() {
+    mettail_runtime::clear_var_cache();
+    let (backend, _fingerprint) = swap_demo_backend();
+
+    let term = SwapDemoTerm(Proc::Pair(
+        Arc::new(Proc::Swap(Arc::new(Proc::A), Arc::new(Proc::B))),
+        Arc::new(Proc::Swap(Arc::new(Proc::B), Arc::new(Proc::A))),
+    ));
+    let report = SwapDemoLanguage::dovetail_report_for(&term, 64, 1_000_000)
+        .expect("multi-redex report must compile");
+
+    // Generated wiring: one injection per firing, then the replay invocation.
+    let injections =
+        SwapDemoLanguage::rho_net_replay_invocation_from_dovetail_to(&term, &report, "OUT")
+            .expect("the generated replay method must build one injection per firing");
+    assert_eq!(injections.len(), 2, "two firings ⇒ two σ-injections");
+
+    let firings = match build_rho_net_replay_invocation_from_contracts(injections) {
+        RhoMachineInvocation::RunRhoNetReplayAndObserveRuntimeValues { firings } => firings,
+        other => panic!("the replay bridge must map to RunRhoNetReplay…, got {other:?}"),
+    };
+
+    let observation = backend
+        .run_rho_net_replay_and_observe_runtime_values(&firings)
+        .await
+        .expect("the generated replay wiring must execute on the Rho runtime");
+    assert_eq!(observation.observed_count(), 2, "both firings fire as COMMs");
+
+    let pair = |a: &str, b: &str| RuntimeObservationValue::Term {
+        constructor: "Pair".to_string(),
+        children: vec![
+            RuntimeObservationValue::Term { constructor: a.to_string(), children: Vec::new() },
+            RuntimeObservationValue::Term { constructor: b.to_string(), children: Vec::new() },
+        ],
+    };
+    assert!(observation.values.contains(&pair("B", "A")));
+    assert!(observation.values.contains(&pair("A", "B")));
+}
+
+/// A normal-form term replays to NOTHING (no redex → no COMM) — a valid state,
+/// distinct from the single-firing `rho_net_invocation_from_dovetail_to`, which
+/// fails closed when nothing fires. The replay of an already-normal term is a
+/// no-op, so the whole reduction still executes only as COMMs (zero of them).
+#[tokio::test]
+async fn generated_replay_wiring_is_empty_for_a_normal_form() {
+    mettail_runtime::clear_var_cache();
+    let (backend, _fingerprint) = swap_demo_backend();
+
+    let term = SwapDemoTerm(Proc::Pair(Arc::new(Proc::A), Arc::new(Proc::B)));
+    let report = SwapDemoLanguage::dovetail_report_for(&term, 64, 1_000_000)
+        .expect("normal-form report must compile");
+
+    let injections =
+        SwapDemoLanguage::rho_net_replay_invocation_from_dovetail_to(&term, &report, "OUT")
+            .expect("replay of a normal form is an empty sequence, not an error");
+    assert!(injections.is_empty(), "a normal form has no firing to replay");
+
+    let firings = match build_rho_net_replay_invocation_from_contracts(injections) {
+        RhoMachineInvocation::RunRhoNetReplayAndObserveRuntimeValues { firings } => firings,
+        other => panic!("the replay bridge must map to RunRhoNetReplay…, got {other:?}"),
+    };
+    let observation = backend
+        .run_rho_net_replay_and_observe_runtime_values(&firings)
+        .await
+        .expect("an empty replay is a valid no-op");
+    assert_eq!(observation.observed_count(), 0, "no redex ⇒ no COMM ⇒ no observation");
 }
 
 #[tokio::test]

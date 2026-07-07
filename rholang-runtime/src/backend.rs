@@ -858,6 +858,30 @@ pub fn build_rho_net_injection_invocation_from_contract(
     RhoMachineInvocation::RunRhoNetWithCallAndObserveRuntimeValues { call, out_channel }
 }
 
+/// Build the Stage 0 multi-firing replay invocation from a codegen-owned
+/// σ-injection SEQUENCE — one [`mettail_rholang_codegen::RhoNetInjectionInvocation`]
+/// per rewrite firing, produced by `<Lang>::rho_net_replay_invocation_from_dovetail_to`.
+///
+/// The N-firing generalization of [`build_rho_net_injection_invocation_from_contract`]
+/// (the single-firing case): each injection becomes one `(call, out_channel)` pair,
+/// and the replay driver
+/// ([`PlannedRhoBackend::run_rho_net_replay_and_observe_runtime_values`]) fires each
+/// as its own atomic COMM against the same INSTALLED σ-receiver program — so a
+/// multi-redex reduction replays every rewrite as a `c(ℓ)` COMM. An empty sequence
+/// (a normal-form term) yields a no-op replay with no observations.
+#[cfg(feature = "runtime-report")]
+pub fn build_rho_net_replay_invocation_from_contracts(
+    invocations: Vec<mettail_rholang_codegen::RhoNetInjectionInvocation>,
+) -> RhoMachineInvocation {
+    let firings = invocations
+        .into_iter()
+        .map(|mettail_rholang_codegen::RhoNetInjectionInvocation { call, out_channel }| {
+            (call, out_channel)
+        })
+        .collect();
+    RhoMachineInvocation::RunRhoNetReplayAndObserveRuntimeValues { firings }
+}
+
 #[cfg(feature = "runtime-report")]
 impl RhoMachineInvocation {
     /// Which runtime site executes this invocation.
