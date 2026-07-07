@@ -363,6 +363,7 @@ fn write_collection_type(coll_type: &CollectionType, out: &mut String) {
         CollectionType::HashSet => "HashSet",
         CollectionType::Vec => "Vec",
         CollectionType::HashMap => "HashMap",
+        CollectionType::PathMap => "PathMap",
     });
 }
 
@@ -381,6 +382,16 @@ fn write_collection_category_opt(value: &Option<CollectionCategory>, out: &mut S
         },
         Some(CollectionCategory::Map(delims)) => {
             out.push_str("map(");
+            write_delimiters(delims, out);
+            out.push(')');
+        },
+        Some(CollectionCategory::Set(delims)) => {
+            out.push_str("set(");
+            write_delimiters(delims, out);
+            out.push(')');
+        },
+        Some(CollectionCategory::Pathmap(delims)) => {
+            out.push_str("pathmap(");
             write_delimiters(delims, out);
             out.push(')');
         },

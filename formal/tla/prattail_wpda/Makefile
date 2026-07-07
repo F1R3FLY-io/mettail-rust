@@ -10,9 +10,9 @@ FORMAL_CAPPED_TARGET_HINT := tla-prattail-wpda
 FORMAL_CLEAN_GOALS := clean
 include ../../capped.mk
 
-.PHONY: check check-cohort check-chain check-crosscat expected-fail clean prepare-tmp
+.PHONY: check check-cohort check-chain check-crosscat check-collectionfork expected-fail binder-broadcast-expected-fail clean prepare-tmp
 
-check: prepare-tmp check-cohort check-chain check-crosscat
+check: prepare-tmp check-cohort check-chain check-crosscat check-collectionfork
 
 prepare-tmp:
 	mkdir -p "$(TMPDIR)"
@@ -25,6 +25,9 @@ check-chain: prepare-tmp
 
 check-crosscat: prepare-tmp
 	$(APALACHE) --features=no-rows check --length=$(LENGTH) --config=CrossCat.cfg $(TLA)
+
+check-collectionfork: prepare-tmp
+	$(APALACHE) --features=no-rows check --length=$(LENGTH) --config=CollectionFork.cfg $(TLA)
 
 expected-fail: prepare-tmp
 	@out=$$(mktemp "$$TMPDIR/wrap-sensitive.XXXXXX"); \
@@ -41,6 +44,24 @@ expected-fail: prepare-tmp
 		cat "$$out"; \
 		rm -f "$$out"; \
 		echo "expected a wrap-sensitive quotient counterexample, but Apalache failed for another reason"; \
+		exit 1; \
+	fi
+
+binder-broadcast-expected-fail: prepare-tmp
+	@out=$$(mktemp "$$TMPDIR/binder-broadcast.XXXXXX"); \
+	if $(APALACHE) --features=no-rows check --length=$(LENGTH) --config=BinderForkBroadcastExpectedFail.cfg $(TLA) > "$$out" 2>&1; then \
+		cat "$$out"; \
+		rm -f "$$out"; \
+		echo "expected a cohort-broadcast NoValidParseLost counterexample, but Apalache reported success"; \
+		exit 1; \
+	elif grep -qE "state invariant [0-9]+ violated" "$$out"; then \
+		cat "$$out"; \
+		rm -f "$$out"; \
+		echo "observed expected cohort-broadcast NoValidParseLost counterexample"; \
+	else \
+		cat "$$out"; \
+		rm -f "$$out"; \
+		echo "expected a cohort-broadcast NoValidParseLost counterexample, but Apalache failed for another reason"; \
 		exit 1; \
 	fi
 

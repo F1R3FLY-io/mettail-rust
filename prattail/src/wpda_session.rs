@@ -356,6 +356,7 @@ mod tests {
                 _frontier_top: Option<&WpdaGssNode>,
                 _pos: usize,
                 _tokens: &dyn WpdaTokenSource,
+                _frame_ctx: crate::wpda_runtime::FrameCtx,
             ) -> WpdaStepAction<LexicographicWeight> {
                 WpdaStepAction::Accept
             }
@@ -377,6 +378,7 @@ mod tests {
                 _frontier_top: Option<&WpdaGssNode>,
                 _pos: usize,
                 _tokens: &dyn WpdaTokenSource,
+                _frame_ctx: crate::wpda_runtime::FrameCtx,
             ) -> WpdaStepAction<LexicographicWeight> {
                 WpdaStepAction::Error("simulated".to_string())
             }
@@ -413,6 +415,7 @@ mod tests {
             _frontier_top: Option<&WpdaGssNode>,
             _pos: usize,
             _tokens: &dyn WpdaTokenSource,
+            _frame_ctx: crate::wpda_runtime::FrameCtx,
         ) -> WpdaStepAction<LexicographicWeight> {
             let mut c = self.counter.borrow_mut();
             if *c >= self.n {
@@ -458,6 +461,7 @@ mod tests {
                 _frontier_top: Option<&WpdaGssNode>,
                 _pos: usize,
                 _tokens: &dyn WpdaTokenSource,
+                _frame_ctx: crate::wpda_runtime::FrameCtx,
             ) -> WpdaStepAction<LexicographicWeight> {
                 WpdaStepAction::Accept
             }

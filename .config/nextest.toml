@@ -18,6 +18,15 @@ slow-timeout = { period = "60s", terminate-after = 3 }
 fail-fast = false
 slow-timeout = { period = "120s", terminate-after = 5 }   # 600s general cap
 
+# Heavy CPU-bound proptest campaigns + display/parse roundtrips are single-thread
+# CPU-bound and slow: under full 16-way parallelism they starve each other (e.g.
+# inputbind_display_parse_roundtrip @CASES=100 completes in ~16s in isolation but
+# times out at 1800s when contended). Cap this class to a small dedicated pool so
+# each gets a full core instead of 1/N — a scheduling change only, no coverage or
+# product-behavior change (the Welch-t-test gate does not apply).
+[test-groups]
+heavy-proptests = { max-threads = 4 }
+
 # Property-test campaigns + display/parse roundtrips are legitimately long: the
 # known-GOOD gen_calculator_prop::sim_calculator_proptest_campaign passes at
 # ~1391s. Give this class a longer leash (1800s) so the good campaign still
@@ -25,3 +34,4 @@ slow-timeout = { period = "120s", terminate-after = 5 }   # 600s general cap
 [[profile.ci.overrides]]
 filter = 'test(/proptest_campaign/) | test(/display_parse_roundtrip/)'
 slow-timeout = { period = "180s", terminate-after = 10 }   # 1800s cap
+test-group = 'heavy-proptests'

@@ -28,22 +28,6 @@ fn equation_rhocalc_quotedrop() {
     assert!(!eq.rhs.is_empty(), "Equation QuoteDrop RHS should be non-empty");
 }
 
-#[test]
-fn equation_rhocalc_execeq() {
-    let _lang = RhoCalcLanguage;
-    let meta = _lang.metadata();
-    let equations = meta.equations();
-    // Verify equation ExecEq (index 1) exists in metadata
-    assert!(
-        equations.len() > 1,
-        "Expected at least 2 equations in metadata, found {}",
-        equations.len()
-    );
-    let eq = &equations[1];
-    assert!(!eq.lhs.is_empty(), "Equation ExecEq LHS should be non-empty");
-    assert!(!eq.rhs.is_empty(), "Equation ExecEq RHS should be non-empty");
-}
-
 // Equation Extrude has freshness/complex conditions
 #[test]
 fn equation_rhocalc_extrude() {
@@ -57,11 +41,11 @@ fn equation_rhocalc_extrude() {
 // ═══════════════════════════════════════════════════════════
 
 #[test]
-fn rewrite_rhocalc_comm() {
+fn rewrite_rhocalc_exec() {
     let _lang = RhoCalcLanguage;
     let meta = _lang.metadata();
     let rewrites = meta.rewrites();
-    // Verify rewrite Comm (index 0) exists in metadata
+    // Verify rewrite Exec (index 0) exists in metadata
     assert!(
         rewrites.len() > 0,
         "Expected at least 1 rewrites in metadata, found {}",
@@ -69,30 +53,12 @@ fn rewrite_rhocalc_comm() {
     );
     let rw = &rewrites[0];
     // Verify rewrite rule name
-    assert_eq!(rw.name, Some("Comm"), "Rewrite rule name mismatch");
-    assert!(!rw.lhs.is_empty(), "Rewrite Comm LHS should be non-empty");
-    assert!(!rw.rhs.is_empty(), "Rewrite Comm RHS should be non-empty");
-}
-
-#[test]
-fn rewrite_rhocalc_exec() {
-    let _lang = RhoCalcLanguage;
-    let meta = _lang.metadata();
-    let rewrites = meta.rewrites();
-    // Verify rewrite Exec (index 1) exists in metadata
-    assert!(
-        rewrites.len() > 1,
-        "Expected at least 2 rewrites in metadata, found {}",
-        rewrites.len()
-    );
-    let rw = &rewrites[1];
-    // Verify rewrite rule name
     assert_eq!(rw.name, Some("Exec"), "Rewrite rule name mismatch");
     assert!(!rw.lhs.is_empty(), "Rewrite Exec LHS should be non-empty");
     assert!(!rw.rhs.is_empty(), "Rewrite Exec RHS should be non-empty");
 }
 
-// Concrete execution test: run "* ( 0 )" through SimulationRunner,
+// Concrete execution test: run "* 0" through SimulationRunner,
 // assert it reaches NormalForm (exercises rewrite rule Exec).
 #[test]
 fn rewrite_rhocalc_exec_exec() {
@@ -107,13 +73,102 @@ fn rewrite_rhocalc_exec_exec() {
     };
     let runner = SimulationRunner::new(lang_ref, config);
     mettail_runtime::clear_var_cache();
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        runner.run_to_normal_form("* ( 0 )")
-    }));
+    let result =
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| runner.run_to_normal_form("* 0")));
     if let Ok(Ok(trace)) = result {
         assert!(
             matches!(trace.outcome, TraceOutcome::NormalForm { .. }),
-            "Rewrite rule Exec: input '* ( 0 )' did not reach NF: {:?}",
+            "Rewrite rule Exec: input '* 0' did not reach NF: {:?}",
+            trace.outcome,
+        );
+    }
+    // Panics (e.g., division by zero in native eval) are tolerated.
+}
+
+#[test]
+fn rewrite_rhocalc_execquoteshort() {
+    let _lang = RhoCalcLanguage;
+    let meta = _lang.metadata();
+    let rewrites = meta.rewrites();
+    // Verify rewrite ExecQuoteShort (index 1) exists in metadata
+    assert!(
+        rewrites.len() > 1,
+        "Expected at least 2 rewrites in metadata, found {}",
+        rewrites.len()
+    );
+    let rw = &rewrites[1];
+    // Verify rewrite rule name
+    assert_eq!(rw.name, Some("ExecQuoteShort"), "Rewrite rule name mismatch");
+    assert!(!rw.lhs.is_empty(), "Rewrite ExecQuoteShort LHS should be non-empty");
+    assert!(!rw.rhs.is_empty(), "Rewrite ExecQuoteShort RHS should be non-empty");
+}
+
+// Concrete execution test: run "* 0" through SimulationRunner,
+// assert it reaches NormalForm (exercises rewrite rule ExecQuoteShort).
+#[test]
+fn rewrite_rhocalc_execquoteshort_exec() {
+    use mettail_simulation::runner::{SimulationConfig, SimulationRunner};
+    use mettail_simulation::trace::TraceOutcome;
+    let lang = RhoCalcLanguage;
+    let lang_ref: &dyn mettail_runtime::Language = &lang;
+    let config = SimulationConfig {
+        max_steps: 100,
+        track_morphology: false,
+        ..SimulationConfig::default()
+    };
+    let runner = SimulationRunner::new(lang_ref, config);
+    mettail_runtime::clear_var_cache();
+    let result =
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| runner.run_to_normal_form("* 0")));
+    if let Ok(Ok(trace)) = result {
+        assert!(
+            matches!(trace.outcome, TraceOutcome::NormalForm { .. }),
+            "Rewrite rule ExecQuoteShort: input '* 0' did not reach NF: {:?}",
+            trace.outcome,
+        );
+    }
+    // Panics (e.g., division by zero in native eval) are tolerated.
+}
+
+#[test]
+fn rewrite_rhocalc_execparenquote() {
+    let _lang = RhoCalcLanguage;
+    let meta = _lang.metadata();
+    let rewrites = meta.rewrites();
+    // Verify rewrite ExecParenQuote (index 2) exists in metadata
+    assert!(
+        rewrites.len() > 2,
+        "Expected at least 3 rewrites in metadata, found {}",
+        rewrites.len()
+    );
+    let rw = &rewrites[2];
+    // Verify rewrite rule name
+    assert_eq!(rw.name, Some("ExecParenQuote"), "Rewrite rule name mismatch");
+    assert!(!rw.lhs.is_empty(), "Rewrite ExecParenQuote LHS should be non-empty");
+    assert!(!rw.rhs.is_empty(), "Rewrite ExecParenQuote RHS should be non-empty");
+}
+
+// Concrete execution test: run "* 0" through SimulationRunner,
+// assert it reaches NormalForm (exercises rewrite rule ExecParenQuote).
+#[test]
+fn rewrite_rhocalc_execparenquote_exec() {
+    use mettail_simulation::runner::{SimulationConfig, SimulationRunner};
+    use mettail_simulation::trace::TraceOutcome;
+    let lang = RhoCalcLanguage;
+    let lang_ref: &dyn mettail_runtime::Language = &lang;
+    let config = SimulationConfig {
+        max_steps: 100,
+        track_morphology: false,
+        ..SimulationConfig::default()
+    };
+    let runner = SimulationRunner::new(lang_ref, config);
+    mettail_runtime::clear_var_cache();
+    let result =
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| runner.run_to_normal_form("* 0")));
+    if let Ok(Ok(trace)) = result {
+        assert!(
+            matches!(trace.outcome, TraceOutcome::NormalForm { .. }),
+            "Rewrite rule ExecParenQuote: input '* 0' did not reach NF: {:?}",
             trace.outcome,
         );
     }
@@ -408,225 +463,513 @@ fn rewrite_rhocalc_orcongr() {
     // They fire when their premise (S ~> T) is satisfied by another rewrite.
 }
 
-// Rewrite test for LenCong skipped: congruence rule (needs triggering context)
+// Rewrite test for LLengthCong skipped: congruence rule (needs triggering context)
 #[test]
-fn rewrite_rhocalc_lencong() {
+fn rewrite_rhocalc_llengthcong() {
     let _lang = RhoCalcLanguage;
     // Congruence rules require a rewrite-triggering context to test.
     // They fire when their premise (S ~> T) is satisfied by another rewrite.
 }
 
-// Rewrite test for ConcatListCongL skipped: congruence rule (needs triggering context)
+// Rewrite test for MGetCongL skipped: congruence rule (needs triggering context)
 #[test]
-fn rewrite_rhocalc_concatlistcongl() {
+fn rewrite_rhocalc_mgetcongl() {
     let _lang = RhoCalcLanguage;
     // Congruence rules require a rewrite-triggering context to test.
     // They fire when their premise (S ~> T) is satisfied by another rewrite.
 }
 
-// Rewrite test for ConcatListCongR skipped: congruence rule (needs triggering context)
+// Rewrite test for MGetCongR skipped: congruence rule (needs triggering context)
 #[test]
-fn rewrite_rhocalc_concatlistcongr() {
+fn rewrite_rhocalc_mgetcongr() {
     let _lang = RhoCalcLanguage;
     // Congruence rules require a rewrite-triggering context to test.
     // They fire when their premise (S ~> T) is satisfied by another rewrite.
 }
 
-// Rewrite test for ElemListCongL skipped: congruence rule (needs triggering context)
+// Rewrite test for MSetCongL skipped: congruence rule (needs triggering context)
 #[test]
-fn rewrite_rhocalc_elemlistcongl() {
+fn rewrite_rhocalc_msetcongl() {
     let _lang = RhoCalcLanguage;
     // Congruence rules require a rewrite-triggering context to test.
     // They fire when their premise (S ~> T) is satisfied by another rewrite.
 }
 
-// Rewrite test for ElemListCongR skipped: congruence rule (needs triggering context)
+// Rewrite test for MSetCongKey skipped: congruence rule (needs triggering context)
 #[test]
-fn rewrite_rhocalc_elemlistcongr() {
+fn rewrite_rhocalc_msetcongkey() {
     let _lang = RhoCalcLanguage;
     // Congruence rules require a rewrite-triggering context to test.
     // They fire when their premise (S ~> T) is satisfied by another rewrite.
 }
 
-// Rewrite test for DeleteListCongL skipped: congruence rule (needs triggering context)
+// Rewrite test for MSetCongVal skipped: congruence rule (needs triggering context)
 #[test]
-fn rewrite_rhocalc_deletelistcongl() {
+fn rewrite_rhocalc_msetcongval() {
     let _lang = RhoCalcLanguage;
     // Congruence rules require a rewrite-triggering context to test.
     // They fire when their premise (S ~> T) is satisfied by another rewrite.
 }
 
-// Rewrite test for DeleteListCongR skipped: congruence rule (needs triggering context)
+// Rewrite test for MContainsCongL skipped: congruence rule (needs triggering context)
 #[test]
-fn rewrite_rhocalc_deletelistcongr() {
+fn rewrite_rhocalc_mcontainscongl() {
     let _lang = RhoCalcLanguage;
     // Congruence rules require a rewrite-triggering context to test.
     // They fire when their premise (S ~> T) is satisfied by another rewrite.
 }
 
-// Rewrite test for UnionBagCongL skipped: congruence rule (needs triggering context)
+// Rewrite test for MContainsCongR skipped: congruence rule (needs triggering context)
 #[test]
-fn rewrite_rhocalc_unionbagcongl() {
+fn rewrite_rhocalc_mcontainscongr() {
     let _lang = RhoCalcLanguage;
     // Congruence rules require a rewrite-triggering context to test.
     // They fire when their premise (S ~> T) is satisfied by another rewrite.
 }
 
-// Rewrite test for UnionBagCongR skipped: congruence rule (needs triggering context)
+// Rewrite test for MDeleteCongL skipped: congruence rule (needs triggering context)
 #[test]
-fn rewrite_rhocalc_unionbagcongr() {
+fn rewrite_rhocalc_mdeletecongl() {
     let _lang = RhoCalcLanguage;
     // Congruence rules require a rewrite-triggering context to test.
     // They fire when their premise (S ~> T) is satisfied by another rewrite.
 }
 
-// Rewrite test for RemoveBagCongL skipped: congruence rule (needs triggering context)
+// Rewrite test for MDeleteCongR skipped: congruence rule (needs triggering context)
 #[test]
-fn rewrite_rhocalc_removebagcongl() {
+fn rewrite_rhocalc_mdeletecongr() {
     let _lang = RhoCalcLanguage;
     // Congruence rules require a rewrite-triggering context to test.
     // They fire when their premise (S ~> T) is satisfied by another rewrite.
 }
 
-// Rewrite test for RemoveBagCongR skipped: congruence rule (needs triggering context)
+// Rewrite test for MUnionCongL skipped: congruence rule (needs triggering context)
 #[test]
-fn rewrite_rhocalc_removebagcongr() {
+fn rewrite_rhocalc_munioncongl() {
     let _lang = RhoCalcLanguage;
     // Congruence rules require a rewrite-triggering context to test.
     // They fire when their premise (S ~> T) is satisfied by another rewrite.
 }
 
-// Rewrite test for DiffBagCongL skipped: congruence rule (needs triggering context)
+// Rewrite test for MUnionCongR skipped: congruence rule (needs triggering context)
 #[test]
-fn rewrite_rhocalc_diffbagcongl() {
+fn rewrite_rhocalc_munioncongr() {
     let _lang = RhoCalcLanguage;
     // Congruence rules require a rewrite-triggering context to test.
     // They fire when their premise (S ~> T) is satisfied by another rewrite.
 }
 
-// Rewrite test for DiffBagCongR skipped: congruence rule (needs triggering context)
+// Rewrite test for MSizeCong skipped: congruence rule (needs triggering context)
 #[test]
-fn rewrite_rhocalc_diffbagcongr() {
+fn rewrite_rhocalc_msizecong() {
     let _lang = RhoCalcLanguage;
     // Congruence rules require a rewrite-triggering context to test.
     // They fire when their premise (S ~> T) is satisfied by another rewrite.
 }
 
-// Rewrite test for CountBagCongL skipped: congruence rule (needs triggering context)
+// Rewrite test for MToByteArrayCong skipped: congruence rule (needs triggering context)
 #[test]
-fn rewrite_rhocalc_countbagcongl() {
+fn rewrite_rhocalc_mtobytearraycong() {
     let _lang = RhoCalcLanguage;
     // Congruence rules require a rewrite-triggering context to test.
     // They fire when their premise (S ~> T) is satisfied by another rewrite.
 }
 
-// Rewrite test for CountBagCongR skipped: congruence rule (needs triggering context)
+// Rewrite test for MKeysCong skipped: congruence rule (needs triggering context)
 #[test]
-fn rewrite_rhocalc_countbagcongr() {
+fn rewrite_rhocalc_mkeyscong() {
     let _lang = RhoCalcLanguage;
     // Congruence rules require a rewrite-triggering context to test.
     // They fire when their premise (S ~> T) is satisfied by another rewrite.
 }
 
-// Rewrite test for GetMapCongL skipped: congruence rule (needs triggering context)
+// Rewrite test for MValuesCong skipped: congruence rule (needs triggering context)
 #[test]
-fn rewrite_rhocalc_getmapcongl() {
+fn rewrite_rhocalc_mvaluescong() {
     let _lang = RhoCalcLanguage;
     // Congruence rules require a rewrite-triggering context to test.
     // They fire when their premise (S ~> T) is satisfied by another rewrite.
 }
 
-// Rewrite test for GetMapCongR skipped: congruence rule (needs triggering context)
+// Rewrite test for LNthCongL skipped: congruence rule (needs triggering context)
 #[test]
-fn rewrite_rhocalc_getmapcongr() {
+fn rewrite_rhocalc_lnthcongl() {
     let _lang = RhoCalcLanguage;
     // Congruence rules require a rewrite-triggering context to test.
     // They fire when their premise (S ~> T) is satisfied by another rewrite.
 }
 
-// Rewrite test for PutMapCongL skipped: congruence rule (needs triggering context)
+// Rewrite test for LNthCongR skipped: congruence rule (needs triggering context)
 #[test]
-fn rewrite_rhocalc_putmapcongl() {
+fn rewrite_rhocalc_lnthcongr() {
     let _lang = RhoCalcLanguage;
     // Congruence rules require a rewrite-triggering context to test.
     // They fire when their premise (S ~> T) is satisfied by another rewrite.
 }
 
-// Rewrite test for PutMapCongKey skipped: congruence rule (needs triggering context)
+// Rewrite test for LConcatCongL skipped: congruence rule (needs triggering context)
 #[test]
-fn rewrite_rhocalc_putmapcongkey() {
+fn rewrite_rhocalc_lconcatcongl() {
     let _lang = RhoCalcLanguage;
     // Congruence rules require a rewrite-triggering context to test.
     // They fire when their premise (S ~> T) is satisfied by another rewrite.
 }
 
-// Rewrite test for PutMapCongVal skipped: congruence rule (needs triggering context)
+// Rewrite test for LConcatCongR skipped: congruence rule (needs triggering context)
 #[test]
-fn rewrite_rhocalc_putmapcongval() {
+fn rewrite_rhocalc_lconcatcongr() {
     let _lang = RhoCalcLanguage;
     // Congruence rules require a rewrite-triggering context to test.
     // They fire when their premise (S ~> T) is satisfied by another rewrite.
 }
 
-// Rewrite test for DeleteMapCongL skipped: congruence rule (needs triggering context)
+// Rewrite test for BCountCongL skipped: congruence rule (needs triggering context)
 #[test]
-fn rewrite_rhocalc_deletemapcongl() {
+fn rewrite_rhocalc_bcountcongl() {
     let _lang = RhoCalcLanguage;
     // Congruence rules require a rewrite-triggering context to test.
     // They fire when their premise (S ~> T) is satisfied by another rewrite.
 }
 
-// Rewrite test for DeleteMapCongR skipped: congruence rule (needs triggering context)
+// Rewrite test for BCountCongR skipped: congruence rule (needs triggering context)
 #[test]
-fn rewrite_rhocalc_deletemapcongr() {
+fn rewrite_rhocalc_bcountcongr() {
     let _lang = RhoCalcLanguage;
     // Congruence rules require a rewrite-triggering context to test.
     // They fire when their premise (S ~> T) is satisfied by another rewrite.
 }
 
-// Rewrite test for MergeMapCongL skipped: congruence rule (needs triggering context)
+// Rewrite test for BDiffCongL skipped: congruence rule (needs triggering context)
 #[test]
-fn rewrite_rhocalc_mergemapcongl() {
+fn rewrite_rhocalc_bdiffcongl() {
     let _lang = RhoCalcLanguage;
     // Congruence rules require a rewrite-triggering context to test.
     // They fire when their premise (S ~> T) is satisfied by another rewrite.
 }
 
-// Rewrite test for MergeMapCongR skipped: congruence rule (needs triggering context)
+// Rewrite test for BDiffCongR skipped: congruence rule (needs triggering context)
 #[test]
-fn rewrite_rhocalc_mergemapcongr() {
+fn rewrite_rhocalc_bdiffcongr() {
     let _lang = RhoCalcLanguage;
     // Congruence rules require a rewrite-triggering context to test.
     // They fire when their premise (S ~> T) is satisfied by another rewrite.
 }
 
-// Rewrite test for HasMapCongL skipped: congruence rule (needs triggering context)
+// Rewrite test for BRemoveCongL skipped: congruence rule (needs triggering context)
 #[test]
-fn rewrite_rhocalc_hasmapcongl() {
+fn rewrite_rhocalc_bremovecongl() {
     let _lang = RhoCalcLanguage;
     // Congruence rules require a rewrite-triggering context to test.
     // They fire when their premise (S ~> T) is satisfied by another rewrite.
 }
 
-// Rewrite test for HasMapCongR skipped: congruence rule (needs triggering context)
+// Rewrite test for BRemoveCongR skipped: congruence rule (needs triggering context)
 #[test]
-fn rewrite_rhocalc_hasmapcongr() {
+fn rewrite_rhocalc_bremovecongr() {
     let _lang = RhoCalcLanguage;
     // Congruence rules require a rewrite-triggering context to test.
     // They fire when their premise (S ~> T) is satisfied by another rewrite.
 }
 
-// Rewrite test for KeysMapCong skipped: congruence rule (needs triggering context)
+// Rewrite test for PRestrictCongL skipped: congruence rule (needs triggering context)
 #[test]
-fn rewrite_rhocalc_keysmapcong() {
+fn rewrite_rhocalc_prestrictcongl() {
     let _lang = RhoCalcLanguage;
     // Congruence rules require a rewrite-triggering context to test.
     // They fire when their premise (S ~> T) is satisfied by another rewrite.
 }
 
-// Rewrite test for ValuesMapCong skipped: congruence rule (needs triggering context)
+// Rewrite test for PRestrictCongR skipped: congruence rule (needs triggering context)
 #[test]
-fn rewrite_rhocalc_valuesmapcong() {
+fn rewrite_rhocalc_prestrictcongr() {
+    let _lang = RhoCalcLanguage;
+    // Congruence rules require a rewrite-triggering context to test.
+    // They fire when their premise (S ~> T) is satisfied by another rewrite.
+}
+
+// Rewrite test for PSubtractCongL skipped: congruence rule (needs triggering context)
+#[test]
+fn rewrite_rhocalc_psubtractcongl() {
+    let _lang = RhoCalcLanguage;
+    // Congruence rules require a rewrite-triggering context to test.
+    // They fire when their premise (S ~> T) is satisfied by another rewrite.
+}
+
+// Rewrite test for PSubtractCongR skipped: congruence rule (needs triggering context)
+#[test]
+fn rewrite_rhocalc_psubtractcongr() {
+    let _lang = RhoCalcLanguage;
+    // Congruence rules require a rewrite-triggering context to test.
+    // They fire when their premise (S ~> T) is satisfied by another rewrite.
+}
+
+// Rewrite test for PMeetCongL skipped: congruence rule (needs triggering context)
+#[test]
+fn rewrite_rhocalc_pmeetcongl() {
+    let _lang = RhoCalcLanguage;
+    // Congruence rules require a rewrite-triggering context to test.
+    // They fire when their premise (S ~> T) is satisfied by another rewrite.
+}
+
+// Rewrite test for PMeetCongR skipped: congruence rule (needs triggering context)
+#[test]
+fn rewrite_rhocalc_pmeetcongr() {
+    let _lang = RhoCalcLanguage;
+    // Congruence rules require a rewrite-triggering context to test.
+    // They fire when their premise (S ~> T) is satisfied by another rewrite.
+}
+
+// Rewrite test for PGetSubtrieCong skipped: congruence rule (needs triggering context)
+#[test]
+fn rewrite_rhocalc_pgetsubtriecong() {
+    let _lang = RhoCalcLanguage;
+    // Congruence rules require a rewrite-triggering context to test.
+    // They fire when their premise (S ~> T) is satisfied by another rewrite.
+}
+
+// Rewrite test for PGetSubtrieAtCongL skipped: congruence rule (needs triggering context)
+#[test]
+fn rewrite_rhocalc_pgetsubtrieatcongl() {
+    let _lang = RhoCalcLanguage;
+    // Congruence rules require a rewrite-triggering context to test.
+    // They fire when their premise (S ~> T) is satisfied by another rewrite.
+}
+
+// Rewrite test for PGetSubtrieAtCongR skipped: congruence rule (needs triggering context)
+#[test]
+fn rewrite_rhocalc_pgetsubtrieatcongr() {
+    let _lang = RhoCalcLanguage;
+    // Congruence rules require a rewrite-triggering context to test.
+    // They fire when their premise (S ~> T) is satisfied by another rewrite.
+}
+
+// Rewrite test for PReadZipperCong skipped: congruence rule (needs triggering context)
+#[test]
+fn rewrite_rhocalc_preadzippercong() {
+    let _lang = RhoCalcLanguage;
+    // Congruence rules require a rewrite-triggering context to test.
+    // They fire when their premise (S ~> T) is satisfied by another rewrite.
+}
+
+// Rewrite test for PReadZipperAtCongL skipped: congruence rule (needs triggering context)
+#[test]
+fn rewrite_rhocalc_preadzipperatcongl() {
+    let _lang = RhoCalcLanguage;
+    // Congruence rules require a rewrite-triggering context to test.
+    // They fire when their premise (S ~> T) is satisfied by another rewrite.
+}
+
+// Rewrite test for PReadZipperAtCongR skipped: congruence rule (needs triggering context)
+#[test]
+fn rewrite_rhocalc_preadzipperatcongr() {
+    let _lang = RhoCalcLanguage;
+    // Congruence rules require a rewrite-triggering context to test.
+    // They fire when their premise (S ~> T) is satisfied by another rewrite.
+}
+
+// Rewrite test for PWriteZipperCong skipped: congruence rule (needs triggering context)
+#[test]
+fn rewrite_rhocalc_pwritezippercong() {
+    let _lang = RhoCalcLanguage;
+    // Congruence rules require a rewrite-triggering context to test.
+    // They fire when their premise (S ~> T) is satisfied by another rewrite.
+}
+
+// Rewrite test for PWriteZipperAtCongL skipped: congruence rule (needs triggering context)
+#[test]
+fn rewrite_rhocalc_pwritezipperatcongl() {
+    let _lang = RhoCalcLanguage;
+    // Congruence rules require a rewrite-triggering context to test.
+    // They fire when their premise (S ~> T) is satisfied by another rewrite.
+}
+
+// Rewrite test for PWriteZipperAtCongR skipped: congruence rule (needs triggering context)
+#[test]
+fn rewrite_rhocalc_pwritezipperatcongr() {
+    let _lang = RhoCalcLanguage;
+    // Congruence rules require a rewrite-triggering context to test.
+    // They fire when their premise (S ~> T) is satisfied by another rewrite.
+}
+
+// Rewrite test for RZGetLeafCong skipped: congruence rule (needs triggering context)
+#[test]
+fn rewrite_rhocalc_rzgetleafcong() {
+    let _lang = RhoCalcLanguage;
+    // Congruence rules require a rewrite-triggering context to test.
+    // They fire when their premise (S ~> T) is satisfied by another rewrite.
+}
+
+// Rewrite test for RZDescendToCongL skipped: congruence rule (needs triggering context)
+#[test]
+fn rewrite_rhocalc_rzdescendtocongl() {
+    let _lang = RhoCalcLanguage;
+    // Congruence rules require a rewrite-triggering context to test.
+    // They fire when their premise (S ~> T) is satisfied by another rewrite.
+}
+
+// Rewrite test for RZDescendToCongR skipped: congruence rule (needs triggering context)
+#[test]
+fn rewrite_rhocalc_rzdescendtocongr() {
+    let _lang = RhoCalcLanguage;
+    // Congruence rules require a rewrite-triggering context to test.
+    // They fire when their premise (S ~> T) is satisfied by another rewrite.
+}
+
+// Rewrite test for RZChildCountCong skipped: congruence rule (needs triggering context)
+#[test]
+fn rewrite_rhocalc_rzchildcountcong() {
+    let _lang = RhoCalcLanguage;
+    // Congruence rules require a rewrite-triggering context to test.
+    // They fire when their premise (S ~> T) is satisfied by another rewrite.
+}
+
+// Rewrite test for RZDescendFirstCong skipped: congruence rule (needs triggering context)
+#[test]
+fn rewrite_rhocalc_rzdescendfirstcong() {
+    let _lang = RhoCalcLanguage;
+    // Congruence rules require a rewrite-triggering context to test.
+    // They fire when their premise (S ~> T) is satisfied by another rewrite.
+}
+
+// Rewrite test for RZToNextSiblingCong skipped: congruence rule (needs triggering context)
+#[test]
+fn rewrite_rhocalc_rztonextsiblingcong() {
+    let _lang = RhoCalcLanguage;
+    // Congruence rules require a rewrite-triggering context to test.
+    // They fire when their premise (S ~> T) is satisfied by another rewrite.
+}
+
+// Rewrite test for RZToPrevSiblingCong skipped: congruence rule (needs triggering context)
+#[test]
+fn rewrite_rhocalc_rztoprevsiblingcong() {
+    let _lang = RhoCalcLanguage;
+    // Congruence rules require a rewrite-triggering context to test.
+    // They fire when their premise (S ~> T) is satisfied by another rewrite.
+}
+
+// Rewrite test for RZDescendIndexedBranchCongL skipped: congruence rule (needs triggering context)
+#[test]
+fn rewrite_rhocalc_rzdescendindexedbranchcongl() {
+    let _lang = RhoCalcLanguage;
+    // Congruence rules require a rewrite-triggering context to test.
+    // They fire when their premise (S ~> T) is satisfied by another rewrite.
+}
+
+// Rewrite test for RZDescendIndexedBranchCongR skipped: congruence rule (needs triggering context)
+#[test]
+fn rewrite_rhocalc_rzdescendindexedbranchcongr() {
+    let _lang = RhoCalcLanguage;
+    // Congruence rules require a rewrite-triggering context to test.
+    // They fire when their premise (S ~> T) is satisfied by another rewrite.
+}
+
+// Rewrite test for RZAscendOneCong skipped: congruence rule (needs triggering context)
+#[test]
+fn rewrite_rhocalc_rzascendonecong() {
+    let _lang = RhoCalcLanguage;
+    // Congruence rules require a rewrite-triggering context to test.
+    // They fire when their premise (S ~> T) is satisfied by another rewrite.
+}
+
+// Rewrite test for RZAscendCongL skipped: congruence rule (needs triggering context)
+#[test]
+fn rewrite_rhocalc_rzascendcongl() {
+    let _lang = RhoCalcLanguage;
+    // Congruence rules require a rewrite-triggering context to test.
+    // They fire when their premise (S ~> T) is satisfied by another rewrite.
+}
+
+// Rewrite test for RZAscendCongR skipped: congruence rule (needs triggering context)
+#[test]
+fn rewrite_rhocalc_rzascendcongr() {
+    let _lang = RhoCalcLanguage;
+    // Congruence rules require a rewrite-triggering context to test.
+    // They fire when their premise (S ~> T) is satisfied by another rewrite.
+}
+
+// Rewrite test for WZSetLeafCongL skipped: congruence rule (needs triggering context)
+#[test]
+fn rewrite_rhocalc_wzsetleafcongl() {
+    let _lang = RhoCalcLanguage;
+    // Congruence rules require a rewrite-triggering context to test.
+    // They fire when their premise (S ~> T) is satisfied by another rewrite.
+}
+
+// Rewrite test for WZSetLeafCongKey skipped: congruence rule (needs triggering context)
+#[test]
+fn rewrite_rhocalc_wzsetleafcongkey() {
+    let _lang = RhoCalcLanguage;
+    // Congruence rules require a rewrite-triggering context to test.
+    // They fire when their premise (S ~> T) is satisfied by another rewrite.
+}
+
+// Rewrite test for WZSetLeafCongVal skipped: congruence rule (needs triggering context)
+#[test]
+fn rewrite_rhocalc_wzsetleafcongval() {
+    let _lang = RhoCalcLanguage;
+    // Congruence rules require a rewrite-triggering context to test.
+    // They fire when their premise (S ~> T) is satisfied by another rewrite.
+}
+
+// Rewrite test for WZSetSubtrieCongL skipped: congruence rule (needs triggering context)
+#[test]
+fn rewrite_rhocalc_wzsetsubtriecongl() {
+    let _lang = RhoCalcLanguage;
+    // Congruence rules require a rewrite-triggering context to test.
+    // They fire when their premise (S ~> T) is satisfied by another rewrite.
+}
+
+// Rewrite test for WZSetSubtrieCongR skipped: congruence rule (needs triggering context)
+#[test]
+fn rewrite_rhocalc_wzsetsubtriecongr() {
+    let _lang = RhoCalcLanguage;
+    // Congruence rules require a rewrite-triggering context to test.
+    // They fire when their premise (S ~> T) is satisfied by another rewrite.
+}
+
+// Rewrite test for WZRemoveLeafCong skipped: congruence rule (needs triggering context)
+#[test]
+fn rewrite_rhocalc_wzremoveleafcong() {
+    let _lang = RhoCalcLanguage;
+    // Congruence rules require a rewrite-triggering context to test.
+    // They fire when their premise (S ~> T) is satisfied by another rewrite.
+}
+
+// Rewrite test for WZRemoveBranchesCong skipped: congruence rule (needs triggering context)
+#[test]
+fn rewrite_rhocalc_wzremovebranchescong() {
+    let _lang = RhoCalcLanguage;
+    // Congruence rules require a rewrite-triggering context to test.
+    // They fire when their premise (S ~> T) is satisfied by another rewrite.
+}
+
+// Rewrite test for WZGraftCongL skipped: congruence rule (needs triggering context)
+#[test]
+fn rewrite_rhocalc_wzgraftcongl() {
+    let _lang = RhoCalcLanguage;
+    // Congruence rules require a rewrite-triggering context to test.
+    // They fire when their premise (S ~> T) is satisfied by another rewrite.
+}
+
+// Rewrite test for WZGraftCongR skipped: congruence rule (needs triggering context)
+#[test]
+fn rewrite_rhocalc_wzgraftcongr() {
+    let _lang = RhoCalcLanguage;
+    // Congruence rules require a rewrite-triggering context to test.
+    // They fire when their premise (S ~> T) is satisfied by another rewrite.
+}
+
+// Rewrite test for WZJoinIntoCongL skipped: congruence rule (needs triggering context)
+#[test]
+fn rewrite_rhocalc_wzjoinintocongl() {
+    let _lang = RhoCalcLanguage;
+    // Congruence rules require a rewrite-triggering context to test.
+    // They fire when their premise (S ~> T) is satisfied by another rewrite.
+}
+
+// Rewrite test for WZJoinIntoCongR skipped: congruence rule (needs triggering context)
+#[test]
+fn rewrite_rhocalc_wzjoinintocongr() {
     let _lang = RhoCalcLanguage;
     // Congruence rules require a rewrite-triggering context to test.
     // They fire when their premise (S ~> T) is satisfied by another rewrite.
@@ -635,6 +978,54 @@ fn rewrite_rhocalc_valuesmapcong() {
 // Rewrite test for CastMapCong skipped: congruence rule (needs triggering context)
 #[test]
 fn rewrite_rhocalc_castmapcong() {
+    let _lang = RhoCalcLanguage;
+    // Congruence rules require a rewrite-triggering context to test.
+    // They fire when their premise (S ~> T) is satisfied by another rewrite.
+}
+
+// Rewrite test for CastSetCong skipped: congruence rule (needs triggering context)
+#[test]
+fn rewrite_rhocalc_castsetcong() {
+    let _lang = RhoCalcLanguage;
+    // Congruence rules require a rewrite-triggering context to test.
+    // They fire when their premise (S ~> T) is satisfied by another rewrite.
+}
+
+// Rewrite test for CastPathmapCong skipped: congruence rule (needs triggering context)
+#[test]
+fn rewrite_rhocalc_castpathmapcong() {
+    let _lang = RhoCalcLanguage;
+    // Congruence rules require a rewrite-triggering context to test.
+    // They fire when their premise (S ~> T) is satisfied by another rewrite.
+}
+
+// Rewrite test for CastReadZipperCong skipped: congruence rule (needs triggering context)
+#[test]
+fn rewrite_rhocalc_castreadzippercong() {
+    let _lang = RhoCalcLanguage;
+    // Congruence rules require a rewrite-triggering context to test.
+    // They fire when their premise (S ~> T) is satisfied by another rewrite.
+}
+
+// Rewrite test for CastWriteZipperCong skipped: congruence rule (needs triggering context)
+#[test]
+fn rewrite_rhocalc_castwritezippercong() {
+    let _lang = RhoCalcLanguage;
+    // Congruence rules require a rewrite-triggering context to test.
+    // They fire when their premise (S ~> T) is satisfied by another rewrite.
+}
+
+// Rewrite test for SAddCongL skipped: congruence rule (needs triggering context)
+#[test]
+fn rewrite_rhocalc_saddcongl() {
+    let _lang = RhoCalcLanguage;
+    // Congruence rules require a rewrite-triggering context to test.
+    // They fire when their premise (S ~> T) is satisfied by another rewrite.
+}
+
+// Rewrite test for SAddCongR skipped: congruence rule (needs triggering context)
+#[test]
+fn rewrite_rhocalc_saddcongr() {
     let _lang = RhoCalcLanguage;
     // Congruence rules require a rewrite-triggering context to test.
     // They fire when their premise (S ~> T) is satisfied by another rewrite.
@@ -805,13 +1196,13 @@ fn rewrite_rhocalc_normcastbooltointinproc() {
     let _lang = RhoCalcLanguage;
     let meta = _lang.metadata();
     let rewrites = meta.rewrites();
-    // Verify rewrite NormCastBoolToIntInProc (index 87) exists in metadata
+    // Verify rewrite NormCastBoolToIntInProc (index 130) exists in metadata
     assert!(
-        rewrites.len() > 87,
-        "Expected at least 88 rewrites in metadata, found {}",
+        rewrites.len() > 130,
+        "Expected at least 131 rewrites in metadata, found {}",
         rewrites.len()
     );
-    let rw = &rewrites[87];
+    let rw = &rewrites[130];
     // Verify rewrite rule name
     assert_eq!(rw.name, Some("NormCastBoolToIntInProc"), "Rewrite rule name mismatch");
     assert!(!rw.lhs.is_empty(), "Rewrite NormCastBoolToIntInProc LHS should be non-empty");
@@ -859,13 +1250,13 @@ fn rewrite_rhocalc_normcastbooltouint32inproc() {
     let _lang = RhoCalcLanguage;
     let meta = _lang.metadata();
     let rewrites = meta.rewrites();
-    // Verify rewrite NormCastBoolToUInt32InProc (index 89) exists in metadata
+    // Verify rewrite NormCastBoolToUInt32InProc (index 132) exists in metadata
     assert!(
-        rewrites.len() > 89,
-        "Expected at least 90 rewrites in metadata, found {}",
+        rewrites.len() > 132,
+        "Expected at least 133 rewrites in metadata, found {}",
         rewrites.len()
     );
-    let rw = &rewrites[89];
+    let rw = &rewrites[132];
     // Verify rewrite rule name
     assert_eq!(rw.name, Some("NormCastBoolToUInt32InProc"), "Rewrite rule name mismatch");
     assert!(!rw.lhs.is_empty(), "Rewrite NormCastBoolToUInt32InProc LHS should be non-empty");
@@ -913,13 +1304,13 @@ fn rewrite_rhocalc_normcastbooltobigintinproc() {
     let _lang = RhoCalcLanguage;
     let meta = _lang.metadata();
     let rewrites = meta.rewrites();
-    // Verify rewrite NormCastBoolToBigIntInProc (index 91) exists in metadata
+    // Verify rewrite NormCastBoolToBigIntInProc (index 134) exists in metadata
     assert!(
-        rewrites.len() > 91,
-        "Expected at least 92 rewrites in metadata, found {}",
+        rewrites.len() > 134,
+        "Expected at least 135 rewrites in metadata, found {}",
         rewrites.len()
     );
-    let rw = &rewrites[91];
+    let rw = &rewrites[134];
     // Verify rewrite rule name
     assert_eq!(rw.name, Some("NormCastBoolToBigIntInProc"), "Rewrite rule name mismatch");
     assert!(!rw.lhs.is_empty(), "Rewrite NormCastBoolToBigIntInProc LHS should be non-empty");
@@ -967,13 +1358,13 @@ fn rewrite_rhocalc_normcastbooltobigratinproc() {
     let _lang = RhoCalcLanguage;
     let meta = _lang.metadata();
     let rewrites = meta.rewrites();
-    // Verify rewrite NormCastBoolToBigRatInProc (index 93) exists in metadata
+    // Verify rewrite NormCastBoolToBigRatInProc (index 136) exists in metadata
     assert!(
-        rewrites.len() > 93,
-        "Expected at least 94 rewrites in metadata, found {}",
+        rewrites.len() > 136,
+        "Expected at least 137 rewrites in metadata, found {}",
         rewrites.len()
     );
-    let rw = &rewrites[93];
+    let rw = &rewrites[136];
     // Verify rewrite rule name
     assert_eq!(rw.name, Some("NormCastBoolToBigRatInProc"), "Rewrite rule name mismatch");
     assert!(!rw.lhs.is_empty(), "Rewrite NormCastBoolToBigRatInProc LHS should be non-empty");
@@ -1021,13 +1412,13 @@ fn rewrite_rhocalc_normcastinttobigintinproc() {
     let _lang = RhoCalcLanguage;
     let meta = _lang.metadata();
     let rewrites = meta.rewrites();
-    // Verify rewrite NormCastIntToBigIntInProc (index 95) exists in metadata
+    // Verify rewrite NormCastIntToBigIntInProc (index 138) exists in metadata
     assert!(
-        rewrites.len() > 95,
-        "Expected at least 96 rewrites in metadata, found {}",
+        rewrites.len() > 138,
+        "Expected at least 139 rewrites in metadata, found {}",
         rewrites.len()
     );
-    let rw = &rewrites[95];
+    let rw = &rewrites[138];
     // Verify rewrite rule name
     assert_eq!(rw.name, Some("NormCastIntToBigIntInProc"), "Rewrite rule name mismatch");
     assert!(!rw.lhs.is_empty(), "Rewrite NormCastIntToBigIntInProc LHS should be non-empty");
@@ -1074,13 +1465,13 @@ fn rewrite_rhocalc_normcastinttobigratinproc() {
     let _lang = RhoCalcLanguage;
     let meta = _lang.metadata();
     let rewrites = meta.rewrites();
-    // Verify rewrite NormCastIntToBigRatInProc (index 97) exists in metadata
+    // Verify rewrite NormCastIntToBigRatInProc (index 140) exists in metadata
     assert!(
-        rewrites.len() > 97,
-        "Expected at least 98 rewrites in metadata, found {}",
+        rewrites.len() > 140,
+        "Expected at least 141 rewrites in metadata, found {}",
         rewrites.len()
     );
-    let rw = &rewrites[97];
+    let rw = &rewrites[140];
     // Verify rewrite rule name
     assert_eq!(rw.name, Some("NormCastIntToBigRatInProc"), "Rewrite rule name mismatch");
     assert!(!rw.lhs.is_empty(), "Rewrite NormCastIntToBigRatInProc LHS should be non-empty");
@@ -1127,13 +1518,13 @@ fn rewrite_rhocalc_normcastuint32tointinproc() {
     let _lang = RhoCalcLanguage;
     let meta = _lang.metadata();
     let rewrites = meta.rewrites();
-    // Verify rewrite NormCastUInt32ToIntInProc (index 99) exists in metadata
+    // Verify rewrite NormCastUInt32ToIntInProc (index 142) exists in metadata
     assert!(
-        rewrites.len() > 99,
-        "Expected at least 100 rewrites in metadata, found {}",
+        rewrites.len() > 142,
+        "Expected at least 143 rewrites in metadata, found {}",
         rewrites.len()
     );
-    let rw = &rewrites[99];
+    let rw = &rewrites[142];
     // Verify rewrite rule name
     assert_eq!(rw.name, Some("NormCastUInt32ToIntInProc"), "Rewrite rule name mismatch");
     assert!(!rw.lhs.is_empty(), "Rewrite NormCastUInt32ToIntInProc LHS should be non-empty");
@@ -1180,13 +1571,13 @@ fn rewrite_rhocalc_normcastuint32tobigintinproc() {
     let _lang = RhoCalcLanguage;
     let meta = _lang.metadata();
     let rewrites = meta.rewrites();
-    // Verify rewrite NormCastUInt32ToBigIntInProc (index 101) exists in metadata
+    // Verify rewrite NormCastUInt32ToBigIntInProc (index 144) exists in metadata
     assert!(
-        rewrites.len() > 101,
-        "Expected at least 102 rewrites in metadata, found {}",
+        rewrites.len() > 144,
+        "Expected at least 145 rewrites in metadata, found {}",
         rewrites.len()
     );
-    let rw = &rewrites[101];
+    let rw = &rewrites[144];
     // Verify rewrite rule name
     assert_eq!(rw.name, Some("NormCastUInt32ToBigIntInProc"), "Rewrite rule name mismatch");
     assert!(
@@ -1239,13 +1630,13 @@ fn rewrite_rhocalc_normcastuint32tobigratinproc() {
     let _lang = RhoCalcLanguage;
     let meta = _lang.metadata();
     let rewrites = meta.rewrites();
-    // Verify rewrite NormCastUInt32ToBigRatInProc (index 103) exists in metadata
+    // Verify rewrite NormCastUInt32ToBigRatInProc (index 146) exists in metadata
     assert!(
-        rewrites.len() > 103,
-        "Expected at least 104 rewrites in metadata, found {}",
+        rewrites.len() > 146,
+        "Expected at least 147 rewrites in metadata, found {}",
         rewrites.len()
     );
-    let rw = &rewrites[103];
+    let rw = &rewrites[146];
     // Verify rewrite rule name
     assert_eq!(rw.name, Some("NormCastUInt32ToBigRatInProc"), "Rewrite rule name mismatch");
     assert!(
@@ -1298,13 +1689,13 @@ fn rewrite_rhocalc_normcastfloattobigratinproc() {
     let _lang = RhoCalcLanguage;
     let meta = _lang.metadata();
     let rewrites = meta.rewrites();
-    // Verify rewrite NormCastFloatToBigRatInProc (index 105) exists in metadata
+    // Verify rewrite NormCastFloatToBigRatInProc (index 148) exists in metadata
     assert!(
-        rewrites.len() > 105,
-        "Expected at least 106 rewrites in metadata, found {}",
+        rewrites.len() > 148,
+        "Expected at least 149 rewrites in metadata, found {}",
         rewrites.len()
     );
-    let rw = &rewrites[105];
+    let rw = &rewrites[148];
     // Verify rewrite rule name
     assert_eq!(rw.name, Some("NormCastFloatToBigRatInProc"), "Rewrite rule name mismatch");
     assert!(
@@ -1357,13 +1748,13 @@ fn rewrite_rhocalc_normcastbiginttobigratinproc() {
     let _lang = RhoCalcLanguage;
     let meta = _lang.metadata();
     let rewrites = meta.rewrites();
-    // Verify rewrite NormCastBigIntToBigRatInProc (index 107) exists in metadata
+    // Verify rewrite NormCastBigIntToBigRatInProc (index 150) exists in metadata
     assert!(
-        rewrites.len() > 107,
-        "Expected at least 108 rewrites in metadata, found {}",
+        rewrites.len() > 150,
+        "Expected at least 151 rewrites in metadata, found {}",
         rewrites.len()
     );
-    let rw = &rewrites[107];
+    let rw = &rewrites[150];
     // Verify rewrite rule name
     assert_eq!(rw.name, Some("NormCastBigIntToBigRatInProc"), "Rewrite rule name mismatch");
     assert!(
@@ -1416,13 +1807,13 @@ fn rewrite_rhocalc_normcastfixedtobigratinproc() {
     let _lang = RhoCalcLanguage;
     let meta = _lang.metadata();
     let rewrites = meta.rewrites();
-    // Verify rewrite NormCastFixedToBigRatInProc (index 109) exists in metadata
+    // Verify rewrite NormCastFixedToBigRatInProc (index 152) exists in metadata
     assert!(
-        rewrites.len() > 109,
-        "Expected at least 110 rewrites in metadata, found {}",
+        rewrites.len() > 152,
+        "Expected at least 153 rewrites in metadata, found {}",
         rewrites.len()
     );
-    let rw = &rewrites[109];
+    let rw = &rewrites[152];
     // Verify rewrite rule name
     assert_eq!(rw.name, Some("NormCastFixedToBigRatInProc"), "Rewrite rule name mismatch");
     assert!(

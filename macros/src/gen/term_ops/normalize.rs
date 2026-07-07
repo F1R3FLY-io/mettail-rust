@@ -431,7 +431,7 @@ fn optional_collection_field_type(field: &FieldInfo) -> TokenStream {
         CollectionType::Vec => quote! { Option<Vec<#cat>> },
         CollectionType::HashBag => quote! { Option<mettail_runtime::HashBag<#cat>> },
         CollectionType::HashSet => quote! { Option<std::collections::HashSet<#cat>> },
-        CollectionType::HashMap => {
+        CollectionType::HashMap | CollectionType::PathMap => {
             // HashMap inside Optional uses HashMapLit<K,V>; treat the inner
             // element category as the value category. Map-typed slots aren't
             // exercised yet in the test grammar; emit a best-effort type.
@@ -914,7 +914,7 @@ fn emit_collection_field_alloc(
             });
             assemble_fields.push(quote! { #start_name, #count_name, #counts_name });
         },
-        CollectionType::HashMap => {
+        CollectionType::HashMap | CollectionType::PathMap => {
             // Phase 4 #5b (2026-05-12): HashMap field — HashMapLit's
             // `iter` yields `(&K, &V)`, not `(&T, usize)` (which HashBag
             // yields). The Phase 4 #5 pilot left this codepath broken
@@ -1002,7 +1002,7 @@ fn generate_collection_visit_arm(
     let visit_task = format_ident!("Visit{}", element_cat);
 
     match coll_type {
-        CollectionType::HashBag | CollectionType::HashMap => {
+        CollectionType::HashBag | CollectionType::HashMap | CollectionType::PathMap => {
             quote! {
                 #cat::#label(ref coll) => {
                     let elements_start = results.len();
@@ -1204,7 +1204,7 @@ fn emit_pre_field_visit_alloc(
             let count_name = format_ident!("pf{}_count", i);
             let visit_task = format_ident!("Visit{}", field.category);
             match field.coll_type.as_ref().unwrap_or(&CollectionType::Vec) {
-                CollectionType::HashBag | CollectionType::HashMap => {
+                CollectionType::HashBag | CollectionType::HashMap | CollectionType::PathMap => {
                     let counts_name = format_ident!("pf{}_counts", i);
                     alloc_stmts.push(quote! {
                         let #start_name = results.len();
@@ -1640,7 +1640,7 @@ fn emit_reg_field_extract(i: usize, field: &FieldInfo) -> TokenStream {
             // Phase 4 #5b (2026-05-12): HashMap — 2*N flat slots laid
             // out as (k0, v0, k1, v1, ...) per `emit_collection_field_alloc`.
             // Reconstruct entries by zipping consecutive pairs.
-            CollectionType::HashMap => {
+            CollectionType::HashMap | CollectionType::PathMap => {
                 quote! {
                     let mut #result_ident =
                         mettail_runtime::HashMapLit::default();
@@ -1739,7 +1739,7 @@ fn generate_collection_assemble_arm(
     // Per-arm `#[inline(never)]` peel rationale — shared with the sibling
     // iterative term-ops.
     match coll_type {
-        CollectionType::HashBag | CollectionType::HashMap => {
+        CollectionType::HashBag | CollectionType::HashMap | CollectionType::PathMap => {
             let helper_name = format_ident!("insert_into_{}", label.to_string().to_lowercase());
             quote! {
                 NormTask::#assemble_variant { slot, elements_start, elements_count, counts_vec } => {
@@ -1946,7 +1946,7 @@ fn emit_pre_field_extracts(pre_scope_fields: &[FieldInfo]) -> Vec<TokenStream> {
                 let start_name = format_ident!("pf{}_start", i);
                 let count_name = format_ident!("pf{}_count", i);
                 match field.coll_type.as_ref().unwrap_or(&CollectionType::Vec) {
-                    CollectionType::HashBag | CollectionType::HashMap => {
+                    CollectionType::HashBag | CollectionType::HashMap | CollectionType::PathMap => {
                         let counts_name = format_ident!("pf{}_counts", i);
                         quote! {
                             let mut #result_ident = mettail_runtime::HashBag::new();

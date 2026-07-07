@@ -601,6 +601,7 @@ mod tests {
             tree_invariants: Vec::new(),
             refinement_types: Vec::new(),
             guard_config: None,
+            reservation_policy: crate::ReservationPolicy::default(),
         }
     }
 

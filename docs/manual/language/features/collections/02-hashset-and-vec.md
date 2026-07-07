@@ -17,7 +17,15 @@ this document covers only the deltas.
 | **Init expression**  | `HashBag::new()`                  | `HashSet::new()`               | `Vec::new()`           |
 | **Ascent iteration** | `bag.iter()` → `(&T, usize)`      | `set.iter()` → `&T`            | `vec.iter()` → `&T`    |
 | **DSL syntax**       | `HashBag(T)`                      | `HashSet(T)`                   | `Vec(T)`               |
-| **RhoCalc usage**    | PPar (parallel composition)       | — (not used)                   | PInputs (channel list) |
+| **RhoCalc usage**    | PPar (parallel composition)       | `Set(…)` native category       | PInputs (channel list) |
+
+### RhoCalc `Set` literals vs `HashSet(T)` parameters
+
+Grammar parameters such as `ss:HashSet(Name)` still use PraTTaIL's
+`CollectionKind::HashSet` inside rule bodies. RhoCalc's first-class **`Set`**
+category is declared in `types { }` and parses `Set(e₁, e₂, …)` / `Set()` into
+`Set::SetLit(HashSetLit<Proc>)`. See
+[set-type-design.md](../../../../design/made/native-types/set-type-design.md).
 
 ## HashSet(T)
 

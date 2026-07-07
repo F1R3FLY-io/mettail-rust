@@ -3,7 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use mettail_ast::grammar::{GrammarItem, GrammarRule, PatternOp, SyntaxExpr, TermParam};
-use mettail_ast::language::{BehavioralPred, LanguageDef, Premise};
+use mettail_ast::language::{AttributeValue, BehavioralPred, LanguageDef, Premise};
 use mettail_ast::pattern::{Pattern, PatternTerm};
 use mettail_ast::types::EvalMode;
 use syn::{Item, ItemMacro};
@@ -57,6 +57,26 @@ fn language_files() -> Vec<PathBuf> {
 
     files.sort();
     files
+}
+
+/// A `parse_only: true` language is a syntax/lex-only test/demo fixture (no
+/// reduction semantics) and is excluded from the production LanguageDefInventory.
+fn is_parse_only(def: &LanguageDef) -> bool {
+    matches!(def.options.get("parse_only"), Some(AttributeValue::Bool(true)))
+}
+
+/// Whether a language declares any reduction semantics. A `parse_only` language
+/// MUST NOT — the inventory guard fails loudly otherwise, so a real reduction
+/// language cannot hide behind the flag to escape the formal rewrite inventory.
+fn has_reduction_semantics(def: &LanguageDef) -> bool {
+    !def.equations.is_empty()
+        || !def.rewrites.is_empty()
+        || def.logic.is_some()
+        || def.guard_config.is_some()
+        || def
+            .terms
+            .iter()
+            .any(|rule| rule.eval_mode.is_some() || rule.rust_code.is_some())
 }
 
 fn repo_root() -> PathBuf {
@@ -391,24 +411,44 @@ fn current_language_defs_have_dovetail_requirement_inventory() {
 
     assert!(!languages.is_empty(), "expected at least one in-repo language! definition");
 
-    let language_names = languages
+    // Parse-only fixtures (syntax/lex demonstrations that declare
+    // `options { parse_only: true }`, e.g. the keyword-reservation FortranModel/
+    // ReservedModel) are excluded from the production LanguageDefInventory.
+    // Fail-closed: a language is inventoried unless it explicitly opts out here.
+    // Anti-loophole: a parse_only language must carry NO reduction semantics, or
+    // this fails loudly — a real reduction language cannot hide behind the flag.
+    for language in &languages {
+        if is_parse_only(language) {
+            assert!(
+                !has_reduction_semantics(language),
+                "language `{}` is marked `parse_only: true` but declares reduction \
+                 semantics (equations/rewrites/logic/guards/fold/eval); parse_only \
+                 is for syntax-only fixtures",
+                language.name
+            );
+        }
+    }
+    let production: Vec<&LanguageDef> =
+        languages.iter().filter(|language| !is_parse_only(language)).collect();
+
+    let language_names = production
         .iter()
         .map(|language| language.name.to_string().to_ascii_lowercase())
         .collect::<BTreeSet<_>>();
     assert_eq!(
         language_names.len(),
-        languages.len(),
-        "duplicate in-repo language! names discovered"
+        production.len(),
+        "duplicate in-repo production language! names discovered"
     );
     assert_eq!(
         language_names, rocq_names,
-        "AST LanguageDef parser inventory must exactly match Rocq LanguageDefInventory"
+        "AST LanguageDef parser inventory (production languages) must exactly match Rocq LanguageDefInventory"
     );
 
     assert_eq!(
         rocq_names.len(),
-        languages.len(),
-        "Rocq LanguageDefInventory and parsed language! inventory have different cardinality"
+        production.len(),
+        "Rocq LanguageDefInventory and parsed production language! inventory have different cardinality"
     );
 
     assert!(
@@ -419,7 +459,7 @@ fn current_language_defs_have_dovetail_requirement_inventory() {
     );
 
     let mut aggregate = BTreeSet::new();
-    for language in &languages {
+    for language in &production {
         let reqs = classify_language(language);
         assert!(
             !reqs.is_empty(),

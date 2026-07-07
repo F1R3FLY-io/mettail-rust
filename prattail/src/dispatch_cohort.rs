@@ -92,6 +92,107 @@ pub enum CohortRoute {
     CrossCatLhs,
 }
 
+/// ROOT-P design-cycle-3 master compile-time switch for the projection-cohort
+/// CACHE pos-quotient. When `false`, [`DispatchKey::cache_key`] preserves `pos`
+/// so the cohort cache keys on the full (pos-bearing) key exactly as before the
+/// quotient landed — byte-identical to the shipped behavior. When `true`, the
+/// runtime env `PRATTAIL_PROJ_CACHE_POS_QUOTIENT=off` can still force it back OFF
+/// (the kill-switch), otherwise the quotient drops `pos` from the cache key so
+/// the structurally-identical `@a` cross-cat projection SHARES its fork-branch
+/// creation across `&`-segments (Stage 3 flip; see `ROOT_P_DESIGN_CYCLE3.md`).
+///
+/// STAGE 1: `false` (carrier plumbing only; kill-switch OFF ⇒ byte-identical).
+/// STAGE 3: flipped to `true` after FV (ProjCohortPosQuotientSoundness.v) is
+/// green, gated by the S-M2 (linear-or-HALT) + S-M3 (alt-count-identical) gates.
+///
+/// STAGE 3 S-M2 DECISIVE GATE — REFUTED (2026-07-03): flipping this to `true`
+/// caused a CATASTROPHIC runaway at `@a<-@b` k=0 (0.14s OFF → >3min ON, RSS
+/// growing ~20MB/s unbounded), reverted cleanly by the kill-switch (control:
+/// `PRATTAIL_PROJ_CACHE_POS_QUOTIENT=off` restores 0.14s). ROOT CAUSE (proven):
+/// the cohort cache's `ResolvedHit`/`InflightCollision` reuse inherently shares
+/// the RESOLVED BODY (`resolved_hit_bodies` returns the first-resolved
+/// position's `symbol_id`/`hi_pos`/`pos_at_dispatch`). Collapsing DISTINCT
+/// positions onto one entry therefore revives a position-P2 dispatch with
+/// position-P1's span — a structurally-wrong cursor that re-dispatches and
+/// cascades. The design premise "shares WORK/branching, NEVER results" is FALSE
+/// for this cache: the entry's payload IS the position-specific result. Even
+/// WITHIN a single `@a<-@b` (k=0, no `&`) GATE 0c found 58 multi-pos quotient
+/// groups, so the collapse mis-fires immediately. HELD OFF pending a redesign
+/// that shares ONLY the branching decision without sharing the resolved body
+/// (see the report / rp3_sm2_findings.md). Kept `false` = byte-identical.
+pub const PROJ_CACHE_POS_QUOTIENT_ENABLED: bool = false;
+
+/// Runtime resolution of the pos-quotient: active iff the compile-time master
+/// switch is `true` AND the env kill-switch is not set to `off`. Cached once via
+/// `OnceLock` (matches the `grind_*_enabled` pattern in `tomita_frontier.rs`) so
+/// the hot cohort-register path pays a single relaxed load.
+#[inline]
+pub fn proj_cache_pos_quotient_enabled() -> bool {
+    use std::sync::OnceLock;
+    static FLAG: OnceLock<bool> = OnceLock::new();
+    *FLAG.get_or_init(|| {
+        if !PROJ_CACHE_POS_QUOTIENT_ENABLED {
+            return false;
+        }
+        // Kill-switch: any of `off`/`0`/`false` (case-insensitive) disables.
+        match std::env::var("PRATTAIL_PROJ_CACHE_POS_QUOTIENT") {
+            Ok(v) => {
+                let v = v.trim().to_ascii_lowercase();
+                !(v == "off" || v == "0" || v == "false" || v == "no")
+            },
+            Err(_) => true,
+        }
+    })
+}
+
+/// The sentinel `pos` value stamped into a [`ProjCacheKey`] when the pos-quotient
+/// is ACTIVE. All keys sharing `(source_src_idx, inner_cur_bp, wrap_cat,
+/// wrap_rule, route)` collapse to this single `pos` so cross-`&`-segment
+/// registrations hit the SAME cache entry (reusing the segment-1 branching
+/// decision + snapshots). Real token positions are ≪ `usize::MAX`, so no
+/// collision with a genuine position when the quotient is OFF.
+pub const PROJ_CACHE_QUOTIENT_POS: usize = usize::MAX;
+
+/// ROOT-P design-cycle-3 (2026-07-02): the projection-cohort CACHE key — the
+/// full [`DispatchKey`] with `pos` REPLACED by a quotient sentinel when the
+/// pos-quotient is active (and preserved verbatim when it is OFF). This is the
+/// key type the cohort cache's `entries` map uses. It intentionally RETAINS
+/// `wrap_cat`/`wrap_rule`/`route`/`source`/`bp` (unlike the merge-only
+/// [`EquivKey`], which also drops those) so the quotient shares ONLY the
+/// position axis — the exact axis Stage-0 GATE 0a/0c proved is the fork
+/// multiplier — while every grammar-determined disambiguator survives.
+///
+/// INVARIANT (kill-switch identity, FV T6): when
+/// [`proj_cache_pos_quotient_enabled`] is `false`, `cache_key()` copies the real
+/// `pos`, so the map `DispatchKey ↦ entry` and the map `ProjCacheKey ↦ entry`
+/// are in bijection and the cache behaves byte-identically to the pre-quotient
+/// cohort cache.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ProjCacheKey {
+    /// Real `pos` when the quotient is OFF; [`PROJ_CACHE_QUOTIENT_POS`] when ON.
+    pub pos: usize,
+    pub source_src_idx: u16,
+    pub inner_cur_bp: u8,
+    pub wrap_cat: u16,
+    pub wrap_rule: u16,
+    pub route: CohortRoute,
+}
+
+impl ProjCacheKey {
+    /// Position-independent cohort-MERGE quotient (same as
+    /// [`DispatchKey::equiv`]). The sibling scans over `entries` (now keyed on
+    /// `ProjCacheKey`) call this to narrow to the `(source_src_idx,
+    /// inner_cur_bp)` equivalence class — identical to the pre-quotient
+    /// behavior since both axes are retained verbatim in the cache key.
+    #[inline(always)]
+    pub fn equiv(&self) -> EquivKey {
+        EquivKey {
+            source_src_idx: self.source_src_idx,
+            inner_cur_bp: self.inner_cur_bp,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct DispatchKey {
     pub pos: usize,
@@ -180,6 +281,34 @@ impl DispatchKey {
         EquivKey {
             source_src_idx: self.source_src_idx,
             inner_cur_bp: self.inner_cur_bp,
+        }
+    }
+
+    /// ROOT-P design-cycle-3: project to the projection-cohort CACHE key. When
+    /// the pos-quotient is ACTIVE ([`proj_cache_pos_quotient_enabled`]), `pos`
+    /// is replaced by [`PROJ_CACHE_QUOTIENT_POS`] so all keys sharing the five
+    /// grammar/route axes collapse to ONE cache entry (sharing fork-branch
+    /// creation across `&`-segments — the Stage-0-proven fork multiplier). When
+    /// OFF, the real `pos` is preserved, making this an injective image of the
+    /// full [`DispatchKey`] ⇒ the cohort cache is byte-identical to the shipped
+    /// (pos-bearing) behavior (FV T6 kill-switch identity).
+    ///
+    /// RETAINS `wrap_cat`/`wrap_rule`/`route`/`source`/`bp` unconditionally so
+    /// the M4 cast-family discriminator (wrap) and the R6-7 route discriminant
+    /// survive — only the position axis is quotiented (FV T1).
+    #[inline(always)]
+    pub fn cache_key(&self) -> ProjCacheKey {
+        ProjCacheKey {
+            pos: if proj_cache_pos_quotient_enabled() {
+                PROJ_CACHE_QUOTIENT_POS
+            } else {
+                self.pos
+            },
+            source_src_idx: self.source_src_idx,
+            inner_cur_bp: self.inner_cur_bp,
+            wrap_cat: self.wrap_cat,
+            wrap_rule: self.wrap_rule,
+            route: self.route,
         }
     }
 }
@@ -281,6 +410,16 @@ pub enum DispatchCacheEntry<W: SemiringRef> {
     /// register here as paused; they revive at end-of-step drain.
     InFlight {
         cohort_size: u32,
+        /// ROOT-P design-cycle-3: the REAL dispatch position(s) this InFlight
+        /// entry represents. When the pos-quotient is OFF this is exactly the
+        /// key's `pos` (a singleton — byte-identical). When ON, the entry is
+        /// shared across `&`-segments, so this records every distinct dispatch
+        /// `pos` that registered here (in registration order; deduplicated).
+        /// The crosswrap sibling scan's `K_sib.pos == R.pos_at_dispatch`
+        /// dispatch-site-identity clause reads THIS (any-match) instead of the
+        /// quotiented key so it stays pos-correct under the quotient. `Vec` with
+        /// capacity 1 (the OFF / non-quotiented singleton is the common case).
+        pos_at_dispatch: Vec<usize>,
         /// Stage 1.5: worker snapshots accumulated by every sibling
         /// worker pop at this key during the SAME step_fanout
         /// iteration. The FIRST entry corresponds to the worker that
@@ -389,6 +528,7 @@ impl<W: SemiringRef> std::fmt::Debug for DispatchCacheEntry<W> {
         match self {
             DispatchCacheEntry::InFlight {
                 cohort_size,
+                pos_at_dispatch,
                 worker_snapshots,
                 worker_pre_dispatch_weight: _,
                 cohort_shell: _,
@@ -398,6 +538,7 @@ impl<W: SemiringRef> std::fmt::Debug for DispatchCacheEntry<W> {
             } => f
                 .debug_struct("InFlight")
                 .field("cohort_size", cohort_size)
+                .field("pos_at_dispatch", pos_at_dispatch)
                 .field("pending_members_len", &pending_members.len())
                 .field("full_pending_members_len", &full_pending_members.len())
                 .field("worker_snapshots_len", &worker_snapshots.len())
@@ -445,7 +586,10 @@ pub struct CohortMember<W: SemiringRef> {
 /// re-drive large orphan sets without first materializing every parked member
 /// into a full [`BranchCursor`].
 pub struct OrphanedInflightMembers<W: SemiringRef> {
-    pub key: DispatchKey,
+    /// ROOT-P design-cycle-3: the cohort-cache key the orphan group lived under
+    /// (a [`ProjCacheKey`]; identity/diagnostics only — downstream re-injection
+    /// uses each member's own `return_frame`/shell, not this key).
+    pub key: ProjCacheKey,
     pub cohort_shell: Option<std::sync::Arc<crate::cohort_lazy::CohortShell<W>>>,
     pub pending_members: Vec<crate::cohort_lazy::CohortMemberState<W>>,
     pub full_pending_members: Vec<CohortMember<W>>,
@@ -715,6 +859,27 @@ fn resolved_entry_max_hi_pos<W: SemiringRef>(entry: &DispatchCacheEntry<W>) -> O
     )
 }
 
+/// ROOT-P design-cycle-3: does `entry` represent a dispatch at input position
+/// `pos`? Reads the REAL dispatch position(s) from the ENTRY (never the map key,
+/// which the pos-quotient may have collapsed to a sentinel), so the crosswrap /
+/// backstop sibling scans' dispatch-site-identity clause stays pos-correct.
+///
+/// - `InFlight`: any of the recorded `pos_at_dispatch` positions matches (a
+///   singleton == the key's real pos when the quotient is OFF ⇒ byte-identical).
+/// - `Resolved`: the scalar `pos_at_dispatch` OR any per-body
+///   `alternate_bodies[i].pos_at_dispatch` matches.
+/// - `Failed`: never.
+#[inline]
+fn entry_has_dispatch_pos<W: SemiringRef>(entry: &DispatchCacheEntry<W>, pos: usize) -> bool {
+    match entry {
+        DispatchCacheEntry::InFlight { pos_at_dispatch, .. } => pos_at_dispatch.contains(&pos),
+        DispatchCacheEntry::Resolved { pos_at_dispatch, alternate_bodies, .. } => {
+            *pos_at_dispatch == pos || alternate_bodies.iter().any(|b| b.pos_at_dispatch == pos)
+        },
+        DispatchCacheEntry::Failed => false,
+    }
+}
+
 /// Sig-B Blocker-2 (2026-05-31, pgmcp experiment #9): one own-wrap-gated
 /// cross-wrap body-splice job. Produced by
 /// [`DispatchCohortCache::take_pending_for_drain_crosswrap`] for each
@@ -775,7 +940,11 @@ pub struct CrossWrapSpliceJob<W: SemiringRef> {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct CrossWrapDrainKey {
-    pub dispatch_key: DispatchKey,
+    /// ROOT-P design-cycle-3: the sibling/pausing key as a [`ProjCacheKey`]
+    /// (quotiented pos when ON; real pos when OFF ⇒ byte-identical idempotence).
+    /// Combined with the per-parse-unique `member_id` + `symbol_id` + `coercion`
+    /// this stays a unique take-once discriminator under the quotient.
+    pub dispatch_key: ProjCacheKey,
     pub symbol_id: SppfId,
     pub member_id: u64,
     pub coercion: Option<(u16, u16)>,
@@ -784,13 +953,13 @@ pub struct CrossWrapDrainKey {
 impl CrossWrapDrainKey {
     #[inline]
     fn new(
-        dispatch_key: &DispatchKey,
+        dispatch_key: &ProjCacheKey,
         symbol_id: SppfId,
         member_id: u64,
         coercion: Option<(u16, u16)>,
     ) -> Self {
         Self {
-            dispatch_key: dispatch_key.clone(),
+            dispatch_key: *dispatch_key,
             symbol_id,
             member_id,
             coercion,
@@ -814,7 +983,15 @@ impl<W: SemiringRef> std::fmt::Debug for CrossWrapSpliceJob<W> {
 
 /// Walker-global cohort cache.
 pub struct DispatchCohortCache<W: SemiringRef> {
-    pub entries: rustc_hash::FxHashMap<DispatchKey, DispatchCacheEntry<W>>,
+    /// ROOT-P design-cycle-3: keyed on [`ProjCacheKey`] — the full `DispatchKey`
+    /// with `pos` quotiented when the pos-quotient is ACTIVE, and `pos` preserved
+    /// (byte-identical) when OFF. Every lookup converts a `DispatchKey` via
+    /// [`DispatchKey::cache_key`]. The REAL dispatch position is preserved inside
+    /// each entry (`pos_at_dispatch` on both InFlight and Resolved, plus per-body
+    /// `ResolvedBody::pos_at_dispatch`) so the crosswrap / span-anchor sibling
+    /// scans read positions from the ENTRY, never from the (possibly quotiented)
+    /// key — keeping them byte-identical OFF and pos-correct ON.
+    pub entries: rustc_hash::FxHashMap<ProjCacheKey, DispatchCacheEntry<W>>,
     next_member_id: u64,
     pub registrations_total: u64,
     pub inflight_collisions_total: u64,
@@ -866,7 +1043,8 @@ pub struct DispatchCohortCache<W: SemiringRef> {
     /// persistent storage caps. These preserve the semantic fanout for members
     /// already waiting at the key while allowing the storage cap to remain a
     /// storage cap, not a parse-completeness failure.
-    uncached_body_drain_jobs: rustc_hash::FxHashMap<DispatchKey, Vec<CohortDrainJob<W>>>,
+    /// ROOT-P design-cycle-3: keyed on [`ProjCacheKey`] to match `entries`.
+    uncached_body_drain_jobs: rustc_hash::FxHashMap<ProjCacheKey, Vec<CohortDrainJob<W>>>,
     /// Unresolved evidence produced by cache conditions that cannot be safely
     /// replayed. Plain body/snapshot storage saturation must not set this:
     /// those paths queue one-shot uncached drains and mark the entry saturated
@@ -965,12 +1143,23 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
     /// InFlight entry for later cohort revive weight delta computation.
     pub fn register(&mut self, key: DispatchKey, worker_pre_weight: W) -> RegisterOutcome<W> {
         self.registrations_total += 1;
-        match self.entries.get_mut(&key) {
+        // ROOT-P design-cycle-3: consult/insert under the pos-quotient CACHE key.
+        // OFF ⇒ `ck` carries the real `pos` (byte-identical, singleton pos vec);
+        // ON ⇒ `pos` is the quotient sentinel so cross-`&`-segment dispatches
+        // share this entry (sharing the segment-1 branching decision). The REAL
+        // dispatch position (`key.pos`, ALWAYS preserved on the DispatchKey) is
+        // recorded IN the entry so the sibling scans stay pos-correct.
+        let ck = key.cache_key();
+        let real_pos = key.pos;
+        match self.entries.get_mut(&ck) {
             None => {
+                let mut pos_vec = Vec::with_capacity(1);
+                pos_vec.push(real_pos);
                 self.entries.insert(
-                    key,
+                    ck,
                     DispatchCacheEntry::InFlight {
                         cohort_size: 1,
+                        pos_at_dispatch: pos_vec,
                         worker_snapshots: Vec::new(),
                         worker_pre_dispatch_weight: worker_pre_weight,
                         cohort_shell: None,
@@ -982,9 +1171,16 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
                 );
                 RegisterOutcome::WorkerInserted
             },
-            Some(DispatchCacheEntry::InFlight { cohort_size, .. }) => {
+            Some(DispatchCacheEntry::InFlight { cohort_size, pos_at_dispatch, .. }) => {
                 *cohort_size += 1;
                 self.inflight_collisions_total += 1;
+                // ROOT-P design-cycle-3: under the quotient this collision may be
+                // a DIFFERENT dispatch position sharing the entry — record it so
+                // the sibling scans see the full position set (dedup; OFF this is
+                // always a same-pos collision so the vec stays a singleton).
+                if !pos_at_dispatch.contains(&real_pos) {
+                    pos_at_dispatch.push(real_pos);
+                }
                 RegisterOutcome::InflightCollision
             },
             Some(DispatchCacheEntry::Resolved {
@@ -1039,7 +1235,9 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
         let mut snapshot_overflow = None;
         let mut body_overflow = None;
         let mut uncached_body_drain_job = None;
-        let entry = match self.entries.get_mut(&key) {
+        // ROOT-P design-cycle-3: resolve under the pos-quotient CACHE key.
+        let ck = key.cache_key();
+        let entry = match self.entries.get_mut(&ck) {
             Some(e) => e,
             None => return ResolveOutcome::NoOp,
         };
@@ -1255,7 +1453,7 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
         }
         if let Some(job) = uncached_body_drain_job {
             self.uncached_body_drain_jobs
-                .entry(key)
+                .entry(ck)
                 .or_default()
                 .push(job);
         }
@@ -1303,11 +1501,13 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
     }
 
     pub fn take_pending_for_drain_all(&mut self, key: &DispatchKey) -> Vec<CohortDrainJob<W>> {
+        // ROOT-P design-cycle-3: drain under the pos-quotient CACHE key.
+        let ck = key.cache_key();
         let mut jobs = self
             .uncached_body_drain_jobs
-            .remove(key)
+            .remove(&ck)
             .unwrap_or_default();
-        let Some(entry) = self.entries.get_mut(key) else {
+        let Some(entry) = self.entries.get_mut(&ck) else {
             return jobs;
         };
         let mut cached_jobs = match entry {
@@ -1440,8 +1640,9 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
     ) -> Vec<CrossWrapSpliceJob<W>> {
         // ── Read `R` (the resolved sibling). Require Resolved; clone every
         //    resolved body so the subsequent sibling scan can borrow
-        //    `self.entries` immutably without aliasing.
-        let Some(resolved_entry) = self.entries.get(resolved_key) else {
+        //    `self.entries` immutably without aliasing. ROOT-P design-cycle-3:
+        //    look up under the pos-quotient CACHE key.
+        let Some(resolved_entry) = self.entries.get(&resolved_key.cache_key()) else {
             return Vec::new();
         };
         let resolved_bodies = live_resolved_bodies_from_entry(resolved_entry);
@@ -1461,17 +1662,37 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
             //    `K_sib`, its materialized members. `crosswrap_drained` is
             //    consulted after materialization to skip already-spliced
             //    non-coercion body/member alternatives.
-            let mut eligible: Vec<(DispatchKey, Vec<CohortMember<W>>)> = Vec::new();
+            let mut eligible: Vec<(ProjCacheKey, Vec<CohortMember<W>>)> = Vec::new();
+            let resolved_ck = resolved_key.cache_key();
             for (k_sib, entry) in self.entries.iter() {
+                // ROOT-P design-cycle-3 SCAN-PROBE (THROWAWAY, env-gated by
+                // PRATTAIL_RP3_SCANPROBE): does the crosswrap sibling scan ever
+                // iterate over route=Projection entries (the `@a<-@b` cohorts the
+                // pos-quotient collapses)? If it only touches route entries that
+                // are cast-family cross-WRAP, the quotient (which targets
+                // Projection cohorts) is disjoint from this scan's pos-identity.
+                if std::env::var_os("PRATTAIL_RP3_SCANPROBE").is_some() {
+                    let _ = entry;
+                    eprintln!(
+                        "[RP3-SCAN crosswrap] k_sib{{route:{:?},pos:{},src:{},bp:{},wrap:({},{})}} R{{pos_disp:{}}}",
+                        k_sib.route, k_sib.pos, k_sib.source_src_idx, k_sib.inner_cur_bp,
+                        k_sib.wrap_cat, k_sib.wrap_rule, r_pos_at_dispatch,
+                    );
+                }
                 // Clause 1 + 2 + 3: equiv match, distinct wrap, dispatch-site
-                // identity (`K_sib.pos == R.pos_at_dispatch`).
-                if k_sib == resolved_key {
+                // identity (`K_sib.pos == R.pos_at_dispatch`). ROOT-P
+                // design-cycle-3: clause-1 compares CACHE keys (the map's key
+                // space); clause-3 reads the sibling's REAL dispatch pos from the
+                // ENTRY (`entry_has_dispatch_pos`), not the possibly-quotiented
+                // key, so it stays pos-correct under the quotient and
+                // byte-identical when OFF (singleton entry pos == key pos).
+                if *k_sib == resolved_ck {
                     continue;
                 }
                 if k_sib.equiv() != r_equiv {
                     continue;
                 }
-                if k_sib.pos != r_pos_at_dispatch {
+                if !entry_has_dispatch_pos(entry, r_pos_at_dispatch) {
                     continue;
                 }
                 // Clause 4 + member materialization. Eligible iff own wrap is
@@ -1731,13 +1952,23 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
         // ── Pass 2: for each body × each paused member `K_sib`, test the
         //    §2.4a eligibility. Collect (K_sib, body_idx, coercion, members).
         struct Pairing<W: SemiringRef> {
-            k_sib: DispatchKey,
+            // ROOT-P design-cycle-3: the sibling's CACHE key (ProjCacheKey).
+            k_sib: ProjCacheKey,
             body_idx: usize,
             coercion: Option<(u16, u16)>,
             members: Vec<CohortMember<W>>,
         }
         let mut pairings: Vec<Pairing<W>> = Vec::new();
         for (k_sib, entry) in self.entries.iter() {
+            // ROOT-P design-cycle-3 SCAN-PROBE (THROWAWAY, env-gated): route of
+            // entries the span-anchored outer-cast scan iterates.
+            if std::env::var_os("PRATTAIL_RP3_SCANPROBE").is_some() {
+                eprintln!(
+                    "[RP3-SCAN spananchor] k_sib{{route:{:?},pos:{},src:{},bp:{},wrap:({},{})}}",
+                    k_sib.route, k_sib.pos, k_sib.source_src_idx, k_sib.inner_cur_bp,
+                    k_sib.wrap_cat, k_sib.wrap_rule,
+                );
+            }
             // Clause 1 + member materialization: own wrap InFlight (with
             // members) OR Resolved with a STRICTLY shorter span (with members)
             // — a self-resolution at `>= some body's hi` is its own body, not
@@ -1777,7 +2008,10 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
             // Test each body against this member.
             for (body_idx, body) in bodies.iter().enumerate() {
                 // Clause 3: span anchor — the body starts where K_sib delegated.
-                if body.span_lo != k_sib.pos {
+                // ROOT-P design-cycle-3: read the sibling's REAL delegation pos
+                // from the ENTRY (`entry_has_dispatch_pos`), not the quotiented
+                // key — byte-identical OFF (singleton entry pos == key pos).
+                if !entry_has_dispatch_pos(entry, body.span_lo) {
                     continue;
                 }
                 // Clause 2: narrow EquivKey match (R5).
@@ -1878,8 +2112,12 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
                         symbol_id: body.symbol_id,
                         // §2.4b: the body's span IS the member's body extent.
                         // pos_at_dispatch = K_sib.pos = R.span_lo; hi_pos = R.span_hi.
+                        // ROOT-P design-cycle-3: clause 3 established the sibling
+                        // delegated at `body.span_lo`, so use that directly (the
+                        // real delegation pos) — quotient-safe and, when OFF,
+                        // exactly `p.k_sib.pos` (byte-identical).
                         hi_pos: body.span_hi,
-                        pos_at_dispatch: p.k_sib.pos,
+                        pos_at_dispatch: body.span_lo,
                         // equiv() match ⇒ source_src_idx + inner_cur_bp are
                         // identical between K_sib and the body's key; read from
                         // K_sib (the member whose continuation we revive).
@@ -1965,17 +2203,84 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
         (inflight, inflight_with, resolved, resolved_with)
     }
 
+    /// ROOT-P design-cycle-3 STAGE 0 GATE 0c (THROWAWAY DIAGNOSTIC, read-only).
+    ///
+    /// Groups the LIVE cache entry keys by the proposed `ProjCacheKey`-shape
+    /// quotient — `(source_src_idx, inner_cur_bp, wrap_cat, wrap_rule, route)`,
+    /// i.e. the full `DispatchKey` MINUS `pos` — and reports:
+    ///   1. `distinct_dispatch_keys`: number of live entries (each a distinct
+    ///      full `DispatchKey`).
+    ///   2. `distinct_projcache_keys`: number of distinct quotient groups (the
+    ///      count that would survive dropping `pos` from the cache key).
+    ///   3. `pos_only_groups`: number of quotient groups whose members differ
+    ///      ONLY in `pos` (all other axes identical — trivially true by
+    ///      construction of the quotient, reported for confirmation).
+    ///   4. `multi_pos_groups`: number of quotient groups with ≥2 distinct
+    ///      `pos` values (these are the cross-`&`-segment re-forks the quotient
+    ///      would collapse).
+    ///   5. `max_pos_per_group`: the largest number of distinct positions
+    ///      sharing one quotient (the per-key fork multiplier).
+    ///
+    /// GATE 0c PASSES iff `distinct_dispatch_keys` grows ~d^k while
+    /// `distinct_projcache_keys` stays ~constant AND every multi-pos group
+    /// differs ONLY in `pos` (the quotient is not inert / does not conflate
+    /// distinct wrap/source axes).
+    pub fn dbg_projcache_quotient_census(&self) -> (u64, u64, u64, u64, u64) {
+        use rustc_hash::FxHashMap;
+        // quotient axes (ProjCacheKey shape) -> set of distinct `pos` values.
+        let mut groups: FxHashMap<(u16, u8, u16, u16, CohortRoute), Vec<usize>> =
+            FxHashMap::default();
+        for key in self.entries.keys() {
+            let q = (
+                key.source_src_idx,
+                key.inner_cur_bp,
+                key.wrap_cat,
+                key.wrap_rule,
+                key.route,
+            );
+            let positions = groups.entry(q).or_default();
+            if !positions.contains(&key.pos) {
+                positions.push(key.pos);
+            }
+        }
+        let distinct_dispatch_keys = self.entries.len() as u64;
+        let distinct_projcache_keys = groups.len() as u64;
+        // By construction every group's members differ ONLY in `pos` (the five
+        // quotient axes are held fixed within a group). We report the count of
+        // groups (pos_only == distinct_projcache_keys) plus the multi-pos
+        // subset that the quotient actually collapses.
+        let pos_only_groups = distinct_projcache_keys;
+        let mut multi_pos_groups = 0u64;
+        let mut max_pos_per_group = 0u64;
+        for positions in groups.values() {
+            let n = positions.len() as u64;
+            if n >= 2 {
+                multi_pos_groups += 1;
+            }
+            if n > max_pos_per_group {
+                max_pos_per_group = n;
+            }
+        }
+        (
+            distinct_dispatch_keys,
+            distinct_projcache_keys,
+            pos_only_groups,
+            multi_pos_groups,
+            max_pos_per_group,
+        )
+    }
+
     pub fn drain_orphaned_inflight_member_groups(&mut self) -> Vec<OrphanedInflightMembers<W>> {
         // First pass: identify InFlight keys that carry revivable
         // orphans. We collect keys then remove, because `FxHashMap`
         // cannot be mutated while its `values()` iterator is borrowed.
-        let orphan_keys: Vec<DispatchKey> = self
+        let orphan_keys: Vec<ProjCacheKey> = self
             .entries
             .iter()
             .filter_map(|(k, entry)| match entry {
                 DispatchCacheEntry::InFlight {
                     pending_members, full_pending_members, ..
-                } if has_pending_members(pending_members, full_pending_members) => Some(k.clone()),
+                } if has_pending_members(pending_members, full_pending_members) => Some(*k),
                 _ => None,
             })
             .collect();
@@ -2083,7 +2388,8 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
     /// entry. Used by the walker's resolve site to populate
     /// `WorkerSnapshot::worker_pre_dispatch_weight`.
     pub fn read_worker_pre(&self, key: &DispatchKey) -> Option<W> {
-        match self.entries.get(key)? {
+        // ROOT-P design-cycle-3: read under the pos-quotient CACHE key.
+        match self.entries.get(&key.cache_key())? {
             DispatchCacheEntry::InFlight { worker_pre_dispatch_weight, .. } => {
                 Some(worker_pre_dispatch_weight.clone())
             },
@@ -2107,7 +2413,9 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
     where
         W: crate::automata::semiring::LexProvenance,
     {
-        match self.entries.get(key) {
+        // ROOT-P design-cycle-3: consult/remove under the pos-quotient CACHE key.
+        let ck = key.cache_key();
+        match self.entries.get(&ck) {
             Some(DispatchCacheEntry::InFlight {
                 pending_members, full_pending_members, ..
             }) if has_pending_members(pending_members, full_pending_members) => {},
@@ -2118,7 +2426,7 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
             pending_members,
             full_pending_members,
             ..
-        }) = self.entries.remove(key)
+        }) = self.entries.remove(&ck)
         else {
             return Vec::new();
         };
@@ -2147,7 +2455,11 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
         if member.member_id == 0 {
             member.member_id = self.allocate_member_id();
         }
-        match self.entries.get_mut(&key) {
+        // ROOT-P design-cycle-3: locate the entry under the pos-quotient CACHE
+        // key; the FULL `key` is still passed to `pause_pending_member` below so
+        // the cohort shell / member state keep their pos-bearing observational
+        // identity (members from distinct `&`-segments stay distinguishable).
+        match self.entries.get_mut(&key.cache_key()) {
             Some(DispatchCacheEntry::InFlight {
                 cohort_shell,
                 pending_members,
@@ -2235,7 +2547,8 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
         // Read `K_pause`'s own state to evaluate clause 4 for the
         // `Resolved`-pause case (own span must be strictly shorter than R'
         // to be eligible; InFlight is always eligible).
-        let pause_own_hi: Option<usize> = match self.entries.get(k_pause) {
+        // ROOT-P design-cycle-3: read K_pause's own entry under the CACHE key.
+        let pause_own_hi: Option<usize> = match self.entries.get(&k_pause.cache_key()) {
             Some(entry @ DispatchCacheEntry::Resolved { .. }) => resolved_entry_max_hi_pos(entry),
             // InFlight / absent / Failed: treat as "own wrap not resolved"
             // (eligible by clause 4's InFlight disjunct). Failed members
@@ -2248,7 +2561,20 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
         // re-pushes `CategoryEntry(source)` with the RESOLVED wrap).
         let mut sources: Vec<(SppfId, usize, usize, u16, u16, Vec<WorkerSnapshot<W>>)> = Vec::new();
         for (k_sib, entry) in self.entries.iter() {
-            if k_sib == k_pause {
+            // ROOT-P design-cycle-3 SCAN-PROBE (THROWAWAY, env-gated): route of
+            // entries the pausing-member crosswrap backstop scan iterates.
+            if std::env::var_os("PRATTAIL_RP3_SCANPROBE").is_some() {
+                let _ = entry;
+                eprintln!(
+                    "[RP3-SCAN backstop] k_sib{{route:{:?},pos:{},src:{},bp:{},wrap:({},{})}} pause{{pos:{}}}",
+                    k_sib.route, k_sib.pos, k_sib.source_src_idx, k_sib.inner_cur_bp,
+                    k_sib.wrap_cat, k_sib.wrap_rule, k_pause.pos,
+                );
+            }
+            // ROOT-P design-cycle-3: compare CACHE keys (exclude K_pause's own
+            // entry; distinct-wrap siblings have distinct quotient keys and
+            // survive). Byte-identical OFF (cache key preserves pos).
+            if *k_sib == k_pause.cache_key() {
                 continue;
             }
             if k_sib.equiv() != pause_equiv {
@@ -2272,7 +2598,7 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
                     // Idempotence: skip if this concrete member already saw
                     // R'.symbol_id. Other members under K_pause remain eligible.
                     if self.crosswrap_drained.contains(&CrossWrapDrainKey::new(
-                        k_pause,
+                        &k_pause.cache_key(),
                         body.symbol_id,
                         member.member_id,
                         None,
@@ -2320,7 +2646,7 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
         );
         for (symbol_id, hi_pos, pos_at_dispatch, sib_wrap_cat, sib_wrap_rule, snaps) in sources {
             if !self.crosswrap_drained.insert(CrossWrapDrainKey::new(
-                k_pause,
+                &k_pause.cache_key(),
                 symbol_id,
                 member.member_id,
                 None,
@@ -2353,7 +2679,10 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
     /// SPPF symbol). Reserved for Stage 1.5+.
     #[allow(dead_code)]
     pub fn fail(&mut self, key: DispatchKey) {
-        if let Some(entry @ DispatchCacheEntry::InFlight { .. }) = self.entries.get_mut(&key) {
+        // ROOT-P design-cycle-3: transition under the pos-quotient CACHE key.
+        if let Some(entry @ DispatchCacheEntry::InFlight { .. }) =
+            self.entries.get_mut(&key.cache_key())
+        {
             *entry = DispatchCacheEntry::Failed;
             self.failed_total += 1;
         }
@@ -2500,6 +2829,7 @@ mod tests {
             _frontier_top: Option<&crate::gss::WpdaGssNode>,
             _pos: usize,
             _tokens: &dyn crate::wpda_runtime::WpdaTokenSource,
+            _frame_ctx: crate::wpda_runtime::FrameCtx,
         ) -> crate::wpda_walker::WpdaStepAction<LexicographicWeight> {
             crate::wpda_walker::WpdaStepAction::Idle
         }
@@ -2528,42 +2858,79 @@ mod tests {
             cache.register(low.clone(), TropicalWeight(0.0)),
             RegisterOutcome::WorkerInserted
         ));
-        assert!(matches!(
-            cache.register(high.clone(), TropicalWeight(0.0)),
-            RegisterOutcome::WorkerInserted
-        ));
-        assert_eq!(cache.entries.len(), 2);
-        assert!(cache.entries.contains_key(&low));
-        assert!(cache.entries.contains_key(&high));
+        let high_outcome = cache.register(high.clone(), TropicalWeight(0.0));
+        // ROOT-P design-cycle-3: `low` and `high` share (source,bp,wrap), so
+        // under the pos-quotient they collapse to ONE entry (their positions —
+        // including the > u32 one — are preserved IN the entry's `pos_at_dispatch`
+        // Vec, not the key). With the quotient OFF they are two distinct entries.
+        if proj_cache_pos_quotient_enabled() {
+            assert!(matches!(high_outcome, RegisterOutcome::InflightCollision));
+            assert_eq!(cache.entries.len(), 1);
+            assert_eq!(low.cache_key(), high.cache_key());
+            match cache.entries.get(&low.cache_key()) {
+                Some(DispatchCacheEntry::InFlight { pos_at_dispatch, .. }) => {
+                    // both real positions recorded, including the > u32 one.
+                    assert!(pos_at_dispatch.contains(&0));
+                    assert!(pos_at_dispatch.contains(&after_u32));
+                },
+                other => panic!("expected InFlight, got {other:?}"),
+            }
+        } else {
+            assert!(matches!(high_outcome, RegisterOutcome::WorkerInserted));
+            assert_eq!(cache.entries.len(), 2);
+            assert!(cache.entries.contains_key(&low.cache_key()));
+            assert!(cache.entries.contains_key(&high.cache_key()));
+        }
     }
 
     #[test]
     fn dispatch_cache_key_separates_all_obligation_axes() {
+        // ROOT-P design-cycle-3: the NON-pos grammar axes (source, bp, wrap_cat,
+        // wrap_rule) MUST each separate the cohort CACHE key in BOTH modes (the
+        // M4 cast-family un-conflation). The POS axis separates only when the
+        // pos-quotient is OFF; when ON, a pos-variant collapses onto `base`.
         let base = DispatchKey::new(3, 7, 0, 2, 16);
-        let variants = [
-            DispatchKey::new(4, 7, 0, 2, 16),
-            DispatchKey::new(3, 8, 0, 2, 16),
-            DispatchKey::new(3, 7, 1, 2, 16),
-            DispatchKey::new(3, 7, 0, 3, 16),
-            DispatchKey::new(3, 7, 0, 2, 17),
+        let non_pos_variants = [
+            DispatchKey::new(3, 8, 0, 2, 16), // source
+            DispatchKey::new(3, 7, 1, 2, 16), // bp
+            DispatchKey::new(3, 7, 0, 3, 16), // wrap_cat
+            DispatchKey::new(3, 7, 0, 2, 17), // wrap_rule
         ];
+        let pos_variant = DispatchKey::new(4, 7, 0, 2, 16); // pos only
 
         let mut cache = DispatchCohortCache::<TropicalWeight>::new();
         assert!(matches!(
             cache.register(base.clone(), TropicalWeight(0.0)),
             RegisterOutcome::WorkerInserted
         ));
-        for key in &variants {
+        // Every non-pos variant is a fresh key in BOTH modes.
+        for key in &non_pos_variants {
             assert_ne!(&base, key);
+            assert_ne!(base.cache_key(), key.cache_key());
             assert!(matches!(
                 cache.register(key.clone(), TropicalWeight(0.0)),
                 RegisterOutcome::WorkerInserted
             ));
         }
+        assert!(cache.entries.contains_key(&base.cache_key()));
+        assert!(non_pos_variants
+            .iter()
+            .all(|key| cache.entries.contains_key(&key.cache_key())));
 
-        assert_eq!(cache.entries.len(), 1 + variants.len());
-        assert!(cache.entries.contains_key(&base));
-        assert!(variants.iter().all(|key| cache.entries.contains_key(key)));
+        // The pos-variant: collapses onto `base` (InflightCollision) when the
+        // quotient is ON; is a fresh key (WorkerInserted) when OFF.
+        let pos_outcome = cache.register(pos_variant.clone(), TropicalWeight(0.0));
+        if proj_cache_pos_quotient_enabled() {
+            assert_eq!(base.cache_key(), pos_variant.cache_key());
+            assert!(matches!(pos_outcome, RegisterOutcome::InflightCollision));
+            // base + 4 non-pos variants = 5 distinct entries (pos-variant shares).
+            assert_eq!(cache.entries.len(), 1 + non_pos_variants.len());
+        } else {
+            assert_ne!(base.cache_key(), pos_variant.cache_key());
+            assert!(matches!(pos_outcome, RegisterOutcome::WorkerInserted));
+            // base + 4 non-pos + pos-variant = 6 distinct entries.
+            assert_eq!(cache.entries.len(), 2 + non_pos_variants.len());
+        }
     }
 
     #[test]
@@ -2593,7 +2960,7 @@ mod tests {
         second.binder_scope_marks.push((1, vec!["x".to_string()]));
         assert!(cache.pause_cohort_member(key.clone(), cohort_member(second)));
 
-        match cache.entries.get(&key) {
+        match cache.entries.get(&key.cache_key()) {
             Some(DispatchCacheEntry::InFlight {
                 pending_members, full_pending_members, ..
             }) => {

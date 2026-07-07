@@ -27,6 +27,12 @@ pub mod class2smoke;
 pub mod class3multi;
 #[cfg(feature = "class3opt")]
 pub mod class3opt;
+// PIECE 3: keyword-reservation OPT-OUT fixture (Fortran-style full ambiguity).
+#[cfg(feature = "fortran_model")]
+pub mod fortran_model;
+// PIECE 3: keyword-reservation ENABLED (`auto`) twin of fortran_model.
+#[cfg(feature = "reserved_model")]
+pub mod reserved_model;
 #[cfg(feature = "guarded-rho")]
 pub mod guarded_rho;
 #[cfg(feature = "lambda")]

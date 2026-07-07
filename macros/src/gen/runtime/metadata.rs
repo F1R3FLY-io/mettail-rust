@@ -22,6 +22,7 @@ fn collection_type_name(coll_type: &CollectionType) -> &'static str {
         CollectionType::HashSet => "HashSet",
         CollectionType::Vec => "Vec",
         CollectionType::HashMap => "HashMap",
+        CollectionType::PathMap => "PathMap",
     }
 }
 

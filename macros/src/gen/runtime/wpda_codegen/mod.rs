@@ -55,6 +55,13 @@ pub mod facade;
 /// Helpers replace deterministic peek-and-decide patterns with
 /// `WpdaStepAction::Fork` per `feedback_use_wpds_disambiguation_not_heuristics.md`.
 pub mod forks;
+/// Layer-A grammar-generality property harness (the permanent safeguard).
+/// Test-only: calls the `pub(crate)` codegen functions directly on random
+/// `LanguageDef`s and asserts the seven generality invariants (INV-1..7) of
+/// `scratchpad/prattail-generality-audit.md`. Blocking gate via
+/// `cargo test -p macros grammar_generality`.
+#[cfg(test)]
+mod grammar_generality_prop;
 pub mod infix;
 /// M6c.2 (2026-05-14): per-grammar `lex_alt_rule_for(cat, kind)` codegen.
 /// Used by the lex-Fork emitter to bind alternative tokens to prefix-site
@@ -108,6 +115,11 @@ pub fn generate_wpda_engine_module(language: &LanguageDef) -> TokenStream {
     let bp_tables = infix::emit_bp_tables(language, &categories, &per_cat);
 
     let facade_fns = facade::emit_parse_fns(language, &categories, &engine_ident);
+
+    // SPPF-realize observational-dedup (2026-06-28): the semantic-key hasher,
+    // hoisted to module scope so the facade root-dedup and the engine's
+    // `semantic_fingerprint` per-node dedup share ONE key definition.
+    let semantic_key_hasher = facade::emit_semantic_key_hasher();
 
     // Stage 10.5r migration: per-category recovery infrastructure
     // (BRACKET_STATE_<cat>, LAST_ERROR_POS_<cat>, RUNNING_WEIGHT_<CAT>,
@@ -172,6 +184,11 @@ pub fn generate_wpda_engine_module(language: &LanguageDef) -> TokenStream {
         pub const WPDA_RULES: &[&[(&str, u16)]] = &[
             #rule_table
         ];
+
+        // SPPF-realize observational-dedup (2026-06-28): one module-scope
+        // semantic-key hasher shared by the facade root-dedup and the
+        // engine's `WpdaEngine::semantic_fingerprint` per-node dedup.
+        #semantic_key_hasher
 
         // EP-P2 (Stage B): Parikh obligation tables.
         #[doc = #parikh_inventory_doc]

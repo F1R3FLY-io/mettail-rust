@@ -20,8 +20,8 @@
 **Semantics:** List equality: same length and element-wise equality. Bag = multiset equality (element, count). Element bounds: Bag requires `Clone + Eq + Hash`; List elements in relations need `Eq + Hash`.
 
 **Type declaration (language macro):** In **types**, collection categories are declared as:
-- `![Vec<Proc>] as List` — List; **default** delimiters are `list(`, `)`, `,` (see `CollectionCategory::list_defaults()` in `macros/src/ast/language.rs`). Languages may override, e.g. RhoCalc: `![Vec<Proc>] as List ["[", "]", ","]`.
-- `![mettail_runtime::HashBag<Proc>] as Bag` — Bag; **default** delimiters are `bag(`, `)`, `,`. RhoCalc uses `![mettail_runtime::HashBag<Proc>] as Bag [ "#{", "}#", "|" ]` to avoid clashing with PPar `{ … }`.
+- `![Vec<Proc>] as List` — List; **default** delimiters are `list(`, `)`, `,` (see `CollectionCategory::list_defaults()` in `macros/src/ast/language.rs`). Languages may override with a braced dictionary (`open_parts`, `close_parts`, `sep`), e.g. RhoCalc brace lists.
+- `![mettail_runtime::HashBag<Proc>] as Bag` — Bag; **default** delimiters are `bag(`, `)`, `,`. RhoCalc uses `open_parts: ["#", "{"]`, `close_parts: ["}", "#"]`, `sep: "|"` to avoid clashing with PPar `{ … }`.
 - Optional 4-string bracket form for **Map**: open, close, entry separator, key/value separator (see map design doc).
 
 One parameterised PraTTaIL rule per collection kind; element category can differ from collection category (e.g. parse **Proc** into List/Bag via `ElemParse` and `pending_elem` in the trampoline).

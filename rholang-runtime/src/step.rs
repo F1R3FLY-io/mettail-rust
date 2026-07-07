@@ -626,7 +626,10 @@ mod tests {
 
     /// The flagship COMM term: a receive on `@"c"` and a matching send carrying the process
     /// `@"OUT"!("p")` — exactly one rendezvous fires.
-    const COMM_SRC: &str = r#"{ (@("c")?x).{*(x)} | @("c")!(@("OUT")!("p")) }"#;
+    // Guarded-receive sugar `(@("c")?x).{p}` was superseded by main's `for(x <- c){p}`
+    // (RhoCalc → Rholang 1.4 merge). `(c?x).{p} ≡ for(x <- c){p}`; the sibling oracle
+    // `tests/rho_rhocalc_ast.rs` uses the same `for(...)` form.
+    const COMM_SRC: &str = r#"{ for(x <- @("c")){*(x)} | @("c")!(@("OUT")!("p")) }"#;
 
     fn lower(src: &str) -> Par {
         let term = RhoCalcLanguage.parse_term(src).expect("parse rhocalc term");
@@ -740,7 +743,7 @@ mod tests {
         // The held fold `int(*(x),8)` lifts (1 fold-spec); the ground send-side `int(5,8)` folds in
         // place; the lifted call has the original send + receive.
         let term = RhoCalcLanguage
-            .parse_term(r#"{ (@("c")?x).{ int(*(x), 8) } | @("c")!(int(5,8)) }"#)
+            .parse_term(r#"{ for(x <- @("c")){ int(*(x), 8) } | @("c")!(int(5,8)) }"#)
             .expect("parse");
         let (par, specs) = crate::rhocalc_ast::lower_rhocalc_term_with_folds(term.as_ref())
             .expect("the held fold lifts, so lowering succeeds");
@@ -760,7 +763,7 @@ mod tests {
         use crate::rhocalc_ast::dovetail_rho_backed_rhocalc;
         let language = dovetail_rho_backed_rhocalc("OUT").expect("build RhoCalc wrapper");
         let term = RhoCalcLanguage
-            .parse_term(r#"{ (@("c")?x).{ int(*(x), 8) } | @("c")!(int(5,8)) }"#)
+            .parse_term(r#"{ for(x <- @("c")){ int(*(x), 8) } | @("c")!(int(5,8)) }"#)
             .expect("parse held-fold term");
         let mut stepper = language
             .start_reduction_stepper(term.as_ref())

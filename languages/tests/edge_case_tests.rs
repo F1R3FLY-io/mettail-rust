@@ -442,7 +442,7 @@ mod rhocalc_edge_cases {
 
     #[test]
     fn comm_under_new() {
-        rhocalc_parses("new(x) in { {(x?y).{*(y)} | x!(42)} }");
+        rhocalc_parses("new(x) in { {for(y <- x){*(y)} | x!(42)} }");
     }
 
     #[test]
@@ -452,12 +452,12 @@ mod rhocalc_edge_cases {
 
     #[test]
     fn nested_concat() {
-        rhocalc_parses(r#"{concat("hello", concat("wor", "ld"))}"#);
+        rhocalc_parses(r#"{"hello".concat("wor".concat("ld"))}"#);
     }
 
     #[test]
     fn len_of_concat() {
-        rhocalc_parses(r#"{len(concat("a", "bc"))}"#);
+        rhocalc_parses(r#"{"a".concat("bc").length()}"#);
     }
 
     #[test]

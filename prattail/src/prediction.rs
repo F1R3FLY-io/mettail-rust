@@ -1813,7 +1813,26 @@ pub fn build_dispatch_action_tables(
             // Skip rules handled outside the trie-backed prefix dispatcher.
             // Unary prefix rules are parsed by the Pratt binding-power path;
             // collection rules are parsed by collection-specific machinery.
-            if rd_rule.is_collection || rd_rule.prefix_bp.is_some() {
+            //
+            // Bug fix (2026-06-30): `is_collection` is set for ANY rule with a
+            // collection (`.*sep()`/`Vec`) FIELD, not only for pure collection
+            // LITERALS. The collection-specific machinery, however, only handles
+            // pure literals — a delimited collection surface (`[items]`, `{k:v}`,
+            // `Set(xs)`, …) with no other operands. A normal terminal-first rule
+            // that merely HAS a collection field — e.g. the query receive
+            // `InputBindEmptyQuery : "<-" n "!" "?" "(" args.*sep ")"` (which has a
+            // `NonTerminal(n)` operand before the collection) — is dispatched by
+            // NEITHER path if skipped here (the collection machinery is keyed on a
+            // collection-open token, not `<-`), so it becomes silently unparseable
+            // (`for(<- c!?(a)){…}` → "no accepting branch"). Only skip a rule when
+            // it is a PURE collection literal: `is_collection` AND it has no
+            // `NonTerminal` operand. Otherwise it must go through the prefix
+            // dispatcher on its leading terminal like any other rule.
+            let is_pure_collection_literal = rd_rule.is_collection
+                && !rd_rule.items.iter().any(|it| {
+                    matches!(it, crate::grammar::ir::RDSyntaxItem::NonTerminal { .. })
+                });
+            if is_pure_collection_literal || rd_rule.prefix_bp.is_some() {
                 continue;
             }
 
@@ -1827,12 +1846,31 @@ pub fn build_dispatch_action_tables(
 
             if let Some(crate::grammar::ir::RDSyntaxItem::Terminal(t)) = rd_rule.items.first() {
                 let variant = terminal_to_variant_name(t);
-                entries
-                    .entry(variant)
-                    .or_insert_with(|| DispatchAction::Direct {
-                        rule_label: rd_rule.label.clone(),
-                        parse_fn: format!("parse_{}", rd_rule.label.to_lowercase()),
-                    });
+                match entries.entry(variant.clone()) {
+                    std::collections::hash_map::Entry::Vacant(v) => {
+                        v.insert(DispatchAction::Direct {
+                            rule_label: rd_rule.label.clone(),
+                            parse_fn: format!("parse_{}", rd_rule.label.to_lowercase()),
+                        });
+                    },
+                    std::collections::hash_map::Entry::Occupied(e) => {
+                        // DIAGNOSTIC (2026-06-30, gated; REMOVE after): the terminal
+                        // already has a Direct dispatch for this first-token variant,
+                        // so THIS rule is silently discarded by the table. Log the
+                        // kept/dropped pair to pin whether the unreachable longer
+                        // rules (InputBindEmptyQuery, NQuote, …) are dropped HERE.
+                        if std::env::var("PRATTAIL_DISPATCH_TRACE").is_ok() {
+                            let kept = match e.get() {
+                                DispatchAction::Direct { rule_label, .. } => rule_label.clone(),
+                                _ => "<non-Direct>".to_string(),
+                            };
+                            eprintln!(
+                                "[DISPATCH-DROP] cat={} token={:?} variant={} KEPT={} DROPPED={}",
+                                cat, t, variant, kept, rd_rule.label
+                            );
+                        }
+                    },
+                }
             }
         }
 

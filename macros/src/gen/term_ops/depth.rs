@@ -93,7 +93,7 @@ fn collection_max_depth(name: TokenStream, coll_type: &CollectionType) -> TokenS
         CollectionType::HashBag => {
             quote! { #name.iter().map(|(x, _count)| x.term_depth()).max().unwrap_or(0) }
         },
-        CollectionType::HashMap => {
+        CollectionType::HashMap | CollectionType::PathMap => {
             quote! {
                 #name.iter()
                     .map(|(k, v)| k.term_depth().max(v.term_depth()))

@@ -232,6 +232,7 @@ fn collection_rule(
 /// Minimal language (~Lambda calculus): 1 category, 3 rules.
 pub fn minimal_spec() -> LanguageSpec {
     LanguageSpec {
+        reservation_policy: Default::default(),
         name: "Lambda".to_string(),
         types: vec![CategorySpec {
             name: "Term".to_string(),
@@ -277,6 +278,7 @@ pub fn minimal_spec() -> LanguageSpec {
 /// Small language (~Calculator): 3 categories, 12 rules.
 pub fn small_spec() -> LanguageSpec {
     LanguageSpec {
+        reservation_policy: Default::default(),
         name: "Calculator".to_string(),
         types: vec![
             CategorySpec {
@@ -333,6 +335,7 @@ pub fn small_spec() -> LanguageSpec {
 /// Medium language (~Ambient calculus): 2 categories, 7 rules.
 pub fn medium_spec() -> LanguageSpec {
     LanguageSpec {
+        reservation_policy: Default::default(),
         name: "Ambient".to_string(),
         types: vec![
             CategorySpec {
@@ -386,6 +389,7 @@ pub fn medium_spec() -> LanguageSpec {
 /// Complex language (~RhoCalc): 3 categories, 10 rules.
 pub fn complex_spec() -> LanguageSpec {
     LanguageSpec {
+        reservation_policy: Default::default(),
         name: "RhoCalc".to_string(),
         types: vec![
             CategorySpec {
@@ -485,6 +489,7 @@ pub fn synthetic_spec(n_ops: usize) -> LanguageSpec {
     }
 
     LanguageSpec {
+        reservation_policy: Default::default(),
         name: "Synthetic".to_string(),
         types: vec![CategorySpec {
             name: "Expr".to_string(),
@@ -717,6 +722,7 @@ pub fn prepare(spec: &LanguageSpec) -> PreparedSpec {
         .iter()
         .filter(|r| r.is_infix)
         .map(|r| InfixRuleInfo {
+            nullary_literals: Vec::new(),
             label: r.label.clone(),
             terminal: r
                 .syntax

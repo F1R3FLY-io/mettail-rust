@@ -8,7 +8,7 @@ use mettail_languages::rhocalc::*;
 use mettail_runtime::BehavioralPred;
 use mettail_runtime::Language;
 
-// Dead rules detected by WFST analysis: ["Int::CountBag", "Proc::BigintCastProc", "Proc::BigratCastProc", "Proc::ConcatList", "Proc::DeleteList", "Proc::DeleteMap", "Proc::DiffBag", "Proc::ElemList", "Proc::FixedBinProc", "Proc::FloatBinProc", "Proc::FractionProc", "Proc::GetMap", "Proc::HasMap", "Proc::IntBinProc", "Proc::KeysMap", "Proc::Len", "Proc::MergeMap", "Proc::PDrop", "Proc::PInputs", "Proc::PNew", "Proc::POutput", "Proc::PutMap", "Proc::RemoveBag", "Proc::ToBool", "Proc::ToStr", "Proc::UIntBinProc", "Proc::UnionBag", "Proc::ValuesMap"]
+// Dead rules detected by WFST analysis: ["Bag::BagLit", "BigInt::BoolToBigInt", "BigInt::IntToBigInt", "BigInt::UInt32ToBigInt", "BigRat::BigIntToBigRat", "BigRat::BoolToBigRat", "BigRat::FixedToBigRat", "BigRat::FloatToBigRat", "BigRat::IntToBigRat", "BigRat::UInt32ToBigRat", "ForRow::ForRowNoWhere", "ForRow::ForRowSingleWhere", "ForRow::ForRowWhere", "InputBind::InputBind", "InputBind::InputBindEmptyQuery", "InputBind::InputBindPersistent", "InputBind::InputBindPersistentPolyadic", "InputBind::InputBindPolyadic", "InputBind::InputBindQuery", "InputBind::InputBindQuoted", "InputBind::InputBindQuotedPersistent", "InputBind::InputBindQuotedQuery", "Int::BoolToInt", "Int::NegInt", "Int::UInt32ToInt", "List::ListLit", "Map::MapLit", "Name::NParen", "Name::NQuote", "Name::NQuoteNil", "Name::NQuoteShort", "Pathmap::PathmapLit", "Proc::Add", "Proc::And", "Proc::BCount", "Proc::BDiff", "Proc::BRemove", "Proc::BigintCastProc", "Proc::BigratCastProc", "Proc::BitAnd", "Proc::BitNot", "Proc::BitOr", "Proc::CommWhere", "Proc::Div", "Proc::Eq", "Proc::FixedBinProc", "Proc::FloatBinProc", "Proc::FractionProc", "Proc::Gt", "Proc::GtEq", "Proc::GuardThen", "Proc::IntBinProc", "Proc::LConcat", "Proc::LLength", "Proc::LNth", "Proc::Lt", "Proc::LtEq", "Proc::MContains", "Proc::MDelete", "Proc::MGet", "Proc::MKeys", "Proc::MSet", "Proc::MSize", "Proc::MToByteArray", "Proc::MUnion", "Proc::MValues", "Proc::MapEmpty", "Proc::Mod", "Proc::Mul", "Proc::Ne", "Proc::NegProc", "Proc::Not", "Proc::Or", "Proc::PDrop", "Proc::PForUser", "Proc::PGetSubtrie", "Proc::PGetSubtrieAt", "Proc::PMeet", "Proc::PNew", "Proc::POutput", "Proc::POutput2Plus", "Proc::POutputEmpty", "Proc::POutputNil", "Proc::POutputNil2Plus", "Proc::POutputNilEmpty", "Proc::POutputQuoted", "Proc::POutputQuoted2Plus", "Proc::POutputQuotedEmpty", "Proc::POutputShort", "Proc::POutputShort2Plus", "Proc::POutputShortEmpty", "Proc::PPar", "Proc::PParInfix", "Proc::PParInternal", "Proc::PPersistOutput", "Proc::PPersistOutput2Plus", "Proc::PPersistOutputEmpty", "Proc::PPersistOutputNil", "Proc::PPersistOutputNil2Plus", "Proc::PPersistOutputNilEmpty", "Proc::PPersistOutputShort", "Proc::PPersistOutputShort2Plus", "Proc::PPersistOutputShortEmpty", "Proc::PReadZipper", "Proc::PReadZipperAt", "Proc::PRestrict", "Proc::PSubtract", "Proc::PWriteZipper", "Proc::PWriteZipperAt", "Proc::PathmapEmpty", "Proc::RZAscend", "Proc::RZAscendOne", "Proc::RZChildCount", "Proc::RZDescendFirst", "Proc::RZDescendIndexedBranch", "Proc::RZDescendTo", "Proc::RZGetLeaf", "Proc::RZToNextSibling", "Proc::RZToPrevSibling", "Proc::SAdd", "Proc::Sub", "Proc::ToBool", "Proc::ToStr", "Proc::UIntBinProc", "Proc::WZGraft", "Proc::WZJoinInto", "Proc::WZRemoveBranches", "Proc::WZRemoveLeaf", "Proc::WZSetLeaf", "Proc::WZSetSubtrie", "Set::SetLit", "UInt32::BoolToUInt32"]
 
 // ═══════════════════════════════════════════════════════════
 // Unit tests (one per constructor)
@@ -46,9 +46,7 @@ fn unit_rhocalc_proc_pzero() {
 #[test]
 fn unit_rhocalc_proc_pdrop() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::PDrop(std::sync::Arc::new(Name::NVar(mettail_runtime::OrdVar(
-        mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a")),
-    ))));
+    let term = Proc::PDrop(std::sync::Arc::new(Name::NQuoteNil));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for PDrop");
     if let Ok(parsed) = Proc::parse(&displayed) {
@@ -63,15 +61,13 @@ fn unit_rhocalc_proc_pdrop() {
 
 // Skipped unit test for PPar (Proc) — constructor too complex to construct statically
 
+// Skipped unit test for PParInternal (Proc) — constructor too complex to construct statically
+
 #[test]
 fn unit_rhocalc_proc_poutput() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::POutput(
-        std::sync::Arc::new(Name::NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
-            mettail_runtime::get_or_create_var("a"),
-        )))),
-        std::sync::Arc::new(Proc::PZero),
-    );
+    let term =
+        Proc::POutput(std::sync::Arc::new(Name::NQuoteNil), std::sync::Arc::new(Proc::PZero));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for POutput");
     if let Ok(parsed) = Proc::parse(&displayed) {
@@ -84,7 +80,788 @@ fn unit_rhocalc_proc_poutput() {
     }
 }
 
-// Skipped unit test for PInputs (Proc) — constructor too complex to construct statically
+#[test]
+fn unit_rhocalc_proc_ppersistoutput() {
+    mettail_runtime::clear_var_cache();
+    let term = Proc::PPersistOutput(
+        std::sync::Arc::new(Name::NQuoteNil),
+        std::sync::Arc::new(Proc::PZero),
+    );
+    let displayed = format!("{}", term);
+    assert!(
+        !displayed.is_empty(),
+        "Display should produce non-empty output for PPersistOutput"
+    );
+    if let Ok(parsed) = Proc::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for PPersistOutput: {} != {}",
+            displayed, re_displayed
+        );
+    }
+}
+
+#[test]
+fn unit_rhocalc_proc_poutputempty() {
+    mettail_runtime::clear_var_cache();
+    let term = Proc::POutputEmpty(std::sync::Arc::new(Name::NQuoteNil));
+    let displayed = format!("{}", term);
+    assert!(
+        !displayed.is_empty(),
+        "Display should produce non-empty output for POutputEmpty"
+    );
+    if let Ok(parsed) = Proc::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for POutputEmpty: {} != {}",
+            displayed, re_displayed
+        );
+    }
+}
+
+#[test]
+fn unit_rhocalc_proc_ppersistoutputempty() {
+    mettail_runtime::clear_var_cache();
+    let term = Proc::PPersistOutputEmpty(std::sync::Arc::new(Name::NQuoteNil));
+    let displayed = format!("{}", term);
+    assert!(
+        !displayed.is_empty(),
+        "Display should produce non-empty output for PPersistOutputEmpty"
+    );
+    if let Ok(parsed) = Proc::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for PPersistOutputEmpty: {} != {}",
+            displayed, re_displayed
+        );
+    }
+}
+
+#[test]
+fn unit_rhocalc_proc_poutput2plus() {
+    mettail_runtime::clear_var_cache();
+    let term = Proc::POutput2Plus(
+        std::sync::Arc::new(Name::NQuoteNil),
+        std::sync::Arc::new(Proc::PZero),
+        vec![],
+    );
+    let displayed = format!("{}", term);
+    assert!(
+        !displayed.is_empty(),
+        "Display should produce non-empty output for POutput2Plus"
+    );
+    if let Ok(parsed) = Proc::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for POutput2Plus: {} != {}",
+            displayed, re_displayed
+        );
+    }
+}
+
+#[test]
+fn unit_rhocalc_proc_ppersistoutput2plus() {
+    mettail_runtime::clear_var_cache();
+    let term = Proc::PPersistOutput2Plus(
+        std::sync::Arc::new(Name::NQuoteNil),
+        std::sync::Arc::new(Proc::PZero),
+        vec![],
+    );
+    let displayed = format!("{}", term);
+    assert!(
+        !displayed.is_empty(),
+        "Display should produce non-empty output for PPersistOutput2Plus"
+    );
+    if let Ok(parsed) = Proc::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for PPersistOutput2Plus: {} != {}",
+            displayed, re_displayed
+        );
+    }
+}
+
+#[test]
+fn unit_rhocalc_proc_poutputnil() {
+    mettail_runtime::clear_var_cache();
+    let term = Proc::POutputNil(std::sync::Arc::new(Proc::PZero));
+    let displayed = format!("{}", term);
+    assert!(!displayed.is_empty(), "Display should produce non-empty output for POutputNil");
+    if let Ok(parsed) = Proc::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for POutputNil: {} != {}",
+            displayed, re_displayed
+        );
+    }
+}
+
+#[test]
+fn unit_rhocalc_proc_ppersistoutputnil() {
+    mettail_runtime::clear_var_cache();
+    let term = Proc::PPersistOutputNil(std::sync::Arc::new(Proc::PZero));
+    let displayed = format!("{}", term);
+    assert!(
+        !displayed.is_empty(),
+        "Display should produce non-empty output for PPersistOutputNil"
+    );
+    if let Ok(parsed) = Proc::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for PPersistOutputNil: {} != {}",
+            displayed, re_displayed
+        );
+    }
+}
+
+#[test]
+fn unit_rhocalc_proc_poutputquoted() {
+    mettail_runtime::clear_var_cache();
+    let term =
+        Proc::POutputQuoted(std::sync::Arc::new(Name::NQuoteNil), std::sync::Arc::new(Proc::PZero));
+    let displayed = format!("{}", term);
+    assert!(
+        !displayed.is_empty(),
+        "Display should produce non-empty output for POutputQuoted"
+    );
+    if let Ok(parsed) = Proc::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for POutputQuoted: {} != {}",
+            displayed, re_displayed
+        );
+    }
+}
+
+#[test]
+fn unit_rhocalc_proc_poutputshort() {
+    mettail_runtime::clear_var_cache();
+    let term =
+        Proc::POutputShort(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
+    let displayed = format!("{}", term);
+    assert!(
+        !displayed.is_empty(),
+        "Display should produce non-empty output for POutputShort"
+    );
+    if let Ok(parsed) = Proc::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for POutputShort: {} != {}",
+            displayed, re_displayed
+        );
+    }
+}
+
+#[test]
+fn unit_rhocalc_proc_ppersistoutputshort() {
+    mettail_runtime::clear_var_cache();
+    let term = Proc::PPersistOutputShort(
+        std::sync::Arc::new(Proc::PZero),
+        std::sync::Arc::new(Proc::PZero),
+    );
+    let displayed = format!("{}", term);
+    assert!(
+        !displayed.is_empty(),
+        "Display should produce non-empty output for PPersistOutputShort"
+    );
+    if let Ok(parsed) = Proc::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for PPersistOutputShort: {} != {}",
+            displayed, re_displayed
+        );
+    }
+}
+
+#[test]
+fn unit_rhocalc_proc_poutputnilempty() {
+    let term = Proc::POutputNilEmpty;
+    let displayed = format!("{}", term);
+    assert!(
+        !displayed.is_empty(),
+        "Display should produce non-empty output for POutputNilEmpty"
+    );
+    if let Ok(parsed) = Proc::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for POutputNilEmpty: {} != {}",
+            displayed, re_displayed
+        );
+    }
+}
+
+#[test]
+fn unit_rhocalc_proc_ppersistoutputnilempty() {
+    let term = Proc::PPersistOutputNilEmpty;
+    let displayed = format!("{}", term);
+    assert!(
+        !displayed.is_empty(),
+        "Display should produce non-empty output for PPersistOutputNilEmpty"
+    );
+    if let Ok(parsed) = Proc::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for PPersistOutputNilEmpty: {} != {}",
+            displayed, re_displayed
+        );
+    }
+}
+
+#[test]
+fn unit_rhocalc_proc_poutputquotedempty() {
+    mettail_runtime::clear_var_cache();
+    let term = Proc::POutputQuotedEmpty(std::sync::Arc::new(Name::NQuoteNil));
+    let displayed = format!("{}", term);
+    assert!(
+        !displayed.is_empty(),
+        "Display should produce non-empty output for POutputQuotedEmpty"
+    );
+    if let Ok(parsed) = Proc::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for POutputQuotedEmpty: {} != {}",
+            displayed, re_displayed
+        );
+    }
+}
+
+#[test]
+fn unit_rhocalc_proc_poutputshortempty() {
+    mettail_runtime::clear_var_cache();
+    let term = Proc::POutputShortEmpty(std::sync::Arc::new(Proc::PZero));
+    let displayed = format!("{}", term);
+    assert!(
+        !displayed.is_empty(),
+        "Display should produce non-empty output for POutputShortEmpty"
+    );
+    if let Ok(parsed) = Proc::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for POutputShortEmpty: {} != {}",
+            displayed, re_displayed
+        );
+    }
+}
+
+#[test]
+fn unit_rhocalc_proc_ppersistoutputshortempty() {
+    mettail_runtime::clear_var_cache();
+    let term = Proc::PPersistOutputShortEmpty(std::sync::Arc::new(Proc::PZero));
+    let displayed = format!("{}", term);
+    assert!(
+        !displayed.is_empty(),
+        "Display should produce non-empty output for PPersistOutputShortEmpty"
+    );
+    if let Ok(parsed) = Proc::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for PPersistOutputShortEmpty: {} != {}",
+            displayed, re_displayed
+        );
+    }
+}
+
+#[test]
+fn unit_rhocalc_proc_poutputnil2plus() {
+    mettail_runtime::clear_var_cache();
+    let term = Proc::POutputNil2Plus(std::sync::Arc::new(Proc::PZero), vec![]);
+    let displayed = format!("{}", term);
+    assert!(
+        !displayed.is_empty(),
+        "Display should produce non-empty output for POutputNil2Plus"
+    );
+    if let Ok(parsed) = Proc::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for POutputNil2Plus: {} != {}",
+            displayed, re_displayed
+        );
+    }
+}
+
+#[test]
+fn unit_rhocalc_proc_ppersistoutputnil2plus() {
+    mettail_runtime::clear_var_cache();
+    let term = Proc::PPersistOutputNil2Plus(std::sync::Arc::new(Proc::PZero), vec![]);
+    let displayed = format!("{}", term);
+    assert!(
+        !displayed.is_empty(),
+        "Display should produce non-empty output for PPersistOutputNil2Plus"
+    );
+    if let Ok(parsed) = Proc::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for PPersistOutputNil2Plus: {} != {}",
+            displayed, re_displayed
+        );
+    }
+}
+
+#[test]
+fn unit_rhocalc_proc_poutputquoted2plus() {
+    mettail_runtime::clear_var_cache();
+    let term = Proc::POutputQuoted2Plus(
+        std::sync::Arc::new(Name::NQuoteNil),
+        std::sync::Arc::new(Proc::PZero),
+        vec![],
+    );
+    let displayed = format!("{}", term);
+    assert!(
+        !displayed.is_empty(),
+        "Display should produce non-empty output for POutputQuoted2Plus"
+    );
+    if let Ok(parsed) = Proc::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for POutputQuoted2Plus: {} != {}",
+            displayed, re_displayed
+        );
+    }
+}
+
+#[test]
+fn unit_rhocalc_proc_poutputshort2plus() {
+    mettail_runtime::clear_var_cache();
+    let term = Proc::POutputShort2Plus(
+        std::sync::Arc::new(Proc::PZero),
+        std::sync::Arc::new(Proc::PZero),
+        vec![],
+    );
+    let displayed = format!("{}", term);
+    assert!(
+        !displayed.is_empty(),
+        "Display should produce non-empty output for POutputShort2Plus"
+    );
+    if let Ok(parsed) = Proc::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for POutputShort2Plus: {} != {}",
+            displayed, re_displayed
+        );
+    }
+}
+
+#[test]
+fn unit_rhocalc_proc_ppersistoutputshort2plus() {
+    mettail_runtime::clear_var_cache();
+    let term = Proc::PPersistOutputShort2Plus(
+        std::sync::Arc::new(Proc::PZero),
+        std::sync::Arc::new(Proc::PZero),
+        vec![],
+    );
+    let displayed = format!("{}", term);
+    assert!(
+        !displayed.is_empty(),
+        "Display should produce non-empty output for PPersistOutputShort2Plus"
+    );
+    if let Ok(parsed) = Proc::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for PPersistOutputShort2Plus: {} != {}",
+            displayed, re_displayed
+        );
+    }
+}
+
+#[test]
+fn unit_rhocalc_proc_guardthen() {
+    mettail_runtime::clear_var_cache();
+    let term = Proc::GuardThen(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
+    let displayed = format!("{}", term);
+    assert!(!displayed.is_empty(), "Display should produce non-empty output for GuardThen");
+    if let Ok(parsed) = Proc::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for GuardThen: {} != {}",
+            displayed, re_displayed
+        );
+    }
+}
+
+#[test]
+fn unit_rhocalc_proc_commwhere() {
+    mettail_runtime::clear_var_cache();
+    let term = Proc::CommWhere(
+        std::sync::Arc::new(Proc::PZero),
+        std::sync::Arc::new(Name::NQuoteNil),
+        std::sync::Arc::new(Proc::PZero),
+        std::sync::Arc::new(Proc::PZero),
+        std::sync::Arc::new(Proc::PZero),
+    );
+    let displayed = format!("{}", term);
+    assert!(!displayed.is_empty(), "Display should produce non-empty output for CommWhere");
+    if let Ok(parsed) = Proc::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for CommWhere: {} != {}",
+            displayed, re_displayed
+        );
+    }
+}
+
+#[test]
+fn unit_rhocalc_inputbind_inputbindquery() {
+    mettail_runtime::clear_var_cache();
+    let term = InputBind::InputBindQuery(
+        std::sync::Arc::new(Name::NQuoteNil),
+        std::sync::Arc::new(Name::NQuoteNil),
+        vec![],
+    );
+    let displayed = format!("{}", term);
+    assert!(
+        !displayed.is_empty(),
+        "Display should produce non-empty output for InputBindQuery"
+    );
+    if let Ok(parsed) = InputBind::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for InputBindQuery: {} != {}",
+            displayed, re_displayed
+        );
+    }
+}
+
+#[test]
+fn unit_rhocalc_inputbind_inputbindemptyquery() {
+    mettail_runtime::clear_var_cache();
+    let term = InputBind::InputBindEmptyQuery(std::sync::Arc::new(Name::NQuoteNil), vec![]);
+    let displayed = format!("{}", term);
+    assert!(
+        !displayed.is_empty(),
+        "Display should produce non-empty output for InputBindEmptyQuery"
+    );
+    if let Ok(parsed) = InputBind::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for InputBindEmptyQuery: {} != {}",
+            displayed, re_displayed
+        );
+    }
+}
+
+#[test]
+fn unit_rhocalc_inputbind_inputbindquotedquery() {
+    mettail_runtime::clear_var_cache();
+    let term = InputBind::InputBindQuotedQuery(
+        std::sync::Arc::new(Proc::PZero),
+        std::sync::Arc::new(Name::NQuoteNil),
+        vec![],
+    );
+    let displayed = format!("{}", term);
+    assert!(
+        !displayed.is_empty(),
+        "Display should produce non-empty output for InputBindQuotedQuery"
+    );
+    if let Ok(parsed) = InputBind::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for InputBindQuotedQuery: {} != {}",
+            displayed, re_displayed
+        );
+    }
+}
+
+#[test]
+fn unit_rhocalc_inputbind_inputbindquoted() {
+    mettail_runtime::clear_var_cache();
+    let term = InputBind::InputBindQuoted(
+        std::sync::Arc::new(Proc::PZero),
+        std::sync::Arc::new(Name::NQuoteNil),
+    );
+    let displayed = format!("{}", term);
+    assert!(
+        !displayed.is_empty(),
+        "Display should produce non-empty output for InputBindQuoted"
+    );
+    if let Ok(parsed) = InputBind::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for InputBindQuoted: {} != {}",
+            displayed, re_displayed
+        );
+    }
+}
+
+#[test]
+fn unit_rhocalc_inputbind_inputbindpolyadic() {
+    mettail_runtime::clear_var_cache();
+    let term = InputBind::InputBindPolyadic(
+        std::sync::Arc::new(Name::NQuoteNil),
+        vec![],
+        std::sync::Arc::new(Name::NQuoteNil),
+    );
+    let displayed = format!("{}", term);
+    assert!(
+        !displayed.is_empty(),
+        "Display should produce non-empty output for InputBindPolyadic"
+    );
+    if let Ok(parsed) = InputBind::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for InputBindPolyadic: {} != {}",
+            displayed, re_displayed
+        );
+    }
+}
+
+#[test]
+fn unit_rhocalc_inputbind_inputbindpersistentpolyadic() {
+    mettail_runtime::clear_var_cache();
+    let term = InputBind::InputBindPersistentPolyadic(
+        std::sync::Arc::new(Name::NQuoteNil),
+        vec![],
+        std::sync::Arc::new(Name::NQuoteNil),
+    );
+    let displayed = format!("{}", term);
+    assert!(
+        !displayed.is_empty(),
+        "Display should produce non-empty output for InputBindPersistentPolyadic"
+    );
+    if let Ok(parsed) = InputBind::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for InputBindPersistentPolyadic: {} != {}",
+            displayed, re_displayed
+        );
+    }
+}
+
+#[test]
+fn unit_rhocalc_inputbind_inputbindquotedpersistent() {
+    mettail_runtime::clear_var_cache();
+    let term = InputBind::InputBindQuotedPersistent(
+        std::sync::Arc::new(Proc::PZero),
+        std::sync::Arc::new(Name::NQuoteNil),
+    );
+    let displayed = format!("{}", term);
+    assert!(
+        !displayed.is_empty(),
+        "Display should produce non-empty output for InputBindQuotedPersistent"
+    );
+    if let Ok(parsed) = InputBind::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for InputBindQuotedPersistent: {} != {}",
+            displayed, re_displayed
+        );
+    }
+}
+
+#[test]
+fn unit_rhocalc_inputbind_inputbind() {
+    mettail_runtime::clear_var_cache();
+    let term = InputBind::InputBind(
+        std::sync::Arc::new(Name::NQuoteNil),
+        std::sync::Arc::new(Name::NQuoteNil),
+    );
+    let displayed = format!("{}", term);
+    assert!(!displayed.is_empty(), "Display should produce non-empty output for InputBind");
+    if let Ok(parsed) = InputBind::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for InputBind: {} != {}",
+            displayed, re_displayed
+        );
+    }
+}
+
+#[test]
+fn unit_rhocalc_inputbind_inputbindpersistent() {
+    mettail_runtime::clear_var_cache();
+    let term = InputBind::InputBindPersistent(
+        std::sync::Arc::new(Name::NQuoteNil),
+        std::sync::Arc::new(Name::NQuoteNil),
+    );
+    let displayed = format!("{}", term);
+    assert!(
+        !displayed.is_empty(),
+        "Display should produce non-empty output for InputBindPersistent"
+    );
+    if let Ok(parsed) = InputBind::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for InputBindPersistent: {} != {}",
+            displayed, re_displayed
+        );
+    }
+}
+
+#[test]
+fn unit_rhocalc_inputbind_inputbindempty() {
+    mettail_runtime::clear_var_cache();
+    let term = InputBind::InputBindEmpty(std::sync::Arc::new(Name::NQuoteNil));
+    let displayed = format!("{}", term);
+    assert!(
+        !displayed.is_empty(),
+        "Display should produce non-empty output for InputBindEmpty"
+    );
+    if let Ok(parsed) = InputBind::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for InputBindEmpty: {} != {}",
+            displayed, re_displayed
+        );
+    }
+}
+
+#[test]
+fn unit_rhocalc_inputbind_inputbindemptypersistent() {
+    mettail_runtime::clear_var_cache();
+    let term = InputBind::InputBindEmptyPersistent(std::sync::Arc::new(Name::NQuoteNil));
+    let displayed = format!("{}", term);
+    assert!(
+        !displayed.is_empty(),
+        "Display should produce non-empty output for InputBindEmptyPersistent"
+    );
+    if let Ok(parsed) = InputBind::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for InputBindEmptyPersistent: {} != {}",
+            displayed, re_displayed
+        );
+    }
+}
+
+#[test]
+fn unit_rhocalc_forrow_forrowwhere() {
+    mettail_runtime::clear_var_cache();
+    let term = ForRow::ForRowWhere(
+        std::sync::Arc::new(InputBind::IVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+            mettail_runtime::get_or_create_var("a"),
+        )))),
+        vec![],
+        std::sync::Arc::new(Proc::PZero),
+    );
+    let displayed = format!("{}", term);
+    assert!(!displayed.is_empty(), "Display should produce non-empty output for ForRowWhere");
+    if let Ok(parsed) = ForRow::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for ForRowWhere: {} != {}",
+            displayed, re_displayed
+        );
+    }
+}
+
+#[test]
+fn unit_rhocalc_forrow_forrownowhere() {
+    mettail_runtime::clear_var_cache();
+    let term = ForRow::ForRowNoWhere(
+        std::sync::Arc::new(InputBind::IVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+            mettail_runtime::get_or_create_var("a"),
+        )))),
+        vec![],
+    );
+    let displayed = format!("{}", term);
+    assert!(
+        !displayed.is_empty(),
+        "Display should produce non-empty output for ForRowNoWhere"
+    );
+    if let Ok(parsed) = ForRow::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for ForRowNoWhere: {} != {}",
+            displayed, re_displayed
+        );
+    }
+}
+
+#[test]
+fn unit_rhocalc_forrow_forrowsinglewhere() {
+    mettail_runtime::clear_var_cache();
+    let term = ForRow::ForRowSingleWhere(
+        std::sync::Arc::new(InputBind::IVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+            mettail_runtime::get_or_create_var("a"),
+        )))),
+        std::sync::Arc::new(Proc::PZero),
+    );
+    let displayed = format!("{}", term);
+    assert!(
+        !displayed.is_empty(),
+        "Display should produce non-empty output for ForRowSingleWhere"
+    );
+    if let Ok(parsed) = ForRow::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for ForRowSingleWhere: {} != {}",
+            displayed, re_displayed
+        );
+    }
+}
+
+#[test]
+fn unit_rhocalc_forrow_forrowsinglenowhere() {
+    mettail_runtime::clear_var_cache();
+    let term =
+        ForRow::ForRowSingleNoWhere(std::sync::Arc::new(InputBind::IVar(mettail_runtime::OrdVar(
+            mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a")),
+        ))));
+    let displayed = format!("{}", term);
+    assert!(
+        !displayed.is_empty(),
+        "Display should produce non-empty output for ForRowSingleNoWhere"
+    );
+    if let Ok(parsed) = ForRow::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for ForRowSingleNoWhere: {} != {}",
+            displayed, re_displayed
+        );
+    }
+}
+
+#[test]
+fn unit_rhocalc_proc_pforuser() {
+    mettail_runtime::clear_var_cache();
+    let term = Proc::PForUser(vec![], std::sync::Arc::new(Proc::PZero));
+    let displayed = format!("{}", term);
+    assert!(!displayed.is_empty(), "Display should produce non-empty output for PForUser");
+    if let Ok(parsed) = Proc::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for PForUser: {} != {}",
+            displayed, re_displayed
+        );
+    }
+}
 
 #[test]
 fn unit_rhocalc_name_nquote() {
@@ -97,6 +874,53 @@ fn unit_rhocalc_name_nquote() {
         assert_eq!(
             displayed, re_displayed,
             "Roundtrip failed for NQuote: {} != {}",
+            displayed, re_displayed
+        );
+    }
+}
+
+#[test]
+fn unit_rhocalc_name_nquotenil() {
+    let term = Name::NQuoteNil;
+    let displayed = format!("{}", term);
+    assert!(!displayed.is_empty(), "Display should produce non-empty output for NQuoteNil");
+    if let Ok(parsed) = Name::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for NQuoteNil: {} != {}",
+            displayed, re_displayed
+        );
+    }
+}
+
+#[test]
+fn unit_rhocalc_name_nquoteshort() {
+    mettail_runtime::clear_var_cache();
+    let term = Name::NQuoteShort(std::sync::Arc::new(Proc::PZero));
+    let displayed = format!("{}", term);
+    assert!(!displayed.is_empty(), "Display should produce non-empty output for NQuoteShort");
+    if let Ok(parsed) = Name::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for NQuoteShort: {} != {}",
+            displayed, re_displayed
+        );
+    }
+}
+
+#[test]
+fn unit_rhocalc_name_nparen() {
+    mettail_runtime::clear_var_cache();
+    let term = Name::NParen(std::sync::Arc::new(Name::NQuoteNil));
+    let displayed = format!("{}", term);
+    assert!(!displayed.is_empty(), "Display should produce non-empty output for NParen");
+    if let Ok(parsed) = Name::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for NParen: {} != {}",
             displayed, re_displayed
         );
     }
@@ -256,6 +1080,22 @@ fn unit_rhocalc_proc_caststr() {
 }
 
 #[test]
+fn unit_rhocalc_proc_castbytes() {
+    mettail_runtime::clear_var_cache();
+    let term = Proc::CastBytes(std::sync::Arc::new(Bytes::StringLit(String::new())));
+    let displayed = format!("{}", term);
+    assert!(!displayed.is_empty(), "Display should produce non-empty output for CastBytes");
+    if let Ok(parsed) = Proc::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for CastBytes: {} != {}",
+            displayed, re_displayed
+        );
+    }
+}
+
+#[test]
 fn unit_rhocalc_proc_castlist() {
     mettail_runtime::clear_var_cache();
     let term = Proc::CastList(std::sync::Arc::new(List::ListLit(Vec::new())));
@@ -298,6 +1138,76 @@ fn unit_rhocalc_proc_castmap() {
         assert_eq!(
             displayed, re_displayed,
             "Roundtrip failed for CastMap: {} != {}",
+            displayed, re_displayed
+        );
+    }
+}
+
+#[test]
+fn unit_rhocalc_proc_castset() {
+    mettail_runtime::clear_var_cache();
+    let term = Proc::CastSet(std::sync::Arc::new(Set::SetLit(Default::default())));
+    let displayed = format!("{}", term);
+    assert!(!displayed.is_empty(), "Display should produce non-empty output for CastSet");
+    if let Ok(parsed) = Proc::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for CastSet: {} != {}",
+            displayed, re_displayed
+        );
+    }
+}
+
+#[test]
+fn unit_rhocalc_proc_castpathmap() {
+    mettail_runtime::clear_var_cache();
+    let term = Proc::CastPathmap(std::sync::Arc::new(Pathmap::PathmapLit(Default::default())));
+    let displayed = format!("{}", term);
+    assert!(!displayed.is_empty(), "Display should produce non-empty output for CastPathmap");
+    if let Ok(parsed) = Proc::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for CastPathmap: {} != {}",
+            displayed, re_displayed
+        );
+    }
+}
+
+#[test]
+fn unit_rhocalc_proc_castreadzipper() {
+    mettail_runtime::clear_var_cache();
+    let term = Proc::CastReadZipper(std::sync::Arc::new(ReadZipper::Lit(Default::default())));
+    let displayed = format!("{}", term);
+    assert!(
+        !displayed.is_empty(),
+        "Display should produce non-empty output for CastReadZipper"
+    );
+    if let Ok(parsed) = Proc::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for CastReadZipper: {} != {}",
+            displayed, re_displayed
+        );
+    }
+}
+
+#[test]
+fn unit_rhocalc_proc_castwritezipper() {
+    mettail_runtime::clear_var_cache();
+    let term = Proc::CastWriteZipper(std::sync::Arc::new(WriteZipper::Lit(Default::default())));
+    let displayed = format!("{}", term);
+    assert!(
+        !displayed.is_empty(),
+        "Display should produce non-empty output for CastWriteZipper"
+    );
+    if let Ok(parsed) = Proc::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for CastWriteZipper: {} != {}",
             displayed, re_displayed
         );
     }
@@ -425,12 +1335,12 @@ fn unit_rhocalc_int_negint() {
     let term = Int::NegInt(std::sync::Arc::new(Int::NumLit(0i64)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for NegInt");
-    if let Ok(alts) = Int::parse_via_wpda_all(&displayed) {
-        let alt_displays: Vec<String> = alts.iter().map(|a| format!("{}", a)).collect();
-        assert!(
-            alt_displays.iter().any(|d| d == &displayed),
-            "Multi-alt roundtrip failed for NegInt: constructed display {:?} not among parse alts {:?}",
-            displayed, alt_displays,
+    if let Ok(parsed) = Int::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for NegInt: {} != {}",
+            displayed, re_displayed
         );
     }
 }
@@ -450,6 +1360,22 @@ fn unit_rhocalc_proc_fractionproc() {
         assert_eq!(
             displayed, re_displayed,
             "Roundtrip failed for FractionProc: {} != {}",
+            displayed, re_displayed
+        );
+    }
+}
+
+#[test]
+fn unit_rhocalc_proc_pparinfix() {
+    mettail_runtime::clear_var_cache();
+    let term = Proc::PParInfix(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
+    let displayed = format!("{}", term);
+    assert!(!displayed.is_empty(), "Display should produce non-empty output for PParInfix");
+    if let Ok(parsed) = Proc::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for PParInfix: {} != {}",
             displayed, re_displayed
         );
     }
@@ -728,228 +1654,728 @@ fn unit_rhocalc_proc_negproc() {
 }
 
 #[test]
-fn unit_rhocalc_proc_concatlist() {
-    mettail_runtime::clear_var_cache();
-    let term = Proc::ConcatList(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
+fn unit_rhocalc_proc_mapempty() {
+    let term = Proc::MapEmpty;
     let displayed = format!("{}", term);
-    assert!(!displayed.is_empty(), "Display should produce non-empty output for ConcatList");
+    assert!(!displayed.is_empty(), "Display should produce non-empty output for MapEmpty");
     if let Ok(parsed) = Proc::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
         assert_eq!(
             displayed, re_displayed,
-            "Roundtrip failed for ConcatList: {} != {}",
+            "Roundtrip failed for MapEmpty: {} != {}",
             displayed, re_displayed
         );
     }
 }
 
 #[test]
-fn unit_rhocalc_proc_elemlist() {
-    mettail_runtime::clear_var_cache();
-    let term = Proc::ElemList(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
+fn unit_rhocalc_proc_pathmapempty() {
+    let term = Proc::PathmapEmpty;
     let displayed = format!("{}", term);
-    assert!(!displayed.is_empty(), "Display should produce non-empty output for ElemList");
+    assert!(
+        !displayed.is_empty(),
+        "Display should produce non-empty output for PathmapEmpty"
+    );
     if let Ok(parsed) = Proc::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
         assert_eq!(
             displayed, re_displayed,
-            "Roundtrip failed for ElemList: {} != {}",
+            "Roundtrip failed for PathmapEmpty: {} != {}",
             displayed, re_displayed
         );
     }
 }
 
 #[test]
-fn unit_rhocalc_proc_deletelist() {
+fn unit_rhocalc_proc_mget() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::DeleteList(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
+    let term = Proc::MGet(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let displayed = format!("{}", term);
-    assert!(!displayed.is_empty(), "Display should produce non-empty output for DeleteList");
+    assert!(!displayed.is_empty(), "Display should produce non-empty output for MGet");
     if let Ok(parsed) = Proc::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
         assert_eq!(
             displayed, re_displayed,
-            "Roundtrip failed for DeleteList: {} != {}",
+            "Roundtrip failed for MGet: {} != {}",
             displayed, re_displayed
         );
     }
 }
 
 #[test]
-fn unit_rhocalc_proc_unionbag() {
+fn unit_rhocalc_proc_mset() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::UnionBag(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
-    let displayed = format!("{}", term);
-    assert!(!displayed.is_empty(), "Display should produce non-empty output for UnionBag");
-    if let Ok(parsed) = Proc::parse(&displayed) {
-        let re_displayed = format!("{}", parsed);
-        assert_eq!(
-            displayed, re_displayed,
-            "Roundtrip failed for UnionBag: {} != {}",
-            displayed, re_displayed
-        );
-    }
-}
-
-#[test]
-fn unit_rhocalc_proc_removebag() {
-    mettail_runtime::clear_var_cache();
-    let term = Proc::RemoveBag(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
-    let displayed = format!("{}", term);
-    assert!(!displayed.is_empty(), "Display should produce non-empty output for RemoveBag");
-    if let Ok(parsed) = Proc::parse(&displayed) {
-        let re_displayed = format!("{}", parsed);
-        assert_eq!(
-            displayed, re_displayed,
-            "Roundtrip failed for RemoveBag: {} != {}",
-            displayed, re_displayed
-        );
-    }
-}
-
-#[test]
-fn unit_rhocalc_proc_diffbag() {
-    mettail_runtime::clear_var_cache();
-    let term = Proc::DiffBag(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
-    let displayed = format!("{}", term);
-    assert!(!displayed.is_empty(), "Display should produce non-empty output for DiffBag");
-    if let Ok(parsed) = Proc::parse(&displayed) {
-        let re_displayed = format!("{}", parsed);
-        assert_eq!(
-            displayed, re_displayed,
-            "Roundtrip failed for DiffBag: {} != {}",
-            displayed, re_displayed
-        );
-    }
-}
-
-#[test]
-fn unit_rhocalc_int_countbag() {
-    mettail_runtime::clear_var_cache();
-    let term = Int::CountBag(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
-    let displayed = format!("{}", term);
-    assert!(!displayed.is_empty(), "Display should produce non-empty output for CountBag");
-    if let Ok(parsed) = Int::parse(&displayed) {
-        let re_displayed = format!("{}", parsed);
-        assert_eq!(
-            displayed, re_displayed,
-            "Roundtrip failed for CountBag: {} != {}",
-            displayed, re_displayed
-        );
-    }
-}
-
-#[test]
-fn unit_rhocalc_proc_getmap() {
-    mettail_runtime::clear_var_cache();
-    let term = Proc::GetMap(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
-    let displayed = format!("{}", term);
-    assert!(!displayed.is_empty(), "Display should produce non-empty output for GetMap");
-    if let Ok(parsed) = Proc::parse(&displayed) {
-        let re_displayed = format!("{}", parsed);
-        assert_eq!(
-            displayed, re_displayed,
-            "Roundtrip failed for GetMap: {} != {}",
-            displayed, re_displayed
-        );
-    }
-}
-
-#[test]
-fn unit_rhocalc_proc_putmap() {
-    mettail_runtime::clear_var_cache();
-    let term = Proc::PutMap(
+    let term = Proc::MSet(
         std::sync::Arc::new(Proc::PZero),
         std::sync::Arc::new(Proc::PZero),
         std::sync::Arc::new(Proc::PZero),
     );
     let displayed = format!("{}", term);
-    assert!(!displayed.is_empty(), "Display should produce non-empty output for PutMap");
+    assert!(!displayed.is_empty(), "Display should produce non-empty output for MSet");
     if let Ok(parsed) = Proc::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
         assert_eq!(
             displayed, re_displayed,
-            "Roundtrip failed for PutMap: {} != {}",
+            "Roundtrip failed for MSet: {} != {}",
             displayed, re_displayed
         );
     }
 }
 
 #[test]
-fn unit_rhocalc_proc_deletemap() {
+fn unit_rhocalc_proc_mcontains() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::DeleteMap(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
+    let term = Proc::MContains(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let displayed = format!("{}", term);
-    assert!(!displayed.is_empty(), "Display should produce non-empty output for DeleteMap");
+    assert!(!displayed.is_empty(), "Display should produce non-empty output for MContains");
     if let Ok(parsed) = Proc::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
         assert_eq!(
             displayed, re_displayed,
-            "Roundtrip failed for DeleteMap: {} != {}",
+            "Roundtrip failed for MContains: {} != {}",
             displayed, re_displayed
         );
     }
 }
 
 #[test]
-fn unit_rhocalc_proc_mergemap() {
+fn unit_rhocalc_proc_mdelete() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::MergeMap(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
+    let term = Proc::MDelete(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let displayed = format!("{}", term);
-    assert!(!displayed.is_empty(), "Display should produce non-empty output for MergeMap");
+    assert!(!displayed.is_empty(), "Display should produce non-empty output for MDelete");
     if let Ok(parsed) = Proc::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
         assert_eq!(
             displayed, re_displayed,
-            "Roundtrip failed for MergeMap: {} != {}",
+            "Roundtrip failed for MDelete: {} != {}",
             displayed, re_displayed
         );
     }
 }
 
 #[test]
-fn unit_rhocalc_proc_hasmap() {
+fn unit_rhocalc_proc_munion() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::HasMap(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
+    let term = Proc::MUnion(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let displayed = format!("{}", term);
-    assert!(!displayed.is_empty(), "Display should produce non-empty output for HasMap");
+    assert!(!displayed.is_empty(), "Display should produce non-empty output for MUnion");
     if let Ok(parsed) = Proc::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
         assert_eq!(
             displayed, re_displayed,
-            "Roundtrip failed for HasMap: {} != {}",
+            "Roundtrip failed for MUnion: {} != {}",
             displayed, re_displayed
         );
     }
 }
 
 #[test]
-fn unit_rhocalc_proc_keysmap() {
+fn unit_rhocalc_proc_msize() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::KeysMap(std::sync::Arc::new(Proc::PZero));
+    let term = Proc::MSize(std::sync::Arc::new(Proc::PZero));
     let displayed = format!("{}", term);
-    assert!(!displayed.is_empty(), "Display should produce non-empty output for KeysMap");
+    assert!(!displayed.is_empty(), "Display should produce non-empty output for MSize");
     if let Ok(parsed) = Proc::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
         assert_eq!(
             displayed, re_displayed,
-            "Roundtrip failed for KeysMap: {} != {}",
+            "Roundtrip failed for MSize: {} != {}",
             displayed, re_displayed
         );
     }
 }
 
 #[test]
-fn unit_rhocalc_proc_valuesmap() {
+fn unit_rhocalc_proc_mtobytearray() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::ValuesMap(std::sync::Arc::new(Proc::PZero));
+    let term = Proc::MToByteArray(std::sync::Arc::new(Proc::PZero));
     let displayed = format!("{}", term);
-    assert!(!displayed.is_empty(), "Display should produce non-empty output for ValuesMap");
+    assert!(
+        !displayed.is_empty(),
+        "Display should produce non-empty output for MToByteArray"
+    );
     if let Ok(parsed) = Proc::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
         assert_eq!(
             displayed, re_displayed,
-            "Roundtrip failed for ValuesMap: {} != {}",
+            "Roundtrip failed for MToByteArray: {} != {}",
+            displayed, re_displayed
+        );
+    }
+}
+
+#[test]
+fn unit_rhocalc_proc_mkeys() {
+    mettail_runtime::clear_var_cache();
+    let term = Proc::MKeys(std::sync::Arc::new(Proc::PZero));
+    let displayed = format!("{}", term);
+    assert!(!displayed.is_empty(), "Display should produce non-empty output for MKeys");
+    if let Ok(parsed) = Proc::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for MKeys: {} != {}",
+            displayed, re_displayed
+        );
+    }
+}
+
+#[test]
+fn unit_rhocalc_proc_mvalues() {
+    mettail_runtime::clear_var_cache();
+    let term = Proc::MValues(std::sync::Arc::new(Proc::PZero));
+    let displayed = format!("{}", term);
+    assert!(!displayed.is_empty(), "Display should produce non-empty output for MValues");
+    if let Ok(parsed) = Proc::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for MValues: {} != {}",
+            displayed, re_displayed
+        );
+    }
+}
+
+#[test]
+fn unit_rhocalc_proc_llength() {
+    mettail_runtime::clear_var_cache();
+    let term = Proc::LLength(std::sync::Arc::new(Proc::PZero));
+    let displayed = format!("{}", term);
+    assert!(!displayed.is_empty(), "Display should produce non-empty output for LLength");
+    if let Ok(parsed) = Proc::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for LLength: {} != {}",
+            displayed, re_displayed
+        );
+    }
+}
+
+#[test]
+fn unit_rhocalc_proc_lnth() {
+    mettail_runtime::clear_var_cache();
+    let term = Proc::LNth(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
+    let displayed = format!("{}", term);
+    assert!(!displayed.is_empty(), "Display should produce non-empty output for LNth");
+    if let Ok(parsed) = Proc::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for LNth: {} != {}",
+            displayed, re_displayed
+        );
+    }
+}
+
+#[test]
+fn unit_rhocalc_proc_lconcat() {
+    mettail_runtime::clear_var_cache();
+    let term = Proc::LConcat(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
+    let displayed = format!("{}", term);
+    assert!(!displayed.is_empty(), "Display should produce non-empty output for LConcat");
+    if let Ok(parsed) = Proc::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for LConcat: {} != {}",
+            displayed, re_displayed
+        );
+    }
+}
+
+#[test]
+fn unit_rhocalc_proc_bcount() {
+    mettail_runtime::clear_var_cache();
+    let term = Proc::BCount(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
+    let displayed = format!("{}", term);
+    assert!(!displayed.is_empty(), "Display should produce non-empty output for BCount");
+    if let Ok(parsed) = Proc::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for BCount: {} != {}",
+            displayed, re_displayed
+        );
+    }
+}
+
+#[test]
+fn unit_rhocalc_proc_bdiff() {
+    mettail_runtime::clear_var_cache();
+    let term = Proc::BDiff(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
+    let displayed = format!("{}", term);
+    assert!(!displayed.is_empty(), "Display should produce non-empty output for BDiff");
+    if let Ok(parsed) = Proc::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for BDiff: {} != {}",
+            displayed, re_displayed
+        );
+    }
+}
+
+#[test]
+fn unit_rhocalc_proc_bremove() {
+    mettail_runtime::clear_var_cache();
+    let term = Proc::BRemove(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
+    let displayed = format!("{}", term);
+    assert!(!displayed.is_empty(), "Display should produce non-empty output for BRemove");
+    if let Ok(parsed) = Proc::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for BRemove: {} != {}",
+            displayed, re_displayed
+        );
+    }
+}
+
+#[test]
+fn unit_rhocalc_proc_prestrict() {
+    mettail_runtime::clear_var_cache();
+    let term = Proc::PRestrict(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
+    let displayed = format!("{}", term);
+    assert!(!displayed.is_empty(), "Display should produce non-empty output for PRestrict");
+    if let Ok(parsed) = Proc::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for PRestrict: {} != {}",
+            displayed, re_displayed
+        );
+    }
+}
+
+#[test]
+fn unit_rhocalc_proc_psubtract() {
+    mettail_runtime::clear_var_cache();
+    let term = Proc::PSubtract(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
+    let displayed = format!("{}", term);
+    assert!(!displayed.is_empty(), "Display should produce non-empty output for PSubtract");
+    if let Ok(parsed) = Proc::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for PSubtract: {} != {}",
+            displayed, re_displayed
+        );
+    }
+}
+
+#[test]
+fn unit_rhocalc_proc_pmeet() {
+    mettail_runtime::clear_var_cache();
+    let term = Proc::PMeet(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
+    let displayed = format!("{}", term);
+    assert!(!displayed.is_empty(), "Display should produce non-empty output for PMeet");
+    if let Ok(parsed) = Proc::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for PMeet: {} != {}",
+            displayed, re_displayed
+        );
+    }
+}
+
+#[test]
+fn unit_rhocalc_proc_pgetsubtrie() {
+    mettail_runtime::clear_var_cache();
+    let term = Proc::PGetSubtrie(std::sync::Arc::new(Proc::PZero));
+    let displayed = format!("{}", term);
+    assert!(!displayed.is_empty(), "Display should produce non-empty output for PGetSubtrie");
+    if let Ok(parsed) = Proc::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for PGetSubtrie: {} != {}",
+            displayed, re_displayed
+        );
+    }
+}
+
+#[test]
+fn unit_rhocalc_proc_pgetsubtrieat() {
+    mettail_runtime::clear_var_cache();
+    let term =
+        Proc::PGetSubtrieAt(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
+    let displayed = format!("{}", term);
+    assert!(
+        !displayed.is_empty(),
+        "Display should produce non-empty output for PGetSubtrieAt"
+    );
+    if let Ok(parsed) = Proc::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for PGetSubtrieAt: {} != {}",
+            displayed, re_displayed
+        );
+    }
+}
+
+#[test]
+fn unit_rhocalc_proc_preadzipper() {
+    mettail_runtime::clear_var_cache();
+    let term = Proc::PReadZipper(std::sync::Arc::new(Proc::PZero));
+    let displayed = format!("{}", term);
+    assert!(!displayed.is_empty(), "Display should produce non-empty output for PReadZipper");
+    if let Ok(parsed) = Proc::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for PReadZipper: {} != {}",
+            displayed, re_displayed
+        );
+    }
+}
+
+#[test]
+fn unit_rhocalc_proc_preadzipperat() {
+    mettail_runtime::clear_var_cache();
+    let term =
+        Proc::PReadZipperAt(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
+    let displayed = format!("{}", term);
+    assert!(
+        !displayed.is_empty(),
+        "Display should produce non-empty output for PReadZipperAt"
+    );
+    if let Ok(parsed) = Proc::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for PReadZipperAt: {} != {}",
+            displayed, re_displayed
+        );
+    }
+}
+
+#[test]
+fn unit_rhocalc_proc_pwritezipper() {
+    mettail_runtime::clear_var_cache();
+    let term = Proc::PWriteZipper(std::sync::Arc::new(Proc::PZero));
+    let displayed = format!("{}", term);
+    assert!(
+        !displayed.is_empty(),
+        "Display should produce non-empty output for PWriteZipper"
+    );
+    if let Ok(parsed) = Proc::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for PWriteZipper: {} != {}",
+            displayed, re_displayed
+        );
+    }
+}
+
+#[test]
+fn unit_rhocalc_proc_pwritezipperat() {
+    mettail_runtime::clear_var_cache();
+    let term =
+        Proc::PWriteZipperAt(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
+    let displayed = format!("{}", term);
+    assert!(
+        !displayed.is_empty(),
+        "Display should produce non-empty output for PWriteZipperAt"
+    );
+    if let Ok(parsed) = Proc::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for PWriteZipperAt: {} != {}",
+            displayed, re_displayed
+        );
+    }
+}
+
+#[test]
+fn unit_rhocalc_proc_rzgetleaf() {
+    mettail_runtime::clear_var_cache();
+    let term = Proc::RZGetLeaf(std::sync::Arc::new(Proc::PZero));
+    let displayed = format!("{}", term);
+    assert!(!displayed.is_empty(), "Display should produce non-empty output for RZGetLeaf");
+    if let Ok(parsed) = Proc::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for RZGetLeaf: {} != {}",
+            displayed, re_displayed
+        );
+    }
+}
+
+#[test]
+fn unit_rhocalc_proc_rzdescendto() {
+    mettail_runtime::clear_var_cache();
+    let term =
+        Proc::RZDescendTo(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
+    let displayed = format!("{}", term);
+    assert!(!displayed.is_empty(), "Display should produce non-empty output for RZDescendTo");
+    if let Ok(parsed) = Proc::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for RZDescendTo: {} != {}",
+            displayed, re_displayed
+        );
+    }
+}
+
+#[test]
+fn unit_rhocalc_proc_rzchildcount() {
+    mettail_runtime::clear_var_cache();
+    let term = Proc::RZChildCount(std::sync::Arc::new(Proc::PZero));
+    let displayed = format!("{}", term);
+    assert!(
+        !displayed.is_empty(),
+        "Display should produce non-empty output for RZChildCount"
+    );
+    if let Ok(parsed) = Proc::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for RZChildCount: {} != {}",
+            displayed, re_displayed
+        );
+    }
+}
+
+#[test]
+fn unit_rhocalc_proc_rzdescendfirst() {
+    mettail_runtime::clear_var_cache();
+    let term = Proc::RZDescendFirst(std::sync::Arc::new(Proc::PZero));
+    let displayed = format!("{}", term);
+    assert!(
+        !displayed.is_empty(),
+        "Display should produce non-empty output for RZDescendFirst"
+    );
+    if let Ok(parsed) = Proc::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for RZDescendFirst: {} != {}",
+            displayed, re_displayed
+        );
+    }
+}
+
+#[test]
+fn unit_rhocalc_proc_rztonextsibling() {
+    mettail_runtime::clear_var_cache();
+    let term = Proc::RZToNextSibling(std::sync::Arc::new(Proc::PZero));
+    let displayed = format!("{}", term);
+    assert!(
+        !displayed.is_empty(),
+        "Display should produce non-empty output for RZToNextSibling"
+    );
+    if let Ok(parsed) = Proc::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for RZToNextSibling: {} != {}",
+            displayed, re_displayed
+        );
+    }
+}
+
+#[test]
+fn unit_rhocalc_proc_rztoprevsibling() {
+    mettail_runtime::clear_var_cache();
+    let term = Proc::RZToPrevSibling(std::sync::Arc::new(Proc::PZero));
+    let displayed = format!("{}", term);
+    assert!(
+        !displayed.is_empty(),
+        "Display should produce non-empty output for RZToPrevSibling"
+    );
+    if let Ok(parsed) = Proc::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for RZToPrevSibling: {} != {}",
+            displayed, re_displayed
+        );
+    }
+}
+
+#[test]
+fn unit_rhocalc_proc_rzdescendindexedbranch() {
+    mettail_runtime::clear_var_cache();
+    let term = Proc::RZDescendIndexedBranch(
+        std::sync::Arc::new(Proc::PZero),
+        std::sync::Arc::new(Proc::PZero),
+    );
+    let displayed = format!("{}", term);
+    assert!(
+        !displayed.is_empty(),
+        "Display should produce non-empty output for RZDescendIndexedBranch"
+    );
+    if let Ok(parsed) = Proc::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for RZDescendIndexedBranch: {} != {}",
+            displayed, re_displayed
+        );
+    }
+}
+
+#[test]
+fn unit_rhocalc_proc_rzascendone() {
+    mettail_runtime::clear_var_cache();
+    let term = Proc::RZAscendOne(std::sync::Arc::new(Proc::PZero));
+    let displayed = format!("{}", term);
+    assert!(!displayed.is_empty(), "Display should produce non-empty output for RZAscendOne");
+    if let Ok(parsed) = Proc::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for RZAscendOne: {} != {}",
+            displayed, re_displayed
+        );
+    }
+}
+
+#[test]
+fn unit_rhocalc_proc_rzascend() {
+    mettail_runtime::clear_var_cache();
+    let term = Proc::RZAscend(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
+    let displayed = format!("{}", term);
+    assert!(!displayed.is_empty(), "Display should produce non-empty output for RZAscend");
+    if let Ok(parsed) = Proc::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for RZAscend: {} != {}",
+            displayed, re_displayed
+        );
+    }
+}
+
+#[test]
+fn unit_rhocalc_proc_wzsetleaf() {
+    mettail_runtime::clear_var_cache();
+    let term = Proc::WZSetLeaf(
+        std::sync::Arc::new(Proc::PZero),
+        std::sync::Arc::new(Proc::PZero),
+        std::sync::Arc::new(Proc::PZero),
+    );
+    let displayed = format!("{}", term);
+    assert!(!displayed.is_empty(), "Display should produce non-empty output for WZSetLeaf");
+    if let Ok(parsed) = Proc::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for WZSetLeaf: {} != {}",
+            displayed, re_displayed
+        );
+    }
+}
+
+#[test]
+fn unit_rhocalc_proc_wzsetsubtrie() {
+    mettail_runtime::clear_var_cache();
+    let term =
+        Proc::WZSetSubtrie(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
+    let displayed = format!("{}", term);
+    assert!(
+        !displayed.is_empty(),
+        "Display should produce non-empty output for WZSetSubtrie"
+    );
+    if let Ok(parsed) = Proc::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for WZSetSubtrie: {} != {}",
+            displayed, re_displayed
+        );
+    }
+}
+
+#[test]
+fn unit_rhocalc_proc_wzremoveleaf() {
+    mettail_runtime::clear_var_cache();
+    let term = Proc::WZRemoveLeaf(std::sync::Arc::new(Proc::PZero));
+    let displayed = format!("{}", term);
+    assert!(
+        !displayed.is_empty(),
+        "Display should produce non-empty output for WZRemoveLeaf"
+    );
+    if let Ok(parsed) = Proc::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for WZRemoveLeaf: {} != {}",
+            displayed, re_displayed
+        );
+    }
+}
+
+#[test]
+fn unit_rhocalc_proc_wzremovebranches() {
+    mettail_runtime::clear_var_cache();
+    let term = Proc::WZRemoveBranches(std::sync::Arc::new(Proc::PZero));
+    let displayed = format!("{}", term);
+    assert!(
+        !displayed.is_empty(),
+        "Display should produce non-empty output for WZRemoveBranches"
+    );
+    if let Ok(parsed) = Proc::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for WZRemoveBranches: {} != {}",
+            displayed, re_displayed
+        );
+    }
+}
+
+#[test]
+fn unit_rhocalc_proc_wzgraft() {
+    mettail_runtime::clear_var_cache();
+    let term = Proc::WZGraft(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
+    let displayed = format!("{}", term);
+    assert!(!displayed.is_empty(), "Display should produce non-empty output for WZGraft");
+    if let Ok(parsed) = Proc::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for WZGraft: {} != {}",
+            displayed, re_displayed
+        );
+    }
+}
+
+#[test]
+fn unit_rhocalc_proc_wzjoininto() {
+    mettail_runtime::clear_var_cache();
+    let term = Proc::WZJoinInto(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
+    let displayed = format!("{}", term);
+    assert!(!displayed.is_empty(), "Display should produce non-empty output for WZJoinInto");
+    if let Ok(parsed) = Proc::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for WZJoinInto: {} != {}",
+            displayed, re_displayed
+        );
+    }
+}
+
+#[test]
+fn unit_rhocalc_proc_sadd() {
+    mettail_runtime::clear_var_cache();
+    let term = Proc::SAdd(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
+    let displayed = format!("{}", term);
+    assert!(!displayed.is_empty(), "Display should produce non-empty output for SAdd");
+    if let Ok(parsed) = Proc::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for SAdd: {} != {}",
             displayed, re_displayed
         );
     }
@@ -966,22 +2392,6 @@ fn unit_rhocalc_proc_not() {
         assert_eq!(
             displayed, re_displayed,
             "Roundtrip failed for Not: {} != {}",
-            displayed, re_displayed
-        );
-    }
-}
-
-#[test]
-fn unit_rhocalc_proc_len() {
-    mettail_runtime::clear_var_cache();
-    let term = Proc::Len(std::sync::Arc::new(Proc::PZero));
-    let displayed = format!("{}", term);
-    assert!(!displayed.is_empty(), "Display should produce non-empty output for Len");
-    if let Ok(parsed) = Proc::parse(&displayed) {
-        let re_displayed = format!("{}", parsed);
-        assert_eq!(
-            displayed, re_displayed,
-            "Roundtrip failed for Len: {} != {}",
             displayed, re_displayed
         );
     }
@@ -1262,6 +2672,26 @@ fn unit_rhocalc_auto_name_nvar() {
 }
 
 #[test]
+fn unit_rhocalc_auto_inputbind_ivar() {
+    mettail_runtime::clear_var_cache();
+    let term = InputBind::IVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+        mettail_runtime::get_or_create_var("a"),
+    )));
+    let displayed = format!("{}", term);
+    assert!(!displayed.is_empty(), "Display should produce non-empty output for IVar");
+}
+
+#[test]
+fn unit_rhocalc_auto_forrow_fvar() {
+    mettail_runtime::clear_var_cache();
+    let term = ForRow::FVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+        mettail_runtime::get_or_create_var("a"),
+    )));
+    let displayed = format!("{}", term);
+    assert!(!displayed.is_empty(), "Display should produce non-empty output for FVar");
+}
+
+#[test]
 fn unit_rhocalc_auto_int_numlit() {
     let term = Int::NumLit(0i64);
     let displayed = format!("{}", term);
@@ -1382,6 +2812,21 @@ fn unit_rhocalc_auto_str_stringlit() {
 }
 
 #[test]
+fn unit_rhocalc_auto_bytes_stringlit() {
+    let term = Bytes::StringLit(String::new());
+    let displayed = format!("{}", term);
+    assert!(!displayed.is_empty(), "Display should produce non-empty output for StringLit");
+    if let Ok(parsed) = Bytes::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for StringLit: {} != {}",
+            displayed, re_displayed
+        );
+    }
+}
+
+#[test]
 fn unit_rhocalc_auto_list_listlit() {
     let term = List::ListLit(Vec::new());
     let displayed = format!("{}", term);
@@ -1421,6 +2866,66 @@ fn unit_rhocalc_auto_map_maplit() {
         assert_eq!(
             displayed, re_displayed,
             "Roundtrip failed for MapLit: {} != {}",
+            displayed, re_displayed
+        );
+    }
+}
+
+#[test]
+fn unit_rhocalc_auto_set_setlit() {
+    let term = Set::SetLit(Default::default());
+    let displayed = format!("{}", term);
+    assert!(!displayed.is_empty(), "Display should produce non-empty output for SetLit");
+    if let Ok(parsed) = Set::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for SetLit: {} != {}",
+            displayed, re_displayed
+        );
+    }
+}
+
+#[test]
+fn unit_rhocalc_auto_pathmap_pathmaplit() {
+    let term = Pathmap::PathmapLit(Default::default());
+    let displayed = format!("{}", term);
+    assert!(!displayed.is_empty(), "Display should produce non-empty output for PathmapLit");
+    if let Ok(parsed) = Pathmap::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for PathmapLit: {} != {}",
+            displayed, re_displayed
+        );
+    }
+}
+
+#[test]
+fn unit_rhocalc_auto_readzipper_lit() {
+    let term = ReadZipper::Lit(Default::default());
+    let displayed = format!("{}", term);
+    assert!(!displayed.is_empty(), "Display should produce non-empty output for Lit");
+    if let Ok(parsed) = ReadZipper::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for Lit: {} != {}",
+            displayed, re_displayed
+        );
+    }
+}
+
+#[test]
+fn unit_rhocalc_auto_writezipper_lit() {
+    let term = WriteZipper::Lit(Default::default());
+    let displayed = format!("{}", term);
+    assert!(!displayed.is_empty(), "Display should produce non-empty output for Lit");
+    if let Ok(parsed) = WriteZipper::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for Lit: {} != {}",
             displayed, re_displayed
         );
     }

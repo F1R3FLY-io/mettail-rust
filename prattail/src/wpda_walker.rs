@@ -84,6 +84,90 @@ fn b2_crosswrap_disabled() -> bool {
     *GATE.get_or_init(|| std::env::var_os("B2_DISABLE").is_some())
 }
 
+/// ROOT E (2026-07-03): is the `proj_source` widening of the CrossCatDelegate
+/// projection ENCLOSING-FRAME DISCRIMINANT DISABLED?
+///
+/// The Root-1/Root-2 frame discriminant
+/// ([`WpdaEngine::crosscat_projection_enclosing_frame_disc`]) originally packed
+/// ONLY the enclosing return-frame `(cat, rule, slot)` (R2) / the completed-body
+/// SPPF id (R1). It did NOT encode the projection's SOURCE category
+/// (`proj_source`). For a polyadic send `@error!(arg0, arg1, arg2)` the `@error`
+/// **Name-channel** projection (`proj_source = Name`) and a sibling **Proc-channel**
+/// projection dispatch under the SAME `MixfixMarker` frame with the SAME
+/// `operands_completed = 0` → they collapse to the SAME `disc` → the projection
+/// cohort `InflightCollision` treats them as a same-frame redundant re-projection,
+/// PAUSE+merges them, and the correct `@error`-Name-channel reading is DROPPED.
+/// The `TriggerOwnershipLeadGate` then (correctly) refuses the residue survivor →
+/// parse ERR "found Eof".
+///
+/// The widening folds `proj_source` into the hashed disc so cross-`proj_source`
+/// projections at the same `(cat, rule, slot)` get DISTINCT discs → the collision
+/// sees `registrant != Some(disc)` → the correct reading is allocated
+/// independently via the existing `CROSSCAT_PROJ_UNCACHED` add-a-reading path and
+/// survives to feed the trigger-lead gate (which accepts it).
+///
+/// This is a STRICT REFINEMENT: it ONLY makes cross-`proj_source` collisions
+/// distinct; it NEVER merges fewer of the SAME-`proj_source` ones, so the Root-1 /
+/// Root-2 same-source merges and the M4 same-frame cast-family dedup are
+/// byte-preserved.
+///
+/// DEFAULT: **widened** (fix ON). Set `PRATTAIL_NO_ROOTE_PROJ_SOURCE_DISC` (env,
+/// memoized once — the P-series `OnceLock` convention, matching
+/// [`b2_crosswrap_disabled`]) to restore the pre-fix disc (source dropped), as the
+/// labeled A/B control. Also gated by the compile-time
+/// `ROOTE_PROJ_SOURCE_DISC_ENABLED` const at the disc call site.
+#[inline]
+fn roote_proj_source_disc_disabled() -> bool {
+    static GATE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *GATE.get_or_init(|| std::env::var_os("PRATTAIL_NO_ROOTE_PROJ_SOURCE_DISC").is_some())
+}
+
+/// AT_QUOTED_BIND_GATE Task-2 (session da0842dc, 2026-07-03): the DECISIVE
+/// `sppf_stack_id`-CHAIN content-eq probe for the isolated one-alt `@a<-c`
+/// projection fan-out. THROWAWAY DIAGNOSTIC, gated `GRIND_SPPF_CONTENT=1`
+/// (memoized `OnceLock`, the P-series convention). Re-adds the root-p Phase-1
+/// probe (memory root-p-phase1-content-distinct — that measured the TWO-inequal-
+/// alt `@a<-@b`/`@Nil<=@Nil` case = 100% content-distinct) but now for the
+/// ONE-alt LHS-`@`-only `@a<-c` residual. At each Tomita ingest COLLISION (same
+/// `TomitaKey`, arc lands on a non-empty bucket), resolves BOTH the incoming
+/// arc's and the bucket's FIRST arc's `sppf_stack_id` chains via
+/// `sppf_stack_arena.slice_at` + `sppf.node`, and tallies raw/shallow/deep
+/// equality (see [`WpdaWalker::grind_sppf_content_check`]). Byte-identical when
+/// unset (the flag read short-circuits before any work).
+#[inline]
+fn grind_sppf_content_enabled() -> bool {
+    static GATE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *GATE.get_or_init(|| std::env::var_os("GRIND_SPPF_CONTENT").is_some())
+}
+
+/// AT_QUOTED_BIND_GATE Task-2 content-eq tally (process-global, gated).
+/// Counts, across the whole parse, the `sppf_stack_id`-diverging Tomita
+/// no-merges partitioned by content-eq level. Dumped once at parse end.
+#[derive(Default)]
+struct GrindSppfContentTally {
+    /// Collisions where the incoming and first arc had the SAME `sppf_stack_id`
+    /// (no divergence on this axis — not the driver here).
+    same_stack_id: u64,
+    /// `sppf_stack_id` DIVERGED. This is the population the axes below classify.
+    diverged: u64,
+    /// raw_eq: identical `SppfId` sequences (pure interning artifact — the
+    /// same forest nodes reached via distinct StackIds → MERGEABLE).
+    raw_eq: u64,
+    /// shallow_eq: same length + each position same dedup-identity
+    /// (Symbol→(nt,lo,hi), Terminal→(kind,pos), Packing→(rule,#children),
+    /// CollectionId→(id,#items), Trigger→(kind,pos,cat,rule)) — id-distinct but
+    /// structurally identical at depth 1 → MERGEABLE.
+    shallow_eq: u64,
+    /// deep_eq: recursive structural fingerprint (resolves child SppfIds) —
+    /// structurally identical all the way down → MERGEABLE.
+    deep_eq: u64,
+}
+
+thread_local! {
+    static GRIND_SPPF_CONTENT_TALLY: std::cell::RefCell<GrindSppfContentTally> =
+        std::cell::RefCell::new(GrindSppfContentTally::default());
+}
+
 /// Sig-B Blocker-3 §4 (2026-06-01, pgmcp experiment #9): is the WHOLE
 /// span-anchored outer-cast reconstruction disabled? Read once from
 /// `B3_DISABLE` and memoized. When set, the §2.4a span-anchored Bool
@@ -97,6 +181,34 @@ fn b2_crosswrap_disabled() -> bool {
 fn b3_disabled() -> bool {
     static GATE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *GATE.get_or_init(|| std::env::var_os("B3_DISABLE").is_some())
+}
+
+/// SPPF-realize observational-dedup kill switch (2026-06-28).
+///
+/// `PRATTAIL_REALIZE_DEDUP` controls whether `realize_*` collapses
+/// observationally-equivalent sub-derivations per SPPF node (reusing the
+/// facade's semantic-hash byte key via [`WpdaEngine::semantic_fingerprint`]).
+/// `1`/`on` enables it; `0`/`off` disables it (realize is then byte-identical
+/// to the pre-dedup behavior). Read ONCE per process (`OnceLock`, the
+/// P-series convention, mirroring [`SrSubsumeMode::from_env`]).
+///
+/// DEFAULT: **ON** (Stage 3, 2026-06-29 — flipped on once the numeric-leaf
+/// canonicalization landed, so cast-promotion-tower cohorts collapse instead of
+/// overflowing the realize frontier). Set `PRATTAIL_REALIZE_DEDUP=0`/`off` to
+/// restore the pre-dedup behavior. Even with the switch ON, engines whose
+/// `semantic_fingerprint` returns `None` (handwritten / test engines) get NO
+/// dedup, so the entire `prattail` test suite is byte-identical regardless of
+/// this switch.
+#[inline]
+fn realize_dedup_enabled() -> bool {
+    static GATE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *GATE.get_or_init(|| match std::env::var("PRATTAIL_REALIZE_DEDUP").ok().as_deref() {
+        Some("1") | Some("on") | Some("ON") | Some("On") => true,
+        Some("0") | Some("off") | Some("OFF") | Some("Off") => false,
+        // Stage 3 default ON (the explicit `PRATTAIL_REALIZE_DEDUP=0` override
+        // above restores the Stage-2 dormant behavior).
+        _ => true,
+    })
 }
 
 /// EP-P1 amended §P1 (2026-06-11; red-team ledger Round 5 + user
@@ -304,6 +416,98 @@ impl SrSubsumeMode {
 /// red-team measured it BIT-IDENTICAL to `Clear` on the infix battery (design
 /// §4.1 "Implemented"); `Clear` is preferred because it is stack-free, cannot
 /// underflow, and needs no cohort-shell carrier.
+/// GROUP-A arg-list fix (2026-07-01): the KIND of enclosing rule frame whose
+/// first `Param` operand slot a completed cross-cat-LHS body might fill. The
+/// send-in-operand shadow class manifests at two dispatch shapes:
+/// - `Prefix`: a keyword-prefix rule dispatched via `PrefixRuleEntry{item_pos}`
+///   (e.g. `IntBinProc . a:Proc, w:Int |- "int" "(" a "," w ")"`).
+/// - `Mixfix`: a receiver-first / mixfix rule dispatched via
+///   `MixfixMarker{operands_completed}` (e.g.
+///   `WZSetLeaf . w:Proc, full:Proc, v:Proc |- w "." "setLeaf" "(" full "," v ")"`).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum ArgSlotFrameKind {
+    Prefix,
+    Mixfix,
+}
+
+/// GROUP-A arg-list fix (2026-07-01): a description of the nearest enclosing
+/// rule arg-slot frame found by `crosscat_lhs_enclosing_binder_resume_frame`.
+/// `slot` is the `item_pos` (Prefix) or `operands_completed` (Mixfix) — the
+/// resume/advance coordinate; `cat`/`rule` identify the rule.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+struct EnclosingArgSlotFrame {
+    cat: u16,
+    rule: u16,
+    slot: u8,
+    kind: ArgSlotFrameKind,
+}
+
+/// Root-B collection-element maximal-extent reconnection (2026-07-02): a
+/// description of the nearest enclosing `CollectionElement` (CollectionMarker)
+/// frame found by [`WpdaWalker::crosscat_lhs_enclosing_collection_element_frame`]
+/// — the collection whose element the cross-cat-LHS-extended operand belongs to.
+/// `(result_src, rule_idx, acc_id)` is exactly the `collection_spec` /
+/// `collection_element_src_idx` key (`acc_id` = the CollectionMarker symbol's
+/// codegen-stamped slot_idx, from `EdgeKind::from_symbol`).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+struct EnclosingCollectionElementFrame {
+    result_src: u16,
+    rule_idx: u16,
+    acc_id: u8,
+}
+
+/// ROOT-D infix-RHS maximal-extent reconnection (2026-07-02): a description of
+/// the nearest enclosing infix-operator RHS-dispatch `ReturnFrame{cat_src,
+/// rule_idx}` frame found by
+/// [`WpdaWalker::crosscat_lhs_enclosing_infix_rhs_frame`] — the binary-infix
+/// rule (e.g. `PParInfix . a:Proc, b:Proc |- a "|" b`) whose right-hand-side
+/// operand the cross-cat-LHS-extended body belongs to. When an infix operator's
+/// RHS is dispatched, a `SymbolKind::Return` marker carrying
+/// `(category_src_idx = rule result cat, rule_index_in_category = rule)` is
+/// pushed (`EdgeKind::from_symbol` → `ReturnFrame`); the completed RHS pops
+/// through it to fire the rule. `(cat, rule)` is exactly the `action_for` key.
+///
+/// This is the infix-RHS analogue of [`EnclosingCollectionElementFrame`] /
+/// [`EnclosingArgSlotFrame`]: same maximal-extent reconnection problem
+/// (`for(){Nil} | a!(Nil)` inside `.set(…, …)`), but the enclosing frame is an
+/// infix RHS `ReturnFrame` rather than a `CollectionElement` / arg-slot marker.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+struct EnclosingInfixRhsFrame {
+    cat: u16,
+    rule: u16,
+}
+
+/// C3 / ROOT-PERSIST-`<=` (2026-07-04): a description of the nearest enclosing
+/// CHANNEL-FIRST-RECEIVER rule mid-rule OPERATOR slot found by
+/// [`WpdaWalker::crosscat_lhs_enclosing_channel_first_receiver_frame`] — the
+/// receiver-style rule (e.g. `InputBindQuotedPersistent . pat:Proc, n:Name |-
+/// "@" pat "<=" n`) whose current item slot is a LITERAL operator (`<=`) that is
+/// ALSO an infix operator in the completed body's category (Proc), so the
+/// grouping-close operand-continuation MASKS the receiver frame and hands the
+/// operator to the shadowing Proc-infix rule (LtEq) instead of advancing the
+/// receiver past its operator literal.
+///
+/// This is the FIFTH member of the `crosscat_lhs_enclosing_*_frame`
+/// reconnection family alongside [`EnclosingArgSlotFrame`] (binder-resume),
+/// [`EnclosingCollectionElementFrame`] (collection), and
+/// [`EnclosingInfixRhsFrame`] (infix-RHS). The distinguishing feature: the four
+/// existing arms fire when the InfixLoop Fork's IMMEDIATE incoming edge is a
+/// cross-cat-LHS re-entry (`CrossCatLhsScoped`/`…Reentry`) OR a direct
+/// `PrefixRuleEntry{item_pos>0}`; this arm fires when the immediate edge is a
+/// `CategoryEntryContinuation` (the operand-continuation a grouping-close /
+/// projection cascade installs) — which NONE of the four walk transparently,
+/// leaving the shadowed receiver frame one hop below it unreachable to them.
+///
+/// `(cat, rule)` is the `action_for` key of the receiver rule; `slot` is its
+/// `item_pos` (the operator slot). Same shape as [`EnclosingArgSlotFrame`]'s
+/// `Prefix` variant — the receiver is a `PrefixRuleEntry`-dispatched rule.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+struct EnclosingChannelFirstReceiverFrame {
+    cat: u16,
+    rule: u16,
+    slot: u8,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum InfixLexclearMode {
     /// Disable the truncation entirely; the frontier is byte-identical to the
@@ -347,6 +551,33 @@ fn prefix_cast_stage_memo_enabled_from_env() -> bool {
     )
 }
 
+/// GAP-9 §1b (2026-06-28): compile-time DEFAULT for the cross-cat-LHS no-op
+/// PROJECTION-on-unwind wrap (`ccl_project_on_unwind`).
+///
+/// Staging: G9.0/G9.1 keep this `false` (the wrap is DORMANT unless
+/// `PRATTAIL_CCL_PROJECT_ON_UNWIND=on` is set, which is how G9.1 flips it ON
+/// for the env differential WITHOUT a code change). G9.2 flips this to `true`
+/// — once the codegen emits ONE cross-cat-LHS delegate
+/// (`CROSSCAT_SINGLE_DELEGATE`), the suppressed projection MUST be supplied by
+/// this wrap, so it becomes the production default; `PRATTAIL_CCL_PROJECT_ON_UNWIND=off`
+/// is then the kill switch.
+const CCL_PROJECT_ON_UNWIND_DEFAULT: bool = false;
+
+/// Read `PRATTAIL_CCL_PROJECT_ON_UNWIND` ONCE per walker construction (P-series
+/// convention: a per-walker field, never read per step, so one process can run
+/// the ON/OFF differential). `on`/`1` forces the wrap on; `off`/`0` forces it
+/// off; unset falls back to [`CCL_PROJECT_ON_UNWIND_DEFAULT`].
+fn ccl_project_on_unwind_from_env() -> bool {
+    match std::env::var("PRATTAIL_CCL_PROJECT_ON_UNWIND")
+        .ok()
+        .as_deref()
+    {
+        Some("1") | Some("on") | Some("ON") | Some("On") => true,
+        Some("0") | Some("off") | Some("OFF") | Some("Off") => false,
+        _ => CCL_PROJECT_ON_UNWIND_DEFAULT,
+    }
+}
+
 /// Sig-B Blocker-3 §4 (2026-06-01, pgmcp experiment #9): is the
 /// SPAN-ANCHORED drain isolated from the rest of Blocker-2? Read once from
 /// `B3_SPAN_DISABLE` and memoized. When set, the §2.4 span-anchored drain +
@@ -377,9 +608,9 @@ use crate::automata::TokenKind;
 use crate::gss::{WpdaGss, WpdaGssNode};
 use crate::recovery::RecoveryConfig;
 use crate::wpda_runtime::{
-    ActionArg, ActionEntry, SemanticBuilder, StackSymbolV2, SymbolKind, WpdaConfiguration,
-    WpdaControl, WpdaEvent, WpdaMaxStepsExceeded, WpdaMutableTokenSource, WpdaResolveResult,
-    WpdaState, WpdaTokenSource, WpdaTraceEntry, WpdaTransition,
+    ActionArg, ActionEntry, CollectionSpec, SemanticBuilder, StackSymbolV2, SymbolKind,
+    WpdaConfiguration, WpdaControl, WpdaEvent, WpdaMaxStepsExceeded, WpdaMutableTokenSource,
+    WpdaResolveResult, WpdaState, WpdaTokenSource, WpdaTraceEntry, WpdaTransition,
 };
 
 /// Token-level atom producer available to stack-safe chain synthesis.
@@ -432,6 +663,15 @@ impl ChainAtomProducer {
 pub trait WpdaEngine<W: SemiringRef> {
     /// Decide the next action given the current state, configuration,
     /// and input.
+    ///
+    /// Stage 4 (Lever-1 emit-both): `frame_ctx` carries the innermost enclosing
+    /// collection frame's structural delimiters (computed by the walker via
+    /// [`WpdaWalker`]`::frame_ctx_for_stack`). The generated engine consults it
+    /// in the `InfixLoop`/`PrefixDispatch` lex-fork to add a `CollectionMarker`
+    /// yield branch ALONGSIDE the operator branches when a peeked lattice
+    /// alternative's text equals a required delimiter. Handwritten/test engines
+    /// ignore it (pass [`crate::wpda_runtime::FrameCtx::EMPTY`] from non-cohort
+    /// call sites).
     fn step(
         &self,
         state: &WpdaState,
@@ -439,6 +679,7 @@ pub trait WpdaEngine<W: SemiringRef> {
         frontier_top: Option<&WpdaGssNode>,
         pos: usize,
         tokens: &dyn WpdaTokenSource,
+        frame_ctx: crate::wpda_runtime::FrameCtx,
     ) -> WpdaStepAction<W>;
 
     /// Look up the semantic action attached to a `(src_idx, rule_idx)` pair.
@@ -449,6 +690,27 @@ pub trait WpdaEngine<W: SemiringRef> {
     /// structural rules that don't produce AST nodes).
     fn action_for(&self, src_idx: u16, rule_idx: u16) -> Option<&ActionEntry> {
         let _ = (src_idx, rule_idx);
+        None
+    }
+
+    /// SPPF-realize observational-dedup hook (2026-06-28).
+    ///
+    /// Return an INJECTIVE-up-to-observational-equivalence byte key for a
+    /// realized term, or `None` to opt out of per-node dedup. The key is the
+    /// SAME tagged byte stream the facade's root-dedup already uses
+    /// (`SemanticKeyHasher::into_key` over `term.semantic_hash`), so deduping
+    /// a sub-derivation is exactly as sound as deduping at the root — the
+    /// output-identity theorem (`docs`/`SppfRealizeObservationalDedup.v`)
+    /// holds by construction.
+    ///
+    /// The default is `None`: handwritten / test engines (e.g.
+    /// [`ScriptedEngine`], [`IdleEngine`]) keep every derivation distinct, so
+    /// `realize_root_to_terms_with_weights` is byte-identical for them
+    /// regardless of the `PRATTAIL_REALIZE_DEDUP` switch. Codegen overrides
+    /// this to downcast the term to each declared category and emit
+    /// `category_discriminant ‖ term.semantic_hash(..)`.
+    fn semantic_fingerprint(&self, term: &Arc<dyn Any + Send + Sync>) -> Option<Vec<u8>> {
+        let _ = term;
         None
     }
 
@@ -549,6 +811,25 @@ pub trait WpdaEngine<W: SemiringRef> {
         false
     }
 
+    /// Trigger-ownership soundness (2026-07-02): does the rule's surface syntax
+    /// pattern BEGIN with a structural literal trigger (its first `SyntaxExpr`
+    /// is a `Literal`, e.g. `@ p`, `int ( a )`, `- a`)? Consumed by
+    /// `emit_fire_action`'s walk-back drain to gate the `pos_match` fallback that
+    /// claims a leading `TriggerTerminal` at the firing rule's frame-start
+    /// position. An operand-leading rule (whose first element is a Param, e.g.
+    /// `PPersistOutput2Plus . n:Name |- n "!!" "(" a "," bs ")"`) has NO leading
+    /// trigger of its own and must NOT claim a foreign-owned `@` trigger sitting
+    /// at its frame start (the `@Nil!!(…)`→`NVar("Nil")` phantom whose display
+    /// `Nil!!(…)` is unparseable). Default `false` ⇒ the pos-only fallback is
+    /// disabled unless the rule demonstrably begins with a trigger; the codegen
+    /// override supplies the grammar-derived per-rule truth. Rules with a
+    /// genuine leading trigger (the `@{map}` binder repair the fallback was
+    /// introduced for) return `true` and keep the fallback.
+    fn rule_has_leading_structural_trigger(&self, src_idx: u16, rule_idx: u16) -> bool {
+        let _ = (src_idx, rule_idx);
+        false
+    }
+
     /// B8 / Issue D (2026-05-09); Phase 4 #2 (2026-05-12): per-(src, rule,
     /// slot_idx) predicate identifying Class-3 ZIP-MAP-SEP CollectionMarker
     /// pushes whose enclosing binder rule has a `^[xs]` MultiAbstraction.
@@ -593,6 +874,30 @@ pub trait WpdaEngine<W: SemiringRef> {
     fn is_class3_inner_marker(&self, src_idx: u16, rule_idx: u16, sub_pos: u8) -> bool {
         let _ = (src_idx, rule_idx, sub_pos);
         false
+    }
+
+    /// Stage 2 consolidation (2026-06-27): the single per-(result_src_idx,
+    /// rule_idx, slot_idx) collection-slot spec. Per-language codegen overrides
+    /// this with the one table that supersedes the former close / `(close,
+    /// sep)` / element-src / kv-separator lookups; the other collection
+    /// accessors ([`Self::kv_separator_for_collection`],
+    /// [`Self::collection_element_src_idx`]) and the `InfixLoop` /
+    /// `PrefixDispatch` / `CollectionLoop` close gates all project the field
+    /// they need off this record.
+    ///
+    /// Note: this is distinct from [`Self::is_binder_internal_collection`],
+    /// which is the 2-tuple `(src, rule)` FireAction-suppression query queried
+    /// at the `CollectionMarker` pop without a slot.
+    ///
+    /// Default returns `None` (no collection slots) for test engines.
+    fn collection_spec(
+        &self,
+        result_src_idx: u16,
+        rule_idx: u16,
+        slot_idx: u8,
+    ) -> Option<CollectionSpec> {
+        let _ = (result_src_idx, rule_idx, slot_idx);
+        None
     }
 
     /// Phase 4 #5b (2026-05-12): per-(src, rule, slot_idx) lookup that
@@ -696,6 +1001,44 @@ pub trait WpdaEngine<W: SemiringRef> {
     fn min_terminal_span(&self, src_idx: u16, rule_idx: u16) -> u32 {
         let _ = (src_idx, rule_idx);
         0
+    }
+
+    /// AT_QUOTED_BIND_GATE realize-backstop (option B, 2026-07-03). Returns
+    /// `true` iff `(src_idx, rule_idx)` is a GENERIC whole-source bind rule
+    /// `result ::= source <bind-trigger> …` (its first syntax element is the
+    /// `source`-category parameter, NOT a leading literal) that ALSO has a
+    /// SIGIL-LED sibling `result ::= σ operand <same-bind-trigger> …` in the
+    /// same result category — i.e. a rule of the `InputBind`/`InputBindPersistent`/
+    /// `InputBindQuery` family whose LHS is the whole `source` and for which the
+    /// sigil-quoted scalar form (`InputBindQuoted` family) exists. A realized
+    /// packing of such a rule whose `children[0]` is a `σ`-quoted `source` atom
+    /// (e.g. `NQuoteShort` / `NQuote` Name) is the PROVEN over-generation of the
+    /// scalar sigil-quoted sibling and is DROPPED at realize time (see
+    /// [`WpdaWalker::AT_QUOTED_BIND_REALIZE_GATE`]).
+    ///
+    /// This is the defense-in-depth CORRECTNESS backstop that is INERT under
+    /// the parse-time (C) gate (which already prevents the whole-source delegate
+    /// from forming). It does NOT linearize on its own (it fires post-parse,
+    /// after the frontier has formed). Default `false` (no drop-set) for engines
+    /// without a sigil-quoted-bind family; per-language codegen overrides it.
+    /// FV: `AtQuotedBindGate.{drop_set_sound, realize_inert_under_parse_gate}`.
+    fn sigil_quoted_bind_overgen_rule(&self, src_idx: u16, rule_idx: u16) -> bool {
+        let _ = (src_idx, rule_idx);
+        false
+    }
+
+    /// AT_QUOTED_BIND_GATE realize-backstop companion (option B, 2026-07-03).
+    /// Returns `true` iff `(src_idx, rule_idx)` is a SIGIL-QUOTED atom rule of a
+    /// `source` category — a rule whose realized term makes its parent's LHS a
+    /// `σ`-quoted `source` (e.g. rhocalc `NQuoteShort . p:Proc |- "@" p : Name`,
+    /// `NQuote . p:Proc |- "@" "(" p ")" : Name`). The realize backstop tests
+    /// the `children[0]` Symbol's packing rule against this predicate to decide
+    /// whether the whole-source LHS is `σ`-quoted. Grammar-derived: a rule whose
+    /// `syntax_pattern[0]` is the sigil literal `σ` that also LEADS a sibling in
+    /// a DIFFERENT (result) category. Default `false`; codegen overrides.
+    fn sigil_quoted_source_atom_rule(&self, src_idx: u16, rule_idx: u16) -> bool {
+        let _ = (src_idx, rule_idx);
+        false
     }
 
     /// Sig-B Blocker-3 §2.3 (2026-06-01, pgmcp experiment #9): the
@@ -1281,6 +1624,14 @@ impl EdgeStackScopeFlags {
     const CROSSCAT: u8 = 0b0000_0001;
     /// Any `PrefixRuleEntry` edge (searched by `enclosing_prefix_rule_frame`).
     const PREFIX_RULE: u8 = 0b0000_0010;
+    /// Stage 4 (Lever-1 emit-both): any structural-delimiter frame edge — a
+    /// `CollectionElement` (`CollectionMarker`) push. EXISTENCE-ONLY fast-reject
+    /// for `frame_ctx_for_stack`: when this bit is clear anywhere up the stack,
+    /// there is no enclosing collection frame and the innermost-frame walk is
+    /// skipped. The *delimiter values* are read from the nearest
+    /// `CollectionMarker`'s `collection_spec` (never the union — red-team
+    /// RT3-MINOR7).
+    const STRUCTURAL_DELIM: u8 = 0b0000_0100;
 
     #[inline]
     fn empty() -> Self {
@@ -1302,11 +1653,29 @@ impl EdgeStackScopeFlags {
         self.0 & Self::PREFIX_RULE != 0
     }
 
+    /// Stage 4 (Lever-1 emit-both): whether any enclosing structural-delimiter
+    /// (collection) frame edge is present anywhere up the stack.
+    #[inline]
+    fn has_structural_delim(self) -> bool {
+        self.0 & Self::STRUCTURAL_DELIM != 0
+    }
+
     /// Whether all tracked bits are already set (the recurrence can stop
     /// short-circuiting once the running union is saturated).
+    ///
+    /// Stage 4 (L1-SATURATION-BIT): `STRUCTURAL_DELIM` is folded into the
+    /// saturation mask ATOMICALLY with its addition to `edge_own_scope_flags`,
+    /// so the memoized scope-union recurrence never stops short before observing
+    /// a structural-delim edge. This is monotone-read: existing `has_crosscat` /
+    /// `has_prefix_rule` query RESULTS are unchanged (a longer walk can only ADD
+    /// bits already-true bits stay true); only later saturation = a small perf
+    /// cost on stacks that carry crosscat+prefix-rule but no collection frame.
     #[inline]
     fn is_saturated(self) -> bool {
-        self.0 & (Self::CROSSCAT | Self::PREFIX_RULE) == (Self::CROSSCAT | Self::PREFIX_RULE)
+        const ALL: u8 = EdgeStackScopeFlags::CROSSCAT
+            | EdgeStackScopeFlags::PREFIX_RULE
+            | EdgeStackScopeFlags::STRUCTURAL_DELIM;
+        self.0 & ALL == ALL
     }
 }
 
@@ -1584,6 +1953,29 @@ pub struct WpdaWalker<W: SemiringRef, E: WpdaEngine<W>> {
     /// EP-P1 v3.1: CrossCatLhs edges whose pop already decremented
     /// `crosscat_lhs_live_lineages` (decrement-once-per-edge).
     popped_crosscat_lhs_edges: rustc_hash::FxHashSet<crate::gss::GssEdgeId>,
+    /// Root 1 + Root 2 (2026-07-02): the ENCLOSING RETURN-FRAME discriminant of the
+    /// FIRST (worker-inserted) CrossCatDelegate projection registered under each
+    /// projection `DispatchKey`. On a subsequent `InflightCollision`, the walker
+    /// compares the colliding dispatch's frame discriminant against this stored
+    /// value: if they DIFFER (a genuinely distinct enclosing frame — the Root-1
+    /// group-vs-cast / Root-2 rule-8-vs-rule-13 case), the colliding projection is
+    /// allocated as an INDEPENDENT uncached worker instead of paused+merged (its
+    /// distinct projection would otherwise be lost). If they MATCH (a redundant
+    /// SAME-frame re-projection — e.g. the M4 nested-cast cast-family), the normal
+    /// cohort pause/dedup runs (the chain-O(N²) / cast-family ceiling preserved).
+    /// Walker-local; no cohort-cache change. Cleared with the cohort caches.
+    /// ROOT-P design-cycle-3 (Part C): keyed on [`ProjCacheKey`] (the cohort
+    /// cache's key space) so a cross-`&`-segment `InflightCollision` — which now
+    /// shares the segment-1 entry under the pos-quotient — can locate the
+    /// registrant's enclosing-frame discriminant and decide MERGE (same frame ⇒
+    /// share the branching) vs ALLOCATE-INDEPENDENT (distinct frame ⇒ ROOT-1/2
+    /// preserved). When the quotient is OFF, `cache_key()` preserves `pos`, so
+    /// this is byte-identical to the previous full-`DispatchKey` keying (each
+    /// pos is its own registrant). The frame discriminant itself is recomputed
+    /// LIVE per collision from the current parent (span-dependent), so no
+    /// cross-segment disc contamination (gate C1).
+    crosscat_proj_registrant_frame:
+        rustc_hash::FxHashMap<crate::dispatch_cohort::ProjCacheKey, u64>,
     /// EP-P1 v3.1: keys whose parked members are ready to revive at the
     /// end-of-step drain (inserted at the pop-resolve when the key is
     /// quiescent and parked members exist). OWN set — never mixed with
@@ -1764,6 +2156,19 @@ pub struct WpdaWalker<W: SemiringRef, E: WpdaEngine<W>> {
     /// byte-identical parse differential checked. See the
     /// `prefix_cast_stage_watermark` field doc for the soundness argument.
     prefix_cast_stage_memo_enabled: bool,
+    /// GAP-9 §1b (2026-06-28): enable the cross-cat-LHS no-op PROJECTION-on-unwind
+    /// wrap in [`Self::apply_pop_body_to_cursor`]. When a `CrossCatLhsReentry`
+    /// edge pops with the body STILL in the source category (no operator was
+    /// consumed by the one re-entry InfixLoop pass) and the enclosing target has
+    /// a DECLARED `single_hop_coercion` (transparent projection `source → target`),
+    /// the wrap fires that projection over the single body Symbol — supplying the
+    /// projection reading that the single cross-cat-LHS delegate (`CROSSCAT_SINGLE_DELEGATE`)
+    /// no longer pushes a separate projection delegate for. Read once from
+    /// `PRATTAIL_CCL_PROJECT_ON_UNWIND` ([`ccl_project_on_unwind_from_env`]); the
+    /// `single_hop_coercion`-empty gate makes it a strict no-op where no projection
+    /// is declared (calculator LedTest `Num → Pred` via `==`, cast towers), so
+    /// those paths are provably untouched.
+    ccl_project_on_unwind: bool,
     /// Option C / C2 (2026-05-15): the walker-owned Shared Packed Parse
     /// Forest arena. Cursors carry `SppfId` handles into this arena rather
     /// than per-cursor AST builders; the arena is the central, shared,
@@ -2258,6 +2663,23 @@ pub enum ForkActionKind {
     /// `emit_push_side_effects`. Pos advancement controlled by Fork's
     /// `consume_trigger: bool`.
     Push,
+
+    /// Unified Fix A (ROOT B + ROOT C, 2026-06-27): a Fork branch for a
+    /// cross-cat PROJECTION delegate (`new_state = CrossCatDelegate { .. }`)
+    /// that must be allocated via the SINGLETON uncached push
+    /// (`allocate_uncached_push_child`) — NOT the cohort
+    /// `allocate_fork_push_child` register / park / broadcast path. The cohort
+    /// broadcast reconciles a binder-frame survivor against the WORKER's frame
+    /// (dropping ROOT C's `for(@{1:2} <- c){…}` Map projection) and storms the
+    /// per-key snapshot cap (dropping ROOT B's `{|…|}` Pathmap delegate);
+    /// routing the projection INLINE makes it reconcile against its OWN frame
+    /// exactly like the working Bag/List/Set singleton projections
+    /// (prefix.rs:1480 `WpdaStepAction::Push`). The Fork-arm GLL descriptor
+    /// cycle-defense (the per-branch `parent_in_visited` skip) still gates it.
+    /// FV: ForkSurvivorBinderPop.v (`fork_survivor_pop_eq_singleton_pop`,
+    /// `current_broadcast_drops_matching_rule`, `terminal_frame_broadcast_sound`)
+    /// + CollectionDelegateDispatch.v. Fork emits `consume_trigger: false`.
+    PushProjectionInline,
     /// #307 ROOT-A D3 multi-target literal consume (FV:
     /// MixfixLiteralAccounting.fork_completeness): a mixfix rule literal
     /// matched MORE THAN ONE same-text lattice edge with DISTINCT targets
@@ -2448,6 +2870,24 @@ pub enum ForkActionKind {
         next_pos: usize,
         l_bp: u8,
         result_src_idx: u16,
+    },
+
+    /// GAP-3 (2026-06-28) — 0-operand multi-literal keyword-PREFIX lex-Fork
+    /// branch (`MapEmpty`/`PathmapEmpty`/`NQuoteNil`) for a trigger that ALSO
+    /// lexes as an identifier (the category-name `{Fixed,Ident}` lattice).
+    /// Apply is IDENTICAL to [`ForkActionKind::LexAltPrefixOp`]: mirror the
+    /// consumed `trigger` as a branch-owned `TriggerTerminal` (the SOLE SPPF
+    /// child under the marker → its span lo; arity-0 fire filters it), push
+    /// `branch.symbol` = `mixfix_marker(cat, rule_idx, 0)`, transition to
+    /// `branch.new_state` = `MixfixLiteralRun { kind: 2, completed_idx: 0 }`,
+    /// then advance `child.pos = next_pos`. Grouped into the LexAltPrefixOp
+    /// apply arm (the `body_src_idx`/`outer_bp` it ignores are carried by
+    /// `branch.new_state`, which here is `MixfixLiteralRun` instead).
+    LexAltNullaryRun {
+        alt_idx: u16,
+        trigger: String,
+        rule_idx: u16,
+        next_pos: usize,
     },
 
     /// Stage 3.16 atomic-literal multi-arm Fork branch (Cluster 2,
@@ -2948,6 +3388,30 @@ pub struct BranchCursor<W: SemiringRef> {
     /// refuting splice-divergent sub-multiset lineages (the
     /// "shorter-Ambiguous ghost" packings) as definite token-unsound.
     pub collection_sep_counts: Arc<Vec<u32>>,
+    /// D&C `.*sep` reconvergence (ROOT-P `<-` linearization, Plan ad4b660e,
+    /// 2026-07-05): per-collection-slot LOOP-ENTRY BASELINE of the SOLE
+    /// exponential carrier — the incoming edge-stack (`incoming_edge_stack_id`).
+    ///
+    /// Captured at `emit_start_collection` (loop entry) and RESTORED at each
+    /// `.*sep` element seal (Site A, `emit_splice_into_collection`) + separator
+    /// consume (Site B, `ConsumeCollectionSep`) so the continuation cursor
+    /// re-converges to ONE frontier arc per segment instead of accumulating a
+    /// per-segment-distinct edge-stack chain (`O(dᵏ)`→`O(k·d)`). This GENERALIZES
+    /// the landed Cluster D `lex_fork_path` reset (`:24220`) to the edge-stack —
+    /// the axis the BCC/DW Stage-0 measurements pinned as the exponential carrier
+    /// (GLL floor is already linear; the edge-stack is the sole residual).
+    ///
+    /// Parallel CoW `Arc<Vec<_>>` indexed by collection slot id (exactly like
+    /// `collection_sep_counts`), so it rides every `BranchCursor` clone,
+    /// `CohortShell` materialization, and Tomita frontier round-trip. NOT part of
+    /// any merge key (`ConfigKey`/`SubsumeConfigKey`/`TomitaKey`) — it must not
+    /// discriminate cursors. STAYS EMPTY unless `sep_reconverge_active()`
+    /// (`SEP_RECONVERGE_ENABLED` const + `PRATTAIL_SEP_RECONVERGE` env), so the
+    /// gate-OFF build is byte-identical. Soundness: the baseline preserves the
+    /// enclosing `CollectionMarker`'s own incoming edge (the live `.*sep`→ForRow
+    /// pop target); only the element-internal frames pushed since loop entry —
+    /// dead once the element seals — are discarded. See SepReconvergence.v.
+    pub collection_loop_edge_baseline: Arc<Vec<crate::edge_stack_arena::EdgeStackId>>,
     // Phase F.13 H1 (2026-05-20): `sppf_symbol_terms` PROMOTED from
     // per-cursor `Arc<Vec<(SppfId, Arc<dyn Any>)>>` to walker-global
     // `HashMap<SppfId, Arc<dyn Any>>` at `WpdaWalker::sppf_symbol_terms`.
@@ -3179,6 +3643,7 @@ impl<W: SemiringRef> Clone for BranchCursor<W> {
             // splice in the cloned cursor triggers Arc::make_mut CoW.
             sppf_collection_arena: Arc::clone(&self.sppf_collection_arena),
             collection_sep_counts: Arc::clone(&self.collection_sep_counts),
+            collection_loop_edge_baseline: Arc::clone(&self.collection_loop_edge_baseline),
             // Phase F.3a (2026-05-20): Option<u16> is Copy.
             last_action_output_cat: self.last_action_output_cat,
             cohort_origin: self.cohort_origin.clone(),
@@ -3298,6 +3763,7 @@ impl<W: SemiringRef> BranchCursor<W> {
             // no collection accumulator state.
             sppf_collection_arena: Arc::new(Vec::new()),
             collection_sep_counts: Arc::new(Vec::new()),
+            collection_loop_edge_baseline: Arc::new(Vec::new()),
             // Phase F.3a (2026-05-20): fresh cursor has no action yet.
             last_action_output_cat: None,
             cohort_origin: None,
@@ -3393,6 +3859,7 @@ impl<W: SemiringRef> BranchCursor<W> {
             // splice in the child cursor.
             sppf_collection_arena: Arc::clone(&parent.sppf_collection_arena),
             collection_sep_counts: Arc::clone(&parent.collection_sep_counts),
+            collection_loop_edge_baseline: Arc::clone(&parent.collection_loop_edge_baseline),
             // Phase F.3a (2026-05-20): inherit parent's mirror.
             last_action_output_cat: parent.last_action_output_cat,
             cohort_origin: parent.cohort_origin.clone(),
@@ -3860,6 +4327,20 @@ pub enum BuilderDelta {
         id: u8,
     },
 
+    /// Pathmap optional-value support (2026-06-27): duplicate the LAST element
+    /// of the innermost active collection accumulator (clone its SPPF node id
+    /// and re-push it). Emitted by the `kv_phase == 1` collection-loop arm when
+    /// a value-optional kv-collection (Pathmap) parses a bare path `{| k |}`
+    /// (no `: v`): the key just spliced into the arena is duplicated as the
+    /// value, so the accumulator stays even-length `[k, k]` and the existing
+    /// pair-walking finalize materializes the set-form entry `k → k`. The `id`
+    /// is the static slot_idx debug witness; `apply_effect_to_cursor` resolves
+    /// the runtime innermost slot (`collection_stack_depth - 1`) exactly like
+    /// [`BuilderDelta::SpliceIntoCollection`].
+    DuplicateLastCollectionElement {
+        id: u8,
+    },
+
     /// Codegen-emitted "allocate a fresh collection slot" payload. Survives
     /// 5.6-tail-E because BinderListLoop codegen emits it via
     /// `WithMultipleEffects` payloads. Walker-side emit_start_collection
@@ -3956,6 +4437,10 @@ impl std::fmt::Debug for BuilderDelta {
             },
             BuilderDelta::SpliceIntoCollection { id } => f
                 .debug_struct("SpliceIntoCollection")
+                .field("id", id)
+                .finish(),
+            BuilderDelta::DuplicateLastCollectionElement { id } => f
+                .debug_struct("DuplicateLastCollectionElement")
                 .field("id", id)
                 .finish(),
             BuilderDelta::StartCollection => f.debug_struct("StartCollection").finish(),
@@ -4897,6 +5382,7 @@ where
             crosscat_lhs_live_lineages: rustc_hash::FxHashMap::default(),
             pushed_crosscat_lhs_edges: rustc_hash::FxHashSet::default(),
             popped_crosscat_lhs_edges: rustc_hash::FxHashSet::default(),
+            crosscat_proj_registrant_frame: rustc_hash::FxHashMap::default(),
             pending_crosscat_lhs_drain_keys: rustc_hash::FxHashSet::default(),
             parked_crosscat_lhs_keys: rustc_hash::FxHashSet::default(),
             parked_crosscat_lhs_outstanding: 0,
@@ -4916,7 +5402,7 @@ where
             sr_subsume_mode: SrSubsumeMode::from_env(),
             infix_lexclear_mode: InfixLexclearMode::from_env(),
             prefix_cast_stage_memo_enabled: prefix_cast_stage_memo_enabled_from_env(),
-            infix_lexclear_watermark: 0,
+            ccl_project_on_unwind: ccl_project_on_unwind_from_env(),            infix_lexclear_watermark: 0,
             // Option C / C2: fresh empty SPPF arena.
             sppf: crate::sppf::Sppf::new(),
             sppf_predicate_arena: Vec::new(),
@@ -5016,6 +5502,7 @@ where
             crosscat_lhs_live_lineages: rustc_hash::FxHashMap::default(),
             pushed_crosscat_lhs_edges: rustc_hash::FxHashSet::default(),
             popped_crosscat_lhs_edges: rustc_hash::FxHashSet::default(),
+            crosscat_proj_registrant_frame: rustc_hash::FxHashMap::default(),
             pending_crosscat_lhs_drain_keys: rustc_hash::FxHashSet::default(),
             parked_crosscat_lhs_keys: rustc_hash::FxHashSet::default(),
             parked_crosscat_lhs_outstanding: 0,
@@ -5035,7 +5522,7 @@ where
             sr_subsume_mode: SrSubsumeMode::from_env(),
             infix_lexclear_mode: InfixLexclearMode::from_env(),
             prefix_cast_stage_memo_enabled: prefix_cast_stage_memo_enabled_from_env(),
-            infix_lexclear_watermark: 0,
+            ccl_project_on_unwind: ccl_project_on_unwind_from_env(),            infix_lexclear_watermark: 0,
             // Option C / C2: fresh empty SPPF arena.
             sppf: crate::sppf::Sppf::new(),
             sppf_predicate_arena: Vec::new(),
@@ -5134,6 +5621,7 @@ where
             crosscat_lhs_live_lineages: rustc_hash::FxHashMap::default(),
             pushed_crosscat_lhs_edges: rustc_hash::FxHashSet::default(),
             popped_crosscat_lhs_edges: rustc_hash::FxHashSet::default(),
+            crosscat_proj_registrant_frame: rustc_hash::FxHashMap::default(),
             pending_crosscat_lhs_drain_keys: rustc_hash::FxHashSet::default(),
             parked_crosscat_lhs_keys: rustc_hash::FxHashSet::default(),
             parked_crosscat_lhs_outstanding: 0,
@@ -5153,7 +5641,7 @@ where
             sr_subsume_mode: SrSubsumeMode::from_env(),
             infix_lexclear_mode: InfixLexclearMode::from_env(),
             prefix_cast_stage_memo_enabled: prefix_cast_stage_memo_enabled_from_env(),
-            infix_lexclear_watermark: 0,
+            ccl_project_on_unwind: ccl_project_on_unwind_from_env(),            infix_lexclear_watermark: 0,
             // Option C / C2: fresh empty SPPF arena.
             sppf: crate::sppf::Sppf::new(),
             sppf_predicate_arena: Vec::new(),
@@ -5279,6 +5767,7 @@ where
         self.pushed_crosscat_lhs_edges.clear();
         self.popped_crosscat_lhs_edges.clear();
         self.pending_crosscat_lhs_drain_keys.clear();
+        self.crosscat_proj_registrant_frame.clear();
         self.parked_crosscat_lhs_keys.clear();
         self.parked_crosscat_lhs_outstanding = 0;
         self.crosscat_lhs_key_edges.clear();
@@ -5399,6 +5888,7 @@ where
         self.pushed_crosscat_lhs_edges.clear();
         self.popped_crosscat_lhs_edges.clear();
         self.pending_crosscat_lhs_drain_keys.clear();
+        self.crosscat_proj_registrant_frame.clear();
         self.parked_crosscat_lhs_keys.clear();
         self.parked_crosscat_lhs_outstanding = 0;
         self.crosscat_lhs_key_edges.clear();
@@ -5830,6 +6320,7 @@ where
                     // Phase F.4 (2026-05-18): fresh empty Arc.
                     sppf_collection_arena: Arc::new(Vec::new()),
                     collection_sep_counts: Arc::new(Vec::new()),
+                    collection_loop_edge_baseline: Arc::new(Vec::new()),
                     // Phase F.3a (2026-05-20): fresh cursor.
                     last_action_output_cat: None,
                     cohort_origin: None,
@@ -5955,7 +6446,19 @@ where
             let frontier_top = self.top_node.and_then(|id| self.gss.node(id)).cloned();
             let action =
                 self.engine
-                    .step(&self.state, &self.gss, frontier_top.as_ref(), self.pos, tokens);
+                    .step(
+                        &self.state,
+                        &self.gss,
+                        frontier_top.as_ref(),
+                        self.pos,
+                        tokens,
+                        // Scalar (non-cohort) driver: no per-cursor incoming-edge
+                        // stack here, so no innermost-collection frame_ctx. The
+                        // emit-both yield is a cohort-path concern (the languages
+                        // parser drives via the Tomita frontier); EMPTY keeps this
+                        // path byte-identical.
+                        crate::wpda_runtime::FrameCtx::EMPTY,
+                    );
             if matches!(action, WpdaStepAction::Idle) {
                 // B6 (2026-04-28): make stalls explicit. The engine has
                 // nothing more to derive at this configuration. If the
@@ -6100,6 +6603,10 @@ where
                 return Ok(());
             }
             if stop_when_accepting && self.live_frontier_has_demand_resolvable_accept(tokens) {
+                // DIAG (2026-07-01, gated; REMOVE after GROUP-A arg-list root):
+                // the EARLY-STOP fired. Log walker pos/state + the live
+                // frontier's (pos, eoi?) so we can see if a PREFIX accept
+                // (pos<eof) prematurely halts the run before IntBinProc@EOF.
                 return Ok(());
             }
             if matches!(self.state, WpdaState::AmbiguityFanout { .. }) {
@@ -6274,7 +6781,19 @@ where
             let frontier_top = self.top_node.and_then(|id| self.gss.node(id)).cloned();
             let action =
                 self.engine
-                    .step(&self.state, &self.gss, frontier_top.as_ref(), self.pos, tokens);
+                    .step(
+                        &self.state,
+                        &self.gss,
+                        frontier_top.as_ref(),
+                        self.pos,
+                        tokens,
+                        // Scalar (non-cohort) driver: no per-cursor incoming-edge
+                        // stack here, so no innermost-collection frame_ctx. The
+                        // emit-both yield is a cohort-path concern (the languages
+                        // parser drives via the Tomita frontier); EMPTY keeps this
+                        // path byte-identical.
+                        crate::wpda_runtime::FrameCtx::EMPTY,
+                    );
             if matches!(action, WpdaStepAction::Idle) {
                 if self.pos >= tokens.len() {
                     // Stage 3.5b: EOI Idle in live mode is a parked
@@ -6497,6 +7016,11 @@ where
     {
         let at_logical_eoi = self.is_logical_eoi(cursor.pos, tokens);
         let prefix_trailing_pos = self.is_prefix_trailing_position(cursor.pos, tokens);
+        // DIAG (2026-07-01, gated PRATTAIL_TRACE=actions; REMOVE after GROUP-A
+        // arg-list send-shadow root-cause): log EVERY EOI-resolution candidate
+        // cursor — pos, inner_state, accepting?, logical_eoi?, sppf root + its
+        // category — so we can see whether the full IntBinProc@EOF cursor even
+        // reaches resolution (vs being dropped mid-walk by a keep-one merge).
         snapshot.logical_count = snapshot.logical_count.saturating_add(1);
         snapshot.max_dead_pos = snapshot.max_dead_pos.max(cursor.pos);
         if !matches!(cursor.inner_state, WpdaState::Accepted)
@@ -6733,6 +7257,10 @@ where
                 eprintln!("{}", self.stats);
             }
         }
+        // AT_QUOTED_BIND_GATE Task-2 (session da0842dc, 2026-07-03): dump the
+        // `sppf_stack_id`-chain content-eq tally at the parse boundary (gated
+        // GRIND_SPPF_CONTENT=1; the dump method is a no-op when unset).
+        self.grind_sppf_content_dump();
         // Cohort-revive-rework M0 (2026-05-29): orphan census at the
         // parse boundary, BEFORE force-materialize / resolution. Snapshot
         // the count of paused cohort members still parked on non-Resolved
@@ -6779,6 +7307,23 @@ where
                     }
                 }
                 eprintln!("{}", CacheSummary(&self.dispatch_cohort_cache));
+            }
+        }
+        // ROOT-P design-cycle-3 STAGE 0 GATE 0c (THROWAWAY, env-gated by
+        // PRATTAIL_GATE0C): emit the ProjCacheKey-quotient census over the LIVE
+        // cache entries at EOI. Confirms the `pos` axis is the fork multiplier —
+        // distinct DispatchKeys grow with `&`-segments while the ProjCacheKey
+        // quotient stays ~constant, and every multi-pos group differs ONLY in
+        // `pos`.
+        {
+            if std::env::var_os("PRATTAIL_GATE0C").is_some() {
+                let (dk, pck, pos_only, multi_pos, max_pos) =
+                    self.dispatch_cohort_cache.dbg_projcache_quotient_census();
+                let ratio = if pck == 0 { 0.0 } else { dk as f64 / pck as f64 };
+                eprintln!(
+                    "[GATE0c] live entries: distinct_dispatch_keys={} distinct_projcache_keys={} collapse_ratio={:.2}x pos_only_groups={} multi_pos_groups={} max_pos_per_group={}",
+                    dk, pck, ratio, pos_only, multi_pos, max_pos,
+                );
             }
         }
         // Lazy-budget fix (2026-06-08): decode structured frontier
@@ -6946,6 +7491,11 @@ where
         // only the root id (reads the SPPF arena, not the cursor), so the
         // captured root id survives any later cursor mutation.
         let snapshot = self.eoi_resolution_snapshot(tokens);
+        // DIAG (2026-07-01, gated; REMOVE after GROUP-A arg-list root): the
+        // resolution snapshot summary — how many EOI-accepting vs prefix-
+        // trailing candidates, and the premature-filter survivor count. This
+        // tells us WHICH resolution arm fires (0/1/multi accepting, or the
+        // premature-zeroed → resolve_prefix_with_trailing path).
         // EP-P2 (Stage B) Step-0: flush the EOI shadow accumulators
         // (gathered in the `&self` snapshot pass) into `self.stats` now
         // that we hold `&mut self`. Per-slot OR-add preserves the
@@ -7264,14 +7814,6 @@ where
             None => self.realize_root_to_terms_with_weights_eager(root, limit),
         };
         // #307 ROOT-F diagnostics (2026-06-11).
-        if trace_actions_enabled() {
-            eprintln!(
-                "[wpds-action] realize-root root={} limit={:?} results={}",
-                root,
-                limit,
-                __res.len(),
-            );
-        }
         __res
     }
 
@@ -7529,6 +8071,58 @@ where
         self.sppf.packings_of(symbol_id).to_vec()
     }
 
+    /// SPPF-realize observational-dedup (2026-06-28): fold one realized
+    /// `entry` into `out`, threading `seen` (observational fingerprint →
+    /// index in `out`). Returns `true` iff `entry` is a NEW distinct
+    /// ≡-class (so callers count DISTINCT alternatives toward their cap),
+    /// `false` iff it was folded into an existing representative.
+    ///
+    /// The fold MIRRORS the facade root-dedup EXACTLY (see
+    /// `__mettail_wpda_collect_*` in `wpda_codegen::facade`): on a duplicate,
+    /// the representative — term AND weight — is replaced iff the new weight
+    /// is strictly `⊕`-smaller (`semiring_priority_cmp == Less`, which equals
+    /// `<` for `LexicographicWeight`); ties keep the first-seen representative
+    /// in place. Combined with `⊗`-monotonicity and the `semantic_hash`
+    /// congruence, this makes per-node dedup byte-for-byte equal to
+    /// root-only dedup (the output-identity theorem).
+    ///
+    /// NO-OP (always pushes, returns `true`) when the `PRATTAIL_REALIZE_DEDUP`
+    /// switch is off, OR the engine returns `None` for this term
+    /// (handwritten / test engines, or a non-`Term` arg) — preserving
+    /// byte-identical realize output.
+    fn dedup_push_realized(
+        &self,
+        out: &mut Vec<(ActionArg, W)>,
+        seen: &mut std::collections::HashMap<Vec<u8>, usize>,
+        entry: (ActionArg, W),
+    ) -> bool {
+        if realize_dedup_enabled() {
+            if let ActionArg::Term { value, .. } = &entry.0 {
+                if let Some(key) = self.engine.semantic_fingerprint(value) {
+                    match seen.get(&key).copied() {
+                        Some(idx) => {
+                            // Duplicate ≡-class: keep the `⊕`-minimal
+                            // representative (term + weight), first-seen on tie.
+                            if Self::semiring_priority_cmp(&entry.1, &out[idx].1)
+                                == std::cmp::Ordering::Less
+                            {
+                                out[idx] = entry;
+                            }
+                            return false;
+                        },
+                        None => {
+                            seen.insert(key, out.len());
+                            out.push(entry);
+                            return true;
+                        },
+                    }
+                }
+            }
+        }
+        out.push(entry);
+        true
+    }
+
     fn realize_node_lazy_prefix(
         &self,
         id: crate::sppf::SppfId,
@@ -7557,12 +8151,17 @@ where
                 cap: usize,
                 next_idx: usize,
                 out: Vec<(ActionArg, W)>,
+                // SPPF-realize observational-dedup (2026-06-28): fingerprint →
+                // index in `out`, threaded across Scan/Collect so the lazy
+                // Symbol path dedups cross-packing exactly like the eager path.
+                seen: std::collections::HashMap<Vec<u8>, usize>,
             },
             SymbolCollect {
                 id: crate::sppf::SppfId,
                 cap: usize,
                 next_idx: usize,
                 out: Vec<(ActionArg, W)>,
+                seen: std::collections::HashMap<Vec<u8>, usize>,
                 packing: crate::sppf::SppfId,
             },
         }
@@ -7589,6 +8188,7 @@ where
                                 cap,
                                 next_idx: 0,
                                 out: Vec::new(),
+                                seen: std::collections::HashMap::new(),
                             });
                         },
                         Some(crate::sppf::SppfNode::Packing { children, .. }) => {
@@ -7615,7 +8215,7 @@ where
                     memo.insert(id, realized);
                     colors.insert(id, RealizeColor::Black);
                 },
-                LazyFrame::SymbolScan { id, cap, mut next_idx, mut out } => {
+                LazyFrame::SymbolScan { id, cap, mut next_idx, mut out, mut seen } => {
                     if out.len() >= cap {
                         memo.insert(id, out);
                         colors.insert(id, RealizeColor::Black);
@@ -7651,7 +8251,11 @@ where
                             Some(RealizeColor::Black) => {
                                 if let Some(entries) = memo.get(&packing) {
                                     for entry in entries {
-                                        out.push(entry.clone());
+                                        self.dedup_push_realized(
+                                            &mut out,
+                                            &mut seen,
+                                            entry.clone(),
+                                        );
                                         if out.len() >= cap {
                                             break;
                                         }
@@ -7674,17 +8278,24 @@ where
                         colors.insert(id, RealizeColor::Black);
                     } else if let Some(packing) = pending {
                         let remaining = cap.saturating_sub(out.len());
-                        stack.push(LazyFrame::SymbolCollect { id, cap, next_idx, out, packing });
+                        stack.push(LazyFrame::SymbolCollect {
+                            id,
+                            cap,
+                            next_idx,
+                            out,
+                            seen,
+                            packing,
+                        });
                         stack.push(LazyFrame::Enter { id: packing, cap: remaining });
                     } else {
                         memo.insert(id, out);
                         colors.insert(id, RealizeColor::Black);
                     }
                 },
-                LazyFrame::SymbolCollect { id, cap, next_idx, mut out, packing } => {
+                LazyFrame::SymbolCollect { id, cap, next_idx, mut out, mut seen, packing } => {
                     if let Some(entries) = memo.get(&packing) {
                         for entry in entries {
-                            out.push(entry.clone());
+                            self.dedup_push_realized(&mut out, &mut seen, entry.clone());
                             if out.len() >= cap {
                                 break;
                             }
@@ -7694,7 +8305,7 @@ where
                         memo.insert(id, out);
                         colors.insert(id, RealizeColor::Black);
                     } else {
-                        stack.push(LazyFrame::SymbolScan { id, cap, next_idx, out });
+                        stack.push(LazyFrame::SymbolScan { id, cap, next_idx, out, seen });
                     }
                 },
             }
@@ -7732,6 +8343,54 @@ where
             return true;
         }
         sym_span - child_span_sum >= min_span
+    }
+
+    /// AT_QUOTED_BIND_GATE realize-backstop predicate (option B, 2026-07-03).
+    /// Sibling of [`packing_satisfies_min_terminal_span`]. Returns `true` iff
+    /// this packing is a GENERIC whole-source bind rule in the sigil-quoted-bind
+    /// family (`sigil_quoted_bind_overgen_rule`) AND its first child realizes to
+    /// a `σ`-quoted `source` atom (a `Symbol` whose sole/leading packing rule is
+    /// a `sigil_quoted_source_atom_rule`, e.g. `NQuoteShort`/`NQuote`). Such a
+    /// packing is the proven over-generation of the scalar sigil-quoted sibling;
+    /// the realize loop drops it (see the `AT_QUOTED_BIND_REALIZE_GATE` gate).
+    /// Grammar-derived (both predicates are engine metadata), so no per-language
+    /// hardcode. Returns `false` for any non-drop-set rule or a non-`σ`-quoted
+    /// `children[0]` ⇒ inert. FV: `AtQuotedBindGate.drop_set_sound`.
+    fn packing_is_at_quoted_bind_overgen(
+        &self,
+        global_rule_idx: u32,
+        children: &[crate::sppf::SppfId],
+    ) -> bool {
+        let pcat = (global_rule_idx >> 16) as u16;
+        let plocal = (global_rule_idx & 0xFFFF) as u16;
+        if !self.engine.sigil_quoted_bind_overgen_rule(pcat, plocal) {
+            return false;
+        }
+        // The LHS is the first child. It must realize to a `σ`-quoted source
+        // atom for this to be the over-generation.
+        let Some(&first) = children.first() else {
+            return false;
+        };
+        let Some(crate::sppf::SppfNode::Symbol {
+            non_terminal_tag, ..
+        }) = self.sppf.node(first)
+        else {
+            return false;
+        };
+        let child_cat = *non_terminal_tag as u16;
+        // Any packing of the child Symbol whose rule is a sigil-quoted source
+        // atom rule ⇒ the LHS is `σ`-quoted. (Symbol-dedup means all packings
+        // share the child category; we scan for the sigil-quoted derivation.)
+        self.priority_ordered_packings(first).into_iter().any(|cp| {
+            matches!(
+                self.sppf.node(cp),
+                Some(crate::sppf::SppfNode::Packing { rule_idx: crule, .. })
+                    if self.engine.sigil_quoted_source_atom_rule(
+                        child_cat,
+                        (*crule & 0xFFFF) as u16,
+                    )
+            )
+        })
     }
 
     /// Internal helper: combine an SPPF node's children realizations
@@ -7861,6 +8520,13 @@ where
                 // this is identity; for non-idempotent W the multiplier
                 // captures the cycle's closed-semiring contribution.
                 let mut out: Vec<(ActionArg, W)> = Vec::new();
+                // SPPF-realize observational-dedup (2026-06-28): dedup the
+                // cross-packing concat (the eager Symbol-Leave path). Folds
+                // cast-cohort / cross-packing duplicates so this Symbol's memo
+                // (consumed by parent cartesian products) carries only distinct
+                // ≡-classes. No-op + byte-identical when the switch is off.
+                let mut seen: std::collections::HashMap<Vec<u8>, usize> =
+                    std::collections::HashMap::new();
                 for p in self.priority_ordered_packings(id) {
                     let p_color = colors.get(&p).copied();
                     // Pass-2c token-soundness backstop (2026-05-30): reject a
@@ -7883,6 +8549,31 @@ where
                         // in the original realization-only filter.
                         if !self
                             .packing_satisfies_min_terminal_span(*prule, children, *sym_lo, *sym_hi)
+                        {
+                            continue;
+                        }
+                        // AT_QUOTED_BIND_GATE realize-backstop (option B,
+                        // 2026-07-03). Kill-switch. Defense-in-depth for the
+                        // parse-time (C) gate: reject a GENERIC whole-source bind
+                        // packing (`InputBind`/`InputBindPersistent`/
+                        // `InputBindQuery` family — grammar-derived drop-set via
+                        // `sigil_quoted_bind_overgen_rule`) whose realized
+                        // `children[0]` is a `σ`-quoted `source` atom
+                        // (`NQuoteShort`/`NQuote` Name via
+                        // `sigil_quoted_source_atom_rule`). That reading is the
+                        // proven over-generation of the scalar sigil-quoted
+                        // sibling (`InputBindQuoted` family) — dropping it loses
+                        // no admitting parse. INERT under (C) (which prevents the
+                        // whole-source delegate from forming, so this packing
+                        // never exists), fires 0× then; a pure correctness net if
+                        // (C) is off. When `AT_QUOTED_BIND_REALIZE_GATE` is
+                        // `false` the whole branch is const-folded away
+                        // (byte-identical realize). FV:
+                        // `AtQuotedBindGate.{drop_set_sound,
+                        // realize_inert_under_parse_gate}`.
+                        const AT_QUOTED_BIND_REALIZE_GATE: bool = true;
+                        if AT_QUOTED_BIND_REALIZE_GATE
+                            && self.packing_is_at_quoted_bind_overgen(*prule, children)
                         {
                             continue;
                         }
@@ -7995,7 +8686,7 @@ where
                                 return out;
                             }
                         }
-                        out.push(entry.clone());
+                        self.dedup_push_realized(&mut out, &mut seen, entry.clone());
                     }
                 }
                 out
@@ -8239,6 +8930,11 @@ where
         // action, capture top. Phase C.6: result weight is
         // `combo_weight ⊗ packing_weight`.
         let mut out: Vec<(ActionArg, W)> = Vec::with_capacity(combos.len());
+        // SPPF-realize observational-dedup (2026-06-28): per-packing dedup of
+        // the cartesian-product output (the within-rule source of multiplicity).
+        // No-op + byte-identical when the switch is off / fingerprint is None.
+        let mut seen: std::collections::HashMap<Vec<u8>, usize> =
+            std::collections::HashMap::new();
         for (args, combo_w) in combos {
             let mut sb = SemanticBuilder::new();
             // B.1 (Phase E Stage 1, 2026-05-16): pre-allocate collection
@@ -8280,20 +8976,6 @@ where
                 continue;
             }
             // #307 ROOT-F diagnostics (2026-06-11): realize-side combo fire.
-            if trace_actions_enabled() && !collection_ids.is_empty() {
-                let item_dump: Vec<Vec<crate::sppf::SppfId>> = collection_ids
-                    .iter()
-                    .map(|id| {
-                        self.collection_items_for_action_children(&action_children, *id)
-                            .unwrap_or(&[])
-                            .to_vec()
-                    })
-                    .collect();
-                eprintln!(
-                    "[wpds-action] realize-fire rule={:#x} ids={:?} items={:?}",
-                    rule_idx, collection_ids, item_dump,
-                );
-            }
             // Push args one-by-one. The push semantics must match what
             // the walker's emit-helpers would have done so the action's
             // pop_args call shape is preserved.
@@ -8412,7 +9094,11 @@ where
                 //
                 // Phase C.6: per-derivation weight = combo_w ⊗ packing_weight.
                 let result_w = combo_w.times_ref(&packing_weight);
-                out.push((ActionArg::Term { value: t, type_name: "RealizedTerm" }, result_w));
+                self.dedup_push_realized(
+                    &mut out,
+                    &mut seen,
+                    (ActionArg::Term { value: t, type_name: "RealizedTerm" }, result_w),
+                );
             }
             if let Some(cap) = limit {
                 if out.len() >= cap {
@@ -8730,7 +9416,17 @@ where
         let frontier_top = self.top_node.and_then(|id| self.gss.node(id)).cloned();
         let action =
             self.engine
-                .step(&self.state, &self.gss, frontier_top.as_ref(), self.pos, tokens);
+                .step(
+                    &self.state,
+                    &self.gss,
+                    frontier_top.as_ref(),
+                    self.pos,
+                    tokens,
+                    // Scalar `handle_step` (non-cohort) driver: no per-cursor
+                    // incoming-edge stack — EMPTY keeps this path byte-identical
+                    // (emit-both is a cohort-path concern).
+                    crate::wpda_runtime::FrameCtx::EMPTY,
+                );
         if matches!(action, WpdaStepAction::Idle) {
             return WpdaTransition::NoChange;
         }
@@ -8864,6 +9560,7 @@ where
                         // Phase F.4 (2026-05-18): fresh empty Arc.
                         sppf_collection_arena: Arc::new(Vec::new()),
                         collection_sep_counts: Arc::new(Vec::new()),
+                        collection_loop_edge_baseline: Arc::new(Vec::new()),
                         // Phase F.3a (2026-05-20): post-Drop reset clears the
                         // mirror — the dropped cursor's action history is gone.
                         last_action_output_cat: None,
@@ -9485,7 +10182,7 @@ where
         popped_edge_kind: Option<&crate::gss::EdgeKind>,
         popped_edge_id: Option<crate::gss::GssEdgeId>,
     ) -> u8 {
-        match popped_edge_kind {
+        let __bp = match popped_edge_kind {
             Some(crate::gss::EdgeKind::CategoryEntryContinuation { min_bp })
             | Some(crate::gss::EdgeKind::CrossCatLhsScoped { min_bp, .. }) => *min_bp,
             Some(crate::gss::EdgeKind::CrossCatLhsReentry { min_bp, .. }) => popped_edge_id
@@ -9495,7 +10192,86 @@ where
                 .and_then(|eid| self.crosscat_lhs_min_bp.get(&eid).copied())
                 .unwrap_or(0),
             _ => 0,
+        };
+        __bp
+    }
+
+    /// Reconnection primitive (2026-07-01, M1): the cross-category-inherited
+    /// InfixLoop floor reset, computed member-independently for a shell/cursor
+    /// at `inner_state` sitting on GSS node `frontier_node` with incoming-edge
+    /// stack `stack_id`. Returns `Some(reset_state)` when the frontier is an
+    /// `InfixLoop` whose floor is genuinely FOREIGN to its own category and must
+    /// be reset to 0 for the pending operator; `None` when no reset applies.
+    ///
+    /// A grouped/atomic operand of category `C` re-entered under an enclosing
+    /// category-`D` context (via a `CrossCatLhsReentry { source_src_idx: C }`
+    /// edge on top of the incoming-edge stack) carries a floor computed in `D`'s
+    /// binding-power numbering. E.g. the grouped Name channel `(a)` inside the
+    /// Proc RHS of `d - (a)!!()` re-enters the Name category (`C = 3`) with
+    /// `cur_bp = 27` (the `-` right-bp, a PROC floor). Binding powers are
+    /// CATEGORY-LOCAL and incomparable across `C` vs `D`, so the generated
+    /// `InfixLoop` gate `if l_bp >= *cur_bp` wrongly rejects the Name-mixfix `!!`
+    /// (Name-local left-bp 4/8: `4 >= 27` is false) — the persistent-send never
+    /// attaches and `d - (a)!!()` strands at `!!`. A re-entered operand of
+    /// category `C` must continue its OWN operators at `C`'s fresh-operand floor
+    /// (0); the enclosing `D`-floor still governs how the COMPLETED
+    /// `C`-expression binds when it later pops back to the `D` frame (that floor
+    /// rides the OUTER edge, consumed at the pop, not this inner `C` InfixLoop).
+    ///
+    /// SELF-CORRECTING GUARD (no precedence regression): the reset fires ONLY
+    /// when the next token is an operator that `C` RECOGNIZES, `C` does NOT
+    /// accept it at the current floor, but `C` WOULD at floor 0, AND the floor
+    /// sits directly on a `source_src_idx == C` cross-cat re-entry (the ONLY way
+    /// a `C`-InfixLoop can carry a `D`-scale floor). A genuine same-category
+    /// precedence floor is not installed by such an edge, so it never reaches
+    /// this branch and precedence is preserved. Member-independent: the floor
+    /// and the incoming-edge top are shared across a merged frontier's arcs.
+    fn crosscat_inherited_floor_reset(
+        &self,
+        inner_state: &WpdaState,
+        frontier_node: crate::gss::GssNodeId,
+        stack_id: crate::edge_stack_arena::EdgeStackId,
+        pos: usize,
+        tokens: &dyn crate::wpda_runtime::WpdaTokenSource,
+    ) -> Option<WpdaState> {
+        let WpdaState::InfixLoop { cur_bp } = inner_state else {
+            return None;
+        };
+        let cur_bp = *cur_bp;
+        if cur_bp == 0 {
+            return None;
         }
+        let node = self.gss.node(frontier_node)?;
+        if node.symbol.kind != SymbolKind::CategoryEntry {
+            return None;
+        }
+        let cat = node.symbol.category_src_idx;
+        let on_own_reentry = self
+            .incoming_edge_stack_arena
+            .top(stack_id)
+            .and_then(|eid| self.gss.edge_kind(eid))
+            .map(|k| {
+                matches!(
+                    k,
+                    crate::gss::EdgeKind::CrossCatLhsReentry { source_src_idx, .. }
+                        if source_src_idx == cat
+                )
+            })
+            .unwrap_or(false);
+        if !on_own_reentry {
+            return None;
+        }
+        let tok = tokens.peek_text(pos)?;
+        if tok.is_empty() {
+            return None;
+        }
+        if self.engine.category_recognizes_operator(cat, tok)
+            && !self.engine.category_accepts_operator_at_floor(cat, tok, cur_bp)
+            && self.engine.category_accepts_operator_at_floor(cat, tok, 0)
+        {
+            return Some(WpdaState::InfixLoop { cur_bp: 0 });
+        }
+        None
     }
 
     fn record_crosscat_lhs_resume_on_cursor_top(
@@ -9557,6 +10333,16 @@ where
             ) => bits |= EdgeStackScopeFlags::CROSSCAT,
             Some(crate::gss::EdgeKind::PrefixRuleEntry { .. }) => {
                 bits |= EdgeStackScopeFlags::PREFIX_RULE
+            },
+            // Stage 4 (Lever-1 emit-both, L1-SATURATION-BIT): a
+            // `CollectionElement` (CollectionMarker) push is a structural-
+            // delimiter frame. Set ATOMICALLY with the `STRUCTURAL_DELIM`
+            // bit + its inclusion in `is_saturated` so the memoized scope-union
+            // stays consistent. `frame_ctx_for_stack` uses
+            // `has_structural_delim()` as the existence-only fast-reject before
+            // walking for the innermost collection's delimiters.
+            Some(crate::gss::EdgeKind::CollectionElement { .. }) => {
+                bits |= EdgeStackScopeFlags::STRUCTURAL_DELIM
             },
             _ => {},
         }
@@ -9621,6 +10407,706 @@ where
     ) -> bool {
         self.crosscat_lhs_stack_scope_flags_for(stack_id)
             .has_prefix_rule()
+    }
+
+    /// GROUP-A arg-list fix (2026-07-01): scan the incoming-edge stack for the
+    /// nearest enclosing `PrefixRuleEntry { item_pos > 0 }` (a binder/keyword
+    /// rule mid-rule slot resume), looking THROUGH any `CrossCatLhsScoped` /
+    /// `CrossCatLhsReentry` cross-cat-LHS edges that sit above it. Returns
+    /// `(cat_src, rule_idx, item_pos)` of that frame.
+    ///
+    /// This is the cross-cat sibling of the immediate-edge check in the
+    /// `BINDER-SLOT-UNWIND-INJECT` gate. When a keyword/method-call rule's first
+    /// `Param` operand (e.g. `IntBinProc . a:Proc, w:Int |- "int" "(" a "," w
+    /// ")"`, slot `a`) is satisfied by a Name projected to the operand category
+    /// (`b` as Name→Proc) that is then EXTENDED by a postfix operator into the
+    /// operand category (`b!(Nil)` = `POutput`), the extended body sits on a
+    /// `CrossCatLhsScoped` Name lineage whose IMMEDIATE incoming edge is NOT the
+    /// `PrefixRuleEntry` binder-resume edge — that edge is one hop below, under
+    /// the cross-cat-LHS re-entry. Without looking through the cross-cat edge the
+    /// gate never offers "the operand is complete; return it to the enclosing
+    /// rule slot", so the LONG (postfix-extended) reading strands and only the
+    /// SHORT bare-operand reading resumes the rule (dead — trailing operator).
+    /// The scan stops at the FIRST `PrefixRuleEntry` (nearest enclosing frame);
+    /// only cross-cat-LHS edges are transparent, so an unrelated intervening
+    /// frame (grouping, another rule, a collection) blocks the look-through and
+    /// the gate stays inert (no spurious injection).
+    fn crosscat_lhs_enclosing_binder_resume_frame(
+        &self,
+        stack_id: crate::edge_stack_arena::EdgeStackId,
+    ) -> Option<EnclosingArgSlotFrame> {
+        let mut sid = stack_id;
+        while let Some(eid) = self.incoming_edge_stack_arena.top(sid) {
+            match self.gss.edge_kind_ref(eid) {
+                // Keyword-PREFIX rule mid-rule slot (e.g. IntBinProc
+                // `"int" "(" a "," w ")"`, the `a` slot is item_pos 2).
+                Some(crate::gss::EdgeKind::PrefixRuleEntry { cat_src, rule_idx, item_pos })
+                    if *item_pos > 0 =>
+                {
+                    return Some(EnclosingArgSlotFrame {
+                        cat: *cat_src,
+                        rule: *rule_idx,
+                        slot: *item_pos,
+                        kind: ArgSlotFrameKind::Prefix,
+                    });
+                },
+                // Receiver-first / MIXFIX rule arg slot (e.g. WZSetLeaf
+                // `w "." "setLeaf" "(" full "," v ")"`, dispatched via a
+                // MixfixMarker whose `operands_completed` counts filled operands).
+                // A bare-Name-channel send in the `full` slot takes the SAME
+                // CrossCatLhs Name→operand lineage as the keyword case, so the
+                // "operand complete; return it to the enclosing slot" GLR reading
+                // is offered here too — keyed on the MixfixMarker frame.
+                Some(crate::gss::EdgeKind::MixfixMarker { result_src, rule_idx, operands_completed }) => {
+                    return Some(EnclosingArgSlotFrame {
+                        cat: *result_src,
+                        rule: *rule_idx,
+                        slot: *operands_completed,
+                        kind: ArgSlotFrameKind::Mixfix,
+                    });
+                },
+                // Only cross-cat-LHS re-entry edges are transparent to this
+                // look-through — they are the exact edges the Name→operand
+                // projection installs above the enclosing rule's arg-slot frame.
+                Some(crate::gss::EdgeKind::CrossCatLhsScoped { .. })
+                | Some(crate::gss::EdgeKind::CrossCatLhsReentry { .. }) => {
+                    sid = self.incoming_edge_stack_arena.intern_pop(sid);
+                },
+                // Any other edge (or a PrefixRuleEntry at item_pos 0) blocks the
+                // transparent walk: the completed body does not belong to a rule
+                // arg slot reachable purely through cross-cat-LHS.
+                _ => return None,
+            }
+        }
+        None
+    }
+
+    /// Root-B collection-element maximal-extent reconnection (2026-07-02):
+    /// walk the incoming-edge stack — transparent ONLY through cross-cat-LHS
+    /// re-entry edges — for the nearest enclosing `CollectionElement`
+    /// (CollectionMarker) frame. Returns `None` when a scope-resetting frame
+    /// (`GroupingMarker`, or a FRESH rule arg-slot `PrefixRuleEntry{item_pos>0}`
+    /// / `MixfixMarker`) is reached FIRST — those re-scope the operand, so a
+    /// completed body under them belongs to that inner scope, not the outer
+    /// collection.
+    ///
+    /// This is the collection analogue of
+    /// [`Self::crosscat_lhs_enclosing_binder_resume_frame`] (which finds the
+    /// enclosing rule arg-slot). The stop-set matches
+    /// [`Self::collection_element_direct_separator`] exactly: return on the FIRST
+    /// `CollectionElement`; return `None` on the first group / rule-arg-slot.
+    ///
+    /// ## Why it is needed (the Root-B bug)
+    /// A collection element that starts in the collection's element category via
+    /// a CROSS-CAT-LHS path — e.g. a bare Name channel `y` inside `a!(x, y!(z),
+    /// w)`'s `bs:Vec(Proc)` rest-collection, which extends to a Proc send
+    /// `y!(z)` through the Name→Proc `CrossCatLhsScoped` delegate — completes at
+    /// MAXIMAL extent (`y!(z)` : Proc) but its extension lineage re-scopes onto
+    /// the Name frame and pops OUT of the collection. Only the SHORT `y` : Name
+    /// pops back to the `CollectionMarker`, so the outer separator `,` is never
+    /// consumed. The trace-decisive edge stack at the outer `,` is
+    /// `[CrossCatLhsScoped{src} | CollectionElement{..} | MixfixMarker{..} | ..]`
+    /// with the SPPF top ALREADY in the element category — the maximal element is
+    /// reachable to the `CollectionElement` THROUGH the cross-cat-LHS edge, but no
+    /// reading unwinds it back. This walk finds that `CollectionElement` so the
+    /// injection (mirroring the GROUP-A binder-slot-unwind) can offer the
+    /// "element complete at maximal extent; return it to the CollectionMarker"
+    /// reading.
+    fn crosscat_lhs_enclosing_collection_element_frame(
+        &self,
+        stack_id: crate::edge_stack_arena::EdgeStackId,
+    ) -> Option<EnclosingCollectionElementFrame> {
+        // Fast reject: no structural-delim frame anywhere ⇒ no enclosing
+        // collection element to reconnect to. (Mirror
+        // `collection_element_direct_separator`.)
+        if !self
+            .crosscat_lhs_stack_scope_flags_for(stack_id)
+            .has_structural_delim()
+        {
+            return None;
+        }
+        let mut sid = stack_id;
+        while let Some(eid) = self.incoming_edge_stack_arena.top(sid) {
+            match self.gss.edge_kind_ref(eid) {
+                // Reached the innermost collection element with no intervening
+                // scope reset: this is the collection the maximal cross-cat
+                // element belongs to.
+                Some(crate::gss::EdgeKind::CollectionElement {
+                    result_src,
+                    rule_idx,
+                    acc_id,
+                }) => {
+                    return Some(EnclosingCollectionElementFrame {
+                        result_src: *result_src,
+                        rule_idx: *rule_idx,
+                        acc_id: *acc_id,
+                    });
+                },
+                // A group or a fresh rule-arg-slot RE-SCOPES the operand: a
+                // completed body under it belongs to that inner scope, not the
+                // enclosing collection. Stop — no reconnection (mirrors
+                // `collection_element_direct_separator`'s stop-set exactly).
+                Some(crate::gss::EdgeKind::GroupingMarker { .. }) => return None,
+                Some(crate::gss::EdgeKind::PrefixRuleEntry { item_pos, .. })
+                    if *item_pos > 0 =>
+                {
+                    return None;
+                },
+                Some(crate::gss::EdgeKind::MixfixMarker { .. }) => return None,
+                // Transparent edges (cross-cat-LHS re-entries — the projection
+                // lineage the source runs under — plus returns from completed
+                // sub-parses that don't reset collection scope): keep walking.
+                _ => {
+                    sid = self.incoming_edge_stack_arena.intern_pop(sid);
+                },
+            }
+        }
+        None
+    }
+
+    /// ROOT-D infix-RHS maximal-extent reconnection (2026-07-02): walk the
+    /// incoming-edge stack — transparent ONLY through cross-cat-LHS re-entry
+    /// edges — for the nearest enclosing infix-operator RHS-dispatch
+    /// `ReturnFrame{cat_src, rule_idx}` frame. Returns `None` when a
+    /// scope-resetting frame (`GroupingMarker`, a FRESH rule arg-slot
+    /// `PrefixRuleEntry{item_pos>0}` / `MixfixMarker`, or a `CollectionElement`)
+    /// is reached FIRST — those re-scope the operand, so a completed body under
+    /// them belongs to that inner scope, not to the infix RHS.
+    ///
+    /// This is the infix-RHS analogue of
+    /// [`Self::crosscat_lhs_enclosing_collection_element_frame`] (collection) and
+    /// [`Self::crosscat_lhs_enclosing_binder_resume_frame`] (arg-slot). The
+    /// stop-set is identical to those two.
+    ///
+    /// ## Why it is needed (the ROOT-D bug)
+    /// The RHS operand of a binary-infix rule (`PParInfix . a:Proc, b:Proc |- a
+    /// "|" b`) is dispatched as a fresh sub-parse under a `SymbolKind::Return`
+    /// marker (→ `ReturnFrame{cat_src = Proc, rule_idx = PParInfix}`). When that
+    /// RHS starts in a DIFFERENT category via a cross-cat-LHS path — e.g. a bare
+    /// Name `a` that extends to a Proc send `a!(Nil)` through the Name→Proc
+    /// `CrossCatLhsScoped` delegate — it completes at MAXIMAL extent (`a!(Nil)` :
+    /// Proc) but its extension lineage rides the Name frame; only the SHORT `a` :
+    /// Name reading pops back to the infix `ReturnFrame` (committed early),
+    /// stranding the maximal reading. STANDALONE (`for(){Nil} | a!(Nil)`) the
+    /// infix `ReturnFrame` is the TOP-most enclosing frame and the top-level
+    /// `InfixLoop` re-fork pops the maximal POutput directly back — so the LONG
+    /// `PParInfix` forms and the short one loses to trailing-token. But nested in
+    /// a rule arg-slot (`Nil.set(for(){Nil} | a!(Nil), Nil)`) an intervening
+    /// `MixfixMarker` (the `.set` method call) sits BELOW the infix `ReturnFrame`;
+    /// the maximal POutput at the `,` boundary has edge stack
+    /// `[CrossCatLhsScoped{Name} | ReturnFrame{PParInfix} | MixfixMarker{.set}]`
+    /// with the SPPF top ALREADY Proc — the maximal RHS is reachable to the infix
+    /// `ReturnFrame` THROUGH the cross-cat-LHS edge, but no reading unwinds it
+    /// back, so ONLY the short bare-Name reading survives (`for(){Nil} | a`), the
+    /// enclosing `.set` then sees the unconsumed `!` and rejects. This walk finds
+    /// that infix `ReturnFrame` so the injection (mirroring the collection-element
+    /// / binder-slot unwind) can offer the "RHS complete at maximal extent; return
+    /// it to the infix rule" reading.
+    fn crosscat_lhs_enclosing_infix_rhs_frame(
+        &self,
+        stack_id: crate::edge_stack_arena::EdgeStackId,
+    ) -> Option<EnclosingInfixRhsFrame> {
+        // Fast reject: no cross-cat-family edge anywhere ⇒ we are not inside a
+        // cross-cat operand extension, so there is nothing to reconnect. (This
+        // walk only ever runs when the immediate edge is a cross-cat-LHS edge,
+        // so the flag is already set at every real call site; the check keeps
+        // the helper self-contained + cheap under speculative callers.)
+        if !self.crosscat_lhs_stack_has_scope_edge(stack_id) {
+            return None;
+        }
+        let mut sid = stack_id;
+        while let Some(eid) = self.incoming_edge_stack_arena.top(sid) {
+            match self.gss.edge_kind_ref(eid) {
+                // Reached the nearest infix-operator RHS-dispatch return frame with
+                // no intervening scope reset: this is the infix rule the maximal
+                // cross-cat RHS belongs to.
+                Some(crate::gss::EdgeKind::ReturnFrame { cat_src, rule_idx }) => {
+                    return Some(EnclosingInfixRhsFrame {
+                        cat: *cat_src,
+                        rule: *rule_idx,
+                    });
+                },
+                // A group, a fresh rule arg-slot, or a collection element
+                // RE-SCOPES the operand — a completed body under it belongs to
+                // that inner scope, not the enclosing infix RHS. Stop (mirrors the
+                // collection-element / binder-resume stop-sets exactly).
+                Some(crate::gss::EdgeKind::GroupingMarker { .. }) => return None,
+                Some(crate::gss::EdgeKind::PrefixRuleEntry { item_pos, .. })
+                    if *item_pos > 0 =>
+                {
+                    return None;
+                },
+                Some(crate::gss::EdgeKind::MixfixMarker { .. }) => return None,
+                Some(crate::gss::EdgeKind::CollectionElement { .. }) => return None,
+                // Transparent edges (cross-cat-LHS re-entries — the projection
+                // lineage the source runs under): keep walking.
+                _ => {
+                    sid = self.incoming_edge_stack_arena.intern_pop(sid);
+                },
+            }
+        }
+        None
+    }
+
+    /// ROOT-D (2026-07-02): does the enclosing infix rule accept a completed body
+    /// of `body_cat` in one of its operand slots? Infix-RHS analogue of
+    /// [`Self::binder_slot_accepts_body_category`] /
+    /// [`Self::collection_element_accepts_body_category`]: an exact match on a
+    /// declared operand category OR a body reachable by a declared single-hop
+    /// coercion. Delegates to `binder_slot_accepts_body_category` (the operand
+    /// membership check is identical — a binary infix's `expected_input_cats` are
+    /// its `[lhs, rhs]` operand cats; slot is not consulted).
+    fn infix_rhs_frame_accepts_body_category(
+        &self,
+        frame: EnclosingInfixRhsFrame,
+        body_cat: u16,
+    ) -> bool {
+        self.binder_slot_accepts_body_category(frame.cat, frame.rule, 0, body_cat)
+    }
+
+    /// C3 / ROOT-PERSIST-`<=` (2026-07-04): walk the incoming-edge stack —
+    /// transparent through the operand-continuation edges a grouping-close /
+    /// projection cascade installs (`CategoryEntryContinuation`) PLUS the
+    /// cross-cat-LHS re-entry lineage (`CrossCatLhsScoped`/`…Reentry`) and the
+    /// pass-through Proc-infix `ReturnFrame` the shadowing operator opened — for
+    /// the nearest enclosing CHANNEL-FIRST-RECEIVER rule mid-rule OPERATOR slot
+    /// (`PrefixRuleEntry{item_pos>0}`). Returns `None` when a scope-resetting
+    /// frame (`GroupingMarker`, `MixfixMarker`, or a `CollectionElement`) is
+    /// reached FIRST — those re-scope the operand, so a completed body under them
+    /// belongs to that inner scope, not the receiver rule's operator slot.
+    ///
+    /// This is the FIFTH member of the `crosscat_lhs_enclosing_*_frame`
+    /// reconnection family. The stop-set matches the other four; the ONLY
+    /// difference is the TRANSPARENT set — this walk ALSO looks through
+    /// `CategoryEntryContinuation` (the exact edge the four existing walkers stop
+    /// on via their `_ => None` arm, which is why the shadowed receiver frame one
+    /// hop below a grouping-close continuation is unreachable to them).
+    ///
+    /// ## Why it is needed (the C3 bug)
+    /// The `<=` persistent-bind receiver rule (`InputBindQuotedPersistent .
+    /// pat:Proc, n:Name |- "@" pat "<=" n`) reaches its OPERATOR slot (`item_pos
+    /// 2`, the `<=` literal) after the `pat` channel completes. When `pat` is a
+    /// COMPLEX Proc that completes via a CROSS-CAT PROJECTION cascade (a
+    /// keyword-collection `Map()`, a method-call `error.keys()`, a deref `*a`),
+    /// the grouping-close installs a `CategoryEntryContinuation` operand
+    /// continuation whose InfixLoop Fork offers the completed `pat` (a Proc) to
+    /// the shadowing Proc-infix rule `<=` (LtEq) — which greedily consumes `<=`
+    /// and the receiver frame `PrefixRuleEntry{rule, item_pos 2}` never advances
+    /// past its operator literal, so at EOF its guard dies (`peek=""`, the `<=`
+    /// was stolen). The trace-decisive edge stack at the `<=` operator position
+    /// is `[CategoryEntryContinuation | PrefixRuleEntry{cat 1, rule 6, item_pos
+    /// 2}]` with the SPPF top ALREADY the completed `pat` (Proc) — the receiver
+    /// operator slot is reachable ONE HOP below the continuation, but no reading
+    /// unwinds the completed `pat` back to it BEFORE the operator is stolen. This
+    /// walk finds that receiver frame so the injection (mirroring the four landed
+    /// unwind arms) can offer the "channel complete; return it to the receiver
+    /// rule's operator slot" reading, re-offering the shadowed operator literal
+    /// to the receiver. The `<-` twin (`InputBindQuoted |- "@" pat "<-" n`) is
+    /// INERT because `<-` is NOT a Proc infix, so there is no shadowing
+    /// continuation — the direct binder-resume arms already reconnect it.
+    fn crosscat_lhs_enclosing_channel_first_receiver_frame(
+        &self,
+        stack_id: crate::edge_stack_arena::EdgeStackId,
+    ) -> Option<EnclosingChannelFirstReceiverFrame> {
+        // Fast reject: no `PrefixRuleEntry` anywhere ⇒ no enclosing receiver rule
+        // to reconnect to. (Mirror `enclosing_prefix_rule_frame`'s fast reject.)
+        if !self.crosscat_lhs_stack_has_prefix_rule_entry(stack_id) {
+            return None;
+        }
+        let mut sid = stack_id;
+        while let Some(eid) = self.incoming_edge_stack_arena.top(sid) {
+            match self.gss.edge_kind_ref(eid) {
+                // Reached the nearest receiver-rule mid-rule OPERATOR slot with no
+                // intervening scope reset: this is the channel-first receiver rule
+                // whose operator literal the shadowing continuation stole.
+                Some(crate::gss::EdgeKind::PrefixRuleEntry { cat_src, rule_idx, item_pos })
+                    if *item_pos > 0 =>
+                {
+                    return Some(EnclosingChannelFirstReceiverFrame {
+                        cat: *cat_src,
+                        rule: *rule_idx,
+                        slot: *item_pos,
+                    });
+                },
+                // A group, a fresh mixfix/keyword arg slot, or a collection element
+                // RE-SCOPES the operand — a completed body under it belongs to that
+                // inner scope, not the receiver rule's operator slot. Stop (mirrors
+                // the collection-element / binder-resume / infix-rhs stop-sets).
+                Some(crate::gss::EdgeKind::GroupingMarker { .. }) => return None,
+                Some(crate::gss::EdgeKind::MixfixMarker { .. }) => return None,
+                Some(crate::gss::EdgeKind::CollectionElement { .. }) => return None,
+                // A `PrefixRuleEntry` at item_pos 0 is a fresh rule dispatch (not a
+                // mid-rule resume): it re-scopes too. Stop.
+                Some(crate::gss::EdgeKind::PrefixRuleEntry { item_pos, .. })
+                    if *item_pos == 0 =>
+                {
+                    return None;
+                },
+                // Transparent edges: the grouping-close / projection-cascade
+                // operand continuation (`CategoryEntryContinuation` — the edge the
+                // four existing walkers stop on, and the WHOLE reason this arm
+                // exists), the cross-cat-LHS re-entry lineage the projected source
+                // runs under, and the pass-through Proc-infix `ReturnFrame` the
+                // shadowing operator opened (which only PASSES the completed body,
+                // it does not own the receiver operator slot). Keep walking.
+                _ => {
+                    sid = self.incoming_edge_stack_arena.intern_pop(sid);
+                },
+            }
+        }
+        None
+    }
+
+    /// C3 / ROOT-PERSIST-`<=` (2026-07-04): does the enclosing receiver rule
+    /// accept a completed body of `body_cat` in one of its operand slots?
+    /// Channel-first-receiver analogue of
+    /// [`Self::binder_slot_accepts_body_category`] /
+    /// [`Self::infix_rhs_frame_accepts_body_category`] — delegates to the shared
+    /// operand-membership check (the receiver rule's `expected_input_cats`
+    /// includes the `pat` channel-pattern slot the completed body fills, e.g.
+    /// `InputBindQuotedPersistent`'s `[Proc, Name]`; a `Map()` body is Proc).
+    fn channel_first_receiver_frame_accepts_body_category(
+        &self,
+        frame: EnclosingChannelFirstReceiverFrame,
+        body_cat: u16,
+    ) -> bool {
+        self.binder_slot_accepts_body_category(frame.cat, frame.rule, frame.slot, body_cat)
+    }
+
+    /// C3 / ROOT-PERSIST-`<=` (2026-07-04): is the receiver rule's operator
+    /// literal SHADOWED by the completed body's category — i.e. does that
+    /// category recognize the lookahead token as one of ITS OWN operators
+    /// (infix/postfix/mixfix)? This is the grammar-derived predicate that
+    /// distinguishes the `<=` persistent-bind case (Proc recognizes `<=` as its
+    /// LtEq infix ⇒ SHADOWED ⇒ the continuation steals it ⇒ this arm must
+    /// reconnect) from the `<-`/`!?` twins (Proc does NOT recognize `<-`/`!?` as
+    /// operators ⇒ NOT shadowed ⇒ no stealing continuation ⇒ this arm is INERT,
+    /// the direct binder-resume arms already reconnect them).
+    ///
+    /// Keys ENTIRELY on [`WpdaEngine::category_recognizes_operator`] — the same
+    /// grammar-level operator-ownership query the walker uses for transparent
+    /// projection re-entry. NO keyword / rule-index / category hardcode: for any
+    /// language whose channel-first receiver rule's operator literal collides
+    /// with a same-category infix/postfix/mixfix operator, this returns `true`;
+    /// otherwise `false` (fail-closed for test engines whose default is `false`).
+    fn channel_first_receiver_operator_is_shadowed(
+        &self,
+        body_cat: u16,
+        lookahead: &str,
+    ) -> bool {
+        !lookahead.is_empty() && self.engine.category_recognizes_operator(body_cat, lookahead)
+    }
+
+    /// Root-B (2026-07-02): does the enclosing collection's element category
+    /// accept a completed body of `body_cat`? Collection analogue of
+    /// [`Self::binder_slot_accepts_body_category`] — admits an exact match on the
+    /// declared `element_src_idx` OR a body reachable by a declared single-hop
+    /// coercion into it (keeps the gate general across languages). kv-collections
+    /// (which carry a `kv_sep`) are excluded: a single element category cannot
+    /// speak for both the key and value slots.
+    fn collection_element_accepts_body_category(
+        &self,
+        frame: EnclosingCollectionElementFrame,
+        body_cat: u16,
+    ) -> bool {
+        // kv-collections: the reconnection element-category gate is ambiguous
+        // (per-slot key/value cats), so do not fire for them.
+        if self
+            .engine
+            .kv_separator_for_collection(frame.result_src, frame.rule_idx, frame.acc_id)
+            .is_some()
+        {
+            return false;
+        }
+        let Some(element_cat) = self.engine.collection_element_src_idx(
+            frame.result_src,
+            frame.rule_idx,
+            frame.acc_id,
+        ) else {
+            return false;
+        };
+        if element_cat == body_cat {
+            return true;
+        }
+        // Body reachable by a declared single-hop coercion into the element cat.
+        self.engine
+            .single_hop_coercion(body_cat, element_cat)
+            .iter()
+            .any(|&(coercion_cat, _)| coercion_cat == element_cat)
+    }
+
+    /// Stage 4 (Lever-1 emit-both): compute the [`crate::wpda_runtime::FrameCtx`]
+    /// for a cursor/shell's incoming-edge `stack_id` — the structural-delimiter
+    /// context of the INNERMOST enclosing collection frame.
+    ///
+    /// 1. Existence-only fast reject via the `STRUCTURAL_DELIM` scope-flag bit:
+    ///    no enclosing collection frame ⇒ `FrameCtx::EMPTY` (the common case; no
+    ///    `O(depth)` walk).
+    /// 2. Innermost-frame lookup: walk the incoming-edge stack top-down for the
+    ///    nearest `CollectionElement` (CollectionMarker) edge and project its
+    ///    [`WpdaEngine::collection_spec`] delimiters. NEVER the union of
+    ///    enclosing frames (red-team RT3-MINOR7) — the innermost frame is the one
+    ///    whose close/sep the element's `InfixLoop` must yield to.
+    ///
+    /// Member-independent: the innermost structural frame is part of the shared
+    /// forward sub-parse (cohort members of one worker share it), so it is sound
+    /// to compute once per merged frontier and broadcast the resulting step
+    /// action. Mirrors [`Self::enclosing_prefix_rule_frame`]'s edge-stack walk.
+    fn frame_ctx_for_stack(
+        &self,
+        stack_id: crate::edge_stack_arena::EdgeStackId,
+    ) -> crate::wpda_runtime::FrameCtx {
+        use crate::wpda_runtime::FrameCtx;
+        // (1) Existence-only fast reject.
+        if !self
+            .crosscat_lhs_stack_scope_flags_for(stack_id)
+            .has_structural_delim()
+        {
+            return FrameCtx::EMPTY;
+        }
+        // (2) Innermost-frame lookup: nearest enclosing CollectionElement edge.
+        let mut sid = stack_id;
+        while let Some(eid) = self.incoming_edge_stack_arena.top(sid) {
+            if let Some(crate::gss::EdgeKind::CollectionElement {
+                result_src,
+                rule_idx,
+                acc_id,
+            }) = self.gss.edge_kind_ref(eid)
+            {
+                // `acc_id` is the CollectionMarker symbol's `bp` field = the
+                // codegen-stamped collection SLOT id (see `EdgeKind::from_symbol`
+                // and the Phase-4-#1 invariant in `emit_push_side_effects`: `bp`
+                // holds `slot_idx`, NOT the runtime accumulator). It is exactly
+                // the slot `collection_spec` keys on — the same value the
+                // CollectionMarker InfixLoop reroute reads as `node.symbol.bp`.
+                return match self.engine.collection_spec(*result_src, *rule_idx, *acc_id) {
+                    Some(spec) => FrameCtx {
+                        close: spec.close,
+                        sep: spec.sep,
+                        kv_sep: spec.kv_sep,
+                        has_frame: true,
+                    },
+                    None => FrameCtx::EMPTY,
+                };
+            }
+            sid = self.incoming_edge_stack_arena.intern_pop(sid);
+        }
+        FrameCtx::EMPTY
+    }
+
+    /// Collection-element ghost refutation (2026-07-01): the collection
+    /// separator `sep` of the innermost enclosing collection element, BUT only
+    /// when that `CollectionElement` frame is reached with no intervening
+    /// scope-resetting frame — specifically no `GroupingMarker` and no fresh
+    /// rule-arg-slot (`PrefixRuleEntry{item_pos>0}` / `MixfixMarker`) between the
+    /// cursor and the `CollectionElement`. `None` otherwise.
+    ///
+    /// Rationale: inside a collection element parsed DIRECTLY (e.g. `{(1) | 2}`
+    /// after the `(1)` group has already closed, so the cursor's continuation is
+    /// a plain `CategoryEntryContinuation` sitting straight on the bag's
+    /// `CollectionElement` frame), the separator token `|` is UNAMBIGUOUSLY the
+    /// bag separator — it must NOT also be consumed as the same-category
+    /// `PParInfix` operator (`a "|" b`), which would fold `(1) | 2` into a SINGLE
+    /// element `PParInfix(1,2)` and yield a spurious sub-multiset "ghost"
+    /// (`PPar{PParInfix(1,2)}`) alongside the faithful 2-element bag. Contrast
+    /// `{(a|b)}`: there the `|` sits INSIDE the still-open group `(a|b)`, so a
+    /// `GroupingMarker` is between the cursor and the `CollectionElement` — the
+    /// walk stops at it and returns `None`, leaving the legitimate grouped-par
+    /// element `PParInfix(a,b)` intact. This is the structural "kill the spurious
+    /// reading at source" refutation (never disambiguate early applies to
+    /// GENUINE ambiguity; a same-category infix on a bag separator directly in
+    /// the bag is not a genuine reading — the bag constructor owns that token).
+    fn collection_element_direct_separator(
+        &self,
+        stack_id: crate::edge_stack_arena::EdgeStackId,
+    ) -> Option<&'static str> {
+        // Fast reject: no structural-delim frame anywhere ⇒ nothing to refute.
+        if !self
+            .crosscat_lhs_stack_scope_flags_for(stack_id)
+            .has_structural_delim()
+        {
+            return None;
+        }
+        let mut sid = stack_id;
+        while let Some(eid) = self.incoming_edge_stack_arena.top(sid) {
+            match self.gss.edge_kind_ref(eid) {
+                // Reached the innermost collection element with no intervening
+                // scope reset: its separator owns the token.
+                Some(crate::gss::EdgeKind::CollectionElement {
+                    result_src,
+                    rule_idx,
+                    acc_id,
+                }) => {
+                    return self
+                        .engine
+                        .collection_spec(*result_src, *rule_idx, *acc_id)
+                        .map(|spec| spec.sep);
+                },
+                // A group or a fresh rule-arg-slot RE-SCOPES the operand: the
+                // token belongs to that inner scope, not the enclosing
+                // collection. Stop — no refutation (the operator reading is
+                // legitimate inside the group / rule slot).
+                Some(crate::gss::EdgeKind::GroupingMarker { .. }) => return None,
+                Some(crate::gss::EdgeKind::PrefixRuleEntry { item_pos, .. })
+                    if *item_pos > 0 =>
+                {
+                    return None;
+                },
+                Some(crate::gss::EdgeKind::MixfixMarker { .. }) => return None,
+                // Transparent edges (returns from completed sub-parses, cross-cat
+                // reentries that don't reset collection scope): keep walking down.
+                _ => {
+                    sid = self.incoming_edge_stack_arena.intern_pop(sid);
+                },
+            }
+        }
+        None
+    }
+
+    /// Root 1 + Root 2 (2026-07-02): compute the ENCLOSING RETURN-FRAME
+    /// DISCRIMINANT of a CrossCatDelegate projection about to be dispatched from
+    /// `parent` (projecting source category `proj_source`), used to decide whether a
+    /// projection-cohort `InflightCollision` is a REDUNDANT same-frame re-projection
+    /// (merge — the M4 cast-family / chain dedup) or a DISTINCT-frame projection
+    /// (allocate independently — the Root-1 group-vs-cast / Root-2
+    /// rule-8-vs-rule-13 defect, where merging silently loses the second frame's
+    /// projection and stalls its enclosing rule).
+    ///
+    /// Returns `Some(disc)` iff the projection is a RULE-OPERAND or GROUP-CLOSE
+    /// cross-category projection — one that MUST return to a SPECIFIC enclosing
+    /// frame and is provably NEVER a same-category infix chain interior. `disc`
+    /// uniquely identifies that enclosing frame (so two projections at the same
+    /// `DispatchKey` with DIFFERENT `disc` are known to belong to different frames).
+    /// `None` otherwise (no rule-operand / reentry-host frame — the projection
+    /// registers normally, byte-identical to the pre-fix cohort path; this is the
+    /// case for chain interiors, whose enclosing context is a same-category infix
+    /// continuation, never a cross-cat re-entry host or a rule-arg-slot reached
+    /// purely through cross-cat edges).
+    ///
+    /// The two configurations (full rationale at the call site in
+    /// `allocate_fork_push_child`):
+    ///   (R1) the immediate incoming edge is a cross-cat re-entry host
+    ///        (`CrossCatLhsReentry`/`CrossCatLhsScoped`, source == the completed
+    ///        body (SPPF top) category == `proj_source`) — the group-close
+    ///        projection lineage (`(1?2:int(true)) <= 4`), reached only via the
+    ///        lex-fork Fork path (`lex_fork_originated`). `disc` = the completed
+    ///        body's SPPF-node id (distinguishes the group [1,9] body from the cast
+    ///        [5,10] body — the two collide on `(pos,source,bp,wrap)` but have
+    ///        distinct bodies).
+    ///   (R2) the nearest enclosing frame reachable THROUGH cross-cat-LHS edges is a
+    ///        rule-argument slot (`MixfixMarker` / `PrefixRuleEntry{item_pos>0}`) —
+    ///        a cross-category operand of a rule (`@Pathmap()!({||}, {})`'s bag
+    ///        first-arg under POutput2Plus). Reuses the SAME enclosing-frame walk /
+    ///        stop-set as [`Self::crosscat_lhs_enclosing_binder_resume_frame`].
+    ///        `disc` = the frame's `(cat, rule, slot)` packed — distinguishes the
+    ///        POutput2Plus rule-8 channel frame from the sibling rule-13 frame,
+    ///        while a NESTED CAST re-projected redundantly into the SAME slot has
+    ///        the SAME `disc` (so it correctly merges — M4 preserved).
+    fn crosscat_projection_enclosing_frame_disc(
+        &self,
+        parent: &BranchCursor<W>,
+        proj_source: u16,
+        lex_fork_originated: bool,
+    ) -> Option<u64> {
+        // ROOT E (2026-07-03): the `proj_source` widening. When ENABLED (default),
+        // the projection's SOURCE category is folded into the (hashed) disc so two
+        // cross-category projections into the SAME enclosing frame at the SAME
+        // `(cat, rule, slot)` — the `@error!(a0, a1, a2)` Name-channel vs a sibling
+        // Proc-channel projection under POutput2Plus operand-0 — get DISTINCT
+        // discs. That turns the projection-cohort `InflightCollision` for the two
+        // channels into a DISTINCT-frame bypass (allocate-independently, both
+        // readings retained) instead of a same-frame PAUSE+merge that drops the
+        // Name-channel reading. STRICT REFINEMENT: identical `proj_source` still
+        // yields the identical disc (same-source Root-1/2 merges + the M4
+        // same-frame cast-family dedup are byte-preserved). The compile-time
+        // `ROOTE_PROJ_SOURCE_DISC_ENABLED` const + the memoized env kill-switch
+        // `PRATTAIL_NO_ROOTE_PROJ_SOURCE_DISC` restore the pre-fix disc (source
+        // dropped) as the labeled A/B control.
+        const ROOTE_PROJ_SOURCE_DISC_ENABLED: bool = true;
+        let widen_with_source =
+            ROOTE_PROJ_SOURCE_DISC_ENABLED && !roote_proj_source_disc_disabled();
+
+        // (R1) group-close reentry-host projection (lex-fork path only). The disc
+        // is the completed body's SPPF id (in the high bits, tagged) so two
+        // different bodies under the same reentry key never collide.
+        if lex_fork_originated && matches!(parent.inner_state, WpdaState::InfixLoop { .. }) {
+            let immediate_reentry_source = self
+                .incoming_edge_stack_arena
+                .top(parent.incoming_edge_stack_id)
+                .and_then(|eid| match self.gss.edge_kind_ref(eid) {
+                    Some(
+                        crate::gss::EdgeKind::CrossCatLhsReentry { source_src_idx, .. }
+                        | crate::gss::EdgeKind::CrossCatLhsScoped { source_src_idx, .. },
+                    ) => Some(*source_src_idx),
+                    _ => None,
+                });
+            let body_sid = self.sppf_stack_arena.top(parent.sppf_stack_id);
+            let body_cat = body_sid.and_then(|sid| self.sppf_symbol_category(sid));
+            if immediate_reentry_source == Some(proj_source) && body_cat == Some(proj_source) {
+                let sid_u64 = body_sid.map(|s| s as u64).unwrap_or(0);
+                if widen_with_source {
+                    // ROOT E: fold `proj_source` into the R1 body-SPPF disc via
+                    // FxHash (RT-3: the SPPF id already consumes the low 56 bits,
+                    // so there is no bit budget for a `proj_source` field — hash).
+                    // Tag 0x01 kept in the top byte for taxonomy parity with the
+                    // pre-fix disc; the low 56 bits become a hash of
+                    // (proj_source, body_sid). Same body + same source ⇒ same disc.
+                    return Some(Self::hash_frame_disc(0x01, proj_source, sid_u64));
+                }
+                // Pre-fix disc (kill-switch): tag 0x01 << 56 | body SPPF id.
+                return Some((0x01u64 << 56) | (sid_u64 & 0x00FF_FFFF_FFFF_FFFF));
+            }
+        }
+        // (R2) rule-argument-slot cross-category operand projection. The disc packs
+        // the enclosing (cat, rule, slot) frame identity so distinct enclosing
+        // rules get distinct discs, while a redundant re-projection into the SAME
+        // slot (the M4 nested-cast cast-family) keeps the SAME disc → merges.
+        if let Some(frame) =
+            self.crosscat_lhs_enclosing_binder_resume_frame(parent.incoming_edge_stack_id)
+        {
+            let packed = ((frame.cat as u64) << 32)
+                | ((frame.rule as u64) << 16)
+                | (frame.slot as u64);
+            if widen_with_source {
+                // ROOT E: fold `proj_source` into the R2 frame disc via FxHash so
+                // the Name-channel (source = Name) and a sibling Proc-channel
+                // projection into the SAME (cat, rule, slot) frame get DISTINCT
+                // discs. A NESTED CAST re-projected redundantly into the SAME slot
+                // with the SAME `proj_source` still hashes to the SAME disc ⇒
+                // merges (M4 preserved). Tag 0x02 kept in the top byte.
+                return Some(Self::hash_frame_disc(0x02, proj_source, packed));
+            }
+            // Pre-fix disc (kill-switch): tag 0x02; pack cat(16)|rule(16)|slot(16).
+            return Some((0x02u64 << 56) | packed);
+        }
+        None
+    }
+
+    /// ROOT E (2026-07-03): hash a cross-category-projection ENCLOSING-FRAME
+    /// discriminant that folds the projection's SOURCE category (`proj_source`)
+    /// together with the frame identity (`payload` = the packed `(cat, rule,
+    /// slot)` for R2, or the body SPPF id for R1). Used only by
+    /// [`Self::crosscat_projection_enclosing_frame_disc`] under the ROOT E
+    /// widening (the pre-fix bit-packed disc is used when the kill-switch is set).
+    ///
+    /// The top byte carries the pre-fix taxonomy `tag` (0x01 = R1 body-SPPF,
+    /// 0x02 = R2 frame) so the two configurations never alias each other, and the
+    /// low 56 bits are an FxHash of `(tag, proj_source, payload)`. FxHash is
+    /// deterministic per process (no random seed — the `rustc_hash` convention,
+    /// mirroring [`crate::earley::token_kind_to_tag`]); the disc is compared only
+    /// by equality within a single parse, so a stable-per-run hash is sufficient.
+    /// Two projections with the SAME `(tag, proj_source, payload)` ⇒ SAME disc
+    /// (the strict-refinement invariant: same-source same-frame still merges).
+    #[inline]
+    fn hash_frame_disc(tag: u8, proj_source: u16, payload: u64) -> u64 {
+        use std::hash::Hasher;
+        let mut hasher = rustc_hash::FxHasher::default();
+        hasher.write_u8(tag);
+        hasher.write_u16(proj_source);
+        hasher.write_u64(payload);
+        // Keep the pre-fix tag in the top byte (taxonomy parity: R1 vs R2 discs
+        // are never confused) and put the 56-bit hash below it.
+        ((tag as u64) << 56) | (hasher.finish() & 0x00FF_FFFF_FFFF_FFFF)
     }
 
     fn nearest_cross_cat_lhs_context(&self, cursor: &BranchCursor<W>) -> Option<(u16, bool)> {
@@ -9691,7 +11177,10 @@ where
                         ForkActionKind::LexAlt { .. }
                         | ForkActionKind::LexAltPrefixOp { .. }
                         | ForkActionKind::LexAltPostfixOp { .. }
-                        | ForkActionKind::LexAltMixfixOp { .. } => false,
+                        | ForkActionKind::LexAltMixfixOp { .. }
+                        // GAP-3: a nullary-prefix lex-alt is not a
+                        // category-changing infix.
+                        | ForkActionKind::LexAltNullaryRun { .. } => false,
                         _ => true,
                     }
             }),
@@ -9705,7 +11194,10 @@ where
             ForkActionKind::LexAltPrefixOp { alt_idx, trigger, .. }
             | ForkActionKind::LexAltPostfixOp { alt_idx, trigger, .. }
             | ForkActionKind::LexAltInfixOp { alt_idx, trigger, .. }
-            | ForkActionKind::LexAltMixfixOp { alt_idx, trigger, .. } => {
+            | ForkActionKind::LexAltMixfixOp { alt_idx, trigger, .. }
+            // GAP-3: nullary-prefix lex-alt carries its trigger text too, so
+            // shadowed-secondary detection sees it.
+            | ForkActionKind::LexAltNullaryRun { alt_idx, trigger, .. } => {
                 Some((*alt_idx, trigger.as_str()))
             },
             _ => None,
@@ -9749,6 +11241,9 @@ where
             Some(&source_frontier),
             cursor.pos,
             tokens,
+            // Hypothetical probe for a category-changing infix; the emit-both
+            // collection yield is irrelevant to that classification, so EMPTY.
+            crate::wpda_runtime::FrameCtx::EMPTY,
         );
         Self::action_contains_primary_category_changing_infix_from(&action, source_src_idx)
     }
@@ -9899,15 +11394,6 @@ where
         if self.transparent_source_reentry_keys.insert(key) {
             TransparentSourceReentryDecision::Reenter(reentry)
         } else {
-            if trace_actions_enabled() {
-                eprintln!(
-                    "[wpds-action] transparent-source reentry skipped: duplicate source={} target={} pos={} child={}",
-                    reentry.source_src_idx,
-                    reentry.target_src_idx,
-                    cursor.pos,
-                    self.sppf_trace_summary(reentry.child_symbol_id),
-                );
-            }
             TransparentSourceReentryDecision::AlreadyQueued
         }
     }
@@ -10368,9 +11854,78 @@ where
             return None;
         }
         let fallback_bp = Self::state_binding_power_floor(&cursor.inner_state).unwrap_or(0);
-        self.incoming_edge_stack_arena
-            .find_top_down(cursor.incoming_edge_stack_id, |edge_id| {
-                let kind = self.gss.edge_kind_ref(edge_id)?;
+        // Reconnection primitive (2026-07-01): the projection-target boundary
+        // walk must STOP at the nearest enclosing rule-arg-slot frame that
+        // RE-SCOPES the current operand. A `PrefixRuleEntry { item_pos > 0 }`
+        // (keyword/binder rule mid-slot, e.g. the for-body slot of PForUser
+        // `for(rows){body}`) or a `MixfixMarker` (receiver-first / method-call
+        // operand slot) dispatches its operand as a FRESH sub-parse at the
+        // rule's own binding-power floor. Any cross-category projection that
+        // sits BELOW such a frame belongs to the ENCLOSING context, not to the
+        // operand being parsed inside the frame — so an operator token the inner
+        // operand's `InfixLoop` wants to consume (`b | c` inside `for(…){b|c}`)
+        // must NOT be handed off to that outer projection target. Without this
+        // stop, the top-down walk skips the transparent-returning rule-frame
+        // edge and finds the outer projection, then `suppress_projection_source_
+        // action` steals the inner operator (the for-body `|` becomes an
+        // `Unwinding`), collapsing the whole `for(…){b|c}` sub-parse and with it
+        // the enclosing send/par (`w | n!(for(…){b|c})` strands at `!`). This is
+        // the for-body / infix-RHS reconnection manifestation: the completed
+        // inner operand must reconnect to ITS OWN rule frame, so the frame is a
+        // scope boundary for the projection walk. Cross-cat-LHS re-entry edges
+        // remain transparent (they ARE the projection lineage the source runs
+        // under); only fresh rule-arg-slot frames stop the walk.
+        let mut sid = cursor.incoming_edge_stack_id;
+        loop {
+            let Some(edge_id) = self.incoming_edge_stack_arena.top(sid) else {
+                return None;
+            };
+            let Some(kind) = self.gss.edge_kind_ref(edge_id) else {
+                sid = self.incoming_edge_stack_arena.intern_pop(sid);
+                continue;
+            };
+            // Scope-boundary stop: a rule-arg-slot frame re-scopes the operand.
+            // CONTROL (2026-07-01): PRATTAIL_NO_BOUNDARY_STOP=1 disables this stop
+            // to A/B-attribute regressions. Remove after the fix stabilizes.
+            //
+            // ROOT A (2026-07-02): a `CollectionElement` frame is ALSO a scope
+            // boundary. A bracket-delimited collection literal (`{ … }` PPar,
+            // `[ … ]` list, `{| … |}` pathmap, `#{ … }#` bag, `{ k:v }` map)
+            // dispatches EACH element as a FRESH sub-parse at floor 0 (see the
+            // `collection_marker` / `CollectionOpenParen` element PrefixDispatch,
+            // always `cur_bp: 0`) — the brackets are SELF-DELIMITING, so an
+            // operator token an element's `InfixLoop` wants to consume can NEVER
+            // belong to anything OUTSIDE the brackets. Concretely, in
+            // `@{a!(Nil)}` the `@` (NQuoteShort, `prefix(220)`) pushes a
+            // `CrossCatProjection { inner_cur_bp: 220, wrap_cat: Proc }` around
+            // the `{…}` collection; the element `a` parses as a Name and reaches
+            // `!` (the `POutput = n:Name "!" …` cross-cat continuation). Without
+            // this stop, the projection-target walk skips PAST the collection
+            // frame and finds the OUTER `@`-projection (`target_floor = 220`);
+            // since Proc rejects `!` at floor 220 (`target_accepts=false`) while
+            // Name accepts it at 0 (`source_accepts=true`), the boundary logic
+            // steals the `!`, `POutput` never forms, and `@{a!(Nil)}` strands at
+            // `!` ("no accepting branch, found Ident"). `@{Nil|Nil}`, `@{a+a}`,
+            // `@[Nil,Nil]`, etc. parse fine only because their elements need no
+            // cross-cat-LHS continuation. The completed element's OWN dispatch
+            // floor (0) governs its operators; the enclosing projection floor
+            // rides the OUTER edge and is consumed when the finished collection
+            // pops back — exactly as with the for-body / infix-RHS frames above.
+            // This is the collection-literal analogue of the documented for-body
+            // reconnection fix; identical one-sided soundness (the operator can
+            // only ever be an element-local operator, never an outer one).
+            if (matches!(
+                kind,
+                crate::gss::EdgeKind::PrefixRuleEntry { item_pos, .. } if *item_pos > 0
+            ) || matches!(kind, crate::gss::EdgeKind::MixfixMarker { .. })
+                || matches!(kind, crate::gss::EdgeKind::CollectionElement { .. }))
+                && std::env::var("PRATTAIL_NO_BOUNDARY_STOP").is_err()
+            {
+                return None;
+            }
+            let boundary = (|edge_id: crate::gss::GssEdgeId,
+                             kind: &crate::gss::EdgeKind|
+             -> Option<ProjectionTargetBoundary> {
                 let (target_cat, target_floor) =
                     self.crosscat_boundary_target_for_edge(edge_id, kind, fallback_bp)?;
                 if !self
@@ -10387,26 +11942,18 @@ where
                 );
                 let source_accepts_at_source_floor =
                     self.category_accepts_operator_at_floor(source_cat, cursor, fallback_bp, tokens);
-                if trace_actions_enabled() {
-                    eprintln!(
-                        "[wpds-action] crosscat target-boundary source={} target={} pos={} source_floor={} target_floor={} lookahead={:?} source_accepts={} target_accepts={}",
-                        source_cat,
-                        target_cat,
-                        cursor.pos,
-                        fallback_bp,
-                        target_floor,
-                        token_text,
-                        source_accepts_at_source_floor,
-                        target_accepts_at_projection_floor,
-                    );
-                }
                 Some(ProjectionTargetBoundary {
                     source_src_idx: source_cat,
                     target_src_idx: target_cat,
                     source_accepts_at_source_floor,
                     target_accepts_at_projection_floor,
                 })
-            })
+            })(edge_id, kind);
+            if boundary.is_some() {
+                return boundary;
+            }
+            sid = self.incoming_edge_stack_arena.intern_pop(sid);
+        }
     }
 
     fn iterative_chain_normal_branch(
@@ -10526,6 +12073,10 @@ where
                         &symbol, &new_state, boundary,
                     );
                 if self.suppress_projection_source_action(boundary, satisfies_projection_target) {
+                    // DIAG (2026-07-01, gated; REMOVE after reconnection root):
+                    // log projection-boundary suppression of a ConsumeAndPush so
+                    // we can see WHICH cursor (its immediate edge + enclosing
+                    // frame) loses its operator to the projection target.
                     return WpdaStepAction::Advance(WpdaState::Unwinding);
                 }
                 WpdaStepAction::Fork {
@@ -10628,12 +12179,6 @@ where
             let has_direct_category_change =
                 Self::action_contains_category_changing_infix_from(&action, source_src_idx);
             if has_direct_category_change {
-                if trace_actions_enabled() {
-                    eprintln!(
-                        "[wpds-action] cross-cat-lhs hosted boundary source={} pos={}",
-                        source_src_idx, cursor.pos
-                    );
-                }
             }
             if let Some(primary_text) = tokens.peek_text(cursor.pos) {
                 if !has_direct_category_change
@@ -10644,12 +12189,6 @@ where
                         tokens,
                     )
                 {
-                    if trace_actions_enabled() {
-                        eprintln!(
-                            "[wpds-action] cross-cat-lhs lex boundary source={} pos={} primary={:?}",
-                            source_src_idx, cursor.pos, primary_text
-                        );
-                    }
                     return WpdaStepAction::Advance(WpdaState::Unwinding);
                 }
             }
@@ -10666,15 +12205,6 @@ where
                         source_src_idx,
                         result_src_idx,
                     ) {
-                        if trace_actions_enabled() {
-                            eprintln!(
-                                "[wpds-action] suppress category-changing infix source={} result={} pos={} evidence={:?}",
-                                source_src_idx,
-                                symbol.category_src_idx,
-                                cursor.pos,
-                                lhs_evidence
-                            );
-                        }
                         return WpdaStepAction::Advance(WpdaState::Unwinding);
                     }
                     if boundary_source == Some(source_src_idx) {
@@ -10710,21 +12240,84 @@ where
                     )
                 });
                 if branches.len() != before {
-                    if trace_actions_enabled() {
-                        eprintln!(
-                            "[wpds-action] suppress category-changing infix branches kept={} removed={} pos={} evidence={:?}",
-                            branches.len(),
-                            before.saturating_sub(branches.len()),
-                            cursor.pos,
-                            lhs_evidence
-                        );
-                    }
                     if branches.is_empty() {
                         return WpdaStepAction::Advance(WpdaState::Unwinding);
                     }
                 }
                 if let Some(source_src_idx) = boundary_source {
                     branches.push(Self::crosscat_lhs_boundary_branch(source_src_idx));
+                }
+                WpdaStepAction::Fork { branches, consume_trigger }
+            },
+            other => other,
+        }
+    }
+
+    /// Collection-element ghost refutation (2026-07-01): when an `InfixLoop`
+    /// cursor sits DIRECTLY inside a collection element (nearest scope frame is
+    /// the bag/set/list `CollectionElement`, with no intervening `GroupingMarker`
+    /// or fresh rule-arg-slot — see [`Self::collection_element_direct_separator`])
+    /// and the current token IS that collection's separator, the token belongs to
+    /// the collection constructor (the element's `InfixLoop` must UNWIND so the
+    /// `CollectionMarker` dispatch consumes the separator and starts the next
+    /// element). Any action that CONSUMES the separator token here is the
+    /// spurious same-category-infix reading (`(1) | 2` folded into a single
+    /// `PParInfix(1,2)` element → the sub-multiset ghost). Refute it: a bare
+    /// consume becomes `Advance(Unwinding)`; a `Fork` drops its token-consuming
+    /// branches and keeps the rest (the emit-both `Unwinding` separator branch is
+    /// added by the generated engine, so the faithful "seal this element, take
+    /// the separator" reading always survives). Never fires inside a group
+    /// (`{(a|b)}` keeps its legitimate grouped-`PParInfix` element) or a rule slot
+    /// — the walk stops at those frames. Additive-safe: only REMOVES a spurious
+    /// operator consumption of a structurally-owned delimiter, never a genuine
+    /// reading, so no shipped parse regresses (verified across the suite).
+    fn guard_collection_separator_infix(
+        &self,
+        cursor: &BranchCursor<W>,
+        action: WpdaStepAction<W>,
+        tokens: &dyn crate::wpda_runtime::WpdaTokenSource,
+    ) -> WpdaStepAction<W> {
+        if !matches!(cursor.inner_state, WpdaState::InfixLoop { .. }) {
+            return action;
+        }
+        // CONTROL (2026-07-01): PRATTAIL_NO_COLLSEP_REFUTE=1 disables this guard
+        // to A/B-attribute regressions. Remove after the fix stabilizes.
+        if std::env::var("PRATTAIL_NO_COLLSEP_REFUTE").is_ok() {
+            return action;
+        }
+        // Only meaningful at a CategoryEntry frontier (an operand seal point).
+        let is_cat_entry = self
+            .gss
+            .node(cursor.node)
+            .map(|n| n.symbol.kind == SymbolKind::CategoryEntry)
+            .unwrap_or(false);
+        if !is_cat_entry {
+            return action;
+        }
+        let Some(sep) = self.collection_element_direct_separator(cursor.incoming_edge_stack_id)
+        else {
+            return action;
+        };
+        // The token under the cursor (or any lex alternative at this position)
+        // must BE the collection separator for the refutation to apply.
+        let tok = tokens.peek_text(cursor.pos).unwrap_or("");
+        let token_is_sep = tok == sep
+            || tokens
+                .peek_alternatives(cursor.pos)
+                .iter()
+                .any(|a| a.text == sep);
+        if !token_is_sep {
+            return action;
+        }
+        match action {
+            WpdaStepAction::ConsumeAndPush { .. }
+            | WpdaStepAction::IterativeChainAbsorb { .. } => {
+                WpdaStepAction::Advance(WpdaState::Unwinding)
+            },
+            WpdaStepAction::Fork { mut branches, consume_trigger } => {
+                branches.retain(|b| !Self::fork_branch_consumes_current_token(b));
+                if branches.is_empty() {
+                    return WpdaStepAction::Advance(WpdaState::Unwinding);
                 }
                 WpdaStepAction::Fork { branches, consume_trigger }
             },
@@ -10748,6 +12341,11 @@ where
     ) -> CursorOutcome<W> {
         // Phase F.13 walker-stats (2026-05-20): count per-cursor invocations.
         crate::stats_inc!(self, apply_action_calls);
+        // DIAG (2026-06-30, gated PRATTAIL_TRACE=actions; REMOVE after GROUP-A
+        // root-cause): log every InputBind BinderRule step so Branch 1
+        // (InputBindEmptyQuery, result_src=1 rule=1) slot-1 (ReplaceAndPush) →
+        // slot-2 (Fork) progression is visible: does it step slot-1 then lose its
+        // return-edge (no slot-2), or never step at all (dropped pre-step)?
         // EP-P5 (Stage D) ENTRY-GATE: increment BOTH per-cursor step counters
         // at the canonical apply_action entry (one per cursor-step, exactly
         // mirroring `apply_action_calls`). NON-cfg (the field rides every
@@ -10833,15 +12431,6 @@ where
                     ) {
                         TransparentSourceReentryDecision::Reenter(reentry) => {
                             self.reenter_transparent_projection_source(cursor, reentry, cur_bp);
-                            if trace_actions_enabled() {
-                                eprintln!(
-                                    "[wpds-action] transparent-source reentry source={} target={} pos={} lookahead={:?}",
-                                    reentry.source_src_idx,
-                                    reentry.target_src_idx,
-                                    cursor.pos,
-                                    token_text
-                                );
-                            }
                             return self.cursor_resolution_check(cursor);
                         },
                         TransparentSourceReentryDecision::AlreadyQueued => {
@@ -10865,16 +12454,11 @@ where
         if let Some(source_src_idx) = self.cast_result_hosting_reentry_source(cursor, &action) {
             self.synthesize_cross_cat_lhs_reentry(cursor, source_src_idx);
             self.set_cursor_inner_state(cursor, WpdaState::InfixLoop { cur_bp: 0 });
-            if trace_actions_enabled() {
-                eprintln!(
-                    "[wpds-action] cast-host synth reentry source={} pos={}",
-                    source_src_idx, cursor.pos
-                );
-            }
             return self.cursor_resolution_check(cursor);
         }
         let action = self.guard_crosscat_projection_target_boundary(cursor, action, tokens);
         let action = self.guard_category_changing_infix(cursor, action, tokens);
+        let action = self.guard_collection_separator_infix(cursor, action, tokens);
         #[cfg(feature = "walker-stats")]
         {
             let bucket = crate::walker_stats::apply_action_variant_index(&action);
@@ -10907,73 +12491,16 @@ where
                 self.set_cursor_inner_state(cursor, new_state);
                 self.cursor_resolution_check(cursor)
             },
-            WpdaStepAction::Push { mut symbol, weight, new_state } => {
-                let new_state =
-                    Self::normalize_prefix_crosscat_delegate_state(&cursor.inner_state, new_state);
-                // B12 / Candidate E (2026-05-07): cross-cat projection
-                // cycle defense for SINGLETON projection arms. Singleton
-                // bucket emits `WpdaStepAction::Push` (not Fork) when only
-                // one descriptor matches a (pat, guard) — see
-                // `prefix.rs::emit_unified_arm` UnifiedDescriptor::
-                // CrossCatProjection branch's singleton emission. This
-                // path bypasses the Fork-arm cycle defense, so we mirror
-                // the same check here.
-                //
-                // Sig-B GLL-descriptor (#9, M1 site 1): the cycle-defense key
-                // is now the PROGRESS-AWARE [`ProjDescriptorKey`] (carrying
-                // `sppf_stack_id` as the GLL `w`), NOT the `(pos,cat_src,cur_bp)`
-                // `extract_dispatch_config`. A no-progress re-entry reproduces
-                // the descriptor (same StackId) → drop; a productive SPPF-fold
-                // advances the StackId → distinct descriptor → allowed. The
-                // singleton path mutates the cursor's set in place (check +
-                // insert) so the next projection at the same descriptor on
-                // this cursor's path is caught.
-                if matches!(&new_state, WpdaState::CrossCatDelegate { .. }) {
-                    if let Some(desc) = extract_proj_descriptor(cursor, &self.gss) {
-                        if cursor.visited_proj_descriptors.contains(&desc) {
-                            let msg = format!(
-                                "cross-cat projection cycle detected at \
-                                 descriptor (gss_node={}, sppf_stack={}, \
-                                 cat_src={}, cur_bp={}) — refusing to \
-                                 re-dispatch projection Push (Sig-B GLL \
-                                 descriptor cycle defense, singleton-bucket \
-                                 path)",
-                                desc.gss_node, desc.sppf_stack, desc.cat_src, desc.cur_bp,
-                            );
-                            self.set_cursor_inner_state(cursor, WpdaState::Error { message: msg });
-                            return CursorOutcome::Drop;
-                        }
-                        // im::OrdSet structural-share insert (CoW).
-                        cursor.visited_proj_descriptors.insert(desc);
-                    }
+            WpdaStepAction::Push { symbol, weight, new_state } => {
+                // Factored into `apply_singleton_push` (2026-06-30) so the
+                // collision-`{` Fork CastMap projection branch can mirror this
+                // proven trigger-preserving path EXACTLY (clone-of-parent +
+                // same helper) — fixing the `@{map}`-binder trigger-drop.
+                if self.apply_singleton_push(cursor, symbol, weight, new_state) {
+                    self.cursor_resolution_check(cursor)
+                } else {
+                    CursorOutcome::Drop
                 }
-                // Stage 3.9 / ι Phase 4 (2026-05-01): symbol-kind-driven
-                // implicit Push-time side effects via centralized helper.
-                // Handles CollectionMarker (id alloc + bp patch + arg push)
-                // AND OptionalGroupAt(1) (scope open).
-                self.emit_push_side_effects(cursor, &mut symbol);
-                let edge_kind =
-                    self.edge_kind_for_push_transition(cursor.node, &symbol, &new_state);
-                // Lazy redesign L2a prep (2026-05-27): record the residual
-                // Push EdgeKind (i.e., NOT covered by Substage 5's
-                // broadcast at wpda_walker.rs:7949-8071). Confirms L2a's
-                // 80% target before we ship the broadcast extension.
-                #[cfg(feature = "walker-stats")]
-                {
-                    let bucket = crate::walker_stats::pop_kind_bucket_index(&edge_kind);
-                    self.stats.push_kind_histogram[bucket] =
-                        self.stats.push_kind_histogram[bucket].saturating_add(1);
-                }
-                let _ = self.cursor_gss_push_with_kind(
-                    cursor,
-                    symbol,
-                    cursor.pos,
-                    weight.clone(),
-                    edge_kind,
-                );
-                self.multiply_cursor_weight(cursor, &weight);
-                self.set_cursor_inner_state(cursor, new_state);
-                self.cursor_resolution_check(cursor)
             },
             WpdaStepAction::PushWithEdgeKind {
                 mut symbol,
@@ -11036,6 +12563,34 @@ where
                 }
                 if matches!(&new_state, WpdaState::CrossCatDelegate { .. }) {
                     if let Some(desc) = extract_proj_descriptor(cursor, &self.gss) {
+                        // ROOT-P design-cycle-3 STAGE 0 GATE 0b (THROWAWAY, env-gated,
+                        // inert unless PRATTAIL_GATE0B set): log whether THIS
+                        // CrossCatDelegate projection dispatch fires at a
+                        // CollectionMarker GSS node. If `@a`-style projections in
+                        // `@a<-@b & …` fire at a marker node, `ProjDescriptorKey`
+                        // keys `pos` there (node_is_marker=true ⇒ pos_key != NO_POS),
+                        // and dropping `pos` from the cohort CACHE while the descriptor
+                        // keeps it is the exact cache-vs-cycle-defense position-identity
+                        // mismatch a prior experiment burned on (0.6s→133s). PASS iff
+                        // node_is_marker=false (pos_key==NO_POS) for these dispatches.
+                        if std::env::var_os("PRATTAIL_GATE0B").is_some() {
+                            let node_is_marker = self
+                                .gss
+                                .node(cursor.node)
+                                .map(|n| n.symbol.kind == SymbolKind::CollectionMarker)
+                                .unwrap_or(false);
+                            let pos_key_is_no_pos = desc.pos == ProjDescriptorKey::NO_POS;
+                            eprintln!(
+                                "[GATE0b] CrossCatDelegate dispatch: gss_node={} cat_src={} cur_bp={} cursor_pos={} node_is_marker={} pos_key={} pos_key_is_NO_POS={}",
+                                desc.gss_node,
+                                desc.cat_src,
+                                desc.cur_bp,
+                                cursor.pos,
+                                node_is_marker,
+                                if pos_key_is_no_pos { u32::MAX as usize } else { desc.pos as usize },
+                                pos_key_is_no_pos,
+                            );
+                        }
                         if cursor.visited_proj_descriptors.contains(&desc) {
                             let msg = format!(
                                 "cross-cat projection cycle detected at \
@@ -12057,6 +13612,366 @@ where
                 self.cursor_resolution_check(cursor)
             },
             WpdaStepAction::Fork { mut branches, consume_trigger } => {
+                // GROUP-A Bug 2 FIX (2026-07-01): restore the missing GLR
+                // "return the completed atom to the enclosing binder rule" fork.
+                //
+                // When a binder rule's SLOT operand (`... n <lit> ...`, e.g.
+                // `InputBindEmptyQuery = "<-" n "!" "?" "(" args ")"`) finishes
+                // parsing its atom, the operand sub-parse enters `InfixLoop` at
+                // its `CategoryEntry` frontier. The codegen dispatches that slot
+                // operand at binding-power floor 0 (generated binder-slot
+                // `ReplaceAndPush{ new_state: PrefixDispatch{cur_bp:0} }`), so if
+                // the slot's FOLLOWING literal is ALSO an operator for the operand
+                // category (the `!` after the Name is a Name→Proc mixfix, the
+                // POutput send), the InfixLoop `Fork` contains ONLY the operator
+                // branches (mixfix/infix/postfix continuations) and NO branch that
+                // unwinds the atom back to the enclosing rule. The binder rule's
+                // continuation (its next slot literal) is then silently dropped —
+                // the whole LONG rule dies while a shorter sibling that parses the
+                // SAME atom via a prefix-cast delegate (floor = operator right-bp)
+                // survives. This is the `@`/`<-` LONG-vs-SHORT cluster class
+                // (InputBindEmptyQuery/…Quoted*, NQuote/NQuoteShort,
+                // POutput*Nil, query_receive_sugar_empty_receiver).
+                //
+                // A correct GLR parser ALWAYS offers "the atom is complete; return
+                // it to the enclosing context" as a competing reading alongside any
+                // operator continuation. We restore exactly that: when this Fork is
+                // an `InfixLoop` step at a `CategoryEntry` frontier whose incoming
+                // edge is a binder mid-rule resume (`PrefixRuleEntry{item_pos>0}`),
+                // inject one `Advance → Unwinding` branch. On its next step the
+                // Unwinding→CategoryEntry pop fires and the existing GROUP-A
+                // CategoryEntry→RuleAt recompute (this fn, below) resumes the
+                // binder rule's slot dispatch. The injected cursor DIES cleanly if
+                // the binder rule cannot proceed on the current token (its
+                // `GuardedConsumeAndReplace` literal guard fails), so this ADDS a
+                // reading, never removes one, and preserves genuine ambiguity
+                // (both the operator reading and the rule-continuation reading
+                // survive where each is valid). GENERAL — keys purely on the
+                // structural shape (InfixLoop @ CategoryEntry under a binder resume
+                // edge), never on a keyword / category / rule id. The +0-regression
+                // claim: without a binder mid-rule resume edge on the stack the
+                // gate is inert, so the passing corpus is unaffected; the no-fan-out
+                // chain-perf optimization is a POP-site concern (untouched here).
+                if matches!(cursor.inner_state, WpdaState::InfixLoop { .. }) {
+                    let __frontier_is_cat_entry = self
+                        .gss
+                        .node(cursor.node)
+                        .map(|n| n.symbol.kind == SymbolKind::CategoryEntry)
+                        .unwrap_or(false);
+                    if __frontier_is_cat_entry {
+                        let __immediate_edge = self
+                            .incoming_edge_stack_arena
+                            .top(cursor.incoming_edge_stack_id)
+                            .and_then(|e| self.gss.edge_kind(e));
+                        // ROOT-B DIAG (2026-07-02, gated PRATTAIL_DUMP_EDGESTACK):
+                        // dump the FULL incoming-edge stack (top-down) at every
+                        // InfixLoop Fork on a CategoryEntry frontier — surfaces
+                        // whether a CollectionElement frame is reachable through the
+                        // cross-cat edges (the `y`→`y!(z)` reconnection site). Kept
+                        // as a gated probe (inert unless the env var is set).
+                        if std::env::var("PRATTAIL_DUMP_EDGESTACK").is_ok() {
+                            let __top_cat = self
+                                .sppf_stack_arena
+                                .top(cursor.sppf_stack_id)
+                                .and_then(|s| self.sppf_symbol_category(s));
+                            let mut __chain: Vec<String> = Vec::new();
+                            let mut __sid = cursor.incoming_edge_stack_id;
+                            let mut __budget = 24;
+                            while __budget > 0 {
+                                let Some(__eid) = self.incoming_edge_stack_arena.top(__sid) else {
+                                    break;
+                                };
+                                __chain.push(format!("{:?}", self.gss.edge_kind_ref(__eid)));
+                                __sid = self.incoming_edge_stack_arena.intern_pop(__sid);
+                                __budget -= 1;
+                            }
+                            eprintln!(
+                                "[ROOTB-EDGESTACK] pos={} frontier_cat={:?} sppf_top_cat={:?} chain=[{}]",
+                                cursor.pos,
+                                self.gss.node(cursor.node).map(|n| n.symbol.category_src_idx),
+                                __top_cat,
+                                __chain.join(" | ")
+                            );
+                        }
+                        let __under_binder_resume = matches!(
+                            __immediate_edge,
+                            Some(crate::gss::EdgeKind::PrefixRuleEntry { item_pos, .. }) if item_pos > 0
+                        );
+                        // GROUP-A arg-list fix (2026-07-01): ALSO fire when the
+                        // immediate edge is a `CrossCatLhsScoped`/`…Reentry`
+                        // (Name→operand projection) and an enclosing
+                        // `PrefixRuleEntry{item_pos>0}` binder-slot frame is
+                        // reachable THROUGH that cross-cat edge, AND the current
+                        // SPPF-stack top (the completed body) is already in the
+                        // category that binder frame's slot expects (i.e. the
+                        // operand has been EXTENDED into the operand category — a
+                        // bare-Name-channel send `b!(Nil)` : Proc satisfying an
+                        // `a:Proc` slot). Injecting the Unwinding branch offers the
+                        // GLR "operand complete; return it to the enclosing rule
+                        // slot" reading so the LONG postfix-extended operand
+                        // resumes the rule (mirrors the direct binder-resume case
+                        // one hop lower). Guarded on the operand-category match so
+                        // it fires ONLY where the completed body genuinely fills
+                        // the slot — never for a still-source-category Name (that
+                        // reading unwinds via the existing cross-cat projection).
+                        let __under_crosscat_binder_resume = if __under_binder_resume {
+                            false
+                        } else if matches!(
+                            __immediate_edge,
+                            Some(crate::gss::EdgeKind::CrossCatLhsScoped { .. })
+                                | Some(crate::gss::EdgeKind::CrossCatLhsReentry { .. })
+                        ) {
+                            match self.crosscat_lhs_enclosing_binder_resume_frame(
+                                cursor.incoming_edge_stack_id,
+                            ) {
+                                Some(frame) => {
+                                    let __top_cat = self
+                                        .sppf_stack_arena
+                                        .top(cursor.sppf_stack_id)
+                                        .and_then(|s| self.sppf_symbol_category(s));
+                                    // The completed body must already be in a
+                                    // category the enclosing rule's operand slot
+                                    // accepts (the operand has been extended into
+                                    // the operand category). Applies uniformly to
+                                    // Prefix (keyword) and Mixfix (receiver-first)
+                                    // enclosing frames.
+                                    match __top_cat {
+                                        Some(bc) => self.binder_slot_accepts_body_category(
+                                            frame.cat,
+                                            frame.rule,
+                                            frame.slot,
+                                            bc,
+                                        ),
+                                        None => false,
+                                    }
+                                },
+                                None => false,
+                            }
+                        } else {
+                            false
+                        };
+                        // Root-B collection-element maximal-extent reconnection
+                        // (2026-07-02): the COLLECTION analogue of
+                        // `__under_crosscat_binder_resume`. When the InfixLoop Fork
+                        // sits at a CategoryEntry frontier under a cross-cat-LHS
+                        // edge AND the nearest enclosing frame (through cross-cat-LHS
+                        // edges) is a `CollectionElement` AND the completed body
+                        // (SPPF top) is ALREADY in the collection's element category
+                        // (the operand has been extended into the element cat — e.g.
+                        // Name `y` → Proc `y!(z)` in `a!(x, y!(z), w)`'s
+                        // `bs:Vec(Proc)`), inject the "element complete at maximal
+                        // extent; return it to the CollectionMarker" reading so the
+                        // CollectionMarker pop fires the splice + ConsumeCollectionSep
+                        // / close at MAXIMAL extent. Without it only the SHORT
+                        // pre-extension element pops back and the outer sep/close is
+                        // never consumed (the Root-B failure). KILL-SWITCH: the
+                        // const gate + `PRATTAIL_NO_COLL_ELEM_RECONNECT` (OFF ⇒
+                        // byte-identical control). GENERAL — keys on the structural
+                        // shape (InfixLoop @ CategoryEntry, cross-cat-LHS edge,
+                        // enclosing CollectionElement, body ∈ element cat), never on
+                        // a keyword / category / rule id.
+                        const COLLECTION_ELEMENT_MAXIMAL_RECONNECT_ENABLED: bool = true;
+                        let __under_crosscat_collection_element = if __under_binder_resume
+                            || __under_crosscat_binder_resume
+                            || !COLLECTION_ELEMENT_MAXIMAL_RECONNECT_ENABLED
+                            || std::env::var("PRATTAIL_NO_COLL_ELEM_RECONNECT").is_ok()
+                        {
+                            false
+                        } else if matches!(
+                            __immediate_edge,
+                            Some(crate::gss::EdgeKind::CrossCatLhsScoped { .. })
+                                | Some(crate::gss::EdgeKind::CrossCatLhsReentry { .. })
+                        ) {
+                            match self.crosscat_lhs_enclosing_collection_element_frame(
+                                cursor.incoming_edge_stack_id,
+                            ) {
+                                Some(frame) => {
+                                    let __top_cat = self
+                                        .sppf_stack_arena
+                                        .top(cursor.sppf_stack_id)
+                                        .and_then(|s| self.sppf_symbol_category(s));
+                                    match __top_cat {
+                                        Some(bc) => self
+                                            .collection_element_accepts_body_category(frame, bc),
+                                        None => false,
+                                    }
+                                },
+                                None => false,
+                            }
+                        } else {
+                            false
+                        };
+                        // ROOT-D infix-RHS maximal-extent reconnection
+                        // (2026-07-02): the INFIX analogue of
+                        // `__under_crosscat_collection_element` /
+                        // `__under_crosscat_binder_resume`. When the InfixLoop Fork
+                        // sits at a CategoryEntry frontier under a cross-cat-LHS
+                        // edge AND the nearest enclosing frame (through cross-cat-LHS
+                        // edges) is an infix-operator RHS-dispatch `ReturnFrame`
+                        // (e.g. `PParInfix . a:Proc, b:Proc |- a "|" b`) AND the
+                        // completed body (SPPF top) is ALREADY in a category that
+                        // infix rule's operand slot accepts (the RHS has been
+                        // extended into the operand cat — Name `a` → Proc `a!(Nil)`
+                        // in `for(){Nil} | a!(Nil)`), inject the "RHS complete at
+                        // maximal extent; return it to the infix rule" reading so
+                        // the infix `ReturnFrame` pop fires the LONG infix reading.
+                        // Without it only the SHORT pre-extension RHS pops back and
+                        // the maximal reading is lost when an intervening rule
+                        // arg-slot (`.set(…)`) sits below the infix frame — the
+                        // ROOT-D failure (`Nil.set(for(){Nil} | a!(Nil), Nil)`
+                        // strands at `!`). KILL-SWITCH: the const gate +
+                        // `PRATTAIL_NO_INFIX_RHS_RECONNECT` (OFF ⇒ byte-identical
+                        // control). GENERAL — keys on the structural shape
+                        // (InfixLoop @ CategoryEntry, cross-cat-LHS edge, enclosing
+                        // infix `ReturnFrame`, body ∈ an operand cat), never on a
+                        // keyword / category / rule id.
+                        const INFIX_RHS_MAXIMAL_RECONNECT_ENABLED: bool = true;
+                        let __under_crosscat_infix_rhs = if __under_binder_resume
+                            || __under_crosscat_binder_resume
+                            || __under_crosscat_collection_element
+                            || !INFIX_RHS_MAXIMAL_RECONNECT_ENABLED
+                            || std::env::var("PRATTAIL_NO_INFIX_RHS_RECONNECT").is_ok()
+                        {
+                            false
+                        } else if matches!(
+                            __immediate_edge,
+                            Some(crate::gss::EdgeKind::CrossCatLhsScoped { .. })
+                                | Some(crate::gss::EdgeKind::CrossCatLhsReentry { .. })
+                        ) {
+                            match self.crosscat_lhs_enclosing_infix_rhs_frame(
+                                cursor.incoming_edge_stack_id,
+                            ) {
+                                Some(frame) => {
+                                    let __top_cat = self
+                                        .sppf_stack_arena
+                                        .top(cursor.sppf_stack_id)
+                                        .and_then(|s| self.sppf_symbol_category(s));
+                                    match __top_cat {
+                                        Some(bc) => self
+                                            .infix_rhs_frame_accepts_body_category(frame, bc),
+                                        None => false,
+                                    }
+                                },
+                                None => false,
+                            }
+                        } else {
+                            false
+                        };
+                        // C3 / ROOT-PERSIST-`<=` channel-first-receiver
+                        // operator-shadow reconnection (2026-07-04): the FIFTH
+                        // member of the reconnection family. Unlike the four
+                        // above — which fire when the immediate edge is a
+                        // cross-cat-LHS re-entry (`CrossCatLhsScoped`/`…Reentry`)
+                        // or a direct `PrefixRuleEntry{item_pos>0}` — THIS arm
+                        // fires when the immediate edge is a
+                        // `CategoryEntryContinuation` (the operand continuation a
+                        // grouping-close / cross-cat PROJECTION cascade installs),
+                        // AND the nearest enclosing frame reachable THROUGH that
+                        // continuation is a channel-first RECEIVER rule's mid-rule
+                        // OPERATOR slot (`PrefixRuleEntry{item_pos>0}`), AND the
+                        // completed body (SPPF top) fills one of that rule's
+                        // operand slots, AND — the KEY gate — the lookahead
+                        // operator is SHADOWED by the body's category (the body
+                        // category recognizes it as one of ITS OWN
+                        // infix/postfix/mixfix operators, e.g. Proc recognizes
+                        // `<=` as LtEq). When shadowed, the continuation's
+                        // InfixLoop Fork hands the operator literal to the
+                        // shadowing Proc-infix rule and the receiver frame never
+                        // advances past its operator literal (it dies at EOF with
+                        // the operator already stolen). Injecting the Unwinding
+                        // branch offers the "channel complete; return it to the
+                        // receiver rule's operator slot" reading so the receiver's
+                        // `GuardedConsumeAndReplace` re-consumes the shadowed
+                        // operator (`<=`) at the operator position — restoring the
+                        // reading the four existing arms cannot, because they stop
+                        // on `CategoryEntryContinuation`. Without it, `@(complex)
+                        // <= n` (`InputBindQuotedPersistent` with a projected `pat`
+                        // — `Map()`/`error.keys()`/`*a`) strands and the whole
+                        // persistent bind dies; the `<-`/`!?` twins are INERT
+                        // (their operator is not a Proc infix ⇒ not shadowed ⇒
+                        // `channel_first_receiver_operator_is_shadowed` is false).
+                        // KILL-SWITCH: `const
+                        // CHANNEL_FIRST_RECEIVER_RECONNECT_ENABLED` (default false;
+                        // P1 lands OFF byte-identical) +
+                        // `PRATTAIL_NO_CHANNEL_FIRST_RECONNECT` (OFF ⇒
+                        // byte-identical control). GENERAL — keys on the
+                        // structural shape (InfixLoop @ CategoryEntry,
+                        // CategoryEntryContinuation immediate edge, enclosing
+                        // receiver `PrefixRuleEntry{item_pos>0}`, body ∈ an operand
+                        // cat, operator shadowed via
+                        // `category_recognizes_operator`), never on a keyword /
+                        // category / rule id (the "`<=` LtEq / rule 6" in the
+                        // trace is DESCRIPTIVE — the code uses
+                        // `category_recognizes_operator`).
+                        const CHANNEL_FIRST_RECEIVER_RECONNECT_ENABLED: bool = true;
+                        let __under_crosscat_channel_first_receiver = if __under_binder_resume
+                            || __under_crosscat_binder_resume
+                            || __under_crosscat_collection_element
+                            || __under_crosscat_infix_rhs
+                            || !CHANNEL_FIRST_RECEIVER_RECONNECT_ENABLED
+                            || std::env::var("PRATTAIL_NO_CHANNEL_FIRST_RECONNECT").is_ok()
+                        {
+                            false
+                        } else if matches!(
+                            __immediate_edge,
+                            Some(crate::gss::EdgeKind::CategoryEntryContinuation { .. })
+                        ) {
+                            match self.crosscat_lhs_enclosing_channel_first_receiver_frame(
+                                cursor.incoming_edge_stack_id,
+                            ) {
+                                Some(frame) => {
+                                    let __top_cat = self
+                                        .sppf_stack_arena
+                                        .top(cursor.sppf_stack_id)
+                                        .and_then(|s| self.sppf_symbol_category(s));
+                                    match __top_cat {
+                                        Some(bc) => {
+                                            // Body must fill an operand slot of the
+                                            // receiver rule AND the lookahead
+                                            // operator must be shadowed by the
+                                            // body's category (the exact condition
+                                            // that makes the continuation steal it).
+                                            let __lookahead =
+                                                tokens.peek_text(cursor.pos).unwrap_or("");
+                                            self.channel_first_receiver_frame_accepts_body_category(
+                                                frame, bc,
+                                            ) && self
+                                                .channel_first_receiver_operator_is_shadowed(
+                                                    bc, __lookahead,
+                                                )
+                                        },
+                                        None => false,
+                                    }
+                                },
+                                None => false,
+                            }
+                        } else {
+                            false
+                        };
+                        let __already_has_unwind = branches
+                            .iter()
+                            .any(|b| matches!(b.new_state, WpdaState::Unwinding));
+                        if (__under_binder_resume
+                            || __under_crosscat_binder_resume
+                            || __under_crosscat_collection_element
+                            || __under_crosscat_infix_rhs
+                            || __under_crosscat_channel_first_receiver)
+                            && !__already_has_unwind
+                        {
+                            let __unwind_symbol = self
+                                .gss
+                                .node(cursor.node)
+                                .map(|n| n.symbol)
+                                .unwrap_or_else(|| StackSymbolV2::category_entry(0));
+                            branches.push(ForkBranch {
+                                symbol: __unwind_symbol,
+                                weight: W::one_ref(),
+                                new_state: WpdaState::Unwinding,
+                                action_kind: ForkActionKind::Advance,
+                            });
+                        }
+                    }
+                }
                 // Phase F.13 walker-stats (2026-05-20): count Fork firings
                 // and per-branch composition by ForkActionKind variant +
                 // CrossCatDelegate detection.
@@ -12316,6 +14231,37 @@ where
                 } else {
                     extract_proj_descriptor(cursor, &self.gss)
                 };
+                // ROOT-P design-cycle-3 STAGE 0 GATE 0b (THROWAWAY, env-gated,
+                // inert unless PRATTAIL_GATE0B set): this is the PRIMARY cross-cat
+                // projection Fork cycle-defense site (Sig-B GLL descriptor #9). Log
+                // whether the `@a`-style projection Fork descriptor was computed at a
+                // CollectionMarker GSS node (⇒ pos_key != NO_POS) or a non-marker node
+                // (⇒ pos_key == NO_POS). The 220× (0.6s→133s) hazard fires ONLY if the
+                // multiplied `@a` projections dispatch at marker nodes: there the
+                // descriptor already keys `pos`, so dropping `pos` from the cohort
+                // CACHE would make cache-identity and cycle-defense-identity disagree.
+                if std::env::var_os("PRATTAIL_GATE0B").is_some() {
+                    if let Some(d) = parent_proj_descriptor {
+                        let node_is_marker = self
+                            .gss
+                            .node(cursor.node)
+                            .map(|n| n.symbol.kind == SymbolKind::CollectionMarker)
+                            .unwrap_or(false);
+                        let pos_key_is_no_pos = d.pos == ProjDescriptorKey::NO_POS;
+                        let is_proj_fork = !is_recovery && is_projection_fork(&branches);
+                        eprintln!(
+                            "[GATE0b-FORK] proj-fork descriptor: gss_node={} cat_src={} cur_bp={} cursor_pos={} node_is_marker={} pos_key_is_NO_POS={} is_projection_fork={} nbranches={}",
+                            d.gss_node,
+                            d.cat_src,
+                            d.cur_bp,
+                            cursor.pos,
+                            node_is_marker,
+                            pos_key_is_no_pos,
+                            is_proj_fork,
+                            branches.len(),
+                        );
+                    }
+                }
                 let parent_in_visited: bool = parent_proj_descriptor
                     .map(|d| cursor.visited_proj_descriptors.contains(&d))
                     .unwrap_or(false);
@@ -12586,6 +14532,43 @@ where
                                 child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
                             }
                         },
+                        ForkActionKind::PushProjectionInline => {
+                            // The collision-`{` Fork CastMap projection delegate is
+                            // pushed via the uncached (non-cohort) singleton push
+                            // (allocate_uncached_push_child), mirroring the working
+                            // Bag/List/Set singleton projections. NOTE (2026-06-30):
+                            // the `@{map}`-binder trigger-drop is NOT a push problem
+                            // — it is fixed at the REALIZE site (emit_fire_action,
+                            // `lo_pos`), so this push stays byte-identical for bare
+                            // `{…}` maps (a clone+apply_singleton_push reroute here
+                            // regressed bare-map realize and was reverted).
+                            let push_branch = ForkBranch {
+                                symbol: branch.symbol,
+                                weight: branch.weight,
+                                new_state: branch.new_state,
+                                action_kind: ForkActionKind::Push,
+                            };
+                            let child = self.allocate_uncached_push_child(
+                                &cursor,
+                                push_branch,
+                                pos_after,
+                                pos_after,
+                                child_recovery_depth,
+                                child_visited_recovery.clone(),
+                                child_visited_dispatch.clone(),
+                                child_visited_proj_descriptors.clone(),
+                                None,
+                                None,
+                                None,
+                                child_source_priority,
+                            );
+                            children.push(child);
+                            crate::stats_thunk_created!(
+                                self,
+                                crate::walker_stats::fork_kind_index::PUSH
+                            );
+                            child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
+                        },
                         ForkActionKind::OptGroupAbsent { replace_symbol } => {
                             // Stage 3.12 / Class A.i (2026-05-01): SKIP
                             // branch. Mirrors `apply_action_to_cursor::OptGroupAbsent`
@@ -12650,6 +14633,7 @@ where
                                 // Phase F.4 (2026-05-18): Arc bump.
                                 sppf_collection_arena: Arc::clone(&cursor.sppf_collection_arena),
                                 collection_sep_counts: Arc::clone(&cursor.collection_sep_counts),
+                                collection_loop_edge_baseline: Arc::clone(&cursor.collection_loop_edge_baseline),
                                 // Phase F.3a (2026-05-20): inherit parent's
                                 // last_action_output_cat. Fork-arm children
                                 // share the parent's "most recent action
@@ -12770,6 +14754,7 @@ where
                                 // Phase F.4 (2026-05-18): Arc bump.
                                 sppf_collection_arena: Arc::clone(&cursor.sppf_collection_arena),
                                 collection_sep_counts: Arc::clone(&cursor.collection_sep_counts),
+                                collection_loop_edge_baseline: Arc::clone(&cursor.collection_loop_edge_baseline),
                                 // Phase F.3a (2026-05-20): inherit parent's
                                 // last_action_output_cat. Fork-arm children
                                 // share the parent's "most recent action
@@ -12866,6 +14851,7 @@ where
                                 // Phase F.4 (2026-05-18): Arc bump.
                                 sppf_collection_arena: Arc::clone(&cursor.sppf_collection_arena),
                                 collection_sep_counts: Arc::clone(&cursor.collection_sep_counts),
+                                collection_loop_edge_baseline: Arc::clone(&cursor.collection_loop_edge_baseline),
                                 // Phase F.3a (2026-05-20): inherit parent's
                                 // last_action_output_cat. Fork-arm children
                                 // share the parent's "most recent action
@@ -13018,6 +15004,7 @@ where
                                 // Phase F.4 (2026-05-18): Arc bump.
                                 sppf_collection_arena: Arc::clone(&cursor.sppf_collection_arena),
                                 collection_sep_counts: Arc::clone(&cursor.collection_sep_counts),
+                                collection_loop_edge_baseline: Arc::clone(&cursor.collection_loop_edge_baseline),
                                 // Phase F.3a (2026-05-20): inherit parent's
                                 // last_action_output_cat. Fork-arm children
                                 // share the parent's "most recent action
@@ -13055,6 +15042,24 @@ where
                                     counts.push(0);
                                 }
                                 counts[slot] = counts[slot].saturating_add(1);
+                            }
+                            // D&C `.*sep` reconvergence — Site B separator-consume
+                            // (Plan ad4b660e, 2026-07-05): the child inherited the
+                            // parent's ACCUMULATED edge-stack above
+                            // (`incoming_edge_stack_id: cursor.incoming_edge_stack_id`
+                            // — the edge-inherit-leak). Reset it to the innermost
+                            // slot's LOOP-ENTRY baseline so the NEXT `.*sep` segment
+                            // starts from the shared loop frame, not the prior
+                            // segment's chain. This complements the Site-A element
+                            // seal reset. Gated OFF ⇒ inert (baseline empty).
+                            if sep_reconverge_active() {
+                                let slot =
+                                    (child.collection_stack_depth as usize).saturating_sub(1);
+                                if let Some(&baseline) =
+                                    child.collection_loop_edge_baseline.get(slot)
+                                {
+                                    child.incoming_edge_stack_id = baseline;
+                                }
                             }
                             children.push(child);
                             // L0 (2026-05-27): lazy-thunk created counter.
@@ -13118,6 +15123,7 @@ where
                                 // Phase F.4 (2026-05-18): Arc bump.
                                 sppf_collection_arena: Arc::clone(&cursor.sppf_collection_arena),
                                 collection_sep_counts: Arc::clone(&cursor.collection_sep_counts),
+                                collection_loop_edge_baseline: Arc::clone(&cursor.collection_loop_edge_baseline),
                                 // Phase F.3a (2026-05-20): inherit parent's
                                 // last_action_output_cat. Fork-arm children
                                 // share the parent's "most recent action
@@ -13234,6 +15240,7 @@ where
                                 // Phase F.4 (2026-05-18): Arc bump.
                                 sppf_collection_arena: Arc::clone(&cursor.sppf_collection_arena),
                                 collection_sep_counts: Arc::clone(&cursor.collection_sep_counts),
+                                collection_loop_edge_baseline: Arc::clone(&cursor.collection_loop_edge_baseline),
                                 // Phase F.3a (2026-05-20): inherit parent's
                                 // last_action_output_cat. Fork-arm children
                                 // share the parent's "most recent action
@@ -13337,6 +15344,7 @@ where
                                 // Phase F.4 (2026-05-18): Arc bump.
                                 sppf_collection_arena: Arc::clone(&cursor.sppf_collection_arena),
                                 collection_sep_counts: Arc::clone(&cursor.collection_sep_counts),
+                                collection_loop_edge_baseline: Arc::clone(&cursor.collection_loop_edge_baseline),
                                 // Phase F.3a (2026-05-20): inherit parent's
                                 // last_action_output_cat. Fork-arm children
                                 // share the parent's "most recent action
@@ -13441,6 +15449,7 @@ where
                                 // Phase F.4 (2026-05-18): Arc bump.
                                 sppf_collection_arena: Arc::clone(&cursor.sppf_collection_arena),
                                 collection_sep_counts: Arc::clone(&cursor.collection_sep_counts),
+                                collection_loop_edge_baseline: Arc::clone(&cursor.collection_loop_edge_baseline),
                                 // Phase F.3a (2026-05-20): inherit parent's
                                 // last_action_output_cat. Fork-arm children
                                 // share the parent's "most recent action
@@ -13587,6 +15596,7 @@ where
                                 // Phase F.4 (2026-05-18): Arc bump.
                                 sppf_collection_arena: Arc::clone(&cursor.sppf_collection_arena),
                                 collection_sep_counts: Arc::clone(&cursor.collection_sep_counts),
+                                collection_loop_edge_baseline: Arc::clone(&cursor.collection_loop_edge_baseline),
                                 // Phase F.3a (2026-05-20): inherit parent's
                                 // last_action_output_cat. Fork-arm children
                                 // share the parent's "most recent action
@@ -13736,6 +15746,7 @@ where
                                 // Phase F.4 (2026-05-18): Arc bump.
                                 sppf_collection_arena: Arc::clone(&cursor.sppf_collection_arena),
                                 collection_sep_counts: Arc::clone(&cursor.collection_sep_counts),
+                                collection_loop_edge_baseline: Arc::clone(&cursor.collection_loop_edge_baseline),
                                 // Phase F.3a (2026-05-20): inherit parent's
                                 // last_action_output_cat. Fork-arm children
                                 // share the parent's "most recent action
@@ -13797,9 +15808,21 @@ where
                             alt_idx,
                             trigger,
                             rule_idx,
-                            body_src_idx: _,
                             next_pos,
-                            outer_bp: _,
+                            ..
+                        }
+                        // GAP-3 (2026-06-28): nullary multi-literal keyword
+                        // PREFIX lex-Fork branch. Apply is byte-identical to
+                        // LexAltPrefixOp — the trigger is mirrored as a
+                        // TriggerTerminal and `branch.symbol`/`branch.new_state`
+                        // (here `mixfix_marker` + `MixfixLiteralRun{kind:2}`)
+                        // are pushed/installed. The `body_src_idx`/`outer_bp`
+                        // that LexAltPrefixOp ignores are absent here.
+                        | ForkActionKind::LexAltNullaryRun {
+                            alt_idx,
+                            trigger,
+                            rule_idx,
+                            next_pos,
                         } => {
                             // Phase F.13 Stage 2.1b (2026-05-22): stamp
                             // lex-Fork branch on child's lex_fork_path
@@ -13878,6 +15901,7 @@ where
                                 // Phase F.4 (2026-05-18): Arc bump.
                                 sppf_collection_arena: Arc::clone(&cursor.sppf_collection_arena),
                                 collection_sep_counts: Arc::clone(&cursor.collection_sep_counts),
+                                collection_loop_edge_baseline: Arc::clone(&cursor.collection_loop_edge_baseline),
                                 // Phase F.3a (2026-05-20): inherit parent's
                                 // last_action_output_cat. Fork-arm children
                                 // share the parent's "most recent action
@@ -14089,6 +16113,7 @@ where
                                 // Phase F.4 (2026-05-18): Arc bump.
                                 sppf_collection_arena: Arc::clone(&cursor.sppf_collection_arena),
                                 collection_sep_counts: Arc::clone(&cursor.collection_sep_counts),
+                                collection_loop_edge_baseline: Arc::clone(&cursor.collection_loop_edge_baseline),
                                 // Phase F.3a (2026-05-20): inherit parent's
                                 // last_action_output_cat. Fork-arm children
                                 // share the parent's "most recent action
@@ -14167,7 +16192,9 @@ where
                                             non_terminal_tag,
                                             ..
                                         }) => *non_terminal_tag as u16,
-                                        _ => continue,
+                                        _ => {
+                                            continue;
+                                        },
                                     };
                                     if top_cat == required_top_cat {
                                         vec![None]
@@ -15371,6 +17398,181 @@ where
         Some(state)
     }
 
+    /// AT_QUOTED_BIND_GATE Task-2 (session da0842dc, 2026-07-03) — THROWAWAY,
+    /// gated `GRIND_SPPF_CONTENT=1`. At a Tomita ingest COLLISION (the incoming
+    /// arc's `key` already has a non-empty bucket), classify whether the
+    /// incoming arc's `sppf_stack_id` chain is content-equal to the bucket's
+    /// FIRST arc's chain. This resolves the DECISIVE Task-2 question for the
+    /// isolated one-alt `@a<-c` projection fan-out: are the diverging cursors'
+    /// `sppf_stack_id` chains CONTENT-IDENTICAL (interning artifact → shareable)
+    /// or CONTENT-DISTINCT (genuinely-different derivations → open-ended)?
+    /// Mirrors the root-p Phase-1 probe (which measured the TWO-inequal-alt
+    /// case = 100% content-distinct); this re-runs it on the ONE-alt residual.
+    fn grind_sppf_content_check(
+        &self,
+        key: &crate::tomita_frontier::TomitaKey,
+        incoming_stack: crate::sppf_stack_arena::StackId,
+    ) {
+        let Some(node) = self.tomita_frontier_map.get(key) else {
+            return; // fresh bucket → no collision to classify
+        };
+        let Some(first) = node.arcs.first() else {
+            return;
+        };
+        let first_stack = first.sppf_stack_id;
+        GRIND_SPPF_CONTENT_TALLY.with(|t| {
+            let mut t = t.borrow_mut();
+            if first_stack == incoming_stack {
+                t.same_stack_id += 1;
+                return;
+            }
+            t.diverged += 1;
+            // Resolve both chains to SppfId sequences (top-down).
+            let mut sa = Vec::new();
+            let mut sb = Vec::new();
+            let a = self.sppf_stack_arena.slice_at(first_stack, &mut sa);
+            // slice_at needs its own scratch; clone `a` before reusing.
+            let a: Vec<crate::sppf::SppfId> = a.to_vec();
+            let b: Vec<crate::sppf::SppfId> = {
+                let s = self.sppf_stack_arena.slice_at(incoming_stack, &mut sb);
+                s.to_vec()
+            };
+            // raw_eq: identical SppfId sequences.
+            if a == b {
+                t.raw_eq += 1;
+                t.shallow_eq += 1;
+                t.deep_eq += 1;
+                return;
+            }
+            // shallow_eq: same length + same depth-1 dedup-identity per position.
+            if a.len() == b.len()
+                && a.iter()
+                    .zip(b.iter())
+                    .all(|(&x, &y)| self.sppf_shallow_ident(x) == self.sppf_shallow_ident(y))
+            {
+                t.shallow_eq += 1;
+                // deep_eq: recursive structural fingerprint per position.
+                if a.iter()
+                    .zip(b.iter())
+                    .all(|(&x, &y)| self.sppf_deep_fp(x, 6) == self.sppf_deep_fp(y, 6))
+                {
+                    t.deep_eq += 1;
+                }
+            }
+        });
+    }
+
+    /// Depth-1 dedup-identity of an SppfId (root-p convention). THROWAWAY.
+    fn sppf_shallow_ident(&self, id: crate::sppf::SppfId) -> (u8, u64, u64, u64) {
+        use crate::sppf::PosOrSynth;
+        let pos_u = |p: &PosOrSynth| match p {
+            PosOrSynth::Real(v) => (*v as u64) << 1,
+            PosOrSynth::Synthesized(v) => ((*v as u64) << 1) | 1,
+        };
+        match self.sppf.node(id) {
+            Some(crate::sppf::SppfNode::Symbol {
+                non_terminal_tag,
+                lo_pos,
+                hi_pos,
+                ..
+            }) => (1, *non_terminal_tag as u64, *lo_pos as u64, *hi_pos as u64),
+            Some(crate::sppf::SppfNode::Terminal { token_kind, pos, .. }) => (
+                2,
+                Self::token_kind_disc(token_kind),
+                pos_u(pos),
+                0,
+            ),
+            Some(crate::sppf::SppfNode::Packing {
+                rule_idx, children, ..
+            }) => (3, *rule_idx as u64, children.len() as u64, 0),
+            Some(crate::sppf::SppfNode::Epsilon { pos }) => (4, *pos as u64, 0, 0),
+            Some(crate::sppf::SppfNode::CollectionId { id, items }) => {
+                (5, *id as u64, items.len() as u64, 0)
+            },
+            Some(crate::sppf::SppfNode::OptAbsent { pos }) => (6, *pos as u64, 0, 0),
+            Some(crate::sppf::SppfNode::TriggerTerminal {
+                token_kind,
+                pos,
+                owner_cat,
+                owner_rule_idx,
+                ..
+            }) => (
+                7,
+                Self::token_kind_disc(token_kind),
+                pos_u(pos),
+                ((*owner_cat as u64) << 16) | (*owner_rule_idx as u64),
+            ),
+            _ => (0, 0, 0, 0),
+        }
+    }
+
+    /// Recursive structural fingerprint of an SppfId to bounded depth
+    /// (resolves child SppfIds → detects id-distinct-but-structurally-identical).
+    /// THROWAWAY (root-p `deep_eq`).
+    fn sppf_deep_fp(&self, id: crate::sppf::SppfId, depth: u8) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut h = rustc_hash::FxHasher::default();
+        let sh = self.sppf_shallow_ident(id);
+        sh.hash(&mut h);
+        if depth > 0 {
+            match self.sppf.node(id) {
+                Some(crate::sppf::SppfNode::Packing { children, .. }) => {
+                    for &c in children {
+                        self.sppf_deep_fp(c, depth - 1).hash(&mut h);
+                    }
+                },
+                Some(crate::sppf::SppfNode::CollectionId { items, .. }) => {
+                    for &c in items {
+                        self.sppf_deep_fp(c, depth - 1).hash(&mut h);
+                    }
+                },
+                Some(crate::sppf::SppfNode::Symbol { .. }) => {
+                    // Resolve the Symbol's packings (its derivations) so two
+                    // same-(nt,lo,hi) Symbols with different derivations differ.
+                    for p in self.sppf.packings_of(id) {
+                        self.sppf_deep_fp(*p, depth - 1).hash(&mut h);
+                    }
+                },
+                _ => {},
+            }
+        }
+        h.finish()
+    }
+
+    /// Stable discriminant for a `TokenKind` (Fixed variants keyed by text).
+    /// THROWAWAY helper for the content-eq probe.
+    fn token_kind_disc(k: &crate::automata::TokenKind) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut h = rustc_hash::FxHasher::default();
+        std::mem::discriminant(k).hash(&mut h);
+        format!("{k:?}").hash(&mut h);
+        h.finish()
+    }
+
+    /// AT_QUOTED_BIND_GATE Task-2: dump + reset the content-eq tally. THROWAWAY,
+    /// called at parse end (gated). Prints one `GRIND-SPPFC` summary line.
+    fn grind_sppf_content_dump(&self) {
+        if !grind_sppf_content_enabled() {
+            return;
+        }
+        GRIND_SPPF_CONTENT_TALLY.with(|t| {
+            let mut t = t.borrow_mut();
+            let d = t.diverged.max(1);
+            eprintln!(
+                "GRIND-SPPFC same_stack_id={} diverged={} raw_eq={} ({:.2}%) shallow_eq={} ({:.2}%) deep_eq={} ({:.2}%)",
+                t.same_stack_id,
+                t.diverged,
+                t.raw_eq,
+                100.0 * t.raw_eq as f64 / d as f64,
+                t.shallow_eq,
+                100.0 * t.shallow_eq as f64 / d as f64,
+                t.deep_eq,
+                100.0 * t.deep_eq as f64 / d as f64,
+            );
+            *t = GrindSppfContentTally::default();
+        });
+    }
+
     /// Step 3 (Fork plan F6): per-step driver for `WpdaState::AmbiguityFanout`.
     ///
     /// Iterates each `BranchCursor`, queries the engine for an action against
@@ -15467,6 +17669,11 @@ where
                     );
                     let shell = crate::tomita_frontier::TomitaShell::from_cursor(c);
                     let arc = crate::tomita_frontier::FrontierArc::from_cursor(c);
+                    // AT_QUOTED_BIND_GATE Task-2 content-eq probe (gated
+                    // GRIND_SPPF_CONTENT=1; byte-identical when unset).
+                    if grind_sppf_content_enabled() {
+                        self.grind_sppf_content_check(&key, arc.sppf_stack_id);
+                    }
                     // Substage 6: ⊕-aggregation on TomitaKey collision —
                     // arcs with same merge_disambiguator + same heavy-Arc
                     // identities collapse via LexicographicWeight::plus.
@@ -15496,6 +17703,11 @@ where
                         );
                         let shell = crate::tomita_frontier::TomitaShell::from_cursor(&cursor);
                         let arc = crate::tomita_frontier::FrontierArc::from_cursor(&cursor);
+                        // AT_QUOTED_BIND_GATE Task-2 content-eq probe (gated
+                        // GRIND_SPPF_CONTENT=1; byte-identical when unset).
+                        if grind_sppf_content_enabled() {
+                            self.grind_sppf_content_check(&key, arc.sppf_stack_id);
+                        }
                         // Substage 6: ⊕-aggregation on TomitaKey collision.
                         self.tomita_frontier_map
                             .register_arc_with_aggregation(key, shell, arc);
@@ -15575,12 +17787,44 @@ where
             }
             // ONE engine.step call per frontier.
             let frontier_top = self.gss.node(node.shell.node).cloned();
-            let action = self.engine.step(
+            // Stage 4 (Lever-1 emit-both): the innermost-collection frame_ctx for
+            // this merged frontier. Member-independent — the innermost structural
+            // frame is part of the shared forward sub-parse across the shell's
+            // arcs (red-team RT3-FV1 / RT3-MINOR7) — so it is sound to compute
+            // ONCE here and broadcast the resulting action to every arc. The
+            // emit-both yield is additive (never replaces an operator branch), so
+            // even a conservatively-broad frame_ctx only adds a doomed yield that
+            // dies under the ambiguity budget.
+            let frame_ctx = self.frame_ctx_for_stack(node.shell.incoming_edge_stack_id);
+            // Reconnection primitive (2026-07-01, M1): reset a cross-category-
+            // inherited InfixLoop floor (member-independent — shared across the
+            // frontier's arcs) for the engine step, so the generated
+            // `l_bp >= cur_bp` mixfix gate sees the operand's own category-local
+            // floor. See `crosscat_inherited_floor_reset`. The shell is `Arc`-
+            // shared (immutable here); the corrected state is used ONLY to
+            // compute the broadcast action. The per-arc materialized cursors
+            // carry the same InfixLoop floor, so when the reset fires and the
+            // action consumes the operator (`ConsumeAndPush`/mixfix), the
+            // resulting cursor advances past the operator — the stale
+            // (pre-reset) floor on the arc is irrelevant once the operator is
+            // consumed. When the reset does NOT fire, `effective_shell_state`
+            // aliases the shell state (no clone, no behavior change).
+            let __reset_shell_state = self.crosscat_inherited_floor_reset(
                 &node.shell.inner_state,
+                node.shell.node,
+                node.shell.incoming_edge_stack_id,
+                node.shell.pos,
+                tokens,
+            );
+            let effective_shell_state =
+                __reset_shell_state.as_ref().unwrap_or(&node.shell.inner_state);
+            let action = self.engine.step(
+                effective_shell_state,
                 &self.gss,
                 frontier_top.as_ref(),
                 node.shell.pos,
                 tokens,
+                frame_ctx,
             );
             if Self::action_contains_category_changing_infix(&action) {
                 for arc in &node.arcs {
@@ -15614,15 +17858,6 @@ where
                                         reentry,
                                         cur_bp,
                                     );
-                                    if trace_actions_enabled() {
-                                        eprintln!(
-                                            "[wpds-action] transparent-source cohort reentry source={} target={} pos={} lookahead={:?}",
-                                            reentry.source_src_idx,
-                                            reentry.target_src_idx,
-                                            cursor.pos,
-                                            token_text
-                                        );
-                                    }
                                     match self.cursor_resolution_check(&cursor) {
                                         CursorOutcome::Drop => {},
                                         CursorOutcome::Alive => {
@@ -17147,6 +19382,889 @@ where
         }
     }
 
+    /// ★ BCC shadow measurement (Plan afde9c48, Stage 0 — the DECISIVE
+    /// S0-G-LINEAR + gravest S0-G-Cont). MEASURE-ONLY: reads `&drained`, writes
+    /// only walker-stats counters; the real merge bucketing is UNTOUCHED ⇒
+    /// byte-identical. Gated `PRATTAIL_BCC_SHADOW=1`.
+    ///
+    /// Models the BCC-coarsened merge tier — the counterfactual frontier BCC
+    /// would produce by SEALING both `@a` cross-cat readings to ONE canonical
+    /// element (M4) under ONE continuation node (M2/N_cont). Concretely the
+    /// coarse key is:
+    ///   - node → `node_class` (the N_cont demotion — the two readings' Return
+    ///     vs CategoryEntry symbols collapse, as the COARSEN-SHADOW already
+    ///     confirmed at S0-G1);
+    ///   - sppf_stack → the WHOLE chain projected to `non_terminal_tag`, with
+    ///     the TOP element SEALED to ONE sentinel (`BCC_SEAL`) whenever it is a
+    ///     cross-cat `@a`-reading element (incoming edge is CrossCatProjection /
+    ///     CrossCatLhs*), so Reading-A's Proc/NQuoteShort tag and Reading-B's
+    ///     Name/projected tag CONVERGE — the piece the COARSEN-SHADOW's
+    ///     `deep_edge_sppf` did NOT do (it kept the two tags distinct);
+    ///   - edge_stack → each edge projected via `edge_merge_key`, but BOTH
+    ///     `@a`-reading edge kinds (CrossCatProjection AND the CrossCatLhs
+    ///     family) folded to ONE canonical label per target (the seal makes them
+    ///     one continuation edge), which `edge_merge_key` alone does NOT (it
+    ///     keeps the distinct EdgeKind variants);
+    ///   - lex/weight provenance CANONICALIZED (one packing under one symbol ⇒
+    ///     the per-reading `weight_rule_idx` — the M0 23% co-carrier — collapses).
+    ///
+    /// S0-G-LINEAR verdict: if `bcc_shadow_peak_pre_merge` is LINEAR in the
+    /// `&`-segment count k while `branch_cursors_peak_pre_merge` is exponential,
+    /// the shared continuation linearizes ⇒ PASS. If it stays super-linear ⇒ a
+    /// deeper multiplier survives the seal ⇒ HALT + name it. The `noseal`
+    /// control isolates the seal's contribution.
+    ///
+    /// S0-G-Cont (gravest): `bcc_shadow_seal_type_conflicts` counts collapsed
+    /// pairs whose SEALED element tag DIFFERS (e.g. InputBind vs InputBindQuoted
+    /// = different COMM arity). MUST be 0 for a sound two-category seal.
+    #[cfg(feature = "walker-stats")]
+    fn bcc_shadow_measure(&mut self, drained: &[BranchCursor<W>]) {
+        if !bcc_shadow_enabled() || drained.len() < 2 {
+            return;
+        }
+        // Sentinel tag for a SEALED cross-cat `@a`-reading element top. Chosen
+        // above any real non_terminal_tag so it never aliases a genuine
+        // category. `u16::MAX` is already used by sppf_stack_proj for
+        // non-Symbol tips; use MAX-1 so a sealed Symbol top ≠ a non-Symbol tip.
+        const BCC_SEAL: u16 = u16::MAX - 1;
+        // Canonical edge-label the two `@a`-reading edges fold to (target-keyed).
+        // We fold CrossCatProjection AND CrossCatLhs/Scoped/Reentry to ONE label
+        // per target: the seal makes them the SAME continuation edge.
+        #[derive(PartialEq, Eq, Hash, Clone)]
+        enum BccEdgeLabel {
+            /// A folded `@a`-reading cross-cat edge, keyed only by its post-pop
+            /// target node (NOT the per-reading EdgeKind variant/payload).
+            SealedCrossCat(u32),
+            /// Any other edge: its ordinary merge key (or identity fallback).
+            Other(crate::gss::EdgeMergeKey),
+        }
+
+        // Is `eid` one of the two `@a`-reading cross-cat edges the seal folds?
+        let is_crosscat_reading_edge = |eid: crate::gss::GssEdgeId| -> bool {
+            matches!(
+                self.gss.edge_kind_ref(eid),
+                Some(crate::gss::EdgeKind::CrossCatProjection { .. })
+                    | Some(crate::gss::EdgeKind::CrossCatLhs { .. })
+                    | Some(crate::gss::EdgeKind::CrossCatLhsScoped { .. })
+                    | Some(crate::gss::EdgeKind::CrossCatLhsReentry { .. })
+            )
+        };
+        let bcc_edge_label = |eid: crate::gss::GssEdgeId| -> BccEdgeLabel {
+            if is_crosscat_reading_edge(eid) {
+                // Fold to the target only — the seal converges the readings.
+                let tgt = self.gss.edge_target(eid).unwrap_or(u32::MAX);
+                BccEdgeLabel::SealedCrossCat(tgt)
+            } else {
+                BccEdgeLabel::Other(
+                    self.gss
+                        .edge_merge_key(eid)
+                        .unwrap_or(crate::gss::EdgeMergeKey::Identity(eid)),
+                )
+            }
+        };
+        let node_class_of = |cursor: &BranchCursor<W>| -> crate::gss::NodeClass {
+            self.gss
+                .node(cursor.node)
+                .map(|n| crate::gss::node_class(&n.symbol))
+                .unwrap_or(crate::gss::NodeClass {
+                    shape: crate::gss::ContinuationShape::OperandOrReturn,
+                    coll_dispatch_bp: None,
+                    goal_src_idx: None,
+                })
+        };
+        // Edge-stack projected with the two `@a`-reading edges folded.
+        let bcc_edge_stack_proj = |cursor: &BranchCursor<W>| -> Vec<BccEdgeLabel> {
+            self.incoming_edge_stack_arena
+                .to_vec(cursor.incoming_edge_stack_id)
+                .into_iter()
+                .map(bcc_edge_label)
+                .collect()
+        };
+        // sppf_stack projected to tags. `seal_top=true` ⇒ the TOP element is
+        // sealed to BCC_SEAL when the cursor's incoming-edge top is a cross-cat
+        // `@a`-reading edge (i.e. the top sppf element IS the `@a` reading).
+        // Returns (projected chain, sealed-top-tag-or-None). The sealed-top-tag
+        // is the ORIGINAL tag of the sealed top (for the S0-G-Cont type check).
+        let bcc_sppf_stack_proj = |cursor: &BranchCursor<W>,
+                                   seal_top: bool|
+         -> (Vec<u16>, Option<u16>) {
+            let top_is_crosscat = self
+                .incoming_edge_stack_arena
+                .top(cursor.incoming_edge_stack_id)
+                .map(&is_crosscat_reading_edge)
+                .unwrap_or(false);
+            let raw: Vec<u16> = self
+                .sppf_stack_arena
+                .to_vec(cursor.sppf_stack_id)
+                .into_iter()
+                .map(|sid| match self.sppf.node(sid) {
+                    Some(crate::sppf::SppfNode::Symbol { non_terminal_tag, .. }) => {
+                        *non_terminal_tag as u16
+                    },
+                    _ => u16::MAX,
+                })
+                .collect();
+            let mut sealed_top_original: Option<u16> = None;
+            let mut proj = raw;
+            if seal_top && top_is_crosscat {
+                if let Some(last) = proj.last_mut() {
+                    sealed_top_original = Some(*last);
+                    *last = BCC_SEAL;
+                }
+            }
+            (proj, sealed_top_original)
+        };
+
+        #[derive(PartialEq, Eq, Hash, Clone)]
+        struct BccKey {
+            state_class: usize,
+            node_class: crate::gss::NodeClass,
+            pos: usize,
+            collection_depth: usize,
+            edge_stack: Vec<BccEdgeLabel>,
+            sppf_stack: Vec<u16>,
+            // cohort_origin RETAINED (a genuine continuation frame; dropping it
+            // was byte-identical in the prior bisection, so keep the tighter key
+            // — the seal must fold WITHOUT relaxing cohort identity).
+            cohort_origin: Option<crate::dispatch_cohort::EquivKey>,
+        }
+
+        let state_class_of =
+            |c: &BranchCursor<W>| crate::walker_stats::wpda_state_class(&c.inner_state);
+
+        let mut sealed: std::collections::HashMap<BccKey, Vec<usize>> =
+            std::collections::HashMap::with_capacity(drained.len());
+        let mut noseal: std::collections::HashSet<BccKey> =
+            std::collections::HashSet::with_capacity(drained.len());
+        // MAXIMAL-seal control (obstruction-naming): the STRONGEST possible
+        // coarsening — the ENTIRE sppf-stack chain collapsed to one constant AND
+        // cohort_origin dropped. If EVEN THIS stays exponential in k, the
+        // residual multiplier is NOT foldable by any element seal — it is the
+        // (pos / collection_depth / edge-stack-length) derivation multiplicity
+        // (genuinely-distinct partial `<-` derivations), which BCC's single
+        // continuation cursor cannot avoid. This NAMES the deeper multiplier.
+        let mut maximal: std::collections::HashSet<BccKey> =
+            std::collections::HashSet::with_capacity(drained.len());
+        // GLL-invariant floor `(state_class, node_class, pos, collection_depth)`.
+        let mut gll_floor: std::collections::HashSet<(
+            usize,
+            crate::gss::NodeClass,
+            usize,
+            usize,
+        )> = std::collections::HashSet::with_capacity(drained.len());
+        // Per-cursor sealed-top original tag (for S0-G-Cont type-conflict check).
+        let mut sealed_top_tags: Vec<Option<u16>> = Vec::with_capacity(drained.len());
+
+        for (i, cursor) in drained.iter().enumerate() {
+            let (sppf_sealed, top_tag) = bcc_sppf_stack_proj(cursor, true);
+            sealed_top_tags.push(top_tag);
+            let key_sealed = BccKey {
+                state_class: state_class_of(cursor),
+                node_class: node_class_of(cursor),
+                pos: cursor.pos,
+                collection_depth: cursor.collection_stack_depth as usize,
+                edge_stack: bcc_edge_stack_proj(cursor),
+                sppf_stack: sppf_sealed,
+                cohort_origin: cursor.cohort_origin.as_ref().map(|k| k.equiv()),
+            };
+            sealed.entry(key_sealed).or_default().push(i);
+
+            // MAXIMAL seal: whole sppf-stack → one constant, cohort dropped,
+            // edges folded. Retains only (state_class, node_class, pos,
+            // collection_depth, edge-fold). The floor of what any element-seal
+            // BCC can achieve.
+            maximal.insert(BccKey {
+                state_class: state_class_of(cursor),
+                node_class: node_class_of(cursor),
+                pos: cursor.pos,
+                collection_depth: cursor.collection_stack_depth as usize,
+                edge_stack: bcc_edge_stack_proj(cursor),
+                sppf_stack: Vec::new(),
+                cohort_origin: None,
+            });
+            // GLL-INVARIANT FLOOR: the absolute Tomita/GLL continuation key
+            // `(state/slot, pos)` — everything else dropped (edge-stack too).
+            // If THIS is linear, edge-stack is the sole residual carrier; if it
+            // is ALSO exponential, `pos`-multiplicity itself (many distinct
+            // partial derivations reaching the same position) is irreducible.
+            gll_floor.insert((
+                state_class_of(cursor),
+                node_class_of(cursor),
+                cursor.pos,
+                cursor.collection_stack_depth as usize,
+            ));
+
+            let (sppf_noseal, _) = bcc_sppf_stack_proj(cursor, false);
+            let key_noseal = BccKey {
+                state_class: state_class_of(cursor),
+                node_class: node_class_of(cursor),
+                pos: cursor.pos,
+                collection_depth: cursor.collection_stack_depth as usize,
+                // noseal control: edges NOT folded either (ordinary merge key),
+                // to isolate the full seal (sppf-top + edge-fold) contribution.
+                edge_stack: self
+                    .incoming_edge_stack_arena
+                    .to_vec(cursor.incoming_edge_stack_id)
+                    .into_iter()
+                    .map(|eid| {
+                        BccEdgeLabel::Other(
+                            self.gss
+                                .edge_merge_key(eid)
+                                .unwrap_or(crate::gss::EdgeMergeKey::Identity(eid)),
+                        )
+                    })
+                    .collect(),
+                sppf_stack: sppf_noseal,
+                cohort_origin: cursor.cohort_origin.as_ref().map(|k| k.equiv()),
+            };
+            noseal.insert(key_noseal);
+        }
+
+        // S0-G-Cont: within each SEALED bucket that folds ≥2 cursors, count
+        // pairs whose sealed-top ORIGINAL tag differs (a type conflict) vs
+        // agrees. A conflict = two different-typed `@a` readings the seal would
+        // force onto one continuation (the cycle-2 wall).
+        let mut type_conflicts: u64 = 0;
+        let mut agreements: u64 = 0;
+        for indices in sealed.values() {
+            if indices.len() < 2 {
+                continue;
+            }
+            for a in 0..indices.len() {
+                for b in (a + 1)..indices.len() {
+                    let ta = sealed_top_tags[indices[a]];
+                    let tb = sealed_top_tags[indices[b]];
+                    // Only the pairs where BOTH tops were actually SEALED
+                    // (a cross-cat `@a` reading) are relevant to the type check.
+                    if let (Some(ta), Some(tb)) = (ta, tb) {
+                        if ta == tb {
+                            agreements += 1;
+                        } else {
+                            type_conflicts += 1;
+                        }
+                    }
+                }
+            }
+        }
+
+        crate::stats_max!(self, bcc_shadow_peak_pre_merge, sealed.len() as u64);
+        crate::stats_max!(self, bcc_shadow_peak_noseal, noseal.len() as u64);
+        crate::stats_max!(self, bcc_shadow_peak_maximal, maximal.len() as u64);
+        crate::stats_max!(self, bcc_shadow_peak_gll_floor, gll_floor.len() as u64);
+        self.stats.bcc_shadow_seal_type_conflicts = self
+            .stats
+            .bcc_shadow_seal_type_conflicts
+            .saturating_add(type_conflicts);
+        self.stats.bcc_shadow_seal_agreements =
+            self.stats.bcc_shadow_seal_agreements.saturating_add(agreements);
+        self.stats.bcc_shadow_calls = self.stats.bcc_shadow_calls.saturating_add(1);
+
+        if bcc_shadow_trace_enabled() {
+            eprintln!(
+                "[bcc-shadow] drained={} bcc_sealed_buckets={} bcc_noseal_buckets={} seal_type_conflicts={} seal_agreements={}",
+                drained.len(),
+                sealed.len(),
+                noseal.len(),
+                type_conflicts,
+                agreements,
+            );
+        }
+    }
+
+    /// ★ DW SHADOW measurement (Plan aaf070b3 / DESCRIPTOR_WORKLIST_DESIGN.md,
+    /// Stage 0). Measure-only: reads `&drained`, writes ONLY walker-stats
+    /// counters — byte-identical to baseline. Gated `PRATTAIL_DW_SHADOW=1`.
+    ///
+    /// Installs the `.*sep`-return-reconvergence projection `R` exactly as the
+    /// behavioral fix (M3) will:
+    ///
+    ///   R(edge_stack) = walk the concrete `incoming_edge_stack` bottom→top and
+    ///   FOLD each MAXIMAL RUN of CrossCatLhs-family edges {CrossCatLhs,
+    ///   CrossCatLhsScoped, CrossCatLhsReentry, CrossCatProjection} that sits
+    ///   AT-OR-BELOW a repetition-return frame (a CollectionElement /
+    ///   CollectionMarker edge — the ForRow `&`-list is CollectionLoop-owned) to
+    ///   ONE canonical `(edge_target, EdgeKind-variant-tag)` label. Across `k`
+    ///   `&`-segments the per-segment left-context runs all return to the SAME
+    ///   shared `.*sep` slot, so their labels coincide → the run-length-encoded
+    ///   chain collapses to O(1) per segment instead of Θ(dᵏ).
+    ///
+    /// This is STRICTLY STRONGER than BCC's `bcc_edge_stack_proj` (:19934) which
+    /// folded each cross-cat edge INDIVIDUALLY but retained chain LENGTH (so the
+    /// accumulated `&`-context survived and SEALED stayed exponential). `R` folds
+    /// the whole RUN and RLE-dedups → chain LENGTH collapses. If `dw_shadow_peak`
+    /// (with `R`) linearizes where SEALED/MAXIMAL did not, that is the positive
+    /// mechanical discriminator proving the fix is the reconvergence, measured
+    /// offline before any behavioral line is written (S0-DW-LINEAR).
+    ///
+    /// The three gates:
+    ///   - S0-DW-LINEAR: `dw_shadow_peak` LINEAR-in-k tracking GLL_FLOOR while
+    ///     `branch_cursors_peak_pre_merge` is exponential.
+    ///   - S0-DW-SOUND: `dw_pop_target_conflicts == 0` (co-located cursors' top
+    ///     edges route to compatible pop targets) AND `dw_seal_type_conflicts == 0`
+    ///     post-gate (the make-or-break — the design's whole feasibility).
+    ///   - RT-7: `dw_return_fires >= k` (the repetition-return site actually fires;
+    ///     anti the M0 fires-0× failure).
+    #[cfg(feature = "walker-stats")]
+    fn dw_shadow_measure(&mut self, drained: &[BranchCursor<W>]) {
+        if !dw_shadow_enabled() || drained.len() < 2 {
+            return;
+        }
+        // Sentinel tag for a sealed cross-cat `@a`-reading element top (mirrors
+        // BCC_SEAL — the S0-DW-SOUND seal-type check reuses the same top-seal).
+        const DW_SEAL: u16 = u16::MAX - 1;
+
+        // Is `eid` one of the cross-cat `@a`-reading edges the run-fold targets?
+        let is_crosscat_reading_edge = |eid: crate::gss::GssEdgeId| -> bool {
+            matches!(
+                self.gss.edge_kind_ref(eid),
+                Some(crate::gss::EdgeKind::CrossCatProjection { .. })
+                    | Some(crate::gss::EdgeKind::CrossCatLhs { .. })
+                    | Some(crate::gss::EdgeKind::CrossCatLhsScoped { .. })
+                    | Some(crate::gss::EdgeKind::CrossCatLhsReentry { .. })
+            )
+        };
+        // Is `eid` a repetition-return frame (a `.*sep` loop-return marker)? The
+        // ForRow `&`-list is CollectionLoop-owned, so the return frame is a
+        // CollectionElement (CollectionMarker) edge. RT-7 counts these.
+        let is_repetition_return_edge = |eid: crate::gss::GssEdgeId| -> bool {
+            matches!(
+                self.gss.edge_kind_ref(eid),
+                Some(crate::gss::EdgeKind::CollectionElement { .. })
+            )
+        };
+
+        // Discriminant-only tag of a CrossCatLhs-family EdgeKind. Retained for the
+        // investigation trail: this was the RUN #1–#3 cross-cat-run projection
+        // basis (fold a run to its family variant). RUN #4 SUPERSEDED it by
+        // hashing the FULL `EdgeKind` (node-independent) for EVERY edge — see the
+        // `edge_class_tag` closure below and DW_IMPL_LEDGER.md RUN #1–#4. Kept
+        // (not deleted) so the superseded projection is reproducible.
+        #[allow(dead_code)]
+        fn crosscat_variant_tag(kind: &crate::gss::EdgeKind) -> u8 {
+            match kind {
+                crate::gss::EdgeKind::CrossCatProjection { .. } => 1,
+                crate::gss::EdgeKind::CrossCatLhs { .. } => 2,
+                crate::gss::EdgeKind::CrossCatLhsScoped { .. } => 3,
+                crate::gss::EdgeKind::CrossCatLhsReentry { .. } => 4,
+                _ => 0,
+            }
+        }
+
+        // Stable, FULLY-NODE-INDEPENDENT class-tag of a single edge (RUN #4 —
+        // the EdgeKind-variant-only projection). We hash the raw `EdgeKind`
+        // DIRECTLY, NOT the `edge_merge_key`. This is the decisive change: the
+        // `EdgeKind` variants carry only category/rule/bp/acc payloads and NEVER a
+        // GssNodeId/GssEdgeId, so hashing the EdgeKind yields a tag that is
+        // INVARIANT of the per-segment-distinct GSS node/edge id. This is the
+        // faithful M2 model: post-M2 all d readings re-enter ONE shared
+        // RepetitionReturn node, so the concrete per-segment `edge_target` is not
+        // a continuation distinction and drops out of the merge key. Under the
+        // pre-M2 CURRENT impl the seg-blocks are byte-DISTINCT ONLY because each
+        // frame carries a per-Push distinct edge id / per-segment distinct target
+        // node (measured in RUN #3's R-COLLAPSE diagnostic: the blocks matched by
+        // EdgeKind NAME but the merge-key hashes all differed). Projecting to the
+        // EdgeKind variant makes them byte-identical so the segment-block RLE
+        // collapse fires. The soundness of this projection (whether two cursors it
+        // co-locates route to compatible pops / share a type) is measured
+        // separately by S0-DW-SOUND (dw_pop_target_conflicts / dw_seal_type_conflicts).
+        let edge_class_tag = |eid: crate::gss::GssEdgeId| -> u64 {
+            use std::hash::{Hash, Hasher};
+            match self.gss.edge_kind_ref(eid) {
+                Some(kind) => {
+                    let mut h = rustc_hash::FxHasher::default();
+                    kind.hash(&mut h);
+                    h.finish()
+                },
+                // No EdgeKind (shouldn't happen for a live edge) — fall back to a
+                // per-edge-id tag so absence never spuriously collapses.
+                None => {
+                    let mut h = rustc_hash::FxHasher::default();
+                    eid.hash(&mut h);
+                    h.finish()
+                },
+            }
+        };
+
+        // R(edge_stack): project every edge to its class-tag (bottom→top), then
+        // COLLAPSE consecutive-identical `.*sep` ITERATION BLOCKS. The edge-stack
+        // dump shows each `&`-segment appends ONE repeating block delimited by a
+        // CollectionElement frame — e.g. `[CrossCatLhs* · MixfixMarker ·
+        // CollectionElement · … · PrefixRuleEntry · PrefixRuleEntry]` — so the raw
+        // stack grows by one block per segment (the Θ(dᵏ) carrier). Under M1/M2
+        // these blocks' CollectionElement frames are ONE shared RepetitionReturn
+        // node (same `.*sep` slot) and the per-element tails ride edges off it, so
+        // the stack does NOT accumulate them. The shadow models that by RLE-
+        // collapsing maximal adjacent-repeated blocks (any period p ≥ 1 whose
+        // repeated span contains a CollectionElement class-tag) to ONE copy: each
+        // additional identical `.*sep` iteration then adds 0 to the key. Ordinary
+        // (non-`.*sep`) continuations contain no CollectionElement in their
+        // repeated span, so they are NEVER collapsed (the RT-8 generality guard).
+        // Re-bind `edge_class_tag` under a second name so both `dw_edge_stack_proj`
+        // and the bisection loop can call it (a `Copy` Fn closure — the alias
+        // avoids a double-capture move).
+        let cel_tag = edge_class_tag;
+        let dw_edge_stack_proj = |cursor: &BranchCursor<W>| -> Vec<u64> {
+            let raw = self.incoming_edge_stack_arena.to_vec(cursor.incoming_edge_stack_id);
+            // The distinguished class-tag of a `.*sep` element frame (so the
+            // collapse only fires on spans that actually contain one).
+            let is_cel = |eid: crate::gss::GssEdgeId| {
+                matches!(
+                    self.gss.edge_kind_ref(eid),
+                    Some(crate::gss::EdgeKind::CollectionElement { .. })
+                )
+            };
+            let tags: Vec<u64> = raw.iter().map(|&e| cel_tag(e)).collect();
+            let cel_mask: Vec<bool> = raw.iter().map(|&e| is_cel(e)).collect();
+            // Adjacent-repeated-block collapse. Scan left→right; at each position
+            // try the LARGEST period p such that tags[i..i+p] == tags[i+p..i+2p]
+            // AND that window contains a CollectionElement; if found, SKIP the
+            // duplicate copies (advance past all consecutive repeats), emitting
+            // the block once. This RLE at the block level collapses k identical
+            // `.*sep` iterations to one.
+            let n = tags.len();
+            let mut out: Vec<u64> = Vec::with_capacity(n);
+            let mut i = 0usize;
+            while i < n {
+                let mut collapsed = false;
+                // Largest period first so nested repeats fold maximally.
+                let max_p = (n - i) / 2;
+                for p in (1..=max_p).rev() {
+                    if i + 2 * p > n {
+                        continue;
+                    }
+                    if tags[i..i + p] == tags[i + p..i + 2 * p]
+                        && cel_mask[i..i + p].iter().any(|&b| b)
+                    {
+                        // Emit one copy of the block.
+                        out.extend_from_slice(&tags[i..i + p]);
+                        // Advance past ALL consecutive repeats of this block.
+                        let mut j = i + p;
+                        while j + p <= n && tags[j..j + p] == tags[i..i + p] {
+                            j += p;
+                        }
+                        i = j;
+                        collapsed = true;
+                        break;
+                    }
+                }
+                if !collapsed {
+                    out.push(tags[i]);
+                    i += 1;
+                }
+            }
+            out
+        };
+
+        // sppf_stack projected to tags, top SEALED to DW_SEAL when the cursor's
+        // incoming-edge top is a cross-cat `@a` reading (for the seal-type check).
+        // Returns (projected chain, sealed-top-original-tag-or-None).
+        let dw_sppf_stack_proj = |cursor: &BranchCursor<W>| -> (Vec<u16>, Option<u16>) {
+            let top_is_crosscat = self
+                .incoming_edge_stack_arena
+                .top(cursor.incoming_edge_stack_id)
+                .map(&is_crosscat_reading_edge)
+                .unwrap_or(false);
+            let mut proj: Vec<u16> = self
+                .sppf_stack_arena
+                .to_vec(cursor.sppf_stack_id)
+                .into_iter()
+                .map(|sid| match self.sppf.node(sid) {
+                    Some(crate::sppf::SppfNode::Symbol { non_terminal_tag, .. }) => {
+                        *non_terminal_tag as u16
+                    },
+                    _ => u16::MAX,
+                })
+                .collect();
+            let mut sealed_top_original: Option<u16> = None;
+            if top_is_crosscat {
+                if let Some(last) = proj.last_mut() {
+                    sealed_top_original = Some(*last);
+                    *last = DW_SEAL;
+                }
+            }
+            (proj, sealed_top_original)
+        };
+
+        // Pop-target signature of a cursor's CONCRETE top edge (unchanged by R):
+        // `(edge_target, EdgeKind.source_src_idx)` — exactly what
+        // `cursor_gss_pop_via_edge` reads to route. Two co-located cursors whose
+        // top-edge signatures DIFFER route to distinct predecessors (a genuine
+        // continuation distinction that must NOT be merged at the top).
+        let pop_target_sig = |cursor: &BranchCursor<W>| -> (u32, u32) {
+            match self.incoming_edge_stack_arena.top(cursor.incoming_edge_stack_id) {
+                Some(eid) => {
+                    let tgt = self.gss.edge_target(eid).unwrap_or(u32::MAX);
+                    let src = match self.gss.edge_kind_ref(eid) {
+                        Some(crate::gss::EdgeKind::CrossCatLhs { source_src_idx })
+                        | Some(crate::gss::EdgeKind::CrossCatLhsScoped {
+                            source_src_idx, ..
+                        })
+                        | Some(crate::gss::EdgeKind::CrossCatLhsReentry {
+                            source_src_idx, ..
+                        })
+                        | Some(crate::gss::EdgeKind::CrossCatProjection {
+                            source_src_idx, ..
+                        }) => *source_src_idx as u32,
+                        _ => u32::MAX,
+                    };
+                    (tgt, src)
+                },
+                None => (u32::MAX, u32::MAX),
+            }
+        };
+
+        let state_class_of =
+            |c: &BranchCursor<W>| crate::walker_stats::wpda_state_class(&c.inner_state);
+        let node_class_of = |cursor: &BranchCursor<W>| -> crate::gss::NodeClass {
+            self.gss
+                .node(cursor.node)
+                .map(|n| crate::gss::node_class(&n.symbol))
+                .unwrap_or(crate::gss::NodeClass {
+                    shape: crate::gss::ContinuationShape::OperandOrReturn,
+                    coll_dispatch_bp: None,
+                    goal_src_idx: None,
+                })
+        };
+
+        #[derive(PartialEq, Eq, Hash, Clone)]
+        struct DwKey {
+            state_class: usize,
+            node_class: crate::gss::NodeClass,
+            pos: usize,
+            collection_depth: usize,
+            edge_stack_r: Vec<u64>,
+            sppf_stack: Vec<u16>,
+            cohort_origin: Option<crate::dispatch_cohort::EquivKey>,
+        }
+
+        // The DECISIVE DW key (S0-DW-LINEAR): full ConfigKey axes with the
+        // edge-stack replaced by R and the sppf top sealed. Buckets index the
+        // co-located cursors for the S0-DW-SOUND pair checks.
+        let mut dw: std::collections::HashMap<DwKey, Vec<usize>> =
+            std::collections::HashMap::with_capacity(drained.len());
+        // MAXIMAL-R control: R alone, sppf dropped + cohort dropped.
+        let mut maximal_r: std::collections::HashSet<DwKey> =
+            std::collections::HashSet::with_capacity(drained.len());
+        let mut sealed_top_tags: Vec<Option<u16>> = Vec::with_capacity(drained.len());
+        // RT-7: count repetition-return frames observed across all edge-stacks.
+        let mut return_fires: u64 = 0;
+
+        for (i, cursor) in drained.iter().enumerate() {
+            let (sppf_sealed, top_tag) = dw_sppf_stack_proj(cursor);
+            sealed_top_tags.push(top_tag);
+            let edge_r = dw_edge_stack_proj(cursor);
+            // RT-7: tally the .*sep-return frames in this cursor's stack.
+            for &eid in self
+                .incoming_edge_stack_arena
+                .to_vec(cursor.incoming_edge_stack_id)
+                .iter()
+            {
+                if is_repetition_return_edge(eid) {
+                    return_fires += 1;
+                }
+            }
+            let key = DwKey {
+                state_class: state_class_of(cursor),
+                node_class: node_class_of(cursor),
+                pos: cursor.pos,
+                collection_depth: cursor.collection_stack_depth as usize,
+                edge_stack_r: edge_r.clone(),
+                sppf_stack: sppf_sealed,
+                cohort_origin: cursor.cohort_origin.as_ref().map(|k| k.equiv()),
+            };
+            dw.entry(key).or_default().push(i);
+
+            maximal_r.insert(DwKey {
+                state_class: state_class_of(cursor),
+                node_class: node_class_of(cursor),
+                pos: cursor.pos,
+                collection_depth: cursor.collection_stack_depth as usize,
+                edge_stack_r: edge_r,
+                sppf_stack: Vec::new(),
+                cohort_origin: None,
+            });
+        }
+
+        // ── LINEARITY BISECTION (Stage-0 diagnostic). Bracket EXACTLY where
+        //    linearity emerges by keying an otherwise-GLL_FLOOR key
+        //    (state_class, node_class, pos, coll_depth) with progressively
+        //    COARSER edge-stack projections. This is the decisive S0-DW-LINEAR
+        //    experiment: the coarsest projection that is BOTH linear-in-k AND
+        //    sound is the fix target; if none is, the residual is genuine
+        //    derivation multiplicity (a141ea9c's content-distinct floor).
+        //    Each entry = (4 GLL axes) + a distinct edge-stack projection.
+        #[derive(PartialEq, Eq, Hash, Clone)]
+        enum BisectEdge {
+            VariantSeq(Vec<u64>),      // variant-only sequence + seg-block RLE (== R)
+            VariantMultiset(Vec<u64>), // variant-only, order-independent (sorted)
+            VariantSet(Vec<u64>),      // variant-only, distinct set (sorted+dedup)
+            CrosscatCount(usize),      // count of cross-cat-family edges only
+            Len(usize),                // edge-stack length only
+        }
+        #[derive(PartialEq, Eq, Hash, Clone)]
+        struct BisectKey {
+            state_class: usize,
+            node_class: crate::gss::NodeClass,
+            pos: usize,
+            collection_depth: usize,
+            edge: BisectEdge,
+        }
+        let mut b_variant_seq: std::collections::HashSet<BisectKey> = Default::default();
+        let mut b_variant_multiset: std::collections::HashSet<BisectKey> = Default::default();
+        let mut b_variant_set: std::collections::HashSet<BisectKey> = Default::default();
+        let mut b_crosscat_count: std::collections::HashSet<BisectKey> = Default::default();
+        let mut b_len: std::collections::HashSet<BisectKey> = Default::default();
+        for cursor in drained.iter() {
+            let sc = state_class_of(cursor);
+            let nc = node_class_of(cursor);
+            let pos = cursor.pos;
+            let cd = cursor.collection_stack_depth as usize;
+            let raw = self
+                .incoming_edge_stack_arena
+                .to_vec(cursor.incoming_edge_stack_id);
+            let variant_seq = dw_edge_stack_proj(cursor); // already RLE-collapsed
+            let mut variant_multiset: Vec<u64> = raw.iter().map(|&e| edge_class_tag(e)).collect();
+            variant_multiset.sort_unstable();
+            let mut variant_set = variant_multiset.clone();
+            variant_set.dedup();
+            let crosscat_count = raw
+                .iter()
+                .filter(|&&e| is_crosscat_reading_edge(e))
+                .count();
+            let len = raw.len();
+            let mk = |edge: BisectEdge| BisectKey {
+                state_class: sc,
+                node_class: nc,
+                pos,
+                collection_depth: cd,
+                edge,
+            };
+            b_variant_seq.insert(mk(BisectEdge::VariantSeq(variant_seq)));
+            b_variant_multiset.insert(mk(BisectEdge::VariantMultiset(variant_multiset)));
+            b_variant_set.insert(mk(BisectEdge::VariantSet(variant_set)));
+            b_crosscat_count.insert(mk(BisectEdge::CrosscatCount(crosscat_count)));
+            b_len.insert(mk(BisectEdge::Len(len)));
+        }
+        crate::stats_max!(self, dw_bisect_variant_seq, b_variant_seq.len() as u64);
+        crate::stats_max!(self, dw_bisect_variant_multiset, b_variant_multiset.len() as u64);
+        crate::stats_max!(self, dw_bisect_variant_set, b_variant_set.len() as u64);
+        crate::stats_max!(self, dw_bisect_crosscat_count, b_crosscat_count.len() as u64);
+        crate::stats_max!(self, dw_bisect_len, b_len.len() as u64);
+
+        // ── SOUNDNESS OF THE LINEAR PROJECTION (crosscat_count). This is the
+        //    decisive S0-DW-SOUND measurement: the ONLY edge-stack projection that
+        //    LINEARIZES is a count (crosscat_count / len). Does keying by it
+        //    over-merge cursors with INCOMPATIBLE pop targets? The merge in
+        //    `merge_equivalent_cursors` DROPS the loser (weight-combine only), so
+        //    two co-located cursors with different concrete pop-targets LOSE one's
+        //    continuation (the cycle-3 wall). Group cursors by the crosscat_count
+        //    key and count pop-target-incompatible pairs.
+        let mut count_pop_conflicts: u64 = 0;
+        let mut count_agreements: u64 = 0;
+        {
+            let mut buckets: std::collections::HashMap<(usize, crate::gss::NodeClass, usize, usize, usize), Vec<usize>> =
+                std::collections::HashMap::with_capacity(drained.len());
+            for (i, cursor) in drained.iter().enumerate() {
+                let cc = self
+                    .incoming_edge_stack_arena
+                    .to_vec(cursor.incoming_edge_stack_id)
+                    .iter()
+                    .filter(|&&e| is_crosscat_reading_edge(e))
+                    .count();
+                let k = (
+                    state_class_of(cursor),
+                    node_class_of(cursor),
+                    cursor.pos,
+                    cursor.collection_stack_depth as usize,
+                    cc,
+                );
+                buckets.entry(k).or_default().push(i);
+            }
+            for indices in buckets.values() {
+                if indices.len() < 2 {
+                    continue;
+                }
+                for a in 0..indices.len() {
+                    for b in (a + 1)..indices.len() {
+                        let sa = pop_target_sig(&drained[indices[a]]);
+                        let sb = pop_target_sig(&drained[indices[b]]);
+                        if sa != sb {
+                            count_pop_conflicts += 1;
+                        } else {
+                            count_agreements += 1;
+                        }
+                    }
+                }
+            }
+        }
+        self.stats.dw_count_pop_conflicts = self
+            .stats
+            .dw_count_pop_conflicts
+            .saturating_add(count_pop_conflicts);
+        self.stats.dw_count_agreements =
+            self.stats.dw_count_agreements.saturating_add(count_agreements);
+        if dw_shadow_trace_enabled() {
+            eprintln!(
+                "[dw-sound-count] crosscat_count-key: pop_target_conflicts={} agreements={}  (the LINEAR projection's soundness — nonzero ⇒ the only linear edge-stack key is UNSOUND ⇒ S0-DW-SOUND HALT)",
+                count_pop_conflicts,
+                count_agreements,
+            );
+        }
+
+        // S0-DW-SOUND: within each DW bucket folding ≥2 cursors, check BOTH:
+        //   (1) pop-target conflicts: concrete top-edge signatures must agree
+        //       (else a wrong-body revive — cycle-3 wall);
+        //   (2) seal-type conflicts: sealed-top original tags must agree (else
+        //       two different-typed @a readings on one continuation — the wall).
+        let mut pop_target_conflicts: u64 = 0;
+        let mut seal_type_conflicts: u64 = 0;
+        let mut seal_agreements: u64 = 0;
+        for indices in dw.values() {
+            if indices.len() < 2 {
+                continue;
+            }
+            for a in 0..indices.len() {
+                for b in (a + 1)..indices.len() {
+                    // (1) pop-target soundness on the CONCRETE tops.
+                    let sa = pop_target_sig(&drained[indices[a]]);
+                    let sb = pop_target_sig(&drained[indices[b]]);
+                    if sa != sb {
+                        pop_target_conflicts += 1;
+                    }
+                    // (2) seal-type soundness on the sealed tops.
+                    if let (Some(ta), Some(tb)) =
+                        (sealed_top_tags[indices[a]], sealed_top_tags[indices[b]])
+                    {
+                        if ta == tb {
+                            seal_agreements += 1;
+                        } else {
+                            seal_type_conflicts += 1;
+                        }
+                    }
+                }
+            }
+        }
+
+        crate::stats_max!(self, dw_shadow_peak, dw.len() as u64);
+        crate::stats_max!(self, dw_shadow_peak_maximal_r, maximal_r.len() as u64);
+        self.stats.dw_pop_target_conflicts = self
+            .stats
+            .dw_pop_target_conflicts
+            .saturating_add(pop_target_conflicts);
+        self.stats.dw_seal_type_conflicts = self
+            .stats
+            .dw_seal_type_conflicts
+            .saturating_add(seal_type_conflicts);
+        self.stats.dw_seal_agreements =
+            self.stats.dw_seal_agreements.saturating_add(seal_agreements);
+        self.stats.dw_return_fires = self.stats.dw_return_fires.saturating_add(return_fires);
+        self.stats.dw_shadow_calls = self.stats.dw_shadow_calls.saturating_add(1);
+
+        if dw_shadow_trace_enabled() {
+            eprintln!(
+                "[dw-shadow] drained={} dw_buckets={} maximal_r_buckets={} pop_target_conflicts={} seal_type_conflicts={} seal_agreements={} return_fires={}",
+                drained.len(),
+                dw.len(),
+                maximal_r.len(),
+                pop_target_conflicts,
+                seal_type_conflicts,
+                seal_agreements,
+                return_fires,
+            );
+        }
+
+        // ── EdgeKind-composition diagnostic (`PRATTAIL_DW_DUMP=1`). Dumps, for
+        //    the single LARGEST drained set seen this process, an EdgeKind
+        //    histogram across all cursors' edge-stacks + a few sample sequences.
+        //    Data-driven: SEE the real edge-stack structure before finalizing R.
+        if std::env::var_os("PRATTAIL_DW_DUMP").is_some() {
+            use std::sync::atomic::{AtomicUsize, Ordering};
+            static MAX_SEEN: AtomicUsize = AtomicUsize::new(0);
+            if drained.len() > MAX_SEEN.load(Ordering::Relaxed) && drained.len() >= 8 {
+                MAX_SEEN.store(drained.len(), Ordering::Relaxed);
+                let ek_name = |eid: crate::gss::GssEdgeId| -> String {
+                    match self.gss.edge_kind_ref(eid) {
+                        Some(k) => format!("{:?}", k)
+                            .split(|c: char| c == '{' || c == '(')
+                            .next()
+                            .unwrap_or("?")
+                            .trim()
+                            .to_string(),
+                        None => "None".to_string(),
+                    }
+                };
+                let mut hist: std::collections::BTreeMap<String, usize> =
+                    std::collections::BTreeMap::new();
+                let mut len_hist: std::collections::BTreeMap<usize, usize> =
+                    std::collections::BTreeMap::new();
+                for cursor in drained.iter() {
+                    let v = self
+                        .incoming_edge_stack_arena
+                        .to_vec(cursor.incoming_edge_stack_id);
+                    *len_hist.entry(v.len()).or_default() += 1;
+                    for &eid in v.iter() {
+                        *hist.entry(ek_name(eid)).or_default() += 1;
+                    }
+                }
+                eprintln!("[dw-dump] LARGEST drained={} edge-kind histogram:", drained.len());
+                for (k, c) in hist.iter() {
+                    eprintln!("[dw-dump]   {:>6} × {}", c, k);
+                }
+                eprintln!("[dw-dump] edge-stack LENGTH histogram (len→count):");
+                for (l, c) in len_hist.iter() {
+                    eprintln!("[dw-dump]   len {:>3} × {}", l, c);
+                }
+                // R-projection collapse effectiveness: distinct RAW class-tag
+                // vectors vs distinct R-projected vectors + R-length histogram.
+                let mut raw_class_set: std::collections::HashSet<Vec<u64>> =
+                    std::collections::HashSet::new();
+                let mut r_set: std::collections::HashSet<Vec<u64>> =
+                    std::collections::HashSet::new();
+                let mut r_len_hist: std::collections::BTreeMap<usize, usize> =
+                    std::collections::BTreeMap::new();
+                for cursor in drained.iter() {
+                    let raw = self
+                        .incoming_edge_stack_arena
+                        .to_vec(cursor.incoming_edge_stack_id);
+                    let rawc: Vec<u64> = raw.iter().map(|&e| edge_class_tag(e)).collect();
+                    raw_class_set.insert(rawc);
+                    let r = dw_edge_stack_proj(cursor);
+                    *r_len_hist.entry(r.len()).or_default() += 1;
+                    r_set.insert(r);
+                }
+                eprintln!(
+                    "[dw-dump] R-COLLAPSE: distinct_raw_classvecs={} distinct_R_vecs={}  (R should be << raw if collapsing)",
+                    raw_class_set.len(),
+                    r_set.len(),
+                );
+                eprintln!("[dw-dump] R-projected LENGTH histogram (len→count):");
+                for (l, c) in r_len_hist.iter() {
+                    eprintln!("[dw-dump]   Rlen {:>3} × {}", l, c);
+                }
+                // Sample the 3 LONGEST distinct edge-stacks (the deep-k carriers),
+                // each shown RAW then R-projected (as class-tags, cross-cat small).
+                let mut idx_by_len: Vec<usize> = (0..drained.len()).collect();
+                idx_by_len.sort_by_key(|&ix| {
+                    std::cmp::Reverse(
+                        self.incoming_edge_stack_arena
+                            .len(drained[ix].incoming_edge_stack_id),
+                    )
+                });
+                for (i, &ix) in idx_by_len.iter().take(3).enumerate() {
+                    let v = self
+                        .incoming_edge_stack_arena
+                        .to_vec(drained[ix].incoming_edge_stack_id);
+                    let seq: Vec<String> = v.iter().map(|&e| ek_name(e)).collect();
+                    let rawc: Vec<u64> = v.iter().map(|&e| edge_class_tag(e)).collect();
+                    let r = dw_edge_stack_proj(&drained[ix]);
+                    eprintln!("[dw-dump] sample#{i} (len {}): {}", v.len(), seq.join(" · "));
+                    eprintln!("[dw-dump]   raw_class[{}]: {:?}", rawc.len(), rawc);
+                    eprintln!("[dw-dump]   R_proj  [{}]: {:?}", r.len(), r);
+                }
+            }
+        }
+    }
+
     fn merge_equivalent_cursors(&mut self) {
         if self.branch_cursors.len() < 2 {
             return;
@@ -17178,6 +20296,16 @@ where
             .into_iter()
             .map(|f| f.into_concrete())
             .collect();
+        // ★ BCC SHADOW measurement (Plan afde9c48, Stage 0 — S0-G-LINEAR +
+        // S0-G-Cont). Byte-identical: reads `&drained`, writes only
+        // walker-stats counters. Gated by `PRATTAIL_BCC_SHADOW=1`.
+        #[cfg(feature = "walker-stats")]
+        self.bcc_shadow_measure(&drained);
+        // ★ DW SHADOW measurement (Plan aaf070b3 / DESCRIPTOR_WORKLIST_DESIGN.md,
+        // Stage 0 — S0-DW-LINEAR + S0-DW-SOUND + RT-7). Byte-identical: reads
+        // `&drained`, writes only walker-stats counters. Gated `PRATTAIL_DW_SHADOW=1`.
+        #[cfg(feature = "walker-stats")]
+        self.dw_shadow_measure(&drained);
         for cursor in drained {
             let key = ConfigKey {
                 state: cursor.inner_state.clone(),
@@ -17703,7 +20831,8 @@ where
                 | BuilderDelta::EndBinderScope
                 | BuilderDelta::StartCollection
                 | BuilderDelta::PushCollectionId { .. }
-                | BuilderDelta::SpliceIntoCollection { .. } => {
+                | BuilderDelta::SpliceIntoCollection { .. }
+                | BuilderDelta::DuplicateLastCollectionElement { .. } => {
                     debug_assert!(
                         false,
                         "non-recovery BuilderDelta reached commit_winner replay \
@@ -17949,6 +21078,7 @@ where
             // (`fire_action_via_transient`) still reads it before commit.
             sppf_collection_arena: winner.sppf_collection_arena,
             collection_sep_counts: winner.collection_sep_counts,
+            collection_loop_edge_baseline: winner.collection_loop_edge_baseline,
             // Phase F.3a (2026-05-20): preserve winner's mirror.
             last_action_output_cat: winner.last_action_output_cat,
             cohort_origin: winner.cohort_origin.clone(),
@@ -18305,6 +21435,34 @@ where
                     }
                 }
             },
+            BuilderDelta::DuplicateLastCollectionElement { id } => {
+                // Pathmap optional-value (2026-06-27): clone the LAST SPPF node
+                // id in the innermost active collection slot and re-push it, so
+                // the bare-path key just spliced becomes its own value
+                // (`{| k |}` ≡ `{| k : k |}`). The duplicated id reconstructs to
+                // a term identical to the key, and the even-length arena pairs
+                // cleanly through the existing kv-finalize. Resolve the runtime
+                // innermost slot the same way `SpliceIntoCollection` does
+                // (`collection_stack_depth - 1`); `id` is the static slot_idx
+                // debug witness. NO `sppf_stack` pop happens here — unlike a
+                // splice, the value is not a freshly-parsed element on the
+                // stack; it is a copy of the element already in the slot.
+                let acc_id = cursor.collection_stack_depth.saturating_sub(1) as usize;
+                debug_assert!(
+                    *id as usize <= acc_id,
+                    "DuplicateLastCollectionElement: static slot_idx {} exceeds \
+                     runtime innermost slot {} (collection_stack_depth = {})",
+                    id,
+                    acc_id,
+                    cursor.collection_stack_depth,
+                );
+                if acc_id < cursor.sppf_collection_arena.len() {
+                    let last = cursor.sppf_collection_arena[acc_id].last().copied();
+                    if let Some(last) = last {
+                        Arc::make_mut(&mut cursor.sppf_collection_arena)[acc_id].push(last);
+                    }
+                }
+            },
             // Recovery effects: no SPPF mirror here; recovery deltas mutate
             // mutable_token_source / recovery_events, not AST.
             _ => {},
@@ -18641,19 +21799,6 @@ where
     // arena post-commit, truncating/emptying collections belonging to other
     // (non-winner) derivations in an `Ambiguous([...])` result.
 
-    fn action_arg_trace_shape(arg: &ActionArg) -> &'static str {
-        match arg {
-            ActionArg::Token { .. } => "Token",
-            ActionArg::Ident { .. } => "Ident",
-            ActionArg::Term { type_name, .. } => *type_name,
-            ActionArg::BinderScope(_) => "BinderScope",
-            ActionArg::Collection { type_name, .. } => *type_name,
-            ActionArg::CollectionId(_) => "CollectionId",
-            ActionArg::Predicate(_) => "Predicate",
-            ActionArg::Optional(_) => "Optional",
-        }
-    }
-
     fn sppf_trace_summary(&self, sid: crate::sppf::SppfId) -> String {
         match self.sppf.node(sid) {
             Some(crate::sppf::SppfNode::Symbol { non_terminal_tag, lo_pos, hi_pos, .. }) => {
@@ -18745,36 +21890,16 @@ where
                 // HashMap lookup replaces the per-cursor Vec scan; the
                 // `cursor` parameter is unused for this arm.
                 let _ = cursor;
-                let trace_symbol = trace_actions_enabled();
                 if let Some(term) = self.sppf_symbol_terms.get(&sid) {
                     if !term
                         .output_cat
                         .is_some_and(|cat| cat as u32 != *non_terminal_tag)
                     {
-                        if trace_symbol {
-                            eprintln!(
-                                "[wpds-action] reconstruct symbol sid={} nt={} source=memo output_cat={:?}",
-                                sid, non_terminal_tag, term.output_cat
-                            );
-                        }
                         return Some(ActionArg::Term {
                             value: Arc::clone(&term.value),
                             type_name: "F3c2Reconstructed",
                         });
                     }
-                    if trace_symbol {
-                        eprintln!(
-                            "[wpds-action] reconstruct symbol sid={} nt={} memo-cat-mismatch output_cat={:?}",
-                            sid, non_terminal_tag, term.output_cat
-                        );
-                    }
-                } else if trace_symbol {
-                    eprintln!(
-                        "[wpds-action] reconstruct symbol sid={} nt={} source=witness packings={:?}",
-                        sid,
-                        non_terminal_tag,
-                        self.sppf.packings_of(sid)
-                    );
                 }
                 self.realize_symbol_term_witness(cursor, sid, visiting)
                     .and_then(|term| {
@@ -18782,20 +21907,8 @@ where
                             .output_cat
                             .is_some_and(|cat| cat as u32 != *non_terminal_tag)
                         {
-                            if trace_symbol {
-                                eprintln!(
-                                    "[wpds-action] reconstruct symbol sid={} nt={} witness-cat-mismatch output_cat={:?}",
-                                    sid, non_terminal_tag, term.output_cat
-                                );
-                            }
                             None
                         } else {
-                            if trace_symbol {
-                                eprintln!(
-                                    "[wpds-action] reconstruct symbol sid={} nt={} source=witness output_cat={:?}",
-                                    sid, non_terminal_tag, term.output_cat
-                                );
-                            }
                             Some(ActionArg::Term {
                                 value: term.value,
                                 type_name: "F3c2Witness",
@@ -18864,12 +21977,6 @@ where
             _ => return None,
         };
         if !visiting.insert(symbol_id) {
-            if trace_actions_enabled() {
-                eprintln!(
-                    "[wpds-action] witness symbol sid={} nt={} reason=cycle",
-                    symbol_id, non_terminal_tag
-                );
-            }
             return None;
         }
         let packings: Vec<crate::sppf::SppfId> = self.sppf.packings_of(symbol_id).to_vec();
@@ -18879,53 +21986,17 @@ where
                 self.sppf.node(packing_id)
             {
                 if !self.packing_satisfies_min_terminal_span(*rule_idx, children, sym_lo, sym_hi) {
-                    if trace_actions_enabled() {
-                        eprintln!(
-                            "[wpds-action] witness symbol sid={} nt={} packing={} reject=min-span node={}",
-                            symbol_id,
-                            non_terminal_tag,
-                            packing_id,
-                            self.sppf_trace_summary(packing_id)
-                        );
-                    }
                     continue;
                 }
             }
-            if trace_actions_enabled() {
-                eprintln!(
-                    "[wpds-action] witness symbol sid={} nt={} try packing={} node={}",
-                    symbol_id,
-                    non_terminal_tag,
-                    packing_id,
-                    self.sppf_trace_summary(packing_id)
-                );
-            }
             let Some(term) = self.realize_packing_term_witness(cursor, packing_id, visiting) else {
-                if trace_actions_enabled() {
-                    eprintln!(
-                        "[wpds-action] witness symbol sid={} nt={} packing={} result=none",
-                        symbol_id, non_terminal_tag, packing_id
-                    );
-                }
                 continue;
             };
             if term
                 .output_cat
                 .is_some_and(|cat| cat as u32 != non_terminal_tag)
             {
-                if trace_actions_enabled() {
-                    eprintln!(
-                        "[wpds-action] witness symbol sid={} nt={} packing={} reject=output-cat output_cat={:?}",
-                        symbol_id, non_terminal_tag, packing_id, term.output_cat
-                    );
-                }
                 continue;
-            }
-            if trace_actions_enabled() {
-                eprintln!(
-                    "[wpds-action] witness symbol sid={} nt={} packing={} result=some output_cat={:?}",
-                    symbol_id, non_terminal_tag, packing_id, term.output_cat
-                );
             }
             found = Some(term);
             break;
@@ -18951,7 +22022,6 @@ where
         }
         let cat = (rule_idx >> 16) as u16;
         let local_rule_idx = (rule_idx & 0xFFFF) as u16;
-        let trace_this = trace_actions_enabled();
         let entry = self.engine.action_for(cat, local_rule_idx)?;
         let arity = entry.arity as usize;
         let action_children: Vec<crate::sppf::SppfId> = children
@@ -18962,17 +22032,6 @@ where
             })
             .collect();
         if action_children.len() != arity || entry.expected_input_cats.len() != arity {
-            if trace_this {
-                eprintln!(
-                    "[wpds-action] witness packing={} reject=arity cat={} rule={} action_children={} arity={} expected_len={}",
-                    packing_id,
-                    cat,
-                    local_rule_idx,
-                    action_children.len(),
-                    arity,
-                    entry.expected_input_cats.len()
-                );
-            }
             return None;
         }
         for (&sid, &expected_cat) in action_children.iter().zip(entry.expected_input_cats.iter()) {
@@ -18983,17 +22042,6 @@ where
                 Some(crate::sppf::SppfNode::Symbol { non_terminal_tag, .. })
                     if *non_terminal_tag == expected_cat as u32 => {},
                 _ => {
-                    if trace_this {
-                        eprintln!(
-                            "[wpds-action] witness packing={} reject=expected-cat cat={} rule={} sid={} expected={} node={}",
-                            packing_id,
-                            cat,
-                            local_rule_idx,
-                            sid,
-                            expected_cat,
-                            self.sppf_trace_summary(sid)
-                        );
-                    }
                     return None;
                 },
             }
@@ -19003,14 +22051,6 @@ where
             .map(|&sid| self.reconstruct_action_arg_inner(cursor, sid, visiting))
             .collect();
         let args = args?;
-        if trace_this {
-            let arg_shapes: Vec<&'static str> =
-                args.iter().map(Self::action_arg_trace_shape).collect();
-            eprintln!(
-                "[wpds-action] witness packing={} args cat={} rule={} shapes={:?}",
-                packing_id, cat, local_rule_idx, arg_shapes
-            );
-        }
 
         let mut sb = SemanticBuilder::new();
         let collection_ids = Self::collection_ids_in_args(&args);
@@ -19058,12 +22098,6 @@ where
         }
         let pre_len = sb.len();
         if pre_len < arity {
-            if trace_this {
-                eprintln!(
-                    "[wpds-action] witness packing={} reject=pre-underflow cat={} rule={} pre_len={} arity={}",
-                    packing_id, cat, local_rule_idx, pre_len, arity
-                );
-            }
             return None;
         }
         let pre_collection_len = sb.collection_stack_len();
@@ -19071,16 +22105,6 @@ where
         (entry.action_fn)(&mut sb, popped);
         let expected_len = pre_len.saturating_sub(arity).saturating_add(1);
         if sb.len() != expected_len {
-            if trace_this {
-                eprintln!(
-                    "[wpds-action] witness packing={} reject=post-len cat={} rule={} post_len={} expected={}",
-                    packing_id,
-                    cat,
-                    local_rule_idx,
-                    sb.len(),
-                    expected_len
-                );
-            }
             return None;
         }
         let output_cat = sb
@@ -19088,12 +22112,6 @@ where
             .and_then(|tn| self.engine.cat_of_type_name(tn));
         let drains_count = pre_collection_len.saturating_sub(sb.collection_stack_len());
         let value = sb.take_dyn_result()?;
-        if trace_this {
-            eprintln!(
-                "[wpds-action] witness packing={} success cat={} rule={} output_cat={:?}",
-                packing_id, cat, local_rule_idx, output_cat
-            );
-        }
         Some(SppfSymbolTerm { value, output_cat, drains_count })
     }
 
@@ -19170,9 +22188,8 @@ where
         &mut self,
         sid: crate::sppf::SppfId,
         expected_cat: u16,
-        cat_src_idx: u16,
-        local_rule_idx: u16,
-        trace_this_action: bool,
+        _cat_src_idx: u16,
+        _local_rule_idx: u16,
     ) -> Option<crate::sppf::SppfId> {
         if expected_cat == crate::wpda_runtime::ANY_CAT {
             return Some(sid);
@@ -19182,16 +22199,6 @@ where
                 *non_terminal_tag as u16
             },
             _ => {
-                if trace_this_action {
-                    eprintln!(
-                        "[wpds-action] transient reject cat={} rule={} reason=expected-cat sid={} expected={} node={}",
-                        cat_src_idx,
-                        local_rule_idx,
-                        sid,
-                        expected_cat,
-                        self.sppf_trace_summary(sid),
-                    );
-                }
                 return None;
             },
         };
@@ -19214,43 +22221,9 @@ where
             })
             .min_by_key(|(_, coercion_rule)| *coercion_rule);
         let Some((coercion_cat, coercion_rule)) = coercion else {
-            if trace_this_action {
-                eprintln!(
-                    "[wpds-action] transient reject cat={} rule={} reason=expected-cat sid={} expected={} node={}",
-                    cat_src_idx,
-                    local_rule_idx,
-                    sid,
-                    expected_cat,
-                    self.sppf_trace_summary(sid),
-                );
-            }
             return None;
         };
         let wrapped = self.intern_coercion_over_body(sid, coercion_cat, coercion_rule);
-        if trace_this_action {
-            match wrapped {
-                Some(wrapped_sid) => eprintln!(
-                    "[wpds-action] transient child coercion cat={} rule={} child={} produced={} expected={} via=({}, {}) wrapped={}",
-                    cat_src_idx,
-                    local_rule_idx,
-                    self.sppf_trace_summary(sid),
-                    produced_cat,
-                    expected_cat,
-                    coercion_cat,
-                    coercion_rule,
-                    self.sppf_trace_summary(wrapped_sid),
-                ),
-                None => eprintln!(
-                    "[wpds-action] transient reject cat={} rule={} reason=coercion-materialize sid={} expected={} via=({}, {})",
-                    cat_src_idx,
-                    local_rule_idx,
-                    sid,
-                    expected_cat,
-                    coercion_cat,
-                    coercion_rule,
-                ),
-            }
-        }
         wrapped
     }
 
@@ -19260,7 +22233,6 @@ where
         expected_input_cats: &[u16],
         cat_src_idx: u16,
         local_rule_idx: u16,
-        trace_this_action: bool,
     ) -> Option<Vec<crate::sppf::SppfId>> {
         let mut rewritten = Vec::with_capacity(children.len());
         let mut expected_idx = 0usize;
@@ -19270,14 +22242,6 @@ where
                 continue;
             }
             let Some(&expected_cat) = expected_input_cats.get(expected_idx) else {
-                if trace_this_action {
-                    eprintln!(
-                        "[wpds-action] transient reject cat={} rule={} reason=arity action_children>{}",
-                        cat_src_idx,
-                        local_rule_idx,
-                        expected_input_cats.len(),
-                    );
-                }
                 return None;
             };
             let rewritten_sid = self.coerce_action_child_for_expected_category(
@@ -19285,21 +22249,11 @@ where
                 expected_cat,
                 cat_src_idx,
                 local_rule_idx,
-                trace_this_action,
             )?;
             rewritten.push(rewritten_sid);
             expected_idx += 1;
         }
         if expected_idx != expected_input_cats.len() {
-            if trace_this_action {
-                eprintln!(
-                    "[wpds-action] transient reject cat={} rule={} reason=arity action_children={} expected={}",
-                    cat_src_idx,
-                    local_rule_idx,
-                    expected_idx,
-                    expected_input_cats.len(),
-                );
-            }
             return None;
         }
         Some(rewritten)
@@ -19413,14 +22367,12 @@ where
         let arity = entry.arity as usize;
         let action_fn = entry.action_fn;
         let expected_input_cats = entry.expected_input_cats;
-        let trace_this_action = trace_actions_enabled();
         let fire_children = if allow_child_coercions {
             self.coerce_children_for_expected_categories(
                 children,
                 expected_input_cats,
                 cat_src_idx,
                 local_rule_idx,
-                trace_this_action,
             )?
         } else {
             children.to_vec()
@@ -19429,13 +22381,6 @@ where
         // Filter TriggerTerminal children — same filter as
         // `realize_packing_call` (line 3739-3746). TriggerTerminals
         // contribute NO ActionArg to action_fn.
-        let action_children: Vec<crate::sppf::SppfId> = children
-            .iter()
-            .copied()
-            .filter(|&c| {
-                !matches!(self.sppf.node(c), Some(crate::sppf::SppfNode::TriggerTerminal { .. }))
-            })
-            .collect();
         let fire_action_children: Vec<crate::sppf::SppfId> = fire_children
             .iter()
             .copied()
@@ -19443,47 +22388,9 @@ where
                 !matches!(self.sppf.node(c), Some(crate::sppf::SppfNode::TriggerTerminal { .. }))
             })
             .collect();
-        if trace_this_action {
-            let child_summaries: Vec<String> = children
-                .iter()
-                .map(|&sid| self.sppf_trace_summary(sid))
-                .collect();
-            let action_child_summaries: Vec<String> = action_children
-                .iter()
-                .map(|&sid| self.sppf_trace_summary(sid))
-                .collect();
-            let fire_child_summaries: Vec<String> = fire_children
-                .iter()
-                .map(|&sid| self.sppf_trace_summary(sid))
-                .collect();
-            let fire_action_child_summaries: Vec<String> = fire_action_children
-                .iter()
-                .map(|&sid| self.sppf_trace_summary(sid))
-                .collect();
-            eprintln!(
-                "[wpds-action] transient start cat={} rule={} pos={} arity={} children={:?} action_children={:?} fire_children={:?} fire_action_children={:?}",
-                cat_src_idx,
-                local_rule_idx,
-                cursor.pos,
-                arity,
-                child_summaries,
-                action_child_summaries,
-                fire_child_summaries,
-                fire_action_child_summaries,
-            );
-        }
         if fire_action_children.len() != arity {
             // Arity mismatch — action would fail; mirror persistent
             // path's behavior by returning None.
-            if trace_this_action {
-                eprintln!(
-                    "[wpds-action] transient reject cat={} rule={} reason=arity action_children={} expected={}",
-                    cat_src_idx,
-                    local_rule_idx,
-                    fire_action_children.len(),
-                    arity,
-                );
-            }
             return None;
         }
         for (&sid, &expected_cat) in fire_action_children.iter().zip(expected_input_cats.iter()) {
@@ -19494,16 +22401,6 @@ where
                 Some(crate::sppf::SppfNode::Symbol { non_terminal_tag, .. })
                     if *non_terminal_tag == expected_cat as u32 => {},
                 _ => {
-                    if trace_this_action {
-                        eprintln!(
-                            "[wpds-action] transient reject cat={} rule={} reason=expected-cat sid={} expected={} node={}",
-                            cat_src_idx,
-                            local_rule_idx,
-                            sid,
-                            expected_cat,
-                            self.sppf_trace_summary(sid),
-                        );
-                    }
                     return None;
                 },
             }
@@ -19517,25 +22414,9 @@ where
         let args = match args {
             Some(args) => args,
             None => {
-                if trace_this_action {
-                    eprintln!(
-                        "[wpds-action] transient reject cat={} rule={} reason=reconstruct action_children={:?}",
-                        cat_src_idx,
-                        local_rule_idx,
-                        fire_action_children
-                    );
-                }
                 return None;
             },
         };
-        if trace_this_action {
-            let arg_shapes: Vec<&'static str> =
-                args.iter().map(Self::action_arg_trace_shape).collect();
-            eprintln!(
-                "[wpds-action] transient args cat={} rule={} shapes={:?}",
-                cat_src_idx, local_rule_idx, arg_shapes
-            );
-        }
 
         // Build transient SB. Pre-allocate collection slots for every
         // CollectionId reachable in the action args. CollectionId can be
@@ -19545,15 +22426,6 @@ where
         let collection_ids = Self::collection_ids_in_args(&args);
         Self::preallocate_collection_slots(&mut sb, &collection_ids);
         // #307 ROOT-F diagnostics (2026-06-11): fire-time arena contents.
-        if trace_actions_enabled() && !collection_ids.is_empty() {
-            eprintln!(
-                "[wpds-action] fire-arena pos={} ids={:?} arena={:?} seps={:?}",
-                cursor.pos,
-                collection_ids,
-                cursor.sppf_collection_arena,
-                cursor.collection_sep_counts,
-            );
-        }
         // #307 ROOT-F coverage backstop (2026-06-11): ENFORCEMENT REVERTED
         // pending #313 (root-f-ghost-coverage-backstop-completion). The
         // accounting identity (CollectionForkEvidence: items = seps + 1;
@@ -19614,38 +22486,15 @@ where
         // Fire. Mirror fire_action_for_on_builder's pre/post check.
         let pre_len = sb.len();
         if pre_len < arity {
-            if trace_this_action {
-                eprintln!(
-                    "[wpds-action] transient reject cat={} rule={} reason=pre-underflow pre_len={} arity={}",
-                    cat_src_idx, local_rule_idx, pre_len, arity
-                );
-            }
             return None;
         }
         let pre_collection_len = sb.collection_stack_len();
         let pre_action_len = sb.len();
         let popped = sb.pop_args(arity);
-        if trace_this_action {
-            let popped_shapes: Vec<&'static str> =
-                popped.iter().map(Self::action_arg_trace_shape).collect();
-            eprintln!(
-                "[wpds-action] transient pop cat={} rule={} popped={:?}",
-                cat_src_idx, local_rule_idx, popped_shapes
-            );
-        }
         action_fn(&mut sb, popped);
         let expected_len = pre_action_len.saturating_sub(arity).saturating_add(1);
         if sb.len() != expected_len {
             // Action elided (cross-cat-incompatible arg). Return None.
-            if trace_this_action {
-                eprintln!(
-                    "[wpds-action] transient reject cat={} rule={} reason=post-len post_len={} expected={}",
-                    cat_src_idx,
-                    local_rule_idx,
-                    sb.len(),
-                    expected_len,
-                );
-            }
             return None;
         }
         let post_collection_len = sb.collection_stack_len();
@@ -19658,12 +22507,6 @@ where
         // builder.stack as an Arc<dyn Any>. Mirror semantic with
         // realize_packing_call line 3955+.
         let result_arc = sb.take_dyn_result()?;
-        if trace_this_action {
-            eprintln!(
-                "[wpds-action] transient success cat={} rule={} output_cat={:?} drains={}",
-                cat_src_idx, local_rule_idx, output_cat, drains_count
-            );
-        }
         Some((result_arc, output_cat, drains_count, fire_children))
     }
 
@@ -19802,6 +22645,50 @@ where
             // frames. The previous path materialized the entire path-tree
             // stack via `slice_at`, which made a unary/grouping reduce at
             // depth N pay O(N) even though it pops O(1) children.
+            // @{map}-binder fix (2026-06-30, trace-pinned): a quoted-Name prefix
+            // rule's `@` trigger is SHARED across the ambiguous `@`-readings —
+            // the InputBind `@ pat <- n` consume stamps owner (InputBind), while
+            // the NQuoteShort `@ p` reading wants its own (Name) owner. For
+            // `@{1:2}` only the InputBind-owned lineage survives the `{`-collision
+            // Fork, so the owner-gate rejects its (correctly-positioned) `@`
+            // trigger → the Name realizes at a degenerate span → the binder
+            // orphans. The leftmost trigger at THIS rule's frame-start position is
+            // genuinely this rule's span anchor even when the owner-stamp names a
+            // sibling `@`-reading, so accept by (owner match) OR (trigger pos ==
+            // firing-rule frame-start pos). The pos branch is a no-op for
+            // non-prefix rules (no trigger at the frame start), multi-step binders
+            // (ReplaceAndPush moves the frame pos off the trigger pos), and
+            // cross-nesting theft (an outer trigger's pos != the inner rule's
+            // frame-start) — it repairs ONLY the ambiguously-owned-but-correctly-
+            // positioned prefix trigger. FV: ForkSurvivorBinderPop.v.
+            //
+            // Self-nesting prefix fix (2026-07-01, trace-pinned; double-negation
+            // root): a prefix operator that recurses on its OWN category (e.g.
+            // `Neg . a:Int |- "-" a`) stacks one TriggerTerminal PER application,
+            // ALL stamped with the same `(owner_cat, owner_rule)`. When the
+            // innermost instance reduces, its operand sits atop a run of same-owner
+            // triggers `[trigger@0, trigger@1, …, operand]` in which only the
+            // adjacent trigger belongs to THIS instance; the deeper ones belong to
+            // the ENCLOSING instances that have not reduced yet. The bare
+            // `owner_match` gate greedily swept ALL of them into one Packing, whose
+            // `TriggerTerminal`-filtered `action_children` then held a single
+            // operand → the rule fired ONCE, collapsing `--3` (Neg∘Neg) to a lone
+            // `Neg(3)`. Latent until the main→wfst merge dropped the leading `-?`
+            // from the Int regex (so `--3` lexes as two `-` operators instead of
+            // `-` + the atomic literal `-3`), which first put two same-owner
+            // triggers on one stack. FIX: a trigger at `pos < frame_start_pos`
+            // began BEFORE this instance's frame and therefore belongs to an
+            // enclosing instance — never collect it. Every trigger genuinely owned
+            // by THIS instance is at `pos >= frame_start_pos` (the frame's first
+            // token IS its leading trigger; interleaved mixfix triggers come
+            // later), so multi-trigger prefix/mixfix rules are unaffected and the
+            // deep-parens O(1)-suffix optimization is preserved. The walk-back
+            // halts at the first deeper trigger (`collect_suffix_with_preceding_while`
+            // stops on the first `false`), so each instance now claims exactly its
+            // own trigger and the correct nesting is reconstructed. When
+            // `frame_start_pos` is unknown (no GSS node), fall back to the prior
+            // owner/pos gate. FV: ForkSurvivorBinderPop.v (walk-back ownership).
+            let frame_start_pos = self.gss.node(cursor.node).map(|n| n.pos as u32);
             let (children, pop_count) =
                 self.sppf_stack_arena
                     .collect_suffix_with_preceding_while(cursor.sppf_stack_id, arity, |sid| {
@@ -19809,8 +22696,55 @@ where
                             Some(crate::sppf::SppfNode::TriggerTerminal {
                                 owner_cat,
                                 owner_rule_idx,
+                                pos,
                                 ..
-                            }) => *owner_cat == cat_src_idx && *owner_rule_idx == local_rule_idx,
+                            }) => {
+                                let trigger_pos = match pos {
+                                    crate::sppf::PosOrSynth::Real(p)
+                                    | crate::sppf::PosOrSynth::Synthesized(p) => *p,
+                                };
+                                // A trigger positioned strictly before this
+                                // instance's frame start belongs to an enclosing
+                                // (earlier-starting) rule instance — never sweep it
+                                // into this reduce (self-nesting prefix fix). Only
+                                // enforced when the frame start is known.
+                                if let Some(fs) = frame_start_pos {
+                                    if trigger_pos < fs {
+                                        return false;
+                                    }
+                                }
+                                let owner_match = *owner_cat == cat_src_idx
+                                    && *owner_rule_idx == local_rule_idx;
+                                // Trigger-ownership soundness (2026-07-02): the
+                                // pos-only fallback (accept a trigger at THIS
+                                // rule's frame-start regardless of owner) must be
+                                // confined to rules that GENUINELY begin with a
+                                // structural trigger. An operand-leading rule
+                                // (first `SyntaxExpr` is a Param, e.g.
+                                // `PPersistOutput2Plus` `n "!!" "(" a "," bs ")"`)
+                                // has no leading trigger of its own; letting it
+                                // claim a foreign `@` trigger sitting at its
+                                // frame start (reached via the `@`→Name cross-cat
+                                // delegation) produces the `@Nil!!(…)`→
+                                // `NVar("Nil")` phantom, whose display `Nil!!(…)`
+                                // is unparseable (soundness violation). The
+                                // `@{map}` repair the fallback was added for is a
+                                // genuine PREFIX rule (`@ p`), so it still
+                                // qualifies. Kill-switch env
+                                // `PRATTAIL_NO_TRIGGER_LEAD_GATE=1` restores the
+                                // prior unconditional `owner || pos` (labeled
+                                // scientific control).
+                                let pos_match = Some(trigger_pos) == frame_start_pos
+                                    && (self
+                                        .engine
+                                        .rule_has_leading_structural_trigger(
+                                            cat_src_idx,
+                                            local_rule_idx,
+                                        )
+                                        || std::env::var("PRATTAIL_NO_TRIGGER_LEAD_GATE")
+                                            .is_ok());
+                                owner_match || pos_match
+                            },
                             _ => false,
                         }
                     })
@@ -19837,13 +22771,11 @@ where
                 .is_some();
             if let Some(action_entry) = self.engine.action_for(cat_src_idx, local_rule_idx).copied()
             {
-                let trace_this_action = trace_actions_enabled();
                 if let Some(mut reuse_children) = self.coerce_children_for_expected_categories(
                     &children,
                     action_entry.expected_input_cats,
                     cat_src_idx,
                     local_rule_idx,
-                    trace_this_action,
                 ) {
                     for child in &mut reuse_children {
                         *child = self.snapshot_collection_ids_in_child(*child, cursor);
@@ -19891,15 +22823,6 @@ where
                                     body_origins,
                                     false,
                                 );
-                                if trace_actions_enabled() {
-                                    eprintln!(
-                                        "[wpds-action] intern reuse cat={} rule={} token_sound=true symbol={} packing={}",
-                                        cat_src_idx,
-                                        local_rule_idx,
-                                        self.sppf_trace_summary(symbol_id),
-                                        self.sppf_trace_summary(packing_id)
-                                    );
-                                }
                                 return;
                             }
                         }
@@ -19925,15 +22848,6 @@ where
                 cursor.sppf_stack_id = self
                     .sppf_stack_arena
                     .intern_push(cursor.sppf_stack_id, symbol_id);
-                if trace_actions_enabled() {
-                    eprintln!(
-                        "[wpds-action] intern reuse no-action cat={} rule={} symbol={} packing={}",
-                        cat_src_idx,
-                        local_rule_idx,
-                        self.sppf_trace_summary(symbol_id),
-                        self.sppf_trace_summary(packing_id)
-                    );
-                }
                 return;
             }
             let transient_result = self.fire_action_via_transient(cursor, symbol, &children);
@@ -20013,16 +22927,6 @@ where
                             .intern_packing(global_rule_idx, children, packing_weight);
                     let symbol_id = self.sppf.intern_symbol(cat_src_idx as u32, lo_pos, hi_pos);
                     self.sppf.link_packing_to_symbol(symbol_id, packing_id);
-                    if trace_actions_enabled() {
-                        eprintln!(
-                            "[wpds-action] intern success cat={} rule={} token_sound={} symbol={} packing={}",
-                            cat_src_idx,
-                            local_rule_idx,
-                            token_sound,
-                            self.sppf_trace_summary(symbol_id),
-                            self.sppf_trace_summary(packing_id)
-                        );
-                    }
                     // Phase F.13 chain_10000 Plan D E3 Substage 2 (2026-05-26):
                     // arena.intern_push replaces Arc::make_mut(&mut sppf_stack).push.
                     cursor.sppf_stack_id = self
@@ -20070,15 +22974,6 @@ where
                 .intern_packing(global_rule_idx, children, packing_weight);
             let symbol_id = self.sppf.intern_symbol(cat_src_idx as u32, lo_pos, hi_pos);
             self.sppf.link_packing_to_symbol(symbol_id, packing_id);
-            if trace_actions_enabled() {
-                eprintln!(
-                    "[wpds-action] intern no-action cat={} rule={} symbol={} packing={}",
-                    cat_src_idx,
-                    local_rule_idx,
-                    self.sppf_trace_summary(symbol_id),
-                    self.sppf_trace_summary(packing_id)
-                );
-            }
             // Phase F.13 chain_10000 Plan D E3 Substage 2 (2026-05-26):
             // arena.intern_push replaces Arc::make_mut(&mut sppf_stack).push.
             cursor.sppf_stack_id = self
@@ -20149,6 +23044,21 @@ where
             counts.push(0);
         }
         counts[id as usize] = 0;
+        // D&C `.*sep` reconvergence (Plan ad4b660e, 2026-07-05): capture this
+        // collection slot's LOOP-ENTRY edge-stack baseline so each `.*sep`
+        // element seal (Site A) + separator consume (Site B) can RESTORE it,
+        // collapsing the per-segment edge-stack accumulation (the sole
+        // exponential carrier) to ONE frontier arc. Gated: the carrier stays
+        // empty when OFF ⇒ byte-identical. The read of `incoming_edge_stack_id`
+        // is hoisted before the `make_mut` borrow.
+        if sep_reconverge_active() {
+            let entry = cursor.incoming_edge_stack_id;
+            let baseline = Arc::make_mut(&mut cursor.collection_loop_edge_baseline);
+            while baseline.len() <= id as usize {
+                baseline.push(crate::edge_stack_arena::EDGE_STACK_ID_ROOT);
+            }
+            baseline[id as usize] = entry;
+        }
         id
     }
 
@@ -20183,7 +23093,49 @@ where
             // arena.top + intern_pop replaces Arc::make_mut(&mut sppf_stack).pop.
             // Read top first (since intern_pop discards it), then pop.
             if let Some(top) = self.sppf_stack_arena.top(cursor.sppf_stack_id) {
+                let __grind_pre = cursor.sppf_stack_id;
                 cursor.sppf_stack_id = self.sppf_stack_arena.intern_pop(cursor.sppf_stack_id);
+                // ROOT-P Layer-S entry diagnostic (gated GRIND_SPLICE=1).
+                if grind_splice_enabled() {
+                    // Decode each SppfId in the stack slice to (nt_tag, lo..hi)
+                    // so we can tell whether the residual base divergence is a
+                    // genuine 2-way enclosing-rule reading (distinct nt/span =
+                    // Layer-S-refuting) or redundant residue that Symbol `top`
+                    // already subsumes (same span = Layer-S-applicable).
+                    let decode = |arena: &crate::sppf_stack_arena::SppfStackArena,
+                                  sppf: &crate::sppf::Sppf<W>,
+                                  sid: crate::sppf_stack_arena::StackId| {
+                        let mut sc = Vec::new();
+                        arena
+                            .slice_at(sid, &mut sc)
+                            .iter()
+                            .map(|&s| match sppf.node(s) {
+                                Some(crate::sppf::SppfNode::Symbol {
+                                    non_terminal_tag,
+                                    lo_pos,
+                                    hi_pos,
+                                    ..
+                                }) => format!("Sym(nt={non_terminal_tag},{lo_pos}..{hi_pos})"),
+                                _ => format!("#{s}?"),
+                            })
+                            .collect::<Vec<_>>()
+                    };
+                    let __top_desc = match self.sppf.node(top) {
+                        Some(crate::sppf::SppfNode::Symbol {
+                            non_terminal_tag,
+                            lo_pos,
+                            hi_pos,
+                            ..
+                        }) => format!("Sym(nt={non_terminal_tag},{lo_pos}..{hi_pos})"),
+                        _ => format!("#{top}?"),
+                    };
+                    eprintln!(
+                        "GRIND-SPLICE node={:?} slot={} pos={} sealed_top={} pre_sppf={:?} post_sppf={:?} pre={:?} post={:?}",
+                        cursor.node, id, cursor.pos, __top_desc, __grind_pre, cursor.sppf_stack_id,
+                        decode(&self.sppf_stack_arena, &self.sppf, __grind_pre),
+                        decode(&self.sppf_stack_arena, &self.sppf, cursor.sppf_stack_id)
+                    );
+                }
                 Arc::make_mut(&mut cursor.sppf_collection_arena)[id as usize].push(top);
                 // Cluster D (2026-06-20): the just-spliced element's lexical
                 // reading is now sealed as an SPPF packing under the shared
@@ -20210,17 +23162,31 @@ where
                 if !cursor.lex_fork_path.is_empty() {
                     Arc::make_mut(&mut cursor.lex_fork_path).clear();
                 }
+                // D&C `.*sep` reconvergence — Site A element-seal (Plan
+                // ad4b660e, 2026-07-05): GENERALIZE the Cluster D lex reset above
+                // to the SOLE exponential carrier, the incoming edge-stack. The
+                // just-spliced element is now sealed as ONE shared SPPF Symbol
+                // (`top`); restore the continuation cursor's edge-stack to this
+                // slot's LOOP-ENTRY baseline so sibling `.*sep` segments
+                // re-converge to ONE frontier arc rather than stacking
+                // per-segment-distinct edge chains (`O(dᵏ)`→`O(k·d)`). The
+                // element-internal frames pushed since loop entry (CrossCatLhs /
+                // MixfixMarker / PrefixRuleEntry) are DEAD post-seal — they can
+                // only block a merge, never route a live pop; the baseline
+                // preserves the enclosing CollectionMarker's own incoming edge
+                // (the live `.*sep`→ForRow pop target, `cursor_gss_pop_via_edge`).
+                // Gated OFF ⇒ the carrier is empty ⇒ inert / byte-identical.
+                // Stage-0 measured this collapses the frontier 84·(k+1) LINEAR
+                // vs the monolithic ~9×/seg exponential. See SepReconvergence.v.
+                if sep_reconverge_active() {
+                    if let Some(&baseline) =
+                        cursor.collection_loop_edge_baseline.get(id as usize)
+                    {
+                        cursor.incoming_edge_stack_id = baseline;
+                    }
+                }
                 // #307 ROOT-F diagnostics (2026-06-11): actions-trace the
                 // splice so arena divergence across lineages is observable.
-                if trace_actions_enabled() {
-                    eprintln!(
-                        "[wpds-action] splice slot={} pos={} item={:?} arena_now={:?}",
-                        id,
-                        cursor.pos,
-                        top,
-                        cursor.sppf_collection_arena.get(id as usize),
-                    );
-                }
             }
         }
         // push_to_collection silently no-ops on out-of-bounds id.
@@ -20831,6 +23797,71 @@ where
         let new_id = self
             .gss
             .get_or_create_node(WpdaGssNode { pos, symbol: sym });
+        // S0-G1 PROBE (Plan a0ddad66, Stage 0; env PRATTAIL_COARSEN_PROBE=1):
+        // MEASURE-ONLY log of EVERY push-chokepoint get_or_create_node — the
+        // full pushed StackSymbolV2, its derived node_class, the assigned
+        // GssNodeId, and the incoming edge kind. Off-line post-processing
+        // over `@a<-@b` groups the two `@a` readings (CrossCatProjection
+        // Proc/Return vs CrossCatLhs Name/CategoryEntry) by (pos, node_class)
+        // to confirm they collapse to ONE class WITHOUT unifying genuinely-
+        // distinct continuations. Pure `eprintln!` ⇒ zero behavior change.
+        if coarsen_probe_enabled() {
+            let nc = crate::gss::node_class(&sym);
+            eprintln!(
+                "[coarsen-probe] PUSH pos={} node_id={} sym=(cat={},rule={},bp={:?},kind={:?},coll_bp={:?},goal={:?}) node_class=(shape={:?},coll_bp={:?},goal={:?}) edge_kind={:?}",
+                pos,
+                new_id,
+                sym.category_src_idx,
+                sym.rule_index_in_category,
+                sym.bp,
+                sym.kind,
+                sym.coll_dispatch_bp,
+                sym.goal_src_idx,
+                nc.shape,
+                nc.coll_dispatch_bp,
+                nc.goal_src_idx,
+                &kind,
+            );
+        }
+        // ★ S0-G-Cont PROBE (BCC, Plan afde9c48, Stage 0; env PRATTAIL_BCC_PROBE=1):
+        // MEASURE-ONLY. Log EVERY cross-cat `@a`-reading push at the delegate —
+        // the pushed symbol's category (= the element category this reading would
+        // seal into), its node_class (= the N_cont it would allocate), the
+        // assigned node_id, and the cross-cat edge kind. Off-line grouping over
+        // `@a<-@b` by (pos) shows whether Reading A (CrossCatProjection, into the
+        // projection-RESULT cat) and Reading B (CrossCatLhs, into the SOURCE cat)
+        // seal to the SAME element category (⇒ one N_cont, S0-G-Cont PASS) or
+        // DIFFERENT element categories (⇒ two different-typed readings, HALT →
+        // user canonical-reading decision on `@pat<-n`). Pure eprintln ⇒ zero
+        // behavior change.
+        if bcc_probe_enabled() {
+            let is_crosscat = matches!(
+                &kind,
+                crate::gss::EdgeKind::CrossCatProjection { .. }
+                    | crate::gss::EdgeKind::CrossCatLhs { .. }
+                    | crate::gss::EdgeKind::CrossCatLhsScoped { .. }
+                    | crate::gss::EdgeKind::CrossCatLhsReentry { .. }
+            );
+            if is_crosscat {
+                let nc = crate::gss::node_class(&sym);
+                let reading = match &kind {
+                    crate::gss::EdgeKind::CrossCatProjection { source_src_idx, wrap_cat, wrap_rule, .. } => {
+                        format!("A/Projection(src={source_src_idx}→result_cat={},wrap=({wrap_cat},{wrap_rule}))", sym.category_src_idx)
+                    },
+                    crate::gss::EdgeKind::CrossCatLhs { source_src_idx }
+                    | crate::gss::EdgeKind::CrossCatLhsScoped { source_src_idx, .. }
+                    | crate::gss::EdgeKind::CrossCatLhsReentry { source_src_idx, .. } => {
+                        format!("B/CrossCatLhs(source_cat={source_src_idx})")
+                    },
+                    _ => "?".to_string(),
+                };
+                eprintln!(
+                    "[bcc-cont] @-DISPATCH pos={} node_id={} reading={} pushed_element_cat={} node_class=(shape={:?},coll_bp={:?},goal={:?}) edge_kind={:?}",
+                    pos, new_id, reading, sym.category_src_idx,
+                    nc.shape, nc.coll_dispatch_bp, nc.goal_src_idx, &kind,
+                );
+            }
+        }
         // EP-P1 amended §P1 SHADOW (2026-06-11, red-team Round 5 + user
         // decision): observation-only would-share measurement at the ONE
         // chokepoint every CrossCatLhs dispatch push flows through (both
@@ -22054,8 +25085,86 @@ where
             if self.pos_in_absorbed_chain_interval((wrap_cat, wrap_rule), pos_after) {
                 return Vec::new();
             }
+            // Root 1 (2026-07-02): group-close cross-cat projection under a
+            // LEX-FORKED operator. TRACE-PROVEN: `(1 ? 2 : int(true)) OP 4`,
+            // OP∈{`<=`,`>=`}. At a lex-ambiguous cross-cat operator the lex-fork
+            // dispatches CrossCatDelegate projection children for BOTH the
+            // ternary-else-slot CAST body `int(true)` [5,10] AND the enclosing
+            // GROUP body `(1?2:int(true))` [1,9] at the SAME operator position.
+            // They register under the SAME projection `DispatchKey` (pos, source,
+            // bp, wrap_cat, wrap_rule) — which does NOT encode the LHS body — so
+            // the SECOND (group) collides `InflightCollision`, is paused as a
+            // cohort member, and is later revived with the FIRST (cast) resolution
+            // rather than its OWN distinct-LHS projection. The group `[1,X]→Bool`
+            // reading is thus never generated; only the cast `[5,X]→Bool` reading
+            // survives, which corrupts the ternary (its Int else-operand becomes a
+            // Bool) → `accepting_roots=[]`. The single-token operator (`<`,`>`)
+            // path takes the direct `apply_singleton_push` projection (no cohort
+            // registration), so it is unaffected and ACCEPTS.
+            //
+            // FIX (GLR add-a-reading; grammar/structure-keyed; minimal blast
+            // radius): a CrossCatDelegate projection dispatched from a distinct
+            // ENCLOSING RETURN-FRAME must not merge with a same-`(pos,source,bp,
+            // wrap)` projection destined for a DIFFERENT frame/body — the
+            // projection result would return to the wrong frame. Two such
+            // configurations, both trace-proven, share this defect:
+            //   Root 1 — parent is an `InfixLoop` over a cross-cat re-entry host
+            //     (`CrossCatLhsReentry`/`Scoped`, source == the completed body's
+            //     category): the group-close projection collides with the
+            //     ternary-else-slot cast projection (different LHS body).
+            //   Root 2 — the projected body is an OPERAND of a rule-argument slot
+            //     (nearest enclosing frame reachable THROUGH cross-cat edges is a
+            //     `MixfixMarker` / `PrefixRuleEntry{item_pos>0}`): the send's
+            //     `{||}` bag first-arg (collection→Proc cast) collides between the
+            //     correct POutput2Plus (Name-channel) frame and a sibling
+            //     Proc-channel frame (different enclosing rule).
+            // In BOTH the collision PAUSES the second dispatch as a cohort member
+            // that is then revived with the FIRST resolution — the second frame's
+            // distinct projection is never computed, and its enclosing rule stalls.
+            // The single-token / direct-element paths bypass this cohort entirely
+            // (they use `apply_singleton_push` / the Root-A element redirect), so
+            // they are unaffected and ACCEPT — which is exactly why the OK variants
+            // pass and only these compound shapes fail.
+            //
+            // FIX: on an `InflightCollision` (an in-flight worker already holds this
+            // key), such a rule-operand / reentry-host CrossCatDelegate projection
+            // allocates as an INDEPENDENT uncached worker INSTEAD of pausing as a
+            // cohort member (see the `InflightCollision` arm below) — so its
+            // distinct-frame projection is computed rather than merged away. The
+            // cohort dedup is a chain-O(N²) defense (redundant SAME-frame
+            // re-projection of a same-category infix chain interior); a
+            // rule-argument / group-close cross-category projection is never a chain
+            // interior (chains are same-category infix continuations, never
+            // rule-arg-slots / reentry hosts), so the FIRST worker still uses the
+            // cohort normally and the chain ceiling is untouched. NARROW: this only
+            // affects the SECOND (colliding) dispatch — the WorkerInserted /
+            // ResolvedHit paths are byte-identical. NO reading is removed (the first
+            // frame's projection registers normally); the second frame's projection
+            // is ADDED (GLR). Kill-switch: `PRATTAIL_NO_CROSSCAT_PROJ_UNCACHED`
+            // (env) + the const `CROSSCAT_PROJ_UNCACHED_ENABLED` (checked at the
+            // collision site below).
             let key =
                 crate::dispatch_cohort::DispatchKey::new(pos_after, s, b, wrap_cat, wrap_rule);
+            // ROOT-P design-cycle-3 STAGE 0 GATE 0b (THROWAWAY, env-gated by
+            // PRATTAIL_GATE0B): this is the ACTUAL cohort-CACHE register site for
+            // the `@a` cross-cat projection (the site whose DispatchKey the
+            // pos-quotient will re-key). Log whether the GSS node at this cohort
+            // registration is a CollectionMarker. THIS is the definitive hazard
+            // test: the descriptor's marker pos-keying (extract_proj_descriptor)
+            // and the cache's pos axis DISAGREE only if the SAME cohort-registered
+            // dispatch fires at a marker node. PASS iff cohort registrations fire
+            // at NON-marker nodes (node_is_marker=false).
+            if std::env::var_os("PRATTAIL_GATE0B").is_some() {
+                let node_is_marker = self
+                    .gss
+                    .node(parent.node)
+                    .map(|n| n.symbol.kind == SymbolKind::CollectionMarker)
+                    .unwrap_or(false);
+                eprintln!(
+                    "[GATE0b-REGISTER] cohort register: pos_after={} source={} inner_bp={} wrap=({},{}) parent_node={} parent_pos={} node_is_marker={}",
+                    pos_after, s, b, wrap_cat, wrap_rule, parent.node, parent.pos, node_is_marker,
+                );
+            }
             // COQ-S0 (2026-05-27): track distinct DispatchKey vs
             // EquivKey to confirm the cohort_origin pos discriminator
             // is the super-linear scaling root cause.
@@ -22076,9 +25185,78 @@ where
             use crate::dispatch_cohort::RegisterOutcome;
             match outcome {
                 RegisterOutcome::WorkerInserted => {
+                    // Root 1 + Root 2 (2026-07-02): record THIS worker's enclosing
+                    // return-frame discriminant for the key, so a later collision
+                    // can tell a redundant same-frame re-projection (merge — M4
+                    // cast-family / chain dedup) from a distinct-frame projection
+                    // (allocate independently — the group-vs-cast / rule-8-vs-rule-13
+                    // defect). Only recorded for rule-operand / reentry-host
+                    // projections (None ⇒ chain interior / plain projection ⇒ never
+                    // bypassed ⇒ byte-identical).
+                    if std::env::var("PRATTAIL_NO_CROSSCAT_PROJ_UNCACHED").is_err() {
+                        if let Some(disc) = self.crosscat_projection_enclosing_frame_disc(
+                            parent,
+                            s,
+                            lex_fork_stamp.is_some(),
+                        ) {
+                            // ROOT-P design-cycle-3 (Part C): key on the cohort
+                            // CACHE key so the cross-`&`-segment collision below
+                            // finds this registrant (byte-identical OFF).
+                            self.crosscat_proj_registrant_frame.insert(key.cache_key(), disc);
+                        }
+                    }
                     // Worker child — fall through to normal allocation.
                 },
                 RegisterOutcome::InflightCollision => {
+                    // Root 1 + Root 2 (2026-07-02): a rule-operand / group-close
+                    // cross-category projection whose enclosing return-frame DIFFERS
+                    // from the in-flight worker's (recorded at WorkerInserted) must
+                    // NOT pause+merge — its distinct projection would be revived with
+                    // the in-flight worker's body and silently lost, stalling its
+                    // enclosing rule. Allocate it as an INDEPENDENT uncached worker
+                    // instead. When the frame discriminant MATCHES (a redundant
+                    // SAME-frame re-projection — the M4 nested-cast cast-family: `int(
+                    // int(...))` re-projecting into the same slot), fall through to
+                    // the normal cohort pause so the dedup / chain-O(N²) ceiling is
+                    // preserved. Fires ONLY on collision (narrow); the first worker
+                    // always uses the cohort. Kill-switch:
+                    // `PRATTAIL_NO_CROSSCAT_PROJ_UNCACHED` (env) + const.
+                    const CROSSCAT_PROJ_UNCACHED_ENABLED: bool = true;
+                    if CROSSCAT_PROJ_UNCACHED_ENABLED
+                        && std::env::var("PRATTAIL_NO_CROSSCAT_PROJ_UNCACHED").is_err()
+                    {
+                        if let Some(disc) = self.crosscat_projection_enclosing_frame_disc(
+                            parent,
+                            s,
+                            lex_fork_stamp.is_some(),
+                        ) {
+                            // ROOT-P design-cycle-3 (Part C): look up under the
+                            // cohort CACHE key (byte-identical OFF).
+                            let registrant =
+                                self.crosscat_proj_registrant_frame.get(&key.cache_key()).copied();
+                            // Distinct enclosing frame ⇒ allocate independently.
+                            // (If no registrant was recorded — the first worker was a
+                            // plain/chain projection with no frame disc — treat as
+                            // distinct too: this projection is a genuine rule-operand
+                            // that must not merge with a chain-interior worker.)
+                            if registrant != Some(disc) {
+                                return vec![self.allocate_uncached_push_child(
+                                    parent,
+                                    branch,
+                                    pos_after,
+                                    push_pos,
+                                    child_recovery_depth,
+                                    child_visited_recovery,
+                                    child_visited_dispatch,
+                                    child_visited_proj_descriptors,
+                                    trigger_terminal,
+                                    push_edge_kind,
+                                    lex_fork_stamp,
+                                    child_source_priority,
+                                )];
+                            }
+                        }
+                    }
                     // Stage 1.5 (2026-05-21): pause cohort member.
                     // If the cache's cap is exceeded
                     // (MAX_PENDING_COHORT_PER_KEY), pause_cohort_member
@@ -22285,6 +25463,74 @@ where
         )]
     }
 
+    /// Trigger-preserving SINGLETON push, factored from the
+    /// `WpdaStepAction::Push` arm so the collision-`{` Fork CastMap projection
+    /// branch can mirror it EXACTLY (on a cloned cursor). Advances `cursor`
+    /// IN-PLACE at `cursor.pos`, keeping the enclosing prefix trigger (`@`) on
+    /// the SPPF stack so the same-lineage pop-back realizes `[trigger, body]`.
+    /// This is the proven-working path for non-colliding `@[`/`@Set(`/`@#{`
+    /// projections; routing the `{`-collision Fork projection through it fixes
+    /// the `@{map}`-binder trigger-drop (the fresh-child
+    /// `allocate_uncached_push_child` path produced only the cohort-revive
+    /// realize `[body]`, dropping `@` → the binder orphaned). Returns `false`
+    /// iff the Sig-B GLL projection cycle-defense dropped the cursor (caller
+    /// treats as `CursorOutcome::Drop`). FV: ForkSurvivorBinderPop.v.
+    fn apply_singleton_push(
+        &mut self,
+        cursor: &mut BranchCursor<W>,
+        mut symbol: StackSymbolV2,
+        weight: W,
+        new_state: WpdaState,
+    ) -> bool {
+        let new_state =
+            Self::normalize_prefix_crosscat_delegate_state(&cursor.inner_state, new_state);
+        // B12 / Candidate E (2026-05-07): cross-cat projection cycle defense
+        // for SINGLETON projection arms (Sig-B GLL-descriptor #9, M1 site 1).
+        // A no-progress re-entry reproduces the descriptor (same StackId) →
+        // drop; a productive SPPF-fold advances the StackId → distinct
+        // descriptor → allowed.
+        if matches!(&new_state, WpdaState::CrossCatDelegate { .. }) {
+            if let Some(desc) = extract_proj_descriptor(cursor, &self.gss) {
+                if cursor.visited_proj_descriptors.contains(&desc) {
+                    let msg = format!(
+                        "cross-cat projection cycle detected at \
+                         descriptor (gss_node={}, sppf_stack={}, \
+                         cat_src={}, cur_bp={}) — refusing to \
+                         re-dispatch projection Push (Sig-B GLL \
+                         descriptor cycle defense, singleton-bucket \
+                         path)",
+                        desc.gss_node, desc.sppf_stack, desc.cat_src, desc.cur_bp,
+                    );
+                    self.set_cursor_inner_state(cursor, WpdaState::Error { message: msg });
+                    return false;
+                }
+                // im::OrdSet structural-share insert (CoW).
+                cursor.visited_proj_descriptors.insert(desc);
+            }
+        }
+        // Stage 3.9 / ι Phase 4 (2026-05-01): symbol-kind-driven implicit
+        // Push-time side effects (CollectionMarker id alloc + bp patch + arg
+        // push; OptionalGroupAt(1) scope open).
+        self.emit_push_side_effects(cursor, &mut symbol);
+        let edge_kind = self.edge_kind_for_push_transition(cursor.node, &symbol, &new_state);
+        #[cfg(feature = "walker-stats")]
+        {
+            let bucket = crate::walker_stats::pop_kind_bucket_index(&edge_kind);
+            self.stats.push_kind_histogram[bucket] =
+                self.stats.push_kind_histogram[bucket].saturating_add(1);
+        }
+        let _ = self.cursor_gss_push_with_kind(
+            cursor,
+            symbol,
+            cursor.pos,
+            weight.clone(),
+            edge_kind,
+        );
+        self.multiply_cursor_weight(cursor, &weight);
+        self.set_cursor_inner_state(cursor, new_state);
+        true
+    }
+
     fn allocate_uncached_push_child(
         &mut self,
         parent: &BranchCursor<W>,
@@ -22332,6 +25578,7 @@ where
             collection_stack_depth: parent.collection_stack_depth,
             sppf_collection_arena: Arc::clone(&parent.sppf_collection_arena),
             collection_sep_counts: Arc::clone(&parent.collection_sep_counts),
+            collection_loop_edge_baseline: Arc::clone(&parent.collection_loop_edge_baseline),
             last_action_output_cat: parent.last_action_output_cat,
             cohort_origin: parent.cohort_origin.clone(),
             cohort_revive_depth: parent.cohort_revive_depth,
@@ -22494,6 +25741,48 @@ where
             return false;
         };
         entry.arity == 1 && entry.output_cat == c_out && entry.expected_input_cats == [c_in]
+    }
+
+    /// GROUP-A arg-list fix (2026-07-01): does the rule `(cat, rule)` have a
+    /// `Param` operand slot whose declared category admits a body of category
+    /// `body_cat` (directly OR via a single-hop coercion)? Used by the
+    /// cross-cat `BINDER-SLOT-UNWIND-INJECT` extension to fire the "operand
+    /// complete; return it to the enclosing rule slot" reading ONLY when the
+    /// completed body genuinely fits an operand slot of the enclosing rule.
+    ///
+    /// The engine exposes `expected_input_cats` (the Param slot categories in
+    /// left-to-right order) but not an item-position→param-index map, so this is
+    /// a MEMBERSHIP check over the rule's operand categories rather than a
+    /// pinpoint per-`item_pos` check. That is sound for the inject (which only
+    /// ADDS a competing reading that dies cleanly if the slot dispatch cannot
+    /// proceed on the current token) and matches every keyword/method-call rule
+    /// whose first operand is a `Proc`/collection nonterminal that a bare-Name
+    /// or extended send can fill. `_item_pos` is accepted for call-site
+    /// symmetry / future pinpointing but not yet consulted.
+    fn binder_slot_accepts_body_category(
+        &self,
+        cat: u16,
+        rule: u16,
+        _item_pos: u8,
+        body_cat: u16,
+    ) -> bool {
+        let Some(entry) = self.engine.action_for(cat, rule) else {
+            return false;
+        };
+        if entry.expected_input_cats.contains(&body_cat) {
+            return true;
+        }
+        // Also admit a body reachable by a declared single-hop coercion into one
+        // of the operand categories (e.g. an Int operand filled by a coercible
+        // numeric body). Keeps the gate general across languages.
+        entry.expected_input_cats.iter().any(|&slot_cat| {
+            slot_cat != body_cat
+                && self
+                    .engine
+                    .single_hop_coercion(body_cat, slot_cat)
+                    .iter()
+                    .any(|&(coercion_cat, _)| coercion_cat == slot_cat)
+        })
     }
 
     fn trigger_unary_wrapper_consumes_structural_close(&self, c_out: u16, rule: u16) -> bool {
@@ -22792,51 +26081,21 @@ where
         let Some((frame_cat, frame_rule, body_start_pos, pred, stack_below_prefix, resume_bp)) =
             self.enclosing_prefix_rule_frame(cursor)
         else {
-            if trace_actions_enabled() {
-                eprintln!(
-                    "[wpds-action] direct prefix waiter skipped: no enclosing frame c_out={} rule={} body_cat={} pos={}",
-                    c_out, cast_rule, body_cat, cursor.pos
-                );
-            }
             return;
         };
         if frame_cat != c_out || frame_rule != cast_rule || body_start_pos != cursor.pos {
-            if trace_actions_enabled() {
-                eprintln!(
-                    "[wpds-action] direct prefix waiter skipped: frame mismatch frame=({},{}) body_start={} expected=({},{}) pos={}",
-                    frame_cat, frame_rule, body_start_pos, c_out, cast_rule, cursor.pos
-                );
-            }
             return;
         }
         let Some((keyword, trigger_lo)) = self.enclosing_prefix_trigger(cursor, c_out, cast_rule)
         else {
-            if trace_actions_enabled() {
-                eprintln!(
-                    "[wpds-action] direct prefix waiter skipped: no trigger c_out={} rule={} pos={}",
-                    c_out, cast_rule, cursor.pos
-                );
-            }
             return;
         };
         if !self.trigger_unary_wrapper_rule_matches(body_cat, c_out, cast_rule, &keyword) {
-            if trace_actions_enabled() {
-                eprintln!(
-                    "[wpds-action] direct prefix waiter skipped: wrapper mismatch frame_kw={:?} c_out={} rule={} body_cat={}",
-                    keyword, c_out, cast_rule, body_cat
-                );
-            }
             return;
         }
         let Some(stack_below_trigger) =
             self.sppf_stack_below_prefix_trigger(cursor, c_out, cast_rule, trigger_lo)
         else {
-            if trace_actions_enabled() {
-                eprintln!(
-                    "[wpds-action] direct prefix waiter skipped: trigger not on stack c_out={} rule={} trigger_lo={} pos={}",
-                    c_out, cast_rule, trigger_lo, cursor.pos
-                );
-            }
             return;
         };
 
@@ -22855,12 +26114,6 @@ where
             resume_bp,
             outer_frame: outer,
         });
-        if trace_actions_enabled() {
-            eprintln!(
-                "[wpds-action] direct prefix waiter parked: body_cat={} start={} c_out={} rule={} trigger_lo={} resume_bp={}",
-                body_cat, body_start_pos, c_out, cast_rule, trigger_lo, resume_bp
-            );
-        }
     }
 
     /// RC-B (2026-06-17): stage a prefix-cast wrap synthesis job at the
@@ -22927,6 +26180,20 @@ where
             .incoming_edge_stack_arena
             .intern_pop(outer.incoming_edge_stack_id);
         outer.sppf_stack_id = stack_below_prefix_body;
+        // GROUP-A SPPF FIX (2026-07-01): same guard as `try_stage_prefix_cast_body_wrap`
+        // — the projection-pop staging variant must ALSO fire only the cast rule
+        // that IS the enclosing prefix-rule frame, never a shorter sibling rule
+        // that shares the trigger keyword. See the detailed rationale on the guard
+        // in `try_stage_prefix_cast_body_wrap` and
+        // docs/design/parser/rc-b-cross-cat-comparison-projection.md §5.1
+        // ("the cast's own delegate lineage" / "+0-cursors"). Genuine RC-B
+        // (`int(...)`) has `outer_rule == cast_rule`, so this is transparent there.
+        // DIAG (2026-07-01, gated; REMOVE before commit).
+        let cast_rules: Vec<u16> =
+            cast_rules.into_iter().filter(|&r| r == outer_rule).collect();
+        if cast_rules.is_empty() {
+            return;
+        }
         for cast_rule in cast_rules {
             self.push_prefix_cast_wrap_job_once(PrefixCastWrapJob {
                 body_sid: body_symbol_id,
@@ -22960,8 +26227,12 @@ where
         let Some(body_cat) = self.sppf_symbol_category(body_symbol_id) else {
             return;
         };
-        let Some((c_out, outer_rule, body_start_pos, pred, stack_below_prefix, resume_bp)) =
-            self.enclosing_prefix_rule_frame(cursor)
+        // DIAG (2026-07-01, gated; REMOVE after GROUP-A arg-list root): log the
+        // enclosing prefix-rule frame (if any) found for a completed body, plus
+        // the unary-wrapper cast_rules for the keyword. Proves whether the
+        // POutput arg-body reconnects to the IntBinProc(rule36) frame.
+        let __encl = self.enclosing_prefix_rule_frame(cursor);
+        let Some((c_out, outer_rule, body_start_pos, pred, stack_below_prefix, resume_bp)) = __encl
         else {
             return;
         };
@@ -22989,6 +26260,35 @@ where
         outer.node = pred;
         outer.incoming_edge_stack_id = stack_below_prefix;
         outer.sppf_stack_id = stack_below_prefix_body;
+        // GROUP-A SPPF FIX (2026-07-01): the RC-B prefix-cast wrap MUST fire only
+        // the cast rule that IS the enclosing prefix-rule frame — never a SHORTER
+        // sibling rule that merely shares the same trigger keyword + first body
+        // slot. The `<-`/`@` LONG-vs-SHORT fork clusters expose this: a LONG rule
+        // (e.g. `InputBindEmptyQuery`, `"<-" n "!" "?" "(" args ")"`, rule 1) and
+        // a SHORT rule (`InputBindEmpty`, `"<-" n`, rule 9) share the `<-` trigger
+        // and the Name body slot. When the LONG rule's Name body resolves, the
+        // enclosing prefix frame is the LONG rule (`outer_rule == 1`), but the
+        // trigger-unary wrapper set for `<-` is the SHORT cast rule 9. Without
+        // this guard the SHORT wrap synthesizes an InputBind and installs it
+        // (StackId with the InputBind on top) back onto the LONG rule's OWN
+        // mid-rule `RuleAt` continuation frame (its slot-2 `!` dispatch) — the
+        // LONG rule then resumes carrying the wrapped InputBind (cat 1) instead
+        // of the raw Name (cat 3) and its slot-2 `!` guard (required_top_cat = 3)
+        // dies (`GUARD-DIE-nocoerce`). That violates the RC-B design's own
+        // "the cast's own delegate lineage" + "+0-cursors" contract
+        // (docs/design/parser/rc-b-cross-cat-comparison-projection.md §5.1): the
+        // wrap must resolve the CAST's own frame, not hijack a longer sibling.
+        // For the genuine RC-B case (`int(b >= 2 <= b >= 3)`) the enclosing
+        // prefix frame IS the `BoolToInt` cast (`outer_rule == cast_rule`), so
+        // this guard is transparent there. GENERAL — keys on the structural
+        // identity (enclosing-frame rule == cast rule), not any keyword/category.
+        // Mirrors the identical guard already present in the DIRECT waiter path
+        // (`try_park_direct_prefix_cast_waiter`: `frame_rule != cast_rule`).
+        let cast_rules: Vec<u16> =
+            cast_rules.into_iter().filter(|&r| r == outer_rule).collect();
+        if cast_rules.is_empty() {
+            return;
+        }
         for cast_rule in cast_rules {
             self.push_prefix_cast_wrap_job_once(PrefixCastWrapJob {
                 body_sid: body_symbol_id,
@@ -23112,6 +26412,7 @@ where
             debug_assert_eq!(waiter.body_cat, body_cat);
             let mut outer = waiter.outer_frame.clone();
             outer.weight = outer.weight.times_ref(&body_weight);
+            // DIAG (2026-07-01, gated; REMOVE after GROUP-A SPPF root):
             staged.push(PrefixCastWrapJob {
                 body_sid: body_symbol_id,
                 body_start_pos: waiter.body_start_pos,
@@ -23127,18 +26428,6 @@ where
                 resume_bp: waiter.resume_bp,
                 outer_frame: outer,
             });
-            if trace_actions_enabled() {
-                let waiter = &self.parked_prefix_cast_waiters[idx];
-                eprintln!(
-                    "[wpds-action] direct prefix waiter matched: body={} body_cat={} span=[{},{}] c_out={} rule={}",
-                    self.sppf_trace_summary(body_symbol_id),
-                    body_cat,
-                    body_lo,
-                    body_hi,
-                    waiter.c_out,
-                    waiter.cast_rule
-                );
-            }
         }
         for job in staged {
             self.push_prefix_cast_wrap_job_once(job);
@@ -23255,7 +26544,9 @@ where
         tokens: &dyn WpdaTokenSource,
         pos: usize,
         count: usize,
-        job: &PrefixCastWrapJob<W>,
+        // `job` is retained for API symmetry with the other cast-wrap helpers;
+        // its sole use was a PRATTAIL_TRACE=actions diagnostic (now stripped).
+        _job: &PrefixCastWrapJob<W>,
     ) -> Vec<usize> {
         if count == 0 {
             return vec![pos];
@@ -23273,12 +26564,6 @@ where
                 continue;
             }
             let successors = self.structural_delimiter_successors(tokens, cur, false);
-            if successors.is_empty() && trace_actions_enabled() {
-                eprintln!(
-                    "[wpds-action] RC-B prefix-cast wrap skipped: no close edge at pos {} for body=sid{} ({},{})",
-                    cur, job.body_sid, job.c_out, job.cast_rule
-                );
-            }
             for next in successors {
                 stack.push((next, consumed.saturating_add(1)));
             }
@@ -23368,12 +26653,6 @@ where
                 }
             }
             if emitted_close_his.is_empty() {
-                if trace_actions_enabled() {
-                    eprintln!(
-                        "[wpds-action] RC-B prefix-cast wrap skipped: no structural close completion for body=sid{} ({},{})",
-                        job.body_sid, job.c_out, job.cast_rule
-                    );
-                }
             }
         }
         out
@@ -23415,12 +26694,6 @@ where
         let children = vec![trigger_sid, job.body_sid];
         // +0-cursor "unfired" guard: bail if this exact cast packing exists.
         if self.sppf.packing_exists(global_rule_idx, &children) {
-            if trace_actions_enabled() {
-                eprintln!(
-                    "[wpds-action] RC-B prefix-cast wrap skipped: packing exists ({},{}) body=sid{} span=[{},{}]",
-                    job.c_out, job.cast_rule, job.body_sid, lo, hi
-                );
-            }
             return None;
         }
         // Token-soundness was proved by `drain_prefix_cast_wrap_jobs` using
@@ -23436,12 +26709,6 @@ where
         {
             Some(value) => value,
             None => {
-                if trace_actions_enabled() {
-                    eprintln!(
-                            "[wpds-action] RC-B prefix-cast wrap skipped: action failed ({},{}) body=sid{}",
-                            job.c_out, job.cast_rule, job.body_sid
-                        );
-                }
                 return None;
             },
         };
@@ -23470,18 +26737,6 @@ where
         acc.pos = job.close_hi;
         acc.inner_state = WpdaState::InfixLoop { cur_bp: job.resume_bp };
         acc.last_action_output_cat = output_cat.or(Some(job.c_out));
-        if trace_actions_enabled() {
-            eprintln!(
-                "[wpds-action] RC-B prefix-cast wrap: fired ({},{}) over body=sid{} -> {} span=[{},{}] resume_bp={}",
-                job.c_out,
-                job.cast_rule,
-                job.body_sid,
-                self.sppf_trace_summary(wrapped_symbol_id),
-                lo,
-                hi,
-                job.resume_bp,
-            );
-        }
         Some(acc)
     }
 
@@ -23506,15 +26761,6 @@ where
         if self.sppf.packing_exists(global_rule_idx, &children) {
             if let Some(wrapped_symbol_id) = self.sppf.symbol_id(coercion_cat as u32, lo, hi) {
                 if self.sppf_symbol_terms.contains_key(&wrapped_symbol_id) {
-                    if trace_actions_enabled() {
-                        eprintln!(
-                            "[wpds-action] coercion reuse cat={} rule={} body={} symbol={}",
-                            coercion_cat,
-                            coercion_rule,
-                            self.sppf_trace_summary(body_symbol_id),
-                            self.sppf_trace_summary(wrapped_symbol_id),
-                        );
-                    }
                     return Some(wrapped_symbol_id);
                 }
             }
@@ -23673,16 +26919,6 @@ where
         if self.category_can_satisfy_expected(rhs_cat, expected_rhs_cat) {
             return true;
         }
-        if trace_actions_enabled() {
-            eprintln!(
-                "[wpds-action] iterative-chain rhs reject cat={} rule={} expected={} produced={} rhs={}",
-                symbol.category_src_idx,
-                symbol.rule_index_in_category,
-                expected_rhs_cat,
-                rhs_cat,
-                self.sppf_trace_summary(rhs_sid),
-            );
-        }
         false
     }
 
@@ -23723,13 +26959,6 @@ where
                 })
                 .unwrap_or(false);
         if transparent_unary_self_wrapper {
-            if trace_actions_enabled() {
-                eprintln!(
-                    "[wpds-action] crosscat projection wrapper elided: body already in host cat={} symbol={}",
-                    wrap_cat,
-                    self.sppf_trace_summary(body_symbol_id)
-                );
-            }
             return None;
         }
         if self.action_accepts_single_body_category(*wrap_cat, *wrap_rule, body_cat) {
@@ -23750,16 +26979,6 @@ where
             })
             .min_by_key(|(_, coercion_rule)| *coercion_rule);
         if let Some((coercion_cat, coercion_rule)) = rebound {
-            if trace_actions_enabled() {
-                eprintln!(
-                    "[wpds-action] crosscat projection wrapper rebound: body_cat={} host_cat={} old_rule={} new_rule={} symbol={}",
-                    body_cat,
-                    coercion_cat,
-                    wrap_rule,
-                    coercion_rule,
-                    self.sppf_trace_summary(body_symbol_id)
-                );
-            }
             return Some(
                 StackSymbolV2::rule_at(coercion_cat, coercion_rule, 0, symbol.bp)
                     .with_kind_return(),
@@ -23942,20 +27161,6 @@ where
             .incoming_edge_stack_arena
             .len(cursor.incoming_edge_stack_id) as u32;
         cursor.inner_state = snap.worker_inner_state.clone();
-        if trace_actions_enabled() {
-            eprintln!(
-                "[wpds-action] cohort revive key=pos:{} src:{} bp:{} wrap=({},{}) dispatch_pos={} hi={} symbol={} state={:?}",
-                pos_at_dispatch,
-                source_src_idx,
-                inner_cur_bp,
-                wrap_cat,
-                wrap_rule,
-                pos_at_dispatch,
-                hi_pos,
-                self.sppf_trace_summary(symbol_id),
-                cursor.inner_state
-            );
-        }
         // Stage 1.5.3R-d: observability counter.
         self.dispatch_cohort_cache.cohort_cursors_emitted_total += 1;
         // Stage 1.5.3R-d: invariant — origin is set IFF depth is set.
@@ -23990,6 +27195,24 @@ where
         if sym.kind == SymbolKind::CategoryEntry {
             if self.gss_node_is_root_sentinel(predecessor) {
                 crate::gss::EdgeKind::CategoryEntryRoot
+            } else if let Some(pred_sym) = self.gss.node(predecessor).map(|n| n.symbol) {
+                // GROUP-A FIX (2026-07-01): a `CategoryEntry` body-parse pushed onto
+                // a `RuleAt` rule frame gets a SELF-DESCRIBING return edge carrying
+                // the caller's slot identity (`PrefixRuleEntry{cat,rule,item_pos}`),
+                // NOT an anonymous `Generic` edge. Otherwise a LONG rule's body-
+                // return edge (e.g. `InputBindEmptyQuery : "<-" n "!" "?" "(" args ")"`
+                // slot-2 return) is indistinguishable-BY-KIND from a sibling SHORT
+                // rule's return edge on a SHARED sub-parse node (the Name after `<-`
+                // is memoized to one node with multiple in-edges), so the shared pop
+                // follows the wrong edge and the LONG rule never resumes its next
+                // slot (`!?(args)` stranded → parse fails). `from_symbol` maps
+                // `RuleAt(item_pos)` → `PrefixRuleEntry{cat,rule,item_pos}`. GENERAL:
+                // every `@`/`<-` LONG-vs-SHORT fork cluster shares this exact shape.
+                if matches!(pred_sym.kind, SymbolKind::RuleAt(_)) {
+                    crate::gss::EdgeKind::from_symbol(&pred_sym)
+                } else {
+                    crate::gss::EdgeKind::Generic
+                }
             } else {
                 crate::gss::EdgeKind::Generic
             }
@@ -24251,6 +27474,59 @@ where
                 }
             }
         }
+        // GAP-9 §1b (2026-06-28): cross-cat-LHS no-op PROJECTION-on-unwind.
+        // BESIDE the `TransparentSourceReentry` wrap above (and BEFORE the
+        // collection splice below, so a collection element reaches the splice
+        // ALREADY in the target category — the `body_cat != ecat` branch then
+        // folds to a no-op). The single cross-cat-LHS delegate
+        // (`CROSSCAT_SINGLE_DELEGATE`, forks.rs) parses the source ONCE and, at
+        // the no-operator unwind, leaves the body in the SOURCE category; the
+        // separate transparent-projection delegate that previously produced the
+        // result Symbol is suppressed, so the projection reading is supplied HERE
+        // instead. The pop being handled is the `CrossCatLhsReentry` edge pushed
+        // at the no-operator re-entry (Case A below): when its single InfixLoop
+        // pass consumes an operator the body already EXITS the source category
+        // (extension reading) and `sppf top == source` is false ⇒ no wrap; when
+        // it consumes NO operator the body stays SOURCE ⇒ wrap projects it. The
+        // `single_hop_coercion(source → wrap_cat) non-empty` gate makes the wrap
+        // fire ONLY where a transparent projection is declared, so a
+        // no-projection cross-cat-LHS (calculator LedTest `Num → Pred` via `==`,
+        // cast towers) hits the empty-coercion gate and dies by evidence exactly
+        // as at baseline. Gated behind `ccl_project_on_unwind` (default-OFF at
+        // G9.0/G9.1; the production default at G9.2). FV:
+        // CastLexForkCrossCatLhsGap project_on_unwind_sound.
+        let mut crosscat_lhs_reentry_error: Option<String> = None;
+        if let (
+            Some(crate::gss::EdgeKind::CrossCatLhsReentry {
+                source_src_idx,
+                origin: Some(origin),
+                ..
+            }),
+            Some(popped),
+        ) = (popped_edge_kind, popped_symbol)
+        {
+            // Copy the Copy fields out so no borrow of `popped_edge_kind`
+            // (and hence, potentially, of `self`) is held across the
+            // `&mut self` wrap call below.
+            let wrap_cat = origin.wrap_cat;
+            let source = *source_src_idx;
+            if popped.kind == SymbolKind::CategoryEntry
+                && self.ccl_project_on_unwind
+                && wrap_cat != u16::MAX
+                && self
+                    .sppf_stack_arena
+                    .top(cursor.sppf_stack_id)
+                    .and_then(|sid| self.sppf_symbol_category(sid))
+                    == Some(source)
+                && !self.engine.single_hop_coercion(source, wrap_cat).is_empty()
+            {
+                if let Err(message) =
+                    self.wrap_transparent_source_reentry_result(cursor, wrap_cat)
+                {
+                    crosscat_lhs_reentry_error = Some(message);
+                }
+            }
+        }
         // Per-child collection splice (keyed on predecessor symbol —
         // differs across children when fan-out lands on different
         // calling contexts).
@@ -24293,7 +27569,10 @@ where
         //     (`cur_bp > 0`) never have CollectionMarker as their
         //     pred — they have Return/MixfixMarker pred — so this
         //     branch only runs at the outermost element-parse level.
-        if transparent_reentry_error.is_none() && pred_id != crate::gss::GSS_NODE_NONE {
+        if transparent_reentry_error.is_none()
+            && crosscat_lhs_reentry_error.is_none()
+            && pred_id != crate::gss::GSS_NODE_NONE
+        {
             // Capture pred metadata (Copy types) under the immutable
             // borrow, then release the borrow so the engine.step query
             // and the mutable splice call can both run.
@@ -24403,11 +27682,54 @@ where
                                 frontier_snap.as_ref(),
                                 cursor.pos,
                                 tokens,
+                                // Splice-gate probe: emit-both only ever turns a
+                                // close into a `Fork` (yield ALONGSIDE the operator
+                                // branches), never into `Advance(Unwinding)`, so the
+                                // `matches!` below is invariant under frame_ctx —
+                                // EMPTY keeps this gate byte-identical.
+                                crate::wpda_runtime::FrameCtx::EMPTY,
                             );
+                            if std::env::var("PRATTAIL_DUMP_SPLICEGATE").is_ok() {
+                                let __top_cat = self
+                                    .sppf_stack_arena
+                                    .top(cursor.sppf_stack_id)
+                                    .and_then(|s| self.sppf_symbol_category(s));
+                                eprintln!(
+                                    "[wpds-action] SPLICE-PROBE pos={} frontier_sym={:?} sppf_top_cat={:?} test_action={:?}",
+                                    cursor.pos,
+                                    frontier_snap.as_ref().map(|n| (n.symbol.category_src_idx, n.symbol.rule_index_in_category, n.symbol.kind)),
+                                    __top_cat,
+                                    test_action,
+                                );
+                            }
+                            // Gap-2 (2026-07-03): `test_action` is produced by the
+                            // SAME `engine.step` InfixLoop handler that now redirects
+                            // a cross-cat CollectionMarker frontier's operator-dispatch
+                            // category to the element category, so this probe correctly
+                            // sees the element's infix/postfix continuation (`Map() * c`
+                            // yields a Fork, not `Advance(Unwinding)`) and defers the
+                            // premature splice. No separate mirror is needed here.
                             matches!(test_action, WpdaStepAction::Advance(WpdaState::Unwinding),)
                         },
                         None => false,
                     };
+                    // Gap-2 DIAG (2026-07-03, gated PRATTAIL_DUMP_SPLICEGATE): log the
+                    // splice-gate decision for a CollectionMarker pop so the
+                    // mixfix-keyword-element (MapEmpty/`Map()`) splice-vs-InfixLoop
+                    // question is directly observable. Inert unless the env var is set.
+                    if std::env::var("PRATTAIL_DUMP_SPLICEGATE").is_ok() {
+                        let __tok = tokens.peek_text(cursor.pos).unwrap_or("");
+                        eprintln!(
+                            "[wpds-action] SPLICE-GATE pos={} popped_kind={:?} should_splice={} next_tok={:?} pred=(c{}:r{} slot{})",
+                            cursor.pos,
+                            popped_symbol.map(|s| s.kind),
+                            should_splice,
+                            __tok,
+                            pred_sym.category_src_idx,
+                            pred_sym.rule_index_in_category,
+                            pred_slot_idx,
+                        );
+                    }
                     if should_splice {
                         // #307 TR ghost (2026-06-17): ELEMENT-CATEGORY SOUNDNESS.
                         // A collection element of declared category `ecat` must be
@@ -24449,27 +27771,80 @@ where
                             )
                         };
                         if let Some(ecat) = __elem_cat {
-                            if let Some(top_sid) = self.sppf_stack_arena.top(cursor.sppf_stack_id) {
-                                if let Some(crate::sppf::SppfNode::Symbol {
-                                    non_terminal_tag,
-                                    ..
-                                }) = self.sppf.node(top_sid)
-                                {
-                                    if *non_terminal_tag as u16 != ecat {
-                                        cursor.inner_state = WpdaState::Error {
-                                            message: format!(
-                                                "collection element-category mismatch: \
-                                                 spliced Symbol nt={} != element cat {} \
-                                                 (rule {}:{} slot {}) — raw cross-cat \
-                                                 element spliced pre-wrap (token-unsound)",
-                                                non_terminal_tag,
-                                                ecat,
-                                                pred_sym.category_src_idx,
-                                                pred_sym.rule_index_in_category,
-                                                pred_slot_idx,
-                                            ),
-                                        };
-                                        return false;
+                            let __body_cat = self
+                                .sppf_stack_arena
+                                .top(cursor.sppf_stack_id)
+                                .and_then(|top_sid| match self.sppf.node(top_sid) {
+                                    Some(crate::sppf::SppfNode::Symbol {
+                                        non_terminal_tag,
+                                        ..
+                                    }) => Some(*non_terminal_tag as u16),
+                                    _ => None,
+                                });
+                            if let Some(body_cat) = __body_cat {
+                                if body_cat != ecat {
+                                    // Cross-cat-LHS-infix completion path (2026-06-27):
+                                    // a collection element whose body arrived in the
+                                    // SOURCE category of a DECLARED ZERO-SPAN projection
+                                    // into the element category (e.g. rhocalc
+                                    // `ForRowSingleNoWhere . b:InputBind |- b`, so a
+                                    // `lhs "<-" n` InputBind projects to a ForRow row) is
+                                    // wrapped by `crosscat_projection_return_for_actual_body`
+                                    // when it pops a CrossCatProjection edge — but a body
+                                    // built via a cross-cat-LHS *infix* (`Name "<-" Name
+                                    // -> InputBind`) reaches the collection splice through
+                                    // a Generic / CrossCatLhsReentry pop UNWRAPPED, so
+                                    // every projected receive row (`for(x <- c)`, quoted
+                                    // binds) was rejected here as an element-category
+                                    // mismatch while the equivalent persistent `<=` row —
+                                    // which has a DIRECT cat-2 rule — worked. Apply the
+                                    // same declared projection here before splicing; this
+                                    // is evidence-driven (the grammar declares the
+                                    // zero-span projection), not a heuristic, and only a
+                                    // genuinely unprojectable mismatch is the token-unsound
+                                    // error below.
+                                    let __projection = self
+                                        .engine
+                                        .single_hop_coercion(body_cat, ecat)
+                                        .iter()
+                                        .copied()
+                                        .find(|(__ccat, __crule)| {
+                                            *__ccat == ecat
+                                                && self
+                                                    .engine
+                                                    .min_terminal_span(*__ccat, *__crule)
+                                                    == 0
+                                                && self.action_accepts_single_body_category(
+                                                    *__ccat, *__crule, body_cat,
+                                                )
+                                        });
+                                    match __projection {
+                                        Some((__proj_cat, __proj_rule)) => {
+                                            let __proj_sym = StackSymbolV2::rule_at(
+                                                __proj_cat,
+                                                __proj_rule,
+                                                0,
+                                                None,
+                                            )
+                                            .with_kind_return();
+                                            self.emit_fire_action(cursor, __proj_sym, tokens);
+                                        },
+                                        None => {
+                                            cursor.inner_state = WpdaState::Error {
+                                                message: format!(
+                                                    "collection element-category mismatch: \
+                                                     spliced Symbol nt={} != element cat {} \
+                                                     (rule {}:{} slot {}) — raw cross-cat \
+                                                     element spliced pre-wrap (token-unsound)",
+                                                    body_cat,
+                                                    ecat,
+                                                    pred_sym.category_src_idx,
+                                                    pred_sym.rule_index_in_category,
+                                                    pred_slot_idx,
+                                                ),
+                                            };
+                                            return false;
+                                        },
                                     }
                                 }
                             }
@@ -24505,6 +27880,28 @@ where
                             effective_new_state = WpdaState::Unwinding;
                         }
                     },
+                    // GROUP-A FIX (2026-06-30): a `CategoryEntry` operand that pops
+                    // back onto a `RuleAt` frame is a MID-RULE slot resume (e.g.
+                    // `InputBindEmptyQuery` after parsing its Name body → resume the
+                    // slot-2 `!` dispatch), NOT an unwind. Previously it fell into the
+                    // catch-all `Some(_) => Unwinding` below, so `cursor_resolution_check`
+                    // reclassified the cursor as `Resolved` and the LONG rule's
+                    // continuation was silently dropped whenever it shared a memoized
+                    // sub-parse with a SHORT sibling rule (the `@`/`<-` LONG-vs-SHORT
+                    // fork clusters: InputBindEmptyQuery/…Quoted*, NQuote/NQuoteShort,
+                    // POutputNil/PPersistOutputNil). Restore the rule-dispatch state from
+                    // the EXACT predecessor RuleAt frame (mirrors the generated
+                    // `Unwinding→RuleAt` recovery, in ONE hop, avoiding the `Resolved`
+                    // sidelining). GENERAL — keys on the structural shape, not any rule.
+                    Some(SymbolKind::RuleAt(_)) => {
+                        let pred_sym = self.gss.node(pred_id).map(|n| n.symbol);
+                        effective_new_state = WpdaState::BinderRule {
+                            result_src_idx: pred_sym.map(|s| s.category_src_idx).unwrap_or(0),
+                            rule_idx: pred_sym.map(|s| s.rule_index_in_category).unwrap_or(0),
+                            body_src_idx: 0,
+                            outer_bp: pred_sym.and_then(|s| s.bp).unwrap_or(0),
+                        };
+                    },
                     Some(_) => {
                         effective_new_state = WpdaState::Unwinding;
                     },
@@ -24515,9 +27912,23 @@ where
                         effective_new_state = WpdaState::Unwinding;
                     },
                 }
+                // DIAG (2026-06-30, gated PRATTAIL_TRACE=actions; REMOVE after
+                // GROUP-A verify): confirm the CategoryEntry-pop recompute chose the
+                // resume state for an InputBind (cat 1) predecessor.
             }
         }
+        // DIAG (2026-07-01, gated; REMOVE after GROUP-A SPPF root): trace EVERY
+        // pop's (popped kind, pred kind, edge, resulting state) when the popped
+        // or pred symbol involves cat 3 (Name) — to see why Branch1's Name
+        // Return pop lands in InfixLoop (forks into mixfix) while Branch2's lands
+        // in Unwinding (pops cleanly).
         if let Some(message) = transparent_reentry_error {
+            effective_new_state = WpdaState::Error { message };
+        }
+        // GAP-9 §1b: surface a failed projection-on-unwind wrap as an Error
+        // state (mirrors the `transparent_reentry_error` application above; the
+        // wrap variable is declared next to the TransparentSourceReentry wrap).
+        if let Some(message) = crosscat_lhs_reentry_error {
             effective_new_state = WpdaState::Error { message };
         }
         if let (
@@ -24604,17 +28015,6 @@ where
                     );
                     self.record_crosscat_lhs_resume_on_cursor_top(cursor, target_resume_bp);
                     effective_new_state = WpdaState::InfixLoop { cur_bp: target_resume_bp };
-                    if trace_actions_enabled() {
-                        eprintln!(
-                            "[wpds-action] crosscat lhs result reenters produced category: source={} produced={} pred={} bp={}",
-                            source_src_idx, produced_cat, pred_id, target_resume_bp
-                        );
-                    }
-                } else if trace_actions_enabled() {
-                    eprintln!(
-                        "[wpds-action] crosscat lhs result exits source: source={} produced={} pred={} state={:?}",
-                        source_src_idx, produced_cat, pred_id, effective_new_state
-                    );
                 }
             }
         }
@@ -25005,6 +28405,13 @@ where
         // data but no consumer reads it yet. Stage 1.3 will use the
         // Resolved entries to short-circuit cohort members.
         if let Some(eid) = edge_id {
+            // CrossCatProjection pops feed the cohort resolve uniformly. The
+            // `@{…} <- c` / `@{…}!(q)` quoted-binder span bug is NOT addressed
+            // here (an earlier inline-pop kill-switch experiment was reverted as
+            // a no-op); the true fix is at the NQuoteShort realize, where the
+            // span anchor collects the ambiguously-owned `@` trigger by
+            // frame-start position (see `collect_suffix_with_preceding_while`
+            // caller in `emit_fire_action`).
             if let Some(crate::gss::EdgeKind::CrossCatProjection {
                 source_src_idx,
                 inner_cur_bp,
@@ -25080,19 +28487,6 @@ where
                                 dispatch_pos_usize,
                                 snap,
                             );
-                            if trace_actions_enabled() {
-                                eprintln!(
-                                    "[wpds-action] cohort resolve key=pos:{} src:{} bp:{} wrap=({},{}) hi={} symbol={} outcome={:?}",
-                                    dispatch_pos_usize,
-                                    source_src_idx,
-                                    inner_cur_bp,
-                                    wrap_cat,
-                                    wrap_rule,
-                                    cursor.pos,
-                                    self.sppf_trace_summary(symbol_id),
-                                    outcome
-                                );
-                            }
                             match outcome {
                                 crate::dispatch_cohort::ResolveOutcome::FirstResolve => {
                                     self.pending_cohort_drain_keys.insert(key);
@@ -25464,6 +28858,7 @@ impl<W: SemiringRef> WpdaEngine<W> for IdleEngine {
         _frontier_top: Option<&WpdaGssNode>,
         _pos: usize,
         _tokens: &dyn WpdaTokenSource,
+        _frame_ctx: crate::wpda_runtime::FrameCtx,
     ) -> WpdaStepAction<W> {
         WpdaStepAction::Idle
     }
@@ -25758,13 +29153,12 @@ const TRACE_STEPS: u8 = 1;
 const TRACE_CURSORS: u8 = 2;
 const TRACE_MERGES: u8 = 4;
 const TRACE_DROPS: u8 = 8;
-const TRACE_ACTIONS: u8 = 16;
-const TRACE_ALL: u8 = TRACE_STEPS | TRACE_CURSORS | TRACE_MERGES | TRACE_DROPS | TRACE_ACTIONS;
+const TRACE_ALL: u8 = TRACE_STEPS | TRACE_CURSORS | TRACE_MERGES | TRACE_DROPS;
 
 /// Reads `PRATTAIL_TRACE` env var on construction:
 /// - empty/unset → all bits 0, no output (still cheap-skips).
 /// - `"1"` or `"all"` → all bits set.
-/// - comma list `"steps,cursors,merges,drops,actions"` → bitwise OR of named flags.
+/// - comma list `"steps,cursors,merges,drops"` → bitwise OR of named flags.
 fn parse_trace_env() -> u8 {
     let raw = std::env::var("PRATTAIL_TRACE").unwrap_or_default();
     if raw.is_empty() {
@@ -25780,17 +29174,140 @@ fn parse_trace_env() -> u8 {
             "cursors" => bits |= TRACE_CURSORS,
             "merges" => bits |= TRACE_MERGES,
             "drops" => bits |= TRACE_DROPS,
-            "actions" => bits |= TRACE_ACTIONS,
             _ => {},
         }
     }
     bits
 }
 
+/// ROOT-P Layer-S entry gate (throwaway diagnostic, `GRIND_SPLICE=1`): trace
+/// every `.*sep` / collection element seal at `emit_splice_into_collection`
+/// — the pre-pop `sppf_stack_id` (base+inner), the sealed element Symbol
+/// `top`, and the post-pop `sppf_stack_id` — so a post-processor can confirm
+/// (a) that a `bs.*sep("&")` REPETITION OPERAND actually flows through this
+/// splice (design-cycle-2 premise), and (b) whether the residual `<-` inner
+/// divergence is on the pre-seal stack chain (re-rootable) as the design's
+/// CLASS-2 model claims. Cached OnceLock — one relaxed load when off.
 #[inline]
-fn trace_actions_enabled() -> bool {
+fn grind_splice_enabled() -> bool {
     static GATE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *GATE.get_or_init(|| (parse_trace_env() & TRACE_ACTIONS) != 0)
+    *GATE.get_or_init(|| std::env::var("GRIND_SPLICE").is_ok())
+}
+
+/// Master compile-time kill-switch for the P1 IN-PLACE D&C `.*sep`
+/// reconvergence attempt (ROOT-P `<-` linearization, Plan ad4b660e, 2026-07-05).
+/// `false` ⇒ the baseline carrier (`collection_loop_edge_baseline`) is never
+/// captured and the Site-A/Site-B edge-stack resets never fire, so behavior is
+/// BYTE-IDENTICAL to the pre-fix baseline (verified: `@x<-@y & …` k=0..3 gives
+/// the identical alts=1 ladder [84, 629, 1544, 13047] OFF).
+///
+/// ★ EMPIRICALLY REFUTED — LABELED CONTROL, DO NOT FLIP TO `true`.
+/// Flipping ON (`PRATTAIL_SEP_RECONVERGE=on`) BREAKS the monolithic ForRow
+/// parse: `@x<-@y & …` yields `total_alts=0` (NO accepting derivation) at every
+/// k≥1 AND stays exponential (1479/5669/35866). ROOT CAUSE (data-driven, A/B
+/// causal): resetting `incoming_edge_stack_id` in place DESYNCS the per-cursor
+/// edge-stack from its GSS node, so `cursor_gss_pop_via_edge` (which routes pops
+/// off the CONCRETE per-cursor edge top; `CrossCatLhs` is identity-strict and
+/// "must not be erased") pops to the wrong node → the `.*sep`→ForRow return pop
+/// fails. The edge-stack cannot be reset in place without also resetting the
+/// node+position — which is precisely what the P2 ISOLATION approach does by
+/// construction (fresh `new_for_category` walker per segment), and which the
+/// Stage-0 measurement PROVED is linear (Σ = 84·(k+1)) AND sound (isolated ==
+/// monolithic alt set incl. d=3). The carrier + gate plumbing is retained
+/// gate-OFF as a documented scientific control per the mandate ("document even
+/// what does not work"; "any revert = labeled control"). The linearizing fix is
+/// P2 isolation, wired at the parse facade — NOT this in-place reset.
+///
+/// Runtime env `PRATTAIL_SEP_RECONVERGE=on` forces it ON (and `=off` OFF),
+/// mirroring [`crate::gss::NODE_CLASS_COARSEN_ENABLED`] — retained only so the
+/// A/B refutation control stays reproducible.
+pub const SEP_RECONVERGE_ENABLED: bool = false;
+
+/// Runtime resolution of the `.*sep` reconvergence switch: the const gates it
+/// OFF unless explicitly overridden. Cached in a `OnceLock` (single env read).
+///   - const `false` (Stage 1): OFF unless `PRATTAIL_SEP_RECONVERGE=on`.
+///   - const `true`  (post-flip): ON  unless `PRATTAIL_SEP_RECONVERGE=off`.
+#[inline]
+pub fn sep_reconverge_active() -> bool {
+    static GATE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *GATE.get_or_init(|| match std::env::var("PRATTAIL_SEP_RECONVERGE") {
+        Ok(v) if v.eq_ignore_ascii_case("on") || v == "1" => true,
+        Ok(v) if v.eq_ignore_ascii_case("off") || v == "0" => false,
+        _ => SEP_RECONVERGE_ENABLED,
+    })
+}
+
+/// ★ BCC SHADOW gate (`PRATTAIL_BCC_SHADOW=1`; Plan afde9c48, Stage 0). Enables
+/// the DECISIVE S0-G-LINEAR + gravest S0-G-Cont measurement at the merge tier —
+/// the BCC-coarsened (M4-sealed) bucketing run in parallel to the real one,
+/// walker-stats only, byte-identical. Consulted ONLY by `bcc_shadow_measure`
+/// (walker-stats-gated), so the function is gated too — no dead code off-feature.
+#[cfg(feature = "walker-stats")]
+#[inline]
+fn bcc_shadow_enabled() -> bool {
+    static GATE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *GATE.get_or_init(|| std::env::var("PRATTAIL_BCC_SHADOW").is_ok())
+}
+
+/// BCC SHADOW per-step trace gate (`PRATTAIL_BCC_SHADOW=trace`): prints a
+/// per-merge `[bcc-shadow]` line for the offline peak-per-step k-scaling series.
+#[cfg(feature = "walker-stats")]
+#[inline]
+fn bcc_shadow_trace_enabled() -> bool {
+    static GATE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *GATE.get_or_init(|| {
+        std::env::var("PRATTAIL_BCC_SHADOW")
+            .map(|v| v.eq_ignore_ascii_case("trace"))
+            .unwrap_or(false)
+    })
+}
+
+/// ★ DW SHADOW gate (`PRATTAIL_DW_SHADOW=1`; Plan aaf070b3 /
+/// DESCRIPTOR_WORKLIST_DESIGN.md, Stage 0). Enables the DECISIVE 3-way gate —
+/// S0-DW-LINEAR (the `R` reconvergence linearizes) + S0-DW-SOUND (pop-target +
+/// seal-type conflicts both 0) + RT-7 tripwire (dw_return_fires >= k). The
+/// DW-reconverged bucketing runs in parallel to the real merge, walker-stats
+/// only, byte-identical. Consulted ONLY by `dw_shadow_measure` (walker-stats-
+/// gated), so the function is gated too — no dead code off-feature.
+#[cfg(feature = "walker-stats")]
+#[inline]
+fn dw_shadow_enabled() -> bool {
+    static GATE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *GATE.get_or_init(|| std::env::var("PRATTAIL_DW_SHADOW").is_ok())
+}
+
+/// DW SHADOW per-step trace gate (`PRATTAIL_DW_SHADOW=trace`): prints a per-merge
+/// `[dw-shadow]` line for the offline peak-per-step k-scaling series.
+#[cfg(feature = "walker-stats")]
+#[inline]
+fn dw_shadow_trace_enabled() -> bool {
+    static GATE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *GATE.get_or_init(|| {
+        std::env::var("PRATTAIL_DW_SHADOW")
+            .map(|v| v.eq_ignore_ascii_case("trace"))
+            .unwrap_or(false)
+    })
+}
+
+/// S0-G1 node-creation PROBE gate (`PRATTAIL_COARSEN_PROBE=1`). Logs every
+/// push-chokepoint `get_or_create_node` with its pushed symbol + derived
+/// `node_class`. MEASURE-ONLY (pure `eprintln!`), so it lives in the default
+/// build without a feature gate — one relaxed `OnceLock` load when off.
+#[inline]
+fn coarsen_probe_enabled() -> bool {
+    static GATE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *GATE.get_or_init(|| std::env::var("PRATTAIL_COARSEN_PROBE").is_ok())
+}
+
+/// ★ S0-G-Cont PROBE gate (`PRATTAIL_BCC_PROBE=1`; BCC, Plan afde9c48, Stage 0).
+/// Logs the two `@a` cross-cat readings' pushed element category + N_cont class
+/// at the delegate so the two-category-viability (seal-to-one-continuation)
+/// question is answered from ground truth. MEASURE-ONLY (pure `eprintln!`) — in
+/// the default build without a feature gate, one relaxed `OnceLock` load off.
+#[inline]
+fn bcc_probe_enabled() -> bool {
+    static GATE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *GATE.get_or_init(|| std::env::var("PRATTAIL_BCC_PROBE").is_ok())
 }
 
 /// Env-gated stderr trace consumer for ad-hoc debugging.
@@ -26028,7 +29545,15 @@ where
             .ok()
             .and_then(|s| s.parse::<usize>().ok())
             .unwrap_or(default_max_steps);
-        if EnvTracingConsumer::from_env().is_active() {
+        // DIAG (2026-07-01, gated PRATTAIL_TRACE_STRICT; REMOVE after GROUP-A
+        // arg-list root): the normal env-active branch below flips to the
+        // NON-accepting-stop driver under tracing (so trace output is
+        // exhaustive), which HIDES the single-result `stop_when_accepting`
+        // path we are debugging. When PRATTAIL_TRACE_STRICT=1, keep the
+        // accepting-stop driver even while tracing so the trace reflects the
+        // ACTUAL failing single-result path.
+        let __force_strict = std::env::var("PRATTAIL_TRACE_STRICT").is_ok();
+        if EnvTracingConsumer::from_env().is_active() && !__force_strict {
             self.run_to_end_of_input_env_aware(max_steps, tokens)
         } else {
             self.run_to_end_of_input_until_accepting(max_steps, tokens)
@@ -26142,6 +29667,7 @@ mod tests {
             _frontier_top: Option<&WpdaGssNode>,
             _pos: usize,
             _tokens: &dyn WpdaTokenSource,
+            _frame_ctx: crate::wpda_runtime::FrameCtx,
         ) -> WpdaStepAction<LexicographicWeight> {
             self.script
                 .borrow_mut()
@@ -26160,6 +29686,7 @@ mod tests {
             _frontier_top: Option<&WpdaGssNode>,
             _pos: usize,
             _tokens: &dyn WpdaTokenSource,
+            _frame_ctx: crate::wpda_runtime::FrameCtx,
         ) -> WpdaStepAction<LexicographicWeight> {
             let config_seen = crate::recovery_cohort::with_active_recovery_config(|config| {
                 config.max_recovery_depth == 0
@@ -26384,6 +29911,7 @@ mod tests {
             _frontier_top: Option<&WpdaGssNode>,
             _pos: usize,
             _tokens: &dyn WpdaTokenSource,
+            _frame_ctx: crate::wpda_runtime::FrameCtx,
         ) -> WpdaStepAction<LexicographicWeight> {
             WpdaStepAction::Idle
         }
@@ -26459,6 +29987,7 @@ mod tests {
                 bp: None,
                 kind: SymbolKind::Return,
                 coll_dispatch_bp: None,
+                goal_src_idx: None,
             },
         });
         assert!(
@@ -26674,7 +30203,7 @@ mod tests {
             .register(dispatch_key.clone(), lex(0.0, 0, 0));
         w.dispatch_cohort_cache.crosswrap_drained.insert(
             crate::dispatch_cohort::CrossWrapDrainKey {
-                dispatch_key: dispatch_key.clone(),
+                dispatch_key: dispatch_key.cache_key(),
                 symbol_id: 1,
                 member_id: 1,
                 coercion: None,
@@ -27214,6 +30743,7 @@ mod tests {
                 _frontier_top: Option<&WpdaGssNode>,
                 _pos: usize,
                 _tokens: &dyn WpdaTokenSource,
+                _frame_ctx: crate::wpda_runtime::FrameCtx,
             ) -> WpdaStepAction<LexicographicWeight> {
                 self.calls.set(self.calls.get().saturating_add(1));
                 WpdaStepAction::Idle
@@ -27262,6 +30792,7 @@ mod tests {
                 _frontier_top: Option<&WpdaGssNode>,
                 _pos: usize,
                 _tokens: &dyn WpdaTokenSource,
+                _frame_ctx: crate::wpda_runtime::FrameCtx,
             ) -> WpdaStepAction<LexicographicWeight> {
                 self.calls.set(self.calls.get().saturating_add(1));
                 WpdaStepAction::Idle
@@ -27917,6 +31448,7 @@ mod tests {
             frontier_top: Option<&WpdaGssNode>,
             _pos: usize,
             tokens: &dyn WpdaTokenSource,
+            _frame_ctx: crate::wpda_runtime::FrameCtx,
         ) -> WpdaStepAction<LexicographicWeight> {
             match state {
                 WpdaState::Ready { min_bp } => WpdaStepAction::Push {
@@ -27993,6 +31525,7 @@ mod tests {
             _frontier_top: Option<&WpdaGssNode>,
             _pos: usize,
             _tokens: &dyn WpdaTokenSource,
+            _frame_ctx: crate::wpda_runtime::FrameCtx,
         ) -> WpdaStepAction<LexicographicWeight> {
             WpdaStepAction::Idle
         }
@@ -28373,6 +31906,7 @@ mod tests {
             _frontier_top: Option<&WpdaGssNode>,
             _pos: usize,
             _tokens: &dyn WpdaTokenSource,
+            _frame_ctx: crate::wpda_runtime::FrameCtx,
         ) -> WpdaStepAction<LexicographicWeight> {
             WpdaStepAction::Idle
         }
@@ -28402,7 +31936,14 @@ mod tests {
         count: usize,
     ) {
         for i in 0..count {
-            let key = crate::dispatch_cohort::DispatchKey::new(i, 7, 0, 2, 16);
+            // ROOT-P design-cycle-3: give each seeded orphan a DISTINCT grammar
+            // axis (`source_src_idx = i`) as well as a distinct pos, so each is
+            // its OWN cohort-cache entry (a fresh `WorkerInserted`) in BOTH the
+            // pos-quotient-ON and -OFF modes. This keeps the large-orphan-set
+            // revival path under test independent of whether `pos` is a cache
+            // key axis (the pre-quotient version relied on distinct `pos` alone,
+            // which the quotient collapses onto one entry + the 16-member cap).
+            let key = crate::dispatch_cohort::DispatchKey::new(i, i as u16, 0, 2, 16);
             assert!(matches!(
                 walker
                     .dispatch_cohort_cache
@@ -28749,6 +32290,7 @@ mod tests {
             _frontier_top: Option<&WpdaGssNode>,
             _pos: usize,
             _tokens: &dyn WpdaTokenSource,
+            _frame_ctx: crate::wpda_runtime::FrameCtx,
         ) -> WpdaStepAction<LexicographicWeight> {
             self.script
                 .borrow_mut()
@@ -29183,6 +32725,7 @@ mod tests {
                 _frontier_top: Option<&WpdaGssNode>,
                 _pos: usize,
                 _tokens: &dyn WpdaTokenSource,
+                _frame_ctx: crate::wpda_runtime::FrameCtx,
             ) -> WpdaStepAction<LexicographicWeight> {
                 self.script
                     .borrow_mut()
@@ -29609,6 +33152,7 @@ mod tests {
             frontier_top: Option<&WpdaGssNode>,
             pos: usize,
             tokens: &dyn WpdaTokenSource,
+            _frame_ctx: crate::wpda_runtime::FrameCtx,
         ) -> WpdaStepAction<LexicographicWeight> {
             let target_cat = frontier_top.map(|node| node.symbol.category_src_idx);
             let token_text = tokens.peek_text(pos).unwrap_or("");
@@ -29672,6 +33216,7 @@ mod tests {
             frontier_top: Option<&WpdaGssNode>,
             pos: usize,
             tokens: &dyn WpdaTokenSource,
+            _frame_ctx: crate::wpda_runtime::FrameCtx,
         ) -> WpdaStepAction<LexicographicWeight> {
             let cat = frontier_top.map(|node| node.symbol.category_src_idx);
             let token_text = tokens.peek_text(pos).unwrap_or("");

@@ -340,26 +340,18 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
         // Arms inside `match frame { ... }` for non-Visit frames:
         let mut pda_reduce_arms: Vec<TokenStream> = Vec::new();
 
-        // PDA literal arm
+        // PDA literal arm. `n` is bound by reference, so the payload is cloned
+        // out. `n.clone()` resolves to the payload type's `Clone` and is correct
+        // for every native type — Copy primitives (compiled to a bitwise copy),
+        // string/collection wrappers, and non-Copy structs (e.g. the
+        // `Arc<…ZipperLit>` payloads of RhoCalc's ReadZipper/WriteZipper) alike.
         if !has_literal_rule {
-            let nt = NativeType::from_syn_type(native_type);
-            let try_literal_arm = if nt.is_string() {
-                quote! { #category::#literal_label(n) => Some(n.clone()), }
-            } else if is_collection_for_eval {
-                quote! { #category::#literal_label(n) => Some(n.clone()), }
-            } else {
-                quote! { #category::#literal_label(n) => Some(*n), }
-            };
-            try_eval_arms.push(try_literal_arm);
-
-            let pda_literal_arm = if nt.is_string() {
-                quote! { #category::#literal_label(n) => values.push(n.clone()), }
-            } else if is_collection_for_eval {
-                quote! { #category::#literal_label(n) => values.push(n.clone()), }
-            } else {
-                quote! { #category::#literal_label(n) => values.push(*n), }
-            };
-            pda_visit_arms.push(pda_literal_arm);
+            try_eval_arms.push(quote! {
+                #category::#literal_label(n) => Some(n.clone()),
+            });
+            pda_visit_arms.push(quote! {
+                #category::#literal_label(n) => values.push(n.clone()),
+            });
         }
         try_eval_arms.push(quote! {
             #category::#var_label(_) => None,

@@ -114,6 +114,8 @@ pub enum CollectionKind {
     HashSet,
     Vec,
     HashMap,
+    /// Rholang 1.4 (main): PathMap literal `{| k: v |}` → `mettail_runtime::PathMapLit`.
+    PathMap,
 }
 
 // ─── Cross-category dispatch rules ────────────────────────────────────────

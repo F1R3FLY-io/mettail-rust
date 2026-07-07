@@ -18,8 +18,8 @@ use crate::automata::{
     minimize::minimize_dfa,
     nfa::{build_nfa_with_custom, BuiltinNeeds},
     partition::compute_equivalence_classes,
-    subset::subset_construction,
-    TerminalPattern, TokenKind,
+    subset::{subset_construction, subset_construction_with_reserved},
+    ReservedKeywords, TerminalPattern, TokenKind,
 };
 use crate::{CustomTokenSpec, LiteralPatterns};
 
@@ -37,6 +37,11 @@ pub struct LexerInput {
     pub custom_tokens: Vec<CustomTokenSpec>,
     /// Named lexer modes (each gets its own NFA-to-DFA pipeline).
     pub modes: Vec<LexerModeInput>,
+    /// Reserved keyword token kinds (PIECE 3, keyword reservation). When a
+    /// primary DFA accept is a reserved keyword, the generic `Ident`
+    /// co-accept is dropped during subset construction. Empty by default →
+    /// byte-identical lexer for languages that do not opt in.
+    pub reserved_kinds: ReservedKeywords,
 }
 
 /// Input for a single named lexer mode's NFA-to-DFA pipeline.
@@ -98,8 +103,8 @@ pub fn generate_lexer(input: &LexerInput) -> (TokenStream, LexerStats) {
     let partition = compute_equivalence_classes(&nfa);
     let num_equiv_classes = partition.num_classes;
 
-    // Step 3: Subset construction (NFA → DFA)
-    let dfa = subset_construction(&nfa, &partition);
+    // Step 3: Subset construction (NFA → DFA), applying keyword reservation.
+    let dfa = subset_construction_with_reserved(&nfa, &partition, &input.reserved_kinds);
     let num_dfa_states = dfa.states.len();
 
     // Step 4: Minimize DFA. When both float and fixed-point literals are used, Hopcroft
@@ -210,8 +215,8 @@ pub fn generate_lexer_as_string(input: &LexerInput) -> (String, LexerStats) {
     let partition = compute_equivalence_classes(&nfa);
     let num_equiv_classes = partition.num_classes;
 
-    // Step 3: Subset construction (NFA → DFA)
-    let dfa = subset_construction(&nfa, &partition);
+    // Step 3: Subset construction (NFA → DFA), applying keyword reservation.
+    let dfa = subset_construction_with_reserved(&nfa, &partition, &input.reserved_kinds);
     let num_dfa_states = dfa.states.len();
 
     // Step 4: Minimize DFA (see `generate_lexer` — skip minimization when float + fixed overlap).
@@ -336,7 +341,7 @@ pub fn generate_lexer_as_string_hybrid(
     stage!("compute_equiv_classes.done", num_equiv_classes);
 
     stage!("subset_construction.start");
-    let dfa = subset_construction(&nfa, &partition);
+    let dfa = subset_construction_with_reserved(&nfa, &partition, &input.reserved_kinds);
     let num_dfa_states = dfa.states.len();
     stage!("subset_construction.done", num_dfa_states);
 
@@ -584,6 +589,9 @@ pub fn extract_terminals(
         literal_patterns: LiteralPatterns::default(),
         custom_tokens: Vec::new(),
         modes: Vec::new(),
+        // Populated by the caller (`generate_lexer_code_with_map`) from the
+        // language's reservation policy; empty here → no reservation.
+        reserved_kinds: ReservedKeywords::none(),
     }
 }
 

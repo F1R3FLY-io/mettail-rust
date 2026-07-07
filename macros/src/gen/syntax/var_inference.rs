@@ -437,7 +437,9 @@ fn generate_var_inference_arm(
                             .any(|c| c.to_string() == element_type.to_string())
                         {
                             let kind = match coll_type {
-                                CollectionType::HashBag | CollectionType::HashMap => {
+                                CollectionType::HashBag
+                                | CollectionType::HashMap
+                                | CollectionType::PathMap => {
                                     InferFieldKind::HashBag
                                 },
                                 CollectionType::Vec => InferFieldKind::Vec,
@@ -675,7 +677,9 @@ fn generate_var_type_inference_arm(
                             .any(|c| c.to_string() == element_type.to_string())
                         {
                             let kind = match coll_type {
-                                CollectionType::HashBag | CollectionType::HashMap => {
+                                CollectionType::HashBag
+                                | CollectionType::HashMap
+                                | CollectionType::PathMap => {
                                     InferFieldKind::HashBag
                                 },
                                 CollectionType::Vec => InferFieldKind::Vec,

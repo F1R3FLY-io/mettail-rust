@@ -355,7 +355,7 @@ fn collection_walk(name: TokenStream, coll: &CollectionType) -> TokenStream {
                 __elt._collect_uniform_flags(has_auto_inj, has_native_lit);
             }
         },
-        CollectionType::HashMap => quote! {
+        CollectionType::HashMap | CollectionType::PathMap => quote! {
             for (__k, __v) in #name.iter() {
                 __k._collect_uniform_flags(has_auto_inj, has_native_lit);
                 __v._collect_uniform_flags(has_auto_inj, has_native_lit);

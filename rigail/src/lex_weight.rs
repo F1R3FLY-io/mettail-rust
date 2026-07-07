@@ -164,8 +164,33 @@ use crate::{
 // LexicographicWeight
 // ══════════════════════════════════════════════════════════════════════════════
 
-/// Four-component lexicographic weight: primary tropical cost + three integer
-/// tiebreaks. Order: `primary > lex_alt_idx > src_idx > rule_idx`.
+/// Five-component lexicographic weight: primary tropical cost + longest-open
+/// length + three integer tiebreaks.
+/// Order: `primary > open_len > lex_alt_idx > src_idx > rule_idx`.
+///
+/// GEN-2 longest-open-token (2026-06-29): added `open_len`, the byte length of
+/// the OPEN token a lex-fork branch matched at a prefix dispatch. A LONGER
+/// matched open wins (the maximal-munch / longest-match lexing principle),
+/// compared in REVERSE — but as the FIRST TIE-BREAKER BELOW `primary` (see the
+/// Cluster D fix note on `lex_cmp`), so it only decides when the primary tropical
+/// costs are EQUAL. This resolves the empty-collection prefix-fork ambiguity
+/// (`{||}`): the Pathmap `{|` open (len 2) and the PPar `{` open (len 1) readings
+/// TIE on `primary`, so `open_len` elects the longer open. Default `0` means "no
+/// open-length preference" — ALL non-fork call sites (`lex_w`, `from_cost`, …)
+/// leave it `0`, so among themselves they tie on `open_len` and fall through to
+/// the integer tiebreaks (behaviorally unchanged). Only the prefix lex-fork
+/// branches (via `lex_w_with_len` / `lex_w_alt_with_len`) carry a non-zero
+/// `open_len`. Ambiguity is preserved (both forks are still emitted; only the
+/// single-result winner, ON A PRIMARY TIE, becomes the longest-open branch).
+///
+/// HISTORICAL NOTE (2026-06-29 → 2026-07-01): GEN-2 originally placed `open_len`
+/// as the HIGHEST-priority component (above `primary`). Combined with the
+/// whole-derivation MAX-projection in `times`, that let any longer-open lex-fork
+/// branch dominate the entire single-result EOI comparison regardless of cost,
+/// mis-parsing `bitnot 5 + bitnot 6 : BigRat` (ambiguous len-6 `bitnot` keyword
+/// vs ident) into cast-heavy `bigint(…)` wrappers, and diverged from the
+/// primary-first FV model in `SingleResultDominanceSubsumption.v`. `open_len` was
+/// demoted to the first tie-breaker below `primary`.
 ///
 /// L1 (2026-04-28): added `lex_alt_idx` for lex-time disambiguation. When a
 /// DFA's `alt_accepts` slice contains 2+ TokenKinds at the same byte position,
@@ -182,6 +207,11 @@ use crate::{
 /// See module docs for the semantic justification of left-projection times.
 #[derive(Clone, Copy, PartialEq)]
 pub struct LexicographicWeight {
+    /// GEN-2 longest-open length: byte length of the open token matched by a
+    /// lex-fork branch (LONGER wins; compared in reverse, highest priority).
+    /// `0` (the default for every non-fork site) means "no open-length
+    /// preference" — ties fall through to `primary`.
+    pub open_len: u16,
     /// Primary cost — tropical (lower is better).
     pub primary: TropicalWeight,
     /// Lex-alternative index within a DFA accept state (L1, lower wins).
@@ -284,10 +314,12 @@ pub const BP_TIER_MIXFIX: f64 = 0.20;
 pub const BP_TIER_PASS2C_SYNTHESIZED: f64 = 0.15;
 
 impl LexicographicWeight {
-    /// Construct a weight with the given components. Sets `lex_alt_idx` to 0.
+    /// Construct a weight with the given components. Sets `lex_alt_idx` to 0
+    /// and `open_len` to 0 (no open-length preference).
     #[inline]
     pub const fn new(primary: TropicalWeight, src_idx: u16, rule_idx: u16) -> Self {
         LexicographicWeight {
+            open_len: 0,
             primary,
             lex_alt_idx: 0,
             src_idx,
@@ -295,7 +327,7 @@ impl LexicographicWeight {
         }
     }
 
-    /// Construct a weight with explicit lex-alt index.
+    /// Construct a weight with explicit lex-alt index. `open_len` is 0.
     #[inline]
     pub const fn new_with_lex(
         primary: TropicalWeight,
@@ -303,14 +335,15 @@ impl LexicographicWeight {
         src_idx: u16,
         rule_idx: u16,
     ) -> Self {
-        LexicographicWeight { primary, lex_alt_idx, src_idx, rule_idx }
+        LexicographicWeight { open_len: 0, primary, lex_alt_idx, src_idx, rule_idx }
     }
 
     /// Construct a weight from a raw tropical cost and indices.
-    /// Sets `lex_alt_idx` to 0 (default — no lex ambiguity).
+    /// Sets `lex_alt_idx` to 0 (default — no lex ambiguity) and `open_len` to 0.
     #[inline]
     pub const fn from_cost(cost: f64, src_idx: u16, rule_idx: u16) -> Self {
         LexicographicWeight {
+            open_len: 0,
             primary: TropicalWeight::new(cost),
             lex_alt_idx: 0,
             src_idx,
@@ -320,7 +353,7 @@ impl LexicographicWeight {
 
     /// Construct a weight with explicit `lex_alt_idx` for lex-fork branches.
     /// L1 (2026-04-28): used by the lex-Fork emission path (L6) when a DFA
-    /// position has multiple accepting `TokenKind` alternatives.
+    /// position has multiple accepting `TokenKind` alternatives. `open_len` is 0.
     #[inline]
     pub const fn from_cost_with_lex(
         cost: f64,
@@ -329,6 +362,7 @@ impl LexicographicWeight {
         lex_alt_idx: u16,
     ) -> Self {
         LexicographicWeight {
+            open_len: 0,
             primary: TropicalWeight::new(cost),
             lex_alt_idx,
             src_idx,
@@ -336,16 +370,59 @@ impl LexicographicWeight {
         }
     }
 
-    /// Lex-comparison: primary, then lex_alt_idx, then src_idx, then rule_idx.
+    /// GEN-2 longest-open-token (2026-06-29): return a copy of this weight with
+    /// `open_len` set to the byte length of the open token a lex-fork branch
+    /// matched. A LONGER open wins over a shorter one (highest-priority,
+    /// reverse-compared component), so the longest-match prefix is preferred at
+    /// a prefix dispatch (e.g. Pathmap `{|` over PPar `{`). Among equal-length
+    /// opens the `primary` BP tier breaks the tie unchanged.
+    #[inline]
+    pub const fn with_open_len(mut self, open_len: u16) -> Self {
+        self.open_len = open_len;
+        self
+    }
+
+    /// Lex-comparison: open_len (REVERSE — longer wins), then primary, then
+    /// lex_alt_idx, then src_idx, then rule_idx.
     ///
     /// Returns `Ordering::Less` for the lexicographically smaller weight
     /// (the "better" parse under our priority rules).
+    ///
+    /// GEN-2 longest-open-token: `open_len` breaks ties as the FIRST tie-breaker
+    /// BELOW `primary` and in REVERSE (`other.cmp(self)`), so a LARGER `open_len`
+    /// wins (maximal munch) ONLY when the primary tropical costs are EQUAL.
+    ///
+    /// Cluster D fix (2026-07-01): `open_len` was previously compared ABOVE
+    /// `primary` (highest priority), which — combined with the whole-derivation
+    /// MAX-projection in `times` — let ANY derivation that took a longer-open
+    /// lex-fork branch DOMINATE the entire EOI single-result comparison,
+    /// regardless of primary cost. That broke `bitnot 5 + bitnot 6 : BigRat`:
+    /// the `bitnot` token lexes ambiguously (`Fixed("bitnot")` len 6 vs `Ident`
+    /// len 6), so cast-heavy readings that went through the len-6 lex-fork
+    /// (`bigint(bitnot 5) + bitnot bigint(6)`, primary 0.3) dominated the clean
+    /// non-fork reading (`bitnot 5 + bitnot 6`, primary 0.1) purely on
+    /// `open_len 6 > 0`. It ALSO diverged from the FV model in
+    /// `formal/rocq/prattail_wpda_runtime/theories/SingleResultDominanceSubsumption.v`
+    /// (which models `lex_cmp` as `compare primary` then, on `Eq`, the integer
+    /// triple — i.e. primary-first — and whose single-result dominance-under-⊗
+    /// theorem relies on that order).
+    ///
+    /// Placing `open_len` as the first tie-breaker BELOW `primary` preserves the
+    /// intended empty-collection disambiguation (`{||}`): the Pathmap `{|` (len 2)
+    /// and PPar `{` (len 1) readings TIE on `primary`, so `open_len` still elects
+    /// the longer open — but a genuine primary-cost DIFFERENCE (cluster D) now
+    /// decides first, so a longer-open branch can no longer override a cheaper
+    /// parse. With the default `open_len == 0` everywhere off the prefix
+    /// lex-fork, this leg ties and the comparison falls through to the integer
+    /// tiebreaks exactly as before.
     #[inline]
     pub fn lex_cmp(&self, other: &Self) -> Ordering {
         // TropicalWeight uses f64 internally; use total_cmp for NaN safety.
         self.primary
             .0
             .total_cmp(&other.primary.0)
+            // Longer open wins on a primary tie ⇒ reverse: larger open_len = Less.
+            .then_with(|| other.open_len.cmp(&self.open_len))
             .then(self.lex_alt_idx.cmp(&other.lex_alt_idx))
             .then(self.src_idx.cmp(&other.src_idx))
             .then(self.rule_idx.cmp(&other.rule_idx))
@@ -368,7 +445,8 @@ impl Ord for LexicographicWeight {
 
 impl std::hash::Hash for LexicographicWeight {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        // Hash via bit pattern of primary plus the three indices.
+        // Hash via bit pattern of primary plus the open length and three indices.
+        self.open_len.hash(state);
         self.primary.0.to_bits().hash(state);
         self.lex_alt_idx.hash(state);
         self.src_idx.hash(state);
@@ -380,6 +458,7 @@ impl Semiring for LexicographicWeight {
     #[inline]
     fn zero() -> Self {
         LexicographicWeight {
+            open_len: 0,
             primary: TropicalWeight::zero(),
             lex_alt_idx: u16::MAX,
             src_idx: u16::MAX,
@@ -390,6 +469,7 @@ impl Semiring for LexicographicWeight {
     #[inline]
     fn one() -> Self {
         LexicographicWeight {
+            open_len: 0,
             primary: TropicalWeight::one(),
             lex_alt_idx: u16::MAX,
             src_idx: u16::MAX,
@@ -416,12 +496,28 @@ impl Semiring for LexicographicWeight {
     /// real tiebreak.
     #[inline]
     fn times(&self, other: &Self) -> Self {
+        // GEN-2 longest-open-token: `open_len` is MAX-projected (the LONGEST
+        // open token matched ANYWHERE along the derivation path survives),
+        // NOT left-projected like the other tiebreaks. Rationale: the walker
+        // composes a fork branch as the RIGHT operand
+        // (`cursor.weight.times(&branch.weight)`), and a longer-open branch
+        // (e.g. Pathmap `{|`, cost 0.025) — or worse, a shorter-open branch
+        // whose cost is exactly tropical `one()` (PPar `{`, cost 0.0, which
+        // would otherwise hit the identity short-circuit) — must not lose its
+        // matched-open length. MAX is applied through the identity
+        // short-circuit so it is preserved regardless of which operand is the
+        // multiplicative identity. Identity laws still hold because `one()`
+        // carries `open_len == 0` (`max(0, x) == x`), and MAX is associative
+        // and distributes over the lex-min `⊕` (which selects the larger
+        // `open_len` first), so the semiring axioms are preserved.
+        let open_len = self.open_len.max(other.open_len);
         if self.is_one() {
-            *other
+            LexicographicWeight { open_len, ..*other }
         } else if other.is_one() {
-            *self
+            LexicographicWeight { open_len, ..*self }
         } else {
             LexicographicWeight {
+                open_len,
                 primary: self.primary.times(&other.primary),
                 lex_alt_idx: self.lex_alt_idx,
                 src_idx: self.src_idx,
@@ -441,7 +537,8 @@ impl Semiring for LexicographicWeight {
     }
 
     fn approx_eq(&self, other: &Self, epsilon: f64) -> bool {
-        self.primary.approx_eq(&other.primary, epsilon)
+        self.open_len == other.open_len
+            && self.primary.approx_eq(&other.primary, epsilon)
             && self.lex_alt_idx == other.lex_alt_idx
             && self.src_idx == other.src_idx
             && self.rule_idx == other.rule_idx
@@ -469,8 +566,8 @@ impl fmt::Debug for LexicographicWeight {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "LexWeight(primary={:?}, lex_alt={}, src={}, rule={})",
-            self.primary, self.lex_alt_idx, self.src_idx, self.rule_idx
+            "LexWeight(open_len={}, primary={:?}, lex_alt={}, src={}, rule={})",
+            self.open_len, self.primary, self.lex_alt_idx, self.src_idx, self.rule_idx
         )
     }
 }
@@ -479,8 +576,8 @@ impl fmt::Display for LexicographicWeight {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "({}, lex#{}, src#{}, rule#{})",
-            self.primary.0, self.lex_alt_idx, self.src_idx, self.rule_idx
+            "(open{}, {}, lex#{}, src#{}, rule#{})",
+            self.open_len, self.primary.0, self.lex_alt_idx, self.src_idx, self.rule_idx
         )
     }
 }
@@ -516,6 +613,7 @@ impl TropicalDeltaWeight for LexicographicWeight {
         // weights.
         let delta_primary = (post.primary.0 - pre.primary.0).max(0.0);
         LexicographicWeight {
+            open_len: post.open_len,
             primary: TropicalWeight(delta_primary),
             lex_alt_idx: post.lex_alt_idx,
             src_idx: post.src_idx,

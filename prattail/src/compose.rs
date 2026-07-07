@@ -626,6 +626,7 @@ pub fn compose_many(specs: &[&LanguageSpec]) -> Result<LanguageSpec, Vec<Composi
             tree_invariants: Vec::new(),
             refinement_types: Vec::new(),
             guard_config: None,
+            reservation_policy: crate::ReservationPolicy::default(),
         });
     }
 
@@ -1149,6 +1150,7 @@ mod tests {
             tree_invariants: Vec::new(),
             refinement_types: Vec::new(),
             guard_config: None,
+            reservation_policy: crate::ReservationPolicy::default(),
         }
     }
 
@@ -1282,6 +1284,7 @@ mod tests {
             tree_invariants: Vec::new(),
             refinement_types: Vec::new(),
             guard_config: None,
+            reservation_policy: crate::ReservationPolicy::default(),
         };
 
         let err = compose_languages(&spec_a, &spec_b).expect_err("should fail");
@@ -1532,6 +1535,7 @@ mod tests {
             tree_invariants: Vec::new(),
             refinement_types: Vec::new(),
             guard_config: None,
+            reservation_policy: crate::ReservationPolicy::default(),
         };
 
         let merged = compose_languages(&spec_a, &spec_b).expect("composition should succeed");
@@ -1620,6 +1624,7 @@ mod tests {
                 tree_invariants: Vec::new(),
                 refinement_types: Vec::new(),
                 guard_config: None,
+                reservation_policy: crate::ReservationPolicy::default(),
             };
             // Manually set prefix_precedence to simulate user override
             spec.rules[0].prefix_precedence = Some(10);
@@ -1662,6 +1667,7 @@ mod tests {
                 tree_invariants: Vec::new(),
                 refinement_types: Vec::new(),
                 guard_config: None,
+                reservation_policy: crate::ReservationPolicy::default(),
             };
             spec.rules[0].prefix_precedence = Some(20);
             spec
@@ -1717,6 +1723,7 @@ mod tests {
                 tree_invariants: Vec::new(),
                 refinement_types: Vec::new(),
                 guard_config: None,
+                reservation_policy: crate::ReservationPolicy::default(),
             };
             spec.rules[0].prefix_precedence = Some(10);
             spec
@@ -1757,6 +1764,7 @@ mod tests {
                 tree_invariants: Vec::new(),
                 refinement_types: Vec::new(),
                 guard_config: None,
+                reservation_policy: crate::ReservationPolicy::default(),
             };
             spec.rules[0].prefix_precedence = Some(10);
             spec

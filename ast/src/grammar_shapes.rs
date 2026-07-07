@@ -34,7 +34,8 @@
 //! `semantic_actions.rs` is needed for the shared shape recognizers.
 
 use crate::grammar::{GrammarRule, SyntaxExpr, TermParam};
-use crate::types::TypeExpr;
+use crate::types::{EvalMode, TypeExpr};
+use std::collections::HashSet;
 
 /// Recognized shape of a unary-prefix rule.
 ///
@@ -163,6 +164,250 @@ pub fn classify_simple_projection_shape(rule: &GrammarRule) -> Option<SimpleProj
     }
 
     Some(SimpleProjectionShape { source_category, target_category })
+}
+
+/// Recognized shape of a **fold-alias** (sugar) rule: a `fold` rule whose
+/// `![...]` action is a PURE constructor re-wrap of its own parameters into a
+/// canonical node of the rule's own category.
+///
+/// Returned by [`classify_fold_alias_shape`] when ALL of the following hold:
+/// - `eval_mode == Some(EvalMode::Fold)` and the rule carries a `![...]` code
+///   block (`rust_code`),
+/// - `term_context` is present and entirely `Simple { ty: Base(_) }` params
+///   (no collection `Vec(..)` / binder `^[..]` / optional params), and
+/// - the code block, after unwrapping a single-tail-expression block, is a
+///   tree composed ONLY of:
+///   - category-variant constructor calls `Type::Variant(args…)` (PascalCase
+///     last segment),
+///   - smart-pointer wraps `Arc::new(…)` / `Box::new(…)` / `Rc::new(…)`,
+///   - nullary-variant paths (e.g. `Proc::PZero`), and
+///   - `param.clone()` leaves over the rule's own parameters,
+///   rooted at a constructor of the rule's OWN category whose variant is NOT
+///   the rule's own label (so a self-reconstruction / identity fold is rejected
+///   and reconstruction terminates).
+///
+/// ## Examples (RhoCalc)
+///
+/// Classified (sugar ≡ a structural re-wrap of its fold target):
+/// - `POutputShort . p:Proc, q:Proc |- "@" p "!" "(" q ")" : Proc
+///   ![{ Proc::POutput(Arc::new(Name::NQuote(Arc::new(p.clone()))),
+///   Arc::new(q.clone())) }] fold;`  re-wraps to `POutput(NQuote(p), q)`.
+/// - `NQuoteShort . p:Proc |- "@" p : Name ![{ Name::NQuote(Arc::new(p.clone()))
+///   }] fold;`  re-wraps to `NQuote(p)`.
+/// - `NQuoteNil . |- "@" "Nil" : Name ![{ Name::NQuote(Arc::new(Proc::PZero)) }]
+///   fold;`  re-wraps to `NQuote(PZero)`.
+///
+/// NOT classified (conservatively excluded — never collapse non-equivalent reads):
+/// - `POutputQuoted` — calls `name_pattern_to_proc(&n)` (a non-constructor fn).
+/// - `PForUser` / `GuardThen` / `CommWhere` — call helper fns and/or have a
+///   `Vec(..)` param.
+/// - `PPersistOutput2Plus`, `InputBindPolyadic` — `let`-block building a `Vec`.
+/// - `NParen` — identity `n.clone()` (root is not a constructor call).
+/// - `InputBind` / `InputBindQuoted` / … — self-fold (root variant == label).
+///
+/// ## Used by
+///
+/// `semantic_hash` codegen (`macros/.../term_ops/semantic_hash.rs`): a
+/// fold-alias variant hashes its RECONSTRUCTED canonical node, so the runtime
+/// realize-dedup collapses a sugar reading with its fold target (both are
+/// eval-identical — e.g. `@("c")!(q)` parsed as `POutputShort(c, q)` vs
+/// `POutput(NQuote(c), q)`). The fold body IS the evaluator's own action, so
+/// canonicalizing only sugar≡target is observational-equivalence-preserving by
+/// construction; genuinely distinct sends keep distinct parameters and so keep
+/// distinct hashes.
+#[derive(Debug, Clone)]
+pub struct FoldAliasShape {
+    /// The category produced by the fold (== `rule.category`, == the root
+    /// constructor's type segment).
+    pub target_category: String,
+}
+
+/// Classify a `GrammarRule` as a [`FoldAliasShape`], if it matches. See the
+/// struct docs for the full predicate. Returns `None` for the common case
+/// (non-fold rules, computational folds, collection/binder folds, self-folds).
+pub fn classify_fold_alias_shape(rule: &GrammarRule) -> Option<FoldAliasShape> {
+    // (1) Must be a `fold` rule carrying a `![...]` code block.
+    if rule.eval_mode != Some(EvalMode::Fold) {
+        return None;
+    }
+    let code = &rule.rust_code.as_ref()?.code;
+
+    // (2) All term-context params must be `Simple { ty: Base(_) }` — the basis
+    // for the trivial 1:1 field↔param mapping the reconstruction relies on.
+    // Excludes collection (`Vec(..)`) and binder (`^[..]`) rules.
+    let tc = rule.term_context.as_ref()?;
+    let mut param_names: HashSet<String> = HashSet::with_capacity(tc.len());
+    for p in tc {
+        match p {
+            TermParam::Simple { name, ty: TypeExpr::Base(_) } => {
+                param_names.insert(name.to_string());
+            },
+            _ => return None,
+        }
+    }
+
+    // (3) The body must be a pure constructor re-wrap rooted at a constructor of
+    // the rule's OWN category, whose variant is not the rule's own label.
+    let cat = rule.category.to_string();
+    let label = rule.label.to_string();
+    if !is_fold_alias_root(code, &cat, &label, &param_names) {
+        return None;
+    }
+
+    Some(FoldAliasShape { target_category: cat })
+}
+
+/// Unwrap a `{ tail_expr }` block / parenthesization / invisible group down to
+/// its single inner expression. Returns `None` when the block has any
+/// statement (e.g. a `let`) or is not exactly one tail expression — such bodies
+/// are never pure re-wraps.
+fn unwrap_single_expr(expr: &syn::Expr) -> Option<&syn::Expr> {
+    match expr {
+        syn::Expr::Block(b) if b.block.stmts.len() == 1 => match &b.block.stmts[0] {
+            // syn 2.x: a trailing tail expression is `Stmt::Expr(_, None)`.
+            syn::Stmt::Expr(inner, None) => unwrap_single_expr(inner),
+            _ => None,
+        },
+        syn::Expr::Paren(p) => unwrap_single_expr(&p.expr),
+        syn::Expr::Group(g) => unwrap_single_expr(&g.expr),
+        other => Some(other),
+    }
+}
+
+/// The ROOT of a fold-alias body: must be a constructor call
+/// `root_cat::Variant(args…)` where `Variant != rule_label` (rejects identity /
+/// self-folds and guarantees reconstruction terminates) and every argument is a
+/// pure re-wrap node.
+fn is_fold_alias_root(
+    expr: &syn::Expr,
+    root_cat: &str,
+    rule_label: &str,
+    params: &HashSet<String>,
+) -> bool {
+    let Some(e) = unwrap_single_expr(expr) else {
+        return false;
+    };
+    match e {
+        syn::Expr::Call(call) => match constructor_path(&call.func) {
+            Some((type_seg, variant_seg))
+                if type_seg == root_cat && variant_seg != rule_label =>
+            {
+                call.args.iter().all(|a| is_fold_alias_node(a, params))
+            },
+            _ => false,
+        },
+        _ => false,
+    }
+}
+
+/// A pure re-wrap node (recursive): a category-variant constructor call, a
+/// smart-pointer `new`, a `param.clone()` leaf, a nullary-variant path, or a
+/// bare param reference. Anything else (free-function calls, `let`/closures/
+/// control flow, other method calls, references) makes the body impure.
+fn is_fold_alias_node(expr: &syn::Expr, params: &HashSet<String>) -> bool {
+    match expr {
+        syn::Expr::Call(call) => {
+            // `Arc::new(x)` / `Box::new(x)` / `Rc::new(x)` — recurse the wrapped expr.
+            if is_smart_ptr_new(&call.func) {
+                return call.args.len() == 1 && is_fold_alias_node(&call.args[0], params);
+            }
+            // `Type::Variant(args…)` — a constructor of any category. Recurse args.
+            if constructor_path(&call.func).is_some() {
+                return call.args.iter().all(|a| is_fold_alias_node(a, params));
+            }
+            false
+        },
+        // `param.clone()` — the only permitted method call.
+        syn::Expr::MethodCall(mc) => {
+            mc.method == "clone" && mc.args.is_empty() && is_param_ref(&mc.receiver, params)
+        },
+        // A nullary-variant path (`Proc::PZero`) or a bare param reference.
+        syn::Expr::Path(p) => {
+            is_nullary_variant_path(&p.path) || is_single_ident_in(&p.path, params)
+        },
+        syn::Expr::Paren(p) => is_fold_alias_node(&p.expr, params),
+        syn::Expr::Group(g) => is_fold_alias_node(&g.expr, params),
+        _ => false,
+    }
+}
+
+/// If `func` is a `≥2`-segment path whose LAST segment is a PascalCase
+/// identifier with no generic arguments, return `(second_last_segment,
+/// last_segment)` — interpreted as a `Type::Variant` enum constructor. Returns
+/// `None` for free functions (snake_case last segment) and single-segment paths.
+fn constructor_path(func: &syn::Expr) -> Option<(String, String)> {
+    let syn::Expr::Path(p) = func else {
+        return None;
+    };
+    let segs = &p.path.segments;
+    if segs.len() < 2 {
+        return None;
+    }
+    let last = segs.last()?;
+    if !matches!(last.arguments, syn::PathArguments::None) {
+        return None;
+    }
+    let last_str = last.ident.to_string();
+    if !is_pascal_case(&last_str) {
+        return None;
+    }
+    let type_seg = segs[segs.len() - 2].ident.to_string();
+    Some((type_seg, last_str))
+}
+
+/// Whether `func` is `Arc::new` / `Box::new` / `Rc::new` (possibly fully
+/// qualified, e.g. `std::sync::Arc::new`).
+fn is_smart_ptr_new(func: &syn::Expr) -> bool {
+    let syn::Expr::Path(p) = func else {
+        return false;
+    };
+    let segs = &p.path.segments;
+    if segs.len() < 2 {
+        return false;
+    }
+    if segs.last().map(|s| s.ident == "new").unwrap_or(false) {
+        let owner = segs[segs.len() - 2].ident.to_string();
+        return owner == "Arc" || owner == "Box" || owner == "Rc";
+    }
+    false
+}
+
+/// A path expression naming a nullary enum variant: `≥2` segments, last is a
+/// PascalCase identifier with no generic arguments (e.g. `Proc::PZero`).
+fn is_nullary_variant_path(path: &syn::Path) -> bool {
+    let segs = &path.segments;
+    if segs.len() < 2 {
+        return false;
+    }
+    segs.last()
+        .map(|s| {
+            matches!(s.arguments, syn::PathArguments::None) && is_pascal_case(&s.ident.to_string())
+        })
+        .unwrap_or(false)
+}
+
+/// Whether `expr` is a bare single-ident path naming one of `params` (the
+/// receiver position of an admissible `param.clone()`).
+fn is_param_ref(expr: &syn::Expr, params: &HashSet<String>) -> bool {
+    match expr {
+        syn::Expr::Path(p) => is_single_ident_in(&p.path, params),
+        syn::Expr::Paren(p) => is_param_ref(&p.expr, params),
+        syn::Expr::Group(g) => is_param_ref(&g.expr, params),
+        _ => false,
+    }
+}
+
+/// Whether `path` is a single identifier contained in `params`.
+fn is_single_ident_in(path: &syn::Path, params: &HashSet<String>) -> bool {
+    path.get_ident().map(|id| params.contains(&id.to_string())).unwrap_or(false)
+}
+
+/// A PascalCase (UpperCamelCase) identifier starts with an ASCII uppercase
+/// letter — the convention that separates enum-variant constructors
+/// (`POutput`, `NQuote`, `PZero`) from free functions (`name_pattern_to_proc`,
+/// `new`, `clone`).
+fn is_pascal_case(s: &str) -> bool {
+    s.chars().next().map(|c| c.is_ascii_uppercase()).unwrap_or(false)
 }
 
 #[cfg(test)]
@@ -313,5 +558,120 @@ mod tests {
             vec![SyntaxExpr::Literal("-".to_string()), SyntaxExpr::Param(ident("b"))],
         );
         assert!(classify_unary_prefix_shape(&rule).is_none());
+    }
+
+    // ── classify_fold_alias_shape ────────────────────────────────────────────
+
+    /// Build a `fold` rule with a `![code]` action body for the fold-alias tests.
+    fn fold_rule(
+        label: &str,
+        category: &str,
+        term_context: Vec<TermParam>,
+        code: syn::Expr,
+    ) -> GrammarRule {
+        let mut rule = make_rule(label, category, term_context, Vec::new());
+        rule.rust_code = Some(crate::types::RustCodeBlock { code });
+        rule.eval_mode = Some(crate::types::EvalMode::Fold);
+        rule
+    }
+
+    #[test]
+    fn detects_poutputshort_fold_alias() {
+        // POutputShort . p:Proc, q:Proc |- "@" p "!" "(" q ")" : Proc
+        //   ![{ Proc::POutput(Arc::new(Name::NQuote(Arc::new(p.clone()))),
+        //                     Arc::new(q.clone())) }] fold;
+        let rule = fold_rule(
+            "POutputShort",
+            "Proc",
+            vec![simple_param("p", "Proc"), simple_param("q", "Proc")],
+            syn::parse_quote! {{
+                Proc::POutput(
+                    std::sync::Arc::new(Name::NQuote(std::sync::Arc::new(p.clone()))),
+                    std::sync::Arc::new(q.clone()),
+                )
+            }},
+        );
+        let shape = classify_fold_alias_shape(&rule).expect("POutputShort is a fold-alias");
+        assert_eq!(shape.target_category, "Proc");
+    }
+
+    #[test]
+    fn detects_nquotenil_zero_param_fold_alias() {
+        // NQuoteNil . |- "@" "Nil" : Name ![{ Name::NQuote(Arc::new(Proc::PZero)) }] fold;
+        let rule = fold_rule(
+            "NQuoteNil",
+            "Name",
+            Vec::new(),
+            syn::parse_quote! {{ Name::NQuote(std::sync::Arc::new(Proc::PZero)) }},
+        );
+        let shape = classify_fold_alias_shape(&rule).expect("NQuoteNil is a fold-alias");
+        assert_eq!(shape.target_category, "Name");
+    }
+
+    #[test]
+    fn rejects_self_fold_identity() {
+        // A fold whose root reconstructs its OWN variant must be rejected (it is
+        // identity-shaped and would make hash-reconstruction non-terminating).
+        let rule = fold_rule(
+            "InputBindQuoted",
+            "InputBind",
+            vec![simple_param("pat", "Proc"), simple_param("n", "Name")],
+            syn::parse_quote! {{
+                InputBind::InputBindQuoted(
+                    std::sync::Arc::new(pat.clone()),
+                    std::sync::Arc::new(n.clone()),
+                )
+            }},
+        );
+        assert!(classify_fold_alias_shape(&rule).is_none());
+    }
+
+    #[test]
+    fn rejects_helper_fn_fold() {
+        // POutputQuoted calls `name_pattern_to_proc(&n)` — a non-constructor fn —
+        // so it is NOT a pure re-wrap and must be rejected.
+        let rule = fold_rule(
+            "POutputQuoted",
+            "Proc",
+            vec![simple_param("n", "Name"), simple_param("q", "Proc")],
+            syn::parse_quote! {{
+                Proc::POutput(
+                    std::sync::Arc::new(Name::NQuote(std::sync::Arc::new(
+                        crate::rhocalc::receive::name_pattern_to_proc(&n),
+                    ))),
+                    std::sync::Arc::new(q.clone()),
+                )
+            }},
+        );
+        assert!(classify_fold_alias_shape(&rule).is_none());
+    }
+
+    #[test]
+    fn rejects_non_fold_rule() {
+        // Same body, but `eval_mode` is not `Fold` ⇒ not a fold-alias.
+        let mut rule = fold_rule(
+            "NQuoteShort",
+            "Name",
+            vec![simple_param("p", "Proc")],
+            syn::parse_quote! {{ Name::NQuote(std::sync::Arc::new(p.clone())) }},
+        );
+        rule.eval_mode = None;
+        assert!(classify_fold_alias_shape(&rule).is_none());
+        // With a `Fold` mode it IS a fold-alias (positive control).
+        rule.eval_mode = Some(crate::types::EvalMode::Fold);
+        assert!(classify_fold_alias_shape(&rule).is_some());
+    }
+
+    #[test]
+    fn rejects_wrong_root_category_fold() {
+        // The root constructor must produce the rule's OWN category. A `Name`-
+        // category rule whose body builds a `Proc` is rejected.
+        let rule = fold_rule(
+            "Weird",
+            "Name",
+            vec![simple_param("p", "Proc")],
+            syn::parse_quote! {{ Proc::POutput(std::sync::Arc::new(p.clone()), std::sync::Arc::new(p.clone())) }},
+        );
+        assert!(classify_fold_alias_shape(&rule).is_none());
     }
 }

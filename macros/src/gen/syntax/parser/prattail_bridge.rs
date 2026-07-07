@@ -12,6 +12,7 @@
 use std::collections::HashSet;
 
 use crate::gen::native::native_type_to_full_string;
+use crate::gen::runtime::wpda_codegen::collection::kv_sep_for;
 use mettail_ast::{
     grammar::{GrammarItem, GrammarRule, NonTerminalKind, PatternOp, SyntaxExpr, TermParam},
     language::{AttributeValue, LanguageDef},
@@ -20,8 +21,8 @@ use mettail_ast::{
 use mettail_prattail::{
     binding_power::Associativity, grammar::ir::CollectionKind, BeamWidthConfig, CategorySpec,
     CustomTokenSpec, LanguageSpec, LexerModeSpec, LiteralPatterns, RefinementPredKind,
-    RefinementTypeSpec, RuleSpecInput, SyncConstraintSpec, SyncSpec, SyntaxItemSpec,
-    TreeInvariantSpec,
+    RefinementTypeSpec, ReservationPolicy, RuleSpecInput, SyncConstraintSpec, SyncSpec,
+    SyntaxItemSpec, TreeInvariantSpec,
 };
 
 /// Convert a `LanguageDef` to a PraTTaIL `LanguageSpec`.
@@ -56,6 +57,15 @@ pub fn language_def_to_spec(language: &LanguageDef) -> LanguageSpec {
         .map(|rule| convert_rule(rule, &cat_names))
         .collect();
 
+    // PIECE 3 (keyword reservation): collect the *ident-shaped* collection-open
+    // delimiters (e.g. `Set` from a `Set( … )` literal, as opposed to bracket
+    // openers like `[`, `{`, `#{`). Such an opener is a grammar keyword AND the
+    // constructor token of a collection literal; the collection-literal parser
+    // needs it to remain lexable as an identifier, so reserving it would break
+    // `Set( … )`. These are escalated to the reservation policy's `contextual`
+    // opt-out set — grammar-derived, general, no per-language hardcode.
+    let mut contextual_collection_openers: HashSet<String> = HashSet::new();
+
     // Synthesize collection-literal rules (`ListLit`, `BagLit`, `MapLit`)
     // for every `![Vec<T>] as Cat` / `![HashBag<T>] as Cat` /
     // `![HashMap<K,V>] as Cat` declaration. The merge plan B.1 specifies
@@ -70,32 +80,27 @@ pub fn language_def_to_spec(language: &LanguageDef) -> LanguageSpec {
         let Some(ref ck) = lt.collection_kind else {
             continue;
         };
-        let (open, close, sep, kv, kind, label) = match ck {
-            mettail_ast::language::CollectionCategory::List(d) => (
-                d.open.clone(),
-                d.close.clone(),
-                d.sep.clone(),
-                d.key_val_sep.clone(),
-                CollectionKind::Vec,
-                "ListLit",
-            ),
-            mettail_ast::language::CollectionCategory::Bag(d) => (
-                d.open.clone(),
-                d.close.clone(),
-                d.sep.clone(),
-                d.key_val_sep.clone(),
-                CollectionKind::HashBag,
-                "BagLit",
-            ),
-            mettail_ast::language::CollectionCategory::Map(d) => (
-                d.open.clone(),
-                d.close.clone(),
-                d.sep.clone(),
-                d.key_val_sep.clone(),
-                CollectionKind::HashMap,
-                "MapLit",
-            ),
+        // Stage 2 (2026-06-27): read the delimiters through the single
+        // delimiters() accessor; only the irreducible variant → (kind, label)
+        // mapping stays a per-variant match.
+        let d = ck.delimiters();
+        let (kind, label) = match ck {
+            mettail_ast::language::CollectionCategory::List(_) => (CollectionKind::Vec, "ListLit"),
+            mettail_ast::language::CollectionCategory::Bag(_) => {
+                (CollectionKind::HashBag, "BagLit")
+            },
+            mettail_ast::language::CollectionCategory::Map(_) => {
+                (CollectionKind::HashMap, "MapLit")
+            },
+            mettail_ast::language::CollectionCategory::Set(_) => {
+                (CollectionKind::HashSet, "SetLit")
+            },
+            mettail_ast::language::CollectionCategory::Pathmap(_) => {
+                (CollectionKind::PathMap, "PathmapLit")
+            },
         };
+        let (open, close, sep, kv) =
+            (d.open.clone(), d.close.clone(), d.sep.clone(), d.key_val_sep.clone());
         // Resolve element category from the collection's payload type.
         // For Vec<Proc>/HashBag<Proc>, that's Proc; for HashMap<K, V>
         // the element is the key category — the map's `key_val_separator`
@@ -112,6 +117,15 @@ pub fn language_def_to_spec(language: &LanguageDef) -> LanguageSpec {
         // making empty `[]` and non-default delimiters unparseable.
         let trimmed_open = open.trim_end_matches('(').to_string();
         let needs_synth_paren = open != trimmed_open;
+        // If the opener is lexically an identifier (e.g. `Set`), it collides
+        // with the identifier pattern and would be reserved under `auto`;
+        // record it as a contextual opt-out so the collection literal keeps
+        // parsing (grammar-derived; bracket openers like `[`/`{` are skipped).
+        if !trimmed_open.is_empty()
+            && trimmed_open.chars().all(|c| c.is_alphanumeric() || c == '_')
+        {
+            contextual_collection_openers.insert(trimmed_open.clone());
+        }
         let mut syntax = Vec::with_capacity(4);
         syntax.push(SyntaxItemSpec::Terminal(trimmed_open));
         if needs_synth_paren {
@@ -159,6 +173,29 @@ pub fn language_def_to_spec(language: &LanguageDef) -> LanguageSpec {
                 AttributeValue::Str(s) => s.clone(),
                 _ => unreachable!("log_semiring_model_path type validated at parse time"),
             });
+
+    // PIECE 3: keyword-reservation policy. `auto` reserves identifier-shaped
+    // keyword terminals (default-reserve modeling); `none` (the default when
+    // the option is absent) retains full ambiguity for Fortran-style
+    // languages. Validated at parse time (ast/language/parse.rs).
+    //
+    // Under `auto`, ident-shaped collection-open delimiters (e.g. `Set`) are
+    // escalated to the `contextual` opt-out so `Set( … )` literals keep
+    // parsing — the grammar-derived global-vs-contextual decision (see the
+    // S0-kw-no-break measurement: reserving `Set` broke `Set(1,2,3).size()`
+    // et al. while every bracket-delimited collection was unaffected).
+    let reservation_policy = match language.options.get("reserved_keywords") {
+        Some(AttributeValue::Keyword(kw)) => match kw.as_str() {
+            "auto" => ReservationPolicy {
+                mode: mettail_prattail::ReservationMode::Auto,
+                contextual: contextual_collection_openers,
+            },
+            "none" => ReservationPolicy::none(),
+            _ => unreachable!("reserved_keywords keyword validated at parse time"),
+        },
+        None => ReservationPolicy::none(),
+        _ => unreachable!("reserved_keywords type validated at parse time"),
+    };
 
     let semantic_dependency_groups = collect_semantic_dependency_groups(language);
 
@@ -380,6 +417,7 @@ pub fn language_def_to_spec(language: &LanguageDef) -> LanguageSpec {
     spec.modes = modes;
     spec.sync = sync;
     spec.tree_invariants = tree_invariants;
+    spec.reservation_policy = reservation_policy;
 
     // Convert refinement type definitions from the macros AST to the pipeline spec.
     spec.refinement_types = language
@@ -989,7 +1027,9 @@ fn convert_grammar_items(
                 delimiters,
             } => {
                 let kind = match coll_type {
-                    CollectionType::HashBag | CollectionType::HashMap => CollectionKind::HashBag,
+                    CollectionType::HashBag
+                    | CollectionType::HashMap
+                    | CollectionType::PathMap => CollectionKind::HashBag,
                     CollectionType::HashSet => CollectionKind::HashSet,
                     CollectionType::Vec => CollectionKind::Vec,
                 };
@@ -1055,22 +1095,32 @@ fn find_collection_info(
                 if let TypeExpr::Collection { coll_type, element, .. } = ty {
                     let elem_cat = extract_base_category(element);
                     let kind = match coll_type {
-                        CollectionType::HashBag | CollectionType::HashMap => {
+                        CollectionType::HashBag
+                        | CollectionType::HashMap
+                        | CollectionType::PathMap => {
                             CollectionKind::HashBag
                         },
                         CollectionType::HashSet => CollectionKind::HashSet,
                         CollectionType::Vec => CollectionKind::Vec,
                     };
-                    let kv = match coll_type {
-                        CollectionType::HashMap => Some(":".to_string()),
-                        _ => None,
-                    };
+                    // Stage 3 (2026-06-27): lexer-terminal kv-source routed
+                    // through the single `kv_sep_for` resolver. An inline term-
+                    // context collection type carries no declared delimiters, so
+                    // `declared = None` ⇒ per-type default (`HashMap`/`PathMap`
+                    // ⇒ `":"`, else `None`) — byte-identical to the former match.
+                    let kv = kv_sep_for(coll_type, None);
                     return (elem_cat, kind, kv);
                 }
                 if let TypeExpr::Map { value, .. } = ty {
                     // Phase 4 #5b (2026-05-12): `HashMap(K, V)` Map type.
+                    // Stage 3 (2026-06-27): kv via `kv_sep_for(HashMap, None)` ⇒
+                    // `Some(":")`, byte-identical to the former literal.
                     let elem_cat = extract_base_category(value);
-                    return (elem_cat, CollectionKind::HashBag, Some(":".to_string()));
+                    return (
+                        elem_cat,
+                        CollectionKind::HashBag,
+                        kv_sep_for(&CollectionType::HashMap, None),
+                    );
                 }
             }
         }

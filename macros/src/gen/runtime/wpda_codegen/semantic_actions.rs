@@ -12,7 +12,7 @@ use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::Ident;
 
-use super::binder::{classify_binder, emit_binder_action_entry};
+use super::binder::{classify_binder_in, emit_binder_action_entry};
 use super::collection::{classify_collection, CollectionShape};
 use super::infix;
 use super::prefix::{classify_atomic, AtomicShape, LiteralFamily};
@@ -39,7 +39,7 @@ pub fn emit_action_for_body(
         for (rule_idx, rule) in rules {
             // Phase 5: try classifying as a binder rule first; takes
             // precedence over collection / atomic / infix classification.
-            if let Some(shape) = classify_binder(rule) {
+            if let Some(shape) = classify_binder_in(rule, language) {
                 if let Some(entry) = emit_binder_action_entry(
                     cat_i as u16,
                     *rule_idx,
@@ -185,6 +185,149 @@ pub fn emit_min_terminal_span_body(
             match (src_idx, rule_idx) {
                 #(#arms)*
                 _ => 0u32,
+            }
+        }
+    }
+}
+
+/// AT_QUOTED_BIND_GATE realize-backstop (option B, 2026-07-03). Emit the body
+/// of `WpdaEngine::sigil_quoted_bind_overgen_rule(src_idx, rule_idx) -> bool`.
+///
+/// The DROP-SET: a rule `R` in category `C` is a generic whole-source bind rule
+/// that a sigil-quoted sibling subsumes iff (a) `R.syntax_pattern[0]` is a
+/// `Param` (the whole-`source` LHS — NOT a leading literal), (b) `R` carries at
+/// least one interior bind-trigger literal `T`, and (c) `C` contains a
+/// SIGIL-LED sibling `R'` (`R'.syntax_pattern[0]` a `Literal`) that ALSO carries
+/// `T` as an interior literal. For rhocalc InputBind this selects rule 7
+/// `InputBind (lhs "<-" n)`, rule 8 `InputBindPersistent (lhs "<=" n)`, and
+/// rule 0 `InputBindQuery (lhs "<-" n "!" "?" …)` — each subsumed by
+/// InputBindQuoted / …Persistent / …Query respectively. Polyadic rules
+/// (`lhs "," …`) are EXCLUDED: their bind position follows a `,` that no
+/// sigil-led sibling carries, so no `R'` matches. Grammar-derived; empty ⇒
+/// default `false`.
+pub fn emit_sigil_quoted_bind_overgen_rule_body(
+    per_cat: &[Vec<(u16, &GrammarRule)>],
+) -> TokenStream {
+    use mettail_ast::grammar::SyntaxExpr;
+    // Per category: the set of interior literals carried by SIGIL-LED rules
+    // (sp[0] == Literal). These are the bind-trigger positions a quoted sibling
+    // provides.
+    let mut arms: Vec<TokenStream> = Vec::new();
+    for (ci, rules) in per_cat.iter().enumerate() {
+        let cat_u16 = ci as u16;
+        // sigil-led interior literals for THIS category.
+        let mut sigil_interior: std::collections::BTreeSet<String> =
+            std::collections::BTreeSet::new();
+        for (_ri, rule) in rules {
+            let Some(sp) = rule.syntax_pattern.as_ref() else {
+                continue;
+            };
+            if !matches!(sp.first(), Some(SyntaxExpr::Literal(_))) {
+                continue;
+            }
+            for (i, e) in sp.iter().enumerate() {
+                if i == 0 {
+                    continue;
+                }
+                if let SyntaxExpr::Literal(t) = e {
+                    sigil_interior.insert(t.clone());
+                }
+            }
+        }
+        if sigil_interior.is_empty() {
+            continue;
+        }
+        for (rule_idx, rule) in rules {
+            let Some(sp) = rule.syntax_pattern.as_ref() else {
+                continue;
+            };
+            // (a) whole-source: first syntax element is a Param.
+            if !matches!(sp.first(), Some(SyntaxExpr::Param(_))) {
+                continue;
+            }
+            // (b)+(c): some interior literal of R is also carried by a
+            // sigil-led sibling of the same category.
+            let has_shared_bind_trigger = sp.iter().enumerate().any(|(i, e)| {
+                i > 0
+                    && matches!(e, SyntaxExpr::Literal(t) if sigil_interior.contains(t))
+            });
+            if has_shared_bind_trigger {
+                let r = *rule_idx;
+                arms.push(quote! { (#cat_u16, #r) => true, });
+            }
+        }
+    }
+    if arms.is_empty() {
+        quote! { false }
+    } else {
+        quote! {
+            match (src_idx, rule_idx) {
+                #(#arms)*
+                _ => false,
+            }
+        }
+    }
+}
+
+/// AT_QUOTED_BIND_GATE realize-backstop companion (option B, 2026-07-03). Emit
+/// the body of `WpdaEngine::sigil_quoted_source_atom_rule(src_idx, rule_idx) ->
+/// bool`.
+///
+/// The SIGIL-ATOM set: a rule `R` in category `S` whose `syntax_pattern[0]` is
+/// a Literal `σ` that ALSO leads a sibling rule in a DIFFERENT result category
+/// `C ≠ S` (so `σ` both makes `σ…` an `S` atom and directly triggers a rule in
+/// `C`). For rhocalc this selects `NQuoteShort . p:Proc |- "@" p : Name` and
+/// `NQuote . p:Proc |- "@" "(" p ")" : Name` (both `@`-led in Name, and `@`
+/// also leads InputBindQuoted in InputBind). The realize backstop uses this to
+/// decide whether a whole-source packing's `children[0]` is `σ`-quoted.
+/// Grammar-derived; empty ⇒ default `false`.
+pub fn emit_sigil_quoted_source_atom_rule_body(
+    categories: &[String],
+    per_cat: &[Vec<(u16, &GrammarRule)>],
+    language: &LanguageDef,
+) -> TokenStream {
+    use mettail_ast::grammar::SyntaxExpr;
+    // For each category, the leading literals of its rules (grammar-wide).
+    let mut leads_by_cat: Vec<std::collections::BTreeSet<String>> =
+        vec![std::collections::BTreeSet::new(); categories.len()];
+    for (ci, rules) in per_cat.iter().enumerate() {
+        for (_ri, rule) in rules {
+            if let Some(sp) = rule.syntax_pattern.as_ref() {
+                if let Some(SyntaxExpr::Literal(t)) = sp.first() {
+                    leads_by_cat[ci].insert(t.clone());
+                }
+            }
+        }
+    }
+    let _ = language;
+    let mut arms: Vec<TokenStream> = Vec::new();
+    for (ci, rules) in per_cat.iter().enumerate() {
+        for (rule_idx, rule) in rules {
+            let Some(sp) = rule.syntax_pattern.as_ref() else {
+                continue;
+            };
+            let Some(SyntaxExpr::Literal(sigil)) = sp.first() else {
+                continue;
+            };
+            // σ must lead a sibling in a DIFFERENT category.
+            let leads_elsewhere = leads_by_cat
+                .iter()
+                .enumerate()
+                .any(|(cj, leads)| cj != ci && leads.contains(sigil));
+            if leads_elsewhere {
+                let cat_u16 = ci as u16;
+                let r = *rule_idx;
+                arms.push(quote! { (#cat_u16, #r) => true, });
+            }
+        }
+    }
+    if arms.is_empty() {
+        quote! { false }
+    } else {
+        quote! {
+            match (src_idx, rule_idx) {
+                #(#arms)*
+                _ => false,
             }
         }
     }
@@ -590,6 +733,21 @@ fn emit_action_entry_arm(
             1u8,
             quote! { &[#any_cat] },
         ),
+        // GAP-3 (2026-06-28): 0-operand multi-literal keyword-prefix rule
+        // (`Map ()`, `Pathmap ()`, `@ Nil`). REUSE the TerminalKeyword action
+        // body verbatim — it ignores its `_args` and builds the nullary VARIANT
+        // `Cat::<wrapper_variant>` (e.g. `Proc::MapEmpty`, NOT the container;
+        // the `fold`, if any, materializes the container at eval time). The
+        // trigger reaches the SPPF as a `TriggerTerminal`, which the runtime
+        // FILTERS before counting children, so the marker-pop fire sees
+        // `action_children.len() == 0`. Arity MUST therefore be 0 (the walker's
+        // `debug_assert_eq!(action_entry.arity, action_children.len())` fires
+        // otherwise) and there are no input-category slots.
+        AtomicShape::NullaryLiteralRun { wrapper_variant, .. } => (
+            emit_terminal_keyword_action(cat_ident, wrapper_variant),
+            0u8,
+            quote! { &[] },
+        ),
         AtomicShape::VarRule { wrapper_variant } => {
             (emit_var_rule_action(cat_ident, wrapper_variant), 1u8, quote! { &[#any_cat] })
         },
@@ -942,11 +1100,58 @@ fn emit_collection_action_entry(
                     None => return,
                 };
                 let drained = b.drain_collection(id);
-                let container = std::collections::HashSet::<#element_cat_ident>::from_iter(
+                // `as Set` (Rholang 1.4 / main) carries a `HashSetLit` payload (see
+                // rhocalc `![mettail_runtime::HashSetLit<Proc>] as Set`); build the
+                // deterministic wrapper, not `std::collections::HashSet`.
+                let container = mettail_runtime::HashSetLit::<#element_cat_ident>::from_iter(
                     drained
                         .into_iter()
                         .filter_map(|a| a.into_term::<#element_cat_ident>())
                 );
+                b.push_term::<#cat_ident>(#cat_ident::#label_ident(container));
+            }
+        },
+        CollectionType::PathMap => quote! {
+            |b: &mut mettail_prattail::wpda_runtime::SemanticBuilder,
+             args: Vec<mettail_prattail::wpda_runtime::ActionArg>| {
+                let id = match args.into_iter().next().and_then(|a| a.as_collection_id()) {
+                    Some(id) => id,
+                    None => return,
+                };
+                let drained = b.drain_collection(id);
+                // PathMap elements are flattened key/value pairs in drain order
+                // [k0, v0, k1, v1, ...] (same as HashMap); insert into a PathMapLit
+                // (the wrapper that `Pathmap::PathmapLit(...)` accepts — see
+                // runtime/src/pathmap_lit.rs; it derefs to HashMapLit for `insert`).
+                let mut iter = drained.into_iter();
+                let mut container = mettail_runtime::PathMapLit::<
+                    #element_cat_ident, #element_cat_ident,
+                >::new();
+                while let Some(k_arg) = iter.next() {
+                    match iter.next() {
+                        Some(v_arg) => {
+                            if let (Some(k), Some(v)) = (
+                                k_arg.into_term::<#element_cat_ident>(),
+                                v_arg.into_term::<#element_cat_ident>(),
+                            ) {
+                                container.insert(k, v);
+                            }
+                        },
+                        None => {
+                            // Pathmap optional-value (2026-06-27): a trailing
+                            // UNPAIRED key is a bare path `{| k |}` whose value
+                            // is the key itself (set-form: value = key). The
+                            // parser duplicates bare-path keys at parse time
+                            // (DuplicateLastCollectionElement) so even-length
+                            // pairs are the norm; this odd-tail arm is the
+                            // defensive net that still materializes a correct
+                            // `k → k` entry rather than dropping the key.
+                            if let Some(k) = k_arg.into_term::<#element_cat_ident>() {
+                                container.insert(k.clone(), k);
+                            }
+                        },
+                    }
+                }
                 b.push_term::<#cat_ident>(#cat_ident::#label_ident(container));
             }
         },
@@ -1015,6 +1220,16 @@ fn emit_infix_action_entry(
     cat_ident: &Ident,
     categories: &[String],
 ) -> Option<TokenStream> {
+    // GEN-1 B-3 (Stage S3): a mixfix rule MAY carry a `*sep` repetition part
+    // (POutput2Plus `… bs.*sep(",") …`, InputBind* polyadic/query binds). Its
+    // field is a `Vec<elem>` built by DRAINING the `ActionArg::CollectionId` that
+    // the walker left in the marker's args (the rep slot's CollectionMarker pop is
+    // FireAction-suppressed via `is_binder_internal_collection`), NOT by
+    // `into_term_arc`. The per-arg emission below special-cases the rep parts
+    // (drain) vs ordinary parts (`into_term_arc`). Mirrors
+    // `emit_collection_action_entry`'s Vec drain. (At Stage S2 this returned
+    // `None` because the walker erred at the inert rep slot before the marker
+    // popped; S3 wires both the walker handoff and this drain-aware action.)
     let arity: u8 = if info.is_postfix {
         1
     } else if info.is_mixfix {
@@ -1043,7 +1258,14 @@ fn emit_infix_action_entry(
     } else if info.is_mixfix {
         let mut v = vec![operand_cat_idx];
         for part in &info.mixfix_parts {
-            v.push(lookup_cat_idx(&part.operand_category));
+            // GEN-1 B-3 (Stage S3): a `*sep` repetition part's arg is an
+            // `ActionArg::CollectionId` (not a Term), so its expected category is
+            // ANY_CAT (u16::MAX) — mirroring the binder/collection drain args.
+            if part.repetition.is_some() {
+                v.push(u16::MAX);
+            } else {
+                v.push(lookup_cat_idx(&part.operand_category));
+            }
         }
         v
     } else {
@@ -1080,6 +1302,30 @@ fn emit_infix_action_entry(
         let pops: Vec<TokenStream> = (0..n)
             .map(|i| {
                 let var = format_ident!("arg{}", i);
+                // arg0 is the LHS (info.category); args 1..N correspond to
+                // mixfix_parts[i-1] in term_context (= constructor) order.
+                let part = if i == 0 { None } else { Some(&info.mixfix_parts[i - 1]) };
+                // GEN-1 B-3 (Stage S3): a repetition part's arg is an
+                // `ActionArg::CollectionId`; drain it into `Vec<elem>` (the AST
+                // field type for a `*sep` collection param — all shipped rep params
+                // are `Vec`). Mirrors `emit_collection_action_entry`'s Vec drain.
+                if let Some(p) = part {
+                    if p.repetition.is_some() {
+                        let elem = format_ident!("{}", p.operand_category);
+                        return quote! {
+                            let #var: std::vec::Vec<#elem> = {
+                                let __id = match iter.next().and_then(|a| a.as_collection_id()) {
+                                    Some(__id) => __id,
+                                    None => return,
+                                };
+                                b.drain_collection(__id)
+                                    .into_iter()
+                                    .filter_map(|a| a.into_term::<#elem>())
+                                    .collect()
+                            };
+                        };
+                    }
+                }
                 let cat_str = if i == 0 {
                     info.category.clone()
                 } else {

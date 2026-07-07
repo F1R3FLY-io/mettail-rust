@@ -8,6 +8,9 @@ each with different ordering and multiplicity semantics:
 |-------------|--------------|-----------|-------------------|----------------|--------------------|
 | **HashBag** | `HashBag<T>` | Unordered | Allowed (counted) | Count-based    | `ps:HashBag(Proc)` |
 | **HashSet** | `HashSet<T>` | Unordered | Deduplicated      | Set membership | `ss:HashSet(Name)` |
+
+RhoCalc also exposes a native **`Set`** category (`Set(…)` literals backed by
+`HashSetLit<Proc>`; see [set-type-design.md](../../../../design/made/native-types/set-type-design.md)).
 | **Vec**     | `Vec<T>`     | Ordered   | Allowed           | Positional     | `vs:Vec(Proc)`     |
 
 All three use the `*sep(delim)` metasyntax to specify the separator token
@@ -15,13 +18,22 @@ between elements in concrete syntax.
 
 ## Running Example
 
-RhoCalc's parallel composition `PPar` uses `HashBag`:
+RhoCalc's parallel composition `PPar` uses `HashBag` and is built from the
+bare-infix surface rule `PParInfix . a "|" b` which folds into the
+multiset `Proc::PPar`:
 
 ```text
-PPar . ps:HashBag(Proc) |- "{" ps.*sep("|") "}" : Proc ;
+PParInfix . a:Proc, b:Proc |- a "|" b : Proc
+    ![{ merge_pp_parallel(a, b) }] fold ;
+PPar      . ps:HashBag(Proc) |- "__ppar" "(" ps.*sep(",") ")" : Proc ; // internal
 ```
 
-Concrete syntax: `{ a | b | c }` → `Proc::PPar(HashBag { a, b, c })`
+Concrete surface syntax: `a | b | c` → `Proc::PParInfix(…)` →
+(fold via `merge_pp_parallel`) → `Proc::PPar(HashBag { a, b, c })`. The
+internal `__ppar(…)` form is reserved for AST round-tripping and never
+appears in user input. See
+[exploring/rhocalc-rholang-style-syntax.md](../../../../../design/exploring/rhocalc-rholang-style-syntax.md)
+for the Rholang-style alignment that drove this split.
 
 ## Key Types
 
@@ -84,6 +96,18 @@ Concrete syntax: `{ a | b | c }` → `Proc::PPar(HashBag { a, b, c })`
 | [01-hashbag.md](01-hashbag.md)                           | Full pipeline trace for `HashBag(Proc)` using `PPar` |
 | [02-hashset-and-vec.md](02-hashset-and-vec.md)           | Differences for `HashSet` and `Vec`                  |
 | [03-ascent-decomposition.md](03-ascent-decomposition.md) | Ascent fixpoint rules for collection terms           |
+| [Rhocalc collection equality](../../../../design/made/rhocalc-collection-equality.md) | Surface `==` / `!=` on Rhocalc `CastList` / `CastBag` / `CastMap` / `CastSet` (fold and guards), separate from Ascent `eq_*` |
+| [Rhocalc collection wire](../../../../design/made/rhocalc-collection-wire.md) | Surface `.toByteArray()` on collection casts; protobuf `Par` bytes via `languages/src/rhocalc/wire.rs` |
+
+## Rhocalc surface equality
+
+Rhocalc programs compare collection values at the `Proc` layer with `==` and
+`!=`, which fold to booleans via `compare_collection_equality`. This is
+distinct from Ascent `eq_list`, `eq_bag`, `eq_map`, and `eq_set`, which
+support rewriting and congruence. See
+[rhocalc-collection-equality.md](../../../../design/made/rhocalc-collection-equality.md).
+Collection `.toByteArray()` wire encoding is documented in
+[rhocalc-collection-wire.md](../../../../design/made/rhocalc-collection-wire.md).
 
 ## Source Files
 

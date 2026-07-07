@@ -35,10 +35,20 @@ fn rhocalc_name_keyword_text_uses_identifier_alternative_in_all_parse() {
     );
 }
 
+/// Operator-form negatives (merge decision #4): the calculator `Int` regex
+/// dropped the leading `-?`, so `-3!` no longer forks in the lex DAG into an
+/// atomic-negative `Fact(NumLit(-3))` branch. The source-generic WPDA facade
+/// (`parse_Int_via_wpda_all_with_source`) therefore returns the single
+/// operator-form reading `Neg(Fact(NumLit(3)))`, with one realized weight, and
+/// consumes the whole DAG. This test guards that operator-form behavior plus the
+/// one-weight-per-term invariant of the all-results facade.
 #[test]
 fn calculator_parse_all_with_source_returns_weight_for_each_neg_factorial_alternative() {
     let dag = calculator::lex_dag("-3!").expect("calculator lex DAG should accept -3!");
-    assert!(dag.has_ambiguity(), "-3! should fork in the lex DAG");
+    assert!(
+        !dag.has_ambiguity(),
+        "-3! must NOT fork in the lex DAG under operator-form negatives (no atomic-negative literal)",
+    );
     let source = LatticeTokenSource::new(dag);
     let mut pos = 0usize;
     let (terms, weights) = calculator::parse_Int_via_wpda_all_with_source(&source, &mut pos, 0)
@@ -50,17 +60,7 @@ fn calculator_parse_all_with_source_returns_weight_for_each_neg_factorial_altern
         weights.len(),
         "all-results facade must return one realized weight per term",
     );
-    assert!(
-        terms.iter().any(|t| {
-            matches!(
-                t,
-                calculator::Int::Fact(a)
-                    if matches!(a.as_ref(), calculator::Int::NumLit(-3))
-            )
-        }),
-        "expected atomic-negative branch Fact(NumLit(-3)); got {:?}",
-        terms
-    );
+    // Operator-form reading -(3!) = Neg(Fact(NumLit(3))).
     assert!(
         terms.iter().any(|t| {
             matches!(
@@ -73,7 +73,19 @@ fn calculator_parse_all_with_source_returns_weight_for_each_neg_factorial_altern
                     )
             )
         }),
-        "expected prefix-negative branch Neg(Fact(NumLit(3))); got {:?}",
+        "expected operator-form reading Neg(Fact(NumLit(3))); got {:?}",
+        terms
+    );
+    // The removed atomic-negative branch must NOT reappear.
+    assert!(
+        !terms.iter().any(|t| {
+            matches!(
+                t,
+                calculator::Int::Fact(a)
+                    if matches!(a.as_ref(), calculator::Int::NumLit(-3))
+            )
+        }),
+        "atomic-negative branch Fact(NumLit(-3)) must NOT be produced; got {:?}",
         terms
     );
 }

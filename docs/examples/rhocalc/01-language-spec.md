@@ -74,12 +74,15 @@ separates parameters from concrete syntax.  The `:` gives the result category.
 
 ```rust
 PZero .
-|- "{}" : Proc;
+|- "Nil" : Proc;
 ```
 
-No parameters.  The syntax is a single literal terminal `"{}"`.  This generates
-`Proc::PZero` with no fields and a prefix parse handler matching `Token::Braces`
-(or the comb-compressed equivalent).
+No parameters.  The syntax is the keyword terminal `"Nil"` — the
+[Rholang](https://rholang.io)-style spelling of the zero process.  This
+generates `Proc::PZero` with no fields and a prefix parse handler matching
+`Token::Nil`.  (Historically the rule was `"{}"`, but `{}` is now reserved for
+the empty `Map` literal; see
+[exploring/rhocalc-rholang-style-syntax.md](../../design/exploring/rhocalc-rholang-style-syntax.md).)
 
 ### 3.2 Prefix Terms
 
@@ -95,16 +98,103 @@ terminal tokens, not a nonterminal.
 ### 3.3 Collection Terms
 
 ```rust
-PPar . ps:HashBag(Proc)
-|- "{" ps.*sep("|") "}" : Proc;
+PParInfix . a:Proc, b:Proc |- a "|" b : Proc ![{
+    crate::rhocalc::runtime::merge_pp_parallel(a.clone(), b.clone())
+}] fold;
+
+// Internal AST constructor — matched by equations / rewrites, never input by
+// users. The `__ppar(…)` form is the round-trip surface for the AST.
+PPar . ps:HashBag(Proc) |- "__ppar" "(" ps.*sep(",") ")" : Proc;
 ```
 
-The parameter `ps` has type `HashBag(Proc)` — a multiset of `Proc` values.
-The syntax `ps.*sep("|")` means "parse zero or more `Proc` values separated by
-`|`" and collect them into a `HashBag`.  Generates `Proc::PPar(HashBag<Proc>)`.
+Parallel composition uses Rholang-style bare infix `a | b` (`PParInfix`),
+which `fold`s to the multiset `Proc::PPar(HashBag<Proc>)` via
+`merge_pp_parallel`. The `__ppar(…)` keyword rule keeps the `Proc::PPar`
+variant available for equation/rewrite matching but is reserved for internal
+use (never appears in user input). The earlier braced surface
+`{ a | b | c }` was retired so that `{` `}` could be repurposed for the
+Rholang-style empty `Map` literal — see
+[exploring/rhocalc-rholang-style-syntax.md](../../design/exploring/rhocalc-rholang-style-syntax.md).
 
 The `*sep(delim)` operator is a collection operation.  Available collection
 types are `Vec(T)`, `HashBag(T)`, and `HashSet(T)`.
+
+### 3.3.1 Map Literals and Method-Call Sugar
+
+`Map` overrides the default `map(k:v)` delimiters to Rholang-style braces:
+
+```rust
+![HashMap<Proc, Proc>] as Map {
+    open_parts: ["{"],
+    close_parts: ["}"],
+    sep: ",",
+    key_val_sep: ":",
+}
+```
+
+producing `{}`, `{k: v}`, `{k₁: v₁, k₂: v₂, …}`. An explicit `Map()` alias
+is provided for chained method calls:
+
+```rust
+MapEmpty . |- "Map" "(" ")" : Proc ![{
+    Proc::CastMap(Box::new(Map::MapLit(Default::default())))
+}] fold;
+```
+
+### 3.3.2 Pathmap Literals (Rholang `{| … |}`)
+
+`Pathmap` uses Rholang-style pathmap braces. Each element is one `Proc`; the
+literal conflates path and stored value (`insert(e, e)`):
+
+```rust
+![mettail_runtime::PathMapLit<Proc, Proc>] as Pathmap {
+    open_parts: ["{|"],
+    close_parts: ["|}"],
+    sep: ",",
+}
+```
+
+producing `{||}`, `{| e |}`, `{| e₁, e₂, … |}` (lexer tokens `{|` / `|}`). List elements contribute **all**
+segments to the trie key (e.g. `{| ["a","b","c"] |}`). Use `.set(k, v)` or
+zipper `setLeaf` when the payload must differ from the path term. `Pathmap()`
+is an alias for the empty literal.
+
+Method-call surface (canonical AST; each method rule is its own constructor):
+
+| Method form | AST node | Receiver |
+|-------------|----------|----------|
+| `m.get(k)` | `MGet(m, k)` | Map / Pathmap |
+| `m.set(k, v)` | `MSet(m, k, v)` | Map / Pathmap |
+| `m.contains(k)` | `MContains(m, k)` | Map / Set / Pathmap |
+| `m.delete(k)` | `MDelete(m, k)` | Map / Set / List |
+| `m.keys()` | `MKeys(m)` | Map |
+| `m.values()` | `MValues(m)` | Map |
+| `s.add(e)` | `SAdd(s, e)` | Set |
+| `l.length()` | `LLength(l)` | List |
+| `l.nth(i)` | `LNth(l, i)` | List |
+| `l.concat(r)` | `LConcat(l, r)` | List / Str |
+| `b.count(e)` | `BCount(b, e)` | Bag |
+| `b.diff(c)` | `BDiff(b, c)` | Bag / Set |
+| `b.remove(e)` | `BRemove(b, e)` | Bag |
+| `m.restrict(b)` / `m.subtract(b)` / `m.meet(b)` | `PRestrict` / `PSubtract` / `PMeet` | Pathmap |
+| `m.getSubtrie()` / `m.getSubtrieAt(p)` | `PGetSubtrie` / `PGetSubtrieAt` | Pathmap / ReadZipper |
+| `m.readZipper()` / … | `PReadZipper` / `PReadZipperAt` / … | Pathmap |
+| `z.getLeaf()` / … | `RZGetLeaf` / `RZDescendTo` / … | ReadZipper |
+| `w.setLeaf(p,v)` / … | `WZSetLeaf` / `WZGraft` / … | WriteZipper |
+| `x.size()` | `MSize(x)` | Map / Set / Bag |
+| `x.union(y)` | `MUnion(x, y)` | Map / Set / Bag / Pathmap |
+
+The unary forms (`m.size()`, `m.keys()`, `m.values()`, `l.length()`,
+`b.size()`, Pathmap/Zipper zero-arg methods) use prattail's
+zero-operand-after-trigger mixfix shape (1 NT with 3+ terminals), dispatched
+inline without a frame push. Prefix functional forms such as `get(m, k)` are
+not user-facing.
+
+The shared-name methods `.union`, `.size`, `.contains`, `.delete`, and
+`.diff` use a single grammar rule each (`MUnion`, `MSize`, `MContains`,
+`MDelete`, `BDiff`) whose `fold` action inspects the (already-folded)
+receiver and applies the appropriate semantics inline for `.union(n)`,
+`.size()`, and related operations.
 
 ### 3.4 Binder Terms (Lambda / Multi-Lambda)
 
@@ -167,6 +257,29 @@ This combines several features:
 All arithmetic, comparison, logical, and conversion operators follow this
 same pattern (Sub, Mul, Div, Eq, Ne, Gt, Lt, ...).
 
+### 3.5.1 Collection equality (`==` / `!=`)
+
+`Eq` and `Ne` fold collection casts injected into `Proc` to `CastBool` using
+`compare_collection_equality` in `languages/src/rhocalc/runtime.rs`. List
+comparison is ordered and duplicate-sensitive; bag comparison is multiset
+(count-based) after `normalize_bag_elements`; map and set comparison are
+order-independent on keys/members. Cross-type collection pairs (for example
+`[1, 2] == Set(1, 2)`) fold to `false` / `true` for `!=`. Non-literal
+collection operands yield `Proc::Err`, matching scalar `Eq` on non-literal
+casts. `where` guards use the same helper via `eval_guard_bool` in
+`languages/src/rhocalc/receive.rs`. Ascent `eq_list` / `eq_bag` / `eq_map` /
+`eq_set` remain equational relations, separate from surface boolean
+comparison. See
+[rhocalc-collection-equality.md](../../design/made/rhocalc-collection-equality.md).
+
+### 3.5.2 Collection wire (`toByteArray()`)
+
+Collection casts support zero-argument `.toByteArray()`, which folds to
+`CastBytes` with a lowercase hex encoding of the f1r3node `Par` protobuf bytes
+for the corresponding Rholang collection kind. Bag literals use the Rhocalc
+extension rule (multiset expanded to `EList`). See
+[rhocalc-collection-wire.md](../../design/made/rhocalc-collection-wire.md).
+
 ### 3.6 Unary Prefix with Fold
 
 ```rust
@@ -214,6 +327,102 @@ The parameter `p` is `Proc` but the result category is `Name`.  This is a
 *cross-category* rule: it appears in the `Name` category's parser but parses a
 `Proc` sub-expression.  Classification: `is_cross_category = true,
 cross_source_category = Some("Proc")`.
+
+#### `@Nil` shorthand
+
+Rholang spells `Name::NQuote(Proc::PZero)` as `@Nil`. We add the same
+shorthand by a Name-category fold rule that lowers to the canonical
+`NQuote(PZero)` AST node:
+
+```rust
+NQuoteNil .
+|- "@" "Nil" : Name ![{
+    Name::NQuote(Box::new(Proc::PZero))
+}] fold;
+```
+
+`Nil` is the surface keyword for `PZero` and is therefore not in `Name`'s
+FIRST set; `NQuoteNil` instead enters via the shared `@` token, with prattail
+disambiguating between `@(P)` (`NQuote`) and `@Nil` (`NQuoteNil`) by the
+second-token NFA branch (`LParen` vs `KwNil`).
+
+For send positions where `POutputQuoted`'s `@ <Name> ! ( q )` shape would
+otherwise reject `Nil` (the inner Name parser does not accept the keyword), two
+Proc-category sugars complete the surface:
+
+```rust
+POutputNil . q:Proc
+|- "@" "Nil" "!" "(" q ")" : Proc ![{
+    Proc::POutput(
+        Box::new(Name::NQuote(Box::new(Proc::PZero))),
+        Box::new(q.clone()),
+    )
+}] fold;
+
+PPersistOutputNil . q:Proc
+|- "@" "Nil" "!!" "(" q ")" : Proc ![{
+    Proc::PPersistOutput(
+        Box::new(Name::NQuote(Box::new(Proc::PZero))),
+        Box::new(q.clone()),
+    )
+}] fold;
+```
+
+All three Proc rules dispatch from `Token::At`; prattail's
+`write_nfa_merged_prefix_arm` NFA-tries each via its generated
+`parse_<label>` standalone function, taking the first declaration-order
+success.
+
+#### Generalised `@P` shorthand for arbitrary `P:Proc`
+
+Rholang lets `@` quote *any* process, not just `Nil` — `@1`, `@"k"`, `@*x`
+are all valid Names. A single fold rule generalises both `NQuote` (`@(P)`)
+and `NQuoteNil` (`@Nil`):
+
+```rust
+NQuoteShort . p:Proc
+|- "@" p : Name ![{
+    Name::NQuote(Box::new(p.clone()))
+}] fold;
+```
+
+For send positions where neither `POutputQuoted` nor `POutputNil` matches
+(e.g. the inner is a literal like `@1!(q)` or `@"k"!(q)`), we likewise
+add generalised sugars:
+
+```rust
+POutputShort . p:Proc, q:Proc
+|- "@" p "!" "(" q ")" : Proc ![{
+    Proc::POutput(
+        Box::new(Name::NQuote(Box::new(p.clone()))),
+        Box::new(q.clone()),
+    )
+}] fold;
+
+PPersistOutputShort . p:Proc, q:Proc
+|- "@" p "!!" "(" q ")" : Proc ![{
+    Proc::PPersistOutput(
+        Box::new(Name::NQuote(Box::new(p.clone()))),
+        Box::new(q.clone()),
+    )
+}] fold;
+```
+
+Five Proc-level rules now share the `@` opener; the NFA dispatcher above
+tries each in declaration order (more specific rules — `POutputNil`,
+`POutputQuoted` — declared first). For overlapping inputs the fold actions
+collapse to the same canonical `POutput(NQuote(P), q)` AST, so the choice
+is semantically transparent.
+
+**Precedence:** All three short-form rules carry `prefix(220)`, a
+cross-category prefix binding-power annotation. The framework now honours
+`prefix(N)` for any prefix-shaped rule, threading the BP into the rule's
+generated standalone parser without entering the same-category
+unary-prefix dispatch. With `min_bp = 220` (well above all Proc-level
+infix BPs), `@P` consumes only a high-precedence Proc subterm: `*@1 + 0`
+parses as `(*@1) + 0`, and `@1+2!(0)` is a parse error rather than the
+ambiguous `(@(1+2))!(0)`. Users wanting to quote a compound expression
+still write `@(1+2)` explicitly.
 
 ## 4. `equations { ... }` — Structural Equivalences
 

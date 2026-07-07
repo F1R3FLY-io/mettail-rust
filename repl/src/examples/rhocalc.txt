@@ -1,30 +1,70 @@
 // examples
-add = { a!(2) | b!(3) | (a?x,b?y).{ *(x) + *(y) } }
-comm = { a!(0) | (a?x).{*(x)}}
-multi_comm = {a!(p) | b!(q) | c!(r) | (a?x, b?y, c?z).{{*(x) | *(y) | *(z)}}}
+add = a!(2) | b!(3) | for(x <- a & y <- b){ *(x) + *(y) }
+comm = a!(0) | for(x <- a){*(x)}
+multi_comm = a!(p) | b!(q) | c!(r) | for(x <- a & y <- b & z <- c){*(x) | *(y) | *(z)}
 
-new_test = {a!(0) | new (x) in { (a?z).{*(z)}} }
+new_test = a!(0) | new (x) in { for(z <- a){*(z)} }
 
 // duplication and replication
-dup = ^l.{(l?x).{{*(x)|l!(*(x))}}}
-rep = ^n.{^a.{^cont.{{$name(dup,n)|n!((a?y).{{$name(cont,y)|$name(dup,n)}})}}}}
+dup = ^l.{for(x <- l){*(x)|l!(*(x))}}
+rep = ^n.{^a.{^cont.{$name(dup,n)|n!(for(y <- a){$name(cont,y)|$name(dup,n)})}}}
 
 rep_serv = $proc($name($name(rep, loc), serv), id)
 
 // some combinators
 id = ^z.{*(z)}
-fwd = ^src.{^dst.{(src?x).{dst!(*(x))}}}
-const = ^val.{^n.{(n?x).{*(val)}}}
+fwd = ^src.{^dst.{for(x <- src){dst!(*(x))}}}
+const = ^val.{^n.{for(x <- n){*(val)}}}
 
 // a data structure
 cell = ^loc.{^init.{loc!(init)}}
-read = ^loc.{^ret.{(loc?x).{{loc!(*(x)) | ret!(*(x))}}}}
-write = ^loc.{^val.{(loc?x).{loc!(val)}}}
+read = ^loc.{^ret.{for(x <- loc){loc!(*(x)) | ret!(*(x))}}}
+write = ^loc.{^val.{for(x <- loc){loc!(val)}}}
 
-// List and Bag (communication then operation, like add)
-list_concat_comm = { a!( [ 1, 2 ] ) | b!( [ 3, 4 ] ) | (a?x, b?y).{ concat(*(x), *(y)) } }
-list_len_comm = { a!( [ 1, 2, 3 ] ) | (a?x).{ len(*(x)) } }
-list_at_comm = { a!( [ 1, 2, 3 ] ) | b!( 1 ) | (a?lst, b?i).{ at(*(lst), *(i)) } }
-bag_union_comm = { a!( #{ 1 | 2 }# ) | b!( #{ 2 | 3 }# ) | (a?x, b?y).{ union(*(x), *(y)) } }
-bag_count_comm = { a!( #{ 1 | 2 | 2 }# ) | c!( 2 ) | (a?b, c?e).{ count(*(b), *(e)) } }
-bag_remove_comm = { a!( #{ 1 | 2 | 2 }# ) | c!( 2 ) | (a?b, c?e).{ remove(*(b), *(e)) } }
+// List, Bag, and Map (communication then operation, like add)
+list_concat_comm = a!([ 1, 2 ]) | b!([ 3, 4 ]) | for(x <- a & y <- b){ (*(x)).concat(*(y)) }
+list_len_comm = a!([ 1, 2, 3 ]) | for(x <- a){ (*(x)).length() }
+list_at_comm = a!([ 1, 2, 3 ]) | b!( 1 ) | for(lst <- a & i <- b){ (*(lst)).nth(*(i)) }
+bag_union_comm = a!(#{ 1 | 2 }#) | b!(#{ 2 | 3 }#) | for(x <- a & y <- b){ (*(x)).union(*(y)) }
+bag_count_comm = a!(#{ 1 | 2 | 2 }#) | c!( 2 ) | for(b <- a & e <- c){ (*(b)).count(*(e)) }
+bag_remove_comm = a!(#{ 1 | 2 | 2 }#) | c!( 2 ) | for(b <- a & e <- c){ (*(b)).remove(*(e)) }
+
+// List literal + method-call sugar (Rholang style)
+list_length  = [1, 2, 3].length()
+list_nth     = [10, 20, 30].nth(1)
+list_concat  = [1, 2].concat([3, 4])
+list_chain   = [1, 2].concat([3, 4]).length()
+
+// Bag literal + method-call sugar (rhocalc-only — no Rholang counterpart)
+bag_size     = #{1 | 2 | 2}#.size()
+bag_count    = #{1 | 2 | 2}#.count(2)
+bag_diff     = #{1 | 2 | 2}#.diff(#{2}#)
+bag_remove   = #{1 | 2 | 2}#.remove(2)
+bag_union    = #{1 | 2}#.union(#{2 | 3}#)
+
+// Map literal + method-call sugar (Rholang style)
+map_get      = {1: 10, 2: 20}.get(1)
+map_set      = Map().set(1, 10).set(2, 20)
+map_size     = {1: 10, 2: 20}.size()
+map_contains = {1: 10}.contains(1)
+map_keys     = {1: 10, 2: 20}.keys()
+map_values   = {1: 10, 2: 20}.values()
+map_delete   = {1: 10, 2: 20}.delete(1)
+map_union    = {1: 10}.union({2: 20})
+
+// Set literal + method-call sugar (Rholang style)
+set_size     = Set(1, 2, 3).size()
+set_add      = Set(1, 2).add(3)
+set_delete   = Set(1, 2, 3).delete(2)
+set_contains = Set(1, 2).contains(2)
+set_union    = Set(1, 2).union(Set(2, 3))
+set_diff     = Set(1, 2, 3).diff(Set(1, 4))
+
+// Generalised `@P` quote shorthand for arbitrary `P:Proc` (Rholang style).
+// `@P` parses as `Name::NQuote(P)`, generalising `@(P)` and `@Nil`.
+// Works in Name positions (receive channels, drops) and send sugars.
+quote_int_drop   = *@1
+quote_str_drop   = *@"hello"
+quote_comm_int   = for(x <- @1){x} | @1!(42)
+quote_comm_str   = for(x <- @"k"){x} | @"k"!(7)
+quote_persistent = for(x <- @1){x} | @1!!(99)

@@ -122,14 +122,38 @@ fn calculator_guard_tiers() {
     assert_tier_tuple(meta, 671, 236, 435, 0, 0, T2);
 }
 
-/// **RhoCalc** — process calculus over `Proc`/`Name` + the scalar tower. 2
-/// binder fields (`PInputs`/`PNew` carry `^[xs].p` multi-binders ⇒ T2 freshness).
-/// 105 structural fields (scalar operands, casts, channel/process payloads).
-/// T2 = 102 conditions + 96 congruence premises + 2 binders = 200. worst = T2.
+/// **RhoCalc** — process calculus over `Proc`/`Name` + the scalar tower, grown by the
+/// RhoCalc→Rholang-1.4/WFST merge (pathmap + read/write zippers, set/map/bag native types,
+/// for-row sugar, input-bind, byte-array). 1 binder field (the `^[xs].p` scope binder ⇒ T2
+/// freshness). 227 structural fields (211 after Layer-F, +16 from the `@`-led empty/polyadic
+/// send rules — see the send-rule paragraph below; scalar operands, casts, channel/process
+/// payloads, and the collection/zipper/cast operands — all data-sort assertions ⇒ T1). T2 = 144
+/// rewrite conditions + 138 congruence premises + 1 binder = 283. worst = T2.
+///
+/// ROOT-P Layer F (design-cycle-2, 2026-07-02): the six grammar-redundant persistent ForRow
+/// rules (ForRowPersistentWhere/NoWhere, ForRowSinglePersistentWhere/NoWhere,
+/// ForRowSingleEmptyPersistentWhere/NoWhere) were DELETED (their readings are expressible via
+/// the general ForRow rules over a persistent InputBind — see ForRowPersistentRuleRedundancy.v).
+/// That removed exactly 15 structural fields (4+3+3+2+1 from the Where/NoWhere heads + the empty
+/// forms: cond/bs/lhs/n operands), dropping T1 226 → 211 and total 509 → 494. T2 is unchanged
+/// (283) — the deleted rules carried no binder / rewrite-condition / congruence premise.
+///
+/// `@`-led send-rule additions (2026-07-04, merge-to-green): the empty `@`-send rules
+/// (`POutputNilEmpty`/`PPersistOutputNilEmpty` [0 fields each], `POutputQuotedEmpty` [n:Name],
+/// `POutputShortEmpty`/`PPersistOutputShortEmpty` [p:Proc] = 3 fields) plus the polyadic `@`-send
+/// rules (`POutputNil2Plus`/`PPersistOutputNil2Plus` [a,bs = 2 each], `POutputQuoted2Plus`/
+/// `POutputShort2Plus`/`PPersistOutputShort2Plus` [chan,a,bs = 3 each] = 13 fields) add exactly
+/// 3 + 13 = 16 structural (data-sort) fields ⇒ T1 211 → 227, total 494 → 510. T2 is unchanged
+/// (283) — none carries a binder / rewrite-condition / congruence premise; T3/T4 stay 0.
+///
+/// Re-derived (not invented) after the send-rule additions: the harvested
+/// `check_guard_decidability` tuple is `(510, 227, 283, 0, 0, T2)`, and the in-test cross-check
+/// (`assert_tier_tuple`) independently confirms 227 == structural fields and 283 == conditions +
+/// congruence premises + binders against the raw metadata.
 #[test]
 fn rhocalc_guard_tiers() {
     let meta = mettail_languages::rhocalc::RhoCalcLanguage.metadata();
-    assert_tier_tuple(meta, 305, 105, 200, 0, 0, T2);
+    assert_tier_tuple(meta, 510, 227, 283, 0, 0, T2);
 }
 
 /// **Ambient** — mobile ambients over `Proc`/`Name` (both non-scalar; no native

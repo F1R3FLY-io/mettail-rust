@@ -6,9 +6,14 @@ resolver = "2"
 
 [package]
 name = "mettail"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
 default-run = "mettail"
+publish = false
 
 [[bin]]
 name = "mettail"
@@ -25,8 +30,8 @@ version = "0.1.0"
 edition = "2021"
 authors = ["MeTTaIL Contributors"]
 license = "MIT"
-repository = "https://github.com/cb-wells/mettail-rust"
-homepage = "https://github.com/cb-wells/mettail-rust"
+repository = "https://github.com/F1R3FLY-io/mettail-rust"
+homepage = "https://github.com/F1R3FLY-io/mettail-rust"
 
 [workspace.dependencies]
 proc-macro2 = { version = "1.0", features = ["span-locations"] }
@@ -38,6 +43,7 @@ rand = "0.8"
 
 moniker = { version = "0.5", features = ["moniker-derive"] }
 indexmap = "2.0"
+pathmap = "0.2.2"
 
 ascent_syntax_export = { path = "ascent_syntax_export" }
 query = { path = "query" }

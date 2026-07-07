@@ -205,6 +205,7 @@ fn walker_publishes_snapshot_during_run_to_end_of_input() {
             _frontier_top: Option<&WpdaGssNode>,
             _pos: usize,
             _tokens: &dyn WpdaTokenSource,
+            _frame_ctx: crate::wpda_runtime::FrameCtx,
         ) -> WpdaStepAction<LexicographicWeight> {
             self.script
                 .borrow_mut()

@@ -48,7 +48,7 @@ For RhoCalc:
 
 | Category | FIRST set                                                                                                                                            |
 |----------|------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `Proc`   | `{`, `{}`, `*`, `(`, `@`, `Integer`, `Float`, `Boolean`, `StringLit`, `not`, `concat`, `len`, `int`, `float`, `bool`, `str`, `new`, `error`, `Ident` |
+| `Proc`   | `Nil`, `{`, `*`, `(`, `@`, `Map`, `Set`, `Integer`, `Float`, `Boolean`, `StringLit`, `not`, `concat`, `len`, `int`, `float`, `bool`, `str`, `new`, `error`, `Ident` |
 | `Name`   | `@`, `Ident`                                                                                                                                         |
 | `Int`    | `Integer`                                                                                                                                            |
 | `Float`  | `Float` (literal float)                                                                                                                              |
@@ -56,7 +56,7 @@ For RhoCalc:
 | `Str`    | `StringLit`                                                                                                                                          |
 
 Proc's FIRST set includes tokens from:
-- Its own prefix rules: `{}` (PZero), `*` (PDrop), `(` (PInputs/POutput), `not` (Not), etc.
+- Its own prefix rules: `Nil` (PZero), `*` (PDrop), `(` (PInputs/POutput), `not` (Not), `Map` (`Map()` alias for empty Map), `Set` (`Set()` alias for empty Set), `{` (`Map` literal `{}`, `{k:v}`), etc.
 - Cast rules: `Integer` (CastInt), `Float` (CastFloat), etc.
 - Cross-category casts from Name: `@` (NQuote → Proc via cast path)
 
@@ -96,9 +96,10 @@ spec.  Here is how key RhoCalc rules are classified:
 
 | Rule      | Pattern                                                                                         | Classification                            |
 |-----------|-------------------------------------------------------------------------------------------------|-------------------------------------------|
-| `PZero`   | `Terminal("{}")`                                                                                | literal (prefix)                          |
-| `PDrop`   | `Terminal("*") Terminal("(") NT(Name) Terminal(")")`                                            | prefix                                    |
-| `PPar`    | `Terminal("{") Collection(Proc,"\|") Terminal("}")`                                             | prefix, collection                        |
+| `PZero`     | `Terminal("Nil")`                                                                               | literal (prefix)                          |
+| `PDrop`     | `Terminal("*") Terminal("(") NT(Name) Terminal(")")`                                            | prefix                                    |
+| `PParInfix` | `NT(Proc) Terminal("\|") NT(Proc)`                                                              | infix (folds to `Proc::PPar`)             |
+| `PPar`      | `Terminal("__ppar") Terminal("(") Collection(Proc,",") Terminal(")")`                           | prefix, collection (internal AST round-trip) |
 | `POutput` | `NT(Name) Terminal("!") Terminal("(") NT(Proc) Terminal(")")`                                   | cross-category (Name in Proc)             |
 | `PInputs` | `Terminal("(") ZipMapSep(...) Terminal(")") Terminal(".") Terminal("{") NT(Proc) Terminal("}")` | prefix, multi-binder                      |
 | `NQuote`  | `Terminal("@") Terminal("(") NT(Proc) Terminal(")")`                                            | prefix (in Name category), cross-category |

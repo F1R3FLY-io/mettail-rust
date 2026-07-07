@@ -457,3 +457,65 @@ pub struct TerminalPattern {
     /// priority over the generic identifier pattern).
     pub is_keyword: bool,
 }
+
+/// Set of *reserved* keyword token kinds for a language.
+///
+/// Keyword reservation (PIECE 3) removes a lexer **over-generation**: a
+/// grammar literal terminal that is lexically an identifier (e.g. `Nil`,
+/// `true`, `Map`) accepts at the same DFA state as the generic `Ident`
+/// pattern, so the lexer emits BOTH a keyword token and an identifier token
+/// for the same bytes. When the keyword is *reserved*, the identifier reading
+/// is a spurious "variable literally named after a keyword" that no valid
+/// program in that language intends.
+///
+/// When a DFA accept state's primary (highest-priority) token kind is in this
+/// set and the generic `Ident` pattern also accepts at that state,
+/// [`super::subset::subset_construction_with_reserved`] drops the `Ident`
+/// co-accept so the keyword becomes the ONLY reading (keyword-only singleton).
+///
+/// This is consistent with the "never disambiguate early" invariant: it
+/// removes a grammar-declared over-generation, NOT a genuine ambiguity.
+/// Languages that do not opt in carry an EMPTY reserved set, so their
+/// generated lexer is byte-identical.
+///
+/// The set is keyed by [`TokenKind`] (not text) so it uniformly covers
+/// `Fixed(text)` keywords AND the boolean keywords `True` / `False`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ReservedKeywords {
+    kinds: std::collections::HashSet<TokenKind>,
+}
+
+impl ReservedKeywords {
+    /// An empty reserved set — no reservation (byte-identical lexer).
+    pub fn none() -> Self {
+        Self::default()
+    }
+
+    /// Build a reserved set directly from a set of token kinds.
+    pub fn from_kinds(kinds: std::collections::HashSet<TokenKind>) -> Self {
+        Self { kinds }
+    }
+
+    /// Whether the reserved set is empty (no reservation active).
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.kinds.is_empty()
+    }
+
+    /// Number of reserved token kinds.
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.kinds.len()
+    }
+
+    /// Whether `kind` is reserved.
+    #[inline]
+    pub fn contains(&self, kind: &TokenKind) -> bool {
+        self.kinds.contains(kind)
+    }
+
+    /// Iterate the reserved token kinds (unordered).
+    pub fn iter(&self) -> impl Iterator<Item = &TokenKind> {
+        self.kinds.iter()
+    }
+}

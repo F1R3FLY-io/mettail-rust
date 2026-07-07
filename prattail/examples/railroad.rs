@@ -105,6 +105,7 @@ fn make_simple_spec() -> LanguageSpec {
         tree_invariants: Vec::new(),
         refinement_types: Vec::new(),
         guard_config: None,
+        reservation_policy: mettail_prattail::ReservationPolicy::default(),
     }
 }
 

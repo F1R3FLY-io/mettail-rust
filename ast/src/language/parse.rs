@@ -267,6 +267,85 @@ impl Parse for LanguageDef {
     }
 }
 
+/// Parse a non-empty array of string literals: `["a", "b", ...]`.
+/// Used by the brace-dict collection-delimiter form (main / Rholang 1.4).
+fn parse_string_lit_array(input: ParseStream) -> SynResult<Vec<String>> {
+    let arr;
+    syn::bracketed!(arr in input);
+    let mut parts = Vec::new();
+    while !arr.is_empty() {
+        parts.push(arr.parse::<syn::LitStr>()?.value());
+        if arr.peek(Token![,]) {
+            let _ = arr.parse::<Token![,]>()?;
+        }
+    }
+    if parts.is_empty() {
+        return Err(syn::Error::new(
+            proc_macro2::Span::call_site(),
+            "collection delimiter array must be non-empty",
+        ));
+    }
+    Ok(parts)
+}
+
+/// Parse the brace-dict collection-delimiter form (main / Rholang 1.4):
+/// `{ open_parts: ["..."], close_parts: ["..."], sep: "...", key_val_sep: "..." }`.
+/// Multi-element `open_parts`/`close_parts` arrays are concatenated into the single
+/// `open`/`close` strings — feature's collection codegen uses single delimiter strings,
+/// and every `language!` declaration that uses this form supplies single-element arrays.
+fn parse_collection_delimiters_dict(
+    input: ParseStream,
+    allow_kv: bool,
+    require_kv: bool,
+) -> SynResult<CollectionDelimiters> {
+    let dict;
+    syn::braced!(dict in input);
+    let mut open: Option<String> = None;
+    let mut close: Option<String> = None;
+    let mut sep: Option<String> = None;
+    let mut key_val_sep: Option<String> = None;
+    while !dict.is_empty() {
+        let key: Ident = dict.parse()?;
+        let _ = dict.parse::<Token![:]>()?;
+        match key.to_string().as_str() {
+            "open_parts" => open = Some(parse_string_lit_array(&dict)?.concat()),
+            "close_parts" => close = Some(parse_string_lit_array(&dict)?.concat()),
+            "sep" => sep = Some(dict.parse::<syn::LitStr>()?.value()),
+            "key_val_sep" => key_val_sep = Some(dict.parse::<syn::LitStr>()?.value()),
+            other => {
+                return Err(syn::Error::new(
+                    key.span(),
+                    format!(
+                        "unknown collection delimiter key `{other}` (expected open_parts/close_parts/sep/key_val_sep)"
+                    ),
+                ))
+            },
+        }
+        if dict.peek(Token![,]) {
+            let _ = dict.parse::<Token![,]>()?;
+        }
+    }
+    let span = proc_macro2::Span::call_site();
+    let open = open
+        .ok_or_else(|| syn::Error::new(span, "collection delimiters dict requires `open_parts`"))?;
+    let close = close
+        .ok_or_else(|| syn::Error::new(span, "collection delimiters dict requires `close_parts`"))?;
+    let sep =
+        sep.ok_or_else(|| syn::Error::new(span, "collection delimiters dict requires `sep`"))?;
+    if !allow_kv && key_val_sep.is_some() {
+        return Err(syn::Error::new(span, "this collection does not accept `key_val_sep`"));
+    }
+    if require_kv && key_val_sep.is_none() {
+        return Err(syn::Error::new(span, "Map collection requires `key_val_sep`"));
+    }
+    // A key/value collection that accepts `key_val_sep` but omits it (e.g. `Pathmap`,
+    // whose dict block need not restate `:`) defaults to `":"`, matching the no-block
+    // `pathmap_defaults()`. Without this it would parse as a single-element collection
+    // and reject `{| k: v |}` at the `:`.
+    let key_val_sep = if allow_kv { key_val_sep.or_else(|| Some(":".to_string())) } else { key_val_sep };
+    Ok(CollectionDelimiters { open, close, sep, key_val_sep })
+}
+
 fn parse_types(input: ParseStream) -> SynResult<(Vec<LangType>, Vec<RefinementTypeDef>)> {
     let types_ident = input.parse::<Ident>()?;
     if types_ident != "types" {
@@ -315,20 +394,28 @@ fn parse_types(input: ParseStream) -> SynResult<(Vec<LangType>, Vec<RefinementTy
                 native_type_raw
             };
 
-            // Optional (Param) legacy backward-compat and optional `[open, close, sep (, kv_sep)]`
-            // custom delimiters for List/Bag/Map.
-            let collection_kind = if name_str == "List" || name_str == "Bag" || name_str == "Map" {
+            // Optional (Param) legacy backward-compat, plus custom delimiters in either the
+            // positional `[open, close, sep (, kv_sep)]` form (feature legacy) or the brace-dict
+            // `{ open_parts: [...], close_parts: [...], sep: ..., key_val_sep: ... }` form
+            // (main / Rholang 1.4). Applies to List/Bag/Map/Set/Pathmap.
+            let is_collection =
+                matches!(name_str.as_str(), "List" | "Bag" | "Map" | "Set" | "Pathmap");
+            let collection_kind = if is_collection {
                 if content.peek(syn::token::Paren) {
                     let paren_content;
                     syn::parenthesized!(paren_content in content);
-                    // Consume legacy params for backward compat: List(Proc), Bag(Proc), Map(Proc, Proc)
+                    // Consume legacy params: List(Proc), Bag(Proc), Set(Proc), Map(Proc, Proc), Pathmap(Proc, Proc)
                     let _ = paren_content.parse::<Ident>()?;
-                    if name_str == "Map" && paren_content.peek(Token![,]) {
+                    if (name_str == "Map" || name_str == "Pathmap") && paren_content.peek(Token![,]) {
                         let _ = paren_content.parse::<Token![,]>()?;
                         let _ = paren_content.parse::<Ident>()?;
                     }
                 }
-                let delimiters: CollectionDelimiters = if content.peek(syn::token::Bracket) {
+                let allow_kv = name_str == "Map" || name_str == "Pathmap";
+                let require_kv = name_str == "Map";
+                let delimiters: CollectionDelimiters = if content.peek(syn::token::Brace) {
+                    parse_collection_delimiters_dict(&content, allow_kv, require_kv)?
+                } else if content.peek(syn::token::Bracket) {
                     let bracket_content;
                     syn::bracketed!(bracket_content in content);
                     let open: syn::LitStr = bracket_content.parse()?;
@@ -336,36 +423,33 @@ fn parse_types(input: ParseStream) -> SynResult<(Vec<LangType>, Vec<RefinementTy
                     let close: syn::LitStr = bracket_content.parse()?;
                     let _ = bracket_content.parse::<Token![,]>()?;
                     let sep: syn::LitStr = bracket_content.parse()?;
-                    if name_str == "Map" {
+                    let key_val_sep = if allow_kv && bracket_content.peek(Token![,]) {
                         let _ = bracket_content.parse::<Token![,]>()?;
-                        let key_val_sep: syn::LitStr = bracket_content.parse()?;
-                        CollectionDelimiters {
-                            open: open.value(),
-                            close: close.value(),
-                            sep: sep.value(),
-                            key_val_sep: Some(key_val_sep.value()),
-                        }
+                        Some(bracket_content.parse::<syn::LitStr>()?.value())
                     } else {
-                        CollectionDelimiters {
-                            open: open.value(),
-                            close: close.value(),
-                            sep: sep.value(),
-                            key_val_sep: None,
-                        }
+                        None
+                    };
+                    CollectionDelimiters {
+                        open: open.value(),
+                        close: close.value(),
+                        sep: sep.value(),
+                        key_val_sep,
                     }
-                } else if name_str == "List" {
-                    CollectionCategory::list_defaults()
-                } else if name_str == "Bag" {
-                    CollectionCategory::bag_defaults()
                 } else {
-                    CollectionCategory::map_defaults()
+                    match name_str.as_str() {
+                        "List" => CollectionCategory::list_defaults(),
+                        "Bag" => CollectionCategory::bag_defaults(),
+                        "Map" => CollectionCategory::map_defaults(),
+                        "Set" => CollectionCategory::set_defaults(),
+                        _ => CollectionCategory::pathmap_defaults(),
+                    }
                 };
-                Some(if name_str == "List" {
-                    CollectionCategory::List(delimiters)
-                } else if name_str == "Bag" {
-                    CollectionCategory::Bag(delimiters)
-                } else {
-                    CollectionCategory::Map(delimiters)
+                Some(match name_str.as_str() {
+                    "List" => CollectionCategory::List(delimiters),
+                    "Bag" => CollectionCategory::Bag(delimiters),
+                    "Map" => CollectionCategory::Map(delimiters),
+                    "Set" => CollectionCategory::Set(delimiters),
+                    _ => CollectionCategory::Pathmap(delimiters),
                 })
             } else {
                 None
@@ -1822,6 +1906,21 @@ fn parse_options(input: ParseStream) -> SynResult<HashMap<String, AttributeValue
                     ));
                 },
             },
+            // `parse_only: true` declares a language as a syntax-only test/demo
+            // fixture with no reduction semantics — it is excluded from the
+            // production LanguageDefInventory (the dovetail/ast inventory
+            // invariant tests). Fail-closed: a real language is inventoried
+            // unless it explicitly opts out here, and the inventory tests guard
+            // that a parse_only language carries no equations/rewrites/logic.
+            "parse_only" => match &value {
+                AttributeValue::Bool(_) => {},
+                _ => {
+                    return Err(syn::Error::new(
+                        key_ident.span(),
+                        "parse_only must be a boolean (true or false)",
+                    ));
+                },
+            },
             "emit_blockly" => match &value {
                 AttributeValue::Bool(_) => {},
                 _ => {
@@ -1878,11 +1977,41 @@ fn parse_options(input: ParseStream) -> SynResult<HashMap<String, AttributeValue
                     ));
                 },
             },
+            // PIECE 3: keyword reservation. `auto` reserves every
+            // identifier-shaped literal terminal as a keyword (the "reserved
+            // words" modeling, e.g. `Nil`/`true`/`Map` cannot also be a
+            // variable named after the keyword); `none` retains full
+            // ambiguity (Fortran-style languages with no reserved words,
+            // where `IF`/`DO`/`THEN` may double as identifiers). Grammar-
+            // derived: the reserved set is exactly the identifier-shaped
+            // terminals — no per-language hardcoded list.
+            "reserved_keywords" => match &value {
+                AttributeValue::Keyword(kw) => match kw.as_str() {
+                    "auto" | "none" => {},
+                    _ => {
+                        return Err(syn::Error::new(
+                            key_ident.span(),
+                            format!(
+                                "reserved_keywords: invalid keyword '{}'. \
+                                 Use 'auto' (reserve identifier-shaped keywords) \
+                                 or 'none' (retain full ambiguity)",
+                                kw
+                            ),
+                        ));
+                    },
+                },
+                _ => {
+                    return Err(syn::Error::new(
+                        key_ident.span(),
+                        "reserved_keywords must be a keyword: 'auto' or 'none'",
+                    ));
+                },
+            },
             unknown => {
                 return Err(syn::Error::new(
                     key_ident.span(),
                     format!(
-                        "unknown option '{}'. Valid options are: beam_width, log_semiring_model_path, dispatch, emit_tests, emit_blockly, emit_simulator, case_insensitive, unicode_normalization",
+                        "unknown option '{}'. Valid options are: beam_width, log_semiring_model_path, dispatch, emit_tests, emit_blockly, emit_simulator, case_insensitive, unicode_normalization, reserved_keywords, parse_only",
                         unknown
                     ),
                 ));
