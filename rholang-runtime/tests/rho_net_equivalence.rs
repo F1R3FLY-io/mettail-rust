@@ -38,7 +38,8 @@ use mettail_rholang_codegen::{
 };
 use mettail_rholang_runtime::{
     build_rho_net_injection_invocation_from_contract,
-    build_rho_net_replay_invocation_from_contracts, PlannedRhoBackend, RhoMachineInvocation,
+    build_rho_net_replay_invocation_from_contracts, run_normalized_par_for_oracle_and_read_runtime_values,
+    PlannedRhoBackend, RhoMachineInvocation,
 };
 use mettail_runtime::{Language, RuntimeObservationValue, RuntimeReflectedSubterm};
 
@@ -470,6 +471,113 @@ fn swap_step_network(fingerprint: &str) -> models::rhoapi::Par {
     .expect("Swap(x, y) compiles");
     automaton_receiver_network_par(&automaton.view(), "site0", &site.channel, "OUT", fingerprint)
         .expect("the automaton serializes")
+}
+
+/// A test observer for the automaton's accept:
+/// `for(y_0,…,y_{k-1}, o <- accept_channel){ o!(y_0) | … | o!(y_{k-1}) }` — it
+/// forwards each received σ slot to the out channel the accept named, so a match's
+/// σ can be observed WITHOUT a language σ-receiver (which exists only for SwapDemo).
+/// De Bruijn (the `k+1` binds are `[y_0,…,y_{k-1}, o]`): `o = BoundVar(0)`,
+/// `y_i = BoundVar(arity-i)`; the body is closed by the receive (`locally_free = {}`).
+fn sigma_echo_receiver(accept_channel: &str, arity: usize) -> models::rhoapi::Par {
+    use models::create_bit_vector;
+    use models::rhoapi::{Par, ReceiveBind};
+    use models::rust::utils::{
+        new_boundvar_par, new_freevar_par, new_gstring_par, new_receive_par, new_send_par,
+    };
+
+    let mut body = Par::default();
+    for i in 0..arity {
+        let yi = arity - i; // y_i = BoundVar(arity - i)
+        let send = new_send_par(
+            new_boundvar_par(0, create_bit_vector(&[0]), false), // channel o = BoundVar(0)
+            vec![new_boundvar_par(yi as i32, create_bit_vector(&[yi]), false)],
+            false,
+            create_bit_vector(&[0, yi]),
+            false,
+            create_bit_vector(&[0, yi]),
+            false,
+        );
+        body = body.append(send);
+    }
+    // The body references BoundVar(0..=arity) (o and every y_i); set it explicitly so
+    // the receive binds a body with the correct free set.
+    if arity > 0 {
+        body.locally_free = create_bit_vector(&(0..=arity).collect::<Vec<_>>());
+    }
+    new_receive_par(
+        vec![ReceiveBind {
+            patterns: (0..arity + 1)
+                .map(|i| new_freevar_par(i as i32, Vec::new()))
+                .collect(),
+            source: Some(new_gstring_par(accept_channel.to_string(), Vec::new(), false)),
+            remainder: None,
+            free_count: (arity + 1) as i32,
+        }],
+        body,
+        false,
+        false,
+        (arity + 1) as i32,
+        Vec::new(),
+        false,
+        Vec::new(),
+        false,
+    )
+}
+
+/// Stage 1 M1: the in-Rho match GENERALIZES beyond the binary Swap case, at runtime.
+/// `Triple(x, y, z)` matched against `Triple(A, B, C)` ON the interpreter binds
+/// σ = [⟦A⟧, ⟦B⟧, ⟦C⟧]; the σ-echo forwards those slots to OUT (no σ-receiver needed).
+/// The arity-3 runtime companion of `m1_matches_swap…` (arity 2); it also exercises
+/// the σ-echo observer that the property-based oracle reuses.
+#[tokio::test]
+async fn m1_matches_a_ternary_pattern_in_rho() {
+    mettail_runtime::clear_var_cache();
+    let (_backend, fingerprint) = swap_demo_backend();
+
+    let automaton = SetAutomaton::compile_structural([(
+        PatternId(0),
+        Pattern::app(
+            "Triple".to_string(),
+            vec![Pattern::var("x"), Pattern::var("y"), Pattern::var("z")],
+        ),
+    )])
+    .expect("Triple(x, y, z) compiles");
+    let network =
+        automaton_receiver_network_par(&automaton.view(), "site0", "MATCH", "OUT", &fingerprint)
+            .expect("the ternary automaton serializes");
+
+    let subject = spread_term_par(
+        &GroundTerm::new(
+            "Triple",
+            vec![
+                GroundTerm::new("A", Vec::new()),
+                GroundTerm::new("B", Vec::new()),
+                GroundTerm::new("C", Vec::new()),
+            ],
+        ),
+        &fingerprint,
+        "site0",
+    );
+
+    let echo = sigma_echo_receiver("MATCH", 3);
+    let program = echo.append(network).append(subject);
+    let mut observed = run_normalized_par_for_oracle_and_read_runtime_values(&program, "OUT")
+        .await
+        .expect("the in-Rho ternary match must execute");
+
+    // The echo's parallel sends land on OUT in nondeterministic order — compare as a
+    // multiset by constructor.
+    observed.sort_by_key(|value| match value {
+        RuntimeObservationValue::Term { constructor, .. } => constructor.clone(),
+        _ => "?".to_string(),
+    });
+    let expected = vec![
+        RuntimeObservationValue::Term { constructor: "A".to_string(), children: Vec::new() },
+        RuntimeObservationValue::Term { constructor: "B".to_string(), children: Vec::new() },
+        RuntimeObservationValue::Term { constructor: "C".to_string(), children: Vec::new() },
+    ];
+    assert_eq!(observed, expected, "Triple(A, B, C) matched in Rho binds σ = [A, B, C]");
 }
 
 /// Stage 1 M1: no false-positive matches. The Swap automaton over a `Pair(A, B)`
