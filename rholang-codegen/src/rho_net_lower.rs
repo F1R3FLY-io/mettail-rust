@@ -757,6 +757,71 @@ pub fn term_contract_call(channel_name: &str, mut args: Vec<Par>, out_channel: &
     )
 }
 
+/// The location channel of a spread term's ROOT — a `loc:`-kind quoted name
+/// derived from the site-root string `root_location`.
+///
+/// Per INV-7 / `rem:fresh` ("freshness is supplied as rho supplies all freshness,
+/// by quoting … no ν, no central allocator") the whole location scheme is ν-free:
+/// location channels are deterministic ground names, never fresh `New` bindings.
+/// `root_location` is the quoted per-site nonce ρ of the `⌜(ρ,ℓ)⌝` idiom — a plain
+/// string IS its quote — so distinct redex sites use disjoint channel prefixes.
+pub fn spread_root_location(root_location: &str) -> String {
+    format!("loc:{root_location}")
+}
+
+/// The location channel of the `index`-th child (under constructor `op`) of the
+/// node at `parent` — the derived location `ℓ·(op,index)` of `knotted-topoi`
+/// Appendix A. The spread emitter and the in-Rho automaton MUST derive every
+/// child channel through THIS one helper so they agree on the channel a subterm
+/// is published on and matched at.
+pub fn spread_child_location(parent: &str, op: &str, index: usize) -> String {
+    format!("{parent}/{op}.{index}")
+}
+
+/// Spread a ground subject term across per-location channels for in-Rho
+/// set-automaton matching (`knotted-topoi` Appendix A):
+///
+/// ```text
+/// ⟦f(t₁,…,tₙ)⟧_ℓ = c(ℓ)!(f̲) │ ∏ᵢ ⟦tᵢ⟧_{ℓ·(f,i)}
+/// ```
+///
+/// Each node publishes ONLY its head tag `f̲` (byte-identical to
+/// [`reflect_ground_term_par`]'s tag — the SHARED [`reflect_tag`] ABI) on its
+/// deterministic quoted location channel ([`spread_root_location`] /
+/// [`spread_child_location`]); the child subterms are spread on the derived child
+/// channels, which the automaton knows statically. This is the ν-free scheme
+/// (INV-7): a flat parallel composition of ground sends — no `New`, no `BoundVar`
+/// — and the message carries the tag ALONE, never child channels. `root_location`
+/// is the site root ρ of the `⌜(ρ,ℓ)⌝` freshness idiom.
+///
+/// The dual of the collapsed [`reflect_ground_term_par`]: same head tags at the
+/// same positions, spread across channels rather than nested in one `EList`.
+pub fn spread_term_par(term: &GroundTerm, language_fingerprint: &str, root_location: &str) -> Par {
+    spread_term_par_at(term, language_fingerprint, &spread_root_location(root_location))
+}
+
+fn spread_term_par_at(term: &GroundTerm, language_fingerprint: &str, location: &str) -> Par {
+    // This node's head-tag send on its location channel — the tag ALONE (Appendix
+    // A publishes `f̲`; child locations are derived, never carried in the message).
+    let head_tag =
+        GPrivateBuilder::new_par_from_string(reflect_tag(language_fingerprint, &term.constructor));
+    let mut par = new_send_par(
+        new_gstring_par(location.to_string(), Vec::new(), false),
+        vec![head_tag],
+        false,
+        Vec::new(),
+        false,
+        Vec::new(),
+        false,
+    );
+    // Spread each child on its derived location channel, in left-to-right `L` order.
+    for (index, child) in term.children.iter().enumerate() {
+        let child_location = spread_child_location(location, &term.constructor, index);
+        par = par.append(spread_term_par_at(child, language_fingerprint, &child_location));
+    }
+    par
+}
+
 /// Reflect an RHS pattern term to a normalized `Par` value under the constructor
 /// reflection ABI:
 ///
@@ -915,6 +980,132 @@ mod tests {
     use mettail_ast::language::Equation;
     use models::rhoapi::expr::ExprInstance;
     use models::rhoapi::var::VarInstance;
+
+    // ---- Stage 1 M0: the term-spread encoding (`spread_term_par`) ----
+
+    fn ground(constructor: &str, children: Vec<GroundTerm>) -> GroundTerm {
+        GroundTerm::new(constructor, children)
+    }
+
+    fn gstring_value(par: &Par) -> Option<String> {
+        match par.exprs.first()?.expr_instance.as_ref()? {
+            ExprInstance::GString(value) => Some(value.clone()),
+            _ => None,
+        }
+    }
+
+    /// The (location channel, constructor) nodes the spread must publish, in
+    /// pre-order — the forward image of `spread_term_par` over a ground term.
+    fn expected_spread_nodes(term: &GroundTerm, location: &str, out: &mut Vec<(String, String)>) {
+        out.push((location.to_string(), term.constructor.clone()));
+        for (index, child) in term.children.iter().enumerate() {
+            let child_location = spread_child_location(location, &term.constructor, index);
+            expected_spread_nodes(child, &child_location, out);
+        }
+    }
+
+    /// INV-10 witness: the spread encodes EXACTLY the term — one head-tag send per
+    /// node, on the derived location channel, carrying the shared-`reflect_tag`-ABI
+    /// head tag (byte-identical to `reflect_ground_term_par`'s tag); and it is
+    /// ν-free (no `New`, INV-7) and sends-only (a matching subject, not a program).
+    fn assert_spread_encodes(term: &GroundTerm, fingerprint: &str, root: &str) {
+        let spread = spread_term_par(term, fingerprint, root);
+        let mut expected = Vec::new();
+        expected_spread_nodes(term, &spread_root_location(root), &mut expected);
+
+        assert_eq!(spread.sends.len(), expected.len(), "one head-tag send per node");
+        assert!(spread.news.is_empty(), "ν-free spread: no New (INV-7)");
+        assert!(spread.receives.is_empty(), "a spread subject is sends only");
+        assert!(spread.matches.is_empty() && spread.bundles.is_empty(), "no Match/Bundle in a spread");
+
+        for (channel, constructor) in &expected {
+            let expected_channel = new_gstring_par(channel.clone(), Vec::new(), false);
+            let expected_tag =
+                GPrivateBuilder::new_par_from_string(reflect_tag(fingerprint, constructor));
+            assert!(
+                spread.sends.iter().any(|send| {
+                    send.chan.as_ref() == Some(&expected_channel)
+                        && send.data == vec![expected_tag.clone()]
+                }),
+                "spread must publish the head tag for `{constructor}` on `{channel}`"
+            );
+        }
+    }
+
+    #[test]
+    fn spread_encodes_a_flat_application() {
+        // Swap(A, B): the root plus two nullary leaves on their derived channels.
+        let term = ground("Swap", vec![ground("A", Vec::new()), ground("B", Vec::new())]);
+        assert_spread_encodes(&term, "testfp", "site0");
+        let spread = spread_term_par(&term, "testfp", "site0");
+        let channels: std::collections::BTreeSet<String> =
+            spread.sends.iter().filter_map(|s| s.chan.as_ref()).filter_map(gstring_value).collect();
+        let want: std::collections::BTreeSet<String> =
+            ["loc:site0", "loc:site0/Swap.0", "loc:site0/Swap.1"]
+                .into_iter()
+                .map(String::from)
+                .collect();
+        assert_eq!(channels, want, "the exact derived location channels");
+    }
+
+    #[test]
+    fn spread_encodes_a_nested_term() {
+        // Pair(Swap(A, B), Swap(B, A)) — two distinct subtrees, six nodes.
+        let term = ground(
+            "Pair",
+            vec![
+                ground("Swap", vec![ground("A", Vec::new()), ground("B", Vec::new())]),
+                ground("Swap", vec![ground("B", Vec::new()), ground("A", Vec::new())]),
+            ],
+        );
+        assert_spread_encodes(&term, "testfp", "site0");
+    }
+
+    #[test]
+    fn spread_leaf_head_tag_equals_collapsed_reflection_abi() {
+        // A nullary spread is a single head-tag send; the collapsed reflector wraps
+        // the SAME tag in an EList — the shared reflect_tag ABI, one dual of the other.
+        let leaf = ground("A", Vec::new());
+        let spread = spread_term_par(&leaf, "testfp", "site0");
+        assert_eq!(spread.sends.len(), 1);
+        let spread_tag = &spread.sends[0].data[0];
+        let expected_tag = GPrivateBuilder::new_par_from_string(reflect_tag("testfp", "A"));
+        assert_eq!(spread_tag, &expected_tag, "spread head tag is the shared-ABI tag");
+    }
+
+    mod spread_property {
+        use super::*;
+        use proptest::prelude::*;
+
+        /// A bounded strategy for ground constructor trees: `A`/`B`/`Nil` leaves and
+        /// unary/binary applications, to `max_depth` levels.
+        fn arb_ground_term(max_depth: u32) -> impl Strategy<Value = GroundTerm> {
+            let leaf = prop_oneof![
+                Just(GroundTerm::new("A", Vec::new())),
+                Just(GroundTerm::new("B", Vec::new())),
+                Just(GroundTerm::new("Nil", Vec::new())),
+            ];
+            leaf.prop_recursive(max_depth, 48, 3, |inner| {
+                prop_oneof![
+                    inner.clone().prop_map(|c| GroundTerm::new("Wrap", vec![c])),
+                    (inner.clone(), inner.clone())
+                        .prop_map(|(l, r)| GroundTerm::new("Swap", vec![l, r])),
+                    (inner.clone(), inner)
+                        .prop_map(|(l, r)| GroundTerm::new("Pair", vec![l, r])),
+                ]
+            })
+        }
+
+        proptest! {
+            /// INV-10 property: an ARBITRARY ground term spreads to exactly one
+            /// head-tag send per node, on the derived location channels, ν-free —
+            /// `spread_term_par` is an information-preserving transient scaffold.
+            #[test]
+            fn spread_encodes_arbitrary_ground_terms(term in arb_ground_term(4)) {
+                assert_spread_encodes(&term, "propfp", "site0");
+            }
+        }
+    }
 
     const SCALAR_FRAGMENT: &str = r#"
         name: RhoNetLowerScalarFrag,

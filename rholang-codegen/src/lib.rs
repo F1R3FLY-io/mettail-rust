@@ -128,9 +128,9 @@ pub use rho_net::{
     RhoNetSemanticPredicate, RhoNetSemanticPredicateQuality, RhoNetValidationError,
 };
 pub use rho_net_lower::{
-    reflect_ground_term_par, rho_net_injection_sites, term_contract_call, GroundTerm,
-    RhoNetInjectionInvocation, RhoNetInjectionSite, RhoNetInstallError, RhoNetLowered,
-    RhoNetLoweredRule, RhoNetLoweringError, UnsupportedFamily,
+    reflect_ground_term_par, rho_net_injection_sites, spread_child_location, spread_root_location,
+    spread_term_par, term_contract_call, GroundTerm, RhoNetInjectionInvocation, RhoNetInjectionSite,
+    RhoNetInstallError, RhoNetLowered, RhoNetLoweredRule, RhoNetLoweringError, UnsupportedFamily,
 };
 pub use validate::{
     validate_rho_program, RhoValidationError, ValidatedRhoAstProgram, ValidatedRhoProgram,

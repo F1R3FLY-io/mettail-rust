@@ -19,3 +19,8 @@ name = "mettail_rholang_codegen"
 mettail-ast = { package = "ast", path = "../ast" }
 syn = { workspace = true }
 models = { workspace = true }
+
+[dev-dependencies]
+# Property-based tests of the Stage 1 term-spread encoding (arbitrary ground terms
+# must spread to exactly one head-tag send per node on the derived location channel).
+proptest = "1"
