@@ -237,6 +237,50 @@ pub(crate) const AT_QUOTED_BIND_REALIZE_GATE: bool = true;
 /// Enabled (`true`).
 pub(crate) const ROOT2_DRIVER_FALLTHROUGH: bool = true;
 
+/// GRAMMAR_DERIVED_ISOLATION_CATEGORIES — increment P0 of the ROOT-P
+/// generalization (2026-07-07). Master compile-time kill-switch selecting HOW the
+/// three isolation families choose their result categories at the gates
+/// [`super::facade::sep_isolation_shape`] / [`super::facade::projection_iso_shape`]
+/// / [`super::facade::infix_iso_shape`]:
+///
+///   - `true` (SHIP DEFAULT, the ACTIVE generalization): use the GRAMMAR-DERIVED
+///     eligibility predicate (`facade::eligible_family`) — a prefix-cohort /
+///     list-element / infix-operand REACHABILITY analysis over the grammar IR,
+///     with NO hardcoded category names. This is the real "not coupled to `@`"
+///     selection: it isolates EXACTLY the categories that fork-explode (a ≥2
+///     shared-prefix cohort whose operands nest back into the category), in ANY
+///     language, present or future.
+///   - `false` (kill-switch fallback): use the HARDCODED include lists
+///     [`SEP_ISOLATION_CATEGORIES`] / [`PROJ_ISOLATION_CATEGORIES`] /
+///     [`INFIX_ISOLATION_CATEGORIES`] — the pre-P0, rhocalc-name-coupled behavior.
+///     Retained as a byte-identical-to-pre-P0 escape hatch.
+///
+/// ## Behavior-preserving refinement (NOT byte-identical — validated 2026-07-07)
+/// The derived predicate is a PRINCIPLED REFINEMENT, not a byte-for-byte
+/// reproduction, of the hardcoded lists. The hardcoded PROJ list is name-global
+/// (`Name`/`Proc`/`InputBind`), so it incidentally isolated 5 non-rhocalc
+/// languages' categories (Ambient/Class2Smoke `Proc`, Class3Multi/Class3Opt
+/// `Name`, GuardedRho `Name`+`Proc`) whose shapes are SINGLETON-sigil / framed-list
+/// / method-frame — i.e. do NOT fork-explode. The derived predicate correctly
+/// EXCLUDES them (no ≥2 cohort), so it emits FEWER (redundant) isolation helpers
+/// than the hardcoded lists for those 5 languages. This is EMPIRICALLY VALIDATED
+/// BEHAVIOR-PRESERVING: the full test suites of all 5 languages + every control
+/// (rhocalc 386/0, prattail 3606/0, gen_* , cross-lang roundtrips) pass IDENTICALLY
+/// with the derived path ON vs OFF (422/0 affected, byte-diff of per-suite counts
+/// empty). Isolation is a pure early-return fast-path; for a non-fork-exploding
+/// shape the monolithic path already yields the same term, so dropping the helper
+/// changes the ROUTE, not the RESULT. The behavioral gate is therefore the full
+/// test suite (it runs against this default-ON path), NOT a codegen set-equality
+/// assert — the earlier `debug_assert_eq!(derived, effective)` enforced a false
+/// (byte-identity) invariant and was retired. `PRATTAIL_ISOLATION_ORACLE_DEBUG`
+/// still prints the per-language derived-vs-effective sets for inspection.
+///
+/// ## Kill-switch / A-B
+/// The codegen-time env override `PRATTAIL_GRAMMAR_DERIVED_ISOLATION=1|0` (read by
+/// `facade::grammar_derived_isolation_enabled`) flips the path WITHOUT a source
+/// edit; unset ⇒ this const. `0` restores the pre-P0 hardcoded-list emission.
+pub(crate) const GRAMMAR_DERIVED_ISOLATION_CATEGORIES: bool = true;
+
 /// SEP_ISOLATION_COMBINE — the ROOT-P `.*sep` DIVIDE-AND-CONQUER isolation+combine
 /// facade fast-path (Plan a7986200, 2026-07-05, session da0842dc). Master
 /// compile-time kill-switch (same convention as [`ROOT2_DRIVER_FALLTHROUGH`] /
@@ -399,10 +443,16 @@ pub(crate) const PROJ_ISOLATION_COMBINE: bool = true;
 /// [`SEP_ISOLATION_CATEGORIES`] convention). An `@`-projection category is given the
 /// isolation+combine prologue + helper ONLY when its name appears here AND
 /// [`PROJ_ISOLATION_COMBINE`] is `true` AND a `ProjIsoShape` is derivable for it.
-/// EMPTY ⇒ byte-identical (P1 plumbing checkpoint). Expanded to
-/// `{"Name","Proc","InputBind","ForRow"}` at P4 (the DECISIVE `@`-nesting flip).
-pub(crate) const PROJ_ISOLATION_CATEGORIES: &[&str] =
-    &["Name", "Proc", "InputBind", "ForRow"];
+/// EMPTY ⇒ byte-identical (P1 plumbing checkpoint). `{"Name","Proc","InputBind"}`
+/// at P4 (the DECISIVE `@`-nesting flip).
+///
+/// P0 (2026-07-07): dropped the inert `"ForRow"` entry — `ForRow` has NO
+/// sigil-led projection rule and its `.*sep` list is owned by the dedicated sep
+/// helper (`sep_owned`), so `derive_projection_iso_shape(ForRow)` is `None`;
+/// listing it never emitted a projection helper. The drop is a behavioral no-op
+/// (byte-identical) and makes this list equal the EFFECTIVE set the P0 oracle
+/// compares the GRAMMAR-DERIVED predicate against.
+pub(crate) const PROJ_ISOLATION_CATEGORIES: &[&str] = &["Name", "Proc", "InputBind"];
 
 /// METHOD_FRAME_ISOLATION — extend the `@`-PROJECTION isolation (above) to the
 /// RECEIVER-LED POSTFIX (method-call) frames (ROOT-D, session da0842dc,

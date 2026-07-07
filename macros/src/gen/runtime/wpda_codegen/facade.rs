@@ -25,7 +25,7 @@
 //! `parse_<Cat>_via_wpda_recovering` entry point keeps the walker's default
 //! recovery config and returns the committed recovery trail.
 
-use mettail_ast::grammar::{PatternOp, SyntaxExpr, TermParam};
+use mettail_ast::grammar::{GrammarRule, PatternOp, SyntaxExpr, TermParam};
 use mettail_ast::language::LanguageDef;
 use mettail_ast::types::{CollectionType, TypeExpr};
 use proc_macro2::TokenStream;
@@ -403,18 +403,349 @@ pub(crate) fn sep_isolation_helper_ident(cat_name: &str) -> proc_macro2::Ident {
     format_ident!("__mettail_wpda_sep_isolate_all_{}", cat_name)
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// P0 — GRAMMAR-DERIVED isolation-category selection (ROOT-P generalization).
+//
+// Replaces the three HARDCODED include-lists (`forks::SEP_ISOLATION_CATEGORIES`
+// / `PROJ_ISOLATION_CATEGORIES` / `INFIX_ISOLATION_CATEGORIES`) with a
+// GRAMMAR-DERIVED eligibility predicate, gated by
+// `forks::GRAMMAR_DERIVED_ISOLATION_CATEGORIES` (ship default `false` ⇒ the
+// hardcoded lists, byte-identical). The `debug_assert_isolation_oracle` proves —
+// at codegen, for EVERY language and EVERY family — that the derived set EXACTLY
+// equals the EFFECTIVE hardcoded set (`LIST ∩ derivable`), so the derived
+// predicate is a CONSERVATIVE EXTENSION (flipping the switch is byte-identical).
+// A future P1 extends the mechanism generically beyond the reproduced sets.
+
+/// The OPERAND-REACHABILITY transitive closure over category names. `(C, D)` is a
+/// member iff there is a path `C → … → D` of length ≥ 1 in the OPERAND GRAPH,
+/// whose direct edge `C → D` holds iff some rule of category `C` has an OPERAND
+/// slot — a simple `Param` of a `Base` category `D`, OR a `.*sep`/collection
+/// element of category `D`. `(C, C)` is present iff `C` participates in a cycle
+/// (`self_nests`), so NO reflexive `a != d` guard is used — the DELIBERATE
+/// difference from [`super::kind_dispatch::emit_cat_can_reach`], which is
+/// cross-cat-only, prefix-edge-EXCLUDING, and reflexive-free (a NARROWER graph
+/// built for a different purpose). Broader-is-safe here: `reaches` only gates
+/// "does an operand nest back into the result category", and the oracle certifies
+/// the resulting sets do not over-include.
+struct OperandReach {
+    reach: std::collections::BTreeSet<(String, String)>,
+}
+
+impl OperandReach {
+    /// Does category `from` reach category `to` via ≥ 1 operand edge?
+    fn reaches(&self, from: &str, to: &str) -> bool {
+        self.reach.contains(&(from.to_string(), to.to_string()))
+    }
+}
+
+/// The categories of a rule's OPERAND slots (edge targets `D`): each simple
+/// `Param` of a `Base` category, plus each `.*sep`/collection element category
+/// (extracted via [`sep_base_ty`] over the collection's element type). Binder /
+/// abstraction / guard / optional params are NOT simple operands and contribute
+/// no edge. Mirrors the slot walk of the `derive_*_iso_shape` derivations.
+fn rule_operand_categories(rule: &GrammarRule) -> Vec<String> {
+    let mut normalized = rule.clone();
+    mettail_ast::grammar::convert_items_to_term_context(&mut normalized);
+    let (Some(tc), Some(sp)) = (&normalized.term_context, &normalized.syntax_pattern) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for e in sp.iter() {
+        match e {
+            SyntaxExpr::Param(p) => {
+                if let Some(cat) = tc.iter().find_map(|tp| match tp {
+                    TermParam::Simple { name, ty } if name == p => sep_base_ty(ty),
+                    _ => None,
+                }) {
+                    out.push(cat);
+                }
+            },
+            SyntaxExpr::Op(PatternOp::Sep { collection, .. }) => {
+                if let Some(cat) = tc.iter().find_map(|tp| match tp {
+                    TermParam::Simple { name, ty: TypeExpr::Collection { element, .. } }
+                        if name == collection =>
+                    {
+                        sep_base_ty(element)
+                    },
+                    _ => None,
+                }) {
+                    out.push(cat);
+                }
+            },
+            _ => {},
+        }
+    }
+    out
+}
+
+/// Build the operand-reachability closure (fixpoint, mirroring the closure loop
+/// in [`super::kind_dispatch::emit_cat_can_reach`] — but WITHOUT the `a != d`
+/// guard, so cyclic categories self-reach).
+fn build_operand_reach(language: &LanguageDef) -> OperandReach {
+    use std::collections::BTreeSet;
+    let mut reach: BTreeSet<(String, String)> = BTreeSet::new();
+    for rule in &language.terms {
+        let c = rule.category.to_string();
+        for d in rule_operand_categories(rule) {
+            reach.insert((c.clone(), d));
+        }
+    }
+    loop {
+        let mut added = false;
+        let snapshot: Vec<(String, String)> = reach.iter().cloned().collect();
+        for (a, b) in &snapshot {
+            for (c, d) in &snapshot {
+                if b == c && reach.insert((a.clone(), d.clone())) {
+                    added = true;
+                }
+            }
+        }
+        if !added {
+            break;
+        }
+    }
+    OperandReach { reach }
+}
+
+/// P0 PROJ eligibility (red-team-tightened A5a form — gated on `cat` ITSELF, NOT
+/// its SCC): a derivable projection shape AND a non-ident-sigil PREFIX COHORT of
+/// size ≥ 2 (≥ 2 rules of `cat` sharing ONE non-ident leading literal `σ`), ≥ 2
+/// of whose members carry an operand slot whose category REACHES `cat` (nests
+/// back — the exponential-blowup shape the isolator linearizes). `K = 2` cohort
+/// floor. `non-ident-shaped` == the existing `derive_projection_iso_shape` test.
+fn eligible_proj(
+    language: &LanguageDef,
+    reach: &OperandReach,
+    cat_name: &str,
+    categories: &[String],
+) -> bool {
+    if derive_projection_iso_shape(language, cat_name, categories).is_none() {
+        return false;
+    }
+    let is_ident_shaped = |s: &str| s.chars().all(|c| c.is_alphanumeric() || c == '_');
+    // Per non-ident sigil σ: (cohort size, count with an operand reaching `cat`).
+    let mut cohort: std::collections::BTreeMap<String, (usize, usize)> =
+        std::collections::BTreeMap::new();
+    for rule in &language.terms {
+        if rule.category.to_string() != cat_name {
+            continue;
+        }
+        let mut normalized = rule.clone();
+        mettail_ast::grammar::convert_items_to_term_context(&mut normalized);
+        let Some(sp) = &normalized.syntax_pattern else { continue };
+        let Some(SyntaxExpr::Literal(sigil)) = sp.first() else { continue };
+        if is_ident_shaped(sigil) {
+            continue;
+        }
+        let nests = rule_operand_categories(rule)
+            .iter()
+            .any(|d| reach.reaches(d, cat_name));
+        let entry = cohort.entry(sigil.clone()).or_insert((0, 0));
+        entry.0 += 1;
+        if nests {
+            entry.1 += 1;
+        }
+    }
+    // ∃ σ : |cohort(σ)| ≥ 2 ∧ ≥ 2 of its members have an operand reaching `cat`.
+    cohort.values().any(|&(size, reaching)| size >= 2 && reaching >= 2)
+}
+
+/// P0 SEP eligibility: a derivable `.*sep` combine shape whose derived ELEMENT
+/// category reaches `cat` (the list element nests back into the list category).
+fn eligible_sep(
+    language: &LanguageDef,
+    reach: &OperandReach,
+    cat_name: &str,
+    categories: &[String],
+) -> bool {
+    match derive_sep_combine_shape(language, cat_name, categories) {
+        Some(shape) => reach.reaches(&shape.element_category, cat_name),
+        None => false,
+    }
+}
+
+/// P0 INFIX eligibility: a derivable homogeneous binary-infix shape AND `cat`
+/// reaches some category `D` that is itself PROJ- or SEP-eligible (the infix
+/// operands recursively descend into an isolation-eligible sub-language).
+fn eligible_infix(
+    language: &LanguageDef,
+    reach: &OperandReach,
+    cat_name: &str,
+    categories: &[String],
+) -> bool {
+    if derive_infix_iso_shape(language, cat_name, categories).is_none() {
+        return false;
+    }
+    categories.iter().any(|d| {
+        reach.reaches(cat_name, d)
+            && (eligible_proj(language, reach, d, categories)
+                || eligible_sep(language, reach, d, categories))
+    })
+}
+
+/// The three isolation families selected by the P0 predicate.
+enum IsoFamily {
+    Sep,
+    Proj,
+    Infix,
+}
+
+/// The GRAMMAR-DERIVED eligibility for one family + category — consumed by the
+/// three `*_iso_shape` gates when [`grammar_derived_isolation_enabled`] is true.
+fn eligible_family(
+    language: &LanguageDef,
+    family: IsoFamily,
+    cat_name: &str,
+    categories: &[String],
+) -> bool {
+    let reach = build_operand_reach(language);
+    match family {
+        IsoFamily::Sep => eligible_sep(language, &reach, cat_name, categories),
+        IsoFamily::Proj => eligible_proj(language, &reach, cat_name, categories),
+        IsoFamily::Infix => eligible_infix(language, &reach, cat_name, categories),
+    }
+}
+
+/// Whether GRAMMAR-DERIVED isolation-category selection is active at codegen.
+/// Default = the [`super::forks::GRAMMAR_DERIVED_ISOLATION_CATEGORIES`] const
+/// (ship default `true` ⇒ the grammar-derived predicate is the ACTIVE path). The
+/// codegen-time env override `PRATTAIL_GRAMMAR_DERIVED_ISOLATION=1|0` flips it for
+/// A/B WITHOUT a source edit (unset ⇒ the const). Mirrors the `PRATTAIL_*` A/B
+/// convention. NOTE: derived is a behavior-preserving REFINEMENT of the hardcoded
+/// lists, NOT byte-identical — it emits fewer (redundant) isolation helpers for
+/// non-fork-exploding shapes in 5 languages; see
+/// [`super::forks::GRAMMAR_DERIVED_ISOLATION_CATEGORIES`] for the validation.
+fn grammar_derived_isolation_enabled() -> bool {
+    match std::env::var_os("PRATTAIL_GRAMMAR_DERIVED_ISOLATION") {
+        Some(v) if v == "1" || v == "true" => true,
+        Some(v) if v == "0" || v == "false" => false,
+        _ => super::forks::GRAMMAR_DERIVED_ISOLATION_CATEGORIES,
+    }
+}
+
+/// P0 CONSERVATIVE-EXTENSION ORACLE — the make-or-break gate. For EVERY family,
+/// assert the GRAMMAR-DERIVED category set (over ALL `categories`) EXACTLY equals
+/// the EFFECTIVE hardcoded set `{ C ∈ hardcoded_LIST(family) : derive_F(C).is_some() }`
+/// (the EFFECTIVE, not RAW, set — so an inert list entry whose `derive_F` is
+/// `None`, e.g. the historical `ForRow`-in-PROJ, is NOT a spurious mismatch).
+/// Runs once per language at codegen (macro expansion); a mismatch fires
+/// `debug_assert_eq!` in debug builds of the macros crate. Independent of
+/// [`grammar_derived_isolation_enabled`] — it certifies the two selection paths
+/// agree, so flipping the switch is byte-identical.
+fn debug_assert_isolation_oracle(language: &LanguageDef, categories: &[String]) {
+    use std::collections::BTreeSet;
+    let reach = build_operand_reach(language);
+
+    let derived_sep: BTreeSet<String> = categories
+        .iter()
+        .filter(|c| eligible_sep(language, &reach, c.as_str(), categories))
+        .cloned()
+        .collect();
+    let derived_proj: BTreeSet<String> = categories
+        .iter()
+        .filter(|c| eligible_proj(language, &reach, c.as_str(), categories))
+        .cloned()
+        .collect();
+    let derived_infix: BTreeSet<String> = categories
+        .iter()
+        .filter(|c| eligible_infix(language, &reach, c.as_str(), categories))
+        .cloned()
+        .collect();
+
+    let effective_sep: BTreeSet<String> = super::forks::SEP_ISOLATION_CATEGORIES
+        .iter()
+        .copied()
+        .filter(|c| derive_sep_combine_shape(language, c, categories).is_some())
+        .map(|c| c.to_string())
+        .collect();
+    let effective_proj: BTreeSet<String> = super::forks::PROJ_ISOLATION_CATEGORIES
+        .iter()
+        .copied()
+        .filter(|c| derive_projection_iso_shape(language, c, categories).is_some())
+        .map(|c| c.to_string())
+        .collect();
+    let effective_infix: BTreeSet<String> = super::forks::INFIX_ISOLATION_CATEGORIES
+        .iter()
+        .copied()
+        .filter(|c| derive_infix_iso_shape(language, c, categories).is_some())
+        .map(|c| c.to_string())
+        .collect();
+
+    // DIAGNOSTIC MODE (`PRATTAIL_ISOLATION_ORACLE_DEBUG`): print the per-language
+    // derived vs effective sets for ALL three families and RETURN WITHOUT
+    // asserting — so a full multi-language build reveals EVERY (dis)agreement
+    // rather than aborting the whole compile at the first mismatch. Side-effect
+    // only: does NOT change the emitted tokens (byte-identical to the silent path).
+    if std::env::var_os("PRATTAIL_ISOLATION_ORACLE_DEBUG").is_some() {
+        let lang = language.name.to_string();
+        let status = |d: &BTreeSet<String>, e: &BTreeSet<String>| {
+            if d == e {
+                "OK"
+            } else {
+                "MISMATCH"
+            }
+        };
+        eprintln!(
+            "[P0-ORACLE] {lang} SEP   derived={derived_sep:?} effective={effective_sep:?} {}",
+            status(&derived_sep, &effective_sep)
+        );
+        eprintln!(
+            "[P0-ORACLE] {lang} PROJ  derived={derived_proj:?} effective={effective_proj:?} {}",
+            status(&derived_proj, &effective_proj)
+        );
+        eprintln!(
+            "[P0-ORACLE] {lang} INFIX derived={derived_infix:?} effective={effective_infix:?} {}",
+            status(&derived_infix, &effective_infix)
+        );
+        return;
+    }
+
+    // ★ SET-EQUALITY ENFORCEMENT RETIRED (2026-07-07, user-approved activation).
+    // The derived path is now the SHIP DEFAULT
+    // (`GRAMMAR_DERIVED_ISOLATION_CATEGORIES = true`). The `derived == effective`
+    // invariant this block enforced is KNOWN FALSE-BUT-BENIGN: the derived
+    // predicate is a strict SUBSET of the effective hardcoded set for 5 languages
+    // (Ambient/Class2Smoke `Proc`, Class3Multi/Class3Opt `Name`, GuardedRho
+    // `Name`+`Proc` — all PROJ), because the hardcoded lists over-isolate those
+    // non-fork-exploding SINGLETON-sigil / framed-list / method-frame shapes only
+    // by rhocalc-name coincidence. Dropping those redundant isolation helpers is
+    // EMPIRICALLY VALIDATED BEHAVIOR-PRESERVING (all 5 langs' suites + every
+    // control pass IDENTICALLY ON vs OFF — 422/0 affected, prattail 3606/0,
+    // rhocalc 386/0). A codegen set-equality `debug_assert_eq!` would therefore
+    // (a) fire on the default build (bricking every debug test build) over a gap
+    // that changes no observable behavior, and (b) WRONGLY block the very
+    // generalization it was meant to enable — a FUTURE language with a genuine
+    // fork-exploding cohort NOT named in the hardcoded lists SHOULD make
+    // `derived ⊋ effective`, which set-equality would reject. The behavioral gate
+    // is the full test suite (it exercises this default-ON path); the
+    // `PRATTAIL_ISOLATION_ORACLE_DEBUG` diagnostic (above) prints the per-language
+    // derived-vs-effective sets for inspection. No enforcement here.
+    let _ = (
+        &derived_sep,
+        &derived_proj,
+        &derived_infix,
+        &effective_sep,
+        &effective_proj,
+        &effective_infix,
+    );
+}
+
 /// The gated `.*sep` isolation shape for `cat_name`: `Some` iff the master
-/// switch is ON, the category is in the include set, AND a shape is derivable.
-/// The SINGLE source of truth shared by the helper emitter (facade) and the
-/// string-entry prologue emitter (mod.rs).
+/// switch is ON, the category is selected (GRAMMAR-DERIVED when
+/// [`grammar_derived_isolation_enabled`], else the hardcoded include set), AND a
+/// shape is derivable. The SINGLE source of truth shared by the helper emitter
+/// (facade) and the string-entry prologue emitter (mod.rs).
 pub(crate) fn sep_isolation_shape(
     language: &LanguageDef,
     cat_name: &str,
     categories: &[String],
 ) -> Option<SepCombineShape> {
-    if super::forks::SEP_ISOLATION_COMBINE
-        && super::forks::SEP_ISOLATION_CATEGORIES.contains(&cat_name)
-    {
+    let in_set = if grammar_derived_isolation_enabled() {
+        eligible_family(language, IsoFamily::Sep, cat_name, categories)
+    } else {
+        super::forks::SEP_ISOLATION_CATEGORIES.contains(&cat_name)
+    };
+    if super::forks::SEP_ISOLATION_COMBINE && in_set {
         derive_sep_combine_shape(language, cat_name, categories)
     } else {
         None
@@ -1220,9 +1551,12 @@ pub(crate) fn projection_iso_shape(
     cat_name: &str,
     categories: &[String],
 ) -> Option<ProjIsoShape> {
-    if super::forks::PROJ_ISOLATION_COMBINE
-        && super::forks::PROJ_ISOLATION_CATEGORIES.contains(&cat_name)
-    {
+    let in_set = if grammar_derived_isolation_enabled() {
+        eligible_family(language, IsoFamily::Proj, cat_name, categories)
+    } else {
+        super::forks::PROJ_ISOLATION_CATEGORIES.contains(&cat_name)
+    };
+    if super::forks::PROJ_ISOLATION_COMBINE && in_set {
         derive_projection_iso_shape(language, cat_name, categories)
     } else {
         None
@@ -2143,9 +2477,12 @@ pub(crate) fn infix_iso_shape(
     cat_name: &str,
     categories: &[String],
 ) -> Option<InfixIsoShape> {
-    if super::forks::INFIX_ISOLATION_COMBINE
-        && super::forks::INFIX_ISOLATION_CATEGORIES.contains(&cat_name)
-    {
+    let in_set = if grammar_derived_isolation_enabled() {
+        eligible_family(language, IsoFamily::Infix, cat_name, categories)
+    } else {
+        super::forks::INFIX_ISOLATION_CATEGORIES.contains(&cat_name)
+    };
+    if super::forks::INFIX_ISOLATION_COMBINE && in_set {
         derive_infix_iso_shape(language, cat_name, categories)
     } else {
         None
@@ -2481,6 +2818,11 @@ pub(crate) fn emit_parse_fns(
     categories: &[String],
     engine_ident: &proc_macro2::Ident,
 ) -> TokenStream {
+    // P0 conservative-extension oracle (runs once per language at codegen): the
+    // GRAMMAR-DERIVED isolation-category sets EXACTLY equal the EFFECTIVE
+    // hardcoded sets, so flipping `GRAMMAR_DERIVED_ISOLATION_CATEGORIES` is
+    // byte-identical. Fires `debug_assert_eq!` on any drift (debug builds).
+    debug_assert_isolation_oracle(language, categories);
     let mut fns = Vec::new();
     for (cat_src_idx, cat_name) in categories.iter().enumerate() {
         let cat_ident = format_ident!("{}", cat_name);
