@@ -222,7 +222,7 @@ runtime values are normalized AST artifacts, and the executable form is
 | [13 — Knotted-Topoi Operational Invariants](13-knotted-topoi-operational-invariants.md) | Which operational invariants does the north-star paper require, and is host-side matching plus Rho injection a faithful realization? |
 | [14 — Completion Audit](14-completion-audit.md) | The final completion audit (plan #1956 Epic 1 #2078): change classification (#1970) + per-epic requirement-to-evidence matrix (#1972/#1973), verifying the persistent goal against current code. |
 | [15 — In-Rho Set-Automaton Matching Integration](15-in-rho-set-automaton-matching.md) | How is Greg Meredith's set-automaton matching integration finished — compiling the set automaton into Rho for O1-optimal in-Rho matching, with every non-semantic-predicate rewrite firing as a COMM? Authored one campaign stage per section (Stage 0 firing driver; Stage 1 matching). |
-| [16 — In-Rho Matching: Verification Plan](16-in-rho-verification-plan.md) | What is the end-to-end formal-verification strategy for the in-Rho matching — the Rocq-first obligations, the load-bearing rem:nonopt discharge chain, the tool fit, and what is proven vs pending? |
+| [16 — In-Rho Matching: Verification Plan](16-in-rho-verification-plan.md) | What is the end-to-end formal-verification strategy for the in-Rho matching — the Rocq-first obligations, the load-bearing rem:nonopt discharge chain, the tool fit, and what is proven vs outstanding? |
 | [References](references.md) | Which papers, docs, and formal artifacts support the design? |
 | [Validation Script](validate.sh) | How are the documentation structure checks reproduced locally? |
 

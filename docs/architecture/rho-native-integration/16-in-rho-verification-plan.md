@@ -3,7 +3,7 @@
 > The end-to-end formal-verification strategy for the in-Rho set-automaton
 > integration ([15](15-in-rho-set-automaton-matching.md)). **Rocq is the default
 > theorem prover** (zero-admission — `Print Assumptions` = "Closed under the global
-> context"; no `Admitted`/`Axiom`/`Parameter`, enforced by
+> context"; no admits, no added axioms, no free section parameters, enforced by
 > `formal/scripts/check_rocq_zero_admission.py`). Wolfram 15, TLA+/Apalache, and
 > mCRL2/Maude are the finite / symbolic / CLTS-bisimilarity complements — the
 > executable floor under each unbounded Rocq theorem, never a substitute for it.
@@ -79,8 +79,8 @@ Stage AC. The capstone flips INV-2/6/13 in [13](13-knotted-topoi-operational-inv
 |---|---|---|
 | M0 spread | done | INV-10 round-trip property (example + proptest); the `$\nu$`-free assertion is the INV-7 executable form |
 | M1 matching | done (base case) | validated end-to-end by the runtime match test (`m1_matches_swap_in_rho_and_fires_the_rewrite`), which the RSpace reducer checks; the arity-general De Bruijn frame + the no-false-positive negative case are covered; the Phase-A Rocq theorems (ii/i/x) are the next verification step |
-| M2 channel re-keying | pending | (viii), O2 |
-| M3 `$\tau$` internalization | pending | (iii) — the `rem:nonopt` discharge |
+| M2 channel re-keying | later slice | (viii), O2 |
+| M3 `$\tau$` internalization | later slice | (iii) — the `rem:nonopt` discharge |
 
 The Rust example / property / integration tests are the executable floor; the Rocq
 theorems above are the unbounded ceiling, authored one slice at a time under the
