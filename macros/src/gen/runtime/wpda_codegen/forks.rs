@@ -81,6 +81,70 @@ pub(crate) const BP_TIER_MIXFIX: f64 = 0.20;
 /// snapshot.
 pub(crate) const FORROW_PROJ_GATE: bool = true;
 
+/// KWAMBIG_PROJ_EXEMPT_GATE — the ROOT-A fix (keyword/ident-ambiguous bare
+/// cross-cat PROJECTION exemption from the F3 row-scoped-trigger suppression;
+/// 2026-07-07). Compile-time `const` resolved at macro expansion (the
+/// [`FORROW_PROJ_GATE`] / [`AT_QUOTED_BIND_GATE`] kill-switch convention).
+///
+/// ## The defect it ships the fix for (ROOT A — the display-roundtrip blocker)
+/// A comma-separated `Proc`-operand sequence FAILS to parse when one operand is a
+/// keyword/ident-ambiguous bare cross-cat projection (`CastBool` of `true`/`false`
+/// — the ONLY such trigger in rhocalc: `true`/`false` lex as BOTH a `Bool` literal
+/// keyword AND an `Ident`) AND a LATER comma-operand carries a top-level send
+/// (`!(`/`!!(`). Minimal: `fraction(false, a!(0))` FAILS; `fraction(0, a!(0))`,
+/// `fraction(Nil, a!(0))`, `fraction((false), a!(0))`, `fraction(false, (a!(0)))`
+/// all PASS. Generalizes to `[false, a!(0)]`. The grammar ADMITS the derivation
+/// `FractionProc(CastBool(false), POutput(a,0))`; the parser wrongly cannot build
+/// it (BOTH the demand `parse` and the exhaustive `parse_via_wpda_all` fail).
+///
+/// ## Root cause (measured, impl-step-0 2026-07-07)
+/// When the ambiguous `false` operand is dispatched, its `Bool→Proc` projection
+/// (`CastBool`, `LexAltRuleKind::CrossCatProjection`) is emitted through the F3
+/// [`FORROW_PROJ_GATE`] suppression in [`emit_lex_fork_at_prefix_dispatch`] (both
+/// `CrossCatProjection` arms). That gate suppresses the projection when
+/// `prefix_crosscat_lhs_trigger_ahead_scoped(primary_src, …)` sees a cross-cat-LHS
+/// trigger AT DEPTH 0 ahead AND a transparent `source→result` projection fallback
+/// exists. The scoped scan starts at depth 0 from the operand position and — the
+/// operand separator `,` is NOT a bracket opener and NOT a `row_sep` — it walks
+/// PAST the comma and sees the NEXT operand's send `!` at depth 0, concluding a
+/// send trigger "binds" the `false` LHS. It does not: `!` binds a `Name` send
+/// channel (a metavariable LHS), while `false` is a self-contained `Bool` literal
+/// belonging to a different comma-operand. So the `Bool→Proc` projection is
+/// wrongly suppressed, `false` never reads as `Bool`, `CastBool` never forms, and
+/// no `FractionProc` derivation exists. (`(a!(0))` PASSES because its `!` sits at
+/// depth 1 inside parens — never counted; `(false)` PASSES because a parenthesized
+/// operand is not the ambiguous-token lex-fork path — F3 never applies.)
+///
+/// ## The fix — ADD the missing reading (ambiguity-preserving, one-sided monotone)
+/// EXEMPT from the F3 suppression any projection whose lex-fork trigger token is a
+/// KEYWORD reading (`kind ≠ Ident`) of an IDENT-AMBIGUOUS position (some reading at
+/// `*pos` IS `Ident`). Such a projection reads a self-contained keyword LITERAL of
+/// the source category (`true`/`false` ⇒ a complete `Bool`); a keyword literal can
+/// NEVER be the metavariable LHS the pending cross-cat-LHS extension trigger binds,
+/// so the F3 futility premise never holds for it. This is GRAMMAR-DERIVED (keys on
+/// the token being a keyword-of-an-ambiguous-position, NOT on `fraction`/`Bool`
+/// names) and STRICTLY ADDITIVE: it can only flip `__proj_keep` from `false` to
+/// `true` (keep a projection F3 removed), never the reverse — the REALIZED reading
+/// set only GROWS, restoring the admitted `CastBool` derivation. It is NOT an
+/// early-disambiguation tiebreak (it selects no winner; the added branch competes
+/// on evidence exactly like every other). The `@a<-a & @a<-a` ForRow `&`-join that
+/// F3 protects is UNAFFECTED: its `InputBind→ForRow` projection is triggered by
+/// `@`/`Ident` (not a non-Ident keyword of an ident-ambiguous position — `@` is not
+/// even lexically ambiguous), so the exemption never matches it and the F2 `2^N`
+/// suppression stays intact.
+///
+/// ## Kill-switch / A-B
+/// `false` ⇒ the exemption conjunct + the `__pos_has_ident_reading` decl are
+/// OMITTED ENTIRELY from the emission (the [`AT_QUOTED_BIND_GATE`] convention) ⇒
+/// the generated `wpda.rs` is TEXTUALLY BYTE-IDENTICAL (md5-verified) to the pre-fix
+/// baseline. `true` (SHIP DEFAULT — this IS the fix) ⇒ the exemption is folded into
+/// both `CrossCatProjection` arms' `__proj_keep`. FV: `KwAmbigProjExempt.v` (mirror
+/// `AtQuotedBindGate.v`: exempt_no_loss one-sided monotone — the gated keep-set is a
+/// strict SUPERSET of the F3 keep-set and every added branch is a keyword-literal
+/// projection whose F3 futility premise is false, so no reading is lost and the
+/// realized set only grows).
+pub(crate) const KWAMBIG_PROJ_EXEMPT_GATE: bool = true;
+
 /// AT_QUOTED_BIND_GATE — parse-time evidence gate for the `@`-quoted bind
 /// over-generation (2026-07-03). Kill-switch `const` (compile-time, folded into
 /// the generated CrossCatLhs push guard as a literal `true`/`false`, the same
@@ -563,6 +627,181 @@ pub(crate) const METHOD_FRAME_ISOLATION: bool = true;
 /// literal boundary WITHOUT a rebuild (causal A/B — reproduces the pre-fix decline).
 pub(crate) const PROJ_ISO_LITERAL_RUN_ANCHOR: bool = true;
 
+/// PROJ_ISO_AMBIGUOUS_BOUNDARY_ENUM — the ROOT-P nested-send fix (Fix A, P1,
+/// 2026-07-07). The `__proj_skeleton_match` matcher delimits each cross-cat operand
+/// at the NEXT depth-0 occurrence of the following literal δ, committed GREEDY-FIRST.
+/// That is WRONG when the operand's OWN category can itself PRODUCE δ at depth 0:
+/// e.g. the send-sugar receiver `p` in `@ p ! ( … )` (rhocalc `POutputShort2Plus`),
+/// where δ = `!` and `p : Proc` is ITSELF a send (`@Nil!(…)`) carrying its own
+/// depth-0 `!(`. Greedy-first splits `p = @Nil`, strands the outer `!(args)`, the
+/// whole-input check fails, EVERY `@`-send variant declines, the helper falls to the
+/// monolithic path — which fork-explodes on nested `@` (the ROOT-P residual:
+/// `@@@Nil!(…)!(…) <- a` timed the display roundtrip out at ~8.5 s / "no accepting
+/// branch"). The parser is full-GLR (monolithic ⊇ any operand tiling), so the fix is
+/// DIVIDE-AND-CONQUER ENUMERATION: at an AMBIGUOUS-δ operand slot (k ≥ 1) enumerate
+/// ALL run-anchor-passing depth-0 δ boundaries, sub-parse each candidate assignment
+/// in isolation, and keep those that consume the whole input and parse — the
+/// ambiguity-preserving union (ALL seam) / min-weight (SINGLE seam). GRAMMAR-DERIVED,
+/// NOT `@`-coupled: a slot's δ is "ambiguous" iff δ is producible at depth 0 in the
+/// operand category (`category_produces_delim_at_depth0` — transitive over depth-0
+/// operands); δ = `<-`/`!?(`/`where` are NOT depth-0-producible in a Proc so those
+/// slots keep the single greedy boundary. Generalizes the ROOT-D method greedy-last
+/// (k == 0, NOT enumerated — retains greedy-last; sigil-send receivers sit at k = 1,
+/// method receivers at k = 0, disjoint).
+///
+/// ## Kill-switch / A-B
+/// `false` ⇒ the codegen emits the pre-P1 single-assignment matcher + variant arm
+/// VERBATIM ⇒ BYTE-IDENTICAL (every generated `wpda.rs` md5 == the pre-P1 baseline).
+/// `true` (SHIP DEFAULT — this IS the fix) ⇒ the enumerating matcher + per-assignment
+/// arm loop. Runtime env `PRATTAIL_NO_PROJ_BOUNDARY_ENUM` forces the single-boundary
+/// behavior WITHOUT a rebuild (causal A/B — reproduces the pre-fix decline/explosion).
+/// Requires `PROJ_ISO_LITERAL_RUN_ANCHOR` ON (enumeration ranges only over
+/// run-anchor-passing positions, so a `!` inside a `!!`-persistent send is never a
+/// candidate).
+pub(crate) const PROJ_ISO_AMBIGUOUS_BOUNDARY_ENUM: bool = true;
+
+/// PROJ_ISO_BESTPARSE_MEMO — the ROOT-P MEMOIZED BEST-PARSE fix (design af7680e2,
+/// "3A LIGHT"), layered ON TOP of the [`PROJ_ISO_AMBIGUOUS_BOUNDARY_ENUM`]
+/// enumerating matcher (P1). Compile-time kill-switch (same convention as
+/// [`PROJ_ISO_AMBIGUOUS_BOUNDARY_ENUM`] / [`PROJ_ISOLATION_COMBINE`]).
+///
+/// ## The defect it ships the fix for (the P1 seed-timeout residual)
+/// P1's enumerating matcher greens the ROOT-P nested-send counterexample and the
+/// inputbind/proc/forrow display roundtrips at CASES=100, but
+/// `name_display_parse_roundtrip` TIMES OUT on some proptest seeds. Root cause:
+/// enumerate-all's recursive sub-parses re-parse OVERLAPPING `(category, span)`
+/// subproblems. At each `@`-projection / framed-list level the matcher enumerates
+/// every run-anchor-passing depth-0 boundary assignment (O(n) tilings — a send has
+/// ≤1 ambiguous operand slot, so the per-LEVEL enum is linear), sub-parses each
+/// candidate operand span IN ISOLATION, and keeps the whole-input-consuming ones.
+/// Because a nested operand of depth `d` is re-visited by every enclosing tiling,
+/// the recursion is an exponential TREE — `O(n^{m·d})`, `m` = operands/level, `d` =
+/// nesting depth. The per-level tiling is fine; it is the un-shared RE-descent that
+/// explodes.
+///
+/// ## The fix
+/// MEMOIZE the per-category STRING entry `Cat::parse_via_wpda(input) ->
+/// Result<Cat, ParseError>` on the key = TRIMMED span CONTENT (`String`), in a
+/// per-category thread-local map, EPOCH-SCOPED to the OUTERMOST parse (the RAII
+/// `__ProjMemoGuard`; see [`super::facade::emit_proj_memo_preamble`]). Every operand
+/// is parsed from a freshly-trimmed ISOLATED substring taken from ROOT (the bug-2318
+/// locality), so `parse_via_wpda(cat, trimmed-content)` is a PURE function of
+/// `(cat, trimmed-content)` — memoizing returns the IDENTICAL value; only WHEN
+/// sub-parses run changes, never WHAT. This collapses the recursion TREE into a
+/// polynomial DAG (each distinct `(category, trimmed-span)` sub-parse runs once per
+/// outermost parse), so the SELECTED single winner is BYTE-IDENTICAL to the pre-memo
+/// (P1) enumerate-all winner while depth scaling becomes polynomial. Failure (`Err`)
+/// results are memoized too (required for polynomiality — a non-parsing span fails
+/// identically every visit). Mirrors `runtime/src/binding.rs` BCG05_EPOCH /
+/// clear_var_cache.
+///
+/// ## Scope — ONLY the single-winner seam
+/// The memo wraps ONLY the single-result `parse_via_wpda`. The ambiguity-preserving
+/// `parse_via_wpda_all` / `parse_via_wpda_all_with_weights` (a genuine `2^d` SET, off
+/// the roundtrip path) are NOT memoized — they stay byte-identical and disjoint from
+/// the memo. Only ISOLATION-ELIGIBLE categories (`projection_iso_shape` ∨
+/// `sep_isolation_shape` ∨ `infix_iso_shape` is `Some` — the categories whose
+/// `parse_via_wpda` recurses through the divide-and-conquer prologues) get the memo
+/// wrapper; every other category keeps the plain body (byte-identical).
+///
+/// ## Kill-switch / A-B
+/// `false` ⇒ NO memo preamble, NO per-category memo map, and the `parse_via_wpda`
+/// body is emitted VERBATIM (no `parse_via_wpda_uncached` split) ⇒ BYTE-IDENTICAL
+/// (every generated `wpda.rs`/`parser.rs` md5 == the pre-memo baseline). `true`
+/// (SHIP DEFAULT — this IS the fix) ⇒ the memo wrapper + `parse_via_wpda_uncached`
+/// for iso-eligible categories + the shared thread-local preamble. The runtime env
+/// `PRATTAIL_NO_PROJ_MEMO` (read once per OUTERMOST parse, at `__ProjMemoGuard::enter`
+/// when depth 0 → 1 — the isolation path is non-hot) BYPASSES the memo WITHOUT a
+/// rebuild (causal A/B — reproduces the pre-memo exponential recursion for
+/// study / drift verification).
+pub(crate) const PROJ_ISO_BESTPARSE_MEMO: bool = true;
+
+/// PROJ_ISO_SIGIL_AUTHORITATIVE_REJECT — the ROOT-1 deep-`@` polynomiality fix
+/// (design a9fbeefe, 2026-07-07). Layered ON TOP of the P1 enumerating matcher
+/// ([`PROJ_ISO_AMBIGUOUS_BOUNDARY_ENUM`]) + the memo ([`PROJ_ISO_BESTPARSE_MEMO`]).
+/// Compile-time kill-switch (same convention as its two predecessors).
+///
+/// ## The defect it ships the fix for (the ROOT-1 exponential residual)
+/// The receiver-nested send ladder `@^d Nil (!(0))^d` parses EXPONENTIALLY
+/// (measured d4≈856 ms, d5≈8 s, d6≈67 s, base≈8), even with P1 + memo ON. The
+/// chain IS already correctly tiled by P1; the blow-up is the GLR WALKER running
+/// on genuinely-UNPARSEABLE, UNBALANCED `@`-led send spans reached via the
+/// `POutputQuoted` (`@ n ! ( q )`, `n : Name`) → `NQuoteShort` (`@ Op`, peels one
+/// `@`) name-receiver detour: the receiver sub-parse of a nested send strands an
+/// unbalanced span (e.g. `@@Nil!(0)!(0)!(0)` — 2 `@`, 3 sends) that is NOT a Proc.
+/// The proj helper CORRECTLY declines it (every tiling's operand sub-parse `Err`s
+/// ⇒ `__candidates` empty), but the bare `return None` at the decline falls to
+/// `parse_via_wpda_uncached`'s WPDA walker, which fork-explodes ≈`8^d` PROVING the
+/// span non-parseable. perf: ≈100 % walker, helper/matcher/memo ≈0 %. The memo
+/// cannot help — the expensive walker call is a single atomic unit and the spans
+/// are unique. GROUND TRUTH (measured): a bare `@`-led string can ONLY be a send
+/// (`POutput*`) or an infix-combination of sends — there is NO `Name → Proc`
+/// coercion (the only `@`-adjacent Name reading is `PDrop . "*" n : Proc`, which is
+/// STAR-led, not `@`-led), so an `@`-led span whose every send-tiling fails is
+/// provably not a Proc.
+///
+/// ## The fix
+/// Make the projection helper AUTHORITATIVE for sigil-led send frames. When the
+/// helper MATCHED a whole-input sigil-led send skeleton (a `sigil_led` variant's
+/// `__proj_skeleton_match_all` returned a non-empty tiling set — `__sigil_frame_matched`)
+/// but EVERY tiling's operand sub-parse failed (`__candidates` empty) AND no
+/// materialization cap fired (`!__cap_hit` — enumeration was COMPLETE) AND the
+/// (trimmed, non-empty) input starts with a projection sigil, SIGNAL A DEFINITIVE
+/// REJECT (a thread-local `__PROJ_SIGIL_REJECT` the prologue reads → `Err`) instead
+/// of the bare `return None` that falls to the fork-exploding walker. SOUND because
+/// an `@`-led string is a send or an infix-combination of sends, and the infix
+/// isolation prologue runs AFTER proj in `parse_via_wpda_uncached` — so the reject
+/// fires ONLY when BOTH proj AND infix decline (`@Nil!(0) or @Nil!(0)`, an
+/// infix-of-sends, is recovered by the infix prologue and never reaches the reject).
+/// Combined with P1 + memo, the recursion now bottoms out at the small non-`@`-led
+/// leaf `Nil!(0)` (the walker never runs on a span whose size grows with `d`) ⇒
+/// the ladder is O(d³) POLYNOMIAL.
+///
+/// ## Scope — ONLY the single-winner seam
+/// The reject is signalled ONLY when the helper is called with `__single_winner`
+/// (the `parse_via_wpda` / `parse_via_wpda_uncached` seam). The ambiguity-preserving
+/// `parse_via_wpda_all` / `parse_via_wpda_all_with_weights` (ALL seam, g3 alt-counts)
+/// are left UNTOUCHED — byte-identical. The cap-hit path stays `None` → walker
+/// (never `Err`): a cap means enumeration was INCOMPLETE, so a valid parse might be
+/// hidden and rejecting would be unsound.
+///
+/// ## Kill-switch / A-B
+/// `false` ⇒ NO `__sigil_frame_matched` / `__cap_hit` locals, NO reject preamble,
+/// NO prologue capture/fire, and the decline site + cap sites are emitted VERBATIM
+/// (bare `return None` / `break '__variant`) ⇒ BYTE-IDENTICAL (every generated
+/// `wpda.rs` md5 == the pre-fix baseline). `true` (SHIP DEFAULT — this IS the fix)
+/// ⇒ the authoritative-reject machinery. The runtime env
+/// `PRATTAIL_NO_PROJ_AUTHORITATIVE_REJECT` (read at the decline site) suppresses the
+/// reject WITHOUT a rebuild (causal A/B — reproduces the pre-fix `None` → walker
+/// explosion for study / drift verification). Requires
+/// [`PROJ_ISO_AMBIGUOUS_BOUNDARY_ENUM`] ON (`__sigil_frame_matched` is set from the
+/// enumerating matcher's `__assignments`).
+// ## Completeness fix (2026-07-07, ENABLED) — reject fires ONLY on complete-
+// enumeration-all-genuinely-failed
+// The reject's soundness precondition is "the helper declined ⟹ the span is
+// genuinely unparseable". A helper decline for a STRUCTURAL / INCOMPLETENESS reason
+// (an empty operand/region/element segment, a receiver ws/AST gate, a materialization
+// cap, a debug A/B knob) VIOLATES that precondition — the walker/grammar may still
+// accept the span. Canonical break: an `@`-led send with a TRAILING COMMA in its args
+// (`@Nil!(0,)`) — the grammar's `args.*sep(",")` ACCEPTS a trailing separator, but the
+// SepList element split of `"0,"` yields `["0",""]` and the empty trailing segment
+// declined (`break '__variant`), which the pre-fix reject wrongly escalated to `Err`
+// (an Ok→Err FLIP; proptest `proc`/`inputbind` `_display_parse_roundtrip` regress).
+// FIX: every STRUCTURAL decline site in `emit_proj_variant_arm` now sets `__cap_hit`
+// (the same "enumeration incomplete" flag the materialization caps use), so the reject
+// (`!__cap_hit`) never fires on a structural bail — it falls to the walker (the
+// authoritative/complete parser, which handles trailing commas etc.). The ONLY decline
+// that permits the reject is a σ-led send skeleton that matched every tiling and whose
+// every operand's `parse_via_wpda` sub-parse returned a genuine `Err` (the walker's own
+// verdict). Fail-safe: when in doubt, mark incomplete (don't reject ⇒ fall to walker ⇒
+// correct-but-slow, never a false `Err`). Gate A (polynomiality) is preserved — the
+// pathological `@^d Nil (!(0))^d` spans have NO trailing comma / empty segment, so
+// every tiling routes through the genuine-`Err` operand decline (UNMARKED) and the
+// reject still fires. Verified: Gate B′ (no Ok→Err drift incl. trailing-comma) + the
+// `proc_/inputbind_/name_/forrow_display_parse_roundtrip` completeness fuzz
+// (PROPTEST_CASES=300 × ≥5 seeds, all PASS).
+pub(crate) const PROJ_ISO_SIGIL_AUTHORITATIVE_REJECT: bool = true;
+
 /// INFIX_ISOLATION_COMBINE — the PRECEDENCE-AWARE BINARY-INFIX operand
 /// DIVIDE-AND-CONQUER isolation+combine facade fast-path (ROOT-2 `or`/PParInfix
 /// locus, 2026-07-06). Master compile-time kill-switch (same convention as
@@ -797,6 +1036,54 @@ pub(crate) fn emit_lex_fork_at_prefix_dispatch(primary_src_idx: u16) -> TokenStr
     // (`bool: ToTokens`). `false` ⇒ `!(false && …) == true` ⇒ projection
     // always kept ⇒ behaviorally byte-identical to the pre-F3 (F2) emission.
     let __forrow_proj_gate_lit = FORROW_PROJ_GATE;
+    // KWAMBIG_PROJ_EXEMPT_GATE (ROOT-A, 2026-07-07): three codegen fragments,
+    // EMPTY when the gate is off (⇒ every interpolation site below is textually
+    // byte-identical to the pre-fix emission — the AT_QUOTED_BIND_GATE
+    // convention). When on: (1) `__kwambig_pos_ident_decl` binds a once-per-fork
+    // runtime bool `__pos_has_ident_reading` (some reading at `*pos` IS `Ident`);
+    // (2)/(3) the primary/secondary `&& !( … )` conjuncts fold the exemption into
+    // each `CrossCatProjection` arm's `__proj_keep`, keying on the projection
+    // trigger being a KEYWORD (`kind ≠ Ident`) reading of that ident-ambiguous
+    // position. `!( keyword ∧ ident-ambiguous )` is appended so a matched
+    // exemption drives the inner `__proj_keep` conjunction false ⇒ `!( … )` ⇒
+    // the projection is KEPT (strictly additive over F3).
+    let __kwambig_pos_ident_decl: TokenStream = if KWAMBIG_PROJ_EXEMPT_GATE {
+        quote! {
+            let __pos_has_ident_reading: bool =
+                matches!(
+                    tokens.peek_kind(*pos),
+                    Some(mettail_prattail::automata::TokenKind::Ident)
+                ) || tokens.peek_alternatives(*pos).iter().any(|__a| {
+                    matches!(__a.kind, mettail_prattail::automata::TokenKind::Ident)
+                });
+        }
+    } else {
+        TokenStream::new()
+    };
+    let __kwambig_exempt_primary: TokenStream = if KWAMBIG_PROJ_EXEMPT_GATE {
+        quote! {
+            && !(
+                !matches!(
+                    primary_kind,
+                    mettail_prattail::automata::TokenKind::Ident
+                ) && __pos_has_ident_reading
+            )
+        }
+    } else {
+        TokenStream::new()
+    };
+    let __kwambig_exempt_secondary: TokenStream = if KWAMBIG_PROJ_EXEMPT_GATE {
+        quote! {
+            && !(
+                !matches!(
+                    alt.kind,
+                    mettail_prattail::automata::TokenKind::Ident
+                ) && __pos_has_ident_reading
+            )
+        }
+    } else {
+        TokenStream::new()
+    };
     quote! {
         // M6c.3 (2026-05-14): lex-Fork emits ALL alternatives — primary
         // (branch[0]) + each secondary that has a literal rule in the
@@ -935,6 +1222,7 @@ pub(crate) fn emit_lex_fork_at_prefix_dispatch(primary_src_idx: u16) -> TokenStr
             // anyway, so dropping it removes no admitting parse).
             let __ccl_trigger_scoped: bool =
                 prefix_crosscat_lhs_trigger_ahead_scoped(primary_src, tokens, *pos);
+            #__kwambig_pos_ident_decl
 
             // Branch[0] — PRIMARY (lex_alt_idx = 0).
             // M6c.6.4.d (2026-05-14): activated PrefixOp branch — same-cat
@@ -1067,7 +1355,8 @@ pub(crate) fn emit_lex_fork_at_prefix_dispatch(primary_src_idx: u16) -> TokenStr
                                 && __ccl_trigger_scoped
                                 && crosscat_lhs_has_projection_fallback(
                                     primary_src, source_src_idx,
-                                ));
+                                )
+                                #__kwambig_exempt_primary);
                             if __proj_keep
                                 && __crosscat_projection_seen
                                     .insert((info.rule_idx, source_src_idx))
@@ -1276,7 +1565,8 @@ pub(crate) fn emit_lex_fork_at_prefix_dispatch(primary_src_idx: u16) -> TokenStr
                                 && __ccl_trigger_scoped
                                 && crosscat_lhs_has_projection_fallback(
                                     primary_src, source_src_idx,
-                                ));
+                                )
+                                #__kwambig_exempt_secondary);
                             if __proj_keep
                                 && __crosscat_projection_seen
                                     .insert((info.rule_idx, source_src_idx))
