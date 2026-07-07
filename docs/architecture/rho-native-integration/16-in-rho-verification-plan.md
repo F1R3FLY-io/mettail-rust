@@ -78,7 +78,7 @@ Stage AC. The capstone flips INV-2/6/13 in [13](13-knotted-topoi-operational-inv
 | Slice | Implementation | Verification |
 |---|---|---|
 | M0 spread | done | INV-10 round-trip property (example + proptest); the `$\nu$`-free assertion is the INV-7 executable form |
-| M1 matching | done (base case) | validated end-to-end by the runtime match test (`m1_matches_swap_in_rho_and_fires_the_rewrite`), which the RSpace reducer checks; the arity-general De Bruijn frame + the no-false-positive negative case are covered; the Phase-A Rocq theorems (ii/i/x) are the next verification step |
+| M1 matching | done (base case) | **Phase A proven zero-admission** — `SymbolOnceInjective` (ii), `InRhoMatchPositional` (i), `InRhoReuseDeterminism` (x), 13 theorems "Closed under the global context". These prove the fold-level accept decision; the emitted `Par`'s faithfulness to the fold is witnessed by the runtime tests (`m1_matches_swap_in_rho_and_fires_the_rewrite`, the arity-3 companion, the no-false-positive negative case, and the property-based positional oracle over random constructors/arities), which the RSpace reducer checks |
 | M2 channel re-keying | later slice | (viii), O2 |
 | M3 `$\tau$` internalization | later slice | (iii) — the `rem:nonopt` discharge |
 
