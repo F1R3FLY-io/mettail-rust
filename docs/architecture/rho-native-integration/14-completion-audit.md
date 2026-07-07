@@ -2,7 +2,7 @@
 
 > pgmcp plan #1956 (`complete-rho-native-dovetail-rho-parser-generator-and-runtime-architecture-refactor`).
 > This is the final completion audit (Epic 1 #2078) with its supporting change
-> classification (#1970) and requirement→evidence matrix (#1972/#1973). It records,
+> classification (#1970) and requirement to evidence matrix (#1972/#1973). It records,
 > per epic, the authoritative evidence for each delivered requirement so the persistent
 > goal can be verified against current code. Branch: `codex/rho-native-set-automata`.
 
@@ -25,33 +25,33 @@ matching optimized by the set-automaton papers.
 | Documentation | 18 | #2002, #2065, #2043, #2068 (+ tail), this audit |
 | Generated languages | 13 | SwapDemo (R-4/R-5), Calculator/RhoCalc runtime tests |
 | Dovetail engine | 12 | O1 FxHash, O2/O3 extraction, set-automaton |
-| rholang-runtime | 10 | σ-injection bridge, install boundary, F-stage |
+| rholang-runtime | 10 | sigma-injection bridge, install boundary, F-stage |
 | Formal (Rocq/Sage/Wolfram) | 9 | Epic 8 FVs, #2049 models |
-| macros (codegen) | 8 | RhoNet→Par lowering, report codegen, #2030 accessor |
+| macros (codegen) | 8 | RhoNet to Par lowering, report codegen, #2030 accessor |
 | rholang-codegen | 6 | RhoNet planning, install-boundary Result |
-| runtime / repl / testkit / … | 8 | routing, capability backends, harness |
+| runtime / repl / testkit / ... | 8 | routing, capability backends, harness |
 
 Every change classifies to **Dovetail matching/saturation**, **RhoNet planning/
 lowering**, **runtime backend/bridge**, **formal verification**, or **documentation** —
 none touches the WPDA parser generator (that is the primary tree's domain, kept disjoint
 to minimize merge conflicts; the one merge had a 1-file conflict surface).
 
-## 3. Requirement → evidence matrix, by epic (#1972 / #2078 verification)
+## 3. Requirement to evidence matrix, by epic (#1972 / #2078 verification)
 
-### Epic 4 — RhoNet lowering + σ-injection bridge (north star)
+### Epic 4 — RhoNet lowering + sigma-injection bridge (north star)
 | Requirement | Evidence | Verified |
 |---|---|---|
-| RhoNet→`Par` lowering codegen | commits `ad6e2f00`, `98cbffa0` (constructor reflection) | ✅ |
-| Runtime σ-injection bridge (Dovetail→σ→Rho) | `922ef9dc` + `rholang-runtime/tests/rho_net_equivalence.rs` (SwapDemo `Swap(A,B)`→`Pair(B,A)` on a live Rho machine) | ✅ |
-| Per-rewrite σ in the Dovetail report | `597ca1e2` | ✅ |
-| Fail-closed install boundary | `06e091a5` (`installed_program_par`→`Result`) + `RhoLoweringTotalOrRejects.v` `Section RhoNetInstallBoundary` | ✅ proof |
+| RhoNet to `Par` lowering codegen | commits `ad6e2f00`, `98cbffa0` (constructor reflection) | ✅ |
+| Runtime sigma-injection bridge (Dovetail to sigma to Rho) | `922ef9dc` + `rholang-runtime/tests/rho_net_equivalence.rs` (SwapDemo `Swap(A,B)` to `Pair(B,A)` on a live Rho machine) | ✅ |
+| Per-rewrite sigma in the Dovetail report | `597ca1e2` | ✅ |
+| Fail-closed install boundary | `06e091a5` (`installed_program_par` to `Result`) + `RhoLoweringTotalOrRejects.v` `Section RhoNetInstallBoundary` | ✅ proof |
 | Model-b faithfulness (matching locus is a free choice) | `aefa8327` doc 13 (14 invariants); the paper proves CLTS-level correspondence | ✅ |
 | End-to-end operational correspondence | per-step `LinearCommCorrespondence.v` + **`EndToEndCommCorrespondence.v`** (finite-trace lift, `2a96926d`, zero-admission) | ✅ proof |
 
 ### Epic 5/6/7 — runtime-invocation split, accessors, REPL
 | Requirement | Evidence | Verified |
 |---|---|---|
-| Runtime invocation migration (`DeferToDovetailReport`→`DeferToDovetailSemanticPredicate`) | doc 12 (`8f8467ed`); no-silent-host-fallback invariant | ✅ |
+| Runtime invocation migration (`DeferToDovetailReport` to `DeferToDovetailSemanticPredicate`) | doc 12 (`8f8467ed`); no-silent-host-fallback invariant | ✅ |
 | Generated `rho_net_program()` accessor + codegen-determinism/boundary tests | `7696b52e` (#2030/#2033) | ✅ tests |
 | REPL routing across all bundled languages | capability backends (prior campaign) | ✅ |
 
@@ -65,13 +65,13 @@ to minimize merge conflicts; the one merge had a 1-file conflict surface).
 | FV artifact inventory | `formal/README.md` inventory table (`82499902`/`4ad5400c`, #2043) | ✅ |
 | Sage/Wolfram RhoNet small-state models | `formal/{sage,wolfram}/rho_net/` (`20e4701e`, #2049) — both self-check + pass | ✅ artifact |
 
-### Epic 9 — performance (baselines → optimization, data-driven)
+### Epic 9 — performance (baselines to optimization, data-driven)
 | Requirement | Evidence | Verified |
 |---|---|---|
 | Baselines + scientific ledger | `rho_native_bench` + `docs/benchmarks/rho-native-baselines.md` (`43b16d0d`, #2053) | ✅ |
-| O1 FxHash e-graph keys | `8a86435a` — saturation −24…−40%, t-test p<0.05, 113+306 tests | ✅ bench + test |
-| O2 extractor reuse across roots | `bbc05217` — −17…−28%, 3563 tests | ✅ bench + test |
-| O3 composed-derivation reuse | `ad95ddfa` — −10…−16%, oracle-verified byte-identical | ✅ bench + proof-test |
+| O1 FxHash e-graph keys | `8a86435a` — saturation -24...-40%, t-test p<0.05, 113+306 tests | ✅ bench + test |
+| O2 extractor reuse across roots | `bbc05217` — -17...-28%, 3563 tests | ✅ bench + test |
+| O3 composed-derivation reuse | `ad95ddfa` — -10...-16%, oracle-verified byte-identical | ✅ bench + proof-test |
 
 ### Epic 10 — documentation
 | Requirement | Evidence | Verified |
@@ -99,7 +99,7 @@ this tree.
 ## 6. Verdict
 
 Every in-tree requirement of plan #1956 is delivered with authoritative evidence:
-**functional** (Epic 4–7 bridge + boundary + accessors), **formal** (Epic 8 — four
+**functional** (Epic 4-7 bridge + boundary + accessors), **formal** (Epic 8 — four
 zero-admission Rocq FVs + two self-checking Sage/Wolfram models + the end-to-end opcorr
 lift), **performance** (Epic 9 — three t-test-gated, oracle-verified generic engine
 optimizations), and **documentation** (Epic 10 — matcher doc + full stale-reference
