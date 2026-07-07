@@ -109,6 +109,50 @@ unchanged, confirming the win is targeted and side-effect-free. Correctness: all
 `dovetail` tests pass (including the positional-oracle property test), so hash-order
 independence holds — the swap changes only speed, not results.
 
+## Post-merge profile shift (2026-07-07)
+
+A branch merge (primary WPDA-parser tree → this tree) integrated new Calculator
+cross-category numeric-cast rules, INVERTING the profile: `add` 1.46 ms→297 µs
+(faster), `nested` 83 µs→**2.53 ms** (+2925 % regression), `deep` ~unchanged.
+Evidence-based root cause: the new rules make each literal parse in all 6 numeric
+categories, so an expression lowers to a **combinatorial forest of equivalent
+typed-parse roots** (nested = 65 classes/25 roots; `(2+3)+(4+1)` = 130/80; the *larger*
+`deep` collapses to Int-only 15/6 because its top `-` prunes the cross-category chain).
+Two factors: **(A)** the ambiguity forest = parser domain (fix #1, requested —
+demand-gate cross-category injection, preserving the display→parse roundtrip); **(B)**
+per-root extraction recompute = engine domain (O2/O3).
+
+## Optimization O2 — reuse the extractor across roots (APPLIED, commit `bbc05217`)
+
+The report path (`macros/.../typed_report.rs`) built a **fresh `Extractor` per root**,
+so `funded_best` re-ran `compute_inside_closed` (O(classes) fixpoint + SCC + Newton)
+once per root, discarding the memo — an O(roots) multiplier. Fix: hoist the extractor
+out of all three per-root `funded_best` loops (main report / reconstruct / alternatives).
+**Result (t-test p<0.05):** add −16.7 %, nested −27.9 %, deep −23.6 %. 3563 tests pass.
+
+## Optimization O3 — reuse the composed derivation at pop (APPLIED)
+
+Post-O2 perf: `Extractor::compose` = **23.4 %** self-time. `make_candidate` computed the
+full `(op, w, key, children)` for heap ordering but **discarded op+children**;
+`build_derivation` recomposed the whole thing at pop — every popped candidate composed
+**twice** (redundant fraction → ½). The self-time is the `ContentKey` build (key-byte Vec
+alloc + order-preserving byte-doubling + `from_bytes` box). Fix (Plan-agent designed):
+build the full `Rc<Derivation>` in `make_candidate` (compose-free — it already computes
+op+children) and reuse it at pop via `Rc::clone`, deleting `OrdKey` + `build_derivation`
+— **zero extra w/key memory** (they move into the derivation). O3b: FxHash for the
+report-projection root-dedup set (residual SipHash). **Result (t-test p<0.05):** add
+−12.4 %, nested −16.3 %, deep −10.3 %. Extraction **byte-identical**: 125 dovetail tests
+pass incl. `prop_extractor_matches_bruteforce_acyclic_oracle` (full ordered
+`(weight, key, op)` sequence vs a brute-force oracle over 256 random e-graphs).
+
+## Cumulative on the post-merge `nested` regression
+
+O2 (−28 %) then O3 (−16 %) = **−39 % engine-side** (2.53 ms → 1.55 ms), extraction
+oracle-verified. The residual (still ~18× the pre-merge 83 µs) is the ambiguity **forest
+itself** — the parser-side fix #1 (demand-gate cross-category injection), not an engine
+cost. Engine-side generic wins to date: **O1** (FxHash keys), **O2** (extractor reuse),
+**O3** (composed-derivation reuse) — all benefit every language, zero parser code.
+
 ## Coverage vs #2053 scope
 
 | Area | Baseline |

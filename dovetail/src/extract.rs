@@ -122,51 +122,41 @@ pub struct Derivation<L, W> {
     pub key: ContentKey,
 }
 
-/// Total heap order: best weight first, then `ContentKey` (so equal-weight
-/// distinct derivations both survive in a deterministic order).
-struct OrdKey<W> {
-    w: W,
-    key: ContentKey,
+/// A frontier candidate: the fully-built derivation for a hyperedge of a class at a
+/// given per-child rank vector, plus the `(edge_idx, ranks)` that identify it.
+///
+/// The derivation is composed exactly once — when the candidate is CREATED in
+/// [`Extractor::make_candidate`], which already computes the full
+/// `(op, w, key, children)` — and then reused by an `Rc::clone` when the candidate
+/// is popped, so the pop path never recomposes (removing the former
+/// `build_derivation` recompute, ~half of all `compose` calls). Heap order is best
+/// weight first, then `ContentKey`, read directly off the derivation, so equal-weight
+/// distinct derivations both survive in a deterministic order — byte-identical to the
+/// former `OrdKey` order.
+struct Candidate<L, W> {
+    derivation: Rc<Derivation<L, W>>,
+    edge_idx: usize,
+    ranks: Vec<usize>,
 }
-impl<W: BestOrder> Ord for OrdKey<W> {
+impl<L, W: BestOrder> Ord for Candidate<L, W> {
     fn cmp(&self, o: &Self) -> Ordering {
-        self.w.cmp_best(&o.w).then_with(|| self.key.cmp(&o.key))
+        self.derivation
+            .weight
+            .cmp_best(&o.derivation.weight)
+            .then_with(|| self.derivation.key.cmp(&o.derivation.key))
     }
 }
-impl<W: BestOrder> PartialOrd for OrdKey<W> {
+impl<L, W: BestOrder> PartialOrd for Candidate<L, W> {
     fn partial_cmp(&self, o: &Self) -> Option<Ordering> {
         Some(self.cmp(o))
     }
 }
-impl<W: BestOrder> PartialEq for OrdKey<W> {
+impl<L, W: BestOrder> PartialEq for Candidate<L, W> {
     fn eq(&self, o: &Self) -> bool {
         self.cmp(o) == Ordering::Equal
     }
 }
-impl<W: BestOrder> Eq for OrdKey<W> {}
-
-/// A frontier candidate: a hyperedge of a class + a per-child rank vector.
-struct Candidate<W> {
-    ord: OrdKey<W>,
-    edge_idx: usize,
-    ranks: Vec<usize>,
-}
-impl<W: BestOrder> Ord for Candidate<W> {
-    fn cmp(&self, o: &Self) -> Ordering {
-        self.ord.cmp(&o.ord)
-    }
-}
-impl<W: BestOrder> PartialOrd for Candidate<W> {
-    fn partial_cmp(&self, o: &Self) -> Option<Ordering> {
-        Some(self.cmp(o))
-    }
-}
-impl<W: BestOrder> PartialEq for Candidate<W> {
-    fn eq(&self, o: &Self) -> bool {
-        self.ord == o.ord
-    }
-}
-impl<W: BestOrder> Eq for Candidate<W> {}
+impl<L, W: BestOrder> Eq for Candidate<L, W> {}
 
 struct ClassState<L, W> {
     initialized: bool,
@@ -174,7 +164,7 @@ struct ClassState<L, W> {
     on_stack: bool,
     built: Vec<Rc<Derivation<L, W>>>,
     built_keys: HashSet<ContentKey>,
-    cand: BinaryHeap<Reverse<Candidate<W>>>,
+    cand: BinaryHeap<Reverse<Candidate<L, W>>>,
     seen: HashSet<(usize, Vec<usize>)>,
 }
 impl<L, W> Default for ClassState<L, W> {
@@ -340,7 +330,9 @@ where
                 },
             };
 
-            let built_d = self.build_derivation(q, cand.edge_idx, &cand.ranks);
+            // Reuse the derivation composed when this candidate was created — no
+            // recompose (the former `build_derivation` recompute is gone).
+            let built_d = Some(Rc::clone(&cand.derivation));
 
             // Push successors that bump exactly one child's rank (always — never
             // close the lattice on a zero/duplicate).
@@ -464,19 +456,13 @@ where
         q: EClassId,
         edge_idx: usize,
         ranks: Vec<usize>,
-    ) -> Option<Candidate<W>> {
-        let (_op, w, key, _children) = self.compose(q, edge_idx, &ranks)?;
-        Some(Candidate { ord: OrdKey { w, key }, edge_idx, ranks })
-    }
-
-    fn build_derivation(
-        &mut self,
-        q: EClassId,
-        edge_idx: usize,
-        ranks: &[usize],
-    ) -> Option<Rc<Derivation<L, W>>> {
-        let (op, w, key, children) = self.compose(q, edge_idx, ranks)?;
-        Some(Rc::new(Derivation { op, class: q, children, weight: w, key }))
+    ) -> Option<Candidate<L, W>> {
+        // `compose` already computes the full `(op, w, key, children)`; keep them as
+        // the built `Rc<Derivation>` so the pop path reuses it via `Rc::clone` instead
+        // of recomposing (`w`/`key` move into the derivation — no extra storage).
+        let (op, w, key, children) = self.compose(q, edge_idx, &ranks)?;
+        let derivation = Rc::new(Derivation { op, class: q, children, weight: w, key });
+        Some(Candidate { derivation, edge_idx, ranks })
     }
 
     fn funded_derivation_is_certified(

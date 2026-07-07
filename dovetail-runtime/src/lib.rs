@@ -9,7 +9,11 @@
 #![forbid(unsafe_code)]
 
 use std::any::Any;
-use std::collections::HashSet;
+// FxHash (via dovetail's inline hasher) for the per-report root-dedup set: the keys
+// are internal `ExactTermKey`s, so SipHash's DoS resistance is pointless overhead
+// (mirrors the O1 e-graph-key optimization; showed as residual `Sip13` self-time in
+// the post-O2 saturation profile).
+use dovetail::hash::HashSet;
 use std::fmt;
 
 use dovetail::extract::ExtractionCompleteness;
@@ -224,7 +228,7 @@ where
     let mut roots = Vec::with_capacity(seeds.len());
     let mut root_ordinals = Vec::with_capacity(seeds.len());
     let mut terms = Vec::with_capacity(seeds.len());
-    let mut seen = HashSet::new();
+    let mut seen = HashSet::default();
     for seed in seeds {
         let Some(key) = seed.exact_key else {
             return Err(NativeDovetailReportError::MissingExactKey {
