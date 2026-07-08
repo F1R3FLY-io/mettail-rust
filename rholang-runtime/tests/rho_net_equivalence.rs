@@ -586,6 +586,79 @@ async fn m1_matches_a_ternary_pattern_in_rho() {
     assert_eq!(observed, expected, "Triple(A, B, C) matched in Rho binds σ = [A, B, C]");
 }
 
+/// Stage 2: `f(x, x)` matched against `f(A, A)` ON the interpreter — the `eq:` consistency
+/// join's condition `EEq(h0, h1)` holds (equal head tags), so the guarded consume commits and
+/// the accept binds the single distinct-var σ = [⟦A⟧]. The σ-echo forwards it to OUT.
+#[tokio::test]
+async fn nonlinear_matches_equal_args_in_rho() {
+    mettail_runtime::clear_var_cache();
+    let (_backend, fingerprint) = swap_demo_backend();
+
+    let automaton = SetAutomaton::compile_structural([(
+        PatternId(0),
+        Pattern::app("f".to_string(), vec![Pattern::var("x"), Pattern::var("x")]),
+    )])
+    .expect("f(x, x) compiles");
+    let network =
+        automaton_receiver_network_par(&automaton.view(), "site0", "MATCH", "OUT", &fingerprint)
+            .expect("f(x, x) serializes with the eq: guard");
+
+    let subject = spread_term_par(
+        &GroundTerm::new(
+            "f",
+            vec![GroundTerm::new("A", Vec::new()), GroundTerm::new("A", Vec::new())],
+        ),
+        &fingerprint,
+        "site0",
+    );
+    // k = 1 distinct variable (x), so the accept sends one σ slot.
+    let program = sigma_echo_receiver("MATCH", 1).append(network).append(subject);
+    let observed = run_normalized_par_for_oracle_and_read_runtime_values(&program, "OUT")
+        .await
+        .expect("the in-Rho non-linear match must execute");
+
+    let expected =
+        vec![RuntimeObservationValue::Term { constructor: "A".to_string(), children: Vec::new() }];
+    assert_eq!(observed, expected, "f(A, A) matched in Rho (equal args) binds σ = [A]");
+}
+
+/// Stage 2 reject-safety: `f(x, x)` against `f(A, B)` — the condition `EEq(h0, h1)` is false
+/// (distinct head tags), so the reducer's `check_commit` VETOES the whole join consume
+/// (mirroring `merge_substs → None`): no accept fires, nothing lands on OUT. The RSpace reducer
+/// is the true reject-safety oracle.
+#[tokio::test]
+async fn nonlinear_rejects_unequal_args_in_rho() {
+    mettail_runtime::clear_var_cache();
+    let (_backend, fingerprint) = swap_demo_backend();
+
+    let automaton = SetAutomaton::compile_structural([(
+        PatternId(0),
+        Pattern::app("f".to_string(), vec![Pattern::var("x"), Pattern::var("x")]),
+    )])
+    .expect("f(x, x) compiles");
+    let network =
+        automaton_receiver_network_par(&automaton.view(), "site0", "MATCH", "OUT", &fingerprint)
+            .expect("f(x, x) serializes with the eq: guard");
+
+    let subject = spread_term_par(
+        &GroundTerm::new(
+            "f",
+            vec![GroundTerm::new("A", Vec::new()), GroundTerm::new("B", Vec::new())],
+        ),
+        &fingerprint,
+        "site0",
+    );
+    let program = sigma_echo_receiver("MATCH", 1).append(network).append(subject);
+    let observed = run_normalized_par_for_oracle_and_read_runtime_values(&program, "OUT")
+        .await
+        .expect("the in-Rho non-linear match must execute");
+
+    assert!(
+        observed.is_empty(),
+        "f(A, B) does NOT match — the eq: guard vetoes reject-safely (got {observed:?})"
+    );
+}
+
 /// Multiset sort key for observation comparison (the σ-echo's parallel sends land on
 /// OUT in nondeterministic order).
 fn observation_constructor(value: &RuntimeObservationValue) -> String {
