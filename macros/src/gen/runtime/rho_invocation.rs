@@ -590,6 +590,119 @@ pub fn generate_rho_net_invocation(language: &LanguageDef) -> TokenStream {
         }
     };
 
+    // Stage 3 piece 5: the in-Rho MATCH body. Unlike `#body` (host-computes σ and injects
+    // it), this compiles the language's in-Rho matching ruleset, GATES on it, rebuilds the
+    // ground subject `LHS[σ]`, and assembles the `network ‖ spread` call so the automaton
+    // re-does the MATCHING on the interpreter and fires the σ-receiver.
+    let match_body = quote! {
+        report.assert_complete().map_err(|status| {
+            ::std::format!(
+                "in-Rho match for language {} requires a complete Dovetail report, got {}",
+                #language_lit, status,
+            )
+        })?;
+        // Stage 3 boundary: the subject is the fired redex `LHS[σ]`, not the whole input
+        // `term` — there is no `Term` → `GroundTerm` structural reflection, so the ground
+        // subject is rebuilt from the firing's σ. The automaton still MATCHES it on the
+        // interpreter (the τ `sa:` COMMs re-bind σ′); host σ supplies only the ground
+        // subject term, not the firing.
+        let _ = term;
+        let out_channel = out_channel.as_ref();
+
+        // Reconstruct the def exactly as `rho_net_program()` does, so the ruleset's
+        // fingerprint + accept channels are the ones the installed σ-receivers were
+        // compiled with (one def, one fingerprint, no separate metadata read → no drift).
+        let __source = <#language_struct as mettail_runtime::Language>::metadata(
+            &#language_struct,
+        )
+        .definition_source()
+        .ok_or_else(|| {
+            ::std::format!(
+                "language {} has no definition source for in-Rho matching",
+                #language_lit,
+            )
+        })?;
+        let __def = ::mettail_rholang_codegen::reconstruct_language_def(__source).map_err(|__err| {
+            ::std::format!(
+                "language {} definition source did not reconstruct for in-Rho matching: {}",
+                #language_lit, __err,
+            )
+        })?;
+
+        let __ruleset = ::mettail_rholang_codegen::compile_in_rho_matching_ruleset(&__def);
+
+        // Capability gate (FV ix `install_admits`): fail closed BEFORE any Rho reduction
+        // if any FIRED rule is skipped from in-Rho matching.
+        let __fired: ::std::vec::Vec<&str> = report
+            .rewrite_justifications
+            .iter()
+            .map(|__justification| __justification.rule_label.as_str())
+            .collect();
+        if let ::core::option::Option::Some(__skipped) =
+            ::mettail_rholang_codegen::in_rho_match_gate_reject(&__ruleset.deferred, &__fired)
+        {
+            return ::core::result::Result::Err(::std::format!(
+                "in-Rho match gate for language {} rejects: fired rule {} is not matchable in Rho ({:?})",
+                #language_lit, __skipped.rule_label, __skipped.reason,
+            ));
+        }
+
+        // Stage 3 scope: exactly one root-rooted redex (0 = normal form, >1 = Stage-4
+        // multi-redex — both fail closed so the repl falls back to the σ-replay driver).
+        let __justification = match report.rewrite_justifications.as_slice() {
+            [__only] => __only,
+            __other => {
+                return ::core::result::Result::Err(::std::format!(
+                    "in-Rho match for language {} handles a single root-rooted redex (Stage 3); the report fired {} rules",
+                    #language_lit, __other.len(),
+                ));
+            },
+        };
+
+        // Rebuild the ground subject `LHS[σ]` the fired rule matched.
+        fn __mettail_rho_net_to_ground(
+            subterm: &mettail_runtime::RuntimeReflectedSubterm,
+        ) -> ::mettail_rholang_codegen::GroundTerm {
+            ::mettail_rholang_codegen::GroundTerm::new(
+                subterm.constructor.clone(),
+                subterm.children.iter().map(__mettail_rho_net_to_ground).collect(),
+            )
+        }
+        let __sigma: ::std::vec::Vec<(
+            ::std::string::String,
+            ::mettail_rholang_codegen::GroundTerm,
+        )> = __justification
+            .sigma
+            .iter()
+            .map(|(__name, __subterm)| (__name.clone(), __mettail_rho_net_to_ground(__subterm)))
+            .collect();
+        let __subject = ::mettail_rholang_codegen::reconstruct_redex_subject(
+            &__def,
+            &__justification.rule_label,
+            &__sigma,
+        )?;
+
+        // Assemble the in-Rho match call (network ‖ spread) — the SAME driver target as
+        // the σ-injection path (`RhoNetInjectionInvocation`).
+        let __call = ::mettail_rholang_codegen::in_rho_match_call_par(
+            &__ruleset,
+            &__subject,
+            "site0",
+            out_channel,
+        )
+        .map_err(|__err| {
+            ::std::format!(
+                "in-Rho match for language {} could not serialize the match call: {:?}",
+                #language_lit, __err,
+            )
+        })?;
+
+        ::core::result::Result::Ok(::mettail_rholang_codegen::RhoNetInjectionInvocation {
+            call: __call,
+            out_channel: out_channel.to_string(),
+        })
+    };
+
     quote! {
         #[cfg(feature = "rho-codegen")]
         impl #language_struct {
@@ -635,6 +748,28 @@ pub fn generate_rho_net_invocation(language: &LanguageDef) -> TokenStream {
                 ::std::string::String,
             > {
                 Self::rho_net_invocation_from_dovetail_to_firing(term, report, out_channel, 0)
+            }
+
+            /// Build the in-Rho set-automaton MATCH call for the single, root-rooted
+            /// rewrite firing of an already complete Dovetail report (Stage 3 piece 5):
+            /// compile the language's in-Rho matching ruleset, GATE (fail closed if any
+            /// fired rule is not matchable in Rho — FV (ix) `install_admits`), rebuild the
+            /// ground subject `LHS[σ]`, and assemble the `network ‖ spread` call the runtime
+            /// runs against the installed σ-receiver program. Unlike
+            /// [`Self::rho_net_invocation_from_dovetail_to`] (which host-computes σ and
+            /// injects it), here the automaton re-does the MATCHING on the interpreter (the
+            /// `$\tau$` `sa:` COMMs) and fires the σ-receiver — the campaign endpoint for a
+            /// base rewrite. The default backend (`swapdemo_backed`) calls this, falling
+            /// back to the σ-replay driver on a gate/scope rejection.
+            pub fn rho_net_match_invocation_from_dovetail_to(
+                term: &dyn mettail_runtime::Term,
+                report: &mettail_runtime::RuntimeDovetailRunReport,
+                out_channel: impl ::core::convert::AsRef<str>,
+            ) -> ::core::result::Result<
+                ::mettail_rholang_codegen::RhoNetInjectionInvocation,
+                ::std::string::String,
+            > {
+                #match_body
             }
 
             /// Build the FULL multi-firing σ-injection sequence from an already
@@ -850,6 +985,19 @@ mod tests {
         assert!(tokens.contains("RhoNetProgram"));
         assert!(tokens.contains("from_language_def"));
         assert!(tokens.contains("reconstruct_language_def"));
+    }
+
+    #[test]
+    fn generated_rho_net_invocation_emits_the_in_rho_match_method() {
+        // Stage 3 piece 5: the emitted impl also carries the in-Rho MATCH invocation —
+        // compile the ruleset, GATE on it, rebuild the ground subject LHS[σ], and
+        // assemble the network‖spread call (the automaton matches ON the interpreter).
+        let tokens = generate_rho_net_invocation(&swap_net_fixture()).to_string();
+        assert!(tokens.contains("rho_net_match_invocation_from_dovetail_to"));
+        assert!(tokens.contains("compile_in_rho_matching_ruleset"));
+        assert!(tokens.contains("in_rho_match_gate_reject"));
+        assert!(tokens.contains("reconstruct_redex_subject"));
+        assert!(tokens.contains("in_rho_match_call_par"));
     }
 
     #[test]
