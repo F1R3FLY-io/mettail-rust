@@ -71,7 +71,30 @@ pub(crate) fn needs_typed_dovetail_path(language: &LanguageDef) -> bool {
         .rewrites
         .iter()
         .any(|rw| is_comm_rewrite(language, rw).is_some());
-    has_native_fold || has_substitution_rewrite || has_native_system_process || has_comm_rewrite
+    // (Stage 3d) A STRUCTURAL non-linear AC rewrite ([`is_structural_ac_rewrite`], the Ambient
+    // `OpenRule` `{(open N P), N[Q], ...rest} ~> {P, Q, ...rest}`) is a TYPED native firing for the
+    // same reasons as Comm — its LHS is a NON-LINEAR AC pattern (Blocker 2) the `EGraph<String>`
+    // path records no justification for, and its RHS nests a structural bag in an AC `PPar`
+    // (Blocker 1) — so routing it typed makes `dovetail_report_for` produce the OpenRule
+    // justification the runtime structural-AC σ-injection reads.
+    //
+    // GATED on `!should_emit_binder_congruence`: a language whose reduction ALSO needs the untyped
+    // path's binder-congruence float (the full `Ambient`, with its `PNew` binder + `new`-floating
+    // equations, whose `InRule`/`OutRule` also reduce via the untyped String-AC) MUST stay on the
+    // untyped path — the typed lane has no binder float. Such a language cannot install on the Rho
+    // backend anyway (its nested `InRule`/`OutRule` stay `Unsupported`), so the structural-AC Rho
+    // firing is delivered by a binder-free generated language (`AmbDemo`), which this gate routes
+    // typed while keeping the full `Ambient` byte-identical on the untyped path.
+    let has_structural_ac_rewrite = language
+        .rewrites
+        .iter()
+        .any(|rw| is_structural_ac_rewrite(language, rw).is_some())
+        && !crate::gen::runtime::binder_congruence::should_emit_binder_congruence(language);
+    has_native_fold
+        || has_substitution_rewrite
+        || has_native_system_process
+        || has_comm_rewrite
+        || has_structural_ac_rewrite
 }
 
 /// Backward-compatible alias for [`needs_typed_dovetail_path`] (the typed path is no longer
@@ -518,6 +541,108 @@ pub(crate) fn is_comm_rewrite(language: &LanguageDef, rw: &RewriteRule) -> Optio
         arg_var,
         binder_var_cat,
         body_cat,
+    })
+}
+
+/// (Stage 3d) A STRUCTURAL non-linear AC rewrite — the Ambient-calculus `OpenRule`
+/// `op{ E0, E1, ...rest } ~> op{ r0, …, r_{m-1}, ...rest }` — classified for typed-native lowering.
+/// It is the [`CommRewrite`] shape MINUS the substitution: the two structured elements share the
+/// non-linear channel `N`, and the reduct is a PURE STRUCTURAL restructuring (each RHS fixed element
+/// `r_j` is a bare LHS-element argument variable — supplied directly by the firing's σ, never
+/// host-computed). Everything is derived from `LanguageDef` (no per-language hardcoding); it
+/// fail-closes on every other shape (verified to REJECT the β `is_substitution_rewrite` shape and the
+/// `is_comm_rewrite` substitution shape).
+#[derive(Debug, Clone)]
+pub(crate) struct StructuralAcRewrite {
+    /// `<Lang>::rewrite::<name>` — the native-rule label (matches the structural-AC σ-receiver's label).
+    pub(crate) label: String,
+    /// The AC bag operator constructor (e.g. `PPar`) …
+    pub(crate) op_label: Ident,
+    /// … and the category it builds (e.g. `Proc`) — the reduced bag's category.
+    pub(crate) op_cat: Ident,
+    /// The `k` structured elements (LHS order); all non-binder.
+    pub(crate) elements: Vec<CommElementInfo>,
+    /// The shared non-linear channel variable `N`.
+    pub(crate) nonlinear_var: Ident,
+    /// The `...rest` remainder variable.
+    pub(crate) rest_var: Ident,
+    /// The `m` RHS fixed element variables, in RHS order — each a bare LHS-element argument (e.g.
+    /// `[P, Q]`). The dispatch splices `op{ σ[r0], …, σ[r_{m-1}], ...rest }`.
+    pub(crate) reduct_vars: Vec<Ident>,
+}
+
+/// (Stage 3d) Classify a rewrite as a STRUCTURAL non-linear AC rewrite ([`StructuralAcRewrite`]), or
+/// `None`. Fail-closed on every other shape: a non-HashBag collection, <2 structured elements, a
+/// binder element, 0/≥2 shared variables, an RHS that is not a with-rest bag over the SAME op + rest,
+/// an RHS fixed element that is NOT a bare variable (the Comm substitution case), or an RHS reduct
+/// variable that is not an LHS-element argument.
+pub(crate) fn is_structural_ac_rewrite(
+    language: &LanguageDef,
+    rw: &RewriteRule,
+) -> Option<StructuralAcRewrite> {
+    // Premises: congruence-only (same gate as the structural lowering).
+    if !rw.premises.iter().all(premise_supported) {
+        return None;
+    }
+
+    // LHS: op{ E0, …, ...rest } — a with-rest HashBag with ≥2 structured elements.
+    let (op_label, lhs_elements, lhs_rest) = comm_collection_apply(&rw.left)?;
+    let rest_var = lhs_rest?.clone();
+    if lhs_elements.len() < 2 {
+        return None;
+    }
+    let mut elements: Vec<CommElementInfo> = Vec::with_capacity(lhs_elements.len());
+    for element in lhs_elements {
+        let info = comm_structured_element(language, element)?;
+        // A structured element must be a plain (non-binder) constructor — a binder element lowers to
+        // the 3-child `[pre, BinderArity, body]` node, which the flat element pattern would not
+        // match; such a rule is a Comm/substitution shape, handled on its own lane.
+        for variant in collect_category_variants(&info.category, language) {
+            match variant {
+                VariantKind::Binder { label, .. } | VariantKind::MultiBinder { label, .. }
+                    if label == info.constructor =>
+                {
+                    return None;
+                },
+                _ => {},
+            }
+        }
+        elements.push(info);
+    }
+
+    // The shared non-linear channel variable.
+    let nonlinear_var = comm_unique_shared_var(&elements)?;
+
+    // RHS: op{ r0, …, ...rest } — the SAME op + rest, all-bare-variable fixed elements (NO subst).
+    let (rhs_op, rhs_elements, rhs_rest) = comm_collection_apply(&rw.right)?;
+    let rhs_rest = rhs_rest?;
+    if rhs_op != op_label || rhs_elements.is_empty() || rhs_rest != &rest_var {
+        return None;
+    }
+    let mut reduct_vars: Vec<Ident> = Vec::with_capacity(rhs_elements.len());
+    for element in rhs_elements {
+        let AstPattern::Term(PatternTerm::Var(var)) = element else {
+            return None; // a substitution / constructor element ⇒ not a structural restructuring.
+        };
+        reduct_vars.push(var.clone());
+    }
+
+    // Every reduct variable must be a bare argument of some LHS element (supplied by the AC match's σ).
+    let is_lhs_var = |name: &Ident| elements.iter().any(|e| e.args.iter().any(|v| v == name));
+    if !reduct_vars.iter().all(is_lhs_var) {
+        return None;
+    }
+
+    let op_cat = language.category_of_constructor(op_label)?.clone();
+
+    Some(StructuralAcRewrite {
+        label: format!("{}::rewrite::{}", language.name, rw.name),
+        op_label: op_label.clone(),
+        op_cat,
+        elements,
+        nonlinear_var,
+        rest_var,
+        reduct_vars,
     })
 }
 
@@ -1159,6 +1284,14 @@ fn lower_rewrite(
     if enum_id.is_some() && is_comm_rewrite(language, rw).is_some() {
         return (Vec::new(), Vec::new());
     }
+    // (Stage 3d) A structural non-linear AC rewrite (Ambient `OpenRule`) is likewise NOT a structural
+    // `RewriteRule` — it is lowered as a typed native rule + dispatch arm (`typed_report`), so it
+    // emits NOTHING here. Gated on `enum_id.is_some()` (typed path only); the `EGraph<String>` path
+    // never routes a structural-AC rewrite (it stays a String-path AC `RewriteRule` for the untyped
+    // binder-handler `Ambient`), so this is defensively byte-identical for the String path.
+    if enum_id.is_some() && is_structural_ac_rewrite(language, rw).is_some() {
+        return (Vec::new(), Vec::new());
+    }
 
     match (
         pattern_to_dovetail(language, &rw.left, enum_id),
@@ -1672,12 +1805,15 @@ mod tests {
 
     #[test]
     fn generated_report_lowers_ac_bag_rewrite_on_the_typed_path() {
-        // (A-1) The SAME AC bag rewrite must ALSO lower on the TYPED fold path
+        // (A-1 + Stage 3d) The SAME AC bag rewrite must lower on the TYPED fold path
         // (`enum_id = Some(L)`), NOT be rejected as "AC collection metapatterns are
-        // not yet lowered on the typed fold path". The operator + fixed sub-patterns
-        // are the typed op variants (`L::Proc_PPar`, `L::Proc_POpen`, …), so an
-        // `AcApp` LHS matches the typed lowering's n-ary bag node (the CommDemo `PPar`
-        // shape). This closes Blocker 3.
+        // not yet lowered on the typed fold path". As of Stage 3d the Ambient `OpenRule`
+        // is a STRUCTURAL non-linear AC rewrite, so it lowers on the typed NATIVE lane
+        // (`is_structural_ac_rewrite` → a `NativeRule`, skipped by `rule_block`), NOT as a
+        // structural `RewriteRule`; the typed op variants (`L::Proc_PPar`, `L::Proc_POpen`,
+        // …) still appear — now as the native rule's AcApp LHS + tag-routed element patterns.
+        // `rule_block` therefore reports it as NEITHER unsupported (not rejected) NOR a
+        // structural rule (it is native).
         let language = parse(
             r#"
                 name: AcTypedSmoke,
@@ -1700,13 +1836,13 @@ mod tests {
         let (_, unsupported) = rule_block(&language, Some(&enum_id));
         assert!(
             unsupported.is_empty(),
-            "the typed AC bag rewrite must lower, not be rejected: {unsupported:?}"
+            "the typed AC bag rewrite must lower (native lane), not be rejected: {unsupported:?}"
         );
 
-        let (rules, _) = rule_block(&language, Some(&enum_id));
-        let tokens = rules.to_string();
-        // The typed lowering uses `Pattern::ac` with the TYPED op variant (`Proc_PPar`),
-        // never the String label `AcTypedSmoke::Proc::PPar`.
+        // The whole typed report carries the structural-AC NATIVE rule, whose AcApp LHS uses the
+        // TYPED op variant (`Proc_PPar`) with the tag-routed `Proc_POpen`/`Proc_PAmb` element
+        // patterns + the `rest` remainder.
+        let tokens = generate_dovetail_report(&language).to_string();
         assert!(tokens.contains("Pattern :: ac"), "typed AC bag pattern emitted");
         assert!(tokens.contains("Proc_PPar"), "PPar is the typed AC operator variant: {tokens}");
         assert!(tokens.contains("Proc_POpen"), "the fixed POpen element lowers typed");
@@ -2008,6 +2144,106 @@ mod tests {
         assert!(
             is_comm_rewrite(&language, rewrite(&language, "OpenRule")).is_none(),
             "a structural non-linear AC rewrite (RHS is not a single substitution) is not a Comm rewrite"
+        );
+    }
+
+    // ─── Stage 3d: `is_structural_ac_rewrite` shape classifier ───────────────────────────────────
+
+    /// Ambient's `OpenRule` `(PPar {(POpen N P), (PAmb N Q), ...rest}) ~> (PPar {P, Q, ...rest})` is
+    /// detected as a STRUCTURAL non-linear AC rewrite, with every field derived from `LanguageDef`,
+    /// and it routes the language to the typed native lane. It is NOT a Comm rewrite (RHS is
+    /// structural, not a substitution).
+    #[test]
+    fn is_structural_ac_rewrite_detects_open_rule() {
+        let language = parse(
+            r#"
+                name: OpenClassify,
+                types { Proc Name }
+                terms {
+                    POpen . Proc ::= "open(" Name "," Proc ")" ;
+                    PAmb . Proc ::= Name "[" Proc "]" ;
+                    PPar . Proc ::= HashBag(Proc) sep "|" delim "{" "}" ;
+                }
+                equations {}
+                rewrites {
+                    OpenRule . |- (PPar {(POpen N P), (PAmb N Q), ...rest})
+                        ~> (PPar {P, Q, ...rest}) ;
+                }
+            "#,
+        );
+        let sr = is_structural_ac_rewrite(&language, rewrite(&language, "OpenRule"))
+            .expect("OpenRule must be detected as a structural AC rewrite");
+        assert_eq!(sr.op_label.to_string(), "PPar");
+        assert_eq!(sr.op_cat.to_string(), "Proc");
+        assert_eq!(sr.nonlinear_var.to_string(), "N");
+        assert_eq!(sr.rest_var.to_string(), "rest");
+        assert_eq!(
+            sr.reduct_vars.iter().map(|v| v.to_string()).collect::<Vec<_>>(),
+            vec!["P".to_string(), "Q".to_string()]
+        );
+        assert_eq!(
+            sr.elements.iter().map(|e| e.constructor.to_string()).collect::<Vec<_>>(),
+            vec!["POpen".to_string(), "PAmb".to_string()]
+        );
+        // It is NOT a Comm rewrite (mutually exclusive by RHS shape).
+        assert!(is_comm_rewrite(&language, rewrite(&language, "OpenRule")).is_none());
+        // And it routes the language (no binder handler — no equations) to the typed native lane.
+        assert!(needs_typed_dovetail_path(&language));
+    }
+
+    /// The canonical Comm rule (substitution-in-bag RHS) is NOT a structural AC rewrite — the two
+    /// classifiers are mutually exclusive by RHS shape.
+    #[test]
+    fn is_structural_ac_rewrite_rejects_comm() {
+        let language = parse(
+            r#"
+                name: CommNotStructural,
+                types { Proc Name }
+                terms {
+                    PZero . |- "0" : Proc ;
+                    Na . |- "na" : Name ;
+                    Nb . |- "nb" : Name ;
+                    PPar . ps:HashBag(Proc) |- "{" ps.*sep("|") "}" : Proc ;
+                    POutput . n:Name, q:Name |- n "!" "(" q ")" : Proc ;
+                    PFor . n:Name, ^x.p:[Name -> Proc]
+                        |- "for" "(" x "<-" n ")" "{" p "}" : Proc ;
+                }
+                equations {}
+                rewrites {
+                    Comm . |- (PPar {(PFor N cont), (POutput N Q), ...rest})
+                        ~> (PPar {(eval cont Q), ...rest}) ;
+                }
+            "#,
+        );
+        assert!(
+            is_structural_ac_rewrite(&language, rewrite(&language, "Comm")).is_none(),
+            "a Comm (substitution-in-bag) RHS is not a structural AC rewrite"
+        );
+    }
+
+    /// A structural AC rewrite whose RHS reintroduces a FRESH variable the σ cannot supply (not an
+    /// LHS-element argument) is rejected.
+    #[test]
+    fn is_structural_ac_rewrite_rejects_fresh_rhs_var() {
+        let language = parse(
+            r#"
+                name: FreshRhsVar,
+                types { Proc Name }
+                terms {
+                    POpen . Proc ::= "open(" Name "," Proc ")" ;
+                    PAmb . Proc ::= Name "[" Proc "]" ;
+                    PPar . Proc ::= HashBag(Proc) sep "|" delim "{" "}" ;
+                }
+                equations {}
+                rewrites {
+                    BadOpen . |- (PPar {(POpen N P), (PAmb N Q), ...rest})
+                        ~> (PPar {P, Z, ...rest}) ;
+                }
+            "#,
+        );
+        assert!(
+            is_structural_ac_rewrite(&language, rewrite(&language, "BadOpen")).is_none(),
+            "an RHS reduct var `Z` that is not an LHS-element arg is rejected"
         );
     }
 

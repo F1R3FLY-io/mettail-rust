@@ -22,8 +22,9 @@ use syn::Ident;
 use super::op_enum::{self, op_enum_ident, op_variant_ident};
 use super::reconstruct::{self, build_fn};
 use super::{
-    category_lowering_fn, is_comm_rewrite, is_substitution_rewrite, lit, rule_block,
-    subst_rewrite_native_lhs, to_snake, typed_lowering, CommElementInfo, CommRewrite, SubstRewrite,
+    category_lowering_fn, is_comm_rewrite, is_structural_ac_rewrite, is_substitution_rewrite, lit,
+    rule_block, subst_rewrite_native_lhs, to_snake, typed_lowering, CommElementInfo, CommRewrite,
+    StructuralAcRewrite, SubstRewrite,
 };
 use crate::gen::term_ops::subst::{collect_category_variants, VariantKind};
 
@@ -180,6 +181,30 @@ fn collect_comm_rules(language: &LanguageDef, start_op_id: usize) -> Vec<CommRul
     out
 }
 
+/// (Stage 3d) A structural non-linear AC rewrite ([`StructuralAcRewrite`], Ambient `OpenRule`)
+/// lowered to a typed native rule + dispatch arm, carrying its assigned `op_id`. The `op_id` counter
+/// is SHARED with the folds ∪ substitution ∪ Comm rules (structural-AC op-ids start after them), so
+/// every native rule across all kinds has a distinct id and its own dispatch arm.
+struct StructuralAcRule {
+    op_id: u32,
+    rewrite: StructuralAcRewrite,
+}
+
+/// Collect the language's structural non-linear AC rewrites ([`is_structural_ac_rewrite`]) as typed
+/// native rules, assigning each an `op_id` STARTING AT `start_op_id` (the shared counter after folds
+/// ∪ substitution ∪ Comm rules). Source order is preserved (stable ids).
+fn collect_structural_ac_rules(language: &LanguageDef, start_op_id: usize) -> Vec<StructuralAcRule> {
+    let mut out = Vec::new();
+    let mut op_id = start_op_id as u32;
+    for rw in &language.rewrites {
+        if let Some(sr) = is_structural_ac_rewrite(language, rw) {
+            out.push(StructuralAcRule { op_id, rewrite: sr });
+            op_id += 1;
+        }
+    }
+    out
+}
+
 /// The `mettail_runtime` native-output numeric-cast reductions (generated cast fold bodies
 /// call these). They return `Option<scalar>` — a `None` defers — but carry no `try` segment,
 /// so they are recognized by name in [`body_returns_option`]. Their object-output siblings
@@ -247,6 +272,7 @@ fn generate_helpers(
     folds: &[FoldRule<'_>],
     substs: &[SubstRule],
     comms: &[CommRule],
+    structural_acs: &[StructuralAcRule],
 ) -> TokenStream {
     let enum_id = op_enum_ident(language);
     let mut redex_heads: Vec<TokenStream> = folds
@@ -272,6 +298,17 @@ fn generate_helpers(
         let element = &c.rewrite.elements[c.rewrite.binder_element_index];
         let v = op_variant_ident(&element.category, &element.constructor);
         redex_heads.push(quote! { #enum_id::#v });
+    }
+    // (Stage 3d / MF1) EVERY structured element head of a structural-AC rewrite is CONSUMED by the
+    // firing (Ambient's `{(open N P), N[Q], ...rest}` becomes `{P, Q, ...rest}` — neither `open` nor
+    // `amb` survives), so ALL of them join the redex-head set. A bag carrying an un-opened element is
+    // then strictly heavier than the restructured bag, so funded 1-best extraction reports the
+    // restructured bag `op{ r0, …, ...rest }` as the firing's contractum.
+    for s in structural_acs {
+        for element in &s.rewrite.elements {
+            let v = op_variant_ident(&element.category, &element.constructor);
+            redex_heads.push(quote! { #enum_id::#v });
+        }
     }
     let var_pats: Vec<TokenStream> = language
         .types
@@ -355,6 +392,7 @@ fn generate_native_rules_and_dispatch(
     folds: &[FoldRule<'_>],
     substs: &[SubstRule],
     comms: &[CommRule],
+    structural_acs: &[StructuralAcRule],
 ) -> (TokenStream, TokenStream) {
     let enum_id = op_enum_ident(language);
 
@@ -558,6 +596,22 @@ fn generate_native_rules_and_dispatch(
     let comm_dispatch_arms: Vec<TokenStream> =
         comms.iter().map(|c| comm_dispatch_arm(c, &enum_id)).collect();
 
+    // (Stage 3d) Structural-AC native rules + dispatch arms. Their `op_id`s are disjoint from folds ∪
+    // substitution ∪ Comm rules, so the dispatch match has one arm per rule across all four kinds.
+    let structural_ac_native_rules: Vec<TokenStream> = structural_acs
+        .iter()
+        .map(|s| structural_ac_native_rule(s, &enum_id))
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap_or_else(|reason| {
+            // A structural-AC rewrite that passed `is_structural_ac_rewrite` but whose LHS does not
+            // lower is a generator bug, surfaced as a build error rather than a silently-missing rule.
+            vec![quote! { compile_error!(#reason); }]
+        });
+    let structural_ac_dispatch_arms: Vec<TokenStream> = structural_acs
+        .iter()
+        .map(|s| structural_ac_dispatch_arm(s, &enum_id))
+        .collect();
+
     let dispatch = quote! {
         |__op: ::dovetail::rules::NativeOpId,
          __eg: &mut ::dovetail::egraph::EGraph<#enum_id>,
@@ -567,13 +621,21 @@ fn generate_native_rules_and_dispatch(
                 #(#dispatch_arms)*
                 #(#subst_dispatch_arms)*
                 #(#comm_dispatch_arms)*
+                #(#structural_ac_dispatch_arms)*
                 _ => ::core::option::Option::None,
             }
         }
     };
 
     (
-        quote! { vec![#(#native_rules,)* #(#subst_native_rules,)* #(#comm_native_rules),*] },
+        quote! {
+            vec![
+                #(#native_rules,)*
+                #(#subst_native_rules,)*
+                #(#comm_native_rules,)*
+                #(#structural_ac_native_rules),*
+            ]
+        },
         dispatch,
     )
 }
@@ -880,6 +942,71 @@ fn comm_dispatch_arm(c: &CommRule, enum_id: &Ident) -> TokenStream {
     }
 }
 
+/// (Stage 3d) The typed `NativeRule` for a structural non-linear AC rewrite (Ambient `OpenRule`): its
+/// LHS is the AcApp `op{ E0, …, ...rest }` with the SAME tag-routed, non-linear-guarded element
+/// patterns the Comm rule uses (each element a plain constructor over bare vars — the shared channel
+/// `N` occurs in BOTH, so the AC matcher's `Var` re-bind check enforces `N ≡ N` by e-class equality);
+/// its op is the structural-AC `op_id`; its label is `<Lang>::rewrite::<name>` (matching the installed
+/// structural-AC σ-receiver's label). Every element is non-binder, so [`comm_element_pattern`]'s
+/// non-binder branch applies.
+fn structural_ac_native_rule(s: &StructuralAcRule, enum_id: &Ident) -> Result<TokenStream, String> {
+    let op_id = s.op_id;
+    let sr = &s.rewrite;
+    let label = lit(&sr.label);
+    let op_variant = op_variant_ident(&sr.op_cat, &sr.op_label);
+    let fixed: Vec<TokenStream> =
+        sr.elements.iter().map(|e| comm_element_pattern(e, enum_id)).collect();
+    let rest_lit = lit(&sr.rest_var.to_string());
+    Ok(quote! {
+        ::dovetail::rules::NativeRule {
+            lhs: ::dovetail::rules::Pattern::ac(
+                #enum_id::#op_variant,
+                vec![#(#fixed),*],
+                ::core::option::Option::Some(#rest_lit.to_string()),
+            ),
+            op: #op_id,
+            label: ::core::option::Option::Some(#label.to_string()),
+        }
+    })
+}
+
+/// (Stage 3d) The dispatch arm for a structural non-linear AC rewrite. UNLIKE the Comm arm there is
+/// no binder reconstruction and no substitution: the reduct is a PURE structural restructuring, so
+/// each RHS element `r_j` — a bare LHS-element argument bound by the AC match — is re-referenced
+/// DIRECTLY from `__subst`. The arm splices `op{ σ[r0], …, σ[r_{m-1}], ...rest }` into ONE flat
+/// canonical bag via `instantiate` (whose `AcApp` RHS handling flattens the `rest` bag into the
+/// parallel) and returns the restructured bag's e-class — the contractum the engine merges with the
+/// redex bag, from which `resolve_rewrite_justifications` reports the restructured bag and the
+/// structural-AC σ-injection recovers each `r_j` from σ. The non-linear guard `N ≡ N` was already
+/// enforced at the AC matcher (a mismatched-channel soup produces no match ⇒ no firing), so the arm
+/// needs no re-check.
+fn structural_ac_dispatch_arm(s: &StructuralAcRule, enum_id: &Ident) -> TokenStream {
+    let op_id = s.op_id;
+    let sr = &s.rewrite;
+    let op_variant = op_variant_ident(&sr.op_cat, &sr.op_label);
+    let rest_var = lit(&sr.rest_var.to_string());
+    let reduct_pats: Vec<TokenStream> = sr
+        .reduct_vars
+        .iter()
+        .map(|v| {
+            let name = lit(&v.to_string());
+            quote! { ::dovetail::rules::Pattern::var(#name) }
+        })
+        .collect();
+    quote! {
+        #op_id => {
+            // Splice op{ σ[r0], …, σ[r_{m-1}], ...rest } from the AC-matched σ (every reduct var is a
+            // bound LHS-element arg — no substitution, no reconstruction) into one flat canonical bag.
+            let __rhs_pat = ::dovetail::rules::Pattern::ac(
+                #enum_id::#op_variant,
+                ::std::vec![#(#reduct_pats),*],
+                ::core::option::Option::Some(#rest_var.to_string()),
+            );
+            __eg.instantiate(&__rhs_pat, __subst)
+        }
+    }
+}
+
 /// (E2.2) Generate the `dovetail_normal_term` method body for a fold-bearing language.
 ///
 /// `dovetail_normal_term(term, max_iters, max_nodes) -> Result<Box<dyn Term>, String>` reuses
@@ -920,9 +1047,14 @@ fn generate_dovetail_normal_term(language: &LanguageDef, struct_slack: usize) ->
     // start at `folds.len() + substs.len()`), so the helpers (redex-head set) and the
     // native-rule/dispatcher generator both see folds ∪ substitution rules ∪ Comm rules.
     let comms = collect_comm_rules(language, folds.len() + substs.len());
-    let helpers = generate_helpers(language, &folds, &substs, &comms);
+    // (Stage 3d) Structural-AC rewrites (Ambient `OpenRule`) share the native op-id counter, starting
+    // after folds ∪ substitution ∪ Comm rules, so the helpers (redex-head set) and the
+    // native-rule/dispatcher generator see all four native kinds.
+    let structural_acs =
+        collect_structural_ac_rules(language, folds.len() + substs.len() + comms.len());
+    let helpers = generate_helpers(language, &folds, &substs, &comms, &structural_acs);
     let (native_rules_expr, dispatch) =
-        generate_native_rules_and_dispatch(language, &folds, &substs, &comms);
+        generate_native_rules_and_dispatch(language, &folds, &substs, &comms, &structural_acs);
     let (rules_expr, _unsupported) = rule_block(language, Some(&enum_id));
 
     let primary_cat = &language.types.first().expect("language has a type").name;
@@ -1186,9 +1318,14 @@ fn generate_step_graph(language: &LanguageDef) -> TokenStream {
     // start at `folds.len() + substs.len()`), so the helpers (redex-head set) and the
     // native-rule/dispatcher generator both see folds ∪ substitution rules ∪ Comm rules.
     let comms = collect_comm_rules(language, folds.len() + substs.len());
-    let helpers = generate_helpers(language, &folds, &substs, &comms);
+    // (Stage 3d) Structural-AC rewrites (Ambient `OpenRule`) share the native op-id counter, starting
+    // after folds ∪ substitution ∪ Comm rules, so the helpers (redex-head set) and the
+    // native-rule/dispatcher generator see all four native kinds.
+    let structural_acs =
+        collect_structural_ac_rules(language, folds.len() + substs.len() + comms.len());
+    let helpers = generate_helpers(language, &folds, &substs, &comms, &structural_acs);
     let (native_rules_expr, dispatch) =
-        generate_native_rules_and_dispatch(language, &folds, &substs, &comms);
+        generate_native_rules_and_dispatch(language, &folds, &substs, &comms, &structural_acs);
     let (rules_expr, _unsupported) = rule_block(language, Some(&enum_id));
 
     let primary_cat = &language.types.first().expect("language has a type").name;
@@ -1643,9 +1780,14 @@ pub(crate) fn generate_typed_dovetail_report(language: &LanguageDef) -> TokenStr
     // start at `folds.len() + substs.len()`), so the helpers (redex-head set) and the
     // native-rule/dispatcher generator both see folds ∪ substitution rules ∪ Comm rules.
     let comms = collect_comm_rules(language, folds.len() + substs.len());
-    let helpers = generate_helpers(language, &folds, &substs, &comms);
+    // (Stage 3d) Structural-AC rewrites (Ambient `OpenRule`) share the native op-id counter, starting
+    // after folds ∪ substitution ∪ Comm rules, so the helpers (redex-head set) and the
+    // native-rule/dispatcher generator see all four native kinds.
+    let structural_acs =
+        collect_structural_ac_rules(language, folds.len() + substs.len() + comms.len());
+    let helpers = generate_helpers(language, &folds, &substs, &comms, &structural_acs);
     let (native_rules_expr, dispatch) =
-        generate_native_rules_and_dispatch(language, &folds, &substs, &comms);
+        generate_native_rules_and_dispatch(language, &folds, &substs, &comms, &structural_acs);
     // Typed structural rules (congruence is automatic; Comm/Extrude rules that belong to the
     // RhoNativeJoin boundary land in the dropped `unsupported` — NON-FATAL on the fold path).
     let (rules_expr, _unsupported) = rule_block(language, Some(&enum_id));
@@ -1769,13 +1911,18 @@ pub(crate) fn generate_typed_dovetail_report(language: &LanguageDef) -> TokenStr
     // nested-substitution RHS) reduces on THIS typed native lane, so its report is produced by this
     // body. Without carrying its resolved σ + contractum, the runtime Comm σ-injection F-fn would
     // have no firing to read (the hand-built-σ deviation this campaign removes).
+    // Stage 3d: the STRUCTURAL-AC family (`rho_net_structural_ac_injection_sites`) matters HERE — a
+    // structural non-linear AC rewrite (Ambient `OpenRule`) reduces on THIS typed native lane, so its
+    // report is produced by this body. Without carrying its resolved σ, the runtime structural-AC
+    // σ-injection F-fn would have no firing to read.
     let populate_rewrite_justifications =
         !mettail_rholang_codegen::rho_net_injection_sites(language).is_empty()
             || !mettail_rholang_codegen::rho_net_ac_injection_sites(language).is_empty()
             || !mettail_rholang_codegen::rho_net_contextual_injection_sites(language).is_empty()
             || !mettail_rholang_codegen::rho_net_subst_injection_sites(language).is_empty()
             || !mettail_rholang_codegen::rho_net_native_injection_sites(language).is_empty()
-            || !mettail_rholang_codegen::rho_net_comm_injection_sites(language).is_empty();
+            || !mettail_rholang_codegen::rho_net_comm_injection_sites(language).is_empty()
+            || !mettail_rholang_codegen::rho_net_structural_ac_injection_sites(language).is_empty();
     // The report `let` binding (mut only when we populate σ), the σ-resolution statement (resolves
     // σ + the firing CONTRACTUM under the SAME `__weigh` cost model the roots use, so the
     // contractum is the reduct the extractor reports — model-b: the host computed the

@@ -489,12 +489,20 @@ pub fn generate_rho_net_invocation(language: &LanguageDef) -> TokenStream {
     // `comm_contract_call`, which sends `channel!(⟦bag⟧, ⟦reduct⟧, @out)`. This is the AUTOMATED
     // drive that removes the hand-built-σ `comm_contract_call` deviation.
     let comm_sites = mettail_rholang_codegen::rho_net_comm_injection_sites(language);
+    // Stage 3d: the STRUCTURAL-AC firing sites — a structural non-linear AC rewrite (Ambient
+    // `OpenRule`, `RhoNetLoweredRule::StructuralAcRewrite`) fires by reconstructing the WHOLE operand
+    // bag from σ (its structured elements ⊎ the `rest` children) and recovering each STRUCTURAL reduct
+    // element `r_j` DIRECTLY from σ (an LHS-element arg — no host-computed contractum), then passing
+    // them to `structural_ac_contract_call`, which sends `channel!(⟦bag⟧, ⟦r0⟧, …, @out)`.
+    let structural_ac_sites =
+        mettail_rholang_codegen::rho_net_structural_ac_injection_sites(language);
 
     let body = if sites.is_empty()
         && ac_sites.is_empty()
         && subst_sites.is_empty()
         && native_sites.is_empty()
         && comm_sites.is_empty()
+        && structural_ac_sites.is_empty()
     {
         // No σ-receiver (base OR AC OR subst OR native): the helper exists for a uniform surface
         // but always fails closed (there is nothing to inject).
@@ -738,6 +746,77 @@ pub fn generate_rho_net_invocation(language: &LanguageDef) -> TokenStream {
             })
             .collect();
 
+        // Structural-AC-rewrite arms (Stage 3d): reconstruct the operand bag from σ EXACTLY like the
+        // Comm arm (each structured element `C(σ[a_0], …)` from `element_constructors` ∥
+        // `element_arg_vars`, ⊎ the `rest` sub-term's children), then recover each STRUCTURAL reduct
+        // element `r_j` DIRECTLY from σ (each `reduct_var` is a bare LHS-element arg the AC match
+        // bound — no contractum, no substitution), and pass them to `structural_ac_contract_call`,
+        // which sends `channel!(⟦bag⟧, ⟦r0⟧, …, ⟦r_{m-1}⟧, @out)` for the installed structural-AC
+        // receiver (which re-does the non-linear AC match `N ≡ N` and splices `r0 | … | rest`).
+        let structural_ac_site_arms: Vec<TokenStream> = structural_ac_sites
+            .iter()
+            .map(|site| {
+                let label = lit(&site.rule_label);
+                let channel = lit(&site.channel);
+                let op = lit(&site.op);
+                let rest_var = lit(&site.rest_var);
+                let element_count = site.element_constructors.len();
+                let element_builds: Vec<TokenStream> = site
+                    .element_constructors
+                    .iter()
+                    .zip(site.element_arg_vars.iter())
+                    .map(|(constructor, arg_vars)| {
+                        let ctor = lit(constructor);
+                        let arg_lits: Vec<LitStr> = arg_vars.iter().map(|arg| lit(arg)).collect();
+                        let arg_count = arg_vars.len();
+                        quote! {
+                            {
+                                let mut __elem_children =
+                                    ::std::vec::Vec::with_capacity(#arg_count);
+                                #(
+                                    __elem_children.push(__mettail_rho_net_to_ground(
+                                        __mettail_rho_net_find_sigma(__justification, #arg_lits)?,
+                                    ));
+                                )*
+                                ::mettail_rholang_codegen::GroundTerm::new(#ctor, __elem_children)
+                            }
+                        }
+                    })
+                    .collect();
+                let reduct_lits: Vec<LitStr> =
+                    site.reduct_vars.iter().map(|var| lit(var)).collect();
+                let reduct_count = site.reduct_vars.len();
+                quote! {
+                    #label => {
+                        // Reconstruct the operand bag: the k structured elements ⊎ the residual bag.
+                        let mut __elements = ::std::vec::Vec::with_capacity(#element_count);
+                        #( __elements.push(#element_builds); )*
+                        let __rest = __mettail_rho_net_to_ground(
+                            __mettail_rho_net_find_sigma(__justification, #rest_var)?,
+                        );
+                        __elements.extend(__rest.children.iter().cloned());
+                        let __whole_bag = ::mettail_rholang_codegen::GroundTerm::collection(
+                            ::mettail_rholang_codegen::CollectionType::HashBag,
+                            #op,
+                            __elements,
+                        );
+                        // The m STRUCTURAL reduct elements — recovered DIRECTLY from σ (each an
+                        // LHS-element arg the AC match bound). No contractum: the reduct is a pure
+                        // rearrangement, so σ already carries every element.
+                        let mut __reducts = ::std::vec::Vec::with_capacity(#reduct_count);
+                        #(
+                            __reducts.push(__mettail_rho_net_to_ground(
+                                __mettail_rho_net_find_sigma(__justification, #reduct_lits)?,
+                            ));
+                        )*
+                        ::mettail_rholang_codegen::structural_ac_contract_call(
+                            #channel, &__whole_bag, &__reducts, __fingerprint, out_channel,
+                        )
+                    },
+                }
+            })
+            .collect();
+
         // The multiset-difference reduct recovery, emitted only for a language with a Comm site (so
         // a non-Comm language surfaces no dead helper).
         let comm_reduct_helper: TokenStream = if comm_sites.is_empty() {
@@ -856,6 +935,7 @@ pub fn generate_rho_net_invocation(language: &LanguageDef) -> TokenStream {
                 #(#subst_site_arms)*
                 #(#native_site_arms)*
                 #(#comm_site_arms)*
+                #(#structural_ac_site_arms)*
                 __other => {
                     return ::core::result::Result::Err(::std::format!(
                         "Rho-net injection for language {} has no σ-receiver for fired rule {}",
