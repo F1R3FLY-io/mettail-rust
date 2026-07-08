@@ -65,3 +65,8 @@ theories/PrunePreservesWork.v
 # and trace/tc_sound (viii, TcChannelNamingQuotient); mirrors RhoCommScheduleFamily's
 # erase/τ backbone.
 theories/InRhoSameCLTSWeakBisim.v
+# FV (AC-rest) — Stage AC in-Rho AC matching: rest = bag - selection (the partition,
+# selection_rest_partition) + the RHS flatten byte-identity to add_flattened_bag (a same-op
+# sub-bag splices; flatten distributes over append). Self-contained multiset theory (Stdlib
+# Permutation), the byte-identity spec the RHS reflection meets.
+theories/AcRestReconstruction.v
