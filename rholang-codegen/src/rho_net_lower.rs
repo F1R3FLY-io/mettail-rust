@@ -103,8 +103,16 @@ pub enum RhoNetLoweredRule {
     StructuralConstructor { rule_id: String },
     /// A structural-congruence equation (compile-time e-graph closure).
     CongruenceClosure { rule_id: String },
-    /// A congruence (contextual) rewrite — deferred to the next slice.
-    ContextualRewrite { rule_id: String },
+    /// A congruence (contextual) rewrite lowered to an atomic polyadic JOIN receiver
+    /// (`contextual_join_receiver_par`, INV-6): a length-`n` `Receive.binds`, one flat
+    /// σ-slot per premise hole on that premise's location channel, whose body emits the
+    /// reduced context `⟦K'⟧` on the rule's dynamic out channel. Materialized exactly like
+    /// [`Self::BaseRewrite`]/[`Self::AcRewrite`] — installed into the program and given a
+    /// contextual injection site — so contextual firing rides the same install∥call seam
+    /// (Stage 3a). A congruence rule whose context is AC / binder / substitution, or which
+    /// carries a non-congruence side condition, has no flat join image and stays
+    /// `Unsupported` (fail-closed).
+    ContextualRewrite { rule_id: String, par: Par },
     /// A declared join (COMM) — deferred to the next slice.
     Comm { rule_id: String },
     /// A native system-process dispatch — deferred to the next slice.
@@ -123,9 +131,9 @@ impl RhoNetLoweredRule {
             Self::NativeFold { rule_id, .. }
             | Self::BaseRewrite { rule_id, .. }
             | Self::AcRewrite { rule_id, .. }
+            | Self::ContextualRewrite { rule_id, .. }
             | Self::StructuralConstructor { rule_id }
             | Self::CongruenceClosure { rule_id }
-            | Self::ContextualRewrite { rule_id }
             | Self::Comm { rule_id }
             | Self::NativeSystemProcess { rule_id }
             | Self::Unsupported { rule_id, .. } => rule_id,
@@ -138,7 +146,8 @@ impl RhoNetLoweredRule {
         match self {
             Self::NativeFold { par, .. }
             | Self::BaseRewrite { par, .. }
-            | Self::AcRewrite { par, .. } => Some(par),
+            | Self::AcRewrite { par, .. }
+            | Self::ContextualRewrite { par, .. } => Some(par),
             _ => None,
         }
     }
@@ -179,8 +188,8 @@ pub enum RhoNetLoweringError {
 pub enum RhoNetInstallError {
     /// Lowering recorded fail-closed diagnostics; the program is incomplete.
     LoweringErrors(Vec<RhoNetLoweringError>),
-    /// A recognized-but-not-yet-executable rule family (`ContextualRewrite` /
-    /// `Comm` / `NativeSystemProcess` / `Unsupported`) whose contract the installed
+    /// A recognized-but-not-yet-executable rule family (`Comm` /
+    /// `NativeSystemProcess` / `Unsupported`) whose contract the installed
     /// program would silently omit.
     UnmaterializedRule { rule_id: String, family: &'static str },
 }
@@ -238,9 +247,8 @@ impl RhoNetLowered {
     /// * [`RhoNetInstallError::LoweringErrors`] if lowering recorded any diagnostic
     ///   (e.g. an `Unsupported` family), and
     /// * [`RhoNetInstallError::UnmaterializedRule`] if any rule is a
-    ///   recognized-but-not-yet-lowered family (`ContextualRewrite` / `Comm` /
-    ///   `NativeSystemProcess` / `Unsupported`) that [`RhoNetLoweredRule::par`]
-    ///   would silently omit.
+    ///   recognized-but-not-yet-lowered family (`Comm` / `NativeSystemProcess` /
+    ///   `Unsupported`) that [`RhoNetLoweredRule::par`] would silently omit.
     ///
     /// `StructuralConstructor` / `CongruenceClosure` legitimately contribute no
     /// `Par` (inline RHS reflection / compile-time e-graph closure) and never block
@@ -253,13 +261,13 @@ impl RhoNetLowered {
         }
         for rule in &self.rules {
             let family = match rule {
-                RhoNetLoweredRule::ContextualRewrite { .. } => "ContextualRewrite",
                 RhoNetLoweredRule::Comm { .. } => "Comm",
                 RhoNetLoweredRule::NativeSystemProcess { .. } => "NativeSystemProcess",
                 RhoNetLoweredRule::Unsupported { .. } => "Unsupported",
                 RhoNetLoweredRule::NativeFold { .. }
                 | RhoNetLoweredRule::BaseRewrite { .. }
                 | RhoNetLoweredRule::AcRewrite { .. }
+                | RhoNetLoweredRule::ContextualRewrite { .. }
                 | RhoNetLoweredRule::StructuralConstructor { .. }
                 | RhoNetLoweredRule::CongruenceClosure { .. } => continue,
             };
@@ -351,9 +359,12 @@ pub(crate) fn lower(
                 &program.language_fingerprint,
                 &mut errors,
             ),
-            RhoNetRuleKind::ContextualRewrite => {
-                lower_contextual_rewrite(rule, &rewrite_by_id, &mut errors)
-            },
+            RhoNetRuleKind::ContextualRewrite => lower_contextual_rewrite(
+                rule,
+                &rewrite_by_id,
+                &program.language_fingerprint,
+                &mut errors,
+            ),
             RhoNetRuleKind::Comm => Some(RhoNetLoweredRule::Comm { rule_id: rule.id.clone() }),
         };
         if let Some(lowered) = lowered {
@@ -507,22 +518,95 @@ fn lower_base_rewrite(
     Some(RhoNetLoweredRule::BaseRewrite { rule_id: rule.id.clone(), par })
 }
 
-/// Lower a congruence (contextual) rewrite. Not materialized to a σ-receiver
-/// this slice, but the P2 detector still records an out-of-scope family
-/// fail-closed rather than silently deferring it.
+/// Lower a congruence (contextual) rewrite `⟦…S_i ~> T_i… |- K(S_1..S_n) ~> K'(T_1..T_n)⟧`
+/// to the atomic polyadic JOIN receiver (INV-6, Stage 3a).
+///
+/// The hypothesis-carrying contextual rewrite fires as ONE `Receive` with `n` binds — one
+/// flat σ-slot per premise hole on that premise's location channel — whose body emits the
+/// reduced context `⟦K'⟧` on the rule's dynamic out channel; the contextual injection
+/// ([`contextual_contract_call`]) delivers the `n` reduced holes `T_i`. See
+/// [`contextual_join_receiver_par`].
+///
+/// FAIL-CLOSED (never silently deferred) when the rewrite has no flat join image:
+///
+///  - the independent P2 detector reports a binder / collection / substitution context
+///    (e.g. RhoCalc's `ParCong` over an AC `PPar` bag has an AC-collection LHS/RHS) — such a
+///    context stays `Unsupported{family}`, exactly as before this slice;
+///  - a non-congruence side condition (a semantic-predicate guard, freshness, relation
+///    query, universal) appears as a premise — it has no join slot ([`congruence_targets`]);
+///  - the reduced context RHS `K'` is unreflectable (binder / collection / substitution /
+///    dangling hole) — caught by [`reflect_term_par`].
 fn lower_contextual_rewrite(
     rule: &RhoNetRule,
     rewrite_by_id: &HashMap<String, &RewriteRule>,
+    language_fingerprint: &str,
     errors: &mut Vec<RhoNetLoweringError>,
 ) -> Option<RhoNetLoweredRule> {
     let Some(rewrite) = rewrite_by_id.get(rule.id.as_str()) else {
         errors.push(RhoNetLoweringError::RuleSourceDrift { rule_id: rule.id.clone() });
         return None;
     };
-    match rewrite_pattern_unsupported(&rewrite.left, &rewrite.right) {
-        Some(family) => Some(record_unsupported(rule, family, errors)),
-        None => Some(RhoNetLoweredRule::ContextualRewrite { rule_id: rule.id.clone() }),
+    // Independent P2 detector: a binder / collection / substitution context (RhoCalc's
+    // ParCong over an AC PPar bag) has no flat contextual-join image — fail closed with the
+    // out-of-scope family, exactly as the classify-only predecessor did.
+    if let Some(family) = rewrite_pattern_unsupported(&rewrite.left, &rewrite.right) {
+        return Some(record_unsupported(rule, family, errors));
     }
+    match contextual_join_rule_par(rewrite, rule, language_fingerprint) {
+        Ok(par) => Some(RhoNetLoweredRule::ContextualRewrite { rule_id: rule.id.clone(), par }),
+        Err(family) => Some(record_unsupported(rule, family, errors)),
+    }
+}
+
+/// Build the atomic polyadic-join `Par` for a contextual rewrite, or return the
+/// [`UnsupportedFamily`] the rewrite fails closed on. The premise holes come from the
+/// congruence premises (in premise order), the premise location channels from the rule's
+/// `input_channels[1..]` (the LHS trace channel is `input_channels[0]`), and the reduced
+/// context `⟦K'⟧` from reflecting `rewrite.right` over the `n` target holes.
+fn contextual_join_rule_par(
+    rewrite: &RewriteRule,
+    rule: &RhoNetRule,
+    language_fingerprint: &str,
+) -> Result<Par, UnsupportedFamily> {
+    let targets = congruence_targets(&rewrite.premises)?;
+    let n = targets.len();
+    // The reduced context `⟦K'⟧`: `rewrite.right` reflected over the target holes, so hole
+    // `i` (`targets[i]`) reflects to `BoundVar(rhs_var_index(n, i)) = BoundVar(n - i)` — the
+    // reverse-De-Bruijn slot the join binds it at (out is `BoundVar(0)`).
+    let context_rhs = reflect_term_par(&rewrite.right, &targets, n, language_fingerprint)?;
+    // The `n` premise location channels are `input_channels[1..]` (channel 0 is the LHS
+    // trace channel). A congruence premise contributes exactly one channel, so the slice
+    // has length `n` — a drift here means the rule was paired with a mismatched program.
+    let premise_channel_names = rule
+        .input_channels
+        .get(1..)
+        .filter(|channels| channels.len() == n)
+        .ok_or(UnsupportedFamily::NonCongruenceSideCondition)?;
+    let mut premise_channels = Vec::with_capacity(n);
+    for name in premise_channel_names {
+        premise_channels.push(resolve_channel(name).map_err(|_| {
+            // An empty premise channel name has no location rendezvous; treat it as an
+            // unenforceable side condition rather than emit a nameless join.
+            UnsupportedFamily::NonCongruenceSideCondition
+        })?);
+    }
+    Ok(contextual_join_receiver_par(context_rhs, &premise_channels))
+}
+
+/// The `n` target (reduced-hole) variables of a contextual rewrite's congruence premises,
+/// in premise order. Returns [`UnsupportedFamily::NonCongruenceSideCondition`] if ANY
+/// premise is not a `Premise::Congruence` hole (a semantic-predicate guard, freshness,
+/// relation query, or universal has no join slot and must stay off-machine / fail closed),
+/// so a mixed-premise congruence rule does not silently drop its side condition.
+fn congruence_targets(premises: &[Premise]) -> Result<Vec<Ident>, UnsupportedFamily> {
+    let mut targets = Vec::with_capacity(premises.len());
+    for premise in premises {
+        match premise {
+            Premise::Congruence { target, .. } => targets.push(target.clone()),
+            _ => return Err(UnsupportedFamily::NonCongruenceSideCondition),
+        }
+    }
+    Ok(targets)
 }
 
 /// Record an `UnsupportedFamily` diagnostic and return the matching classified
@@ -869,6 +953,140 @@ pub fn rho_net_ac_injection_sites(def: &LanguageDef) -> Vec<RhoNetAcInjectionSit
     sites
 }
 
+/// One contextual-rewrite JOIN injection site derived from a `LanguageDef`: a congruence
+/// rewrite's bare label and its `n` premise location channels (the join binds one reduced
+/// hole per channel).
+///
+/// The contextual firing analogue of [`RhoNetInjectionSite`] / [`RhoNetAcInjectionSite`]. A
+/// runtime contextual σ-injection F-function reads the premise firing(s) from the Dovetail
+/// report, reconstructs each reduced hole `T_i = RHS_premise[σ]` (via
+/// [`reconstruct_contractum`]), reflects it, and delivers the `n` holes on
+/// [`premise_channels`](Self::premise_channels) via [`contextual_contract_call`], where the
+/// installed [`contextual_join_receiver_par`] binds them and emits `⟦K'⟧` on `@out`. Only
+/// rewrites that lowered to a [`RhoNetLoweredRule::ContextualRewrite`] join are surfaced, so
+/// a site is always executable.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RhoNetContextualInjectionSite {
+    /// The bare source rewrite label (the contextual join rule's label, e.g. `WrapCong`).
+    pub rule_label: String,
+    /// The `n` premise location channels the join binds, in premise order
+    /// (`RhoNetRule::input_channels[1..]`, since `input_channels[0]` is the LHS trace
+    /// channel). The contextual injection sends one reduced hole per channel; the LAST
+    /// channel additionally carries the dynamic out channel.
+    pub premise_channels: Vec<String>,
+}
+
+/// Derive every contextual-rewrite JOIN injection site for a language — the sites a runtime
+/// contextual σ-injection F-function targets.
+///
+/// Builds the same [`RhoNetProgram`] + [`RhoNetLowered`] the contextual joins are compiled
+/// from, keeps only the rewrites that materialized to a
+/// [`RhoNetLoweredRule::ContextualRewrite`] join, and reports each one's bare rule label and
+/// premise location channels (the `input_channels[1..]` the join binds). The contextual
+/// firing analogue of [`rho_net_injection_sites`] / [`rho_net_ac_injection_sites`].
+pub fn rho_net_contextual_injection_sites(def: &LanguageDef) -> Vec<RhoNetContextualInjectionSite> {
+    let lowering = crate::lower::lower_language_def(def);
+    let program = RhoNetProgram::from_language_def(def, &lowering);
+    let lowered = program.lower_to_par(def, &lowering);
+
+    let rule_by_id: HashMap<&str, &RhoNetRule> = program
+        .rules
+        .iter()
+        .map(|rule| (rule.id.as_str(), rule))
+        .collect();
+
+    let mut sites = Vec::new();
+    for lowered_rule in lowered.rules() {
+        let RhoNetLoweredRule::ContextualRewrite { rule_id, .. } = lowered_rule else {
+            continue;
+        };
+        let Some(program_rule) = rule_by_id.get(rule_id.as_str()) else {
+            continue;
+        };
+        let Some(rule_label) = program_rule.label.as_deref() else {
+            continue;
+        };
+        // The premise channels are `input_channels[1..]` (channel 0 is the LHS trace
+        // channel). A materialized `ContextualRewrite` has at least one premise channel.
+        let premise_channels: Vec<String> = program_rule
+            .input_channels
+            .get(1..)
+            .unwrap_or(&[])
+            .iter()
+            .cloned()
+            .collect();
+        if premise_channels.is_empty() {
+            continue;
+        }
+        sites.push(RhoNetContextualInjectionSite {
+            rule_label: rule_label.to_string(),
+            premise_channels,
+        });
+    }
+    sites
+}
+
+/// Reconstruct the reduced hole `T = RHS_premise[σ]` a fired premise rewrite produced — the
+/// contractum a contextual JOIN plugs into its context `K'`. Finds the rewrite named
+/// `rule_label` in `def` and instantiates its RHS with `σ` (the premise firing's
+/// substitution, mapping the premise rewrite's LHS variables to ground sub-terms).
+///
+/// The RHS-instantiation dual of [`reconstruct_redex_subject`](crate::reconstruct_redex_subject)
+/// (which instantiates the LHS). Total + fail-closed: a premise rewrite's RHS is Var/Apply
+/// only, so the collection/binder/substitution arms are defensive (a contextual join over
+/// such a premise would already have failed closed at lowering).
+pub fn reconstruct_contractum(
+    def: &LanguageDef,
+    rule_label: &str,
+    sigma: &[(String, GroundTerm)],
+) -> Result<GroundTerm, String> {
+    let rewrite = def
+        .rewrites
+        .iter()
+        .find(|rewrite| rewrite.name.to_string() == rule_label)
+        .ok_or_else(|| format!("contextual contractum: no rewrite named {rule_label}"))?;
+    let bindings: HashMap<&str, &GroundTerm> = sigma
+        .iter()
+        .map(|(name, ground)| (name.as_str(), ground))
+        .collect();
+    instantiate_rhs(&rewrite.right, &bindings, rule_label)
+}
+
+fn instantiate_rhs(
+    pattern: &Pattern,
+    sigma: &HashMap<&str, &GroundTerm>,
+    rule: &str,
+) -> Result<GroundTerm, String> {
+    match pattern {
+        Pattern::Term(PatternTerm::Var(id)) => {
+            let name = id.to_string();
+            sigma
+                .get(name.as_str())
+                .map(|ground| (*ground).clone())
+                .ok_or_else(|| {
+                    format!("contextual contractum for {rule}: σ missing RHS variable {name}")
+                })
+        },
+        Pattern::Term(PatternTerm::Apply { constructor, args }) => {
+            if let [Pattern::Collection { .. }] = args.as_slice() {
+                return Err(format!(
+                    "contextual contractum for {rule}: AC constructor {constructor} has no positional contractum image"
+                ));
+            }
+            let children = args
+                .iter()
+                .map(|arg| instantiate_rhs(arg, sigma, rule))
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(GroundTerm::new(constructor.to_string(), children))
+        },
+        // binder / subst / collection RHS → a premise rewrite whose contractum has no
+        // positional ground image; never reached past a materialized contextual join.
+        _ => Err(format!(
+            "contextual contractum for {rule}: non-structural RHS has no ground contractum image"
+        )),
+    }
+}
+
 /// Reflect a GROUND constructor term to a normalized `Par` value under the SAME
 /// constructor reflection ABI as the internal RHS reflector `reflect_term_par`:
 ///
@@ -1007,6 +1225,56 @@ pub fn ac_contract_call(
         Vec::new(),
         false,
     )
+}
+
+/// The contextual-JOIN injection `call` for a congruence rewrite (Stage 3a): deliver the
+/// `n` reduced holes `⟦T_i⟧` on their premise location channels so the installed
+/// [`contextual_join_receiver_par`] fires, emitting `⟦K'⟧` on `@out`.
+///
+/// The atomic n-ary join binds ALL `n` premise channels, so the injection publishes one send
+/// per premise: `c(ℓ_i)!(⟦T_i⟧)` for `i < n-1`, and `c(ℓ_{n-1})!(⟦T_{n-1}⟧, @out)` on the
+/// LAST channel (which also carries the dynamic out channel the join's body sends `⟦K'⟧` on).
+/// `premise_channels` and `reduced_holes` MUST be the join's premise channels and the reduced
+/// holes in premise order (`premise_channels.len() == reduced_holes.len() == n`), so the
+/// accept triad (receiver premise channels ≡ injection channels) holds by symmetric
+/// derivation, exactly as the flat [`term_contract_call`] / [`ac_contract_call`] paths.
+///
+/// A degenerate `n = 0` (no premise holes — not a real congruence rule) yields an empty
+/// `Par`: nothing to deliver, and the join could never fire.
+pub fn contextual_contract_call(
+    premise_channels: &[&str],
+    reduced_holes: Vec<Par>,
+    out_channel: &str,
+) -> Par {
+    let n = premise_channels.len().min(reduced_holes.len());
+    let mut call = Par::default();
+    for (index, (channel, hole)) in premise_channels
+        .iter()
+        .zip(reduced_holes.into_iter())
+        .enumerate()
+    {
+        // The last premise send also carries the dynamic out channel (a quoted GString name,
+        // exactly how `term_contract_call` lowers its return channel).
+        let data = if index + 1 == n {
+            vec![hole, new_gstring_par(out_channel.to_string(), Vec::new(), false)]
+        } else {
+            vec![hole]
+        };
+        let free = data
+            .iter()
+            .fold(Vec::new(), |acc, par| union(acc, par.locally_free.clone()));
+        let send = new_send_par(
+            new_gstring_par(channel.to_string(), Vec::new(), false),
+            data,
+            false,
+            free.clone(),
+            false,
+            free,
+            false,
+        );
+        call = call.append(send);
+    }
+    call
 }
 
 /// The location channel of a spread term's ROOT — a `loc:`-kind quoted name
@@ -1198,6 +1466,74 @@ fn sigma_receiver_par(k: usize, rhs_par: Par, source: Par) -> Par {
         persistent: true,
         peek: false,
         bind_count: formal_count as i32,
+        locally_free: Vec::new(),
+        connective_used: false,
+        condition: None,
+    };
+    Par::default().with_receives(vec![receive])
+}
+
+/// Build the atomic polyadic-JOIN receiver for a contextual (congruence) rewrite (INV-6):
+///
+/// ```text
+/// for( T_0 <- c(ℓ_0) ; … ; (T_{n-1}, out) <- c(ℓ_{n-1}) ){ out!(⟦K'⟧) }
+/// ```
+///
+/// a single persistent `Receive` with `n` binds — ONE flat σ-slot per premise hole `T_i` on
+/// that premise's location channel `c(ℓ_i)` — whose body emits the reduced context `⟦K'⟧`
+/// (`context_rhs`) on the dynamic out channel. The `n` reduced holes must ALL arrive for the
+/// join to fire (the atomic n-ary rendezvous the tex's Appendix A / `[optimal]` Def 3.1
+/// contextual clause demands); the [`contextual_contract_call`] injection delivers them.
+///
+/// De Bruijn frame (`n + 1` bound vars total: `n` holes + `out`). Each `ReceiveBind` uses
+/// LOCAL free-var indices (the reducer numbers a bind's patterns from 0), and the merged
+/// binding order is bind-0-first, so hole `i` sits at global level `i` and `out` at global
+/// level `n`; the body therefore references hole `i` as `BoundVar(n - i)` and `out` as
+/// `BoundVar(0)` — the SAME frame [`sigma_receiver_par`] uses, so `context_rhs` is built by
+/// the SHARED [`reflect_term_par`] over the `n` target holes (`BoundVar(rhs_var_index(n,i))`
+/// `= BoundVar(n - i)`). The out channel rides the LAST bind (`(T_{n-1}, out)`), keeping the
+/// receive an `n`-bind join. For `n = 1` this is byte-identical to
+/// `sigma_receiver_par(1, context_rhs, c(ℓ_0))`.
+///
+/// FV: `formal/rocq/rho_bridge/theories/ContextualAtomicJoinPlugging.v` (atomic n-ary join +
+/// plugging-stability, generalizing `LinearCommCorrespondence.v`'s `SameChannelJoin` 2→n).
+pub fn contextual_join_receiver_par(context_rhs: Par, premise_channels: &[Par]) -> Par {
+    let n = premise_channels.len();
+    let free_count = n + 1; // n reduced holes + out
+    let all_formals = all_formals_bitvec(free_count);
+    let out_channel = bound_formal(free_count, n); // out = BoundVar(0)
+    let body = new_send_par(
+        out_channel,
+        vec![context_rhs],
+        false,
+        all_formals.clone(),
+        false,
+        all_formals,
+        false,
+    );
+    let mut binds = Vec::with_capacity(n.max(1));
+    for (index, channel) in premise_channels.iter().enumerate() {
+        // The last bind also carries the out channel (LOCAL free var 1); each premise bind
+        // otherwise carries just its one reduced hole (LOCAL free var 0).
+        let is_last = index + 1 == n;
+        let (patterns, free_count_bind) = if is_last {
+            (vec![new_freevar_par(0, Vec::new()), new_freevar_par(1, Vec::new())], 2)
+        } else {
+            (vec![new_freevar_par(0, Vec::new())], 1)
+        };
+        binds.push(ReceiveBind {
+            patterns,
+            source: Some(channel.clone()),
+            remainder: None,
+            free_count: free_count_bind,
+        });
+    }
+    let receive = Receive {
+        binds,
+        body: Some(body),
+        persistent: true,
+        peek: false,
+        bind_count: free_count as i32,
         locally_free: Vec::new(),
         connective_used: false,
         condition: None,
@@ -2770,6 +3106,295 @@ mod tests {
                 &var_pattern("p"),
             ),
             Some(UnsupportedFamily::LambdaBinder)
+        );
+    }
+
+    // ---- Stage 3a: contextual (congruence) rewrite → atomic polyadic join ----
+
+    /// A clean UNARY congruence language: a base rewrite `Flip: Swap(x, y) ~> Pair(y, x)`
+    /// fires the premise `S ~> T`, and the congruence rewrite `WrapCong: | S ~> T |-
+    /// Wrap(S) ~> Wrap(T)` closes the context. The mirror of `swapdemo` with a Wrap
+    /// congruence — the codegen fixture for the contextual join lowering.
+    const CTX_DEMO_FRAGMENT: &str = r#"
+        name: RhoNetCtxFrag,
+        options {
+            emit_simulator: false,
+            emit_blockly: false,
+        },
+        types { Proc },
+        terms {
+            A . |- "A" : Proc ;
+            B . |- "B" : Proc ;
+            Pair . x:Proc, y:Proc |- "pair" "(" x "," y ")" : Proc ;
+            Swap . x:Proc, y:Proc |- "swap" "(" x "," y ")" : Proc ;
+            Wrap . x:Proc |- "wrap" "(" x ")" : Proc ;
+        },
+        equations {},
+        rewrites {
+            Flip . |- (Swap x y) ~> (Pair y x) ;
+            WrapCong . | S ~> T |- (Wrap S) ~> (Wrap T) ;
+        }
+    "#;
+
+    fn ctx_demo_def() -> LanguageDef {
+        syn::parse_str::<LanguageDef>(CTX_DEMO_FRAGMENT).expect("ctx-demo fragment must parse")
+    }
+
+    /// The bare `GString` channel of a single-expr `Par`, or `None`.
+    fn send_channel_gstring(send: &models::rhoapi::Send) -> Option<String> {
+        gstring_value(send.chan.as_ref()?)
+    }
+
+    #[test]
+    fn contextual_join_unary_is_the_sigma_receiver_frame() {
+        // n = 1: `for( (T, out) <- c_ctx ){ out!(⟦Wrap(T)⟧) }`. The single-premise join is
+        // BYTE-IDENTICAL to `sigma_receiver_par(1, ⟦Wrap(T)⟧, c_ctx)` — the reduced hole T is
+        // the one σ-slot and the context Wrap(_) is the RHS.
+        let fp = "ctxfp";
+        let context_rhs = reflect_term_par(&apply("Wrap", vec![var_pattern("T")]), &[ident("T")], 1, fp)
+            .expect("Wrap(T) reflects");
+        let c_ctx = new_gstring_par("c_ctx".to_string(), Vec::new(), false);
+
+        let join = contextual_join_receiver_par(context_rhs.clone(), &[c_ctx.clone()]);
+        let sigma = sigma_receiver_par(1, context_rhs, c_ctx);
+        assert_eq!(join, sigma, "the unary contextual join is the k=1 σ-receiver frame");
+
+        // Structure: one persistent receive, one bind on c_ctx binding [hole, out].
+        assert_eq!(join.receives.len(), 1);
+        let receive = &join.receives[0];
+        assert!(receive.persistent, "the contextual join must self-reinstall (persistent)");
+        assert_eq!(receive.bind_count, 2, "1 reduced hole + out");
+        assert_eq!(receive.binds.len(), 1, "one premise channel ⇒ one bind");
+        assert_eq!(receive.binds[0].free_count, 2);
+        assert_eq!(
+            receive.binds[0].patterns.len(),
+            2,
+            "the last (only) bind carries the hole and the out channel"
+        );
+
+        // Body: out!(⟦Wrap(T)⟧) with out = BoundVar(0) and the hole at BoundVar(1).
+        let body = receive.body.as_ref().expect("join body");
+        assert_eq!(body.sends.len(), 1);
+        let send = &body.sends[0];
+        assert_eq!(
+            boundvar_index(send.chan.as_ref().expect("out channel")),
+            Some(0),
+            "the join emits on the dynamic out channel (BoundVar(0))"
+        );
+        // The emitted context is ⟦Wrap(T)⟧ = EList[tag_Wrap, BoundVar(1)].
+        let list = elist_body(&send.data[0]);
+        assert_eq!(
+            &list.ps[0],
+            &GPrivateBuilder::new_par_from_string(reflect_tag(fp, "Wrap")),
+            "the reduced context head is the Wrap reflection tag"
+        );
+        assert_eq!(
+            boundvar_index(&list.ps[1]),
+            Some(1),
+            "the reduced hole T sits at BoundVar(rhs_var_index(1,0)) = BoundVar(1)"
+        );
+    }
+
+    #[test]
+    fn contextual_join_binary_builds_two_binds() {
+        // n = 2: `for( T0 <- c0 ; (T1, out) <- c1 ){ out!(⟦Pair(T0, T1)⟧) }`. Two premise
+        // channels ⇒ two binds; the out channel rides the LAST bind.
+        let fp = "ctxfp";
+        let context_rhs = reflect_term_par(
+            &apply("Pair", vec![var_pattern("T0"), var_pattern("T1")]),
+            &[ident("T0"), ident("T1")],
+            2,
+            fp,
+        )
+        .expect("Pair(T0, T1) reflects");
+        let c0 = new_gstring_par("c0".to_string(), Vec::new(), false);
+        let c1 = new_gstring_par("c1".to_string(), Vec::new(), false);
+
+        let join = contextual_join_receiver_par(context_rhs, &[c0, c1]);
+        assert_eq!(join.receives.len(), 1);
+        let receive = &join.receives[0];
+        assert_eq!(receive.bind_count, 3, "2 reduced holes + out");
+        assert_eq!(receive.binds.len(), 2, "two premise channels ⇒ two binds");
+
+        // Bind 0 (c0): one hole, LOCAL free var 0.
+        assert_eq!(receive.binds[0].free_count, 1);
+        assert_eq!(receive.binds[0].patterns.len(), 1, "a non-last bind carries only its hole");
+        assert_eq!(send_channel_gstring_of_bind(&receive.binds[0]), Some("c0".to_string()));
+        // Bind 1 (c1): hole + out, LOCAL free vars 0, 1.
+        assert_eq!(receive.binds[1].free_count, 2);
+        assert_eq!(receive.binds[1].patterns.len(), 2, "the last bind also carries the out channel");
+        assert_eq!(send_channel_gstring_of_bind(&receive.binds[1]), Some("c1".to_string()));
+
+        // Body: out!(⟦Pair(T0, T1)⟧) with hole i = BoundVar(2 - i), out = BoundVar(0).
+        let body = receive.body.as_ref().expect("join body");
+        let list = elist_body(&body.sends[0].data[0]);
+        assert_eq!(boundvar_index(&list.ps[1]), Some(2), "hole T0 at BoundVar(n - 0) = BoundVar(2)");
+        assert_eq!(boundvar_index(&list.ps[2]), Some(1), "hole T1 at BoundVar(n - 1) = BoundVar(1)");
+    }
+
+    fn send_channel_gstring_of_bind(bind: &ReceiveBind) -> Option<String> {
+        gstring_value(bind.source.as_ref()?)
+    }
+
+    #[test]
+    fn contextual_rewrite_materializes_an_atomic_join() {
+        let def = ctx_demo_def();
+        let lowering = lower_language_def(&def);
+        let program = RhoNetProgram::from_language_def(&def, &lowering);
+        let lowered = program.lower_to_par(&def, &lowering);
+
+        let par = lowered
+            .rules()
+            .iter()
+            .find_map(|rule| match rule {
+                RhoNetLoweredRule::ContextualRewrite { rule_id, par }
+                    if rule_id == "rule:rewrite:1:WrapCong" =>
+                {
+                    Some(par)
+                },
+                _ => None,
+            })
+            .expect("WrapCong must materialize to a ContextualRewrite join");
+
+        assert_eq!(par.receives.len(), 1, "the contextual join is one persistent receive");
+        let receive = &par.receives[0];
+        assert_eq!(receive.bind_count, 2, "1 premise hole + out");
+        assert_eq!(receive.binds.len(), 1, "one congruence premise ⇒ one bind");
+        // The join binds the premise location channel (`input_channels[1..]`).
+        let channel = send_channel_gstring_of_bind(&receive.binds[0]).expect("premise channel");
+        assert!(
+            channel.contains("contextual-premise"),
+            "the join binds the premise location channel, got {channel}"
+        );
+        // Body emits ⟦Wrap(T)⟧ on the dynamic out channel.
+        let body = receive.body.as_ref().expect("join body");
+        let list = elist_body(&body.sends[0].data[0]);
+        let fp = &program.language_fingerprint;
+        assert_eq!(
+            &list.ps[0],
+            &GPrivateBuilder::new_par_from_string(reflect_tag(fp, "Wrap")),
+            "the reduced context is Wrap(_)"
+        );
+        assert!(lowered.errors().is_empty(), "a clean congruence rewrite must not error");
+    }
+
+    #[test]
+    fn contextual_rewrite_with_side_condition_fails_closed() {
+        // A congruence rule carrying a non-congruence side condition (a relation query) has
+        // no flat join slot for that premise — it must stay `Unsupported`, not silently drop
+        // the side condition.
+        let mut def = scalar_def();
+        def.rewrites.push(RewriteRule {
+            name: ident("GuardedCong"),
+            type_context: Vec::new(),
+            premises: vec![
+                Premise::Congruence { source: ident("S"), target: ident("T") },
+                Premise::RelationQuery { relation: ident("ok"), args: vec![ident("S")] },
+            ],
+            left: apply("Wrap", vec![var_pattern("S")]),
+            right: apply("Wrap", vec![var_pattern("T")]),
+            is_auto_injected: false,
+        });
+        let lowering = lower_language_def(&def);
+        let program = RhoNetProgram::from_language_def(&def, &lowering);
+        let lowered = program.lower_to_par(&def, &lowering);
+        let rule = lowered
+            .rules()
+            .iter()
+            .find(|rule| rule.rule_id() == "rule:rewrite:0:GuardedCong")
+            .expect("GuardedCong must be lowered");
+        assert_eq!(
+            *rule,
+            RhoNetLoweredRule::Unsupported {
+                rule_id: "rule:rewrite:0:GuardedCong".to_string(),
+                family: UnsupportedFamily::NonCongruenceSideCondition,
+            },
+            "a mixed-premise congruence rule fails closed on its side condition"
+        );
+    }
+
+    #[test]
+    fn contextual_injection_sites_derive_the_wrapcong_site() {
+        let def = ctx_demo_def();
+        let sites = rho_net_contextual_injection_sites(&def);
+        assert_eq!(sites.len(), 1, "exactly one contextual join (WrapCong)");
+        let site = &sites[0];
+        assert_eq!(site.rule_label, "WrapCong");
+        assert_eq!(site.premise_channels.len(), 1, "one congruence premise ⇒ one channel");
+        assert!(
+            site.premise_channels[0].contains("contextual-premise"),
+            "the site's premise channel is the contextual-premise location channel, got {}",
+            site.premise_channels[0]
+        );
+    }
+
+    #[test]
+    fn contextual_contract_call_delivers_hole_and_out() {
+        // The unary injection: c_ctx!(⟦Pair(B, A)⟧, @"OUT").
+        let fp = "ctxfp";
+        let hole = reflect_ground_term_par(
+            &GroundTerm::new("Pair", vec![GroundTerm::nullary("B"), GroundTerm::nullary("A")]),
+            fp,
+        );
+        let call = contextual_contract_call(&["c_ctx"], vec![hole.clone()], "OUT");
+        assert_eq!(call.sends.len(), 1, "one premise ⇒ one delivery send");
+        let send = &call.sends[0];
+        assert_eq!(send_channel_gstring(send), Some("c_ctx".to_string()));
+        assert_eq!(send.data.len(), 2, "the (only, last) send carries the hole and @out");
+        assert_eq!(&send.data[0], &hole, "the reduced hole ⟦Pair(B, A)⟧");
+        assert_eq!(gstring_value(&send.data[1]), Some("OUT".to_string()), "the dynamic out channel");
+    }
+
+    #[test]
+    fn contextual_contract_call_binary_puts_out_on_the_last_channel() {
+        let fp = "ctxfp";
+        let h0 = reflect_ground_term_par(&GroundTerm::nullary("A"), fp);
+        let h1 = reflect_ground_term_par(&GroundTerm::nullary("B"), fp);
+        let call = contextual_contract_call(&["c0", "c1"], vec![h0, h1], "OUT");
+        assert_eq!(call.sends.len(), 2, "two premises ⇒ two delivery sends");
+        // Sends land in premise order; find by channel to be robust to `append` order.
+        let on = |name: &str| call.sends.iter().find(|s| send_channel_gstring(s).as_deref() == Some(name));
+        assert_eq!(on("c0").expect("c0 send").data.len(), 1, "a non-last send carries only its hole");
+        let last = on("c1").expect("c1 send");
+        assert_eq!(last.data.len(), 2, "the last send also carries @out");
+        assert_eq!(gstring_value(&last.data[1]), Some("OUT".to_string()));
+    }
+
+    #[test]
+    fn reconstruct_contractum_instantiates_the_premise_rhs() {
+        // The premise `Flip: Swap(x, y) ~> Pair(y, x)` under σ = {x ↦ A, y ↦ B} produces the
+        // reduced hole T = Pair(B, A) — the contractum a contextual join plugs into Wrap(_).
+        let def = ctx_demo_def();
+        let sigma = vec![
+            ("x".to_string(), GroundTerm::nullary("A")),
+            ("y".to_string(), GroundTerm::nullary("B")),
+        ];
+        let contractum =
+            reconstruct_contractum(&def, "Flip", &sigma).expect("Flip contractum reconstructs");
+        assert_eq!(
+            contractum,
+            GroundTerm::new("Pair", vec![GroundTerm::nullary("B"), GroundTerm::nullary("A")]),
+            "RHS(Flip)[σ] = Pair(σ[y], σ[x]) = Pair(B, A)"
+        );
+    }
+
+    #[test]
+    fn installed_program_admits_a_contextual_join() {
+        // The whole ctx-demo language installs: the base Flip σ-receiver AND the WrapCong
+        // contextual join compose into one installable program (no fail-closed diagnostic).
+        let def = ctx_demo_def();
+        let lowering = lower_language_def(&def);
+        let program = RhoNetProgram::from_language_def(&def, &lowering);
+        let lowered = program.lower_to_par(&def, &lowering);
+        assert!(lowered.errors().is_empty(), "ctx-demo lowers cleanly: {:?}", lowered.errors());
+        let installed = lowered
+            .installed_program_par()
+            .expect("the base rewrite + contextual join install together");
+        // Two persistent receives: the Flip base σ-receiver and the WrapCong contextual join.
+        assert_eq!(
+            installed.receives.len(),
+            2,
+            "installed = Flip σ-receiver ∥ WrapCong contextual join"
         );
     }
 }
