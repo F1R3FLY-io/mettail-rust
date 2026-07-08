@@ -47,6 +47,9 @@ pub mod lambdademo;
 // Stage 3e (rho-native): the native-system-process (`![…] fold` PowInt) firing demonstration.
 #[cfg(feature = "native-demo")]
 pub mod nativedemo;
+// Stage 3f (rho-native): the native-scalar-fold (`![…] fold` AddInt) firing demonstration.
+#[cfg(feature = "native-fold-demo")]
+pub mod nativefolddemo;
 // PIECE 3: keyword-reservation OPT-OUT fixture (Fortran-style full ambiguity).
 #[cfg(feature = "fortran_model")]
 pub mod fortran_model;

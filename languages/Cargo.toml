@@ -44,6 +44,7 @@ all-languages = [
     "lambda-demo",
     "led-test",
     "native-demo",
+    "native-fold-demo",
     "optsmoke",
     "refinementsmoke",
     "rhocalc",
@@ -71,6 +72,7 @@ lambda = []
 lambda-demo = []
 led-test = []
 native-demo = []
+native-fold-demo = []
 optsmoke = []
 refinementsmoke = []
 rhocalc = []
