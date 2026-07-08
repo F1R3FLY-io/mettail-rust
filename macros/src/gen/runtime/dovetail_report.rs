@@ -742,18 +742,16 @@ fn pattern_term_to_dovetail(
         PatternTerm::Apply { constructor, args } => {
             // A constructor whose SOLE argument is a collection metapattern
             // `{ ... }` (e.g. Ambient `(PPar { P, Q, ...rest })`) lowers to an AC
-            // bag pattern, with the constructor label as the AC operator. The
-            // collection has no constructor of its own (see `Pattern::Collection`).
+            // bag pattern, with the constructor as the AC operator. The collection
+            // has no constructor of its own (see `Pattern::Collection`). The AC
+            // lowering is representation-uniform (A-1): on the `EGraph<String>` path
+            // (`enum_id = None`) the operator is the label string; on the typed fold
+            // path (`enum_id = Some(L)`) it is the typed op variant `L::<Cat>_<Ctor>`,
+            // so an `AcApp` LHS matches the typed lowering's n-ary bag node (RhoCalc's
+            // / CommDemo's `PPar`). `ac::lower_ac_collection` threads `enum_id` to both
+            // the operator and the `fixed` sub-patterns.
             if let [AstPattern::Collection { .. }] = args.as_slice() {
-                if enum_id.is_some() {
-                    return Err(
-                        "AC collection metapatterns are not yet lowered on the typed fold path"
-                            .into(),
-                    );
-                }
-                let label = constructor_label(language, constructor)?;
-                let label = lit(&label);
-                return ac::lower_ac_collection(language, &label, &args[0]);
+                return ac::lower_ac_collection(language, constructor, &args[0], enum_id);
             }
             let op = constructor_op_expr(language, constructor, enum_id)?;
             let args = args
@@ -1434,6 +1432,54 @@ mod tests {
         // are present.
         assert!(tokens.contains("AcSmoke::Proc::POpen"));
         assert!(tokens.contains("AcSmoke::Proc::PAmb"));
+        assert!(tokens.contains("\"rest\""), "rest remainder variable bound");
+    }
+
+    #[test]
+    fn generated_report_lowers_ac_bag_rewrite_on_the_typed_path() {
+        // (A-1) The SAME AC bag rewrite must ALSO lower on the TYPED fold path
+        // (`enum_id = Some(L)`), NOT be rejected as "AC collection metapatterns are
+        // not yet lowered on the typed fold path". The operator + fixed sub-patterns
+        // are the typed op variants (`L::Proc_PPar`, `L::Proc_POpen`, …), so an
+        // `AcApp` LHS matches the typed lowering's n-ary bag node (the CommDemo `PPar`
+        // shape). This closes Blocker 3.
+        let language = parse(
+            r#"
+                name: AcTypedSmoke,
+                types { Proc Name }
+                terms {
+                    PZero . Proc ::= "0" ;
+                    POpen . Proc ::= "open(" Name "," Proc ")" ;
+                    PAmb . Proc ::= Name "[" Proc "]" ;
+                    PPar . Proc ::= HashBag(Proc) sep "|" delim "{" "}" ;
+                }
+                equations {}
+                rewrites {
+                    OpenRule . |- (PPar {(POpen N P), (PAmb N Q), ...rest})
+                        ~> (PPar {P, Q, ...rest}) ;
+                }
+            "#,
+        );
+
+        let enum_id = op_enum::op_enum_ident(&language);
+        let (_, unsupported) = rule_block(&language, Some(&enum_id));
+        assert!(
+            unsupported.is_empty(),
+            "the typed AC bag rewrite must lower, not be rejected: {unsupported:?}"
+        );
+
+        let (rules, _) = rule_block(&language, Some(&enum_id));
+        let tokens = rules.to_string();
+        // The typed lowering uses `Pattern::ac` with the TYPED op variant (`Proc_PPar`),
+        // never the String label `AcTypedSmoke::Proc::PPar`.
+        assert!(tokens.contains("Pattern :: ac"), "typed AC bag pattern emitted");
+        assert!(tokens.contains("Proc_PPar"), "PPar is the typed AC operator variant: {tokens}");
+        assert!(tokens.contains("Proc_POpen"), "the fixed POpen element lowers typed");
+        assert!(tokens.contains("Proc_PAmb"), "the fixed PAmb element lowers typed");
+        assert!(
+            !tokens.contains("not yet lowered on the typed fold path"),
+            "the typed AC gate must be removed"
+        );
         assert!(tokens.contains("\"rest\""), "rest remainder variable bound");
     }
 
