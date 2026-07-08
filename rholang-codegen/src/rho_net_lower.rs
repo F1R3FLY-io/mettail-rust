@@ -31,6 +31,7 @@ use std::collections::{HashMap, HashSet};
 
 use mettail_ast::language::{LanguageDef, Premise, RewriteRule};
 use mettail_ast::pattern::{Pattern, PatternTerm};
+use mettail_ast::types::CollectionType;
 use models::create_bit_vector;
 use models::rhoapi::{Par, Receive, ReceiveBind};
 use models::rust::rholang::implicits::GPrivateBuilder;
@@ -589,20 +590,37 @@ pub struct GroundTerm {
     /// The constructor label (a grammar term's label, e.g. `Pair`), reflected
     /// verbatim into the unforgeable tag via [`reflect_tag`].
     pub constructor: String,
-    /// The ground children, in constructor-argument order.
+    /// The ground children, in constructor-argument order (or the bag elements when
+    /// [`coll_type`](Self::coll_type) is `Some`).
     pub children: Vec<GroundTerm>,
+    /// `Some(kind)` when this term is an AC operand COLLECTION — its elements are
+    /// reflected as the kind's native matching carrier (a process-`Par` soup for
+    /// `HashBag`), order-independent and multiplicity-preserving, so the native
+    /// spatial matcher can AC-match it. `None` (the common case) reflects positionally
+    /// as the tagged `EList`.
+    pub coll_type: Option<CollectionType>,
 }
 
 impl GroundTerm {
-    /// A constructor applied to ground children.
+    /// A constructor applied to ground children (positional, `coll_type = None`).
     pub fn new(constructor: impl Into<String>, children: Vec<GroundTerm>) -> Self {
-        Self { constructor: constructor.into(), children }
+        Self { constructor: constructor.into(), children, coll_type: None }
     }
 
     /// A nullary constructor (no children), e.g. the `A`/`B` operands of
     /// `Swap(A, B)`.
     pub fn nullary(constructor: impl Into<String>) -> Self {
         Self::new(constructor, Vec::new())
+    }
+
+    /// An AC operand collection of `kind` — its elements reflected as the native carrier
+    /// (Stage AC). For `HashBag` this is the order-independent process-`Par` soup.
+    pub fn collection(
+        kind: CollectionType,
+        constructor: impl Into<String>,
+        elements: Vec<GroundTerm>,
+    ) -> Self {
+        Self { constructor: constructor.into(), children: elements, coll_type: Some(kind) }
     }
 }
 
@@ -718,6 +736,11 @@ pub fn rho_net_injection_sites(def: &LanguageDef) -> Vec<RhoNetInjectionSite> {
 /// the same shape would emit, and the runtime `decode_reflected_term` counterpart
 /// decodes both identically.
 pub fn reflect_ground_term_par(term: &GroundTerm, language_fingerprint: &str) -> Par {
+    // Stage AC: a HashBag AC operand bag reflects as the order-independent process-`Par`
+    // matching carrier, not the positional tagged `EList`.
+    if let Some(CollectionType::HashBag) = term.coll_type {
+        return reflect_ac_bag_par(term, language_fingerprint);
+    }
     let tag =
         GPrivateBuilder::new_par_from_string(reflect_tag(language_fingerprint, &term.constructor));
     let mut elements = Vec::with_capacity(term.children.len() + 1);
@@ -729,6 +752,32 @@ pub fn reflect_ground_term_par(term: &GroundTerm, language_fingerprint: &str) ->
         elements.push(child);
     }
     new_elist_par(elements, locally_free.clone(), false, None, locally_free, false)
+}
+
+/// Reflect a HashBag AC operand bag as the process-`Par` matching CARRIER: each element is a
+/// ground send `@"ac:{op}"!(⟦e⟧)`, so the soup is order-independent (the native connective /
+/// `sub_pars` matcher picks any element↔pattern assignment) and multiplicity-preserving (a
+/// `Vec` of sends, duplicates disambiguated by `Indexed`), and element slots never collide
+/// with the pattern's process remainder. This is the subject side of Stage AC's Scheme B —
+/// the AC receiver's collection pattern matches this carrier inside one atomic `consume`.
+fn reflect_ac_bag_par(term: &GroundTerm, language_fingerprint: &str) -> Par {
+    let element_channel = format!("ac:{}", term.constructor);
+    let mut soup = Par::default();
+    for child in &term.children {
+        let element = reflect_ground_term_par(child, language_fingerprint);
+        let free = element.locally_free.clone();
+        let send = new_send_par(
+            new_gstring_par(element_channel.clone(), Vec::new(), false),
+            vec![element],
+            false,
+            free.clone(),
+            false,
+            free,
+            false,
+        );
+        soup = soup.append(send);
+    }
+    soup
 }
 
 /// Build the flat σ-injection call for a base rewrite's σ-receiver:
@@ -1900,6 +1949,44 @@ mod tests {
         // empty locally_free (byte-identical to a lowered ground RHS constructor).
         assert!(par.locally_free.is_empty());
         assert_eq!(boundvar_index(&par), None);
+    }
+
+    #[test]
+    fn reflects_a_hashbag_as_the_ac_process_soup() {
+        // Stage AC0: a HashBag AC operand bag reflects as the ORDER-INDEPENDENT process-`Par`
+        // matching carrier — one ground send `@"ac:PPar"!(⟦e⟧)` per element (multiplicity-
+        // preserving), NOT the positional tagged EList.
+        let fp = "mettail-langdef-v1:0011223344556677";
+        let bag = GroundTerm::collection(
+            CollectionType::HashBag,
+            "PPar",
+            vec![GroundTerm::nullary("A"), GroundTerm::nullary("B")],
+        );
+        let par = reflect_ground_term_par(&bag, fp);
+
+        assert_eq!(par.sends.len(), 2, "one send per bag element");
+        assert!(par.exprs.is_empty(), "the ground bag carrier is a pure send soup (no EList)");
+        for send in &par.sends {
+            assert_eq!(send.data.len(), 1, "each send carries one reflected element");
+            assert_eq!(
+                send.chan.as_ref().unwrap(),
+                &new_gstring_par("ac:PPar".to_string(), Vec::new(), false),
+                "elements are sent on the AC element channel ac:{{op}}"
+            );
+            assert_eq!(elist_body(&send.data[0]).ps.len(), 1, "nullary element = lone head tag");
+        }
+
+        // Multiplicity: a duplicate element yields a duplicate send (2 x A + B -> 3 sends).
+        let bag2 = GroundTerm::collection(
+            CollectionType::HashBag,
+            "PPar",
+            vec![
+                GroundTerm::nullary("A"),
+                GroundTerm::nullary("A"),
+                GroundTerm::nullary("B"),
+            ],
+        );
+        assert_eq!(reflect_ground_term_par(&bag2, fp).sends.len(), 3);
     }
 
     /// `term_contract_call` builds `chan!(arg₀, …, @"out")`: a single flat send on
