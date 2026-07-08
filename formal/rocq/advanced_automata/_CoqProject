@@ -79,3 +79,8 @@ theories/AcAtomicNoPartialConsume.v
 # sorted-dedup invariant) is preserved across the AC split — the remainder is still key-unique and
 # the removed key is gone (re-inserting fixed entries cannot collide). Self-contained over NoDup.
 theories/AcMapKeyUniqueness.v
+# FV (AC-i) — Stage AC in-Rho AC matching: the native sub_pars/MaximumBipartiteMatch match set
+# EQUALS the AC matching relation over multisets: sub_multiset S B <-> exists rest, Permutation
+# (S ++ rest) B (sound forward = the faithful complement; complete backward = every partition is a
+# reachable match; rest unique up to permutation). Reuses AcRestReconstruction + Stdlib Permutation.
+theories/InRhoAcMatchMultiset.v
