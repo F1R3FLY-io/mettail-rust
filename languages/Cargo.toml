@@ -40,6 +40,7 @@ all-languages = [
     "lambda",
     "lambda-demo",
     "led-test",
+    "native-demo",
     "optsmoke",
     "refinementsmoke",
     "rhocalc",
@@ -63,6 +64,7 @@ guarded-rho = []
 lambda = []
 lambda-demo = []
 led-test = []
+native-demo = []
 optsmoke = []
 refinementsmoke = []
 rhocalc = []

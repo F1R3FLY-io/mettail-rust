@@ -32,6 +32,7 @@ default = [
     "ac-demo-runtime",
     "ctx-demo-runtime",
     "lambda-demo-runtime",
+    "native-demo-runtime",
 ]
 # Conversion from typed Rho observation reports into mettail_runtime::RuntimeBackendReport
 # plus the generic Language backend installer wrappers.
@@ -93,6 +94,18 @@ lambda-demo-runtime = [
     "runtime-report",
     "dep:mettail-languages",
     "mettail-languages/lambda-demo",
+    "mettail-languages/dovetail-codegen",
+    "mettail-languages/rho-codegen",
+]
+# Stage 3e: pulls in the generated `NativeDemo` language for the end-to-end in-Rho
+# NATIVE-SYSTEM-PROCESS firing test (`rho_net_native_firing`) — a generated `fold` native process
+# `PowInt(a, b) ~> a^b` firing as a COMM on the reducer, emitting the value the host's TRUSTED
+# native handler computed. Needs the generated `dovetail_report_for` (native firing σ + contractum
+# population, `dovetail-codegen`) and the native σ-injection F-function (`rho-codegen`).
+native-demo-runtime = [
+    "runtime-report",
+    "dep:mettail-languages",
+    "mettail-languages/native-demo",
     "mettail-languages/dovetail-codegen",
     "mettail-languages/rho-codegen",
 ]
@@ -180,6 +193,11 @@ required-features = ["ctx-demo-runtime"]
 name = "rho_net_beta_firing"
 path = "tests/rho_net_beta_firing.rs"
 required-features = ["lambda-demo-runtime"]
+
+[[test]]
+name = "rho_net_native_firing"
+path = "tests/rho_net_native_firing.rs"
+required-features = ["native-demo-runtime"]
 
 [[test]]
 name = "rho_comm_oracle"

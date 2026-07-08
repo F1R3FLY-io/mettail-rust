@@ -35,6 +35,9 @@ pub mod ctxdemo;
 // Stage 3c: the untyped λ-calculus binder/β-substitution demonstration language.
 #[cfg(feature = "lambda-demo")]
 pub mod lambdademo;
+// Stage 3e (rho-native): the native-system-process (`![…] fold` PowInt) firing demonstration.
+#[cfg(feature = "native-demo")]
+pub mod nativedemo;
 // PIECE 3: keyword-reservation OPT-OUT fixture (Fortran-style full ambiguity).
 #[cfg(feature = "fortran_model")]
 pub mod fortran_model;
