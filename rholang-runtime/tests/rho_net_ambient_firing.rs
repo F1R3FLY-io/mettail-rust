@@ -85,7 +85,7 @@ fn amb_demo_backend() -> (PlannedRhoBackend, String, String) {
     (PlannedRhoBackend::from_plan(plan), fingerprint, channel)
 }
 
-/// A nullary process observation value (e.g. the unwrapped `PA` = `a`).
+/// A nullary process observation value (e.g. the unwrapped `PA` = `A`).
 fn proc_leaf(constructor: &str) -> RuntimeObservationValue {
     RuntimeObservationValue::Term { constructor: constructor.to_string(), children: Vec::new() }
 }
@@ -108,9 +108,9 @@ fn assert_bag_is(value: &RuntimeObservationValue, expected: &[RuntimeObservation
 /// (Stage 3d GATE) `dovetail_report_for(AmbDemo subject)` PRODUCES the OpenRule justification — the
 /// AUTOMATED Dovetail pipeline drives the Ambient `OpenRule` on the typed native lane.
 ///
-/// The redex `{ open(na, a) | na[b] }` (both names `na`) reduces on the typed native lane: the
+/// The redex `{ open(na, A) | na[B] }` (both names `na`) reduces on the typed native lane: the
 /// structural-AC native rule AC-matches the non-linear soup (`N ≡ N` by e-class equality), and the
-/// dispatch splices `op{ σ[P], σ[Q], ...rest } = { a, b }` DIRECTLY from σ (no substitution). The sole
+/// dispatch splices `op{ σ[P], σ[Q], ...rest } = { A, B }` DIRECTLY from σ (no substitution). The sole
 /// `rewrite_justifications` entry is the `OpenRule` firing whose σ reconstructs the operand bag — it
 /// binds the ambient name `N = na`, the two unwrapped processes `P = a` and `Q = b`, and the residual
 /// `rest` (an empty `PPar` bag). This is the report the structural-AC σ-injection reads.
@@ -118,7 +118,7 @@ fn assert_bag_is(value: &RuntimeObservationValue, expected: &[RuntimeObservation
 fn ambdemo_dovetail_report_produces_the_open_justification() {
     mettail_runtime::clear_var_cache();
     let term = AmbDemoLanguage
-        .parse_term("{ open(na, a) | na[b] }")
+        .parse_term("{ open(na, A) | na[B] }")
         .expect("AmbDemo must parse the OpenRule redex");
 
     let report = AmbDemoLanguage::dovetail_report_for(term.as_ref(), 64, 1_000_000)
@@ -147,14 +147,14 @@ fn ambdemo_dovetail_report_produces_the_open_justification() {
             .unwrap_or_else(|| panic!("σ must bind {name}, got {:?}", justification.sigma))
     };
     assert_eq!(sigma("N").constructor, "Na", "the non-linear ambient name N is `na`");
-    assert_eq!(sigma("P").constructor, "PA", "the unwrapped open-body P is `a`");
-    assert_eq!(sigma("Q").constructor, "PB", "the unwrapped ambient-body Q is `b`");
+    assert_eq!(sigma("P").constructor, "PA", "the unwrapped open-body P is `A`");
+    assert_eq!(sigma("Q").constructor, "PB", "the unwrapped ambient-body Q is `B`");
     assert_eq!(sigma("rest").constructor, "PPar", "rest is the residual PPar bag");
     assert!(sigma("rest").children.is_empty(), "the residual bag is empty here");
 }
 
-/// POSITIVE (empty rest): `{ open(na, a) | na[b] }` — both names `na` — fires as ONE COMM, landing
-/// `{ a | b }` (= `P | Q`) on OUT. The non-linear `Receive.condition` holds.
+/// POSITIVE (empty rest): `{ open(na, A) | na[B] }` — both names `na` — fires as ONE COMM, landing
+/// `{ A | B }` (= `P | Q`) on OUT. The non-linear `Receive.condition` holds.
 #[tokio::test]
 async fn ambdemo_open_fires_as_a_comm_on_the_reducer() {
     mettail_runtime::clear_var_cache();
@@ -169,10 +169,10 @@ async fn ambdemo_open_fires_as_a_comm_on_the_reducer() {
         "planned backend fingerprint must equal the generated metadata fingerprint"
     );
 
-    // (1) AUTOMATED Dovetail report. The redex `{ open(na, a) | na[b] }` (both names `na`) reduces on
+    // (1) AUTOMATED Dovetail report. The redex `{ open(na, A) | na[B] }` (both names `na`) reduces on
     // the typed native lane; the sole firing is the `OpenRule` firing.
     let term = AmbDemoLanguage
-        .parse_term("{ open(na, a) | na[b] }")
+        .parse_term("{ open(na, A) | na[B] }")
         .expect("AmbDemo must parse the OpenRule redex");
     let report = AmbDemoLanguage::dovetail_report_for(term.as_ref(), 64, 1_000_000)
         .expect("AmbDemo Dovetail report must compile");
@@ -199,8 +199,8 @@ async fn ambdemo_open_fires_as_a_comm_on_the_reducer() {
     assert_bag_is(&observation.values[0], &[proc_leaf("PA"), proc_leaf("PB")]);
 }
 
-/// POSITIVE (with rest): `{ open(na, a) | na[b] | 0 }` — the residual `0` (a `PZero`, distinct tag)
-/// rides the `rest` remainder and is spliced back, so OUT is `{ a | b | 0 }`.
+/// POSITIVE (with rest): `{ open(na, A) | na[B] | 0 }` — the residual `0` (a `PZero`, distinct tag)
+/// rides the `rest` remainder and is spliced back, so OUT is `{ A | B | 0 }`.
 #[tokio::test]
 async fn ambdemo_open_splices_the_residual_bag() {
     mettail_runtime::clear_var_cache();
@@ -211,12 +211,12 @@ async fn ambdemo_open_splices_the_residual_bag() {
         "planned backend fingerprint must equal the generated metadata fingerprint"
     );
 
-    // `{ open(na, a) | na[b] | 0 }` — the residual `0` (a `PZero`) rides the `rest` remainder.
+    // `{ open(na, A) | na[B] | 0 }` — the residual `0` (a `PZero`) rides the `rest` remainder.
     // AUTOMATED: σ binds `rest = { 0 }`; the F-fn reconstructs the whole operand bag (splicing the
-    // `rest` children) and recovers the reducts `a`/`b` DIRECTLY from σ; the receiver splices
+    // `rest` children) and recovers the reducts `A`/`B` DIRECTLY from σ; the receiver splices
     // `a | b | 0`.
     let term = AmbDemoLanguage
-        .parse_term("{ open(na, a) | na[b] | 0 }")
+        .parse_term("{ open(na, A) | na[B] | 0 }")
         .expect("AmbDemo must parse the with-rest OpenRule redex");
     let report = AmbDemoLanguage::dovetail_report_for(term.as_ref(), 64, 1_000_000)
         .expect("AmbDemo Dovetail report must compile");
@@ -235,14 +235,14 @@ async fn ambdemo_open_splices_the_residual_bag() {
         "the OpenRule receiver must fire exactly once (got {:?})",
         observation.values
     );
-    // The restructured bag = { P, Q, rest } = { a, b, 0 }.
+    // The restructured bag = { P, Q, rest } = { A, B, 0 }.
     assert_bag_is(
         &observation.values[0],
         &[proc_leaf("PA"), proc_leaf("PB"), proc_leaf("PZero")],
     );
 }
 
-/// NEGATIVE (mismatched names): `{ open(na, a) | nb[b] }` — the open name `na` ≠ the ambient name
+/// NEGATIVE (mismatched names): `{ open(na, A) | nb[B] }` — the open name `na` ≠ the ambient name
 /// `nb`. On the AUTOMATED pipeline the NON-LINEAR AC guard VETOES at the Dovetail matcher: the
 /// structural-AC native rule finds NO pairing (`N ≡ N` is unsatisfiable — `na` and `nb` are distinct
 /// e-classes, so `collect_ac_matches` prunes by evidence), so the report carries NO OpenRule firing
@@ -255,7 +255,7 @@ fn ambdemo_mismatched_name_does_not_fire() {
 
     // POpen on `na`, PAmb on `nb` — ambient names disagree.
     let term = AmbDemoLanguage
-        .parse_term("{ open(na, a) | nb[b] }")
+        .parse_term("{ open(na, A) | nb[B] }")
         .expect("AmbDemo must parse the mismatched-name soup");
     let report = AmbDemoLanguage::dovetail_report_for(term.as_ref(), 64, 1_000_000)
         .expect("AmbDemo Dovetail report must compile");

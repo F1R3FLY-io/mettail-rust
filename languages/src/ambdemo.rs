@@ -32,14 +32,15 @@ use mettail_macros::language;
 //
 // `POpen . n:Name, p:Proc` is the ambient-dissolution capability `open(n, p)`; `PAmb . n:Name,
 // p:Proc` is the ambient `n[p]`; both carry the ambient name `n` and a process. Names are distinct
-// nullary leaves (`Na`/`Nb`) and processes distinct nullary leaves (`PA`/`PB`), so distinct
-// names/processes are available for the positive (matching) and negative (mismatched) firing checks
-// without single-letter identifiers colliding.
+// nullary leaves (`Na`/`Nb` = `na`/`nb`) and processes distinct nullary leaves (`PA`/`PB` = `A`/`B`),
+// so distinct names/processes are available for the positive (matching) and negative (mismatched)
+// firing checks, and neither leaf spelling collides with the auto-generated lowercase `a` VARIABLE
+// identifier — so a name-variable ambient `a[·]` still round-trips through parse ∘ display.
 //
-// The concrete redex `{ open(na, a) | na[b] }` reduces (both names `na`) to `{ a | b }` — the
-// unwrapped `P = a` and `Q = b` in parallel — and `{ open(na, a) | na[b] } ≠ { a | b }`, so a
-// positive OUT observation of `{ a | b }` is non-vacuous evidence the Ambient `OpenRule` fired as
-// ONE COMM with the σ Dovetail computed. The mismatched soup `{ open(na, a) | nb[b] }` (names
+// The concrete redex `{ open(na, A) | na[B] }` reduces (both names `na`) to `{ A | B }` — the
+// unwrapped `P = A` and `Q = B` in parallel — and `{ open(na, A) | na[B] } ≠ { A | B }`, so a
+// positive OUT observation of `{ A | B }` is non-vacuous evidence the Ambient `OpenRule` fired as
+// ONE COMM with the σ Dovetail computed. The mismatched soup `{ open(na, A) | nb[B] }` (names
 // `na` ≠ `nb`) does NOT fire — the non-linear `Receive.condition` vetoes it.
 //
 // Kept SEPARATE from the full `Ambient` (whose `InRule`/`OutRule` are DEEP nested-ambient AC
@@ -64,12 +65,18 @@ language! {
     terms {
         PZero . |- "0" : Proc ;
 
-        // Distinct nullary processes `a`/`b` — the payloads `open(n, ·)` dissolves and `n[·]`
-        // ambient carries. Kept nullary (single leaf literals) so `{ a | b }` decodes to a bag of
-        // two distinct tagged leaves for the positive firing check; the structural-restructuring
-        // semantics (unwrap-and-splice) are unchanged by their arity.
-        PA . |- "a" : Proc ;
-        PB . |- "b" : Proc ;
+        // Distinct nullary processes `A`/`B` — the payloads `open(n, ·)` dissolves and `n[·]`
+        // ambient carries. Spelled with CAPITAL letters (like the sibling `SwapDemo`/`CtxDemo`/
+        // `AcDemo` process leaves `A`/`B`/`C`) so they do NOT collide with the auto-generated,
+        // lowercase process/name VARIABLE identifiers (`PVar`/`NVar`, spelled `a`). A lowercase
+        // literal `"a"` would RESERVE the token `a`, so a `PAmb`/`POpen` whose ambient name is a
+        // variable — displayed as e.g. `a[A]` — could not re-parse: the lexer would grab the leading
+        // `a` as the `PA` literal (a complete `Proc`) and choke on the following `[`. Kept nullary
+        // (single leaf literals) so `{ A | B }` decodes to a bag of two distinct tagged leaves for
+        // the positive firing check; the structural-restructuring semantics (unwrap-and-splice) are
+        // unchanged by their arity.
+        PA . |- "A" : Proc ;
+        PB . |- "B" : Proc ;
 
         // Distinct nullary ambient names `na`/`nb` for the matching / mismatched name checks.
         Na . |- "na" : Name ;

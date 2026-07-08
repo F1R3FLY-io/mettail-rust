@@ -473,7 +473,7 @@ fn sim_ambdemo_normal_form_reachability() {
     };
     let runner = SimulationRunner::new(lang_ref, config);
 
-    let test_inputs: Vec<&str> = vec!["0", "a", "b", "na", "nb", "open ( 0 , 0 )", "0 [ 0 ]"];
+    let test_inputs: Vec<&str> = vec!["0", "A", "B", "na", "nb", "open ( 0 , 0 )", "0 [ 0 ]"];
 
     let mut tested = 0usize;
     let mut reached_nf = 0usize;
@@ -525,7 +525,7 @@ fn sim_ambdemo_roundtrip_under_rewrite() {
     let runner = SimulationRunner::new(lang_ref, config);
 
     // Test a set of concrete expressions for rewrite roundtrip.
-    let test_inputs: Vec<&str> = vec!["0", "a", "b", "na", "nb", "open ( 0 , 0 )", "0 [ 0 ]"];
+    let test_inputs: Vec<&str> = vec!["0", "A", "B", "na", "nb", "open ( 0 , 0 )", "0 [ 0 ]"];
 
     for input in &test_inputs {
         mettail_runtime::clear_var_cache();
@@ -587,7 +587,7 @@ fn sim_ambdemo_morphology_bounded() {
     };
     let runner = SimulationRunner::new(lang_ref, config);
 
-    let test_inputs: Vec<&str> = vec!["0", "a", "b", "na", "nb", "open ( 0 , 0 )", "0 [ 0 ]"];
+    let test_inputs: Vec<&str> = vec!["0", "A", "B", "na", "nb", "open ( 0 , 0 )", "0 [ 0 ]"];
 
     for input in &test_inputs {
         mettail_runtime::clear_var_cache();
@@ -622,7 +622,7 @@ fn sim_ambdemo_eval_determinism() {
     let lang = AmbDemoLanguage;
     let lang_ref: &dyn mettail_runtime::Language = &lang;
 
-    let test_inputs: Vec<&str> = vec!["0", "a", "b", "na", "nb", "open ( 0 , 0 )", "0 [ 0 ]"];
+    let test_inputs: Vec<&str> = vec!["0", "A", "B", "na", "nb", "open ( 0 , 0 )", "0 [ 0 ]"];
 
     for input in &test_inputs {
         let config1 = SimulationConfig {
