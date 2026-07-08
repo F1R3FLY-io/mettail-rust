@@ -168,8 +168,214 @@ Proof.
   apply sa_accept_sound; assumption.
 Qed.
 
+(* ============================================================================
+   STAGE 4 extension of obligation (i): the M-collapse σ + whole-term location.
+
+   The M1 scope above modeled ACCEPTANCE on all-leaf patterns, where a Var leaf's σ
+   is its head tag (`children_trivial`). Stage 4 closes the two gaps the campaign
+   opened:
+
+     (M-collapse) a Var leaf now binds the FULLY COLLAPSED subterm `⟦subtree⟧` (the
+       `cap:` bottom-up fold of `rho_net_lower.rs::collapse_publish`), so σ is the
+       POSITIONAL σ for a matched subject of ARBITRARY depth — not merely the head
+       tag, which silently dropped a non-nullary subject's children (the reachable
+       `Swap(Pair(A,B),_) → Pair()` soundness bug).
+
+     (M-reflect) the driver spreads the WHOLE structurally-reflected subject term and
+       the root index LOCATES the redex; `whole_term_located` is the GENERAL (nested)
+       children-match instance of the host `index_never_drops_match` — the same index
+       theorem, now over the full recursive positional matcher rather than the M1
+       all-leaf `children_trivial`.
+
+   Faithfulness of the emitted `Par`/spread to these folds is witnessed operationally
+   by the runtime tests (`rho_net_equivalence.rs`: `m_collapse_matches_*`,
+   `m_reflect_sigma_is_produced_by_the_automaton_not_the_report`,
+   `nested_pattern_collapses_a_deep_non_nullary_leaf_in_rho`); this file proves the
+   SERIALIZATION LOGIC (the σ the fold yields, and the index location) correct.
+   Rocq 9.1 compatible. No Admitted, no Axioms, no Assumptions.
+   ============================================================================ *)
+
+(* The `cap:` COLLAPSE fold (`rho_net_lower.rs::collapse_publish`): a bottom-up
+   reflection that rebuilds `⟦subtree⟧` from the children's already-collapsed values.
+   On the abstract `Node` it reconstructs the whole subtree — information-preserving.
+   (The inner fix maps the fold over the children; guarded by the child subterm.) *)
+Fixpoint collapse (n : Node) : Node :=
+  match n with
+  | NApp op ch =>
+      NApp op ((fix cmap (l : list Node) : list Node :=
+                  match l with
+                  | [] => []
+                  | x :: xs => collapse x :: cmap xs
+                  end) ch)
+  end.
+
+(* The collapse is FAITHFUL: `⟦subtree⟧` decodes to EXACTLY the subtree — no data lost.
+   This is the M-collapse correctness the pre-fix head-tag capture violated. *)
+Lemma collapse_faithful : forall n, collapse n = n.
+Proof.
+  fix IH 1. intros [op ch]. simpl. f_equal.
+  induction ch as [| c ch' IHch].
+  - reflexivity.
+  - simpl. rewrite (IH c). f_equal. exact IHch.
+Qed.
+
+(* The PRE-M-collapse Var-leaf capture: only the head tag (an arity-0 stub). *)
+Definition head_tag_only (n : Node) : Node :=
+  match n with NApp op _ => NApp op [] end.
+
+(* The bug is REACHABLE: on a non-nullary subterm the head-tag capture DROPS the
+   children, so it is NOT the matched subterm (the `Pair()` witness). *)
+Lemma head_tag_drops_nonnullary : forall op ch,
+  ch <> [] -> head_tag_only (NApp op ch) <> NApp op ch.
+Proof.
+  intros op ch Hne Heq. simpl in Heq. injection Heq as Hch.
+  apply Hne. symmetry. exact Hch.
+Qed.
+
+(* The GENERAL recursive positional matcher — the nested descend-then-collapse matcher (no
+   longer the M1 all-leaf `children_trivial`): a structural App matches iff op + arity agree
+   AND every child matches RECURSIVELY. A single fixpoint on the PATTERN `p` with an inner
+   fix folding the children (each call `pmatch_rec a c` is on `a`, a subterm of `args`,
+   itself a subterm of `p`) — guarded WITHOUT the mutual `with` (which Rocq 9.1's guard
+   checker rejects for this nested inductive). *)
+Fixpoint pmatch_rec (p : Pat) (n : Node) {struct p} : bool :=
+  match p, n with
+  | PVar, _ => true
+  | PApp op args, NApp nop nch =>
+      Nat.eqb op nop && Nat.eqb (length args) (length nch) &&
+      (fix go (ps : list Pat) (ns : list Node) : bool :=
+         match ps, ns with
+         | [], [] => true
+         | a :: ps', c :: ns' => pmatch_rec a c && go ps' ns'
+         | _, _ => false
+         end) args nch
+  | PAcApp _ _, _ => false
+  end.
+
+(* A nested match implies the ROOT (op, arity) index would also fire — the nested matcher's
+   root conjuncts ARE the M1 `children_trivial` root check, so `pmatch_rec` refines
+   `pmatch children_trivial`; hence the host index theorem applies unchanged. *)
+Lemma pmatch_rec_implies_trivial : forall p n,
+  pmatch_rec p n = true -> pmatch children_trivial p n = true.
+Proof.
+  intros p n H. destruct p as [| op args | op args].
+  - reflexivity.
+  - destruct n as [nop nch]. simpl in H.
+    (* `&&` is left-associative: H : ((op=?nop) && (len=?len)) && go = true. *)
+    apply andb_true_iff in H. destruct H as [Hoa _].
+    apply andb_true_iff in Hoa. destruct Hoa as [Hop Hlen].
+    unfold pmatch, children_trivial. rewrite Bool.andb_true_r.
+    rewrite Hop, Hlen. reflexivity.
+  - simpl in H. destruct n. discriminate H.
+Qed.
+
+(* The σ extractor parameterized by the Var-leaf CAPTURE `cap`. A Var leaf binds `cap n`
+   (the positional σ uses `id`; the in-Rho network uses the `cap:` collapse fold
+   `collapse`); a structural App concatenates its children's σ in first-occurrence
+   (left-to-right / DFS) order — the σ-receiver's formal order. The inner `go` fixpoint
+   folds the children (guarded on `ps`, a subterm of `args`, itself a subterm of `p`). *)
+Fixpoint sigma_gen (cap : Node -> Node) (p : Pat) (n : Node) {struct p}
+  : option (list Node) :=
+  match p, n with
+  | PVar, _ => Some [cap n]
+  | PApp op args, NApp nop nch =>
+      if Nat.eqb op nop && Nat.eqb (length args) (length nch)
+      then (fix go (ps : list Pat) (ns : list Node) : option (list Node) :=
+              match ps, ns with
+              | [], [] => Some []
+              | a :: ps', c :: ns' =>
+                  match sigma_gen cap a c, go ps' ns' with
+                  | Some s1, Some s2 => Some (s1 ++ s2)
+                  | _, _ => None
+                  end
+              | _, _ => None
+              end) args nch
+      else None
+  | PAcApp _ _, _ => None
+  end.
+
+(* The POSITIONAL σ binds each Var leaf to the WHOLE matched subterm (`id`). *)
+Definition sigma_pos : Pat -> Node -> option (list Node) := sigma_gen (fun n => n).
+(* The IN-RHO σ binds each Var leaf to its `cap:` COLLAPSE value (`collapse`). *)
+Definition sigma_rho : Pat -> Node -> option (list Node) := sigma_gen collapse.
+
+(* The σ depends on the Var-leaf capture ONLY at the leaf: two captures that agree
+   everywhere induce the same σ (the structural descent is capture-agnostic). *)
+Lemma sigma_gen_ext : forall cap1 cap2,
+  (forall n, cap1 n = cap2 n) ->
+  forall p n, sigma_gen cap1 p n = sigma_gen cap2 p n.
+Proof.
+  intros cap1 cap2 Hcap. fix IH 1. intros p n.
+  destruct p as [| op args | op args].
+  - simpl. rewrite Hcap. reflexivity.
+  - destruct n as [nop nch]. simpl.
+    destruct (Nat.eqb op nop && Nat.eqb (length args) (length nch)); [| reflexivity].
+    revert nch. induction args as [| a args' IHargs]; intros nch.
+    + reflexivity.
+    + destruct nch as [| c nch']; [ reflexivity |].
+      simpl. rewrite (IH a c). rewrite (IHargs nch'). reflexivity.
+  - reflexivity.
+Qed.
+
+(* ---- the children_match fold yields the POSITIONAL σ (M-collapse correctness) ---- *)
+
+(* KEY (non-nullary σ correctness): the in-Rho σ (via the `cap:` collapse fold) EQUALS
+   the positional σ (the full matched subterms) — for a matched subject of ARBITRARY
+   depth, not just a nullary leaf. The Var leaf binds `collapse n = n` (faithful), and
+   the structural descent is capture-agnostic. This is the exact obligation the M1 scope
+   left open: a non-nullary Var subterm's σ is its whole `⟦subtree⟧`, not its head tag. *)
+Theorem sigma_rho_eq_pos : forall p n, sigma_rho p n = sigma_pos p n.
+Proof.
+  intros p n. unfold sigma_rho, sigma_pos.
+  apply sigma_gen_ext. intro m. apply collapse_faithful.
+Qed.
+
+(* The pre-fix head-tag capture is UNSOUND at a NON-nullary Var leaf: it disagrees with
+   the positional σ (the arity-abstracted `Pair()` witness — the exact soundness bug the
+   `cap:` collapse removed). *)
+Theorem buggy_head_tag_wrong_for_nonnullary : forall op ch,
+  ch <> [] -> Some [head_tag_only (NApp op ch)] <> sigma_pos PVar (NApp op ch).
+Proof.
+  intros op ch Hne. unfold sigma_pos. simpl. intro Heq.
+  apply (head_tag_drops_nonnullary op ch Hne). simpl.
+  injection Heq as Hn. rewrite Hn. reflexivity.
+Qed.
+
+(* ---- whole-term location: the root index locates a nested match (M-reflect) ---- *)
+
+(* The automaton spreads the WHOLE structurally reflected subject and the root (op, arity)
+   index LOCATES a root-rooted redex — a NESTED positional match (`pmatch_rec`, arbitrary
+   depth) of a compilable pattern is dispatched by the index. Reuses the host
+   `index_never_drops_match` (via `pmatch_rec_implies_trivial`), now over the full recursive
+   matcher rather than M1's all-leaf `children_trivial`. *)
+Corollary whole_term_located : forall p n,
+  compilable p = true -> pmatch_rec p n = true -> dispatched p n = true.
+Proof.
+  intros p n Hc Hm.
+  apply (index_never_drops_match children_trivial p n).
+  - exact Hc.
+  - apply pmatch_rec_implies_trivial. exact Hm.
+Qed.
+
+(* Obligation (i), STAGE 4: on a matched whole-term subject, the automaton BOTH (a)
+   LOCATES the redex by the root index AND (b) binds the POSITIONAL σ (the full
+   collapsed subterms), for a pattern of ARBITRARY depth. *)
+Corollary inrho_stage4_locates_and_binds_positional_sigma : forall p n,
+  compilable p = true -> pmatch_rec p n = true ->
+  dispatched p n = true /\ sigma_rho p n = sigma_pos p n.
+Proof.
+  intros p n Hc Hm. split.
+  - apply whole_term_located; assumption.
+  - apply sigma_rho_eq_pos.
+Qed.
+
 Print Assumptions sa_accept_sound.
 Print Assumptions sa_accept_complete.
 Print Assumptions sa_matches_positional.
 Print Assumptions inrho_match_dispatched.
 Print Assumptions inrho_no_false_root.
+Print Assumptions collapse_faithful.
+Print Assumptions sigma_rho_eq_pos.
+Print Assumptions buggy_head_tag_wrong_for_nonnullary.
+Print Assumptions whole_term_located.
+Print Assumptions inrho_stage4_locates_and_binds_positional_sigma.
