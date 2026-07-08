@@ -107,3 +107,15 @@ theories/BinderReflectionTotalOrReject.v
 # fabrication), tracking the handler value injectively. Inherits LinearCommCorrespondence + the
 # RhoLoweringTotalOrRejects install boundary + the RhoHostObligationBoundary trusted-handler seam.
 theories/NativeSystemProcessBoundary.v
+
+# Stage 3f — the fold-vs-equation criterion (D3, INV-9) is SOUND (FoldMotionVsCongruence): a
+# COMPUTING native scalar fold `AddInt(a,b) ~> a+b` changes a CLTS barb (the unreduced redex is
+# observably not the value), so it is directed motion firing as a COMM (`lower_native_fold` →
+# `NativeFold` dispatch receiver); a LOSSLESS ISO COERCION `NormCast (Cast<Src> v) ~> (Cast<Tgt>
+# (SrcToTgt v))` — marked by its `Premise::SyntheticInjGuard`, `is_lossless_cast_congruence` —
+# preserves all barbs (the representation tag is not observable), so it is compile-time congruence,
+# no COMM (`CongruenceClosure`). The discriminator (keyed on the inj-guard) is proved CONSISTENT
+# with the barb behavior: it fires exactly the barb-changing rules and treats exactly the
+# barb-preserving rules as congruence (fires-as-COMM ⟺ directed motion). Companion to
+# NativeSystemProcessBoundary.v (the firing side) + the RhoHostObligationBoundary trusted-handler seam.
+theories/FoldMotionVsCongruence.v
