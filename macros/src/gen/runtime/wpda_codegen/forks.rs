@@ -904,6 +904,101 @@ pub(crate) const PROJ_ISO_SIGIL_AUTHORITATIVE_REJECT: bool = true;
 /// narrow gate (and/or once the frontier converges).
 pub(crate) const RECOGNIZER_PREFILTER: bool = false;
 
+/// RECOGNIZER_REJECT_GATE — the SOUND GATE on the authoritative-reject
+/// (non-parseability recognizer oracle a166789b, wired 2026-07-08). This is the
+/// PRINCIPLED narrow-gate refinement the STAGE-2 result of [`RECOGNIZER_PREFILTER`]
+/// called for — but applied at a DIFFERENT (and inherently narrow) hook: the
+/// authoritative-reject FIRE site, not the every-σ-led fall-through.
+///
+/// ## The defect it ships the fix for (the auth-reject FALSE-REJECT)
+/// [`PROJ_ISO_SIGIL_AUTHORITATIVE_REJECT`] fires whenever a σ-led send skeleton
+/// matched the WHOLE input, enumeration was COMPLETE (`!__cap_hit`), the trimmed
+/// input starts with a projection sigil, and NO tiling parsed — the module
+/// thread-local `__proj_sigil_reject` flag is set, and the `parse_via_wpda`
+/// prologue turns it into `Err`. That heuristic is UNSOUND: a valid NON-send
+/// `@`-quoted bind whose subject looks like a send frame is FALSE-REJECTED. Proven
+/// counterexamples (with `PRATTAIL_NO_PROJ_AUTHORITATIVE_REJECT=1` both parse):
+///   • `@([]) <= @(Map())` → the valid `InputBind` `@[] <= @(Map())`
+///   • `@([]) <- x`        → the valid `InputBind` `@[] <- x`
+/// `@([])` is a valid quoted-list `Name`, not a malformed send. The reject fires
+/// because the σ-frame matcher matches `@( … )` over the whole input, every tiling
+/// declines (it is not a send), and the crude heuristic concludes "unparseable".
+///
+/// ## The fix — GATE the reject with the SOUND recognizer
+/// At the `proj_reject_fire` site (the SINGLE place `__proj_sigil_reject` becomes
+/// `Err`), fire the authoritative-reject ONLY IF the non-parseability recognizer
+/// (`WpdaWalker::recognize_reachable`, a166789b — a one-sided REJECT-only oracle:
+/// coarse GLL-Slot cursor merge + Tomita pop fan-out ⇒ a SOUND over-approximation
+/// of the real walker whose frontier stays POLYNOMIAL even where the full parse is
+/// exponential) CONFIRMS the span is `Unreachable` (returns `false`). If the
+/// recognizer says `Reachable` (`true`), grinds to the step budget (`true`), or the
+/// input fails to lex (inconclusive), SUPPRESS the reject and fall through to the
+/// full walker UNCHANGED. This makes the crude auth-reject SOUND: it now rejects
+/// ONLY recognizer-confirmed-`Unreachable` spans.
+///   • Parseable `@([])` bind ⇒ recognizer `Reachable` (or budget ⇒ `true`) ⇒
+///     reject SUPPRESSED ⇒ the walker parses it correctly. FIXES the false-reject.
+///   • Genuinely-unparseable deep-`@` (`@Nil!(true false)`, `@@@Nil!(0`) ⇒
+///     recognizer converges `Unreachable` FAST (poly) ⇒ reject FIRES ⇒ fast reject.
+///     Delivers the ROOT-P perf (never reaches the exponential fail-safe walker).
+///
+/// ## Why the narrow gate is inherently safe (vs the broad prefilter)
+/// The recognizer runs ONLY when `__proj_sigil_reject` is already set — the σ-frame-
+/// matched clean-decline set, a NARROW residual (NOT every σ-led parse). So the
+/// STAGE-2 non-convergence (coarse frontier grinding to `max_steps` on some SMALL
+/// PARSEABLE σ-led spans) costs at most a BOUNDED latency (`RECOGNIZER_GATE_MAX_STEPS`)
+/// on those rare reject-candidate spans — which fall through to the full walker
+/// ANYWAY. That bounded budget IS the natural one-sided-oracle semantics (budget ⇒
+/// inconclusive ⇒ `true` ⇒ suppress), not a band-aid. All non-reject-candidate
+/// parses NEVER touch the recognizer ⇒ no ~2× regression.
+///
+/// ## Soundness — REJECT-only, never a parse-reading heuristic
+/// The recognizer NEVER drops or elects a reading. The reject fires ONLY on a
+/// DEFINITIVE `Unreachable` (`false`); ANY doubt (`true`, max-steps, a lex failure,
+/// or the env A/B set) SUPPRESSES the reject and falls through to the walker
+/// (correct-but-slow, never a false `Err`). Because the walker soundly under-lies
+/// the recognizer (fan-out ⊇ SlotEdge ⊇ true-parser), a recognizer `false` means the
+/// walker would ALSO reject (just exponentially slower) ⇒ the reject is SOUND.
+///
+/// ## Kill-switch / A-B
+/// `true` (SHIP DEFAULT — it FIXES a correctness bug, so on-by-default is warranted,
+/// unlike the perf-only [`RECOGNIZER_PREFILTER`]) ⇒ the `proj_reject_fire` site emits
+/// the recognizer-gated fire + the `recognize_<Cat>_reachable_ws` facade fn is emitted
+/// (shared with the prefilter's emission gate). `false` ⇒ the `proj_reject_fire` site
+/// emits the VERBATIM unconditional reject + (with [`RECOGNIZER_PREFILTER`] also OFF)
+/// NO facade fn ⇒ every generated `wpda.rs`/`parser.rs` is BYTE-IDENTICAL to the
+/// pre-gate baseline. The runtime env `PRATTAIL_NO_RECOGNIZER_REJECT_GATE` (read at
+/// the fire site) reverts to the unconditional reject WITHOUT a rebuild (causal A/B —
+/// reproduces the pre-fix false-reject for study).
+pub(crate) const RECOGNIZER_REJECT_GATE: bool = true;
+
+/// RECOGNIZER_GATE_MAX_STEPS — the coarse-walker step budget for the
+/// [`RECOGNIZER_REJECT_GATE`] recognizer call. Modest (NOT the prefilter's 1M).
+///
+/// ## Empirically calibrated (2026-07-08 measurement, rhocalc)
+/// The gate's recognizer is invoked ONLY on `__proj_sigil_reject` candidates. Three
+/// regimes were measured (coarse walker ≈ 0.38 ms/step):
+///   • CONVERGENT-Reachable (the parseable false-reject candidates, e.g.
+///     `@([]) <= @(Map())`): the recognizer converges to `Reachable` in < 300 steps
+///     REGARDLESS of budget (parse latency is budget-invariant at ~490 ms — that is
+///     the WALKER parsing the now-un-rejected span, not the recognizer). ⇒ suppress
+///     fires fast, the false-reject FIX is preserved at ANY budget ≥ ~300.
+///   • CONVERGENT-Unreachable (shallow genuine rejects, e.g. `@Nil!(true false)`):
+///     converge to `Unreachable` in ~100 steps ⇒ the reject fires (≈38 ms).
+///   • NON-CONVERGENT (genuinely-unparseable DEEP-`@`, e.g. `@@Nil!(true false)`):
+///     the coarse frontier NEVER converges — it grinds to `max_steps` at EVERY budget
+///     (500 → 19 s at budget 50 000). Nothing converges in the (500, 50 000) range, so
+///     a larger budget buys ZERO extra fast-rejects and only inflates the grind that
+///     precedes the safe suppress → the full walker (which was going to run anyway;
+///     the deep-`@` explosion is PRE-EXISTING — present identically with the gate
+///     OFF). ⇒ a SMALL budget is strictly better here.
+///
+/// 500 sits above the convergent ceiling (< 300) with margin AND bounds the
+/// non-convergent grind to ≈190 ms (vs ≈760 ms at the initially-suggested 2000).
+/// Correctness is BUDGET-INDEPENDENT (suppress-on-budget is always sound); the budget
+/// is purely an error-path latency knob. Env `PRATTAIL_RECOGNIZER_MAX_STEPS` overrides
+/// at runtime for tuning without a rebuild.
+pub(crate) const RECOGNIZER_GATE_MAX_STEPS: usize = 500;
+
 /// INFIX_ISOLATION_COMBINE — the PRECEDENCE-AWARE BINARY-INFIX operand
 /// DIVIDE-AND-CONQUER isolation+combine facade fast-path (ROOT-2 `or`/PParInfix
 /// locus, 2026-07-06). Master compile-time kill-switch (same convention as

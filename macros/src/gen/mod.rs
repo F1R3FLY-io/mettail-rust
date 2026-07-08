@@ -361,7 +361,20 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
             } else {
                 quote! {}
             };
-            let proj_reject_fire = if sigil_reject_on {
+            // ── RECOGNIZER REJECT-GATE (a166789b, 2026-07-08) ──
+            // When `RECOGNIZER_REJECT_GATE` is ON, the authoritative-reject FIRE is
+            // GATED on the SOUND non-parseability recognizer: the reject `Err` returns
+            // ONLY when the recognizer CONFIRMS the span `Unreachable`. This FIXES the
+            // false-reject of valid non-send `@`-quoted binds (`@([]) <= @(Map())`) and
+            // fast-rejects genuinely-unparseable deep-`@`. The gate is inherently narrow
+            // (only `__proj_sigil_reject`-candidate spans pay the recognizer). OFF ⇒ the
+            // VERBATIM unconditional reject (byte-identical). See
+            // `emit_recognizer_reject_gate`.
+            let proj_reject_fire = if sigil_reject_on
+                && runtime::wpda_codegen::forks::RECOGNIZER_REJECT_GATE
+            {
+                runtime::wpda_codegen::facade::emit_recognizer_reject_gate(&cat_str)
+            } else if sigil_reject_on {
                 quote! {
                     if __proj_sigil_reject {
                         return Err(ParseError::UnexpectedToken {

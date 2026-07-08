@@ -1803,7 +1803,7 @@ pub(crate) fn emit_recognizer_prefilter(
                 let __recog_reachable = if __recog_dag.has_ambiguity() {
                     let __recog_src =
                         mettail_prattail::wpda_runtime::LatticeTokenSource::new(__recog_dag);
-                    #recognize_ws_fn_name(&__recog_src, 0)
+                    #recognize_ws_fn_name(&__recog_src, 0, 1_000_000usize)
                 } else {
                     match lex(input) {
                         Ok(__recog_tokens) => {
@@ -1821,7 +1821,7 @@ pub(crate) fn emit_recognizer_prefilter(
                                     &__recog_kinds,
                                     &__recog_texts,
                                 );
-                            #recognize_ws_fn_name(&__recog_src, 0)
+                            #recognize_ws_fn_name(&__recog_src, 0, 1_000_000usize)
                         }
                         // lex failed ⇒ inconclusive ⇒ don't reject (fall to walker).
                         Err(_) => true,
@@ -1844,6 +1844,108 @@ pub(crate) fn emit_recognizer_prefilter(
                         )),
                     });
                 }
+            }
+        }
+    }
+}
+
+/// ROOT-P / false-reject RECOGNIZER REJECT-GATE (non-parseability oracle a166789b,
+/// gated by [`super::forks::RECOGNIZER_REJECT_GATE`]). Emit the recognizer-GATED form
+/// of the authoritative-reject FIRE fragment for `cat_name`: the `parse_via_wpda`
+/// prologue's `if __proj_sigil_reject { … }` block, but the reject `Err` returns ONLY
+/// when the SOUND non-parseability recognizer CONFIRMS the span `Unreachable`
+/// (`false`). Reachable / budget-exceeded / lex-fail / env-A-B ⇒ SUPPRESS the reject
+/// and fall through to the full walker (never a false reject).
+///
+/// This is the PRINCIPLED replacement for the crude unconditional auth-reject: it
+/// FIXES the false-reject of valid non-send `@`-quoted binds (`@([]) <= @(Map())`)
+/// AND fast-rejects genuinely-unparseable deep-`@` spans (the recognizer converges
+/// `Unreachable` in poly time before the exponential walker is reached).
+///
+/// Invoked ONLY where `__proj_sigil_reject` is already set — the σ-frame-matched
+/// clean-decline residual — so it is inherently narrow (NOT every σ-led parse), and
+/// the STAGE-2 coarse-frontier non-convergence costs at most the bounded
+/// [`super::forks::RECOGNIZER_GATE_MAX_STEPS`] on those rare reject-candidate spans
+/// (which fall through to the walker anyway). Calls the module-scope
+/// `recognize_<Cat>_reachable_ws` facade fn (co-emitted under the widened gate). The
+/// caller (`gen/mod.rs`) emits this ONLY when `RECOGNIZER_REJECT_GATE` is ON AND the
+/// category is proj-eligible; OFF ⇒ the caller emits the VERBATIM unconditional
+/// reject ⇒ byte-identical.
+pub(crate) fn emit_recognizer_reject_gate(cat_name: &str) -> TokenStream {
+    let recognize_ws_fn_name = format_ident!("recognize_{}_reachable_ws", cat_name);
+    let max_steps = super::forks::RECOGNIZER_GATE_MAX_STEPS;
+    quote! {
+        if __proj_sigil_reject {
+            // ── RECOGNIZER REJECT-GATE (non-parseability oracle a166789b) ──
+            // The authoritative-reject WANTS to fire (a σ-led send skeleton matched
+            // the whole input, enumeration was COMPLETE, and NO tiling parsed). But
+            // that heuristic FALSE-REJECTS valid non-send `@`-quoted binds like
+            // `@([]) <= @(Map())`. Confirm with the SOUND non-parseability recognizer:
+            // fire the reject ONLY IF the recognizer proves the span `Unreachable`
+            // (`false`). Reachable / budget-exceeded / lex-fail ⇒ SUPPRESS (fall
+            // through to the full walker — never a false reject). Env
+            // `PRATTAIL_NO_RECOGNIZER_REJECT_GATE` = causal A/B: revert to the
+            // unconditional reject (today's behavior) without a rebuild.
+            let __recog_confirms_unreachable = if
+                std::env::var_os("PRATTAIL_NO_RECOGNIZER_REJECT_GATE").is_some()
+            {
+                // A/B disabled ⇒ the ORIGINAL unconditional reject (recognizer not run).
+                true
+            } else if let Ok(__recog_dag) = lex_dag(input) {
+                // Mirror the walker's own dispatch so the recognized token stream is
+                // IDENTICAL to the walker's (a `LatticeTokenSource` when `lex_dag` is
+                // ambiguous, else the `SliceTokenSource` kinds/texts shape).
+                let __reachable = if __recog_dag.has_ambiguity() {
+                    let __recog_src =
+                        mettail_prattail::wpda_runtime::LatticeTokenSource::new(__recog_dag);
+                    #recognize_ws_fn_name(&__recog_src, 0, #max_steps)
+                } else {
+                    match lex(input) {
+                        Ok(__recog_tokens) => {
+                            let __recog_kinds: Vec<mettail_prattail::automata::TokenKind> =
+                                __recog_tokens
+                                    .iter()
+                                    .map(|(__t, _)| token_to_kind(__t))
+                                    .collect();
+                            let __recog_texts: Vec<&str> = __recog_tokens
+                                .iter()
+                                .map(|(__t, __r)| token_text(__t, input, *__r))
+                                .collect();
+                            let __recog_src =
+                                mettail_prattail::wpda_runtime::SliceTokenSource::with_texts(
+                                    &__recog_kinds,
+                                    &__recog_texts,
+                                );
+                            #recognize_ws_fn_name(&__recog_src, 0, #max_steps)
+                        }
+                        // lex failed ⇒ inconclusive ⇒ don't confirm (suppress reject).
+                        Err(_) => true,
+                    }
+                };
+                // `false` (Unreachable) ⇒ the recognizer CONFIRMS the reject.
+                !__reachable
+            } else {
+                // `lex_dag` failed ⇒ inconclusive ⇒ suppress the reject and fall
+                // through (the body's own `lex_dag(input)?` below surfaces the real
+                // lex error — still a fast reject, never a false accept).
+                false
+            };
+            if __recog_confirms_unreachable {
+                return Err(ParseError::UnexpectedToken {
+                    expected: Cow::Borrowed(
+                        "no valid parse: a projection-sigil-led send frame whose operands do not parse",
+                    ),
+                    found: input
+                        .trim_start()
+                        .chars()
+                        .next()
+                        .map(|__c| __c.to_string())
+                        .unwrap_or_else(|| "end of input".to_string()),
+                    range: Range::from_byte_offsets(input, 0, input.len()),
+                    hint: Some(Cow::Borrowed(
+                        "an `@`-led span that is not a well-formed send (or infix of sends) is not a valid term",
+                    )),
+                });
             }
         }
     }
@@ -3904,7 +4006,8 @@ pub(crate) fn emit_parse_fns(
             // category has ANY `@`-projection shape. The fragment (its sole caller) is
             // therefore never emitted without the fn; a fn emitted without a caller
             // (proj shape but no σ-led variant) is covered by `#[allow(dead_code)]`.
-            let recog_gate = super::forks::RECOGNIZER_PREFILTER
+            let recog_gate = (super::forks::RECOGNIZER_PREFILTER
+                || super::forks::RECOGNIZER_REJECT_GATE)
                 && projection_iso_shape(language, cat_name, categories).is_some();
             if recog_gate {
                 quote! {
@@ -3924,6 +4027,7 @@ pub(crate) fn emit_parse_fns(
                     pub fn #recognize_ws_fn_name(
                         source: &dyn mettail_prattail::wpda_runtime::WpdaTokenSource,
                         min_bp: u8,
+                        __default_max_steps: usize,
                     ) -> bool {
                         use mettail_prattail::wpda_walker::WpdaWalker;
                         use mettail_prattail::automata::lex_weight::LexicographicWeight;
@@ -3936,23 +4040,31 @@ pub(crate) fn emit_parse_fns(
                         // reachable accept). Env `PRATTAIL_RECOGNIZER_MAX_STEPS`
                         // overrides for tuning without a rebuild.
                         //
-                        // ⚠ STAGE-2 FINDING (2026-07-08): `recognize_reachable`'s
-                        // coarse frontier does NOT always converge — on some SMALL,
-                        // PARSEABLE σ-led spans (e.g. a 4-token rhocalc `Proc`) it
-                        // never empties/accepts and grinds to `max_steps` (returning
-                        // the inconclusive `true`). At the natural 1M default a single
-                        // such call runs tens of seconds, so the broad σ-led gate below
-                        // regresses the display proptests. Genuine rejects DO fire fast
-                        // (empty frontier in ~10 ms). The principled fix (a narrow gate
-                        // that only invokes the recognizer on the structural-decline
-                        // residual, decoupling perf from the budget) is pending, so
-                        // `RECOGNIZER_PREFILTER` ships OFF (see its const doc). The
-                        // budget stays env-tunable for that follow-up work.
+                        // The step budget defaults to the CALLER-supplied
+                        // `__default_max_steps` (the narrow reject-gate passes the
+                        // modest `RECOGNIZER_GATE_MAX_STEPS`; the dormant broad prefilter
+                        // passes its 1M natural default). Env `PRATTAIL_RECOGNIZER_MAX_STEPS`
+                        // overrides for tuning without a rebuild. Hitting the cap ⇒
+                        // conservatively `true` (inconclusive ⇒ fall to the walker; NEVER
+                        // a false reject — soundness is budget-independent, since `false`
+                        // is returned only when the run genuinely completes with no
+                        // reachable accept).
+                        //
+                        // ⚠ STAGE-2 FINDING (2026-07-08): `recognize_reachable`'s coarse
+                        // frontier does NOT always converge — on some SMALL, PARSEABLE
+                        // σ-led spans it never empties/accepts and grinds to `max_steps`
+                        // (returning the inconclusive `true`). The BROAD prefilter gate
+                        // (every σ-led fall-through) therefore regresses; the NARROW
+                        // reject-gate (`RECOGNIZER_REJECT_GATE`) invokes this ONLY on the
+                        // already-narrow `__proj_sigil_reject` reject-candidate set, so a
+                        // modest bounded budget cleanly bounds that latency (genuine
+                        // rejects converge fast; non-convergent parseable spans bail to
+                        // the walker they were headed to anyway).
                         let max_steps: usize =
                             std::env::var("PRATTAIL_RECOGNIZER_MAX_STEPS")
                                 .ok()
                                 .and_then(|__s| __s.parse().ok())
-                                .unwrap_or(1_000_000);
+                                .unwrap_or(__default_max_steps);
                         WpdaWalker::<DW, _>::recognize_reachable(
                             #engine_ident::default(),
                             #cat_src_idx_u16,
