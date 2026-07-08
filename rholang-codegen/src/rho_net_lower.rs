@@ -2884,6 +2884,12 @@ pub struct RhoNetCommInjectionSite {
     pub op: String,
     /// The two structured elements' constructors, in LHS order (e.g. `["PFor", "POutput"]`).
     pub element_constructors: Vec<String>,
+    /// Each structured element's argument variables, in LHS order — PARALLEL to
+    /// [`element_constructors`](Self::element_constructors) (e.g. `[["N", "cont"], ["N", "Q"]]`).
+    /// The Comm σ-injection rebuilds each operand-bag element `C(σ[a_0], …)` from these slots, so
+    /// the reflected soup carries the tags + channels the installed receiver's element patterns
+    /// route on.
+    pub element_arg_vars: Vec<Vec<String>>,
     /// The shared NON-LINEAR channel variable the two elements enforce equal (`N`).
     pub nonlinear_var: String,
     /// The `rest` variable the LHS binds to the residual bag.
@@ -2950,6 +2956,11 @@ pub fn rho_net_comm_injection_sites(def: &LanguageDef) -> Vec<RhoNetCommInjectio
                 .elements
                 .iter()
                 .map(|element| element.constructor.clone())
+                .collect(),
+            element_arg_vars: shape
+                .elements
+                .iter()
+                .map(|element| element.args.iter().map(|arg| arg.to_string()).collect())
                 .collect(),
             nonlinear_var: shape.nonlinear_var.to_string(),
             rest_var: shape.rest.to_string(),
@@ -4035,6 +4046,15 @@ mod tests {
         assert_eq!(site.scope_var, "cont");
         assert_eq!(site.arg_var, "Q");
         assert_eq!(site.element_constructors, vec!["PFor".to_string(), "POutput".to_string()]);
+        // Each element's arg vars (parallel to `element_constructors`) — the σ slots the Comm
+        // injection rebuilds each operand-bag element from.
+        assert_eq!(
+            site.element_arg_vars,
+            vec![
+                vec!["N".to_string(), "cont".to_string()],
+                vec!["N".to_string(), "Q".to_string()],
+            ]
+        );
         assert!(!site.channel.is_empty(), "the Comm receiver has a source channel");
     }
 

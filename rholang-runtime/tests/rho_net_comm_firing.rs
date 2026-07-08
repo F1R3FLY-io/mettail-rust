@@ -39,9 +39,9 @@
 
 use mettail_languages::commdemo::CommDemoLanguage;
 use mettail_rholang_codegen::{
-    comm_contract_call, lower_language_def, plan_rho_default_backend, reconstruct_language_def,
-    rho_net_comm_injection_sites, suggest_rejected_rule_dispositions, CollectionType, GroundTerm,
-    RhoCoverageEvidence, RhoDefaultBackendRequirements, RhoGuardCoverageEvidence,
+    lower_language_def, plan_rho_default_backend, reconstruct_language_def,
+    rho_net_comm_injection_sites, suggest_rejected_rule_dispositions, RhoCoverageEvidence,
+    RhoDefaultBackendRequirements, RhoGuardCoverageEvidence,
 };
 use mettail_rholang_runtime::PlannedRhoBackend;
 use mettail_runtime::{Language, RuntimeObservationValue, RuntimeReflectedSubterm};
@@ -76,18 +76,6 @@ fn comm_demo_backend() -> (PlannedRhoBackend, String, String) {
         .expect("CommDemo (non-linear AC communication) must flip to the Rho backend");
     let fingerprint = plan.definition_fingerprint().to_string();
     (PlannedRhoBackend::from_plan(plan), fingerprint, channel)
-}
-
-/// The receive `for(y <- chan){ … }`: `PFor(chan, cont)`. The continuation is wildcarded by the
-/// Comm receiver (model-b: the host computes `cont[Q/y]`, delivered as the reduct), so a nullary
-/// placeholder `PZero` stands in for it — the firing reads only the PFor tag + the channel.
-fn pfor(chan: &str) -> GroundTerm {
-    GroundTerm::new("PFor", vec![GroundTerm::nullary(chan), GroundTerm::nullary("PZero")])
-}
-
-/// The send `chan!(val)`: `POutput(chan, val)` over nullary Name constants.
-fn poutput(chan: &str, val: &str) -> GroundTerm {
-    GroundTerm::new("POutput", vec![GroundTerm::nullary(chan), GroundTerm::nullary(val)])
 }
 
 /// Assert `value` is the singleton observed bag whose sole element is `expected` (multiplicity 1).
@@ -200,20 +188,36 @@ fn commdemo_dovetail_report_produces_the_comm_justification() {
 #[tokio::test]
 async fn commdemo_communication_fires_as_a_comm_on_the_reducer() {
     mettail_runtime::clear_var_cache();
-    let (backend, fingerprint, channel) = comm_demo_backend();
+    let (backend, fingerprint, _channel) = comm_demo_backend();
 
-    // Operand bag `PPar{ PFor(na, cont), POutput(na, nb) }` (both channels `na`) + host reduct
-    // `cont[nb/y]` = `nb!(nc)` = `POutput(nb, nc)`.
-    let operand_bag = GroundTerm::collection(
-        CollectionType::HashBag,
-        "PPar",
-        vec![pfor("Na"), poutput("Na", "Nb")],
+    // Fingerprint coherence: the installed Comm σ-receiver (from the reconstructed def) and the
+    // Comm σ-injection (which reflects the reconstructed bag + reduct with
+    // `metadata().definition_fingerprint()`) must agree, or the soup would decode inconsistently.
+    assert_eq!(
+        CommDemoLanguage.metadata().definition_fingerprint(),
+        Some(fingerprint.as_str()),
+        "planned backend fingerprint must equal the generated metadata fingerprint"
     );
-    let reduct = poutput("Nb", "Nc");
-    let call = comm_contract_call(&channel, &operand_bag, &reduct, &fingerprint, "OUT");
 
+    // (1) AUTOMATED Dovetail report — NO hand-built σ. The redex `{ for(y <- na){ y!(nc) } | na!(nb) }`
+    // (both channels `na`) reduces on the typed native lane; the sole firing is the `Comm` firing.
+    let term = CommDemoLanguage
+        .parse_term("{ for(y <- na){ y!(nc) } | na!(nb) }")
+        .expect("CommDemo must parse the Comm redex");
+    let report = CommDemoLanguage::dovetail_report_for(term.as_ref(), 64, 1_000_000)
+        .expect("CommDemo Dovetail report must compile");
+
+    // (2) The generated Comm σ-injection F-function reconstructs the operand bag from σ and the
+    // reduct `cont[Q/y]` from the contractum, and assembles the `comm_contract_call` — REPLACING the
+    // hand-built σ that was the deviation this campaign removes.
+    let invocation =
+        CommDemoLanguage::rho_net_invocation_from_dovetail_to(term.as_ref(), &report, "OUT")
+            .expect("the Comm σ-injection must assemble from a complete report");
+    assert_eq!(invocation.out_channel, "OUT");
+
+    // (3) RHO-MACHINE EXECUTION: run the installed Comm σ-receiver ∥ call and observe OUT.
     let observation = backend
-        .run_rho_net_with_call_and_observe_runtime_values(&call, "OUT")
+        .run_rho_net_with_call_and_observe_runtime_values(&invocation.call, &invocation.out_channel)
         .await
         .expect("the Comm injection must execute on the Rho runtime");
 
@@ -231,18 +235,28 @@ async fn commdemo_communication_fires_as_a_comm_on_the_reducer() {
 #[tokio::test]
 async fn commdemo_communication_splices_the_residual_bag() {
     mettail_runtime::clear_var_cache();
-    let (backend, fingerprint, channel) = comm_demo_backend();
-
-    let operand_bag = GroundTerm::collection(
-        CollectionType::HashBag,
-        "PPar",
-        vec![pfor("Na"), poutput("Na", "Nb"), GroundTerm::nullary("PZero")],
+    let (backend, fingerprint, _channel) = comm_demo_backend();
+    assert_eq!(
+        CommDemoLanguage.metadata().definition_fingerprint(),
+        Some(fingerprint.as_str()),
+        "planned backend fingerprint must equal the generated metadata fingerprint"
     );
-    let reduct = poutput("Nb", "Nc");
-    let call = comm_contract_call(&channel, &operand_bag, &reduct, &fingerprint, "OUT");
+
+    // `{ for(y <- na){ y!(nc) } | na!(nb) | 0 }` — the residual `0` (a `PZero`) rides the `rest`
+    // remainder. AUTOMATED: σ binds `rest = { 0 }`; the F-fn reconstructs the whole operand bag
+    // (splicing the `rest` children) and recovers the reduct `nb!(nc)` from the contractum
+    // `PPar{ nb!(nc), 0 }` minus `rest`; the receiver splices `nb!(nc) | 0`.
+    let term = CommDemoLanguage
+        .parse_term("{ for(y <- na){ y!(nc) } | na!(nb) | 0 }")
+        .expect("CommDemo must parse the with-rest Comm redex");
+    let report = CommDemoLanguage::dovetail_report_for(term.as_ref(), 64, 1_000_000)
+        .expect("CommDemo Dovetail report must compile");
+    let invocation =
+        CommDemoLanguage::rho_net_invocation_from_dovetail_to(term.as_ref(), &report, "OUT")
+            .expect("the Comm σ-injection must assemble from a complete report");
 
     let observation = backend
-        .run_rho_net_with_call_and_observe_runtime_values(&call, "OUT")
+        .run_rho_net_with_call_and_observe_runtime_values(&invocation.call, &invocation.out_channel)
         .await
         .expect("the Comm injection must execute on the Rho runtime");
 
@@ -274,32 +288,39 @@ async fn commdemo_communication_splices_the_residual_bag() {
 }
 
 /// NEGATIVE (mismatched channels): `{ for(y <- na){ y!(nc) } | nb!(nd) }` — the receive channel `na`
-/// ≠ the send channel `nb`, so the non-linear `Receive.condition` `EEq(N_recv, N_send)` VETOES the
-/// COMM: nothing lands on OUT (the data rests — the `merge_substs → None` / reject-safe analogue).
-#[tokio::test]
-async fn commdemo_mismatched_channel_does_not_fire() {
+/// ≠ the send channel `nb`. On the AUTOMATED pipeline the NON-LINEAR AC guard VETOES at the Dovetail
+/// matcher: the Comm native rule finds NO pairing (`N ≡ N` is unsatisfiable — `na` and `nb` are
+/// distinct e-classes, so `collect_ac_matches` prunes by evidence, A-2), so the report carries NO
+/// Comm firing and the Comm σ-injection has nothing to inject — nothing lands on OUT. (The
+/// installed receiver's `Receive.condition` `EEq(N_recv, N_send)` is the same guard, redundant here
+/// since the Dovetail matcher already vetoes upstream.)
+#[test]
+fn commdemo_mismatched_channel_does_not_fire() {
     mettail_runtime::clear_var_cache();
-    let (backend, fingerprint, channel) = comm_demo_backend();
 
     // PFor on `na`, POutput on `nb` — channels disagree.
-    let operand_bag = GroundTerm::collection(
-        CollectionType::HashBag,
-        "PPar",
-        vec![pfor("Na"), poutput("Nb", "Nd")],
+    let term = CommDemoLanguage
+        .parse_term("{ for(y <- na){ y!(nc) } | nb!(nd) }")
+        .expect("CommDemo must parse the mismatched-channel soup");
+    let report = CommDemoLanguage::dovetail_report_for(term.as_ref(), 64, 1_000_000)
+        .expect("CommDemo Dovetail report must compile");
+
+    // The reduction is a normal form: the non-linear AC guard vetoed, so NO Comm fired.
+    assert!(
+        report.is_complete(),
+        "the mismatched-channel soup is a normal form (Complete), got {:?}",
+        report.completeness
     );
-    // A well-formed reduct is still supplied; the guard vetoes BEFORE the body runs.
-    let reduct = poutput("Nb", "Nd");
-    let call = comm_contract_call(&channel, &operand_bag, &reduct, &fingerprint, "OUT");
+    assert!(
+        report.rewrite_justifications.is_empty(),
+        "the non-linear AC guard must VETO the mismatched-channel soup — no Comm firing (got {:?})",
+        report.rewrite_justifications
+    );
 
-    let observation = backend
-        .run_rho_net_with_call_and_observe_runtime_values(&call, "OUT")
-        .await
-        .expect("the mismatched Comm injection must still execute (and observe nothing)");
-
-    assert_eq!(
-        observation.observed_count(),
-        0,
-        "the non-linear guard must VETO a mismatched-channel soup — nothing fires (got {:?})",
-        observation.values
+    // Consequently the Comm σ-injection fails closed (no firing to inject) — nothing reaches OUT.
+    assert!(
+        CommDemoLanguage::rho_net_invocation_from_dovetail_to(term.as_ref(), &report, "OUT")
+            .is_err(),
+        "no Comm firing ⇒ the σ-injection has nothing to inject (nothing lands on OUT)"
     );
 }

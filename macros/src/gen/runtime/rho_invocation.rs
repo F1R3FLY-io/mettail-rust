@@ -482,11 +482,19 @@ pub fn generate_rho_net_invocation(language: &LanguageDef) -> TokenStream {
     // and sending it on the dispatch channel (the installed NativeSystemProcessRewrite receiver
     // forwards that single slot on `@out`).
     let native_sites = mettail_rholang_codegen::rho_net_native_injection_sites(language);
+    // Stage 3b / A-4: the COMM firing sites — a canonical single-receive Rholang communication
+    // rewrite (`RhoNetLoweredRule::CommRewrite`) fires by reconstructing the WHOLE operand bag from
+    // σ (its structured elements ⊎ the `rest` children) and passing the host-computed reduct
+    // `cont[Q/y]` — recovered from the firing's CONTRACTUM (the communicated bag) minus `rest` — to
+    // `comm_contract_call`, which sends `channel!(⟦bag⟧, ⟦reduct⟧, @out)`. This is the AUTOMATED
+    // drive that removes the hand-built-σ `comm_contract_call` deviation.
+    let comm_sites = mettail_rholang_codegen::rho_net_comm_injection_sites(language);
 
     let body = if sites.is_empty()
         && ac_sites.is_empty()
         && subst_sites.is_empty()
         && native_sites.is_empty()
+        && comm_sites.is_empty()
     {
         // No σ-receiver (base OR AC OR subst OR native): the helper exists for a uniform surface
         // but always fails closed (there is nothing to inject).
@@ -653,6 +661,114 @@ pub fn generate_rho_net_invocation(language: &LanguageDef) -> TokenStream {
             })
             .collect();
 
+        // Comm-rewrite arms (Stage 3b / A-4): COMPOSE the AC-site whole-bag reconstruction with the
+        // subst-site contractum read. Reconstruct the operand bag from σ — each structured element
+        // `C(σ[a_0], …)` (from `element_constructors` ∥ `element_arg_vars`) followed by the `rest`
+        // sub-term's children — and pass the host-computed reduct `cont[Q/y]` (recovered from the
+        // firing's CONTRACTUM, the communicated bag, minus the residual `rest`) to
+        // `comm_contract_call`, which sends `channel!(⟦bag⟧, ⟦reduct⟧, @out)` for the installed Comm
+        // receiver (which re-does the non-linear AC match `N ≡ N` and splices `reduct | rest`).
+        let comm_site_arms: Vec<TokenStream> = comm_sites
+            .iter()
+            .map(|site| {
+                let label = lit(&site.rule_label);
+                let channel = lit(&site.channel);
+                let op = lit(&site.op);
+                let rest_var = lit(&site.rest_var);
+                let element_count = site.element_constructors.len();
+                let element_builds: Vec<TokenStream> = site
+                    .element_constructors
+                    .iter()
+                    .zip(site.element_arg_vars.iter())
+                    .map(|(constructor, arg_vars)| {
+                        let ctor = lit(constructor);
+                        let arg_lits: Vec<LitStr> = arg_vars.iter().map(|arg| lit(arg)).collect();
+                        let arg_count = arg_vars.len();
+                        quote! {
+                            {
+                                let mut __elem_children =
+                                    ::std::vec::Vec::with_capacity(#arg_count);
+                                #(
+                                    __elem_children.push(__mettail_rho_net_to_ground(
+                                        __mettail_rho_net_find_sigma(__justification, #arg_lits)?,
+                                    ));
+                                )*
+                                ::mettail_rholang_codegen::GroundTerm::new(#ctor, __elem_children)
+                            }
+                        }
+                    })
+                    .collect();
+                quote! {
+                    #label => {
+                        // Reconstruct the operand bag: the k structured elements ⊎ the residual bag.
+                        let mut __elements = ::std::vec::Vec::with_capacity(#element_count);
+                        #( __elements.push(#element_builds); )*
+                        let __rest = __mettail_rho_net_to_ground(
+                            __mettail_rho_net_find_sigma(__justification, #rest_var)?,
+                        );
+                        __elements.extend(__rest.children.iter().cloned());
+                        let __whole_bag = ::mettail_rholang_codegen::GroundTerm::collection(
+                            ::mettail_rholang_codegen::CollectionType::HashBag,
+                            #op,
+                            __elements,
+                        );
+                        // The reduct `cont[Q/y]` = the communicated bag (the firing's CONTRACTUM)
+                        // minus the residual `rest` (multiset difference — exactly one element left).
+                        let __contractum = __justification.contractum.as_ref().ok_or_else(|| {
+                            ::std::format!(
+                                "Rho-net Comm injection for language {} has no contractum for fired rule {}",
+                                #language_lit, #label,
+                            )
+                        })?;
+                        let __reduct = __mettail_rho_net_comm_reduct(
+                            &__mettail_rho_net_to_ground(__contractum),
+                            &__rest.children,
+                        )
+                        .ok_or_else(|| {
+                            ::std::format!(
+                                "Rho-net Comm injection for language {} could not recover the reduct for fired rule {}",
+                                #language_lit, #label,
+                            )
+                        })?;
+                        ::mettail_rholang_codegen::comm_contract_call(
+                            #channel, &__whole_bag, &__reduct, __fingerprint, out_channel,
+                        )
+                    },
+                }
+            })
+            .collect();
+
+        // The multiset-difference reduct recovery, emitted only for a language with a Comm site (so
+        // a non-Comm language surfaces no dead helper).
+        let comm_reduct_helper: TokenStream = if comm_sites.is_empty() {
+            quote! {}
+        } else {
+            quote! {
+                // The firing's CONTRACTUM is the communicated bag `op{ cont[Q/y], ...rest }`. Remove
+                // ONE occurrence of each residual `rest` child (multiset difference); the single
+                // remaining element is the reduct `cont[Q/y]` the Comm receiver splices back with
+                // `rest`. `None` when the shape is unexpected (fail-closed).
+                fn __mettail_rho_net_comm_reduct(
+                    __contractum: &::mettail_rholang_codegen::GroundTerm,
+                    __rest_children: &[::mettail_rholang_codegen::GroundTerm],
+                ) -> ::core::option::Option<::mettail_rholang_codegen::GroundTerm> {
+                    let mut __remaining: ::std::vec::Vec<::mettail_rholang_codegen::GroundTerm> =
+                        __contractum.children.clone();
+                    for __r in __rest_children {
+                        if let ::core::option::Option::Some(__pos) =
+                            __remaining.iter().position(|__c| __c == __r)
+                        {
+                            __remaining.remove(__pos);
+                        }
+                    }
+                    match __remaining.as_slice() {
+                        [__reduct] => ::core::option::Option::Some(__reduct.clone()),
+                        _ => ::core::option::Option::None,
+                    }
+                }
+            }
+        };
+
         quote! {
             report.assert_complete().map_err(|status| {
                 ::std::format!(
@@ -662,6 +778,8 @@ pub fn generate_rho_net_invocation(language: &LanguageDef) -> TokenStream {
             })?;
             let _ = term;
             let out_channel = out_channel.as_ref();
+
+            #comm_reduct_helper
 
             // Rebuild a runtime-neutral σ sub-term into a codegen ground term (same
             // `{ constructor, children }` shape). The report producer already
@@ -737,6 +855,7 @@ pub fn generate_rho_net_invocation(language: &LanguageDef) -> TokenStream {
                 #(#ac_site_arms)*
                 #(#subst_site_arms)*
                 #(#native_site_arms)*
+                #(#comm_site_arms)*
                 __other => {
                     return ::core::result::Result::Err(::std::format!(
                         "Rho-net injection for language {} has no σ-receiver for fired rule {}",
