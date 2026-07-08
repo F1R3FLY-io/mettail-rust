@@ -60,7 +60,18 @@ pub(crate) fn needs_typed_dovetail_path(language: &LanguageDef) -> bool {
     // typed path. (Byte-identical for every language with no native injection site.)
     let has_native_system_process =
         !mettail_rholang_codegen::rho_net_native_injection_sites(language).is_empty();
-    has_native_fold || has_substitution_rewrite || has_native_system_process
+    // (A-3) A canonical single-receive Rholang COMMUNICATION rule ([`is_comm_rewrite`]) is a
+    // TYPED native firing: its `(PPar { (PFor N cont), (POutput N Q), ...rest })` LHS is a
+    // NON-LINEAR AC pattern (Blocker 2) over a BINDER element (the substitution `cont[Q/y]` needs
+    // the typed native lane), and its RHS nests a `MultiSubst` in an AC `PPar` (Blocker 1) — none
+    // of which the `EGraph<String>` path lowers. Routing it typed makes `dovetail_report_for`
+    // produce the Comm justification (σ + contractum) the runtime Comm σ-injection reads, removing
+    // the hand-built-σ deviation. Byte-identical for every language with no Comm rewrite.
+    let has_comm_rewrite = language
+        .rewrites
+        .iter()
+        .any(|rw| is_comm_rewrite(language, rw).is_some());
+    has_native_fold || has_substitution_rewrite || has_native_system_process || has_comm_rewrite
 }
 
 /// Backward-compatible alias for [`needs_typed_dovetail_path`] (the typed path is no longer
@@ -292,6 +303,222 @@ fn pattern_contains_collection(pattern: &AstPattern) -> bool {
             PatternTerm::Var(_) => false,
         },
     }
+}
+
+/// (A-3) One structured element of a Comm rule's AC bag LHS — a constructor applied to bare
+/// variables (e.g. `(PFor N cont)`, `(POutput N Q)`).
+#[derive(Debug, Clone)]
+pub(crate) struct CommElementInfo {
+    /// The element constructor label (e.g. `PFor`).
+    pub(crate) constructor: Ident,
+    /// The category the constructor builds (e.g. `Proc`).
+    pub(crate) category: Ident,
+    /// The bare-variable arguments, in LHS order.
+    pub(crate) args: Vec<Ident>,
+    /// Whether this element is a single `Binder` constructor whose SCOPE (last arg) is the
+    /// substitution scope var (the receive continuation `cont`).
+    pub(crate) is_binder: bool,
+}
+
+/// (A-3) The canonical single-receive Rholang COMMUNICATION rule, classified for typed-native
+/// lowering:
+///
+/// ```text
+/// op{ (Recv N cont), (Send N Q), ...rest }  ~>  op{ (eval cont Q), ...rest }
+/// ```
+///
+/// i.e. `for(y <- N){ cont } | N!(Q) ~> cont[Q/y]`, spliced back into the residual bag. The two
+/// structured elements share the NON-LINEAR channel var `N` (once each); one element is a single
+/// `Binder` whose scope is `cont`; and the RHS is a single-argument substitution `(eval cont Q)`
+/// over the SAME `op` + `rest`. This is the shape the shared `comm_rule_shape` un-skips to a
+/// `CommRewrite` σ-receiver; classifying it here routes it onto the TYPED native lane so
+/// `dovetail_report_for` produces the Comm justification (σ + contractum) the injection reads.
+/// Everything is derived from `LanguageDef` (no per-language hardcoding); it fail-closes on every
+/// other shape (verified to REJECT the β `is_substitution_rewrite` shape and any structural AC).
+#[derive(Debug, Clone)]
+pub(crate) struct CommRewrite {
+    /// `<Lang>::rewrite::<name>` — the native-rule label (matches the Comm σ-receiver's label).
+    pub(crate) label: String,
+    /// The AC bag operator constructor (e.g. `PPar`) …
+    pub(crate) op_label: Ident,
+    /// … and the category it builds (e.g. `Proc`) — the reduced bag's category.
+    pub(crate) op_cat: Ident,
+    /// The two structured elements (LHS order); exactly one has `is_binder == true`.
+    pub(crate) elements: Vec<CommElementInfo>,
+    /// The index (0/1) of the binder element within `elements`.
+    pub(crate) binder_element_index: usize,
+    /// The shared non-linear channel variable `N`.
+    pub(crate) nonlinear_var: Ident,
+    /// The `...rest` remainder variable.
+    pub(crate) rest_var: Ident,
+    /// The substitution scope variable (= the binder element's scope arg = `cont`).
+    pub(crate) scope_var: Ident,
+    /// The substitution replacement variable (= the sent name `Q`).
+    pub(crate) arg_var: Ident,
+    /// The bound-variable (domain) category of the binder element (e.g. `Name`) — selects the
+    /// generated `substitute_<binder_var_cat>` and the `build_<binder_var_cat>_d` for the arg.
+    pub(crate) binder_var_cat: Ident,
+    /// The body (codomain) category of the binder element (e.g. `Proc`) — the reconstructed body
+    /// category, the substitution result category, and the reduced bag's element category.
+    pub(crate) body_cat: Ident,
+}
+
+/// Extract `op{ elements, ...rest }` from a constructor applied to a SINGLE HashBag collection
+/// (accepting `None` — inferred from the constructor's grammar — or an explicit `HashBag`, exactly
+/// as the shared `ac_rule_shape`/`collection_apply`). Returns the op constructor, the element
+/// patterns, and the optional `rest` remainder variable.
+fn comm_collection_apply(
+    pattern: &AstPattern,
+) -> Option<(&Ident, &[AstPattern], Option<&Ident>)> {
+    let AstPattern::Term(PatternTerm::Apply { constructor, args }) = pattern else {
+        return None;
+    };
+    let [AstPattern::Collection { coll_type, elements, rest }] = args.as_slice() else {
+        return None;
+    };
+    match coll_type {
+        None | Some(CollectionType::HashBag) => {},
+        Some(_) => return None,
+    }
+    Some((constructor, elements.as_slice(), rest.as_ref()))
+}
+
+/// A structured element `C(v_0, …, v_{m-1})` — a constructor applied to bare variables. Returns
+/// `None` for a bare variable or any non-variable argument.
+fn comm_structured_element(
+    language: &LanguageDef,
+    pattern: &AstPattern,
+) -> Option<CommElementInfo> {
+    let AstPattern::Term(PatternTerm::Apply { constructor, args }) = pattern else {
+        return None;
+    };
+    let mut vars: Vec<Ident> = Vec::with_capacity(args.len());
+    for arg in args {
+        let AstPattern::Term(PatternTerm::Var(v)) = arg else {
+            return None;
+        };
+        vars.push(v.clone());
+    }
+    let category = language.category_of_constructor(constructor)?.clone();
+    Some(CommElementInfo {
+        constructor: constructor.clone(),
+        category,
+        args: vars,
+        is_binder: false,
+    })
+}
+
+/// The unique variable shared by EVERY element, exactly once in each — the non-linear channel
+/// variable `N`. Returns `None` unless exactly one such variable exists (mirrors
+/// `rho_net_lower::unique_shared_variable`, kept self-contained).
+fn comm_unique_shared_var(elements: &[CommElementInfo]) -> Option<Ident> {
+    let mut shared: Option<Ident> = None;
+    let first = elements.first()?;
+    for candidate in &first.args {
+        let appears_once_in_all = elements
+            .iter()
+            .all(|element| element.args.iter().filter(|v| *v == candidate).count() == 1);
+        if appears_once_in_all && shared.replace(candidate.clone()).is_some() {
+            return None; // a second shared variable — ambiguous non-linear guard.
+        }
+    }
+    shared
+}
+
+/// The RHS substitution element `(eval scope arg)` — a `MultiSubst`/`Subst` whose scope and single
+/// replacement are bare variables. Returns `(scope_var, arg_var)`.
+fn comm_subst_element(pattern: &AstPattern) -> Option<(Ident, Ident)> {
+    let AstPattern::Term(term) = pattern else {
+        return None;
+    };
+    let (scope, arg): (&AstPattern, &AstPattern) = match term {
+        PatternTerm::MultiSubst { scope, replacements } if replacements.len() == 1 => {
+            (scope.as_ref(), &replacements[0])
+        },
+        PatternTerm::Subst { term, replacement, .. } => (term.as_ref(), replacement.as_ref()),
+        _ => return None,
+    };
+    match (scope, arg) {
+        (
+            AstPattern::Term(PatternTerm::Var(scope_var)),
+            AstPattern::Term(PatternTerm::Var(arg_var)),
+        ) => Some((scope_var.clone(), arg_var.clone())),
+        _ => None,
+    }
+}
+
+/// (A-3) Classify a rewrite as the canonical single-receive Rholang COMMUNICATION rule
+/// ([`CommRewrite`]), or `None`. Fail-closed on every other shape: a non-HashBag collection, ≠2
+/// structured elements, 0/≥2 shared variables, an RHS that is not a single-substitution with-rest
+/// bag over the SAME op + rest, or a scope that is not the last arg of a single `Binder` element.
+pub(crate) fn is_comm_rewrite(language: &LanguageDef, rw: &RewriteRule) -> Option<CommRewrite> {
+    // Premises: congruence-only (same gate as the structural lowering).
+    if !rw.premises.iter().all(premise_supported) {
+        return None;
+    }
+
+    // LHS: op{ E0, E1, ...rest } — a with-rest HashBag with exactly two structured elements.
+    let (op_label, lhs_elements, lhs_rest) = comm_collection_apply(&rw.left)?;
+    let rest_var = lhs_rest?.clone();
+    if lhs_elements.len() != 2 {
+        return None;
+    }
+    let mut elements: Vec<CommElementInfo> = Vec::with_capacity(2);
+    for element in lhs_elements {
+        elements.push(comm_structured_element(language, element)?);
+    }
+
+    // The shared non-linear channel variable.
+    let nonlinear_var = comm_unique_shared_var(&elements)?;
+
+    // RHS: op{ (eval scope arg), ...rest } — the SAME op + rest, a single substitution element.
+    let (rhs_op, rhs_elements, rhs_rest) = comm_collection_apply(&rw.right)?;
+    let rhs_rest = rhs_rest?;
+    if rhs_op != op_label || rhs_elements.len() != 1 || rhs_rest != &rest_var {
+        return None;
+    }
+    let (scope_var, arg_var) = comm_subst_element(&rhs_elements[0])?;
+
+    // The substitution's scope + arg must be LHS variables.
+    let is_lhs_var = |name: &Ident| elements.iter().any(|e| e.args.iter().any(|v| v == name));
+    if !is_lhs_var(&scope_var) || !is_lhs_var(&arg_var) {
+        return None;
+    }
+
+    // The binder element: the one whose SCOPE (last arg) is `scope_var` AND whose constructor is a
+    // single `Binder` variant of its category. Its bound-variable (`binder_cat`) and body
+    // (`body_cat`) categories select the substitution + reconstruction fns.
+    let mut binder_info: Option<(usize, Ident, Ident)> = None;
+    for (index, element) in elements.iter().enumerate() {
+        if element.args.last() != Some(&scope_var) {
+            continue;
+        }
+        for variant in collect_category_variants(&element.category, language) {
+            if let VariantKind::Binder { label, binder_cat, body_cat, .. } = variant {
+                if label == element.constructor {
+                    binder_info = Some((index, binder_cat, body_cat));
+                }
+            }
+        }
+    }
+    let (binder_element_index, binder_var_cat, body_cat) = binder_info?;
+    elements[binder_element_index].is_binder = true;
+
+    let op_cat = language.category_of_constructor(op_label)?.clone();
+
+    Some(CommRewrite {
+        label: format!("{}::rewrite::{}", language.name, rw.name),
+        op_label: op_label.clone(),
+        op_cat,
+        elements,
+        binder_element_index,
+        nonlinear_var,
+        rest_var,
+        scope_var,
+        arg_var,
+        binder_var_cat,
+        body_cat,
+    })
 }
 
 /// Whether any `PatternTerm::Subst`/`MultiSubst` appears anywhere in a pattern (recursing
@@ -922,6 +1149,14 @@ fn lower_rewrite(
     // `needs_typed_dovetail_path`. (Gated on `enum_id.is_some()` defensively so the String
     // path's behavior is byte-identical.)
     if enum_id.is_some() && is_substitution_rewrite(language, rw).is_some() {
+        return (Vec::new(), Vec::new());
+    }
+    // (A-3) A Comm rewrite is likewise NOT a structural `RewriteRule` — it is lowered as a typed
+    // native rule + dispatch arm (`typed_report`), so it emits NOTHING here and adds NOTHING to
+    // `unsupported`. Gated on `enum_id.is_some()` (typed path only); the `EGraph<String>` path
+    // never routes a Comm rewrite (`needs_typed_dovetail_path` routes it typed), so this is
+    // defensively byte-identical for the String path.
+    if enum_id.is_some() && is_comm_rewrite(language, rw).is_some() {
         return (Vec::new(), Vec::new());
     }
 
@@ -1673,6 +1908,106 @@ mod tests {
             is_substitution_rewrite(&language, rewrite(&language, "Comm")).is_none(),
             "RhoCalc Comm (MultiSubst nested in AC PPar, Map replacement, AC-nested LHS) must NOT \
              be detected as a substitution rewrite"
+        );
+    }
+
+    // ─── A-3: `is_comm_rewrite` shape classifier ────────────────────────────────────────────
+
+    /// The canonical single-receive COMMUNICATION rule
+    /// `(PPar {(PFor N cont), (POutput N Q), ...rest}) ~> (PPar {(eval cont Q), ...rest})` is
+    /// detected, with every `CommRewrite` field derived from `LanguageDef`, and it routes the
+    /// language to the typed native lane.
+    #[test]
+    fn is_comm_rewrite_detects_the_canonical_comm() {
+        let language = parse(
+            r#"
+                name: CommClassify,
+                types { Proc Name }
+                terms {
+                    PZero . |- "0" : Proc ;
+                    Na . |- "na" : Name ;
+                    Nb . |- "nb" : Name ;
+                    Nc . |- "nc" : Name ;
+                    PPar . ps:HashBag(Proc) |- "{" ps.*sep("|") "}" : Proc ;
+                    POutput . n:Name, q:Name |- n "!" "(" q ")" : Proc ;
+                    PFor . n:Name, ^x.p:[Name -> Proc]
+                        |- "for" "(" x "<-" n ")" "{" p "}" : Proc ;
+                }
+                equations {}
+                rewrites {
+                    Comm . |- (PPar {(PFor N cont), (POutput N Q), ...rest})
+                        ~> (PPar {(eval cont Q), ...rest}) ;
+                }
+            "#,
+        );
+        let cr = is_comm_rewrite(&language, rewrite(&language, "Comm"))
+            .expect("Comm must be detected as a Comm rewrite");
+        assert_eq!(cr.op_label.to_string(), "PPar");
+        assert_eq!(cr.op_cat.to_string(), "Proc");
+        assert_eq!(cr.nonlinear_var.to_string(), "N");
+        assert_eq!(cr.rest_var.to_string(), "rest");
+        assert_eq!(cr.scope_var.to_string(), "cont");
+        assert_eq!(cr.arg_var.to_string(), "Q");
+        assert_eq!(cr.binder_var_cat.to_string(), "Name", "the bound variable is a Name");
+        assert_eq!(cr.body_cat.to_string(), "Proc", "the continuation body is a Proc");
+        assert_eq!(cr.elements.len(), 2);
+        // The binder element is `PFor` (its scope is `cont`); `POutput` is the send.
+        let binder = &cr.elements[cr.binder_element_index];
+        assert_eq!(binder.constructor.to_string(), "PFor");
+        assert!(binder.is_binder, "the receive element is a binder");
+        let send = &cr.elements[1 - cr.binder_element_index];
+        assert_eq!(send.constructor.to_string(), "POutput");
+        assert!(!send.is_binder, "the send element is not a binder");
+        // And it routes the language to the typed native lane.
+        assert!(needs_typed_dovetail_path(&language));
+    }
+
+    /// β-reduction (`(App (Lam fun) arg) ~> (eval fun arg)`) is NOT a Comm rewrite — no AC bag, no
+    /// non-linear channel — so `is_comm_rewrite` fail-closes (it stays on the `SubstRewrite` lane).
+    #[test]
+    fn is_comm_rewrite_rejects_lambda_beta() {
+        let language = parse(
+            r#"
+                name: BetaClassify,
+                types { Term }
+                terms {
+                    Lam . ^x.body:[Term -> Term] |- "lam " x "." body : Term;
+                    App . fun:Term, arg:Term |- "(" fun "," arg ")" : Term;
+                }
+                equations {}
+                rewrites { Beta . |- (App (Lam fun) arg) ~> (eval fun arg); }
+            "#,
+        );
+        assert!(
+            is_comm_rewrite(&language, rewrite(&language, "Beta")).is_none(),
+            "β-reduction is not a Comm rewrite (no AC bag / non-linear channel)"
+        );
+    }
+
+    /// A STRUCTURAL non-linear AC rewrite (Ambient's `OpenRule` — the RHS is structural, TWO
+    /// elements, NOT a single substitution) is NOT a Comm rewrite: it stays on the AC lane, so
+    /// `is_comm_rewrite` fail-closes.
+    #[test]
+    fn is_comm_rewrite_rejects_structural_ac() {
+        let language = parse(
+            r#"
+                name: OpenClassify,
+                types { Proc Name }
+                terms {
+                    POpen . Proc ::= "open(" Name "," Proc ")" ;
+                    PAmb . Proc ::= Name "[" Proc "]" ;
+                    PPar . Proc ::= HashBag(Proc) sep "|" delim "{" "}" ;
+                }
+                equations {}
+                rewrites {
+                    OpenRule . |- (PPar {(POpen N P), (PAmb N Q), ...rest})
+                        ~> (PPar {P, Q, ...rest}) ;
+                }
+            "#,
+        );
+        assert!(
+            is_comm_rewrite(&language, rewrite(&language, "OpenRule")).is_none(),
+            "a structural non-linear AC rewrite (RHS is not a single substitution) is not a Comm rewrite"
         );
     }
 

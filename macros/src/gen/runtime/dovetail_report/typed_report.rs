@@ -22,8 +22,8 @@ use syn::Ident;
 use super::op_enum::{self, op_enum_ident, op_variant_ident};
 use super::reconstruct::{self, build_fn};
 use super::{
-    category_lowering_fn, is_substitution_rewrite, lit, rule_block, subst_rewrite_native_lhs,
-    to_snake, typed_lowering, SubstRewrite,
+    category_lowering_fn, is_comm_rewrite, is_substitution_rewrite, lit, rule_block,
+    subst_rewrite_native_lhs, to_snake, typed_lowering, CommElementInfo, CommRewrite, SubstRewrite,
 };
 use crate::gen::term_ops::subst::{collect_category_variants, VariantKind};
 
@@ -156,6 +156,30 @@ fn collect_substitution_rules(language: &LanguageDef, fold_count: usize) -> Vec<
     out
 }
 
+/// (A-3) A Comm rewrite ([`CommRewrite`]) lowered to a typed native rule + dispatch arm, carrying
+/// its assigned `op_id`. The `op_id` counter is SHARED with the folds ∪ substitution rules (Comm
+/// op-ids start at `folds.len() + substs.len()`), so every native rule across all three kinds has a
+/// distinct id and its own dispatch arm.
+struct CommRule {
+    op_id: u32,
+    rewrite: CommRewrite,
+}
+
+/// Collect the language's Comm rewrites ([`is_comm_rewrite`]) as typed native rules, assigning each
+/// an `op_id` STARTING AT `start_op_id` (the shared counter after folds ∪ substitution rules).
+/// Source order is preserved (stable ids).
+fn collect_comm_rules(language: &LanguageDef, start_op_id: usize) -> Vec<CommRule> {
+    let mut out = Vec::new();
+    let mut op_id = start_op_id as u32;
+    for rw in &language.rewrites {
+        if let Some(cr) = is_comm_rewrite(language, rw) {
+            out.push(CommRule { op_id, rewrite: cr });
+            op_id += 1;
+        }
+    }
+    out
+}
+
 /// The `mettail_runtime` native-output numeric-cast reductions (generated cast fold bodies
 /// call these). They return `Option<scalar>` — a `None` defers — but carry no `try` segment,
 /// so they are recognized by name in [`body_returns_option`]. Their object-output siblings
@@ -222,6 +246,7 @@ fn generate_helpers(
     language: &LanguageDef,
     folds: &[FoldRule<'_>],
     substs: &[SubstRule],
+    comms: &[CommRule],
 ) -> TokenStream {
     let enum_id = op_enum_ident(language);
     let mut redex_heads: Vec<TokenStream> = folds
@@ -235,6 +260,17 @@ fn generate_helpers(
     // (e.g. `App(Lam.., ..)`) is heavier than its contractum.
     for s in substs {
         let v = op_variant_ident(&s.rewrite.head_cat, &s.rewrite.head_label);
+        redex_heads.push(quote! { #enum_id::#v });
+    }
+    // (A-3 / MF1) The Comm BINDER (receive) element head — present in the redex bag, CONSUMED by
+    // the COMM (`(PFor N cont)` is gone from `op{ cont[Q/y], ...rest }`) — joins the redex-head
+    // set. So a bag carrying the un-communicated receive is strictly heavier than the communicated
+    // bag, and funded 1-best extraction reports the reduced bag `op{ cont[Q/y], ...rest }` as the
+    // firing's contractum (`resolve_rewrite_justifications` roots the contractum at the firing's
+    // ROOT class), from which the Comm σ-injection recovers `cont[Q/y]`.
+    for c in comms {
+        let element = &c.rewrite.elements[c.rewrite.binder_element_index];
+        let v = op_variant_ident(&element.category, &element.constructor);
         redex_heads.push(quote! { #enum_id::#v });
     }
     let var_pats: Vec<TokenStream> = language
@@ -318,6 +354,7 @@ fn generate_native_rules_and_dispatch(
     language: &LanguageDef,
     folds: &[FoldRule<'_>],
     substs: &[SubstRule],
+    comms: &[CommRule],
 ) -> (TokenStream, TokenStream) {
     let enum_id = op_enum_ident(language);
 
@@ -506,6 +543,21 @@ fn generate_native_rules_and_dispatch(
     let subst_dispatch_arms: Vec<TokenStream> =
         substs.iter().map(|s| subst_dispatch_arm(s)).collect();
 
+    // (A-3) Comm native rules + dispatch arms. Their `op_id`s are disjoint from the folds and
+    // substitution rules (Comm ids start at `folds.len() + substs.len()`), so the dispatch match
+    // has one arm per rule across all three native kinds.
+    let comm_native_rules: Vec<TokenStream> = comms
+        .iter()
+        .map(|c| comm_native_rule(c, &enum_id))
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap_or_else(|reason| {
+            // A Comm rewrite that passed `is_comm_rewrite` but whose LHS does not lower is a
+            // generator bug, surfaced as a build error rather than a silently-missing rule.
+            vec![quote! { compile_error!(#reason); }]
+        });
+    let comm_dispatch_arms: Vec<TokenStream> =
+        comms.iter().map(|c| comm_dispatch_arm(c, &enum_id)).collect();
+
     let dispatch = quote! {
         |__op: ::dovetail::rules::NativeOpId,
          __eg: &mut ::dovetail::egraph::EGraph<#enum_id>,
@@ -514,12 +566,16 @@ fn generate_native_rules_and_dispatch(
             match __op {
                 #(#dispatch_arms)*
                 #(#subst_dispatch_arms)*
+                #(#comm_dispatch_arms)*
                 _ => ::core::option::Option::None,
             }
         }
     };
 
-    (quote! { vec![#(#native_rules,)* #(#subst_native_rules),*] }, dispatch)
+    (
+        quote! { vec![#(#native_rules,)* #(#subst_native_rules,)* #(#comm_native_rules),*] },
+        dispatch,
+    )
 }
 
 /// (E1.4) The `NativeRule` for a substitution rewrite. Its LHS binds the redex (`App(var fun,
@@ -677,6 +733,153 @@ fn subst_dispatch_arm(s: &SubstRule) -> TokenStream {
     }
 }
 
+/// (A-3) The typed AcApp element pattern for one structured Comm element. A BINDER (receive)
+/// element `(Recv pre… scope)` lowers to `[pre-scope children…, BinderArity(1), body]`, so its
+/// pattern binds each pre-scope arg, matches the FIX-A arity marker EXACTLY (single binder ⇒ arity
+/// 1 — `is_comm_rewrite` accepts only single `Binder`s), and binds `scope` (the LAST arg, the
+/// continuation `cont`) to the BODY class. A non-binder (send) element `(Send v_0 …)` binds each
+/// arg positionally. The shared non-linear channel var occurs in BOTH element patterns, so the AC
+/// matcher's `Var` re-bind check enforces `N ≡ N` by e-class equality (A-2).
+fn comm_element_pattern(element: &CommElementInfo, enum_id: &Ident) -> TokenStream {
+    let elem_op = op_variant_ident(&element.category, &element.constructor);
+    if element.is_binder {
+        let (pre, scope) = element
+            .args
+            .split_last()
+            .map(|(scope, pre)| (pre, scope))
+            .expect("a binder element has at least the scope arg");
+        let pre_pats: Vec<TokenStream> = pre
+            .iter()
+            .map(|arg| {
+                let name = lit(&arg.to_string());
+                quote! { ::dovetail::rules::Pattern::var(#name) }
+            })
+            .collect();
+        let scope_lit = lit(&scope.to_string());
+        quote! {
+            ::dovetail::rules::Pattern::app(
+                #enum_id::#elem_op,
+                vec![
+                    #(#pre_pats,)*
+                    ::dovetail::rules::Pattern::leaf(#enum_id::BinderArity(1u32)),
+                    ::dovetail::rules::Pattern::var(#scope_lit),
+                ],
+            )
+        }
+    } else {
+        let arg_pats: Vec<TokenStream> = element
+            .args
+            .iter()
+            .map(|arg| {
+                let name = lit(&arg.to_string());
+                quote! { ::dovetail::rules::Pattern::var(#name) }
+            })
+            .collect();
+        quote! {
+            ::dovetail::rules::Pattern::app(#enum_id::#elem_op, vec![#(#arg_pats),*])
+        }
+    }
+}
+
+/// (A-3) The typed `NativeRule` for a Comm rewrite: its LHS is the AcApp `op{ E0, E1, ...rest }`
+/// with binder-aware element patterns ([`comm_element_pattern`]); its op is the Comm `op_id`
+/// (≥ `folds.len() + substs.len()`); its label is the rewrite's `<Lang>::rewrite::<name>` (matching
+/// the installed Comm σ-receiver's label).
+fn comm_native_rule(c: &CommRule, enum_id: &Ident) -> Result<TokenStream, String> {
+    let op_id = c.op_id;
+    let cr = &c.rewrite;
+    let label = lit(&cr.label);
+    let op_variant = op_variant_ident(&cr.op_cat, &cr.op_label);
+    let fixed: Vec<TokenStream> =
+        cr.elements.iter().map(|e| comm_element_pattern(e, enum_id)).collect();
+    let rest_lit = lit(&cr.rest_var.to_string());
+    Ok(quote! {
+        ::dovetail::rules::NativeRule {
+            lhs: ::dovetail::rules::Pattern::ac(
+                #enum_id::#op_variant,
+                vec![#(#fixed),*],
+                ::core::option::Option::Some(#rest_lit.to_string()),
+            ),
+            op: #op_id,
+            label: ::core::option::Option::Some(#label.to_string()),
+        }
+    })
+}
+
+/// (A-3 — the dropped-`Extractor`-scope-then-mutate discipline) The dispatch arm for a Comm
+/// rewrite. It mirrors the fold/subst arm structure (gate operand classes, extract child
+/// derivations in ONE dropped `Extractor` scope, reconstruct, mutate via the typed lowering), but
+/// realizes the communication reduct + AC splice:
+///
+///  1. bind the continuation `cont` (the binder BODY class — the AcApp pattern binds it via the
+///     3-child binder shape), the sent name `Q`, and (from the AC match) the residual `rest`; gate
+///     `cont` on `__class_is_fold_value` and `Q` on `__class_has_normal_form`;
+///  2. `kth(.., 0)`-extract the `cont`/`Q` child derivations in ONE `Extractor` scope that DROPS
+///     before the mutable `instantiate` (A4 borrow discipline);
+///  3. reconstruct the body, rebuild its binder `Scope` with a FRESH binder (`reconstruct.rs`'s
+///     `Binder` arm — α-equivalent), `unbind` to freshen the bound variable, and reconstruct `Q`;
+///  4. `cont[Q/y]` = `body.substitute_<binder_var_cat>(&binder.0, &Q)` — the host-computed
+///     capture-avoiding substitution (model-b, exactly the Stage 3c binder reduct);
+///  5. lower the reduct and splice `op{ reduct, ...rest }` into ONE flat canonical bag via
+///     `instantiate` (whose `AcApp` RHS handling flattens the `rest` bag into the parallel), and
+///     return the reduced bag's e-class — the contractum the engine merges with the redex bag, from
+///     which `resolve_rewrite_justifications` reports the communicated bag and the Comm σ-injection
+///     recovers `cont[Q/y]`.
+fn comm_dispatch_arm(c: &CommRule, enum_id: &Ident) -> TokenStream {
+    let op_id = c.op_id;
+    let cr = &c.rewrite;
+    let scope_var = lit(&cr.scope_var.to_string());
+    let arg_var = lit(&cr.arg_var.to_string());
+    let rest_var = lit(&cr.rest_var.to_string());
+    let body_build = build_fn(&cr.body_cat);
+    let arg_build = build_fn(&cr.binder_var_cat);
+    let body_add = category_lowering_fn(&cr.body_cat);
+    let single_subst = format_ident!("substitute_{}", to_snake(&cr.binder_var_cat.to_string()));
+    let op_variant = op_variant_ident(&cr.op_cat, &cr.op_label);
+    quote! {
+        #op_id => {
+            // 1. Bind + gate the operand classes.
+            let __ccls = *__subst.get(#scope_var)?;
+            if !__class_is_fold_value(__eg, __ccls) {
+                return ::core::option::Option::None;
+            }
+            let __qcls = *__subst.get(#arg_var)?;
+            if !__class_has_normal_form(__eg, __qcls) {
+                return ::core::option::Option::None;
+            }
+            // 2. Extract the funded 1-best child derivations in ONE dropped `Extractor` scope.
+            let (__cont_d, __q_d) = {
+                let mut __ex = ::dovetail::extract::Extractor::new(&*__eg, __weigh);
+                (
+                    __ex.kth(__eg.find(__ccls), 0).value?,
+                    __ex.kth(__eg.find(__qcls), 0).value?,
+                )
+            };
+            // 3. Reconstruct the body, rebuild its binder scope (FRESH binder), unbind, reconstruct Q.
+            let __body = #body_build(&__cont_d)?;
+            let __binder = ::mettail_runtime::Binder(::mettail_runtime::FreeVar::fresh_unnamed());
+            let __scope = ::mettail_runtime::Scope::from_parts_unsafe(
+                __binder,
+                ::std::sync::Arc::new(__body),
+            );
+            let (__b, __open_body) = __scope.unbind();
+            let __arg = #arg_build(&__q_d)?;
+            // 4. cont[Q/y] — host-computed capture-avoiding substitution (model-b).
+            let __reduct = (*__open_body).#single_subst(&__b.0, &__arg);
+            // 5. Splice op{ reduct, ...rest } into one flat canonical bag and return its class.
+            let __reduct_class = #body_add(__eg, &__reduct);
+            let mut __rhs_subst = __subst.clone();
+            __rhs_subst.insert(::std::string::String::from("__comm_reduct"), __reduct_class);
+            let __rhs_pat = ::dovetail::rules::Pattern::ac(
+                #enum_id::#op_variant,
+                ::std::vec![::dovetail::rules::Pattern::var("__comm_reduct")],
+                ::core::option::Option::Some(#rest_var.to_string()),
+            );
+            __eg.instantiate(&__rhs_pat, &__rhs_subst)
+        }
+    }
+}
+
 /// (E2.2) Generate the `dovetail_normal_term` method body for a fold-bearing language.
 ///
 /// `dovetail_normal_term(term, max_iters, max_nodes) -> Result<Box<dyn Term>, String>` reuses
@@ -713,9 +916,13 @@ fn generate_dovetail_normal_term(language: &LanguageDef, struct_slack: usize) ->
     // `folds.len()`), so the helpers (redex-head set) and the native-rule/dispatcher generator
     // both see folds ∪ substitution rules.
     let substs = collect_substitution_rules(language, folds.len());
-    let helpers = generate_helpers(language, &folds, &substs);
+    // (A-3) Comm rewrites share the native op-id counter with the folds ∪ substitution rules (ids
+    // start at `folds.len() + substs.len()`), so the helpers (redex-head set) and the
+    // native-rule/dispatcher generator both see folds ∪ substitution rules ∪ Comm rules.
+    let comms = collect_comm_rules(language, folds.len() + substs.len());
+    let helpers = generate_helpers(language, &folds, &substs, &comms);
     let (native_rules_expr, dispatch) =
-        generate_native_rules_and_dispatch(language, &folds, &substs);
+        generate_native_rules_and_dispatch(language, &folds, &substs, &comms);
     let (rules_expr, _unsupported) = rule_block(language, Some(&enum_id));
 
     let primary_cat = &language.types.first().expect("language has a type").name;
@@ -975,9 +1182,13 @@ fn generate_step_graph(language: &LanguageDef) -> TokenStream {
 
     let folds = collect_fold_rules(language);
     let substs = collect_substitution_rules(language, folds.len());
-    let helpers = generate_helpers(language, &folds, &substs);
+    // (A-3) Comm rewrites share the native op-id counter with the folds ∪ substitution rules (ids
+    // start at `folds.len() + substs.len()`), so the helpers (redex-head set) and the
+    // native-rule/dispatcher generator both see folds ∪ substitution rules ∪ Comm rules.
+    let comms = collect_comm_rules(language, folds.len() + substs.len());
+    let helpers = generate_helpers(language, &folds, &substs, &comms);
     let (native_rules_expr, dispatch) =
-        generate_native_rules_and_dispatch(language, &folds, &substs);
+        generate_native_rules_and_dispatch(language, &folds, &substs, &comms);
     let (rules_expr, _unsupported) = rule_block(language, Some(&enum_id));
 
     let primary_cat = &language.types.first().expect("language has a type").name;
@@ -1428,9 +1639,13 @@ pub(crate) fn generate_typed_dovetail_report(language: &LanguageDef) -> TokenStr
     // `folds.len()`), so the helpers (redex-head set) and the native-rule/dispatcher generator
     // both see folds ∪ substitution rules.
     let substs = collect_substitution_rules(language, folds.len());
-    let helpers = generate_helpers(language, &folds, &substs);
+    // (A-3) Comm rewrites share the native op-id counter with the folds ∪ substitution rules (ids
+    // start at `folds.len() + substs.len()`), so the helpers (redex-head set) and the
+    // native-rule/dispatcher generator both see folds ∪ substitution rules ∪ Comm rules.
+    let comms = collect_comm_rules(language, folds.len() + substs.len());
+    let helpers = generate_helpers(language, &folds, &substs, &comms);
     let (native_rules_expr, dispatch) =
-        generate_native_rules_and_dispatch(language, &folds, &substs);
+        generate_native_rules_and_dispatch(language, &folds, &substs, &comms);
     // Typed structural rules (congruence is automatic; Comm/Extrude rules that belong to the
     // RhoNativeJoin boundary land in the dropped `unsupported` — NON-FATAL on the fold path).
     let (rules_expr, _unsupported) = rule_block(language, Some(&enum_id));
@@ -1549,12 +1764,18 @@ pub(crate) fn generate_typed_dovetail_report(language: &LanguageDef) -> TokenStr
     // enum), so its report is produced by this body — the non-typed gate never runs for it. Without
     // this, the native fold fires in the e-graph but the report carries no `rewrite_justifications`,
     // so the native σ-injection F-fn has no firing (and no contractum) to read.
+    // Stage 3b / A-3: the COMM family (`rho_net_comm_injection_sites`) matters HERE — a canonical
+    // single-receive Rholang communication rewrite (a non-linear AC over a binder element with a
+    // nested-substitution RHS) reduces on THIS typed native lane, so its report is produced by this
+    // body. Without carrying its resolved σ + contractum, the runtime Comm σ-injection F-fn would
+    // have no firing to read (the hand-built-σ deviation this campaign removes).
     let populate_rewrite_justifications =
         !mettail_rholang_codegen::rho_net_injection_sites(language).is_empty()
             || !mettail_rholang_codegen::rho_net_ac_injection_sites(language).is_empty()
             || !mettail_rholang_codegen::rho_net_contextual_injection_sites(language).is_empty()
             || !mettail_rholang_codegen::rho_net_subst_injection_sites(language).is_empty()
-            || !mettail_rholang_codegen::rho_net_native_injection_sites(language).is_empty();
+            || !mettail_rholang_codegen::rho_net_native_injection_sites(language).is_empty()
+            || !mettail_rholang_codegen::rho_net_comm_injection_sites(language).is_empty();
     // The report `let` binding (mut only when we populate σ), the σ-resolution statement (resolves
     // σ + the firing CONTRACTUM under the SAME `__weigh` cost model the roots use, so the
     // contractum is the reduct the extractor reports — model-b: the host computed the

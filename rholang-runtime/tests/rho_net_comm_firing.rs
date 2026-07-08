@@ -44,7 +44,7 @@ use mettail_rholang_codegen::{
     RhoCoverageEvidence, RhoDefaultBackendRequirements, RhoGuardCoverageEvidence,
 };
 use mettail_rholang_runtime::PlannedRhoBackend;
-use mettail_runtime::{Language, RuntimeObservationValue};
+use mettail_runtime::{Language, RuntimeObservationValue, RuntimeReflectedSubterm};
 
 /// Reconstruct CommDemo's augmented `LanguageDef`, plan its Rho-default backend (the `Comm`
 /// non-linear AC σ-receiver installs alongside the structural constructors), and return the planned
@@ -110,6 +110,89 @@ fn output_value(chan: &str, val: &str) -> RuntimeObservationValue {
         constructor: "POutput".to_string(),
         children: vec![leaf(chan), leaf(val)],
     }
+}
+
+/// A nullary `RuntimeReflectedSubterm`, e.g. the Name `Nb`.
+fn reflected_nullary(constructor: &str) -> RuntimeReflectedSubterm {
+    RuntimeReflectedSubterm { constructor: constructor.to_string(), children: Vec::new() }
+}
+
+/// `POutput(chan, val)` as a reflected σ/contractum sub-term.
+fn reflected_output(chan: &str, val: &str) -> RuntimeReflectedSubterm {
+    RuntimeReflectedSubterm {
+        constructor: "POutput".to_string(),
+        children: vec![reflected_nullary(chan), reflected_nullary(val)],
+    }
+}
+
+/// (A-3 GATE) `dovetail_report_for(CommDemo subject)` now PRODUCES the Comm justification — the
+/// AUTOMATED Dovetail pipeline drives the RhoCalc `Comm` rule, removing the hand-built-σ workaround.
+///
+/// The redex `{ for(y <- na){ y!(nc) } | na!(nb) }` (both channels `na`) reduces on the typed native
+/// lane: the Comm native rule AC-matches the non-linear soup (`N ≡ N` by e-class equality), the
+/// dispatch host-computes `cont[Q/y] = (y!(nc))[nb/y] = nb!(nc)` (model-b) and splices it into the
+/// residual (here empty) bag. The sole `rewrite_justifications` entry is the `Comm` firing whose:
+///   * σ reconstructs the operand bag — it binds the channel `N = na`, the continuation `cont`, the
+///     sent name `Q = nb`, and the residual `rest` (an empty `PPar` bag);
+///   * CONTRACTUM is the communicated bag `PPar{ nb!(nc) }`, whose sole element is `cont[Q/y]`.
+/// This is the report the Comm σ-injection (A-4) reads INSTEAD of the hand-built `comm_contract_call`.
+#[test]
+fn commdemo_dovetail_report_produces_the_comm_justification() {
+    mettail_runtime::clear_var_cache();
+    let term = CommDemoLanguage
+        .parse_term("{ for(y <- na){ y!(nc) } | na!(nb) }")
+        .expect("CommDemo must parse the Comm redex");
+
+    let report = CommDemoLanguage::dovetail_report_for(term.as_ref(), 64, 1_000_000)
+        .expect("CommDemo Dovetail report must compile on the typed native lane");
+    assert!(
+        report.is_complete(),
+        "the acyclic Comm reduction must report Complete, got {:?}",
+        report.completeness
+    );
+    assert_eq!(
+        report.rewrite_justifications.len(),
+        1,
+        "exactly one Comm firing must be recorded, got {:?}",
+        report.rewrite_justifications
+    );
+    let justification = &report.rewrite_justifications[0];
+    assert_eq!(justification.rule_label, "Comm", "the fired rule is Comm");
+
+    // σ reconstructs the operand bag: N (channel), cont (continuation), Q (sent name), rest.
+    let sigma = |name: &str| {
+        justification
+            .sigma
+            .iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, subterm)| subterm)
+            .unwrap_or_else(|| panic!("σ must bind {name}, got {:?}", justification.sigma))
+    };
+    assert_eq!(sigma("N").constructor, "Na", "the non-linear channel N is `na`");
+    assert_eq!(sigma("Q").constructor, "Nb", "the sent name Q is `nb`");
+    assert_eq!(sigma("rest").constructor, "PPar", "rest is the residual PPar bag");
+    assert!(sigma("rest").children.is_empty(), "the residual bag is empty here");
+    // `cont` (the receive continuation) is bound too — the binder body the dispatch substitutes.
+    let _ = sigma("cont");
+
+    // The CONTRACTUM is the communicated bag `PPar{ cont[Q/y] }`; its sole element (rest empty) is
+    // `cont[nb/y] = nb!(nc) = POutput(Nb, Nc)` — the host-computed reduct the σ-injection reflects.
+    let contractum = justification
+        .contractum
+        .as_ref()
+        .expect("the Comm firing carries a contractum (the communicated bag)");
+    assert_eq!(contractum.constructor, "PPar", "the contractum is the reduced bag");
+    assert_eq!(
+        contractum.children.len(),
+        1,
+        "empty rest ⇒ a singleton communicated bag, got {contractum:?}"
+    );
+    assert_eq!(
+        contractum.children[0],
+        reflected_output("Nb", "Nc"),
+        "the communicated element is cont[Q/y] = nb!(nc), got {:?}",
+        contractum.children[0]
+    );
 }
 
 /// POSITIVE (empty rest): `{ for(y <- na){ y!(nc) } | na!(nb) }` — both channels `na` — fires as ONE
