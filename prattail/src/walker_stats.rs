@@ -2897,6 +2897,124 @@ pub fn wpda_state_class(state: &crate::wpda_runtime::WpdaState) -> usize {
     }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// ★ GLL-FLOOR SHADOW RECOGNIZER — control + measurement thread-local
+//   (investigation a166789b, Stage-0 gate validation BEFORE any wiring).
+//
+//   This module is the ACTIVE recognizer control. When `Mode != Off`, the
+//   walker's `merge_equivalent_cursors` swaps the derivation-provenance-bearing
+//   `ConfigKey` for a COARSE GLL-floor merge key (SLOT or LITERAL), turning the
+//   SAME automaton (transition fn, GSS, lexer) into a coarse-keyed RECOGNIZER:
+//   distinct fine derivations that share a coarse key COLLAPSE to one bucket
+//   (keep-one representative). The parse is then run exactly as normal (via the
+//   ordinary facade `Cat::parse`), and its Ok/Err is read as the recognizer
+//   verdict Reachable/Unreachable.
+//
+//   SOUNDNESS-BY-CONSTRUCTION of the validation (the reachability-⊆ lemma):
+//   the ONLY change vs the real parser is the merge KEY. The real parser is
+//   itself a keep-one merge on the FINE key with edge-guided pop. This coarse
+//   recognizer is keep-one on a COARSE key with the SAME edge-guided pop. A
+//   keep-one-coarse recognizer explores a SUBSET of the reachability of the
+//   task's true UNION / pop_all_predecessors-fan-out recognizer (fan-out only
+//   ADDS pop targets, never removes). Hence:  keep-one-coarse Reachable  ⟹
+//   fan-out Reachable.  So if this (harsher) keep-one recognizer is Reachable
+//   on every parseable span (G0-SOUND), the true fan-out recognizer is too —
+//   a CONSERVATIVE, sound validation of G0-SOUND. (Conversely a keep-one
+//   Unreachable is inconclusive for fan-out — reported as such.)
+//
+//   ZERO effect on the real parse: `Mode::Off` (the default, and the only
+//   value without a harness explicitly opting in) leaves the merge key at the
+//   exact `ConfigKey` path. Feature-gated `walker-stats`.
+#[cfg(feature = "walker-stats")]
+pub mod recog {
+    use std::cell::Cell;
+
+    /// Which coarse merge key the recognizer uses (or `Off` = real parser).
+    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+    pub enum Mode {
+        /// Real parser — full `ConfigKey` (derivation-provenance retained).
+        Off,
+        /// SLOT key: `(WpdaState, gss-node, pos, collection_depth, cohort.equiv())`
+        /// — the fine ConfigKey MINUS the derivation-provenance block
+        /// (incoming-edge / edge-stack, sppf_top / sppf_stack, lex_* stamps).
+        Slot,
+        /// LITERAL key AS SPECIFIED by the design under test:
+        /// `(state_class, node_class, pos, collection_depth, bp_floor)`.
+        Literal,
+        /// DIAGNOSTIC: SLOT + the edge-stack (incoming_edge + incoming_edge_stack)
+        /// — i.e. drops ONLY the sppf_* + lex_* axes, RETAINING the pop-routing
+        /// edge-stack. Used to localize keep-one SLOT false-rejects: if `SlotEdge`
+        /// is sound where `Slot` false-rejects, the lost config was a POP TARGET
+        /// (which the task's `pop_all_predecessors` fan-out recovers without the
+        /// edge-stack), and `SlotEdge`'s frontier reveals the edge-stack blow-up
+        /// that fan-out is needed to avoid.
+        SlotEdge,
+        /// DIAGNOSTIC: SLOT + the SINGLE `incoming_edge` (one `GssEdgeId`) but
+        /// NOT the `incoming_edge_stack`. Isolates whether the cheap,
+        /// grammar-bounded single pop-routing edge suffices for SOUNDNESS
+        /// without the exponential cross-product edge-STACK. If `SlotEdge1` is
+        /// sound (0 false-rejects) AND poly (flat frontier) it is the wireable
+        /// non-parseability oracle; if it is unsound where `SlotEdge` is sound,
+        /// the edge-STACK (not just the single edge) is load-bearing and the
+        /// `pop_all_predecessors` fan-out is required instead.
+        SlotEdge1,
+        /// THE WIREABLE ORACLE: SLOT merge key (identical to `Slot`) PLUS pop
+        /// FAN-OUT over `pop_all_predecessors` (Tomita fork-on-pop) at every
+        /// pop. Recovers the pop-target reachability that keep-one `Slot` loses
+        /// (the 3 trailing-comma false-rejects) while keeping the Slot-column
+        /// polynomial frontier — the edge-stack cross-product is never
+        /// materialized. Drives the same fan-out path the production
+        /// `recognizer_mode` oracle uses; this harness variant validates it
+        /// (G0-SOUND 0-false-reject + G0-POLY tracks Slot not SlotEdge).
+        SlotFanout,
+    }
+
+    thread_local! {
+        static MODE: Cell<Mode> = const { Cell::new(Mode::Off) };
+        static PEAK: Cell<u64> = const { Cell::new(0) };
+        static STEPS: Cell<u64> = const { Cell::new(0) };
+    }
+
+    /// Activate/deactivate the recognizer for the current thread. The harness
+    /// calls `set(Mode::Slot|Literal)` before `Cat::parse`, then `set(Mode::Off)`.
+    #[inline]
+    pub fn set(m: Mode) {
+        MODE.with(|c| c.set(m));
+    }
+    #[inline]
+    pub fn get() -> Mode {
+        MODE.with(|c| c.get())
+    }
+    #[inline]
+    pub fn is_active() -> bool {
+        get() != Mode::Off
+    }
+
+    /// Reset the per-parse frontier peak + merge-tier step count.
+    #[inline]
+    pub fn reset_peak() {
+        PEAK.with(|c| c.set(0));
+        STEPS.with(|c| c.set(0));
+    }
+    /// Record one merge tier's POST-merge frontier size (the recognizer's
+    /// coarse-keyed frontier — the G0-POLY metric).
+    #[inline]
+    pub fn record_frontier(n: u64) {
+        PEAK.with(|c| c.set(c.get().max(n)));
+        STEPS.with(|c| c.set(c.get().saturating_add(1)));
+    }
+    /// Peak post-merge coarse frontier size observed this parse.
+    #[inline]
+    pub fn peak() -> u64 {
+        PEAK.with(|c| c.get())
+    }
+    /// Number of merge tiers observed this parse (a proxy for total steps).
+    #[inline]
+    pub fn steps() -> u64 {
+        STEPS.with(|c| c.get())
+    }
+}
+
 /// Increment slot `$idx` of a dimensioned `[u64; N]` counter on
 /// `self.stats` (zero-cost when feature off). The P-series partitioned-
 /// counter primitive (round-2 m-1: `stats_inc!` cannot index).
@@ -3138,6 +3256,243 @@ pub mod fork_kind_index {
     pub const LEX_ALT_INFIX_OP: usize = 12;
     pub const LEX_ALT_MIXFIX_OP: usize = 13;
     pub const OTHER: usize = 14;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ★ GLL-FLOOR SHADOW RECOGNIZER (investigation a166789b, Stage 0 — VALIDATION
+//   BEFORE WIRING). Gated `walker-stats` + activated per-parse via `reset(true)`.
+//
+//   PURPOSE. Validate the architecture-native NON-PARSEABILITY ORACLE hypothesis:
+//   RECOGNITION (∃ a parse?) is strictly weaker than PARSING, so the SAME
+//   automaton run as a coarse-keyed RECOGNIZER can reject genuinely-unparseable
+//   spans in polynomial time (a one-sided oracle: Unreachable ⇒ non-parseable;
+//   Reachable ⇒ run the full parser). This module is a MEASURE-ONLY shadow: it
+//   reads the walker's merge-tier frontier + EOI-accept configs and computes, in
+//   parallel to the real parse, the coarse-frontier reachability signals. It
+//   writes ONLY into this module's thread-local store — ZERO effect on the real
+//   parse (byte-identical). It is a piggyback traversal over the REAL walker's
+//   projected frontier, NOT an independent re-implementation of the transition
+//   relation.
+//
+//   THREE KEYS are projected from each live cursor and measured side-by-side:
+//     • GLL_FLOOR  `(state_class, node_class, pos, coll_depth)` — the EXISTING
+//       `bcc_shadow_peak_gll_floor` key (no binding-power axis).
+//     • LITERAL    GLL_FLOOR + `bp_floor` — the coarse key AS LITERALLY
+//       SPECIFIED `(state-class, node-class, pos, collection-depth, bp-floor)`.
+//     • SLOT       `(WpdaState, node StackSymbolV2, pos, coll_depth,
+//       cohort_origin.equiv())` — the fine `ConfigKey` MINUS the
+//       derivation-provenance block. This is the GLL GRAMMAR SLOT: the minimal
+//       key the G0-MONOTONE audit predicts is required for a SOUND recognizer.
+//       Grammar-bounded ⇒ polynomial.
+//
+//   OVER-MERGE = the number of LITERAL buckets that collapse ≥2 DISTINCT SLOT
+//   keys — a config where the literal coarse key CANNOT distinguish two
+//   genuinely-distinct grammar slots. A keep-one recognizer on the LITERAL key
+//   would retain one representative and LOSE the others' transitions → potential
+//   FALSE-REJECT. On a PARSEABLE corpus, OVER-MERGE is the empirical failable
+//   soundness signal: 0 ⇒ literal ≡ slot ⇒ empirically sound; >0 ⇒ the literal
+//   key conflates distinct slots (necessary condition for a false-reject; the
+//   static G0-MONOTONE audit confirms these fields gate transitions). SLOT never
+//   over-merges (it IS the slot) ⇒ the sound key by construction.
+#[cfg(feature = "walker-stats")]
+pub mod gll_recog {
+    use crate::dispatch_cohort::EquivKey;
+    use crate::gss::NodeClass;
+    use crate::wpda_runtime::{StackSymbolV2, WpdaState};
+    use std::cell::RefCell;
+    use std::collections::{HashMap, HashSet};
+
+    /// The EXISTING GLL invariant floor `(state_class, node_class, pos,
+    /// collection_depth)` — no binding-power axis (== `bcc_shadow_peak_gll_floor`).
+    pub type GllFloorKey = (usize, NodeClass, usize, usize);
+
+    /// The coarse key AS LITERALLY SPECIFIED: GLL_FLOOR + `bp_floor`
+    /// (`state_binding_power_floor`).
+    pub type LiteralKey = (usize, NodeClass, usize, usize, Option<u8>);
+
+    /// The fine `ConfigKey` with the DERIVATION-PROVENANCE block dropped: the
+    /// GLL grammar slot. Retains the full state + node grammar identity + cohort
+    /// (all grammar-bounded); drops incoming-edge-stack, sppf_top/sppf_stack,
+    /// and the lex_* disambiguation stamps.
+    #[derive(Clone, PartialEq, Eq, Hash)]
+    pub struct SlotKey {
+        pub state: WpdaState,
+        pub node_symbol: Option<StackSymbolV2>,
+        pub pos: usize,
+        pub coll_depth: usize,
+        pub cohort: Option<EquivKey>,
+    }
+
+    /// One projected cursor: its three keys, computed walker-side.
+    pub type Item = (GllFloorKey, LiteralKey, SlotKey);
+
+    #[derive(Default)]
+    struct State {
+        active: bool,
+        merge_calls: u64,
+        peak_fine: u64,       // peak pre-merge frontier size (drained.len())
+        peak_gll_floor: u64,  // peak distinct GLL_FLOOR keys at a merge
+        peak_literal: u64,    // peak distinct LITERAL keys at a merge
+        peak_slot: u64,       // peak distinct SLOT keys at a merge  (POLY metric)
+        overmerge_pairs: u64, // Σ over LITERAL buckets of (distinct SLOTs − 1)
+        overmerge_buckets: u64,
+        bp_recovered_pairs: u64, // Σ over GLL_FLOOR buckets of (distinct LITERALs − 1)
+        reach_literal: HashSet<LiteralKey>,
+        reach_slot: HashSet<SlotKey>,
+        accept_slot_reached: bool,
+        accept_literal_reached: bool,
+        first_overmerge: Option<String>,
+    }
+
+    thread_local! {
+        static STATE: RefCell<State> = RefCell::new(State::default());
+    }
+
+    /// Begin observing a fresh parse. `active=false` fully disables observation.
+    /// Resets ALL per-parse state.
+    #[inline]
+    pub fn reset(active: bool) {
+        STATE.with(|s| {
+            *s.borrow_mut() = State {
+                active,
+                ..State::default()
+            };
+        });
+    }
+
+    /// True iff a parse is currently being observed (the walker checks this
+    /// before doing any projection work).
+    #[inline]
+    pub fn is_active() -> bool {
+        STATE.with(|s| s.borrow().active)
+    }
+
+    /// Observe one merge-tier frontier: the walker passes the three projected
+    /// keys per live (drained) cursor. Updates peaks, over-merge counts, and the
+    /// accumulated reachability sets.
+    pub fn observe_frontier(items: &[Item]) {
+        STATE.with(|s| {
+            let mut st = s.borrow_mut();
+            if !st.active {
+                return;
+            }
+            st.merge_calls = st.merge_calls.saturating_add(1);
+            st.peak_fine = st.peak_fine.max(items.len() as u64);
+
+            let gll: HashSet<&GllFloorKey> = items.iter().map(|(g, _, _)| g).collect();
+            let lit: HashSet<&LiteralKey> = items.iter().map(|(_, l, _)| l).collect();
+            let slot: HashSet<&SlotKey> = items.iter().map(|(_, _, sl)| sl).collect();
+            st.peak_gll_floor = st.peak_gll_floor.max(gll.len() as u64);
+            st.peak_literal = st.peak_literal.max(lit.len() as u64);
+            st.peak_slot = st.peak_slot.max(slot.len() as u64);
+
+            // OVER-MERGE: group SLOTs by LITERAL. A LITERAL bucket with ≥2
+            // distinct SLOTs conflates distinct grammar slots.
+            let mut by_lit: HashMap<&LiteralKey, HashSet<&SlotKey>> =
+                HashMap::with_capacity(lit.len());
+            for (_g, l, sl) in items {
+                by_lit.entry(l).or_default().insert(sl);
+            }
+            for (l, slots) in &by_lit {
+                if slots.len() >= 2 {
+                    st.overmerge_buckets = st.overmerge_buckets.saturating_add(1);
+                    st.overmerge_pairs =
+                        st.overmerge_pairs.saturating_add((slots.len() - 1) as u64);
+                    if st.first_overmerge.is_none() {
+                        let detail = slots
+                            .iter()
+                            .map(|sk| {
+                                format!(
+                                    "{{state={:?}, node={:?}, cohort={:?}}}",
+                                    sk.state, sk.node_symbol, sk.cohort
+                                )
+                            })
+                            .collect::<Vec<_>>()
+                            .join("  ||  ");
+                        st.first_overmerge = Some(format!(
+                            "LITERAL {:?} conflates {} distinct SLOTs: {}",
+                            l,
+                            slots.len(),
+                            detail
+                        ));
+                    }
+                }
+            }
+
+            // bp-recovery: how much the bp_floor axis alone refines GLL_FLOOR.
+            let mut by_gll: HashMap<&GllFloorKey, HashSet<&LiteralKey>> =
+                HashMap::with_capacity(gll.len());
+            for (g, l, _sl) in items {
+                by_gll.entry(g).or_default().insert(l);
+            }
+            for (_g, lits) in &by_gll {
+                if lits.len() >= 2 {
+                    st.bp_recovered_pairs =
+                        st.bp_recovered_pairs.saturating_add((lits.len() - 1) as u64);
+                }
+            }
+
+            for (_g, l, sl) in items {
+                st.reach_literal.insert(*l);
+                st.reach_slot.insert(sl.clone());
+            }
+        });
+    }
+
+    /// Observe an EOI-accepting configuration (recognizer verdict = Reachable).
+    pub fn observe_accept(lit: LiteralKey, slot: SlotKey) {
+        STATE.with(|s| {
+            let mut st = s.borrow_mut();
+            if !st.active {
+                return;
+            }
+            st.accept_literal_reached = true;
+            st.accept_slot_reached = true;
+            st.reach_literal.insert(lit);
+            st.reach_slot.insert(slot);
+        });
+    }
+
+    /// Per-parse readout.
+    #[derive(Debug, Clone, Default)]
+    pub struct Snapshot {
+        pub merge_calls: u64,
+        pub peak_fine: u64,
+        pub peak_gll_floor: u64,
+        pub peak_literal: u64,
+        pub peak_slot: u64,
+        pub overmerge_pairs: u64,
+        pub overmerge_buckets: u64,
+        pub bp_recovered_pairs: u64,
+        pub reach_literal_size: u64,
+        pub reach_slot_size: u64,
+        /// Recognizer verdict (piggyback): an EOI-accepting config was observed.
+        pub accept_slot_reached: bool,
+        pub accept_literal_reached: bool,
+        pub first_overmerge: Option<String>,
+    }
+
+    /// Read the current parse's signals.
+    pub fn snapshot() -> Snapshot {
+        STATE.with(|s| {
+            let st = s.borrow();
+            Snapshot {
+                merge_calls: st.merge_calls,
+                peak_fine: st.peak_fine,
+                peak_gll_floor: st.peak_gll_floor,
+                peak_literal: st.peak_literal,
+                peak_slot: st.peak_slot,
+                overmerge_pairs: st.overmerge_pairs,
+                overmerge_buckets: st.overmerge_buckets,
+                bp_recovered_pairs: st.bp_recovered_pairs,
+                reach_literal_size: st.reach_literal.len() as u64,
+                reach_slot_size: st.reach_slot.len() as u64,
+                accept_slot_reached: st.accept_slot_reached,
+                accept_literal_reached: st.accept_literal_reached,
+                first_overmerge: st.first_overmerge.clone(),
+            }
+        })
+    }
 }
 
 #[cfg(test)]

@@ -1856,6 +1856,27 @@ pub struct WpdaWalker<W: SemiringRef, E: WpdaEngine<W>> {
     /// deferred drains or replay journal, the walker can resume this direct
     /// singleton mode.
     deterministic: bool,
+    /// ★ RECOGNIZER ORACLE (investigation a166789b). When `true` the walker
+    /// runs as a coarse NON-PARSEABILITY RECOGNIZER: `merge_equivalent_cursors`
+    /// coarsens the merge key to the GLL SLOT (dropping the derivation-provenance
+    /// block), and every pop FANS OUT over `pop_all_predecessors(node)` (Tomita
+    /// fork-on-pop) instead of following the cursor's single recorded edge. This
+    /// recovers pop-target reachability that keep-one-Slot would lose (sound:
+    /// fan-out ⊇ SlotEdge ⊇ true-parser) while keeping the frontier polynomial
+    /// (the edge-stack cross-product is never materialized). The real parse
+    /// leaves this `false` ⇒ byte-identical. Set via `set_recognizer_mode`.
+    recognizer_mode: bool,
+    /// Set to `true` ONLY while stepping a NON-canonical fanned-pop child (an
+    /// "extra" out-edge beyond the cursor's own recorded edge). Gates the
+    /// cohort-RESOLVE writes (CrossCatProjection / CrossCatLhs `live_lineages`
+    /// decrement + resolve / CrossCatLhsReentry resolve, and the
+    /// `emit_fire_action` body-origin resolves) so an extra child does not
+    /// double-decrement lineages, overflow the snapshot cap, or pollute the
+    /// cohort cache. Control-flow (node/pos/state/collection-depth) is left
+    /// intact, so the extra still explores its pop target — over-approximation
+    /// only, never under (soundness-preserving). Always `false` outside a
+    /// recognizer fanned pop ⇒ byte-identical to the real parse.
+    pop_fanout_suppress_resolve: bool,
     /// Stage 7+ Fork plan, step 2: per-branch micro-state during
     /// `WpdaState::AmbiguityFanout`. Each entry is a `BranchCursor` that
     /// pairs a GSS-tip node id with the branch's own `pos`, accumulated
@@ -5369,6 +5390,8 @@ where
             // driver flips this true at entry; cleared elsewhere.
             single_result_demand: false,
             deterministic: true,
+            recognizer_mode: false,
+            pop_fanout_suppress_resolve: false,
             branch_cursors: vec![crate::cohort_lazy::Frame::Concrete(initial_cursor)],
             step_counter: 0,
             recovery_events: Vec::new(),
@@ -5489,6 +5512,8 @@ where
             // driver flips this true at entry; cleared elsewhere.
             single_result_demand: false,
             deterministic: true,
+            recognizer_mode: false,
+            pop_fanout_suppress_resolve: false,
             branch_cursors: vec![crate::cohort_lazy::Frame::Concrete(initial_cursor)],
             step_counter: 0,
             recovery_events: Vec::new(),
@@ -5608,6 +5633,8 @@ where
             // driver flips this true at entry; cleared elsewhere.
             single_result_demand: false,
             deterministic: true,
+            recognizer_mode: false,
+            pop_fanout_suppress_resolve: false,
             branch_cursors: vec![crate::cohort_lazy::Frame::Concrete(initial_cursor)],
             step_counter: 0,
             recovery_events: Vec::new(),
@@ -6381,6 +6408,32 @@ where
         self.recovery_config = recovery_config;
     }
 
+    /// ★ RECOGNIZER ORACLE (a166789b): enable coarse Slot-merge + pop fan-out.
+    /// The real parser never calls this ⇒ default `false` ⇒ byte-identical.
+    #[inline]
+    pub fn set_recognizer_mode(&mut self, on: bool) {
+        self.recognizer_mode = on;
+    }
+
+    /// Do pops FAN OUT over all predecessors (Tomita fork-on-pop)? True under
+    /// the production `recognizer_mode` flag OR (walker-stats only) the
+    /// `recog::SlotFanout` harness mode. `false` on the real parse ⇒ pops route
+    /// via the cursor's single recorded edge exactly as today.
+    #[inline]
+    fn recognizer_pop_fanout(&self) -> bool {
+        if self.recognizer_mode {
+            return true;
+        }
+        #[cfg(feature = "walker-stats")]
+        {
+            crate::walker_stats::recog::get() == crate::walker_stats::recog::Mode::SlotFanout
+        }
+        #[cfg(not(feature = "walker-stats"))]
+        {
+            false
+        }
+    }
+
     /// Builder-style variant of [`set_recovery_config`](Self::set_recovery_config).
     pub fn with_recovery_config(mut self, recovery_config: RecoveryConfig) -> Self {
         self.set_recovery_config(recovery_config);
@@ -7093,6 +7146,36 @@ where
                 if variant.recovery_depth > 0 && !self.accept_root_covers_input_start(root, tokens)
                 {
                     continue;
+                }
+                // ★ GLL-FLOOR SHADOW RECOGNIZER (investigation a166789b, Stage 0):
+                // record this EOI-accepting config's coarse accept keys — the
+                // recognizer verdict is Reachable. Byte-identical: writes only
+                // the gll_recog thread-local. Gated walker-stats + reset(true).
+                #[cfg(feature = "walker-stats")]
+                if crate::walker_stats::gll_recog::is_active() {
+                    let node_symbol = self.gss.node(variant.node).map(|n| n.symbol);
+                    let node_class = node_symbol.map(|s| crate::gss::node_class(&s)).unwrap_or(
+                        crate::gss::NodeClass {
+                            shape: crate::gss::ContinuationShape::OperandOrReturn,
+                            coll_dispatch_bp: None,
+                            goal_src_idx: None,
+                        },
+                    );
+                    let state_class = crate::walker_stats::wpda_state_class(&variant.inner_state);
+                    let bpf = Self::state_binding_power_floor(&variant.inner_state);
+                    let pos = variant.pos;
+                    let cd = variant.collection_stack_depth as usize;
+                    let cohort = variant.cohort_origin.as_ref().map(|k| k.equiv());
+                    crate::walker_stats::gll_recog::observe_accept(
+                        (state_class, node_class, pos, cd, bpf),
+                        crate::walker_stats::gll_recog::SlotKey {
+                            state: variant.inner_state.clone(),
+                            node_symbol,
+                            pos,
+                            coll_depth: cd,
+                            cohort,
+                        },
+                    );
                 }
                 snapshot.accepting.push(EoiCursorCandidate {
                     weight: variant.weight.clone(),
@@ -9873,6 +9956,12 @@ where
         sppf_id: crate::sppf::SppfId,
         origins: Vec<CrossCatLhsBodyOrigin>,
     ) {
+        // ★ RECOGNIZER (a166789b): a non-canonical fanned-pop extra skips the
+        // SPPF body-origin recording (reachability doesn't need it; recording
+        // it for the wrong predecessor would pollute paused members' revival).
+        if self.pop_fanout_suppress_resolve {
+            return;
+        }
         if origins.is_empty() {
             return;
         }
@@ -11705,6 +11794,10 @@ where
         body_origin: CrossCatLhsBodyOrigin,
         schedule_immediately: bool,
     ) {
+        // ★ RECOGNIZER (a166789b): extras skip the body-origin resolve write.
+        if self.pop_fanout_suppress_resolve {
+            return;
+        }
         if self.ep_p1_mode != EpP1Mode::On {
             return;
         }
@@ -11764,6 +11857,11 @@ where
         origins: Vec<CrossCatLhsBodyOrigin>,
         schedule_immediately: bool,
     ) {
+        // ★ RECOGNIZER (a166789b): extras skip the body-origin resolves (the
+        // delegate is also gated; this avoids the loop for the common case).
+        if self.pop_fanout_suppress_resolve {
+            return;
+        }
         if self.ep_p1_mode != EpP1Mode::On {
             return;
         }
@@ -12333,6 +12431,66 @@ where
     /// Returns a [`CursorOutcome`] describing whether the cursor is dead,
     /// alive, forked, or resolved (candidate winner). See module docs for
     /// the detailed mapping per `WpdaStepAction` variant.
+    /// ★ RECOGNIZER (a166789b): true iff a pop from `node` should FAN OUT —
+    /// recognizer pop-fanout active AND the node has ≥2 out-edges (≥2 distinct
+    /// pop targets). With ≤1 edge the single-edge pop is already exhaustive, so
+    /// the fast in-place path is kept (and `deterministic` is never churned).
+    #[inline]
+    fn recognizer_should_fan_pop(&self, node: crate::gss::GssNodeId) -> bool {
+        self.recognizer_pop_fanout() && self.gss.edges_from(node).len() > 1
+    }
+
+    /// ★ RECOGNIZER (a166789b): Tomita fork-on-pop. Spawns one child per
+    /// out-edge of `cursor_snapshot.node`: the CANONICAL child (routes via the
+    /// cursor's own recorded top edge, cohort-resolve writes ON — byte-identical
+    /// to the single-path pop) plus one EXTRA child per other out-edge (routed
+    /// via that edge, resolve writes SUPPRESSED — over-approximation only, never
+    /// under). Each child runs the caller's full post-pop body through
+    /// `per_edge` (returns `Some(child)` iff it survives). The full body keeps
+    /// `collection_stack_depth`/`kv_phase`/state exactly as `Slot` mode ⇒ the
+    /// frontier stays polynomial. Returns `ForkInto(children)` and flips
+    /// `deterministic=false` (the fan is non-deterministic, matching the
+    /// Fork-action contract the `ForkInto` handler expects).
+    fn recognizer_fan_pop(
+        &mut self,
+        cursor_snapshot: BranchCursor<W>,
+        per_edge: impl Fn(
+            &mut Self,
+            BranchCursor<W>,
+            Option<crate::gss::GssEdgeId>,
+        ) -> Option<BranchCursor<W>>,
+    ) -> CursorOutcome<W> {
+        let node = cursor_snapshot.node;
+        let canonical = self
+            .incoming_edge_stack_arena
+            .top(cursor_snapshot.incoming_edge_stack_id);
+        let n_edges = self.gss.edges_from(node).len();
+        let mut children: Vec<BranchCursor<W>> = Vec::with_capacity(n_edges);
+        // Canonical child — resolve writes ON (byte-identical to single-path).
+        self.pop_fanout_suppress_resolve = false;
+        if let Some(c) = per_edge(self, cursor_snapshot.clone(), canonical) {
+            children.push(c);
+        }
+        // Extra out-edges — resolve writes SUPPRESSED (poly-safe, over-approx).
+        // `pack_edge_id(node, i)` for i in 0..n_edges are the node's out-edges;
+        // the set only grows (no removal) so indices stay valid across the loop.
+        if canonical.is_some() {
+            self.pop_fanout_suppress_resolve = true;
+            for i in 0..n_edges {
+                let eid = crate::gss::pack_edge_id(node, i);
+                if Some(eid) == canonical {
+                    continue;
+                }
+                if let Some(c) = per_edge(self, cursor_snapshot.clone(), Some(eid)) {
+                    children.push(c);
+                }
+            }
+            self.pop_fanout_suppress_resolve = false;
+        }
+        self.deterministic = false;
+        CursorOutcome::ForkInto(children)
+    }
+
     fn apply_action_to_cursor(
         &mut self,
         cursor: &mut BranchCursor<W>,
@@ -12906,6 +13064,32 @@ where
                 // unique. The Tomita "spawn N children per in-edge"
                 // pattern is replaced by per-cursor edge identity
                 // (Scott & Johnstone 2010 GLL descriptor uniqueness).
+                //
+                // ★ RECOGNIZER (a166789b): the recognizer REVERSES this — when
+                // the popped node has ≥2 predecessors it fans out (Tomita
+                // fork-on-pop) so keep-one Slot merge cannot lose a pop target.
+                // Off (real parse) ⇒ the single-edge pop below runs unchanged.
+                if self.recognizer_should_fan_pop(cursor.node) {
+                    return self.recognizer_fan_pop(cursor.clone(), |w, mut ch, edge| {
+                        let popped_symbol = w.gss.node(ch.node).map(|n| n.symbol);
+                        let (pred_id, kind, edge_id) =
+                            w.cursor_gss_pop_via_edge_id(&mut ch, edge);
+                        if w.apply_pop_body_to_cursor(
+                            &mut ch,
+                            pred_id,
+                            kind.as_ref(),
+                            edge_id,
+                            popped_symbol,
+                            &weight,
+                            new_state.clone(),
+                            tokens,
+                        ) {
+                            Some(ch)
+                        } else {
+                            None
+                        }
+                    });
+                }
                 let popped_symbol = self.gss.node(cursor.node).map(|n| n.symbol);
                 // Lazy redesign L2 prep (2026-05-27): record the popped
                 // EdgeKind so L2 can confirm dominance of convergent
@@ -13443,6 +13627,29 @@ where
                 // Stage 3.12.6 (2026-05-02): single-predecessor pop via
                 // edge-id (see Pop arm). Consume token first, then pop
                 // along the cursor's recorded path.
+                // ★ RECOGNIZER (a166789b): fan-out on ≥2-predecessor pop.
+                if self.recognizer_should_fan_pop(cursor.node) {
+                    return self.recognizer_fan_pop(cursor.clone(), |w, mut ch, edge| {
+                        let popped_symbol = w.gss.node(ch.node).map(|n| n.symbol);
+                        let (pred_id, kind, edge_id) =
+                            w.cursor_gss_pop_via_edge_id(&mut ch, edge);
+                        w.advance_cursor_pos(&mut ch, tokens, 1);
+                        if w.apply_pop_body_to_cursor(
+                            &mut ch,
+                            pred_id,
+                            kind.as_ref(),
+                            edge_id,
+                            popped_symbol,
+                            &weight,
+                            new_state.clone(),
+                            tokens,
+                        ) {
+                            Some(ch)
+                        } else {
+                            None
+                        }
+                    });
+                }
                 let popped_symbol = self.gss.node(cursor.node).map(|n| n.symbol);
                 let (pred_id, popped_edge_kind, popped_edge_id) =
                     self.cursor_gss_pop_via_edge(cursor);
@@ -13469,6 +13676,32 @@ where
                 // reads inside apply_pop_body_to_cursor — splice probe,
                 // CrossCatLhs re-entry, cross-cat Return replace,
                 // GroupingClose resolve).
+                // ★ RECOGNIZER (a166789b): fan-out on ≥2-predecessor pop. Each
+                // child sets `ch.pos = next_pos` (the deterministic `self.pos`
+                // mirror is skipped — recognizer runs non-deterministic and the
+                // per-cursor pos is authoritative).
+                if self.recognizer_should_fan_pop(cursor.node) {
+                    return self.recognizer_fan_pop(cursor.clone(), |w, mut ch, edge| {
+                        let popped_symbol = w.gss.node(ch.node).map(|n| n.symbol);
+                        let (pred_id, kind, edge_id) =
+                            w.cursor_gss_pop_via_edge_id(&mut ch, edge);
+                        ch.pos = next_pos;
+                        if w.apply_pop_body_to_cursor(
+                            &mut ch,
+                            pred_id,
+                            kind.as_ref(),
+                            edge_id,
+                            popped_symbol,
+                            &weight,
+                            new_state.clone(),
+                            tokens,
+                        ) {
+                            Some(ch)
+                        } else {
+                            None
+                        }
+                    });
+                }
                 let popped_symbol = self.gss.node(cursor.node).map(|n| n.symbol);
                 let (pred_id, popped_edge_kind, popped_edge_id) =
                     self.cursor_gss_pop_via_edge(cursor);
@@ -16861,6 +17094,34 @@ where
                 //   3. Push `replace_symbol` (the advanced outer RuleAt at
                 //      next outer position) onto the cursor's GSS.
                 //   4. Update cursor weight + state.
+                // ★ RECOGNIZER (a166789b): fan-out on ≥2-predecessor pop. Each
+                // child replays the full absent-skip body along its edge
+                // (`emit_push_optional_absent` is SPPF-only ⇒ unguarded); the
+                // deterministic `top_node` mirror is skipped (non-det fan).
+                if self.recognizer_should_fan_pop(cursor.node) {
+                    return self.recognizer_fan_pop(cursor.clone(), |w, mut ch, edge| {
+                        w.emit_push_optional_absent(&mut ch);
+                        let (new_node_after_pop, _, _) =
+                            w.cursor_gss_pop_via_edge_id(&mut ch, edge);
+                        if new_node_after_pop == crate::gss::GSS_NODE_NONE {
+                            let sentinel = w.gss.get_or_create_node(WpdaGssNode {
+                                pos: ch.pos,
+                                symbol: StackSymbolV2::category_entry(0),
+                            });
+                            ch.node = sentinel;
+                        }
+                        let ch_pos = ch.pos;
+                        let _ = w.cursor_gss_push_auto(
+                            &mut ch,
+                            replace_symbol.clone(),
+                            ch_pos,
+                            weight.clone(),
+                        );
+                        w.multiply_cursor_weight(&mut ch, &weight);
+                        w.set_cursor_inner_state(&mut ch, new_state.clone());
+                        Some(ch)
+                    });
+                }
                 self.emit_push_optional_absent(cursor);
                 // Stage 3.12.6 (2026-05-02): use edge-id-guided pop so
                 // the cursor's recorded predecessor is the one followed,
@@ -19417,6 +19678,72 @@ where
     /// S0-G-Cont (gravest): `bcc_shadow_seal_type_conflicts` counts collapsed
     /// pairs whose SEALED element tag DIFFERS (e.g. InputBind vs InputBindQuoted
     /// = different COMM arity). MUST be 0 for a sound two-category seal.
+    /// ★ GLL-FLOOR SHADOW RECOGNIZER measurement (investigation a166789b,
+    /// Stage 0 — VALIDATION BEFORE WIRING). Measure-only: reads `&drained`,
+    /// writes ONLY the `crate::walker_stats::gll_recog` thread-local store —
+    /// byte-identical to baseline. Gated `walker-stats` + activated per-parse by
+    /// `gll_recog::reset(true)`.
+    ///
+    /// Projects each live (drained) cursor to the THREE keys under test and
+    /// hands them to `gll_recog::observe_frontier`, which tracks peak coarse-
+    /// frontier sizes (the G0-POLY metric) and the LITERAL-vs-SLOT over-merge
+    /// count (the empirical G0-SOUND signal). See the `gll_recog` module header.
+    ///
+    ///   • GLL_FLOOR `(state_class, node_class, pos, coll_depth)` — existing key.
+    ///   • LITERAL   GLL_FLOOR + `bp_floor` — the coarse key AS SPECIFIED.
+    ///   • SLOT      `(WpdaState, node symbol, pos, coll_depth, cohort.equiv())`
+    ///     — the fine ConfigKey minus the derivation-provenance block: the GLL
+    ///     grammar slot (grammar-bounded ⇒ polynomial), the key the G0-MONOTONE
+    ///     audit predicts is required for a never-false-reject recognizer.
+    #[cfg(feature = "walker-stats")]
+    fn gll_recog_measure(&self, drained: &[BranchCursor<W>]) {
+        use crate::walker_stats::gll_recog;
+        if !gll_recog::is_active() {
+            return;
+        }
+        // bp_floor: the Pratt binding-power floor carried by the STATE — the
+        // `state_binding_power_floor` axis that the 8-bucket `wpda_state_class`
+        // drops. Kept in lock-step with `Self::state_binding_power_floor`.
+        #[inline]
+        fn bp_floor(state: &WpdaState) -> Option<u8> {
+            match state {
+                WpdaState::Ready { min_bp } => Some(*min_bp),
+                WpdaState::PrefixDispatch { cur_bp, .. } | WpdaState::InfixLoop { cur_bp } => {
+                    Some(*cur_bp)
+                },
+                WpdaState::CrossCatDelegate { inner_cur_bp, .. } => Some(*inner_cur_bp),
+                _ => None,
+            }
+        }
+        let mut items: Vec<gll_recog::Item> = Vec::with_capacity(drained.len());
+        for c in drained {
+            let node_symbol = self.gss.node(c.node).map(|n| n.symbol);
+            let node_class = node_symbol.map(|s| crate::gss::node_class(&s)).unwrap_or(
+                crate::gss::NodeClass {
+                    shape: crate::gss::ContinuationShape::OperandOrReturn,
+                    coll_dispatch_bp: None,
+                    goal_src_idx: None,
+                },
+            );
+            let state_class = crate::walker_stats::wpda_state_class(&c.inner_state);
+            let bpf = bp_floor(&c.inner_state);
+            let pos = c.pos;
+            let cd = c.collection_stack_depth as usize;
+            let cohort = c.cohort_origin.as_ref().map(|k| k.equiv());
+            let gll: gll_recog::GllFloorKey = (state_class, node_class, pos, cd);
+            let lit: gll_recog::LiteralKey = (state_class, node_class, pos, cd, bpf);
+            let slot = gll_recog::SlotKey {
+                state: c.inner_state.clone(),
+                node_symbol,
+                pos,
+                coll_depth: cd,
+                cohort,
+            };
+            items.push((gll, lit, slot));
+        }
+        gll_recog::observe_frontier(&items);
+    }
+
     #[cfg(feature = "walker-stats")]
     fn bcc_shadow_measure(&mut self, drained: &[BranchCursor<W>]) {
         if !bcc_shadow_enabled() || drained.len() < 2 {
@@ -20289,7 +20616,53 @@ where
         // count (input cursors). Collapses counted per-cursor in the
         // Occupied arm below.
         crate::stats_add!(self, merge_attempts_total, concrete_drain.len() as u64);
-        let mut by_key: std::collections::HashMap<ConfigKey, usize> =
+        // ★ GLL-FLOOR SHADOW RECOGNIZER merge key (investigation a166789b,
+        // Stage-0 gate validation). When the recognizer is active (walker-stats
+        // + `recog::set`), the merge dedups on a COARSE GLL-floor key instead of
+        // the derivation-provenance `ConfigKey`, collapsing distinct fine
+        // derivations that share a coarse key (keep-one representative) — the
+        // SAME automaton run as a coarse recognizer. `Fine` is byte-identical to
+        // the ConfigKey path and is the ONLY variant reachable on the real parse
+        // (recog `Off`, and the sole variant compiled without `walker-stats`).
+        // Literal/SlotEdge/SlotEdge1 are walker-stats-only diagnostics; the
+        // production `recognizer_mode` path constructs only Fine + Slot.
+        #[derive(PartialEq, Eq, Hash)]
+        #[cfg_attr(not(feature = "walker-stats"), allow(dead_code))]
+        enum MergeKey {
+            Fine(ConfigKey),
+            /// SLOT: fine ConfigKey MINUS the derivation-provenance block.
+            Slot(
+                WpdaState,
+                crate::gss::GssNodeId,
+                usize,
+                usize,
+                Option<crate::dispatch_cohort::EquivKey>,
+            ),
+            /// LITERAL: `(state_class, node_class, pos, collection_depth, bp_floor)`.
+            Literal(usize, crate::gss::NodeClass, usize, usize, Option<u8>),
+            /// DIAGNOSTIC SlotEdge: SLOT + edge-stack (drops ONLY sppf_* + lex_*).
+            SlotEdge(
+                WpdaState,
+                crate::gss::GssNodeId,
+                usize,
+                usize,
+                Option<crate::dispatch_cohort::EquivKey>,
+                Option<crate::gss::GssEdgeId>,
+                crate::edge_stack_arena::EdgeStackId,
+            ),
+            /// DIAGNOSTIC SlotEdge1: SLOT + the SINGLE incoming_edge only (drops
+            /// the edge-STACK + sppf_* + lex_*). Tests whether the cheap
+            /// grammar-bounded single pop-routing edge suffices for soundness.
+            SlotEdge1(
+                WpdaState,
+                crate::gss::GssNodeId,
+                usize,
+                usize,
+                Option<crate::dispatch_cohort::EquivKey>,
+                Option<crate::gss::GssEdgeId>,
+            ),
+        }
+        let mut by_key: std::collections::HashMap<MergeKey, usize> =
             std::collections::HashMap::with_capacity(concrete_drain.len());
         let mut merged: Vec<BranchCursor<W>> = Vec::with_capacity(concrete_drain.len());
         let drained: Vec<BranchCursor<W>> = concrete_drain
@@ -20306,6 +20679,11 @@ where
         // `&drained`, writes only walker-stats counters. Gated `PRATTAIL_DW_SHADOW=1`.
         #[cfg(feature = "walker-stats")]
         self.dw_shadow_measure(&drained);
+        // ★ GLL-FLOOR SHADOW RECOGNIZER (investigation a166789b, Stage 0). Byte-
+        // identical: reads `&drained`, writes only the gll_recog thread-local
+        // store. Activated per-parse via gll_recog::reset(true).
+        #[cfg(feature = "walker-stats")]
+        self.gll_recog_measure(&drained);
         for cursor in drained {
             let key = ConfigKey {
                 state: cursor.inner_state.clone(),
@@ -20370,7 +20748,83 @@ where
                 // lex-Fork stamp (orthogonal to weight).
                 lex_fork_stamp: cursor.lex_fork_path.last().copied(),
             };
-            match by_key.entry(key) {
+            // ★ Recognizer coarsening: on the real parse this is `Fine(key)`
+            // (byte-identical). Under `recog::Slot`/`Literal` it drops the
+            // derivation-provenance axes so the merge collapses fine-distinct
+            // derivations to one coarse bucket.
+            // ★ RECOGNIZER (a166789b): the production `recognizer_mode` flag
+            // coarsens the merge key to the GLL SLOT unconditionally; otherwise
+            // (walker-stats only) the `recog` harness modes drive it. Off-path
+            // (`recognizer_mode=false` + `recog::Off`) ⇒ `Fine(key)`, exactly
+            // the pre-recognizer code (byte-identical).
+            #[cfg(feature = "walker-stats")]
+            let mkey = if self.recognizer_mode {
+                MergeKey::Slot(
+                    key.state.clone(),
+                    key.node,
+                    key.pos,
+                    key.collection_depth,
+                    key.cohort_origin.clone(),
+                )
+            } else {
+                match crate::walker_stats::recog::get() {
+                crate::walker_stats::recog::Mode::Off => MergeKey::Fine(key),
+                // SlotFanout reuses the SLOT merge key; it differs from Slot
+                // only in pop ROUTING (fan-out), not in the dedup key.
+                crate::walker_stats::recog::Mode::Slot
+                | crate::walker_stats::recog::Mode::SlotFanout => MergeKey::Slot(
+                    key.state.clone(),
+                    key.node,
+                    key.pos,
+                    key.collection_depth,
+                    key.cohort_origin.clone(),
+                ),
+                crate::walker_stats::recog::Mode::Literal => {
+                    let sc = crate::walker_stats::wpda_state_class(&key.state);
+                    let nc = self
+                        .gss
+                        .node(key.node)
+                        .map(|n| crate::gss::node_class(&n.symbol))
+                        .unwrap_or(crate::gss::NodeClass {
+                            shape: crate::gss::ContinuationShape::OperandOrReturn,
+                            coll_dispatch_bp: None,
+                            goal_src_idx: None,
+                        });
+                    let bpf = Self::state_binding_power_floor(&key.state);
+                    MergeKey::Literal(sc, nc, key.pos, key.collection_depth, bpf)
+                },
+                crate::walker_stats::recog::Mode::SlotEdge => MergeKey::SlotEdge(
+                    key.state.clone(),
+                    key.node,
+                    key.pos,
+                    key.collection_depth,
+                    key.cohort_origin.clone(),
+                    key.incoming_edge,
+                    key.incoming_edge_stack,
+                ),
+                crate::walker_stats::recog::Mode::SlotEdge1 => MergeKey::SlotEdge1(
+                    key.state.clone(),
+                    key.node,
+                    key.pos,
+                    key.collection_depth,
+                    key.cohort_origin.clone(),
+                    key.incoming_edge,
+                ),
+                }
+            };
+            #[cfg(not(feature = "walker-stats"))]
+            let mkey = if self.recognizer_mode {
+                MergeKey::Slot(
+                    key.state.clone(),
+                    key.node,
+                    key.pos,
+                    key.collection_depth,
+                    key.cohort_origin.clone(),
+                )
+            } else {
+                MergeKey::Fine(key)
+            };
+            match by_key.entry(mkey) {
                 std::collections::hash_map::Entry::Vacant(v) => {
                     v.insert(merged.len());
                     merged.push(cursor);
@@ -20504,6 +20958,15 @@ where
                     }
                 },
             }
+        }
+        // ★ GLL-FLOOR SHADOW RECOGNIZER (investigation a166789b): record the
+        // POST-merge coarse-keyed frontier size — the G0-POLY metric. `merged`
+        // holds one representative per distinct coarse (SLOT/LITERAL) bucket, so
+        // its length IS the recognizer's frontier at this merge tier. No-op on
+        // the real parse (recog Off).
+        #[cfg(feature = "walker-stats")]
+        if crate::walker_stats::recog::is_active() {
+            crate::walker_stats::recog::record_frontier(merged.len() as u64);
         }
         // Phase F.13 Stage L3.1 (2026-05-25): wrap merged BranchCursors in
         // Frame::Concrete.
@@ -28375,6 +28838,9 @@ where
     /// `incoming_edge_stack` correctly. `cursor_gss_pop` (legacy
     /// arbitrary-pred scalar) remains for code paths that don't use
     /// the stack mirror.
+    /// Pop routing along the cursor's OWN recorded top edge (reads
+    /// `arena.top`). Thin wrapper over [`Self::cursor_gss_pop_via_edge_id`];
+    /// the real parse and all existing callers use this ⇒ byte-identical.
     fn cursor_gss_pop_via_edge(
         &mut self,
         cursor: &mut BranchCursor<W>,
@@ -28383,12 +28849,33 @@ where
         Option<crate::gss::EdgeKind>,
         Option<crate::gss::GssEdgeId>,
     ) {
-        // Phase F.13 chain_10000 Plan D E6 Substage 2 (2026-05-26):
-        // arena.top peeks pre-pop value; arena.intern_pop updates the
-        // cursor's StackId to the predecessor chain (or ROOT for empty).
         let edge_id = self
             .incoming_edge_stack_arena
             .top(cursor.incoming_edge_stack_id);
+        self.cursor_gss_pop_via_edge_id(cursor, edge_id)
+    }
+
+    /// ★ RECOGNIZER (a166789b): pop routing along an EXPLICIT edge. The
+    /// Tomita fork-on-pop fans over `edges_from(node)`, spawning one child per
+    /// out-edge and routing each via this fn. When `edge_id` is the cursor's
+    /// own `arena.top` (the canonical child, and every real-parse pop via the
+    /// wrapper above) this is byte-identical to the legacy pop. For a
+    /// non-canonical EXTRA edge, `pop_fanout_suppress_resolve` is set so the
+    /// cohort-RESOLVE writes (below) are skipped — control flow (node / pos /
+    /// state / collection-depth) still runs, so the extra explores its pop
+    /// target (over-approximation only, never under).
+    fn cursor_gss_pop_via_edge_id(
+        &mut self,
+        cursor: &mut BranchCursor<W>,
+        edge_id: Option<crate::gss::GssEdgeId>,
+    ) -> (
+        crate::gss::GssNodeId,
+        Option<crate::gss::EdgeKind>,
+        Option<crate::gss::GssEdgeId>,
+    ) {
+        // Phase F.13 chain_10000 Plan D E6 Substage 2 (2026-05-26):
+        // arena.top peeks pre-pop value; arena.intern_pop updates the
+        // cursor's StackId to the predecessor chain (or ROOT for empty).
         let popped_edge_kind = edge_id.and_then(|e| self.gss.edge_kind(e));
         cursor.incoming_edge_stack_id = self
             .incoming_edge_stack_arena
@@ -28404,7 +28891,10 @@ where
         // Stage 1.2 only WRITES — the resolve transition records the
         // data but no consumer reads it yet. Stage 1.3 will use the
         // Resolved entries to short-circuit cohort members.
-        if let Some(eid) = edge_id {
+        // ★ RECOGNIZER (a166789b): a non-canonical fanned-pop EXTRA edge skips
+        // the cohort-resolve WRITES (`.filter` → None ⇒ block skipped); the
+        // canonical child + every real-parse pop have the flag false ⇒ runs.
+        if let Some(eid) = edge_id.filter(|_| !self.pop_fanout_suppress_resolve) {
             // CrossCatProjection pops feed the cohort resolve uniformly. The
             // `@{…} <- c` / `@{…}!(q)` quoted-binder span bug is NOT addressed
             // here (an earlier inline-pop kill-switch experiment was reverted as
@@ -28545,7 +29035,11 @@ where
         // splice-skip preserves it through CrossCatLhs pops). Measure
         // mode records the resolution + the R6-6/B1 tail-divergence
         // witness and NEVER schedules a drain.
-        if matches!(self.ep_p1_mode, EpP1Mode::Measure | EpP1Mode::On) {
+        // ★ RECOGNIZER: extras skip the CrossCatLhs live-lineage decrement +
+        // resolve (prevents premature quiesce/drain under fan-out).
+        if !self.pop_fanout_suppress_resolve
+            && matches!(self.ep_p1_mode, EpP1Mode::Measure | EpP1Mode::On)
+        {
             if let (
                 Some(eid),
                 Some(
@@ -28693,7 +29187,8 @@ where
         // Preserve the original key on the reentry edge and publish such
         // later bodies as alternate resolutions rather than forcing the first
         // raw source body to be complete by construction.
-        if self.ep_p1_mode == EpP1Mode::On {
+        // ★ RECOGNIZER: extras skip the CrossCatLhsReentry resolve write.
+        if !self.pop_fanout_suppress_resolve && self.ep_p1_mode == EpP1Mode::On {
             if let Some(crate::gss::EdgeKind::CrossCatLhsReentry {
                 source_src_idx, origin, ..
             }) = popped_edge_kind.clone()
