@@ -17,23 +17,68 @@ fn generated_dovetail_report_runs_structural_constructor_boundary() {
         .validate_shape()
         .expect("generated report must be structurally valid");
     assert_eq!(report.completeness, RuntimeDovetailCompleteness::Complete);
+
+    // Stage 3f routed BaseMath's native scalar fold
+    //     `Add . a:Num, b:Num |- a "+" b : Num ![a + b] fold;`
+    // onto the TYPED fold path (`has_native_fold_rewrite`), so `dovetail_report_for` — the production
+    // `exec` reducer — now FIRES the `Add` fold and reduces `1 + 2` to its normal form `3`. (The
+    // pre-3f untyped `EGraph<String>` path left the redex STRUCTURAL because a native-output fold
+    // reduced nowhere there — an artifact of BaseMath having no working reducer on that path, not a
+    // feature. The old `Add`-root + `NumLit::1`/`NumLit::2` child term records were that non-reducing
+    // shape and went stale when the fold started firing.)
+    //
+    // The structural-constructor boundary over the parsed `Add` term is now witnessed — MORE strongly
+    // than before — by the fold firing whose σ binds the Add's two `NumLit` operand children and whose
+    // contractum is the reduced literal:
+    //
+    //     Num_Add   σ = { a ↦ NumLit(1), b ↦ NumLit(2) }   ⊢   contractum NumLit(3)
+    //
+    // and the extracted normal form is that `NumLit(3)`.
+
+    // (1) The native `Add` fold fired exactly once over the parsed redex.
     assert!(
-        report
-            .terms
-            .iter()
-            .any(|record| record.is_root && record.op_display == "BaseMath::Num::Add"),
-        "structural report should include the parsed Add root: {report:?}",
+        report.rule_firings.iter().any(|firing| {
+            firing.label.as_deref() == Some("BaseMath::fold::Num_Add") && firing.count == 1
+        }),
+        "typed report should record the Num_Add fold firing exactly once: {report:?}",
     );
+
+    // (2) Its justification carries the structural-constructor boundary: σ binds the Add's two
+    //     `NumLit` operand children, and the contractum is the reduced `NumLit(3)`.
+    let add = report
+        .rewrite_justifications
+        .iter()
+        .find(|justification| justification.rule_label == "Num_Add")
+        .unwrap_or_else(|| panic!("typed report must justify the Num_Add firing: {report:?}"));
+    let sigma_operand = |name: &str| {
+        add.sigma
+            .iter()
+            .find(|(var, _)| var == name)
+            .map(|(_, subterm)| subterm.constructor.as_str())
+    };
+    assert_eq!(
+        sigma_operand("a"),
+        Some("NumLit(1)"),
+        "Num_Add σ should bind operand `a` to the parsed NumLit(1) child: {report:?}",
+    );
+    assert_eq!(
+        sigma_operand("b"),
+        Some("NumLit(2)"),
+        "Num_Add σ should bind operand `b` to the parsed NumLit(2) child: {report:?}",
+    );
+    assert_eq!(
+        add.contractum.as_ref().map(|c| c.constructor.as_str()),
+        Some("NumLit(3)"),
+        "Num_Add contractum should be the reduced NumLit(3): {report:?}",
+    );
+
+    // (3) The extracted normal-form root is that reduced literal.
     assert!(
         report
             .terms
             .iter()
-            .any(|record| record.op_display == "BaseMath::Num::NumLit::1")
-            && report
-                .terms
-                .iter()
-                .any(|record| record.op_display == "BaseMath::Num::NumLit::2"),
-        "structural report should include exact literal children: {report:?}",
+            .any(|record| record.is_root && record.op_display == "BaseMath::Num::NumLit(3)"),
+        "structural report should reduce to the NumLit(3) normal-form root: {report:?}",
     );
 }
 
