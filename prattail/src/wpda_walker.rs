@@ -14121,8 +14121,48 @@ where
                                         .top(cursor.sppf_stack_id)
                                         .and_then(|s| self.sppf_symbol_category(s));
                                     match __top_cat {
-                                        Some(bc) => self
-                                            .infix_rhs_frame_accepts_body_category(frame, bc),
+                                        // ★ CR#1 (a57abf00): DEMAND-GATE the RHS
+                                        // reconnect on a GENUINE cross-cat
+                                        // EXTENSION — fire only when the operand's
+                                        // ENTRY category (`source_src_idx` on the
+                                        // cross-cat-LHS edge) DIFFERS from the
+                                        // completed body category. When they are
+                                        // EQUAL (the calculator's HOMOGENEOUS
+                                        // shared-operator arithmetic, e.g. a Fixed
+                                        // operand into `MulFixed`'s Fixed slot) the
+                                        // ordinary InfixLoop pop already delivers
+                                        // this reading, so the reconnect is
+                                        // REDUNDANT — and its per-operator
+                                        // injection is what drives the K^depth
+                                        // frontier explosion (the merge-regression
+                                        // `sim_calculator_proptest_campaign`
+                                        // timeout). rhocalc ROOT-D (`a`:Name →
+                                        // `a!(Nil)`:Proc, entry≠body) still fires.
+                                        // NO reading lost (the same-cat reading is
+                                        // supplied by the ordinary pop). GENERAL —
+                                        // keys on entry-vs-body category identity,
+                                        // never a keyword/rule id.
+                                        Some(bc) => {
+                                            let __rhs_entry_cat = match &__immediate_edge {
+                                                Some(
+                                                    crate::gss::EdgeKind::CrossCatLhsScoped {
+                                                        source_src_idx,
+                                                        ..
+                                                    },
+                                                )
+                                                | Some(
+                                                    crate::gss::EdgeKind::CrossCatLhsReentry {
+                                                        source_src_idx,
+                                                        ..
+                                                    },
+                                                ) => Some(*source_src_idx),
+                                                _ => None,
+                                            };
+                                            __rhs_entry_cat != Some(bc)
+                                                && self.infix_rhs_frame_accepts_body_category(
+                                                    frame, bc,
+                                                )
+                                        },
                                         None => false,
                                     }
                                 },
