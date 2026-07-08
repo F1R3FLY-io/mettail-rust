@@ -335,9 +335,13 @@ pub(crate) fn lower(
             RhoNetRuleKind::StructuralCongruence => {
                 Some(RhoNetLoweredRule::CongruenceClosure { rule_id: rule.id.clone() })
             },
-            RhoNetRuleKind::BaseRewrite => {
-                lower_base_rewrite(rule, &rewrite_by_id, &program.language_fingerprint, &mut errors)
-            },
+            RhoNetRuleKind::BaseRewrite => lower_base_rewrite(
+                rule,
+                &rewrite_by_id,
+                def,
+                &program.language_fingerprint,
+                &mut errors,
+            ),
             RhoNetRuleKind::ContextualRewrite => {
                 lower_contextual_rewrite(rule, &rewrite_by_id, &mut errors)
             },
@@ -411,6 +415,7 @@ fn lower_native_fold(
 fn lower_base_rewrite(
     rule: &RhoNetRule,
     rewrite_by_id: &HashMap<String, &RewriteRule>,
+    def: &LanguageDef,
     language_fingerprint: &str,
     errors: &mut Vec<RhoNetLoweringError>,
 ) -> Option<RhoNetLoweredRule> {
@@ -443,12 +448,19 @@ fn lower_base_rewrite(
         // `Unsupported{CollectionAc}` when it declines (nested/non-linear/no-rest, or a LHS
         // whose collection is not a confirmed HashBag — Set/Map await a later slice).
         Err(UnsupportedFamily::CollectionAc) => {
+            let resolved_kind = resolve_ac_collection_type(def, &rewrite.left);
             if let Some(par) = rule
                 .input_channels
                 .first()
                 .and_then(|channel| resolve_channel(channel).ok())
                 .and_then(|source| {
-                    ac_rule_receiver(&rewrite.left, &rewrite.right, source, language_fingerprint)
+                    ac_rule_receiver(
+                        &rewrite.left,
+                        &rewrite.right,
+                        source,
+                        language_fingerprint,
+                        resolved_kind,
+                    )
                 })
             {
                 return Some(RhoNetLoweredRule::AcRewrite { rule_id: rule.id.clone(), par });
@@ -1111,11 +1123,20 @@ pub fn ac_rule_receiver(
     right: &Pattern,
     source: Par,
     language_fingerprint: &str,
+    resolved_kind: Option<CollectionType>,
 ) -> Option<Par> {
-    // Match a HashBag AC LHS: `op( { x_1, …, x_k, ...rest } )`.
+    // Match a HashBag AC LHS: `op( { x_1, …, x_k, ...rest } )`. The parser leaves a rewrite-LHS
+    // collection's `coll_type` as `None` (it is "inferred from the enclosing constructor's
+    // grammar"), so the effective kind is the pattern's `coll_type` when set, else
+    // `resolved_kind` — resolved from `op`'s declared collection param via
+    // [`resolve_ac_collection_type`]. Only a HashBag lowers to the process-soup AC receiver
+    // this slice (Set/Map await a later slice); an unresolved kind (`None`) does not un-skip.
     let (op, elements, rest_name) = match left {
         Pattern::Term(PatternTerm::Apply { constructor, args }) => match args.as_slice() {
-            [Pattern::Collection { coll_type: Some(CollectionType::HashBag), elements, rest }] => {
+            [Pattern::Collection { coll_type, elements, rest }]
+                if coll_type.as_ref().or(resolved_kind.as_ref())
+                    == Some(&CollectionType::HashBag) =>
+            {
                 (constructor.to_string(), elements, rest.clone())
             },
             _ => return None,
@@ -1139,6 +1160,27 @@ pub fn ac_rule_receiver(
     // The RHS `⟦R⟧σ` in the AC receiver's `k+2`-formal frame (`reflect_term_par` at `k+1`).
     let rhs = reflect_term_par(right, &vars, k + 1, language_fingerprint).ok()?;
     Some(ac_sigma_receiver_par(&op, k, rhs, source))
+}
+
+/// Resolve the collection kind the AC rule's constructor declares (`op . ps:HashBag(..) |- ..`).
+/// The parser leaves a rewrite-LHS collection's `coll_type` as `None` ("inferred from the
+/// enclosing constructor's grammar"), so the AC un-skip resolves it from `op`'s declared
+/// collection parameter in `def.terms` (the type alias is inlined to a `TypeExpr::Collection`).
+/// Returns `None` when `op` is not a constructor over a single collection param — so a
+/// non-collection or unknown constructor is never mis-classified as an AC HashBag rule.
+fn resolve_ac_collection_type(def: &LanguageDef, left: &Pattern) -> Option<CollectionType> {
+    let op = match left {
+        Pattern::Term(PatternTerm::Apply { constructor, .. }) => constructor.to_string(),
+        _ => return None,
+    };
+    let rule = def.terms.iter().find(|rule| rule.label.to_string() == op)?;
+    rule.term_context.as_ref()?.iter().find_map(|param| match param {
+        mettail_ast::grammar::TermParam::Simple {
+            ty: mettail_ast::types::TypeExpr::Collection { coll_type, .. },
+            ..
+        } => Some(coll_type.clone()),
+        _ => None,
+    })
 }
 
 /// The `n`-th De Bruijn formal of a receiver with `total_formals` formals
@@ -1306,6 +1348,25 @@ mod tests {
             EqInt . a:Int, b:Int |- a "==" b : Bool ;
         }
     "#;
+
+    // A HashBag language: `PPar` is a constructor over a HashBag operand. The AC un-skip must
+    // resolve `PPar`'s collection kind from THIS declaration even though the parser leaves a
+    // rewrite-LHS collection's `coll_type` as `None`.
+    const AC_DEMO_FRAGMENT: &str = r##"
+        name: AcDemoFrag,
+        types {
+            ![i32] as Int
+            ![mettail_runtime::HashBag<Int>] as Bag {
+                open_parts: ["#{"],
+                close_parts: ["}#"],
+                sep: "|",
+            }
+        }
+        terms {
+            Wrap . x:Int |- "wrap" "(" x ")" : Int ;
+            PPar . ps:HashBag(Int) |- "#{" ps.*sep("|") "}#" : Int ;
+        }
+    "##;
 
     const MINIRHO_FOR_FRAGMENT: &str = r#"
         name: RhoNetLowerMiniRhoFor,
@@ -2181,9 +2242,14 @@ mod tests {
             }],
         );
         let right = apply("Wrap", vec![var_pattern("x")]);
-        let receiver =
-            ac_rule_receiver(&left, &right, new_gstring_par("c_ac".to_string(), Vec::new(), false), fp)
-                .expect("the HashBag AC rule un-skips to an AC receiver");
+        let receiver = ac_rule_receiver(
+            &left,
+            &right,
+            new_gstring_par("c_ac".to_string(), Vec::new(), false),
+            fp,
+            Some(CollectionType::HashBag),
+        )
+        .expect("the HashBag AC rule un-skips to an AC receiver");
 
         // A persistent receive over [connective collection pattern, out].
         let recv = &receiver.receives[0];
@@ -2203,8 +2269,14 @@ mod tests {
         // A non-AC rule (structural Swap) is NOT un-skipped — stays on its existing path.
         let swap = apply("Swap", vec![var_pattern("a"), var_pattern("b")]);
         assert!(
-            ac_rule_receiver(&swap, &right, new_gstring_par("c".to_string(), Vec::new(), false), fp)
-                .is_none(),
+            ac_rule_receiver(
+                &swap,
+                &right,
+                new_gstring_par("c".to_string(), Vec::new(), false),
+                fp,
+                None
+            )
+            .is_none(),
             "a non-HashBag LHS is not un-skipped"
         );
     }
@@ -2251,6 +2323,70 @@ mod tests {
         assert!(
             lowered.installed_program_par().is_ok(),
             "the AC rewrite installs (does not block the fail-closed boundary)"
+        );
+    }
+
+    #[test]
+    fn resolve_ac_collection_type_reads_the_constructor_declaration() {
+        // Stage AC-U0: the resolver reads PPar's declared HashBag collection param from
+        // def.terms, even though a rewrite-LHS collection's coll_type is None (parser default) —
+        // this is what lets a PARSER-produced AC rule un-skip.
+        let def: LanguageDef =
+            syn::parse_str(AC_DEMO_FRAGMENT).expect("the AcDemo fragment parses");
+        let lhs = apply(
+            "PPar",
+            vec![Pattern::Collection {
+                coll_type: None,
+                elements: vec![var_pattern("x")],
+                rest: Some(ident("rest")),
+            }],
+        );
+        assert_eq!(
+            resolve_ac_collection_type(&def, &lhs),
+            Some(CollectionType::HashBag),
+            "PPar's HashBag collection param resolves despite coll_type: None"
+        );
+        // A non-collection constructor resolves to None (never mis-classified as AC).
+        assert_eq!(
+            resolve_ac_collection_type(&def, &apply("Wrap", vec![var_pattern("x")])),
+            None,
+            "a non-collection constructor is not an AC HashBag rule"
+        );
+    }
+
+    #[test]
+    fn parser_none_hashbag_rule_un_skips_via_resolution() {
+        // The end-to-end AC-U0 path: a rewrite whose LHS collection has coll_type: None (the
+        // parser default) un-skips to AcRewrite because lower_base_rewrite resolves PPar's
+        // declared HashBag kind from def.terms — the fix that makes REAL (parsed) AC rules fire.
+        let mut def: LanguageDef =
+            syn::parse_str(AC_DEMO_FRAGMENT).expect("the AcDemo fragment parses");
+        def.rewrites.push(RewriteRule {
+            name: ident("AcStep"),
+            type_context: Vec::new(),
+            premises: Vec::new(),
+            left: apply(
+                "PPar",
+                vec![Pattern::Collection {
+                    coll_type: None,
+                    elements: vec![var_pattern("x")],
+                    rest: Some(ident("rest")),
+                }],
+            ),
+            right: apply("Wrap", vec![var_pattern("x")]),
+            is_auto_injected: false,
+        });
+        let lowering = lower_language_def(&def);
+        let program = RhoNetProgram::from_language_def(&def, &lowering);
+        let lowered = program.lower_to_par(&def, &lowering);
+        let id = rule_id_rewrite(0, "AcStep");
+        assert!(
+            lowered
+                .rules()
+                .iter()
+                .any(|r| r.rule_id() == id && matches!(r, RhoNetLoweredRule::AcRewrite { .. })),
+            "a coll_type: None HashBag rule un-skips to AcRewrite via resolution: {:?}",
+            lowered.rules().iter().map(|r| r.rule_id()).collect::<Vec<_>>()
         );
     }
 
