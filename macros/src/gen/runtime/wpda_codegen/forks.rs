@@ -802,6 +802,108 @@ pub(crate) const PROJ_ISO_BESTPARSE_MEMO: bool = true;
 // (PROPTEST_CASES=300 × ≥5 seeds, all PASS).
 pub(crate) const PROJ_ISO_SIGIL_AUTHORITATIVE_REJECT: bool = true;
 
+/// RECOGNIZER_PREFILTER — the ROOT-P structural-decline fast-reject FALLBACK
+/// (non-parseability recognizer oracle a166789b, wired 2026-07-07). The SIBLING
+/// fail-safe of [`PROJ_ISO_SIGIL_AUTHORITATIVE_REJECT`]. Compile-time kill-switch
+/// (same convention as its predecessors).
+///
+/// ## The defect it ships the fix for (the ROOT-P structural-decline residual)
+/// The authoritative-reject fast-rejects the CLEAN σ-led-send residual (a σ-frame
+/// skeleton matched the whole input, enumeration was COMPLETE, and EVERY tiling's
+/// operand sub-parse genuinely `Err`ed) in poly time — Gate A. But it FAILS SAFE:
+/// on a STRUCTURAL decline (`__cap_hit` — a trailing separator like `@Nil!(0,)`,
+/// an empty segment, or a materialization cap marked the enumeration INCOMPLETE,
+/// so the reject cannot SOUNDLY fire) it falls through to the walker. When such a
+/// residual σ-led span is GENUINELY non-parseable, the GLR walker still explores
+/// ≈`8^d` before failing. The display proptests
+/// `{proc,name,inputbind,forrow}_display_parse_roundtrip` TIME OUT at high
+/// `PROPTEST_CASES` because a VALID top-level term's receiver-detour sub-parse
+/// (`@ n ! ( q )` → `NQuoteShort`) strands exactly such a span.
+///
+/// ## The fix
+/// Wire the already-VALIDATED non-parseability RECOGNIZER
+/// (`WpdaWalker::recognize_reachable`, a166789b — a one-sided REJECT-only oracle:
+/// coarse GLL-Slot cursor merge + Tomita pop fan-out ⇒ a SOUND over-approximation
+/// of the real walker's reachability whose frontier stays POLYNOMIAL even where
+/// the full parse is exponential) as that fail-safe's FALLBACK. At the STRING-entry
+/// `parse_via_wpda` fall-through point — AFTER the proj/sep/infix isolation
+/// prologues AND the authoritative-reject have all DECLINED to reject, i.e. exactly
+/// where a known-hard σ-led span is about to hit the walker — run the recognizer on
+/// the SAME token source the guarded walker path uses (`LatticeTokenSource` when
+/// `lex_dag(input)` is ambiguous, else the `SliceTokenSource` kinds/texts shape).
+/// `false` ⇒ the span is DEFINITIVELY non-parseable ⇒ return the parse `Err` in
+/// poly time (the exponential walker is never reached). `true` / inconclusive
+/// (max-steps) ⇒ proceed to the existing walker path UNCHANGED.
+///
+/// ## Scope — the σ-led hard cases only (NOT every parse; no ~2× on easy parses)
+/// Emitted ONLY for a category with a derivable `@`-projection shape
+/// (`projection_iso_shape(..).is_some()`) that admits ≥1 σ-led variant, and gated
+/// at RUNTIME on the trimmed input starting with one of that category's
+/// grammar-derived projection sigils (`sigil_lead_bytes` — `@`/`*`/`-`/`(` … — the
+/// SAME set the authoritative-reject's `starts_with_sigil` uses). Non-σ-led inputs
+/// (the common easy parse: `Nil`, `x!(5)`, a number, `for(..)`) SKIP the recognizer
+/// entirely. σ-led spans that were PARSEABLE are handled by the isolation prologues
+/// and return BEFORE the fall-through, so only σ-led spans that ALREADY FAILED
+/// isolation (all genuinely hard) reach the recognizer — where the walker was about
+/// to explode, so the poly recognizer is a strict win, not a 2× tax.
+///
+/// ## Soundness — REJECT-only, never a parse-reading heuristic
+/// The recognizer NEVER drops or elects a parse reading. It acts ONLY on a
+/// DEFINITIVE `Unreachable` (`false`); ANY doubt — `true`, max-steps inconclusive,
+/// a `lex`/`lex_dag` failure, or the env A/B being set — falls through to the
+/// walker (correct-but-slow, never a false `Err`). Because isolation has already
+/// declined at the hook, the ONLY remaining acceptance path IS the walker, and the
+/// recognizer soundly over-approximates the walker ⇒ `false` ⇒ the walker would
+/// also reject (just exponentially slower).
+///
+/// ## Kill-switch / A-B
+/// `false` (SHIP DEFAULT until STAGE 2 confirms the win) ⇒ NO
+/// `recognize_<Cat>_reachable_ws` facade fn, NO pre-pass fragment in the
+/// `parse_via_wpda` body ⇒ every generated `wpda.rs` is BYTE-IDENTICAL to the
+/// pre-wiring baseline. `true` ⇒ the recognizer pre-pass machinery. The runtime env
+/// `PRATTAIL_NO_RECOGNIZER_PREFILTER` (read at the fall-through hook) suppresses the
+/// pre-pass WITHOUT a rebuild (causal A/B — reproduces the pre-fix walker explosion
+/// for study). Independent of [`PROJ_ISO_SIGIL_AUTHORITATIVE_REJECT`] (they cover
+/// DISJOINT σ-led subsets: the reject the clean-all-fail set, the recognizer the
+/// structural-decline residual) but shares its `projection_iso_shape` /
+/// `sigil_lead_bytes` grammar-derived gates.
+///
+/// ## STAGE-2 RESULT (2026-07-08) — SHIPS OFF pending a narrow-gate refinement
+/// The wiring is COMPLETE and CORRECT (verified: emits nothing OFF ⇒ generated
+/// `wpda.rs` byte-identical; ON emits the `recognize_<Cat>_reachable_ws` facade fn
+/// + the `parse_via_wpda` fall-through fragment for `Proc`/`Name`/`InputBind`), and
+/// the recognizer DOES deliver its intended win where it applies:
+///   • `proc_display_parse_roundtrip` @ PROPTEST_CASES=64: baseline STACK OVERFLOW
+///     (9.8 s) → PASS (13.3 s) — the exploding σ-led spans fast-reject (`false` in
+///     ≈10 ms) before the walker recurses to overflow.
+///   • `name_display_parse_roundtrip`: 22.2 s → 9.4 s.
+/// BUT the current SHIP-DEFAULT wiring (this const ON + the BROAD σ-led gate + the
+/// natural `max_steps` = 1M) REGRESSES badly, because `recognize_reachable`'s coarse
+/// frontier does NOT converge on some SMALL, PARSEABLE σ-led spans (empirically: a
+/// 4-token rhocalc `Proc`): it neither empties nor accepts, and grinds to `max_steps`
+/// (≈0.4 ms/step ⇒ tens of seconds at 1M). The broad gate invokes the recognizer on
+/// EVERY σ-led fall-through — including those non-convergent parseable spans — so a
+/// single one hangs the parse (proc @ CASES=1: 2.4 s → >90 s). A bounded budget
+/// (`PRATTAIL_RECOGNIZER_MAX_STEPS=300`) makes the non-convergent calls bail fast and
+/// restores the win (proc→PASS 13.3 s), but 300 is a GRAMMAR-TUNED magic number that
+/// trades reject-completeness against latency — a band-aid, not a principled fix.
+/// (`inputbind_display_parse_roundtrip` STACK-OVERFLOWS in BOTH baseline and ON with
+/// 0 recognizer rejects — the separate cast-tower recursion the recognizer does not
+/// target; out-of-scope, pre-existing, NOT a regression.)
+///
+/// ROOT CAUSE = a recognizer-MECHANISM non-convergence (`prattail/src/wpda_walker.rs`
+/// `recognizer_mode`, OUT OF SCOPE here — actively under FV development, HEAD "recognizer
+/// pop fan-out soundness"). The PRINCIPLED WIRING FIX is a NARROW gate: invoke the
+/// recognizer ONLY on the structural-decline residual (the σ-frame-matched-but-not-
+/// authoritatively-rejected spans where the walker actually explodes), NOT every σ-led
+/// fall-through — that decouples latency from `max_steps` (few calls ⇒ a large,
+/// reject-complete budget is affordable) and skips the non-convergent parseable spans
+/// entirely. That needs a Plan-agent design + empirical confirmation it selects the
+/// exploding spans, and coordination with the in-flight recognizer convergence work.
+/// Until then this ships OFF (byte-identical, zero-regression); flip ON only WITH the
+/// narrow gate (and/or once the frontier converges).
+pub(crate) const RECOGNIZER_PREFILTER: bool = false;
+
 /// INFIX_ISOLATION_COMBINE — the PRECEDENCE-AWARE BINARY-INFIX operand
 /// DIVIDE-AND-CONQUER isolation+combine facade fast-path (ROOT-2 `or`/PParInfix
 /// locus, 2026-07-06). Master compile-time kill-switch (same convention as

@@ -1296,6 +1296,27 @@ pub(crate) struct ProjIsoShape {
     variants: Vec<ProjVariant>,
 }
 
+/// Grammar-derived DISTINCT first-bytes of a projection shape's σ-led variants'
+/// leading literal (`@`/`*`/`-`/`(` …) — the projection sigils the category admits.
+/// SINGLE SOURCE OF TRUTH shared by the authoritative-reject `starts_with_sigil`
+/// gate (`emit_projection_isolation`) AND the ROOT-P recognizer pre-pass gate
+/// (`emit_recognizer_prefilter`), so both fire on exactly the same σ-led domain. No
+/// token hardcode — the bytes come straight from the grammar's leading literals.
+fn proj_sigil_lead_bytes(shape: &ProjIsoShape) -> Vec<u8> {
+    let mut bs: Vec<u8> = shape
+        .variants
+        .iter()
+        .filter(|v| v.sigil_led)
+        .filter_map(|v| match v.slots.first() {
+            Some(ProjSlot::Lit(l)) => l.as_bytes().first().copied(),
+            _ => None,
+        })
+        .collect();
+    bs.sort_unstable();
+    bs.dedup();
+    bs
+}
+
 /// ROOT-D: is `cat` LEFT-RECURSIVE via the literal `delim`? I.e. does the grammar
 /// have a rule producing `cat` whose syntax pattern begins with a `Param` of
 /// category `cat` IMMEDIATELY followed by `Literal(delim)` (`cat delim … : cat`)?
@@ -1714,6 +1735,117 @@ pub(crate) fn emit_projection_isolation_prologue(
                 }
             }
         },
+    }
+}
+
+/// ROOT-P RECOGNIZER PRE-PASS (non-parseability oracle a166789b, gated by
+/// [`super::forks::RECOGNIZER_PREFILTER`]). Emit the STRING-entry `parse_via_wpda`
+/// FALL-THROUGH FALLBACK fragment for `cat_name`: the SINGLE-WINNER seam's poly-time
+/// definitive fast-reject for the σ-led hard cases the authoritative-reject fails
+/// safe on. Interpolated by `gen/mod.rs` at the fall-through point (AFTER
+/// `proj_reject_fire`, BEFORE `lex_dag` — where the proj/sep/infix prologues + the
+/// authoritative-reject have all DECLINED and a known-hard σ-led span is about to
+/// hit the walker). Calls the module-scope `recognize_<Cat>_reachable_ws` facade fn
+/// (emitted by [`emit_parse_fns`]) on the SAME token-source shape the guarded walker
+/// path uses. OFF / non-proj / no-σ-led-variant ⇒ empty ⇒ BYTE-IDENTICAL. See the
+/// const doc for the soundness argument (REJECT-only over-approximation) and the
+/// σ-led gate rationale (not every parse — no ~2× on easy parses).
+pub(crate) fn emit_recognizer_prefilter(
+    cat_name: &str,
+    language: &LanguageDef,
+    categories: &[String],
+) -> TokenStream {
+    // Gate 1 (compile-time master): OFF ⇒ nothing ⇒ byte-identical.
+    if !super::forks::RECOGNIZER_PREFILTER {
+        return quote! {};
+    }
+    // Gate 2 (shape): only a derivable `@`-projection category can strand a σ-led
+    // hard span; non-proj categories emit nothing.
+    let Some(shape) = projection_iso_shape(language, cat_name, categories) else {
+        return quote! {};
+    };
+    // Gate 3 (σ-led variants): a proj category with only framed-list / method-frame
+    // variants (no σ-led leading literal) has no projection sigil to gate on ⇒
+    // nothing to guard (it can never strand a σ-led hard span).
+    let sigil_lead_bytes = proj_sigil_lead_bytes(&shape);
+    if sigil_lead_bytes.is_empty() {
+        return quote! {};
+    }
+    let recognize_ws_fn_name = format_ident!("recognize_{}_reachable_ws", cat_name);
+    let byte_lits = sigil_lead_bytes.iter().map(|b| quote! { #b });
+    // Runtime σ-led gate: the SAME grammar-derived projection-sigil set the
+    // authoritative-reject's `starts_with_sigil` uses. NON-σ-led inputs skip the
+    // recognizer entirely.
+    let starts_with_sigil: TokenStream =
+        quote! { matches!(input.trim_start().as_bytes().first(), Some(#(#byte_lits)|*)) };
+    quote! {
+        // ── ROOT-P RECOGNIZER PRE-PASS (non-parseability oracle a166789b) ──
+        // FALL-THROUGH FALLBACK: the proj/sep/infix isolation prologues AND the
+        // authoritative-reject have all DECLINED. A σ-led span reaching HERE has
+        // already FAILED isolation ⇒ it is a KNOWN-HARD case about to drive the GLR
+        // walker (potentially ≈`8^d`). Run the one-sided non-parseability recognizer
+        // on the SAME token source the guarded walker path uses; a DEFINITIVE
+        // `Unreachable` (`false`) ⇒ return the parse `Err` in poly time. REJECT-ONLY:
+        // ANY doubt (true / max-steps inconclusive / a lex failure / env A-B) falls
+        // through to the walker UNCHANGED (never a false reject). Gated on the trimmed
+        // input starting with a grammar-derived projection sigil so NON-σ-led easy
+        // parses skip it entirely (not ~2×'d). `PRATTAIL_NO_RECOGNIZER_PREFILTER` =
+        // causal A-B suppress (no rebuild).
+        if #starts_with_sigil
+            && std::env::var_os("PRATTAIL_NO_RECOGNIZER_PREFILTER").is_none()
+        {
+            // Self-contained: mirror the body's dispatch below so the recognized
+            // token stream is IDENTICAL to the walker's (a `LatticeTokenSource` when
+            // `lex_dag(input)` is ambiguous, else the `SliceTokenSource` kinds/texts
+            // shape). A `lex_dag`/`lex` failure here ⇒ inconclusive ⇒ do NOT reject
+            // (the body's own `lex_dag(input)?` below surfaces the real lex error).
+            if let Ok(__recog_dag) = lex_dag(input) {
+                let __recog_reachable = if __recog_dag.has_ambiguity() {
+                    let __recog_src =
+                        mettail_prattail::wpda_runtime::LatticeTokenSource::new(__recog_dag);
+                    #recognize_ws_fn_name(&__recog_src, 0)
+                } else {
+                    match lex(input) {
+                        Ok(__recog_tokens) => {
+                            let __recog_kinds: Vec<mettail_prattail::automata::TokenKind> =
+                                __recog_tokens
+                                    .iter()
+                                    .map(|(__t, _)| token_to_kind(__t))
+                                    .collect();
+                            let __recog_texts: Vec<&str> = __recog_tokens
+                                .iter()
+                                .map(|(__t, __r)| token_text(__t, input, *__r))
+                                .collect();
+                            let __recog_src =
+                                mettail_prattail::wpda_runtime::SliceTokenSource::with_texts(
+                                    &__recog_kinds,
+                                    &__recog_texts,
+                                );
+                            #recognize_ws_fn_name(&__recog_src, 0)
+                        }
+                        // lex failed ⇒ inconclusive ⇒ don't reject (fall to walker).
+                        Err(_) => true,
+                    }
+                };
+                if !__recog_reachable {
+                    return Err(ParseError::UnexpectedToken {
+                        expected: Cow::Borrowed(
+                            "no valid parse: the non-parseability recognizer proved this span has no reachable accepting configuration",
+                        ),
+                        found: input
+                            .trim_start()
+                            .chars()
+                            .next()
+                            .map(|__c| __c.to_string())
+                            .unwrap_or_else(|| "end of input".to_string()),
+                        range: Range::from_byte_offsets(input, 0, input.len()),
+                        hint: Some(Cow::Borrowed(
+                            "recognizer fast-reject: a coarse SOUND over-approximation of the parser found this category unreachable for the input",
+                        )),
+                    });
+                }
+            }
+        }
     }
 }
 
@@ -2702,20 +2834,8 @@ fn emit_projection_isolation(cat_ident: &proc_macro2::Ident, shape: &ProjIsoShap
     let reject_on = super::forks::PROJ_ISO_SIGIL_AUTHORITATIVE_REJECT;
     // Grammar-derived DISTINCT first-bytes of the σ-led variants' leading literal
     // (`@`/`*`/`-`/`(` …) — the projection sigils this category admits. No hardcode.
-    let sigil_lead_bytes: Vec<u8> = {
-        let mut bs: Vec<u8> = shape
-            .variants
-            .iter()
-            .filter(|v| v.sigil_led)
-            .filter_map(|v| match v.slots.first() {
-                Some(ProjSlot::Lit(l)) => l.as_bytes().first().copied(),
-                _ => None,
-            })
-            .collect();
-        bs.sort_unstable();
-        bs.dedup();
-        bs
-    };
+    // Shared with the ROOT-P recognizer pre-pass gate (`emit_recognizer_prefilter`).
+    let sigil_lead_bytes: Vec<u8> = proj_sigil_lead_bytes(shape);
     // Declared whenever ON (the cap sites reference `__cap_hit` regardless of shape;
     // `__sigil_frame_matched` stays false for a category with no σ-led variant ⇒ that
     // category never rejects). `#[allow(unused_assignments)]` on the helper covers the
@@ -3473,6 +3593,11 @@ pub(crate) fn emit_parse_fns(
             format_ident!("parse_{}_via_wpda_surface_exact_with_source", cat_name);
         let surface_exact_fn_name = format_ident!("parse_{}_via_wpda_surface_exact", cat_name);
         let all_fn_name = format_ident!("parse_{}_via_wpda_all", cat_name);
+        // ROOT-P RECOGNIZER PRE-PASS (a166789b): module-scope non-parseability
+        // recognizer facade for this category (emitted below, gated on the const +
+        // a σ-led projection shape). Called by the `parse_via_wpda` fall-through
+        // fragment (`emit_recognizer_prefilter`).
+        let recognize_ws_fn_name = format_ident!("recognize_{}_reachable_ws", cat_name);
         let cat_src_idx_u16 = cat_src_idx as u16;
 
         // ── ROOT-P MEMOIZED BEST-PARSE per-category memo map ──
@@ -3767,6 +3892,81 @@ pub(crate) fn emit_parse_fns(
             }
         };
 
+        // ── ROOT-P RECOGNIZER PRE-PASS facade fn (non-parseability oracle a166789b)
+        // Emitted ONLY when the master const is ON AND this category has a σ-led
+        // `@`-projection shape — the EXACT gate `emit_recognizer_prefilter` uses for
+        // the calling fragment, so the fn and its sole caller are co-emitted (never
+        // one without the other). OFF / non-proj / no-σ-led-variant ⇒ empty ⇒
+        // byte-identical.
+        let recognizer_facade_fn: TokenStream = {
+            // SUPERSET of the fragment's gate (`emit_recognizer_prefilter` additionally
+            // requires ≥1 σ-led variant): emit the fn whenever the const is ON AND this
+            // category has ANY `@`-projection shape. The fragment (its sole caller) is
+            // therefore never emitted without the fn; a fn emitted without a caller
+            // (proj shape but no σ-led variant) is covered by `#[allow(dead_code)]`.
+            let recog_gate = super::forks::RECOGNIZER_PREFILTER
+                && projection_iso_shape(language, cat_name, categories).is_some();
+            if recog_gate {
+                quote! {
+                    /// ROOT-P RECOGNIZER PRE-PASS facade (non-parseability oracle
+                    /// a166789b, gated by [`super::forks::RECOGNIZER_PREFILTER`]).
+                    /// One-sided NON-PARSEABILITY oracle for the `#cat_ident`
+                    /// category: builds a FRESH coarse (GLL-Slot cursor merge + Tomita
+                    /// pop fan-out) walker via `recognize_reachable` and reports
+                    /// whether an EOI-accepting configuration is REACHABLE over
+                    /// `source`. `false` ⇒ the span is DEFINITIVELY non-parseable
+                    /// (poly-time, even where the full parse is exponential); `true` /
+                    /// max-steps ⇒ the span MAY be parseable (run the full parser).
+                    /// Called ONLY from the `parse_via_wpda` σ-led structural-decline
+                    /// fall-through (see `emit_recognizer_prefilter`). Not emitted when
+                    /// the const is OFF ⇒ byte-identical.
+                    #[allow(non_snake_case, dead_code)]
+                    pub fn #recognize_ws_fn_name(
+                        source: &dyn mettail_prattail::wpda_runtime::WpdaTokenSource,
+                        min_bp: u8,
+                    ) -> bool {
+                        use mettail_prattail::wpda_walker::WpdaWalker;
+                        use mettail_prattail::automata::lex_weight::LexicographicWeight;
+                        // Phase 3.1.7 (C10): walker W = LexicographicWeight.
+                        type DW = LexicographicWeight;
+                        // Coarse-walker step budget. Hitting the cap ⇒ conservatively
+                        // `true` (inconclusive ⇒ fall to the walker; NEVER a false
+                        // reject — soundness is budget-independent, since `false` is
+                        // returned only when the run genuinely completes with no
+                        // reachable accept). Env `PRATTAIL_RECOGNIZER_MAX_STEPS`
+                        // overrides for tuning without a rebuild.
+                        //
+                        // ⚠ STAGE-2 FINDING (2026-07-08): `recognize_reachable`'s
+                        // coarse frontier does NOT always converge — on some SMALL,
+                        // PARSEABLE σ-led spans (e.g. a 4-token rhocalc `Proc`) it
+                        // never empties/accepts and grinds to `max_steps` (returning
+                        // the inconclusive `true`). At the natural 1M default a single
+                        // such call runs tens of seconds, so the broad σ-led gate below
+                        // regresses the display proptests. Genuine rejects DO fire fast
+                        // (empty frontier in ~10 ms). The principled fix (a narrow gate
+                        // that only invokes the recognizer on the structural-decline
+                        // residual, decoupling perf from the budget) is pending, so
+                        // `RECOGNIZER_PREFILTER` ships OFF (see its const doc). The
+                        // budget stays env-tunable for that follow-up work.
+                        let max_steps: usize =
+                            std::env::var("PRATTAIL_RECOGNIZER_MAX_STEPS")
+                                .ok()
+                                .and_then(|__s| __s.parse().ok())
+                                .unwrap_or(1_000_000);
+                        WpdaWalker::<DW, _>::recognize_reachable(
+                            #engine_ident::default(),
+                            #cat_src_idx_u16,
+                            min_bp,
+                            source,
+                            max_steps,
+                        )
+                    }
+                }
+            } else {
+                quote! {}
+            }
+        };
+
         fns.push(quote! {
             // ROOT-P MEMOIZED BEST-PARSE (design af7680e2): the per-category
             // thread-local memo map `__PROJ_MEMO_<Cat>` consulted by the memoized
@@ -3792,6 +3992,13 @@ pub(crate) fn emit_parse_fns(
             // ONLY when this category is in `INFIX_ISOLATION_CATEGORIES` with ≥1
             // homogeneous binary-infix operator; empty otherwise.
             #infix_helper_fns
+
+            // ROOT-P RECOGNIZER PRE-PASS (non-parseability oracle a166789b): the
+            // module-scope `recognize_<Cat>_reachable_ws` facade fn. Emitted ONLY
+            // when `RECOGNIZER_PREFILTER` is ON AND this category has a σ-led
+            // `@`-projection shape; empty otherwise (byte-identical). Called by the
+            // `parse_via_wpda` fall-through fragment (`emit_recognizer_prefilter`).
+            #recognizer_facade_fn
 
             /// WPDS-runtime parser for the `#cat_ident` category.
             ///

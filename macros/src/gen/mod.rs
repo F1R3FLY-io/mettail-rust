@@ -415,6 +415,21 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                 quote! {}
             };
 
+            // ── ROOT-P RECOGNIZER PRE-PASS (non-parseability oracle a166789b) ──
+            // The SINGLE-WINNER seam's poly-time definitive fast-reject FALLBACK for
+            // the σ-led hard cases the authoritative-reject fails safe on. Wired into
+            // the `parse_via_wpda` body at the fall-through point (AFTER
+            // `proj_reject_fire`, BEFORE `lex_dag`). Self-gating: `emit_*` returns
+            // EMPTY unless `RECOGNIZER_PREFILTER` is ON AND this category has a σ-led
+            // `@`-projection shape ⇒ OFF / non-proj ⇒ byte-identical. The `_all`
+            // (ambiguity-preserving) seam is intentionally UNTOUCHED (single-winner
+            // only, mirroring the authoritative-reject's scope).
+            let recognizer_prefilter = runtime::wpda_codegen::facade::emit_recognizer_prefilter(
+                &cat_str,
+                language,
+                &sep_categories_ordered,
+            );
+
             // ── ROOT-P MEMOIZED BEST-PARSE (design af7680e2, "3A LIGHT") ──
             // This category's single-winner `parse_via_wpda` is wrapped with a
             // per-category, epoch-scoped, thread-local memo IFF the master const
@@ -589,6 +604,13 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                     #sep_prologue_single
                     #infix_prologue_single
                     #proj_reject_fire
+                    // ROOT-P RECOGNIZER PRE-PASS (a166789b): the fall-through fallback
+                    // — proj/sep/infix isolation + authoritative-reject have all
+                    // DECLINED, so a known-hard σ-led span is about to hit the walker.
+                    // A DEFINITIVE recognizer `Unreachable` returns the parse `Err`
+                    // here in poly time; any doubt falls through UNCHANGED. Empty
+                    // (byte-identical) unless the const is ON + σ-led proj shape.
+                    #recognizer_prefilter
                     let dag = lex_dag(input).map_err(ParseError::from)?;
                     if dag.has_ambiguity() {
                         let source = mettail_prattail::wpda_runtime::LatticeTokenSource::new(dag);
