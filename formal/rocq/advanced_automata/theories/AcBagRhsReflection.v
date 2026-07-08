@@ -118,6 +118,18 @@ Section AcBagRhsReflection.
     rewrite reflect_rhs_soup_elements, soup_elements_reflect. reflexivity.
   Qed.
 
+  (* INJECTIVE: distinct bags reflect to distinct carriers — `soup_elements` is a left inverse
+     (soup_elements_reflect), so the reflection loses nothing. Together with (2)+(5)+(6) this is the
+     "the RHS soup reflection is the multiset image of the source bag, injective and splice-correct"
+     obligation Stage AC2b adds over AcRestReconstruction. *)
+  Corollary reflect_bag_soup_injective : forall b1 b2,
+    reflect_bag_soup b1 = reflect_bag_soup b2 -> b1 = b2.
+  Proof.
+    intros b1 b2 Heq.
+    rewrite <- (soup_elements_reflect b1), <- (soup_elements_reflect b2).
+    rewrite Heq. reflexivity.
+  Qed.
+
 End AcBagRhsReflection.
 
 Print Assumptions soup_elements_reflect.
@@ -127,3 +139,4 @@ Print Assumptions reflect_rhs_soup_is_ground_reflection.
 Print Assumptions reflect_preserves_multiplicity.
 Print Assumptions reflect_bag_soup_perm.
 Print Assumptions rhs_soup_decodes_to_transformed_bag.
+Print Assumptions reflect_bag_soup_injective.
