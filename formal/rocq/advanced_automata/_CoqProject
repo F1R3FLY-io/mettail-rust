@@ -75,3 +75,7 @@ theories/AcRestReconstruction.v
 # removal-side dual of AtomicFiringNoPartialMatch; reuses AcRestReconstruction (sub_multiset,
 # complement, selection_rest_partition). Mirrors GuardedCommSoundness's three guarded outcomes.
 theories/AcAtomicNoPartialConsume.v
+# FV (AC-map) — Stage AC in-Rho AC matching of Map (EMap) operands: key-uniqueness (the ParMap
+# sorted-dedup invariant) is preserved across the AC split — the remainder is still key-unique and
+# the removed key is gone (re-inserting fixed entries cannot collide). Self-contained over NoDup.
+theories/AcMapKeyUniqueness.v
