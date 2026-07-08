@@ -1,0 +1,43 @@
+@startuml
+' Stage 3 production-wiring pipeline: LanguageDef → in-Rho matching ruleset →
+' capability-gated per-firing match call → matched + fired on the interpreter → OUT.
+skinparam backgroundColor #FFFFFF
+skinparam defaultFontName sans-serif
+skinparam shadowing false
+skinparam ActivityBorderColor #37474F
+skinparam ActivityDiamondBackgroundColor #FFF3E0
+skinparam ActivityDiamondBorderColor #E65100
+skinparam NoteBackgroundColor #F5F5F5
+skinparam NoteBorderColor #9E9E9E
+title Stage 3 — Production Wiring of In-Rho Set-Automaton Matching
+
+|#DDE8FB|Compile-time — partial evaluation|
+start
+:LanguageDef;
+:compile_in_rho_matching_ruleset;
+note right
+  Groups a language's structural base rewrites into
+  ONE positional set automaton. Each accept channel is
+  sourced from rho_net_injection_sites (the σ-receiver
+  SOURCE — the triad anchor). TOTAL partition: every
+  rewrite is an automaton entry OR a reasoned skip.
+end note
+:InRhoMatchingRuleset\n(automaton + accept_channels\n+ fingerprint + skip-list);
+
+|#FCEBCF|Per-firing invocation — the F-stage|
+:Dovetail report\n(the firing justification, host-matched);
+if (every FIRED rule matchable in Rho?\nFV (ix) install_admits) then (no)
+  :GATE REJECT — fall CLOSED to the\nhost-matched σ-replay driver\n(the language stays on its existing path);
+  stop
+else (yes)
+endif
+:reconstruct the ground subject LHS[σ]\n(root-rooted single redex; nested/multi\nfail closed → Stage 4);
+:in_rho_match_call_par\n= receiver network  ‖  subject spread\n(single-shot, per-site nonce → O1);
+
+|#D6EBDA|Runtime — the Rholang interpreter (RSpace)|
+:installed σ-receivers  ‖  call;
+:MATCH in Rho\n(the τ sa: symbol-inspection COMMs —\nunobservable, O1 symbol-once);
+:FIRE the σ-receiver\n(one observable c(ℓ) COMM → ⟦R⟧σ);
+:observe the rewrite result on OUT;
+stop
+@enduml
