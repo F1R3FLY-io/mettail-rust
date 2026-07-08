@@ -31,6 +31,7 @@ default = [
     "swap-demo-runtime",
     "ac-demo-runtime",
     "ctx-demo-runtime",
+    "lambda-demo-runtime",
 ]
 # Conversion from typed Rho observation reports into mettail_runtime::RuntimeBackendReport
 # plus the generic Language backend installer wrappers.
@@ -80,6 +81,18 @@ ctx-demo-runtime = [
     "runtime-report",
     "dep:mettail-languages",
     "mettail-languages/ctx-demo",
+    "mettail-languages/dovetail-codegen",
+    "mettail-languages/rho-codegen",
+]
+# Stage 3c: pulls in the generated `LambdaDemo` language for the end-to-end in-Rho BINDER
+# firing test (`rho_net_beta_firing`) — a generated β-reduction `App(Lam(^x. b), a) ~>
+# subst(b, x := a)` firing as a COMM on the reducer. Needs the generated `dovetail_report_for`
+# (σ + contractum population, `dovetail-codegen`) and the substitution σ-injection F-function
+# (`rho-codegen`).
+lambda-demo-runtime = [
+    "runtime-report",
+    "dep:mettail-languages",
+    "mettail-languages/lambda-demo",
     "mettail-languages/dovetail-codegen",
     "mettail-languages/rho-codegen",
 ]
@@ -162,6 +175,11 @@ required-features = ["ac-demo-runtime"]
 name = "rho_net_contextual_firing"
 path = "tests/rho_net_contextual_firing.rs"
 required-features = ["ctx-demo-runtime"]
+
+[[test]]
+name = "rho_net_beta_firing"
+path = "tests/rho_net_beta_firing.rs"
+required-features = ["lambda-demo-runtime"]
 
 [[test]]
 name = "rho_comm_oracle"

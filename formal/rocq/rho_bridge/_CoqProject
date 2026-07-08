@@ -74,3 +74,10 @@ theories/AcNonLinearConsistency.v
 # all-or-nothing (no partial consume, one reduced context emitted); plugging is total+injective with
 # an outer head invariant to the holes (O2); the unary Wrap(S)~>Wrap(T) join reconstructs ⟦Wrap(T)⟧.
 theories/ContextualAtomicJoinPlugging.v
+# Stage 3c — the binder/β-substitution codegen (App(Lam(^x. b), a) ~> subst(b, x := a)) is
+# well-defined + injective (BinderReflectionTotalOrReject): the De Bruijn LHS σ-variable
+# extraction excludes the binder and preserves the body's free variables (free_lam_char), and the
+# RHS Lambda-node reflection is collision-free (the reserved ^lambda/^bound tags never collide with
+# an Apply node or a σ-slot) + injective under a NoDup σ-order (reflect_inj). Beta is a BASE
+# rewrite, so it inherits LinearCommCorrespondence + the RhoLoweringTotalOrRejects install boundary.
+theories/BinderReflectionTotalOrReject.v

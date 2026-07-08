@@ -470,10 +470,16 @@ pub fn generate_rho_net_invocation(language: &LanguageDef) -> TokenStream {
     // sending its process-soup carrier on the AC trace channel (the installed AC receiver re-does
     // the order-independent match), rather than the flat base-rewrite σ-tuple.
     let ac_sites = mettail_rholang_codegen::rho_net_ac_injection_sites(language);
+    // Stage 3c: the binder/β-substitution firing sites — a substitution rewrite
+    // (`RhoNetLoweredRule::SubstRewrite`) fires by reflecting the firing's CONTRACTUM (the
+    // host-computed reduct `RHS[σ]`) at the scope variable's σ slot and the raw σ at every
+    // other LHS slot, then sending the σ tuple on the receiver channel (the installed
+    // SubstRewrite σ-receiver forwards the scope slot on `@out`).
+    let subst_sites = mettail_rholang_codegen::rho_net_subst_injection_sites(language);
 
-    let body = if sites.is_empty() && ac_sites.is_empty() {
-        // No σ-receiver (base OR AC): the helper exists for a uniform surface but always fails
-        // closed (there is nothing to inject).
+    let body = if sites.is_empty() && ac_sites.is_empty() && subst_sites.is_empty() {
+        // No σ-receiver (base OR AC OR subst): the helper exists for a uniform surface but
+        // always fails closed (there is nothing to inject).
         quote! {
             report.assert_complete().map_err(|status| {
                 ::std::format!(
@@ -555,6 +561,52 @@ pub fn generate_rho_net_invocation(language: &LanguageDef) -> TokenStream {
                         ::mettail_rholang_codegen::ac_contract_call(
                             #channel, &__whole_bag, __fingerprint, out_channel,
                         )
+                    },
+                }
+            })
+            .collect();
+
+        // Subst-rewrite arms (Stage 3c): reflect the firing's CONTRACTUM (the host-computed
+        // reduct) at the scope variable's slot, and the raw σ at every other LHS slot, then send
+        // the σ tuple on the receiver channel via `term_contract_call` (the same flat send the
+        // base arm uses — the SubstRewrite receiver is a plain σ-receiver that forwards the scope
+        // slot). The host does the matching AND the capture-avoiding substitution (model-b); the
+        // reduced term reflects to that ground σ slot.
+        let subst_site_arms: Vec<TokenStream> = subst_sites
+            .iter()
+            .map(|site| {
+                let label = lit(&site.rule_label);
+                let channel = lit(&site.channel);
+                let vars: Vec<LitStr> = site.lhs_var_order.iter().map(|var| lit(var)).collect();
+                let scope_var = lit(&site.scope_var);
+                quote! {
+                    #label => {
+                        // The reduced term the host produced (`RHS[σ]` after capture-avoiding
+                        // substitution) is the firing's contractum; it fills the scope slot.
+                        let __contractum = __justification.contractum.as_ref().ok_or_else(|| {
+                            ::std::format!(
+                                "Rho-net subst injection for language {} has no contractum for fired rule {}",
+                                #language_lit, #label,
+                            )
+                        })?;
+                        let __var_order: &[&str] = &[#(#vars),*][..];
+                        let mut __args = ::std::vec::Vec::with_capacity(__var_order.len());
+                        for __var in __var_order {
+                            // The scope slot carries the host-computed reduct; every other LHS
+                            // slot carries its raw matched sub-term (bound by the receiver but
+                            // not emitted — the body forwards only the scope slot).
+                            let __ground = if *__var == #scope_var {
+                                __mettail_rho_net_to_ground(__contractum)
+                            } else {
+                                __mettail_rho_net_to_ground(
+                                    __mettail_rho_net_find_sigma(__justification, __var)?,
+                                )
+                            };
+                            __args.push(::mettail_rholang_codegen::reflect_ground_term_par(
+                                &__ground, __fingerprint,
+                            ));
+                        }
+                        ::mettail_rholang_codegen::term_contract_call(#channel, __args, out_channel)
                     },
                 }
             })
@@ -642,6 +694,7 @@ pub fn generate_rho_net_invocation(language: &LanguageDef) -> TokenStream {
             let __call = match __justification.rule_label.as_str() {
                 #(#base_site_arms)*
                 #(#ac_site_arms)*
+                #(#subst_site_arms)*
                 __other => {
                     return ::core::result::Result::Err(::std::format!(
                         "Rho-net injection for language {} has no σ-receiver for fired rule {}",

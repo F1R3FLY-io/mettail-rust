@@ -67,6 +67,18 @@ pub struct ResolvedRewriteJustification<L> {
     pub rule_label: Option<String>,
     /// σ resolved to funded-best sub-terms, ordered by variable name.
     pub sigma: Vec<(String, JustifiedSubterm<L>)>,
+    /// The firing's ROOT resolved to its funded-best sub-term — the **contractum**
+    /// this firing produced (`RHS[σ]` after the host applied the rule, incl.
+    /// capture-avoiding substitution for a β-style `Subst`/`MultiSubst` RHS). This
+    /// is the reduct a binder-rewrite σ-injection hands to its σ-receiver: the host
+    /// computes the substitution (model-b) and the reduced term reflects to a ground
+    /// σ slot the receiver fires (Stage 3c). Extracted under the SAME
+    /// `funded_best` cost model the report roots use, so for a whole-term root redex
+    /// it equals the whole normal form and for a nested redex the local reduct.
+    /// `None` only if the root class has no funded-best derivation (defensive; a
+    /// fired class always has at least one node). Additive: base/AC/contextual
+    /// injection arms ignore it and stay byte-identical.
+    pub contractum: Option<JustifiedSubterm<L>>,
 }
 
 /// Checked, runtime-facing artifact for an extraction run.
@@ -266,9 +278,21 @@ where
                 sigma.push((name.clone(), derivation_to_subterm(&derivation)));
             }
         }
+        // The contractum: the firing's ROOT resolved to its funded-best sub-term —
+        // the reduct `RHS[σ]` the host produced (incl. capture-avoiding substitution
+        // for a β-style `Subst`/`MultiSubst` RHS, applied during saturation and
+        // merged into `root`). Extracted with the SAME `funded_best` cost model the
+        // report roots use, so it is the local normal form the extractor would
+        // report for this class (the appsubst/lambda `dovetail_normal_term` tests
+        // witness that this reliably yields the contractum, not the un-reduced redex).
+        let contractum = extractor
+            .funded_best(eg.find(justification.root))
+            .value
+            .map(|derivation| derivation_to_subterm(&derivation));
         resolved.push(ResolvedRewriteJustification {
             rule_label: justification.rule_label.clone(),
             sigma,
+            contractum,
         });
     }
     resolved

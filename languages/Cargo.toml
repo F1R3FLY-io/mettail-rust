@@ -38,6 +38,7 @@ all-languages = [
     "reserved_model",
     "guarded-rho",
     "lambda",
+    "lambda-demo",
     "led-test",
     "optsmoke",
     "refinementsmoke",
@@ -60,6 +61,7 @@ fortran_model = []
 reserved_model = []
 guarded-rho = []
 lambda = []
+lambda-demo = []
 led-test = []
 optsmoke = []
 refinementsmoke = []

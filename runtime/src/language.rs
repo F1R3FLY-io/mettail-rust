@@ -374,6 +374,13 @@ pub struct RuntimeReflectedSubterm {
 pub struct RuntimeRewriteJustification {
     pub rule_label: String,
     pub sigma: Vec<(String, RuntimeReflectedSubterm)>,
+    /// The firing's **contractum** — the reduct `RHS[σ]` the host produced (incl.
+    /// capture-avoiding substitution for a β-style substitution rewrite). A binder
+    /// (Stage 3c) Rho σ-injection reads this: the host computes the substitution
+    /// (model-b) and the reduced term reflects to the ground σ slot the flat
+    /// σ-receiver fires. `None` when the report producer did not resolve it
+    /// (additive; base/AC/contextual σ-injections ignore it and stay byte-identical).
+    pub contractum: Option<RuntimeReflectedSubterm>,
 }
 
 /// Structural validation failure for a runtime-projected Dovetail report.

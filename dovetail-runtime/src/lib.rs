@@ -114,6 +114,13 @@ where
             .iter()
             .map(|(var, subterm)| (var.clone(), project_reflected_subterm(subterm)))
             .collect(),
+        // Additive: the firing's contractum (the reduct `RHS[σ]`), projected like a σ
+        // sub-term. Populated only when the producer resolved it; base/AC/contextual
+        // injections ignore it, so existing `exec` reports stay byte-identical.
+        contractum: justification
+            .contractum
+            .as_ref()
+            .map(project_reflected_subterm),
     }
 }
 

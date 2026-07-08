@@ -1080,10 +1080,17 @@ pub fn generate_dovetail_report(language: &LanguageDef) -> TokenStream {
     // the contextual injection F-fn has no premise firing to read. (For a language that also
     // has a base rewrite the base-site gate already fires; this widens it to the
     // contextual-only signal for completeness.)
+    // Stage 3c: a binder/β-substitution rewrite that materialized to a `SubstRewrite`
+    // σ-receiver is a firing site too — its `rho_net_subst_injection_sites` entry drives the
+    // runtime subst σ-injection, which reads the firing's CONTRACTUM (the host-computed reduct)
+    // from `rewrite_justifications` — so a language whose ONLY rewrites are binder rewrites (e.g.
+    // LambdaDemo) must ALSO carry the resolved σ provenance, or the subst injection F-fn has no
+    // firing (and no contractum) to read.
     let populate_rewrite_justifications =
         !mettail_rholang_codegen::rho_net_injection_sites(language).is_empty()
             || !mettail_rholang_codegen::rho_net_ac_injection_sites(language).is_empty()
-            || !mettail_rholang_codegen::rho_net_contextual_injection_sites(language).is_empty();
+            || !mettail_rholang_codegen::rho_net_contextual_injection_sites(language).is_empty()
+            || !mettail_rholang_codegen::rho_net_subst_injection_sites(language).is_empty();
     let report_projection: TokenStream = if populate_rewrite_justifications {
         quote! {
             // Bare-ify a generated e-graph op / rule label to its source identity:
@@ -1112,6 +1119,14 @@ pub fn generate_dovetail_report(language: &LanguageDef) -> TokenStream {
                     __justification.rule_label = __mettail_bareify_label(&__justification.rule_label);
                     for (_, __subterm) in __justification.sigma.iter_mut() {
                         __mettail_bareify_subterm(__subterm);
+                    }
+                    // Stage 3c: the contractum (the reduct a subst σ-injection reflects) carries
+                    // the same "{lang}::{cat}::{ctor}" op labels as σ, so bare-ify it identically
+                    // — a runtime injection reflects each constructor as `mettail.term.{fp}.{ctor}`.
+                    if let ::core::option::Option::Some(__contractum) =
+                        __justification.contractum.as_mut()
+                    {
+                        __mettail_bareify_subterm(__contractum);
                     }
                 }
             }

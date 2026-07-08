@@ -32,6 +32,9 @@ pub mod class3opt;
 // Stage 3a: the unary-congruence (contextual join) demonstration language.
 #[cfg(feature = "ctx-demo")]
 pub mod ctxdemo;
+// Stage 3c: the untyped λ-calculus binder/β-substitution demonstration language.
+#[cfg(feature = "lambda-demo")]
+pub mod lambdademo;
 // PIECE 3: keyword-reservation OPT-OUT fixture (Fortran-style full ambiguity).
 #[cfg(feature = "fortran_model")]
 pub mod fortran_model;

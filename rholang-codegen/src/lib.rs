@@ -138,10 +138,11 @@ pub use rho_net_lower::{
     ac_bag_pattern, ac_contract_call, ac_rule_receiver, ac_sigma_receiver_par,
     contextual_contract_call, contextual_join_receiver_par, reconstruct_contractum,
     reflect_ground_term_par, rho_net_ac_injection_sites, rho_net_contextual_injection_sites,
-    rho_net_injection_sites, spread_child_location, spread_root_location, spread_term_par,
-    term_contract_call, GroundTerm, RhoNetAcInjectionSite, RhoNetContextualInjectionSite,
-    RhoNetInjectionInvocation, RhoNetInjectionSite, RhoNetInstallError, RhoNetLowered,
-    RhoNetLoweredRule, RhoNetLoweringError, UnsupportedFamily,
+    rho_net_injection_sites, rho_net_subst_injection_sites, spread_child_location,
+    spread_root_location, spread_term_par, term_contract_call, GroundTerm, RhoNetAcInjectionSite,
+    RhoNetContextualInjectionSite, RhoNetInjectionInvocation, RhoNetInjectionSite,
+    RhoNetInstallError, RhoNetLowered, RhoNetLoweredRule, RhoNetLoweringError,
+    RhoNetSubstInjectionSite, UnsupportedFamily,
 };
 pub use rho_net_ruleset::{
     compile_in_rho_matching_ruleset, convert_lhs_pattern, in_rho_match_call_par,

@@ -1533,6 +1533,77 @@ pub(crate) fn generate_typed_dovetail_report(language: &LanguageDef) -> TokenStr
     // reaches it.
     let step_graph_method = generate_step_graph(language);
 
+    // Stage 3c (typed path): a language whose rewrites lower to a σ-receiver (base / AC /
+    // contextual / SubstRewrite) carries the resolved σ provenance a runtime Rho σ-injection
+    // reads. The BINDER family (`rho_net_subst_injection_sites`) matters HERE: a λ-calculus
+    // reduces on the TYPED fold path (a binder `[Term -> Term]` + substitution), so its report is
+    // produced by THIS body — the non-typed `report_projection` gate never runs for it. Without
+    // this, β fires in the e-graph but the report carries no `rewrite_justifications`, so the subst
+    // σ-injection F-fn has no firing (and no contractum) to read. The gate mirrors the non-typed
+    // path exactly; a language with no σ-receiver keeps `rewrite_justifications` empty and stays
+    // byte-identical.
+    let populate_rewrite_justifications =
+        !mettail_rholang_codegen::rho_net_injection_sites(language).is_empty()
+            || !mettail_rholang_codegen::rho_net_ac_injection_sites(language).is_empty()
+            || !mettail_rholang_codegen::rho_net_contextual_injection_sites(language).is_empty()
+            || !mettail_rholang_codegen::rho_net_subst_injection_sites(language).is_empty();
+    // The report `let` binding (mut only when we populate σ), the σ-resolution statement (resolves
+    // σ + the firing CONTRACTUM under the SAME `__weigh` cost model the roots use, so the
+    // contractum is the reduct the extractor reports — model-b: the host computed the
+    // substitution), and the runtime bare-ification (source-identity op labels for the Rho
+    // reflector, incl. the contractum).
+    let (report_let, resolve_justifications, bareify_justifications) =
+        if populate_rewrite_justifications {
+            (
+                quote! { let mut report },
+                quote! {
+                    // Resolve σ + contractum while the e-graph is still live, under the SAME
+                    // `__weigh` the roots were extracted with (so the contractum is the extractor's
+                    // funded-best reduct for the firing's root class).
+                    report.rewrite_justifications =
+                        ::dovetail::report::resolve_rewrite_justifications(
+                            &eg,
+                            &sat.rewrite_justifications,
+                            __weigh,
+                        );
+                },
+                quote! {
+                    fn __mettail_bareify_label(__label: &str) -> String {
+                        __label.split("::").nth(2).unwrap_or(__label).to_string()
+                    }
+                    fn __mettail_bareify_subterm(
+                        __subterm: &mut mettail_runtime::RuntimeReflectedSubterm,
+                    ) {
+                        __subterm.constructor = __mettail_bareify_label(&__subterm.constructor);
+                        for __child in &mut __subterm.children {
+                            __mettail_bareify_subterm(__child);
+                        }
+                    }
+                    fn __mettail_bareify_rewrite_justifications(
+                        __justifications: &mut Vec<mettail_runtime::RuntimeRewriteJustification>,
+                    ) {
+                        for __justification in __justifications.iter_mut() {
+                            __justification.rule_label =
+                                __mettail_bareify_label(&__justification.rule_label);
+                            for (_, __subterm) in __justification.sigma.iter_mut() {
+                                __mettail_bareify_subterm(__subterm);
+                            }
+                            if let ::core::option::Option::Some(__contractum) =
+                                __justification.contractum.as_mut()
+                            {
+                                __mettail_bareify_subterm(__contractum);
+                            }
+                        }
+                    }
+                    __mettail_bareify_rewrite_justifications(
+                        &mut runtime_report.rewrite_justifications,
+                    );
+                },
+            )
+        } else {
+            (quote! { let report }, quote! {}, quote! {})
+        };
+
     quote! {
         // `op_enum_decl` carries `#[cfg(feature = "dovetail-codegen")]` on each of its items.
         #op_enum_decl
@@ -1629,15 +1700,17 @@ pub(crate) fn generate_typed_dovetail_report(language: &LanguageDef) -> TokenStr
                     }
                 }
 
-                let report = ::dovetail::report::report_from_extraction_with_rule_firings(
+                #report_let = ::dovetail::report::report_from_extraction_with_rule_firings(
                     ::dovetail::extract::Extraction {
                         value: __derivations,
                         completeness: __completeness,
                     },
                     sat.rule_firings,
                 );
+                #resolve_justifications
                 let mut runtime_report =
                     ::mettail_dovetail_runtime::project_dovetail_report(&report);
+                #bareify_justifications
                 if record_source {
                     for __term in &mut runtime_report.terms {
                         __term.source_display = __source_map.get(&__term.key).cloned();
