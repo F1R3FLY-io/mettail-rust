@@ -1073,9 +1073,17 @@ pub fn generate_dovetail_report(language: &LanguageDef) -> TokenStream {
     // firing site too — its `rho_net_ac_injection_sites` entry drives the runtime AC
     // σ-injection — so a language whose ONLY rewrites are AC rewrites (e.g. AcDemo) must
     // ALSO carry the resolved σ provenance, or the AC injection F-fn has no firing to read.
+    // Stage 3a: a contextual (congruence) rewrite that materialized to an atomic JOIN is a
+    // firing site too — its `rho_net_contextual_injection_sites` entry drives the runtime
+    // contextual σ-injection, which reconstructs the reduced hole from the PREMISE firing's
+    // σ — so a language with a contextual join must ALSO carry the resolved σ provenance, or
+    // the contextual injection F-fn has no premise firing to read. (For a language that also
+    // has a base rewrite the base-site gate already fires; this widens it to the
+    // contextual-only signal for completeness.)
     let populate_rewrite_justifications =
         !mettail_rholang_codegen::rho_net_injection_sites(language).is_empty()
-            || !mettail_rholang_codegen::rho_net_ac_injection_sites(language).is_empty();
+            || !mettail_rholang_codegen::rho_net_ac_injection_sites(language).is_empty()
+            || !mettail_rholang_codegen::rho_net_contextual_injection_sites(language).is_empty();
     let report_projection: TokenStream = if populate_rewrite_justifications {
         quote! {
             // Bare-ify a generated e-graph op / rule label to its source identity:
