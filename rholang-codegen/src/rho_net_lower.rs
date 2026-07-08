@@ -89,6 +89,13 @@ pub enum RhoNetLoweredRule {
     NativeFold { rule_id: String, par: Par },
     /// A base rewrite lowered to a flat σ-receiver contract.
     BaseRewrite { rule_id: String, par: Par },
+    /// A linear with-rest HashBag AC base rewrite un-skipped to an in-Rho AC receiver
+    /// (`ac_rule_receiver`): the connective process-soup pattern matches the bag ORDER-
+    /// INDEPENDENTLY (native `sub_pars`/`MaximumBipartiteMatch`) and fires `⟦R⟧σ` on the
+    /// dynamic out. Materialized exactly like [`Self::BaseRewrite`] — installed into the
+    /// program and given a real AC injection site — so AC firing rides the same install∥call
+    /// seam (Stage AC). Nested/non-linear/no-rest / Map-Zip AC rules stay `Unsupported`.
+    AcRewrite { rule_id: String, par: Par },
     /// A grammar structural constructor. In model b a constructor is realized
     /// inline via RHS term reflection (see [`reflect_term_par`]), never as a
     /// standalone installed contract, so this classification contributes no `Par`
@@ -112,6 +119,7 @@ impl RhoNetLoweredRule {
         match self {
             Self::NativeFold { rule_id, .. }
             | Self::BaseRewrite { rule_id, .. }
+            | Self::AcRewrite { rule_id, .. }
             | Self::StructuralConstructor { rule_id }
             | Self::CongruenceClosure { rule_id }
             | Self::ContextualRewrite { rule_id }
@@ -125,7 +133,9 @@ impl RhoNetLoweredRule {
     /// AST (`NativeFold`/`BaseRewrite`).
     pub fn par(&self) -> Option<&Par> {
         match self {
-            Self::NativeFold { par, .. } | Self::BaseRewrite { par, .. } => Some(par),
+            Self::NativeFold { par, .. }
+            | Self::BaseRewrite { par, .. }
+            | Self::AcRewrite { par, .. } => Some(par),
             _ => None,
         }
     }
@@ -243,6 +253,7 @@ impl RhoNetLowered {
                 RhoNetLoweredRule::Unsupported { .. } => "Unsupported",
                 RhoNetLoweredRule::NativeFold { .. }
                 | RhoNetLoweredRule::BaseRewrite { .. }
+                | RhoNetLoweredRule::AcRewrite { .. }
                 | RhoNetLoweredRule::StructuralConstructor { .. }
                 | RhoNetLoweredRule::CongruenceClosure { .. } => continue,
             };
@@ -425,6 +436,25 @@ fn lower_base_rewrite(
     // out-of-scope node.
     let vars = match lower_lhs_vars(&rewrite.left) {
         Ok(vars) => vars,
+        // Stage AC un-skip: a HashBag AC LHS has no flat σ-receiver (`lower_lhs_vars` fails
+        // `CollectionAc`), but a linear with-rest HashBag rule lowers to an in-Rho AC receiver
+        // via `ac_rule_receiver`, on the rule's OWN trace channel — the same channel the AC
+        // injection targets (accept-triad coherence by symmetric derivation). Fall through to
+        // `Unsupported{CollectionAc}` when it declines (nested/non-linear/no-rest, or a LHS
+        // whose collection is not a confirmed HashBag — Set/Map await a later slice).
+        Err(UnsupportedFamily::CollectionAc) => {
+            if let Some(par) = rule
+                .input_channels
+                .first()
+                .and_then(|channel| resolve_channel(channel).ok())
+                .and_then(|source| {
+                    ac_rule_receiver(&rewrite.left, &rewrite.right, source, language_fingerprint)
+                })
+            {
+                return Some(RhoNetLoweredRule::AcRewrite { rule_id: rule.id.clone(), par });
+            }
+            return Some(record_unsupported(rule, UnsupportedFamily::CollectionAc, errors));
+        },
         Err(family) => return Some(record_unsupported(rule, family, errors)),
     };
     let k = vars.len();
@@ -2176,6 +2206,51 @@ mod tests {
             ac_rule_receiver(&swap, &right, new_gstring_par("c".to_string(), Vec::new(), false), fp)
                 .is_none(),
             "a non-HashBag LHS is not un-skipped"
+        );
+    }
+
+    #[test]
+    fn hashbag_ac_rewrite_un_skips_to_an_installed_ac_receiver() {
+        // Stage AC-U1: a linear with-rest HashBag AC base rewrite PPar{P, ...rest} ~> Wrap(P)
+        // un-skips (in lower_base_rewrite, where lower_lhs_vars fails CollectionAc) to an
+        // AcRewrite — a materialized in-Rho AC receiver — NOT Unsupported, and it installs.
+        let rewrite = RewriteRule {
+            name: ident("AcStep"),
+            type_context: Vec::new(),
+            premises: Vec::new(),
+            left: apply(
+                "PPar",
+                vec![Pattern::Collection {
+                    coll_type: Some(CollectionType::HashBag),
+                    elements: vec![var_pattern("P")],
+                    rest: Some(ident("rest")),
+                }],
+            ),
+            right: apply("Wrap", vec![var_pattern("P")]),
+            is_auto_injected: false,
+        };
+        let (rule, errors) = lower_single_rewrite(rewrite.clone());
+        assert!(
+            matches!(rule, RhoNetLoweredRule::AcRewrite { .. }),
+            "HashBag AC rewrite un-skips to AcRewrite, got {rule:?}"
+        );
+        assert!(errors.is_empty(), "no lowering errors: {errors:?}");
+
+        // It installs: the AcRewrite materializes a persistent AC receiver, past the boundary.
+        let (lowered, id) = lower_single_rewrite_full(rewrite);
+        let ac_par = lowered
+            .rules()
+            .iter()
+            .find_map(|r| match r {
+                RhoNetLoweredRule::AcRewrite { par, rule_id } if rule_id == &id => Some(par),
+                _ => None,
+            })
+            .expect("the lowering carries the AcRewrite par");
+        assert_eq!(ac_par.receives.len(), 1, "the AC receiver is one receive");
+        assert!(ac_par.receives[0].persistent, "the AC receiver is persistent");
+        assert!(
+            lowered.installed_program_par().is_ok(),
+            "the AC rewrite installs (does not block the fail-closed boundary)"
         );
     }
 
