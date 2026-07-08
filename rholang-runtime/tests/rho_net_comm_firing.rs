@@ -20,21 +20,25 @@
 //!     binder path) delivered as the firing's CONTRACTUM at a dedicated σ slot;
 //!   * a bag RHS `PPar{ cont[Q/y], ...rest }` — the receiver body `@"ac:PPar"!(reduct) | rest`.
 //!
-//! ## Firing drive (deviation, documented)
+//! ## Firing drive (AUTOMATED — the deviation is REMOVED, Epic 4 A-1..A-4)
 //!
-//! Every other Stage (base/AC/AC2b/contextual/binder/native) drives its injection from
-//! `dovetail_report_for → rho_net_invocation_from_dovetail_to`. The Comm rule CANNOT take that path:
-//! the generated Dovetail compiler REJECTS the Comm RHS (a `MultiSubst` nested inside an AC `PPar` is
-//! `Err("multi-substitution patterns require generated substitution lowering")`), and even a
-//! STRUCTURAL non-linear AC rewrite (Ambient's `OpenRule` shape) records NO `rewrite_justifications`
-//! on the untyped e-graph path while the typed path does not lower AC collections at all. RhoCalc's
-//! communication is handled by the separate `receive::try_comm_rw_proc` engine for exactly this
-//! reason. So — as the backend explicitly anticipates (`run_rho_net_with_call_and_observe_runtime_values`
-//! documents "a hand-built (or … Dovetail-report-derived) σ injection actually fires its receiver")
-//! — the Comm injection here is HAND-BUILT (`comm_contract_call`) from the operand bag + the
-//! host-computed reduct (model-b). The INSTALLED RECEIVER is the codegen-materialized
-//! `RhoNetLoweredRule::CommRewrite` (from `CommDemo`'s def, via `installed_rho_net_program_par`), the
-//! COMM is real on the live reducer, and the non-linear `Receive.condition` is the real gate.
+//! Like every other Stage (base/AC/AC2b/contextual/binder/native), the Comm rule now drives its
+//! injection from `dovetail_report_for → rho_net_invocation_from_dovetail_to`. The three seams that
+//! once blocked this were closed:
+//!   * **Blocker 3 (A-1):** AC collection metapatterns lower on the TYPED fold path (the typed op
+//!     variant `L::<Cat>_<Ctor>`), so an `AcApp` LHS matches the typed n-ary `PPar` bag node.
+//!   * **Blocker 2 (A-2):** a non-linear AC NATIVE rule records a `rewrite_justification` — the two
+//!     `N` occurrences hashcons to one e-class, so `collect_ac_matches` finds the match (and prunes a
+//!     mismatched channel by evidence — the non-linear guard, at the Dovetail matcher).
+//!   * **Blocker 1 (A-3):** `is_comm_rewrite` routes the Comm rule onto the typed native lane; its
+//!     dispatch reconstructs the receive continuation's binder scope, host-computes `cont[Q/y]`
+//!     (model-b, the Stage 3c reduct), and splices `op{ reduct, ...rest }`, so `dovetail_report_for`
+//!     PRODUCES the Comm justification (σ + contractum).
+//! The generated Comm σ-injection F-function (A-4) reconstructs the operand bag from σ and the reduct
+//! `cont[Q/y]` from the contractum (the communicated bag minus `rest`), and assembles
+//! `comm_contract_call(⟦bag⟧, ⟦reduct⟧, @out)` — the SAME `RhoNetLoweredRule::CommRewrite` receiver
+//! (from `CommDemo`'s def, via `installed_rho_net_program_par`), the COMM real on the live reducer,
+//! the non-linear `Receive.condition` the belt-and-suspenders gate. No hand-built σ remains.
 #![cfg(feature = "comm-demo-runtime")]
 
 use mettail_languages::commdemo::CommDemoLanguage;
