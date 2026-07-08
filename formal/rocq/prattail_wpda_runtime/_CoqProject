@@ -61,3 +61,4 @@ theories/KeywordReservation.v
 theories/MethodFrameIsolation.v
 theories/InfixReconvergence.v
 theories/PrefixCohortIsolationGeneral.v
+theories/GroupedCollectionAccept.v
