@@ -81,3 +81,13 @@ theories/ContextualAtomicJoinPlugging.v
 # an Apply node or a σ-slot) + injective under a NoDup σ-order (reflect_inj). Beta is a BASE
 # rewrite, so it inherits LinearCommCorrespondence + the RhoLoweringTotalOrRejects install boundary.
 theories/BinderReflectionTotalOrReject.v
+# Stage 3e — the native-system-process dispatch (NativeProc(a..) ~> <native value>) is
+# TOTAL-OR-REJECT + the emitted payload is EXACTLY the trusted handler's value
+# (NativeSystemProcessBoundary): lower_native_system_process either materializes the flat one-slot
+# dispatch receiver (iff `fold` — a host-computed contractum — AND the channel resolves) or fails
+# closed with a precise reason (NotFold / ChannelUnresolved), never silently; and the receiver
+# forwards ONLY the injected slot, which the native σ-injection fills with the REFLECTED contractum
+# (the host's trusted-handler value) — so emitted = reflect(handler_value) (delegation, no
+# fabrication), tracking the handler value injectively. Inherits LinearCommCorrespondence + the
+# RhoLoweringTotalOrRejects install boundary + the RhoHostObligationBoundary trusted-handler seam.
+theories/NativeSystemProcessBoundary.v

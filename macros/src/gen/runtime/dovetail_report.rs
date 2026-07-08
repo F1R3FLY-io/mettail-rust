@@ -49,7 +49,18 @@ pub(crate) fn needs_typed_dovetail_path(language: &LanguageDef) -> bool {
         .rewrites
         .iter()
         .any(|rw| is_substitution_rewrite(language, rw).is_some());
-    has_native_fold || has_substitution_rewrite
+    // Stage 3e: a native SYSTEM PROCESS (a `fold` whose native-SCALAR output the Rho scalar path
+    // rejects — e.g. `PowInt : Int`, BigInt arithmetic) reduces to its host-computed value on the
+    // TYPED fold path (the native rule + op enum). The `has_native_fold` gate above deliberately
+    // skips native-scalar-output folds (historically the retired Ascent backend ran them), so a
+    // language whose ONLY reducing rule is such a native process would otherwise take the untyped
+    // String path — where the native fold never fires, leaving the redex un-reduced with no
+    // rewrite justification for the native σ-injection to read. Its materialized dispatch receiver
+    // (`rho_net_native_injection_sites`) signals exactly this: the native process must fire on the
+    // typed path. (Byte-identical for every language with no native injection site.)
+    let has_native_system_process =
+        !mettail_rholang_codegen::rho_net_native_injection_sites(language).is_empty();
+    has_native_fold || has_substitution_rewrite || has_native_system_process
 }
 
 /// Backward-compatible alias for [`needs_typed_dovetail_path`] (the typed path is no longer
@@ -1086,11 +1097,18 @@ pub fn generate_dovetail_report(language: &LanguageDef) -> TokenStream {
     // from `rewrite_justifications` — so a language whose ONLY rewrites are binder rewrites (e.g.
     // LambdaDemo) must ALSO carry the resolved σ provenance, or the subst injection F-fn has no
     // firing (and no contractum) to read.
+    // Stage 3e: a `fold` native system process that materialized to a `NativeSystemProcessRewrite`
+    // dispatch receiver is a firing site too — its `rho_net_native_injection_sites` entry drives
+    // the runtime native σ-injection, which reads the firing's CONTRACTUM (the trusted handler's
+    // native value) from `rewrite_justifications` — so a language whose ONLY reducing rules are
+    // native processes (e.g. NativeDemo) must ALSO carry the resolved σ provenance, or the native
+    // injection F-fn has no firing (and no contractum) to read.
     let populate_rewrite_justifications =
         !mettail_rholang_codegen::rho_net_injection_sites(language).is_empty()
             || !mettail_rholang_codegen::rho_net_ac_injection_sites(language).is_empty()
             || !mettail_rholang_codegen::rho_net_contextual_injection_sites(language).is_empty()
-            || !mettail_rholang_codegen::rho_net_subst_injection_sites(language).is_empty();
+            || !mettail_rholang_codegen::rho_net_subst_injection_sites(language).is_empty()
+            || !mettail_rholang_codegen::rho_net_native_injection_sites(language).is_empty();
     let report_projection: TokenStream = if populate_rewrite_justifications {
         quote! {
             // Bare-ify a generated e-graph op / rule label to its source identity:

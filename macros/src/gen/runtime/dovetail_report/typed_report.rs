@@ -1542,11 +1542,19 @@ pub(crate) fn generate_typed_dovetail_report(language: &LanguageDef) -> TokenStr
     // σ-injection F-fn has no firing (and no contractum) to read. The gate mirrors the non-typed
     // path exactly; a language with no σ-receiver keeps `rewrite_justifications` empty and stays
     // byte-identical.
+    //
+    // Stage 3e: the NATIVE-SYSTEM-PROCESS family (`rho_net_native_injection_sites`) matters HERE
+    // too, and CRUCIALLY: a `fold` native process (BigInt/large-int arithmetic, `PowInt`,
+    // factorial) reduces to its host-computed value on THIS typed fold path (the native rule + op
+    // enum), so its report is produced by this body — the non-typed gate never runs for it. Without
+    // this, the native fold fires in the e-graph but the report carries no `rewrite_justifications`,
+    // so the native σ-injection F-fn has no firing (and no contractum) to read.
     let populate_rewrite_justifications =
         !mettail_rholang_codegen::rho_net_injection_sites(language).is_empty()
             || !mettail_rholang_codegen::rho_net_ac_injection_sites(language).is_empty()
             || !mettail_rholang_codegen::rho_net_contextual_injection_sites(language).is_empty()
-            || !mettail_rholang_codegen::rho_net_subst_injection_sites(language).is_empty();
+            || !mettail_rholang_codegen::rho_net_subst_injection_sites(language).is_empty()
+            || !mettail_rholang_codegen::rho_net_native_injection_sites(language).is_empty();
     // The report `let` binding (mut only when we populate σ), the σ-resolution statement (resolves
     // σ + the firing CONTRACTUM under the SAME `__weigh` cost model the roots use, so the
     // contractum is the reduct the extractor reports — model-b: the host computed the

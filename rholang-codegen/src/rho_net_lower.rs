@@ -29,9 +29,10 @@
 
 use std::collections::{HashMap, HashSet};
 
+use mettail_ast::grammar::GrammarRule;
 use mettail_ast::language::{LanguageDef, Premise, RewriteRule};
 use mettail_ast::pattern::{Pattern, PatternTerm};
-use mettail_ast::types::CollectionType;
+use mettail_ast::types::{CollectionType, EvalMode};
 use models::create_bit_vector;
 use models::rhoapi::{Par, Receive, ReceiveBind};
 use models::rust::rholang::implicits::GPrivateBuilder;
@@ -76,6 +77,15 @@ pub enum UnsupportedFamily {
     /// guards are off-machine, but any other side condition has no receiver
     /// representation this (bridge-less) slice.
     NonCongruenceSideCondition,
+    /// A native system process (`![…]` HOL term) whose evaluation mode is NOT
+    /// `fold` (Stage 3e). A `fold` native process reduces to a host-computed
+    /// value INSIDE Dovetail saturation, producing a rewrite justification whose
+    /// contractum the native σ-injection delegates. A `step` (or annotation-less)
+    /// native process reduces on a different path (e.g. a partial `step` rule
+    /// routing to an `Err` normal form) and exposes no funded-best contractum for
+    /// the flat dispatch receiver to forward, so it fails closed with this precise
+    /// reason rather than installing a receiver that no native firing would drive.
+    NativeSystemProcessNotFold,
 }
 
 /// One lowered RhoNet rule.
@@ -128,9 +138,39 @@ pub enum RhoNetLoweredRule {
     /// substitution), or whose RHS is not a top-level `Subst`/`MultiSubst`, has no
     /// flat σ-receiver image and stays `Unsupported` (fail-closed).
     SubstRewrite { rule_id: String, par: Par },
+    /// A native system-process dispatch `NativeProc(a₀..a_{k-1}) ~> ⟨native value⟩`
+    /// lowered to a persistent flat DISPATCH RECEIVER whose body forwards the
+    /// host-computed native value (Stage 3e). The `NativeProc` is a `![…] fold`
+    /// HOL term (BigInt/large-int arithmetic, `PowInt`, factorial-style built-ins)
+    /// that the Rho scalar-contract path rejects, so the value is produced by a
+    /// TRUSTED native handler (the host's Dovetail native fold) rather than by an
+    /// in-Rho scalar contract: model-b — the host matches AND computes, the
+    /// reduced value reflects to a ground σ slot, and the receiver fires `⟦value⟧`.
+    /// The receiver is the flat one-slot [`sigma_receiver_par`] `for (result, out
+    /// <- c) { out!(result) }`; the native injection site
+    /// ([`rho_net_native_injection_sites`]) delivers the firing's CONTRACTUM (the
+    /// native handler's value, carried on
+    /// [`RuntimeRewriteJustification::contractum`]) in that slot. Materialized
+    /// exactly like [`Self::SubstRewrite`] — installed into the program and given a
+    /// native injection site — so native dispatch rides the same install∥call
+    /// seam. The structural rendezvous (the COMM on the native rule's dedicated
+    /// dispatch channel) is real; only the PAYLOAD is delegated to the trusted
+    /// handler. A native process whose evaluation mode is not `fold` (no
+    /// host-computed contractum) stays `Unsupported`
+    /// ([`UnsupportedFamily::NativeSystemProcessNotFold`], fail-closed).
+    ///
+    /// FV: `formal/rocq/rho_bridge/theories/NativeSystemProcessBoundary.v`
+    /// (total-or-reject dispatch + the emitted payload is exactly the trusted
+    /// handler's value — the encoder delegates, never fabricates) and the trust
+    /// boundary `RhoHostObligationBoundary.v`.
+    NativeSystemProcessRewrite { rule_id: String, par: Par },
     /// A declared join (COMM) — deferred to the next slice.
     Comm { rule_id: String },
-    /// A native system-process dispatch — deferred to the next slice.
+    /// A native system-process dispatch whose source construct has no flat
+    /// dispatch-receiver image (fail-closed; see
+    /// [`UnsupportedFamily::NativeSystemProcessNotFold`]). Retained as a recognized
+    /// classify-only family so a genuinely-unhandleable native process is caught at
+    /// the install boundary, never silently dropped.
     NativeSystemProcess { rule_id: String },
     /// A rule whose source construct is out of scope this slice (fail-closed).
     Unsupported {
@@ -148,6 +188,7 @@ impl RhoNetLoweredRule {
             | Self::AcRewrite { rule_id, .. }
             | Self::ContextualRewrite { rule_id, .. }
             | Self::SubstRewrite { rule_id, .. }
+            | Self::NativeSystemProcessRewrite { rule_id, .. }
             | Self::StructuralConstructor { rule_id }
             | Self::CongruenceClosure { rule_id }
             | Self::Comm { rule_id }
@@ -164,7 +205,8 @@ impl RhoNetLoweredRule {
             | Self::BaseRewrite { par, .. }
             | Self::AcRewrite { par, .. }
             | Self::ContextualRewrite { par, .. }
-            | Self::SubstRewrite { par, .. } => Some(par),
+            | Self::SubstRewrite { par, .. }
+            | Self::NativeSystemProcessRewrite { par, .. } => Some(par),
             _ => None,
         }
     }
@@ -286,6 +328,7 @@ impl RhoNetLowered {
                 | RhoNetLoweredRule::AcRewrite { .. }
                 | RhoNetLoweredRule::ContextualRewrite { .. }
                 | RhoNetLoweredRule::SubstRewrite { .. }
+                | RhoNetLoweredRule::NativeSystemProcessRewrite { .. }
                 | RhoNetLoweredRule::StructuralConstructor { .. }
                 | RhoNetLoweredRule::CongruenceClosure { .. } => continue,
             };
@@ -354,6 +397,17 @@ pub(crate) fn lower(
         .map(|(index, rewrite)| (rule_id_rewrite(index, &rewrite.name.to_string()), rewrite))
         .collect();
 
+    // Correlate native-system-process rule-ids back to their source `GrammarRule` (the `![…]`
+    // HOL term), which carries the eval mode + result category `program.rules` does not retain
+    // (Stage 3e). Keyed exactly as `add_native_system_process_rules` derives the id
+    // (`rule_id_native(index, label)`), so the two walks cannot drift.
+    let term_by_id: HashMap<String, &GrammarRule> = def
+        .terms
+        .iter()
+        .enumerate()
+        .map(|(index, term)| (rule_id_native(index, &term.label.to_string()), term))
+        .collect();
+
     for rule in &program.rules {
         let lowered = match rule.kind {
             RhoNetRuleKind::NativeFold => lower_native_fold(rule, lowering, &mut errors),
@@ -365,7 +419,7 @@ pub(crate) fn lower(
                 Some(RhoNetLoweredRule::StructuralConstructor { rule_id: rule.id.clone() })
             },
             RhoNetRuleKind::NativeSystemProcess => {
-                Some(RhoNetLoweredRule::NativeSystemProcess { rule_id: rule.id.clone() })
+                lower_native_system_process(rule, &term_by_id, &mut errors)
             },
             RhoNetRuleKind::StructuralCongruence => {
                 Some(RhoNetLoweredRule::CongruenceClosure { rule_id: rule.id.clone() })
@@ -627,6 +681,83 @@ fn lower_subst_rewrite(
     };
     let par = sigma_receiver_par(k, rhs_par, source);
     Some(RhoNetLoweredRule::SubstRewrite { rule_id: rule.id.clone(), par })
+}
+
+/// The bare RULE LABEL a `fold` native system process's Dovetail firing carries in a runtime
+/// rewrite justification (Stage 3e): `"{Category}_{Label}"` — the op-enum variant identity the
+/// macro's native-fold rule uses (`{Lang}::fold::{Category}_{Label}`), bare-ified by the report
+/// producer's `split("::").nth(2)` to `"{Category}_{Label}"`. Returns `None` unless the term is a
+/// `fold`-mode native process (a `step` / annotation-less native process reduces on a different
+/// path and exposes no funded-best contractum for the flat dispatch receiver to forward).
+///
+/// This is the SINGLE native-process shape shared by [`lower_native_system_process`] (which
+/// materializes the installed dispatch receiver) and [`rho_net_native_injection_sites`] (which
+/// surfaces the runtime native injection site), so both agree byte-for-byte on the rule label the
+/// native σ-injection F-function matches the firing on. The native-dispatch analogue of
+/// [`subst_rule_shape`].
+pub(crate) fn native_rule_shape(term: &GrammarRule) -> Option<String> {
+    // Only a `fold` native process reduces to a host-computed value inside Dovetail saturation
+    // (producing a rewrite justification whose contractum the injection delegates). A `step`
+    // native process (partial / routing to an `Err` normal form) has no funded-best contractum.
+    if term.eval_mode != Some(EvalMode::Fold) {
+        return None;
+    }
+    Some(format!("{}_{}", term.category, term.label))
+}
+
+/// Lower a native system process `NativeProc(a₀..a_{k-1}) ~> ⟨native value⟩` to its flat
+/// `NativeSystemProcessRewrite` DISPATCH RECEIVER (Stage 3e).
+///
+/// The receiver is the one-slot [`sigma_receiver_par`] `for (result, out <- c) { out!(result) }`:
+/// the host (Dovetail, model-b) matches the redex AND computes the native value via its TRUSTED
+/// native handler (the `![…] fold` HOL body — BigInt add, `PowInt`, factorial), and the reduced
+/// value reflects to the receiver's single ground σ slot, which the body forwards on the dynamic
+/// out channel as `⟦value⟧`. The native injection site ([`rho_net_native_injection_sites`])
+/// delivers the firing's CONTRACTUM (the native handler's value) in that slot; the structural
+/// rendezvous is the COMM on the native rule's dedicated dispatch channel
+/// (`RhoNetRule::input_channels.first()`), so only the PAYLOAD is delegated to the trusted
+/// handler (`RhoHostObligationBoundary.v`).
+///
+/// FAIL-CLOSED (never silently deferred): a native process whose evaluation mode is not `fold`
+/// (no host-computed contractum for the receiver to forward) is rejected with
+/// [`UnsupportedFamily::NativeSystemProcessNotFold`]; a missing source term or an unresolvable
+/// dispatch channel surfaces via `errors`.
+fn lower_native_system_process(
+    rule: &RhoNetRule,
+    term_by_id: &HashMap<String, &GrammarRule>,
+    errors: &mut Vec<RhoNetLoweringError>,
+) -> Option<RhoNetLoweredRule> {
+    let Some(term) = term_by_id.get(rule.id.as_str()) else {
+        // The RhoNet program carried a native rule with no source `GrammarRule` — the program
+        // was paired with a drifted def; fail closed rather than fabricate a receiver.
+        errors.push(RhoNetLoweringError::RuleSourceDrift { rule_id: rule.id.clone() });
+        return None;
+    };
+    // A non-`fold` native process has no host-computed contractum; fail closed with the precise
+    // reason (never install a receiver no native firing would drive).
+    if native_rule_shape(term).is_none() {
+        return Some(record_unsupported(
+            rule,
+            UnsupportedFamily::NativeSystemProcessNotFold,
+            errors,
+        ));
+    }
+    let Some(channel) = rule.input_channels.first() else {
+        errors.push(RhoNetLoweringError::RuleSourceDrift { rule_id: rule.id.clone() });
+        return None;
+    };
+    let source = match resolve_channel(channel) {
+        Ok(source) => source,
+        Err(error) => {
+            errors.push(error);
+            return None;
+        },
+    };
+    // The one-slot dispatch receiver `for (result, out <- c) { out!(result) }`: `k = 1` σ slot
+    // (the delegated native value), body forwards that slot (`BoundVar(rhs_var_index(1, 0))`).
+    let rhs_par = new_boundvar_par(rhs_var_index(1, 0), Vec::new(), false);
+    let par = sigma_receiver_par(1, rhs_par, source);
+    Some(RhoNetLoweredRule::NativeSystemProcessRewrite { rule_id: rule.id.clone(), par })
 }
 
 /// Lower a congruence (contextual) rewrite `⟦…S_i ~> T_i… |- K(S_1..S_n) ~> K'(T_1..T_n)⟧`
@@ -1257,6 +1388,83 @@ pub fn rho_net_subst_injection_sites(def: &LanguageDef) -> Vec<RhoNetSubstInject
             lhs_var_order: vars.iter().map(|var| var.to_string()).collect(),
             scope_var: scope_var.to_string(),
         });
+    }
+    sites
+}
+
+/// One native-system-process σ-injection site derived from a `LanguageDef` (Stage 3e): a `fold`
+/// native process's Dovetail firing label and its dispatch-receiver SOURCE channel.
+///
+/// The native-dispatch analogue of [`RhoNetSubstInjectionSite`]. A runtime native σ-injection
+/// F-function reads a rewrite firing's justification, reflects the firing's CONTRACTUM (the native
+/// value the host's trusted handler computed via its `![…] fold` HOL body, carried in
+/// [`RuntimeRewriteJustification::contractum`]) — the WHOLE payload, no structural RHS — and sends
+/// it on [`channel`](Self::channel) via [`term_contract_call`], where the installed
+/// `NativeSystemProcessRewrite` dispatch receiver ([`sigma_receiver_par`]) forwards that slot on
+/// `@out`. Only native processes that lowered to a
+/// [`RhoNetLoweredRule::NativeSystemProcessRewrite`] are surfaced, so a site is always executable.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RhoNetNativeInjectionSite {
+    /// The RULE LABEL the `fold` native process's Dovetail firing carries in a runtime rewrite
+    /// justification: `"{Category}_{Label}"` (the op-enum variant identity, e.g. `Int_PowInt`).
+    /// This is what the native σ-injection F-function matches the fired justification on — NOT the
+    /// bare source label — because the macro's native-fold rule labels its firing
+    /// `{Lang}::fold::{Category}_{Label}`, which the report producer bare-ifies to
+    /// `"{Category}_{Label}"`.
+    pub rule_label: String,
+    /// The dispatch-receiver SOURCE channel (`RhoNetRule::input_channels.first()`) — the SAME
+    /// channel the receiver rests on, so the accept triad (receiver source ≡ injection channel)
+    /// holds by symmetric derivation.
+    pub channel: String,
+}
+
+/// Derive every native-system-process σ-injection site for a language — the sites a runtime
+/// native σ-injection F-function targets (Stage 3e).
+///
+/// Builds the same [`RhoNetProgram`] + [`RhoNetLowered`] the `NativeSystemProcessRewrite` dispatch
+/// receivers are compiled from, keeps only the native processes that lowered to a
+/// [`RhoNetLoweredRule::NativeSystemProcessRewrite`] receiver, and reports each one's Dovetail
+/// firing label and source channel (the label extracted through the SAME [`native_rule_shape`] the
+/// receiver materialized from, so the injection agrees with the receiver and with the report
+/// producer's bare-ified firing label). The native-dispatch analogue of
+/// [`rho_net_injection_sites`] / [`rho_net_subst_injection_sites`].
+pub fn rho_net_native_injection_sites(def: &LanguageDef) -> Vec<RhoNetNativeInjectionSite> {
+    let lowering = crate::lower::lower_language_def(def);
+    let program = RhoNetProgram::from_language_def(def, &lowering);
+    let lowered = program.lower_to_par(def, &lowering);
+
+    let rule_by_id: HashMap<&str, &RhoNetRule> = program
+        .rules
+        .iter()
+        .map(|rule| (rule.id.as_str(), rule))
+        .collect();
+    let term_by_id: HashMap<String, &GrammarRule> = def
+        .terms
+        .iter()
+        .enumerate()
+        .map(|(index, term)| (rule_id_native(index, &term.label.to_string()), term))
+        .collect();
+
+    let mut sites = Vec::new();
+    for lowered_rule in lowered.rules() {
+        let RhoNetLoweredRule::NativeSystemProcessRewrite { rule_id, .. } = lowered_rule else {
+            continue;
+        };
+        let Some(program_rule) = rule_by_id.get(rule_id.as_str()) else {
+            continue;
+        };
+        let Some(channel) = program_rule.input_channels.first() else {
+            continue;
+        };
+        let Some(term) = term_by_id.get(rule_id) else {
+            continue;
+        };
+        // A `NativeSystemProcessRewrite` lowered iff `native_rule_shape` succeeded, so this cannot
+        // fail; a defensive `continue` keeps the derivation total.
+        let Some(rule_label) = native_rule_shape(term) else {
+            continue;
+        };
+        sites.push(RhoNetNativeInjectionSite { rule_label, channel: channel.clone() });
     }
     sites
 }
@@ -3136,6 +3344,177 @@ mod tests {
         assert_eq!(sites[0].scope_var, "fun");
         assert_eq!(sites[0].lhs_var_order, vec!["fun".to_string(), "arg".to_string()]);
         assert!(!sites[0].channel.trim().is_empty(), "the site carries a source channel");
+    }
+
+    /// Stage 3e: a minimal integer calculator whose only reducing rule is the native
+    /// exponentiation `PowInt(a, b) ~> a^b` (`a "^" b`, a `![…] fold` HOL term). The `^` operator
+    /// has no in-Rho scalar contract, so it is rejected by the scalar lowering and classified as a
+    /// `RhoNetRuleKind::NativeSystemProcess`. Mirrors `mettail_languages::nativedemo`.
+    const NATIVE_DEMO_FRAGMENT: &str = r#"
+        name: NativeDemo,
+        options {
+            emit_simulator: false,
+            emit_blockly: false,
+        },
+        types {
+            ![i64] as Int
+        },
+        terms {
+            PowInt . a:Int, b:Int |- a "^" b : Int ![a.pow(b as u32)] fold;
+        },
+        equations {},
+        rewrites {}
+    "#;
+
+    fn native_demo_def() -> LanguageDef {
+        syn::parse_str::<LanguageDef>(NATIVE_DEMO_FRAGMENT).expect("native-demo fragment must parse")
+    }
+
+    /// Stage 3e: the native system process `PowInt(a, b) ~> a^b` (a `![…] fold` HOL term the Rho
+    /// scalar path rejects) lowers to a `NativeSystemProcessRewrite` dispatch receiver (NOT
+    /// `NativeSystemProcess`/`Unsupported`), and its native injection site carries the op-variant
+    /// firing label `Int_PowInt` (the label the report producer bare-ifies the native firing to)
+    /// plus a source dispatch channel.
+    #[test]
+    fn native_demo_pow_lowers_to_native_system_process_rewrite() {
+        let def = native_demo_def();
+
+        // The native-rule shape: fold-mode, op-variant firing label "Int_PowInt".
+        let term = def
+            .terms
+            .iter()
+            .find(|term| term.label.to_string() == "PowInt")
+            .expect("the PowInt term exists");
+        assert_eq!(
+            native_rule_shape(term).as_deref(),
+            Some("Int_PowInt"),
+            "PowInt (fold) yields its op-variant firing label Int_PowInt"
+        );
+
+        // It materializes to a NativeSystemProcessRewrite lowered rule (installable).
+        let lowering = lower_language_def(&def);
+        let program = RhoNetProgram::from_language_def(&def, &lowering);
+        let lowered = program.lower_to_par(&def, &lowering);
+        assert!(
+            lowered.errors().is_empty(),
+            "the PowInt native process lowers with no fail-closed diagnostics, got {:?}",
+            lowered.errors()
+        );
+        // A rejected native term generates BOTH a `rule:term:*` structural constructor AND a
+        // `rule:native:*` dispatch rule; the native process is the `rule:native:` one.
+        let pow = lowered
+            .rules()
+            .iter()
+            .find(|rule| rule.rule_id() == "rule:native:0:PowInt")
+            .expect("PowInt has a native-dispatch lowered rule");
+        assert!(
+            matches!(pow, RhoNetLoweredRule::NativeSystemProcessRewrite { .. }),
+            "PowInt lowers to a NativeSystemProcessRewrite dispatch receiver, got {pow:?}"
+        );
+        assert!(
+            lowered.installed_program_par().is_ok(),
+            "the NativeSystemProcessRewrite dispatch receiver installs (a plain flat receiver)"
+        );
+
+        // The native injection site is derived (drives the runtime native σ-injection).
+        let sites = rho_net_native_injection_sites(&def);
+        assert_eq!(sites.len(), 1, "one native injection site for PowInt, got {sites:?}");
+        assert_eq!(
+            sites[0].rule_label, "Int_PowInt",
+            "the site's rule label is the op-variant identity Int_PowInt the firing bare-ifies to"
+        );
+        assert!(!sites[0].channel.trim().is_empty(), "the site carries a source channel");
+    }
+
+    /// Stage 3e (fail-closed): [`native_rule_shape`] is `fold`-gated — only a `fold` native
+    /// process has a host-computed contractum for the flat dispatch receiver to forward. A `step`
+    /// native process (partial / routing to an `Err` normal form) yields no firing label and, if
+    /// classified as a native system process, fails closed with the precise
+    /// [`UnsupportedFamily::NativeSystemProcessNotFold`] reason (never installs a receiver no
+    /// native firing would drive).
+    #[test]
+    fn native_rule_shape_is_fold_gated_and_a_step_native_process_fails_closed() {
+        const FRAGMENT: &str = r#"
+            name: NativeStepDemo,
+            options {
+                emit_simulator: false,
+                emit_blockly: false,
+            },
+            types {
+                ![i64] as Int
+            },
+            terms {
+                PowInt . a:Int, b:Int |- a "^" b : Int ![a.pow(b as u32)] fold;
+                FactInt . a:Int |- a "!" : Int ![a] step;
+            },
+            equations {},
+            rewrites {}
+        "#;
+        let def =
+            syn::parse_str::<LanguageDef>(FRAGMENT).expect("native-step fragment must parse");
+
+        let pow = def
+            .terms
+            .iter()
+            .find(|term| term.label.to_string() == "PowInt")
+            .expect("PowInt exists");
+        let fact = def
+            .terms
+            .iter()
+            .find(|term| term.label.to_string() == "FactInt")
+            .expect("FactInt exists");
+        assert_eq!(
+            native_rule_shape(pow).as_deref(),
+            Some("Int_PowInt"),
+            "a fold native process yields its op-variant firing label"
+        );
+        assert_eq!(
+            native_rule_shape(fact),
+            None,
+            "a step native process has no host-computed contractum, so no native firing label"
+        );
+
+        // The step native process (a rejected native system process) fails closed with the precise
+        // reason; the fold sibling still materializes.
+        let lowering = lower_language_def(&def);
+        let program = RhoNetProgram::from_language_def(&def, &lowering);
+        let lowered = program.lower_to_par(&def, &lowering);
+        let fact_lowered = lowered
+            .rules()
+            .iter()
+            .find(|rule| rule.rule_id() == "rule:native:1:FactInt")
+            .expect("FactInt has a native-dispatch lowered rule");
+        assert!(
+            matches!(
+                fact_lowered,
+                RhoNetLoweredRule::Unsupported {
+                    family: UnsupportedFamily::NativeSystemProcessNotFold,
+                    ..
+                }
+            ),
+            "a step native process fails closed as NativeSystemProcessNotFold, got {fact_lowered:?}"
+        );
+        assert!(
+            lowered.errors().iter().any(|error| matches!(
+                error,
+                RhoNetLoweringError::UnsupportedFamily {
+                    family: UnsupportedFamily::NativeSystemProcessNotFold,
+                    ..
+                }
+            )),
+            "the step native process records the precise fail-closed reason, got {:?}",
+            lowered.errors()
+        );
+        // The fold sibling still materializes a dispatch receiver.
+        let pow_lowered = lowered
+            .rules()
+            .iter()
+            .find(|rule| rule.rule_id() == "rule:native:0:PowInt")
+            .expect("PowInt has a native-dispatch lowered rule");
+        assert!(
+            matches!(pow_lowered, RhoNetLoweredRule::NativeSystemProcessRewrite { .. }),
+            "the fold sibling still materializes a dispatch receiver, got {pow_lowered:?}"
+        );
     }
 
     /// Stage 3c (item 1): the De Bruijn binder environment in the LHS σ-variable extraction — a

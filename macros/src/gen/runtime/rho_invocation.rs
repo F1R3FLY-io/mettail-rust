@@ -476,10 +476,20 @@ pub fn generate_rho_net_invocation(language: &LanguageDef) -> TokenStream {
     // other LHS slot, then sending the σ tuple on the receiver channel (the installed
     // SubstRewrite σ-receiver forwards the scope slot on `@out`).
     let subst_sites = mettail_rholang_codegen::rho_net_subst_injection_sites(language);
+    // Stage 3e: the native-system-process firing sites — a `fold` native process
+    // (`RhoNetLoweredRule::NativeSystemProcessRewrite`) fires by reflecting the firing's CONTRACTUM
+    // (the WHOLE native value the host's trusted handler computed — there is no structural RHS)
+    // and sending it on the dispatch channel (the installed NativeSystemProcessRewrite receiver
+    // forwards that single slot on `@out`).
+    let native_sites = mettail_rholang_codegen::rho_net_native_injection_sites(language);
 
-    let body = if sites.is_empty() && ac_sites.is_empty() && subst_sites.is_empty() {
-        // No σ-receiver (base OR AC OR subst): the helper exists for a uniform surface but
-        // always fails closed (there is nothing to inject).
+    let body = if sites.is_empty()
+        && ac_sites.is_empty()
+        && subst_sites.is_empty()
+        && native_sites.is_empty()
+    {
+        // No σ-receiver (base OR AC OR subst OR native): the helper exists for a uniform surface
+        // but always fails closed (there is nothing to inject).
         quote! {
             report.assert_complete().map_err(|status| {
                 ::std::format!(
@@ -612,6 +622,37 @@ pub fn generate_rho_net_invocation(language: &LanguageDef) -> TokenStream {
             })
             .collect();
 
+        // Native-system-process arms (Stage 3e): a `fold` native process has NO structural RHS —
+        // the WHOLE reduct is the host's trusted-handler value, carried as the firing's contractum.
+        // Reflect that contractum and send it (as the single dispatch argument) on the dispatch
+        // channel via `term_contract_call`; the installed `NativeSystemProcessRewrite` receiver is
+        // the flat one-slot receiver `for (result, out <- c) { out!(result) }` that forwards it on
+        // `@out`. The host matched AND computed the native value (model-b) via its `![…] fold` HOL
+        // body; only the payload is delegated — the encoder reflects it, never fabricates it.
+        let native_site_arms: Vec<TokenStream> = native_sites
+            .iter()
+            .map(|site| {
+                let label = lit(&site.rule_label);
+                let channel = lit(&site.channel);
+                quote! {
+                    #label => {
+                        let __contractum = __justification.contractum.as_ref().ok_or_else(|| {
+                            ::std::format!(
+                                "Rho-net native injection for language {} has no contractum for fired rule {}",
+                                #language_lit, #label,
+                            )
+                        })?;
+                        let __arg = ::mettail_rholang_codegen::reflect_ground_term_par(
+                            &__mettail_rho_net_to_ground(__contractum), __fingerprint,
+                        );
+                        ::mettail_rholang_codegen::term_contract_call(
+                            #channel, ::std::vec![__arg], out_channel,
+                        )
+                    },
+                }
+            })
+            .collect();
+
         quote! {
             report.assert_complete().map_err(|status| {
                 ::std::format!(
@@ -695,6 +736,7 @@ pub fn generate_rho_net_invocation(language: &LanguageDef) -> TokenStream {
                 #(#base_site_arms)*
                 #(#ac_site_arms)*
                 #(#subst_site_arms)*
+                #(#native_site_arms)*
                 __other => {
                     return ::core::result::Result::Err(::std::format!(
                         "Rho-net injection for language {} has no σ-receiver for fired rule {}",
