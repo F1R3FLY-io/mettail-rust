@@ -2418,4 +2418,118 @@ mod tests {
             "the result must be flat, never a nested bag-of-bags"
         );
     }
+
+    #[test]
+    fn ac_nonlinear_native_rule_records_one_justification_with_shared_sigma() {
+        // (A-2 — closes Blocker 2) The FIRST NON-LINEAR AC NATIVE firing:
+        //     par{ open(N,P), amb(N,Q), ...rest }  ~>  ⟨native reduct⟩
+        // where the channel metavariable `N` occurs in BOTH structured elements. The two
+        // `N` occurrences hashcons to ONE e-class (`amb`/`open` share the leaf `n`), so
+        // `collect_ac_matches` (rules.rs) finds the match — the non-linear `Var` re-bind
+        // check in `collect_matches` succeeds by e-class equality — and
+        // `apply_native_matches` records EXACTLY ONE `RewriteJustification` whose σ binds
+        // `N` to the shared class and `rest` to the multiset complement. This is the exact
+        // mechanism the CommDemo Comm rule rides (its `(PFor N cont)`/`(POutput N Q)`
+        // elements share the channel `N`).
+        let mut eg = EGraph::<String>::new();
+        let n = eg.add(ENode::leaf("n".into()));
+        let va = eg.add(ENode::leaf("A".into()));
+        let vb = eg.add(ENode::leaf("B".into()));
+        let extra = eg.add(ENode::leaf("E".into()));
+        let open = eg.add(ENode::new("open".into(), vec![n, va]));
+        let amb = eg.add(ENode::new("amb".into(), vec![n, vb])); // SAME `n` → one class
+        let mut bag = vec![open, amb, extra];
+        bag.sort_by_cached_key(|&a| eg.canonical_class_key(a));
+        let _par = eg.add(ENode::new("par".into(), bag));
+        eg.rebuild();
+
+        // A native AcApp rule: its dispatch computes a fresh reduct and returns it (a net
+        // change → the firing is recorded), mirroring the Comm dispatch's compute-and-splice.
+        let native = vec![NativeRule {
+            lhs: Pattern::ac(
+                "par".into(),
+                vec![
+                    Pattern::app("open".into(), vec![Pattern::var("N"), Pattern::var("P")]),
+                    Pattern::app("amb".into(), vec![Pattern::var("N"), Pattern::var("Q")]),
+                ],
+                Some("rest".into()),
+            ),
+            op: 0,
+            label: Some("NlComm".into()),
+        }];
+        let dispatch =
+            |_op: NativeOpId, eg: &mut EGraph<String>, subst: &Subst| -> Option<EClassId> {
+                // The non-linear channel var + rest are bound by the match (else no firing).
+                let _n = *subst.get("N")?;
+                let _rest = *subst.get("rest")?;
+                Some(eg.add(ENode::leaf("reduct".into())))
+            };
+        let rep = eg.saturate_with_native(&[], &native, &dispatch, 20);
+        assert_eq!(rep.outcome, SaturationOutcome::Converged);
+
+        // EXACTLY ONE justification — the non-linear native AcApp fired once and recorded σ.
+        assert_eq!(
+            rep.rewrite_justifications.len(),
+            1,
+            "one non-linear native AC firing must be recorded, got {:?}",
+            rep.rewrite_justifications
+        );
+        let j = &rep.rewrite_justifications[0];
+        assert_eq!(j.rule_label.as_deref(), Some("NlComm"));
+        // σ binds the shared `N` to the single shared channel class (the non-linear guard
+        // held by e-class equality), plus the element bodies and the complement `rest`.
+        assert_eq!(
+            eg.find(j.subst["N"]),
+            eg.find(n),
+            "N is bound to the single shared channel class"
+        );
+        assert!(j.subst.contains_key("P"), "the open body P is bound");
+        assert!(j.subst.contains_key("Q"), "the amb body Q is bound");
+        assert!(j.subst.contains_key("rest"), "the complement `rest` is bound");
+    }
+
+    #[test]
+    fn ac_nonlinear_native_rule_vetoes_mismatched_shared_var() {
+        // (A-2 negative) par{ open(n,A), amb(m,B) } with n ≠ m: the shared-channel
+        // constraint is UNSATISFIABLE, so `collect_ac_matches` finds NO pairing (the
+        // non-linear `Var` re-bind check refutes `find(n) == find(m)`), and
+        // `apply_native_matches` records NO justification — the Dovetail-level analogue of
+        // the Comm receiver's non-linear `Receive.condition` vetoing a mismatched-channel
+        // soup.
+        let mut eg = EGraph::<String>::new();
+        let n = eg.add(ENode::leaf("n".into()));
+        let m = eg.add(ENode::leaf("m".into()));
+        let va = eg.add(ENode::leaf("A".into()));
+        let vb = eg.add(ENode::leaf("B".into()));
+        let open = eg.add(ENode::new("open".into(), vec![n, va]));
+        let amb = eg.add(ENode::new("amb".into(), vec![m, vb])); // DIFFERENT channel
+        let mut bag = vec![open, amb];
+        bag.sort_by_cached_key(|&a| eg.canonical_class_key(a));
+        let _par = eg.add(ENode::new("par".into(), bag));
+        eg.rebuild();
+
+        let native = vec![NativeRule {
+            lhs: Pattern::ac(
+                "par".into(),
+                vec![
+                    Pattern::app("open".into(), vec![Pattern::var("N"), Pattern::var("P")]),
+                    Pattern::app("amb".into(), vec![Pattern::var("N"), Pattern::var("Q")]),
+                ],
+                Some("rest".into()),
+            ),
+            op: 0,
+            label: Some("NlComm".into()),
+        }];
+        let dispatch =
+            |_op: NativeOpId, eg: &mut EGraph<String>, _subst: &Subst| -> Option<EClassId> {
+                Some(eg.add(ENode::leaf("reduct".into())))
+            };
+        let rep = eg.saturate_with_native(&[], &native, &dispatch, 20);
+        assert_eq!(rep.outcome, SaturationOutcome::Converged);
+        assert!(
+            rep.rewrite_justifications.is_empty(),
+            "a mismatched-channel soup must record NO firing (non-linear veto), got {:?}",
+            rep.rewrite_justifications
+        );
+    }
 }
