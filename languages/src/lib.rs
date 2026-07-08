@@ -32,6 +32,9 @@ pub mod class2smoke;
 pub mod class3multi;
 #[cfg(feature = "class3opt")]
 pub mod class3opt;
+// Stage 3b: the canonical single-receive Rholang COMMUNICATION rule (non-linear AC firing).
+#[cfg(feature = "comm-demo")]
+pub mod commdemo;
 // Stage 3a: the unary-congruence (contextual join) demonstration language.
 #[cfg(feature = "ctx-demo")]
 pub mod ctxdemo;

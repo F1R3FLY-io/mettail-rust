@@ -34,10 +34,12 @@ use mettail_ast::language::{LanguageDef, Premise, RewriteRule};
 use mettail_ast::pattern::{Pattern, PatternTerm};
 use mettail_ast::types::{CollectionType, EvalMode};
 use models::create_bit_vector;
-use models::rhoapi::{Par, Receive, ReceiveBind};
+use models::rhoapi::expr::ExprInstance;
+use models::rhoapi::{EAnd, EEq, Expr, Par, Receive, ReceiveBind};
 use models::rust::rholang::implicits::GPrivateBuilder;
 use models::rust::utils::{
-    new_boundvar_par, new_elist_par, new_freevar_par, new_gstring_par, new_send_par, union,
+    new_boundvar_par, new_elist_par, new_freevar_par, new_gstring_par, new_send_par,
+    new_wildcard_par, union,
 };
 use syn::Ident;
 
@@ -106,6 +108,18 @@ pub enum RhoNetLoweredRule {
     /// program and given a real AC injection site — so AC firing rides the same install∥call
     /// seam (Stage AC). Nested/non-linear/no-rest / Map-Zip AC rules stay `Unsupported`.
     AcRewrite { rule_id: String, par: Par },
+    /// A canonical single-receive Rholang COMMUNICATION rewrite
+    /// `op{(PFor N cont), (POutput N Q), ...rest} ~> op{(eval cont Q), ...rest}` un-skipped to a
+    /// NON-LINEAR AC σ-receiver ([`comm_rule_receiver`]): the connective process-soup pattern
+    /// matches the two STRUCTURED elements ORDER-INDEPENDENTLY, a `Receive.condition`
+    /// `EEq(N_recv, N_send)` enforces the shared channel `N ≡ N` (reject-safe), and the body emits
+    /// the bag RHS `@"ac:op"!(reduct) | rest` where the reduct is the host-computed contractum
+    /// `cont[Q/y]`. Materialized exactly like [`Self::AcRewrite`] — installed into the program and
+    /// fired by a Comm injection ([`comm_contract_call`]) on the same install∥call seam (Stage 3b).
+    /// The FIRST non-linear AC firing. A structured/non-linear AC rewrite whose RHS is not a
+    /// single-substitution with-rest bag (e.g. Ambient's structural `OpenRule`) declines and stays
+    /// `Unsupported` (fail-closed).
+    CommRewrite { rule_id: String, par: Par },
     /// A grammar structural constructor. In model b a constructor is realized
     /// inline via RHS term reflection (see [`reflect_term_par`]), never as a
     /// standalone installed contract, so this classification contributes no `Par`
@@ -186,6 +200,7 @@ impl RhoNetLoweredRule {
             Self::NativeFold { rule_id, .. }
             | Self::BaseRewrite { rule_id, .. }
             | Self::AcRewrite { rule_id, .. }
+            | Self::CommRewrite { rule_id, .. }
             | Self::ContextualRewrite { rule_id, .. }
             | Self::SubstRewrite { rule_id, .. }
             | Self::NativeSystemProcessRewrite { rule_id, .. }
@@ -204,6 +219,7 @@ impl RhoNetLoweredRule {
             Self::NativeFold { par, .. }
             | Self::BaseRewrite { par, .. }
             | Self::AcRewrite { par, .. }
+            | Self::CommRewrite { par, .. }
             | Self::ContextualRewrite { par, .. }
             | Self::SubstRewrite { par, .. }
             | Self::NativeSystemProcessRewrite { par, .. } => Some(par),
@@ -326,6 +342,7 @@ impl RhoNetLowered {
                 RhoNetLoweredRule::NativeFold { .. }
                 | RhoNetLoweredRule::BaseRewrite { .. }
                 | RhoNetLoweredRule::AcRewrite { .. }
+                | RhoNetLoweredRule::CommRewrite { .. }
                 | RhoNetLoweredRule::ContextualRewrite { .. }
                 | RhoNetLoweredRule::SubstRewrite { .. }
                 | RhoNetLoweredRule::NativeSystemProcessRewrite { .. }
@@ -541,22 +558,37 @@ fn lower_base_rewrite(
         // whose collection is not a confirmed HashBag — Set/Map await a later slice).
         Err(UnsupportedFamily::CollectionAc) => {
             let resolved_kind = resolve_ac_collection_type(def, &rewrite.left);
-            if let Some(par) = rule
+            let source = rule
                 .input_channels
                 .first()
-                .and_then(|channel| resolve_channel(channel).ok())
-                .and_then(|source| {
-                    ac_rule_receiver(
-                        &rewrite.left,
-                        &rewrite.right,
-                        source,
-                        language_fingerprint,
-                        resolved_kind,
-                        Some(def),
-                    )
-                })
-            {
+                .and_then(|channel| resolve_channel(channel).ok());
+            // Linear with-rest HashBag AC (bare-var elements) → AcRewrite.
+            if let Some(par) = source.clone().and_then(|source| {
+                ac_rule_receiver(
+                    &rewrite.left,
+                    &rewrite.right,
+                    source,
+                    language_fingerprint,
+                    resolved_kind.clone(),
+                    Some(def),
+                )
+            }) {
                 return Some(RhoNetLoweredRule::AcRewrite { rule_id: rule.id.clone(), par });
+            }
+            // Stage 3b: the canonical single-receive COMMUNICATION rule (structured non-linear AC
+            // LHS + substitution-in-bag RHS) → a non-linear AC σ-receiver whose `Receive.condition`
+            // `EEq(N_recv, N_send)` enforces the shared channel. Declines for every other
+            // structured/non-linear AC rewrite (e.g. Ambient's structural `OpenRule`).
+            if let Some(par) = source.and_then(|source| {
+                comm_rule_receiver(
+                    &rewrite.left,
+                    &rewrite.right,
+                    source,
+                    language_fingerprint,
+                    resolved_kind,
+                )
+            }) {
+                return Some(RhoNetLoweredRule::CommRewrite { rule_id: rule.id.clone(), par });
             }
             return Some(record_unsupported(rule, UnsupportedFamily::CollectionAc, errors));
         },
@@ -2405,6 +2437,529 @@ fn all_formals_bitvec(count: usize) -> Vec<u8> {
     }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+// Stage 3b: the canonical single-receive Rholang COMMUNICATION rule as a NON-LINEAR AC σ-receiver.
+//
+//     Comm . |- (PPar {(PFor N cont), (POutput N Q), ...rest}) ~> (PPar {(eval cont Q), ...rest})
+//
+// i.e. `for(y <- N){ cont } | N!(Q)  ~>  cont[Q/y]`, spliced back into the residual bag. This is
+// the FIRST rewrite family that COMPOSES, in one atomic COMM on the reducer:
+//
+//   * HashBag AC over `op` (`PPar`) with k=2 STRUCTURED fixed elements (the `PFor` receive + the
+//     `POutput` send) + `...rest` — the order-independent process-soup match (the `ac_bag_pattern`
+//     shape, but with structured element patterns instead of bare σ slots);
+//   * a NON-LINEAR consistency guard: the shared channel variable `N` occurs in BOTH elements, so
+//     each occurrence binds a DISTINCT free σ slot (Rholang rejects a pattern free variable that
+//     occurs twice), and a `Receive.condition` `EEq(N_recv, N_send)` — the `where`-clause the
+//     f1r3node reducer commits the COMM under only when it evaluates to `GBool(true)` — enforces
+//     `N ≡ N`, reject-safe (a mismatched-channel soup leaves the data resting, the
+//     `merge_substs → None` analogue). This is Def 4.9's enable-gate / `AcNonLinearConsistency.v`'s
+//     `ac_nl_guard`, realized as the AC receiver's condition;
+//   * host-computed capture-avoiding substitution `cont[Q/y]` (the `(eval cont Q)` operator IS the
+//     substitution — model-b, exactly as the Stage 3c binder path) delivered as the firing's
+//     CONTRACTUM at a dedicated σ slot the receiver forwards;
+//   * a bag RHS `op{ cont[Q/y], ...rest }` — the receiver body `@"ac:op"!(reduct) | rest` is the
+//     Stage AC2b process-soup carrier (`reflect_hashbag_soup_par` shape): the reduct is the one
+//     fixed element and the bound `rest` remainder splices the residual sends back flat.
+//
+// The non-linear channel guard cannot be a repeated pattern variable (`for(@N!(_) & @N!(_) …)` is
+// rejected: a free variable may occur at most once in a Rholang pattern), so — exactly as the
+// positional set-automaton `eq:` join does (`rho_net_automaton::consistency_guard`) — the two
+// occurrences bind distinct slots and the equality is a depth-1-substituted `Receive.condition`.
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+
+/// One structured fixed element of a Comm rule's AC bag LHS — a constructor applied to bare
+/// variables (e.g. `(PFor N cont)`, `(POutput N Q)`). `nonlinear_index` is the position, within
+/// `args`, of the shared non-linear channel variable.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CommElement {
+    pub constructor: String,
+    pub args: Vec<Ident>,
+    pub nonlinear_index: usize,
+}
+
+/// The recognized shape of the canonical single-receive Rholang COMMUNICATION rule
+/// `op{ E0, E1, ...rest } ~> op{ (eval scope arg), ...rest }`: two STRUCTURED constructor elements
+/// `E0`/`E1` sharing exactly one NON-LINEAR channel variable `N` (each occurrence a distinct slot),
+/// a with-rest remainder, and an RHS whose sole fixed element is a substitution `(eval scope arg)`
+/// over LHS variables (the receive continuation `scope` and the sent name `arg`). Returned only for
+/// this precise shape; every other structured / non-linear AC rewrite (e.g. Ambient's `OpenRule`,
+/// whose RHS is structural, not a substitution) declines and stays on its existing path.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CommShape {
+    pub op: String,
+    pub elements: Vec<CommElement>,
+    pub rest: Ident,
+    pub nonlinear_var: Ident,
+    pub scope_var: Ident,
+    pub arg_var: Ident,
+}
+
+/// Extract `op{ elements, ...rest }` from a constructor applied to a SINGLE with-rest HashBag
+/// collection (the `coll_type` precedence mirrors [`ac_rule_shape`]). Returns the op label, the
+/// element patterns, and the (optional) rest variable.
+fn collection_apply<'a>(
+    pattern: &'a Pattern,
+    resolved_kind: Option<&CollectionType>,
+) -> Option<(String, &'a [Pattern], Option<Ident>)> {
+    match pattern {
+        Pattern::Term(PatternTerm::Apply { constructor, args }) => match args.as_slice() {
+            [Pattern::Collection { coll_type, elements, rest }]
+                if coll_type.as_ref().or(resolved_kind) == Some(&CollectionType::HashBag) =>
+            {
+                Some((constructor.to_string(), elements.as_slice(), rest.clone()))
+            },
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// A structured element `C(v_0, …, v_{m-1})` — a constructor applied to bare variables. Returns
+/// `None` for a bare variable element (that is the linear [`ac_rule_shape`] path) or any element
+/// whose arguments are not all bare variables (a nested structured element is a later slice).
+fn structured_element(pattern: &Pattern) -> Option<CommElement> {
+    let Pattern::Term(PatternTerm::Apply { constructor, args }) = pattern else {
+        return None;
+    };
+    let mut vars: Vec<Ident> = Vec::with_capacity(args.len());
+    for arg in args {
+        match arg {
+            Pattern::Term(PatternTerm::Var(name)) => vars.push(name.clone()),
+            _ => return None,
+        }
+    }
+    Some(CommElement {
+        constructor: constructor.to_string(),
+        args: vars,
+        nonlinear_index: 0,
+    })
+}
+
+/// The unique variable shared across ALL elements, each occurrence exactly once per element — the
+/// non-linear channel variable `N`. Returns `None` unless exactly one variable is shared by every
+/// element and appears exactly once in each (the canonical `{(PFor N …), (POutput N …)}` shape).
+fn unique_shared_variable(elements: &[CommElement]) -> Option<Ident> {
+    let mut shared: Option<Ident> = None;
+    // Candidates: variables of the first element that occur (exactly once) in EVERY element.
+    let first = elements.first()?;
+    for candidate in &first.args {
+        let appears_once_in_all = elements
+            .iter()
+            .all(|element| element.args.iter().filter(|v| *v == candidate).count() == 1);
+        if appears_once_in_all {
+            // Reject a SECOND distinct shared variable (ambiguous non-linear guard).
+            if shared.replace(candidate.clone()).is_some() {
+                return None;
+            }
+        }
+    }
+    shared
+}
+
+/// The RHS substitution element `(eval scope arg)` — a `MultiSubst`/`Subst` whose scope and single
+/// replacement are bare variables. Returns `(scope_var, arg_var)`.
+fn subst_element(pattern: &Pattern) -> Option<(Ident, Ident)> {
+    let Pattern::Term(term) = pattern else {
+        return None;
+    };
+    let (scope, arg) = match term {
+        PatternTerm::MultiSubst { scope, replacements } if replacements.len() == 1 => {
+            (scope.as_ref(), &replacements[0])
+        },
+        PatternTerm::Subst { term, replacement, .. } => (term.as_ref(), replacement.as_ref()),
+        _ => return None,
+    };
+    match (scope, arg) {
+        (Pattern::Term(PatternTerm::Var(scope_var)), Pattern::Term(PatternTerm::Var(arg_var))) => {
+            Some((scope_var.clone(), arg_var.clone()))
+        },
+        _ => None,
+    }
+}
+
+/// Recognize the canonical single-receive Rholang COMMUNICATION rule
+/// `op{ E0, E1, ...rest } ~> op{ (eval scope arg), ...rest }` — see [`CommShape`]. Fail-closed on
+/// every other shape (a non-HashBag collection, an element that is not a constructor over bare
+/// variables, 0 or ≥2 shared variables, or an RHS that is not a single-substitution with-rest bag
+/// over the SAME op and rest).
+pub(crate) fn comm_rule_shape(
+    left: &Pattern,
+    right: &Pattern,
+    resolved_kind: Option<&CollectionType>,
+) -> Option<CommShape> {
+    // LHS: op{ E0, E1, ...rest } — a with-rest HashBag with exactly two structured elements.
+    let (op, lhs_elements, rest) = collection_apply(left, resolved_kind)?;
+    if lhs_elements.len() != 2 {
+        return None;
+    }
+    let rest = rest?;
+
+    let mut elements: Vec<CommElement> = Vec::with_capacity(lhs_elements.len());
+    for element in lhs_elements {
+        elements.push(structured_element(element)?);
+    }
+
+    // The shared non-linear channel variable, and each element's occurrence index of it.
+    let nonlinear_var = unique_shared_variable(&elements)?;
+    for element in &mut elements {
+        element.nonlinear_index = element.args.iter().position(|v| v == &nonlinear_var)?;
+    }
+
+    // RHS: op{ (eval scope arg), ...rest } — the SAME op + rest, a single substitution element.
+    let (rhs_op, rhs_elements, rhs_rest) = collection_apply(right, resolved_kind)?;
+    if rhs_op != op || rhs_elements.len() != 1 || rhs_rest.as_ref() != Some(&rest) {
+        return None;
+    }
+    let (scope_var, arg_var) = subst_element(&rhs_elements[0])?;
+
+    // The substitution's scope + arg must be LHS variables (supplied by the AC match's σ).
+    let lhs_vars: HashSet<String> = elements
+        .iter()
+        .flat_map(|element| element.args.iter())
+        .map(|var| var.to_string())
+        .collect();
+    if !lhs_vars.contains(&scope_var.to_string()) || !lhs_vars.contains(&arg_var.to_string()) {
+        return None;
+    }
+
+    Some(CommShape {
+        op,
+        elements,
+        rest,
+        nonlinear_var,
+        scope_var,
+        arg_var,
+    })
+}
+
+/// The Comm receiver's σ-slot frame (a single polyadic `ReceiveBind`, free-var levels): the two
+/// structured elements' non-linear channel slots come first (`0` = first element = `N_recv`, `1` =
+/// second = `N_send`), then the bag remainder `rest` (`2`), the host-delivered reduct (`3`), and
+/// the dynamic out channel (`4`). `free_count = 5`. Body/condition read these back as
+/// `BoundVar(free_count - 1 - level)`.
+const COMM_FREE_COUNT: usize = 5;
+
+/// The reflected pattern for one structured Comm element `C(v_0, …)`: a tagged `EList`
+/// `[ GPrivate(reflect_tag(C)), … ]` whose non-linear-channel position is the free σ slot
+/// `FreeVar(nl_level)` and whose every OTHER position is a wildcard `_` (the AC match consumes the
+/// whole element structurally, but only the channel — for the guard — and the tag — to route the
+/// PFor pattern to the PFor send and the POutput pattern to the POutput send — are read; the
+/// continuation / sent-name are supplied host-side via the reduct). Byte-identical in the tag +
+/// EList shape to [`reflect_ground_term_par`]'s constructor reflection, so the reflected ground
+/// element in the injected soup matches this pattern.
+fn comm_element_pattern(element: &CommElement, nl_level: usize, language_fingerprint: &str) -> Par {
+    let tag = GPrivateBuilder::new_par_from_string(reflect_tag(
+        language_fingerprint,
+        &element.constructor,
+    ));
+    let mut items = Vec::with_capacity(element.args.len() + 1);
+    items.push(tag);
+    for index in 0..element.args.len() {
+        if index == element.nonlinear_index {
+            items.push(new_freevar_par(nl_level as i32, Vec::new()));
+        } else {
+            items.push(new_wildcard_par(Vec::new(), true));
+        }
+    }
+    // A pattern EList carrying free vars / wildcards is connective; its `locally_free` is empty
+    // (free vars are pattern binders, not locally-free bound vars).
+    new_elist_par(items, Vec::new(), true, None, Vec::new(), true)
+}
+
+/// The non-linear consistency `Receive.condition` for a Comm receiver: the conjunction (`EAnd`) of
+/// `EEq(BoundVar, BoundVar)` over each repeated variable's occurrence slot pairs — for the
+/// canonical single shared channel with two occurrences, exactly one conjunct
+/// `EEq(BoundVar(N_recv), BoundVar(N_send))`. Child `i`'s slot at free level `l` is
+/// `BoundVar(COMM_FREE_COUNT - 1 - l)` (the receive binds flattened, so body + condition share the
+/// reverse De Bruijn frame). Mirrors `rho_net_automaton::consistency_guard`, kept self-contained.
+fn comm_consistency_condition(occurrence_levels: &[usize]) -> Par {
+    let mut conjuncts: Vec<(Par, Vec<usize>)> = Vec::with_capacity(occurrence_levels.len());
+    let idx0 = COMM_FREE_COUNT - 1 - occurrence_levels[0];
+    for &level in &occurrence_levels[1..] {
+        let idxj = COMM_FREE_COUNT - 1 - level;
+        let eq = Expr {
+            expr_instance: Some(ExprInstance::EEqBody(EEq {
+                p1: Some(new_boundvar_par(idx0 as i32, create_bit_vector(&[idx0]), false)),
+                p2: Some(new_boundvar_par(idxj as i32, create_bit_vector(&[idxj]), false)),
+            })),
+        };
+        let free = vec![idx0.min(idxj), idx0.max(idxj)];
+        conjuncts.push((expr_par_with(eq, &free), free));
+    }
+    let (mut guard, mut free) = conjuncts
+        .first()
+        .cloned()
+        .expect("a non-linear Comm guard has at least one repeated-occurrence conjunct");
+    for (conjunct, conjunct_free) in conjuncts.into_iter().skip(1) {
+        let mut union_free = free.clone();
+        union_free.extend(conjunct_free);
+        union_free.sort_unstable();
+        union_free.dedup();
+        let and = Expr {
+            expr_instance: Some(ExprInstance::EAndBody(EAnd {
+                p1: Some(guard),
+                p2: Some(conjunct),
+            })),
+        };
+        guard = expr_par_with(and, &union_free);
+        free = union_free;
+    }
+    guard
+}
+
+/// A ground `Par` carrying the single expression `instance`, locally-free in `free`. Mirrors
+/// `rho_net_automaton::expr_par`.
+fn expr_par_with(instance: Expr, free: &[usize]) -> Par {
+    Par {
+        exprs: vec![instance],
+        locally_free: create_bit_vector(free),
+        connective_used: false,
+        ..Par::default()
+    }
+}
+
+/// Build the Comm σ-receiver for `op{ E0, E1, ...rest } ~> op{ (eval scope arg), ...rest }`
+/// ([`CommShape`]): a persistent
+///
+/// ```text
+/// for( < rest_rem | @"ac:op"!(⟦E0⟧) | @"ac:op"!(⟦E1⟧) >, reduct, out <- source )
+///   where ( N_recv == N_send )
+///   { out!( @"ac:op"!(reduct) | rest_rem ) }
+/// ```
+///
+/// The connective process-soup pattern (element 0) matches the reflected operand bag carrier
+/// ORDER-INDEPENDENTLY (native `sub_pars`/`MaximumBipartiteMatch`), binding the two elements' channel
+/// σ slots (`FreeVar(0)`/`FreeVar(1)`) — via the structured [`comm_element_pattern`]s, whose tags
+/// route each pattern to its like-tagged send — and the residual soup to the remainder `rest`
+/// (`FreeVar(2)`). The `reduct` (`FreeVar(3)`) is the host-computed contractum `cont[Q/y]`; `out`
+/// (`FreeVar(4)`) is the dynamic out channel. The `condition` fires the COMM only when the two
+/// channel slots are name-equal ([`comm_consistency_condition`]); the body emits the bag RHS
+/// `@"ac:op"!(reduct) | rest` on `out`.
+fn comm_receiver_par(shape: &CommShape, source: Par, language_fingerprint: &str) -> Par {
+    let element_channel = format!("ac:{}", shape.op);
+    let rest_level = shape.elements.len(); // 2
+    let reduct_level = rest_level + 1; // 3
+    let out_level = reduct_level + 1; // 4
+    debug_assert_eq!(out_level + 1, COMM_FREE_COUNT);
+
+    // Element 0 of the receive bind: the structured with-rest process-soup pattern.
+    let mut bag_pattern = new_freevar_par(rest_level as i32, Vec::new()); // the `rest` remainder
+    let mut occurrence_levels = Vec::with_capacity(shape.elements.len());
+    for (nl_level, element) in shape.elements.iter().enumerate() {
+        occurrence_levels.push(nl_level);
+        let element_pattern = comm_element_pattern(element, nl_level, language_fingerprint);
+        let send_pattern = new_send_par(
+            new_gstring_par(element_channel.clone(), Vec::new(), false),
+            vec![element_pattern],
+            false,
+            Vec::new(),
+            true,
+            Vec::new(),
+            true,
+        );
+        bag_pattern = bag_pattern.append(send_pattern);
+    }
+
+    // The non-linear consistency guard `EEq(N_recv, N_send)`.
+    let condition = comm_consistency_condition(&occurrence_levels);
+
+    // Body: `out!( @"ac:op"!(reduct) | rest )`.
+    let reduct_bv_index = COMM_FREE_COUNT - 1 - reduct_level; // 1
+    let rest_bv_index = COMM_FREE_COUNT - 1 - rest_level; // 2
+    let out_bv_index = COMM_FREE_COUNT - 1 - out_level; // 0
+    let reduct_free = create_bit_vector(&[reduct_bv_index]);
+    let reduct_send = new_send_par(
+        new_gstring_par(element_channel.clone(), Vec::new(), false),
+        vec![new_boundvar_par(reduct_bv_index as i32, reduct_free.clone(), false)],
+        false,
+        reduct_free.clone(),
+        false,
+        reduct_free.clone(),
+        false,
+    );
+    let rest_bv =
+        new_boundvar_par(rest_bv_index as i32, create_bit_vector(&[rest_bv_index]), false);
+    let body_soup = reduct_send.append(rest_bv); // `@"ac:op"!(reduct) | rest`
+    let body_free = union(body_soup.locally_free.clone(), create_bit_vector(&[out_bv_index]));
+    let body = new_send_par(
+        new_boundvar_par(out_bv_index as i32, create_bit_vector(&[out_bv_index]), false),
+        vec![body_soup],
+        false,
+        body_free.clone(),
+        false,
+        body_free,
+        false,
+    );
+
+    let receive = Receive {
+        binds: vec![ReceiveBind {
+            patterns: vec![
+                bag_pattern,
+                new_freevar_par(reduct_level as i32, Vec::new()),
+                new_freevar_par(out_level as i32, Vec::new()),
+            ],
+            source: Some(source),
+            remainder: None,
+            free_count: COMM_FREE_COUNT as i32,
+        }],
+        body: Some(body),
+        persistent: true,
+        peek: false,
+        bind_count: COMM_FREE_COUNT as i32,
+        locally_free: Vec::new(),
+        connective_used: false,
+        condition: Some(condition),
+    };
+    Par::default().with_receives(vec![receive])
+}
+
+/// Un-skip a Comm-shaped base rewrite to its non-linear AC σ-receiver ([`comm_receiver_par`]),
+/// on the rule's OWN trace channel `source` (the channel the Comm injection targets — accept-triad
+/// coherence by symmetric derivation, exactly as [`ac_rule_receiver`]). Returns `None` when the
+/// rewrite is not the canonical single-receive Comm shape ([`comm_rule_shape`]), so the caller keeps
+/// it fail-closed.
+pub fn comm_rule_receiver(
+    left: &Pattern,
+    right: &Pattern,
+    source: Par,
+    language_fingerprint: &str,
+    resolved_kind: Option<CollectionType>,
+) -> Option<Par> {
+    let shape = comm_rule_shape(left, right, resolved_kind.as_ref())?;
+    Some(comm_receiver_par(&shape, source, language_fingerprint))
+}
+
+/// The Comm injection `call` for an un-skipped Comm rewrite: `channel!(⟦whole_bag⟧, ⟦reduct⟧, @out)`,
+/// where `⟦whole_bag⟧` is the operand bag's process-soup carrier ([`reflect_ground_term_par`] routes
+/// a HashBag to the soup) and `⟦reduct⟧` is the host-computed contractum `cont[Q/y]`. This is the
+/// exact 3-value message the Comm receiver ([`comm_receiver_par`]) consumes: the connective bag
+/// pattern matches the soup (binding the two channel slots + the remainder and enforcing the
+/// non-linear guard), the reduct fills the dedicated slot, and the out formal binds `@out`.
+/// `channel` MUST be the Comm receiver's SOURCE (the rule's trace channel), so the accept triad
+/// (receiver source ≡ injection channel) holds by symmetric derivation, exactly as
+/// [`ac_contract_call`].
+pub fn comm_contract_call(
+    channel_name: &str,
+    whole_bag: &GroundTerm,
+    reduct: &GroundTerm,
+    fingerprint: &str,
+    out_channel: &str,
+) -> Par {
+    let soup = reflect_ground_term_par(whole_bag, fingerprint);
+    let reduct_par = reflect_ground_term_par(reduct, fingerprint);
+    new_send_par(
+        new_gstring_par(channel_name.to_string(), Vec::new(), false),
+        vec![soup, reduct_par, new_gstring_par(out_channel.to_string(), Vec::new(), false)],
+        false,
+        Vec::new(),
+        false,
+        Vec::new(),
+        false,
+    )
+}
+
+/// One Comm-rewrite σ-injection site derived from a `LanguageDef` (Stage 3b): the canonical
+/// single-receive Rholang COMMUNICATION rule's bare label, its Comm σ-receiver SOURCE channel, the
+/// HashBag operand constructor `op`, the two structured elements' constructors (in LHS order), the
+/// shared non-linear channel variable, the `rest` variable, and the RHS substitution's scope/arg
+/// variables.
+///
+/// The Comm firing analogue of [`RhoNetAcInjectionSite`]. A Comm σ-injection reconstructs the whole
+/// operand bag from the firing's σ and the host-computed reduct `cont[Q/y]`, reflects them, and
+/// sends `channel!(⟦bag⟧, ⟦reduct⟧, @out)` via [`comm_contract_call`], where the installed
+/// [`comm_receiver_par`] consumes the soup (enforcing `N ≡ N`) and emits the bag RHS. Only rewrites
+/// that lowered to a [`RhoNetLoweredRule::CommRewrite`] are surfaced, so a site is always
+/// executable.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RhoNetCommInjectionSite {
+    /// The bare source rewrite label (the Comm receiver rule's label, e.g. `Comm`).
+    pub rule_label: String,
+    /// The Comm receiver SOURCE channel (`RhoNetRule::input_channels.first()`) — the SAME channel
+    /// the receiver rests on, so the accept triad (receiver source ≡ injection channel) holds by
+    /// symmetric derivation (`comm_contract_call`'s coherence contract).
+    pub channel: String,
+    /// The HashBag operand constructor (`op` in `op{…}`, e.g. `PPar`). Both the receiver's element
+    /// pattern channel `ac:{op}` and the reflected carrier's send channel derive from this.
+    pub op: String,
+    /// The two structured elements' constructors, in LHS order (e.g. `["PFor", "POutput"]`).
+    pub element_constructors: Vec<String>,
+    /// The shared NON-LINEAR channel variable the two elements enforce equal (`N`).
+    pub nonlinear_var: String,
+    /// The `rest` variable the LHS binds to the residual bag.
+    pub rest_var: String,
+    /// The RHS substitution's scope variable (the receive continuation `cont`).
+    pub scope_var: String,
+    /// The RHS substitution's argument variable (the sent name `Q`).
+    pub arg_var: String,
+}
+
+/// Derive every Comm-rewrite σ-injection site for a language — the sites a Comm σ-injection targets.
+///
+/// Builds the same [`RhoNetProgram`] + [`RhoNetLowered`] the Comm receivers are compiled from, keeps
+/// only the rewrites that un-skipped to a [`RhoNetLoweredRule::CommRewrite`] receiver, and reports
+/// each one's bare rule label, source channel, and Comm shape (extracted through the SAME
+/// [`comm_rule_shape`] the receiver materialized from, so the injection agrees with the receiver on
+/// `op`/elements/`rest`/scope/arg). The Comm firing analogue of [`rho_net_ac_injection_sites`].
+pub fn rho_net_comm_injection_sites(def: &LanguageDef) -> Vec<RhoNetCommInjectionSite> {
+    let lowering = crate::lower::lower_language_def(def);
+    let program = RhoNetProgram::from_language_def(def, &lowering);
+    let lowered = program.lower_to_par(def, &lowering);
+
+    let rule_by_id: HashMap<&str, &RhoNetRule> = program
+        .rules
+        .iter()
+        .map(|rule| (rule.id.as_str(), rule))
+        .collect();
+    let rewrite_by_id: HashMap<String, &RewriteRule> = def
+        .rewrites
+        .iter()
+        .enumerate()
+        .map(|(index, rewrite)| (rule_id_rewrite(index, &rewrite.name.to_string()), rewrite))
+        .collect();
+
+    let mut sites = Vec::new();
+    for lowered_rule in lowered.rules() {
+        let RhoNetLoweredRule::CommRewrite { rule_id, .. } = lowered_rule else {
+            continue;
+        };
+        let Some(program_rule) = rule_by_id.get(rule_id.as_str()) else {
+            continue;
+        };
+        let Some(channel) = program_rule.input_channels.first() else {
+            continue;
+        };
+        let Some(rule_label) = program_rule.label.as_deref() else {
+            continue;
+        };
+        let Some(rewrite) = rewrite_by_id.get(rule_id) else {
+            continue;
+        };
+        // A `CommRewrite` lowered iff `comm_rule_shape` succeeded under the resolved kind, so this
+        // cannot fail; a defensive `continue` keeps the derivation total.
+        let resolved_kind = resolve_ac_collection_type(def, &rewrite.left);
+        let Some(shape) = comm_rule_shape(&rewrite.left, &rewrite.right, resolved_kind.as_ref())
+        else {
+            continue;
+        };
+        sites.push(RhoNetCommInjectionSite {
+            rule_label: rule_label.to_string(),
+            channel: channel.clone(),
+            op: shape.op,
+            element_constructors: shape
+                .elements
+                .iter()
+                .map(|element| element.constructor.clone())
+                .collect(),
+            nonlinear_var: shape.nonlinear_var.to_string(),
+            rest_var: shape.rest.to_string(),
+            scope_var: shape.scope_var.to_string(),
+            arg_var: shape.arg_var.to_string(),
+        });
+    }
+    sites
+}
+
 #[cfg(test)]
 mod tests {
     // `super::*` already re-exports the parent module's imports (`Par`,
@@ -3333,29 +3888,27 @@ mod tests {
     }
 
     #[test]
-    fn minirho_rewrites_are_unsupported_via_both_detectors() {
+    fn minirho_comm_materializes_and_parcong_is_unsupported() {
         let def = syn::parse_str::<LanguageDef>(MINIRHO_FOR_FRAGMENT).expect("fragment must parse");
         let lowering = lower_language_def(&def);
         let program = RhoNetProgram::from_language_def(&def, &lowering);
         let lowered = program.lower_to_par(&def, &lowering);
 
-        // Comm is a BASE rewrite whose Collection LHS is caught by the
-        // constructive `lower_lhs_vars` walk.
+        // Stage 3b: Comm is a BASE rewrite whose Collection LHS `lower_lhs_vars` rejects
+        // (`CollectionAc`), the linear `ac_rule_receiver` declines (structured elements), and the
+        // Comm detector un-skips to a non-linear AC σ-receiver — no longer fail-closed.
         let comm = lowered
             .rules()
             .iter()
             .find(|rule| rule.rule_id() == "rule:rewrite:0:Comm")
             .expect("Comm must be lowered");
-        assert_eq!(
-            *comm,
-            RhoNetLoweredRule::Unsupported {
-                rule_id: "rule:rewrite:0:Comm".to_string(),
-                family: UnsupportedFamily::CollectionAc,
-            }
+        assert!(
+            matches!(comm, RhoNetLoweredRule::CommRewrite { .. }),
+            "Comm must materialize as a CommRewrite, got {comm:?}"
         );
 
         // ParCong is a CONTEXTUAL rewrite whose Collection LHS is caught by the
-        // independent P2 detector.
+        // independent P2 detector — still fail-closed (a congruence over an AC context).
         let parcong = lowered
             .rules()
             .iter()
@@ -3376,6 +3929,144 @@ mod tests {
                 .iter()
                 .any(|error| matches!(error, RhoNetLoweringError::RuleSourceDrift { .. })),
             "faithful re-derivation must not report rule-source drift"
+        );
+    }
+
+    /// The Comm rule un-skips to a non-linear AC σ-receiver: a single persistent polyadic
+    /// `Receive` carrying the `EEq(N_recv, N_send)` consistency `condition`, the structured
+    /// process-soup bag pattern, and a bag-RHS body. This is the codegen half of the Stage 3b
+    /// end-to-end firing (`rho_net_comm_firing`).
+    #[test]
+    fn comm_rule_un_skips_to_a_guarded_non_linear_ac_receiver() {
+        let def = syn::parse_str::<LanguageDef>(MINIRHO_FOR_FRAGMENT).expect("fragment must parse");
+
+        // The shape is recognized (structured non-linear AC LHS + substitution-in-bag RHS).
+        let comm_rewrite = def
+            .rewrites
+            .iter()
+            .find(|rewrite| rewrite.name.to_string() == "Comm")
+            .expect("MiniRhoFor has a Comm rewrite");
+        let shape = comm_rule_shape(
+            &comm_rewrite.left,
+            &comm_rewrite.right,
+            Some(&CollectionType::HashBag),
+        )
+        .expect("Comm rule must be recognized as a Comm shape");
+        assert_eq!(shape.op, "PPar");
+        assert_eq!(shape.nonlinear_var.to_string(), "N");
+        assert_eq!(shape.rest.to_string(), "rest");
+        assert_eq!(shape.scope_var.to_string(), "cont");
+        assert_eq!(shape.arg_var.to_string(), "Q");
+        assert_eq!(
+            shape
+                .elements
+                .iter()
+                .map(|element| element.constructor.clone())
+                .collect::<Vec<_>>(),
+            vec!["PFor".to_string(), "POutput".to_string()]
+        );
+        // Each element carries the non-linear channel var once (`PFor N …` / `POutput N …`).
+        for element in &shape.elements {
+            assert_eq!(element.args[element.nonlinear_index].to_string(), "N");
+        }
+
+        // The materialized receiver carries a persistent guarded Receive.
+        let receiver = comm_rule_receiver(
+            &comm_rewrite.left,
+            &comm_rewrite.right,
+            new_gstring_par("c(root)".to_string(), Vec::new(), false),
+            "fp",
+            Some(CollectionType::HashBag),
+        )
+        .expect("Comm rule must materialize a receiver");
+        let receive = receiver
+            .receives
+            .first()
+            .expect("the Comm receiver is a single Receive");
+        assert!(receive.persistent, "the Comm σ-receiver is persistent");
+        assert_eq!(receive.bind_count, COMM_FREE_COUNT as i32);
+        // Exactly one polyadic bind: [ bag-soup pattern, reduct, out ].
+        assert_eq!(receive.binds.len(), 1);
+        assert_eq!(receive.binds[0].patterns.len(), 3);
+        assert_eq!(receive.binds[0].free_count, COMM_FREE_COUNT as i32);
+
+        // The consistency `condition` is `EEq(BoundVar, BoundVar)` over the two channel slots.
+        let condition = receive
+            .condition
+            .as_ref()
+            .expect("the Comm receiver carries a non-linear condition");
+        let expr = condition
+            .exprs
+            .first()
+            .expect("the condition is a single expression");
+        let ExprInstance::EEqBody(eq) = expr.expr_instance.as_ref().expect("condition has an expr")
+        else {
+            panic!("the Comm consistency condition must be an EEq, got {expr:?}");
+        };
+        // N_recv is slot 0 (BoundVar 4), N_send is slot 1 (BoundVar 3), free_count 5.
+        assert_eq!(boundvar_index(eq.p1.as_ref().expect("EEq p1")), Some(4));
+        assert_eq!(boundvar_index(eq.p2.as_ref().expect("EEq p2")), Some(3));
+
+        // The bag pattern (first bind pattern) is a connective process soup with two like-tagged
+        // element sends + a remainder.
+        let bag_pattern = &receive.binds[0].patterns[0];
+        assert_eq!(bag_pattern.sends.len(), 2, "two structured element sends");
+        assert!(
+            bag_pattern
+                .exprs
+                .iter()
+                .any(|expr| matches!(expr.expr_instance, Some(ExprInstance::EVarBody(_)))),
+            "the bag pattern binds a process remainder"
+        );
+    }
+
+    /// The Comm injection site surfaces the receiver's channel + shape so a Comm σ-injection
+    /// (`comm_contract_call`) can target it.
+    #[test]
+    fn comm_injection_site_is_surfaced_for_the_comm_rule() {
+        let def = syn::parse_str::<LanguageDef>(MINIRHO_FOR_FRAGMENT).expect("fragment must parse");
+        let sites = rho_net_comm_injection_sites(&def);
+        assert_eq!(sites.len(), 1, "MiniRhoFor has exactly one Comm rewrite");
+        let site = &sites[0];
+        assert_eq!(site.rule_label, "Comm");
+        assert_eq!(site.op, "PPar");
+        assert_eq!(site.nonlinear_var, "N");
+        assert_eq!(site.rest_var, "rest");
+        assert_eq!(site.scope_var, "cont");
+        assert_eq!(site.arg_var, "Q");
+        assert_eq!(site.element_constructors, vec!["PFor".to_string(), "POutput".to_string()]);
+        assert!(!site.channel.is_empty(), "the Comm receiver has a source channel");
+    }
+
+    /// Ambient's structural `OpenRule` (`{(POpen N P), (PAmb N Q), ...rest} ~> {P, Q, ...rest}`) is
+    /// non-linear structured AC but its RHS is STRUCTURAL, not a substitution-in-bag, so the Comm
+    /// detector DECLINES it (fail-closed / handled on its existing path) — the Comm shape is the
+    /// precise substitution-communication shape, never a generic non-linear AC rewrite.
+    #[test]
+    fn structural_non_linear_ac_rewrite_is_not_a_comm_shape() {
+        let open_rule_left = apply(
+            "PPar",
+            vec![Pattern::Collection {
+                coll_type: Some(CollectionType::HashBag),
+                elements: vec![
+                    apply("POpen", vec![var_pattern("N"), var_pattern("P")]),
+                    apply("PAmb", vec![var_pattern("N"), var_pattern("Q")]),
+                ],
+                rest: Some(ident("rest")),
+            }],
+        );
+        let open_rule_right = apply(
+            "PPar",
+            vec![Pattern::Collection {
+                coll_type: Some(CollectionType::HashBag),
+                elements: vec![var_pattern("P"), var_pattern("Q")],
+                rest: Some(ident("rest")),
+            }],
+        );
+        assert!(
+            comm_rule_shape(&open_rule_left, &open_rule_right, Some(&CollectionType::HashBag))
+                .is_none(),
+            "a structural (non-substitution) non-linear AC RHS is not a Comm shape"
         );
     }
 
@@ -3429,7 +4120,8 @@ mod tests {
     "#;
 
     fn lambda_demo_def() -> LanguageDef {
-        syn::parse_str::<LanguageDef>(LAMBDA_DEMO_FRAGMENT).expect("lambda-demo fragment must parse")
+        syn::parse_str::<LanguageDef>(LAMBDA_DEMO_FRAGMENT)
+            .expect("lambda-demo fragment must parse")
     }
 
     /// Stage 3c: the β-reduction `App(Lam(^x. b), a) ~> subst(b, x := a)` (DSL `(App (Lam fun) arg)
@@ -3446,8 +4138,8 @@ mod tests {
             .iter()
             .find(|rewrite| rewrite.name.to_string() == "Beta")
             .expect("the Beta rewrite exists");
-        let (vars, scope) =
-            subst_rule_shape(&rewrite.left, &rewrite.right).expect("Beta is a substitution rewrite");
+        let (vars, scope) = subst_rule_shape(&rewrite.left, &rewrite.right)
+            .expect("Beta is a substitution rewrite");
         assert_eq!(
             vars.iter().map(|v| v.to_string()).collect::<Vec<_>>(),
             vec!["fun".to_string(), "arg".to_string()],
@@ -3508,7 +4200,8 @@ mod tests {
     "#;
 
     fn native_demo_def() -> LanguageDef {
-        syn::parse_str::<LanguageDef>(NATIVE_DEMO_FRAGMENT).expect("native-demo fragment must parse")
+        syn::parse_str::<LanguageDef>(NATIVE_DEMO_FRAGMENT)
+            .expect("native-demo fragment must parse")
     }
 
     /// Stage 3e: the native system process `PowInt(a, b) ~> a^b` (a `![…] fold` HOL term the Rho
@@ -3591,8 +4284,7 @@ mod tests {
             equations {},
             rewrites {}
         "#;
-        let def =
-            syn::parse_str::<LanguageDef>(FRAGMENT).expect("native-step fragment must parse");
+        let def = syn::parse_str::<LanguageDef>(FRAGMENT).expect("native-step fragment must parse");
 
         let pow = def
             .terms
@@ -3686,7 +4378,10 @@ mod tests {
             })],
         );
         let closed_vars = lower_lhs_vars(&closed).expect("a closed binder LHS lowers");
-        assert!(closed_vars.is_empty(), "a closed binder has no free σ-slots, got {closed_vars:?}");
+        assert!(
+            closed_vars.is_empty(),
+            "a closed binder has no free σ-slots, got {closed_vars:?}"
+        );
     }
 
     /// Stage 3c (item 2): the RHS `Lambda`-node reflection is a tagged binder node
@@ -4450,14 +5145,26 @@ mod tests {
         assert_eq!(send_channel_gstring_of_bind(&receive.binds[0]), Some("c0".to_string()));
         // Bind 1 (c1): hole + out, LOCAL free vars 0, 1.
         assert_eq!(receive.binds[1].free_count, 2);
-        assert_eq!(receive.binds[1].patterns.len(), 2, "the last bind also carries the out channel");
+        assert_eq!(
+            receive.binds[1].patterns.len(),
+            2,
+            "the last bind also carries the out channel"
+        );
         assert_eq!(send_channel_gstring_of_bind(&receive.binds[1]), Some("c1".to_string()));
 
         // Body: out!(⟦Pair(T0, T1)⟧) with hole i = BoundVar(2 - i), out = BoundVar(0).
         let body = receive.body.as_ref().expect("join body");
         let list = elist_body(&body.sends[0].data[0]);
-        assert_eq!(boundvar_index(&list.ps[1]), Some(2), "hole T0 at BoundVar(n - 0) = BoundVar(2)");
-        assert_eq!(boundvar_index(&list.ps[2]), Some(1), "hole T1 at BoundVar(n - 1) = BoundVar(1)");
+        assert_eq!(
+            boundvar_index(&list.ps[1]),
+            Some(2),
+            "hole T0 at BoundVar(n - 0) = BoundVar(2)"
+        );
+        assert_eq!(
+            boundvar_index(&list.ps[2]),
+            Some(1),
+            "hole T1 at BoundVar(n - 1) = BoundVar(1)"
+        );
     }
 
     fn send_channel_gstring_of_bind(bind: &ReceiveBind) -> Option<String> {
@@ -4517,7 +5224,10 @@ mod tests {
             type_context: Vec::new(),
             premises: vec![
                 Premise::Congruence { source: ident("S"), target: ident("T") },
-                Premise::RelationQuery { relation: ident("ok"), args: vec![ident("S")] },
+                Premise::RelationQuery {
+                    relation: ident("ok"),
+                    args: vec![ident("S")],
+                },
             ],
             left: apply("Wrap", vec![var_pattern("S")]),
             right: apply("Wrap", vec![var_pattern("T")]),
@@ -4570,7 +5280,11 @@ mod tests {
         assert_eq!(send_channel_gstring(send), Some("c_ctx".to_string()));
         assert_eq!(send.data.len(), 2, "the (only, last) send carries the hole and @out");
         assert_eq!(&send.data[0], &hole, "the reduced hole ⟦Pair(B, A)⟧");
-        assert_eq!(gstring_value(&send.data[1]), Some("OUT".to_string()), "the dynamic out channel");
+        assert_eq!(
+            gstring_value(&send.data[1]),
+            Some("OUT".to_string()),
+            "the dynamic out channel"
+        );
     }
 
     #[test]
@@ -4581,8 +5295,16 @@ mod tests {
         let call = contextual_contract_call(&["c0", "c1"], vec![h0, h1], "OUT");
         assert_eq!(call.sends.len(), 2, "two premises ⇒ two delivery sends");
         // Sends land in premise order; find by channel to be robust to `append` order.
-        let on = |name: &str| call.sends.iter().find(|s| send_channel_gstring(s).as_deref() == Some(name));
-        assert_eq!(on("c0").expect("c0 send").data.len(), 1, "a non-last send carries only its hole");
+        let on = |name: &str| {
+            call.sends
+                .iter()
+                .find(|s| send_channel_gstring(s).as_deref() == Some(name))
+        };
+        assert_eq!(
+            on("c0").expect("c0 send").data.len(),
+            1,
+            "a non-last send carries only its hole"
+        );
         let last = on("c1").expect("c1 send");
         assert_eq!(last.data.len(), 2, "the last send also carries @out");
         assert_eq!(gstring_value(&last.data[1]), Some("OUT".to_string()));

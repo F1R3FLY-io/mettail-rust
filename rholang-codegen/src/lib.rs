@@ -135,12 +135,13 @@ pub use rho_net_automaton::{
     AutomatonUnsupported,
 };
 pub use rho_net_lower::{
-    ac_bag_pattern, ac_contract_call, ac_rule_receiver, ac_sigma_receiver_par,
-    contextual_contract_call, contextual_join_receiver_par, reconstruct_contractum,
-    reflect_ground_term_par, rho_net_ac_injection_sites, rho_net_contextual_injection_sites,
-    rho_net_injection_sites, rho_net_native_injection_sites, rho_net_subst_injection_sites,
-    spread_child_location, spread_root_location, spread_term_par, term_contract_call, GroundTerm,
-    RhoNetAcInjectionSite, RhoNetContextualInjectionSite, RhoNetInjectionInvocation,
+    ac_bag_pattern, ac_contract_call, ac_rule_receiver, ac_sigma_receiver_par, comm_contract_call,
+    comm_rule_receiver, contextual_contract_call, contextual_join_receiver_par,
+    reconstruct_contractum, reflect_ground_term_par, rho_net_ac_injection_sites,
+    rho_net_comm_injection_sites, rho_net_contextual_injection_sites, rho_net_injection_sites,
+    rho_net_native_injection_sites, rho_net_subst_injection_sites, spread_child_location,
+    spread_root_location, spread_term_par, term_contract_call, GroundTerm, RhoNetAcInjectionSite,
+    RhoNetCommInjectionSite, RhoNetContextualInjectionSite, RhoNetInjectionInvocation,
     RhoNetInjectionSite, RhoNetInstallError, RhoNetLowered, RhoNetLoweredRule, RhoNetLoweringError,
     RhoNetNativeInjectionSite, RhoNetSubstInjectionSite, UnsupportedFamily,
 };

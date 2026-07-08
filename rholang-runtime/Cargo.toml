@@ -124,6 +124,20 @@ native-demo-runtime = [
     "mettail-languages/dovetail-codegen",
     "mettail-languages/rho-codegen",
 ]
+# Stage 3b: pulls in the generated `CommDemo` language for the end-to-end in-Rho non-linear
+# COMMUNICATION firing test (`rho_net_comm_firing`) — the canonical single-receive Rholang Comm
+# rule `PPar{(PFor N cont), (POutput N Q), ...rest} ~> PPar{(eval cont Q), ...rest}` firing as ONE
+# atomic COMM on the reducer, where the non-linear channel guard (`N ≡ N`) is enforced by the AC
+# receiver's `Receive.condition` and the substituted element `cont[Q/y]` is the host-computed
+# contractum spliced into the residual bag. Needs the generated `dovetail_report_for` (σ +
+# contractum population, `dovetail-codegen`) and the Comm σ-injection F-function (`rho-codegen`).
+comm-demo-runtime = [
+    "runtime-report",
+    "dep:mettail-languages",
+    "mettail-languages/comm-demo",
+    "mettail-languages/dovetail-codegen",
+    "mettail-languages/rho-codegen",
+]
 # Backward-compatible test/oracle feature name. New production code should use
 # `rhocalc-runtime` directly.
 oracle-rhocalc = ["rhocalc-runtime"]
@@ -218,6 +232,11 @@ required-features = ["lambda-demo-runtime"]
 name = "rho_net_native_firing"
 path = "tests/rho_net_native_firing.rs"
 required-features = ["native-demo-runtime"]
+
+[[test]]
+name = "rho_net_comm_firing"
+path = "tests/rho_net_comm_firing.rs"
+required-features = ["comm-demo-runtime"]
 
 [[test]]
 name = "rho_comm_oracle"

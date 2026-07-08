@@ -33,6 +33,7 @@ all-languages = [
     "class2smoke",
     "class3multi",
     "class3opt",
+    "comm-demo",
     "composition",
     "ctx-demo",
     "fortran_model",
@@ -58,6 +59,7 @@ class2optsmoke = []
 class2smoke = []
 class3multi = []
 class3opt = []
+comm-demo = []
 composition = ["calculator", "lambda"]
 ctx-demo = []
 fortran_model = []

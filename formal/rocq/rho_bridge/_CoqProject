@@ -68,6 +68,13 @@ theories/NonLinearEqConsistency.v
 # values at its slot positions; the consistency guard is all_equal over them = vi COMPOSED WITH the
 # slot-gather. Inherits vi's commit<->name-equality + reject-safety; two-slot x=x' characterization.
 theories/AcNonLinearConsistency.v
+# Stage 3b — the canonical single-receive Rholang COMMUNICATION rule fires as ONE non-linear AC COMM
+# (CommRuleFiring): the AC 2-pick selects the PFor receive + POutput send, the Receive.condition
+# `EEq(N_recv, N_send)` = ac_nl_guard [0;1] commits IFF the shared channel N is name-equal
+# (reject-safe otherwise), the host reduct cont[Q/y] is forwarded (no fabrication), and the fired
+# bag is {reduct, ...rest}. Specializes AcNonLinearConsistency (itself an instance of
+# NonLinearEqConsistency / GuardedCommSoundness) to the two-element Comm selection.
+theories/CommRuleFiring.v
 # FV (vii) — Stage 3a contextual rewrite as an ATOMIC POLYADIC JOIN (INV-6) + PLUGGING-STABILITY
 # (INV-2): generalizes LinearCommCorrespondence's SameChannelJoin 2->n. consume_list agrees with
 # consume_two at n=2; the n-ary contextual join is sound+complete with matching barbs; atomic
