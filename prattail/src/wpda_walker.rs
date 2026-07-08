@@ -6586,6 +6586,47 @@ where
         self.run_to_end_of_input_with_accept_demand(max_steps, tokens, true)
     }
 
+    /// ★ RECOGNIZER ORACLE (investigation a166789b): a one-sided
+    /// NON-PARSEABILITY oracle. Runs a FRESH walker in `recognizer_mode`
+    /// (coarse GLL-Slot merge + Tomita pop fan-out) to end of input and reports
+    /// whether an EOI-accepting configuration is REACHABLE. The recognizer is a
+    /// sound over-approximation of the real parser's reachability (Slot-merge +
+    /// fan-out ⊇ SlotEdge ⊇ true-parser), so:
+    ///   • `false` ⇒ the span is GENUINELY non-parseable — a DEFINITIVE
+    ///     fast-reject. The recognizer frontier stays polynomial even where the
+    ///     full parse is exponential (deep-@ structural-decline), so this
+    ///     rejects the hard unparseable spans in poly time instead of the
+    ///     walker's exponential fail-safe.
+    ///   • `true`  ⇒ the span MAY be parseable; the caller must run the full
+    ///     parser (which produces the actual result / definitive verdict).
+    /// `max_steps` exceeded ⇒ conservatively `true` (inconclusive — NEVER
+    /// false-reject). No SPPF realization is performed (reachability needs none).
+    ///
+    /// Validated by the `zz_gll_recog_gates` harness (G0-SOUND: 0 false-rejects
+    /// over the parseable corpus incl. trailing-comma sends; G0-COMPLETE:
+    /// rejects genuinely non-parseable spans; G0-POLY: frontier ~O(d²) vs the
+    /// full parser's exponential).
+    pub fn recognize_reachable(
+        engine: E,
+        cat_src_idx: u16,
+        initial_min_bp: u8,
+        tokens: &dyn WpdaTokenSource,
+        max_steps: usize,
+    ) -> bool
+    where
+        W: 'static + std::fmt::Debug + IdempotentSemiring + StarSemiringRef,
+    {
+        let mut walker = Self::new_for_category(engine, cat_src_idx, initial_min_bp);
+        walker.set_recognizer_mode(true);
+        let mut recovery_config = crate::recovery::RecoveryConfig::default();
+        recovery_config.max_recovery_depth = 0;
+        walker.set_recovery_config(recovery_config);
+        match walker.run_to_end_of_input_until_accepting(max_steps, tokens) {
+            Ok(()) => walker.live_frontier_has_demand_resolvable_accept(tokens),
+            Err(_) => true,
+        }
+    }
+
     fn run_to_end_of_input_with_accept_demand(
         &mut self,
         max_steps: usize,
