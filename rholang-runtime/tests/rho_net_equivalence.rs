@@ -31,11 +31,11 @@ use dovetail::rules::Pattern;
 use dovetail::set_automaton::{AutomatonNode, PatternId, SetAutomaton};
 use mettail_languages::swapdemo::{Proc, SwapDemoLanguage, SwapDemoTerm};
 use mettail_rholang_codegen::{
-    automaton_receiver_network_par, compile_in_rho_matching_ruleset, in_rho_match_call_par,
-    lower_language_def, multi_pattern_receiver_network_par, plan_rho_default_backend,
-    reconstruct_language_def,
+    ac_bag_pattern, automaton_receiver_network_par, compile_in_rho_matching_ruleset,
+    in_rho_match_call_par, lower_language_def, multi_pattern_receiver_network_par,
+    plan_rho_default_backend, reconstruct_language_def, reflect_ground_term_par,
     rho_net_injection_sites, spread_term_par, suggest_rejected_rule_dispositions,
-    AutomatonAcceptTarget, GroundTerm, RhoCoverageEvidence, RhoDefaultBackendRequirements,
+    AutomatonAcceptTarget, CollectionType, GroundTerm, RhoCoverageEvidence, RhoDefaultBackendRequirements,
     RhoGuardCoverageEvidence, RhoNetRuleKind,
 };
 use mettail_rholang_runtime::{
@@ -657,6 +657,82 @@ async fn nonlinear_rejects_unequal_args_in_rho() {
         observed.is_empty(),
         "f(A, B) does NOT match — the eq: guard vetoes reject-safely (got {observed:?})"
     );
+}
+
+/// Stage AC1: the AC connective bag pattern MATCHES the process-`Par` carrier soup ON the
+/// interpreter. A HashBag operand `PPar{A, B}` reflects to a two-send soup (AC0); the receiver
+/// `for( @"ac:PPar"!(x) | rest  <- c_ac ){ OUT!(x) }` (built from `ac_bag_pattern`) matches it
+/// ORDER-INDEPENDENTLY — binding `x` to ONE element (any) and `rest` to the residual — and
+/// echoes the matched element to OUT: the order-independent multiset match in Rho.
+#[tokio::test]
+async fn ac_bag_pattern_matches_the_process_soup_in_rho() {
+    use models::create_bit_vector;
+    use models::rhoapi::ReceiveBind;
+    use models::rust::utils::{new_boundvar_par, new_gstring_par, new_receive_par, new_send_par};
+
+    mettail_runtime::clear_var_cache();
+    let (_backend, fingerprint) = swap_demo_backend();
+
+    // The subject: ⟦PPar{A, B}⟧ = the process-Par carrier soup (AC0).
+    let soup = reflect_ground_term_par(
+        &GroundTerm::collection(
+            CollectionType::HashBag,
+            "PPar",
+            vec![GroundTerm::nullary("A"), GroundTerm::nullary("B")],
+        ),
+        &fingerprint,
+    );
+
+    // The receiver: for(<ac_bag_pattern PPar/1> <- c_ac){ OUT!(x) }. The pattern binds the
+    // element x = FreeVar(0) and rest = FreeVar(1); at the body's depth 2 the element is
+    // BoundVar(1) (reverse De Bruijn over the bind's 2 free vars).
+    let pattern = ac_bag_pattern("PPar", 1);
+    let body = new_send_par(
+        new_gstring_par("OUT".to_string(), Vec::new(), false),
+        vec![new_boundvar_par(1, create_bit_vector(&[1]), false)],
+        false,
+        create_bit_vector(&[1]),
+        false,
+        create_bit_vector(&[1]),
+        false,
+    );
+    let receiver = new_receive_par(
+        vec![ReceiveBind {
+            patterns: vec![pattern],
+            source: Some(new_gstring_par("c_ac".to_string(), Vec::new(), false)),
+            remainder: None,
+            free_count: 2,
+        }],
+        body,
+        false,
+        false,
+        2,
+        Vec::new(),
+        false,
+        Vec::new(),
+        false,
+    );
+
+    // The injection: c_ac!(⟦bag⟧).
+    let injection = new_send_par(
+        new_gstring_par("c_ac".to_string(), Vec::new(), false),
+        vec![soup],
+        false,
+        Vec::new(),
+        false,
+        Vec::new(),
+        false,
+    );
+
+    let program = receiver.append(injection);
+    let observed = run_normalized_par_for_oracle_and_read_runtime_values(&program, "OUT")
+        .await
+        .expect("the in-Rho AC match must execute");
+
+    // One element is matched (any, order-independent) and echoed; it is A or B.
+    assert_eq!(observed.len(), 1, "the connective pattern matches one element (got {observed:?})");
+    let matched = observation_constructor(&observed[0]);
+    assert!(matched == "A" || matched == "B", "matched element is a bag element, got {matched}");
 }
 
 /// Multiset sort key for observation comparison (the σ-echo's parallel sends land on

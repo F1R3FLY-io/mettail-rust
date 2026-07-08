@@ -138,8 +138,10 @@ pub use rho_net::{
     RhoNetChannel, RhoNetChannelKind, RhoNetProgram, RhoNetRhsTemplate, RhoNetRule, RhoNetRuleKind,
     RhoNetSemanticPredicate, RhoNetSemanticPredicateQuality, RhoNetValidationError,
 };
+pub use mettail_ast::types::CollectionType;
 pub use rho_net_lower::{
-    reflect_ground_term_par, rho_net_injection_sites, spread_child_location, spread_root_location,
+    ac_bag_pattern, reflect_ground_term_par, rho_net_injection_sites, spread_child_location,
+    spread_root_location,
     spread_term_par, term_contract_call, GroundTerm, RhoNetInjectionInvocation, RhoNetInjectionSite,
     RhoNetInstallError, RhoNetLowered, RhoNetLoweredRule, RhoNetLoweringError, UnsupportedFamily,
 };
