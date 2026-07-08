@@ -2071,6 +2071,31 @@ mod tests {
         }
     }
 
+    #[test]
+    fn ac_rhs_reflects_with_the_ac_receiver_frame() {
+        // Stage AC2: the AC RHS `⟦R⟧σ` reuses `reflect_term_par` with `k' = k+1` (the AC
+        // receiver has k+2 formals: k elements + rest + out), so element var `x_i` maps to
+        // `BoundVar(k+2-i)` and `rest` to `BoundVar(1)` — NO new reflection frame is needed.
+        // For k=1, `PPar{x, ...rest} ~> Wrap(x)`: `⟦Wrap(x)⟧ = EList[tag_Wrap, BoundVar(2)]`
+        // (x = element 1 = BoundVar(2), matching the receiver's `ac_receiver_fires` frame).
+        let fp = "mettail-langdef-v1:0011223344556677";
+        let rhs = apply("Wrap", vec![var_pattern("x")]);
+        let vars = vec![ident("x"), ident("rest")]; // [element, rest] — the AC σ order
+        let reflected = reflect_term_par(&rhs, &vars, 2, fp).expect("Wrap(x) reflects");
+        let outer = elist_body(&reflected);
+        assert_eq!(outer.ps.len(), 2, "head tag + one element σ");
+        assert_eq!(
+            outer.ps[0],
+            GPrivateBuilder::new_par_from_string(format!("mettail.term.{fp}.Wrap")),
+            "the RHS head is the Wrap reflection tag"
+        );
+        assert_eq!(
+            boundvar_index(&outer.ps[1]),
+            Some(2),
+            "element x = BoundVar(2) — the AC receiver frame (k+2-1 for k=1)"
+        );
+    }
+
     /// `term_contract_call` builds `chan!(arg₀, …, @"out")`: a single flat send on
     /// `GString(chan)` whose data is the σ arguments in first-occurrence order with
     /// the quoted out channel appended last (mirroring `RhoAstSend::contract_call`).
