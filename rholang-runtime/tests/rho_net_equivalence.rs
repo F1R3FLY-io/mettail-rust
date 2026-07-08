@@ -31,7 +31,7 @@ use dovetail::rules::Pattern;
 use dovetail::set_automaton::{AutomatonNode, PatternId, SetAutomaton};
 use mettail_languages::swapdemo::{Proc, SwapDemoLanguage, SwapDemoTerm};
 use mettail_rholang_codegen::{
-    ac_bag_pattern, ac_sigma_receiver_par, automaton_receiver_network_par,
+    ac_bag_pattern, ac_contract_call, ac_sigma_receiver_par, automaton_receiver_network_par,
     compile_in_rho_matching_ruleset, in_rho_match_call_par, lower_language_def,
     multi_pattern_receiver_network_par, plan_rho_default_backend, reconstruct_language_def,
     reflect_ground_term_par,
@@ -856,6 +856,44 @@ async fn ac_sigma_receiver_par_builds_a_working_receiver() {
         .expect("the codegen AC receiver must fire");
 
     assert_eq!(observed.len(), 1, "the codegen AC receiver fires once (got {observed:?})");
+    let fired = observation_constructor(&observed[0]);
+    assert!(fired == "A" || fired == "B", "fired the matched element, got {fired}");
+}
+
+/// Stage AC-U2: the production injection builder `ac_contract_call` produces the exact message
+/// the AC receiver consumes — `c_ac!(⟦PPar{A,B}⟧, @"OUT")` — firing the receiver to OUT. Closes
+/// the AC firing loop with BOTH sides from codegen (`ac_sigma_receiver_par` + `ac_contract_call`),
+/// no hand-assembled send.
+#[tokio::test]
+async fn ac_contract_call_fires_the_ac_receiver() {
+    use models::create_bit_vector;
+    use models::rust::utils::{new_boundvar_par, new_gstring_par};
+
+    mettail_runtime::clear_var_cache();
+    let (_backend, fingerprint) = swap_demo_backend();
+
+    // The AC receiver (codegen), source = c_ac; fires the element σ (BoundVar(2), k=1) on out.
+    let rhs = new_boundvar_par(2, create_bit_vector(&[2]), false);
+    let receiver = ac_sigma_receiver_par(
+        "PPar",
+        1,
+        rhs,
+        new_gstring_par("c_ac".to_string(), Vec::new(), false),
+    );
+
+    // The injection built by the PRODUCTION builder (not hand-assembled): c_ac!(⟦bag⟧, @"OUT").
+    let bag = GroundTerm::collection(
+        CollectionType::HashBag,
+        "PPar",
+        vec![GroundTerm::nullary("A"), GroundTerm::nullary("B")],
+    );
+    let injection = ac_contract_call("c_ac", &bag, &fingerprint, "OUT");
+
+    let program = receiver.append(injection);
+    let observed = run_normalized_par_for_oracle_and_read_runtime_values(&program, "OUT")
+        .await
+        .expect("the ac_contract_call injection fires the AC receiver");
+    assert_eq!(observed.len(), 1, "one firing (got {observed:?})");
     let fired = observation_constructor(&observed[0]);
     assert!(fired == "A" || fired == "B", "fired the matched element, got {fired}");
 }

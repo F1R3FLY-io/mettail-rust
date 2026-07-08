@@ -876,6 +876,31 @@ pub fn term_contract_call(channel_name: &str, mut args: Vec<Par>, out_channel: &
     )
 }
 
+/// The AC injection `call` for an un-skipped HashBag AC rewrite: `channel!(⟦whole_bag⟧, @out)`,
+/// where `⟦whole_bag⟧` is the process-soup carrier ([`reflect_ground_term_par`] routes a HashBag
+/// `GroundTerm` to the soup). This is the exact 2-value message the AC receiver
+/// ([`ac_sigma_receiver_par`]) consumes — the connective collection pattern matches the soup
+/// order-independently and the out formal binds `@out`. `channel_name` MUST be the AC receiver's
+/// SOURCE (the rule's trace channel), so the accept triad (receiver source ≡ injection channel)
+/// holds by symmetric derivation, exactly as the flat `term_contract_call` path.
+pub fn ac_contract_call(
+    channel_name: &str,
+    whole_bag: &GroundTerm,
+    fingerprint: &str,
+    out_channel: &str,
+) -> Par {
+    let soup = reflect_ground_term_par(whole_bag, fingerprint);
+    new_send_par(
+        new_gstring_par(channel_name.to_string(), Vec::new(), false),
+        vec![soup, new_gstring_par(out_channel.to_string(), Vec::new(), false)],
+        false,
+        Vec::new(),
+        false,
+        Vec::new(),
+        false,
+    )
+}
+
 /// The location channel of a spread term's ROOT — a `loc:`-kind quoted name
 /// derived from the site-root string `root_location`.
 ///
