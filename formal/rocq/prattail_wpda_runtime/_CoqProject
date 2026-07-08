@@ -48,6 +48,7 @@ theories/ForRowPersistentRuleRedundancy.v
 theories/CollectionElementInfixCategory.v
 theories/ProjCohortPosQuotientSoundness.v
 theories/AtQuotedBindGate.v
+theories/LeadingLiteralPhantomGate.v
 theories/CrossCatLexCompatGate.v
 theories/DescriptorWorklistReconvergence.v
 theories/ChannelFirstEmptySendRules.v
