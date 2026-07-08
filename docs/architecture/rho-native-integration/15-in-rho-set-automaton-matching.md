@@ -200,3 +200,25 @@ The channel-NAMING for the shared receivers — re-keying `pattern_trace_channel
 whole-LHS identity (the paper's rejected `@K` naming) to the interned-state trace
 `$tc(K) = \ulcorner T_M(K) \urcorner$` — is verified as the unique `O1`/`O3` quotient by
 `TcChannelNamingQuotient` (viii) and applied in production by M2b.
+
+### 3.5 The `sa:`/`eq:` steps are `$\tau$` — the same-CLTS discharge (M3)
+
+The in-Rho matching's `sa:` (symbol inspection) and `eq:` (non-linear consistency)
+COMMs are INTERNAL — unobservable `$\tau$` steps — so moving matching into Rho does
+not change the observable behavior. `knotted-topoi.tex` ASSERTS (`rem:nonopt`) that
+the SOUND channel scheme (keyed by the runtime location `$\ell$`) and the OPTIMAL
+scheme (keyed by the interned StateId trace `$tc(K)$`) induce the SAME CLTS; the
+in-Rho realization forces this to be proven.
+
+`InRhoSameCLTSWeakBisim` (FV Phase C, obligation iii) discharges it: the `sa:`/`eq:`
+steps erase to `$\tau$` (`optimal_visible_equals_sound` — the two schemes' visible
+schedules are identical), and the two schemes are weakly bisimilar
+(`same_clts_weak_bisim` — the CLTS is independent of the channel scheme). The
+bisimulation's forward condition (every sound firing has a complete `sa:` chain) is
+discharged by `positions_count` (the O1 symbol-once totality, ii); its backward
+condition (distinct `$R_{op}$`-equivalent contexts share, distinct ones get distinct
+channels — no cross-talk) by `tc_sound` (the O3 quotient, viii). Non-vacuity is real:
+the sound scheme is keyed by LOCATION, so two redexes at different locations share
+the optimal channel yet get distinct sound channels — the cross-location sharing is
+exactly what is shown invisible. This is the load-bearing `rem:nonopt` discharge —
+the previously-asserted claim, now proven zero-admission.
