@@ -11,6 +11,9 @@
 
 #[cfg(feature = "ac-demo")]
 pub mod acdemo;
+// Stage AC2b: the bag-TRANSFORMING (nested-bag RHS) AC firing demonstration language.
+#[cfg(feature = "ac-bag-demo")]
+pub mod acbagdemo;
 #[cfg(feature = "ambient")]
 pub mod ambient;
 #[cfg(feature = "appsubst")]

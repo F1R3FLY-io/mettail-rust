@@ -30,6 +30,7 @@ default = [
     "source-oracle",
     "swap-demo-runtime",
     "ac-demo-runtime",
+    "ac-bag-demo-runtime",
     "ctx-demo-runtime",
     "lambda-demo-runtime",
     "native-demo-runtime",
@@ -70,6 +71,20 @@ ac-demo-runtime = [
     "runtime-report",
     "dep:mettail-languages",
     "mettail-languages/ac-demo",
+    "mettail-languages/dovetail-codegen",
+    "mettail-languages/rho-codegen",
+]
+# Stage AC2b: pulls in the generated `AcBagDemo` language for the end-to-end in-Rho BAG-VALUED
+# AC firing test (`rho_net_ac_bag_firing`) — a generated HashBag bag-TRANSFORMING rewrite
+# `PPar{x, ...rest} ~> PPar{Wrap(x), ...rest}` firing as a COMM on the reducer, landing the
+# TRANSFORMED BAG (a bare process-soup carrier) on OUT. Needs the generated `dovetail_report_for`
+# (AC σ population, `dovetail-codegen`) and the AC σ-injection F-function (`rho-codegen`); the
+# receiver body's `⟦R⟧σ` is the bag soup (`reflect_hashbag_soup_par`), decoded by
+# `decode_ac_bag_soup`.
+ac-bag-demo-runtime = [
+    "runtime-report",
+    "dep:mettail-languages",
+    "mettail-languages/ac-bag-demo",
     "mettail-languages/dovetail-codegen",
     "mettail-languages/rho-codegen",
 ]
@@ -183,6 +198,11 @@ required-features = ["swap-demo-runtime"]
 name = "rho_net_ac_firing"
 path = "tests/rho_net_ac_firing.rs"
 required-features = ["ac-demo-runtime"]
+
+[[test]]
+name = "rho_net_ac_bag_firing"
+path = "tests/rho_net_ac_bag_firing.rs"
+required-features = ["ac-bag-demo-runtime"]
 
 [[test]]
 name = "rho_net_contextual_firing"

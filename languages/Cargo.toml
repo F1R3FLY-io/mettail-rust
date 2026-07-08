@@ -23,6 +23,7 @@ name = "mettail_languages"
 default = ["all-languages", "rho-codegen", "dovetail-codegen"]
 all-languages = [
     "ac-demo",
+    "ac-bag-demo",
     "ambient",
     "appsubst",
     "calculator",
@@ -47,6 +48,7 @@ all-languages = [
     "swap-demo",
 ]
 ac-demo = []
+ac-bag-demo = []
 ambient = []
 appsubst = []
 calculator = []
