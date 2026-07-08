@@ -70,3 +70,8 @@ theories/InRhoSameCLTSWeakBisim.v
 # sub-bag splices; flatten distributes over append). Self-contained multiset theory (Stdlib
 # Permutation), the byte-identity spec the RHS reflection meets.
 theories/AcRestReconstruction.v
+# FV (AC-atom) — Stage AC in-Rho AC matching: the native RSpace consume is all-or-nothing (commit
+# removes the whole selection = complement; veto leaves the bag untouched, reject-safe). The
+# removal-side dual of AtomicFiringNoPartialMatch; reuses AcRestReconstruction (sub_multiset,
+# complement, selection_rest_partition). Mirrors GuardedCommSoundness's three guarded outcomes.
+theories/AcAtomicNoPartialConsume.v
