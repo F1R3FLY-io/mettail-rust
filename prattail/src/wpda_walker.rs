@@ -9559,9 +9559,95 @@ where
             return false;
         }
 
-        let opens_ok = self.all_structural_open_delimiters(tokens, root_lo);
+        // Grouped-collection fix (2026-07-08): a COLLECTION root
+        // (List/Bag/Map/Set/Pathmap and its transparent cast wrapper) carries a
+        // DEGENERATE zero-width span `[p, p]` where `p` is the position right
+        // AFTER its closing delimiter — because its sole SPPF child is the
+        // arena-backed, span-less `CollectionId` node, so the fire-site span
+        // derivation `lo = children[0].span_lo().unwrap_or(hi)` collapses `lo`
+        // onto `hi = cursor.pos`. The delimiter-window obligation below assumes
+        // `[root_lo, root_hi)` bounds the SEMANTIC content; for a grouped
+        // collection `([...])` on a LINEAR token source that assumption is
+        // violated — `root_lo == root_hi == p` puts the collection's own
+        // content tokens (`[`, `3`, `]`) into the "prefix must be all-open"
+        // window, which then fails. (Grouped collections whose element carries a
+        // keyword — `([Nil])`, `([true])` — only "parsed" by the accident of
+        // routing through a `LatticeTokenSource`, where this whole check
+        // short-circuits to `true` above.) To restore the obligation's premise
+        // without perturbing span construction (which feeds disambiguation
+        // weights / recovery), recover the collection's TRUE left boundary by
+        // matching the balanced structural-delimiter group that terminates at
+        // `root_hi`, and validate the window against that recovered boundary.
+        // SOUND: the recovered `[effective_lo, root_hi)` is exactly the
+        // collection's `[ ... ]` extent, so the accept reduces to the same
+        // "opens · content · closes" obligation the proper-span path proves;
+        // and the prefix/suffix all-delimiter checks still reject any leading /
+        // trailing non-delimiter garbage (see the fallback below).
+        let effective_lo = if root_lo == root_hi && group_collection_accept_active() {
+            self.structural_group_open_pos(tokens, root_hi)
+                .unwrap_or(root_lo)
+        } else {
+            root_lo
+        };
+
+        let opens_ok = self.all_structural_open_delimiters(tokens, effective_lo);
         let closes_ok = self.all_structural_close_delimiters(tokens, root_hi, semantic_cursor_pos);
         opens_ok && closes_ok
+    }
+
+    /// Recover the left boundary of the balanced structural-delimiter group
+    /// that CLOSES immediately before `root_hi` (i.e. whose closing delimiter
+    /// is the token at `root_hi - 1`), by scanning backward and matching
+    /// nested structural delimiters. Returns the position of the matching
+    /// OPEN delimiter, or `None` when `root_hi == 0`, the token at `root_hi-1`
+    /// is not a structural close delimiter, or no balanced match exists.
+    ///
+    /// Used ONLY by [`Self::semantic_root_accepts_at_cursor`] to reconstruct
+    /// the true token extent of a zero-width COLLECTION root (whose SPPF span
+    /// collapses to `[after-close, after-close]`; see the caller). The scan
+    /// uses the SAME grammar-derived delimiter classification
+    /// (`is_structural_{open,close}_delimiter`) the window check uses, so a
+    /// collection's own brackets balance to depth 0 while interior content
+    /// tokens (numbers, idents, commas, `*`) are depth-neutral. On an
+    /// unbalanced prefix (`checked_sub` underflow) or a run off the left edge,
+    /// it returns `None` and the caller falls back to the pre-fix behaviour
+    /// (treating the degenerate `root_lo` as the boundary — a reject).
+    fn structural_group_open_pos(
+        &self,
+        tokens: &dyn WpdaTokenSource,
+        root_hi: usize,
+    ) -> Option<usize> {
+        if root_hi == 0 {
+            return None;
+        }
+        let close_pos = root_hi - 1;
+        let close_kind = tokens.peek_kind(close_pos)?;
+        if !self
+            .engine
+            .is_structural_close_delimiter(&close_kind, tokens.peek_text(close_pos))
+        {
+            return None;
+        }
+        let mut depth: usize = 0;
+        let mut pos = close_pos;
+        loop {
+            let kind = tokens.peek_kind(pos)?;
+            let text = tokens.peek_text(pos);
+            // A token is classified as at most one of open / close; interior
+            // content tokens are neither and leave `depth` unchanged.
+            if self.engine.is_structural_close_delimiter(&kind, text) {
+                depth += 1;
+            } else if self.engine.is_structural_open_delimiter(&kind, text) {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 {
+                    return Some(pos);
+                }
+            }
+            if pos == 0 {
+                return None;
+            }
+            pos -= 1;
+        }
     }
 
     // ─── Internal step handler ──────────────────────────────────────────────
@@ -29826,6 +29912,22 @@ fn parse_trace_env() -> u8 {
 fn grind_splice_enabled() -> bool {
     static GATE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *GATE.get_or_init(|| std::env::var("GRIND_SPLICE").is_ok())
+}
+
+/// Grouped-collection EOI-accept fix gate (2026-07-08). ON by default — it FIXES
+/// a correctness bug (a grouped collection `([...])` on a LINEAR token source was
+/// wrongly rejected by the delimiter-window obligation, because a collection
+/// root's SPPF span is a DEGENERATE zero-width `[after-close, after-close]` and
+/// the window check mistook the collection's own content tokens for a
+/// non-delimiter prefix — see `WpdaWalker::semantic_root_accepts_at_cursor`). The
+/// env `PRATTAIL_NO_GROUP_COLLECTION_ACCEPT` reverts to the pre-fix behaviour
+/// WITHOUT a rebuild (causal A/B — reproduces the false-reject / the fast
+/// `@([]) <- x` auth-reject for study or perf comparison). Cached `OnceLock` —
+/// one relaxed load when consulted (only on the zero-width-root accept path).
+#[inline]
+fn group_collection_accept_active() -> bool {
+    static GATE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *GATE.get_or_init(|| std::env::var_os("PRATTAIL_NO_GROUP_COLLECTION_ACCEPT").is_none())
 }
 
 /// Master compile-time kill-switch for the P1 IN-PLACE D&C `.*sep`
