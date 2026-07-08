@@ -75,6 +75,15 @@ theories/AcNonLinearConsistency.v
 # bag is {reduct, ...rest}. Specializes AcNonLinearConsistency (itself an instance of
 # NonLinearEqConsistency / GuardedCommSoundness) to the two-element Comm selection.
 theories/CommRuleFiring.v
+# Stage 3d — the Ambient-calculus OpenRule fires as ONE STRUCTURAL non-linear AC COMM
+# (AmbientOpenFiring): the AC 2-pick selects the POpen capability + PAmb ambient, the
+# Receive.condition `EEq(N_open, N_amb)` = ac_nl_guard [0;1] commits IFF the shared ambient name N
+# is name-equal (reject-safe otherwise), and — UNLIKE Comm — the reducts [P;Q] are STRUCTURAL
+# projections of the selected elements (LHS-element args the σ carries, not a host substitution),
+# atomically spliced with `...rest` into {P, Q, ...rest} (`insert_all`, the m-reduct generalization
+# of Comm's single `insert_exact`). Specializes AcNonLinearConsistency's guard to the two-element
+# OpenRule selection; generalizes CommRuleFiring's single-reduct emit to m structural reducts.
+theories/AmbientOpenFiring.v
 # FV (vii) — Stage 3a contextual rewrite as an ATOMIC POLYADIC JOIN (INV-6) + PLUGGING-STABILITY
 # (INV-2): generalizes LinearCommCorrespondence's SameChannelJoin 2->n. consume_list agrees with
 # consume_two at n=2; the n-ary contextual join is sound+complete with matching barbs; atomic
