@@ -84,3 +84,10 @@ theories/AcMapKeyUniqueness.v
 # (S ++ rest) B (sound forward = the faithful complement; complete backward = every partition is a
 # reachable match; rest unique up to permutation). Reuses AcRestReconstruction + Stdlib Permutation.
 theories/InRhoAcMatchMultiset.v
+# FV (AC-bag) — Stage AC2b bag-VALUED AC RHS: the AC receiver's RHS process-SOUP carrier
+# (reflect_hashbag_soup_par) is a multiset homomorphism (faithful, multiplicity-preserving,
+# order-independent), and the RHS soup `fixed sends ∥ residual soup` is BYTE-IDENTICAL to the
+# ground reflection of the flat transformed bag `fixed ⊎ rest` (the `...rest` splices, never
+# nests), so a bag-RHS fires to exactly `op{fixed ⊎ rest}` on OUT. Self-contained (Stdlib
+# List/Permutation); the send-carrier dual of AcRestReconstruction's list-level flatten.
+theories/AcBagRhsReflection.v

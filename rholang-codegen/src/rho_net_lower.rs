@@ -552,6 +552,7 @@ fn lower_base_rewrite(
                         source,
                         language_fingerprint,
                         resolved_kind,
+                        Some(def),
                     )
                 })
             {
@@ -664,7 +665,9 @@ fn lower_subst_rewrite(
 ) -> Option<RhoNetLoweredRule> {
     // The RHS `⟦R⟧σ` = `BoundVar(scope-slot)` (the host hands the reduct at the scope slot).
     // An open substitution (scope not a bound LHS var) fails closed here.
-    let rhs_par = match reflect_term_par(&rewrite.right, vars, k, language_fingerprint) {
+    // A subst RHS is a top-level `Subst`/`MultiSubst` (never a collection), so no HashBag bag-RHS
+    // resolver is needed here (`None`) — the scope reflects to its σ-slot regardless.
+    let rhs_par = match reflect_term_par(&rewrite.right, vars, k, language_fingerprint, None) {
         Ok(par) => par,
         Err(family) => return Some(record_unsupported(rule, family, errors)),
     };
@@ -815,7 +818,10 @@ fn contextual_join_rule_par(
     // The reduced context `⟦K'⟧`: `rewrite.right` reflected over the target holes, so hole
     // `i` (`targets[i]`) reflects to `BoundVar(rhs_var_index(n, i)) = BoundVar(n - i)` — the
     // reverse-De-Bruijn slot the join binds it at (out is `BoundVar(0)`).
-    let context_rhs = reflect_term_par(&rewrite.right, &targets, n, language_fingerprint)?;
+    // A contextual (congruence) RHS with a collection context is already rejected by the P2
+    // detector before reaching here (RhoCalc's `ParCong` over an AC bag), so no HashBag bag-RHS
+    // resolver is threaded (`None`) — a bag context stays fail-closed, exactly as before.
+    let context_rhs = reflect_term_par(&rewrite.right, &targets, n, language_fingerprint, None)?;
     // The `n` premise location channels are `input_channels[1..]` (channel 0 is the LHS
     // trace channel). A congruence premise contributes exactly one channel, so the slice
     // has length `n` — a drift here means the rule was paired with a mismatched program.
@@ -978,7 +984,11 @@ pub(crate) fn lower_rhs(
     k: usize,
     language_fingerprint: &str,
 ) -> Result<Par, UnsupportedFamily> {
-    reflect_term_par(rhs, vars, k, language_fingerprint)
+    // A base rewrite (non-AC LHS) keeps its byte-identical reflection: a collection RHS stays
+    // fail-closed (`None` — no HashBag bag-RHS resolver). A bag-VALUED RHS is only reachable via
+    // the AC path ([`ac_rule_receiver`]), whose LHS is the operand bag; a base rewrite has no AC
+    // receiver to consume/produce the soup carrier.
+    reflect_term_par(rhs, vars, k, language_fingerprint, None)
 }
 
 /// The nominal unforgeable ABI tag identifying a reflected constructor term:
@@ -1813,8 +1823,9 @@ fn reflect_term_par(
     vars: &[Ident],
     k: usize,
     language_fingerprint: &str,
+    def: Option<&LanguageDef>,
 ) -> Result<Par, UnsupportedFamily> {
-    reflect_term_par_env(pattern, vars, k, language_fingerprint, &mut Vec::new())
+    reflect_term_par_env(pattern, vars, k, language_fingerprint, &mut Vec::new(), def)
 }
 
 /// The reserved reflection tag for a single-binder `Lambda` node — a synthetic
@@ -1839,6 +1850,7 @@ fn reflect_term_par_env(
     k: usize,
     language_fingerprint: &str,
     binder_env: &mut Vec<String>,
+    def: Option<&LanguageDef>,
 ) -> Result<Par, UnsupportedFamily> {
     match pattern {
         Pattern::Term(PatternTerm::Var(name)) => {
@@ -1856,6 +1868,33 @@ fn reflect_term_par_env(
             }
         },
         Pattern::Term(PatternTerm::Apply { constructor, args }) => {
+            // Stage AC2b: a HashBag constructor over a single collection metapattern
+            // `op{e_0, …, ...rest}` reflects to the BARE process-soup carrier — the SAME shape
+            // `reflect_ground_term_par` emits for a HashBag ground term — NOT a tagged `EList`, so
+            // a bag-VALUED RHS fires as one FLAT bag: each fixed element is a send
+            // `@"ac:{op}"!(⟦e_i⟧σ)` and the `...rest` σ-slot delivers the residual bag's sends,
+            // which parallel composition SPLICES in (mirroring `dovetail::rules::add_flattened_bag`).
+            // Only when `def` resolves `op` to a HashBag; every other collection RHS (no `def`, a
+            // non-HashBag kind, or an unresolved kind) falls through to the fail-closed `Collection`
+            // arm below, exactly as before this stage.
+            if let (Some(def), [Pattern::Collection { coll_type, elements, rest }]) =
+                (def, args.as_slice())
+            {
+                if resolve_collection_kind(def, constructor, coll_type.as_ref())
+                    == Some(CollectionType::HashBag)
+                {
+                    return reflect_hashbag_soup_par(
+                        constructor,
+                        elements,
+                        rest.as_ref(),
+                        vars,
+                        k,
+                        language_fingerprint,
+                        binder_env,
+                        def,
+                    );
+                }
+            }
             let tag = GPrivateBuilder::new_par_from_string(reflect_tag(
                 language_fingerprint,
                 &constructor.to_string(),
@@ -1864,7 +1903,8 @@ fn reflect_term_par_env(
             let mut locally_free = tag.locally_free.clone();
             elements.push(tag);
             for arg in args {
-                let child = reflect_term_par_env(arg, vars, k, language_fingerprint, binder_env)?;
+                let child =
+                    reflect_term_par_env(arg, vars, k, language_fingerprint, binder_env, def)?;
                 locally_free = union(locally_free, child.locally_free.clone());
                 elements.push(child);
             }
@@ -1882,6 +1922,7 @@ fn reflect_term_par_env(
             k,
             language_fingerprint,
             binder_env,
+            def,
         ),
         Pattern::Term(PatternTerm::MultiLambda { binders, body }) => reflect_binder_node(
             MULTILAMBDA_REFLECT_LABEL,
@@ -1891,6 +1932,7 @@ fn reflect_term_par_env(
             k,
             language_fingerprint,
             binder_env,
+            def,
         ),
         // A substitution `subst(scope, …)` / `(eval scope arg)` resolves to the
         // host-computed REDUCED term at its scope variable's σ-slot (Stage 3c model-b):
@@ -1902,6 +1944,10 @@ fn reflect_term_par_env(
             reflect_subst_scope_slot(scope, vars, k)
         },
         Pattern::Term(PatternTerm::Subst { term, .. }) => reflect_subst_scope_slot(term, vars, k),
+        // A HashBag bag-VALUED RHS is intercepted at its ENCLOSING `Apply` (which supplies the `op`
+        // for the `@"ac:{op}"` soup channel — see the `Apply` arm's Stage AC2b intercept above). A
+        // BARE collection reaching here has no enclosing constructor, hence no `op` and no soup
+        // image; it fails closed (mirrors `pattern_to_dovetail`'s bare-collection rejection).
         Pattern::Collection { .. } => Err(UnsupportedFamily::CollectionAc),
         Pattern::Map { .. } => Err(UnsupportedFamily::MapAc),
         Pattern::Zip { .. } => Err(UnsupportedFamily::ZipAc),
@@ -1936,6 +1982,7 @@ fn reflect_binder_node(
     k: usize,
     language_fingerprint: &str,
     binder_env: &mut Vec<String>,
+    def: Option<&LanguageDef>,
 ) -> Result<Par, UnsupportedFamily> {
     let tag = GPrivateBuilder::new_par_from_string(reflect_tag(language_fingerprint, label));
     let mut elements = Vec::with_capacity(binders.len() + 2);
@@ -1949,7 +1996,7 @@ fn reflect_binder_node(
     for binder in binders {
         binder_env.push(binder.to_string());
     }
-    let body_result = reflect_term_par_env(body, vars, k, language_fingerprint, binder_env);
+    let body_result = reflect_term_par_env(body, vars, k, language_fingerprint, binder_env, def);
     for _ in binders {
         binder_env.pop();
     }
@@ -1978,6 +2025,68 @@ fn reflect_subst_scope_slot(
         // that the host can fill with one reduct — out of scope this slice, fail closed.
         _ => Err(UnsupportedFamily::Substitution),
     }
+}
+
+/// Reflect a HashBag constructor's bag-VALUED RHS `op{e_0, …, e_{m-1}, ...rest}` to the
+/// process-soup carrier (Stage AC2b): each fixed element `e_i` becomes a send
+/// `@"ac:{op}"!(⟦e_i⟧σ)` and the residual `...rest` becomes the reflected `rest` σ-slot — all
+/// parallel-composed.
+///
+/// This is byte-identical in SHAPE to [`reflect_ground_term_par`]'s HashBag reflection
+/// ([`reflect_ac_bag_par`]): a sends-only `Par` on the `@"ac:{op}"` element channel, one send per
+/// element, order-independent and multiplicity-preserving. So when this is the AC receiver body's
+/// `⟦R⟧σ` ([`ac_sigma_receiver_par`]), firing it emits a FLAT bag: the AC receiver bound `rest`
+/// (`ac_bag_pattern`'s process remainder) to the residual soup — the leftover `@"ac:{op}"!(…)`
+/// sends — so the reflected `rest` σ-slot substitutes to those sends and parallel composition
+/// SPLICES them into the fixed-element sends, never nesting (mirroring the host's
+/// `dovetail::rules::add_flattened_bag`).
+///
+/// Each fixed element reflects through the SAME [`reflect_term_par_env`] (so a `Wrap(x)` element →
+/// `EList[tag_Wrap, ⟦x⟧σ]`), threading `binder_env`/`def` so a nested binder or a nested same-op
+/// bag element reflects correctly. `rest`, when present, is reflected as its σ-slot `BoundVar`
+/// (`Pattern::Var`), so an unbound `rest` fails closed exactly like any dangling RHS variable
+/// ([`UnsupportedFamily::DanglingRhsVariable`]); a `None` rest yields an exact (rest-free) bag.
+#[allow(clippy::too_many_arguments)]
+fn reflect_hashbag_soup_par(
+    op: &Ident,
+    elements: &[Pattern],
+    rest: Option<&Ident>,
+    vars: &[Ident],
+    k: usize,
+    language_fingerprint: &str,
+    binder_env: &mut Vec<String>,
+    def: &LanguageDef,
+) -> Result<Par, UnsupportedFamily> {
+    let element_channel = format!("ac:{op}");
+    let mut soup = Par::default();
+    // Each fixed element `e_i` → a ground send `@"ac:{op}"!(⟦e_i⟧σ)` (the subject side's
+    // `reflect_ac_bag_par` element shape). Reflected with `Some(def)` so a nested same-op bag
+    // element is itself intercepted at its `Apply`.
+    for element in elements {
+        let reflected =
+            reflect_term_par_env(element, vars, k, language_fingerprint, binder_env, Some(def))?;
+        let free = reflected.locally_free.clone();
+        let send = new_send_par(
+            new_gstring_par(element_channel.clone(), Vec::new(), false),
+            vec![reflected],
+            false,
+            free.clone(),
+            false,
+            free,
+            false,
+        );
+        soup = soup.append(send);
+    }
+    // The residual `...rest`: reflect the σ-bound variable to its `BoundVar` slot. The AC receiver
+    // bound it to the leftover soup (a parallel composition of `@"ac:{op}"!(…)` sends), so
+    // appending it here parallel-composes — hence SPLICES — the residual sends into the flat bag.
+    if let Some(rest_name) = rest {
+        let rest_var = Pattern::Term(PatternTerm::Var(rest_name.clone()));
+        let rest_par =
+            reflect_term_par_env(&rest_var, vars, k, language_fingerprint, binder_env, Some(def))?;
+        soup = soup.append(rest_par);
+    }
+    Ok(soup)
 }
 
 /// P2 defensive detector (independent of the constructive walk): report the
@@ -2207,34 +2316,40 @@ pub(crate) fn ac_rule_shape(
 /// with-rest linear HashBag AC pattern (a no-rest exact match, a nested/non-linear element, or a
 /// non-HashBag collection — those stay on their existing path, later slices), so the caller keeps
 /// them fail-closed.
+///
+/// The RHS `R` may be a plain term (`Wrap(x)` — a tagged `EList`) OR itself a HashBag bag
+/// `op'{e_0, …, ...rest}` (Stage AC2b — a bare process-soup carrier, so a bag-TRANSFORMING AC rule
+/// fires as one flat bag). The bag-RHS reflection needs the constructor's declared collection kind
+/// when the parser left the RHS collection's `coll_type` as `None`, so `def` is threaded to
+/// [`reflect_term_par`] (`Some(def)` from the lowering driver; `None` in unit tests whose RHS is a
+/// plain term).
 pub fn ac_rule_receiver(
     left: &Pattern,
     right: &Pattern,
     source: Par,
     language_fingerprint: &str,
     resolved_kind: Option<CollectionType>,
+    def: Option<&LanguageDef>,
 ) -> Option<Par> {
     let (op, element_vars, rest) = ac_rule_shape(left, resolved_kind.as_ref())?;
     let k = element_vars.len();
     // The σ variable order: the k element vars (first-occurrence), then `rest`.
     let mut vars: Vec<Ident> = element_vars;
     vars.push(rest);
-    // The RHS `⟦R⟧σ` in the AC receiver's `k+2`-formal frame (`reflect_term_par` at `k+1`).
-    let rhs = reflect_term_par(right, &vars, k + 1, language_fingerprint).ok()?;
+    // The RHS `⟦R⟧σ` in the AC receiver's `k+2`-formal frame (`reflect_term_par` at `k+1`). A
+    // bag-VALUED RHS reflects to the process-soup carrier ([`reflect_hashbag_soup_par`]) via `def`.
+    let rhs = reflect_term_par(right, &vars, k + 1, language_fingerprint, def).ok()?;
     Some(ac_sigma_receiver_par(&op, k, rhs, source))
 }
 
-/// Resolve the collection kind the AC rule's constructor declares (`op . ps:HashBag(..) |- ..`).
-/// The parser leaves a rewrite-LHS collection's `coll_type` as `None` ("inferred from the
-/// enclosing constructor's grammar"), so the AC un-skip resolves it from `op`'s declared
-/// collection parameter in `def.terms` (the type alias is inlined to a `TypeExpr::Collection`).
-/// Returns `None` when `op` is not a constructor over a single collection param — so a
-/// non-collection or unknown constructor is never mis-classified as an AC HashBag rule.
-fn resolve_ac_collection_type(def: &LanguageDef, left: &Pattern) -> Option<CollectionType> {
-    let op = match left {
-        Pattern::Term(PatternTerm::Apply { constructor, .. }) => constructor.to_string(),
-        _ => return None,
-    };
+/// Resolve the collection kind a CONSTRUCTOR declares (`op . ps:HashBag(..) |- ..`), keyed on the
+/// op label. The parser leaves a rewrite pattern collection's `coll_type` as `None` ("inferred from
+/// the enclosing constructor's grammar"), so BOTH the AC LHS un-skip ([`resolve_ac_collection_type`])
+/// AND the AC bag-VALUED RHS reflection ([`reflect_hashbag_soup_par`], Stage AC2b) resolve it from
+/// `op`'s declared collection parameter in `def.terms` (the type alias is inlined to a
+/// `TypeExpr::Collection`). Returns `None` when `op` is not a constructor over a collection
+/// parameter — so a non-collection or unknown constructor is never mis-classified as a HashBag.
+fn resolve_constructor_collection_type(def: &LanguageDef, op: &str) -> Option<CollectionType> {
     let rule = def.terms.iter().find(|rule| rule.label.to_string() == op)?;
     rule.term_context
         .as_ref()?
@@ -2246,6 +2361,32 @@ fn resolve_ac_collection_type(def: &LanguageDef, left: &Pattern) -> Option<Colle
             } => Some(coll_type.clone()),
             _ => None,
         })
+}
+
+/// Resolve the collection kind the AC rule's constructor declares (`op . ps:HashBag(..) |- ..`) —
+/// [`resolve_constructor_collection_type`] keyed on the LHS `Apply`'s constructor. Returns `None`
+/// when the LHS is not a constructor application.
+fn resolve_ac_collection_type(def: &LanguageDef, left: &Pattern) -> Option<CollectionType> {
+    let op = match left {
+        Pattern::Term(PatternTerm::Apply { constructor, .. }) => constructor.to_string(),
+        _ => return None,
+    };
+    resolve_constructor_collection_type(def, &op)
+}
+
+/// The effective collection kind of a rewrite-pattern collection nested under constructor `op`:
+/// the pattern's own `coll_type` when the parser set it, else the kind `op`'s collection parameter
+/// declares (via [`resolve_constructor_collection_type`]). This mirrors the LHS
+/// `coll_type.as_ref().or(resolved_kind)` precedence in [`ac_rule_shape`], so the AC bag-RHS
+/// reflection ([`reflect_hashbag_soup_par`]) agrees with the AC LHS un-skip on the operand kind.
+fn resolve_collection_kind(
+    def: &LanguageDef,
+    constructor: &Ident,
+    pattern_kind: Option<&CollectionType>,
+) -> Option<CollectionType> {
+    pattern_kind
+        .cloned()
+        .or_else(|| resolve_constructor_collection_type(def, &constructor.to_string()))
 }
 
 /// The `n`-th De Bruijn formal of a receiver with `total_formals` formals
@@ -3563,7 +3704,8 @@ mod tests {
             body: Box::new(apply("Pair", vec![var_pattern("x"), var_pattern("y")])),
         });
         let vars = vec![ident("y")];
-        let reflected = reflect_term_par(&lam, &vars, 1, fp).expect("the binder node reflects");
+        let reflected =
+            reflect_term_par(&lam, &vars, 1, fp, None).expect("the binder node reflects");
 
         let lambda_tag = GPrivateBuilder::new_par_from_string(reflect_tag(fp, "^lambda"));
         let bound_tag = GPrivateBuilder::new_par_from_string(reflect_tag(fp, "^bound"));
@@ -3605,7 +3747,8 @@ mod tests {
             scope: Box::new(var_pattern("fun")),
             replacements: vec![var_pattern("arg")],
         });
-        let reflected = reflect_term_par(&subst, &vars, 2, fp).expect("closed substitution reflects");
+        let reflected =
+            reflect_term_par(&subst, &vars, 2, fp, None).expect("closed substitution reflects");
         assert_eq!(
             boundvar_index(&reflected),
             Some(rhs_var_index(2, 0)),
@@ -3618,7 +3761,7 @@ mod tests {
             replacements: vec![var_pattern("arg")],
         });
         assert_eq!(
-            reflect_term_par(&open, &vars, 2, fp),
+            reflect_term_par(&open, &vars, 2, fp, None),
             Err(UnsupportedFamily::Substitution),
             "an open substitution under a free scope fails closed"
         );
@@ -3715,7 +3858,7 @@ mod tests {
         let fp = "mettail-langdef-v1:0011223344556677";
         let rhs = apply("Wrap", vec![var_pattern("x")]);
         let vars = vec![ident("x"), ident("rest")]; // [element, rest] — the AC σ order
-        let reflected = reflect_term_par(&rhs, &vars, 2, fp).expect("Wrap(x) reflects");
+        let reflected = reflect_term_par(&rhs, &vars, 2, fp, None).expect("Wrap(x) reflects");
         let outer = elist_body(&reflected);
         assert_eq!(outer.ps.len(), 2, "head tag + one element σ");
         assert_eq!(
@@ -3727,6 +3870,145 @@ mod tests {
             boundvar_index(&outer.ps[1]),
             Some(2),
             "element x = BoundVar(2) — the AC receiver frame (k+2-1 for k=1)"
+        );
+    }
+
+    #[test]
+    fn ac_bag_rhs_reflects_to_the_hashbag_soup_carrier() {
+        // Stage AC2b: a bag-VALUED RHS `PPar{Wrap(x), ...rest}` reflects to the process-soup
+        // carrier (the SAME shape `reflect_ground_term_par` emits for a HashBag) — one send
+        // `@"ac:PPar"!(⟦Wrap(x)⟧σ)` per fixed element, parallel-composed with the `rest` σ-slot (a
+        // top-level process `BoundVar` that splices the residual sends at runtime) — NOT a tagged
+        // `EList`. The parser leaves the RHS collection's `coll_type` as `None`, so the kind is
+        // resolved from `PPar`'s declared HashBag param via the threaded `def`.
+        let fp = "mettail-langdef-v1:0011223344556677";
+        let def = syn::parse_str::<LanguageDef>(AC_DEMO_FRAGMENT).expect("AC demo fragment parses");
+        let rhs = apply(
+            "PPar",
+            vec![Pattern::Collection {
+                coll_type: None,
+                elements: vec![apply("Wrap", vec![var_pattern("x")])],
+                rest: Some(ident("rest")),
+            }],
+        );
+        let vars = vec![ident("x"), ident("rest")]; // the AC σ order [element, rest]
+        let soup = reflect_term_par(&rhs, &vars, 2, fp, Some(&def))
+            .expect("the bag RHS reflects to a soup");
+
+        // A bare soup, NOT a tagged EList: exactly one fixed-element send + the rest process var.
+        assert_eq!(soup.sends.len(), 1, "one send per fixed element (Wrap(x))");
+        let send = &soup.sends[0];
+        assert_eq!(
+            gstring_value(send.chan.as_ref().expect("send channel")),
+            Some("ac:PPar".to_string()),
+            "the element send is on the @\"ac:{{op}}\" carrier channel"
+        );
+        let elem = elist_body(&send.data[0]);
+        assert_eq!(
+            elem.ps[0],
+            GPrivateBuilder::new_par_from_string(format!("mettail.term.{fp}.Wrap")),
+            "the fixed element head is the Wrap reflection tag"
+        );
+        assert_eq!(
+            boundvar_index(&elem.ps[1]),
+            Some(2),
+            "x = element BoundVar(2) (the AC receiver's k+2-formal frame, k=1)"
+        );
+
+        // The `rest` σ-slot is the one top-level process var BoundVar(1) — the AC receiver's
+        // residual-soup formal — which parallel-composes (SPLICES) the residual sends at runtime.
+        assert_eq!(soup.exprs.len(), 1, "the rest σ-slot is the one top-level process var");
+        assert_eq!(
+            boundvar_index(&soup),
+            Some(1),
+            "rest = BoundVar(1) (the AC receiver's residual-soup formal)"
+        );
+    }
+
+    #[test]
+    fn ac_bag_rhs_without_a_def_stays_fail_closed() {
+        // Without a `def` to resolve the constructor's HashBag kind, a collection RHS has no soup
+        // image and fails closed exactly as before Stage AC2b — so a base/subst/contextual RHS
+        // (which thread `None`) never accidentally emits a bag soup.
+        let fp = "mettail-langdef-v1:0011223344556677";
+        let rhs = apply(
+            "PPar",
+            vec![Pattern::Collection {
+                coll_type: None,
+                elements: vec![apply("Wrap", vec![var_pattern("x")])],
+                rest: Some(ident("rest")),
+            }],
+        );
+        let vars = vec![ident("x"), ident("rest")];
+        assert_eq!(
+            reflect_term_par(&rhs, &vars, 2, fp, None),
+            Err(UnsupportedFamily::CollectionAc),
+            "a bag RHS with no def resolver fails closed"
+        );
+    }
+
+    #[test]
+    fn ac_rule_receiver_un_skips_a_bag_transforming_rule() {
+        // Stage AC2b end-to-end (codegen): `PPar{x, ...rest} ~> PPar{Wrap(x), ...rest}` un-skips to
+        // an AC receiver whose body fires the transformed bag-soup carrier on out:
+        // `out!( @"ac:PPar"!(⟦Wrap(x)⟧σ) | rest )`. The rest σ-slot BoundVar(1) splices the
+        // residual soup, so the fired value is a FLAT bag (mirrors `add_flattened_bag`).
+        let fp = "mettail-langdef-v1:0011223344556677";
+        let def = syn::parse_str::<LanguageDef>(AC_DEMO_FRAGMENT).expect("AC demo fragment parses");
+        let left = apply(
+            "PPar",
+            vec![Pattern::Collection {
+                coll_type: Some(CollectionType::HashBag),
+                elements: vec![var_pattern("x")],
+                rest: Some(ident("rest")),
+            }],
+        );
+        let right = apply(
+            "PPar",
+            vec![Pattern::Collection {
+                coll_type: None,
+                elements: vec![apply("Wrap", vec![var_pattern("x")])],
+                rest: Some(ident("rest")),
+            }],
+        );
+        let receiver = ac_rule_receiver(
+            &left,
+            &right,
+            new_gstring_par("c_ac".to_string(), Vec::new(), false),
+            fp,
+            Some(CollectionType::HashBag),
+            Some(&def),
+        )
+        .expect("the bag-transforming AC rule un-skips to an AC receiver");
+
+        let recv = &receiver.receives[0];
+        assert!(recv.persistent, "the AC receiver is persistent");
+        // Body: out!(soup) with out = BoundVar(0), soup = @"ac:PPar"!(⟦Wrap(x)⟧) | BoundVar(1).
+        let body_send = &recv.body.as_ref().expect("receiver body").sends[0];
+        assert_eq!(
+            boundvar_index(body_send.chan.as_ref().expect("out channel")),
+            Some(0),
+            "fires on out = BoundVar(0)"
+        );
+        let soup = &body_send.data[0];
+        assert_eq!(soup.sends.len(), 1, "the transformed bag has one fixed-element send");
+        assert_eq!(
+            gstring_value(soup.sends[0].chan.as_ref().expect("element channel")),
+            Some("ac:PPar".to_string()),
+            "the fixed element rides the @\"ac:PPar\" carrier"
+        );
+        let elem = elist_body(&soup.sends[0].data[0]);
+        assert_eq!(
+            elem.ps[0],
+            GPrivateBuilder::new_par_from_string(format!("mettail.term.{fp}.Wrap")),
+            "the transformed element is Wrap(...)"
+        );
+        assert_eq!(boundvar_index(&elem.ps[1]), Some(2), "x = element BoundVar(2)");
+        // The rest σ-slot BoundVar(1) at the soup top level splices the residual bag.
+        assert_eq!(
+            boundvar_index(soup),
+            Some(1),
+            "rest = BoundVar(1) splices the residual soup (the flat bag)"
         );
     }
 
@@ -3749,6 +4031,7 @@ mod tests {
             new_gstring_par("c_ac".to_string(), Vec::new(), false),
             fp,
             Some(CollectionType::HashBag),
+            None,
         )
         .expect("the HashBag AC rule un-skips to an AC receiver");
 
@@ -3779,6 +4062,7 @@ mod tests {
                 &right,
                 new_gstring_par("c".to_string(), Vec::new(), false),
                 fp,
+                None,
                 None
             )
             .is_none(),
@@ -4093,8 +4377,9 @@ mod tests {
         // BYTE-IDENTICAL to `sigma_receiver_par(1, ⟦Wrap(T)⟧, c_ctx)` — the reduced hole T is
         // the one σ-slot and the context Wrap(_) is the RHS.
         let fp = "ctxfp";
-        let context_rhs = reflect_term_par(&apply("Wrap", vec![var_pattern("T")]), &[ident("T")], 1, fp)
-            .expect("Wrap(T) reflects");
+        let context_rhs =
+            reflect_term_par(&apply("Wrap", vec![var_pattern("T")]), &[ident("T")], 1, fp, None)
+                .expect("Wrap(T) reflects");
         let c_ctx = new_gstring_par("c_ctx".to_string(), Vec::new(), false);
 
         let join = contextual_join_receiver_par(context_rhs.clone(), &[c_ctx.clone()]);
@@ -4147,6 +4432,7 @@ mod tests {
             &[ident("T0"), ident("T1")],
             2,
             fp,
+            None,
         )
         .expect("Pair(T0, T1) reflects");
         let c0 = new_gstring_par("c0".to_string(), Vec::new(), false);

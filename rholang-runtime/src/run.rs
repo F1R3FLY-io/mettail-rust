@@ -186,6 +186,74 @@ fn decode_rhocalc_bag(
     Some(counts.into_iter().collect())
 }
 
+/// Whether `par` is a NON-empty sends-only parallel composition — the AC bag-carrier soup shape
+/// (Stage AC2b): at least one `Send` and every other `Par` field empty/closed. Mirrors the exact
+/// field set of [`par_has_only_ground_value_fields`], inverted for `sends`.
+#[cfg(feature = "runtime-report")]
+fn par_is_only_sends(par: &Par) -> bool {
+    !par.sends.is_empty()
+        && par.exprs.is_empty()
+        && par.receives.is_empty()
+        && par.news.is_empty()
+        && par.matches.is_empty()
+        && par.bundles.is_empty()
+        && par.connectives.is_empty()
+        && par.conditionals.is_empty()
+        && par.unforgeables.is_empty()
+        && par.locally_free.is_empty()
+        && !par.connective_used
+}
+
+/// The AC bag-carrier operator label `op` a soup send's channel `@"ac:{op}"` carries, when the
+/// channel is a quoted `GString` with the reserved `"ac:"` prefix and a non-empty operator.
+#[cfg(feature = "runtime-report")]
+fn ac_soup_channel_op(chan: &Par) -> Option<&str> {
+    match single_expr_instance(chan)? {
+        ExprInstance::GString(name) => name.strip_prefix("ac:").filter(|op| !op.is_empty()),
+        _ => None,
+    }
+}
+
+/// Decode the AC bag-carrier process soup — a bag-VALUED AC RHS's OUT value (Stage AC2b) — into a
+/// multiset of decoded elements.
+///
+/// The carrier is a sends-only parallel `Par` in which every send is `@"ac:{op}"!(⟦e⟧)`, the exact
+/// shape the codegen `reflect_ac_bag_par` (subject side) and `reflect_hashbag_soup_par` (the AC
+/// receiver's bag-RHS body) emit for a `HashBag`: all sends on the SAME `"ac:{op}"` channel, each
+/// with exactly one datum, non-persistent, with nothing else present. Each datum decodes through
+/// the same [`par_as_runtime_observation_value`], so a bag whose elements are themselves reflected
+/// terms (e.g. `Wrap(A)`) decodes recursively. Returns `None` for any `Par` that is not exactly
+/// such a soup — a tagged-`EList` term, a scalar, an unforgeable, a `for`-carrying process, or a
+/// mixed-operator soup — so this never mis-claims another observation shape (the `"ac:"` channel
+/// prefix + sends-only shape are disjoint from every other decoder's head).
+#[cfg(feature = "runtime-report")]
+fn decode_ac_bag_soup(par: &Par) -> Option<Vec<(RuntimeObservationValue, usize)>> {
+    if !par_is_only_sends(par) {
+        return None;
+    }
+    let mut op: Option<&str> = None;
+    let mut counts = std::collections::BTreeMap::<RuntimeObservationValue, usize>::new();
+    for send in &par.sends {
+        if send.persistent {
+            return None;
+        }
+        let send_op = ac_soup_channel_op(send.chan.as_ref()?)?;
+        match op {
+            None => op = Some(send_op),
+            Some(existing) if existing == send_op => {},
+            // Mixed operators are not a single AC bag — fail closed rather than merge two bags.
+            Some(_) => return None,
+        }
+        let [datum] = send.data.as_slice() else {
+            return None;
+        };
+        let value = par_as_runtime_observation_value(datum)?;
+        let slot = counts.entry(value).or_insert(0);
+        *slot = slot.checked_add(1)?;
+    }
+    Some(counts.into_iter().collect())
+}
+
 /// Recover the UTF-8 tag string carried by a private-name `Par`, when that name
 /// was built by `GPrivateBuilder::new_par_from_string(s)`.
 ///
@@ -247,6 +315,14 @@ fn decode_reflected_term(list: &models::rhoapi::EList) -> Option<RuntimeObservat
 pub fn par_as_runtime_observation_value(par: &Par) -> Option<RuntimeObservationValue> {
     if let Some(value) = par_as_unforgeable_observation(par) {
         return Some(value);
+    }
+
+    // Stage AC2b: a bag-VALUED AC RHS lands on OUT as the bare process-soup carrier
+    // (`@"ac:{op}"!(⟦e⟧) | …`) — the SAME shape a `HashBag` reflects to — not an `EList`. Decode
+    // it to a multiset `Bag`. The `"ac:"` channel + sends-only shape are disjoint from every
+    // `single_expr_instance` head below, so this claims only the AC carrier.
+    if let Some(entries) = decode_ac_bag_soup(par) {
+        return Some(RuntimeObservationValue::Bag(entries));
     }
 
     match single_expr_instance(par)? {
@@ -945,7 +1021,7 @@ pub async fn run_rholang_source_sequence_for_oracle_and_read_bools(
 #[cfg(all(test, feature = "runtime-report"))]
 mod tests {
     use super::*;
-    use mettail_rholang_codegen::{reflect_ground_term_par, GroundTerm};
+    use mettail_rholang_codegen::{reflect_ground_term_par, CollectionType, GroundTerm};
     use models::rust::utils::{new_elist_par, new_gint_par, new_gstring_par};
 
     /// The R-1 ABI round-trip (no Rho machine): reflecting a ground constructor
@@ -1017,6 +1093,76 @@ mod tests {
                 RuntimeObservationValue::Int(1),
                 RuntimeObservationValue::Text("two".to_string()),
             ]))
+        );
+    }
+
+    /// Stage AC2b: the AC bag-carrier round-trip. A `HashBag` ground term reflects to the
+    /// process-soup carrier (`@"ac:{op}"!(⟦e⟧) | …`, via `reflect_ac_bag_par`), the SAME shape a
+    /// bag-VALUED AC RHS lands on OUT as. Decoding it through the public observation entry point
+    /// reconstructs the multiset `Bag`, elements decoded recursively (so `Wrap(A)` is a nested
+    /// `Term`). This is the decoder counterpart of `reflect_hashbag_soup_par`.
+    #[test]
+    fn reflect_then_decode_round_trips_hashbag_soup() {
+        let fp = "mettail-langdef-v1:0011223344556677";
+        // PPar{Wrap(A), B, C} — a transformed bag: one wrapped element + two bare elements.
+        let bag = GroundTerm::collection(
+            CollectionType::HashBag,
+            "PPar",
+            vec![
+                GroundTerm::new("Wrap", vec![GroundTerm::nullary("A")]),
+                GroundTerm::nullary("B"),
+                GroundTerm::nullary("C"),
+            ],
+        );
+        let soup = reflect_ground_term_par(&bag, fp);
+        // A HashBag reflects to a bare sends-only soup (not a tagged EList head).
+        assert!(
+            soup.exprs.is_empty() && soup.sends.len() == 3,
+            "a HashBag reflects to a bare 3-send soup, got {soup:?}"
+        );
+
+        let decoded = par_as_runtime_observation_value(&soup)
+            .expect("the AC bag-carrier soup must decode to a Bag");
+        let term = |constructor: &str, children: Vec<RuntimeObservationValue>| {
+            RuntimeObservationValue::Term {
+                constructor: constructor.to_string(),
+                children,
+            }
+        };
+        let mut expected = vec![
+            (term("Wrap", vec![term("A", Vec::new())]), 1usize),
+            (term("B", Vec::new()), 1),
+            (term("C", Vec::new()), 1),
+        ];
+        expected.sort();
+        assert_eq!(
+            decoded,
+            RuntimeObservationValue::Bag(expected),
+            "the soup decodes to the transformed-bag multiset"
+        );
+    }
+
+    /// A multiplicity > 1 bag `PPar{A, A, B}` decodes to a multiset with the correct counts —
+    /// the soup carrier is multiplicity-preserving (one send per element).
+    #[test]
+    fn ac_bag_soup_decode_preserves_multiplicity() {
+        let fp = "mettail-langdef-v1:0011223344556677";
+        let bag = GroundTerm::collection(
+            CollectionType::HashBag,
+            "PPar",
+            vec![GroundTerm::nullary("A"), GroundTerm::nullary("A"), GroundTerm::nullary("B")],
+        );
+        let soup = reflect_ground_term_par(&bag, fp);
+        let term = |constructor: &str| RuntimeObservationValue::Term {
+            constructor: constructor.to_string(),
+            children: Vec::new(),
+        };
+        let mut expected = vec![(term("A"), 2usize), (term("B"), 1)];
+        expected.sort();
+        assert_eq!(
+            par_as_runtime_observation_value(&soup),
+            Some(RuntimeObservationValue::Bag(expected)),
+            "duplicate elements accumulate multiplicity in the decoded bag"
         );
     }
 }
