@@ -969,7 +969,21 @@ pub(crate) const RECOGNIZER_PREFILTER: bool = false;
 /// pre-gate baseline. The runtime env `PRATTAIL_NO_RECOGNIZER_REJECT_GATE` (read at
 /// the fire site) reverts to the unconditional reject WITHOUT a rebuild (causal A/B —
 /// reproduces the pre-fix false-reject for study).
-pub(crate) const RECOGNIZER_REJECT_GATE: bool = true;
+///
+/// ⚠ SHIPPED OFF (2026-07-08, reverted from `true`): although the gate fixes the
+/// `@([])` false-reject (a real correctness win), a CASES=64 A/B proved it
+/// SEVERELY regresses perf — `gen_rhocalc_prop::proc_display_parse_roundtrip`
+/// (7.2s→TIMEOUT) and `sim_rhocalc_proptest_campaign` (52.6s→TIMEOUT) — because
+/// the coarse recognizer is NON-CONVERGENT on genuinely-unparseable deep-`@`
+/// (d≥2), so every malformed `@`-led reject span these generator-heavy tests
+/// produce grinds to `RECOGNIZER_GATE_MAX_STEPS` then (soundly) SUPPRESSES the
+/// previously-fast auth-reject → slow walker → timeout. A sound gate MUST
+/// suppress-on-budget (never false-reject), so the regression is intrinsic to
+/// gating on a non-convergent recognizer. The `@([])` false-reject is instead
+/// addressed by a TARGETED auth-reject-matcher narrowing (no per-span recognizer
+/// cost). The gate machinery stays for if/when the recognizer's deep-`@`
+/// non-convergence is fixed. OFF ⇒ byte-identical to the pre-gate baseline.
+pub(crate) const RECOGNIZER_REJECT_GATE: bool = false;
 
 /// RECOGNIZER_GATE_MAX_STEPS — the coarse-walker step budget for the
 /// [`RECOGNIZER_REJECT_GATE`] recognizer call. Modest (NOT the prefilter's 1M).
