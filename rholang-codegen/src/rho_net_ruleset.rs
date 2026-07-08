@@ -132,8 +132,10 @@ pub struct InRhoMatchingRuleset {
 pub fn compile_in_rho_matching_ruleset(def: &LanguageDef) -> InRhoMatchingRuleset {
     let language_fingerprint = language_definition_fingerprint(def);
     let sites = crate::rho_net_injection_sites(def);
-    let site_channel: HashMap<&str, &str> =
-        sites.iter().map(|s| (s.rule_label.as_str(), s.channel.as_str())).collect();
+    let site_channel: HashMap<&str, &str> = sites
+        .iter()
+        .map(|s| (s.rule_label.as_str(), s.channel.as_str()))
+        .collect();
 
     let mut pairs: Vec<(PatternId, DvPattern<String>)> = Vec::with_capacity(def.rewrites.len());
     let mut accept_channels: Vec<(PatternId, String)> = Vec::new();
@@ -144,7 +146,10 @@ pub fn compile_in_rho_matching_ruleset(def: &LanguageDef) -> InRhoMatchingRulese
         let channel = match site_channel.get(label.as_str()) {
             Some(channel) => channel.to_string(),
             None => {
-                deferred.push(DeferredRewrite { rule_label: label, reason: DeferReason::NotBaseRewrite });
+                deferred.push(DeferredRewrite {
+                    rule_label: label,
+                    reason: DeferReason::NotBaseRewrite,
+                });
                 continue;
             },
         };
@@ -154,7 +159,10 @@ pub fn compile_in_rho_matching_ruleset(def: &LanguageDef) -> InRhoMatchingRulese
                 accept_channels.push((PatternId(index), channel));
             },
             Err(reject) => {
-                deferred.push(DeferredRewrite { rule_label: label, reason: DeferReason::Convert(reject) });
+                deferred.push(DeferredRewrite {
+                    rule_label: label,
+                    reason: DeferReason::Convert(reject),
+                });
             },
         }
     }
@@ -170,7 +178,10 @@ pub fn compile_in_rho_matching_ruleset(def: &LanguageDef) -> InRhoMatchingRulese
                     err.unsupported_patterns().iter().copied().collect();
                 for pid in &unsupported {
                     let label = def.rewrites[pid.0].name.to_string();
-                    deferred.push(DeferredRewrite { rule_label: label, reason: DeferReason::Ac });
+                    deferred.push(DeferredRewrite {
+                        rule_label: label,
+                        reason: DeferReason::Ac,
+                    });
                 }
                 pairs.retain(|(pid, _)| !unsupported.contains(pid));
                 accept_channels.retain(|(pid, _)| !unsupported.contains(pid));
@@ -178,7 +189,12 @@ pub fn compile_in_rho_matching_ruleset(def: &LanguageDef) -> InRhoMatchingRulese
         }
     };
 
-    InRhoMatchingRuleset { automaton, accept_channels, language_fingerprint, deferred }
+    InRhoMatchingRuleset {
+        automaton,
+        accept_channels,
+        language_fingerprint,
+        deferred,
+    }
 }
 
 /// Build the per-firing `call` that matches `subject` in Rho against `ruleset`: the M2a
@@ -225,7 +241,32 @@ pub fn in_rho_match_gate_reject<'a>(
     skipped: &'a [DeferredRewrite],
     fired_labels: &[&str],
 ) -> Option<&'a DeferredRewrite> {
-    skipped.iter().find(|entry| fired_labels.contains(&entry.rule_label.as_str()))
+    skipped
+        .iter()
+        .find(|entry| fired_labels.contains(&entry.rule_label.as_str()))
+}
+
+/// The ROOT constructor of a rewrite's LHS (an `Apply`-rooted structural pattern), or a typed
+/// error if the rule is absent or its LHS is not constructor-rooted.
+///
+/// The Stage-4 in-Rho MATCH path (M-reflect) spreads the WHOLE reflected subject term and lets
+/// the automaton LOCATE the redex at the spread ROOT. That locates a redex only when the whole
+/// subject IS the redex — i.e. the subject's root constructor equals the fired rule's LHS root.
+/// The driver uses this to fail a NESTED redex (whose subject root is a context constructor)
+/// closed to the σ-replay path, which openly uses σ to locate + inject nested redexes. This
+/// reads ONLY the compiled rule set (not the report σ), so it never re-does the host match.
+pub fn rule_lhs_root_constructor(def: &LanguageDef, rule_label: &str) -> Result<String, String> {
+    let rewrite = def
+        .rewrites
+        .iter()
+        .find(|rewrite| rewrite.name.to_string() == rule_label)
+        .ok_or_else(|| format!("in-Rho match root check: no rewrite named {rule_label}"))?;
+    match &rewrite.left {
+        Pattern::Term(PatternTerm::Apply { constructor, .. }) => Ok(constructor.to_string()),
+        _ => Err(format!(
+            "in-Rho match root check: rewrite {rule_label} LHS is not constructor-rooted"
+        )),
+    }
 }
 
 /// Reconstruct the ground redex `LHS[σ]` a fired base rewrite matched — the SUBJECT the
@@ -234,6 +275,10 @@ pub fn in_rho_match_gate_reject<'a>(
 /// rewrite named `rule_label` in `def` and instantiates its LHS with σ. Total +
 /// fail-closed; a matched (non-skipped) rule's LHS is Var/Apply-only, so the error arms
 /// are defensive (they never trigger past the gate).
+///
+/// NOTE: the Stage-4 M-reflect MATCH path no longer calls this (it reflects the whole `term`
+/// structurally instead of rebuilding `LHS[σ]` from the report σ). It is retained as the
+/// executable spec/oracle for the redex a firing matched (still exercised by the unit tests).
 pub fn reconstruct_redex_subject(
     def: &LanguageDef,
     rule_label: &str,
@@ -244,8 +289,10 @@ pub fn reconstruct_redex_subject(
         .iter()
         .find(|rewrite| rewrite.name.to_string() == rule_label)
         .ok_or_else(|| format!("in-Rho match subject: no rewrite named {rule_label}"))?;
-    let bindings: HashMap<&str, &GroundTerm> =
-        sigma.iter().map(|(name, ground)| (name.as_str(), ground)).collect();
+    let bindings: HashMap<&str, &GroundTerm> = sigma
+        .iter()
+        .map(|(name, ground)| (name.as_str(), ground))
+        .collect();
     instantiate_lhs(&rewrite.left, &bindings, rule_label)
 }
 

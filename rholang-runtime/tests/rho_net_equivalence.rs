@@ -1334,6 +1334,58 @@ async fn m_collapse_matches_both_non_nullary_args_in_rho() {
     assert_eq!(observation.values[0], expected, "both non-nullary σ slots collapsed correctly");
 }
 
+/// M-reflect (Stage 4) — the DECISIVE probe that σ is produced by the `sa:` automaton accept,
+/// NOT by the host report. We take a real, complete report for `Swap(A, B)` and CORRUPT its σ to
+/// nonsense (`{x ↦ Pair(A,A), y ↦ Pair(B,B)}`), leaving the rule label + shape valid so the
+/// gate / single-firing / root-rooted checks still admit the MATCH path. If the match path read σ
+/// from the report (the pre-M-reflect duplicate), OUT would be `Pair(Pair(B,B), Pair(A,A))`. It is
+/// instead the CORRECT `Pair(B, A)`, because the automaton LOCATES the redex in the spread of the
+/// structurally reflected `term` and emits σ from its accept — the host runtime match is gone.
+#[tokio::test]
+async fn m_reflect_sigma_is_produced_by_the_automaton_not_the_report() {
+    mettail_runtime::clear_var_cache();
+    let (backend, _fingerprint) = swap_demo_backend();
+    let term = SwapDemoTerm(Proc::Swap(Arc::new(Proc::A), Arc::new(Proc::B)));
+
+    let mut report =
+        SwapDemoLanguage::dovetail_report_for(&term, 64, 1_000_000).expect("SwapDemo report");
+    assert_eq!(report.rewrite_justifications.len(), 1, "Swap(A, B) fires exactly once");
+    let wrong = |c: &str| RuntimeReflectedSubterm {
+        constructor: "Pair".to_string(),
+        children: vec![nullary_subterm(c), nullary_subterm(c)],
+    };
+    for justification in &mut report.rewrite_justifications {
+        // Deliberately WRONG σ: were it read, OUT would be Pair(Pair(B,B), Pair(A,A)).
+        justification.sigma = vec![("x".to_string(), wrong("A")), ("y".to_string(), wrong("B"))];
+    }
+
+    let invocation =
+        SwapDemoLanguage::rho_net_match_invocation_from_dovetail_to(&term, &report, "OUT")
+            .expect("the MATCH path admits Swap(A, B) with a corrupted report σ");
+    let observation = backend
+        .run_rho_net_with_call_and_observe_runtime_values(&invocation.call, &invocation.out_channel)
+        .await
+        .expect("the in-Rho match executes");
+
+    assert_eq!(observation.observed_count(), 1, "fired once (got {:?})", observation.values);
+    let pair_b_a = obs("Pair", vec![obs("B", Vec::new()), obs("A", Vec::new())]);
+    assert_eq!(
+        observation.values[0], pair_b_a,
+        "σ came from the sa: accept (reflected term spread), NOT the corrupted report σ"
+    );
+    let would_be_wrong_if_report_sigma_were_used = obs(
+        "Pair",
+        vec![
+            obs("Pair", vec![obs("B", Vec::new()), obs("B", Vec::new())]),
+            obs("Pair", vec![obs("A", Vec::new()), obs("A", Vec::new())]),
+        ],
+    );
+    assert_ne!(
+        observation.values[0], would_be_wrong_if_report_sigma_were_used,
+        "the host report σ was demonstrably NOT used to fire the σ-receiver"
+    );
+}
+
 /// Stage 3 piece 5: the WHOLE production default-backend stack. Install SwapDemo's
 /// Dovetail+Rho backend with the SAME capability-gated in-Rho-match closure the repl's
 /// `swapdemo_backed()` uses (the closure IS the production closure, re-instantiated — no

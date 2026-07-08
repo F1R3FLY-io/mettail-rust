@@ -17,6 +17,7 @@ use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote};
 use syn::{Ident, LitStr};
 
+use crate::gen::term_ops::subst::{collect_category_variants, FieldInfo, VariantKind};
 use crate::gen::{generate_literal_label, literal_rule_nonterminal};
 
 fn to_snake(s: &str) -> String {
@@ -442,6 +443,195 @@ pub fn generate_rho_scalar_invocation(language: &LanguageDef) -> TokenStream {
                 #plan_label_lit
             }
         }
+    }
+}
+
+/// The per-category `Term → GroundTerm` reflection fn name (`__mettail_rho_net_reflect_<cat>`).
+fn reflect_fn_name(category: &Ident) -> Ident {
+    format_ident!("__mettail_rho_net_reflect_{}", to_snake(&category.to_string()))
+}
+
+/// Whether a constructor field is a PLAIN structural category subterm the M-reflect walk can
+/// recurse into (`Box`/`Arc<Cat>`, `.as_ref()` → `&Cat`): a non-collection, non-optional,
+/// non-predicate field whose category is a language non-terminal (not a builtin like `i32`).
+/// Every other field (builtin / optional / predicate / collection) has no positional ground
+/// image, so its host variant fails the reflection closed (routing that firing to σ-replay).
+fn is_structural_category_field(field: &FieldInfo) -> bool {
+    !field.is_collection
+        && !field.is_optional
+        && !field.is_predicate
+        && !NonTerminalKind::classify(&field.category.to_string()).is_builtin()
+}
+
+/// Generate the per-category structural `Term → GroundTerm` reflection fn — the M-reflect
+/// greenfield hinge. It mirrors the Dovetail report's `category_lowering` term walk
+/// (`macros/src/gen/runtime/dovetail_report.rs`) but produces a codegen
+/// [`GroundTerm`](mettail_rholang_codegen::GroundTerm) DIRECTLY from the runtime subject term
+/// (NOT from the report's σ), tagging each node with its BARE constructor label — the exact
+/// input `spread_term_par` / `reflect_tag` expect, so the reflected subject is coherent with the
+/// automaton's compiled tags. It is TOTAL over the category's variants: a Nullary or an
+/// all-structural Regular constructor reflects; a Var / Literal / Collection / Binder / an
+/// Regular with a non-structural field fails CLOSED with a typed reason (the firing then falls
+/// back to the σ-replay driver). The `k` reflection fns (one per category) are mutually
+/// recursive nested fns, so cross-category structural fields resolve without a trait surface.
+fn reflect_category_fn(language: &LanguageDef, category: &Ident) -> TokenStream {
+    let fn_name = reflect_fn_name(category);
+    let ground = quote!(::mettail_rholang_codegen::GroundTerm);
+    let arms: Vec<TokenStream> = collect_category_variants(category, language)
+        .into_iter()
+        .map(|variant| match variant {
+            VariantKind::Nullary { label } => {
+                let label_lit = lit(&label.to_string());
+                quote! {
+                    #category::#label => ::core::result::Result::Ok(
+                        #ground::new(#label_lit, ::std::vec::Vec::new())
+                    )
+                }
+            },
+            VariantKind::Regular { label, fields } if fields.iter().all(is_structural_category_field) => {
+                let label_lit = lit(&label.to_string());
+                let field_vars: Vec<Ident> =
+                    (0..fields.len()).map(|i| format_ident!("__field_{i}")).collect();
+                let child_calls: Vec<TokenStream> = fields
+                    .iter()
+                    .zip(field_vars.iter())
+                    .map(|(field, var)| {
+                        let child_fn = reflect_fn_name(&field.category);
+                        quote! { #child_fn(#var.as_ref())? }
+                    })
+                    .collect();
+                quote! {
+                    #category::#label(#(#field_vars),*) => ::core::result::Result::Ok(
+                        #ground::new(#label_lit, ::std::vec![#(#child_calls),*])
+                    )
+                }
+            },
+            VariantKind::Regular { label, .. } => {
+                let msg = lit(&format!(
+                    "in-Rho match reflection: constructor {label} has a non-structural field with no positional ground image"
+                ));
+                quote! {
+                    #category::#label(..) =>
+                        ::core::result::Result::Err(::std::string::String::from(#msg))
+                }
+            },
+            VariantKind::Var { label } | VariantKind::Literal { label } => {
+                let msg = lit(&format!(
+                    "in-Rho match reflection: {label} is a variable/literal leaf with no structural ground image"
+                ));
+                quote! {
+                    #category::#label(..) =>
+                        ::core::result::Result::Err(::std::string::String::from(#msg))
+                }
+            },
+            VariantKind::Collection { label, .. } => {
+                let msg = lit(&format!(
+                    "in-Rho match reflection: {label} is an AC/collection node (matched via the AC path, not the base automaton)"
+                ));
+                quote! {
+                    #category::#label(..) =>
+                        ::core::result::Result::Err(::std::string::String::from(#msg))
+                }
+            },
+            VariantKind::Binder { label, .. } | VariantKind::MultiBinder { label, .. } => {
+                let msg = lit(&format!(
+                    "in-Rho match reflection: {label} is a binder node with no positional ground image"
+                ));
+                quote! {
+                    #category::#label(..) =>
+                        ::core::result::Result::Err(::std::string::String::from(#msg))
+                }
+            },
+        })
+        .collect();
+    quote! {
+        fn #fn_name(
+            __term: &#category,
+        ) -> ::core::result::Result<#ground, ::std::string::String> {
+            match __term {
+                #(#arms),*
+            }
+        }
+    }
+}
+
+/// The M-reflect subject binding for `match_body`: the `k` per-category reflection fns plus the
+/// `let __subject = …;` that reflects the runtime subject term `typed_term.0` into a
+/// `GroundTerm` — WITHOUT reading `report.rewrite_justifications` (no host σ). For a
+/// single-category language `typed_term.0` IS the primary category; for a multi-category one it
+/// is the `…TermInner` cross-category enum, whose first structurally-reflectable alternative is
+/// taken (fail-closed otherwise). The subject is then spread and LOCATED by the automaton.
+fn reflect_subject_binding(language: &LanguageDef) -> TokenStream {
+    let name = &language.name;
+    let language_lit = lit(&name.to_string());
+    let term_name = format_ident!("{}Term", name);
+    let reflect_fns: Vec<TokenStream> = language
+        .types
+        .iter()
+        .map(|ty| reflect_category_fn(language, &ty.name))
+        .collect();
+    let primary = language
+        .types
+        .first()
+        .map(|ty| ty.name.clone())
+        .expect("a language declares at least one category");
+
+    let subject_expr = if language.types.len() > 1 {
+        let inner_enum = format_ident!("{}TermInner", name);
+        let arms: Vec<TokenStream> = language
+            .types
+            .iter()
+            .map(|ty| {
+                let cat = &ty.name;
+                let reflect = reflect_fn_name(cat);
+                quote! { #inner_enum::#cat(__value) => #reflect(__value), }
+            })
+            .collect();
+        quote! {
+            let __subject = {
+                let mut __reflected: ::core::result::Result<
+                    ::mettail_rholang_codegen::GroundTerm,
+                    ::std::string::String,
+                > = ::core::result::Result::Err(::std::format!(
+                    "in-Rho match for language {} has no structurally reflectable subject alternative",
+                    #language_lit,
+                ));
+                for __alt in __typed_term.0.all_alts() {
+                    __reflected = match __alt {
+                        #(#arms)*
+                        #inner_enum::Ambiguous(_) => ::core::result::Result::Err(
+                            ::std::string::String::from(
+                                "in-Rho match reflection: an Ambiguous subject alternative has no ground image",
+                            ),
+                        ),
+                    };
+                    if __reflected.is_ok() {
+                        break;
+                    }
+                }
+                __reflected?
+            };
+        }
+    } else {
+        let reflect_primary = reflect_fn_name(&primary);
+        quote! {
+            let __subject = #reflect_primary(&__typed_term.0)?;
+        }
+    };
+
+    quote! {
+        #(#reflect_fns)*
+
+        let __typed_term = term
+            .as_any()
+            .downcast_ref::<#term_name>()
+            .ok_or_else(|| {
+                ::std::format!(
+                    "in-Rho match for language {} could not reflect the subject: expected {}Term, got {:?}",
+                    #language_lit, #language_lit, term,
+                )
+            })?;
+        #subject_expr
     }
 }
 
@@ -994,6 +1184,10 @@ pub fn generate_rho_net_invocation(language: &LanguageDef) -> TokenStream {
     // it), this compiles the language's in-Rho matching ruleset, GATES on it, rebuilds the
     // ground subject `LHS[σ]`, and assembles the `network ‖ spread` call so the automaton
     // re-does the MATCHING on the interpreter and fires the σ-receiver.
+    // M-reflect (Stage 4): the per-category `Term → GroundTerm` reflection fns + the
+    // `let __subject = …;` that structurally reflects the runtime subject term — the greenfield
+    // hinge that retires the report-σ redex reconstruction from the MATCH path.
+    let reflect_subject = reflect_subject_binding(language);
     let match_body = quote! {
         report.assert_complete().map_err(|status| {
             ::std::format!(
@@ -1001,13 +1195,13 @@ pub fn generate_rho_net_invocation(language: &LanguageDef) -> TokenStream {
                 #language_lit, status,
             )
         })?;
-        // Stage 3 boundary: the subject is the fired redex `LHS[σ]`, not the whole input
-        // `term` — there is no `Term` → `GroundTerm` structural reflection, so the ground
-        // subject is rebuilt from the firing's σ. The automaton still MATCHES it on the
-        // interpreter (the τ `sa:` COMMs re-bind σ′); host σ supplies only the ground
-        // subject term, not the firing.
-        let _ = term;
+        // M-reflect (Stage 4): the subject is the WHOLE input `term`, reflected STRUCTURALLY to a
+        // `GroundTerm` (`__subject`) — NOT rebuilt from `report.rewrite_justifications` σ. The
+        // `sa:` automaton then LOCATES the redex in the spread and EMITS σ, so the host Dovetail
+        // no longer computes σ (nor locates the redex) for the MATCH path; the report survives
+        // only to GATE (which rules fired) and to drive the σ-replay FALLBACK.
         let out_channel = out_channel.as_ref();
+        #reflect_subject
 
         // Reconstruct the def exactly as `rho_net_program()` does, so the ruleset's
         // fingerprint + accept channels are the ones the installed σ-receivers were
@@ -1059,28 +1253,21 @@ pub fn generate_rho_net_invocation(language: &LanguageDef) -> TokenStream {
             },
         };
 
-        // Rebuild the ground subject `LHS[σ]` the fired rule matched.
-        fn __mettail_rho_net_to_ground(
-            subterm: &mettail_runtime::RuntimeReflectedSubterm,
-        ) -> ::mettail_rholang_codegen::GroundTerm {
-            ::mettail_rholang_codegen::GroundTerm::new(
-                subterm.constructor.clone(),
-                subterm.children.iter().map(__mettail_rho_net_to_ground).collect(),
-            )
-        }
-        let __sigma: ::std::vec::Vec<(
-            ::std::string::String,
-            ::mettail_rholang_codegen::GroundTerm,
-        )> = __justification
-            .sigma
-            .iter()
-            .map(|(__name, __subterm)| (__name.clone(), __mettail_rho_net_to_ground(__subterm)))
-            .collect();
-        let __subject = ::mettail_rholang_codegen::reconstruct_redex_subject(
+        // Root-rooted scope: the automaton LOCATES the redex at the spread ROOT, so the whole
+        // reflected subject must BE the redex — its root constructor equals the fired rule's LHS
+        // root constructor. A NESTED redex (subject root ≠ rule root; the whole term is a context
+        // AROUND the redex) is not locatable by the root Match, so it fails closed to the
+        // σ-replay driver, which openly uses σ to locate + inject nested redexes.
+        let __lhs_root = ::mettail_rholang_codegen::rule_lhs_root_constructor(
             &__def,
             &__justification.rule_label,
-            &__sigma,
         )?;
+        if __subject.constructor != __lhs_root {
+            return ::core::result::Result::Err(::std::format!(
+                "in-Rho match for language {}: the fired redex is not root-rooted (subject root `{}` \u{2260} rule `{}` LHS root `{}`); the \u{3c3}-replay driver handles nested redexes",
+                #language_lit, __subject.constructor, __justification.rule_label, __lhs_root,
+            ));
+        }
 
         // Assemble the in-Rho match call (network ‖ spread) — the SAME driver target as
         // the σ-injection path (`RhoNetInjectionInvocation`).
@@ -1625,15 +1812,31 @@ mod tests {
 
     #[test]
     fn generated_rho_net_invocation_emits_the_in_rho_match_method() {
-        // Stage 3 piece 5: the emitted impl also carries the in-Rho MATCH invocation —
-        // compile the ruleset, GATE on it, rebuild the ground subject LHS[σ], and
-        // assemble the network‖spread call (the automaton matches ON the interpreter).
+        // Stage 4 M-reflect: the emitted impl carries the in-Rho MATCH invocation — compile the
+        // ruleset, GATE on it, STRUCTURALLY reflect the whole subject term (NOT the report σ),
+        // check the redex is root-rooted, and assemble the network‖spread call (the automaton
+        // LOCATES the redex + emits σ ON the interpreter).
         let tokens = generate_rho_net_invocation(&swap_net_fixture()).to_string();
         assert!(tokens.contains("rho_net_match_invocation_from_dovetail_to"));
         assert!(tokens.contains("compile_in_rho_matching_ruleset"));
         assert!(tokens.contains("in_rho_match_gate_reject"));
-        assert!(tokens.contains("reconstruct_redex_subject"));
         assert!(tokens.contains("in_rho_match_call_par"));
+        // M-reflect: the MATCH path structurally reflects `term` (the greenfield hinge) and
+        // checks the redex is root-rooted — instead of rebuilding LHS[σ] from the report σ.
+        assert!(
+            tokens.contains("__mettail_rho_net_reflect_proc"),
+            "per-category Term→GroundTerm"
+        );
+        assert!(tokens.contains("rule_lhs_root_constructor"), "root-rooted redex check");
+        // Retirement proof (by construction): the MATCH path no longer reconstructs LHS[σ] from
+        // the host report σ — `reconstruct_redex_subject` is gone from the emitted MATCH method,
+        // so the σ the σ-receiver fires on is produced by the `sa:` accept, never the report.
+        // (The σ-injection `body` above is a DIFFERENT method and legitimately keeps its σ read;
+        // the match method uniquely names the reflection fns, asserted present above.)
+        assert!(
+            !tokens.contains("reconstruct_redex_subject"),
+            "the MATCH path must not rebuild the redex from the report σ (M-reflect retirement)"
+        );
     }
 
     #[test]

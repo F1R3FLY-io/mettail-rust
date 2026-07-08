@@ -151,8 +151,8 @@ pub use rho_net_lower::{
 };
 pub use rho_net_ruleset::{
     compile_in_rho_matching_ruleset, convert_lhs_pattern, in_rho_match_call_par,
-    in_rho_match_gate_reject, reconstruct_redex_subject, DeferReason, DeferredRewrite,
-    InRhoMatchingRuleset, PatternConvertReject,
+    in_rho_match_gate_reject, reconstruct_redex_subject, rule_lhs_root_constructor, DeferReason,
+    DeferredRewrite, InRhoMatchingRuleset, PatternConvertReject,
 };
 pub use validate::{
     validate_rho_program, RhoValidationError, ValidatedRhoAstProgram, ValidatedRhoProgram,
