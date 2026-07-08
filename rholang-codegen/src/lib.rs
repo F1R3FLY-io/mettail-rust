@@ -89,15 +89,6 @@ pub mod rho_net_automaton;
 pub mod rho_net_lower;
 pub mod rho_net_ruleset;
 pub mod validate;
-pub use rho_net_ruleset::{
-    compile_in_rho_matching_ruleset, convert_lhs_pattern, in_rho_match_call_par,
-    in_rho_match_gate_reject, reconstruct_redex_subject, DeferReason, DeferredRewrite,
-    InRhoMatchingRuleset, PatternConvertReject,
-};
-pub use rho_net_automaton::{
-    automaton_receiver_network_par, multi_pattern_receiver_network_par, AutomatonAcceptTarget,
-    AutomatonUnsupported,
-};
 pub use ast::{RhoAstBuildError, RhoAstLiteral, RhoAstSend};
 pub use backend::{
     audit_rho_default_backend, classify_rejected_rules, collect_guard_obligations,
@@ -126,6 +117,7 @@ pub use lower::{
     lower_language_def, RhoArtifactKind, RhoAstProgram, RhoAstValidationProfile, RhoLowering,
     RhoProgram, RhoScalarContractAbi, RhoScalarContractShape, RhoScalarType,
 };
+pub use mettail_ast::types::CollectionType;
 pub use need::{
     admit_call_by_need_force, build_call_by_need_thunk_ast, build_call_by_need_thunk_ast_from_spec,
     build_call_by_need_thunk_program, build_call_by_need_thunk_program_from_spec,
@@ -138,12 +130,21 @@ pub use rho_net::{
     RhoNetChannel, RhoNetChannelKind, RhoNetProgram, RhoNetRhsTemplate, RhoNetRule, RhoNetRuleKind,
     RhoNetSemanticPredicate, RhoNetSemanticPredicateQuality, RhoNetValidationError,
 };
-pub use mettail_ast::types::CollectionType;
+pub use rho_net_automaton::{
+    automaton_receiver_network_par, multi_pattern_receiver_network_par, AutomatonAcceptTarget,
+    AutomatonUnsupported,
+};
 pub use rho_net_lower::{
     ac_bag_pattern, ac_contract_call, ac_rule_receiver, ac_sigma_receiver_par,
-    reflect_ground_term_par, rho_net_injection_sites, spread_child_location, spread_root_location,
-    spread_term_par, term_contract_call, GroundTerm, RhoNetInjectionInvocation, RhoNetInjectionSite,
-    RhoNetInstallError, RhoNetLowered, RhoNetLoweredRule, RhoNetLoweringError, UnsupportedFamily,
+    reflect_ground_term_par, rho_net_ac_injection_sites, rho_net_injection_sites,
+    spread_child_location, spread_root_location, spread_term_par, term_contract_call, GroundTerm,
+    RhoNetAcInjectionSite, RhoNetInjectionInvocation, RhoNetInjectionSite, RhoNetInstallError,
+    RhoNetLowered, RhoNetLoweredRule, RhoNetLoweringError, UnsupportedFamily,
+};
+pub use rho_net_ruleset::{
+    compile_in_rho_matching_ruleset, convert_lhs_pattern, in_rho_match_call_par,
+    in_rho_match_gate_reject, reconstruct_redex_subject, DeferReason, DeferredRewrite,
+    InRhoMatchingRuleset, PatternConvertReject,
 };
 pub use validate::{
     validate_rho_program, RhoValidationError, ValidatedRhoAstProgram, ValidatedRhoProgram,

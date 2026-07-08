@@ -465,10 +465,15 @@ pub fn generate_rho_net_invocation(language: &LanguageDef) -> TokenStream {
     let language_lit = lit(&language_name);
 
     let sites = mettail_rholang_codegen::rho_net_injection_sites(language);
+    // Stage AC-U3: the AC firing sites — an un-skipped linear with-rest HashBag AC rewrite
+    // (`RhoNetLoweredRule::AcRewrite`) fires by reconstructing the WHOLE operand bag from σ and
+    // sending its process-soup carrier on the AC trace channel (the installed AC receiver re-does
+    // the order-independent match), rather than the flat base-rewrite σ-tuple.
+    let ac_sites = mettail_rholang_codegen::rho_net_ac_injection_sites(language);
 
-    let body = if sites.is_empty() {
-        // No base-rewrite σ-receiver: the helper exists for a uniform surface but
-        // always fails closed (there is nothing to inject).
+    let body = if sites.is_empty() && ac_sites.is_empty() {
+        // No σ-receiver (base OR AC): the helper exists for a uniform surface but always fails
+        // closed (there is nothing to inject).
         quote! {
             report.assert_complete().map_err(|status| {
                 ::std::format!(
@@ -483,14 +488,74 @@ pub fn generate_rho_net_invocation(language: &LanguageDef) -> TokenStream {
             ))
         }
     } else {
-        let site_arms: Vec<TokenStream> = sites
+        // Base-rewrite arms: reflect the flat σ tuple (first-occurrence LHS order) and send it on
+        // the trace channel — the existing byte-identical path, now one dispatch arm.
+        let base_site_arms: Vec<TokenStream> = sites
             .iter()
             .map(|site| {
                 let label = lit(&site.rule_label);
                 let channel = lit(&site.channel);
                 let vars: Vec<LitStr> = site.lhs_var_order.iter().map(|var| lit(var)).collect();
                 quote! {
-                    #label => (#channel, &[#(#vars),*][..]),
+                    #label => {
+                        // Reorder the report's (name-sorted) σ into the σ-receiver's
+                        // first-occurrence LHS variable order and reflect each sub-term.
+                        let __var_order: &[&str] = &[#(#vars),*][..];
+                        let mut __args = ::std::vec::Vec::with_capacity(__var_order.len());
+                        for __var in __var_order {
+                            let __subterm = __mettail_rho_net_find_sigma(__justification, __var)?;
+                            __args.push(::mettail_rholang_codegen::reflect_ground_term_par(
+                                &__mettail_rho_net_to_ground(__subterm),
+                                __fingerprint,
+                            ));
+                        }
+                        ::mettail_rholang_codegen::term_contract_call(#channel, __args, out_channel)
+                    },
+                }
+            })
+            .collect();
+
+        // AC-rewrite arms: reconstruct the WHOLE operand bag from σ — the k matched element
+        // sub-terms (`element_var_order`) followed by the CHILDREN of the `rest` sub-term (the
+        // canonical `op` node over the multiset complement, whose `children` are the residual bag
+        // elements) — and send its reflected process-soup carrier on the AC trace channel.
+        let ac_site_arms: Vec<TokenStream> = ac_sites
+            .iter()
+            .map(|site| {
+                let label = lit(&site.rule_label);
+                let channel = lit(&site.channel);
+                let op = lit(&site.op);
+                let element_vars: Vec<LitStr> =
+                    site.element_var_order.iter().map(|var| lit(var)).collect();
+                let element_count = site.element_var_order.len();
+                let rest_var = lit(&site.rest_var);
+                quote! {
+                    #label => {
+                        // The k matched element σ sub-terms (first-occurrence order), plus the
+                        // residual `rest.children` spliced in below.
+                        let mut __elements = ::std::vec::Vec::with_capacity(#element_count);
+                        #(
+                            __elements.push(__mettail_rho_net_to_ground(
+                                __mettail_rho_net_find_sigma(__justification, #element_vars)?,
+                            ));
+                        )*
+                        // `rest` binds to the canonical bag over the multiset complement: its
+                        // `{ constructor: op, children: [complement…] }` sub-term reconstructs to a
+                        // positional ground term whose CHILDREN are the residual elements. Splice
+                        // them so `whole_bag = elements ⊎ rest.children` is the full operand bag.
+                        let __rest = __mettail_rho_net_to_ground(
+                            __mettail_rho_net_find_sigma(__justification, #rest_var)?,
+                        );
+                        __elements.extend(__rest.children.iter().cloned());
+                        let __whole_bag = ::mettail_rholang_codegen::GroundTerm::collection(
+                            ::mettail_rholang_codegen::CollectionType::HashBag,
+                            #op,
+                            __elements,
+                        );
+                        ::mettail_rholang_codegen::ac_contract_call(
+                            #channel, &__whole_bag, __fingerprint, out_channel,
+                        )
+                    },
                 }
             })
             .collect();
@@ -516,6 +581,28 @@ pub fn generate_rho_net_invocation(language: &LanguageDef) -> TokenStream {
                     subterm.constructor.clone(),
                     subterm.children.iter().map(__mettail_rho_net_to_ground).collect(),
                 )
+            }
+
+            // Look up a σ binding by LHS variable name (the report's σ is name-sorted, not in LHS
+            // order). Shared by the base and AC arms so the two σ reorderings are one routine.
+            fn __mettail_rho_net_find_sigma<'a>(
+                __justification: &'a mettail_runtime::RuntimeRewriteJustification,
+                __name: &str,
+            ) -> ::core::result::Result<
+                &'a mettail_runtime::RuntimeReflectedSubterm,
+                ::std::string::String,
+            > {
+                __justification
+                    .sigma
+                    .iter()
+                    .find(|(__n, _)| __n.as_str() == __name)
+                    .map(|(_, __subterm)| __subterm)
+                    .ok_or_else(|| {
+                        ::std::format!(
+                            "Rho-net injection for language {} is missing σ binding for LHS variable {}",
+                            #language_lit, __name,
+                        )
+                    })
             }
 
             // The reflection fingerprint MUST equal the one the installed σ-receiver
@@ -548,41 +635,20 @@ pub fn generate_rho_net_invocation(language: &LanguageDef) -> TokenStream {
                     )
                 })?;
 
-            let (__channel, __var_order): (&str, &[&str]) =
-                match __justification.rule_label.as_str() {
-                    #(#site_arms)*
-                    __other => {
-                        return ::core::result::Result::Err(::std::format!(
-                            "Rho-net injection for language {} has no σ-receiver for fired rule {}",
-                            #language_lit, __other,
-                        ));
-                    },
-                };
-
-            // Reorder the report's (name-sorted) σ into the σ-receiver's
-            // first-occurrence LHS variable order and reflect each sub-term.
-            let mut __args = ::std::vec::Vec::with_capacity(__var_order.len());
-            for __var in __var_order {
-                let __subterm = __justification
-                    .sigma
-                    .iter()
-                    .find(|(__name, _)| __name.as_str() == *__var)
-                    .map(|(_, __subterm)| __subterm)
-                    .ok_or_else(|| {
-                        ::std::format!(
-                            "Rho-net injection for language {} is missing σ binding for LHS variable {}",
-                            #language_lit, __var,
-                        )
-                    })?;
-                let __ground = __mettail_rho_net_to_ground(__subterm);
-                __args.push(::mettail_rholang_codegen::reflect_ground_term_par(
-                    &__ground,
-                    __fingerprint,
-                ));
-            }
-
-            let __call =
-                ::mettail_rholang_codegen::term_contract_call(__channel, __args, out_channel);
+            // Dispatch the fired rule to its σ-receiver family: base rewrites send a flat σ tuple
+            // (`term_contract_call`); un-skipped HashBag AC rewrites send the whole-bag carrier
+            // (`ac_contract_call`). Both assemble the SAME `RhoNetInjectionInvocation` — one atomic
+            // `c(ℓ)` COMM the runtime runs against the installed σ-receiver program.
+            let __call = match __justification.rule_label.as_str() {
+                #(#base_site_arms)*
+                #(#ac_site_arms)*
+                __other => {
+                    return ::core::result::Result::Err(::std::format!(
+                        "Rho-net injection for language {} has no σ-receiver for fired rule {}",
+                        #language_lit, __other,
+                    ));
+                },
+            };
             ::core::result::Result::Ok(::mettail_rholang_codegen::RhoNetInjectionInvocation {
                 call: __call,
                 out_channel: out_channel.to_string(),
@@ -936,6 +1002,48 @@ mod tests {
         assert!(tokens.contains("\"SwapStep\""));
         // The out-of-scope fallback fails closed (no silent no-op).
         assert!(tokens.contains("for fired rule"));
+    }
+
+    #[test]
+    fn generated_rho_net_invocation_emits_the_ac_firing_arm() {
+        // Stage AC-U3: a linear with-rest HashBag AC rewrite emits an AC firing arm that
+        // reconstructs the WHOLE operand bag from σ (the matched elements ⊎ the `rest`
+        // sub-term's children) and sends its process-soup carrier via `ac_contract_call` —
+        // NOT the flat base-rewrite `term_contract_call`.
+        let language = parse(
+            r##"
+                name: AcNetGen,
+                types {
+                    Proc
+                    ![mettail_runtime::HashBag<Proc>] as Bag {
+                        open_parts: ["#{"],
+                        close_parts: ["}#"],
+                        sep: "|",
+                    }
+                }
+                terms {
+                    A . |- "A" : Proc ;
+                    Wrap . x:Proc |- "wrap" "(" x ")" : Proc ;
+                    PPar . ps:HashBag(Proc) |- "#{" ps.*sep("|") "}#" : Proc ;
+                }
+                equations {}
+                rewrites {
+                    AcStep . |- (PPar {x, ...rest}) ~> (Wrap x) ;
+                }
+            "##,
+        );
+        let tokens = generate_rho_net_invocation(&language).to_string();
+        assert!(tokens.contains("rho_net_invocation_from_dovetail_to"));
+        // The AC arm reconstructs the whole bag and sends it via the AC injection builder.
+        assert!(tokens.contains("ac_contract_call"));
+        assert!(tokens.contains("GroundTerm :: collection"));
+        assert!(tokens.contains("CollectionType :: HashBag"));
+        // The `rest` sub-term's children are spliced into the whole bag.
+        assert!(tokens.contains("__rest . children"));
+        // The fired AC rule's bare label keys the AC firing arm.
+        assert!(tokens.contains("\"AcStep\""));
+        // A pure-AC language surfaces no flat base-rewrite site, so no `term_contract_call`.
+        assert!(!tokens.contains("term_contract_call"));
     }
 
     #[test]

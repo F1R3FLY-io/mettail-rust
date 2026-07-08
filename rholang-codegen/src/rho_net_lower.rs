@@ -110,7 +110,10 @@ pub enum RhoNetLoweredRule {
     /// A native system-process dispatch — deferred to the next slice.
     NativeSystemProcess { rule_id: String },
     /// A rule whose source construct is out of scope this slice (fail-closed).
-    Unsupported { rule_id: String, family: UnsupportedFamily },
+    Unsupported {
+        rule_id: String,
+        family: UnsupportedFamily,
+    },
 }
 
 impl RhoNetLoweredRule {
@@ -149,7 +152,10 @@ impl RhoNetLoweredRule {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RhoNetLoweringError {
     /// A rewrite/equation whose source construct is out of scope this slice.
-    UnsupportedFamily { rule_id: String, family: UnsupportedFamily },
+    UnsupportedFamily {
+        rule_id: String,
+        family: UnsupportedFamily,
+    },
     /// The independently re-derived rule-id sequence disagreed with
     /// `program.rules` (the program was paired with a different def/lowering, or
     /// the two walks drifted).
@@ -262,10 +268,13 @@ impl RhoNetLowered {
                 family,
             });
         }
-        Ok(self.rules.iter().fold(Par::default(), |program, rule| match rule.par() {
-            Some(par) => program.append(par.clone()),
-            None => program,
-        }))
+        Ok(self
+            .rules
+            .iter()
+            .fold(Par::default(), |program, rule| match rule.par() {
+                Some(par) => program.append(par.clone()),
+                None => program,
+            }))
     }
 }
 
@@ -615,10 +624,7 @@ pub(crate) fn lower_rhs(
 /// unforgeable (not a `GString`), it is collision-free with any user `GString`
 /// term data. Mirrors the rhocalc bag ABI tag ([`crate::RHOCALC_BAG_ABI_TAG`]).
 pub(crate) fn reflect_tag(language_fingerprint: &str, constructor_label: &str) -> String {
-    format!(
-        "{}{language_fingerprint}.{constructor_label}",
-        crate::REFLECTED_TERM_ABI_PREFIX
-    )
+    format!("{}{language_fingerprint}.{constructor_label}", crate::REFLECTED_TERM_ABI_PREFIX)
 }
 
 /// A ground (variable-free) constructor term: a constructor label applied to
@@ -646,7 +652,11 @@ pub struct GroundTerm {
 impl GroundTerm {
     /// A constructor applied to ground children (positional, `coll_type = None`).
     pub fn new(constructor: impl Into<String>, children: Vec<GroundTerm>) -> Self {
-        Self { constructor: constructor.into(), children, coll_type: None }
+        Self {
+            constructor: constructor.into(),
+            children,
+            coll_type: None,
+        }
     }
 
     /// A nullary constructor (no children), e.g. the `A`/`B` operands of
@@ -662,7 +672,11 @@ impl GroundTerm {
         constructor: impl Into<String>,
         elements: Vec<GroundTerm>,
     ) -> Self {
-        Self { constructor: constructor.into(), children: elements, coll_type: Some(kind) }
+        Self {
+            constructor: constructor.into(),
+            children: elements,
+            coll_type: Some(kind),
+        }
     }
 }
 
@@ -721,8 +735,11 @@ pub fn rho_net_injection_sites(def: &LanguageDef) -> Vec<RhoNetInjectionSite> {
     let program = RhoNetProgram::from_language_def(def, &lowering);
     let lowered = program.lower_to_par(def, &lowering);
 
-    let rule_by_id: HashMap<&str, &RhoNetRule> =
-        program.rules.iter().map(|rule| (rule.id.as_str(), rule)).collect();
+    let rule_by_id: HashMap<&str, &RhoNetRule> = program
+        .rules
+        .iter()
+        .map(|rule| (rule.id.as_str(), rule))
+        .collect();
     let rewrite_by_id: HashMap<String, &RewriteRule> = def
         .rewrites
         .iter()
@@ -756,6 +773,97 @@ pub fn rho_net_injection_sites(def: &LanguageDef) -> Vec<RhoNetInjectionSite> {
             rule_label: rule_label.to_string(),
             channel: channel.clone(),
             lhs_var_order: vars.iter().map(|var| var.to_string()).collect(),
+        });
+    }
+    sites
+}
+
+/// One AC-rewrite σ-injection site derived from a `LanguageDef`: an un-skipped linear with-rest
+/// HashBag AC rewrite's bare label, its AC receiver SOURCE channel, the HashBag constructor `op`,
+/// the `k` linear element σ variables (first-occurrence order), and the `rest` variable.
+///
+/// The AC firing analogue of [`RhoNetInjectionSite`]. A runtime AC σ-injection F-function reads a
+/// rewrite firing's justification, reconstructs the WHOLE operand bag from σ — the `k` matched
+/// element sub-terms (`element_var_order`) followed by the CHILDREN of the [`rest_var`] sub-term
+/// (the canonical bag over the multiset complement) — reflects it to the process-soup carrier, and
+/// sends it on [`channel`](Self::channel), where the installed AC receiver
+/// ([`ac_sigma_receiver_par`]) consumes it and re-does the order-independent match. Only rewrites
+/// that actually lowered to an AC receiver ([`RhoNetLoweredRule::AcRewrite`]) are surfaced, so a
+/// site is always executable.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RhoNetAcInjectionSite {
+    /// The bare source rewrite label (the AC receiver rule's label, e.g. `AcStep`).
+    pub rule_label: String,
+    /// The AC receiver SOURCE channel (`RhoNetRule::input_channels.first()`) — the SAME channel
+    /// the AC receiver rests on, so the accept triad (receiver source ≡ injection channel) holds
+    /// by symmetric derivation (`ac_contract_call`'s coherence contract).
+    pub channel: String,
+    /// The HashBag operand constructor (`op` in `op{…}`, e.g. `PPar`). Both the receiver's element
+    /// pattern channel `ac:{op}` and the reflected carrier's send channel derive from this.
+    pub op: String,
+    /// The `k` element σ variables the AC LHS binds, in first-occurrence order.
+    pub element_var_order: Vec<String>,
+    /// The `rest` variable the AC LHS binds to the residual bag (whose σ sub-term is a canonical
+    /// `op` node over the multiset complement).
+    pub rest_var: String,
+}
+
+/// Derive every AC-rewrite σ-injection site for a language — the sites a runtime AC σ-injection
+/// F-function targets.
+///
+/// Builds the same [`RhoNetProgram`] + [`RhoNetLowered`] the AC receivers are compiled from, keeps
+/// only the rewrites that un-skipped to a [`RhoNetLoweredRule::AcRewrite`] receiver, and reports
+/// each one's bare rule label, source channel, HashBag constructor, element variable order, and
+/// `rest` variable (extracted through the SAME [`ac_rule_shape`] the receiver materialized from, so
+/// the injection agrees with the receiver on `op`/elements/`rest`). The AC firing analogue of
+/// [`rho_net_injection_sites`].
+pub fn rho_net_ac_injection_sites(def: &LanguageDef) -> Vec<RhoNetAcInjectionSite> {
+    let lowering = crate::lower::lower_language_def(def);
+    let program = RhoNetProgram::from_language_def(def, &lowering);
+    let lowered = program.lower_to_par(def, &lowering);
+
+    let rule_by_id: HashMap<&str, &RhoNetRule> = program
+        .rules
+        .iter()
+        .map(|rule| (rule.id.as_str(), rule))
+        .collect();
+    let rewrite_by_id: HashMap<String, &RewriteRule> = def
+        .rewrites
+        .iter()
+        .enumerate()
+        .map(|(index, rewrite)| (rule_id_rewrite(index, &rewrite.name.to_string()), rewrite))
+        .collect();
+
+    let mut sites = Vec::new();
+    for lowered_rule in lowered.rules() {
+        let RhoNetLoweredRule::AcRewrite { rule_id, .. } = lowered_rule else {
+            continue;
+        };
+        let Some(program_rule) = rule_by_id.get(rule_id.as_str()) else {
+            continue;
+        };
+        let Some(channel) = program_rule.input_channels.first() else {
+            continue;
+        };
+        let Some(rule_label) = program_rule.label.as_deref() else {
+            continue;
+        };
+        let Some(rewrite) = rewrite_by_id.get(rule_id) else {
+            continue;
+        };
+        // An `AcRewrite` lowered iff `ac_rule_shape` succeeded under the resolved kind, so this
+        // cannot fail; a defensive `continue` keeps the derivation total.
+        let resolved_kind = resolve_ac_collection_type(def, &rewrite.left);
+        let Some((op, element_vars, rest)) = ac_rule_shape(&rewrite.left, resolved_kind.as_ref())
+        else {
+            continue;
+        };
+        sites.push(RhoNetAcInjectionSite {
+            rule_label: rule_label.to_string(),
+            channel: channel.clone(),
+            op,
+            element_var_order: element_vars.iter().map(|var| var.to_string()).collect(),
+            rest_var: rest.to_string(),
         });
     }
     sites
@@ -1015,9 +1123,8 @@ fn reflect_term_par(
         },
         Pattern::Term(PatternTerm::Lambda { .. }) => Err(UnsupportedFamily::LambdaBinder),
         Pattern::Term(PatternTerm::MultiLambda { .. }) => Err(UnsupportedFamily::MultiLambda),
-        Pattern::Term(PatternTerm::Subst { .. }) | Pattern::Term(PatternTerm::MultiSubst { .. }) => {
-            Err(UnsupportedFamily::Substitution)
-        },
+        Pattern::Term(PatternTerm::Subst { .. })
+        | Pattern::Term(PatternTerm::MultiSubst { .. }) => Err(UnsupportedFamily::Substitution),
         Pattern::Collection { .. } => Err(UnsupportedFamily::CollectionAc),
         Pattern::Map { .. } => Err(UnsupportedFamily::MapAc),
         Pattern::Zip { .. } => Err(UnsupportedFamily::ZipAc),
@@ -1035,8 +1142,7 @@ pub(crate) fn rewrite_pattern_unsupported(
     left: &Pattern,
     right: &Pattern,
 ) -> Option<UnsupportedFamily> {
-    pattern_binder_or_collection_family(left)
-        .or_else(|| pattern_binder_or_collection_family(right))
+    pattern_binder_or_collection_family(left).or_else(|| pattern_binder_or_collection_family(right))
 }
 
 fn pattern_binder_or_collection_family(pattern: &Pattern) -> Option<UnsupportedFamily> {
@@ -1051,7 +1157,9 @@ fn pattern_binder_or_collection_family(pattern: &Pattern) -> Option<UnsupportedF
 fn pattern_term_binder_family(term: &PatternTerm) -> Option<UnsupportedFamily> {
     match term {
         PatternTerm::Var(_) => None,
-        PatternTerm::Apply { args, .. } => args.iter().find_map(pattern_binder_or_collection_family),
+        PatternTerm::Apply { args, .. } => {
+            args.iter().find_map(pattern_binder_or_collection_family)
+        },
         PatternTerm::Lambda { .. } => Some(UnsupportedFamily::LambdaBinder),
         PatternTerm::MultiLambda { .. } => Some(UnsupportedFamily::MultiLambda),
         PatternTerm::Subst { .. } | PatternTerm::MultiSubst { .. } => {
@@ -1109,15 +1217,8 @@ pub fn ac_sigma_receiver_par(op: &str, k: usize, rhs_par: Par, source: Par) -> P
     let free_count = k + 2; // k elements + rest + out
     let out_channel = bound_formal(free_count, k + 1); // out = BoundVar(0)
     let body_free = union(rhs_par.locally_free.clone(), create_bit_vector(&[0]));
-    let body = new_send_par(
-        out_channel,
-        vec![rhs_par],
-        false,
-        body_free.clone(),
-        false,
-        body_free,
-        false,
-    );
+    let body =
+        new_send_par(out_channel, vec![rhs_par], false, body_free.clone(), false, body_free, false);
     let receive = Receive {
         binds: vec![ReceiveBind {
             patterns: vec![ac_bag_pattern(op, k), new_freevar_par((k + 1) as i32, Vec::new())],
@@ -1136,31 +1237,29 @@ pub fn ac_sigma_receiver_par(op: &str, k: usize, rhs_par: Par, source: Par) -> P
     Par::default().with_receives(vec![receive])
 }
 
-/// Un-skip a `DeferReason::Ac` base rewrite whose LHS is a linear HashBag AC pattern
-/// `op{x_1, …, x_k, ...rest} ~> R`: extract the element variables + `rest`, reflect the RHS
-/// in the AC receiver frame (`reflect_term_par` at `k+1` over the `[x_1..x_k, rest]` σ order —
-/// verified by `ac_rhs_reflects_with_the_ac_receiver_frame`), and build the receiver via
-/// [`ac_sigma_receiver_par`]. Returns `None` when the LHS is not a with-rest linear HashBag AC
-/// pattern (a no-rest exact match, a nested/non-linear element, or a non-HashBag collection —
-/// those stay on their existing path, later slices), so the caller keeps them fail-closed.
-pub fn ac_rule_receiver(
+/// The shape of a linear with-rest HashBag AC rewrite LHS `op({x_1, …, x_k, ...rest})`: the
+/// HashBag constructor `op`, the `k` linear element variables in first-occurrence order, and
+/// the `rest` variable. Returns `None` unless the LHS is a constructor applied to a SINGLE
+/// with-rest HashBag collection whose elements are ALL linear `Var`s.
+///
+/// The parser leaves a rewrite-LHS collection's `coll_type` as `None` (it is "inferred from the
+/// enclosing constructor's grammar"), so the effective kind is the pattern's `coll_type` when
+/// set, else `resolved_kind` — resolved from `op`'s declared collection param via
+/// [`resolve_ac_collection_type`]. Only a HashBag matches this slice (Set/Map await a later
+/// slice); an unresolved kind (`None`) does not match, and a no-rest exact match or a
+/// nested/non-linear element returns `None`.
+///
+/// This is the SINGLE AC-LHS extraction shared by [`ac_rule_receiver`] (which materializes the
+/// installed AC receiver) and [`rho_net_ac_injection_sites`] (which surfaces the runtime AC
+/// injection site), so both agree byte-for-byte on `op`, the element order, and `rest`.
+pub(crate) fn ac_rule_shape(
     left: &Pattern,
-    right: &Pattern,
-    source: Par,
-    language_fingerprint: &str,
-    resolved_kind: Option<CollectionType>,
-) -> Option<Par> {
-    // Match a HashBag AC LHS: `op( { x_1, …, x_k, ...rest } )`. The parser leaves a rewrite-LHS
-    // collection's `coll_type` as `None` (it is "inferred from the enclosing constructor's
-    // grammar"), so the effective kind is the pattern's `coll_type` when set, else
-    // `resolved_kind` — resolved from `op`'s declared collection param via
-    // [`resolve_ac_collection_type`]. Only a HashBag lowers to the process-soup AC receiver
-    // this slice (Set/Map await a later slice); an unresolved kind (`None`) does not un-skip.
+    resolved_kind: Option<&CollectionType>,
+) -> Option<(String, Vec<Ident>, Ident)> {
     let (op, elements, rest_name) = match left {
         Pattern::Term(PatternTerm::Apply { constructor, args }) => match args.as_slice() {
             [Pattern::Collection { coll_type, elements, rest }]
-                if coll_type.as_ref().or(resolved_kind.as_ref())
-                    == Some(&CollectionType::HashBag) =>
+                if coll_type.as_ref().or(resolved_kind) == Some(&CollectionType::HashBag) =>
             {
                 (constructor.to_string(), elements, rest.clone())
             },
@@ -1171,16 +1270,37 @@ pub fn ac_rule_receiver(
     // Require an explicit `...rest` (the connective pattern always binds a remainder; a
     // no-rest exact-match rule is a later slice).
     let rest = rest_name?;
-    let k = elements.len();
-    // The σ variable order: the k element vars (first-occurrence), then `rest`. Linear (Var)
-    // elements only — a nested/non-linear element defers the rule.
-    let mut vars: Vec<Ident> = Vec::with_capacity(k + 1);
+    // The k element vars (first-occurrence). Linear (Var) elements only — a nested/non-linear
+    // element defers the rule.
+    let mut element_vars: Vec<Ident> = Vec::with_capacity(elements.len());
     for element in elements {
         match element {
-            Pattern::Term(PatternTerm::Var(name)) => vars.push(name.clone()),
+            Pattern::Term(PatternTerm::Var(name)) => element_vars.push(name.clone()),
             _ => return None,
         }
     }
+    Some((op, element_vars, rest))
+}
+
+/// Un-skip a `DeferReason::Ac` base rewrite whose LHS is a linear HashBag AC pattern
+/// `op{x_1, …, x_k, ...rest} ~> R`: extract the element variables + `rest` (via the shared
+/// [`ac_rule_shape`]), reflect the RHS in the AC receiver frame (`reflect_term_par` at `k+1`
+/// over the `[x_1..x_k, rest]` σ order — verified by `ac_rhs_reflects_with_the_ac_receiver_frame`),
+/// and build the receiver via [`ac_sigma_receiver_par`]. Returns `None` when the LHS is not a
+/// with-rest linear HashBag AC pattern (a no-rest exact match, a nested/non-linear element, or a
+/// non-HashBag collection — those stay on their existing path, later slices), so the caller keeps
+/// them fail-closed.
+pub fn ac_rule_receiver(
+    left: &Pattern,
+    right: &Pattern,
+    source: Par,
+    language_fingerprint: &str,
+    resolved_kind: Option<CollectionType>,
+) -> Option<Par> {
+    let (op, element_vars, rest) = ac_rule_shape(left, resolved_kind.as_ref())?;
+    let k = element_vars.len();
+    // The σ variable order: the k element vars (first-occurrence), then `rest`.
+    let mut vars: Vec<Ident> = element_vars;
     vars.push(rest);
     // The RHS `⟦R⟧σ` in the AC receiver's `k+2`-formal frame (`reflect_term_par` at `k+1`).
     let rhs = reflect_term_par(right, &vars, k + 1, language_fingerprint).ok()?;
@@ -1199,13 +1319,16 @@ fn resolve_ac_collection_type(def: &LanguageDef, left: &Pattern) -> Option<Colle
         _ => return None,
     };
     let rule = def.terms.iter().find(|rule| rule.label.to_string() == op)?;
-    rule.term_context.as_ref()?.iter().find_map(|param| match param {
-        mettail_ast::grammar::TermParam::Simple {
-            ty: mettail_ast::types::TypeExpr::Collection { coll_type, .. },
-            ..
-        } => Some(coll_type.clone()),
-        _ => None,
-    })
+    rule.term_context
+        .as_ref()?
+        .iter()
+        .find_map(|param| match param {
+            mettail_ast::grammar::TermParam::Simple {
+                ty: mettail_ast::types::TypeExpr::Collection { coll_type, .. },
+                ..
+            } => Some(coll_type.clone()),
+            _ => None,
+        })
 }
 
 /// The `n`-th De Bruijn formal of a receiver with `total_formals` formals
@@ -1271,7 +1394,10 @@ mod tests {
         assert_eq!(spread.sends.len(), expected.len(), "one head-tag send per node");
         assert!(spread.news.is_empty(), "ν-free spread: no New (INV-7)");
         assert!(spread.receives.is_empty(), "a spread subject is sends only");
-        assert!(spread.matches.is_empty() && spread.bundles.is_empty(), "no Match/Bundle in a spread");
+        assert!(
+            spread.matches.is_empty() && spread.bundles.is_empty(),
+            "no Match/Bundle in a spread"
+        );
 
         for (channel, constructor) in &expected {
             let expected_channel = new_gstring_par(channel.clone(), Vec::new(), false);
@@ -1293,8 +1419,12 @@ mod tests {
         let term = ground("Swap", vec![ground("A", Vec::new()), ground("B", Vec::new())]);
         assert_spread_encodes(&term, "testfp", "site0");
         let spread = spread_term_par(&term, "testfp", "site0");
-        let channels: std::collections::BTreeSet<String> =
-            spread.sends.iter().filter_map(|s| s.chan.as_ref()).filter_map(gstring_value).collect();
+        let channels: std::collections::BTreeSet<String> = spread
+            .sends
+            .iter()
+            .filter_map(|s| s.chan.as_ref())
+            .filter_map(gstring_value)
+            .collect();
         let want: std::collections::BTreeSet<String> =
             ["loc:site0", "loc:site0/Swap.0", "loc:site0/Swap.1"]
                 .into_iter()
@@ -1345,8 +1475,7 @@ mod tests {
                     inner.clone().prop_map(|c| GroundTerm::new("Wrap", vec![c])),
                     (inner.clone(), inner.clone())
                         .prop_map(|(l, r)| GroundTerm::new("Swap", vec![l, r])),
-                    (inner.clone(), inner)
-                        .prop_map(|(l, r)| GroundTerm::new("Pair", vec![l, r])),
+                    (inner.clone(), inner).prop_map(|(l, r)| GroundTerm::new("Pair", vec![l, r])),
                 ]
             })
         }
@@ -1454,9 +1583,7 @@ mod tests {
 
     /// Push a single rewrite onto the scalar fragment (rewrite index 0), lower,
     /// and return the lowered rule for it plus the collected errors.
-    fn lower_single_rewrite(
-        rewrite: RewriteRule,
-    ) -> (RhoNetLoweredRule, Vec<RhoNetLoweringError>) {
+    fn lower_single_rewrite(rewrite: RewriteRule) -> (RhoNetLoweredRule, Vec<RhoNetLoweringError>) {
         let name = rewrite.name.to_string();
         let mut def = scalar_def();
         def.rewrites.push(rewrite);
@@ -1489,7 +1616,11 @@ mod tests {
     /// Extract the `EList` body of a single-expr `Par` (panicking unless the Par
     /// is exactly one plain `EList` expression).
     fn elist_body(par: &Par) -> &models::rhoapi::EList {
-        match par.exprs.first().and_then(|expr| expr.expr_instance.as_ref()) {
+        match par
+            .exprs
+            .first()
+            .and_then(|expr| expr.expr_instance.as_ref())
+        {
             Some(ExprInstance::EListBody(list)) => list,
             other => panic!("expected an EList body, got {other:?}"),
         }
@@ -1563,7 +1694,9 @@ mod tests {
                     rule_id: "rule:rewrite:0:Ok".to_string(),
                     par: Par::default(),
                 },
-                RhoNetLoweredRule::Comm { rule_id: "rule:rewrite:1:Join".to_string() },
+                RhoNetLoweredRule::Comm {
+                    rule_id: "rule:rewrite:1:Join".to_string(),
+                },
             ],
             errors: Vec::new(),
         };
@@ -1658,8 +1791,8 @@ mod tests {
     #[test]
     fn lower_rhs_variable_uses_first_occurrence_de_bruijn_index() {
         let vars = vec![ident("a"), ident("b"), ident("c")]; // k = 3
-        // b is the second variable (occurrence index 1) ⇒ BoundVar(3 - 1) = 2.
-        // The fingerprint is unused for a bare variable RHS.
+                                                             // b is the second variable (occurrence index 1) ⇒ BoundVar(3 - 1) = 2.
+                                                             // The fingerprint is unused for a bare variable RHS.
         let par = lower_rhs(&var_pattern("b"), &vars, 3, "fp").expect("bound RHS variable");
         assert_eq!(boundvar_index(&par), Some(2));
         assert_eq!(rhs_var_index(3, 0), 3);
@@ -1768,7 +1901,10 @@ mod tests {
         });
         assert!(matches!(
             rule,
-            RhoNetLoweredRule::Unsupported { family: UnsupportedFamily::LambdaBinder, .. }
+            RhoNetLoweredRule::Unsupported {
+                family: UnsupportedFamily::LambdaBinder,
+                ..
+            }
         ));
     }
 
@@ -1849,7 +1985,11 @@ mod tests {
             })
             .expect("Wrap must lower to a BaseRewrite σ-receiver");
 
-        let send = &par.receives[0].body.as_ref().expect("σ-receiver body").sends[0];
+        let send = &par.receives[0]
+            .body
+            .as_ref()
+            .expect("σ-receiver body")
+            .sends[0];
         let outer = elist_body(&send.data[0]);
         assert_eq!(outer.ps.len(), 2, "outer head tag + one child");
         assert_eq!(
@@ -1930,6 +2070,74 @@ mod tests {
         assert!(rho_net_injection_sites(&scalar_def()).is_empty());
     }
 
+    /// Stage AC-U3: an un-skipped linear with-rest HashBag AC rewrite surfaces exactly one
+    /// AC injection site whose channel equals the AC receiver's SOURCE channel (accept-triad
+    /// coherence), whose `op` is the HashBag constructor, whose `element_var_order` is the
+    /// first-occurrence element vars, and whose `rest_var` is the residual binder — the AC
+    /// firing analogue of the base-rewrite site test. Uses a `coll_type: None` LHS collection
+    /// (the parser default) so the site derivation exercises the same kind resolution the
+    /// receiver un-skip does.
+    #[test]
+    fn rho_net_ac_injection_sites_surface_the_ac_rewrite_channel_op_vars_and_rest() {
+        let mut def: LanguageDef =
+            syn::parse_str(AC_DEMO_FRAGMENT).expect("the AcDemo fragment parses");
+        def.rewrites.push(RewriteRule {
+            name: ident("AcStep"),
+            type_context: Vec::new(),
+            premises: Vec::new(),
+            left: apply(
+                "PPar",
+                vec![Pattern::Collection {
+                    coll_type: None,
+                    elements: vec![var_pattern("x")],
+                    rest: Some(ident("rest")),
+                }],
+            ),
+            right: apply("Wrap", vec![var_pattern("x")]),
+            is_auto_injected: false,
+        });
+        let lowering = lower_language_def(&def);
+        let program = RhoNetProgram::from_language_def(&def, &lowering);
+
+        // The AC receiver's source channel, resolved exactly as the runtime AC injection must
+        // reproduce it (the un-skipped rewrite's first input channel).
+        let ac_rewrite_id = rule_id_rewrite(0, "AcStep");
+        let expected_channel = program
+            .rules
+            .iter()
+            .find(|rule| rule.id == ac_rewrite_id)
+            .and_then(|rule| rule.input_channels.first())
+            .expect("AcStep AC rewrite must have a source channel")
+            .clone();
+
+        let sites = rho_net_ac_injection_sites(&def);
+        assert_eq!(sites.len(), 1, "one un-skipped AC receiver ⇒ one AC injection site");
+        assert_eq!(
+            sites[0],
+            RhoNetAcInjectionSite {
+                rule_label: "AcStep".to_string(),
+                channel: expected_channel,
+                op: "PPar".to_string(),
+                element_var_order: vec!["x".to_string()],
+                rest_var: "rest".to_string(),
+            }
+        );
+
+        // The AC rule is NOT a flat base-rewrite site: the two site derivations partition the
+        // rewrites by receiver family, so an AC firing routes to the AC arm exclusively.
+        assert!(
+            rho_net_injection_sites(&def).is_empty(),
+            "an AC rewrite is not a flat base-rewrite σ-receiver site"
+        );
+    }
+
+    /// A language with no un-skipped AC rewrites surfaces no AC injection sites (the AC firing
+    /// analogue of `rho_net_injection_sites_are_empty_without_base_rewrites`).
+    #[test]
+    fn rho_net_ac_injection_sites_are_empty_without_ac_rewrites() {
+        assert!(rho_net_ac_injection_sites(&scalar_def()).is_empty());
+    }
+
     /// `Id(x) ~> y`: a RHS variable with no LHS binding has no σ-tuple slot, so the
     /// rewrite fails closed even though the LHS itself lowers.
     #[test]
@@ -1976,7 +2184,10 @@ mod tests {
         });
         assert!(matches!(
             rule,
-            RhoNetLoweredRule::Unsupported { family: UnsupportedFamily::CollectionAc, .. }
+            RhoNetLoweredRule::Unsupported {
+                family: UnsupportedFamily::CollectionAc,
+                ..
+            }
         ));
     }
 
@@ -2065,8 +2276,7 @@ mod tests {
 
     #[test]
     fn minirho_rewrites_are_unsupported_via_both_detectors() {
-        let def =
-            syn::parse_str::<LanguageDef>(MINIRHO_FOR_FRAGMENT).expect("fragment must parse");
+        let def = syn::parse_str::<LanguageDef>(MINIRHO_FOR_FRAGMENT).expect("fragment must parse");
         let lowering = lower_language_def(&def);
         let program = RhoNetProgram::from_language_def(&def, &lowering);
         let lowered = program.lower_to_par(&def, &lowering);
@@ -2143,10 +2353,8 @@ mod tests {
     #[test]
     fn reflect_ground_term_par_reflects_ground_pair_to_tagged_elist() {
         let fp = "mettail-langdef-v1:0011223344556677";
-        let pair = GroundTerm::new(
-            "Pair",
-            vec![GroundTerm::nullary("B"), GroundTerm::nullary("A")],
-        );
+        let pair =
+            GroundTerm::new("Pair", vec![GroundTerm::nullary("B"), GroundTerm::nullary("A")]);
         let par = reflect_ground_term_par(&pair, fp);
 
         let outer = elist_body(&par);
@@ -2159,16 +2367,10 @@ mod tests {
 
         let b = elist_body(&outer.ps[1]);
         assert_eq!(b.ps.len(), 1, "nullary B is a lone head tag");
-        assert_eq!(
-            b.ps[0],
-            GPrivateBuilder::new_par_from_string(format!("mettail.term.{fp}.B"))
-        );
+        assert_eq!(b.ps[0], GPrivateBuilder::new_par_from_string(format!("mettail.term.{fp}.B")));
         let a = elist_body(&outer.ps[2]);
         assert_eq!(a.ps.len(), 1, "nullary A is a lone head tag");
-        assert_eq!(
-            a.ps[0],
-            GPrivateBuilder::new_par_from_string(format!("mettail.term.{fp}.A"))
-        );
+        assert_eq!(a.ps[0], GPrivateBuilder::new_par_from_string(format!("mettail.term.{fp}.A")));
 
         // Ground reflection binds no σ variable: no BoundVar leaves anywhere and
         // empty locally_free (byte-identical to a lowered ground RHS constructor).
@@ -2205,11 +2407,7 @@ mod tests {
         let bag2 = GroundTerm::collection(
             CollectionType::HashBag,
             "PPar",
-            vec![
-                GroundTerm::nullary("A"),
-                GroundTerm::nullary("A"),
-                GroundTerm::nullary("B"),
-            ],
+            vec![GroundTerm::nullary("A"), GroundTerm::nullary("A"), GroundTerm::nullary("B")],
         );
         assert_eq!(reflect_ground_term_par(&bag2, fp).sends.len(), 3);
     }
@@ -2286,7 +2484,11 @@ mod tests {
 
         // The body fires ⟦Wrap(x)⟧ = EList[tag_Wrap, BoundVar(2)] on out = BoundVar(0).
         let send = &recv.body.as_ref().unwrap().sends[0];
-        assert_eq!(boundvar_index(send.chan.as_ref().unwrap()), Some(0), "fires on out = BoundVar(0)");
+        assert_eq!(
+            boundvar_index(send.chan.as_ref().unwrap()),
+            Some(0),
+            "fires on out = BoundVar(0)"
+        );
         let rhs = elist_body(&send.data[0]);
         assert_eq!(rhs.ps.len(), 2, "Wrap tag + the element σ");
         assert_eq!(boundvar_index(&rhs.ps[1]), Some(2), "element x = BoundVar(2) (the AC frame)");
@@ -2411,7 +2613,11 @@ mod tests {
                 .iter()
                 .any(|r| r.rule_id() == id && matches!(r, RhoNetLoweredRule::AcRewrite { .. })),
             "a coll_type: None HashBag rule un-skips to AcRewrite via resolution: {:?}",
-            lowered.rules().iter().map(|r| r.rule_id()).collect::<Vec<_>>()
+            lowered
+                .rules()
+                .iter()
+                .map(|r| r.rule_id())
+                .collect::<Vec<_>>()
         );
     }
 

@@ -1068,8 +1068,14 @@ pub fn generate_dovetail_report(language: &LanguageDef) -> TokenStream {
     // (scalar / rhocalc-typed-path / no base rewrite) keeps `rewrite_justifications`
     // empty, so its report stays byte-identical. The decision is made here, at
     // generation time, from the same σ-receiver derivation the runtime uses.
+    //
+    // Stage AC-U3: an un-skipped HashBag AC rewrite (`RhoNetLoweredRule::AcRewrite`) is a
+    // firing site too — its `rho_net_ac_injection_sites` entry drives the runtime AC
+    // σ-injection — so a language whose ONLY rewrites are AC rewrites (e.g. AcDemo) must
+    // ALSO carry the resolved σ provenance, or the AC injection F-fn has no firing to read.
     let populate_rewrite_justifications =
-        !mettail_rholang_codegen::rho_net_injection_sites(language).is_empty();
+        !mettail_rholang_codegen::rho_net_injection_sites(language).is_empty()
+            || !mettail_rholang_codegen::rho_net_ac_injection_sites(language).is_empty();
     let report_projection: TokenStream = if populate_rewrite_justifications {
         quote! {
             // Bare-ify a generated e-graph op / rule label to its source identity:
