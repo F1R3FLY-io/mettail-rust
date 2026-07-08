@@ -735,6 +735,81 @@ async fn ac_bag_pattern_matches_the_process_soup_in_rho() {
     assert!(matched == "A" || matched == "B", "matched element is a bag element, got {matched}");
 }
 
+/// Stage AC1c: the AC receiver FIRES on the DYNAMIC out channel the injection provides — the
+/// σ-receiver shape. The bind `[<collection pattern>, out]` over `c_ac`, with the injection
+/// `c_ac!(⟦PPar{A,B}⟧, @"OUT")`, binds the matched element `x` and the out channel, then fires
+/// `x` on `out` (= @"OUT"). AC1b's match extended to the σ-receiver's dynamic-out firing.
+#[tokio::test]
+async fn ac_receiver_fires_the_matched_element_on_the_dynamic_out() {
+    use models::create_bit_vector;
+    use models::rhoapi::ReceiveBind;
+    use models::rust::utils::{
+        new_boundvar_par, new_freevar_par, new_gstring_par, new_receive_par, new_send_par,
+    };
+
+    mettail_runtime::clear_var_cache();
+    let (_backend, fingerprint) = swap_demo_backend();
+
+    let soup = reflect_ground_term_par(
+        &GroundTerm::collection(
+            CollectionType::HashBag,
+            "PPar",
+            vec![GroundTerm::nullary("A"), GroundTerm::nullary("B")],
+        ),
+        &fingerprint,
+    );
+
+    // Bind [collection pattern (element FreeVar(0), rest FreeVar(1)), out FreeVar(2)]. The body
+    // fires on out = BoundVar(0) the element = BoundVar(2) (reverse De Bruijn, 3 bind free vars).
+    let pattern = ac_bag_pattern("PPar", 1);
+    let out_pattern = new_freevar_par(2, Vec::new());
+    let body = new_send_par(
+        new_boundvar_par(0, create_bit_vector(&[0]), false),
+        vec![new_boundvar_par(2, create_bit_vector(&[2]), false)],
+        false,
+        create_bit_vector(&[0, 2]),
+        false,
+        create_bit_vector(&[0, 2]),
+        false,
+    );
+    let receiver = new_receive_par(
+        vec![ReceiveBind {
+            patterns: vec![pattern, out_pattern],
+            source: Some(new_gstring_par("c_ac".to_string(), Vec::new(), false)),
+            remainder: None,
+            free_count: 3,
+        }],
+        body,
+        false,
+        false,
+        3,
+        Vec::new(),
+        false,
+        Vec::new(),
+        false,
+    );
+
+    // c_ac!(⟦bag⟧, @"OUT").
+    let injection = new_send_par(
+        new_gstring_par("c_ac".to_string(), Vec::new(), false),
+        vec![soup, new_gstring_par("OUT".to_string(), Vec::new(), false)],
+        false,
+        Vec::new(),
+        false,
+        Vec::new(),
+        false,
+    );
+
+    let program = receiver.append(injection);
+    let observed = run_normalized_par_for_oracle_and_read_runtime_values(&program, "OUT")
+        .await
+        .expect("the in-Rho AC firing must execute");
+
+    assert_eq!(observed.len(), 1, "the AC receiver fires once on the dynamic out (got {observed:?})");
+    let fired = observation_constructor(&observed[0]);
+    assert!(fired == "A" || fired == "B", "fired the matched element, got {fired}");
+}
+
 /// Multiset sort key for observation comparison (the σ-echo's parallel sends land on
 /// OUT in nondeterministic order).
 fn observation_constructor(value: &RuntimeObservationValue) -> String {
