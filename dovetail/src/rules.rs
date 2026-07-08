@@ -16,7 +16,7 @@ use crate::set_automaton::{
 };
 
 /// A pattern over operator labels `L` with named pattern variables.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Pattern<L> {
     /// A pattern variable, binding to an e-class.
     Var(String),

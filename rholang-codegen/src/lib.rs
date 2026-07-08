@@ -87,7 +87,9 @@ pub mod need;
 pub mod rho_net;
 pub mod rho_net_automaton;
 pub mod rho_net_lower;
+pub mod rho_net_ruleset;
 pub mod validate;
+pub use rho_net_ruleset::{convert_lhs_pattern, PatternConvertReject};
 pub use rho_net_automaton::{
     automaton_receiver_network_par, multi_pattern_receiver_network_par, AutomatonAcceptTarget,
     AutomatonUnsupported,
