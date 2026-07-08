@@ -35,6 +35,7 @@ default = [
     "lambda-demo-runtime",
     "native-demo-runtime",
     "comm-demo-runtime",
+    "amb-demo-runtime",
 ]
 # Conversion from typed Rho observation reports into mettail_runtime::RuntimeBackendReport
 # plus the generic Language backend installer wrappers.
@@ -139,6 +140,21 @@ comm-demo-runtime = [
     "mettail-languages/dovetail-codegen",
     "mettail-languages/rho-codegen",
 ]
+# Stage 3d: pulls in the generated `AmbDemo` language for the end-to-end in-Rho structural
+# non-linear AC firing test (`rho_net_ambient_firing`) — the Ambient-calculus `OpenRule`
+# `{(open N P), N[Q], ...rest} ~> {P, Q, ...rest}` (`open(n, P) | n[Q] ~> P | Q`) firing as ONE
+# atomic COMM on the reducer, where the non-linear ambient-name guard (`N ≡ N`) is enforced by the
+# AC receiver's `Receive.condition` and the STRUCTURAL reduct `{P, Q}` is unwrapped from the matched
+# elements (no host substitution) and spliced into the residual bag. Needs the generated
+# `dovetail_report_for` (σ population, `dovetail-codegen`) and the structural-AC σ-injection
+# F-function (`rho-codegen`).
+amb-demo-runtime = [
+    "runtime-report",
+    "dep:mettail-languages",
+    "mettail-languages/amb-demo",
+    "mettail-languages/dovetail-codegen",
+    "mettail-languages/rho-codegen",
+]
 # Backward-compatible test/oracle feature name. New production code should use
 # `rhocalc-runtime` directly.
 oracle-rhocalc = ["rhocalc-runtime"]
@@ -238,6 +254,11 @@ required-features = ["native-demo-runtime"]
 name = "rho_net_comm_firing"
 path = "tests/rho_net_comm_firing.rs"
 required-features = ["comm-demo-runtime"]
+
+[[test]]
+name = "rho_net_ambient_firing"
+path = "tests/rho_net_ambient_firing.rs"
+required-features = ["amb-demo-runtime"]
 
 [[test]]
 name = "rho_comm_oracle"

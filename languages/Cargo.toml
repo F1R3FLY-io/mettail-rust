@@ -24,6 +24,7 @@ default = ["all-languages", "rho-codegen", "dovetail-codegen"]
 all-languages = [
     "ac-demo",
     "ac-bag-demo",
+    "amb-demo",
     "ambient",
     "appsubst",
     "calculator",
@@ -50,6 +51,7 @@ all-languages = [
 ]
 ac-demo = []
 ac-bag-demo = []
+amb-demo = []
 ambient = []
 appsubst = []
 calculator = []
