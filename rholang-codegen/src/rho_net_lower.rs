@@ -2010,48 +2010,197 @@ pub fn spread_child_location(parent: &str, op: &str, index: usize) -> String {
     format!("{parent}/{op}.{index}")
 }
 
+/// The CHAIN collapse channel of the node at `root_location`'s spread — the `col:`-kind
+/// quoted name that carries `⟦subtree⟧` UP to the parent's collapse receiver. It is read
+/// exactly once (by the parent), so the bottom-up fold never contends with the automaton.
+pub fn collapse_chain_location(root_location: &str) -> String {
+    format!("col:{root_location}")
+}
+
+/// The CAPTURE collapse channel of the node at `root_location`'s spread — the `cap:`-kind
+/// quoted name the in-Rho automaton reads at a Var-leaf state to bind the positional σ for
+/// an ARBITRARY-depth matched subterm (the M-collapse fix). It carries the SAME `⟦subtree⟧`
+/// value as the chain channel but on a DISJOINT name, so the parent's chain read and the
+/// automaton's capture read never race for one value (each is consumed at most once — O1).
+pub fn collapse_capture_location(root_location: &str) -> String {
+    format!("cap:{root_location}")
+}
+
 /// Spread a ground subject term across per-location channels for in-Rho
 /// set-automaton matching (`knotted-topoi` Appendix A):
 ///
 /// ```text
-/// ⟦f(t₁,…,tₙ)⟧_ℓ = c(ℓ)!(f̲) │ ∏ᵢ ⟦tᵢ⟧_{ℓ·(f,i)}
+/// ⟦f(t₁,…,tₙ)⟧_ℓ = loc(ℓ)!(f̲) │ ∏ᵢ ⟦tᵢ⟧_{ℓ·(f,i)} │ collapse(f̲; ℓ)
 /// ```
 ///
-/// Each node publishes ONLY its head tag `f̲` (byte-identical to
+/// Each node publishes its head tag `f̲` (byte-identical to
 /// [`reflect_ground_term_par`]'s tag — the SHARED [`reflect_tag`] ABI) on its
-/// deterministic quoted location channel ([`spread_root_location`] /
-/// [`spread_child_location`]); the child subterms are spread on the derived child
-/// channels, which the automaton knows statically. This is the ν-free scheme
-/// (INV-7): a flat parallel composition of ground sends — no `New`, no `BoundVar`
-/// — and the message carries the tag ALONE, never child channels. `root_location`
-/// is the site root ρ of the `⌜(ρ,ℓ)⌝` freshness idiom.
+/// deterministic `loc:` location channel ([`spread_root_location`] /
+/// [`spread_child_location`]), which the automaton reads to DISPATCH / DESCEND; the
+/// child subterms are spread on the derived child channels, which the automaton knows
+/// statically. This is the ν-free scheme (INV-7): a flat parallel composition of ground
+/// sends — no `New` — and the head-tag message carries the tag ALONE, never child channels.
 ///
-/// The dual of the collapsed [`reflect_ground_term_par`]: same head tags at the
-/// same positions, spread across channels rather than nested in one `EList`.
+/// It ALSO emits the M-collapse machinery: a bottom-up `collapse` fold that publishes the
+/// FULLY COLLAPSED subterm value `⟦subtree⟧` on two DISJOINT channels — `col:` (read once by
+/// the parent's fold) and `cap:` (read once by the automaton's Var-leaf state). A Var-leaf
+/// matching a NON-nullary subterm therefore binds `⟦subtree⟧` (not just its head tag), the
+/// positional σ for an arbitrary-depth subject. Each `col:`/`cap:` value is consumed at most
+/// once — the collapse IS that consumption — so matching stays O1 (each symbol once).
+/// `root_location` is the site root ρ of the `⌜(ρ,ℓ)⌝` freshness idiom.
+///
+/// The `col:`/`cap:` fold is the Rho realization of [`reflect_ground_term_par`]: the value
+/// published at a node's collapse channels is byte-identical to `reflect_ground_term_par`
+/// over that subtree, assembled bottom-up rather than in one host-side nest.
 pub fn spread_term_par(term: &GroundTerm, language_fingerprint: &str, root_location: &str) -> Par {
-    spread_term_par_at(term, language_fingerprint, &spread_root_location(root_location))
+    spread_term_par_at(
+        term,
+        language_fingerprint,
+        &spread_root_location(root_location),
+        &collapse_chain_location(root_location),
+        &collapse_capture_location(root_location),
+    )
 }
 
-fn spread_term_par_at(term: &GroundTerm, language_fingerprint: &str, location: &str) -> Par {
-    // This node's head-tag send on its location channel — the tag ALONE (Appendix
-    // A publishes `f̲`; child locations are derived, never carried in the message).
+fn spread_term_par_at(
+    term: &GroundTerm,
+    language_fingerprint: &str,
+    location: &str,
+    chain_location: &str,
+    capture_location: &str,
+) -> Par {
+    // This node's head-tag send on its `loc:` channel — the tag ALONE (Appendix A publishes
+    // `f̲`; child locations are derived, never carried in the message). The automaton reads
+    // it to Match-dispatch (root / nested App descent), NEVER the collapse fold.
     let head_tag =
         GPrivateBuilder::new_par_from_string(reflect_tag(language_fingerprint, &term.constructor));
     let mut par = new_send_par(
         new_gstring_par(location.to_string(), Vec::new(), false),
-        vec![head_tag],
+        vec![head_tag.clone()],
         false,
         Vec::new(),
         false,
         Vec::new(),
         false,
     );
-    // Spread each child on its derived location channel, in left-to-right `L` order.
+    // Spread each child on its derived `loc:`/`col:`/`cap:` channels, in left-to-right `L`
+    // order, and collect the children's CHAIN channels so this node's fold can read them.
+    let mut child_chain_channels = Vec::with_capacity(term.children.len());
     for (index, child) in term.children.iter().enumerate() {
         let child_location = spread_child_location(location, &term.constructor, index);
-        par = par.append(spread_term_par_at(child, language_fingerprint, &child_location));
+        let child_chain = spread_child_location(chain_location, &term.constructor, index);
+        let child_capture = spread_child_location(capture_location, &term.constructor, index);
+        child_chain_channels.push(child_chain.clone());
+        par = par.append(spread_term_par_at(
+            child,
+            language_fingerprint,
+            &child_location,
+            &child_chain,
+            &child_capture,
+        ));
     }
-    par
+    // Bottom-up collapse: publish `⟦subtree⟧` on this node's `col:` (chain) and `cap:`
+    // (capture) channels.
+    par.append(collapse_publish(
+        chain_location,
+        capture_location,
+        head_tag,
+        &child_chain_channels,
+    ))
+}
+
+/// Publish `⟦subtree⟧` on this node's CHAIN (`col:`) and CAPTURE (`cap:`) channels.
+///
+/// A leaf (no children) is two ground sends `col!(EList[f̲]) │ cap!(EList[f̲])` (`⟦leaf⟧`,
+/// byte-identical to [`reflect_ground_term_par`] over a nullary constructor). An internal
+/// node is the collapse RECEIVER
+/// `for(v₀ <- col:…/f.0 ; … ; v_{n-1} <- col:…/f.{n-1}){ col!(EList[f̲,v₀,…]) │ cap!(EList[f̲,v₀,…]) }`
+/// that CONSUMES its children's chain values (each once) and REBUILDS its own `⟦subtree⟧` —
+/// so a Var-leaf state reading `cap:ℓ` binds the full positional σ for an arbitrary-depth
+/// subterm. The head tag `f̲` is baked GROUND (never read from `loc:`), so the fold never
+/// contends with the automaton's head-tag descent. Child `i` binds `BoundVar(n-1-i)` (the
+/// join flattens in bind order), so `EList[f̲, v₀, …, v_{n-1}]` reproduces
+/// [`reflect_ground_term_par`]'s `[tag, ⟦c₀⟧, …]` shape.
+fn collapse_publish(
+    chain_location: &str,
+    capture_location: &str,
+    head_tag: Par,
+    child_chain_channels: &[String],
+) -> Par {
+    let n = child_chain_channels.len();
+    if n == 0 {
+        // Leaf: ⟦leaf⟧ = EList[tag]; two linear ground sends (chain + capture).
+        let collapsed = new_elist_par(vec![head_tag], Vec::new(), false, None, Vec::new(), false);
+        let chain = new_send_par(
+            new_gstring_par(chain_location.to_string(), Vec::new(), false),
+            vec![collapsed.clone()],
+            false,
+            Vec::new(),
+            false,
+            Vec::new(),
+            false,
+        );
+        let capture = new_send_par(
+            new_gstring_par(capture_location.to_string(), Vec::new(), false),
+            vec![collapsed],
+            false,
+            Vec::new(),
+            false,
+            Vec::new(),
+            false,
+        );
+        return chain.append(capture);
+    }
+    // Internal: one polyadic join binding all `n` children's chain values (child `i` →
+    // BoundVar(n-1-i)); the body republishes `⟦subtree⟧` on chain + capture.
+    let binds: Vec<ReceiveBind> = child_chain_channels
+        .iter()
+        .map(|channel| ReceiveBind {
+            patterns: vec![new_freevar_par(0, Vec::new())],
+            source: Some(new_gstring_par(channel.to_string(), Vec::new(), false)),
+            remainder: None,
+            free_count: 1,
+        })
+        .collect();
+    let all_free: Vec<usize> = (0..n).collect();
+    let free_bits = create_bit_vector(&all_free);
+    let mut elements = Vec::with_capacity(n + 1);
+    elements.push(head_tag);
+    for i in 0..n {
+        let idx = n - 1 - i;
+        elements.push(new_boundvar_par(idx as i32, create_bit_vector(&[idx]), false));
+    }
+    let collapsed =
+        new_elist_par(elements, free_bits.clone(), false, None, free_bits.clone(), false);
+    let chain = new_send_par(
+        new_gstring_par(chain_location.to_string(), Vec::new(), false),
+        vec![collapsed.clone()],
+        false,
+        free_bits.clone(),
+        false,
+        free_bits.clone(),
+        false,
+    );
+    let capture = new_send_par(
+        new_gstring_par(capture_location.to_string(), Vec::new(), false),
+        vec![collapsed],
+        false,
+        free_bits.clone(),
+        false,
+        free_bits,
+        false,
+    );
+    let receive = Receive {
+        binds,
+        body: Some(chain.append(capture)),
+        persistent: false,
+        peek: false,
+        bind_count: n as i32,
+        locally_free: Vec::new(),
+        connective_used: false,
+        condition: None,
+    };
+    Par::default().with_receives(vec![receive])
 }
 
 /// Reflect an RHS pattern term to a normalized `Par` value under the constructor
@@ -3287,7 +3436,10 @@ pub(crate) fn structural_ac_rule_shape(
         .flat_map(|element| element.args.iter())
         .map(|var| var.to_string())
         .collect();
-    if !reduct_vars.iter().all(|v| lhs_vars.contains(&v.to_string())) {
+    if !reduct_vars
+        .iter()
+        .all(|v| lhs_vars.contains(&v.to_string()))
+    {
         return None;
     }
 
@@ -3615,18 +3767,34 @@ mod tests {
         }
     }
 
-    /// INV-10 witness: the spread encodes EXACTLY the term — one head-tag send per
-    /// node, on the derived location channel, carrying the shared-`reflect_tag`-ABI
-    /// head tag (byte-identical to `reflect_ground_term_par`'s tag); and it is
-    /// ν-free (no `New`, INV-7) and sends-only (a matching subject, not a program).
+    /// The `loc:` head-tag sends of a spread (one per node) — the tag-dispatch surface the
+    /// automaton descends. The M-collapse `col:`/`cap:` collapse sends/folds are ADDITIONAL and
+    /// checked separately in [`assert_spread_collapses`].
+    fn loc_head_tag_sends(spread: &Par) -> usize {
+        spread
+            .sends
+            .iter()
+            .filter(|send| {
+                send.chan
+                    .as_ref()
+                    .and_then(gstring_value)
+                    .is_some_and(|channel| channel.starts_with("loc:"))
+            })
+            .count()
+    }
+
+    /// INV-10 witness: the spread encodes EXACTLY the term — one `loc:` head-tag send per
+    /// node, on the derived location channel, carrying the shared-`reflect_tag`-ABI head tag
+    /// (byte-identical to `reflect_ground_term_par`'s tag); and it is ν-free (no `New`, INV-7).
+    /// The spread ALSO carries the M-collapse `col:`/`cap:` fold (leaf sends + internal collapse
+    /// receivers), so it is no longer sends-only — but it stays Match/Bundle-free.
     fn assert_spread_encodes(term: &GroundTerm, fingerprint: &str, root: &str) {
         let spread = spread_term_par(term, fingerprint, root);
         let mut expected = Vec::new();
         expected_spread_nodes(term, &spread_root_location(root), &mut expected);
 
-        assert_eq!(spread.sends.len(), expected.len(), "one head-tag send per node");
+        assert_eq!(loc_head_tag_sends(&spread), expected.len(), "one loc: head-tag send per node");
         assert!(spread.news.is_empty(), "ν-free spread: no New (INV-7)");
-        assert!(spread.receives.is_empty(), "a spread subject is sends only");
         assert!(
             spread.matches.is_empty() && spread.bundles.is_empty(),
             "no Match/Bundle in a spread"
@@ -3646,24 +3814,68 @@ mod tests {
         }
     }
 
+    /// The `⟦subtree⟧` value a Var-leaf state would capture at each spread node's `cap:`
+    /// channel MUST be byte-identical to `reflect_ground_term_par` over that subtree — the
+    /// M-collapse fold IS the Rho realization of the host reflector. A leaf's `cap:` send is a
+    /// ground `EList[tag]`; an internal node's `cap:` value is assembled by a collapse receiver,
+    /// so we assert the leaf sends directly and that every internal node carries a fold.
+    fn assert_spread_collapses(term: &GroundTerm, fingerprint: &str, root: &str) {
+        fn walk(term: &GroundTerm, fingerprint: &str, capture: &str, spread: &Par) {
+            let capture_channel = new_gstring_par(capture.to_string(), Vec::new(), false);
+            if term.children.is_empty() {
+                // Leaf: a ground `cap:ℓ!(⟦leaf⟧)` send equals reflect_ground_term_par(leaf).
+                let collapsed = reflect_ground_term_par(term, fingerprint);
+                assert!(
+                    spread.sends.iter().any(|send| {
+                        send.chan.as_ref() == Some(&capture_channel)
+                            && send.data == vec![collapsed.clone()]
+                    }),
+                    "leaf `{}` must publish ⟦leaf⟧ on its capture channel `{capture}`",
+                    term.constructor,
+                );
+            }
+            for (index, child) in term.children.iter().enumerate() {
+                let child_capture = spread_child_location(capture, &term.constructor, index);
+                walk(child, fingerprint, &child_capture, spread);
+            }
+        }
+        let spread = spread_term_par(term, fingerprint, root);
+        walk(term, fingerprint, &collapse_capture_location(root), &spread);
+    }
+
     #[test]
     fn spread_encodes_a_flat_application() {
         // Swap(A, B): the root plus two nullary leaves on their derived channels.
         let term = ground("Swap", vec![ground("A", Vec::new()), ground("B", Vec::new())]);
         assert_spread_encodes(&term, "testfp", "site0");
+        assert_spread_collapses(&term, "testfp", "site0");
         let spread = spread_term_par(&term, "testfp", "site0");
-        let channels: std::collections::BTreeSet<String> = spread
+        let loc_channels: std::collections::BTreeSet<String> = spread
             .sends
             .iter()
             .filter_map(|s| s.chan.as_ref())
             .filter_map(gstring_value)
+            .filter(|c| c.starts_with("loc:"))
             .collect();
         let want: std::collections::BTreeSet<String> =
             ["loc:site0", "loc:site0/Swap.0", "loc:site0/Swap.1"]
                 .into_iter()
                 .map(String::from)
                 .collect();
-        assert_eq!(channels, want, "the exact derived location channels");
+        assert_eq!(loc_channels, want, "the exact derived location channels");
+        // The two leaves publish their collapse values on the derived `cap:` channels.
+        let cap_channels: std::collections::BTreeSet<String> = spread
+            .sends
+            .iter()
+            .filter_map(|s| s.chan.as_ref())
+            .filter_map(gstring_value)
+            .filter(|c| c.starts_with("cap:"))
+            .collect();
+        let want_cap: std::collections::BTreeSet<String> = ["cap:site0/Swap.0", "cap:site0/Swap.1"]
+            .into_iter()
+            .map(String::from)
+            .collect();
+        assert_eq!(cap_channels, want_cap, "the leaves' capture channels");
     }
 
     #[test]
@@ -3677,18 +3889,40 @@ mod tests {
             ],
         );
         assert_spread_encodes(&term, "testfp", "site0");
+        assert_spread_collapses(&term, "testfp", "site0");
     }
 
     #[test]
     fn spread_leaf_head_tag_equals_collapsed_reflection_abi() {
-        // A nullary spread is a single head-tag send; the collapsed reflector wraps
-        // the SAME tag in an EList — the shared reflect_tag ABI, one dual of the other.
+        // A nullary spread publishes the head tag on `loc:` (for dispatch) AND the collapsed
+        // ⟦leaf⟧ = EList[tag] on `col:`/`cap:` — the shared reflect_tag ABI, one dual of the other.
         let leaf = ground("A", Vec::new());
         let spread = spread_term_par(&leaf, "testfp", "site0");
-        assert_eq!(spread.sends.len(), 1);
-        let spread_tag = &spread.sends[0].data[0];
         let expected_tag = GPrivateBuilder::new_par_from_string(reflect_tag("testfp", "A"));
-        assert_eq!(spread_tag, &expected_tag, "spread head tag is the shared-ABI tag");
+        // The `loc:` head-tag send carries the tag ALONE.
+        let loc_channel = new_gstring_par("loc:site0".to_string(), Vec::new(), false);
+        let loc_send = spread
+            .sends
+            .iter()
+            .find(|s| s.chan.as_ref() == Some(&loc_channel))
+            .expect("the leaf publishes its head tag on loc:site0");
+        assert_eq!(
+            loc_send.data,
+            vec![expected_tag.clone()],
+            "loc: head tag is the shared-ABI tag"
+        );
+        // The `cap:` collapse send carries ⟦leaf⟧ = EList[tag] = reflect_ground_term_par(leaf).
+        let cap_channel = new_gstring_par("cap:site0".to_string(), Vec::new(), false);
+        let cap_send = spread
+            .sends
+            .iter()
+            .find(|s| s.chan.as_ref() == Some(&cap_channel))
+            .expect("the leaf publishes its collapse value on cap:site0");
+        assert_eq!(
+            cap_send.data,
+            vec![reflect_ground_term_par(&leaf, "testfp")],
+            "cap: collapse value is ⟦leaf⟧ (byte-identical to reflect_ground_term_par)"
+        );
     }
 
     mod spread_property {
@@ -3961,12 +4195,19 @@ mod tests {
         // It surfaces a native-fold FIRING site (Int_AddInt) on that same dispatch channel — so the
         // fold fires as a COMM (the accept-triad: receiver source ≡ injection channel).
         let sites = rho_net_native_fold_injection_sites(&def);
-        assert_eq!(sites.len(), 1, "the `fold` AddInt must surface exactly one native-fold firing site");
+        assert_eq!(
+            sites.len(),
+            1,
+            "the `fold` AddInt must surface exactly one native-fold firing site"
+        );
         assert_eq!(sites[0].rule_label, "Int_AddInt");
         assert_eq!(sites[0].channel, "sa:scalar/AddInt");
 
         // The program installs cleanly (the firing receiver is a real materialized contract).
-        assert!(lowered.errors().is_empty(), "a `fold` scalar language lowers without diagnostics");
+        assert!(
+            lowered.errors().is_empty(),
+            "a `fold` scalar language lowers without diagnostics"
+        );
         assert!(
             lowered.installed_program_par().is_ok(),
             "the native-fold firing receiver installs"
@@ -4955,7 +5196,11 @@ mod tests {
         }
         // The reduct vars are the STRUCTURAL RHS elements `P`, `Q` (bare LHS-element args).
         assert_eq!(
-            shape.reduct_vars.iter().map(|v| v.to_string()).collect::<Vec<_>>(),
+            shape
+                .reduct_vars
+                .iter()
+                .map(|v| v.to_string())
+                .collect::<Vec<_>>(),
             vec!["P".to_string(), "Q".to_string()]
         );
     }
@@ -5064,10 +5309,7 @@ mod tests {
         // rebuilds each operand-bag element from.
         assert_eq!(
             site.element_arg_vars,
-            vec![
-                vec!["N".to_string(), "P".to_string()],
-                vec!["N".to_string(), "Q".to_string()],
-            ]
+            vec![vec!["N".to_string(), "P".to_string()], vec!["N".to_string(), "Q".to_string()],]
         );
         assert!(!site.channel.is_empty(), "the structural-AC receiver has a source channel");
     }

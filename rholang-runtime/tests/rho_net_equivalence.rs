@@ -34,10 +34,9 @@ use mettail_rholang_codegen::{
     ac_bag_pattern, ac_contract_call, ac_sigma_receiver_par, automaton_receiver_network_par,
     compile_in_rho_matching_ruleset, in_rho_match_call_par, lower_language_def,
     multi_pattern_receiver_network_par, plan_rho_default_backend, reconstruct_language_def,
-    reflect_ground_term_par,
-    rho_net_injection_sites, spread_term_par, suggest_rejected_rule_dispositions,
-    AutomatonAcceptTarget, CollectionType, GroundTerm, RhoCoverageEvidence, RhoDefaultBackendRequirements,
-    RhoGuardCoverageEvidence, RhoNetRuleKind,
+    reflect_ground_term_par, rho_net_injection_sites, spread_term_par,
+    suggest_rejected_rule_dispositions, AutomatonAcceptTarget, CollectionType, GroundTerm,
+    RhoCoverageEvidence, RhoDefaultBackendRequirements, RhoGuardCoverageEvidence, RhoNetRuleKind,
 };
 use mettail_rholang_runtime::{
     build_rho_net_injection_invocation_from_contract,
@@ -85,13 +84,20 @@ fn swap_demo_backend() -> (PlannedRhoBackend, String) {
 fn reflected_to_observation(subterm: &RuntimeReflectedSubterm) -> RuntimeObservationValue {
     RuntimeObservationValue::Term {
         constructor: subterm.constructor.clone(),
-        children: subterm.children.iter().map(reflected_to_observation).collect(),
+        children: subterm
+            .children
+            .iter()
+            .map(reflected_to_observation)
+            .collect(),
     }
 }
 
 /// A bare nullary σ sub-term, e.g. `A` or `B`, as the report carries it post-R-4.
 fn nullary_subterm(constructor: &str) -> RuntimeReflectedSubterm {
-    RuntimeReflectedSubterm { constructor: constructor.to_string(), children: Vec::new() }
+    RuntimeReflectedSubterm {
+        constructor: constructor.to_string(),
+        children: Vec::new(),
+    }
 }
 
 #[tokio::test]
@@ -193,8 +199,14 @@ async fn dovetail_report_semantics_match_rho_machine_execution_for_swap() {
     let pair_b_a = RuntimeObservationValue::Term {
         constructor: "Pair".to_string(),
         children: vec![
-            RuntimeObservationValue::Term { constructor: "B".to_string(), children: Vec::new() },
-            RuntimeObservationValue::Term { constructor: "A".to_string(), children: Vec::new() },
+            RuntimeObservationValue::Term {
+                constructor: "B".to_string(),
+                children: Vec::new(),
+            },
+            RuntimeObservationValue::Term {
+                constructor: "A".to_string(),
+                children: Vec::new(),
+            },
         ],
     };
     assert_eq!(
@@ -278,8 +290,14 @@ async fn multi_firing_replay_fires_each_redex_as_its_own_comm() {
     let pair = |a: &str, b: &str| RuntimeObservationValue::Term {
         constructor: "Pair".to_string(),
         children: vec![
-            RuntimeObservationValue::Term { constructor: a.to_string(), children: Vec::new() },
-            RuntimeObservationValue::Term { constructor: b.to_string(), children: Vec::new() },
+            RuntimeObservationValue::Term {
+                constructor: a.to_string(),
+                children: Vec::new(),
+            },
+            RuntimeObservationValue::Term {
+                constructor: b.to_string(),
+                children: Vec::new(),
+            },
         ],
     };
     assert!(observation.values.contains(&pair("B", "A")), "Swap(A,B) replayed to Pair(B,A)");
@@ -324,8 +342,14 @@ async fn generated_replay_wiring_fires_every_firing_as_a_comm() {
     let pair = |a: &str, b: &str| RuntimeObservationValue::Term {
         constructor: "Pair".to_string(),
         children: vec![
-            RuntimeObservationValue::Term { constructor: a.to_string(), children: Vec::new() },
-            RuntimeObservationValue::Term { constructor: b.to_string(), children: Vec::new() },
+            RuntimeObservationValue::Term {
+                constructor: a.to_string(),
+                children: Vec::new(),
+            },
+            RuntimeObservationValue::Term {
+                constructor: b.to_string(),
+                children: Vec::new(),
+            },
         ],
     };
     assert!(observation.values.contains(&pair("B", "A")));
@@ -420,9 +444,14 @@ async fn m1_matches_swap_in_rho_and_fires_the_rewrite() {
         Pattern::app("Swap".to_string(), vec![Pattern::var("x"), Pattern::var("y")]),
     )])
     .expect("Swap(x, y) compiles to a positional automaton");
-    let network =
-        automaton_receiver_network_par(&automaton.view(), "site0", &site.channel, "OUT", &fingerprint)
-            .expect("the automaton serializes to a receiver network");
+    let network = automaton_receiver_network_par(
+        &automaton.view(),
+        "site0",
+        &site.channel,
+        "OUT",
+        &fingerprint,
+    )
+    .expect("the automaton serializes to a receiver network");
 
     // The subject `Swap(A, B)` spread across per-location channels (M0).
     let subject = spread_term_par(
@@ -452,8 +481,14 @@ async fn m1_matches_swap_in_rho_and_fires_the_rewrite() {
     let pair_b_a = RuntimeObservationValue::Term {
         constructor: "Pair".to_string(),
         children: vec![
-            RuntimeObservationValue::Term { constructor: "B".to_string(), children: Vec::new() },
-            RuntimeObservationValue::Term { constructor: "A".to_string(), children: Vec::new() },
+            RuntimeObservationValue::Term {
+                constructor: "B".to_string(),
+                children: Vec::new(),
+            },
+            RuntimeObservationValue::Term {
+                constructor: "A".to_string(),
+                children: Vec::new(),
+            },
         ],
     };
     assert_eq!(
@@ -580,9 +615,18 @@ async fn m1_matches_a_ternary_pattern_in_rho() {
         _ => "?".to_string(),
     });
     let expected = vec![
-        RuntimeObservationValue::Term { constructor: "A".to_string(), children: Vec::new() },
-        RuntimeObservationValue::Term { constructor: "B".to_string(), children: Vec::new() },
-        RuntimeObservationValue::Term { constructor: "C".to_string(), children: Vec::new() },
+        RuntimeObservationValue::Term {
+            constructor: "A".to_string(),
+            children: Vec::new(),
+        },
+        RuntimeObservationValue::Term {
+            constructor: "B".to_string(),
+            children: Vec::new(),
+        },
+        RuntimeObservationValue::Term {
+            constructor: "C".to_string(),
+            children: Vec::new(),
+        },
     ];
     assert_eq!(observed, expected, "Triple(A, B, C) matched in Rho binds σ = [A, B, C]");
 }
@@ -613,13 +657,17 @@ async fn nonlinear_matches_equal_args_in_rho() {
         "site0",
     );
     // k = 1 distinct variable (x), so the accept sends one σ slot.
-    let program = sigma_echo_receiver("MATCH", 1).append(network).append(subject);
+    let program = sigma_echo_receiver("MATCH", 1)
+        .append(network)
+        .append(subject);
     let observed = run_normalized_par_for_oracle_and_read_runtime_values(&program, "OUT")
         .await
         .expect("the in-Rho non-linear match must execute");
 
-    let expected =
-        vec![RuntimeObservationValue::Term { constructor: "A".to_string(), children: Vec::new() }];
+    let expected = vec![RuntimeObservationValue::Term {
+        constructor: "A".to_string(),
+        children: Vec::new(),
+    }];
     assert_eq!(observed, expected, "f(A, A) matched in Rho (equal args) binds σ = [A]");
 }
 
@@ -649,7 +697,9 @@ async fn nonlinear_rejects_unequal_args_in_rho() {
         &fingerprint,
         "site0",
     );
-    let program = sigma_echo_receiver("MATCH", 1).append(network).append(subject);
+    let program = sigma_echo_receiver("MATCH", 1)
+        .append(network)
+        .append(subject);
     let observed = run_normalized_par_for_oracle_and_read_runtime_values(&program, "OUT")
         .await
         .expect("the in-Rho non-linear match must execute");
@@ -731,9 +781,16 @@ async fn ac_bag_pattern_matches_the_process_soup_in_rho() {
         .expect("the in-Rho AC match must execute");
 
     // One element is matched (any, order-independent) and echoed; it is A or B.
-    assert_eq!(observed.len(), 1, "the connective pattern matches one element (got {observed:?})");
+    assert_eq!(
+        observed.len(),
+        1,
+        "the connective pattern matches one element (got {observed:?})"
+    );
     let matched = observation_constructor(&observed[0]);
-    assert!(matched == "A" || matched == "B", "matched element is a bag element, got {matched}");
+    assert!(
+        matched == "A" || matched == "B",
+        "matched element is a bag element, got {matched}"
+    );
 }
 
 /// Stage AC1c: the AC receiver FIRES on the DYNAMIC out channel the injection provides — the
@@ -806,7 +863,11 @@ async fn ac_receiver_fires_the_matched_element_on_the_dynamic_out() {
         .await
         .expect("the in-Rho AC firing must execute");
 
-    assert_eq!(observed.len(), 1, "the AC receiver fires once on the dynamic out (got {observed:?})");
+    assert_eq!(
+        observed.len(),
+        1,
+        "the AC receiver fires once on the dynamic out (got {observed:?})"
+    );
     let fired = observation_constructor(&observed[0]);
     assert!(fired == "A" || fired == "B", "fired the matched element, got {fired}");
 }
@@ -962,8 +1023,14 @@ async fn m2_dispatches_to_the_matching_pattern_in_rho() {
 
     observed.sort_by_key(observation_constructor);
     let expected = vec![
-        RuntimeObservationValue::Term { constructor: "A".to_string(), children: Vec::new() },
-        RuntimeObservationValue::Term { constructor: "B".to_string(), children: Vec::new() },
+        RuntimeObservationValue::Term {
+            constructor: "A".to_string(),
+            children: Vec::new(),
+        },
+        RuntimeObservationValue::Term {
+            constructor: "B".to_string(),
+            children: Vec::new(),
+        },
     ];
     assert_eq!(
         observed, expected,
@@ -1002,8 +1069,9 @@ async fn m2_o3_fan_out_fires_both_same_op_rules_in_rho() {
             out_channel: "OUT".to_string(),
         },
     ];
-    let network = multi_pattern_receiver_network_par(&automaton.view(), "site0", &targets, &fingerprint)
-        .expect("the O3 fan-out network serializes");
+    let network =
+        multi_pattern_receiver_network_par(&automaton.view(), "site0", &targets, &fingerprint)
+            .expect("the O3 fan-out network serializes");
     let echoes = sigma_echo_receiver("MATCH1", 2).append(sigma_echo_receiver("MATCH2", 2));
     let subject = spread_term_par(
         &GroundTerm::new(
@@ -1020,10 +1088,22 @@ async fn m2_o3_fan_out_fires_both_same_op_rules_in_rho() {
 
     observed.sort_by_key(observation_constructor);
     let expected = vec![
-        RuntimeObservationValue::Term { constructor: "A".to_string(), children: Vec::new() },
-        RuntimeObservationValue::Term { constructor: "A".to_string(), children: Vec::new() },
-        RuntimeObservationValue::Term { constructor: "B".to_string(), children: Vec::new() },
-        RuntimeObservationValue::Term { constructor: "B".to_string(), children: Vec::new() },
+        RuntimeObservationValue::Term {
+            constructor: "A".to_string(),
+            children: Vec::new(),
+        },
+        RuntimeObservationValue::Term {
+            constructor: "A".to_string(),
+            children: Vec::new(),
+        },
+        RuntimeObservationValue::Term {
+            constructor: "B".to_string(),
+            children: Vec::new(),
+        },
+        RuntimeObservationValue::Term {
+            constructor: "B".to_string(),
+            children: Vec::new(),
+        },
     ];
     assert_eq!(observed, expected, "both same-op rules fire (σ=[A, B] announced twice)");
 }
@@ -1075,7 +1155,11 @@ fn stage3_swapdemo_ruleset_compiles_the_base_rewrite_coherently() {
     let ruleset = compile_in_rho_matching_ruleset(&def);
 
     assert_eq!(ruleset.automaton.view().entry_count(), 1, "one base rewrite → one entry");
-    assert!(ruleset.deferred.is_empty(), "SwapDemo has no deferred rewrites: {:?}", ruleset.deferred);
+    assert!(
+        ruleset.deferred.is_empty(),
+        "SwapDemo has no deferred rewrites: {:?}",
+        ruleset.deferred
+    );
     assert_eq!(ruleset.accept_channels.len(), 1);
 
     // The accept channel equals the SwapStep σ-receiver source (the triad coherence).
@@ -1132,14 +1216,122 @@ async fn stage3_swapdemo_matches_and_fires_from_the_derived_ruleset() {
     let pair_b_a = RuntimeObservationValue::Term {
         constructor: "Pair".to_string(),
         children: vec![
-            RuntimeObservationValue::Term { constructor: "B".to_string(), children: Vec::new() },
-            RuntimeObservationValue::Term { constructor: "A".to_string(), children: Vec::new() },
+            RuntimeObservationValue::Term {
+                constructor: "B".to_string(),
+                children: Vec::new(),
+            },
+            RuntimeObservationValue::Term {
+                constructor: "A".to_string(),
+                children: Vec::new(),
+            },
         ],
     };
     assert_eq!(
         observation.values[0], pair_b_a,
         "Swap(A, B) matched from the derived ruleset → Pair(B, A)"
     );
+}
+
+/// A nested `RuntimeObservationValue::Term` (the shape the reducer decodes an `⟦…⟧` back to).
+fn obs(constructor: &str, children: Vec<RuntimeObservationValue>) -> RuntimeObservationValue {
+    RuntimeObservationValue::Term {
+        constructor: constructor.to_string(),
+        children,
+    }
+}
+
+/// M-collapse (Stage 4) — the soundness fix under a hand-built NON-NULLARY subject. The
+/// SwapStep pattern `Swap(x, y)` is LINEAR with Var leaves, but the subject binds a NON-nullary
+/// subterm at position 0: `Swap(Pair(A, B), B)`. The pre-M-collapse accept captured only the
+/// head tag at a Var-leaf state, so it would have fired `Pair(B, Pair())` — silently dropping
+/// `Pair`'s children. With the `cap:` collapse the Var-leaf state binds the FULL `⟦Pair(A, B)⟧`,
+/// so the σ-receiver fires the correct `Pair(B, Pair(A, B))` — matched IN Rho (no host σ), the
+/// witness the task calls out. `Swap(Pair(A,B),B) ≠ Pair(B,Pair(A,B))`, so a positive OUT is
+/// non-vacuous.
+#[tokio::test]
+async fn m_collapse_matches_a_non_nullary_first_arg_in_rho() {
+    mettail_runtime::clear_var_cache();
+    let (backend, _fingerprint) = swap_demo_backend();
+    let source = SwapDemoLanguage
+        .metadata()
+        .definition_source()
+        .expect("SwapDemo exposes its definition source");
+    let def = reconstruct_language_def(source).expect("SwapDemo def reconstructs");
+    let ruleset = compile_in_rho_matching_ruleset(&def);
+
+    // Swap(Pair(A, B), B): x binds the NON-nullary Pair(A, B); y binds the nullary B.
+    let pair_a_b = GroundTerm::new(
+        "Pair",
+        vec![GroundTerm::new("A", Vec::new()), GroundTerm::new("B", Vec::new())],
+    );
+    let subject = GroundTerm::new("Swap", vec![pair_a_b, GroundTerm::new("B", Vec::new())]);
+    let call = in_rho_match_call_par(&ruleset, &subject, "site0", "OUT")
+        .expect("the derived ruleset serializes a non-nullary match call");
+    let observation = backend
+        .run_rho_net_with_call_and_observe_runtime_values(&call, "OUT")
+        .await
+        .expect("the in-Rho match + firing must execute for a non-nullary subject");
+
+    assert_eq!(
+        observation.observed_count(),
+        1,
+        "Swap(Pair(A,B), B) matched in Rho and fired once (got {:?})",
+        observation.values
+    );
+    // Pair(y, x) = Pair(B, Pair(A, B)) — the collapse captured Pair's children, NOT just its tag.
+    let expected = obs(
+        "Pair",
+        vec![
+            obs("B", Vec::new()),
+            obs("Pair", vec![obs("A", Vec::new()), obs("B", Vec::new())]),
+        ],
+    );
+    assert_eq!(
+        observation.values[0], expected,
+        "the non-nullary σ collapse fired Pair(B, Pair(A, B)) — NOT the pre-fix Pair(B, Pair())"
+    );
+}
+
+/// M-collapse — BOTH linear args non-nullary: `Swap(Pair(A, B), Pair(B, A))`. Each Var-leaf
+/// state collapses a distinct depth-1 subtree, so the σ-receiver fires
+/// `Pair(Pair(B, A), Pair(A, B))` in Rho — the arbitrary-depth positional σ, both slots.
+#[tokio::test]
+async fn m_collapse_matches_both_non_nullary_args_in_rho() {
+    mettail_runtime::clear_var_cache();
+    let (backend, _fingerprint) = swap_demo_backend();
+    let source = SwapDemoLanguage
+        .metadata()
+        .definition_source()
+        .expect("SwapDemo exposes its definition source");
+    let def = reconstruct_language_def(source).expect("SwapDemo def reconstructs");
+    let ruleset = compile_in_rho_matching_ruleset(&def);
+
+    let pair_a_b = GroundTerm::new(
+        "Pair",
+        vec![GroundTerm::new("A", Vec::new()), GroundTerm::new("B", Vec::new())],
+    );
+    let pair_b_a = GroundTerm::new(
+        "Pair",
+        vec![GroundTerm::new("B", Vec::new()), GroundTerm::new("A", Vec::new())],
+    );
+    let subject = GroundTerm::new("Swap", vec![pair_a_b, pair_b_a]);
+    let call = in_rho_match_call_par(&ruleset, &subject, "site0", "OUT")
+        .expect("the derived ruleset serializes a both-non-nullary match call");
+    let observation = backend
+        .run_rho_net_with_call_and_observe_runtime_values(&call, "OUT")
+        .await
+        .expect("the in-Rho match + firing must execute for two non-nullary subjects");
+
+    assert_eq!(observation.observed_count(), 1, "matched once (got {:?})", observation.values);
+    // Pair(y, x) = Pair(Pair(B, A), Pair(A, B)).
+    let expected = obs(
+        "Pair",
+        vec![
+            obs("Pair", vec![obs("B", Vec::new()), obs("A", Vec::new())]),
+            obs("Pair", vec![obs("A", Vec::new()), obs("B", Vec::new())]),
+        ],
+    );
+    assert_eq!(observation.values[0], expected, "both non-nullary σ slots collapsed correctly");
 }
 
 /// Stage 3 piece 5: the WHOLE production default-backend stack. Install SwapDemo's
@@ -1169,9 +1361,9 @@ fn stage3_swapdemo_default_backend_matches_in_rho_via_run_backend_report() {
                     let injections = SwapDemoLanguage::rho_net_replay_invocation_from_dovetail_to(
                         term, report, "OUT",
                     )?;
-                    Ok(RhoBackendInvocation::from(
-                        build_rho_net_replay_invocation_from_contracts(injections),
-                    ))
+                    Ok(RhoBackendInvocation::from(build_rho_net_replay_invocation_from_contracts(
+                        injections,
+                    )))
                 },
             }
         },
@@ -1200,8 +1392,14 @@ fn stage3_swapdemo_default_backend_matches_in_rho_via_run_backend_report() {
     let pair_b_a = RuntimeObservationValue::Term {
         constructor: "Pair".to_string(),
         children: vec![
-            RuntimeObservationValue::Term { constructor: "B".to_string(), children: Vec::new() },
-            RuntimeObservationValue::Term { constructor: "A".to_string(), children: Vec::new() },
+            RuntimeObservationValue::Term {
+                constructor: "B".to_string(),
+                children: Vec::new(),
+            },
+            RuntimeObservationValue::Term {
+                constructor: "A".to_string(),
+                children: Vec::new(),
+            },
         ],
     };
     assert_eq!(
@@ -1215,8 +1413,7 @@ fn swap_demo_exposes_its_rho_net_program_directly() {
     // Epic 6 #2030: a generated language exposes its RhoNet planning artifact —
     // planned channels + rule identities — DIRECTLY via `rho_net_program()`,
     // without the caller reconstructing the `LanguageDef` by hand.
-    let program =
-        SwapDemoLanguage::rho_net_program().expect("SwapDemo exposes its RhoNet program");
+    let program = SwapDemoLanguage::rho_net_program().expect("SwapDemo exposes its RhoNet program");
     let swap_rule = program
         .rules
         .iter()

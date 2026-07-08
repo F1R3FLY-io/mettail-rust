@@ -25,11 +25,13 @@ use models::rhoapi::expr::ExprInstance;
 use models::rhoapi::{EAnd, EEq, Expr, MatchCase, Par, Receive, ReceiveBind};
 use models::rust::rholang::implicits::GPrivateBuilder;
 use models::rust::utils::{
-    new_boundvar_par, new_elist_par, new_freevar_par, new_gstring_par, new_match_par,
-    new_receive_par, new_send_par,
+    new_boundvar_par, new_freevar_par, new_gstring_par, new_match_par, new_receive_par,
+    new_send_par,
 };
 
-use crate::rho_net_lower::{reflect_tag, spread_child_location, spread_root_location};
+use crate::rho_net_lower::{
+    collapse_capture_location, reflect_tag, spread_child_location, spread_root_location,
+};
 
 /// The pattern shapes the M1 automaton serializer does not yet handle — each
 /// fails closed to a later slice rather than emitting an incorrect network.
@@ -100,16 +102,18 @@ fn for_receive(channel: &str, body: Par, body_free: &[usize]) -> Par {
 }
 
 /// The accepting send for ONE entry: `accept_channel!(σ_0,…,σ_{k-1}, @out)` with ONE σ
-/// slot per DISTINCT LHS variable (`k = first_occ.len()`), `σ_d = EList[BoundVar(arity-1-p)]`
-/// where `p = first_occ[d]` is that variable's first occurrence position. The child bound
-/// at position `p` is `BoundVar(arity-1-p)` (the reverse De Bruijn convention of the `arity`
-/// child binders); a nullary Var subterm's spread is a single head-tag send, so
-/// `EList[received tag] = ⟦leaf⟧`. This distinct-var arity is the TRIAD-coherence point: the
-/// σ-receiver has `k` formals (`lower_lhs_vars` dedups repeats), so a non-linear accept must
-/// send `k` slots, not `arity`. For a LINEAR entry `first_occ = [0,…,arity-1]`, reducing to
-/// the M1/M2a positional send byte-identically. Built manually (NOT `term_contract_call`,
-/// which hardcodes empty `locally_free`): the σ args reference BoundVars, so the send is free
-/// in `{arity-1-p : p ∈ first_occ}`.
+/// slot per DISTINCT LHS variable (`k = first_occ.len()`), `σ_d = BoundVar(arity-1-p)` where
+/// `p = first_occ[d]` is that variable's first occurrence position. The child bound at
+/// position `p` is `BoundVar(arity-1-p)` (the reverse De Bruijn convention of the `arity`
+/// child binders); that child binder is the node's `cap:` COLLAPSE channel, which carries the
+/// FULLY COLLAPSED subterm `⟦subtree⟧` (M-collapse), so the σ slot IS `⟦subtree⟧` for a matched
+/// subject of ARBITRARY depth — NOT `EList[head tag]`, which held only for a nullary leaf and
+/// dropped every non-nullary subject's children. This distinct-var arity is the TRIAD-coherence
+/// point: the σ-receiver has `k` formals (`lower_lhs_vars` dedups repeats), so a non-linear
+/// accept must send `k` slots, not `arity`. For a LINEAR entry `first_occ = [0,…,arity-1]`,
+/// reducing to the M1/M2a positional send. Built manually (NOT `term_contract_call`, which
+/// hardcodes empty `locally_free`): the σ args reference BoundVars, so the send is free in
+/// `{arity-1-p : p ∈ first_occ}`.
 fn build_accept_send(
     accept_channel: &str,
     out_channel: &str,
@@ -120,9 +124,10 @@ fn build_accept_send(
         .iter()
         .map(|&p| {
             let idx = arity - 1 - p;
-            let received = new_boundvar_par(idx as i32, bits(&[idx]), false);
-            let free = bits(&[idx]);
-            new_elist_par(vec![received], free.clone(), false, None, free, false)
+            // The child binder is the `cap:` collapse channel value = `⟦subtree⟧`, so the σ
+            // slot IS that value. No `EList[tag]` wrap (that reconstructed a NULLARY leaf and
+            // silently dropped a non-nullary subject's children — the M-collapse soundness fix).
+            new_boundvar_par(idx as i32, bits(&[idx]), false)
         })
         .collect();
     data.push(new_gstring_par(out_channel.to_string(), Vec::new(), false));
@@ -157,12 +162,15 @@ fn parallel_accept(accepts: &[(String, String)], arity: usize, first_occ: &[usiz
 
 /// Wrap the `arity` Var `for`s innermost-first around `accept`, tracking the free De
 /// Bruijn set (accept is free in `{0..arity-1}`; each wrap shifts under a binder), down
-/// to the closed (`locally_free = {}`) `Match` case body.
-fn wrap_children(root_channel: &str, op: &str, arity: usize, accept: Par) -> Par {
+/// to the closed (`locally_free = {}`) `Match` case body. Each child `for` reads the node's
+/// `cap:` COLLAPSE channel (`capture_root·(op,i)`), NOT the `loc:` head-tag channel — so it
+/// binds the FULLY COLLAPSED subterm `⟦subtree⟧` (M-collapse), the positional σ for a subject
+/// of arbitrary depth.
+fn wrap_children(capture_root: &str, op: &str, arity: usize, accept: Par) -> Par {
     let mut body = accept;
     let mut body_free: Vec<usize> = (0..arity).collect();
     for i in (0..arity).rev() {
-        let child_channel = spread_child_location(root_channel, op, i);
+        let child_channel = spread_child_location(capture_root, op, i);
         let receiver = for_receive(&child_channel, body, &body_free);
         body_free = shift_under_binder(&body_free);
         body = receiver;
@@ -213,23 +221,26 @@ fn consistency_guard(arity: usize, partition: &[usize]) -> Par {
         union.extend(conjunct_free);
         union.sort_unstable();
         union.dedup();
-        guard = expr_par(ExprInstance::EAndBody(EAnd { p1: Some(guard), p2: Some(conjunct) }), &union);
+        guard =
+            expr_par(ExprInstance::EAndBody(EAnd { p1: Some(guard), p2: Some(conjunct) }), &union);
         free = union;
     }
     guard
 }
 
 /// Wrap `accept` in the `eq:`-guarded polyadic JOIN for a NON-LINEAR op partition: one atomic
-/// `for(h_0 <- loc:ρ/op.0 ; … ; h_{arity-1} <- loc:ρ/op.{arity-1}){ accept }` whose `condition`
-/// is [`consistency_guard`]. Unlike the nested [`wrap_children`] chain, the join binds every
-/// child in ONE receive so the depth-1-substituted guard can compare the repeated occurrences,
-/// and on inequality the reducer's `check_commit` vetoes the WHOLE consume — consuming no child
-/// (the reject-safe `merge_substs → None`, at the strongest granularity). Child `i` is
-/// `BoundVar(arity-1-i)` (the join binds flattened in bind order), so the guard and `accept`
-/// share the reverse De Bruijn frame; the receive binds all `arity` indices, closing the case
-/// body (`locally_free = {}`).
+/// `for(v_0 <- cap:ρ/op.0 ; … ; v_{arity-1} <- cap:ρ/op.{arity-1}){ accept }` whose `condition`
+/// is [`consistency_guard`]. Each `v_i` is the node's `cap:` COLLAPSE value `⟦subtree_i⟧`
+/// (M-collapse), so the guard compares FULLY COLLAPSED subterms — repeated occurrences match
+/// iff their whole subtrees are equal, not merely their head tags. Unlike the nested
+/// [`wrap_children`] chain, the join binds every child in ONE receive so the depth-1-substituted
+/// guard can compare the repeated occurrences, and on inequality the reducer's `check_commit`
+/// vetoes the WHOLE consume — consuming no child (the reject-safe `merge_substs → None`, at the
+/// strongest granularity). Child `i` is `BoundVar(arity-1-i)` (the join binds flattened in bind
+/// order), so the guard and `accept` share the reverse De Bruijn frame; the receive binds all
+/// `arity` indices, closing the case body (`locally_free = {}`).
 fn join_children_receiver(
-    root_channel: &str,
+    capture_root: &str,
     op: &str,
     arity: usize,
     partition: &[usize],
@@ -238,7 +249,11 @@ fn join_children_receiver(
     let binds: Vec<ReceiveBind> = (0..arity)
         .map(|i| ReceiveBind {
             patterns: vec![new_freevar_par(0, Vec::new())],
-            source: Some(new_gstring_par(spread_child_location(root_channel, op, i), Vec::new(), false)),
+            source: Some(new_gstring_par(
+                spread_child_location(capture_root, op, i),
+                Vec::new(),
+                false,
+            )),
             remainder: None,
             free_count: 1,
         })
@@ -351,11 +366,20 @@ pub fn multi_pattern_receiver_network_par(
                 }
                 group.accepts.push(accept);
             },
-            None => groups.push(OpGroup { op, arity, partition, first_occ, accepts: vec![accept] }),
+            None => groups.push(OpGroup {
+                op,
+                arity,
+                partition,
+                first_occ,
+                accepts: vec![accept],
+            }),
         }
     }
 
     let root_channel = spread_root_location(root_location);
+    // The Var-leaf states read the `cap:` COLLAPSE channels (the fully collapsed subterms),
+    // NOT the `loc:` head-tag channels the root Match dispatches on.
+    let capture_root = collapse_capture_location(root_location);
 
     // One `Match` case per distinct root op: the parallel distinct-var accept, wrapped in
     // the linear child chain OR (for a repeated-variable partition) the `eq:`-guarded join.
@@ -363,9 +387,9 @@ pub fn multi_pattern_receiver_network_par(
     for group in &groups {
         let accept = parallel_accept(&group.accepts, group.arity, &group.first_occ);
         let body = if group.first_occ.len() == group.arity {
-            wrap_children(&root_channel, &group.op, group.arity, accept)
+            wrap_children(&capture_root, &group.op, group.arity, accept)
         } else {
-            join_children_receiver(&root_channel, &group.op, group.arity, &group.partition, accept)
+            join_children_receiver(&capture_root, &group.op, group.arity, &group.partition, accept)
         };
         let head_tag =
             GPrivateBuilder::new_par_from_string(reflect_tag(language_fingerprint, &group.op));
@@ -381,14 +405,8 @@ pub fn multi_pattern_receiver_network_par(
     // case bodies are closed, and the root `for` closes the network to {}.
     let match_target = new_boundvar_par(0, bits(&[0]), false);
     let match_free = bits(&[0]);
-    let match_par = new_match_par(
-        match_target,
-        cases,
-        match_free.clone(),
-        false,
-        match_free,
-        false,
-    );
+    let match_par =
+        new_match_par(match_target, cases, match_free.clone(), false, match_free, false);
     Ok(for_receive(&root_channel, match_par, &[0]))
 }
 
@@ -487,14 +505,6 @@ mod tests {
         );
     }
 
-    /// An `EList[BoundVar(i)]` σ slot's inner index (mirrors `serializes_swap`'s local walk).
-    fn elist_boundvar(p: &Par) -> Option<i32> {
-        match p.exprs.first()?.expr_instance.as_ref()? {
-            ExprInstance::EListBody(l) => boundvar_index(&l.ps[0]),
-            _ => None,
-        }
-    }
-
     #[test]
     fn serializes_a_nonlinear_pattern_with_the_eq_guard() {
         // f(x, x): the two positions share variable x, so the case body is ONE guarded join
@@ -517,13 +527,16 @@ mod tests {
         assert_eq!(case_body.receives.len(), 1, "the non-linear case body is one guarded join");
         let join = &case_body.receives[0];
 
-        // Two binds, on the two child location channels — one atomic polyadic join.
+        // Two binds, on the two child CAPTURE (collapse) channels — one atomic polyadic join.
         assert_eq!(join.bind_count, 2, "the join binds both children in one receive");
-        assert_eq!(gstring(join.binds[0].source.as_ref().unwrap()), Some("loc:site0/f.0"));
-        assert_eq!(gstring(join.binds[1].source.as_ref().unwrap()), Some("loc:site0/f.1"));
+        assert_eq!(gstring(join.binds[0].source.as_ref().unwrap()), Some("cap:site0/f.0"));
+        assert_eq!(gstring(join.binds[1].source.as_ref().unwrap()), Some("cap:site0/f.1"));
 
         // The consistency condition: EEq(BoundVar(1), BoundVar(0)) (occurrence 0 == occurrence 1).
-        let guard = join.condition.as_ref().expect("the non-linear join carries a condition");
+        let guard = join
+            .condition
+            .as_ref()
+            .expect("the non-linear join carries a condition");
         match guard.exprs.first().unwrap().expr_instance.as_ref().unwrap() {
             ExprInstance::EEqBody(eq) => {
                 assert_eq!(boundvar_index(eq.p1.as_ref().unwrap()), Some(1));
@@ -532,11 +545,15 @@ mod tests {
             other => panic!("expected an EEq consistency guard, got {other:?}"),
         }
 
-        // The accept sends ONE σ slot (x = EList[BoundVar(1)]) + @out — NOT two.
+        // The accept sends ONE σ slot (x = BoundVar(1), the collapsed value) + @out — NOT two.
         let send = &join.body.as_ref().unwrap().sends[0];
         assert_eq!(gstring(send.chan.as_ref().unwrap()), Some("sa:acc"));
         assert_eq!(send.data.len(), 2, "one distinct-var σ slot + @out");
-        assert_eq!(elist_boundvar(&send.data[0]), Some(1), "σ[x] = EList[BoundVar(1)] (first occurrence)");
+        assert_eq!(
+            boundvar_index(&send.data[0]),
+            Some(1),
+            "σ[x] = BoundVar(1) = ⟦subterm⟧ (first occurrence's collapse value)"
+        );
         assert_eq!(gstring(&send.data[1]), Some("OUT"));
     }
 
@@ -571,8 +588,8 @@ mod tests {
         }
         let send = &join.body.as_ref().unwrap().sends[0];
         assert_eq!(send.data.len(), 3, "two distinct-var σ slots + @out");
-        assert_eq!(elist_boundvar(&send.data[0]), Some(2), "σ[x] = EList[BoundVar(2)]");
-        assert_eq!(elist_boundvar(&send.data[1]), Some(0), "σ[y] = EList[BoundVar(0)]");
+        assert_eq!(boundvar_index(&send.data[0]), Some(2), "σ[x] = BoundVar(2) (collapse value)");
+        assert_eq!(boundvar_index(&send.data[1]), Some(0), "σ[y] = BoundVar(0) (collapse value)");
         assert_eq!(gstring(&send.data[2]), Some("OUT"));
     }
 
@@ -627,31 +644,41 @@ mod tests {
         let root_body = root_recv.body.as_ref().unwrap();
         assert_eq!(root_body.matches.len(), 1, "root body dispatches on the head tag");
         let m = &root_body.matches[0];
-        assert_eq!(boundvar_index(m.target.as_ref().unwrap()), Some(0), "match target is BoundVar(0)");
+        assert_eq!(
+            boundvar_index(m.target.as_ref().unwrap()),
+            Some(0),
+            "match target is BoundVar(0)"
+        );
         assert_eq!(m.cases.len(), 1);
         assert_eq!(m.cases[0].free_count, 0, "ground head-tag discriminator binds nothing");
 
-        // Case body: for(h1 <- loc:site0/Swap.0){ for(h2 <- loc:site0/Swap.1){ accept } }.
+        // Case body: for(v1 <- cap:site0/Swap.0){ for(v2 <- cap:site0/Swap.1){ accept } } — the
+        // children read the `cap:` COLLAPSE channels (the fully collapsed subterms), NOT `loc:`.
         let r1 = m.cases[0].source.as_ref().unwrap();
-        assert_eq!(gstring(r1.receives[0].binds[0].source.as_ref().unwrap()), Some("loc:site0/Swap.0"));
+        assert_eq!(
+            gstring(r1.receives[0].binds[0].source.as_ref().unwrap()),
+            Some("cap:site0/Swap.0")
+        );
         let r1_body = r1.receives[0].body.as_ref().unwrap();
-        assert_eq!(gstring(r1_body.receives[0].binds[0].source.as_ref().unwrap()), Some("loc:site0/Swap.1"));
+        assert_eq!(
+            gstring(r1_body.receives[0].binds[0].source.as_ref().unwrap()),
+            Some("cap:site0/Swap.1")
+        );
 
-        // Accept send: sa:acc!( EList[BoundVar(1)], EList[BoundVar(0)], @"OUT" ).
+        // Accept send: sa:acc!( BoundVar(1), BoundVar(0), @"OUT" ) — each σ slot is the bound
+        // collapse value `⟦subterm⟧` DIRECTLY (no `EList[tag]` wrap).
         let accept = r1_body.receives[0].body.as_ref().unwrap();
         assert_eq!(accept.sends.len(), 1, "the accept is a single send");
         let send = &accept.sends[0];
-        assert_eq!(gstring(send.chan.as_ref().unwrap()), Some("sa:acc"), "accept fires the σ-receiver source");
+        assert_eq!(
+            gstring(send.chan.as_ref().unwrap()),
+            Some("sa:acc"),
+            "accept fires the σ-receiver source"
+        );
         assert_eq!(send.data.len(), 3, "σ[x], σ[y], @out");
-        // σ[x] = EList[BoundVar(1)] (h1); σ[y] = EList[BoundVar(0)] (h2).
-        let elist_boundvar = |p: &Par| -> Option<i32> {
-            match p.exprs.first()?.expr_instance.as_ref()? {
-                ExprInstance::EListBody(l) => boundvar_index(&l.ps[0]),
-                _ => None,
-            }
-        };
-        assert_eq!(elist_boundvar(&send.data[0]), Some(1), "σ[x] = EList[BoundVar(1)]");
-        assert_eq!(elist_boundvar(&send.data[1]), Some(0), "σ[y] = EList[BoundVar(0)]");
+        // σ[x] = BoundVar(1) (v1); σ[y] = BoundVar(0) (v2) — the collapsed child values.
+        assert_eq!(boundvar_index(&send.data[0]), Some(1), "σ[x] = BoundVar(1)");
+        assert_eq!(boundvar_index(&send.data[1]), Some(0), "σ[y] = BoundVar(0)");
         assert_eq!(gstring(&send.data[2]), Some("OUT"), "out channel appended last");
     }
 
@@ -676,24 +703,28 @@ mod tests {
             .source
             .as_ref()
             .unwrap();
-        assert_eq!(gstring(r_x.receives[0].binds[0].source.as_ref().unwrap()), Some("loc:site0/Triple.0"));
+        assert_eq!(
+            gstring(r_x.receives[0].binds[0].source.as_ref().unwrap()),
+            Some("cap:site0/Triple.0")
+        );
         let r_y = r_x.receives[0].body.as_ref().unwrap();
-        assert_eq!(gstring(r_y.receives[0].binds[0].source.as_ref().unwrap()), Some("loc:site0/Triple.1"));
+        assert_eq!(
+            gstring(r_y.receives[0].binds[0].source.as_ref().unwrap()),
+            Some("cap:site0/Triple.1")
+        );
         let r_z = r_y.receives[0].body.as_ref().unwrap();
-        assert_eq!(gstring(r_z.receives[0].binds[0].source.as_ref().unwrap()), Some("loc:site0/Triple.2"));
+        assert_eq!(
+            gstring(r_z.receives[0].binds[0].source.as_ref().unwrap()),
+            Some("cap:site0/Triple.2")
+        );
         let accept = r_z.receives[0].body.as_ref().unwrap();
 
         let send = &accept.sends[0];
         assert_eq!(send.data.len(), 4, "σ_x, σ_y, σ_z, @out");
-        let elist_boundvar = |p: &Par| -> Option<i32> {
-            match p.exprs.first()?.expr_instance.as_ref()? {
-                ExprInstance::EListBody(l) => boundvar_index(&l.ps[0]),
-                _ => None,
-            }
-        };
-        assert_eq!(elist_boundvar(&send.data[0]), Some(2), "σ[x] = EList[BoundVar(2)]");
-        assert_eq!(elist_boundvar(&send.data[1]), Some(1), "σ[y] = EList[BoundVar(1)]");
-        assert_eq!(elist_boundvar(&send.data[2]), Some(0), "σ[z] = EList[BoundVar(0)]");
+        // Each σ slot is the bound collapse value DIRECTLY (σ_i = BoundVar(arity-1-i)).
+        assert_eq!(boundvar_index(&send.data[0]), Some(2), "σ[x] = BoundVar(2)");
+        assert_eq!(boundvar_index(&send.data[1]), Some(1), "σ[y] = BoundVar(1)");
+        assert_eq!(boundvar_index(&send.data[2]), Some(0), "σ[z] = BoundVar(0)");
     }
 
     // Descend `arity` child for-receives of a Match case body to its accept Par.
@@ -776,8 +807,11 @@ mod tests {
         assert_eq!(m.cases.len(), 1, "one Match case for the shared op");
         let accept = accept_of(m.cases[0].source.as_ref().unwrap(), 2);
         assert_eq!(accept.sends.len(), 2, "both rules announce in parallel (O3 fan-out)");
-        let channels: Vec<Option<&str>> =
-            accept.sends.iter().map(|s| gstring(s.chan.as_ref().unwrap())).collect();
+        let channels: Vec<Option<&str>> = accept
+            .sends
+            .iter()
+            .map(|s| gstring(s.chan.as_ref().unwrap()))
+            .collect();
         assert!(channels.contains(&Some("sa:one")) && channels.contains(&Some("sa:two")));
     }
 
