@@ -140,8 +140,8 @@ pub use rho_net::{
 };
 pub use mettail_ast::types::CollectionType;
 pub use rho_net_lower::{
-    ac_bag_pattern, ac_sigma_receiver_par, reflect_ground_term_par, rho_net_injection_sites,
-    spread_child_location, spread_root_location,
+    ac_bag_pattern, ac_rule_receiver, ac_sigma_receiver_par, reflect_ground_term_par,
+    rho_net_injection_sites, spread_child_location, spread_root_location,
     spread_term_par, term_contract_call, GroundTerm, RhoNetInjectionInvocation, RhoNetInjectionSite,
     RhoNetInstallError, RhoNetLowered, RhoNetLoweredRule, RhoNetLoweringError, UnsupportedFamily,
 };

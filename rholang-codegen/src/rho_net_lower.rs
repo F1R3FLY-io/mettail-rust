@@ -1069,6 +1069,48 @@ pub fn ac_sigma_receiver_par(op: &str, k: usize, rhs_par: Par, source: Par) -> P
     Par::default().with_receives(vec![receive])
 }
 
+/// Un-skip a `DeferReason::Ac` base rewrite whose LHS is a linear HashBag AC pattern
+/// `op{x_1, …, x_k, ...rest} ~> R`: extract the element variables + `rest`, reflect the RHS
+/// in the AC receiver frame (`reflect_term_par` at `k+1` over the `[x_1..x_k, rest]` σ order —
+/// verified by `ac_rhs_reflects_with_the_ac_receiver_frame`), and build the receiver via
+/// [`ac_sigma_receiver_par`]. Returns `None` when the LHS is not a with-rest linear HashBag AC
+/// pattern (a no-rest exact match, a nested/non-linear element, or a non-HashBag collection —
+/// those stay on their existing path, later slices), so the caller keeps them fail-closed.
+pub fn ac_rule_receiver(
+    left: &Pattern,
+    right: &Pattern,
+    source: Par,
+    language_fingerprint: &str,
+) -> Option<Par> {
+    // Match a HashBag AC LHS: `op( { x_1, …, x_k, ...rest } )`.
+    let (op, elements, rest_name) = match left {
+        Pattern::Term(PatternTerm::Apply { constructor, args }) => match args.as_slice() {
+            [Pattern::Collection { coll_type: Some(CollectionType::HashBag), elements, rest }] => {
+                (constructor.to_string(), elements, rest.clone())
+            },
+            _ => return None,
+        },
+        _ => return None,
+    };
+    // Require an explicit `...rest` (the connective pattern always binds a remainder; a
+    // no-rest exact-match rule is a later slice).
+    let rest = rest_name?;
+    let k = elements.len();
+    // The σ variable order: the k element vars (first-occurrence), then `rest`. Linear (Var)
+    // elements only — a nested/non-linear element defers the rule.
+    let mut vars: Vec<Ident> = Vec::with_capacity(k + 1);
+    for element in elements {
+        match element {
+            Pattern::Term(PatternTerm::Var(name)) => vars.push(name.clone()),
+            _ => return None,
+        }
+    }
+    vars.push(rest);
+    // The RHS `⟦R⟧σ` in the AC receiver's `k+2`-formal frame (`reflect_term_par` at `k+1`).
+    let rhs = reflect_term_par(right, &vars, k + 1, language_fingerprint).ok()?;
+    Some(ac_sigma_receiver_par(&op, k, rhs, source))
+}
+
 /// The `n`-th De Bruijn formal of a receiver with `total_formals` formals
 /// (`BoundVar(total_formals - 1 - formal_index)`). Mirrors `lower::bound_formal`.
 fn bound_formal(total_formals: usize, formal_index: usize) -> Par {
@@ -2093,6 +2135,47 @@ mod tests {
             boundvar_index(&outer.ps[1]),
             Some(2),
             "element x = BoundVar(2) — the AC receiver frame (k+2-1 for k=1)"
+        );
+    }
+
+    #[test]
+    fn ac_rule_receiver_un_skips_a_hashbag_rule() {
+        // PPar{x, ...rest} ~> Wrap(x): a HashBag AC base rewrite un-skips to a working AC receiver.
+        let fp = "mettail-langdef-v1:0011223344556677";
+        let left = apply(
+            "PPar",
+            vec![Pattern::Collection {
+                coll_type: Some(CollectionType::HashBag),
+                elements: vec![var_pattern("x")],
+                rest: Some(ident("rest")),
+            }],
+        );
+        let right = apply("Wrap", vec![var_pattern("x")]);
+        let receiver =
+            ac_rule_receiver(&left, &right, new_gstring_par("c_ac".to_string(), Vec::new(), false), fp)
+                .expect("the HashBag AC rule un-skips to an AC receiver");
+
+        // A persistent receive over [connective collection pattern, out].
+        let recv = &receiver.receives[0];
+        assert!(recv.persistent, "the AC receiver is persistent");
+        assert_eq!(recv.binds[0].patterns.len(), 2, "[collection pattern, out]");
+        let pattern = &recv.binds[0].patterns[0];
+        assert_eq!(pattern.sends.len(), 1, "k=1 element send-pattern");
+        assert!(pattern.connective_used, "the collection pattern is connective");
+
+        // The body fires ⟦Wrap(x)⟧ = EList[tag_Wrap, BoundVar(2)] on out = BoundVar(0).
+        let send = &recv.body.as_ref().unwrap().sends[0];
+        assert_eq!(boundvar_index(send.chan.as_ref().unwrap()), Some(0), "fires on out = BoundVar(0)");
+        let rhs = elist_body(&send.data[0]);
+        assert_eq!(rhs.ps.len(), 2, "Wrap tag + the element σ");
+        assert_eq!(boundvar_index(&rhs.ps[1]), Some(2), "element x = BoundVar(2) (the AC frame)");
+
+        // A non-AC rule (structural Swap) is NOT un-skipped — stays on its existing path.
+        let swap = apply("Swap", vec![var_pattern("a"), var_pattern("b")]);
+        assert!(
+            ac_rule_receiver(&swap, &right, new_gstring_par("c".to_string(), Vec::new(), false), fp)
+                .is_none(),
+            "a non-HashBag LHS is not un-skipped"
         );
     }
 
