@@ -1915,12 +1915,19 @@ pub(crate) fn generate_typed_dovetail_report(language: &LanguageDef) -> TokenStr
     // structural non-linear AC rewrite (Ambient `OpenRule`) reduces on THIS typed native lane, so its
     // report is produced by this body. Without carrying its resolved σ, the runtime structural-AC
     // σ-injection F-fn would have no firing to read.
+    // Stage 3f: the NATIVE-SCALAR-FOLD family (`rho_net_native_fold_injection_sites`) matters HERE —
+    // a `fold` native scalar arithmetic (`AddInt`) reduces to its host-computed value on THIS typed
+    // fold path (the native rule + op enum), so its report is produced by this body. Without
+    // carrying its resolved σ + contractum, the runtime native-fold σ-injection F-fn would have no
+    // firing (and no contractum) to read — empirically the pure scalar fold records `#justifications
+    // = 0` on the untyped String path.
     let populate_rewrite_justifications =
         !mettail_rholang_codegen::rho_net_injection_sites(language).is_empty()
             || !mettail_rholang_codegen::rho_net_ac_injection_sites(language).is_empty()
             || !mettail_rholang_codegen::rho_net_contextual_injection_sites(language).is_empty()
             || !mettail_rholang_codegen::rho_net_subst_injection_sites(language).is_empty()
             || !mettail_rholang_codegen::rho_net_native_injection_sites(language).is_empty()
+            || !mettail_rholang_codegen::rho_net_native_fold_injection_sites(language).is_empty()
             || !mettail_rholang_codegen::rho_net_comm_injection_sites(language).is_empty()
             || !mettail_rholang_codegen::rho_net_structural_ac_injection_sites(language).is_empty();
     // The report `let` binding (mut only when we populate σ), the σ-resolution statement (resolves

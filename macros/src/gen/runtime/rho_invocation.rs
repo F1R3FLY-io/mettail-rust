@@ -482,6 +482,13 @@ pub fn generate_rho_net_invocation(language: &LanguageDef) -> TokenStream {
     // and sending it on the dispatch channel (the installed NativeSystemProcessRewrite receiver
     // forwards that single slot on `@out`).
     let native_sites = mettail_rholang_codegen::rho_net_native_injection_sites(language);
+    // Stage 3f: the native-SCALAR-FOLD firing sites — a `fold` native scalar arithmetic
+    // (`RhoNetLoweredRule::NativeFold`, e.g. `AddInt`) fires by reflecting the firing's CONTRACTUM
+    // (the WHOLE reduced value the host computed via its trusted `fold` handler — there is no
+    // structural RHS) and sending it on the dispatch channel (the installed `NativeFold` receiver
+    // forwards that single slot on `@out`). The scalar-fold analogue of the Stage 3e native arm —
+    // the SAME contractum lane.
+    let native_fold_sites = mettail_rholang_codegen::rho_net_native_fold_injection_sites(language);
     // Stage 3b / A-4: the COMM firing sites — a canonical single-receive Rholang communication
     // rewrite (`RhoNetLoweredRule::CommRewrite`) fires by reconstructing the WHOLE operand bag from
     // σ (its structured elements ⊎ the `rest` children) and passing the host-computed reduct
@@ -501,6 +508,7 @@ pub fn generate_rho_net_invocation(language: &LanguageDef) -> TokenStream {
         && ac_sites.is_empty()
         && subst_sites.is_empty()
         && native_sites.is_empty()
+        && native_fold_sites.is_empty()
         && comm_sites.is_empty()
         && structural_ac_sites.is_empty()
     {
@@ -655,6 +663,37 @@ pub fn generate_rho_net_invocation(language: &LanguageDef) -> TokenStream {
                         let __contractum = __justification.contractum.as_ref().ok_or_else(|| {
                             ::std::format!(
                                 "Rho-net native injection for language {} has no contractum for fired rule {}",
+                                #language_lit, #label,
+                            )
+                        })?;
+                        let __arg = ::mettail_rholang_codegen::reflect_ground_term_par(
+                            &__mettail_rho_net_to_ground(__contractum), __fingerprint,
+                        );
+                        ::mettail_rholang_codegen::term_contract_call(
+                            #channel, ::std::vec![__arg], out_channel,
+                        )
+                    },
+                }
+            })
+            .collect();
+
+        // Native-scalar-fold arms (Stage 3f): a `fold` native scalar arithmetic (`AddInt`) has NO
+        // structural RHS — the WHOLE reduct is the host's trusted-handler value `a op b`, carried as
+        // the firing's contractum. IDENTICAL to the Stage 3e native (system-process) arm: reflect
+        // that contractum and send it (as the single dispatch argument) on the dispatch channel via
+        // `term_contract_call`; the installed `NativeFold` receiver is the flat one-slot receiver
+        // `for (result, out <- c) { out!(result) }` that forwards it on `@out`. By D3 a computing
+        // fold is directed motion, so it fires as a COMM (a lossless cast would be congruence).
+        let native_fold_site_arms: Vec<TokenStream> = native_fold_sites
+            .iter()
+            .map(|site| {
+                let label = lit(&site.rule_label);
+                let channel = lit(&site.channel);
+                quote! {
+                    #label => {
+                        let __contractum = __justification.contractum.as_ref().ok_or_else(|| {
+                            ::std::format!(
+                                "Rho-net native-fold injection for language {} has no contractum for fired rule {}",
                                 #language_lit, #label,
                             )
                         })?;
@@ -934,6 +973,7 @@ pub fn generate_rho_net_invocation(language: &LanguageDef) -> TokenStream {
                 #(#ac_site_arms)*
                 #(#subst_site_arms)*
                 #(#native_site_arms)*
+                #(#native_fold_site_arms)*
                 #(#comm_site_arms)*
                 #(#structural_ac_site_arms)*
                 __other => {

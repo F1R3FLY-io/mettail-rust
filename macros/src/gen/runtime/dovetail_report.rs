@@ -60,6 +60,20 @@ pub(crate) fn needs_typed_dovetail_path(language: &LanguageDef) -> bool {
     // typed path. (Byte-identical for every language with no native injection site.)
     let has_native_system_process =
         !mettail_rholang_codegen::rho_net_native_injection_sites(language).is_empty();
+    // Stage 3f: a native SCALAR FOLD (`AddInt`, `SubInt` — a `fold` whose native-SCALAR output the
+    // Rho scalar path DOES lower to an in-Rho contract, so it is classified `NativeFold` rather than
+    // the rejected `NativeSystemProcess`) reduces to its host-computed value on the TYPED fold path
+    // (the native rule + op enum), for the SAME reason as `has_native_system_process`: the
+    // `has_native_fold` gate above deliberately skips native-scalar-output folds, so a pure
+    // scalar-fold language (e.g. `NativeFoldDemo`) would otherwise take the untyped String path —
+    // where the fold reduces but records NO rewrite justification (empirically: `#justifications =
+    // 0`), leaving the native-fold σ-injection with no firing (and no contractum) to read. Its
+    // materialized `NativeFold` dispatch receiver (`rho_net_native_fold_injection_sites`) signals
+    // exactly this: the native scalar fold must fire on the typed path. (Byte-identical for every
+    // language with no native-fold injection site — the Calculator already reaches the typed path
+    // via its non-native-output Proc-cast folds, so its `||` result is unchanged.)
+    let has_native_fold_rewrite =
+        !mettail_rholang_codegen::rho_net_native_fold_injection_sites(language).is_empty();
     // (A-3) A canonical single-receive Rholang COMMUNICATION rule ([`is_comm_rewrite`]) is a
     // TYPED native firing: its `(PPar { (PFor N cont), (POutput N Q), ...rest })` LHS is a
     // NON-LINEAR AC pattern (Blocker 2) over a BINDER element (the substitution `cont[Q/y]` needs
@@ -93,6 +107,7 @@ pub(crate) fn needs_typed_dovetail_path(language: &LanguageDef) -> bool {
     has_native_fold
         || has_substitution_rewrite
         || has_native_system_process
+        || has_native_fold_rewrite
         || has_comm_rewrite
         || has_structural_ac_rewrite
 }
@@ -1469,12 +1484,18 @@ pub fn generate_dovetail_report(language: &LanguageDef) -> TokenStream {
     // native value) from `rewrite_justifications` — so a language whose ONLY reducing rules are
     // native processes (e.g. NativeDemo) must ALSO carry the resolved σ provenance, or the native
     // injection F-fn has no firing (and no contractum) to read.
+    // Stage 3f: a native SCALAR FOLD (`AddInt`) that materialized to a `NativeFold` dispatch
+    // receiver is a firing site too — its `rho_net_native_fold_injection_sites` entry drives the
+    // runtime native-fold σ-injection, which reads the firing's CONTRACTUM (the reduced value) from
+    // `rewrite_justifications`. (A pure scalar-fold language routes to the TYPED path, so this
+    // non-typed gate is defensive/symmetric with the native-system-process disjunct above.)
     let populate_rewrite_justifications =
         !mettail_rholang_codegen::rho_net_injection_sites(language).is_empty()
             || !mettail_rholang_codegen::rho_net_ac_injection_sites(language).is_empty()
             || !mettail_rholang_codegen::rho_net_contextual_injection_sites(language).is_empty()
             || !mettail_rholang_codegen::rho_net_subst_injection_sites(language).is_empty()
-            || !mettail_rholang_codegen::rho_net_native_injection_sites(language).is_empty();
+            || !mettail_rholang_codegen::rho_net_native_injection_sites(language).is_empty()
+            || !mettail_rholang_codegen::rho_net_native_fold_injection_sites(language).is_empty();
     let report_projection: TokenStream = if populate_rewrite_justifications {
         quote! {
             // Bare-ify a generated e-graph op / rule label to its source identity:
@@ -1926,9 +1947,18 @@ mod tests {
             "#,
         );
         assert!(!needs_normal_term(&language));
-        // It also never reaches the typed-fold path (native output stays on the String path),
-        // so the method is doubly excluded for it.
-        assert!(!needs_typed_fold_path(&language));
+        // Stage 3f: it DOES now reach the typed-fold path. A native SCALAR fold (`AddInt`, whose
+        // `+` lowers to an in-Rho scalar contract, so it is classified `NativeFold` and surfaces a
+        // native-fold FIRING site) reduces to its host-computed value on the TYPED fold path, so
+        // its fold can fire as a COMM (D2(f)/D3). Before Stage 3f it stayed on the untyped String
+        // path — where the fold reduced but recorded NO rewrite justification for the native-fold
+        // σ-injection to read. `needs_normal_term` and `needs_typed_fold_path` are independent
+        // gates: the fold routes typed to fire, but still needs no `dovetail_normal_term`.
+        assert!(needs_typed_fold_path(&language));
+        assert!(
+            !mettail_rholang_codegen::rho_net_native_fold_injection_sites(&language).is_empty(),
+            "a `fold` scalar op must surface a native-fold firing site (the reason it routes typed)"
+        );
     }
 
     #[test]

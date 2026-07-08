@@ -97,7 +97,39 @@ pub enum UnsupportedFamily {
 /// contribute no `Par` to [`RhoNetLowered::installed_program_par`]).
 #[derive(Debug, Clone, PartialEq)]
 pub enum RhoNetLoweredRule {
-    /// Scalar native-fold reusing the proven scalar operator contract.
+    /// A native SCALAR fold `AddInt(a, b) ~> a + b` (a `![…] fold` HOL term whose output is a
+    /// native scalar and whose operator the Rho scalar path DOES lower to an in-Rho contract —
+    /// `+`, `-`, `*`, `==` — hence classified `RhoNetRuleKind::NativeFold`, not the rejected
+    /// `NativeSystemProcess` family) lowered to a persistent flat DISPATCH RECEIVER whose body
+    /// forwards the host-computed reduced value (Stage 3f, the scalar-fold analogue of
+    /// [`Self::NativeSystemProcessRewrite`]). By the fold-vs-equation criterion (D3, INV-9) a
+    /// native COMPUTE is directed motion changing a CLTS barb, so it fires as a COMM (a lossless
+    /// iso coercion / `NormCast` would instead be compile-time congruence — see
+    /// [`Self::CongruenceClosure`]).
+    ///
+    /// model-b: the host (Dovetail) matches `AddInt(a, b)` AND computes the reduced value `a + b`
+    /// via its trusted `fold` handler, and the reduced value reflects to the receiver's single
+    /// ground σ slot, which the body emits as `⟦value⟧`. The receiver is the flat one-slot
+    /// [`sigma_receiver_par`] `for (result, out <- c) { out!(result) }` — IDENTICAL to
+    /// [`Self::NativeSystemProcessRewrite`] — resting on the rule's dispatch channel
+    /// (`RhoNetRule::input_channels.first()`, the `sa:scalar/{label}` trace); the native-fold
+    /// injection site ([`rho_net_native_fold_injection_sites`]) delivers the firing's CONTRACTUM
+    /// (the reduced value, carried on [`RuntimeRewriteJustification::contractum`]) in that slot.
+    /// Materialized/installed exactly like [`Self::NativeSystemProcessRewrite`] — so native-scalar
+    /// firing rides the same install∥call seam. The structural rendezvous (the COMM on the fold's
+    /// dedicated dispatch channel) is real; only the PAYLOAD is delegated to the trusted handler.
+    ///
+    /// This same variant ALSO carries the disposition of a NON-`fold` scalar op (a `step`
+    /// comparison, or a bare scalar constructor): such an op has no funded-best contractum, so its
+    /// `par` is instead the Model-T Rho SCALAR CONTRACT (`contract @"L"(@a, @b, ret){ret!(a op b)}`,
+    /// [`lower_native_fold`]) — recognized and installed, but never driven by the Model-N native-fold
+    /// σ-injection (it surfaces no native-fold injection site). Only a `fold` op gets the firing
+    /// dispatch receiver; the discriminator is [`lower_native_fold`].
+    ///
+    /// FV: `formal/rocq/rho_bridge/theories/FoldMotionVsCongruence.v` (a computing fold changes a
+    /// barb ⇒ COMM, while a lossless iso preserves all barbs ⇒ congruence) +
+    /// `NativeSystemProcessBoundary.v` (total-or-reject dispatch + the emitted payload is exactly
+    /// the trusted handler's value) + the trust boundary `RhoHostObligationBoundary.v`.
     NativeFold { rule_id: String, par: Par },
     /// A base rewrite lowered to a flat σ-receiver contract.
     BaseRewrite { rule_id: String, par: Par },
@@ -443,9 +475,21 @@ pub(crate) fn lower(
         .map(|(index, term)| (rule_id_native(index, &term.label.to_string()), term))
         .collect();
 
+    // Correlate native SCALAR-FOLD rule-ids back to their source `GrammarRule` (Stage 3f). A
+    // `NativeFold` rule is keyed by `rule_id_scalar(label)` (NOT `rule_id_native`), so it correlates
+    // by the term LABEL the scalar contract carries (`RhoNetRule::label`), which is the term's
+    // constructor label — unique across `def.terms`.
+    let term_by_label: HashMap<String, &GrammarRule> = def
+        .terms
+        .iter()
+        .map(|term| (term.label.to_string(), term))
+        .collect();
+
     for rule in &program.rules {
         let lowered = match rule.kind {
-            RhoNetRuleKind::NativeFold => lower_native_fold(rule, lowering, &mut errors),
+            RhoNetRuleKind::NativeFold => {
+                lower_native_fold(rule, lowering, &term_by_label, &mut errors)
+            },
             // A grammar constructor is realized in model b by inline RHS term
             // reflection (see `reflect_term_par`), not as a standalone Rho
             // contract, so it contributes no `Par` — recognized, never
@@ -522,13 +566,69 @@ fn expected_rule_ids(def: &LanguageDef, lowering: &RhoLowering) -> Vec<String> {
     ids
 }
 
-/// Lower a `NativeFold` rule by reusing its proven scalar operator contract.
+/// Lower a `NativeFold`-classified rule (a scalar op with an in-Rho scalar contract).
+///
+/// Two dispositions, discriminated by the fold-vs-equation criterion (D3) applied to the op's
+/// evaluation mode (Stage 3f):
+///
+/// * **A `fold` native scalar op** (`AddInt(a, b) ~> a + b`, a `![a + b] fold` HOL term) is
+///   directed COMPUTE — it fires as a COMM. It lowers to the flat one-slot DISPATCH RECEIVER
+///   [`sigma_receiver_par`] `for (result, out <- c) { out!(result) }` on the rule's dispatch
+///   channel (`sa:scalar/{label}`) — IDENTICAL to [`lower_native_system_process`] — and gets a
+///   native-fold injection site ([`rho_net_native_fold_injection_sites`]). model-b: the host
+///   (Dovetail) matches AND computes the reduced value `a + b` via its trusted `fold` handler, and
+///   the firing's CONTRACTUM reflects to the receiver's single ground σ slot, which the body
+///   forwards on `@out` as `⟦value⟧`. The structural rendezvous (the COMM on the dispatch channel)
+///   is real; only the PAYLOAD is delegated (`RhoHostObligationBoundary.v`).
+///
+/// * **A NON-`fold` native scalar op** (a `step` comparison like `EqInt`, or a bare scalar
+///   constructor) has no funded-best contractum for the flat receiver to forward, so it keeps its
+///   Model-T Rho SCALAR CONTRACT artifact ([`scalar_contract_par_for`]) `contract @"L"(@a, @b,
+///   ret) { ret!(a op b) }` — recognized and installed, but NOT driven by the Model-N native-fold
+///   σ-injection (it surfaces NO native-fold injection site). This keeps a mixed scalar language
+///   installable (never a fail-close) and is byte-identical to the pre-Stage-3f behavior for every
+///   non-fold scalar op.
+///
+/// The Rho scalar contract's GInt-scalar-arg ABI differs from the reflected-ground-term σ-injection
+/// ABI, so the campaign's model-b firing forwards the host-computed contractum through the dispatch
+/// receiver rather than re-deriving `a op b` in-Rho — hence the `fold` disposition installs the
+/// dispatch receiver (Model-N), while the scalar contract remains the separate Model-T artifact
+/// (`lowering.scalar_contract_abi`, consumed by `invocation.rs`).
 fn lower_native_fold(
     rule: &RhoNetRule,
     lowering: &RhoLowering,
+    term_by_label: &HashMap<String, &GrammarRule>,
     errors: &mut Vec<RhoNetLoweringError>,
 ) -> Option<RhoNetLoweredRule> {
     let label = rule.label.as_deref().unwrap_or(rule.id.as_str());
+    // D3: a `fold` op is directed compute (fires as a COMM). `native_rule_shape` returns `Some`
+    // iff the source term is a `fold` HOL term (the SAME fold-gate the injection site uses, so the
+    // receiver and its injection agree by construction).
+    let is_fold = term_by_label
+        .get(label)
+        .and_then(|term| native_rule_shape(term))
+        .is_some();
+    if is_fold {
+        let Some(channel) = rule.input_channels.first() else {
+            errors.push(RhoNetLoweringError::RuleSourceDrift { rule_id: rule.id.clone() });
+            return None;
+        };
+        let source = match resolve_channel(channel) {
+            Ok(source) => source,
+            Err(error) => {
+                errors.push(error);
+                return None;
+            },
+        };
+        // The one-slot dispatch receiver `for (result, out <- c) { out!(result) }`: `k = 1` σ slot
+        // (the reduced value), body forwards that slot (`BoundVar(rhs_var_index(1, 0))`) —
+        // IDENTICAL to `lower_native_system_process`.
+        let rhs_par = new_boundvar_par(rhs_var_index(1, 0), Vec::new(), false);
+        let par = sigma_receiver_par(1, rhs_par, source);
+        return Some(RhoNetLoweredRule::NativeFold { rule_id: rule.id.clone(), par });
+    }
+    // Non-`fold`: keep the proven Model-T scalar operator contract (installed, never driven by the
+    // Model-N native-fold σ-injection).
     match scalar_contract_par_for(lowering, label) {
         Some(par) => Some(RhoNetLoweredRule::NativeFold { rule_id: rule.id.clone(), par }),
         None => {
@@ -550,6 +650,21 @@ fn lower_base_rewrite(
         errors.push(RhoNetLoweringError::RuleSourceDrift { rule_id: rule.id.clone() });
         return None;
     };
+
+    // D3 (fold-vs-equation criterion, INV-9): a LOSSLESS ISO COERCION — an auto-injected
+    // cast-canonicalization `NormCast<Src>To<Tgt>In<Result>` `(Cast<Src> v) ~> (Cast<Tgt>
+    // (SrcToTgt v))` (uniquely identified by its `Premise::SyntheticInjGuard`, which auto-injection
+    // adds to `NormCast*` rules ONLY) — is a SYMMETRIC representation change that preserves the
+    // value, NOT directed motion changing a CLTS barb. So it compiles to compile-time structural
+    // congruence (the host normalizes the cast in its e-graph closure), NOT a firing COMM: it
+    // lowers to a [`RhoNetLoweredRule::CongruenceClosure`] (recognized, contributes no `Par`, does
+    // NOT install a firing receiver, and — unlike an `Unsupported` fail-close — does NOT block the
+    // install boundary). This is exactly the D3 boundary a COMPUTING fold (`NativeFold`,
+    // [`lower_native_fold`]) sits on the other side of: the fold FIRES (motion), the lossless cast
+    // is CONGRUENCE (plugging). FV: `formal/rocq/rho_bridge/theories/FoldMotionVsCongruence.v`.
+    if is_lossless_cast_congruence(rewrite) {
+        return Some(RhoNetLoweredRule::CongruenceClosure { rule_id: rule.id.clone() });
+    }
 
     // Fail closed on premises the flat σ-receiver cannot enforce this slice.
     // Dovetail carries structural matching into σ, and purely-semantic
@@ -947,6 +1062,23 @@ fn rewrite_premises_receiver_safe(premises: &[Premise]) -> bool {
         Premise::BehavioralGuard(pred) => !behavioral_predicate_has_structural_component(pred),
         _ => false,
     })
+}
+
+/// D3 (fold-vs-equation criterion, INV-9): is this rewrite a LOSSLESS ISO COERCION that must be
+/// treated as compile-time structural CONGRUENCE (not a firing COMM)?
+///
+/// True iff the rewrite carries a [`Premise::SyntheticInjGuard`] — the guard auto-injection adds
+/// EXCLUSIVELY to its synthetic cast-canonicalization `NormCast<Src>To<Tgt>In<Result>` rules (see
+/// `mettail_ast::auto_inject`: the post-process loop skips any rule whose name does not start with
+/// `"NormCast"`). Such a rule `(Cast<Src> v) ~> (Cast<Tgt> (SrcToTgt v))` rewrites a cast wrapper to
+/// its canonical form — a lossless representation change over the numeric-widening lattice, NOT
+/// directed motion changing a CLTS barb — so per D3 it is congruence (plugging), never a COMM. A
+/// COMPUTING native fold ([`lower_native_fold`]) sits on the FIRING side of this exact boundary.
+fn is_lossless_cast_congruence(rewrite: &RewriteRule) -> bool {
+    rewrite
+        .premises
+        .iter()
+        .any(|premise| matches!(premise, Premise::SyntheticInjGuard { .. }))
 }
 
 /// Resolve a channel name to a Rho `GString` name, rejecting an empty name.
@@ -1542,6 +1674,62 @@ pub fn rho_net_native_injection_sites(def: &LanguageDef) -> Vec<RhoNetNativeInje
         };
         // A `NativeSystemProcessRewrite` lowered iff `native_rule_shape` succeeded, so this cannot
         // fail; a defensive `continue` keeps the derivation total.
+        let Some(rule_label) = native_rule_shape(term) else {
+            continue;
+        };
+        sites.push(RhoNetNativeInjectionSite { rule_label, channel: channel.clone() });
+    }
+    sites
+}
+
+/// Derive every native-SCALAR-FOLD σ-injection site for a language — the sites a runtime native
+/// σ-injection F-function targets for the `NativeFold` family (Stage 3f). The scalar-fold analogue
+/// of [`rho_net_native_injection_sites`], reusing the same [`RhoNetNativeInjectionSite`] shape
+/// (`(rule_label, channel)`) because both native families fire the SAME contractum lane onto the
+/// SAME flat one-slot dispatch receiver.
+///
+/// Builds the same [`RhoNetProgram`] + [`RhoNetLowered`] the `NativeFold` dispatch receivers are
+/// compiled from, keeps only the native scalar folds that lowered to a
+/// [`RhoNetLoweredRule::NativeFold`] receiver, and reports each one's Dovetail firing label
+/// (`{Category}_{Label}`, via the SAME [`native_rule_shape`] the receiver's fold-gate used) and its
+/// source dispatch channel (`sa:scalar/{label}`). Unlike the native-system-process sites (keyed by
+/// `rule_id_native`), a `NativeFold` rule is keyed by `rule_id_scalar`, so it correlates back to
+/// its source `GrammarRule` by the term LABEL the scalar rule carries.
+pub fn rho_net_native_fold_injection_sites(def: &LanguageDef) -> Vec<RhoNetNativeInjectionSite> {
+    let lowering = crate::lower::lower_language_def(def);
+    let program = RhoNetProgram::from_language_def(def, &lowering);
+    let lowered = program.lower_to_par(def, &lowering);
+
+    let rule_by_id: HashMap<&str, &RhoNetRule> = program
+        .rules
+        .iter()
+        .map(|rule| (rule.id.as_str(), rule))
+        .collect();
+    let term_by_label: HashMap<String, &GrammarRule> = def
+        .terms
+        .iter()
+        .map(|term| (term.label.to_string(), term))
+        .collect();
+
+    let mut sites = Vec::new();
+    for lowered_rule in lowered.rules() {
+        let RhoNetLoweredRule::NativeFold { rule_id, .. } = lowered_rule else {
+            continue;
+        };
+        let Some(program_rule) = rule_by_id.get(rule_id.as_str()) else {
+            continue;
+        };
+        let Some(channel) = program_rule.input_channels.first() else {
+            continue;
+        };
+        let Some(label) = program_rule.label.as_deref() else {
+            continue;
+        };
+        let Some(term) = term_by_label.get(label) else {
+            continue;
+        };
+        // A `NativeFold` receiver lowered iff its fold-gate (`native_rule_shape`) succeeded, so this
+        // cannot fail; a defensive `continue` keeps the derivation total.
         let Some(rule_label) = native_rule_shape(term) else {
             continue;
         };
@@ -3703,6 +3891,158 @@ mod tests {
                 .len(),
             2
         );
+
+        // D3 (fold-vs-equation): a BARE (non-`fold`) scalar op is NOT directed compute, so it
+        // surfaces NO native-fold FIRING site — its scalar contract is the Model-T artifact only.
+        assert!(
+            rho_net_native_fold_injection_sites(&def).is_empty(),
+            "a bare (non-fold) scalar op must surface no native-fold firing site"
+        );
+    }
+
+    /// A pure scalar fragment whose `+` op is a `fold` HOL term (`![a + b] fold`) — the Stage 3f
+    /// firing shape (mirrors `NativeFoldDemo`), contrasted against the BARE `SCALAR_FRAGMENT`.
+    const NATIVE_FOLD_FRAGMENT: &str = r#"
+        name: RhoNetLowerNativeFoldFrag,
+        types {
+            ![i64] as Int
+        }
+        terms {
+            AddInt . a:Int, b:Int |- a "+" b : Int ![a + b] fold;
+        }
+    "#;
+
+    /// D3 (Stage 3f) — the FIRING side of the fold-vs-equation criterion: a COMPUTING native scalar
+    /// `fold` (`AddInt ~> a + b`) lowers to a flat FIRING DISPATCH RECEIVER (NOT the Model-T scalar
+    /// contract) and surfaces a native-fold injection site, so it fires as a COMM. Contrast with
+    /// [`native_fold_reuses_scalar_contract_par`] (a bare non-fold op keeps its scalar contract and
+    /// surfaces NO firing site).
+    #[test]
+    fn native_scalar_fold_lowers_to_a_firing_dispatch_receiver() {
+        let def =
+            syn::parse_str::<LanguageDef>(NATIVE_FOLD_FRAGMENT).expect("fold fragment must parse");
+        let lowering = lower_language_def(&def);
+        let program = RhoNetProgram::from_language_def(&def, &lowering);
+        let lowered = program.lower_to_par(&def, &lowering);
+
+        // AddInt lowers to a `NativeFold` whose `par` is the flat one-slot DISPATCH RECEIVER
+        // `for (result, out <- sa:scalar/AddInt) { out!(result) }` — `bind_count == 2` (result +
+        // out), NOT the 3-formal scalar contract `contract @"AddInt"(@a, @b, ret)` (bind_count 3).
+        let par = lowered
+            .rules()
+            .iter()
+            .find_map(|rule| match rule {
+                RhoNetLoweredRule::NativeFold { rule_id, par } if rule_id == "rule:AddInt" => {
+                    Some(par)
+                },
+                _ => None,
+            })
+            .expect("a `fold` AddInt must lower to a NativeFold dispatch receiver");
+        let receive = par
+            .receives
+            .first()
+            .expect("the NativeFold dispatch receiver is a single persistent receive");
+        assert_eq!(
+            receive.bind_count, 2,
+            "the firing dispatch receiver binds exactly (result, out) — 2 formals, NOT the \
+             3-formal scalar contract"
+        );
+        let source = receive.binds[0]
+            .source
+            .as_ref()
+            .expect("the dispatch receiver rests on its source channel");
+        assert_eq!(
+            source,
+            &new_gstring_par("sa:scalar/AddInt".to_string(), Vec::new(), false),
+            "the firing dispatch receiver rests on the `sa:scalar/AddInt` trace channel, NOT the \
+             scalar contract's `@\"AddInt\"` channel"
+        );
+
+        // It surfaces a native-fold FIRING site (Int_AddInt) on that same dispatch channel — so the
+        // fold fires as a COMM (the accept-triad: receiver source ≡ injection channel).
+        let sites = rho_net_native_fold_injection_sites(&def);
+        assert_eq!(sites.len(), 1, "the `fold` AddInt must surface exactly one native-fold firing site");
+        assert_eq!(sites[0].rule_label, "Int_AddInt");
+        assert_eq!(sites[0].channel, "sa:scalar/AddInt");
+
+        // The program installs cleanly (the firing receiver is a real materialized contract).
+        assert!(lowered.errors().is_empty(), "a `fold` scalar language lowers without diagnostics");
+        assert!(
+            lowered.installed_program_par().is_ok(),
+            "the native-fold firing receiver installs"
+        );
+    }
+
+    /// D3 (Stage 3f) — the CONGRUENCE side of the fold-vs-equation criterion: a LOSSLESS ISO
+    /// COERCION (an auto-injected cast-canonicalization `NormCast`, identified by its
+    /// `Premise::SyntheticInjGuard`) is a symmetric representation change, NOT directed motion, so
+    /// it lowers to a `CongruenceClosure` — recognized, NO firing receiver (does not install a
+    /// σ-receiver), and — unlike a fail-closed `Unsupported` — does NOT block the install boundary.
+    /// This is the exact boundary a computing fold ([`native_scalar_fold_lowers_to_a_firing_dispatch_receiver`])
+    /// sits on the FIRING side of.
+    #[test]
+    fn lossless_cast_normcast_lowers_to_congruence_not_a_firing_receiver() {
+        // A rewrite mirroring the auto-injected `NormCast<Src>To<Tgt>In<Result>`:
+        // `(CastInt v) ~> (CastBigRat (IntToBigRat v))` carrying the `SyntheticInjGuard` premise
+        // (the sole marker of a lossless cast-canonicalization; auto-injection attaches it ONLY to
+        // `NormCast*` rules).
+        let (lowered, id) = lower_single_rewrite_full(RewriteRule {
+            name: ident("NormCastIntToBigRatInInt"),
+            type_context: Vec::new(),
+            premises: vec![Premise::SyntheticInjGuard {
+                inner_var: ident("v"),
+                source_category: ident("Int"),
+                excluded_variants: vec![ident("BoolToInt")],
+            }],
+            left: apply("CastInt", vec![var_pattern("v")]),
+            right: apply("CastBigRat", vec![apply("IntToBigRat", vec![var_pattern("v")])]),
+            is_auto_injected: true,
+        });
+
+        // It lowers to a CONGRUENCE closure — NOT a firing receiver (no `par`), NOT a fail-closed
+        // `Unsupported` (which would block the install).
+        let rule = lowered
+            .rules()
+            .iter()
+            .find(|rule| rule.rule_id() == id)
+            .expect("the NormCast rewrite must be lowered");
+        assert_eq!(
+            *rule,
+            RhoNetLoweredRule::CongruenceClosure { rule_id: id.clone() },
+            "a lossless cast (NormCast/SyntheticInjGuard) is congruence, not a firing receiver"
+        );
+        assert!(
+            rule.par().is_none(),
+            "a congruence closure installs NO firing receiver Par (D3: no COMM for a lossless iso)"
+        );
+
+        // Crucially, it does NOT block the install boundary (unlike a fail-closed side condition):
+        // the scalar contracts still install, the NormCast contributes no Par (compile-time
+        // congruence). Contrast `rewrite_premises_receiver_safe`, which would fail-close a
+        // structural side condition into an `Unsupported` that blocks the install.
+        assert!(
+            lowered.errors().is_empty(),
+            "a lossless-cast congruence records no fail-closed diagnostic, got {:?}",
+            lowered.errors()
+        );
+        assert!(
+            lowered.installed_program_par().is_ok(),
+            "the program still installs — the lossless cast is congruence, not an install blocker"
+        );
+
+        // And the discriminator itself: the SyntheticInjGuard marks it a lossless cast.
+        assert!(is_lossless_cast_congruence(&RewriteRule {
+            name: ident("NormCastIntToBigRatInInt"),
+            type_context: Vec::new(),
+            premises: vec![Premise::SyntheticInjGuard {
+                inner_var: ident("v"),
+                source_category: ident("Int"),
+                excluded_variants: Vec::new(),
+            }],
+            left: var_pattern("v"),
+            right: var_pattern("v"),
+            is_auto_injected: true,
+        }));
     }
 
     #[test]
