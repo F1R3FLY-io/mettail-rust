@@ -1,0 +1,254 @@
+//! Stage AC-U3 end-to-end: a GENERATED language's HashBag associative-commutative (AC) rewrite
+//! fires end-to-end as a COMM on the live f1r3node Rholang interpreter.
+//!
+//! `AcDemo` is a generated `language!` whose only rewrite is the linear with-rest HashBag AC base
+//! rewrite `PPar{x, ...rest} ~> Wrap(x)` over nullary `A`/`B`/`C`. The pipeline exercised here is
+//! the AC analogue of the base-rewrite σ-injection proven in `rho_net_equivalence.rs`:
+//!
+//!  1. [`AcDemoLanguage::dovetail_report_for`] saturates the AC redex, resolving + bare-ifying
+//!     each firing's σ — the matched element `x` and the residual `rest` (the canonical `PPar`
+//!     node over the multiset complement); the report producer's AC gate populates
+//!     `rewrite_justifications` (Stage AC-U3, the `rho_net_ac_injection_sites` gate).
+//!  2. the generated `rho_net_invocation_from_dovetail_to{,_firing}` / `_replay_` F-function reads
+//!     a firing, RECONSTRUCTS the whole operand bag `[σ[x]] ⊎ σ[rest].children`, reflects it to the
+//!     process-soup carrier, and assembles `c_ac!(⟦bag⟧, @out)` via `ac_contract_call`;
+//!  3. the runtime bridge runs `installed_rho_net_program_par() ∥ call` on the f1r3node RhoRuntime,
+//!     where the installed AC receiver (`ac_sigma_receiver_par`) matches the soup ORDER-
+//!     INDEPENDENTLY (native `sub_pars` / `MaximumBipartiteMatch`) inside one atomic `consume` and
+//!     fires `Wrap(element)` on `@out`.
+//!
+//! The AC matcher picks ONE element of the bag, so `OUT = Wrap(e)` for some `e` in the operand bag
+//! (`RHS[σ]` up to the receiver's re-pick). A positive OUT observation is non-vacuous evidence the
+//! AC rule fired as a COMM with the σ Dovetail computed.
+
+use std::collections::HashMap;
+
+use mettail_languages::acdemo::{AcDemoLanguage, AcDemoTerm, AcDemoTermInner, Proc};
+use mettail_rholang_codegen::{
+    lower_language_def, plan_rho_default_backend, reconstruct_language_def,
+    suggest_rejected_rule_dispositions, RhoCoverageEvidence, RhoDefaultBackendRequirements,
+    RhoGuardCoverageEvidence,
+};
+use mettail_rholang_runtime::{
+    build_rho_net_injection_invocation_from_contract,
+    build_rho_net_replay_invocation_from_contracts, PlannedRhoBackend, RhoMachineInvocation,
+};
+use mettail_runtime::{
+    Language, RuntimeObservationValue, RuntimeReflectedSubterm, RuntimeRewriteJustification,
+};
+
+/// Reconstruct AcDemo's augmented `LanguageDef` from the generated metadata's
+/// `definition_source()` and plan its Rho-default backend (the AC receiver installs alongside the
+/// structural constructors), exactly as the Rho/Dovetail installer does. Returns the planned
+/// backend and the plan's definition fingerprint (which must equal the generated metadata
+/// fingerprint the AC injection reflects σ with).
+fn ac_demo_backend() -> (PlannedRhoBackend, String) {
+    let source = AcDemoLanguage
+        .metadata()
+        .definition_source()
+        .expect("generated AcDemoLanguage must expose its definition_source");
+    let def = reconstruct_language_def(source)
+        .expect("AcDemoLanguage definition_source must reconstruct as a LanguageDef");
+
+    let lowering = lower_language_def(&def);
+    let requirements = RhoDefaultBackendRequirements {
+        coverage: RhoCoverageEvidence::CoveredRejectedRules(suggest_rejected_rule_dispositions(
+            &def, &lowering,
+        )),
+        guard_coverage: RhoGuardCoverageEvidence::NoGuardObligations,
+    };
+    let plan = plan_rho_default_backend(&def, requirements)
+        .expect("AcDemo (HashBag AC rewrite) must flip to the Rho backend");
+    let fingerprint = plan.definition_fingerprint().to_string();
+    (PlannedRhoBackend::from_plan(plan), fingerprint)
+}
+
+/// The concrete subject `PPar{A | B | C}`, built through the generated typed AST (no parse —
+/// sidesteps the keyword-`A`/`B`/`C` vs auto-`VarProc` ambiguity the linter reports).
+fn subject_bag() -> AcDemoTerm {
+    let bag = mettail_runtime::HashBag::from_iter([Proc::A, Proc::B, Proc::C]);
+    AcDemoTerm(AcDemoTermInner::Proc(Proc::PPar(bag)))
+}
+
+/// The elements of the whole operand bag a firing reconstructs: `[σ[x]] ⊎ σ[rest].children`.
+/// This is EXACTLY what the generated AC injection reflects onto the AC channel, so `OUT` must
+/// wrap one of these.
+fn reconstructed_bag_elements(justification: &RuntimeRewriteJustification) -> Vec<String> {
+    let sigma: HashMap<&str, &RuntimeReflectedSubterm> = justification
+        .sigma
+        .iter()
+        .map(|(name, subterm)| (name.as_str(), subterm))
+        .collect();
+    let x = sigma
+        .get("x")
+        .expect("the AC firing binds the element variable x");
+    let rest = sigma
+        .get("rest")
+        .expect("the AC firing binds the residual variable rest");
+    let mut elements = Vec::with_capacity(1 + rest.children.len());
+    elements.push(x.constructor.clone());
+    elements.extend(rest.children.iter().map(|child| child.constructor.clone()));
+    elements
+}
+
+/// Assert `value` is `Wrap(e)` where `e` is a nullary constructor drawn from `bag_elements`, and
+/// return the wrapped element. This is the AC RHS `Wrap(σ[picked])` where the receiver picked one
+/// element of the operand bag.
+fn assert_wraps_a_bag_element(value: &RuntimeObservationValue, bag_elements: &[String]) -> String {
+    match value {
+        RuntimeObservationValue::Term { constructor, children } => {
+            assert_eq!(constructor, "Wrap", "the AC RHS is Wrap(element), got {value:?}");
+            assert_eq!(children.len(), 1, "Wrap is unary, got {value:?}");
+            match &children[0] {
+                RuntimeObservationValue::Term {
+                    constructor: elem,
+                    children: grandchildren,
+                } => {
+                    assert!(
+                        grandchildren.is_empty(),
+                        "the wrapped element is nullary, got {value:?}"
+                    );
+                    assert!(
+                        bag_elements.contains(elem),
+                        "OUT must wrap an element of the reconstructed bag {bag_elements:?}, got Wrap({elem})"
+                    );
+                    elem.clone()
+                },
+                other => panic!("expected Wrap(nullary constructor), got Wrap({other:?})"),
+            }
+        },
+        other => panic!("expected Wrap(...), got {other:?}"),
+    }
+}
+
+/// The single-firing AC σ-injection fires the installed AC receiver as ONE COMM, landing
+/// `Wrap(element)` on OUT — where `element` is one of the whole operand bag the firing's σ
+/// reconstructs. This is the AC analogue of
+/// `dovetail_report_semantics_match_rho_machine_execution_for_swap`.
+#[tokio::test]
+async fn acdemo_ac_rewrite_fires_as_a_comm_on_the_reducer() {
+    mettail_runtime::clear_var_cache();
+    let (backend, fingerprint) = ac_demo_backend();
+
+    // Fingerprint coherence: the installed AC receiver (from the reconstructed def) and the AC
+    // σ-injection (which reflects the bag carrier with `metadata().definition_fingerprint()`)
+    // must agree, or the receiver could not recognize the reflected soup.
+    assert_eq!(
+        AcDemoLanguage.metadata().definition_fingerprint(),
+        Some(fingerprint.as_str()),
+        "planned backend fingerprint must equal the generated metadata fingerprint"
+    );
+
+    let term = subject_bag();
+
+    // (1) DOVETAIL REPORT SEMANTICS: the AC redex saturates acyclically (Complete), and the AC
+    // gate populates the firing σ provenance the injection reads.
+    let report = AcDemoLanguage::dovetail_report_for(&term, 64, 1_000_000)
+        .expect("AcDemo Dovetail report must compile");
+    assert!(
+        report.is_complete(),
+        "the acyclic AC reduction reports Complete: {:?}",
+        report.completeness
+    );
+    assert!(
+        !report.rewrite_justifications.is_empty(),
+        "the AC rewrite must surface at least one firing justification"
+    );
+    let justification = &report.rewrite_justifications[0];
+    assert_eq!(justification.rule_label, "AcStep", "the fired rule is the AC rewrite AcStep");
+    let bag_elements = reconstructed_bag_elements(justification);
+
+    // (2) The generated AC σ-injection F-function reconstructs the whole bag from σ and assembles
+    // `c_ac!(⟦bag⟧, @OUT)` via `ac_contract_call`.
+    let invocation = AcDemoLanguage::rho_net_invocation_from_dovetail_to(&term, &report, "OUT")
+        .expect("AcDemo AC σ-injection must assemble from a complete report");
+    assert_eq!(invocation.out_channel, "OUT");
+
+    // The Epic-4 bridge selects the INSTALLED-σ-receiver observation shape so the AC rule fires.
+    match build_rho_net_injection_invocation_from_contract(invocation.clone()) {
+        RhoMachineInvocation::RunRhoNetWithCallAndObserveRuntimeValues { out_channel, .. } => {
+            assert_eq!(out_channel, "OUT", "the bridge must preserve the out channel");
+        },
+        other => panic!("the AC injection must map to RunRhoNet…, got {other:?}"),
+    }
+
+    // (3) RHO-MACHINE EXECUTION: run the installed AC receiver program ∥ call and observe OUT.
+    let observation = backend
+        .run_rho_net_with_call_and_observe_runtime_values(&invocation.call, &invocation.out_channel)
+        .await
+        .expect("the AC injection must execute on the Rho runtime");
+
+    // Non-vacuity: the AC receiver fired exactly once (one atomic consume of one carrier value).
+    assert_eq!(
+        observation.observed_count(),
+        1,
+        "OUT must carry exactly one value — the AC receiver must fire (got {:?})",
+        observation.values
+    );
+
+    // EQUIVALENCE, checked against the firing's OWN σ: the AC receiver landed `Wrap(picked)` where
+    // `picked` is an element of the operand bag `[σ[x]] ⊎ σ[rest].children` the injection sent.
+    let picked = assert_wraps_a_bag_element(&observation.values[0], &bag_elements);
+    assert!(
+        matches!(picked.as_str(), "A" | "B" | "C"),
+        "the AC receiver wrapped a concrete bag element, got {picked}"
+    );
+}
+
+/// The multi-firing replay drives EVERY AC firing the report enumerates as its own atomic COMM
+/// (host `collect_ac_matches` enumerates ALL AC matches; the persistent receiver re-fires per
+/// firing). Each lands `Wrap(element)` on its own out channel. The AC analogue of
+/// `generated_replay_wiring_fires_every_firing_as_a_comm`.
+#[tokio::test]
+async fn acdemo_ac_replay_fires_every_ac_match_as_a_comm() {
+    mettail_runtime::clear_var_cache();
+    let (backend, _fingerprint) = ac_demo_backend();
+
+    let term = subject_bag();
+    let report = AcDemoLanguage::dovetail_report_for(&term, 64, 1_000_000)
+        .expect("AcDemo multi-match Dovetail report must compile");
+
+    // Every AC firing's reconstructed bag elements (the universe OUT_i may wrap), by firing index.
+    let per_firing_bags: Vec<Vec<String>> = report
+        .rewrite_justifications
+        .iter()
+        .map(reconstructed_bag_elements)
+        .collect();
+
+    // Generated wiring: one AC injection per firing (distinct out channel), then the replay bridge.
+    let injections =
+        AcDemoLanguage::rho_net_replay_invocation_from_dovetail_to(&term, &report, "OUT")
+            .expect("the generated replay method must build one AC injection per firing");
+    assert_eq!(
+        injections.len(),
+        report.rewrite_justifications.len(),
+        "one AC injection per firing"
+    );
+    assert!(!injections.is_empty(), "the AC redex must fire at least once");
+
+    let firings = match build_rho_net_replay_invocation_from_contracts(injections) {
+        RhoMachineInvocation::RunRhoNetReplayAndObserveRuntimeValues { firings } => firings,
+        other => panic!("the replay bridge must map to RunRhoNetReplay…, got {other:?}"),
+    };
+
+    let observation = backend
+        .run_rho_net_replay_and_observe_runtime_values(&firings)
+        .await
+        .expect("the generated AC replay wiring must execute on the Rho runtime");
+
+    // Every firing fired as a COMM: one observation per firing.
+    assert_eq!(
+        observation.observed_count(),
+        per_firing_bags.len(),
+        "every AC firing fires as its own COMM (got {:?})",
+        observation.values
+    );
+
+    // Every observed value is `Wrap(e)` for a concrete bag element `e ∈ {A, B, C}` — the AC RHS
+    // under the receiver's per-firing pick. (The values arrive in nondeterministic order across
+    // the parallel out channels, so this is a set-level assertion.)
+    let universe: Vec<String> = vec!["A".to_string(), "B".to_string(), "C".to_string()];
+    for value in &observation.values {
+        assert_wraps_a_bag_element(value, &universe);
+    }
+}

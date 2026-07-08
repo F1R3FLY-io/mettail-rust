@@ -22,6 +22,7 @@ name = "mettail_languages"
 # (already default) to give the default build a complete runtime surface.
 default = ["all-languages", "rho-codegen", "dovetail-codegen"]
 all-languages = [
+    "ac-demo",
     "ambient",
     "appsubst",
     "calculator",
@@ -42,6 +43,7 @@ all-languages = [
     "rhocalc",
     "swap-demo",
 ]
+ac-demo = []
 ambient = []
 appsubst = []
 calculator = []

@@ -25,7 +25,7 @@ name = "mettail_rholang_runtime"
 # default `cargo nextest --workspace`. `rhocalc-runtime` transitively enables
 # `runtime-report`. The opt-in feature names below are retained only so a
 # `--no-default-features` build can still drop the heavy generated-language surface.
-default = ["rhocalc-runtime", "source-oracle", "swap-demo-runtime"]
+default = ["rhocalc-runtime", "source-oracle", "swap-demo-runtime", "ac-demo-runtime"]
 # Conversion from typed Rho observation reports into mettail_runtime::RuntimeBackendReport
 # plus the generic Language backend installer wrappers.
 runtime-report = ["dep:mettail-runtime", "dep:mettail-prattail"]
@@ -51,6 +51,17 @@ swap-demo-runtime = [
     "runtime-report",
     "dep:mettail-languages",
     "mettail-languages/swap-demo",
+    "mettail-languages/dovetail-codegen",
+    "mettail-languages/rho-codegen",
+]
+# Stage AC-U3: pulls in the generated `AcDemo` language for the end-to-end in-Rho AC
+# firing test (`rho_net_ac_firing`) — a generated HashBag AC rewrite `PPar{x, ...rest} ~>
+# Wrap(x)` firing as a COMM on the reducer. Needs the generated `dovetail_report_for` (AC σ
+# population, `dovetail-codegen`) and the AC σ-injection F-function (`rho-codegen`).
+ac-demo-runtime = [
+    "runtime-report",
+    "dep:mettail-languages",
+    "mettail-languages/ac-demo",
     "mettail-languages/dovetail-codegen",
     "mettail-languages/rho-codegen",
 ]
@@ -123,6 +134,11 @@ required-features = ["runtime-report"]
 name = "rho_net_equivalence"
 path = "tests/rho_net_equivalence.rs"
 required-features = ["swap-demo-runtime"]
+
+[[test]]
+name = "rho_net_ac_firing"
+path = "tests/rho_net_ac_firing.rs"
+required-features = ["ac-demo-runtime"]
 
 [[test]]
 name = "rho_comm_oracle"

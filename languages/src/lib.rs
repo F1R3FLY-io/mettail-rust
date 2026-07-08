@@ -9,6 +9,8 @@
     unused_imports, // generated parser code may include unused imports
 )]
 
+#[cfg(feature = "ac-demo")]
+pub mod acdemo;
 #[cfg(feature = "ambient")]
 pub mod ambient;
 #[cfg(feature = "appsubst")]
@@ -31,8 +33,6 @@ pub mod class3opt;
 #[cfg(feature = "fortran_model")]
 pub mod fortran_model;
 // PIECE 3: keyword-reservation ENABLED (`auto`) twin of fortran_model.
-#[cfg(feature = "reserved_model")]
-pub mod reserved_model;
 #[cfg(feature = "guarded-rho")]
 pub mod guarded_rho;
 #[cfg(feature = "lambda")]
@@ -43,6 +43,8 @@ pub mod led_test;
 pub mod optsmoke;
 #[cfg(feature = "refinementsmoke")]
 pub mod refinementsmoke;
+#[cfg(feature = "reserved_model")]
+pub mod reserved_model;
 #[cfg(feature = "rhocalc")]
 pub mod rhocalc;
 #[cfg(feature = "swap-demo")]
