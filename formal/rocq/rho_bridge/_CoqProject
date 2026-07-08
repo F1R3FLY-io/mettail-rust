@@ -51,3 +51,10 @@ theories/GeneratedLanguageInstallation.v
 theories/OracleQuotientEquivalence.v
 theories/RhoGuardedCommSoundness.v
 theories/HeldFoldContractSound.v
+# FV (ix) — the Stage 3 in-Rho matching encoder is total-or-reject + persistence-preserving
+# (InRhoEncoderTotalOrReject): the encoder partitions every rewrite into a matched-in-Rho
+# automaton entry or a reasoned deferral (total/sound/disjoint/count), the capability gate
+# admits in-Rho matching iff every fired rule is matchable, and appending the transient
+# (network + spread) per-firing call preserves the installed σ-receivers' persistent-input
+# count. Companion, at the in-Rho encoder, to RhoLoweringTotalOrRejects's install boundary.
+theories/InRhoEncoderTotalOrReject.v
