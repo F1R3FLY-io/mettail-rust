@@ -90,8 +90,8 @@ pub mod rho_net_lower;
 pub mod rho_net_ruleset;
 pub mod validate;
 pub use rho_net_ruleset::{
-    compile_in_rho_matching_ruleset, convert_lhs_pattern, DeferReason, DeferredRewrite,
-    InRhoMatchingRuleset, PatternConvertReject,
+    compile_in_rho_matching_ruleset, convert_lhs_pattern, in_rho_match_call_par, DeferReason,
+    DeferredRewrite, InRhoMatchingRuleset, PatternConvertReject,
 };
 pub use rho_net_automaton::{
     automaton_receiver_network_par, multi_pattern_receiver_network_par, AutomatonAcceptTarget,

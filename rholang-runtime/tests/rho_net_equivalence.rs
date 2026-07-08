@@ -31,8 +31,9 @@ use dovetail::rules::Pattern;
 use dovetail::set_automaton::{AutomatonNode, PatternId, SetAutomaton};
 use mettail_languages::swapdemo::{Proc, SwapDemoLanguage, SwapDemoTerm};
 use mettail_rholang_codegen::{
-    automaton_receiver_network_par, compile_in_rho_matching_ruleset, lower_language_def,
-    multi_pattern_receiver_network_par, plan_rho_default_backend, reconstruct_language_def,
+    automaton_receiver_network_par, compile_in_rho_matching_ruleset, in_rho_match_call_par,
+    lower_language_def, multi_pattern_receiver_network_par, plan_rho_default_backend,
+    reconstruct_language_def,
     rho_net_injection_sites, spread_term_par, suggest_rejected_rule_dispositions,
     AutomatonAcceptTarget, GroundTerm, RhoCoverageEvidence, RhoDefaultBackendRequirements,
     RhoGuardCoverageEvidence, RhoNetRuleKind,
@@ -778,6 +779,51 @@ fn stage3_swapdemo_ruleset_compiles_the_base_rewrite_coherently() {
     // One shared language fingerprint, coherent with the plan's.
     let (_backend, fingerprint) = swap_demo_backend();
     assert_eq!(ruleset.language_fingerprint, fingerprint, "one shared language fingerprint");
+}
+
+/// Stage 3 piece 3: the WHOLE chain from the DERIVED ruleset (not hand-built). Swap(A, B)
+/// is matched in Rho by the compiled automaton over the spread — the host does NOT inject
+/// σ — and fires the SwapStep σ-receiver → Pair(B, A). This is `m1_matches_swap` with the
+/// automaton, accept channel, and spread ALL derived from SwapDemo's `LanguageDef`.
+#[tokio::test]
+async fn stage3_swapdemo_matches_and_fires_from_the_derived_ruleset() {
+    mettail_runtime::clear_var_cache();
+    let (backend, _fingerprint) = swap_demo_backend();
+    let source = SwapDemoLanguage
+        .metadata()
+        .definition_source()
+        .expect("SwapDemo exposes its definition source");
+    let def = reconstruct_language_def(source).expect("SwapDemo def reconstructs");
+    let ruleset = compile_in_rho_matching_ruleset(&def);
+
+    let subject = GroundTerm::new(
+        "Swap",
+        vec![GroundTerm::new("A", Vec::new()), GroundTerm::new("B", Vec::new())],
+    );
+    let call = in_rho_match_call_par(&ruleset, &subject, "site0", "OUT")
+        .expect("the derived ruleset serializes a match call");
+    let observation = backend
+        .run_rho_net_with_call_and_observe_runtime_values(&call, "OUT")
+        .await
+        .expect("the in-Rho match + firing must execute");
+
+    assert_eq!(
+        observation.observed_count(),
+        1,
+        "the derived ruleset matched Swap(A, B) in Rho and fired once (got {:?})",
+        observation.values
+    );
+    let pair_b_a = RuntimeObservationValue::Term {
+        constructor: "Pair".to_string(),
+        children: vec![
+            RuntimeObservationValue::Term { constructor: "B".to_string(), children: Vec::new() },
+            RuntimeObservationValue::Term { constructor: "A".to_string(), children: Vec::new() },
+        ],
+    };
+    assert_eq!(
+        observation.values[0], pair_b_a,
+        "Swap(A, B) matched from the derived ruleset → Pair(B, A)"
+    );
 }
 
 #[test]

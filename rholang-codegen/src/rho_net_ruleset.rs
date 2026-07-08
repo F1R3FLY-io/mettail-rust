@@ -22,6 +22,12 @@ use dovetail::set_automaton::{PatternId, SetAutomaton};
 use mettail_ast::identity::language_definition_fingerprint;
 use mettail_ast::language::LanguageDef;
 use mettail_ast::pattern::{Pattern, PatternTerm};
+use models::rhoapi::Par;
+
+use crate::rho_net_automaton::{
+    multi_pattern_receiver_network_par, AutomatonAcceptTarget, AutomatonUnsupported,
+};
+use crate::rho_net_lower::{spread_term_par, GroundTerm};
 
 /// Why an LHS pattern has no structural set-automaton image (fail-closed to a later
 /// stage rather than mis-compiling it into a wrong automaton).
@@ -173,6 +179,40 @@ pub fn compile_in_rho_matching_ruleset(def: &LanguageDef) -> InRhoMatchingRulese
     };
 
     InRhoMatchingRuleset { automaton, accept_channels, language_fingerprint, deferred }
+}
+
+/// Build the per-firing `call` that matches `subject` in Rho against `ruleset`: the M2a
+/// receiver network composed with the spread of the subject, at a fresh `site` nonce. Run
+/// as `installed_σ_receiver_program ∥ call`, the network matches the spread ON the
+/// interpreter (the τ `sa:` COMMs) and on accept fires the rule's σ-receiver. The network
+/// is SINGLE-SHOT (O1 symbol-once), so it rides the per-firing call, not the persistent
+/// install; a fresh `site` per firing keeps redex sites disjoint.
+///
+/// Every channel and tag flows from `ruleset` (one fingerprint, the σ-receiver-source
+/// accept channels), so the accept triad and the fingerprint stay coherent by construction.
+pub fn in_rho_match_call_par(
+    ruleset: &InRhoMatchingRuleset,
+    subject: &GroundTerm,
+    site: &str,
+    out_channel: &str,
+) -> Result<Par, AutomatonUnsupported> {
+    let targets: Vec<AutomatonAcceptTarget> = ruleset
+        .accept_channels
+        .iter()
+        .map(|(pattern, accept_channel)| AutomatonAcceptTarget {
+            pattern: *pattern,
+            accept_channel: accept_channel.clone(),
+            out_channel: out_channel.to_string(),
+        })
+        .collect();
+    let network = multi_pattern_receiver_network_par(
+        &ruleset.automaton.view(),
+        site,
+        &targets,
+        &ruleset.language_fingerprint,
+    )?;
+    let spread = spread_term_par(subject, &ruleset.language_fingerprint, site);
+    Ok(network.append(spread))
 }
 
 #[cfg(test)]
