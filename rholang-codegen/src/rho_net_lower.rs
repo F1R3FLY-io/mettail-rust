@@ -1030,6 +1030,45 @@ fn sigma_receiver_par(k: usize, rhs_par: Par, source: Par) -> Par {
     Par::default().with_receives(vec![receive])
 }
 
+/// Build the AC receiver for a HashBag base rewrite `op{L_1..L_k, ...rest} ~> R`: a persistent
+/// `for( <ac_bag_pattern(op,k)> , out <- source ){ out!(rhs_par) }` over the AC channel. The
+/// connective collection pattern matches the reflected bag carrier ORDER-INDEPENDENTLY (the
+/// native `sub_pars` / `MaximumBipartiteMatch`), binding the `k` element σ slots (`FreeVar(0..k-1)`),
+/// the residual `rest` (`FreeVar(k)`), and `out` (`FreeVar(k+1)`); the body fires `rhs_par` on
+/// `out` (`BoundVar(0)`). `rhs_par` = `⟦R⟧σ` must reference element `i` as `BoundVar(k+1-i)` and
+/// `rest` as `BoundVar(1)` (the reverse De Bruijn over the `k+2` bind free vars). Verified end to
+/// end by `ac_receiver_fires_the_matched_element_on_the_dynamic_out`.
+pub fn ac_sigma_receiver_par(op: &str, k: usize, rhs_par: Par, source: Par) -> Par {
+    let free_count = k + 2; // k elements + rest + out
+    let out_channel = bound_formal(free_count, k + 1); // out = BoundVar(0)
+    let body_free = union(rhs_par.locally_free.clone(), create_bit_vector(&[0]));
+    let body = new_send_par(
+        out_channel,
+        vec![rhs_par],
+        false,
+        body_free.clone(),
+        false,
+        body_free,
+        false,
+    );
+    let receive = Receive {
+        binds: vec![ReceiveBind {
+            patterns: vec![ac_bag_pattern(op, k), new_freevar_par((k + 1) as i32, Vec::new())],
+            source: Some(source),
+            remainder: None,
+            free_count: free_count as i32,
+        }],
+        body: Some(body),
+        persistent: true,
+        peek: false,
+        bind_count: free_count as i32,
+        locally_free: Vec::new(),
+        connective_used: false,
+        condition: None,
+    };
+    Par::default().with_receives(vec![receive])
+}
+
 /// The `n`-th De Bruijn formal of a receiver with `total_formals` formals
 /// (`BoundVar(total_formals - 1 - formal_index)`). Mirrors `lower::bound_formal`.
 fn bound_formal(total_formals: usize, formal_index: usize) -> Par {

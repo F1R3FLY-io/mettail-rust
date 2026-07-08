@@ -31,9 +31,10 @@ use dovetail::rules::Pattern;
 use dovetail::set_automaton::{AutomatonNode, PatternId, SetAutomaton};
 use mettail_languages::swapdemo::{Proc, SwapDemoLanguage, SwapDemoTerm};
 use mettail_rholang_codegen::{
-    ac_bag_pattern, automaton_receiver_network_par, compile_in_rho_matching_ruleset,
-    in_rho_match_call_par, lower_language_def, multi_pattern_receiver_network_par,
-    plan_rho_default_backend, reconstruct_language_def, reflect_ground_term_par,
+    ac_bag_pattern, ac_sigma_receiver_par, automaton_receiver_network_par,
+    compile_in_rho_matching_ruleset, in_rho_match_call_par, lower_language_def,
+    multi_pattern_receiver_network_par, plan_rho_default_backend, reconstruct_language_def,
+    reflect_ground_term_par,
     rho_net_injection_sites, spread_term_par, suggest_rejected_rule_dispositions,
     AutomatonAcceptTarget, CollectionType, GroundTerm, RhoCoverageEvidence, RhoDefaultBackendRequirements,
     RhoGuardCoverageEvidence, RhoNetRuleKind,
@@ -806,6 +807,55 @@ async fn ac_receiver_fires_the_matched_element_on_the_dynamic_out() {
         .expect("the in-Rho AC firing must execute");
 
     assert_eq!(observed.len(), 1, "the AC receiver fires once on the dynamic out (got {observed:?})");
+    let fired = observation_constructor(&observed[0]);
+    assert!(fired == "A" || fired == "B", "fired the matched element, got {fired}");
+}
+
+/// Stage AC1d: the codegen `ac_sigma_receiver_par` builds a WORKING AC receiver. Building the
+/// receiver via the codegen fn (not hand-built) + injecting `c_ac!(⟦PPar{A,B}⟧, @"OUT")` fires
+/// the element σ (rhs = element `BoundVar(2)`) on the out channel → OUT = [A or B], proving the
+/// fn packages the verified receiver (pattern + out + body + De Bruijn) correctly.
+#[tokio::test]
+async fn ac_sigma_receiver_par_builds_a_working_receiver() {
+    use models::create_bit_vector;
+    use models::rust::utils::{new_boundvar_par, new_gstring_par, new_send_par};
+
+    mettail_runtime::clear_var_cache();
+    let (_backend, fingerprint) = swap_demo_backend();
+
+    let soup = reflect_ground_term_par(
+        &GroundTerm::collection(
+            CollectionType::HashBag,
+            "PPar",
+            vec![GroundTerm::nullary("A"), GroundTerm::nullary("B")],
+        ),
+        &fingerprint,
+    );
+
+    // rhs = the element σ (BoundVar(k+1-0) = BoundVar(2) for k=1) — fired on out by the receiver.
+    let rhs = new_boundvar_par(2, create_bit_vector(&[2]), false);
+    let receiver = ac_sigma_receiver_par(
+        "PPar",
+        1,
+        rhs,
+        new_gstring_par("c_ac".to_string(), Vec::new(), false),
+    );
+    let injection = new_send_par(
+        new_gstring_par("c_ac".to_string(), Vec::new(), false),
+        vec![soup, new_gstring_par("OUT".to_string(), Vec::new(), false)],
+        false,
+        Vec::new(),
+        false,
+        Vec::new(),
+        false,
+    );
+
+    let program = receiver.append(injection);
+    let observed = run_normalized_par_for_oracle_and_read_runtime_values(&program, "OUT")
+        .await
+        .expect("the codegen AC receiver must fire");
+
+    assert_eq!(observed.len(), 1, "the codegen AC receiver fires once (got {observed:?})");
     let fired = observation_constructor(&observed[0]);
     assert!(fired == "A" || fired == "B", "fired the matched element, got {fired}");
 }
