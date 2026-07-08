@@ -631,6 +631,68 @@ async fn m1_matches_a_ternary_pattern_in_rho() {
     assert_eq!(observed, expected, "Triple(A, B, C) matched in Rho binds σ = [A, B, C]");
 }
 
+/// Stage 4 M-collapse (nested + deep non-nullary): the NESTED-App pattern `f(g(x))` matched
+/// against `f(g(Pair(A, B)))` ON the interpreter — the removed `NonNullaryVarSubtree` rejection.
+/// The automaton DESCENDS `loc:` head tags to the nested `g`, then COLLAPSES the DEEP Var leaf x
+/// on `cap:site0/f.0/g.0`, binding the full ⟦Pair(A, B)⟧ (an arbitrary-depth subterm at a nested
+/// hole). The σ-echo forwards σ[x] to OUT, decoded back to Pair(A, B).
+#[tokio::test]
+async fn nested_pattern_collapses_a_deep_non_nullary_leaf_in_rho() {
+    mettail_runtime::clear_var_cache();
+    let (_backend, fingerprint) = swap_demo_backend();
+
+    let automaton = SetAutomaton::compile_structural([(
+        PatternId(0),
+        Pattern::app("f".to_string(), vec![Pattern::app("g".to_string(), vec![Pattern::var("x")])]),
+    )])
+    .expect("f(g(x)) compiles");
+    let network =
+        automaton_receiver_network_par(&automaton.view(), "site0", "MATCH", "OUT", &fingerprint)
+            .expect("the nested automaton serializes");
+
+    // Subject f(g(Pair(A, B))): x is bound DEEP to the non-nullary Pair(A, B).
+    let subject = spread_term_par(
+        &GroundTerm::new(
+            "f",
+            vec![GroundTerm::new(
+                "g",
+                vec![GroundTerm::new(
+                    "Pair",
+                    vec![GroundTerm::new("A", Vec::new()), GroundTerm::new("B", Vec::new())],
+                )],
+            )],
+        ),
+        &fingerprint,
+        "site0",
+    );
+
+    let echo = sigma_echo_receiver("MATCH", 1);
+    let program = echo.append(network).append(subject);
+    let observed = run_normalized_par_for_oracle_and_read_runtime_values(&program, "OUT")
+        .await
+        .expect("the nested in-Rho match must execute");
+
+    // σ[x] is the COLLAPSED deep subterm ⟦Pair(A, B)⟧ — decoded back to Pair(A, B).
+    let expected = RuntimeObservationValue::Term {
+        constructor: "Pair".to_string(),
+        children: vec![
+            RuntimeObservationValue::Term {
+                constructor: "A".to_string(),
+                children: Vec::new(),
+            },
+            RuntimeObservationValue::Term {
+                constructor: "B".to_string(),
+                children: Vec::new(),
+            },
+        ],
+    };
+    assert_eq!(
+        observed,
+        vec![expected],
+        "f(g(x)) matched f(g(Pair(A,B))) in Rho: σ[x] = ⟦Pair(A,B)⟧ (deep collapse)"
+    );
+}
+
 /// Stage 2: `f(x, x)` matched against `f(A, A)` ON the interpreter — the `eq:` consistency
 /// join's condition `EEq(h0, h1)` holds (equal head tags), so the guarded consume commits and
 /// the accept binds the single distinct-var σ = [⟦A⟧]. The σ-echo forwards it to OUT.

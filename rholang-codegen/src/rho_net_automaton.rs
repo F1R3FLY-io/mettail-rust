@@ -1,25 +1,29 @@
-//! Stage 1 M1b: serialize a compiled positional set automaton into an in-Rho
-//! `sa:`-receiver network that MATCHES the spread subject term (M0's
+//! Serialize a compiled positional set automaton into an in-Rho `sa:`-receiver
+//! network that MATCHES the spread subject term (M0's
 //! [`spread_term_par`](crate::spread_term_par)) directly on the Rholang
 //! interpreter, and on an accepting match hands σ to the existing flat
 //! σ-receiver via its accept channel — so the base rewrite fires unchanged.
 //!
-//! Each automaton state becomes one `for`-receive (the τ symbol inspection of
-//! the two set-automaton papers): the head tag published by the spread at a
-//! node's location channel is received and `Match`-dispatched on the state's
-//! constructor. On reaching the accepting configuration the network sends
-//! `accept_channel!(σ₀,…,σ_{k-1}, @out)` — byte-identical to the message the
-//! host σ-injection builds — so the persistent `sigma_receiver_par` contract
-//! fires and lands `⟦R⟧σ` (INV-3/4/10/13 by construction).
+//! Each App state becomes one `for`-receive (the τ symbol inspection of the two
+//! set-automaton papers): the head tag published by the spread on a node's `loc:`
+//! location channel is received and `Match`-dispatched on the state's constructor
+//! (the root, then every NESTED App by descent). Each Var-leaf state instead reads
+//! the node's `cap:` COLLAPSE channel — the FULLY COLLAPSED `⟦subtree⟧` the spread's
+//! bottom-up fold publishes — so σ is correct for a matched subject of ARBITRARY
+//! depth (Stage 4 M-collapse), not just a nullary leaf. On reaching the accepting
+//! configuration the network sends `accept_channel!(σ₀,…,σ_{k-1}, @out)` — byte-
+//! identical to the message the host σ-injection builds — so the persistent
+//! `sigma_receiver_par` contract fires and lands `⟦R⟧σ` (INV-3/4/10/13 by construction).
 //!
-//! M1 scope: ONE App-rooted, linear pattern whose argument states are Var leaves
-//! matching NULLARY subterms (σ = `EList[received head tag]` = `⟦leaf⟧`). Every
-//! other shape fails closed to a later slice ([`AutomatonUnsupported`]) rather
-//! than emitting an incorrect receiver network. The De Bruijn / `locally_free`
-//! frame is validated end-to-end by the runtime match test (the RSpace reducer
-//! is the true `locally_free` oracle).
+//! Scope: App-rooted patterns, LINEAR (distinct vars) at any depth via
+//! descend-then-collapse ([`build_nested_case_body`]), plus FLAT non-linear repeats
+//! via the `eq:` consistency join over the collapsed values. A bare-variable root, a
+//! nested NON-linear repeat, or a same-op arity/partition clash fails closed to a
+//! later slice ([`AutomatonUnsupported`]) rather than emitting an incorrect network.
+//! The De Bruijn / `locally_free` frame is validated end-to-end by the runtime match
+//! tests (the RSpace reducer is the true `locally_free` oracle).
 
-use dovetail::set_automaton::{AutomatonNode, PatternId, SetAutomatonView};
+use dovetail::set_automaton::{AutomatonNode, PatternId, SetAutomatonView, StateId};
 use models::create_bit_vector;
 use models::rhoapi::expr::ExprInstance;
 use models::rhoapi::{EAnd, EEq, Expr, MatchCase, Par, Receive, ReceiveBind};
@@ -49,8 +53,11 @@ pub enum AutomatonUnsupported {
     /// one guarded `eq:` join cannot host both (one would gate the shared consume the other
     /// must not); fail closed (a per-accept `If`-gate is the follow-up).
     NonLinearSharedOp,
-    /// A Var whose matched subterm may be non-nullary — the general σ needs the
-    /// in-Rho collapse (a later slice); M1 handles nullary Var leaves only.
+    /// RESERVED (no longer emitted): a nested-App pattern child. Stage 4 M-collapse serializes
+    /// these by descending `loc:` head tags to the nested App(s) and collapsing the Var leaves on
+    /// their `cap:` channels (`build_nested_case_body`), so a non-nullary matched subterm binds
+    /// its full `⟦subtree⟧`. Kept as a public variant for API stability; a nested NON-linear
+    /// pattern (a deep-position repeat) now fails closed with [`NonLinearVariable`] instead.
     NonNullaryVarSubtree,
     /// A bare-variable root pattern — not an App-rooted rewrite the σ-receiver fires.
     VariableRootPattern,
@@ -160,20 +167,115 @@ fn parallel_accept(accepts: &[(String, String)], arity: usize, first_occ: &[usiz
     accept
 }
 
-/// Wrap the `arity` Var `for`s innermost-first around `accept`, tracking the free De
-/// Bruijn set (accept is free in `{0..arity-1}`; each wrap shifts under a binder), down
-/// to the closed (`locally_free = {}`) `Match` case body. Each child `for` reads the node's
-/// `cap:` COLLAPSE channel (`capture_root·(op,i)`), NOT the `loc:` head-tag channel — so it
-/// binds the FULLY COLLAPSED subterm `⟦subtree⟧` (M-collapse), the positional σ for a subject
-/// of arbitrary depth.
+/// Wrap the `arity` Var `for`s innermost-first around `accept`, reading the node's `cap:`
+/// COLLAPSE channels (`capture_root·(op,i)`), NOT the `loc:` head-tag channels — so each binds
+/// the FULLY COLLAPSED subterm `⟦subtree⟧` (M-collapse), the positional σ for a subject of
+/// arbitrary depth. The FLAT special case of [`wrap_capture_chain`] (the `k = arity` direct-child
+/// captures at positions `0..arity`).
 fn wrap_children(capture_root: &str, op: &str, arity: usize, accept: Par) -> Par {
+    let channels: Vec<String> = (0..arity)
+        .map(|i| spread_child_location(capture_root, op, i))
+        .collect();
+    wrap_capture_chain(&channels, accept)
+}
+
+/// Wrap the `k = capture_channels.len()` Var-leaf `for`s innermost-first around `accept`,
+/// tracking the free De Bruijn set (accept is free in `{0..k-1}`; each wrap shifts under a
+/// binder), down to the closed (`locally_free = {}`) case body. Each `for` reads one Var leaf's
+/// `cap:` COLLAPSE channel (a nested pattern's leaves live at arbitrary DFS paths), binding
+/// `⟦subtree⟧`. `capture_channels[i]` is bound as `BoundVar(k-1-i)`, so the DFS-first leaf gets
+/// the highest De Bruijn index — matching [`build_accept_send`]'s `σ_d = BoundVar(k-1-p)`.
+fn wrap_capture_chain(capture_channels: &[String], accept: Par) -> Par {
+    let k = capture_channels.len();
     let mut body = accept;
-    let mut body_free: Vec<usize> = (0..arity).collect();
-    for i in (0..arity).rev() {
-        let child_channel = spread_child_location(capture_root, op, i);
-        let receiver = for_receive(&child_channel, body, &body_free);
+    let mut body_free: Vec<usize> = (0..k).collect();
+    for channel in capture_channels.iter().rev() {
+        let receiver = for_receive(channel, body, &body_free);
         body_free = shift_under_binder(&body_free);
         body = receiver;
+    }
+    body
+}
+
+/// One nested App node the automaton must DESCEND into: its `loc:` head-tag channel and the
+/// constructor `op` whose tag the deep `Match` dispatches on (the reified τ symbol inspection at
+/// a deep position of the set-automaton papers).
+struct Descent {
+    loc_channel: String,
+    op: String,
+}
+
+/// DFS a nested pattern subtree rooted at `state` — whose head tag is published on `loc_channel`
+/// and whose collapse value is published on `cap_channel` — collecting the DESCENTS (nested App
+/// nodes, `loc:`, pre-order) and CAPTURES (Var leaves, `cap:`, DFS order) plus each leaf's var
+/// NAME (for the linearity check). A Var leaf contributes a capture; an App node contributes a
+/// descent and recurses left-to-right, so the capture order is the pattern's first-occurrence
+/// (left-to-right) variable order — the σ-receiver's formal order.
+fn collect_nested_schedule(
+    view: &SetAutomatonView<'_, String>,
+    state: StateId,
+    loc_channel: &str,
+    cap_channel: &str,
+    descents: &mut Vec<Descent>,
+    captures: &mut Vec<String>,
+    names: &mut Vec<String>,
+) {
+    match view.node(state) {
+        AutomatonNode::Var(name) => {
+            captures.push(cap_channel.to_string());
+            names.push(name.to_string());
+        },
+        AutomatonNode::App { op, args } => {
+            descents.push(Descent {
+                loc_channel: loc_channel.to_string(),
+                op: op.to_string(),
+            });
+            for (index, &arg) in args.iter().enumerate() {
+                let child_loc = spread_child_location(loc_channel, op, index);
+                let child_cap = spread_child_location(cap_channel, op, index);
+                collect_nested_schedule(
+                    view, arg, &child_loc, &child_cap, descents, captures, names,
+                );
+            }
+        },
+    }
+}
+
+/// A DESCENT receiver `for(h <- loc){ match h { op̲ => closed_body } }`: consume the nested App
+/// node's head tag on its `loc:` channel and dispatch on `op_tag` (free_count 0 — the tag is a
+/// ground discriminator), then run the closed inner body. `closed_body` MUST have
+/// `locally_free = {}` (the capture chain closes its own σ binders), so the descent binds only
+/// `h` and closes to `{}` — the nested analogue of the root Match, one level deep.
+fn wrap_descent(loc_channel: &str, op_tag: Par, closed_body: Par) -> Par {
+    let case = MatchCase {
+        pattern: Some(op_tag),
+        source: Some(closed_body),
+        free_count: 0,
+        guard: None,
+    };
+    let match_target = new_boundvar_par(0, bits(&[0]), false);
+    let match_free = bits(&[0]);
+    let match_par =
+        new_match_par(match_target, vec![case], match_free.clone(), false, match_free, false);
+    for_receive(loc_channel, match_par, &[0])
+}
+
+/// The `Match` case body for a NESTED, LINEAR entry (`descend-then-collapse`): wrap the DFS Var
+/// leaves' `cap:` captures around `accept` (the innermost closed σ frame), then wrap the nested
+/// App descents in DFS-REVERSE order (the deepest App innermost, the root's direct App children
+/// outermost). The root op's own `Match` is the shared per-op case that hosts this body, so the
+/// schedule is collected over the root's ARGS, never the root itself.
+fn build_nested_case_body(
+    capture_channels: &[String],
+    descents: &[Descent],
+    accept: Par,
+    language_fingerprint: &str,
+) -> Par {
+    let mut body = wrap_capture_chain(capture_channels, accept);
+    for descent in descents.iter().rev() {
+        let op_tag =
+            GPrivateBuilder::new_par_from_string(reflect_tag(language_fingerprint, &descent.op));
+        body = wrap_descent(&descent.loc_channel, op_tag, body);
     }
     body
 }
@@ -307,8 +409,16 @@ pub fn multi_pattern_receiver_network_par(
         return Err(AutomatonUnsupported::VariableRootPattern);
     }
 
-    // Group entries by root op (first-seen order), collecting each entry's positional
-    // accept target; reject nested-App children, non-linear vars, and op/arity clashes.
+    let root_channel = spread_root_location(root_location);
+    // Var-leaf states read the `cap:` COLLAPSE channels (fully collapsed subterms); the root
+    // Match and every nested App descent read `loc:` head-tag channels.
+    let capture_root = collapse_capture_location(root_location);
+
+    // Group entries by root op (first-seen order). A FLAT entry (all direct children are Var
+    // leaves) joins the O1/O3 partition grouping; a NESTED entry (some direct child is an App)
+    // takes the recursive descend-then-collapse path (single-entry, LINEAR). A root op is EITHER
+    // flat or nested — a shared op across the two, or two nested entries, fails closed (one `Match`
+    // hosts ONE case per op).
     struct OpGroup {
         op: String,
         arity: usize,
@@ -320,6 +430,7 @@ pub fn multi_pattern_receiver_network_par(
         accepts: Vec<(String, String)>,
     }
     let mut groups: Vec<OpGroup> = Vec::new();
+    let mut nested_cases: Vec<(String, MatchCase)> = Vec::new();
     for entry in 0..view.entry_count() {
         let root = view.entry_root_state(entry);
         let (op, args) = match view.node(root) {
@@ -327,9 +438,74 @@ pub fn multi_pattern_receiver_network_par(
             AutomatonNode::Var(_) => return Err(AutomatonUnsupported::VariableRootPattern),
         };
         let arity = args.len();
-        // Partition the positions by which distinct variable each binds (first-occurrence
-        // order). A repeated variable (`k = first_occ.len() < arity`) is matched by the
-        // `eq:` consistency join; every position must be a nullary Var leaf (M2a scope).
+        let pid = view.entry_id(entry);
+        let target = accept_targets
+            .iter()
+            .find(|t| t.pattern == pid)
+            .ok_or(AutomatonUnsupported::MissingAcceptTarget)?;
+
+        // NESTED: some direct child is an App — the automaton descends `loc:` head tags to the
+        // nested App(s) and collapses `cap:` at the Var leaves (removing the M1 rejection).
+        let is_nested = args
+            .iter()
+            .any(|&arg| matches!(view.node(arg), AutomatonNode::App { .. }));
+        if is_nested {
+            if groups.iter().any(|group| group.op == op)
+                || nested_cases.iter().any(|(nested_op, _)| *nested_op == op)
+            {
+                return Err(AutomatonUnsupported::ConflictingArityForOp);
+            }
+            // DFS the root's ARGS (the root op is this case's Match) → descents + captures.
+            let mut descents: Vec<Descent> = Vec::new();
+            let mut captures: Vec<String> = Vec::new();
+            let mut names: Vec<String> = Vec::new();
+            for (index, &arg) in args.iter().enumerate() {
+                let child_loc = spread_child_location(&root_channel, &op, index);
+                let child_cap = spread_child_location(&capture_root, &op, index);
+                collect_nested_schedule(
+                    view,
+                    arg,
+                    &child_loc,
+                    &child_cap,
+                    &mut descents,
+                    &mut captures,
+                    &mut names,
+                );
+            }
+            // LINEAR only: a repeated var across nested positions needs a deep-position
+            // consistency guard (a later slice) — fail closed.
+            let is_linear = names
+                .iter()
+                .enumerate()
+                .all(|(i, name)| !names[..i].contains(name));
+            if !is_linear {
+                return Err(AutomatonUnsupported::NonLinearVariable);
+            }
+            let k = names.len();
+            let first_occ: Vec<usize> = (0..k).collect();
+            let accept = parallel_accept(
+                &[(target.accept_channel.clone(), target.out_channel.clone())],
+                k,
+                &first_occ,
+            );
+            let body = build_nested_case_body(&captures, &descents, accept, language_fingerprint);
+            let head_tag =
+                GPrivateBuilder::new_par_from_string(reflect_tag(language_fingerprint, &op));
+            nested_cases.push((
+                op,
+                MatchCase {
+                    pattern: Some(head_tag),
+                    source: Some(body),
+                    free_count: 0,
+                    guard: None,
+                },
+            ));
+            continue;
+        }
+
+        // FLAT: partition the direct-child positions by which distinct variable each binds
+        // (first-occurrence order). A repeated variable (`k = first_occ.len() < arity`) is matched
+        // by the `eq:` consistency join.
         let mut names: Vec<String> = Vec::new();
         let mut partition: Vec<usize> = Vec::with_capacity(arity);
         let mut first_occ: Vec<usize> = Vec::new();
@@ -343,16 +519,12 @@ pub fn multi_pattern_receiver_network_par(
                         names.push(name.to_string());
                     },
                 },
+                // An App child means the entry is nested — routed to the descend path above.
                 AutomatonNode::App { .. } => {
-                    return Err(AutomatonUnsupported::NonNullaryVarSubtree)
+                    unreachable!("a nested entry (App child) takes the descend path")
                 },
             }
         }
-        let pid = view.entry_id(entry);
-        let target = accept_targets
-            .iter()
-            .find(|t| t.pattern == pid)
-            .ok_or(AutomatonUnsupported::MissingAcceptTarget)?;
         let accept = (target.accept_channel.clone(), target.out_channel.clone());
         match groups.iter_mut().find(|g| g.op == op) {
             Some(group) => {
@@ -366,24 +538,24 @@ pub fn multi_pattern_receiver_network_par(
                 }
                 group.accepts.push(accept);
             },
-            None => groups.push(OpGroup {
-                op,
-                arity,
-                partition,
-                first_occ,
-                accepts: vec![accept],
-            }),
+            None => {
+                if nested_cases.iter().any(|(nested_op, _)| *nested_op == op) {
+                    return Err(AutomatonUnsupported::ConflictingArityForOp);
+                }
+                groups.push(OpGroup {
+                    op,
+                    arity,
+                    partition,
+                    first_occ,
+                    accepts: vec![accept],
+                });
+            },
         }
     }
 
-    let root_channel = spread_root_location(root_location);
-    // The Var-leaf states read the `cap:` COLLAPSE channels (the fully collapsed subterms),
-    // NOT the `loc:` head-tag channels the root Match dispatches on.
-    let capture_root = collapse_capture_location(root_location);
-
-    // One `Match` case per distinct root op: the parallel distinct-var accept, wrapped in
-    // the linear child chain OR (for a repeated-variable partition) the `eq:`-guarded join.
-    let mut cases = Vec::with_capacity(groups.len());
+    // One `Match` case per distinct root op: the flat partition cases (linear child chain OR the
+    // `eq:`-guarded join) plus the nested descend-then-collapse cases.
+    let mut cases = Vec::with_capacity(groups.len() + nested_cases.len());
     for group in &groups {
         let accept = parallel_accept(&group.accepts, group.arity, &group.first_occ);
         let body = if group.first_occ.len() == group.arity {
@@ -399,6 +571,9 @@ pub fn multi_pattern_receiver_network_par(
             free_count: 0,
             guard: None,
         });
+    }
+    for (_op, case) in nested_cases {
+        cases.push(case);
     }
 
     // The root head tag (BoundVar(0)) is Match-dispatched; the Match is free in {0}, the
@@ -489,8 +664,13 @@ mod tests {
             automaton_receiver_network_par(&var_root.view(), "s", "acc", "OUT", "fp"),
             Err(AutomatonUnsupported::VariableRootPattern)
         );
+    }
 
-        // Nested App child (non-nullary Var subtree).
+    #[test]
+    fn serializes_a_nested_app_pattern_by_descending_then_collapsing() {
+        // f(g(x)): the M-collapse nested path. The root Match dispatches f on `loc:site0`, then
+        // DESCENDS `loc:site0/f.0` (matching g), then CAPTURES the Var leaf x on the collapse
+        // channel `cap:site0/f.0/g.0` (its ⟦subtree⟧), and the accept sends the single σ slot.
         let nested = SetAutomaton::compile_structural([(
             PatternId(0),
             Pattern::app(
@@ -499,10 +679,63 @@ mod tests {
             ),
         )])
         .unwrap();
+        let network =
+            automaton_receiver_network_par(&nested.view(), "site0", "sa:acc", "OUT", "fp")
+                .expect("a nested-App pattern now descends-then-collapses");
+        assert!(network.locally_free.is_empty(), "the nested network is a closed contract");
+
+        // Root: for(h <- loc:site0){ match h { f => <descent> } }.
+        let root = &network.receives[0];
+        assert_eq!(gstring(root.binds[0].source.as_ref().unwrap()), Some("loc:site0"));
+        let f_case = &root.body.as_ref().unwrap().matches[0].cases[0];
+        // Descent: for(h1 <- loc:site0/f.0){ match h1 { g => <capture> } }.
+        let descent = &f_case.source.as_ref().unwrap().receives[0];
+        assert_eq!(gstring(descent.binds[0].source.as_ref().unwrap()), Some("loc:site0/f.0"));
+        let g_case = &descent.body.as_ref().unwrap().matches[0].cases[0];
+        // Capture: for(v <- cap:site0/f.0/g.0){ accept }.
+        let capture = &g_case.source.as_ref().unwrap().receives[0];
         assert_eq!(
-            automaton_receiver_network_par(&nested.view(), "s", "acc", "OUT", "fp"),
-            Err(AutomatonUnsupported::NonNullaryVarSubtree)
+            gstring(capture.binds[0].source.as_ref().unwrap()),
+            Some("cap:site0/f.0/g.0"),
+            "the Var leaf captures the COLLAPSED subterm at its deep cap: channel"
         );
+        // Accept: sa:acc!( BoundVar(0), @"OUT" ) — the single σ slot ⟦subtree at f.0/g.0⟧.
+        let accept = &capture.body.as_ref().unwrap().sends[0];
+        assert_eq!(gstring(accept.chan.as_ref().unwrap()), Some("sa:acc"));
+        assert_eq!(accept.data.len(), 2, "σ[x] + @out");
+        assert_eq!(boundvar_index(&accept.data[0]), Some(0), "σ[x] = BoundVar(0)");
+        assert_eq!(gstring(&accept.data[1]), Some("OUT"));
+    }
+
+    #[test]
+    fn serializes_a_nested_pattern_with_a_flat_sibling_leaf() {
+        // f(g(x), y): x is captured DEEP (cap:site0/f.0/g.0), y is captured at the direct child
+        // (cap:site0/f.1). Both σ slots are bound INSIDE the g descent's closed frame, in DFS
+        // (first-occurrence) order [x, y] → σ[x] = BoundVar(1), σ[y] = BoundVar(0).
+        let nested = SetAutomaton::compile_structural([(
+            PatternId(0),
+            Pattern::app(
+                "f".to_string(),
+                vec![Pattern::app("g".to_string(), vec![Pattern::var("x")]), Pattern::var("y")],
+            ),
+        )])
+        .unwrap();
+        let network =
+            automaton_receiver_network_par(&nested.view(), "site0", "sa:acc", "OUT", "fp")
+                .expect("a nested pattern with a flat sibling serializes");
+        let f_case = &network.receives[0].body.as_ref().unwrap().matches[0].cases[0];
+        let descent = &f_case.source.as_ref().unwrap().receives[0];
+        let g_case = &descent.body.as_ref().unwrap().matches[0].cases[0];
+        // Inside the g descent: for(vx <- cap:site0/f.0/g.0){ for(vy <- cap:site0/f.1){ accept } }.
+        let cap_x = &g_case.source.as_ref().unwrap().receives[0];
+        assert_eq!(gstring(cap_x.binds[0].source.as_ref().unwrap()), Some("cap:site0/f.0/g.0"));
+        let cap_y = &cap_x.body.as_ref().unwrap().receives[0];
+        assert_eq!(gstring(cap_y.binds[0].source.as_ref().unwrap()), Some("cap:site0/f.1"));
+        let accept = &cap_y.body.as_ref().unwrap().sends[0];
+        assert_eq!(accept.data.len(), 3, "σ[x], σ[y], @out");
+        assert_eq!(boundvar_index(&accept.data[0]), Some(1), "σ[x] = BoundVar(1) (DFS-first)");
+        assert_eq!(boundvar_index(&accept.data[1]), Some(0), "σ[y] = BoundVar(0)");
+        assert_eq!(gstring(&accept.data[2]), Some("OUT"));
     }
 
     #[test]
