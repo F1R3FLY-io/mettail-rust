@@ -21,7 +21,8 @@
 
 use dovetail::set_automaton::{AutomatonNode, PatternId, SetAutomatonView};
 use models::create_bit_vector;
-use models::rhoapi::{MatchCase, Par, ReceiveBind};
+use models::rhoapi::expr::ExprInstance;
+use models::rhoapi::{EAnd, EEq, Expr, MatchCase, Par, Receive, ReceiveBind};
 use models::rust::rholang::implicits::GPrivateBuilder;
 use models::rust::utils::{
     new_boundvar_par, new_elist_par, new_freevar_par, new_gstring_par, new_match_par,
@@ -38,8 +39,14 @@ pub enum AutomatonUnsupported {
     /// [`automaton_receiver_network_par`] entry point — use
     /// [`multi_pattern_receiver_network_par`] for ≥2 patterns.
     MultiPattern,
-    /// A repeated LHS variable — non-linear consistency is Stage 2 (`eq:` receivers).
+    /// A repeated LHS variable in a shape Stage 2's `eq:` join cannot yet host (reserved
+    /// for the deep-position non-linear path; nullary-leaf repeats ARE handled — a guarded
+    /// polyadic join with an `EEq`/`EAnd` consistency `condition`).
     NonLinearVariable,
+    /// Two entries share a root op but induce different variable-repetition partitions —
+    /// one guarded `eq:` join cannot host both (one would gate the shared consume the other
+    /// must not); fail closed (a per-accept `If`-gate is the follow-up).
+    NonLinearSharedOp,
     /// A Var whose matched subterm may be non-nullary — the general σ needs the
     /// in-Rho collapse (a later slice); M1 handles nullary Var leaves only.
     NonNullaryVarSubtree,
@@ -92,24 +99,35 @@ fn for_receive(channel: &str, body: Par, body_free: &[usize]) -> Par {
     )
 }
 
-/// The accepting send for ONE entry: `accept_channel!(σ_0,…,σ_{k-1}, @out)` with the
-/// positional σ `σ_i = EList[BoundVar(arity-1-i)]`. The i-th Var's `for` is opened at
-/// ordinal 1+i of depth 1+arity, so at the innermost accept it is
-/// `BoundVar((1+arity)-1-(1+i)) = BoundVar(arity-1-i)`; a nullary Var subterm's spread
-/// is a single head-tag send, so `EList[received tag] = ⟦leaf⟧`. Built manually (NOT
-/// `term_contract_call`, which hardcodes empty `locally_free` for ground σ args): the
-/// σ args reference BoundVars, so the send is free in `{0..arity-1}`.
-fn build_accept_send(accept_channel: &str, out_channel: &str, arity: usize) -> Par {
-    let mut data: Vec<Par> = (0..arity)
-        .map(|i| {
-            let idx = arity - 1 - i;
+/// The accepting send for ONE entry: `accept_channel!(σ_0,…,σ_{k-1}, @out)` with ONE σ
+/// slot per DISTINCT LHS variable (`k = first_occ.len()`), `σ_d = EList[BoundVar(arity-1-p)]`
+/// where `p = first_occ[d]` is that variable's first occurrence position. The child bound
+/// at position `p` is `BoundVar(arity-1-p)` (the reverse De Bruijn convention of the `arity`
+/// child binders); a nullary Var subterm's spread is a single head-tag send, so
+/// `EList[received tag] = ⟦leaf⟧`. This distinct-var arity is the TRIAD-coherence point: the
+/// σ-receiver has `k` formals (`lower_lhs_vars` dedups repeats), so a non-linear accept must
+/// send `k` slots, not `arity`. For a LINEAR entry `first_occ = [0,…,arity-1]`, reducing to
+/// the M1/M2a positional send byte-identically. Built manually (NOT `term_contract_call`,
+/// which hardcodes empty `locally_free`): the σ args reference BoundVars, so the send is free
+/// in `{arity-1-p : p ∈ first_occ}`.
+fn build_accept_send(
+    accept_channel: &str,
+    out_channel: &str,
+    arity: usize,
+    first_occ: &[usize],
+) -> Par {
+    let mut data: Vec<Par> = first_occ
+        .iter()
+        .map(|&p| {
+            let idx = arity - 1 - p;
             let received = new_boundvar_par(idx as i32, bits(&[idx]), false);
             let free = bits(&[idx]);
             new_elist_par(vec![received], free.clone(), false, None, free, false)
         })
         .collect();
     data.push(new_gstring_par(out_channel.to_string(), Vec::new(), false));
-    let accept_free = bits(&(0..arity).collect::<Vec<_>>());
+    let free_indices: Vec<usize> = first_occ.iter().map(|&p| arity - 1 - p).collect();
+    let accept_free = bits(&free_indices);
     new_send_par(
         new_gstring_par(accept_channel.to_string(), Vec::new(), false),
         data,
@@ -122,16 +140,17 @@ fn build_accept_send(accept_channel: &str, out_channel: &str, arity: usize) -> P
 }
 
 /// The accept for one op group: the parallel composition of every entry's accept send
-/// (the O3 "share the match, announce to every rule" fan-out). For a single entry this
-/// is exactly that entry's [`build_accept_send`]. Free in `{0..arity-1}` (the shared σ
-/// BoundVars, identical across entries of the same arity).
-fn parallel_accept(accepts: &[(String, String)], arity: usize) -> Par {
+/// (the O3 "share the match, announce to every rule" fan-out). For a single entry this is
+/// exactly that entry's [`build_accept_send`]. Free in `{arity-1-p : p ∈ first_occ}` (the
+/// shared distinct-var σ BoundVars, identical across entries of the same op partition).
+fn parallel_accept(accepts: &[(String, String)], arity: usize, first_occ: &[usize]) -> Par {
     let mut accept = Par::default();
     for (accept_channel, out_channel) in accepts {
-        accept = accept.append(build_accept_send(accept_channel, out_channel, arity));
+        accept = accept.append(build_accept_send(accept_channel, out_channel, arity, first_occ));
     }
-    if arity > 0 {
-        accept.locally_free = bits(&(0..arity).collect::<Vec<_>>());
+    if !first_occ.is_empty() {
+        let free_indices: Vec<usize> = first_occ.iter().map(|&p| arity - 1 - p).collect();
+        accept.locally_free = bits(&free_indices);
     }
     accept
 }
@@ -149,6 +168,93 @@ fn wrap_children(root_channel: &str, op: &str, arity: usize, accept: Par) -> Par
         body = receiver;
     }
     body
+}
+
+/// A ground `Par` carrying the single binary expression `instance`, free in `free`.
+fn expr_par(instance: ExprInstance, free: &[usize]) -> Par {
+    Par {
+        exprs: vec![Expr { expr_instance: Some(instance) }],
+        locally_free: bits(free),
+        connective_used: false,
+        ..Par::default()
+    }
+}
+
+/// The consistency `condition` for a NON-LINEAR op partition: the conjunction (`EAnd`) of
+/// `EEq(BoundVar(arity-1-q0), BoundVar(arity-1-qj))` over every repeated variable's
+/// occurrence positions `q0 < q1 < … < q_{m-1}` (m ≥ 2). This is Def 4.9's enable-gate: the
+/// guarded `consume` commits iff every repeated occurrence bound the SAME value (name-equal
+/// head tags), and is reject-safe otherwise. Precondition: the partition has ≥1 repeat, so at
+/// least one conjunct is emitted.
+fn consistency_guard(arity: usize, partition: &[usize]) -> Par {
+    let distinct = partition.iter().copied().max().map(|d| d + 1).unwrap_or(0);
+    let mut conjuncts: Vec<(Par, Vec<usize>)> = Vec::new();
+    for d in 0..distinct {
+        let occs: Vec<usize> = (0..arity).filter(|&q| partition[q] == d).collect();
+        if occs.len() < 2 {
+            continue;
+        }
+        let idx0 = arity - 1 - occs[0];
+        for &qj in &occs[1..] {
+            let idxj = arity - 1 - qj;
+            let eq = expr_par(
+                ExprInstance::EEqBody(EEq {
+                    p1: Some(new_boundvar_par(idx0 as i32, bits(&[idx0]), false)),
+                    p2: Some(new_boundvar_par(idxj as i32, bits(&[idxj]), false)),
+                }),
+                &[idx0.min(idxj), idx0.max(idxj)],
+            );
+            conjuncts.push((eq, vec![idx0, idxj]));
+        }
+    }
+    let (mut guard, mut free) = conjuncts[0].clone();
+    for (conjunct, conjunct_free) in conjuncts.into_iter().skip(1) {
+        let mut union = free.clone();
+        union.extend(conjunct_free);
+        union.sort_unstable();
+        union.dedup();
+        guard = expr_par(ExprInstance::EAndBody(EAnd { p1: Some(guard), p2: Some(conjunct) }), &union);
+        free = union;
+    }
+    guard
+}
+
+/// Wrap `accept` in the `eq:`-guarded polyadic JOIN for a NON-LINEAR op partition: one atomic
+/// `for(h_0 <- loc:ρ/op.0 ; … ; h_{arity-1} <- loc:ρ/op.{arity-1}){ accept }` whose `condition`
+/// is [`consistency_guard`]. Unlike the nested [`wrap_children`] chain, the join binds every
+/// child in ONE receive so the depth-1-substituted guard can compare the repeated occurrences,
+/// and on inequality the reducer's `check_commit` vetoes the WHOLE consume — consuming no child
+/// (the reject-safe `merge_substs → None`, at the strongest granularity). Child `i` is
+/// `BoundVar(arity-1-i)` (the join binds flattened in bind order), so the guard and `accept`
+/// share the reverse De Bruijn frame; the receive binds all `arity` indices, closing the case
+/// body (`locally_free = {}`).
+fn join_children_receiver(
+    root_channel: &str,
+    op: &str,
+    arity: usize,
+    partition: &[usize],
+    accept: Par,
+) -> Par {
+    let binds: Vec<ReceiveBind> = (0..arity)
+        .map(|i| ReceiveBind {
+            patterns: vec![new_freevar_par(0, Vec::new())],
+            source: Some(new_gstring_par(spread_child_location(root_channel, op, i), Vec::new(), false)),
+            remainder: None,
+            free_count: 1,
+        })
+        .collect();
+    let guard = consistency_guard(arity, partition);
+    let receive = Receive {
+        binds,
+        body: Some(accept),
+        persistent: false,
+        peek: false,
+        bind_count: arity as i32,
+        locally_free: Vec::new(),
+        connective_used: false,
+        condition: Some(guard),
+    };
+    Par::default().with_receives(vec![receive])
 }
 
 /// Where an accepting match for one compiled entry fires — the entry's OWN rewrite
@@ -191,6 +297,11 @@ pub fn multi_pattern_receiver_network_par(
     struct OpGroup {
         op: String,
         arity: usize,
+        /// `partition[pos]` = the distinct-variable index the child at `pos` binds.
+        partition: Vec<usize>,
+        /// `first_occ[d]` = the first position binding distinct variable `d` (so
+        /// `k = first_occ.len()` = the σ-receiver's formal count).
+        first_occ: Vec<usize>,
         accepts: Vec<(String, String)>,
     }
     let mut groups: Vec<OpGroup> = Vec::new();
@@ -201,14 +312,21 @@ pub fn multi_pattern_receiver_network_par(
             AutomatonNode::Var(_) => return Err(AutomatonUnsupported::VariableRootPattern),
         };
         let arity = args.len();
-        let mut seen: Vec<String> = Vec::with_capacity(arity);
-        for &arg in &args {
+        // Partition the positions by which distinct variable each binds (first-occurrence
+        // order). A repeated variable (`k = first_occ.len() < arity`) is matched by the
+        // `eq:` consistency join; every position must be a nullary Var leaf (M2a scope).
+        let mut names: Vec<String> = Vec::new();
+        let mut partition: Vec<usize> = Vec::with_capacity(arity);
+        let mut first_occ: Vec<usize> = Vec::new();
+        for (pos, &arg) in args.iter().enumerate() {
             match view.node(arg) {
-                AutomatonNode::Var(name) => {
-                    if seen.iter().any(|v| v == name) {
-                        return Err(AutomatonUnsupported::NonLinearVariable);
-                    }
-                    seen.push(name.to_string());
+                AutomatonNode::Var(name) => match names.iter().position(|v| v == name) {
+                    Some(d) => partition.push(d),
+                    None => {
+                        partition.push(names.len());
+                        first_occ.push(pos);
+                        names.push(name.to_string());
+                    },
                 },
                 AutomatonNode::App { .. } => {
                     return Err(AutomatonUnsupported::NonNullaryVarSubtree)
@@ -226,19 +344,29 @@ pub fn multi_pattern_receiver_network_par(
                 if group.arity != arity {
                     return Err(AutomatonUnsupported::ConflictingArityForOp);
                 }
+                // Entries sharing a root op must induce the SAME repetition partition to
+                // share one guarded join and fan out accepts (the O3 constraint made precise).
+                if group.partition != partition {
+                    return Err(AutomatonUnsupported::NonLinearSharedOp);
+                }
                 group.accepts.push(accept);
             },
-            None => groups.push(OpGroup { op, arity, accepts: vec![accept] }),
+            None => groups.push(OpGroup { op, arity, partition, first_occ, accepts: vec![accept] }),
         }
     }
 
     let root_channel = spread_root_location(root_location);
 
-    // One `Match` case per distinct root op: its shared children chain + parallel accept.
+    // One `Match` case per distinct root op: the parallel distinct-var accept, wrapped in
+    // the linear child chain OR (for a repeated-variable partition) the `eq:`-guarded join.
     let mut cases = Vec::with_capacity(groups.len());
     for group in &groups {
-        let accept = parallel_accept(&group.accepts, group.arity);
-        let body = wrap_children(&root_channel, &group.op, group.arity, accept);
+        let accept = parallel_accept(&group.accepts, group.arity, &group.first_occ);
+        let body = if group.first_occ.len() == group.arity {
+            wrap_children(&root_channel, &group.op, group.arity, accept)
+        } else {
+            join_children_receiver(&root_channel, &group.op, group.arity, &group.partition, accept)
+        };
         let head_tag =
             GPrivateBuilder::new_par_from_string(reflect_tag(language_fingerprint, &group.op));
         cases.push(MatchCase {
@@ -344,17 +472,6 @@ mod tests {
             Err(AutomatonUnsupported::VariableRootPattern)
         );
 
-        // Non-linear variable.
-        let nonlinear = SetAutomaton::compile_structural([(
-            PatternId(0),
-            Pattern::app("f".to_string(), vec![Pattern::var("x"), Pattern::var("x")]),
-        )])
-        .unwrap();
-        assert_eq!(
-            automaton_receiver_network_par(&nonlinear.view(), "s", "acc", "OUT", "fp"),
-            Err(AutomatonUnsupported::NonLinearVariable)
-        );
-
         // Nested App child (non-nullary Var subtree).
         let nested = SetAutomaton::compile_structural([(
             PatternId(0),
@@ -367,6 +484,128 @@ mod tests {
         assert_eq!(
             automaton_receiver_network_par(&nested.view(), "s", "acc", "OUT", "fp"),
             Err(AutomatonUnsupported::NonNullaryVarSubtree)
+        );
+    }
+
+    /// An `EList[BoundVar(i)]` σ slot's inner index (mirrors `serializes_swap`'s local walk).
+    fn elist_boundvar(p: &Par) -> Option<i32> {
+        match p.exprs.first()?.expr_instance.as_ref()? {
+            ExprInstance::EListBody(l) => boundvar_index(&l.ps[0]),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn serializes_a_nonlinear_pattern_with_the_eq_guard() {
+        // f(x, x): the two positions share variable x, so the case body is ONE guarded join
+        // (not the nested chain), carrying an EEq(BoundVar(1), BoundVar(0)) consistency
+        // condition, and the accept sends ONE distinct-var σ slot — matching the σ-receiver's
+        // single formal (the triad-coherence point).
+        let automaton = SetAutomaton::compile_structural([(
+            PatternId(0),
+            Pattern::app("f".to_string(), vec![Pattern::var("x"), Pattern::var("x")]),
+        )])
+        .expect("f(x, x) compiles");
+        let network =
+            automaton_receiver_network_par(&automaton.view(), "site0", "sa:acc", "OUT", "fp")
+                .expect("f(x, x) serializes with the eq: guard");
+        assert!(network.locally_free.is_empty(), "the network is still a closed contract");
+
+        let root_recv = &network.receives[0];
+        let m = &root_recv.body.as_ref().unwrap().matches[0];
+        let case_body = m.cases[0].source.as_ref().unwrap();
+        assert_eq!(case_body.receives.len(), 1, "the non-linear case body is one guarded join");
+        let join = &case_body.receives[0];
+
+        // Two binds, on the two child location channels — one atomic polyadic join.
+        assert_eq!(join.bind_count, 2, "the join binds both children in one receive");
+        assert_eq!(gstring(join.binds[0].source.as_ref().unwrap()), Some("loc:site0/f.0"));
+        assert_eq!(gstring(join.binds[1].source.as_ref().unwrap()), Some("loc:site0/f.1"));
+
+        // The consistency condition: EEq(BoundVar(1), BoundVar(0)) (occurrence 0 == occurrence 1).
+        let guard = join.condition.as_ref().expect("the non-linear join carries a condition");
+        match guard.exprs.first().unwrap().expr_instance.as_ref().unwrap() {
+            ExprInstance::EEqBody(eq) => {
+                assert_eq!(boundvar_index(eq.p1.as_ref().unwrap()), Some(1));
+                assert_eq!(boundvar_index(eq.p2.as_ref().unwrap()), Some(0));
+            },
+            other => panic!("expected an EEq consistency guard, got {other:?}"),
+        }
+
+        // The accept sends ONE σ slot (x = EList[BoundVar(1)]) + @out — NOT two.
+        let send = &join.body.as_ref().unwrap().sends[0];
+        assert_eq!(gstring(send.chan.as_ref().unwrap()), Some("sa:acc"));
+        assert_eq!(send.data.len(), 2, "one distinct-var σ slot + @out");
+        assert_eq!(elist_boundvar(&send.data[0]), Some(1), "σ[x] = EList[BoundVar(1)] (first occurrence)");
+        assert_eq!(gstring(&send.data[1]), Some("OUT"));
+    }
+
+    #[test]
+    fn serializes_partial_nonlinear_f_x_x_y() {
+        // f(x, x, y): x repeats at positions 0,1 (distinct 0); y at position 2 (distinct 1).
+        // Guard EEq(BoundVar(2), BoundVar(1)); accept σ = [ EList[BoundVar(2)] (x),
+        // EList[BoundVar(0)] (y) ] — two distinct-var slots for a ternary pattern.
+        let automaton = SetAutomaton::compile_structural([(
+            PatternId(0),
+            Pattern::app(
+                "f".to_string(),
+                vec![Pattern::var("x"), Pattern::var("x"), Pattern::var("y")],
+            ),
+        )])
+        .expect("f(x, x, y) compiles");
+        let network =
+            automaton_receiver_network_par(&automaton.view(), "site0", "sa:acc", "OUT", "fp")
+                .expect("f(x, x, y) serializes");
+        let root_recv = &network.receives[0];
+        let m = &root_recv.body.as_ref().unwrap().matches[0];
+        let join = &m.cases[0].source.as_ref().unwrap().receives[0];
+        assert_eq!(join.bind_count, 3, "all three children bound in one join");
+
+        let guard = join.condition.as_ref().expect("condition");
+        match guard.exprs.first().unwrap().expr_instance.as_ref().unwrap() {
+            ExprInstance::EEqBody(eq) => {
+                assert_eq!(boundvar_index(eq.p1.as_ref().unwrap()), Some(2));
+                assert_eq!(boundvar_index(eq.p2.as_ref().unwrap()), Some(1));
+            },
+            other => panic!("expected EEq, got {other:?}"),
+        }
+        let send = &join.body.as_ref().unwrap().sends[0];
+        assert_eq!(send.data.len(), 3, "two distinct-var σ slots + @out");
+        assert_eq!(elist_boundvar(&send.data[0]), Some(2), "σ[x] = EList[BoundVar(2)]");
+        assert_eq!(elist_boundvar(&send.data[1]), Some(0), "σ[y] = EList[BoundVar(0)]");
+        assert_eq!(gstring(&send.data[2]), Some("OUT"));
+    }
+
+    #[test]
+    fn rejects_mixed_linearity_shared_op() {
+        // f(x, y) is linear, f(x, x) is non-linear — a shared op with differing repetition
+        // partitions cannot share one guarded join; fail closed.
+        let automaton = SetAutomaton::compile_structural([
+            (
+                PatternId(0),
+                Pattern::app("f".to_string(), vec![Pattern::var("x"), Pattern::var("y")]),
+            ),
+            (
+                PatternId(1),
+                Pattern::app("f".to_string(), vec![Pattern::var("x"), Pattern::var("x")]),
+            ),
+        ])
+        .expect("both f entries compile");
+        let targets = vec![
+            AutomatonAcceptTarget {
+                pattern: PatternId(0),
+                accept_channel: "sa:one".to_string(),
+                out_channel: "OUT".to_string(),
+            },
+            AutomatonAcceptTarget {
+                pattern: PatternId(1),
+                accept_channel: "sa:two".to_string(),
+                out_channel: "OUT".to_string(),
+            },
+        ];
+        assert_eq!(
+            multi_pattern_receiver_network_par(&automaton.view(), "site0", &targets, "fp"),
+            Err(AutomatonUnsupported::NonLinearSharedOp)
         );
     }
 
