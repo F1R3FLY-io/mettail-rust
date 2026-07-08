@@ -15,7 +15,12 @@
 //! classifier (`lower_lhs_vars`) on "structural" — cross-checked in the tests — so a
 //! rule can never be admitted by one path and rejected by the other.
 
+use std::collections::{HashMap, HashSet};
+
 use dovetail::rules::Pattern as DvPattern;
+use dovetail::set_automaton::{PatternId, SetAutomaton};
+use mettail_ast::identity::language_definition_fingerprint;
+use mettail_ast::language::LanguageDef;
 use mettail_ast::pattern::{Pattern, PatternTerm};
 
 /// Why an LHS pattern has no structural set-automaton image (fail-closed to a later
@@ -76,6 +81,98 @@ fn convert_term(term: &PatternTerm) -> Result<DvPattern<String>, PatternConvertR
             Err(PatternConvertReject::Subst)
         },
     }
+}
+
+/// Why a rewrite is not matched in Rho (routed to a later stage / its existing path).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DeferReason {
+    /// The rewrite did not lower to a base-rewrite σ-receiver (congruence / unsafe
+    /// premise / AC / binder) — it has no injection site.
+    NotBaseRewrite,
+    /// The LHS has no structural set-automaton image (binder / subst / search).
+    Convert(PatternConvertReject),
+    /// The LHS compiled to an `AcApp` (the AC path — Stage AC).
+    Ac,
+}
+
+/// A rewrite the in-Rho matcher does NOT serialize, and why.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeferredRewrite {
+    pub rule_label: String,
+    pub reason: DeferReason,
+}
+
+/// The in-Rho matching ruleset for a language: the positional automaton over its
+/// structural base-rewrite LHSs, each entry's accept channel (its σ-receiver SOURCE —
+/// the coherence anchor, from [`rho_net_injection_sites`](crate::rho_net_injection_sites)),
+/// the shared language fingerprint, and every rewrite NOT matched in Rho (with a reason).
+pub struct InRhoMatchingRuleset {
+    pub automaton: SetAutomaton<String>,
+    /// `PatternId(rewrite index)` → the rule's σ-receiver source channel.
+    pub accept_channels: Vec<(PatternId, String)>,
+    pub language_fingerprint: String,
+    pub deferred: Vec<DeferredRewrite>,
+}
+
+/// Compile a language's structural base rewrites into ONE positional set automaton,
+/// routing each accept to the rule's σ-receiver source channel. TOTAL over
+/// `def.rewrites`: every rewrite is either an automaton entry or in `deferred` with
+/// its reason (nothing silently dropped — the executable half of FV (ix)).
+///
+/// A rewrite is matched in Rho iff it has a base-rewrite σ-receiver site (so it lowered
+/// to a `BaseRewrite` — congruence / unsafe-premise / AC / binder rules have none) AND
+/// its LHS converts structurally AND compiles AC-free. Coherence: the accept channel is
+/// the SAME `rho_net_injection_sites` channel the installed σ-receiver was compiled with.
+pub fn compile_in_rho_matching_ruleset(def: &LanguageDef) -> InRhoMatchingRuleset {
+    let language_fingerprint = language_definition_fingerprint(def);
+    let sites = crate::rho_net_injection_sites(def);
+    let site_channel: HashMap<&str, &str> =
+        sites.iter().map(|s| (s.rule_label.as_str(), s.channel.as_str())).collect();
+
+    let mut pairs: Vec<(PatternId, DvPattern<String>)> = Vec::with_capacity(def.rewrites.len());
+    let mut accept_channels: Vec<(PatternId, String)> = Vec::new();
+    let mut deferred: Vec<DeferredRewrite> = Vec::new();
+
+    for (index, rewrite) in def.rewrites.iter().enumerate() {
+        let label = rewrite.name.to_string();
+        let channel = match site_channel.get(label.as_str()) {
+            Some(channel) => channel.to_string(),
+            None => {
+                deferred.push(DeferredRewrite { rule_label: label, reason: DeferReason::NotBaseRewrite });
+                continue;
+            },
+        };
+        match convert_lhs_pattern(&rewrite.left) {
+            Ok(pattern) => {
+                pairs.push((PatternId(index), pattern));
+                accept_channels.push((PatternId(index), channel));
+            },
+            Err(reject) => {
+                deferred.push(DeferredRewrite { rule_label: label, reason: DeferReason::Convert(reject) });
+            },
+        }
+    }
+
+    // compile_structural rejects any AcApp entry; move it to `deferred{Ac}` and recompile
+    // the AC-free remainder. Converges: AcApp is the only rejection, and the empty ruleset
+    // compiles.
+    let automaton = loop {
+        match SetAutomaton::compile_structural(pairs.clone()) {
+            Ok(automaton) => break automaton,
+            Err(err) => {
+                let unsupported: HashSet<PatternId> =
+                    err.unsupported_patterns().iter().copied().collect();
+                for pid in &unsupported {
+                    let label = def.rewrites[pid.0].name.to_string();
+                    deferred.push(DeferredRewrite { rule_label: label, reason: DeferReason::Ac });
+                }
+                pairs.retain(|(pid, _)| !unsupported.contains(pid));
+                accept_channels.retain(|(pid, _)| !unsupported.contains(pid));
+            },
+        }
+    };
+
+    InRhoMatchingRuleset { automaton, accept_channels, language_fingerprint, deferred }
 }
 
 #[cfg(test)]

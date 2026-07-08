@@ -28,13 +28,14 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use dovetail::rules::Pattern;
-use dovetail::set_automaton::{PatternId, SetAutomaton};
+use dovetail::set_automaton::{AutomatonNode, PatternId, SetAutomaton};
 use mettail_languages::swapdemo::{Proc, SwapDemoLanguage, SwapDemoTerm};
 use mettail_rholang_codegen::{
-    automaton_receiver_network_par, lower_language_def, multi_pattern_receiver_network_par,
-    plan_rho_default_backend, reconstruct_language_def, rho_net_injection_sites, spread_term_par,
-    suggest_rejected_rule_dispositions, AutomatonAcceptTarget, GroundTerm, RhoCoverageEvidence,
-    RhoDefaultBackendRequirements, RhoGuardCoverageEvidence, RhoNetRuleKind,
+    automaton_receiver_network_par, compile_in_rho_matching_ruleset, lower_language_def,
+    multi_pattern_receiver_network_par, plan_rho_default_backend, reconstruct_language_def,
+    rho_net_injection_sites, spread_term_par, suggest_rejected_rule_dispositions,
+    AutomatonAcceptTarget, GroundTerm, RhoCoverageEvidence, RhoDefaultBackendRequirements,
+    RhoGuardCoverageEvidence, RhoNetRuleKind,
 };
 use mettail_rholang_runtime::{
     build_rho_net_injection_invocation_from_contract,
@@ -741,6 +742,42 @@ async fn m1_does_not_match_a_non_matching_head_in_rho() {
         "a non-matching head (Pair ≠ Swap) must not fire the rewrite (got {:?})",
         observation.values
     );
+}
+
+/// Stage 3 piece 2: compiling SwapDemo's rules into the in-Rho matching ruleset yields
+/// one automaton entry (the SwapStep base rewrite) whose accept channel IS the rule's
+/// σ-receiver source (the coherence anchor) and whose fingerprint is the shared one;
+/// nothing is deferred.
+#[test]
+fn stage3_swapdemo_ruleset_compiles_the_base_rewrite_coherently() {
+    let source = SwapDemoLanguage
+        .metadata()
+        .definition_source()
+        .expect("SwapDemo exposes its definition source");
+    let def = reconstruct_language_def(source).expect("SwapDemo def reconstructs");
+    let ruleset = compile_in_rho_matching_ruleset(&def);
+
+    assert_eq!(ruleset.automaton.view().entry_count(), 1, "one base rewrite → one entry");
+    assert!(ruleset.deferred.is_empty(), "SwapDemo has no deferred rewrites: {:?}", ruleset.deferred);
+    assert_eq!(ruleset.accept_channels.len(), 1);
+
+    // The accept channel equals the SwapStep σ-receiver source (the triad coherence).
+    let site = rho_net_injection_sites(&def)
+        .into_iter()
+        .find(|s| s.rule_label == "SwapStep")
+        .expect("SwapStep site");
+    assert_eq!(ruleset.accept_channels[0].1, site.channel, "accept channel = σ-receiver source");
+
+    // The compiled entry's root is the Swap constructor.
+    let view = ruleset.automaton.view();
+    match view.node(view.entry_root_state(0)) {
+        AutomatonNode::App { op, .. } => assert_eq!(op, "Swap"),
+        AutomatonNode::Var(_) => panic!("SwapStep LHS root must be an App"),
+    }
+
+    // One shared language fingerprint, coherent with the plan's.
+    let (_backend, fingerprint) = swap_demo_backend();
+    assert_eq!(ruleset.language_fingerprint, fingerprint, "one shared language fingerprint");
 }
 
 #[test]
