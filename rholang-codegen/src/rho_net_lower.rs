@@ -780,6 +780,34 @@ fn reflect_ac_bag_par(term: &GroundTerm, language_fingerprint: &str) -> Par {
     soup
 }
 
+/// The AC receiver's collection PATTERN for a HashBag operand `op` with `k` fixed element
+/// slots: a connective process-`Par` with `k` send-patterns `@"ac:{op}"!(FreeVar(i))` (each
+/// binding element σ slot `i`) plus a process remainder `EVar(FreeVar(k))` (binding `rest`,
+/// the residual soup). The native connective / `sub_pars` matcher assigns the `k` send-
+/// patterns to `k` carrier sends in ANY order (`MaximumBipartiteMatch`) and binds the residual
+/// to the remainder — the order-independent multiset match — inside one atomic `consume`.
+///
+/// The remainder is `new_freevar_par(k)`, whose `EVar(FreeVar(k))` in `exprs` is exactly the
+/// `var_level` the spatial matcher reads (`spatial_matcher.rs`); element `i` binds `FreeVar(i)`.
+pub fn ac_bag_pattern(op: &str, k: usize) -> Par {
+    let element_channel = format!("ac:{op}");
+    // Start from the process remainder (a top-level free var at level k; connective_used).
+    let mut pattern = new_freevar_par(k as i32, Vec::new());
+    for i in 0..k {
+        let send_pattern = new_send_par(
+            new_gstring_par(element_channel.clone(), Vec::new(), false),
+            vec![new_freevar_par(i as i32, Vec::new())],
+            false,
+            Vec::new(),
+            true,
+            Vec::new(),
+            true,
+        );
+        pattern = pattern.append(send_pattern);
+    }
+    pattern
+}
+
 /// Build the flat σ-injection call for a base rewrite's σ-receiver:
 /// `channel_name!(arg₀, …, arg_{k-1}, @"out_channel")` as normalized `rhoapi::Par`.
 ///
@@ -1987,6 +2015,21 @@ mod tests {
             ],
         );
         assert_eq!(reflect_ground_term_par(&bag2, fp).sends.len(), 3);
+    }
+
+    #[test]
+    fn ac_bag_pattern_is_a_connective_soup_with_a_remainder() {
+        // The AC receiver's collection pattern: k send-patterns @"ac:PPar"!(FreeVar(i)) + a
+        // process remainder EVar(FreeVar(k)), connective (the native sub_pars matcher assigns
+        // the k patterns to k carrier sends in any order and binds the residual to `rest`).
+        let pattern = ac_bag_pattern("PPar", 2);
+        assert_eq!(pattern.sends.len(), 2, "one send-pattern per fixed element");
+        assert!(pattern.connective_used, "a matching pattern with free vars is connective");
+        assert_eq!(pattern.exprs.len(), 1, "the process remainder is one top-level free var");
+        for send in &pattern.sends {
+            assert_eq!(send.data.len(), 1, "each send-pattern carries one element free var");
+            assert!(send.connective_used, "the send-pattern binds a free element var");
+        }
     }
 
     /// `term_contract_call` builds `chan!(arg₀, …, @"out")`: a single flat send on
