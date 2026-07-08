@@ -215,6 +215,74 @@ pub fn in_rho_match_call_par(
     Ok(network.append(spread))
 }
 
+/// The FV (ix) `install_admits` capability gate, executable: returns the first rule that
+/// BOTH fired and is skipped-from-in-Rho-matching (the fail-closed reason), or `None` if
+/// every fired rule is matchable in Rho. A language's default backend flips to in-Rho
+/// matching iff this returns `None` for its report. Model: `InRhoEncoderTotalOrReject.v`
+/// (`gate_admits_iff_all_fired_matchable`) — the reject exists iff some rule both `fires`
+/// and is `¬in_rho` (a skipped rule is exactly `¬in_rho`).
+pub fn in_rho_match_gate_reject<'a>(
+    skipped: &'a [DeferredRewrite],
+    fired_labels: &[&str],
+) -> Option<&'a DeferredRewrite> {
+    skipped.iter().find(|entry| fired_labels.contains(&entry.rule_label.as_str()))
+}
+
+/// Reconstruct the ground redex `LHS[σ]` a fired base rewrite matched — the SUBJECT the
+/// in-Rho matcher re-matches ON the interpreter (the automaton still does the matching
+/// work in Rho; host σ only supplies the ground subject term, not the firing). Finds the
+/// rewrite named `rule_label` in `def` and instantiates its LHS with σ. Total +
+/// fail-closed; a matched (non-skipped) rule's LHS is Var/Apply-only, so the error arms
+/// are defensive (they never trigger past the gate).
+pub fn reconstruct_redex_subject(
+    def: &LanguageDef,
+    rule_label: &str,
+    sigma: &[(String, GroundTerm)],
+) -> Result<GroundTerm, String> {
+    let rewrite = def
+        .rewrites
+        .iter()
+        .find(|rewrite| rewrite.name.to_string() == rule_label)
+        .ok_or_else(|| format!("in-Rho match subject: no rewrite named {rule_label}"))?;
+    let bindings: HashMap<&str, &GroundTerm> =
+        sigma.iter().map(|(name, ground)| (name.as_str(), ground)).collect();
+    instantiate_lhs(&rewrite.left, &bindings, rule_label)
+}
+
+fn instantiate_lhs(
+    pattern: &Pattern,
+    sigma: &HashMap<&str, &GroundTerm>,
+    rule: &str,
+) -> Result<GroundTerm, String> {
+    match pattern {
+        Pattern::Term(PatternTerm::Var(id)) => {
+            let name = id.to_string();
+            sigma
+                .get(name.as_str())
+                .map(|ground| (*ground).clone())
+                .ok_or_else(|| {
+                    format!("in-Rho match subject for {rule}: σ missing LHS variable {name}")
+                })
+        },
+        Pattern::Term(PatternTerm::Apply { constructor, args }) => {
+            if let [Pattern::Collection { .. }] = args.as_slice() {
+                return Err(format!(
+                    "in-Rho match subject for {rule}: AC constructor {constructor} has no positional redex image"
+                ));
+            }
+            let children = args
+                .iter()
+                .map(|arg| instantiate_lhs(arg, sigma, rule))
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(GroundTerm::new(constructor.to_string(), children))
+        },
+        // binder / subst / collection-search → skipped rules; never reached past the gate.
+        _ => Err(format!(
+            "in-Rho match subject for {rule}: non-structural LHS has no ground redex image"
+        )),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -323,6 +391,42 @@ mod tests {
         assert_eq!(
             convert_lhs_pattern(&app("f", vec![var("a"), lambda])),
             Err(PatternConvertReject::Binder)
+        );
+    }
+
+    #[test]
+    fn gate_rejects_a_fired_skipped_rule_and_admits_matched_ones() {
+        let skipped = vec![DeferredRewrite {
+            rule_label: "Cong".to_string(),
+            reason: DeferReason::NotBaseRewrite,
+        }];
+        // A fired skipped rule → reject (fail-closed, per FV ix's install_admits).
+        assert!(in_rho_match_gate_reject(&skipped, &["Cong"]).is_some());
+        // A fired matched rule (not in the skip-list) → admit.
+        assert!(in_rho_match_gate_reject(&skipped, &["Swap"]).is_none());
+        // Nothing fired → admit.
+        assert!(in_rho_match_gate_reject(&skipped, &[]).is_none());
+    }
+
+    #[test]
+    fn instantiates_a_structural_lhs_with_sigma() {
+        // SwapStep LHS `Swap x y` with σ = {x↦A, y↦B} reconstructs `Swap(A, B)` — the
+        // ground redex the in-Rho matcher re-matches (equal to piece 3's hand-built subject).
+        let lhs = app("Swap", vec![var("x"), var("y")]);
+        let a = GroundTerm::new("A".to_string(), Vec::new());
+        let b = GroundTerm::new("B".to_string(), Vec::new());
+        let sigma: HashMap<&str, &GroundTerm> = [("x", &a), ("y", &b)].into_iter().collect();
+        let subject =
+            instantiate_lhs(&lhs, &sigma, "SwapStep").expect("structural LHS instantiates");
+        assert_eq!(
+            subject,
+            GroundTerm::new(
+                "Swap".to_string(),
+                vec![
+                    GroundTerm::new("A".to_string(), Vec::new()),
+                    GroundTerm::new("B".to_string(), Vec::new()),
+                ]
+            )
         );
     }
 }
