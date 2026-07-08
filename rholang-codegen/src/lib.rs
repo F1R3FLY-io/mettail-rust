@@ -88,7 +88,10 @@ pub mod rho_net;
 pub mod rho_net_automaton;
 pub mod rho_net_lower;
 pub mod validate;
-pub use rho_net_automaton::{automaton_receiver_network_par, AutomatonUnsupported};
+pub use rho_net_automaton::{
+    automaton_receiver_network_par, multi_pattern_receiver_network_par, AutomatonAcceptTarget,
+    AutomatonUnsupported,
+};
 pub use ast::{RhoAstBuildError, RhoAstLiteral, RhoAstSend};
 pub use backend::{
     audit_rho_default_backend, classify_rejected_rules, collect_guard_obligations,
