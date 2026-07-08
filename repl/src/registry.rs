@@ -89,6 +89,7 @@ pub fn build_registry() -> Result<LanguageRegistry> {
         registry.register(crate::rho_backends::ambient_backed()?);
         registry.register(crate::rho_backends::rhocalc_backed()?);
         registry.register(crate::rho_backends::calculator_backed()?);
+        registry.register(crate::rho_backends::swapdemo_backed()?);
         Ok(registry)
     }
 

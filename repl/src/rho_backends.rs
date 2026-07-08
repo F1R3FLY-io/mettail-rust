@@ -44,6 +44,7 @@ mod rho {
     use anyhow::{anyhow, Result};
 
     use mettail_languages::calculator::CalculatorLanguage;
+    use mettail_languages::swapdemo::SwapDemoLanguage;
     use mettail_runtime::{Language, RuntimeDovetailRunReport, Term};
 
     use mettail_rholang_codegen::{
@@ -52,7 +53,9 @@ mod rho {
         RhoFoldDataflowDisposition, RhoGuardCoverageEvidence,
     };
     use mettail_rholang_runtime::{
-        build_fold_dataflow_invocation_from_contract, dovetail_rho_backed_rhocalc,
+        build_fold_dataflow_invocation_from_contract,
+        build_rho_net_injection_invocation_from_contract,
+        build_rho_net_replay_invocation_from_contracts, dovetail_rho_backed_rhocalc,
         install_dovetail_rho_runtime_backend, PlannedRhoBackend, RhoBackendInvocation,
     };
 
@@ -144,7 +147,73 @@ mod rho {
         .map_err(|err| anyhow!("Calculator Dovetail+Rho backend install failed: {err:?}"))?;
         Ok(Box::new(language))
     }
+
+    /// Build the SwapDemo [`PlannedRhoBackend`] from its REAL reconstructed augmented
+    /// `LanguageDef` (so the plan's fingerprint matches `SwapDemoLanguage` and the wrapper
+    /// installs on it) — byte-identical to [`calculator_planned_rho_backend`] with SwapDemo.
+    fn swapdemo_planned_rho_backend() -> Result<PlannedRhoBackend> {
+        let source = SwapDemoLanguage
+            .metadata()
+            .definition_source()
+            .ok_or_else(|| anyhow!("SwapDemoLanguage must expose its definition_source"))?;
+        let def = reconstruct_language_def(&source)
+            .map_err(|err| anyhow!("reconstruct SwapDemo LanguageDef: {err:?}"))?;
+        let lowering = lower_language_def(&def);
+        let dispositions = suggest_rejected_rule_dispositions(&def, &lowering);
+        let requirements = RhoDefaultBackendRequirements {
+            coverage: RhoCoverageEvidence::CoveredRejectedRules(dispositions),
+            guard_coverage: RhoGuardCoverageEvidence::NoGuardObligations,
+        };
+        let plan = plan_rho_default_backend(&def, requirements)
+            .map_err(|err| anyhow!("SwapDemo Rho-default backend planning failed: {err:?}"))?;
+        Ok(PlannedRhoBackend::from_plan(plan))
+    }
+
+    /// The SwapDemo Dovetail D-stage report producer. SwapDemo is NOT fold-bearing, so it has
+    /// no `dovetail_step_graph`; this producer serves both the D-stage and the (REPL-`step`-only)
+    /// step slot — `exec`/`run_backend_report` never reaches the step slot.
+    fn swapdemo_dovetail_report(term: &dyn Term) -> Result<RuntimeDovetailRunReport, String> {
+        SwapDemoLanguage::dovetail_report_for(term, MAX_ITERS, MAX_NODES)
+    }
+
+    /// The SwapDemo F-stage: capability-gated in-Rho set-automaton MATCHING (Stage 3 piece 5).
+    /// The automaton MATCHES the redex on the interpreter (the `sa:` τ COMMs) and fires the
+    /// σ-receiver. On a gate/scope rejection (a fired rule not matchable in Rho, or a
+    /// multi/nested redex), fall CLOSED to the proven Stage-0 host-matched σ-replay driver —
+    /// "the language stays on its existing path" — so every input stays correct.
+    fn swapdemo_invocation(
+        term: &dyn Term,
+        report: &RuntimeDovetailRunReport,
+    ) -> Result<RhoBackendInvocation, String> {
+        match SwapDemoLanguage::rho_net_match_invocation_from_dovetail_to(term, report, OUT) {
+            Ok(invocation) => Ok(RhoBackendInvocation::from(
+                build_rho_net_injection_invocation_from_contract(invocation),
+            )),
+            Err(_gate_or_scope_reject) => {
+                let injections =
+                    SwapDemoLanguage::rho_net_replay_invocation_from_dovetail_to(term, report, OUT)?;
+                Ok(RhoBackendInvocation::from(
+                    build_rho_net_replay_invocation_from_contracts(injections),
+                ))
+            },
+        }
+    }
+
+    /// SwapDemo → two-stage Dovetail+Rholang backend: base rewrites MATCH in Rho (the campaign
+    /// endpoint), with the host-matched σ-replay as the fail-closed fallback.
+    pub fn swapdemo_backed() -> Result<Box<dyn Language>> {
+        let backend = swapdemo_planned_rho_backend()?;
+        let language = install_dovetail_rho_runtime_backend(
+            SwapDemoLanguage,
+            backend,
+            swapdemo_dovetail_report,
+            swapdemo_dovetail_report,
+            swapdemo_invocation,
+        )
+        .map_err(|err| anyhow!("SwapDemo Dovetail+Rho backend install failed: {err:?}"))?;
+        Ok(Box::new(language))
+    }
 }
 
 #[cfg(feature = "rho-languages")]
-pub use rho::{calculator_backed, rhocalc_backed};
+pub use rho::{calculator_backed, rhocalc_backed, swapdemo_backed};

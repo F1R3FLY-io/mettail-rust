@@ -40,10 +40,14 @@ use mettail_rholang_codegen::{
 };
 use mettail_rholang_runtime::{
     build_rho_net_injection_invocation_from_contract,
-    build_rho_net_replay_invocation_from_contracts, run_normalized_par_for_oracle_and_read_runtime_values,
-    PlannedRhoBackend, RhoMachineInvocation,
+    build_rho_net_replay_invocation_from_contracts, install_dovetail_rho_runtime_backend,
+    run_normalized_par_for_oracle_and_read_runtime_values, PlannedRhoBackend, RhoBackendInvocation,
+    RhoMachineInvocation,
 };
-use mettail_runtime::{Language, RuntimeObservationValue, RuntimeReflectedSubterm};
+use mettail_runtime::{
+    Language, RuntimeBackend, RuntimeDovetailRunReport, RuntimeObservationValue,
+    RuntimeReflectedSubterm, Term,
+};
 
 /// Reconstruct SwapDemo's augmented `LanguageDef` from the generated metadata's
 /// `definition_source()` (the macro-time def, composition + auto-injection),
@@ -823,6 +827,74 @@ async fn stage3_swapdemo_matches_and_fires_from_the_derived_ruleset() {
     assert_eq!(
         observation.values[0], pair_b_a,
         "Swap(A, B) matched from the derived ruleset → Pair(B, A)"
+    );
+}
+
+/// Stage 3 piece 5: the WHOLE production default-backend stack. Install SwapDemo's
+/// Dovetail+Rho backend with the SAME capability-gated in-Rho-match closure the repl's
+/// `swapdemo_backed()` uses (the closure IS the production closure, re-instantiated — no
+/// test-only wiring), then drive `Swap(A, B)` through `run_backend_report(RhoMachine, …)`.
+/// The report → gate → ruleset → network‖spread → installed σ-receivers → OUT chain matches
+/// in Rho and fires → Pair(B, A).
+#[test]
+fn stage3_swapdemo_default_backend_matches_in_rho_via_run_backend_report() {
+    mettail_runtime::clear_var_cache();
+    let (backend, _fingerprint) = swap_demo_backend();
+
+    let language = install_dovetail_rho_runtime_backend(
+        SwapDemoLanguage,
+        backend,
+        |term: &dyn Term| SwapDemoLanguage::dovetail_report_for(term, 64, 1_000_000),
+        |term: &dyn Term| SwapDemoLanguage::dovetail_report_for(term, 64, 1_000_000),
+        |term: &dyn Term,
+         report: &RuntimeDovetailRunReport|
+         -> Result<RhoBackendInvocation, String> {
+            match SwapDemoLanguage::rho_net_match_invocation_from_dovetail_to(term, report, "OUT") {
+                Ok(invocation) => Ok(RhoBackendInvocation::from(
+                    build_rho_net_injection_invocation_from_contract(invocation),
+                )),
+                Err(_reject) => {
+                    let injections = SwapDemoLanguage::rho_net_replay_invocation_from_dovetail_to(
+                        term, report, "OUT",
+                    )?;
+                    Ok(RhoBackendInvocation::from(
+                        build_rho_net_replay_invocation_from_contracts(injections),
+                    ))
+                },
+            }
+        },
+    )
+    .expect("SwapDemo Dovetail+Rho backend installs");
+
+    let term = SwapDemoTerm(Proc::Swap(Arc::new(Proc::A), Arc::new(Proc::B)));
+
+    // The match path (not the σ-replay fallback) admits this root-rooted redex.
+    let report =
+        SwapDemoLanguage::dovetail_report_for(&term, 64, 1_000_000).expect("SwapDemo report");
+    assert!(
+        SwapDemoLanguage::rho_net_match_invocation_from_dovetail_to(&term, &report, "OUT").is_ok(),
+        "the in-Rho match invocation admits Swap(A, B)"
+    );
+
+    // The whole production stack via run_backend_report.
+    let backend_report = language
+        .run_backend_report(RuntimeBackend::RhoMachine, &term)
+        .expect("run_backend_report on the RhoMachine");
+    let observation = backend_report
+        .observations_for_channel("OUT")
+        .expect("an OUT observation");
+    assert_eq!(observation.observed_count(), 1, "one firing observed on OUT");
+
+    let pair_b_a = RuntimeObservationValue::Term {
+        constructor: "Pair".to_string(),
+        children: vec![
+            RuntimeObservationValue::Term { constructor: "B".to_string(), children: Vec::new() },
+            RuntimeObservationValue::Term { constructor: "A".to_string(), children: Vec::new() },
+        ],
+    };
+    assert_eq!(
+        observation.values[0], pair_b_a,
+        "the default RhoMachine backend matched Swap(A, B) in Rho and fired → Pair(B, A)"
     );
 }
 
