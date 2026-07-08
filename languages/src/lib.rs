@@ -29,6 +29,9 @@ pub mod class2smoke;
 pub mod class3multi;
 #[cfg(feature = "class3opt")]
 pub mod class3opt;
+// Stage 3a: the unary-congruence (contextual join) demonstration language.
+#[cfg(feature = "ctx-demo")]
+pub mod ctxdemo;
 // PIECE 3: keyword-reservation OPT-OUT fixture (Fortran-style full ambiguity).
 #[cfg(feature = "fortran_model")]
 pub mod fortran_model;

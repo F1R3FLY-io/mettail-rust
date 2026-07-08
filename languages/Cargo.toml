@@ -33,6 +33,7 @@ all-languages = [
     "class3multi",
     "class3opt",
     "composition",
+    "ctx-demo",
     "fortran_model",
     "reserved_model",
     "guarded-rho",
@@ -54,6 +55,7 @@ class2smoke = []
 class3multi = []
 class3opt = []
 composition = ["calculator", "lambda"]
+ctx-demo = []
 fortran_model = []
 reserved_model = []
 guarded-rho = []

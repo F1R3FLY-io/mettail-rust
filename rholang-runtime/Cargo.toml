@@ -25,7 +25,13 @@ name = "mettail_rholang_runtime"
 # default `cargo nextest --workspace`. `rhocalc-runtime` transitively enables
 # `runtime-report`. The opt-in feature names below are retained only so a
 # `--no-default-features` build can still drop the heavy generated-language surface.
-default = ["rhocalc-runtime", "source-oracle", "swap-demo-runtime", "ac-demo-runtime"]
+default = [
+    "rhocalc-runtime",
+    "source-oracle",
+    "swap-demo-runtime",
+    "ac-demo-runtime",
+    "ctx-demo-runtime",
+]
 # Conversion from typed Rho observation reports into mettail_runtime::RuntimeBackendReport
 # plus the generic Language backend installer wrappers.
 runtime-report = ["dep:mettail-runtime", "dep:mettail-prattail"]
@@ -62,6 +68,18 @@ ac-demo-runtime = [
     "runtime-report",
     "dep:mettail-languages",
     "mettail-languages/ac-demo",
+    "mettail-languages/dovetail-codegen",
+    "mettail-languages/rho-codegen",
+]
+# Stage 3a: pulls in the generated `CtxDemo` language for the end-to-end in-Rho CONTEXTUAL
+# firing test (`rho_net_contextual_firing`) — a generated unary congruence rewrite
+# `WrapCong: | S ~> T |- Wrap(S) ~> Wrap(T)` firing as an atomic JOIN COMM on the reducer.
+# Needs the generated `dovetail_report_for` (premise σ population, `dovetail-codegen`) and the
+# contextual σ-injection F-function (`rho-codegen`).
+ctx-demo-runtime = [
+    "runtime-report",
+    "dep:mettail-languages",
+    "mettail-languages/ctx-demo",
     "mettail-languages/dovetail-codegen",
     "mettail-languages/rho-codegen",
 ]
@@ -139,6 +157,11 @@ required-features = ["swap-demo-runtime"]
 name = "rho_net_ac_firing"
 path = "tests/rho_net_ac_firing.rs"
 required-features = ["ac-demo-runtime"]
+
+[[test]]
+name = "rho_net_contextual_firing"
+path = "tests/rho_net_contextual_firing.rs"
+required-features = ["ctx-demo-runtime"]
 
 [[test]]
 name = "rho_comm_oracle"
