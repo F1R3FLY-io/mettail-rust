@@ -168,7 +168,35 @@ validates the De Bruijn / `locally_free` frame end-to-end — which a structural
 alone cannot. The negative case `m1_does_not_match_a_non_matching_head_in_rho`
 confirms a wrong head (`Pair` vs `Swap`) does not accept: no false-positive match.
 
-The `O1`/`O3` channel sharing (M2), the `sa:`/`eq:`-as-`$\tau$` same-CLTS discharge
-(M3 — the `rem:nonopt` weak bisimulation), and the Phase-A correctness proofs
-(`SymbolOnceInjective`, `InRhoMatchPositional`, `InRhoReuseDeterminism`) build on
-this validated matching core.
+The Phase-A correctness proofs (`SymbolOnceInjective`, `InRhoMatchPositional`,
+`InRhoReuseDeterminism`) verify this single-pattern matching core; §3.4 extends it to
+multiple patterns, and the `sa:`/`eq:`-as-`$\tau$` same-CLTS discharge (M3 — the
+`rem:nonopt` weak bisimulation) is the remaining Stage 1 obligation.
+
+### 3.4 Multi-pattern dispatch (M2a)
+
+`automaton_receiver_network_par`'s multi-pattern generalization
+(`multi_pattern_receiver_network_par`) serializes one or more App-rooted linear entries
+into ONE network sharing a single root `loc:` receive. The linear single-shot spread publishes
+each node's head tag exactly once, so only one `for`-receive can consume it: the root
+tag is received once and `Match`-dispatched — ONE case per distinct root op, the reified
+`app_roots` router (`search_egraph`'s dispatch). Entries sharing an op share the child
+`for`-receives — the interned `StateId` quotient means structurally-equal sub-patterns
+share one state, hence one receiver — and on accept the network announces in PARALLEL to
+each rule's channel `$c!(\sigma, @\mathit{out}_e)$`, the `O3` "share the match, announce
+to every rule" fan-out. The M1 single-pattern serializer is the special case (one entry
+gives one `Match` case, the byte-identical M1 frame), so `automaton_receiver_network_par`
+delegates — no dual path.
+
+Validated in Rho (`rho_net_equivalence.rs`): a `Swap(A, B)` subject against a
+`[Swap, Pair]` network fires ONLY the Swap accept (the router discriminates on the head
+tag, so `OUT` carries exactly `[A, B]`); two rules sharing the LHS `Swap(x, y)` fire BOTH
+accepts (`OUT` carries `[A, B]` twice — the fan-out). Out-of-scope shapes fail closed:
+`ConflictingArityForOp` (one `Match` case cannot host two arities — a typed algebra never
+produces it, since the op determines the arity), `MissingAcceptTarget`, plus the retained
+non-linear / nested-App / bare-variable-root rejections.
+
+The channel-NAMING for the shared receivers — re-keying `pattern_trace_channel` from the
+whole-LHS identity (the paper's rejected `@K` naming) to the interned-state trace
+`$tc(K) = \ulcorner T_M(K) \urcorner$` — is verified as the unique `O1`/`O3` quotient by
+`TcChannelNamingQuotient` (viii) and applied in production by M2b.

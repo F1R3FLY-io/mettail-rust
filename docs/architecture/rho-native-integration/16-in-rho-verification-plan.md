@@ -79,8 +79,9 @@ Stage AC. The capstone flips INV-2/6/13 in [13](13-knotted-topoi-operational-inv
 |---|---|---|
 | M0 spread | done | INV-10 round-trip property (example + proptest); the `$\nu$`-free assertion is the INV-7 executable form |
 | M1 matching | done (base case) | **Phase A proven zero-admission** — `SymbolOnceInjective` (ii), `InRhoMatchPositional` (i), `InRhoReuseDeterminism` (x), 13 theorems "Closed under the global context". These prove the fold-level accept decision; the emitted `Par`'s faithfulness to the fold is witnessed by the runtime tests (`m1_matches_swap_in_rho_and_fires_the_rewrite`, the arity-3 companion, the no-false-positive negative case, and the property-based positional oracle over random constructors/arities), which the RSpace reducer checks |
-| M2 channel re-keying | later slice | (viii), O2 |
-| M3 `$\tau$` internalization | later slice | (iii) — the `rem:nonopt` discharge |
+| M2a multi-pattern | done | `multi_pattern_receiver_network_par` — the root-shared `Match` router (one case per distinct op) + O3 accept fan-out (structural + runtime tests: dispatch discrimination and same-op double-fire on the RSpace reducer). **FV Phase B proven zero-admission** — `TcChannelNamingQuotient` (viii, `tc(K)` is the `O1`/`O3` `R_op` quotient) + `PrunePreservesWork` (O2), 9 theorems |
+| M2b channel re-key | remaining | applies FV viii's `sa:⌜StateId trace⌝` naming in production (the σ-receiver source + injection site must move together — coherence-sensitive; the M2a matching mechanism already works with any accept channels) |
+| M3 `$\tau$` internalization | remaining | (iii) — the `rem:nonopt` weak-bisimulation discharge (operational, extends `RhoCommScheduleFamily`) |
 
 The Rust example / property / integration tests are the executable floor; the Rocq
 theorems above are the unbounded ceiling, authored one slice at a time under the
