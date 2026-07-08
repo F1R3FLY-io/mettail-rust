@@ -58,3 +58,9 @@ theories/HeldFoldContractSound.v
 # (network + spread) per-firing call preserves the installed σ-receivers' persistent-input
 # count. Companion, at the in-Rho encoder, to RhoLoweringTotalOrRejects's install boundary.
 theories/InRhoEncoderTotalOrReject.v
+# FV (iv)+(vi) — Stage 2 in-Rho non-linear eq: consistency (an INSTANCE of GuardedCommSoundness's
+# guarded_attempt): AtomicFiringNoPartialMatch (the guarded join is all-or-nothing, no partial
+# consume; accept atomic after the verdict) + NonLinearEqConsistency (commit <-> all-k name-equal,
+# reject-safe = merge_substs->None, no-fabrication, oracle-agreement).
+theories/AtomicFiringNoPartialMatch.v
+theories/NonLinearEqConsistency.v
