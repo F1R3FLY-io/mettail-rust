@@ -59,3 +59,9 @@ theories/TcChannelNamingQuotient.v
 # (O2) prune-preserves-work: pruning below p adds no for-receive outside p. Reuses
 # positions / chan / chan_injective_on_positions from SymbolOnceInjective.
 theories/PrunePreservesWork.v
+# In-Rho Phase C (Stage 1 M3) — the load-bearing rem:nonopt discharge. (iii) sa:/eq:
+# are τ ⇒ the sound (location-channel) and optimal (StateId-channel) schemes induce
+# the same CLTS (weak bisimulation). Reuses positions_count (ii, SymbolOnceInjective)
+# and trace/tc_sound (viii, TcChannelNamingQuotient); mirrors RhoCommScheduleFamily's
+# erase/τ backbone.
+theories/InRhoSameCLTSWeakBisim.v
