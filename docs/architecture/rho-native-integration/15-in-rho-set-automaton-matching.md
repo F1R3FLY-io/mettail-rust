@@ -222,3 +222,44 @@ the sound scheme is keyed by LOCATION, so two redexes at different locations sha
 the optimal channel yet get distinct sound channels — the cross-location sharing is
 exactly what is shown invisible. This is the load-bearing `rem:nonopt` discharge —
 the previously-asserted claim, now proven zero-admission.
+
+### 3.6 Non-linear consistency — the `eq:` guarded join (Stage 2)
+
+M1–M3 handle LINEAR patterns (each variable at one position). A NON-LINEAR pattern — a
+variable at `$\geq 2$` positions, e.g. `f(x, x)` or the rho-into-rho `x = x'` — needs a
+CONSISTENCY check: the repeated positions must bind the SAME value. Stage 2 realizes
+Meredith's `[optimal]` Def 4.9 enable-gate as a `Receive.condition` where-guard on a POLYADIC
+JOIN over the entry's children.
+
+**The join, not the nested chain.** The linear frame nests one `for`-receive per child
+(`wrap_children`). A non-linear entry instead binds ALL children in ONE receive
+(`join_children_receiver`): `for(h_0 <- loc:ρ/op.0 ; … ; h_k <- loc:ρ/op.k){ accept }`. The
+join is REQUIRED — the f1r3node reducer substitutes a receive's guard at binder depth 1, so
+the guard sees only THIS receive's binds; a nested chain's guard could not compare children
+bound by outer `for`s.
+
+**The consistency guard.** For each repeated variable with occurrence positions
+`$q_0 < q_1 < \dots < q_{m-1}$`, `consistency_guard` emits the conjunction (`EAnd`) of
+`EEq(BoundVar(arity-1-q_0), BoundVar(arity-1-q_j))` for `$j = 1 \dots m-1$` — the head tags at
+the repeated positions must be structurally equal. The guard is the receive's `condition`; the
+reducer's `check_commit` commits the whole `consume` iff the condition reduces to `GBool(true)`.
+
+**Reject-safe by construction.** On inequality the condition is false, so `check_commit` VETOES
+the entire `consume` — NO child is consumed, no accept fires. This mirrors the host
+`merge_substs` `$\to$` `None` at the strongest granularity ("leave all the data"). Validated on
+the live reducer: `f(x, x)` matches `f(A, A)` (binds `$\sigma = [A]$`) but NOT `f(A, B)` (the
+guard vetoes, nothing lands on OUT).
+
+**The triad-coherence fix.** A non-linear entry's `$\sigma$`-receiver has `$k$` formals (the
+DISTINCT variable count — `lower_lhs_vars` dedups repeats), so the accept must send `$k$` slots,
+NOT `arity`. `build_accept_send` sends one slot per distinct variable (its first-occurrence
+`BoundVar`); the linear case (`first_occ = [0 \dots arity-1]`) reduces byte-identically to the
+M1/M2a frame.
+
+**Formal verification** (FV (iv)+(vi), zero-admission, both INSTANCES of the proven
+`GuardedCommSoundness` `guarded_attempt` model): `NonLinearEqConsistency` proves commit
+`$\Leftrightarrow$` all-`$k$` name-equal, reject-safe, and oracle-agreement with the host;
+`AtomicFiringNoPartialMatch` proves the guarded join is all-or-nothing (no partial-consume state
+reachable) and the accept fires atomically after the whole verdict — which is precisely why the
+JOIN (one atomic `consume`) is required over a nested chain (which would expose an intermediate
+committed state).
