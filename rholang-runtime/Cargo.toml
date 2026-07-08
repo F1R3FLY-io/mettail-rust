@@ -34,6 +34,7 @@ default = [
     "ctx-demo-runtime",
     "lambda-demo-runtime",
     "native-demo-runtime",
+    "comm-demo-runtime",
 ]
 # Conversion from typed Rho observation reports into mettail_runtime::RuntimeBackendReport
 # plus the generic Language backend installer wrappers.
