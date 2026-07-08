@@ -64,3 +64,7 @@ theories/InRhoEncoderTotalOrReject.v
 # reject-safe = merge_substs->None, no-fabrication, oracle-agreement).
 theories/AtomicFiringNoPartialMatch.v
 theories/NonLinearEqConsistency.v
+# FV (AC-nl) — Stage AC non-linear AC matching: a repeated var's occurrences are the AC selection
+# values at its slot positions; the consistency guard is all_equal over them = vi COMPOSED WITH the
+# slot-gather. Inherits vi's commit<->name-equality + reject-safety; two-slot x=x' characterization.
+theories/AcNonLinearConsistency.v
