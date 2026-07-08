@@ -31,9 +31,9 @@ use dovetail::rules::Pattern;
 use dovetail::set_automaton::{PatternId, SetAutomaton};
 use mettail_languages::swapdemo::{Proc, SwapDemoLanguage, SwapDemoTerm};
 use mettail_rholang_codegen::{
-    automaton_receiver_network_par, lower_language_def, plan_rho_default_backend,
-    reconstruct_language_def, rho_net_injection_sites, spread_term_par,
-    suggest_rejected_rule_dispositions, GroundTerm, RhoCoverageEvidence,
+    automaton_receiver_network_par, lower_language_def, multi_pattern_receiver_network_par,
+    plan_rho_default_backend, reconstruct_language_def, rho_net_injection_sites, spread_term_par,
+    suggest_rejected_rule_dispositions, AutomatonAcceptTarget, GroundTerm, RhoCoverageEvidence,
     RhoDefaultBackendRequirements, RhoGuardCoverageEvidence, RhoNetRuleKind,
 };
 use mettail_rholang_runtime::{
@@ -578,6 +578,136 @@ async fn m1_matches_a_ternary_pattern_in_rho() {
         RuntimeObservationValue::Term { constructor: "C".to_string(), children: Vec::new() },
     ];
     assert_eq!(observed, expected, "Triple(A, B, C) matched in Rho binds σ = [A, B, C]");
+}
+
+/// Multiset sort key for observation comparison (the σ-echo's parallel sends land on
+/// OUT in nondeterministic order).
+fn observation_constructor(value: &RuntimeObservationValue) -> String {
+    match value {
+        RuntimeObservationValue::Term { constructor, .. } => constructor.clone(),
+        _ => "?".to_string(),
+    }
+}
+
+/// The [Swap, Pair] multi-pattern automaton, accepting to `MATCH_SWAP` / `MATCH_PAIR`.
+fn swap_pair_network(fingerprint: &str) -> models::rhoapi::Par {
+    let automaton = SetAutomaton::compile_structural([
+        (
+            PatternId(0),
+            Pattern::app("Swap".to_string(), vec![Pattern::var("x"), Pattern::var("y")]),
+        ),
+        (
+            PatternId(1),
+            Pattern::app("Pair".to_string(), vec![Pattern::var("a"), Pattern::var("b")]),
+        ),
+    ])
+    .expect("[Swap, Pair] compiles");
+    let targets = [
+        AutomatonAcceptTarget {
+            pattern: PatternId(0),
+            accept_channel: "MATCH_SWAP".to_string(),
+            out_channel: "OUT".to_string(),
+        },
+        AutomatonAcceptTarget {
+            pattern: PatternId(1),
+            accept_channel: "MATCH_PAIR".to_string(),
+            out_channel: "OUT".to_string(),
+        },
+    ];
+    multi_pattern_receiver_network_par(&automaton.view(), "site0", &targets, fingerprint)
+        .expect("the multi-pattern network serializes")
+}
+
+/// Stage 1 M2 — the multi-pattern Match router dispatches to the RIGHT pattern, in Rho.
+/// One [Swap, Pair] network; a `Swap(A, B)` subject fires ONLY the Swap accept (σ=[A, B]
+/// forwarded to OUT by its echo), and the Pair case never fires (no Pair spread), so OUT
+/// carries exactly [A, B] — evidence the router discriminates on the head tag in Rho.
+#[tokio::test]
+async fn m2_dispatches_to_the_matching_pattern_in_rho() {
+    mettail_runtime::clear_var_cache();
+    let (_backend, fingerprint) = swap_demo_backend();
+
+    let network = swap_pair_network(&fingerprint);
+    let echoes = sigma_echo_receiver("MATCH_SWAP", 2).append(sigma_echo_receiver("MATCH_PAIR", 2));
+    let subject = spread_term_par(
+        &GroundTerm::new(
+            "Swap",
+            vec![GroundTerm::new("A", Vec::new()), GroundTerm::new("B", Vec::new())],
+        ),
+        &fingerprint,
+        "site0",
+    );
+    let program = echoes.append(network).append(subject);
+    let mut observed = run_normalized_par_for_oracle_and_read_runtime_values(&program, "OUT")
+        .await
+        .expect("the in-Rho multi-pattern match executes");
+
+    observed.sort_by_key(observation_constructor);
+    let expected = vec![
+        RuntimeObservationValue::Term { constructor: "A".to_string(), children: Vec::new() },
+        RuntimeObservationValue::Term { constructor: "B".to_string(), children: Vec::new() },
+    ];
+    assert_eq!(
+        observed, expected,
+        "only the Swap case fires on a Swap subject (Pair stays silent)"
+    );
+}
+
+/// Stage 1 M2 — the O3 fan-out: two rules with the same LHS `Swap(x, y)` share ONE
+/// children subtree and announce in PARALLEL to both rules' accept channels. A single
+/// `Swap(A, B)` subject fires BOTH echoes, so OUT carries σ=[A, B] twice.
+#[tokio::test]
+async fn m2_o3_fan_out_fires_both_same_op_rules_in_rho() {
+    mettail_runtime::clear_var_cache();
+    let (_backend, fingerprint) = swap_demo_backend();
+
+    let automaton = SetAutomaton::compile_structural([
+        (
+            PatternId(0),
+            Pattern::app("Swap".to_string(), vec![Pattern::var("x"), Pattern::var("y")]),
+        ),
+        (
+            PatternId(1),
+            Pattern::app("Swap".to_string(), vec![Pattern::var("x"), Pattern::var("y")]),
+        ),
+    ])
+    .expect("two same-op rules compile");
+    let targets = [
+        AutomatonAcceptTarget {
+            pattern: PatternId(0),
+            accept_channel: "MATCH1".to_string(),
+            out_channel: "OUT".to_string(),
+        },
+        AutomatonAcceptTarget {
+            pattern: PatternId(1),
+            accept_channel: "MATCH2".to_string(),
+            out_channel: "OUT".to_string(),
+        },
+    ];
+    let network = multi_pattern_receiver_network_par(&automaton.view(), "site0", &targets, &fingerprint)
+        .expect("the O3 fan-out network serializes");
+    let echoes = sigma_echo_receiver("MATCH1", 2).append(sigma_echo_receiver("MATCH2", 2));
+    let subject = spread_term_par(
+        &GroundTerm::new(
+            "Swap",
+            vec![GroundTerm::new("A", Vec::new()), GroundTerm::new("B", Vec::new())],
+        ),
+        &fingerprint,
+        "site0",
+    );
+    let program = echoes.append(network).append(subject);
+    let mut observed = run_normalized_par_for_oracle_and_read_runtime_values(&program, "OUT")
+        .await
+        .expect("the in-Rho O3 fan-out executes");
+
+    observed.sort_by_key(observation_constructor);
+    let expected = vec![
+        RuntimeObservationValue::Term { constructor: "A".to_string(), children: Vec::new() },
+        RuntimeObservationValue::Term { constructor: "A".to_string(), children: Vec::new() },
+        RuntimeObservationValue::Term { constructor: "B".to_string(), children: Vec::new() },
+        RuntimeObservationValue::Term { constructor: "B".to_string(), children: Vec::new() },
+    ];
+    assert_eq!(observed, expected, "both same-op rules fire (σ=[A, B] announced twice)");
 }
 
 /// Stage 1 M1: no false-positive matches. The Swap automaton over a `Pair(A, B)`
