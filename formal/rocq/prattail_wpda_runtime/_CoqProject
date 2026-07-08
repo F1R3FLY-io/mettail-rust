@@ -59,3 +59,4 @@ theories/ProjectionIsolation.v
 theories/KeywordReservation.v
 theories/MethodFrameIsolation.v
 theories/InfixReconvergence.v
+theories/PrefixCohortIsolationGeneral.v
