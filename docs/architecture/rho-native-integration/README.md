@@ -223,6 +223,8 @@ runtime values are normalized AST artifacts, and the executable form is
 | [14 — Completion Audit](14-completion-audit.md) | The final completion audit (plan #1956 Epic 1 #2078): change classification (#1970) + per-epic requirement-to-evidence matrix (#1972/#1973), verifying the persistent goal against current code. |
 | [15 — In-Rho Set-Automaton Matching Integration](15-in-rho-set-automaton-matching.md) | How is Greg Meredith's set-automaton matching integration finished — compiling the set automaton into Rho for O1-optimal in-Rho matching, with every non-semantic-predicate rewrite firing as a COMM? Authored one campaign stage per section (Stage 0 firing driver; Stage 1 matching). |
 | [16 — In-Rho Matching: Verification Plan](16-in-rho-verification-plan.md) | What is the end-to-end formal-verification strategy for the in-Rho matching — the Rocq-first obligations, the load-bearing rem:nonopt discharge chain, the tool fit, and what is proven vs outstanding? |
+| [17 — Stage 3: Production Wiring](17-stage-3-production-wiring.md) | How does the derived in-Rho matching ruleset become a language's default backend — the match gate, the redex/subject reconstruction, and the end-to-end match + fire on the live reducer? |
+| [18 — In-Rho AC Matching](18-in-rho-ac-matching.md) | How are associative-commutative operands (HashBag par-soups) matched ORDER-INDEPENDENTLY on the interpreter — the process-soup carrier (Scheme B), the connective pattern, the `AcRewrite` un-skip + collection-kind resolution, the injection, and the five zero-admission AC theorems? |
 | [References](references.md) | Which papers, docs, and formal artifacts support the design? |
 | [Validation Script](validate.sh) | How are the documentation structure checks reproduced locally? |
 

@@ -1,0 +1,33 @@
+@startuml
+title In-Rho AC match + fire (Scheme B): one atomic order-independent consume
+skinparam backgroundColor #FEFEFE
+skinparam defaultFontName monospaced
+skinparam sequenceArrowColor #2B6CB0
+skinparam sequenceLifeLineBorderColor #4A5568
+skinparam participantBackgroundColor #E6F0FA
+skinparam participantBorderColor #2B6CB0
+skinparam noteBackgroundColor #EAF7EE
+skinparam noteBorderColor #38A169
+
+participant "Dovetail firing\n(host AC match)" as DV
+participant "ac_contract_call\n(codegen injection)" as INJ
+participant "RSpace consume\n(native sub_pars /\nMaximumBipartiteMatch)" as RS
+participant "ac_sigma_receiver_par\n(installed AC receiver)" as RCV
+participant "OUT\n(observed rewrite)" as OUT
+
+DV -> INJ : sigma = elements + rest
+INJ -> RS : channel ! ( reflect(bag) soup , @out )
+note over RS
+  ONE atomic locked consume:
+  assign k send-patterns to k soup sends
+  in ANY order; bind residual to rest;
+  check the non-linear guard;
+  all-or-nothing (reject-safe veto)
+end note
+RS -> RCV : bind elements + rest + out
+RCV -> OUT : out ! ( reflect(R) under sigma )
+note right of OUT
+  one firing per bag,
+  order-independent
+end note
+@enduml

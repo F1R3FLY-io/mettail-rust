@@ -37,13 +37,27 @@ which the in-Rho realization finally forces to be *proven* rather than inherited
 
 ### 2.2 AC matching (beyond the papers — reuse the proven multiset/bipartite algebra)
 
-| # | Obligation | Rocq theory | Reuses |
+| # | Obligation | Rocq theory (proven, zero-admission) | Reuses (as built) |
 |---|---|---|---|
-| (AC-i) | in-Rho AC match set = AC matching relation (multisets) | `InRhoAcMatchMultiset.v` | `DeltaOneMinCostMatching.v`, `MultisetSemiringLaws.v`, `AmbiguitySetPreservation.v` |
-| (AC-atom) | atomic, no partial-consume reachable | `AcAtomicNoPartialConsume.v` | `DeltaOneMinCostJoin.v`, `GuardedCommSoundness.v` |
-| (AC-rest) | `rest` reconstruction = host `instantiate` AcApp flatten | `AcRestReconstruction.v` | `MultisetSemiringLaws.v` |
-| (AC-nl) | non-linear AC commit `$\Leftrightarrow$` name-equality, reject-safe | `AcNonLinearConsistency.v` | composes (vi) |
-| (AC-map) | MapAc key-uniqueness + ZipAc correlation preserved by split | `AcMapKeyUniqueness.v` | `MultisetSemiringLaws.v` |
+| (AC-rest) | `rest` reconstruction = host `instantiate` AcApp flatten | `AcRestReconstruction.v` — 4 thm | self-contained (Stdlib `Permutation`) |
+| (AC-atom) | atomic consume: commit removes exactly the selection, veto/missing untouched, no partial removal | `AcAtomicNoPartialConsume.v` — 5 thm | `AcRestReconstruction.v` (the removal dual of `AtomicFiringNoPartialMatch.v`) |
+| (AC-map) | MapAc key-uniqueness preserved across the split | `AcMapKeyUniqueness.v` — 3 thm | self-contained (Stdlib `NoDup`) |
+| (AC-nl) | non-linear AC commit `$\Leftrightarrow$` name-equality, reject-safe | `AcNonLinearConsistency.v` — 4 thm | `NonLinearEqConsistency.v` (vi) `$\circ$` the AC selection's slot-gather |
+| (AC-i) | in-Rho AC match set = AC matching relation over multisets (sound + complete) | `InRhoAcMatchMultiset.v` — 4 thm | `AcRestReconstruction.v` (`sub_multiset` / `complement` / `selection_rest_partition`) + Stdlib `Permutation` |
+
+**Status — all five proven zero-admission** (20 theorems, `Print Assumptions` =
+"Closed under the global context"). The design's proposed reuses
+(`DeltaOneMinCostMatching`, `MultisetSemiringLaws`, `AmbiguitySetPreservation`) were
+superseded by one smaller self-contained multiset core, `AcRestReconstruction.v`, on
+which AC-atom and AC-i build. AC-i proves the match correspondence `sub_multiset S B`
+holds iff some `rest` gives `Permutation (S ++ rest) B` — order-independence is
+inherent in the `Permutation` witness (soundness = the faithful `complement`,
+completeness = every partition is a reachable match). Each theory is paired with a
+runtime test exercising the AC match/fire on the live reducer:
+`ac_bag_pattern_matches_the_process_soup_in_rho` (order-independent match),
+`ac_receiver_fires_the_matched_element_on_the_dynamic_out` (the σ-receiver firing),
+and `ac_contract_call_fires_the_ac_receiver` (the codegen injection fires the
+codegen receiver).
 
 **AC economy:** because the AC match is ONE atomic `consume` (the pick is internal
 to a single COMM), AC contributes zero new `$\tau$` steps — it needs NO (iii)-style
@@ -90,6 +104,9 @@ Stage AC. The capstone flips INV-2/6/13 in [13](13-knotted-topoi-operational-inv
 | Stage 2 `eq:` codegen | done | `multi_pattern_receiver_network_par` serializes non-linear patterns — a repeated variable emits a polyadic `eq:` JOIN over the children with a `Receive.condition` consistency guard (`EAnd`-fold of `EEq(BoundVar(arity-1-q0), BoundVar(arity-1-qj))`), the `[optimal]` Def 4.9 enable-gate; the accept sends `k`=distinct-var slots (the triad fix). Linear frame byte-identical; 3 structural tests |
 | Stage 2 `eq:` runtime | done | `f(x,x)` matches `f(A,A)` in Rho (guard holds, `σ=[A]`) and does NOT match `f(A,B)` (the reducer's `check_commit` VETOES reject-safely, the `merge_substs` `$\to$` `None` analogue) — validated on the live RSpace reducer |
 | Stage 2 FV (iv)+(vi) | done | **proven zero-admission** — `AtomicFiringNoPartialMatch` (iv: the guarded join is all-or-nothing, no partial consume; accept atomic after the verdict) + `NonLinearEqConsistency` (vi: commit `$\Leftrightarrow$` all-k name-equal, reject-safe, oracle-agreement with `merge_substs`), both INSTANCES of `GuardedCommSoundness`; 7 `Print Assumptions` "Closed under the global context" |
+| Stage AC match + fire | done | the HashBag AC receiver runs ON the interpreter — a bag reflects to a process-`Par` soup (`reflect_ground_term_par`; corrected from `EList`, whose `fold_match` is positional), the connective `ac_bag_pattern` matches it ORDER-INDEPENDENTLY (native `sub_pars` / `MaximumBipartiteMatch`), and `ac_sigma_receiver_par` fires `$\llbracket R \rrbracket \sigma$` on the dynamic out. Runtime tests `ac_bag_pattern_matches_the_process_soup_in_rho` + `ac_receiver_fires_the_matched_element_on_the_dynamic_out` on the live reducer |
+| Stage AC un-skip | done | a linear with-rest HashBag AC base rewrite un-skips to `RhoNetLoweredRule::AcRewrite` in `lower_base_rewrite` (materialized + installed like a base rewrite, on the rule's own trace channel — accept-triad coherence). `resolve_ac_collection_type` reads `op`'s declared HashBag kind from `def.terms`, so PARSER-produced rules (`coll_type: None`) un-skip; `ac_contract_call` builds the injection `channel!(⟦bag⟧, @out)`. Tests `parser_none_hashbag_rule_un_skips_via_resolution` + `ac_contract_call_fires_the_ac_receiver` (both receiver and injection from codegen) |
+| Stage AC FV | done | **the five AC theories proven zero-admission** (§2.2; 20 theorems "Closed under the global context") — AC-rest / AC-atom / AC-map / AC-nl / AC-i, each paired with a runtime match/fire test |
 
 The Rust example / property / integration tests are the executable floor; the Rocq
 theorems above are the unbounded ceiling, authored one slice at a time under the
