@@ -190,6 +190,59 @@ pub fn emit_min_terminal_span_body(
     }
 }
 
+/// ROOT-C structural token-soundness backstop (2026-07-08): emit the body of
+/// `WpdaEngine::rule_leads_with_literal(src_idx, rule_idx) -> bool` — a
+/// `match (src_idx, rule_idx)` returning `true` for every rule whose FIRST
+/// `syntax_pattern` element is a `SyntaxExpr::Literal`.
+///
+/// This is the STRUCTURAL companion to `min_terminal_span`. Where the (count-
+/// based) span filter cannot soundly distinguish a rule's IN-span leading
+/// literal (rhocalc `ToStr`'s `str`) from an OUT-OF-span leading trigger
+/// (calculator `StrToInt`'s `int`, lambda `App`'s `(`) — because that split is
+/// a runtime parse property, not a grammar property — this predicate captures
+/// the ONE grammar fact both dispositions share: the rule LEADS WITH A LITERAL,
+/// so a sound derivation must realize that literal as a terminal-kind FIRST
+/// child. The realize filter (`packing_satisfies_min_terminal_span`) then
+/// rejects any such packing whose `children[0]` is a `Symbol` (the demand-
+/// driver's fabricated cast wrap, which consumed no leading literal). See
+/// `WpdaEngine::rule_leads_with_literal` for the full rationale.
+///
+/// Grammar-derived and MAXIMALLY general: EVERY literal-led rule is included
+/// (casts, groupings, sigil sends, keyword atoms) — the structural check on
+/// `children[0]` is inert for a sound packing (its first child IS the terminal)
+/// and fires only on the phantom, so over-inclusion here can never reject a
+/// sound parse. Emitted unconditionally (no kill-switch): the trait default is
+/// `false`, so the generated impl is byte-identical for grammars with no
+/// literal-led rules.
+pub fn emit_rule_leads_with_literal_body(
+    per_cat: &[Vec<(u16, &GrammarRule)>],
+) -> TokenStream {
+    use mettail_ast::grammar::SyntaxExpr;
+    let mut arms: Vec<TokenStream> = Vec::new();
+    for (ci, rules) in per_cat.iter().enumerate() {
+        let cat_u16 = ci as u16;
+        for (rule_idx, rule) in rules {
+            let Some(sp) = rule.syntax_pattern.as_ref() else {
+                continue;
+            };
+            if matches!(sp.first(), Some(SyntaxExpr::Literal(_))) {
+                let r = *rule_idx;
+                arms.push(quote! { (#cat_u16, #r) => true, });
+            }
+        }
+    }
+    if arms.is_empty() {
+        quote! { false }
+    } else {
+        quote! {
+            match (src_idx, rule_idx) {
+                #(#arms)*
+                _ => false,
+            }
+        }
+    }
+}
+
 /// AT_QUOTED_BIND_GATE realize-backstop (option B, 2026-07-03). Emit the body
 /// of `WpdaEngine::sigil_quoted_bind_overgen_rule(src_idx, rule_idx) -> bool`.
 ///

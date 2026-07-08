@@ -151,6 +151,12 @@ pub(crate) fn emit_engine_impl_full(
     // count consumed by the realize-time soundness filter.
     let min_terminal_span_body =
         semantic_actions::emit_min_terminal_span_body(categories, &per_cat_indexed);
+    // ROOT-C structural token-soundness backstop (2026-07-08): per-rule
+    // "leads with a literal" predicate consumed by the realize-time filter to
+    // reject the demand-driver's fabricated leading-literal cast phantom (whose
+    // `children[0]` is the operand `Symbol`, not the realized leading terminal).
+    let rule_leads_with_literal_body =
+        semantic_actions::emit_rule_leads_with_literal_body(&per_cat_indexed);
     // AT_QUOTED_BIND_GATE realize-backstop (option B, 2026-07-03): the two
     // grammar-derived engine helper methods are emitted ONLY when the codegen
     // realize kill-switch is on (in lock-step with the walker-side
@@ -2548,6 +2554,17 @@ pub(crate) fn emit_engine_impl_full(
                 // span leaves less slack than this — dropping token-unsound
                 // fabricated-cast derivations on evidence (yield != span).
                 #min_terminal_span_body
+            }
+
+            fn rule_leads_with_literal(&self, src_idx: u16, rule_idx: u16) -> bool {
+                // ROOT-C structural token-soundness backstop (2026-07-08):
+                // `true` iff this rule's first syntax element is a literal. A
+                // sound packing of a literal-led rule realizes that literal as a
+                // terminal-kind first child; the realize filter rejects a
+                // literal-led packing whose `children[0]` is a `Symbol` (the
+                // fabricated grouping-close cast phantom). See
+                // emit_rule_leads_with_literal_body.
+                #rule_leads_with_literal_body
             }
 
             // AT_QUOTED_BIND_GATE realize-backstop (option B, 2026-07-03):

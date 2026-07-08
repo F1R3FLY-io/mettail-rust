@@ -1041,6 +1041,38 @@ pub trait WpdaEngine<W: SemiringRef> {
         false
     }
 
+    /// ROOT-C structural token-soundness backstop (2026-07-08). Returns `true`
+    /// iff `(src_idx, rule_idx)`'s FIRST `syntax_pattern` element is a
+    /// `SyntaxExpr::Literal` — i.e. the rule is LED by a fixed terminal: a
+    /// keyword/sigil cast (`"str" "(" p ")"`, rhocalc `ToStr`), a cross-category
+    /// trigger cast (`"int" "(" a ")"`, calculator `StrToInt`), a grouping
+    /// (`"(" fun "," arg ")"`, lambda `App`), or a sigil send (`"@" n "!" …`).
+    ///
+    /// A SOUND derivation of such a rule ALWAYS REALIZES that leading literal
+    /// into the packing as its FIRST child — either an IN-span `Terminal`
+    /// (rhocalc's `str` is matched within the result span) OR an OUT-OF-span
+    /// `TriggerTerminal` (calculator's cross-cat `int`, lambda's grouping `(`
+    /// are consumed as span-anchored triggers). The two dispositions differ by
+    /// span arithmetic (which is NOT codegen-derivable — see the abandoned
+    /// count-based `min_terminal_span` formula "J"), but they agree
+    /// STRUCTURALLY: `children[0]` is a terminal-kind SPPF node, never a
+    /// `Symbol`.
+    ///
+    /// The single-result demand driver's grouping-close synthesizes a PHANTOM
+    /// cast wrap (`(str(X))` → `ToStr(ToStr(X))`) WITHOUT consuming the leading
+    /// literal, so the phantom packing's `children[0]` is the OPERAND `Symbol`.
+    /// The realize-time filter [`WpdaWalker::packing_satisfies_min_terminal_span`]
+    /// rejects any leading-literal packing whose `children[0]` is a `Symbol`
+    /// (NOT a `Terminal`/`TriggerTerminal`) — a purely STRUCTURAL evidence test
+    /// ("was the leading terminal realized at all?"), sidestepping the in-span /
+    /// out-of-span span-arithmetic wall that no count threshold can cross
+    /// soundly. Grammar-derived; default `false` (no constraint) for engines
+    /// without literal-led rules. Per-language codegen overrides it.
+    fn rule_leads_with_literal(&self, src_idx: u16, rule_idx: u16) -> bool {
+        let _ = (src_idx, rule_idx);
+        false
+    }
+
     /// Sig-B Blocker-3 §2.3 (2026-06-01, pgmcp experiment #9): the
     /// grammar-determined SINGLE-hop coercion table. Returns the
     /// `(target_cat, rule_index_in_target_cat)` pairs for every Pass-2a
@@ -8447,6 +8479,32 @@ where
     ) -> bool {
         let pcat = (global_rule_idx >> 16) as u16;
         let plocal = (global_rule_idx & 0xFFFF) as u16;
+        // ── ROOT-C structural phantom-cast rejection (2026-07-08) ──────────
+        // A rule that LEADS WITH A LITERAL (`rule_leads_with_literal`) always
+        // realizes that leading literal as its FIRST child in a SOUND
+        // derivation — an in-span `Terminal` OR an out-of-span
+        // `TriggerTerminal` (empirically rhocalc `str`, calc cross-cat `int`,
+        // and lambda grouping `(` all realize a `TriggerTerminal` first child).
+        // The single-result demand driver's grouping-close, however, FABRICATES
+        // an outer cast wrap whose `children[0]` is the OPERAND `Symbol` — the
+        // leading literal was never consumed (`(str(X))` → `ToStr(ToStr(X))`,
+        // which the 1+4-pass display fixpoint then grows +1 per pass). This is a
+        // STRUCTURAL evidence test ("was the leading terminal realized at
+        // all?"), so it sidesteps the in-span/out-of-span span-arithmetic wall
+        // that no count-based `min_terminal_span` threshold can cross soundly
+        // (the abandoned formula "J", which raised the trigger-cast count by
+        // counting the leading `(` and thereby false-rejected lambda `App`
+        // whose `(` is out-of-span). Inert for sound packings (their first child
+        // IS the terminal); fires only on the phantom. Grammar-derived, no
+        // per-language / rule-id hardcode.
+        if self.engine.rule_leads_with_literal(pcat, plocal)
+            && matches!(
+                children.first().map(|&c| self.sppf.node(c)),
+                Some(Some(crate::sppf::SppfNode::Symbol { .. }))
+            )
+        {
+            return false;
+        }
         let min_span = self.engine.min_terminal_span(pcat, plocal);
         if min_span == 0 {
             return true;
