@@ -5940,6 +5940,584 @@ pub fn rho_net_nested_structural_ac_injection_sites(
     sites
 }
 
+// ─── Stage 4 (Ambient In/Out): the DEPTH-2 NESTED structural-AC SPREAD MATCH (in-Rho locate+reduct) ─
+//
+// The SPREAD analogue of the report-path `nested_structural_ac_receiver_par` — the DEPTH-2
+// generalization of the flat `structural_ac_match_receiver_par` (OpenRule). Where the report path
+// (`structural_ac_contract_call` → `nested_structural_ac_receiver_par`) HOST-locates the redex,
+// HOST-reflects the operand bag, and HOST-builds the nested reduct `⟦R⟧σ`, delivering the reduct(s)
+// as separately-delivered message slots, the SPREAD path:
+//
+//   * LOCATES the operand IN RHO by a structural walk of the reflected subject
+//     ([`nested_structural_ac_match_call_par`]), re-sourcing the operand bag from the SUBJECT (not
+//     the host-σ report) — the corrupted-σ probe proof;
+//   * BINDS every σ slot the reduct needs (`na`, `A`, `nb`, `B`, the inner `rest1`, the outer
+//     `rest2`, and the cross-level `M` guard slots) FROM the operand bag's connective pattern
+//     ([`nested_match_bind_pattern_for`], the binding twin of the report-path
+//     `nested_match_pattern_for`, which WILDCARDS those positions); and
+//   * BUILDS the nested reduct `⟦nb[{ na[{A}] | B }]⟧` (or Out's `⟦{ na[{A} ] | nb[B] }⟧`) IN THE
+//     RECEIVER BODY from the bag-bound σ slots ([`reflect_ac_template_bound_par`], the bound-var twin
+//     of `reflect_ground_term_par` — reusing the `reflect_hashbag_soup_par` idiom so a NESTED AC bag
+//     rebuilds via the `ac:` carrier + a σ-slot rest), NOT host-delivered as a message slot.
+//
+// So its message is the 2-value `carrier!(⟦operand⟧, @out)` the spread delivers (NO host σ), exactly
+// like the flat [`structural_ac_match_receiver_par`]; the reducer still matches the DEPTH-2 nested
+// pattern + the cross-level `EEq(M_outer, M_inner)` guard in ONE atomic `consume` (a HashBag argument
+// reflects to the same order-independent process-soup carrier as the top bag — feasibility already
+// proven by the report-path receiver).
+
+/// One in-Rho MATCHING entry for a DEPTH-2 NESTED structural non-linear AC family rewrite
+/// (`RhoNetLoweredRule::NestedStructuralAcRewrite`, the Ambient `InRule`/`OutRule`): the data the
+/// in-Rho matcher needs to ADMIT the nested-structural-AC redex and co-install a per-site MATCH
+/// receiver that re-sources BOTH the operand AND the nested reducts from the SPREAD of the reflected
+/// subject (never the host-σ report).
+///
+/// The DEPTH-2 twin of [`RhoNetStructuralAcMatchEntry`]: where a flat structural-AC element is a
+/// constructor over BARE variables (its reduct args bound directly), a nested element's argument is
+/// itself a HashBag, and the reduct is a NESTED restructuring (never a bare LHS var). The report-path
+/// [`nested_structural_ac_receiver_par`] takes those reducts as separately DELIVERED σ slots; the
+/// MATCH receiver ([`nested_structural_ac_match_receiver_par`]) instead BINDS every σ slot from the
+/// operand's connective pattern and REBUILDS the nested reduct in its body — so, exactly like the flat
+/// [`structural_ac_match_call_par`], its message is the 2-value `carrier!(⟦operand⟧, @out)` the spread
+/// delivers, with NO host σ. Like every AC redex, a nested-structural-AC redex is NOT an automaton
+/// entry (its `AcApp` bag has no positional image), so it carries no `accept_channels` entry and no
+/// `PatternId`; the match driver LOCATES it by a separate walk ([`nested_structural_ac_match_install_at`])
+/// that keys on the LHS root pattern's TOP constructor (a bag op for `InRule`, a wrapper for `OutRule`).
+#[derive(Debug, Clone)]
+pub struct RhoNetNestedStructuralAcMatchEntry {
+    /// The Dovetail firing label the nested-structural-AC firing carries (the bare rewrite label,
+    /// e.g. `InRule`) — what the report keys the firing on and the in-Rho gate admits.
+    pub fired_rule_label: String,
+    /// The recognized nested-structural-AC shape (`op`, the LHS root pattern, the cross-level
+    /// non-linear channel var, the spliced outer rest, and the `m` NESTED reduct templates) — the
+    /// per-site MATCH receiver is materialized from it. Crate-private: only
+    /// [`nested_structural_ac_match_call_par`] (same crate) reads it. (No `PartialEq`/`Eq`:
+    /// [`NestedStructuralAcShape`] stores an AST [`Pattern`], which is not `PartialEq`.)
+    pub(crate) shape: NestedStructuralAcShape,
+}
+
+impl RhoNetNestedStructuralAcMatchEntry {
+    /// The HashBag operand constructor `op` (`PPar` for both `InRule`/`OutRule`) — the AC element
+    /// channel of the operand/reduct soup.
+    pub fn op(&self) -> &str {
+        &self.shape.op
+    }
+
+    /// The LHS root pattern's TOP constructor — the located subject node's constructor the match
+    /// driver keys the co-install on (`PPar` for the bag-rooted `InRule`; `PAmb` for the
+    /// wrapper-rooted `OutRule`).
+    pub fn root_constructor(&self) -> Option<String> {
+        nested_root_constructor(&self.shape.root_pattern)
+    }
+}
+
+/// The LHS root pattern's TOP constructor of a nested structural-AC shape — a bag op `PPar`
+/// (bag-rooted `InRule`) or a wrapper constructor `PAmb` (wrapper-rooted `OutRule`). `None` for a
+/// non-`Apply` root (never a recognized nested shape).
+fn nested_root_constructor(pattern: &Pattern) -> Option<String> {
+    match pattern {
+        Pattern::Term(PatternTerm::Apply { constructor, .. }) => Some(constructor.to_string()),
+        _ => None,
+    }
+}
+
+/// Whether a nested-structural-AC `shape` is faithfully representable as an in-Rho MATCH receiver
+/// ([`nested_structural_ac_match_receiver_par`]): every REDUCT-referenced var that is NOT the
+/// cross-level channel var must occur EXACTLY ONCE across the LHS (so the connective pattern binds it
+/// at a single unambiguous position — a Rholang pattern free variable may occur at most once). The
+/// nested twin of [`structural_ac_shape_is_match_representable`]. The recognizer
+/// ([`nested_structural_ac_rule_shape`]) already guarantees only `M` has count 2 and every reduct var
+/// is an LHS var, so this passes for every recognized In/Out shape; it is the defensive fail-closed
+/// gate that keeps a degenerate future shape (a repeated non-channel reduct arg) on the host-σ replay
+/// path rather than a wrong in-Rho pattern.
+fn nested_structural_ac_shape_is_match_representable(shape: &NestedStructuralAcShape) -> bool {
+    let nonlinear = shape.nonlinear_var.to_string();
+    let mut referenced: HashSet<String> = HashSet::new();
+    for template in &shape.reduct_templates {
+        template.collect_vars(&mut referenced);
+    }
+    referenced.insert(shape.spliced_rest.to_string());
+
+    let mut var_counts: HashMap<String, usize> = HashMap::new();
+    collect_pattern_var_counts(&shape.root_pattern, &mut var_counts);
+
+    referenced
+        .iter()
+        .filter(|name| **name != nonlinear)
+        .all(|name| match var_counts.get(name) {
+            // A `Var` leaf: it must occur exactly once (else two pattern free vars would collide).
+            Some(&count) => count == 1,
+            // A `...rest` remainder (not a `Var` node): structurally unique — appears once as its
+            // bag's with-rest marker.
+            None => true,
+        })
+}
+
+/// The mutable slot-allocation state threaded through the SPREAD nested-AC operand pattern walk
+/// ([`nested_match_bind_pattern_for`]): the next unused receive-frame free level, the map from a
+/// bound σ var/rest NAME to its assigned level, and the cross-level `M`'s occurrence levels (for the
+/// `EEq` guard).
+struct NestedBindState {
+    next_level: usize,
+    slot_of: HashMap<String, usize>,
+    occurrence_levels: Vec<usize>,
+}
+
+/// Build the SPREAD nested-AC receiver's match PATTERN by walking the LHS root pattern, BINDING every
+/// σ slot the reduct needs (unlike the report-path [`nested_match_pattern_for`], which wildcards
+/// every non-`M`, non-spliced-rest position because the report delivers the reduct host-side): each
+/// occurrence of the cross-level channel `M` binds a distinct GUARD slot (recorded in
+/// `state.occurrence_levels`, its FIRST occurrence the reduct's `M` slot); each other
+/// reduct-referenced var binds one slot; each reduct-referenced bag `...rest` (the inner `rest1`
+/// AND the outer spliced `rest2`) binds the soup remainder to a slot; every OTHER position is a
+/// wildcard `_` (a dropped argument). A constructor over a single HashBag lowers to the
+/// order-independent process-soup `remainder | @"ac:op"!(⟦e⟧) | …` (byte-identical to
+/// [`reflect_ac_bag_par`], so the reflected operand matches); every other constructor to the tagged
+/// `EList[ GPrivate(tag), … ]` (byte-identical to [`reflect_ground_term_par`]). `referenced` is the
+/// set of var/rest NAMES the reducts (plus the spliced outer rest) reference — only those are bound;
+/// the rest ride nothing and stay wildcards.
+fn nested_match_bind_pattern_for(
+    pattern: &Pattern,
+    nonlinear_var: &Ident,
+    referenced: &HashSet<String>,
+    state: &mut NestedBindState,
+    language_fingerprint: &str,
+) -> Par {
+    match pattern {
+        // A cross-level channel occurrence — a distinct GUARD σ slot (its FIRST occurrence is the
+        // reduct's `M` slot; every occurrence is a guard conjunct).
+        Pattern::Term(PatternTerm::Var(v)) if v == nonlinear_var => {
+            let slot = state.next_level;
+            state.next_level += 1;
+            state.occurrence_levels.push(slot);
+            state.slot_of.entry(v.to_string()).or_insert(slot);
+            new_freevar_par(slot as i32, Vec::new())
+        },
+        // A reduct-referenced (non-channel) var — bound at its single occurrence.
+        Pattern::Term(PatternTerm::Var(v)) if referenced.contains(&v.to_string()) => {
+            let slot = state.next_level;
+            state.next_level += 1;
+            // The recognizer guarantees a non-`M` var occurs once, so `or_insert` records it once;
+            // it is defensive against a would-be repeat (which representability already rejects).
+            state.slot_of.entry(v.to_string()).or_insert(slot);
+            new_freevar_par(slot as i32, Vec::new())
+        },
+        // Any other bare variable the reduct does not use — a wildcard (a dropped argument).
+        Pattern::Term(PatternTerm::Var(_)) => new_wildcard_par(Vec::new(), true),
+        Pattern::Term(PatternTerm::Apply { constructor, args }) => {
+            if let [Pattern::Collection { elements, rest, .. }] = args.as_slice() {
+                // `op{ elements, ...rest }` — the process-soup pattern. The remainder binds a σ slot
+                // iff the reduct references this rest (the inner `rest1` OR the outer spliced
+                // `rest2`); an unreferenced rest is a wildcard.
+                let element_channel = format!("ac:{constructor}");
+                let mut soup = match rest {
+                    Some(r) if referenced.contains(&r.to_string()) => {
+                        let slot = state.next_level;
+                        state.next_level += 1;
+                        state.slot_of.entry(r.to_string()).or_insert(slot);
+                        new_freevar_par(slot as i32, Vec::new())
+                    },
+                    Some(_) => new_wildcard_par(Vec::new(), true),
+                    None => Par::default(),
+                };
+                for element in elements {
+                    let element_pattern = nested_match_bind_pattern_for(
+                        element,
+                        nonlinear_var,
+                        referenced,
+                        state,
+                        language_fingerprint,
+                    );
+                    let send_pattern = new_send_par(
+                        new_gstring_par(element_channel.clone(), Vec::new(), false),
+                        vec![element_pattern],
+                        false,
+                        Vec::new(),
+                        true,
+                        Vec::new(),
+                        true,
+                    );
+                    soup = soup.append(send_pattern);
+                }
+                soup
+            } else {
+                // A plain constructor node → the tagged `EList[ GPrivate(tag), <arg patterns> ]`.
+                let tag = GPrivateBuilder::new_par_from_string(reflect_tag(
+                    language_fingerprint,
+                    &constructor.to_string(),
+                ));
+                let mut items = Vec::with_capacity(args.len() + 1);
+                items.push(tag);
+                for arg in args {
+                    items.push(nested_match_bind_pattern_for(
+                        arg,
+                        nonlinear_var,
+                        referenced,
+                        state,
+                        language_fingerprint,
+                    ));
+                }
+                new_elist_par(items, Vec::new(), true, None, Vec::new(), true)
+            }
+        },
+        // A nested structural-AC rule LHS has no other node kinds (the recognizer rejected subst /
+        // lambda / map / zip); a defensive wildcard keeps the walk total.
+        _ => new_wildcard_par(Vec::new(), true),
+    }
+}
+
+/// Reflect a nested-AC reduct [`AcReconstructTemplate`] to a receiver-BODY `Par` whose leaves are the
+/// operand-pattern's BAG-BOUND σ slots (a `BoundVar` at `free_count - 1 - level`) — the bound-var
+/// twin of [`reflect_ground_term_par`]. A `Var` (or a `Bag`'s `...rest`) reflects to its bound σ
+/// slot; a `Node` to the tagged `EList[ GPrivate(tag), ⟦child⟧… ]` (byte-identical to
+/// `reflect_ground_term_par`'s constructor image); a `Bag` to the process-soup `@"ac:op"!(⟦e⟧) | … |
+/// BoundVar(rest)` (byte-identical to [`reflect_ac_bag_par`] / [`reflect_hashbag_soup_par`], so a
+/// NESTED AC bag rebuilds through the `ac:` carrier with its residual bag spliced via the bound `rest`
+/// slot). This is how the SPREAD receiver BUILDS `⟦R⟧σ` in its body from the in-Rho-bound σ — never a
+/// host-delivered message slot. `slot_of` MUST bind every var/rest the template references (the walk
+/// [`nested_match_bind_pattern_for`] ensures this), so the `expect`s are unreachable past the
+/// representability gate.
+fn reflect_ac_template_bound_par(
+    template: &AcReconstructTemplate,
+    slot_of: &HashMap<String, usize>,
+    free_count: usize,
+    language_fingerprint: &str,
+) -> Par {
+    match template {
+        AcReconstructTemplate::Var(name) => {
+            let level = *slot_of
+                .get(name)
+                .expect("a nested-AC reduct var is bound by the operand pattern");
+            let bv_index = free_count - 1 - level;
+            new_boundvar_par(bv_index as i32, create_bit_vector(&[bv_index]), false)
+        },
+        AcReconstructTemplate::Node { constructor, children } => {
+            let tag = GPrivateBuilder::new_par_from_string(reflect_tag(
+                language_fingerprint,
+                constructor,
+            ));
+            let mut items = Vec::with_capacity(children.len() + 1);
+            let mut locally_free = tag.locally_free.clone();
+            items.push(tag);
+            for child in children {
+                let child =
+                    reflect_ac_template_bound_par(child, slot_of, free_count, language_fingerprint);
+                locally_free = union(locally_free, child.locally_free.clone());
+                items.push(child);
+            }
+            new_elist_par(items, locally_free.clone(), false, None, locally_free, false)
+        },
+        AcReconstructTemplate::Bag { op, elements, rest } => {
+            let element_channel = format!("ac:{op}");
+            let mut soup = Par::default();
+            for element in elements {
+                let element =
+                    reflect_ac_template_bound_par(element, slot_of, free_count, language_fingerprint);
+                let free = element.locally_free.clone();
+                let send = new_send_par(
+                    new_gstring_par(element_channel.clone(), Vec::new(), false),
+                    vec![element],
+                    false,
+                    free.clone(),
+                    false,
+                    free,
+                    false,
+                );
+                soup = soup.append(send);
+            }
+            // The residual `...rest`: the operand pattern bound it to the leftover bag soup, so
+            // appending its bound σ slot parallel-composes — hence SPLICES — the residual sends into
+            // the flat reduct bag (mirroring [`reflect_hashbag_soup_par`], one level deeper).
+            if let Some(rest_name) = rest {
+                let level = *slot_of
+                    .get(rest_name)
+                    .expect("a nested-AC reduct bag rest is bound by the operand pattern");
+                let bv_index = free_count - 1 - level;
+                soup = soup.append(new_boundvar_par(
+                    bv_index as i32,
+                    create_bit_vector(&[bv_index]),
+                    false,
+                ));
+            }
+            soup
+        },
+    }
+}
+
+/// Build the SPREAD DEPTH-2 nested structural-AC MATCH receiver for a [`NestedStructuralAcShape`]: a
+/// persistent
+///
+/// ```text
+/// for( < ⟦nested operand pattern⟧ >, out <- source )
+///   where ( M_a == M_b )
+///   { out!( @"ac:op"!(⟦r0⟧) | … | @"ac:op"!(⟦r_{m-1}⟧) | spliced_rest ) }
+/// ```
+///
+/// The 2-value spread message `carrier!(⟦operand⟧, @out)` (NO host σ) — the DEPTH-2 generalization of
+/// the flat [`structural_ac_match_receiver_par`]. The connective operand pattern (element 0,
+/// [`nested_match_bind_pattern_for`]) matches the reflected operand ORDER-INDEPENDENTLY at every depth
+/// (native `sub_pars`/`MaximumBipartiteMatch` per level), BINDING every σ slot the reducts need — the
+/// two cross-level `M` occurrences (the guard slots), the outer spliced rest, the inner bag rest, and
+/// each reduct var — and wildcarding the rest. The `condition` fires the COMM only when the two `M`
+/// slots are name-equal ([`nonlinear_consistency_condition`], DEPTH-AGNOSTIC — it indexes the flat
+/// receive frame); the body BUILDS each nested reduct `⟦r_j⟧` from the bag-bound σ slots
+/// ([`reflect_ac_template_bound_par`]) and splices the outer remainder. Unlike the report-path
+/// [`nested_structural_ac_receiver_par`] (which takes the `m` reducts as separately-delivered host-σ
+/// slots and wildcards the reduct positions), this binds + rebuilds EVERYTHING from the operand, so
+/// the reduct comes from the SPREAD, not the report.
+fn nested_structural_ac_match_receiver_par(
+    shape: &NestedStructuralAcShape,
+    source: Par,
+    language_fingerprint: &str,
+) -> Par {
+    let element_channel = format!("ac:{}", shape.op);
+
+    // The var/rest NAMES the RHS reducts reference, PLUS the outer spliced rest — the operand pattern
+    // must BIND each (the report-path pattern wildcards them, taking them host-side), so the body can
+    // rebuild the nested reduct + splice the outer remainder from the bag-bound slots.
+    let mut referenced: HashSet<String> = HashSet::new();
+    for template in &shape.reduct_templates {
+        template.collect_vars(&mut referenced);
+    }
+    referenced.insert(shape.spliced_rest.to_string());
+
+    // Walk the LHS root pattern, binding every referenced var/rest (guard slots for the cross-level
+    // `M`, a slot for each other referenced var/rest) and wildcarding the rest.
+    let mut state = NestedBindState {
+        next_level: 0,
+        slot_of: HashMap::new(),
+        occurrence_levels: Vec::new(),
+    };
+    let bag_pattern = nested_match_bind_pattern_for(
+        &shape.root_pattern,
+        &shape.nonlinear_var,
+        &referenced,
+        &mut state,
+        language_fingerprint,
+    );
+
+    let out_level = state.next_level;
+    let free_count = out_level + 1;
+    let slot_of = state.slot_of;
+
+    // The cross-level non-linear consistency guard `EEq(M_a, M_b)` over the two `M` occurrence slots.
+    let condition = nonlinear_consistency_condition(&state.occurrence_levels, free_count);
+
+    // Body: `out!( @"ac:op"!(⟦r0⟧) | … | @"ac:op"!(⟦r_{m-1}⟧) | spliced_rest )` — each nested reduct
+    // BUILT from the bag-bound σ slots, then the outer remainder spliced (identical top-level shape
+    // to [`nested_structural_ac_receiver_par`], only the reduct is rebuilt in-body not delivered).
+    let out_bv_index = free_count - 1 - out_level; // 0
+    let mut body_soup: Option<Par> = None;
+    for template in &shape.reduct_templates {
+        let reduct =
+            reflect_ac_template_bound_par(template, &slot_of, free_count, language_fingerprint);
+        let free = reduct.locally_free.clone();
+        let reduct_send = new_send_par(
+            new_gstring_par(element_channel.clone(), Vec::new(), false),
+            vec![reduct],
+            false,
+            free.clone(),
+            false,
+            free,
+            false,
+        );
+        body_soup = Some(match body_soup {
+            None => reduct_send,
+            Some(soup) => soup.append(reduct_send),
+        });
+    }
+    // Splice the outer remainder (`spliced_rest`) — bound by the operand pattern.
+    let rest_level = *slot_of
+        .get(&shape.spliced_rest.to_string())
+        .expect("the spliced outer rest is bound by the operand pattern");
+    let rest_bv_index = free_count - 1 - rest_level;
+    let rest_bv =
+        new_boundvar_par(rest_bv_index as i32, create_bit_vector(&[rest_bv_index]), false);
+    // `m ≥ 1` (a nested structural-AC rewrite has ≥1 RHS element), so `body_soup` is always `Some`.
+    let body_soup = match body_soup {
+        Some(soup) => soup.append(rest_bv),
+        None => rest_bv,
+    };
+    let body_free = union(body_soup.locally_free.clone(), create_bit_vector(&[out_bv_index]));
+    let body = new_send_par(
+        new_boundvar_par(out_bv_index as i32, create_bit_vector(&[out_bv_index]), false),
+        vec![body_soup],
+        false,
+        body_free.clone(),
+        false,
+        body_free,
+        false,
+    );
+
+    // Receive-bind patterns: [operand_pattern, FreeVar(out)] — the 2-value spread message
+    // `carrier!(⟦operand⟧, @out)`, exactly as the flat structural-AC match receiver.
+    let patterns = vec![bag_pattern, new_freevar_par(out_level as i32, Vec::new())];
+
+    let receive = Receive {
+        binds: vec![ReceiveBind {
+            patterns,
+            source: Some(source),
+            remainder: None,
+            free_count: free_count as i32,
+        }],
+        body: Some(body),
+        persistent: true,
+        peek: false,
+        bind_count: free_count as i32,
+        locally_free: Vec::new(),
+        connective_used: false,
+        condition: Some(condition),
+    };
+    Par::default().with_receives(vec![receive])
+}
+
+/// Derive every in-Rho MATCHING entry for a language's DEPTH-2 NESTED structural non-linear AC family
+/// rewrites (the Ambient `InRule`/`OutRule`) — the nested twin of [`rho_net_structural_ac_match_entries`],
+/// routed for the automaton MATCH path (operand + nested reducts re-sourced from the subject spread)
+/// rather than the host-σ [`structural_ac_contract_call`] replay path.
+///
+/// Correlates each installed nested-structural-AC firing site
+/// ([`rho_net_nested_structural_ac_injection_sites`] — the rewrites that un-skipped to a
+/// [`RhoNetLoweredRule::NestedStructuralAcRewrite`] receiver) back to its source `RewriteRule`,
+/// re-extracts its shape through the SAME [`nested_structural_ac_rule_shape`] the receiver
+/// materialized from, and keeps only those a MATCH receiver can faithfully bind
+/// ([`nested_structural_ac_shape_is_match_representable`]). A non-representable shape is DROPPED here
+/// (not surfaced), so it stays deferred and the gate routes its firing to the host-σ replay path —
+/// never a wrong in-Rho match.
+pub fn rho_net_nested_structural_ac_match_entries(
+    def: &LanguageDef,
+) -> Vec<RhoNetNestedStructuralAcMatchEntry> {
+    let sites = rho_net_nested_structural_ac_injection_sites(def);
+    let mut entries = Vec::with_capacity(sites.len());
+    for site in &sites {
+        // The source rewrite a nested-structural-AC injection site surfaced is always present; a
+        // defensive skip keeps the derivation total.
+        let Some(rewrite) = def
+            .rewrites
+            .iter()
+            .find(|rewrite| rewrite.name.to_string() == site.rule_label)
+        else {
+            continue;
+        };
+        // A `NestedStructuralAcRewrite` lowered iff `nested_structural_ac_rule_shape` succeeded, so
+        // this cannot fail; a defensive skip keeps the derivation total.
+        let Some(shape) = nested_structural_ac_rule_shape(&rewrite.left, &rewrite.right, def) else {
+            continue;
+        };
+        // Fail-closed: a shape the MATCH receiver cannot faithfully bind stays on the host-σ path.
+        if !nested_structural_ac_shape_is_match_representable(&shape) {
+            continue;
+        }
+        entries.push(RhoNetNestedStructuralAcMatchEntry {
+            fired_rule_label: site.rule_label.clone(),
+            shape,
+        });
+    }
+    entries
+}
+
+/// Recursively LOCATE + co-install the DEPTH-2 nested structural-AC MATCH receivers for `node` at the
+/// position whose `loc:` head-tag channel is `loc_channel` (the SAME location derivation the spread
+/// uses). The nested twin of [`structural_ac_match_install_at`], keyed on the LHS root pattern's TOP
+/// constructor (`by_root`) rather than a bag op — because a nested rule may be WRAPPER-rooted (the
+/// `OutRule`, root `PAmb`) as well as bag-rooted (the `InRule`, root `PPar`). At every node whose
+/// constructor is an admitted nested root it derives the site-keyed carrier `ac:⌜ℓ⌝/ctor`
+/// ([`ac_carrier_channel`], disjoint per position), co-installs a
+/// [`nested_structural_ac_match_receiver_par`] over it, and publishes `carrier!(⟦node⟧, @out)` where
+/// `⟦node⟧` is [`reflect_ground_term_par`] over THIS node — a bag-rooted operand delivers its
+/// process-soup, a wrapper-rooted operand delivers `EList[tag, ⟦name⟧, soup]`, each matching its
+/// receiver's element-0 pattern (both derived from the SAME root pattern). It then DESCENDS into every
+/// child (locating a nested redex too, and riding a `^lambda` binder image for free). A co-installed
+/// receiver whose full nested pattern + cross-level guard does not match the delivered operand simply
+/// never consumes (single-shot, isolated run) — never a false firing.
+fn nested_structural_ac_match_install_at(
+    node: &GroundTerm,
+    loc_channel: &str,
+    by_root: &HashMap<String, &RhoNetNestedStructuralAcMatchEntry>,
+    out_channel: &str,
+    language_fingerprint: &str,
+) -> Par {
+    let mut par = Par::default();
+    // Co-install at THIS node iff its constructor is an admitted nested root.
+    if let Some(entry) = by_root.get(&node.constructor) {
+        let carrier = ac_carrier_channel(loc_channel, &node.constructor);
+        let receiver = nested_structural_ac_match_receiver_par(
+            &entry.shape,
+            new_gstring_par(carrier.clone(), Vec::new(), false),
+            language_fingerprint,
+        );
+        // The carrier delivery `carrier!(⟦node⟧, @out)` — the WHOLE located node reflected from the
+        // SUBJECT (`reflect_ground_term_par`), NOT `find_sigma`. Ground, so the send is closed.
+        let operand = reflect_ground_term_par(node, language_fingerprint);
+        let delivery = new_send_par(
+            new_gstring_par(carrier, Vec::new(), false),
+            vec![operand, new_gstring_par(out_channel.to_string(), Vec::new(), false)],
+            false,
+            Vec::new(),
+            false,
+            Vec::new(),
+            false,
+        );
+        par = par.append(receiver).append(delivery);
+    }
+    // Descend into every child at its derived `loc:` channel (a nested bag / wrapper is located, and
+    // a bag under a `^lambda` binder image is reached by the SAME descent).
+    for (index, child) in node.children.iter().enumerate() {
+        let child_loc = spread_child_location(loc_channel, &node.constructor, index);
+        par = par.append(nested_structural_ac_match_install_at(
+            child,
+            &child_loc,
+            by_root,
+            out_channel,
+            language_fingerprint,
+        ));
+    }
+    par
+}
+
+/// Stage 4 (Ambient In/Out) — walk `subject`, LOCATE every DEPTH-2 NESTED structural non-linear AC
+/// redex (an admitted operand whose head is a nested rule's LHS root constructor), and co-install a
+/// per-site MATCH receiver over the SPREAD, re-sourcing the operand + nested reducts from the subject
+/// (NOT the host-σ report). The DEPTH-2 generalization of the flat [`structural_ac_match_call_par`]:
+/// it walks the subject from root nonce `root_site` ([`nested_structural_ac_match_install_at`]) and at
+/// every node whose constructor is an admitted nested root — a bag op (`PPar`, the bag-rooted
+/// `InRule`) OR a wrapper (`PAmb`, the wrapper-rooted `OutRule`) — co-installs a
+/// [`nested_structural_ac_match_receiver_par`] over the site-keyed carrier `ac:⌜ℓ⌝/ctor` and publishes
+/// `carrier!(⟦node⟧, @out)`. The reducer then matches the DEPTH-2 nested pattern + the cross-level
+/// `EEq(M_outer, M_inner)` guard and BUILDS the nested reduct in the receiver body — all from the
+/// spread — in ONE atomic `consume`. Returns the parallel composition of every located node's
+/// `(receiver ‖ delivery)` (empty when `subject` has no nested-AC redex). `language_fingerprint` MUST
+/// be the ruleset's (the spread's) fingerprint, so the operand's element tags and the receiver's
+/// patterns agree.
+pub fn nested_structural_ac_match_call_par(
+    subject: &GroundTerm,
+    entries: &[RhoNetNestedStructuralAcMatchEntry],
+    root_site: &str,
+    out_channel: &str,
+    language_fingerprint: &str,
+) -> Par {
+    if entries.is_empty() {
+        return Par::default();
+    }
+    // Key each entry by its LHS root-pattern's TOP constructor (`InRule` → the bag op `PPar`;
+    // `OutRule` → the wrapper `PAmb`). Mirrors the flat [`structural_ac_match_call_par`]'s `by_op`
+    // (one entry per root constructor — the Ambient In/Out roots are distinct).
+    let mut by_root: HashMap<String, &RhoNetNestedStructuralAcMatchEntry> =
+        HashMap::with_capacity(entries.len());
+    for entry in entries {
+        if let Some(root_ctor) = nested_root_constructor(&entry.shape.root_pattern) {
+            by_root.insert(root_ctor, entry);
+        }
+    }
+    nested_structural_ac_match_install_at(
+        subject,
+        &spread_root_location(root_site),
+        &by_root,
+        out_channel,
+        language_fingerprint,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     // `super::*` already re-exports the parent module's imports (`Par`,
@@ -7574,6 +8152,170 @@ mod tests {
         assert_eq!(inner_bag.children.len(), 2);
         assert!(inner_bag.children.iter().any(|c| c.constructor == "PAmb"));
         assert!(inner_bag.children.iter().any(|c| c.constructor == "PZero"));
+    }
+
+    /// The DEPTH-2 nested structural-AC MATCH entries surface both `InRule` (bag-rooted, root
+    /// constructor `PPar`) and `OutRule` (wrapper-rooted, root constructor `PAmb`) — the data the
+    /// SPREAD path co-installs a MATCH receiver from, keyed on the LHS root pattern's TOP constructor.
+    #[test]
+    fn nested_structural_ac_match_entries_surface_in_and_out() {
+        let def = syn::parse_str::<LanguageDef>(MINI_INOUT_FRAGMENT).expect("fragment must parse");
+        let entries = rho_net_nested_structural_ac_match_entries(&def);
+        assert_eq!(entries.len(), 2, "InRule + OutRule surface two match entries, got {entries:?}");
+
+        let in_entry = entries
+            .iter()
+            .find(|e| e.fired_rule_label == "InRule")
+            .expect("the InRule match entry is present");
+        assert_eq!(in_entry.op(), "PPar");
+        assert_eq!(
+            in_entry.root_constructor().as_deref(),
+            Some("PPar"),
+            "InRule is bag-rooted — its LHS root TOP constructor is the bag op PPar"
+        );
+
+        let out_entry = entries
+            .iter()
+            .find(|e| e.fired_rule_label == "OutRule")
+            .expect("the OutRule match entry is present");
+        assert_eq!(out_entry.op(), "PPar");
+        assert_eq!(
+            out_entry.root_constructor().as_deref(),
+            Some("PAmb"),
+            "OutRule is wrapper-rooted — its LHS root TOP constructor is the wrapper PAmb"
+        );
+    }
+
+    /// The SPREAD nested-AC MATCH receiver is a persistent single `Receive` carrying the cross-level
+    /// `EEq(M_outer, M_inner)` guard `condition` and — unlike the report-path
+    /// `nested_structural_ac_receiver_par` (which takes the `m` reducts as SEPARATELY DELIVERED slots,
+    /// a `(m + 2)`-value message) — exactly a 2-VALUE message `[operand_pattern, out]`, because it
+    /// BINDS every σ slot from the operand and REBUILDS the nested reduct in its body. Both In (a soup
+    /// operand pattern) and Out (a wrapper `EList` operand pattern) bind the same 8-slot frame
+    /// (2 cross-level `M` + the outer/inner rests + `N`/`P`/`R` + out).
+    #[test]
+    fn nested_structural_ac_match_receiver_is_a_two_value_message_with_the_cross_level_guard() {
+        let def = syn::parse_str::<LanguageDef>(MINI_INOUT_FRAGMENT).expect("fragment must parse");
+        let entries = rho_net_nested_structural_ac_match_entries(&def);
+        let fp = mettail_ast::identity::language_definition_fingerprint(&def);
+        let source = new_gstring_par("ac:site".to_string(), Vec::new(), false);
+
+        for label in ["InRule", "OutRule"] {
+            let entry = entries
+                .iter()
+                .find(|e| e.fired_rule_label == label)
+                .unwrap_or_else(|| panic!("{label} match entry present"));
+            let receiver =
+                nested_structural_ac_match_receiver_par(&entry.shape, source.clone(), &fp);
+
+            assert_eq!(receiver.receives.len(), 1, "{label}: one receive");
+            let receive = &receiver.receives[0];
+            assert!(receive.persistent, "{label}: the match receiver is persistent");
+            assert!(
+                receive.condition.is_some(),
+                "{label}: the cross-level M ≡ M guard is present"
+            );
+            assert_eq!(receive.binds.len(), 1, "{label}: one polyadic bind");
+            assert_eq!(
+                receive.binds[0].patterns.len(),
+                2,
+                "{label}: the 2-value spread message [operand_pattern, out] — NOT the report-path reduct slots"
+            );
+            // 2 cross-level M occurrences + outer rest2 + inner rest1 + N + P + R + out = 8 slots.
+            assert_eq!(
+                receive.binds[0].free_count, 8,
+                "{label}: the operand binds every reduct σ slot (M×2, rest1, rest2, N, P, R) + out"
+            );
+            // The body sends the rebuilt reduct on the bound `out` (BoundVar(0)) channel.
+            assert!(receive.body.is_some(), "{label}: the body rebuilds + emits the reduct on out");
+        }
+    }
+
+    /// The DEPTH-2 nested structural-AC MATCH call LOCATES the `InRule` operand at a bag-rooted node
+    /// (root `PPar`) AND the `OutRule` operand at a wrapper-rooted node (root `PAmb`) — keyed on the
+    /// LHS root TOP constructor — co-installing a MATCH receiver + the site-keyed carrier delivery at
+    /// each, and co-installs NOTHING for a non-matching subject (fail-closed).
+    #[test]
+    fn nested_structural_ac_match_call_locates_the_in_bag_and_the_out_wrapper() {
+        let def = syn::parse_str::<LanguageDef>(MINI_INOUT_FRAGMENT).expect("fragment must parse");
+        let entries = rho_net_nested_structural_ac_match_entries(&def);
+        let fp = mettail_ast::identity::language_definition_fingerprint(&def);
+
+        // The InRule redex `{ na[{ in(nb, A) }] | nb[B] }` — a bag-rooted (`PPar`) operand.
+        let in_bag = GroundTerm::collection(
+            CollectionType::HashBag,
+            "PPar",
+            vec![
+                GroundTerm::new(
+                    "PAmb",
+                    vec![
+                        GroundTerm::nullary("Na"),
+                        GroundTerm::collection(
+                            CollectionType::HashBag,
+                            "PPar",
+                            vec![GroundTerm::new(
+                                "PIn",
+                                vec![GroundTerm::nullary("Nb"), GroundTerm::nullary("PA")],
+                            )],
+                        ),
+                    ],
+                ),
+                GroundTerm::new("PAmb", vec![GroundTerm::nullary("Nb"), GroundTerm::nullary("PB")]),
+            ],
+        );
+        let in_call = nested_structural_ac_match_call_par(&in_bag, &entries, "site0", "OUT", &fp);
+        assert!(
+            !in_call.receives.is_empty(),
+            "the bag-rooted InRule operand co-installs a nested-structural-AC MATCH receiver"
+        );
+        assert!(!in_call.sends.is_empty(), "the site-keyed carrier delivery is published");
+
+        // The OutRule redex `nb[{ na[{ out(nb, A) }] | B }]` — a WRAPPER-rooted (`PAmb`) operand.
+        let out_wrapper = GroundTerm::new(
+            "PAmb",
+            vec![
+                GroundTerm::nullary("Nb"),
+                GroundTerm::collection(
+                    CollectionType::HashBag,
+                    "PPar",
+                    vec![
+                        GroundTerm::new(
+                            "PAmb",
+                            vec![
+                                GroundTerm::nullary("Na"),
+                                GroundTerm::collection(
+                                    CollectionType::HashBag,
+                                    "PPar",
+                                    vec![GroundTerm::new(
+                                        "POut",
+                                        vec![
+                                            GroundTerm::nullary("Nb"),
+                                            GroundTerm::nullary("PA"),
+                                        ],
+                                    )],
+                                ),
+                            ],
+                        ),
+                        GroundTerm::nullary("PB"),
+                    ],
+                ),
+            ],
+        );
+        let out_call =
+            nested_structural_ac_match_call_par(&out_wrapper, &entries, "site0", "OUT", &fp);
+        assert!(
+            !out_call.receives.is_empty(),
+            "the wrapper-rooted OutRule operand co-installs a nested-structural-AC MATCH receiver"
+        );
+        assert!(!out_call.sends.is_empty(), "the site-keyed carrier delivery is published");
+
+        // A non-matching subject (no PPar bag / PAmb wrapper) co-installs nothing (fail-closed).
+        let leaf = GroundTerm::nullary("PZero");
+        let none = nested_structural_ac_match_call_par(&leaf, &entries, "site0", "OUT", &fp);
+        assert!(
+            none.receives.is_empty() && none.sends.is_empty(),
+            "no nested-AC operand ⇒ no nested-structural-AC co-install"
+        );
     }
 
     /// Slice 3a: the AC match descent (`ac_match_install_at`, the routine the structural-AC spread

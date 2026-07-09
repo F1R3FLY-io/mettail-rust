@@ -30,9 +30,10 @@ use crate::rho_net_automaton::{
 };
 use crate::rho_net_lower::{
     ac_match_call_par, contextual_hole_bridge_par, contextual_premise_hole_channel,
-    spread_child_location, spread_term_par, structural_ac_match_call_par, GroundTerm,
-    RhoNetAcMatchEntry, RhoNetContextualMatchEntry, RhoNetStructuralAcMatchEntry,
-    LAMBDA_REFLECT_LABEL, MULTILAMBDA_REFLECT_LABEL,
+    nested_structural_ac_match_call_par, spread_child_location, spread_term_par,
+    structural_ac_match_call_par, GroundTerm, RhoNetAcMatchEntry, RhoNetContextualMatchEntry,
+    RhoNetNestedStructuralAcMatchEntry, RhoNetStructuralAcMatchEntry, LAMBDA_REFLECT_LABEL,
+    MULTILAMBDA_REFLECT_LABEL,
 };
 
 /// Why an LHS pattern has no structural set-automaton image (fail-closed to a later
@@ -280,6 +281,17 @@ pub struct InRhoMatchingRuleset {
     /// image), so it carries no `accept_channels` entry and no `PatternId`; the walk rides the SAME
     /// `^lambda`/nested descent, so a bag under a `new(x, ·)` binder is located too.
     pub structural_ac_dispatch: Vec<RhoNetStructuralAcMatchEntry>,
+    /// One record per ADMITTED DEPTH-2 NESTED structural non-linear AC family entry (Stage 4 —
+    /// the Ambient `InRule`/`OutRule`): the firing label + recognized nested shape the match driver
+    /// ([`nested_structural_ac_match_call_par`](crate::nested_structural_ac_match_call_par))
+    /// co-installs a per-site MATCH receiver from — re-sourcing the operand AND the NESTED reducts
+    /// from the SPREAD of the subject (binding every σ slot from the operand and rebuilding the nested
+    /// reduct in the receiver body), not the host-σ report. The DEPTH-2 generalization of
+    /// [`structural_ac_dispatch`](Self::structural_ac_dispatch): like every AC redex it is NOT an
+    /// automaton entry (its nested `AcApp` has no positional image), so it carries no
+    /// `accept_channels` entry and no `PatternId`; the walk keys on the LHS root pattern's TOP
+    /// constructor (a bag op for `InRule`, a wrapper for `OutRule`).
+    pub nested_structural_ac_dispatch: Vec<RhoNetNestedStructuralAcMatchEntry>,
 }
 
 /// Compile a language's structural base rewrites into ONE positional set automaton,
@@ -336,6 +348,24 @@ pub fn compile_in_rho_matching_ruleset(def: &LanguageDef) -> InRhoMatchingRulese
     let structural_ac_admitted: HashSet<&str> =
         structural_ac_dispatch.iter().map(|entry| entry.fired_rule_label.as_str()).collect();
 
+    // Stage 4 (Ambient In/Out): ADMIT the DEPTH-2 NESTED structural non-linear AC family rewrites
+    // (the Ambient `InRule`/`OutRule`). A nested-structural-AC rewrite has NO base-rewrite σ-receiver
+    // site (it un-skipped to a `NestedStructuralAcRewrite`), so it would otherwise defer
+    // `NotBaseRewrite` and the gate would reject the match path — deferring In/Out to the host-σ
+    // report replay (the DUAL PATH). Instead the match driver
+    // ([`nested_structural_ac_match_call_par`]) LOCATES the operand in the reflected subject (keyed on
+    // the LHS root pattern's TOP constructor — a bag op `PPar` for `InRule`, a wrapper `PAmb` for
+    // `OutRule`) and co-installs a per-site MATCH receiver that re-sources the operand AND rebuilds
+    // the NESTED reduct in its body from the SPREAD (not the report σ). Admitting a rule here (skipping
+    // its defer) shrinks `deferred`, so the gate stops rejecting it — the DEPTH-2 generalization of
+    // S-binder SLICE 3b's `structural_ac_dispatch`. This is what upgrades In/Out from the REPORT path
+    // to the SPREAD path, eliminating the dual runtime path.
+    let nested_structural_ac_dispatch = crate::rho_net_nested_structural_ac_match_entries(def);
+    let nested_structural_ac_admitted: HashSet<&str> = nested_structural_ac_dispatch
+        .iter()
+        .map(|entry| entry.fired_rule_label.as_str())
+        .collect();
+
     // Stage 4 (S-binder): ADMIT the binder/β-substitution rewrites. A subst rewrite lowered to a
     // `SubstRewrite` σ-receiver (NOT a base rewrite), so `site_channel` misses it and it would
     // otherwise defer `NotBaseRewrite` (the gate would reject the match path). Its LHS
@@ -363,12 +393,15 @@ pub fn compile_in_rho_matching_ruleset(def: &LanguageDef) -> InRhoMatchingRulese
             Some(channel) => channel.to_string(),
             None => {
                 // Admitted via the AC match path (its bag is located + fired in Rho by the match
-                // driver), the contextual match path (its holes are located + reassembled in Rho), or
-                // the structural-AC match path (its bag is located under the `^lambda`/nested descent
-                // and fired in Rho) — do NOT defer, so the gate admits it.
+                // driver), the contextual match path (its holes are located + reassembled in Rho), the
+                // structural-AC match path (its bag is located under the `^lambda`/nested descent and
+                // fired in Rho), or the DEPTH-2 nested structural-AC match path (the Ambient
+                // `InRule`/`OutRule`: its operand is located + its nested reduct rebuilt in Rho) — do
+                // NOT defer, so the gate admits it.
                 if ac_admitted.contains(label.as_str())
                     || contextual_admitted.contains(label.as_str())
                     || structural_ac_admitted.contains(label.as_str())
+                    || nested_structural_ac_admitted.contains(label.as_str())
                 {
                     continue;
                 }
@@ -500,6 +533,7 @@ pub fn compile_in_rho_matching_ruleset(def: &LanguageDef) -> InRhoMatchingRulese
         ac_dispatch,
         contextual_dispatch,
         structural_ac_dispatch,
+        nested_structural_ac_dispatch,
     }
 }
 
@@ -691,6 +725,30 @@ pub fn in_rho_match_all_sites_call_par(
         &ruleset.language_fingerprint,
     );
     call = call.append(structural_ac_call);
+
+    // Stage 4 (Ambient In/Out): co-install the DEPTH-2 NESTED structural non-linear AC redexes (the
+    // Ambient `InRule`/`OutRule`). Each admitted nested family
+    // ([`InRhoMatchingRuleset::nested_structural_ac_dispatch`]) has NO automaton entry (its nested
+    // `AcApp` has no positional image), so — like every AC redex — it is located by a SEPARATE walk
+    // of the subject ([`nested_structural_ac_match_call_par`]) rather than by `collect_redex_sites`:
+    // at every node whose head is a nested rule's LHS root constructor (a bag op `PPar` for `InRule`,
+    // a wrapper `PAmb` for `OutRule`) a per-site MATCH receiver reads the site-keyed `ac:` carrier the
+    // walk publishes the SUBJECT operand on (not the report σ), binds every σ slot from the operand,
+    // and — matching the DEPTH-2 nested pattern + the cross-level `M ≡ M` guard — REBUILDS the nested
+    // reduct in its body, firing in ONE atomic `consume`. Nested-AC leaves read only their OWN disjoint
+    // site-keyed carrier, so they are ALWAYS co-installable — with each other, the flat/linear AC
+    // leaves, AND the base networks (disjoint `ac:` vs `loc:`/`cap:` channels) — and never trigger the
+    // nested-multi-site contention gate. This SPREAD path replaces the In/Out REPORT path (dual-path
+    // elimination); the host-σ `structural_ac_contract_call` replay survives only as the fail-closed
+    // fallback (reached when the gate defers, like every other family).
+    let nested_structural_ac_call = nested_structural_ac_match_call_par(
+        subject,
+        &ruleset.nested_structural_ac_dispatch,
+        root_site,
+        out_channel,
+        &ruleset.language_fingerprint,
+    );
+    call = call.append(nested_structural_ac_call);
 
     let spread = spread_term_par(subject, &ruleset.language_fingerprint, root_site);
     Ok((call.append(spread), sites.len()))
