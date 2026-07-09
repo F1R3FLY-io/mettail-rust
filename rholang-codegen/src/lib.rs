@@ -135,7 +135,9 @@ pub use rho_net_automaton::{
     AutomatonUnsupported,
 };
 pub use rho_net_lower::{
-    ac_bag_pattern, ac_carrier_channel, ac_contract_call, ac_match_call_par, ac_rule_receiver,
+    ac_bag_pattern, ac_carrier_channel, ac_collection_pattern, ac_contract_call,
+    ac_element_slot_count, ac_map_pattern, ac_match_call_par, ac_rule_receiver,
+    ac_set_correlation_condition, ac_set_element_pattern, ac_set_paired_receiver_par, ac_set_pattern,
     ac_sigma_receiver_par, ac_sigma_receiver_par_with_condition, collapse_capture_location,
     collapse_chain_location, comm_contract_call,
     comm_rule_receiver, contextual_contract_call, contextual_hole_bridge_par,

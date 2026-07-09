@@ -544,15 +544,18 @@ fn reflect_category_fn(language: &LanguageDef, category: &Ident) -> TokenStream 
                         ::core::result::Result::Err(::std::string::String::from(#msg))
                 }
             },
-            // An AC operand COLLECTION `op(HashBag<E>)` (Stage 4 S-AC) reflects to a
-            // `GroundTerm::collection(HashBag, op, children)` whose `children` are the reflected bag
-            // elements (order-independent, multiplicity-preserving). This is the structural image of
-            // the operand bag DIRECTLY from the runtime subject term — NOT the report σ — so the
-            // in-Rho AC matcher (a co-installed `ac_sigma_receiver_par` over the SPREAD of this bag)
-            // picks k-of-n + binds `rest` ON the interpreter: a genuine in-Rho replacement, not a
-            // σ-replay duplicate. Only a HashBag reflects here; a `Set`/`Map` (`HashSet`/`HashMap`)
-            // has no in-Rho AC carrier yet (a later S-AC slice) and fails CLOSED, routing that firing
-            // to the σ-replay driver.
+            // An AC operand COLLECTION `op(HashBag<E>)` / `op(HashSet<E>)` (Stage 4 S-AC / AC4)
+            // reflects to a `GroundTerm::collection(kind, op, children)` whose `children` are the
+            // reflected elements (order-independent; a `HashBag` is multiplicity-preserving, a
+            // `HashSet` uniqueness-preserving). This is the structural image of the operand collection
+            // DIRECTLY from the runtime subject term — NOT the report σ — so the in-Rho AC matcher (a
+            // co-installed `ac_sigma_receiver_par` over the SPREAD of this collection) picks k-of-n +
+            // binds `rest` ON the interpreter: a genuine in-Rho replacement, not a σ-replay duplicate.
+            // A `HashBag` rides the process-soup carrier; a `HashSet` the native `ESet` carrier (its
+            // field is `std::collections::HashSet<E>`, iterated by `.iter()`). A `HashMap` has no
+            // element_cat-shaped image here (its entries are `key => value` pairs — its reflection is
+            // reached through the runtime-value path, not this constructor arm) and fails CLOSED,
+            // routing that firing to the σ-replay driver.
             VariantKind::Collection { label, element_cat, coll_type } => match coll_type {
                 mettail_ast::types::CollectionType::HashBag => {
                     let label_lit = lit(&label.to_string());
@@ -574,9 +577,34 @@ fn reflect_category_fn(language: &LanguageDef, category: &Ident) -> TokenStream 
                         }
                     }
                 },
+                // A `HashSet` collection FIELD rides `HashSetLit` (see
+                // `macros/src/gen/types/enums.rs`), a deterministic, orderable, hashable set wrapper
+                // iterated by `.iter()` (yielding `&E`, no multiplicity). The reflected `GroundTerm`
+                // is tagged `HashSet`, so it rides the native `ESet` carrier (`reflect_ac_set_par`) —
+                // which `ParSet` sorts + dedupes, so SET uniqueness holds through the reflect.
+                mettail_ast::types::CollectionType::HashSet => {
+                    let label_lit = lit(&label.to_string());
+                    let element_reflect = reflect_fn_name(&element_cat);
+                    quote! {
+                        #category::#label(__set) => {
+                            let mut __children =
+                                ::std::vec::Vec::with_capacity(__set.len());
+                            for __elem in __set.iter() {
+                                __children.push(#element_reflect(__elem)?);
+                            }
+                            ::core::result::Result::Ok(
+                                ::mettail_rholang_codegen::GroundTerm::collection(
+                                    ::mettail_rholang_codegen::CollectionType::HashSet,
+                                    #label_lit,
+                                    __children,
+                                )
+                            )
+                        }
+                    }
+                },
                 _ => {
                     let msg = lit(&format!(
-                        "in-Rho match reflection: {label} is a non-HashBag ({coll_type:?}) collection with no in-Rho AC carrier yet"
+                        "in-Rho match reflection: {label} is a non-bare-var ({coll_type:?}) collection with no in-Rho AC carrier via this arm"
                     ));
                     quote! {
                         #category::#label(..) =>
@@ -1808,6 +1836,39 @@ mod tests {
         assert!(tokens.contains("\"AcStep\""));
         // A pure-AC language surfaces no flat base-rewrite site, so no `term_contract_call`.
         assert!(!tokens.contains("term_contract_call"));
+    }
+
+    #[test]
+    fn generated_rho_net_reflection_emits_the_hashset_arm() {
+        // Stage 4 S-AC (AC4): a `HashSet` collection FIELD reflects to a
+        // `GroundTerm::collection(HashSet, …)` via the `VariantKind::Collection` `HashSet` arm — the
+        // subject side of the native `ESet` carrier. The reflect fn iterates the set by `.iter()`
+        // (the `HashSetLit`/`std::collections::HashSet` API, no multiplicity), so the reflected
+        // collection is tagged `HashSet` and rides `reflect_ac_set_par`. (The generated-language
+        // HashSet FIELD does not yet compile end-to-end — the base collection-field codegen is
+        // HashBag-shaped, a separate GROUP-B item — but the reflection codegen branch itself is
+        // exercised here at the token level.)
+        let language = parse(
+            r##"
+                name: SetNetGen,
+                types {
+                    Proc
+                }
+                terms {
+                    A . |- "A" : Proc ;
+                    Wrap . x:Proc |- "wrap" "(" x ")" : Proc ;
+                    SetOp . ps:HashSet(Proc) |- "#s{" ps.*sep("|") "}s#" : Proc ;
+                }
+                equations {}
+                rewrites {}
+            "##,
+        );
+        let reflect = reflect_category_fn(&language, &format_ident!("Proc")).to_string();
+        // The reflect fn emits the `HashSet` collection arm (native `ESet` carrier), iterating by
+        // `.iter()` and tagging the reflected `GroundTerm` `HashSet`.
+        assert!(reflect.contains("CollectionType :: HashSet"));
+        assert!(reflect.contains("GroundTerm :: collection"));
+        assert!(reflect.contains(". iter ()"));
     }
 
     #[test]

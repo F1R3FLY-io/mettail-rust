@@ -284,6 +284,16 @@ name = "rho_net_bicong_firing"
 path = "tests/rho_net_bicong_firing.rs"
 required-features = ["bicong-demo-runtime"]
 
+# Stage 4 S-AC (AC4): the NATIVE-collection AC firing tests (`rho_net_mapzip_firing`) — the `ESet`
+# (`HashSet`), `EMap` (`HashMap`), and structured paired/correlated (`ZipAc`) carriers matched +
+# fired in Rho by the production `ac_sigma_receiver_par` builders, direct-construction (no demo
+# language — the generated-`language!` HashSet/HashMap FIELD path is blocked by the base
+# collection-field codegen, see the AC4 report), so only the base runtime is needed.
+[[test]]
+name = "rho_net_mapzip_firing"
+path = "tests/rho_net_mapzip_firing.rs"
+required-features = ["runtime-report"]
+
 [[test]]
 name = "rho_net_beta_firing"
 path = "tests/rho_net_beta_firing.rs"

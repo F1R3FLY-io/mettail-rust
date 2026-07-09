@@ -35,11 +35,12 @@ use mettail_ast::pattern::{Pattern, PatternTerm};
 use mettail_ast::types::{CollectionType, EvalMode};
 use models::create_bit_vector;
 use models::rhoapi::expr::ExprInstance;
-use models::rhoapi::{EAnd, EEq, Expr, Par, Receive, ReceiveBind};
+use models::rhoapi::var::VarInstance;
+use models::rhoapi::{EAnd, EEq, Expr, KeyValuePair, Par, Receive, ReceiveBind, Var};
 use models::rust::rholang::implicits::GPrivateBuilder;
 use models::rust::utils::{
-    new_boundvar_par, new_elist_par, new_freevar_par, new_gstring_par, new_send_par,
-    new_wildcard_par, union,
+    new_boundvar_par, new_elist_par, new_emap_par, new_eset_par, new_freevar_par, new_gstring_par,
+    new_send_par, new_wildcard_par, union,
 };
 use syn::Ident;
 
@@ -1306,7 +1307,9 @@ impl GroundTerm {
     }
 
     /// An AC operand collection of `kind` — its elements reflected as the native carrier
-    /// (Stage AC). For `HashBag` this is the order-independent process-`Par` soup.
+    /// (Stage AC / AC4). `HashBag` → the order-independent process-`Par` soup; `HashSet` → a native
+    /// `ESet`; `HashMap` → a native `EMap` (whose `elements` are [`map_entry`](Self::map_entry)
+    /// `^kv(key, value)` nodes).
     pub fn collection(
         kind: CollectionType,
         constructor: impl Into<String>,
@@ -1317,6 +1320,13 @@ impl GroundTerm {
             children: elements,
             coll_type: Some(kind),
         }
+    }
+
+    /// A `HashMap` AC operand ENTRY `key => value` — the reserved `^kv(key, value)` envelope
+    /// ([`AC_MAP_ENTRY_LABEL`]) [`reflect_ac_map_par`] reads back as one `EMap` `KeyValuePair`. A
+    /// `HashMap` [`collection`](Self::collection)'s `elements` are these entry nodes.
+    pub fn map_entry(key: GroundTerm, value: GroundTerm) -> Self {
+        Self::new(AC_MAP_ENTRY_LABEL, vec![key, value])
     }
 }
 
@@ -1896,12 +1906,17 @@ pub struct RhoNetAcMatchEntry {
     /// AC receiver rule label, e.g. `AcStep`) — what the match driver keys the report firing on and
     /// the gate admits.
     pub fired_rule_label: String,
-    /// The HashBag operand constructor (`op` in `op{…}`, e.g. `PPar`) — the reflected subject bag
-    /// node's `constructor`, so the located bag matches, and the soup carrier / element pattern
-    /// channel derive from it.
+    /// The AC operand constructor (`op` in `op{…}`, e.g. `PPar`) — the reflected subject collection
+    /// node's `constructor`, so the located collection matches, and the soup carrier / element
+    /// pattern channel derive from it.
     pub op: String,
+    /// The AC operand COLLECTION kind (`HashBag` soup / `HashSet` `ESet`, Stage 4 S-AC / AC4): it
+    /// selects the co-installed receiver's connective pattern ([`ac_collection_pattern`]) and the
+    /// carrier reflection ([`reflect_ac_collection_par`]), so the located collection is re-sourced
+    /// from the SPREAD with the SAME kind the installed receiver expects.
+    pub kind: CollectionType,
     /// The `k` fixed element slots the AC LHS binds (the element variable count) — the
-    /// [`ac_bag_pattern`] arity the co-installed receiver picks from the bag.
+    /// [`ac_collection_pattern`] arity the co-installed receiver picks from the collection.
     pub arity: usize,
     /// The pre-built RHS `⟦R⟧σ` in the AC receiver's `k+2`-formal frame ([`reflect_term_par`] at
     /// `k+1` over the `[x₀..x_{k-1}, rest]` σ order — the SAME reflection [`ac_rule_receiver`]
@@ -1948,6 +1963,9 @@ pub fn rho_net_ac_match_entries(def: &LanguageDef) -> Vec<RhoNetAcMatchEntry> {
         else {
             continue;
         };
+        // The effective operand kind (`HashBag` soup / `HashSet` `ESet`) — SAME as the installed
+        // receiver's, so the co-installed per-site receiver's connective pattern matches the carrier.
+        let kind = ac_effective_bare_var_kind(&rewrite.left, resolved_kind.as_ref());
         let k = element_vars.len();
         // The NON-LINEAR consistency guard (AC3) for a repeated bare element var, computed BEFORE
         // `element_vars` is moved — SAME as the installed receiver's ([`ac_rule_receiver`]).
@@ -1965,6 +1983,7 @@ pub fn rho_net_ac_match_entries(def: &LanguageDef) -> Vec<RhoNetAcMatchEntry> {
         entries.push(RhoNetAcMatchEntry {
             fired_rule_label: site.rule_label,
             op,
+            kind,
             arity: k,
             rhs_par,
             condition,
@@ -2164,10 +2183,15 @@ fn instantiate_rhs(
 /// the same shape would emit, and the runtime `decode_reflected_term` counterpart
 /// decodes both identically.
 pub fn reflect_ground_term_par(term: &GroundTerm, language_fingerprint: &str) -> Par {
-    // Stage AC: a HashBag AC operand bag reflects as the order-independent process-`Par`
-    // matching carrier, not the positional tagged `EList`.
-    if let Some(CollectionType::HashBag) = term.coll_type {
-        return reflect_ac_bag_par(term, language_fingerprint);
+    // Stage AC / AC4: an AC operand COLLECTION reflects as its kind's native matching CARRIER,
+    // not the positional tagged `EList`. A `HashBag` reflects to the order-independent process-`Par`
+    // soup; a `HashSet` to a native `ESet`; a `HashMap` to a native `EMap` (key-uniqueness enforced
+    // by `ParMap`'s sorted-dedup). See [`reflect_ac_collection_par`].
+    if matches!(
+        term.coll_type,
+        Some(CollectionType::HashBag | CollectionType::HashSet | CollectionType::HashMap)
+    ) {
+        return reflect_ac_collection_par(term, language_fingerprint);
     }
     let tag =
         GPrivateBuilder::new_par_from_string(reflect_tag(language_fingerprint, &term.constructor));
@@ -2208,6 +2232,122 @@ fn reflect_ac_bag_par(term: &GroundTerm, language_fingerprint: &str) -> Par {
     soup
 }
 
+/// The reserved constructor label a HashMap AC operand entry (`key => value`) reflects to in a
+/// [`GroundTerm`]: a synthetic node `^kv(⟦key⟧, ⟦value⟧)` whose two children are the entry's key
+/// and value. It cannot collide with any user constructor (a Rust `Ident`, never containing `^`),
+/// so the map carrier's entry envelope is distinct from every `Apply` node. The macro
+/// `reflect_category_fn`'s `HashMap` arm emits one such node per entry; [`reflect_ac_map_par`] reads
+/// the two children back as the `EMap`'s key/value.
+pub(crate) const AC_MAP_ENTRY_LABEL: &str = "^kv";
+
+/// Reflect an AC operand COLLECTION [`GroundTerm`] as its kind's native matching CARRIER — the
+/// subject side of Stage 4 S-AC / AC4. A `HashBag` reflects to the order-independent process-`Par`
+/// soup ([`reflect_ac_bag_par`]); a `HashSet` to a native `ESet` ([`reflect_ac_set_par`]); a
+/// `HashMap` to a native `EMap` ([`reflect_ac_map_par`]). The `ESet`/`EMap` carriers ride
+/// `ParSet`/`ParMap`, whose construction SORTS + DEDUPES (so `ESet` is a genuine set and `EMap`'s
+/// keys are unique — the key-uniqueness invariant survives reflection), and the native spatial
+/// matcher AC-matches each carrier order-independently with a remainder.
+fn reflect_ac_collection_par(term: &GroundTerm, language_fingerprint: &str) -> Par {
+    match term.coll_type {
+        Some(CollectionType::HashSet) => reflect_ac_set_par(term, language_fingerprint),
+        Some(CollectionType::HashMap) => reflect_ac_map_par(term, language_fingerprint),
+        // `HashBag` (and any other kind routed here) → the process-soup carrier.
+        _ => reflect_ac_bag_par(term, language_fingerprint),
+    }
+}
+
+/// Reflect a `HashSet` AC operand set as a native `ESet` matching CARRIER: each element reflects to
+/// its ground `Par` and the set rides `ParSet` (sorted + deduplicated), so the carrier is a genuine
+/// order-independent, uniqueness-preserving set. The AC receiver's `ESet` connective pattern
+/// ([`ac_set_pattern`]) matches this carrier inside one atomic `consume` (native `list_match_single_`
+/// over `sorted_pars`), binding `k` element slots + the residual set to the remainder.
+fn reflect_ac_set_par(term: &GroundTerm, language_fingerprint: &str) -> Par {
+    let mut elements = Vec::with_capacity(term.children.len());
+    let mut locally_free = Vec::new();
+    for child in &term.children {
+        let element = reflect_ground_term_par(child, language_fingerprint);
+        locally_free = union(locally_free, element.locally_free.clone());
+        elements.push(element);
+    }
+    // A GROUND set: no free vars, no connective, no remainder. `ParSet::new` sorts + dedupes.
+    new_eset_par(elements, locally_free.clone(), false, None, locally_free, false)
+}
+
+/// Reflect a `HashMap` AC operand map as a native `EMap` matching CARRIER: each `^kv(key, value)`
+/// entry ([`AC_MAP_ENTRY_LABEL`]) reflects to a `KeyValuePair`, and the map rides `ParMap` (sorted by
+/// key + deduplicated on key), so KEY-UNIQUENESS is enforced natively — the sorted-dedup `ParMap`
+/// invariant survives the reflect. The AC receiver's `EMap` connective pattern ([`ac_map_pattern`])
+/// matches this carrier inside one atomic `consume` (native `list_match_single_` over the
+/// key-sorted kv list), binding `k` `(key, value)` slots + the residual map to the remainder.
+fn reflect_ac_map_par(term: &GroundTerm, language_fingerprint: &str) -> Par {
+    let mut kvs = Vec::with_capacity(term.children.len());
+    let mut locally_free = Vec::new();
+    for entry in &term.children {
+        // Each entry is a `^kv(key, value)` node ([`AC_MAP_ENTRY_LABEL`]) — read its two children
+        // back as key/value. A malformed entry (defensive) is skipped, keeping the reflection total.
+        let ([key, value], true) =
+            (entry.children.as_slice(), entry.constructor == AC_MAP_ENTRY_LABEL)
+        else {
+            continue;
+        };
+        let key_par = reflect_ground_term_par(key, language_fingerprint);
+        let value_par = reflect_ground_term_par(value, language_fingerprint);
+        locally_free = union(locally_free, key_par.locally_free.clone());
+        locally_free = union(locally_free, value_par.locally_free.clone());
+        kvs.push(KeyValuePair { key: Some(key_par), value: Some(value_par) });
+    }
+    // A GROUND map: no free vars, no connective, no remainder. `ParMap::new` sorts by key + dedupes
+    // on key (so duplicate keys collapse to the last write — the key-uniqueness invariant).
+    new_emap_par(kvs, locally_free.clone(), false, None, locally_free, false)
+}
+
+/// The AC receiver's collection PATTERN for an operand of `kind` with `k` fixed element slots
+/// (Stage 4 S-AC / AC4): a `HashBag` yields the process-soup connective ([`ac_bag_pattern`]); a
+/// `HashSet` the `ESet` connective ([`ac_set_pattern`]); a `HashMap` the `EMap` connective
+/// ([`ac_map_pattern`]). Each binds the fixed element slots + a residual-binding remainder, matched
+/// order-independently by the native spatial matcher inside one atomic `consume`. `op` is used only
+/// by the `HashBag` soup (its element channel `ac:{op}`); the native `ESet`/`EMap` carriers need no
+/// element channel.
+pub fn ac_collection_pattern(kind: CollectionType, op: &str, k: usize) -> Par {
+    match kind {
+        CollectionType::HashSet => ac_set_pattern(k),
+        CollectionType::HashMap => ac_map_pattern(k),
+        // `HashBag` (and any other kind routed here) → the process-soup pattern.
+        _ => ac_bag_pattern(op, k),
+    }
+}
+
+/// The AC receiver's `ESet` connective PATTERN for a `HashSet` operand with `k` fixed element slots:
+/// a connective `ESet` whose `k` elements are free vars `FreeVar(0..k-1)` (each binding element σ
+/// slot `i`) plus a remainder free var `FreeVar(k)` (binding `rest`, the residual set). The native
+/// `list_match_single_` (spatial matcher's `ESetBody` arm) assigns the `k` free-var patterns to `k`
+/// set elements in ANY order and binds the residual SET to the remainder — the order-independent set
+/// match — inside one atomic `consume`. The remainder is a `FreeVar(k)` `Var` (exactly the
+/// `remainder_var_opt` level the matcher reads); element `i` binds `FreeVar(i)`.
+pub fn ac_set_pattern(k: usize) -> Par {
+    let elements: Vec<Par> = (0..k).map(|i| new_freevar_par(i as i32, Vec::new())).collect();
+    let remainder = Var { var_instance: Some(VarInstance::FreeVar(k as i32)) };
+    new_eset_par(elements, Vec::new(), true, Some(remainder), Vec::new(), true)
+}
+
+/// The AC receiver's `EMap` connective PATTERN for a `HashMap` operand with `k` fixed `(key, value)`
+/// slots: a connective `EMap` whose `k` entries are free-var pairs `(FreeVar(2i), FreeVar(2i+1))`
+/// (key σ slot `2i`, value σ slot `2i+1`) plus a remainder free var `FreeVar(2k)` (binding `rest`,
+/// the residual map). The native `list_match_single_` (spatial matcher's `EMapBody` arm) assigns the
+/// `k` entry patterns to `k` map entries (matched key-first over the key-sorted kv list) and binds
+/// the residual MAP to the remainder — inside one atomic `consume`. KEY-UNIQUENESS holds because the
+/// target rides `ParMap` (key-sorted, deduped) and each residual is re-wrapped as an `EMap`.
+pub fn ac_map_pattern(k: usize) -> Par {
+    let kvs: Vec<KeyValuePair> = (0..k)
+        .map(|i| KeyValuePair {
+            key: Some(new_freevar_par((2 * i) as i32, Vec::new())),
+            value: Some(new_freevar_par((2 * i + 1) as i32, Vec::new())),
+        })
+        .collect();
+    let remainder = Var { var_instance: Some(VarInstance::FreeVar((2 * k) as i32)) };
+    new_emap_par(kvs, Vec::new(), true, Some(remainder), Vec::new(), true)
+}
+
 /// The AC receiver's collection PATTERN for a HashBag operand `op` with `k` fixed element
 /// slots: a connective process-`Par` with `k` send-patterns `@"ac:{op}"!(FreeVar(i))` (each
 /// binding element σ slot `i`) plus a process remainder `EVar(FreeVar(k))` (binding `rest`,
@@ -2234,6 +2374,88 @@ pub fn ac_bag_pattern(op: &str, k: usize) -> Par {
         pattern = pattern.append(send_pattern);
     }
     pattern
+}
+
+/// A STRUCTURED `ESet` element PATTERN `⟦op(FreeVar(base), …, FreeVar(base+arity-1))⟧` for the AC4
+/// paired/correlated set match (`ZipAc`): a tagged `EList` `[GPrivate(reflect_tag(op)), FreeVar(base),
+/// …]` — byte-identical to [`reflect_ground_term_par`]'s image of an `op`-headed element, but with
+/// the `arity` argument positions as consecutive free-var σ slots. Inside an [`ac_set_paired_receiver_par`]
+/// `ESet` connective, this pattern matches ONE set element whose head constructor is `op` and binds
+/// its args, so two such patterns sharing a slot (via the receiver's `Receive.condition`) express a
+/// correlated pairing (e.g. `Pair(a, x)` and `Pair(a, y)` sharing `a`). `fingerprint` MUST be the
+/// carrier's, so the pattern's head tag equals the reflected element's.
+pub fn ac_set_element_pattern(op: &str, arity: usize, base: usize, fingerprint: &str) -> Par {
+    let tag = GPrivateBuilder::new_par_from_string(reflect_tag(fingerprint, op));
+    let mut elements = Vec::with_capacity(arity + 1);
+    elements.push(tag);
+    for i in 0..arity {
+        elements.push(new_freevar_par((base + i) as i32, Vec::new()));
+    }
+    // A connective element pattern (free-var args); free vars are tracked by the bind `free_count`,
+    // so `locally_free` is empty and `connective_used` is set.
+    new_elist_par(elements, Vec::new(), true, None, Vec::new(), true)
+}
+
+/// Build the AC4 PAIRED/CORRELATED `ESet` receiver (`ZipAc`) — the native-set analogue of
+/// [`comm_receiver_par`] / [`structural_ac_receiver_par`] (which match a process-soup): a persistent
+///
+/// ```text
+/// for( < ESet[ ⟦elem_0⟧, …, ⟦elem_{k-1}⟧ ... rest ] , out > <- source )
+///   where ( condition )
+///   { out!( rhs ) }
+/// ```
+///
+/// The `ESet` connective pattern matches `k` STRUCTURED set elements ([`ac_set_element_pattern`])
+/// ORDER-INDEPENDENTLY (native `list_match_single_` over `ParSet`) + binds the residual set to the
+/// remainder, inside ONE atomic `consume`. The `element_patterns` bind `element_slots` free-var σ
+/// slots in total (their argument positions, `FreeVar(0..element_slots-1)`); the remainder is
+/// `FreeVar(element_slots)` and `out` is `FreeVar(element_slots + 1)`, so `free_count = element_slots
+/// + 2`. The `condition` (a `Receive.condition` over the bound slots, e.g.
+/// [`nonlinear_consistency_condition`] `EEq(slot_i, slot_j)`) commits the COMM only when the
+/// correlation holds — the CORRELATED pairing enforced on the reducer. The body fires `rhs` (the RHS
+/// `⟦R⟧σ`, referencing the bound slots) on `out` (`BoundVar(0)`).
+pub fn ac_set_paired_receiver_par(
+    element_patterns: Vec<Par>,
+    element_slots: usize,
+    condition: Option<Par>,
+    rhs: Par,
+    source: Par,
+) -> Par {
+    let free_count = element_slots + 2; // element slots + rest + out
+    let remainder = Var { var_instance: Some(VarInstance::FreeVar(element_slots as i32)) };
+    let eset_pattern =
+        new_eset_par(element_patterns, Vec::new(), true, Some(remainder), Vec::new(), true);
+    let out_channel = bound_formal(free_count, element_slots + 1); // out = BoundVar(0)
+    let body_free = union(rhs.locally_free.clone(), create_bit_vector(&[0]));
+    let body =
+        new_send_par(out_channel, vec![rhs], false, body_free.clone(), false, body_free, false);
+    let receive = Receive {
+        binds: vec![ReceiveBind {
+            patterns: vec![eset_pattern, new_freevar_par((element_slots + 1) as i32, Vec::new())],
+            source: Some(source),
+            remainder: None,
+            free_count: free_count as i32,
+        }],
+        body: Some(body),
+        persistent: true,
+        peek: false,
+        bind_count: free_count as i32,
+        locally_free: Vec::new(),
+        connective_used: false,
+        condition,
+    };
+    Par::default().with_receives(vec![receive])
+}
+
+/// The AC4 paired/correlated set CONSISTENCY guard: an `EEq(slot_i, slot_j) ∧ …` `Receive.condition`
+/// over the receiver's bound slots enforcing that the `occurrence_slots` (the free-var positions a
+/// non-linear shared variable binds across the paired elements) are name-equal — the `N ≡ N`
+/// correlation, expressed as the [`ac_set_paired_receiver_par`] receiver's condition. `free_count`
+/// is the receiver's total (`element_slots + 2`). This reuses the SAME
+/// [`nonlinear_consistency_condition`] machinery as the Comm / structural-AC soup path, so the native
+/// set pairing matches ONLY correlated picks.
+pub fn ac_set_correlation_condition(occurrence_slots: &[usize], free_count: usize) -> Par {
+    nonlinear_consistency_condition(occurrence_slots, free_count)
 }
 
 /// Build the flat σ-injection call for a base rewrite's σ-receiver:
@@ -2564,6 +2786,7 @@ fn ac_match_install_at(
         // shape (incl. the AC3 non-linear `Receive.condition` guard) as the installed one, only the
         // source differs (so it picks k-of-n from the SPREAD bag, not the report σ).
         let receiver = ac_sigma_receiver_par_with_condition(
+            entry.kind.clone(),
             &entry.op,
             entry.arity,
             entry.rhs_par.clone(),
@@ -2617,10 +2840,16 @@ fn spread_term_par_at(
     // `col:`/`cap:` channels — the value a PARENT's fold / a Var-leaf `cap:` capture binds when the
     // bag is a σ subterm — and does NOT positionally recurse (no `loc:` head-tag, no child spread).
     // The AC redex firing is the co-installed receiver over the DISJOINT site-keyed `ac:` carrier
-    // (Red-team #1: the `ac:` soup and the `col:`/`cap:` collapse are disjoint channels, each
-    // consumed at most once), so re-sourcing the bag from the spread is the genuine in-Rho AC match.
-    if let Some(CollectionType::HashBag) = term.coll_type {
-        let soup = reflect_ac_bag_par(term, language_fingerprint);
+    // (Red-team #1: the `ac:` carrier and the `col:`/`cap:` collapse are disjoint channels, each
+    // consumed at most once), so re-sourcing the collection from the spread is the genuine in-Rho AC
+    // match. Every AC operand collection kind (`HashBag` soup / `HashSet` `ESet` / `HashMap` `EMap`)
+    // publishes only its native carrier value on `col:`/`cap:` — the value a parent's fold or a
+    // Var-leaf `cap:` capture binds — and does NOT positionally recurse.
+    if matches!(
+        term.coll_type,
+        Some(CollectionType::HashBag | CollectionType::HashSet | CollectionType::HashMap)
+    ) {
+        let soup = reflect_ac_collection_par(term, language_fingerprint);
         let free = soup.locally_free.clone();
         let chain = new_send_par(
             new_gstring_par(chain_location.to_string(), Vec::new(), false),
@@ -3221,7 +3450,18 @@ pub fn contextual_join_receiver_par(context_rhs: Par, premise_channels: &[Par]) 
 /// `rest` as `BoundVar(1)` (the reverse De Bruijn over the `k+2` bind free vars). Verified end to
 /// end by `ac_receiver_fires_the_matched_element_on_the_dynamic_out`.
 pub fn ac_sigma_receiver_par(op: &str, k: usize, rhs_par: Par, source: Par) -> Par {
-    ac_sigma_receiver_par_with_condition(op, k, rhs_par, source, None)
+    ac_sigma_receiver_par_with_condition(CollectionType::HashBag, op, k, rhs_par, source, None)
+}
+
+/// The number of connective element σ SLOTS an AC receiver of `kind` binds for `k` fixed LHS
+/// elements: a `HashMap` binds `2k` slots (one key + one value per entry), every other kind (soup
+/// `HashBag`, `ESet`) binds `k`. The residual `rest` is then `FreeVar(slots)` and `out` is
+/// `FreeVar(slots + 1)`, so the receiver's `free_count` is `slots + 2`.
+pub fn ac_element_slot_count(kind: CollectionType, k: usize) -> usize {
+    match kind {
+        CollectionType::HashMap => 2 * k,
+        _ => k,
+    }
 }
 
 /// [`ac_sigma_receiver_par`] with an optional NON-LINEAR consistency `Receive.condition` (Stage 4
@@ -3238,20 +3478,27 @@ pub fn ac_sigma_receiver_par(op: &str, k: usize, rhs_par: Par, source: Par) -> P
 /// non-linear AC rewrite over bare element vars matches ONLY equal picks, closing the latent
 /// condition-less gap. Every other formal (rest, out) and the body are the linear receiver's.
 pub fn ac_sigma_receiver_par_with_condition(
+    kind: CollectionType,
     op: &str,
     k: usize,
     rhs_par: Par,
     source: Par,
     condition: Option<Par>,
 ) -> Par {
-    let free_count = k + 2; // k elements + rest + out
-    let out_channel = bound_formal(free_count, k + 1); // out = BoundVar(0)
+    // The connective pattern binds `slots` element σ vars (`2k` for a `HashMap` key+value, `k`
+    // otherwise), then the residual `rest` (`FreeVar(slots)`) and `out` (`FreeVar(slots + 1)`).
+    let slots = ac_element_slot_count(kind.clone(), k);
+    let free_count = slots + 2; // element slots + rest + out
+    let out_channel = bound_formal(free_count, slots + 1); // out = BoundVar(0)
     let body_free = union(rhs_par.locally_free.clone(), create_bit_vector(&[0]));
     let body =
         new_send_par(out_channel, vec![rhs_par], false, body_free.clone(), false, body_free, false);
     let receive = Receive {
         binds: vec![ReceiveBind {
-            patterns: vec![ac_bag_pattern(op, k), new_freevar_par((k + 1) as i32, Vec::new())],
+            patterns: vec![
+                ac_collection_pattern(kind, op, k),
+                new_freevar_par((slots + 1) as i32, Vec::new()),
+            ],
             source: Some(source),
             remainder: None,
             free_count: free_count as i32,
@@ -3313,16 +3560,27 @@ fn ac_nonlinear_condition(element_vars: &[Ident], free_count: usize) -> Option<P
     condition
 }
 
-/// The shape of a linear with-rest HashBag AC rewrite LHS `op({x_1, …, x_k, ...rest})`: the
-/// HashBag constructor `op`, the `k` linear element variables in first-occurrence order, and
+/// Whether `kind` is a BARE-VAR AC operand collection whose linear with-rest LHS
+/// `op({x_1, …, x_k, ...rest})` binds one σ var per element — a `HashBag` (process-soup carrier) or a
+/// `HashSet` (`ESet` carrier). A `HashMap` is NOT (its entries are `key => value` pairs, not bare
+/// vars — a distinct shape), and `Vec`/`PathMap` are not AC. Both [`ac_rule_shape`] and the AC
+/// carriers key off this, so the LHS extraction and the connective pattern agree on the kind.
+pub(crate) fn is_bare_var_ac_kind(kind: Option<&CollectionType>) -> bool {
+    matches!(kind, Some(CollectionType::HashBag | CollectionType::HashSet))
+}
+
+/// The shape of a linear with-rest bare-var AC rewrite LHS `op({x_1, …, x_k, ...rest})`: the
+/// collection constructor `op`, the `k` linear element variables in first-occurrence order, and
 /// the `rest` variable. Returns `None` unless the LHS is a constructor applied to a SINGLE
-/// with-rest HashBag collection whose elements are ALL linear `Var`s.
+/// with-rest bare-var AC collection (`HashBag` or `HashSet`, [`is_bare_var_ac_kind`]) whose elements
+/// are ALL linear `Var`s.
 ///
 /// The parser leaves a rewrite-LHS collection's `coll_type` as `None` (it is "inferred from the
 /// enclosing constructor's grammar"), so the effective kind is the pattern's `coll_type` when
 /// set, else `resolved_kind` — resolved from `op`'s declared collection param via
-/// [`resolve_ac_collection_type`]. Only a HashBag matches this slice (Set/Map await a later
-/// slice); an unresolved kind (`None`) does not match, and a no-rest exact match or a
+/// [`resolve_ac_collection_type`]. A `HashBag` routes to the process-soup carrier and a `HashSet` to
+/// the native `ESet` carrier (Stage 4 S-AC / AC4); a `HashMap` (`key => value` entries) has its own
+/// shape and an unresolved kind (`None`) does not match, and a no-rest exact match or a
 /// nested/non-linear element returns `None`.
 ///
 /// This is the SINGLE AC-LHS extraction shared by [`ac_rule_receiver`] (which materializes the
@@ -3335,7 +3593,7 @@ pub(crate) fn ac_rule_shape(
     let (op, elements, rest_name) = match left {
         Pattern::Term(PatternTerm::Apply { constructor, args }) => match args.as_slice() {
             [Pattern::Collection { coll_type, elements, rest }]
-                if coll_type.as_ref().or(resolved_kind) == Some(&CollectionType::HashBag) =>
+                if is_bare_var_ac_kind(coll_type.as_ref().or(resolved_kind)) =>
             {
                 (constructor.to_string(), elements, rest.clone())
             },
@@ -3383,6 +3641,10 @@ pub fn ac_rule_receiver(
 ) -> Option<Par> {
     let (op, element_vars, rest) = ac_rule_shape(left, resolved_kind.as_ref())?;
     let k = element_vars.len();
+    // The effective operand kind (`HashBag` soup or `HashSet` `ESet`) — the pattern's `coll_type`
+    // when the parser set it, else `resolved_kind` (both are `is_bare_var_ac_kind` since
+    // `ac_rule_shape` succeeded), defaulting to `HashBag`.
+    let kind = ac_effective_bare_var_kind(left, resolved_kind.as_ref());
     // The NON-LINEAR consistency guard for a repeated bare element var (`{x, x, ...rest}` — the
     // `N ≡ N` shape); `None` for a linear LHS (byte-identical to the pre-AC3 receiver). Computed
     // BEFORE `element_vars` is moved into the σ order.
@@ -3391,10 +3653,28 @@ pub fn ac_rule_receiver(
     let mut vars: Vec<Ident> = element_vars;
     vars.push(rest);
     // The RHS `⟦R⟧σ` in the AC receiver's `k+2`-formal frame (`reflect_term_par` at `k+1`). A
-    // bag-VALUED RHS reflects to the process-soup carrier ([`reflect_hashbag_soup_par`]) via `def`.
-    // A repeated var resolves to its FIRST occurrence slot (matching the guard's canonical slot).
+    // collection-VALUED RHS reflects to the kind's carrier (soup / `ESet`) via `def`. A repeated var
+    // resolves to its FIRST occurrence slot (matching the guard's canonical slot).
     let rhs = reflect_term_par(right, &vars, k + 1, language_fingerprint, def).ok()?;
-    Some(ac_sigma_receiver_par_with_condition(&op, k, rhs, source, condition))
+    Some(ac_sigma_receiver_par_with_condition(kind, &op, k, rhs, source, condition))
+}
+
+/// The effective BARE-VAR AC operand kind of a linear AC rewrite LHS: the pattern collection's own
+/// `coll_type` when the parser set it, else `resolved_kind`, defaulting to `HashBag`. Only reached
+/// after [`ac_rule_shape`] confirmed [`is_bare_var_ac_kind`], so the result is always `HashBag` or
+/// `HashSet`.
+pub(crate) fn ac_effective_bare_var_kind(
+    left: &Pattern,
+    resolved_kind: Option<&CollectionType>,
+) -> CollectionType {
+    let pattern_kind = match left {
+        Pattern::Term(PatternTerm::Apply { args, .. }) => match args.as_slice() {
+            [Pattern::Collection { coll_type, .. }] => coll_type.as_ref(),
+            _ => None,
+        },
+        _ => None,
+    };
+    pattern_kind.or(resolved_kind).cloned().unwrap_or(CollectionType::HashBag)
 }
 
 /// Resolve the collection kind a CONSTRUCTOR declares (`op . ps:HashBag(..) |- ..`), keyed on the
