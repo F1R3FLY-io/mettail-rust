@@ -369,6 +369,130 @@ Proof.
   - apply sigma_rho_eq_pos.
 Qed.
 
+(* ============================================================================
+   STAGE 4 (locate-all + multi-firing): the automaton LOCATES EVERY redex — at ANY
+   position in the subject, and multiple simultaneously (P1 Thm 6.12 / P2 Thm 2).
+
+   `whole_term_located` above proves the root index locates a redex that is the WHOLE
+   subject. The Stage-4 driver instead spreads the whole subject ONCE and co-installs a
+   positional network at EVERY position whose head is a rule root — so a NESTED redex
+   (a strict subterm) and MULTIPLE redexes all fire. We model the POSITION SET of a
+   subject (`subnodes`, its subtree list) and prove the located-match set
+   `matches_at p = filter (pmatch_rec p) (subnodes n)` is exactly the positions the
+   recursive matcher accepts, that EACH is dispatched by the root index at that position
+   (reusing `whole_term_located` — the SAME index theorem, now at every subnode rather
+   than only the root) and binds the POSITIONAL σ there (reusing `sigma_rho_eq_pos`), and
+   that MULTIPLE distinct positions are located simultaneously (a non-vacuous 2-redex
+   witness). This is the executable image of the Rust `collect_redex_sites` /
+   `in_rho_match_all_sites_call_par` (`rholang-codegen/src/rho_net_ruleset.rs`) — the
+   host pre-filters candidate positions by head op (exactly the root-index dispatch), and
+   the emitted per-position network re-does the match + σ ON the interpreter.
+
+   Faithfulness of the emitted `∏ network_ℓ ‖ spread` to this position fold is witnessed
+   operationally by `rho_net_equivalence.rs` (`nested_redex_fires_in_rho_no_replay_fallback`,
+   `multiple_redexes_fire_in_rho_no_replay_fallback`, `nested_redex_in_arg_position_fires_in_rho`,
+   and the `locate_all_property` positional-oracle proptest); this file proves the LOCATION
+   LOGIC (which positions the index dispatches, and the σ each binds) correct.
+   Rocq 9.1 compatible. No Admitted, no Axioms, no Assumptions.
+   ============================================================================ *)
+
+(* The POSITION SET of a subject: the subject itself plus every subtree, DFS pre-order —
+   the config-tree positions the spread publishes a `loc:`/`cap:` channel for. Same nested
+   `fix` shape as `collapse`/`pmatch_rec` (the recursive call `subnodes x` is on a child of
+   `NApp op ch`, structurally smaller; the inner `smap` folds the child list). *)
+Fixpoint subnodes (n : Node) : list Node :=
+  match n with
+  | NApp op ch =>
+      NApp op ch :: (fix smap (l : list Node) : list Node :=
+                       match l with
+                       | [] => []
+                       | x :: xs => subnodes x ++ smap xs
+                       end) ch
+  end.
+
+(* The root subject is one of its own positions (the root `loc:ρ` channel). *)
+Lemma subnodes_refl : forall n, In n (subnodes n).
+Proof. intros [op ch]. simpl. left. reflexivity. Qed.
+
+(* The LOCATED-MATCH SET at a subject: every position whose subtree the recursive matcher
+   accepts (the multiset of redex sites the automaton co-installs a network at). *)
+Definition matches_at (p : Pat) (n : Node) : list Node :=
+  filter (fun m => pmatch_rec p m) (subnodes n).
+
+(* SOUND: every located site is a genuine positional match at a real position. *)
+Lemma matches_at_sound : forall p n m,
+  In m (matches_at p n) -> In m (subnodes n) /\ pmatch_rec p m = true.
+Proof. intros p n m Hin. apply filter_In in Hin. exact Hin. Qed.
+
+(* COMPLETE: every positional match at a real position is located (no redex is dropped). *)
+Lemma matches_at_complete : forall p n m,
+  In m (subnodes n) -> pmatch_rec p m = true -> In m (matches_at p n).
+Proof. intros p n m Hpos Hm. apply filter_In. split; assumption. Qed.
+
+(* LOCATE-ALL DISPATCH (obligation i, generalized off the root): EVERY located redex — at
+   ANY position — is dispatched by the root index AT THAT POSITION. The exact same
+   `whole_term_located` index theorem, applied at each subnode rather than only the whole
+   subject: the root Match at position ℓ never drops the match sitting there. *)
+Theorem locate_all_dispatched : forall p n,
+  compilable p = true -> forall m, In m (matches_at p n) -> dispatched p m = true.
+Proof.
+  intros p n Hc m Hin. apply matches_at_sound in Hin. destruct Hin as [_ Hm].
+  apply whole_term_located; assumption.
+Qed.
+
+(* LOCATE-ALL σ: EVERY located redex binds the POSITIONAL σ (its full `cap:`-collapsed
+   subterms) at its position — the M-collapse σ correctness, now at every site. *)
+Theorem locate_all_binds_positional_sigma : forall p n m,
+  In m (matches_at p n) -> sigma_rho p m = sigma_pos p m.
+Proof. intros p n m _. apply sigma_rho_eq_pos. Qed.
+
+(* The root redex (when the whole subject matches) is among the located sites — the
+   root-rooted case is subsumed, not special-cased. *)
+Corollary root_redex_located : forall p n,
+  pmatch_rec p n = true -> In n (matches_at p n).
+Proof.
+  intros p n Hm. apply matches_at_complete; [ apply subnodes_refl | exact Hm ].
+Qed.
+
+(* MULTIPLE redexes located SIMULTANEOUSLY: any two (indeed any number of) distinct
+   matching positions are BOTH in the located set — the co-installed sites do not
+   exclude one another. *)
+Theorem two_distinct_redexes_both_located : forall p n m1 m2,
+  In m1 (subnodes n) -> In m2 (subnodes n) ->
+  pmatch_rec p m1 = true -> pmatch_rec p m2 = true ->
+  In m1 (matches_at p n) /\ In m2 (matches_at p n).
+Proof.
+  intros p n m1 m2 H1 H2 Hm1 Hm2.
+  split; apply matches_at_complete; assumption.
+Qed.
+
+(* Non-vacuity: a concrete subject with TWO simultaneously-located redexes — the
+   `Pair(Swap(A,B), Swap(C,D))` shape (two Swap children of an inert Pair). Both Swap
+   positions match the arity-2 op-0 pattern; the Pair root (op 1) and the leaves do not,
+   so exactly 2 sites are located. Proves the multi-firing set is genuinely > 1. *)
+Definition witness_leaf (k : nat) : Node := NApp k [].
+Definition witness_swap1 : Node := NApp 0 [witness_leaf 2; witness_leaf 3].
+Definition witness_swap2 : Node := NApp 0 [witness_leaf 4; witness_leaf 5].
+Definition witness_pair : Node := NApp 1 [witness_swap1; witness_swap2].
+Definition witness_pat : Pat := PApp 0 [PVar; PVar].
+
+Theorem multiple_redexes_locatable :
+  compilable witness_pat = true /\ length (matches_at witness_pat witness_pair) = 2.
+Proof. split; vm_compute; reflexivity. Qed.
+
+(* Obligation (i), STAGE 4 LOCATE-ALL: at EVERY located position of a compilable pattern,
+   the automaton BOTH LOCATES the redex (root index at that position) AND binds the
+   POSITIONAL σ there — for redexes at ANY position and any number of them. *)
+Corollary inrho_stage4_locates_all_and_binds_positional_sigma : forall p n,
+  compilable p = true ->
+  forall m, In m (matches_at p n) ->
+    dispatched p m = true /\ sigma_rho p m = sigma_pos p m.
+Proof.
+  intros p n Hc m Hin. split.
+  - apply (locate_all_dispatched p n Hc m Hin).
+  - apply (locate_all_binds_positional_sigma p n m Hin).
+Qed.
+
 Print Assumptions sa_accept_sound.
 Print Assumptions sa_accept_complete.
 Print Assumptions sa_matches_positional.
@@ -379,3 +503,9 @@ Print Assumptions sigma_rho_eq_pos.
 Print Assumptions buggy_head_tag_wrong_for_nonnullary.
 Print Assumptions whole_term_located.
 Print Assumptions inrho_stage4_locates_and_binds_positional_sigma.
+Print Assumptions locate_all_dispatched.
+Print Assumptions locate_all_binds_positional_sigma.
+Print Assumptions root_redex_located.
+Print Assumptions two_distinct_redexes_both_located.
+Print Assumptions multiple_redexes_locatable.
+Print Assumptions inrho_stage4_locates_all_and_binds_positional_sigma.
