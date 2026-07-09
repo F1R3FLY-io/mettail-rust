@@ -315,6 +315,17 @@ name = "rho_net_beta_firing"
 path = "tests/rho_net_beta_firing.rs"
 required-features = ["lambda-demo-runtime"]
 
+# The COMMITTED randomized PROPERTY floor for `DeBruijnSubstTRS.v`'s NF theorem
+# (`NF(subst(0, a, b)) = b[a/0]`): a proptest that cross-checks the live in-Rho
+# β-substitution cascade (and an independent pure-Rust operational TRS) against a
+# denotational de-Bruijn `b[a/0]` reference over many random well-scoped terms. The
+# reducer loop reuses the same direct-seed harness as `rho_net_subst_trs_reducer.rs`,
+# so it needs only the default `runtime-report` surface (no demo language).
+[[test]]
+name = "rho_net_subst_trs_prop"
+path = "tests/rho_net_subst_trs_prop.rs"
+required-features = ["runtime-report"]
+
 [[test]]
 name = "rho_net_native_firing"
 path = "tests/rho_net_native_firing.rs"
