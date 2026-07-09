@@ -3066,6 +3066,28 @@ pub const FREE_VAR_REFLECT_LABEL: &str = "^free";
 pub const PEANO_ZERO_REFLECT_LABEL: &str = "Z";
 pub const PEANO_SUCC_REFLECT_LABEL: &str = "S";
 
+/// The reserved reduction-channel / rule tags for the generated de-Bruijn substitution
+/// term-rewriting system (Stage 4 S-binder SLICE 2a — the in-Rho β cascade). Each names one
+/// reserved TRS receiver's rendezvous channel (`GPrivate(reflect_tag(fp, LABEL))`, unforgeable
+/// vs any user `Ident`), and the whole set is the C2 object-congruence EXCLUSION set: an
+/// object constructor may NOT reflect to any of these (else `^lambda` would receive a generic
+/// congruence — losing the `S j` depth increment — causing non-confluence and variable capture).
+/// See [`crate::rho_net_subst_trs`] (the receiver builders) and
+/// [`crate::rho_net_subst_trs::reserved_subst_trs_labels`] (the assertion source).
+///
+/// `^sb`/`^shb` are the `^cmp`-result dispatch rules (`^subst(_,_,^bound n)` and
+/// `^shift(_,^bound n)` after the comparison resolves). The spike / codegen INLINE their three
+/// arms inside the `^subst`/`^shift` receivers (a `match cr { … }` on the returned `^cmp` result),
+/// so they have no standalone channel; the labels are reserved so a user constructor named `sb`/
+/// `shb` still cannot collide with the (future) split form.
+pub const SUBST_RESERVED_LABEL: &str = "^subst";
+pub const SHIFT_RESERVED_LABEL: &str = "^shift";
+pub const CMP_RESERVED_LABEL: &str = "^cmp";
+pub const SHIFTK_RESERVED_LABEL: &str = "^shiftk";
+pub const PRED_RESERVED_LABEL: &str = "^pred";
+pub const SB_RESERVED_LABEL: &str = "^sb";
+pub const SHB_RESERVED_LABEL: &str = "^shb";
+
 /// Reflect an RHS pattern term to a normalized `Par`, threading a **binder
 /// environment** (the RHS binders currently in scope, De Bruijn stack). A variable
 /// occurrence that names an in-scope binder reflects to a distinguished bound-var

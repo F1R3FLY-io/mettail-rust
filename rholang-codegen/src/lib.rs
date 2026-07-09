@@ -88,6 +88,7 @@ pub mod rho_net;
 pub mod rho_net_automaton;
 pub mod rho_net_lower;
 pub mod rho_net_ruleset;
+pub mod rho_net_subst_trs;
 pub mod validate;
 pub use ast::{RhoAstBuildError, RhoAstLiteral, RhoAstSend};
 pub use backend::{
@@ -155,7 +156,12 @@ pub use rho_net_lower::{
     RhoNetContextualInjectionSite, RhoNetContextualMatchEntry, RhoNetInjectionInvocation,
     RhoNetInjectionSite, RhoNetInstallError, RhoNetLowered, RhoNetLoweredRule, RhoNetLoweringError,
     RhoNetNativeInjectionSite, RhoNetNativeMatchEntry, RhoNetStructuralAcInjectionSite,
-    RhoNetSubstInjectionSite, UnsupportedFamily,
+    RhoNetSubstInjectionSite, UnsupportedFamily, CMP_RESERVED_LABEL, PRED_RESERVED_LABEL,
+    SB_RESERVED_LABEL, SHB_RESERVED_LABEL, SHIFTK_RESERVED_LABEL, SHIFT_RESERVED_LABEL,
+    SUBST_RESERVED_LABEL,
+};
+pub use rho_net_subst_trs::{
+    reserved_subst_trs_labels, subst_seed_receiver_par, subst_seed_send_par, subst_trs_program_par,
 };
 pub use rho_net_ruleset::{
     compile_in_rho_matching_ruleset, contextual_match_call_par, convert_lhs_pattern,
