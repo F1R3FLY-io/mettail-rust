@@ -6266,6 +6266,62 @@ mod tests {
         );
     }
 
+    /// Slice 3a: the AC match descent (`ac_match_install_at`, the routine the structural-AC spread
+    /// matcher reuses) is STRUCTURAL — it descends the children of every non-bag node until it
+    /// locates a HashBag. A PNew binder reflects to a single-child `^lambda([⟦body⟧])` (macro
+    /// `reflect_category_fn`), so an operand bag UNDER a `new` is reached by the SAME descent with NO
+    /// binder-specific code. We wrap the bag in a synthetic `^lambda` node (exactly the shape PNew
+    /// reflects to) and confirm the co-install still fires at the bag — the reflection+descent the
+    /// structural-AC spread matcher (slice 3b) rides for FREE.
+    #[test]
+    fn ac_match_call_descends_through_lambda_to_the_bag() {
+        let mut def =
+            syn::parse_str::<LanguageDef>(AC_DEMO_FRAGMENT).expect("the AcDemo fragment parses");
+        // A linear with-rest HashBag AC rewrite `PPar{x, ...rest} ~> Wrap(x)` so `rho_net_ac_match_
+        // entries` surfaces a real match entry (the AcDemo fragment declares only the constructors).
+        def.rewrites.push(RewriteRule {
+            name: ident("AcStep"),
+            type_context: Vec::new(),
+            premises: Vec::new(),
+            left: apply(
+                "PPar",
+                vec![Pattern::Collection {
+                    coll_type: Some(CollectionType::HashBag),
+                    elements: vec![var_pattern("x")],
+                    rest: Some(ident("rest")),
+                }],
+            ),
+            right: apply("Wrap", vec![var_pattern("x")]),
+            is_auto_injected: false,
+        });
+        let entries = rho_net_ac_match_entries(&def);
+        assert!(!entries.is_empty(), "the linear AC rewrite surfaces a match entry");
+        let fp = mettail_ast::identity::language_definition_fingerprint(&def);
+
+        let bag = GroundTerm::collection(
+            CollectionType::HashBag,
+            "PPar",
+            vec![GroundTerm::nullary("A"), GroundTerm::nullary("B")],
+        );
+
+        // Top-level bag: located at the spread root.
+        let top = ac_match_call_par(&bag, &entries, "site0", "OUT", &fp);
+        assert!(!top.receives.is_empty(), "the top-level bag co-installs an AC receiver");
+
+        // Bag under a `^lambda` (the PNew reflection image): located by the SAME structural descent.
+        let under_lambda = GroundTerm::new(LAMBDA_REFLECT_LABEL, vec![bag.clone()]);
+        let nested = ac_match_call_par(&under_lambda, &entries, "site0", "OUT", &fp);
+        assert!(
+            !nested.receives.is_empty(),
+            "the descent rides the ^lambda child into the operand bag and co-installs there"
+        );
+
+        // No bag under the `^lambda` ⇒ fail-closed descent (nothing co-installed).
+        let leaf = GroundTerm::new(LAMBDA_REFLECT_LABEL, vec![GroundTerm::nullary("A")]);
+        let none = ac_match_call_par(&leaf, &entries, "site0", "OUT", &fp);
+        assert!(none.receives.is_empty(), "no bag under the ^lambda ⇒ no co-install");
+    }
+
     /// The Comm shape (substitution-in-bag RHS) is NOT a structural AC shape — the two detectors are
     /// mutually exclusive by RHS shape (bare-var elements vs a single `(eval scope arg)` element).
     #[test]

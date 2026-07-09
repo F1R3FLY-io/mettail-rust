@@ -1939,6 +1939,53 @@ mod tests {
         assert!(reflect.contains(". iter ()"));
     }
 
+    /// Stage 4 S-binder SLICE 3a (Ambient OpenRule structural-AC under a `new`): the PNew binder
+    /// constructor (`^x.p:[Name -> Proc]`, EMPTY pre-scope fields) reflects to the reserved
+    /// `^lambda([⟦body⟧])` tag over the reflected scope body, and a bound NAME occurrence reflects to
+    /// `^bound(peano(depth))` (the `^bound`/`Z`/`S` De-Bruijn leaf). This is the ALREADY-generic
+    /// reflection the structural-AC spread matcher rides: `structural_ac_match_install_at` descends
+    /// the single `^lambda` child into the operand bag (see the `rho_net_lower` companion test
+    /// `structural_ac_match_call_descends_through_lambda_to_the_bag`), so an OpenRule redex under
+    /// `new(x, {open(x,A) | x[B]})` is LOCATED in Rho with NO new reflection code.
+    #[test]
+    fn generated_rho_net_reflection_emits_the_lambda_arm_for_pnew() {
+        let language = parse(
+            r#"
+                name: AmbNewReflect,
+                types { Proc Name }
+                terms {
+                    PA . |- "A" : Proc ;
+                    Na . |- "na" : Name ;
+                    POpen . n:Name, p:Proc |- "open" "(" n "," p ")" : Proc ;
+                    PAmb . n:Name, p:Proc |- n "[" p "]" : Proc ;
+                    PNew . ^x.p:[Name -> Proc] |- "new" "(" x "," p ")" : Proc ;
+                    PPar . ps:HashBag(Proc) |- "{" ps.*sep("|") "}" : Proc ;
+                }
+                equations {}
+                rewrites {
+                    OpenRule . |- (PPar {(POpen N P), (PAmb N Q), ...rest})
+                        ~> (PPar {P, Q, ...rest}) ;
+                }
+            "#,
+        );
+        // The `Proc` reflection emits the PNew binder arm: a single-child `^lambda` over the reflected
+        // scope body (read via `unsafe_body`, preserving the de-Bruijn coordinates). PNew has EMPTY
+        // pre-scope fields, so it takes the single-child `^lambda` arm (not the fail-closed arm).
+        let proc_reflect = reflect_category_fn(&language, &format_ident!("Proc")).to_string();
+        assert!(proc_reflect.contains("\"^lambda\""), "PNew reflects to the ^lambda tag");
+        assert!(proc_reflect.contains("unsafe_body"), "the ^lambda arm reads the scope body");
+        // The `Name` reflection emits the de-Bruijn Var arm: a BOUND occurrence → `^bound(peano)`, a
+        // FREE occurrence → `^free`. A bound `new`-scoped ambient name rides `^bound(peano(depth))`,
+        // so the non-linear guard `N ≡ N` compares the two occurrences' de-Bruijn depths.
+        let name_reflect = reflect_category_fn(&language, &format_ident!("Name")).to_string();
+        assert!(name_reflect.contains("\"^bound\""), "a bound Name occurrence reflects to ^bound");
+        assert!(name_reflect.contains("\"^free\""), "a free Name occurrence reflects to ^free");
+        assert!(
+            name_reflect.contains("\"Z\"") && name_reflect.contains("\"S\""),
+            "the ^bound depth is a Peano numeral Z/S(…)"
+        );
+    }
+
     #[test]
     fn generated_rho_net_invocation_without_base_rewrites_fails_closed() {
         let language = parse(
