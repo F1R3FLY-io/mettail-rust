@@ -514,55 +514,118 @@ pub fn in_rho_match_all_sites_call_par(
 /// and let the reused join reassemble ⟦K'⟧ — the reduced holes coming from the automaton's NESTED
 /// FIRINGS, never the host-σ [`reconstruct_contractum`](crate::reconstruct_contractum) report replay.
 ///
-/// This sub-slice matches the UNARY shape (exactly one congruence family, one hole): the outer
-/// context spine `K` is the reflected subject with ONE distinguished hole position ℓ_0 (the premise
-/// subject). The base locate-all ([`in_rho_match_all_sites_call_par`]) LOCATES the hole's premise
-/// redex by descending `K`'s spine from the ONE spread and fires its σ-receiver with the intermediate
-/// [`contextual_premise_hole_channel`] `ph:c(ℓ_0)` as its dynamic out; the
-/// [`contextual_hole_bridge_par`] then re-delivers the reduced hole `T_0` on the join's premise
-/// channel `c(ℓ_0)` (carrying the dynamic out, the unary join's `(T_0, out)` bind), where the
-/// installed join emits ⟦K'⟧ = ⟦K(T_0)⟧ on `@out`.
+/// The outer context spine `K` is the reflected subject with `n` distinguished hole positions
+/// ℓ_0..ℓ_{n-1} (the premise subjects). Each hole position is derived from the contextual rule's LHS
+/// (the `(op, index)` path to premise `i`'s source variable, folded through [`spread_child_location`]
+/// — the SAME derivation `collect_redex_sites` uses). At each hole site the automaton LOCATES the
+/// premise redex (its head `Match` + `cap:` capture in Rho) and fires its σ-receiver with the
+/// intermediate [`contextual_premise_hole_channel`] `ph:c(ℓ_i)` as its dynamic out; the
+/// [`contextual_hole_bridge_par`] then re-delivers the reduced hole `T_i` on the join's premise
+/// channel `c(ℓ_i)` (the LAST hole additionally carries the dynamic out — the join's
+/// `(T_{n-1}, out)` bind), where the installed join binds all `n` reduced holes and emits
+/// ⟦K'⟧ = ⟦K(T_0..T_{n-1})⟧ on `@out`. The hole↔channel correspondence (premise `i`'s located firing
+/// routes to premise channel `i`) is what places each reduced hole at its context position in `K'`.
 ///
-/// FAIL-CLOSED ([`AutomatonUnsupported::ContextualNonUnarySite`]) when `subject`/`ruleset` is not
-/// this single-congruence, single-hole shape: 0 or ≥2 contextual families, an n-ary context (the
-/// per-hole routing is the next sub-slice), or a subject in which the automaton located a number of
-/// hole redexes other than one (a deeper multi-redex reduction). Never a wrong reassembly. The
-/// automaton `loc:`/`cap:` reads, the `ph:` intermediate, and the join's `c(ℓ_0)` are all disjoint,
-/// so the single-shot bridge and the persistent join never race.
+/// The `n` hole sites are DISJOINT-PREFIX locations, so their co-installed networks read disjoint
+/// `loc:`/`cap:` channels (like the locate-all multi-site install), and the `ph:` intermediates +
+/// the join's `c(ℓ_i)` are all disjoint — so the single-shot bridges and the persistent join never
+/// race. `n > 1` co-installed networks require a flat-only ruleset (a nested-App entry would descend
+/// into a co-installed site — [`AutomatonUnsupported::NestedEntryMultiSite`]).
+///
+/// FAIL-CLOSED ([`AutomatonUnsupported::ContextualHoleMismatch`]) when `subject`/`ruleset` does not
+/// match `K`'s hole structure: 0 or ≥2 contextual families, a premise-channel/hole-position drift,
+/// or — the load-bearing check — the subject's LOCATED rule-root redexes are not EXACTLY the `n`
+/// expected hole positions (a normal form, a deeper redex inside a hole, or an extra redex outside
+/// the holes). Never a wrong reassembly. Reduced holes come from the automaton's IN-RHO nested
+/// firings, never the host-σ [`reconstruct_contractum`](crate::reconstruct_contractum) report replay.
 pub fn contextual_match_call_par(
     ruleset: &InRhoMatchingRuleset,
     subject: &GroundTerm,
     root_site: &str,
     out_channel: &str,
 ) -> Result<Par, AutomatonUnsupported> {
-    // UNARY scope: exactly one contextual family with exactly one premise channel/hole.
+    // Exactly one contextual family (the single congruence context to close). 0 or ≥2 fail closed.
     let [entry] = ruleset.contextual_dispatch.as_slice() else {
-        return Err(AutomatonUnsupported::ContextualNonUnarySite);
+        return Err(AutomatonUnsupported::ContextualHoleMismatch);
     };
-    let [premise_channel] = entry.premise_channels.as_slice() else {
-        return Err(AutomatonUnsupported::ContextualNonUnarySite);
-    };
-
-    // Route the located hole redex's nested firing to the intermediate premise-hole channel: the
-    // base automaton locates the hole's premise redex from the ONE spread and fires its σ-receiver
-    // with `ph:c(ℓ_0)` as the dynamic out (so `⟦T_0⟧` lands there — from the reflected subject, NOT
-    // the report σ).
-    let hole_channel = contextual_premise_hole_channel(premise_channel);
-    let (base_call, sites) =
-        in_rho_match_all_sites_call_par(ruleset, subject, root_site, &hole_channel)?;
-
-    // UNARY scope: the unary context has exactly ONE hole, so the automaton must locate exactly one
-    // premise redex. 0 (a normal form — nothing to reduce) or ≥2 (a deeper multi-redex reduction the
-    // single-hole join cannot host) fail closed.
-    if sites != 1 {
-        return Err(AutomatonUnsupported::ContextualNonUnarySite);
+    let n = entry.premise_channels.len();
+    // A congruence has ≥1 premise, and each premise contributes one channel AND one hole position
+    // (aligned index-for-index) — a drift means the entry was derived from a mismatched def.
+    if n == 0 || n != entry.hole_positions.len() {
+        return Err(AutomatonUnsupported::ContextualHoleMismatch);
     }
 
-    // The bridge re-delivers the reduced hole on the join's premise channel in the join ABI (the
-    // unary hole is the LAST, so it carries the dynamic out channel), where the installed
-    // `contextual_join_receiver_par` binds it and emits ⟦K'⟧.
-    let bridge = contextual_hole_bridge_par(&hole_channel, premise_channel, Some(out_channel));
-    Ok(base_call.append(bridge))
+    // The `n` expected hole sites: fold `spread_child_location` over each premise's `(op, index)`
+    // path from the spread root (the SAME derivation `collect_redex_sites` publishes `loc:`/`cap:`
+    // at, so the network built at a hole site reads exactly what the spread published there).
+    let expected_sites: Vec<String> = entry
+        .hole_positions
+        .iter()
+        .map(|path| {
+            path.iter().fold(root_site.to_string(), |site, (op, index)| {
+                spread_child_location(&site, op, *index)
+            })
+        })
+        .collect();
+
+    // LOAD-BEARING bijection check: the subject's located rule-root redexes must be EXACTLY the `n`
+    // expected hole positions (as a multiset). This rejects a normal form (0 hole redexes), a deeper
+    // nested redex inside a hole, and an extra redex outside the holes — so the reused join binds
+    // exactly the `n` located firings the context expects, never a wrong reassembly.
+    let roots = rule_lhs_root_constructors(ruleset);
+    let mut located: Vec<String> = Vec::new();
+    collect_redex_sites(subject, root_site, &roots, &mut located);
+    let mut located_sorted = located;
+    located_sorted.sort();
+    let mut expected_sorted = expected_sites.clone();
+    expected_sorted.sort();
+    if located_sorted != expected_sorted {
+        return Err(AutomatonUnsupported::ContextualHoleMismatch);
+    }
+
+    // Co-installing ≥2 per-hole networks over ONE spread is contention-free only for a flat-only
+    // ruleset (a nested-App entry would descend `loc:` head tags into a co-installed site). A single
+    // hole (n = 1) has no co-installation and admits a nested entry.
+    if n > 1 && !ruleset_all_entries_flat(ruleset) {
+        return Err(AutomatonUnsupported::NestedEntryMultiSite);
+    }
+
+    // Build one positional network per hole site — each routing its accept to that hole's
+    // intermediate `ph:c(ℓ_i)` channel — plus a per-hole bridge re-delivering the reduced hole on
+    // the join's premise channel `c(ℓ_i)` in the join's bind ABI (the LAST hole carries `@out`).
+    let mut call = Par::default();
+    for (index, expected_site) in expected_sites.iter().enumerate() {
+        let premise_channel = &entry.premise_channels[index];
+        let hole_channel = contextual_premise_hole_channel(premise_channel);
+        let targets: Vec<AutomatonAcceptTarget> = ruleset
+            .accept_channels
+            .iter()
+            .map(|(pattern, accept_channel)| AutomatonAcceptTarget {
+                pattern: *pattern,
+                accept_channel: accept_channel.clone(),
+                out_channel: hole_channel.clone(),
+            })
+            .collect();
+        let network = multi_pattern_receiver_network_par(
+            &ruleset.automaton.view(),
+            expected_site,
+            &targets,
+            &ruleset.language_fingerprint,
+        )?;
+        call = call.append(network);
+
+        let is_last = index + 1 == n;
+        let bridge = contextual_hole_bridge_par(
+            &hole_channel,
+            premise_channel,
+            if is_last { Some(out_channel) } else { None },
+        );
+        call = call.append(bridge);
+    }
+
+    // ONE spread of the whole subject — every hole network reads its site's channels from it.
+    let spread = spread_term_par(subject, &ruleset.language_fingerprint, root_site);
+    Ok(call.append(spread))
 }
 
 /// The FV (ix) `install_admits` capability gate, executable: returns the first rule that
@@ -1041,12 +1104,13 @@ mod tests {
         );
         assert_eq!(
             contextual_match_call_par(&ruleset, &normal, "site0", "OUT"),
-            Err(AutomatonUnsupported::ContextualNonUnarySite),
+            Err(AutomatonUnsupported::ContextualHoleMismatch),
             "a normal form has no located hole redex — fail closed"
         );
 
-        // Two hole redexes Pair(Swap(A,B), Swap(B,A)) under the SAME single-hole context would
-        // over-fire the unary join → fail closed (the n-ary routing is the next sub-slice).
+        // Two hole redexes Pair(Swap(A,B), Swap(B,A)) under the SAME single-hole context: the located
+        // redexes (Wrap.0/Pair.0, Wrap.0/Pair.1) are NOT the expected single hole (Wrap.0) → the
+        // bijection check fails closed (an extra redex inside the hole).
         let two = GroundTerm::new(
             "Wrap",
             vec![GroundTerm::new(
@@ -1065,8 +1129,105 @@ mod tests {
         );
         assert_eq!(
             contextual_match_call_par(&ruleset, &two, "site0", "OUT"),
-            Err(AutomatonUnsupported::ContextualNonUnarySite),
-            "≥2 located hole redexes exceed the unary join — fail closed"
+            Err(AutomatonUnsupported::ContextualHoleMismatch),
+            "located redexes that are not exactly the expected hole positions — fail closed"
+        );
+    }
+
+    /// A 2-ARY congruence `NodeCong: | S0 ~> T0, S1 ~> T1 |- Node(S0, S1) ~> Node(T0, T1)` (plus the
+    /// base `Flip` to reduce each hole) — the n-ary (n > 1) contextual shape.
+    fn bicong_demo_def() -> LanguageDef {
+        syn::parse_str(
+            r#"
+                name: BiCongRulesetGen,
+                types { Proc }
+                terms {
+                    A . |- "A" : Proc ;
+                    B . |- "B" : Proc ;
+                    C . |- "C" : Proc ;
+                    D . |- "D" : Proc ;
+                    Pair . x:Proc, y:Proc |- "pair" "(" x "," y ")" : Proc ;
+                    Swap . x:Proc, y:Proc |- "swap" "(" x "," y ")" : Proc ;
+                    Node . x:Proc, y:Proc |- "node" "(" x "," y ")" : Proc ;
+                }
+                equations {}
+                rewrites {
+                    Flip . |- (Swap x y) ~> (Pair y x) ;
+                    NodeCong . | S0 ~> T0, S1 ~> T1 |- (Node S0 S1) ~> (Node T0 T1) ;
+                }
+            "#,
+        )
+        .expect("the 2-ary congruence fragment parses")
+    }
+
+    #[test]
+    fn contextual_match_entry_locates_the_two_hole_positions() {
+        // The 2-ary NodeCong hole positions: S0 at Node.0, S1 at Node.1 — aligned with the two
+        // premise channels in premise order.
+        let ruleset = compile_in_rho_matching_ruleset(&bicong_demo_def());
+        assert_eq!(ruleset.contextual_dispatch.len(), 1, "one contextual family (NodeCong)");
+        let entry = &ruleset.contextual_dispatch[0];
+        assert_eq!(entry.premise_channels.len(), 2, "two congruence premises ⇒ two channels");
+        assert_eq!(
+            entry.hole_positions,
+            vec![vec![("Node".to_string(), 0)], vec![("Node".to_string(), 1)]],
+            "S0 at Node.0, S1 at Node.1 (premise order)"
+        );
+    }
+
+    #[test]
+    fn contextual_match_call_routes_each_of_two_holes_to_its_own_premise_channel() {
+        // Node(Swap(A, B), Swap(C, D)): two hole redexes at Node.0 and Node.1. The n-ary match call
+        // co-installs a bridge per hole, each reading `ph:{premise_channel_i}` and re-delivering on
+        // its OWN join premise channel — so K'(T0, T1) = Node(Pair(B,A), Pair(D,C)) reassembles with
+        // each reduced hole at its context position.
+        let ruleset = compile_in_rho_matching_ruleset(&bicong_demo_def());
+        let swap = |a: &str, b: &str| {
+            GroundTerm::new(
+                "Swap",
+                vec![GroundTerm::new(a, Vec::new()), GroundTerm::new(b, Vec::new())],
+            )
+        };
+        let subject = GroundTerm::new("Node", vec![swap("A", "B"), swap("C", "D")]);
+        let call = contextual_match_call_par(&ruleset, &subject, "site0", "OUT")
+            .expect("the 2-ary contextual match call serializes");
+
+        // Both intermediate hole channels are read by a co-installed bridge (distinct per hole).
+        for premise in &ruleset.contextual_dispatch[0].premise_channels {
+            let hole_channel = format!("ph:{premise}");
+            let has_bridge = call.receives.iter().any(|receive| {
+                receive.binds.iter().any(|bind| {
+                    bind.source.as_ref().and_then(par_gstring).as_deref()
+                        == Some(hole_channel.as_str())
+                })
+            });
+            assert!(has_bridge, "a hole bridge must read {hole_channel}");
+        }
+    }
+
+    #[test]
+    fn contextual_match_call_fails_closed_when_a_hole_is_a_normal_form() {
+        // Node(Swap(A, B), Pair(C, D)): only Node.0 has a redex (Pair is inert), so the located
+        // redexes {Node.0} ≠ the expected holes {Node.0, Node.1} → fail closed (a hole is not a
+        // redex — the join could never bind that hole).
+        let ruleset = compile_in_rho_matching_ruleset(&bicong_demo_def());
+        let subject = GroundTerm::new(
+            "Node",
+            vec![
+                GroundTerm::new(
+                    "Swap",
+                    vec![GroundTerm::new("A", Vec::new()), GroundTerm::new("B", Vec::new())],
+                ),
+                GroundTerm::new(
+                    "Pair",
+                    vec![GroundTerm::new("C", Vec::new()), GroundTerm::new("D", Vec::new())],
+                ),
+            ],
+        );
+        assert_eq!(
+            contextual_match_call_par(&ruleset, &subject, "site0", "OUT"),
+            Err(AutomatonUnsupported::ContextualHoleMismatch),
+            "a hole that is not a located redex fails closed"
         );
     }
 }

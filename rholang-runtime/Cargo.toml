@@ -113,6 +113,17 @@ ctx-demo-runtime = [
     "mettail-languages/dovetail-codegen",
     "mettail-languages/rho-codegen",
 ]
+# Stage 4 S-contextual (sub-slice 2): pulls in the generated `BiCongDemo` language for the
+# end-to-end in-Rho N-ARY (n > 1) CONTEXTUAL firing test (`rho_net_bicong_firing`) — a generated
+# 2-ary congruence `NodeCong: | S0 ~> T0, S1 ~> T1 |- Node(S0, S1) ~> Node(T0, T1)` firing as an
+# atomic 2-premise JOIN COMM on the reducer. Same generated surface as `ctx-demo-runtime`.
+bicong-demo-runtime = [
+    "runtime-report",
+    "dep:mettail-languages",
+    "mettail-languages/bicong-demo",
+    "mettail-languages/dovetail-codegen",
+    "mettail-languages/rho-codegen",
+]
 # Stage 3c: pulls in the generated `LambdaDemo` language for the end-to-end in-Rho BINDER
 # firing test (`rho_net_beta_firing`) — a generated β-reduction `App(Lam(^x. b), a) ~>
 # subst(b, x := a)` firing as a COMM on the reducer. Needs the generated `dovetail_report_for`
@@ -267,6 +278,11 @@ required-features = ["nl-ac-demo-runtime"]
 name = "rho_net_contextual_firing"
 path = "tests/rho_net_contextual_firing.rs"
 required-features = ["ctx-demo-runtime"]
+
+[[test]]
+name = "rho_net_bicong_firing"
+path = "tests/rho_net_bicong_firing.rs"
+required-features = ["bicong-demo-runtime"]
 
 [[test]]
 name = "rho_net_beta_firing"

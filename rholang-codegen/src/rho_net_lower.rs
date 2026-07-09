@@ -2005,6 +2005,16 @@ pub struct RhoNetContextualMatchEntry {
     /// [`RhoNetContextualInjectionSite::premise_channels`]; the LAST additionally carries the
     /// dynamic out channel (the join's `(T_{n-1}, out)` bind ABI).
     pub premise_channels: Vec<String>,
+    /// The `n` HOLE POSITIONS in the outer context `K`, in premise order — one `(op, index)` path
+    /// per premise, locating that premise's SOURCE variable `S_i` in the contextual rule's LHS
+    /// (`K(S_0..S_{n-1})`). The match driver
+    /// ([`contextual_match_call_par`](crate::contextual_match_call_par)) derives each hole's location
+    /// site `ℓ_i` by folding [`spread_child_location`] over its path from the spread root (the SAME
+    /// derivation `collect_redex_sites` uses), so a premise-`i` located firing routes to premise
+    /// channel `i` — the hole↔channel correspondence that makes the n-ary reassembly `K'(T_0..T_{n-1})`
+    /// place each reduced hole at its context position. Aligned index-for-index with
+    /// [`premise_channels`](Self::premise_channels).
+    pub hole_positions: Vec<Vec<(String, usize)>>,
 }
 
 /// Derive every in-Rho MATCHING entry for a language's contextual (congruence) rewrite families
@@ -2020,11 +2030,60 @@ pub struct RhoNetContextualMatchEntry {
 pub fn rho_net_contextual_match_entries(def: &LanguageDef) -> Vec<RhoNetContextualMatchEntry> {
     rho_net_contextual_injection_sites(def)
         .into_iter()
-        .map(|site| RhoNetContextualMatchEntry {
-            fired_rule_label: site.rule_label,
-            premise_channels: site.premise_channels,
+        .map(|site| {
+            // The hole positions: for each premise (in premise order), the `(op, index)` path to its
+            // SOURCE variable in the contextual rule's LHS `K`. A materialized `ContextualRewrite`
+            // has all-congruence premises (`congruence_targets` succeeded) whose sources are LHS
+            // variables, so each path is found; a defensive empty path (source absent) keeps the
+            // derivation total (the match driver's bijection check then fails closed).
+            let hole_positions = def
+                .rewrites
+                .iter()
+                .find(|rewrite| rewrite.name.to_string() == site.rule_label)
+                .map(|rewrite| {
+                    rewrite
+                        .premises
+                        .iter()
+                        .filter_map(|premise| match premise {
+                            Premise::Congruence { source, .. } => {
+                                Some(contextual_source_path(&rewrite.left, &source.to_string())
+                                    .unwrap_or_default())
+                            },
+                            _ => None,
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            RhoNetContextualMatchEntry {
+                fired_rule_label: site.rule_label,
+                premise_channels: site.premise_channels,
+                hole_positions,
+            }
         })
         .collect()
+}
+
+/// The `(op, index)` path to the SOURCE variable `source` in a contextual rule's LHS context `K`
+/// (`pattern`) — the hole position the automaton descends `K`'s spine to. A DFS returning the first
+/// occurrence's path (empty when `pattern` IS the source var — a degenerate hole-only context — and
+/// `None` when `source` does not occur). The path is folded through [`spread_child_location`] by the
+/// match driver into the hole's location site, so the derivation matches `collect_redex_sites`.
+fn contextual_source_path(pattern: &Pattern, source: &str) -> Option<Vec<(String, usize)>> {
+    match pattern {
+        Pattern::Term(PatternTerm::Var(id)) if id.to_string() == source => Some(Vec::new()),
+        Pattern::Term(PatternTerm::Apply { constructor, args }) => {
+            for (index, arg) in args.iter().enumerate() {
+                if let Some(mut suffix) = contextual_source_path(arg, source) {
+                    let mut path = Vec::with_capacity(suffix.len() + 1);
+                    path.push((constructor.to_string(), index));
+                    path.append(&mut suffix);
+                    return Some(path);
+                }
+            }
+            None
+        },
+        _ => None,
+    }
 }
 
 /// Reconstruct the reduced hole `T = RHS_premise[σ]` a fired premise rewrite produced — the

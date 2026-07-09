@@ -80,14 +80,15 @@ pub enum AutomatonUnsupported {
     /// [`in_rho_match_all_sites_call_par`]: crate::in_rho_match_all_sites_call_par
     NestedEntryMultiSite,
     /// The Stage-4 S-contextual match ([`contextual_match_call_par`](crate::contextual_match_call_par))
-    /// was asked to serialize a contextual JOIN that is not the single-congruence, single-hole
-    /// (UNARY) shape this sub-slice matches in Rho: 0 or ≥2 contextual families, an n-ary (n > 1)
-    /// context, or a subject in which the automaton located a number of hole redexes other than the
-    /// one the unary context has. The reduced hole must come from EXACTLY one in-Rho nested firing at
-    /// the single hole position for the reused unary [`contextual_join_receiver_par`](crate::contextual_join_receiver_par)
-    /// to reassemble ⟦K'⟧; anything else fails closed here (the n-ary hole routing is the next
-    /// sub-slice). Never a wrong reassembly.
-    ContextualNonUnarySite,
+    /// was asked to serialize a contextual JOIN whose subject does not match the outer context `K`'s
+    /// hole structure: 0 or ≥2 contextual families, a premise-channel/hole-position count drift, or —
+    /// the load-bearing check — the subject's LOCATED rule-root redexes are not EXACTLY the `n`
+    /// expected hole positions (a normal form with 0 hole redexes, a deeper nested redex inside a
+    /// hole, or an extra redex outside the holes). Each of the `n` reduced holes must come from
+    /// EXACTLY one in-Rho nested firing at its hole position `ℓ_i` for the reused
+    /// [`contextual_join_receiver_par`](crate::contextual_join_receiver_par) to reassemble ⟦K'⟧ from
+    /// the `n` located firings; anything else fails closed here. Never a wrong reassembly.
+    ContextualHoleMismatch,
 }
 
 /// The `locally_free` index set `indices` as a rhoapi bit vector (empty when none).

@@ -38,6 +38,7 @@ all-languages = [
     "comm-demo",
     "composition",
     "ctx-demo",
+    "bicong-demo",
     "fortran_model",
     "reserved_model",
     "guarded-rho",
@@ -67,6 +68,7 @@ class3opt = []
 comm-demo = []
 composition = ["calculator", "lambda"]
 ctx-demo = []
+bicong-demo = []
 fortran_model = []
 reserved_model = []
 guarded-rho = []

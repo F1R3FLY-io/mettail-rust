@@ -44,6 +44,9 @@ pub mod commdemo;
 // Stage 3a: the unary-congruence (contextual join) demonstration language.
 #[cfg(feature = "ctx-demo")]
 pub mod ctxdemo;
+// Stage 4 S-contextual (sub-slice 2): the 2-ARY-congruence (n-hole contextual join) demonstration.
+#[cfg(feature = "bicong-demo")]
+pub mod bicongdemo;
 // Stage 3c: the untyped λ-calculus binder/β-substitution demonstration language.
 #[cfg(feature = "lambda-demo")]
 pub mod lambdademo;
