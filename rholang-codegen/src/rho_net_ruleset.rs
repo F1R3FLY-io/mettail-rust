@@ -27,7 +27,9 @@ use models::rhoapi::Par;
 use crate::rho_net_automaton::{
     multi_pattern_receiver_network_par, AutomatonAcceptTarget, AutomatonUnsupported,
 };
-use crate::rho_net_lower::{spread_child_location, spread_term_par, GroundTerm};
+use crate::rho_net_lower::{
+    ac_match_call_par, spread_child_location, spread_term_par, GroundTerm, RhoNetAcMatchEntry,
+};
 
 /// Why an LHS pattern has no structural set-automaton image (fail-closed to a later
 /// stage rather than mis-compiling it into a wrong automaton).
@@ -145,6 +147,13 @@ pub struct InRhoMatchingRuleset {
     /// One record per ADMITTED native process family entry (Stage 4 S-native): the firing label,
     /// trigger + dispatch channels, and arity the match driver co-installs a value bridge from.
     pub native_dispatch: Vec<NativeDispatch>,
+    /// One record per ADMITTED HashBag AC family entry (Stage 4 S-AC): the firing label, operand
+    /// constructor, element count, and pre-built RHS the match driver
+    /// ([`ac_match_call_par`](crate::ac_match_call_par)) co-installs a per-site AC receiver from —
+    /// re-sourcing the operand bag from the SPREAD of the subject, not the host-σ report. Unlike a
+    /// base rewrite or native process, an AC redex is NOT an automaton entry (its `AcApp` has no
+    /// positional image), so it carries no `accept_channels` entry and no `PatternId`.
+    pub ac_dispatch: Vec<RhoNetAcMatchEntry>,
 }
 
 /// Compile a language's structural base rewrites into ONE positional set automaton,
@@ -164,6 +173,17 @@ pub fn compile_in_rho_matching_ruleset(def: &LanguageDef) -> InRhoMatchingRulese
         .map(|s| (s.rule_label.as_str(), s.channel.as_str()))
         .collect();
 
+    // Stage 4 (S-AC): ADMIT the linear with-rest HashBag AC family rewrites. An AC rewrite has NO
+    // base-rewrite σ-receiver site (it un-skipped to an `AcRewrite`), so it would otherwise defer
+    // `NotBaseRewrite` and the gate would reject the match path. Instead the match driver
+    // ([`ac_match_call_par`](crate::ac_match_call_par)) LOCATES the bag in the reflected subject and
+    // co-installs a per-site AC receiver re-sourcing the operand bag from the SPREAD (not the
+    // report σ). Admitting a rule here (skipping its defer) shrinks `deferred`, so the gate stops
+    // rejecting it — the AC analogue of S-native's `native_dispatch`.
+    let ac_dispatch = crate::rho_net_ac_match_entries(def);
+    let ac_admitted: HashSet<&str> =
+        ac_dispatch.iter().map(|entry| entry.fired_rule_label.as_str()).collect();
+
     let mut pairs: Vec<(PatternId, DvPattern<String>)> = Vec::with_capacity(def.rewrites.len());
     let mut accept_channels: Vec<(PatternId, String)> = Vec::new();
     let mut deferred: Vec<DeferredRewrite> = Vec::new();
@@ -173,6 +193,11 @@ pub fn compile_in_rho_matching_ruleset(def: &LanguageDef) -> InRhoMatchingRulese
         let channel = match site_channel.get(label.as_str()) {
             Some(channel) => channel.to_string(),
             None => {
+                // Admitted via the AC match path (its bag is located + fired in Rho by the match
+                // driver) — do NOT defer, so the gate admits it.
+                if ac_admitted.contains(label.as_str()) {
+                    continue;
+                }
                 deferred.push(DeferredRewrite {
                     rule_label: label,
                     reason: DeferReason::NotBaseRewrite,
@@ -278,6 +303,7 @@ pub fn compile_in_rho_matching_ruleset(def: &LanguageDef) -> InRhoMatchingRulese
         language_fingerprint,
         deferred,
         native_dispatch,
+        ac_dispatch,
     }
 }
 
@@ -430,6 +456,25 @@ pub fn in_rho_match_all_sites_call_par(
         )?;
         call = call.append(network);
     }
+
+    // Stage 4 (S-AC): co-install the HashBag AC redexes. Each admitted AC family
+    // ([`InRhoMatchingRuleset::ac_dispatch`]) has NO automaton entry (its `AcApp` has no positional
+    // image), so it is located by a SEPARATE walk of the subject ([`ac_match_call_par`]) rather than
+    // by `collect_redex_sites`: at every bag position whose op is admitted, a per-site AC receiver
+    // reads the site-keyed `ac:` carrier the walk publishes the SUBJECT bag's soup on (not the
+    // report σ) and picks k-of-n + binds `rest` in ONE atomic `consume`. AC leaves read only their
+    // OWN disjoint site-keyed carrier (Red-team #4/#5), so they are ALWAYS co-installable — with
+    // each other AND with the base networks (disjoint `ac:` vs `loc:`/`cap:` channels) — and never
+    // trigger the nested-multi-site contention gate.
+    let ac_call = ac_match_call_par(
+        subject,
+        &ruleset.ac_dispatch,
+        root_site,
+        out_channel,
+        &ruleset.language_fingerprint,
+    );
+    call = call.append(ac_call);
+
     let spread = spread_term_par(subject, &ruleset.language_fingerprint, root_site);
     Ok((call.append(spread), sites.len()))
 }

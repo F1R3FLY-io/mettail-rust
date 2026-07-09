@@ -252,3 +252,96 @@ async fn acdemo_ac_replay_fires_every_ac_match_as_a_comm() {
         assert_wraps_a_bag_element(value, &universe);
     }
 }
+
+/// S-AC (Stage 4, AC1) — the DECISIVE probe that the AC operand BAG is re-sourced from the SPREAD
+/// of the reflected subject, NOT the host report σ. The AC analogue of the base
+/// `m_reflect_sigma_is_produced_by_the_automaton_not_the_report` and the native
+/// `s_native_location_is_produced_by_the_automaton_not_the_report`.
+///
+/// We take a real, complete report for `PPar{A | B | C}` and CORRUPT its σ (the matched element `x`
+/// and the residual `rest` — the SAME σ the host-σ AC arm reconstructs `whole_bag = [σ[x]] ⊎
+/// σ[rest].children` from) to nonsense, leaving the rule label (`AcStep`) valid so the in-Rho match
+/// GATE still admits the path. The Stage-4 `rho_net_match_invocation_from_dovetail_to` STRUCTURALLY
+/// reflects the WHOLE subject `PPar{A | B | C}` (M-reflect, NOT the report σ); the match driver
+/// (`ac_match_call_par`) LOCATES that bag, publishes its process-soup carrier on the SITE-KEYED
+/// `ac:` channel from the SUBJECT's ground elements, and the co-installed `ac_sigma_receiver_par`
+/// picks ONE element + binds `rest` ON the reducer (one atomic native `sub_pars` consume) and fires
+/// `Wrap(x)`.
+///
+/// Because the operand bag — and hence the picked element — is built from `term`, not the corrupted
+/// σ, OUT is `Wrap(e)` for a REAL element `e ∈ {A, B, C}`. A host-σ AC arm would have reconstructed
+/// the bag from the nonsense σ and wrapped `Z_NONSENSE`. So a positive, correct OUT is non-vacuous
+/// evidence the bag came from the spread of the subject, not the report — AC matching is a genuine
+/// in-Rho replacement (the σ-replay duplicate matcher is retired), and the site-keyed carrier
+/// eliminates cross-bag intermingle. The AC firing carries NO host-supplied residue (unlike
+/// S-native): the whole match AND fire is in Rho.
+///
+/// FV: `InRhoAcMatchMultiset.v` (the located bag = the subject operand bag; the carrier-agnostic
+/// atomic k-of-n pick) + `AcRestReconstruction.v` (`rest` = the residual soup) +
+/// `AcAtomicNoPartialConsume.v` (one atomic consume, no partial commit).
+#[tokio::test]
+async fn s_ac_bag_is_produced_by_the_spread_not_the_report() {
+    mettail_runtime::clear_var_cache();
+    let (backend, _fingerprint) = ac_demo_backend();
+
+    let term = subject_bag();
+
+    let mut report = AcDemoLanguage::dovetail_report_for(&term, 64, 1_000_000)
+        .expect("AcDemo Dovetail report must compile");
+    assert!(
+        !report.rewrite_justifications.is_empty(),
+        "the AC rewrite must surface at least one firing justification"
+    );
+
+    // Deliberately WRONG σ: a report-σ AC arm would reconstruct the operand bag from these bindings
+    // and wrap `Z_NONSENSE`. The rule label (`AcStep` — the location-independent identity) stays
+    // valid so the in-Rho match gate admits the path; ONLY the σ (the bag source) is corrupted.
+    let nonsense = RuntimeReflectedSubterm {
+        constructor: "Z_NONSENSE".to_string(),
+        children: Vec::new(),
+    };
+    let nonsense_rest = RuntimeReflectedSubterm {
+        constructor: "PPar".to_string(),
+        children: vec![nonsense.clone(), nonsense.clone()],
+    };
+    for justification in &mut report.rewrite_justifications {
+        assert_eq!(
+            justification.rule_label, "AcStep",
+            "the fired rule label (the location-independent identity) stays valid"
+        );
+        justification.sigma = vec![
+            ("x".to_string(), nonsense.clone()),
+            ("rest".to_string(), nonsense_rest.clone()),
+        ];
+    }
+
+    // The MATCH path admits the AC redex despite the corrupted σ, and RE-SOURCES the operand bag
+    // from the reflected subject `term` (the spread), never the report σ.
+    let invocation =
+        AcDemoLanguage::rho_net_match_invocation_from_dovetail_to(&term, &report, "OUT")
+            .expect("the MATCH path admits PPar{A|B|C} with a corrupted report σ");
+    assert_eq!(invocation.out_channel, "OUT");
+
+    let observation = backend
+        .run_rho_net_with_call_and_observe_runtime_values(&invocation.call, &invocation.out_channel)
+        .await
+        .expect("the in-Rho AC match + firing executes on the reducer");
+
+    // Non-vacuity: the co-installed AC receiver fired exactly once (one atomic consume of one bag).
+    assert_eq!(
+        observation.observed_count(),
+        1,
+        "OUT must carry exactly one value — the located AC redex must fire (got {:?})",
+        observation.values
+    );
+
+    // The AC receiver wrapped a REAL bag element `e ∈ {A, B, C}` from the SPREAD subject — never the
+    // corrupted σ's `Z_NONSENSE`. `assert_wraps_a_bag_element` panics if OUT wraps anything outside
+    // the universe, so a nonsense-sourced bag would fail here.
+    let universe: Vec<String> = vec!["A".to_string(), "B".to_string(), "C".to_string()];
+    let picked = assert_wraps_a_bag_element(&observation.values[0], &universe);
+    assert!(
+        matches!(picked.as_str(), "A" | "B" | "C"),
+        "the AC bag was re-sourced from the spread (not the corrupted report σ), got Wrap({picked})"
+    );
+}

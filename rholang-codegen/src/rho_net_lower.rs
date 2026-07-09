@@ -1874,6 +1874,96 @@ pub fn rho_net_native_match_entries(def: &LanguageDef) -> Vec<RhoNetNativeMatchE
     entries
 }
 
+/// One in-Rho MATCHING entry for a linear with-rest HashBag AC family rewrite
+/// (`RhoNetLoweredRule::AcRewrite`, Stage 4 S-AC): the data the in-Rho matcher needs to ADMIT the
+/// AC redex and co-install a per-site AC receiver that re-sources the operand bag from the SPREAD
+/// of the reflected subject (NOT the host-σ report).
+///
+/// An AC operand bag `op{x₀..x_{k-1}, ...rest}` has no positional set-automaton image (it is an
+/// `AcApp`, which `compile_structural` rejects), so — unlike a base rewrite or a native process —
+/// it is NOT an automaton entry. Instead the match driver ([`ac_match_call_par`]) LOCATES each bag
+/// position in the reflected subject, publishes the site-keyed process-soup carrier `ac:⌜ℓ⌝/op`
+/// from that bag's ground elements, and co-installs an [`ac_sigma_receiver_par`] over that carrier
+/// which picks k-of-n + binds `rest` ON the interpreter (one atomic `consume`, native `sub_pars`)
+/// and fires the rule's RHS. This entry carries the firing label the report keys on, the HashBag
+/// operand constructor `op`, the `k` fixed element slots, and the pre-built RHS `⟦R⟧σ` (the AC
+/// receiver frame — site-independent, so one build serves every located site). The VALUE is the
+/// rule's own structural RHS (no host handler), so — unlike S-native — AC has NO host-supplied
+/// residue: the whole match AND fire is in Rho.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RhoNetAcMatchEntry {
+    /// The Dovetail firing label the AC firing carries in a runtime rewrite justification (the bare
+    /// AC receiver rule label, e.g. `AcStep`) — what the match driver keys the report firing on and
+    /// the gate admits.
+    pub fired_rule_label: String,
+    /// The HashBag operand constructor (`op` in `op{…}`, e.g. `PPar`) — the reflected subject bag
+    /// node's `constructor`, so the located bag matches, and the soup carrier / element pattern
+    /// channel derive from it.
+    pub op: String,
+    /// The `k` fixed element slots the AC LHS binds (the element variable count) — the
+    /// [`ac_bag_pattern`] arity the co-installed receiver picks from the bag.
+    pub arity: usize,
+    /// The pre-built RHS `⟦R⟧σ` in the AC receiver's `k+2`-formal frame ([`reflect_term_par`] at
+    /// `k+1` over the `[x₀..x_{k-1}, rest]` σ order — the SAME reflection [`ac_rule_receiver`]
+    /// materializes the installed AC receiver from). Site-independent: the co-installed per-site
+    /// receiver differs from the installed one ONLY in its source channel.
+    pub rhs_par: Par,
+}
+
+/// Derive every in-Rho MATCHING entry for a language's linear with-rest HashBag AC family rewrites
+/// (Stage 4 S-AC) — the AC analogue of [`rho_net_native_match_entries`], routed for the automaton
+/// MATCH path (bag re-sourced from the subject spread) rather than the host-σ replay path.
+///
+/// Correlates each installed AC firing site ([`rho_net_ac_injection_sites`] — the rewrites that
+/// actually un-skipped to an [`RhoNetLoweredRule::AcRewrite`] receiver) back to its source
+/// `RewriteRule`, re-extracts its AC LHS shape through the SAME [`ac_rule_shape`] the receiver
+/// materialized from (so the op / element count / `rest` agree byte-for-byte), and pre-builds the
+/// RHS `⟦R⟧σ` in the AC receiver frame with the language fingerprint the spread + installed
+/// receivers share ([`language_definition_fingerprint`](mettail_ast::identity::language_definition_fingerprint)).
+/// Only rewrites with a materialized AC receiver are surfaced, so an entry is always executable.
+pub fn rho_net_ac_match_entries(def: &LanguageDef) -> Vec<RhoNetAcMatchEntry> {
+    let language_fingerprint =
+        mettail_ast::identity::language_definition_fingerprint(def);
+    let sites = rho_net_ac_injection_sites(def);
+    let mut entries = Vec::with_capacity(sites.len());
+    for site in sites {
+        // The source rewrite an AC injection site surfaced is always present; a defensive skip keeps
+        // the derivation total.
+        let Some(rewrite) = def
+            .rewrites
+            .iter()
+            .find(|rewrite| rewrite.name.to_string() == site.rule_label)
+        else {
+            continue;
+        };
+        let resolved_kind = resolve_ac_collection_type(def, &rewrite.left);
+        // An `AcRewrite` lowered iff `ac_rule_shape` succeeded under the resolved kind, so this
+        // cannot fail; a defensive skip keeps the derivation total.
+        let Some((op, element_vars, rest)) = ac_rule_shape(&rewrite.left, resolved_kind.as_ref())
+        else {
+            continue;
+        };
+        let k = element_vars.len();
+        // The σ variable order: the k element vars (first-occurrence), then `rest` — EXACTLY the
+        // frame `ac_rule_receiver` reflects the RHS in, so the co-installed receiver is byte-
+        // identical to the installed one apart from its source channel.
+        let mut vars: Vec<Ident> = element_vars;
+        vars.push(rest);
+        let Ok(rhs_par) =
+            reflect_term_par(&rewrite.right, &vars, k + 1, &language_fingerprint, Some(def))
+        else {
+            continue;
+        };
+        entries.push(RhoNetAcMatchEntry {
+            fired_rule_label: site.rule_label,
+            op,
+            arity: k,
+            rhs_par,
+        });
+    }
+    entries
+}
+
 /// Reconstruct the reduced hole `T = RHS_premise[σ]` a fired premise rewrite produced — the
 /// contractum a contextual JOIN plugs into its context `K'`. Finds the rewrite named
 /// `rule_label` in `def` and instantiates its RHS with `σ` (the premise firing's
@@ -2162,6 +2252,22 @@ pub fn collapse_capture_location(root_location: &str) -> String {
     format!("cap:{root_location}")
 }
 
+/// The SITE-KEYED AC carrier channel of a HashBag AC operand bag at the spread node whose `loc:`
+/// head-tag channel is `loc_channel`, for operand constructor `op` — the `ac:`-kind quoted name the
+/// match driver ([`ac_match_call_par`]) publishes the bag's process-soup on and the co-installed
+/// [`ac_sigma_receiver_par`] reads from.
+///
+/// The site key `⌜(ρ,ℓ)⌝` is inherited from `loc_channel` (the ν-free location path the spread and
+/// automaton already agree on via [`spread_root_location`] / [`spread_child_location`]), so two
+/// same-`op` bags at DISTINCT positions (`loc:ρ/ℓ₁ ≠ loc:ρ/ℓ₂`) get DISJOINT carriers
+/// (`ac:loc:ρ/ℓ₁/op ≠ ac:loc:ρ/ℓ₂/op`) — Red-team #5: without the site key two same-`op` bags'
+/// soups would intermingle on one `ac:op` channel and the native matcher could pick cross-bag
+/// elements, a latent soundness bug. Both the carrier delivery and the co-installed receiver derive
+/// the channel through THIS one helper, so they rendezvous on exactly one bag's soup.
+pub fn ac_carrier_channel(loc_channel: &str, op: &str) -> String {
+    format!("ac:{loc_channel}/{op}")
+}
+
 /// Spread a ground subject term across per-location channels for in-Rho
 /// set-automaton matching (`knotted-topoi` Appendix A):
 ///
@@ -2198,6 +2304,107 @@ pub fn spread_term_par(term: &GroundTerm, language_fingerprint: &str, root_locat
     )
 }
 
+/// Stage 4 (S-AC) — build the co-install `Par` that LOCATES every HashBag AC redex of `subject` and
+/// fires it IN RHO, re-sourcing each operand bag from the SPREAD of the subject (NOT the host-σ
+/// report). The AC analogue of the base [`in_rho_match_all_sites_call_par`](crate::in_rho_match_all_sites_call_par)
+/// leg: walk `subject` (from root nonce `root_site`, the SAME `loc:` derivation the spread uses),
+/// and at every bag node whose constructor is one of the admitted AC `entries`' ops:
+///
+///   1. derive the SITE-KEYED carrier `ac:⌜ℓ⌝/op` ([`ac_carrier_channel`], disjoint per position);
+///   2. co-install an [`ac_sigma_receiver_par`] over that carrier — byte-identical to the installed
+///      AC receiver EXCEPT its source is the per-site carrier — which picks k-of-n + binds `rest`
+///      via the native connective match (`ac_bag_pattern`) inside ONE atomic `consume` and fires
+///      the rule's RHS `⟦R⟧σ` on `@out`;
+///   3. publish `carrier!(⟦bag⟧, @out)` where `⟦bag⟧` is [`reflect_ac_bag_par`] over THIS node's
+///      ground elements (the subject bag — NO `find_sigma`).
+///
+/// A HashBag has no positional child descent, so the walk does NOT recurse into a bag's elements
+/// (it keeps descending the structural children of non-bag nodes, so a nested bag is located). The
+/// carrier delivery and the receiver both derive the carrier through [`ac_carrier_channel`], so they
+/// rendezvous on exactly one bag's soup; distinct sites are disjoint. Returns the parallel
+/// composition of every located bag's `(receiver ‖ delivery)` (empty when `subject` has no AC redex
+/// — the caller then runs the bare base call).
+///
+/// `language_fingerprint` MUST be the ruleset's (the spread's) fingerprint, and each entry's
+/// `rhs_par` was reflected with it, so the soup's element tags and the receiver's RHS tags agree.
+pub fn ac_match_call_par(
+    subject: &GroundTerm,
+    entries: &[RhoNetAcMatchEntry],
+    root_site: &str,
+    out_channel: &str,
+    language_fingerprint: &str,
+) -> Par {
+    if entries.is_empty() {
+        return Par::default();
+    }
+    let by_op: HashMap<&str, &RhoNetAcMatchEntry> =
+        entries.iter().map(|entry| (entry.op.as_str(), entry)).collect();
+    ac_match_install_at(
+        subject,
+        &spread_root_location(root_site),
+        &by_op,
+        out_channel,
+        language_fingerprint,
+    )
+}
+
+/// Recursively LOCATE + co-install the AC receivers for `node` at the position whose `loc:` head-tag
+/// channel is `loc_channel` (the SAME location derivation the spread uses). See
+/// [`ac_match_call_par`].
+fn ac_match_install_at(
+    node: &GroundTerm,
+    loc_channel: &str,
+    by_op: &HashMap<&str, &RhoNetAcMatchEntry>,
+    out_channel: &str,
+    language_fingerprint: &str,
+) -> Par {
+    // A HashBag AC operand bag: fire it IN RHO over the site-keyed carrier if its op is admitted.
+    // Do NOT recurse into its elements (a bag has no positional child descent).
+    if let Some(CollectionType::HashBag) = node.coll_type {
+        let Some(entry) = by_op.get(node.constructor.as_str()) else {
+            return Par::default();
+        };
+        let carrier = ac_carrier_channel(loc_channel, &node.constructor);
+        // The co-installed AC receiver over the site-keyed carrier — SAME `ac_sigma_receiver_par`
+        // shape as the installed one, only the source differs (so it picks k-of-n from the SPREAD
+        // bag, not the report σ).
+        let receiver = ac_sigma_receiver_par(
+            &entry.op,
+            entry.arity,
+            entry.rhs_par.clone(),
+            new_gstring_par(carrier.clone(), Vec::new(), false),
+        );
+        // The carrier delivery `carrier!(⟦bag⟧, @out)` — the process-soup sourced from THIS subject
+        // bag's ground elements (`reflect_ac_bag_par`), NOT `find_sigma`. The soup is ground, so the
+        // send is closed.
+        let soup = reflect_ac_bag_par(node, language_fingerprint);
+        let delivery = new_send_par(
+            new_gstring_par(carrier, Vec::new(), false),
+            vec![soup, new_gstring_par(out_channel.to_string(), Vec::new(), false)],
+            false,
+            Vec::new(),
+            false,
+            Vec::new(),
+            false,
+        );
+        return receiver.append(delivery);
+    }
+    // A structural node: descend into each child at its derived `loc:` channel (a nested bag is
+    // located), composing every located bag's co-install.
+    let mut par = Par::default();
+    for (index, child) in node.children.iter().enumerate() {
+        let child_loc = spread_child_location(loc_channel, &node.constructor, index);
+        par = par.append(ac_match_install_at(
+            child,
+            &child_loc,
+            by_op,
+            out_channel,
+            language_fingerprint,
+        ));
+    }
+    par
+}
+
 fn spread_term_par_at(
     term: &GroundTerm,
     language_fingerprint: &str,
@@ -2205,6 +2412,40 @@ fn spread_term_par_at(
     chain_location: &str,
     capture_location: &str,
 ) -> Par {
+    // Stage 4 (S-AC): a HashBag AC operand bag has NO positional `loc:`/child descent structure —
+    // the in-Rho AC matcher (a co-installed [`ac_sigma_receiver_par`], see
+    // [`ac_match_call_par`](crate::ac_match_call_par)) picks k-of-n + binds `rest` from the bag's
+    // order-independent process-soup carrier ON the interpreter, NOT by positional descent. So the
+    // spread publishes ONLY the bag's COLLAPSE value (the soup = [`reflect_ac_bag_par`], the same
+    // value [`reflect_ground_term_par`] produces for a HashBag `GroundTerm`) on this node's
+    // `col:`/`cap:` channels — the value a PARENT's fold / a Var-leaf `cap:` capture binds when the
+    // bag is a σ subterm — and does NOT positionally recurse (no `loc:` head-tag, no child spread).
+    // The AC redex firing is the co-installed receiver over the DISJOINT site-keyed `ac:` carrier
+    // (Red-team #1: the `ac:` soup and the `col:`/`cap:` collapse are disjoint channels, each
+    // consumed at most once), so re-sourcing the bag from the spread is the genuine in-Rho AC match.
+    if let Some(CollectionType::HashBag) = term.coll_type {
+        let soup = reflect_ac_bag_par(term, language_fingerprint);
+        let free = soup.locally_free.clone();
+        let chain = new_send_par(
+            new_gstring_par(chain_location.to_string(), Vec::new(), false),
+            vec![soup.clone()],
+            false,
+            free.clone(),
+            false,
+            free.clone(),
+            false,
+        );
+        let capture = new_send_par(
+            new_gstring_par(capture_location.to_string(), Vec::new(), false),
+            vec![soup],
+            false,
+            free.clone(),
+            false,
+            free,
+            false,
+        );
+        return chain.append(capture);
+    }
     // This node's head-tag send on its `loc:` channel — the tag ALONE (Appendix A publishes
     // `f̲`; child locations are derived, never carried in the message). The automaton reads
     // it to Match-dispatch (root / nested App descent), NEVER the collapse fold.

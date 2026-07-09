@@ -544,14 +544,45 @@ fn reflect_category_fn(language: &LanguageDef, category: &Ident) -> TokenStream 
                         ::core::result::Result::Err(::std::string::String::from(#msg))
                 }
             },
-            VariantKind::Collection { label, .. } => {
-                let msg = lit(&format!(
-                    "in-Rho match reflection: {label} is an AC/collection node (matched via the AC path, not the base automaton)"
-                ));
-                quote! {
-                    #category::#label(..) =>
-                        ::core::result::Result::Err(::std::string::String::from(#msg))
-                }
+            // An AC operand COLLECTION `op(HashBag<E>)` (Stage 4 S-AC) reflects to a
+            // `GroundTerm::collection(HashBag, op, children)` whose `children` are the reflected bag
+            // elements (order-independent, multiplicity-preserving). This is the structural image of
+            // the operand bag DIRECTLY from the runtime subject term — NOT the report σ — so the
+            // in-Rho AC matcher (a co-installed `ac_sigma_receiver_par` over the SPREAD of this bag)
+            // picks k-of-n + binds `rest` ON the interpreter: a genuine in-Rho replacement, not a
+            // σ-replay duplicate. Only a HashBag reflects here; a `Set`/`Map` (`HashSet`/`HashMap`)
+            // has no in-Rho AC carrier yet (a later S-AC slice) and fails CLOSED, routing that firing
+            // to the σ-replay driver.
+            VariantKind::Collection { label, element_cat, coll_type } => match coll_type {
+                mettail_ast::types::CollectionType::HashBag => {
+                    let label_lit = lit(&label.to_string());
+                    let element_reflect = reflect_fn_name(&element_cat);
+                    quote! {
+                        #category::#label(__bag) => {
+                            let mut __children =
+                                ::std::vec::Vec::with_capacity(__bag.len());
+                            for __elem in __bag.iter_elements() {
+                                __children.push(#element_reflect(__elem)?);
+                            }
+                            ::core::result::Result::Ok(
+                                ::mettail_rholang_codegen::GroundTerm::collection(
+                                    ::mettail_rholang_codegen::CollectionType::HashBag,
+                                    #label_lit,
+                                    __children,
+                                )
+                            )
+                        }
+                    }
+                },
+                _ => {
+                    let msg = lit(&format!(
+                        "in-Rho match reflection: {label} is a non-HashBag ({coll_type:?}) collection with no in-Rho AC carrier yet"
+                    ));
+                    quote! {
+                        #category::#label(..) =>
+                            ::core::result::Result::Err(::std::string::String::from(#msg))
+                    }
+                },
             },
             VariantKind::Binder { label, .. } | VariantKind::MultiBinder { label, .. } => {
                 let msg = lit(&format!(
