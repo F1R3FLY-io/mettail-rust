@@ -148,6 +148,14 @@ Section WholeGsltInRhoOpCorrespondence.
      theorem to gate-admitted ⟦G⟧, where every fired label has a covered family. *)
   Variable family_of : CommLabel -> option Family.
 
+  (* The (iii) thread (consumed ONLY by whole_gslt_opcorr_over_optimal_matching below):
+     `gstep_opt` is the O1-OPTIMAL in-Rho COMM — the channel keyed by the interned
+     StateId trace `tc(K)` rather than the runtime location ℓ — and `Rso` relates a
+     SOUND in-Rho config to its OPTIMAL image. Declared here so the optimal theorem's
+     instantiation supplies all carrier/step parameters up front. *)
+  Variable gstep_opt : GConfig -> CommLabel -> GConfig -> Prop.
+  Variable Rso : GConfig -> GConfig -> Prop.
+
   (* ============================================================================
      4.1  The per-family arms (Section Hypotheses) + barb preservation + install gate.
 
@@ -341,6 +349,100 @@ Section WholeGsltInRhoOpCorrespondence.
              assembled_R_barb assembled_R_forward assembled_R_backward).
   Qed.
 
+  (* ============================================================================
+     4.8  THE (iii) THREAD — upgrading the capstone from the SOUND baseline to the
+     O1-OPTIMAL in-Rho matching (the `rem:nonopt` discharge).
+
+     The six arms establish source↔in-Rho for the SOUND (location-keyed, model-b)
+     scheme (that is 4.5/4.6/4.7). Obligation (iii),
+     advanced_automata/InRhoSameCLTSWeakBisim.same_clts_weak_bisim, proves the SOUND
+     and OPTIMAL channel schemes induce the SAME context-labelled transition system —
+     the sa:/eq: matching COMMs are τ, so the two schemes are weakly bisimilar, and
+     (its relation R equating the fired-redex sets) barb-preserving. TRANSITIVITY of
+     the finite-trace correspondence then upgrades the capstone from "sound baseline"
+     to "O1-optimal in-Rho matching".
+
+     The three `matching_locus_*` hypotheses are exactly the shape of
+     same_clts_weak_bisim's two bisimulation clauses (fwd/bwd) plus its barb
+     preservation. This is BUILD-WIRING OPTION (b) (interim, zero cross-project churn):
+     (iii) is threaded as a cited Section Hypothesis, so the theorem stays Closed (a
+     Hypothesis is not an Axiom). Option (a) — the literal
+     `From AdvancedAutomata Require Import InRhoSameCLTSWeakBisim` discharge — is
+     attempted separately (see WholeGsltInRhoOpCorrespondenceOptimalViaSameClts.v /
+     the report) so the harness here carries no cross-project -Q edge.
+     ============================================================================ *)
+
+  (* (iii) barb preservation: sound and optimal in-Rho images have equal barbs
+     (same_clts_weak_bisim's R equates the fired-redex sets, whose resting sends ARE
+     the barb). *)
+  Hypothesis matching_locus_barb : forall s t, Rso s t -> gbarb s = gbarb t.
+  (* (iii) forward: every SOUND COMM is matched, label-for-label, by an OPTIMAL COMM
+     (same_clts_weak_bisim's backward clause: sound fires ⇒ optimal matches). *)
+  Hypothesis matching_locus_fwd : forall s t l s',
+    Rso s t -> gstep s l s' -> exists t', gstep_opt t l t' /\ Rso s' t'.
+  (* (iii) backward: every OPTIMAL COMM is matched by a SOUND COMM
+     (same_clts_weak_bisim's forward clause: optimal fires ⇒ sound matches). *)
+  Hypothesis matching_locus_bwd : forall s t l t',
+    Rso s t -> gstep_opt t l t' -> exists s', gstep s l s' /\ Rso s' t'.
+
+  (* The sound↔optimal STEP bisimulation lifts to finite traces — a direct induction
+     (the same shape as EndToEndCommCorrespondence.forward_trace_correspondence, but
+     relating the two DIFFERENT step relations gstep and gstep_opt under Rso). *)
+  Lemma sound_to_optimal_forward : forall s t ls s',
+    Rso s t -> steps GConfig CommLabel gstep s ls s' ->
+    exists t', steps GConfig CommLabel gstep_opt t ls t' /\ Rso s' t' /\ gbarb s' = gbarb t'.
+  Proof.
+    intros s t ls s' HR Hsteps. revert t HR.
+    induction Hsteps as [s0 | s0 l s1 ls0 s2 Hstep Hsteps IH]; intros t HR.
+    - exists t. split; [constructor | split; [exact HR | apply matching_locus_barb; exact HR]].
+    - destruct (matching_locus_fwd s0 t l s1 HR Hstep) as [t1 [Ht1step Ht1R]].
+      destruct (IH t1 Ht1R) as [t' [Ht'steps [Ht'R Ht'barb]]].
+      exists t'. split.
+      + econstructor; [exact Ht1step | exact Ht'steps].
+      + split; [exact Ht'R | exact Ht'barb].
+  Qed.
+
+  Lemma optimal_to_sound_backward : forall s t ls t',
+    Rso s t -> steps GConfig CommLabel gstep_opt t ls t' ->
+    exists s', steps GConfig CommLabel gstep s ls s' /\ Rso s' t' /\ gbarb s' = gbarb t'.
+  Proof.
+    intros s t ls t' HR Hsteps. revert s HR.
+    induction Hsteps as [t0 | t0 l t1 ls0 t2 Hstep Hsteps IH]; intros s HR.
+    - exists s. split; [constructor | split; [exact HR | apply matching_locus_barb; exact HR]].
+    - destruct (matching_locus_bwd s t0 l t1 HR Hstep) as [s1 [Hs1step Hs1R]].
+      destruct (IH s1 Hs1R) as [s' [Hs'steps [Hs'R Hs'barb]]].
+      exists s'. split.
+      + econstructor; [exact Hs1step | exact Hs'steps].
+      + split; [exact Hs'R | exact Hs'barb].
+  Qed.
+
+  (* whole_gslt_opcorr_over_optimal_matching — the capstone over the O1-OPTIMAL in-Rho
+     matching: 4.5/4.6 (source↔sound) composed transitively with the (iii) trace
+     transfer (sound↔optimal). Every source rewrite trace of ⟦G⟧ is matched by an
+     OPTIMAL in-Rho COMM trace with equal barbs, both directions. This is the
+     `rem:nonopt` discharge. *)
+  Theorem whole_gslt_opcorr_over_optimal_matching : forall s t u ls,
+    Rgio s t -> Rso t u ->
+    (forall s', steps GConfig CommLabel gstep s ls s' ->
+        exists u', steps GConfig CommLabel gstep_opt u ls u' /\ gbarb s' = gbarb u') /\
+    (forall u', steps GConfig CommLabel gstep_opt u ls u' ->
+        exists s', steps GConfig CommLabel gstep s ls s' /\ gbarb s' = gbarb u').
+  Proof.
+    intros s t u ls HRst HRtu. split.
+    - intros s' Hs.
+      destruct (whole_gslt_forward_correspondence s t ls s' HRst Hs)
+        as [t' [Ht'steps [_ Hbst]]].
+      destruct (sound_to_optimal_forward t u ls t' HRtu Ht'steps)
+        as [u' [Hu'steps [_ Hbtu]]].
+      exists u'. split; [exact Hu'steps | rewrite Hbst; exact Hbtu].
+    - intros u' Hu.
+      destruct (optimal_to_sound_backward t u ls u' HRtu Hu)
+        as [t' [Ht'steps [_ Hbtu]]].
+      destruct (whole_gslt_backward_correspondence s t ls t' HRst Ht'steps)
+        as [s' [Hs'steps [_ Hbst]]].
+      exists s'. split; [exact Hs'steps | rewrite Hbst; exact Hbtu].
+  Qed.
+
 End WholeGsltInRhoOpCorrespondence.
 
 (* ================================================================================
@@ -462,7 +564,70 @@ Proof.
   - cbn. reflexivity.
 Qed.
 
+(* ---- 4.8 non-vacuity: the SwapDemo base rewrite over the OPTIMAL matching ----
+   In this model the OPTIMAL scheme coincides with the SOUND scheme (a single base
+   rewrite has no location/StateId distinction), so `gstep_opt := nv_step` and
+   `Rso := nv_eq` (identity). Discharging the three additional `matching_locus_*`
+   hypotheses (trivially, since sound = optimal here) shows the (iii)-threaded
+   harness context is inhabited; the genuine content — that optimal SHARES channels
+   where sound SEPARATES yet stays bisimilar — is proven in
+   InRhoSameCLTSWeakBisim.optimal_shares_where_sound_separates, which the harness
+   consumes via `matching_locus_*`. *)
+Definition nv_eq (a b : GC) : Prop := a = b.
+
+Theorem swapdemo_base_opcorr_over_optimal : forall (s : SourceState) (t u : GC) ls,
+  nv_R (GSrc s) t -> nv_eq t u ->
+  (forall a', steps GC Fact nv_step (GSrc s) ls a' ->
+      exists u', steps GC Fact nv_step u ls u' /\ nv_barb a' = nv_barb u') /\
+  (forall u', steps GC Fact nv_step u ls u' ->
+      exists a', steps GC Fact nv_step (GSrc s) ls a' /\ nv_barb a' = nv_barb u').
+Proof.
+  intros s t u ls Hrgio Hrso.
+  eapply (whole_gslt_opcorr_over_optimal_matching GC Fact (list Fact)
+           nv_step nv_barb nv_R nv_family nv_step nv_eq).
+  - exact nv_Rgio_barb.
+  - exact nv_fwd_base.
+  - exact nv_bwd_base.
+  - intros a b l a' H _ _; cbn in H; discriminate H.
+  - intros a b l b' H _ _; cbn in H; discriminate H.
+  - intros a b l a' H _ _; cbn in H; discriminate H.
+  - intros a b l b' H _ _; cbn in H; discriminate H.
+  - intros a b l a' H _ _; cbn in H; discriminate H.
+  - intros a b l b' H _ _; cbn in H; discriminate H.
+  - intros a b l a' H _ _; cbn in H; discriminate H.
+  - intros a b l b' H _ _; cbn in H; discriminate H.
+  - intros a b l a' H _ _; cbn in H; discriminate H.
+  - intros a b l b' H _ _; cbn in H; discriminate H.
+  - intros a b l a' H _ _; cbn in H; discriminate H.
+  - intros a b l b' H _ _; cbn in H; discriminate H.
+  - intros l; cbn; discriminate.
+  - intros a b Hab; unfold nv_eq in Hab; subst b; reflexivity.
+  - intros a b l a' Hab Hstep; unfold nv_eq in Hab; subst b;
+      exists a'; split; [exact Hstep | unfold nv_eq; reflexivity].
+  - intros a b l b' Hab Hstep; unfold nv_eq in Hab; subst b;
+      exists b'; split; [exact Hstep | unfold nv_eq; reflexivity].
+  - exact Hrgio.
+  - exact Hrso.
+Qed.
+
+(* Fully concrete corollary: the SwapDemo source↔optimal-in-Rho finite-trace opcorr,
+   where the optimal image is the lowered config (sound = optimal for a base rewrite). *)
+Corollary swapdemo_base_opcorr_over_optimal_concrete : forall (s : SourceState) ls,
+  (forall a', steps GC Fact nv_step (GSrc s) ls a' ->
+      exists u', steps GC Fact nv_step (GRho (lower_state s)) ls u' /\ nv_barb a' = nv_barb u') /\
+  (forall u', steps GC Fact nv_step (GRho (lower_state s)) ls u' ->
+      exists a', steps GC Fact nv_step (GSrc s) ls a' /\ nv_barb a' = nv_barb u').
+Proof.
+  intros s ls.
+  apply (swapdemo_base_opcorr_over_optimal s (GRho (lower_state s)) (GRho (lower_state s)) ls).
+  - cbn. reflexivity.
+  - unfold nv_eq. reflexivity.
+Qed.
+
 (* Zero-admission confirmation. *)
 Print Assumptions semantic_predicates_emit_no_comm.
 Print Assumptions whole_gslt_in_rho_opcorrespondence.
 Print Assumptions swapdemo_base_finite_trace_opcorr.
+Print Assumptions whole_gslt_opcorr_over_optimal_matching.
+Print Assumptions swapdemo_base_opcorr_over_optimal.
+Print Assumptions swapdemo_base_opcorr_over_optimal_concrete.

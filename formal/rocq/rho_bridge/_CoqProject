@@ -8,6 +8,15 @@
 # Zero-Admitted / zero-Axiom (the project gate).
 
 -Q theories RhoBridge
+# Stage 5 CAPSTONE (iii) thread — build-wiring OPTION (a): the cross-project load path
+# so a RhoBridge theory (WholeGsltInRhoOpCorrespondenceOptimalViaSameClts) can
+# `From AdvancedAutomata Require Import InRhoSameCLTSWeakBisim` and discharge the
+# capstone's matching_locus_* hypotheses LITERALLY from the landed obligation (iii)
+# same_clts_weak_bisim. advanced_automata is built before rho_bridge in the Makefile
+# `rocq-support` prerequisite order (rocq-advanced-automata precedes rocq-rho-bridge),
+# so its .vo are present. The main harness WholeGsltInRhoOpCorrespondence.v itself
+# carries NO cross-project import (it threads (iii) as cited Section hypotheses).
+-Q ../advanced_automata/theories AdvancedAutomata
 
 theories/BridgeInertness.v
 theories/HostRhoMachineReuse.v
@@ -155,3 +164,11 @@ theories/FoldMotionVsCongruence.v
 # the non-vacuity witness (all §4.1 hypotheses jointly satisfiable, base arms discharged from the landed
 # comm_step_complete/sound), simultaneously a concrete Closed finite-trace opcorr through the capstone.
 theories/WholeGsltInRhoOpCorrespondence.v
+# Stage 5 CAPSTONE (iii) thread — build-wiring OPTION (a): imports the landed obligation
+# (iii) advanced_automata/InRhoSameCLTSWeakBisim.same_clts_weak_bisim and proves it
+# discharges the capstone's matching_locus_fwd / matching_locus_bwd hypotheses' EXACT
+# shapes (the two weak-bisimulation clauses), witnessing that the option-(b) Section
+# hypotheses in WholeGsltInRhoOpCorrespondence.v are backed by the real (iii) theorem.
+# The barb hypothesis is discharged downstream of (iii) (InRhoSameCLTSWeakBisim is
+# schedule-level, defines no Par/RSpace barb). Requires the -Q AdvancedAutomata edge above.
+theories/WholeGsltInRhoOpCorrespondenceOptimalViaSameClts.v
