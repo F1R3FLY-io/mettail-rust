@@ -929,51 +929,55 @@ pub fn generate_rho_net_invocation(language: &LanguageDef) -> TokenStream {
             })
             .collect();
 
-        // Subst-rewrite arms (Stage 3c): reflect the firing's CONTRACTUM (the host-computed
-        // reduct) at the scope variable's slot, and the raw σ at every other LHS slot, then send
-        // the σ tuple on the receiver channel via `term_contract_call` (the same flat send the
-        // base arm uses — the SubstRewrite receiver is a plain σ-receiver that forwards the scope
-        // slot). The host does the matching AND the capture-avoiding substitution (model-b); the
-        // reduced term reflects to that ground σ slot.
-        let subst_site_arms: Vec<TokenStream> = subst_sites
-            .iter()
-            .map(|site| {
-                let label = lit(&site.rule_label);
-                let channel = lit(&site.channel);
-                let vars: Vec<LitStr> = site.lhs_var_order.iter().map(|var| lit(var)).collect();
-                let scope_var = lit(&site.scope_var);
-                quote! {
-                    #label => {
-                        // The reduced term the host produced (`RHS[σ]` after capture-avoiding
-                        // substitution) is the firing's contractum; it fills the scope slot.
-                        let __contractum = __justification.contractum.as_ref().ok_or_else(|| {
-                            ::std::format!(
-                                "Rho-net subst injection for language {} has no contractum for fired rule {}",
-                                #language_lit, #label,
-                            )
-                        })?;
-                        let __var_order: &[&str] = &[#(#vars),*][..];
-                        let mut __args = ::std::vec::Vec::with_capacity(__var_order.len());
-                        for __var in __var_order {
-                            // The scope slot carries the host-computed reduct; every other LHS
-                            // slot carries its raw matched sub-term (bound by the receiver but
-                            // not emitted — the body forwards only the scope slot).
-                            let __ground = if *__var == #scope_var {
-                                __mettail_rho_net_to_ground(__contractum)
-                            } else {
-                                __mettail_rho_net_to_ground(
-                                    __mettail_rho_net_find_sigma(__justification, __var)?,
-                                )
-                            };
-                            __args.push(::mettail_rholang_codegen::reflect_ground_term_par(
-                                &__ground, __fingerprint,
-                            ));
-                        }
-                        ::mettail_rholang_codegen::term_contract_call(#channel, __args, out_channel)
-                    },
-                }
-            })
-            .collect();
+        // RETIRED for the in-Rho β (Stage 4 S-binder SLICE 2a): the Stage-3c host-CONTRACTUM subst
+        // injection arms.
+        //
+        // These reflected the firing's CONTRACTUM (the host-computed reduct `RHS[σ]` after the
+        // capture-avoiding substitution) at the scope slot, so the (then-forward-only) SubstRewrite
+        // σ-receiver emitted the ALREADY-REDUCED term. The in-Rho β now COMPUTES the reduct with the
+        // generated de-Bruijn TRS: the SubstRewrite σ-receiver is the β SEED
+        // (`subst_seed_receiver_par`), which SENDS `^subst(⟦Z⟧, a, b, out)` with the RAW captured body
+        // `b`; feeding it the host CONTRACTUM instead would double-substitute. So the in-Rho β fires
+        // via the MATCH path (`rho_net_match_invocation_from_dovetail_to` → the automaton captures the
+        // RAW body + arg → the seed), and a `Beta` firing routed to THIS host-σ dispatch body has no
+        // arm and errors (`__other =>`), naming the rule. The arms are kept (commented) for reference
+        // / a future σ-replay fallback, which would need a SEED-compatible RAW-σ injection (the raw
+        // matched body, NOT the contractum). `subst_sites` still gates the `#body` shape (above).
+        //
+        // let subst_site_arms: Vec<TokenStream> = subst_sites
+        //     .iter()
+        //     .map(|site| {
+        //         let label = lit(&site.rule_label);
+        //         let channel = lit(&site.channel);
+        //         let vars: Vec<LitStr> = site.lhs_var_order.iter().map(|var| lit(var)).collect();
+        //         let scope_var = lit(&site.scope_var);
+        //         quote! {
+        //             #label => {
+        //                 let __contractum = __justification.contractum.as_ref().ok_or_else(|| {
+        //                     ::std::format!(
+        //                         "Rho-net subst injection for language {} has no contractum for fired rule {}",
+        //                         #language_lit, #label,
+        //                     )
+        //                 })?;
+        //                 let __var_order: &[&str] = &[#(#vars),*][..];
+        //                 let mut __args = ::std::vec::Vec::with_capacity(__var_order.len());
+        //                 for __var in __var_order {
+        //                     let __ground = if *__var == #scope_var {
+        //                         __mettail_rho_net_to_ground(__contractum)
+        //                     } else {
+        //                         __mettail_rho_net_to_ground(
+        //                             __mettail_rho_net_find_sigma(__justification, __var)?,
+        //                         )
+        //                     };
+        //                     __args.push(::mettail_rholang_codegen::reflect_ground_term_par(
+        //                         &__ground, __fingerprint,
+        //                     ));
+        //                 }
+        //                 ::mettail_rholang_codegen::term_contract_call(#channel, __args, out_channel)
+        //             },
+        //         }
+        //     })
+        //     .collect();
 
         // Native-system-process arms (Stage 3e): a `fold` native process has NO structural RHS —
         // the WHOLE reduct is the host's trusted-handler value, carried as the firing's contractum.
@@ -1300,7 +1304,11 @@ pub fn generate_rho_net_invocation(language: &LanguageDef) -> TokenStream {
             let __call = match __justification.rule_label.as_str() {
                 #(#base_site_arms)*
                 #(#ac_site_arms)*
-                #(#subst_site_arms)*
+                // RETIRED (Stage 4 S-binder SLICE 2a): the host-contractum subst dispatch arm — a
+                // `Beta` firing now fires the in-Rho β via the MATCH path + the TRS SEED, so this
+                // host-σ injection body has no `Beta` arm (it falls to `__other`). See the commented
+                // `subst_site_arms` builder above.
+                // #(#subst_site_arms)*
                 #(#native_site_arms)*
                 #(#native_fold_site_arms)*
                 #(#comm_site_arms)*

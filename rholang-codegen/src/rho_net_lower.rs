@@ -345,6 +345,12 @@ pub struct RhoNetLowered {
     pub language_fingerprint: String,
     rules: Vec<RhoNetLoweredRule>,
     errors: Vec<RhoNetLoweringError>,
+    /// The generated de-Bruijn subst/shift TRS program (Stage 4 S-binder SLICE 2a): the five
+    /// reserved receivers ([`crate::rho_net_subst_trs::subst_trs_program_par`]) that drive the in-Rho
+    /// β cascade. `Some` iff the language carries a `SubstRewrite`; installed ONCE (appended by
+    /// [`Self::installed_program_par`]) alongside the β SEED σ-receiver — persistent, on disjoint
+    /// reserved roots, disturbing no landed receiver.
+    subst_trs: Option<Par>,
 }
 
 impl RhoNetLowered {
@@ -405,13 +411,21 @@ impl RhoNetLowered {
                 family,
             });
         }
-        Ok(self
-            .rules
-            .iter()
-            .fold(Par::default(), |program, rule| match rule.par() {
-                Some(par) => program.append(par.clone()),
-                None => program,
-            }))
+        let mut program =
+            self.rules
+                .iter()
+                .fold(Par::default(), |program, rule| match rule.par() {
+                    Some(par) => program.append(par.clone()),
+                    None => program,
+                });
+        // Stage 4 S-binder SLICE 2a: append the generated de-Bruijn subst/shift TRS ONCE (the five
+        // reserved receivers that drive the in-Rho β cascade), so the β SEED σ-receiver's
+        // `^subst(⟦Z⟧, a, b, out)` self-drives to the β-normal form on `out`. Persistent + disjoint
+        // reserved roots — disturbs no landed base/AC/contextual/native receiver.
+        if let Some(trs) = &self.subst_trs {
+            program = program.append(trs.clone());
+        }
+        Ok(program)
     }
 }
 
@@ -524,10 +538,22 @@ pub(crate) fn lower(
         }
     }
 
+    // Stage 4 S-binder SLICE 2a: if any rule lowered to a β SEED `SubstRewrite`, build the generated
+    // de-Bruijn subst/shift TRS ONCE (`^cmp`/`^pred`/`^shiftk` fixed + `^subst`/`^shift` with `def`'s
+    // object-congruence arms). It is installed alongside the SEED σ-receivers to drive the in-Rho β
+    // cascade.
+    let subst_trs = rules
+        .iter()
+        .any(|rule| matches!(rule, RhoNetLoweredRule::SubstRewrite { .. }))
+        .then(|| {
+            crate::rho_net_subst_trs::subst_trs_program_par(def, &program.language_fingerprint)
+        });
+
     RhoNetLowered {
         language_fingerprint: program.language_fingerprint.clone(),
         rules,
         errors,
+        subst_trs,
     }
 }
 
@@ -801,47 +827,75 @@ pub(crate) fn is_top_level_substitution(rhs: &Pattern) -> bool {
     )
 }
 
-/// The shape of a binder/β-substitution base rewrite `LHS ~> subst(scope, …)`: the LHS
-/// σ-variables (first-occurrence order, binder-excluded — the order [`lower_lhs_vars`]
-/// collects them) and the SCOPE variable (the `scope`/`term` of the RHS `Subst`/`MultiSubst`,
-/// which must be a bound LHS variable). Returns `None` unless the RHS is a top-level
-/// substitution whose scope is a bound LHS variable — a non-variable / open scope (open
-/// substitution), or a LHS with no flat σ image, declines here and the caller fails closed.
+/// The shape of a binder/β-substitution base rewrite `LHS ~> subst(scope, x := repl)`: the LHS
+/// σ-variables (first-occurrence order, binder-excluded — the order [`lower_lhs_vars`] collects
+/// them), the SCOPE variable (the `scope`/`term` of the RHS `Subst`/`MultiSubst`, the lambda body
+/// `b`), and the REPLACEMENT variable (the `replacements[0]`/`replacement`, the argument `a`) —
+/// BOTH of which must be bound LHS variables (their σ slots carry the captured body + argument the
+/// in-Rho β SEED threads into `^subst(⟦Z⟧, a, b, out)`, Stage 4 SLICE 2a). Returns `None` unless the
+/// RHS is a top-level substitution whose scope AND replacement are bound LHS variables — a
+/// non-variable / open scope or replacement, or a LHS with no flat σ image, declines here and the
+/// caller fails closed.
 ///
-/// This is the SINGLE subst-LHS/RHS extraction shared by [`lower_subst_rewrite`] (which
-/// materializes the installed σ-receiver) and [`rho_net_subst_injection_sites`] (which surfaces
-/// the runtime subst injection site), so both agree byte-for-byte on the σ order and the scope
-/// variable. The AC/contextual analogue of [`ac_rule_shape`].
-pub(crate) fn subst_rule_shape(left: &Pattern, right: &Pattern) -> Option<(Vec<Ident>, Ident)> {
-    let scope = match right {
-        Pattern::Term(PatternTerm::MultiSubst { scope, .. }) => scope.as_ref(),
-        Pattern::Term(PatternTerm::Subst { term, .. }) => term.as_ref(),
+/// This is the SINGLE subst-LHS/RHS extraction shared by [`lower_subst_rewrite`] (which materializes
+/// the installed β SEED σ-receiver) and [`rho_net_subst_injection_sites`] (which surfaces the runtime
+/// subst injection site), so both agree byte-for-byte on the σ order + the scope/replacement slots.
+/// The AC/contextual analogue of [`ac_rule_shape`].
+pub(crate) fn subst_rule_shape(
+    left: &Pattern,
+    right: &Pattern,
+) -> Option<(Vec<Ident>, Ident, Ident)> {
+    // Extract the scope (`b`) and the replacement (`a`) from the top-level substitution RHS. A
+    // `MultiSubst` β-substitution has exactly one replacement (`(eval fun arg)` = `MultiSubst{scope:
+    // fun, replacements: [arg]}`); a 3-arg `Subst{term, var, replacement}` carries the replacement
+    // directly. Both must be BARE variables.
+    let (scope, replacement) = match right {
+        Pattern::Term(PatternTerm::MultiSubst { scope, replacements }) => {
+            let [replacement] = replacements.as_slice() else {
+                return None;
+            };
+            (scope.as_ref(), replacement)
+        },
+        Pattern::Term(PatternTerm::Subst { term, replacement, .. }) => {
+            (term.as_ref(), replacement.as_ref())
+        },
         _ => return None,
     };
     let Pattern::Term(PatternTerm::Var(scope_var)) = scope else {
         return None;
     };
+    let Pattern::Term(PatternTerm::Var(repl_var)) = replacement else {
+        return None;
+    };
     let vars = lower_lhs_vars(left).ok()?;
-    // The scope variable MUST be a bound LHS σ-slot (a closed substitution); an open
-    // substitution under a genuinely-free scope has no slot to carry the reduct.
-    if !vars.iter().any(|var| var == scope_var) {
+    // The scope AND replacement variables MUST be bound LHS σ-slots (a closed substitution): the SEED
+    // reads the captured body `b` from the scope slot and the argument `a` from the replacement slot.
+    // An open substitution (a genuinely-free scope/replacement) has no slot and fails closed.
+    if !vars.iter().any(|var| var == scope_var) || !vars.iter().any(|var| var == repl_var) {
         return None;
     }
-    Some((vars, scope_var.clone()))
+    Some((vars, scope_var.clone(), repl_var.clone()))
 }
 
-/// Lower a binder/β-substitution base rewrite to its flat `SubstRewrite` σ-receiver (Stage 3c).
+/// Lower a binder/β-substitution base rewrite to its `SubstRewrite` β SEED σ-receiver — the in-Rho β
+/// FIRING (Stage 4 S-binder SLICE 2a; supersedes the Stage 3c host-σ forward).
 ///
-/// The receiver is a plain `(k+1)`-ary σ-receiver ([`sigma_receiver_par`]) whose reflected RHS is
-/// `BoundVar(scope-slot)` (built by [`reflect_term_par`]'s `Subst`/`MultiSubst` arm): the host
-/// (Dovetail, model-b) matches the redex AND applies the capture-avoiding substitution, and the
-/// reduced term reflects to the scope variable's ground σ slot — which the receiver body forwards
-/// on the dynamic out channel as `⟦R⟧σ`. The substitution injection site
-/// ([`rho_net_subst_injection_sites`]) delivers the firing's contractum in that slot.
+/// The receiver is a `(k+1)`-ary σ-receiver whose body — instead of forwarding a host-computed
+/// reduct — SENDS the SEED `^subst(⟦Z⟧, σ_repl, σ_scope, out)` on the reserved `^subst` channel
+/// ([`crate::rho_net_subst_trs::subst_seed_receiver_par`]), threading `out` as the cascade's
+/// continuation. THIS ONE COMM is the observable β-FIRE; the reduct is the τ-cascade normal form the
+/// installed TRS delivers on `out` (`b[a/0]`, capture-avoiding, IN RHO). The captured lambda body
+/// `b` (the scope slot) and argument `a` (the replacement slot) flow from the AUTOMATON's in-Rho
+/// capture (the MATCH path) straight into the seed with NO host substitution.
 ///
-/// FAIL-CLOSED (never silently deferred): a malformed subst whose scope is not a bound LHS
-/// variable — an OPEN substitution — is rejected by [`reflect_term_par`] with
-/// [`UnsupportedFamily::Substitution`]; a resolution failure surfaces via `errors`.
+/// σ frame: `σ_scope = BoundVar(rhs_var_index(k, pos_of_scope))` and
+/// `σ_repl = BoundVar(rhs_var_index(k, pos_of_repl))`; `out = BoundVar(0)`. Both slots MUST be bound
+/// LHS variables ([`subst_rule_shape`]); an open substitution fails closed.
+///
+/// RETIRED (see the commented `subst_site_arms` / [`reflect_subst_scope_slot`]): the Stage 3c
+/// host-contractum σ-replay, where the receiver forwarded `BoundVar(scope-slot)` carrying the
+/// host-computed reduct. The in-Rho β now COMPUTES the reduct via the TRS, so the seed needs the RAW
+/// captured body — incompatible with a receiver that expected the already-reduced contractum.
 fn lower_subst_rewrite(
     rule: &RhoNetRule,
     rewrite: &RewriteRule,
@@ -850,14 +904,23 @@ fn lower_subst_rewrite(
     language_fingerprint: &str,
     errors: &mut Vec<RhoNetLoweringError>,
 ) -> Option<RhoNetLoweredRule> {
-    // The RHS `⟦R⟧σ` = `BoundVar(scope-slot)` (the host hands the reduct at the scope slot).
-    // An open substitution (scope not a bound LHS var) fails closed here.
-    // A subst RHS is a top-level `Subst`/`MultiSubst` (never a collection), so no HashBag bag-RHS
-    // resolver is needed here (`None`) — the scope reflects to its σ-slot regardless.
-    let rhs_par = match reflect_term_par(&rewrite.right, vars, k, language_fingerprint, None) {
-        Ok(par) => par,
-        Err(family) => return Some(record_unsupported(rule, family, errors)),
+    // The subst SCOPE (body `b`) + REPLACEMENT (argument `a`) σ slots the SEED reads. An open
+    // substitution (scope/replacement not a bound LHS var, or a non-variable) fails closed.
+    let Some((_shape_vars, scope_var, repl_var)) = subst_rule_shape(&rewrite.left, &rewrite.right)
+    else {
+        return Some(record_unsupported(rule, UnsupportedFamily::Substitution, errors));
     };
+    // Positions in the σ-receiver's first-occurrence LHS order (`vars`), which equals
+    // `subst_rule_shape`'s `lower_lhs_vars(left)` order — so the reverse-De-Bruijn indices agree.
+    let (Some(scope_pos), Some(repl_pos)) = (
+        vars.iter().position(|var| var == &scope_var),
+        vars.iter().position(|var| var == &repl_var),
+    ) else {
+        // Cannot happen (both checked bound by `subst_rule_shape`); fail closed defensively.
+        return Some(record_unsupported(rule, UnsupportedFamily::Substitution, errors));
+    };
+    let scope_bv = rhs_var_index(k, scope_pos) as usize;
+    let repl_bv = rhs_var_index(k, repl_pos) as usize;
     let Some(channel) = rule.input_channels.first() else {
         errors.push(RhoNetLoweringError::RuleSourceDrift { rule_id: rule.id.clone() });
         return None;
@@ -869,7 +932,13 @@ fn lower_subst_rewrite(
             return None;
         },
     };
-    let par = sigma_receiver_par(k, rhs_par, source);
+    let par = crate::rho_net_subst_trs::subst_seed_receiver_par(
+        k,
+        scope_bv,
+        repl_bv,
+        language_fingerprint,
+        source,
+    );
     Some(RhoNetLoweredRule::SubstRewrite { rule_id: rule.id.clone(), par })
 }
 
@@ -1616,9 +1685,14 @@ pub struct RhoNetSubstInjectionSite {
     /// The `k` LHS σ variables the receiver binds, in first-occurrence (binder-excluded) order —
     /// the order [`term_contract_call`] expects the σ arguments in.
     pub lhs_var_order: Vec<String>,
-    /// The SCOPE variable (`subst` scope). Its σ slot carries the host-computed reduct (the
-    /// firing's contractum), not the raw matched sub-term.
+    /// The SCOPE variable (`subst` scope, the lambda body `b`). Its σ slot carries the captured body
+    /// the in-Rho β SEED threads into `^subst(⟦Z⟧, a, b, out)` (Stage 4 SLICE 2a). (In the retired
+    /// host-σ path it carried the host-computed reduct/contractum — see the commented
+    /// `subst_site_arms`.)
     pub scope_var: String,
+    /// The REPLACEMENT variable (`subst` replacement, the argument `a`). Its σ slot carries the
+    /// captured argument the SEED threads into `^subst(⟦Z⟧, a, b, out)`.
+    pub repl_var: String,
 }
 
 /// Derive every binder/β-substitution σ-injection site for a language — the sites a runtime subst
@@ -1666,7 +1740,8 @@ pub fn rho_net_subst_injection_sites(def: &LanguageDef) -> Vec<RhoNetSubstInject
         };
         // A `SubstRewrite` lowered iff `subst_rule_shape` succeeded, so this cannot fail; a
         // defensive `continue` keeps the derivation total.
-        let Some((vars, scope_var)) = subst_rule_shape(&rewrite.left, &rewrite.right) else {
+        let Some((vars, scope_var, repl_var)) = subst_rule_shape(&rewrite.left, &rewrite.right)
+        else {
             continue;
         };
         sites.push(RhoNetSubstInjectionSite {
@@ -1674,6 +1749,7 @@ pub fn rho_net_subst_injection_sites(def: &LanguageDef) -> Vec<RhoNetSubstInject
             channel: channel.clone(),
             lhs_var_order: vars.iter().map(|var| var.to_string()).collect(),
             scope_var: scope_var.to_string(),
+            repl_var: repl_var.to_string(),
         });
     }
     sites
@@ -3185,16 +3261,21 @@ fn reflect_term_par_env(
             binder_env,
             def,
         ),
-        // A substitution `subst(scope, …)` / `(eval scope arg)` resolves to the
-        // host-computed REDUCED term at its scope variable's σ-slot (Stage 3c model-b):
-        // the host applies the capture-avoiding substitution and hands the reduct as the
-        // scope slot's σ, so the receiver body forwards `BoundVar(scope-slot)`. Requires
-        // the scope to be a bound LHS variable; an OPEN substitution under a
-        // genuinely-free scope fails closed (`Substitution`).
-        Pattern::Term(PatternTerm::MultiSubst { scope, .. }) => {
-            reflect_subst_scope_slot(scope, vars, k)
+        // A substitution `subst(scope, …)` / `(eval scope arg)` RHS.
+        //
+        // RETIRED for the in-Rho β (Stage 4 S-binder SLICE 2a): a TOP-LEVEL substitution rewrite RHS
+        // no longer reflects here — it is lowered to the in-Rho β SEED σ-receiver
+        // (`lower_subst_rewrite` → `subst_seed_receiver_par`), which SENDS `^subst(⟦Z⟧, a, b, out)`
+        // on the reserved channel so the TRS COMPUTES the reduct IN RHO. The Stage 3c host-σ-slot
+        // resolver (`reflect_subst_scope_slot`) — which forwarded `BoundVar(scope-slot)` carrying the
+        // host-computed CONTRACTUM — is commented out below; the seed needs the RAW captured body,
+        // which the host-contractum path cannot supply. So a substitution node reaching THIS reflector
+        // (only a NESTED subst — a top-level one is routed to the seed) has no in-Rho image this slice
+        // and fails closed, exactly like the LHS subst arm (`collect_lhs_vars_term`).
+        Pattern::Term(PatternTerm::MultiSubst { .. }) | Pattern::Term(PatternTerm::Subst { .. }) => {
+            // RETIRED (host-σ-slot reduct): `reflect_subst_scope_slot(scope, vars, k)`.
+            Err(UnsupportedFamily::Substitution)
         },
-        Pattern::Term(PatternTerm::Subst { term, .. }) => reflect_subst_scope_slot(term, vars, k),
         // A HashBag bag-VALUED RHS is intercepted at its ENCLOSING `Apply` (which supplies the `op`
         // for the `@"ac:{op}"` soup channel — see the `Apply` arm's Stage AC2b intercept above). A
         // BARE collection reaching here has no enclosing constructor, hence no `op` and no soup
@@ -3257,26 +3338,35 @@ fn reflect_binder_node(
     Ok(new_elist_par(elements, locally_free.clone(), false, None, locally_free, false))
 }
 
-/// Resolve a substitution's scope to its σ-slot `BoundVar`: the host hands the
-/// REDUCED term (`RHS[σ]` after capture-avoiding substitution) as the σ of the
-/// scope variable, so the receiver body simply forwards that slot. The scope MUST
-/// be a bound LHS variable; an OPEN substitution under a genuinely-free scope (no σ
-/// binding) has no slot and fails closed (`Substitution`).
-fn reflect_subst_scope_slot(
-    scope: &Pattern,
-    vars: &[Ident],
-    k: usize,
-) -> Result<Par, UnsupportedFamily> {
-    match scope {
-        Pattern::Term(PatternTerm::Var(name)) => match vars.iter().position(|var| var == name) {
-            Some(index) => Ok(new_boundvar_par(rhs_var_index(k, index), Vec::new(), false)),
-            None => Err(UnsupportedFamily::Substitution),
-        },
-        // A non-variable scope (a literal binder body / nested term) has no single σ-slot
-        // that the host can fill with one reduct — out of scope this slice, fail closed.
-        _ => Err(UnsupportedFamily::Substitution),
-    }
-}
+// RETIRED (Stage 4 S-binder SLICE 2a): the host-σ-slot substitution-scope resolver.
+//
+// This resolved a substitution's scope variable to its σ-slot `BoundVar`, so the σ-receiver body
+// forwarded that slot — into which the host (Dovetail, model-b) injected the CONTRACTUM (the
+// capture-avoiding substitution `RHS[σ]` it computed). The in-Rho β now COMPUTES the reduct with the
+// generated de-Bruijn TRS (`crate::rho_net_subst_trs`), driven by the β SEED (`subst_seed_receiver_par`),
+// so the receiver no longer forwards a host reduct — it seeds `^subst(⟦Z⟧, a, b, out)` with the RAW
+// captured body `b`. The host-contractum path is therefore incompatible with the seed and retired.
+//
+// Kept (commented) for reference / the σ-replay fallback, per the "disable-don't-delete" rule: were a
+// future slice to re-enable a host-σ-replay for substitution, it would need a SEED-compatible raw-σ
+// injection (the RAW matched body, NOT the contractum). Its former call sites — the `reflect_term_par_env`
+// `Subst`/`MultiSubst` arms — now fail closed (`UnsupportedFamily::Substitution`).
+//
+// fn reflect_subst_scope_slot(
+//     scope: &Pattern,
+//     vars: &[Ident],
+//     k: usize,
+// ) -> Result<Par, UnsupportedFamily> {
+//     match scope {
+//         Pattern::Term(PatternTerm::Var(name)) => match vars.iter().position(|var| var == name) {
+//             Some(index) => Ok(new_boundvar_par(rhs_var_index(k, index), Vec::new(), false)),
+//             None => Err(UnsupportedFamily::Substitution),
+//         },
+//         // A non-variable scope (a literal binder body / nested term) has no single σ-slot
+//         // that the host can fill with one reduct — out of scope this slice, fail closed.
+//         _ => Err(UnsupportedFamily::Substitution),
+//     }
+// }
 
 /// Reflect a HashBag constructor's bag-VALUED RHS `op{e_0, …, e_{m-1}, ...rest}` to the
 /// process-soup carrier (Stage AC2b): each fixed element `e_i` becomes a send
@@ -5269,6 +5359,7 @@ mod tests {
                 rule_id: "rule:rewrite:0:BadAc".to_string(),
                 family: UnsupportedFamily::CollectionAc,
             }],
+            subst_trs: None,
         };
         match lowered.installed_program_par() {
             Err(RhoNetInstallError::LoweringErrors(errors)) => assert_eq!(errors.len(), 1),
@@ -5293,6 +5384,7 @@ mod tests {
                 },
             ],
             errors: Vec::new(),
+            subst_trs: None,
         };
         match lowered.installed_program_par() {
             Err(RhoNetInstallError::UnmaterializedRule { rule_id, family }) => {
@@ -5315,6 +5407,7 @@ mod tests {
                 RhoNetLoweredRule::CongruenceClosure { rule_id: "rule:eq:0:Cong".to_string() },
             ],
             errors: Vec::new(),
+            subst_trs: None,
         };
         let installed = lowered
             .installed_program_par()
@@ -6350,7 +6443,7 @@ mod tests {
             .iter()
             .find(|rewrite| rewrite.name.to_string() == "Beta")
             .expect("the Beta rewrite exists");
-        let (vars, scope) = subst_rule_shape(&rewrite.left, &rewrite.right)
+        let (vars, scope, repl) = subst_rule_shape(&rewrite.left, &rewrite.right)
             .expect("Beta is a substitution rewrite");
         assert_eq!(
             vars.iter().map(|v| v.to_string()).collect::<Vec<_>>(),
@@ -6358,6 +6451,7 @@ mod tests {
             "the LHS σ order is [fun, arg] (binder-excluded)"
         );
         assert_eq!(scope.to_string(), "fun", "the substitution scope variable is fun");
+        assert_eq!(repl.to_string(), "arg", "the substitution replacement variable is arg");
 
         // It materializes to a SubstRewrite lowered rule (installable).
         let lowering = lower_language_def(&def);
@@ -6641,28 +6735,29 @@ mod tests {
         );
     }
 
-    /// Stage 3c (item 2): a top-level `Subst`/`MultiSubst` RHS resolves to the host-computed reduct
-    /// at its scope variable's σ-slot — `reflect_term_par(MultiSubst{scope: Var(fun)}, [fun, arg])`
-    /// is `BoundVar(scope-slot)` (the receiver forwards the reduct the host injects there). An OPEN
-    /// substitution under a genuinely-free scope fails closed.
+    /// Stage 4 S-binder SLICE 2a: a `Subst`/`MultiSubst` RHS reaching `reflect_term_par` fails closed
+    /// (`Substitution`). The RETIRED Stage-3c behavior resolved it to the host-σ-slot `BoundVar`
+    /// (the receiver forwarded the host-computed CONTRACTUM there — see the commented
+    /// `reflect_subst_scope_slot`); the in-Rho β now lowers a TOP-LEVEL substitution rewrite to the
+    /// β SEED (`lower_subst_rewrite` → `subst_seed_receiver_par`, which SENDS `^subst(⟦Z⟧, a, b, out)`
+    /// so the TRS computes the reduct IN RHO), so a subst node reaching this general reflector (only a
+    /// NESTED subst) has no in-Rho image this slice and fails closed — like the LHS subst arm.
     #[test]
-    fn reflect_term_par_resolves_substitution_to_the_scope_slot() {
+    fn reflect_term_par_fails_closed_on_a_substitution_node() {
         let fp = "mettail-langdef-v1:0011223344556677";
         let vars = vec![ident("fun"), ident("arg")];
-        // `⟦(eval fun arg)⟧` = `BoundVar(scope-slot of fun)`.
+        // A (formerly scope-slot-resolving) closed substitution now fails closed here.
         let subst = Pattern::Term(PatternTerm::MultiSubst {
             scope: Box::new(var_pattern("fun")),
             replacements: vec![var_pattern("arg")],
         });
-        let reflected =
-            reflect_term_par(&subst, &vars, 2, fp, None).expect("closed substitution reflects");
         assert_eq!(
-            boundvar_index(&reflected),
-            Some(rhs_var_index(2, 0)),
-            "the substitution forwards the scope variable's σ-slot (fun at index 0)"
+            reflect_term_par(&subst, &vars, 2, fp, None),
+            Err(UnsupportedFamily::Substitution),
+            "a substitution RHS is the in-Rho β SEED (lower_subst_rewrite), not a reflect_term_par slot",
         );
 
-        // An OPEN substitution (scope not a bound LHS var) fails closed.
+        // An OPEN substitution (scope not a bound LHS var) also fails closed.
         let open = Pattern::Term(PatternTerm::MultiSubst {
             scope: Box::new(var_pattern("free")),
             replacements: vec![var_pattern("arg")],
