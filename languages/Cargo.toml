@@ -26,6 +26,7 @@ all-languages = [
     "ac-bag-demo",
     "nl-ac-demo",
     "amb-demo",
+    "amb-new-demo",
     "ambient",
     "appsubst",
     "calculator",
@@ -56,6 +57,7 @@ ac-demo = []
 ac-bag-demo = []
 nl-ac-demo = []
 amb-demo = []
+amb-new-demo = []
 ambient = []
 appsubst = []
 calculator = []

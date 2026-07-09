@@ -44,6 +44,7 @@
 #![cfg(feature = "amb-demo-runtime")]
 
 use mettail_languages::ambdemo::AmbDemoLanguage;
+use mettail_languages::ambnewdemo::AmbNewDemoLanguage;
 use mettail_rholang_codegen::{
     lower_language_def, plan_rho_default_backend, reconstruct_language_def,
     rho_net_structural_ac_injection_sites, suggest_rejected_rule_dispositions, RhoCoverageEvidence,
@@ -88,6 +89,30 @@ fn amb_demo_backend() -> (PlannedRhoBackend, String, String) {
 /// A nullary process observation value (e.g. the unwrapped `PA` = `A`).
 fn proc_leaf(constructor: &str) -> RuntimeObservationValue {
     RuntimeObservationValue::Term { constructor: constructor.to_string(), children: Vec::new() }
+}
+
+/// Reconstruct `AmbNewDemo`'s augmented `LanguageDef` (the OpenRule fragment PLUS the `PNew` name
+/// binder) and plan its Rho-default backend, so a redex UNDER a `new(x, ·)` binder can be matched in
+/// Rho via the spread. Returns the planned backend + the plan's definition fingerprint.
+fn amb_new_demo_backend() -> (PlannedRhoBackend, String) {
+    let source = AmbNewDemoLanguage
+        .metadata()
+        .definition_source()
+        .expect("generated AmbNewDemoLanguage must expose its definition_source");
+    let def = reconstruct_language_def(source)
+        .expect("AmbNewDemoLanguage definition_source must reconstruct as a LanguageDef");
+
+    let lowering = lower_language_def(&def);
+    let requirements = RhoDefaultBackendRequirements {
+        coverage: RhoCoverageEvidence::CoveredRejectedRules(suggest_rejected_rule_dispositions(
+            &def, &lowering,
+        )),
+        guard_coverage: RhoGuardCoverageEvidence::NoGuardObligations,
+    };
+    let plan = plan_rho_default_backend(&def, requirements)
+        .expect("AmbNewDemo (OpenRule + PNew binder) must flip to the Rho backend");
+    let fingerprint = plan.definition_fingerprint().to_string();
+    (PlannedRhoBackend::from_plan(plan), fingerprint)
 }
 
 /// Assert `value` is a bag whose multiset of elements is exactly `expected` (each multiplicity 1).
@@ -389,5 +414,152 @@ async fn s_ac_structural_bag_is_produced_by_the_spread_not_the_report() {
         &observation.values[0],
         &RuntimeObservationValue::Bag(vec![(proc_leaf("PZero"), 2)]),
         "the reduct bag was re-sourced from the spread, not the corrupted report σ"
+    );
+}
+
+/// POSITIVE under-`new` (Stage 4 S-binder SLICE 3b) — the OpenRule redex UNDER a `new(x, ·)` binder
+/// MATCHES IN RHO via the spread. The subject `new(x, { open(x, A) | x[B] })` binds the ambient name
+/// `x`; both occurrences reflect to the SAME `^bound(peano(0))` (bound by the ONE enclosing `new`),
+/// so the non-linear `N ≡ N` guard HOLDS. The whole subject reflects to `^lambda([⟦{…}⟧])`; the
+/// structural-AC match walk DESCENDS the single `^lambda` child into the operand bag with NO binder-
+/// specific code (slice 3a), co-installs the per-site MATCH receiver, and fires on the reducer.
+///
+/// The observed reduct is the HOLE bag `{ A | B }` — the OpenRule firing on the inner par, observed
+/// WITHOUT the `NewCong` re-wrap `new(x, { A | B })` (the deferred slice 3c), exactly as the base
+/// nested-redex tests observe the inner contractum without whole-term reassembly. This is also the
+/// under-`new` #24 DEFAULT-path proof: it drives the default `rho_net_match_invocation_from_dovetail_to`.
+#[tokio::test]
+async fn ambnewdemo_open_under_new_matches_in_rho_via_the_spread() {
+    mettail_runtime::clear_var_cache();
+    let (backend, fingerprint) = amb_new_demo_backend();
+    assert_eq!(
+        AmbNewDemoLanguage.metadata().definition_fingerprint(),
+        Some(fingerprint.as_str()),
+        "planned backend fingerprint must equal the generated metadata fingerprint"
+    );
+
+    let term = AmbNewDemoLanguage
+        .parse_term("new(x, { open(x, A) | x[B] })")
+        .expect("AmbNewDemo must parse the under-new OpenRule redex");
+    let report = AmbNewDemoLanguage::dovetail_report_for(term.as_ref(), 64, 1_000_000)
+        .expect("AmbNewDemo Dovetail report must compile");
+
+    // The DEFAULT match path (NOT the replay branch — the retirement proof): STRUCTURALLY reflects
+    // `^lambda([⟦bag⟧])`, descends the binder image into the bag, and assembles the spread-match call.
+    let invocation =
+        AmbNewDemoLanguage::rho_net_match_invocation_from_dovetail_to(term.as_ref(), &report, "OUT")
+            .expect("the structural-AC MATCH path admits OpenRule UNDER the new");
+    assert_eq!(invocation.out_channel, "OUT");
+
+    let observation = backend
+        .run_rho_net_with_call_and_observe_runtime_values(&invocation.call, &invocation.out_channel)
+        .await
+        .expect("the in-Rho structural-AC match + firing executes on the reducer");
+
+    assert_eq!(
+        observation.observed_count(),
+        1,
+        "the OpenRule MATCH receiver fires exactly once under the new (got {:?})",
+        observation.values
+    );
+    // The HOLE reduct `{ A | B }` (the `NewCong` re-wrap is the deferred slice 3c).
+    assert_bag_is(&observation.values[0], &[proc_leaf("PA"), proc_leaf("PB")]);
+}
+
+/// NEGATIVE under-`new` (Stage 4 S-binder SLICE 3b, reject-safe) — DISTINCT binders VETO the match.
+/// The subject `new(x, new(y, { open(x, A) | y[B] }))` has the open name `x` bound by the OUTER `new`
+/// and the ambient name `y` by the INNER `new`, so inside the inner scope `x` reflects to
+/// `^bound(peano(1))` and `y` to `^bound(peano(0))` — DIFFERENT de-Bruijn depths. The co-installed
+/// MATCH receiver's non-linear `Receive.condition` `EEq(N_open, N_amb)` therefore evaluates to
+/// `false` and the reducer never commits the COMM: nothing lands on OUT. `open` cannot dissolve an
+/// ambient bound by a DIFFERENT `new` — the guard is the belt-and-suspenders reject the reflection's
+/// depth-tagging makes decidable in Rho.
+#[tokio::test]
+async fn ambnewdemo_distinct_binders_veto_the_open() {
+    mettail_runtime::clear_var_cache();
+    let (backend, _fingerprint) = amb_new_demo_backend();
+
+    let term = AmbNewDemoLanguage
+        .parse_term("new(x, new(y, { open(x, A) | y[B] }))")
+        .expect("AmbNewDemo must parse the distinct-binder soup");
+    let report = AmbNewDemoLanguage::dovetail_report_for(term.as_ref(), 64, 1_000_000)
+        .expect("AmbNewDemo Dovetail report must compile");
+
+    // The match path ASSEMBLES a call (the reflection + descent + co-install succeed exactly as the
+    // positive case — the distinct binder depths change only the ground bound-var subterms, not the
+    // shape), so it returns Ok; the veto happens on the REDUCER, where the `N ≡ N` guard sees the two
+    // DIFFERENT `^bound` depths and never commits the COMM.
+    let invocation =
+        AmbNewDemoLanguage::rho_net_match_invocation_from_dovetail_to(term.as_ref(), &report, "OUT")
+            .expect("the match path assembles a call; the guard vetoes on the reducer, not at build");
+
+    let observation = backend
+        .run_rho_net_with_call_and_observe_runtime_values(&invocation.call, &invocation.out_channel)
+        .await
+        .expect("the in-Rho match call executes (the guard decides whether it fires)");
+    assert_eq!(
+        observation.observed_count(),
+        0,
+        "the non-linear guard vetoes DISTINCT ^bound depths — nothing fires (got {:?})",
+        observation.values
+    );
+}
+
+/// S-AC under-`new` (Stage 4 S-binder SLICE 3b) — the DECISIVE probe that the operand BAG re-sourced
+/// UNDER a `^lambda` binder image comes from the SPREAD, NOT the report σ. The under-`new` analogue of
+/// `s_ac_structural_bag_is_produced_by_the_spread_not_the_report`: we CORRUPT the report σ of
+/// `new(x, { open(x, A) | x[B] })` to a decoy, leaving the `OpenRule` label valid so the gate admits.
+/// The match driver STRUCTURALLY reflects `^lambda([⟦bag⟧])`, DESCENDS the binder image into the bag,
+/// and re-sources the bag + reducts from the SUBJECT — so OUT is STILL `{ A | B }`, never the decoy.
+/// This is the load-bearing proof that the `^lambda`-descent re-sourcing (not the report) drives the
+/// under-`new` firing.
+#[tokio::test]
+async fn s_ac_under_new_bag_is_produced_by_the_spread_not_the_report() {
+    mettail_runtime::clear_var_cache();
+    let (backend, _fingerprint) = amb_new_demo_backend();
+
+    let term = AmbNewDemoLanguage
+        .parse_term("new(x, { open(x, A) | x[B] })")
+        .expect("AmbNewDemo must parse the under-new OpenRule redex");
+    let mut report = AmbNewDemoLanguage::dovetail_report_for(term.as_ref(), 64, 1_000_000)
+        .expect("AmbNewDemo Dovetail report must compile");
+
+    // Corrupt EVERY firing's σ to a decoy `PZero`. The match path ignores σ entirely (it re-sources
+    // from the reflected `^lambda` subject), so this must not change OUT. (Some reports may carry no
+    // OpenRule firing at all — the match path fires from the spread regardless; the loop is a no-op
+    // then, and the spread still drives the firing.)
+    let decoy = RuntimeReflectedSubterm { constructor: "PZero".to_string(), children: Vec::new() };
+    let decoy_rest =
+        RuntimeReflectedSubterm { constructor: "PPar".to_string(), children: Vec::new() };
+    for justification in &mut report.rewrite_justifications {
+        justification.sigma = vec![
+            ("N".to_string(), decoy.clone()),
+            ("P".to_string(), decoy.clone()),
+            ("Q".to_string(), decoy.clone()),
+            ("rest".to_string(), decoy_rest.clone()),
+        ];
+    }
+
+    let invocation =
+        AmbNewDemoLanguage::rho_net_match_invocation_from_dovetail_to(term.as_ref(), &report, "OUT")
+            .expect("the MATCH path admits OpenRule under the new despite the corrupted report σ");
+
+    let observation = backend
+        .run_rho_net_with_call_and_observe_runtime_values(&invocation.call, &invocation.out_channel)
+        .await
+        .expect("the in-Rho structural-AC match + firing executes on the reducer");
+
+    assert_eq!(
+        observation.observed_count(),
+        1,
+        "the located under-new OpenRule redex fires exactly once (got {:?})",
+        observation.values
+    );
+    // OUT is the HOLE bag `{ A | B }` from the SPREAD — never the corrupted σ's `{ PZero | PZero }`.
+    assert_bag_is(&observation.values[0], &[proc_leaf("PA"), proc_leaf("PB")]);
+    assert_ne!(
+        &observation.values[0],
+        &RuntimeObservationValue::Bag(vec![(proc_leaf("PZero"), 2)]),
+        "the under-new reduct bag was re-sourced from the spread, not the corrupted report σ"
     );
 }

@@ -20,6 +20,9 @@ pub mod nlacdemo;
 // Stage 3d: the Ambient-calculus `OpenRule` STRUCTURAL non-linear AC firing demonstration language.
 #[cfg(feature = "amb-demo")]
 pub mod ambdemo;
+
+#[cfg(feature = "amb-new-demo")]
+pub mod ambnewdemo;
 #[cfg(feature = "ambient")]
 pub mod ambient;
 #[cfg(feature = "appsubst")]
