@@ -28,7 +28,9 @@ use crate::rho_net_automaton::{
     multi_pattern_receiver_network_par, AutomatonAcceptTarget, AutomatonUnsupported,
 };
 use crate::rho_net_lower::{
-    ac_match_call_par, spread_child_location, spread_term_par, GroundTerm, RhoNetAcMatchEntry,
+    ac_match_call_par, contextual_hole_bridge_par, contextual_premise_hole_channel,
+    spread_child_location, spread_term_par, GroundTerm, RhoNetAcMatchEntry,
+    RhoNetContextualMatchEntry,
 };
 
 /// Why an LHS pattern has no structural set-automaton image (fail-closed to a later
@@ -154,6 +156,16 @@ pub struct InRhoMatchingRuleset {
     /// base rewrite or native process, an AC redex is NOT an automaton entry (its `AcApp` has no
     /// positional image), so it carries no `accept_channels` entry and no `PatternId`.
     pub ac_dispatch: Vec<RhoNetAcMatchEntry>,
+    /// One record per ADMITTED contextual (congruence) rewrite family (Stage 4 S-contextual): the
+    /// contextual rule label and its `n` join premise channels the match driver
+    /// ([`contextual_match_call_par`](crate::contextual_match_call_par)) routes each hole position's
+    /// IN-RHO nested firing to (via [`contextual_hole_bridge_par`](crate::contextual_hole_bridge_par)),
+    /// so the installed [`contextual_join_receiver_par`](crate::contextual_join_receiver_par)
+    /// reassembles ⟦K'⟧ from the automaton's firings, not the host-σ report. Like an AC redex, a
+    /// contextual redex is NOT an automaton entry (its outer context `K` fires no positional root
+    /// `Match` — the base automaton locates the HOLE's premise redex by nested-App descent), so it
+    /// carries no `accept_channels` entry and no `PatternId`.
+    pub contextual_dispatch: Vec<RhoNetContextualMatchEntry>,
 }
 
 /// Compile a language's structural base rewrites into ONE positional set automaton,
@@ -184,6 +196,19 @@ pub fn compile_in_rho_matching_ruleset(def: &LanguageDef) -> InRhoMatchingRulese
     let ac_admitted: HashSet<&str> =
         ac_dispatch.iter().map(|entry| entry.fired_rule_label.as_str()).collect();
 
+    // Stage 4 (S-contextual): ADMIT the contextual (congruence) rewrite families. A contextual
+    // rewrite has NO base-rewrite σ-receiver site (it lowered to a `ContextualRewrite` join), so it
+    // would otherwise defer `NotBaseRewrite` and the gate would reject the match path. Instead the
+    // match driver ([`contextual_match_call_par`]) LOCATES each hole position's premise redex in the
+    // reflected subject (the base automaton's nested-App descent through `K`'s spine) and routes its
+    // reduced hole to the join's premise channel, where the installed
+    // [`contextual_join_receiver_par`] reassembles ⟦K'⟧. Admitting a rule here (skipping its defer)
+    // shrinks `deferred`, so the gate stops rejecting it — the contextual analogue of S-native's
+    // `native_dispatch` / S-AC's `ac_dispatch`.
+    let contextual_dispatch = crate::rho_net_contextual_match_entries(def);
+    let contextual_admitted: HashSet<&str> =
+        contextual_dispatch.iter().map(|entry| entry.fired_rule_label.as_str()).collect();
+
     let mut pairs: Vec<(PatternId, DvPattern<String>)> = Vec::with_capacity(def.rewrites.len());
     let mut accept_channels: Vec<(PatternId, String)> = Vec::new();
     let mut deferred: Vec<DeferredRewrite> = Vec::new();
@@ -194,8 +219,11 @@ pub fn compile_in_rho_matching_ruleset(def: &LanguageDef) -> InRhoMatchingRulese
             Some(channel) => channel.to_string(),
             None => {
                 // Admitted via the AC match path (its bag is located + fired in Rho by the match
-                // driver) — do NOT defer, so the gate admits it.
-                if ac_admitted.contains(label.as_str()) {
+                // driver) or the contextual match path (its holes are located + reassembled in Rho)
+                // — do NOT defer, so the gate admits it.
+                if ac_admitted.contains(label.as_str())
+                    || contextual_admitted.contains(label.as_str())
+                {
                     continue;
                 }
                 deferred.push(DeferredRewrite {
@@ -304,6 +332,7 @@ pub fn compile_in_rho_matching_ruleset(def: &LanguageDef) -> InRhoMatchingRulese
         deferred,
         native_dispatch,
         ac_dispatch,
+        contextual_dispatch,
     }
 }
 
@@ -477,6 +506,63 @@ pub fn in_rho_match_all_sites_call_par(
 
     let spread = spread_term_par(subject, &ruleset.language_fingerprint, root_site);
     Ok((call.append(spread), sites.len()))
+}
+
+/// Stage 4 (S-contextual) — build the in-Rho contextual-JOIN match call for `subject`: LOCATE the
+/// outer context `K`'s hole positions' PREMISE redexes in Rho, route each reduced hole to the
+/// installed [`contextual_join_receiver_par`](crate::contextual_join_receiver_par)'s premise channel,
+/// and let the reused join reassemble ⟦K'⟧ — the reduced holes coming from the automaton's NESTED
+/// FIRINGS, never the host-σ [`reconstruct_contractum`](crate::reconstruct_contractum) report replay.
+///
+/// This sub-slice matches the UNARY shape (exactly one congruence family, one hole): the outer
+/// context spine `K` is the reflected subject with ONE distinguished hole position ℓ_0 (the premise
+/// subject). The base locate-all ([`in_rho_match_all_sites_call_par`]) LOCATES the hole's premise
+/// redex by descending `K`'s spine from the ONE spread and fires its σ-receiver with the intermediate
+/// [`contextual_premise_hole_channel`] `ph:c(ℓ_0)` as its dynamic out; the
+/// [`contextual_hole_bridge_par`] then re-delivers the reduced hole `T_0` on the join's premise
+/// channel `c(ℓ_0)` (carrying the dynamic out, the unary join's `(T_0, out)` bind), where the
+/// installed join emits ⟦K'⟧ = ⟦K(T_0)⟧ on `@out`.
+///
+/// FAIL-CLOSED ([`AutomatonUnsupported::ContextualNonUnarySite`]) when `subject`/`ruleset` is not
+/// this single-congruence, single-hole shape: 0 or ≥2 contextual families, an n-ary context (the
+/// per-hole routing is the next sub-slice), or a subject in which the automaton located a number of
+/// hole redexes other than one (a deeper multi-redex reduction). Never a wrong reassembly. The
+/// automaton `loc:`/`cap:` reads, the `ph:` intermediate, and the join's `c(ℓ_0)` are all disjoint,
+/// so the single-shot bridge and the persistent join never race.
+pub fn contextual_match_call_par(
+    ruleset: &InRhoMatchingRuleset,
+    subject: &GroundTerm,
+    root_site: &str,
+    out_channel: &str,
+) -> Result<Par, AutomatonUnsupported> {
+    // UNARY scope: exactly one contextual family with exactly one premise channel/hole.
+    let [entry] = ruleset.contextual_dispatch.as_slice() else {
+        return Err(AutomatonUnsupported::ContextualNonUnarySite);
+    };
+    let [premise_channel] = entry.premise_channels.as_slice() else {
+        return Err(AutomatonUnsupported::ContextualNonUnarySite);
+    };
+
+    // Route the located hole redex's nested firing to the intermediate premise-hole channel: the
+    // base automaton locates the hole's premise redex from the ONE spread and fires its σ-receiver
+    // with `ph:c(ℓ_0)` as the dynamic out (so `⟦T_0⟧` lands there — from the reflected subject, NOT
+    // the report σ).
+    let hole_channel = contextual_premise_hole_channel(premise_channel);
+    let (base_call, sites) =
+        in_rho_match_all_sites_call_par(ruleset, subject, root_site, &hole_channel)?;
+
+    // UNARY scope: the unary context has exactly ONE hole, so the automaton must locate exactly one
+    // premise redex. 0 (a normal form — nothing to reduce) or ≥2 (a deeper multi-redex reduction the
+    // single-hole join cannot host) fail closed.
+    if sites != 1 {
+        return Err(AutomatonUnsupported::ContextualNonUnarySite);
+    }
+
+    // The bridge re-delivers the reduced hole on the join's premise channel in the join ABI (the
+    // unary hole is the LAST, so it carries the dynamic out channel), where the installed
+    // `contextual_join_receiver_par` binds it and emits ⟦K'⟧.
+    let bridge = contextual_hole_bridge_par(&hole_channel, premise_channel, Some(out_channel));
+    Ok(base_call.append(bridge))
 }
 
 /// The FV (ix) `install_admits` capability gate, executable: returns the first rule that
@@ -852,6 +938,135 @@ mod tests {
                     GroundTerm::new("B".to_string(), Vec::new()),
                 ]
             )
+        );
+    }
+
+    /// The CtxDemo ruleset: a base rewrite `Flip: Swap(x,y) ~> Pair(y,x)` (reduces the hole) and a
+    /// UNARY congruence `WrapCong: | S ~> T |- Wrap(S) ~> Wrap(T)` (the outer context Wrap(_)).
+    fn ctx_demo_def() -> LanguageDef {
+        syn::parse_str(
+            r#"
+                name: CtxRulesetGen,
+                types { Proc }
+                terms {
+                    A . |- "A" : Proc ;
+                    B . |- "B" : Proc ;
+                    Pair . x:Proc, y:Proc |- "pair" "(" x "," y ")" : Proc ;
+                    Swap . x:Proc, y:Proc |- "swap" "(" x "," y ")" : Proc ;
+                    Wrap . x:Proc |- "wrap" "(" x ")" : Proc ;
+                }
+                equations {}
+                rewrites {
+                    Flip . |- (Swap x y) ~> (Pair y x) ;
+                    WrapCong . | S ~> T |- (Wrap S) ~> (Wrap T) ;
+                }
+            "#,
+        )
+        .expect("the CtxDemo ruleset fragment parses")
+    }
+
+    /// The bare `GString` name of a single-expr `Par` (a `loc:`/`ph:`/premise channel), or `None`.
+    fn par_gstring(par: &Par) -> Option<String> {
+        use models::rhoapi::expr::ExprInstance;
+        match par.exprs.first()?.expr_instance.as_ref()? {
+            ExprInstance::GString(s) => Some(s.clone()),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn compile_admits_the_contextual_family() {
+        // Stage 4 S-contextual: WrapCong is ADMITTED via `contextual_dispatch` (its hole is located
+        // + reassembled in Rho), so the gate no longer skips it; it is NOT an automaton entry (the
+        // base automaton dispatches only on Swap, the hole's premise redex root).
+        let ruleset = compile_in_rho_matching_ruleset(&ctx_demo_def());
+        assert_eq!(ruleset.contextual_dispatch.len(), 1, "one contextual family");
+        assert_eq!(ruleset.contextual_dispatch[0].fired_rule_label, "WrapCong");
+        assert_eq!(
+            ruleset.contextual_dispatch[0].premise_channels.len(),
+            1,
+            "WrapCong is a unary congruence (one premise channel)"
+        );
+        assert!(
+            !ruleset.deferred.iter().any(|d| d.rule_label == "WrapCong"),
+            "WrapCong is admitted (contextual), not deferred: {:?}",
+            ruleset.deferred
+        );
+        assert_eq!(
+            rule_lhs_root_constructors(&ruleset),
+            ["Swap".to_string()].into_iter().collect::<BTreeSet<_>>(),
+            "the base automaton dispatches only on the hole's premise root Swap (Wrap is inert)"
+        );
+    }
+
+    #[test]
+    fn contextual_match_call_routes_the_unary_hole_to_the_premise_channel() {
+        // Wrap(Swap(A, B)): the hole redex Swap is at Wrap.0. The contextual match call co-installs
+        // the hole bridge reading `ph:{premise_channel}` (where the located Swap's nested firing
+        // lands) and re-delivering on the join's premise channel — the IN-RHO hole routing.
+        let ruleset = compile_in_rho_matching_ruleset(&ctx_demo_def());
+        let swap = GroundTerm::new(
+            "Swap",
+            vec![GroundTerm::new("A", Vec::new()), GroundTerm::new("B", Vec::new())],
+        );
+        let subject = GroundTerm::new("Wrap", vec![swap]);
+        let call = contextual_match_call_par(&ruleset, &subject, "site0", "OUT")
+            .expect("the unary contextual match call serializes");
+
+        let premise = &ruleset.contextual_dispatch[0].premise_channels[0];
+        let hole_channel = format!("ph:{premise}");
+        let has_bridge = call.receives.iter().any(|receive| {
+            receive.binds.iter().any(|bind| {
+                bind.source.as_ref().and_then(par_gstring).as_deref()
+                    == Some(hole_channel.as_str())
+            })
+        });
+        assert!(
+            has_bridge,
+            "the contextual match call must co-install the hole bridge reading {hole_channel}"
+        );
+    }
+
+    #[test]
+    fn contextual_match_call_fails_closed_off_the_unary_shape() {
+        let ruleset = compile_in_rho_matching_ruleset(&ctx_demo_def());
+        // A normal form Wrap(Pair(A, B)): Pair is inert, so NO hole redex is located → fail closed
+        // (the single-hole join has nothing to reassemble).
+        let normal = GroundTerm::new(
+            "Wrap",
+            vec![GroundTerm::new(
+                "Pair",
+                vec![GroundTerm::new("A", Vec::new()), GroundTerm::new("B", Vec::new())],
+            )],
+        );
+        assert_eq!(
+            contextual_match_call_par(&ruleset, &normal, "site0", "OUT"),
+            Err(AutomatonUnsupported::ContextualNonUnarySite),
+            "a normal form has no located hole redex — fail closed"
+        );
+
+        // Two hole redexes Pair(Swap(A,B), Swap(B,A)) under the SAME single-hole context would
+        // over-fire the unary join → fail closed (the n-ary routing is the next sub-slice).
+        let two = GroundTerm::new(
+            "Wrap",
+            vec![GroundTerm::new(
+                "Pair",
+                vec![
+                    GroundTerm::new(
+                        "Swap",
+                        vec![GroundTerm::new("A", Vec::new()), GroundTerm::new("B", Vec::new())],
+                    ),
+                    GroundTerm::new(
+                        "Swap",
+                        vec![GroundTerm::new("B", Vec::new()), GroundTerm::new("A", Vec::new())],
+                    ),
+                ],
+            )],
+        );
+        assert_eq!(
+            contextual_match_call_par(&ruleset, &two, "site0", "OUT"),
+            Err(AutomatonUnsupported::ContextualNonUnarySite),
+            "≥2 located hole redexes exceed the unary join — fail closed"
         );
     }
 }

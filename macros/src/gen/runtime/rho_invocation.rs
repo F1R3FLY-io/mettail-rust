@@ -1394,128 +1394,96 @@ pub fn generate_rho_net_invocation(language: &LanguageDef) -> TokenStream {
         })
     };
 
-    // Stage 3a: the CONTEXTUAL injection body — the third arm of the σ-injection F-function
-    // family (base | AC | contextual). Unlike the base/AC arms (keyed on the fired rule's
-    // OWN σ-receiver), a congruence rule fires no explicit Dovetail rule (the e-graph
-    // congruence closure closes the context implicitly), so its atomic JOIN is driven by the
-    // PREMISE firing: reconstruct the reduced hole `T = RHS_premise[σ]` and deliver it on the
-    // join's premise channel, where the installed `contextual_join_receiver_par` binds it and
-    // emits `⟦K'⟧` on `@out`. Stage 3a scope = a single UNARY congruence rule closed by a
-    // single root-rooted premise firing; 0/≥2 congruence rules, a non-unary context, or a
-    // multi-redex report fail closed (a later multi-premise stage).
+    // Stage 4 (S-contextual): the CONTEXTUAL injection body — the third arm of the σ-injection
+    // F-function family (base | AC | contextual), now MATCHING IN RHO. Unlike the base/AC arms (keyed
+    // on the fired rule's OWN σ-receiver), a congruence rule fires no explicit Dovetail rule (the
+    // e-graph congruence closure closes the outer context `K` implicitly), so its atomic JOIN is fed
+    // by the PREMISE redex — but that premise redex is now MATCHED + REDUCED IN RHO: the base
+    // automaton LOCATES the hole's premise redex from the ONE spread of the structurally reflected
+    // subject (M-reflect, the nested-App descent through `K`'s spine) and fires its σ-receiver, and
+    // the hole bridge routes that IN-RHO reduced hole `T` to the join's premise channel, where the
+    // installed `contextual_join_receiver_par` reassembles `⟦K'⟧` on `@out`. The reduced hole is the
+    // automaton's NESTED FIRING, NOT `reconstruct_contractum` from the report σ (which is retired
+    // from this path — the report survives only to GATE which rules fired). Sub-slice 1 scope = a
+    // single UNARY congruence rule closed by a single located hole redex; 0/≥2 congruence rules, a
+    // non-unary context, or a differing hole count fail closed (the n-ary hole routing is the next
+    // sub-slice). Host residue: a premise SEMANTIC-PREDICATE guard stays off-machine (INV-14) — the
+    // premise's STRUCTURAL reduction is in Rho, only its value-predicate guard is host.
     let contextual_body = quote! {
         report.assert_complete().map_err(|status| {
             ::std::format!(
-                "contextual injection for language {} requires a complete Dovetail report, got {}",
+                "contextual match for language {} requires a complete Dovetail report, got {}",
                 #language_lit, status,
             )
         })?;
-        let _ = term;
+        // M-reflect (Stage 4, S-contextual): the outer context spine `K` IS the whole input `term`,
+        // reflected STRUCTURALLY to a `GroundTerm` (`__subject`) with the hole position(s) — NOT
+        // rebuilt from the report σ. The base automaton then LOCATES the hole's premise redex in the
+        // spread + EMITS its reduced value, so the host no longer reconstructs the reduced hole for
+        // the contextual MATCH path.
         let out_channel = out_channel.as_ref();
+        #reflect_subject
 
-        // Reconstruct the def exactly as `rho_net_program()` does, so the contextual join's
-        // premise channels + fingerprint are the ones the installed join was compiled with
-        // (one def, one fingerprint, no separate metadata read → no drift).
+        // Reconstruct the def exactly as `rho_net_program()` does, so the contextual join's premise
+        // channels + the ruleset's fingerprint/accept channels are the ones the installed join +
+        // σ-receivers were compiled with (one def, one fingerprint, no separate metadata read → no
+        // drift).
         let __source = <#language_struct as mettail_runtime::Language>::metadata(
             &#language_struct,
         )
         .definition_source()
         .ok_or_else(|| {
             ::std::format!(
-                "language {} has no definition source for contextual injection",
+                "language {} has no definition source for contextual match",
                 #language_lit,
             )
         })?;
         let __def = ::mettail_rholang_codegen::reconstruct_language_def(__source).map_err(|__err| {
             ::std::format!(
-                "language {} definition source did not reconstruct for contextual injection: {}",
+                "language {} definition source did not reconstruct for contextual match: {}",
                 #language_lit, __err,
             )
         })?;
 
-        // Stage 3a scope: exactly ONE congruence rule (one context to close). 0 (no join) or
-        // ≥2 (multi-congruence) fail closed.
-        let __sites = ::mettail_rholang_codegen::rho_net_contextual_injection_sites(&__def);
-        let __site = match __sites.as_slice() {
-            [__only] => __only,
-            __other => {
-                return ::core::result::Result::Err(::std::format!(
-                    "contextual injection for language {} handles a single congruence rule (Stage 3a); found {}",
-                    #language_lit, __other.len(),
-                ));
-            },
-        };
-        // Stage 3a scope: a UNARY context (one premise hole). A wider n-ary join is a later
-        // multi-premise stage.
-        let __premise_channel = match __site.premise_channels.as_slice() {
-            [__only] => __only,
-            __other => {
-                return ::core::result::Result::Err(::std::format!(
-                    "contextual injection for language {} handles a unary congruence (one premise); rule {} has {} premises",
-                    #language_lit, __site.rule_label, __other.len(),
-                ));
-            },
-        };
+        let __ruleset = ::mettail_rholang_codegen::compile_in_rho_matching_ruleset(&__def);
 
-        // The premise firing whose contractum fills the hole. Stage 3a scope: exactly one
-        // root-rooted premise firing (0 = normal form, ≥2 = multi-redex — both fail closed).
-        let __justification = match report.rewrite_justifications.as_slice() {
-            [__only] => __only,
-            __other => {
-                return ::core::result::Result::Err(::std::format!(
-                    "contextual injection for language {} handles a single premise firing (Stage 3a); the report fired {} rules",
-                    #language_lit, __other.len(),
-                ));
-            },
-        };
-
-        // Rebuild the premise firing's σ, then reconstruct the reduced hole
-        // `T = RHS_premise[σ]` — the contractum the join plugs into its context `K'`.
-        fn __mettail_rho_net_to_ground(
-            subterm: &mettail_runtime::RuntimeReflectedSubterm,
-        ) -> ::mettail_rholang_codegen::GroundTerm {
-            ::mettail_rholang_codegen::GroundTerm::new(
-                subterm.constructor.clone(),
-                subterm.children.iter().map(__mettail_rho_net_to_ground).collect(),
-            )
-        }
-        let __sigma: ::std::vec::Vec<(
-            ::std::string::String,
-            ::mettail_rholang_codegen::GroundTerm,
-        )> = __justification
-            .sigma
+        // Capability gate (FV ix `install_admits`): fail closed BEFORE any Rho reduction if any
+        // FIRED rule (the premise firing that closes the context) is skipped from in-Rho matching —
+        // a contextual rule's hole is reduced by its PREMISE's σ-receiver, so the premise rule must
+        // be matchable in Rho for the hole to fire on the reducer.
+        let __fired: ::std::vec::Vec<&str> = report
+            .rewrite_justifications
             .iter()
-            .map(|(__name, __subterm)| (__name.clone(), __mettail_rho_net_to_ground(__subterm)))
+            .map(|__justification| __justification.rule_label.as_str())
             .collect();
-        let __hole = ::mettail_rholang_codegen::reconstruct_contractum(
-            &__def,
-            &__justification.rule_label,
-            &__sigma,
-        )?;
+        if let ::core::option::Option::Some(__skipped) =
+            ::mettail_rholang_codegen::in_rho_match_gate_reject(&__ruleset.deferred, &__fired)
+        {
+            return ::core::result::Result::Err(::std::format!(
+                "contextual match gate for language {} rejects: fired rule {} is not matchable in Rho ({:?})",
+                #language_lit, __skipped.rule_label, __skipped.reason,
+            ));
+        }
 
-        // Reflect the reduced hole with the SAME fingerprint the installed join reflects its
-        // context constructors with (the install boundary requires
-        // `metadata().definition_fingerprint() == plan.definition_fingerprint()`).
-        let __fingerprint = <#language_struct as mettail_runtime::Language>::metadata(
-            &#language_struct,
+        // Build the contextual match call: the base automaton LOCATES the hole's premise redex in
+        // the ONE spread (the nested-App descent through `K`'s spine) and fires its σ-receiver; the
+        // hole bridge routes the IN-RHO reduced hole to the join's premise channel, where the
+        // installed `contextual_join_receiver_par` reassembles `⟦K'⟧` on `@out` — one atomic JOIN
+        // COMM (INV-6). The reduced hole is the automaton's nested firing, NOT `reconstruct_
+        // contractum` from the report σ.
+        let __call = ::mettail_rholang_codegen::contextual_match_call_par(
+            &__ruleset,
+            &__subject,
+            "site0",
+            out_channel,
         )
-        .definition_fingerprint()
-        .ok_or_else(|| {
+        .map_err(|__err| {
             ::std::format!(
-                "language {} has no definition fingerprint for contextual σ reflection",
-                #language_lit,
+                "contextual match for language {} could not serialize the contextual match call: {:?}",
+                #language_lit, __err,
             )
         })?;
-        let __reflected_hole =
-            ::mettail_rholang_codegen::reflect_ground_term_par(&__hole, __fingerprint);
 
-        // Deliver the reduced hole on the premise channel; the installed contextual join
-        // binds it and emits `⟦K'⟧` on `@out` — one atomic JOIN COMM (INV-6).
-        let __call = ::mettail_rholang_codegen::contextual_contract_call(
-            &[__premise_channel.as_str()],
-            ::std::vec![__reflected_hole],
-            out_channel,
-        );
         ::core::result::Result::Ok(::mettail_rholang_codegen::RhoNetInjectionInvocation {
             call: __call,
             out_channel: out_channel.to_string(),
@@ -1597,26 +1565,32 @@ pub fn generate_rho_net_invocation(language: &LanguageDef) -> TokenStream {
                 #match_body
             }
 
-            /// Build the CONTEXTUAL (congruence) JOIN injection for a single, root-rooted
-            /// premise firing of an already complete Dovetail report (Stage 3a) — the third
-            /// arm of the σ-injection F-function family (base | AC | contextual).
+            /// Build the CONTEXTUAL (congruence) JOIN injection that MATCHES IN RHO for an already
+            /// complete Dovetail report (Stage 4, S-contextual) — the third arm of the σ-injection
+            /// F-function family (base | AC | contextual).
             ///
-            /// A congruence rewrite `⟦ S ~> T |- K(S) ~> K'(T) ⟧` fires no explicit Dovetail
-            /// rule (the e-graph congruence closure closes the context implicitly), so unlike
-            /// [`Self::rho_net_invocation_from_dovetail_to`] (which dispatches on the fired
-            /// rule's OWN σ-receiver) this is driven by the PREMISE firing: reconstruct the
-            /// reduced hole `T = RHS_premise[σ]`
-            /// ([`reconstruct_contractum`](mettail_rholang_codegen::reconstruct_contractum)),
-            /// reflect it, and deliver it on the join's premise location channel via
-            /// [`contextual_contract_call`](mettail_rholang_codegen::contextual_contract_call),
-            /// where the installed [`contextual_join_receiver_par`](mettail_rholang_codegen::contextual_join_receiver_par)
-            /// binds it and emits `⟦K'⟧` on `@out` — one atomic JOIN COMM on the reducer
-            /// (INV-6). Returns codegen types (`RhoNetInjectionInvocation`) so the language
-            /// crate takes no Rho runtime dependency.
+            /// A congruence rewrite `⟦ S ~> T |- K(S) ~> K'(T) ⟧` fires no explicit Dovetail rule
+            /// (the e-graph congruence closure closes the outer context `K` implicitly), so unlike
+            /// [`Self::rho_net_invocation_from_dovetail_to`] (which dispatches on the fired rule's OWN
+            /// σ-receiver) its atomic JOIN is fed by the PREMISE redex — but that premise redex is now
+            /// MATCHED + REDUCED IN RHO, not host-reconstructed. This STRUCTURALLY reflects the whole
+            /// subject `term` (M-reflect, the outer context spine `K` with its hole positions, NOT the
+            /// report σ), compiles + GATES the in-Rho matching ruleset, and assembles the contextual
+            /// match call: the base automaton LOCATES the hole's premise redex from the ONE spread
+            /// (the nested-App descent through `K`'s spine) and fires its σ-receiver, and the hole
+            /// bridge routes that IN-RHO reduced hole to the join's premise channel, where the
+            /// installed
+            /// [`contextual_join_receiver_par`](mettail_rholang_codegen::contextual_join_receiver_par)
+            /// binds it and emits `⟦K'⟧` on `@out` — one atomic JOIN COMM on the reducer (INV-6). So
+            /// the reduced hole is the automaton's NESTED FIRING, never the report σ. Returns codegen
+            /// types (`RhoNetInjectionInvocation`) so the language crate takes no Rho runtime
+            /// dependency.
             ///
-            /// Stage 3a scope: exactly one UNARY congruence rule closed by a single
-            /// root-rooted premise firing; 0/≥2 congruence rules, a non-unary context, or a
-            /// multi-redex report fail closed (a later multi-premise stage).
+            /// Sub-slice 1 scope: exactly one UNARY congruence rule closed by a single located hole
+            /// redex; 0/≥2 congruence rules, a non-unary context, or a differing located-hole count
+            /// fail closed (the n-ary hole routing is the next sub-slice). Host residue: a premise
+            /// SEMANTIC-PREDICATE guard stays off-machine (INV-14) — the premise's STRUCTURAL
+            /// reduction runs in Rho, only its value-predicate guard is host.
             pub fn rho_net_contextual_invocation_from_dovetail_to(
                 term: &dyn mettail_runtime::Term,
                 report: &mettail_runtime::RuntimeDovetailRunReport,
@@ -1887,10 +1861,12 @@ mod tests {
 
     #[test]
     fn generated_rho_net_invocation_emits_the_contextual_join_arm() {
-        // Stage 3a: a UNARY congruence rewrite `| S ~> T |- Wrap(S) ~> Wrap(T)` (plus a base
-        // rewrite `Flip` to fire the premise) emits the contextual injection method, which
-        // reconstructs the reduced hole from the premise firing and delivers it via
-        // `contextual_contract_call` — the third arm (base | AC | contextual) of the F-fn.
+        // Stage 4 (S-contextual): a UNARY congruence rewrite `| S ~> T |- Wrap(S) ~> Wrap(T)` (plus a
+        // base rewrite `Flip` to reduce the hole) emits the contextual injection method, which now
+        // MATCHES IN RHO — it compiles the ruleset, GATES on it, STRUCTURALLY reflects the whole
+        // subject (M-reflect, NOT the report σ), and assembles the contextual match call (the base
+        // automaton LOCATES the hole's premise redex + the hole bridge routes its IN-RHO reduced hole
+        // to the join). This is the third arm (base | AC | contextual) of the F-fn.
         let language = parse(
             r#"
                 name: CtxNetGen,
@@ -1910,11 +1886,28 @@ mod tests {
             "#,
         );
         let tokens = generate_rho_net_invocation(&language).to_string();
-        // The contextual injection method + its distinctive helpers.
+        // The contextual injection method + its distinctive in-Rho MATCH helpers.
         assert!(tokens.contains("rho_net_contextual_invocation_from_dovetail_to"));
-        assert!(tokens.contains("rho_net_contextual_injection_sites"));
-        assert!(tokens.contains("reconstruct_contractum"));
-        assert!(tokens.contains("contextual_contract_call"));
+        assert!(tokens.contains("compile_in_rho_matching_ruleset"));
+        assert!(tokens.contains("in_rho_match_gate_reject"));
+        assert!(tokens.contains("contextual_match_call_par"), "the contextual match call");
+        // M-reflect: the contextual path structurally reflects `term` (the greenfield hinge)
+        // instead of reconstructing the reduced hole `T = RHS_premise[σ]` from the report σ.
+        assert!(
+            tokens.contains("__mettail_rho_net_reflect_proc"),
+            "per-category Term→GroundTerm (M-reflect)"
+        );
+        // Retirement proof (by construction): the contextual MATCH path no longer reconstructs the
+        // reduced hole from the report σ (`reconstruct_contractum`) nor host-delivers it
+        // (`contextual_contract_call`) — the hole comes from the automaton's IN-RHO nested firing.
+        assert!(
+            !tokens.contains("reconstruct_contractum"),
+            "the contextual MATCH path must not reconstruct the hole from the report σ"
+        );
+        assert!(
+            !tokens.contains("contextual_contract_call"),
+            "the contextual MATCH path must not host-deliver the reduced hole (in-Rho routing)"
+        );
         // The base arm still fires for the `Flip` premise rewrite (base | AC | contextual).
         assert!(tokens.contains("term_contract_call"));
         assert!(tokens.contains("\"Flip\"") || tokens.contains("Flip"));

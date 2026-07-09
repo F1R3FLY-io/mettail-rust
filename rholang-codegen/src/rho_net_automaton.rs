@@ -79,6 +79,15 @@ pub enum AutomatonUnsupported {
     ///
     /// [`in_rho_match_all_sites_call_par`]: crate::in_rho_match_all_sites_call_par
     NestedEntryMultiSite,
+    /// The Stage-4 S-contextual match ([`contextual_match_call_par`](crate::contextual_match_call_par))
+    /// was asked to serialize a contextual JOIN that is not the single-congruence, single-hole
+    /// (UNARY) shape this sub-slice matches in Rho: 0 or ≥2 contextual families, an n-ary (n > 1)
+    /// context, or a subject in which the automaton located a number of hole redexes other than the
+    /// one the unary context has. The reduced hole must come from EXACTLY one in-Rho nested firing at
+    /// the single hole position for the reused unary [`contextual_join_receiver_par`](crate::contextual_join_receiver_par)
+    /// to reassemble ⟦K'⟧; anything else fails closed here (the n-ary hole routing is the next
+    /// sub-slice). Never a wrong reassembly.
+    ContextualNonUnarySite,
 }
 
 /// The `locally_free` index set `indices` as a rhoapi bit vector (empty when none).

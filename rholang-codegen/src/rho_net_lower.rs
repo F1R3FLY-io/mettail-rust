@@ -1973,6 +1973,60 @@ pub fn rho_net_ac_match_entries(def: &LanguageDef) -> Vec<RhoNetAcMatchEntry> {
     entries
 }
 
+/// One in-Rho MATCHING entry for a contextual (congruence) rewrite family
+/// (`RhoNetLoweredRule::ContextualRewrite`, Stage 4 S-contextual): the data the in-Rho matcher
+/// needs to ADMIT the contextual redex and route each hole position's IN-RHO nested firing to the
+/// installed join's premise channel — so the reduced holes come from the automaton's nested
+/// firings, NOT the host-σ [`reconstruct_contractum`] report replay.
+///
+/// A contextual rewrite `⟦…S_i ~> T_i… |- K(S_1..S_n) ~> K'(T_1..T_n)⟧` fires no explicit Dovetail
+/// rule of its own (the e-graph congruence closure closes the outer context `K` implicitly), so —
+/// unlike a base rewrite or a native process — it is NOT an automaton entry (it has no positional
+/// LHS to `Match` at the root). Instead the outer context spine `K` is the subject term with `n`
+/// distinguished hole positions ℓ_i (already reflected by the base M-reflect); the base automaton's
+/// locate-all LOCATES each hole's PREMISE redex from the ONE spread (the nested-App descent through
+/// `K`'s spine), fires its σ-receiver, and the contextual match driver
+/// ([`contextual_match_call_par`](crate::contextual_match_call_par)) routes that reduced hole to the
+/// join's premise channel `c(ℓ_i)` (via [`contextual_hole_bridge_par`]) INSTEAD of a shared `OUT`.
+/// The reused, unchanged [`contextual_join_receiver_par`] then binds the `n` reduced holes and emits
+/// ⟦K'⟧. This entry carries the contextual rule label the gate admits and the `n` premise location
+/// channels the located holes route to. The VALUE is the rule's own reduced context (no host
+/// handler), so — like S-AC — the whole match AND reassembly is in Rho; the only inherent host
+/// residue is a premise's SEMANTIC-PREDICATE guard (INV-14), which stays off-machine.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RhoNetContextualMatchEntry {
+    /// The bare contextual rule label (e.g. `WrapCong`) — what the capability gate admits (so a
+    /// fired contextual rule is no longer skipped) and the match path keys the join on. Identical
+    /// to [`RhoNetContextualInjectionSite::rule_label`].
+    pub fired_rule_label: String,
+    /// The `n` premise location channels the installed [`contextual_join_receiver_par`] binds, in
+    /// premise order — the channels each located hole redex's reduced contractum routes to (via
+    /// [`contextual_hole_bridge_par`]), so the join reassembles ⟦K'⟧. Identical to
+    /// [`RhoNetContextualInjectionSite::premise_channels`]; the LAST additionally carries the
+    /// dynamic out channel (the join's `(T_{n-1}, out)` bind ABI).
+    pub premise_channels: Vec<String>,
+}
+
+/// Derive every in-Rho MATCHING entry for a language's contextual (congruence) rewrite families
+/// (Stage 4 S-contextual) — the contextual analogue of [`rho_net_native_match_entries`] /
+/// [`rho_net_ac_match_entries`], routed for the automaton MATCH path (reduced holes re-sourced from
+/// the IN-RHO nested firings at the hole positions) rather than the host-σ [`reconstruct_contractum`]
+/// replay path.
+///
+/// Reads each materialized contextual JOIN site ([`rho_net_contextual_injection_sites`] — the
+/// congruence rewrites that actually lowered to a [`RhoNetLoweredRule::ContextualRewrite`] join) and
+/// carries its rule label + premise channels. Only rewrites with a materialized join are surfaced,
+/// so an entry is always executable (its join receiver is installed).
+pub fn rho_net_contextual_match_entries(def: &LanguageDef) -> Vec<RhoNetContextualMatchEntry> {
+    rho_net_contextual_injection_sites(def)
+        .into_iter()
+        .map(|site| RhoNetContextualMatchEntry {
+            fired_rule_label: site.rule_label,
+            premise_channels: site.premise_channels,
+        })
+        .collect()
+}
+
 /// Reconstruct the reduced hole `T = RHS_premise[σ]` a fired premise rewrite produced — the
 /// contractum a contextual JOIN plugs into its context `K'`. Finds the rewrite named
 /// `rule_label` in `def` and instantiates its RHS with `σ` (the premise firing's
@@ -2222,6 +2276,79 @@ pub fn contextual_contract_call(
         call = call.append(send);
     }
     call
+}
+
+/// The intermediate PREMISE-HOLE channel `ph:{premise_channel}` an in-Rho contextual match routes
+/// a hole position's nested firing to (Stage 4 S-contextual) before the [`contextual_hole_bridge_par`]
+/// re-delivers the reduced hole on the join's premise channel.
+///
+/// The base automaton's located accept fires the hole's premise σ-receiver with THIS channel as its
+/// dynamic out, so the reduced hole `T_i` lands on `ph:c(ℓ_i)` as a bare single-value send
+/// `ph:c(ℓ_i)!(⟦T_i⟧)`. The bridge then reads it and re-sends it on the actual premise channel
+/// `c(ℓ_i)` in the join's bind ABI (the last hole additionally carrying the dynamic out). The `ph:`
+/// prefix keeps this channel DISJOINT from the join's own premise channel `c(ℓ_i)` (so the σ-receiver
+/// firing and the join never race for one send) and from every `loc:`/`cap:`/`ac:` automaton channel.
+pub fn contextual_premise_hole_channel(premise_channel: &str) -> String {
+    format!("ph:{premise_channel}")
+}
+
+/// The Stage-4 S-contextual HOLE BRIDGE: forward a hole position's IN-RHO reduced hole from its
+/// intermediate [`contextual_premise_hole_channel`] onto the installed join's premise channel in the
+/// join's bind ABI.
+///
+/// ```text
+/// for( T <- ph:c(ℓ_i) ){ c(ℓ_i)!(T [, @out]) }
+/// ```
+///
+/// The base automaton locates the hole's premise redex from the ONE spread and fires its
+/// σ-receiver, which emits the reduced hole `⟦T_i⟧` on `ph:c(ℓ_i)` (the σ-receiver's dynamic out was
+/// routed there). This one-shot bridge binds that reduced hole (`T = BoundVar(0)`) and re-delivers
+/// it on the premise channel `c(ℓ_i)` exactly as the host-σ [`contextual_contract_call`] would — a
+/// bare `c(ℓ_i)!(T)` for a non-last hole (`out_channel = None`), or `c(ℓ_i)!(T, @out)` for the LAST
+/// hole (`out_channel = Some(out)`, which also carries the join's dynamic out channel). So the
+/// reduced hole the reused [`contextual_join_receiver_par`] binds is the automaton's NESTED FIRING,
+/// never the report σ.
+pub fn contextual_hole_bridge_par(
+    hole_channel: &str,
+    premise_channel: &str,
+    out_channel: Option<&str>,
+) -> Par {
+    // The reduced hole is the single bound formal `T = BoundVar(0)`; the send is free only there.
+    let hole = bound_formal(1, 0);
+    let mut data = Vec::with_capacity(2);
+    data.push(hole);
+    if let Some(out) = out_channel {
+        // The LAST hole's send also carries the dynamic out channel (a quoted GString name), exactly
+        // how `contextual_contract_call` lowers the join's out — so the unary join's `(T_0, out)`
+        // bind is satisfied.
+        data.push(new_gstring_par(out.to_string(), Vec::new(), false));
+    }
+    let free = create_bit_vector(&[0]);
+    let body = new_send_par(
+        new_gstring_par(premise_channel.to_string(), Vec::new(), false),
+        data,
+        false,
+        free.clone(),
+        false,
+        free,
+        false,
+    );
+    let receive = Receive {
+        binds: vec![ReceiveBind {
+            patterns: vec![new_freevar_par(0, Vec::new())],
+            source: Some(new_gstring_par(hole_channel.to_string(), Vec::new(), false)),
+            remainder: None,
+            free_count: 1,
+        }],
+        body: Some(body),
+        persistent: false,
+        peek: false,
+        bind_count: 1,
+        locally_free: Vec::new(),
+        connective_used: false,
+        condition: None,
+    };
+    Par::default().with_receives(vec![receive])
 }
 
 /// The location channel of a spread term's ROOT — a `loc:`-kind quoted name
@@ -7050,6 +7177,70 @@ mod tests {
             installed.receives.len(),
             2,
             "installed = Flip σ-receiver ∥ WrapCong contextual join"
+        );
+    }
+
+    #[test]
+    fn contextual_premise_hole_channel_prefixes_ph() {
+        // The intermediate channel is DISJOINT from the join's own premise channel (the `ph:`
+        // prefix), so the σ-receiver firing and the join never race for one send.
+        assert_eq!(contextual_premise_hole_channel("c_ctx"), "ph:c_ctx");
+        assert_ne!(contextual_premise_hole_channel("c_ctx"), "c_ctx");
+    }
+
+    #[test]
+    fn contextual_hole_bridge_reroutes_the_reduced_hole_to_the_premise_channel() {
+        // Stage 4 S-contextual: the UNARY bridge `for (T <- ph:c_ctx) { c_ctx!(T, @OUT) }` — the
+        // LAST (unary) hole carries @out, satisfying the join's `(T_0, out)` bind ABI.
+        let bridge = contextual_hole_bridge_par("ph:c_ctx", "c_ctx", Some("OUT"));
+        assert_eq!(bridge.receives.len(), 1, "one bridge receive");
+        let receive = &bridge.receives[0];
+        assert!(!receive.persistent, "the hole bridge is one-shot (a single located hole)");
+        assert_eq!(receive.bind_count, 1, "binds the single reduced hole T");
+        assert_eq!(receive.binds.len(), 1);
+        assert_eq!(
+            send_channel_gstring_of_bind(&receive.binds[0]),
+            Some("ph:c_ctx".to_string()),
+            "the bridge reads the reduced hole off the intermediate ph: channel"
+        );
+        let body = receive.body.as_ref().expect("bridge body");
+        assert_eq!(body.sends.len(), 1, "one re-delivery send");
+        let send = &body.sends[0];
+        assert_eq!(
+            send_channel_gstring(send),
+            Some("c_ctx".to_string()),
+            "the bridge re-delivers on the join's premise channel"
+        );
+        assert_eq!(send.data.len(), 2, "the last hole carries the reduced hole T and @out");
+        assert_eq!(
+            gstring_value(&send.data[1]),
+            Some("OUT".to_string()),
+            "the dynamic out channel rides the last premise send"
+        );
+    }
+
+    #[test]
+    fn contextual_hole_bridge_non_last_omits_the_out_channel() {
+        // A non-last hole (n-ary, the next sub-slice) carries only its hole: `for (T <- ph:c0) {
+        // c0!(T) }` — matching the join's non-last single-slot bind.
+        let bridge = contextual_hole_bridge_par("ph:c0", "c0", None);
+        let send = &bridge.receives[0].body.as_ref().expect("body").sends[0];
+        assert_eq!(send.data.len(), 1, "a non-last hole carries only its reduced hole");
+        assert_eq!(send_channel_gstring(send), Some("c0".to_string()));
+    }
+
+    #[test]
+    fn contextual_match_entries_mirror_the_injection_sites() {
+        // The match entries carry the SAME rule label + premise channels the installed join was
+        // compiled with (the coherence anchor), so the routed hole lands on the join's channel.
+        let def = ctx_demo_def();
+        let entries = rho_net_contextual_match_entries(&def);
+        let sites = rho_net_contextual_injection_sites(&def);
+        assert_eq!(entries.len(), 1, "one contextual family (WrapCong)");
+        assert_eq!(entries[0].fired_rule_label, "WrapCong");
+        assert_eq!(
+            entries[0].premise_channels, sites[0].premise_channels,
+            "the match entry carries the join's premise channels verbatim"
         );
     }
 }
