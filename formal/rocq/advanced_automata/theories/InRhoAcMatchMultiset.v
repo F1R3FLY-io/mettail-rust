@@ -256,6 +256,102 @@ Section SiteKeyedCarrierDisjointness.
 
 End SiteKeyedCarrierDisjointness.
 
+(* ============================================================================================= *)
+(* Stage 4 (S-AC, AC4) — the located SET / MAP / ZIP = the SUBJECT operand collection.            *)
+(*                                                                                               *)
+(* AC4 extends the in-Rho AC match from the process-soup HashBag carrier to the NATIVE carriers   *)
+(* `ESet` (HashSet), `EMap` (HashMap), and a structured paired `ESet` (ZipAc). Each is re-sourced  *)
+(* from the SPREAD of the reflected subject, EXACTLY as the HashBag soup: the located collection    *)
+(* PERMUTES the subject operand collection (the reflect is order-independent; `ParSet`/`ParMap`     *)
+(* additionally sort + dedupe). The element-multiset match (`sub_multiset`) is carrier-AGNOSTIC —   *)
+(* it is defined over the element identities — so the located = subject arms REUSE                 *)
+(* `sub_multiset_perm_iff` verbatim (appended here, the HashBag arms above untouched). The NEW      *)
+(* content per kind is the EXTRA carrier invariant, each preserved under the located permutation:   *)
+(* SET uniqueness (`NoDup`), MAP key-uniqueness (`NoDup` of the keys), ZIP correlation (a shared    *)
+(* first component across two picked elements). These are the AC4 analogue of `located_matches_     *)
+(* subject`, so re-sourcing a set/map/zip collection from the spread neither adds nor drops a match *)
+(* and never violates the native carrier's invariant.                                             *)
+(* ============================================================================================= *)
+
+Section LocatedSetFromSubject.
+
+  (* AC4-set (HashSet -> ESet): the operand SET as the M-reflect walk produces it from the subject,
+     and the LOCATED set the co-installed `ac_set_pattern` receiver reads off the ESet carrier. Being
+     the SAME elements (the ParSet is order-independent), the located set PERMUTES the subject set. A
+     SET carries no duplicate (the ParSet uniqueness invariant). *)
+  Variable subject_set located_set : list nat.
+  Hypothesis set_located_is_spread : Permutation located_set subject_set.
+  Hypothesis subject_set_nodup : NoDup subject_set.
+
+  (* The ESet AC match set over the LOCATED set EQUALS that over the SUBJECT set (order-independent —
+     the native `list_match_single_` picks a sub-multiset of DISTINCT set elements + a residual set). *)
+  Theorem located_set_matches_subject : forall selection,
+    sub_multiset selection located_set <-> sub_multiset selection subject_set.
+  Proof. intro selection. apply sub_multiset_perm_iff. exact set_located_is_spread. Qed.
+
+  (* SET UNIQUENESS survives the reflect: the located set is still duplicate-free, so the ESet carrier
+     is a genuine set (no element is picked twice as two "distinct" slots). *)
+  Theorem located_set_nodup : NoDup located_set.
+  Proof.
+    apply (Permutation_NoDup (Permutation_sym set_located_is_spread)). exact subject_set_nodup.
+  Qed.
+
+End LocatedSetFromSubject.
+
+Section LocatedMapFromSubject.
+
+  (* AC4-map (HashMap -> EMap): the operand map, modelled by its KEY list (nat identities), as the
+     subject produces it and as the located `ac_map_pattern` receiver reads it off the EMap carrier.
+     The located keys PERMUTE the subject keys (the ParMap is key-sorted + deduped — a reordering).
+     KEY-UNIQUENESS is `NoDup` of the keys (the ParMap invariant). *)
+  Variable subject_map_keys located_map_keys : list nat.
+  Hypothesis map_located_is_spread : Permutation located_map_keys subject_map_keys.
+  Hypothesis subject_map_key_unique : NoDup subject_map_keys.
+
+  (* The EMap AC match set over the LOCATED map (its keys) EQUALS that over the SUBJECT map — the
+     native match picks k entries + binds a residual map, order-independent over the key multiset. *)
+  Theorem located_map_matches_subject : forall selection,
+    sub_multiset selection located_map_keys <-> sub_multiset selection subject_map_keys.
+  Proof. intro selection. apply sub_multiset_perm_iff. exact map_located_is_spread. Qed.
+
+  (* KEY-UNIQUENESS survives the reflect: the located map's keys are still duplicate-free, so the
+     located EMap carrier upholds the ParMap key-unique invariant the decoder relies on. *)
+  Theorem located_map_key_unique : NoDup located_map_keys.
+  Proof.
+    apply (Permutation_NoDup (Permutation_sym map_located_is_spread)). exact subject_map_key_unique.
+  Qed.
+
+End LocatedMapFromSubject.
+
+Section LocatedZipFromSubject.
+
+  (* AC4-zip (ZipAc): the operand set of STRUCTURED elements, modelled as pairs (nat * nat) — the
+     first component is the correlated key `a` in `Pair(a, _)`. The located paired set PERMUTES the
+     subject paired set (the ESet re-sourcing). The `Receive.condition` `EEq(a_0, a_1)` picks two
+     elements with EQUAL first component — the CORRELATION. *)
+  Variable subject_pairs located_pairs : list (nat * nat).
+  Hypothesis zip_located_is_spread : Permutation located_pairs subject_pairs.
+
+  (* CORRELATION PRESERVED: a correlated pair (`fst e1 = fst e2`) of LOCATED elements is exactly a
+     correlated pair of SUBJECT elements — `In` is permutation-invariant and the guard is a property
+     of the two elements. So the paired match the reducer commits under the guard is the subject's. *)
+  Theorem located_zip_correlation_matches_subject : forall e1 e2,
+    (In e1 located_pairs /\ In e2 located_pairs /\ fst e1 = fst e2) <->
+    (In e1 subject_pairs /\ In e2 subject_pairs /\ fst e1 = fst e2).
+  Proof.
+    intros e1 e2. split.
+    - intros [H1 [H2 Hc]]. split; [| split ].
+      + apply (Permutation_in e1 zip_located_is_spread). exact H1.
+      + apply (Permutation_in e2 zip_located_is_spread). exact H2.
+      + exact Hc.
+    - intros [H1 [H2 Hc]]. split; [| split ].
+      + apply (Permutation_in e1 (Permutation_sym zip_located_is_spread)). exact H1.
+      + apply (Permutation_in e2 (Permutation_sym zip_located_is_spread)). exact H2.
+      + exact Hc.
+  Qed.
+
+End LocatedZipFromSubject.
+
 Print Assumptions ac_match_iff_partition.
 Print Assumptions ac_match_sound.
 Print Assumptions ac_match_complete.
@@ -266,3 +362,8 @@ Print Assumptions located_match_is_independent_of_report.
 Print Assumptions located_ac_match_iff_partition_subject.
 Print Assumptions carrier_site_keyed_injective.
 Print Assumptions carrier_read_independent.
+Print Assumptions located_set_matches_subject.
+Print Assumptions located_set_nodup.
+Print Assumptions located_map_matches_subject.
+Print Assumptions located_map_key_unique.
+Print Assumptions located_zip_correlation_matches_subject.
