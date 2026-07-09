@@ -19,6 +19,7 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 
 use dovetail::rules::Pattern as DvPattern;
 use dovetail::set_automaton::{AutomatonNode, PatternId, SetAutomaton};
+use mettail_ast::grammar::{GrammarItem, TermParam};
 use mettail_ast::identity::language_definition_fingerprint;
 use mettail_ast::language::LanguageDef;
 use mettail_ast::pattern::{Pattern, PatternTerm};
@@ -30,7 +31,7 @@ use crate::rho_net_automaton::{
 use crate::rho_net_lower::{
     ac_match_call_par, contextual_hole_bridge_par, contextual_premise_hole_channel,
     spread_child_location, spread_term_par, GroundTerm, RhoNetAcMatchEntry,
-    RhoNetContextualMatchEntry,
+    RhoNetContextualMatchEntry, LAMBDA_REFLECT_LABEL, MULTILAMBDA_REFLECT_LABEL,
 };
 
 /// Why an LHS pattern has no structural set-automaton image (fail-closed to a later
@@ -87,6 +88,109 @@ fn convert_term(term: &PatternTerm) -> Result<DvPattern<String>, PatternConvertR
         PatternTerm::Lambda { .. } | PatternTerm::MultiLambda { .. } => {
             Err(PatternConvertReject::Binder)
         },
+        PatternTerm::Subst { .. } | PatternTerm::MultiSubst { .. } => {
+            Err(PatternConvertReject::Subst)
+        },
+    }
+}
+
+/// The binder constructors of a language mapped to their RESERVED reflection tag (Stage 4
+/// S-binder): a single-binder constructor (a `TermParam::Abstraction`, e.g. `Lam` from
+/// `^x.body:[Term -> Term]`) → [`LAMBDA_REFLECT_LABEL`] (`^lambda`); a multi-binder
+/// (`TermParam::MultiAbstraction`) → [`MULTILAMBDA_REFLECT_LABEL`] (`^multilambda`).
+///
+/// This is the CODEGEN-side dual of the macro `reflect_category_fn`'s
+/// Binder/MultiBinder arm: the M-reflect subject reflection tags a runtime `Lam(scope)`
+/// node `^lambda`, so a subst rewrite whose LHS names that binder constructor must convert
+/// `Lam` to the SAME `^lambda` op for the automaton entry to MATCH the reflected subject.
+/// An old-syntax binder without a `term_context` (a bare `GrammarItem::Binder`) is treated
+/// as a single binder.
+fn binder_reflect_tags(def: &LanguageDef) -> HashMap<String, &'static str> {
+    let mut tags: HashMap<String, &'static str> = HashMap::new();
+    for term in &def.terms {
+        let label = term.label.to_string();
+        if let Some(params) = &term.term_context {
+            let mut is_single = false;
+            let mut is_multi = false;
+            for param in params {
+                match param {
+                    TermParam::Abstraction { .. } => is_single = true,
+                    TermParam::MultiAbstraction { .. } => is_multi = true,
+                    _ => {},
+                }
+            }
+            if is_multi {
+                tags.insert(label, MULTILAMBDA_REFLECT_LABEL);
+            } else if is_single {
+                tags.insert(label, LAMBDA_REFLECT_LABEL);
+            }
+        } else if term.items.iter().any(|item| matches!(item, GrammarItem::Binder { .. })) {
+            tags.insert(label, LAMBDA_REFLECT_LABEL);
+        }
+    }
+    tags
+}
+
+/// Convert a binder/β-substitution rewrite's LHS pattern to its dovetail set-automaton input
+/// (Stage 4 S-binder), REMAPPING each binder constructor to its reserved reflection tag via
+/// `binder_tags`. Unlike the base [`convert_lhs_pattern`] (which keeps `Lam` as the op and rejects
+/// `\x.` / `^[…].` binder metasyntax), this maps a binder constructor `Lam` → `^lambda` (and a
+/// `Lambda` / `MultiLambda` node → `^lambda` / `^multilambda` over its converted body, the binder
+/// De Bruijn-implicit), so `App(Lam(fun), arg)` compiles to the nested App entry
+/// `App(^lambda(fun), arg)` that MATCHES the M-reflect subject (whose `Lam` node reflects to
+/// `^lambda`) and CAPTURES `(fun, arg)`. Total over `Pattern`: every node converts or returns a
+/// typed reject. The base converter is left BYTE-IDENTICAL (no landed base/native/AC/contextual
+/// admission changes); only the S-binder subst admission uses this binder-aware path.
+fn convert_subst_lhs(
+    p: &Pattern,
+    binder_tags: &HashMap<String, &'static str>,
+) -> Result<DvPattern<String>, PatternConvertReject> {
+    match p {
+        Pattern::Term(term) => convert_subst_term(term, binder_tags),
+        Pattern::Collection { .. } | Pattern::Map { .. } | Pattern::Zip { .. } => {
+            Err(PatternConvertReject::CollectionSearch)
+        },
+    }
+}
+
+fn convert_subst_term(
+    term: &PatternTerm,
+    binder_tags: &HashMap<String, &'static str>,
+) -> Result<DvPattern<String>, PatternConvertReject> {
+    match term {
+        PatternTerm::Var(id) => Ok(DvPattern::var(id.to_string())),
+        PatternTerm::Apply { constructor, args } => {
+            // A binder constructor (`Lam`) reflects to `^lambda`; a plain constructor (`App`, `F`)
+            // keeps its label — the SAME op the M-reflect subject tags the node with.
+            let op = binder_tags
+                .get(constructor.to_string().as_str())
+                .map(|tag| (*tag).to_string())
+                .unwrap_or_else(|| constructor.to_string());
+            if let [Pattern::Collection { elements, rest, .. }] = args.as_slice() {
+                let fixed = elements
+                    .iter()
+                    .map(|p| convert_subst_lhs(p, binder_tags))
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(DvPattern::ac(op, fixed, rest.as_ref().map(|r| r.to_string())))
+            } else {
+                let converted = args
+                    .iter()
+                    .map(|p| convert_subst_lhs(p, binder_tags))
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(DvPattern::app(op, converted))
+            }
+        },
+        // A `\x.body` / `^[…].body` binder written in binder metasyntax reflects to
+        // `^lambda` / `^multilambda` over its converted body; the binder is De Bruijn-implicit.
+        PatternTerm::Lambda { body, .. } => {
+            let body_pat = convert_subst_lhs(body, binder_tags)?;
+            Ok(DvPattern::app(LAMBDA_REFLECT_LABEL.to_string(), vec![body_pat]))
+        },
+        PatternTerm::MultiLambda { body, .. } => {
+            let body_pat = convert_subst_lhs(body, binder_tags)?;
+            Ok(DvPattern::app(MULTILAMBDA_REFLECT_LABEL.to_string(), vec![body_pat]))
+        },
+        // A subst/multisubst on the LHS has no positional image (it is a host-computed σ slot).
         PatternTerm::Subst { .. } | PatternTerm::MultiSubst { .. } => {
             Err(PatternConvertReject::Subst)
         },
@@ -209,6 +313,23 @@ pub fn compile_in_rho_matching_ruleset(def: &LanguageDef) -> InRhoMatchingRulese
     let contextual_admitted: HashSet<&str> =
         contextual_dispatch.iter().map(|entry| entry.fired_rule_label.as_str()).collect();
 
+    // Stage 4 (S-binder): ADMIT the binder/β-substitution rewrites. A subst rewrite lowered to a
+    // `SubstRewrite` σ-receiver (NOT a base rewrite), so `site_channel` misses it and it would
+    // otherwise defer `NotBaseRewrite` (the gate would reject the match path). Its LHS
+    // `App(Lam(fun), arg)` is a NESTED App over a BINDER constructor; the binder constructor
+    // reflects to the reserved `^lambda`/`^multilambda` tag (`binder_reflect_tags`) — the SAME tag
+    // the M-reflect subject reflection emits for a runtime `Lam(scope)` node — so
+    // `convert_subst_lhs` yields the `App(^lambda(fun), arg)` automaton entry that MATCHES the
+    // reflected subject + CAPTURES `(fun, arg)`. Its accept routes to the subst σ-receiver SOURCE
+    // channel (exactly like a base rewrite's accept), where the installed `SubstRewrite` σ-receiver
+    // forwards the fun (scope-body) slot. In the MATCH path that slot carries the RAW captured body
+    // (the automaton's in-Rho capture), NOT the host-computed reduct — the capture-avoiding
+    // substitution (the in-Rho subst TRS) is S-binder slice 2. This slice LOCATES + captures.
+    let subst_sites = crate::rho_net_subst_injection_sites(def);
+    let subst_site_channel: HashMap<&str, &str> =
+        subst_sites.iter().map(|s| (s.rule_label.as_str(), s.channel.as_str())).collect();
+    let binder_tags = binder_reflect_tags(def);
+
     let mut pairs: Vec<(PatternId, DvPattern<String>)> = Vec::with_capacity(def.rewrites.len());
     let mut accept_channels: Vec<(PatternId, String)> = Vec::new();
     let mut deferred: Vec<DeferredRewrite> = Vec::new();
@@ -224,6 +345,26 @@ pub fn compile_in_rho_matching_ruleset(def: &LanguageDef) -> InRhoMatchingRulese
                 if ac_admitted.contains(label.as_str())
                     || contextual_admitted.contains(label.as_str())
                 {
+                    continue;
+                }
+                // Stage 4 (S-binder): admit a binder/β-substitution rewrite as a `^lambda`-remapped
+                // nested App automaton entry, routed to its `SubstRewrite` σ-receiver source channel
+                // (the coherence anchor, exactly like a base rewrite's accept). A binder LHS with no
+                // positional image (e.g. a subst/collection-search arg) fails closed via
+                // `convert_subst_lhs`.
+                if let Some(channel) = subst_site_channel.get(label.as_str()) {
+                    match convert_subst_lhs(&rewrite.left, &binder_tags) {
+                        Ok(pattern) => {
+                            pairs.push((PatternId(index), pattern));
+                            accept_channels.push((PatternId(index), (*channel).to_string()));
+                        },
+                        Err(reject) => {
+                            deferred.push(DeferredRewrite {
+                                rule_label: label,
+                                reason: DeferReason::Convert(reject),
+                            });
+                        },
+                    }
                     continue;
                 }
                 deferred.push(DeferredRewrite {

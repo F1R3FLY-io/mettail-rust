@@ -535,13 +535,40 @@ fn reflect_category_fn(language: &LanguageDef, category: &Ident) -> TokenStream 
                     )
                 }
             },
+            // Stage 4 (S-binder): a VARIABLE leaf (`Term::TVar(OrdVar)`) reflects DE-BRUIJN. The
+            // runtime is already de-Bruijn (moniker), so a BOUND occurrence
+            // `Var::Bound{scope, binder}` reflects to a `^bound(peano(scope))` leaf — the reserved
+            // `^bound` tag over a Peano numeral `S(S(…(Z)))` of the scope offset — and a genuinely
+            // FREE occurrence to a `^free(name)` leaf. This is what lets a binder body (reflected
+            // under the `^lambda` arm below) carry its bound occurrences as structural ground nodes,
+            // so the set-automaton can LOCATE + CAPTURE an `App(^lambda(body), arg)` β-redex in Rho
+            // (the reduct — the capture-avoiding substitution — is deferred to the S-binder slice-2
+            // in-Rho TRS; this slice only MATCHES + captures `(body, arg)`). The `^`-prefixed tags
+            // are unforgeable vs any user `Ident`; `Z`/`S` are only meaningful UNDER `^bound`.
             VariantKind::Var { label } => {
-                let msg = lit(&format!(
-                    "in-Rho match reflection: {label} is a variable leaf with no structural ground image"
-                ));
+                let bound_lit = lit(mettail_rholang_codegen::BOUND_VAR_REFLECT_LABEL);
+                let free_lit = lit(mettail_rholang_codegen::FREE_VAR_REFLECT_LABEL);
+                let zero_lit = lit(mettail_rholang_codegen::PEANO_ZERO_REFLECT_LABEL);
+                let succ_lit = lit(mettail_rholang_codegen::PEANO_SUCC_REFLECT_LABEL);
                 quote! {
-                    #category::#label(..) =>
-                        ::core::result::Result::Err(::std::string::String::from(#msg))
+                    #category::#label(__ordvar) => match &__ordvar.0 {
+                        mettail_runtime::Var::Bound(__bv) => {
+                            let mut __peano = #ground::new(#zero_lit, ::std::vec::Vec::new());
+                            for _ in 0..__bv.scope.0 {
+                                __peano = #ground::new(#succ_lit, ::std::vec![__peano]);
+                            }
+                            ::core::result::Result::Ok(#ground::new(#bound_lit, ::std::vec![__peano]))
+                        },
+                        mettail_runtime::Var::Free(__fv) => ::core::result::Result::Ok(
+                            #ground::new(
+                                #free_lit,
+                                ::std::vec![#ground::new(
+                                    ::std::format!("{:?}", __fv),
+                                    ::std::vec::Vec::new(),
+                                )],
+                            )
+                        ),
+                    }
                 }
             },
             // An AC operand COLLECTION `op(HashBag<E>)` / `op(HashSet<E>)` (Stage 4 S-AC / AC4)
@@ -612,9 +639,42 @@ fn reflect_category_fn(language: &LanguageDef, category: &Ident) -> TokenStream 
                     }
                 },
             },
+            // Stage 4 (S-binder): a single BINDER node (`Term::Lam(Scope<Binder, Arc<Body>>)`)
+            // reflects to `^lambda([⟦body⟧])` — the reserved `^lambda` tag over the reflected scope
+            // BODY (read via `unsafe_body()`, which preserves the de-Bruijn coordinates: a bound
+            // occurrence in the body reflects to `^bound(peano(n))` under the `Var` arm, NOT a fresh
+            // free var). The bound variable is de-Bruijn-IMPLICIT (no named binder leaf), so the node
+            // has exactly ONE child — the shape an `App(^lambda(body), arg)` automaton entry matches.
+            // A MultiBinder reflects to `^multilambda([⟦body⟧])` identically. A binder WITH
+            // pre-scope fields (e.g. `PInput(chan, ^x.body)`) has no single-child `^lambda` image in
+            // this slice and fails CLOSED (routing that firing to the σ-replay driver).
+            VariantKind::Binder { label, pre_scope_fields, body_cat, .. }
+                if pre_scope_fields.is_empty() =>
+            {
+                let lambda_lit = lit(mettail_rholang_codegen::LAMBDA_REFLECT_LABEL);
+                let body_fn = reflect_fn_name(&body_cat);
+                quote! {
+                    #category::#label(__scope) => {
+                        let __body = #body_fn(__scope.unsafe_body().as_ref())?;
+                        ::core::result::Result::Ok(#ground::new(#lambda_lit, ::std::vec![__body]))
+                    }
+                }
+            },
+            VariantKind::MultiBinder { label, pre_scope_fields, body_cat, .. }
+                if pre_scope_fields.is_empty() =>
+            {
+                let multilambda_lit = lit(mettail_rholang_codegen::MULTILAMBDA_REFLECT_LABEL);
+                let body_fn = reflect_fn_name(&body_cat);
+                quote! {
+                    #category::#label(__scope) => {
+                        let __body = #body_fn(__scope.unsafe_body().as_ref())?;
+                        ::core::result::Result::Ok(#ground::new(#multilambda_lit, ::std::vec![__body]))
+                    }
+                }
+            },
             VariantKind::Binder { label, .. } | VariantKind::MultiBinder { label, .. } => {
                 let msg = lit(&format!(
-                    "in-Rho match reflection: {label} is a binder node with no positional ground image"
+                    "in-Rho match reflection: {label} is a binder node with pre-scope fields — no single-child ^lambda ground image in this slice"
                 ));
                 quote! {
                     #category::#label(..) =>

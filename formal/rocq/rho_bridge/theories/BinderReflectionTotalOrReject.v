@@ -388,8 +388,145 @@ Section BinderReflectionTotalOrReject.
 
 End BinderReflectionTotalOrReject.
 
+(* ===========================================================================
+   STAGE 4 S-binder (slice 1): the INDEXED-PEANO MATCH-side reflection.
+
+   The section above models the RHS *pattern* reflection (`reflect_term_par_env`) — NAMED binders,
+   host-computed σ-slots. The Stage-4 S-binder MATCH path instead reflects the RUNTIME SUBJECT term
+   (the macro `reflect_category_fn`, `macros/src/gen/runtime/rho_invocation.rs`), which is ALREADY
+   de-Bruijn (moniker). So a BOUND occurrence `Var::Bound{scope=n}` reflects to `^bound(peano n)`
+   (the reserved `^bound` tag over a Peano numeral `S(S(…Z))` of the scope offset), a FREE
+   occurrence to `^free name`, a single binder `Lam(^x. body)` to `^lambda([⟦body⟧])` (ONE child,
+   the binder De Bruijn-IMPLICIT), and a structural constructor node to its op-tagged image.
+
+   This is a TOTAL subject reflection (every runtime term has a ground image — no σ-slot failure).
+   The added obligation this slice discharges: it is INJECTIVE (distinct runtime terms → distinct
+   ground images), with the reserved `^`-tags collision-free vs the structural nodes, so the
+   set-automaton's `App(^lambda(body), arg)` entry matches the reflected β-redex UNAMBIGUOUSLY. The
+   REDUCT (the capture-avoiding substitution turning the captured `(body, arg)` into `b[a/0]`) is
+   S-binder SLICE 2's in-Rho TRS — NOT modeled here (this slice MATCHES + captures).
+
+   Rocq 9.1 compatible. No Admitted, no Axioms, no Assumptions.
+   =========================================================================== *)
+
+Section MatchSideIndexedPeanoReflection.
+
+  (* Peano numeral for a De Bruijn scope offset: `^bound(peano n)` reflects a runtime
+     `Var::Bound{scope=n}` to the reserved `^bound` tag over `S(S(…(Z)))` with n `S`s. (Constructor
+     names carry an `M`/`MR` prefix — the RHS-pattern section above already defines global
+     `RTerm`/`PTerm` constructors; Inductives are NOT section-discharged, so the prefixes avoid the
+     collision.) *)
+  Inductive MPeano : Type :=
+    | MPZ : MPeano
+    | MPS : MPeano -> MPeano.
+
+  Fixpoint mpeano (n : nat) : MPeano :=
+    match n with
+    | O => MPZ
+    | S m => MPS (mpeano m)
+    end.
+
+  (* mpeano is INJECTIVE: distinct scope offsets give distinct numerals (hence distinct `^bound`
+     leaves) — the numeric core of the binder-node injectivity. *)
+  Lemma mpeano_inj : forall m n, mpeano m = mpeano n -> m = n.
+  Proof.
+    induction m as [| m IH]; intros [| n] H; simpl in H; try discriminate H.
+    - reflexivity.
+    - injection H as H. f_equal. apply IH. exact H.
+  Qed.
+
+  (* A runtime term, already de-Bruijn (the MATCH-side subject the M-reflect walk reads): a BOUND
+     occurrence at scope [n] (`Var::Bound{scope=n}`), a FREE occurrence [x] (`Var::Free`), a
+     structural constructor node (nullary `A` / unary `F(·)` / binary `App(·,·)` — the LambdaDemo
+     β-redex shapes, exactly as the existing [PApp] models the App arm binary), or a single binder
+     [MLam body] (`Lam(^x. body)`). *)
+  Inductive MTerm : Type :=
+    | MBound : nat -> MTerm
+    | MFree  : nat -> MTerm
+    | MNode0 : nat -> MTerm
+    | MNode1 : nat -> MTerm -> MTerm
+    | MNode2 : nat -> MTerm -> MTerm -> MTerm
+    | MLam   : MTerm -> MTerm.
+
+  (* The reflected GROUND image (a `GroundTerm`): the reserved `^bound(mpeano n)` leaf, the reserved
+     `^free x` leaf, an op-tagged structural node (`MRNode·`, SAME arity as the source), or the
+     reserved `^lambda([body])` binder node (ONE child, the binder De Bruijn-IMPLICIT). The three
+     reserved kinds ([MRBound]/[MRFree]/[MRLam]) are pairwise distinct from each other AND from every
+     structural node — the `^`-prefixed tags are unforgeable. *)
+  Inductive MImg : Type :=
+    | MRBound : MPeano -> MImg
+    | MRFree  : nat -> MImg
+    | MRNode0 : nat -> MImg
+    | MRNode1 : nat -> MImg -> MImg
+    | MRNode2 : nat -> MImg -> MImg -> MImg
+    | MRLam   : MImg -> MImg.
+
+  (* The MATCH-side reflection: TOTAL (a subject always has a ground image, unlike the RHS pattern
+     reflection which can fail on a dangling σ-slot). A bound var → `^bound(mpeano scope)`; a free
+     var → `^free name`; a structural node → its op-tagged image; a binder → `^lambda([⟦body⟧])`. *)
+  Fixpoint mreflect (t : MTerm) : MImg :=
+    match t with
+    | MBound n => MRBound (mpeano n)
+    | MFree x => MRFree x
+    | MNode0 op => MRNode0 op
+    | MNode1 op a => MRNode1 op (mreflect a)
+    | MNode2 op a b => MRNode2 op (mreflect a) (mreflect b)
+    | MLam body => MRLam (mreflect body)
+    end.
+
+  (* COLLISION-FREEDOM (the reserved `^lambda` tag never collides): whatever reflects to a binder
+     node IS a binder — no structural node and no variable reflects to it. *)
+  Theorem mreflect_lambda_collision_free : forall body t,
+    mreflect (MLam body) = mreflect t -> exists b, t = MLam b.
+  Proof.
+    intros body t H. destruct t; simpl in H; try discriminate H.
+    exists t. reflexivity.
+  Qed.
+
+  (* COLLISION-FREEDOM (the reserved `^bound` tag never collides): whatever reflects to a `^bound`
+     leaf IS a bound occurrence — no structural node, no free var, no binder reflects to it. *)
+  Theorem mreflect_bound_collision_free : forall n t,
+    mreflect (MBound n) = mreflect t -> exists m, t = MBound m.
+  Proof.
+    intros n t H. destruct t; simpl in H; try discriminate H.
+    exists n0. reflexivity.
+  Qed.
+
+  (* COLLISION-FREEDOM (the reserved `^free` tag never collides). *)
+  Theorem mreflect_free_collision_free : forall x t,
+    mreflect (MFree x) = mreflect t -> exists y, t = MFree y.
+  Proof.
+    intros x t H. destruct t; simpl in H; try discriminate H.
+    exists n. reflexivity.
+  Qed.
+
+  (* INJECTIVITY: distinct runtime terms reflect to distinct ground images — the MATCH reflection
+     loses no information. The `^bound` case reduces to [mpeano_inj]; every other case is structural.
+     So the reflected β-redex `App(^lambda(F(^bound Z)), A)` is an UNAMBIGUOUS automaton subject. *)
+  Theorem mreflect_inj : forall t1 t2, mreflect t1 = mreflect t2 -> t1 = t2.
+  Proof.
+    induction t1 as [n1 | x1 | op1 | op1 a1 IHa1 | op1 a1 IHa1 b1 IHb1 | body1 IHbody1];
+      intros t2 H; destruct t2 as [n2 | x2 | op2 | op2 a2 | op2 a2 b2 | body2];
+      simpl in H; try discriminate H.
+    - injection H as H. apply mpeano_inj in H. subst n2. reflexivity.
+    - injection H as H. subst x2. reflexivity.
+    - injection H as H. subst op2. reflexivity.
+    - injection H as Hop Ha. subst op2. f_equal. apply IHa1. exact Ha.
+    - injection H as Hop Ha Hb. subst op2. f_equal.
+      + apply IHa1. exact Ha.
+      + apply IHb1. exact Hb.
+    - injection H as Hb. f_equal. apply IHbody1. exact Hb.
+  Qed.
+
+End MatchSideIndexedPeanoReflection.
+
 (* Zero-admission confirmation. *)
 Print Assumptions binder_excluded.
 Print Assumptions free_lam_char.
 Print Assumptions reflect_inj.
 Print Assumptions reflect_binder_node_collision_free.
+Print Assumptions mpeano_inj.
+Print Assumptions mreflect_lambda_collision_free.
+Print Assumptions mreflect_bound_collision_free.
+Print Assumptions mreflect_free_collision_free.
+Print Assumptions mreflect_inj.

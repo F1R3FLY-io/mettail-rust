@@ -623,6 +623,98 @@ Section NativeValueResidue.
 
 End NativeValueResidue.
 
+(* ============================================================================
+   STAGE 4 S-binder (slice 1): the BINDER-FRAME LOCATE arm — `App(^lambda(body), arg)`
+   matching in-Rho (the λ-calculus β-redex).
+
+   The β-redex `App(Lam(^x. b), a)` M-reflects (Stage 4 S-binder) to the NESTED App node
+   `App(^lambda(⟦b⟧), ⟦a⟧)`: the binder reflects to the reserved `^lambda` tag over its body (the
+   bound `x` De Bruijn-implicit, its occurrences `^bound(peano)` leaves — see
+   `BinderReflectionTotalOrReject.v`'s indexed-Peano reflection). So the β-LHS compiles
+   (`convert_subst_lhs`, `rholang-codegen/src/rho_net_ruleset.rs`) to the NESTED App PATTERN
+   `App(^lambda(body), arg)` — a plain nested App over two Var-leaf captures — and its redex
+   LOCATION + `(body, arg)` CAPTURE are the general Stage-4 nested-App case: the M-reflect /
+   locate-all set-automaton LOCATES the App-rooted β-redex in the reflected subject and binds its
+   positional σ = (body, arg). The redex accept routes to the installed `Beta` `SubstRewrite`
+   σ-receiver, which forwards the captured BODY slot.
+
+   SLICE BOUNDARY (reduct fail-closed): this slice MATCHES + captures ONLY. The capture-avoiding
+   substitution (the in-Rho subst TRS turning the captured `(body, arg)` into the β-reduct
+   `b[a/0]`) is S-binder SLICE 2 — deliberately NOT modeled here. The delivered value is the RAW
+   captured body, NOT the reduct.
+
+   This section names the binder-frame pattern explicitly and proves it is LOCATED + positional-σ-
+   bound by the SAME automaton theorems the base / native arms use
+   (`inrho_stage4_locates_all_and_binds_positional_sigma`), plus a concrete β-redex witness whose
+   located σ is EXACTLY `(body, arg)`. Rocq 9.1 compatible. No Admitted, no Axioms, no Assumptions.
+   ============================================================================ *)
+
+(* The binder-frame β pattern `App(^lambda(body), arg)` — a NESTED App: op [op_app] over
+   [PApp op_lambda [PVar]] (the `^lambda(body)` sub-pattern, one Var-leaf body capture) and [PVar]
+   (the arg capture). [op_app] / [op_lambda] are the reserved op ids. *)
+Definition binder_beta_pattern (op_app op_lambda : nat) : Pat :=
+  PApp op_app [PApp op_lambda [PVar]; PVar].
+
+(* A binder-frame pattern is AC-free, hence compilable — a nested App over Var leaves has no
+   `PAcApp` node (regardless of the op ids). *)
+Lemma binder_beta_compilable : forall op_app op_lambda,
+  compilable (binder_beta_pattern op_app op_lambda) = true.
+Proof. intros op_app op_lambda. reflexivity. Qed.
+
+(* BINDER LOCATE-ALL + POSITIONAL σ: at EVERY located position of a binder-frame β pattern, the
+   in-Rho set-automaton LOCATES the redex (root index at that position) AND binds the POSITIONAL σ
+   over its captured `(body, arg)` — reusing the Stage-4 locate-all result. The β-redex needs NO
+   bespoke location theorem: being App-rooted (nested), it is subsumed by
+   `inrho_stage4_locates_all_and_binds_positional_sigma`. *)
+Corollary binder_locates_all_and_binds_positional_sigma : forall op_app op_lambda n,
+  forall m, In m (matches_at (binder_beta_pattern op_app op_lambda) n) ->
+    dispatched (binder_beta_pattern op_app op_lambda) m = true
+    /\ sigma_rho (binder_beta_pattern op_app op_lambda) m
+       = sigma_pos (binder_beta_pattern op_app op_lambda) m.
+Proof.
+  intros op_app op_lambda n m Hin.
+  apply (inrho_stage4_locates_all_and_binds_positional_sigma
+           (binder_beta_pattern op_app op_lambda) n).
+  - apply binder_beta_compilable.
+  - exact Hin.
+Qed.
+
+(* A concrete β-redex subject `App(^lambda(F(^bound Z)), A)`: op ids 10 = App, 11 = ^lambda,
+   12 = F, 13 = ^bound, 14 = Z, 15 = A (arbitrary distinct ids). The body is `F(^bound(Z))` (the
+   reflected `f(x)` with `x` de-Bruijn scope 0 = `^bound(Z)`), the arg is `A`. *)
+Definition witness_body : Node := NApp 12 [NApp 13 [NApp 14 []]].
+Definition witness_arg : Node := NApp 15 [].
+Definition witness_lambda : Node := NApp 11 [witness_body].
+Definition witness_beta : Node := NApp 10 [witness_lambda; witness_arg].
+
+(* The β-redex root MATCHES the binder-frame pattern (the nested `^lambda` head + arity + the two
+   Var-leaf captures all agree), so it is among the located sites. *)
+Lemma witness_beta_located :
+  In witness_beta (matches_at (binder_beta_pattern 10 11) witness_beta).
+Proof. apply root_redex_located. vm_compute. reflexivity. Qed.
+
+(* THE CAPTURE (body, arg): the located positional σ at the β-redex is EXACTLY the pair
+   `(F(^bound Z), A)` — the automaton captures the lambda BODY and the ARG, in that (DFS) order.
+   This is the `(body, arg)` the S-binder slice-1 MATCH captures in Rho (the σ-receiver forwards
+   the body slot; the reduct `b[a/0]` is slice 2). *)
+Theorem witness_beta_sigma_is_body_and_arg :
+  sigma_pos (binder_beta_pattern 10 11) witness_beta = Some [witness_body; witness_arg].
+Proof. vm_compute. reflexivity. Qed.
+
+(* END-TO-END binder-frame LOCATE + CAPTURE (slice 1): the automaton LOCATES the β-redex
+   `App(^lambda(body), arg)` and binds the POSITIONAL σ = `(body, arg)` — over the STRUCTURAL
+   captures, the reduct deferred to slice 2. Combines the reusable locate-all result with the
+   concrete witness. *)
+Theorem binder_locates_beta_and_binds_body_arg :
+  dispatched (binder_beta_pattern 10 11) witness_beta = true
+  /\ sigma_rho (binder_beta_pattern 10 11) witness_beta = Some [witness_body; witness_arg].
+Proof.
+  split.
+  - apply (binder_locates_all_and_binds_positional_sigma 10 11 witness_beta witness_beta).
+    apply witness_beta_located.
+  - rewrite sigma_rho_eq_pos. apply witness_beta_sigma_is_body_and_arg.
+Qed.
+
 Print Assumptions sa_accept_sound.
 Print Assumptions sa_accept_complete.
 Print Assumptions sa_matches_positional.
@@ -648,3 +740,10 @@ Print Assumptions native_value_outside_sigma.
 Print Assumptions native_value_outside_location.
 Print Assumptions config_sigma_is_positional.
 Print Assumptions native_config_locates_binds_and_separates.
+
+(* ---- Stage 4 S-binder (BINDER-FRAME LOCATE arm, slice 1) ---- *)
+Print Assumptions binder_beta_compilable.
+Print Assumptions binder_locates_all_and_binds_positional_sigma.
+Print Assumptions witness_beta_located.
+Print Assumptions witness_beta_sigma_is_body_and_arg.
+Print Assumptions binder_locates_beta_and_binds_body_arg.

@@ -3043,9 +3043,28 @@ fn reflect_term_par(
 /// (which is a Rust `Ident`, never containing `^`), so the tagged binder node is
 /// distinct from every `Apply` node AND from any user `GString` term data. The
 /// multi-binder tag is `^multilambda`; a bound-variable occurrence uses `^bound`.
-const LAMBDA_REFLECT_LABEL: &str = "^lambda";
-const MULTILAMBDA_REFLECT_LABEL: &str = "^multilambda";
-const BOUND_VAR_REFLECT_LABEL: &str = "^bound";
+///
+/// These are `pub` so the Stage-4 S-binder MATCH-side reflection (the macro
+/// `reflect_category_fn` in `macros/src/gen/runtime/rho_invocation.rs`) bakes the
+/// SAME strings into the generated `Term → GroundTerm` reflection it emits, keeping
+/// the reflected subject's tags coherent with the spread's `reflect_tag` and the
+/// automaton's compiled entry ops (all three derive from these labels).
+pub const LAMBDA_REFLECT_LABEL: &str = "^lambda";
+pub const MULTILAMBDA_REFLECT_LABEL: &str = "^multilambda";
+pub const BOUND_VAR_REFLECT_LABEL: &str = "^bound";
+/// The reserved reflection tag for a FREE-variable occurrence — a `^free(name)` leaf
+/// (Stage 4 S-binder). The runtime is already de-Bruijn, so a subject bound
+/// occurrence reflects to `^bound(peano(scope))` and only a genuinely-free variable
+/// reflects to `^free`; the `^` prefix keeps it unforgeable vs any user `Ident`.
+pub const FREE_VAR_REFLECT_LABEL: &str = "^free";
+/// The reserved Peano tags for a de-Bruijn `^bound` index (Stage 4 S-binder): the
+/// scope offset `n` of a runtime `Var::Bound{scope,binder}` reflects to
+/// `S(S(…(Z)))` with `n` `S`s — `^bound(peano(n))`. `Z`/`S` are ordinary (unquoted)
+/// nullary/unary tags: the reserved-ness is carried by the enclosing `^bound`, and a
+/// user constructor named `Z`/`S` only appears UNDER `^bound` in a bound-var leaf
+/// (its own `Z`/`S` term reflects structurally, never mistaken for a Peano index).
+pub const PEANO_ZERO_REFLECT_LABEL: &str = "Z";
+pub const PEANO_SUCC_REFLECT_LABEL: &str = "S";
 
 /// Reflect an RHS pattern term to a normalized `Par`, threading a **binder
 /// environment** (the RHS binders currently in scope, De Bruijn stack). A variable

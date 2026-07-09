@@ -176,3 +176,118 @@ async fn lambdademo_beta_reduction_fires_as_a_comm_on_the_reducer() {
         "the β-reduction fired as a COMM on the reducer and landed the reduct f(A)"
     );
 }
+
+/// S-binder SLICE 1 (Stage 4) — the set-automaton LOCATES the β-redex `App(Lam(^x. b), a)` IN RHO
+/// and CAPTURES `(body, arg)` from the REFLECTED SUBJECT, not the host report. The binder analogue
+/// of the base `m_reflect_sigma_is_produced_by_the_automaton_not_the_report` (`rho_net_equivalence.rs`)
+/// and the S-native `s_native_location_is_produced_by_the_automaton_not_the_report`
+/// (`rho_net_native_firing.rs`).
+///
+/// The MATCH path (`rho_net_match_invocation_from_dovetail_to`) M-reflects the whole subject
+/// `(lam x. f(x), A)` STRUCTURALLY to `App(^lambda(F(^bound(Z))), A)` — the de-Bruijn binder body
+/// reflects to a `^bound(peano(scope))` leaf (scope 0 ⟹ `Z`) — admits `Beta` as the
+/// `^lambda`-remapped nested App automaton entry `App(^lambda(body), arg)`, and the positional
+/// set-automaton LOCATES that redex + CAPTURES `(body, arg)` ON the reducer. Its accept routes to
+/// the installed `Beta` `SubstRewrite` σ-receiver (`for([fun, arg, out] <- c_beta){ out!(fun) }`),
+/// which forwards the captured scope-BODY slot (`fun`) on `@OUT`.
+///
+/// SLICE BOUNDARY (reduct fail-closed): the delivered value is the RAW captured body
+/// `F(^bound(Z))` — the automaton's in-Rho CAPTURE — NOT the substituted β-reduct `F(A)`. The
+/// capture-avoiding substitution (the in-Rho subst TRS + `^subst` seed send) is S-binder SLICE 2;
+/// this slice proves the MATCH (locate + capture) ONLY. β STILL REDUCES CORRECTLY on the host-σ
+/// path — `lambdademo_beta_reduction_fires_as_a_comm_on_the_reducer` above uses
+/// `rho_net_invocation_from_dovetail_to` (the σ-injection F-function), which is UNCHANGED, so the
+/// `fun` slot there carries the host-computed reduct `f(A)` and OUT is `f(A)`.
+///
+/// We CORRUPT the report σ to nonsense (leaving `rule_label = "Beta"` + the completeness gate
+/// valid — the only things the MATCH path reads the report for), so a positive, correct CAPTURE
+/// observation is non-vacuous evidence the captured body came from the AUTOMATON (the reflected
+/// subject spread), NOT the report. A report-σ locator would key off the nonsense and never find
+/// the real `App(^lambda(...), ...)`.
+///
+/// FV: `BinderReflectionTotalOrReject.v` (the indexed-Peano MATCH reflection is total-or-reject +
+/// injective: `^lambda`/`^bound(peano)`/`^free` shapes pairwise-distinct, `peano` injective) +
+/// `InRhoMatchPositional.v` (the binder-frame arm: the automaton LOCATES `App(^lambda(body), arg)`
+/// and binds the positional σ `(body, arg)`).
+#[tokio::test]
+async fn s_binder_matches_the_beta_redex_in_rho() {
+    mettail_runtime::clear_var_cache();
+    let (backend, _fingerprint) = lambda_demo_backend();
+
+    // The β-redex `App(Lam(^x. f(x)), A)` = `(lam x. f(x), A)` — the SAME subject the host-σ firing
+    // test reduces. `f(A) ≠ (lam x. f(x), A)` and the captured body `f(^bound(Z)) ≠ f(A)`, so a
+    // positive OUT observation is non-vacuous.
+    let term = LambdaDemoLanguage
+        .parse_term("(lam x. f(x), A)")
+        .expect("LambdaDemo must parse the β-redex (lam x. f(x), A)");
+
+    let mut report = LambdaDemoLanguage::dovetail_report_for(term.as_ref(), 64, 1_000_000)
+        .expect("LambdaDemo Dovetail report must compile");
+    assert_eq!(
+        report.rewrite_justifications.len(),
+        1,
+        "(lam x. f(x), A) fires exactly one Beta, got {:?}",
+        report.rewrite_justifications
+    );
+
+    // Deliberately WRONG σ (the matched-subterm LOCATION): a report-σ locator would key off these
+    // and never find the real App(^lambda(F(^bound(Z))), A). The rule label (the location-independent
+    // identity) stays valid — only the LOCATION σ is corrupted.
+    let nonsense = RuntimeReflectedSubterm { constructor: "A".to_string(), children: Vec::new() };
+    for justification in &mut report.rewrite_justifications {
+        justification.sigma =
+            vec![("fun".to_string(), nonsense.clone()), ("arg".to_string(), nonsense.clone())];
+        assert_eq!(
+            justification.rule_label, "Beta",
+            "the fired rule label (the location-independent identity) stays valid"
+        );
+    }
+
+    // The MATCH path admits the β-redex despite the corrupted σ: it M-reflects `term` to
+    // `App(^lambda(F(^bound(Z))), A)`, admits `Beta` as the nested `App(^lambda(body), arg)` entry,
+    // and the automaton LOCATES it + CAPTURES `(body, arg)`.
+    let invocation =
+        LambdaDemoLanguage::rho_net_match_invocation_from_dovetail_to(term.as_ref(), &report, "OUT")
+            .expect("the MATCH path admits the β-redex (lam x. f(x), A) with a corrupted report σ");
+    assert_eq!(invocation.out_channel, "OUT");
+
+    let observation = backend
+        .run_rho_net_with_call_and_observe_runtime_values(&invocation.call, &invocation.out_channel)
+        .await
+        .expect("the in-Rho β-redex match + capture executes on the reducer");
+
+    // Non-vacuity: the automaton located the β-redex and the σ-receiver fired exactly once.
+    assert_eq!(
+        observation.observed_count(),
+        1,
+        "OUT must carry exactly one value — the located β-redex must fire (got {:?})",
+        observation.values
+    );
+
+    // The RAW CAPTURED BODY `F(^bound(Z))` — the automaton's in-Rho capture from the reflected
+    // subject (the de-Bruijn `x` reflects to `^bound(Z)`), located by the `sa:` automaton (from
+    // `term`), NOT the corrupted report σ. This is the MATCH-only delivery: the un-substituted body.
+    let captured_body = RuntimeObservationValue::Term {
+        constructor: "F".to_string(),
+        children: vec![RuntimeObservationValue::Term {
+            constructor: "^bound".to_string(),
+            children: vec![nullary("Z")],
+        }],
+    };
+    assert_eq!(
+        observation.values[0], captured_body,
+        "the automaton LOCATED App(^lambda(body), arg) and CAPTURED the body F(^bound(Z)) IN RHO \
+         (from the reflected term, not the corrupted report σ)"
+    );
+
+    // SLICE BOUNDARY, made explicit: the captured body is NOT the substituted β-reduct `F(A)` — the
+    // capture-avoiding substitution is S-binder slice 2's in-Rho TRS. Slice 1 MATCHES + captures.
+    let reduct = RuntimeObservationValue::Term {
+        constructor: "F".to_string(),
+        children: vec![nullary("A")],
+    };
+    assert_ne!(
+        observation.values[0], reduct,
+        "slice 1 delivers the RAW captured body (MATCH-only); the substituted reduct F(A) is slice 2"
+    );
+}
