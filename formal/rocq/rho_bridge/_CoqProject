@@ -96,7 +96,26 @@ theories/ContextualAtomicJoinPlugging.v
 # RHS Lambda-node reflection is collision-free (the reserved ^lambda/^bound tags never collide with
 # an Apply node or a σ-slot) + injective under a NoDup σ-order (reflect_inj). Beta is a BASE
 # rewrite, so it inherits LinearCommCorrespondence + the RhoLoweringTotalOrRejects install boundary.
+# Stage-4 S-binder slice 1 adds MatchSideIndexedPeanoReflection; slice 2b adds the ^subst/^shift
+# 5-shape injectivity (SubstShiftReflectionInjective).
 theories/BinderReflectionTotalOrReject.v
+# Stage 4 S-binder SLICE 2b — the in-Rho de-Bruijn substitution/shift TRS (the five persistent
+# reserved receivers of rholang-codegen/src/rho_net_subst_trs.rs) is STRONGLY NORMALIZING
+# (subst_trs_terminating, via the val(k)-weighted 3^k / 4^(mu t) measure — the naive <#nodes,size>
+# is non-monotone since shiftk(S k) spawns a shift), CONFLUENT (subst_trs_confluent, by the
+# normalizing interpretation `norm`: step preserves norm + every term reduces to it, an
+# orthogonality-free Church-Rosser), and its seed subst(0,a,b) normalizes to the capture-avoiding
+# de-Bruijn beta reduct b[a/0] (subst_normal_form_is_debruijn_beta); SN+CR give the UNIQUE NF
+# (subst_trs_unique_nf) the bisimulation consumes. The numeral dispatch ^cmp/^pred/^sb/^shb is
+# abstracted to nat conditionals (documented in the header).
+theories/DeBruijnSubstTRS.v
+# Stage 4 S-binder SLICE 2b — the in-Rho β cascade is weakly bisimilar to abstract β
+# (InRhoBetaCascadeWeakBisim): object-β is the single VISIBLE label; each ^subst/^shift/^shiftk COMM
+# is τ; the σ-receiver's one visible seed COMM followed by the τ-cascade collapses (via
+# DeBruijnSubstTRS confluence+termination) to the UNIQUE NF = b[a/0]. Modeled on
+# CommReductionCorrespondence (a genuine REDUCTION bisimulation, NOT the vacuous τ-erasure of
+# advanced_automata/InRhoSameCLTSWeakBisim): R o c := norm c = o, proved a weak bisimulation.
+theories/InRhoBetaCascadeWeakBisim.v
 # Stage 3e — the native-system-process dispatch (NativeProc(a..) ~> <native value>) is
 # TOTAL-OR-REJECT + the emitted payload is EXACTLY the trusted handler's value
 # (NativeSystemProcessBoundary): lower_native_system_process either materializes the flat one-slot

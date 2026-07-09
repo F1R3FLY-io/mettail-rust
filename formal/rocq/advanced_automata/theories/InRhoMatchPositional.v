@@ -715,6 +715,87 @@ Proof.
   - rewrite sigma_rho_eq_pos. apply witness_beta_sigma_is_body_and_arg.
 Qed.
 
+(* ============================================================================
+   STAGE 4 S-binder (SLICE 2b): the REDUCT-SEPARATION arm -- the beta reduct is a
+   FUNCTION OF THE SUBJECT (the automaton-captured `(body, arg)`), independent of the
+   `__justification` report.
+
+   Slice 1 (above) proves the automaton LOCATES the beta redex `App(^lambda(body), arg)`
+   and binds the POSITIONAL sigma = `(body, arg)` over the STRUCTURAL captures, deferring
+   the reduct.  Slice 2a lands the in-Rho subst cascade, whose result -- the de-Bruijn
+   beta reduct `trs_normal_form(subst(Z, arg, body)) = body[arg/0]` -- is verified sound,
+   confluent and terminating in `rho_bridge/DeBruijnSubstTRS.v` (a SEPARATE Rocq project;
+   not re-derived here).  What this arm discharges is the SEPARATION the corrupted-sigma
+   probe `s_binder_reduct_is_report_sigma_independent`
+   (`rholang-runtime/tests/rho_net_beta_firing.rs`) exercises: routing Beta through
+   `match_body` (which reads the report ONLY to GATE -- `assert_complete` + `rule_label`
+   -- NEVER for the reduct), corrupting BOTH the report's sigma AND its contractum, and
+   observing the delivered `OUT == the cascade NF` unchanged.  The reduct `reduct_of` is
+   a function of the SUBJECT captures `(body, arg)` alone; corrupting the report cannot
+   perturb it.  This mirrors the S-native `NativeValueResidue` separation (the located
+   value residue sits OUTSIDE the structural sigma), now for the binder reduct.
+   Rocq 9.1 compatible.  No Admitted, no Axioms, no Assumptions.
+   ============================================================================ *)
+
+Section BinderReductSeparation.
+
+  (* The `__justification` report type -- the host-supplied observation the corrupted-sigma
+     probe corrupts (its would-be sigma AND contractum).  Abstract (a Section Variable,
+     discharged when the section closes; no Axiom, no free global) -- exactly as the
+     S-native `NativeValueResidue` section abstracts the native value. *)
+  Variable Report : Type.
+
+  (* The beta reduct as a function of the SUBJECT captures: `reduct_of body arg` models
+     `trs_normal_form(subst(Z, arg, body))` (the in-Rho cascade NF -- its de-Bruijn
+     correctness is `rho_bridge/DeBruijnSubstTRS.v`).  It reads `(body, arg)` -- the
+     STRUCTURAL captures the automaton binds -- and nothing else.  Abstract here (its
+     value is irrelevant to the SEPARATION): whatever the cascade computes, it is a
+     function of the subject. *)
+  Variable reduct_of : Node -> Node -> Node.
+
+  (* A LOCATED beta configuration: the automaton-captured `(body, arg)` PAIRED with the
+     report residue.  The automaton produces the two structural captures; the host
+     produces the report -- two SEPARATE wires. *)
+  Definition BinderConfig : Type := (Node * Node * Report)%type.
+
+  Definition cfg_body (c : BinderConfig) : Node := fst (fst c).
+  Definition cfg_arg (c : BinderConfig) : Node := snd (fst c).
+  Definition cfg_report (c : BinderConfig) : Report := snd c.
+
+  (* The delivered reduct reads the STRUCTURAL captures ONLY (`cfg_body` / `cfg_arg`);
+     the report (`cfg_report`) is never consulted. *)
+  Definition config_reduct (c : BinderConfig) : Node :=
+    reduct_of (cfg_body c) (cfg_arg c).
+
+  (* SEPARATION (report ==> reduct): two configs with the SAME captures but ANY (differing)
+     reports deliver the SAME reduct -- corrupting the report's sigma / contractum cannot
+     perturb the cascade NF. *)
+  Theorem corrupt_report_preserves_reduct : forall body arg r1 r2,
+    config_reduct (body, arg, r1) = config_reduct (body, arg, r2).
+  Proof. intros body arg r1 r2. unfold config_reduct. reflexivity. Qed.
+
+  (* The reduct is produced from the AUTOMATON captures, NOT the report: it equals
+     `reduct_of body arg` over the structural captures alone. *)
+  Theorem reduct_from_automaton_not_report : forall body arg r,
+    config_reduct (body, arg, r) = reduct_of body arg.
+  Proof. intros body arg r. unfold config_reduct. reflexivity. Qed.
+
+  (* END-TO-END (the corrupted-sigma probe, formal analogue): the reduct at the located
+     beta redex is fed by EXACTLY the automaton's positional sigma `(witness_body,
+     witness_arg)` (slice-1 `witness_beta_sigma_is_body_and_arg`) and is INDEPENDENT of
+     the report -- the concrete `App(^lambda(F(^bound Z)), A)` witness. *)
+  Theorem witness_reduct_is_report_independent : forall r1 r2 : Report,
+    sigma_pos (binder_beta_pattern 10 11) witness_beta = Some [witness_body; witness_arg]
+    /\ config_reduct (witness_body, witness_arg, r1)
+       = config_reduct (witness_body, witness_arg, r2).
+  Proof.
+    intros r1 r2. split.
+    - apply witness_beta_sigma_is_body_and_arg.
+    - apply corrupt_report_preserves_reduct.
+  Qed.
+
+End BinderReductSeparation.
+
 Print Assumptions sa_accept_sound.
 Print Assumptions sa_accept_complete.
 Print Assumptions sa_matches_positional.
@@ -747,3 +828,8 @@ Print Assumptions binder_locates_all_and_binds_positional_sigma.
 Print Assumptions witness_beta_located.
 Print Assumptions witness_beta_sigma_is_body_and_arg.
 Print Assumptions binder_locates_beta_and_binds_body_arg.
+
+(* ---- Stage 4 S-binder (SLICE 2b, reduct separation) ---- *)
+Print Assumptions corrupt_report_preserves_reduct.
+Print Assumptions reduct_from_automaton_not_report.
+Print Assumptions witness_reduct_is_report_independent.

@@ -520,6 +520,114 @@ Section MatchSideIndexedPeanoReflection.
 
 End MatchSideIndexedPeanoReflection.
 
+(* ===========================================================================
+   STAGE 4 S-binder (slice 2b): the ^subst / ^shift reflection is INJECTIVE, and the
+   FIVE reserved-tagged shapes (^lambda / ^bound(peano) / ^free / ^subst / ^shift) are
+   pairwise distinct.
+
+   Slice 2a lands the in-Rho subst cascade: the Beta sigma-receiver SENDS a reserved
+   `^subst(Z, a, b, out)` node, and the five reserved receivers spread `^shift(...)`
+   nodes as the cascade runs (`rholang-codegen/src/rho_net_subst_trs.rs`,
+   `reserved_subst_trs_labels`).  For the cascade to be UNAMBIGUOUS on the reducer, the
+   two NEW reserved tags `^subst` / `^shift` must be reflected injectively and must not
+   collide with the slice-1 subject tags `^lambda` / `^bound` / `^free` (nor with each
+   other) -- the `^`-prefixed tags are unforgeable vs a user constructor, and the
+   depth-indexed Peano arguments (`j` in `^subst`, `c` in `^shift`) reflect through the
+   same injective `mpeano` the slice-1 `^bound` leaf uses.
+
+   This section extends the slice-1 `MatchSideIndexedPeanoReflection` with a term algebra
+   carrying the two reserved reduction tags and proves (a) the reflection is injective
+   (`sbreflect_inj`, reusing `mpeano_inj` for every Peano index) and (b) the five reserved
+   shapes are pairwise distinct (`subst_five_shapes_distinct` / the collision-free
+   lemmas).  Rocq 9.1 compatible.  No Admitted, no Axioms, no Assumptions.
+   =========================================================================== *)
+
+Section SubstShiftReflectionInjective.
+
+  (* A reflected term carrying the two reduction tags on top of the slice-1 subject
+     shapes: `^bound(peano n)`, `^free x`, `^lambda b`, `^subst(j, a, t)`, `^shift(c, t)`
+     (`j` / `c` are de-Bruijn depths -- reflected as Peano numerals, as in the runtime
+     ABI).  These are the FIVE reserved shapes of the cascade. *)
+  Inductive SbTerm : Type :=
+    | SbBound : nat -> SbTerm
+    | SbFree  : nat -> SbTerm
+    | SbLam   : SbTerm -> SbTerm
+    | SbSubst : nat -> SbTerm -> SbTerm -> SbTerm
+    | SbShift : nat -> SbTerm -> SbTerm.
+
+  (* The reflected image: the reserved tag over the Peano-indexed / structural children.
+     The FIVE constructors are pairwise distinct, so the reserved `^subst` / `^shift`
+     tags never collide with `^lambda` / `^bound` / `^free` nor with each other. *)
+  Inductive SbImg : Type :=
+    | SbRBound : MPeano -> SbImg
+    | SbRFree  : nat -> SbImg
+    | SbRLam   : SbImg -> SbImg
+    | SbRSubst : MPeano -> SbImg -> SbImg -> SbImg
+    | SbRShift : MPeano -> SbImg -> SbImg.
+
+  (* The reflection: every de-Bruijn index / depth goes through the injective `mpeano`
+     (slice 1); the structure is preserved. *)
+  Fixpoint sbreflect (t : SbTerm) : SbImg :=
+    match t with
+    | SbBound n => SbRBound (mpeano n)
+    | SbFree x => SbRFree x
+    | SbLam b => SbRLam (sbreflect b)
+    | SbSubst j a t => SbRSubst (mpeano j) (sbreflect a) (sbreflect t)
+    | SbShift c t => SbRShift (mpeano c) (sbreflect t)
+    end.
+
+  (* COLLISION-FREEDOM (the reserved `^subst` tag never collides): whatever reflects to a
+     `^subst` node IS a `^subst` -- no `^lambda` / `^bound` / `^free` / `^shift` does. *)
+  Theorem sbreflect_subst_collision_free : forall j a t s,
+    sbreflect (SbSubst j a t) = sbreflect s ->
+    exists j' a' t', s = SbSubst j' a' t'.
+  Proof.
+    intros j a t s H. destruct s; simpl in H; try discriminate H.
+    exists n, s1, s2. reflexivity.
+  Qed.
+
+  (* COLLISION-FREEDOM (the reserved `^shift` tag never collides). *)
+  Theorem sbreflect_shift_collision_free : forall c t s,
+    sbreflect (SbShift c t) = sbreflect s ->
+    exists c' t', s = SbShift c' t'.
+  Proof.
+    intros c t s H. destruct s; simpl in H; try discriminate H.
+    exists n, s. reflexivity.
+  Qed.
+
+  (* THE FIVE SHAPES ARE PAIRWISE DISTINCT: the reserved `^subst` image differs from each
+     of the other four reflected shapes (the analogous facts for the remaining pairs are
+     immediate by constructor distinctness -- `^subst` is the new load-bearing tag the
+     Beta seed sends, so it is stated explicitly). *)
+  Theorem subst_five_shapes_distinct : forall j a t,
+    (forall n, sbreflect (SbSubst j a t) <> sbreflect (SbBound n))
+    /\ (forall x, sbreflect (SbSubst j a t) <> sbreflect (SbFree x))
+    /\ (forall b, sbreflect (SbSubst j a t) <> sbreflect (SbLam b))
+    /\ (forall c t', sbreflect (SbSubst j a t) <> sbreflect (SbShift c t')).
+  Proof.
+    intros j a t. repeat split; intros; simpl; discriminate.
+  Qed.
+
+  (* INJECTIVITY: distinct reserved terms reflect to distinct images -- the `^bound`,
+     `^subst` and `^shift` Peano indices reduce to `mpeano_inj`; the rest is structural.
+     So a `^subst(Z, a, b)` seed and every `^shift(c, .)` the cascade spreads is an
+     UNAMBIGUOUS reflected subject. *)
+  Theorem sbreflect_inj : forall t1 t2, sbreflect t1 = sbreflect t2 -> t1 = t2.
+  Proof.
+    induction t1 as [n1 | x1 | b1 IHb1 | j1 a1 IHa1 tt1 IHtt1 | c1 tt1 IHtt1];
+      intros t2 H; destruct t2 as [n2 | x2 | b2 | j2 a2 tt2 | c2 tt2];
+      simpl in H; try discriminate H.
+    - injection H as H. apply mpeano_inj in H. subst n2. reflexivity.
+    - injection H as H. subst x2. reflexivity.
+    - injection H as H. f_equal. apply IHb1. exact H.
+    - injection H as Hj Ha Ht. apply mpeano_inj in Hj. subst j2.
+      f_equal; [ apply IHa1; exact Ha | apply IHtt1; exact Ht ].
+    - injection H as Hc Ht. apply mpeano_inj in Hc. subst c2.
+      f_equal. apply IHtt1. exact Ht.
+  Qed.
+
+End SubstShiftReflectionInjective.
+
 (* Zero-admission confirmation. *)
 Print Assumptions binder_excluded.
 Print Assumptions free_lam_char.
@@ -530,3 +638,9 @@ Print Assumptions mreflect_lambda_collision_free.
 Print Assumptions mreflect_bound_collision_free.
 Print Assumptions mreflect_free_collision_free.
 Print Assumptions mreflect_inj.
+
+(* ---- Stage 4 S-binder (slice 2b): ^subst / ^shift reflection injectivity ---- *)
+Print Assumptions sbreflect_subst_collision_free.
+Print Assumptions sbreflect_shift_collision_free.
+Print Assumptions subst_five_shapes_distinct.
+Print Assumptions sbreflect_inj.
