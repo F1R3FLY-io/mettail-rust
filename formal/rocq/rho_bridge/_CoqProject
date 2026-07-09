@@ -138,3 +138,20 @@ theories/NativeSystemProcessBoundary.v
 # barb-preserving rules as congruence (fires-as-COMM ⟺ directed motion). Companion to
 # NativeSystemProcessBoundary.v (the firing side) + the RhoHostObligationBoundary trusted-handler seam.
 theories/FoldMotionVsCongruence.v
+# Stage 5 CAPSTONE — the whole-⟦G⟧ operational correspondence for FINITE executions with O1-optimal
+# in-Rho matching (WholeGsltInRhoOpCorrespondence, INV-13 / the knotted-topoi paper's `ob:opcorr`).
+# A COMPOSITION HARNESS, not a new reduction proof: it (a) instantiates the assumption-free finite-trace
+# lift EndToEndCommCorrespondence with the whole-⟦G⟧ in-Rho configuration LTS, (b) assembles the lift's
+# three step obligations by a `family_of` case split whose SIX arms are already-landed per-step theorems
+# (FBase<-LinearCommCorrespondence, FContextualJoin<-ContextualAtomicJoinPlugging, FAcLinear<-CommRuleFiring,
+# FAcStructural<-AmbientOpenFiring, FBinderBeta<-InRhoBetaCascadeWeakBisim, FNative<-NativeSystemProcessBoundary)
+# plus the slotted In/Out FAcNested (InRhoAcMatchMultiset depth-2), each a Section Hypothesis (a universally
+# quantified premise on Section close, NOT an Axiom — so every theorem stays Closed), and (c) `apply`s the
+# lift to obtain the whole-⟦G⟧ finite-trace opcorr, then threads obligation (iii) so the result holds over
+# the O1-OPTIMAL matching (the `rem:nonopt` discharge). The matching layer (i/ii/iv/vi/viii/x) and the AC
+# match-logic are NOT arms — they enter as gstep well-formedness + premises of (iii). Semantic predicates
+# (INV-14) are excluded by construction (no Family constructor + the `semantic_predicates_emit_no_comm`
+# fence); all-G universality is conditional on `g_install_gate_admits` (ix). The SwapDemo base rewrite is
+# the non-vacuity witness (all §4.1 hypotheses jointly satisfiable, base arms discharged from the landed
+# comm_step_complete/sound), simultaneously a concrete Closed finite-trace opcorr through the capstone.
+theories/WholeGsltInRhoOpCorrespondence.v
