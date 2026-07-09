@@ -1448,6 +1448,145 @@ async fn m_reflect_sigma_is_produced_by_the_automaton_not_the_report() {
     );
 }
 
+/// Stage 4 (locate-all) — a NESTED redex fires IN RHO with the σ-replay fallback RETIRED.
+/// `Pair(Swap(A, B), B)`: `Pair` is inert (not a rule LHS root), so the sole redex is the nested
+/// `Swap(A, B)` at position `Pair.0`. The pre-Stage-4 `match_body` FAILED this closed (subject
+/// root `Pair` ≠ rule root `Swap`) to the σ-replay driver; now the automaton LOCATES the nested
+/// redex in the ONE spread and fires the σ-receiver → `Pair(B, A)` on OUT, entirely in Rho. That
+/// `rho_net_match_invocation_from_dovetail_to` returns `Ok` (never the replay branch) IS the
+/// fallback-retirement proof. (The site's contractum `Pair(B, A)` is the reduct AT that position;
+/// whole-term contextual reassembly `Pair(Pair(B, A), B)` is the congruence slice, a later stage.)
+#[tokio::test]
+async fn nested_redex_fires_in_rho_no_replay_fallback() {
+    mettail_runtime::clear_var_cache();
+    let (backend, _fingerprint) = swap_demo_backend();
+    // Pair(Swap(A, B), B): one nested redex at Pair.0 (Pair is inert, the B at Pair.1 is a leaf).
+    let term = SwapDemoTerm(Proc::Pair(
+        Arc::new(Proc::Swap(Arc::new(Proc::A), Arc::new(Proc::B))),
+        Arc::new(Proc::B),
+    ));
+    let report = SwapDemoLanguage::dovetail_report_for(&term, 64, 1_000_000)
+        .expect("SwapDemo nested-redex Dovetail report must compile");
+
+    // The MATCH path (NOT the σ-replay fallback) admits the nested redex — fallback retired.
+    let invocation =
+        SwapDemoLanguage::rho_net_match_invocation_from_dovetail_to(&term, &report, "OUT")
+            .expect("the locate-all MATCH path admits a nested redex (no σ-replay fallback)");
+    let observation = backend
+        .run_rho_net_with_call_and_observe_runtime_values(&invocation.call, &invocation.out_channel)
+        .await
+        .expect("the nested in-Rho match + firing executes");
+
+    assert_eq!(
+        observation.observed_count(),
+        1,
+        "the nested Swap(A, B) at Pair.0 was located + fired once (got {:?})",
+        observation.values
+    );
+    assert_eq!(
+        observation.values[0],
+        obs("Pair", vec![obs("B", Vec::new()), obs("A", Vec::new())]),
+        "the nested Swap(A, B) fired IN RHO → Pair(B, A) (located, not root-rooted)"
+    );
+}
+
+/// Stage 4 (multi-firing) — MULTIPLE redexes fire IN RHO simultaneously, fallback RETIRED.
+/// `Pair(Swap(A, B), Swap(B, A))`: two DISTINCT redexes at `Pair.0` and `Pair.1`. The locate-all
+/// automaton co-installs a disjoint-site network at each over ONE spread; both accepts fire the
+/// shared persistent σ-receiver → {`Pair(B, A)`, `Pair(A, B)`} on OUT — both in Rho, no σ-replay.
+/// SwapDemo has `A`/`B` leaves only, so the task's `Pair(Swap(A,B), Swap(C,D))` is realized here
+/// as `Pair(Swap(A,B), Swap(B,A))` (two DISTINCT swaps; structurally-equal ones would hash-cons).
+#[tokio::test]
+async fn multiple_redexes_fire_in_rho_no_replay_fallback() {
+    mettail_runtime::clear_var_cache();
+    let (backend, _fingerprint) = swap_demo_backend();
+    let term = SwapDemoTerm(Proc::Pair(
+        Arc::new(Proc::Swap(Arc::new(Proc::A), Arc::new(Proc::B))),
+        Arc::new(Proc::Swap(Arc::new(Proc::B), Arc::new(Proc::A))),
+    ));
+    let report = SwapDemoLanguage::dovetail_report_for(&term, 64, 1_000_000)
+        .expect("SwapDemo multi-redex Dovetail report must compile");
+
+    // The MATCH path admits BOTH redexes in one call — no σ-replay fallback.
+    let invocation =
+        SwapDemoLanguage::rho_net_match_invocation_from_dovetail_to(&term, &report, "OUT")
+            .expect("the locate-all MATCH path admits multiple redexes (no σ-replay fallback)");
+    let observation = backend
+        .run_rho_net_with_call_and_observe_runtime_values(&invocation.call, &invocation.out_channel)
+        .await
+        .expect("the multi-redex in-Rho match + firing executes");
+
+    assert_eq!(
+        observation.observed_count(),
+        2,
+        "both located redexes fired in Rho (got {:?})",
+        observation.values
+    );
+    // Parallel accepts land on OUT in nondeterministic order — compare as a multiset.
+    let pair_b_a = obs("Pair", vec![obs("B", Vec::new()), obs("A", Vec::new())]);
+    let pair_a_b = obs("Pair", vec![obs("A", Vec::new()), obs("B", Vec::new())]);
+    assert!(
+        observation.values.contains(&pair_b_a),
+        "Swap(A, B) at Pair.0 fired → Pair(B, A) in Rho (got {:?})",
+        observation.values
+    );
+    assert!(
+        observation.values.contains(&pair_a_b),
+        "Swap(B, A) at Pair.1 fired → Pair(A, B) in Rho (got {:?})",
+        observation.values
+    );
+}
+
+/// Stage 4 — a NESTED redex in a NON-INERT arg position also fires in Rho. `Swap(A, Swap(B, A))`:
+/// the OUTER Swap (the whole term) AND the INNER Swap at position `Swap.1` are BOTH redexes. Both
+/// fire against the ORIGINAL term's σ: outer σ = [⟦A⟧, ⟦Swap(B,A)⟧] → `Pair(Swap(B,A), A)`; inner
+/// σ = [⟦B⟧, ⟦A⟧] → `Pair(A, B)`. The automaton locates BOTH in the ONE spread — no σ-replay.
+#[tokio::test]
+async fn nested_redex_in_arg_position_fires_in_rho() {
+    mettail_runtime::clear_var_cache();
+    let (backend, _fingerprint) = swap_demo_backend();
+    let term = SwapDemoTerm(Proc::Swap(
+        Arc::new(Proc::A),
+        Arc::new(Proc::Swap(Arc::new(Proc::B), Arc::new(Proc::A))),
+    ));
+    let report = SwapDemoLanguage::dovetail_report_for(&term, 64, 1_000_000)
+        .expect("SwapDemo nested-arg Dovetail report must compile");
+
+    let invocation =
+        SwapDemoLanguage::rho_net_match_invocation_from_dovetail_to(&term, &report, "OUT")
+            .expect("the locate-all MATCH path admits the outer + nested-arg redexes (no fallback)");
+    let observation = backend
+        .run_rho_net_with_call_and_observe_runtime_values(&invocation.call, &invocation.out_channel)
+        .await
+        .expect("the nested-arg in-Rho match + firing executes");
+
+    assert_eq!(
+        observation.observed_count(),
+        2,
+        "the outer Swap + the inner Swap at Swap.1 both fired (got {:?})",
+        observation.values
+    );
+    // Outer: Pair(Swap(B,A), A) — σ[y] is the UN-reduced inner subtree. Inner: Pair(A, B).
+    let outer = obs(
+        "Pair",
+        vec![
+            obs("Swap", vec![obs("B", Vec::new()), obs("A", Vec::new())]),
+            obs("A", Vec::new()),
+        ],
+    );
+    let inner = obs("Pair", vec![obs("A", Vec::new()), obs("B", Vec::new())]);
+    assert!(
+        observation.values.contains(&outer),
+        "the outer Swap fired → Pair(Swap(B,A), A) (got {:?})",
+        observation.values
+    );
+    assert!(
+        observation.values.contains(&inner),
+        "the inner Swap at Swap.1 fired → Pair(A, B) (got {:?})",
+        observation.values
+    );
+}
+
 /// Stage 3 piece 5: the WHOLE production default-backend stack. Install SwapDemo's
 /// Dovetail+Rho backend with the SAME capability-gated in-Rho-match closure the repl's
 /// `swapdemo_backed()` uses (the closure IS the production closure, re-instantiated — no
@@ -1520,6 +1659,88 @@ fn stage3_swapdemo_default_backend_matches_in_rho_via_run_backend_report() {
         observation.values[0], pair_b_a,
         "the default RhoMachine backend matched Swap(A, B) in Rho and fired → Pair(B, A)"
     );
+}
+
+/// Stage 4 — the WHOLE production default-backend stack for NESTED + MULTIPLE redexes. Install
+/// SwapDemo with the SAME capability-gated locate-all closure `swapdemo_backed()` uses (match then
+/// σ-replay fallback ONLY on Err), then drive both `Pair(Swap(A,B), Swap(B,A))` (two redexes) and
+/// `Pair(Swap(A,B), B)` (one nested redex) through `run_backend_report(RhoMachine, …)`. Both take
+/// the LOCATE-ALL match path (the closure's `Ok` branch) — never the σ-replay fallback — and land
+/// every located redex's contractum on OUT, in Rho. This closes the loop the direct-match-path
+/// tests open: the production wiring itself fires nested + multiple redexes in Rho.
+#[test]
+fn stage4_swapdemo_default_backend_fires_nested_and_multiple_in_rho() {
+    mettail_runtime::clear_var_cache();
+    let (backend, _fingerprint) = swap_demo_backend();
+
+    let language = install_dovetail_rho_runtime_backend(
+        SwapDemoLanguage,
+        backend,
+        |term: &dyn Term| SwapDemoLanguage::dovetail_report_for(term, 64, 1_000_000),
+        |term: &dyn Term| SwapDemoLanguage::dovetail_report_for(term, 64, 1_000_000),
+        |term: &dyn Term,
+         report: &RuntimeDovetailRunReport|
+         -> Result<RhoBackendInvocation, String> {
+            match SwapDemoLanguage::rho_net_match_invocation_from_dovetail_to(term, report, "OUT") {
+                Ok(invocation) => Ok(RhoBackendInvocation::from(
+                    build_rho_net_injection_invocation_from_contract(invocation),
+                )),
+                Err(_reject) => {
+                    let injections = SwapDemoLanguage::rho_net_replay_invocation_from_dovetail_to(
+                        term, report, "OUT",
+                    )?;
+                    Ok(RhoBackendInvocation::from(build_rho_net_replay_invocation_from_contracts(
+                        injections,
+                    )))
+                },
+            }
+        },
+    )
+    .expect("SwapDemo Dovetail+Rho backend installs");
+
+    // MULTIPLE: Pair(Swap(A,B), Swap(B,A)) → both located redexes fire in Rho.
+    let multi = SwapDemoTerm(Proc::Pair(
+        Arc::new(Proc::Swap(Arc::new(Proc::A), Arc::new(Proc::B))),
+        Arc::new(Proc::Swap(Arc::new(Proc::B), Arc::new(Proc::A))),
+    ));
+    let multi_report =
+        SwapDemoLanguage::dovetail_report_for(&multi, 64, 1_000_000).expect("multi report");
+    assert!(
+        SwapDemoLanguage::rho_net_match_invocation_from_dovetail_to(&multi, &multi_report, "OUT")
+            .is_ok(),
+        "the production backend takes the locate-all MATCH path for multiple redexes (no fallback)"
+    );
+    let multi_backend_report = language
+        .run_backend_report(RuntimeBackend::RhoMachine, &multi)
+        .expect("run_backend_report on the multi-redex term");
+    let multi_obs = multi_backend_report
+        .observations_for_channel("OUT")
+        .expect("an OUT observation");
+    assert_eq!(multi_obs.observed_count(), 2, "both redexes fired (got {:?})", multi_obs.values);
+    let pair_b_a = obs("Pair", vec![obs("B", Vec::new()), obs("A", Vec::new())]);
+    let pair_a_b = obs("Pair", vec![obs("A", Vec::new()), obs("B", Vec::new())]);
+    assert!(multi_obs.values.contains(&pair_b_a) && multi_obs.values.contains(&pair_a_b));
+
+    // NESTED: Pair(Swap(A,B), B) → the nested Swap at Pair.0 fires in Rho.
+    let nested = SwapDemoTerm(Proc::Pair(
+        Arc::new(Proc::Swap(Arc::new(Proc::A), Arc::new(Proc::B))),
+        Arc::new(Proc::B),
+    ));
+    let nested_report =
+        SwapDemoLanguage::dovetail_report_for(&nested, 64, 1_000_000).expect("nested report");
+    assert!(
+        SwapDemoLanguage::rho_net_match_invocation_from_dovetail_to(&nested, &nested_report, "OUT")
+            .is_ok(),
+        "the production backend takes the locate-all MATCH path for a nested redex (no fallback)"
+    );
+    let nested_backend_report = language
+        .run_backend_report(RuntimeBackend::RhoMachine, &nested)
+        .expect("run_backend_report on the nested-redex term");
+    let nested_obs = nested_backend_report
+        .observations_for_channel("OUT")
+        .expect("an OUT observation");
+    assert_eq!(nested_obs.observed_count(), 1, "the nested redex fired (got {:?})", nested_obs.values);
+    assert_eq!(nested_obs.values[0], pair_b_a, "the nested Swap(A,B) fired → Pair(B, A)");
 }
 
 #[test]
@@ -1693,6 +1914,115 @@ mod in_rho_match_property {
                 })
                 .collect();
             expected.sort_by_key(observation_key);
+            prop_assert_eq!(observed, expected);
+        }
+    }
+}
+
+/// Stage 4 property-based LOCATE-ALL verification (obligation i, `locate_all_*`): for ARBITRARY
+/// well-formed SwapDemo terms, the in-Rho MATCH path (locate-all) fires EVERY positional redex —
+/// at any position, and multiple simultaneously — and lands exactly the positional oracle's
+/// per-Swap contracta on OUT, with the σ-replay fallback RETIRED (the match invocation is always
+/// `Ok`, never the replay branch). The positional oracle (`positional_contracta`) counts POSITIONS
+/// (not e-graph e-classes), so structurally-equal redexes each fire — the P1 Thm 6.12 / P2 Thm 2
+/// "locate every match" semantics the pre-Stage-4 single-root/single-firing guard could not reach.
+mod locate_all_property {
+    use super::*;
+    use proptest::prelude::*;
+
+    /// Reflect a SwapDemo `Proc` to the observation value the spread's `cap:` collapse fold yields
+    /// for it (the decoder counterpart of `reflect_ground_term_par` over the whole subtree).
+    fn proc_to_observation(proc: &Proc) -> RuntimeObservationValue {
+        let node = |c: &str, children: Vec<RuntimeObservationValue>| RuntimeObservationValue::Term {
+            constructor: c.to_string(),
+            children,
+        };
+        match proc {
+            Proc::A => node("A", Vec::new()),
+            Proc::B => node("B", Vec::new()),
+            Proc::Pair(l, r) => node("Pair", vec![proc_to_observation(l), proc_to_observation(r)]),
+            Proc::Swap(l, r) => node("Swap", vec![proc_to_observation(l), proc_to_observation(r)]),
+            // The macro auto-injects binder/var/apply variants into `Proc`; `arb_swap_proc` never
+            // generates them, so they cannot appear in this oracle.
+            _ => unreachable!("arb_swap_proc only generates A/B/Swap/Pair nodes"),
+        }
+    }
+
+    /// The POSITIONAL oracle: every `Swap(l, r)` node (at ANY position, in DFS order) is a redex
+    /// whose in-Rho firing lands its contractum `Pair(r, l)` — l, r the ORIGINAL (un-reduced)
+    /// children. The multiset over ALL Swap positions is exactly what the locate-all match observes
+    /// on OUT. `Pair`/leaf nodes are inert (recurse but emit nothing at that node).
+    fn positional_contracta(proc: &Proc, out: &mut Vec<RuntimeObservationValue>) {
+        match proc {
+            Proc::A | Proc::B => {},
+            Proc::Pair(l, r) => {
+                positional_contracta(l, out);
+                positional_contracta(r, out);
+            },
+            Proc::Swap(l, r) => {
+                out.push(RuntimeObservationValue::Term {
+                    constructor: "Pair".to_string(),
+                    children: vec![proc_to_observation(r), proc_to_observation(l)],
+                });
+                positional_contracta(l, out);
+                positional_contracta(r, out);
+            },
+            _ => unreachable!("arb_swap_proc only generates A/B/Swap/Pair nodes"),
+        }
+    }
+
+    /// The same bounded strategy the replay property uses: `A`/`B` leaves + binary `Swap`/`Pair`
+    /// to `max_depth` levels (so nested + multiple + structurally-equal redexes all arise).
+    fn arb_swap_proc(max_depth: u32) -> impl Strategy<Value = Proc> {
+        let leaf = prop_oneof![Just(Proc::A), Just(Proc::B)];
+        leaf.prop_recursive(max_depth, 32, 2, |inner| {
+            prop_oneof![
+                (inner.clone(), inner.clone())
+                    .prop_map(|(l, r)| Proc::Swap(Arc::new(l), Arc::new(r))),
+                (inner.clone(), inner).prop_map(|(l, r)| Proc::Pair(Arc::new(l), Arc::new(r))),
+            ]
+        })
+    }
+
+    fn sort_key(value: &RuntimeObservationValue) -> String {
+        format!("{value:?}")
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig { cases: 24, ..ProptestConfig::default() })]
+
+        #[test]
+        fn locate_all_match_observes_every_positional_redex_in_rho(proc in arb_swap_proc(3)) {
+            mettail_runtime::clear_var_cache();
+            let (backend, _fingerprint) = swap_demo_backend();
+            let term = SwapDemoTerm(proc.clone());
+
+            let report = SwapDemoLanguage::dovetail_report_for(&term, 512, 8_000_000)
+                .expect("SwapDemo report must compile");
+            prop_assert!(report.is_complete(), "the acyclic Swap→Pair reduction must complete");
+
+            // The MATCH path (locate-all) admits EVERY arb_swap_proc term — the σ-replay fallback
+            // is retired for a flat-rule language's nested + multiple redexes.
+            let invocation =
+                SwapDemoLanguage::rho_net_match_invocation_from_dovetail_to(&term, &report, "OUT")
+                    .expect("the locate-all MATCH path admits every SwapDemo term (no fallback)");
+
+            let runtime =
+                tokio::runtime::Runtime::new().expect("tokio runtime for the locate-all property");
+            let observation = runtime
+                .block_on(backend.run_rho_net_with_call_and_observe_runtime_values(
+                    &invocation.call,
+                    &invocation.out_channel,
+                ))
+                .expect("the locate-all match must execute on the Rho runtime");
+
+            // Every positional Swap redex fired its contractum, compared as a multiset (parallel
+            // accepts land on OUT in nondeterministic order).
+            let mut observed = observation.values.clone();
+            observed.sort_by_key(sort_key);
+            let mut expected = Vec::new();
+            positional_contracta(&proc, &mut expected);
+            expected.sort_by_key(sort_key);
             prop_assert_eq!(observed, expected);
         }
     }

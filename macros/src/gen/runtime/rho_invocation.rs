@@ -1241,37 +1241,17 @@ pub fn generate_rho_net_invocation(language: &LanguageDef) -> TokenStream {
             ));
         }
 
-        // Stage 3 scope: exactly one root-rooted redex (0 = normal form, >1 = Stage-4
-        // multi-redex — both fail closed so the repl falls back to the σ-replay driver).
-        let __justification = match report.rewrite_justifications.as_slice() {
-            [__only] => __only,
-            __other => {
-                return ::core::result::Result::Err(::std::format!(
-                    "in-Rho match for language {} handles a single root-rooted redex (Stage 3); the report fired {} rules",
-                    #language_lit, __other.len(),
-                ));
-            },
-        };
-
-        // Root-rooted scope: the automaton LOCATES the redex at the spread ROOT, so the whole
-        // reflected subject must BE the redex — its root constructor equals the fired rule's LHS
-        // root constructor. A NESTED redex (subject root ≠ rule root; the whole term is a context
-        // AROUND the redex) is not locatable by the root Match, so it fails closed to the
-        // σ-replay driver, which openly uses σ to locate + inject nested redexes.
-        let __lhs_root = ::mettail_rholang_codegen::rule_lhs_root_constructor(
-            &__def,
-            &__justification.rule_label,
-        )?;
-        if __subject.constructor != __lhs_root {
-            return ::core::result::Result::Err(::std::format!(
-                "in-Rho match for language {}: the fired redex is not root-rooted (subject root `{}` \u{2260} rule `{}` LHS root `{}`); the \u{3c3}-replay driver handles nested redexes",
-                #language_lit, __subject.constructor, __justification.rule_label, __lhs_root,
-            ));
-        }
-
-        // Assemble the in-Rho match call (network ‖ spread) — the SAME driver target as
-        // the σ-injection path (`RhoNetInjectionInvocation`).
-        let __call = ::mettail_rholang_codegen::in_rho_match_call_par(
+        // Stage 4 (locate-all + multi-firing): the automaton LOCATES every redex — at ANY
+        // position in the spread subject, and multiple simultaneously (P1 Thm 6.12 / P2 Thm 2) —
+        // NOT just the root. `in_rho_match_all_sites_call_par` spreads the whole reflected
+        // subject ONCE and co-installs a positional network at every position whose head is a
+        // rule LHS root (the ν-free `⌜(ρ,ℓ)⌝` site paths), each accept firing the σ-receiver on
+        // `out_channel`. So a NESTED redex (the redex is a sub-term, not the whole subject) and
+        // MULTIPLE redexes both match + fire IN RHO — the root-rooted + single-redex fallback is
+        // retired. Only a ruleset with a NESTED-App entry (whose descents could contend across
+        // co-installed sites) fails closed to the σ-replay driver; a flat-only ruleset (SwapDemo)
+        // locates all redexes in Rho. A normal form locates 0 sites (the bare spread, a no-op).
+        let (__call, _sites) = ::mettail_rholang_codegen::in_rho_match_all_sites_call_par(
             &__ruleset,
             &__subject,
             "site0",
@@ -1279,7 +1259,7 @@ pub fn generate_rho_net_invocation(language: &LanguageDef) -> TokenStream {
         )
         .map_err(|__err| {
             ::std::format!(
-                "in-Rho match for language {} could not serialize the match call: {:?}",
+                "in-Rho match for language {} could not serialize the locate-all match call: {:?}",
                 #language_lit, __err,
             )
         })?;
@@ -1465,17 +1445,23 @@ pub fn generate_rho_net_invocation(language: &LanguageDef) -> TokenStream {
                 Self::rho_net_invocation_from_dovetail_to_firing(term, report, out_channel, 0)
             }
 
-            /// Build the in-Rho set-automaton MATCH call for the single, root-rooted
-            /// rewrite firing of an already complete Dovetail report (Stage 3 piece 5):
-            /// compile the language's in-Rho matching ruleset, GATE (fail closed if any
-            /// fired rule is not matchable in Rho — FV (ix) `install_admits`), rebuild the
-            /// ground subject `LHS[σ]`, and assemble the `network ‖ spread` call the runtime
-            /// runs against the installed σ-receiver program. Unlike
-            /// [`Self::rho_net_invocation_from_dovetail_to`] (which host-computes σ and
-            /// injects it), here the automaton re-does the MATCHING on the interpreter (the
-            /// `$\tau$` `sa:` COMMs) and fires the σ-receiver — the campaign endpoint for a
-            /// base rewrite. The default backend (`swapdemo_backed`) calls this, falling
-            /// back to the σ-replay driver on a gate/scope rejection.
+            /// Build the in-Rho set-automaton MATCH call that LOCATES EVERY redex of an
+            /// already complete Dovetail report — at ANY position in the subject term, and
+            /// multiple simultaneously (Stage 4, P1 Thm 6.12 / P2 Thm 2): compile the
+            /// language's in-Rho matching ruleset, GATE (fail closed if any fired rule is not
+            /// matchable in Rho — FV (ix) `install_admits`), STRUCTURALLY reflect the whole
+            /// subject `term` (M-reflect, NOT the report σ), and assemble ONE
+            /// `∏ network_ℓ ‖ spread` call — a positional network co-installed at every redex
+            /// position `ℓ` over one spread — the runtime runs against the installed
+            /// σ-receiver program. Unlike [`Self::rho_net_invocation_from_dovetail_to`] (which
+            /// host-computes σ and injects it), the automaton re-does the MATCHING +
+            /// LOCATION on the interpreter (the `$\tau$` `sa:` COMMs) and each located site's
+            /// accept fires the σ-receiver — so a NESTED redex and MULTIPLE redexes all fire
+            /// IN RHO, the observed channel collecting every located redex's contractum. The
+            /// default backend (`swapdemo_backed`) calls this, falling back to the σ-replay
+            /// driver ONLY when the gate rejects (a fired rule is off-machine: AC / contextual
+            /// / binder / native) or the ruleset has a nested-App entry (co-install
+            /// contention) — never for a flat-rule language's nested/multiple redexes.
             pub fn rho_net_match_invocation_from_dovetail_to(
                 term: &dyn mettail_runtime::Term,
                 report: &mettail_runtime::RuntimeDovetailRunReport,
@@ -1812,27 +1798,32 @@ mod tests {
 
     #[test]
     fn generated_rho_net_invocation_emits_the_in_rho_match_method() {
-        // Stage 4 M-reflect: the emitted impl carries the in-Rho MATCH invocation — compile the
-        // ruleset, GATE on it, STRUCTURALLY reflect the whole subject term (NOT the report σ),
-        // check the redex is root-rooted, and assemble the network‖spread call (the automaton
-        // LOCATES the redex + emits σ ON the interpreter).
+        // Stage 4 (M-reflect + locate-all): the emitted impl carries the in-Rho MATCH invocation
+        // — compile the ruleset, GATE on it, STRUCTURALLY reflect the whole subject term (NOT the
+        // report σ), and assemble the LOCATE-ALL ∏ network_ℓ ‖ spread call (the automaton LOCATES
+        // every redex at any position + emits σ ON the interpreter).
         let tokens = generate_rho_net_invocation(&swap_net_fixture()).to_string();
         assert!(tokens.contains("rho_net_match_invocation_from_dovetail_to"));
         assert!(tokens.contains("compile_in_rho_matching_ruleset"));
         assert!(tokens.contains("in_rho_match_gate_reject"));
-        assert!(tokens.contains("in_rho_match_call_par"));
-        // M-reflect: the MATCH path structurally reflects `term` (the greenfield hinge) and
-        // checks the redex is root-rooted — instead of rebuilding LHS[σ] from the report σ.
+        // Locate-all: the MATCH path co-installs a positional network at EVERY located redex
+        // position (nested + multiple), retiring the single-root `in_rho_match_call_par` +
+        // `rule_lhs_root_constructor` root-rooted restriction.
+        assert!(tokens.contains("in_rho_match_all_sites_call_par"), "locate-all multi-site call");
+        // M-reflect: the MATCH path structurally reflects `term` (the greenfield hinge) instead
+        // of rebuilding LHS[σ] from the report σ.
         assert!(
             tokens.contains("__mettail_rho_net_reflect_proc"),
             "per-category Term→GroundTerm"
         );
-        assert!(tokens.contains("rule_lhs_root_constructor"), "root-rooted redex check");
-        // Retirement proof (by construction): the MATCH path no longer reconstructs LHS[σ] from
-        // the host report σ — `reconstruct_redex_subject` is gone from the emitted MATCH method,
-        // so the σ the σ-receiver fires on is produced by the `sa:` accept, never the report.
-        // (The σ-injection `body` above is a DIFFERENT method and legitimately keeps its σ read;
-        // the match method uniquely names the reflection fns, asserted present above.)
+        // Retirement proof (by construction): the MATCH path no longer restricts to a single
+        // root-rooted redex (`rule_lhs_root_constructor`) nor rebuilds LHS[σ] from the host
+        // report σ (`reconstruct_redex_subject`) — every redex is LOCATED + fired by the `sa:`
+        // accept, so σ is produced by the automaton, never the report.
+        assert!(
+            !tokens.contains("rule_lhs_root_constructor"),
+            "the MATCH path must not gate on a single root-rooted redex (locate-all retirement)"
+        );
         assert!(
             !tokens.contains("reconstruct_redex_subject"),
             "the MATCH path must not rebuild the redex from the report σ (M-reflect retirement)"

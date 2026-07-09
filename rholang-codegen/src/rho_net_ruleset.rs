@@ -15,10 +15,10 @@
 //! classifier (`lower_lhs_vars`) on "structural" — cross-checked in the tests — so a
 //! rule can never be admitted by one path and rejected by the other.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 use dovetail::rules::Pattern as DvPattern;
-use dovetail::set_automaton::{PatternId, SetAutomaton};
+use dovetail::set_automaton::{AutomatonNode, PatternId, SetAutomaton};
 use mettail_ast::identity::language_definition_fingerprint;
 use mettail_ast::language::LanguageDef;
 use mettail_ast::pattern::{Pattern, PatternTerm};
@@ -27,7 +27,7 @@ use models::rhoapi::Par;
 use crate::rho_net_automaton::{
     multi_pattern_receiver_network_par, AutomatonAcceptTarget, AutomatonUnsupported,
 };
-use crate::rho_net_lower::{spread_term_par, GroundTerm};
+use crate::rho_net_lower::{spread_child_location, spread_term_par, GroundTerm};
 
 /// Why an LHS pattern has no structural set-automaton image (fail-closed to a later
 /// stage rather than mis-compiling it into a wrong automaton).
@@ -229,6 +229,117 @@ pub fn in_rho_match_call_par(
     )?;
     let spread = spread_term_par(subject, &ruleset.language_fingerprint, site);
     Ok(network.append(spread))
+}
+
+/// The set of rule LHS ROOT constructors the in-Rho matcher's positional automaton dispatches
+/// on — the compiled entries' root ops. A subject node whose head is one of these is a CANDIDATE
+/// redex position the automaton attempts a match at (the plural, locate-all generalization of the
+/// single-redex [`rule_lhs_root_constructor`]). Reads ONLY the compiled automaton (not the report
+/// σ), so it never re-does the host match.
+pub fn rule_lhs_root_constructors(ruleset: &InRhoMatchingRuleset) -> BTreeSet<String> {
+    let view = ruleset.automaton.view();
+    (0..view.entry_count())
+        .filter_map(|entry| match view.node(view.entry_root_state(entry)) {
+            AutomatonNode::App { op, .. } => Some(op.to_string()),
+            AutomatonNode::Var(_) => None,
+        })
+        .collect()
+}
+
+/// Whether every compiled entry is FLAT — an App root over Var-leaf arguments only. This is the
+/// soundness precondition for the Stage-4 locate-all multi-site install
+/// ([`in_rho_match_all_sites_call_par`]): a flat entry's network reads only its own root `loc:`
+/// head-tag channel and its direct-child `cap:` COLLAPSE channels, which are DISJOINT across
+/// distinct positions (`loc:ρ/ℓ₁ ≠ loc:ρ/ℓ₂`, `cap:ρ/ℓ₁/op.i ≠ cap:ρ/ℓ₂/op.j`), so co-installing
+/// one network per redex position over ONE spread never contends for a channel. A NESTED entry
+/// would DESCEND `loc:` head tags into its arguments; a co-installed root attempt at a descent
+/// position would then race for that one linear head-tag send. Such a ruleset fails closed to the
+/// σ-replay driver ([`AutomatonUnsupported::NestedEntryMultiSite`]).
+pub fn ruleset_all_entries_flat(ruleset: &InRhoMatchingRuleset) -> bool {
+    let view = ruleset.automaton.view();
+    (0..view.entry_count()).all(|entry| match view.node(view.entry_root_state(entry)) {
+        AutomatonNode::App { args, .. } => args
+            .iter()
+            .all(|&arg| matches!(view.node(arg), AutomatonNode::Var(_))),
+        AutomatonNode::Var(_) => false,
+    })
+}
+
+/// Collect the per-position SITE strings of `node` at which the automaton attempts a match: every
+/// position (pre-order, DFS) whose head constructor is a rule LHS root (`roots`). The site string
+/// is the ν-free location path `⌜(ρ,ℓ)⌝` (root nonce ρ = `root_location`, position ℓ derived via
+/// [`spread_child_location`] — the SAME derivation the spread uses for its `loc:`/`cap:` channels),
+/// so the network built at each site reads the channels the ONE spread of the whole subject
+/// published there. Distinct positions get distinct (disjoint-prefix) site strings.
+fn collect_redex_sites(
+    node: &GroundTerm,
+    location: &str,
+    roots: &BTreeSet<String>,
+    sites: &mut Vec<String>,
+) {
+    if roots.contains(&node.constructor) {
+        sites.push(location.to_string());
+    }
+    for (index, child) in node.children.iter().enumerate() {
+        let child_location = spread_child_location(location, &node.constructor, index);
+        collect_redex_sites(child, &child_location, roots, sites);
+    }
+}
+
+/// Stage 4 (locate-all + multi-firing) — build ONE combined match call that locates EVERY redex of
+/// `subject`, at ANY position and multiple simultaneously (P1 Thm 6.12 / P2 Thm 2). The whole
+/// reflected subject is spread ONCE at root nonce `root_site`; for every position whose head is a
+/// rule LHS root ([`rule_lhs_root_constructors`]) a positional receiver network is built at that
+/// position's ν-free site path (`⌜(ρ,ℓ)⌝`), and all networks are composed with the one spread. Each
+/// site's accept fires the matched rule's σ-receiver on `out_channel`, so a single isolated run
+/// observes every located redex's contractum on that channel (the shared persistent σ-receiver
+/// serves every site's accept — the accept send carries its σ + `@out` atomically, so distinct
+/// sites never cross-talk). Returns the combined call and the number of located sites (0 = a normal
+/// form: the call is the bare spread, which fires nothing).
+///
+/// The automaton — not the host — LOCATES + binds σ: `collect_redex_sites` only pre-filters
+/// candidate positions by head op (exactly the set-automaton root-state dispatch); at each site the
+/// emitted network re-does the head `Match` and the `cap:` σ capture ON the interpreter, so σ is
+/// produced by the accept, never the report (M-reflect). Fails closed
+/// ([`AutomatonUnsupported::NestedEntryMultiSite`]) unless the ruleset is flat-only
+/// ([`ruleset_all_entries_flat`]), the co-installation contention-freedom precondition.
+pub fn in_rho_match_all_sites_call_par(
+    ruleset: &InRhoMatchingRuleset,
+    subject: &GroundTerm,
+    root_site: &str,
+    out_channel: &str,
+) -> Result<(Par, usize), AutomatonUnsupported> {
+    if !ruleset_all_entries_flat(ruleset) {
+        return Err(AutomatonUnsupported::NestedEntryMultiSite);
+    }
+    let targets: Vec<AutomatonAcceptTarget> = ruleset
+        .accept_channels
+        .iter()
+        .map(|(pattern, accept_channel)| AutomatonAcceptTarget {
+            pattern: *pattern,
+            accept_channel: accept_channel.clone(),
+            out_channel: out_channel.to_string(),
+        })
+        .collect();
+
+    let roots = rule_lhs_root_constructors(ruleset);
+    let mut sites: Vec<String> = Vec::new();
+    collect_redex_sites(subject, root_site, &roots, &mut sites);
+
+    // One positional network per located site (disjoint-prefix channels), then ONE spread of the
+    // whole subject. A normal form (no located site) is the bare spread — a valid no-op.
+    let mut call = Par::default();
+    for site in &sites {
+        let network = multi_pattern_receiver_network_par(
+            &ruleset.automaton.view(),
+            site,
+            &targets,
+            &ruleset.language_fingerprint,
+        )?;
+        call = call.append(network);
+    }
+    let spread = spread_term_par(subject, &ruleset.language_fingerprint, root_site);
+    Ok((call.append(spread), sites.len()))
 }
 
 /// The FV (ix) `install_admits` capability gate, executable: returns the first rule that
@@ -453,6 +564,117 @@ mod tests {
         assert!(in_rho_match_gate_reject(&skipped, &["Swap"]).is_none());
         // Nothing fired → admit.
         assert!(in_rho_match_gate_reject(&skipped, &[]).is_none());
+    }
+
+    /// The flat SwapDemo ruleset (`Swap(x, y) ~> Pair(y, x)`) — a single flat App entry.
+    fn swap_demo_def() -> LanguageDef {
+        syn::parse_str(
+            r#"
+                name: SwapRulesetGen,
+                types { Proc }
+                terms {
+                    A . |- "A" : Proc ;
+                    B . |- "B" : Proc ;
+                    Pair . x:Proc, y:Proc |- "pair" "(" x "," y ")" : Proc ;
+                    Swap . x:Proc, y:Proc |- "swap" "(" x "," y ")" : Proc ;
+                }
+                equations {}
+                rewrites { SwapStep . |- (Swap x y) ~> (Pair y x) ; }
+            "#,
+        )
+        .expect("the SwapDemo ruleset fragment parses")
+    }
+
+    #[test]
+    fn rule_lhs_roots_are_the_flat_entry_ops() {
+        let ruleset = compile_in_rho_matching_ruleset(&swap_demo_def());
+        assert_eq!(
+            rule_lhs_root_constructors(&ruleset),
+            ["Swap".to_string()].into_iter().collect::<BTreeSet<_>>(),
+            "the only matchable rule root is Swap"
+        );
+        assert!(ruleset_all_entries_flat(&ruleset), "Swap(x, y) is a flat App-over-Var entry");
+    }
+
+    #[test]
+    fn a_nested_pattern_entry_is_not_flat() {
+        // Wrap(Swap x y) ~> Pair(y, x): the LHS has a NESTED App child, so the ruleset is not
+        // flat and the locate-all multi-site install fails closed (co-install contention).
+        let def: LanguageDef = syn::parse_str(
+            r#"
+                name: NestedRulesetGen,
+                types { Proc }
+                terms {
+                    A . |- "A" : Proc ;
+                    Pair . x:Proc, y:Proc |- "pair" "(" x "," y ")" : Proc ;
+                    Swap . x:Proc, y:Proc |- "swap" "(" x "," y ")" : Proc ;
+                    Wrap . x:Proc |- "wrap" "(" x ")" : Proc ;
+                }
+                equations {}
+                rewrites { NestStep . |- (Wrap (Swap x y)) ~> (Pair y x) ; }
+            "#,
+        )
+        .expect("the nested-pattern fragment parses");
+        let ruleset = compile_in_rho_matching_ruleset(&def);
+        assert!(!ruleset_all_entries_flat(&ruleset), "Wrap(Swap x y) is a nested entry");
+        // The locate-all install fails closed (→ σ-replay), never emitting a contending network.
+        let subject = GroundTerm::new("A", Vec::new());
+        assert_eq!(
+            in_rho_match_all_sites_call_par(&ruleset, &subject, "site0", "OUT"),
+            Err(AutomatonUnsupported::NestedEntryMultiSite)
+        );
+    }
+
+    #[test]
+    fn locate_all_finds_every_redex_position() {
+        let ruleset = compile_in_rho_matching_ruleset(&swap_demo_def());
+
+        // A single ROOT redex: Swap(A, B) — one site.
+        let a = GroundTerm::new("A", Vec::new());
+        let b = GroundTerm::new("B", Vec::new());
+        let root = GroundTerm::new("Swap", vec![a.clone(), b.clone()]);
+        let (_call, n_root) = in_rho_match_all_sites_call_par(&ruleset, &root, "site0", "OUT")
+            .expect("a flat ruleset serializes the locate-all call");
+        assert_eq!(n_root, 1, "Swap(A, B) is one root-rooted redex");
+
+        // A single NESTED redex: Pair(Swap(A, B), B) — Pair is inert (not a rule root), so the
+        // only located site is the nested Swap at position Pair.0.
+        let nested = GroundTerm::new(
+            "Pair",
+            vec![GroundTerm::new("Swap", vec![a.clone(), b.clone()]), b.clone()],
+        );
+        let (_call, n_nested) = in_rho_match_all_sites_call_par(&ruleset, &nested, "site0", "OUT")
+            .expect("locate-all serializes for a nested redex");
+        assert_eq!(n_nested, 1, "the nested Swap at Pair.0 is located (Pair is inert)");
+
+        // MULTIPLE redexes: Pair(Swap(A, B), Swap(B, A)) — two sites (Pair.0 and Pair.1).
+        let multi = GroundTerm::new(
+            "Pair",
+            vec![
+                GroundTerm::new("Swap", vec![a.clone(), b.clone()]),
+                GroundTerm::new("Swap", vec![b.clone(), a.clone()]),
+            ],
+        );
+        let (_call, n_multi) = in_rho_match_all_sites_call_par(&ruleset, &multi, "site0", "OUT")
+            .expect("locate-all serializes for multiple redexes");
+        assert_eq!(n_multi, 2, "both nested Swaps are located simultaneously");
+
+        // A NESTED redex in a non-inert arg position: Swap(A, Swap(B, A)) — the outer Swap AND
+        // the inner Swap at position Swap.1 are both redexes → two sites.
+        let nested_arg = GroundTerm::new(
+            "Swap",
+            vec![a.clone(), GroundTerm::new("Swap", vec![b.clone(), a.clone()])],
+        );
+        let (_call, n_nested_arg) =
+            in_rho_match_all_sites_call_par(&ruleset, &nested_arg, "site0", "OUT")
+                .expect("locate-all serializes for a nested-arg redex");
+        assert_eq!(n_nested_arg, 2, "the outer Swap and the inner Swap at Swap.1 are both located");
+
+        // A normal form: Pair(A, B) — no located site (the bare spread, a no-op).
+        let normal = GroundTerm::new("Pair", vec![a, b]);
+        let (_call, n_normal) = in_rho_match_all_sites_call_par(&ruleset, &normal, "site0", "OUT")
+            .expect("locate-all serializes a no-op for a normal form");
+        assert_eq!(n_normal, 0, "Pair(A, B) has no redex");
     }
 
     #[test]

@@ -67,6 +67,18 @@ pub enum AutomatonUnsupported {
     /// A compiled entry has no accept target (its `PatternId` is absent from the
     /// caller's `accept_targets`) — the accept could not be routed to a rule.
     MissingAcceptTarget,
+    /// The Stage-4 locate-all multi-site install ([`in_rho_match_all_sites_call_par`]) was
+    /// asked to co-install per-position networks for a ruleset with a NESTED-App entry. A
+    /// nested entry DESCENDS `loc:` head tags into its arguments, and a co-installed root
+    /// attempt at a descent position would then contend for that same `loc:` head-tag send
+    /// (one linear message, two readers) — potentially DROPPING a match. Flat-only rulesets
+    /// (every entry an App over Var leaves) read only their own root `loc:` + leaf `cap:`
+    /// channels, which are disjoint across positions, so they co-install soundly; a
+    /// nested-entry ruleset fails closed here to the σ-replay driver (still correct, just
+    /// off the in-Rho locate-all path). See `in_rho_match_all_sites_call_par`.
+    ///
+    /// [`in_rho_match_all_sites_call_par`]: crate::in_rho_match_all_sites_call_par
+    NestedEntryMultiSite,
 }
 
 /// The `locally_free` index set `indices` as a rhoapi bit vector (empty when none).
