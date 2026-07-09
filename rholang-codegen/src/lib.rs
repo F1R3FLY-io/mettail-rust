@@ -136,7 +136,8 @@ pub use rho_net_automaton::{
 };
 pub use rho_net_lower::{
     ac_bag_pattern, ac_carrier_channel, ac_contract_call, ac_match_call_par, ac_rule_receiver,
-    ac_sigma_receiver_par, collapse_capture_location, collapse_chain_location, comm_contract_call,
+    ac_sigma_receiver_par, ac_sigma_receiver_par_with_condition, collapse_capture_location,
+    collapse_chain_location, comm_contract_call,
     comm_rule_receiver, contextual_contract_call, contextual_join_receiver_par,
     native_locate_bridge_par, reconstruct_contractum, reflect_ground_term_par,
     rho_net_ac_injection_sites, rho_net_ac_match_entries, rho_net_comm_injection_sites,

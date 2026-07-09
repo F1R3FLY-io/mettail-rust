@@ -14,6 +14,9 @@ pub mod acdemo;
 // Stage AC2b: the bag-TRANSFORMING (nested-bag RHS) AC firing demonstration language.
 #[cfg(feature = "ac-bag-demo")]
 pub mod acbagdemo;
+// Stage 4 S-AC (AC3): the NON-LINEAR `{x, x, ...rest}` bare-var AC firing demonstration language.
+#[cfg(feature = "nl-ac-demo")]
+pub mod nlacdemo;
 // Stage 3d: the Ambient-calculus `OpenRule` STRUCTURAL non-linear AC firing demonstration language.
 #[cfg(feature = "amb-demo")]
 pub mod ambdemo;

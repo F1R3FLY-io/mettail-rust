@@ -1908,6 +1908,11 @@ pub struct RhoNetAcMatchEntry {
     /// materializes the installed AC receiver from). Site-independent: the co-installed per-site
     /// receiver differs from the installed one ONLY in its source channel.
     pub rhs_par: Par,
+    /// The NON-LINEAR consistency `Receive.condition` (Stage 4 S-AC, AC3) for a repeated bare
+    /// element var (`{x, x, ...rest}` — the `N ≡ N` shape), or `None` for a LINEAR LHS. Site-
+    /// independent (it references only the receiver's bound element slots), so the co-installed
+    /// per-site receiver carries the SAME guard as the installed one.
+    pub condition: Option<Par>,
 }
 
 /// Derive every in-Rho MATCHING entry for a language's linear with-rest HashBag AC family rewrites
@@ -1944,6 +1949,9 @@ pub fn rho_net_ac_match_entries(def: &LanguageDef) -> Vec<RhoNetAcMatchEntry> {
             continue;
         };
         let k = element_vars.len();
+        // The NON-LINEAR consistency guard (AC3) for a repeated bare element var, computed BEFORE
+        // `element_vars` is moved — SAME as the installed receiver's ([`ac_rule_receiver`]).
+        let condition = ac_nonlinear_condition(&element_vars, k + 2);
         // The σ variable order: the k element vars (first-occurrence), then `rest` — EXACTLY the
         // frame `ac_rule_receiver` reflects the RHS in, so the co-installed receiver is byte-
         // identical to the installed one apart from its source channel.
@@ -1959,6 +1967,7 @@ pub fn rho_net_ac_match_entries(def: &LanguageDef) -> Vec<RhoNetAcMatchEntry> {
             op,
             arity: k,
             rhs_par,
+            condition,
         });
     }
     entries
@@ -2366,13 +2375,14 @@ fn ac_match_install_at(
         };
         let carrier = ac_carrier_channel(loc_channel, &node.constructor);
         // The co-installed AC receiver over the site-keyed carrier — SAME `ac_sigma_receiver_par`
-        // shape as the installed one, only the source differs (so it picks k-of-n from the SPREAD
-        // bag, not the report σ).
-        let receiver = ac_sigma_receiver_par(
+        // shape (incl. the AC3 non-linear `Receive.condition` guard) as the installed one, only the
+        // source differs (so it picks k-of-n from the SPREAD bag, not the report σ).
+        let receiver = ac_sigma_receiver_par_with_condition(
             &entry.op,
             entry.arity,
             entry.rhs_par.clone(),
             new_gstring_par(carrier.clone(), Vec::new(), false),
+            entry.condition.clone(),
         );
         // The carrier delivery `carrier!(⟦bag⟧, @out)` — the process-soup sourced from THIS subject
         // bag's ground elements (`reflect_ac_bag_par`), NOT `find_sigma`. The soup is ground, so the
@@ -3025,6 +3035,29 @@ pub fn contextual_join_receiver_par(context_rhs: Par, premise_channels: &[Par]) 
 /// `rest` as `BoundVar(1)` (the reverse De Bruijn over the `k+2` bind free vars). Verified end to
 /// end by `ac_receiver_fires_the_matched_element_on_the_dynamic_out`.
 pub fn ac_sigma_receiver_par(op: &str, k: usize, rhs_par: Par, source: Par) -> Par {
+    ac_sigma_receiver_par_with_condition(op, k, rhs_par, source, None)
+}
+
+/// [`ac_sigma_receiver_par`] with an optional NON-LINEAR consistency `Receive.condition` (Stage 4
+/// S-AC, AC3): a LINEAR AC rule (`op{x_0, …, x_{k-1}, ...rest}`, all element vars DISTINCT) passes
+/// `None` (byte-identical to [`ac_sigma_receiver_par`]); a NON-LINEAR one (`op{x, x, ...rest}` — the
+/// `N ≡ N` shape a repeated bare element var expresses) passes the [`ac_nonlinear_condition`] guard
+/// `EEq(slot_i, slot_j) ∧ …`, which the reducer evaluates before committing the COMM so the k
+/// element slots the connective [`ac_bag_pattern`] binds are picked ONLY when the repeated
+/// occurrences are name-equal. The RHS references each repeated var's FIRST occurrence slot
+/// (`reflect_term_par`'s first-occurrence resolution), consistent with the guard's canonical slot.
+///
+/// This reuses the same [`nonlinear_consistency_condition`] machinery as [`comm_receiver_par`] /
+/// [`structural_ac_receiver_par`], generalized to the bare-var connective bag pattern — so a
+/// non-linear AC rewrite over bare element vars matches ONLY equal picks, closing the latent
+/// condition-less gap. Every other formal (rest, out) and the body are the linear receiver's.
+pub fn ac_sigma_receiver_par_with_condition(
+    op: &str,
+    k: usize,
+    rhs_par: Par,
+    source: Par,
+    condition: Option<Par>,
+) -> Par {
     let free_count = k + 2; // k elements + rest + out
     let out_channel = bound_formal(free_count, k + 1); // out = BoundVar(0)
     let body_free = union(rhs_par.locally_free.clone(), create_bit_vector(&[0]));
@@ -3043,9 +3076,55 @@ pub fn ac_sigma_receiver_par(op: &str, k: usize, rhs_par: Par, source: Par) -> P
         bind_count: free_count as i32,
         locally_free: Vec::new(),
         connective_used: false,
-        condition: None,
+        condition,
     };
     Par::default().with_receives(vec![receive])
+}
+
+/// The NON-LINEAR consistency `Receive.condition` for a bare-var AC LHS `op{x_0, …, x_{k-1},
+/// ...rest}` (Stage 4 S-AC, AC3), or `None` when the LHS is LINEAR (every element var distinct — no
+/// guard needed). Groups the `k` element positions by variable name; each group with ≥2 positions
+/// is a repeated (non-linear) var whose occurrences must be name-equal, contributing an
+/// [`nonlinear_consistency_condition`] `EEq(slot_first, slot_other) ∧ …` over the receiver's `k+2`
+/// formals (`ac_bag_pattern` binds element `i` as `FreeVar(i)` → `BoundVar(k+1-i)`). Multiple
+/// non-linear groups are conjoined with `EAnd`. This is the AC analogue of the automaton's flat
+/// `eq:` consistency join, expressed as the connective receiver's guard.
+fn ac_nonlinear_condition(element_vars: &[Ident], free_count: usize) -> Option<Par> {
+    // Element positions grouped by variable name (first-occurrence order).
+    let mut groups: Vec<(String, Vec<usize>)> = Vec::with_capacity(element_vars.len());
+    for (pos, var) in element_vars.iter().enumerate() {
+        let name = var.to_string();
+        match groups.iter_mut().find(|(existing, _)| *existing == name) {
+            Some((_, positions)) => positions.push(pos),
+            None => groups.push((name, vec![pos])),
+        }
+    }
+    let mut condition: Option<Par> = None;
+    for (_, positions) in &groups {
+        if positions.len() < 2 {
+            continue;
+        }
+        let group = nonlinear_consistency_condition(positions, free_count);
+        condition = Some(match condition {
+            None => group,
+            Some(existing) => {
+                let union_free = union(existing.locally_free.clone(), group.locally_free.clone());
+                let and = Expr {
+                    expr_instance: Some(ExprInstance::EAndBody(EAnd {
+                        p1: Some(existing),
+                        p2: Some(group),
+                    })),
+                };
+                Par {
+                    exprs: vec![and],
+                    locally_free: union_free,
+                    connective_used: false,
+                    ..Par::default()
+                }
+            },
+        });
+    }
+    condition
 }
 
 /// The shape of a linear with-rest HashBag AC rewrite LHS `op({x_1, …, x_k, ...rest})`: the
@@ -3118,13 +3197,18 @@ pub fn ac_rule_receiver(
 ) -> Option<Par> {
     let (op, element_vars, rest) = ac_rule_shape(left, resolved_kind.as_ref())?;
     let k = element_vars.len();
+    // The NON-LINEAR consistency guard for a repeated bare element var (`{x, x, ...rest}` — the
+    // `N ≡ N` shape); `None` for a linear LHS (byte-identical to the pre-AC3 receiver). Computed
+    // BEFORE `element_vars` is moved into the σ order.
+    let condition = ac_nonlinear_condition(&element_vars, k + 2);
     // The σ variable order: the k element vars (first-occurrence), then `rest`.
     let mut vars: Vec<Ident> = element_vars;
     vars.push(rest);
     // The RHS `⟦R⟧σ` in the AC receiver's `k+2`-formal frame (`reflect_term_par` at `k+1`). A
     // bag-VALUED RHS reflects to the process-soup carrier ([`reflect_hashbag_soup_par`]) via `def`.
+    // A repeated var resolves to its FIRST occurrence slot (matching the guard's canonical slot).
     let rhs = reflect_term_par(right, &vars, k + 1, language_fingerprint, def).ok()?;
-    Some(ac_sigma_receiver_par(&op, k, rhs, source))
+    Some(ac_sigma_receiver_par_with_condition(&op, k, rhs, source, condition))
 }
 
 /// Resolve the collection kind a CONSTRUCTOR declares (`op . ps:HashBag(..) |- ..`), keyed on the

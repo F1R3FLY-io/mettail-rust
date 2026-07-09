@@ -31,6 +31,7 @@ default = [
     "swap-demo-runtime",
     "ac-demo-runtime",
     "ac-bag-demo-runtime",
+    "nl-ac-demo-runtime",
     "ctx-demo-runtime",
     "lambda-demo-runtime",
     "native-demo-runtime",
@@ -87,6 +88,16 @@ ac-bag-demo-runtime = [
     "runtime-report",
     "dep:mettail-languages",
     "mettail-languages/ac-bag-demo",
+    "mettail-languages/dovetail-codegen",
+    "mettail-languages/rho-codegen",
+]
+# Stage 4 S-AC (AC3) — the NON-LINEAR bare-var HashBag AC firing test (`rho_net_nl_ac_firing`) — a
+# generated `PPar{x, x, ...rest} ~> Wrap(x)` whose repeated element var carries the `Receive.condition`
+# consistency guard, matched + fired in Rho from the subject spread.
+nl-ac-demo-runtime = [
+    "runtime-report",
+    "dep:mettail-languages",
+    "mettail-languages/nl-ac-demo",
     "mettail-languages/dovetail-codegen",
     "mettail-languages/rho-codegen",
 ]
@@ -246,6 +257,11 @@ required-features = ["ac-demo-runtime"]
 name = "rho_net_ac_bag_firing"
 path = "tests/rho_net_ac_bag_firing.rs"
 required-features = ["ac-bag-demo-runtime"]
+
+[[test]]
+name = "rho_net_nl_ac_firing"
+path = "tests/rho_net_nl_ac_firing.rs"
+required-features = ["nl-ac-demo-runtime"]
 
 [[test]]
 name = "rho_net_contextual_firing"
