@@ -796,6 +796,201 @@ Section BinderReductSeparation.
 
 End BinderReductSeparation.
 
+(* ============================================================================
+   STAGE 4 S-binder (SLICE 3b): the STRUCTURAL-AC `^lambda`-descent LOCATES the operand
+   bag — top-level AND UNDER a `new(x, .)` binder image.
+
+   The Ambient `OpenRule` `{POpen N P, PAmb N Q, ...rest} ~> {P, Q, ...rest}` is a STRUCTURAL
+   non-linear AC redex whose operand bag is NOT an automaton entry (an `AcApp` bag has no
+   positional image). The match driver LOCATES it by a SEPARATE structural walk
+   (`rho_net_lower.rs::structural_ac_match_install_at`): at an admitted HashBag node whose op is
+   one of the `by_op` entries it STOPS and co-installs a per-site MATCH receiver (a bag has no
+   positional child descent); at every OTHER node — INCLUDING the reserved `^lambda` binder image
+   a `PNew` reflects to (`^lambda ∉ by_op`) — it RECURSES into the children. So a bag ARBITRARILY
+   deep under `new` binders is reached for free, exactly as the runtime tests
+   (`rho_net_ambient_firing.rs`: `..._matches_in_rho_via_the_spread`,
+   `s_ac_under_new_bag_is_produced_by_the_spread_not_the_report`) exercise.
+
+   This section models the descent (`ac_locate`, parameterized by the admitted-op predicate
+   `is_bag_op` exactly as `sigma_gen` is parameterized by the leaf capture) and proves the exact
+   Part-1 obligation: the `loc:`-derivation REACHES the bag IFF the bag is on the NON-BAG SPINE of
+   the reflected subject (`ac_locate_iff_spine`) — the `^lambda`-recursion made precise. Corollaries:
+   only admitted bags are located (`ac_locate_sound`), a bag under any non-bag (`^lambda`) wrapper
+   is located (`located_under_lambda`), and concrete under-`new` witnesses (bag under 1 and 2
+   `^lambda` images). This is the `InRhoMatchPositional`-style location image of the structural-AC
+   bag re-sourcing whose multiset σ correctness is `advanced_automata/InRhoAcMatchMultiset.v`.
+   Rocq 9.1 compatible. No Admitted, no Axioms, no Assumptions.
+   ============================================================================ *)
+
+(* The structural-AC locate descent (`structural_ac_match_install_at`), parameterized by the
+   admitted-op predicate `is_bag_op` (the `by_op` membership test). At an admitted HashBag node STOP
+   and record THAT node (no element descent); at a non-bag node RECURSE into every child (the
+   `^lambda ∉ by_op` recursion). The inner `lmap` folds the children (each `ac_locate is_bag_op x` on
+   a child of `NApp op ch`, structurally smaller — same nested-fix shape as `subnodes`/`collapse`). *)
+Fixpoint ac_locate (is_bag_op : nat -> bool) (n : Node) : list Node :=
+  match n with
+  | NApp op ch =>
+      if is_bag_op op
+      then [NApp op ch]
+      else (fix lmap (l : list Node) : list Node :=
+              match l with
+              | [] => []
+              | x :: xs => ac_locate is_bag_op x ++ lmap xs
+              end) ch
+  end.
+
+(* At an admitted bag node the descent STOPS at that bag (a bag has no positional child descent). *)
+Lemma ac_locate_bag : forall is_bag_op op ch,
+  is_bag_op op = true -> ac_locate is_bag_op (NApp op ch) = [NApp op ch].
+Proof. intros is_bag_op op ch H. simpl. rewrite H. reflexivity. Qed.
+
+(* At a non-bag node the descent RECURSES = flat_map ac_locate over the children (the `^lambda ∉
+   by_op` recursion — a bag under the binder image is reached). *)
+Lemma ac_locate_nonbag : forall is_bag_op op ch,
+  is_bag_op op = false ->
+  ac_locate is_bag_op (NApp op ch) = flat_map (ac_locate is_bag_op) ch.
+Proof.
+  intros is_bag_op op ch H. simpl. rewrite H.
+  induction ch as [| c ch' IH]; simpl; [ reflexivity | rewrite IH; reflexivity ].
+Qed.
+
+(* A bag located anywhere under a NON-bag (e.g. `^lambda`) wrapper is located at the wrapper — the
+   location is monotone through binder images, so a bag under `new` is reached. *)
+Lemma located_under_lambda : forall is_bag_op op ch c b,
+  is_bag_op op = false -> In c ch -> In b (ac_locate is_bag_op c) ->
+  In b (ac_locate is_bag_op (NApp op ch)).
+Proof.
+  intros is_bag_op op ch c b Hop Hc Hb.
+  rewrite (ac_locate_nonbag is_bag_op op ch Hop).
+  apply in_flat_map. exists c. split; [ exact Hc | exact Hb ].
+Qed.
+
+(* `b` is on the NON-BAG SPINE of `n`: either `n` IS `b` and `b` is an admitted bag (`spine_here`),
+   or `n` is a NON-bag node and `b` is on the spine of one of its children (`spine_under` — the
+   descent recurses through non-bag ancestors, the `^lambda` binder images, and stops at the FIRST
+   admitted bag). `b` and the target are both indices for clean inversion. *)
+Inductive on_nonbag_spine (is_bag_op : nat -> bool) : Node -> Node -> Prop :=
+  | spine_here : forall b,
+      is_bag_op (node_op b) = true -> on_nonbag_spine is_bag_op b b
+  | spine_under : forall b op ch c,
+      is_bag_op op = false ->
+      In c ch ->
+      on_nonbag_spine is_bag_op b c ->
+      on_nonbag_spine is_bag_op b (NApp op ch).
+
+(* Inversion at a NON-bag node: being on the spine of `NApp op ch` (op non-bag) is exactly being on
+   the spine of one of its children — the descent recurses. *)
+Lemma on_nonbag_spine_nonbag : forall is_bag_op b op ch,
+  is_bag_op op = false ->
+  (on_nonbag_spine is_bag_op b (NApp op ch)
+   <-> exists c, In c ch /\ on_nonbag_spine is_bag_op b c).
+Proof.
+  intros is_bag_op b op ch Hop. split.
+  - intro H. inversion H; subst.
+    + (* spine_here would force is_bag_op op = true *) simpl in *. congruence.
+    + (* spine_under: the witness child *) eexists; split; eassumption.
+  - intros [c [Hc Hsp]]. apply (spine_under is_bag_op b op ch c Hop Hc Hsp).
+Qed.
+
+(* COMPLETENESS: every bag on the non-bag spine is located — a bag under any chain of `^lambda`
+   binder images IS reached. Induction on the spine derivation. *)
+Lemma spine_implies_located : forall is_bag_op b n,
+  on_nonbag_spine is_bag_op b n -> In b (ac_locate is_bag_op n).
+Proof.
+  intros is_bag_op b n H.
+  induction H as [ b0 Hbag | b0 op ch c Hop Hc Hspine IH ].
+  - destruct b0 as [op ch]. simpl in Hbag.
+    rewrite (ac_locate_bag is_bag_op op ch Hbag). left. reflexivity.
+  - apply (located_under_lambda is_bag_op op ch c b0 Hop Hc IH).
+Qed.
+
+(* SOUNDNESS (kind): only an admitted bag is ever located — nothing else is a `loc:` site. Structural
+   fix on `n` (nested-list induction with the IH on the head child, as in `collapse_faithful`). *)
+Lemma ac_locate_sound : forall is_bag_op n b,
+  In b (ac_locate is_bag_op n) -> is_bag_op (node_op b) = true.
+Proof.
+  intros is_bag_op. fix IH 1. intros [op ch] b Hin.
+  destruct (is_bag_op op) eqn:Hop.
+  - rewrite (ac_locate_bag is_bag_op op ch Hop) in Hin.
+    destruct Hin as [Heq | Hfalse]; [ subst b; simpl; exact Hop | destruct Hfalse ].
+  - rewrite (ac_locate_nonbag is_bag_op op ch Hop) in Hin.
+    revert Hin. induction ch as [| c ch' IHch]; intro Hin.
+    + simpl in Hin. destruct Hin.
+    + cbn [flat_map] in Hin. rewrite in_app_iff in Hin. destruct Hin as [Hhead | Htail].
+      * apply (IH c b). exact Hhead.
+      * apply IHch. exact Htail.
+Qed.
+
+(* SOUNDNESS (spine): a located bag is on the non-bag spine — the descent only reaches spine-reachable
+   bags. Structural fix on `n`; the tail case promotes the sibling via `on_nonbag_spine_nonbag`. *)
+Lemma located_implies_spine : forall is_bag_op n b,
+  In b (ac_locate is_bag_op n) -> on_nonbag_spine is_bag_op b n.
+Proof.
+  intros is_bag_op. fix IH 1. intros [op ch] b Hin.
+  destruct (is_bag_op op) eqn:Hop.
+  - rewrite (ac_locate_bag is_bag_op op ch Hop) in Hin.
+    destruct Hin as [Heq | Hfalse].
+    + subst b. apply spine_here. simpl. exact Hop.
+    + destruct Hfalse.
+  - rewrite (ac_locate_nonbag is_bag_op op ch Hop) in Hin.
+    revert Hin. induction ch as [| c ch' IHch]; intro Hin.
+    + simpl in Hin. destruct Hin.
+    + cbn [flat_map] in Hin. rewrite in_app_iff in Hin. destruct Hin as [Hhead | Htail].
+      * apply (spine_under is_bag_op b op (c :: ch') c Hop).
+        -- left. reflexivity.
+        -- apply (IH c b). exact Hhead.
+      * specialize (IHch Htail).
+        destruct (proj1 (on_nonbag_spine_nonbag is_bag_op b op ch' Hop) IHch)
+          as [c' [Hc' Hsp']].
+        apply (spine_under is_bag_op b op (c :: ch') c' Hop).
+        -- right. exact Hc'.
+        -- exact Hsp'.
+Qed.
+
+(* THE PART-1 OBLIGATION: the descent's `loc:` derivation REACHES the bag IFF the bag is on the
+   NON-BAG SPINE of the reflected subject — the `^lambda`-recursion made precise. A structural child
+   of the reflected spine (through any chain of `^lambda`/non-bag binder images) is located; nothing
+   off the spine, and nothing but an admitted bag, is. *)
+Theorem ac_locate_iff_spine : forall is_bag_op n b,
+  In b (ac_locate is_bag_op n) <-> on_nonbag_spine is_bag_op b n.
+Proof.
+  intros is_bag_op n b. split.
+  - apply located_implies_spine.
+  - apply spine_implies_located.
+Qed.
+
+(* ---- concrete under-`new` witnesses (op 7 = the admitted HashBag `PPar`; op 11 = `^lambda`) ---- *)
+Definition sac_is_bag_op (op : nat) : bool := Nat.eqb op 7.
+Definition sac_bag : Node := NApp 7 [NApp 20 []; NApp 21 []].         (* {POpen(..); PAmb(..)} *)
+Definition sac_under_new : Node := NApp 11 [sac_bag].                 (* new(x, {..}) => ^lambda([bag]) *)
+Definition sac_under_new2 : Node := NApp 11 [NApp 11 [sac_bag]].      (* new(x, new(y, {..})) *)
+
+(* The bag is located TOP-LEVEL. *)
+Theorem sac_bag_located_top_level : In sac_bag (ac_locate sac_is_bag_op sac_bag).
+Proof. vm_compute. left. reflexivity. Qed.
+
+(* The bag is located UNDER a `new` binder image (one `^lambda`) — the descent rides the binder. *)
+Theorem sac_bag_located_under_new : In sac_bag (ac_locate sac_is_bag_op sac_under_new).
+Proof. vm_compute. left. reflexivity. Qed.
+
+(* The bag is located ARBITRARILY deep — under two nested `new`s. *)
+Theorem sac_bag_located_under_new2 : In sac_bag (ac_locate sac_is_bag_op sac_under_new2).
+Proof. vm_compute. left. reflexivity. Qed.
+
+(* The `^lambda` wrapper is NOT itself a located site (`^lambda ∉ by_op`) — only the inner bag is. *)
+Theorem sac_lambda_wrapper_not_located :
+  ~ In sac_under_new (ac_locate sac_is_bag_op sac_under_new).
+Proof. vm_compute. intros [H | []]. discriminate H. Qed.
+
+(* The under-`new` bag is on the non-bag spine (reached THROUGH the `^lambda` image), hence located
+   by the general theorem — the executable image of the descent riding the binder. *)
+Corollary sac_under_new_on_spine :
+  on_nonbag_spine sac_is_bag_op sac_bag sac_under_new.
+Proof.
+  apply (proj1 (ac_locate_iff_spine sac_is_bag_op sac_under_new sac_bag)).
+  apply sac_bag_located_under_new.
+Qed.
+
 Print Assumptions sa_accept_sound.
 Print Assumptions sa_accept_complete.
 Print Assumptions sa_matches_positional.
@@ -833,3 +1028,18 @@ Print Assumptions binder_locates_beta_and_binds_body_arg.
 Print Assumptions corrupt_report_preserves_reduct.
 Print Assumptions reduct_from_automaton_not_report.
 Print Assumptions witness_reduct_is_report_independent.
+
+(* ---- Stage 4 S-binder (SLICE 3b, structural-AC `^lambda`-descent locate) ---- *)
+Print Assumptions ac_locate_bag.
+Print Assumptions ac_locate_nonbag.
+Print Assumptions located_under_lambda.
+Print Assumptions on_nonbag_spine_nonbag.
+Print Assumptions spine_implies_located.
+Print Assumptions ac_locate_sound.
+Print Assumptions located_implies_spine.
+Print Assumptions ac_locate_iff_spine.
+Print Assumptions sac_bag_located_top_level.
+Print Assumptions sac_bag_located_under_new.
+Print Assumptions sac_bag_located_under_new2.
+Print Assumptions sac_lambda_wrapper_not_located.
+Print Assumptions sac_under_new_on_spine.

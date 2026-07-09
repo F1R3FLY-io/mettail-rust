@@ -352,6 +352,197 @@ Section LocatedZipFromSubject.
 
 End LocatedZipFromSubject.
 
+(* ============================================================================================= *)
+(* Stage 4 (S-binder SLICE 3b) — the STRUCTURED-element AC SPREAD match: the located STRUCTURED bag  *)
+(* = the subject operand bag, the connective-bound σ (channel occurrences N_i, structural reducts    *)
+(* r_j, residual rest) = the host report σ, and the spliced body = the RHS.                          *)
+(*                                                                                                   *)
+(* The Ambient `OpenRule`  {POpen N P, PAmb N Q, ...rest} ~> {P, Q, ...rest}  generalizes the        *)
+(* bare-var AC element (whose value IS the reduct) to a STRUCTURED element `C(N, …, r_j, …)` whose    *)
+(* reduct args `r_j` are INNER arguments. The report-path `structural_ac_contract_call` wildcards     *)
+(* those args and takes them as separately DELIVERED σ slots (from `find_sigma`); the MATCH receiver  *)
+(* `structural_ac_match_receiver_par` instead BINDS them from the operand bag's connective pattern —  *)
+(* so, exactly like the linear `ac_match_call_par`, its message is the 2-value `carrier!(⟦bag⟧,@out)` *)
+(* the SPREAD delivers, with NO host σ. This section proves the STRUCTURED analogue of the bare-var    *)
+(* `LocatedBagFromSubject` results: because the spread only PERMUTES the operand bag, (1a) the         *)
+(* located structured bag admits the SAME AC partitions as the subject bag, (2) the σ the connective   *)
+(* binds (`names`/`reducts`/`rest`) is EXACTLY a report delivery — binding reduct args from the bag ≡  *)
+(* recovering them from σ — and (4) the spliced body `reducts ⊎ rest` reconstructs the RHS multiset,   *)
+(* multiplicity-preserving (reusing `AcRestReconstruction`'s flatten splice). Reuses                   *)
+(* `ac_match_iff_partition`/`sub_multiset_perm_iff` at the channel-occurrence multiset level +         *)
+(* `instantiate_ac_shape` for the body splice + Stdlib `Permutation`. The `^lambda`/nested DESCENT     *)
+(* that LOCATES this bag (including under a `new` binder) is the companion                             *)
+(* `advanced_automata/InRhoMatchPositional.v::ac_locate_iff_spine`; the reflected-name GUARD           *)
+(* `EEq(N_i,N_j)` ⟺ α-equivalence is `rho_bridge/BinderReflectionTotalOrReject.v`.                     *)
+(* ============================================================================================= *)
+
+Section StructuralAcSpreadMatch.
+
+  (* A STRUCTURED AC element `C(N, …, r_j, …)`: its constructor tag, the non-linear channel-occurrence
+     identity `N` (a nat — the reflected `^bound`/`^free` name), and its structural reduct-arg
+     identities `r_j` (the RHS elements it sources — for `POpen N P` the singleton `[P]`; a dropped
+     arg contributes nothing). *)
+  Record StructElem : Type := {
+    se_ctor : nat;
+    se_name : nat;
+    se_reducts : list nat
+  }.
+
+  (* The channel-occurrence multiset of a selection (`map se_name`) — the guard slots N_i. *)
+  Definition names (sel : list StructElem) : list nat := map se_name sel.
+  (* The structural-reduct multiset of a selection (`flat_map se_reducts`) — the RHS elements r_j, in
+     element order (the fired bag is a multiset, so RHS-order = element-order up to permutation). *)
+  Definition reducts (sel : list StructElem) : list nat := flat_map se_reducts sel.
+
+  (* Permutation is a congruence for `flat_map` (Stdlib gives `Permutation_map` for `names`; the
+     `reducts` re-sourcing is order-independent, proved here from the append congruences). *)
+  Lemma Permutation_flat_map_se : forall (f : StructElem -> list nat) l l',
+    Permutation l l' -> Permutation (flat_map f l) (flat_map f l').
+  Proof.
+    intros f l l' H. induction H; simpl.
+    - apply Permutation_refl.
+    - apply Permutation_app_head. exact IHPermutation.
+    - rewrite !app_assoc. apply Permutation_app_tail. apply Permutation_app_comm.
+    - eapply Permutation_trans; eassumption.
+  Qed.
+
+  (* `flatten (map Leaf l) = l` — a list of ordinary Leaf members flattens to itself (each Leaf
+     splices to its singleton). *)
+  Lemma flatten_map_leaf : forall l, flatten (map Leaf l) = l.
+  Proof.
+    induction l as [| x xs IH]; simpl; [ reflexivity | rewrite IH; reflexivity ].
+  Qed.
+
+  (* (S-AC.4) THE SPLICED BODY = THE RHS MULTISET. The receiver body `out!(@"ac:op"!(r0) | … | rest)`
+     emits one send per RHS reduct occurrence spliced with the residual bag — the multiset
+     `reducts ++ rest`. Reuse `AcRestReconstruction`'s flatten splice (`instantiate_ac_shape`): the
+     `rest` member splices INLINE (never nests), multiplicity-preserving. Independent of the spread
+     source (no section variables). *)
+  Theorem fired_bag_is_reducts_splice_rest : forall reduct_ids rest_ids : list nat,
+    flatten (map Leaf reduct_ids ++ [Sub rest_ids]) = reduct_ids ++ rest_ids.
+  Proof.
+    intros reduct_ids rest_ids.
+    rewrite instantiate_ac_shape. rewrite flatten_map_leaf. reflexivity.
+  Qed.
+
+  (* The subject operand bag (the M-reflect walk reads it off the SAME subtree the host oracle
+     `structural_ac_contract_call` reconstructs from σ) and the LOCATED bag the co-installed MATCH
+     receiver picks from (one send per element on the site-keyed `ac:` carrier — order-independent,
+     so a PERMUTATION of the subject bag). Elements are STRUCTURED. *)
+  Variable subject_struct_bag located_struct_bag : list StructElem.
+  Hypothesis struct_located_is_spread :
+    Permutation located_struct_bag subject_struct_bag.
+
+  (* (S-AC.1a) THE LOCATED STRUCTURED BAG = THE SUBJECT OPERAND BAG: a (selection, rest) is an AC
+     partition of the located bag IFF it is one of the subject bag — the native `sub_pars` picks the
+     SAME structured elements whether sourced from the spread or (hypothetically) the report, because
+     the spread only permutes the bag. Polymorphic over `StructElem` (Permutation is order-
+     independent), the structured analogue of `located_matches_subject`. *)
+  Theorem located_struct_matches_subject : forall selection rest,
+    Permutation (selection ++ rest) located_struct_bag <->
+    Permutation (selection ++ rest) subject_struct_bag.
+  Proof.
+    intros selection rest. split; intro H.
+    - apply Permutation_trans with located_struct_bag; [ exact H | exact struct_located_is_spread ].
+    - apply Permutation_trans with subject_struct_bag;
+        [ exact H | apply Permutation_sym; exact struct_located_is_spread ].
+  Qed.
+
+  (* The channel-occurrence multiset of the located bag PERMUTES that of the subject (map preserves
+     Permutation) — the guard slots N_i re-source faithfully. *)
+  Lemma located_names_perm :
+    Permutation (names located_struct_bag) (names subject_struct_bag).
+  Proof. unfold names. apply Permutation_map. exact struct_located_is_spread. Qed.
+
+  (* Reuse `sub_multiset_perm_iff` (hence AC-i `ac_match_iff_partition`): the located bag's channel-
+     occurrence multiset admits the SAME AC sub-multiset matches as the subject's. *)
+  Theorem located_struct_names_match_subject : forall sel_names,
+    sub_multiset sel_names (names located_struct_bag) <->
+    sub_multiset sel_names (names subject_struct_bag).
+  Proof. intro sel_names. apply sub_multiset_perm_iff. exact located_names_perm. Qed.
+
+  (* The located channel-occurrence match set = the order-independent partitions of the LOCATED bag —
+     reusing AC-i (`ac_match_iff_partition`) over the located names, transported to the subject via
+     `located_struct_names_match_subject`. The genuine in-Rho structural-AC match, at the guard slots. *)
+  Corollary located_struct_names_iff_partition : forall sel_names,
+    sub_multiset sel_names (names subject_struct_bag) <->
+    exists rest, Permutation (sel_names ++ rest) (names located_struct_bag).
+  Proof.
+    intro sel_names. split.
+    - intro Hs. apply (proj2 (located_struct_names_match_subject sel_names)) in Hs.
+      apply (proj1 (ac_match_iff_partition sel_names (names located_struct_bag))). exact Hs.
+    - intros [rest Hp]. apply (proj1 (located_struct_names_match_subject sel_names)).
+      apply (proj2 (ac_match_iff_partition sel_names (names located_struct_bag))).
+      exists rest. exact Hp.
+  Qed.
+
+  (* The structural-reduct multiset of the located bag PERMUTES that of the subject (`flat_map`
+     congruence) — the RHS elements r_j re-source faithfully; binding them from the bag ≡ recovering
+     them from σ. *)
+  Lemma located_reducts_perm :
+    Permutation (reducts located_struct_bag) (reducts subject_struct_bag).
+  Proof. unfold reducts. apply Permutation_flat_map_se. exact struct_located_is_spread. Qed.
+
+  (* The σ a partition (selection, rest) delivers: (channel occurrences, structural reducts, residual
+     bag) — read by BOTH the spread (off the located bag) and the report (off the subject bag). *)
+  Definition delivered_sigma (selection rest : list StructElem)
+    : list nat * list nat * list StructElem :=
+    (names selection, reducts selection, rest).
+
+  (* (S-AC.2) SPREAD σ = REPORT σ: the SET of σ the spread can bind (from a LOCATED-bag partition)
+     EQUALS the set the report can deliver (from a SUBJECT-bag partition). Every σ is deliverable from
+     the spread IFF from the report — re-sourcing the bag host→spread neither adds, drops, nor
+     perturbs a σ. Non-vacuous: it quantifies over ALL partitions and pivots on S-AC.1a (located =
+     subject), with the projections `names`/`reducts`/`rest` functions of the shared selection. This
+     is the corrupted-σ probe `s_ac_structural_bag_is_produced_by_the_spread_not_the_report` made
+     precise: the deliverable σ is the SUBJECT's, for ANY report. *)
+  Theorem deliverable_sigma_sets_agree : forall sigma,
+    (exists selection rest,
+       Permutation (selection ++ rest) located_struct_bag /\
+       delivered_sigma selection rest = sigma) <->
+    (exists selection rest,
+       Permutation (selection ++ rest) subject_struct_bag /\
+       delivered_sigma selection rest = sigma).
+  Proof.
+    intro sigma. split.
+    - intros [selection [rest [Hp Hs]]]. exists selection, rest. split; [| exact Hs ].
+      apply (proj1 (located_struct_matches_subject selection rest)). exact Hp.
+    - intros [selection [rest [Hp Hs]]]. exists selection, rest. split; [| exact Hs ].
+      apply (proj2 (located_struct_matches_subject selection rest)). exact Hp.
+  Qed.
+
+  (* (S-AC.4 / OUT = ⟦R⟧σ) The fired OUT bag re-sourced from the SPREAD is a PERMUTATION of the
+     report's `⟦R⟧σ`: the reducts re-sourced from the spread permute the report's reducts
+     (`located_reducts_perm`), so the whole spliced bag `reducts ⊎ rest` agrees as a MULTISET — the
+     fired OUT bag = `⟦R⟧σ`, never the corrupted report's decoy. *)
+  Theorem fired_bag_permutes_report_rhs : forall rest_ids,
+    Permutation
+      (reducts located_struct_bag ++ rest_ids)
+      (reducts subject_struct_bag ++ rest_ids).
+  Proof. intro rest_ids. apply Permutation_app_tail. exact located_reducts_perm. Qed.
+
+  (* (S-AC CAPSTONE) THE GENUINE IN-RHO STRUCTURAL-AC REPLACEMENT: for every located-bag partition
+     (selection, rest) — the spread MATCH — (a) the SAME partition is a subject-bag partition
+     (located = subject, S-AC.1a), (b) the σ bound (`names`, `reducts`, `rest`) is exactly a report
+     delivery from the subject (S-AC.2), and (c) the fired bag `reducts ++ rest` reconstructs the RHS
+     multiset, multiplicity-preserving (S-AC.4). So OUT = `⟦R⟧σ`, sourced from the SUBJECT, never the
+     report. *)
+  Theorem structural_ac_spread_is_report_faithful : forall selection rest rest_ids,
+    Permutation (selection ++ rest) located_struct_bag ->
+    Permutation (selection ++ rest) subject_struct_bag
+    /\ (exists s r, Permutation (s ++ r) subject_struct_bag
+                    /\ delivered_sigma s r = delivered_sigma selection rest)
+    /\ flatten (map Leaf (reducts selection) ++ [Sub rest_ids]) = reducts selection ++ rest_ids.
+  Proof.
+    intros selection rest rest_ids Hloc. split; [| split ].
+    - apply (proj1 (located_struct_matches_subject selection rest)). exact Hloc.
+    - exists selection, rest. split; [| reflexivity ].
+      apply (proj1 (located_struct_matches_subject selection rest)). exact Hloc.
+    - apply fired_bag_is_reducts_splice_rest.
+  Qed.
+
+End StructuralAcSpreadMatch.
+
 Print Assumptions ac_match_iff_partition.
 Print Assumptions ac_match_sound.
 Print Assumptions ac_match_complete.
@@ -367,3 +558,14 @@ Print Assumptions located_set_nodup.
 Print Assumptions located_map_matches_subject.
 Print Assumptions located_map_key_unique.
 Print Assumptions located_zip_correlation_matches_subject.
+
+(* ---- Stage 4 S-binder (SLICE 3b, structured-element AC spread match) ---- *)
+Print Assumptions fired_bag_is_reducts_splice_rest.
+Print Assumptions located_struct_matches_subject.
+Print Assumptions located_names_perm.
+Print Assumptions located_struct_names_match_subject.
+Print Assumptions located_struct_names_iff_partition.
+Print Assumptions located_reducts_perm.
+Print Assumptions deliverable_sigma_sets_agree.
+Print Assumptions fired_bag_permutes_report_rhs.
+Print Assumptions structural_ac_spread_is_report_faithful.

@@ -39,6 +39,12 @@
 From Stdlib Require Import Bool.
 From Stdlib Require Import List.
 From Stdlib Require Import PeanoNat.
+From Stdlib Require Import Lia.
+(* Stage 4 S-binder SLICE 3b: the reflected-occurrence guard bridges to the proven report firing. *)
+From RhoBridge Require Import GuardedCommSoundness.
+From RhoBridge Require Import NonLinearEqConsistency.
+From RhoBridge Require Import AcNonLinearConsistency.
+From RhoBridge Require Import AmbientOpenFiring.
 
 Import ListNotations.
 
@@ -628,6 +634,172 @@ Section SubstShiftReflectionInjective.
 
 End SubstShiftReflectionInjective.
 
+(* ===========================================================================
+   STAGE 4 S-binder (SLICE 3b): the STRUCTURAL-AC non-linear guard `EEq(N_i, N_j)` on the
+   reflected ambient-name occurrences ⟺ the report's `N ≡ N` e-class equality — the LOAD-BEARING
+   binder piece that makes the distinct-`new` veto SOUND.
+
+   The Ambient `OpenRule` `{POpen N P, PAmb N Q, ...rest} ~> {P, Q, ...rest}` fires only when the
+   OPEN capability's ambient name and the AMBIENT's name are the SAME name. The in-Rho MATCH receiver
+   (`rho_net_lower.rs::structural_ac_match_receiver_par`) enforces this with a `Receive.condition`
+   `EEq(N_0, N_1)` over the two elements' REFLECTED channel occurrences; the host report enforces the
+   e-graph e-class equality `N ≡ N`. Both compare the SAME de-Bruijn name occurrences: a runtime
+   `Var::Bound{scope=d}` reflects to the reserved `^bound(peano d)` leaf (the slice-1 indexed-Peano
+   reflection, `mreflect` on `MBound`), a `Var::Free name` to `^free name`. Because DE-BRUIJN quotients
+   α (α-equivalent occurrences are SYNTACTICALLY identical), and the reflection is INJECTIVE
+   (`mpeano_inj` at the depth, constructor-distinctness across bound/free), the reducer's `EEq` on the
+   reflected leaves is EXACTLY α-equivalence of the ambient names — hence exactly the report's e-class
+   check. Two names bound at the same depth reflect equal; two names bound at DIFFERENT depths (by
+   DIFFERENT `new`s — `^bound(peano d1)` vs `^bound(peano d2)`, `d1 ≠ d2`) reflect UNEQUAL, so the
+   guard FAILS and the reducer never commits the COMM: `open` cannot dissolve an ambient bound by a
+   different binder (the `ambnewdemo_distinct_binders_veto_the_open` reject).
+
+   HONEST MODELING NOTE. The reducer's `EEq` returns a `bool`; here `guard_holds` is the PROP
+   "the two reflected name images are equal", i.e. `EEq` evaluated true. This is faithful — NOT a
+   weakening: `EEq` on the reserved GROUND `^bound`/`^free` leaves IS structural equality of those
+   leaves (they carry no free variables to evaluate), and the report's `Fact` identity of a name
+   occurrence (`name_fact`, keyed on bound depth / free name with disjoint parities) is an INJECTIVE
+   naming precisely because de-Bruijn quotients α. So the reflected-occurrence guard, the report's
+   `open_guard` over the name Facts (`AmbientOpenFiring`), and α-equivalence coincide. This section
+   proves that coincidence and composes it with the PROVEN report firing (`AmbientOpenFiring.
+   open_commits_when_names_agree` / `open_disagree_no_commit`) — so the OpenRule fires in Rho EXACTLY
+   when the reflected names are α-equal, delivering `{P, Q, ...rest}`, and is reject-safe otherwise.
+   Reuses `mpeano`/`mpeano_inj`/`MImg` (this file, slice 1) + `open_guard_iff_names_agree` /
+   `open_commits_when_names_agree` / `open_disagree_no_commit` / `struct_attempt` / `insert_all`
+   (AmbientOpenFiring). Rocq 9.1 compatible. No Admitted, no Axioms, no Assumptions.
+   =========================================================================== *)
+
+Section StructuralAcBinderGuard.
+
+  (* An ambient NAME occurrence, already de-Bruijn (the MATCH-side subject the M-reflect walk reads):
+     bound at scope depth [d] (`Var::Bound{scope=d}` → `^bound(peano d)`) or free with name [x]
+     (`Var::Free` → `^free x`). Two occurrences are α-EQUIVALENT iff they are the SAME de-Bruijn
+     occurrence — equal as `AmbName`. *)
+  Inductive AmbName : Type :=
+    | ANBound : nat -> AmbName
+    | ANFree  : nat -> AmbName.
+
+  (* The reserved-tagged GROUND reflection of a name occurrence (the SAME indexed-Peano reflection the
+     subject walk uses on `MBound`/`MFree`: `^bound(mpeano d)` / `^free x`). Reuses `MImg`/`mpeano`
+     from `MatchSideIndexedPeanoReflection` — so the guard compares EXACTLY the reflected channel
+     images. *)
+  Definition reflect_name (n : AmbName) : MImg :=
+    match n with
+    | ANBound d => MRBound (mpeano d)
+    | ANFree x => MRFree x
+    end.
+
+  (* The receiver's `Receive.condition` `EEq(N_i, N_j)` HOLDS iff the two reflected name images are
+     structurally equal — the reducer's `EEq` on the reserved ground leaves. *)
+  Definition guard_holds (n1 n2 : AmbName) : Prop := reflect_name n1 = reflect_name n2.
+
+  (* (S-guard.1) THE α-EQUIVALENCE CHARACTERIZATION: the reflected-occurrence `EEq` guard holds IFF
+     the two ambient names are the SAME de-Bruijn occurrence — α-equivalence. Same depth ⟹ same
+     `^bound(peano d)` (`mpeano_inj`); same free name ⟹ same `^free x`; bound vs free never collide
+     (constructor-distinct `MImg`). So reducer `EEq` ≡ α-equivalence of the ambient names. *)
+  Theorem guard_holds_iff_alpha_equiv : forall n1 n2,
+    guard_holds n1 n2 <-> n1 = n2.
+  Proof.
+    intros n1 n2. unfold guard_holds. split.
+    - destruct n1 as [d1 | x1]; destruct n2 as [d2 | x2]; simpl; intro H.
+      + injection H as H. apply mpeano_inj in H. subst d2. reflexivity.
+      + discriminate H.
+      + discriminate H.
+      + injection H as H. subst x2. reflexivity.
+    - intro H. subst n2. reflexivity.
+  Qed.
+
+  (* (S-guard.2) THE DISTINCT-BINDER VETO IS SOUND: an open name bound at depth [d1] and an ambient
+     name bound at depth [d2] ≠ [d1] (bound by DIFFERENT `new`s) reflect to DIFFERENT `^bound` depths,
+     so the guard FAILS — `open` cannot dissolve an ambient bound by a different binder. The exact
+     `ambnewdemo_distinct_binders_veto_the_open` reject, made decidable in Rho by the depth-tagging. *)
+  Theorem distinct_binder_depth_vetoes : forall d1 d2,
+    d1 <> d2 -> ~ guard_holds (ANBound d1) (ANBound d2).
+  Proof.
+    intros d1 d2 Hne Hg. apply Hne.
+    apply (proj1 (guard_holds_iff_alpha_equiv (ANBound d1) (ANBound d2))) in Hg.
+    injection Hg as Hg. exact Hg.
+  Qed.
+
+  (* The report's `Fact` identity of a name occurrence (`find_sigma` reads the de-Bruijn subterm): a
+     bound occurrence at depth [d] ↦ the EVEN tag [2*d], a free name [x] ↦ the ODD tag [S (2*x)] — an
+     INJECTIVE naming (disjoint parities; de-Bruijn quotients α, so equal `Fact` ⟺ α-equivalent). This
+     is the `Fact` the `AmbientOpenFiring` report model keys `open_guard` on. *)
+  Definition name_fact (n : AmbName) : Fact :=
+    match n with
+    | ANBound d => 2 * d
+    | ANFree x => S (2 * x)
+    end.
+
+  Lemma name_fact_inj : forall n1 n2, name_fact n1 = name_fact n2 -> n1 = n2.
+  Proof.
+    intros [d1 | x1] [d2 | x2]; simpl; intro H.
+    - f_equal. lia.
+    - exfalso. lia.
+    - exfalso. lia.
+    - f_equal. lia.
+  Qed.
+
+  (* (S-guard.3) THE GUARD ⟺ THE REPORT e-class CHECK: the reflected-occurrence `EEq` guard holds IFF
+     the report's `open_guard` over the name Facts holds (`AmbientOpenFiring`) — both certify `N ≡ N`.
+     Composes `open_guard_iff_names_agree` (report) with `name_fact` injectivity + the α-equivalence
+     characterization (spread). *)
+  Theorem spread_guard_iff_report_open_guard : forall n1 n2,
+    guard_holds n1 n2 <-> open_guard (name_fact n1) (name_fact n2) = true.
+  Proof.
+    intros n1 n2. rewrite guard_holds_iff_alpha_equiv.
+    rewrite open_guard_iff_names_agree. split.
+    - intro H. subst n2. reflexivity.
+    - intro H. apply name_fact_inj. exact H.
+  Qed.
+
+  (* (S-guard.4 CAPSTONE) THE OpenRule FIRES IN RHO EXACTLY WHEN THE REFLECTED NAMES ARE α-EQUIVALENT,
+     delivering `{P, Q, ...rest}`: when the two reflected ambient-name occurrences are α-equal (guard
+     holds), the PROVEN report firing model commits BOTH structural reducts P, Q spliced with rest
+     (`AmbientOpenFiring.open_commits_when_names_agree` — `insert_all [p;q] facts`); when they are
+     DISTINCT (e.g. different `^bound` depths, different `new`s), the guard FAILS and the consume
+     commits NOTHING (`open_disagree_no_commit`) — reject-safe. Ties the spread guard (Part 3) to the
+     proven report firing (Stage 3d `AmbientOpenFiring`). *)
+  Theorem open_fires_iff_alpha_equiv :
+    forall facts premises n1 n2 p q,
+      all_present facts premises ->
+      ( guard_holds n1 n2 ->
+        struct_attempt facts (open_rule premises (name_fact n1) (name_fact n2) p q)
+          (insert_all [p; q] facts) )
+      /\ ( ~ guard_holds n1 n2 ->
+           forall next,
+             struct_attempt facts (open_rule premises (name_fact n1) (name_fact n2) p q) next ->
+             next = facts ).
+  Proof.
+    intros facts premises n1 n2 p q Hpres. split.
+    - intro Hg.
+      apply spread_guard_iff_report_open_guard in Hg.
+      apply open_guard_iff_names_agree in Hg.
+      apply open_commits_when_names_agree; [ exact Hpres | exact Hg ].
+    - intros Hng next Hatt.
+      apply (open_disagree_no_commit facts premises (name_fact n1) (name_fact n2) p q next);
+        [ | exact Hatt ].
+      intro Heq. apply Hng.
+      apply (proj2 (spread_guard_iff_report_open_guard n1 n2)).
+      apply (proj2 (open_guard_iff_names_agree (name_fact n1) (name_fact n2))).
+      exact Heq.
+  Qed.
+
+  (* Concrete POSITIVE witness (`new(x, {open(x, A) | x[B]})`): both ambient names bound by the ONE
+     enclosing `new`, so both reflect to `^bound(peano 0)` and the guard HOLDS. *)
+  Theorem same_new_binder_guard_holds :
+    guard_holds (ANBound 0) (ANBound 0).
+  Proof. apply guard_holds_iff_alpha_equiv. reflexivity. Qed.
+
+  (* Concrete NEGATIVE witness (`new(x, new(y, {open(x, A) | y[B]}))`): the open name `x` bound by the
+     OUTER `new` (depth 1 inside the inner scope), the ambient name `y` by the INNER `new` (depth 0) —
+     DIFFERENT depths, so the guard FAILS and the OpenRule cannot fire. *)
+  Theorem distinct_new_binders_veto_witness :
+    ~ guard_holds (ANBound 1) (ANBound 0).
+  Proof. apply distinct_binder_depth_vetoes. discriminate. Qed.
+
+End StructuralAcBinderGuard.
+
 (* Zero-admission confirmation. *)
 Print Assumptions binder_excluded.
 Print Assumptions free_lam_char.
@@ -644,3 +816,12 @@ Print Assumptions sbreflect_subst_collision_free.
 Print Assumptions sbreflect_shift_collision_free.
 Print Assumptions subst_five_shapes_distinct.
 Print Assumptions sbreflect_inj.
+
+(* ---- Stage 4 S-binder (SLICE 3b): the reflected-occurrence guard ⟺ α-equivalence ---- *)
+Print Assumptions guard_holds_iff_alpha_equiv.
+Print Assumptions distinct_binder_depth_vetoes.
+Print Assumptions name_fact_inj.
+Print Assumptions spread_guard_iff_report_open_guard.
+Print Assumptions open_fires_iff_alpha_equiv.
+Print Assumptions same_new_binder_guard_holds.
+Print Assumptions distinct_new_binders_veto_witness.
