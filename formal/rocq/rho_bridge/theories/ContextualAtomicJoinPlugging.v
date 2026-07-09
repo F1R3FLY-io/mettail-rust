@@ -376,6 +376,130 @@ Section Capstone.
 End Capstone.
 
 (* ------------------------------------------------------------------------ *)
+(* Stage 4 (S-contextual) MATCHING-SIDE ARM: the reduced holes fed to the    *)
+(* proven join come from the automaton's IN-RHO NESTED FIRINGS at the hole   *)
+(* positions (a function of the SUBJECT spread), NOT the host-σ report        *)
+(* (reconstruct_contractum). The corrupted-σ probe made precise.             *)
+(* ------------------------------------------------------------------------ *)
+
+Section MatchingSideArm.
+
+  (* Abstract subject/report carriers: the whole reflected subject term (the outer context K with
+     its distinguished hole positions) and a (possibly corrupted) Dovetail report. *)
+  Variable Subject : Type.
+  Variable Report : Type.
+
+  (* The automaton's LOCATED reduced hole: the base set-automaton descends K's spine to the hole
+     position ℓ_0, matches + fires the premise redex IN RHO, and the σ-receiver emits the reduced
+     hole `T_0` — a function of the SUBJECT SPREAD alone (M-reflect). The hole bridge routes it to
+     the join's premise channel. *)
+  Variable located_hole : Subject -> Fact.
+  (* The RETIRED host-σ reconstruction (`reconstruct_contractum`): the reduced hole rebuilt from the
+     report σ. Present ONLY to state the separation — it is no longer on the match path. *)
+  Variable report_hole : Report -> Fact.
+
+  (* The routed premise-channel sends: for a UNARY context (the landed sub-slice), ONE send carrying
+     the located hole on the join's single premise channel `c(ℓ_0)`. *)
+  Definition routed_sends (subj : Subject) : list Fact := [located_hole subj].
+
+  (* SUBJECT-KEYED (AC-style independence, cf. InRhoAcMatchMultiset's
+     `located_match_is_independent_of_report`): the routed premise send is a function of the SUBJECT
+     only — the conclusion never mentions the report, so it holds for ANY report. *)
+  Theorem routed_hole_is_subject_keyed : forall (subj : Subject) (rep : Report),
+    routed_sends subj = [located_hole subj].
+  Proof. intros subj rep. reflexivity. Qed.
+
+  (* The CORRUPTED-σ probe `s_contextual_holes_reassembled_in_rho_not_the_report` made precise:
+     even when the report hole DIFFERS from the automaton's located hole (a corrupted σ), the routed
+     hole is STILL the located hole — the corrupted report cannot perturb the routed reduced hole. *)
+  Theorem corrupted_report_does_not_perturb_routed_hole :
+    forall (subj : Subject) (rep : Report),
+      located_hole subj <> report_hole rep -> routed_sends subj = [located_hole subj].
+  Proof. intros subj rep _. reflexivity. Qed.
+
+  (* The routed UNARY join fires + reassembles ⟦K'⟧ from the located hole (reuses the proven
+     `unary_wrap_join_fires`): the armed join over the routed premise send consumes the located
+     hole and emits `⟦Wrap(located_hole subj)⟧`. So the plugging is FED BY the in-Rho nested firing. *)
+  Theorem routed_unary_join_reassembles_located_hole :
+    forall (op : nat) (subj : Subject) (outs : list Term),
+      rho_nary_join Term (wrap_plug op)
+        {| jrho_sends := routed_sends subj; jrho_receive := true; jrho_outputs := outs |}
+        [located_hole subj]
+        {| jrho_sends := remove_first (located_hole subj) (routed_sends subj);
+           jrho_receive := false;
+           jrho_outputs := TNode op [TLeaf (located_hole subj)] :: outs |}.
+  Proof.
+    intros op subj outs. apply unary_wrap_join_fires. unfold routed_sends. apply in_eq.
+  Qed.
+
+  (* CAPSTONE (the matching-side analogue of `contextual_join_atomic_and_plugging_stable`): whenever
+     the routed join fires, the emitted reduced context IS the SUBJECT's located hole plugged, for
+     ANY report `rep` (which is quantified but never used) — so the reassembled ⟦K'⟧ is fed by the
+     automaton's nested firing, never the report σ. This is the corrupted-σ probe's OUT value made
+     precise: `Wrap(located_hole subj)` regardless of the (corrupted) report. *)
+  Theorem matching_side_reassembly_is_subject_keyed_not_report :
+    forall (op : nat) (subj : Subject) (outs : list Term) (rep : Report) r',
+      rho_nary_join Term (wrap_plug op)
+        {| jrho_sends := routed_sends subj; jrho_receive := true; jrho_outputs := outs |}
+        [located_hole subj] r' ->
+      jrho_outputs Term r' = wrap_plug op [located_hole subj] :: outs.
+  Proof.
+    intros op subj outs rep r' Hstep.
+    exact (nary_join_emits_one_reduced_context Term (wrap_plug op) _ _ _ Hstep).
+  Qed.
+
+End MatchingSideArm.
+
+(* ------------------------------------------------------------------------ *)
+(* n-ary generalization of the matching-side arm (the next sub-slice): the n *)
+(* located holes (each a function of the subject) route to the n premise     *)
+(* channels and feed the proven n-ary join, which emits plug(located_holes). *)
+(* ------------------------------------------------------------------------ *)
+
+Section MatchingSideArmNary.
+
+  Variable Subject : Type.
+  Variable Out : Type.
+  Variable plug : list Fact -> Out.
+  (* The n located reduced holes, in premise order — each the automaton's nested firing at hole ℓ_i
+     (a function of the SUBJECT). The n-ary hole bridge routes them to the n premise channels. *)
+  Variable located_holes : Subject -> list Fact.
+
+  Definition routed_sends_nary (subj : Subject) : list Fact := located_holes subj.
+
+  (* Routing the n located holes to the n premise channels and firing the proven n-ary join emits
+     `plug (located_holes subj)` — the reassembled ⟦K'⟧ — consuming exactly the routed holes. The
+     `all_present` precondition (the automaton delivered all n located holes to their channels) is an
+     honest premise, exactly the join step's own availability conjunct. The report never appears. *)
+  Theorem routed_nary_join_reassembles_located_holes :
+    forall (subj : Subject) (outs : list Out),
+      all_present (located_holes subj) (routed_sends_nary subj) ->
+      rho_nary_join Out plug
+        {| jrho_sends := routed_sends_nary subj; jrho_receive := true; jrho_outputs := outs |}
+        (located_holes subj)
+        {| jrho_sends := consume_list (located_holes subj) (routed_sends_nary subj);
+           jrho_receive := false;
+           jrho_outputs := plug (located_holes subj) :: outs |}.
+  Proof.
+    intros subj outs Hpres. unfold rho_nary_join. simpl.
+    split; [reflexivity | split; [exact Hpres | reflexivity]].
+  Qed.
+
+  (* And the emitted reduced context is plug(located_holes) — subject-keyed, report-absent. *)
+  Theorem nary_reassembly_is_subject_keyed :
+    forall (subj : Subject) (outs : list Out) r',
+      rho_nary_join Out plug
+        {| jrho_sends := routed_sends_nary subj; jrho_receive := true; jrho_outputs := outs |}
+        (located_holes subj) r' ->
+      jrho_outputs Out r' = plug (located_holes subj) :: outs.
+  Proof.
+    intros subj outs r' Hstep.
+    exact (nary_join_emits_one_reduced_context Out plug _ _ _ Hstep).
+  Qed.
+
+End MatchingSideArmNary.
+
+(* ------------------------------------------------------------------------ *)
 (* Zero-admission confirmation.                                              *)
 (* ------------------------------------------------------------------------ *)
 
@@ -387,3 +511,9 @@ Print Assumptions plug_ctx_holes_injective.
 Print Assumptions plug_ctx_head_stable.
 Print Assumptions unary_wrap_join_fires.
 Print Assumptions contextual_join_atomic_and_plugging_stable.
+Print Assumptions routed_hole_is_subject_keyed.
+Print Assumptions corrupted_report_does_not_perturb_routed_hole.
+Print Assumptions routed_unary_join_reassembles_located_hole.
+Print Assumptions matching_side_reassembly_is_subject_keyed_not_report.
+Print Assumptions routed_nary_join_reassembles_located_holes.
+Print Assumptions nary_reassembly_is_subject_keyed.

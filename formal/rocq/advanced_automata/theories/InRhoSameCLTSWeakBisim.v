@@ -68,11 +68,17 @@ Section InRhoSameCLTSWeakBisim.
   | Reserve (r : Redex)
   | SaInspect (r : Redex) (c : C)
   | EqCheck (r : Redex) (c : C)
+  (* Stage 4 (S-contextual): the loc: CONTEXT-SPINE DESCENT step — the automaton descends the outer
+     context K's spine to a hole position ℓ_i before the sa: inspection. A NEW τ step (internal,
+     unobservable), so a contextual firing's schedule fragment gains a CtxDescend prefix but erases
+     to the SAME single ObsFire. *)
+  | CtxDescend (r : Redex) (c : C)
   | Fire (r : Redex)
   | Complete.
   Arguments Reserve {C} r.
   Arguments SaInspect {C} r c.
   Arguments EqCheck {C} r c.
+  Arguments CtxDescend {C} r c.
   Arguments Fire {C} r.
   Arguments Complete {C}.
 
@@ -80,7 +86,8 @@ Section InRhoSameCLTSWeakBisim.
     match s with
     | Fire r => [ObsFire r]
     | Complete => [ObsComplete]
-    | Reserve _ | SaInspect _ _ | EqCheck _ _ => []   (* sa:/eq: are τ *)
+    (* sa:/eq: AND the contextual loc: spine descent are all τ *)
+    | Reserve _ | SaInspect _ _ | EqCheck _ _ | CtxDescend _ _ => []
     end.
   Fixpoint erase {C} (l : list (MatchStep C)) : list Obs :=
     match l with [] => [] | s :: t => step_obs s ++ erase t end.
@@ -255,6 +262,66 @@ Section InRhoSameCLTSWeakBisim.
         * exact HR.
   Qed.
 
+  (* ---- Stage 4 (S-contextual): the loc: CONTEXT-SPINE DESCENT τ ----
+     The contextual match descends K's spine to each hole position before the sa: inspection — NEW
+     τ steps (CtxDescend), unobservable. A contextual firing fragment prefixes them; it erases to
+     the SAME single ObsFire, so the sound (per-location) and optimal (per-StateId) schemes STILL
+     induce the same visible schedule after the descent — the `rem:nonopt` discharge survives the
+     new τ. `descend r` is the (abstract) list of spine-descent channels the firing visits. *)
+  Definition frag_ctx {C} (descend ch : Redex -> list C) (r : Redex) : list (MatchStep C) :=
+    Reserve r :: map (fun c => CtxDescend r c) (descend r)
+              ++ map (fun c => SaInspect r c) (ch r) ++ [Fire r].
+  Definition sched_ctx {C} (descend ch : Redex -> list C) (order : list Redex)
+      : list (MatchStep C) :=
+    flat_map (frag_ctx descend ch) order ++ [Complete].
+
+  Lemma erase_ctxdescend_map : forall C (r : Redex) (cs : list C),
+    erase (map (fun c => CtxDescend r c) cs) = [].
+  Proof.
+    intros C r cs. induction cs as [| c cs' IH]; simpl; [reflexivity | exact IH].
+  Qed.
+
+  Lemma erase_frag_ctx : forall C (descend ch : Redex -> list C) (r : Redex),
+    erase (frag_ctx descend ch r) = [ObsFire r].
+  Proof.
+    intros C descend ch r. unfold frag_ctx. simpl.
+    rewrite !erase_app, erase_ctxdescend_map, erase_sa_map. reflexivity.
+  Qed.
+
+  Lemma erase_flatmap_frag_ctx : forall C (descend ch : Redex -> list C) (order : list Redex),
+    erase (flat_map (frag_ctx descend ch) order) = map ObsFire order.
+  Proof.
+    intros C descend ch order. induction order as [| r rest IH].
+    - reflexivity.
+    - cbn [flat_map map]. rewrite erase_app, erase_frag_ctx, IH. reflexivity.
+  Qed.
+
+  Lemma erase_sched_ctx : forall C (descend ch : Redex -> list C) (order : list Redex),
+    erase (sched_ctx descend ch order) = map ObsFire order ++ [ObsComplete].
+  Proof.
+    intros C descend ch order. unfold sched_ctx.
+    rewrite erase_app, erase_flatmap_frag_ctx. reflexivity.
+  Qed.
+
+  (* the contextual descent τ is INVISIBLE: a contextual schedule erases identically to the base one
+     (with the SAME sa: chain `ch`) — adding the loc: spine-descent τ steps changes no visible obs. *)
+  Theorem ctx_descent_is_invisible : forall C (descend ch : Redex -> list C) (order : list Redex),
+    erase (sched_ctx descend ch order) = erase (sched ch order).
+  Proof.
+    intros C descend ch order. rewrite erase_sched_ctx, erase_sched. reflexivity.
+  Qed.
+
+  (* rem:nonopt survives the new τ: the sound & optimal schemes STILL share the same visible
+     contextual schedule (each descends its own spine channels, and both erase away) — the
+     contextual analogue of `optimal_visible_equals_sound`. *)
+  Theorem optimal_visible_equals_sound_ctx :
+    forall (descend_opt : Redex -> list (option (nat * nat)))
+           (descend_sound : Redex -> list Channel) order,
+    erase (sched_ctx descend_opt opt_ch order) = erase (sched_ctx descend_sound sound_ch order).
+  Proof.
+    intros descend_opt descend_sound order. rewrite !erase_sched_ctx. reflexivity.
+  Qed.
+
 End InRhoSameCLTSWeakBisim.
 
 (* ---- non-vacuity: the optimal scheme SHARES where the sound scheme SEPARATES ----
@@ -275,3 +342,5 @@ Qed.
 Print Assumptions optimal_visible_equals_sound.
 Print Assumptions same_clts_weak_bisim.
 Print Assumptions optimal_shares_where_sound_separates.
+Print Assumptions ctx_descent_is_invisible.
+Print Assumptions optimal_visible_equals_sound_ctx.
