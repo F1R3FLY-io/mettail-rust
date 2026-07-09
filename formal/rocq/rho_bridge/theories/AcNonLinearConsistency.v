@@ -86,9 +86,38 @@ Section AcNonLinearConsistency.
       = ac_nl_guard positions selection default.
   Proof. intros. reflexivity. Qed.
 
+  (* (AC-nl.5, Stage 4 S-AC / AC3) SPREAD-SOURCED SELECTION: the AC3 non-linear guard
+     (`ac_sigma_receiver_par_with_condition`'s `Receive.condition`) reads the SELECTION — the k
+     elements the native matcher picked from the SPREAD of the subject bag (`ac_match_call_par`) —
+     NOT the report σ. Because EVERY theorem above quantifies over an ARBITRARY `selection`, the
+     guard's commit<->agreement (AC-nl.1) and reject-safety (AC-nl.2) hold VERBATIM whether the
+     selection was picked from the subject spread (S-AC) or reconstructed from the report σ: the
+     guard is carrier-agnostic, so re-sourcing the bag host->spread is compatible. This makes the
+     connection explicit for the `{x, x, ...rest}` shape: a spread-picked pair commits iff the two
+     SPREAD-sourced elements agree — the guard is enforced ON the reducer over the subject's bag,
+     the decisive content of the corrupted-σ probe
+     `s_ac_nonlinear_guard_fires_in_rho_from_the_spread_not_the_report`. *)
+  Theorem ac_nl_spread_selection_two_slot :
+    forall (spread_selection : list Fact) default,
+      ac_nl_guard [0; 1] spread_selection default = true <->
+      nth 0 spread_selection default = nth 1 spread_selection default.
+  Proof. intros. apply ac_nl_two_slot_agree. Qed.
+
+  (* The guard's VALUE is a function of the selection alone, so a selection picked from the subject
+     spread and an (equal) selection reconstructed from the report yield the SAME guard verdict —
+     the report cannot perturb the reducer-enforced non-linear check when the picked elements match. *)
+  Theorem ac_nl_guard_selection_determined :
+    forall positions (spread_selection report_selection : list Fact) default,
+      spread_selection = report_selection ->
+      ac_nl_guard positions spread_selection default
+      = ac_nl_guard positions report_selection default.
+  Proof. intros positions s r default Heq. rewrite Heq. reflexivity. Qed.
+
 End AcNonLinearConsistency.
 
 Print Assumptions ac_nl_commits_iff_slots_agree.
 Print Assumptions ac_nl_disagree_no_commit.
 Print Assumptions ac_nl_two_slot_agree.
 Print Assumptions ac_nl_oracle_agreement.
+Print Assumptions ac_nl_spread_selection_two_slot.
+Print Assumptions ac_nl_guard_selection_determined.
