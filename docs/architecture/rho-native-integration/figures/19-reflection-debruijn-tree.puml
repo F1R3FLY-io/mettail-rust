@@ -1,0 +1,52 @@
+@startuml
+' Figure 19-3: the MATCH-side reflection maps a de-Bruijn object AST to a reserved-tagged
+' reflected ground term (an EList tree). Lam -> ^lambda (binder De-Bruijn-implicit, ONE child);
+' a bound occurrence -> ^bound(peano n); a free occurrence -> ^free x; a structural ctor -> its
+' op-tagged EList. Worked term: App(Lam(^x. f(x)), A).
+skinparam backgroundColor #FEFEFE
+skinparam defaultFontName monospaced
+skinparam shadowing false
+skinparam rectangle {
+  BorderColor #4A5568
+  FontColor #1A202C
+}
+skinparam ArrowColor #4A5568
+
+title Figure 19-3 — MATCH-side reflection: object AST  |->  reserved-tagged ground term\n(alpha-equivalence free: the runtime moniker is ALREADY de-Bruijn)
+
+package "object AST  (typed term)" #E8F0FE {
+  rectangle "App" as OApp #C3DAF7
+  rectangle "Lam (^x. .)\n<size:10>binder</size>" as OLam #B7E4C7
+  rectangle "F" as OF #C3DAF7
+  rectangle "x\n<size:10>bound occ (scope 0)</size>" as Ox #F7D9D5
+  rectangle "A\n<size:10>nullary ctor</size>" as OA #C3DAF7
+  OApp --> OLam
+  OApp --> OA
+  OLam --> OF
+  OF --> Ox
+}
+
+package "reflected ground term  (EList ABI)" #EDE7F6 {
+  rectangle "EList[ ^App, .. ]" as RApp #D6C6EE
+  rectangle "EList[ ^lambda, .. ]\n<size:10>ONE child (binder implicit)</size>" as RLam #B7E4C7
+  rectangle "EList[ ^F, .. ]" as RF #D6C6EE
+  rectangle "EList[ ^bound, ^Z ]\n<size:10>^bound(peano 0)</size>" as Rb #F7D9D5
+  rectangle "EList[ ^A ]" as RA #D6C6EE
+  RApp --> RLam
+  RApp --> RA
+  RLam --> RF
+  RF --> Rb
+}
+
+OApp ..[#805AD5]> RApp : reflect
+OLam ..[#2F855A]> RLam : Lam |-> ^lambda
+OF ..[#805AD5]> RF
+Ox ..[#C05621]> Rb : Var::Bound{0} |-> ^bound(Z)
+OA ..[#805AD5]> RA
+
+note bottom #FCF3D0
+  Every ^-prefixed tag is GPrivate(reflect_tag(fingerprint, "^..")) — unforgeable vs a user
+  Ident, so the reflected image is INJECTIVE and the ^lambda / ^bound / ^free tags never collide
+  with a structural node (BinderReflectionTotalOrReject.v: mreflect_inj + the collision-free lemmas).
+end note
+@enduml

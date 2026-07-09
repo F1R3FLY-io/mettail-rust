@@ -1,0 +1,55 @@
+@startuml
+' Figure 19-4: the zero-admission proof DAG. Strong Normalization (SN) + Church-Rosser (CR)
+' pin a UNIQUE normal form; the NF theorem identifies it with the de-Bruijn beta reduct b[a/0];
+' together they make the up-to-tau target of the weak bisimulation well defined and non-vacuous.
+skinparam backgroundColor #FEFEFE
+skinparam defaultFontName monospaced
+skinparam shadowing false
+skinparam rectangle {
+  BorderColor #4A5568
+  FontColor #1A202C
+}
+skinparam ArrowColor #4A5568
+left to right direction
+
+title Figure 19-4 — FV discharge: SN + CR  =>  unique NF = b[a/0]  =>  weak bisimulation\n(every node: "Closed under the global context" — no axioms, no admits)
+
+package "BinderReflectionTotalOrReject.v  (reflection is total + injective)" #E8F0FE {
+  rectangle "mreflect_inj\n<size:10>+ collision-free tags</size>" as REFINJ #C3DAF7
+}
+
+package "DeBruijnSubstTRS.v  (the TRS core)" #EDE7F6 {
+  rectangle "head_step_deterministic\nobject_binder_disjoint\nreserved_disjoint_from_object\n<size:10>C2 orthogonality</size>" as ORTH #D6C6EE
+  rectangle "step_preserves_norm\n+ reduces_to_norm\n<size:10>normalizing interp.</size>" as NORM #D6C6EE
+  rectangle "step_decreases_mu\n<size:10>val(k) measure mu =\n(mu a + 2)*3^j*4^(mu t)</size>" as MU #D6C6EE
+  rectangle "<b>subst_trs_confluent</b>\n(CR)" as CR #C6E0F5
+  rectangle "<b>subst_trs_terminating</b>\n(SN, well_founded)" as SN #C6E0F5
+  rectangle "subst_normal_form_\nis_debruijn_beta\n<size:10>NF = b[a/0]</size>" as NF #B7E4C7
+  rectangle "<b>subst_trs_unique_nf</b>\nbeta_seed_unique_nf_\nis_debruijn_beta" as UNIQ #A7D8B6
+}
+
+package "InRhoBetaCascadeWeakBisim.v  (reduction bisimulation)" #E6F4EA {
+  rectangle "cascade_target_\nwell_defined" as TARGET #C9E7D4
+  rectangle "<b>weak_bisim_beta_cascade_</b>\n<b>vs_abstract_beta</b>" as BISIM #9FD3B4
+  rectangle "beta_cascade_is_nonvacuous\n<size:10>witness takes REAL steps</size>" as NONVAC #C9E7D4
+}
+
+REFINJ --> ORTH
+ORTH --> CR
+NORM --> CR
+MU --> SN
+CR --> UNIQ
+SN --> UNIQ
+NF --> UNIQ
+UNIQ --> TARGET
+NF --> BISIM
+NORM --> BISIM
+TARGET --> BISIM
+BISIM --> NONVAC
+
+note bottom of NONVAC #FCF3D0
+  Non-vacuity closes the tau-erasure trap: the witness (lam.0)(free A)
+  takes >= 1 genuine step and lands on ^free A, so the bisimulation is
+  NOT satisfied by an inert tau backbone.
+end note
+@enduml

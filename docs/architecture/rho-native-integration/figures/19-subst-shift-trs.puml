@@ -1,0 +1,41 @@
+@startuml
+' Figure 19-2: the five reserved receivers as a self-re-spreading cascade (Driver-B).
+' Each state is a persistent receiver on an unforgeable reserved channel; each edge is a
+' rewrite rule that SENDS reduced sub-work on a reserved channel (self-re-spreading).
+skinparam backgroundColor #FEFEFE
+skinparam defaultFontName monospaced
+skinparam shadowing false
+skinparam state {
+  BorderColor #4A5568
+  FontColor #1A202C
+  ArrowColor #4A5568
+}
+
+title Figure 19-2 — The five reserved de-Bruijn TRS receivers (Driver-B cascade topology)
+
+state "^subst(j, a, t, ret)\n<size:10>capture-avoiding substitution t[a/j]</size>" as SUBST #E6DBF2
+state "^shift(c, t, ret)\n<size:10>free-variable shift (cutoff c)</size>" as SHIFT #E6DBF2
+state "^shiftk(k, a, ret)\n<size:10>k iterated ^shift(0, .) passes</size>" as SHIFTK #DCEEF9
+state "^cmp(m, n, ret)\n<size:10>Peano compare -> ^Eq / ^Lt / ^Gt</size>" as CMP #DCEEF9
+state "^pred(n, ret)\n<size:10>TOTAL Peano predecessor</size>" as PRED #DCEEF9
+
+SUBST -[#805AD5]-> CMP : ^bound n : ^cmp(n, j)
+SUBST -[#C05621]-> SHIFTK : ^cmp = Eq : ^shiftk(j, a)
+SUBST -[#805AD5]-> PRED : ^cmp = Gt : ^pred(n)
+SUBST -[#2F855A]-> SUBST : ^lambda b : ^subst(S j, a, b)\n<b>DEPTH INCREMENT (C1)</b>
+SUBST -[#2B6CB0]-> SUBST : C(t..) : ^subst(j, a, t..)\n<size:10>C2 object congruence (j unchanged)</size>
+
+SHIFTK -[#C05621]-> SHIFT : S k : ^shift(0, ^shiftk(k, a))
+SHIFTK -[#C05621]-> SHIFTK : recursion on k
+
+SHIFT -[#805AD5]-> CMP : ^bound n : ^cmp(n, c)
+SHIFT -[#2F855A]-> SHIFT : ^lambda b : ^shift(S c, b)\n<size:10>cutoff INCREMENT under a binder</size>
+SHIFT -[#2B6CB0]-> SHIFT : C(t..) : ^shift(c, t..)\n<size:10>C2 object congruence</size>
+
+note bottom of PRED #EAF7EE
+  Terminating base cases (return an OBJECT, no re-spread):
+  ^subst/^shift on ^free x -> x ;  ^shiftk(Z, a) -> a ;
+  ^cmp(Z,Z) -> Eq ;  ^pred(Z) -> Z ;  ^subst(_, _, ^bound n) with ^cmp=Lt -> ^bound n.
+  Reserved channels = GPrivate(reflect_tag(fp, "^..")) — unforgeable vs any object ctor.
+end note
+@enduml

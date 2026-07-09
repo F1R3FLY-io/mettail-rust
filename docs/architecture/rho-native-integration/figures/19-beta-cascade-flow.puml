@@ -1,0 +1,52 @@
+@startuml
+' Figure 19-1: the in-Rho beta fire -> subst/shift tau-cascade -> b[a/0] on OUT.
+' One VISIBLE COMM (the seed send) is the observable beta-fire; every reserved-channel
+' COMM after it is INTERNAL (tau). Worked redex: App(Lam(^x. f(x)), A) ~> f(A).
+skinparam backgroundColor #FEFEFE
+skinparam defaultFontName monospaced
+skinparam shadowing false
+skinparam sequenceMessageAlign center
+skinparam sequence {
+  ArrowColor #4A5568
+  LifeLineBorderColor #7A7A7A
+  LifeLineBackgroundColor #F4F4F4
+  ParticipantBorderColor #7A7A7A
+  ParticipantFontColor #202020
+}
+
+title Figure 19-1 — In-Rho beta: ONE visible COMM (seed) then the tau subst-cascade to b[a/0]\nWorked redex  App(Lam(^x. f(x)), A) ~> f(A)
+
+participant "set automaton\n(match path, in Rho)" as SA #E8F0FE
+participant "Beta sigma-receiver\n(the beta SEED)" as BETA #FDE8D5
+participant "^subst receiver" as SUBST #E6DBF2
+participant "^cmp receiver" as CMP #DCEEF9
+participant "^shiftk receiver" as SHK #DCEEF9
+participant "@OUT\n(observed reduct)" as OUT #FEF7E0
+
+group tau* prefix — reflect + locate + capture the redex (internal)
+  SA -> SA : M-reflect subject ->\nApp(^lambda(F(^bound Z)), A)
+  SA -> BETA : accept: capture RAW\n(body = F(^bound Z), arg = A)
+end
+
+BETA -[#C05621]-> SUBST : <b>^subst(Z, A, F(^bound Z), OUT)</b>
+note right of BETA #FCE9D6
+  THE ONE VISIBLE COMM = the beta-fire.
+  Seed threads @OUT as the cascade's
+  continuation. No host reduct.
+end note
+
+group tau cascade — the reserved receivers self-drive to the NF (all internal)
+  SUBST -> SUBST : object arm C2 for F ->\n^subst(Z, A, ^bound Z, r0)  |  join r0
+  SUBST -> CMP : ^cmp(Z, Z, r)
+  CMP --> SUBST : ^Eq
+  SUBST -> SHK : Eq arm -> ^shiftk(Z, A, ret)
+  SHK --> SUBST : ^shiftk(Z, .) = A  (base case)
+  SUBST -> SUBST : join fires ret!(F(A))\n(only after every child NF arrived)
+end
+
+SUBST -[#2F855A]-> OUT : <b>OUT ! ( f(A) )</b>
+note over SUBST, OUT #E6F4EA
+  b[a/0] = f(A), capture-avoiding, computed ENTIRELY by the
+  in-Rho cascade. f(A) != App(Lam(^x. f(x)), A) => non-vacuous.
+end note
+@enduml

@@ -127,6 +127,18 @@ Used for: the set-automaton matching algorithm underlying the optimal
 channel-naming scheme, and the host-side match that the corrected
 set-automaton-assisted lowering model uses to produce a substitution.
 
+### SET-AUTOMATON-LOCATE-2021
+
+R. Erkens and J. F. Groote. 2021. "A Set Automaton to Locate All Pattern Matches
+in a Term." In *Theoretical Aspects of Computing — ICTAC 2021*, Lecture Notes in
+Computer Science, vol. 12819, pages 67-85. Springer.
+[DOI: 10.1007/978-3-030-85315-0_5](https://doi.org/10.1007/978-3-030-85315-0_5).
+[arXiv:2106.15311](https://arxiv.org/abs/2106.15311).
+
+Used for: the set automaton that visits each subject function symbol exactly once
+to locate all pattern matches — the O1 "symbol-once" locate discipline the in-Rho
+matcher rides to find the beta-redex before seeding the substitution cascade.
+
 ## Tuple Spaces, RSpace, and Dataflow
 
 ### LINDA-1985
@@ -191,6 +203,41 @@ Databases*. Addison-Wesley.
 
 Used for: fixed-point and Datalog-style rule evaluation background. No DOI was
 found for the book.
+
+## Lambda Calculus and Explicit Substitutions
+
+### DEBRUIJN-1972
+
+N. G. de Bruijn. 1972. "Lambda Calculus Notation with Nameless Dummies, a Tool
+for Automatic Formula Manipulation, with Application to the Church-Rosser
+Theorem." Indagationes Mathematicae 34 (5): 381-392.
+[DOI: 10.1016/1385-7258(72)90034-0](https://doi.org/10.1016/1385-7258%2872%2990034-0).
+
+Used for: the nameless (de-Bruijn) index representation of bound variables that
+makes alpha-equivalence syntactic identity, so capture-avoidance is an arithmetic
+condition on indices — the representation the in-Rho binder reflection and the
+substitution TRS are built on.
+
+### EXPLICIT-SUBST-1991
+
+M. Abadi, L. Cardelli, P.-L. Curien, and J.-J. Lévy. 1991. "Explicit
+Substitutions." Journal of Functional Programming 1 (4): 375-416.
+[DOI: 10.1017/S0956796800000186](https://doi.org/10.1017/S0956796800000186).
+
+Used for: the lambda-sigma calculus lineage — substitution and shifting promoted
+to first-class rewrite operators — of which the in-Rho de-Bruijn subst/shift TRS
+is the sigma-fragment, and the explicit-substitution sharing discipline named as
+the cost mitigation.
+
+### CURIEN-HARDIN-LEVY-1996
+
+P.-L. Curien, T. Hardin, and J.-J. Lévy. 1996. "Confluence Properties of Weak and
+Strong Calculi of Explicit Substitutions." Journal of the ACM 43 (2): 362-397.
+[DOI: 10.1145/226643.226675](https://doi.org/10.1145/226643.226675).
+
+Used for: the confluence and termination theory of the explicit-substitution
+sigma-fragment, the theoretical basis for the strong-normalization and
+Church-Rosser results proved for the in-Rho substitution TRS.
 
 ## Weighted Deduction and Extraction
 
@@ -343,6 +390,25 @@ generated-backend source-text exclusion, COMM correspondence, exact observation,
 guard behavior, ambiguity preservation, cost separation, arity-parametric
 independent-redex COMM schedules, call-by-need budget admission,
 escrow/refund settlement, per-purse determinism, and backend flip gating.
+
+### S-BINDER-FORMAL
+
+Repository-local in-Rho binder beta-substitution artifacts:
+
+- `rholang-codegen/src/rho_net_subst_trs.rs`
+- `rholang-runtime/tests/rho_net_beta_firing.rs`
+- `rholang-runtime/tests/rho_net_subst_trs_reducer.rs`
+- `formal/rocq/rho_bridge/theories/BinderReflectionTotalOrReject.v`
+- `formal/rocq/rho_bridge/theories/DeBruijnSubstTRS.v`
+- `formal/rocq/rho_bridge/theories/InRhoBetaCascadeWeakBisim.v`
+- `formal/rocq/advanced_automata/theories/InRhoMatchPositional.v`
+
+Used for: the in-Rho de-Bruijn substitution/shift TRS (the five reserved
+receivers), its zero-admission strong-normalization, confluence, and normal-form
+proof, the object-beta weak bisimulation, the reflection totality and injectivity,
+the positional match with report-independent reduct separation, and the
+live-reducer firing evidence. Primary source for
+[In-Rho Binder Beta-Substitution](19-in-rho-binder-beta-substitution.md).
 
 ### RHO-PROCESS-FORMAL
 

@@ -1,0 +1,47 @@
+@startuml
+' Figure 19-5: the C1 depth-index witness (lam.lam.1) c ~> lam.c. The as-built ^subst ^lambda
+' arm INCREMENTS the substitution depth (j := S j) under a binder; without that increment the
+' free argument c would be captured, giving the WRONG reduct lam.0 (the identity).
+skinparam backgroundColor #FEFEFE
+skinparam defaultFontName monospaced
+skinparam shadowing false
+skinparam activity {
+  BorderColor #4A5568
+  FontColor #1A202C
+  ArrowColor #4A5568
+  DiamondBorderColor #4A5568
+}
+
+title Figure 19-5 — C1 depth increment: (lam.lam.1) c ~> lam.c  (reduced via  subst(0, c, lam.1))
+
+start
+:beta seed  ^subst(Z, ^free c, ^lambda(^bound(S Z)), OUT);
+note right #FCF3D0
+  subject  (lam. lam. 1) c
+  fires to  subst(0, c, lam.1)
+  where  lam.1 = ^lambda(^bound(S Z))
+end note
+:match the ^lambda arm of ^subst;
+split
+  -[#2F855A]->;
+  partition "C1 as-built: depth INCREMENTS under the binder" #E6F4EA {
+    :j := S j      (0 -> 1);
+    :body ^bound(S Z):  ^cmp(1, 1) = ^Eq;
+    :Eq arm:  ^shiftk(1, ^free c);
+    :^free c inert under shift  ->  ^free c;
+    :NF = ^lambda(^free c) = lam.c;
+    :<b>CORRECT — c stays free</b>;
+  }
+  stop
+split again
+  -[#C0392B]->;
+  partition "counterfactual: depth NOT incremented (the C1 bug)" #FDEDEC {
+    :j stays 0;
+    :body ^bound(S Z):  ^cmp(1, 0) = ^Gt;
+    :Gt arm:  ^pred(1) = 0  ->  ^bound Z;
+    :NF = ^lambda(^bound Z) = lam.0;
+    :<b>WRONG — c CAPTURED (lam.0 = identity)</b>;
+  }
+  stop
+end split
+@enduml
