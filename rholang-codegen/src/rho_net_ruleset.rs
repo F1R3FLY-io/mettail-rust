@@ -1230,4 +1230,58 @@ mod tests {
             "a hole that is not a located redex fails closed"
         );
     }
+
+    /// Sub-slice 3 (declared-join Comm): a Comm authored AS A DECLARED JOIN — a congruence rewrite
+    /// with a premise, here NAMED `Comm` to make the point — `Comm: | S ~> T |- Send(S) ~> Send(T)`.
+    /// The classification routes by STRUCTURE (`Premise::Congruence`), not by name, so a declared-join
+    /// Comm is a `ContextualRewrite` and rides `contextual_match_call_par` IDENTICALLY to WrapCong.
+    /// (No bundled language authors a Comm this way — the bundled Comms are AC-bag PROCESS rules
+    /// `PPar{...} ~> PPar{...}` that ride S-AC — so this is the honest, code-grounded demonstration
+    /// that the declared-join Comm case is subsumed by the contextual mechanism.)
+    fn comm_join_demo_def() -> LanguageDef {
+        syn::parse_str(
+            r#"
+                name: CommJoinRulesetGen,
+                types { Proc }
+                terms {
+                    A . |- "A" : Proc ;
+                    B . |- "B" : Proc ;
+                    Pair . x:Proc, y:Proc |- "pair" "(" x "," y ")" : Proc ;
+                    Swap . x:Proc, y:Proc |- "swap" "(" x "," y ")" : Proc ;
+                    Send . x:Proc |- "send" "(" x ")" : Proc ;
+                }
+                equations {}
+                rewrites {
+                    Flip . |- (Swap x y) ~> (Pair y x) ;
+                    Comm . | S ~> T |- (Send S) ~> (Send T) ;
+                }
+            "#,
+        )
+        .expect("the declared-join Comm fragment parses")
+    }
+
+    #[test]
+    fn a_declared_join_comm_rides_the_contextual_path() {
+        // The `Comm`-named declared join is a ContextualRewrite: admitted via contextual_dispatch
+        // (not deferred), and its hole is matched + reassembled in Rho exactly like WrapCong.
+        let ruleset = compile_in_rho_matching_ruleset(&comm_join_demo_def());
+        assert_eq!(ruleset.contextual_dispatch.len(), 1, "the declared-join Comm is a contextual family");
+        assert_eq!(ruleset.contextual_dispatch[0].fired_rule_label, "Comm");
+        assert!(
+            !ruleset.deferred.iter().any(|d| d.rule_label == "Comm"),
+            "the declared-join Comm is admitted (contextual), not deferred: {:?}",
+            ruleset.deferred
+        );
+        // Send(Swap(A, B)): the hole redex Swap is at Send.0 — the declared-join Comm reassembles
+        // Send(Pair(B, A)) via the SAME contextual match call as WrapCong.
+        let subject = GroundTerm::new(
+            "Send",
+            vec![GroundTerm::new(
+                "Swap",
+                vec![GroundTerm::new("A", Vec::new()), GroundTerm::new("B", Vec::new())],
+            )],
+        );
+        contextual_match_call_par(&ruleset, &subject, "site0", "OUT")
+            .expect("the declared-join Comm rides contextual_match_call_par identically to WrapCong");
+    }
 }
