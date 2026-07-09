@@ -240,3 +240,93 @@ async fn acbagdemo_bag_rhs_ac_rewrite_fires_as_a_comm_on_the_reducer() {
         "the AC receiver marked a concrete bag element, got {picked}"
     );
 }
+
+/// S-AC (Stage 4, AC2) — the DECISIVE probe that the operand bag AND its residual `rest` are
+/// re-sourced from the SPREAD of the reflected subject, NOT the host report σ, for a bag-VALUED RHS.
+/// The `rest`/bag-RHS analogue of `s_ac_bag_is_produced_by_the_spread_not_the_report` (AC1).
+///
+/// The bag RHS `PPar{Mark(x), ...rest}` carries the residual `rest` through: the transformed OUT bag
+/// is `{Mark(e)} ⊎ rest`, so a WRONG `rest` would corrupt the OUT bag's non-marked elements (and its
+/// cardinality). We take a real, complete report for `PPar{A | B | C}` and CORRUPT its σ — both the
+/// matched element `x` AND the residual `rest` (the SAME σ the host-σ AC arm reconstructs
+/// `whole_bag = [σ[x]] ⊎ σ[rest].children` from) — to nonsense, leaving the rule label (`AcBagStep`)
+/// valid so the gate admits the MATCH path. The Stage-4 `rho_net_match_invocation_from_dovetail_to`
+/// re-sources the WHOLE bag from the SPREAD of the subject; the co-installed `ac_sigma_receiver_par`
+/// picks one element to mark and binds `rest` to the residual SPREAD soup (`ac_bag_pattern`'s
+/// remainder), and the bag-RHS `⟦PPar{Mark(x), ...rest}⟧σ` splices `Mark(picked) | rest` flat
+/// (`add_flattened_bag` byte-identity, reused verbatim from the installed receiver).
+///
+/// Because BOTH the marked element and the residual `rest` come from `term`, not the corrupted σ,
+/// OUT is `PPar{Mark(e), <the real rest>}` over `{A, B, C}` — never a `Z_NONSENSE` element and never
+/// the wrong cardinality. A host-σ AC arm would have reconstructed the bag (and hence `rest`) from
+/// the nonsense σ. So a correct transformed-bag OUT is non-vacuous evidence the bag AND its `rest`
+/// came from the spread, not the report.
+///
+/// FV: `InRhoAcMatchMultiset.v` (located bag = subject operand bag) + `AcRestReconstruction.v`
+/// (`rest` = the residual complement; the RHS flatten reproduces `add_flattened_bag`).
+#[tokio::test]
+async fn s_ac_rest_and_bag_rhs_are_produced_by_the_spread_not_the_report() {
+    mettail_runtime::clear_var_cache();
+    let (backend, _fingerprint) = ac_bag_demo_backend();
+
+    let term = subject_bag();
+
+    let mut report = AcBagDemoLanguage::dovetail_report_for(&term, 64, 1_000_000)
+        .expect("AcBagDemo Dovetail report must compile");
+    assert_eq!(
+        report.rewrite_justifications.first().map(|j| j.rule_label.as_str()),
+        Some("AcBagStep"),
+        "the bag-transforming AC rewrite AcBagStep is the first firing"
+    );
+
+    // Deliberately WRONG σ on EVERY firing (the saturation also surfaces `MarkIdem` normalizations,
+    // whose σ is equally irrelevant to the MATCH path): a report-σ AC arm would reconstruct the
+    // operand bag AND its `rest` from these and land a nonsense transformed bag. The rule labels
+    // (the location-independent identities) stay valid so the in-Rho match gate admits the path;
+    // ONLY the σ (the bag + rest source) is corrupted.
+    let nonsense = RuntimeReflectedSubterm {
+        constructor: "Z_NONSENSE".to_string(),
+        children: Vec::new(),
+    };
+    let nonsense_rest = RuntimeReflectedSubterm {
+        constructor: "PPar".to_string(),
+        children: vec![nonsense.clone(), nonsense.clone()],
+    };
+    for justification in &mut report.rewrite_justifications {
+        justification.sigma = vec![
+            ("x".to_string(), nonsense.clone()),
+            ("rest".to_string(), nonsense_rest.clone()),
+        ];
+    }
+
+    // The MATCH path admits the AC redex despite the corrupted σ, and re-sources the whole bag (and
+    // its `rest`) from the reflected subject `term`.
+    let invocation =
+        AcBagDemoLanguage::rho_net_match_invocation_from_dovetail_to(&term, &report, "OUT")
+            .expect("the MATCH path admits PPar{A|B|C} with a corrupted report σ");
+    assert_eq!(invocation.out_channel, "OUT");
+
+    let observation = backend
+        .run_rho_net_with_call_and_observe_runtime_values(&invocation.call, &invocation.out_channel)
+        .await
+        .expect("the in-Rho bag-RHS AC match + firing executes on the reducer");
+
+    // Non-vacuity: the co-installed AC receiver fired exactly once, landing ONE transformed bag.
+    assert_eq!(
+        observation.observed_count(),
+        1,
+        "OUT must carry exactly one value — the transformed bag (got {:?})",
+        observation.values
+    );
+
+    // OUT is the transformed bag `PPar{Mark(e), <the real rest>}` over the REAL universe {A,B,C} —
+    // never `Z_NONSENSE` and never the wrong cardinality. `assert_transformed_bag` panics if the
+    // marked element or the residual `rest` is outside the universe or the cardinality differs, so a
+    // σ-sourced (corrupted) bag/rest would fail here.
+    let universe: Vec<String> = vec!["A".to_string(), "B".to_string(), "C".to_string()];
+    let picked = assert_transformed_bag(&observation.values[0], &universe);
+    assert!(
+        matches!(picked.as_str(), "A" | "B" | "C"),
+        "the bag AND its rest were re-sourced from the spread (not the corrupted σ), marked {picked}"
+    );
+}
