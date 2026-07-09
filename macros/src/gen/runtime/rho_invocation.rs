@@ -515,9 +515,29 @@ fn reflect_category_fn(language: &LanguageDef, category: &Ident) -> TokenStream 
                         ::core::result::Result::Err(::std::string::String::from(#msg))
                 }
             },
-            VariantKind::Var { label } | VariantKind::Literal { label } => {
+            // A native-scalar LITERAL leaf (`Int::NumLit(8)`, a `![i64]`-category value) reflects to
+            // a NULLARY `GroundTerm` whose tag bakes the literal value — `"NumLit(8)"` — the SAME
+            // bare form the Dovetail report bare-ifies a literal op-enum leaf to. This is the exact
+            // structural image of a literal (a ground nullary node), and it lets a native process
+            // `NativeProc(a₀..a_{k-1})` over literal args reflect STRUCTURALLY, so the automaton can
+            // LOCATE its App head + CAPTURE the args in Rho (Stage 4 S-native). The captured args
+            // only GATE the located native dispatch; the native VALUE stays the trusted handler's
+            // payload (the firing's contractum), so an internally-consistent tag suffices — a Var
+            // leaf still matches it. The tag format matters only for the spread's own coherence.
+            VariantKind::Literal { label } => {
+                let label_lit = lit(&label.to_string());
+                quote! {
+                    #category::#label(__value) => ::core::result::Result::Ok(
+                        #ground::new(
+                            ::std::format!("{}({:?})", #label_lit, __value),
+                            ::std::vec::Vec::new(),
+                        )
+                    )
+                }
+            },
+            VariantKind::Var { label } => {
                 let msg = lit(&format!(
-                    "in-Rho match reflection: {label} is a variable/literal leaf with no structural ground image"
+                    "in-Rho match reflection: {label} is a variable leaf with no structural ground image"
                 ));
                 quote! {
                     #category::#label(..) =>
@@ -1252,7 +1272,7 @@ pub fn generate_rho_net_invocation(language: &LanguageDef) -> TokenStream {
         // contend across co-installed sites) fails closed to the σ-replay driver; a flat-only
         // ruleset (SwapDemo) locates ALL redexes in Rho, and a single nested-pattern redex still
         // matches. A normal form locates 0 sites (the bare spread, a no-op).
-        let (__call, _sites) = ::mettail_rholang_codegen::in_rho_match_all_sites_call_par(
+        let (mut __call, _sites) = ::mettail_rholang_codegen::in_rho_match_all_sites_call_par(
             &__ruleset,
             &__subject,
             "site0",
@@ -1264,6 +1284,78 @@ pub fn generate_rho_net_invocation(language: &LanguageDef) -> TokenStream {
                 #language_lit, __err,
             )
         })?;
+
+        // Stage 4 (S-native): co-install a value-carrying bridge per LOCATED native firing. The
+        // automaton has already MATCHED the native `NativeProc` head + CAPTURED its structural args
+        // in Rho (the located accept routes to the entry's trigger channel — the STRUCTURAL DISPATCH
+        // moved in Rho); the bridge binds those captures (they only GATE the delivery) and forwards
+        // the trusted host handler's VALUE — the firing's CONTRACTUM, NOT the report σ — on the
+        // dispatch channel, where the installed dispatch receiver emits it on `@out`. So the redex
+        // LOCATION is the automaton's; only the native VALUE stays host-supplied (the inherent
+        // `NativeSystemProcessBoundary` — BigInt / pow / factorial is outside Rho's arithmetic).
+        if !__ruleset.native_dispatch.is_empty() {
+            fn __mettail_rho_net_to_ground(
+                __subterm: &mettail_runtime::RuntimeReflectedSubterm,
+            ) -> ::mettail_rholang_codegen::GroundTerm {
+                ::mettail_rholang_codegen::GroundTerm::new(
+                    __subterm.constructor.clone(),
+                    __subterm.children.iter().map(__mettail_rho_net_to_ground).collect(),
+                )
+            }
+            // The reflection fingerprint the installed dispatch receiver was compiled with (the
+            // install boundary requires `metadata().definition_fingerprint() ==
+            // plan.definition_fingerprint()`), so the forwarded value decodes coherently.
+            let __native_fingerprint = <#language_struct as mettail_runtime::Language>::metadata(
+                &#language_struct,
+            )
+            .definition_fingerprint()
+            .ok_or_else(|| {
+                ::std::format!(
+                    "language {} has no definition fingerprint for in-Rho native value reflection",
+                    #language_lit,
+                )
+            })?;
+
+            let mut __native_firings = 0usize;
+            for __justification in &report.rewrite_justifications {
+                let ::core::option::Option::Some(__dispatch) = __ruleset
+                    .native_dispatch
+                    .iter()
+                    .find(|__d| __d.fired_rule_label == __justification.rule_label)
+                else {
+                    continue;
+                };
+                // A single located native firing delivers a single host value on one trigger; ≥2
+                // native firings share the per-rule trigger channel, so their value bridges would
+                // cross-talk — fail closed to the host-matched σ-replay driver, which replays each
+                // firing as its own atomic COMM (correct, exactly the nested-multi-site fallback).
+                __native_firings += 1;
+                if __native_firings > 1 {
+                    return ::core::result::Result::Err(::std::format!(
+                        "in-Rho native match for language {} handles a single native firing per call; \
+                         the report fired {} native rewrites (deferring to σ-replay)",
+                        #language_lit, __native_firings,
+                    ));
+                }
+                let __contractum = __justification.contractum.as_ref().ok_or_else(|| {
+                    ::std::format!(
+                        "in-Rho native match for language {}: fired native rule {} has no contractum",
+                        #language_lit, __justification.rule_label,
+                    )
+                })?;
+                let __value = ::mettail_rholang_codegen::reflect_ground_term_par(
+                    &__mettail_rho_net_to_ground(__contractum),
+                    __native_fingerprint,
+                );
+                let __bridge = ::mettail_rholang_codegen::native_locate_bridge_par(
+                    &__dispatch.trigger_channel,
+                    __dispatch.arity,
+                    &__dispatch.dispatch_channel,
+                    __value,
+                );
+                __call = __call.append(__bridge);
+            }
+        }
 
         ::core::result::Result::Ok(::mettail_rholang_codegen::RhoNetInjectionInvocation {
             call: __call,

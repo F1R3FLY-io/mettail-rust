@@ -872,6 +872,70 @@ fn lower_subst_rewrite(
     Some(RhoNetLoweredRule::SubstRewrite { rule_id: rule.id.clone(), par })
 }
 
+/// The S-native LOCATE→VALUE bridge (Stage 4): gate the trusted handler's native VALUE on the
+/// automaton LOCATING the native process head IN RHO.
+///
+/// The positional receiver network's accept for a native `NativeProc(a₀..a_{k-1})` entry sends
+/// `trigger!(⟦a₀⟧, …, ⟦a_{k-1}⟧, @out)` once it has MATCHED the head tag + arity and CAPTURED the
+/// `k` structural args ON the interpreter (the `sa:` τ COMMs) — exactly the base-rewrite accept,
+/// since a native process is a plain App-rooted node. This bridge binds those `k` captures (which
+/// only GATE the delivery — the value is NOT computed from them) plus the dynamic `out`, and
+/// forwards the host-supplied native value on `dispatch_channel`, where the installed
+/// `NativeSystemProcessRewrite` / `NativeFold` dispatch receiver `for (result, out <- c) {
+/// out!(result) }` forwards it on `@out`.
+///
+/// So the LOCATION is the automaton's (produced in Rho from the structurally reflected subject,
+/// never the report σ), and ONLY the VALUE stays the trusted handler's payload (the firing's
+/// CONTRACTUM — the inherent boundary modeled by `NativeSystemProcessBoundary.v` /
+/// `RhoHostObligationBoundary.v`), delivered as `dispatch(⟦value⟧, out)`.
+///
+/// `value` MUST be a closed ground `Par` (the reflected contractum). `trigger_channel` is the
+/// native entry's accept channel (its [`InRhoMatchingRuleset`](crate::InRhoMatchingRuleset)
+/// `accept_channels` entry); `dispatch_channel` is the installed dispatch receiver's SOURCE.
+/// Non-persistent: one located native firing delivers exactly one value.
+pub fn native_locate_bridge_par(
+    trigger_channel: &str,
+    k: usize,
+    dispatch_channel: &str,
+    value: Par,
+) -> Par {
+    let formal_count = k + 1;
+    // The dynamic out channel is the LAST bound formal (`BoundVar(0)`), exactly as the σ-receiver
+    // binds its out slot; the `k` captured args are the higher indices, bound but unused here.
+    let out_channel = bound_formal(formal_count, k);
+    let out_free = create_bit_vector(&[0]);
+    // Body: `dispatch_channel!(⟦value⟧, out)` — the value is a closed ground `Par`, so the send is
+    // free only in the `out` slot (`BoundVar(0)`).
+    let body = new_send_par(
+        new_gstring_par(dispatch_channel.to_string(), Vec::new(), false),
+        vec![value, out_channel],
+        false,
+        out_free.clone(),
+        false,
+        out_free,
+        false,
+    );
+    let source = new_gstring_par(trigger_channel.to_string(), Vec::new(), false);
+    let receive = Receive {
+        binds: vec![ReceiveBind {
+            patterns: (0..formal_count)
+                .map(|i| new_freevar_par(i as i32, Vec::new()))
+                .collect(),
+            source: Some(source),
+            remainder: None,
+            free_count: formal_count as i32,
+        }],
+        body: Some(body),
+        persistent: false,
+        peek: false,
+        bind_count: formal_count as i32,
+        locally_free: Vec::new(),
+        connective_used: false,
+        condition: None,
+    };
+    Par::default().with_receives(vec![receive])
+}
+
 /// The bare RULE LABEL a `fold` native system process's Dovetail firing carries in a runtime
 /// rewrite justification (Stage 3e): `"{Category}_{Label}"` — the op-enum variant identity the
 /// macro's native-fold rule uses (`{Lang}::fold::{Category}_{Label}`), bare-ified by the report
@@ -1736,6 +1800,78 @@ pub fn rho_net_native_fold_injection_sites(def: &LanguageDef) -> Vec<RhoNetNativ
         sites.push(RhoNetNativeInjectionSite { rule_label, channel: channel.clone() });
     }
     sites
+}
+
+/// One in-Rho MATCHING entry for a native process family (`NativeSystemProcessRewrite` /
+/// `NativeFold`, Stage 4 S-native): the data the in-Rho matcher needs to ADMIT the native redex
+/// into the positional automaton and route its located accept to the value-carrying bridge.
+///
+/// A native process `NativeProc(a₀..a_{k-1})` is a plain App-rooted node, so the SAME positional
+/// set-automaton LOCATES it by its head tag + arity and CAPTURES its `k` structural args, exactly
+/// as a base rewrite — once ADMITTED (`compile_in_rho_matching_ruleset`). The native family differs
+/// only in the VALUE: it has no structural RHS, so its reduced value is the trusted host handler's
+/// payload (the firing's contractum), delivered by the [`native_locate_bridge_par`] on the
+/// [`dispatch_channel`](Self::dispatch_channel). This entry carries the bare head label + arity
+/// (the automaton pattern `bare_label(x₀..x_{arity-1})`, which the structurally reflected subject's
+/// tag matches), the Dovetail firing label the report keys on, and that dispatch channel.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RhoNetNativeMatchEntry {
+    /// The Dovetail firing label (`"{Category}_{Label}"`, e.g. `Int_PowInt`) the native firing
+    /// carries in a runtime rewrite justification — what the match driver keys the report firing on
+    /// (identical to [`RhoNetNativeInjectionSite::rule_label`]).
+    pub fired_rule_label: String,
+    /// The BARE head label (`"PowInt"`) — the automaton pattern's root op AND the tag the
+    /// structurally reflected subject node carries, so the located head matches.
+    pub bare_label: String,
+    /// The native process's arity `k` (its structural arg count) — the automaton pattern
+    /// `bare_label(x₀..x_{k-1})` and the number of captures the located accept sends.
+    pub arity: usize,
+    /// The installed dispatch receiver's SOURCE channel — where the bridge forwards `⟦value⟧`.
+    pub dispatch_channel: String,
+}
+
+/// Derive every in-Rho MATCHING entry for a language's native process families (Stage 4 S-native)
+/// — the native analogue of the base [`rho_net_injection_sites`], routed for the automaton MATCH
+/// path rather than the host-σ replay path.
+///
+/// Correlates each installed native firing site ([`rho_net_native_injection_sites`] ∪
+/// [`rho_net_native_fold_injection_sites`] — the processes that actually lowered to a dispatch
+/// receiver) back to its source `GrammarRule` by the SAME `"{Category}_{Label}"` firing label, and
+/// reads the bare head label + arity the automaton pattern is synthesized from. Only fold-mode
+/// native processes with a materialized dispatch receiver are surfaced, so an entry is always
+/// executable (its dispatch receiver is installed).
+pub fn rho_net_native_match_entries(def: &LanguageDef) -> Vec<RhoNetNativeMatchEntry> {
+    // `"{Category}_{Label}"` → (bare head label, arity) over fold-mode native processes. The arity
+    // is the structural arg count (its `term_context` parameters), matching the reflected subject
+    // node's child count and the automaton pattern's Var-leaf count.
+    let mut shape_by_fired: HashMap<String, (String, usize)> = HashMap::new();
+    for term in &def.terms {
+        if term.eval_mode != Some(EvalMode::Fold) {
+            continue;
+        }
+        let fired = format!("{}_{}", term.category, term.label);
+        let arity = term.term_context.as_ref().map_or(0, Vec::len);
+        shape_by_fired.insert(fired, (term.label.to_string(), arity));
+    }
+
+    let mut entries = Vec::new();
+    for site in rho_net_native_injection_sites(def)
+        .into_iter()
+        .chain(rho_net_native_fold_injection_sites(def))
+    {
+        // A materialized site whose source term is a fold-mode native process is always found; a
+        // defensive skip keeps the derivation total.
+        let Some((bare_label, arity)) = shape_by_fired.get(&site.rule_label) else {
+            continue;
+        };
+        entries.push(RhoNetNativeMatchEntry {
+            fired_rule_label: site.rule_label,
+            bare_label: bare_label.clone(),
+            arity: *arity,
+            dispatch_channel: site.channel,
+        });
+    }
+    entries
 }
 
 /// Reconstruct the reduced hole `T = RHS_premise[σ]` a fired premise rewrite produced — the

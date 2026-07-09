@@ -175,3 +175,100 @@ async fn nativedemo_native_system_process_fires_as_a_comm_on_the_reducer() {
         "the native system process fired as a COMM on the reducer and landed the value 8"
     );
 }
+
+/// S-native (Stage 4) — the DECISIVE probe that the native redex LOCATION is produced by the `sa:`
+/// automaton, NOT by the host report. The native-dispatch analogue of the base
+/// `m_reflect_sigma_is_produced_by_the_automaton_not_the_report`.
+///
+/// We take a real, complete report for `2 ^ 3` and CORRUPT its σ (the matched-subterm record — the
+/// LOCATION) to nonsense (`{a ↦ NumLit(999), b ↦ NumLit(999)}`), leaving the rule label
+/// (`Int_PowInt`) and the native VALUE (the contractum `NumLit(8)`) valid — so the gate / single
+/// native firing checks still admit the MATCH path. The Stage-4 `rho_net_match_invocation_from_dovetail_to`
+/// STRUCTURALLY reflects the WHOLE subject `2 ^ 3` = `PowInt(NumLit(2), NumLit(3))` (M-reflect, NOT
+/// the report σ), the positional automaton LOCATES that `PowInt` App head + CAPTURES its args ON the
+/// reducer, and its located accept GATES the value bridge, which forwards the trusted handler's
+/// value (the contractum) on the dispatch channel → `NumLit(8)` on OUT.
+///
+/// Because the subject — and hence the redex LOCATION — is built from `term`, not from the corrupted
+/// report σ, OUT is the CORRECT `NumLit(8)`. A location read from the report would have matched the
+/// nonsense σ and never located the real `PowInt`. So a positive, correct OUT observation is
+/// non-vacuous evidence the location came from the automaton, not the report. The native VALUE stays
+/// the trusted host handler's payload (the contractum — the inherent `NativeSystemProcessBoundary`:
+/// BigInt / pow / factorial is outside Rho's own arithmetic); ONLY the structural dispatch moved in
+/// Rho.
+///
+/// FV: `NativeSystemProcessBoundary.v` (the `match_emit` location boundary — the emitted value is
+/// invariant under the report σ and tracks the handler value) + `InRhoMatchPositional.v` (the native
+/// App head is located + positionally captured, and the delivered value is gated + delegated).
+#[tokio::test]
+async fn s_native_location_is_produced_by_the_automaton_not_the_report() {
+    mettail_runtime::clear_var_cache();
+    let (backend, _fingerprint) = native_demo_backend();
+
+    let term = NativeDemoLanguage
+        .parse_term("2 ^ 3")
+        .expect("NativeDemo must parse the native redex 2 ^ 3");
+
+    let mut report = NativeDemoLanguage::dovetail_report_for(term.as_ref(), 64, 1_000_000)
+        .expect("NativeDemo Dovetail report must compile");
+    assert_eq!(
+        report.rewrite_justifications.len(),
+        1,
+        "2 ^ 3 fires exactly one native rewrite"
+    );
+
+    // Deliberately WRONG σ (the matched-subterm LOCATION): a report-σ locator would key off these
+    // and never find the real PowInt(NumLit(2), NumLit(3)). The rule label + contractum (the native
+    // VALUE) stay valid — only the LOCATION σ is corrupted.
+    let nonsense = RuntimeReflectedSubterm { constructor: "NumLit(999)".to_string(), children: Vec::new() };
+    for justification in &mut report.rewrite_justifications {
+        justification.sigma = vec![
+            ("a".to_string(), nonsense.clone()),
+            ("b".to_string(), nonsense.clone()),
+        ];
+        assert_eq!(
+            justification.rule_label, "Int_PowInt",
+            "the fired rule label (the location-independent identity) stays valid"
+        );
+        assert_eq!(
+            justification.contractum,
+            Some(RuntimeReflectedSubterm {
+                constructor: "NumLit(8)".to_string(),
+                children: Vec::new(),
+            }),
+            "the native VALUE (contractum) stays the trusted handler's payload"
+        );
+    }
+
+    // The MATCH path (M-reflect + locate) admits the native redex despite the corrupted σ, and the
+    // automaton LOCATES PowInt from the reflected subject `term`.
+    let invocation =
+        NativeDemoLanguage::rho_net_match_invocation_from_dovetail_to(term.as_ref(), &report, "OUT")
+            .expect("the MATCH path admits 2 ^ 3 with a corrupted report σ");
+    assert_eq!(invocation.out_channel, "OUT");
+
+    let observation = backend
+        .run_rho_net_with_call_and_observe_runtime_values(&invocation.call, &invocation.out_channel)
+        .await
+        .expect("the in-Rho native match + firing executes on the reducer");
+
+    // Non-vacuity: the automaton located PowInt and the value bridge fired exactly once.
+    assert_eq!(
+        observation.observed_count(),
+        1,
+        "OUT must carry exactly one value — the located native dispatch must fire (got {:?})",
+        observation.values
+    );
+
+    // The Rho machine landed the reduced value `8` — located by the automaton (from `term`), valued
+    // by the trusted handler (the contractum), NOT by the corrupted report σ.
+    let eight_value = RuntimeObservationValue::Term {
+        constructor: "NumLit(8)".to_string(),
+        children: Vec::new(),
+    };
+    assert_eq!(
+        observation.values[0], eight_value,
+        "the native redex was LOCATED by the sa: automaton (from the reflected term, not the \
+         corrupted report σ), and the handler's value 8 was delivered on OUT"
+    );
+}

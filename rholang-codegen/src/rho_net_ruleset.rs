@@ -108,16 +108,43 @@ pub struct DeferredRewrite {
     pub reason: DeferReason,
 }
 
+/// One in-Rho MATCHING dispatch record for a native process family (Stage 4 S-native): the
+/// automaton entry LOCATES the native `NativeProc` head + CAPTURES its structural args in Rho, and
+/// its accept routes to [`trigger_channel`](Self::trigger_channel); the match driver co-installs a
+/// [`native_locate_bridge_par`](crate::native_locate_bridge_par) that binds those captures (they
+/// only GATE the delivery) and forwards the trusted handler's VALUE (the firing's contractum — the
+/// inherent host boundary) on [`dispatch_channel`](Self::dispatch_channel), where the installed
+/// dispatch receiver emits it on `@out`. So the LOCATION is the automaton's; only the VALUE is
+/// host-supplied.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NativeDispatch {
+    /// The Dovetail firing label (`"{Category}_{Label}"`) the report keys the native firing on.
+    pub fired_rule_label: String,
+    /// The native entry's accept channel — the automaton's located accept sends
+    /// `trigger!(⟦arg₀⟧, …, @out)` here, and the bridge consumes it.
+    pub trigger_channel: String,
+    /// The installed dispatch receiver's SOURCE channel — where the bridge forwards `⟦value⟧`.
+    pub dispatch_channel: String,
+    /// The native process's arity `k` — the number of captured args the accept sends and the
+    /// bridge binds.
+    pub arity: usize,
+}
+
 /// The in-Rho matching ruleset for a language: the positional automaton over its
-/// structural base-rewrite LHSs, each entry's accept channel (its σ-receiver SOURCE —
-/// the coherence anchor, from [`rho_net_injection_sites`](crate::rho_net_injection_sites)),
-/// the shared language fingerprint, and every rewrite NOT matched in Rho (with a reason).
+/// structural base-rewrite LHSs AND its native process heads (Stage 4 S-native), each entry's
+/// accept channel (a base rewrite's is its σ-receiver SOURCE — the coherence anchor, from
+/// [`rho_net_injection_sites`](crate::rho_net_injection_sites); a native process's is its
+/// per-rule trigger channel), the shared language fingerprint, the native dispatch records the
+/// match driver builds value bridges from, and every rewrite NOT matched in Rho (with a reason).
 pub struct InRhoMatchingRuleset {
     pub automaton: SetAutomaton<String>,
-    /// `PatternId(rewrite index)` → the rule's σ-receiver source channel.
+    /// `PatternId` → the entry's accept channel (base: σ-receiver source; native: trigger channel).
     pub accept_channels: Vec<(PatternId, String)>,
     pub language_fingerprint: String,
     pub deferred: Vec<DeferredRewrite>,
+    /// One record per ADMITTED native process family entry (Stage 4 S-native): the firing label,
+    /// trigger + dispatch channels, and arity the match driver co-installs a value bridge from.
+    pub native_dispatch: Vec<NativeDispatch>,
 }
 
 /// Compile a language's structural base rewrites into ONE positional set automaton,
@@ -167,9 +194,58 @@ pub fn compile_in_rho_matching_ruleset(def: &LanguageDef) -> InRhoMatchingRulese
         }
     }
 
+    // Stage 4 (S-native): ADMIT the native process families (`NativeSystemProcessRewrite` /
+    // `NativeFold`). A native process `NativeProc(a₀..a_{k-1})` is a plain App-rooted node, so the
+    // SAME positional automaton LOCATES it by head tag + arity once its flat pattern
+    // `bare_label(x₀..x_{k-1})` is an automaton entry — the redex location moves in Rho (the
+    // structural DISPATCH), while its VALUE stays the trusted host handler's payload (delivered by
+    // the match driver's value bridge on the dispatch channel — the inherent boundary). Native
+    // process PatternIds start AFTER the base-rewrite ones (`def.rewrites.len() + native_index`),
+    // disjoint from every base `PatternId(rewrite index)`. Their accept routes to a per-rule trigger
+    // channel (NOT the σ-receiver source), so the located accept hands the captures to the bridge.
+    let native_base = def.rewrites.len();
+    let native_entries = crate::rho_net_native_match_entries(def);
+    let mut native_dispatch: Vec<NativeDispatch> = Vec::with_capacity(native_entries.len());
+    for (native_index, entry) in native_entries.iter().enumerate() {
+        let pid = PatternId(native_base + native_index);
+        // The flat App pattern `bare_label(x₀..x_{arity-1})` over DISTINCT fresh Var leaves: the
+        // automaton matches the head tag + arity and captures each arg (a Var matches any subterm),
+        // exactly the base-rewrite flat entry shape (App-over-Var).
+        let args: Vec<DvPattern<String>> = (0..entry.arity)
+            .map(|i| DvPattern::var(format!("__mettail_native_arg_{i}")))
+            .collect();
+        let pattern = DvPattern::app(entry.bare_label.clone(), args);
+        // The per-rule trigger channel (the located accept's target) — derived from the unique
+        // dispatch channel, disjoint from every base σ-receiver / automaton `loc:`/`cap:` channel.
+        let trigger = format!("{}/sa-locate", entry.dispatch_channel);
+        pairs.push((pid, pattern));
+        accept_channels.push((pid, trigger.clone()));
+        native_dispatch.push(NativeDispatch {
+            fired_rule_label: entry.fired_rule_label.clone(),
+            trigger_channel: trigger,
+            dispatch_channel: entry.dispatch_channel.clone(),
+            arity: entry.arity,
+        });
+    }
+
+    // The label of a rejected `PatternId` — a base rewrite name, or a native firing label for the
+    // (non-occurring) native rejection, so the retry loop never indexes `def.rewrites` out of range.
+    // Reads `native_entries` (parallel to `native_dispatch`, never mutated), so it does not conflict
+    // with the defensive `native_dispatch.retain` below.
+    let deferred_label = |pid: PatternId| -> String {
+        if pid.0 < native_base {
+            def.rewrites[pid.0].name.to_string()
+        } else {
+            native_entries
+                .get(pid.0 - native_base)
+                .map(|entry| entry.fired_rule_label.clone())
+                .unwrap_or_else(|| format!("native#{}", pid.0))
+        }
+    };
+
     // compile_structural rejects any AcApp entry; move it to `deferred{Ac}` and recompile
-    // the AC-free remainder. Converges: AcApp is the only rejection, and the empty ruleset
-    // compiles.
+    // the AC-free remainder. Converges: AcApp is the only rejection (a native flat App-over-Var
+    // entry is never rejected), and the empty ruleset compiles.
     let automaton = loop {
         match SetAutomaton::compile_structural(pairs.clone()) {
             Ok(automaton) => break automaton,
@@ -177,14 +253,21 @@ pub fn compile_in_rho_matching_ruleset(def: &LanguageDef) -> InRhoMatchingRulese
                 let unsupported: HashSet<PatternId> =
                     err.unsupported_patterns().iter().copied().collect();
                 for pid in &unsupported {
-                    let label = def.rewrites[pid.0].name.to_string();
                     deferred.push(DeferredRewrite {
-                        rule_label: label,
+                        rule_label: deferred_label(*pid),
                         reason: DeferReason::Ac,
                     });
                 }
                 pairs.retain(|(pid, _)| !unsupported.contains(pid));
                 accept_channels.retain(|(pid, _)| !unsupported.contains(pid));
+                native_dispatch.retain(|entry| {
+                    !unsupported.iter().any(|pid| {
+                        pid.0 >= native_base
+                            && native_entries
+                                .get(pid.0 - native_base)
+                                .is_some_and(|e| e.fired_rule_label == entry.fired_rule_label)
+                    })
+                });
             },
         }
     };
@@ -194,6 +277,7 @@ pub fn compile_in_rho_matching_ruleset(def: &LanguageDef) -> InRhoMatchingRulese
         accept_channels,
         language_fingerprint,
         deferred,
+        native_dispatch,
     }
 }
 
