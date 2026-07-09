@@ -5,6 +5,8 @@
 //! rendered syntax strings: constructor labels, categories, rules, and
 //! patterns come directly from the parsed language definition.
 
+use std::collections::HashSet;
+
 use mettail_ast::grammar::NonTerminalKind;
 use mettail_ast::language::{Equation, LanguageDef, Premise, RewriteRule};
 use mettail_ast::pattern::{Pattern as AstPattern, PatternTerm};
@@ -104,12 +106,27 @@ pub(crate) fn needs_typed_dovetail_path(language: &LanguageDef) -> bool {
         .iter()
         .any(|rw| is_structural_ac_rewrite(language, rw).is_some())
         && !crate::gen::runtime::binder_congruence::should_emit_binder_congruence(language);
+    // (Stage 4) A DEPTH-2 NESTED structural non-linear AC rewrite ([`is_nested_structural_ac_rewrite`],
+    // the Ambient `InRule`/`OutRule`) is a TYPED native firing for the SAME reasons as the flat
+    // structural-AC `OpenRule` — its LHS is a NON-LINEAR AC pattern (the `EGraph<String>` path records
+    // no justification) and its RHS nests a bag in an AC `PPar` — so routing it typed makes
+    // `dovetail_report_for` produce the In/Out justification (σ + contractum) the runtime nested
+    // structural-AC σ-injection reads. GATED on `!should_emit_binder_congruence` (identical to the
+    // flat gate): the full `Ambient` (PNew binder + `new`-floating equations) MUST stay on the untyped
+    // path — its In/Out are delivered in Rho by the binder-free `InOutDemo`, which this gate routes
+    // typed while keeping the full `Ambient` byte-identical on the untyped path.
+    let has_nested_structural_ac_rewrite = language
+        .rewrites
+        .iter()
+        .any(|rw| is_nested_structural_ac_rewrite(language, rw).is_some())
+        && !crate::gen::runtime::binder_congruence::should_emit_binder_congruence(language);
     has_native_fold
         || has_substitution_rewrite
         || has_native_system_process
         || has_native_fold_rewrite
         || has_comm_rewrite
         || has_structural_ac_rewrite
+        || has_nested_structural_ac_rewrite
 }
 
 /// Backward-compatible alias for [`needs_typed_dovetail_path`] (the typed path is no longer
@@ -658,6 +675,87 @@ pub(crate) fn is_structural_ac_rewrite(
         nonlinear_var,
         rest_var,
         reduct_vars,
+    })
+}
+
+/// (Stage 4) A DEPTH-2 NESTED structural non-linear AC rewrite (the Ambient `InRule`/`OutRule`,
+/// `{ n[{in(m,P), ...q}], m[R], ...s } ~> { m[{ n[{P, ...q}], R }], ...s }` and its `out` dual)
+/// classified for typed-native lowering. It GENERALIZES [`StructuralAcRewrite`]: an outer element
+/// whose argument is itself a HashBag carrying the capability, sharing a CROSS-LEVEL non-linear
+/// channel `M`. Its LHS + RHS lower through the ordinary [`pattern_to_dovetail`] (which already
+/// handles the nested `AcApp` + `App` structure), and its dispatch instantiates the re-assembled RHS.
+#[derive(Debug, Clone)]
+pub(crate) struct NestedStructuralAcRewrite {
+    /// `<Lang>::rewrite::<name>` — the native-rule label (matches the nested structural-AC σ-receiver).
+    pub(crate) label: String,
+    /// The whole LHS pattern — the native-rule LHS ([`pattern_to_dovetail`], which handles nesting).
+    pub(crate) left: AstPattern,
+    /// The whole RHS pattern — the dispatch arm instantiates it (`pattern_to_dovetail` + `instantiate`).
+    pub(crate) right: AstPattern,
+    /// The CONSUMED constructor heads `(category, constructor)` — the LHS heads MINUS the RHS heads
+    /// (e.g. `PIn` for `InRule`, `POut` for `OutRule`; the PERSISTING `PAmb`/`PPar` are excluded).
+    /// These join the MF1 redex-head set so funded 1-best extraction prefers the restructured
+    /// contractum over the un-reduced redex (a bag still carrying the consumed capability is heavier).
+    pub(crate) consumed_heads: Vec<(Ident, Ident)>,
+}
+
+/// Collect every `PatternTerm::Apply` constructor label in `pattern` (recursing through `Apply` args
+/// and `Collection` elements). Used to compute the CONSUMED redex heads (LHS constructors MINUS RHS
+/// constructors) for the nested structural-AC extraction preference.
+fn collect_apply_constructors(pattern: &AstPattern, out: &mut HashSet<String>) {
+    match pattern {
+        AstPattern::Term(PatternTerm::Apply { constructor, args }) => {
+            out.insert(constructor.to_string());
+            for arg in args {
+                collect_apply_constructors(arg, out);
+            }
+        },
+        AstPattern::Collection { elements, .. } => {
+            for element in elements {
+                collect_apply_constructors(element, out);
+            }
+        },
+        _ => {},
+    }
+}
+
+/// (Stage 4) Classify a rewrite as a DEPTH-2 NESTED structural non-linear AC rewrite
+/// ([`NestedStructuralAcRewrite`], the Ambient `InRule`/`OutRule`), or `None`. The shape check
+/// delegates to the SINGLE-SOURCE-OF-TRUTH `mettail_rholang_codegen::is_nested_structural_ac_rewrite`
+/// (so the Dovetail report path and the Rho lowering agree byte-for-byte on which rewrites are nested
+/// firings) — it rejects the flat `OpenRule` (no nested element), a Comm/substitution, and any
+/// non-nested shape. Premises must be congruence-only (same gate as every structural lowering).
+pub(crate) fn is_nested_structural_ac_rewrite(
+    language: &LanguageDef,
+    rw: &RewriteRule,
+) -> Option<NestedStructuralAcRewrite> {
+    if !rw.premises.iter().all(premise_supported) {
+        return None;
+    }
+    if !mettail_rholang_codegen::is_nested_structural_ac_rewrite(&rw.left, &rw.right, language) {
+        return None;
+    }
+    // Consumed heads = (constructor heads in LHS) \ (constructor heads in RHS), each with its
+    // category (for `op_variant_ident`). `PPar`/`PAmb` persist (appear in both), so only the
+    // dissolved capability (`PIn`/`POut`) remains — the head whose disappearance marks the firing.
+    let mut left_heads: HashSet<String> = HashSet::new();
+    collect_apply_constructors(&rw.left, &mut left_heads);
+    let mut right_heads: HashSet<String> = HashSet::new();
+    collect_apply_constructors(&rw.right, &mut right_heads);
+    let mut consumed_heads: Vec<(Ident, Ident)> = Vec::new();
+    for head in &left_heads {
+        if right_heads.contains(head) {
+            continue;
+        }
+        let head_ident = format_ident!("{}", head);
+        let category = language.category_of_constructor(&head_ident)?.clone();
+        consumed_heads.push((category, head_ident));
+    }
+    Some(NestedStructuralAcRewrite {
+        label: format!("{}::rewrite::{}", language.name, rw.name),
+        left: rw.left.clone(),
+        right: rw.right.clone(),
+        consumed_heads,
     })
 }
 
@@ -1305,6 +1403,15 @@ fn lower_rewrite(
     // never routes a structural-AC rewrite (it stays a String-path AC `RewriteRule` for the untyped
     // binder-handler `Ambient`), so this is defensively byte-identical for the String path.
     if enum_id.is_some() && is_structural_ac_rewrite(language, rw).is_some() {
+        return (Vec::new(), Vec::new());
+    }
+    // (Stage 4) A DEPTH-2 nested structural non-linear AC rewrite (Ambient `InRule`/`OutRule`) is
+    // likewise NOT a structural `RewriteRule` — it is lowered as a typed native rule + dispatch arm
+    // (`typed_report`), so it emits NOTHING here. Gated on `enum_id.is_some()` (typed path only); the
+    // `EGraph<String>` path never routes a nested structural-AC rewrite (it stays a String-path AC
+    // `RewriteRule` for the untyped binder-handler `Ambient`), so this is defensively byte-identical
+    // for the String path.
+    if enum_id.is_some() && is_nested_structural_ac_rewrite(language, rw).is_some() {
         return (Vec::new(), Vec::new());
     }
 

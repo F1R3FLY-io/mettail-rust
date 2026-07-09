@@ -43,6 +43,48 @@ fn lit(value: &str) -> LitStr {
     LitStr::new(value, Span::call_site())
 }
 
+/// Emit a codegen-owned `AcReconstructTemplate` VALUE (a constructor-call expression) for a nested
+/// structural-AC operand / reduct template, so the generated σ-injection F-function can materialize it
+/// at runtime and walk it with the firing's σ (`instantiate_ac_reconstruct_template`) to rebuild the
+/// ground operand / reduct. Recurses through the template's `Node` children / `Bag` elements.
+fn ac_template_tokens(template: &mettail_rholang_codegen::AcReconstructTemplate) -> TokenStream {
+    use mettail_rholang_codegen::AcReconstructTemplate as T;
+    match template {
+        T::Var(name) => {
+            let name = lit(name);
+            quote! { ::mettail_rholang_codegen::AcReconstructTemplate::Var(#name.to_string()) }
+        },
+        T::Node { constructor, children } => {
+            let constructor = lit(constructor);
+            let children: Vec<TokenStream> = children.iter().map(ac_template_tokens).collect();
+            quote! {
+                ::mettail_rholang_codegen::AcReconstructTemplate::Node {
+                    constructor: #constructor.to_string(),
+                    children: ::std::vec![#(#children),*],
+                }
+            }
+        },
+        T::Bag { op, elements, rest } => {
+            let op = lit(op);
+            let elements: Vec<TokenStream> = elements.iter().map(ac_template_tokens).collect();
+            let rest = match rest {
+                Some(rest) => {
+                    let rest = lit(rest);
+                    quote! { ::core::option::Option::Some(#rest.to_string()) }
+                },
+                None => quote! { ::core::option::Option::None },
+            };
+            quote! {
+                ::mettail_rholang_codegen::AcReconstructTemplate::Bag {
+                    op: #op.to_string(),
+                    elements: ::std::vec![#(#elements),*],
+                    rest: #rest,
+                }
+            }
+        },
+    }
+}
+
 fn scalar_type_expr(scalar_type: RhoScalarType) -> TokenStream {
     match scalar_type {
         RhoScalarType::Int => quote! { ::mettail_rholang_codegen::RhoScalarType::Int },
@@ -832,6 +874,14 @@ pub fn generate_rho_net_invocation(language: &LanguageDef) -> TokenStream {
     // them to `structural_ac_contract_call`, which sends `channel!(⟦bag⟧, ⟦r0⟧, …, @out)`.
     let structural_ac_sites =
         mettail_rholang_codegen::rho_net_structural_ac_injection_sites(language);
+    // Stage 4: the DEPTH-2 NESTED structural-AC firing sites — a nested non-linear AC rewrite (Ambient
+    // `InRule`/`OutRule`, `RhoNetLoweredRule::NestedStructuralAcRewrite`) fires by rebuilding the WHOLE
+    // nested operand `⟦{ n[{in(m,P),...q}], m[R], ...s }⟧` (or the `out` wrapper) from σ by walking its
+    // OPERAND template, and each NESTED reduct element (a host-computed restructuring) from σ by
+    // walking its REDUCT template, then passing them to `structural_ac_contract_call`, which sends
+    // `channel!(⟦operand⟧, ⟦r0⟧, …, @out)` — the SAME firing seam as the flat structural-AC path.
+    let nested_structural_ac_sites =
+        mettail_rholang_codegen::rho_net_nested_structural_ac_injection_sites(language);
 
     let body = if sites.is_empty()
         && ac_sites.is_empty()
@@ -840,6 +890,7 @@ pub fn generate_rho_net_invocation(language: &LanguageDef) -> TokenStream {
         && native_fold_sites.is_empty()
         && comm_sites.is_empty()
         && structural_ac_sites.is_empty()
+        && nested_structural_ac_sites.is_empty()
     {
         // No σ-receiver (base OR AC OR subst OR native): the helper exists for a uniform surface
         // but always fails closed (there is nothing to inject).
@@ -1189,6 +1240,66 @@ pub fn generate_rho_net_invocation(language: &LanguageDef) -> TokenStream {
             })
             .collect();
 
+        // Nested-structural-AC-rewrite arms (Stage 4, Ambient `InRule`/`OutRule`): rebuild the WHOLE
+        // DEPTH-2 nested operand `⟦{ n[{in(m,P),...q}], m[R], ...s }⟧` (or the `out` wrapper) from σ by
+        // walking its OPERAND template, and each NESTED reduct element (the host-computed
+        // restructuring) from σ by walking its REDUCT template, then send
+        // `channel!(⟦operand⟧, ⟦r0⟧, …, @out)` via the SAME `structural_ac_contract_call` seam. The
+        // installed nested σ-receiver re-does the DEPTH-2 match + the cross-level `M ≡ M` guard and
+        // splices `⟦r0⟧ | … | ...s`.
+        let nested_structural_ac_site_arms: Vec<TokenStream> = nested_structural_ac_sites
+            .iter()
+            .map(|site| {
+                let label = lit(&site.rule_label);
+                let channel = lit(&site.channel);
+                let operand_tokens = ac_template_tokens(&site.operand_template);
+                let reduct_count = site.reduct_templates.len();
+                let reduct_tokens: Vec<TokenStream> =
+                    site.reduct_templates.iter().map(ac_template_tokens).collect();
+                quote! {
+                    #label => {
+                        // σ → ground reconstruction closure (a missing σ variable fails closed).
+                        let __find = |__name: &str|
+                            -> ::core::option::Option<::mettail_rholang_codegen::GroundTerm> {
+                            __mettail_rho_net_find_sigma(__justification, __name)
+                                .ok()
+                                .map(__mettail_rho_net_to_ground)
+                        };
+                        // The WHOLE nested operand, rebuilt from σ by walking the operand template.
+                        let __operand_template = #operand_tokens;
+                        let __operand =
+                            ::mettail_rholang_codegen::instantiate_ac_reconstruct_template(
+                                &__operand_template, &__find,
+                            )
+                            .ok_or_else(|| ::std::format!(
+                                "Rho-net injection for language {} could not reconstruct the {} operand from σ",
+                                #language_lit, #label,
+                            ))?;
+                        // The m NESTED reduct elements — each the host-computed restructuring rebuilt
+                        // from σ by walking its reduct template.
+                        let mut __reducts = ::std::vec::Vec::with_capacity(#reduct_count);
+                        #(
+                            {
+                                let __reduct_template = #reduct_tokens;
+                                __reducts.push(
+                                    ::mettail_rholang_codegen::instantiate_ac_reconstruct_template(
+                                        &__reduct_template, &__find,
+                                    )
+                                    .ok_or_else(|| ::std::format!(
+                                        "Rho-net injection for language {} could not reconstruct a {} reduct from σ",
+                                        #language_lit, #label,
+                                    ))?,
+                                );
+                            }
+                        )*
+                        ::mettail_rholang_codegen::structural_ac_contract_call(
+                            #channel, &__operand, &__reducts, __fingerprint, out_channel,
+                        )
+                    },
+                }
+            })
+            .collect();
+
         // The multiset-difference reduct recovery, emitted only for a language with a Comm site (so
         // a non-Comm language surfaces no dead helper).
         let comm_reduct_helper: TokenStream = if comm_sites.is_empty() {
@@ -1313,6 +1424,7 @@ pub fn generate_rho_net_invocation(language: &LanguageDef) -> TokenStream {
                 #(#native_fold_site_arms)*
                 #(#comm_site_arms)*
                 #(#structural_ac_site_arms)*
+                #(#nested_structural_ac_site_arms)*
                 __other => {
                     return ::core::result::Result::Err(::std::format!(
                         "Rho-net injection for language {} has no σ-receiver for fired rule {}",
