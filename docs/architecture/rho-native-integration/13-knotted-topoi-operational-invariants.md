@@ -237,19 +237,19 @@ FV theories are under `formal/rocq/rho_bridge/theories/`.
 | ID | Invariant (what must hold) | Paper basis | Realization (code + FV) | Status |
 |---|---|---|---|---|
 | INV-1 | **Injective location channels.** Distinct term locations map to distinct channels: `c(ℓ) = ⌜ℓ⌝`, injective. | `Definition` "location channels", §5.2 | `RhoNetChannel::location` → `loc:{path}`; `resolve_channel` → distinct `GString`-quoted names (`rho_net.rs`, `rho_net_lower.rs`). `RhoGroundingAndNames.v` | Satisfied |
-| INV-2 | **Plugging-stability of `c(·)`.** No spurious rendezvous under embedding into a larger context; minimal enabling contexts are exactly the location channels. | proof of opcorr, §5.2 | Absolute-from-root location paths; per-injection fresh root (INV-7). `LinearCommCorrespondence.v` (barb-preserving COMM) | Partial |
+| INV-2 | **Plugging-stability of `c(·)`.** No spurious rendezvous under embedding into a larger context; minimal enabling contexts are exactly the location channels. | proof of opcorr, §5.2 | Absolute-from-root location paths; per-injection fresh root (INV-7). `ContextualAtomicJoinPlugging.v` (`plug_ctx_head_invariant_to_holes`, O2 — plugging total + injective, the outer head invariant to the holes); consumed across every finite trace by the whole-⟦G⟧ opcorr `WholeGsltInRhoOpCorrespondence.v` (FContextualJoin arm) | Satisfied (in-Rho realization) |
 | INV-3 | **One firing = one atomic rendezvous emitting `⟦R⟧σ`.** A base-rewrite firing at `ℓ` is a single COMM on `c(ℓ)` delivering the hole-fillers and emitting the instantiated RHS. | `eq:base` + Appendix A "base rewrites"; proof of opcorr | `sigma_receiver_par`: single `(k+1)`-ary `ReceiveBind` on `c(ℓ)`, body `out!(⟦R⟧σ)`. `LinearCommCorrespondence.v` (`comm_step_sound`/`_complete`), `CommReductionCorrespondence.v` | Satisfied |
 | INV-4 | **Firing atomicity — no partial-match states.** Recognition of a redex introduces no reachable Rho state absent from the source rewrite system. | proof of opcorr; `Remark` "freshness" (anti-collapse) | Host set automaton pre-decides the match; flat receiver = one COMM. Naive re-match families are fail-closed (`rewrite_pattern_unsupported`, `UnsupportedFamily`). `RhoLoweringTotalOrRejects.v` (install boundary) | Satisfied |
 | INV-5 | **Non-linear pattern-variable consistency.** A pattern variable occurring twice binds equal sub-terms. | "name-equality guards", §5.2 / Appendix A | Host: `collect_lhs_vars` dedups to first occurrence; Dovetail `merge_substs` folds equality into `σ`; receiver binds one slot per distinct variable. In-Rho channel kind `RhoNetChannel::consistency` (`eq:…`) reserved | Satisfied (host locus) |
-| INV-6 | **Structural premises / contextual rewrites as atomic joins.** An `n`-premise rule blocks until all `n` hole-fillers arrive, each on a distinct child channel, then emits the outer RHS. | Appendix A "contextual rewrites" | `lower_contextual_rewrite` classifies but emits no `Par`; non-behavioral premises fail closed (`rewrite_premises_receiver_safe` → `NonCongruenceSideCondition`). Same-channel two-premise join modeled in `LinearCommCorrespondence.v` | Gap (recognized, fail-closed) |
+| INV-6 | **Structural premises / contextual rewrites as atomic joins.** An `n`-premise rule blocks until all `n` hole-fillers arrive, each on a distinct child channel, then emits the outer RHS. | Appendix A "contextual rewrites" | Contextual rewrites fire as an atomic polyadic join — `ContextualAtomicJoinPlugging.v` (`nary_join_complete`/`nary_join_sound`: sound + complete with matching barbs, all-or-nothing, one reduced context emitted); structural / Ambient OpenRule fires as one structural non-linear AC COMM — `AmbientOpenFiring.v` (`open_commits_when_names_agree`, `open_emits_both_reducts_and_splices_rest`). Both consumed by the whole-⟦G⟧ opcorr `WholeGsltInRhoOpCorrespondence.v` (FContextualJoin + FAcStructural arms) | Satisfied (in-Rho realization) |
 | INV-7 | **Freshness by quoting; no `ν`, no allocator.** Distinct injected terms publish on distinct fresh quoted roots. | `Remark` "freshness by quoting", §5.2 | Injection publishes on a fresh quoted root; No-Injection `GPrivate` tag discipline; name canonicalization. `RhoGroundingAndNames.v`, `LinearCommCorrespondence.v` (name canon) | Satisfied (root suppressed in template, as in the paper) |
 | INV-8 | **Persistent installer, no replication.** The receiver survives each fire via the reflection idiom, not `!`-replication. | Appendix A "base rewrites" | `sigma_receiver_par` builds a persistent contract-shaped receive (reuses the proven scalar contract shape). `RhoParWellFormedness.v` | Satisfied |
 | INV-9 | **Equations as structural congruence — cost-free, iso, not motion.** The equation component is compile-time normalisation, never a Rho reduction. | §5.2; `Construction` "desugaring functor" | `CongruenceClosure` (compile-time e-graph, empty `Par`); Dovetail union-find e-graph (see [Dovetail Rewrite Semantics](03-dovetail-rewrite-semantics.md)) | Satisfied |
 | INV-10 | **RHS constructor reflection preserves head tag, arity, and child structure.** `⟦f(…)⟧` publishes tag `f̲`; nullary = tag only; a schema variable reflects to its filler. | Appendix A "terms" | `reflect_term_par`: `EList[GPrivate(reflect_tag(f)), ⟦t₁⟧,…]`; nullary → tag-only `EList`; variable → `σ`-slot `BoundVar(k−i)`. `RhoAstSendBoundary.v`, `RhocalcAstLowering.v` | Satisfied (RHS; represented as one reflected payload at `c(ℓ)`) |
 | INV-11 | **Total-or-reject — the desugaring installs every rewrite.** `⟦G⟧` is the parallel composition of every rule's installation; none is silently dropped. | `Construction` "desugaring functor", §5.2 | `lower` classifies every rule; `installed_program_par` fails closed on any unmaterialized/error rule. `RhoLoweringTotalOrRejects.v` (`lowering_total`/`_sound`/`_disjoint`/`_count`, `install_ok_drops_nothing`) | Satisfied |
 | INV-12 | **Compile to core rho; reuse the host Rho machine.** The target is core rho; nothing depends on a MeTTaIL primitive; execution is on the host machine. | §1.5 (standing conventions) | Artifact is `rhoapi::Par` injected into F1r3node `RhoRuntime`/RSpace; one-way bridge. `HostRhoMachineReuse.v`, `BridgeInertness.v` | Satisfied |
-| INV-13 | **Channel-intension freedom — same CLTS.** Any matching intension is admissible iff it induces the paper's CLTS. | §1.5 (Q2); `Remark` "non-optimality" (Q3) | Model b is one admissible intension; `RhoNetChannel` reserves both verbatim `location` and `set_automaton_trace` kinds. CLTS obligation discharged for the covered fragment by `LinearCommCorrespondence.v` / `CommReductionCorrespondence.v`; full opcorr theorem open | Partial (design principle honored; full theorem open) |
-| INV-14 | **Semantic predicates as the only off-machine obligation.** Beyond the paper's pure-rho fragment; consistent, not required. | (not in the paper's fragment) | `RhoBackendInvocation::DeferToDovetailSemanticPredicate`; audit boundary in [Runtime Invocation Migration](12-runtime-invocation-migration.md). `RhoDefaultBackendAudit.v` | Consistent (beyond paper scope) |
+| INV-13 | **Channel-intension freedom — same CLTS.** Any matching intension is admissible iff it induces the paper's CLTS. | §1.5 (Q2); `Remark` "non-optimality" (Q3) | The whole-⟦G⟧ **finite-execution** opcorr is landed: `WholeGsltInRhoOpCorrespondence.whole_gslt_in_rho_opcorrespondence` composes the six per-family per-step arms (base / contextual / AC-linear / AC-structural / binder-β / native) into a both-direction finite-trace barb-equivalence; `whole_gslt_opcorr_over_optimal_matching` threads obligation (iii) `advanced_automata/InRhoSameCLTSWeakBisim.same_clts_weak_bisim` so it holds over the O1-OPTIMAL `set_automaton_trace` scheme — the `rem:nonopt` (Q3) discharge. Non-vacuity: `swapdemo_base_finite_trace_opcorr`. `RhoNetChannel` reserves both `location` and `set_automaton_trace` kinds | Satisfied (finite executions, in-Rho realization) |
+| INV-14 | **Semantic predicates as the only off-machine obligation.** Beyond the paper's pure-rho fragment; consistent, not required. | (not in the paper's fragment) | `RhoBackendInvocation::DeferToDovetailSemanticPredicate`; audit boundary in [Runtime Invocation Migration](12-runtime-invocation-migration.md). `RhoDefaultBackendAudit.v`. Excluded from the whole-⟦G⟧ opcorr BY CONSTRUCTION — `WholeGsltInRhoOpCorrespondence.semantic_predicates_emit_no_comm` (a predicate disposition carries no `c(ℓ)` label, so it emits no COMM and is absent from every opcorr trace; `Family` has no predicate constructor) | Consistent (beyond paper scope; opcorr-excluded by the fence) |
 
 ### 5.1 Two loci, one firing (illustration)
 
@@ -283,6 +283,7 @@ in [References](references.md#rho-bridge-formal):
 
 | Paper obligation | FV theory | What it establishes |
 |---|---|---|
+| **whole-⟦G⟧ opcorr (the full `Obligation` "opcorr", FINITE traces)** | `WholeGsltInRhoOpCorrespondence.v` (+ the `EndToEndCommCorrespondence.v` lift; `WholeGsltInRhoOpCorrespondenceOptimalViaSameClts.v` for the (iii) literal discharge) | **the Stage 5 CAPSTONE.** A COMPOSITION HARNESS: instantiates the assumption-free finite-trace lift with the whole-⟦G⟧ in-Rho LTS and assembles the six per-family per-step arms + the slotted In/Out into a both-direction finite-trace barb-equivalence (`whole_gslt_in_rho_opcorrespondence`), then threads obligation (iii) so it holds over the O1-optimal matching (`whole_gslt_opcorr_over_optimal_matching` — the `rem:nonopt` discharge). Zero-admission (the arms are Section hypotheses = the landed per-step theorems, not Axioms); non-vacuity via the SwapDemo base rewrite |
 | firing = COMM, both directions (opcorr) | `LinearCommCorrespondence.v` | a lowered linear COMM has a source COMM reduct with the same barbs, and conversely; grounding commutes with COMM for injective groundings |
 | persistent rules-as-data layer | `CommReductionCorrespondence.v` | persistent contracts and monotone fact insertion for the saturation layer |
 | total-or-reject; miss nothing | `RhoLoweringTotalOrRejects.v` | every rule is lowered or fail-closed; the install boundary drops nothing silently |
@@ -290,12 +291,25 @@ in [References](references.md#rho-bridge-formal):
 | host-machine reuse (INV-12) | `HostRhoMachineReuse.v`, `BridgeInertness.v` | accepted plans depend on the host interpreter and RSpace; the bridge introduces no second Rho machine |
 | GSLT presentation / OSLF laws | `MettaGsltPresentation.v`, `MettaOslfLawsConformance.v` | MeTTaIL presents finitely presentable GSLTs and conforms to the OSLF laws the paper's keystone rests on |
 
-The **open** part of INV-13 is the full `opcorr` theorem — a single mechanized
-statement that the whole desugaring's CLTS is bisimilar to the source rewrite
-system, with labels matched by location channels and independence from the channel
-intension. The current suite proves the per-step COMM correspondence and the
-total-or-reject boundary; the end-to-end bisimulation across a whole `⟦G⟧` remains
-an open obligation, exactly as the paper leaves it (`Obligation` "opcorr").
+The end-to-end `opcorr` is now landed **for finite executions**:
+`WholeGsltInRhoOpCorrespondence.whole_gslt_in_rho_opcorrespondence` is a single
+mechanized statement that every finite rewrite trace of `⟦G⟧` is matched, label-for-
+label (by the `c(ℓ)` COMM), by an in-Rho trace with equal barbs at every reachable
+state, and conversely. It is assembled by a `family_of` case split over the six
+landed per-family per-step correspondences (a Section-hypothesis harness over the
+assumption-free `EndToEndCommCorrespondence.v` finite-trace lift, so it stays *Closed
+under the global context* and admits the slotted In/Out arm additively — a Hypothesis
+is a universally-quantified premise on Section close, not an Axiom).
+`whole_gslt_opcorr_over_optimal_matching` threads obligation (iii)
+(`advanced_automata/InRhoSameCLTSWeakBisim.same_clts_weak_bisim`) so the result holds
+over the O1-optimal `set_automaton_trace` scheme — the `rem:nonopt` (Q3) discharge that
+the optimal StateId-trace channels induce the same CLTS as the sound location channels
+— and `swapdemo_base_finite_trace_opcorr` witnesses non-vacuity (the harness context is
+inhabited, the base arms discharged from the landed `comm_step_complete`/`comm_step_sound`).
+The **honest residual** is the scope: finite executions of gate-admitted `⟦G⟧` (INV-11),
+over the covered rule families; divergent / infinite executions and any future rule
+family beyond the six + slotted In/Out are outside the current statement (the harness
+extends additively — one more `Family` constructor + one more `family_of` case).
 
 ## 7. What Transfers to Items #2005-2007
 
@@ -330,10 +344,12 @@ that the invariants above do not constrain.
 - Therefore **model b is faithful** (High confidence, `≈ 0.9`); items #2005-2007 are
   **optimizations** that must preserve the §5 invariants, not semantic mandates.
 - The current lowering satisfies the structural, atomicity, freshness,
-  persistence, reflection, equation, and total-or-reject invariants; the open
-  items are the full end-to-end `opcorr` bisimulation theorem (INV-13) and the
-  in-machine realizations of contextual joins and structural premises (INV-6),
-  both of which are locus-free and already reserved for in the RhoNet model.
+  persistence, reflection, equation, and total-or-reject invariants; the whole-⟦G⟧
+  **finite-execution** `opcorr` bisimulation theorem (INV-13) is now landed as the
+  Stage 5 capstone (`WholeGsltInRhoOpCorrespondence.v`), threaded over the O1-optimal
+  matching via obligation (iii), and contextual joins + structural premises (INV-6)
+  fire as atomic COMMs; the residual is divergent / infinite executions and rule
+  families beyond the covered six + slotted In/Out.
 
 ## Sources
 
