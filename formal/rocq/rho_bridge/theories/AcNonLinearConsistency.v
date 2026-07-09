@@ -113,6 +113,67 @@ Section AcNonLinearConsistency.
       = ac_nl_guard positions report_selection default.
   Proof. intros positions s r default Heq. rewrite Heq. reflexivity. Qed.
 
+  (* --------------------------------------------------------------------------------------------- *)
+  (* (AC-nl.6, Stage 4 S-binder SLICE 3 — Ambient In/Out DEPTH-2 cross-level guard)                  *)
+  (*                                                                                                 *)
+  (* The Ambient `InRule`/`OutRule` are DEPTH-2 nested structural AC redexes whose non-linear guard   *)
+  (* `EEq(M_outer, M_inner)` compares the shared ambient name `M` at TWO different nesting levels:    *)
+  (* one occurrence bound at the OUTER level (the sibling `m[R]` for `InRule`, the root wrapper        *)
+  (* `m[{…}]` for `OutRule`) and one bound ONE LEVEL DOWN (the inner `in(m,P)`/`out(m,P)`             *)
+  (* capability's channel). The reducer flattens EVERY free variable at EVERY nesting depth into ONE   *)
+  (* De Bruijn receive frame (`free_map`), so the two `M` occurrences bind DISTINCT flat slots — and   *)
+  (* `gather` (AC-nl) reads the selection at SLOT POSITIONS, NOT at depth levels. Hence the cross-      *)
+  (* level guard is `ac_nl_guard [i; j]` over the two `M` slots for ARBITRARY positions `i`, `j`,       *)
+  (* REGARDLESS of which nesting level bound each: obligation (vi) — and its Stage-AC slot-gather       *)
+  (* composition (AC-nl.1/AC-nl.2/AC-nl.3) — applies VERBATIM, with the two occurrences supplied by    *)
+  (* the DEPTH-2 selection instead of a flat one. Only the depth-2 MATCH/σ/reduct correspondence        *)
+  (* (`advanced_automata/InRhoAcMatchMultiset.v::NestedStructuralAcSpreadMatch`) is genuinely new; the  *)
+  (* guard is reused unchanged. These corollaries state that reuse for the two-`M` cross-level shape.   *)
+
+  (* (AC-nl.6a) THE CROSS-LEVEL TWO-SLOT CHARACTERIZATION: the depth-2 In/Out guard commits IFF the
+     outer-`M` slot and the inner-`M` slot bound the SAME name — `all_equal` over the two `M` slots
+     for ANY positions `i`, `j` (depth-agnostic). Directly `ac_nl_two_slot_agree`, restated to make
+     explicit that the two slots may be bound at DIFFERENT nesting levels. *)
+  Theorem ac_nl_cross_level_two_slot :
+    forall (i j : nat) (selection : list Fact) (default : Fact),
+      ac_nl_guard [i; j] selection default = true <->
+      nth i selection default = nth j selection default.
+  Proof. intros i j selection default. apply ac_nl_two_slot_agree. Qed.
+
+  (* (AC-nl.6b) CROSS-LEVEL COMMIT: with the two structured-element premises present, the depth-2
+     In/Out COMM commits (fires, adding the output) IFF the outer-`M` and inner-`M` slots agree — the
+     `check_commit` fires. Inherits AC-nl.1 (`ac_nl_commits_iff_slots_agree`) at the two cross-level
+     slots. *)
+  Theorem ac_nl_cross_level_commits :
+    forall facts premises i j selection default output,
+      all_present facts premises ->
+      nth i selection default = nth j selection default ->
+      guarded_attempt facts
+        (eq_rule premises (gather [i; j] selection default) output)
+        (insert_exact output facts).
+  Proof.
+    intros facts premises i j selection default output Hpres Hagree.
+    apply ac_nl_commits_iff_slots_agree; [ exact Hpres |].
+    apply (proj2 (ac_nl_cross_level_two_slot i j selection default)). exact Hagree.
+  Qed.
+
+  (* (AC-nl.6c) CROSS-LEVEL REJECT-SAFE (`check_commit` rollback): disagreeing outer/inner `M` slots
+     => the guard is false => NO commit and NO data consumed (next = facts) — the mismatched-name
+     Ambient soup rests, so `in`/`out` cannot enter/leave a NON-matching ambient. Inherits AC-nl.2
+     (`ac_nl_disagree_no_commit`); the depth-2 analogue of `AmbientOpenFiring.open_disagree_no_commit`
+     for the cross-LEVEL name check. *)
+  Theorem ac_nl_cross_level_reject_safe :
+    forall facts premises i j selection default output next,
+      nth i selection default <> nth j selection default ->
+      guarded_attempt facts (eq_rule premises (gather [i; j] selection default) output) next ->
+      next = facts.
+  Proof.
+    intros facts premises i j selection default output next Hne Hatt.
+    apply (ac_nl_disagree_no_commit facts premises [i; j] selection default output next); [| exact Hatt].
+    destruct (ac_nl_guard [i; j] selection default) eqn:E; [| reflexivity ].
+    exfalso. apply Hne. apply (proj1 (ac_nl_cross_level_two_slot i j selection default)). exact E.
+  Qed.
+
 End AcNonLinearConsistency.
 
 Print Assumptions ac_nl_commits_iff_slots_agree.
@@ -121,3 +182,8 @@ Print Assumptions ac_nl_two_slot_agree.
 Print Assumptions ac_nl_oracle_agreement.
 Print Assumptions ac_nl_spread_selection_two_slot.
 Print Assumptions ac_nl_guard_selection_determined.
+
+(* ---- Stage 4 S-binder (SLICE 3, Ambient In/Out — DEPTH-2 cross-level non-linear guard) ---- *)
+Print Assumptions ac_nl_cross_level_two_slot.
+Print Assumptions ac_nl_cross_level_commits.
+Print Assumptions ac_nl_cross_level_reject_safe.

@@ -543,6 +543,407 @@ Section StructuralAcSpreadMatch.
 
 End StructuralAcSpreadMatch.
 
+(* ============================================================================================= *)
+(* Stage 4 (S-binder SLICE 3, Ambient In/Out) — the DEPTH-2 NESTED structural-AC SPREAD match:      *)
+(* the located NESTED outer bag = the subject operand bag AT BOTH nesting levels, the connective-    *)
+(* bound σ (cross-level names, both remainders, the inner reducts) = the host report σ, and the      *)
+(* spliced NESTED body = the RHS — multiplicity-preserving at BOTH the inner AND the outer levels.   *)
+(*                                                                                                   *)
+(* The Ambient `InRule`                                                                              *)
+(*     { n[{ in(m,P), ...rest1 }], m[R], ...rest2 } ~> { m[{ n[{ P, ...rest1 }], R }], ...rest2 }    *)
+(* (bag-rooted, LHS root `PPar`) and its dual `OutRule`                                              *)
+(*     m[{ n[{ out(m,P), ...rest1 }], R, ...rest2 }] ~> { n[{ P, ...rest1 }], m[R], ...rest2 }       *)
+(* (wrapper-rooted, LHS root `PAmb`) generalize the flat `OpenRule` structured-element AC redex      *)
+(* (`StructuralAcSpreadMatch`, above) to a DEPTH-2 nesting: the outer operand bag matches TWO        *)
+(* structured elements — a NESTED ambient `A = n[{ … }]` (`PAmb N (PPar {…})`, whose second argument *)
+(* is ITSELF a HashBag carrying the `in`/`out` capability) and a FLAT ambient `B = m[R]`             *)
+(* (`PAmb M R`) — plus the outer remainder `...rest2`; and, ONE LEVEL DOWN, A's inner bag matches     *)
+(* the capability `in(m,P)`/`out(m,P)` plus the inner remainder `...rest1`. The reducer's             *)
+(* `SpatialMatcher<Par,Par>` recurses `Par→Send→EList→Par→Send` into the inner bag in the SAME        *)
+(* atomic `consume` (`reflect_ground_term_par` routes a HashBag ARGUMENT to the same order-           *)
+(* independent process-soup carrier as the top bag — `nested_structural_ac_match_receiver_par`,       *)
+(* `nested_match_bind_pattern_for` in `rholang-codegen/src/rho_net_lower.rs`).                        *)
+(*                                                                                                   *)
+(* HONEST DEPTH-2 MODEL. The nesting has EXACTLY ONE inner-bag match level (the moving ambient A's    *)
+(* inner bag); we model the outer bag as a `list NestedElem` (a nested ambient carries only its        *)
+(* channel name + an OPAQUE inner-bag handle — the reflected inner carrier is a distinct sub-term at   *)
+(* the outer soup level) and A's inner bag as its OWN `list StructElem`, EACH re-sourced from the      *)
+(* spread by its OWN order-independent `Permutation` hypothesis (`outer_located_is_spread` /           *)
+(* `inner_located_is_spread`). This pair of hypotheses is the FAITHFUL depth-2 analogue of the flat    *)
+(* single `struct_located_is_spread`: the spread is order-independent at BOTH nesting levels because   *)
+(* the inner HashBag rides the SAME `ac:` soup carrier the SpatialMatcher recurses through — it is a   *)
+(* statement of the mechanism, not a weakening (exactly the sanctioned `located_is_spread_of_subject`  *)
+(* / `children_match` Section-Variable idiom the flat cases use). Everything else is DERIVED.          *)
+(*                                                                                                   *)
+(* We prove the depth-2 analogues of the flat `LocatedBagFromSubject`/`StructuralAcSpreadMatch`        *)
+(* results: (NS.1) the located nested bag admits the SAME depth-2 partition as the subject bag at BOTH *)
+(* levels (`nested_match_located_iff_subject`); (NS.2) the depth-2 match is TWO single-level           *)
+(* `ac_match_iff_partition` (AC-i) composed PER LEVEL under a nested `Permutation` witness             *)
+(* (`nested_ac_match_iff_partition`); (NS.3) the σ the connective binds (cross-level names, both        *)
+(* remainders, inner reducts) is EXACTLY a report delivery (`deliverable_nested_sigma_sets_agree`);    *)
+(* and (NS.4) the `reflect_ac_template_bound_par` body reproduces the host `instantiate` NESTED         *)
+(* re-assembly — the `...rest1` splices inline at the INNER bag and the `...rest2` splices inline at    *)
+(* the OUTER bag, multiplicity-preserving at BOTH, neither nesting into the other                       *)
+(* (`inrule_reduct_ids_two_level` / `outrule_reduct_ids_two_level`, each two independent               *)
+(* `fired_bag_is_reducts_splice_rest`). Reuses `ac_match_iff_partition` / `ac_match_complete` /         *)
+(* `sub_multiset` / `fired_bag_is_reducts_splice_rest` + the flat `StructElem` / `names` / `reducts` +  *)
+(* Stdlib `Permutation`. The CROSS-LEVEL non-linear GUARD `EEq(M_outer, M_inner)` reuses obligation     *)
+(* (vi) UNCHANGED — its `gather` is over selection SLOT POSITIONS, not depth levels — stated as the     *)
+(* depth-2 corollary `rho_bridge/AcNonLinearConsistency.v::ac_nl_cross_level_two_slot`. The DEPTH-2     *)
+(* LOCATE of the outer/root node is the SINGLE-level `InRhoMatchPositional.v::ac_locate_iff_spine`      *)
+(* instantiated at the `by_root` predicate (an arbitrary root-constructor set: `PPar` for `InRule`,     *)
+(* `PAmb` for `OutRule`); the depth-2-ness is entirely in the MATCH (the receiver's connective pattern  *)
+(* recursing one level down), NOT the locate, so no new `ac_locate` corollary is needed.               *)
+(* ============================================================================================= *)
+
+Section NestedStructuralAcSpreadMatch.
+
+  (* A DEPTH-2 outer element is EITHER a NESTED ambient `n[{ inner_bag }]` (the moving ambient
+     A = `PAmb N (PPar {…})` — carrying its channel-occurrence name and an OPAQUE inner-bag handle:
+     the reflected inner carrier is a distinct sub-term at the outer soup level, matched ONE LEVEL
+     down) or a FLAT structured element (the sibling `m[R]` = B, and every outer `...rest2` element)
+     — a plain `StructElem`. This is the depth-2 generalization of the flat `StructElem` bag whose
+     element argument may itself be a bag. *)
+  Inductive NestedElem : Type :=
+    | NFlat : StructElem -> NestedElem
+    | NNest : nat -> nat -> NestedElem.
+
+  (* The outer channel-occurrence of an outer element (its guard/`M`-or-`N` slot): the nested
+     ambient's name `N`, or the flat element's `se_name` (the sibling's `M`). The outer analogue of
+     `se_name`. *)
+  Definition ne_name (e : NestedElem) : nat :=
+    match e with
+    | NFlat se => se_name se
+    | NNest n _ => n
+    end.
+
+  (* The outer structural reducts of an outer element: a flat element's `se_reducts` (the sibling's
+     body `R`); a nested ambient's reducts live ONE LEVEL DOWN (its inner bag), so it contributes
+     none at the outer level. The outer analogue of `se_reducts`. *)
+  Definition ne_reducts (e : NestedElem) : list nat :=
+    match e with
+    | NFlat se => se_reducts se
+    | NNest _ _ => []
+    end.
+
+  (* The outer channel-occurrence multiset (`map ne_name`) and outer structural-reduct multiset
+     (`flat_map ne_reducts`) of an outer selection — the outer guard slots (`M` in `m[R]`, `N` in
+     `n[…]`) and the outer reducts (`R`). *)
+  Definition outer_names (sel : list NestedElem) : list nat := map ne_name sel.
+  Definition outer_reducts (sel : list NestedElem) : list nat := flat_map ne_reducts sel.
+
+  (* Permutation is a congruence for `flat_map` over `NestedElem` (the outer-reduct re-sourcing is
+     order-independent) — the `NestedElem` twin of the flat `Permutation_flat_map_se`. *)
+  Lemma Permutation_flat_map_ne : forall (f : NestedElem -> list nat) l l',
+    Permutation l l' -> Permutation (flat_map f l) (flat_map f l').
+  Proof.
+    intros f l l' H. induction H; simpl.
+    - apply Permutation_refl.
+    - apply Permutation_app_head. exact IHPermutation.
+    - rewrite !app_assoc. apply Permutation_app_tail. apply Permutation_app_comm.
+    - eapply Permutation_trans; eassumption.
+  Qed.
+
+  (* THE DEPTH-2 NESTED MATCH: the outer bag partitions into the outer selection + `rest2`, AND the
+     nested element's inner bag partitions into the inner selection + `rest1` — a conjunction of two
+     single-level partition witnesses, ONE `Permutation` PER nesting level (outer over `NestedElem`,
+     inner over `StructElem`). The load-bearing depth-2 match the receiver commits in ONE atomic
+     consume: the outer `sub_pars` picks {A, B, ...rest2}, and the SAME consume's inner `sub_pars`
+     (one level down, via the reducer's recursive `SpatialMatcher`) picks {in(m,P), ...rest1} from
+     A's inner bag. *)
+  Definition nested_match
+      (outer_sel : list NestedElem) (rest2 : list NestedElem)
+      (inner_sel : list StructElem) (rest1 : list StructElem)
+      (bag_outer : list NestedElem) (bag_inner : list StructElem) : Prop :=
+    Permutation (outer_sel ++ rest2) bag_outer /\
+    Permutation (inner_sel ++ rest1) bag_inner.
+
+  (* The σ a depth-2 partition delivers — read by BOTH the spread (off the located bags) and the
+     report (off the subject bags): (OUTER channel occurrences, outer reducts, outer remainder) and
+     (INNER channel occurrences, inner reducts, inner remainder). The nested twin of the flat
+     `delivered_sigma`, carrying BOTH nesting levels' slots (the cross-level `M` occurrences live one
+     each in the outer and inner name lists; `N`, `R` outer; `P` inner). *)
+  Definition delivered_nested_sigma
+      (outer_sel : list NestedElem) (rest2 : list NestedElem)
+      (inner_sel : list StructElem) (rest1 : list StructElem)
+      : (list nat * list nat * list NestedElem) * (list nat * list nat * list StructElem) :=
+    ((outer_names outer_sel, outer_reducts outer_sel, rest2),
+     (names inner_sel, reducts inner_sel, rest1)).
+
+  (* --- the two-level spread abstraction (the sanctioned `..._is_spread_of_subject` idiom) --- *)
+
+  (* The SUBJECT outer operand bag (the M-reflect walk reads it off the SAME subtree the host oracle
+     `structural_ac_contract_call` reconstructs from σ) and the LOCATED outer bag the co-installed
+     nested MATCH receiver (`nested_structural_ac_match_receiver_par`) picks from — one send per
+     element on the site-keyed `ac:` carrier, order-independent, so a PERMUTATION of the subject
+     outer bag. *)
+  Variable subject_outer_bag located_outer_bag : list NestedElem.
+  Hypothesis outer_located_is_spread :
+    Permutation located_outer_bag subject_outer_bag.
+
+  (* The moving-ambient A's INNER bag: the SUBJECT inner bag (`{ in(m,P), ...rest1 }` one level down
+     inside `A = n[{…}]`) and the LOCATED inner bag the SAME receiver's connective pattern picks ONE
+     LEVEL DOWN. The reducer's `SpatialMatcher<Par,Par>` recurses `Par→Send→EList→Par→Send` into the
+     inner bag, and `reflect_ground_term_par` routes a HashBag ARGUMENT to the same order-independent
+     process-soup carrier as the top bag, so the inner bag is ALSO re-sourced from the spread — a
+     PERMUTATION of the subject inner bag. This second hypothesis is the HONEST depth-2 analogue of
+     the flat single `struct_located_is_spread`: the spread is order-independent at BOTH nesting
+     levels because the inner HashBag rides the SAME soup carrier. *)
+  Variable subject_inner_bag located_inner_bag : list StructElem.
+  Hypothesis inner_located_is_spread :
+    Permutation located_inner_bag subject_inner_bag.
+
+  (* (NS.1a-outer) THE LOCATED OUTER BAG = THE SUBJECT OUTER BAG: a (selection, rest2) is an AC
+     partition of the located outer bag IFF it is one of the subject outer bag — the native
+     `sub_pars` picks the SAME outer elements whether sourced from the spread or the report, because
+     the spread only permutes the bag. The outer-level `located_struct_matches_subject`. *)
+  Theorem located_outer_matches_subject : forall selection rest2,
+    Permutation (selection ++ rest2) located_outer_bag <->
+    Permutation (selection ++ rest2) subject_outer_bag.
+  Proof.
+    intros selection rest2. split; intro H.
+    - apply Permutation_trans with located_outer_bag; [ exact H | exact outer_located_is_spread ].
+    - apply Permutation_trans with subject_outer_bag;
+        [ exact H | apply Permutation_sym; exact outer_located_is_spread ].
+  Qed.
+
+  (* (NS.1a-inner) THE LOCATED INNER BAG = THE SUBJECT INNER BAG: the same order-independence ONE
+     LEVEL DOWN — a (selection, rest1) is an AC partition of the located inner bag IFF one of the
+     subject inner bag. The inner-level twin of `located_outer_matches_subject`. *)
+  Theorem located_inner_matches_subject : forall selection rest1,
+    Permutation (selection ++ rest1) located_inner_bag <->
+    Permutation (selection ++ rest1) subject_inner_bag.
+  Proof.
+    intros selection rest1. split; intro H.
+    - apply Permutation_trans with located_inner_bag; [ exact H | exact inner_located_is_spread ].
+    - apply Permutation_trans with subject_inner_bag;
+        [ exact H | apply Permutation_sym; exact inner_located_is_spread ].
+  Qed.
+
+  (* (NS.1) THE DEPTH-2 CORRESPONDENCE: the depth-2 match holds of the LOCATED bags IFF it holds of
+     the SUBJECT bags — located = subject AT BOTH nesting levels. Composed from the two per-level
+     transports (`located_outer_matches_subject` ∧ `located_inner_matches_subject`), the nested
+     `Permutation`-witness analogue of `located_struct_matches_subject`. The load-bearing claim: the
+     depth-2 match set is invariant under the spread's per-level permutation, so re-sourcing the
+     NESTED bag from the spread neither adds nor drops a match at either level. *)
+  Theorem nested_match_located_iff_subject :
+    forall outer_sel rest2 inner_sel rest1,
+      nested_match outer_sel rest2 inner_sel rest1 located_outer_bag located_inner_bag <->
+      nested_match outer_sel rest2 inner_sel rest1 subject_outer_bag subject_inner_bag.
+  Proof.
+    intros outer_sel rest2 inner_sel rest1. unfold nested_match. split.
+    - intros [Ho Hi]. split.
+      + apply (proj1 (located_outer_matches_subject outer_sel rest2)). exact Ho.
+      + apply (proj1 (located_inner_matches_subject inner_sel rest1)). exact Hi.
+    - intros [Ho Hi]. split.
+      + apply (proj2 (located_outer_matches_subject outer_sel rest2)). exact Ho.
+      + apply (proj2 (located_inner_matches_subject inner_sel rest1)). exact Hi.
+  Qed.
+
+  (* The outer / inner channel-occurrence multisets of the located bags PERMUTE those of the subject
+     (`map` preserves Permutation) — the cross-level guard slots re-source faithfully at both levels. *)
+  Lemma located_outer_names_perm :
+    Permutation (outer_names located_outer_bag) (outer_names subject_outer_bag).
+  Proof. unfold outer_names. apply Permutation_map. exact outer_located_is_spread. Qed.
+
+  Lemma located_inner_names_perm :
+    Permutation (names located_inner_bag) (names subject_inner_bag).
+  Proof. unfold names. apply Permutation_map. exact inner_located_is_spread. Qed.
+
+  (* (NS.2) THE DEPTH-2 MATCH = TWO SINGLE-LEVEL PARTITIONS: a pair of channel-occurrence selections
+     (outer `M`/`N` slots, inner `M`/capability slots) is a depth-2 AC match of the LOCATED nested
+     bag IFF each level is an order-independent partition of that level's occurrence multiset — the
+     single-level `ac_match_iff_partition` (AC-i) applied PER LEVEL and conjoined under the nested
+     witness. This is the "compose `ac_match_iff_partition` per level" obligation: the outer names
+     sub-multiset the outer bag AND the inner names sub-multiset the inner bag, each iff an
+     order-independent complement partitions its level. *)
+  Theorem nested_ac_match_iff_partition :
+    forall outer_sel_names inner_sel_names,
+      (sub_multiset outer_sel_names (outer_names located_outer_bag) /\
+       sub_multiset inner_sel_names (names located_inner_bag)) <->
+      ((exists rest2n, Permutation (outer_sel_names ++ rest2n) (outer_names located_outer_bag)) /\
+       (exists rest1n, Permutation (inner_sel_names ++ rest1n) (names located_inner_bag))).
+  Proof.
+    intros outer_sel_names inner_sel_names. split.
+    - intros [Ho Hi]. split.
+      + apply (proj1 (ac_match_iff_partition outer_sel_names (outer_names located_outer_bag))). exact Ho.
+      + apply (proj1 (ac_match_iff_partition inner_sel_names (names located_inner_bag))). exact Hi.
+    - intros [Ho Hi]. split.
+      + apply (proj2 (ac_match_iff_partition outer_sel_names (outer_names located_outer_bag))). exact Ho.
+      + apply (proj2 (ac_match_iff_partition inner_sel_names (names located_inner_bag))). exact Hi.
+  Qed.
+
+  (* An element-level depth-2 match yields the channel-occurrence sub-multiset AT EACH LEVEL — the
+     sound bridge from the nested element partition to AC-i's nat-level match (`ac_match_complete`
+     per level, through the `map ne_name` / `map se_name` congruence). The cross-level guard slots
+     (`outer_names`, inner `names`) re-source faithfully from the located bags. *)
+  Theorem nested_match_yields_name_submultisets :
+    forall outer_sel rest2 inner_sel rest1,
+      nested_match outer_sel rest2 inner_sel rest1 located_outer_bag located_inner_bag ->
+      sub_multiset (outer_names outer_sel) (outer_names located_outer_bag) /\
+      sub_multiset (names inner_sel) (names located_inner_bag).
+  Proof.
+    intros outer_sel rest2 inner_sel rest1 Hm. unfold nested_match in Hm. destruct Hm as [Ho Hi]. split.
+    - apply (ac_match_complete (outer_names outer_sel) (outer_names rest2) (outer_names located_outer_bag)).
+      unfold outer_names. rewrite <- map_app. apply Permutation_map. exact Ho.
+    - apply (ac_match_complete (names inner_sel) (names rest1) (names located_inner_bag)).
+      unfold names. rewrite <- map_app. apply Permutation_map. exact Hi.
+  Qed.
+
+  (* The outer / inner structural-reduct multisets of the located bags PERMUTE those of the subject
+     (`flat_map` congruence) — the RHS reducts (`R` outer, `P` inner) re-source faithfully; binding
+     them from the bag ≡ recovering them from σ. *)
+  Lemma located_outer_reducts_perm :
+    Permutation (outer_reducts located_outer_bag) (outer_reducts subject_outer_bag).
+  Proof. unfold outer_reducts. apply Permutation_flat_map_ne. exact outer_located_is_spread. Qed.
+
+  Lemma located_inner_reducts_perm :
+    Permutation (reducts located_inner_bag) (reducts subject_inner_bag).
+  Proof. unfold reducts. apply Permutation_flat_map_se. exact inner_located_is_spread. Qed.
+
+  (* The inner fired bag re-sourced from the SPREAD is a PERMUTATION of the report's inner `⟦R⟧σ`:
+     the inner reducts permute (`located_inner_reducts_perm`), so the spliced inner bag
+     `reducts ⊎ rest1` agrees as a MULTISET — the fired inner bag = the subject's, never a corrupted
+     report decoy. The inner-level `fired_bag_permutes_report_rhs`. *)
+  Theorem nested_inner_fired_permutes_report : forall rest_ids,
+    Permutation
+      (reducts located_inner_bag ++ rest_ids)
+      (reducts subject_inner_bag ++ rest_ids).
+  Proof. intro rest_ids. apply Permutation_app_tail. exact located_inner_reducts_perm. Qed.
+
+  (* (NS.3) SPREAD σ = REPORT σ: the SET of depth-2 σ the spread can bind (from a LOCATED-bag
+     partition) EQUALS the set the report can deliver (from a SUBJECT-bag partition). Every σ — both
+     nesting levels' names, reducts, and remainders — is deliverable from the spread IFF from the
+     report; re-sourcing the NESTED bag host→spread neither adds, drops, nor perturbs a σ. Pivots on
+     NS.1 (located = subject), the depth-2 analogue of `deliverable_sigma_sets_agree`. This is the
+     corrupted-σ probe made precise: the deliverable σ is the SUBJECT's, for ANY report. *)
+  Theorem deliverable_nested_sigma_sets_agree : forall sigma,
+    (exists outer_sel rest2 inner_sel rest1,
+       nested_match outer_sel rest2 inner_sel rest1 located_outer_bag located_inner_bag /\
+       delivered_nested_sigma outer_sel rest2 inner_sel rest1 = sigma) <->
+    (exists outer_sel rest2 inner_sel rest1,
+       nested_match outer_sel rest2 inner_sel rest1 subject_outer_bag subject_inner_bag /\
+       delivered_nested_sigma outer_sel rest2 inner_sel rest1 = sigma).
+  Proof.
+    intro sigma. split.
+    - intros [osel [r2 [isel [r1 [Hm Hs]]]]]. exists osel, r2, isel, r1. split; [| exact Hs].
+      apply (proj1 (nested_match_located_iff_subject osel r2 isel r1)). exact Hm.
+    - intros [osel [r2 [isel [r1 [Hm Hs]]]]]. exists osel, r2, isel, r1. split; [| exact Hs].
+      apply (proj2 (nested_match_located_iff_subject osel r2 isel r1)). exact Hm.
+  Qed.
+
+  (* NON-REPORT (corrupted-σ probe, In AND Out): the depth-2 located match is the SUBJECT's, for ANY
+     report `report'` — the located partition does not mention the report, so a decoy/corrupted
+     report σ cannot perturb the match. The precise content of the e2e corrupted-σ probes for In and
+     Out: OUT is still the spread's reduct. The nested `located_match_is_independent_of_report`. *)
+  Theorem nested_match_independent_of_report :
+    forall (report' : list NestedElem) outer_sel rest2 inner_sel rest1,
+      nested_match outer_sel rest2 inner_sel rest1 located_outer_bag located_inner_bag <->
+      nested_match outer_sel rest2 inner_sel rest1 subject_outer_bag subject_inner_bag.
+  Proof.
+    intros report' outer_sel rest2 inner_sel rest1.
+    apply nested_match_located_iff_subject.
+  Qed.
+
+  (* (NS.1-concrete) THE CONCRETE In/Out DEPTH-2 SELECTION `{A, B, ...rest2}`: the outer selection is
+     exactly `[A; B]` with `A = n[{ inner_bag }]` the moving ambient (`NNest N handle`) and `B = m[R]`
+     the flat sibling (`NFlat B`); the depth-2 match then requires A's inner bag to carry a VALID
+     inner partition {capability, ...rest1}. An INSTANCE of `nested_match`, transported located =
+     subject — the "outer bag partitions into {A carrying a valid inner partition, B, rest2}" shape,
+     made explicit. *)
+  Corollary inrule_match_located_iff_subject :
+    forall (N handle : nat) (B : StructElem) (rest2 : list NestedElem)
+           (inner_sel rest1 : list StructElem),
+      nested_match (NNest N handle :: NFlat B :: nil) rest2 inner_sel rest1
+                   located_outer_bag located_inner_bag <->
+      nested_match (NNest N handle :: NFlat B :: nil) rest2 inner_sel rest1
+                   subject_outer_bag subject_inner_bag.
+  Proof.
+    intros N handle B rest2 inner_sel rest1.
+    apply nested_match_located_iff_subject.
+  Qed.
+
+  (* --- (NS.4) the NESTED reduct reassembly: a multiplicity-preserving splice at BOTH bag levels --- *)
+  (*                                                                                                   *)
+  (* The `reflect_ac_template_bound_par` Bag arm emits, per bag level, `@"ac:op"!(⟦e0⟧) | … |          *)
+  (* BoundVar(rest)` — the SAME process-soup carrier as `reflect_ac_bag_par`, whose id-multiset is the *)
+  (* flatten splice `elements ++ rest` (`fired_bag_is_reducts_splice_rest`). A `Node` (ambient) child  *)
+  (* is a SINGLE tagged `EList` LEAF at its enclosing bag (never spliced — only same-op sub-bags        *)
+  (* splice), abstracted as the opaque `wrap_ambient : list nat -> nat` (its byte-identity to           *)
+  (* `reflect_ground_term_par` is the runtime tests' obligation, exactly as the flat structural         *)
+  (* reduct's `se_reducts` are opaque nat ids). So the InRule reduct `{ m[{ n[{P, ...rest1}], R }],     *)
+  (* ...rest2 }` has exactly TWO rest-bearing bag levels: the INNERMOST `{P, ...rest1}` (splices        *)
+  (* rest1) and the OUTERMOST `{ m[…], ...rest2 }` (splices rest2); the middle bag `{ n[…], R }` has no  *)
+  (* rest. Each level is an independent `fired_bag_is_reducts_splice_rest` — rest1 preserved with exact  *)
+  (* multiplicity INSIDE the reassembled `m[…]`, rest2 preserved OUTSIDE it, DISJOINT levels, no         *)
+  (* cross-absorption.                                                                                   *)
+
+  (* (NS.4-In) THE InRule NESTED REASSEMBLY `{ m[{ n[{P, ...rest1}], R }], ...rest2 }`: the innermost
+     bag splices rest1 (`P :: rest1`), the middle+outer ambients wrap it (with R) into ONE opaque top
+     element `m[…]`, and the outermost bag splices rest2 around that element — both rests inline at
+     THEIR OWN level, multiplicity-preserving. The depth-2 analogue of the flat single-level
+     `fired_bag_is_reducts_splice_rest`, proving the in-body reduct reproduces the host `instantiate`
+     nested re-assembly. *)
+  Theorem inrule_reduct_ids_two_level :
+    forall (wrap_ambient : list nat -> nat) (P_id R_id : nat) (rest1_ids rest2_ids : list nat),
+      flatten (map Leaf
+                 (wrap_ambient (wrap_ambient (flatten (map Leaf (P_id :: nil) ++ (Sub rest1_ids :: nil)))
+                                :: R_id :: nil) :: nil)
+               ++ (Sub rest2_ids :: nil))
+      = wrap_ambient (wrap_ambient (P_id :: rest1_ids) :: R_id :: nil) :: rest2_ids.
+  Proof.
+    intros wrap_ambient P_id R_id rest1_ids rest2_ids.
+    rewrite !fired_bag_is_reducts_splice_rest. reflexivity.
+  Qed.
+
+  (* (NS.4-Out) THE OutRule NESTED REASSEMBLY `{ n[{P, ...rest1}], m[R], ...rest2 }`: the innermost
+     bag splices rest1 (`P :: rest1`) inside the moving ambient `n[…]`, and the outermost bag splices
+     rest2 around BOTH the reassembled `n[…]` and the opaque sibling `m[R]` — the dual two-level
+     splice, multiplicity-preserving at both. *)
+  Theorem outrule_reduct_ids_two_level :
+    forall (wrap_ambient : list nat -> nat) (P_id E_id : nat) (rest1_ids rest2_ids : list nat),
+      flatten (map Leaf
+                 (wrap_ambient (flatten (map Leaf (P_id :: nil) ++ (Sub rest1_ids :: nil)))
+                  :: E_id :: nil)
+               ++ (Sub rest2_ids :: nil))
+      = wrap_ambient (P_id :: rest1_ids) :: E_id :: rest2_ids.
+  Proof.
+    intros wrap_ambient P_id E_id rest1_ids rest2_ids.
+    rewrite !fired_bag_is_reducts_splice_rest. reflexivity.
+  Qed.
+
+  (* (NS-CAPSTONE) THE DEPTH-2 IN-RHO STRUCTURAL-AC REPLACEMENT: for every LOCATED depth-2 partition
+     (outer_sel, rest2, inner_sel, rest1) — the spread MATCH — (a) the SAME depth-2 partition is a
+     SUBJECT-bag partition AT BOTH levels (NS.1, located = subject), (b) the σ bound (outer names +
+     reducts + rest2, inner names + reducts + rest1) is exactly a report delivery from the subject
+     (NS.3), and (c) the fired reduct reassembles NESTED, splicing rest1 at the inner level and rest2
+     at the outer level, multiplicity-preserving at BOTH (NS.4-In). So OUT = ⟦R⟧σ, sourced from the
+     SUBJECT, never the report — the depth-2 analogue of `structural_ac_spread_is_report_faithful`. *)
+  Theorem nested_structural_ac_spread_is_report_faithful :
+    forall outer_sel rest2 inner_sel rest1
+           (wrap_ambient : list nat -> nat) (P_id R_id : nat) (rest1_ids rest2_ids : list nat),
+      nested_match outer_sel rest2 inner_sel rest1 located_outer_bag located_inner_bag ->
+      nested_match outer_sel rest2 inner_sel rest1 subject_outer_bag subject_inner_bag
+      /\ (exists osel r2 isel r1,
+            nested_match osel r2 isel r1 subject_outer_bag subject_inner_bag
+            /\ delivered_nested_sigma osel r2 isel r1
+               = delivered_nested_sigma outer_sel rest2 inner_sel rest1)
+      /\ flatten (map Leaf
+                    (wrap_ambient (wrap_ambient (flatten (map Leaf (P_id :: nil) ++ (Sub rest1_ids :: nil)))
+                                   :: R_id :: nil) :: nil)
+                  ++ (Sub rest2_ids :: nil))
+         = wrap_ambient (wrap_ambient (P_id :: rest1_ids) :: R_id :: nil) :: rest2_ids.
+  Proof.
+    intros outer_sel rest2 inner_sel rest1 wrap_ambient P_id R_id rest1_ids rest2_ids Hloc.
+    split; [| split ].
+    - apply (proj1 (nested_match_located_iff_subject outer_sel rest2 inner_sel rest1)). exact Hloc.
+    - exists outer_sel, rest2, inner_sel, rest1. split; [| reflexivity ].
+      apply (proj1 (nested_match_located_iff_subject outer_sel rest2 inner_sel rest1)). exact Hloc.
+    - rewrite !fired_bag_is_reducts_splice_rest. reflexivity.
+  Qed.
+
+End NestedStructuralAcSpreadMatch.
+
 Print Assumptions ac_match_iff_partition.
 Print Assumptions ac_match_sound.
 Print Assumptions ac_match_complete.
@@ -569,3 +970,21 @@ Print Assumptions located_reducts_perm.
 Print Assumptions deliverable_sigma_sets_agree.
 Print Assumptions fired_bag_permutes_report_rhs.
 Print Assumptions structural_ac_spread_is_report_faithful.
+
+(* ---- Stage 4 S-binder (SLICE 3, Ambient In/Out — DEPTH-2 nested structural-AC spread match) ---- *)
+Print Assumptions located_outer_matches_subject.
+Print Assumptions located_inner_matches_subject.
+Print Assumptions nested_match_located_iff_subject.
+Print Assumptions located_outer_names_perm.
+Print Assumptions located_inner_names_perm.
+Print Assumptions nested_ac_match_iff_partition.
+Print Assumptions nested_match_yields_name_submultisets.
+Print Assumptions located_outer_reducts_perm.
+Print Assumptions located_inner_reducts_perm.
+Print Assumptions nested_inner_fired_permutes_report.
+Print Assumptions deliverable_nested_sigma_sets_agree.
+Print Assumptions nested_match_independent_of_report.
+Print Assumptions inrule_match_located_iff_subject.
+Print Assumptions inrule_reduct_ids_two_level.
+Print Assumptions outrule_reduct_ids_two_level.
+Print Assumptions nested_structural_ac_spread_is_report_faithful.
