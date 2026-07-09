@@ -23,6 +23,10 @@ pub mod ambdemo;
 
 #[cfg(feature = "amb-new-demo")]
 pub mod ambnewdemo;
+// Stage 4 (Ambient In/Out): the DEPTH-2 NESTED structural non-linear AC firing demonstration language
+// (the Ambient-calculus `InRule`/`OutRule`), generalizing `AmbDemo`'s flat `OpenRule`.
+#[cfg(feature = "in-out-demo")]
+pub mod inoutdemo;
 #[cfg(feature = "ambient")]
 pub mod ambient;
 #[cfg(feature = "appsubst")]
