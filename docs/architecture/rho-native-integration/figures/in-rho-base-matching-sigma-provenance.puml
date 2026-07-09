@@ -1,0 +1,46 @@
+@startuml
+' Figure E: The σ-provenance argument (the corrupted-σ probe test
+' m_reflect_sigma_is_produced_by_the_automaton_not_the_report). The host report's σ
+' is deliberately corrupted; the observed @OUT is still the CORRECT Pair(B,A), so σ
+' must come from the automaton accept (reading the reflected spread), NOT the report.
+skinparam backgroundColor #FEFEFE
+skinparam defaultFontName sans
+skinparam shadowing false
+skinparam componentStyle rectangle
+skinparam ArrowColor #555555
+skinparam rectangle {
+  BorderColor #7A7A7A
+  FontColor #202020
+}
+
+title σ-Provenance — the Corrupted-σ Probe  (σ is produced by the sa: accept, not the report)
+
+legend top right
+  |= colour |= meaning |
+  |<#E4E4E4>| retired / oracle-only path |
+  |<#E8F0FE>| reflected subject |
+  |<#C9E7D4>| automaton accept (the live σ source) |
+  |<#F7D9D5>| σ-receiver / firing |
+  |<#FEF7E0>| CORRECT observed output |
+  |<#F5D5D0>| counterfactual (refuted) |
+endlegend
+
+rectangle "host Dovetail report\nσ CORRUPTED := { x ↦ Pair(A,A),  y ↦ Pair(B,B) }\n<i>rule label + shape kept valid so the gate still admits</i>" as REP #E4E4E4
+rectangle "reflected subject spread\n⟦Swap(A,B)⟧   (reflect_subject_binding — the WHOLE term)" as SPREAD #E8F0FE
+rectangle "sa: automaton accept\ndescend loc: → read cap: →  σ = [ ⟦A⟧, ⟦B⟧ ]" as ACC #C9E7D4
+rectangle "σ-receiver\n<size:11>sigma_receiver_par</size>" as SIG #F7D9D5
+rectangle "OBSERVED  @OUT = Pair(B, A)   ✔\nthe CORRECT reduct ⟦R⟧σ" as GOOD #FEF7E0
+rectangle "counterfactual  @OUT = Pair(Pair(B,B), Pair(A,A))   ✘\nwhat the report σ WOULD have produced — never observed" as BAD #F5D5D0
+
+REP -[#B03A2E,dashed,thickness=2]-> SIG : ✗  report σ NOT read\n(pre-M-reflect duplicate — RETIRED)
+SPREAD -[#2E6DB4,thickness=2]-> ACC
+ACC -[#2E8B57,thickness=2]-> SIG : the ONLY σ source
+SIG -[#2E8B57,thickness=2]-> GOOD
+SIG .[#B03A2E,dashed].> BAD : refuted by the test\n(assert_ne!)
+
+note bottom of REP #EFEFEF
+  reconstruct_redex_subject (rebuild LHS[σ] from the report) is RETAINED only as an
+  executable oracle / unit-test spec — the MATCH path never calls it. This is the
+  precise sense in which in-Rho matching REPLACES, not duplicates, the host matcher.
+end note
+@enduml

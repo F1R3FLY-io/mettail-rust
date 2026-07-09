@@ -1,0 +1,65 @@
+@startuml
+' Figure A: The three-layer architecture of in-Rho set-automaton matching
+' for the BASE-REWRITE family. Layer 1 (matching) and Layer 2 (firing) run ON
+' the f1r3node interpreter; Layer 3 is off the COMM machine. The seam between
+' L1 and L2 is the accept message  sa:tc(K)!(σ, @OUT).
+skinparam backgroundColor #FEFEFE
+skinparam defaultFontName sans
+skinparam componentStyle rectangle
+skinparam ArrowColor #555555
+skinparam shadowing false
+skinparam rectangle {
+  BorderColor #7A7A7A
+  FontColor #202020
+}
+skinparam package {
+  BorderColor #9A9A9A
+  FontColor #202020
+}
+
+title Three-Layer Architecture — In-Rho Set-Automaton Matching (Base-Rewrite Family)
+
+legend top right
+  |= colour |= concept |
+  |<#E8F0FE>| reflect / spread (the subject) |
+  |<#C9E7D4>| automaton / matching (in Rho) |
+  |<#F7D9D5>| firing / σ-receiver (one COMM) |
+  |<#FEF7E0>| observation / @OUT |
+  |<#F7E0C8>| congruence + predicates (off machine) |
+endlegend
+
+package "Layer 1 — MATCHING   (f1r3node interpreter; internal τ-labelled COMMs)" #E6F4EA {
+  rectangle "Term → GroundTerm reflection\n<size:11>reflect_category_fn / reflect_subject_binding</size>\n<i>reflects the WHOLE subject; total-or-reject</i>" as REFLECT #E8F0FE
+  rectangle "Spread  ⟦t⟧\n<size:11>spread_term_par</size>\nloc: head tags  │  col:/cap: collapse fold" as SPREAD #E8F0FE
+  rectangle "Locate-all site walk\n<size:11>collect_redex_sites → site path ⌜(ρ,ℓ)⌝</size>\n<size:11>in_rho_match_all_sites_call_par</size>" as LOCATE #D7ECFB
+  rectangle "sa: automaton network\n<size:11>multi_pattern_receiver_network_par</size>\nMatch/MatchCase head dispatch;\none for-receive per StateId  (O1 symbol-once)" as AUTO #C9E7D4
+}
+
+package "Layer 2 — FIRING   (one atomic c(ℓ) COMM per located redex)" #FCE8E6 {
+  rectangle "σ-receiver  (persistent)\n<size:11>sigma_receiver_par</size>" as SIGMA #F7D9D5
+  rectangle "⟦R⟧σ  landed on  @OUT" as OUT #FEF7E0
+}
+
+package "Layer 3 — CONGRUENCE & PREDICATES   (never a COMM)" #FCE8D6 {
+  rectangle "Equations =\ncompile-time structural congruence" as CONG #F7E0C8
+  rectangle "Semantic predicates\n(Effective Boolean Algebra / native handler)" as PRED #F7E0C8
+}
+
+REFLECT -[#2E6DB4,thickness=2]-> SPREAD : GroundTerm
+SPREAD -[#2E6DB4,thickness=2]-> LOCATE : one spread at ρ
+LOCATE -[#2E8B57,thickness=2]-> AUTO : co-install a network\nper redex site ⌜(ρ,ℓ)⌝
+AUTO -[#C0392B,thickness=2]-> SIGMA : <b>sa:tc(K)!(σ₀,…,σ_{k−1}, @OUT)</b>\n« accept = the byte-identical σ-injection message »
+SIGMA -[#C0392B,thickness=2]-> OUT : ⟦R⟧σ
+
+note bottom of AUTO #E6F4EA
+  σ is PRODUCED HERE — the accept reads the cap: capture of the
+  reflected spread — NOT read from the host Dovetail report.
+  The host runtime matcher is RETIRED from the MATCH path
+  (reconstruct_redex_subject survives only as an oracle).
+end note
+
+note bottom of CONG #FCE8D6
+  Congruence closes the whole-term normal form (host e-graph plugging);
+  it is not itself a rendezvous.
+end note
+@enduml

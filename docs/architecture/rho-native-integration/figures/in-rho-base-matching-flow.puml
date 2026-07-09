@@ -1,0 +1,69 @@
+@startuml
+' Figure B: The end-to-end reflect -> spread -> locate -> accept -> fire pipeline
+' for one base rewrite  Swap(A,B) ~> Pair(B,A).  Swimlanes are the pipeline stages;
+' the host report is consulted ONLY to gate (which rules fired), never for sigma.
+skinparam backgroundColor #FEFEFE
+skinparam defaultFontName sans
+skinparam shadowing false
+skinparam ArrowColor #555555
+skinparam activity {
+  BorderColor #7A7A7A
+  FontColor #202020
+  DiamondBorderColor #7A7A7A
+}
+
+title Reflect → Spread → Locate → Accept → Fire  (base rewrite: Swap(A,B) ~> Pair(B,A))
+
+|#F2F2F2|Host / Dovetail|
+start
+:complete Dovetail report
+(consulted ONLY to GATE:
+which rules fired — never for σ);
+note right #FCE8D6
+  in_rho_match_gate_reject:
+  fail closed BEFORE any Rho
+  reduction if a fired rule is
+  not matchable in Rho.
+end note
+
+|#E8F0FE|Reflect|
+:downcast term → SwapDemoTerm;
+:reflect_category_fn walks the runtime term
+Swap(A,B) → GroundTerm  (bare head tags);
+note right #E8F0FE
+  Total-or-reject. NO
+  report.rewrite_justifications
+  (host σ) is read here.
+end note
+
+|#E8F0FE|Spread ⟦t⟧|
+:spread_term_par at root nonce ρ —
+  loc:ρ!(Swap̲)  │  loc:ρ/Swap.0!(Ā)  │  loc:ρ/Swap.1!(B̲)
+  │  col:/cap: bottom-up collapse fold;
+
+|#D7ECFB|Locate-all|
+:collect_redex_sites walks the GroundTerm (pre-order DFS);
+if (node head ∈ rule LHS roots?) then (yes)
+  :record site ⌜(ρ,ℓ)⌝;
+else (no)
+  :skip (inert position);
+endif
+:co-install one automaton network per site
+over the ONE spread (disjoint-prefix channels);
+
+|#C9E7D4|sa: automaton|
+:for(h ⟸ loc:ρ){ match h }  — the τ symbol inspection;
+:Match  Swap̲  ⇒  descend to the Var leaves;
+:read cap:ρ/Swap.0, cap:ρ/Swap.1  →  bind σ = [⟦A⟧, ⟦B⟧]
+(the FULLY COLLAPSED subterms — O1: each symbol once);
+:accept  →  send  sa:tc(K)!(σ₀, σ₁, @OUT);
+
+|#F7D9D5|σ-receiver (firing)|
+:persistent sigma_receiver_par consumes sa:tc(K);
+:one atomic c(ℓ) COMM emits ⟦R⟧σ = ⟦Pair(B,A)⟧;
+
+|#FEF7E0|@OUT|
+:observe  Pair(B,A)  on @OUT
+(≠ Swap(A,B): non-vacuous evidence the match ran IN RHO);
+stop
+@enduml

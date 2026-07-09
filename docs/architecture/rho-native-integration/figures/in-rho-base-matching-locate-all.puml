@@ -1,0 +1,65 @@
+@startuml
+' Figure D: Locate-all + multi-firing. The whole reflected subject
+' Pair(Swap(A,B), Swap(C,D)) is spread ONCE at root nonce ρ; collect_redex_sites
+' walks it and marks every position whose head is a rule LHS root (the two Swap
+' children of the inert Pair). One automaton network is co-installed at each site
+' ⌜(ρ,ℓ)⌝ over that one spread; both accepts fire the SHARED σ-receiver.
+skinparam backgroundColor #FEFEFE
+skinparam defaultFontName sans
+skinparam shadowing false
+skinparam componentStyle rectangle
+skinparam ArrowColor #555555
+skinparam rectangle {
+  BorderColor #7A7A7A
+  FontColor #202020
+}
+
+title Locate-All Site-Walk + Multi-Firing  (Pair(Swap(A,B), Swap(C,D)) — two disjoint redex sites)
+
+legend top right
+  |= colour |= meaning |
+  |<#C9E7D4>| LOCATED redex site (head ∈ LHS roots) |
+  |<#F7E0C8>| inert position (skipped) |
+  |<#E8F0FE>| leaf / spread |
+  |<#F7D9D5>| shared σ-receiver (firing) |
+  |<#FEF7E0>| observation |
+endlegend
+
+' ---- the reflected GroundTerm, annotated by position ℓ ----
+rectangle "Pair   @ ρ  (root nonce)\ninert — Pair ∉ rule LHS roots" as PAIR #F7E0C8
+rectangle "Swap(A,B)   @ ρ/Pair.0\n<b>LOCATED</b>  site ⌜(ρ, ρ/Pair.0)⌝" as S0 #C9E7D4
+rectangle "Swap(C,D)   @ ρ/Pair.1\n<b>LOCATED</b>  site ⌜(ρ, ρ/Pair.1)⌝" as S1 #C9E7D4
+rectangle "A" as LA #E8F0FE
+rectangle "B" as LB #E8F0FE
+rectangle "C" as LC #E8F0FE
+rectangle "D" as LD #E8F0FE
+
+PAIR --> S0
+PAIR --> S1
+S0 --> LA
+S0 --> LB
+S1 --> LC
+S1 --> LD
+
+' ---- one spread, co-installed networks, shared firing ----
+rectangle "ONE spread of the WHOLE subject at ρ\n<size:11>spread_term_par</size> — loc:/col:/cap:, ν-free (INV-7)" as SPREAD #D7ECFB
+rectangle "network @ site ρ/Pair.0\n<size:11>multi_pattern_receiver_network_par</size>\nreads loc:ρ/Pair.0 + cap:ρ/Pair.0/Swap.·" as N0 #C9E7D4
+rectangle "network @ site ρ/Pair.1\n<size:11>multi_pattern_receiver_network_par</size>\nreads loc:ρ/Pair.1 + cap:ρ/Pair.1/Swap.·" as N1 #C9E7D4
+rectangle "shared persistent σ-receiver\n<size:11>sigma_receiver_par</size>" as SIG #F7D9D5
+rectangle "@OUT  =  { Pair(B,A),  Pair(D,C) }\n(multiset — either accept order)" as OUT #FEF7E0
+
+SPREAD -[#2E6DB4,thickness=2]-> N0 : disjoint-prefix\nchannels
+SPREAD -[#2E6DB4,thickness=2]-> N1 : disjoint-prefix\nchannels
+S0 .[#2E8B57,thickness=2].> N0 : located ⇒\nco-install
+S1 .[#2E8B57,thickness=2].> N1 : located ⇒\nco-install
+N0 -[#C0392B,thickness=2]-> SIG : sa:tc(K)!(σ, @OUT)
+N1 -[#C0392B,thickness=2]-> SIG : sa:tc(K)!(σ, @OUT)
+SIG -[#C0392B,thickness=2]-> OUT
+
+note bottom of OUT #EFEFEF
+  Disjoint-prefix loc:/cap: channels ⇒ the two networks never contend
+  (AtomicFiringNoPartialMatch: no-disable, no cross-talk, both commit, commute).
+  Fail-closed boundary: a NESTED-App-entry ruleset with ≥2 located sites would
+  race for a descent head-tag send ⇒ routed to the σ-replay driver instead.
+end note
+@enduml
