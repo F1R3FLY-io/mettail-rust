@@ -30,8 +30,9 @@ use crate::rho_net_automaton::{
 };
 use crate::rho_net_lower::{
     ac_match_call_par, contextual_hole_bridge_par, contextual_premise_hole_channel,
-    spread_child_location, spread_term_par, GroundTerm, RhoNetAcMatchEntry,
-    RhoNetContextualMatchEntry, LAMBDA_REFLECT_LABEL, MULTILAMBDA_REFLECT_LABEL,
+    spread_child_location, spread_term_par, structural_ac_match_call_par, GroundTerm,
+    RhoNetAcMatchEntry, RhoNetContextualMatchEntry, RhoNetStructuralAcMatchEntry,
+    LAMBDA_REFLECT_LABEL, MULTILAMBDA_REFLECT_LABEL,
 };
 
 /// Why an LHS pattern has no structural set-automaton image (fail-closed to a later
@@ -270,6 +271,15 @@ pub struct InRhoMatchingRuleset {
     /// `Match` — the base automaton locates the HOLE's premise redex by nested-App descent), so it
     /// carries no `accept_channels` entry and no `PatternId`.
     pub contextual_dispatch: Vec<RhoNetContextualMatchEntry>,
+    /// One record per ADMITTED STRUCTURAL non-linear AC family entry (Stage 4 S-binder SLICE 3b — the
+    /// Ambient `OpenRule`): the firing label + recognized shape the match driver
+    /// ([`structural_ac_match_call_par`](crate::structural_ac_match_call_par)) co-installs a per-site
+    /// MATCH receiver from — re-sourcing the operand bag AND the structural reducts from the SPREAD of
+    /// the subject (binding the reduct arguments FROM the bag), not the host-σ report. Like a linear
+    /// AC redex, a structural-AC redex is NOT an automaton entry (its `AcApp` bag has no positional
+    /// image), so it carries no `accept_channels` entry and no `PatternId`; the walk rides the SAME
+    /// `^lambda`/nested descent, so a bag under a `new(x, ·)` binder is located too.
+    pub structural_ac_dispatch: Vec<RhoNetStructuralAcMatchEntry>,
 }
 
 /// Compile a language's structural base rewrites into ONE positional set automaton,
@@ -313,6 +323,19 @@ pub fn compile_in_rho_matching_ruleset(def: &LanguageDef) -> InRhoMatchingRulese
     let contextual_admitted: HashSet<&str> =
         contextual_dispatch.iter().map(|entry| entry.fired_rule_label.as_str()).collect();
 
+    // Stage 4 (S-binder SLICE 3b): ADMIT the STRUCTURAL non-linear AC family rewrites (the Ambient
+    // `OpenRule`). A structural-AC rewrite has NO base-rewrite σ-receiver site (it un-skipped to a
+    // `StructuralAcRewrite`), so it would otherwise defer `NotBaseRewrite` and the gate would reject
+    // the match path. Instead the match driver ([`structural_ac_match_call_par`]) LOCATES the bag in
+    // the reflected subject (riding the SAME `^lambda`/nested descent, so a bag under a `new(x, ·)`
+    // binder is reached too) and co-installs a per-site MATCH receiver re-sourcing the operand bag +
+    // structural reducts from the SPREAD (not the report σ). Admitting a rule here (skipping its
+    // defer) shrinks `deferred`, so the gate stops rejecting it — the structural-AC analogue of
+    // S-AC's `ac_dispatch` / S-contextual's `contextual_dispatch`.
+    let structural_ac_dispatch = crate::rho_net_structural_ac_match_entries(def);
+    let structural_ac_admitted: HashSet<&str> =
+        structural_ac_dispatch.iter().map(|entry| entry.fired_rule_label.as_str()).collect();
+
     // Stage 4 (S-binder): ADMIT the binder/β-substitution rewrites. A subst rewrite lowered to a
     // `SubstRewrite` σ-receiver (NOT a base rewrite), so `site_channel` misses it and it would
     // otherwise defer `NotBaseRewrite` (the gate would reject the match path). Its LHS
@@ -340,10 +363,12 @@ pub fn compile_in_rho_matching_ruleset(def: &LanguageDef) -> InRhoMatchingRulese
             Some(channel) => channel.to_string(),
             None => {
                 // Admitted via the AC match path (its bag is located + fired in Rho by the match
-                // driver) or the contextual match path (its holes are located + reassembled in Rho)
-                // — do NOT defer, so the gate admits it.
+                // driver), the contextual match path (its holes are located + reassembled in Rho), or
+                // the structural-AC match path (its bag is located under the `^lambda`/nested descent
+                // and fired in Rho) — do NOT defer, so the gate admits it.
                 if ac_admitted.contains(label.as_str())
                     || contextual_admitted.contains(label.as_str())
+                    || structural_ac_admitted.contains(label.as_str())
                 {
                     continue;
                 }
@@ -474,6 +499,7 @@ pub fn compile_in_rho_matching_ruleset(def: &LanguageDef) -> InRhoMatchingRulese
         native_dispatch,
         ac_dispatch,
         contextual_dispatch,
+        structural_ac_dispatch,
     }
 }
 
@@ -644,6 +670,27 @@ pub fn in_rho_match_all_sites_call_par(
         &ruleset.language_fingerprint,
     );
     call = call.append(ac_call);
+
+    // Stage 4 (S-binder SLICE 3b): co-install the STRUCTURAL non-linear AC redexes (Ambient
+    // `OpenRule`). Each admitted structural-AC family ([`InRhoMatchingRuleset::structural_ac_dispatch`])
+    // has NO automaton entry (its `AcApp` bag has no positional image), so — like a linear AC redex —
+    // it is located by a SEPARATE walk of the subject ([`structural_ac_match_call_par`]) rather than
+    // by `collect_redex_sites`: at every admitted bag position (reached by the SAME `^lambda`/nested
+    // descent, so a bag under `new(x, ·)` is located too) a per-site MATCH receiver reads the
+    // site-keyed `ac:` carrier the walk publishes the SUBJECT bag's soup on (not the report σ), binds
+    // the k elements + structural reducts + `rest` from the bag, and fires `{r0, …, rest}` in ONE
+    // atomic `consume` under the `N ≡ N` guard. Structural-AC leaves read only their OWN disjoint
+    // site-keyed carrier, so they are ALWAYS co-installable — with each other, the linear AC leaves,
+    // AND the base networks (disjoint `ac:` vs `loc:`/`cap:` channels) — and never trigger the
+    // nested-multi-site contention gate.
+    let structural_ac_call = structural_ac_match_call_par(
+        subject,
+        &ruleset.structural_ac_dispatch,
+        root_site,
+        out_channel,
+        &ruleset.language_fingerprint,
+    );
+    call = call.append(structural_ac_call);
 
     let spread = spread_term_par(subject, &ruleset.language_fingerprint, root_site);
     Ok((call.append(spread), sites.len()))

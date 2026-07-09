@@ -4790,6 +4790,402 @@ pub fn rho_net_structural_ac_injection_sites(
     sites
 }
 
+// ─── Stage 4 S-binder SLICE 3b: the STRUCTURAL-AC SPREAD MATCH (Ambient `OpenRule` in-Rho) ────────
+
+/// One in-Rho MATCHING entry for a STRUCTURAL non-linear AC family rewrite
+/// (`RhoNetLoweredRule::StructuralAcRewrite`, Stage 3d — the Ambient `OpenRule`
+/// `op{ E0, E1, ...rest } ~> op{ r0, …, ...rest }`): the data the in-Rho matcher needs to ADMIT the
+/// structural-AC redex and co-install a per-site MATCH receiver that re-sources BOTH the operand bag
+/// AND the structural reducts from the SPREAD of the reflected subject (never the host-σ report).
+///
+/// The STRUCTURAL twin of [`RhoNetAcMatchEntry`]: where a LINEAR AC element is a bare variable (its
+/// value IS the reduct), a structural AC element is a constructor `C(N, …, r_j, …)` whose reduct args
+/// `r_j` are INNER arguments. The report-path [`structural_ac_receiver_par`] wildcards those args and
+/// takes them as separately DELIVERED σ slots; the MATCH receiver ([`structural_ac_match_receiver_par`])
+/// instead BINDS them from the bag's connective pattern — so, exactly like the linear
+/// [`ac_match_call_par`], its message is the 2-value `carrier!(⟦bag⟧, @out)` the spread delivers, with
+/// NO host σ. Like a linear AC redex, a structural-AC redex is NOT an automaton entry (its `AcApp`
+/// bag has no positional image), so it carries no `accept_channels` entry and no `PatternId`; the
+/// match driver LOCATES it by a separate structural walk ([`structural_ac_match_install_at`]) that
+/// rides the SAME `^lambda`/nested descent — so a bag under a `new(x, ·)` binder is reached for free.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RhoNetStructuralAcMatchEntry {
+    /// The Dovetail firing label the structural-AC firing carries (the bare rewrite label, e.g.
+    /// `OpenRule`) — what the report keys the firing on and the in-Rho gate admits.
+    pub fired_rule_label: String,
+    /// The recognized structural-AC shape (`op`, the `k` structured elements, the shared non-linear
+    /// channel var, `rest`, and the `m` structural reduct vars) — the per-site MATCH receiver is
+    /// materialized from it (byte-identical guard + body to the installed receiver, only re-sourced
+    /// from the bag). Crate-private: only [`structural_ac_match_call_par`] (same crate) reads it.
+    pub(crate) shape: StructuralAcShape,
+}
+
+impl RhoNetStructuralAcMatchEntry {
+    /// The HashBag operand constructor `op` (`PPar` for `OpenRule`) — the located bag's constructor,
+    /// which the match driver keys the co-install on.
+    pub fn op(&self) -> &str {
+        &self.shape.op
+    }
+}
+
+/// Whether a structural-AC `shape` is faithfully representable as an in-Rho MATCH receiver
+/// ([`structural_ac_match_receiver_par`]): every STRUCTURAL reduct var that is NOT the non-linear
+/// channel var must occur EXACTLY ONCE across all element arguments, so the connective pattern binds
+/// it at a single unambiguous position (a Rholang pattern free variable may occur at most once). A
+/// reduct that is itself the non-linear var rides the guard's first occurrence slot and needs no bag
+/// binding, so it is exempt. Fail-closed (returns `false`) for a within-element repeated argument
+/// (e.g. `C(P, P)`) — a degenerate shape that would need an intra-element non-linear guard — which
+/// then routes that firing to the host-σ replay path rather than a wrong in-Rho pattern.
+fn structural_ac_shape_is_match_representable(shape: &StructuralAcShape) -> bool {
+    let nonlinear = shape.nonlinear_var.to_string();
+    shape
+        .reduct_vars
+        .iter()
+        .map(|var| var.to_string())
+        .filter(|name| *name != nonlinear)
+        .all(|name| {
+            let occurrences: usize = shape
+                .elements
+                .iter()
+                .flat_map(|element| element.args.iter())
+                .filter(|arg| arg.to_string() == name)
+                .count();
+            occurrences == 1
+        })
+}
+
+/// Derive every in-Rho MATCHING entry for a language's STRUCTURAL non-linear AC family rewrites
+/// (Stage 3d Ambient `OpenRule`) — the structural-AC analogue of [`rho_net_ac_match_entries`],
+/// routed for the automaton MATCH path (bag + reducts re-sourced from the subject spread) rather than
+/// the host-σ [`structural_ac_contract_call`] replay path.
+///
+/// Correlates each installed structural-AC firing site ([`rho_net_structural_ac_injection_sites`] —
+/// the rewrites that actually un-skipped to a [`RhoNetLoweredRule::StructuralAcRewrite`] receiver)
+/// back to its source `RewriteRule`, re-extracts its shape through the SAME [`structural_ac_rule_shape`]
+/// the receiver materialized from (so the op / elements / non-linear var / reducts agree
+/// byte-for-byte), and keeps only those a MATCH receiver can faithfully bind
+/// ([`structural_ac_shape_is_match_representable`]). A non-representable shape is DROPPED here (not
+/// surfaced), so it stays deferred and the gate routes its firing to the host-σ replay path — never
+/// a wrong in-Rho match.
+pub fn rho_net_structural_ac_match_entries(def: &LanguageDef) -> Vec<RhoNetStructuralAcMatchEntry> {
+    let sites = rho_net_structural_ac_injection_sites(def);
+    let mut entries = Vec::with_capacity(sites.len());
+    for site in sites {
+        // The source rewrite a structural-AC injection site surfaced is always present; a defensive
+        // skip keeps the derivation total.
+        let Some(rewrite) = def
+            .rewrites
+            .iter()
+            .find(|rewrite| rewrite.name.to_string() == site.rule_label)
+        else {
+            continue;
+        };
+        let resolved_kind = resolve_ac_collection_type(def, &rewrite.left);
+        // A `StructuralAcRewrite` lowered iff `structural_ac_rule_shape` succeeded under the resolved
+        // kind, so this cannot fail; a defensive skip keeps the derivation total.
+        let Some(shape) =
+            structural_ac_rule_shape(&rewrite.left, &rewrite.right, resolved_kind.as_ref())
+        else {
+            continue;
+        };
+        // Fail-closed: a shape the MATCH receiver cannot faithfully bind stays on the host-σ path.
+        if !structural_ac_shape_is_match_representable(&shape) {
+            continue;
+        }
+        entries.push(RhoNetStructuralAcMatchEntry {
+            fired_rule_label: site.rule_label,
+            shape,
+        });
+    }
+    entries
+}
+
+/// Stage 4 (S-binder SLICE 3b) — walk `subject`, LOCATE every STRUCTURAL non-linear AC redex (an
+/// admitted operand bag), and co-install a per-site MATCH receiver over the SPREAD, re-sourcing the
+/// operand bag + reducts from the subject (NOT the host-σ report). The structural-AC analogue of the
+/// linear [`ac_match_call_par`]: it reuses the SAME structural descent ([`structural_ac_match_install_at`],
+/// mirroring [`ac_match_install_at`]) from root nonce `root_site` — so it rides the `^lambda`/nested
+/// descent through a `new(x, ·)` binder for FREE, locating a bag ARBITRARILY deep. At every bag node
+/// whose constructor is one of the admitted `entries`' ops it derives the site-keyed carrier `ac:⌜ℓ⌝/op`
+/// ([`ac_carrier_channel`], disjoint per position — SAME channel family the linear AC walk uses),
+/// co-installs a [`structural_ac_match_receiver_par`] over it, and publishes `carrier!(⟦bag⟧, @out)`
+/// where `⟦bag⟧` is [`reflect_ac_bag_par`] over THIS node's ground elements. Returns the parallel
+/// composition of every located bag's `(receiver ‖ delivery)` (empty when `subject` has no structural
+/// AC redex). `language_fingerprint` MUST be the ruleset's (the spread's) fingerprint, so the soup's
+/// element tags and the receiver's element patterns agree.
+pub fn structural_ac_match_call_par(
+    subject: &GroundTerm,
+    entries: &[RhoNetStructuralAcMatchEntry],
+    root_site: &str,
+    out_channel: &str,
+    language_fingerprint: &str,
+) -> Par {
+    if entries.is_empty() {
+        return Par::default();
+    }
+    let by_op: HashMap<&str, &RhoNetStructuralAcMatchEntry> =
+        entries.iter().map(|entry| (entry.shape.op.as_str(), entry)).collect();
+    structural_ac_match_install_at(
+        subject,
+        &spread_root_location(root_site),
+        &by_op,
+        out_channel,
+        language_fingerprint,
+    )
+}
+
+/// Recursively LOCATE + co-install the structural-AC MATCH receivers for `node` at the position whose
+/// `loc:` head-tag channel is `loc_channel` (the SAME location derivation the spread uses). The
+/// structural-AC twin of [`ac_match_install_at`]: identical descent (a HashBag whose op is admitted
+/// fires in Rho over the site-keyed carrier; a non-bag node descends its structural children — so a
+/// bag under a `^lambda` binder image is located), only the co-installed receiver differs
+/// ([`structural_ac_match_receiver_par`] instead of the linear [`ac_sigma_receiver_par_with_condition`]).
+fn structural_ac_match_install_at(
+    node: &GroundTerm,
+    loc_channel: &str,
+    by_op: &HashMap<&str, &RhoNetStructuralAcMatchEntry>,
+    out_channel: &str,
+    language_fingerprint: &str,
+) -> Par {
+    // A HashBag structural-AC operand bag: fire it IN RHO over the site-keyed carrier if its op is
+    // admitted. Do NOT recurse into its elements (a bag has no positional child descent).
+    if let Some(CollectionType::HashBag) = node.coll_type {
+        let Some(entry) = by_op.get(node.constructor.as_str()) else {
+            return Par::default();
+        };
+        let carrier = ac_carrier_channel(loc_channel, &node.constructor);
+        // The co-installed structural-AC MATCH receiver over the site-keyed carrier — SAME non-linear
+        // `Receive.condition` guard + spliced body as the installed receiver, only the source differs
+        // (so it binds the k elements + reducts + `rest` from the SPREAD bag, not the report σ).
+        let receiver = structural_ac_match_receiver_par(
+            &entry.shape,
+            new_gstring_par(carrier.clone(), Vec::new(), false),
+            language_fingerprint,
+        );
+        // The carrier delivery `carrier!(⟦bag⟧, @out)` — the process-soup sourced from THIS subject
+        // bag's ground elements (`reflect_ac_bag_par`), NOT `find_sigma`. The soup is ground, so the
+        // send is closed. Exactly the 2-value message the linear AC walk delivers.
+        let soup = reflect_ac_bag_par(node, language_fingerprint);
+        let delivery = new_send_par(
+            new_gstring_par(carrier, Vec::new(), false),
+            vec![soup, new_gstring_par(out_channel.to_string(), Vec::new(), false)],
+            false,
+            Vec::new(),
+            false,
+            Vec::new(),
+            false,
+        );
+        return receiver.append(delivery);
+    }
+    // A structural node (incl. the `^lambda` binder image PNew reflects to): descend into each child
+    // at its derived `loc:` channel (a nested bag is located), composing every located bag's co-install.
+    let mut par = Par::default();
+    for (index, child) in node.children.iter().enumerate() {
+        let child_loc = spread_child_location(loc_channel, &node.constructor, index);
+        par = par.append(structural_ac_match_install_at(
+            child,
+            &child_loc,
+            by_op,
+            out_channel,
+            language_fingerprint,
+        ));
+    }
+    par
+}
+
+/// The reflected element PATTERN for one structured element `C(a_0, …)` in a structural-AC MATCH
+/// receiver: a tagged `EList` `[ GPrivate(reflect_tag(C)), … ]` (byte-identical in tag + shape to
+/// [`reflect_ground_term_par`]'s constructor image, so the reflected element in the soup matches)
+/// whose NON-LINEAR channel position binds `FreeVar(nl_level)` (the guard slot), whose STRUCTURAL
+/// reduct positions bind `FreeVar(reduct_slots[name])` (the RHS elements, sourced FROM the bag —
+/// unlike the report-path [`comm_element_pattern`], which wildcards them and takes them as delivered
+/// slots), and whose every OTHER position is a wildcard `_` (a dropped argument).
+fn structural_ac_match_element_pattern(
+    element: &CommElement,
+    nl_level: usize,
+    reduct_slots: &HashMap<String, usize>,
+    language_fingerprint: &str,
+) -> Par {
+    let tag = GPrivateBuilder::new_par_from_string(reflect_tag(
+        language_fingerprint,
+        &element.constructor,
+    ));
+    let mut items = Vec::with_capacity(element.args.len() + 1);
+    items.push(tag);
+    for (index, arg) in element.args.iter().enumerate() {
+        if index == element.nonlinear_index {
+            // The non-linear channel occurrence — the guard slot (`FreeVar(nl_level)`).
+            items.push(new_freevar_par(nl_level as i32, Vec::new()));
+        } else if let Some(level) = reduct_slots.get(&arg.to_string()) {
+            // A structural reduct argument — bound FROM the bag at its dedicated slot.
+            items.push(new_freevar_par(*level as i32, Vec::new()));
+        } else {
+            // A dropped argument (not the channel, not an RHS reduct) — a wildcard.
+            items.push(new_wildcard_par(Vec::new(), true));
+        }
+    }
+    // A pattern EList carrying free vars / wildcards is connective; its `locally_free` is empty (free
+    // vars are pattern binders, not locally-free bound vars).
+    new_elist_par(items, Vec::new(), true, None, Vec::new(), true)
+}
+
+/// Build the STRUCTURAL-AC MATCH receiver for a per-site co-install (Stage 4 S-binder SLICE 3b): the
+/// SPREAD analogue of [`structural_ac_receiver_par`]. A persistent
+///
+/// ```text
+/// for( < rest_rem | @"ac:op"!(⟦E0⟧) | … | @"ac:op"!(⟦E_{k-1}⟧) >, out <- source )
+///   where ( N_0 == N_1 == … )
+///   { out!( @"ac:op"!(r0) | … | @"ac:op"!(r_{m-1}) | rest_rem ) }
+/// ```
+///
+/// Where the installed (report-path) receiver takes the `m` reduct elements as SEPARATELY DELIVERED
+/// message slots (host-σ sourced) and WILDCARDS the reduct arguments in its element patterns, the
+/// MATCH receiver binds EVERYTHING from the operand bag — exactly like the linear
+/// [`ac_sigma_receiver_par_with_condition`] — so its message is the 2-value `carrier!(⟦bag⟧, @out)`
+/// the spread delivers (NO host σ). The connective process-soup pattern (element 0) binds, ORDER-
+/// INDEPENDENTLY (native `sub_pars`/`MaximumBipartiteMatch`), from the bag:
+///   * each element's non-linear channel occurrence `FreeVar(i)` (element `i`, for the `N ≡ N` guard);
+///   * each DISTINCT structural reduct var's argument `FreeVar(k+1+j)` (bound WHERE it occurs as an
+///     element argument — the RHS element `r_j`), a reduct that IS the channel var riding slot `0`;
+///   * the residual soup to `rest` (`FreeVar(k)`).
+/// The `condition` fires the COMM only when all channel slots are name-equal
+/// ([`nonlinear_consistency_condition`]); the body splices `out!( @"ac:op"!(r0) | … | rest )` — one
+/// send per RHS reduct occurrence (multiplicity-preserving) — from the bag-bound slots. Guard + body
+/// share the installed receiver's reverse-De-Bruijn frame; only the element patterns bind (not
+/// wildcard) the reduct args and the message drops the reduct formals. The caller
+/// ([`structural_ac_match_install_at`]) has already checked (via
+/// [`structural_ac_shape_is_match_representable`]) that each distinct non-channel reduct occurs once,
+/// so no bag position is double-bound.
+fn structural_ac_match_receiver_par(
+    shape: &StructuralAcShape,
+    source: Par,
+    language_fingerprint: &str,
+) -> Par {
+    let element_channel = format!("ac:{}", shape.op);
+    let k = shape.elements.len();
+    let rest_level = k;
+
+    // The DISTINCT structural reduct vars that need a fresh bag-bound slot — those NOT the non-linear
+    // channel var (a reduct that IS the channel var rides the guard's first occurrence slot `0`), in
+    // first-appearance order over the RHS reduct vars.
+    let nonlinear = shape.nonlinear_var.to_string();
+    let mut distinct_reducts: Vec<String> = Vec::with_capacity(shape.reduct_vars.len());
+    for var in &shape.reduct_vars {
+        let name = var.to_string();
+        if name != nonlinear && !distinct_reducts.contains(&name) {
+            distinct_reducts.push(name);
+        }
+    }
+    let first_reduct_level = k + 1;
+    let out_level = first_reduct_level + distinct_reducts.len();
+    let free_count = out_level + 1;
+
+    // reduct var name → its bound slot LEVEL (`0` = the non-linear var's first occurrence).
+    let reduct_slots: HashMap<String, usize> = distinct_reducts
+        .iter()
+        .enumerate()
+        .map(|(index, name)| (name.clone(), first_reduct_level + index))
+        .collect();
+    let reduct_level = |name: &str| -> usize {
+        if name == nonlinear {
+            0
+        } else {
+            *reduct_slots
+                .get(name)
+                .expect("a distinct structural reduct var is indexed")
+        }
+    };
+
+    // Element 0 of the receive bind: the structured with-rest process-soup pattern (each element
+    // binds its channel occurrence + any structural reduct arg; the `rest` remainder is `FreeVar(k)`).
+    let mut bag_pattern = new_freevar_par(rest_level as i32, Vec::new());
+    let mut occurrence_levels = Vec::with_capacity(k);
+    for (nl_level, element) in shape.elements.iter().enumerate() {
+        occurrence_levels.push(nl_level);
+        let element_pattern = structural_ac_match_element_pattern(
+            element,
+            nl_level,
+            &reduct_slots,
+            language_fingerprint,
+        );
+        let send_pattern = new_send_par(
+            new_gstring_par(element_channel.clone(), Vec::new(), false),
+            vec![element_pattern],
+            false,
+            Vec::new(),
+            true,
+            Vec::new(),
+            true,
+        );
+        bag_pattern = bag_pattern.append(send_pattern);
+    }
+
+    // The non-linear consistency guard `EEq(N_0, N_1) ∧ …`.
+    let condition = nonlinear_consistency_condition(&occurrence_levels, free_count);
+
+    // Body: `out!( @"ac:op"!(r0) | … | @"ac:op"!(r_{m-1}) | rest )` — one send per RHS reduct
+    // occurrence (multiplicity-preserving), each referencing its bag-bound slot.
+    let rest_bv_index = free_count - 1 - rest_level;
+    let out_bv_index = free_count - 1 - out_level; // 0
+    let mut body_soup: Option<Par> = None;
+    for var in &shape.reduct_vars {
+        let level = reduct_level(&var.to_string());
+        let reduct_bv_index = free_count - 1 - level;
+        let reduct_free = create_bit_vector(&[reduct_bv_index]);
+        let reduct_send = new_send_par(
+            new_gstring_par(element_channel.clone(), Vec::new(), false),
+            vec![new_boundvar_par(reduct_bv_index as i32, reduct_free.clone(), false)],
+            false,
+            reduct_free.clone(),
+            false,
+            reduct_free,
+            false,
+        );
+        body_soup = Some(match body_soup {
+            None => reduct_send,
+            Some(soup) => soup.append(reduct_send),
+        });
+    }
+    let rest_bv =
+        new_boundvar_par(rest_bv_index as i32, create_bit_vector(&[rest_bv_index]), false);
+    // `m ≥ 1` (a structural AC rewrite has ≥1 RHS element), so `body_soup` is always `Some`.
+    let body_soup = match body_soup {
+        Some(soup) => soup.append(rest_bv),
+        None => rest_bv,
+    };
+    let body_free = union(body_soup.locally_free.clone(), create_bit_vector(&[out_bv_index]));
+    let body = new_send_par(
+        new_boundvar_par(out_bv_index as i32, create_bit_vector(&[out_bv_index]), false),
+        vec![body_soup],
+        false,
+        body_free.clone(),
+        false,
+        body_free,
+        false,
+    );
+
+    // Receive-bind patterns: [bag_pattern, FreeVar(out)] — the 2-value spread message
+    // `carrier!(⟦bag⟧, @out)`, exactly as the linear AC match receiver.
+    let patterns = vec![bag_pattern, new_freevar_par(out_level as i32, Vec::new())];
+
+    let receive = Receive {
+        binds: vec![ReceiveBind {
+            patterns,
+            source: Some(source),
+            remainder: None,
+            free_count: free_count as i32,
+        }],
+        body: Some(body),
+        persistent: true,
+        peek: false,
+        bind_count: free_count as i32,
+        locally_free: Vec::new(),
+        connective_used: false,
+        condition: Some(condition),
+    };
+    Par::default().with_receives(vec![receive])
+}
+
 #[cfg(test)]
 mod tests {
     // `super::*` already re-exports the parent module's imports (`Par`,
@@ -6320,6 +6716,98 @@ mod tests {
         let leaf = GroundTerm::new(LAMBDA_REFLECT_LABEL, vec![GroundTerm::nullary("A")]);
         let none = ac_match_call_par(&leaf, &entries, "site0", "OUT", &fp);
         assert!(none.receives.is_empty(), "no bag under the ^lambda ⇒ no co-install");
+    }
+
+    /// Slice 3b: the STRUCTURAL non-linear AC match ENTRY surfaces the OpenRule (op `PPar`, the two
+    /// structural reduct vars `P`/`Q`) — the structural-AC analogue of the linear `rho_net_ac_match_
+    /// entries`. Only rewrites that un-skipped to a `StructuralAcRewrite` receiver are surfaced.
+    #[test]
+    fn structural_ac_match_entry_surfaces_the_open_rule() {
+        let def =
+            syn::parse_str::<LanguageDef>(MINI_AMBIENT_FRAGMENT).expect("fragment must parse");
+        let entries = rho_net_structural_ac_match_entries(&def);
+        assert_eq!(entries.len(), 1, "MiniAmbient surfaces exactly one structural-AC match entry");
+        assert_eq!(entries[0].fired_rule_label, "OpenRule");
+        assert_eq!(entries[0].op(), "PPar");
+        assert_eq!(
+            entries[0].shape.reduct_vars.iter().map(|v| v.to_string()).collect::<Vec<_>>(),
+            vec!["P".to_string(), "Q".to_string()]
+        );
+    }
+
+    /// Slice 3b: the per-site MATCH receiver for OpenRule binds EVERYTHING from the bag — a 2-value
+    /// message `[bag_pattern, out]` (NOT the report-path `[bag, r0, …, out]`), a persistent receive,
+    /// the non-linear `N ≡ N` guard, and a connective soup with one send-pattern per structured
+    /// element. `free_count = k + 2 + |distinct reducts| = 2 + 2 + 2 = 6`.
+    #[test]
+    fn structural_ac_match_receiver_binds_the_bag_and_reducts() {
+        let def =
+            syn::parse_str::<LanguageDef>(MINI_AMBIENT_FRAGMENT).expect("fragment must parse");
+        let entries = rho_net_structural_ac_match_entries(&def);
+        let fp = mettail_ast::identity::language_definition_fingerprint(&def);
+        let source = new_gstring_par("ac:site".to_string(), Vec::new(), false);
+        let receiver = structural_ac_match_receiver_par(&entries[0].shape, source, &fp);
+
+        assert_eq!(receiver.receives.len(), 1, "one receive");
+        let receive = &receiver.receives[0];
+        assert!(receive.persistent, "the match receiver is persistent");
+        assert!(receive.condition.is_some(), "the non-linear N ≡ N guard is present");
+        assert_eq!(receive.binds.len(), 1, "one polyadic bind");
+        assert_eq!(
+            receive.binds[0].patterns.len(),
+            2,
+            "the 2-value spread message [bag_pattern, out] — NOT the report-path reduct slots"
+        );
+        assert_eq!(receive.binds[0].free_count, 6, "k(2) + rest(1) + reducts(2) + out(1)");
+        assert_eq!(
+            receive.binds[0].patterns[0].sends.len(),
+            2,
+            "the connective bag soup has one send-pattern per structured element"
+        );
+    }
+
+    /// Slice 3b: the structural-AC match CALL locates the OpenRule bag at the TOP LEVEL and UNDER a
+    /// `^lambda` (the PNew reflection image) by the SAME structural descent, and co-installs nothing
+    /// for a non-matching subject (fail-closed).
+    #[test]
+    fn structural_ac_match_call_locates_the_open_bag_top_level_and_under_lambda() {
+        let def =
+            syn::parse_str::<LanguageDef>(MINI_AMBIENT_FRAGMENT).expect("fragment must parse");
+        let entries = rho_net_structural_ac_match_entries(&def);
+        let fp = mettail_ast::identity::language_definition_fingerprint(&def);
+
+        let bag = GroundTerm::collection(
+            CollectionType::HashBag,
+            "PPar",
+            vec![
+                GroundTerm::new("POpen", vec![GroundTerm::nullary("Na"), GroundTerm::nullary("PA")]),
+                GroundTerm::new("PAmb", vec![GroundTerm::nullary("Na"), GroundTerm::nullary("PB")]),
+            ],
+        );
+
+        // Top-level bag: located at the spread root.
+        let top = structural_ac_match_call_par(&bag, &entries, "site0", "OUT", &fp);
+        assert!(
+            !top.receives.is_empty(),
+            "the top-level open bag co-installs a structural-AC match receiver"
+        );
+        assert!(!top.sends.is_empty(), "the site-keyed carrier delivery is published");
+
+        // Bag under a `^lambda` (the PNew reflection image): located by the SAME structural descent.
+        let under_lambda = GroundTerm::new(LAMBDA_REFLECT_LABEL, vec![bag.clone()]);
+        let nested = structural_ac_match_call_par(&under_lambda, &entries, "site0", "OUT", &fp);
+        assert!(
+            !nested.receives.is_empty(),
+            "the descent rides the ^lambda binder image into the open bag"
+        );
+
+        // A non-matching subject (no PPar bag anywhere) co-installs nothing (fail-closed).
+        let leaf = GroundTerm::nullary("PZero");
+        let none = structural_ac_match_call_par(&leaf, &entries, "site0", "OUT", &fp);
+        assert!(
+            none.receives.is_empty() && none.sends.is_empty(),
+            "no operand bag ⇒ no structural-AC co-install"
+        );
     }
 
     /// The Comm shape (substitution-in-bag RHS) is NOT a structural AC shape — the two detectors are

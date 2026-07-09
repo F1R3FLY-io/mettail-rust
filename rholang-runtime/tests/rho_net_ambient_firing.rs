@@ -50,7 +50,7 @@ use mettail_rholang_codegen::{
     RhoDefaultBackendRequirements, RhoGuardCoverageEvidence,
 };
 use mettail_rholang_runtime::PlannedRhoBackend;
-use mettail_runtime::{Language, RuntimeObservationValue};
+use mettail_runtime::{Language, RuntimeObservationValue, RuntimeReflectedSubterm};
 
 /// Reconstruct AmbDemo's augmented `LanguageDef`, plan its Rho-default backend (the `OpenRule`
 /// structural non-linear AC σ-receiver installs alongside the structural constructors), and return
@@ -277,5 +277,117 @@ fn ambdemo_mismatched_name_does_not_fire() {
         AmbDemoLanguage::rho_net_invocation_from_dovetail_to(term.as_ref(), &report, "OUT")
             .is_err(),
         "no OpenRule firing ⇒ the σ-injection has nothing to inject (nothing lands on OUT)"
+    );
+}
+
+/// #24 default-path (Stage 4 S-binder SLICE 3b) — the DEFAULT `rho_net_match_invocation_from_dovetail_to`
+/// (the match-or-replay GATE's MATCH branch) admits the Ambient `OpenRule` and fires it IN RHO via the
+/// SPREAD. The direct analogue of the AC / native / contextual default-path proofs: unlike the
+/// report-path `rho_net_invocation_from_dovetail_to` (which the other AmbDemo tests drive DIRECTLY,
+/// reconstructing the bag + reducts from σ), this STRUCTURALLY reflects the WHOLE subject and re-sources
+/// the operand bag from the spread — the structural-AC redex is located by the same descent walk that
+/// rides a `^lambda` binder image, and a per-site MATCH receiver binds the k elements + reducts + `rest`
+/// from the bag and splices `{P, Q, ...rest}` on `@out` under the `N ≡ N` guard.
+#[tokio::test]
+async fn ambdemo_open_matches_in_rho_via_the_spread() {
+    mettail_runtime::clear_var_cache();
+    let (backend, _fingerprint, _channel) = amb_demo_backend();
+
+    let term = AmbDemoLanguage
+        .parse_term("{ open(na, A) | na[B] }")
+        .expect("AmbDemo must parse the OpenRule redex");
+    let report = AmbDemoLanguage::dovetail_report_for(term.as_ref(), 64, 1_000_000)
+        .expect("AmbDemo Dovetail report must compile");
+
+    // The MATCH path (NOT the replay branch — the retirement proof for OpenRule): it admits the
+    // OpenRule and assembles the in-Rho spread-match call.
+    let invocation =
+        AmbDemoLanguage::rho_net_match_invocation_from_dovetail_to(term.as_ref(), &report, "OUT")
+            .expect("the structural-AC MATCH path admits OpenRule and assembles the spread call");
+    assert_eq!(invocation.out_channel, "OUT");
+
+    let observation = backend
+        .run_rho_net_with_call_and_observe_runtime_values(&invocation.call, &invocation.out_channel)
+        .await
+        .expect("the in-Rho structural-AC match + firing executes on the reducer");
+
+    assert_eq!(
+        observation.observed_count(),
+        1,
+        "the OpenRule MATCH receiver fires exactly once (got {:?})",
+        observation.values
+    );
+    assert_bag_is(&observation.values[0], &[proc_leaf("PA"), proc_leaf("PB")]);
+}
+
+/// S-AC structural (Stage 4 S-binder SLICE 3b) — the DECISIVE probe that the structural-AC operand
+/// BAG AND its reducts are re-sourced from the SPREAD of the reflected subject, NOT the host report σ.
+/// The structural-AC analogue of `s_ac_bag_is_produced_by_the_spread_not_the_report`.
+///
+/// We take a real, complete report for `{ open(na, A) | na[B] }` and CORRUPT its σ (the ambient name
+/// `N`, the two unwrapped processes `P`/`Q`, and the residual `rest` — the SAME σ the report-path
+/// `structural_ac_contract_call` reconstructs the bag + reducts from) to a decoy `PZero`, leaving the
+/// rule label (`OpenRule`) valid so the in-Rho match GATE still admits. The Stage-4
+/// `rho_net_match_invocation_from_dovetail_to` STRUCTURALLY reflects the WHOLE subject (M-reflect, NOT
+/// the report σ); the match driver LOCATES the bag, publishes its soup on the SITE-KEYED `ac:` carrier
+/// from the SUBJECT's ground elements, and the co-installed MATCH receiver binds the two elements +
+/// `P`/`Q` + `rest` ON the reducer and splices `{P, Q}`.
+///
+/// Because the operand bag AND the reducts are built from `term`, not the corrupted σ, OUT is
+/// `{ A | B }` (= `{ PA | PB }`). A report-σ arm would have reconstructed `{ PZero | PZero }`. So a
+/// positive, correct OUT is non-vacuous evidence the bag + reducts came from the spread, not the
+/// report — structural-AC matching is a genuine in-Rho replacement (the σ-replay duplicate is retired).
+#[tokio::test]
+async fn s_ac_structural_bag_is_produced_by_the_spread_not_the_report() {
+    mettail_runtime::clear_var_cache();
+    let (backend, _fingerprint, _channel) = amb_demo_backend();
+
+    let term = AmbDemoLanguage
+        .parse_term("{ open(na, A) | na[B] }")
+        .expect("AmbDemo must parse the OpenRule redex");
+    let mut report = AmbDemoLanguage::dovetail_report_for(term.as_ref(), 64, 1_000_000)
+        .expect("AmbDemo Dovetail report must compile");
+    assert!(
+        !report.rewrite_justifications.is_empty(),
+        "the OpenRule must surface at least one firing justification"
+    );
+
+    // Deliberately WRONG σ: a report-σ structural-AC arm would reconstruct the bag + reducts from
+    // these and fire `{ PZero | PZero }`. The rule label (`OpenRule`) stays valid so the in-Rho match
+    // gate admits the path; ONLY the σ (the bag + reduct source) is corrupted.
+    let decoy = RuntimeReflectedSubterm { constructor: "PZero".to_string(), children: Vec::new() };
+    let decoy_rest =
+        RuntimeReflectedSubterm { constructor: "PPar".to_string(), children: Vec::new() };
+    for justification in &mut report.rewrite_justifications {
+        assert_eq!(justification.rule_label, "OpenRule", "the fired rule label stays valid");
+        justification.sigma = vec![
+            ("N".to_string(), decoy.clone()),
+            ("P".to_string(), decoy.clone()),
+            ("Q".to_string(), decoy.clone()),
+            ("rest".to_string(), decoy_rest.clone()),
+        ];
+    }
+
+    let invocation =
+        AmbDemoLanguage::rho_net_match_invocation_from_dovetail_to(term.as_ref(), &report, "OUT")
+            .expect("the MATCH path admits OpenRule despite the corrupted report σ");
+
+    let observation = backend
+        .run_rho_net_with_call_and_observe_runtime_values(&invocation.call, &invocation.out_channel)
+        .await
+        .expect("the in-Rho structural-AC match + firing executes on the reducer");
+
+    assert_eq!(
+        observation.observed_count(),
+        1,
+        "the located OpenRule redex fires exactly once (got {:?})",
+        observation.values
+    );
+    // OUT is `{ A | B }` from the SPREAD subject — never the corrupted σ's `{ PZero | PZero }`.
+    assert_bag_is(&observation.values[0], &[proc_leaf("PA"), proc_leaf("PB")]);
+    assert_ne!(
+        &observation.values[0],
+        &RuntimeObservationValue::Bag(vec![(proc_leaf("PZero"), 2)]),
+        "the reduct bag was re-sourced from the spread, not the corrupted report σ"
     );
 }
