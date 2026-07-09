@@ -493,6 +493,136 @@ Proof.
   - apply (locate_all_binds_positional_sigma p n m Hin).
 Qed.
 
+(* ============================================================================
+   STAGE 4 S-native: the NATIVE-LEAF arm (NativeSystemProcess / NativeFold matching
+   in-Rho, commit 445bf013).
+
+   A native system process `NativeProc(a0..a_{k-1})` (a BigInt / factorial / PowInt
+   fold the Rho scalar-contract path rejects) is a PLAIN App-rooted node — it reflects
+   to `PApp op [PVar; ..; PVar]`, an App root over k structural-arg Var leaves. So its
+   LOCATION and ARG CAPTURE are ALREADY the general Stage-4 App case: nothing native-
+   specific is needed to LOCATE it or to bind its σ. `compile_in_rho_matching_ruleset`
+   (`rholang-codegen`, `native_dispatch` / `rho_net_native_match_entries`) admits these
+   native PatternIds, and the M-reflect / locate-all set-automaton LOCATES the
+   App-rooted `NativeProc` in the reflected subject and CAPTURES its structural args —
+   retiring the host-σ location.
+
+   The native VALUE (the trusted handler's opaque BigInt / fact / pow payload, the
+   RhoHostObligationBoundary `NativeHandler` disposition) is the inherent semantic
+   boundary: it stays the handler's payload, a SEPARATE residue OUTSIDE the structural
+   σ. This section makes the native case explicit and proves the LOCATION↔VALUE
+   SEPARATION: a native-process pattern is located + σ-bound by the SAME automaton
+   theorems (`locate_all_dispatched`, `sigma_rho_eq_pos`), and the located σ (and the
+   located position) are PROVABLY INDEPENDENT of the native value residue — the
+   executable image of the corrupted-σ probe
+   `s_native_location_is_produced_by_the_automaton_not_the_report`
+   (`rholang-runtime/tests/rho_net_native_firing.rs`), which corrupts the report's
+   would-be σ and observes the automaton-produced location + delegated value unchanged.
+   Rocq 9.1 compatible. No Admitted, no Axioms, no Assumptions.
+   ============================================================================ *)
+
+(* A NATIVE-PROCESS pattern: an App root over structural-arg Var leaves — the shape a
+   `NativeProc(a0..a_{k-1})` reflects to (`PApp op` with k `PVar` captured positions).
+   It coincides with the M1 all-leaf App shape (`m1_pattern`); named here for the
+   native dispatch so the native case reads explicitly. *)
+Definition native_proc_pattern (p : Pat) : bool :=
+  match p with PApp _ args => all_leaves args | _ => false end.
+
+(* A native-process pattern IS exactly an M1-shaped pattern (App root over Var leaves). *)
+Lemma native_proc_pattern_is_m1 : forall p, native_proc_pattern p = m1_pattern p.
+Proof. intro p. destruct p; reflexivity. Qed.
+
+(* A native-process pattern is AC-free, hence compilable (reuses `m1_compilable`). *)
+Lemma native_proc_compilable : forall p,
+  native_proc_pattern p = true -> compilable p = true.
+Proof. intro p. rewrite native_proc_pattern_is_m1. apply m1_compilable. Qed.
+
+(* NATIVE LOCATE-ALL + POSITIONAL σ: at EVERY located position of a native-process
+   pattern, the in-Rho set-automaton LOCATES the redex (root index at that position,
+   `locate_all_dispatched`) AND binds the POSITIONAL σ over its captured structural args
+   (`sigma_rho_eq_pos`, via `locate_all_binds_positional_sigma`). Native processes need
+   NO bespoke location theorem: being App-rooted, they are subsumed by the Stage-4
+   locate-all result `inrho_stage4_locates_all_and_binds_positional_sigma`. *)
+Corollary native_locates_all_and_binds_positional_sigma : forall p n,
+  native_proc_pattern p = true ->
+  forall m, In m (matches_at p n) ->
+    dispatched p m = true /\ sigma_rho p m = sigma_pos p m.
+Proof.
+  intros p n Hnp m Hin.
+  apply (inrho_stage4_locates_all_and_binds_positional_sigma p n).
+  - apply native_proc_compilable. exact Hnp.
+  - exact Hin.
+Qed.
+
+Section NativeValueResidue.
+
+  (* The native VALUE residue type — the trusted handler's opaque payload (a BigInt, a
+     factorial, a PowInt) the structural `Node` term algebra does NOT compute: it is the
+     RhoHostObligationBoundary host-computed value, carried on a SEPARATE wire from the
+     structural σ. Abstract (a Section Variable, discharged when the section closes; no
+     Axiom, no free global). *)
+  Variable NativeVal : Type.
+
+  (* A LOCATED native redex configuration: the App-rooted `NativeProc` node (whose
+     children are the automaton-captured structural args) PAIRED with its native value
+     residue. The automaton produces the NODE (the located position + the captured
+     structural args); the trusted handler produces the VALUE — two SEPARATE wires. *)
+  Definition NativeConfig : Type := (Node * NativeVal)%type.
+
+  (* The located σ is the `cap:`-collapse POSITIONAL σ over the captured structural args:
+     it reads the STRUCTURAL node projection (`fst`) ONLY — the native value (`snd`) is
+     never consulted. *)
+  Definition config_sigma (p : Pat) (c : NativeConfig) : option (list Node) :=
+    sigma_rho p (fst c).
+
+  (* The located-position (dispatch) decision likewise reads the STRUCTURAL node ONLY. *)
+  Definition config_dispatched (p : Pat) (c : NativeConfig) : bool :=
+    dispatched p (fst c).
+
+  (* SEPARATION (value ⇏ σ): two configs with the SAME structural node but ANY (differing)
+     native values bind the SAME located σ — the value residue sits OUTSIDE the σ.
+     Corrupting the native value cannot perturb the captured structural σ. *)
+  Theorem native_value_outside_sigma : forall p n v1 v2,
+    config_sigma p (n, v1) = config_sigma p (n, v2).
+  Proof. intros p n v1 v2. unfold config_sigma. reflexivity. Qed.
+
+  (* SEPARATION (value ⇏ location): likewise the native value cannot perturb the located
+     POSITION — the dispatch reads the structural node alone. The dual direction of the
+     corrupted-σ probe: value ⇏ location, as value ⇏ σ. *)
+  Theorem native_value_outside_location : forall p n v1 v2,
+    config_dispatched p (n, v1) = config_dispatched p (n, v2).
+  Proof. intros p n v1 v2. unfold config_dispatched. reflexivity. Qed.
+
+  (* The located σ of a native config IS the POSITIONAL σ over its captured structural
+     args (`config_sigma = sigma_rho on the node = sigma_pos`), reusing `sigma_rho_eq_pos`
+     — over the structural args ONLY, never the native value. *)
+  Theorem config_sigma_is_positional : forall p c,
+    config_sigma p c = sigma_pos p (fst c).
+  Proof. intros p c. unfold config_sigma. apply sigma_rho_eq_pos. Qed.
+
+  (* END-TO-END native separation (the corrupted-σ probe, formal analogue): at every
+     located position of a native-process pattern, the automaton LOCATES the redex and
+     binds the POSITIONAL σ over the captured structural args, and BOTH the located
+     position and that σ are INDEPENDENT of the native value residue. *)
+  Theorem native_config_locates_binds_and_separates : forall p n v1 v2,
+    native_proc_pattern p = true ->
+    forall m, In m (matches_at p n) ->
+      config_dispatched p (m, v1) = true
+      /\ config_sigma p (m, v1) = sigma_pos p m
+      /\ config_sigma p (m, v1) = config_sigma p (m, v2)
+      /\ config_dispatched p (m, v1) = config_dispatched p (m, v2).
+  Proof.
+    intros p n v1 v2 Hnp m Hin.
+    assert (Hc : compilable p = true) by (apply native_proc_compilable; exact Hnp).
+    split; [| split; [| split]].
+    - unfold config_dispatched. apply (locate_all_dispatched p n Hc m Hin).
+    - unfold config_sigma. apply (locate_all_binds_positional_sigma p n m Hin).
+    - apply native_value_outside_sigma.
+    - apply native_value_outside_location.
+  Qed.
+
+End NativeValueResidue.
+
 Print Assumptions sa_accept_sound.
 Print Assumptions sa_accept_complete.
 Print Assumptions sa_matches_positional.
@@ -509,3 +639,12 @@ Print Assumptions root_redex_located.
 Print Assumptions two_distinct_redexes_both_located.
 Print Assumptions multiple_redexes_locatable.
 Print Assumptions inrho_stage4_locates_all_and_binds_positional_sigma.
+
+(* ---- Stage 4 S-native (NATIVE-LEAF arm) ---- *)
+Print Assumptions native_proc_pattern_is_m1.
+Print Assumptions native_proc_compilable.
+Print Assumptions native_locates_all_and_binds_positional_sigma.
+Print Assumptions native_value_outside_sigma.
+Print Assumptions native_value_outside_location.
+Print Assumptions config_sigma_is_positional.
+Print Assumptions native_config_locates_binds_and_separates.

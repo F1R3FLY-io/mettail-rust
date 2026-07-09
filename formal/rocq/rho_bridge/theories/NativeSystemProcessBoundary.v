@@ -237,6 +237,129 @@ Section NativeSystemProcessBoundary.
     - apply emitted_is_reflected_handler_value.
   Qed.
 
+  (* ---------------------------------------------------------------------------
+     (3) IN-RHO DISPATCH + LOCATION↔VALUE SEPARATION (Stage 4 S-native, commit
+     445bf013).
+
+     Stage 4 moved the native DISPATCH — LOCATE `NativeProc(a0..a_{k-1})` by its head
+     tag + arity and CAPTURE the structural args — INTO Rho: the reflected subject is
+     spread and the positional set-automaton LOCATES the App-rooted native node
+     (AdvancedAutomata `InRhoMatchPositional.locate_all_dispatched` /
+     `whole_term_located`) and captures its structural args, RETIRING the host-σ
+     location. The native VALUE stays the trusted handler's payload: it is
+     [reflect handler_value] on the AUTOMATON-captured args, and is INDEPENDENT of
+     where — or of any REPORT field claiming where — the redex was located.
+
+     We model the two directions of the SEPARATION the corrupted-σ probe
+     `s_native_location_is_produced_by_the_automaton_not_the_report`
+     (`rholang-runtime/tests/rho_net_native_firing.rs`) exercises:
+
+       (a) a corrupted REPORT LOCATION cannot change the emitted VALUE — the payload
+           reads the handler value, never the report's location field
+           ([corrupt_location_preserves_value]); and, contrastively, a design that DID
+           read the location from the (corruptible) report WOULD be perturbable
+           ([buggy_report_location_is_corruptible]);
+       (b) the native VALUE cannot perturb the located POSITION — the true location is
+           the AUTOMATON's, computed from the subject alone, never from the report
+           ([location_from_automaton_not_report]).
+
+     [native_dispatch_separation] packages both as the formal analogue of the probe.
+     --------------------------------------------------------------------------- *)
+
+  (* The located position of the redex (a Dewey / StateId address). Historically the
+     host-σ carried it; the corrupted-σ probe overwrites it with garbage. Abstract —
+     the separation holds for ANY location representation (a Section Variable,
+     discharged when the section closes; no Axiom). *)
+  Variable Loc : Type.
+
+  (* The reflected subject the in-Rho automaton scans. The automaton LOCATES the
+     App-rooted `NativeProc` node in it ([automaton_locate]) and CAPTURES its
+     structural args, from which the trusted handler computes the native value
+     ([handler_of]) — BOTH functions of the SUBJECT, never of any report field. *)
+  Variable Subject          : Type.
+  Variable automaton_locate : Subject -> Loc.  (* where the automaton locates the redex *)
+  Variable handler_of       : Subject -> Val.  (* the trusted handler value on the captured args *)
+
+  (* A firing REPORT: it carries a LOCATION field (the redex position — historically
+     the host-σ, now automaton-produced) and the handler VALUE payload. The
+     corrupted-σ probe overwrites the location field with an arbitrary value. *)
+  Record Report : Type := { rep_loc : Loc ; rep_value : Val }.
+
+  (* The emitted COMM payload reads the report's VALUE field and reflects it — the
+     one-slot dispatch receiver forwards exactly the injected reflected value
+     ([receiver_emit (inject (rep_value r))]). It never reads the location field. *)
+  Definition report_emit (r : Report) : option Val := receiver_emit (inject (rep_value r)).
+
+  (* The TRUE located position is the AUTOMATON's, computed from the subject — NOT the
+     report's (corruptible) location field. This is the claim the probe name asserts:
+     the location is "produced by the automaton, not the report". *)
+  Definition true_location (s : Subject) (r : Report) : Loc := automaton_locate s.
+
+  (* The BUGGY alternative the probe rules out: reading the located position from the
+     REPORT's location field. *)
+  Definition report_location (r : Report) : Loc := rep_loc r.
+
+  (* The emitted payload is EXACTLY the reflection of the report's VALUE field — a
+     function of the value field ALONE (never the location). *)
+  Theorem report_emit_is_reflected_value : forall r,
+    report_emit r = Some (reflect (rep_value r)).
+  Proof. intro r. unfold report_emit. apply emitted_is_reflected_handler_value. Qed.
+
+  (* SEPARATION (a): a corrupted report LOCATION cannot change the emitted VALUE — the
+     payload is [reflect (rep_value r)], independent of the location field. Overwriting
+     the location with garbage leaves the payload byte-identical. The formal analogue
+     of the corrupted-σ probe's VALUE invariance. *)
+  Theorem corrupt_location_preserves_value : forall loc1 loc2 v,
+    report_emit {| rep_loc := loc1 ; rep_value := v |}
+    = report_emit {| rep_loc := loc2 ; rep_value := v |}.
+  Proof. intros loc1 loc2 v. rewrite !report_emit_is_reflected_value. reflexivity. Qed.
+
+  (* CONTRAST (reachability of the bug): a design that read the located position from
+     the REPORT's location field IS corruptible — distinct (corrupted) location fields
+     give distinct positions. This is exactly the failure the automaton-produced
+     [true_location] avoids; it makes [location_from_automaton_not_report] non-vacuous.
+     (The corruptible-report dual of InRhoMatchPositional's
+     `buggy_head_tag_wrong_for_nonnullary`.) *)
+  Theorem buggy_report_location_is_corruptible : forall loc1 loc2 v,
+    loc1 <> loc2 ->
+    report_location {| rep_loc := loc1 ; rep_value := v |}
+    <> report_location {| rep_loc := loc2 ; rep_value := v |}.
+  Proof. intros loc1 loc2 v Hne. unfold report_location. cbn. exact Hne. Qed.
+
+  (* SEPARATION (b): the native VALUE cannot perturb the located POSITION — the true
+     location is [automaton_locate s], a function of the SUBJECT alone. Two reports
+     with ANY (differing) value or location fields yield the SAME true location. The
+     dual direction of (a): value ⇏ location, as (corrupted) location ⇏ value. *)
+  Theorem location_from_automaton_not_report : forall s r1 r2,
+    true_location s r1 = true_location s r2.
+  Proof. intros s r1 r2. unfold true_location. reflexivity. Qed.
+
+  (* In an HONEST firing the report's value field IS the trusted handler's value on the
+     automaton-captured args ([rep_value r = handler_of s]); then the emitted payload is
+     [reflect (handler_of s)] — computed from the SUBJECT's captured args, wholly
+     independent of the report's location field. *)
+  Theorem emitted_is_handler_on_captured_args : forall s r,
+    rep_value r = handler_of s ->
+    report_emit r = Some (reflect (handler_of s)).
+  Proof.
+    intros s r Hval. rewrite report_emit_is_reflected_value, Hval. reflexivity.
+  Qed.
+
+  (* MAIN (the corrupted-σ probe, formal analogue): take an HONEST report and a
+     LOCATION-CORRUPTED report carrying the SAME handler value [v]. BOTH (i) the true
+     located position (the automaton's) and (ii) the emitted value (the handler's) are
+     UNCHANGED by the corruption — the location↔value separation is sound. *)
+  Theorem native_dispatch_separation : forall s loc_true loc_corrupt v,
+    true_location s {| rep_loc := loc_true ; rep_value := v |}
+      = true_location s {| rep_loc := loc_corrupt ; rep_value := v |}
+    /\ report_emit {| rep_loc := loc_true ; rep_value := v |}
+      = report_emit {| rep_loc := loc_corrupt ; rep_value := v |}.
+  Proof.
+    intros s loc_true loc_corrupt v. split.
+    - apply location_from_automaton_not_report.
+    - apply corrupt_location_preserves_value.
+  Qed.
+
 End NativeSystemProcessBoundary.
 
 Print Assumptions lower_total.
@@ -246,3 +369,11 @@ Print Assumptions emitted_is_reflected_handler_value.
 Print Assumptions emitted_determines_reflected_value.
 Print Assumptions emitted_tracks_handler_value.
 Print Assumptions fold_native_process_fires_handler_value.
+
+(* ---- Stage 4 S-native (in-Rho dispatch + location↔value separation) ---- *)
+Print Assumptions report_emit_is_reflected_value.
+Print Assumptions corrupt_location_preserves_value.
+Print Assumptions buggy_report_location_is_corruptible.
+Print Assumptions location_from_automaton_not_report.
+Print Assumptions emitted_is_handler_on_captured_args.
+Print Assumptions native_dispatch_separation.
