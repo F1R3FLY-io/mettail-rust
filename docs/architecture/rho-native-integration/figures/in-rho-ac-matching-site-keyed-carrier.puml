@@ -1,0 +1,65 @@
+@startuml
+' Figure B: The site-keyed carrier ac:ρ/ℓ/op (Red-team #5). Under locate-all, two
+' same-op bags at DISTINCT positions ℓ1, ℓ2 get DISJOINT carriers, so their soups
+' never intermingle and the native matcher cannot pick cross-bag elements.
+skinparam backgroundColor #FEFEFE
+skinparam defaultFontName sans
+skinparam componentStyle rectangle
+skinparam shadowing false
+skinparam ArrowColor #555555
+skinparam rectangle {
+  BorderColor #7A7A7A
+  FontColor #202020
+}
+skinparam package {
+  BorderColor #9A9A9A
+  FontColor #202020
+}
+
+title Site-Keyed Carrier  ac:ρ/ℓ/op  — Disjoint Carriers Under Locate-All  (subject: Node(PPar{A|B}, PPar{C|D}))
+
+legend top right
+  |= colour |= concept |
+  |<#E8F0FE>| reflected subject / spread |
+  |<#E6DBF2>| site-keyed ac: carrier (per position) |
+  |<#F7D9D5>| co-installed AC receiver (one per bag) |
+  |<#FEF7E0>| observation / @OUT |
+  |<#F5D5D0>| refuted: shared carrier (no site key) |
+endlegend
+
+rectangle "reflected subject\n<b>Node( PPar{A|B} , PPar{C|D} )</b>\n<size:10>one spread at root nonce ρ  (spread_term_par)</size>" as SUB #E8F0FE
+
+package "site ℓ₁ = Node.0   (bag PPar{A|B})" #E6F4EA {
+  rectangle "carrier  <b>ac:ρ/Node.0/PPar</b>\n<size:10>ac_carrier_channel(loc:ρ/Node.0, PPar)</size>\nsoup = @\"ac:PPar\"!(⟦A⟧) │ @\"ac:PPar\"!(⟦B⟧)" as C1 #E6DBF2
+  rectangle "receiver R₁\n<size:10>ac_sigma_receiver_par, source = ac:ρ/Node.0/PPar</size>\npick-k ↔ {A,B}  +  bind rest" as R1 #F7D9D5
+  rectangle "@OUT ← Wrap(A) or Wrap(B)" as O1 #FEF7E0
+}
+
+package "site ℓ₂ = Node.1   (bag PPar{C|D})" #E6F4EA {
+  rectangle "carrier  <b>ac:ρ/Node.1/PPar</b>\n<size:10>ac_carrier_channel(loc:ρ/Node.1, PPar)</size>\nsoup = @\"ac:PPar\"!(⟦C⟧) │ @\"ac:PPar\"!(⟦D⟧)" as C2 #E6DBF2
+  rectangle "receiver R₂\n<size:10>ac_sigma_receiver_par, source = ac:ρ/Node.1/PPar</size>\npick-k ↔ {C,D}  +  bind rest" as R2 #F7D9D5
+  rectangle "@OUT ← Wrap(C) or Wrap(D)" as O2 #FEF7E0
+}
+
+SUB -[#2E6DB4,thickness=2]-> C1 : locate bag @ ℓ₁\npublish soup {A,B}
+SUB -[#2E6DB4,thickness=2]-> C2 : locate bag @ ℓ₂\npublish soup {C,D}
+C1 -[#8E44AD,thickness=2]-> R1 : rendezvous on\nEXACTLY this carrier
+C2 -[#8E44AD,thickness=2]-> R2 : rendezvous on\nEXACTLY this carrier
+R1 -[#2E8B57,thickness=2]-> O1
+R2 -[#2E8B57,thickness=2]-> O2
+
+note bottom of SUB #E6F4EA
+  ac_carrier_channel embeds the ν-free location path ⌜(ρ,ℓ)⌝, so
+  ac:ρ/Node.0/PPar ≠ ac:ρ/Node.1/PPar even though the op (PPar) is shared.
+  FV: carrier_site_keyed_injective, carrier_read_independent (InRhoAcMatchMultiset.v).
+end note
+
+rectangle "REFUTED design — a bare  ac:PPar  channel (no site key)\nboth bags' sends land on ONE channel:  @\"ac:PPar\"!(⟦A⟧) │ (⟦B⟧) │ (⟦C⟧) │ (⟦D⟧)\nthe native matcher could pick a CROSS-BAG selection {A, D}  ✘  (a latent soundness bug)" as BAD #F5D5D0
+
+C1 .[#C0392B,dashed].> BAD
+C2 .[#C0392B,dashed].> BAD
+note right of BAD #EFEFEF
+  The site key is the load-bearing Red-team #5 fix:
+  it makes each receiver read only its OWN bag's soup.
+end note
+@enduml

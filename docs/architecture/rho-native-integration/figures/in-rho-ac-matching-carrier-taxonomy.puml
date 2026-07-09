@@ -1,0 +1,76 @@
+@startuml
+' Figure C: The AC carrier taxonomy. Each operand collection kind reflects to its
+' NATIVE order-independent carrier, is matched by a kind-specific connective pattern,
+' and carries a kind-specific invariant preserved across the reflect → match → RHS split.
+skinparam backgroundColor #FEFEFE
+skinparam defaultFontName sans
+skinparam componentStyle rectangle
+skinparam shadowing false
+skinparam ArrowColor #555555
+skinparam rectangle {
+  BorderColor #7A7A7A
+  FontColor #202020
+}
+skinparam package {
+  BorderColor #9A9A9A
+  FontColor #202020
+}
+
+title AC Carrier Taxonomy — HashBag · HashSet · HashMap · Zip  (Stage 4 S-AC / AC4)
+
+legend bottom right
+  |= colour |= layer |
+  |<#E8F0FE>| operand kind (GroundTerm.coll_type) |
+  |<#E6DBF2>| reflected carrier value (subject side) |
+  |<#C9E7D4>| connective pattern + native matcher arm |
+  |<#FCF3D0>| kind-specific invariant (FV) |
+endlegend
+
+rectangle "AC operand collection\n<b>GroundTerm { coll_type, op, children }</b>\n<size:10>reflect_ac_collection_par · ac_collection_pattern</size>" as ROOT #DCE7F7
+
+package "HashBag  →  process soup" #EEF4FB {
+  rectangle "reflect_ac_bag_par\n<b>∏ᵢ @\"ac:op\"!(⟦eᵢ⟧)</b>\nPar multiset of sends" as BAGC #E6DBF2
+  rectangle "ac_bag_pattern(op, k)\nk send-patterns @\"ac:op\"!(FreeVar i)\n+ EVar(FreeVar k) remainder\n<size:10>sub_pars · MaximumBipartiteMatch</size>" as BAGP #C9E7D4
+  rectangle "multiplicity-preserving\n(a Vec of sends; duplicates kept)" as BAGI #FCF3D0
+}
+
+package "HashSet  →  native ESet" #EEF4FB {
+  rectangle "reflect_ac_set_par\n<b>ESet[ ⟦e₀⟧, … ]</b>\nrides ParSet (SORTED + DEDUPED)" as SETC #E6DBF2
+  rectangle "ac_set_pattern(k)\nk FreeVar(0..k-1) elements\n+ FreeVar(k) remainder\n<size:10>list_match_single_ · ESetBody</size>" as SETP #C9E7D4
+  rectangle "SET UNIQUENESS (NoDup)\n<size:10>located_set_nodup</size>" as SETI #FCF3D0
+}
+
+package "HashMap  →  native EMap" #EEF4FB {
+  rectangle "reflect_ac_map_par\n<b>EMap over ^kv(⟦k⟧,⟦v⟧) entries</b>\nrides ParMap (KEY-sorted + deduped)" as MAPC #E6DBF2
+  rectangle "ac_map_pattern(k)\nk (FreeVar 2i, FreeVar 2i+1) pairs\n+ FreeVar(2k) remainder\n<size:10>list_match_single_ · EMapBody</size>" as MAPP #C9E7D4
+  rectangle "KEY-UNIQUENESS (NoDup keys)\nsurvives reflect→match→RHS\n<size:10>map_split_preserves_uniqueness</size>" as MAPI #FCF3D0
+}
+
+package "Zip  →  paired ESet + guard" #EEF4FB {
+  rectangle "reflect_ac_set_par (of Pairs)\n<b>ESet[ ⟦Pair(a,b)⟧, … ]</b>\nrides ParSet" as ZIPC #E6DBF2
+  rectangle "2× ac_set_element_pattern(Pair)\n+ ac_set_correlation_condition\nEEq(a₀, a₁) Receive.condition\n<size:10>list_match_single_ + guard</size>" as ZIPP #C9E7D4
+  rectangle "CORRELATION (fst e₁ = fst e₂)\n<size:10>correlation_perm_invariant</size>" as ZIPI #FCF3D0
+}
+
+ROOT -[#2E6DB4,thickness=2]-> BAGC : HashBag
+ROOT -[#2E6DB4,thickness=2]-> SETC : HashSet
+ROOT -[#2E6DB4,thickness=2]-> MAPC : HashMap
+ROOT -[#8E44AD,thickness=2]-> ZIPC : ZipAc
+
+BAGC -[#2E8B57]-> BAGP
+SETC -[#2E8B57]-> SETP
+MAPC -[#2E8B57]-> MAPP
+ZIPC -[#2E8B57]-> ZIPP
+
+BAGP -[#B8860B,dashed]-> BAGI
+SETP -[#B8860B,dashed]-> SETI
+MAPP -[#B8860B,dashed]-> MAPI
+ZIPP -[#B8860B,dashed]-> ZIPI
+
+note bottom of ROOT #EEF4FB
+  Every carrier is re-sourced from the SPREAD of the reflected subject and matched
+  order-independently inside ONE atomic consume with a residual-binding remainder.
+  The located collection PERMUTES the subject collection, so the match set is invariant
+  (sub_multiset_perm_iff) and each kind-specific invariant survives the reflect.
+end note
+@enduml

@@ -1,0 +1,68 @@
+@startuml
+' Figure D: The zero-new-τ economy. The structural sa: family recognises a redex
+' through a CHAIN of internal COMMs (each erased to τ), forcing an (iii)-style weak
+' bisimulation (sound vs optimal channel schemes). The AC family resolves the whole
+' match INSIDE one atomic consume — below τ granularity — so it adds NO new τ steps.
+skinparam backgroundColor #FEFEFE
+skinparam defaultFontName sans
+skinparam componentStyle rectangle
+skinparam shadowing false
+skinparam ArrowColor #555555
+skinparam rectangle {
+  BorderColor #7A7A7A
+  FontColor #202020
+}
+skinparam package {
+  BorderColor #9A9A9A
+  FontColor #202020
+}
+
+title Zero-New-τ Economy — AC (one atomic consume) vs the Structural sa: Chain
+
+legend top right
+  |= colour |= concept |
+  |<#D7ECFB>| structural sa: matching (τ chain) |
+  |<#C9E7D4>| AC match (one atomic consume) |
+  |<#F7D9D5>| the ONE observable firing COMM |
+  |<#FCF3D0>| formal-verification obligation |
+  |<#FEF7E0>| the shared CLTS |
+endlegend
+
+package "STRUCTURAL base family  —  matching is a CHAIN of internal COMMs" #EAF3FC {
+  rectangle "loc:ℓ  head-tag dispatch\n(τ)" as L1 #D7ECFB
+  rectangle "cap:ℓ  subterm capture\n(τ)" as L2 #D7ECFB
+  rectangle "sa:tc(K)  accept  → σ\n(τ)" as L3 #D7ECFB
+  L1 -[#2E6DB4,thickness=2]-> L2
+  L2 -[#2E6DB4,thickness=2]-> L3
+  rectangle "each COMM erases to τ; the SOUND (location-keyed c(ℓ))\nand OPTIMAL (state-keyed sa:tc(K)) channel schemes\nmust induce the SAME CLTS  ⇒  a weak bisimulation" as LNEED #FCF3D0
+  L3 -[#B8860B,dashed]-> LNEED
+}
+
+package "AC family  —  matching is INTERNAL to ONE consume" #E6F4EA {
+  rectangle "sub_pars pick-k  ·  MaximumBipartiteMatch\n·  bind rest  ·  Receive.condition guard\n<b>all INSIDE one locked consume (check_commit)</b>\n— NOT a sequence of observable COMMs —" as A1 #C9E7D4
+  rectangle "AC adds ZERO new τ transitions to the CLTS\nmatching-locus independence is IMMEDIATE\n⇒  NO (iii)-style weak bisimulation needed" as ANEED #FCF3D0
+  A1 -[#2E8B57,thickness=2]-> ANEED
+}
+
+rectangle "the ONE observable firing COMM\n<b>out!(⟦R⟧σ)</b>  landed on @OUT\n(identical discipline in BOTH families)" as FIRE #F7D9D5
+rectangle "shared CLTS  (knotted-topoi reference semantics)\nboth families induce the SAME context-labelled transition system" as CLTS #FEF7E0
+
+L3 -[#C0392B,thickness=2]-> FIRE
+A1 -[#C0392B,thickness=2]-> FIRE
+FIRE -[#555555,thickness=2]-> CLTS
+
+package "FV discharge" #FBEEE9 {
+  rectangle "InRhoSameCLTSWeakBisim.v\n(the rem:nonopt (iii) discharge —\nSTRUCTURAL family only)" as FVS #FCF3D0
+  rectangle "AC opcorr arm discharged directly by\nAC-i (InRhoAcMatchMultiset) ∧\nAC-atom (AcAtomicNoPartialConsume) ∧\nAC-rest (AcRestReconstruction)\n— no new τ obligation" as FVA #FCF3D0
+}
+
+LNEED -[#B8860B,dashed]-> FVS
+ANEED -[#B8860B,dashed]-> FVA
+
+note bottom of CLTS #FEF7E0
+  WHY IT MATTERS: the atomic consume places the k-of-n pick BELOW the observable
+  (τ) granularity, so the AC redex family costs nothing in the weak-bisimulation
+  ledger the structural sa: chain must pay — the capstone opcorr gains one
+  rule-family arm for free.
+end note
+@enduml

@@ -1,0 +1,67 @@
+@startuml
+' Figure A: Scheme B — the whole AC match (pick-k + bind rest + non-linear guard)
+' resolves INSIDE one atomic RSpace consume, re-sourced from the SPREAD of the
+' reflected subject (never the host report σ), then fires ⟦R⟧σ on @OUT.
+skinparam backgroundColor #FEFEFE
+skinparam defaultFontName sans
+skinparam shadowing false
+skinparam ArrowColor #555555
+skinparam sequence {
+  LifeLineBorderColor #7A7A7A
+  LifeLineBackgroundColor #F4F4F4
+  ParticipantBorderColor #7A7A7A
+  ParticipantFontColor #202020
+  BoxBorderColor #2E8B57
+  GroupBorderColor #2E8B57
+  GroupFontColor #1E5631
+}
+
+title Scheme B — In-Rho AC Match + Fire as ONE Atomic Consume  (AcDemo: PPar{A | B | C} ~> Wrap(x))
+
+participant "reflected subject\n⟦PPar{A|B|C}⟧\n<size:10>reflect_category_fn</size>" as SUB #E8F0FE
+participant "match driver\n<size:11>ac_match_call_par</size>" as DRV #E8F0FE
+participant "site-keyed carrier\n<b>ac:ρ/ℓ/PPar</b>\n<size:10>ac_carrier_channel</size>" as CAR #E6DBF2
+participant "co-installed AC receiver\n<size:11>ac_sigma_receiver_par</size>" as RCV #F7D9D5
+box "ONE atomic RSpace consume  (locked; check_commit; all-or-nothing)" #E6F4EA
+participant "f1r3node spatial matcher\n<size:10>sub_pars · MaximumBipartiteMatch · remainder</size>" as MAT #C9E7D4
+end box
+participant "@OUT" as OUT #FEF7E0
+
+SUB -> DRV : M-reflect the WHOLE term\n(structural; NO host σ read)
+activate DRV
+DRV -> DRV : walk subject → locate the\nbag node at position ℓ\n(the spread's loc: derivation)
+DRV -> RCV : co-install receiver whose\n<b>source = the site-keyed carrier</b>
+DRV -> CAR : publish  <b>ac:ρ/ℓ/PPar!(⟦bag⟧, @OUT)</b>\n⟦bag⟧ = soup ∏ @"ac:PPar"!(⟦eᵢ⟧)\nfrom the SUBJECT's ground elements
+deactivate DRV
+
+RCV -> MAT : match  ⟨ ac_bag_pattern(PPar, k=1) , out ⟩\nagainst the carrier's  ⟨ soup , @OUT ⟩
+activate MAT #C9E7D4
+group ONE atomic consume — internal, unobservable (τ-free)
+  MAT -> MAT : sub_pars enumerates a size-k\nsub-multiset (the selection)
+  MAT -> MAT : MaximumBipartiteMatch assigns\nk send-patterns ↔ k soup sends\n(ANY order — order-independent)
+  MAT -> MAT : bind  rest = par remainder\n(bag ⊖ selection)
+  MAT -> MAT : Receive.condition guard\n(non-linear: EEq(slotᵢ, slotⱼ)) —\ncommit ⟺ present ∧ guard
+end
+alt selection present ∧ guard holds
+  MAT -> RCV : COMMIT — σ = [ ⟦picked⟧ , rest ]\nremove exactly the selection
+  deactivate MAT
+  RCV -> OUT : body fires  out!(⟦R⟧σ) = Wrap(picked)
+  note over RCV, OUT #E6F4EA
+    ONE observable COMM — the firing.
+    The pick/rest/guard were INTERNAL to the
+    single consume, so AC adds ZERO new τ steps.
+  end note
+else missing selection ∨ guard fails
+  MAT -[#C0392B]-> RCV : VETO — bag UNTOUCHED\n(check_commit ↦ merge_substs = None)
+  note over MAT, RCV #F5D5D0
+    Reject-safe: no partial consume is reachable.
+    No slot is bound, no element removed.
+  end note
+end
+
+note over SUB, OUT #FCF3D0
+  Provenance: OUT = Wrap(e) for a REAL e ∈ {A,B,C} even when the host report σ is
+  corrupted (s_ac_bag_is_produced_by_the_spread_not_the_report) — the bag is the
+  subject's spread, never find_sigma. Zero host residue: the whole match AND fire are in Rho.
+end note
+@enduml
