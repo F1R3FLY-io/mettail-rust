@@ -300,18 +300,20 @@ fn collect_redex_sites(
 /// The automaton — not the host — LOCATES + binds σ: `collect_redex_sites` only pre-filters
 /// candidate positions by head op (exactly the set-automaton root-state dispatch); at each site the
 /// emitted network re-does the head `Match` and the `cap:` σ capture ON the interpreter, so σ is
-/// produced by the accept, never the report (M-reflect). Fails closed
-/// ([`AutomatonUnsupported::NestedEntryMultiSite`]) unless the ruleset is flat-only
-/// ([`ruleset_all_entries_flat`]), the co-installation contention-freedom precondition.
+/// produced by the accept, never the report (M-reflect).
+///
+/// Contention is possible ONLY when ≥2 networks are CO-INSTALLED (a nested-App entry descends
+/// `loc:` head tags, which a co-installed root attempt at that descent position could race for). So
+/// this admits: a flat-only ruleset ([`ruleset_all_entries_flat`]) at ANY number of sites (disjoint
+/// `loc:`/`cap:` reads); OR a nested ruleset at ≤1 site (no co-installation → no contention, exactly
+/// the single-redex path). A nested ruleset with ≥2 located redexes fails closed
+/// ([`AutomatonUnsupported::NestedEntryMultiSite`]) to the σ-replay driver — never a wrong match.
 pub fn in_rho_match_all_sites_call_par(
     ruleset: &InRhoMatchingRuleset,
     subject: &GroundTerm,
     root_site: &str,
     out_channel: &str,
 ) -> Result<(Par, usize), AutomatonUnsupported> {
-    if !ruleset_all_entries_flat(ruleset) {
-        return Err(AutomatonUnsupported::NestedEntryMultiSite);
-    }
     let targets: Vec<AutomatonAcceptTarget> = ruleset
         .accept_channels
         .iter()
@@ -325,6 +327,12 @@ pub fn in_rho_match_all_sites_call_par(
     let roots = rule_lhs_root_constructors(ruleset);
     let mut sites: Vec<String> = Vec::new();
     collect_redex_sites(subject, root_site, &roots, &mut sites);
+
+    // Co-installing ≥2 per-position networks is contention-free only for a flat-only ruleset; a
+    // nested ruleset admits at most one site (no co-installation). Fail closed otherwise.
+    if sites.len() > 1 && !ruleset_all_entries_flat(ruleset) {
+        return Err(AutomatonUnsupported::NestedEntryMultiSite);
+    }
 
     // One positional network per located site (disjoint-prefix channels), then ONE spread of the
     // whole subject. A normal form (no located site) is the bare spread — a valid no-op.
@@ -617,11 +625,30 @@ mod tests {
         .expect("the nested-pattern fragment parses");
         let ruleset = compile_in_rho_matching_ruleset(&def);
         assert!(!ruleset_all_entries_flat(&ruleset), "Wrap(Swap x y) is a nested entry");
-        // The locate-all install fails closed (→ σ-replay), never emitting a contending network.
-        let subject = GroundTerm::new("A", Vec::new());
+
+        let swap_a_a = GroundTerm::new(
+            "Swap",
+            vec![GroundTerm::new("A", Vec::new()), GroundTerm::new("A", Vec::new())],
+        );
+        let wrap = |inner: GroundTerm| GroundTerm::new("Wrap", vec![inner]);
+
+        // A SINGLE nested-pattern redex has no co-installation, so it still matches in Rho (the
+        // pre-Stage-4 single-redex behavior is preserved — no fallback).
+        let single = wrap(swap_a_a.clone());
+        let (_call, n_single) =
+            in_rho_match_all_sites_call_par(&ruleset, &single, "site0", "OUT")
+                .expect("a single nested-pattern redex still serializes (no co-install contention)");
+        assert_eq!(n_single, 1, "the single Wrap(Swap …) redex is located");
+
+        // ≥2 co-installed nested-pattern networks could contend, so fail closed (→ σ-replay).
+        let two = GroundTerm::new(
+            "Pair",
+            vec![wrap(swap_a_a.clone()), wrap(swap_a_a)],
+        );
         assert_eq!(
-            in_rho_match_all_sites_call_par(&ruleset, &subject, "site0", "OUT"),
-            Err(AutomatonUnsupported::NestedEntryMultiSite)
+            in_rho_match_all_sites_call_par(&ruleset, &two, "site0", "OUT"),
+            Err(AutomatonUnsupported::NestedEntryMultiSite),
+            "≥2 nested-pattern sites fail closed to the σ-replay driver"
         );
     }
 

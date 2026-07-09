@@ -1248,9 +1248,10 @@ pub fn generate_rho_net_invocation(language: &LanguageDef) -> TokenStream {
         // rule LHS root (the ν-free `⌜(ρ,ℓ)⌝` site paths), each accept firing the σ-receiver on
         // `out_channel`. So a NESTED redex (the redex is a sub-term, not the whole subject) and
         // MULTIPLE redexes both match + fire IN RHO — the root-rooted + single-redex fallback is
-        // retired. Only a ruleset with a NESTED-App entry (whose descents could contend across
-        // co-installed sites) fails closed to the σ-replay driver; a flat-only ruleset (SwapDemo)
-        // locates all redexes in Rho. A normal form locates 0 sites (the bare spread, a no-op).
+        // retired. Only a NESTED-App-entry ruleset with ≥2 located redexes (whose descents could
+        // contend across co-installed sites) fails closed to the σ-replay driver; a flat-only
+        // ruleset (SwapDemo) locates ALL redexes in Rho, and a single nested-pattern redex still
+        // matches. A normal form locates 0 sites (the bare spread, a no-op).
         let (__call, _sites) = ::mettail_rholang_codegen::in_rho_match_all_sites_call_par(
             &__ruleset,
             &__subject,
