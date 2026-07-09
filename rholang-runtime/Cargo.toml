@@ -178,6 +178,21 @@ amb-demo-runtime = [
     "mettail-languages/dovetail-codegen",
     "mettail-languages/rho-codegen",
 ]
+# Stage 4 (Ambient In/Out): pulls in the generated `InOutDemo` language for the end-to-end in-Rho
+# DEPTH-2 NESTED structural non-linear AC firing test (`rho_net_inout_firing`) — the Ambient-calculus
+# `InRule` `{ n[{in(m,P), ...q}], m[R], ...s } ~> { m[{ n[{P, ...q}], R }], ...s }` and its `out` dual
+# firing as ONE atomic COMM on the reducer, where the CROSS-LEVEL non-linear ambient-name guard
+# (`M ≡ M`) is enforced by the nested AC receiver's `Receive.condition` and the NESTED reduct
+# (host-computed `RHS[σ]`) is reconstructed from σ and spliced with the outer remainder. Needs the
+# generated `dovetail_report_for` (σ + contractum population, `dovetail-codegen`) and the nested
+# structural-AC σ-injection F-function (`rho-codegen`).
+in-out-demo-runtime = [
+    "runtime-report",
+    "dep:mettail-languages",
+    "mettail-languages/in-out-demo",
+    "mettail-languages/dovetail-codegen",
+    "mettail-languages/rho-codegen",
+]
 # Stage 3f: pulls in the generated `NativeFoldDemo` language for the end-to-end in-Rho
 # NATIVE-SCALAR-FOLD firing test (`rho_net_native_fold_firing`) — a generated `fold` native scalar
 # arithmetic `AddInt(a, b) ~> a + b` firing as a COMM on the reducer, emitting the reduced value the
@@ -319,6 +334,11 @@ required-features = ["comm-demo-runtime"]
 name = "rho_net_ambient_firing"
 path = "tests/rho_net_ambient_firing.rs"
 required-features = ["amb-demo-runtime"]
+
+[[test]]
+name = "rho_net_inout_firing"
+path = "tests/rho_net_inout_firing.rs"
+required-features = ["in-out-demo-runtime"]
 
 [[test]]
 name = "rho_comm_oracle"
