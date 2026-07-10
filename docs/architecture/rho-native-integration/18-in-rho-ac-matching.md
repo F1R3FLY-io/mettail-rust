@@ -16,14 +16,14 @@ A HashBag AC rewrite `op{L_1, …, L_k, ...rest} ~> R` fires when the subject ba
 contains, in ANY order, a sub-multiset matching the `k` fixed element patterns; the
 residual multiset binds `rest`. The correctness constraint from `knotted-topoi.tex`
 is the same as the base case — one atomic COMM rendezvous emitting
-$\llbracket R \rrbracket \sigma$ — with the extra requirement that the match is
+$`\llbracket R \rrbracket \sigma`$ — with the extra requirement that the match is
 INVARIANT under the bag's shuffle order and cannot PARTIALLY fire (bind only some of
 the `k` elements and leave the residual unbound).
 
 **Scheme B** meets both by reflecting the whole operand bag as ONE process-`Par`
 "soup" value and matching it with ONE connective receive. f1r3node's spatial matcher
 does par-bag AC natively — `sub_pars` (selection / complement enumeration) plus
-`MaximumBipartiteMatch` (element `$\leftrightarrow$` pattern assignment) plus the
+`MaximumBipartiteMatch` (element $`\leftrightarrow`$ pattern assignment) plus the
 `remainder` binding — so the entire AC decision (pick-`k`, bind `rest`, check the
 non-linear guard) resolves INSIDE the single locked `consume` (`check_commit`,
 all-or-nothing, reject-safe). No reserve/commit protocol, no partial-fire hazard.
@@ -41,7 +41,9 @@ A HashBag `GroundTerm` (tagged by `coll_type`) reflects to the soup: each elemen
 the bag is their PARALLEL composition. Order-independence is inherited from `par`
 (a multiset of processes):
 
-$$ \llbracket \mathtt{op}\{e_1, \dots, e_m\} \rrbracket \;=\; \Big\Vert_{i=1}^{m} \; \mathtt{@"ac:}\mathtt{op"}!\bigl(\llbracket e_i \rrbracket\bigr) $$
+```math
+\llbracket \mathtt{op}\{e_1, \dots, e_m\} \rrbracket \;=\; \Big\Vert_{i=1}^{m} \; \mathtt{@"ac:}\mathtt{op"}!\bigl(\llbracket e_i \rrbracket\bigr)
+```
 
 The element channel `ac:{op}` is scoped INSIDE the carried message (never free in the
 tuplespace), so it needs no fingerprint — both the carrier and the pattern use the
@@ -51,13 +53,13 @@ identical `format!("ac:{op}")`.
 
 `ac_bag_pattern(op, k)` builds the AC receiver's matching side: a connective
 process-`Par` with `k` send-patterns `@"ac:{op}"!(FreeVar(i))` (each binding one
-element slot `$\sigma_i$`) plus a process remainder `EVar(FreeVar(k))` (binding
+element slot $`\sigma_i`$) plus a process remainder `EVar(FreeVar(k))` (binding
 `rest`). The remainder is exactly the `var_level` the spatial matcher reads
 (`new_freevar_par(k)`'s top-level `EVar` in `exprs`).
 
 | Piece | Rho shape | Binds |
 |---|---|---|
-| element slot `i` (`$i < k$`) | `@"ac:{op}"!(FreeVar(i))` send-pattern | one bag element, `$\sigma_i$` |
+| element slot `i` ($`i < k`$) | `@"ac:{op}"!(FreeVar(i))` send-pattern | one bag element, $`\sigma_i`$ |
 | `rest` | top-level `EVar(FreeVar(k))` | the residual soup (par remainder) |
 
 The native `MaximumBipartiteMatch` assigns the `k` send-patterns to `k` carrier sends
@@ -70,7 +72,7 @@ match, all inside one `consume`.
 shape `for( <ac_bag_pattern(op,k)> , out <- source ){ out!(rhs) }`. The bind has
 `k+2` free variables (the `k` elements, `rest`, and `out`), so under the reverse
 De Bruijn frame `out = BoundVar(0)`, `rest = BoundVar(1)`, and element `i` is
-`BoundVar(k+2-i)`. The RHS `$\llbracket R \rrbracket \sigma$` reuses the flat
+`BoundVar(k+2-i)`. The RHS $`\llbracket R \rrbracket \sigma`$ reuses the flat
 `reflect_term_par` at `k+1` over the `[x_1..x_k, rest]` σ order — that shift yields
 exactly this frame, so NO new reflection machinery is needed. Verified end to end by
 `ac_receiver_fires_the_matched_element_on_the_dynamic_out`.
@@ -121,7 +123,7 @@ theory table.
 | AC-map | MapAc key-uniqueness preserved across the split | `AcMapKeyUniqueness.v` |
 
 **AC economy.** Because the whole match is ONE atomic `consume`, the AC path adds
-ZERO new `$\tau$` steps to the CLTS — its matching-locus independence is immediate, so
+ZERO new $`\tau`$ steps to the CLTS — its matching-locus independence is immediate, so
 (unlike the structural `sa:` chain) it needs NO `(iii)`-style weak-bisimulation. The
 capstone opcorr gains one rule-family arm discharged by AC-i + AC-atom + AC-rest.
 
@@ -131,6 +133,6 @@ Figure 18-1 traces one firing. The codegen injection carries the whole bag as a
 process-soup value; the RSpace `consume` assigns the `k` send-patterns to `k` soup
 sends in ANY order, binds the residual to `rest`, and checks the non-linear guard —
 all in ONE atomic all-or-nothing COMM — and the receiver fires
-$\llbracket R \rrbracket \sigma$ on the dynamic out.
+$`\llbracket R \rrbracket \sigma`$ on the dynamic out.
 
 ![Figure 18-1 — in-Rho AC match + fire](figures/18-in-rho-ac-match-fire.svg)

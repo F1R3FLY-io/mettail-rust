@@ -1,6 +1,14 @@
 # End-to-End Architecture
 
-Last updated: 2026-06-14
+> **Superseded (host-matched era).** This document describes the architecture from
+> when rewrite *matching* ran on the host (the Dovetail set automaton) while firing
+> ran in-Rho. The landed in-Rho realization — matching AND firing both on the
+> Rholang interpreter — is in [20](20-rholang-runtime-backend.md) (how it runs),
+> [22](22-end-to-end-formal-verification.md) (proofs), and
+> [23](23-coverage-and-correctness.md) (coverage). Retained for historical
+> architecture context.
+
+Last updated: 2026-07-10
 
 This document explains the whole execution path from a source-language snippet
 to native execution on F1r3node's Rho machine, scoped to replacement of the CESK

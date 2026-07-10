@@ -1,0 +1,47 @@
+@startuml
+' Figure 22-3: the zero-admission gate as a top-to-bottom flow. Each theory compiles
+' and prints its assumptions (Closed, or the build halts); the Makefile gate self-tests
+' the scanner and re-scans every source for the banned proof-incompleteness vernaculars.
+' Rendered with rectangle fills (not activity nodes) so hex colors stay clean in the SVG.
+skinparam backgroundColor #FEFEFE
+skinparam defaultFontName monospaced
+skinparam shadowing false
+skinparam rectangle {
+  BorderColor #4A5568
+  FontColor #1A202C
+}
+skinparam ArrowColor #4A5568
+top to bottom direction
+
+title Figure 22-3 — the zero-admission gate:  Print Assumptions => Closed => Makefile gate
+
+rectangle "compile a campaign theory\n(rho_bridge / advanced_automata)" as COMPILE #C6E0F5
+rectangle "Print Assumptions <thm>" as PRINT #C6E0F5
+rectangle "reports\n\"Closed under the global context\" ?" as CLOSED #FDE9C8
+rectangle "theory admitted to the corpus\n(310 total: 161 rho_bridge + 149 advanced_automata)" as CORPUS #A7D8B6
+rectangle "BUILD HALTS —\nan axiom or admit leaked" as HALT1 #F6C177
+
+rectangle "make rocq-critical-zero-admission\n(require-capped, 32 GiB ceiling)" as MAKE #C6E0F5
+rectangle "check_rocq_zero_admission.py --self-test\n(5 fixtures must trip the scanner)" as SELFTEST #C6E0F5
+rectangle "strip nested Rocq comments\n(line numbers preserved)" as STRIP #C6E0F5
+rectangle "BANNED_COMMAND\nmatches any line head ?" as BANNED #FDE9C8
+rectangle "FAIL: banned vernacular\n(assumption / conjecture / parameter / admission)" as FAIL #F6C177
+rectangle "GATE PASSES —\nzero admissions across the corpus" as PASS #7FC79B
+
+COMPILE --> PRINT
+PRINT --> CLOSED
+CLOSED -[#2F855A]-> CORPUS : "yes"
+CLOSED -[#C05621]-> HALT1 : "no"
+CORPUS --> MAKE
+MAKE --> SELFTEST
+SELFTEST --> STRIP
+STRIP --> BANNED
+BANNED -[#C05621]-> FAIL : "yes"
+BANNED -[#2F855A]-> PASS : "no"
+
+note right of PASS #EDF2F7
+  The corpus's 310 "Closed under the global context" certificates plus
+  this source scan are what make every Theorem in doc 22 trustworthy:
+  no axiom, no conjecture, no parameter, no admission.
+end note
+@enduml

@@ -1,0 +1,78 @@
+@startuml
+' Figure 20-1: component view of the realized runtime backend. The three in-Rho
+' layers (matching / firing / congruence) are SERIALIZED at MeTTaIL compile time and
+' EXECUTED as COMMs on ONE f1r3node host (RhoRuntime + RSpace). Host Dovetail survives
+' ONLY as the compile-time set-automaton partial-evaluator + the report sigma-source.
+skinparam backgroundColor #FEFEFE
+skinparam defaultFontName monospaced
+skinparam shadowing false
+skinparam componentStyle rectangle
+skinparam component {
+  BorderColor #4A5568
+  FontColor #1A202C
+}
+skinparam package {
+  BorderColor #7A7A7A
+  FontColor #202020
+}
+skinparam artifact {
+  BorderColor #7A7A7A
+  FontColor #202020
+}
+
+title Figure 20-1 — Three in-Rho layers compiled at MeTTaIL time, executed as COMMs on ONE f1r3node host\n(host Dovetail survives only as the compile-time partial-evaluator + report <latex>\sigma</latex>-source)
+
+package "COMPILE TIME   MeTTaIL · Dovetail · rholang-codegen" #F4F4F4 {
+  component "language! macro\n<latex>\to</latex> LanguageDef" as MACRO #EDEDED
+
+  package "host Dovetail = PARTIAL EVALUATOR" #FEF3C7 {
+    component "set-automaton interner\nPatternCompiler::intern\nset_automaton.rs:140\n(O1/O3 quotient, L-independent DAG)" as INTERN #FDE9A6
+    component "Dovetail run report\n(<latex>\sigma</latex>-source + fired-rule labels)" as REPORT #FDE9A6
+  }
+
+  package "Layer 1 — MATCHING (serializer)" #C6E0F5 {
+    component "multi_pattern_receiver_network_par\nrho_net_automaton.rs:421\nloc:/cap: sa: receiver network" as L1 #C6E0F5
+  }
+  package "Layer 2 — FIRING (serializer)" #FDE8D5 {
+    component "sigma_receiver_par + variants\nrho_net_lower.rs:3516\nbase · AC · nested · join · native" as L2 #FDE8D5
+  }
+  package "Layer 3 — CONGRUENCE" #E6DBF2 {
+    component "structural e-graph closure\nCongruenceClosure (empty Par, compile time)" as L3A #E6DBF2
+    component "de-Bruijn substitution TRS\nrho_net_subst_trs.rs\n5 reserved receivers (runtime)" as L3B #E6DBF2
+  }
+
+  component "install gate — FAIL CLOSED\ninstalled_program_par <latex>\to</latex> Result\nrho_net_lower.rs:404" as GATE #E2E8F0
+}
+
+artifact "installed Rho program\nrhoapi::Par  ( <latex>\prod</latex> receivers )" as PAR #FEF7E0
+
+package "RUNTIME   f1r3node" #C9E7D4 {
+  component "RhoRuntime (reducer)\ninj + cost accounting\nrun.rs:455" as RT #A7D8B6
+  component "RSpace (tuple space)\nproduce / consume / join\n= the scheduler" as RS #A7D8B6
+  component "@OUT resting value\ndecode_reflected_term\nrun.rs:294" as OUT #C9E7D4
+}
+
+MACRO --> INTERN
+INTERN --> L1
+MACRO --> L2
+MACRO --> L3A
+MACRO --> L3B
+L1 --> GATE
+L2 --> GATE
+L3A --> GATE
+L3B --> GATE
+GATE --> PAR : Ok
+REPORT ..> GATE : gate keys +\n(fallback) <latex>\sigma</latex>
+PAR --> RT : inj
+RT --> RS : COMMs
+RS --> OUT : reduct  <latex>[\![R]\!]\sigma</latex>
+
+legend right
+  |= color |= concept |
+  |<#FEF3C7>| host Dovetail = compile-time partial-evaluator |
+  |<#C6E0F5>| Layer 1 matching (sa: network) |
+  |<#FDE8D5>| Layer 2 firing (<latex>\sigma</latex>-receivers) |
+  |<#E6DBF2>| Layer 3 congruence (e-graph + subst TRS) |
+  |<#A7D8B6>| f1r3node host — the ONLY runtime |
+endlegend
+@enduml

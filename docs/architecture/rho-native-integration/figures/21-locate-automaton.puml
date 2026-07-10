@@ -1,0 +1,40 @@
+@startuml
+' Figure 21-1: the Erkens-Groote LOCATE automaton M = (S, s0, L, delta, eta) for the
+' single-LHS lambda pattern set L = { app(lam(M), N) }. Each state s carries a labelling
+' L(s) naming the ONE position it inspects; delta branches on the HEAD SYMBOL read there.
+' Because every state advances the inspection frontier, each subject symbol is visited
+' exactly once (Theorem thm:symbol-once, optimal-channels.tex:457).
+skinparam backgroundColor #FEFEFE
+skinparam defaultFontName monospaced
+skinparam shadowing false
+skinparam state {
+  BorderColor #4A5568
+  FontColor #1A202C
+  BackgroundColor #E8F0FE
+}
+skinparam ArrowColor #4A5568
+title Figure 21-1 — the locate automaton  M = (S, s0, L, δ, η)  for  L = { app(lam(M), N) }\nδ branches on the head symbol read at the single inspected position L(s); each subject symbol is visited once
+
+[*] --> s0
+
+state "s0  —  inspect the root head\n<latex>L(s_0)=\epsilon</latex>" as s0 #C3DAF7
+state "s_app  —  inspect child 1\n<latex>L(s_{app})=1</latex>" as sapp #C3DAF7
+state "redex-search in N\n<latex>\delta(s_0,\mathrm{app})\ \mathrm{offset}\ 2</latex>" as sarg #D6C6EE
+state "ACCEPT\n<latex>\eta(s_{app},\mathrm{lam})</latex>" as acc #B7E4C7
+
+s0 -[#2B6CB0]-> sapp : <latex>\mathrm{app}\ /\ \mathrm{offset}\ \epsilon</latex>
+s0 -[#805AD5]-> sarg : <latex>\mathrm{app}\ /\ \mathrm{offset}\ 2</latex>
+sapp -[#2F855A]-> acc : <latex>\mathrm{lam}\ \ (\mathrm{goal}\to\emptyset)</latex>
+
+note right of sarg #FCF3D0
+  A HOLE at the inspected position SUSPENDS the run.
+  The suspended configuration tree is reflected to a channel:
+  <latex>tc(K)=\ulcorner T_M(K)\urcorner</latex>
+  (optimal-channels.tex, Def. def:trace / def:channel)
+end note
+
+note bottom of acc #E6F4EA
+  One state = one inspected position = one head-symbol
+  decision. No position is ever re-read → SYMBOL-ONCE (O1).
+end note
+@enduml

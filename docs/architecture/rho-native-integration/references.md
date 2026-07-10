@@ -1,6 +1,6 @@
 # References
 
-Last updated: 2026-06-14
+Last updated: 2026-07-10
 
 This bibliography supports the Rho-native MeTTaIL integration documents. DOI
 links are included only where a DOI was verified or is part of a publisher
@@ -185,6 +185,18 @@ to Term Rewriting Systems." Journal of the ACM.
 [DOI: 10.1145/322217.322230](https://doi.org/10.1145/322217.322230).
 
 Used for: rewrite-system confluence background.
+
+### SEKAR-RAMESH-RAMAKRISHNAN-1995
+
+R. C. Sekar, R. Ramesh, and I. V. Ramakrishnan. 1995. "Adaptive Pattern
+Matching." SIAM Journal on Computing 24 (6): 1207-1234.
+[DOI: 10.1137/S0097539793246252](https://doi.org/10.1137/S0097539793246252).
+
+Used for: the adaptive pattern-matching lineage and the discrimination-net worst
+case — a $`\Theta(n^2)`$ blow-up in match states for $`n`$ overlapping patterns —
+that the interned-DAG set automaton linearizes to $`2n+1`$ states, the
+size-optimality result in
+[21 — Set-Automata Optimization Theory](21-set-automata-optimization-theory.md).
 
 ### EQUALITY-SATURATION-2009
 
@@ -409,6 +421,55 @@ proof, the object-beta weak bisimulation, the reflection totality and injectivit
 the positional match with report-independent reduct separation, and the
 live-reducer firing evidence. Primary source for
 [In-Rho Binder Beta-Substitution](19-in-rho-binder-beta-substitution.md).
+
+### IN-RHO-CAMPAIGN-FORMAL
+
+Repository-local Epic-4 in-Rho matching campaign formal suite. The end-to-end
+verification document [22](22-end-to-end-formal-verification.md) presents these as
+numbered QED theorems; the coverage matrix
+[23](23-coverage-and-correctness.md) and the completion audit
+[24](24-in-rho-completion-audit.md) map each theorem to its runtime evidence.
+
+Matching layer:
+
+- `formal/rocq/advanced_automata/theories/InRhoMatchPositional.v`
+- `formal/rocq/advanced_automata/theories/PositionalSetAutomatonSound.v`
+- `formal/rocq/advanced_automata/theories/SymbolOnceInjective.v`
+- `formal/rocq/advanced_automata/theories/TcChannelNamingQuotient.v`
+- `formal/rocq/advanced_automata/theories/PrunePreservesWork.v`
+- `formal/rocq/advanced_automata/theories/InRhoReuseDeterminism.v`
+- `formal/rocq/advanced_automata/theories/InRhoAcMatchMultiset.v`
+- `formal/rocq/advanced_automata/theories/InRhoSameCLTSWeakBisim.v`
+- `formal/rocq/advanced_automata/theories/AcAtomicNoPartialConsume.v`
+- `formal/rocq/advanced_automata/theories/AcRestReconstruction.v`
+- `formal/rocq/advanced_automata/theories/AcMapKeyUniqueness.v`
+- `formal/rocq/advanced_automata/theories/AcBagRhsReflection.v`
+
+Firing and capstone layer:
+
+- `formal/rocq/rho_bridge/theories/ContextualAtomicJoinPlugging.v`
+- `formal/rocq/rho_bridge/theories/NonLinearEqConsistency.v`
+- `formal/rocq/rho_bridge/theories/AtomicFiringNoPartialMatch.v`
+- `formal/rocq/rho_bridge/theories/AmbientOpenFiring.v`
+- `formal/rocq/rho_bridge/theories/AmbientInOutFiring.v`
+- `formal/rocq/rho_bridge/theories/NativeSystemProcessBoundary.v`
+- `formal/rocq/rho_bridge/theories/CommRuleFiring.v`
+- `formal/rocq/rho_bridge/theories/DeBruijnSubstTRS.v`
+- `formal/rocq/rho_bridge/theories/InRhoBetaCascadeWeakBisim.v`
+- `formal/rocq/rho_bridge/theories/BinderReflectionTotalOrReject.v`
+- `formal/rocq/rho_bridge/theories/EndToEndCommCorrespondence.v`
+- `formal/rocq/rho_bridge/theories/WholeGsltInRhoOpCorrespondence.v`
+- `formal/rocq/rho_bridge/theories/WholeGsltInRhoOpCorrespondenceOptimalViaSameClts.v`
+- `formal/rocq/rho_bridge/theories/WholeGsltInRhoOpCorrespondenceInOutViaFiring.v`
+
+Used for: the machine-checked, zero-admission proof that every non-semantic-
+predicate rewrite family matches AND fires in Rho — the per-family per-step COMM
+correspondences (base / contextual / AC-linear / AC-structural / binder-β / native
+/ ambient In-Out), the O1 symbol-once and $`tc(K)`$ channel-naming optimality, the
+AC multiset match, the de-Bruijn substitution TRS strong-normalization / confluence
+/ normal-form results, and the whole-⟦G⟧ finite-execution operational-correspondence
+capstone threaded over the O1-optimal matching (the `rem:nonopt` discharge). Primary
+source for [22 — End-to-End Formal Verification](22-end-to-end-formal-verification.md).
 
 ### RHO-PROCESS-FORMAL
 

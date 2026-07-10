@@ -1,15 +1,24 @@
 # Knotted-Topoi Operational Invariants
 
-Last updated: 2026-07-04
+Last updated: 2026-07-10
 
 This document extracts concrete, checkable operational requirements from the
 north-star paper *Knotted Topoi*
 ([KNOTTED-TOPOI-2026](references.md#knotted-topoi-2026)) and maps them onto the
 Rho-native lowering (`rholang-codegen`) and its formal-verification suite
-(`formal/rocq/rho_bridge`). It also answers the one question that gates the
-remaining Epic 4 matching-locus work: **does the paper require pattern matching,
-non-linear consistency, and structural premises to run inside the Rho machine,
-or is host-side matching plus Rho `σ`-injection a faithful realization?**
+(`formal/rocq/rho_bridge`). It first settled the question that gated the Epic 4
+matching-locus work — **does the paper require pattern matching, non-linear
+consistency, and structural premises to run inside the Rho machine, or is
+host-side matching plus Rho `σ`-injection a faithful realization?** — and, once
+that question was answered (host-side matching *is* faithful; moving matching into
+Rho is an **optimization** that recovers the symbol-once property O1, not a
+semantic mandate), records the outcome of acting on it: the optimization has since
+**landed**. Every non-semantic-predicate rewrite family now matches AND fires in
+Rho, with a whole-⟦G⟧ operational-correspondence capstone proven over the
+O1-optimal matching. The in-Rho realization is documented in
+[20](20-rholang-runtime-backend.md), why it is optimal in
+[21](21-set-automata-optimization-theory.md), and its end-to-end proofs in
+[22](22-end-to-end-formal-verification.md).
 
 All symbols and acronyms used here are defined in
 [Concepts and Glossary](01-concepts-and-glossary.md); the rewrite model this
@@ -109,14 +118,22 @@ qualified, as §4 below shows.
 | Model | Structural + non-linear match + guards | Rho artifact per rewrite |
 |---|---|---|
 | naive in-machine ("model a") | re-matched **in Rho** by nested single-name receives with name-equality guards over the per-location term spread | a structured receiver that re-gathers `⟦L⟧` |
-| set-automaton-assisted ("model b", current) | decided **on the host** by Dovetail's set automaton (`merge_substs`), yielding a substitution `σ` | a flat persistent `(k+1)`-ary `σ`-receiver `for(σ,out ⇐ c(ℓ)){ out!(⟦R⟧σ) }` |
+| set-automaton-assisted ("model b", the host-matched stepping-stone) | decided **on the host** by Dovetail's set automaton (`merge_substs`), yielding a substitution `σ` | a flat persistent `(k+1)`-ary `σ`-receiver `for(σ,out ⇐ c(ℓ)){ out!(⟦R⟧σ) }` |
+| **in-Rho set automaton ("model c", LANDED)** | decided **in Rho** by a compiled set automaton — the redex is *located and bound* by interpreter COMMs over the reflected subject spread, recovering O1 | the `sa:` automaton network co-installed at every redex position, feeding the same flat `σ`-receiver ([20](20-rholang-runtime-backend.md)) |
 
 Model b is implemented in
 [`rholang-codegen/src/rho_net_lower.rs`](04-rho-native-dataflow-lowering.md)
 (`sigma_receiver_par`, `lower_base_rewrite`). A campaign red-team refuted the
 naive model a (channel-incoherence, no linearity pass, wrong De Bruijn indexing);
 model b was chosen because the host set automaton is exactly the partial-evaluation
-device of the two set-automata papers.
+device of the two set-automata papers. **Model c is the completed endpoint**: the
+same partial-evaluated automaton is now *serialized into Rho* (the interner emits
+the O1/O3-optimal state DAG; `PatternCompiler::intern`), so the redex is located and
+bound by interpreter COMMs rather than by `merge_substs` on the host. Model c both
+matches and fires in Rho for every family; the decisive "replacement, not duplicate"
+evidence is a probe that corrupts the host `σ` and still observes the correct firing
+([23](23-coverage-and-correctness.md); the requirement-to-evidence audit is
+[24](24-in-rho-completion-audit.md)).
 
 ### 4.2 The three decisive passages
 
@@ -224,7 +241,10 @@ against this paper to: in no case at the CLTS level.** Moving the set-automaton
 trace, non-linear consistency, or structural premises into Rho is an
 **optimization** (recovering the symbol-once property O1, or offloading match work
 onto RSpace parallelism), not a semantic mandate — it must still preserve exactly
-the same invariants that host matching must (§5).
+the same invariants that host matching must (§5). That optimization has since landed
+as **model c** (§4.1): the in-Rho set automaton recovers O1 and is proven
+CLTS-equivalent over the optimal matching (`whole_gslt_opcorr_over_optimal_matching`,
+§6), discharging this residual against the paper's own endorsed alternative.
 
 ## 5. The Operational Invariants
 
@@ -258,7 +278,7 @@ FV theories are under `formal/rocq/rho_bridge/theories/`.
         t  →_r  rhs_r(σ)   at location ℓ   one firing  ⇔  one 𝔅-transition labelled c(ℓ)
                                                    │
         ┌──────────────────────────────┬──────────┴───────────────────────────────┐
-        │  model a (paper's sugar)     │           model b (current, faithful)     │
+        │  model a (paper's sugar)     │           model b (on-host, faithful)     │
         │  match decided IN Rho        │           match decided ON host           │
         │                              │                                           │
    ⟦L⟧ spread over c(ℓ·…) channels    │      Dovetail set automaton + merge_substs │
@@ -273,7 +293,11 @@ FV theories are under `formal/rocq/rho_bridge/theories/`.
 
 Both loci must land on the identical `c(ℓ)`-labelled firing. The paper certifies
 the equivalence (Q2, Q3); model b additionally guarantees atomicity, which the
-naive locus does not.
+naive locus does not. **Model c** (the landed in-Rho locus, §4.1) keeps model b's
+atomic flat-`σ`-receiver firing but moves the *match decision* onto the interpreter
+— the redex is located and bound by `sa:` COMMs — recovering O1 while preserving the
+same `c(ℓ)`-labelled firing, and is proven CLTS-equivalent to the sound scheme
+([22](22-end-to-end-formal-verification.md)).
 
 ## 6. Mapping to the Formal-Verification Suite
 
@@ -311,22 +335,25 @@ over the covered rule families; divergent / infinite executions and any future r
 family beyond the six + slotted In/Out are outside the current statement (the harness
 extends additively — one more `Family` constructor + one more `family_of` case).
 
-## 7. What Transfers to Items #2005-2007
+## 7. What Items #2005-2007 Landed
 
 Because the verdict (§4.4) is that in-Rho matching is an optimization rather than
-a semantic mandate, the roadmap items inherit **locus-independent** obligations:
+a semantic mandate, the roadmap items carried **locus-independent** obligations:
 whatever encodes the set-automaton trace, non-linear consistency, or structural
-premises, it must preserve every invariant of §5 — above all INV-3 (one atomic
+premises had to preserve every invariant of §5 — above all INV-3 (one atomic
 firing per redex), INV-4 (no partial-match states), and INV-13 (the same CLTS).
-The RhoNet model already reserves the channel kinds these items would use —
+Those items have **landed**. The set-automaton trace, non-linear consistency, and
+structural premises now execute in Rho on the reserved channel kinds —
 `RhoNetChannel::set_automaton_trace` (`sa:…`) and `RhoNetChannel::consistency`
-(`eq:…`) — so an in-Rho encoding is a change of realization behind the same
-invariants, not a change of semantics. The measurable prize the paper names for
-that work is condition **O1** (the symbol-once property), recovered by the optimal
-set-automaton scheme
+(`eq:…`) — a change of realization behind the same invariants, not a change of
+semantics. The measurable prize the paper named for that work, condition **O1**
+(the symbol-once property), is recovered by the compiled in-Rho set automaton
 ([OPTIMAL-CHANNEL-NAMING-2026](references.md#optimal-channel-naming-2026);
-[SET-AUTOMATON-MATCHING-2022](references.md#set-automaton-matching-2022)) — an
-efficiency property, invisible to the CLTS by Q2 and Q3.
+[SET-AUTOMATON-MATCHING-2022](references.md#set-automaton-matching-2022); why it is
+optimal is [21](21-set-automata-optimization-theory.md)) — an efficiency property,
+invisible to the CLTS by Q2 and Q3, and now proven to induce the same CLTS as the
+sound scheme (`whole_gslt_opcorr_over_optimal_matching`,
+[22](22-end-to-end-formal-verification.md)).
 
 The one boundary genuinely **outside** the paper is INV-14: semantic predicates
 over values. The paper's pure-rho fragment has no such predicates, so treating
@@ -341,8 +368,11 @@ that the invariants above do not constrain.
 - It **licenses** host-side (set-automaton) matching explicitly: the optimal and
   verbatim schemes "induce the same context-labelled transition system, so the
   choice is invisible to everything downstream."
-- Therefore **model b is faithful** (High confidence, `≈ 0.9`); items #2005-2007 are
-  **optimizations** that must preserve the §5 invariants, not semantic mandates.
+- Therefore **model b was faithful** (High confidence, `≈ 0.9`) as the host-matched
+  stepping-stone; items #2005-2007 were **optimizations** preserving the §5
+  invariants, not semantic mandates — and they have since **landed as model c**
+  (§4.1), the in-Rho set automaton that recovers O1 and is proven CLTS-equivalent
+  over the optimal matching.
 - The current lowering satisfies the structural, atomicity, freshness,
   persistence, reflection, equation, and total-or-reject invariants; the whole-⟦G⟧
   **finite-execution** `opcorr` bisimulation theorem (INV-13) is now landed as the

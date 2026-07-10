@@ -1,6 +1,6 @@
 # Concepts and Glossary
 
-Last updated: 2026-06-14
+Last updated: 2026-07-10
 
 This document defines the names, acronyms, and symbols used by the
 Rho-native MeTTaIL integration documents. A term is introduced here before it
@@ -71,6 +71,30 @@ is used formally elsewhere.
 | resting space | The RSpace state after evaluation reaches quiescence: stored data plus waiting continuations. |
 | replay log | A deterministic record of communication events used to replay nondeterministic schedules consistently. |
 
+## In-Rho Matching Campaign
+
+These terms are shared by documents [20](20-rholang-runtime-backend.md) through
+[26](26-in-rho-ac-family-reference.md), which document the campaign that moved
+rewrite *matching* (not only firing) onto the Rholang interpreter.
+
+| Term | Definition |
+|---|---|
+| set automaton | The compiled matcher that locates every redex by visiting each subject function symbol exactly once — the Erkens–Groote locate automaton ([SET-AUTOMATON-LOCATE-2021](references.md#set-automaton-locate-2021)), serialized into Rholang `for`-receives so the match runs as interpreter COMMs. |
+| spread | The in-Rho reflection of a whole subject term across per-location channels; `spread_term_par` publishes each node's head tag on its `loc:` channel and its collapse values on `col:` / `cap:`, so the automaton walks the subject by receiving. |
+| M-reflect | The compile-time reflection of a runtime category value into its canonical `Par` (the reflected-`EList` ABI), performed by the generated `reflect_category_fn`. |
+| reflected-`EList` ABI | The canonical `Par` encoding of a ground term, $`\llbracket f(t_1,\dots,t_n) \rrbracket = \mathtt{EList}[\underline{f}, \llbracket t_1 \rrbracket, \dots, \llbracket t_n \rrbracket]`$ — head tag first, then reflected children. |
+| interner | `PatternCompiler::intern`, the compile-time partial evaluator that collapses structurally-equal sub-patterns to a single `StateId`, computing the O1 / O3 quotient DAG whose size is inspection-order-independent and provably minimal. |
+| σ-receiver | The persistent Rholang receiver a rewrite lowers to: `for(σ₀,…,σ_{k-1}, out <= c){ out!(⟦R⟧σ) }`, binding the matched sub-terms plus the output channel and emitting the instantiated right-hand side in one COMM. |
+| `tc(K)` | The optimal channel name for a redex context `K` — the reflected, interned suspended automaton trace $`tc(K) = \ulcorner T_M(K) \urcorner = \ulcorner \delta^{*}(s_0, \mathrm{surf}(K)) \urcorner`$ ([OPTIMAL-CHANNEL-NAMING-2026](references.md#optimal-channel-naming-2026)). |
+| O1 / O2 / O3 | The three channel-naming optimality conditions — symbol-once, prune-preserves, and coarsest-sound — that the optimal set automaton satisfies and the two failing baselines do not ([21](21-set-automata-optimization-theory.md)). |
+| CLTS | Context-labelled transition system: the transition system whose labels are the minimal enabling contexts (location channels `c(ℓ)`), at which the north-star paper states its correctness criterion. |
+| opcorr | Operational correspondence — the paper's obligation that the CLTS of `⟦t⟧` in `⟦G⟧` is bisimilar to the rewrite transition system of `t` in `G`: each firing matched label-for-label, and conversely. |
+| barb | An observable of a process: readiness to communicate on a given channel. Weak barbed equivalence $`\approx`$ quotients internal $`\tau`$ steps and compares barbs. |
+| corrupted-σ probe | The decisive "replacement, not replay" test: corrupt the host report's $`\sigma`$ (leaving only the gate fields), run the MATCH path, and observe that the fired output is still correct because $`\sigma`$ is re-sourced from the in-Rho spread, not the report. |
+| rem:nonopt | The north-star paper's "non-optimality" remark: the optimal set-automaton scheme and the sound location scheme induce the *same* CLTS, so operational correspondence is indifferent to the choice. Discharged in Rocq by `InRhoSameCLTSWeakBisim.same_clts_weak_bisim`. |
+| SN / CR / NF | Strong normalization, Church-Rosser confluence, and normal form — proved for the in-Rho de-Bruijn substitution TRS, so β reduces to a unique de-Bruijn normal form in Rho. |
+| zero-admission | A Rocq corpus containing no `Axiom`, `Conjecture`, `Parameter`, `Admitted.`, or `admit`; every theorem's `Print Assumptions` reports "Closed under the global context". A Section `Variable` / `Hypothesis` discharged on `End` is a premise, not an admitted assumption. |
+
 ## Formal Relations and Symbols
 
 | Symbol | Meaning |
@@ -131,3 +155,18 @@ The Rho backend uses structured channel names to avoid collisions:
 The sentinel format matters. A free source name such as `out` may ground to a
 channel like `@"mtl:out"`, so the observation sentinel uses `@"mtl#out"` to stay
 outside that image.
+
+### In-Rho matching channels
+
+The in-Rho set-automaton matcher rendezvouses on a second channel family, keyed by
+subject location and channel kind (documents [20](20-rholang-runtime-backend.md),
+[25](25-in-rho-base-family-reference.md), [26](26-in-rho-ac-family-reference.md)):
+
+| Channel kind | Purpose |
+|---|---|
+| `loc:<path>` | Head-tag channel for the automaton's positional walk — one per subject node. |
+| `col:<path>` | A node's chain-collapse value, read once by the parent's fold. |
+| `cap:<path>` | A Var-leaf's capture-collapse value, read once by the binding state. |
+| `sa:<trace>` | A σ-receiver's accept / dispatch channel, keyed by the `tc(K)` set-automaton trace. |
+| `eq:<var>` | A non-linear consistency (name-equality) guard channel. |
+| `ac:<site>` | A site-keyed associative-commutative operand-bag carrier. |

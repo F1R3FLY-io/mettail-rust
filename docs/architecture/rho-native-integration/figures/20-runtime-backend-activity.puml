@@ -1,0 +1,40 @@
+@startuml
+' Figure 20-2: the full pipeline as a two-swimlane activity. The LEFT lane is MeTTaIL
+' compile time (partial evaluation into an installed Par); the RIGHT lane is f1r3node
+' runtime (reflect -> spread -> match -> fire -> congruence -> decode). The install gate is
+' fail-closed: a rule that cannot match+fire in Rho stops the install, never silently drops.
+skinparam backgroundColor #FEFEFE
+skinparam defaultFontName monospaced
+skinparam shadowing false
+skinparam activity {
+  BorderColor #4A5568
+  FontColor #1A202C
+  DiamondBorderColor #4A5568
+  DiamondFontColor #1A202C
+}
+
+title Figure 20-2 — Full pipeline: MeTTaIL compile-time partial evaluation | f1r3node runtime COMMs
+
+|#F4F4F4|MeTTaIL compile time|
+start
+:parse language! <latex>\to</latex> LanguageDef;
+:Dovetail saturate <latex>\to</latex> run report\n(exact keys, completeness flag);
+:intern set automaton\nPatternCompiler::intern — O1/O3 quotient\n(set_automaton.rs:140);
+:serialize Layer 1 matching + Layer 2 firing\n+ Layer 3 congruence (subst TRS appended once);
+if (installed_program_par == Ok?\nrho_net_lower.rs:404) then (Ok)
+  :emit installed Rho program\nrhoapi::Par;
+else (Err: lowering / unmaterialized rule)
+  :FAIL CLOSED — reject install\n(never silently dropped);
+  kill
+endif
+
+|#C9E7D4|f1r3node runtime|
+:M-reflect subject term\nreflect_category_fn (rho_invocation.rs:519);
+:spread <latex>[\![t]\!]</latex> on loc:/col:/cap: channels\nspread_term_par (rho_net_lower.rs:2832);
+:LOCATE + MATCH in Rho — sa: <latex>\tau</latex> COMMs\ncapture <latex>\sigma = [s_0,\dots,s_{k-1}]</latex>;
+:FIRE <latex>\sigma</latex>-receiver\n<latex>\mathtt{out}\,!\,([\![R]\!]\sigma)</latex> — one visible COMM;
+:CONGRUENCE cascade (if RHS needs it)\nsubst TRS <latex>\tau</latex> COMMs <latex>\to</latex> normal form;
+:decode @OUT EList\ndecode_reflected_term (run.rs:294);
+:RuntimeObservationValue;
+stop
+@enduml

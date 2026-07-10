@@ -1,0 +1,62 @@
+@startuml
+' Figure 21-4: SYMBOL-ONCE realized in Rho. The subject App(Lam(body), arg) is spread as a
+' flat parallel composition of ground sends — each node publishes its head tag ONCE on its
+' deterministic location channel. Because the spread is single-shot linear, each head tag is
+' consumed by EXACTLY ONE for-receive (one interned sa:-state), so no symbol is re-inspected.
+' The sa: COMMs are internal (tau); only the final rule firing is a visible COMM. The mechanism
+' itself is owned by docs 15/20 — this figure shows only the symbol-once accounting (Theorem
+' thm:symbol-once, optimal-channels.tex:457).
+skinparam backgroundColor #FEFEFE
+skinparam defaultFontName monospaced
+skinparam shadowing false
+skinparam sequence {
+  ArrowColor #4A5568
+  LifeLineBorderColor #4A5568
+  ParticipantBorderColor #4A5568
+  ParticipantFontColor #1A202C
+  ParticipantBackgroundColor #E8F0FE
+  ActorBorderColor #4A5568
+}
+skinparam ArrowColor #4A5568
+title Figure 21-4 — symbol-once in Rho: each spread head tag is consumed by exactly one for-receive\nsubject  App(Lam(body), arg)  reduces to the reduct, sigma = [body, arg]
+
+participant "spread <latex>[\![ t ]\!]</latex>\n(ground sends)" as SUB #EDE7F6
+participant "sa: state <latex>s_0</latex>\n<latex>\mathrm{for}(h \Leftarrow c(\epsilon))</latex>" as S0 #C3DAF7
+participant "sa: state <latex>s_{app}</latex>\n<latex>\mathrm{for}(h \Leftarrow c(1))</latex>" as SAPP #C3DAF7
+participant "<latex>\sigma</latex>-receiver\n(rule channel)" as SIG #B7E4C7
+participant "OUT" as OUT #9FD3B4
+
+note over SUB #FCF3D0
+  Each node publishes ITS head tag exactly once:
+  <latex>c(\epsilon)\,!\,(\mathrm{app})\ \ |\ \ c(1)\,!\,(\mathrm{lam})\ \ |\ \ \ldots</latex>
+end note
+
+SUB -[#2B6CB0]->> S0 : <latex>c(\epsilon)\,!\,(\mathrm{app})</latex>
+activate S0
+note right of S0 #E6F4EA
+  <latex>\tau</latex> (internal): match app,
+  advance to child 1   <latex>[\,\delta(s_0,\mathrm{app})\,]</latex>
+end note
+S0 -[#2B6CB0]->> SAPP : advance frontier to position 1
+deactivate S0
+
+activate SAPP
+SUB -[#805AD5]->> SAPP : <latex>c(1)\,!\,(\mathrm{lam})</latex>
+note right of SAPP #E6F4EA
+  <latex>\tau</latex> (internal): match lam,
+  goal completes   <latex>[\,\eta(s_{app},\mathrm{lam})\,]</latex>
+end note
+SAPP -[#2F855A]->> SIG : <latex>\mathrm{accept}\,!\,(\sigma),\ \ \sigma=[\mathrm{body},\mathrm{arg}]</latex>
+deactivate SAPP
+
+activate SIG
+SIG -[#C05621]->> OUT : <latex>[\![ R ]\!]\sigma</latex>   (the single VISIBLE COMM)
+deactivate SIG
+
+note over S0, SAPP #FFF5F5
+  |= subject symbol |= for-receives that consume it |
+  | app | exactly 1  (state s0) |
+  | lam | exactly 1  (state s_app) |
+  Total surface symbols consumed = total for-receives fired  <latex>\Rightarrow</latex>  O1.
+end note
+@enduml

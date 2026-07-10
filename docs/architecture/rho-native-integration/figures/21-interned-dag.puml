@@ -1,0 +1,46 @@
+@startuml
+' Figure 21-2: PatternCompiler::intern (dovetail/src/set_automaton.rs:140) hash-conses
+' every sub-pattern by its StateKey (Var(name) | App{op, [StateId]}), so two structurally
+' EQUAL sub-patterns collapse to ONE StateId. Here wrap(pair(x,y)) [entry 0] and pair(x,y)
+' [entry 1] SHARE the interned pair-node S2. This is the compile-time O1/O3 quotient; it is
+' the test `view_shares_one_state_for_structurally_equal_subpatterns` (set_automaton.rs:479).
+skinparam backgroundColor #FEFEFE
+skinparam defaultFontName monospaced
+skinparam shadowing false
+skinparam rectangle {
+  BorderColor #4A5568
+  FontColor #1A202C
+}
+skinparam ArrowColor #4A5568
+top to bottom direction
+title Figure 21-2 — the interned pattern DAG: structurally-equal sub-patterns share one StateId\nPatternCompiler::intern (set_automaton.rs:140) — the compile-time O1/O3 quotient tc(·)
+
+rectangle "entry 0   PatternId(0)\n<latex>\mathrm{wrap}(\mathrm{pair}(x,y))</latex>" as E0 #EDE7F6
+rectangle "entry 1   PatternId(1)\n<latex>\mathrm{pair}(x,y)</latex>" as E1 #EDE7F6
+
+rectangle "<latex>S_3 : \mathrm{App}\{\,\mathrm{wrap},[S_2]\,\}</latex>" as S3 #C3DAF7
+rectangle "<latex>S_2 : \mathrm{App}\{\,\mathrm{pair},[S_0,S_1]\,\}</latex>\nSHARED — interned once" as S2 #9FD3B4
+rectangle "<latex>S_0 : \mathrm{Var}(x)</latex>" as S0 #C6E0F5
+rectangle "<latex>S_1 : \mathrm{Var}(y)</latex>" as S1 #C6E0F5
+
+E0 -[#805AD5]-> S3 : root_state
+E1 -[#805AD5]-> S2 : root_state
+S3 -[#2B6CB0]-> S2 : arg 0
+S2 -[#2F855A]-> S0 : arg 0
+S2 -[#2F855A]-> S1 : arg 1
+
+note right of S2 #FCF3D0
+  Both entries reach the SAME node S2.
+  state_count counts DISTINCT sub-patterns,
+  not pattern-tree nodes:  4 states, not 5.
+  The in-Rho sa:-receiver keyed by StateId S2
+  is therefore emitted ONCE and shared —
+  the [optimal] scheme's channel sharing.
+end note
+
+legend bottom
+  Interned-DAG size = number of DISTINCT sub-patterns, INDEPENDENT of the inspection order L.
+  Diagonal worst case (n LHSs over n-ary g) interns to <latex>2n+1</latex> states — LINEAR, not <latex>\Theta(n^2)</latex>.
+  (languages/tests/set_automaton_size_optimal.rs)
+endlegend
+@enduml

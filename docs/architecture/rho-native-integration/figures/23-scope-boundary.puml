@@ -1,0 +1,61 @@
+@startuml
+' Figure 23-3: the in-scope / boundary / out-of-scope package map. What the coverage claim
+' asserts (matches AND fires in Rho), what is a delegated VALUE boundary (structural dispatch in
+' Rho, value off-machine by construction), and what is NOT claimed (off-machine by construction,
+' divergent executions, arbitrary host Rholang).
+skinparam backgroundColor #FEFEFE
+skinparam defaultFontName monospaced
+skinparam shadowing false
+skinparam rectangle {
+  BorderColor #4A5568
+  FontColor #1A202C
+}
+skinparam package {
+  BorderColor #4A5568
+  FontColor #1A202C
+}
+
+title Figure 23-3 — scope boundary: in-Rho realization vs delegated value vs off-machine-by-construction
+
+package "IN SCOPE — matches AND fires in Rho (the coverage claim of this doc)" #E7F5EC {
+  rectangle "base   |   non-linear eq:" as A #BCE3C9
+  rectangle "AC linear   |   AC with-rest   |   AC non-linear" as B #BCE3C9
+  rectangle "AC4 Set   |   AC4 Map   |   AC4 Zip" as C #BCE3C9
+  rectangle "contextual atomic join   |   ambient open" as D #BCE3C9
+  rectangle "ambient in/out (depth-2 nested)" as E #BCE3C9
+  rectangle "<b>binder-<latex>\beta</latex></b>: match + capture-avoiding\nSUBSTITUTION, fully in Rho (subst TRS cascade)" as F #93D3AA
+  note bottom of F #E6F4EA
+    Capstone: whole-<latex>[\![ G ]\!]</latex> operational correspondence over
+    O1-optimal matching (WholeGsltInRhoOpCorrespondence.v),
+    lifted to finite-trace barb equivalence.
+  end note
+}
+
+package "BOUNDARY — structural DISPATCH in Rho, VALUE delegated (trusted, off-machine by construction)" #FEF3C7 {
+  rectangle "<b>native system process</b>\n<size:10>PowInt / factorial / BigInt: the automaton LOCATES the App</size>\n<size:10>head in Rho; the trusted host handler supplies the VALUE</size>\n<size:10>(the contractum).  NativeSystemProcessBoundary.v</size>" as N #FDE68A
+  rectangle "<b>RhoCalc Comm reduct</b>\n<size:10>the channel match is in Rho; the substitution reduct</size>\n<size:10>cont[Q/y] is the host-computed contractum (CommRuleFiring.v).</size>\n<size:10>Contrast binder-<latex>\beta</latex>, whose substitution IS in Rho.</size>" as CM #FDE68A
+}
+
+package "OUT OF SCOPE — NOT claimed" #FDE7E7 {
+  rectangle "<b>semantic predicates (guards)</b>\n<size:10>EBA / SFT / behavioral predicates classified off-machine</size>\n<size:10>AT COMPILE by construction; not animated as COMMs.</size>" as SP #F6B5BC
+  rectangle "<b>divergent / non-terminating executions</b>\n<size:10>coverage is over FINITE traces; a productive self-cycle has</size>\n<size:10>more derivations than any finite list (bounded cycle cuts</size>\n<size:10>are reported explicitly).</size>" as DV #F6B5BC
+  rectangle "<b>arbitrary user Rholang mixed in</b>\n<size:10>full abstraction for all Rho contexts is NOT claimed.</size>" as UR #F6B5BC
+}
+
+A -[hidden]-> B
+B -[hidden]-> C
+C -[hidden]-> D
+D -[hidden]-> E
+E -[hidden]-> F
+N -[hidden]-> CM
+SP -[hidden]-> DV
+DV -[hidden]-> UR
+
+legend right
+|= Colour |= Boundary |
+|<#BCE3C9> green | in scope: matches AND fires in Rho |
+|<#93D3AA> dark green | binder-<latex>\beta</latex> + capstone opcorr |
+|<#FDE68A> amber | delegated VALUE boundary (dispatch in Rho, value off-machine) |
+|<#F6B5BC> red | out of scope: off-machine by construction / divergent / host Rholang |
+endlegend
+@enduml

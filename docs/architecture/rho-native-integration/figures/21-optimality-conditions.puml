@@ -1,0 +1,23 @@
+@startuml
+' Figure 21-3: the three optimality conditions O1/O2/O3 (optimal-channels.tex:307-318)
+' across the two failing baselines and the set-automaton channel name tc(K). O3 is split
+' into its two facets — SOUND (never merge contexts that fire different rules) and COARSEST
+' (share whenever firing-equivalent). tc(K) is the UNIQUE all-green row. Creole cells must
+' stay single-line, and PlantUML allows ONE legend, so the key and sources trail the table
+' inside the same legend block; per-cell rationale lives in the verdict column and the prose.
+skinparam backgroundColor #FEFEFE
+skinparam defaultFontName monospaced
+skinparam shadowing false
+title Figure 21-3 — optimality scorecard:  channel naming  ×  { O1 symbol-once, O2 prune-preserves, O3 sound·coarsest }\ntc(K) is the unique naming that passes every condition
+
+legend center
+|=  channel name |=  O1 symbol-once |=  O2 prune-preserves |=  O3 sound |=  O3 coarsest |=  net verdict |
+| <latex>\ulcorner K \urcorner</latex>  ( verbatim context ) |<#FEB2B2> ✗ |<#FBD38D> ◐ |<#B7E4C7> ✓ |<#FEB2B2> ✗ | over-refined → re-inspects shared symbols, duplicates for-receives |
+| <latex>\ulcorner \mathrm{hd}(K) \urcorner</latex>  ( head only ) |<#B7E4C7> ✓ |<#FBD38D> ◐ |<#FEB2B2> ✗ |<#B7E4C7> ✓ | too coarse → merges distinct-firing contexts, UNSOUND |
+| <latex>tc(K)=\ulcorner T_M(K)\urcorner</latex>  ( suspended trace ) |<#B7E4C7> ✓ |<#B7E4C7> ✓ |<#B7E4C7> ✓ |<#B7E4C7> ✓ | symbol-once AND coarsest-sound — optimal |
+
+  ✓ satisfied      ◐ holds only vacuously (monolithic — no positional sub-channels to share or preserve)      ✗ violated
+  Sources — O1: thm:symbol-once (optimal-channels.tex:457) · positions_count (SymbolOnceInjective.v:71)
+  O2: thm:prune-preserves (:489)    O3: thm:coarsest (:519) · tc_sound (TcChannelNamingQuotient.v:63), hd_violates_O3 (:98)
+endlegend
+@enduml

@@ -74,9 +74,27 @@ anchor_exists() {
 }
 
 printf 'checking draft/proof-hole markers...\n'
-if rg -n '\b(TODO|FIXME|TBD|placeholder|stub|hack|temporary|deferred|future work|not implemented|not yet|pending|unimplemented|maybe|probably)\b|I think|Conjecture|Axiom|Admitted\.' "${suite_files[@]}"; then
+if rg -n '\b(TODO|FIXME|TBD|placeholder|stub|hack|temporary|deferred|future work|not implemented|not yet|pending|unimplemented|maybe|probably)\b|I think' "${suite_files[@]}"; then
   fail "draft/proof-hole marker found"
 fi
+
+# Rocq proof-hole vernacular (Axiom / Conjecture / Admitted.) is banned as a real
+# draft marker, but the FV docs legitimately NAME these commands -- always either in
+# inline code (`Axiom`) or negated prose ("not an Axiom", "not Axioms"). Strip those
+# two legitimate forms, then flag any surviving bare mention.
+printf 'checking Rocq proof-hole vernacular (named/negated FV mentions allowed)...\n'
+awk '
+  {
+    line = $0
+    gsub(/`[^`]*`/, "", line)
+    gsub(/[Nn]ot[[:space:]]+(an?[[:space:]]+)?(Axiom|Conjecture)s?/, "", line)
+    if (line ~ /(^|[^[:alnum:]_])(Axiom|Conjecture)([^[:alnum:]_]|$)/ || line ~ /Admitted\./) {
+      print FILENAME ":" FNR ":" $0
+      bad = 1
+    }
+  }
+  END { exit bad ? 1 : 0 }
+' "${suite_files[@]}" || fail "bare Rocq proof-hole vernacular (Axiom/Conjecture/Admitted. outside inline code or negation)"
 
 printf 'checking index incompletion markers...\n'
 if rg -n -i '\b(TODO|FIXME|TBD|placeholder|stub|hack|temporary|deferred|future work|not implemented|not yet|pending|unimplemented|maybe|probably|pragmatic|technical debt)\b|I think' "$root_readme" "$root_index" "$architecture_overview"; then
@@ -85,7 +103,7 @@ fi
 
 printf 'checking fenced block balance...\n'
 for file in "${all_files[@]}"; do
-  fence_count="$(rg -c '^```' "$file" || true)"
+  fence_count="$(rg -c '^\s*```' "$file" || true)"
   fence_count="${fence_count:-0}"
   if (( fence_count % 2 != 0 )); then
     fail "unbalanced fenced code block in $file"
@@ -178,13 +196,35 @@ done < <(find "$figures_dir" -type f -name '*.dot' | sort)
 
 printf 'checking math-symbol literal formatting...\n'
 awk '
-  /^```/ { in_fence = !in_fence; next }
+  /^[[:space:]]*```/ { in_fence = !in_fence; next }
   !in_fence && /[μΔρσ⊆⇒∀∃≈→∧∨∪∖∈≡⊗⊕]|0̄|₀|ᵢ|ᴰ|ᴿ/ && $0 !~ /`/ {
     print FILENAME ":" FNR ":" $0
     bad = 1
   }
   END { exit bad ? 1 : 0 }
 ' "${suite_files[@]}" || fail "math symbol outside code literal"
+
+# Math delimiter conformance (GitHub-flavored Markdown): inline math must be the
+# code-span-protected form  $`X`$  (dollar, backtick span, dollar), and display math
+# must be a ```math fenced block. Bare $X$ / $$...$$ are forbidden -- GitHub's
+# CommonMark pass strips backslash escapes before MathJax, and a backtick-FIRST
+# `$X$` renders as an inert code span. Strip the conformant inline form and all code
+# spans (which also covers a literal dollar written as inline code), then flag any
+# surviving dollar sign.
+printf 'checking math delimiter conformance (inline dollar-backtick form; no bare/double dollar)...\n'
+awk '
+  /^[[:space:]]*```/ { in_fence = !in_fence; next }
+  !in_fence {
+    line = $0
+    gsub(/\$`[^`]+`\$/, "", line)
+    gsub(/`[^`]*`/, "", line)
+    if (line ~ /\$/) {
+      print FILENAME ":" FNR ":" $0
+      bad = 1
+    }
+  }
+  END { exit bad ? 1 : 0 }
+' "${suite_files[@]}" || fail "bare or double dollar math delimiter found (use inline dollar-backtick form or a math fence)"
 
 printf 'checking relative Markdown links...\n'
 link_errors=0
@@ -279,7 +319,7 @@ if (( ${#proposals_files[@]} > 0 )); then
   fi
 
   for file in "${proposals_files[@]}"; do
-    fence_count="$(rg -c '^```' "$file" || true)"
+    fence_count="$(rg -c '^\s*```' "$file" || true)"
     fence_count="${fence_count:-0}"
     if (( fence_count % 2 != 0 )); then
       fail "unbalanced fenced code block in $file"
@@ -287,7 +327,7 @@ if (( ${#proposals_files[@]} > 0 )); then
   done
 
   awk '
-    /^```/ { in_fence = !in_fence; next }
+    /^[[:space:]]*```/ { in_fence = !in_fence; next }
     !in_fence && /[μΔρσ⊆⇒∀∃≈→∧∨∪∖∈≡⊗⊕]|0̄|₀|ᵢ|ᴰ|ᴿ/ && $0 !~ /`/ {
       print FILENAME ":" FNR ":" $0
       bad = 1

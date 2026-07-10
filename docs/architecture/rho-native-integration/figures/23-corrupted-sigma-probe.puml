@@ -1,0 +1,66 @@
+@startuml
+' Figure 23-2: the corrupted-sigma probe as a sequence. The decisive "replacement, not duplicate"
+' evidence: corrupt the Dovetail report's sigma (the redex locator) leaving only the GATE fields
+' valid, run the MATCH path, and observe the CORRECT reduct re-sourced from the SPREAD of the
+' structurally reflected subject. Worked base redex: Swap(A, B) ~> Pair(B, A).
+skinparam backgroundColor #FEFEFE
+skinparam defaultFontName monospaced
+skinparam shadowing false
+skinparam sequenceMessageAlign center
+skinparam sequence {
+  ArrowColor #4A5568
+  LifeLineBorderColor #7A7A7A
+  LifeLineBackgroundColor #F4F4F4
+  ParticipantBorderColor #7A7A7A
+  ParticipantFontColor #202020
+}
+
+title Figure 23-2 — the corrupted-<latex>\sigma</latex> probe: corrupt the report, still-correct OUT re-sourced from the spread\nWorked redex  Swap(A, B) ~> Pair(B, A)   (base; every family runs the same shape)
+
+participant "test\nharness" as T #EBF3FE
+participant "Dovetail report\n(compile-time)" as R #FDECD9
+participant "MATCH invocation\nrho_net_match_invocation_\nfrom_dovetail_to" as M #E8F0FE
+participant "f1r3node reducer\n(RSpace, in Rho)" as RHO #E6F4EA
+participant "@OUT\n(observed reduct)" as OUT #FEF7E0
+
+T -> R : dovetail_report_for(subject)
+activate R
+R --> T : report { rewrite_justifications: [ { rule_label, <b>sigma</b>, <b>contractum</b> } ], is_complete }
+deactivate R
+
+note over T, R #FDE7D3
+  STEP 1 — corrupt the report. Overwrite <b>sigma</b> (a redex LOCATOR) and, for binder-<latex>\beta</latex>,
+  <b>contractum</b> (the retired host reduct) to NONSENSE. Leave ONLY the GATE fields
+  valid: <b>rule_label</b> + <b>is_complete</b> (the two fields the MATCH path reads).
+end note
+
+T -[#C05621]> T : sigma := NONSENSE ;  contractum := NONSENSE\n(rule_label, is_complete kept valid)
+
+T -> M : rho_net_match_invocation_from_dovetail_to(subject, corrupted_report, "OUT")
+activate M
+M -> M : gate reads ONLY rule_label + is_complete\nM-reflect the SUBJECT structurally\n(NOT the report sigma)
+M --> T : invocation.call  =  network(automaton) || spread(subject)
+deactivate M
+
+T -> RHO : run(call), observe OUT
+activate RHO
+RHO -> RHO : spread subject on loc:/ac: ;\nautomaton LOCATES redex, CAPTURES <latex>\sigma'</latex> from the spread ;\nfire the sigma-receiver COMM
+RHO -[#2F855A]-> OUT : OUT ! ( <b>Pair(B, A)</b> )
+deactivate RHO
+
+note over RHO, OUT #E6F4EA
+  STEP 2 — observe. OUT = <b>Pair(B, A)</b>, re-sourced from the spread of the reflected
+  subject. Had the path read the report <latex>\sigma</latex>, OUT would carry the NONSENSE
+  (e.g. Pair(Pair(B,B), Pair(A,A))). It does not:  the reduct is the automaton's
+  in-Rho capture + the reducer's firing, a genuine REPLACEMENT of the host matcher.
+end note
+
+T -[#2F855A]> OUT : assert OUT == Pair(B, A)
+T -[#C05621]> OUT : assert OUT != NONSENSE  (report <latex>\sigma</latex> / contractum demonstrably unused)
+
+legend right
+|= Colour |= Meaning |
+|<#C05621> orange | corruption / negative assertion (report input made unusable) |
+|<#2F855A> green | correct reduct re-sourced from the spread + positive assertion |
+endlegend
+@enduml

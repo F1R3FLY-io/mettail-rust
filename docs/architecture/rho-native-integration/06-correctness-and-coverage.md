@@ -1,6 +1,16 @@
 # Correctness and Coverage
 
-Last updated: 2026-06-14
+> **Superseded (host-matched era).** This document states the prose correctness
+> argument from when rewrite *matching* ran on the host (the Dovetail set automaton)
+> while firing ran in-Rho. The **current** correctness argument for the landed
+> in-Rho realization — matching AND firing both on the Rholang interpreter — is
+> [22](22-end-to-end-formal-verification.md) (the end-to-end machine-checked
+> correspondence, every rewrite family proven as a zero-admission Rocq theorem) and
+> [23](23-coverage-and-correctness.md) (the coverage matrix and empirical
+> correctness). See [20](20-rholang-runtime-backend.md) for how it runs. Retained
+> for historical architecture context.
+
+Last updated: 2026-07-10
 
 This document states the correctness argument for the Rho-native MeTTaIL
 integration. The proofs here are mathematical prose proofs for the architecture.

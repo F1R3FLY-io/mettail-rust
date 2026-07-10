@@ -1,0 +1,69 @@
+@startuml
+title In-Rho Campaign — Artifact Chain (requirement -> code -> test -> FV -> doc)
+skinparam componentStyle rectangle
+skinparam shadowing false
+skinparam defaultTextAlignment center
+skinparam packageStyle rectangle
+skinparam ArrowFontColor #263238
+skinparam ArrowColor #37474F
+
+legend top left
+  <b>Traceability colours</b>
+  |= class |= colour |
+  | requirement (north-star) | <#FFD54F> gold |
+  | code artifact | <#64B5F6> blue |
+  | runtime test (behavioural proof) | <#81C784> green |
+  | FV (Rocq, zero-admission) | <#BA68C8> violet |
+  | capstone convergence | <#FF8A65> orange |
+  | doc | <#B0BEC5> grey |
+endlegend
+
+package "Requirement (north-star)" as REQ #FFF8E1 {
+  component "every non-semantic-predicate\nrewrite family MATCHES + FIRES\nas a COMM on the interpreter" as NS #FFD54F
+  component "<latex>O_1</latex>-optimal in-Rho matching\n(set-automaton papers)" as OPT #FFD54F
+  component "faithful to knotted-topoi CLTS\n(opcorr)" as FTH #FFD54F
+}
+
+package "Code artifact" as CODE #E3F2FD {
+  component "rholang-codegen\nrho_net_lower.rs\nrho_net_subst_trs.rs" as CG #64B5F6
+  component "macros\nrho_invocation.rs\n(match gate + spread default)" as MAC #64B5F6
+  component "rholang-runtime\nbackend.rs / run.rs" as RTC #64B5F6
+}
+
+package "Runtime test (behavioural proof)" as TEST #E8F5E9 {
+  component "firing-as-COMM\nX_fires_as_a_comm_on_the_reducer" as FIRE #81C784
+  component "corrupted-<latex>\sigma</latex> probe\nX_not_the_report" as PROBE #81C784
+  component "size-optimality lock\nset_automaton_size_optimal.rs" as SIZE #81C784
+}
+
+package "FV (Rocq, zero-admission)" as FVP #F3E5F5 {
+  component "matching (advanced_automata)\nInRhoMatchPositional\nSymbolOnceInjective\nTcChannelNamingQuotient\nInRhoSameCLTSWeakBisim" as FVM #BA68C8
+  component "firing (rho_bridge)\nLinearCommCorrespondence\nContextualAtomicJoinPlugging\nAmbientOpenFiring / AmbientInOutFiring\nDeBruijnSubstTRS" as FVF #BA68C8
+  component "CAPSTONE\nWholeGsltInRhoOpCorrespondence\n(+ OptimalViaSameClts)" as CAP #FF8A65
+}
+
+package "Doc" as DOCP #ECEFF1 {
+  component "20 HOW - 21 WHY - 22 PROOF\n23 WHAT - 24 audit - 25/26 refs" as DOCS #B0BEC5
+}
+
+NS  -[#1565C0]-> CG   : lower
+NS  -[#1565C0]-> MAC  : reflect + spread
+OPT -[#1565C0]-> CG   : intern <latex>tc(K)</latex>
+RTC -[#1565C0]-> MAC  : install + invoke
+
+CG    -[#2E7D32]-> FIRE  : run on reducer
+MAC   -[#2E7D32]-> PROBE : gate on report,\nsource from spread
+OPT   -[#2E7D32]-> SIZE  : <latex>|Q| = O(n)</latex>
+
+FIRE  -[#7B1FA2]-> FVF : one COMM
+PROBE -[#7B1FA2]-> FVM : <latex>\sigma</latex> from automaton
+SIZE  -[#7B1FA2]-> FVM : <latex>L</latex>-independent DAG
+
+FVM -[#E64A19]-> CAP : matching arms + <latex>\tau</latex>-bisim (iii)
+FVF -[#E64A19]-> CAP : 7 family firing arms
+FTH -[#E64A19]-> CAP : same CLTS
+
+CAP -[#455A64]-> DOCS : whole-<latex>[\![G]\!]</latex> opcorr
+FVM -[#455A64]-> DOCS
+FVF -[#455A64]-> DOCS
+@enduml

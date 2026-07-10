@@ -1,0 +1,48 @@
+@startuml
+' Figure 20-4: one rewrite firing as a metered COMM cascade on the host reducer. Generic
+' over the rule families: the VISIBLE fire is ONE COMM; the congruence cascade (only when
+' the RHS needs substitution congruence) is a run of internal tau COMMs; every COMM is
+' metered by the interpreter's own cost accounting. The beta-substitution depth is in doc 19.
+skinparam backgroundColor #FEFEFE
+skinparam defaultFontName monospaced
+skinparam shadowing false
+skinparam sequenceMessageAlign center
+skinparam sequence {
+  ArrowColor #4A5568
+  LifeLineBorderColor #7A7A7A
+  LifeLineBackgroundColor #F4F4F4
+  ParticipantBorderColor #7A7A7A
+  ParticipantFontColor #202020
+}
+
+title Figure 20-4 — One rewrite fires as a metered COMM cascade\nvisible fire = ONE COMM; congruence cascade = <latex>\tau</latex>; every COMM charges phlogiston
+
+participant "set automaton\n(match, in Rho)" as SA #C6E0F5
+participant "<latex>\sigma</latex>-receiver\n(firing)" as SIG #FDE8D5
+participant "congruence receiver(s)\ne-graph closed at compile;\nsubst TRS at runtime" as CON #E6DBF2
+participant "RSpace + cost meter\n(f1r3node)" as RS #A7D8B6
+participant "@OUT\n(observed reduct)" as OUT #FEF7E0
+
+group <latex>\tau^{*}</latex> prefix — reflect + spread + locate (internal)
+  SA -> RS : produce loc:/cap: head tags (spread <latex>[\![t]\!]</latex>)
+  RS --> SA : consume, capture <latex>\sigma</latex>  (sa: <latex>\tau</latex> COMMs)
+end
+
+SA -[#C05621]-> SIG : <b>accept COMM — the ONE visible fire</b>
+RS -[#2F855A]-> RS : charge send/receive/match cost (phlo)
+
+group <latex>\tau</latex> cascade — congruence (only if the RHS needs substitution)
+  SIG -> CON : <latex>[\![R]\!]\sigma</latex> requires substitution congruence
+  CON -> RS : reserved-channel COMMs (subst TRS)
+  RS --> CON : each COMM charges phlo
+  CON --> SIG : normal-form subterms rejoin (atomic join)
+end
+
+SIG -[#2F855A]-> OUT : <latex>\mathtt{out}\,!\,([\![R]\!]\sigma)</latex> — the reduct
+note over RS, OUT #E6F4EA
+  Metered by construction: every COMM passes through the interpreter's
+  cost accounting — no manual hook, no unmetered host pre-computation.
+  Tests set Cost::unsafe_max (run.rs:458), so metering is OFF while they
+  assert functional results. <latex>\beta</latex>-substitution depth: doc 19.
+end note
+@enduml

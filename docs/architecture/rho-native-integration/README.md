@@ -1,6 +1,6 @@
 # Rho-Native MeTTaIL Integration
 
-Last updated: 2026-06-14
+Last updated: 2026-07-10
 
 This documentation explains how MeTTaIL, Dovetail, Rholang, F1r3node, RSpace,
 and the Rho machine fit together.
@@ -73,6 +73,17 @@ For reviewers checking claims and citations:
 1. [Requirements Traceability](00-requirements-traceability.md)
 2. [Correctness and Coverage](06-correctness-and-coverage.md)
 3. [References](references.md)
+
+For the in-Rho matching campaign (how matching AND firing both moved onto the interpreter):
+
+1. [Rholang Runtime Backend](20-rholang-runtime-backend.md) — how the whole backend runs
+2. [In-Rho Base-Family Reference](25-in-rho-base-family-reference.md) — the base family, reconstruction-grade
+3. [In-Rho AC-Family Reference](26-in-rho-ac-family-reference.md) — the associative-commutative family
+4. [In-Rho Binder Beta-Substitution](19-in-rho-binder-beta-substitution.md) — the binder-β family
+5. [Set-Automata Optimization Theory](21-set-automata-optimization-theory.md) — why it is optimal
+6. [End-to-End Formal Verification](22-end-to-end-formal-verification.md) — the QED proofs
+7. [Coverage and Correctness](23-coverage-and-correctness.md) — what is covered
+8. [In-Rho Completion Audit](24-in-rho-completion-audit.md) — the closing audit
 
 ## Cohesive Reading Model
 
@@ -219,13 +230,20 @@ runtime values are normalized AST artifacts, and the executable form is
 | [10 — Adaptive Evaluation Model](10-adaptive-evaluation-model.md) | When does a reduction run sequentially vs trampoline, and how does the Tier-3 held-fold contract close the boundary? |
 | [11 — Reactive COMM Stepper](11-reactive-comm-stepper.md) | How does `step` single-step COMM reductions on the Rho machine, lock-free and zero-cost when off? |
 | [12 — Runtime Invocation Migration](12-runtime-invocation-migration.md) | How do downstream crates migrate from the legacy `RhoBackendInvocation` constructors to the `RhoMachineInvocation` / `RhoBackendInvocation` split? |
-| [13 — Knotted-Topoi Operational Invariants](13-knotted-topoi-operational-invariants.md) | Which operational invariants does the north-star paper require, and is host-side matching plus Rho injection a faithful realization? |
+| [13 — Knotted-Topoi Operational Invariants](13-knotted-topoi-operational-invariants.md) | Which operational invariants does the north-star paper require, why host-side matching was a faithful stepping-stone, and how the in-Rho optimization (now landed) discharges the same invariants? |
 | [14 — Completion Audit](14-completion-audit.md) | The final completion audit (plan #1956 Epic 1 #2078): change classification (#1970) + per-epic requirement-to-evidence matrix (#1972/#1973), verifying the persistent goal against current code. |
 | [15 — In-Rho Set-Automaton Matching Integration](15-in-rho-set-automaton-matching.md) | How is Greg Meredith's set-automaton matching integration finished — compiling the set automaton into Rho for O1-optimal in-Rho matching, with every non-semantic-predicate rewrite firing as a COMM? Authored one campaign stage per section (Stage 0 firing driver; Stage 1 matching). |
 | [16 — In-Rho Matching: Verification Plan](16-in-rho-verification-plan.md) | What is the end-to-end formal-verification strategy for the in-Rho matching — the Rocq-first obligations, the load-bearing rem:nonopt discharge chain, the tool fit, and what is proven vs outstanding? |
 | [17 — Stage 3: Production Wiring](17-stage-3-production-wiring.md) | How does the derived in-Rho matching ruleset become a language's default backend — the match gate, the redex/subject reconstruction, and the end-to-end match + fire on the live reducer? |
 | [18 — In-Rho AC Matching](18-in-rho-ac-matching.md) | How are associative-commutative operands (HashBag par-soups) matched ORDER-INDEPENDENTLY on the interpreter — the process-soup carrier (Scheme B), the connective pattern, the `AcRewrite` un-skip + collection-kind resolution, the injection, and the five zero-admission AC theorems? |
 | [19 — In-Rho Binder Beta-Substitution](19-in-rho-binder-beta-substitution.md) | How does the lambda-calculus GSLT's beta rewrite fire FULLY in Rho — the MATCH and the capture-avoiding SUBSTITUTION alike — as a metered cascade of COMMs on the reducer? The de-Bruijn substitution TRS (five reserved receivers), the C1/C2/C3 corrections, Driver-B, the honest cost, the corrupted-report empirical proof, and the zero-admission strong-normalization / confluence / normal-form + weak-bisimulation suite. |
+| [20 — Rholang Runtime Backend](20-rholang-runtime-backend.md) | How does the whole backend run — the three layers (matching / firing / congruence), the reflected-`EList` ABI, the `loc:`/`col:`/`cap:`/`sa:`/`eq:`/`ac:` channel scheme, the two paths, the fail-closed install gate, and metering — all on F1r3node's RhoRuntime / RSpace? |
+| [21 — Set-Automata Optimization Theory](21-set-automata-optimization-theory.md) | Why is the in-Rho matching optimal — the Erkens–Groote locate automaton, the O1 / O2 / O3 conditions, Meredith's $`tc(K)`$ channel naming, and the interner as a compile-time partial evaluator computing the size-optimal quotient? |
+| [22 — End-to-End Formal Verification](22-end-to-end-formal-verification.md) | Why is it correct — the ~41-theory, 310-`Print Assumptions` zero-admission Rocq corpus presented as numbered QED proofs (T1–T23), and the whole-⟦G⟧ operational-correspondence capstone proven over O1-optimal matching? |
+| [23 — Coverage and Correctness](23-coverage-and-correctness.md) | What is covered — the family × capability matrix, the corrupted-$`\sigma`$ "replacement not replay" probe methodology, the finite / symbolic complements, and the honest limits? |
+| [24 — In-Rho Completion Audit](24-in-rho-completion-audit.md) | Did the campaign meet its north star — the requirement-to-evidence traceability matrix, the INV-1..14 reconciliation, the no-dual-path verification, and the residuals register? |
+| [25 — In-Rho Base-Family Reference](25-in-rho-base-family-reference.md) | How is the base-rewrite family rebuilt from scratch — reconstruction-grade coverage of reflection, spread, the collapse fold, the automaton network, and locate-all multi-firing? |
+| [26 — In-Rho AC-Family Reference](26-in-rho-ac-family-reference.md) | How is the associative-commutative family rebuilt from scratch — the Scheme-B spread re-sourcing, the site-keyed carrier, and AC4 (`HashSet` / `HashMap` / `Zip`)? |
 | [References](references.md) | Which papers, docs, and formal artifacts support the design? |
 | [Validation Script](validate.sh) | How are the documentation structure checks reproduced locally? |
 
@@ -265,10 +283,13 @@ Run the documentation suite checks from the repository root:
 docs/architecture/rho-native-integration/validate.sh
 ```
 
-The script checks unfinished-work markers, proof-hole markers, fenced-block
-balance, PlantUML marker balance, PlantUML syntax, math-symbol formatting,
-rendered PlantUML SVG assets, relative Markdown/source/image links,
-bibliography-local paths, and `git diff --check` whitespace diagnostics. Link
+The script checks unfinished-work markers, proof-hole markers (allowing the
+named/negated Rocq-vernacular mentions the FV docs legitimately carry),
+fenced-block balance, PlantUML marker balance, PlantUML syntax, math-symbol
+formatting, math-delimiter conformance (inline math must be the dollar-backtick
+form; bare `$…$` and `$$…$$` are rejected), rendered PlantUML SVG assets,
+relative Markdown/source/image links, bibliography-local paths, and
+`git diff --check` whitespace diagnostics. Link
 and whitespace checks include `README.md`, `docs/README.md`, and
 `docs/architecture.md` so the suite remains discoverable from the project and
 documentation entry points.

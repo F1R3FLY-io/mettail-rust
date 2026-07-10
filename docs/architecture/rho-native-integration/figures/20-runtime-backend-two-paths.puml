@@ -1,0 +1,42 @@
+@startuml
+' Figure 20-3: the two firing paths and the fail-closed install gate. Exactly ONE path
+' fires per invocation (the no-dual-path property); BOTH fire as COMMs on the SAME
+' installed program. The MATCH path (default) re-matches in Rho over one spread; the
+' REPLAY fallback injects the host-computed sigma, one COMM per firing, when the gate rejects.
+skinparam backgroundColor #FEFEFE
+skinparam defaultFontName monospaced
+skinparam shadowing false
+skinparam state {
+  BorderColor #4A5568
+  FontColor #1A202C
+}
+
+title Figure 20-3 — Two firing paths + fail-closed install gate\nexactly ONE path per invocation; both fire on the SAME installed program
+
+state "report.assert_complete()" as ReportComplete #DCEEF9
+state "install gate\ninstalled_program_par <latex>\to</latex> Result\n(rho_net_lower.rs:404)" as InstallGate #E2E8F0
+state "choose firing path\nrho_net_match_invocation_from_dovetail_to\n(rho_invocation.rs:1765)" as ChoosePath #FDE8D5
+state "MATCH path — DEFAULT\nspread + automaton re-match in Rho\n<latex>\prod_\ell \mathit{net}_\ell \parallel \mathit{spread}</latex>\nnested + multiple redexes fire" as MatchPath #C9E7D4
+state "REPLAY fallback\nrho_net_replay_invocation_from_dovetail_to\n(rho_invocation.rs:1827)\nhost-<latex>\sigma</latex> replay, one COMM per firing" as ReplayPath #C6E0F5
+state "observe @OUT\n(decode_reflected_term)" as Observe #FEF7E0
+state "FAIL CLOSED — never silent" as FailClosed #F8D7DA
+
+[*] --> ReportComplete : Dovetail run report
+ReportComplete --> FailClosed : incomplete
+ReportComplete --> InstallGate : complete
+InstallGate --> FailClosed : Err\n(lowering / unmaterialized rule)
+InstallGate --> ChoosePath : Ok(installed Par)
+ChoosePath --> MatchPath : Ok\n(every fired rule matchable in Rho)
+ChoosePath --> ReplayPath : Err\n(AC/contextual/binder/native off-machine\nOR nested-App co-install contention)
+MatchPath --> Observe : COMM(s) on installed program
+ReplayPath --> Observe : COMM(s) on installed program
+Observe --> [*]
+FailClosed --> [*]
+
+note bottom of ReplayPath #EAF2FB
+  The fallback is the proven Stage-0 host-matched <latex>\sigma</latex>-replay
+  driver: correct for every input, and the ONLY residual host
+  role in firing. It fires the SAME installed <latex>\sigma</latex>-receivers —
+  it does not run a second Rho machine.
+end note
+@enduml

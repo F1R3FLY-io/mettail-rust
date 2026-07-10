@@ -1,0 +1,95 @@
+@startuml
+' Figure 23-1: each runtime test file -> the coverage claim it evidences -> the unbounded Rocq
+' theory that proves it (doc 22) -> the finite/symbolic complement that floors it (executable).
+' Three evidence tiers per family: a firing test (it fires in Rho), a corrupted-sigma probe
+' (it is a REPLACEMENT, not a report duplicate), and an unbounded proof.
+skinparam backgroundColor #FEFEFE
+skinparam defaultFontName monospaced
+skinparam shadowing false
+skinparam componentStyle rectangle
+skinparam rectangle {
+  BorderColor #4A5568
+  FontColor #1A202C
+}
+skinparam ArrowColor #4A5568
+left to right direction
+
+title Figure 23-1 — test file  =>  coverage claim  =>  unbounded proof (doc 22)  =>  executable floor\nfive family clusters; each cluster: a firing test (blue) + a corrupted-<latex>\sigma</latex> probe (orange) evidence the in-Rho claim (grey), proved by a Rocq theory (green), floored by a finite model (purple)
+
+package "Runtime firing tests  (rholang-runtime/tests, live f1r3node reducer)" #EBF3FE {
+  rectangle "<b>rho_net_equivalence.rs</b>\n<size:10>dovetail_report_semantics_match_rho_machine_execution_for_swap</size>\n<size:10>m1_matches_swap_in_rho_and_fires_the_rewrite</size>\n<size:10>nonlinear_matches_equal_args_in_rho</size>" as TB #C3DAF7
+  rectangle "<b>rho_net_ac_firing / _ac_bag_ / _nl_ac_ / _mapzip_</b>\n<size:10>acdemo / acbagdemo / nlacdemo / mapzipdemo</size>\n<size:10>_rewrite_fires_as_a_comm_on_the_reducer</size>" as TAC #C3DAF7
+  rectangle "<b>rho_net_ambient_firing / _inout_ / _contextual_</b>\n<size:10>ambdemo_open / inoutdemo_in|out / ctxdemo</size>\n<size:10>_matches_in_rho_via_the_spread (join COMM)</size>" as TST #C3DAF7
+  rectangle "<b>rho_net_beta_firing.rs</b>\n<size:10>lambdademo_beta_reduction</size>\n<size:10>_fires_as_a_comm_on_the_reducer</size>" as TBE #C3DAF7
+  rectangle "<b>rho_net_native_firing.rs</b>\n<size:10>nativedemo_native_system_process</size>\n<size:10>_fires_as_a_comm_on_the_reducer</size>" as TNA #C3DAF7
+}
+
+package "Corrupted-sigma probes  (replacement, not report duplicate)" #FDECD9 {
+  rectangle "<b>m_reflect_sigma_is_produced_</b>\n<b>by_the_automaton_not_the_report</b>\n<size:10>equivalence.rs:1407</size>" as PB #F8C99B
+  rectangle "<b>s_ac_*_produced_by_the_</b>\n<b>spread_not_the_report</b>\n<size:10>ac_firing:283 / ac_bag:268 / nl_ac:136</size>" as PAC #F8C99B
+  rectangle "<b>s_ac_structural / s_ac_nested_* /</b>\n<b>s_contextual_holes_reassembled</b>\n<size:10>ambient:366 / inout:343,407 / ctx:209</size>" as PST #F8C99B
+  rectangle "<b>s_binder_reduct_is_</b>\n<b>report_sigma_independent</b>\n<size:10>beta_firing.rs:176 (corrupts sigma AND contractum)</size>" as PBE #F8C99B
+  rectangle "<b>s_native_location_is_produced_</b>\n<b>by_the_automaton_not_the_report</b>\n<size:10>native_firing.rs:204 (location in-Rho; VALUE delegated)</size>" as PNA #F8C99B
+}
+
+package "Coverage claim  (WHAT is covered — this doc)" #EEF0F2 {
+  rectangle "base + non-linear eq:\nmatch + fire in Rho" as CB #D6DBDF
+  rectangle "AC linear/rest/nl + AC4 Set/Map/Zip\nmatch + fire in Rho" as CAC #D6DBDF
+  rectangle "ambient open/in-out + contextual join\nmatch + fire in Rho" as CST #D6DBDF
+  rectangle "binder-<latex>\beta</latex>: match + capture-avoiding\nsubstitution, fully in Rho" as CBE #D6DBDF
+  rectangle "native: structural dispatch in Rho\n(VALUE delegated — boundary)" as CNA #D6DBDF
+}
+
+package "Unbounded proof  (formal/rocq, doc 22 — Closed under the global context)" #E7F5EC {
+  rectangle "<b>LinearCommCorrespondence.v</b>\nNonLinearEqConsistency.v\nInRhoMatchPositional.v" as FB #BCE3C9
+  rectangle "InRhoAcMatchMultiset.v\nAcRestReconstruction.v / AcNonLinearConsistency.v\nAcMapKeyUniqueness.v" as FAC #BCE3C9
+  rectangle "AmbientOpenFiring.v / AmbientInOutFiring.v\nContextualAtomicJoinPlugging.v" as FST #BCE3C9
+  rectangle "<b>DeBruijnSubstTRS.v</b> (SN+CR+NF)\nInRhoBetaCascadeWeakBisim.v\nBinderReflectionTotalOrReject.v" as FBE #BCE3C9
+  rectangle "NativeSystemProcessBoundary.v" as FNA #BCE3C9
+  rectangle "<b>WholeGsltInRhoOpCorrespondence.v</b>\n<b>...OptimalViaSameClts.v</b>\n<size:10>capstone opcorr over O1-optimal matching</size>" as CAP #93D3AA
+}
+
+package "Executable floor  (finite / symbolic — the bounded check under each unbounded theorem)" #EFE8F7 {
+  rectangle "<b>Sage + Wolfram</b> (formal/{sage,wolfram}/rho_net)\n<size:10>MATCHING: index = recursive oracle</size>\n<size:10>OBSERVATION: sigma-receiver lands RHS[sigma]</size>\n<size:10>SCHEDULING: independent-redex barb confluence</size>" as SW #D5C6EC
+  rectangle "<b>mCRL2 + Maude + TLA+</b> (formal/process,\nfrom rho_comm_slice.json)\n<size:10>4-redex COMM schedule family;</size>\n<size:10>guarded-join non-consumption; no deadlock</size>" as PROC #D5C6EC
+}
+
+TB --> CB
+TAC --> CAC
+TST --> CST
+TBE --> CBE
+TNA --> CNA
+
+PB -[#C05621]-> CB
+PAC -[#C05621]-> CAC
+PST -[#C05621]-> CST
+PBE -[#C05621]-> CBE
+PNA -[#C05621]-> CNA
+
+CB --> FB
+CAC --> FAC
+CST --> FST
+CBE --> FBE
+CNA --> FNA
+
+FB --> CAP
+FAC --> CAP
+FST --> CAP
+FBE --> CAP
+FNA --> CAP
+
+SW ..> FB
+SW ..> FAC
+PROC ..> FB
+PROC ..> CAP
+
+legend right
+|= Colour |= Evidence tier |
+|<#C3DAF7> blue | runtime firing test (fires on the live reducer) |
+|<#F8C99B> orange | corrupted-<latex>\sigma</latex> probe (replacement, not report duplicate) |
+|<#D6DBDF> grey | coverage claim (WHAT is covered) |
+|<#BCE3C9> green | unbounded Rocq theory (doc 22) |
+|<#93D3AA> dark green | whole-<latex>[\![ G ]\!]</latex> capstone opcorr |
+|<#D5C6EC> purple | finite / symbolic executable floor |
+endlegend
+@enduml

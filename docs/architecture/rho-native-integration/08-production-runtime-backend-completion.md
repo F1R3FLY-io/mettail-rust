@@ -1,6 +1,14 @@
 # Production Runtime Backend Completion Guide
 
-Last updated: 2026-06-15
+> **Superseded (host-matched era).** This guide describes the runtime backend from
+> when rewrite *matching* ran on the host (the Dovetail set automaton) while firing
+> ran in-Rho. The landed in-Rho realization — matching AND firing both on the
+> Rholang interpreter — is in [20](20-rholang-runtime-backend.md) (how it runs),
+> [22](22-end-to-end-formal-verification.md) (proofs), and
+> [23](23-coverage-and-correctness.md) (coverage). Retained for historical
+> architecture context.
+
+Last updated: 2026-07-10
 
 This guide turns the architecture suite into an executable handoff for an
 agent completing the runtime backend replacement. Here, **backend** means

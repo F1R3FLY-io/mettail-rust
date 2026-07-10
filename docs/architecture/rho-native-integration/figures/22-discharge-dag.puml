@@ -1,0 +1,78 @@
+@startuml
+' Figure 22-1: the FV discharge DAG. The spine (ii)+(viii) => (iii) => (v) threads the
+' O1-optimality upgrade; the seven family arms feed the abstract finite-trace lift (T21)
+' to give the sound-baseline capstone (T22); T23 composes them over optimal matching.
+' Every node prints "Closed under the global context".
+skinparam backgroundColor #FEFEFE
+skinparam defaultFontName monospaced
+skinparam shadowing false
+skinparam rectangle {
+  BorderColor #4A5568
+  FontColor #1A202C
+}
+skinparam ArrowColor #4A5568
+top to bottom direction
+
+title Figure 22-1 — FV discharge DAG:  (ii)+(viii) => (iii) => (v)\n(every node: "Closed under the global context")
+
+package "Matching layer  (Prop-level: gstep well-formedness + (iii) premises)" #EDF2F7 {
+  rectangle "T2  positions_count\n<size:10>(ii) O1 symbol-once</size>" as T2 #CBD5E0
+  rectangle "T3  tc_sound\n<size:10>(viii) tc(K) no cross-talk</size>" as T3 #CBD5E0
+  rectangle "T1  sa_matches_positional\n<size:10>(i) match = positional</size>" as T1 #E2E8F0
+  rectangle "T4  reuse_determinism\n<size:10>(x) tau-prefix</size>" as T4 #E2E8F0
+  rectangle "T10 partial_consume_\nunreachable  <size:10>(iv)</size>" as T10 #E2E8F0
+  rectangle "T9  eq_all_equal_commits\n<size:10>(vi) guard gates accept</size>" as T9 #E2E8F0
+}
+
+package "(iii) the rem:nonopt discharge" #FDF0E0 {
+  rectangle "<b>T6  same_clts_weak_bisim</b>\n<latex>\mathrm{sound\ CLTS} \approx \mathrm{optimal\ CLTS}</latex>" as T6 #F6C177
+}
+
+package "Firing arms  (genuine per-step correspondences)" #EDE7F6 {
+  rectangle "T7 FBase\ncomm_step_sound/complete" as T7 #D6C6EE
+  rectangle "T8 FContextualJoin\nnary_join_sound/complete" as T8 #D6C6EE
+  rectangle "T11 FAcStructural\nopen_commits/splices" as T11 #D6C6EE
+  rectangle "T12 FAcNested\ninout_step_sound/complete" as T12 #D6C6EE
+  rectangle "T13 FNative\nfold_native_fires_value" as T13 #D6C6EE
+  rectangle "T14+T15 FAcLinear\ncomm_commits + AC bundle" as T14 #D6C6EE
+  rectangle "T19 FBinderBeta\nweak_bisim_beta_cascade" as T19 #D6C6EE
+}
+
+package "the abstract finite-trace lift" #E1EFFA {
+  rectangle "T21  finite_trace_barb_\nequivalence\n<size:10>R_barb / R_fwd / R_bwd</size>" as T21 #C6E0F5
+}
+
+package "the CAPSTONE" #E6F4EA {
+  rectangle "<b>T22  whole_gslt_in_rho_</b>\n<b>opcorrespondence</b>\n<size:10>(v) sound baseline</size>" as T22 #A7D8B6
+  rectangle "<b>T23  whole_gslt_opcorr_</b>\n<b>over_optimal_matching</b>\n<size:10>(v) over O1-optimal</size>" as T23 #7FC79B
+}
+
+' the load-bearing spine (amber)
+T2 -[#C05621]-> T6
+T3 -[#C05621]-> T6
+T6 -[#C05621]-> T23
+
+' the family arms feed the lift
+T7  --> T21
+T8  --> T21
+T11 --> T21
+T12 --> T21
+T13 --> T21
+T14 --> T21
+T19 --> T21
+
+' well-formedness feeds the capstone
+T1  ..> T22
+T4  ..> T22
+T10 ..> T22
+T9  ..> T22
+
+T21 --> T22
+T22 -[#2F855A]-> T23
+
+note bottom of T23 #FCF3D0
+  T23 = T22 (source ↔ sound) composed transitively with (iii) (sound ↔ optimal).
+  Companions: OptimalViaSameClts (the literal (iii) discharge) and
+  InOutViaFiring (the FAcNested non-vacuity witness).
+end note
+@enduml

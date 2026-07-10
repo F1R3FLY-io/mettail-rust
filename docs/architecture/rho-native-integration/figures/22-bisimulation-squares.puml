@@ -1,0 +1,53 @@
+@startuml
+' Figure 22-4: the three obligations of the finite-trace lift (T21) as commuting
+' bisimulation squares. Solid edges are given; dashed edges are the existentials the
+' obligation produces. R relates a source config to its lowered in-Rho image.
+' Math labels use <latex> (JLaTeXMath); verified leak-free.
+skinparam backgroundColor #FEFEFE
+skinparam defaultFontName monospaced
+skinparam shadowing false
+skinparam rectangle {
+  BorderColor #4A5568
+  FontColor #1A202C
+}
+skinparam ArrowColor #4A5568
+
+title Figure 22-4 — the abstract-lift bisimulation squares:  R_barb / R_forward / R_backward\n<latex>R\,s\,t</latex> relates a source config to its lowered in-Rho image
+
+package "R_forward  (source step matched by target step)" #E1EFFA {
+  rectangle "<latex>s</latex>" as F_s #C6E0F5
+  rectangle "<latex>t</latex>" as F_t #C6E0F5
+  rectangle "<latex>s'</latex>" as F_s2 #C6E0F5
+  rectangle "<latex>t'</latex>" as F_t2 #DCEDF9
+  F_s -[#2B6CB0]-> F_t : "<latex>R</latex>"
+  F_s -[#C05621]-> F_s2 : "<latex>\xrightarrow{l}</latex>"
+  F_t ..[#C05621].> F_t2 : "<latex>\exists\ \xrightarrow{l}</latex>"
+  F_s2 ..[#2B6CB0].> F_t2 : "<latex>R</latex>"
+}
+
+package "R_backward  (target step matched by source step)" #EDE7F6 {
+  rectangle "<latex>s</latex>" as B_s #D6C6EE
+  rectangle "<latex>t</latex>" as B_t #D6C6EE
+  rectangle "<latex>s'</latex>" as B_s2 #E6DEF5
+  rectangle "<latex>t'</latex>" as B_t2 #D6C6EE
+  B_s -[#6B46C1]-> B_t : "<latex>R</latex>"
+  B_t -[#C05621]-> B_t2 : "<latex>\xrightarrow{l}</latex>"
+  B_s ..[#C05621].> B_s2 : "<latex>\exists\ \xrightarrow{l}</latex>"
+  B_s2 ..[#6B46C1].> B_t2 : "<latex>R</latex>"
+}
+
+package "R_barb  (related states have equal observations)" #E6F4EA {
+  rectangle "<latex>s</latex>" as O_s #A7D8B6
+  rectangle "<latex>t</latex>" as O_t #A7D8B6
+  rectangle "<latex>\mathrm{barb}\,s = \mathrm{barb}\,t</latex>" as O_b #FCF3D0
+  O_s -[#2F855A]-> O_t : "<latex>R</latex>"
+  O_s --> O_b
+  O_t --> O_b
+}
+
+note bottom of O_b #EDF2F7
+  T21 finite_trace_barb_equivalence lifts these three squares from ONE step to
+  finite label-indexed traces by induction on `steps`; the capstone T22 assembles
+  R_forward / R_backward from the seven family arms (Fig 22-2).
+end note
+@enduml

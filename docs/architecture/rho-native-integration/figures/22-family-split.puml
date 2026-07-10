@@ -1,0 +1,22 @@
+@startmindmap
+' Figure 22-2: the family_of seven-arm case split feeding the capstone T22.
+' Each arm is a Section Hypothesis in the lift's obligation shape, discharged at any
+' concrete instantiation by its cited landed firing theorem. The None branch (an
+' uncovered rule shape) is closed by the install gate (ix).
+caption Figure 22-2 — family_of : CommLabel -> option Family  (the seven-arm split feeding T22)
+skinparam backgroundColor #FEFEFE
+skinparam defaultFontName monospaced
+skinparam shadowing false
+
+*[#A7D8B6] T22 capstone\nassembled_R_forward / backward\nby family_of case split
+**[#D6C6EE] Some FBase\nT7 LinearCommCorrespondence\ncomm_step_sound / complete
+**[#D6C6EE] Some FContextualJoin\nT8 ContextualAtomicJoinPlugging\nnary_join (vii) INV-6/INV-2
+**[#D6C6EE] Some FAcLinear\nT14 CommRuleFiring\n+ T15 AC bundle (payload+atomic)
+**[#D6C6EE] Some FAcStructural\nT11 AmbientOpenFiring\nopen_commits / splices rest
+**[#D6C6EE] Some FBinderBeta\nT19 InRhoBetaCascadeWeakBisim\nweak_bisim (exact-shape)
+**[#D6C6EE] Some FNative\nT13 NativeSystemProcessBoundary\nfold fires handler value
+**[#D6C6EE] Some FAcNested\nT12 AmbientInOutFiring\ninout_step (depth-2, non-vacuous)
+**[#F6C177] None (uncovered shape)\n(ix) InRhoEncoderTotalOrReject\ngate rejects => no GConfig
+left side
+**[#CBD5E0] excluded by construction\nINV-14 semantic predicate\nemits no c(l) label
+@endmindmap
