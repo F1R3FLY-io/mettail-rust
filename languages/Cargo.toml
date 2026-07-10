@@ -168,6 +168,15 @@ mettail-testkit = { package = "testkit", path = "../testkit" }
 # this only makes the type nameable from the integration test.
 mettail-ast = { package = "ast", path = "../ast" }
 
+# Regression lock proving the in-Rho set automaton is size-optimal (adaptive-`L`,
+# Stage 4 task #17, is unnecessary in the interned-subterm representation). Needs the
+# language modules (`all-languages`) plus the codegen ruleset compiler (`rho-codegen`)
+# and the dovetail `SetAutomaton` (`dovetail-codegen`).
+[[test]]
+name = "set_automaton_size_optimal"
+path = "tests/set_automaton_size_optimal.rs"
+required-features = ["all-languages", "rho-codegen", "dovetail-codegen"]
+
 # W7 Stage 8 (parity testing): postcard golden inspector.
 # No `required-features` — usable on default builds.
 [[bin]]
