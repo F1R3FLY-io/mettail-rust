@@ -161,11 +161,311 @@ struct GrindSppfContentTally {
     /// deep_eq: recursive structural fingerprint (resolves child SppfIds) —
     /// structurally identical all the way down → MERGEABLE.
     deep_eq: u64,
+
+    // ── ROOT-P Stage 0 (2026-07-08) TomitaKey-surface extension ──────────
+    // Trigger-MASKED shape-equality: `sppf_shallow_ident_trigger_masked`
+    // emits `(7, kind_disc, pos, 0)` for TriggerTerminals (owner_cat /
+    // owner_rule_idx dropped), so two stacks that differ ONLY in lex
+    // provenance (which grammar rule consumed the `@`-trigger) count as
+    // shape-equal here. This is the redesign's shape-guard collapse
+    // predicate (L-SHAPE + Stage-3 lex→weight lowering).
+    /// shape-equal under the MASKED ident (same length + same masked
+    /// dedup-identity per level) — the shape-guard COLLAPSE population.
+    shallow_eq_mod_trigger: u64,
+    /// `shallow_eq_mod_trigger` ∧ ¬`shallow_eq`: the ONLY divergence is the
+    /// TriggerTerminal owner attribution (lex provenance) → collapsible AND
+    /// the lex axis folds into `Packing.weight` (Stage 3).
+    lex_provenance_only: u64,
+    /// diverged ∧ ¬`shallow_eq_mod_trigger`: the stacks differ in genuine
+    /// `(nt,lo,hi)`/kind/pos SHAPE at some level → NOT collapsible by the
+    /// shape-guard. On a 1-reading term this SHOULD be ≈ the true reading
+    /// count; a large value HALTS the redesign (L-SHAPE false).
+    genuinely_different_span: u64,
+
+    // ── ROOT-P Stage 0 SLOT-surface probe (the ACTUAL merge surface the
+    //    redesign changes). At merge_equivalent_cursors entry, group the
+    //    pre-merge `drained` cursors by the GLL SLOT tuple
+    //    (state,node,pos,coll_depth,cohort.equiv()); within each bucket, group
+    //    cursors into SHAPE-CLASSES by their sppf_stack's per-level MASKED
+    //    ident (the shape-guard's collapse predicate). O(N) equivalence-class
+    //    counting, NOT O(N²) all-pairs. The # masked shape-classes in a bucket
+    //    IS the # of shape-guard survivors — so Σ over buckets is the frontier
+    //    size the SLOT-merge + shape-guard redesign would keep. ─────────────
+    /// # merge tiers observed (grind_slot_bucket_check invocations).
+    slot_bucket_calls: u64,
+    /// # SLOT buckets (cumulative over tiers) that held ≥2 cursors.
+    slot_buckets_ge2: u64,
+    /// # SLOT buckets (cumulative) with ≥2 DISTINCT masked shape-classes — the
+    /// shape-guard CANNOT fully collapse these (genuine ambiguity or residual).
+    slot_multishape_buckets: u64,
+    /// Σ over buckets (cumulative) of (shallow-classes − masked-classes): the #
+    /// shape-distinctions that are PURELY lex provenance (owner attribution),
+    /// collapsed by trigger-masking → folded into `Packing.weight` (Stage 3).
+    slot_lex_only_collapsed: u64,
+    // Representative-pair top-vs-deeper split (cumulative): within each multi-
+    // shape bucket, one representative per masked-class, classified pairwise
+    // (M small ⇒ O(M²) cheap). Answers: is the residual divergence localized to
+    // the TOP (benign, packs at parent) or DEEPER (dangerous, stays exponential)?
+    /// representative pairs whose stacks differ in DEPTH (length).
+    slot_rep_depth_mismatch: u64,
+    /// representative pairs (same depth) diverging ONLY at the TOP level.
+    slot_rep_top_only: u64,
+    /// representative pairs (same depth) diverging at a DEEPER (non-top) level.
+    slot_rep_deeper: u64,
+    /// per-parse PEAK pre-merge cursor count (`drained.len()`) over all tiers.
+    peak_cursors: u64,
+    /// # distinct SLOT buckets AT the peak-cursor tier — the pure SLOT-merge
+    /// floor (what dropping the derivation-provenance axes collapses to).
+    slot_floor_at_peak: u64,
+    /// Σ masked shape-classes over buckets AT the peak-cursor tier — the SLOT +
+    /// shape-guard floor (what the redesign actually keeps; the HALT metric).
+    shapeguard_floor_at_peak: u64,
+    /// Σ shallow (unmasked) shape-classes over buckets AT the peak-cursor tier
+    /// — the SLOT + shape-guard floor WITHOUT lex→weight lowering (shows how
+    /// much the lex-masking buys vs `shapeguard_floor_at_peak`).
+    shallow_floor_at_peak: u64,
+    /// max over tiers of #SLOT buckets (pure SLOT floor peak).
+    slot_floor_max: u64,
+    /// max over tiers of Σ masked shape-classes (SLOT + shape-guard floor peak
+    /// — the real "does the redesign stay polynomial" metric).
+    shapeguard_floor_max: u64,
+
+    // ── ROOT-P Stage 4a (2026-07-08) EDGE-CONDITIONAL floor probe ──────────
+    // The pop-routing edge pair (incoming_edge, incoming_edge_stack) is the
+    // proven exponential axis (~38×/level). These floors model the three
+    // Stage-4 edge treatments AT the peak tier, so the delivery lever
+    // (conditional edge-drop) can be measured READ-ONLY, without touching the
+    // merge core. Within a SLOT bucket the GSS `node` is fixed ⇒ the category
+    // (and hence `category_is_binder_scoped`) is CONSTANT per bucket.
+    /// ARM(i) floor: Σ over SLOT buckets of distinct (edge_top, edge_stack,
+    /// masked-shape) classes — edge KEPT (current RootpSlot / production merge).
+    edge_kept_floor_at_peak: u64,
+    /// ARM(ii) floor: edge dropped only for buckets whose category the emitted
+    /// `category_is_binder_scoped` predicate marks FALSE (CF-interchangeable);
+    /// kept for binder-scoped buckets. == shape floor for dropped buckets,
+    /// == edge_kept for kept buckets.
+    cond_edge_floor_at_peak: u64,
+    /// ARM(4) floor: edge kept per-CURSOR only while a binder scope is LIVE
+    /// (`!binder_scope_marks.is_empty()`), category ignored — the pure dynamic
+    /// is_empty() guard.
+    dyn_edge_floor_at_peak: u64,
+    edge_kept_floor_max: u64,
+    cond_edge_floor_max: u64,
+    dyn_edge_floor_max: u64,
+    /// Per-category breakdown captured at the peak-cursor tier, one line per
+    /// category that held cursors: which categories carry the edge multiplicity
+    /// (ek ≫ mk) and whether the predicate marks them keep (scoped=1).
+    peak_cat_breakdown: String,
 }
 
 thread_local! {
     static GRIND_SPPF_CONTENT_TALLY: std::cell::RefCell<GrindSppfContentTally> =
         std::cell::RefCell::new(GrindSppfContentTally::default());
+}
+
+// ── ROOT-P Canonical-GLL Stage A SHADOW (2026-07-09, agent a30c22f2) ─────────
+// READ-ONLY, byte-identical measurement (walker-stats + env
+// `PRATTAIL_CANONICAL_GLL_SHADOW=1`; the const `ROOTP_SLOT_PACKING_ENABLED`
+// stays `false`). The HARD GO/NO-GO gate for the canonical-GLL descriptor
+// redesign: it maintains a per-parse GLOBAL add-once descriptor set `U` keyed
+// by the canonical GLL 4-tuple `(L,u,i,w)` WITH this engine's non-CF overlays
+// carried FAITHFULLY, and answers the one un-measured question — does a
+// faithful canonical descriptor set stay POLYNOMIAL per input position once
+// bp / collection-accumulator / binder-scope / reduce-owner are carried (GO),
+// or does an overlay re-inflate it super-polynomially (HALT)?
+//
+// The canonical key (`u_full`, THE verdict):
+//   L = `inner_state` (full `WpdaState`, which already carries the Pratt `bp`)
+//       — the current grammar slot + bp. The RETURN continuation identity is
+//       carried by `u` (the GSS node), NOT the per-cursor edge-stack id.
+//   u = `cursor.node` (the GSS tip node; the walker's GSS dedups nodes by
+//       (pos, symbol), so this id IS the canonical return context — bounded by
+//       O(positions × slots), NOT a per-cursor arena excess).
+//   i = `cursor.pos`.
+//   w = the CONDITIONAL-owner-masked shallow ident of the SINGLE `sppf_top`
+//       (top of the cursor's sppf_stack) — one packed Symbol/span, owner masked
+//       for simple sends / kept for @-binders per red-team #1.
+//   overlays (carried, NOT dropped): `binder_scope_marks` (scope-stack
+//       identity), collection-accumulator shape (`collection_stack_depth` +
+//       per-open-slot element counts).
+// It deliberately EXCLUDES the raw `sppf_stack` arena id and the
+// `incoming_edge_stack` arena id — exactly the non-canonical per-cursor excess
+// the redesign removes.
+//
+// Sets are stored as `HashSet<u64>` of FxHash(key) (8 bytes/descriptor);
+// birthday-collision probability at n≈millions descriptors is ~n²/2^64 ≈ 1e-7,
+// negligible for a size metric and it keeps the exponential-case memory bounded.
+#[cfg(feature = "walker-stats")]
+#[derive(Default)]
+struct CanonicalGllShadow {
+    /// THE VERDICT set: the full faithful canonical descriptor
+    /// (state[+bp], node, pos, w_cond, binder_scope, coll_accum), add-once.
+    u_full: std::collections::HashSet<u64>,
+    /// Per-position projection of `u_full` (key MINUS pos) → the decisive
+    /// max-|U|-per-position metric (poly vs exponential across the deep-@ ladder).
+    u_full_by_pos: std::collections::HashMap<usize, std::collections::HashSet<u64>>,
+    /// Ablation — owner UNMASKED (keep the @-trigger owner attribution). Isolates
+    /// the @-owner multiplicity Stage-0 proved is the exponential driver: if this
+    /// blows up while `u_full` stays poly, owner-masking is load-bearing (as expected).
+    u_owner_unmasked: std::collections::HashSet<u64>,
+    /// Ablation — owner masked UNCONDITIONALLY (even @-binders). The TOO-COARSE
+    /// key (red-team #1: collapses the `@a<-@b` two-reading). Should be ≤ `u_full`;
+    /// its accept-level over-merge is measured in `finish` (the false-GO tripwire).
+    u_maskall: std::collections::HashSet<u64>,
+    /// Ablation — DROP the binder-scope overlay. `u_full` ≫ this on binder terms
+    /// ⇒ binder scope is a genuine (carried) distinction; ≈ ⇒ binder scope inert.
+    u_no_binder: std::collections::HashSet<u64>,
+    /// Ablation — DROP the collection-accumulator overlay. Isolates its contribution.
+    u_no_coll: std::collections::HashSet<u64>,
+    /// Ablation — coarsen `L` to `wpda_state_class` (drops the Pratt bp + state
+    /// detail). `u_full` ≫ this ⇒ bp/state detail is load-bearing.
+    u_no_state_detail: std::collections::HashSet<u64>,
+    /// # merge tiers observed (non-empty `measure` calls).
+    merge_tiers: u64,
+    /// Σ cursor projections over all tiers (the raw work the real engine did).
+    cursor_projections: u64,
+    /// max `drained.len()` over tiers (the materialized frontier peak — the
+    /// exponential baseline `|U_full|`/pos is compared against).
+    peak_frontier: u64,
+    /// # `u_full` buckets (cumulative over tiers) holding ≥2 cursors whose FULL
+    /// conditional-masked sppf_stack shape-chains are NOT all identical: cursors
+    /// the one-`w` canonical descriptor co-locates but that carry distinct DEEPER
+    /// pending operands. Sound in canonical GLL (deeper operands ride GSS edges,
+    /// recovered at pop) — reported to size the reliance on edge-recovery.
+    ckey_multishape_buckets: u64,
+    // ── Overlay-ACTIVITY witnesses (rigor: prove the non-CF overlays are
+    //    actually EXERCISED at merge tiers, so "|U_full| == |U_no_binder| ==
+    //    |U_no_coll|" is a genuine redundant/bounded finding, NOT a vacuous
+    //    "empty overlay" artifact). ──────────────────────────────────────────
+    /// max `collection_stack_depth` observed over all projected cursors.
+    max_coll_depth: u8,
+    /// max `binder_scope_marks.len()` observed over all projected cursors.
+    max_binder_depth: u64,
+    /// max Σ per-open-slot element count observed (open collection accumulator
+    /// content — the overlay actually carrying non-trivial values).
+    max_coll_items: u64,
+    /// # cursor projections with a LIVE collection accumulator (`depth > 0`).
+    proj_with_coll: u64,
+    /// # cursor projections with a LIVE binder scope (`marks non-empty`).
+    proj_with_binder: u64,
+
+    // ── ROOT-P Stage P0 (2026-07-09): the RETURN-SLOT ablation `u_retslot` ─────
+    //    The HARD GO/NO-GO for the canonical GSS-by-grammar-SLOT node identity.
+    //    Single-variable ablation of `u_full`: IDENTICAL in every axis (L =
+    //    inner_state, i = pos, w = owner-masked sppf_top, + binder/coll overlays)
+    //    EXCEPT the `u` axis, where the shared-callee GSS node id (`c.node`, which
+    //    (pos,symbol)-dedups G+O together at descent) is replaced by the CANONICAL
+    //    return-slot node proxy `v = (i, L_ret)` = `(cursor.node.pos,
+    //    immediate_caller_slot)`, `immediate_caller_slot` = the caller frame
+    //    reached via the SINGLE TOP incoming-edge (ONE level only, NOT the
+    //    exponential whole-chain SOUND key): `(pre_node.symbol, top EdgeKind)`.
+    //    The `pre_node` is `edge_target(top)` (the frame BELOW = the return target;
+    //    see `cursor_gss_push_with_kind` @27981 `add_edge_kind(new_id, predecessor)`).
+    /// THE Stage-P0 verdict set: the full canonical descriptor with the u-axis =
+    /// return-slot proxy (state[+bp], (callee_pos, caller_slot), pos, w_cond,
+    /// binder, coll), add-once.
+    u_retslot: std::collections::HashSet<u64>,
+    /// Per-position projection of `u_retslot` (key MINUS pos) → the C1 poly metric
+    /// `max(u_retslot_by_pos)`: must PLATEAU across deep-@ d1-4 (like `u_full`
+    /// ~181); super-poly ⇒ C1 HALT (immediate-caller-slot re-inflates |U|).
+    u_retslot_by_pos: std::collections::HashMap<usize, std::collections::HashSet<u64>>,
+    /// Cumulative map `u_full`-key → set of `u_retslot`-keys it covers (add-once
+    /// over tiers). Keys ≤ |U_full| (poly) ⇒ bounded regardless of `u_retslot`
+    /// size; value sets CAPPED at 8 (only ≥2 matters). `split_buckets` (C2) =
+    /// # keys mapping to ≥2 ⇒ buckets `u_full` MERGES but `u_retslot` SEPARATES.
+    retslot_of_full: std::collections::HashMap<u64, std::collections::HashSet<u64>>,
+    /// C2 per-tier witness: # (tier, `u_full`-bucket) that are MULTISHAPE (≥2
+    /// distinct deeper masked shape-chains = distinct pending operands) AND that
+    /// `u_retslot` SEPARATES (≥2 distinct return-slot keys ⇒ distinct immediate
+    /// callers = the grouping G/O divergence u_full co-locates). GO signal.
+    ms_split_by_retslot: u64,
+    /// C2 per-tier witness: # (tier, `u_full`-bucket) MULTISHAPE but that
+    /// `u_retslot` does NOT separate (1 return-slot key). These are distinct
+    /// operands sharing ONE immediate caller (canonically recovered via GSS
+    /// edges/packings at pop — BENIGN, not an under-split of the grouping split;
+    /// reported for completeness so the split picture is exhaustive).
+    ms_unsplit_by_retslot: u64,
+    /// SOUNDNESS witness (over-merge): # (tier, `u_retslot`-bucket) holding ≥2
+    /// distinct `u_full`-keys ⇒ `u_retslot` MERGES cursors `u_full` separates
+    /// (dropping the callee's own symbol). Must be corroborated by
+    /// `multiroot_retslot == 0` at accept (no reading drop). Non-zero alone is
+    /// benign (canonical: callee symbol implied by L); a reading drop is not.
+    retslot_merge_buckets: u64,
+    /// VERIFICATION sample: distinct caller grammar slots
+    /// `(category_src_idx, rule_index_in_category)` observed as the DISTINCT
+    /// callers inside a multishape-split bucket (CAPPED at 64). Confirms the
+    /// split is grouping-vs-send (the intended G/O), not a spurious axis.
+    split_caller_slots: std::collections::HashSet<(u16, u16)>,
+
+    // ── ROOT-P GT-closure A+B ablation (2026-07-09, READ-ONLY shadow) ─────────
+    //    The FREE decisive gate resolving the two hardest GT-closure questions
+    //    BEFORE any core edit. Both ride the SAME classic merge-tier pass; both
+    //    are pure add-once descriptor SETS (byte-identical, no frontier change).
+    //
+    // (A) OWNER-KEPT return-slot descriptor: the P2 descriptor `(L, u_retslot,
+    //     i, w)` with the @-trigger owner UNMASKED in `w` (`w = w_unmask` =
+    //     `sppf_shallow_ident`, cgll_w_top mode 1) instead of the conditional-
+    //     owner-mask `w_cond`. My-reformulation hypothesis: Stage-0's 682×
+    //     owner-collapse was on the EXPONENTIAL sppf_stack-chain surface (owner
+    //     compounds 8^depth there); Stage-A's ~1.7× owner-unmask was on the
+    //     canonical single-w surface. OPEN: on the P2 descriptor (retslot-u +
+    //     single-w) is owner a BOUNDED multiplicative constant (KEEP it, dissolve
+    //     the poly-vs-owner tension) or COMPOUNDING (must stay MASKED)?
+    /// (A) The owner-KEPT return-slot descriptor set (global, add-once).
+    u_retslot_owner_kept: std::collections::HashSet<u64>,
+    /// (A) Per-position projection of `u_retslot_owner_kept` (key MINUS pos).
+    /// A-GATE metric = `max(..)`: PLATEAUS across d1→d4 (like `u_retslot`'s
+    /// 306→307, a bounded ×constant) ⇒ A-GO (keep owner); grows geometrically
+    /// (the 682× / ~8-10×/depth signature) ⇒ A-NO-GO (owner compounds, mask it).
+    u_retslot_owner_kept_by_pos:
+        std::collections::HashMap<usize, std::collections::HashSet<u64>>,
+    /// (A) Per-position projection of the EXISTING global `u_owner_unmasked`
+    /// (the FULL-node key with owner kept) — the owner-kept analogue of
+    /// `u_full_by_pos`, so the A verdict is cross-checkable on the u_full axis
+    /// (Stage-A measured ~1.7× GLOBAL; this exposes the per-pos plateau).
+    u_owner_unmasked_by_pos:
+        std::collections::HashMap<usize, std::collections::HashSet<u64>>,
+    /// (A) C2 delta: # MULTISHAPE `u_full` buckets the OWNER-KEPT return-slot key
+    /// separates into ≥2. Delta vs `ms_split_by_retslot` (the owner-MASKED
+    /// single-level key) = the gaps-1+2-together probe: does owner-keep ALONE
+    /// (on the w-axis, at k=1) already reach deeper grouping buckets?
+    ms_split_owner_kept: u64,
+
+    // (B) BOUNDED-MULTI-LEVEL return key: fold the FIRST k incoming edges (each
+    //     contributing `(edge_target.symbol, EdgeKind)` exactly as the single
+    //     level does) into the `u`-axis, for k ∈ {1,2,3,4}. E2b/P2 root cause:
+    //     grouping cursors diverging at DEEPER return-chain levels merge under
+    //     the single-level (k=1) key BEFORE the constituent completes ⇒ grouping
+    //     d2+ never built. B-GATE: does a FIXED small k SPLIT grouping-d2/d3 AND
+    //     stay POLY (`max` plateaus across depth)? Poly claim: |return-slot ids|
+    //     = O(|G|^k · n), poly for constant k. k=1 MUST reproduce `u_retslot`.
+    /// (B) Per-position projection of `(L, u_retslot_k, i, w_cond, overlays)` for
+    /// k = index+1 ∈ {1,2,3,4}. `[0]` (k=1) == `u_retslot_by_pos` EXACTLY (the
+    /// regression check; reported as `k1_matches_retslot`). B-GATE metric =
+    /// `max` per k: PLATEAU across depth for the smallest k that also splits d2/d3.
+    u_retslot_k_by_pos:
+        [std::collections::HashMap<usize, std::collections::HashSet<u64>>; 4],
+    /// (B) Per-tier witness per k (index+1): # MULTISHAPE `u_full` buckets the
+    /// k-level return-slot key separates into ≥2. `ms_split_k[k-1]` reaching deep
+    /// positions at a fixed small k = the B-GO split signal (grouping d2/d3).
+    ms_split_k: [u64; 4],
+}
+
+#[cfg(feature = "walker-stats")]
+thread_local! {
+    static CANONICAL_GLL_SHADOW: std::cell::RefCell<CanonicalGllShadow> =
+        std::cell::RefCell::new(CanonicalGllShadow::default());
+}
+
+/// ROOT-P Canonical-GLL Stage A gate (`PRATTAIL_CANONICAL_GLL_SHADOW=1`). Enables
+/// the read-only global add-once descriptor-set measurement. Byte-identical when
+/// unset (the flag read short-circuits before any work); consulted only by the
+/// `canonical_gll_shadow_*` methods (walker-stats-gated), so it is gated too.
+#[cfg(feature = "walker-stats")]
+#[inline]
+fn canonical_gll_shadow_enabled() -> bool {
+    static GATE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *GATE.get_or_init(|| std::env::var_os("PRATTAIL_CANONICAL_GLL_SHADOW").is_some())
 }
 
 /// Sig-B Blocker-3 §4 (2026-06-01, pgmcp experiment #9): is the WHOLE
@@ -366,6 +666,336 @@ impl SrSubsumeMode {
             Some("0") | Some("off") | Some("OFF") | Some("Off") => SrSubsumeMode::Off,
             _ => SrSubsumeMode::On,
         }
+    }
+}
+
+/// ROOT-P canonical-GLL slot-packing redesign — MASTER compile-time gate
+/// (Stage 1 scaffolding, 2026-07-08). Design: the staged plan
+/// `$CLAUDE_JOB_DIR/tmp/root-p-redesign-plan.md` and the converged design in
+/// memory `session-2026-07-08-recognizer-cr1-rootc.md` (§"STAGE-0 VERDICT =
+/// PROCEED + DESIGN CONVERGED"). ROOT-P = parse fork-explosion; the fix merges
+/// parse cursors on the grammar SLOT and recovers dropped distinctions via SPPF
+/// packing (Scott-Johnstone/Tomita/Goodman packed forest — the data structure
+/// already exists in [`crate::sppf`]).
+///
+/// `false` (the current default) makes the ENTIRE redesign DEAD CODE. Every
+/// runtime gate is spelled `ROOTP_SLOT_PACKING_ENABLED && …` (via the
+/// [`WpdaWalker`] `rootp_*_active` helpers below), so with the const `false`
+/// the `&&` short-circuits at compile time, the optimizer drops the dormant
+/// Stage-2..4 branches, and the walker is byte-identical to the pre-redesign
+/// behavior. This mirrors the [`SEP_RECONVERGE_ENABLED`] const-gate convention.
+/// Flipping this to `true` (plan Stage 6) makes the redesign LIVE; the
+/// per-walker [`RootpMode`] kill switches then select sub-features for A/B
+/// differentials WITHOUT a recompile.
+const ROOTP_SLOT_PACKING_ENABLED: bool = false; // SCRATCH A/B ONLY — REVERT TO false BEFORE ANY COMMIT
+
+/// ROOT-P canonical-GLL descriptor-worklist redesign — MASTER compile-time gate
+/// (Stage B scaffolding, 2026-07-09). Design: the staged plan
+/// `$CLAUDE_JOB_DIR/tmp/root-p-canonical-gll-plan.md` and memory
+/// `session-2026-07-08-recognizer-cr1-rootc.md` (§"STAGE A = GO"). Stage A PROVED,
+/// read-only, that a faithful canonical Scott-Johnstone GLL descriptor set stays
+/// POLYNOMIAL (|U| = O(n) measured, no overlay re-inflation) AND reading-exact;
+/// this const gates the ENGINE that realizes it.
+///
+/// Unlike the cursor-level [`ROOTP_SLOT_PACKING_ENABLED`] track (which was proven
+/// this-session NOT to deliver — the exact pop-fan re-expands `@`-attribution
+/// multiplicity under GSS-by-`(pos, symbol)`), this selects a PARALLEL ALTERNATIVE
+/// step-driver: the canonical `{R, U, P}` descriptor worklist
+/// ([`WpdaWalker::step_canonical`]) with a GSS-by-SLOT node identity and pending
+/// operands carried as GSS-edge SPPF labels. It runs INSTEAD OF the classic
+/// [`WpdaWalker::step_fanout`] cursor engine when live.
+///
+/// `false` (the current default) makes the ENTIRE canonical-GLL engine DEAD CODE.
+/// The sole dispatch gate at the top of the step loop is spelled
+/// `CANONICAL_GLL_ENABLED && …` (via [`WpdaWalker::canonical_gll_active`]), so with
+/// the const `false` the `&&` short-circuits at compile time, the optimizer drops
+/// the `step_canonical` branch and its (Stage C/D) body, and the walker is
+/// byte-identical to the classic engine. Mirrors the [`ROOTP_SLOT_PACKING_ENABLED`]
+/// / [`SEP_RECONVERGE_ENABLED`] const-gate convention. Flipping this to `true`
+/// (plan Stage G) makes the canonical engine LIVE; the per-walker [`RootpMode`]
+/// `canonical_gll` switch (`PRATTAIL_NO_CANONICAL_GLL`) then toggles it for A/B
+/// differentials WITHOUT a recompile.
+const CANONICAL_GLL_ENABLED: bool = false;
+
+/// ROOT-P Canonical-GLL Stage E1 (2026-07-09): high-bit tag OR'd into a
+/// non-terminal tag to mint a BINARIZED shadow `Symbol` — `intern_symbol(cat |
+/// CGLL_BIN_TAG, lo, hi)`. This keeps the binarized forest's completed-constituent
+/// `Symbol` nodes in a SEPARATE dedup namespace from the classic n-ary `Symbol`s
+/// (which share `(cat, lo, hi)`), so `packings_of(S_bin)` returns ONLY the
+/// binarized `[left,right]` derivations (the N owner-rule readings) and the
+/// canonical realize enumerates them without seeing classic n-ary packings.
+/// `cat_src_idx` is a small `u16`, so the high bit is always free.
+const CGLL_BIN_TAG: u32 = 0x8000_0000;
+
+/// Per-walker ROOT-P sub-feature kill switches (canonical-GLL slot-packing
+/// redesign). Modeled EXACTLY on [`SrSubsumeMode`]: resolved ONCE at walker
+/// construction and stored as a per-walker field, so a parse can never flip a
+/// switch mid-flight (that would make the frontier nondeterministic). The raw
+/// env reads are additionally memoized in a process-`OnceLock` (mirroring
+/// [`sep_reconverge_active`] / [`realize_dedup_enabled`]) so the MANY
+/// per-segment walkers built by projection isolation all observe one identical,
+/// stable mode.
+///
+/// Each field is the FULLY-RESOLVED enabled state: `true` iff the master
+/// compile-time const [`ROOTP_SLOT_PACKING_ENABLED`] is `true` AND neither the
+/// master `PRATTAIL_NO_ROOTP` switch nor the sub-feature's own
+/// `PRATTAIL_NO_ROOTP_*` switch is set. The `NO_` env vars are DISABLE switches
+/// (present, any value ⇒ that feature off), so an unset switch "follows"
+/// `ROOTP_SLOT_PACKING_ENABLED`. When the const is `false` every field is
+/// `false`, and the const-led gate at each (future Stage-2..4) call site
+/// dead-code-eliminates the reader — the switches are inert in Stage 1.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[allow(dead_code)] // Fields read by the `rootp_*_active` gates (wired live in Stages 2-4).
+struct RootpMode {
+    /// Master A/B switch (`PRATTAIL_NO_ROOTP`). When the const is on, setting
+    /// this env var disables the WHOLE redesign (the OFF arm of an A/B run)
+    /// without a recompile. Every sub-feature is `false` when this is `false`.
+    master: bool,
+    /// Stage 2 packing-on-merge-collapse (`PRATTAIL_NO_ROOTP_PACK`): before
+    /// discarding the loser cursor on a merge, link its SPPF packing(s) under
+    /// the survivor's shared Symbol via `sppf.link_packing_to_symbol` instead of
+    /// dropping them.
+    pack: bool,
+    /// Stage 3 SLOT-merge sppf axis + shape-guard (`PRATTAIL_NO_ROOTP_SLOT_SPPF`):
+    /// merge cursors on the grammar SLOT (drop `sppf_top`/`sppf_stack` from the
+    /// merge key) and refuse to collapse shape-unequal (mod-trigger) siblings.
+    slot_sppf: bool,
+    /// Stage 3 conditional owner-masked comparison (`PRATTAIL_NO_ROOTP_LEXWEIGHT`):
+    /// treat same-`(kind,pos)` different-owner `@`-triggers as equal FOR MERGE
+    /// (owner stays ON the SPPF node) — but ONLY for rules with a leading
+    /// structural trigger; multi-step `@`-binders stay owner-distinct.
+    lexweight: bool,
+    /// Stage 4 edge-drop + exact pop fan-out (`PRATTAIL_NO_ROOTP_SLOT_EDGE`):
+    /// drop `incoming_edge`/`incoming_edge_stack` from the merge key for
+    /// CF-interchangeable categories and recover pop-routing by fanning to all
+    /// GSS predecessors (gated on the red-team #2 binder-scope side condition).
+    slot_edge: bool,
+    /// Stage B master switch for the PARALLEL canonical-GLL descriptor-worklist
+    /// engine (`PRATTAIL_NO_CANONICAL_GLL`). INDEPENDENT of the cursor-level
+    /// `master` field above and its [`ROOTP_SLOT_PACKING_ENABLED`] const: this
+    /// selects the alternative [`WpdaWalker::step_canonical`] driver and follows
+    /// its own compile-time master [`CANONICAL_GLL_ENABLED`]. When that const is
+    /// `false` this is `false`, so the [`WpdaWalker::canonical_gll_active`]
+    /// dispatch gate dead-code-eliminates the whole engine and the default build
+    /// is byte-identical.
+    canonical_gll: bool,
+    /// ROOT-P Canonical-GLL Stage E1 (2026-07-09): the BINARIZED-`getNodeP`
+    /// SPPF construction + canonical realize (`PRATTAIL_CGLL_BINARIZE`). Follows
+    /// its own compile-time master [`CANONICAL_GLL_ENABLED`] and is INDEPENDENT
+    /// of `canonical_gll` above, so the mechanism can be exercised on the CLASSIC
+    /// walker (`PRATTAIL_NO_CANONICAL_GLL=1`) to isolate the SPPF/realize half
+    /// from the descriptor-frontier half. `false` when the const is `false` ⇒
+    /// [`WpdaWalker::cgll_binarize_active`] dead-code-eliminates every hook.
+    cgll_binarize: bool,
+}
+
+impl RootpMode {
+    /// Resolve every sub-feature from the environment ONCE per process
+    /// (memoized in a `OnceLock`), following [`ROOTP_SLOT_PACKING_ENABLED`] as
+    /// the default and disabling any sub-feature whose `PRATTAIL_NO_ROOTP*`
+    /// kill switch is set. Mirrors [`SrSubsumeMode::from_env`] (a per-walker
+    /// field, read once at construction) fused with the `OnceLock` single-read
+    /// convention of [`realize_dedup_enabled`].
+    fn from_env() -> Self {
+        static GATE: std::sync::OnceLock<RootpMode> = std::sync::OnceLock::new();
+        *GATE.get_or_init(|| {
+            // `PRATTAIL_NO_ROOTP*` present (any value) ⇒ that switch is DISABLED.
+            let disabled = |key: &str| std::env::var_os(key).is_some();
+            let master = ROOTP_SLOT_PACKING_ENABLED && !disabled("PRATTAIL_NO_ROOTP");
+            RootpMode {
+                master,
+                pack: master && !disabled("PRATTAIL_NO_ROOTP_PACK"),
+                slot_sppf: master && !disabled("PRATTAIL_NO_ROOTP_SLOT_SPPF"),
+                lexweight: master && !disabled("PRATTAIL_NO_ROOTP_LEXWEIGHT"),
+                slot_edge: master && !disabled("PRATTAIL_NO_ROOTP_SLOT_EDGE"),
+                // Stage B canonical-GLL engine: its OWN compile-time master
+                // (`CANONICAL_GLL_ENABLED`), NOT gated by the cursor-level
+                // `master`/`PRATTAIL_NO_ROOTP` above (it is a parallel engine).
+                canonical_gll: CANONICAL_GLL_ENABLED && !disabled("PRATTAIL_NO_CANONICAL_GLL"),
+                // Stage E1 binarized getNodeP: OWN const master; INDEPENDENT of
+                // `canonical_gll` (so it can run on the classic walker for the
+                // Q1 isolation A/B).
+                cgll_binarize: CANONICAL_GLL_ENABLED && disabled("PRATTAIL_CGLL_BINARIZE"),
+            }
+        })
+    }
+}
+
+/// ROOT-P Stage 4c fan-out gate MODE (2026-07-08). Selects WHICH edge-dropped
+/// multi-predecessor pops fan out. Read once per process from
+/// `PRATTAIL_ROOTP_FAN_MODE` (default `All`). A diagnostic A/B lever: the plan's
+/// design is `All` (fan every edge-dropped multi-pred pop), but that re-expands
+/// the deep-`@` `@`-attribution multiplicity the Stage-4b edge-drop collapsed
+/// (each predecessor child lands at a DISTINCT GSS node ⇒ they do not re-merge
+/// ⇒ frontier blow-up). `Coll` restricts the fan to pops with a live collection
+/// accumulator (`collection_stack_depth > 0`) — the `@a!(0,1)` polyadic-send /
+/// wrapped-body reconnection cases (Stage-4a finding #4: the "edge-dependent
+/// reconnection" property) — while deep-`@` single-payload sends fall through to
+/// the single-edge pop that Stage-4b alone already keeps reading-exact.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum RootpFanMode {
+    /// No fan — Stage-4b edge-drop with the single recorded-edge pop. Isolates
+    /// 4b to confirm it preserves the deep-`@` ladder on its own (Stage-4a).
+    Off,
+    /// Fan every edge-dropped ≥2-predecessor pop (the plan's literal design).
+    All,
+    /// Fan only when a collection accumulator is live (`collection_stack_depth >
+    /// 0`) — the targeted reconnection gate.
+    Coll,
+}
+
+/// Resolve [`RootpFanMode`] once per process from `PRATTAIL_ROOTP_FAN_MODE`
+/// (`off` | `all` | `coll`; default `all`). `OnceLock`-memoized so every
+/// projection-isolation sub-walker observes one stable mode.
+#[inline]
+fn rootp_fan_mode() -> RootpFanMode {
+    static MODE: std::sync::OnceLock<RootpFanMode> = std::sync::OnceLock::new();
+    *MODE.get_or_init(|| match std::env::var("PRATTAIL_ROOTP_FAN_MODE").as_deref() {
+        Ok("off") => RootpFanMode::Off,
+        Ok("coll") => RootpFanMode::Coll,
+        _ => RootpFanMode::All,
+    })
+}
+
+// ROOT-P Stage-1 gate helpers. Each ANDs the compile-time master const with the
+// per-walker [`RootpMode`] kill switch. With `ROOTP_SLOT_PACKING_ENABLED`
+// `false` (Stage 1) the leading const short-circuits at compile time, so every
+// call site is dead-code-eliminated and the walker stays byte-identical.
+// `#[inline(always)]` guarantees the const folds through at the call site. Each
+// helper is `allow(dead_code)` until the stage that wires its first caller
+// (mirroring the `sppf`-arena field convention at the `sppf:` field).
+impl<W: SemiringRef, E: WpdaEngine<W>> WpdaWalker<W, E> {
+    /// Master gate: is the ROOT-P redesign live at all?
+    #[allow(dead_code)] // Stage 2 wires the first caller.
+    #[inline(always)]
+    fn rootp_active(&self) -> bool {
+        ROOTP_SLOT_PACKING_ENABLED && self.rootp_mode.master
+    }
+
+    /// Stage 2 gate — packing-on-merge-collapse (link loser packings, don't drop).
+    #[allow(dead_code)] // Stage 2 wires the first caller.
+    #[inline(always)]
+    fn rootp_pack_active(&self) -> bool {
+        ROOTP_SLOT_PACKING_ENABLED && self.rootp_mode.pack
+    }
+
+    /// Stage 3 gate — SLOT-merge sppf axis + shape-guard.
+    #[allow(dead_code)] // Stage 3 wires the first caller.
+    #[inline(always)]
+    fn rootp_slot_sppf_active(&self) -> bool {
+        ROOTP_SLOT_PACKING_ENABLED && self.rootp_mode.slot_sppf
+    }
+
+    /// Stage 3 gate — conditional owner-masked comparison (lex→weight).
+    #[allow(dead_code)] // Stage 3 wires the first caller.
+    #[inline(always)]
+    fn rootp_lexweight_active(&self) -> bool {
+        ROOTP_SLOT_PACKING_ENABLED && self.rootp_mode.lexweight
+    }
+
+    /// Stage 4 gate — edge-drop + exact pop fan-out.
+    #[allow(dead_code)] // Stage 4 wires the first caller.
+    #[inline(always)]
+    fn rootp_slot_edge_active(&self) -> bool {
+        ROOTP_SLOT_PACKING_ENABLED && self.rootp_mode.slot_edge
+    }
+
+    /// Stage B gate — is the PARALLEL canonical-GLL descriptor-worklist engine
+    /// live? When `true`, [`Self::step_fanout`] hands each step to
+    /// [`Self::step_canonical`] instead of driving the classic cursor fan-out.
+    /// The leading [`CANONICAL_GLL_ENABLED`] const short-circuits at compile time
+    /// (Stage B: `false`), so the single dispatch branch is dead-code-eliminated
+    /// and the default build is byte-identical to the classic engine. Wired by
+    /// the dispatch seam in Stage B; the engine body it reaches is Stage C/D.
+    #[allow(dead_code)] // Called only from the const-gated (DCE'd) dispatch branch.
+    #[inline(always)]
+    fn canonical_gll_active(&self) -> bool {
+        CANONICAL_GLL_ENABLED && self.rootp_mode.canonical_gll
+    }
+
+    /// ROOT-P Canonical-GLL Stage E1 gate — is the BINARIZED `getNodeP` SPPF
+    /// construction + canonical realize live? The leading [`CANONICAL_GLL_ENABLED`]
+    /// const short-circuits at compile time (Stage E1: `false`), so EVERY
+    /// binarized hook (`emit_fire_action` mirror, descriptor-`w`, resolve
+    /// interception, realize reader) is dead-code-eliminated and the default
+    /// build is byte-identical. INDEPENDENT of [`Self::canonical_gll_active`]:
+    /// with the const `true` and `PRATTAIL_NO_CANONICAL_GLL=1` the classic walker
+    /// runs but the binarized SPPF is still built + realized — the Q1 isolation.
+    #[allow(dead_code)] // Reached only under the const (DCE'd while const off).
+    #[inline(always)]
+    fn cgll_binarize_active(&self) -> bool {
+        CANONICAL_GLL_ENABLED && self.rootp_mode.cgll_binarize
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // ROOT-P Stage 4a (2026-07-08) READ-ONLY differential harness.
+    //
+    // A walker-stats-ONLY diagnostic that reuses the (already compile-correct)
+    // Stage 2/3 RootpSlot merge machinery (sppf/lex masking + packing-link +
+    // full shape recheck) and varies ONLY the pop-routing edge treatment, so
+    // the three Stage-4 edge arms can be run through `parse_via_wpda_all`
+    // WITHOUT flipping `ROOTP_SLOT_PACKING_ENABLED` (it stays `false`). It is
+    // INDEPENDENT of the production const: in a NON-`walker-stats` build
+    // `rootp_stage4a_active()` is a compile-time `false`, so every call site is
+    // DCE'd and the default build is byte-identical.
+    //
+    // `PRATTAIL_ROOTP_STAGE4A_ARM`:
+    //   0/unset = OFF (Fine key — the true ground-truth merge).
+    //   1 = RootpSlot, edge KEPT (Stage 2/3 masking baseline).
+    //   2 = RootpSlot, edge dropped for CF-interchangeable cats via the emitted
+    //       `category_is_binder_scoped` predicate AND `binder_scope_marks`
+    //       empty (the plan's conditional edge-drop).
+    //   3 = RootpSlot, edge dropped UNCONDITIONALLY (control — should break
+    //       binders, proving the conditionality is load-bearing).
+    //   4 = RootpSlot, edge dropped iff `binder_scope_marks` empty (pure
+    //       dynamic guard, category ignored).
+    //   5 = RootpSlot, edge dropped for every cat EXCEPT those listed in
+    //       `PRATTAIL_ROOTP_STAGE4A_KEEP_CATS` (a comma-separated src_idx set —
+    //       a hand-tightened classification, NO dynamic guard).
+    //   6 = arm 5's tight keep-set AND the dynamic is_empty() guard (the
+    //       CORRECT design: static keep-set for intrinsically-binding cats +
+    //       dynamic guard for in-scope bodies of Proc-category scope-openers).
+    #[cfg(feature = "walker-stats")]
+    #[inline]
+    fn rootp_stage4a_arm() -> u8 {
+        static ARM: std::sync::OnceLock<u8> = std::sync::OnceLock::new();
+        *ARM.get_or_init(|| {
+            std::env::var("PRATTAIL_ROOTP_STAGE4A_ARM")
+                .ok()
+                .and_then(|s| s.trim().parse::<u8>().ok())
+                .unwrap_or(0)
+        })
+    }
+
+    /// Explicit KEEP-edge category set for arm 5 (hand-tightened classification).
+    #[cfg(feature = "walker-stats")]
+    #[inline]
+    fn rootp_stage4a_keep_cats() -> &'static std::collections::BTreeSet<u16> {
+        static KEEP: std::sync::OnceLock<std::collections::BTreeSet<u16>> =
+            std::sync::OnceLock::new();
+        KEEP.get_or_init(|| {
+            std::env::var("PRATTAIL_ROOTP_STAGE4A_KEEP_CATS")
+                .ok()
+                .map(|s| {
+                    s.split(',')
+                        .filter_map(|t| t.trim().parse::<u16>().ok())
+                        .collect()
+                })
+                .unwrap_or_default()
+        })
+    }
+
+    /// True iff a Stage-4a diagnostic arm is active. Compile-time `false` in a
+    /// non-`walker-stats` build ⇒ every gated site is DCE'd (byte-identical).
+    #[cfg(feature = "walker-stats")]
+    #[inline]
+    fn rootp_stage4a_active(&self) -> bool {
+        Self::rootp_stage4a_arm() != 0
+    }
+    #[cfg(not(feature = "walker-stats"))]
+    #[inline(always)]
+    fn rootp_stage4a_active(&self) -> bool {
+        false
     }
 }
 
@@ -828,6 +1458,28 @@ pub trait WpdaEngine<W: SemiringRef> {
     fn rule_has_leading_structural_trigger(&self, src_idx: u16, rule_idx: u16) -> bool {
         let _ = (src_idx, rule_idx);
         false
+    }
+
+    /// ROOT-P Stage 4 (2026-07-08): is category `src_idx` BINDER-SCOPED — a
+    /// category whose parses may sit under (or constitute) a non-context-free
+    /// binder scope, so the GLL pop-routing edge pair
+    /// (`incoming_edge`/`incoming_edge_stack`) MUST be KEPT in the merge key?
+    /// Returning `false` marks the category context-free-INTERCHANGEABLE (its
+    /// return context does not change the reading), permitting the Stage-4
+    /// conditional edge-drop. This is DELIBERATELY NOT
+    /// `rule_has_leading_structural_trigger` (the wrong axis — that is true for
+    /// @-sends AND `NQuote` AND `InputBindQuoted` alike).
+    ///
+    /// Default `true` (KEEP edge = the SAFE / conservative answer: a false KEEP
+    /// costs only delivery, a false DROP costs soundness). The codegen override
+    /// (`emit_category_is_binder_scoped_lookup`) supplies the grammar-derived
+    /// per-category truth: `true` iff the category (a) results from a
+    /// scope-opener, (b) is an abstraction pattern (domain) category, or (c) is
+    /// reachable in the category-reference graph from a scope-opener's body or
+    /// pattern slot.
+    fn category_is_binder_scoped(&self, src_idx: u16) -> bool {
+        let _ = src_idx;
+        true
     }
 
     /// B8 / Issue D (2026-05-09); Phase 4 #2 (2026-05-12): per-(src, rule,
@@ -2174,6 +2826,13 @@ pub struct WpdaWalker<W: SemiringRef, E: WpdaEngine<W>> {
     /// pass without touching the plumbing. See the `SrSubsumeMode` docs
     /// and `docs/design/calculator-map-crosscat-fanout.md` §4.5 M3.
     sr_subsume_mode: SrSubsumeMode,
+    /// ROOT-P canonical-GLL slot-packing redesign kill switches, resolved once
+    /// from the environment at construction (P-series convention; see the
+    /// [`RootpMode`] and [`ROOTP_SLOT_PACKING_ENABLED`] docs). Written by every
+    /// constructor; READ only by the `rootp_*_active` gate helpers, which are
+    /// dead code while the master const is `false` (Stage 1) ⇒ byte-identical.
+    #[allow(dead_code)] // Stages 2-4 wire the first readers via `rootp_*_active`.
+    rootp_mode: RootpMode,
     /// Infix-operand-seal `lex_fork_path` truncation mode, read once from
     /// `PRATTAIL_INFIX_LEXCLEAR` at construction (P-series convention).
     /// `Clear` (default) clears the cursor's `lex_fork_path` at the
@@ -3586,6 +4245,31 @@ pub struct BranchCursor<W: SemiringRef> {
     /// of `apply_action_calls`). The pair brackets the true dead share:
     /// lower (own) ≤ true ≤ upper (lineage). Default 0.
     pub p5_steps_lineage: u32,
+    /// ROOT-P Canonical-GLL Stage E1 (2026-07-09): the BINARIZED single packed
+    /// SPPF node `w` this descriptor carries (Scott & Johnstone `getNodeP`).
+    /// It is the left-fold of the current frame's consumed children as ONE
+    /// node (a leaf for the first child, then `Intermediate` nodes) — the
+    /// canonical replacement for the exponential per-cursor operand STACK.
+    /// Threaded by `step_canonical` ONLY under `CANONICAL_GLL_ENABLED` +
+    /// `PRATTAIL_CGLL_BINARIZE`; `SPPF_ID_NONE` (the empty-frame sentinel) on
+    /// every classic-path cursor, where it is NEVER read (byte-identical
+    /// default — a single idle `u32` per cursor).
+    pub cgll_w: crate::sppf::SppfId,
+    /// ROOT-P Canonical-GLL Stage P1 (2026-07-09): the canonical RETURN-SLOT
+    /// GSS node `v = (i = callee-entry pos, L_ret = the caller's return dotted
+    /// item)` this descriptor keys on under the `PRATTAIL_CGLL_RETSLOT` arm
+    /// (Scott & Johnstone 2010 §4 — the descriptor `u` is the RETURN node, NOT
+    /// the shared callee-entry node the E2b diagnosis proved merges the
+    /// grouping `G` and non-grouping `O` lineages). Minted at each descent by
+    /// `gll_create(from = cgll_ret_node, return_slot = L_ret, at = callee pos)`
+    /// and threaded through the reduce/pop fan (`cgll_ret_node = ret.caller`).
+    /// The P0 read-only shadow VALIDATED that keying `u` on this return slot
+    /// splits `G`/`O` to the ground-truth reading count while staying
+    /// polynomial. `GSS_NODE_NONE` (the empty-frame sentinel) on every
+    /// classic-path cursor and on every canonical cursor UNTIL its first
+    /// descent, where it is NEVER read outside the const-gated `retslot` arm
+    /// (byte-identical default — a single idle `u32` per cursor).
+    pub cgll_ret_node: crate::gss::GssNodeId,
 }
 
 /// Phase F.13 Stage 2.1 (2026-05-22): a single lex-Fork branch
@@ -3713,6 +4397,9 @@ impl<W: SemiringRef> Clone for BranchCursor<W> {
             // a clone is not a fork (no new birth) and not a merge.
             p5_steps_own: self.p5_steps_own,
             p5_steps_lineage: self.p5_steps_lineage,
+            // ROOT-P Stage E1: preserve the binarized `w` across cursor clones.
+            cgll_w: self.cgll_w,
+            cgll_ret_node: self.cgll_ret_node,
             // Phase F.13 H1 (2026-05-20): sppf_symbol_terms field DELETED;
             // memo is walker-global now.
         }
@@ -3831,6 +4518,8 @@ impl<W: SemiringRef> BranchCursor<W> {
             // step counters start at 0.
             p5_steps_own: 0,
             p5_steps_lineage: 0,
+            cgll_w: crate::sppf::SPPF_ID_NONE,
+            cgll_ret_node: crate::gss::GSS_NODE_NONE,
             // Phase F.3c.2 (2026-05-20): fresh empty memo.
         }
     }
@@ -3933,6 +4622,8 @@ impl<W: SemiringRef> BranchCursor<W> {
             // path length (each child genuinely has that ancestry).
             p5_steps_own: 0,
             p5_steps_lineage: parent.p5_steps_lineage,
+            cgll_w: parent.cgll_w,
+            cgll_ret_node: parent.cgll_ret_node,
             // Phase F.3c.2 (2026-05-20): inherit parent's memo via Arc bump.
         }
     }
@@ -5455,6 +6146,9 @@ where
             // Calculator-map cross-cat fan-out fix (§4.5 M3): single-result
             // weight-dominance subsumption kill switch (default On).
             sr_subsume_mode: SrSubsumeMode::from_env(),
+            // ROOT-P slot-packing redesign kill switches (Stage 1 scaffolding;
+            // inert while `ROOTP_SLOT_PACKING_ENABLED` is `false`).
+            rootp_mode: RootpMode::from_env(),
             infix_lexclear_mode: InfixLexclearMode::from_env(),
             prefix_cast_stage_memo_enabled: prefix_cast_stage_memo_enabled_from_env(),
             ccl_project_on_unwind: ccl_project_on_unwind_from_env(),            infix_lexclear_watermark: 0,
@@ -5577,6 +6271,9 @@ where
             // Calculator-map cross-cat fan-out fix (§4.5 M3): single-result
             // weight-dominance subsumption kill switch (default On).
             sr_subsume_mode: SrSubsumeMode::from_env(),
+            // ROOT-P slot-packing redesign kill switches (Stage 1 scaffolding;
+            // inert while `ROOTP_SLOT_PACKING_ENABLED` is `false`).
+            rootp_mode: RootpMode::from_env(),
             infix_lexclear_mode: InfixLexclearMode::from_env(),
             prefix_cast_stage_memo_enabled: prefix_cast_stage_memo_enabled_from_env(),
             ccl_project_on_unwind: ccl_project_on_unwind_from_env(),            infix_lexclear_watermark: 0,
@@ -5698,6 +6395,9 @@ where
             // Calculator-map cross-cat fan-out fix (§4.5 M3): single-result
             // weight-dominance subsumption kill switch (default On).
             sr_subsume_mode: SrSubsumeMode::from_env(),
+            // ROOT-P slot-packing redesign kill switches (Stage 1 scaffolding;
+            // inert while `ROOTP_SLOT_PACKING_ENABLED` is `false`).
+            rootp_mode: RootpMode::from_env(),
             infix_lexclear_mode: InfixLexclearMode::from_env(),
             prefix_cast_stage_memo_enabled: prefix_cast_stage_memo_enabled_from_env(),
             ccl_project_on_unwind: ccl_project_on_unwind_from_env(),            infix_lexclear_watermark: 0,
@@ -6400,6 +7100,8 @@ where
                     // treatment as cohort-revive).
                     p5_steps_own: 0,
                     p5_steps_lineage: 0,
+                    cgll_w: crate::sppf::SPPF_ID_NONE,
+                    cgll_ret_node: crate::gss::GSS_NODE_NONE,
                     // Phase F.3c.2 (2026-05-20): fresh empty memo.
                 })];
                 self.state = new_state.clone();
@@ -6684,6 +7386,30 @@ where
         // walker; the next driver invocation re-asserts the right value at
         // entry).
         self.single_result_demand = stop_when_accepting;
+        // ── ROOT-P canonical-GLL entry (Stage D, 2026-07-09) ─────────────────
+        // When the PARALLEL canonical-GLL descriptor-worklist engine is live,
+        // run the WHOLE parse through the `{R, U, P}` worklist here INSTEAD of
+        // the classic cursor loop below, then hand the collected accepting
+        // frontier to the existing `resolve_at_end_of_input` / realize path.
+        // The gate leads with the `CANONICAL_GLL_ENABLED` compile-time const
+        // (Stage B/D default `false`), so this whole branch — and the entire
+        // `step_canonical` body it reaches — is dead-code-eliminated and the
+        // classic driver stays byte-identical when the const is off.
+        if self.canonical_gll_active() {
+            let final_state = self.step_canonical(tokens);
+            return match final_state {
+                WpdaState::Error { ref message } if message.starts_with("canonical-GLL budget") => {
+                    Err(WpdaMaxStepsExceeded { position: self.pos })
+                },
+                _ => Ok(()),
+            };
+        }
+        // ★ ROOT-P Canonical-GLL Stage A SHADOW (2026-07-09): reset the per-parse
+        // global add-once descriptor set at the parse-loop entry (the walker is
+        // fresh per parse but the thread-local persists on the thread). No-op
+        // unless `PRATTAIL_CANONICAL_GLL_SHADOW=1`; byte-identical otherwise.
+        #[cfg(feature = "walker-stats")]
+        self.canonical_gll_shadow_reset();
         // Phase F.13 Task #117 (2026-05-23): pin recovery cache/config
         // for the duration of the parse loop so the codegen-emitted
         // recovery path can find them via TLS without changing the
@@ -7412,6 +8138,22 @@ where
             {
                 eprintln!("{}", self.stats);
             }
+            // ROOT-P Stage 2/3 acceptance signal (2026-07-08): the packing-link
+            // counters, on a CHEAP dedicated env (`ROOTP_STATS=1`) DECOUPLED from
+            // the O(N²) `GRIND_SPPF_CONTENT` content probe, so the OFF/ARM-1
+            // exponential frontier is not quadratically slowed just to read them.
+            // Expectation: OFF ⇒ all 0 (machinery DCE'd); ARM 1/2 ⇒ `link_noop`
+            // > 0 (machinery reached) and `packings_linked` == 0 (the canonical
+            // Symbol-dedup makes the link a structural no-op — reading
+            // preservation is via Symbol-sharing, delivery via frontier collapse).
+            if std::env::var_os("ROOTP_STATS").map(|v| v == "1").unwrap_or(false) {
+                eprintln!(
+                    "ROOTP-LINK packings_linked={} link_noop={} shape_refusals={}",
+                    self.stats.rootp_packings_linked_total,
+                    self.stats.rootp_link_noop_total,
+                    self.stats.rootp_shape_refusals_total,
+                );
+            }
         }
         // AT_QUOTED_BIND_GATE Task-2 (session da0842dc, 2026-07-03): dump the
         // `sppf_stack_id`-chain content-eq tally at the parse boundary (gated
@@ -7701,6 +8443,22 @@ where
             ..
         } = snapshot;
         sort_eoi_candidates_by_semiring_priority(&mut accepting);
+        // ★ ROOT-P Canonical-GLL Stage E1 BINARIZED resolve (2026-07-09).
+        // When the binarized getNodeP mechanism is live, enumerate the readings
+        // from the binarized shared Symbols' packing families (limit=None) rather
+        // than the classic per-cursor `Some(1)` roots. Gated by
+        // `cgll_binarize_active` (leads with the `CANONICAL_GLL_ENABLED` const ⇒
+        // DCE'd + byte-identical when the const is `false`).
+        if self.cgll_binarize_active() {
+            return self.cgll_resolve_binarized(&accepting);
+        }
+        // ★ ROOT-P Canonical-GLL Stage A SHADOW reading cross-check (2026-07-09).
+        // READ-ONLY: cross-checks the shadow key's soundness against the baseline
+        // reading set (realizes the REAL, unchanged SPPF) and dumps the verdict
+        // numbers. Runs for len 0/1/multi (before the `match accepting.len()`).
+        // Gated `PRATTAIL_CANONICAL_GLL_SHADOW=1`; byte-identical otherwise.
+        #[cfg(feature = "walker-stats")]
+        self.canonical_gll_shadow_finish(&accepting);
         // Fanout mode: resolve over the lazy logical-cursor snapshot.
         // Stage 3.5b (2026-05-01): use `pos >= tokens.len()` rather than
         // `pos == tokens.len()`. Real-grammar codegen never advances pos
@@ -7959,6 +8717,33 @@ where
     where
         W: StarSemiringRef,
     {
+        // ★ ROOT-P Canonical-GLL Stage E1: BINARIZED root reader. The facade
+        // re-realizes each accepting `root` here; when the binarized mechanism is
+        // live AND `root` is a binarized shadow Symbol (`CGLL_BIN_TAG`), dispatch
+        // to the canonical `flatten`-realize (which enumerates the packing family
+        // = the N owner readings) instead of the classic n-ary DFS (which cannot
+        // consume the binary spine). Gated by `cgll_binarize_active` (leads with
+        // the const ⇒ DCE'd + byte-identical when off).
+        if self.cgll_binarize_active() {
+            if let Some(crate::sppf::SppfNode::Symbol { non_terminal_tag, .. }) =
+                self.sppf.node(root)
+            {
+                if non_terminal_tag & CGLL_BIN_TAG != 0 {
+                    let mut memo: std::collections::HashMap<
+                        crate::sppf::SppfId,
+                        Vec<(ActionArg, W)>,
+                    > = std::collections::HashMap::new();
+                    return self
+                        .cgll_realize_bin_symbol(root, &mut memo, limit)
+                        .into_iter()
+                        .filter_map(|(arg, w)| match arg {
+                            ActionArg::Term { value, .. } => Some((value, w)),
+                            _ => None,
+                        })
+                        .collect();
+                }
+            }
+        }
         let __res = match limit {
             Some(0) => Vec::new(),
             Some(cap) => match self.try_realize_root_to_terms_with_weights_lazy(root, cap) {
@@ -8884,6 +9669,10 @@ where
             // Vec::new() ensures the Bug I "missing memo for child SppfId"
             // panic at line 3697-3705 sees `Some(empty_vec)` not `None`.
             Some(crate::sppf::SppfNode::TriggerTerminal { .. }) => Vec::new(),
+            // ROOT-P Stage E1: canonical binarized Intermediate never reaches
+            // the CLASSIC realize (which drives this fn); the canonical reader
+            // `cgll_realize_*` handles Intermediate separately. Defensive empty.
+            Some(crate::sppf::SppfNode::Intermediate { .. }) => Vec::new(),
             None => Vec::new(),
         }
     }
@@ -9846,6 +10635,8 @@ where
                         // starts both counters at 0.
                         p5_steps_own: 0,
                         p5_steps_lineage: 0,
+                        cgll_w: crate::sppf::SPPF_ID_NONE,
+                        cgll_ret_node: crate::gss::GSS_NODE_NONE,
                         // Phase F.3c.2 (2026-05-20): post-Drop reset clears memo.
                     }));
             },
@@ -12676,6 +13467,189 @@ where
         CursorOutcome::ForkInto(children)
     }
 
+    /// ROOT-P Stage E — SLOT-coarsened exact pop-fan. Mirrors
+    /// [`Self::recognizer_fan_pop`] (canonical child resolve-ON, extras
+    /// resolve-suppressed) but fans over the classic out-edges of EVERY
+    /// `sibling_nodes` entry — the set of GSS nodes sharing the popping node's
+    /// `(category, pos)` slot — so callers spread across the `@`-cohort's
+    /// rule-variant nodes are ALL reconnected (the canonical `(nonterminal X,
+    /// position j)` node identity, recovered without re-keying the shared node
+    /// index). The canonical child (the popping cursor's own recorded incoming
+    /// edge) keeps resolve/cohort writes ON; every other edge suppresses them
+    /// (poly-safe). A sibling pop runs on a clone with `node = sibling` so the
+    /// pop-body fires the sibling rule's frame; `emit_fire_action`'s owner-gate
+    /// rejects children that do not belong to that rule (⇒ Error ⇒ dropped),
+    /// so only VALID sibling derivations contribute packings. Byte-identical
+    /// while the const is off (sole caller is the const-gated `step_canonical`).
+    #[allow(dead_code)] // Reached only from `step_canonical` (DCE'd while const off).
+    fn cgll_slot_fan_pop(
+        &mut self,
+        cursor_snapshot: BranchCursor<W>,
+        sibling_nodes: &[crate::gss::GssNodeId],
+        per_edge: impl Fn(
+            &mut Self,
+            BranchCursor<W>,
+            Option<crate::gss::GssEdgeId>,
+        ) -> Option<BranchCursor<W>>,
+    ) -> CursorOutcome<W> {
+        let canonical = self
+            .incoming_edge_stack_arena
+            .top(cursor_snapshot.incoming_edge_stack_id);
+        let mut children: Vec<BranchCursor<W>> = Vec::new();
+        // Canonical child — the popping cursor's own recorded edge, resolve ON.
+        self.pop_fanout_suppress_resolve = false;
+        if let Some(c) = per_edge(self, cursor_snapshot.clone(), canonical) {
+            children.push(c);
+        }
+        // Every slot-sibling node's out-edges — resolve SUPPRESSED, skipping the
+        // canonical edge already handled above.
+        self.pop_fanout_suppress_resolve = true;
+        for &s in sibling_nodes {
+            let n_edges = self.gss.edges_from(s).len();
+            for i in 0..n_edges {
+                let eid = crate::gss::pack_edge_id(s, i);
+                if Some(eid) == canonical {
+                    continue;
+                }
+                let mut snap = cursor_snapshot.clone();
+                snap.node = s;
+                if let Some(c) = per_edge(self, snap, Some(eid)) {
+                    children.push(c);
+                }
+            }
+        }
+        self.pop_fanout_suppress_resolve = false;
+        self.deterministic = false;
+        CursorOutcome::ForkInto(children)
+    }
+
+    /// ROOT-P Stage 4c gate (2026-07-08): should THIS pop fan out over ALL GSS
+    /// predecessors with derivation-EXACT (resolve-ON) children?
+    ///
+    /// True iff the Stage-4 edge-drop is live (`rootp_slot_edge_active`), no
+    /// binder scope is currently open on the cursor (`binder_scope_marks`
+    /// empty), AND the popped node has ≥2 predecessors. This RECOMPUTES the
+    /// exact Stage-4b edge-drop condition (`rootp_slot_edge_active() &&
+    /// binder_scope_marks.is_empty()`): a cursor that dropped its edge in the
+    /// merge key merged with edge-distinct siblings, so its single recorded
+    /// edge no longer routes every collapsed lineage's pop target — the fan
+    /// reconnects them (plan §2 fact #2). With ≤1 predecessor the single-edge
+    /// pop is already exhaustive (no collapse to reconnect). The
+    /// `binder_scope_marks.is_empty()` conjunct is the red-team #2 fence: an
+    /// operand under a live binder scope carries a NON-CF continuation the GSS
+    /// (nt,lo,hi) span does not encode, so fanning it could pair it with a
+    /// scope-continuation it never entered (a spurious reading). Byte-identical
+    /// while the const is `false` (`rootp_slot_edge_active` short-circuits at
+    /// compile time ⇒ the whole predicate folds to `false` and every caller is
+    /// DCE'd).
+    #[allow(dead_code)] // Wired by the Stage-4c Pop / ConsumeAndPop handlers.
+    #[inline]
+    fn rootp_should_exact_fan_pop(&self, cursor: &BranchCursor<W>) -> bool {
+        if !(self.rootp_slot_edge_active()
+            && cursor.binder_scope_marks.is_empty()
+            && self.gss.edges_from(cursor.node).len() > 1)
+        {
+            return false;
+        }
+        // Stage 4c fan-mode gate (diagnostic A/B lever; see `RootpFanMode`).
+        match rootp_fan_mode() {
+            RootpFanMode::Off => false,
+            RootpFanMode::All => true,
+            RootpFanMode::Coll => cursor.collection_stack_depth > 0,
+        }
+    }
+
+    /// ROOT-P Stage 4c (2026-07-08): DERIVATION-EXACT canonical-GLL pop
+    /// fan-out (Scott & Johnstone 2010, §5 "the descriptor's `w` node is read
+    /// off the GSS edge at pop"; Tomita fork-on-pop over a Goodman packed
+    /// forest). Spawns one child per out-edge of `cursor_snapshot.node`, each
+    /// running the caller's full post-pop body through `per_edge`.
+    ///
+    /// ★ WHERE DERIVATION-EXACTNESS COMES FROM (data-driven refinement, 2026-
+    /// 07-08). The plan asked for "resolve ON per child"; running it that way
+    /// (`pop_fanout_suppress_resolve = false` for ALL children) BREAKS the
+    /// deep-`@` battery (`@Nil!(@(@Nil)!())` → "parse incomplete at position 1";
+    /// deeper nests HANG). Root cause: `pop_fanout_suppress_resolve` does NOT
+    /// gate the SPPF packing build — `apply_pop_body_to_cursor`'s
+    /// `emit_fire_action` (`intern_packing` + `link_packing_to_symbol`) runs
+    /// UNCONDITIONALLY, so every predecessor child already contributes its
+    /// packing to the shared `(nt,lo,hi)` Symbol. What the flag gates is the
+    /// dispatch-COHORT sharing side effects (`WorkerSnapshot` accumulation in
+    /// `cursor_gss_pop_via_edge_id`; cross-cat body-origin recording at
+    /// `record_crosscat_lhs_body_origins_for_sppf_id` / `resolve_crosscat_lhs_*`).
+    /// Those are keyed by the DISPATCH position, not by derivation; duplicating
+    /// them across the fan's non-canonical predecessors accumulates redundant
+    /// snapshots (→ `paused × snapshots` blow-up = the HANG) and records
+    /// body-origins for the WRONG predecessor (→ polluted paused-member revival
+    /// = the "parse incomplete"; see the guard comment at
+    /// `record_crosscat_lhs_body_origins_for_sppf_id`).
+    ///
+    /// So the correct EXACT fan keeps the resolve/cohort writes ON for the
+    /// CANONICAL child only (registers each dispatch's worker snapshot ONCE,
+    /// exactly as the non-fan single-edge pop does) and SUPPRESSES them on the
+    /// extras — while `emit_fire_action` still builds every extra's packing.
+    /// This mirrors [`Self::recognizer_fan_pop`]'s resolve handling; the
+    /// reading-EXACTNESS (vs the recognizer's reachability over-approximation)
+    /// comes NOT from the resolve flag but from the caller's merge surface —
+    /// `MergeKey::RootpSlot` with the full masked-shape recheck + Stage-2
+    /// packing-link + Stage-4b edge-drop — which merges cursors on the exact
+    /// GLL SLOT (+shape) rather than the recognizer's coarse `Slot` key. It is
+    /// the pop-side dual of the merge-time [`Self::link_symbol_packings`] (which
+    /// unions the collapsed losers' operand packings under the survivor's
+    /// operand Symbol before this fan runs) — together they retain every
+    /// derivation exactly.
+    ///
+    /// Returns `ForkInto(children)` and flips `deterministic = false` (the
+    /// Fork-action contract the `ForkInto` handlers in `apply_action` /
+    /// `step_fanout` expect). Byte-identical while the const is `false` (only
+    /// reachable from callers gated on `rootp_should_exact_fan_pop`).
+    #[allow(dead_code)] // Wired by the Stage-4c Pop / ConsumeAndPop handlers.
+    fn rootp_exact_fan_pop(
+        &mut self,
+        cursor_snapshot: BranchCursor<W>,
+        per_edge: impl Fn(
+            &mut Self,
+            BranchCursor<W>,
+            Option<crate::gss::GssEdgeId>,
+        ) -> Option<BranchCursor<W>>,
+    ) -> CursorOutcome<W> {
+        let node = cursor_snapshot.node;
+        let canonical = self
+            .incoming_edge_stack_arena
+            .top(cursor_snapshot.incoming_edge_stack_id);
+        let n_edges = self.gss.edges_from(node).len();
+        let mut children: Vec<BranchCursor<W>> = Vec::with_capacity(n_edges);
+        // Canonical child first: resolve/cohort writes ON (byte-identical to the
+        // single-edge pop — registers each dispatch's snapshot exactly once).
+        // `emit_fire_action` (the SPPF packing build) runs on EVERY child
+        // regardless of this flag, so extras still contribute their derivation.
+        let saved_suppress = self.pop_fanout_suppress_resolve;
+        self.pop_fanout_suppress_resolve = false;
+        if let Some(c) = per_edge(self, cursor_snapshot.clone(), canonical) {
+            children.push(c);
+        }
+        // Extra predecessors: SPPF packing ON, dispatch-cohort resolve writes
+        // SUPPRESSED. Duplicating the cohort/body-origin writes across
+        // predecessors pollutes paused-member revival and blows up the
+        // `paused × snapshots` cohort fan (the deep-`@` hang / "incomplete").
+        if canonical.is_some() {
+            self.pop_fanout_suppress_resolve = true;
+            for i in 0..n_edges {
+                let eid = crate::gss::pack_edge_id(node, i);
+                if Some(eid) == canonical {
+                    continue;
+                }
+                if let Some(c) = per_edge(self, cursor_snapshot.clone(), Some(eid)) {
+                    children.push(c);
+                }
+            }
+        }
+        self.pop_fanout_suppress_resolve = saved_suppress;
+        self.deterministic = false;
+        crate::stats_inc!(self, rootp_exact_fan_pops_total);
+        CursorOutcome::ForkInto(children)
+    }
+
     fn apply_action_to_cursor(
         &mut self,
         cursor: &mut BranchCursor<W>,
@@ -13250,6 +14224,38 @@ where
                 // pattern is replaced by per-cursor edge identity
                 // (Scott & Johnstone 2010 GLL descriptor uniqueness).
                 //
+                // ★ ROOT-P Stage 4c (2026-07-08): DERIVATION-EXACT canonical-GLL
+                // pop fan-out. A cursor that dropped its pop-routing edge in the
+                // Stage-4b merge key (condition recomputed by
+                // `rootp_should_exact_fan_pop`) may have absorbed edge-distinct
+                // siblings, so its single recorded edge no longer routes every
+                // collapsed lineage's pop target — fan to ALL predecessors with
+                // SPPF/resolve writes ON per child (each fires + links its
+                // packing). Checked BEFORE the recognizer over-approximation fan
+                // (they are never both live). Byte-identical while the const is
+                // `false` (the gate short-circuits at compile time ⇒ DCE'd).
+                if self.rootp_should_exact_fan_pop(cursor) {
+                    return self.rootp_exact_fan_pop(cursor.clone(), |w, mut ch, edge| {
+                        let popped_symbol = w.gss.node(ch.node).map(|n| n.symbol);
+                        let (pred_id, kind, edge_id) =
+                            w.cursor_gss_pop_via_edge_id(&mut ch, edge);
+                        if w.apply_pop_body_to_cursor(
+                            &mut ch,
+                            pred_id,
+                            kind.as_ref(),
+                            edge_id,
+                            popped_symbol,
+                            &weight,
+                            new_state.clone(),
+                            tokens,
+                            None,
+                        ).0 {
+                            Some(ch)
+                        } else {
+                            None
+                        }
+                    });
+                }
                 // ★ RECOGNIZER (a166789b): the recognizer REVERSES this — when
                 // the popped node has ≥2 predecessors it fans out (Tomita
                 // fork-on-pop) so keep-one Slot merge cannot lose a pop target.
@@ -13268,7 +14274,8 @@ where
                             &weight,
                             new_state.clone(),
                             tokens,
-                        ) {
+                            None,
+                        ).0 {
                             Some(ch)
                         } else {
                             None
@@ -13296,7 +14303,8 @@ where
                     &weight,
                     new_state,
                     tokens,
-                ) {
+                    None,
+                ).0 {
                     return CursorOutcome::Drop;
                 }
                 self.cursor_resolution_check(cursor)
@@ -13812,6 +14820,33 @@ where
                 // Stage 3.12.6 (2026-05-02): single-predecessor pop via
                 // edge-id (see Pop arm). Consume token first, then pop
                 // along the cursor's recorded path.
+                // ★ ROOT-P Stage 4c (2026-07-08): DERIVATION-EXACT pop fan-out
+                // for an edge-dropped cursor (see the Pop arm). Same body as the
+                // recognizer fan below but resolve ON per child; the consume
+                // (`advance_cursor_pos`) runs per child, before the pop.
+                if self.rootp_should_exact_fan_pop(cursor) {
+                    return self.rootp_exact_fan_pop(cursor.clone(), |w, mut ch, edge| {
+                        let popped_symbol = w.gss.node(ch.node).map(|n| n.symbol);
+                        let (pred_id, kind, edge_id) =
+                            w.cursor_gss_pop_via_edge_id(&mut ch, edge);
+                        w.advance_cursor_pos(&mut ch, tokens, 1);
+                        if w.apply_pop_body_to_cursor(
+                            &mut ch,
+                            pred_id,
+                            kind.as_ref(),
+                            edge_id,
+                            popped_symbol,
+                            &weight,
+                            new_state.clone(),
+                            tokens,
+                            None,
+                        ).0 {
+                            Some(ch)
+                        } else {
+                            None
+                        }
+                    });
+                }
                 // ★ RECOGNIZER (a166789b): fan-out on ≥2-predecessor pop.
                 if self.recognizer_should_fan_pop(cursor.node) {
                     return self.recognizer_fan_pop(cursor.clone(), |w, mut ch, edge| {
@@ -13828,7 +14863,8 @@ where
                             &weight,
                             new_state.clone(),
                             tokens,
-                        ) {
+                            None,
+                        ).0 {
                             Some(ch)
                         } else {
                             None
@@ -13848,7 +14884,8 @@ where
                     &weight,
                     new_state,
                     tokens,
-                ) {
+                    None,
+                ).0 {
                     return CursorOutcome::Drop;
                 }
                 self.cursor_resolution_check(cursor)
@@ -13861,6 +14898,14 @@ where
                 // reads inside apply_pop_body_to_cursor — splice probe,
                 // CrossCatLhs re-entry, cross-cat Return replace,
                 // GroupingClose resolve).
+                // NOTE (ROOT-P Stage 4c, 2026-07-08): the DERIVATION-EXACT pop
+                // fan is deliberately NOT wired into `ConsumeAtAndPop` (the
+                // grouping-close pop). Empirically it CAUSED a spurious GAIN
+                // (`@a!(0,1)` 1→2) and turned the deep-`@` `@(...)` failure from
+                // a fast reject into a frontier EXPLOSION (timeout). The
+                // grouping-close reconnection is a distinct, unsolved obstacle
+                // (see the Stage-4c ledger). The recognizer fan below is
+                // unchanged and only active under `recognizer_mode`.
                 // ★ RECOGNIZER (a166789b): fan-out on ≥2-predecessor pop. Each
                 // child sets `ch.pos = next_pos` (the deterministic `self.pos`
                 // mirror is skipped — recognizer runs non-deterministic and the
@@ -13880,7 +14925,8 @@ where
                             &weight,
                             new_state.clone(),
                             tokens,
-                        ) {
+                            None,
+                        ).0 {
                             Some(ch)
                         } else {
                             None
@@ -13911,7 +14957,8 @@ where
                     &weight,
                     new_state,
                     tokens,
-                ) {
+                    None,
+                ).0 {
                     return CursorOutcome::Drop;
                 }
                 self.cursor_resolution_check(cursor)
@@ -15114,6 +16161,9 @@ where
                                 // parent's ancestry path length.
                                 p5_steps_own: 0,
                                 p5_steps_lineage: cursor.p5_steps_lineage,
+                                // ROOT-P Stage E1: inert on classic Fork arms.
+                                cgll_w: cursor.cgll_w,
+                                cgll_ret_node: cursor.cgll_ret_node,
                                 // Phase F.3c.2 (2026-05-20): inherit parent's
                                 // SPPF-symbol → AST memo via Arc bump (O(1)).
                                 // First write in this child triggers Arc::make_mut.
@@ -15235,6 +16285,9 @@ where
                                 // parent's ancestry path length.
                                 p5_steps_own: 0,
                                 p5_steps_lineage: cursor.p5_steps_lineage,
+                                // ROOT-P Stage E1: inert on classic Fork arms.
+                                cgll_w: cursor.cgll_w,
+                                cgll_ret_node: cursor.cgll_ret_node,
                                 // Phase F.3c.2 (2026-05-20): inherit parent's
                                 // SPPF-symbol → AST memo via Arc bump (O(1)).
                                 // First write in this child triggers Arc::make_mut.
@@ -15332,6 +16385,9 @@ where
                                 // parent's ancestry path length.
                                 p5_steps_own: 0,
                                 p5_steps_lineage: cursor.p5_steps_lineage,
+                                // ROOT-P Stage E1: inert on classic Fork arms.
+                                cgll_w: cursor.cgll_w,
+                                cgll_ret_node: cursor.cgll_ret_node,
                                 // Phase F.3c.2 (2026-05-20): inherit parent's
                                 // SPPF-symbol → AST memo via Arc bump (O(1)).
                                 // First write in this child triggers Arc::make_mut.
@@ -15485,6 +16541,9 @@ where
                                 // parent's ancestry path length.
                                 p5_steps_own: 0,
                                 p5_steps_lineage: cursor.p5_steps_lineage,
+                                // ROOT-P Stage E1: inert on classic Fork arms.
+                                cgll_w: cursor.cgll_w,
+                                cgll_ret_node: cursor.cgll_ret_node,
                                 // Phase F.3c.2 (2026-05-20): inherit parent's
                                 // SPPF-symbol → AST memo via Arc bump (O(1)).
                                 // First write in this child triggers Arc::make_mut.
@@ -15604,6 +16663,9 @@ where
                                 // parent's ancestry path length.
                                 p5_steps_own: 0,
                                 p5_steps_lineage: cursor.p5_steps_lineage,
+                                // ROOT-P Stage E1: inert on classic Fork arms.
+                                cgll_w: cursor.cgll_w,
+                                cgll_ret_node: cursor.cgll_ret_node,
                                 // Phase F.3c.2 (2026-05-20): inherit parent's
                                 // SPPF-symbol → AST memo via Arc bump (O(1)).
                                 // First write in this child triggers Arc::make_mut.
@@ -15721,6 +16783,9 @@ where
                                 // parent's ancestry path length.
                                 p5_steps_own: 0,
                                 p5_steps_lineage: cursor.p5_steps_lineage,
+                                // ROOT-P Stage E1: inert on classic Fork arms.
+                                cgll_w: cursor.cgll_w,
+                                cgll_ret_node: cursor.cgll_ret_node,
                                 // Phase F.3c.2 (2026-05-20): inherit parent's
                                 // SPPF-symbol → AST memo via Arc bump (O(1)).
                                 // First write in this child triggers Arc::make_mut.
@@ -15737,7 +16802,8 @@ where
                                 &branch.weight,
                                 branch.new_state.clone(),
                                 tokens,
-                            ) {
+                                None,
+                            ).0 {
                                 continue;
                             }
                             children.push(child);
@@ -15825,6 +16891,9 @@ where
                                 // parent's ancestry path length.
                                 p5_steps_own: 0,
                                 p5_steps_lineage: cursor.p5_steps_lineage,
+                                // ROOT-P Stage E1: inert on classic Fork arms.
+                                cgll_w: cursor.cgll_w,
+                                cgll_ret_node: cursor.cgll_ret_node,
                                 // Phase F.3c.2 (2026-05-20): inherit parent's
                                 // SPPF-symbol → AST memo via Arc bump (O(1)).
                                 // First write in this child triggers Arc::make_mut.
@@ -15842,7 +16911,8 @@ where
                                 &branch.weight,
                                 branch.new_state.clone(),
                                 tokens,
-                            ) {
+                                None,
+                            ).0 {
                                 continue;
                             }
                             children.push(child);
@@ -15930,6 +17000,9 @@ where
                                 // parent's ancestry path length.
                                 p5_steps_own: 0,
                                 p5_steps_lineage: cursor.p5_steps_lineage,
+                                // ROOT-P Stage E1: inert on classic Fork arms.
+                                cgll_w: cursor.cgll_w,
+                                cgll_ret_node: cursor.cgll_ret_node,
                                 // Phase F.3c.2 (2026-05-20): inherit parent's
                                 // SPPF-symbol → AST memo via Arc bump (O(1)).
                                 // First write in this child triggers Arc::make_mut.
@@ -15949,7 +17022,8 @@ where
                                 &branch.weight,
                                 branch.new_state.clone(),
                                 tokens,
-                            ) {
+                                None,
+                            ).0 {
                                 continue;
                             }
                             children.push(child);
@@ -15990,7 +17064,8 @@ where
                                 &branch.weight,
                                 branch.new_state.clone(),
                                 tokens,
-                            ) {
+                                None,
+                            ).0 {
                                 continue;
                             }
                             children.push(child);
@@ -16077,6 +17152,9 @@ where
                                 // parent's ancestry path length.
                                 p5_steps_own: 0,
                                 p5_steps_lineage: cursor.p5_steps_lineage,
+                                // ROOT-P Stage E1: inert on classic Fork arms.
+                                cgll_w: cursor.cgll_w,
+                                cgll_ret_node: cursor.cgll_ret_node,
                                 // Phase F.3c.2 (2026-05-20): inherit parent's
                                 // SPPF-symbol → AST memo via Arc bump (O(1)).
                                 // First write in this child triggers Arc::make_mut.
@@ -16227,6 +17305,9 @@ where
                                 // parent's ancestry path length.
                                 p5_steps_own: 0,
                                 p5_steps_lineage: cursor.p5_steps_lineage,
+                                // ROOT-P Stage E1: inert on classic Fork arms.
+                                cgll_w: cursor.cgll_w,
+                                cgll_ret_node: cursor.cgll_ret_node,
                                 // Phase F.3c.2 (2026-05-20): inherit parent's
                                 // SPPF-symbol → AST memo via Arc bump (O(1)).
                                 // First write in this child triggers Arc::make_mut.
@@ -16382,6 +17463,9 @@ where
                                 // parent's ancestry path length.
                                 p5_steps_own: 0,
                                 p5_steps_lineage: cursor.p5_steps_lineage,
+                                // ROOT-P Stage E1: inert on classic Fork arms.
+                                cgll_w: cursor.cgll_w,
+                                cgll_ret_node: cursor.cgll_ret_node,
                                 // Phase F.3c.2 (2026-05-20): inherit parent's
                                 // SPPF-symbol → AST memo via Arc bump (O(1)).
                                 // First write in this child triggers Arc::make_mut.
@@ -16594,6 +17678,9 @@ where
                                 // parent's ancestry path length.
                                 p5_steps_own: 0,
                                 p5_steps_lineage: cursor.p5_steps_lineage,
+                                // ROOT-P Stage E1: inert on classic Fork arms.
+                                cgll_w: cursor.cgll_w,
+                                cgll_ret_node: cursor.cgll_ret_node,
                                 // Phase F.3c.2 (2026-05-20): inherit parent's
                                 // SPPF-symbol → AST memo via Arc bump (O(1)).
                                 // First write in this child triggers Arc::make_mut.
@@ -16912,7 +17999,8 @@ where
                                 &branch.weight,
                                 branch.new_state.clone(),
                                 tokens,
-                            ) {
+                                None,
+                            ).0 {
                                 continue;
                             }
                             children.push(child);
@@ -17086,7 +18174,8 @@ where
                                 &branch.weight,
                                 branch.new_state.clone(),
                                 tokens,
-                            ) {
+                                None,
+                            ).0 {
                                 continue;
                             }
                             children.push(child);
@@ -17913,37 +19002,52 @@ where
                 return;
             }
             t.diverged += 1;
-            // Resolve both chains to SppfId sequences (top-down).
+            // Resolve both chains to SppfId sequences (push order: index 0 =
+            // deepest/bottom, last = top).
             let mut sa = Vec::new();
             let mut sb = Vec::new();
-            let a = self.sppf_stack_arena.slice_at(first_stack, &mut sa);
-            // slice_at needs its own scratch; clone `a` before reusing.
-            let a: Vec<crate::sppf::SppfId> = a.to_vec();
-            let b: Vec<crate::sppf::SppfId> = {
-                let s = self.sppf_stack_arena.slice_at(incoming_stack, &mut sb);
-                s.to_vec()
-            };
-            // raw_eq: identical SppfId sequences.
-            if a == b {
-                t.raw_eq += 1;
-                t.shallow_eq += 1;
-                t.deep_eq += 1;
-                return;
-            }
-            // shallow_eq: same length + same depth-1 dedup-identity per position.
-            if a.len() == b.len()
+            self.sppf_stack_arena.slice_at(first_stack, &mut sa);
+            self.sppf_stack_arena.slice_at(incoming_stack, &mut sb);
+            let a: &[crate::sppf::SppfId] = &sa;
+            let b: &[crate::sppf::SppfId] = &sb;
+            // raw_eq: identical SppfId sequences (pure interning artifact).
+            let raw = a == b;
+            let same_len = a.len() == b.len();
+            // shallow_eq: same length + same depth-1 dedup-identity per level
+            // (INCLUDING TriggerTerminal owner attribution).
+            let shallow = same_len
                 && a.iter()
                     .zip(b.iter())
-                    .all(|(&x, &y)| self.sppf_shallow_ident(x) == self.sppf_shallow_ident(y))
-            {
+                    .all(|(&x, &y)| self.sppf_shallow_ident(x) == self.sppf_shallow_ident(y));
+            // ROOT-P Stage 0: shape-equal under the MASKED ident (TriggerTerminal
+            // owner_cat/owner_rule_idx dropped) — the shape-guard collapse test.
+            let mod_trig = same_len
+                && a.iter().zip(b.iter()).all(|(&x, &y)| {
+                    self.sppf_shallow_ident_trigger_masked(x)
+                        == self.sppf_shallow_ident_trigger_masked(y)
+                });
+            if raw {
+                t.raw_eq += 1;
+            }
+            if shallow {
                 t.shallow_eq += 1;
-                // deep_eq: recursive structural fingerprint per position.
+                // deep_eq: recursive structural fingerprint per level. ROOT-P
+                // Stage 0 raised the depth cap 6→64 so deep-`@` stacks are not
+                // truncated into false shape-equality.
                 if a.iter()
                     .zip(b.iter())
-                    .all(|(&x, &y)| self.sppf_deep_fp(x, 6) == self.sppf_deep_fp(y, 6))
+                    .all(|(&x, &y)| self.sppf_deep_fp(x, 64) == self.sppf_deep_fp(y, 64))
                 {
                     t.deep_eq += 1;
                 }
+            }
+            if mod_trig {
+                t.shallow_eq_mod_trigger += 1;
+                if !shallow {
+                    t.lex_provenance_only += 1;
+                }
+            } else {
+                t.genuinely_different_span += 1;
             }
         });
     }
@@ -17989,6 +19093,178 @@ where
                 ((*owner_cat as u64) << 16) | (*owner_rule_idx as u64),
             ),
             _ => (0, 0, 0, 0),
+        }
+    }
+
+    /// ROOT-P Stage 0 (2026-07-08) — THROWAWAY, gated `GRIND_SPPF_CONTENT`.
+    /// Trigger-MASKED depth-1 dedup-identity: identical to
+    /// [`WpdaWalker::sppf_shallow_ident`] EXCEPT for `TriggerTerminal`, which
+    /// emits `(7, kind_disc, pos, 0)` — the owner attribution
+    /// (`owner_cat`/`owner_rule_idx`) is MASKED OUT. This is the shape-guard's
+    /// collapse predicate: two cursors whose `sppf_stack`s differ ONLY in which
+    /// grammar rule consumed a `@`-trigger (lex provenance) are shape-equal
+    /// under this ident, so the redesign collapses them and folds the lex axis
+    /// into `Packing.weight` (Stage 3 lex→weight lowering).
+    fn sppf_shallow_ident_trigger_masked(&self, id: crate::sppf::SppfId) -> (u8, u64, u64, u64) {
+        use crate::sppf::PosOrSynth;
+        let pos_u = |p: &PosOrSynth| match p {
+            PosOrSynth::Real(v) => (*v as u64) << 1,
+            PosOrSynth::Synthesized(v) => ((*v as u64) << 1) | 1,
+        };
+        match self.sppf.node(id) {
+            Some(crate::sppf::SppfNode::Symbol {
+                non_terminal_tag,
+                lo_pos,
+                hi_pos,
+                ..
+            }) => (1, *non_terminal_tag as u64, *lo_pos as u64, *hi_pos as u64),
+            Some(crate::sppf::SppfNode::Terminal { token_kind, pos, .. }) => {
+                (2, Self::token_kind_disc(token_kind), pos_u(pos), 0)
+            },
+            Some(crate::sppf::SppfNode::Packing {
+                rule_idx, children, ..
+            }) => (3, *rule_idx as u64, children.len() as u64, 0),
+            Some(crate::sppf::SppfNode::Epsilon { pos }) => (4, *pos as u64, 0, 0),
+            Some(crate::sppf::SppfNode::CollectionId { id, items }) => {
+                (5, *id as u64, items.len() as u64, 0)
+            },
+            Some(crate::sppf::SppfNode::OptAbsent { pos }) => (6, *pos as u64, 0, 0),
+            // MASKED: owner_cat/owner_rule_idx dropped (0), unlike
+            // `sppf_shallow_ident` which packs them into the 4th field.
+            Some(crate::sppf::SppfNode::TriggerTerminal { token_kind, pos, .. }) => {
+                (7, Self::token_kind_disc(token_kind), pos_u(pos), 0)
+            },
+            _ => (0, 0, 0, 0),
+        }
+    }
+
+    /// ROOT-P Stage 3 §B2 — CONDITIONAL owner-masked depth-1 dedup identity, the
+    /// SLOT-merge shape-guard's per-level comparator. Identical to
+    /// [`WpdaWalker::sppf_shallow_ident`] for every node kind EXCEPT
+    /// `TriggerTerminal`, whose owner attribution (`owner_cat`/`owner_rule_idx`)
+    /// is MASKED (emitted as `0`) **iff** the owning rule has a leading
+    /// structural trigger ([`WpdaWalker::rule_has_leading_structural_trigger`]) —
+    /// the "simple send" family (`POutputNil`/`Short`/`Quoted`/…) whose reduce
+    /// collects its trigger via `pos_match` alone (owner NOT load-bearing at
+    /// reduce, `collect_suffix_with_preceding_while`), so two such cursors that
+    /// differ ONLY in which send rule consumed the `@`-trigger are sound to
+    /// collapse. Multi-step `@`-binders (predicate `false`, e.g. `InputBindQuoted`
+    /// / `for` / `PNew`) stay OWNER-DISTINCT (unmasked): their reduce can only
+    /// collect the trigger via `owner_match`, so masking would drop a genuine
+    /// reading (the `@a<-@b` / `for(@x<-y){Nil}` two-reading). Owner ALWAYS stays
+    /// physically on the SPPF node — only the COMPARISON is masked. When
+    /// lex→weight lowering is OFF (`rootp_lexweight_active() == false`) every
+    /// owner distinction is retained (fully unmasked): a sound but
+    /// non-collapsing shape (matches the Stage-0 `shallow_floor`).
+    fn rootp_shape_ident(&self, id: crate::sppf::SppfId) -> (u8, u64, u64, u64) {
+        if !self.rootp_lexweight_active() {
+            // Lex→weight lowering OFF ⇒ keep every owner distinction (unmasked).
+            return self.sppf_shallow_ident(id);
+        }
+        use crate::sppf::PosOrSynth;
+        match self.sppf.node(id) {
+            Some(crate::sppf::SppfNode::TriggerTerminal {
+                token_kind,
+                pos,
+                owner_cat,
+                owner_rule_idx,
+                ..
+            }) => {
+                let pos_u = match pos {
+                    PosOrSynth::Real(v) => (*v as u64) << 1,
+                    PosOrSynth::Synthesized(v) => ((*v as u64) << 1) | 1,
+                };
+                let kind = Self::token_kind_disc(token_kind);
+                if self
+                    .engine
+                    .rule_has_leading_structural_trigger(*owner_cat, *owner_rule_idx)
+                {
+                    // Simple send: owner recoverable at reduce by pos_match ⇒ MASK.
+                    (7, kind, pos_u, 0)
+                } else {
+                    // Multi-step @-binder: owner load-bearing at reduce ⇒ keep.
+                    (
+                        7,
+                        kind,
+                        pos_u,
+                        ((*owner_cat as u64) << 16) | (*owner_rule_idx as u64),
+                    )
+                }
+            },
+            // Every other node kind: masked ident == unmasked ident (verified
+            // against `sppf_shallow_ident`); reuse the base ident.
+            _ => self.sppf_shallow_ident(id),
+        }
+    }
+
+    /// ROOT-P Stage 3 §B1 — materialize a cursor's `sppf_stack` as a top-down
+    /// chain of [`WpdaWalker::rootp_shape_ident`]s: the shape-guard's FULL
+    /// structural key. Preallocated to the exact chain length. Used by the
+    /// Occupied-arm full recheck (REFINEMENT A) so a `shape_fp` hash collision
+    /// can never silently drop a reading (L-SHAPE holds unconditionally).
+    fn rootp_shape_chain(
+        &self,
+        stack_id: crate::sppf_stack_arena::StackId,
+    ) -> Vec<(u8, u64, u64, u64)> {
+        let mut chain = Vec::with_capacity(self.sppf_stack_arena.len(stack_id));
+        self.sppf_stack_arena.for_each_top_down_until(stack_id, |sid| {
+            chain.push(self.rootp_shape_ident(sid));
+            true
+        });
+        chain
+    }
+
+    /// ROOT-P Stage 3 §B1 — `u64` fingerprint of a cursor's `sppf_stack` shape
+    /// (the top-down [`WpdaWalker::rootp_shape_ident`] chain, length-tagged), for
+    /// BUCKETING in `MergeKey::RootpSlot`. Shape-unequal cursors bucket apart so
+    /// the Occupied arm is (almost) only reached for shape-equal cursors; the
+    /// full [`WpdaWalker::rootp_shape_chain`] recheck there catches the
+    /// astronomically-rare collision.
+    fn rootp_shape_fp(&self, stack_id: crate::sppf_stack_arena::StackId) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut h = rustc_hash::FxHasher::default();
+        // Depth-tag: distinct-length chains must not share a prefix hash.
+        self.sppf_stack_arena.len(stack_id).hash(&mut h);
+        self.sppf_stack_arena.for_each_top_down_until(stack_id, |sid| {
+            self.rootp_shape_ident(sid).hash(&mut h);
+            true
+        });
+        h.finish()
+    }
+
+    /// ROOT-P Stage 2 §A/§C — link every packing of `loser_top` under
+    /// `survivor_top`. Idempotent (`sppf::link_packing_to_symbol` dedups via its
+    /// `link_dedup` set) and ⊕-folds the survivor Symbol's `weight_sum`. A NO-OP
+    /// when the two ids are equal (the SAME Symbol) — ALWAYS the case while the
+    /// SLOT-merge sppf axis (B1, `rootp_slot_sppf_active`) is OFF, because the
+    /// merge then collapses only cursors carrying the IDENTICAL `sppf_stack_id`
+    /// ⇒ identical top Symbol. Snapshots `packings_of` into a preallocated `Vec`
+    /// to end the immutable `self.sppf` borrow before the `&mut self.sppf` link
+    /// loop (the `SppfId` handles are `Copy`).
+    fn link_symbol_packings(
+        &mut self,
+        survivor_top: crate::sppf::SppfId,
+        loser_top: crate::sppf::SppfId,
+    ) {
+        if survivor_top == loser_top {
+            crate::stats_inc!(self, rootp_link_noop_total);
+            return;
+        }
+        // Well-definedness (§E rows 1/7): a permitted link only ever joins two
+        // Symbols sharing `(nt, lo, hi)`. Unreachable while B1 is OFF (early-
+        // returned above); once B1 drops `sppf_top` it is guaranteed by the §B1
+        // full-structural shape recheck (equal masked-ident chains ⇒ equal
+        // tops). A Symbol's `(nt, lo, hi)` is mask-invariant, so the fully-masked
+        // ident is the correct well-definedness key.
+        debug_assert_eq!(
+            self.sppf_shallow_ident_trigger_masked(survivor_top),
+            self.sppf_shallow_ident_trigger_masked(loser_top),
+            "rootp: linked survivor/loser top Symbols must share (nt, lo, hi)"
+        );
+        let loser_packings: Vec<crate::sppf::SppfId> = self.sppf.packings_of(loser_top).to_vec();
+        for pk in loser_packings {
+            self.sppf.link_packing_to_symbol(survivor_top, pk);
+            crate::stats_inc!(self, rootp_packings_linked_total);
         }
     }
 
@@ -18055,8 +19331,3374 @@ where
                 t.deep_eq,
                 100.0 * t.deep_eq as f64 / d as f64,
             );
+            // ROOT-P Stage 0: TomitaKey-surface trigger-masked buckets.
+            eprintln!(
+                "GRIND-SPPFC-MASK diverged={} shallow_eq_mod_trigger={} ({:.2}%) lex_provenance_only={} ({:.2}%) genuinely_different_span={} ({:.2}%)",
+                t.diverged,
+                t.shallow_eq_mod_trigger,
+                100.0 * t.shallow_eq_mod_trigger as f64 / d as f64,
+                t.lex_provenance_only,
+                100.0 * t.lex_provenance_only as f64 / d as f64,
+                t.genuinely_different_span,
+                100.0 * t.genuinely_different_span as f64 / d as f64,
+            );
+            // ROOT-P Stage 0: SLOT-surface (the ACTUAL merge surface).
+            // buckets_ge2 = SLOT buckets with ≥2 cursors; multishape_buckets =
+            // those the shape-guard CANNOT fully collapse (≥2 masked classes);
+            // lex_only_collapsed = shape-distinctions removed by trigger-masking.
+            eprintln!(
+                "GRIND-SLOT tiers={} buckets_ge2={} multishape_buckets={} lex_only_collapsed={}",
+                t.slot_bucket_calls,
+                t.slot_buckets_ge2,
+                t.slot_multishape_buckets,
+                t.slot_lex_only_collapsed,
+            );
+            // ROOT-P Stage 0: representative top-vs-deeper split of the residual
+            // multishape buckets (the shape-guard's irreducible classes). DEEPER
+            // divergence is the exponential-frontier DANGER signal.
+            let rep = (t.slot_rep_depth_mismatch + t.slot_rep_top_only + t.slot_rep_deeper).max(1);
+            eprintln!(
+                "GRIND-SLOT-LEVEL rep_pairs={} depth_mismatch={} ({:.2}%) top_only={} ({:.2}%) deeper={} ({:.2}%)",
+                t.slot_rep_depth_mismatch + t.slot_rep_top_only + t.slot_rep_deeper,
+                t.slot_rep_depth_mismatch,
+                100.0 * t.slot_rep_depth_mismatch as f64 / rep as f64,
+                t.slot_rep_top_only,
+                100.0 * t.slot_rep_top_only as f64 / rep as f64,
+                t.slot_rep_deeper,
+                100.0 * t.slot_rep_deeper as f64 / rep as f64,
+            );
+            // ROOT-P Stage 0: THE VERDICT NUMBERS — peak raw frontier vs the two
+            // floors it collapses to. slot_floor = pure SLOT merge; shapeguard
+            // = SLOT + shape-guard (what the redesign keeps); shallow = SLOT +
+            // shape-guard WITHOUT lex→weight (shapeguard vs shallow = lex gain).
+            eprintln!(
+                "GRIND-PEAK peak_cursors={} @peak[ slot_floor={} shapeguard_floor={} shallow_floor={} ] max_over_tiers[ slot_floor={} shapeguard_floor={} ]",
+                t.peak_cursors,
+                t.slot_floor_at_peak,
+                t.shapeguard_floor_at_peak,
+                t.shallow_floor_at_peak,
+                t.slot_floor_max,
+                t.shapeguard_floor_max,
+            );
+            // ── ROOT-P Stage 4a: EDGE-CONDITIONAL floor collapse (the delivery
+            //    lever). edge_kept = ARM(i) (production); cond_edge = ARM(ii)
+            //    (drop edge for CF-interchangeable cats per the emitted
+            //    predicate); shapeguard_floor above = ARM(iii) uncond-drop;
+            //    dyn_edge = ARM(4) pure is_empty() guard. cond_edge → shapeguard
+            //    ⇒ delivery; cond_edge ≈ edge_kept ⇒ classification too coarse
+            //    (vacuous keep-all).
+            eprintln!(
+                "GRIND-EDGE @peak[ edge_kept_floor={} cond_edge_floor={} dyn_edge_floor={} (shapeguard_floor={}) ] max_over_tiers[ edge_kept={} cond_edge={} dyn_edge={} ]",
+                t.edge_kept_floor_at_peak,
+                t.cond_edge_floor_at_peak,
+                t.dyn_edge_floor_at_peak,
+                t.shapeguard_floor_at_peak,
+                t.edge_kept_floor_max,
+                t.cond_edge_floor_max,
+                t.dyn_edge_floor_max,
+            );
+            eprintln!("GRIND-EDGE-CATS @peak[ {}]", t.peak_cat_breakdown);
             *t = GrindSppfContentTally::default();
         });
+    }
+
+    /// ROOT-P Stage 0 (2026-07-08) — THROWAWAY, gated `walker-stats` +
+    /// `GRIND_SPPF_CONTENT`. The SLOT-surface sibling of
+    /// [`WpdaWalker::grind_sppf_content_check`]. Measures the ACTUAL merge
+    /// surface the redesign changes: at `merge_equivalent_cursors` entry,
+    /// group the pre-merge `drained` cursors by the GLL SLOT tuple
+    /// `(state, node, pos, collection_depth, cohort_origin.equiv())` — the
+    /// key the SLOT-merge redesign dedups on — and, for every ≥2-cursor
+    /// bucket, classify ALL PAIRS of their `sppf_stack`s by shape-equality
+    /// (raw / shallow / shallow-mod-trigger / lex-provenance-only /
+    /// genuinely-different-span) plus the per-level TOP-vs-DEEPER split that
+    /// decides whether the shape-guard collapses the frontier.
+    ///
+    /// Also records the per-parse PEAK pre-merge cursor count and the number
+    /// of distinct SLOT buckets AT that peak (the "SLOT floor" — the frontier
+    /// size the SLOT-merge redesign would collapse the peak to).
+    ///
+    /// Byte-identical when off (feature-gated; the runtime flag short-circuits
+    /// before any work); reads `&drained` + the SPPF arenas, writes only the
+    /// gated thread-local tally.
+    #[cfg(feature = "walker-stats")]
+    fn grind_slot_bucket_check(&self, drained: &[BranchCursor<W>]) {
+        use std::hash::{Hash, Hasher};
+        if !grind_sppf_content_enabled() {
+            return;
+        }
+        type SlotKey = (
+            WpdaState,
+            crate::gss::GssNodeId,
+            usize,
+            usize,
+            Option<crate::dispatch_cohort::EquivKey>,
+        );
+        // Pre-materialize each cursor's sppf_stack ONCE, plus a 64-bit hash of
+        // its per-level MASKED ident sequence (the shape-guard shape-class key)
+        // and its per-level SHALLOW (unmasked) ident sequence, and its full
+        // masked-ident vector (kept for the representative top-vs-deeper split).
+        let n = drained.len();
+        let mut masked_seq: Vec<Vec<(u8, u64, u64, u64)>> = Vec::with_capacity(n);
+        let mut masked_hash: Vec<u64> = Vec::with_capacity(n);
+        let mut shallow_hash: Vec<u64> = Vec::with_capacity(n);
+        // ROOT-P Stage 4a: per-cursor pop-routing edge pair, category, the
+        // emitted binder-scope verdict for that category, and whether the
+        // cursor has a LIVE binder scope. All READ-ONLY.
+        let mut edge_top: Vec<Option<crate::gss::GssEdgeId>> = Vec::with_capacity(n);
+        let mut edge_stack: Vec<crate::edge_stack_arena::EdgeStackId> = Vec::with_capacity(n);
+        let mut cat_of: Vec<u16> = Vec::with_capacity(n);
+        let mut scoped_of: Vec<bool> = Vec::with_capacity(n);
+        let mut marks_empty: Vec<bool> = Vec::with_capacity(n);
+        let mut scratch: Vec<crate::sppf::SppfId> = Vec::new();
+        for c in drained {
+            self.sppf_stack_arena.slice_at(c.sppf_stack_id, &mut scratch);
+            let mseq: Vec<(u8, u64, u64, u64)> = scratch
+                .iter()
+                .map(|&id| self.sppf_shallow_ident_trigger_masked(id))
+                .collect();
+            let mut mh = rustc_hash::FxHasher::default();
+            mseq.hash(&mut mh);
+            let mut sh = rustc_hash::FxHasher::default();
+            for &id in scratch.iter() {
+                self.sppf_shallow_ident(id).hash(&mut sh);
+            }
+            masked_hash.push(mh.finish());
+            shallow_hash.push(sh.finish());
+            masked_seq.push(mseq);
+            edge_top.push(self.incoming_edge_stack_arena.top(c.incoming_edge_stack_id));
+            edge_stack.push(c.incoming_edge_stack_id);
+            let cat = self.gss.node(c.node).map(|nd| nd.symbol.category_src_idx).unwrap_or(u16::MAX);
+            cat_of.push(cat);
+            scoped_of.push(if cat == u16::MAX {
+                true
+            } else {
+                self.engine.category_is_binder_scoped(cat)
+            });
+            marks_empty.push(c.binder_scope_marks.is_empty());
+        }
+        // Group cursor indices by the GLL SLOT tuple.
+        let mut buckets: rustc_hash::FxHashMap<SlotKey, Vec<usize>> =
+            rustc_hash::FxHashMap::default();
+        for (i, c) in drained.iter().enumerate() {
+            let key: SlotKey = (
+                c.inner_state.clone(),
+                c.node,
+                c.pos,
+                c.collection_stack_depth as usize,
+                c.cohort_origin.as_ref().map(|k| k.equiv()),
+            );
+            buckets.entry(key).or_default().push(i);
+        }
+        let n_cursors = n as u64;
+        let n_slots = buckets.len() as u64;
+        // Per-tier floors: Σ masked shape-classes (shape-guard) and Σ shallow
+        // shape-classes (shape-guard w/o lex-masking) over all buckets.
+        let mut tier_masked_classes: u64 = 0;
+        let mut tier_shallow_classes: u64 = 0;
+        // ROOT-P Stage 4a per-tier edge floors + per-category aggregation.
+        let mut tier_edge_kept: u64 = 0;
+        let mut tier_cond_edge: u64 = 0;
+        let mut tier_dyn_edge: u64 = 0;
+        // cat -> (Σcursors, Σedge_kept_classes, Σmasked_classes, scoped).
+        let mut cat_agg: std::collections::BTreeMap<u16, (u64, u64, u64, bool)> =
+            std::collections::BTreeMap::new();
+        GRIND_SPPF_CONTENT_TALLY.with(|t| {
+            let mut t = t.borrow_mut();
+            t.slot_bucket_calls += 1;
+            for idxs in buckets.values() {
+                if idxs.len() >= 2 {
+                    t.slot_buckets_ge2 += 1;
+                }
+                // Masked shape-classes (keep one representative index per class)
+                // and shallow shape-class count within this bucket.
+                let mut masked_reps: rustc_hash::FxHashMap<u64, usize> =
+                    rustc_hash::FxHashMap::default();
+                let mut shallow_classes: rustc_hash::FxHashSet<u64> =
+                    rustc_hash::FxHashSet::default();
+                for &i in idxs {
+                    masked_reps.entry(masked_hash[i]).or_insert(i);
+                    shallow_classes.insert(shallow_hash[i]);
+                }
+                let n_masked = masked_reps.len() as u64;
+                let n_shallow = shallow_classes.len() as u64;
+                tier_masked_classes += n_masked;
+                tier_shallow_classes += n_shallow;
+                // ── ROOT-P Stage 4a: edge-conditional classes for THIS bucket.
+                //    The GSS `node` is fixed per bucket ⇒ category (and the
+                //    binder-scope verdict) is CONSTANT across the bucket's
+                //    cursors. ek = distinct (edge_top, edge_stack, masked) — the
+                //    ARM(i) edge-kept classes; cond = ek if the category is
+                //    binder-scoped else the masked (edge-dropped) count; dyn =
+                //    distinct classes keeping edge only under a LIVE scope.
+                let bucket_cat = cat_of[idxs[0]];
+                let bucket_scoped = scoped_of[idxs[0]];
+                let mut ek_set: rustc_hash::FxHashSet<(
+                    Option<crate::gss::GssEdgeId>,
+                    crate::edge_stack_arena::EdgeStackId,
+                    u64,
+                )> = rustc_hash::FxHashSet::default();
+                let mut dyn_set: rustc_hash::FxHashSet<(
+                    Option<(Option<crate::gss::GssEdgeId>, crate::edge_stack_arena::EdgeStackId)>,
+                    u64,
+                )> = rustc_hash::FxHashSet::default();
+                for &i in idxs {
+                    ek_set.insert((edge_top[i], edge_stack[i], masked_hash[i]));
+                    let dyn_e = if marks_empty[i] {
+                        None
+                    } else {
+                        Some((edge_top[i], edge_stack[i]))
+                    };
+                    dyn_set.insert((dyn_e, masked_hash[i]));
+                }
+                let n_ek = ek_set.len() as u64;
+                let n_dyn = dyn_set.len() as u64;
+                let n_cond = if bucket_scoped { n_ek } else { n_masked };
+                tier_edge_kept += n_ek;
+                tier_cond_edge += n_cond;
+                tier_dyn_edge += n_dyn;
+                let ce = cat_agg.entry(bucket_cat).or_insert((0, 0, 0, bucket_scoped));
+                ce.0 += idxs.len() as u64;
+                ce.1 += n_ek;
+                ce.2 += n_masked;
+                // Pure lex-provenance collapse: shape-distinctions removed by
+                // masking the trigger owner (shallow-classes fold into fewer
+                // masked-classes).
+                t.slot_lex_only_collapsed += n_shallow.saturating_sub(n_masked);
+                if n_masked >= 2 {
+                    t.slot_multishape_buckets += 1;
+                    // Representative top-vs-deeper split (M = n_masked small).
+                    let reps: Vec<usize> = masked_reps.values().copied().collect();
+                    for a in 0..reps.len() {
+                        for b in (a + 1)..reps.len() {
+                            let ma = &masked_seq[reps[a]];
+                            let mb = &masked_seq[reps[b]];
+                            if ma.len() != mb.len() {
+                                t.slot_rep_depth_mismatch += 1;
+                            } else {
+                                let top = ma.len() - 1;
+                                let mut deeper = false;
+                                for lvl in 0..ma.len() {
+                                    if ma[lvl] != mb[lvl] && lvl != top {
+                                        deeper = true;
+                                        break;
+                                    }
+                                }
+                                if deeper {
+                                    t.slot_rep_deeper += 1;
+                                } else {
+                                    t.slot_rep_top_only += 1;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            // Peak-cursor tier snapshot + maxes over tiers.
+            if n_cursors > t.peak_cursors {
+                t.peak_cursors = n_cursors;
+                t.slot_floor_at_peak = n_slots;
+                t.shapeguard_floor_at_peak = tier_masked_classes;
+                t.shallow_floor_at_peak = tier_shallow_classes;
+                // ROOT-P Stage 4a: snapshot the edge floors + per-cat breakdown.
+                t.edge_kept_floor_at_peak = tier_edge_kept;
+                t.cond_edge_floor_at_peak = tier_cond_edge;
+                t.dyn_edge_floor_at_peak = tier_dyn_edge;
+                let mut bd = String::new();
+                for (cat, (ncur, ek, mk, scoped)) in &cat_agg {
+                    bd.push_str(&format!(
+                        "cat={cat} scoped={} cursors={ncur} ek={ek} mk={mk} | ",
+                        if *scoped { 1 } else { 0 }
+                    ));
+                }
+                t.peak_cat_breakdown = bd;
+            }
+            if n_slots > t.slot_floor_max {
+                t.slot_floor_max = n_slots;
+            }
+            if tier_masked_classes > t.shapeguard_floor_max {
+                t.shapeguard_floor_max = tier_masked_classes;
+            }
+            if tier_edge_kept > t.edge_kept_floor_max {
+                t.edge_kept_floor_max = tier_edge_kept;
+            }
+            if tier_cond_edge > t.cond_edge_floor_max {
+                t.cond_edge_floor_max = tier_cond_edge;
+            }
+            if tier_dyn_edge > t.dyn_edge_floor_max {
+                t.dyn_edge_floor_max = tier_dyn_edge;
+            }
+        });
+    }
+
+    /// ROOT-P canonical-GLL per-step driver — Stage B STUB (2026-07-09). The
+    /// PARALLEL alternative to [`Self::step_fanout`]: rather than the classic
+    /// per-cursor fan-out it drives the canonical Scott-Johnstone GLL worklist —
+    /// `R` (pending descriptors), `U` (the GLOBAL add-once descriptor set keyed
+    /// EXACTLY by the 4-tuple `(L, u, i, w)`), and `P` (per-GSS-node recorded
+    /// pops) — with a GSS-by-SLOT node identity and pending operands carried as
+    /// GSS-edge SPPF labels. Add-once dedup bounds the descriptor set to
+    /// `O(|G|·n²)` (Scott & Johnstone; Stage A measured `|U| = O(n)`), so the
+    /// frontier is polynomial while readings stay exact via SPPF packing.
+    ///
+    /// The engine BODY is built in Stage C (GSS `P`-set + edge operand labels)
+    /// and Stage D (the descriptor-worklist driver); this Stage-B stub only fixes
+    /// the dispatch seam so the const/mode/FV scaffolding compiles and DCEs.
+    ///
+    /// UNREACHABLE while [`CANONICAL_GLL_ENABLED`] is `false`: the SOLE caller is
+    /// the `canonical_gll_active()` branch at the top of [`Self::step_fanout`],
+    /// and that gate leads with the `CANONICAL_GLL_ENABLED` const, so the `&&`
+    /// short-circuits at compile time and this whole method is
+    /// dead-code-eliminated from the default build. The `unimplemented!` can
+    /// therefore never fire while the const is `false`; it is a fail-loud
+    /// tripwire that guarantees Stage C/D must supply the body before the flip.
+    /// Signature mirrors [`Self::step_fanout`] (same `&mut self` + `tokens`, same
+    /// `WpdaState` return) so the dispatch branch forwards its arguments verbatim.
+    #[allow(dead_code)] // Unreachable while CANONICAL_GLL_ENABLED is false (DCE'd).
+    fn step_canonical(&mut self, tokens: &dyn WpdaTokenSource) -> WpdaState {
+        use rustc_hash::FxHashSet;
+        use std::collections::VecDeque;
+        // ── Fanout mode ──────────────────────────────────────────────────────
+        // `apply_action_to_cursor` gates its `self.state`/`self.top_node` writes
+        // behind `self.deterministic`; keeping it `false` makes each per-
+        // descriptor micro-step operate purely on the popped cursor + the SHARED
+        // `gss`/`sppf`/arenas, so processing descriptors out of the classic
+        // lockstep order never clobbers the shared walker view. It also disables
+        // the deterministic fast-path in `resolve_at_end_of_input`, routing
+        // resolution through the fanout `eoi_resolution_snapshot` over the
+        // accepting frontier this driver publishes into `self.branch_cursors`.
+        self.deterministic = false;
+
+        // ══ Stage-E MEASURED OUTCOME (2026-07-09, deep-@ ladder A/B) ══════════
+        // Target (classic): @Nil!(@Nil!())=2, @Nil!(@(@Nil)!())=2, d2=2, d3=4;
+        // @(p) REJECTS; CF-core 1+2*3/(1+2)*3/-3!/@Nil!(0)=1. The canonical
+        // descriptor worklist keeps |U| POLYNOMIAL (flat max_U_per_pos) but the
+        // pop-fan levers below do NOT reach reading parity — root-caused as a
+        // DIRECT TENSION intrinsic to the n-ary per-cursor SPPF stack + owner-
+        // carrying trigger terminals (see the ROOT-P report / memory):
+        //   • no fan          → nested=1, grouped=0 (poly, lossy).
+        //   • `fan_pop`       → nested=2 ✓, grouped=1, @(p) rejects (poly; BEST,
+        //                        but still under-delivers grouped/deep-@).
+        //   • `ctxfan`(co-merge over slot-siblings) → OVER-generates (nested=15,
+        //                        @(p) FALSE-ACCEPTS) + re-inflates |U| (spurious
+        //                        callers reconnected).
+        //   • `canfan`(canonical operand edges, edge=None) → corrupts the edge
+        //                        chain (breaks @Nil!(0)); NOT viable.
+        //   • `nomask`        → no gain (owner distinctness alone does not
+        //                        preserve the readings).
+        // The clean fix is binarized getNodeP (each descriptor carries ONE packed
+        // `w` node; the caller's partial rides the GSS edge as a single node;
+        // ambiguity lives in packings) — an SPPF-construction + realize rewrite,
+        // NOT reachable by fanning the existing n-ary reduce. All levers are
+        // gated (const off ⇒ DCE ⇒ byte-identical default; smoke 166/166).
+        // A/B levers (env; default = canonical SLOT key, poly).
+        let sound_key = std::env::var_os("PRATTAIL_CGLL_SOUND").is_some();
+        // Stage-E EXPERIMENT lever: exact pop-fan on the reconnection `Pop`
+        // (reconnect to ALL GSS predecessors, not the single per-cursor edge the
+        // SLOT key dropped). Reuses the proven `recognizer_fan_pop` shape.
+        let fan_pop = std::env::var_os("PRATTAIL_CGLL_FANPOP").is_some();
+        // ── Stage-E CANONICAL exact pop-fan (the delivery mechanism) ─────────
+        // `ctxfan` = drive the reduce-pop reconnection from the CANONICAL
+        // operand-labelled GSS edges (`gll_edges_by_slot`), restoring each awaiting
+        // caller's SAVED left-context (`caller_sppf_stack` / `caller_edge_stack`)
+        // before delivering the completed sub-parse result `z`. This is the n-ary
+        // realization of Scott & Johnstone's `getNodeP(L, w, z)` pop: `z` becomes
+        // a child of the SHARED `(cat,lo,hi)` Symbol via each caller's later
+        // `emit_fire_action`, so distinct callers → distinct packings → distinct
+        // readings, all U-deduped (poly). `PRATTAIL_CGLL_CTX_PREPUSH=1` snapshots
+        // the caller's PRE-push context instead of post-push (A/B lever for the
+        // leading-trigger placement question).
+        let ctxfan = std::env::var_os("PRATTAIL_CGLL_CTXFAN").is_some();
+        let ctx_prepush = std::env::var_os("PRATTAIL_CGLL_CTX_PREPUSH").is_some();
+        // ── Stage-E ROOT-CAUSE probe lever ───────────────────────────────────
+        // `nomask` = do NOT collapse the `@`-trigger owner in the descriptor `w`
+        // (keep every candidate `@`-owning rule's pre-reduce cursor DISTINCT).
+        // Predicts full readings (every attribution's reduce fires ⇒ every packing
+        // builds) at the cost of exponential |U| (the Stage-0 682×/level owner
+        // multiplicity). Isolates the owner-mask as the poly-vs-readings locus:
+        // it is applied at the loop-top add-once, BEFORE a cursor reduces, so a
+        // masked-away cursor never fires its reduce ⇒ its packing never exists ⇒
+        // the pop-fan has nothing to reconnect.
+        let nomask = std::env::var_os("PRATTAIL_CGLL_NOMASK").is_some();
+        // ── Stage-E EXACT-caller pop-fan lever ───────────────────────────────
+        // `canfan` fans the reduce-`Pop` over the CANONICAL operand-labelled edges
+        // (`gll_edges_by_slot` — recorded ONLY at genuine descents into this
+        // `(category, pos)` constituent) rather than over ALL classic slot-sibling
+        // nodes (`ctxfan`, which reconnects SPURIOUS callers ⇒ over-generation +
+        // frontier re-inflation). Each genuine caller is resumed via the proven
+        // `apply_pop_body_to_cursor` (pred = edge target, no classic edge id),
+        // firing + linking its packing under the shared Symbol. Distinguishes
+        // exact reconnection (canonical edges) from the coarse sibling fan.
+        let canfan = std::env::var_os("PRATTAIL_CGLL_CANFAN").is_some();
+        let dump_stats = std::env::var_os("PRATTAIL_CANONICAL_GLL_STATS").is_some();
+        // ── ROOT-P EXACT-FAN A1 MEASUREMENT (2026-07-09) ──────────────────────
+        // The DECISIVE pre-surgery GO/NO-GO for the exact return-slot-keyed recon
+        // fan. A READ-ONLY counting pass in the reduce-reconnection block below:
+        // the coarse fan (`cgll_slot_fan_pop`) runs UNCHANGED, so the frontier /
+        // U / SPPF / GSS / readings are untouched and a measurement build reverts
+        // byte-identical. For each `Pop` reduce (retslot recon arm) it computes,
+        // mutating only `fm_*` locals (+ a `walker-stats`-gated counter):
+        //   C_coarse  = Σ over genuine-descent slot-siblings of |edges_from(s)|
+        //               (what the COARSE fan reconnects = classic predecessors),
+        //   C_exact   = |gll_edges_by_slot(cat, lo) deduped|
+        //               (what the EXACT fan WOULD reconnect = canonical operand
+        //                edges = the genuine descenders — the SAME enumerator the
+        //                surgery would drive),
+        //   over_fire = C_coarse − C_exact  (= the classic ∖ canonical over-fire),
+        // plus a target-set subset check (exact targets NOT covered by coarse) and
+        // a whole-parse canonical-edge CENSUS (callers recorded at DESCENT even if
+        // a constituent's reduce is merged away — the `@x!(for)` C-under question).
+        // Reported at EOI as `CGLL-FANMEASURE` (+ per-constituent `-CONS`). GO iff
+        // C_exact poly+plateauing on the deep-@ ladder, over_fire>0 exactly on the
+        // coarse-high-k regressors, C_exact non-empty on @x!(for)/@a!(0,1). Gated
+        // by the env flag ⇒ the pass is skipped when unset; the arm lives inside
+        // `step_canonical` which the const DCE's ⇒ default build byte-identical.
+        let fan_measure = std::env::var_os("PRATTAIL_CGLL_FAN_MEASURE").is_some();
+        // ── Stage E2 CANONICAL reduce/pop RECONNECTION (the delivery core) ────
+        // DEFAULT-ON (disable via `PRATTAIL_CGLL_NORECON=1` for the A/B OFF arm).
+        // At each reduce the completed constituent Symbol `z` is fanned to EVERY
+        // GENUINE caller that descended into its `(category, lo)` slot — the
+        // canonical operand edges recorded ONLY at real descents
+        // (`gll_edges_by_slot`), NOT the classic slot-sibling set (which
+        // reconnects spurious callers ⇒ `@(p)` false-accept, the `ctxfan` bug).
+        // Each secondary caller is reconstructed by RESTORING its saved
+        // left-context (`caller_sppf_stack` + `z` pushed, `caller_edge_stack`) —
+        // the piece the `canfan` arm lacked (it cloned the popping cursor's
+        // context ⇒ corruption). The reconnected caller re-enters R with `z` on
+        // its own stack and continues; its later `emit_fire_action` links its
+        // packing under the shared `(cat,lo,hi)` Symbol, so distinct callers →
+        // distinct packings → distinct readings — exactly what the E1-validated
+        // binarized post-pass + realize then un-binarizes. Every reconnected
+        // descriptor is U-deduped (global add-once), so the fan stays polynomial
+        // (Stage D: the global U bounds the fan). Create-after-pop callers (a
+        // caller that descends AFTER the constituent already popped) are handled
+        // symmetrically at the DESCENT site via `gll_create`'s replays.
+        let recon = std::env::var_os("PRATTAIL_CGLL_RECON").is_some();
+        // ── Stage E2b PERVASIVE getNodeP THREADING (the true delivery core) ───
+        // `thread` = build `cursor.cgll_w` INCREMENTALLY as a binarized
+        // `getNodeP`-packed node at EVERY intra-rule child absorption (plan
+        // §1.4), and FEED IT INTO the descriptor KEY. The E2 diagnosis proved
+        // the poly key `(L,u,i, sppf-top-ident)` merges two mid-rule cursors
+        // BEFORE a divergent grouping constituent completes (the span-6-11
+        // NQuoteGrouped Symbol is NEVER BUILT) ⇒ reading loss. Threading packs
+        // each partial derivation into one `Intermediate` (dedup by
+        // `(slot,lo,hi)` ⇒ poly-many nodes) whose packing family preserves ALL
+        // partials (⇒ exact); two cursors whose partial derivations differ in
+        // span carry DIFFERENT packed `w` ids and do NOT merge, so the live
+        // walker BUILDS the complete forest (Symbol-158 now interned) and the
+        // E1-validated binarized realize (over the now-complete classic forest)
+        // recovers every reading. Same-`(slot,lo,hi)` partials share the packed
+        // node (poly). Micro-step hooks (below): push-child → fold into `w`;
+        // descent → save `operand_w = w` on the canonical GSS edge + reset `w`;
+        // reduce → the completed constituent `z` is folded into the restored
+        // caller `operand_w`. Gated (env, canonical-only) ⇒ the whole arm is
+        // DCE'd with the const off (byte-identical default). Disabled by unset
+        // env; the classic single-`w` key is the OFF arm for the A/B.
+        let thread = std::env::var_os("PRATTAIL_CGLL_THREAD").is_some();
+        // ── Stage P2 RETURN-SLOT node identity (the ROOT-P core delivery) ─────
+        // `retslot` = key the descriptor `u` on the canonical RETURN-slot GSS
+        // node `v = (i = callee-entry pos, L_ret = the caller's return dotted
+        // item)` — Scott & Johnstone 2010 §4 — instead of the shared
+        // callee-entry `cursor.node`. The E2b diagnosis PROVED the shared
+        // callee-entry node merges the grouping lineage `G` and the non-grouping
+        // lineage `O` (both descend into the same `(callee, pos)` ⇒ same node ⇒
+        // same `u` ⇒ collide in U BEFORE the divergent enclosing constituent
+        // completes ⇒ a dropped reading). Keying `u` on the return slot makes
+        // `v_G ≠ v_O` (their immediate callers differ — POutputNil vs
+        // POutputShort), so both descriptors survive and both enclosing
+        // constituents complete. The P0 read-only shadow VALIDATED this split ==
+        // the ground-truth reading count at polynomial |U|. Three edits below
+        // (all under `if retslot`): (1) descent mints `v` via
+        // `gll_create(from = cgll_ret_node, return_slot = L_ret, at = callee pos)`
+        // and threads `cgll_ret_node = v`; (2) the descriptor key hashes
+        // `cgll_ret_node` as `u`; (3) the reduce fans the completed constituent
+        // to EVERY genuine caller over the RETURN node's OWN canonical edges
+        // (the exact per-node edge-fan that supersedes the coarse slot-sibling
+        // fan — killing the `@(p)` false-accept + `@a!(0,1)` gain). Reuses the
+        // binarized `cgll_w` getNodeP mechanics (so the cgll_w mechanic sites
+        // below fire under `thread || retslot`). Gated + canonical-only ⇒ DCE'd
+        // with the const off (byte-identical default). The classic
+        // `WpdaGssNode` Eq/Hash derive is UNCHANGED (classic keeps `(pos,
+        // symbol)`); only the SYMBOL fed to `gll_create` + the `u`-binding move.
+        let retslot = std::env::var_os("PRATTAIL_CGLL_RETSLOT").is_some();
+        // ── ROOT-P Checkpoint 0: P2 NODE-EDGE CENSUS (2026-07-09, READ-ONLY) ──
+        // The decisive make-or-break for the reconciled-P2 return-slot NODE
+        // identity rewire: does minting the callee GSS node by return slot
+        // `v = (at, L_ret)` UNIFY the scattered `-3!` callers (branch a — P2
+        // alone fixes it) or split them into ≥2 completing nodes (branch b —
+        // needs a bounded bp-election on top)? This is a READ-ONLY census that
+        // reuses the EXISTING retslot edge-graph MINT (`gll_create`@~21008) +
+        // `gll_pop` + `gll_edges` — the P2-faithful `(at, L_ret)` node identity —
+        // WITHOUT the toxic reconnection. Setting the flag FORCES `retslot_edges`
+        // on (so the mint runs) + the per-caller re-reduce fan off
+        // (`retslot_nofan`) + SKIPS the coupled `cgll_w` threading (the refuted-
+        // corrupting half, so the descriptor key + edge operands match the
+        // reconciled-P2 that STRIPS it), then LOGS every descent + reduce so the
+        // `-3!` node identity can be reconstructed off-line.
+        // `PRATTAIL_CGLL_P2_NODECENSUS_KEEPW=1` retains the `cgll_w` fold (a
+        // sensitivity arm). Purely additive under the new env flag; DCE'd with
+        // the const off ⇒ default build byte-identical.
+        let p2_nodecensus =
+            retslot && std::env::var_os("PRATTAIL_CGLL_P2_NODECENSUS").is_some();
+        let p2c_skip_w = p2_nodecensus
+            && std::env::var_os("PRATTAIL_CGLL_P2_NODECENSUS_KEEPW").is_none();
+        // ── ROOT-P P2 CORE (2026-07-09): node-identity ⊕ reduce-once ─────────
+        // The clean composition the reconciled-P2 plan + Checkpoint-0 census
+        // (branch a) converged on: the return-slot NODE-identity edge graph
+        // (edits A/B/C) DRIVEN by the B0+B1 reduce-ONCE / push-z pop, with the
+        // two REFUTED couplings STRIPPED — the binarized `cgll_w` threading
+        // (@~21036/21058/21148) and the per-caller n-ary RE-REDUCE
+        // (`apply_pop_body_to_cursor(…, None)` re-collecting children ⇒ arity
+        // mismatch, why the `retslot_edges` edge-graph was refuted). Checkpoint 0
+        // PROVED the `-3!` node-edge graph is a TREE (no node with ≥2 completing
+        // callers) ⇒ the return-slot KEY (edit B) fixes `-3!` alone; the per-node
+        // edge-fan (edit C) reconnects the genuinely-shared deep-@ grouping
+        // constituents at poly `|U|`.
+        //
+        // ★ A/B VERDICT (2026-07-09, reading-set gate): OPT-IN (NOT default-on).
+        // The composition DELIVERS `-3!`=1 (the make-or-break) + CF-core + @(p)
+        // REJECT + owner=2 + grp_d1=2, BUT does NOT reach the full gate at any
+        // fixed `k`: the per-node edge fan does NOT carry the grouping DEPTH (that
+        // still rides the descriptor `k`, and the finer per-node granularity needs
+        // k ≥ ~2·depth+2: grp_d1 k≥4, grp_d2 k≥6, grp_d3 k≥8 — WORSE than the
+        // coarse recon fan's k≥depth+1), and the reduce-once/push-z fan OVER-FIRES
+        // on collection elements (`@a!(0,1)` → ERR at every k). The existing
+        // KEY + coarse-recon arm (`retslot` WITHOUT this flag) already delivers
+        // `-3!`=1 + deep-@ 2/2/2/4 + `@a!(0,1)`=1 + owner=2 at k=4 (not
+        // depth-uniform — the deferred GSS-by-grammar-slot redesign is the
+        // depth-uniform no-scope-down fix). So `p2core` is OPT-IN behind
+        // `PRATTAIL_CGLL_P2CORE=1` (preserving the delivering recon arm as the
+        // `retslot` default); the A/B harness selects it explicitly. Stands down
+        // under the census (which keeps its own nofan config).
+        let p2core = retslot
+            && std::env::var_os("PRATTAIL_CGLL_P2CORE").is_some()
+            && !p2_nodecensus;
+        // EDIT A: p2core STRIPS the coupled binarized `cgll_w` threading (the
+        // refuted-corrupting half) exactly as the census `p2c_skip_w` does — the
+        // descriptor `w` rides the single sppf-top ONLY (edit B), never the
+        // threaded packed node.
+        let strip_cgll_w = p2c_skip_w || p2core;
+        // ── Stage P2 A/B DECISION (2026-07-09, measured) ─────────────────────
+        // The five-arm A/B (see the ROOT-P report) is DECISIVE: the return-slot
+        // KEY (edit 2) is the delivering change, and it delivers when paired with
+        // the EXISTING genuine-descent slot-sibling reduce fan (the `recon` arm) —
+        // NOT with the plan's edit-1/3 return-node EDGE-GRAPH, which under-delivers
+        // (the edge-graph's `cgll_w` binarized-getNodeP threading corrupts the
+        // forest for grouping ⇒ `accepting=0` ⇒ total parse loss; `NOFAN`==`full`
+        // proved it is the edge-graph, not the fan). Measured on the deep-@ ladder:
+        //   • retslot KEY + recon fan: CF-core 1/1/1, @(p) REJECT, @Nil!(0)=1,
+        //     @Nil!(@Nil!())=2 (== GT), @Nil!(@(@Nil)!())=2 (== GT),
+        //     @Nil!(@(@(@Nil)!())!())=1 (GT 2 — d3 residual).
+        //   • retslot KEY + edge-graph (edit 1/3): @Nil!(@Nil!())=1, grouping=ERR.
+        // ⇒ DEFAULT `retslot` = KEY (edit 2) + recon fan. The edit-1/3 edge-graph
+        // is OPT-IN behind `PRATTAIL_CGLL_RETSLOT_EDGES` (kept, gated, for the
+        // record + future work). `retslot_nofan` isolates the edge-graph's fan.
+        // ROOT-P Checkpoint 0: the census FORCES both on (mint runs, fan off).
+        let retslot_nofan = retslot
+            && (std::env::var_os("PRATTAIL_CGLL_RETSLOT_NOFAN").is_some() || p2_nodecensus);
+        // `p2core` forces the return-slot NODE-identity mint ON (edit A runs) so
+        // the reduce reconnection (edit C, below) has a per-node edge graph to
+        // fan over. The post-apply per-caller re-reduce is DISABLED for p2core
+        // (the clean pre-apply reduce-once fan supersedes it — see edit C).
+        let retslot_edges = retslot
+            && (std::env::var_os("PRATTAIL_CGLL_RETSLOT_EDGES").is_some()
+                || p2_nodecensus
+                || p2core);
+        // ── Stage GT-closure (A+B, agent a00bd51d = GO×GO) — the LIVE core ────
+        // A (owner-unmask, w-axis): DROP the descriptor-`w` owner-mask on the
+        // retslot arm so the N `@`-owner cursors each SURVIVE the add-once and
+        // each reduces → each links ONE packing under the shared binarized
+        // Symbol via `link_packing_to_symbol` (owner-attribution recovered as a
+        // clean packing family, NOT via the recon fan). The read-only A/B shadow
+        // PROVED owner-KEPT stays polynomial on the P2 (retslot-u + single-w)
+        // descriptor — a bounded ~1.5× multiplicative constant (per-pos maxU
+        // plateaus 463→463), NOT the Stage-0 682×/level compounding (that was
+        // purely the per-cursor sppf_stack-chain surface). Default ON under
+        // `retslot`; `PRATTAIL_CGLL_OWNER_KEEP=0` re-masks (ablate the w-axis
+        // independently), any other value forces ON. Realized by passing
+        // `nomask=true` into `cgll_descriptor_w` (its else-arm keeps
+        // `(owner_cat,owner_rule_idx)` distinct).
+        let owner_keep = match std::env::var("PRATTAIL_CGLL_OWNER_KEEP").as_deref() {
+            Ok("0") | Ok("off") | Ok("false") => false,
+            Ok(_) => true,
+            Err(_) => retslot,
+        };
+        // B (bounded-k return key, u-depth-axis): fold the FIRST `k` incoming
+        // edges into the return-slot `u` so grouping cursors diverging at DEEPER
+        // return-chain levels stay distinct descriptors and BOTH constituents
+        // build. `k == 1` reproduces the single-level key byte-for-byte
+        // (regression-safe). `PRATTAIL_CGLL_KLEVEL=N` overrides.
+        //
+        // ★ LIVE A/B FINDING (2026-07-09, this agent) — supersedes the shadow's
+        // "k=2 plateaus, does NOT scale with depth" |U| verdict (that was
+        // NECESSARY-not-SUFFICIENT: it measured DESCRIPTOR separability, not the
+        // live reading DELIVERY through the recon fan). The DELIVERED reading
+        // count is NON-MONOTONIC in k and the required k SCALES with grouping
+        // depth `d` (the empirical rule: exact iff `k ≥ d + 1`):
+        //   @Nil!(@(@(@Nil)!())!())        (grouping d2): k1→1(under) k2→3(OVER,
+        //                                   spurious `@Nil!(@(@Nil!())!())`) k3→2✓
+        //   @Nil!(@(@(@(@Nil)!())!())!())  (grouping d3): k3→ERR(loss) k4→4✓
+        // The over-generation at k=2 is the refined key surviving a cursor the
+        // COARSE `(pos,symbol)` recon fan then reconnects spuriously — the
+        // cursor-key/GSS-granularity MISMATCH (the memory's DEFINITIVE
+        // ARCHITECTURAL ROOT: needs GSS-dedup-by-grammar-SLOT for a
+        // depth-UNIFORM fix). Default `k = 4` delivers the milestone battery
+        // (deep-@ ladder 2/2/2/4 reading-multiset-EXACT vs the E1 complete-forest
+        // GT); a term deeper than grouping-d3 would need a correspondingly higher
+        // k (NOT depth-uniform — a battery-scoped delivery, honestly caveated).
+        // EDIT B: under `p2core` the descriptor `u` drops to k=1 (the single
+        // immediate-caller return slot). The DEEPER return-chain distinction that
+        // the prior recon-fan arm needed k=4 to encode now rides the per-node
+        // EDGE GRAPH (edit C's exact fan restores each genuine caller's saved
+        // left-context at reconnect-time), so a fixed k=1 suffices at ALL depths
+        // (the depth-uniform win). `PRATTAIL_CGLL_KLEVEL=N` overrides (fall back to
+        // k=2 only if the A/B shows deep-@ under-covers — Checkpoint 0 predicts
+        // k=1 suffices). The prior (non-p2core) retslot arm keeps its k=4 default.
+        let klevel: usize = std::env::var("PRATTAIL_CGLL_KLEVEL")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(if p2core {
+                1
+            } else if retslot {
+                4
+            } else {
+                1
+            })
+            .max(1);
+        // Fan disposition probe: with the owner-unmask (A) building N packings
+        // DIRECTLY, the genuine-descent slot-sibling reduce fan (@ the
+        // `recon || thread || retslot_recon` gate below) may no longer be needed
+        // for owner-attribution. Default ON (preserves the measured-best P2
+        // config); `PRATTAIL_CGLL_RETSLOT_NORECON=1` turns it off to verify the
+        // fan is redundant (and confirm no over-generation when kept).
+        // RETIRE (under p2core): the coarse genuine-descent slot-sibling recon fan
+        // (`cgll_slot_fan_pop`) is SUPERSEDED by edit C's exact per-node edge fan.
+        // (Moot anyway — the recon block is gated `!retslot_edges`, which p2core
+        // forces on — but excluded here for clarity + so the flag reads honestly.)
+        let retslot_recon = retslot
+            && std::env::var_os("PRATTAIL_CGLL_RETSLOT_NORECON").is_none()
+            && !p2core;
+        // ── ROOT-P Stage B: EXACT return-slot-keyed recon fan (2026-07-09) ────
+        // The DEPTH-UNIFORM delivery lever. The DEFAULT `retslot` recon fan
+        // (`cgll_slot_fan_pop`, below) reconnects a completing constituent to the
+        // CLASSIC predecessors of every genuine-descent slot-sibling node — a
+        // SUPERSET of the genuine callers that OVER-fires at high `k` (the coarse
+        // fan needs `k ≥ grouping_depth + 1`, and at `k ≥ 8` it gains `@a!(0,1)`
+        // 1→2 + explodes `|U|`; the memory's DEFINITIVE ARCHITECTURAL ROOT =
+        // cursor-key ⟷ GSS-granularity mismatch). `exactfan` replaces it with the
+        // EXACT fan: enumerate the completing constituent's GENUINE callers as the
+        // CANONICAL operand edges over the `(cat, lo)` slot (`gll_edges_by_slot`,
+        // deduped by `(target, operand_w, caller_sppf_stack, caller_edge_stack)`),
+        // and reconnect each by RESTORING its saved left-context (edge stack, +
+        // `caller_sppf_stack` under `exactfan_sppf`) before the proven
+        // `cursor_gss_pop_via_edge_id` → `apply_pop_body_to_cursor` reduce. The A0+
+        // A1 shadow measurement (agent ac9c0150) proved `C_exact` POLY + PLATEAUS
+        // at 15 (grammar-bounded, DEPTH-INVARIANT, k-STABLE) and NON-EMPTY on both
+        // overlays (`@x!(for)`=8, `@a!(0,1)`=9 genuine callers RECORDED), so a
+        // SMALL FIXED `k` should suffice at ALL depths (the deep distinction rides
+        // the RESTORED per-caller edge-context, NOT the descriptor key). The
+        // REFUTED edit-1/3 parts are DROPPED (NO `cgll_w` getNodeP threading, NO
+        // synthetic return-node `gll_create` chaining, NO node-identity change) —
+        // the DEFAULT retslot forest is kept verbatim; ONLY the caller-SET + the
+        // per-caller context-restore change. Coexists with the coarse fan (unset ⇒
+        // coarse) for the reading-set A/B. Gated + canonical-only ⇒ DCE'd with the
+        // const off (byte-identical default).
+        let exactfan = retslot && std::env::var_os("PRATTAIL_CGLL_EXACTFAN").is_some();
+        // `exactfan_sppf` ALSO restores each extra caller's saved SPPF working
+        // stack (`caller_sppf_stack`) before the reduce (the getNodeP left-part
+        // restore the `CanonicalGllEdge` doc describes). A/B lever for the C-ctx
+        // red-team item: the proven refuted-arm skeleton kept the callee stack
+        // (children present for `emit_fire_action`); restoring `caller_sppf_stack`
+        // replaces those children ⇒ tested empirically, not assumed correct.
+        let exactfan_sppf = exactfan && std::env::var_os("PRATTAIL_CGLL_EXACTFAN_SPPF").is_some();
+        // ── ROOT-P MECHANISM-B: reduce-ONCE / push-z exact fan (2026-07-09) ───
+        // The CORRECT exact fan. Mechanism-A (`exactfan`) restored each extra
+        // caller's `caller_edge_stack` (and, under `exactfan_sppf`, its
+        // `caller_sppf_stack`) then re-ran `apply_pop_body_to_cursor`'s N-ARY
+        // reduce — but restoring the caller's SPPF stack REPLACES the
+        // constituent's children, so the re-fire either arity-mismatched (ERR
+        // all terms under `exactfan_sppf`) or admitted a WRONG left-context
+        // prefix (edge-only restore → `-3!`→3, grp-d2→3 OVER-generation). B
+        // reduces the constituent EXACTLY ONCE (the primary caller fires + builds
+        // the shared content-canonical Symbol `z`), then for each EXTRA genuine
+        // caller restores its saved left-context (edge stack + SPPF stack) and
+        // PUSHES the shared `z` — NO re-fire, NO re-collection of children (they
+        // live inside `z`) ⇒ no arity mismatch, no wrong prefix. = Scott &
+        // Johnstone `getNodeP(L, w, z)`: the restored caller stack is the left
+        // `w`, `z` is the right, and the caller's OWN later `emit_fire_action`
+        // packs `[…caller_ctx, z]` into its rule's packing family. Coexists with
+        // `exactfan` / coarse (unset ⇒ that path) for the reading-set A/B; gated
+        // + canonical-only ⇒ DCE'd with the const off. B1 does NOT yet union the
+        // binder caller-channel (the for/wrapped-body caller riding a NON-operand
+        // edge, located in B0) — that is B2 — so `@x!(for(…){…})` MAY still ERR.
+        let exactfanb = retslot && std::env::var_os("PRATTAIL_CGLL_EXACTFANB").is_some();
+        // ── ROOT-P MECHANISM-B B1 root-cause DIAGNOSTIC (2026-07-09) ─────────
+        // Isolates the deep-@ grouping LOSS: when ON, the exactfanB reduce-once
+        // fan fires ONLY for SYMBOL-producing pops (Return / RuleAt / MixfixMarker
+        // ⇒ `emit_fire_action` builds a real `z` to share); STRUCTURAL pops
+        // (GroupingMarker / CategoryEntry — the deep grouping-frame reconnections)
+        // fall through to the coarse fan (which re-reduces per slot-sibling and
+        // delivers deep-@ 2/2/2/4). If this recovers deep-@ ⇒ the loss was the
+        // push-z path taking over structural pops it cannot serve (`z = NONE`);
+        // if deep-@ still lost ⇒ push-z itself cannot rebuild the deep grouping
+        // constituent (the deeper gap). Read-only A/B lever (default off).
+        let exactfanb_symonly =
+            exactfanb && std::env::var_os("PRATTAIL_CGLL_EXACTFANB_SYMONLY").is_some();
+        // ── ROOT-P caller-dedup Stage-2 (env PRATTAIL_CGLL_EXACTFANB_DEDUP) ────
+        // The candidate targeted fix for the `-3!` scattered-caller over-gen:
+        // before reconnecting, group the exactfanB genuine callers by their
+        // bounded-`dedup_k` return-slot key and keep ONE representative per key
+        // (the primary if present). Scattered duplicates of the SAME logical
+        // caller (identical return slot — the GSS-by-(pos,symbol) artefact)
+        // collapse; genuine-distinct callers (different return slot, e.g. the
+        // deep-@ grouping frame) stay split. `dedup_k` defaults to the descriptor
+        // `klevel` but is overridable (PRATTAIL_CGLL_EXACTFANB_DEDUP_K) so the
+        // Stage-1 GO k is swept independently of the descriptor granularity. When
+        // the env is unset the whole path is inert (byte-identical exactfanB).
+        let exactfanb_dedup =
+            exactfanb && std::env::var_os("PRATTAIL_CGLL_EXACTFANB_DEDUP").is_some();
+        let dedup_k: usize = std::env::var("PRATTAIL_CGLL_EXACTFANB_DEDUP_K")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(klevel)
+            .max(1);
+        let budget: usize = std::env::var("PRATTAIL_CGLL_BUDGET")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(20_000_000);
+
+        // R = pending worklist; U = GLOBAL add-once descriptor set keyed EXACTLY
+        // by the canonical 4-tuple `(L, u, i, w)` (Scott & Johnstone 2010 §4);
+        // P is the per-GSS-node recorded-pop set inside `self.gss` (Stage C). R
+        // is seeded from the walker's initial frontier (the `CategoryEntry` seed
+        // cursor built by `new_for_category`).
+        let mut worklist: VecDeque<BranchCursor<W>> = VecDeque::new();
+        for frame in std::mem::take(&mut self.branch_cursors) {
+            worklist.push_back(frame.into_concrete());
+        }
+        let mut seen: FxHashSet<u64> = FxHashSet::default();
+        // Accept frontier + a per-(root,pos) dedup so one accept configuration is
+        // published once even if reached along several worklist paths.
+        let mut accepting: Vec<BranchCursor<W>> = Vec::new();
+        let mut accept_seen: FxHashSet<(crate::sppf::SppfId, usize)> = FxHashSet::default();
+
+        // Instrumentation (the delivery signal): |U|, peak |R|, descriptors
+        // processed, and the max descriptors observed at any single input
+        // position (the per-position frontier bound — poly vs exponential).
+        let mut u_count: u64 = 0;
+        let mut peak_r: usize = worklist.len();
+        let mut processed: u64 = 0;
+        let mut gll_creates: u64 = 0;
+        let mut gll_pops: u64 = 0;
+        let mut fan_children: u64 = 0;
+        // ── ROOT-P P2 CORE instrumentation (dumped under stats) ───────────────
+        let mut p2core_fan_sites: u64 = 0; // reduce sites with ≥2 genuine callers (fanned)
+        let mut p2core_extras: u64 = 0; // extra genuine callers reconnected
+        let mut p2core_z_symbol: u64 = 0; // symbol pops (push-z path)
+        let mut p2core_z_none: u64 = 0; // structural pops (non-firing body)
+        // ── ROOT-P MECHANISM-B B1 instrumentation (dumped under stats) ────────
+        let mut exactfanb_sites: u64 = 0; // reduce sites with ≥2 genuine callers (fanned)
+        let mut exactfanb_extras: u64 = 0; // extra callers reconnected via push-z
+        let mut exactfanb_z_none: u64 = 0; // z-capture failures at a fan site (MUST be 0)
+        let mut exactfanb_z_not_in_terms: u64 = 0; // z absent from walker-global terms (red-team)
+        // ── ROOT-P caller-dedup Stage-1 MEASUREMENT (read-only GO/HALT probe) ─
+        // For each exactfanB fan site (≥2 genuine callers), how many DISTINCT
+        // bounded-k return-slot keys do those callers carry, at k∈{1,2,3,4}?
+        // This is the pre-surgery predictor for a caller-dedup-BY-return-slot-key
+        // (Stage 2): dedup keeps ONE representative per distinct key, so the count
+        // of distinct keys == the post-dedup fan size at that site. The DECISIVE
+        // question is whether a single fixed k exists at which the SCATTERED-
+        // duplicate callers (the `-3!` over-gen root) COLLAPSE to 1 key while the
+        // GENUINE-distinct callers (deep-@ grouping) stay SPLIT (correct count).
+        // Keyed by (cat_src_idx, num_callers, k1, k2, k3, k4) → occurrence count
+        // so the log is grammar-bounded regardless of |U|. Read-only: clones a
+        // throwaway probe cursor per caller and calls the EXISTING
+        // `cgll_retslot_key_u` (fold first k incoming edges); mutates no walker
+        // state, adds no descriptor. Computed only when `dump_stats` is set (zero
+        // overhead otherwise ⇒ exactfanB parsing behaviour unperturbed).
+        let mut dedup_profile: std::collections::HashMap<(u16, u32, u32, u32, u32, u32), u64> =
+            std::collections::HashMap::new();
+        let mut dedup_sites: u64 = 0;
+        let mut dedup_max_k: [u32; 4] = [0; 4];
+        // Stage-2 caller-dedup: count of scattered-duplicate callers skipped
+        // (their bounded-`dedup_k` return-slot key already had a representative).
+        let mut exactfanb_dedup_skipped: u64 = 0;
+        // ── ROOT-P Checkpoint 0: P2 NODE-EDGE CENSUS accumulators (READ-ONLY) ─
+        // Verbatim per-descent + per-reduce records (capped so the deep-@ ladder
+        // stays bounded) + the per-position distinct-return-node census (the RT5
+        // flat-poly interior-over-mint guard). Populated only under
+        // `p2_nodecensus && dump_stats`; reported at EOI. See the flag comment.
+        const P2C_CAP: usize = 20000;
+        // (at, l_ret_hash, caller_ret_node, minted v, descent EdgeKind, min_bp, caller category)
+        let mut p2c_descents: Vec<(usize, u64, u32, u32, &'static str, i16, u16)> = Vec::new();
+        // (v, cat, lo, hi, gll_pop return count, edges[(target, target_cat, operand_w, caller EdgeKind, min_bp)])
+        let mut p2c_reduces: Vec<(
+            u32,
+            u16,
+            usize,
+            usize,
+            usize,
+            Vec<(u32, u16, u32, &'static str, i16)>,
+        )> = Vec::new();
+        // v's actual pos (== descent `at` == reduce `lo`) → distinct return-slot ids there.
+        let mut p2c_nodes_by_pos: std::collections::HashMap<usize, FxHashSet<u32>> =
+            std::collections::HashMap::new();
+        let mut p2c_descent_count: u64 = 0;
+        let mut p2c_reduce_count: u64 = 0;
+        // EdgeKind → (name, Pratt min_bp if the variant carries one else -1). The
+        // `-3!` decision hinges on the descent-edge min_bp (bp-admissibility), so
+        // it is logged per descent + per reduce edge. Mirrors the exhaustive
+        // match at the fan-measure Δ classifier above (in-crate ⇒ no wildcard).
+        let p2c_ek = |ek: Option<&crate::gss::EdgeKind>| -> (&'static str, i16) {
+            use crate::gss::EdgeKind;
+            match ek {
+                None => ("None", -1),
+                Some(EdgeKind::Generic) => ("Generic", -1),
+                Some(EdgeKind::CategoryEntryRoot) => ("CategoryEntryRoot", -1),
+                Some(EdgeKind::CategoryEntryContinuation { min_bp }) => {
+                    ("CategoryEntryContinuation", *min_bp as i16)
+                },
+                Some(EdgeKind::CrossCatProjection { inner_cur_bp, .. }) => {
+                    ("CrossCatProjection", *inner_cur_bp as i16)
+                },
+                Some(EdgeKind::CrossCatLhs { .. }) => ("CrossCatLhs", -1),
+                Some(EdgeKind::CrossCatLhsReentry { min_bp, .. }) => {
+                    ("CrossCatLhsReentry", *min_bp as i16)
+                },
+                Some(EdgeKind::CrossCatLhsScoped { min_bp, .. }) => {
+                    ("CrossCatLhsScoped", *min_bp as i16)
+                },
+                Some(EdgeKind::TransparentSourceReentry { .. }) => {
+                    ("TransparentSourceReentry", -1)
+                },
+                Some(EdgeKind::PrefixRuleEntry { .. }) => ("PrefixRuleEntry", -1),
+                Some(EdgeKind::InfixContinuation { l_bp, .. }) => {
+                    ("InfixContinuation", *l_bp as i16)
+                },
+                Some(EdgeKind::LexAltLiteral { .. }) => ("LexAltLiteral", -1),
+                Some(EdgeKind::OptionalGroupAt { .. }) => ("OptionalGroupAt", -1),
+                Some(EdgeKind::BinderListLoopAt { .. }) => ("BinderListLoopAt", -1),
+                Some(EdgeKind::CollectionElement { .. }) => ("CollectionElement", -1),
+                Some(EdgeKind::GroupingMarker { .. }) => ("GroupingMarker", -1),
+                Some(EdgeKind::MixfixMarker { .. }) => ("MixfixMarker", -1),
+                Some(EdgeKind::ReturnFrame { .. }) => ("ReturnFrame", -1),
+            }
+        };
+        // Stage E2b diagnostic: count of non-NONE `cgll_w` folds + how many
+        // accepting cursors carried a non-NONE threaded `w` (delivery signal).
+        let mut thread_folds: u64 = 0;
+        let mut accept_with_w: u64 = 0;
+        let mut u_by_pos: std::collections::HashMap<usize, u64> = std::collections::HashMap::new();
+        // ── ROOT-P EXACT-FAN A1 accumulators (READ-ONLY; `fan_measure`) ───────
+        // See the `PRATTAIL_CGLL_FAN_MEASURE` flag above. All are pure locals.
+        let mut fm_sites: u64 = 0; // Pop reduces observed (retslot recon arm ran)
+        let mut fm_fan_sites: u64 = 0; // subset where the coarse fan fires (C_coarse ≥ 2)
+        let mut fm_c_coarse_max: u64 = 0; // max C_coarse over fan sites
+        let mut fm_c_exact_max: u64 = 0; // max C_exact over ALL observed reduces
+        let mut fm_over_fire_max: u64 = 0; // max (C_coarse − C_exact) over fan sites
+        let mut fm_c_exact_empty_fan_sites: u64 = 0; // C-under witness: C_exact==0 while C_coarse≥2
+        let mut fm_c_exact_nonempty_sites: u64 = 0; // reduces with C_exact ≥ 1
+        let mut fm_exact_not_in_coarse_max: u64 = 0; // subset check: exact targets ∖ coarse targets
+        let mut fm_exact_not_in_coarse_total: u64 = 0; // Σ of the above (0 ⇒ exact ⊆ coarse by target)
+        let mut fm_c_exact_by_pos: std::collections::HashMap<usize, u64> =
+            std::collections::HashMap::new(); // hi = cursor.pos → max C_exact at that position
+        // (category_src_idx, lo) → (C_exact_max, C_coarse_max, over_fire_max)
+        let mut fm_by_constituent: std::collections::HashMap<(u16, usize), (u64, u64, u64)> =
+            std::collections::HashMap::new();
+        // ── ROOT-P MECHANISM-B Stage B0 accumulators (READ-ONLY; `fan_measure`) ──
+        // B0(a) z-CAPTURE: at each default reduce, does `sppf.symbol_id(cat, lo,
+        // hi)` (the (cat=popped category_src_idx, lo=popped descent pos, hi=reduce
+        // pos) the exact-fan surgery has at the fan site) resolve to EXACTLY the
+        // `result_w` z the walker built? match ⇒ symbol_id capture is sound;
+        // mismatch/none ⇒ B1 must capture z from the primary reduce's return.
+        let mut b0_zcap_match: u64 = 0;
+        let mut b0_zcap_mismatch: u64 = 0;
+        let mut b0_zcap_none: u64 = 0;
+        // B0(b) BINDER CHANNEL: Δ = coarse predecessor targets ∖ canonical
+        // operand-edge targets (`gll_edges_by_slot`). A binder / wrapped-body /
+        // collection caller returns via a NON-descent EdgeKind (not recorded as a
+        // canonical operand edge) ⇒ it appears in Δ. Count per (cat, EdgeKind) to
+        // isolate the channel + bound |Δ|.
+        let mut fm_delta_by_cat_kind: std::collections::HashMap<(u16, &'static str), u64> =
+            std::collections::HashMap::new();
+        let mut fm_delta_awaited_by_cat_kind: std::collections::HashMap<(u16, &'static str), u64> =
+            std::collections::HashMap::new();
+        let mut fm_delta_max_per_site: u64 = 0;
+        let mut fm_delta_max_by_constituent: std::collections::HashMap<(u16, usize), u64> =
+            std::collections::HashMap::new();
+        let mut budget_exceeded = false;
+        let max_pos = tokens.len();
+
+        while let Some(mut cursor) = worklist.pop_front() {
+            processed += 1;
+            if processed as usize > budget {
+                budget_exceeded = true;
+                break;
+            }
+
+            // ── U: global add-once by the canonical 4-tuple ────────────────────
+            // `add(L,u,i,w)` inserts into R iff newly inserted into U. Two
+            // descriptors colliding on the 4-tuple share the top SPPF Symbol
+            // `w = (nt,lo,hi)` (interned + dedup'd by `emit_fire_action`), so the
+            // dropped descriptor's top-derivation ambiguity is already packed
+            // under the shared Symbol — the reading is preserved by SPPF packing,
+            // not by the descriptor (Stage A `multiroot_full == 0`). Dropping the
+            // enclosing-frame operands is sound iff they ride the SHARED GSS node
+            // `u` (v1 caveat: they still ride the per-cursor stack — see report).
+            // GT-closure A: `nomask || owner_keep` DROPS the owner-mask on the
+            // retslot arm (owner-unmasked `w` = the shadow's `w_unmask`). B:
+            // `klevel` folds the first k return-chain edges into `u`.
+            let key = self.cgll_descriptor_key(
+                &cursor,
+                sound_key,
+                nomask || owner_keep,
+                thread,
+                retslot,
+                klevel,
+            );
+            if !seen.insert(key) {
+                continue;
+            }
+            u_count += 1;
+            *u_by_pos.entry(cursor.pos.min(max_pos)).or_insert(0) += 1;
+
+            // ── Accept collection ──────────────────────────────────────────────
+            // Snapshot every EOI-accepting configuration (its `w` = the goal
+            // Symbol `(goal_cat, 0, n)` at the top of the SPPF stack). Realized
+            // later by `resolve_at_end_of_input` / `realize_root_to_terms`.
+            if self.is_logical_eoi(cursor.pos, tokens) && self.is_accepting_config(&cursor, tokens) {
+                let root = self
+                    .sppf_stack_arena
+                    .top(cursor.sppf_stack_id)
+                    .unwrap_or(crate::sppf::SPPF_ID_NONE);
+                if accept_seen.insert((root, cursor.pos)) {
+                    if cursor.cgll_w != crate::sppf::SPPF_ID_NONE {
+                        accept_with_w += 1;
+                    }
+                    accepting.push(cursor.clone());
+                }
+                // Fall through: an accepting InfixLoop/Unwinding config may still
+                // legally step (to Accept, or to unwind another frame); the U
+                // dedup bounds any resulting descriptors.
+            }
+            if cursor.inner_state.is_terminal() {
+                continue;
+            }
+
+            // ── Transition: reuse the shared engine tables (grammar + Pratt bp),
+            //    WITHOUT the classic per-cursor fanout scheduler ──────────────────
+            let frontier_top = if cursor.node == crate::gss::GSS_NODE_NONE {
+                None
+            } else {
+                self.gss.node(cursor.node).cloned()
+            };
+            let action = self.engine.step(
+                &cursor.inner_state,
+                &self.gss,
+                frontier_top.as_ref(),
+                cursor.pos,
+                tokens,
+                crate::wpda_runtime::FrameCtx::EMPTY,
+            );
+            if matches!(action, WpdaStepAction::Idle) {
+                continue; // engine parks this config
+            }
+
+            // ── Stage-E EXPERIMENT: exact pop-fan for the reconnection `Pop` ────
+            // Under the canonical SLOT key the pop-routing edge is NOT in the
+            // descriptor identity, so a merged cursor's single recorded edge
+            // under-routes the collapsed lineages' pop targets — the reading-loss
+            // root cause. Reconnect to ALL GSS predecessors of the popped node
+            // (Scott & Johnstone 2010 §5: the descriptor's `w` is read off the
+            // GSS edge at pop), reusing `recognizer_fan_pop` (canonical child
+            // resolve-ON + one resolve-suppressed extra per other out-edge). Each
+            // reconnected child re-enters R and is bounded by the U add-once. The
+            // fan is only meaningful on a ≥2-predecessor node.
+            if fan_pop {
+                if let WpdaStepAction::Pop { weight, new_state } = &action {
+                    if self.gss.edges_from(cursor.node).len() > 1 {
+                        let weight = weight.clone();
+                        let new_state = new_state.clone();
+                        let outcome = self.recognizer_fan_pop(cursor.clone(), |w, mut ch, edge| {
+                            let popped_symbol = w.gss.node(ch.node).map(|n| n.symbol);
+                            let (pred_id, kind, edge_id) =
+                                w.cursor_gss_pop_via_edge_id(&mut ch, edge);
+                            if w.apply_pop_body_to_cursor(
+                                &mut ch,
+                                pred_id,
+                                kind.as_ref(),
+                                edge_id,
+                                popped_symbol,
+                                &weight,
+                                new_state.clone(),
+                                tokens,
+                                None,
+                            ).0 {
+                                Some(ch)
+                            } else {
+                                None
+                            }
+                        });
+                        if let CursorOutcome::ForkInto(children) = outcome {
+                            let result_w = crate::sppf::SPPF_ID_NONE;
+                            let _ = self.gss.gll_pop(cursor.node, cursor.pos, result_w);
+                            for c in children {
+                                worklist.push_back(c);
+                            }
+                        }
+                        peak_r = peak_r.max(worklist.len());
+                        continue;
+                    }
+                }
+            }
+
+            // ── Stage-E EXACT-caller pop-fan over CANONICAL operand edges ─────
+            // Reconnect the completed constituent ONLY to callers that GENUINELY
+            // descended into its `(category, pos)` (the canonical operand edges),
+            // not to every classic slot-sibling. Fires the pop-body once per
+            // genuine caller (dedup'd z Symbol + packing), so no spurious readings.
+            if canfan {
+                if let WpdaStepAction::Pop { weight, new_state } = &action {
+                    if let Some((cat, pos)) = self
+                        .gss
+                        .node(cursor.node)
+                        .map(|n| (n.symbol.category_src_idx, n.pos))
+                    {
+                        let edges = self.gss.gll_edges_by_slot(cat, pos);
+                        if edges.len() > 1 {
+                            let weight = weight.clone();
+                            let new_state = new_state.clone();
+                            let popped_symbol = self.gss.node(cursor.node).map(|n| n.symbol);
+                            let mut children: Vec<BranchCursor<W>> = Vec::new();
+                            for (idx, e) in edges.iter().enumerate() {
+                                // First genuine caller keeps resolve/cohort writes
+                                // ON (byte-identical to the single pop); the rest
+                                // suppress them (poly-safe over-approx guard).
+                                self.pop_fanout_suppress_resolve = idx != 0;
+                                let mut ch = cursor.clone();
+                                if self.apply_pop_body_to_cursor(
+                                    &mut ch,
+                                    e.target,
+                                    None,
+                                    None,
+                                    popped_symbol,
+                                    &weight,
+                                    new_state.clone(),
+                                    tokens,
+                                    None,
+                                ).0 {
+                                    children.push(ch);
+                                }
+                            }
+                            self.pop_fanout_suppress_resolve = false;
+                            self.deterministic = false;
+                            for c in children {
+                                fan_children += 1;
+                                worklist.push_back(c);
+                            }
+                            peak_r = peak_r.max(worklist.len());
+                            continue;
+                        }
+                    }
+                }
+            }
+
+            // ── Stage-E CANONICAL exact pop-fan (SLOT-coarsened co-merge) ──────
+            // The delivery mechanism. Under the canonical GSS-by-`(pos, symbol)`
+            // node index, the `@`-send cohort's rule variants land on DISTINCT
+            // nodes, so a plain single-node fan (the `fan_pop`/recognizer arm
+            // above) reaches only the callers sharing the popping node — it
+            // recovers a nested send's pop-routing readings (`@Nil!(@Nil!())` → 2)
+            // but NOT a grouped constituent whose callers spread across rule-
+            // variant sibling nodes. `ctxfan` fans the reduce-`Pop` over EVERY
+            // slot-sibling node (same `(category, pos)` as the popping node) —
+            // Scott & Johnstone's canonical `(nonterminal X, position j)` node
+            // identity — via the PROVEN `apply_pop_body_to_cursor` pop-body (so
+            // each reconnected caller fires + links its own packing under the
+            // shared `(cat,lo,hi)` Symbol). Wrong-owner sibling reduces are
+            // rejected by `emit_fire_action`'s owner-gate (Error ⇒ dropped next
+            // step), so the fan only ADDS valid derivations. Every child re-enters
+            // R and is bounded by the global U (poly).
+            if ctxfan {
+                if let WpdaStepAction::Pop { weight, new_state } = &action {
+                    if let Some((cat, pos)) = self
+                        .gss
+                        .node(cursor.node)
+                        .map(|n| (n.symbol.category_src_idx, n.pos))
+                    {
+                        let siblings = self.gss.nodes_with_category_pos(cat, pos);
+                        let total_edges: usize =
+                            siblings.iter().map(|&s| self.gss.edges_from(s).len()).sum();
+                        if total_edges > 1 {
+                            let weight = weight.clone();
+                            let new_state = new_state.clone();
+                            let outcome =
+                                self.cgll_slot_fan_pop(cursor.clone(), &siblings, |w, mut ch, edge| {
+                                    let popped_symbol = w.gss.node(ch.node).map(|n| n.symbol);
+                                    let (pred_id, kind, edge_id) =
+                                        w.cursor_gss_pop_via_edge_id(&mut ch, edge);
+                                    if w.apply_pop_body_to_cursor(
+                                        &mut ch,
+                                        pred_id,
+                                        kind.as_ref(),
+                                        edge_id,
+                                        popped_symbol,
+                                        &weight,
+                                        new_state.clone(),
+                                        tokens,
+                                        None,
+                                    ).0 {
+                                        Some(ch)
+                                    } else {
+                                        None
+                                    }
+                                });
+                            if let CursorOutcome::ForkInto(children) = outcome {
+                                for c in children {
+                                    fan_children += 1;
+                                    worklist.push_back(c);
+                                }
+                            }
+                            peak_r = peak_r.max(worklist.len());
+                            continue;
+                        }
+                    }
+                }
+            }
+
+            // ── Stage E2 RECONNECTION (the delivery core, default-off opt-in) ──
+            // Like `ctxfan` (fan the reduce-`Pop` over every node sharing the
+            // popping node's `(category, pos)` slot, reusing the PROVEN
+            // `apply_pop_body_to_cursor` reconstruction — the piece the manual
+            // canfan/recon reconstruction could not reproduce), BUT restricted to
+            // siblings that were GENUINELY descended into: nodes carrying at least
+            // one canonical operand edge (`gll_edges` non-empty, recorded ONLY at a
+            // real `gll_create` descent). `ctxfan`'s over-generation (`@(p)`
+            // false-accept) comes from SPURIOUS slot-siblings no caller ever
+            // descended into; filtering to genuine-descent nodes reconnects the
+            // cross-variant grouped reading (`@Nil!(@(@Nil)!())`'s second packing)
+            // WITHOUT re-admitting the spurious callers. Every reconnected child
+            // re-enters R and is bounded by the global U (poly). Gated on `recon`
+            // (`PRATTAIL_CGLL_RECON`); the leading `CANONICAL_GLL_ENABLED` const
+            // still DCE's the whole arm when the const is `false`.
+            // NOT under `retslot`: the P2 return-slot reduce (below, after
+            // `apply_action`) is the EXACT per-node edge-fan that SUPERSEDES this
+            // coarse genuine-descent slot-sibling fan. Running both would
+            // ── Stage P2 DEFAULT delivery: the retslot KEY + this genuine-descent
+            // slot-sibling reduce fan is the measured-best config (see the flag
+            // block above). Fire it under `retslot` too (the delivering pairing),
+            // UNLESS the opt-in edit-1/3 edge-graph (`retslot_edges`) takes over
+            // the reduce reconnection.
+            if (recon || thread || retslot_recon || exactfan || exactfanb) && !retslot_edges {
+                if let WpdaStepAction::Pop { weight, new_state } = &action {
+                    if let Some((cat, pos)) = self
+                        .gss
+                        .node(cursor.node)
+                        .map(|n| (n.symbol.category_src_idx, n.pos))
+                    {
+                        let siblings: Vec<crate::gss::GssNodeId> = self
+                            .gss
+                            .nodes_with_category_pos(cat, pos)
+                            .into_iter()
+                            .filter(|&s| !self.gss.gll_edges(s).is_empty())
+                            .collect();
+                        let total_edges: usize =
+                            siblings.iter().map(|&s| self.gss.edges_from(s).len()).sum();
+                        // ── ROOT-P EXACT-FAN A1 (READ-ONLY counting pass) ─────
+                        // Observe what the EXACT fan WOULD reconnect vs the coarse
+                        // fan, mutating NOTHING the parse observes (only `fm_*`
+                        // locals + a walker-stats-gated counter). `cat`/`pos` =
+                        // the completing constituent's (category, lo = descent
+                        // pos); `cursor.pos` = hi. C_coarse = total_edges (classic
+                        // predecessors summed over the genuine-descent siblings);
+                        // C_exact = |gll_edges_by_slot(cat, lo)| (canonical operand
+                        // edges, deduped — the SAME enumerator the surgery drives).
+                        // The coarse fan below still runs UNCHANGED.
+                        if fan_measure {
+                            let c_coarse = total_edges as u64;
+                            let exact_edges = self.gss.gll_edges_by_slot(cat, pos);
+                            let c_exact = exact_edges.len() as u64;
+                            let over_fire = c_coarse.saturating_sub(c_exact);
+                            // Target-set subset check: the plan claims the canonical
+                            // operand edges are a STRICT SUBSET of the classic
+                            // predecessors (by reconnection target). Count exact
+                            // targets NOT covered by the coarse target set (must be
+                            // 0 for "strictly inside").
+                            let mut coarse_targets: FxHashSet<crate::gss::GssNodeId> =
+                                FxHashSet::default();
+                            for &s in &siblings {
+                                for e in self.gss.edges_from(s) {
+                                    coarse_targets.insert(e.target);
+                                }
+                            }
+                            let exact_not_in_coarse = exact_edges
+                                .iter()
+                                .filter(|e| !coarse_targets.contains(&e.target))
+                                .map(|e| e.target)
+                                .collect::<FxHashSet<_>>()
+                                .len() as u64;
+                            // ── ROOT-P MECHANISM-B Stage B0(b): binder caller-CHANNEL ──
+                            // Δ = coarse predecessor edges whose target is NOT a
+                            // canonical operand-edge caller of this (cat, lo) slot.
+                            // The binder/wrapped-body caller of `@x!(for(…){…})`'s
+                            // payload rides a NON-descent EdgeKind (not a canonical
+                            // operand edge) ⇒ it lives in Δ. Classify each Δ edge's
+                            // EdgeKind + count per (cat, kind) + bound |Δ| per site.
+                            {
+                                let exact_targets: FxHashSet<crate::gss::GssNodeId> =
+                                    exact_edges.iter().map(|e| e.target).collect();
+                                let mut delta_this_site: u64 = 0;
+                                for &s in &siblings {
+                                    for e in self.gss.edges_from(s) {
+                                        if exact_targets.contains(&e.target) {
+                                            continue;
+                                        }
+                                        delta_this_site += 1;
+                                        let kn: &'static str = match &e.kind {
+                                            crate::gss::EdgeKind::Generic => "Generic",
+                                            crate::gss::EdgeKind::CategoryEntryRoot => {
+                                                "CategoryEntryRoot"
+                                            },
+                                            crate::gss::EdgeKind::CategoryEntryContinuation {
+                                                ..
+                                            } => "CategoryEntryContinuation",
+                                            crate::gss::EdgeKind::CrossCatProjection { .. } => {
+                                                "CrossCatProjection"
+                                            },
+                                            crate::gss::EdgeKind::CrossCatLhs { .. } => "CrossCatLhs",
+                                            crate::gss::EdgeKind::CrossCatLhsReentry { .. } => {
+                                                "CrossCatLhsReentry"
+                                            },
+                                            crate::gss::EdgeKind::CrossCatLhsScoped { .. } => {
+                                                "CrossCatLhsScoped"
+                                            },
+                                            crate::gss::EdgeKind::TransparentSourceReentry {
+                                                ..
+                                            } => "TransparentSourceReentry",
+                                            crate::gss::EdgeKind::PrefixRuleEntry { .. } => {
+                                                "PrefixRuleEntry"
+                                            },
+                                            crate::gss::EdgeKind::InfixContinuation { .. } => {
+                                                "InfixContinuation"
+                                            },
+                                            crate::gss::EdgeKind::LexAltLiteral { .. } => {
+                                                "LexAltLiteral"
+                                            },
+                                            crate::gss::EdgeKind::OptionalGroupAt { .. } => {
+                                                "OptionalGroupAt"
+                                            },
+                                            crate::gss::EdgeKind::BinderListLoopAt { .. } => {
+                                                "BinderListLoopAt"
+                                            },
+                                            crate::gss::EdgeKind::CollectionElement { .. } => {
+                                                "CollectionElement"
+                                            },
+                                            crate::gss::EdgeKind::GroupingMarker { .. } => {
+                                                "GroupingMarker"
+                                            },
+                                            crate::gss::EdgeKind::MixfixMarker { .. } => {
+                                                "MixfixMarker"
+                                            },
+                                            crate::gss::EdgeKind::ReturnFrame { .. } => "ReturnFrame",
+                                        };
+                                        // Genuineness proxy: does the Δ target node
+                                        // itself carry canonical operand edges (a real
+                                        // descended frame, vs a dead slot-sibling)?
+                                        let awaited = !self.gss.gll_edges(e.target).is_empty();
+                                        *fm_delta_by_cat_kind.entry((cat, kn)).or_insert(0) += 1;
+                                        if awaited {
+                                            *fm_delta_awaited_by_cat_kind
+                                                .entry((cat, kn))
+                                                .or_insert(0) += 1;
+                                        }
+                                    }
+                                }
+                                fm_delta_max_per_site = fm_delta_max_per_site.max(delta_this_site);
+                                let de =
+                                    fm_delta_max_by_constituent.entry((cat, pos)).or_insert(0);
+                                *de = (*de).max(delta_this_site);
+                            }
+                            fm_sites += 1;
+                            fm_c_exact_max = fm_c_exact_max.max(c_exact);
+                            fm_exact_not_in_coarse_max =
+                                fm_exact_not_in_coarse_max.max(exact_not_in_coarse);
+                            fm_exact_not_in_coarse_total += exact_not_in_coarse;
+                            if c_exact >= 1 {
+                                fm_c_exact_nonempty_sites += 1;
+                            }
+                            let hi = cursor.pos;
+                            let pe = fm_c_exact_by_pos.entry(hi).or_insert(0);
+                            *pe = (*pe).max(c_exact);
+                            let ce = fm_by_constituent.entry((cat, pos)).or_insert((0, 0, 0));
+                            ce.0 = ce.0.max(c_exact);
+                            ce.1 = ce.1.max(c_coarse);
+                            ce.2 = ce.2.max(over_fire);
+                            if c_coarse >= 2 {
+                                fm_fan_sites += 1;
+                                fm_c_coarse_max = fm_c_coarse_max.max(c_coarse);
+                                fm_over_fire_max = fm_over_fire_max.max(over_fire);
+                                if c_exact == 0 {
+                                    fm_c_exact_empty_fan_sites += 1;
+                                }
+                            }
+                            crate::stats_inc!(self, cgll_fanmeasure_sites_total);
+                        }
+                        let exactfanb_fire = exactfanb
+                            && (!exactfanb_symonly
+                                || self
+                                    .gss
+                                    .node(cursor.node)
+                                    .map(|n| {
+                                        matches!(
+                                            n.symbol.kind,
+                                            SymbolKind::Return
+                                                | SymbolKind::RuleAt(_)
+                                                | SymbolKind::MixfixMarker
+                                        )
+                                    })
+                                    .unwrap_or(false));
+                        if exactfanb_fire {
+                            // ── ROOT-P MECHANISM-B B1: reduce-ONCE / push-z exact fan ──
+                            // The completing `(cat, lo)` constituent's GENUINE callers
+                            // = the CANONICAL operand edges over the slot
+                            // (`gll_edges_by_slot`, deduped). Reduce the constituent
+                            // EXACTLY ONCE via the PRIMARY caller (the cursor's own
+                            // lineage: resolve/cohort writes ON, `prebuilt_z = None` ⇒
+                            // fires `emit_fire_action`, builds + RETURNS the shared
+                            // content-canonical Symbol `z`). Then reconnect each EXTRA
+                            // genuine caller by RESTORING its saved left-context (edge
+                            // stack + SPPF stack) and PUSHING the shared `z`
+                            // (`prebuilt_z = Some(z)` ⇒ NO re-fire, NO re-collection of
+                            // children). Mechanism-A's structure with the two decisive
+                            // fixes: (1) extras restore `caller_sppf_stack` ALWAYS (the
+                            // getNodeP left part), not gated behind `exactfan_sppf`;
+                            // (2) the shared `z` is PUSHED, not rebuilt by a second
+                            // n-ary reduce (which arity-mismatched / admitted a wrong
+                            // left-prefix in mechanism-A). `deterministic = false`.
+                            let exact_edges = self.gss.gll_edges_by_slot(cat, pos);
+                            if exact_edges.len() > 1 {
+                                let weight = weight.clone();
+                                let new_state = new_state.clone();
+                                let popped_symbol = self.gss.node(cursor.node).map(|n| n.symbol);
+                                let primary_chain = cursor.incoming_edge_stack_id;
+                                let mut children: Vec<BranchCursor<W>> = Vec::new();
+                                exactfanb_sites += 1;
+                                // ── ROOT-P caller-dedup Stage-1 MEASUREMENT ───────────
+                                // Count DISTINCT bounded-k return-slot keys among the
+                                // genuine callers of THIS fan site (k = 1..4). Each
+                                // caller's key = `cgll_retslot_key_u` computed on a
+                                // throwaway probe cursor whose incoming-edge / SPPF
+                                // chains are the caller's SAVED left-context (exactly the
+                                // context the extras loop restores at 20544-20545), so
+                                // the measured key == the key a Stage-2 dedup would group
+                                // by. Read-only. Gated on `dump_stats` (the harness sets
+                                // `PRATTAIL_CANONICAL_GLL_STATS=1`), so exactfanB parsing
+                                // is unperturbed when stats are off.
+                                if dump_stats {
+                                    let num_callers = exact_edges.len() as u32;
+                                    let mut key_sets: [FxHashSet<u64>; 4] = [
+                                        FxHashSet::default(),
+                                        FxHashSet::default(),
+                                        FxHashSet::default(),
+                                        FxHashSet::default(),
+                                    ];
+                                    for e in &exact_edges {
+                                        let mut probe = cursor.clone();
+                                        probe.incoming_edge_stack_id = e.caller_edge_stack;
+                                        probe.sppf_stack_id = e.caller_sppf_stack;
+                                        for kk in 1usize..=4 {
+                                            key_sets[kk - 1]
+                                                .insert(self.cgll_retslot_key_u(&probe, kk));
+                                        }
+                                    }
+                                    let cat_idx = self
+                                        .gss
+                                        .node(cursor.node)
+                                        .map(|n| n.symbol.category_src_idx)
+                                        .unwrap_or(cat);
+                                    let d = [
+                                        key_sets[0].len() as u32,
+                                        key_sets[1].len() as u32,
+                                        key_sets[2].len() as u32,
+                                        key_sets[3].len() as u32,
+                                    ];
+                                    *dedup_profile
+                                        .entry((cat_idx, num_callers, d[0], d[1], d[2], d[3]))
+                                        .or_insert(0) += 1;
+                                    dedup_sites += 1;
+                                    for j in 0..4 {
+                                        dedup_max_k[j] = dedup_max_k[j].max(d[j]);
+                                    }
+                                }
+                                // ── PRIMARY: reduce ONCE, capture the built `z`. ──────
+                                self.pop_fanout_suppress_resolve = false;
+                                let z = {
+                                    let mut ch = cursor.clone();
+                                    let edge =
+                                        self.incoming_edge_stack_arena.top(ch.incoming_edge_stack_id);
+                                    let (pred_id, kind, edge_id) =
+                                        self.cursor_gss_pop_via_edge_id(&mut ch, edge);
+                                    let (ok, z) = self.apply_pop_body_to_cursor(
+                                        &mut ch,
+                                        pred_id,
+                                        kind.as_ref(),
+                                        edge_id,
+                                        popped_symbol,
+                                        &weight,
+                                        new_state.clone(),
+                                        tokens,
+                                        None,
+                                    );
+                                    if ok {
+                                        children.push(ch);
+                                    }
+                                    z
+                                };
+                                // ── RED-TEAM: z-capture reliability + action-once. ────
+                                // `z` is the Symbol the primary's `emit_fire_action`
+                                // built (RETURNED — B0 proved `symbol_id(cat, descent-
+                                // pos, hi)` is NOT a reliable capture). A NONE `z` ⇒ the
+                                // primary reduce elided ⇒ degrade to the single
+                                // (primary-only) pop, no fan (still sound).
+                                if z == crate::sppf::SPPF_ID_NONE {
+                                    exactfanb_z_none += 1;
+                                } else if !self.sppf_symbol_terms.contains_key(&z) {
+                                    // token-unsound `z` (interned but not a realized
+                                    // Term) — legitimately absent; record, do not panic.
+                                    exactfanb_z_not_in_terms += 1;
+                                }
+                                // ── EXTRAS: restore left-context, PUSH the shared `z`. ─
+                                if z != crate::sppf::SPPF_ID_NONE {
+                                    self.pop_fanout_suppress_resolve = true;
+                                    // ── ROOT-P caller-dedup Stage-2 ──────────────
+                                    // Keep ONE caller per distinct bounded-`dedup_k`
+                                    // return-slot key. Seed the seen-set with the
+                                    // PRIMARY's key (the primary is always kept), so a
+                                    // scattered extra that shares the primary's slot is
+                                    // dropped. Inert unless `exactfanb_dedup`.
+                                    let mut dedup_seen: FxHashSet<u64> = FxHashSet::default();
+                                    if exactfanb_dedup {
+                                        dedup_seen
+                                            .insert(self.cgll_retslot_key_u(&cursor, dedup_k));
+                                    }
+                                    for e in &exact_edges {
+                                        if e.caller_edge_stack == primary_chain {
+                                            continue; // the primary (handled above)
+                                        }
+                                        if exactfanb_dedup {
+                                            let mut probe = cursor.clone();
+                                            probe.incoming_edge_stack_id = e.caller_edge_stack;
+                                            probe.sppf_stack_id = e.caller_sppf_stack;
+                                            let key = self.cgll_retslot_key_u(&probe, dedup_k);
+                                            if !dedup_seen.insert(key) {
+                                                // Scattered duplicate of an already-kept
+                                                // caller (same return slot) — drop it.
+                                                exactfanb_dedup_skipped += 1;
+                                                continue;
+                                            }
+                                        }
+                                        let mut ch = cursor.clone();
+                                        // getNodeP LEFT part: restore this caller's saved
+                                        // SPPF working stack AND incoming-edge chain (O(1)
+                                        // Copy handles) so `intern_push(z)` builds
+                                        // `[…this-caller-ctx, z]` — NOT the popping
+                                        // cursor's context.
+                                        ch.sppf_stack_id = e.caller_sppf_stack;
+                                        ch.incoming_edge_stack_id = e.caller_edge_stack;
+                                        let caller_edge =
+                                            self.incoming_edge_stack_arena.top(e.caller_edge_stack);
+                                        let (pred_id, kind, edge_id) =
+                                            self.cursor_gss_pop_via_edge_id(&mut ch, caller_edge);
+                                        let (ok, _z2) = self.apply_pop_body_to_cursor(
+                                            &mut ch,
+                                            pred_id,
+                                            kind.as_ref(),
+                                            edge_id,
+                                            popped_symbol,
+                                            &weight,
+                                            new_state.clone(),
+                                            tokens,
+                                            Some(z),
+                                        );
+                                        if ok {
+                                            exactfanb_extras += 1;
+                                            children.push(ch);
+                                        }
+                                    }
+                                    self.pop_fanout_suppress_resolve = false;
+                                }
+                                self.deterministic = false;
+                                for c in children {
+                                    fan_children += 1;
+                                    worklist.push_back(c);
+                                }
+                                peak_r = peak_r.max(worklist.len());
+                                continue;
+                            }
+                            // ≤1 genuine caller: fall through to the classic single pop.
+                        } else if exactfan {
+                            // ── ROOT-P Stage B: EXACT return-slot-keyed recon fan ──
+                            // Reconnect the completing `(cat, lo)` constituent to its
+                            // GENUINE callers = the CANONICAL operand edges over the
+                            // slot (`gll_edges_by_slot`, deduped by
+                            // `(target, operand_w, caller_sppf_stack, caller_edge_stack)`)
+                            // — NOT the coarse fan's `edges_from(slot-siblings)` classic
+                            // predecessors (which over-fire). Each genuine caller is
+                            // reconstructed by RESTORING its saved left-context and
+                            // routed via the PROVEN `cursor_gss_pop_via_edge_id` →
+                            // `apply_pop_body_to_cursor` (the refuted arm's
+                            // reconstruction skeleton reused in ISOLATION, WITHOUT the
+                            // refuted `cgll_w` threading / synthetic return-node parts).
+                            // The DEFAULT retslot forest (classic descent
+                            // `gll_create(pre_node, slot, at, operand_w=pre_top)`, classic
+                            // `emit_fire_action` reduce, classic accept/realize) is
+                            // UNCHANGED — only the caller-SET + per-caller context-restore
+                            // differ. `deterministic=false` (ForkInto contract).
+                            let exact_edges = self.gss.gll_edges_by_slot(cat, pos);
+                            if exact_edges.len() > 1 {
+                                let weight = weight.clone();
+                                let new_state = new_state.clone();
+                                let popped_symbol = self.gss.node(cursor.node).map(|n| n.symbol);
+                                // The primary caller = the lineage the cursor actually
+                                // descended from (its own pre-pop incoming-edge chain).
+                                let primary_chain = cursor.incoming_edge_stack_id;
+                                let mut children: Vec<BranchCursor<W>> = Vec::new();
+                                // Canonical (primary) child: the cursor's OWN pop —
+                                // resolve/cohort writes ON, byte-identical to the classic
+                                // single-edge pop (registers each dispatch's snapshot
+                                // exactly once; mirror `rootp_exact_fan_pop`@13626).
+                                self.pop_fanout_suppress_resolve = false;
+                                {
+                                    let mut ch = cursor.clone();
+                                    let edge = self
+                                        .incoming_edge_stack_arena
+                                        .top(ch.incoming_edge_stack_id);
+                                    let (pred_id, kind, edge_id) =
+                                        self.cursor_gss_pop_via_edge_id(&mut ch, edge);
+                                    if self.apply_pop_body_to_cursor(
+                                        &mut ch,
+                                        pred_id,
+                                        kind.as_ref(),
+                                        edge_id,
+                                        popped_symbol,
+                                        &weight,
+                                        new_state.clone(),
+                                        tokens,
+                                        None,
+                                    ).0 {
+                                        children.push(ch);
+                                    }
+                                }
+                                // Extra genuine callers: resolve writes SUPPRESSED
+                                // (poly-safe over-approx; `emit_fire_action` still builds
+                                // every packing). Restore each caller's saved
+                                // `caller_edge_stack` (routing) — and, under
+                                // `exactfan_sppf`, its `caller_sppf_stack` (the getNodeP
+                                // left-part) — then pop via the caller's OWN descent edge
+                                // (top of its saved chain) to route `ch.node` to the
+                                // caller node `e.target`, and fire the pop-body reduce.
+                                self.pop_fanout_suppress_resolve = true;
+                                for e in &exact_edges {
+                                    // Skip the primary (handled above); it is the edge
+                                    // whose saved caller chain IS the cursor's own.
+                                    if e.caller_edge_stack == primary_chain {
+                                        continue;
+                                    }
+                                    let mut ch = cursor.clone();
+                                    ch.incoming_edge_stack_id = e.caller_edge_stack;
+                                    if exactfan_sppf {
+                                        ch.sppf_stack_id = e.caller_sppf_stack;
+                                    }
+                                    let caller_edge = self
+                                        .incoming_edge_stack_arena
+                                        .top(e.caller_edge_stack);
+                                    let (pred_id, kind, edge_id) =
+                                        self.cursor_gss_pop_via_edge_id(&mut ch, caller_edge);
+                                    if self.apply_pop_body_to_cursor(
+                                        &mut ch,
+                                        pred_id,
+                                        kind.as_ref(),
+                                        edge_id,
+                                        popped_symbol,
+                                        &weight,
+                                        new_state.clone(),
+                                        tokens,
+                                        None,
+                                    ).0 {
+                                        children.push(ch);
+                                    }
+                                }
+                                self.pop_fanout_suppress_resolve = false;
+                                self.deterministic = false;
+                                for c in children {
+                                    fan_children += 1;
+                                    worklist.push_back(c);
+                                }
+                                peak_r = peak_r.max(worklist.len());
+                                continue;
+                            }
+                            // ≤1 genuine caller: fall through to the classic single pop
+                            // (`apply_action_to_cursor` below routes the sole caller — no
+                            // fan needed).
+                        } else if total_edges > 1 {
+                            let weight = weight.clone();
+                            let new_state = new_state.clone();
+                            let outcome =
+                                self.cgll_slot_fan_pop(cursor.clone(), &siblings, |w, mut ch, edge| {
+                                    // Stage E2b: the node being popped (its
+                                    // canonical operand edges carry each caller's
+                                    // saved `operand_w`).
+                                    let popped = ch.node;
+                                    let popped_symbol = w.gss.node(ch.node).map(|n| n.symbol);
+                                    let (pred_id, kind, edge_id) =
+                                        w.cursor_gss_pop_via_edge_id(&mut ch, edge);
+                                    if w.apply_pop_body_to_cursor(
+                                        &mut ch,
+                                        pred_id,
+                                        kind.as_ref(),
+                                        edge_id,
+                                        popped_symbol,
+                                        &weight,
+                                        new_state.clone(),
+                                        tokens,
+                                        None,
+                                    ).0 {
+                                        // ── Stage E2b (c) THREADED pop-fan ──────
+                                        // Give THIS reconnected caller its OWN
+                                        // packed `w`: restore the `operand_w`
+                                        // recorded on the canonical edge at its
+                                        // descent (distinct per caller ⇒ the
+                                        // grouping vs non-grouping continuations
+                                        // DIVERGE, so both complete their enclosing
+                                        // constituents) and fold the completed
+                                        // sub-parse `z` into it. Without this the
+                                        // fanned children inherit the CALLEE's stale
+                                        // `w` (all identical ⇒ the key cannot
+                                        // re-split them).
+                                        if thread {
+                                            let z = w
+                                                .sppf_stack_arena
+                                                .top(ch.sppf_stack_id)
+                                                .unwrap_or(crate::sppf::SPPF_ID_NONE);
+                                            let operand_w = w
+                                                .gss
+                                                .gll_edges(popped)
+                                                .iter()
+                                                .find(|e| e.target == ch.node)
+                                                .map(|e| e.operand_w)
+                                                .unwrap_or(crate::sppf::SPPF_ID_NONE);
+                                            ch.cgll_w = operand_w;
+                                            w.cgll_thread_absorb(&mut ch, z);
+                                        }
+                                        Some(ch)
+                                    } else {
+                                        None
+                                    }
+                                });
+                            if let CursorOutcome::ForkInto(children) = outcome {
+                                for c in children {
+                                    fan_children += 1;
+                                    worklist.push_back(c);
+                                }
+                            }
+                            peak_r = peak_r.max(worklist.len());
+                            continue;
+                        }
+                    }
+                }
+            }
+
+            // Classify the action for Stage-C GSS bookkeeping (descent/reduce).
+            let is_descent = matches!(
+                action,
+                WpdaStepAction::Push { .. }
+                    | WpdaStepAction::PushWithEdgeKind { .. }
+                    | WpdaStepAction::ConsumeAndPush { .. }
+                    | WpdaStepAction::ReplaceAndPush { .. }
+            );
+            let is_reduce = matches!(
+                action,
+                WpdaStepAction::Pop { .. }
+                    | WpdaStepAction::ConsumeAndPop { .. }
+                    | WpdaStepAction::ConsumeAtAndPop { .. }
+            );
+            let pre_node = cursor.node;
+            let pre_top = self.sppf_stack_arena.top(cursor.sppf_stack_id);
+            // Stage E2b: sppf-stack depth BEFORE the micro-step. A step that GROWS
+            // the stack (without reducing) absorbed a leaf/trigger child to fold
+            // into the running packed `w`.
+            let pre_len = self.sppf_stack_arena.len(cursor.sppf_stack_id);
+            // Stage-E: snapshot the caller's PRE-push context handles so the
+            // `ctx_prepush` A/B arm can store the clean pre-call left-context
+            // (no leading trigger, no sub-parse return edge) instead of the
+            // post-push default.
+            let pre_sppf_stack = cursor.sppf_stack_id;
+            let pre_edge_stack = cursor.incoming_edge_stack_id;
+
+            // ── Stage P2 (edit 3) pre-reduce captures ─────────────────────────
+            // `apply_action_to_cursor` MOVES `action` and MUTATES `cursor` (the
+            // classic pop for the PRIMARY caller). The retslot reduce needs the
+            // PRE-pop return node `v`, the popped constituent symbol, the action
+            // `(weight, new_state)`, and — for a ≥2-caller `v` — a clone of the
+            // pre-pop cursor (its sppf_stack still carries the constituent's
+            // children) to reconstruct the NON-primary callers. All gated on
+            // `retslot` (DCE'd with the const off ⇒ byte-identical default).
+            let retslot_reduce_wn: Option<(W, WpdaState)> = if retslot_edges && is_reduce {
+                match &action {
+                    WpdaStepAction::Pop { weight, new_state }
+                    | WpdaStepAction::ConsumeAndPop { weight, new_state }
+                    | WpdaStepAction::ConsumeAtAndPop { weight, new_state, .. } => {
+                        Some((weight.clone(), new_state.clone()))
+                    },
+                    _ => None,
+                }
+            } else {
+                None
+            };
+            let retslot_popped_symbol = if retslot_edges && is_reduce {
+                self.gss.node(pre_node).map(|n| n.symbol)
+            } else {
+                None
+            };
+            // ON-DEMAND constituent return node `v` (robust vs the stale threaded
+            // field): derived from the popped frame `pre_node` + its entry edge
+            // (top of the pre-pop edge stack). This equals the `v` minted at the
+            // descent that created this constituent. Minted here (idempotent) so
+            // the ≥2-caller snapshot decision and the post-pop fan use ONE node.
+            let retslot_reduce_v = if retslot_edges && is_reduce {
+                let pre_top_edge = self.incoming_edge_stack_arena.top(pre_edge_stack);
+                Some(self.cgll_retslot_node_from(pre_node, pre_top_edge))
+            } else {
+                None
+            };
+            // Snapshot the pre-pop cursor ONLY for a genuine ≥2-caller return node
+            // (the exact per-node edge-fan case). Single-caller reduces need no
+            // snapshot (the classic pop already routes the sole caller). Used by the
+            // post-apply per-node fan (p2core STRUCTURAL pops + the non-p2core
+            // opt-in arm); p2core SYMBOL pops fan in the pre-apply block instead.
+            let retslot_fan_snapshot = match retslot_reduce_v {
+                Some(v) if self.gss.gll_edges(v).len() > 1 => Some(cursor.clone()),
+                _ => None,
+            };
+
+            // ── ROOT-P P2 CORE (EDIT C): reduce-ONCE / push-z over the per-node
+            //    RETURN-slot edge graph ─────────────────────────────────────────
+            // The clean composition (node-identity ⊕ reduce-once). The node
+            // identity minted at descent (edit A `gll_create`) records each GENUINE
+            // caller of the completing `(cat, lo)` constituent as a canonical
+            // operand edge on its return node `v = retslot_reduce_v` — `gll_edges(v)`
+            // is the EXACT per-node caller set (the `(pos,symbol)`-SCATTERING that
+            // drove `gll_edges_by_slot`'s `-3!`→3 over-gen is GONE: distinct return
+            // slots ⇒ distinct nodes ⇒ each node's edges are only ITS genuine
+            // callers). Reduce the constituent EXACTLY ONCE via the PRIMARY caller
+            // (the cursor's own incoming edge; resolve/cohort writes ON,
+            // `prebuilt_z = None` ⇒ fires `emit_fire_action`, builds + RETURNS the
+            // shared content-canonical Symbol `z` — B0 proved the RETURN value is
+            // the reliable capture, NOT `symbol_id(cat, descent_pos, hi)`), then
+            // reconnect each OTHER genuine caller by RESTORING its saved left-context
+            // (SPPF + edge stacks — O(1) Copy handles) and PUSHING the shared `z`
+            // (`prebuilt_z = Some(z)` ⇒ NO re-fire, NO re-collection of children —
+            // the arity mismatch that refuted the edit-1/3 per-caller re-reduce).
+            // SYMONLY: a STRUCTURAL pop (`z == NONE`: GroupingMarker / CategoryEntry)
+            // cannot push a `z`, so its extras run the non-firing `None` body
+            // (`apply_pop_body_to_cursor` fires only for Return / RuleAt /
+            // MixfixMarker / CollectionMarker), keeping the constituent stack +
+            // routing via the caller edge. Only plain `Pop` reduces are fanned here
+            // (the validated B1 exactfanB was likewise Pop-only + delivered deep-@
+            // 2/2/2/4); ConsumeAndPop / ConsumeAtAndPop fall through to
+            // `apply_action_to_cursor`'s classic single-caller pop. Fires BEFORE
+            // `apply_action` so the primary `apply_pop_body` reduce IS the once-fire
+            // (no double-fire), then `continue`s. Gated + canonical-only ⇒ DCE'd
+            // with the const off (byte-identical default).
+            if p2core && is_reduce {
+                if let (Some(v), Some((weight, new_state))) =
+                    (retslot_reduce_v, retslot_reduce_wn.as_ref())
+                {
+                    let is_plain_pop = matches!(action, WpdaStepAction::Pop { .. });
+                    // SYMONLY (task EDIT C): reduce-once/push-z fires ONLY for
+                    // SYMBOL-producing pops (Return / RuleAt / MixfixMarker /
+                    // CollectionMarker — the kinds `apply_pop_body_to_cursor` fires
+                    // + builds a shared `z` for). STRUCTURAL pops (GroupingMarker /
+                    // CategoryEntry, z=NONE) are DEFERRED to the post-apply per-node
+                    // `None` fan (where `apply_action_to_cursor` does the PRIMARY
+                    // reduce correctly and `None` reconnects extras WITHOUT re-firing
+                    // — pushing a NONE `z` here would corrupt the parse, the first-
+                    // run ERR mechanism). The first run PROVED every deep-@ grouping
+                    // fan site is structural (z_symbol=0), so this deferral is what
+                    // routes them to the safe path.
+                    let is_symbol_pop = retslot_popped_symbol
+                        .map(|s| {
+                            matches!(
+                                s.kind,
+                                SymbolKind::Return
+                                    | SymbolKind::RuleAt(_)
+                                    | SymbolKind::MixfixMarker
+                                    | SymbolKind::CollectionMarker
+                            )
+                        })
+                        .unwrap_or(false);
+                    let edges = self.gss.gll_edges(v).to_vec();
+                    if is_plain_pop && is_symbol_pop && edges.len() > 1 {
+                        let weight = weight.clone();
+                        let new_state = new_state.clone();
+                        let popped_symbol = retslot_popped_symbol;
+                        let primary_chain = cursor.incoming_edge_stack_id;
+                        // The primary caller's own return node (edge target) — the
+                        // resumed cursor's `cgll_ret_node` (debug cache).
+                        let primary_target = edges
+                            .iter()
+                            .find(|e| e.caller_edge_stack == primary_chain)
+                            .map(|e| e.target)
+                            .unwrap_or(crate::gss::GSS_NODE_NONE);
+                        let mut children: Vec<BranchCursor<W>> = Vec::new();
+                        p2core_fan_sites += 1;
+                        // ── PRIMARY: reduce ONCE, capture the built `z`. ─────────
+                        self.pop_fanout_suppress_resolve = false;
+                        let z = {
+                            let mut ch = cursor.clone();
+                            let edge =
+                                self.incoming_edge_stack_arena.top(ch.incoming_edge_stack_id);
+                            let (pred_id, kind, edge_id) =
+                                self.cursor_gss_pop_via_edge_id(&mut ch, edge);
+                            let (ok, z) = self.apply_pop_body_to_cursor(
+                                &mut ch,
+                                pred_id,
+                                kind.as_ref(),
+                                edge_id,
+                                popped_symbol,
+                                &weight,
+                                new_state.clone(),
+                                tokens,
+                                None,
+                            );
+                            if ok {
+                                ch.cgll_ret_node = primary_target;
+                                children.push(ch);
+                            }
+                            z
+                        };
+                        // Record the pop into P (create-after-pop bookkeeping;
+                        // parity with the census/edge-graph path).
+                        let _ = self.gss.gll_pop(v, cursor.pos, z);
+                        gll_pops += 1;
+                        // RED-TEAM (action-once): the shared `z` MUST be interned
+                        // before we push it onto extras. `z == NONE` ⇒ a structural
+                        // pop (handled by the non-firing body below).
+                        let z_symbolic = z != crate::sppf::SPPF_ID_NONE;
+                        if z_symbolic {
+                            debug_assert!(
+                                self.sppf.node(z).is_some(),
+                                "ROOT-P P2 core: reduce-once z not interned in SPPF"
+                            );
+                            p2core_z_symbol += 1;
+                        } else {
+                            p2core_z_none += 1;
+                        }
+                        // ── EXTRAS: restore left-context, PUSH the shared `z`. ───
+                        // Only fires when the primary built a real `z` (a symbol
+                        // pop that did NOT elide by arity/evidence). If `z == NONE`
+                        // the primary reduce died ⇒ degrade to primary-only (still
+                        // sound), never push a NONE.
+                        if z_symbolic {
+                            self.pop_fanout_suppress_resolve = true;
+                            for e in &edges {
+                                if e.caller_edge_stack == primary_chain {
+                                    continue; // primary — already handled above
+                                }
+                                let mut ch = cursor.clone();
+                                // getNodeP LEFT part: restore this caller's saved
+                                // SPPF working stack + incoming-edge chain so
+                                // `intern_push(z)` builds `[…caller_ctx, z]`.
+                                ch.sppf_stack_id = e.caller_sppf_stack;
+                                ch.incoming_edge_stack_id = e.caller_edge_stack;
+                                let caller_edge =
+                                    self.incoming_edge_stack_arena.top(e.caller_edge_stack);
+                                let (pred_id, kind, edge_id) =
+                                    self.cursor_gss_pop_via_edge_id(&mut ch, caller_edge);
+                                let (ok, _z2) = self.apply_pop_body_to_cursor(
+                                    &mut ch,
+                                    pred_id,
+                                    kind.as_ref(),
+                                    edge_id,
+                                    popped_symbol,
+                                    &weight,
+                                    new_state.clone(),
+                                    tokens,
+                                    Some(z),
+                                );
+                                if ok {
+                                    // Align the resume position with the primary so
+                                    // a ConsumeAndPop-style consume applies uniformly.
+                                    ch.pos = cursor.pos;
+                                    ch.cgll_ret_node = e.target;
+                                    fan_children += 1;
+                                    p2core_extras += 1;
+                                    children.push(ch);
+                                }
+                            }
+                        }
+                        self.pop_fanout_suppress_resolve = false;
+                        self.deterministic = false;
+                        for c in children {
+                            worklist.push_back(c);
+                        }
+                        peak_r = peak_r.max(worklist.len());
+                        continue;
+                    }
+                    // ≤1 genuine caller (or non-plain-pop): fall through to
+                    // `apply_action_to_cursor`'s classic single-caller pop. The
+                    // return-slot KEY (edit B) alone routes it — the census PROVED
+                    // the `-3!` node-edge graph is a TREE (max n_edges = 1) ⇒ the
+                    // spurious `(-3)!` / `-3` readings are bp-dead-ended / node-
+                    // routed-away, NOT fan-reachable.
+                }
+            }
+
+            // ── Apply via the PROVEN per-cursor micro-step (SPPF reduce rides the
+            //    same `emit_fire_action` / `intern_symbol` + `link_packing_to_symbol`
+            //    path, so `w` is one packed Symbol and ambiguity → packings) ──────
+            let outcome = self.apply_action_to_cursor(&mut cursor, action, tokens);
+
+            // ── Stage-C/E canonical GSS recording (operand edges + recorded-pop P):
+            //    descent stores the `(target, operand_w)` edge PLUS the caller's
+            //    context handles (Stage E), and reduce records the pop into P and
+            //    (Stage E `ctxfan`) fans the completed result to every slot-
+            //    coarsened caller with its own restored left-context.
+            match &outcome {
+                CursorOutcome::Alive | CursorOutcome::Resolved => {
+                    // ── Stage E2b (a) push-child absorption ──────────────────
+                    // A non-reducing step that GREW the sppf_stack pushed a leaf
+                    // (Terminal / TriggerTerminal / Ident / Predicate) — a child
+                    // of the current rule (or a ConsumeAndPush leading trigger
+                    // that PRECEDES the descent below). Fold it into the running
+                    // packed `w` (`getNodeP` left-fold) BEFORE the descent save,
+                    // so a saved caller `operand_w` includes its own leading
+                    // trigger. (`thread || retslot_edges`: the retslot arm reuses
+                    // the binarized cgll_w getNodeP mechanics.) EDIT A: `p2core`
+                    // (⊆ `strip_cgll_w`) STRIPS this fold — the descriptor `w`
+                    // rides the single sppf-top only, so `cgll_w` stays NONE and
+                    // the edge `operand_w` minted at descent is NONE (unused: the
+                    // reduce-once fan captures `z` from the primary reduce RETURN,
+                    // not the edge operand).
+                    if (thread || retslot_edges) && !is_reduce && !strip_cgll_w {
+                        let post_len = self.sppf_stack_arena.len(cursor.sppf_stack_id);
+                        if post_len > pre_len {
+                            if let Some(top) = self.sppf_stack_arena.top(cursor.sppf_stack_id) {
+                                self.cgll_thread_absorb(&mut cursor, top);
+                                if cursor.cgll_w != crate::sppf::SPPF_ID_NONE {
+                                    thread_folds += 1;
+                                }
+                            }
+                        }
+                    }
+                    if is_descent && cursor.node != pre_node {
+                        if let Some((slot, at)) =
+                            self.gss.node(cursor.node).map(|n| (n.symbol, n.pos))
+                        {
+                            // ── Stage E2b (b) descent ────────────────────────
+                            // Carry the caller's running packed `w` (its partial
+                            // derivation) as the edge `operand_w`, NOT the raw
+                            // sppf-stack top, then RESET the (now callee) cursor's
+                            // `w` so the sub-parse folds its own children from
+                            // NONE. The caller's `w` is restored + the completed
+                            // sub-parse folded into it at the matching reduce.
+                            let operand_w = if thread || retslot_edges {
+                                cursor.cgll_w
+                            } else {
+                                pre_top.unwrap_or(crate::sppf::SPPF_ID_NONE)
+                            };
+                            // Post-push (default): the caller's working-stack now
+                            // includes its own leading structural trigger (e.g. the
+                            // `(` of a grouped sub-parse) and its incoming-edge chain
+                            // carries the sub-parse return edge (popped at fan). The
+                            // `ctx_prepush` arm stores the pre-call handles instead.
+                            let (caller_sppf_stack, caller_edge_stack) = if ctx_prepush {
+                                (pre_sppf_stack, pre_edge_stack)
+                            } else {
+                                (cursor.sppf_stack_id, cursor.incoming_edge_stack_id)
+                            };
+                            if retslot_edges {
+                                // ── Stage P2 (edit 1) descent — RETURN-slot node
+                                // identity. Mint the callee's return node `v = (i =
+                                // callee-entry pos `at`, L_ret = the callee's
+                                // return dotted item)` and connect the edge to the
+                                // CALLER's return node (NOT the classic predecessor
+                                // `pre_node`), so the canonical edge graph chains
+                                // RETURN nodes. Both `L_ret` and the caller node are
+                                // derived ON-DEMAND from the incoming edges (the
+                                // P0-validated `(pre.symbol, top EdgeKind)` slot),
+                                // NOT a threaded field. `cursor.node` STAYS the
+                                // classic callee frame for `engine.step`.
+                                let callee_edge_top = self
+                                    .incoming_edge_stack_arena
+                                    .top(cursor.incoming_edge_stack_id);
+                                let l_ret = self.cgll_retslot_symbol_from_edge(callee_edge_top);
+                                let caller_edge_top =
+                                    self.incoming_edge_stack_arena.top(pre_edge_stack);
+                                let caller_ret_node =
+                                    self.cgll_retslot_node_from(pre_node, caller_edge_top);
+                                let (v, _replays) = self.gss.gll_create(
+                                    caller_ret_node,
+                                    l_ret,
+                                    at,
+                                    operand_w,
+                                    caller_sppf_stack,
+                                    caller_edge_stack,
+                                );
+                                cursor.cgll_ret_node = v;
+                                gll_creates += 1;
+                                debug_assert!(
+                                    v != crate::gss::GSS_NODE_NONE,
+                                    "ROOT-P P2: retslot descent minted GSS_NODE_NONE"
+                                );
+                                // ── ROOT-P Checkpoint 0: descent census ──────
+                                // `v = (at, L_ret)` = the P2 return node just
+                                // minted; `caller_ret_node` = the caller's own
+                                // return node (edge target); `l_ret` folds
+                                // (caller.symbol, descent EdgeKind incl min_bp).
+                                if p2_nodecensus && dump_stats {
+                                    p2c_descent_count += 1;
+                                    p2c_nodes_by_pos.entry(at).or_default().insert(v);
+                                    if p2c_descents.len() < P2C_CAP {
+                                        let (ek_str, ek_bp) = p2c_ek(
+                                            callee_edge_top
+                                                .and_then(|e| self.gss.edge_kind_ref(e)),
+                                        );
+                                        let l_ret_hash = {
+                                            use std::hash::{Hash, Hasher};
+                                            let mut hh = rustc_hash::FxHasher::default();
+                                            l_ret.hash(&mut hh);
+                                            hh.finish()
+                                        };
+                                        let caller_cat = self
+                                            .gss
+                                            .node(pre_node)
+                                            .map(|n| n.symbol.category_src_idx)
+                                            .unwrap_or(u16::MAX);
+                                        p2c_descents.push((
+                                            at, l_ret_hash, caller_ret_node, v, ek_str,
+                                            ek_bp, caller_cat,
+                                        ));
+                                    }
+                                }
+                            } else {
+                                let (_v, _replays) = self.gss.gll_create(
+                                    pre_node,
+                                    slot,
+                                    at,
+                                    operand_w,
+                                    caller_sppf_stack,
+                                    caller_edge_stack,
+                                );
+                                gll_creates += 1;
+                            }
+                            if thread || retslot_edges {
+                                cursor.cgll_w = crate::sppf::SPPF_ID_NONE;
+                            }
+                        }
+                    }
+                    if is_reduce {
+                        let result_w = self
+                            .sppf_stack_arena
+                            .top(cursor.sppf_stack_id)
+                            .unwrap_or(crate::sppf::SPPF_ID_NONE);
+                        // ── ROOT-P MECHANISM-B Stage B0(a): z-CAPTURE confirmation ─
+                        // `pre_node` = the popped constituent frame (captured before
+                        // `apply_action_to_cursor`); its (category_src_idx, pos) are
+                        // EXACTLY the (cat, lo) the exact-fan census/surgery reads
+                        // from `gss.node(cursor.node)` at the fan site, and
+                        // `cursor.pos` is the reduce hi. Confirm `symbol_id(cat, lo,
+                        // hi)` content-canonically resolves to the SAME `z` the
+                        // walker just built (`result_w` recorded at `gll_pop` below).
+                        // (Runs for every reduce that reaches this site — all reduces
+                        // under `PRATTAIL_CGLL_RETSLOT_NORECON`.)
+                        if fan_measure {
+                            if let Some((zc_cat, zc_lo)) = self
+                                .gss
+                                .node(pre_node)
+                                .map(|n| (n.symbol.category_src_idx, n.pos))
+                            {
+                                match self.sppf.symbol_id(
+                                    zc_cat as u32,
+                                    zc_lo as u32,
+                                    cursor.pos as u32,
+                                ) {
+                                    Some(z) if z == result_w => b0_zcap_match += 1,
+                                    Some(_) => b0_zcap_mismatch += 1,
+                                    None => b0_zcap_none += 1,
+                                }
+                            }
+                        }
+                        if retslot_edges {
+                            // ── Stage P2 (edit 3) RETURN-slot reduce/pop ────────
+                            // Under p2core this path handles ONLY the STRUCTURAL
+                            // pops (GroupingMarker / CategoryEntry, z=NONE): the
+                            // SYMBOL pops reduce-once/push-z in the pre-apply fan
+                            // (above) and `continue`d, so `apply_action_to_cursor`
+                            // already did the PRIMARY reduce for the structural pop
+                            // here, and the per-node None fan below reconnects the
+                            // EXTRA genuine callers WITHOUT re-firing
+                            // (`apply_pop_body_to_cursor` fires only for Return /
+                            // RuleAt / MixfixMarker / CollectionMarker — a
+                            // structural `None` pop is a safe state transition, so
+                            // there is NO arity mismatch). The `cgll_w` threading is
+                            // STRIPPED for p2core (`strip_cgll_w`). The non-p2core
+                            // opt-in (`PRATTAIL_CGLL_RETSLOT_EDGES` +
+                            // `PRATTAIL_CGLL_NO_P2CORE`) keeps the REFUTED per-caller
+                            // re-reduce over ALL pops (kept for the record).
+                            // Record the pop of the RETURN node `v` into P (for
+                            // create-after-pop replays), RESTORE the PRIMARY
+                            // lineage's return node (the canonical edge whose saved
+                            // caller-edge-stack matches this cursor's — the caller
+                            // `apply_action` just classic-popped to), then FAN the
+                            // completed constituent to EVERY OTHER genuine caller
+                            // over `v`'s OWN canonical edges. This exact per-node
+                            // edge-fan (NOT the coarse slot-sibling fan) is what
+                            // reconnects a SHARED interior sub-parse to all its
+                            // distinct-return-slot callers while killing the
+                            // `@(p)` false-accept + `@a!(0,1)` gain (no spurious
+                            // sibling caller is ever reached).
+                            let v = retslot_reduce_v.unwrap_or(crate::gss::GSS_NODE_NONE);
+                            let returns = self.gss.gll_pop(v, cursor.pos, result_w);
+                            gll_pops += 1;
+                            let edges = self.gss.gll_edges(v).to_vec();
+                            // ── ROOT-P Checkpoint 0: reduce census ────────────
+                            // `v` = the completing (cat, lo) constituent's return
+                            // node; `gll_edges(v)` = its distinct callers (edge
+                            // dedup (target, operand_w)); `returns.len()` = the
+                            // callers reconnected by THIS pop (create-after-pop
+                            // replays fire at later descents). The DECISIVE `-3!`
+                            // signal: how many distinct `v` the Int operand maps
+                            // to + how many callers each carries.
+                            if p2_nodecensus && dump_stats {
+                                p2c_reduce_count += 1;
+                                let (rc_cat, rc_lo) = self
+                                    .gss
+                                    .node(pre_node)
+                                    .map(|n| (n.symbol.category_src_idx, n.pos))
+                                    .unwrap_or((u16::MAX, usize::MAX));
+                                p2c_nodes_by_pos.entry(rc_lo).or_default().insert(v);
+                                if p2c_reduces.len() < P2C_CAP {
+                                    let hi = cursor.pos;
+                                    let mut edge_rows: Vec<(u32, u16, u32, &'static str, i16)> =
+                                        Vec::with_capacity(edges.len());
+                                    for e in &edges {
+                                        let tcat = self
+                                            .gss
+                                            .node(e.target)
+                                            .map(|n| n.symbol.category_src_idx)
+                                            .unwrap_or(u16::MAX);
+                                        let (ek_str, ek_bp) = p2c_ek(
+                                            self.incoming_edge_stack_arena
+                                                .top(e.caller_edge_stack)
+                                                .and_then(|id| self.gss.edge_kind_ref(id)),
+                                        );
+                                        edge_rows
+                                            .push((e.target, tcat, e.operand_w, ek_str, ek_bp));
+                                    }
+                                    p2c_reduces
+                                        .push((v, rc_cat, rc_lo, hi, returns.len(), edge_rows));
+                                }
+                            }
+                            // Restore the PRIMARY lineage's return node + fold w.
+                            // Best-effort (the KEY recomputes the return slot
+                            // on-demand, so this only feeds the cgll_w getNodeP
+                            // fold + keeps the field a consistent debug cache).
+                            let mut primary_restored = false;
+                            for e in &edges {
+                                if e.caller_edge_stack == pre_edge_stack {
+                                    cursor.cgll_ret_node = e.target;
+                                    // EDIT A / census: STRIP the coupled cgll_w
+                                    // threading (reconciled-P2 + p2core keep the
+                                    // descriptor `w` on the single sppf-top only).
+                                    if !strip_cgll_w {
+                                        cursor.cgll_w = e.operand_w;
+                                        self.cgll_thread_absorb(&mut cursor, result_w);
+                                    }
+                                    primary_restored = true;
+                                    break;
+                                }
+                            }
+                            if !primary_restored {
+                                // Root/goal reduce (no matching caller edge yet).
+                                cursor.cgll_ret_node = crate::gss::GSS_NODE_NONE;
+                            }
+                            // Exact per-node edge-fan to the NON-primary callers,
+                            // reconstructed from the pre-pop snapshot (its sppf
+                            // stack still carries the constituent's children) via
+                            // each caller's saved classic return edge. `nofan`
+                            // (A/B) skips the fan to isolate its effect.
+                            if let (false, Some(snap), Some((weight, new_state))) = (
+                                retslot_nofan,
+                                retslot_fan_snapshot.as_ref(),
+                                retslot_reduce_wn.as_ref(),
+                            ) {
+                                self.pop_fanout_suppress_resolve = true;
+                                for e in &edges {
+                                    if e.caller_edge_stack == pre_edge_stack {
+                                        continue; // primary — already handled above
+                                    }
+                                    let mut ch = snap.clone();
+                                    ch.incoming_edge_stack_id = e.caller_edge_stack;
+                                    let caller_edge = self
+                                        .incoming_edge_stack_arena
+                                        .top(e.caller_edge_stack);
+                                    let (pred_id, kind, edge_id) =
+                                        self.cursor_gss_pop_via_edge_id(&mut ch, caller_edge);
+                                    if self.apply_pop_body_to_cursor(
+                                        &mut ch,
+                                        pred_id,
+                                        kind.as_ref(),
+                                        edge_id,
+                                        retslot_popped_symbol,
+                                        weight,
+                                        new_state.clone(),
+                                        tokens,
+                                        None,
+                                    ).0 {
+                                        // Align the resume position with the primary
+                                        // so a ConsumeAndPop token-consume applies
+                                        // uniformly across all callers.
+                                        ch.pos = cursor.pos;
+                                        // EDIT A: STRIP cgll_w for p2core (keeps the
+                                        // structural-pop reconnection clean — the
+                                        // toxic threading corrupted the forest).
+                                        if !strip_cgll_w {
+                                            ch.cgll_w = e.operand_w;
+                                            self.cgll_thread_absorb(&mut ch, result_w);
+                                        }
+                                        ch.cgll_ret_node = e.target;
+                                        fan_children += 1;
+                                        worklist.push_back(ch);
+                                    }
+                                }
+                                self.pop_fanout_suppress_resolve = false;
+                                self.deterministic = false;
+                            }
+                        } else {
+                            // Record the pop into P (needed for create-after-pop
+                            // replays at later descents). The Stage-E2 caller
+                            // reconnection fan is applied in the `recon` arm ABOVE
+                            // (before `apply_action`), over genuine-descent siblings.
+                            let _returns = self.gss.gll_pop(pre_node, cursor.pos, result_w);
+                            gll_pops += 1;
+                            // ── Stage E2b (c) reduce/complete ────────────────────
+                            // The completed constituent `z = result_w` (the classic
+                            // Symbol emit_fire_action just pushed) is folded into the
+                            // RESTORED caller `operand_w` (recorded on the canonical
+                            // GSS edge at the caller's descent), so the caller's
+                            // running packed `w` now carries this completed child.
+                            // `getNodeP(END)` semantics: if the caller had no prior
+                            // fold (`operand_w == NONE`) the child IS the running `w`.
+                            if thread {
+                                let operand_w = self
+                                    .gss
+                                    .gll_edges(pre_node)
+                                    .iter()
+                                    .find(|e| e.target == cursor.node)
+                                    .map(|e| e.operand_w)
+                                    .unwrap_or(crate::sppf::SPPF_ID_NONE);
+                                cursor.cgll_w = operand_w;
+                                self.cgll_thread_absorb(&mut cursor, result_w);
+                                if cursor.cgll_w != crate::sppf::SPPF_ID_NONE {
+                                    thread_folds += 1;
+                                }
+                            }
+                        }
+                    }
+                    worklist.push_back(cursor);
+                },
+                CursorOutcome::ForkInto(_) => {
+                    if let CursorOutcome::ForkInto(children) = outcome {
+                        for c in children {
+                            worklist.push_back(c);
+                        }
+                    }
+                },
+                CursorOutcome::Drop => {},
+            }
+
+            peak_r = peak_r.max(worklist.len());
+        }
+
+        // ── Publish the accepting frontier for the existing resolve/realize path.
+        // Set `self.pos` to the EOI position so the facade's `*pos =
+        // walker.position()` reports the consumed span correctly.
+        if let Some(c) = accepting.first() {
+            self.pos = c.pos;
+        }
+        self.branch_cursors = accepting
+            .into_iter()
+            .map(crate::cohort_lazy::Frame::Concrete)
+            .collect();
+        let final_state = if budget_exceeded {
+            WpdaState::Error {
+                message: format!("canonical-GLL budget {} exceeded", budget),
+            }
+        } else if self.branch_cursors.is_empty() {
+            WpdaState::Error {
+                message: "no accepting branch reached end of input (canonical-GLL)".to_string(),
+            }
+        } else {
+            // A non-terminal, non-error sentinel: resolution reads
+            // `branch_cursors` (fanout path, `deterministic == false`), not the
+            // state; `Unwinding` keeps the facade's `Ok(())` contract.
+            WpdaState::Unwinding
+        };
+        self.state = final_state.clone();
+
+        if dump_stats {
+            let max_u_per_pos = u_by_pos.values().copied().max().unwrap_or(0);
+            eprintln!(
+                "CGLL |U|={} peak_R={} processed={} max_U_per_pos={} n_pos={} \
+                 accepting={} gll_creates={} gll_pops={} fan_children={} \
+                 thread={} thread_folds={} accept_with_w={} \
+                 ctxfan={} ctx_prepush={} sound_key={} exactfan={} exactfan_sppf={}",
+                u_count,
+                peak_r,
+                processed,
+                max_u_per_pos,
+                u_by_pos.len(),
+                self.branch_cursors.len(),
+                gll_creates,
+                gll_pops,
+                fan_children,
+                thread,
+                thread_folds,
+                accept_with_w,
+                ctxfan,
+                ctx_prepush,
+                sound_key,
+                exactfan,
+                exactfan_sppf,
+            );
+            eprintln!(
+                "CGLL-EXACTFANB exactfanb={} sites={} extras={} z_none={} z_not_in_terms={} \
+                 dedup={} dedup_k={} dedup_skipped={}",
+                exactfanb, exactfanb_sites, exactfanb_extras, exactfanb_z_none,
+                exactfanb_z_not_in_terms, exactfanb_dedup, dedup_k, exactfanb_dedup_skipped
+            );
+            // ── ROOT-P P2 CORE report (node-identity ⊕ reduce-once) ───────────
+            // `fan_sites` = reduce sites with ≥2 genuine per-node callers (fanned
+            // once + push-z). `extras` = extra callers reconnected. `z_symbol` /
+            // `z_none` = symbol-pop (push-z) vs structural-pop (non-firing body)
+            // splits. `klevel` = the P2 descriptor k (should be 1). Poly guard:
+            // `max_U_per_pos` above must PLATEAU across the deep-@ ladder.
+            eprintln!(
+                "CGLL-P2CORE p2core={} klevel={} fan_sites={} extras={} z_symbol={} z_none={}",
+                p2core, klevel, p2core_fan_sites, p2core_extras, p2core_z_symbol,
+                p2core_z_none
+            );
+            // ── ROOT-P caller-dedup Stage-1 MEASUREMENT report ────────────────
+            // `maxkN` = max distinct return-slot keys seen at ANY single fan site
+            // for k=N (the POLY check: bounded ⇒ dedup keeps a poly fan). Each
+            // PROFILE line = one distinct (cat, callers, k1..k4) shape with its
+            // site count. DECISIVE reading: a profile with callers=C and kN<C is a
+            // site where a k=N dedup COLLAPSES (C−kN) scattered callers; kN==C is
+            // a site where all callers stay SPLIT at k=N.
+            eprintln!(
+                "CGLL-DEDUP-MEASURE sites={} maxk1={} maxk2={} maxk3={} maxk4={}",
+                dedup_sites, dedup_max_k[0], dedup_max_k[1], dedup_max_k[2], dedup_max_k[3]
+            );
+            let mut dedup_profs: Vec<((u16, u32, u32, u32, u32, u32), u64)> =
+                dedup_profile.iter().map(|(k, v)| (*k, *v)).collect();
+            dedup_profs.sort();
+            for ((c, nc, k1, k2, k3, k4), cnt) in dedup_profs {
+                eprintln!(
+                    "CGLL-DEDUP-PROFILE cat={} callers={} k1={} k2={} k3={} k4={} sites={}",
+                    c, nc, k1, k2, k3, k4, cnt
+                );
+            }
+        }
+        if fan_measure {
+            // Whole-parse canonical-edge census (callers recorded at DESCENT,
+            // independent of whether a constituent's reduce fires — the C-under
+            // settler for @x!(for)).
+            let (cen_slots, cen_max, cen_total) = self.gss.canonical_edge_census();
+            let max_c_exact_per_pos = fm_c_exact_by_pos.values().copied().max().unwrap_or(0);
+            let (cons_c_exact_max, cons_c_coarse_max, cons_over_max) = fm_by_constituent
+                .values()
+                .fold((0u64, 0u64, 0u64), |a, &(e, c, o)| {
+                    (a.0.max(e), a.1.max(c), a.2.max(o))
+                });
+            eprintln!(
+                "CGLL-FANMEASURE klevel={} sites={} fan_sites={} C_exact_max={} \
+                 C_coarse_max={} over_fire_max={} C_exact_empty_fan_sites={} \
+                 C_exact_nonempty_sites={} exact_not_in_coarse_max={} \
+                 exact_not_in_coarse_total={} max_C_exact_per_pos={} \
+                 n_constituents={} cons_C_exact_max={} cons_C_coarse_max={} \
+                 cons_over_max={} census_slots={} census_max_edges={} \
+                 census_total_edges={}",
+                klevel,
+                fm_sites,
+                fm_fan_sites,
+                fm_c_exact_max,
+                fm_c_coarse_max,
+                fm_over_fire_max,
+                fm_c_exact_empty_fan_sites,
+                fm_c_exact_nonempty_sites,
+                fm_exact_not_in_coarse_max,
+                fm_exact_not_in_coarse_total,
+                max_c_exact_per_pos,
+                fm_by_constituent.len(),
+                cons_c_exact_max,
+                cons_c_coarse_max,
+                cons_over_max,
+                cen_slots,
+                cen_max,
+                cen_total,
+            );
+            let mut cons: Vec<((u16, usize), (u64, u64, u64))> =
+                fm_by_constituent.iter().map(|(k, v)| (*k, *v)).collect();
+            cons.sort_by_key(|(k, _)| *k);
+            for ((cat_idx, lo), (e, c, o)) in cons {
+                eprintln!(
+                    "CGLL-FANMEASURE-CONS cat_idx={} lo={} C_exact_max={} \
+                     C_coarse_max={} over_fire_max={}",
+                    cat_idx, lo, e, c, o
+                );
+            }
+            // ── ROOT-P MECHANISM-B Stage B0 report ────────────────────────────
+            eprintln!(
+                "CGLL-B0-ZCAP match={} mismatch={} none={}",
+                b0_zcap_match, b0_zcap_mismatch, b0_zcap_none
+            );
+            eprintln!(
+                "CGLL-B0-DELTA max_per_site={} n_cat_kind={}",
+                fm_delta_max_per_site,
+                fm_delta_by_cat_kind.len()
+            );
+            let mut dk: Vec<((u16, &'static str), u64)> =
+                fm_delta_by_cat_kind.iter().map(|(k, v)| (*k, *v)).collect();
+            dk.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+            for ((dcat, dkind), dcount) in dk {
+                let awaited = fm_delta_awaited_by_cat_kind
+                    .get(&(dcat, dkind))
+                    .copied()
+                    .unwrap_or(0);
+                eprintln!(
+                    "CGLL-B0-DELTA-KIND cat={} kind={} count={} awaited={}",
+                    dcat, dkind, dcount, awaited
+                );
+            }
+            let mut dm: Vec<((u16, usize), u64)> = fm_delta_max_by_constituent
+                .iter()
+                .map(|(k, v)| (*k, *v))
+                .collect();
+            dm.sort_by_key(|(k, _)| *k);
+            for ((dcat, dlo), dmax) in dm {
+                eprintln!(
+                    "CGLL-B0-DELTA-CONS cat={} lo={} delta_max={}",
+                    dcat, dlo, dmax
+                );
+            }
+        }
+        // ── ROOT-P Checkpoint 0: P2 NODE-EDGE CENSUS report (standalone) ──────
+        // NOT gated on `fan_measure`/`dump_stats` block placement: independent
+        // of the exact-fan measurement. Populated under `p2_nodecensus &&
+        // dump_stats`; emitted here at EOI.
+        if p2_nodecensus {
+            let mut pos_keys: Vec<usize> = p2c_nodes_by_pos.keys().copied().collect();
+            pos_keys.sort_unstable();
+            let max_v_per_pos = p2c_nodes_by_pos.values().map(|s| s.len()).max().unwrap_or(0);
+            let mut all_v: FxHashSet<u32> = FxHashSet::default();
+            for s in p2c_nodes_by_pos.values() {
+                for &vv in s {
+                    all_v.insert(vv);
+                }
+            }
+            eprintln!(
+                "P2CENSUS-SUMMARY descents={} reduces={} distinct_v={} \
+                 max_v_per_pos={} n_pos={} descents_logged={} reduces_logged={} \
+                 cap={} skip_w={}",
+                p2c_descent_count,
+                p2c_reduce_count,
+                all_v.len(),
+                max_v_per_pos,
+                pos_keys.len(),
+                p2c_descents.len(),
+                p2c_reduces.len(),
+                P2C_CAP,
+                p2c_skip_w,
+            );
+            for p in &pos_keys {
+                eprintln!("P2CENSUS-POS pos={} distinct_v={}", p, p2c_nodes_by_pos[p].len());
+            }
+            for (at, lret, caller, v, ek, bp, ccat) in &p2c_descents {
+                eprintln!(
+                    "P2CENSUS-DESCENT at={} l_ret={:016x} caller_ret_node={} v={} \
+                     descent_ek={} min_bp={} caller_cat={}",
+                    at, lret, caller, v, ek, bp, ccat
+                );
+            }
+            for (v, cat, lo, hi, popret, erows) in &p2c_reduces {
+                let edges_str: Vec<String> = erows
+                    .iter()
+                    .map(|(t, tc, ow, ek, bp)| {
+                        format!(
+                            "(target={},tcat={},operand_w={},ek={},min_bp={})",
+                            t, tc, ow, ek, bp
+                        )
+                    })
+                    .collect();
+                eprintln!(
+                    "P2CENSUS-REDUCE v={} cat={} lo={} hi={} pop_returns={} n_edges={} \
+                     edges=[{}]",
+                    v,
+                    cat,
+                    lo,
+                    hi,
+                    popret,
+                    erows.len(),
+                    edges_str.join(" ")
+                );
+            }
+        }
+        final_state
+    }
+
+    /// ROOT-P Canonical-GLL Stage P2 (2026-07-09) — the RETURN-slot node's label
+    /// symbol `L_ret` for a cursor that has JUST descended (its `cursor.node` is
+    /// now the callee frame). This is the SYMBOL half of the P0-validated
+    /// [`Self::cgll_retslot_u`] proxy: the return slot is the caller's return
+    /// dotted item, read from the cursor's SINGLE TOP incoming edge —
+    /// `(pre.symbol, top EdgeKind)` where `pre = edge_target(top)` — ONE level,
+    /// NOT the whole chain. Both are hashed into a SYNTHETIC `Return`-kind
+    /// [`StackSymbolV2`] (48 bits of hash spread across `category_src_idx` /
+    /// `rule_index_in_category` / `goal_src_idx`), so:
+    ///   • distinct return slots ⇒ distinct `(at, L_ret)` GSS nodes (the G/O
+    ///     split; collision probability is negligible for the O(|G|·n) slots);
+    ///   • the synthetic carries `goal_src_idx = Some(..)`, which EVERY real
+    ///     symbol ctor (`return_symbol`, `category_entry`, `rule_at`, …) leaves
+    ///     `None`, so a synthetic return node can NEVER alias a classic frame
+    ///     node at the same `pos` — the classic `(pos, symbol)` GSS is untouched.
+    /// The callee position is carried by the node's `at`/`pos` field (NOT the
+    /// symbol), completing `v = (at, L_ret)` = the P0 `(callee_pos, L_ret)`
+    /// identity. `cursor.node` STAYS the classic callee frame for `engine.step`;
+    /// only `cgll_ret_node` becomes `v`. Reached only under `PRATTAIL_CGLL_RETSLOT`
+    /// (DCE'd while the const is off).
+    #[allow(dead_code)] // Reached only from `step_canonical` (DCE'd while const off).
+    fn cgll_retslot_symbol_from_edge(
+        &self,
+        edge_top: Option<crate::gss::GssEdgeId>,
+    ) -> StackSymbolV2 {
+        use std::hash::{Hash, Hasher};
+        let mut h = rustc_hash::FxHasher::default();
+        match edge_top {
+            Some(edge_id) => {
+                0x01u8.hash(&mut h); // "has caller" tag (≠ the root sentinel)
+                match self.gss.edge_target(edge_id).and_then(|p| self.gss.node(p)) {
+                    Some(pre) => pre.symbol.hash(&mut h),
+                    None => 0x02u8.hash(&mut h),
+                }
+                match self.gss.edge_kind_ref(edge_id) {
+                    Some(ek) => ek.hash(&mut h),
+                    None => 0x03u8.hash(&mut h),
+                }
+            },
+            None => {
+                // Root frame — no caller. Distinct sentinel.
+                0xFFFF_FFFF_FFFF_FFFFu64.hash(&mut h);
+            },
+        }
+        let d = h.finish();
+        StackSymbolV2 {
+            category_src_idx: (d >> 48) as u16,
+            rule_index_in_category: (d >> 32) as u16,
+            bp: None,
+            kind: SymbolKind::Return,
+            coll_dispatch_bp: None,
+            goal_src_idx: Some((d >> 16) as u16),
+        }
+    }
+
+    /// ROOT-P Stage P2 — the ON-DEMAND return-slot node `v = (frame pos, L_ret)`
+    /// for `frame_node` reached via its entry edge `edge_top`. Computed from the
+    /// ALWAYS-CORRECT incoming edge (NOT a threaded field — the threaded value is
+    /// stale for frames entered via non-`Push` transitions, the C7 gap the P1
+    /// assert exposed), so it never desynchronizes. `get_or_create_node` dedups,
+    /// so repeated calls for the same frame return the same id (idempotent), and
+    /// a descent's `v` equals the matching reduce's constituent node (both derive
+    /// from the frame's entry edge). The classic `(pos, symbol)` GSS is untouched
+    /// — this only ADDS synthetic-`Return` nodes (`goal_src_idx = Some(..)`,
+    /// disjoint from every classic ctor). Reached only under `PRATTAIL_CGLL_RETSLOT`.
+    #[allow(dead_code)] // Reached only from `step_canonical` (DCE'd while const off).
+    fn cgll_retslot_node_from(
+        &mut self,
+        frame_node: crate::gss::GssNodeId,
+        edge_top: Option<crate::gss::GssEdgeId>,
+    ) -> crate::gss::GssNodeId {
+        let sym = self.cgll_retslot_symbol_from_edge(edge_top);
+        let pos = self.gss.node(frame_node).map(|n| n.pos).unwrap_or(0);
+        self.gss
+            .get_or_create_node(crate::gss::WpdaGssNode { pos, symbol: sym })
+    }
+
+    /// ROOT-P Stage P2 — the descriptor `u`-axis hash for a cursor under the
+    /// `retslot` arm: the ON-DEMAND return-slot node identity `(frame pos,
+    /// L_ret)` as a `u64` (byte-for-byte the P0-validated `cgll_retslot_u`
+    /// proxy — `L_ret` from the SINGLE TOP incoming edge, ONE level). Read-only
+    /// (`&self`), so it can key merges WITHOUT minting a node; the edge graph
+    /// mints the corresponding node via `cgll_retslot_node_from` at descent/reduce
+    /// (same `(pos, symbol)` identity). Reached only under `PRATTAIL_CGLL_RETSLOT`.
+    ///
+    /// ROOT-P GT-closure (B, agent a00bd51d GO): folds the FIRST `k` incoming
+    /// edges (top→root) into `u`, each contributing the SAME synthetic
+    /// return-slot symbol as the single level, so grouping cursors that diverge
+    /// only at DEEPER return-chain levels stay DISTINCT descriptors (their
+    /// enclosing constituents both build). `k == 1` folds exactly the top edge
+    /// ⇒ BYTE-FOR-BYTE the prior single-level key (the same `pos` prefix, the
+    /// same top-edge `StackSymbolV2`, the same root sentinel when there are zero
+    /// edges), so the k=1 arm is a regression-safe no-op. Bounded `k` ⇒
+    /// `O(|G|^k · n)` distinct return-slot ids (poly for constant `k`). READ-ONLY
+    /// (`&self`): walks the lazy `incoming_edge_stack` path-tree via
+    /// `for_each_top_down_until` (no materialization), mints no node.
+    #[allow(dead_code)] // Reached only from `cgll_descriptor_key` (DCE'd while const off).
+    fn cgll_retslot_key_u(&self, cursor: &BranchCursor<W>, k: usize) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut h = rustc_hash::FxHasher::default();
+        let pos = self.gss.node(cursor.node).map(|n| n.pos).unwrap_or(usize::MAX);
+        pos.hash(&mut h);
+        // Fold the first `k` incoming edges. The first edge visited by
+        // `for_each_top_down_until` is exactly `.top()`, so k=1 reproduces the
+        // prior `cgll_retslot_symbol_from_edge(edge_top)` single hash.
+        let k = k.max(1);
+        let mut count = 0usize;
+        self.incoming_edge_stack_arena
+            .for_each_top_down_until(cursor.incoming_edge_stack_id, |edge_id| {
+                self.cgll_retslot_symbol_from_edge(Some(edge_id)).hash(&mut h);
+                count += 1;
+                count < k // stop once k edges have been folded
+            });
+        if count == 0 {
+            // Root cursor — no caller frame. IDENTICAL to the prior `None` arm.
+            self.cgll_retslot_symbol_from_edge(None).hash(&mut h);
+        }
+        h.finish()
+    }
+
+    /// ROOT-P Canonical-GLL Stage D — the canonical descriptor key `(L, u, i, w)`
+    /// for a worklist cursor, as one `u64` hash. `L` = `inner_state` (the grammar
+    /// slot; `WpdaState` embeds the Pratt bp), `u` = `node` (GSS node id), `i` =
+    /// `pos`, `w` = the owner-masked shallow ident of the SINGLE top of the SPPF
+    /// stack (the canonical single-`w`; deeper operands ride the GSS, NOT the
+    /// key). With `sound = true` the deeper per-cursor `sppf_stack` chain + the
+    /// `incoming_edge_stack` id are FOLDED IN — the exact-but-exponential key that
+    /// reproduces the classic frontier (the A/B ceiling for the poly claim).
+    #[allow(dead_code)] // Reached only from `step_canonical` (DCE'd while const off).
+    fn cgll_descriptor_key(
+        &self,
+        cursor: &BranchCursor<W>,
+        sound: bool,
+        nomask: bool,
+        thread: bool,
+        retslot: bool,
+        k: usize,
+    ) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut h = rustc_hash::FxHasher::default();
+        cursor.inner_state.hash(&mut h);
+        // ── Stage P2 (edit 2): the descriptor `u` axis. Under `retslot` key on
+        // the canonical RETURN-slot node `cgll_ret_node` (the caller's return
+        // dotted item `v = (i, L_ret)`) instead of the shared callee-entry
+        // `cursor.node`. This is the node-identity split (P0-validated) that
+        // keeps the grouping lineage `G` and the non-grouping lineage `O`
+        // distinct descriptors so both enclosing constituents complete. Every
+        // OTHER axis (L = inner_state, i = pos, w = sppf-top + threaded cgll_w)
+        // is IDENTICAL to the classic key, so this is a single-variable change.
+        // The return-slot identity is computed ON-DEMAND from the cursor's TOP
+        // incoming edge (the P0-validated `cgll_retslot_u` proxy) — NOT the
+        // threaded `cgll_ret_node` field, which is stale for frames entered via
+        // non-`Push` transitions (the C7 gap the P1 assert exposed).
+        if retslot {
+            self.cgll_retslot_key_u(cursor, k).hash(&mut h);
+        } else {
+            cursor.node.hash(&mut h);
+        }
+        cursor.pos.hash(&mut h);
+        self.cgll_descriptor_w(cursor, nomask).hash(&mut h);
+        // ── Stage E2b PERVASIVE getNodeP THREADING (2026-07-09) ──────────────
+        // Fold the incrementally-threaded packed `getNodeP` node `cursor.cgll_w`
+        // into the descriptor identity. `cgll_w_cond` applies the SAME
+        // conditional owner-mask as the sppf-top `w` above, so a bare leading-@
+        // TriggerTerminal `w` (the FIRST-child case where `getNodeP` returns `z`
+        // itself) does NOT re-inflate the @-owner multiplicity — an
+        // `Intermediate` `w` is already owner-free by construction. This is the
+        // axis that keeps two mid-rule cursors whose partial derivations diverge
+        // in SPAN distinct (their `Intermediate(slot,lo,hi)` ids differ) so the
+        // live walker completes BOTH constituents, while same-`(slot,lo,hi)`
+        // partials share the packed id and merge (poly). Additive to the classic
+        // single-`w` key (only ADDS distinctions ⇒ cannot merge-collapse a
+        // reading the OFF arm kept ⇒ CF-core safe by monotonicity). The
+        // `retslot` arm reuses the SAME binarized `cgll_w` getNodeP mechanics
+        // (plan edit 2: "Keep the cgll_w thread-ident fold … unchanged"), so the
+        // fold fires under `thread || retslot`.
+        if thread || retslot {
+            self.cgll_thread_ident(cursor.cgll_w).hash(&mut h);
+        }
+        // Stage E2 axis-isolation probes (diagnostic; env read per-cursor is OK
+        // for a probe — |U| counts are timing-independent). `sound` folds BOTH
+        // axes (the exact-but-exponential ceiling). `SOUND_SPPF` folds ONLY the
+        // CONTENT sppf-stack shape-chain (hash-consed shallow idents — candidate
+        // poly-AND-exact key). `SOUND_EDGE` folds ONLY the pop-routing edge-stack
+        // arena id (the ~38×/level exponential axis per memory adfd1707).
+        let fold_sppf = sound || std::env::var_os("PRATTAIL_CGLL_SOUND_SPPF").is_some();
+        let fold_edge = sound || std::env::var_os("PRATTAIL_CGLL_SOUND_EDGE").is_some();
+        if fold_sppf {
+            self.sppf_stack_arena.len(cursor.sppf_stack_id).hash(&mut h);
+            self.sppf_stack_arena
+                .for_each_top_down_until(cursor.sppf_stack_id, |sid| {
+                    self.sppf_shallow_ident(sid).hash(&mut h);
+                    true
+                });
+        }
+        if fold_edge {
+            cursor.incoming_edge_stack_id.hash(&mut h);
+        }
+        h.finish()
+    }
+
+    /// ROOT-P Canonical-GLL Stage D — the descriptor `w`: the owner-masked shallow
+    /// ident of the SINGLE top of `cursor`'s SPPF stack (mode-0 of Stage A's
+    /// `cgll_w_top`; the conditional `@`-trigger owner mask so the exponential
+    /// `@`-attribution multiplicity collapses while genuine multi-step `@`-binders
+    /// stay owner-distinct). `(0,0,0,0)` sentinel for an empty stack.
+    #[allow(dead_code)] // Reached only from `step_canonical` (DCE'd while const off).
+    fn cgll_descriptor_w(&self, cursor: &BranchCursor<W>, nomask: bool) -> (u8, u64, u64, u64) {
+        use crate::sppf::PosOrSynth;
+        match self.sppf_stack_arena.top(cursor.sppf_stack_id) {
+            None => (0, 0, 0, 0),
+            Some(id) => match self.sppf.node(id) {
+                Some(crate::sppf::SppfNode::TriggerTerminal {
+                    token_kind,
+                    pos,
+                    owner_cat,
+                    owner_rule_idx,
+                    ..
+                }) => {
+                    let pos_u = match pos {
+                        PosOrSynth::Real(v) => (*v as u64) << 1,
+                        PosOrSynth::Synthesized(v) => ((*v as u64) << 1) | 1,
+                    };
+                    let kind = Self::token_kind_disc(token_kind);
+                    // `nomask` root-cause probe: NEVER collapse the owner ⇒ every
+                    // candidate `@`-owner stays a DISTINCT descriptor (exponential
+                    // |U|, but every attribution's reduce fires ⇒ readings preserved).
+                    if !nomask
+                        && self
+                            .engine
+                            .rule_has_leading_structural_trigger(*owner_cat, *owner_rule_idx)
+                    {
+                        (7, kind, pos_u, 0)
+                    } else {
+                        (
+                            7,
+                            kind,
+                            pos_u,
+                            ((*owner_cat as u64) << 16) | (*owner_rule_idx as u64),
+                        )
+                    }
+                },
+                _ => self.sppf_shallow_ident(id),
+            },
+        }
+    }
+
+    /// ROOT-P Canonical-GLL Stage E — the `(category, lo_pos)` slot key of a
+    /// completed sub-parse Symbol `z`. Used by the exact pop-fan to co-merge every
+    /// caller that awaited a constituent of this category starting at this
+    /// position (Scott & Johnstone's canonical `(nonterminal X, position j)` GSS
+    /// node identity). `None` if `id` is not a `Symbol` (e.g. a bare trigger or a
+    /// `SPPF_ID_NONE` sentinel), in which case there is nothing to co-merge.
+    #[allow(dead_code)] // Reached only from `step_canonical` (DCE'd while const off).
+    fn cgll_symbol_cat_lo(&self, id: crate::sppf::SppfId) -> Option<(u16, usize)> {
+        match self.sppf.node(id) {
+            Some(crate::sppf::SppfNode::Symbol {
+                non_terminal_tag,
+                lo_pos,
+                ..
+            }) => Some((*non_terminal_tag as u16, *lo_pos as usize)),
+            _ => None,
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // ROOT-P Canonical-GLL Stage E1 (2026-07-09) — BINARIZED getNodeP + realize
+    // ═══════════════════════════════════════════════════════════════════════
+    // The mechanism the memory long-flagged as the deepest sub-part: each rule's
+    // reduce mirrors its classic n-ary packing as a BINARIZED left-fold spine of
+    // `Intermediate` nodes, all completing at a SHARED binarized `Symbol`
+    // `(cat | CGLL_BIN_TAG, lo, hi)`. The N owner-rules of the `@`-cohort thus
+    // appear as N packings under one shared Symbol (owner-attribution dissolved
+    // into the packing family), and the canonical realize UN-binarizes each spine
+    // (`flatten`) back to the classic n-ary children — firing the SAME action.
+    //
+    // ALL of this is reached ONLY under `cgll_binarize_active()` (leads with the
+    // `CANONICAL_GLL_ENABLED` const ⇒ DCE'd + byte-identical when `false`).
+
+    /// One binarized `getNodeP` fold step (Scott & Johnstone 2010 §5). Combines
+    /// the running left-part `w` with the newly-consumed child `z`:
+    /// - `w == NONE` (FIRST child): return `z` itself (no node minted).
+    /// - else (MIDDLE/END): mint/dedup an `Intermediate(slot_id, lo, hi_z)` and
+    ///   link the binary packing `[w, z]` under it, returning the intermediate.
+    ///
+    /// `slot_id` is the production's global rule id; the intermediate packing's
+    /// `rule_idx` is that same id (never fired — `flatten` unwraps it before the
+    /// action tail runs). Reached only under `cgll_binarize_active()`.
+    #[allow(dead_code)] // Reached only under the const (DCE'd while const off).
+    fn cgll_get_node_p(
+        &mut self,
+        slot_id: u32,
+        w: crate::sppf::SppfId,
+        z: crate::sppf::SppfId,
+        lo: u32,
+        hi_z: u32,
+    ) -> crate::sppf::SppfId {
+        if w == crate::sppf::SPPF_ID_NONE {
+            return z;
+        }
+        let inter = self.sppf.intern_intermediate(slot_id, lo, hi_z);
+        let packing = self.sppf.intern_packing(slot_id, vec![w, z], W::one_ref());
+        self.sppf.link_packing_to_symbol(inter, packing);
+        inter
+    }
+
+    /// Stage E2b (2026-07-09) — a stable `Intermediate` slot id for the cursor's
+    /// current grammar slot `L` (`inner_state`). Two cursors at the same `L`
+    /// share `Intermediate` identity (the packing-family poly-collapse); two at
+    /// different `L`s stay distinct. The high `CGLL_BIN_TAG` bit is cleared so
+    /// the intermediate slot namespace stays visibly disjoint from the binarized
+    /// Symbol-tag marker. Reached only under `cgll_binarize_active()` +
+    /// `PRATTAIL_CGLL_THREAD` (DCE'd while the const is off).
+    #[allow(dead_code)] // Reached only from `step_canonical` (DCE'd while const off).
+    fn cgll_thread_slot(&self, cursor: &BranchCursor<W>) -> u32 {
+        use std::hash::{Hash, Hasher};
+        let mut h = rustc_hash::FxHasher::default();
+        cursor.inner_state.hash(&mut h);
+        (h.finish() as u32) & !CGLL_BIN_TAG
+    }
+
+    /// Stage E2b (2026-07-09) — fold ONE absorbed child `z` (a leaf, or a
+    /// completed constituent Symbol) into the cursor's running packed `getNodeP`
+    /// node `cursor.cgll_w` (plan §1.4 left-fold). `lo` = the running left-part's
+    /// start (or `z`'s start when `w` is empty); `hi` = `z`'s end. A NONE child
+    /// is a no-op. Reached only under `cgll_binarize_active()` +
+    /// `PRATTAIL_CGLL_THREAD` (DCE'd while the const is off).
+    #[allow(dead_code)] // Reached only from `step_canonical` (DCE'd while const off).
+    fn cgll_thread_absorb(&mut self, cursor: &mut BranchCursor<W>, z: crate::sppf::SppfId) {
+        if z == crate::sppf::SPPF_ID_NONE {
+            return;
+        }
+        let slot = self.cgll_thread_slot(cursor);
+        let lo = self
+            .sppf
+            .span_lo(cursor.cgll_w)
+            .or_else(|| self.sppf.span_lo(z))
+            .unwrap_or(0);
+        let hi = self.sppf.span_hi(z).unwrap_or(cursor.pos as u32);
+        cursor.cgll_w = self.cgll_get_node_p(slot, cursor.cgll_w, z, lo, hi);
+    }
+
+    /// Stage E2b (2026-07-09) — the conditional owner-masked shallow ident of a
+    /// packed `w` node, for the descriptor KEY. Identical policy to the
+    /// walker-stats-gated [`Self::cgll_w_cond`] (duplicated here NON-gated so the
+    /// default, non-`walker-stats` build can key on the threaded `w`): a bare
+    /// leading-`@`-trigger `w` (the FIRST-child case where `getNodeP` returns `z`)
+    /// masks its `(owner_cat, owner_rule_idx)` when the owning rule leads with a
+    /// structural trigger (so the exponential @-attribution multiplicity stays
+    /// collapsed), keeps the owner for multi-step `@`-binders, and uses the plain
+    /// shallow ident for every other node (an `Intermediate` `w` is owner-free by
+    /// construction). Reached only under `cgll_binarize_active()` +
+    /// `PRATTAIL_CGLL_THREAD` (DCE'd while the const is off).
+    #[allow(dead_code)] // Reached only from `cgll_descriptor_key` (DCE'd while const off).
+    fn cgll_thread_ident(&self, id: crate::sppf::SppfId) -> (u8, u64, u64, u64) {
+        use crate::sppf::PosOrSynth;
+        match self.sppf.node(id) {
+            // ── Stage E2b: the packed `Intermediate` `w` — the derivation-
+            // distinguishing case. `sppf_shallow_ident` has NO Intermediate arm
+            // (it is canonical-only + would otherwise fall to the `(0,0,0,0)`
+            // sentinel, collapsing EVERY partial derivation to one key ⇒ the
+            // threaded `w` would be inert). Key on `(slot_id, lo, hi)` so two
+            // mid-rule cursors whose partials span DIFFERENT `(lo,hi)` stay
+            // distinct while same-`(slot,lo,hi)` partials share the id (poly).
+            Some(crate::sppf::SppfNode::Intermediate {
+                slot_id,
+                lo_pos,
+                hi_pos,
+                ..
+            }) => (8, *slot_id as u64, *lo_pos as u64, *hi_pos as u64),
+            Some(crate::sppf::SppfNode::TriggerTerminal {
+                token_kind,
+                pos,
+                owner_cat,
+                owner_rule_idx,
+                ..
+            }) => {
+                let pos_u = match pos {
+                    PosOrSynth::Real(v) => (*v as u64) << 1,
+                    PosOrSynth::Synthesized(v) => ((*v as u64) << 1) | 1,
+                };
+                let kind = Self::token_kind_disc(token_kind);
+                if self
+                    .engine
+                    .rule_has_leading_structural_trigger(*owner_cat, *owner_rule_idx)
+                {
+                    (7, kind, pos_u, 0)
+                } else {
+                    (
+                        7,
+                        kind,
+                        pos_u,
+                        ((*owner_cat as u64) << 16) | (*owner_rule_idx as u64),
+                    )
+                }
+            },
+            _ => self.sppf_shallow_ident(id),
+        }
+    }
+
+    /// Map a CLASSIC child SppfId to its BINARIZED counterpart: a classic
+    /// `Symbol(cat, lo, hi)` → the binarized `Symbol(cat | CGLL_BIN_TAG, lo, hi)`
+    /// built by that constituent's own (earlier, bottom-up) reduce. Leaves
+    /// (terminals / triggers / already-binarized symbols) pass through unchanged,
+    /// so the binarized spine is a SELF-CONTAINED forest (binarized symbols
+    /// reference binarized sub-symbols; leaves are shared with the classic
+    /// forest). Falls back to the classic id when no binarized counterpart exists
+    /// (defensive — should not happen for the `@`-cohort). Reached only under
+    /// `cgll_binarize_active()`.
+    #[allow(dead_code)] // Reached only under the const (DCE'd while const off).
+    fn cgll_map_child_to_binarized(&self, c: crate::sppf::SppfId) -> crate::sppf::SppfId {
+        match self.sppf.node(c) {
+            Some(crate::sppf::SppfNode::Symbol {
+                non_terminal_tag,
+                lo_pos,
+                hi_pos,
+                ..
+            }) => {
+                if non_terminal_tag & CGLL_BIN_TAG != 0 {
+                    return c; // already binarized
+                }
+                self.sppf
+                    .symbol_id(non_terminal_tag | CGLL_BIN_TAG, *lo_pos, *hi_pos)
+                    .unwrap_or(c)
+            },
+            _ => c,
+        }
+    }
+
+    /// BINARIZE the completed CLASSIC forest reachable from one classic Symbol
+    /// into its `Intermediate`-spine mirror (the Stage-E1 post-pass, invoked from
+    /// the resolve interception AFTER the parse). For a classic `Symbol(cat, lo,
+    /// hi)` with packings `[P_1..P_N]`, mints the SHARED binarized
+    /// `Symbol(cat | CGLL_BIN_TAG, lo, hi)` and, for each classic packing
+    /// `(rule_idx, [c_1..c_k])`, recursively binarizes the children then left-folds
+    /// them into a spine (`cgll_get_node_p`) linked as a UNARY packing `[spine]`
+    /// (fireable `rule_idx`) under the shared binarized Symbol. Thus the N owner
+    /// readings become N packings under ONE shared Symbol (`packings_of(S_bin) ==
+    /// N`), and `flatten(spine) == [c_1..c_k]` (the classic children) exactly.
+    ///
+    /// Building over the FINISHED classic forest (rather than hooking each
+    /// reduce) captures EVERY classic packing however it was linked (transient /
+    /// packing_exists / reconciliation / cast synthesis). `map` memoizes
+    /// `classic Symbol → binarized Symbol` (inserted before recursion ⇒ cycle
+    /// safe). Reached only under `cgll_binarize_active()`.
+    #[allow(dead_code)] // Reached only under the const (DCE'd while const off).
+    fn cgll_binarize_classic_symbol(
+        &mut self,
+        classic: crate::sppf::SppfId,
+        map: &mut rustc_hash::FxHashMap<crate::sppf::SppfId, crate::sppf::SppfId>,
+    ) -> crate::sppf::SppfId {
+        if let Some(&b) = map.get(&classic) {
+            return b;
+        }
+        let (tag, lo, hi) = match self.sppf.node(classic) {
+            Some(crate::sppf::SppfNode::Symbol { non_terminal_tag, lo_pos, hi_pos, .. }) => {
+                (*non_terminal_tag, *lo_pos, *hi_pos)
+            },
+            // Non-Symbol (leaf / already-binarized) — shared as-is.
+            _ => return classic,
+        };
+        if tag & CGLL_BIN_TAG != 0 {
+            return classic; // already binarized
+        }
+        let bin = self.sppf.intern_symbol(tag | CGLL_BIN_TAG, lo, hi);
+        map.insert(classic, bin); // cycle guard BEFORE recursion
+        let packings: Vec<crate::sppf::SppfId> = self.sppf.packings_of(classic).to_vec();
+        for p in packings {
+            let (rule_idx, children) = match self.sppf.node(p) {
+                Some(crate::sppf::SppfNode::Packing { rule_idx, children, .. }) => {
+                    (*rule_idx, children.clone())
+                },
+                _ => continue,
+            };
+            let mut w = crate::sppf::SPPF_ID_NONE;
+            for &c in &children {
+                let bc = self.cgll_binarize_classic_child(c, map);
+                let hi_z = self.sppf.span_hi(bc).unwrap_or(hi);
+                w = self.cgll_get_node_p(rule_idx, w, bc, lo, hi_z);
+            }
+            let children_bin = if w == crate::sppf::SPPF_ID_NONE {
+                Vec::new()
+            } else {
+                vec![w]
+            };
+            let packing = self
+                .sppf
+                .intern_packing(rule_idx, children_bin, W::one_ref());
+            self.sppf.link_packing_to_symbol(bin, packing);
+        }
+        bin
+    }
+
+    /// Binarize one classic packing child: a `Symbol` recurses via
+    /// [`Self::cgll_binarize_classic_symbol`]; any leaf (Terminal / TriggerTerminal
+    /// / Epsilon / CollectionId / …) is shared verbatim (leaves are common to both
+    /// forests). Reached only under `cgll_binarize_active()`.
+    #[allow(dead_code)] // Reached only under the const (DCE'd while const off).
+    fn cgll_binarize_classic_child(
+        &mut self,
+        c: crate::sppf::SppfId,
+        map: &mut rustc_hash::FxHashMap<crate::sppf::SppfId, crate::sppf::SppfId>,
+    ) -> crate::sppf::SppfId {
+        match self.sppf.node(c) {
+            Some(crate::sppf::SppfNode::Symbol { .. }) => {
+                self.cgll_binarize_classic_symbol(c, map)
+            },
+            // ── Stage P3 (2026-07-09) COLLECTION overlay: a polyadic-send TAIL
+            // (`@a!(0,1)`'s args `bs.*sep(",")`) rides a `CollectionId` leaf whose
+            // `items` are the CLASSIC element SppfIds. The binarized spine folds
+            // this leaf verbatim (a leaf), so its `items` keep referencing the
+            // CLASSIC element symbols while the binarized realize memo keys on the
+            // BINARIZED symbols ⇒ `realize_packing_call`'s per-item `memo.get`
+            // misses every element ⇒ the WHOLE combo is silently dropped ("no
+            // realizable readings" — the measured P3 @a!(0,1) failure). Rebinarize
+            // each element + intern a fresh `CollectionId` carrying the BINARIZED
+            // element ids so the realize (which now realizes those items into the
+            // shared memo) can rebuild the collection. EMPTY collections (deep-@ /
+            // `@Nil!(0)` — the single/no arg is a DIRECT spine child, `items ==
+            // []`) are shared VERBATIM ⇒ byte-identical to the pre-P3 binarize on
+            // the whole delivered deep-@ ladder. Reached only under
+            // `cgll_binarize_active()` (DCE'd while the const is off).
+            Some(crate::sppf::SppfNode::CollectionId { id, items }) => {
+                if items.is_empty() {
+                    return c;
+                }
+                let id = *id;
+                let items = items.clone();
+                let bitems: Vec<crate::sppf::SppfId> = items
+                    .iter()
+                    .map(|&it| self.cgll_binarize_classic_child(it, map))
+                    .collect();
+                self.sppf.intern_collection_id(id, bitems)
+            },
+            _ => c,
+        }
+    }
+
+    /// UN-binarize a spine node into its classic n-ary children list(s). An
+    /// `Intermediate` fans over its packings (each a binary `[left, right]`),
+    /// cartesian-concatenating `flatten(left) ++ flatten(right)` (so a shared
+    /// intermediate with ambiguous packings yields multiple lists); any other
+    /// node is a leaf/symbol and yields the singleton `[[id]]`. The result is the
+    /// classic children list the action tail consumes (`realize_packing_call`
+    /// then filters `TriggerTerminal`). Reached only under `cgll_binarize_active()`.
+    #[allow(dead_code)] // Reached only under the const (DCE'd while const off).
+    fn cgll_flatten_ids(&self, id: crate::sppf::SppfId) -> Vec<Vec<crate::sppf::SppfId>> {
+        match self.sppf.node(id) {
+            Some(crate::sppf::SppfNode::Intermediate { .. }) => {
+                let packings: Vec<crate::sppf::SppfId> = self.sppf.packings_of(id).to_vec();
+                let mut out: Vec<Vec<crate::sppf::SppfId>> = Vec::new();
+                for p in packings {
+                    let pack_children = match self.sppf.node(p) {
+                        Some(crate::sppf::SppfNode::Packing { children, .. }) => children.clone(),
+                        _ => continue,
+                    };
+                    let mut acc: Vec<Vec<crate::sppf::SppfId>> = vec![Vec::new()];
+                    for &c in &pack_children {
+                        let cf = self.cgll_flatten_ids(c);
+                        let mut next: Vec<Vec<crate::sppf::SppfId>> = Vec::new();
+                        for a in &acc {
+                            for b in &cf {
+                                let mut x = a.clone();
+                                x.extend_from_slice(b);
+                                next.push(x);
+                            }
+                        }
+                        acc = next;
+                    }
+                    out.extend(acc);
+                }
+                out
+            },
+            _ => vec![vec![id]],
+        }
+    }
+
+    /// Recursively realize a BINARIZED Symbol to its `(Term, W)` readings by
+    /// enumerating its packing family. For each packing `[spine]`: `flatten` the
+    /// spine to the classic children list(s), realize each child (binarized
+    /// sub-symbol → recurse; leaf → `realize_node_leave`) into the shared `memo`,
+    /// then reuse the EXISTING `realize_packing_call` action tail (which filters
+    /// `TriggerTerminal`, arity-checks, and fires `action_fn`). N packings ⇒ N
+    /// readings — the owner-ambiguity resolved at realize. Reached only under
+    /// `cgll_binarize_active()`.
+    #[allow(dead_code)] // Reached only under the const (DCE'd while const off).
+    fn cgll_realize_bin_symbol(
+        &self,
+        sym: crate::sppf::SppfId,
+        memo: &mut std::collections::HashMap<crate::sppf::SppfId, Vec<(ActionArg, W)>>,
+        limit: Option<usize>,
+    ) -> Vec<(ActionArg, W)>
+    where
+        W: StarSemiringRef,
+    {
+        if let Some(v) = memo.get(&sym) {
+            return v.clone();
+        }
+        // Cycle guard: publish an empty memo before descending (the @-cohort is
+        // acyclic, but a shared-span cycle must not recurse forever).
+        memo.insert(sym, Vec::new());
+        let (sym_lo, sym_hi) = match self.sppf.node(sym) {
+            Some(crate::sppf::SppfNode::Symbol { lo_pos, hi_pos, .. }) => (*lo_pos, *hi_pos),
+            _ => (0, 0),
+        };
+        let packings: Vec<crate::sppf::SppfId> = self.sppf.packings_of(sym).to_vec();
+        let empty_colors: std::collections::HashMap<crate::sppf::SppfId, RealizeColor> =
+            std::collections::HashMap::new();
+        let mut out: Vec<(ActionArg, W)> = Vec::new();
+        for p in packings {
+            let (rule_idx, pack_children, weight) = match self.sppf.node(p) {
+                Some(crate::sppf::SppfNode::Packing { rule_idx, children, weight }) => {
+                    (*rule_idx, children.clone(), weight.clone())
+                },
+                _ => continue,
+            };
+            // Flatten the packing's binary spine to classic n-ary children lists.
+            let mut flats: Vec<Vec<crate::sppf::SppfId>> = vec![Vec::new()];
+            for &c in &pack_children {
+                let cf = self.cgll_flatten_ids(c);
+                let mut next: Vec<Vec<crate::sppf::SppfId>> = Vec::new();
+                for a in &flats {
+                    for b in &cf {
+                        let mut x = a.clone();
+                        x.extend_from_slice(b);
+                        next.push(x);
+                    }
+                }
+                flats = next;
+            }
+            for flat in flats {
+                // Classic soundness parity: reject a derivation whose in-span
+                // literal terminals do not fit the span (mirrors the classic
+                // `realize_node_leave` Symbol-arm filter at the
+                // `packing_satisfies_min_terminal_span` call). `flat` is the
+                // classic children list, so the check is byte-identical to classic.
+                if !self.packing_satisfies_min_terminal_span(rule_idx, &flat, sym_lo, sym_hi) {
+                    continue;
+                }
+                for &c in &flat {
+                    if memo.contains_key(&c) {
+                        continue;
+                    }
+                    let cr = match self.sppf.node(c) {
+                        Some(crate::sppf::SppfNode::Symbol { non_terminal_tag, .. })
+                            if non_terminal_tag & CGLL_BIN_TAG != 0 =>
+                        {
+                            self.cgll_realize_bin_symbol(c, memo, limit)
+                        },
+                        _ => self.realize_node_leave(c, memo, &empty_colors, limit),
+                    };
+                    memo.insert(c, cr);
+                    // ── Stage P3 (2026-07-09): a `CollectionId` leaf carries the
+                    // polyadic-send TAIL elements in `items` (NOT on the binary
+                    // spine), so the child loop above never realizes them. Realize
+                    // each element into the SHARED `memo` (recursing into a
+                    // binarized sub-symbol, else a classic leaf) so
+                    // `realize_packing_call` — which reads `CollectionId.items` and
+                    // looks each element up in `memo` — can rebuild the collection.
+                    // The `CollectionId` here is the binarized one minted by
+                    // `cgll_binarize_classic_child`, so its items are BINARIZED
+                    // symbol ids that this realize keys on. No-op for EMPTY
+                    // collections (deep-@ / `@Nil!(0)`).
+                    if let Some(crate::sppf::SppfNode::CollectionId { items, .. }) =
+                        self.sppf.node(c)
+                    {
+                        let items = items.clone();
+                        for it in items {
+                            if memo.contains_key(&it) {
+                                continue;
+                            }
+                            let ir = match self.sppf.node(it) {
+                                Some(crate::sppf::SppfNode::Symbol { non_terminal_tag, .. })
+                                    if non_terminal_tag & CGLL_BIN_TAG != 0 =>
+                                {
+                                    self.cgll_realize_bin_symbol(it, memo, limit)
+                                },
+                                _ => self.realize_node_leave(it, memo, &empty_colors, limit),
+                            };
+                            memo.insert(it, ir);
+                        }
+                    }
+                }
+                let terms = self.realize_packing_call(rule_idx, &flat, weight.clone(), memo, limit);
+                out.extend(terms);
+            }
+        }
+        memo.insert(sym, out.clone());
+        out
+    }
+
+    /// ROOT-P Stage E1 diagnostic — recursively dump a binarized node's packing
+    /// family + spine flatten (env `PRATTAIL_CGLL_DIAG`). Localizes a lost reading
+    /// to getNodeP-span / owner-packing-link / flatten.
+    #[allow(dead_code)]
+    fn cgll_dump_bin(
+        &self,
+        id: crate::sppf::SppfId,
+        depth: usize,
+        seen: &mut rustc_hash::FxHashSet<crate::sppf::SppfId>,
+    ) {
+        let pad = "  ".repeat(depth);
+        if !seen.insert(id) {
+            eprintln!("{pad}[{id}] (revisit)");
+            return;
+        }
+        match self.sppf.node(id) {
+            Some(crate::sppf::SppfNode::Symbol { non_terminal_tag, lo_pos, hi_pos, .. }) => {
+                let packs = self.sppf.packings_of(id).to_vec();
+                eprintln!(
+                    "{pad}Symbol[{id}] tag={:#x} span=({lo_pos},{hi_pos}) packings={}",
+                    non_terminal_tag,
+                    packs.len(),
+                );
+                for p in packs {
+                    if let Some(crate::sppf::SppfNode::Packing { rule_idx, children, .. }) =
+                        self.sppf.node(p)
+                    {
+                        let children = children.clone();
+                        let rule_idx = *rule_idx;
+                        let flats = {
+                            let mut acc: Vec<Vec<crate::sppf::SppfId>> = vec![Vec::new()];
+                            for &c in &children {
+                                let cf = self.cgll_flatten_ids(c);
+                                let mut next = Vec::new();
+                                for a in &acc {
+                                    for b in &cf {
+                                        let mut x = a.clone();
+                                        x.extend_from_slice(b);
+                                        next.push(x);
+                                    }
+                                }
+                                acc = next;
+                            }
+                            acc
+                        };
+                        eprintln!(
+                            "{pad}  Packing[{p}] rule=({},{}) children={:?} flats={:?}",
+                            rule_idx >> 16,
+                            rule_idx & 0xFFFF,
+                            children,
+                            flats,
+                        );
+                        for &c in &children {
+                            self.cgll_dump_bin(c, depth + 2, seen);
+                        }
+                    }
+                }
+            },
+            Some(crate::sppf::SppfNode::Intermediate { slot_id, lo_pos, hi_pos, .. }) => {
+                let packs = self.sppf.packings_of(id).to_vec();
+                eprintln!(
+                    "{pad}Inter[{id}] slot=({},{}) span=({lo_pos},{hi_pos}) packings={}",
+                    slot_id >> 16,
+                    slot_id & 0xFFFF,
+                    packs.len(),
+                );
+                for p in packs {
+                    if let Some(crate::sppf::SppfNode::Packing { children, .. }) = self.sppf.node(p) {
+                        let children = children.clone();
+                        eprintln!("{pad}  IPacking[{p}] children={:?}", children);
+                        for &c in &children {
+                            self.cgll_dump_bin(c, depth + 2, seen);
+                        }
+                    }
+                }
+            },
+            other => {
+                eprintln!("{pad}leaf[{id}]={:?}", other.map(std::mem::discriminant));
+            },
+        }
+    }
+
+    /// Canonical-GLL binarized RESOLVE (Stage E1). Replaces the classic per-cursor
+    /// `Some(1)` realize with a per-`S_bin` `limit=None` packing enumeration: maps
+    /// each accepting cursor's classic root `(cat, lo, hi)` to its binarized
+    /// `Symbol(cat | CGLL_BIN_TAG, lo, hi)`, dedups, and realizes each with
+    /// `cgll_realize_bin_symbol` (all packings ⇒ all readings). Reached only under
+    /// `cgll_binarize_active()` (DCE'd + byte-identical when the const is `false`).
+    #[allow(dead_code)] // Reached only under the const (DCE'd while const off).
+    fn cgll_resolve_binarized(
+        &mut self,
+        accepting: &[EoiCursorCandidate<W>],
+    ) -> WpdaResolveResult<W>
+    where
+        W: StarSemiringRef,
+    {
+        let mut weights: Vec<W> = Vec::new();
+        let mut terms: Vec<Arc<dyn std::any::Any + Send + Sync>> = Vec::new();
+        let mut roots: Vec<crate::sppf::SppfId> = Vec::new();
+        let mut memo: std::collections::HashMap<crate::sppf::SppfId, Vec<(ActionArg, W)>> =
+            std::collections::HashMap::new();
+        let mut seen_bin: rustc_hash::FxHashSet<crate::sppf::SppfId> =
+            rustc_hash::FxHashSet::default();
+        // Shared classic→binarized map so co-occurring sub-constituents dedup to
+        // ONE binarized Symbol (the packing-family sharing the mechanism relies on).
+        let mut bin_map: rustc_hash::FxHashMap<crate::sppf::SppfId, crate::sppf::SppfId> =
+            rustc_hash::FxHashMap::default();
+        for cand in accepting {
+            let classic_root = cand.root;
+            if classic_root == crate::sppf::SPPF_ID_NONE {
+                continue;
+            }
+            // POST-PASS: binarize the completed classic forest under this root.
+            let bin_root = self.cgll_binarize_classic_symbol(classic_root, &mut bin_map);
+            if bin_root == classic_root {
+                continue; // classic root was not a Symbol (nothing to binarize)
+            }
+            if !seen_bin.insert(bin_root) {
+                continue; // already enumerated this shared S_bin
+            }
+            if std::env::var_os("PRATTAIL_CGLL_DIAG").is_some() {
+                eprintln!(
+                    "CGLL-DIAG accept: classic_root={} -> bin_root={} (span {:?})",
+                    classic_root,
+                    bin_root,
+                    (self.sppf.span_lo(bin_root), self.sppf.span_hi(bin_root)),
+                );
+                self.cgll_dump_bin(bin_root, 0, &mut rustc_hash::FxHashSet::default());
+            }
+            let realized = self.cgll_realize_bin_symbol(bin_root, &mut memo, None);
+            for (arg, w) in realized {
+                if let ActionArg::Term { value, .. } = arg {
+                    weights.push(w);
+                    terms.push(value);
+                    roots.push(bin_root);
+                }
+            }
+        }
+        // Commit the first accepting cursor for the legacy single-result
+        // accessors (mirrors the classic multi-arm contract).
+        if let Some(cand) = accepting.first() {
+            let winner_cursor = cand.cursor.clone();
+            self.commit_winner_cursor(winner_cursor);
+        }
+        if terms.is_empty() {
+            return WpdaResolveResult::ParseError {
+                message: "canonical-GLL binarized: no realizable readings".to_string(),
+                position: self.pos,
+            };
+        }
+        WpdaResolveResult::Accepted { weights, terms, roots }
     }
 
     /// Step 3 (Fork plan F6): per-step driver for `WpdaState::AmbiguityFanout`.
@@ -18076,6 +22718,16 @@ where
     /// Returns the new `WpdaState` after this micro-step (which may still
     /// be `AmbiguityFanout` if Case 4 fires).
     fn step_fanout(&mut self, tokens: &dyn WpdaTokenSource) -> WpdaState {
+        // ── ROOT-P canonical-GLL dispatch (Stage B, 2026-07-09) ──────────────
+        // When the PARALLEL canonical-GLL engine is live, route this step to the
+        // descriptor-worklist driver instead of the classic cursor fan-out below.
+        // `canonical_gll_active()` leads with the `CANONICAL_GLL_ENABLED`
+        // compile-time const (Stage B: `false`), so this whole branch — and the
+        // entire `step_canonical` body it reaches — is dead-code-eliminated and
+        // `step_fanout` stays byte-identical to the pre-redesign engine.
+        if self.canonical_gll_active() {
+            return self.step_canonical(tokens);
+        }
         // Phase F.13 walker-stats (2026-05-20): count step + accumulate
         // pre-step cursor count for avg-cursors-per-step derivation.
         crate::stats_inc!(self, step_fanout_calls);
@@ -18154,7 +22806,25 @@ where
                         c.collection_stack_depth,
                     );
                     let shell = crate::tomita_frontier::TomitaShell::from_cursor(c);
-                    let arc = crate::tomita_frontier::FrontierArc::from_cursor(c);
+                    let mut arc = crate::tomita_frontier::FrontierArc::from_cursor(c);
+                    // ROOT-P Stage 3 §B1 (2026-07-08) — ARC-LEVEL SLOT merge (the
+                    // delivery fix). The walker owns the SPPF, so precompute this
+                    // arc's masked `shape_fp` + FULL masked-ident chain HERE (the
+                    // frontier map is SPPF-agnostic) so
+                    // `register_arc_with_aggregation` can ⊕-absorb same-SLOT/
+                    // same-shape arcs AT REGISTRATION — collapsing the transient
+                    // fan-out to the polynomial floor during `step_fanout` (instead
+                    // of post-hoc at `merge_equivalent_cursors`, which left the
+                    // exponential transient to dominate parse TIME → the sim
+                    // timeout). Mirror of the cursor-level `MergeKey::RootpSlot`
+                    // shape_fp + full-chain recheck. `None`/`false` when the
+                    // redesign is OFF ⇒ byte-identical committed build.
+                    let slot_active = self.rootp_slot_sppf_active();
+                    if slot_active {
+                        arc.rootp_shape_fp = Some(self.rootp_shape_fp(c.sppf_stack_id));
+                        arc.rootp_shape_chain =
+                            Some(std::sync::Arc::new(self.rootp_shape_chain(c.sppf_stack_id)));
+                    }
                     // AT_QUOTED_BIND_GATE Task-2 content-eq probe (gated
                     // GRIND_SPPF_CONTENT=1; byte-identical when unset).
                     if grind_sppf_content_enabled() {
@@ -18162,9 +22832,31 @@ where
                     }
                     // Substage 6: ⊕-aggregation on TomitaKey collision —
                     // arcs with same merge_disambiguator + same heavy-Arc
-                    // identities collapse via LexicographicWeight::plus.
-                    self.tomita_frontier_map
-                        .register_arc_with_aggregation(key, shell, arc);
+                    // identities collapse via LexicographicWeight::plus. ROOT-P:
+                    // the RootpSlot criterion supersedes it when `slot_active`.
+                    let (_, outcome) = self
+                        .tomita_frontier_map
+                        .register_arc_with_aggregation(key, shell, arc, slot_active);
+                    // ROOT-P Stage 2 §C: mirror §A's packing-link onto the Tomita
+                    // arc-collision merge. When the incoming arc was ⊕-absorbed,
+                    // link its top packings under the survivor's top so the
+                    // derivation is retained in the forest (the frontier map is
+                    // SPPF-agnostic; the walker owns both arenas). A NO-OP through
+                    // Stages 2-3 (the arc disambiguator keeps `sppf_stack_id` ⇒
+                    // equal tops). Dead while the const is `false`.
+                    if self.rootp_pack_active() {
+                        if let crate::tomita_frontier::ArcMergeOutcome::Merged {
+                            existing_sppf_stack,
+                            incoming_sppf_stack,
+                        } = outcome
+                        {
+                            let survivor_top = self.sppf_stack_arena.top(existing_sppf_stack);
+                            let loser_top = self.sppf_stack_arena.top(incoming_sppf_stack);
+                            if let (Some(s_top), Some(l_top)) = (survivor_top, loser_top) {
+                                self.link_symbol_packings(s_top, l_top);
+                            }
+                        }
+                    }
                 },
                 crate::cohort_lazy::Frame::Cohort(cf) => {
                     // Materialize each member of the H12 cohort, then
@@ -18188,15 +22880,44 @@ where
                             cursor.collection_stack_depth,
                         );
                         let shell = crate::tomita_frontier::TomitaShell::from_cursor(&cursor);
-                        let arc = crate::tomita_frontier::FrontierArc::from_cursor(&cursor);
+                        let mut arc = crate::tomita_frontier::FrontierArc::from_cursor(&cursor);
+                        // ROOT-P Stage 3 §B1 (cohort-member ingest mirror of the
+                        // Concrete arm above): precompute the masked shape fp/chain
+                        // so the arc-level SLOT merge collapses the fan-out at
+                        // registration. `None`/`false` when OFF ⇒ byte-identical.
+                        let slot_active = self.rootp_slot_sppf_active();
+                        if slot_active {
+                            arc.rootp_shape_fp = Some(self.rootp_shape_fp(cursor.sppf_stack_id));
+                            arc.rootp_shape_chain = Some(std::sync::Arc::new(
+                                self.rootp_shape_chain(cursor.sppf_stack_id),
+                            ));
+                        }
                         // AT_QUOTED_BIND_GATE Task-2 content-eq probe (gated
                         // GRIND_SPPF_CONTENT=1; byte-identical when unset).
                         if grind_sppf_content_enabled() {
                             self.grind_sppf_content_check(&key, arc.sppf_stack_id);
                         }
-                        // Substage 6: ⊕-aggregation on TomitaKey collision.
-                        self.tomita_frontier_map
-                            .register_arc_with_aggregation(key, shell, arc);
+                        // Substage 6: ⊕-aggregation on TomitaKey collision. ROOT-P:
+                        // RootpSlot criterion when `slot_active`.
+                        let (_, outcome) = self
+                            .tomita_frontier_map
+                            .register_arc_with_aggregation(key, shell, arc, slot_active);
+                        // ROOT-P Stage 2 §C (cohort-member ingest mirror of the
+                        // Concrete arm above). No-op through Stages 2-3; dead
+                        // while the const is `false`.
+                        if self.rootp_pack_active() {
+                            if let crate::tomita_frontier::ArcMergeOutcome::Merged {
+                                existing_sppf_stack,
+                                incoming_sppf_stack,
+                            } = outcome
+                            {
+                                let survivor_top = self.sppf_stack_arena.top(existing_sppf_stack);
+                                let loser_top = self.sppf_stack_arena.top(incoming_sppf_stack);
+                                if let (Some(s_top), Some(l_top)) = (survivor_top, loser_top) {
+                                    self.link_symbol_packings(s_top, l_top);
+                                }
+                            }
+                        }
                     }
                 },
             }
@@ -20817,6 +25538,700 @@ where
         }
     }
 
+    /// ROOT-P Canonical-GLL Stage A — CONDITIONAL owner-masked shallow ident of
+    /// an SPPF node (the descriptor's `w`). Mirrors [`WpdaWalker::rootp_shape_ident`]
+    /// but is INDEPENDENT of the `ROOTP_SLOT_PACKING_ENABLED` kill-switch (which
+    /// forces that helper to a fully-unmasked fallback while the const is `false`):
+    /// masks the `TriggerTerminal` owner (`owner_cat`/`owner_rule_idx` → 0) IFF the
+    /// owning rule has a leading structural trigger (a "simple send" whose reduce
+    /// recovers the trigger via `pos_match` alone — owner NOT load-bearing), and
+    /// KEEPS the owner for multi-step `@`-binders (owner load-bearing at reduce, so
+    /// masking would drop a genuine reading — red-team #1). Every non-`TriggerTerminal`
+    /// node uses the unmasked shallow ident (owner N/A).
+    #[cfg(feature = "walker-stats")]
+    fn cgll_w_cond(&self, id: crate::sppf::SppfId) -> (u8, u64, u64, u64) {
+        use crate::sppf::PosOrSynth;
+        match self.sppf.node(id) {
+            Some(crate::sppf::SppfNode::TriggerTerminal {
+                token_kind,
+                pos,
+                owner_cat,
+                owner_rule_idx,
+                ..
+            }) => {
+                let pos_u = match pos {
+                    PosOrSynth::Real(v) => (*v as u64) << 1,
+                    PosOrSynth::Synthesized(v) => ((*v as u64) << 1) | 1,
+                };
+                let kind = Self::token_kind_disc(token_kind);
+                if self
+                    .engine
+                    .rule_has_leading_structural_trigger(*owner_cat, *owner_rule_idx)
+                {
+                    (7, kind, pos_u, 0)
+                } else {
+                    (
+                        7,
+                        kind,
+                        pos_u,
+                        ((*owner_cat as u64) << 16) | (*owner_rule_idx as u64),
+                    )
+                }
+            },
+            _ => self.sppf_shallow_ident(id),
+        }
+    }
+
+    /// ROOT-P Canonical-GLL Stage A — the descriptor `w` for a cursor: the shallow
+    /// ident of the SINGLE top of its sppf_stack under mode `0`=conditional-owner-
+    /// mask, `1`=owner-unmasked, `2`=owner-masked-unconditionally. `(0,0,0,0)` when
+    /// the sppf_stack is empty (a distinct sentinel).
+    #[cfg(feature = "walker-stats")]
+    fn cgll_w_top(&self, c: &BranchCursor<W>, mode: u8) -> (u8, u64, u64, u64) {
+        match self.sppf_stack_arena.top(c.sppf_stack_id) {
+            Some(t) => match mode {
+                0 => self.cgll_w_cond(t),
+                1 => self.sppf_shallow_ident(t),
+                _ => self.sppf_shallow_ident_trigger_masked(t),
+            },
+            None => (0, 0, 0, 0),
+        }
+    }
+
+    /// ROOT-P Canonical-GLL Stage A — FxHash of one canonical-descriptor variant
+    /// for cursor `c` with a precomputed `w`. Flags select the ablation:
+    /// `include_pos` (drop for the per-position projection), `coarse_state`
+    /// (`wpda_state_class` instead of full `inner_state` — drops bp + detail),
+    /// `include_binder` (the binder-scope overlay), `include_coll` (the
+    /// collection-accumulator shape overlay: depth + per-open-slot element counts).
+    #[cfg(feature = "walker-stats")]
+    fn cgll_hash(
+        &self,
+        c: &BranchCursor<W>,
+        w: (u8, u64, u64, u64),
+        include_pos: bool,
+        coarse_state: bool,
+        include_binder: bool,
+        include_coll: bool,
+    ) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut h = rustc_hash::FxHasher::default();
+        if coarse_state {
+            (crate::walker_stats::wpda_state_class(&c.inner_state) as u64).hash(&mut h);
+        } else {
+            c.inner_state.hash(&mut h);
+        }
+        c.node.hash(&mut h);
+        if include_pos {
+            c.pos.hash(&mut h);
+        }
+        w.hash(&mut h);
+        if include_binder {
+            // Scope-stack identity: the full (depth-tag, accumulated-names) marks.
+            c.binder_scope_marks.hash(&mut h);
+        }
+        if include_coll {
+            // Open collection-accumulator SHAPE: depth + per-open-slot element
+            // counts (the grammar-relevant identity; the element SPPF ids are
+            // derivation content packed by the SPPF, not a descriptor distinction).
+            let d = c.collection_stack_depth;
+            d.hash(&mut h);
+            for v in c.sppf_collection_arena.iter().take(d as usize) {
+                (v.len() as u32).hash(&mut h);
+            }
+        }
+        h.finish()
+    }
+
+    /// ROOT-P Stage P0 — the RETURN-SLOT `u` proxy for a cursor: the canonical
+    /// GSS-by-grammar-SLOT node identity `v = (i, L_ret)` the P1/P2 core would use
+    /// as `cursor.node`, computed READ-ONLY here (the real GSS/frontier untouched):
+    ///   `i`      = `cursor.node.pos` — the callee frame's creation position (the
+    ///              position at which the shared sub-parse was entered; IDENTICAL
+    ///              for the grouping cursor G and the send-operand cursor O ⇒ the
+    ///              split must come entirely from `L_ret`).
+    ///   `L_ret`  = the caller's RETURN dotted item, derived from the SINGLE TOP
+    ///              incoming-edge (ONE level only — NOT the whole `incoming_edge_
+    ///              stack` chain, which is the EXPONENTIAL sound key): the caller
+    ///              frame `pre_node = edge_target(top)` (the frame BELOW on the
+    ///              stack = the return target; see `cursor_gss_push_with_kind`
+    ///              `add_edge_kind(new_id, predecessor, …)`), hashed as
+    ///              `(pre_node.symbol, top EdgeKind)`. `pre_node.symbol` is the
+    ///              caller's `StackSymbolV2` (RuleAt / InfixContinuation /
+    ///              GroupingMarker / CategoryEntry — position-free, matching the
+    ///              canonical slot); the top `EdgeKind` carries the wrap/source/bp
+    ///              discriminators (`wrap_cat`/`wrap_rule`/`source_src_idx`/`min_bp`).
+    ///              A cursor with NO incoming edge (root) gets a distinct sentinel.
+    /// The caller's POSITION is deliberately EXCLUDED (canonical `v=(L,i)` keys the
+    /// return node by slot + callee-start-pos; caller position lives on `u`'s edge
+    /// fan, not `v`'s identity), keeping the return-slot count grammar-bounded.
+    #[cfg(feature = "walker-stats")]
+    fn cgll_retslot_u(&self, c: &BranchCursor<W>) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut h = rustc_hash::FxHasher::default();
+        // i = callee-entry position.
+        let callee_pos = self.gss.node(c.node).map(|n| n.pos).unwrap_or(usize::MAX);
+        callee_pos.hash(&mut h);
+        // L_ret = immediate caller slot via the SINGLE TOP incoming edge.
+        match self
+            .incoming_edge_stack_arena
+            .top(c.incoming_edge_stack_id)
+        {
+            Some(edge_id) => {
+                0x01u8.hash(&mut h); // "has caller" tag (distinct from the root sentinel)
+                match self.gss.edge_target(edge_id).and_then(|p| self.gss.node(p)) {
+                    Some(pre) => pre.symbol.hash(&mut h),
+                    None => 0x02u8.hash(&mut h),
+                }
+                match self.gss.edge_kind_ref(edge_id) {
+                    Some(ek) => ek.hash(&mut h),
+                    None => 0x03u8.hash(&mut h),
+                }
+            },
+            None => {
+                // Root cursor — no caller frame. Distinct sentinel.
+                0xFFFF_FFFF_FFFF_FFFFu64.hash(&mut h);
+            },
+        }
+        h.finish()
+    }
+
+    /// ROOT-P GT-closure (B) — the BOUNDED-MULTI-LEVEL return-slot `u` proxy: like
+    /// [`Self::cgll_retslot_u`] but folds the FIRST `k` incoming edges (each
+    /// contributing `(edge_target.symbol, EdgeKind)`, identical to the single-top
+    /// arm) instead of only the top edge. `k == 1` reproduces `cgll_retslot_u`
+    /// BYTE-FOR-BYTE (the same `callee_pos` prefix, the same per-edge hash triple,
+    /// the same root sentinel when there are zero edges) — the regression check
+    /// the B measurement asserts via `k1_matches_retslot`. READ-ONLY: walks the
+    /// lazy `incoming_edge_stack` path-tree via `for_each_top_down_until` (no
+    /// materialization), mints no node, touches no frontier. Poly claim: the
+    /// number of distinct k-level return-slot ids is `O(|G|^k · n)` — polynomial
+    /// for any constant `k` (each level ranges over the grammar's caller slots).
+    #[cfg(feature = "walker-stats")]
+    fn cgll_retslot_u_klevel(&self, c: &BranchCursor<W>, k: usize) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut h = rustc_hash::FxHasher::default();
+        // i = callee-entry position (IDENTICAL prefix to `cgll_retslot_u`).
+        let callee_pos = self.gss.node(c.node).map(|n| n.pos).unwrap_or(usize::MAX);
+        callee_pos.hash(&mut h);
+        // L_ret chain = the first k incoming edges, top→root. Each edge's
+        // contribution is byte-for-byte the single-top arm of `cgll_retslot_u`
+        // (has-caller tag, caller frame symbol, top EdgeKind) so k=1 ≡ the proxy.
+        let mut count = 0usize;
+        self.incoming_edge_stack_arena
+            .for_each_top_down_until(c.incoming_edge_stack_id, |edge_id| {
+                0x01u8.hash(&mut h); // "has caller" tag
+                match self.gss.edge_target(edge_id).and_then(|p| self.gss.node(p)) {
+                    Some(pre) => pre.symbol.hash(&mut h),
+                    None => 0x02u8.hash(&mut h),
+                }
+                match self.gss.edge_kind_ref(edge_id) {
+                    Some(ek) => ek.hash(&mut h),
+                    None => 0x03u8.hash(&mut h),
+                }
+                count += 1;
+                count < k // stop once k edges have been folded
+            });
+        if count == 0 {
+            // Root cursor — no caller frame. IDENTICAL sentinel to `cgll_retslot_u`.
+            0xFFFF_FFFF_FFFF_FFFFu64.hash(&mut h);
+        }
+        h.finish()
+    }
+
+    /// ROOT-P Stage P0 — the RETURN-SLOT descriptor hash: a byte-for-byte mirror of
+    /// [`Self::cgll_hash`] EXCEPT the `u` axis is `u_retslot` (the return-slot proxy)
+    /// instead of the shared-callee `c.node`. Every other axis (L = inner_state,
+    /// i = pos, w, binder overlay, coll overlay) is IDENTICAL so a bucket-count
+    /// difference vs `u_full` is attributable PURELY to the node-identity change
+    /// (the single-variable ablation). `include_pos=false` gives the per-position
+    /// projection (C1). Overlays are always folded (like `u_full`); the Stage-A
+    /// finding is they are inert on this battery, so this equals the pure
+    /// `(L, u_retslot, i, w)` 4-tuple the plan specifies.
+    #[cfg(feature = "walker-stats")]
+    fn cgll_hash_retslot(
+        &self,
+        c: &BranchCursor<W>,
+        u_retslot: u64,
+        w: (u8, u64, u64, u64),
+        include_pos: bool,
+    ) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut h = rustc_hash::FxHasher::default();
+        c.inner_state.hash(&mut h);
+        u_retslot.hash(&mut h); // ← the ONLY axis that differs from `cgll_hash`
+        if include_pos {
+            c.pos.hash(&mut h);
+        }
+        w.hash(&mut h);
+        c.binder_scope_marks.hash(&mut h);
+        let d = c.collection_stack_depth;
+        d.hash(&mut h);
+        for v in c.sppf_collection_arena.iter().take(d as usize) {
+            (v.len() as u32).hash(&mut h);
+        }
+        h.finish()
+    }
+
+    /// ROOT-P Stage P0 — the caller grammar slot `(category_src_idx,
+    /// rule_index_in_category)` of a cursor's immediate caller (top incoming
+    /// edge's target frame). VERIFICATION only: confirms which grammar rules the
+    /// return-slot split distinguishes (expected: grouping vs send). `None` for
+    /// root cursors.
+    #[cfg(feature = "walker-stats")]
+    fn cgll_caller_slot_debug(&self, c: &BranchCursor<W>) -> Option<(u16, u16)> {
+        let edge_id = self
+            .incoming_edge_stack_arena
+            .top(c.incoming_edge_stack_id)?;
+        let pre = self.gss.edge_target(edge_id).and_then(|p| self.gss.node(p))?;
+        Some((pre.symbol.category_src_idx, pre.symbol.rule_index_in_category))
+    }
+
+    /// ROOT-P Canonical-GLL Stage A — reset the per-parse shadow. Each parse uses
+    /// a fresh walker but the thread-local persists across instances on a thread,
+    /// so this is called at the parse-loop entry. No-op unless gated.
+    #[cfg(feature = "walker-stats")]
+    fn canonical_gll_shadow_reset(&self) {
+        if !canonical_gll_shadow_enabled() {
+            return;
+        }
+        CANONICAL_GLL_SHADOW.with(|s| *s.borrow_mut() = CanonicalGllShadow::default());
+    }
+
+    /// ROOT-P Canonical-GLL Stage A — project every live pre-merge cursor into the
+    /// per-parse GLOBAL add-once descriptor set(s) `U`. READ-ONLY: reads `&drained`
+    /// + GSS/SPPF/arenas, writes ONLY the gated thread-local; the real frontier is
+    /// untouched (byte-identical). Called at `merge_equivalent_cursors` entry so
+    /// `U` accumulates across ALL merge tiers of the parse (the canonical-GLL
+    /// add-once property the current engine lacks — it re-derives the same inner
+    /// sub-parse K times across K outer contexts).
+    #[cfg(feature = "walker-stats")]
+    fn canonical_gll_shadow_measure(&self, drained: &[BranchCursor<W>]) {
+        if !canonical_gll_shadow_enabled() || drained.is_empty() {
+            return;
+        }
+        use std::hash::{Hash, Hasher};
+        CANONICAL_GLL_SHADOW.with(|s| {
+            let mut s = s.borrow_mut();
+            s.merge_tiers += 1;
+            s.cursor_projections += drained.len() as u64;
+            s.peak_frontier = s.peak_frontier.max(drained.len() as u64);
+            // Full-key buckets → (distinct DEEPER masked shape-chains, distinct
+            // `u_retslot` keys, distinct caller slots). Because `h_full` fixes
+            // `c.node` (hence `callee_pos`), any variation of `h_retslot` WITHIN a
+            // bucket is PURELY the immediate-caller (L_ret) distinction — so
+            // `retslots.len() >= 2` in a bucket ⟺ ≥2 distinct immediate callers.
+            struct FullBucket {
+                shapes: std::collections::HashSet<u64>,
+                retslots: std::collections::HashSet<u64>,
+                callers: std::collections::HashSet<(u16, u16)>,
+                // ── GT-closure A+B (per-bucket separation witnesses) ───────────
+                // Within an `h_full` bucket `c.pos` is CONSTANT (pos ∈ h_full), so
+                // the pos-free hashes below count DISTINCT (u_retslot, w) combos
+                // exactly like the with-pos `retslots` set — safe to intermix.
+                /// (A) distinct OWNER-KEPT return-slot keys (w = w_unmask).
+                retslots_owner_kept: std::collections::HashSet<u64>,
+                /// (B) distinct k-level return-slot keys, index+1 = k ∈ {1,2,3,4}.
+                retslots_k: [std::collections::HashSet<u64>; 4],
+            }
+            let mut buckets: std::collections::HashMap<u64, FullBucket> =
+                std::collections::HashMap::with_capacity(drained.len());
+            // Reverse map for the OVER-MERGE soundness witness: `h_retslot` → set
+            // of `h_full` keys it covers. ≥2 ⇒ `u_retslot` merges cursors `u_full`
+            // separates (must be corroborated by `multiroot_retslot == 0`).
+            let mut rev: std::collections::HashMap<u64, std::collections::HashSet<u64>> =
+                std::collections::HashMap::with_capacity(drained.len());
+            for c in drained {
+                let w_cond = self.cgll_w_top(c, 0);
+                let w_unmask = self.cgll_w_top(c, 1);
+                let w_mask = self.cgll_w_top(c, 2);
+                let h_full = self.cgll_hash(c, w_cond, true, false, true, true);
+                s.u_full.insert(h_full);
+                let h_full_nopos = self.cgll_hash(c, w_cond, false, false, true, true);
+                s.u_full_by_pos.entry(c.pos).or_default().insert(h_full_nopos);
+                s.u_owner_unmasked
+                    .insert(self.cgll_hash(c, w_unmask, true, false, true, true));
+                s.u_maskall
+                    .insert(self.cgll_hash(c, w_mask, true, false, true, true));
+                s.u_no_binder
+                    .insert(self.cgll_hash(c, w_cond, true, false, false, true));
+                s.u_no_coll
+                    .insert(self.cgll_hash(c, w_cond, true, false, true, false));
+                s.u_no_state_detail
+                    .insert(self.cgll_hash(c, w_cond, true, true, true, true));
+                // ── ROOT-P Stage P0: the RETURN-SLOT ablation (single variable) ──
+                let u_retslot = self.cgll_retslot_u(c);
+                let h_retslot = self.cgll_hash_retslot(c, u_retslot, w_cond, true);
+                s.u_retslot.insert(h_retslot);
+                let h_retslot_nopos = self.cgll_hash_retslot(c, u_retslot, w_cond, false);
+                s.u_retslot_by_pos
+                    .entry(c.pos)
+                    .or_default()
+                    .insert(h_retslot_nopos);
+                // ── ROOT-P GT-closure (A): OWNER-KEPT return-slot descriptor ──
+                // Same P2 shape but w = w_unmask (owner UNMASKED, in scope above)
+                // instead of w_cond. Global set + per-pos projection (A-GATE) +
+                // the FULL-node owner-unmasked per-pos cross-check.
+                let h_retslot_ok = self.cgll_hash_retslot(c, u_retslot, w_unmask, false);
+                s.u_retslot_owner_kept.insert(h_retslot_ok);
+                s.u_retslot_owner_kept_by_pos
+                    .entry(c.pos)
+                    .or_default()
+                    .insert(h_retslot_ok);
+                s.u_owner_unmasked_by_pos
+                    .entry(c.pos)
+                    .or_default()
+                    .insert(self.cgll_hash(c, w_unmask, false, false, true, true));
+                // ── ROOT-P GT-closure (B): BOUNDED-MULTI-LEVEL return keys ────
+                // u_retslot_k folds the first k incoming edges (k=1 ≡ u_retslot,
+                // the regression check). Per-pos projection (B-GATE). w = w_cond
+                // (owner MASKED, isolating the u-depth axis from the A w-axis).
+                let mut h_k_nopos = [0u64; 4];
+                for k in 1usize..=4 {
+                    let u_k = self.cgll_retslot_u_klevel(c, k);
+                    let hk = self.cgll_hash_retslot(c, u_k, w_cond, false);
+                    h_k_nopos[k - 1] = hk;
+                    s.u_retslot_k_by_pos[k - 1]
+                        .entry(c.pos)
+                        .or_default()
+                        .insert(hk);
+                }
+                // Cumulative u_full → {u_retslot} (value set capped at 8; only ≥2
+                // matters for `split_buckets`). Keys ≤ |U_full| ⇒ bounded.
+                let cover = s.retslot_of_full.entry(h_full).or_default();
+                if cover.len() < 8 {
+                    cover.insert(h_retslot);
+                }
+                // Overlay-activity witnesses (rigor: confirm the overlays are
+                // non-trivial at merge tiers).
+                let cd = c.collection_stack_depth;
+                s.max_coll_depth = s.max_coll_depth.max(cd);
+                let items: u64 = c
+                    .sppf_collection_arena
+                    .iter()
+                    .take(cd as usize)
+                    .map(|v| v.len() as u64)
+                    .sum();
+                s.max_coll_items = s.max_coll_items.max(items);
+                if cd > 0 {
+                    s.proj_with_coll += 1;
+                }
+                let bd = c.binder_scope_marks.len() as u64;
+                s.max_binder_depth = s.max_binder_depth.max(bd);
+                if bd > 0 {
+                    s.proj_with_binder += 1;
+                }
+                // Full top-down conditional-masked sppf_stack shape-chain fingerprint.
+                let mut ch = rustc_hash::FxHasher::default();
+                self.sppf_stack_arena.len(c.sppf_stack_id).hash(&mut ch);
+                self.sppf_stack_arena
+                    .for_each_top_down_until(c.sppf_stack_id, |sid| {
+                        self.cgll_w_cond(sid).hash(&mut ch);
+                        true
+                    });
+                let caller = self.cgll_caller_slot_debug(c);
+                let b = buckets.entry(h_full).or_insert_with(|| FullBucket {
+                    shapes: std::collections::HashSet::new(),
+                    retslots: std::collections::HashSet::new(),
+                    callers: std::collections::HashSet::new(),
+                    retslots_owner_kept: std::collections::HashSet::new(),
+                    retslots_k: [
+                        std::collections::HashSet::new(),
+                        std::collections::HashSet::new(),
+                        std::collections::HashSet::new(),
+                        std::collections::HashSet::new(),
+                    ],
+                });
+                b.shapes.insert(ch.finish());
+                b.retslots.insert(h_retslot);
+                if let Some(cs) = caller {
+                    b.callers.insert(cs);
+                }
+                // GT-closure A+B per-bucket separation witnesses (pos-free hashes;
+                // pos is constant within an h_full bucket ⇒ distinct-count-exact).
+                b.retslots_owner_kept.insert(h_retslot_ok);
+                for k in 0..4 {
+                    b.retslots_k[k].insert(h_k_nopos[k]);
+                }
+                rev.entry(h_retslot).or_default().insert(h_full);
+            }
+            for b in buckets.values() {
+                let multishape = b.shapes.len() >= 2;
+                if multishape {
+                    s.ckey_multishape_buckets += 1;
+                    // ── GT-closure A+B: how the OWNER-KEPT key (A) and each
+                    // k-level key (B) separate the SAME multishape bucket. The
+                    // delta of `ms_split_owner_kept` vs `ms_split_by_retslot` =
+                    // the A∩B coupling probe; `ms_split_k[k-1]` reaching deep
+                    // positions at a fixed small k = the B-GO split signal.
+                    if b.retslots_owner_kept.len() >= 2 {
+                        s.ms_split_owner_kept += 1;
+                    }
+                    for k in 0..4 {
+                        if b.retslots_k[k].len() >= 2 {
+                            s.ms_split_k[k] += 1;
+                        }
+                    }
+                    if b.retslots.len() >= 2 {
+                        // u_full MERGES (one bucket) but u_retslot SEPARATES (≥2
+                        // distinct callers): the grouping G/O split — the C2 GO
+                        // signal. Record the distinct caller grammar slots.
+                        s.ms_split_by_retslot += 1;
+                        if s.split_caller_slots.len() < 64 {
+                            for cs in &b.callers {
+                                if s.split_caller_slots.len() >= 64 {
+                                    break;
+                                }
+                                s.split_caller_slots.insert(*cs);
+                            }
+                        }
+                    } else {
+                        // Multishape but ONE caller: distinct operands sharing the
+                        // same immediate caller (canonically ride GSS edges at pop;
+                        // benign, NOT the grouping split).
+                        s.ms_unsplit_by_retslot += 1;
+                    }
+                }
+            }
+            for fulls in rev.values() {
+                if fulls.len() >= 2 {
+                    s.retslot_merge_buckets += 1;
+                }
+            }
+        });
+    }
+
+    /// ROOT-P Canonical-GLL Stage A — at EOI resolution, cross-check the shadow
+    /// key's SOUNDNESS against the baseline reading set and DUMP the verdict
+    /// numbers. READ-ONLY (realizes the REAL, unchanged SPPF; the frontier is
+    /// untouched). Called once per parse after `accepting` is built + sorted.
+    ///
+    /// Reading soundness (realize-light, exact under the content-canonical SPPF):
+    /// distinct accept roots have distinct content ⇒ distinct reading-sets, and
+    /// `w` carries the goal Symbol's `(nt,lo,hi)` ⇒ the canonical key never
+    /// co-locates two distinct accept roots (`multiroot_full == 0` ⇒ NO
+    /// accept-level reading drop; gain is impossible since survivors ⊆ real accept
+    /// roots). `readings_lim1` mirrors the resolve multi-arm (one term per accept
+    /// cursor) == the external baseline count; `readings_allpack` = Σ over distinct
+    /// roots of |realize(root)| (all packings). The `maskall` variant's
+    /// `multiroot_maskall` is the too-coarse tripwire.
+    #[cfg(feature = "walker-stats")]
+    fn canonical_gll_shadow_finish(&self, accepting: &[EoiCursorCandidate<W>])
+    where
+        W: StarSemiringRef,
+    {
+        if !canonical_gll_shadow_enabled() {
+            return;
+        }
+        // Group accept cursors by canonical key (full + maskall); collect the
+        // distinct accept roots per key.
+        let mut roots_full: std::collections::HashMap<
+            u64,
+            std::collections::HashSet<crate::sppf::SppfId>,
+        > = std::collections::HashMap::new();
+        let mut roots_maskall: std::collections::HashMap<
+            u64,
+            std::collections::HashSet<crate::sppf::SppfId>,
+        > = std::collections::HashMap::new();
+        // ROOT-P Stage P0 accept-level retslot buckets (over-merge soundness at
+        // accept: `multiroot_retslot` must be 0 = the return-slot key never
+        // co-locates two DISTINCT accept roots — mirror of `multiroot_full`).
+        let mut roots_retslot: std::collections::HashMap<
+            u64,
+            std::collections::HashSet<crate::sppf::SppfId>,
+        > = std::collections::HashMap::new();
+        let mut distinct_roots: std::collections::HashSet<crate::sppf::SppfId> =
+            std::collections::HashSet::new();
+        let mut readings_lim1: usize = 0;
+        for cand in accepting {
+            let c = &cand.cursor;
+            let root = cand.root;
+            let w_cond = self.cgll_w_top(c, 0);
+            let w_mask = self.cgll_w_top(c, 2);
+            let h_full = self.cgll_hash(c, w_cond, true, false, true, true);
+            let h_mask = self.cgll_hash(c, w_mask, true, false, true, true);
+            let u_retslot = self.cgll_retslot_u(c);
+            let h_retslot = self.cgll_hash_retslot(c, u_retslot, w_cond, true);
+            roots_full.entry(h_full).or_default().insert(root);
+            roots_maskall.entry(h_mask).or_default().insert(root);
+            roots_retslot.entry(h_retslot).or_default().insert(root);
+            distinct_roots.insert(root);
+            if root != crate::sppf::SPPF_ID_NONE
+                && !self.realize_root_to_terms(root, Some(1)).is_empty()
+            {
+                readings_lim1 += 1;
+            }
+        }
+        // All-packings reading count over the distinct accept roots (cap well
+        // above any battery count; the lazy path bounds a pathological realize).
+        let readings_allpack: usize = distinct_roots
+            .iter()
+            .filter(|&&r| r != crate::sppf::SPPF_ID_NONE)
+            .map(|&r| self.realize_root_to_terms(r, Some(65536)).len())
+            .sum();
+        let n_ckeys_full = roots_full.len();
+        let n_ckeys_maskall = roots_maskall.len();
+        let n_ckeys_retslot = roots_retslot.len();
+        let multiroot_full = roots_full.values().filter(|s| s.len() >= 2).count();
+        let multiroot_maskall = roots_maskall.values().filter(|s| s.len() >= 2).count();
+        let multiroot_retslot = roots_retslot.values().filter(|s| s.len() >= 2).count();
+
+        CANONICAL_GLL_SHADOW.with(|s| {
+            let s = s.borrow();
+            let max_u_per_pos = s.u_full_by_pos.values().map(|p| p.len()).max().unwrap_or(0);
+            eprintln!(
+                "CGLL-SHADOW tiers={} cursor_projections={} peak_frontier={} \
+                 |U_full|={} maxU_per_pos={} n_positions={} ckey_multishape_buckets={}",
+                s.merge_tiers,
+                s.cursor_projections,
+                s.peak_frontier,
+                s.u_full.len(),
+                max_u_per_pos,
+                s.u_full_by_pos.len(),
+                s.ckey_multishape_buckets,
+            );
+            eprintln!(
+                "CGLL-ABLATE |U_full|={} |U_owner_unmasked|={} |U_maskall|={} \
+                 |U_no_binder|={} |U_no_coll|={} |U_no_state_detail|={}",
+                s.u_full.len(),
+                s.u_owner_unmasked.len(),
+                s.u_maskall.len(),
+                s.u_no_binder.len(),
+                s.u_no_coll.len(),
+                s.u_no_state_detail.len(),
+            );
+            eprintln!(
+                "CGLL-OVERLAY max_coll_depth={} max_coll_items={} proj_with_coll={} \
+                 max_binder_depth={} proj_with_binder={}",
+                s.max_coll_depth,
+                s.max_coll_items,
+                s.proj_with_coll,
+                s.max_binder_depth,
+                s.proj_with_binder,
+            );
+            // ── ROOT-P Stage P0 RETURN-SLOT verdict lines ──────────────────────
+            // C1 (POLY): `maxU_retslot_per_pos` must PLATEAU across deep-@ d1-4
+            //   (like `u_full`); super-poly ⇒ HALT. `split_buckets` = # `u_full`
+            //   descriptors the return-slot key SEPARATES into ≥2 (add-once).
+            let max_u_retslot_per_pos =
+                s.u_retslot_by_pos.values().map(|p| p.len()).max().unwrap_or(0);
+            let split_buckets =
+                s.retslot_of_full.values().filter(|v| v.len() >= 2).count();
+            eprintln!(
+                "CGLL-RETSLOT |U_full|={} |U_retslot|={} maxU_full_per_pos={} \
+                 maxU_retslot_per_pos={} n_positions={} split_buckets={} \
+                 retslot_merge_buckets={}",
+                s.u_full.len(),
+                s.u_retslot.len(),
+                s.u_full_by_pos.values().map(|p| p.len()).max().unwrap_or(0),
+                max_u_retslot_per_pos,
+                s.u_retslot_by_pos.len(),
+                split_buckets,
+                s.retslot_merge_buckets,
+            );
+            // C2 (SPLITS G/O): among MULTISHAPE `u_full` buckets (≥2 distinct
+            //   deeper operands the poly key co-locates), how many does the
+            //   return-slot key SEPARATE by caller (`ms_split`, the grouping G/O
+            //   split) vs leave merged under one caller (`ms_unsplit`, benign
+            //   edge-recoverable). `split_caller_slots` = the grammar (cat,rule)
+            //   pairs distinguished — must be grouping-vs-send, not CF-core.
+            let mut caller_slots: Vec<(u16, u16)> = s.split_caller_slots.iter().copied().collect();
+            caller_slots.sort_unstable();
+            eprintln!(
+                "CGLL-RETSLOT-C2 ckey_multishape_buckets={} ms_split_by_retslot={} \
+                 ms_unsplit_by_retslot={} split_caller_slots={:?}",
+                s.ckey_multishape_buckets,
+                s.ms_split_by_retslot,
+                s.ms_unsplit_by_retslot,
+                caller_slots,
+            );
+            // ── ROOT-P GT-closure (A) OWNER-KEPT verdict line ──────────────────
+            // A-GATE: `maxU_retslot_owner_kept_per_pos` must PLATEAU across d1→d4
+            //   (bounded × over `maxU_retslot_per_pos` = KEEP owner). Geometric
+            //   growth (682× signature) ⇒ owner COMPOUNDS ⇒ must stay masked.
+            //   `ms_split_owner_kept` − `ms_split_by_retslot` = the A∩B coupling
+            //   probe (does owner-keep at k=1 reach deeper grouping buckets?).
+            let max_u_retslot_owner_kept_per_pos = s
+                .u_retslot_owner_kept_by_pos
+                .values()
+                .map(|p| p.len())
+                .max()
+                .unwrap_or(0);
+            let max_u_owner_unmasked_per_pos = s
+                .u_owner_unmasked_by_pos
+                .values()
+                .map(|p| p.len())
+                .max()
+                .unwrap_or(0);
+            eprintln!(
+                "CGLL-ABLATE-A |U_retslot|={} |U_retslot_owner_kept|={} \
+                 maxU_retslot_per_pos={} maxU_retslot_owner_kept_per_pos={} \
+                 |U_owner_unmasked|={} maxU_owner_unmasked_per_pos={} \
+                 maxU_full_per_pos={} ms_split_by_retslot={} ms_split_owner_kept={}",
+                s.u_retslot.len(),
+                s.u_retslot_owner_kept.len(),
+                max_u_retslot_per_pos,
+                max_u_retslot_owner_kept_per_pos,
+                s.u_owner_unmasked.len(),
+                max_u_owner_unmasked_per_pos,
+                max_u_per_pos,
+                s.ms_split_by_retslot,
+                s.ms_split_owner_kept,
+            );
+            // ── ROOT-P GT-closure (B) BOUNDED-MULTI-LEVEL verdict line ─────────
+            // B-GATE: a FIXED small k whose `maxU_k_per_pos` PLATEAUS across depth
+            //   AND whose `ms_split_k` reaches deep grouping positions. k=1 MUST
+            //   equal the single-level retslot map (`k1_matches_retslot=true`).
+            let max_u_k_per_pos: [usize; 4] = std::array::from_fn(|k| {
+                s.u_retslot_k_by_pos[k].values().map(|p| p.len()).max().unwrap_or(0)
+            });
+            let k1_matches_retslot = s.u_retslot_k_by_pos[0] == s.u_retslot_by_pos;
+            eprintln!(
+                "CGLL-RETSLOT-K k1_matches_retslot={} \
+                 maxU_k1_per_pos={} maxU_k2_per_pos={} maxU_k3_per_pos={} maxU_k4_per_pos={} \
+                 ms_split_k1={} ms_split_k2={} ms_split_k3={} ms_split_k4={}",
+                k1_matches_retslot,
+                max_u_k_per_pos[0],
+                max_u_k_per_pos[1],
+                max_u_k_per_pos[2],
+                max_u_k_per_pos[3],
+                s.ms_split_k[0],
+                s.ms_split_k[1],
+                s.ms_split_k[2],
+                s.ms_split_k[3],
+            );
+        });
+        eprintln!(
+            "CGLL-READINGS n_accept={} distinct_roots={} readings_lim1={} readings_allpack={} \
+             n_ckeys_full={} multiroot_full={} n_ckeys_maskall={} multiroot_maskall={}",
+            accepting.len(),
+            distinct_roots.len(),
+            readings_lim1,
+            readings_allpack,
+            n_ckeys_full,
+            multiroot_full,
+            n_ckeys_maskall,
+            multiroot_maskall,
+        );
+        // ROOT-P Stage P0: accept-level return-slot soundness. `multiroot_retslot`
+        // must be 0 (the return-slot key never co-locates two DISTINCT accept
+        // roots ⇒ no accept-level reading DROP from the callee-symbol demotion).
+        // NOTE (read-only limit, Stage-A caveat #3): the grouping ambiguity is
+        // PACKINGS under ONE root (`distinct_roots=1`, `readings_allpack=2`) so it
+        // is NOT visible here — the C2 mid-parse split (`CGLL-RETSLOT-C2`) is the
+        // decisive metric; this line is the over-merge tripwire only.
+        eprintln!(
+            "CGLL-RETSLOT-ACCEPT n_ckeys_retslot={} multiroot_retslot={} \
+             (n_ckeys_full={} multiroot_full={} distinct_roots={} readings_allpack={})",
+            n_ckeys_retslot,
+            multiroot_retslot,
+            n_ckeys_full,
+            multiroot_full,
+            distinct_roots.len(),
+            readings_allpack,
+        );
+    }
+
     fn merge_equivalent_cursors(&mut self) {
         if self.branch_cursors.len() < 2 {
             return;
@@ -20862,6 +26277,43 @@ where
                 usize,
                 usize,
                 Option<crate::dispatch_cohort::EquivKey>,
+            ),
+            /// ROOT-P Stage 3 §B1+§B2: the SLOT `(state, node, pos,
+            /// collection_depth, cohort_origin)` PLUS the pop-routing edge pair
+            /// `(incoming_edge, incoming_edge_stack)` PLUS a `shape_fp`
+            /// (`rootp_shape_fp` — a `u64` hash of the top-down,
+            /// conditionally-owner-masked `rootp_shape_ident` chain).
+            ///
+            /// Relative to `Fine(key)` it DROPS both the SPPF axis
+            /// (`sppf_top`/`sppf_stack`, replaced by the coarser masked
+            /// `shape_fp`) AND the four lex-Fork provenance axes
+            /// (`lex_alt_idx`/`weight_src_idx`/`weight_rule_idx`/`lex_fork_stamp`
+            /// — the "lex→weight lowering"). This is required for delivery: the
+            /// @-trigger-owner multiplicity that drives the exponential is
+            /// CORRELATED with `weight_rule_idx` (the send rule), so masking the
+            /// owner in `shape_fp` collapses nothing unless the lex axes are also
+            /// dropped. Genuine multi-readings (calc `1+2*3`; rhocalc genuine
+            /// ambiguity) survive because they differ in SHAPE — `shape_fp`
+            /// (kept) buckets them apart and the Occupied-arm full
+            /// `rootp_shape_chain` recheck confirms it (L-SHAPE).
+            ///
+            /// It KEEPS `incoming_edge` + `incoming_edge_stack`: the non-CF
+            /// pop-routing / binder-scope continuation. Dropping THOSE is Stage 4
+            /// (`rootp_slot_edge`, gated on red-team #2, left OFF) — dropping them
+            /// prematurely broke the parse (`@Nil!(@(@Nil)!())` → no accepting
+            /// branch). Equivalently: `SlotEdge` + the masked `shape_fp`.
+            ///
+            /// Distinct from `Slot`/`SlotEdge` (the recognizer's lossy
+            /// coarsenings, no shape axis) so the variants never share a bucket.
+            RootpSlot(
+                WpdaState,
+                crate::gss::GssNodeId,
+                usize,
+                Option<crate::gss::GssEdgeId>,
+                crate::edge_stack_arena::EdgeStackId,
+                usize,
+                Option<crate::dispatch_cohort::EquivKey>,
+                u64,
             ),
             /// LITERAL: `(state_class, node_class, pos, collection_depth, bp_floor)`.
             Literal(usize, crate::gss::NodeClass, usize, usize, Option<u8>),
@@ -20909,6 +26361,21 @@ where
         // store. Activated per-parse via gll_recog::reset(true).
         #[cfg(feature = "walker-stats")]
         self.gll_recog_measure(&drained);
+        // ★ ROOT-P Stage 0 SLOT-surface content probe (2026-07-08). Byte-
+        // identical: reads `&drained` + SPPF arenas, writes only the gated
+        // GRIND_SPPF_CONTENT_TALLY thread-local. Groups the pre-merge frontier
+        // by GLL SLOT and classifies all same-SLOT sppf_stack pairs — the
+        // ACTUAL merge surface the redesign changes (vs the TomitaKey surface
+        // measured by grind_sppf_content_check, which retains edge fields).
+        #[cfg(feature = "walker-stats")]
+        self.grind_slot_bucket_check(&drained);
+        // ★ ROOT-P Canonical-GLL Stage A SHADOW (2026-07-09). READ-ONLY: projects
+        // each pre-merge cursor into the per-parse GLOBAL add-once descriptor set
+        // `U` keyed by the canonical 4-tuple + faithful non-CF overlays. Writes
+        // only the gated CANONICAL_GLL_SHADOW thread-local. Gated
+        // `PRATTAIL_CANONICAL_GLL_SHADOW=1`; byte-identical otherwise.
+        #[cfg(feature = "walker-stats")]
+        self.canonical_gll_shadow_measure(&drained);
         for cursor in drained {
             let key = ConfigKey {
                 state: cursor.inner_state.clone(),
@@ -20983,7 +26450,85 @@ where
             // (`recognizer_mode=false` + `recog::Off`) ⇒ `Fine(key)`, exactly
             // the pre-recognizer code (byte-identical).
             #[cfg(feature = "walker-stats")]
-            let mkey = if self.recognizer_mode {
+            let mkey = if self.rootp_stage4a_active() {
+                // ── ROOT-P Stage 4a READ-ONLY differential ─────────────────
+                // A RootpSlot merge key whose ONLY per-arm variation is the
+                // pop-routing edge pair. Reuses the Stage 2/3 sppf/lex masking
+                // (`rootp_shape_fp`) + packing-link + full shape recheck
+                // (enabled below via `rootp_stage4a_active()`). This path is
+                // reachable ONLY under `--features walker-stats` with
+                // `PRATTAIL_ROOTP_STAGE4A_ARM` set; the const stays `false`.
+                let arm = Self::rootp_stage4a_arm();
+                let cat = self.gss.node(cursor.node).map(|nd| nd.symbol.category_src_idx);
+                let scoped = cat
+                    .map(|c| self.engine.category_is_binder_scoped(c))
+                    .unwrap_or(true);
+                let scope_live = !cursor.binder_scope_marks.is_empty();
+                let not_in_keep = cat
+                    .map(|c| !Self::rootp_stage4a_keep_cats().contains(&c))
+                    .unwrap_or(false);
+                let drop_edge = match arm {
+                    2 => !scoped && !scope_live, // emitted predicate ∧ dynamic guard
+                    3 => true,                   // unconditional control
+                    4 => !scope_live,            // pure dynamic is_empty() guard
+                    5 => not_in_keep,            // pure hand-tightened keep-set (no dyn guard)
+                    6 => not_in_keep && !scope_live, // tight keep-set ∧ dynamic guard (correct design)
+                    _ => false,                  // arm 1: edge kept
+                };
+                let (e_edge, e_stack) = if drop_edge {
+                    (None, crate::edge_stack_arena::EDGE_STACK_ID_ROOT)
+                } else {
+                    (key.incoming_edge, key.incoming_edge_stack)
+                };
+                MergeKey::RootpSlot(
+                    key.state.clone(),
+                    key.node,
+                    key.pos,
+                    e_edge,
+                    e_stack,
+                    key.collection_depth,
+                    key.cohort_origin.clone(),
+                    self.rootp_shape_fp(cursor.sppf_stack_id),
+                )
+            } else if self.rootp_slot_sppf_active() {
+                // ROOT-P Stage 3 §B1+§B2: SLOT + edge pair + masked `shape_fp`.
+                // Drops the sppf axis AND the lex axes. Checked FIRST (the
+                // redesign supersedes the dormant recognizer coarsening). Dead
+                // code while ROOTP_SLOT_PACKING_ENABLED is `false`.
+                //
+                // ★ ROOT-P Stage 4b (2026-07-08): conditional edge-drop. When
+                // the Stage-4 edge-drop is live (`rootp_slot_edge_active`) AND no
+                // binder scope is open on this cursor
+                // (`binder_scope_marks.is_empty()`), substitute the
+                // (None, EDGE_STACK_ID_ROOT) sentinel for the pop-routing edge
+                // pair so edge-distinct-but-otherwise-equal cursors COLLAPSE (the
+                // ~38×/level deep-@ exponential axis; Stage-4a arm 4 measured
+                // this collapse to the poly floor 22/159/356/583 preserving
+                // 2/2/2/4). The severed pop-target reconnection is recovered by
+                // the coupled Stage-4c exact pop fan-out (Pop / ConsumeAndPop).
+                // No `collection_stack_depth` over-guard: send args ARE
+                // collections, so guarding on depth would disable the collapse
+                // for sends — 4c handles collection / wrapped-body reconnection.
+                // Otherwise (edge KEPT) this is byte-identical to the Stage-3
+                // RootpSlot key. `rootp_slot_edge_active` short-circuits at
+                // compile time while the const is `false`.
+                let (rootp_e_edge, rootp_e_stack) =
+                    if self.rootp_slot_edge_active() && cursor.binder_scope_marks.is_empty() {
+                        (None, crate::edge_stack_arena::EDGE_STACK_ID_ROOT)
+                    } else {
+                        (key.incoming_edge, key.incoming_edge_stack)
+                    };
+                MergeKey::RootpSlot(
+                    key.state.clone(),
+                    key.node,
+                    key.pos,
+                    rootp_e_edge,
+                    rootp_e_stack,
+                    key.collection_depth,
+                    key.cohort_origin.clone(),
+                    self.rootp_shape_fp(cursor.sppf_stack_id),
+                )
+            } else if self.recognizer_mode {
                 MergeKey::Slot(
                     key.state.clone(),
                     key.node,
@@ -21038,7 +26583,34 @@ where
                 }
             };
             #[cfg(not(feature = "walker-stats"))]
-            let mkey = if self.recognizer_mode {
+            let mkey = if self.rootp_slot_sppf_active() {
+                // ROOT-P Stage 3 §B1+§B2: SLOT + edge pair + masked `shape_fp`.
+                // Drops sppf + lex. Dead code while ROOTP_SLOT_PACKING_ENABLED is
+                // `false` (the production/committed build) — byte-identical to
+                // `Fine(key)`.
+                //
+                // ★ ROOT-P Stage 4b (2026-07-08): conditional edge-drop (see the
+                // walker-stats arm above for the full rationale). Sentinel edge
+                // when `rootp_slot_edge_active() && binder_scope_marks.is_empty()`
+                // (collapse the deep-@ edge multiplicity; reconnection via the
+                // coupled Stage-4c pop fan-out); real edge otherwise.
+                let (rootp_e_edge, rootp_e_stack) =
+                    if self.rootp_slot_edge_active() && cursor.binder_scope_marks.is_empty() {
+                        (None, crate::edge_stack_arena::EDGE_STACK_ID_ROOT)
+                    } else {
+                        (key.incoming_edge, key.incoming_edge_stack)
+                    };
+                MergeKey::RootpSlot(
+                    key.state.clone(),
+                    key.node,
+                    key.pos,
+                    rootp_e_edge,
+                    rootp_e_stack,
+                    key.collection_depth,
+                    key.cohort_origin.clone(),
+                    self.rootp_shape_fp(cursor.sppf_stack_id),
+                )
+            } else if self.recognizer_mode {
                 MergeKey::Slot(
                     key.state.clone(),
                     key.node,
@@ -21055,11 +26627,34 @@ where
                     merged.push(cursor);
                 },
                 std::collections::hash_map::Entry::Occupied(o) => {
-                    // Phase F.13 walker-stats (2026-05-20): count each
-                    // cursor collapsed by merge.
+                    let idx = *o.get();
+                    // ── ROOT-P Stage 3 §B1 REFINEMENT A: FULL structural shape
+                    //    recheck BEFORE collapsing. `MergeKey::RootpSlot` buckets
+                    //    by SLOT + a `u64` `shape_fp`; a hash COLLISION could land
+                    //    two genuinely-different-shape cursors in one bucket, and
+                    //    dropping the loser would silently lose a reading. So
+                    //    compare the ACTUAL per-level masked-ident chains; on any
+                    //    mismatch REFUSE to merge — push `cursor` as a fresh
+                    //    (un-keyed) survivor. This makes L-SHAPE hold
+                    //    UNCONDITIONALLY (a `u64` collision can never drop a
+                    //    reading — see §E rows 1/7). A pure runtime check, not a
+                    //    debug_assert. Dead code while the const is `false`.
+                    if self.rootp_slot_sppf_active() || self.rootp_stage4a_active() {
+                        let survivor_chain = self.rootp_shape_chain(merged[idx].sppf_stack_id);
+                        let cursor_chain = self.rootp_shape_chain(cursor.sppf_stack_id);
+                        if survivor_chain != cursor_chain {
+                            crate::stats_inc!(self, rootp_shape_refusals_total);
+                            merged.push(cursor);
+                            continue;
+                        }
+                    }
+                    // Phase F.13 walker-stats (2026-05-20): count each cursor
+                    // collapsed by merge. Counted AFTER the §B1 refusal check so a
+                    // refused (pushed-fresh) cursor is not miscounted as a
+                    // collapse (byte-identical order vs pre-ROOT-P when the const
+                    // is `false`: the §B1 block is DCE'd).
                     crate::stats_inc!(self, merge_collapses_total);
                     crate::stats_inc!(self, cursors_dropped_via_merge);
-                    let idx = *o.get();
                     // C8.2 (2026-05-16): the M11.5 builder-snapshot injection
                     // (capturing per-cursor builder state into weight entries
                     // for multiset-union preservation) was deleted alongside
@@ -21093,6 +26688,26 @@ where
                     // chain is the sole tiebreak.
                     let cursor_wins = weight_strict_win
                         || (weight_tied && cursor.source_priority < merged[idx].source_priority);
+                    // ── ROOT-P Stage 2 §A: link the LOSER's top packings under
+                    //    the SURVIVOR's top Symbol BEFORE the loser is discarded,
+                    //    so its derivation survives in the packed forest
+                    //    (`realize_root_to_terms` enumerates `packings_of(root)`).
+                    //    Direction follows `cursor_wins`. Idempotent, and a
+                    //    NO-OP while B1 is OFF (identical `sppf_stack_id` ⇒
+                    //    `survivor_top == loser_top` ⇒ `link_symbol_packings`
+                    //    early-returns). Dead code while the const is `false`.
+                    if self.rootp_pack_active() || self.rootp_stage4a_active() {
+                        let merged_top = self.sppf_stack_arena.top(merged[idx].sppf_stack_id);
+                        let cursor_top = self.sppf_stack_arena.top(cursor.sppf_stack_id);
+                        if let (Some(m_top), Some(c_top)) = (merged_top, cursor_top) {
+                            let (survivor_top, loser_top) = if cursor_wins {
+                                (c_top, m_top)
+                            } else {
+                                (m_top, c_top)
+                            };
+                            self.link_symbol_packings(survivor_top, loser_top);
+                        }
+                    }
                     if cursor_wins {
                         // Phase F.2 (2026-05-18): SPPF-side mirror —
                         // ConfigKey already includes collection_depth so
@@ -21783,6 +27398,8 @@ where
             // verbatim so the committed lineage's work stays attributed.
             p5_steps_own: winner.p5_steps_own,
             p5_steps_lineage: winner.p5_steps_lineage,
+            cgll_w: winner.cgll_w,
+            cgll_ret_node: winner.cgll_ret_node,
             // Phase F.3c.2 (2026-05-20): preserve winner's memo so
             // post-commit symbol lookups continue to find their realized
             // payloads. Move (not clone) — single-cursor post-commit.
@@ -22645,6 +28262,9 @@ where
                 // (parallel to realize_packing_call's filter at line 3739).
                 None
             },
+            // ROOT-P Stage E1: canonical-only Intermediate never reaches the
+            // classic arg-reconstruction path. Defensive None.
+            SppfNode::Intermediate { .. } => None,
         }
     }
 
@@ -23608,6 +29228,12 @@ where
                         Vec::new()
                     };
                     cursor.last_action_output_cat = if token_sound { output_cat } else { None };
+                    // ROOT-P Stage E1: the binarized mirror is built as a POST-PASS
+                    // over the completed classic forest (`cgll_binarize_classic_symbol`,
+                    // invoked from the resolve interception), NOT hooked per-reduce
+                    // here — a reduce can link its classic packing via several paths
+                    // (transient / packing_exists / reconciliation) and hooking only
+                    // one drops readings whose packing was built elsewhere.
                     let packing_weight =
                         std::mem::replace(&mut cursor.pending_packing_weight, W::one_ref());
                     let packing_id =
@@ -26282,6 +31908,8 @@ where
             // pre-EOI-lost residual), lineage carries the parent's ancestry.
             p5_steps_own: 0,
             p5_steps_lineage: parent.p5_steps_lineage,
+            cgll_w: parent.cgll_w,
+            cgll_ret_node: parent.cgll_ret_node,
         };
         if let Some(stamp) = lex_fork_stamp {
             // Infix-operand-seal watermark (comparison-only `Watermark`
@@ -28040,7 +33668,28 @@ where
         weight: &W,
         new_state: WpdaState,
         tokens: &dyn crate::wpda_runtime::WpdaTokenSource,
-    ) -> bool {
+        // ── ROOT-P MECHANISM-B (2026-07-09): reduce-once / push-z ────────────
+        // `None`  ⇒ CURRENT BEHAVIOR VERBATIM: this cursor's constituent reduce
+        //           FIRES (`emit_fire_action`) and builds its Symbol `z`. All
+        //           existing default / coarse / exactfan(mech-A) callers pass
+        //           `None` ⇒ byte-identical. The built `z` is RETURNED (`.1`).
+        // `Some(z)`⇒ the constituent was ALREADY reduced ONCE (by the primary
+        //           caller); its content-canonical Symbol `z` (deduped `(nt,lo,
+        //           hi)`, walker-global term) is SHARED. Do NOT re-fire (no
+        //           collect_suffix / arity / n-ary reduce — the step that
+        //           mechanism-A's edge-restore corrupted); just `intern_push` the
+        //           shared `z` onto THIS (already-restored) caller's left-context
+        //           stack (getNodeP left-fold `[…caller_ctx, z]`), then run the
+        //           REST of the function UNCHANGED (per-caller crosscat
+        //           projection, collection splice, transparent / CrossCatLhs
+        //           reentry, weight, effective_new_state). Returns `(survived, z)`.
+        prebuilt_z: Option<crate::sppf::SppfId>,
+    ) -> (bool, crate::sppf::SppfId) {
+        // The constituent Symbol `z` this pop-body produces (or the shared `z`
+        // pushed on the `Some` path). Returned to the exact-fan (mechanism-B)
+        // caller so it can push the SAME `z` onto every extra genuine caller's
+        // restored left-context (reduce-ONCE). `SPPF_ID_NONE` until built.
+        let mut built_z: crate::sppf::SppfId = prebuilt_z.unwrap_or(crate::sppf::SPPF_ID_NONE);
         // Set cursor's GSS top to the predecessor (or sentinel).
         cursor.node = pred_id;
         if self.deterministic {
@@ -28140,12 +33789,41 @@ where
                         | SymbolKind::MixfixMarker
                 )
             {
-                self.apply_crosscat_projection_completion_weight(
-                    cursor,
-                    popped_edge_kind,
-                    Some(symbol),
-                );
-                self.emit_fire_action(cursor, symbol, tokens);
+                match prebuilt_z {
+                    None => {
+                        // Current behavior VERBATIM: fire the constituent reduce.
+                        self.apply_crosscat_projection_completion_weight(
+                            cursor,
+                            popped_edge_kind,
+                            Some(symbol),
+                        );
+                        self.emit_fire_action(cursor, symbol, tokens);
+                        // ── ROOT-P MECHANISM-B: capture the just-built constituent
+                        // Symbol `z` = the id `emit_fire_action` interned + pushed —
+                        // read BEFORE the caller-side collection splice / reentry
+                        // below can wrap the stack top (why the exact-fan surgery
+                        // does NOT read the post-splice top). `SPPF_ID_NONE` if the
+                        // fire elided (arity-mismatch → cursor already errored).
+                        built_z = self
+                            .sppf_stack_arena
+                            .top(cursor.sppf_stack_id)
+                            .unwrap_or(crate::sppf::SPPF_ID_NONE);
+                    },
+                    Some(z) => {
+                        // ── ROOT-P MECHANISM-B reduce-once / push-z ──────────────
+                        // The constituent was reduced ONCE by the primary caller;
+                        // its shared Symbol `z` is interned walker-global. Skip the
+                        // fire (and its cross-cat completion weight — already applied
+                        // by the primary): just push `z` onto this (restored)
+                        // caller's left-context stack. The children live INSIDE `z`
+                        // (never re-collected), so there is no arity mismatch and no
+                        // wrong-left-context prefix — the defect that made
+                        // mechanism-A's edge-restore over-generate (`-3!`→3, grp-d2→3).
+                        cursor.sppf_stack_id =
+                            self.sppf_stack_arena.intern_push(cursor.sppf_stack_id, z);
+                        built_z = z;
+                    },
+                }
             }
         }
         let mut transparent_reentry_error: Option<String> = None;
@@ -28531,7 +34209,7 @@ where
                                                     pred_slot_idx,
                                                 ),
                                             };
-                                            return false;
+                                            return (false, built_z);
                                         },
                                     }
                                 }
@@ -28913,7 +34591,7 @@ where
                         expected_cat, produced_text
                     );
                     self.set_cursor_inner_state(cursor, WpdaState::Error { message });
-                    return false;
+                    return (false, built_z);
                 }
             }
         }
@@ -28949,7 +34627,7 @@ where
                         expected_cat, produced_text
                     );
                     self.set_cursor_inner_state(cursor, WpdaState::Error { message });
-                    return false;
+                    return (false, built_z);
                 }
             }
         }
@@ -29040,7 +34718,7 @@ where
         if !cursor.inner_state.is_terminal() {
             self.set_cursor_inner_state(cursor, resolved_new_state);
         }
-        true
+        (true, built_z)
     }
 
     /// Stage 3.12.6 (2026-05-02): single-predecessor pop guided by the
@@ -30605,7 +36283,8 @@ mod tests {
             &LexicographicWeight::one(),
             WpdaState::GroupingClosePreservingInner { inner_cat_src_idx: u16::MAX },
             &empty_tokens(),
-        );
+            None,
+        ).0;
         assert!(pop_ok);
 
         assert_eq!(

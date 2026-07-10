@@ -112,6 +112,37 @@ use crate::sppf_stack_arena::StackId;
 use crate::wpda_runtime::WpdaState;
 use crate::wpda_walker::{BranchCursor, BuilderDelta, LexForkStamp, PackedDispatchConfig};
 
+/// ROOT-P Stage 2 §C — outcome of [`TomitaFrontierMap::register_arc_with_aggregation`].
+///
+/// The frontier map does NOT own the SPPF (it holds only `StackId` handles), so
+/// it cannot itself link packings. Instead it reports whether the incoming arc
+/// was ⊕-absorbed into an existing arc (`Merged`, carrying both arcs'
+/// `sppf_stack_id`s) or pushed as a fresh arc (`Pushed`). The CALLER (a walker
+/// method that owns both `self.sppf` and `self.sppf_stack_arena`) resolves the
+/// two stack tops and, when ROOT-P packing is active, links the incoming arc's
+/// top packings under the existing arc's top via the same
+/// `WpdaWalker::link_symbol_packings` helper as §A — keeping this map
+/// SPPF-agnostic. See the redesign spec §C.
+///
+/// **No-op-until-Stage-4 property.** The arc merge predicate still includes
+/// `sppf_stack_id` (Tomita `merge_disambiguator` position `.0`), so a `Merged`
+/// outcome only ever pairs arcs with the IDENTICAL `sppf_stack_id` ⇒ identical
+/// top Symbol ⇒ the caller's link early-returns. The machinery is installed but
+/// inert through Stages 2-3 (symmetric with §A's dormant-until-B1 property).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ArcMergeOutcome {
+    /// The incoming arc was ⊕-absorbed into an existing arc at this key. The
+    /// caller links `incoming_sppf_stack`'s top packings under
+    /// `existing_sppf_stack`'s top (survivor = existing).
+    Merged {
+        existing_sppf_stack: StackId,
+        incoming_sppf_stack: StackId,
+    },
+    /// The incoming arc was pushed as a new arc (fresh key or no disambiguator
+    /// match). No packing link is needed.
+    Pushed,
+}
+
 /// Tomita-merge key for the walker-global frontier merge map.
 ///
 /// Coarsening of the current `ConfigKey` 11-tuple (see
@@ -320,6 +351,30 @@ pub struct FrontierArc<W: SemiringRef> {
     /// lineage MAXes) — see that method.
     pub p5_steps_own: u32,
     pub p5_steps_lineage: u32,
+    // ── ROOT-P Stage 3 §B1 ARC-LEVEL SLOT merge (the delivery fix, 2026-07-08) ──
+    /// Masked shape fingerprint (`WpdaWalker::rootp_shape_fp`) of this arc's
+    /// `sppf_stack`, precomputed at the ingest CALL SITE (the frontier map is
+    /// SPPF-agnostic — it holds only `StackId` handles, so it cannot walk the
+    /// SPPF itself). `None` unless `rootp_slot_sppf_active()` at construction.
+    /// The FAST-PATH bucket discriminant for the RootpSlot arc-merge — see the
+    /// `rootp_slot_active` arm of [`TomitaFrontierMap::register_arc_with_aggregation`].
+    /// Dropping the per-arc `sppf_stack_id` + lex-provenance triple from the arc
+    /// merge key and replacing them with this masked `shape_fp` is what mirrors
+    /// the cursor-level `MergeKey::RootpSlot` so the transient arc fan-out
+    /// COLLAPSES AT REGISTRATION (during `step_fanout`) instead of ballooning
+    /// exponentially and only being merged post-hoc at `merge_equivalent_cursors`.
+    pub rootp_shape_fp: Option<u64>,
+    /// FULL top-down conditionally-owner-masked ident chain
+    /// (`WpdaWalker::rootp_shape_chain`) of this arc's `sppf_stack`, for the
+    /// collision-proof structural RECHECK (REFINEMENT A): a `shape_fp` `u64` hash
+    /// collision could otherwise land two genuinely-different-shape arcs in one
+    /// bucket and silently drop a reading on the ⊕-absorb. Comparing the actual
+    /// per-level chains makes L-SHAPE hold UNCONDITIONALLY (mirrors the
+    /// cursor-level `rootp_shape_chain` recheck at `merge_equivalent_cursors`).
+    /// `Arc`-shared so the merge-search comparison clones O(1); `Arc<Vec<T>>`
+    /// `PartialEq` short-circuits on pointer identity (`T: Eq`) before the
+    /// element-wise compare. `None` unless `rootp_slot_sppf_active()`.
+    pub rootp_shape_chain: Option<Arc<Vec<(u8, u64, u64, u64)>>>,
 }
 
 impl<W: SemiringRef + Clone> FrontierArc<W> {
@@ -384,6 +439,12 @@ impl<W: SemiringRef + Clone> FrontierArc<W> {
             // EP-P5: explicit-args test constructor — no steps yet.
             p5_steps_own: 0,
             p5_steps_lineage: 0,
+            // ROOT-P Stage 3 §B1: the explicit-args test constructor never runs
+            // under `rootp_slot_sppf_active`; the real shape fp/chain are set at
+            // the ingest call site. Defaulting to `None` keeps the `new` arity
+            // stable (test call sites unchanged).
+            rootp_shape_fp: None,
+            rootp_shape_chain: None,
         }
     }
 
@@ -468,6 +529,13 @@ impl<W: SemiringRef + Clone + LexProvenance> FrontierArc<W> {
             // EP-P5: capture the cursor's step counters for the round-trip.
             p5_steps_own: cursor.p5_steps_own,
             p5_steps_lineage: cursor.p5_steps_lineage,
+            // ROOT-P Stage 3 §B1: the shape fp/chain need the walker's SPPF +
+            // engine (owner-mask gate) + rootp_mode, which `from_cursor` does not
+            // have. The ingest call site (`step_fanout`) sets them immediately
+            // after this constructor when `rootp_slot_sppf_active()`. `None` here
+            // ⇒ byte-identical when the redesign is OFF.
+            rootp_shape_fp: None,
+            rootp_shape_chain: None,
         }
     }
 }
@@ -524,6 +592,10 @@ pub fn materialize_branch_cursor_from_arc<W: SemiringRef + Clone>(
         // EP-P5: restore the per-arc step counters.
         p5_steps_own: arc.p5_steps_own,
         p5_steps_lineage: arc.p5_steps_lineage,
+        // ROOT-P Stage E1: the Tomita frontier round-trip is CLASSIC-only (the
+        // canonical worklist bypasses it); the binarized `w` starts empty.
+        cgll_w: crate::sppf::SPPF_ID_NONE,
+        cgll_ret_node: crate::gss::GSS_NODE_NONE,
     }
 }
 
@@ -624,6 +696,14 @@ pub struct TomitaFrontierMap<W: SemiringRef> {
     total_registrations: u64,
     /// Total dedup hits (an arc landed on an existing TomitaKey).
     dedup_hits: u64,
+    /// ROOT-P Stage 3 §B1 (2026-07-08): arc ⊕-absorptions that fired under the
+    /// RootpSlot arc-merge predicate (SLOT + masked `shape_fp` + full chain
+    /// recheck), i.e. collapses that would NOT have happened under the strict
+    /// `merge_disambiguator` (distinct `sppf_stack_id`/lex). The crisp
+    /// arc-level DELIVERY signal: `> 0` ⇒ the transient fan-out is collapsing at
+    /// registration. Always `0` while `rootp_slot_sppf_active()` is off
+    /// (byte-identical committed build).
+    rootp_slot_merges: u64,
 }
 
 impl<W: SemiringRef> Default for TomitaFrontierMap<W> {
@@ -641,6 +721,7 @@ impl<W: SemiringRef> TomitaFrontierMap<W> {
             next_insertion_stamp: 0,
             total_registrations: 0,
             dedup_hits: 0,
+            rootp_slot_merges: 0,
         }
     }
 
@@ -651,6 +732,7 @@ impl<W: SemiringRef> TomitaFrontierMap<W> {
         self.next_insertion_stamp = 0;
         self.total_registrations = 0;
         self.dedup_hits = 0;
+        self.rootp_slot_merges = 0;
     }
 
     /// Begin the next step generation. Frontier nodes whose generation
@@ -710,8 +792,11 @@ impl<W: SemiringRef> TomitaFrontierMap<W> {
     /// the new arc's weight into the existing arc via `LexicographicWeight::plus`
     /// (= lex-min under idempotent semiring); otherwise push as a new arc.
     ///
-    /// Returns the post-insert arc-count of the frontier node at this
-    /// key.
+    /// Returns `(post-insert arc-count, outcome)`. The [`ArcMergeOutcome`] tells
+    /// the caller whether the incoming arc was ⊕-absorbed (`Merged`, carrying
+    /// both arcs' `sppf_stack_id`s so the caller can link packings — ROOT-P
+    /// Stage 2 §C) or pushed fresh (`Pushed`). The arc-count half is unchanged
+    /// from the pre-ROOT-P contract (all current callers ignore it).
     ///
     /// **Soundness**: arcs that merge under this aggregation have
     /// identical per-arc state (Arc::ptr_eq on all 6 heavy fields) so
@@ -723,7 +808,16 @@ impl<W: SemiringRef> TomitaFrontierMap<W> {
         key: TomitaKey,
         shell_if_new: TomitaShell<W>,
         arc: FrontierArc<W>,
-    ) -> usize {
+        // ROOT-P Stage 3 §B1 (2026-07-08): when `true` (the walker's
+        // `rootp_slot_sppf_active()`), the within-bucket arc-merge search uses the
+        // RootpSlot criterion (cohort_origin + masked `shape_fp` + full chain
+        // recheck, all precomputed on the arc at the ingest call site) instead of
+        // the strict `merge_disambiguator` + heavy-field gates. The walker owns
+        // the SPPF, so it precomputes `arc.rootp_shape_fp`/`rootp_shape_chain` and
+        // passes this flag; the map itself stays SPPF-agnostic. `false` ⇒
+        // byte-identical committed behavior.
+        rootp_slot_active: bool,
+    ) -> (usize, ArcMergeOutcome) {
         self.total_registrations = self.total_registrations.saturating_add(1);
         let gen = self.current_generation;
         match self.map.get_mut(&key) {
@@ -733,6 +827,38 @@ impl<W: SemiringRef> TomitaFrontierMap<W> {
                 // AND matching heavy-field Arc identities. If found,
                 // ⊕-aggregate the new arc's weight in place.
                 if let Some(idx) = node.arcs.iter().position(|existing| {
+                    // ── ROOT-P Stage 3 §B1 (2026-07-08) — ARC-LEVEL SLOT merge:
+                    //    the delivery fix. When active, the merge criterion is the
+                    //    RootpSlot key — the SAME criterion as the cursor-level
+                    //    `MergeKey::RootpSlot` at `merge_equivalent_cursors`. The
+                    //    enclosing `TomitaKey` bucket already fixes (state, node,
+                    //    pos, incoming_edge_top, incoming_edge_stack,
+                    //    collection_depth); within the bucket we merge on:
+                    //      • cohort_origin (EquivKey-quotiented, matching the SLOT),
+                    //      • the masked `shape_fp` (fast u64 pre-filter), AND
+                    //      • the FULL masked-ident chain (REFINEMENT A —
+                    //        `Arc<Vec<_>>` eq short-circuits on ptr identity then
+                    //        compares element-wise, so a `shape_fp` u64 collision
+                    //        can NEVER ⊕-absorb two different-shape arcs and drop a
+                    //        reading; L-SHAPE holds unconditionally).
+                    //    This DROPS the per-arc `sppf_stack_id` + incoming-edge +
+                    //    lex-provenance triple + fork stamp AND the heavy-field
+                    //    ptr_eq gates below — EXACTLY the axes the cursor RootpSlot
+                    //    merge drops (`ConfigKey` excludes them), so the two tiers
+                    //    apply an IDENTICAL merge criterion (the arc tier is a
+                    //    faithful early application of the cursor tier ⇒ soundness
+                    //    is that of the already-validated cursor RootpSlot merge;
+                    //    the ⊕-absorbed loser's derivation is retained via the §C
+                    //    packing-link at the call site). Collapses the transient
+                    //    fan-out to the polynomial floor DURING `step_fanout`
+                    //    instead of post-hoc at `merge_equivalent_cursors`. Dead
+                    //    while the const is `false` (`rootp_slot_active == false`).
+                    if rootp_slot_active {
+                        return existing.cohort_origin.as_ref().map(|k| k.equiv())
+                            == arc.cohort_origin.as_ref().map(|k| k.equiv())
+                            && existing.rootp_shape_fp == arc.rootp_shape_fp
+                            && existing.rootp_shape_chain == arc.rootp_shape_chain;
+                    }
                     // WALK-S1 (2026-05-28): evaluate all O(1) Arc::ptr_eq
                     // discriminants FIRST so the two O(set-size) `im::OrdSet`
                     // structural compares (visited_dispatch/visited_recovery)
@@ -808,6 +934,13 @@ impl<W: SemiringRef> TomitaFrontierMap<W> {
                 }) {
                     // Aggregate weight: existing.weight ← existing.weight ⊕ arc.weight.
                     let existing = &mut node.arcs[idx];
+                    // ROOT-P Stage 2 §C: capture the survivor (existing) stack
+                    // handle so the caller can link the incoming arc's packings
+                    // under it. `sppf_stack_id` is `Copy` and is never mutated by
+                    // the ⊕-fold below. No-op through Stages 2-3: the merge
+                    // predicate keeps `sppf_stack_id` (disambiguator `.0`), so
+                    // `existing_sppf_stack == arc.sppf_stack_id` here.
+                    let existing_sppf_stack = existing.sppf_stack_id;
                     let merged_weight = existing.weight.plus_ref(&arc.weight);
                     existing.weight = merged_weight;
                     let merged_pending = existing
@@ -822,8 +955,22 @@ impl<W: SemiringRef> TomitaFrontierMap<W> {
                     existing.p5_steps_own = existing.p5_steps_own.saturating_add(arc.p5_steps_own);
                     existing.p5_steps_lineage = existing.p5_steps_lineage.max(arc.p5_steps_lineage);
                     self.dedup_hits = self.dedup_hits.saturating_add(1);
+                    // ROOT-P Stage 3 §B1 delivery signal: this ⊕-absorption fired
+                    // under the RootpSlot arc-merge (distinct sppf_stack/lex arcs
+                    // collapsing at registration). Disjoint-field write — same
+                    // pattern as the `dedup_hits` line above (both mutate a field
+                    // other than `self.map`, which `node` borrows).
+                    if rootp_slot_active {
+                        self.rootp_slot_merges = self.rootp_slot_merges.saturating_add(1);
+                    }
                     node.generation = gen;
-                    node.arc_count()
+                    (
+                        node.arc_count(),
+                        ArcMergeOutcome::Merged {
+                            existing_sppf_stack,
+                            incoming_sppf_stack: arc.sppf_stack_id,
+                        },
+                    )
                 } else {
                     // GRIND no-merge breakdown (gated on env GRIND_NOMERGE=1): when an
                     // arc lands on an existing TomitaKey but no arc merges, record which
@@ -1007,7 +1154,7 @@ impl<W: SemiringRef> TomitaFrontierMap<W> {
                     }
                     node.push_arc(arc, gen);
                     self.dedup_hits = self.dedup_hits.saturating_add(1);
-                    node.arc_count()
+                    (node.arc_count(), ArcMergeOutcome::Pushed)
                 }
             },
             None => {
@@ -1025,7 +1172,7 @@ impl<W: SemiringRef> TomitaFrontierMap<W> {
                 self.next_insertion_stamp = self.next_insertion_stamp.saturating_add(1);
                 let node = FrontierNode::new(shell_if_new, arc, gen, stamp);
                 self.map.insert(key, node);
-                1
+                (1, ArcMergeOutcome::Pushed)
             },
         }
     }
@@ -1093,6 +1240,12 @@ impl<W: SemiringRef> TomitaFrontierMap<W> {
     /// Total dedup hits.
     pub fn dedup_hits(&self) -> u64 {
         self.dedup_hits
+    }
+
+    /// ROOT-P Stage 3 §B1 arc-level SLOT ⊕-absorptions (see the field docstring).
+    /// The direct DELIVERY counter for the arc-collapse fix.
+    pub fn rootp_slot_merges(&self) -> u64 {
+        self.rootp_slot_merges
     }
 
     /// Per-call merge hit ratio (0.0-1.0). Higher = more frontier-level
@@ -1469,8 +1622,8 @@ mod tests {
             rule_idx: 2,
         }]);
 
-        map.register_arc_with_aggregation(fresh_key(), fresh_shell(), arc1);
-        map.register_arc_with_aggregation(fresh_key(), fresh_shell(), arc2);
+        map.register_arc_with_aggregation(fresh_key(), fresh_shell(), arc1, false);
+        map.register_arc_with_aggregation(fresh_key(), fresh_shell(), arc2, false);
 
         let node = map.get(&fresh_key()).expect("node present");
         assert_eq!(node.arcs.len(), 2);

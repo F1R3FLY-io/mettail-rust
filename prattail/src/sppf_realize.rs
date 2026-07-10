@@ -173,6 +173,9 @@ pub fn realize_into<W: SemiringRef, R: ActionResolver>(
                     | Some(SppfNode::CollectionId { .. })
                     | Some(SppfNode::OptAbsent { .. })
                     | Some(SppfNode::Predicate { .. })
+                    // ROOT-P Stage E1: Intermediate is canonical-only; this
+                    // classic resolver-realize never sees one. Treat as a leaf.
+                    | Some(SppfNode::Intermediate { .. })
                     | Some(SppfNode::BinderScope { .. }) => {
                         // No children.
                     },
@@ -316,6 +319,9 @@ pub fn realize_into<W: SemiringRef, R: ActionResolver>(
                             .map(|child_values| resolver.resolve_packing(*rule_idx, &child_values))
                             .collect()
                     },
+                    // ROOT-P Stage E1: canonical-only Intermediate — never
+                    // reaches this classic resolver-realize. Defensive empty.
+                    Some(SppfNode::Intermediate { .. }) => Vec::new(),
                     None => Vec::new(),
                 };
                 memo.insert(id, results);

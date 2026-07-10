@@ -727,6 +727,10 @@ pub fn materialize_branch_cursor<W: SemiringRef + Clone>(
         // the findings). Both counters start at 0.
         p5_steps_own: 0,
         p5_steps_lineage: 0,
+        // ROOT-P Stage E1: cohort-revive is a CLASSIC-only path (the canonical
+        // worklist never revives cohorts); the binarized `w` starts empty.
+        cgll_w: crate::sppf::SPPF_ID_NONE,
+        cgll_ret_node: crate::gss::GSS_NODE_NONE,
     }
 }
 

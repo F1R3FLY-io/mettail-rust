@@ -43,6 +43,7 @@ use std::collections::HashMap;
 use rustc_hash::FxHashMap;
 
 use crate::automata::semiring::SemiringRef;
+use crate::sppf::SppfId;
 use crate::wpda_runtime::StackSymbolV2;
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -796,6 +797,142 @@ pub struct WpdaGssEdge<W: SemiringRef> {
     pub kind: EdgeKind,
 }
 
+// ══════════════════════════════════════════════════════════════════════════════
+// Canonical-GLL GSS primitives — ROOT-P redesign Stage C (2026-07-09)
+//
+// Scott & Johnstone (2010/2013) GLL keeps a GSS whose nodes are labelled by a
+// grammar *slot* `L` and an input position `i`, whose EDGES are labelled by an
+// SPPF node `w` (the left / operand part built so far at the call site), and a
+// per-node *recorded-pop set* `P` of `(position, SPPF-result)` pairs. The two
+// operations `create` and `pop` are symmetric and together implement the
+// "create-after-pop replay" that makes GLL cubic AND complete:
+//
+//   • create(L, u, i, w): get-or-create the return node `v = (L, i)`, add the
+//     edge `v → u` labelled `w`; if `v` has ALREADY popped (∃ (k, z) ∈ P[v]),
+//     immediately synthesise the return for the *new* edge — descriptor
+//     `(L, u, k, getNodeP(L, w, z))`. THIS IS THE CLASSIC BUG CLASS: an edge
+//     added into a node that already popped MUST replay the recorded pop, or
+//     that derivation is silently lost.
+//   • pop(u, i, z): record `(i, z)` into P[u]; for EVERY edge `u → v` labelled
+//     `w`, synthesise the return `(L_u, v, i, getNodeP(L_u, w, z))`.
+//
+// This module implements the GSS-LAYER halves of those two operations plus the
+// predecessor/operand enumeration. The SPPF combine `getNodeP(L, w, z)` and the
+// descriptor add-once set `U` / worklist `R` are the DRIVER's responsibility
+// (Stage D, `WpdaWalker::step_canonical`); the primitives here return the raw
+// materials (`GllReturn { slot, caller, at_pos, operand_w, result_w }`) from
+// which the driver builds `y = getNodeP` and enqueues `(slot, caller, at_pos, y)`.
+//
+// ── DORMANT / zero-cost-when-OFF ─────────────────────────────────────────────
+// ALL canonical state lives behind a lazily-boxed `Option<Box<CanonicalGssState>>`
+// on `WpdaGss` (default `None`). The classic engine NEVER calls a `gll_*` method,
+// so the box is never allocated and the field is never touched on the classic
+// path — the only classic-path cost is one `None` pointer in the (single, per-
+// walker) `WpdaGss` struct.
+//
+// ── Why a SEPARATE operand-edge store (design choice, Scott-Johnstone §4) ─────
+// Canonical GSS edge identity is `(target, operand_w)`: two links to the SAME
+// caller carrying DIFFERENT operands are DISTINCT edges (each records a distinct
+// left-part derivation). The classic [`WpdaGss::add_edge`] dedups by `(target,
+// EdgeKind)` and would MERGE two `v → u` edges carrying different `w` into one,
+// silently clobbering an operand — and it carries a semiring weight the canonical
+// engine does not use (canonical lex-election rides the SPPF `Packing.weight`).
+// So the canonical operand edges live in their OWN adjacency map inside
+// [`CanonicalGssState`], NOT the classic weighted `edges` map. Keeping the two
+// stores disjoint faithfully models the §4 "edge labelled by an SPPF node" and
+// ALSO guarantees the classic weighted `edges` map is byte-identical whether or
+// not the canonical engine ever runs. Node identity still rides the EXISTING
+// `(pos, symbol)` node index (the canonical GSS-by-slot identity is the symbol
+// being slot-shaped — Stage A/D), so [`WpdaGss::get_or_create_node`] is reused
+// verbatim for the node half. [`WpdaGss::gll_predecessors`] is the operand-aware
+// mirror of [`WpdaGss::pop_all_predecessors`] (which enumerates the CLASSIC
+// weighted edges); the classic enumerator is reused conceptually, not literally,
+// because it reads the wrong (weighted, un-operand-labelled) store.
+
+/// One canonical-GLL GSS edge: a labelled predecessor link `source → target`
+/// carrying the operand SPPF node `w` the caller had built at the call site.
+/// Edge identity for canonical dedup is `(target, operand_w)`. No weight:
+/// canonical lex-election rides the SPPF `Packing.weight`, not a GSS edge weight.
+///
+/// ROOT-P Stage E (2026-07-09): the edge ALSO snapshots the caller's PERSISTENT
+/// context handles at the call site — `caller_sppf_stack` (the caller's SPPF
+/// working stack) and `caller_edge_stack` (its incoming-edge chain). Both are
+/// `path_tree_arena::StackId` (`Copy` u32 handles into a walker-global
+/// append-only path-tree ⇒ O(1) to snapshot and to restore, never clobbered).
+/// The exact pop-fan (Stage E) restores THESE per-caller handles before pushing
+/// the completed sub-parse result `z`, so a reduce that fans to a caller whose
+/// left-context differs from the popping cursor's rebuilds THAT caller's stack
+/// exactly — the n-ary realization of Scott & Johnstone's `getNodeP(L, w, z)`
+/// (here the caller's whole partial SPPF working-stack IS the left part, and
+/// the rule's own `emit_fire_action` packs `[…caller-context, z]` at its later
+/// reduce). Edge identity stays `(target, operand_w)` (a given caller reached
+/// with a given operand has ONE call-site context), so the context fields do
+/// NOT widen dedup.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)] // Fields read by the canonical driver (Stage D/E) + gss unit tests.
+pub(crate) struct CanonicalGllEdge {
+    /// Predecessor (caller) GSS node this edge returns into on pop.
+    pub target: GssNodeId,
+    /// Operand SPPF label `w` (the left part). May be [`crate::sppf::SPPF_ID_NONE`].
+    pub operand_w: SppfId,
+    /// Caller's SPPF working-stack handle at the call site (Stage E restore).
+    pub caller_sppf_stack: crate::path_tree_arena::StackId,
+    /// Caller's incoming-edge chain handle at the call site (Stage E restore).
+    pub caller_edge_stack: crate::path_tree_arena::StackId,
+}
+
+/// One recorded pop in a node's `P` set: the input position `pos` (right extent)
+/// at which the node popped and the SPPF node `result_w` (`z`) it produced.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)] // Fields read by the canonical driver (Stage D) + gss unit tests.
+pub(crate) struct RecordedPop {
+    /// Right-extent input position at which this node popped.
+    pub pos: usize,
+    /// SPPF result node `z` produced by the completed nonterminal.
+    pub result_w: SppfId,
+}
+
+/// A return synthesised by a canonical `create`/`pop`: the raw materials for the
+/// driver to build `y = getNodeP(slot, operand_w, result_w)` and enqueue the
+/// descriptor `(slot, caller, at_pos, y)`. The GSS layer deliberately does NOT
+/// touch the SPPF (owned by the walker) or the descriptor set `U`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)] // Consumed by the canonical driver (Stage D) + gss unit tests.
+pub(crate) struct GllReturn {
+    /// Return slot `L` = the label symbol of the node being resumed (the popped
+    /// node in `gll_pop`; the created node `v` in a `gll_create` replay).
+    pub slot: StackSymbolV2,
+    /// GSS node to resume in — the caller below the edge (`u` / edge target).
+    pub caller: GssNodeId,
+    /// Input position to resume at (the right extent of `result_w`).
+    pub at_pos: usize,
+    /// Edge operand SPPF label `w` (left part).
+    pub operand_w: SppfId,
+    /// Completed-nonterminal SPPF node `z` (right part).
+    pub result_w: SppfId,
+    /// ROOT-P Stage E: caller's SPPF working-stack handle at the call site,
+    /// copied from the edge so the driver can restore the caller's left-context
+    /// before pushing `result_w` (the n-ary getNodeP restore).
+    pub caller_sppf_stack: crate::path_tree_arena::StackId,
+    /// ROOT-P Stage E: caller's incoming-edge chain handle at the call site.
+    pub caller_edge_stack: crate::path_tree_arena::StackId,
+}
+
+/// Canonical-GLL GSS side-state: the operand-labelled edge adjacency and the
+/// per-node recorded-pop set `P`. Lazily boxed on [`WpdaGss`] and allocated only
+/// the first time a `gll_*` op runs (i.e. only under `canonical_gll_active()`),
+/// so the classic path never allocates or touches it. Non-generic (holds only
+/// `u32`/`usize` handles) so it adds no weight-type baggage to `WpdaGss<W>`.
+#[derive(Debug, Clone, Default)]
+#[allow(dead_code)] // Populated/read by the canonical driver (Stage D) + gss unit tests.
+pub(crate) struct CanonicalGssState {
+    /// `source node → its outgoing canonical operand edges`, deduped by
+    /// `(target, operand_w)`.
+    edges: FxHashMap<GssNodeId, Vec<CanonicalGllEdge>>,
+    /// `node → its recorded pops P`, deduped by `(pos, result_w)` (P is a SET).
+    recorded_pops: FxHashMap<GssNodeId, Vec<RecordedPop>>,
+}
+
 /// Typed graph-structured stack for the WPDS-runtime walker.
 ///
 /// Generic over weight semiring `W`. Mirrors [`GraphStructuredStack`]'s API
@@ -807,6 +944,11 @@ pub struct WpdaGss<W: SemiringRef> {
     edges: FxHashMap<GssNodeId, Vec<WpdaGssEdge<W>>>,
     frontier: Vec<GssNodeId>,
     node_index: FxHashMap<WpdaGssNode, GssNodeId>,
+    /// ROOT-P Stage C (2026-07-09): lazily-boxed canonical-GLL side-state
+    /// (operand-labelled edges + recorded-pop set `P`). `None` on the classic
+    /// path — never allocated or touched unless a `gll_*` op runs (i.e. only
+    /// under `canonical_gll_active()`), so the classic GSS stays byte-identical.
+    canonical: Option<Box<CanonicalGssState>>,
 }
 
 impl<W: SemiringRef> WpdaGss<W> {
@@ -817,6 +959,10 @@ impl<W: SemiringRef> WpdaGss<W> {
             edges: FxHashMap::default(),
             frontier: Vec::new(),
             node_index: FxHashMap::default(),
+            // ROOT-P Stage C: canonical side-state stays unallocated until the
+            // first `gll_*` op (canonical engine only); the classic path leaves
+            // this `None` forever.
+            canonical: None,
         }
     }
 
@@ -1237,6 +1383,293 @@ impl<W: SemiringRef> WpdaGss<W> {
     }
 }
 
+// ══════════════════════════════════════════════════════════════════════════════
+// Canonical-GLL GSS operations (ROOT-P Stage C) — DORMANT
+//
+// Reachable ONLY from the canonical descriptor-worklist driver (Stage D,
+// `WpdaWalker::step_canonical`, currently `unimplemented!` and dead-code-
+// eliminated while `CANONICAL_GLL_ENABLED == false`) and from the `gss` unit
+// tests. Every method is `#[allow(dead_code)]`: it has no non-test caller until
+// Stage D wires the driver. None is reachable on the classic parse path, so they
+// add ZERO classic-path cost and cannot change classic behaviour. See the
+// "Canonical-GLL GSS primitives" module section above for the create/pop
+// protocol and the separate-operand-edge-store design rationale.
+// ══════════════════════════════════════════════════════════════════════════════
+impl<W: SemiringRef> WpdaGss<W> {
+    /// Lazily obtain the mutable canonical side-state, boxing it on first use.
+    /// Called only by the `gll_*` mutators, i.e. only under the canonical engine,
+    /// so the classic path never triggers the allocation.
+    #[allow(dead_code)]
+    #[inline]
+    fn canonical_mut(&mut self) -> &mut CanonicalGssState {
+        self.canonical
+            .get_or_insert_with(|| Box::new(CanonicalGssState::default()))
+    }
+
+    /// Read-only view of the canonical side-state (`None` until the first
+    /// `gll_*` mutation — the classic path always observes `None`).
+    #[allow(dead_code)]
+    #[inline]
+    fn canonical_ref(&self) -> Option<&CanonicalGssState> {
+        self.canonical.as_deref()
+    }
+
+    /// Canonical GLL `create(L, u, i, w)` — GSS-layer half (Scott-Johnstone §4).
+    ///
+    /// Get-or-creates the return node `v = (return_slot L, at_pos i)` (via the
+    /// EXISTING `(pos, symbol)` node index), then adds the operand-labelled edge
+    /// `v → from_node(u)` carrying `operand_w(w)`. Edge identity is `(target,
+    /// operand_w)`: re-adding an already-present edge is a no-op (idempotent) and
+    /// produces NO replay.
+    ///
+    /// **Create-after-pop replay:** if the edge is NEW *and* `v` has already
+    /// popped (`P[v]` non-empty), one [`GllReturn`] is synthesised per recorded
+    /// pop `(k, z) ∈ P[v]` — `{ slot: L, caller: u, at_pos: k, operand_w: w,
+    /// result_w: z }` — so the freshly-linked caller immediately receives the
+    /// return it would otherwise have missed (the classic GLL bug class). The
+    /// driver combines `operand_w`/`result_w` into `y = getNodeP(L, w, z)` and
+    /// enqueues descriptor `(L, u, k, y)`.
+    ///
+    /// Returns `(v, replays)`.
+    #[allow(dead_code)]
+    pub(crate) fn gll_create(
+        &mut self,
+        from_node: GssNodeId,
+        return_slot: StackSymbolV2,
+        at_pos: usize,
+        operand_w: SppfId,
+        caller_sppf_stack: crate::path_tree_arena::StackId,
+        caller_edge_stack: crate::path_tree_arena::StackId,
+    ) -> (GssNodeId, Vec<GllReturn>) {
+        // Node dedup rides the EXISTING (pos, symbol) index — the canonical
+        // GSS-by-slot identity (Stage A/D) IS the symbol being slot-shaped.
+        let v = self.get_or_create_node(WpdaGssNode { pos: at_pos, symbol: return_slot });
+        let st = self.canonical_mut();
+        {
+            let edges = st.edges.entry(v).or_default();
+            // Edge identity = (target, operand_w). Idempotent re-add ⇒ no replay.
+            if edges
+                .iter()
+                .any(|e| e.target == from_node && e.operand_w == operand_w)
+            {
+                return (v, Vec::new());
+            }
+            edges.push(CanonicalGllEdge {
+                target: from_node,
+                operand_w,
+                caller_sppf_stack,
+                caller_edge_stack,
+            });
+        }
+        // New edge: replay EVERY recorded pop of `v` into this fresh caller.
+        let replays = st
+            .recorded_pops
+            .get(&v)
+            .map(|pops| {
+                pops.iter()
+                    .map(|p| GllReturn {
+                        slot: return_slot,
+                        caller: from_node,
+                        at_pos: p.pos,
+                        operand_w,
+                        result_w: p.result_w,
+                        caller_sppf_stack,
+                        caller_edge_stack,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        (v, replays)
+    }
+
+    /// Canonical GLL `pop(u, i, z)` — GSS-layer half (Scott-Johnstone §4).
+    ///
+    /// Records `(pos i, result_w z)` into `P[node u]` (P is a SET: a duplicate
+    /// `(i, z)` is ignored and yields NO returns — the returns were already
+    /// produced on the first pop, and any later-added edge is handled by
+    /// `gll_create`'s replay). For a genuinely-new pop, one [`GllReturn`] is
+    /// produced per current outgoing edge `u → caller` labelled `w` —
+    /// `{ slot: L_u, caller, at_pos: i, operand_w: w, result_w: z }` — where
+    /// `L_u` is `u`'s own label symbol (the return slot).
+    #[allow(dead_code)]
+    pub(crate) fn gll_pop(
+        &mut self,
+        node: GssNodeId,
+        pos: usize,
+        result_w: SppfId,
+    ) -> Vec<GllReturn> {
+        // `L_u` = the popping node's label symbol. StackSymbolV2 is `Copy`, so
+        // extract it BEFORE borrowing the canonical side-state (no borrow clash).
+        let slot = match self.node(node) {
+            Some(n) => n.symbol,
+            None => return Vec::new(),
+        };
+        let st = self.canonical_mut();
+        {
+            let pops = st.recorded_pops.entry(node).or_default();
+            // P is a set: skip a duplicate pop (idempotent; no double-emit and no
+            // duplicate P entry that a later `gll_create` would over-replay).
+            if pops.iter().any(|p| p.pos == pos && p.result_w == result_w) {
+                return Vec::new();
+            }
+            pops.push(RecordedPop { pos, result_w });
+        }
+        // Emit a return for EVERY current edge of `node` (edges added LATER are
+        // handled by `gll_create`'s create-after-pop replay).
+        st.edges
+            .get(&node)
+            .map(|edges| {
+                edges
+                    .iter()
+                    .map(|e| GllReturn {
+                        slot,
+                        caller: e.target,
+                        at_pos: pos,
+                        operand_w: e.operand_w,
+                        result_w,
+                        caller_sppf_stack: e.caller_sppf_stack,
+                        caller_edge_stack: e.caller_edge_stack,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Enumerate a node's canonical predecessors with their operand labels —
+    /// `(caller/predecessor, operand_w)` per outgoing canonical edge. The
+    /// operand-aware mirror of [`WpdaGss::pop_all_predecessors`] (which
+    /// enumerates the CLASSIC weighted `edges` map); this reads the
+    /// operand-labelled canonical store instead. Empty if the node has no
+    /// canonical edges (or no `gll_*` op has run).
+    #[allow(dead_code)]
+    pub(crate) fn gll_predecessors(&self, node: GssNodeId) -> Vec<(GssNodeId, SppfId)> {
+        match self.canonical_ref().and_then(|st| st.edges.get(&node)) {
+            Some(edges) => edges.iter().map(|e| (e.target, e.operand_w)).collect(),
+            None => Vec::new(),
+        }
+    }
+
+    /// Borrow a node's outgoing canonical operand edges (`&[]` if none) — a
+    /// borrow-only companion to [`WpdaGss::gll_predecessors`] for the driver's
+    /// hot enumerate.
+    #[allow(dead_code)]
+    pub(crate) fn gll_edges(&self, node: GssNodeId) -> &[CanonicalGllEdge] {
+        match self.canonical_ref().and_then(|st| st.edges.get(&node)) {
+            Some(edges) => edges.as_slice(),
+            None => &[],
+        }
+    }
+
+    /// Read a node's recorded-pop set `P` (`&[]` if none). Exposed for the driver
+    /// + tests to assert pop-recording WITHOUT re-triggering emission.
+    #[allow(dead_code)]
+    pub(crate) fn gll_recorded_pops(&self, node: GssNodeId) -> &[RecordedPop] {
+        match self.canonical_ref().and_then(|st| st.recorded_pops.get(&node)) {
+            Some(pops) => pops.as_slice(),
+            None => &[],
+        }
+    }
+
+    /// ROOT-P Stage E — every GSS node sharing a `(category, pos)` slot. The
+    /// canonical `(nonterminal X, position j)` node identity, recovered by scan
+    /// over the classic `(pos, symbol)` node index (poly-many nodes) WITHOUT
+    /// re-keying it (which the Stage-C unit tests pin). Used by the exact pop-fan
+    /// to reconnect callers spread across the `@`-cohort's rule-variant nodes.
+    #[allow(dead_code)]
+    pub(crate) fn nodes_with_category_pos(&self, category: u16, pos: usize) -> Vec<GssNodeId> {
+        let mut out: Vec<GssNodeId> = Vec::new();
+        for (id, n) in self.nodes.iter().enumerate() {
+            if n.pos == pos && n.symbol.category_src_idx == category {
+                out.push(id as GssNodeId);
+            }
+        }
+        out
+    }
+
+    /// ROOT-P Stage E — SLOT-COARSENED predecessor enumeration (canonical GLL
+    /// node identity fix, plan §Stage-E point #3). The canonical operand edges
+    /// are stored per GSS node, and GSS nodes dedup by `(pos, symbol)` — but the
+    /// `@`-send cohort's rule variants (POutputNil / POutputShort / POutputQuoted
+    /// / …) each carry a DISTINCT `symbol`, so callers that descended into the
+    /// SAME constituent category at the SAME position land on DIFFERENT nodes and
+    /// their return edges never co-locate. Scott & Johnstone's canonical GSS node
+    /// is `(nonterminal X, position j)` — ALL callers awaiting an `X` at `j` share
+    /// ONE node. This enumerator recovers that identity WITHOUT re-keying the node
+    /// index (which the Stage-C unit tests pin): it unions the canonical edges of
+    /// every node whose `symbol.category_src_idx == category` and `pos == at_pos`.
+    /// The scan is over the canonical edge map (poly-many nodes) so it stays
+    /// polynomial. Returns each caller edge once (deduped by
+    /// `(target, operand_w, caller_sppf_stack, caller_edge_stack)`), so the exact
+    /// pop-fan can resume every awaiting caller with its own saved left-context.
+    #[allow(dead_code)]
+    pub(crate) fn gll_edges_by_slot(&self, category: u16, at_pos: usize) -> Vec<CanonicalGllEdge> {
+        let Some(st) = self.canonical_ref() else {
+            return Vec::new();
+        };
+        let mut out: Vec<CanonicalGllEdge> = Vec::new();
+        for (node_id, edges) in st.edges.iter() {
+            match self.nodes.get(*node_id as usize) {
+                Some(n) if n.pos == at_pos && n.symbol.category_src_idx == category => {
+                    for e in edges {
+                        if !out.iter().any(|o| {
+                            o.target == e.target
+                                && o.operand_w == e.operand_w
+                                && o.caller_sppf_stack == e.caller_sppf_stack
+                                && o.caller_edge_stack == e.caller_edge_stack
+                        }) {
+                            out.push(*e);
+                        }
+                    }
+                },
+                _ => {},
+            }
+        }
+        out
+    }
+
+    /// ROOT-P EXACT-FAN A1 census (2026-07-09, READ-ONLY measurement-only). For
+    /// every distinct canonical slot `(category_src_idx, pos)` carrying ≥1
+    /// recorded canonical operand edge, computes the DEDUPED edge count (the same
+    /// `(target, operand_w, caller_sppf_stack, caller_edge_stack)` dedup as
+    /// [`Self::gll_edges_by_slot`]). Returns `(n_slots, max_edges_per_slot,
+    /// total_edges)`.
+    ///
+    /// Because canonical operand edges are recorded at DESCENT (`gll_create`),
+    /// NOT at reduce, this whole-parse census tells the exact-fan A1 measurement
+    /// whether a constituent's genuine callers were recorded EVEN IF its `Pop`
+    /// reduce is merged away before firing under the poly return-slot key — the
+    /// C-under question for `@x!(for(…){…})`. Byte-identical: `#[allow(dead_code)]`,
+    /// reached only from the const-gated `step_canonical` measurement pass.
+    #[allow(dead_code)]
+    pub(crate) fn canonical_edge_census(&self) -> (usize, usize, usize) {
+        let Some(st) = self.canonical_ref() else {
+            return (0, 0, 0);
+        };
+        let mut by_slot: FxHashMap<(u16, usize), Vec<CanonicalGllEdge>> = FxHashMap::default();
+        for (node_id, edges) in st.edges.iter() {
+            let Some(n) = self.nodes.get(*node_id as usize) else {
+                continue;
+            };
+            let slot = (n.symbol.category_src_idx, n.pos);
+            let acc = by_slot.entry(slot).or_default();
+            for e in edges {
+                if !acc.iter().any(|o| {
+                    o.target == e.target
+                        && o.operand_w == e.operand_w
+                        && o.caller_sppf_stack == e.caller_sppf_stack
+                        && o.caller_edge_stack == e.caller_edge_stack
+                }) {
+                    acc.push(*e);
+                }
+            }
+        }
+        let n_slots = by_slot.len();
+        let max_edges = by_slot.values().map(|v| v.len()).max().unwrap_or(0);
+        let total: usize = by_slot.values().map(|v| v.len()).sum();
+        (n_slots, max_edges, total)
+    }
+}
+
 impl<W: SemiringRef> Default for WpdaGss<W> {
     fn default() -> Self {
         Self::new()
@@ -1616,5 +2049,169 @@ mod tests {
         assert!((edges[0].weight.primary.0 - 1.5).abs() < 1e-9);
         assert_eq!(edges[0].weight.src_idx, 2);
         assert_eq!(edges[0].weight.rule_idx, 3);
+    }
+
+    // ─── Canonical-GLL GSS primitives (ROOT-P Stage C) ───────────────────────
+    //
+    // Exercise the DORMANT canonical create/pop/enumerate primitives in
+    // ISOLATION (the classic engine never calls them). `SppfId` is a plain `u32`
+    // handle here — the tests use synthetic ids; the real driver (Stage D)
+    // supplies interned SPPF node ids. The four test classes cover: (a) edge
+    // operand-label round-trip, (b) create-after-pop replay (the classic GLL bug
+    // class), (c) pop enumerates ALL predecessors with their correct operand
+    // labels, (d) create idempotence / (target, operand_w) dedup.
+    use crate::sppf::SppfId;
+
+    /// A distinct return-slot symbol `L` — a mid-rule `RuleAt` frame, the
+    /// slot-shaped continuation the canonical GSS keys nodes on.
+    fn slot_sym(cat: u16, rule: u16, item: u8) -> StackSymbolV2 {
+        StackSymbolV2::rule_at(cat, rule, item, Some(0))
+    }
+
+    #[test]
+    fn test_canonical_gll_edge_label_roundtrip() {
+        // (a) Attach operand `w` on create; read it back via enumerate AND at pop.
+        let mut g: WpdaGss<LexicographicWeight> = WpdaGss::new();
+        let caller = g.get_or_create_node(WpdaGssNode {
+            pos: 0,
+            symbol: StackSymbolV2::category_entry(0),
+        });
+        let w: SppfId = 42;
+        let l = slot_sym(1, 0, 1);
+        let (v, replays) = g.gll_create(caller, l, 3, w, crate::path_tree_arena::STACK_ID_ROOT, crate::path_tree_arena::STACK_ID_ROOT);
+        assert!(replays.is_empty(), "no pops recorded yet ⇒ no replay");
+
+        // Enumerate: predecessor + operand label round-trip.
+        assert_eq!(
+            g.gll_predecessors(v),
+            vec![(caller, w)],
+            "operand label read back via enumerate"
+        );
+        assert_eq!(g.gll_edges(v).len(), 1);
+        assert_eq!(g.gll_edges(v)[0].operand_w, w);
+
+        // Pop: the return carries the same operand `w` plus slot/caller/pos/z.
+        let z: SppfId = 99;
+        let returns = g.gll_pop(v, 5, z);
+        assert_eq!(returns.len(), 1);
+        let r = returns[0];
+        assert_eq!(r.operand_w, w, "operand w round-trips through pop");
+        assert_eq!(r.result_w, z);
+        assert_eq!(r.caller, caller);
+        assert_eq!(r.at_pos, 5);
+        assert_eq!(r.slot, l, "return slot = the popped node's label symbol");
+    }
+
+    #[test]
+    fn test_canonical_gll_create_after_pop_replay() {
+        // (b) THE bug class: pop `v` (recording `z`), THEN create a NEW edge into
+        // `v`; the new edge must IMMEDIATELY yield the return for `z`.
+        let mut g: WpdaGss<LexicographicWeight> = WpdaGss::new();
+        let c1 = g.get_or_create_node(WpdaGssNode {
+            pos: 0,
+            symbol: StackSymbolV2::category_entry(0),
+        });
+        let c2 = g.get_or_create_node(WpdaGssNode {
+            pos: 0,
+            symbol: StackSymbolV2::category_entry(1),
+        });
+        let l = slot_sym(1, 0, 1);
+        let (w1, w2): (SppfId, SppfId) = (10, 20);
+
+        // 1. First caller edge, then pop → return goes to c1.
+        let (v, r0) = g.gll_create(c1, l, 3, w1, crate::path_tree_arena::STACK_ID_ROOT, crate::path_tree_arena::STACK_ID_ROOT);
+        assert!(r0.is_empty());
+        let z: SppfId = 7;
+        let popret = g.gll_pop(v, 8, z);
+        assert_eq!(popret.len(), 1);
+        assert_eq!(popret[0].caller, c1);
+        assert_eq!(g.gll_recorded_pops(v).len(), 1, "z recorded in P[v]");
+
+        // 2. NEW caller edge AFTER the pop ⇒ replay yields the return for z.
+        let (v2, replays) = g.gll_create(c2, l, 3, w2, crate::path_tree_arena::STACK_ID_ROOT, crate::path_tree_arena::STACK_ID_ROOT);
+        assert_eq!(v2, v, "same (slot, pos) ⇒ same node");
+        assert_eq!(replays.len(), 1, "create-after-pop replays the recorded pop");
+        let r = replays[0];
+        assert_eq!(r.caller, c2, "replay routes to the NEW caller");
+        assert_eq!(r.result_w, z, "replayed with the recorded result z");
+        assert_eq!(r.operand_w, w2, "replay carries the NEW edge's operand");
+        assert_eq!(r.at_pos, 8, "replay resumes at the recorded pop position");
+        assert_eq!(r.slot, l);
+    }
+
+    #[test]
+    fn test_canonical_gll_pop_enumerates_all_predecessors() {
+        // (c) pop enumerates ALL predecessors, each with its correct operand.
+        let mut g: WpdaGss<LexicographicWeight> = WpdaGss::new();
+        let l = slot_sym(2, 1, 0);
+        let callers: Vec<(GssNodeId, SppfId)> = (0..3u16)
+            .map(|i| {
+                let c = g.get_or_create_node(WpdaGssNode {
+                    pos: 0,
+                    symbol: StackSymbolV2::category_entry(i),
+                });
+                (c, 100 + i as SppfId)
+            })
+            .collect();
+        let mut v: GssNodeId = 0;
+        for &(c, w) in &callers {
+            let (vv, _) = g.gll_create(c, l, 4, w, crate::path_tree_arena::STACK_ID_ROOT, crate::path_tree_arena::STACK_ID_ROOT);
+            v = vv;
+        }
+        assert_eq!(g.gll_edges(v).len(), 3, "three distinct predecessor edges");
+
+        let z: SppfId = 555;
+        let mut returns = g.gll_pop(v, 9, z);
+        assert_eq!(returns.len(), 3, "one return per predecessor edge");
+        // Each return pairs the correct caller with the correct operand.
+        returns.sort_by_key(|r| r.caller);
+        let mut expect = callers.clone();
+        expect.sort_by_key(|(c, _)| *c);
+        for (r, (c, w)) in returns.iter().zip(expect.iter()) {
+            assert_eq!(r.caller, *c);
+            assert_eq!(r.operand_w, *w, "predecessor's operand label preserved");
+            assert_eq!(r.result_w, z);
+            assert_eq!(r.at_pos, 9);
+            assert_eq!(r.slot, l);
+        }
+    }
+
+    #[test]
+    fn test_canonical_gll_create_idempotent_dedup() {
+        // (d) create dedups by (target, operand_w): same edge twice = one edge;
+        // a different operand into the SAME caller = a distinct edge.
+        let mut g: WpdaGss<LexicographicWeight> = WpdaGss::new();
+        let c1 = g.get_or_create_node(WpdaGssNode {
+            pos: 0,
+            symbol: StackSymbolV2::category_entry(0),
+        });
+        let l = slot_sym(1, 0, 1);
+        let w1: SppfId = 11;
+
+        let (v, _) = g.gll_create(c1, l, 3, w1, crate::path_tree_arena::STACK_ID_ROOT, crate::path_tree_arena::STACK_ID_ROOT);
+        let (v_again, replays) = g.gll_create(c1, l, 3, w1, crate::path_tree_arena::STACK_ID_ROOT, crate::path_tree_arena::STACK_ID_ROOT); // identical
+        assert_eq!(v_again, v);
+        assert!(replays.is_empty(), "idempotent re-add ⇒ no replay");
+        assert_eq!(g.gll_edges(v).len(), 1, "identical edge added exactly once");
+
+        // Different operand into the SAME caller ⇒ a distinct canonical edge.
+        let w2: SppfId = 22;
+        let _ = g.gll_create(c1, l, 3, w2, crate::path_tree_arena::STACK_ID_ROOT, crate::path_tree_arena::STACK_ID_ROOT);
+        assert_eq!(g.gll_edges(v).len(), 2, "distinct operand ⇒ distinct edge");
+
+        // Re-adding an existing edge AFTER a pop must ALSO be idempotent AND must
+        // NOT re-fire the replay (double-count guard — the subtle GLL bug class).
+        let z: SppfId = 3;
+        let _ = g.gll_pop(v, 6, z);
+        let (_, replays_after_pop) = g.gll_create(c1, l, 3, w1, crate::path_tree_arena::STACK_ID_ROOT, crate::path_tree_arena::STACK_ID_ROOT); // already present
+        assert!(
+            replays_after_pop.is_empty(),
+            "re-adding an existing edge after a pop must NOT re-fire the replay"
+        );
+
+        // A duplicate pop is a no-op (P is a set).
+        let dup = g.gll_pop(v, 6, z);
+        assert!(dup.is_empty(), "duplicate pop ⇒ no double-emit");
+        assert_eq!(g.gll_recorded_pops(v).len(), 1, "P deduped by (pos, result)");
     }
 }

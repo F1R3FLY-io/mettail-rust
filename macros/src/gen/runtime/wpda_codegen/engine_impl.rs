@@ -83,6 +83,11 @@ pub(crate) fn emit_engine_impl_full(
     // frame-start position (the `@Nil!!(…)`→`NVar("Nil")` phantom).
     let rule_has_leading_structural_trigger_lookup =
         super::collection::emit_rule_has_leading_structural_trigger_lookup(language, per_cat);
+    // ROOT-P Stage 4 (2026-07-08): per-CATEGORY binder-scope classifier. Gates
+    // the Stage-4 conditional edge-drop — TRUE (keep edge) for binder-scoped
+    // categories, FALSE (droppable) for context-free-interchangeable ones.
+    let category_is_binder_scoped_lookup =
+        super::collection::emit_category_is_binder_scoped_lookup(language, categories, per_cat);
     // Phase 5: BinderRule state body (multi-step state machine per rule).
     // Literal-leading binder/prefix entry arms are emitted by
     // prefix::emit_prefix_arms_for_category so they share one ambiguity bucket
@@ -2466,6 +2471,11 @@ pub(crate) fn emit_engine_impl_full(
             ) -> bool {
                 let _ = (result_src_idx, rule_idx);
                 #rule_has_leading_structural_trigger_lookup
+            }
+
+            fn category_is_binder_scoped(&self, src_idx: u16) -> bool {
+                let _ = src_idx;
+                #category_is_binder_scoped_lookup
             }
 
             fn is_class3_collection_per_slot(
