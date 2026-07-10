@@ -1413,6 +1413,8 @@ mod tests {
             consumed_since_last_check: false,
             p5_steps_own: 0,
             p5_steps_lineage: 0,
+            cgll_w: crate::sppf::SPPF_ID_NONE,
+            cgll_ret_node: crate::gss::GSS_NODE_NONE,
         }
     }
 
@@ -1933,6 +1935,8 @@ mod tests {
             consumed_since_last_check: false,
             p5_steps_own: 0,
             p5_steps_lineage: 0,
+            cgll_w: crate::sppf::SPPF_ID_NONE,
+            cgll_ret_node: crate::gss::GSS_NODE_NONE,
         };
         let shell = TomitaShell::from_cursor(&cursor);
         assert_eq!(shell.node, 42);

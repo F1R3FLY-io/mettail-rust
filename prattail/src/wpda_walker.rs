@@ -687,7 +687,7 @@ impl SrSubsumeMode {
 /// Flipping this to `true` (plan Stage 6) makes the redesign LIVE; the
 /// per-walker [`RootpMode`] kill switches then select sub-features for A/B
 /// differentials WITHOUT a recompile.
-const ROOTP_SLOT_PACKING_ENABLED: bool = false; // SCRATCH A/B ONLY — REVERT TO false BEFORE ANY COMMIT
+const ROOTP_SLOT_PACKING_ENABLED: bool = false;
 
 /// ROOT-P canonical-GLL descriptor-worklist redesign — MASTER compile-time gate
 /// (Stage B scaffolding, 2026-07-09). Design: the staged plan
