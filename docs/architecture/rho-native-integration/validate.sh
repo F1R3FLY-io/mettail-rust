@@ -226,6 +226,15 @@ awk '
   END { exit bad ? 1 : 0 }
 ' "${suite_files[@]}" || fail "bare or double dollar math delimiter found (use inline dollar-backtick form or a math fence)"
 
+# GitHub's MathJax config does not load the mathtools extension (so \llbracket / \rrbracket
+# raise a render error) and rejects the low-level \char primitive. Every math span must
+# render on GitHub, so ban these three; use [\![ ... ]\!] for the reflection brackets and
+# \text{\textasciicircum} for a literal caret (both base commands that render).
+printf 'checking GitHub-unrenderable MathJax commands (llbracket / rrbracket / char)...\n'
+if rg -n '\\llbracket|\\rrbracket|\\char' "${suite_files[@]}"; then
+  fail "GitHub-unrenderable MathJax command found (llbracket/rrbracket/char do not render in GitHub's MathJax) — use the [\\![ .. ]\\!] reflection form and textasciicircum"
+fi
+
 printf 'checking relative Markdown links...\n'
 link_errors=0
 while IFS=: read -r file line match; do

@@ -101,7 +101,7 @@ for some $`e`$ in the bag is *non-vacuous* evidence that the AC match happened i
 
 Mathematical prose uses MathJax; monospace names are Rust items or Rholang channels. Every
 symbol is defined here before first use. Notation inherited unchanged from the
-[base-family reference](25-in-rho-base-family-reference.md) — reflection $`\llbracket t \rrbracket`$, head tag $`\underline{f}`$, location $`\ell`$, root nonce $`\rho`$, the site path
+[base-family reference](25-in-rho-base-family-reference.md) — reflection $`[\![ t ]\!]`$, head tag $`\underline{f}`$, location $`\ell`$, root nonce $`\rho`$, the site path
 $`\ulcorner(\rho,\ell)\urcorner`$, freshness-by-quoting (the `nu`-free INV-7 scheme), the
 CLTS, and $`\tau`$ — is summarized only briefly.
 
@@ -116,7 +116,7 @@ CLTS, and $`\tau`$ — is summarized only briefly.
   side is `op` applied to one collection pattern.
 - **Substitution $`\sigma`$**: a finite map from a rule's left-hand-side variables to ground
   subterms, e.g. $`\sigma = \{x \mapsto A,\ \mathit{rest} \mapsto \mathrm{PPar}\{B,C\}\}`$. We
-  write $`\llbracket R \rrbracket\sigma`$ for the reflected right-hand side under $`\sigma`$.
+  write $`[\![ R ]\!]\sigma`$ for the reflected right-hand side under $`\sigma`$.
 - **`rest`**: the residual-binding variable of a with-`rest` AC pattern
   $`\mathrm{op}\{L_1,\dots,L_k,\ \dots\mathit{rest}\}`$. After the $`k`$ fixed elements are
   matched, `rest` binds the remaining sub-collection (the **complement**).
@@ -128,7 +128,7 @@ CLTS, and $`\tau`$ — is summarized only briefly.
 - **Carrier**: the reflected value the matcher reads the subject collection off. A `HashBag`
   reflects to a **process soup** (below); a `HashSet` to an `ESet`; a `HashMap` to an `EMap`.
 - **Soup**: the process-`Par` reflection of a bag — a parallel composition
-  $`\big\Vert_{i} \mathtt{@"ac:}\mathrm{op}\mathtt{"}!(\llbracket e_i \rrbracket)`$ of one
+  $`\big\Vert_{i} \mathtt{@"ac:}\mathrm{op}\mathtt{"}!([\![ e_i ]\!])`$ of one
   ground send per element on the operand's shared element channel `ac:op`. Order-independence
   is inherited from parallel composition (a `Par` is a multiset of processes).
 - **`ac:op` (element channel)**: the quoted name each bag element is sent on inside the soup.
@@ -164,7 +164,7 @@ CLTS, and $`\tau`$ — is summarized only briefly.
   Correctness means the in-Rho realization induces the *same* CLTS.
 
 The semantic law the AC design serves is the same CLTS **firing law** as the base family — a
-rewrite $`L \Rightarrow R`$ fires as one atomic COMM emitting $`\llbracket R \rrbracket\sigma`$ —
+rewrite $`L \Rightarrow R`$ fires as one atomic COMM emitting $`[\![ R ]\!]\sigma`$ —
 with the *matching* now an order-independent, all-or-nothing selection over the reflected
 carrier. Everything below is the machinery that lets the interpreter *pick* the selection,
 *bind* `rest`, and *check* the guard so this law fires, in Rho, at every AC redex.
@@ -230,7 +230,7 @@ one indivisible transaction. This is **Scheme B**: the AC decision resolves *ins
 (`rholang-codegen/src/rho_net_lower.rs`) reflects the operand bag to the soup
 
 ```math
-\llbracket \mathrm{op}\{e_1,\dots,e_m\} \rrbracket \;=\; \big\Vert_{i=1}^{m}\ \mathtt{@"ac:}\mathrm{op}\mathtt{"}!\bigl(\llbracket e_i \rrbracket\bigr),
+[\![ \mathrm{op}\{e_1,\dots,e_m\} ]\!] \;=\; \big\Vert_{i=1}^{m}\ \mathtt{@"ac:}\mathrm{op}\mathtt{"}!\bigl([\![ e_i ]\!]\bigr),
 ```
 
 one ground send per element on the shared element channel `ac:op`. Order-independence is
@@ -268,7 +268,7 @@ commit and veto branches.
 ![Scheme B — the atomic-consume match-and-fire flow](figures/in-rho-ac-matching-scheme-b-flow.svg)
 
 **Figure A — Scheme B.** The whole match (pick-$`k`$, bind `rest`, check the guard) resolves inside
-one atomic `consume`; on commit the receiver body fires $`\llbracket R \rrbracket\sigma`$ on
+one atomic `consume`; on commit the receiver body fires $`[\![ R ]\!]\sigma`$ on
 `@OUT`; on veto the bag is untouched. The pick is internal, so the match contributes no
 observable steps.
 
@@ -283,7 +283,7 @@ Let $`s = `$ `ac_element_slot_count(kind, k)` be the number of element slots the
 `HashMap` binds $`2k`$ (one key plus one value per entry), every other kind binds $`k`$. The bind has
 $`s + 2`$ free variables (the $`s`$ element slots, then `rest`, then `out`), so under the reverse
 De Bruijn frame `out = BoundVar(0)`, `rest = BoundVar(1)`, and element slot $`j`$ is
-`BoundVar(s + 1 − j)`. The RHS $`\llbracket R \rrbracket\sigma`$ is pre-reflected in exactly this
+`BoundVar(s + 1 − j)`. The RHS $`[\![ R ]\!]\sigma`$ is pre-reflected in exactly this
 frame (the `reflect_term_par` shift over the `[x_0..x_{s-1}, rest]` substitution order), so **no
 new reflection machinery** is needed relative to the base family.
 
@@ -323,7 +323,7 @@ operator is admitted, the walk:
    [section 6](#6-the-site-keyed-carrier)), disjoint per position;
 2. co-installs an `ac_sigma_receiver_par` over that carrier — byte-identical to the installed AC
    receiver **except** its `source` is the per-site carrier — which picks $`k`$-of-$`n`$, binds `rest`,
-   and checks the guard inside one `consume`, then fires $`\llbracket R \rrbracket\sigma`$ on `@out`;
+   and checks the guard inside one `consume`, then fires $`[\![ R ]\!]\sigma`$ on `@out`;
 3. publishes `carrier!(⟦bag⟧, @out)`, where `⟦bag⟧` is `reflect_ac_bag_par` over **this node's
    ground elements** — the subject bag, with **no** `find_sigma` and **no** report read.
 
@@ -496,8 +496,8 @@ makes the `remainder` binding faithful for every kind: the residual bound to `re
 subject collection minus the matched selection.
 
 **Flatten / splice.** When the RHS is itself a same-operator bag — e.g. the `AcBagDemo` rule
-$`\mathrm{PPar}\{x, \dots\mathit{rest}\} \Rightarrow \mathrm{PPar}\{\mathrm{Mark}(x), \dots\mathit{rest}\}`$ — the reflected RHS $`\llbracket \mathrm{PPar}\{\mathrm{Mark}(x), \dots\mathit{rest}\} \rrbracket\sigma`$ is the flat soup
-$`\mathtt{@"ac:PPar"}!(\llbracket \mathrm{Mark}(\mathit{picked}) \rrbracket) \mid \mathit{rest}`$: the
+$`\mathrm{PPar}\{x, \dots\mathit{rest}\} \Rightarrow \mathrm{PPar}\{\mathrm{Mark}(x), \dots\mathit{rest}\}`$ — the reflected RHS $`[\![ \mathrm{PPar}\{\mathrm{Mark}(x), \dots\mathit{rest}\} ]\!]\sigma`$ is the flat soup
+$`\mathtt{@"ac:PPar"}!([\![ \mathrm{Mark}(\mathit{picked}) ]\!]) \mid \mathit{rest}`$: the
 `rest` slot **splices** the residual sends (a parallel composition of `@"ac:PPar"!(…)` sends) rather
 than nesting them under a sub-bag. This reproduces the host `add_flattened_bag` (`dovetail/src/rules.rs`)
 byte-for-byte — a `fixed` member that is itself a same-op sub-bag splices its elements inline
@@ -558,7 +558,7 @@ $`\lambda`$ is `BoundVar(free_count − 1 − λ)`.
 **Example 1 — AcDemo, a HashBag rewrite.** Subject $`\mathrm{PPar}\{A, B, C\}`$, rule
 $`\mathrm{PPar}\{x, \dots\mathit{rest}\} \Rightarrow \mathrm{Wrap}(x)`$, so $`k = 1`$, $`s = 1`$,
 $`\mathit{free\_count} = 3`$, and the element slot $`x = \mathtt{FreeVar}(0)`$ is `BoundVar(2)`. The soup
-$`\mathtt{@"ac:PPar"}!(\llbracket A \rrbracket) \mid \mathtt{@"ac:PPar"}!(\llbracket B \rrbracket) \mid \mathtt{@"ac:PPar"}!(\llbracket C \rrbracket)`$ is published on the site-keyed carrier; the receiver
+$`\mathtt{@"ac:PPar"}!([\![ A ]\!]) \mid \mathtt{@"ac:PPar"}!([\![ B ]\!]) \mid \mathtt{@"ac:PPar"}!([\![ C ]\!])`$ is published on the site-keyed carrier; the receiver
 picks one send, binds `rest` to the other two, and fires $`\mathrm{Wrap}(e)`$ on `@OUT` for some
 $`e \in \{A,B,C\}`$. Verified by `acdemo_ac_rewrite_fires_as_a_comm_on_the_reducer` and — with a
 corrupted report — `s_ac_bag_is_produced_by_the_spread_not_the_report`

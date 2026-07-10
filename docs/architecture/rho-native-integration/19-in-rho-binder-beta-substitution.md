@@ -29,13 +29,13 @@ The paper compiles a GSLT into core Rho by desugaring each base rewrite
 $`L \Rightarrow R`$ into a guarded receiver at the channel $`c(\ell)=\ulcorner \ell \urcorner`$ that names the redex's location $`\ell`$:
 
 ```math
-\llbracket L \Rightarrow R \rrbracket(c)\ =\ \mathtt{for}\bigl(\llbracket L
-\rrbracket \Leftarrow c\bigr)\bigl\{\ c\,!\,(\llbracket R \rrbracket)\ \bigr\}.
+[\![ L \Rightarrow R ]\!](c)\ =\ \mathtt{for}\bigl([\![ L
+]\!] \Leftarrow c\bigr)\bigl\{\ c\,!\,([\![ R ]\!])\ \bigr\}.
 ```
 
 This schema is exactly right for a rewrite whose right-hand side $`R`$ is a
 **constructor tree over the pattern variables** of $`L`$ — a communication step, a
-tape move, a combinator contraction. It reflects $`\llbracket R \rrbracket`$ once, at
+tape move, a combinator contraction. It reflects $`[\![ R ]\!]`$ once, at
 compile time, as a fixed term with holes for the matched sub-terms. But the
 $`\beta`$-rule's right-hand side is not a constructor tree: it is a
 **capture-avoiding substitution**
@@ -91,7 +91,7 @@ are reader annotations for those `Par` values.
 | **depth $`j`$ / cutoff $`c`$** | The de-Bruijn index threshold a substitution or shift is currently operating at. It *increments* on descent under a binder — the arithmetic core of capture-avoidance (correction C1, §5.3). |
 | **$`d_{\max}`$** | The maximum binder nesting depth of the scope term $`b`$ — the largest cutoff the cascade reaches. |
 
-Throughout, $`\llbracket t \rrbracket`$ denotes the reflected `Par` image of a term
+Throughout, $`[\![ t ]\!]`$ denotes the reflected `Par` image of a term
 $`t`$, and $`b[a/j]`$ the de-Bruijn substitution of $`a`$ for index $`j`$ in $`b`$ (so the
 $`\beta`$-reduct is $`b[a/0]`$). Peano numerals encode indices: $`\mathtt{Z}`$ is zero and
 $`\mathtt{S}\,n`$ is the successor of $`n`$.

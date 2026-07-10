@@ -12,7 +12,7 @@
 > the induction principle, the measure, the case split, the reused lemma. No
 > statement here is invented; each was read against the source before it was
 > written. The end-to-end result is the **capstone**: the whole encoded language
-> $`\llbracket G \rrbracket`$ enjoys operational correspondence with its source
+> $`[\![ G ]\!]`$ enjoys operational correspondence with its source
 > rewrite system, over the O1-optimal in-Rho matching, for finite executions.
 
 ## Altitude and single-owner note
@@ -52,9 +52,9 @@ that obligation for the landed in-Rho realization, in the strengthened form the
 campaign achieved:
 
 > **The correctness claim.** For every install-gate-admitted GSLT
-> $`\llbracket G \rrbracket`$, and every finite label-indexed trace, each
+> $`[\![ G ]\!]`$, and every finite label-indexed trace, each
 > non-semantic-predicate rewrite family **matches and fires fully in-Rho** as one
-> or more COMMs on the f1r3node reducer, and the whole-$`\llbracket G \rrbracket`$
+> or more COMMs on the f1r3node reducer, and the whole-$`[\![ G ]\!]`$
 > context-labelled transition system is in both-direction, barb-preserving
 > operational correspondence with the source rewrite system — **over the O1-optimal
 > matching**, not merely a location-keyed baseline.
@@ -98,7 +98,7 @@ they are recalled here so the proofs read stand-alone.
 | **visible label $`c(\ell)`$** | The single context-named accept-send that a firing emits. A **weak-visible** step $`\tau^{*} \cdot c(\ell) \cdot \tau^{*}`$ bundles the silent prefix and suffix around it — in the capstone this is `gstep`; in the binder theory `cwvis`. |
 | **weak bisimulation $`\approx`$** | A relation $`R`$ between two LTSs such that a visible move on one side is matched by a weak-visible move on the other preserving $`R`$, and conversely, and related states have equal observations. It equates systems up to $`\tau`$ activity. |
 | **operational correspondence (opcorr)** | The property that source and target LTS simulate each other step-for-step with matching observations; here, in the finite-trace, barb-preserving form (`ob:opcorr`). |
-| **$`\llbracket t \rrbracket`$** | The reflected/lowered image of a source term or configuration $`t`$ (an `rhoapi::Par`, or its Rocq abstraction `lower_state`). |
+| **$`[\![ t ]\!]`$** | The reflected/lowered image of a source term or configuration $`t`$ (an `rhoapi::Par`, or its Rocq abstraction `lower_state`). |
 | **sound scheme / optimal scheme** | Two channel-naming schemes for the matching COMMs. The **sound** scheme keys a channel by the runtime **location** $`\ell`$ (the model-b baseline). The **optimal** scheme keys it by the interned StateId trace $`tc(K)`$ of the matched context $`K`$ (condition $`O1`$, symbol-once; see doc 21). |
 | **$`tc(K)`$** | The optimal channel name: the interned trace $`\ulcorner \delta^{*}(s_0, \operatorname{surface}(K)) \urcorner`$ of the locate automaton on the surface of context $`K`$ ([OPTIMAL-CHANNEL-NAMING-2026](references.md#optimal-channel-naming-2026)). |
 | **Section `Variable` / `Hypothesis`** | A Rocq *Section* declares local `Variable`s and `Hypothesis`es; on `End`, every theorem is generalized over them, so they become **universally-quantified premises**, not global assumptions. This is the honest-premise idiom (§9.3): a `Hypothesis` is not an axiom. |
@@ -124,7 +124,7 @@ together in §8:
 | (ii) | $`O1`$ symbol-once / chain totality | `SymbolOnceInjective` (§3, T2) |
 | (iii) | sound $`\equiv`$ optimal CLTS (the `rem:nonopt` discharge) | `InRhoSameCLTSWeakBisim` (§4, T6) |
 | (iv) | atomic firing, no partial match | `AtomicFiringNoPartialMatch` (§5, T10) |
-| (v) | whole-$`\llbracket G \rrbracket`$ finite-trace opcorr | `WholeGsltInRhoOpCorrespondence` (§7, T22/T23) |
+| (v) | whole-$`[\![ G ]\!]`$ finite-trace opcorr | `WholeGsltInRhoOpCorrespondence` (§7, T22/T23) |
 | (vi) | non-linear equality consistency | `NonLinearEqConsistency` (§5, T9) |
 | (vii) | contextual atomic join + plugging | `ContextualAtomicJoinPlugging` (§5, T8) |
 | (viii) | $`tc(K)`$ no cross-talk | `TcChannelNamingQuotient` (§3, T3) |
@@ -545,7 +545,7 @@ $`\mu(\mathtt{tShift}\,c\,t) = 2\,\mu\,t`$.
 > **Theorem 20 (binder reflection is total-or-reject and injective).**
 > The MATCH-side reflection of a runtime term to its reserved-tagged ground image is
 > injective and collision-free, so the reflected $`\beta`$-redex
-> $`\mathrm{App}(\mathtt{\char94lambda}(F(\mathtt{\char94bound}\ Z)), A)`$ is an
+> $`\mathrm{App}(\mathtt{\text{\textasciicircum}lambda}(F(\mathtt{\text{\textasciicircum}bound}\ Z)), A)`$ is an
 > unambiguous automaton subject.
 > `mreflect_inj : forall t1 t2, mreflect t1 = mreflect t2 -> t1 = t2`, with the Peano
 > core `mpeano_inj` and the collision-free tag lemmas
@@ -566,13 +566,13 @@ $`\mu(\mathtt{tShift}\,c\,t) = 2\,\mu\,t`$.
 
 ---
 
-## 7. The capstone — whole-$`\llbracket G \rrbracket`$ operational correspondence (T21–T23)
+## 7. The capstone — whole-$`[\![ G ]\!]`$ operational correspondence (T21–T23)
 
 The per-step results above are assembled by a **composition harness** into a
 finite-trace operational correspondence for the whole encoded language. The harness
 does three things (paraphrasing `WholeGsltInRhoOpCorrespondence.v` lines 12–35):
 *(a)* instantiate an assumption-free finite-trace lift with the
-whole-$`\llbracket G \rrbracket`$ CLTS; *(b)* assemble its three obligations by a
+whole-$`[\![ G ]\!]`$ CLTS; *(b)* assemble its three obligations by a
 `family_of` case split
 whose arms are the landed per-step theorems of §5–§6; *(c)* `apply` the lift and
 thread obligation (iii) so the result holds over the O1-optimal matching.
@@ -626,9 +626,9 @@ T12). The `None` (uncovered shape) branch is closed by the install gate (ix). So
 
 ### 7.3 The capstone theorem (T22)
 
-> **Theorem 22 (whole-$`\llbracket G \rrbracket`$ in-Rho operational correspondence —
+> **Theorem 22 (whole-$`[\![ G ]\!]`$ in-Rho operational correspondence —
 > obligation (v)).**
-> Every non-semantic-predicate rewrite trace of $`\llbracket G \rrbracket`$ is matched
+> Every non-semantic-predicate rewrite trace of $`[\![ G ]\!]`$ is matched
 > and fired in-Rho, both directions, with equal barbs at every reachable state.
 
 The statement is reproduced **verbatim** from the source
@@ -648,7 +648,7 @@ Theorem whole_gslt_in_rho_opcorrespondence : forall s t ls, Rgio s t ->
 > `destruct (family_of l)`: the `Some f` branch splits `f` into the seven arms, each
 > discharged by its Section hypothesis (`fwd_base`, `fwd_join`, …, `fwd_ac_nested`);
 > the `None` branch is closed by `g_install_gate_admits` (ix), since a gate-admitted
-> $`\llbracket G \rrbracket`$ never fires an uncovered shape. Semantic predicates
+> $`[\![ G ]\!]`$ never fires an uncovered shape. Semantic predicates
 > (INV-14) are excluded by construction: `Family` has no predicate constructor, and
 > `semantic_predicates_emit_no_comm` (`:277`) proves a predicate disposition emits no
 > $`c(\ell)`$ label, so it contributes no `gstep` transition. **Non-vacuity** is

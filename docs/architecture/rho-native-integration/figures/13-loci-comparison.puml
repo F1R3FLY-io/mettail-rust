@@ -1,0 +1,52 @@
+@startuml
+' Figure 13-1: three matching loci (models a / b / c) all discharging the paper's CLTS
+' obligation on the SAME c(ℓ)-labelled firing. The SOURCE REWRITE (a rewrite of t at
+' location ℓ) maps to opcorr: one firing corresponds to one 𝔅-transition labelled c(ℓ).
+'   model a (paper's sugar): match decided IN Rho by nested single-name receives over the
+'     per-location [[L]] spread -- non-atomic, can partially fire (RISK, amber).
+'   model b (host-matched stepping-stone): match decided ON host via the Dovetail set
+'     automaton + merge_substs, firing one flat (k+1)-ary sigma-receiver in ONE atomic COMM (SAFE, green).
+'   model c (LANDED, in-Rho set automaton): match decided IN Rho by the compiled sa: automaton
+'     network, keeping model b's atomic sigma-receiver and recovering O1 (SAFE, green).
+' All three converge on the SAME c(ℓ) firing => same CLTS => invisible downstream (Q2, Q3).
+skinparam backgroundColor #FEFEFE
+skinparam defaultFontName monospaced
+skinparam shadowing false
+skinparam ArrowColor #4A5568
+skinparam ArrowFontColor #4A5568
+skinparam rectangle {
+  BorderColor #4A5568
+  FontColor #1A202C
+  roundCorner 10
+}
+
+title Figure 13-1 — Three loci, one firing\nmodels a / b / c all land on the same <latex>c(\ell)</latex>-labelled firing <latex>\Rightarrow</latex> same CLTS
+
+rectangle "SOURCE REWRITE\na rewrite of <latex>t</latex> at location <latex>\ell</latex>\n<latex>t \Rightarrow \mathit{rhs}(\sigma)</latex>" as SRC #DCEEF9
+rectangle "THE PAPER'S CLTS OBLIGATION (opcorr)\none firing  <latex>\Leftrightarrow</latex>  one <latex>\mathfrak{B}</latex>-transition\nlabelled <latex>c(\ell) = \ulcorner\ell\urcorner</latex>" as OBL #E6DBF2
+
+rectangle "model a — paper's sugar\nmatch decided IN Rho\nnested single-name receives + name-equality\nguards over the per-location <latex>[\![L]\!]</latex> spread\n(non-atomic; can partially fire — RISK)" as MA #FBE0B8
+rectangle "model b — host-matched stepping-stone\nmatch decided ON host\nDovetail set automaton + merge_substs <latex>\Rightarrow</latex> <latex>\sigma</latex>\nflat <latex>(k{+}1)</latex>-ary <latex>\sigma</latex>-receiver on <latex>c(\ell)</latex>:\n<latex>\mathtt{for}(\sigma,\mathit{out} \Leftarrow c(\ell))\{\,\mathit{out}\,!\,([\![R]\!]\sigma)\,\}</latex>\n(single atomic COMM — SAFE)" as MB #C6E7D2
+rectangle "model c — LANDED (in-Rho set automaton)\nmatch decided IN Rho\nby the sa: compiled automaton network;\nredex located + bound by interpreter COMMs\nsame flat <latex>\sigma</latex>-receiver; recovers O1\n(single atomic COMM — SAFE)" as MC #A7D8B6
+
+rectangle "SAME <latex>c(\ell)</latex>-labelled firing, same resting state\n<latex>\Rightarrow</latex> same CLTS   <latex>\Rightarrow</latex> invisible downstream (Q2, Q3)" as FIRE #BFE3F2
+
+SRC -down-> OBL : discharges
+OBL -down-> MA
+OBL -down-> MB
+OBL -down-> MC
+MA -down-> FIRE
+MB -down-> FIRE
+MC -down-> FIRE
+
+note bottom of MA #FCEFD6
+  the campaign red-team **refuted** model a:
+  channel-incoherence, no linearity pass,
+  wrong de-Bruijn indexing
+end note
+note right of FIRE #EAF2FB
+  the paper certifies the equivalence (Q2, Q3):
+  the optimal and the present scheme induce
+  the same context-labelled transition system
+end note
+@enduml

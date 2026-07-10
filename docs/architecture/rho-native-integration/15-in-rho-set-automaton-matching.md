@@ -21,18 +21,18 @@
 ## 1. The execution model
 
 `knotted-topoi.tex` fixes correctness at the context-labelled transition system
-(CLTS): a base rewrite $`\llbracket L \Rightarrow R \rrbracket`$ firing at location
+(CLTS): a base rewrite $`[\![ L \Rightarrow R ]\!]`$ firing at location
 $`\ell`$ is exactly one atomic COMM rendezvous on the location channel
-$`c(\ell) = \ulcorner \ell \urcorner`$ emitting $`\llbracket R \rrbracket \sigma`$:
+$`c(\ell) = \ulcorner \ell \urcorner`$ emitting $`[\![ R ]\!] \sigma`$:
 
 ```math
-\llbracket L \Rightarrow R \rrbracket(c) \;=\; \mathtt{for}\bigl(\llbracket L \rrbracket \Leftarrow c\bigr)\bigl\{\, c!\bigl(\llbracket R \rrbracket\bigr) \,\bigr\}
+[\![ L \Rightarrow R ]\!](c) \;=\; \mathtt{for}\bigl([\![ L ]\!] \Leftarrow c\bigr)\bigl\{\, c!\bigl([\![ R ]\!]\bigr) \,\bigr\}
 ```
 
 The campaign realizes this in three layers, each faithful to the same CLTS:
 
 1. **Matching** — the host `SetAutomaton` is compiled into a network of persistent
-   `sa:` receivers over a *spread* term $`\llbracket t \rrbracket`$; head-symbol
+   `sa:` receivers over a *spread* term $`[\![ t ]\!]`$; head-symbol
    dispatch via `Match`/`MatchCase`; non-linear consistency via enable-guarded
    `eq:` receivers. These run on the Rholang interpreter as internal
    ($`\tau`$, unobservable) COMMs. The channel for a context $`K`$ is the reflected
@@ -42,7 +42,7 @@ The campaign realizes this in three layers, each faithful to the same CLTS:
    scheme.
 2. **Firing** — on an accepting match, the automaton emits $`\sigma`$ on the rule's
    channel and the flat $`(k+1)`$-ary $`\sigma`$-receiver fires the observable
-   $`c(\ell)`$ COMM producing $`\llbracket R \rrbracket \sigma`$.
+   $`c(\ell)`$ COMM producing $`[\![ R ]\!] \sigma`$.
 3. **Congruence and predicates** — equations compile to compile-time structural
    congruence (never a COMM); semantic predicates are the sole off-machine class,
    evaluated by an Effective-Boolean-Algebra / native handler.
@@ -87,7 +87,7 @@ Because the host report has already computed every $`\sigma_i`$, each firing is 
 independent atomic COMM against the persistent $`\sigma`$-receiver — a faithful
 *replay* of the report's firings on the interpreter. At the Stage 0 endpoint the
 whole-program normal form was still the host-extracted e-graph root (structural
-congruence / plugging is not itself a COMM); the whole-$`\llbracket G \rrbracket`$
+congruence / plugging is not itself a COMM); the whole-$`[\![ G ]\!]`$
 `opcorr` obligation the tex left open was later discharged by the capstone
 ([16](16-in-rho-verification-plan.md) obligation (v),
 `WholeGsltInRhoOpCorrespondence.v`), so this Stage 0 limitation no longer bounds the
@@ -100,7 +100,7 @@ landed system.
 | Indexed $`\sigma`$-injection surface | generated `<Lang>::rho_net_invocation_from_dovetail_to_firing(term, report, out, i)` (`macros/src/gen/runtime/rho_invocation.rs`); the single-firing `…_from_dovetail_to` delegates at index 0 |
 | Full replay sequence | generated `<Lang>::rho_net_replay_invocation_from_dovetail_to(term, report, prefix)` — one injection per firing; an empty result is a normal form (a valid no-op), unlike the single-firing method which fails closed |
 | Replay bridge | `build_rho_net_replay_invocation_from_contracts`, which builds `RhoMachineInvocation::RunRhoNetReplayAndObserveRuntimeValues { firings }` (`rholang-runtime/src/backend.rs`) |
-| Replay driver | `PlannedRhoBackend::run_rho_net_replay_and_observe_runtime_values` — installs the $`\sigma`$-receiver program once, fires each firing as its own COMM, collects every $`\llbracket R \rrbracket \sigma_i`$ |
+| Replay driver | `PlannedRhoBackend::run_rho_net_replay_and_observe_runtime_values` — installs the $`\sigma`$-receiver program once, fires each firing as its own COMM, collects every $`[\![ R ]\!] \sigma_i`$ |
 
 The path is **capability-gated and fail-closed**: the driver installs the
 $`\sigma`$-receiver program via `installed_rho_net_program_par` *before* any Rho
@@ -113,7 +113,7 @@ boundary, never as a silent runtime no-op.
   `Pair(Swap(A, B), Swap(B, A))` yields two *distinct* firings (structurally-equal
   redexes hash-cons to one e-class); the driver fires both and observes
   `Pair(B, A)` and `Pair(A, B)`, each equal to its report-derived
-  $`\llbracket R \rrbracket \sigma`$. The generated wiring and the normal-form
+  $`[\![ R ]\!] \sigma`$. The generated wiring and the normal-form
   no-op case are covered separately.
 - **Property-based**: for arbitrary well-formed SwapDemo terms, the replay
   observations equal — in firing order — the report's per-firing
@@ -141,7 +141,7 @@ A ground subject term is spread across per-location channels
 (`spread_term_par`, `rholang-codegen/src/rho_net_lower.rs`):
 
 ```math
-\llbracket f(t_1,\dots,t_n) \rrbracket_\ell \;=\; c(\ell)!\bigl(\underline{f}\bigr) \;\Big|\; \prod_{i} \llbracket t_i \rrbracket_{\ell\cdot(f,i)}
+[\![ f(t_1,\dots,t_n) ]\!]_\ell \;=\; c(\ell)!\bigl(\underline{f}\bigr) \;\Big|\; \prod_{i} [\![ t_i ]\!]_{\ell\cdot(f,i)}
 ```
 
 Each node publishes ONLY its head tag $`\underline{f}`$ on its deterministic quoted
@@ -165,7 +165,7 @@ sends the substitution tuple on the rule's channel:
 
 The accept send is byte-identical to the message the Stage 0 $`\sigma`$-injection
 builds, so the EXISTING persistent $`\sigma`$-receiver fires unchanged and lands
-$`\llbracket R \rrbracket\sigma`$. The De Bruijn frame is exact: the accept is free
+$`[\![ R ]\!]\sigma`$. The De Bruijn frame is exact: the accept is free
 in $`\{0,\dots,k-1\}`$, each `for`-wrap shifts the free set under its binder, the
 `Match` re-adds its $`\mathrm{BoundVar}(0)`$ target, and the root `for` closes the
 network; the substitution slot for the $`i`$-th argument is

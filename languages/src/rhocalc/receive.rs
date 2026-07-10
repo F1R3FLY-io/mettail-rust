@@ -98,7 +98,9 @@ pub(crate) fn normalize_quote_name(name: &Name) -> Name {
     match name {
         Name::NQuoteNil => Name::NQuote(std::sync::Arc::new(Proc::PZero)),
         Name::NQuoteShort(p) => Name::NQuote(std::sync::Arc::new(p.as_ref().clone())),
-        Name::NParen(inner) => Name::NParen(std::sync::Arc::new(normalize_quote_name(inner.as_ref()))),
+        Name::NParen(inner) => {
+            Name::NParen(std::sync::Arc::new(normalize_quote_name(inner.as_ref())))
+        },
         other => other.clone(),
     }
 }
@@ -492,7 +494,8 @@ fn desugar_query_bind(
     match &bind {
         InputBind::InputBindQuery(lhs, channel, args) => {
             let (binder, ret_name) = fresh_query_return(counter);
-            let recv_bind = InputBind::InputBind(lhs.clone(), std::sync::Arc::new(ret_name.clone()));
+            let recv_bind =
+                InputBind::InputBind(lhs.clone(), std::sync::Arc::new(ret_name.clone()));
             let send = mk_query_send(channel.as_ref(), &ret_name, args);
             (recv_bind, vec![(binder, send)])
         },
@@ -1025,7 +1028,9 @@ mod zipper_pattern_tests {
     }
 
     fn path_key(segments: &[i64]) -> Proc {
-        Proc::CastList(std::sync::Arc::new(List::ListLit(segments.iter().copied().map(int).collect())))
+        Proc::CastList(std::sync::Arc::new(List::ListLit(
+            segments.iter().copied().map(int).collect(),
+        )))
     }
 
     fn pathmap_with_value(key: Proc, val: Proc) -> PathMapLit<Proc, Proc> {
@@ -1035,9 +1040,9 @@ mod zipper_pattern_tests {
     }
 
     fn read_zipper_proc(lit: PathMapLit<Proc, Proc>, focus: Vec<u8>) -> Proc {
-        Proc::CastReadZipper(std::sync::Arc::new(ReadZipper::Lit(std::sync::Arc::new(ReadZipperLit(
-            lit, focus,
-        )))))
+        Proc::CastReadZipper(std::sync::Arc::new(ReadZipper::Lit(std::sync::Arc::new(
+            ReadZipperLit(lit, focus),
+        ))))
     }
 
     fn write_zipper_proc(lit: PathMapLit<Proc, Proc>, focus: Vec<u8>) -> Proc {

@@ -139,7 +139,9 @@ pub(crate) fn fold_proc_length(p: &Proc) -> Proc {
             _ => Proc::Err,
         },
         Proc::CastMap(m) => match m.as_ref() {
-            Map::MapLit(ref payload) => Proc::CastInt(std::sync::Arc::new(Int::NumLit(payload.len() as i64))),
+            Map::MapLit(ref payload) => {
+                Proc::CastInt(std::sync::Arc::new(Int::NumLit(payload.len() as i64)))
+            },
             _ => Proc::Err,
         },
         Proc::CastBag(b) => match b.as_ref() {
@@ -150,7 +152,9 @@ pub(crate) fn fold_proc_length(p: &Proc) -> Proc {
             _ => Proc::Err,
         },
         Proc::CastSet(s) => match s.as_ref() {
-            Set::SetLit(ref payload) => Proc::CastInt(std::sync::Arc::new(Int::NumLit(payload.len() as i64))),
+            Set::SetLit(ref payload) => {
+                Proc::CastInt(std::sync::Arc::new(Int::NumLit(payload.len() as i64)))
+            },
             _ => Proc::Err,
         },
         _ => Proc::Err,
@@ -202,19 +206,24 @@ fn normalize_send_sugar_legacy(p: &Proc) -> Proc {
             let b_norm = normalize_send_sugar_legacy(b.as_ref());
             merge_pp_parallel(a_norm, b_norm)
         },
-        Proc::POutputEmpty(n) => {
-            Proc::POutput(std::sync::Arc::new(n.as_ref().clone()), std::sync::Arc::new(mk_proc_list(vec![])))
-        },
-        Proc::PPersistOutputEmpty(n) => {
-            Proc::PPersistOutput(std::sync::Arc::new(n.as_ref().clone()), std::sync::Arc::new(mk_proc_list(vec![])))
-        },
+        Proc::POutputEmpty(n) => Proc::POutput(
+            std::sync::Arc::new(n.as_ref().clone()),
+            std::sync::Arc::new(mk_proc_list(vec![])),
+        ),
+        Proc::PPersistOutputEmpty(n) => Proc::PPersistOutput(
+            std::sync::Arc::new(n.as_ref().clone()),
+            std::sync::Arc::new(mk_proc_list(vec![])),
+        ),
         Proc::POutput2Plus(n, a, bs) => {
             let a_norm = normalize_send_sugar_legacy(a.as_ref());
             let bs_norm: Vec<Proc> = bs.iter().map(normalize_send_sugar_legacy).collect();
             let mut items = Vec::with_capacity(1 + bs_norm.len());
             items.push(a_norm);
             items.extend(bs_norm);
-            Proc::POutput(std::sync::Arc::new(n.as_ref().clone()), std::sync::Arc::new(mk_proc_list(items)))
+            Proc::POutput(
+                std::sync::Arc::new(n.as_ref().clone()),
+                std::sync::Arc::new(mk_proc_list(items)),
+            )
         },
         Proc::PPersistOutput2Plus(n, a, bs) => {
             let a_norm = normalize_send_sugar_legacy(a.as_ref());
@@ -222,7 +231,10 @@ fn normalize_send_sugar_legacy(p: &Proc) -> Proc {
             let mut items = Vec::with_capacity(1 + bs_norm.len());
             items.push(a_norm);
             items.extend(bs_norm);
-            Proc::PPersistOutput(std::sync::Arc::new(n.as_ref().clone()), std::sync::Arc::new(mk_proc_list(items)))
+            Proc::PPersistOutput(
+                std::sync::Arc::new(n.as_ref().clone()),
+                std::sync::Arc::new(mk_proc_list(items)),
+            )
         },
         Proc::POutput(n, q) => {
             let q_norm = crate::rhocalc::receive::canonicalize_arity_payload(q.as_ref());
@@ -230,7 +242,10 @@ fn normalize_send_sugar_legacy(p: &Proc) -> Proc {
         },
         Proc::PPersistOutput(n, q) => {
             let q_norm = crate::rhocalc::receive::canonicalize_arity_payload(q.as_ref());
-            Proc::PPersistOutput(std::sync::Arc::new(n.as_ref().clone()), std::sync::Arc::new(q_norm))
+            Proc::PPersistOutput(
+                std::sync::Arc::new(n.as_ref().clone()),
+                std::sync::Arc::new(q_norm),
+            )
         },
         Proc::PForUser(rows, body) => {
             let body_norm = normalize_send_sugar_legacy(body.as_ref());
@@ -298,12 +313,15 @@ fn canon_multi_payload(a: &Proc, bs: &[Proc]) -> Proc {
 /// are left as-is (the guard is where the projection surface materializes).
 fn canon_forrow(row: &ForRow) -> ForRow {
     match row {
-        ForRow::ForRowSingleWhere(b, guard) => {
-            ForRow::ForRowSingleWhere(b.clone(), std::sync::Arc::new(normalize_send_sugar_canon(guard.as_ref())))
-        },
-        ForRow::ForRowWhere(b, bs, guard) => {
-            ForRow::ForRowWhere(b.clone(), bs.clone(), std::sync::Arc::new(normalize_send_sugar_canon(guard.as_ref())))
-        },
+        ForRow::ForRowSingleWhere(b, guard) => ForRow::ForRowSingleWhere(
+            b.clone(),
+            std::sync::Arc::new(normalize_send_sugar_canon(guard.as_ref())),
+        ),
+        ForRow::ForRowWhere(b, bs, guard) => ForRow::ForRowWhere(
+            b.clone(),
+            bs.clone(),
+            std::sync::Arc::new(normalize_send_sugar_canon(guard.as_ref())),
+        ),
         other => other.clone(),
     }
 }
@@ -324,33 +342,88 @@ fn normalize_send_sugar_canon(p: &Proc) -> Proc {
     match p {
         // ═══ @-send sugar → canonical POutput/PPersistOutput(NQuote(chan), payload) ═══
         // channel-first (n:Name): lower the channel name, recurse/arity the payload.
-        Proc::POutput(n, q) => Proc::POutput(Arc::new(canon_channel_name(n)), Arc::new(canon_scalar_payload(q))),
-        Proc::PPersistOutput(n, q) => Proc::PPersistOutput(Arc::new(canon_channel_name(n)), Arc::new(canon_scalar_payload(q))),
-        Proc::POutputEmpty(n) => Proc::POutput(Arc::new(canon_channel_name(n)), Arc::new(mk_proc_list(vec![]))),
-        Proc::PPersistOutputEmpty(n) => Proc::PPersistOutput(Arc::new(canon_channel_name(n)), Arc::new(mk_proc_list(vec![]))),
-        Proc::POutput2Plus(n, a, bs) => Proc::POutput(Arc::new(canon_channel_name(n)), Arc::new(canon_multi_payload(a, bs))),
-        Proc::PPersistOutput2Plus(n, a, bs) => Proc::PPersistOutput(Arc::new(canon_channel_name(n)), Arc::new(canon_multi_payload(a, bs))),
+        Proc::POutput(n, q) => {
+            Proc::POutput(Arc::new(canon_channel_name(n)), Arc::new(canon_scalar_payload(q)))
+        },
+        Proc::PPersistOutput(n, q) => {
+            Proc::PPersistOutput(Arc::new(canon_channel_name(n)), Arc::new(canon_scalar_payload(q)))
+        },
+        Proc::POutputEmpty(n) => {
+            Proc::POutput(Arc::new(canon_channel_name(n)), Arc::new(mk_proc_list(vec![])))
+        },
+        Proc::PPersistOutputEmpty(n) => {
+            Proc::PPersistOutput(Arc::new(canon_channel_name(n)), Arc::new(mk_proc_list(vec![])))
+        },
+        Proc::POutput2Plus(n, a, bs) => {
+            Proc::POutput(Arc::new(canon_channel_name(n)), Arc::new(canon_multi_payload(a, bs)))
+        },
+        Proc::PPersistOutput2Plus(n, a, bs) => Proc::PPersistOutput(
+            Arc::new(canon_channel_name(n)),
+            Arc::new(canon_multi_payload(a, bs)),
+        ),
         // @Nil (fixed PZero channel)
-        Proc::POutputNil(q) => Proc::POutput(Arc::new(nquote(Proc::PZero)), Arc::new(canon_scalar_payload(q))),
-        Proc::PPersistOutputNil(q) => Proc::PPersistOutput(Arc::new(nquote(Proc::PZero)), Arc::new(canon_scalar_payload(q))),
-        Proc::POutputNilEmpty => Proc::POutput(Arc::new(nquote(Proc::PZero)), Arc::new(mk_proc_list(vec![]))),
-        Proc::PPersistOutputNilEmpty => Proc::PPersistOutput(Arc::new(nquote(Proc::PZero)), Arc::new(mk_proc_list(vec![]))),
-        Proc::POutputNil2Plus(a, bs) => Proc::POutput(Arc::new(nquote(Proc::PZero)), Arc::new(canon_multi_payload(a, bs))),
-        Proc::PPersistOutputNil2Plus(a, bs) => Proc::PPersistOutput(Arc::new(nquote(Proc::PZero)), Arc::new(canon_multi_payload(a, bs))),
+        Proc::POutputNil(q) => {
+            Proc::POutput(Arc::new(nquote(Proc::PZero)), Arc::new(canon_scalar_payload(q)))
+        },
+        Proc::PPersistOutputNil(q) => {
+            Proc::PPersistOutput(Arc::new(nquote(Proc::PZero)), Arc::new(canon_scalar_payload(q)))
+        },
+        Proc::POutputNilEmpty => {
+            Proc::POutput(Arc::new(nquote(Proc::PZero)), Arc::new(mk_proc_list(vec![])))
+        },
+        Proc::PPersistOutputNilEmpty => {
+            Proc::PPersistOutput(Arc::new(nquote(Proc::PZero)), Arc::new(mk_proc_list(vec![])))
+        },
+        Proc::POutputNil2Plus(a, bs) => {
+            Proc::POutput(Arc::new(nquote(Proc::PZero)), Arc::new(canon_multi_payload(a, bs)))
+        },
+        Proc::PPersistOutputNil2Plus(a, bs) => Proc::PPersistOutput(
+            Arc::new(nquote(Proc::PZero)),
+            Arc::new(canon_multi_payload(a, bs)),
+        ),
         // @P short (p:Proc channel → NQuote(p))
-        Proc::POutputShort(pc, q) => Proc::POutput(Arc::new(nquote(normalize_send_sugar_canon(pc))), Arc::new(canon_scalar_payload(q))),
-        Proc::PPersistOutputShort(pc, q) => Proc::PPersistOutput(Arc::new(nquote(normalize_send_sugar_canon(pc))), Arc::new(canon_scalar_payload(q))),
-        Proc::POutputShortEmpty(pc) => Proc::POutput(Arc::new(nquote(normalize_send_sugar_canon(pc))), Arc::new(mk_proc_list(vec![]))),
-        Proc::PPersistOutputShortEmpty(pc) => Proc::PPersistOutput(Arc::new(nquote(normalize_send_sugar_canon(pc))), Arc::new(mk_proc_list(vec![]))),
-        Proc::POutputShort2Plus(pc, a, bs) => Proc::POutput(Arc::new(nquote(normalize_send_sugar_canon(pc))), Arc::new(canon_multi_payload(a, bs))),
-        Proc::PPersistOutputShort2Plus(pc, a, bs) => Proc::PPersistOutput(Arc::new(nquote(normalize_send_sugar_canon(pc))), Arc::new(canon_multi_payload(a, bs))),
+        Proc::POutputShort(pc, q) => Proc::POutput(
+            Arc::new(nquote(normalize_send_sugar_canon(pc))),
+            Arc::new(canon_scalar_payload(q)),
+        ),
+        Proc::PPersistOutputShort(pc, q) => Proc::PPersistOutput(
+            Arc::new(nquote(normalize_send_sugar_canon(pc))),
+            Arc::new(canon_scalar_payload(q)),
+        ),
+        Proc::POutputShortEmpty(pc) => Proc::POutput(
+            Arc::new(nquote(normalize_send_sugar_canon(pc))),
+            Arc::new(mk_proc_list(vec![])),
+        ),
+        Proc::PPersistOutputShortEmpty(pc) => Proc::PPersistOutput(
+            Arc::new(nquote(normalize_send_sugar_canon(pc))),
+            Arc::new(mk_proc_list(vec![])),
+        ),
+        Proc::POutputShort2Plus(pc, a, bs) => Proc::POutput(
+            Arc::new(nquote(normalize_send_sugar_canon(pc))),
+            Arc::new(canon_multi_payload(a, bs)),
+        ),
+        Proc::PPersistOutputShort2Plus(pc, a, bs) => Proc::PPersistOutput(
+            Arc::new(nquote(normalize_send_sugar_canon(pc))),
+            Arc::new(canon_multi_payload(a, bs)),
+        ),
         // @n quoted (n:Name → NQuote(name_pattern_to_proc(n)))
-        Proc::POutputQuoted(n, q) => Proc::POutput(Arc::new(nquote(crate::rhocalc::receive::name_pattern_to_proc(n))), Arc::new(canon_scalar_payload(q))),
-        Proc::POutputQuotedEmpty(n) => Proc::POutput(Arc::new(nquote(crate::rhocalc::receive::name_pattern_to_proc(n))), Arc::new(mk_proc_list(vec![]))),
-        Proc::POutputQuoted2Plus(n, a, bs) => Proc::POutput(Arc::new(nquote(crate::rhocalc::receive::name_pattern_to_proc(n))), Arc::new(canon_multi_payload(a, bs))),
+        Proc::POutputQuoted(n, q) => Proc::POutput(
+            Arc::new(nquote(crate::rhocalc::receive::name_pattern_to_proc(n))),
+            Arc::new(canon_scalar_payload(q)),
+        ),
+        Proc::POutputQuotedEmpty(n) => Proc::POutput(
+            Arc::new(nquote(crate::rhocalc::receive::name_pattern_to_proc(n))),
+            Arc::new(mk_proc_list(vec![])),
+        ),
+        Proc::POutputQuoted2Plus(n, a, bs) => Proc::POutput(
+            Arc::new(nquote(crate::rhocalc::receive::name_pattern_to_proc(n))),
+            Arc::new(canon_multi_payload(a, bs)),
+        ),
 
         // ═══ containers / binders (recurse; keep the PForUser query-send desugar) ═══
-        Proc::PParInfix(a, b) => merge_pp_parallel(normalize_send_sugar_canon(a), normalize_send_sugar_canon(b)),
+        Proc::PParInfix(a, b) => {
+            merge_pp_parallel(normalize_send_sugar_canon(a), normalize_send_sugar_canon(b))
+        },
         Proc::PPar(ps) => {
             let mut out = mettail_runtime::HashBag::new();
             for (elem, count) in ps.iter() {
@@ -369,7 +442,10 @@ fn normalize_send_sugar_canon(p: &Proc) -> Proc {
         Proc::PForUser(rows, body) => {
             let body_norm = normalize_send_sugar_canon(body.as_ref());
             if crate::rhocalc::receive::pfor_user_still_has_query_rows(rows) {
-                normalize_send_sugar_canon(&crate::rhocalc::receive::desugar_for_rows(rows.clone(), &body_norm))
+                normalize_send_sugar_canon(&crate::rhocalc::receive::desugar_for_rows(
+                    rows.clone(),
+                    &body_norm,
+                ))
             } else {
                 // The `where`-guard (which carries `@Nil!(n)` number-encoded operands) lives in
                 // the ForRow, not the body — canon each row's guard.

@@ -286,8 +286,10 @@ docs/architecture/rho-native-integration/validate.sh
 The script checks unfinished-work markers, proof-hole markers (allowing the
 named/negated Rocq-vernacular mentions the FV docs legitimately carry),
 fenced-block balance, PlantUML marker balance, PlantUML syntax, math-symbol
-formatting, math-delimiter conformance (inline math must be the dollar-backtick
-form; bare `$…$` and `$$…$$` are rejected), rendered PlantUML SVG assets,
+formatting, math-delimiter conformance (inline math must be the code-span-protected
+dollar-backtick form; bare and double-dollar delimiters are rejected), a
+GitHub-renderability check (banning MathJax commands GitHub cannot render, such as
+the mathtools reflection brackets and the char primitive), rendered PlantUML SVG assets,
 relative Markdown/source/image links, bibliography-local paths, and
 `git diff --check` whitespace diagnostics. Link
 and whitespace checks include `README.md`, `docs/README.md`, and

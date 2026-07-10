@@ -135,7 +135,9 @@ pub(crate) fn collection_to_bytes(proc: &Proc) -> Result<Vec<u8>, WireError> {
 
 pub(crate) fn collection_to_byte_array_proc(proc: &Proc) -> Result<Proc, WireError> {
     let bytes = collection_to_bytes(proc)?;
-    Ok(Proc::CastBytes(std::sync::Arc::new(super::Bytes::StringLit(hex::encode(bytes)))))
+    Ok(Proc::CastBytes(std::sync::Arc::new(super::Bytes::StringLit(hex::encode(
+        bytes,
+    )))))
 }
 
 #[cfg(test)]
@@ -192,7 +194,9 @@ mod tests {
                 Proc::CastInt(std::sync::Arc::new(Int::NumLit(1))),
                 Proc::CastInt(std::sync::Arc::new(Int::NumLit(2))),
             ]))),
-            Proc::CastList(std::sync::Arc::new(List::ListLit(vec![Proc::CastInt(std::sync::Arc::new(Int::NumLit(3)))]))),
+            Proc::CastList(std::sync::Arc::new(List::ListLit(vec![Proc::CastInt(
+                std::sync::Arc::new(Int::NumLit(3)),
+            )]))),
         ])));
         let bytes = collection_to_bytes(&proc).expect("encode nested list");
         assert_eq!(

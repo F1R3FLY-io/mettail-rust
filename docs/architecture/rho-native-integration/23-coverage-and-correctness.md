@@ -59,7 +59,7 @@ recorded in [17 — Stage 3](17-stage-3-production-wiring.md#8-what-runs-where-a
 generalized across every family by the later stages.
 
 **Strengthened claim.** Because matching is now on the reducer, the campaign proves
-more than doc 06's replay correspondence: a **whole-$`\llbracket G \rrbracket`$
+more than doc 06's replay correspondence: a **whole-$`[\![ G ]\!]`$
 operational correspondence** (`opcorr`) holds over **O1-optimal** matching — the
 capstone of [22](22-end-to-end-formal-verification.md), threading the O1/O3 "same
 context-labelled transition system" weak bisimulation that discharges the `rem:nonopt`
@@ -125,7 +125,7 @@ and a diagram would only approximate; the diagram (Figure 23-1) instead maps the
 | **binder-$`\beta`$** | positional locate of `App(^lambda(body), arg)`; the de-Bruijn subst/shift TRS (`^subst` / `^shift` / `^cmp` / `^shiftk` / `^pred`) computes `b[a/0]` | one visible seed COMM (`^subst` send) then a $`\tau`$ cascade to the normal form on `OUT` | `DeBruijnSubstTRS.v`, `InRhoBetaCascadeWeakBisim.v`, `BinderReflectionTotalOrReject.v`, `InRhoMatchPositional.v` |
 | **native** | positional locate + capture of the native App head from the reflected subject; the located accept gates the value bridge | one dispatch COMM forwarding the trusted handler's value (the delegated-value boundary, §7) | `NativeSystemProcessBoundary.v` |
 
-The whole-$`\llbracket G \rrbracket`$ capstone `WholeGsltInRhoOpCorrespondence.v`
+The whole-$`[\![ G ]\!]`$ capstone `WholeGsltInRhoOpCorrespondence.v`
 (with `…OptimalViaSameClts.v`) composes these arms into a single operational
 correspondence over O1-optimal matching; its `family_of` split has one arm per family
 group above. The capstone and every listed theory print
@@ -172,7 +172,7 @@ an unbounded proof — are colour-coded per family cluster.
 *Figure 23-1. Evidence map. Blue = a runtime firing test on the live reducer; orange
 = a corrupted-$`\sigma`$ probe (the replacement-not-duplicate evidence); grey =
 the coverage claim (WHAT is covered); green = the unbounded Rocq theory ([22](22-end-to-end-formal-verification.md));
-dark green = the whole-$`\llbracket G \rrbracket`$ capstone; purple = the
+dark green = the whole-$`[\![ G ]\!]`$ capstone; purple = the
 finite/symbolic executable floor (§5). Source:
 [figures/23-test-evidence-map.puml](figures/23-test-evidence-map.puml).*
 
@@ -320,7 +320,7 @@ in the stated claim; each marks the edge of what the matrix asserts.
 4. **Nested/whole-term reassembly is per-family staged.** Several probes observe the
    inner contractum at the fired hole (e.g. the ambient under-`new` HOLE bag `{A | B}`
    without the `NewCong` re-wrap; the base nested-redex site reduct without whole-term
-   congruence reassembly). The capstone lifts these to a whole-$`\llbracket G \rrbracket`$
+   congruence reassembly). The capstone lifts these to a whole-$`[\![ G ]\!]`$
    finite-trace correspondence ([22](22-end-to-end-formal-verification.md)); the
    per-family runtime tests observe at the firing site.
 5. **The modeling abstractions of doc 22 apply.** The de-Bruijn numeral dispatch is

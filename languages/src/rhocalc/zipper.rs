@@ -135,8 +135,12 @@ fn pathmap_from_lit(lit: &PathMapLit<Proc, Proc>) -> Result<PathMap<Proc, Global
 fn zipper_relative_read_zipper<'a>(
     pm: &'a PathMap<Proc, GlobalAlloc>,
     path: &[u8],
-) -> impl Zipper + ZipperMoving + ZipperValues<Proc> + ZipperAbsolutePath + ZipperSubtries<Proc, GlobalAlloc> + 'a
-{
+) -> impl Zipper
+       + ZipperMoving
+       + ZipperValues<Proc>
+       + ZipperAbsolutePath
+       + ZipperSubtries<Proc, GlobalAlloc>
+       + 'a {
     let mut rz = pm.read_zipper();
     rz.move_to_path(path);
     rz
@@ -434,9 +438,9 @@ mod tests {
         ])));
         lit.insert(k1, Proc::CastInt(std::sync::Arc::new(Int::NumLit(1))));
         lit.insert(k2, Proc::CastInt(std::sync::Arc::new(Int::NumLit(2))));
-        let users = Proc::CastList(std::sync::Arc::new(List::ListLit(vec![Proc::CastStr(std::sync::Arc::new(
-            Str::StringLit("users".into()),
-        ))])));
+        let users = Proc::CastList(std::sync::Arc::new(List::ListLit(vec![Proc::CastStr(
+            std::sync::Arc::new(Str::StringLit("users".into())),
+        )])));
         let sub = path_get_subtrie_at(&lit, &users).unwrap();
         assert_eq!(sub.len(), 2);
     }
@@ -460,17 +464,21 @@ mod tests {
             ]))),
             Proc::CastInt(std::sync::Arc::new(Int::NumLit(35))),
         );
-        let root_branch =
-            Proc::CastList(std::sync::Arc::new(List::ListLit(vec![Proc::CastInt(std::sync::Arc::new(Int::NumLit(1)))])));
+        let root_branch = Proc::CastList(std::sync::Arc::new(List::ListLit(vec![Proc::CastInt(
+            std::sync::Arc::new(Int::NumLit(1)),
+        )])));
         let rz = read_zipper_at(&lit, &root_branch).unwrap();
         assert_eq!(zipper_child_count(&rz).unwrap(), 2);
         let mut single = PathMapLit::new();
         single.insert(
-            Proc::CastList(std::sync::Arc::new(List::ListLit(vec![Proc::CastInt(std::sync::Arc::new(Int::NumLit(1)))]))),
+            Proc::CastList(std::sync::Arc::new(List::ListLit(vec![Proc::CastInt(
+                std::sync::Arc::new(Int::NumLit(1)),
+            )]))),
             Proc::CastInt(std::sync::Arc::new(Int::NumLit(10))),
         );
-        let leaf =
-            Proc::CastList(std::sync::Arc::new(List::ListLit(vec![Proc::CastInt(std::sync::Arc::new(Int::NumLit(1)))])));
+        let leaf = Proc::CastList(std::sync::Arc::new(List::ListLit(vec![Proc::CastInt(
+            std::sync::Arc::new(Int::NumLit(1)),
+        )])));
         let leaf_zipper = read_zipper_at(&single, &leaf).unwrap();
         assert!(zipper_descend_first(&leaf_zipper).is_err());
     }

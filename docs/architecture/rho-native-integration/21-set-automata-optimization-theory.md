@@ -25,7 +25,7 @@
 ## 1. Preliminaries and glossary
 
 Every symbol, acronym, and term is defined here before first use. Terms already
-shared across the suite ($`\llbracket t\rrbracket`$ for the lowering of $`t`$,
+shared across the suite ($`[\![ t]\!]`$ for the lowering of $`t`$,
 COMM, $`\tau`$, weak equivalence $`\approx`$, GSLT, RhoNet, $`\sigma`$)
 are defined in [01 — Concepts and Glossary](01-concepts-and-glossary.md); the
 matching-specific vocabulary is defined here.
@@ -62,7 +62,7 @@ channel that *names the rewrite's location*. A single rule $`L\Rightarrow R`$
 compiles to
 
 ```math
-\llbracket L \Rightarrow R \rrbracket(t\ell) \;=\; \mathsf{for}\bigl(\llbracket L\rrbracket \Leftarrow t\ell\bigr)\bigl\{\; t\ell\,!\,(\llbracket R\rrbracket) \;\bigr\},
+[\![ L \Rightarrow R ]\!](t\ell) \;=\; \mathsf{for}\bigl([\![ L]\!] \Leftarrow t\ell\bigr)\bigl\{\; t\ell\,!\,([\![ R]\!]) \;\bigr\},
 ```
 
 and a *contextual* rewrite — inner rewrites $`L_i\Rightarrow R_i`$ licensing an
@@ -71,10 +71,10 @@ that is a function of the outer context $`K`$ (optimal-channels.tex,
 Def. `def:compile`):
 
 ```math
-\llbracket\, L_1\Rightarrow R_1,\dots,L_n\Rightarrow R_n \;\Rightarrow\; K\Rightarrow K'\,\rrbracket \;=\; \mathsf{let}\;tc = \llbracket K\rrbracket\;\mathsf{in}\; \mathsf{for}\bigl((\llbracket L_1\rrbracket,\dots,\llbracket L_n\rrbracket) \Leftarrow tc\bigr)\bigl\{\; tc\,!\,(\llbracket K'\rrbracket(\llbracket R_1\rrbracket,\dots,\llbracket R_n\rrbracket)) \;\bigr\}.
+[\![\, L_1\Rightarrow R_1,\dots,L_n\Rightarrow R_n \;\Rightarrow\; K\Rightarrow K'\,]\!] \;=\; \mathsf{let}\;tc = [\![ K]\!]\;\mathsf{in}\; \mathsf{for}\bigl(([\![ L_1]\!],\dots,[\![ L_n]\!]) \Leftarrow tc\bigr)\bigl\{\; tc\,!\,([\![ K']\!]([\![ R_1]\!],\dots,[\![ R_n]\!])) \;\bigr\}.
 ```
 
-The clause $`\mathsf{let}\;tc=\llbracket K\rrbracket`$ is the **locus of
+The clause $`\mathsf{let}\;tc=[\![ K]\!]`$ is the **locus of
 optimization**. Because $`K`$ is a term-with-holes, the channel $`tc`$ is
 a function only of $`K`$'s *surface shape*, not of the hole-fillers; the
 hole-fillers are precisely the data communicated on $`tc`$ when the rule fires.

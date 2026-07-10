@@ -8,7 +8,7 @@
 > and native — now **also match and fire in Rho** (their matching is no longer host-side);
 > see [section 11](#11-the-associate-families-completed) and, for the full treatment,
 > [26](26-in-rho-ac-family-reference.md) (AC), [19](19-in-rho-binder-beta-substitution.md)
-> (binder-β), and [22](22-end-to-end-formal-verification.md) (the whole-$`\llbracket G \rrbracket`$ capstone).
+> (binder-β), and [22](22-end-to-end-formal-verification.md) (the whole-$`[\![ G ]\!]`$ capstone).
 >
 > **How this document relates to the campaign log.** The numbered file
 > [`15-in-rho-set-automaton-matching.md`](15-in-rho-set-automaton-matching.md) is the
@@ -106,19 +106,19 @@ Rust items or Rholang channels. Every symbol is defined here before first use.
   constructor label, produced by `reflect_tag(fingerprint, f)` and carried as a
   `GPrivate` name. The `fingerprint` disambiguates languages so tags of different
   languages never collide.
-- **Reflection** $`\llbracket t \rrbracket`$: the canonical `Par` (Rholang process)
+- **Reflection** $`[\![ t ]\!]`$: the canonical `Par` (Rholang process)
   encoding of a ground term,
   ```math
-  \llbracket f(t_1,\dots,t_n) \rrbracket \;=\; \mathtt{EList}\!\left[\,\underline{f},\ \llbracket t_1 \rrbracket,\ \dots,\ \llbracket t_n \rrbracket\,\right],
+  [\![ f(t_1,\dots,t_n) ]\!] \;=\; \mathtt{EList}\!\left[\,\underline{f},\ [\![ t_1 ]\!],\ \dots,\ [\![ t_n ]\!]\,\right],
   ```
   implemented by `reflect_ground_term_par` (`rholang-codegen/src/rho_net_lower.rs`). A
-  nullary leaf is $`\llbracket a \rrbracket = \mathtt{EList}[\underline{a}]`$.
+  nullary leaf is $`[\![ a ]\!] = \mathtt{EList}[\underline{a}]`$.
 - **Substitution** $`\sigma`$: a finite map from a rule's left-hand-side variables to
   ground subterms, e.g. $`\sigma = \{x \mapsto A,\ y \mapsto B\}`$. We write
-  $`\llbracket R \rrbracket\sigma`$ for the reflected right-hand side with $`\sigma`$
+  $`[\![ R ]\!]\sigma`$ for the reflected right-hand side with $`\sigma`$
   applied.
 - **$`\sigma`$-receiver**: the persistent Rholang contract `sigma_receiver_par` that, on
-  receiving a $`\sigma`$-tuple, emits $`\llbracket R \rrbracket\sigma`$. It is the
+  receiving a $`\sigma`$-tuple, emits $`[\![ R ]\!]\sigma`$. It is the
   **firing seam** ([section 4](#4-the-three-layer-architecture), Layer 2).
 - **`sa:` channel** and **trace $`tc(K)`$**: the accept channel is `sa:` followed by
   $`tc(K)`$, where $`tc(K) = \ulcorner T_M(K) \urcorner`$ is the reflected, interned
@@ -159,7 +159,7 @@ The single semantic law the whole design serves is the CLTS **firing law**: a ba
 rewrite $`L \Rightarrow R`$ firing at location channel $`c`$ is one atomic COMM,
 
 ```math
-\llbracket L \Rightarrow R \rrbracket(c) \;=\; \mathtt{for}\bigl(\llbracket L \rrbracket \Leftarrow c\bigr)\,\bigl\{\, c!\bigl(\llbracket R \rrbracket\bigr) \,\bigr\}.
+[\![ L \Rightarrow R ]\!](c) \;=\; \mathtt{for}\bigl([\![ L ]\!] \Leftarrow c\bigr)\,\bigl\{\, c!\bigl([\![ R ]\!]\bigr) \,\bigr\}.
 ```
 
 Everything below is the machinery that lets the interpreter *locate* $`c`$ and *bind*
@@ -234,7 +234,7 @@ f1r3node interpreter; *Layer 3 (Congruence and predicates)* is off the COMM mach
 2. **Firing (Layer 2).** On an accepting match the network sends
    $`\texttt{sa:}tc(K)!(\sigma_0,\dots,\sigma_{k-1}, @\mathit{out})`$ — **byte-identical**
    to the message the host injection built — so the *existing* persistent
-   `sigma_receiver_par` fires unchanged and lands $`\llbracket R \rrbracket\sigma`$ in one
+   `sigma_receiver_par` fires unchanged and lands $`[\![ R ]\!]\sigma`$ in one
    atomic $`c(\ell)`$ COMM.
 
 3. **Congruence and predicates (Layer 3).** Equations compile to compile-time
@@ -340,7 +340,7 @@ for a real soundness bug (below).
 for a node at location $`\ell`$,
 
 ```math
-\llbracket f(t_1,\dots,t_n) \rrbracket_\ell \;=\; \underbrace{\texttt{loc:}\ell\,!(\underline{f})}_{\text{head tag}} \;\bigm|\; \prod_{i=1}^{n} \llbracket t_i \rrbracket_{\ell\cdot(f,i)} \;\bigm|\; \underbrace{\mathrm{collapse}(\underline{f}; \ell)}_{\text{fold}}.
+[\![ f(t_1,\dots,t_n) ]\!]_\ell \;=\; \underbrace{\texttt{loc:}\ell\,!(\underline{f})}_{\text{head tag}} \;\bigm|\; \prod_{i=1}^{n} [\![ t_i ]\!]_{\ell\cdot(f,i)} \;\bigm|\; \underbrace{\mathrm{collapse}(\underline{f}; \ell)}_{\text{fold}}.
 ```
 
 Each node publishes **only** its head tag $`\underline{f}`$ on its deterministic location
@@ -350,7 +350,7 @@ scheme is **`nu`-free** (INV-7): a flat parallel composition of ground sends —
 no bound variable.
 
 **The collapse fold.** `collapse_publish` emits, per node, its fully-collapsed subterm
-value $`\llbracket \text{subtree} \rrbracket`$ on **two disjoint channels**:
+value $`[\![ \text{subtree} ]\!]`$ on **two disjoint channels**:
 
 - **`col:`** $`\ell`$ (chain, `collapse_chain_location`, i.e. `"col:" + ℓ`): read **once**
   by the *parent's* fold, so a parent can rebuild *its* subtree from its children.
@@ -368,9 +368,9 @@ republishes its own:
 
 Because child $`i`$ binds $`\mathtt{BoundVar}(n-1-i)`$ (the join flattens in bind order), the
 rebuilt $`E`$ reproduces `reflect_ground_term_par`'s
-$`[\underline{f}, \llbracket c_0 \rrbracket, \dots]`$ shape **byte-for-byte**. In other
+$`[\underline{f}, [\![ c_0 ]\!], \dots]`$ shape **byte-for-byte**. In other
 words, the value published at a node's collapse channels *equals*
-$`\llbracket \text{subtree} \rrbracket`$ — the fold is the Rho realization of
+$`[\![ \text{subtree} ]\!]`$ — the fold is the Rho realization of
 `reflect_ground_term_par`, assembled bottom-up rather than in one host-side nest.
 
 Literate form:
@@ -405,14 +405,14 @@ $`\mathrm{Swap}(\mathrm{Pair}(A,B), C)`$ with pattern $`\mathrm{Swap}(x,y)`$ bou
 $`x \mapsto \mathrm{Pair}()`$ instead of $`x \mapsto \mathrm{Pair}(A,B)`$, firing
 $`\mathrm{Pair}(C, \mathrm{Pair}())`$ instead of $`\mathrm{Pair}(C, \mathrm{Pair}(A,B))`$.
 The `cap:` collapse makes the Var-leaf bind the **whole**
-$`\llbracket \text{subtree} \rrbracket`$, so $`\sigma`$ is correct at arbitrary depth. Figure
+$`[\![ \text{subtree} ]\!]`$, so $`\sigma`$ is correct at arbitrary depth. Figure
 C traces the fold for exactly this non-nullary case.
 
 ![The col and cap collapse fold at a non-nullary Var-leaf](figures/in-rho-base-matching-collapse-fold.svg)
 
 **Figure C — the fold at a non-nullary Var-leaf.** The leaves $`A,B`$ publish their `col:`
 values; the $`\mathrm{Pair}`$ node's join rebuilds
-$`\llbracket \mathrm{Pair}(A,B) \rrbracket`$ and republishes on `col:` (to its parent) and
+$`[\![ \mathrm{Pair}(A,B) ]\!]`$ and republishes on `col:` (to its parent) and
 `cap:` (to the automaton). The Var-leaf $`x`$ reads `cap:` and binds the whole subtree.
 
 The disjointness of `col:` and `cap:` is what keeps this $`O1`$: the parent's chain read
@@ -443,7 +443,7 @@ into **one** network sharing a single root `loc:` receive. It groups entries by 
 - A **flat** entry (all direct children are Var leaves) wraps `arity` Var-leaf
   `for`-receives around the accept, each reading a **`cap:`** capture channel
   (`wrap_children`, then `wrap_capture_chain`), so each binds a fully-collapsed
-  $`\llbracket \text{subtree} \rrbracket`$.
+  $`[\![ \text{subtree} ]\!]`$.
 - A **nested** entry (some direct child is an `App`) takes a *descend-then-collapse*
   path: `collect_nested_schedule` DFS-collects the nested `App` **descents** (`loc:`
   head-tag `Match`es, `wrap_descent`) and the Var-leaf **captures** (`cap:`), and
@@ -459,7 +459,7 @@ into **one** network sharing a single root `loc:` receive. It groups entries by 
 
 with **one $`\sigma`$ slot per *distinct* left-hand-side variable** ($`k`$ = the
 distinct-variable count). The child bound at position $`p`$ is the node's `cap:` value —
-the fully-collapsed $`\llbracket \text{subtree} \rrbracket`$ — so the $`\sigma`$ slot **is**
+the fully-collapsed $`[\![ \text{subtree} ]\!]`$ — so the $`\sigma`$ slot **is**
 that subtree, *not* `EList[head tag]`. This distinct-variable arity is the
 **triad-coherence** point: the $`\sigma`$-receiver has $`k`$ formals (`lower_lhs_vars` dedups
 repeats), so the accept must send $`k`$ slots, not `arity`. For a **linear** entry
@@ -538,7 +538,7 @@ is a rule left-hand-side root.
    position; all networks are composed with the **one** spread of the whole subject.
 
 ```math
-\texttt{call} \;=\; \Bigl(\ \prod_{\ell \in \mathrm{sites}} \mathrm{network}(\rho,\ell)\ \Bigr)\ \Bigm|\ \llbracket \mathrm{subject} \rrbracket_\rho.
+\texttt{call} \;=\; \Bigl(\ \prod_{\ell \in \mathrm{sites}} \mathrm{network}(\rho,\ell)\ \Bigr)\ \Bigm|\ [\![ \mathrm{subject} ]\!]_\rho.
 ```
 
 Each site's accept fires the matched rule's $`\sigma`$-receiver on the *shared*
@@ -702,7 +702,7 @@ exactly what is shown invisible).
 associate families — associative-commutative (AC), contextual/congruence, binder, and native
 — fired as one COMM on the interpreter but still *matched* with a host-computed $`\sigma`$.
 That gap is now **closed**: every family both matches AND fires in Rho, and a
-whole-$`\llbracket G \rrbracket`$ operational-correspondence capstone
+whole-$`[\![ G ]\!]`$ operational-correspondence capstone
 ([22](22-end-to-end-formal-verification.md)) is proven over the $`O1`$-optimal in-Rho
 matching. The base-family machinery generalized exactly as designed — whole-term reflection,
 the spread, and locate-all are family-agnostic; each family adds a specialized *state kind*

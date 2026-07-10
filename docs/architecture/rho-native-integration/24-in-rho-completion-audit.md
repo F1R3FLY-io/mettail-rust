@@ -43,7 +43,7 @@ Four load-bearing clauses, each audited in this document:
 | NS-1 | **Fires in Rho.** Each family's rule firing is one (or a metered cascade of) COMM(s) on the interpreter. | [20](20-rholang-runtime-backend.md) | [§3](#3-the-requirement-to-evidence-traceability-matrix) Group N |
 | NS-2 | **Matches in Rho.** The redex is located and bound by a set automaton running in Rho, not by the host. | [20](20-rholang-runtime-backend.md), [25](25-in-rho-base-family-reference.md) | [§3](#3-the-requirement-to-evidence-traceability-matrix) Groups N, C; [§5](#5-no-dual-path-the-host-matcher-retired) |
 | NS-3 | **$`O1`$-optimal.** Each subject symbol is inspected once; the interned automaton is size-optimal in the pattern. | [21](21-set-automata-optimization-theory.md) | [§3](#3-the-requirement-to-evidence-traceability-matrix) Group O |
-| NS-4 | **Faithful (same CLTS).** The in-Rho scheme induces the paper's CLTS; the whole-$`\llbracket G \rrbracket`$ operational correspondence holds over the optimal matching. | [22](22-end-to-end-formal-verification.md), [13](13-knotted-topoi-operational-invariants.md) | [§3](#3-the-requirement-to-evidence-traceability-matrix) Group C; [§4](#4-inv-114-ledger-reconciliation) |
+| NS-4 | **Faithful (same CLTS).** The in-Rho scheme induces the paper's CLTS; the whole-$`[\![ G ]\!]`$ operational correspondence holds over the optimal matching. | [22](22-end-to-end-formal-verification.md), [13](13-knotted-topoi-operational-invariants.md) | [§3](#3-the-requirement-to-evidence-traceability-matrix) Group C; [§4](#4-inv-114-ledger-reconciliation) |
 
 The **contrast with doc 14** is the whole point of the campaign. Under the host-matched
 model that doc 14 certified, `knotted-topoi.tex` *licensed* host-side matching (the CLTS
@@ -56,7 +56,7 @@ still decides its match on the host.
 ## 2. Glossary (audit-specific terms, defined before use)
 
 Shared vocabulary (MeTTaIL, Dovetail, F1r3node, Rholang, RhoRuntime, RSpace, RhoNet,
-GSLT, COMM, $`\approx`$, $`\llbracket t \rrbracket`$) is defined in
+GSLT, COMM, $`\approx`$, $`[\![ t ]\!]`$) is defined in
 [01 — Concepts and Glossary](01-concepts-and-glossary.md). The terms specific to this
 audit are:
 
@@ -67,12 +67,12 @@ audit are:
 | **opcorr** | Operational correspondence: the knotted-topoi paper's `Obligation` that each source-rewrite firing at location $`\ell`$ is matched, label-for-label (the $`c(\ell)`$ COMM), by a behaviour-functor transition of the lowering, and conversely. Fixed at the CLTS. See [13](13-knotted-topoi-operational-invariants.md) §4.3, [22](22-end-to-end-formal-verification.md) §2. |
 | **CLTS** | Context-labelled transition system: transitions $`P \xrightarrow{F} P'`$ labelled by minimal enabling contexts $`F`$. The correctness criterion is stated here, so it is locus-agnostic. |
 | **spread** | The paper's term encoding that publishes a term's head tag at its location channel and installs each argument at its child location, so a term is distributed across per-location channels for the automaton to locate. |
-| **sigma-receiver** ($`\sigma`$-receiver) | The persistent Rholang receiver a base rewrite lowers to: `for(σ₀,…,σ_{k-1}, out <= c){ … }`, binding the $`k`$ matched sub-terms plus the output channel; its body emits $`\llbracket R \rrbracket\sigma`$. |
+| **sigma-receiver** ($`\sigma`$-receiver) | The persistent Rholang receiver a base rewrite lowers to: `for(σ₀,…,σ_{k-1}, out <= c){ … }`, binding the $`k`$ matched sub-terms plus the output channel; its body emits $`[\![ R ]\!]\sigma`$. |
 | **locate automaton** | The Erkens-Groote positional set automaton that visits each subject function symbol exactly once to locate all pattern matches — the $`O1`$ symbol-once discipline the in-Rho matcher rides. |
 | **$`tc(K)`$** | Meredith's optimal channel naming $`tc(K) = \ulcorner T_M(K) \urcorner`$: the reflected optimal set-automaton state, the $`O1`$/$`O3`$ quotient of the location channels. See [21](21-set-automata-optimization-theory.md). |
 | **$`O1`$ / $`O2`$ / $`O3`$** | The three optimality conditions of the optimal-channels theory: $`O1`$ symbol-once, $`O2`$ prune-preserves-work, $`O3`$ coarsest-sound. |
 | **corrupted-$`\sigma`$ probe** | A decisive runtime test that corrupts the host Dovetail report's $`\sigma`$ (and, where relevant, its contractum) to a nonsense term, then observes the correct output re-sourced from the in-Rho spread — proving the reduct is the automaton's, not the report's. |
-| **capstone** | The whole-$`\llbracket G \rrbracket`$ finite-trace operational-correspondence theorem `whole_gslt_in_rho_opcorrespondence`, and its $`O1`$-optimal upgrade `whole_gslt_opcorr_over_optimal_matching`. |
+| **capstone** | The whole-$`[\![ G ]\!]`$ finite-trace operational-correspondence theorem `whole_gslt_in_rho_opcorrespondence`, and its $`O1`$-optimal upgrade `whole_gslt_opcorr_over_optimal_matching`. |
 | **`family_of`** | The 7-constructor `Family` case split (FBase, FContextualJoin, FAcLinear, FAcStructural, FBinderBeta, FNative, FAcNested) over which the capstone assembles its per-family per-step arms. |
 | **zero-admission** | A Rocq theory whose `Print Assumptions` reports *Closed under the global context*: no admits, no added assumptions, no free section parameters, enforced by `formal/scripts/check_rocq_zero_admission.py`. |
 | **INV-1..14** | The knotted-topoi operational invariants ledger of [13](13-knotted-topoi-operational-invariants.md). |
@@ -149,7 +149,7 @@ unnecessary, and swapping $`L`$ later is CLTS-invisible (the `rem:nonopt` discha
 | **C3** | `sa:`/`eq:` COMMs are $`\tau`$ $`\Rightarrow`$ same CLTS (weak bisimulation) — the `rem:nonopt` discharge | `74c67580` (Stage 1 FV Phase C) | mCRL2 + Maude finite projections (`formal/process/`) | `InRhoSameCLTSWeakBisim` (T6) | Satisfied (proof) |
 | **C4** | Firing atomicity — no partial-match reachable state | `51c037ee` (Stage 2), `dca6f65d` (AC-atom) | TLA+/Apalache + `formal/process/` | `AtomicFiringNoPartialMatch` (T10), `AcAtomicNoPartialConsume` (T15) | Satisfied (proof) |
 | **C5** | Non-linear `eq:` commit $`\Leftrightarrow`$ name-equality, reject-safe | `51c037ee` | Stage 2 reducer runs | `NonLinearEqConsistency` (T9) | Satisfied (proof) |
-| **C6** | **CAPSTONE** — whole-$`\llbracket G \rrbracket`$ finite-trace opcorr, both directions, **over the $`O1`$-optimal matching** | `266440b0` (G0–G5 harness), `131fc2ab` (G6 thread (iii)), `b3bb52dc` (G7 flip INV-2/6/13) | `swapdemo_base_finite_trace_opcorr` (non-vacuity witness) | `WholeGsltInRhoOpCorrespondence.whole_gslt_in_rho_opcorrespondence` (T22), `…_opcorr_over_optimal_matching` (T23), `…OptimalViaSameClts` | Satisfied (proof) |
+| **C6** | **CAPSTONE** — whole-$`[\![ G ]\!]`$ finite-trace opcorr, both directions, **over the $`O1`$-optimal matching** | `266440b0` (G0–G5 harness), `131fc2ab` (G6 thread (iii)), `b3bb52dc` (G7 flip INV-2/6/13) | `swapdemo_base_finite_trace_opcorr` (non-vacuity witness) | `WholeGsltInRhoOpCorrespondence.whole_gslt_in_rho_opcorrespondence` (T22), `…_opcorr_over_optimal_matching` (T23), `…OptimalViaSameClts` | Satisfied (proof) |
 
 The capstone (C6) is the convergence node of Figure 24-1. Its statement is the
 finite-trace barb-equivalence
@@ -208,7 +208,7 @@ host-side realization to an in-Rho realization.**
 |---|---|---|---|
 | INV-1 | Injective location channels $`c(\ell) = \ulcorner \ell \urcorner`$ | Satisfied | `RhoGroundingAndNames`; unchanged by the campaign |
 | INV-2 | Plugging-stability of $`c(\cdot)`$ — no spurious rendezvous under embedding | **Satisfied (in-Rho realization)** | **Flipped by the capstone** (`b3bb52dc`): `ContextualAtomicJoinPlugging` (T8), consumed across every finite trace by the FContextualJoin arm — [§3.3](#33-group-c-clts-faithfulness-ns-4) C6, [§3.1](#31-group-n-every-rewrite-family-matches-and-fires-in-rho-ns-1-ns-2) N7 |
-| INV-3 | One firing = one atomic rendezvous emitting $`\llbracket R \rrbracket\sigma`$ | Satisfied | `LinearCommCorrespondence` (T7) — [§3.1](#31-group-n-every-rewrite-family-matches-and-fires-in-rho-ns-1-ns-2) N1 |
+| INV-3 | One firing = one atomic rendezvous emitting $`[\![ R ]\!]\sigma`$ | Satisfied | `LinearCommCorrespondence` (T7) — [§3.1](#31-group-n-every-rewrite-family-matches-and-fires-in-rho-ns-1-ns-2) N1 |
 | INV-4 | Firing atomicity — no partial-match reachable state | Satisfied | `AtomicFiringNoPartialMatch` (T10), `AcAtomicNoPartialConsume` — [§3.3](#33-group-c-clts-faithfulness-ns-4) C4 |
 | INV-5 | Non-linear pattern-variable consistency | Satisfied | `NonLinearEqConsistency` (T9), and now in Rho via the `eq:` guarded join — [§3.1](#31-group-n-every-rewrite-family-matches-and-fires-in-rho-ns-1-ns-2) N2, [§3.3](#33-group-c-clts-faithfulness-ns-4) C5 |
 | INV-6 | Structural premises / contextual rewrites as atomic joins | **Satisfied (in-Rho realization)** | **Flipped by the capstone** (`b3bb52dc`): `ContextualAtomicJoinPlugging` (T8) + `AmbientOpenFiring` (T11), consumed by the FContextualJoin + FAcStructural arms — [§3.1](#31-group-n-every-rewrite-family-matches-and-fires-in-rho-ns-1-ns-2) N7, N8 |
@@ -225,7 +225,7 @@ host-side realization to an in-Rho realization.**
 stepping-stone to the landed in-Rho realization; commit `b3bb52dc` performed the flip in
 [13](13-knotted-topoi-operational-invariants.md), and the capstone
 `WholeGsltInRhoOpCorrespondence.v` is the evidence. INV-13's honest scope — finite
-executions of gate-admitted $`\llbracket G \rrbracket`$, over the covered families — is
+executions of gate-admitted $`[\![ G ]\!]`$, over the covered families — is
 carried in the residuals register ([§6](#6-residuals-register), R-2). Full ledger prose:
 [13](13-knotted-topoi-operational-invariants.md) §5–§6.
 
@@ -296,7 +296,7 @@ adds evidence; it does not revisit a landed claim).
 | ID | Residual | Nature | Why known-scope, not a defect |
 |---|---|---|---|
 | **R-1** | `DeBruijnSubstTRS.v` models the de-Bruijn indices $`j,c,k,n`$ as Coq `nat` and folds the `^cmp`/`^pred` numeral dispatch into `nat` conditionals. | Modeling abstraction | Sound and *more* rigorous: the numeral dispatch is a bounded, deterministic, terminating sub-cascade computing `Nat.compare`/`Nat.pred`; the genuine $`\lambda\sigma`$ $`\sigma`$-fragment content is fully reducible $`\tau`$. The abstracted arithmetic runs concretely over reflected Peano numerals on the live reducer (`rho_net_subst_trs_reducer.rs`). [19](19-in-rho-binder-beta-substitution.md) §9.2. |
-| **R-2** | The capstone (T22/T23) is stated for **finite executions** of gate-admitted $`\llbracket G \rrbracket`$, over the covered families. | Scope of the theorem | Divergent / infinite executions and any rule family beyond the seven `family_of` constructors are outside the current statement; the harness extends additively — one more `Family` constructor + one more `family_of` case, reusing the assumption-free lift. [13](13-knotted-topoi-operational-invariants.md) §6. |
+| **R-2** | The capstone (T22/T23) is stated for **finite executions** of gate-admitted $`[\![ G ]\!]`$, over the covered families. | Scope of the theorem | Divergent / infinite executions and any rule family beyond the seven `family_of` constructors are outside the current statement; the harness extends additively — one more `Family` constructor + one more `family_of` case, reusing the assumption-free lift. [13](13-knotted-topoi-operational-invariants.md) §6. |
 | **R-3** | The AC and matching layers enter the capstone at the **Prop level** — as `gstep` well-formedness and the premises of obligation (iii) — rather than as their own per-step correspondence arms. | Proof structuring | AC is one atomic `consume` (the pick is internal to a single COMM), so it contributes zero new $`\tau`$ steps and needs no (iii)-style bisimulation; it enters as one rule-family arm (FAcLinear/FAcStructural/FAcNested). [16](16-in-rho-verification-plan.md) §2.2. |
 | **R-4** | Channels are modeled **structurally** in the Rocq development (quoted locations / StateId traces), not as the full F1r3node name algebra. | Modeling boundary | The structural model is exactly what the CLTS criterion ranges over; RSpace-faithfulness is carried by the live-reducer runtime tests (Groups N, I3) that run on the real interpreter. |
 | **R-5** | Obligation (iii) is threaded into the capstone as a cited **Section Hypothesis** (build-wiring option b, zero cross-project churn). | Build wiring | The literal cross-project discharge is landed separately in `WholeGsltInRhoOpCorrespondenceOptimalViaSameClts.v` (option a); both stay *Closed under the global context*. A Hypothesis is a universally-quantified premise on Section close, so nothing is assumed globally. [22](22-end-to-end-formal-verification.md) §8. |
@@ -333,7 +333,7 @@ confirmed flipped to their in-Rho realization by the capstone ([§4](#4-inv-114-
 The seven residuals are bounded known-scope with named additive continuations
 ([§6](#6-residuals-register)). **The in-Rho set-automaton matching campaign is complete
 against its north-star**: every non-semantic-predicate rewrite family matches and fires as
-a COMM on the f1r3node interpreter, $`O1`$-optimally, with the whole-$`\llbracket G \rrbracket`$
+a COMM on the f1r3node interpreter, $`O1`$-optimally, with the whole-$`[\![ G ]\!]`$
 operational correspondence proved over the optimal matching for finite executions.
 
 ## Sources

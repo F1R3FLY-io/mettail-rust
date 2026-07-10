@@ -81,7 +81,7 @@ graph-structured lambda theories." Manuscript, June 2026.
 
 Used for: the declared north-star operational-to-denotational construction. It
 fixes the MeTTaIL-to-core-rho desugaring schema, the location channels
-`c(ℓ) = ⌜ℓ⌝`, the context-labelled operational correspondence (Proposition and
+$`c(\ell) = \ulcorner\ell\urcorner`$, the context-labelled operational correspondence (Proposition and
 Obligation "opcorr"), freshness-by-quoting, persistence-by-reflection, equations
 as structural congruence, and the channel-intension freedom that licenses
 set-automaton-assisted matching. This is the primary source for

@@ -16,7 +16,7 @@ A HashBag AC rewrite `op{L_1, …, L_k, ...rest} ~> R` fires when the subject ba
 contains, in ANY order, a sub-multiset matching the `k` fixed element patterns; the
 residual multiset binds `rest`. The correctness constraint from `knotted-topoi.tex`
 is the same as the base case — one atomic COMM rendezvous emitting
-$`\llbracket R \rrbracket \sigma`$ — with the extra requirement that the match is
+$`[\![ R ]\!] \sigma`$ — with the extra requirement that the match is
 INVARIANT under the bag's shuffle order and cannot PARTIALLY fire (bind only some of
 the `k` elements and leave the residual unbound).
 
@@ -42,7 +42,7 @@ the bag is their PARALLEL composition. Order-independence is inherited from `par
 (a multiset of processes):
 
 ```math
-\llbracket \mathtt{op}\{e_1, \dots, e_m\} \rrbracket \;=\; \Big\Vert_{i=1}^{m} \; \mathtt{@"ac:}\mathtt{op"}!\bigl(\llbracket e_i \rrbracket\bigr)
+[\![ \mathtt{op}\{e_1, \dots, e_m\} ]\!] \;=\; \Big\Vert_{i=1}^{m} \; \mathtt{@"ac:}\mathtt{op"}!\bigl([\![ e_i ]\!]\bigr)
 ```
 
 The element channel `ac:{op}` is scoped INSIDE the carried message (never free in the
@@ -72,7 +72,7 @@ match, all inside one `consume`.
 shape `for( <ac_bag_pattern(op,k)> , out <- source ){ out!(rhs) }`. The bind has
 `k+2` free variables (the `k` elements, `rest`, and `out`), so under the reverse
 De Bruijn frame `out = BoundVar(0)`, `rest = BoundVar(1)`, and element `i` is
-`BoundVar(k+2-i)`. The RHS $`\llbracket R \rrbracket \sigma`$ reuses the flat
+`BoundVar(k+2-i)`. The RHS $`[\![ R ]\!] \sigma`$ reuses the flat
 `reflect_term_par` at `k+1` over the `[x_1..x_k, rest]` σ order — that shift yields
 exactly this frame, so NO new reflection machinery is needed. Verified end to end by
 `ac_receiver_fires_the_matched_element_on_the_dynamic_out`.
@@ -133,6 +133,6 @@ Figure 18-1 traces one firing. The codegen injection carries the whole bag as a
 process-soup value; the RSpace `consume` assigns the `k` send-patterns to `k` soup
 sends in ANY order, binds the residual to `rest`, and checks the non-linear guard —
 all in ONE atomic all-or-nothing COMM — and the receiver fires
-$`\llbracket R \rrbracket \sigma`$ on the dynamic out.
+$`[\![ R ]\!] \sigma`$ on the dynamic out.
 
 ![Figure 18-1 — in-Rho AC match + fire](figures/18-in-rho-ac-match-fire.svg)

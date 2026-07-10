@@ -79,7 +79,7 @@ are reader annotations for those `Par` values.
 | **COMM** | One RSpace communication: a send rendezvousing with a receive, the atomic reduction event of the Rho machine ([RHO-2005](references.md#rho-2005)). Every match step, fire, and substitution step below is a COMM. |
 | **`Par`** | A normalized Rholang process AST (`rhoapi::Par`) — the executable artifact. The backend emits `Par`, never Rholang source text. |
 | **GSLT** | Graph-structured lambda theory — the north-star paper's $`(\text{grammar},\ \text{equations},\ \text{rewrites})`$ classification of a model of computation ([KNOTTED-TOPOI-2026](references.md#knotted-topoi-2026)). A MeTTaIL `language!` is a GSLT. |
-| **$`\llbracket t \rrbracket`$** | The reflected `Par` image of a term $`t`$ — the *reflected-EList ABI* (next row). |
+| **$`[\![ t ]\!]`$** | The reflected `Par` image of a term $`t`$ — the *reflected-EList ABI* (next row). |
 | **reflected-EList ABI** | The tagged-list wire format: a constructor $`C(t_0,\dots,t_{m-1})`$ reflects to `EList[ GPrivate(⌜C⌝), ⟦t₀⟧, …, ⟦t_{m-1}⟧ ]`. The tag $`\ulcorner C \urcorner`$ is `GPrivate("mettail.term.<fp>.C")` (prefix `REFLECTED_TERM_ABI_PREFIX`, `rholang-codegen/src/lib.rs:66`; assembled at `rho_net_lower.rs:1379`). One format shared by the spread, the automaton, and the $`\sigma`$-receivers, so a captured sub-term flows between them with no re-encoding. |
 | **fingerprint (`fp`)** | The per-language tag salt that makes reserved names unforgeable and disjoint across languages. Every tag on the spread, the receivers, and the reflected RHS shares one `fp`, or they would not rendezvous. |
 | **M-reflect** | The runtime reflection of the *whole subject term* into its ground image (`reflect_category_fn`, `macros/src/gen/runtime/rho_invocation.rs:519`) — the input to the spread. Distinct from the report $`\sigma`$: M-reflect reflects the subject, not the host match result. |
@@ -149,7 +149,7 @@ shape is a flat $`(k+1)`$-ary receive (the $`k`$ LHS variables in
 first-occurrence order plus the `out` channel):
 
 ```math
-\texttt{for}\bigl(f_0,\dots,f_{k-1},\ \mathtt{out}\ \Leftarrow\ c(\ell)\bigr)\ \bigl\{\ \mathtt{out}\,!\,(\llbracket R \rrbracket\sigma)\ \bigr\}
+\texttt{for}\bigl(f_0,\dots,f_{k-1},\ \mathtt{out}\ \Leftarrow\ c(\ell)\bigr)\ \bigl\{\ \mathtt{out}\,!\,([\![ R ]\!]\sigma)\ \bigr\}
 ```
 
 That is `sigma_receiver_par` (`rho_net_lower.rs:3516`), built by
@@ -174,7 +174,7 @@ Every variant lowers to the same `Match`/`MatchCase`/`Receive` `Par` family the
 automaton already emits, so no family introduces a new reducer primitive. The
 receivers are parallel-composed into the installed program; a matched
 $`\sigma`$ reaching a receiver's `sa:` source is one atomic COMM that publishes
-$`\llbracket R \rrbracket\sigma`$ on `out`. The per-family internals live in
+$`[\![ R ]\!]\sigma`$ on `out`. The per-family internals live in
 [19](19-in-rho-binder-beta-substitution.md) (binder),
 [25](25-in-rho-base-family-reference.md) (base), and
 [26](26-in-rho-ac-family-reference.md) (AC); the correspondence proof that each
@@ -248,13 +248,13 @@ in Rho stops the install rather than silently dropping. Source:
    constructor to its reserved-tagged `EList`, a bound occurrence to
    `^bound(peano n)`, and a free occurrence to `^free x`.
 6. **Spread.** `spread_term_par` (`rho_net_lower.rs:2832`) publishes
-   $`\llbracket t \rrbracket`$ onto `loc:`/`col:`/`cap:` channels for the
+   $`[\![ t ]\!]`$ onto `loc:`/`col:`/`cap:` channels for the
    automaton to walk.
 7. **Locate and match.** The Layer-1 network consumes the head tags — the `sa:`
    $`\tau`$ COMMs — descends nested applications, and captures
    $`\sigma = [s_0,\dots,s_{k-1}]`$ at each located redex.
 8. **Fire.** Each accept sends $`\sigma`$ on the rule's `sa:` channel; the
-   Layer-2 $`\sigma`$-receiver publishes $`\llbracket R \rrbracket\sigma`$ on
+   Layer-2 $`\sigma`$-receiver publishes $`[\![ R ]\!]\sigma`$ on
    `out` — the visible COMM.
 9. **Congruence cascade (when the RHS needs it).** A $`\beta`$ seed drives the
    Layer-3 subst TRS to the normal form via reserved-channel $`\tau`$ COMMs.
@@ -289,7 +289,7 @@ in Rho), M-reflects the whole subject term (not the report $`\sigma`$), and
 assembles one call:
 
 ```math
-\textstyle\prod_{\ell}\ \mathit{net}_\ell \ \parallel\ \mathit{spread}\bigl(\llbracket t \rrbracket\bigr)
+\textstyle\prod_{\ell}\ \mathit{net}_\ell \ \parallel\ \mathit{spread}\bigl([\![ t ]\!]\bigr)
 ```
 
 a positional network co-installed at every redex position $`\ell`$ over one
@@ -421,7 +421,7 @@ optimality theory, the proofs, and the coverage live in single-owner documents:
   scheme, and the interner-as-partial-evaluator argument:
   [21](21-set-automata-optimization-theory.md).
 - **Proof it is correct.** The operational-correspondence corpus, from per-family
-  COMM correspondence to the whole-$`\llbracket G \rrbracket`$ capstone over
+  COMM correspondence to the whole-$`[\![ G ]\!]`$ capstone over
   optimal matching: [22](22-end-to-end-formal-verification.md); the verification
   plan is [16](16-in-rho-verification-plan.md).
 - **What is covered.** The family-by-capability matrix, the corrupted-$`\sigma`$
