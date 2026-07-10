@@ -4286,6 +4286,246 @@ pub struct LexForkStamp {
     pub rule_idx: u16,
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// ROOT-P S2 Stage B0 (2026-07-10): descriptor-PURE canonical-GLL PoC types.
+//
+// The pure arm's cursor state is EXACTLY the canonical GLL 4-tuple
+// `(L, u, i, w)` (Scott & Johnstone 2010 §4) — `L` split into the three
+// finite components `(state, cur_sym, frame_class)` plus the frame's
+// structured return slot (amendment 1), `u` = the GSS return node minted at
+// this frame's descent, `i` = input position, `w` = ONE binarized `getNodeP`
+// SPPF node. NO classic fields (no sppf_stack_id, no incoming_edge_stack_id,
+// no lex triple, no weight, no collection/binder/recovery state) — the
+// compiler enforces descriptor purity (review §4.4 rule 1). Reached only
+// from `step_canonical_pure`, itself reachable only under the
+// `CANONICAL_GLL_ENABLED` const (+ `PRATTAIL_CGLL_PURE`), so with the const
+// `false` every one of these types is dead code and the default build is
+// byte-identical.
+// ─────────────────────────────────────────────────────────────────────────
+
+/// Frame class of a pure descriptor: `D1` = fresh-constituent descent
+/// (Push / ConsumeAndPush / ReplaceAndPush / LexAlt literal+prefix — the
+/// callee builds a constituent from scratch); `D2` = operand-consuming
+/// descent (pushes from `InfixLoop` / `InfixChainIterative`, incl.
+/// LexAltInfix/Postfix/MixfixOp — the caller's running `w` is the LHS and
+/// rides the descent edge as `operand_w`, consumed into the constituent at
+/// the R2 reduce). Constant per frame (set at descent).
+#[allow(dead_code)] // Reached only under the const (DCE'd while const off).
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+enum CgllFrameClass {
+    D1,
+    D2,
+}
+
+/// AMENDMENT 1 — the structured synthetic RETURN SLOT of a pure frame.
+/// Computed PURELY from the descent action + the caller descriptor (caller
+/// frame symbol AFTER any replace-half): a fold of descent-LOCAL data ONLY
+/// (AV2 condition: no caller-chain folding, which would re-import the k-fold
+/// explosion). `kind_class` + `outer_bp` are REAL FIELDS because (a) the
+/// guard-5 collection-separator kind test reads `kind_class` (B2), and (b)
+/// the create-after-pop REPLAY resume state is derived from them
+/// (`kind_class == Return` ⇒ `InfixLoop { cur_bp: outer_bp }`, mirroring the
+/// generated engine's Return.bp contract at engine_impl.rs ~651-659 — the
+/// AV3 resume-state hole's fix).
+#[allow(dead_code)] // Reached only under the const (DCE'd while const off).
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+struct CgllRetSlot {
+    /// FxHash of the caller frame symbol AFTER applying any replace-half
+    /// (ReplaceAndPush's `replace_symbol`). Distinguishes same-pushed-symbol
+    /// descents from DIFFERENT caller continuations (kills the AV1
+    /// `u₀ = (0, CategoryEntry)` self-loop and the AV3 cross-fan ghost).
+    caller_sym_hash: u64,
+    /// Pushed frame's category (`symbol.category_src_idx`).
+    pushed_cat: u16,
+    /// Pushed frame's global rule id `(cat << 16) | rule_index_in_category`
+    /// (`CGLL_PURE_RULE_NONE` when the pushed symbol carries no rule
+    /// identity worth distinguishing — CategoryEntry pushes).
+    pushed_rule: u32,
+    /// Kind class of the pushed symbol (one of the `CGLL_KC_*` constants
+    /// below; frame-class bit 0x40 folded in so a D1 and a D2 descent of
+    /// the same pushed symbol never share a GSS `v` node).
+    kind_class: u8,
+    /// Resume binding power: the pushed symbol's `bp` (the Return
+    /// invariant's `outer_bp`, or the Grouping/Collection marker's saved
+    /// outer `cur_bp`). `u16::MAX` = none.
+    outer_bp: u16,
+    /// Cross-cat scope marker (EdgeKind class byte for PushWithEdgeKind /
+    /// PushCrossCatLhs descents; 0 otherwise). Preserves the guard-4
+    /// cross-cat-LHS evidence on the u-chain (AV6; consumed in B1/B2).
+    xcat: u8,
+}
+
+/// Kind-class constants for [`CgllRetSlot::kind_class`] (low nibble; the
+/// 0x40 bit carries the frame class — see [`CgllRetSlot`] docs).
+#[allow(dead_code)]
+const CGLL_KC_SEED: u8 = 0; // seed frame sentinel (never minted by a descent)
+#[allow(dead_code)]
+const CGLL_KC_RETURN: u8 = 1;
+#[allow(dead_code)]
+const CGLL_KC_RULE_AT: u8 = 2;
+#[allow(dead_code)]
+const CGLL_KC_INFIX_CONT: u8 = 3;
+#[allow(dead_code)]
+const CGLL_KC_CATEGORY_ENTRY: u8 = 4;
+#[allow(dead_code)]
+const CGLL_KC_COLLECTION_MARKER: u8 = 5;
+#[allow(dead_code)]
+const CGLL_KC_GROUPING_MARKER: u8 = 6;
+#[allow(dead_code)]
+const CGLL_KC_MIXFIX_MARKER: u8 = 7;
+#[allow(dead_code)]
+const CGLL_KC_OPT_GROUP: u8 = 8;
+#[allow(dead_code)]
+const CGLL_KC_BINDER_LIST: u8 = 9;
+
+/// Sentinel for [`CgllRetSlot::pushed_rule`] when no rule identity applies.
+#[allow(dead_code)]
+const CGLL_PURE_RULE_NONE: u32 = u32::MAX;
+
+/// One descriptor of the pure canonical-GLL arm — the C7 fence. Dedup key =
+/// FxHash of ALL SEVEN fields (nothing else may influence stepping). The
+/// `ret_slot` is the frame's OWN structured return slot (the slot describing
+/// how THIS frame returns — i.e. `u`'s label; amendment 1), NOT the caller's.
+#[allow(dead_code)] // Reached only under the const (DCE'd while const off).
+#[derive(Clone, Debug)]
+struct CgllPureDescriptor {
+    /// Grammar slot part 1: the engine state (embeds the Pratt bp;
+    /// `PrefixDispatch.pos ≡ i`, debug-asserted in the loop).
+    state: WpdaState,
+    /// Grammar slot part 2: the current frame symbol (what the generated
+    /// engine sees as `frontier_top.symbol`).
+    cur_sym: StackSymbolV2,
+    /// Grammar slot part 3: D1 fresh-constituent | D2 operand-consuming.
+    frame_class: CgllFrameClass,
+    /// The frame's structured return slot (amendment 1); `CGLL_KC_SEED`
+    /// kind-class for the goal frame.
+    ret_slot: CgllRetSlot,
+    /// GSS return node minted at this frame's descent (`u₀` for the seed).
+    u: crate::gss::GssNodeId,
+    /// Input position `i`.
+    pos: usize,
+    /// Binarized `getNodeP` left-fold of this frame's consumed children —
+    /// ONE node; `SPPF_ID_NONE` at frame entry (or the trigger leaf).
+    w: crate::sppf::SppfId,
+}
+
+/// Caller context recorded per canonical GSS EDGE at `gll_create` time, so a
+/// pop return / create-after-pop replay can materialize the RESUMED caller
+/// descriptor. Keyed by the full edge identity `(v, caller_node, operand_w)`
+/// — matching `CanonicalGllEdge` dedup — so one ctx per edge.
+///
+/// WHY THIS IS PURE (and why conflicts are debug-asserted, not designed
+/// around): the map is keyed by GSS-edge identity and populated at descent,
+/// so it is grammar×n bounded. The caller's `cur_sym` is hash-folded into
+/// `v`'s label (`caller_sym_hash`), so two edges agreeing on `v` agree on
+/// the caller symbol (modulo a counted 64-bit hash collision); the caller's
+/// OWN ret_slot is NOT stored here — it is recovered from `caller_node`'s
+/// label via the `v_slot` map (the caller's `u` IS the v minted at the
+/// caller's own descent, so its slot rides that node). `caller_class` is
+/// determined by the action that pushed the caller frame, which is
+/// determined by the caller symbol + creation-state class; a conflicting
+/// re-record (same edge, different ctx) would violate purity and is counted
+/// (`ctx_conflicts`) + debug-asserted instead of silently overwritten.
+#[allow(dead_code)] // Reached only under the const (DCE'd while const off).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+struct CgllPureCallerCtx {
+    caller_sym: StackSymbolV2,
+    caller_class: CgllFrameClass,
+}
+
+/// Instrumentation counters for one `step_canonical_pure` run (printed as a
+/// `CGLL-PURE …` line under `PRATTAIL_CANONICAL_GLL_STATS`).
+#[allow(dead_code)] // Reached only under the const (DCE'd while const off).
+#[derive(Default)]
+struct CgllPureStats {
+    u_count: u64,
+    processed: u64,
+    peak_r: usize,
+    gll_creates: u64,
+    gll_pops: u64,
+    replays: u64,
+    replay_structural_resumes: u64,
+    seed_pops: u64,
+    seed_pops_at_eoi: u64,
+    unwind_chain_fired: u64,
+    slot_collisions: u64,
+    ctx_conflicts: u64,
+    ctx_misses: u64,
+    d2_lo_fallbacks: u64,
+    iterchain_witness: u64,
+    weight_carriers: u64,
+    replay_weight_drops: u64,
+    collection_pops_structural: u64,
+    coll_closes: u64,
+    coll_sep_folds: u64,
+    coll_coverage_refuted: u64,
+    coll_empty_closes: u64,
+    coll_kv_deferred: u64,
+    effects_skipped: u64,
+    recovery_drops: u64,
+    weight_drops: u64,
+    guard_cc_actions: u64,
+    guard1_sites: u64,
+    guarded_topcat_sites: u64,
+    unwind_inject_m1: u64,
+    unwind_inject_m5: u64,
+    unwind_family_census: u64,
+    chain_ctx_divergence: u64,
+    grouping_cat_rejects: u64,
+    opt_group_absent: u64,
+    out_of_scope_actions: u64,
+    engine_errors: u64,
+    prefix_pos_desyncs: u64,
+    accept_action_hits: u64,
+}
+
+/// Frame-class bit folded into [`CgllRetSlot::kind_class`] (bit 6): a D1 and
+/// a D2 descent of the same pushed symbol mint DISTINCT GSS `v` nodes, so a
+/// pop return always knows which reduce protocol (R1 fold vs R2 per-edge
+/// join) its create-after-pop replays must use.
+#[allow(dead_code)]
+const CGLL_KC_D2_BIT: u8 = 0x40;
+
+/// STAGE C / AMENDMENT 6 (2026-07-10): bit 30 marks a WEIGHT-CARRIER wrapper
+/// `Intermediate`'s slot id (the lex-provenance packing wrapper minted by
+/// `cgll_pure_weight_carrier`). Cleared from every fold-slot hash
+/// (`cgll_pure_slot_hash`) so wrapper and fold intermediates can never share
+/// a `(slot, lo, hi)` identity. Bit 31 remains [`CGLL_BIN_TAG`].
+#[allow(dead_code)]
+const CGLL_WRAP_TAG: u32 = 0x4000_0000;
+
+/// Whole-run mutable state of one `step_canonical_pure` invocation: the
+/// `{R}` worklist, the accept frontier, the two PURE side-maps (both keyed
+/// by GSS node/edge identity, populated at descent, grammar×n bounded — see
+/// [`CgllPureCallerCtx`] for the purity argument), the slot-collision
+/// side-map, and the stats. Non-generic (holds only ids + finite symbols).
+#[allow(dead_code)] // Reached only under the const (DCE'd while const off).
+#[derive(Default)]
+struct CgllPureRun {
+    /// Pending descriptors `R` (U add-once applied at dequeue).
+    worklist: std::collections::VecDeque<CgllPureDescriptor>,
+    /// `v → its structured ret-slot` (the slot is hash-folded into `v`'s
+    /// label, so re-inserts are equal by construction; conflicts counted).
+    v_slot: rustc_hash::FxHashMap<crate::gss::GssNodeId, CgllRetSlot>,
+    /// `(v, caller u, operand_w) → caller ctx` — one ctx per canonical edge.
+    edge_ctx: rustc_hash::FxHashMap<
+        (crate::gss::GssNodeId, crate::gss::GssNodeId, crate::sppf::SppfId),
+        CgllPureCallerCtx,
+    >,
+    /// Accepting `(root, pos)` pairs (amendment 3: recorded ONLY at a
+    /// seed-frame pop at logical EOI), deduped.
+    accepting: Vec<(crate::sppf::SppfId, usize)>,
+    accept_seen: rustc_hash::FxHashSet<(crate::sppf::SppfId, usize)>,
+    /// Debug slot-collision side-map: `slot_id(L)` hash → first-seen
+    /// `(cur_sym, state-discriminant)`; a differing re-entry increments
+    /// `stats.slot_collisions` (31-bit hash risk accepted into the gate;
+    /// escalate to structured ids before any flip).
+    slot_seen: rustc_hash::FxHashMap<u32, (StackSymbolV2, u8)>,
+    /// Capped step-trace budget (`PRATTAIL_CGLL_PURE_TRACE`; 0 = off).
+    trace_budget: u32,
+    stats: CgllPureStats,
+}
+
 impl<W: SemiringRef> std::fmt::Debug for BranchCursor<W>
 where
     W: std::fmt::Debug,
@@ -13650,6 +13890,155 @@ where
         CursorOutcome::ForkInto(children)
     }
 
+    /// ROOT-P S2 Stage A.2 audit instrument (2026-07-10): compact one-line
+    /// summary of a classic step action, with the BINDER-relevant payloads
+    /// spelled out (`start_scope` flags, `TriggerMode`, `BuilderDelta`
+    /// binder-scope variants, Fork branch kinds + symbols + states). Used
+    /// only by the env-gated `PRATTAIL_CLASSIC_ACTION_TRACE` census in
+    /// [`Self::apply_action_to_cursor`].
+    fn classic_trace_action_summary(action: &WpdaStepAction<W>) -> String {
+        fn effect_name(delta: &BuilderDelta) -> String {
+            match delta {
+                BuilderDelta::StartBinderScope { names } => {
+                    format!("StartBinderScope{{names:{names:?}}}")
+                },
+                BuilderDelta::EndBinderScope => "EndBinderScope".to_string(),
+                other => format!("{:?}", std::mem::discriminant(other)),
+            }
+        }
+        match action {
+            WpdaStepAction::Advance(s) => format!("Advance({s:?})"),
+            WpdaStepAction::AdvanceWithEffect { new_state, effect } => {
+                format!("AdvanceWithEffect(st={new_state:?}, eff={})", effect_name(effect))
+            },
+            WpdaStepAction::Push { symbol, new_state, .. } => {
+                format!("Push(sym={symbol:?}, st={new_state:?})")
+            },
+            WpdaStepAction::PushWithEdgeKind { symbol, new_state, edge_kind, .. } => {
+                format!("PushEK(sym={symbol:?}, st={new_state:?}, ek={edge_kind:?})")
+            },
+            WpdaStepAction::Pop { new_state, .. } => format!("Pop(st={new_state:?})"),
+            WpdaStepAction::Replace { symbol, new_state, .. } => {
+                format!("Replace(sym={symbol:?}, st={new_state:?})")
+            },
+            WpdaStepAction::Fork { branches, consume_trigger } => {
+                let kinds: Vec<String> = branches
+                    .iter()
+                    .map(|b| {
+                        let kind = match &b.action_kind {
+                            ForkActionKind::ConsumeIdentAndReplace { start_scope } => {
+                                format!("ConsumeIdentAndReplace{{start_scope:{start_scope}}}")
+                            },
+                            ForkActionKind::GuardedConsumeIdentAndReplace { start_scope } => {
+                                format!(
+                                    "GuardedConsumeIdentAndReplace{{start_scope:{start_scope}}}"
+                                )
+                            },
+                            ForkActionKind::ConsumeIdentAndPop { start_scope } => {
+                                format!("ConsumeIdentAndPop{{start_scope:{start_scope}}}")
+                            },
+                            ForkActionKind::GuardedConsumeBinderIdentAndReplace {
+                                start_scope,
+                            } => format!(
+                                "GuardedConsumeBinderIdentAndReplace{{start_scope:{start_scope}}}"
+                            ),
+                            ForkActionKind::GuardedConsumeBinderIdentAndReplaceWithEffect {
+                                start_scope,
+                                effect,
+                            } => format!(
+                                "GuardedConsumeBinderIdentAndReplaceWithEffect{{start_scope:\
+                                 {start_scope}, eff={}}}",
+                                effect_name(effect)
+                            ),
+                            ForkActionKind::ConsumeAndReplaceWithEffect { effect } => {
+                                format!(
+                                    "ConsumeAndReplaceWithEffect{{eff={}}}",
+                                    effect_name(effect)
+                                )
+                            },
+                            ForkActionKind::GuardedConsumeAndReplaceWithEffect {
+                                expected_text,
+                                effect,
+                            } => format!(
+                                "GuardedConsumeAndReplaceWithEffect{{{expected_text:?}, eff={}}}",
+                                effect_name(effect)
+                            ),
+                            ForkActionKind::GuardedConsumeAndReplaceWithMultipleEffects {
+                                expected_text,
+                                effects,
+                            } => format!(
+                                "GuardedConsumeAndReplaceWithMultipleEffects{{{expected_text:?}, \
+                                 effs=[{}]}}",
+                                effects
+                                    .iter()
+                                    .map(effect_name)
+                                    .collect::<Vec<_>>()
+                                    .join(",")
+                            ),
+                            ForkActionKind::GuardedConsumeAndPopWithEffect {
+                                expected_text,
+                                effect,
+                            } => format!(
+                                "GuardedConsumeAndPopWithEffect{{{expected_text:?}, eff={}}}",
+                                effect_name(effect)
+                            ),
+                            ForkActionKind::PopWithEffect { effect } => {
+                                format!("PopWithEffect{{eff={}}}", effect_name(effect))
+                            },
+                            ForkActionKind::ConsumeAndPush { trigger_mode } => {
+                                format!("ConsumeAndPush{{tm={trigger_mode:?}}}")
+                            },
+                            other => format!("{:?}", std::mem::discriminant(other)),
+                        };
+                        format!("{kind}@sym={:?}/st={:?}", b.symbol, b.new_state)
+                    })
+                    .collect();
+                format!("Fork(ct={consume_trigger}, n={}, {:?})", branches.len(), kinds)
+            },
+            WpdaStepAction::ConsumeAndPush { symbol, new_state, trigger_mode, .. } => format!(
+                "ConsumeAndPush(sym={symbol:?}, st={new_state:?}, tm={trigger_mode:?})"
+            ),
+            WpdaStepAction::IterativeChainAbsorb { symbol, new_state, .. } => {
+                format!("IterAbsorb(sym={symbol:?}, st={new_state:?})")
+            },
+            WpdaStepAction::ConsumeAndPop { new_state, .. } => {
+                format!("ConsumeAndPop(st={new_state:?})")
+            },
+            WpdaStepAction::ConsumeAtAndPop { new_state, next_pos, .. } => {
+                format!("ConsumeAtAndPop(st={new_state:?}, np={next_pos})")
+            },
+            WpdaStepAction::Consume { new_state, .. } => format!("Consume(st={new_state:?})"),
+            WpdaStepAction::ConsumeIdentAndReplace { symbol, new_state, start_scope, .. } => {
+                format!(
+                    "ConsumeIdentAndReplace(sym={symbol:?}, st={new_state:?}, \
+                     start_scope={start_scope})"
+                )
+            },
+            WpdaStepAction::ConsumeAndReplace { symbol, new_state, .. } => {
+                format!("ConsumeAndReplace(sym={symbol:?}, st={new_state:?})")
+            },
+            WpdaStepAction::ConsumeAtAndReplace { symbol, new_state, next_pos, .. } => format!(
+                "ConsumeAtAndReplace(sym={symbol:?}, st={new_state:?}, np={next_pos})"
+            ),
+            WpdaStepAction::ReplaceAndPush { replace_symbol, push_symbol, new_state, .. } => {
+                format!(
+                    "ReplaceAndPush(rep={replace_symbol:?}, push={push_symbol:?}, \
+                     st={new_state:?})"
+                )
+            },
+            WpdaStepAction::ParsePredicate { .. } => "ParsePredicate".to_string(),
+            WpdaStepAction::OptGroupAbsent { replace_symbol, new_state, .. } => {
+                format!("OptGroupAbsent(rep={replace_symbol:?}, st={new_state:?})")
+            },
+            WpdaStepAction::OptGroupFinalize { replace_symbol, new_state, .. } => {
+                format!("OptGroupFinalize(rep={replace_symbol:?}, st={new_state:?})")
+            },
+            WpdaStepAction::Accept => "Accept".to_string(),
+            WpdaStepAction::Error(m) => format!("Error({m})"),
+            WpdaStepAction::Idle => "Idle".to_string(),
+        }
+    }
+
     fn apply_action_to_cursor(
         &mut self,
         cursor: &mut BranchCursor<W>,
@@ -13776,6 +14165,37 @@ where
         let action = self.guard_crosscat_projection_target_boundary(cursor, action, tokens);
         let action = self.guard_category_changing_infix(cursor, action, tokens);
         let action = self.guard_collection_separator_infix(cursor, action, tokens);
+        // ── ROOT-P S2 Stage A.2 AUDIT INSTRUMENT (2026-07-10): env-gated,
+        // capped CLASSIC action trace (`PRATTAIL_CLASSIC_ACTION_TRACE=<n>`).
+        // Purpose: the binder scope-entry action census for
+        // `for(@y<-z){Nil}` (which action starts the binder scope; which
+        // kind pushes the binder body frame; whether it falls inside the
+        // pure arm's §2 descent set). Printed AFTER the three guards so the
+        // EFFECTIVE actions are recorded. Diagnostic only — inert (one
+        // OnceLock read) unless the env var is set; never taken by CI.
+        {
+            static TRACE_BUDGET: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
+            static TRACE_USED: std::sync::atomic::AtomicU32 =
+                std::sync::atomic::AtomicU32::new(0);
+            let budget = *TRACE_BUDGET.get_or_init(|| {
+                std::env::var("PRATTAIL_CLASSIC_ACTION_TRACE")
+                    .ok()
+                    .map(|s| s.parse().unwrap_or(50_000))
+                    .unwrap_or(0)
+            });
+            if budget > 0
+                && TRACE_USED.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < budget
+            {
+                let node_sym = self.gss.node(cursor.node).map(|n| n.symbol);
+                eprintln!(
+                    "CLASSIC-ACT pos={} state={:?} node={:?} act={}",
+                    cursor.pos,
+                    cursor.inner_state,
+                    node_sym,
+                    Self::classic_trace_action_summary(&action),
+                );
+            }
+        }
         #[cfg(feature = "walker-stats")]
         {
             let bucket = crate::walker_stats::apply_action_variant_index(&action);
@@ -19669,6 +20089,17 @@ where
         // accepting frontier this driver publishes into `self.branch_cursors`.
         self.deterministic = false;
 
+        // ── ROOT-P S2 Stage B0 (2026-07-10): descriptor-PURE canonical GLL ──
+        // Opt-in dispatch to the pure `(L, u, i, w)` interpreter
+        // (`step_canonical_pure`). Self-contained: depends on NO other CGLL
+        // env lever (RETSLOT / BINARIZE / P2CORE / POC_RECPOP stay untouched
+        // and are NOT read by the pure arm). Reached only inside
+        // `step_canonical`, which the `CANONICAL_GLL_ENABLED` const DCEs when
+        // `false` ⇒ default build byte-identical.
+        if self.rootp_mode.canonical_gll && std::env::var_os("PRATTAIL_CGLL_PURE").is_some() {
+            return self.step_canonical_pure(tokens);
+        }
+
         // ══ Stage-E MEASURED OUTCOME (2026-07-09, deep-@ ladder A/B) ══════════
         // Target (classic): @Nil!(@Nil!())=2, @Nil!(@(@Nil)!())=2, d2=2, d3=4;
         // @(p) REJECTS; CF-core 1+2*3/(1+2)*3/-3!/@Nil!(0)=1. The canonical
@@ -22737,6 +23168,53 @@ where
         }
     }
 
+    /// STAGE C / AMENDMENT 6 (2026-07-10) — WEIGHT-THREADING flatten: like
+    /// [`Self::cgll_flatten_ids`] but each flat also carries the `⊗`-product
+    /// of every `Intermediate` packing weight traversed to produce it (the
+    /// lex-provenance carriers the pure arm folds into spine/wrapper
+    /// packings). For the E1/k=4 arms every `Intermediate` packing weight is
+    /// `W::one_ref()` (their `cgll_get_node_p` is pinned to one), so the
+    /// product is the `⊗`-identity and this is observationally byte-identical
+    /// for them. Reached only under `cgll_binarize_active()`.
+    #[allow(dead_code)] // Reached only under the const (DCE'd while const off).
+    fn cgll_flatten_ids_weighted(
+        &self,
+        id: crate::sppf::SppfId,
+    ) -> Vec<(Vec<crate::sppf::SppfId>, W)> {
+        match self.sppf.node(id) {
+            Some(crate::sppf::SppfNode::Intermediate { .. }) => {
+                let packings: Vec<crate::sppf::SppfId> = self.sppf.packings_of(id).to_vec();
+                let mut out: Vec<(Vec<crate::sppf::SppfId>, W)> = Vec::new();
+                for p in packings {
+                    let (pack_children, pack_weight) = match self.sppf.node(p) {
+                        Some(crate::sppf::SppfNode::Packing { children, weight, .. }) => {
+                            (children.clone(), weight.clone())
+                        },
+                        _ => continue,
+                    };
+                    let mut acc: Vec<(Vec<crate::sppf::SppfId>, W)> =
+                        vec![(Vec::new(), pack_weight)];
+                    for &c in &pack_children {
+                        let cf = self.cgll_flatten_ids_weighted(c);
+                        let mut next: Vec<(Vec<crate::sppf::SppfId>, W)> =
+                            Vec::with_capacity(acc.len().saturating_mul(cf.len().max(1)));
+                        for (a, aw) in &acc {
+                            for (b, bw) in &cf {
+                                let mut x = a.clone();
+                                x.extend_from_slice(b);
+                                next.push((x, aw.times_ref(bw)));
+                            }
+                        }
+                        acc = next;
+                    }
+                    out.extend(acc);
+                }
+                out
+            },
+            _ => vec![(vec![id], W::one_ref())],
+        }
+    }
+
     /// Recursively realize a BINARIZED Symbol to its `(Term, W)` readings by
     /// enumerating its packing family. For each packing `[spine]`: `flatten` the
     /// spine to the classic children list(s), realize each child (binarized
@@ -22776,21 +23254,25 @@ where
                 },
                 _ => continue,
             };
-            // Flatten the packing's binary spine to classic n-ary children lists.
-            let mut flats: Vec<Vec<crate::sppf::SppfId>> = vec![Vec::new()];
+            // Flatten the packing's binary spine to classic n-ary children
+            // lists. STAGE C / AMENDMENT 6: the WEIGHTED flatten also
+            // ⊗-collects the spine/wrapper packing weights per flat (lex
+            // provenance); `⊗`-identity for the E1/k=4 arms (their spine
+            // packings are all `one`).
+            let mut flats: Vec<(Vec<crate::sppf::SppfId>, W)> = vec![(Vec::new(), W::one_ref())];
             for &c in &pack_children {
-                let cf = self.cgll_flatten_ids(c);
-                let mut next: Vec<Vec<crate::sppf::SppfId>> = Vec::new();
-                for a in &flats {
-                    for b in &cf {
+                let cf = self.cgll_flatten_ids_weighted(c);
+                let mut next: Vec<(Vec<crate::sppf::SppfId>, W)> = Vec::new();
+                for (a, aw) in &flats {
+                    for (b, bw) in &cf {
                         let mut x = a.clone();
                         x.extend_from_slice(b);
-                        next.push(x);
+                        next.push((x, aw.times_ref(bw)));
                     }
                 }
                 flats = next;
             }
-            for flat in flats {
+            for (flat, flat_weight) in flats {
                 // Classic soundness parity: reject a derivation whose in-span
                 // literal terminals do not fit the span (mirrors the classic
                 // `realize_node_leave` Symbol-arm filter at the
@@ -22843,7 +23325,13 @@ where
                         }
                     }
                 }
-                let terms = self.realize_packing_call(rule_idx, &flat, weight.clone(), memo, limit);
+                let terms = self.realize_packing_call(
+                    rule_idx,
+                    &flat,
+                    weight.times_ref(&flat_weight),
+                    memo,
+                    limit,
+                );
                 out.extend(terms);
             }
         }
@@ -22963,11 +23451,42 @@ where
             if classic_root == crate::sppf::SPPF_ID_NONE {
                 continue;
             }
-            // POST-PASS: binarize the completed classic forest under this root.
-            let bin_root = self.cgll_binarize_classic_symbol(classic_root, &mut bin_map);
-            if bin_root == classic_root {
-                continue; // classic root was not a Symbol (nothing to binarize)
-            }
+            // ── ROOT-P S2 Stage B0 (2026-07-10, amendment 4/AV5): pure-root
+            // PASSTHROUGH. The pure arm's accepting roots are ALREADY
+            // binarized (`Symbol(cat | CGLL_BIN_TAG, 0, n)` built live by
+            // `getNodeP`), so the classic binarize post-pass returns the root
+            // itself (`tag & CGLL_BIN_TAG` early-return) and the pre-existing
+            // `bin_root == classic_root ⇒ continue` guard below would DROP
+            // every pure accept (silent total-reject). Under
+            // `PRATTAIL_CGLL_PURE`, a root already carrying `CGLL_BIN_TAG`
+            // bypasses the post-pass and enumerates directly. Non-pure arms
+            // (k=4 / classic E1) never intern a BIN-tagged root as a cursor
+            // root, so their path is byte-identical.
+            let pure_bin_root = if Self::cgll_pure_enabled() {
+                match self.sppf.node(classic_root) {
+                    Some(crate::sppf::SppfNode::Symbol { non_terminal_tag, .. })
+                        if non_terminal_tag & CGLL_BIN_TAG != 0 =>
+                    {
+                        Some(classic_root)
+                    },
+                    _ => None,
+                }
+            } else {
+                None
+            };
+            let bin_root = match pure_bin_root {
+                Some(root) => root,
+                None => {
+                    // POST-PASS: binarize the completed classic forest under
+                    // this root.
+                    let bin_root =
+                        self.cgll_binarize_classic_symbol(classic_root, &mut bin_map);
+                    if bin_root == classic_root {
+                        continue; // classic root was not a Symbol (nothing to binarize)
+                    }
+                    bin_root
+                },
+            };
             if !seen_bin.insert(bin_root) {
                 continue; // already enumerated this shared S_bin
             }
@@ -23002,6 +23521,2504 @@ where
             };
         }
         WpdaResolveResult::Accepted { weights, terms, roots }
+    }
+
+    // ═════════════════════════════════════════════════════════════════════
+    // ROOT-P S2 Stage B0 (2026-07-10): the descriptor-PURE canonical-GLL
+    // interpreter (`step_canonical_pure`) + its helpers.
+    //
+    // Thesis under test (review §4.4): a stepping loop whose cursor state is
+    // EXACTLY `(L, u, i, w)` — interpreting the SAME generated WPDA tables —
+    // keeps `|U|` depth-uniform-polynomial while the packed forest preserves
+    // every reading, because pack-at-advance (`getNodeP`) makes pre-reduce
+    // merges lossless. NO `k` anywhere; NO classic cursor fields.
+    //
+    // Substrate reused verbatim: `gll_create`/`gll_pop`/`gll_edges` (gss.rs),
+    // the binarized SPPF interners (sppf.rs), the generated engine tables
+    // (`engine.step` fed a SYNTHESIZED frontier node — AV7 verified no
+    // emitter reads `frontier_top.pos`), and the existing binarized realize
+    // (`cgll_resolve_binarized` with the pure-root passthrough above).
+    //
+    // Everything below is reachable ONLY from `step_canonical`'s
+    // `PRATTAIL_CGLL_PURE` dispatch, itself DCE'd when
+    // `CANONICAL_GLL_ENABLED == false` ⇒ default build byte-identical.
+    //
+    // B0 SCOPE NOTES (each named, none silent):
+    //  - Collections (`CollectionMarker` pops / sep coverage / CollectionId
+    //    flatten) are B2: a CollectionMarker pop falls to the STRUCTURAL
+    //    passthrough + `collection_pops_structural` counter.
+    //  - Binder scopes (`start_scope`, `BinderScope` leaves) are B2:
+    //    counted via `effects_skipped`.
+    //  - `ParsePredicate` (P3.d) and `OptGroupFinalize` (P3.c) drop the
+    //    descriptor + `out_of_scope_actions` counter (no battery term).
+    //  - The five classic pre-action guards are NOT run (they read classic
+    //    cursor residue). Battery-relevance is instrumented instead:
+    //    `guard_cc_actions` (guard-4 category-changing-infix census — the
+    //    AV6 B1/B2 blocker), `guard1_sites` (transparent-projection
+    //    Advance(Unwinding)-at-InfixLoop census). A reading diff on the B0
+    //    battery attributable to a guard is a stage-blocking finding, never
+    //    a silent skip. The ONE guard mirrored purely (needed for classic
+    //    reject parity on grouping): the grouping produced-category
+    //    admissibility check (`category_can_satisfy_expected`) at the
+    //    structural GroupingMarker pop.
+    //  - Recovery stays HARD-DISABLED (amendment 8): the pure arm never
+    //    consults `RecoveryConfig` and drops engine `Error` actions.
+    //  - Discarded-token lex weights (amendment 6, later stage): a non-one
+    //    step weight on a leafless scan is counted in `weight_drops`.
+    // ═════════════════════════════════════════════════════════════════════
+
+    /// Process-wide `PRATTAIL_CGLL_PURE` gate (OnceLock — one env read, so
+    /// the many per-segment walkers observe one stable value; mirrors
+    /// `realize_dedup_enabled`).
+    #[allow(dead_code)] // Reached only under the const (DCE'd while const off).
+    fn cgll_pure_enabled() -> bool {
+        static GATE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        *GATE.get_or_init(|| std::env::var_os("PRATTAIL_CGLL_PURE").is_some())
+    }
+
+    /// FxHash of any hashable value (the pure arm's one hashing primitive).
+    #[allow(dead_code)]
+    fn cgll_pure_hash_of<T: std::hash::Hash>(value: &T) -> u64 {
+        use std::hash::Hasher;
+        let mut h = rustc_hash::FxHasher::default();
+        value.hash(&mut h);
+        h.finish()
+    }
+
+    /// U add-once key = FxHash of ALL descriptor fields (and nothing else —
+    /// the C7 fence).
+    #[allow(dead_code)]
+    fn cgll_pure_key(d: &CgllPureDescriptor) -> u64 {
+        Self::cgll_pure_hash_of(&(
+            &d.state,
+            d.cur_sym,
+            d.frame_class,
+            d.ret_slot,
+            d.u,
+            d.pos,
+            d.w,
+        ))
+    }
+
+    /// Finite, POSITION-FREE ident of a state for `Intermediate` slot ids:
+    /// discriminant index + the state's bp/rule payload fields, with
+    /// `PrefixDispatch.pos` (≡ `i`) EXCLUDED so partials of the same grammar
+    /// slot at different positions share `Intermediate` identity (the
+    /// packing-family poly-collapse). Exhaustive (in-crate enum).
+    #[allow(dead_code)]
+    fn cgll_pure_state_slot_ident(state: &WpdaState) -> (u8, u64) {
+        #[inline]
+        fn pack4(a: u16, b: u16, c: u16, d: u16) -> u64 {
+            ((a as u64) << 48) | ((b as u64) << 32) | ((c as u64) << 16) | (d as u64)
+        }
+        match state {
+            WpdaState::Ready { min_bp } => (0, *min_bp as u64),
+            WpdaState::PrefixDispatch { cur_bp, .. } => (1, *cur_bp as u64),
+            WpdaState::InfixLoop { cur_bp } => (2, *cur_bp as u64),
+            WpdaState::InfixChainIterative { result_src_idx, rule_idx, outer_bp, rhs_bp } => {
+                (3, pack4(*result_src_idx, *rule_idx, *outer_bp as u16, *rhs_bp as u16))
+            },
+            WpdaState::CollectionLoop {
+                result_src_idx,
+                rule_idx,
+                element_src_idx,
+                outer_bp,
+                accumulator_id,
+                slot_idx,
+                kv_phase,
+            } => (
+                4,
+                pack4(*result_src_idx, *rule_idx, *element_src_idx, *outer_bp as u16)
+                    ^ (((*accumulator_id as u64) << 24)
+                        | ((*slot_idx as u64) << 16)
+                        | ((*kv_phase as u64) << 8)),
+            ),
+            WpdaState::CollectionOpenParen {
+                result_src_idx,
+                rule_idx,
+                element_src_idx,
+                outer_bp,
+            } => (5, pack4(*result_src_idx, *rule_idx, *element_src_idx, *outer_bp as u16)),
+            WpdaState::MixfixContinuation { result_src_idx, rule_idx, completed_idx } => {
+                (6, pack4(*result_src_idx, *rule_idx, *completed_idx as u16, 0))
+            },
+            WpdaState::MixfixLiteralRun {
+                result_src_idx,
+                rule_idx,
+                completed_idx,
+                kind,
+                sub_pos,
+            } => (
+                7,
+                pack4(
+                    *result_src_idx,
+                    *rule_idx,
+                    *completed_idx as u16,
+                    ((*kind as u16) << 8) | (*sub_pos as u16),
+                ),
+            ),
+            WpdaState::BinderRule { result_src_idx, rule_idx, body_src_idx, outer_bp } => {
+                (8, pack4(*result_src_idx, *rule_idx, *body_src_idx, *outer_bp as u16))
+            },
+            WpdaState::OptionalGroup {
+                result_src_idx,
+                rule_idx,
+                group_idx,
+                sub_pos,
+                outer_bp,
+            } => (
+                9,
+                pack4(
+                    *result_src_idx,
+                    *rule_idx,
+                    ((*group_idx as u16) << 8) | (*sub_pos as u16),
+                    *outer_bp as u16,
+                ),
+            ),
+            WpdaState::BinderListLoop {
+                result_src_idx,
+                rule_idx,
+                body_src_idx,
+                outer_bp,
+                marker_pos,
+                next_pos,
+                sub_pos,
+            } => (
+                10,
+                pack4(*result_src_idx, *rule_idx, *body_src_idx, *outer_bp as u16)
+                    ^ (((*marker_pos as u64) << 24)
+                        | ((*next_pos as u64) << 16)
+                        | ((*sub_pos as u64) << 8)),
+            ),
+            WpdaState::CrossCatDelegate { source_src_idx, inner_cur_bp } => {
+                (11, pack4(*source_src_idx, *inner_cur_bp as u16, 0, 0))
+            },
+            WpdaState::AmbiguityFanout { .. } => (12, 0),
+            WpdaState::Saturating { .. } => (13, 0),
+            WpdaState::Unwinding => (14, 0),
+            WpdaState::GroupingClosePreservingInner { inner_cat_src_idx } => {
+                (15, *inner_cat_src_idx as u64)
+            },
+            WpdaState::Accepted => (16, 0),
+            WpdaState::Error { .. } => (17, 0),
+        }
+    }
+
+    /// `slot_id(L)` for the pure arm's `getNodeP` folds: FxHash of
+    /// `(cur_sym, position-free state ident)` with the `CGLL_BIN_TAG` bit
+    /// cleared (Intermediate slot namespace stays disjoint from the
+    /// binarized Symbol tag). A refinement of `cgll_thread_slot` (which
+    /// hashed the state alone and would collide all `Unwinding` folds across
+    /// rules). 31-bit collision risk carried by the debug side-map
+    /// (`CgllPureRun::slot_seen`).
+    #[allow(dead_code)]
+    fn cgll_pure_slot_hash(cur_sym: &StackSymbolV2, state: &WpdaState) -> u32 {
+        let ident = Self::cgll_pure_state_slot_ident(state);
+        // Bit 31 = the binarized-Symbol namespace; bit 30 = the amendment-6
+        // weight-carrier wrapper namespace. Both cleared from fold slots.
+        (Self::cgll_pure_hash_of(&(cur_sym, ident)) as u32) & !(CGLL_BIN_TAG | CGLL_WRAP_TAG)
+    }
+
+    /// Kind-class byte of a pushed symbol for [`CgllRetSlot::kind_class`]
+    /// (+ the frame-class bit — see [`CGLL_KC_D2_BIT`]).
+    #[allow(dead_code)]
+    fn cgll_pure_kind_class(kind: SymbolKind, class: CgllFrameClass) -> u8 {
+        let base = match kind {
+            SymbolKind::CategoryEntry => CGLL_KC_CATEGORY_ENTRY,
+            SymbolKind::RuleAt(_) => CGLL_KC_RULE_AT,
+            SymbolKind::InfixContinuation => CGLL_KC_INFIX_CONT,
+            SymbolKind::Return => CGLL_KC_RETURN,
+            SymbolKind::CollectionMarker => CGLL_KC_COLLECTION_MARKER,
+            SymbolKind::GroupingMarker => CGLL_KC_GROUPING_MARKER,
+            SymbolKind::MixfixMarker => CGLL_KC_MIXFIX_MARKER,
+            SymbolKind::OptionalGroupAt(_) => CGLL_KC_OPT_GROUP,
+            SymbolKind::BinderListLoopAt(_) => CGLL_KC_BINDER_LIST,
+        };
+        base | if matches!(class, CgllFrameClass::D2) { CGLL_KC_D2_BIT } else { 0 }
+    }
+
+    /// The seed (goal) frame's sentinel ret-slot.
+    #[allow(dead_code)]
+    fn cgll_pure_seed_slot(seed_sym: &StackSymbolV2) -> CgllRetSlot {
+        CgllRetSlot {
+            caller_sym_hash: 0,
+            pushed_cat: seed_sym.category_src_idx,
+            pushed_rule: CGLL_PURE_RULE_NONE,
+            kind_class: CGLL_KC_SEED,
+            outer_bp: u16::MAX,
+            xcat: 0,
+        }
+    }
+
+    /// Synthesize the GSS node LABEL for a descent's return node `v` from
+    /// the structured ret-slot: all 64 hash bits of the slot are folded into
+    /// the label fields, so the label is injective in the slot modulo the
+    /// (counted) 64-bit hash. `kind = RuleAt(...)` guarantees the label is
+    /// DISTINCT from every bare `CategoryEntry` — a top-level descent can
+    /// never mint `v == u₀` (the AV1 self-loop kill; the amendment-3
+    /// `gll_edges(u₀).is_empty()` invariant rests on this). The generated
+    /// engine NEVER sees these labels (it sees `cur_sym` via the synthesized
+    /// frontier node), so the encoding needs only injectivity; field
+    /// recovery (kind-class / outer_bp for replay resume) rides the
+    /// `CgllPureRun::v_slot` side-map instead of the label bits.
+    #[allow(dead_code)]
+    fn cgll_pure_v_label(slot: &CgllRetSlot) -> StackSymbolV2 {
+        let h = Self::cgll_pure_hash_of(slot);
+        StackSymbolV2 {
+            category_src_idx: (h >> 48) as u16,
+            rule_index_in_category: (h >> 32) as u16,
+            bp: Some((h >> 24) as u8),
+            kind: SymbolKind::RuleAt((h >> 16) as u8),
+            coll_dispatch_bp: Some((h >> 8) as u8),
+            goal_src_idx: Some(h as u16),
+        }
+    }
+
+    /// Weight-carrying binarized `getNodeP` fold step (the pure-arm variant
+    /// of [`Self::cgll_get_node_p`], which is pinned to `W::one_ref()` by
+    /// the E1/k=4 arms): first child returns `z` itself; otherwise
+    /// mint/dedup `Intermediate(slot_id, lo, hi_z)` and link the binary
+    /// `[w, z]` packing carrying the STEP's weight (`intern_packing`
+    /// ⊕-aggregates on dedup re-intern — the lex-provenance carrier).
+    #[allow(dead_code)]
+    fn cgll_pure_get_node_p(
+        &mut self,
+        slot_id: u32,
+        w: crate::sppf::SppfId,
+        z: crate::sppf::SppfId,
+        lo: u32,
+        hi_z: u32,
+        weight: W,
+    ) -> crate::sppf::SppfId {
+        if w == crate::sppf::SPPF_ID_NONE {
+            return z;
+        }
+        if z == crate::sppf::SPPF_ID_NONE {
+            return w;
+        }
+        let inter = self.sppf.intern_intermediate(slot_id, lo, hi_z);
+        let packing = self.sppf.intern_packing(slot_id, vec![w, z], weight);
+        self.sppf.link_packing_to_symbol(inter, packing);
+        inter
+    }
+
+    /// Span-deriving fold wrapper (mirrors `cgll_thread_absorb`'s lo/hi
+    /// derivation): `lo` = the running left-part's start (else `z`'s start),
+    /// `hi` = `z`'s end (else the supplied position hint).
+    #[allow(dead_code)]
+    fn cgll_pure_fold(
+        &mut self,
+        slot_id: u32,
+        w: crate::sppf::SppfId,
+        z: crate::sppf::SppfId,
+        pos_hint: usize,
+        weight: W,
+    ) -> crate::sppf::SppfId {
+        if z == crate::sppf::SPPF_ID_NONE {
+            return w;
+        }
+        let lo = self
+            .sppf
+            .span_lo(w)
+            .or_else(|| self.sppf.span_lo(z))
+            .unwrap_or(0);
+        let hi = self.sppf.span_hi(z).unwrap_or(pos_hint as u32);
+        self.cgll_pure_get_node_p(slot_id, w, z, lo, hi, weight)
+    }
+
+    /// STAGE B2 — fold a SEPARATOR MARKER leaf into a collection-marker
+    /// frame's `w`-spine at each separator consume (the classic per-slot
+    /// `collection_sep_counts` witness, moved onto the `w` axis so the
+    /// descriptor stays pure). The leaf is a `TriggerTerminal` with the
+    /// RESERVED owner `(u16::MAX, u16::MAX)` — impossible for a real rule,
+    /// so (a) `cgll_pure_is_sep_marker` recognizes it unambiguously at
+    /// flatten, (b) even a leaked one is filtered by `realize_packing_call`
+    /// (TriggerTerminals never become ActionArgs). Stripped from the
+    /// `CollectionId.items` at the marker pop after the coverage gate
+    /// counts it.
+    #[allow(dead_code)] // Reached only under the const (DCE'd while const off).
+    fn cgll_pure_fold_sep_marker(
+        &mut self,
+        run: &mut CgllPureRun,
+        d: &CgllPureDescriptor,
+        sep_pos: usize,
+    ) -> crate::sppf::SppfId {
+        run.stats.coll_sep_folds += 1;
+        let leaf = self.sppf.intern_trigger_terminal(
+            // The token kind is irrelevant for the reserved-owner marker
+            // (identity = (kind, pos, owner) and the owner is reserved).
+            TokenKind::Eof,
+            crate::sppf::PosOrSynth::Real(sep_pos as u32),
+            None,
+            u16::MAX,
+            u16::MAX,
+        );
+        let slot = Self::cgll_pure_slot_hash(&d.cur_sym, &d.state);
+        self.cgll_pure_fold(slot, d.w, leaf, sep_pos, W::one_ref())
+    }
+
+    /// STAGE C / AMENDMENT 6 — the lex-provenance WEIGHT CARRIER. Classic
+    /// Fork-branch weights (`lex_w` tier costs / `lex_w_alt` alternative
+    /// costs) feed each fork child's `pending_packing_weight`, consumed by
+    /// the constituent's fire packing. The pure descriptor has no weight
+    /// field (the C7 purity fence), so the branch weight rides the SPPF
+    /// instead: the descent's `w₀` (a leaf, or nothing for leafless operator
+    /// alternatives) is wrapped in a WEIGHTED unary/empty `Intermediate`
+    /// packing. SHAPE-SAFE: `cgll_flatten_ids` unwraps packings, so a unary
+    /// wrapper flattens to exactly `[leaf]` and an empty wrapper to `[]` —
+    /// the amendment-7 flats are unchanged; the WEIGHTED flatten
+    /// (`cgll_flatten_ids_weighted`) ⊗-threads the weight into the reading
+    /// at realize. The wrapper slot sets bit 30 (`CGLL_WRAP_TAG`, cleared
+    /// from every fold-slot hash) so it never collides with a fold
+    /// `Intermediate` at the same span. `intern_packing` dedup ⊕-aggregates
+    /// identical wrappers (lex-min — the correct alternative election).
+    /// Weight-one branches pass through unwrapped.
+    #[allow(dead_code)] // Reached only under the const (DCE'd while const off).
+    fn cgll_pure_weight_carrier(
+        &mut self,
+        run: &mut CgllPureRun,
+        slot_hash: u32,
+        leaf: crate::sppf::SppfId,
+        pos: usize,
+        weight: &W,
+    ) -> crate::sppf::SppfId {
+        if *weight == W::one_ref() {
+            return leaf;
+        }
+        let wrap_slot = (slot_hash & !(CGLL_BIN_TAG | CGLL_WRAP_TAG)) | CGLL_WRAP_TAG;
+        let (lo, hi) = if leaf == crate::sppf::SPPF_ID_NONE {
+            (pos as u32, pos as u32)
+        } else {
+            (
+                self.sppf.span_lo(leaf).unwrap_or(pos as u32),
+                self.sppf.span_hi(leaf).unwrap_or(pos as u32),
+            )
+        };
+        let inter = self.sppf.intern_intermediate(wrap_slot, lo, hi);
+        let children = if leaf == crate::sppf::SPPF_ID_NONE {
+            Vec::new()
+        } else {
+            vec![leaf]
+        };
+        let packing = self.sppf.intern_packing(wrap_slot, children, weight.clone());
+        self.sppf.link_packing_to_symbol(inter, packing);
+        run.stats.weight_carriers += 1;
+        inter
+    }
+
+    /// AMENDMENT 6, scan-site variant: fold a non-one FORK-branch weight on
+    /// a SCAN branch (Guarded consumes/replaces etc. — classically these
+    /// fork children also ⊗ the branch weight into `pending_packing_weight`)
+    /// into the frame's running `w` as an EMPTY carrier (flattens to `[]` —
+    /// shape-safe). No-op for weight-one branches.
+    #[allow(dead_code)] // Reached only under the const (DCE'd while const off).
+    fn cgll_pure_carry_scan_weight(
+        &mut self,
+        run: &mut CgllPureRun,
+        d: &CgllPureDescriptor,
+        w: crate::sppf::SppfId,
+        pos: usize,
+        weight: &W,
+    ) -> crate::sppf::SppfId {
+        if *weight == W::one_ref() {
+            return w;
+        }
+        let slot = Self::cgll_pure_slot_hash(&d.cur_sym, &d.state);
+        let carrier =
+            self.cgll_pure_weight_carrier(run, slot, crate::sppf::SPPF_ID_NONE, pos, weight);
+        self.cgll_pure_fold(slot, w, carrier, pos, W::one_ref())
+    }
+
+    /// Recognize a B2 separator-marker leaf (reserved owner).
+    #[allow(dead_code)]
+    fn cgll_pure_is_sep_marker(&self, id: crate::sppf::SppfId) -> bool {
+        matches!(
+            self.sppf.node(id),
+            Some(crate::sppf::SppfNode::TriggerTerminal {
+                owner_cat: u16::MAX,
+                owner_rule_idx: u16::MAX,
+                ..
+            })
+        )
+    }
+
+    /// AMENDMENT 1 — the create-after-pop REPLAY resume state, derived from
+    /// the popped frame's structured ret-slot (the AV3 resume-state hole's
+    /// fix). Mirrors the generated engine's frame-determined pop
+    /// transitions: a Return-class frame resumes the caller at
+    /// `InfixLoop { cur_bp: outer_bp }` (engine_impl.rs ~651-659 Return.bp
+    /// contract); Grouping/Collection markers resume at their saved outer
+    /// bp; a structural CategoryEntry resumes `Unwinding` (the
+    /// `GroupingClosePreservingInner` lookahead special is NOT recomputed at
+    /// replay time — counted in `replay_structural_resumes`; B0 battery
+    /// predicts 0 replays, reported honestly).
+    #[allow(dead_code)]
+    fn cgll_pure_replay_resume_state(
+        slot: &CgllRetSlot,
+        stats: &mut CgllPureStats,
+    ) -> WpdaState {
+        let bp = if slot.outer_bp == u16::MAX { 0 } else { slot.outer_bp as u8 };
+        match slot.kind_class & 0x0F {
+            CGLL_KC_RETURN | CGLL_KC_RULE_AT | CGLL_KC_INFIX_CONT | CGLL_KC_MIXFIX_MARKER => {
+                WpdaState::InfixLoop { cur_bp: bp }
+            },
+            CGLL_KC_GROUPING_MARKER | CGLL_KC_COLLECTION_MARKER => {
+                stats.replay_structural_resumes += 1;
+                WpdaState::InfixLoop { cur_bp: bp }
+            },
+            _ => {
+                stats.replay_structural_resumes += 1;
+                WpdaState::Unwinding
+            },
+        }
+    }
+
+    /// DESCENT (pure form of Push / ConsumeAndPush / ReplaceAndPush / the
+    /// Fork push family / LexAlt*): synthesize the structured ret-slot from
+    /// the descent-LOCAL action data + the caller symbol AFTER any
+    /// replace-half, `gll_create` the return node `v` at `at = i` (uniform
+    /// for D1 and D2 per amendment 2 — the caller's running `w` rides the
+    /// edge as `operand_w` either way), record the per-edge caller ctx, and
+    /// enqueue the child frame `(new_state, pushed, class, v, child_pos,
+    /// w₀)`. Create-after-pop replays materialize resume descriptors for
+    /// THIS caller exactly like pop returns.
+    #[allow(dead_code)]
+    #[allow(clippy::too_many_arguments)]
+    fn cgll_pure_descend(
+        &mut self,
+        run: &mut CgllPureRun,
+        caller: &CgllPureDescriptor,
+        caller_sym_now: StackSymbolV2,
+        pushed: StackSymbolV2,
+        new_state: WpdaState,
+        child_pos: usize,
+        child_class: CgllFrameClass,
+        w0: crate::sppf::SppfId,
+        xcat: u8,
+        outer_bp_hint: Option<u8>,
+    ) {
+        let pushed_rule = match pushed.kind {
+            SymbolKind::CategoryEntry => CGLL_PURE_RULE_NONE,
+            _ => {
+                ((pushed.category_src_idx as u32) << 16)
+                    | (pushed.rule_index_in_category as u32)
+            },
+        };
+        let ret_slot = CgllRetSlot {
+            caller_sym_hash: Self::cgll_pure_hash_of(&caller_sym_now),
+            pushed_cat: pushed.category_src_idx,
+            pushed_rule,
+            kind_class: Self::cgll_pure_kind_class(pushed.kind, child_class),
+            // Resume floor: the pushed symbol's own bp (the Return/marker
+            // invariant), else the descent-local edge-kind bp payload
+            // (`outer_bp_hint` — the pure analog of
+            // `category_entry_resume_bp`'s edge reads).
+            outer_bp: pushed
+                .bp
+                .map(|b| b as u16)
+                .or(pushed.coll_dispatch_bp.map(|b| b as u16))
+                .or(outer_bp_hint.map(|b| b as u16))
+                .unwrap_or(u16::MAX),
+            xcat,
+        };
+        let v_label = Self::cgll_pure_v_label(&ret_slot);
+        let (v, replays) = self.gss.gll_create(
+            caller.u,
+            v_label,
+            caller.pos,
+            caller.w,
+            // Stage-E context handles: SENTINELS — never read by the pure arm.
+            crate::sppf_stack_arena::STACK_ID_ROOT,
+            crate::edge_stack_arena::EDGE_STACK_ID_ROOT,
+        );
+        run.stats.gll_creates += 1;
+        if let Some(prev) = run.v_slot.insert(v, ret_slot) {
+            if prev != ret_slot {
+                run.stats.ctx_conflicts += 1;
+                debug_assert_eq!(
+                    prev, ret_slot,
+                    "pure v-label hash collision: one v node, two ret-slots"
+                );
+            }
+        }
+        let ctx = CgllPureCallerCtx { caller_sym: caller_sym_now, caller_class: caller.frame_class };
+        if let Some(prev) = run.edge_ctx.insert((v, caller.u, caller.w), ctx) {
+            if prev != ctx {
+                run.stats.ctx_conflicts += 1;
+                debug_assert_eq!(
+                    prev, ctx,
+                    "pure edge-ctx conflict: one canonical edge, two caller contexts"
+                );
+            }
+        }
+        run.worklist.push_back(CgllPureDescriptor {
+            state: new_state,
+            cur_sym: pushed,
+            frame_class: child_class,
+            ret_slot,
+            u: v,
+            pos: child_pos,
+            w: w0,
+        });
+        // Create-after-pop replays: `v` already popped before this edge was
+        // added — resume THIS caller once per recorded pop.
+        if replays.is_empty() {
+            return;
+        }
+        let is_r2_replay = matches!(child_class, CgllFrameClass::D2)
+            && matches!(
+                ret_slot.kind_class & 0x0F,
+                CGLL_KC_RETURN | CGLL_KC_RULE_AT | CGLL_KC_MIXFIX_MARKER
+            );
+        for rep in replays {
+            run.stats.replays += 1;
+            let resume_state = Self::cgll_pure_replay_resume_state(&ret_slot, &mut run.stats);
+            if is_r2_replay {
+                // R2 P-set convention: `result_w` = the popped frame's
+                // PRE-JOIN `w`; join with THIS edge's operand per edge
+                // (amendment 2). The original pop action's weight is not
+                // recoverable at replay time — `W::one_ref()` + counted.
+                let cat = pushed.category_src_idx as u32;
+                let rule_id = if pushed_rule == CGLL_PURE_RULE_NONE { cat << 16 } else { pushed_rule };
+                let lo = match self.sppf.span_lo(rep.operand_w) {
+                    Some(l) => l,
+                    None => {
+                        run.stats.d2_lo_fallbacks += 1;
+                        self.gss.node(v).map(|n| n.pos).unwrap_or(0) as u32
+                    },
+                };
+                let joined = if rep.operand_w == crate::sppf::SPPF_ID_NONE {
+                    rep.result_w
+                } else {
+                    self.cgll_pure_get_node_p(
+                        rule_id & !CGLL_BIN_TAG,
+                        rep.operand_w,
+                        rep.result_w,
+                        lo,
+                        rep.at_pos as u32,
+                        W::one_ref(),
+                    )
+                };
+                let z_e = self.sppf.intern_symbol(cat | CGLL_BIN_TAG, lo, rep.at_pos as u32);
+                let children = if joined == crate::sppf::SPPF_ID_NONE {
+                    Vec::new()
+                } else {
+                    vec![joined]
+                };
+                // STAGE C: the ORIGINAL pop's packing (if any) already carries
+                // the true pop weight AND is already linked under the same
+                // `z_e` (identical `(rule, [joined])` ⇒ identical operand ⇒
+                // identical `(lo, at_pos)` ⇒ `intern_symbol` dedups to the
+                // same node) — a replay re-intern with `one` would ⊕-corrupt
+                // it (lex-min pulls toward `one`). Exists ⇒ no-op; else
+                // intern with `one` (the pop weight is genuinely unknowable
+                // at replay time — counted in `replay_weight_drops`).
+                if !self.sppf.packing_exists(rule_id, &children) {
+                    run.stats.replay_weight_drops += 1;
+                    let pk = self.sppf.intern_packing(rule_id, children, W::one_ref());
+                    self.sppf.link_packing_to_symbol(z_e, pk);
+                }
+                run.worklist.push_back(CgllPureDescriptor {
+                    state: resume_state,
+                    cur_sym: caller_sym_now,
+                    frame_class: caller.frame_class,
+                    ret_slot: caller.ret_slot,
+                    u: caller.u,
+                    pos: rep.at_pos,
+                    w: z_e,
+                });
+            } else {
+                // R1/structural: `result_w` IS the completed `z` — fold into
+                // this edge's operand per the R1 formula.
+                let y = if rep.operand_w == crate::sppf::SPPF_ID_NONE {
+                    rep.result_w
+                } else {
+                    let slot = Self::cgll_pure_slot_hash(&caller_sym_now, &resume_state);
+                    self.cgll_pure_fold(slot, rep.operand_w, rep.result_w, rep.at_pos, W::one_ref())
+                };
+                run.worklist.push_back(CgllPureDescriptor {
+                    state: resume_state,
+                    cur_sym: caller_sym_now,
+                    frame_class: caller.frame_class,
+                    ret_slot: caller.ret_slot,
+                    u: caller.u,
+                    pos: rep.at_pos,
+                    w: y,
+                });
+            }
+        }
+    }
+
+    /// Materialize ONE resumed caller descriptor from a pop return, folding
+    /// the completed `z` into the caller's edge operand per the R1 formula
+    /// (`y = getNodeP(slot(caller L), w_edge, z)`). Used by R1 AND
+    /// structural pops (structural `z` = the passthrough `w`).
+    #[allow(dead_code)]
+    fn cgll_pure_resume_fold(
+        &mut self,
+        run: &mut CgllPureRun,
+        v: crate::gss::GssNodeId,
+        ret: &crate::gss::GllReturn,
+        z: crate::sppf::SppfId,
+        resume_state: &WpdaState,
+    ) {
+        let Some(ctx) = run.edge_ctx.get(&(v, ret.caller, ret.operand_w)).copied() else {
+            run.stats.ctx_misses += 1;
+            return;
+        };
+        let caller_slot = run
+            .v_slot
+            .get(&ret.caller)
+            .copied()
+            .unwrap_or_else(|| Self::cgll_pure_seed_slot(&ctx.caller_sym));
+        let y = if ret.operand_w == crate::sppf::SPPF_ID_NONE {
+            z
+        } else if z == crate::sppf::SPPF_ID_NONE {
+            ret.operand_w
+        } else {
+            let slot = Self::cgll_pure_slot_hash(&ctx.caller_sym, resume_state);
+            self.cgll_pure_fold(slot, ret.operand_w, z, ret.at_pos, W::one_ref())
+        };
+        run.worklist.push_back(CgllPureDescriptor {
+            state: resume_state.clone(),
+            cur_sym: ctx.caller_sym,
+            frame_class: ctx.caller_class,
+            ret_slot: caller_slot,
+            u: ret.caller,
+            pos: ret.at_pos,
+            w: y,
+        });
+    }
+
+    /// Materialize ONE resumed caller descriptor whose `w` is REPLACED by
+    /// the per-edge `z_e` (R2: the LHS was consumed into the constituent —
+    /// never re-folded into the edge operand).
+    #[allow(dead_code)]
+    fn cgll_pure_resume_replace(
+        &mut self,
+        run: &mut CgllPureRun,
+        v: crate::gss::GssNodeId,
+        ret: &crate::gss::GllReturn,
+        z_e: crate::sppf::SppfId,
+        resume_state: &WpdaState,
+    ) {
+        let Some(ctx) = run.edge_ctx.get(&(v, ret.caller, ret.operand_w)).copied() else {
+            run.stats.ctx_misses += 1;
+            return;
+        };
+        let caller_slot = run
+            .v_slot
+            .get(&ret.caller)
+            .copied()
+            .unwrap_or_else(|| Self::cgll_pure_seed_slot(&ctx.caller_sym));
+        run.worklist.push_back(CgllPureDescriptor {
+            state: resume_state.clone(),
+            cur_sym: ctx.caller_sym,
+            frame_class: ctx.caller_class,
+            ret_slot: caller_slot,
+            u: ret.caller,
+            pos: ret.at_pos,
+            w: z_e,
+        });
+    }
+
+    /// REDUCE (pure form of Pop / ConsumeAndPop / ConsumeAtAndPop and the
+    /// Fork pop kinds). `i_pop` = the POST-consume position (so the interned
+    /// `z` span `hi`, the recorded P entry, and the resume position agree —
+    /// the coherent reading of plan §1 R1; the classic fire interns
+    /// `hi = cursor.pos` AFTER the consume, GT-dump-confirmed root span
+    /// `(0,7)` over spine `(0,6)` for `@Nil!(0)`).
+    #[allow(dead_code)]
+    fn cgll_pure_reduce(
+        &mut self,
+        run: &mut CgllPureRun,
+        d: &CgllPureDescriptor,
+        i_pop: usize,
+        pop_weight: &W,
+        new_state: &WpdaState,
+        tokens: &dyn WpdaTokenSource,
+    ) {
+        // ── AMENDMENT 3: seed-frame pop = the accept event ────────────────
+        if (d.ret_slot.kind_class & 0x0F) == CGLL_KC_SEED {
+            run.stats.seed_pops += 1;
+            if matches!(d.state, WpdaState::Unwinding) {
+                run.stats.unwind_chain_fired += 1;
+            }
+            debug_assert!(
+                self.gss.gll_edges(d.u).is_empty(),
+                "amendment-3 invariant: seed node u0 must carry no canonical edges \
+                 (the synthesized ret-slot labels make v != u0 for every descent)"
+            );
+            if self.is_logical_eoi(i_pop, tokens) {
+                run.stats.seed_pops_at_eoi += 1;
+                if d.w != crate::sppf::SPPF_ID_NONE && run.accept_seen.insert((d.w, i_pop)) {
+                    run.accepting.push((d.w, i_pop));
+                }
+            }
+            return;
+        }
+        // Pop classification mirrors the classic fire set (SYMONLY): the
+        // action-firing kinds intern a binarized Symbol `z`; everything else
+        // (CategoryEntry / GroupingMarker / InfixContinuation / OptionalGroupAt
+        // / BinderListLoopAt — the classic NON-firing pops) passes `w`
+        // through. CollectionMarker is a FIRING kind classically, but its
+        // pure form (accumulator w-spine → CollectionId flatten) is B2 —
+        // routed structural here + counted (`collection_pops_structural`).
+        let is_symbol_pop = matches!(
+            d.cur_sym.kind,
+            SymbolKind::Return | SymbolKind::RuleAt(_) | SymbolKind::MixfixMarker
+        );
+        // ── STAGE B2: Class-2 `.*sep` COLLECTION close ────────────────────
+        // The marker frame's `w` IS the accumulator spine (one fold per
+        // element z + one reserved-owner separator-marker leaf per consumed
+        // separator). At the close: flatten the spine → per flat, strip +
+        // COUNT the separator markers, apply the sep-arity coverage gate
+        // (`elements == seps + 1`, the classic fire-time fence's pure
+        // analog — an under-covered flat is a splice-divergent ghost and
+        // must not realize), intern `CollectionId(slot_idx, items)` (the
+        // static slot idx = the marker's codegen-stamped `bp`, exactly the
+        // id `realize_packing_call` keys the builder slot on), and pass
+        // each surviving CollectionId through as the pop's `z` (fold into
+        // the owning rule frame per the ordinary R1 resume formula — the
+        // GT flat position [.., CollectionId, ..] follows from pop order).
+        // Multiple flats ⇒ one `gll_pop` P-entry + resume per CollectionId
+        // (multiplicity in packings/descriptors, never on the u axis).
+        // kv-maps (kv_sep-carrying slots), Class-5 rules and EMPTY closes
+        // are P3.a: kv flats skip the arity gate (counted,
+        // `coll_kv_deferred`); an empty close interns `CollectionId(id,[])`
+        // (counted, `coll_empty_closes`) — the classic empty-close arg
+        // shape — with no gate (0 elements, 0 seps is internally
+        // consistent). The flat shape stays kv_phase-agnostic so P3.a
+        // bolts on at the gate only.
+        if matches!(d.cur_sym.kind, SymbolKind::CollectionMarker) {
+            run.stats.coll_closes += 1;
+            let slot_idx = d.cur_sym.bp.unwrap_or(0);
+            let coll_id = slot_idx as u32;
+            let is_kv = self
+                .engine
+                .kv_separator_for_collection(
+                    d.cur_sym.category_src_idx,
+                    d.cur_sym.rule_index_in_category,
+                    slot_idx,
+                )
+                .is_some();
+            let flats: Vec<Vec<crate::sppf::SppfId>> = if d.w == crate::sppf::SPPF_ID_NONE {
+                run.stats.coll_empty_closes += 1;
+                vec![Vec::new()]
+            } else {
+                self.cgll_flatten_ids(d.w)
+            };
+            let mut collection_zs: Vec<crate::sppf::SppfId> = Vec::with_capacity(flats.len());
+            for flat in flats {
+                let mut items: Vec<crate::sppf::SppfId> = Vec::with_capacity(flat.len());
+                let mut seps: usize = 0;
+                for id in flat {
+                    if self.cgll_pure_is_sep_marker(id) {
+                        seps += 1;
+                    } else {
+                        items.push(id);
+                    }
+                }
+                if is_kv {
+                    run.stats.coll_kv_deferred += 1;
+                } else if !(items.is_empty() && seps == 0) && items.len() != seps + 1 {
+                    run.stats.coll_coverage_refuted += 1;
+                    continue;
+                }
+                collection_zs.push(self.sppf.intern_collection_id(coll_id, items));
+            }
+            for z in collection_zs {
+                let returns = self.gss.gll_pop(d.u, i_pop, z);
+                run.stats.gll_pops += 1;
+                for ret in &returns {
+                    self.cgll_pure_resume_fold(run, d.u, ret, z, new_state);
+                }
+            }
+            return;
+        }
+        if is_symbol_pop {
+            let cat = d.cur_sym.category_src_idx as u32;
+            let rule_id = (cat << 16) | (d.cur_sym.rule_index_in_category as u32);
+            match d.frame_class {
+                CgllFrameClass::D1 => {
+                    // R1: one shared `z` for every caller.
+                    let lo = self.sppf.span_lo(d.w).unwrap_or_else(|| {
+                        self.gss.node(d.u).map(|n| n.pos).unwrap_or(0) as u32
+                    });
+                    let z = self.sppf.intern_symbol(cat | CGLL_BIN_TAG, lo, i_pop as u32);
+                    let children = if d.w == crate::sppf::SPPF_ID_NONE {
+                        Vec::new()
+                    } else {
+                        vec![d.w]
+                    };
+                    let pk = self.sppf.intern_packing(rule_id, children, pop_weight.clone());
+                    self.sppf.link_packing_to_symbol(z, pk);
+                    let returns = self.gss.gll_pop(d.u, i_pop, z);
+                    run.stats.gll_pops += 1;
+                    for ret in &returns {
+                        self.cgll_pure_resume_fold(run, d.u, ret, z, new_state);
+                    }
+                },
+                CgllFrameClass::D2 => {
+                    // R2 (AMENDMENT 2): record the PRE-JOIN frame `w` in P;
+                    // per edge, join the edge's LHS operand with the frame
+                    // `w` and intern the PER-EDGE `z_e` spanning
+                    // `(span_lo(operand), i_pop)`; the caller's `w` is
+                    // REPLACED by `z_e` (LHS consumed into the constituent).
+                    let returns = self.gss.gll_pop(d.u, i_pop, d.w);
+                    run.stats.gll_pops += 1;
+                    for ret in &returns {
+                        let lo = match self.sppf.span_lo(ret.operand_w) {
+                            Some(l) => l,
+                            None => {
+                                run.stats.d2_lo_fallbacks += 1;
+                                self.gss.node(d.u).map(|n| n.pos).unwrap_or(0) as u32
+                            },
+                        };
+                        let joined = if ret.operand_w == crate::sppf::SPPF_ID_NONE {
+                            d.w
+                        } else {
+                            self.cgll_pure_get_node_p(
+                                rule_id & !CGLL_BIN_TAG,
+                                ret.operand_w,
+                                d.w,
+                                lo,
+                                i_pop as u32,
+                                W::one_ref(),
+                            )
+                        };
+                        let z_e = self.sppf.intern_symbol(cat | CGLL_BIN_TAG, lo, i_pop as u32);
+                        let children = if joined == crate::sppf::SPPF_ID_NONE {
+                            Vec::new()
+                        } else {
+                            vec![joined]
+                        };
+                        let pk = self.sppf.intern_packing(rule_id, children, pop_weight.clone());
+                        self.sppf.link_packing_to_symbol(z_e, pk);
+                        self.cgll_pure_resume_replace(run, d.u, ret, z_e, new_state);
+                    }
+                },
+            }
+        } else {
+            // STRUCTURAL pop: `z := w` passthrough; callers fold per R1.
+            // Pure mirror of the classic grouping produced-category
+            // admissibility check (apply_pop_body ~34901): the classic
+            // Error-drop for an inadmissible grouped category — derived here
+            // from the passthrough `z`'s own category (the completed
+            // constituent), not from classic residue.
+            if matches!(d.cur_sym.kind, SymbolKind::GroupingMarker) {
+                if let Some(produced) = self.sppf_symbol_category(d.w) {
+                    let expected = d.cur_sym.category_src_idx;
+                    if !self.category_can_satisfy_expected(produced, expected) {
+                        run.stats.grouping_cat_rejects += 1;
+                        return;
+                    }
+                }
+            }
+            // GroupingClosePreservingInner{u16::MAX} sentinel patch: the
+            // walker classically resolves the inner RESULT cat from the
+            // builder top; the pure analog reads it off the completed
+            // constituent `z` (fallback: the popped frame's own category —
+            // the classic pre-D8 fallback).
+            let patched_state = match new_state {
+                WpdaState::GroupingClosePreservingInner { inner_cat_src_idx }
+                    if *inner_cat_src_idx == u16::MAX =>
+                {
+                    let resolved = self
+                        .sppf_symbol_category(d.w)
+                        .unwrap_or(d.cur_sym.category_src_idx);
+                    WpdaState::GroupingClosePreservingInner { inner_cat_src_idx: resolved }
+                },
+                other => other.clone(),
+            };
+            let z = d.w;
+            let returns = self.gss.gll_pop(d.u, i_pop, z);
+            run.stats.gll_pops += 1;
+            let popped_is_category_entry =
+                matches!(d.cur_sym.kind, SymbolKind::CategoryEntry);
+            for ret in &returns {
+                // ── Classic post-pop STATE RECOMPUTE for CategoryEntry pops
+                // (apply_pop_body ~36591-36646): the engine's
+                // Unwinding-CategoryEntry `new_state` (incl. the GCPI
+                // lookahead request) is only a REQUEST — the walker resolves
+                // the ACTUAL resume state from the cursor's EXACT
+                // predecessor. Pure form: the "exact predecessor" IS this
+                // return's caller frame symbol (per-edge ctx), so the
+                // recompute is per-return:
+                //   pred CategoryEntry  → InfixLoop { resume bp } (the
+                //     descent-local floor carried on the popped frame's
+                //     ret_slot; classic reads the edge-kind payloads),
+                //   pred GroupingMarker → keep a GCPI request, else Unwinding,
+                //   pred RuleAt         → BinderRule mid-rule slot resume
+                //     (the GROUP-A "return the atom to the enclosing binder
+                //     rule" arm — without this the LONG send rules strand in
+                //     the engine's GCPI Error arm),
+                //   pred other          → Unwinding.
+                let resume_state = if popped_is_category_entry {
+                    let caller_sym = run
+                        .edge_ctx
+                        .get(&(d.u, ret.caller, ret.operand_w))
+                        .map(|c| c.caller_sym);
+                    match caller_sym.map(|s| s.kind) {
+                        Some(SymbolKind::CategoryEntry) => {
+                            let bp = if d.ret_slot.outer_bp == u16::MAX {
+                                0
+                            } else {
+                                d.ret_slot.outer_bp as u8
+                            };
+                            WpdaState::InfixLoop { cur_bp: bp }
+                        },
+                        Some(SymbolKind::GroupingMarker) => {
+                            if matches!(
+                                patched_state,
+                                WpdaState::GroupingClosePreservingInner { .. }
+                            ) {
+                                patched_state.clone()
+                            } else {
+                                WpdaState::Unwinding
+                            }
+                        },
+                        Some(SymbolKind::RuleAt(_)) => {
+                            let sym = caller_sym.expect("checked Some above");
+                            WpdaState::BinderRule {
+                                result_src_idx: sym.category_src_idx,
+                                rule_idx: sym.rule_index_in_category,
+                                body_src_idx: 0,
+                                outer_bp: sym.bp.unwrap_or(0),
+                            }
+                        },
+                        Some(_) => WpdaState::Unwinding,
+                        None => patched_state.clone(), // ctx miss (counted in resume)
+                    }
+                } else {
+                    patched_state.clone()
+                };
+                self.cgll_pure_resume_fold(run, d.u, ret, z, &resume_state);
+            }
+        }
+    }
+
+
+    /// STAGE D — forest WELL-FORMEDNESS self-check (env-gated
+    /// `PRATTAIL_CGLL_PURE_WFCHECK`; diagnostic walk, no behavior change).
+    /// For every BIN Symbol reachable from `root`, for every packing, for
+    /// every flat: (a) the flat's spanned elements are strictly MONOTONIC
+    /// and NON-OVERLAPPING left→right (prev_hi ≤ next_lo), (b) each element
+    /// span lies within the parent Symbol span, (c) the first/last spanned
+    /// elements respect the parent bounds. Discarded-literal GAPS are
+    /// by-construction (classic flats omit discarded literals — e.g. the
+    /// `!`/`(`/`)` of a send — so full coverage is not checkable without
+    /// the literal tables); OVERLAP/REGRESSION is the corruption class this
+    /// hunts. Span-less elements (CollectionId, zero-width carriers) are
+    /// skipped. Returns (symbols, packings, flats, issues≤16).
+    #[allow(dead_code)] // Reached only under the const (DCE'd while const off).
+    fn cgll_pure_wellformedness_report(
+        &self,
+        root: crate::sppf::SppfId,
+    ) -> (u64, u64, u64, Vec<String>) {
+        let mut symbols = 0u64;
+        let mut packings = 0u64;
+        let mut flats_n = 0u64;
+        let mut issues: Vec<String> = Vec::new();
+        let mut seen: rustc_hash::FxHashSet<crate::sppf::SppfId> = rustc_hash::FxHashSet::default();
+        let mut stack: Vec<crate::sppf::SppfId> = vec![root];
+        while let Some(sym) = stack.pop() {
+            if !seen.insert(sym) {
+                continue;
+            }
+            let (lo, hi) = match self.sppf.node(sym) {
+                Some(crate::sppf::SppfNode::Symbol { lo_pos, hi_pos, non_terminal_tag, .. })
+                    if non_terminal_tag & CGLL_BIN_TAG != 0 =>
+                {
+                    (*lo_pos, *hi_pos)
+                },
+                _ => continue,
+            };
+            symbols += 1;
+            let packs: Vec<crate::sppf::SppfId> = self.sppf.packings_of(sym).to_vec();
+            for p in packs {
+                let children = match self.sppf.node(p) {
+                    Some(crate::sppf::SppfNode::Packing { children, .. }) => children.clone(),
+                    _ => continue,
+                };
+                packings += 1;
+                let mut flats: Vec<Vec<crate::sppf::SppfId>> = vec![Vec::new()];
+                for &c in &children {
+                    let cf = self.cgll_flatten_ids(c);
+                    let mut next = Vec::new();
+                    for a in &flats {
+                        for b in &cf {
+                            let mut x = a.clone();
+                            x.extend_from_slice(b);
+                            next.push(x);
+                        }
+                    }
+                    flats = next;
+                }
+                for flat in flats {
+                    flats_n += 1;
+                    let mut cursor: Option<u32> = None;
+                    for &el in &flat {
+                        let (el_lo, el_hi) =
+                            match (self.sppf.span_lo(el), self.sppf.span_hi(el)) {
+                                (Some(a), Some(b)) => (a, b),
+                                _ => continue, // span-less (CollectionId etc.)
+                            };
+                        if el_lo == el_hi {
+                            continue; // zero-width carriers
+                        }
+                        if el_lo < lo || el_hi > hi {
+                            if issues.len() < 16 {
+                                issues.push(format!(
+                                    "el {el} span ({el_lo},{el_hi}) outside parent {sym} ({lo},{hi})"
+                                ));
+                            }
+                        }
+                        if let Some(prev_hi) = cursor {
+                            if el_lo < prev_hi {
+                                if issues.len() < 16 {
+                                    issues.push(format!(
+                                        "OVERLAP in flat of {sym}: el {el} lo {el_lo} < prev hi {prev_hi}"
+                                    ));
+                                }
+                            }
+                        }
+                        cursor = Some(el_hi);
+                        // Recurse into nested BIN symbols + CollectionId items.
+                        stack.push(el);
+                        if let Some(crate::sppf::SppfNode::CollectionId { items, .. }) =
+                            self.sppf.node(el)
+                        {
+                            for &it in items {
+                                stack.push(it);
+                            }
+                        }
+                    }
+                }
+                for &c in &children {
+                    stack.push(c);
+                }
+            }
+        }
+        (symbols, packings, flats_n, issues)
+    }
+
+    /// The descriptor-PURE canonical-GLL step driver: the `{R, U, P}`
+    /// worklist over [`CgllPureDescriptor`]s. Loop shape cloned from
+    /// `step_canonical` (add-once at dequeue; budget backstop; accept
+    /// snapshot; publish through `self.branch_cursors` for the existing
+    /// `resolve_at_end_of_input` → `cgll_resolve_binarized` pipe with the
+    /// amendment-4 boundary fill-list).
+    #[allow(dead_code)] // Reached only under the const (DCE'd while const off).
+    fn step_canonical_pure(&mut self, tokens: &dyn WpdaTokenSource) -> WpdaState {
+        use rustc_hash::FxHashSet;
+
+        let dump_stats = std::env::var_os("PRATTAIL_CANONICAL_GLL_STATS").is_some();
+        let budget: usize = std::env::var("PRATTAIL_CGLL_BUDGET")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(20_000_000);
+
+        let mut run = CgllPureRun::default();
+        // Capped protocol trace (`PRATTAIL_CGLL_PURE_TRACE=<n>`; any
+        // non-numeric value = 400 steps). Diagnostic only.
+        run.trace_budget = std::env::var("PRATTAIL_CGLL_PURE_TRACE")
+            .ok()
+            .map(|s| s.parse().unwrap_or(400))
+            .unwrap_or(0);
+        // Seed: mirror `new_for_category` — the walker's initial frontier IS
+        // the seed cursor at `u₀ = (0, CategoryEntry(goal))`.
+        for frame in std::mem::take(&mut self.branch_cursors) {
+            let cursor = frame.into_concrete();
+            let seed_sym = self
+                .gss
+                .node(cursor.node)
+                .map(|n| n.symbol)
+                .unwrap_or_else(|| StackSymbolV2::category_entry(0));
+            run.worklist.push_back(CgllPureDescriptor {
+                state: cursor.inner_state.clone(),
+                cur_sym: seed_sym,
+                frame_class: CgllFrameClass::D1,
+                ret_slot: Self::cgll_pure_seed_slot(&seed_sym),
+                u: cursor.node,
+                pos: cursor.pos,
+                w: crate::sppf::SPPF_ID_NONE,
+            });
+        }
+
+        let mut seen: FxHashSet<u64> = FxHashSet::default();
+        let mut u_by_pos: std::collections::HashMap<usize, u64> = std::collections::HashMap::new();
+        let max_pos = tokens.len();
+        let mut budget_exceeded = false;
+
+        while let Some(d) = run.worklist.pop_front() {
+            run.stats.processed += 1;
+            if run.stats.processed as usize > budget {
+                budget_exceeded = true;
+                break;
+            }
+            // U: global add-once by the pure key (ALL descriptor fields).
+            if !seen.insert(Self::cgll_pure_key(&d)) {
+                continue;
+            }
+            run.stats.u_count += 1;
+            *u_by_pos.entry(d.pos.min(max_pos)).or_insert(0) += 1;
+            // L-finiteness sentinel: `PrefixDispatch.pos ≡ i` at every
+            // emission site (plan §1); a desync is a protocol bug — counted
+            // + diagnosed (capped) rather than asserted, so one bad emission
+            // path is attributable instead of aborting the whole battery.
+            if let WpdaState::PrefixDispatch { pos, .. } = &d.state {
+                if *pos != d.pos {
+                    run.stats.prefix_pos_desyncs += 1;
+                    if dump_stats && run.stats.prefix_pos_desyncs <= 8 {
+                        eprintln!(
+                            "CGLL-PURE-DESYNC state={:?} cur_sym={:?} class={:?} u={} pos={} w={}",
+                            d.state, d.cur_sym, d.frame_class, d.u, d.pos, d.w
+                        );
+                    }
+                }
+            }
+            if dump_stats {
+                // Slot-collision side-map (31-bit hash risk carried by gate).
+                let slot = Self::cgll_pure_slot_hash(&d.cur_sym, &d.state);
+                let disc = Self::cgll_pure_state_slot_ident(&d.state).0;
+                match run.slot_seen.get(&slot) {
+                    Some(&(sym, prev_disc)) => {
+                        if sym != d.cur_sym || prev_disc != disc {
+                            run.stats.slot_collisions += 1;
+                        }
+                    },
+                    None => {
+                        run.slot_seen.insert(slot, (d.cur_sym, disc));
+                    },
+                }
+            }
+            if matches!(d.state, WpdaState::Accepted | WpdaState::Error { .. }) {
+                continue; // terminal states never step
+            }
+            // ── Transition: the SAME generated engine tables, fed a
+            // SYNTHESIZED frontier node (AV7: no emitter reads
+            // `frontier_top.pos`; the engine reads only `symbol.*`). The
+            // node position is `node(u).pos` — purely diagnostic.
+            let synthesized = crate::gss::WpdaGssNode {
+                pos: self.gss.node(d.u).map(|n| n.pos).unwrap_or(0),
+                symbol: d.cur_sym,
+            };
+            let action = self.engine.step(
+                &d.state,
+                &self.gss,
+                Some(&synthesized),
+                d.pos,
+                tokens,
+                crate::wpda_runtime::FrameCtx::EMPTY,
+            );
+            if run.trace_budget > 0 {
+                run.trace_budget -= 1;
+                let act = match &action {
+                    WpdaStepAction::Advance(s) => format!("Advance({s:?})"),
+                    WpdaStepAction::AdvanceWithEffect { new_state, .. } => {
+                        format!("AdvanceWithEffect({new_state:?})")
+                    },
+                    WpdaStepAction::Push { symbol, new_state, .. } => {
+                        format!("Push(sym={symbol:?}, st={new_state:?})")
+                    },
+                    WpdaStepAction::PushWithEdgeKind { symbol, new_state, edge_kind, .. } => {
+                        format!("PushEK(sym={symbol:?}, st={new_state:?}, ek={edge_kind:?})")
+                    },
+                    WpdaStepAction::Pop { new_state, .. } => format!("Pop(st={new_state:?})"),
+                    WpdaStepAction::Replace { symbol, new_state, .. } => {
+                        format!("Replace(sym={symbol:?}, st={new_state:?})")
+                    },
+                    WpdaStepAction::Fork { branches, consume_trigger } => {
+                        let kinds: Vec<String> = branches
+                            .iter()
+                            .map(|b| {
+                                format!(
+                                    "{:?}@sym={:?}/st={:?}",
+                                    std::mem::discriminant(&b.action_kind),
+                                    b.symbol,
+                                    b.new_state
+                                )
+                            })
+                            .collect();
+                        format!("Fork(ct={consume_trigger}, n={}, {:?})", branches.len(), kinds)
+                    },
+                    WpdaStepAction::ConsumeAndPush { symbol, new_state, trigger_mode, .. } => {
+                        format!(
+                            "ConsumeAndPush(sym={symbol:?}, st={new_state:?}, tm={trigger_mode:?})"
+                        )
+                    },
+                    WpdaStepAction::IterativeChainAbsorb { symbol, new_state, .. } => {
+                        format!("IterAbsorb(sym={symbol:?}, st={new_state:?})")
+                    },
+                    WpdaStepAction::ConsumeAndPop { new_state, .. } => {
+                        format!("ConsumeAndPop(st={new_state:?})")
+                    },
+                    WpdaStepAction::ConsumeAtAndPop { new_state, next_pos, .. } => {
+                        format!("ConsumeAtAndPop(st={new_state:?}, np={next_pos})")
+                    },
+                    WpdaStepAction::Consume { new_state, .. } => {
+                        format!("Consume(st={new_state:?})")
+                    },
+                    WpdaStepAction::ConsumeIdentAndReplace { symbol, new_state, .. } => {
+                        format!("ConsumeIdentAndReplace(sym={symbol:?}, st={new_state:?})")
+                    },
+                    WpdaStepAction::ConsumeAndReplace { symbol, new_state, .. } => {
+                        format!("ConsumeAndReplace(sym={symbol:?}, st={new_state:?})")
+                    },
+                    WpdaStepAction::ConsumeAtAndReplace { symbol, new_state, next_pos, .. } => {
+                        format!(
+                            "ConsumeAtAndReplace(sym={symbol:?}, st={new_state:?}, np={next_pos})"
+                        )
+                    },
+                    WpdaStepAction::ReplaceAndPush {
+                        replace_symbol, push_symbol, new_state, ..
+                    } => format!(
+                        "ReplaceAndPush(rep={replace_symbol:?}, push={push_symbol:?}, \
+                         st={new_state:?})"
+                    ),
+                    WpdaStepAction::ParsePredicate { .. } => "ParsePredicate".to_string(),
+                    WpdaStepAction::OptGroupAbsent { .. } => "OptGroupAbsent".to_string(),
+                    WpdaStepAction::OptGroupFinalize { .. } => "OptGroupFinalize".to_string(),
+                    WpdaStepAction::Accept => "Accept".to_string(),
+                    WpdaStepAction::Error(m) => format!("Error({m})"),
+                    WpdaStepAction::Idle => "Idle".to_string(),
+                };
+                eprintln!(
+                    "CGLL-PURE-TR pos={} u={} w={} class={:?} state={:?} sym={:?} -> {}",
+                    d.pos, d.u, d.w, d.frame_class, d.state, d.cur_sym, act
+                );
+            }
+            self.cgll_pure_dispatch_action(&mut run, &d, action, tokens);
+            run.stats.peak_r = run.stats.peak_r.max(run.worklist.len());
+        }
+
+        // ── Publish: AMENDMENT-4 boundary fill-list per accepting root —
+        // `inner_state = Accepted`, `pos = EOI`, `node = GSS_NODE_NONE`,
+        // weight = `one` (single-root dedup moots equal-weight ordering;
+        // elected-packing weights are a Stage-C election-parity item),
+        // `sppf_stack = push(EMPTY, root)` (len-1 Symbol top),
+        // `optional_scope_marks` empty (seed_from_live default) — exactly
+        // the fields `resolve_at_end_of_input`'s re-filter
+        // (`is_logical_eoi` + `is_accepting_config` + root-variant reads)
+        // consumes (AV5).
+        // STAGE D: env-gated forest well-formedness self-check per accept.
+        if std::env::var_os("PRATTAIL_CGLL_PURE_WFCHECK").is_some() {
+            for &(root, pos) in &run.accepting {
+                let (symbols, packings, flats_n, issues) =
+                    self.cgll_pure_wellformedness_report(root);
+                eprintln!(
+                    "CGLL-PURE-WF root={root} pos={pos} symbols={symbols} packings={packings} \
+                     flats={flats_n} issues={} {:?}",
+                    issues.len(),
+                    issues
+                );
+            }
+        }
+        if let Some(&(_, pos)) = run.accepting.first() {
+            self.pos = pos;
+        }
+        let mut published: Vec<crate::cohort_lazy::Frame<W>> =
+            Vec::with_capacity(run.accepting.len());
+        for &(root, pos) in &run.accepting {
+            // AMENDMENT 4 (Stage C): the boundary cursor carries the ELECTED
+            // weight — the root Symbol's `weight_sum` (⊕ over its linked
+            // packings = the semiring-elected packing weight; Goodman
+            // aggregation). `sort_eoi_candidates_by_semiring_priority` and
+            // the winner commit then order pure candidates exactly as the
+            // classic path orders cursor weights.
+            let elected = self.sppf.symbol_weight_sum(root);
+            let mut boundary = BranchCursor::seed_from_live(
+                crate::gss::GSS_NODE_NONE,
+                pos,
+                elected,
+                WpdaState::Accepted,
+            );
+            boundary.sppf_stack_id = self
+                .sppf_stack_arena
+                .intern_push(crate::sppf_stack_arena::STACK_ID_ROOT, root);
+            published.push(crate::cohort_lazy::Frame::Concrete(boundary));
+        }
+        self.branch_cursors = published;
+        let final_state = if budget_exceeded {
+            WpdaState::Error {
+                message: format!("canonical-GLL budget {} exceeded", budget),
+            }
+        } else if self.branch_cursors.is_empty() {
+            WpdaState::Error {
+                message: "no accepting branch reached end of input (canonical-GLL)".to_string(),
+            }
+        } else {
+            WpdaState::Unwinding
+        };
+        self.state = final_state.clone();
+
+        if dump_stats {
+            let max_u_per_pos = u_by_pos.values().copied().max().unwrap_or(0);
+            let s = &run.stats;
+            eprintln!(
+                "CGLL-PURE |U|={} peak_R={} processed={} max_U_per_pos={} n_pos={} accepts={} \
+                 gll_creates={} gll_pops={} replays={} replay_structural={} seed_pops={} \
+                 seed_pops_at_eoi={} unwind_chain_fired={} slot_collisions={} ctx_conflicts={} \
+                 ctx_misses={} d2_lo_fallbacks={} iterchain_witness={} weight_carriers={} \
+                 replay_weight_drops={} coll_pops_structural={} \
+                 coll_closes={} coll_sep_folds={} coll_cov_refuted={} coll_empty={} coll_kv={} \
+                 effects_skipped={} recovery_drops={} weight_drops={} guard_cc_actions={} \
+                 guard1_sites={} guarded_topcat_sites={} unwind_m1={} unwind_m5={} \
+                 unwind_census={} chain_ctx_div={} grouping_cat_rejects={} \
+                 opt_group_absent={} out_of_scope={} engine_errors={} prefix_pos_desyncs={} \
+                 accept_action_hits={}",
+                s.u_count,
+                s.peak_r,
+                s.processed,
+                max_u_per_pos,
+                u_by_pos.len(),
+                run.accepting.len(),
+                s.gll_creates,
+                s.gll_pops,
+                s.replays,
+                s.replay_structural_resumes,
+                s.seed_pops,
+                s.seed_pops_at_eoi,
+                s.unwind_chain_fired,
+                s.slot_collisions,
+                s.ctx_conflicts,
+                s.ctx_misses,
+                s.d2_lo_fallbacks,
+                s.iterchain_witness,
+                s.weight_carriers,
+                s.replay_weight_drops,
+                s.collection_pops_structural,
+                s.coll_closes,
+                s.coll_sep_folds,
+                s.coll_coverage_refuted,
+                s.coll_empty_closes,
+                s.coll_kv_deferred,
+                s.effects_skipped,
+                s.recovery_drops,
+                s.weight_drops,
+                s.guard_cc_actions,
+                s.guard1_sites,
+                s.guarded_topcat_sites,
+                s.unwind_inject_m1,
+                s.unwind_inject_m5,
+                s.unwind_family_census,
+                s.chain_ctx_divergence,
+                s.grouping_cat_rejects,
+                s.opt_group_absent,
+                s.out_of_scope_actions,
+                s.engine_errors,
+                s.prefix_pos_desyncs,
+                s.accept_action_hits,
+            );
+        }
+        final_state
+    }
+
+    /// STAGE B1 — the pure form of the classic walker's InfixLoop-Fork
+    /// UNWINDING-INJECTION family (the GROUP-A / reconnection family,
+    /// classic Fork arm ~15300-15698): "a correct GLR parser ALWAYS offers
+    /// 'the atom is complete; return it to the enclosing context' as a
+    /// competing reading alongside any operator continuation" — gated on
+    /// structural conditions so the Pratt operator contract is never
+    /// violated (an unconditional unwind would ghost `(1+2)*3`).
+    ///
+    /// The classic conditions walk the cursor's INCOMING-EDGE STACK; the
+    /// pure analog walks the u-chain: a frame's descent record is its
+    /// `ret_slot` (+ morph evidence `cur_sym.kind != descent kind`), and the
+    /// classic edge KIND one level down is the per-edge caller frame symbol
+    /// (`edge_ctx`) — a push from a `RuleAt(k)` caller IS the classic
+    /// `PrefixRuleEntry{item_pos: k}` edge, a `MixfixMarker` caller the
+    /// `MixfixMarker` edge, and so on. `v`-labels hash-fold the caller
+    /// symbol, so a node's edges are caller-symbol-homogeneous (divergence
+    /// counted in `chain_ctx_divergence`, never silently mixed).
+    ///
+    /// B1 implements the two members PROVEN load-bearing for the ladder by
+    /// classic kill-switch A/B (grp_d1: `PRATTAIL_NO_CHANNEL_FIRST_RECONNECT`
+    /// drops 2→1; the NParen-channel reading rides the switchless member 1):
+    ///  - member 1 `__under_binder_resume` (classic ~15382): immediate
+    ///    caller is a mid-rule `RuleAt(k>0)` frame.
+    ///  - member 5 `__under_crosscat_channel_first_receiver` (classic
+    ///    ~15586-15676): the frame MORPHED via a grouping close (pure
+    ///    evidence: `cur_sym.kind == CategoryEntry` while the descent minted
+    ///    a `GroupingMarker` — the classic `CategoryEntryContinuation`
+    ///    re-tag), an enclosing receiver `RuleAt(k>0)` frame is reachable
+    ///    through transparent frames, the completed body's category fills
+    ///    one of that rule's operand slots, and the lookahead operator is
+    ///    SHADOWED by the body's category.
+    /// Members 2/3/4 (cross-cat binder-resume / collection-element /
+    /// infix-RHS maximal-extent) are B2-scope: their candidate sites are
+    /// COUNTED (`unwind_family_census`), never silently skipped.
+    #[allow(dead_code)] // Reached only under the const (DCE'd while const off).
+    fn cgll_pure_immediate_caller_sym(
+        &self,
+        run: &mut CgllPureRun,
+        u: crate::gss::GssNodeId,
+    ) -> Option<StackSymbolV2> {
+        let edges = self.gss.gll_edges(u);
+        let first = edges.first()?;
+        let sym = run
+            .edge_ctx
+            .get(&(u, first.target, first.operand_w))
+            .map(|c| c.caller_sym)?;
+        // v-labels fold the caller symbol hash ⇒ homogeneous; count any
+        // divergence (a hash collision or protocol bug) instead of mixing.
+        for e in &edges[1..] {
+            if let Some(other) = run.edge_ctx.get(&(u, e.target, e.operand_w)) {
+                if other.caller_sym != sym {
+                    run.stats.chain_ctx_divergence += 1;
+                }
+            }
+        }
+        Some(sym)
+    }
+
+    /// Member-5 receiver walk (pure form of
+    /// `crosscat_lhs_enclosing_channel_first_receiver_frame`, classic
+    /// ~11993-12044): walk caller frames outward from `u`; STOP-MATCH on a
+    /// mid-rule `RuleAt(k>0)` caller (the receiver); STOP-NONE on scope
+    /// resets (`GroupingMarker` / `MixfixMarker` / `CollectionMarker` /
+    /// fresh `RuleAt(0)`); TRANSPARENT through everything else
+    /// (CategoryEntry continuations / cross-cat lineages / Return
+    /// pass-throughs — the classic `_ => pop` arm). Budget-bounded.
+    #[allow(dead_code)] // Reached only under the const (DCE'd while const off).
+    fn cgll_pure_enclosing_receiver(
+        &self,
+        run: &mut CgllPureRun,
+        u: crate::gss::GssNodeId,
+    ) -> Option<(u16, u16, u8)> {
+        let mut cur = u;
+        for _ in 0..24 {
+            let edges = self.gss.gll_edges(cur);
+            let first = edges.first()?;
+            let ctx = run.edge_ctx.get(&(cur, first.target, first.operand_w)).copied()?;
+            for e in &edges[1..] {
+                if let Some(other) = run.edge_ctx.get(&(cur, e.target, e.operand_w)) {
+                    if other.caller_sym != ctx.caller_sym {
+                        run.stats.chain_ctx_divergence += 1;
+                    }
+                }
+            }
+            match ctx.caller_sym.kind {
+                SymbolKind::RuleAt(k) if k > 0 => {
+                    return Some((
+                        ctx.caller_sym.category_src_idx,
+                        ctx.caller_sym.rule_index_in_category,
+                        k,
+                    ));
+                },
+                SymbolKind::RuleAt(_)
+                | SymbolKind::GroupingMarker
+                | SymbolKind::MixfixMarker
+                | SymbolKind::CollectionMarker => return None,
+                _ => {
+                    cur = first.target;
+                },
+            }
+        }
+        None
+    }
+
+    /// Decide + perform the pure Unwinding injection for one InfixLoop Fork
+    /// (see the family doc above). Returns `true` when injected (the caller
+    /// counts, the descriptor is enqueued here).
+    #[allow(dead_code)] // Reached only under the const (DCE'd while const off).
+    fn cgll_pure_inject_unwind_reading(
+        &mut self,
+        run: &mut CgllPureRun,
+        d: &CgllPureDescriptor,
+        branches: &[ForkBranch<W>],
+        tokens: &dyn WpdaTokenSource,
+    ) {
+        if !matches!(d.state, WpdaState::InfixLoop { .. }) {
+            return;
+        }
+        if d.cur_sym.kind != SymbolKind::CategoryEntry {
+            return;
+        }
+        if branches
+            .iter()
+            .any(|b| matches!(b.new_state, WpdaState::Unwinding))
+        {
+            return; // classic `__already_has_unwind`
+        }
+        let immediate = self.cgll_pure_immediate_caller_sym(run, d.u);
+        // Member 1: immediate caller = mid-rule RuleAt(k>0) frame (the
+        // classic PrefixRuleEntry{item_pos>0} immediate edge).
+        let member1 = matches!(immediate.map(|s| s.kind), Some(SymbolKind::RuleAt(k)) if k > 0);
+        let mut member5 = false;
+        if !member1 {
+            // Member-5 morph evidence: this CategoryEntry frame was MINTED
+            // as a GroupingMarker descent (the grouping close's
+            // ConsumeAndReplace re-tag — classic CategoryEntryContinuation).
+            let morphed_from_group =
+                (d.ret_slot.kind_class & 0x0F) == CGLL_KC_GROUPING_MARKER;
+            if morphed_from_group {
+                if let Some((cat, rule, slot)) = self.cgll_pure_enclosing_receiver(run, d.u) {
+                    if let Some(body_cat) = self.sppf_symbol_category(d.w) {
+                        let lookahead = tokens.peek_text(d.pos).unwrap_or("");
+                        member5 = self
+                            .binder_slot_accepts_body_category(cat, rule, slot, body_cat)
+                            && self.channel_first_receiver_operator_is_shadowed(
+                                body_cat, lookahead,
+                            );
+                    }
+                }
+            }
+            // Members 2/3/4 candidate census (cross-cat immediate frames —
+            // B2 scope; never silently skipped).
+            if !member5
+                && matches!(
+                    d.ret_slot.xcat,
+                    1 | 2 | 3
+                )
+            {
+                run.stats.unwind_family_census += 1;
+            }
+        }
+        if member1 {
+            run.stats.unwind_inject_m1 += 1;
+        } else if member5 {
+            run.stats.unwind_inject_m5 += 1;
+        } else {
+            return;
+        }
+        run.worklist.push_back(CgllPureDescriptor {
+            state: WpdaState::Unwinding,
+            ..d.clone()
+        });
+    }
+
+    /// Dispatch ONE engine action against ONE pure descriptor (plan §2
+    /// action-classification table, B0 subset). Every arm is either a
+    /// slot-change (requeue with mutated `state`/`cur_sym`/`pos`/`w`), a
+    /// DESCENT (`cgll_pure_descend`), a REDUCE (`cgll_pure_reduce`), a fan
+    /// (Fork → one child per branch), or a named-out-of-scope drop.
+    #[allow(dead_code)] // Reached only under the const (DCE'd while const off).
+    fn cgll_pure_dispatch_action(
+        &mut self,
+        run: &mut CgllPureRun,
+        d: &CgllPureDescriptor,
+        action: WpdaStepAction<W>,
+        tokens: &dyn WpdaTokenSource,
+    ) {
+        let next_of = |p: usize| tokens.next_pos(p, 0).unwrap_or(p + 1);
+        // D2 = operand-consuming descents: pushes taken FROM the Pratt
+        // operator loop states (the caller's running `w` is the LHS).
+        let is_d2_source = matches!(
+            d.state,
+            WpdaState::InfixLoop { .. } | WpdaState::InfixChainIterative { .. }
+        );
+        let class_by_state = if is_d2_source { CgllFrameClass::D2 } else { CgllFrameClass::D1 };
+        // Guard-4 static census (AV6): the classic
+        // `guard_category_changing_infix` would inspect this action; the
+        // pure arm counts the site instead of running the classic-residue
+        // guard (B1/B2 derive it from the u-chain xcat markers).
+        if is_d2_source && Self::action_contains_category_changing_infix(&action) {
+            run.stats.guard_cc_actions += 1;
+        }
+        match action {
+            WpdaStepAction::Advance(new_state) => {
+                if matches!(new_state, WpdaState::Unwinding)
+                    && matches!(d.state, WpdaState::InfixLoop { .. })
+                {
+                    // Guard-1 (transparent-projection re-entry) census site.
+                    run.stats.guard1_sites += 1;
+                }
+                run.worklist.push_back(CgllPureDescriptor { state: new_state, ..d.clone() });
+            },
+            WpdaStepAction::AdvanceWithEffect { new_state, effect } => {
+                // AMENDMENT 8: recovery stays HARD-DISABLED. A recovery
+                // effect (token insert/substitute/… — progresses by MUTATING
+                // the token source, which the pure arm has no channel for)
+                // DROPS the descriptor; applying its state mechanics without
+                // the source mutation pins `PrefixDispatch.pos` and spins.
+                if Self::is_recovery_delta(&effect) {
+                    run.stats.recovery_drops += 1;
+                    return;
+                }
+                // B0: non-recovery effects are no-ops (EndBinderScope etc. =
+                // B2 scope discipline) — counted, never silent.
+                run.stats.effects_skipped += 1;
+                run.worklist.push_back(CgllPureDescriptor { state: new_state, ..d.clone() });
+            },
+            WpdaStepAction::Push { symbol, weight: _, new_state } => {
+                self.cgll_pure_descend(
+                    run,
+                    d,
+                    d.cur_sym,
+                    symbol,
+                    new_state,
+                    d.pos,
+                    class_by_state,
+                    crate::sppf::SPPF_ID_NONE,
+                    0,
+                None,);
+            },
+            WpdaStepAction::PushWithEdgeKind { symbol, weight: _, new_state, edge_kind } => {
+                // xcat marker preserves the cross-cat-LHS evidence class on
+                // the u-chain (AV6 guard-4 pure derivation, consumed B1/B2);
+                // the edge-kind's bp payload rides the ret-slot as the
+                // descent-local resume floor (`category_entry_resume_bp`'s
+                // pure analog).
+                let (xcat, bp_hint) = match &edge_kind {
+                    crate::gss::EdgeKind::CrossCatLhs { .. } => (1, None),
+                    crate::gss::EdgeKind::CrossCatLhsScoped { min_bp, .. } => (2, Some(*min_bp)),
+                    crate::gss::EdgeKind::CrossCatLhsReentry { min_bp, .. } => (3, Some(*min_bp)),
+                    crate::gss::EdgeKind::CrossCatProjection { inner_cur_bp, .. } => {
+                        (4, Some(*inner_cur_bp))
+                    },
+                    crate::gss::EdgeKind::TransparentSourceReentry { .. } => (5, None),
+                    crate::gss::EdgeKind::CategoryEntryContinuation { min_bp } => {
+                        (0, Some(*min_bp))
+                    },
+                    _ => (0, None),
+                };
+                self.cgll_pure_descend(
+                    run,
+                    d,
+                    d.cur_sym,
+                    symbol,
+                    new_state,
+                    d.pos,
+                    class_by_state,
+                    crate::sppf::SPPF_ID_NONE,
+                    xcat,
+                    bp_hint,
+                );
+            },
+            WpdaStepAction::Pop { weight, new_state } => {
+                self.cgll_pure_reduce(run, d, d.pos, &weight, &new_state, tokens);
+            },
+            WpdaStepAction::Replace { symbol, weight: _, new_state } => {
+                run.worklist.push_back(CgllPureDescriptor {
+                    state: new_state,
+                    cur_sym: symbol,
+                    ..d.clone()
+                });
+            },
+            WpdaStepAction::ConsumeAndPush { symbol, weight: _, new_state, trigger_mode } => {
+                // Leaf per TriggerMode (classic arms 14342-14369): the leaf
+                // is the CHILD frame's first `getNodeP` child (`w₀`).
+                let w0 = match trigger_mode {
+                    TriggerMode::CaptureForBuilder => match tokens.peek_kind(d.pos) {
+                        Some(kind) => {
+                            let text = tokens.peek_text(d.pos).unwrap_or("");
+                            let text_opt = if text.is_empty() { None } else { Some(text) };
+                            self.sppf.intern_terminal(
+                                kind,
+                                crate::sppf::PosOrSynth::Real(d.pos as u32),
+                                text_opt,
+                                false,
+                            )
+                        },
+                        None => crate::sppf::SPPF_ID_NONE,
+                    },
+                    TriggerMode::ConsumeAsTriggerOnly => match tokens.peek_kind(d.pos) {
+                        Some(kind) => {
+                            let text = tokens.peek_text(d.pos).unwrap_or("");
+                            let text_opt = if text.is_empty() { None } else { Some(text) };
+                            self.sppf.intern_trigger_terminal(
+                                kind,
+                                crate::sppf::PosOrSynth::Real(d.pos as u32),
+                                text_opt,
+                                symbol.category_src_idx,
+                                symbol.rule_index_in_category,
+                            )
+                        },
+                        None => crate::sppf::SPPF_ID_NONE,
+                    },
+                    TriggerMode::Discard => crate::sppf::SPPF_ID_NONE,
+                };
+                self.cgll_pure_descend(
+                    run,
+                    d,
+                    d.cur_sym,
+                    symbol,
+                    new_state,
+                    next_of(d.pos),
+                    class_by_state,
+                    w0,
+                    0,
+                None,);
+            },
+            WpdaStepAction::IterativeChainAbsorb { symbol, weight: _, new_state, spec } => {
+                // Pure form (plan §2 row 9): NO chart/synth absorption and
+                // NO per-iteration alloc elision — those are classic-engine
+                // optimizations; the pure protocol subsumes them as ordinary
+                // nested D2 frames (each op = its own descent+reduce, U- and
+                // SPPF-deduped). Three sub-shapes mirror the classic
+                // NON-absorbing continuations exactly:
+                let floor = Self::state_binding_power_floor(&d.state).unwrap_or(0);
+                if spec.left_bp < floor {
+                    return; // classic Drop (bp floor)
+                }
+                let chain_witness = d.cur_sym.kind == SymbolKind::Return
+                    && d.cur_sym.category_src_idx == symbol.category_src_idx
+                    && d.cur_sym.rule_index_in_category == symbol.rule_index_in_category;
+                if chain_witness {
+                    // Chain-extension witness: the classic engine elides the
+                    // pop and re-extends the SAME frame. The pure arm
+                    // performs the ELIDED pop instead (R2 at the current
+                    // position; the caller then re-dispatches the operator
+                    // itself through the normal InfixLoop path — U add-once
+                    // bounds the re-dispatch). Counted.
+                    run.stats.iterchain_witness += 1;
+                    let resume = WpdaState::InfixLoop {
+                        cur_bp: d.cur_sym.bp.unwrap_or(0),
+                    };
+                    self.cgll_pure_reduce(run, d, d.pos, &W::one_ref(), &resume, tokens);
+                    return;
+                }
+                if spec.is_mixfix {
+                    // Mirror the classic mixfix fall-through (14498-14523):
+                    // marker + MixfixLiteralRun{kind:2}; trigger consumed,
+                    // no leaf.
+                    let marker = StackSymbolV2::mixfix_marker(
+                        spec.op_cat_src_idx,
+                        spec.op_rule_idx,
+                        0,
+                    );
+                    let st = WpdaState::MixfixLiteralRun {
+                        result_src_idx: spec.op_cat_src_idx,
+                        rule_idx: spec.op_rule_idx,
+                        completed_idx: 0,
+                        kind: 2,
+                        sub_pos: 0,
+                    };
+                    self.cgll_pure_descend(
+                        run,
+                        d,
+                        d.cur_sym,
+                        marker,
+                        st,
+                        next_of(d.pos),
+                        CgllFrameClass::D2,
+                        crate::sppf::SPPF_ID_NONE,
+                        0,
+                    None,);
+                } else if spec.assoc_right {
+                    // Mirror `normal_infix_rhs_state_for_iter_absorb` (the
+                    // classic notes the pre-fork absorb action's `new_state`
+                    // is the POST-absorb state, not a valid fallback): the
+                    // frame category read comes from `cur_sym` (pure).
+                    let frame_cat = d.cur_sym.category_src_idx;
+                    let st = if spec.op_cat_src_idx != frame_cat {
+                        WpdaState::CrossCatDelegate {
+                            source_src_idx: frame_cat,
+                            inner_cur_bp: spec.right_bp,
+                        }
+                    } else {
+                        WpdaState::PrefixDispatch {
+                            pos: next_of(d.pos),
+                            cur_bp: spec.right_bp,
+                        }
+                    };
+                    self.cgll_pure_descend(
+                        run,
+                        d,
+                        d.cur_sym,
+                        symbol,
+                        st,
+                        next_of(d.pos),
+                        CgllFrameClass::D2,
+                        crate::sppf::SPPF_ID_NONE,
+                        0,
+                    None,);
+                } else {
+                    // Left-assoc singleton path: the action's `new_state` IS
+                    // the valid continuation (classic 14802-14817).
+                    self.cgll_pure_descend(
+                        run,
+                        d,
+                        d.cur_sym,
+                        symbol,
+                        new_state,
+                        next_of(d.pos),
+                        CgllFrameClass::D2,
+                        crate::sppf::SPPF_ID_NONE,
+                        0,
+                    None,);
+                }
+            },
+            WpdaStepAction::ConsumeAndPop { weight, new_state } => {
+                self.cgll_pure_reduce(run, d, next_of(d.pos), &weight, &new_state, tokens);
+            },
+            WpdaStepAction::ConsumeAtAndPop { weight, new_state, next_pos } => {
+                self.cgll_pure_reduce(run, d, next_pos, &weight, &new_state, tokens);
+            },
+            WpdaStepAction::Consume { weight: _, new_state } => {
+                // B2: the CollectionLoop's SINGLETON separator consume (the
+                // non-fork sep path, plan §2 row 12) carries the same
+                // flatten-time coverage witness as `ConsumeCollectionSep`.
+                // Every other `Consume` (e.g. CollectionOpenParen's `(`) is
+                // a plain discard scan.
+                let w = if matches!(d.state, WpdaState::CollectionLoop { .. }) {
+                    self.cgll_pure_fold_sep_marker(run, d, d.pos)
+                } else {
+                    d.w
+                };
+                run.worklist.push_back(CgllPureDescriptor {
+                    state: new_state,
+                    pos: next_of(d.pos),
+                    w,
+                    ..d.clone()
+                });
+            },
+            WpdaStepAction::ConsumeIdentAndReplace { symbol, weight: _, new_state, start_scope } => {
+                // Ident-Terminal leaf fold into the FRAME's `w` (the binder
+                // ident is a child of the current rule); scope discipline
+                // (start_scope → BinderScope leaf shape) is B2 — counted.
+                if start_scope {
+                    run.stats.effects_skipped += 1;
+                }
+                let mut w = d.w;
+                if tokens.peek_kind(d.pos).is_some() {
+                    let text = tokens.peek_text(d.pos).unwrap_or("");
+                    let leaf = self.sppf.intern_terminal(
+                        TokenKind::Ident,
+                        crate::sppf::PosOrSynth::Real(d.pos as u32),
+                        Some(text),
+                        true,
+                    );
+                    let slot = Self::cgll_pure_slot_hash(&d.cur_sym, &d.state);
+                    w = self.cgll_pure_fold(slot, w, leaf, d.pos, W::one_ref());
+                }
+                run.worklist.push_back(CgllPureDescriptor {
+                    state: new_state,
+                    cur_sym: symbol,
+                    pos: next_of(d.pos),
+                    w,
+                    ..d.clone()
+                });
+            },
+            WpdaStepAction::ConsumeAndReplace { symbol, weight: _, new_state } => {
+                // Discard-literal: no leaf (mirrors classic 14966-14972).
+                run.worklist.push_back(CgllPureDescriptor {
+                    state: new_state,
+                    cur_sym: symbol,
+                    pos: next_of(d.pos),
+                    ..d.clone()
+                });
+            },
+            WpdaStepAction::ConsumeAtAndReplace { symbol, weight: _, new_state, next_pos } => {
+                run.worklist.push_back(CgllPureDescriptor {
+                    state: new_state,
+                    cur_sym: symbol,
+                    pos: next_pos,
+                    ..d.clone()
+                });
+            },
+            WpdaStepAction::ReplaceAndPush { replace_symbol, push_symbol, weight: _, new_state } => {
+                // Replace half FIRST: the ret-slot folds the caller symbol
+                // AFTER the replace (amendment 1), and the resumed caller
+                // returns with `cur_sym = replace_symbol`.
+                self.cgll_pure_descend(
+                    run,
+                    d,
+                    replace_symbol,
+                    push_symbol,
+                    new_state,
+                    d.pos,
+                    class_by_state,
+                    crate::sppf::SPPF_ID_NONE,
+                    0,
+                None,);
+            },
+            WpdaStepAction::ParsePredicate { .. } => {
+                // OUT of PoC → named Stage P3.d (no battery term).
+                run.stats.out_of_scope_actions += 1;
+            },
+            WpdaStepAction::OptGroupAbsent { replace_symbol, weight: _, new_state } => {
+                // Included per plan row 18, minus the Optional(None) leaf
+                // (E1-GT optional shape is P3.c) — counted, battery-inert.
+                run.stats.opt_group_absent += 1;
+                run.worklist.push_back(CgllPureDescriptor {
+                    state: new_state,
+                    cur_sym: replace_symbol,
+                    ..d.clone()
+                });
+            },
+            WpdaStepAction::OptGroupFinalize { .. } => {
+                // OUT of PoC → named Stage P3.c (no battery term).
+                run.stats.out_of_scope_actions += 1;
+            },
+            WpdaStepAction::Accept => {
+                // Engine-side Accept fires only at Unwinding+frontier=None,
+                // which the pure arm never synthesizes (accept = seed pop,
+                // amendment 3). Defensive: record + count.
+                run.stats.accept_action_hits += 1;
+                if self.is_logical_eoi(d.pos, tokens)
+                    && d.w != crate::sppf::SPPF_ID_NONE
+                    && run.accept_seen.insert((d.w, d.pos))
+                {
+                    run.accepting.push((d.w, d.pos));
+                }
+            },
+            WpdaStepAction::Error(_) => {
+                run.stats.engine_errors += 1; // descriptor dies (no recovery — amendment 8)
+            },
+            WpdaStepAction::Idle => {}, // engine parks this config
+            WpdaStepAction::Fork { branches, consume_trigger } => {
+                // B1: the classic walker's InfixLoop-Fork Unwinding-injection
+                // family, pure form (see `cgll_pure_inject_unwind_reading`).
+                self.cgll_pure_inject_unwind_reading(run, d, &branches, tokens);
+                let pos_after = if consume_trigger { next_of(d.pos) } else { d.pos };
+                for branch in branches {
+                    self.cgll_pure_dispatch_fork_branch(
+                        run,
+                        d,
+                        branch,
+                        pos_after,
+                        class_by_state,
+                        tokens,
+                    );
+                }
+            },
+        }
+    }
+
+    /// Dispatch ONE Fork branch (plan §2 ForkActionKind sub-table, B0
+    /// subset). `pos_after` = the fork-level trigger-consume position
+    /// (`consume_trigger` handled by the caller); guard kinds are token-text
+    /// predicates (pure — AV6).
+    #[allow(dead_code)] // Reached only under the const (DCE'd while const off).
+    fn cgll_pure_dispatch_fork_branch(
+        &mut self,
+        run: &mut CgllPureRun,
+        d: &CgllPureDescriptor,
+        branch: ForkBranch<W>,
+        pos_after: usize,
+        class_by_state: CgllFrameClass,
+        tokens: &dyn WpdaTokenSource,
+    ) {
+        let next_of = |p: usize| tokens.next_pos(p, 0).unwrap_or(p + 1);
+        let ForkBranch { symbol: br_symbol, weight: br_weight, new_state: br_state, action_kind } =
+            branch;
+        match action_kind {
+            ForkActionKind::Advance => {
+                // Classic parity (Fork-Advance arm ~15928): the Advance child
+                // KEEPS the parent's position even under `consume_trigger`
+                // (`child = cursor.clone()` — only state/weight change).
+                run.worklist.push_back(CgllPureDescriptor { state: br_state, ..d.clone() });
+            },
+            ForkActionKind::ConsumeAtAndReplace { next_pos } => {
+                // Classic keeps the node symbol (self-replace no-op by
+                // construction) — mirror: `cur_sym` unchanged.
+                run.worklist.push_back(CgllPureDescriptor {
+                    state: br_state,
+                    pos: next_pos,
+                    ..d.clone()
+                });
+            },
+            ForkActionKind::Push
+            | ForkActionKind::PushProjectionInline => {
+                // AMENDMENT 6: the tier branch weight rides an EMPTY carrier
+                // as the child's `w₀` (classic: fork-child pending ⊗ weight).
+                let child_slot = Self::cgll_pure_slot_hash(&br_symbol, &br_state);
+                let w0 = self.cgll_pure_weight_carrier(
+                    run,
+                    child_slot,
+                    crate::sppf::SPPF_ID_NONE,
+                    pos_after,
+                    &br_weight,
+                );
+                self.cgll_pure_descend(
+                    run,
+                    d,
+                    d.cur_sym,
+                    br_symbol,
+                    br_state,
+                    pos_after,
+                    class_by_state,
+                    w0,
+                    0,
+                None,);
+            },
+            ForkActionKind::PushWithTriggerTerminal => {
+                let leaf = match tokens.peek_kind(d.pos) {
+                    Some(kind) => {
+                        let text = tokens.peek_text(d.pos).unwrap_or("");
+                        let text_opt = if text.is_empty() { None } else { Some(text) };
+                        self.sppf.intern_trigger_terminal(
+                            kind,
+                            crate::sppf::PosOrSynth::Real(d.pos as u32),
+                            text_opt,
+                            br_symbol.category_src_idx,
+                            br_symbol.rule_index_in_category,
+                        )
+                    },
+                    None => crate::sppf::SPPF_ID_NONE,
+                };
+                let child_slot = Self::cgll_pure_slot_hash(&br_symbol, &br_state);
+                let w0 = self.cgll_pure_weight_carrier(run, child_slot, leaf, d.pos, &br_weight);
+                self.cgll_pure_descend(
+                    run,
+                    d,
+                    d.cur_sym,
+                    br_symbol,
+                    br_state,
+                    pos_after,
+                    class_by_state,
+                    w0,
+                    0,
+                None,);
+            },
+            ForkActionKind::PushCrossCatLhs => {
+                // Mirror 15977-15999: a CategoryEntry push carries the full
+                // CrossCatLhs scope; any other symbol is evidence-only
+                // Reentry.
+                let xcat = if br_symbol.kind == SymbolKind::CategoryEntry { 1 } else { 3 };
+                let child_slot = Self::cgll_pure_slot_hash(&br_symbol, &br_state);
+                let w0 = self.cgll_pure_weight_carrier(
+                    run,
+                    child_slot,
+                    crate::sppf::SPPF_ID_NONE,
+                    pos_after,
+                    &br_weight,
+                );
+                self.cgll_pure_descend(
+                    run,
+                    d,
+                    d.cur_sym,
+                    br_symbol,
+                    br_state,
+                    pos_after,
+                    class_by_state,
+                    w0,
+                    xcat,
+                None,);
+            },
+            ForkActionKind::OptGroupAbsent { replace_symbol } => {
+                run.stats.opt_group_absent += 1;
+                let w = self.cgll_pure_carry_scan_weight(run, d, d.w, pos_after, &br_weight);
+                run.worklist.push_back(CgllPureDescriptor {
+                    state: br_state,
+                    cur_sym: replace_symbol,
+                    pos: pos_after,
+                    w,
+                    ..d.clone()
+                });
+            },
+            ForkActionKind::ConsumeAndReplace => {
+                let w = self.cgll_pure_carry_scan_weight(run, d, d.w, pos_after, &br_weight);
+                run.worklist.push_back(CgllPureDescriptor {
+                    state: br_state,
+                    cur_sym: br_symbol,
+                    pos: next_of(pos_after),
+                    w,
+                    ..d.clone()
+                });
+            },
+            ForkActionKind::Consume => {
+                let w = self.cgll_pure_carry_scan_weight(run, d, d.w, pos_after, &br_weight);
+                run.worklist.push_back(CgllPureDescriptor {
+                    state: br_state,
+                    pos: next_of(pos_after),
+                    w,
+                    ..d.clone()
+                });
+            },
+            ForkActionKind::ConsumeAndPush { trigger_mode } => {
+                let w0 = match trigger_mode {
+                    TriggerMode::CaptureForBuilder => match tokens.peek_kind(pos_after) {
+                        Some(kind) => {
+                            let text = tokens.peek_text(pos_after).unwrap_or("");
+                            let text_opt = if text.is_empty() { None } else { Some(text) };
+                            self.sppf.intern_terminal(
+                                kind,
+                                crate::sppf::PosOrSynth::Real(pos_after as u32),
+                                text_opt,
+                                false,
+                            )
+                        },
+                        None => crate::sppf::SPPF_ID_NONE,
+                    },
+                    TriggerMode::ConsumeAsTriggerOnly => match tokens.peek_kind(pos_after) {
+                        Some(kind) => {
+                            let text = tokens.peek_text(pos_after).unwrap_or("");
+                            let text_opt = if text.is_empty() { None } else { Some(text) };
+                            self.sppf.intern_trigger_terminal(
+                                kind,
+                                crate::sppf::PosOrSynth::Real(pos_after as u32),
+                                text_opt,
+                                br_symbol.category_src_idx,
+                                br_symbol.rule_index_in_category,
+                            )
+                        },
+                        None => crate::sppf::SPPF_ID_NONE,
+                    },
+                    TriggerMode::Discard => crate::sppf::SPPF_ID_NONE,
+                };
+                // AMENDMENT 6: branch weight rides the leaf wrapper (or an
+                // empty carrier for Discard).
+                let child_slot = Self::cgll_pure_slot_hash(&br_symbol, &br_state);
+                let w0 = self.cgll_pure_weight_carrier(run, child_slot, w0, pos_after, &br_weight);
+                self.cgll_pure_descend(
+                    run,
+                    d,
+                    d.cur_sym,
+                    br_symbol,
+                    br_state,
+                    next_of(pos_after),
+                    class_by_state,
+                    w0,
+                    0,
+                None,);
+            },
+            ForkActionKind::ConsumeIdentAndReplace { start_scope } => {
+                if start_scope {
+                    run.stats.effects_skipped += 1;
+                }
+                let mut w = self.cgll_pure_carry_scan_weight(run, d, d.w, pos_after, &br_weight);
+                if tokens.peek_kind(pos_after).is_some() {
+                    let text = tokens.peek_text(pos_after).unwrap_or("");
+                    let leaf = self.sppf.intern_terminal(
+                        TokenKind::Ident,
+                        crate::sppf::PosOrSynth::Real(pos_after as u32),
+                        Some(text),
+                        true,
+                    );
+                    let slot = Self::cgll_pure_slot_hash(&d.cur_sym, &d.state);
+                    w = self.cgll_pure_fold(slot, w, leaf, pos_after, W::one_ref());
+                }
+                run.worklist.push_back(CgllPureDescriptor {
+                    state: br_state,
+                    cur_sym: br_symbol,
+                    pos: next_of(pos_after),
+                    w,
+                    ..d.clone()
+                });
+            },
+            ForkActionKind::Pop => {
+                self.cgll_pure_reduce(run, d, pos_after, &br_weight, &br_state, tokens);
+            },
+            ForkActionKind::ConsumeAndPop => {
+                self.cgll_pure_reduce(run, d, next_of(pos_after), &br_weight, &br_state, tokens);
+            },
+            ForkActionKind::ConsumeAtAndPop { next_pos } => {
+                self.cgll_pure_reduce(run, d, next_pos, &br_weight, &br_state, tokens);
+            },
+            ForkActionKind::PopWithEffect { effect } => {
+                // AMENDMENT 8: recovery branch ⇒ DROP (see AdvanceWithEffect).
+                if Self::is_recovery_delta(&effect) {
+                    run.stats.recovery_drops += 1;
+                    return;
+                }
+                // Class-3 effect pop: effect skipped + counted (B2).
+                run.stats.effects_skipped += 1;
+                self.cgll_pure_reduce(run, d, pos_after, &br_weight, &br_state, tokens);
+            },
+            ForkActionKind::ConsumeCollectionSep => {
+                // B2: separator scan + the flatten-time coverage WITNESS — a
+                // reserved-owner marker leaf folded into the marker frame's
+                // `w`-spine (see `cgll_pure_fold_sep_marker`); amendment-6
+                // scan-weight carry chained on top.
+                let w = self.cgll_pure_fold_sep_marker(run, d, pos_after);
+                let w = self.cgll_pure_carry_scan_weight(run, d, w, pos_after, &br_weight);
+                run.worklist.push_back(CgllPureDescriptor {
+                    state: br_state,
+                    pos: next_of(pos_after),
+                    w,
+                    ..d.clone()
+                });
+            },
+            ForkActionKind::ConsumeAndReplaceWithEffect { effect } => {
+                // AMENDMENT 8: recovery branch (token insert/substitute — the
+                // classic progresses by MUTATING the token source; the pure
+                // arm has no channel) ⇒ DROP. Applying the mechanics without
+                // the source mutation pins the state's pos and spins (the
+                // owner_nested loop this fix retires).
+                if Self::is_recovery_delta(&effect) {
+                    run.stats.recovery_drops += 1;
+                    return;
+                }
+                run.stats.effects_skipped += 1;
+                let w = self.cgll_pure_carry_scan_weight(run, d, d.w, pos_after, &br_weight);
+                run.worklist.push_back(CgllPureDescriptor {
+                    state: br_state,
+                    cur_sym: br_symbol,
+                    pos: next_of(pos_after),
+                    w,
+                    ..d.clone()
+                });
+            },
+            ForkActionKind::LexAlt { alt_idx: _, kind, text, next_pos, rule_idx: _ } => {
+                // Literal-rule lex alternative: Terminal leaf (the captured
+                // token) = the pushed literal-rule frame's `w₀`, wrapped in
+                // the AMENDMENT-6 weight carrier so `lex_w_alt` rides the
+                // reading (flats unchanged — the wrapper flattens to the
+                // bare leaf).
+                let text_opt = if text.is_empty() { None } else { Some(text.as_str()) };
+                let leaf = self.sppf.intern_terminal(
+                    kind,
+                    crate::sppf::PosOrSynth::Real(pos_after as u32),
+                    text_opt,
+                    false,
+                );
+                let child_slot = Self::cgll_pure_slot_hash(&br_symbol, &br_state);
+                let w0 =
+                    self.cgll_pure_weight_carrier(run, child_slot, leaf, pos_after, &br_weight);
+                self.cgll_pure_descend(
+                    run,
+                    d,
+                    d.cur_sym,
+                    br_symbol,
+                    br_state,
+                    next_pos,
+                    class_by_state,
+                    w0,
+                    0,
+                None,);
+            },
+            ForkActionKind::LexAltPrefixOp { alt_idx: _, trigger, rule_idx: _, next_pos, .. }
+            | ForkActionKind::LexAltNullaryRun { alt_idx: _, trigger, rule_idx: _, next_pos } => {
+                let leaf = self.sppf.intern_trigger_terminal(
+                    TokenKind::Fixed(trigger.clone()),
+                    crate::sppf::PosOrSynth::Real(pos_after as u32),
+                    Some(trigger.as_str()),
+                    br_symbol.category_src_idx,
+                    br_symbol.rule_index_in_category,
+                );
+                let child_slot = Self::cgll_pure_slot_hash(&br_symbol, &br_state);
+                let w0 =
+                    self.cgll_pure_weight_carrier(run, child_slot, leaf, pos_after, &br_weight);
+                self.cgll_pure_descend(
+                    run,
+                    d,
+                    d.cur_sym,
+                    br_symbol,
+                    br_state,
+                    next_pos,
+                    class_by_state,
+                    w0,
+                    0,
+                None,);
+            },
+            ForkActionKind::LexAltPostfixOp { next_pos, .. }
+            | ForkActionKind::LexAltInfixOp { next_pos, .. }
+            | ForkActionKind::LexAltMixfixOp { next_pos, .. } => {
+                // Operator lex alternatives: D2 descents (LHS = the caller's
+                // running `w`); no leaf (the trigger is structural) — the
+                // `lex_w_alt` rides an EMPTY amendment-6 carrier.
+                let child_slot = Self::cgll_pure_slot_hash(&br_symbol, &br_state);
+                let w0 = self.cgll_pure_weight_carrier(
+                    run,
+                    child_slot,
+                    crate::sppf::SPPF_ID_NONE,
+                    pos_after,
+                    &br_weight,
+                );
+                self.cgll_pure_descend(
+                    run,
+                    d,
+                    d.cur_sym,
+                    br_symbol,
+                    br_state,
+                    next_pos,
+                    CgllFrameClass::D2,
+                    w0,
+                    0,
+                None,);
+            },
+            ForkActionKind::ConsumeAndCaptureAndPush => {
+                let leaf = match tokens.peek_kind(pos_after) {
+                    Some(kind) => {
+                        let text = tokens.peek_text(pos_after).unwrap_or("");
+                        let text_opt = if text.is_empty() { None } else { Some(text) };
+                        self.sppf.intern_terminal(
+                            kind,
+                            crate::sppf::PosOrSynth::Real(pos_after as u32),
+                            text_opt,
+                            false,
+                        )
+                    },
+                    None => crate::sppf::SPPF_ID_NONE,
+                };
+                let child_slot = Self::cgll_pure_slot_hash(&br_symbol, &br_state);
+                let w0 =
+                    self.cgll_pure_weight_carrier(run, child_slot, leaf, pos_after, &br_weight);
+                self.cgll_pure_descend(
+                    run,
+                    d,
+                    d.cur_sym,
+                    br_symbol,
+                    br_state,
+                    next_of(pos_after),
+                    class_by_state,
+                    w0,
+                    0,
+                None,);
+            },
+            ForkActionKind::GuardedConsumeAndReplace { expected_text, required_top_cat } => {
+                if tokens.peek_text(pos_after).unwrap_or("") != expected_text.as_str() {
+                    return; // guard miss: branch dies
+                }
+                if required_top_cat.is_some() {
+                    // Classic reads the sppf-stack TOP's category (and may
+                    // coercion-wrap). B0: admit + count (battery-inert; a
+                    // reading diff here names the pure derivation as the
+                    // blocker — P3 hardens via the last-folded child).
+                    run.stats.guarded_topcat_sites += 1;
+                }
+                let w = self.cgll_pure_carry_scan_weight(run, d, d.w, pos_after, &br_weight);
+                run.worklist.push_back(CgllPureDescriptor {
+                    state: br_state,
+                    cur_sym: br_symbol,
+                    pos: next_of(pos_after),
+                    w,
+                    ..d.clone()
+                });
+            },
+            ForkActionKind::GuardedConsumeIdentAndReplace { start_scope } => {
+                if tokens.peek_kind(pos_after) != Some(TokenKind::Ident) {
+                    return;
+                }
+                if start_scope {
+                    run.stats.effects_skipped += 1;
+                }
+                let text = tokens.peek_text(pos_after).unwrap_or("");
+                let leaf = self.sppf.intern_terminal(
+                    TokenKind::Ident,
+                    crate::sppf::PosOrSynth::Real(pos_after as u32),
+                    Some(text),
+                    true,
+                );
+                let slot = Self::cgll_pure_slot_hash(&d.cur_sym, &d.state);
+                let w = self.cgll_pure_fold(slot, d.w, leaf, pos_after, W::one_ref());
+                let w = self.cgll_pure_carry_scan_weight(run, d, w, pos_after, &br_weight);
+                run.worklist.push_back(CgllPureDescriptor {
+                    state: br_state,
+                    cur_sym: br_symbol,
+                    pos: next_of(pos_after),
+                    w,
+                    ..d.clone()
+                });
+            },
+            ForkActionKind::GuardedConsume { expected_text } => {
+                if tokens.peek_text(pos_after).unwrap_or("") != expected_text.as_str() {
+                    return;
+                }
+                let w = self.cgll_pure_carry_scan_weight(run, d, d.w, pos_after, &br_weight);
+                run.worklist.push_back(CgllPureDescriptor {
+                    state: br_state,
+                    pos: next_of(pos_after),
+                    w,
+                    ..d.clone()
+                });
+            },
+            ForkActionKind::GuardedConsumeAndReplaceWithEffect { expected_text, effect } => {
+                if tokens.peek_text(pos_after).unwrap_or("") != expected_text.as_str() {
+                    return;
+                }
+                if Self::is_recovery_delta(&effect) {
+                    run.stats.recovery_drops += 1; // amendment 8
+                    return;
+                }
+                run.stats.effects_skipped += 1;
+                let w = self.cgll_pure_carry_scan_weight(run, d, d.w, pos_after, &br_weight);
+                run.worklist.push_back(CgllPureDescriptor {
+                    state: br_state,
+                    cur_sym: br_symbol,
+                    pos: next_of(pos_after),
+                    w,
+                    ..d.clone()
+                });
+            },
+            ForkActionKind::GuardedConsumeAndReplaceWithMultipleEffects {
+                expected_text,
+                effects,
+            } => {
+                if tokens.peek_text(pos_after).unwrap_or("") != expected_text.as_str() {
+                    return;
+                }
+                if effects.iter().any(Self::is_recovery_delta) {
+                    run.stats.recovery_drops += 1; // amendment 8
+                    return;
+                }
+                run.stats.effects_skipped += 1;
+                let w = self.cgll_pure_carry_scan_weight(run, d, d.w, pos_after, &br_weight);
+                run.worklist.push_back(CgllPureDescriptor {
+                    state: br_state,
+                    cur_sym: br_symbol,
+                    pos: next_of(pos_after),
+                    w,
+                    ..d.clone()
+                });
+            },
+            ForkActionKind::ConsumeIdentAndPop { start_scope } => {
+                if start_scope {
+                    run.stats.effects_skipped += 1;
+                }
+                let mut folded = d.clone();
+                if tokens.peek_kind(pos_after).is_some() {
+                    let text = tokens.peek_text(pos_after).unwrap_or("");
+                    let leaf = self.sppf.intern_terminal(
+                        TokenKind::Ident,
+                        crate::sppf::PosOrSynth::Real(pos_after as u32),
+                        Some(text),
+                        true,
+                    );
+                    let slot = Self::cgll_pure_slot_hash(&d.cur_sym, &d.state);
+                    folded.w = self.cgll_pure_fold(slot, d.w, leaf, pos_after, W::one_ref());
+                }
+                self.cgll_pure_reduce(
+                    run,
+                    &folded,
+                    next_of(pos_after),
+                    &br_weight,
+                    &br_state,
+                    tokens,
+                );
+            },
+            ForkActionKind::GuardedConsumeAndPopWithEffect { expected_text, effect } => {
+                if tokens.peek_text(pos_after).unwrap_or("") != expected_text.as_str() {
+                    return;
+                }
+                if Self::is_recovery_delta(&effect) {
+                    run.stats.recovery_drops += 1; // amendment 8
+                    return;
+                }
+                run.stats.effects_skipped += 1;
+                self.cgll_pure_reduce(run, d, next_of(pos_after), &br_weight, &br_state, tokens);
+            },
+            ForkActionKind::GuardedConsumeBinderIdentAndReplaceWithEffect {
+                start_scope: _,
+                ref effect,
+            } if Self::is_recovery_delta(effect) => {
+                run.stats.recovery_drops += 1; // amendment 8
+            },
+            ForkActionKind::GuardedConsumeBinderIdentAndReplace { start_scope: _ }
+            | ForkActionKind::GuardedConsumeBinderIdentAndReplaceWithEffect { .. } => {
+                // Binder-scope name capture (NO builder/args push classically
+                // — the name lives in the scope): B2 scope discipline.
+                if tokens.peek_kind(pos_after) != Some(TokenKind::Ident) {
+                    return;
+                }
+                run.stats.effects_skipped += 1;
+                let w = self.cgll_pure_carry_scan_weight(run, d, d.w, pos_after, &br_weight);
+                run.worklist.push_back(CgllPureDescriptor {
+                    state: br_state,
+                    cur_sym: br_symbol,
+                    pos: next_of(pos_after),
+                    w,
+                    ..d.clone()
+                });
+            },
+            ForkActionKind::ReplaceAndPush { replace_symbol } => {
+                self.cgll_pure_descend(
+                    run,
+                    d,
+                    replace_symbol,
+                    br_symbol,
+                    br_state,
+                    pos_after,
+                    class_by_state,
+                    crate::sppf::SPPF_ID_NONE,
+                    0,
+                None,);
+            },
+        }
     }
 
     /// Step 3 (Fork plan F6): per-step driver for `WpdaState::AmbiguityFanout`.
@@ -29483,6 +32500,20 @@ where
                     // persistent path's error semantics: set Error state,
                     // clear mirror, return. cursor_resolution_check will
                     // Drop on next step.
+                    // ── ROOT-P S2 Stage A.2/B2 AUDIT INSTRUMENT (2026-07-10):
+                    // env-gated fire-elide census (shares the
+                    // PRATTAIL_CLASSIC_ACTION_TRACE gate; diagnostic only).
+                    if std::env::var_os("PRATTAIL_CLASSIC_ACTION_TRACE").is_some() {
+                        let child_summaries: Vec<String> = children
+                            .iter()
+                            .map(|&c| self.sppf_trace_summary(c))
+                            .collect();
+                        eprintln!(
+                            "CLASSIC-FIRE-ELIDE rule=({cat_src_idx},{local_rule_idx}) \
+                             pos={} children={:?} kinds={:?}",
+                            cursor.pos, children, child_summaries
+                        );
+                    }
                     let message = format!(
                         "semantic-action elide / arity mismatch at rule \
                          (src={}, rule={}): action_fn returned without \
