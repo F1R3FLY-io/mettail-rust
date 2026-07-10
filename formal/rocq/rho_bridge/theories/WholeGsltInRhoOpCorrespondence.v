@@ -63,9 +63,18 @@
  *                       (payload = a TRUSTED native-handler value, the
  *                       RhoHostObligationBoundary seam; the directed-compute COMM, not a
  *                       predicate).
- * The slotted In/Out arm FAcNested cites the DEPTH-2 match logic
- * InRhoAcMatchMultiset.nested_ac_match_iff_partition /
- * nested_structural_ac_spread_is_report_faithful (commit ffec090f).
+ * The slotted In/Out arm FAcNested NOW cites an OPERATIONAL firing lemma too — on
+ * equal footing with the other six:
+ *   - FAcNested       <- AmbientInOutFiring.inout_step_complete / inout_step_sound
+ *                        / inout_lower_preserves_barbs (the DEPTH-2 analogue of the
+ *                        FAcStructural OpenRule firing), assembling the depth-2 match
+ *                        logic InRhoAcMatchMultiset.nested_ac_match_iff_partition /
+ *                        nested_structural_ac_spread_is_report_faithful (commit ffec090f)
+ *                        + the cross-level guard AcNonLinearConsistency.
+ *                        ac_nl_cross_level_commits / ac_nl_cross_level_reject_safe into
+ *                        a source<->in-Rho step-correspondence. It is discharged
+ *                        NON-VACUOUSLY (not merely asserted) in the companion witness
+ *                        WholeGsltInRhoOpCorrespondenceInOutViaFiring.v.
  *
  * The AC family's match-logic results (ac_match_iff_partition, ...) and the MATCHING
  * LAYER (i InRhoMatchPositional.sa_matches_positional, ii SymbolOnceInjective.positions_count,
@@ -221,12 +230,17 @@ Section WholeGsltInRhoOpCorrespondence.
     family_of l = Some FNative -> Rgio s t -> gstep t l t' ->
     exists s', gstep s l s' /\ Rgio s' t'.
 
-  (* FAcNested (In/Out, slotted) <- the depth-2 nested structural-AC match logic
+  (* FAcNested (In/Out) <- AmbientInOutFiring.inout_step_complete / inout_step_sound
+     (the operational firing FV — the DEPTH-2 analogue of the FAcStructural OpenRule
+     arm), assembled from the depth-2 nested structural-AC match logic
      InRhoAcMatchMultiset.nested_ac_match_iff_partition /
-     nested_structural_ac_spread_is_report_faithful (ffec090f). Its operational
-     step-correspondence closes by the same base-step reuse as FAcLinear once its
-     depth-2 firing lemma lands; until then it is a slotted Section Hypothesis, so the
-     top theorem is already stated + proven over it (additive: one more case). *)
+     nested_structural_ac_spread_is_report_faithful (ffec090f) + the cross-level guard
+     AcNonLinearConsistency.ac_nl_cross_level_commits / ac_nl_cross_level_reject_safe.
+     Its operational step-correspondence NOW LANDED, it is on EQUAL FOOTING with
+     FAcStructural: discharged NON-VACUOUSLY in the companion
+     WholeGsltInRhoOpCorrespondenceInOutViaFiring.v (inoutdemo_nested_finite_trace_opcorr,
+     the depth-2 mirror of the base SwapDemo witness). It remains a slotted Section
+     Hypothesis here so the harness carries no import (additive: one more case). *)
   Hypothesis fwd_ac_nested : forall s t l s',
     family_of l = Some FAcNested -> Rgio s t -> gstep s l s' ->
     exists t', gstep t l t' /\ Rgio s' t'.

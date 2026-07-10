@@ -93,6 +93,18 @@ theories/CommRuleFiring.v
 # of Comm's single `insert_exact`). Specializes AcNonLinearConsistency's guard to the two-element
 # OpenRule selection; generalizes CommRuleFiring's single-reduct emit to m structural reducts.
 theories/AmbientOpenFiring.v
+# Stage 4 S-binder SLICE 3 — the Ambient In/Out rules fire as ONE DEPTH-2 NESTED structural non-linear
+# AC COMM (AmbientInOutFiring): the DEPTH-2 analogue of AmbientOpenFiring. REUSES AmbientOpenFiring's
+# atomic m-reduct struct_attempt at the OUTER bag level, gates it by the CROSS-LEVEL guard
+# `EEq(M_outer, M_inner)` = ac_nl_guard [0;1] over two `M` slots at DIFFERENT nesting levels
+# (AcNonLinearConsistency.ac_nl_cross_level_commits/_reject_safe, inherited verbatim), and splices the
+# nested reduct `⟦R⟧σ` — rest1 INLINE at the inner bag, rest2 INLINE at the outer bag
+# (InRhoAcMatchMultiset.inrule/outrule_reduct_ids_two_level) — from the SUBJECT
+# (nested_structural_ac_spread_is_report_faithful, reusing the outer/inner_located_is_spread pair-
+# Hypothesis). Assembles the landed depth-2 In/Out FV pieces into an OPERATIONAL firing lemma +
+# source<->in-Rho step-correspondence (inout_step_complete/sound/lower_preserves_barbs), putting the
+# Stage-5 capstone's FAcNested (In/Out) arm on EQUAL FOOTING with FAcStructural (OpenRule).
+theories/AmbientInOutFiring.v
 # FV (vii) — Stage 3a contextual rewrite as an ATOMIC POLYADIC JOIN (INV-6) + PLUGGING-STABILITY
 # (INV-2): generalizes LinearCommCorrespondence's SameChannelJoin 2->n. consume_list agrees with
 # consume_two at n=2; the n-ary contextual join is sound+complete with matching barbs; atomic
@@ -172,3 +184,11 @@ theories/WholeGsltInRhoOpCorrespondence.v
 # The barb hypothesis is discharged downstream of (iii) (InRhoSameCLTSWeakBisim is
 # schedule-level, defines no Par/RSpace barb). Requires the -Q AdvancedAutomata edge above.
 theories/WholeGsltInRhoOpCorrespondenceOptimalViaSameClts.v
+# Stage 5 CAPSTONE — the In/Out (FAcNested) NON-VACUITY WITNESS: the depth-2 mirror of the capstone's
+# base-only SwapDemo witness. Instantiates the SAME abstract `whole_gslt_in_rho_opcorrespondence` with an
+# InOutDemo common-carrier sum (GSrcIO/GRhoIO over AmbientInOutFiring's InOut states) whose step is the
+# In/Out reduction / lowered In/Out COMM, and discharges the `FAcNested` arm NON-VACUOUSLY from
+# AmbientInOutFiring.inout_step_complete/inout_step_sound (the other six families vacuous) — the concrete
+# proof the In/Out arm is dischargeable, putting it on EQUAL FOOTING with FAcStructural (OpenRule). Yields
+# a concrete Closed In/Out finite-trace opcorr through the capstone (+ the O1-optimal parity corollary).
+theories/WholeGsltInRhoOpCorrespondenceInOutViaFiring.v
