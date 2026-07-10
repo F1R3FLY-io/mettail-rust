@@ -19821,6 +19821,61 @@ where
         // `WpdaGssNode` Eq/Hash derive is UNCHANGED (classic keeps `(pos,
         // symbol)`); only the SYMBOL fed to `gll_create` + the `u`-binding move.
         let retslot = std::env::var_os("PRATTAIL_CGLL_RETSLOT").is_some();
+        // ── ROOT-P PoC-0 RECURSIVE-POP (2026-07-10, opt-in A/B) ───────────────
+        // The EARLIEST-CHEAPEST GO/NO-GO for the committed recursive-pop rewrite
+        // (Plan agent a9c0c900). Tests the CORRECTED canonical-GLL thesis that the
+        // P2-CORE refutation (single-level node fan under-covers deep grouping)
+        // was of the k-FOLD key + on-demand synthetic-side-node pop, NOT canonical
+        // GLL. Under `poc_recpop` (a SEPARATE opt-in flag; the p2core / retslot
+        // arms are UNTOUCHED when it is unset), the SAME return-slot NODE-identity
+        // machinery (retslot_edges mint + p2core reduce-once/push-z symbol pop +
+        // retslot_edges None structural fan) is driven off FOUR overrides — the
+        // plan's exact deltas:
+        //   (a) the descriptor `u` axis = `cursor.cgll_ret_node.hash()` (the
+        //       RELIABLE single-level return-NODE id) — BYPASS `cgll_retslot_key_u`
+        //       (NO k-fold, so depth is NOT pre-folded into the key);
+        //   (b) the descent edge `from` + the reduce pop node `v` = the RELIABLE
+        //       `cgll_ret_node` STACK (pushed at descent, preserved across
+        //       intra-rule Replace/Consume, popped at reduce) — NOT the ON-DEMAND
+        //       `cgll_retslot_node_from(top-edge)` the p2core / retslot arms use;
+        //   (c) `cgll_w` is UN-STRIPPED (`strip_cgll_w` stays false ⇒ the caller's
+        //       partial `w` rides the descent edge `operand_w` + `getNodeP` folds
+        //       it at pop) — the E2b threading becomes load-bearing;
+        //   (d) the coarse slot-union recon fan is RETIRED (exact `gll_edges(v)`
+        //       only). Depth is meant to EMERGE from the recursive pop chain
+        //       (`gll_pop(v)` fans ALL edges + re-enqueues each caller with its own
+        //       `cgll_ret_node` = the caller node), NOT from a per-depth `k`.
+        // GO iff grp_d1..d5 max_U_per_pos stays FLAT at ONE fixed mechanism (no k)
+        // AND the reading multiset == E1 GT AND CF-core/-3!/@(p) unchanged. Gated
+        // + canonical-only ⇒ DCE'd with the const off (byte-identical default).
+        let poc_recpop = retslot && std::env::var_os("PRATTAIL_CGLL_POC_RECPOP").is_some();
+        // PoC-0 DIAGNOSTIC lever (H1-vs-H2 isolation, NOT part of the mechanism):
+        // `PRATTAIL_CGLL_POC_NO_PUSHZ=1` DISABLES the pre-apply reduce-once/push-z
+        // symbol-pop fan so EVERY PoC reduce falls through to the post-apply exact
+        // `gll_edges(reliable-v)` None fan. If grouping DELIVERS under this (but
+        // ERRs with push-z on) ⇒ the push-z reduce-once was corrupting grouping
+        // (H2, implementation — the recursive pop CAN deliver); if grouping STILL
+        // under-covers ⇒ the single-level node-id key merges lineages (H1, the
+        // depth-uniformity thesis fails). Read-only A/B; no effect unless poc on.
+        let poc_no_pushz =
+            poc_recpop && std::env::var_os("PRATTAIL_CGLL_POC_NO_PUSHZ").is_some();
+        // CLEAN-TEST STEP 1 (reconcile-mint) variant: PRATTAIL_CGLL_POC_ODV drives
+        // the descent `from`, the reduce pop node `v`, AND the descriptor `u`-axis
+        // KEY off the ON-DEMAND recompute `cgll_retslot_node_from(frame, top-edge)`
+        // (the CHECKPOINT-0-census-validated node identity that produced clean
+        // 2-edge grouping nodes) INSTEAD of the threaded `cgll_ret_node` field
+        // (which is `from=NONE` at top level + frame-unstable). Tests whether the
+        // threaded-vs-recompute choice is the STEP-1 reading-loss lever.
+        let poc_odv = poc_recpop && std::env::var_os("PRATTAIL_CGLL_POC_ODV").is_some();
+        // CLEAN-TEST STEP 3 (packing-on-merge, design C): PRATTAIL_CGLL_POC_PACKMERGE.
+        // When a cursor is DROPPED at the add-once merge, LINK its sppf-top Symbol's
+        // packings under the SURVIVOR's sppf-top Symbol (instead of just dropping),
+        // so the loser's derivation is preserved as another packing under the shared
+        // Symbol. Tests whether the merged cursors carry DISTINCT top-Symbol packings
+        // (⇒ linking recovers a reading) or SHARE the top Symbol (⇒ no-op, the
+        // distinction is enclosing, not in the top Symbol).
+        let poc_packmerge =
+            poc_recpop && std::env::var_os("PRATTAIL_CGLL_POC_PACKMERGE").is_some();
         // ── ROOT-P Checkpoint 0: P2 NODE-EDGE CENSUS (2026-07-09, READ-ONLY) ──
         // The decisive make-or-break for the reconciled-P2 return-slot NODE
         // identity rewire: does minting the callee GSS node by return slot
@@ -19903,7 +19958,8 @@ where
         let retslot_edges = retslot
             && (std::env::var_os("PRATTAIL_CGLL_RETSLOT_EDGES").is_some()
                 || p2_nodecensus
-                || p2core);
+                || p2core
+                || poc_recpop);
         // ── Stage GT-closure (A+B, agent a00bd51d = GO×GO) — the LIVE core ────
         // A (owner-unmask, w-axis): DROP the descriptor-`w` owner-mask on the
         // retslot arm so the N `@`-owner cursors each SURVIVE the add-once and
@@ -19957,7 +20013,7 @@ where
         let klevel: usize = std::env::var("PRATTAIL_CGLL_KLEVEL")
             .ok()
             .and_then(|s| s.parse().ok())
-            .unwrap_or(if p2core {
+            .unwrap_or(if p2core || poc_recpop {
                 1
             } else if retslot {
                 4
@@ -19977,7 +20033,10 @@ where
         // forces on — but excluded here for clarity + so the flag reads honestly.)
         let retslot_recon = retslot
             && std::env::var_os("PRATTAIL_CGLL_RETSLOT_NORECON").is_none()
-            && !p2core;
+            && !p2core
+            // PoC-0 (delta d): RETIRE the coarse slot-union recon fan — the
+            // recursive pop uses ONLY the exact `gll_edges(v)`.
+            && !poc_recpop;
         // ── ROOT-P Stage B: EXACT return-slot-keyed recon fan (2026-07-09) ────
         // The DEPTH-UNIFORM delivery lever. The DEFAULT `retslot` recon fan
         // (`cgll_slot_fan_pop`, below) reconnects a completing constituent to the
@@ -20096,6 +20155,27 @@ where
         let mut p2core_extras: u64 = 0; // extra genuine callers reconnected
         let mut p2core_z_symbol: u64 = 0; // symbol pops (push-z path)
         let mut p2core_z_none: u64 = 0; // structural pops (non-firing body)
+        // ── ROOT-P PoC-0 recursive-pop instrumentation (dumped under stats) ────
+        let mut poc_reduces: u64 = 0; // total reduces routed through the PoC path
+        let mut poc_sym_fan_sites: u64 = 0; // symbol pops with ≥2 exact callers (reduce-once)
+        let mut poc_struct_fan_sites: u64 = 0; // structural pops with ≥2 exact callers (None fan)
+        let mut poc_extras: u64 = 0; // extra genuine callers reconnected via the pop chain
+        let mut poc_replays: u64 = 0; // create-after-pop replays observed at descent (RT probe)
+        let mut poc_retnode_desync: u64 = 0; // reliable-stack v ≠ on-demand v at reduce (C7 probe)
+        let mut poc_merge_drops: u64 = 0; // add-once drops (merge-collapses) under the PoC key
+        // STEP 3 packing-on-merge instrumentation + survivor-top map.
+        let mut poc_seen_top: rustc_hash::FxHashMap<u64, crate::sppf::SppfId> =
+            rustc_hash::FxHashMap::default();
+        let mut poc_pack_links: u64 = 0; // total link_packing_to_symbol calls on drop
+        let mut poc_pack_newlinks: u64 = 0; // NON-idempotent links (a NEW packing transferred)
+        let mut poc_pack_distinct_top: u64 = 0; // drops where loser_top != survivor_top (both Symbols)
+        // CLEAN-TEST STEP 1 DIAGNOSTIC (capped trace of descent-mint vs reduce-pop
+        // node to pinpoint the desync mechanism). Enabled by PRATTAIL_CGLL_POC_TRACE.
+        let poc_trace = poc_recpop
+            && dump_stats
+            && std::env::var_os("PRATTAIL_CGLL_POC_TRACE").is_some();
+        let mut poc_trace_n: u32 = 0;
+        const POC_TRACE_CAP: u32 = 160;
         // ── ROOT-P MECHANISM-B B1 instrumentation (dumped under stats) ────────
         let mut exactfanb_sites: u64 = 0; // reduce sites with ≥2 genuine callers (fanned)
         let mut exactfanb_extras: u64 = 0; // extra callers reconnected via push-z
@@ -20255,9 +20335,59 @@ where
                 thread,
                 retslot,
                 klevel,
+                poc_recpop,
+                poc_odv,
             );
             if !seen.insert(key) {
+                if poc_recpop && dump_stats {
+                    poc_merge_drops += 1;
+                }
+                // ── CLEAN-TEST STEP 3: packing-on-merge (design C) ──────────────
+                // On a merge-collapse, link the LOSER's sppf-top Symbol packings
+                // under the SURVIVOR's sppf-top Symbol (don't just drop them).
+                if poc_packmerge {
+                    let loser_top = self
+                        .sppf_stack_arena
+                        .top(cursor.sppf_stack_id)
+                        .unwrap_or(crate::sppf::SPPF_ID_NONE);
+                    if let Some(&surv_top) = poc_seen_top.get(&key) {
+                        let both_symbols = loser_top != crate::sppf::SPPF_ID_NONE
+                            && surv_top != crate::sppf::SPPF_ID_NONE
+                            && matches!(
+                                self.sppf.node(loser_top),
+                                Some(crate::sppf::SppfNode::Symbol { .. })
+                                    | Some(crate::sppf::SppfNode::Intermediate { .. })
+                            )
+                            && matches!(
+                                self.sppf.node(surv_top),
+                                Some(crate::sppf::SppfNode::Symbol { .. })
+                                    | Some(crate::sppf::SppfNode::Intermediate { .. })
+                            );
+                        if both_symbols {
+                            if loser_top != surv_top {
+                                poc_pack_distinct_top += 1;
+                            }
+                            let loser_packings = self.sppf.packings_of(loser_top).to_vec();
+                            for p in loser_packings {
+                                let before = self.sppf.packings_of(surv_top).len();
+                                self.sppf.link_packing_to_symbol(surv_top, p);
+                                let after = self.sppf.packings_of(surv_top).len();
+                                poc_pack_links += 1;
+                                if after > before {
+                                    poc_pack_newlinks += 1;
+                                }
+                            }
+                        }
+                    }
+                }
                 continue;
+            }
+            if poc_packmerge {
+                let surv_top = self
+                    .sppf_stack_arena
+                    .top(cursor.sppf_stack_id)
+                    .unwrap_or(crate::sppf::SPPF_ID_NONE);
+                poc_seen_top.entry(key).or_insert(surv_top);
             }
             u_count += 1;
             *u_by_pos.entry(cursor.pos.min(max_pos)).or_insert(0) += 1;
@@ -21023,6 +21153,14 @@ where
                     | WpdaStepAction::ConsumeAtAndPop { .. }
             );
             let pre_node = cursor.node;
+            // PoC-0 (delta b): the RELIABLE return-node stack value BEFORE the
+            // micro-step. At a descent this is the CALLER's return node (the `from`
+            // for `gll_create`); at a reduce this is the completing constituent's
+            // OWN return node `v` (the node to `gll_pop`). Captured pre-apply
+            // because `apply_action_to_cursor` mutates `cursor` (the classic pop
+            // leaves `cgll_ret_node` untouched, but the descent/reduce blocks below
+            // overwrite it). Only read under `poc_recpop` (DCE'd with the const off).
+            let pre_ret_node = cursor.cgll_ret_node;
             let pre_top = self.sppf_stack_arena.top(cursor.sppf_stack_id);
             // Stage E2b: sppf-stack depth BEFORE the micro-step. A step that GROWS
             // the stack (without reducing) absorbed a leaf/trigger child to fold
@@ -21066,8 +21204,53 @@ where
             // descent that created this constituent. Minted here (idempotent) so
             // the ≥2-caller snapshot decision and the post-pop fan use ONE node.
             let retslot_reduce_v = if retslot_edges && is_reduce {
-                let pre_top_edge = self.incoming_edge_stack_arena.top(pre_edge_stack);
-                Some(self.cgll_retslot_node_from(pre_node, pre_top_edge))
+                if poc_recpop {
+                    // PoC-0 (delta b): pop the RELIABLE stacked return node, NOT the
+                    // on-demand top-edge recompute. Under `dump_stats` also compute
+                    // the on-demand node purely to COUNT the C7 desync (whether the
+                    // reliable stack diverged from the top-edge recompute the
+                    // p2core/retslot arms use) — the minted probe node is inert
+                    // (no `gll_create` targets it under the PoC) and does not affect
+                    // the descriptor frontier (`max_U_per_pos`).
+                    // STEP 1 (POC_ODV): use the ON-DEMAND recompute as the pop node.
+                    let pre_top_edge_v = self.incoming_edge_stack_arena.top(pre_edge_stack);
+                    let on_demand_pop = self.cgll_retslot_node_from(pre_node, pre_top_edge_v);
+                    if dump_stats {
+                        let pre_top_edge = self.incoming_edge_stack_arena.top(pre_edge_stack);
+                        let on_demand_v = self.cgll_retslot_node_from(pre_node, pre_top_edge);
+                        if pre_ret_node != on_demand_v {
+                            poc_retnode_desync += 1;
+                        }
+                        if poc_trace && poc_trace_n < POC_TRACE_CAP {
+                            poc_trace_n += 1;
+                            let ppos = self.gss.node(pre_node).map(|n| n.pos).unwrap_or(usize::MAX);
+                            let pcat = self
+                                .gss
+                                .node(pre_node)
+                                .map(|n| n.symbol.category_src_idx)
+                                .unwrap_or(u16::MAX);
+                            let pkind = self.gss.node(pre_node).map(|n| n.symbol.kind);
+                            let e_tv = self.gss.gll_edges(pre_ret_node).len();
+                            let e_odv = self.gss.gll_edges(on_demand_v).len();
+                            let etop_tgtcat = pre_top_edge
+                                .and_then(|e| self.gss.edge_target(e))
+                                .and_then(|t| self.gss.node(t))
+                                .map(|n| n.symbol.category_src_idx)
+                                .map(|c| c as i32)
+                                .unwrap_or(-1);
+                            eprintln!(
+                                "POC-RED tv={} odv={} SAME={} pnode={} ppos={} pcat={} pkind={:?} \
+                                 e_tv={} e_odv={} etop_tgtcat={}",
+                                pre_ret_node, on_demand_v, pre_ret_node == on_demand_v,
+                                pre_node, ppos, pcat, pkind, e_tv, e_odv, etop_tgtcat
+                            );
+                        }
+                    }
+                    if poc_odv { Some(on_demand_pop) } else { Some(pre_ret_node) }
+                } else {
+                    let pre_top_edge = self.incoming_edge_stack_arena.top(pre_edge_stack);
+                    Some(self.cgll_retslot_node_from(pre_node, pre_top_edge))
+                }
             } else {
                 None
             };
@@ -21110,10 +21293,19 @@ where
             // `apply_action` so the primary `apply_pop_body` reduce IS the once-fire
             // (no double-fire), then `continue`s. Gated + canonical-only ⇒ DCE'd
             // with the const off (byte-identical default).
-            if p2core && is_reduce {
+            // PoC-0 reuses this SAME reduce-once/push-z symbol-pop path (the
+            // validated B1 mechanism), driven off the RELIABLE `v = pre_ret_node`
+            // (via `retslot_reduce_v` above) + the un-stripped `cgll_w` getNodeP
+            // fold added under `poc_recpop` below. Structural pops still defer to
+            // the post-apply `None` fan; the ONLY PoC deltas vs p2core are the
+            // node-id key, the reliable pop node, and the `cgll_w` thread.
+            if (p2core || poc_recpop) && is_reduce {
                 if let (Some(v), Some((weight, new_state))) =
                     (retslot_reduce_v, retslot_reduce_wn.as_ref())
                 {
+                    if poc_recpop && dump_stats {
+                        poc_reduces += 1;
+                    }
                     let is_plain_pop = matches!(action, WpdaStepAction::Pop { .. });
                     // SYMONLY (task EDIT C): reduce-once/push-z fires ONLY for
                     // SYMBOL-producing pops (Return / RuleAt / MixfixMarker /
@@ -21138,7 +21330,7 @@ where
                         })
                         .unwrap_or(false);
                     let edges = self.gss.gll_edges(v).to_vec();
-                    if is_plain_pop && is_symbol_pop && edges.len() > 1 {
+                    if is_plain_pop && is_symbol_pop && edges.len() > 1 && !poc_no_pushz {
                         let weight = weight.clone();
                         let new_state = new_state.clone();
                         let popped_symbol = retslot_popped_symbol;
@@ -21150,8 +21342,20 @@ where
                             .find(|e| e.caller_edge_stack == primary_chain)
                             .map(|e| e.target)
                             .unwrap_or(crate::gss::GSS_NODE_NONE);
+                        // PoC-0 (delta c): the primary caller's saved partial `w`
+                        // (the descent `operand_w`) — folded with `z` at getNodeP so
+                        // the resumed caller's running `cgll_w` carries this
+                        // completed constituent (the un-stripped E2b thread).
+                        let primary_operand_w = edges
+                            .iter()
+                            .find(|e| e.caller_edge_stack == primary_chain)
+                            .map(|e| e.operand_w)
+                            .unwrap_or(crate::sppf::SPPF_ID_NONE);
                         let mut children: Vec<BranchCursor<W>> = Vec::new();
                         p2core_fan_sites += 1;
+                        if poc_recpop && dump_stats {
+                            poc_sym_fan_sites += 1;
+                        }
                         // ── PRIMARY: reduce ONCE, capture the built `z`. ─────────
                         self.pop_fanout_suppress_resolve = false;
                         let z = {
@@ -21173,6 +21377,12 @@ where
                             );
                             if ok {
                                 ch.cgll_ret_node = primary_target;
+                                // PoC-0 (delta c): getNodeP left-fold the completed
+                                // `z` into the primary caller's restored partial `w`.
+                                if poc_recpop {
+                                    ch.cgll_w = primary_operand_w;
+                                    self.cgll_thread_absorb(&mut ch, z);
+                                }
                                 children.push(ch);
                             }
                             z
@@ -21231,8 +21441,18 @@ where
                                     // a ConsumeAndPop-style consume applies uniformly.
                                     ch.pos = cursor.pos;
                                     ch.cgll_ret_node = e.target;
+                                    // PoC-0 (delta c): getNodeP left-fold `z` into
+                                    // THIS caller's restored partial `w`.
+                                    if poc_recpop {
+                                        let eop = e.operand_w;
+                                        ch.cgll_w = eop;
+                                        self.cgll_thread_absorb(&mut ch, z);
+                                    }
                                     fan_children += 1;
                                     p2core_extras += 1;
+                                    if poc_recpop && dump_stats {
+                                        poc_extras += 1;
+                                    }
                                     children.push(ch);
                                 }
                             }
@@ -21333,11 +21553,20 @@ where
                                     .incoming_edge_stack_arena
                                     .top(cursor.incoming_edge_stack_id);
                                 let l_ret = self.cgll_retslot_symbol_from_edge(callee_edge_top);
-                                let caller_edge_top =
-                                    self.incoming_edge_stack_arena.top(pre_edge_stack);
-                                let caller_ret_node =
-                                    self.cgll_retslot_node_from(pre_node, caller_edge_top);
-                                let (v, _replays) = self.gss.gll_create(
+                                // PoC-0 (delta b): the descent edge `from` is the
+                                // RELIABLE parent return node `pre_ret_node` (the
+                                // stacked value captured pre-apply), NOT the
+                                // on-demand top-edge recompute — so `v`'s edges chain
+                                // the REAL ancestry the recursive pop unwinds. The
+                                // p2core / retslot arms keep the on-demand recompute.
+                                let caller_ret_node = if poc_recpop && !poc_odv {
+                                    pre_ret_node
+                                } else {
+                                    let caller_edge_top =
+                                        self.incoming_edge_stack_arena.top(pre_edge_stack);
+                                    self.cgll_retslot_node_from(pre_node, caller_edge_top)
+                                };
+                                let (v, replays) = self.gss.gll_create(
                                     caller_ret_node,
                                     l_ret,
                                     at,
@@ -21347,6 +21576,30 @@ where
                                 );
                                 cursor.cgll_ret_node = v;
                                 gll_creates += 1;
+                                if poc_trace && poc_trace_n < POC_TRACE_CAP {
+                                    poc_trace_n += 1;
+                                    let cnode_pos =
+                                        self.gss.node(cursor.node).map(|n| n.pos).unwrap_or(usize::MAX);
+                                    let ccat = self
+                                        .gss
+                                        .node(cursor.node)
+                                        .map(|n| n.symbol.category_src_idx)
+                                        .unwrap_or(u16::MAX);
+                                    eprintln!(
+                                        "POC-DESC v={} from={} at={} cnode={} cnode_pos={} ccat={} \
+                                         pnode={} operand_w={}",
+                                        v, caller_ret_node, at, cursor.node, cnode_pos, ccat,
+                                        pre_node, operand_w
+                                    );
+                                }
+                                // PoC-0 RT probe (recursion terminate / no-double-
+                                // count): count create-after-pop replays. A NON-ZERO
+                                // count means a caller linked to `v` AFTER `v` popped
+                                // ⇒ the PoC would UNDER-COVER unless these are re-
+                                // enqueued (a deferred P1/P2 piece); reported honestly.
+                                if poc_recpop && dump_stats && !replays.is_empty() {
+                                    poc_replays += replays.len() as u64;
+                                }
                                 debug_assert!(
                                     v != crate::gss::GSS_NODE_NONE,
                                     "ROOT-P P2: retslot descent minted GSS_NODE_NONE"
@@ -21533,6 +21786,16 @@ where
                                 retslot_fan_snapshot.as_ref(),
                                 retslot_reduce_wn.as_ref(),
                             ) {
+                                // PoC-0: this post-apply exact-edge fan handles the
+                                // STRUCTURAL (z=NONE) multi-caller pops (symbol pops
+                                // reduce-once/push-z pre-apply + `continue`). The
+                                // deep-@ grouping reconnections are structural, so
+                                // this is the depth-uniformity delivery lever under
+                                // test (exact `gll_edges(pre_ret_node)`, NO k, NO
+                                // slot-union).
+                                if poc_recpop && dump_stats {
+                                    poc_struct_fan_sites += 1;
+                                }
                                 self.pop_fanout_suppress_resolve = true;
                                 for e in &edges {
                                     if e.caller_edge_stack == pre_edge_stack {
@@ -21569,6 +21832,9 @@ where
                                         }
                                         ch.cgll_ret_node = e.target;
                                         fan_children += 1;
+                                        if poc_recpop && dump_stats {
+                                            poc_extras += 1;
+                                        }
                                         worklist.push_back(ch);
                                     }
                                 }
@@ -21688,6 +21954,24 @@ where
                 "CGLL-P2CORE p2core={} klevel={} fan_sites={} extras={} z_symbol={} z_none={}",
                 p2core, klevel, p2core_fan_sites, p2core_extras, p2core_z_symbol,
                 p2core_z_none
+            );
+            // ── ROOT-P PoC-0 RECURSIVE-POP report ─────────────────────────────
+            // The GO/NO-GO instruments. `reduces` = total reduces routed through
+            // the PoC. `sym_fan_sites` / `struct_fan_sites` = ≥2-caller symbol
+            // (reduce-once/push-z) vs structural (None fan) pops. `extras` = extra
+            // genuine callers reconnected by the recursive pop chain. `replays` =
+            // create-after-pop replays (MUST be 0 for the scoped PoC, else it
+            // under-covers — reported honestly). `retnode_desync` = reliable-stack
+            // `v` ≠ on-demand top-edge `v` at reduce (whether the reliability delta
+            // is load-bearing). Poly guard: `max_U_per_pos` above must PLATEAU
+            // across grp_d1..d5 with NO `k` (`klevel=1`, key on the node id).
+            eprintln!(
+                "CGLL-POC poc={} odv={} reduces={} sym_fan_sites={} struct_fan_sites={} \
+                 extras={} replays={} retnode_desync={} merge_drops={} \
+                 pack_links={} pack_newlinks={} pack_distinct_top={}",
+                poc_recpop, poc_odv, poc_reduces, poc_sym_fan_sites, poc_struct_fan_sites,
+                poc_extras, poc_replays, poc_retnode_desync, poc_merge_drops,
+                poc_pack_links, poc_pack_newlinks, poc_pack_distinct_top
             );
             // ── ROOT-P caller-dedup Stage-1 MEASUREMENT report ────────────────
             // `maxkN` = max distinct return-slot keys seen at ANY single fan site
@@ -21994,6 +22278,8 @@ where
         thread: bool,
         retslot: bool,
         k: usize,
+        poc: bool,
+        poc_odv: bool,
     ) -> u64 {
         use std::hash::{Hash, Hasher};
         let mut h = rustc_hash::FxHasher::default();
@@ -22010,7 +22296,24 @@ where
         // incoming edge (the P0-validated `cgll_retslot_u` proxy) — NOT the
         // threaded `cgll_ret_node` field, which is stale for frames entered via
         // non-`Push` transitions (the C7 gap the P1 assert exposed).
-        if retslot {
+        if poc && poc_odv {
+            // STEP 1 (POC_ODV): key the `u` axis on the ON-DEMAND recompute
+            // (`cgll_retslot_key_u` at k=1 = pos + L_ret(top-edge), the &self
+            // recompute-equivalent of the census node identity), so the KEY,
+            // descent `from`, and reduce pop node ALL agree on the recompute
+            // (frame-derived) node identity — reconciling the mint via the
+            // census-validated path rather than the frame-unstable threaded field.
+            self.cgll_retslot_key_u(cursor, 1).hash(&mut h);
+        } else if poc {
+            // PoC-0 (delta a): key the `u` axis on the RELIABLE single-level
+            // return-NODE id `cgll_ret_node` (the integer GSS node id `v = (i,
+            // L_ret)`). NO k-fold — depth is NOT pre-folded into the key; two
+            // grouping cursors sharing an immediate return slot MERGE here (correct,
+            // poly), and their divergence rides `v`'s edges, recovered by the
+            // recursive `gll_pop(v)` fan + re-enqueue. This is the exact hypothesis
+            // under test vs the refuted k-fold `cgll_retslot_key_u`.
+            cursor.cgll_ret_node.hash(&mut h);
+        } else if retslot {
             self.cgll_retslot_key_u(cursor, k).hash(&mut h);
         } else {
             cursor.node.hash(&mut h);
