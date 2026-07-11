@@ -815,7 +815,13 @@ impl RootpMode {
                 // Stage E1 binarized getNodeP: OWN const master; INDEPENDENT of
                 // `canonical_gll` (so it can run on the classic walker for the
                 // Q1 isolation A/B).
-                cgll_binarize: CANONICAL_GLL_ENABLED && disabled("PRATTAIL_CGLL_BINARIZE"),
+                // P3 (2026-07-10): `PRATTAIL_CGLL_PURE` IMPLIES the binarized
+                // SPPF/realize half — the pure engine emits `CGLL_BIN_TAG`
+                // roots that only the binarize-gated realize consumes, so the
+                // pure switch is complete on its own (suite runs need exactly
+                // one env var). DCE'd with the const like everything else.
+                cgll_binarize: CANONICAL_GLL_ENABLED
+                    && (disabled("PRATTAIL_CGLL_BINARIZE") || disabled("PRATTAIL_CGLL_PURE")),
             }
         })
     }
@@ -3170,6 +3176,12 @@ pub struct WpdaWalker<W: SemiringRef, E: WpdaEngine<W>> {
     /// when it is already in that category or a declared single-hop transparent
     /// coercion can be materialized over the SPPF root.
     requested_root_cat: Option<u16>,
+    /// P3 Pocket-A4 (2026-07-11): the PURE arm's goal category (the seed
+    /// CategoryEntry's category), read by `cgll_resolve_binarized`'s
+    /// accept-boundary goal coercion. Kept separate from
+    /// `requested_root_cat` (whose classic pre-filter drops source-cat
+    /// candidates). `None` while the pure engine has not seeded.
+    cgll_pure_goal_cat: Option<u16>,
 }
 
 // Phase 5.6-tail-F (2026-05-12): CursorMode enum DELETED. The pre-tail
@@ -4452,6 +4464,17 @@ struct CgllPureStats {
     ctx_conflicts: u64,
     ctx_misses: u64,
     d2_lo_fallbacks: u64,
+    /// P3.e adjacency fence: resume-folds refused because the completing
+    /// `z` OVERLAPS the edge operand's span (a mis-routed pop/replay — the
+    /// PNew cyclic-forest source; see `cgll_pure_resume_fold`).
+    fold_overlap_refuted: u64,
+    /// P3.e cycle fence: accepting roots REFUSED because their packing DAG
+    /// is cyclic (protocol corruption; diverges the flatten if published).
+    cyclic_roots_refused: u64,
+    /// P3 Pocket-A3: symbol-mediated cyclic roots TOLERATED at publish
+    /// (realize's memo guard refutes the cyclic packing; classic parity =
+    /// action-elide on the wrong-category coercion child).
+    cyclic_roots_tolerated: u64,
     iterchain_witness: u64,
     weight_carriers: u64,
     replay_weight_drops: u64,
@@ -4461,6 +4484,29 @@ struct CgllPureStats {
     coll_coverage_refuted: u64,
     coll_empty_closes: u64,
     coll_kv_deferred: u64,
+    /// P3.a: standalone collection-rule closes that interned the rule
+    /// packing at the marker pop (PPar-class fire-at-close analog).
+    coll_standalone_fires: u64,
+    /// P3.a: kv-phase parity patches whose spine flats DISAGREED on parity
+    /// (classically impossible — distinct parities were distinct cursors).
+    coll_kv_parity_divergence: u64,
+    /// P3 Pocket-A2: R2 led-continuation joins split at the marker spine's
+    /// last content element (collection-element method calls / infixes).
+    coll_led_splits: u64,
+    /// P3 Pocket-A4: accepting roots wrapped into the goal category at
+    /// publish (the TransparentSourceReentry wrap analog).
+    goal_coercions: u64,
+    /// P3.c: OptGroupFinalize take-path pops (OPTIONAL_PRESENT packings).
+    opt_group_finalizes: u64,
+    /// P3 members-2/3/4: cross-cat unwind injections (acceptor-gated).
+    unwind_inject_m234: u64,
+    /// P3 Pocket-A5: D2 resume-replace CategoryEntry re-tags (the classic
+    /// CategoryEntryContinuation wrap-chain morph analog).
+    d2_retags: u64,
+    /// P3.a: bare-path duplicates applied to a MULTI-packing spine (the
+    /// duplicate takes the first packing's tail; nonzero on a green battery
+    /// would mean divergent packing tails at a bare-path site — escalate).
+    coll_kv_dup_multipack: u64,
     effects_skipped: u64,
     recovery_drops: u64,
     weight_drops: u64,
@@ -4511,6 +4557,25 @@ struct CgllPureRun {
     edge_ctx: rustc_hash::FxHashMap<
         (crate::gss::GssNodeId, crate::gss::GssNodeId, crate::sppf::SppfId),
         CgllPureCallerCtx,
+    >,
+    /// P3.f: `v → (caller frame symbol, caller u, inherited open-scope
+    /// depth)` — the upward link for
+    /// [`WpdaWalker::cgll_pure_frame_ctx`]'s innermost-`CollectionMarker`
+    /// walk (the pure analog of classic `frame_ctx_for_stack`'s
+    /// incoming-edge walk), plus the P3.e binder-scope depth: the third
+    /// element is the number of OPEN enclosing binder scopes at this
+    /// frame's descent (classic `cursor.binder_scope_marks.len()` — a scope
+    /// is open exactly while its frame sits in `BinderListLoop`, so the
+    /// child inherits `parent's depth + (parent state was BinderListLoop)`;
+    /// `intern_binder_scope` consumes it verbatim). Per-`v`, not
+    /// per-lineage — aligned with classic's own soundness note ("the
+    /// innermost structural frame is part of the shared forward
+    /// sub-parse"). Multi-caller re-inserts with a DIFFERENT parent are
+    /// counted (`ctx_conflicts`) and the first insert wins (conservative:
+    /// the walk sees one shared chain).
+    v_parent: rustc_hash::FxHashMap<
+        crate::gss::GssNodeId,
+        (StackSymbolV2, crate::gss::GssNodeId, u16),
     >,
     /// Accepting `(root, pos)` pairs (amendment 3: recorded ONLY at a
     /// seed-frame pop at logical EOI), deduped.
@@ -6438,6 +6503,7 @@ where
             // walker-global GSS edge-stack interning arena. Fresh = empty.
             incoming_edge_stack_arena: crate::edge_stack_arena::EdgeStackArena::new(),
             requested_root_cat: None,
+            cgll_pure_goal_cat: None,
         }
     }
 
@@ -6563,6 +6629,7 @@ where
             // walker-global GSS edge-stack interning arena. Fresh = empty.
             incoming_edge_stack_arena: crate::edge_stack_arena::EdgeStackArena::new(),
             requested_root_cat: Some(cat_src_idx),
+            cgll_pure_goal_cat: None,
         }
     }
 
@@ -6687,6 +6754,7 @@ where
             // walker-global GSS edge-stack interning arena. Fresh = empty.
             incoming_edge_stack_arena: crate::edge_stack_arena::EdgeStackArena::new(),
             requested_root_cat: None,
+            cgll_pure_goal_cat: None,
         }
     }
 
@@ -10000,6 +10068,20 @@ where
     where
         W: StarSemiringRef,
     {
+        // P3 Pocket-A diag (env-gated): entry/exit trace of every packing
+        // realize so silently-empty chains are attributable.
+        #[cfg(debug_assertions)]
+        let diag_on = std::env::var_os("PRATTAIL_CGLL_REALIZE_DIAG").is_some();
+        #[cfg(debug_assertions)]
+        if diag_on {
+            eprintln!(
+                "  [realize-enter] rule=({},{}) children={:?} memo_hits={:?}",
+                rule_idx >> 16,
+                rule_idx & 0xFFFF,
+                children,
+                children.iter().map(|c| memo.get(c).map(|v| v.len())).collect::<Vec<_>>()
+            );
+        }
         // OPTIONAL_PRESENT_RULE_IDX sentinel: synthetic packing emitted
         // by emit_finalize_optional_scope_present. Wrap children's args
         // into ActionArg::Optional(Some(...)).
@@ -10077,14 +10159,40 @@ where
             Some(e) => e.action_fn,
             None => return Vec::new(), // No matching action for this packing.
         };
-        debug_assert_eq!(
-            action_entry.expect("wpda_walker: action_entry is Some — the None arm returned Vec::new() above").arity as usize,
-            arity,
-            "Bug A guard: Packing.rule_idx encodes ({cat}, {local_rule_idx}) but action_entry.arity ({}) != Packing.children.len() ({arity}). \
-             This indicates a corrupt SPPF or a mismatched intern_packing/action_for. \
-             rule_idx={rule_idx:#x}",
-            action_entry.expect("wpda_walker: action_entry is Some — the None arm returned Vec::new() above").arity,
-        );
+        // Bug A guard, P3 Pocket-C revision (2026-07-11): an
+        // arity-mismatched packing flat is a REFUTABLE derivation, not a
+        // process-fatal corruption. Classic parity: the fire on such a
+        // lineage ELIDES (arity/shape mismatch) and the cursor errors out —
+        // the derivation dies, its siblings live. The pure/binarized realize
+        // reaches the same lineages as packing-family alternatives (e.g.
+        // the Class-3 empty-bootstrap ghost flat missing the BinderScope
+        // leaf: [with, C, C, body] beside the canonical [with, C, C,
+        // BinderScope, body]) — refute the flat (return no derivations),
+        // capped-log for observability. The pre-P3 `debug_assert_eq!`
+        // panicked the whole parse on the FIRST ghost, killing the valid
+        // sibling flats (receipt: class3 `with [ ] ( ) . { 0 }`).
+        {
+            let expected_arity = action_entry
+                .expect("wpda_walker: action_entry is Some — the None arm returned Vec::new() above")
+                .arity as usize;
+            if expected_arity != arity {
+                #[cfg(debug_assertions)]
+                {
+                    use std::sync::atomic::{AtomicU64, Ordering};
+                    static ARITY_REFUTES: AtomicU64 = AtomicU64::new(0);
+                    let n = ARITY_REFUTES.fetch_add(1, Ordering::Relaxed);
+                    if n < 8 {
+                        eprintln!(
+                            "[realize_packing_call] arity-refute #{}: rule=({cat},{local_rule_idx}) \
+                             expected arity {expected_arity}, flat has {arity} — derivation refuted \
+                             (classic fire-elide analog)",
+                            n + 1,
+                        );
+                    }
+                }
+                return Vec::new();
+            }
+        }
 
         // Cartesian product over children's realized args. Phase C.6
         // threads weights via ⊗: each combo accumulates the product of
@@ -10184,6 +10292,14 @@ where
                 }
             }
             if !collection_items_ok {
+                #[cfg(debug_assertions)]
+                if std::env::var_os("PRATTAIL_CGLL_REALIZE_DIAG").is_some() {
+                    eprintln!(
+                        "  [realize-f2-refute] rule=({},{}) collection_ids={collection_ids:?}",
+                        rule_idx >> 16,
+                        rule_idx & 0xFFFF
+                    );
+                }
                 continue;
             }
             // #307 ROOT-F diagnostics (2026-06-11): realize-side combo fire.
@@ -10288,6 +10404,19 @@ where
                         pre_len,
                         arg_shapes_for_diag,
                     );
+                    // P3 Pocket-A diag (env-gated): the arg SHAPES alone cannot
+                    // distinguish which Term arg the action's downcast refused —
+                    // dump each action child's SPPF node (Symbol tag + span
+                    // reveals the realized child's category).
+                    if std::env::var_os("PRATTAIL_CGLL_REALIZE_DIAG").is_some() {
+                        for &c in &action_children {
+                            eprintln!(
+                                "  [realize-diag] child sid={} node={:?}",
+                                c,
+                                self.sppf.node(c)
+                            );
+                        }
+                    }
                 }
                 // Drain any stale state the action partially produced
                 // so the next combo starts fresh.
@@ -10316,6 +10445,15 @@ where
                     return out;
                 }
             }
+        }
+        #[cfg(debug_assertions)]
+        if diag_on {
+            eprintln!(
+                "  [realize-exit] rule=({},{}) out={}",
+                rule_idx >> 16,
+                rule_idx & 0xFFFF,
+                out.len()
+            );
         }
         out
     }
@@ -23224,6 +23362,69 @@ where
     /// readings — the owner-ambiguity resolved at realize. Reached only under
     /// `cgll_binarize_active()`.
     #[allow(dead_code)] // Reached only under the const (DCE'd while const off).
+    /// P3.c: bottom-up pre-realization of a flat element's memo
+    /// DEPENDENCIES (CollectionId items, OPTIONAL_PRESENT packing children,
+    /// spine Intermediates — recursively, so collections nested inside
+    /// optional groups realize too). Structural containers only have their
+    /// CONTENTS realized. Cycle-safe via the memo guard + local seen set.
+    #[allow(dead_code)] // Reached only under the const (DCE'd while const off).
+    fn cgll_prerealize_deps(
+        &self,
+        root: crate::sppf::SppfId,
+        memo: &mut std::collections::HashMap<crate::sppf::SppfId, Vec<(ActionArg, W)>>,
+        limit: Option<usize>,
+    ) where
+        W: StarSemiringRef,
+    {
+        let mut stack: Vec<crate::sppf::SppfId> = vec![root];
+        let mut seen: rustc_hash::FxHashSet<crate::sppf::SppfId> =
+            rustc_hash::FxHashSet::default();
+        let empty_colors: std::collections::HashMap<crate::sppf::SppfId, RealizeColor> =
+            std::collections::HashMap::new();
+        while let Some(n) = stack.pop() {
+            if !seen.insert(n) {
+                continue;
+            }
+            let deps: Vec<crate::sppf::SppfId> = match self.sppf.node(n) {
+                Some(crate::sppf::SppfNode::CollectionId { items, .. }) => items.clone(),
+                Some(crate::sppf::SppfNode::Packing { children, .. }) => children.clone(),
+                Some(crate::sppf::SppfNode::Intermediate { .. }) => {
+                    self.sppf.packings_of(n).to_vec()
+                },
+                _ => Vec::new(),
+            };
+            for it in deps {
+                if !memo.contains_key(&it) {
+                    match self.sppf.node(it) {
+                        Some(crate::sppf::SppfNode::Symbol { non_terminal_tag, .. })
+                            if non_terminal_tag & CGLL_BIN_TAG != 0 =>
+                        {
+                            let ir = self.cgll_realize_bin_symbol(it, memo, limit);
+                            memo.insert(it, ir);
+                        },
+                        Some(crate::sppf::SppfNode::Symbol { .. })
+                        | Some(crate::sppf::SppfNode::Terminal { .. })
+                        | Some(crate::sppf::SppfNode::Epsilon { .. })
+                        | Some(crate::sppf::SppfNode::OptAbsent { .. })
+                        | Some(crate::sppf::SppfNode::Predicate { .. })
+                        | Some(crate::sppf::SppfNode::BinderScope { .. })
+                        // CollectionId: memoize the NODE (realize_node_leave
+                        // yields ActionArg::CollectionId — the sentinel arm's
+                        // product needs it, e.g. an EMPTY collection inside an
+                        // optional group `with [ ]`) — its ITEMS are walked
+                        // separately below.
+                        | Some(crate::sppf::SppfNode::CollectionId { .. }) => {
+                            let ir = self.realize_node_leave(it, memo, &empty_colors, limit);
+                            memo.insert(it, ir);
+                        },
+                        _ => {},
+                    }
+                }
+                stack.push(it);
+            }
+        }
+    }
+
     fn cgll_realize_bin_symbol(
         &self,
         sym: crate::sppf::SppfId,
@@ -23282,6 +23483,18 @@ where
                     continue;
                 }
                 for &c in &flat {
+                    // ── P3.c REVISED (2026-07-11): recursive DEPENDENCY
+                    // pre-realization. A flat element's realize can read the
+                    // shared memo for nested structure the flat loop never
+                    // visits directly: OPTIONAL_PRESENT packing children
+                    // (the sentinel arm), CollectionId items (the
+                    // realize_packing_call item loop), and their NESTINGS —
+                    // e.g. a CollectionId INSIDE an optional group
+                    // (`… with [ 0 ]`: F-2 refuted on the unrealized tags
+                    // item — receipt [realize-f2-refute] rule=(0,1)
+                    // collection_ids=[0,1], c3opt4.log). One recursive
+                    // walker realizes every such dependency bottom-up.
+                    self.cgll_prerealize_deps(c, memo, limit);
                     if memo.contains_key(&c) {
                         continue;
                     }
@@ -23294,36 +23507,6 @@ where
                         _ => self.realize_node_leave(c, memo, &empty_colors, limit),
                     };
                     memo.insert(c, cr);
-                    // ── Stage P3 (2026-07-09): a `CollectionId` leaf carries the
-                    // polyadic-send TAIL elements in `items` (NOT on the binary
-                    // spine), so the child loop above never realizes them. Realize
-                    // each element into the SHARED `memo` (recursing into a
-                    // binarized sub-symbol, else a classic leaf) so
-                    // `realize_packing_call` — which reads `CollectionId.items` and
-                    // looks each element up in `memo` — can rebuild the collection.
-                    // The `CollectionId` here is the binarized one minted by
-                    // `cgll_binarize_classic_child`, so its items are BINARIZED
-                    // symbol ids that this realize keys on. No-op for EMPTY
-                    // collections (deep-@ / `@Nil!(0)`).
-                    if let Some(crate::sppf::SppfNode::CollectionId { items, .. }) =
-                        self.sppf.node(c)
-                    {
-                        let items = items.clone();
-                        for it in items {
-                            if memo.contains_key(&it) {
-                                continue;
-                            }
-                            let ir = match self.sppf.node(it) {
-                                Some(crate::sppf::SppfNode::Symbol { non_terminal_tag, .. })
-                                    if non_terminal_tag & CGLL_BIN_TAG != 0 =>
-                                {
-                                    self.cgll_realize_bin_symbol(it, memo, limit)
-                                },
-                                _ => self.realize_node_leave(it, memo, &empty_colors, limit),
-                            };
-                            memo.insert(it, ir);
-                        }
-                    }
                 }
                 let terms = self.realize_packing_call(
                     rule_idx,
@@ -23343,6 +23526,67 @@ where
     /// family + spine flatten (env `PRATTAIL_CGLL_DIAG`). Localizes a lost reading
     /// to getNodeP-span / owner-packing-link / flatten.
     #[allow(dead_code)]
+    /// P3.e diagnostic: iterative DFS cycle detector over the packing DAG.
+    /// A binarized forest for a non-cyclic grammar must be ACYCLIC; a cycle
+    /// means a completion fed back into its own constituent spine (the PNew
+    /// stack-overflow class). Returns the first cycle found as the node
+    /// chain from the on-stack re-entry, or `None`. Iterative (explicit
+    /// stack) so the DETECTOR itself terminates on any input — the very
+    /// property the recursive flatten lacks on a corrupt forest.
+    #[allow(dead_code)] // Reached only under the const (DCE'd while const off).
+    fn cgll_pure_find_cycle(&self, root: crate::sppf::SppfId) -> Option<Vec<crate::sppf::SppfId>> {
+        use rustc_hash::FxHashSet;
+        // children(node) = packing children (Symbol/Intermediate) or none.
+        let children = |id: crate::sppf::SppfId| -> Vec<crate::sppf::SppfId> {
+            match self.sppf.node(id) {
+                Some(
+                    crate::sppf::SppfNode::Symbol { .. }
+                    | crate::sppf::SppfNode::Intermediate { .. },
+                ) => self
+                    .sppf
+                    .packings_of(id)
+                    .iter()
+                    .filter_map(|&p| match self.sppf.node(p) {
+                        Some(crate::sppf::SppfNode::Packing { children, .. }) => {
+                            Some(children.clone())
+                        },
+                        _ => None,
+                    })
+                    .flatten()
+                    .collect(),
+                _ => Vec::new(),
+            }
+        };
+        let mut done: FxHashSet<crate::sppf::SppfId> = FxHashSet::default();
+        let mut on_stack: FxHashSet<crate::sppf::SppfId> = FxHashSet::default();
+        // (node, next-child-index) explicit DFS stack.
+        let mut stack: Vec<(crate::sppf::SppfId, Vec<crate::sppf::SppfId>, usize)> =
+            vec![(root, children(root), 0)];
+        on_stack.insert(root);
+        while let Some((node, kids, idx)) = stack.last_mut() {
+            if *idx >= kids.len() {
+                on_stack.remove(node);
+                done.insert(*node);
+                stack.pop();
+                continue;
+            }
+            let c = kids[*idx];
+            *idx += 1;
+            if on_stack.contains(&c) {
+                let mut path: Vec<crate::sppf::SppfId> =
+                    stack.iter().map(|(n, _, _)| *n).collect();
+                path.push(c);
+                return Some(path);
+            }
+            if !done.contains(&c) {
+                let ck = children(c);
+                on_stack.insert(c);
+                stack.push((c, ck, 0));
+            }
+        }
+        None
+    }
+
     fn cgll_dump_bin(
         &self,
         id: crate::sppf::SppfId,
@@ -23796,6 +24040,20 @@ where
         if z == crate::sppf::SPPF_ID_NONE {
             return w;
         }
+        // MONOTONE-FOLD TRAP (diagnostic, env-gated): a fold whose result
+        // span regresses below the left part's end is the cyclic-forest
+        // constructor — print the coordinates + caller chain.
+        if std::env::var_os("PRATTAIL_CGLL_PURE_FOLDTRAP").is_some() {
+            if let Some(w_hi) = self.sppf.span_hi(w) {
+                if hi_z < w_hi {
+                    eprintln!(
+                        "CGLL-PURE-FOLDTRAP slot={slot_id:#x} lo={lo} hi={hi_z} w={w}(hi={w_hi}) \
+                         z={z}\n{}",
+                        std::backtrace::Backtrace::force_capture()
+                    );
+                }
+            }
+        }
         let inter = self.sppf.intern_intermediate(slot_id, lo, hi_z);
         let packing = self.sppf.intern_packing(slot_id, vec![w, z], weight);
         self.sppf.link_packing_to_symbol(inter, packing);
@@ -23826,6 +24084,29 @@ where
         self.cgll_pure_get_node_p(slot_id, w, z, lo, hi, weight)
     }
 
+    /// P3.e — the reserved BINDER-NAME marker: recognize + read back the
+    /// ident text of a marker folded by `GuardedConsumeBinderIdent*`.
+    /// Reserved owner `(u16::MAX, u16::MAX - 1)` — disjoint from the B2
+    /// separator marker's `(u16::MAX, u16::MAX)` and impossible for a real
+    /// rule; realize filters all TriggerTerminals, so the markers are
+    /// arity- and reading-invisible (they differ from the E1-GT flats,
+    /// which carry only `[trigger, BinderScope, body]` — a documented
+    /// diagnostic-diff, not a reading diff).
+    #[allow(dead_code)] // Reached only under the const (DCE'd while const off).
+    fn cgll_pure_binder_name_of(&self, id: crate::sppf::SppfId) -> Option<String> {
+        match self.sppf.node(id) {
+            Some(crate::sppf::SppfNode::TriggerTerminal {
+                owner_cat: u16::MAX,
+                owner_rule_idx,
+                text_handle,
+                ..
+            }) if *owner_rule_idx == u16::MAX - 1 => {
+                Some(self.sppf.text(*text_handle).to_string())
+            },
+            _ => None,
+        }
+    }
+
     /// STAGE B2 — fold a SEPARATOR MARKER leaf into a collection-marker
     /// frame's `w`-spine at each separator consume (the classic per-slot
     /// `collection_sep_counts` witness, moved onto the `w` axis so the
@@ -23853,7 +24134,12 @@ where
             u16::MAX,
             u16::MAX,
         );
-        let slot = Self::cgll_pure_slot_hash(&d.cur_sym, &d.state);
+        // POSITION-SALTED annotation slot (see `cgll_pure_end_binder_scope`):
+        // marker folds don't advance the grammar dot, so an unsalted slot
+        // can re-hit an earlier fold's `(slot, lo, hi)` identity and close a
+        // packing cycle. The salt keeps cross-lineage sharing (same marker,
+        // same pos ⇒ same salted identity).
+        let slot = Self::cgll_pure_slot_hash(&d.cur_sym, &d.state) ^ ((sep_pos as u32) << 1);
         self.cgll_pure_fold(slot, d.w, leaf, sep_pos, W::one_ref())
     }
 
@@ -23923,14 +24209,154 @@ where
         if *weight == W::one_ref() {
             return w;
         }
-        let slot = Self::cgll_pure_slot_hash(&d.cur_sym, &d.state);
+        // POSITION-SALTED (see `cgll_pure_end_binder_scope`).
+        let slot =
+            Self::cgll_pure_slot_hash(&d.cur_sym, &d.state) ^ ((pos as u32) << 1);
         let carrier =
             self.cgll_pure_weight_carrier(run, slot, crate::sppf::SPPF_ID_NONE, pos, weight);
-        self.cgll_pure_fold(slot, w, carrier, pos, W::one_ref())
+        // The ATTACH-fold lives in the WRAP namespace too (`slot |
+        // CGLL_WRAP_TAG`), NOT the grammar slot: the carrier is a weight
+        // annotation, not a grammar item — the dot has NOT advanced, so a
+        // grammar-slot attach at an unchanged `(lo, hi)` can COLLIDE with a
+        // same-step grammar fold's identity and link a packing under its own
+        // left child (the PNew cyclic forest: End-binder fold at
+        // `(slot_BLL, 0, 4)` then the zero-width carrier attach at the SAME
+        // identity ⇒ `Inter[109]` became its own descendant ⇒ flatten
+        // diverged; receipt `CGLL-PURE-CYCLE-KIDS 113` in
+        // `logs_s2p3/new_cycleprobe.log`). True-GLL reading: every getNodeP
+        // site is a distinct advanced slot; annotations get their own
+        // namespace. Flatten unwraps WRAP nodes, so shapes are unchanged.
+        self.cgll_pure_fold(slot | CGLL_WRAP_TAG, w, carrier, pos, W::one_ref())
     }
 
     /// Recognize a B2 separator-marker leaf (reserved owner).
     #[allow(dead_code)]
+    /// P3 Pocket-A: CONTENT span-lo of a spine — the `lo` of the first
+    /// non-zero-width element of the first flat. Zero-width WEIGHT CARRIERS
+    /// attach at their consume position, which for a D2 (operand-carrying)
+    /// descent is the OPERATOR token — `span_lo(spine)` then swallows the
+    /// operator position into the constituent z's span, and the classic
+    /// `packing_satisfies_min_terminal_span` realize fence rightly refuses
+    /// the parent flat (receipt: `a >= b.keys()` — z_80 interned (1,9) over
+    /// the true `b.keys()` (2,9); root GtEq flats refused; logs_s2p3/
+    /// pocketA_fdump2.log + pocketA_rdiag.log). Content-lo restores the
+    /// classic z span; carriers keep their weight role untouched.
+    #[allow(dead_code)] // Reached only under the const (DCE'd while const off).
+    fn cgll_pure_span_lo_content(&self, w: crate::sppf::SppfId) -> Option<u32> {
+        if w == crate::sppf::SPPF_ID_NONE {
+            return None;
+        }
+        // Fast path: a plain Symbol leaf.
+        if let Some(crate::sppf::SppfNode::Symbol { lo_pos, hi_pos, .. }) = self.sppf.node(w) {
+            if lo_pos < hi_pos {
+                return Some(*lo_pos);
+            }
+        }
+        let flats = self.cgll_flatten_ids(w);
+        if let Some(flat) = flats.first() {
+            for &el in flat {
+                if let (Some(l), Some(h)) = (self.sppf.span_lo(el), self.sppf.span_hi(el)) {
+                    if l < h {
+                        return Some(l);
+                    }
+                }
+            }
+        }
+        self.sppf.span_lo(w)
+    }
+
+    /// P3 Pocket-A2: split a COLLECTION-MARKER operand spine at its LAST
+    /// CONTENT element for a led (infix/mixfix) continuation join. B2 folds
+    /// elements directly into the marker frame's `w`, so a led continuation
+    /// on the last element R2-joins against the WHOLE spine — swallowing
+    /// the sibling elements + separators into the continuation constituent
+    /// (receipt: `@Nil!([], Map(), Nil.ascendOne())` → CollectionId n=1
+    /// whose single item's rule-104 flat = [Map(), sep, Nil]; Bug-A arity
+    /// 1≠2; logs bugA_fdump2.log). Returns
+    /// `Some((prefix_w, trailers, last_content, outer_slot))` where
+    /// `trailers` are peeled non-content rights (chronological order)
+    /// to re-fold into the prefix; `None` when `w` is not a spine
+    /// Intermediate (single-element marker `w` = the element itself —
+    /// whole-join is already correct).
+    #[allow(dead_code)] // Reached only under the const (DCE'd while const off).
+    fn cgll_pure_spine_split_last(
+        &self,
+        w: crate::sppf::SppfId,
+    ) -> Option<(crate::sppf::SppfId, Vec<(u32, crate::sppf::SppfId)>, crate::sppf::SppfId, u32)>
+    {
+        let mut trailers_rev: Vec<(u32, crate::sppf::SppfId)> = Vec::new();
+        let mut cur = w;
+        let mut guard = 0usize;
+        loop {
+            guard += 1;
+            if guard > 1024 {
+                return None;
+            }
+            match self.sppf.node(cur) {
+                Some(crate::sppf::SppfNode::Intermediate { .. }) => {
+                    let pk = self.sppf.packings_of(cur).first().copied()?;
+                    let Some(crate::sppf::SppfNode::Packing { rule_idx, children, .. }) =
+                        self.sppf.node(pk)
+                    else {
+                        return None;
+                    };
+                    match children.as_slice() {
+                        [left, right] => {
+                            let (l, r, slot) = (*left, *right, *rule_idx);
+                            let is_content = match (self.sppf.span_lo(r), self.sppf.span_hi(r)) {
+                                (Some(a), Some(b)) => a < b,
+                                _ => false,
+                            };
+                            if is_content {
+                                trailers_rev.reverse();
+                                return Some((l, trailers_rev, r, slot));
+                            }
+                            trailers_rev.push((slot, r));
+                            cur = l;
+                        },
+                        // Unary (wrap/carrier) packing between the last
+                        // content element and the continuation: no observed
+                        // case (carriers attach inside the pushed frame, not
+                        // on the marker spine tail) — bail to the whole-join
+                        // fallback rather than guess a re-wrap protocol.
+                        _ => return None,
+                    }
+                },
+                _ => return None,
+            }
+        }
+    }
+
+    /// P3.a: non-separator item count of a marker frame's spine `w` (the
+    /// pure accumulator) for the kv-phase parity patch, plus whether the
+    /// spine's flats DISAGREE on parity (counted — classically impossible:
+    /// distinct parities were distinct cursors). First-flat count is
+    /// authoritative.
+    #[allow(dead_code)] // Reached only under the const (DCE'd while const off).
+    fn cgll_pure_spine_item_parity(&self, w: crate::sppf::SppfId) -> (usize, bool) {
+        if w == crate::sppf::SPPF_ID_NONE {
+            return (0, false);
+        }
+        let flats = self.cgll_flatten_ids(w);
+        let mut first: Option<usize> = None;
+        let mut diverged = false;
+        for flat in &flats {
+            let n = flat
+                .iter()
+                .filter(|&&id| !self.cgll_pure_is_sep_marker(id))
+                .count();
+            match first {
+                None => first = Some(n),
+                Some(f) => {
+                    if f % 2 != n % 2 {
+                        diverged = true;
+                    }
+                },
+            }
+        }
+        (first.unwrap_or(0), diverged)
+    }
+
     fn cgll_pure_is_sep_marker(&self, id: crate::sppf::SppfId) -> bool {
         matches!(
             self.sppf.node(id),
@@ -24041,6 +24467,31 @@ where
                 );
             }
         }
+        // P3.f upward link (see `CgllPureRun::v_parent`): first insert wins;
+        // a different-parent re-insert is a shared-`v` multi-caller — counted,
+        // walk stays on the first chain (both callers share the innermost
+        // structural frame in the common case per classic's sharing note).
+        // P3.e: the child's inherited open-scope depth = the caller's
+        // inherited depth + 1 iff the caller descends FROM `BinderListLoop`
+        // (a scope is open exactly while its frame sits in that state —
+        // opened by the `start_scope` ident consume, closed by the `)`
+        // `EndBinderScope`).
+        let inherited_depth = run
+            .v_parent
+            .get(&caller.u)
+            .map(|e| e.2)
+            .unwrap_or(0)
+            .saturating_add(matches!(caller.state, WpdaState::BinderListLoop { .. }) as u16);
+        match run.v_parent.entry(v) {
+            std::collections::hash_map::Entry::Vacant(e) => {
+                e.insert((caller_sym_now, caller.u, inherited_depth));
+            },
+            std::collections::hash_map::Entry::Occupied(e) => {
+                if *e.get() != (caller_sym_now, caller.u, inherited_depth) {
+                    run.stats.ctx_conflicts += 1;
+                }
+            },
+        }
         let ctx = CgllPureCallerCtx { caller_sym: caller_sym_now, caller_class: caller.frame_class };
         if let Some(prev) = run.edge_ctx.insert((v, caller.u, caller.w), ctx) {
             if prev != ctx {
@@ -24072,6 +24523,28 @@ where
             );
         for rep in replays {
             run.stats.replays += 1;
+            // ADJACENCY FENCE, replay arm (the P-replay hazard the red-team
+            // named at AV3): a create-after-pop replay pairs THIS edge's
+            // operand (the caller's spine AS OF NOW) with a pop recorded
+            // EARLIER — when the recorded constituent starts BEFORE the
+            // operand's end, the join is REGRESSIVE (late material paired
+            // with an early pop) and interns span-inflated / cyclic
+            // Intermediates (receipt: `new(x, y)` — `fold(w(0,6), z@5)`
+            // built the mutual 148⇄151 cycle, `CGLL-PURE-CYCLE-NODE` dump).
+            // Same non-overlap rule as `cgll_pure_resume_fold`.
+            if rep.operand_w != crate::sppf::SPPF_ID_NONE
+                && rep.result_w != crate::sppf::SPPF_ID_NONE
+            {
+                if let (Some(w_hi), Some(z_lo)) = (
+                    self.sppf.span_hi(rep.operand_w),
+                    self.sppf.span_lo(rep.result_w),
+                ) {
+                    if z_lo < w_hi {
+                        run.stats.fold_overlap_refuted += 1;
+                        continue;
+                    }
+                }
+            }
             let resume_state = Self::cgll_pure_replay_resume_state(&ret_slot, &mut run.stats);
             if is_r2_replay {
                 // R2 P-set convention: `result_w` = the popped frame's
@@ -24080,19 +24553,38 @@ where
                 // recoverable at replay time — `W::one_ref()` + counted.
                 let cat = pushed.category_src_idx as u32;
                 let rule_id = if pushed_rule == CGLL_PURE_RULE_NONE { cat << 16 } else { pushed_rule };
-                let lo = match self.sppf.span_lo(rep.operand_w) {
+                // ── P3 Pocket-A2: COLLECTION-ELEMENT led split (replay
+                // mirror of the R2 pop arm — see cgll_pure_spine_split_last).
+                let mut spine_prefix = crate::sppf::SPPF_ID_NONE;
+                let mut spine_trailers: Vec<(u32, crate::sppf::SppfId)> = Vec::new();
+                let mut refold_slot = 0u32;
+                let mut join_operand = rep.operand_w;
+                if caller_sym_now.kind == SymbolKind::CollectionMarker
+                    && rep.operand_w != crate::sppf::SPPF_ID_NONE
+                {
+                    if let Some((prefix, trailers, last, slot)) =
+                        self.cgll_pure_spine_split_last(rep.operand_w)
+                    {
+                        run.stats.coll_led_splits += 1;
+                        spine_prefix = prefix;
+                        spine_trailers = trailers;
+                        refold_slot = slot;
+                        join_operand = last;
+                    }
+                }
+                let lo = match self.cgll_pure_span_lo_content(join_operand) {
                     Some(l) => l,
                     None => {
                         run.stats.d2_lo_fallbacks += 1;
                         self.gss.node(v).map(|n| n.pos).unwrap_or(0) as u32
                     },
                 };
-                let joined = if rep.operand_w == crate::sppf::SPPF_ID_NONE {
+                let joined = if join_operand == crate::sppf::SPPF_ID_NONE {
                     rep.result_w
                 } else {
                     self.cgll_pure_get_node_p(
                         rule_id & !CGLL_BIN_TAG,
-                        rep.operand_w,
+                        join_operand,
                         rep.result_w,
                         lo,
                         rep.at_pos as u32,
@@ -24118,6 +24610,24 @@ where
                     let pk = self.sppf.intern_packing(rule_id, children, W::one_ref());
                     self.sppf.link_packing_to_symbol(z_e, pk);
                 }
+                let resumed_w = if spine_prefix != crate::sppf::SPPF_ID_NONE {
+                    let mut acc = spine_prefix;
+                    for (slot, tr) in &spine_trailers {
+                        if *tr != crate::sppf::SPPF_ID_NONE {
+                            acc = self.cgll_pure_fold(*slot, acc, *tr, rep.at_pos, W::one_ref());
+                        }
+                    }
+                    self.cgll_pure_get_node_p(
+                        refold_slot,
+                        acc,
+                        z_e,
+                        self.sppf.span_lo(acc).unwrap_or(lo),
+                        rep.at_pos as u32,
+                        W::one_ref(),
+                    )
+                } else {
+                    z_e
+                };
                 run.worklist.push_back(CgllPureDescriptor {
                     state: resume_state,
                     cur_sym: caller_sym_now,
@@ -24125,7 +24635,7 @@ where
                     ret_slot: caller.ret_slot,
                     u: caller.u,
                     pos: rep.at_pos,
-                    w: z_e,
+                    w: resumed_w,
                 });
             } else {
                 // R1/structural: `result_w` IS the completed `z` — fold into
@@ -24166,6 +24676,16 @@ where
             run.stats.ctx_misses += 1;
             return;
         };
+        // POSITION-COHERENCE FENCE: a resume at `at_pos` whose materials
+        // extend PAST `at_pos` is a mis-paired pop/edge (recorded-pop
+        // replays can pair a late spine with an early pop — the P-replay
+        // hazard); folding it interns span-inflated/cyclic Intermediates.
+        if self.sppf.span_hi(ret.operand_w).is_some_and(|h| h as usize > ret.at_pos)
+            || self.sppf.span_hi(z).is_some_and(|h| h as usize > ret.at_pos)
+        {
+            run.stats.fold_overlap_refuted += 1;
+            return;
+        }
         let caller_slot = run
             .v_slot
             .get(&ret.caller)
@@ -24176,6 +24696,28 @@ where
         } else if z == crate::sppf::SPPF_ID_NONE {
             ret.operand_w
         } else {
+            // ADJACENCY FENCE (AV3 amendment-2's deferred residual, now
+            // load-bearing): a resume-fold's `z` must EXTEND the edge
+            // operand — `span_lo(z) ≥ span_hi(operand)` (gaps from
+            // Discard-consumed delimiters are legal; OVERLAP is not). An
+            // overlapping fold is a mis-routed pop/replay (a completed
+            // constituent feeding back into a spine that already covers
+            // its tokens) and is how the PNew cyclic forest arose: the
+            // full-term Symbol replay-folded into its own rule frame's
+            // spine ⇒ `Symbol(0,n)` became its own descendant ⇒ the
+            // flatten recursion diverged (receipt: `new(x) in { x!(0) }`
+            // stack overflow at 1 GiB, `new_diag.log`). True GLL states
+            // this as "every edge into `(A, i)` carries an operand ending
+            // exactly at `i`"; the fence enforces the non-overlap half
+            // that discard-gaps permit us to check.
+            if let (Some(w_hi), Some(z_lo)) =
+                (self.sppf.span_hi(ret.operand_w), self.sppf.span_lo(z))
+            {
+                if z_lo < w_hi {
+                    run.stats.fold_overlap_refuted += 1;
+                    return;
+                }
+            }
             let slot = Self::cgll_pure_slot_hash(&ctx.caller_sym, resume_state);
             self.cgll_pure_fold(slot, ret.operand_w, z, ret.at_pos, W::one_ref())
         };
@@ -24206,20 +24748,236 @@ where
             run.stats.ctx_misses += 1;
             return;
         };
+        // POSITION-COHERENCE FENCE (see `cgll_pure_resume_fold`).
+        if self.sppf.span_hi(z_e).is_some_and(|h| h as usize > ret.at_pos) {
+            run.stats.fold_overlap_refuted += 1;
+            return;
+        }
         let caller_slot = run
             .v_slot
             .get(&ret.caller)
             .copied()
             .unwrap_or_else(|| Self::cgll_pure_seed_slot(&ctx.caller_sym));
+        // ── P3 Pocket-A5 (2026-07-11): PROGRESSIVE CategoryEntry re-tag —
+        // the pure form of classic's CategoryEntryContinuation morph chain
+        // (the CrossCatLhs wrap tables re-tag the ONE cursor frame by the
+        // BUILDER TOP's category after each cat-changing led completes:
+        // Name → InputBind → ForRow). A D2 constituent `z_e` REPLACING a
+        // CategoryEntry frame's `w` re-tags the frame to `z_e`'s category so
+        // the frame hosts the RESULT category's continuations (receipt:
+        // `(@Nil)<-z& where Nil` — the InputBind z landed on a cat-3/seed
+        // frame and the cat-1-row `&`/`where` triggers never fired).
+        // Same-category resumes are unchanged; non-CE callers (markers,
+        // rule frames) are untouched.
+        let mut resumed_sym = ctx.caller_sym;
+        if resumed_sym.kind == SymbolKind::CategoryEntry {
+            if let Some(zc) = self.sppf_symbol_category(z_e) {
+                if zc != resumed_sym.category_src_idx {
+                    resumed_sym = StackSymbolV2::category_entry(zc);
+                    run.stats.d2_retags += 1;
+                }
+            }
+        }
         run.worklist.push_back(CgllPureDescriptor {
             state: resume_state.clone(),
-            cur_sym: ctx.caller_sym,
+            cur_sym: resumed_sym,
             frame_class: ctx.caller_class,
             ret_slot: caller_slot,
             u: ret.caller,
             pos: ret.at_pos,
             w: z_e,
         });
+    }
+
+    /// P3.e: the binder-IDENT consume (both Guarded fork variants) — the
+    /// name lives in the scope classically (no args push); the pure form
+    /// folds a realize-invisible BINDER-NAME marker carrying the ident text
+    /// (`cgll_pure_end_binder_scope` reads names back off the spine flat —
+    /// the lineage's OWN consumed idents; a token-span walk is
+    /// lattice-unsound). Fold ORDER matters (monotone folds): weight
+    /// carrier on the PRE-consume spine first, then the one-token marker;
+    /// `end_inline` additionally folds the BinderScope right after (the
+    /// lambda `lam x . body` one-action open+capture+close).
+    #[allow(dead_code)] // Reached only from `step_canonical_pure` (DCE'd while const off).
+    #[allow(clippy::too_many_arguments)]
+    fn cgll_pure_binder_ident_consume(
+        &mut self,
+        run: &mut CgllPureRun,
+        d: &CgllPureDescriptor,
+        tokens: &dyn WpdaTokenSource,
+        pos_after: usize,
+        br_symbol: StackSymbolV2,
+        br_state: WpdaState,
+        br_weight: &W,
+        end_inline: bool,
+    ) {
+        if tokens.peek_kind(pos_after) != Some(TokenKind::Ident) {
+            return;
+        }
+        let next_of = |p: usize| tokens.next_pos(p, 0).unwrap_or(p + 1);
+        let text = tokens.peek_text(pos_after).unwrap_or("").to_string();
+        let marker = self.sppf.intern_trigger_terminal(
+            TokenKind::Ident,
+            crate::sppf::PosOrSynth::Real(pos_after as u32),
+            Some(&text),
+            u16::MAX,
+            u16::MAX - 1,
+        );
+        let w_c = self.cgll_pure_carry_scan_weight(run, d, d.w, pos_after, br_weight);
+        // POSITION-SALTED (see `cgll_pure_end_binder_scope`).
+        let slot =
+            Self::cgll_pure_slot_hash(&d.cur_sym, &d.state) ^ ((pos_after as u32) << 1);
+        let w_m = self.cgll_pure_fold(slot, w_c, marker, pos_after, W::one_ref());
+        let w = if end_inline {
+            let d_m = CgllPureDescriptor { w: w_m, ..d.clone() };
+            self.cgll_pure_end_binder_scope(run, &d_m, pos_after, None, tokens)
+        } else {
+            w_m
+        };
+        run.worklist.push_back(CgllPureDescriptor {
+            state: br_state,
+            cur_sym: br_symbol,
+            pos: next_of(pos_after),
+            w,
+            ..d.clone()
+        });
+    }
+
+    /// P3.f: structural-delimiter [`crate::wpda_runtime::FrameCtx`] for a pure
+    /// descriptor — the pure form of classic [`Self::frame_ctx_for_stack`]
+    /// (whose contract this mirrors clause-for-clause): project the
+    /// INNERMOST enclosing `CollectionMarker` frame's
+    /// [`WpdaEngine::collection_spec`] delimiters; never a union of frames.
+    /// "Innermost" resolves as (1) the descriptor's OWN frame if it is a
+    /// marker, else (2) the `v_parent` upward walk (recorded at descent;
+    /// per-`v`, aligned with classic's shared-forward-sub-parse note). The
+    /// hop cap is a defensive bound only — parent chains are finite (the GSS
+    /// is a DAG; `v_parent` holds each node's first caller), and 64 nesting
+    /// levels of *structural collection frames* is beyond any test corpus;
+    /// hitting the cap degrades to `EMPTY` exactly like classic's
+    /// no-enclosing-frame case.
+    #[allow(dead_code)] // Reached only from `step_canonical_pure` (DCE'd while const off).
+    fn cgll_pure_frame_ctx(
+        &self,
+        v_parent: &rustc_hash::FxHashMap<
+            crate::gss::GssNodeId,
+            (StackSymbolV2, crate::gss::GssNodeId, u16),
+        >,
+        d: &CgllPureDescriptor,
+    ) -> crate::wpda_runtime::FrameCtx {
+        use crate::wpda_runtime::FrameCtx;
+        let project = |sym: &StackSymbolV2| -> Option<FrameCtx> {
+            let slot_idx = sym.bp.unwrap_or(0);
+            self.engine
+                .collection_spec(sym.category_src_idx, sym.rule_index_in_category, slot_idx)
+                .map(|spec| FrameCtx {
+                    close: spec.close,
+                    sep: spec.sep,
+                    kv_sep: spec.kv_sep,
+                    has_frame: true,
+                })
+        };
+        // (1) The descriptor's own frame is the innermost when it IS a marker
+        // (standalone collections dispatch elements in-frame).
+        if matches!(d.cur_sym.kind, SymbolKind::CollectionMarker) {
+            if let Some(ctx) = project(&d.cur_sym) {
+                return ctx;
+            }
+        }
+        // (2) Upward walk to the nearest enclosing marker frame.
+        let mut u = d.u;
+        for _ in 0..64 {
+            match v_parent.get(&u) {
+                Some((sym, parent_u, _)) => {
+                    if matches!(sym.kind, SymbolKind::CollectionMarker) {
+                        if let Some(ctx) = project(sym) {
+                            return ctx;
+                        }
+                    }
+                    u = *parent_u;
+                },
+                None => break,
+            }
+        }
+        FrameCtx::EMPTY
+    }
+
+    /// P3.e: the pure `EndBinderScope` — intern the completed
+    /// [`crate::sppf::SppfNode::BinderScope`] leaf (the binder-list child the
+    /// binder rule's fire consumes; GT receipt `gtdump_new.log`: PNew flat =
+    /// `[trigger, BinderScope, body]`) and fold it into the frame's `w`.
+    /// Names are recovered PURELY from `(L, i, tokens)`: the
+    /// `BinderListLoop.marker_pos` in the state brackets the list region, and
+    /// the binder idents are exactly the `Ident`-kind tokens in
+    /// `[marker_pos, close_pos)` (separators are `Fixed`). Depth = this
+    /// frame's inherited open-scope count (`v_parent`, classic
+    /// `binder_scope_marks.len()` at the scope's Start). The empty-list
+    /// atomic case (`StartBinderScope{names} + EndBinderScope` on one `)`
+    /// consume) passes the Start effect's names (normally empty) and the
+    /// state is still `BinderRule` — `marker_pos` is absent, names come from
+    /// the effect.
+    #[allow(dead_code)] // Reached only from `step_canonical_pure` (DCE'd while const off).
+    #[allow(clippy::too_many_arguments)]
+    fn cgll_pure_end_binder_scope(
+        &mut self,
+        run: &mut CgllPureRun,
+        d: &CgllPureDescriptor,
+        close_pos: usize,
+        start_names: Option<&[String]>,
+        tokens: &dyn crate::wpda_runtime::WpdaTokenSource,
+    ) -> crate::sppf::SppfId {
+        let _ = tokens;
+        // Names come from the BINDER-NAME MARKERS folded into the frame's
+        // spine at each `GuardedConsumeBinderIdent*` consume (reserved owner
+        // `(u16::MAX, u16::MAX - 1)`; realize-invisible TriggerTerminals).
+        // A token-SPAN walk is NOT usable here: positions are lattice DAG
+        // nodes with per-byte alternative tokenizations, so "the Ident
+        // tokens in [marker_pos, close)" reads the wrong layer (receipt:
+        // `new(x)` briefly displayed `new(w)` — byte 2 of `new`). The spine
+        // records exactly the lineage's own consumed idents, in order.
+        let names: Vec<String> = match start_names {
+            Some(ns) => ns.to_vec(),
+            None => {
+                let flats = if d.w == crate::sppf::SPPF_ID_NONE {
+                    Vec::new()
+                } else {
+                    self.cgll_flatten_ids(d.w)
+                };
+                let first = flats.into_iter().next().unwrap_or_default();
+                // Scope-bounded collection: a BinderScope leaf already in
+                // the flat closes an EARLIER scope in this frame — markers
+                // before it belong to that scope, so the accumulator resets
+                // at each one (the pure analog of the classic marks-stack
+                // pop; keeps sequential scopes in one frame disjoint).
+                let mut ns: Vec<String> = Vec::new();
+                for id in first {
+                    if matches!(
+                        self.sppf.node(id),
+                        Some(crate::sppf::SppfNode::BinderScope { .. })
+                    ) {
+                        ns.clear();
+                    } else if let Some(n) = self.cgll_pure_binder_name_of(id) {
+                        ns.push(n);
+                    }
+                }
+                ns
+            },
+        };
+        let depth = run.v_parent.get(&d.u).map(|e| e.2).unwrap_or(0);
+        let sid = self.sppf.intern_binder_scope(&names, depth);
+        // POSITION-SALTED annotation slot: binder-list folds (ident markers,
+        // this BinderScope, weight carriers) all happen under ONE
+        // `(cur_sym, state)` pair, so the grammar dot never advances their
+        // slot; two same-`hi` folds then RE-HIT one `(slot, lo, hi)`
+        // identity and the second links a packing under a node its own
+        // left chain contains — a packing CYCLE with every fold monotone
+        // (receipt: `new(x, y)` 151→154→151, `CGLL-PURE-CYCLE-KIDS`). True
+        // GLL gives every fold a distinct advanced slot; salting by the
+        // fold position restores that while preserving cross-lineage
+        // sharing (same annotation at the same position ⇒ same identity).
+        let slot =
+            Self::cgll_pure_slot_hash(&d.cur_sym, &d.state) ^ ((close_pos as u32) << 1);
+        self.cgll_pure_fold(slot, d.w, sid, close_pos, W::one_ref())
     }
 
     /// REDUCE (pure form of Pop / ConsumeAndPop / ConsumeAtAndPop and the
@@ -24294,13 +25052,11 @@ where
             run.stats.coll_closes += 1;
             let slot_idx = d.cur_sym.bp.unwrap_or(0);
             let coll_id = slot_idx as u32;
+            let cat_u16 = d.cur_sym.category_src_idx;
+            let rule_u16 = d.cur_sym.rule_index_in_category;
             let is_kv = self
                 .engine
-                .kv_separator_for_collection(
-                    d.cur_sym.category_src_idx,
-                    d.cur_sym.rule_index_in_category,
-                    slot_idx,
-                )
+                .kv_separator_for_collection(cat_u16, rule_u16, slot_idx)
                 .is_some();
             let flats: Vec<Vec<crate::sppf::SppfId>> = if d.w == crate::sppf::SPPF_ID_NONE {
                 run.stats.coll_empty_closes += 1;
@@ -24308,24 +25064,204 @@ where
             } else {
                 self.cgll_flatten_ids(d.w)
             };
+            // ── P3.e CLASS-3 (zip-map-sep) close overlay ──────────────────
+            // The marker spine of a Class-3 slot (`*zip(ns,xs).*map(|n,x|
+            // n "?" x).*sep(",")`) interleaves the Name items with
+            // BINDER-NAME markers (the `x` idents; realize-invisible
+            // reserved-owner TriggerTerminals). They are NOT collection
+            // items: counting them broke the sep-coverage gate (items=2,
+            // seps=0 on `@(0) ? x` ⇒ every flat refuted ⇒ no pops ⇒ the
+            // walk died at the close — pred3/pred4 receipt). Exclude them
+            // from items, collect their texts (scope-bounded, resetting at
+            // earlier BinderScope leaves exactly like
+            // `cgll_pure_end_binder_scope`), and pass the classic
+            // `[CollectionId, BinderScope]` arg PAIR through as one
+            // two-leaf spine so the outer rule's flat carries both in the
+            // classic order (classic: push side effects open the scope at
+            // marker push; the close's `EndBinderScope` effect closes it
+            // and the outer action pops [.., CID, BinderScope, body]).
+            let is_class3 =
+                self.engine
+                    .is_class3_collection_per_slot(cat_u16, rule_u16, slot_idx);
             let mut collection_zs: Vec<crate::sppf::SppfId> = Vec::with_capacity(flats.len());
             for flat in flats {
                 let mut items: Vec<crate::sppf::SppfId> = Vec::with_capacity(flat.len());
                 let mut seps: usize = 0;
+                let mut binder_names: Vec<String> = Vec::new();
                 for id in flat {
                     if self.cgll_pure_is_sep_marker(id) {
                         seps += 1;
+                    } else if is_class3 {
+                        if matches!(
+                            self.sppf.node(id),
+                            Some(crate::sppf::SppfNode::BinderScope { .. })
+                        ) {
+                            binder_names.clear();
+                        } else if let Some(n) = self.cgll_pure_binder_name_of(id) {
+                            binder_names.push(n);
+                        } else {
+                            items.push(id);
+                        }
                     } else {
                         items.push(id);
                     }
                 }
                 if is_kv {
                     run.stats.coll_kv_deferred += 1;
+                    // P3.a kv coverage gate. A kv flat interleaves
+                    // `k v k v …` (the kv `:` consume is a plain
+                    // ConsumeAndReplace — folds NO sep marker; only the
+                    // inter-pair `,` folds one). So a well-covered kv flat
+                    // has items = 2·pairs and pair-seps = pairs − 1:
+                    // `items == 2·(seps+1)`, items even. An ODD item count
+                    // is an unpaired key — the classic Map action silently
+                    // drops it and ghosts an empty/short map (the
+                    // `CastMap(MapLit({}))` ghost on `{0}`) — refute here.
+                    let kv_ok = (items.is_empty() && seps == 0)
+                        || (items.len() % 2 == 0 && items.len() == 2 * (seps + 1));
+                    if !kv_ok {
+                        run.stats.coll_coverage_refuted += 1;
+                        continue;
+                    }
                 } else if !(items.is_empty() && seps == 0) && items.len() != seps + 1 {
                     run.stats.coll_coverage_refuted += 1;
+                    if std::env::var_os("PRATTAIL_CGLL_PURE_COLLDIAG").is_some() {
+                        let its: Vec<String> =
+                            items.iter().map(|&it| self.sppf_trace_summary(it)).collect();
+                        eprintln!(
+                            "CGLL-PURE-COLLREFUTE(arity) cat={cat_u16} rule={rule_u16} \
+                             slot={slot_idx} pos={} seps={seps} items={its:?}",
+                            d.pos
+                        );
+                    }
                     continue;
                 }
-                collection_zs.push(self.sppf.intern_collection_id(coll_id, items));
+                // ── P3.a ELEMENT-CATEGORY gate (the pure form of classic's
+                // collection-element splice gate — see the
+                // `collection_element_src_idx` doc @~1587: "a raw cross-cat
+                // inner Symbol spliced PRE-WRAP … `into_term::<ecat>()` maps
+                // it to ∅, producing a sub-multiset ghost … refuted at the
+                // source"). The pure analog of "at the source" is HERE, the
+                // only place flats become CollectionIds: a non-kv flat
+                // containing a Symbol item whose category tag != the
+                // declared element category is exactly such a pre-wrap
+                // splice (receipt: `{a}` ghosting `{}` via a raw cat-3 Name
+                // item the PPar builder silently drops; same mechanism for
+                // `{error | a}` → `{error}` and `{(1) | 2}` → `{2}`). The
+                // element lineage that legitimately awaits a send/mixfix
+                // continuation (`{a!(0)}`) is NOT affected: its `!`-descent
+                // consumes the pending Name and completes an ecat Symbol
+                // before any close sees the flat.
+                if !is_kv {
+                    if let Some(ecat) = self
+                        .engine
+                        .collection_element_src_idx(cat_u16, rule_u16, slot_idx)
+                    {
+                        let cat_mask = !(CGLL_BIN_TAG | CGLL_WRAP_TAG);
+                        let cross_cat_item = items.iter().any(|&it| {
+                            matches!(
+                                self.sppf.node(it),
+                                Some(crate::sppf::SppfNode::Symbol { non_terminal_tag, .. })
+                                    if (*non_terminal_tag & cat_mask) != ecat as u32
+                            )
+                        });
+                        if cross_cat_item {
+                            run.stats.coll_coverage_refuted += 1;
+                            if std::env::var_os("PRATTAIL_CGLL_PURE_COLLDIAG").is_some() {
+                                let its: Vec<String> = items
+                                    .iter()
+                                    .map(|&it| self.sppf_trace_summary(it))
+                                    .collect();
+                                eprintln!(
+                                    "CGLL-PURE-COLLREFUTE(ecat) cat={cat_u16} \
+                                     rule={rule_u16} slot={slot_idx} pos={} ecat={ecat} \
+                                     items={its:?}",
+                                    d.pos
+                                );
+                            }
+                            continue;
+                        }
+                    }
+                }
+                // ── P3.a close diagnostic (stats-gated, mirrors CGLL-PURE-TR):
+                // one line per SURVIVING flat with the per-item node summaries,
+                // so a ghost CollectionId's provenance (which items, which
+                // spans, how many seps) is readable without a debugger.
+                if std::env::var_os("PRATTAIL_CGLL_PURE_COLLDIAG").is_some() {
+                    let item_summaries: Vec<String> =
+                        items.iter().map(|&it| self.sppf_trace_summary(it)).collect();
+                    eprintln!(
+                        "CGLL-PURE-COLLCLOSE cat={} rule={} slot={} pos={} w={} seps={} \
+                         items={:?}",
+                        cat_u16, rule_u16, slot_idx, d.pos, d.w, seps, item_summaries
+                    );
+                }
+                let cid = self.sppf.intern_collection_id(coll_id, items);
+                let z = if is_class3 {
+                    let depth = run.v_parent.get(&d.u).map(|e| e.2).unwrap_or(0);
+                    let leaf = self.sppf.intern_binder_scope(&binder_names, depth);
+                    // Position-salted annotation pairing (CID is span-less,
+                    // the leaf zero-width — the salt keeps distinct closes
+                    // from re-hitting one (slot, lo, hi) identity).
+                    let slot = Self::cgll_pure_slot_hash(&d.cur_sym, &d.state)
+                        ^ ((i_pop as u32) << 1)
+                        ^ 0x1000_0000;
+                    self.cgll_pure_get_node_p(
+                        slot,
+                        cid,
+                        leaf,
+                        i_pop as u32,
+                        i_pop as u32,
+                        W::one_ref(),
+                    )
+                } else {
+                    cid
+                };
+                collection_zs.push(z);
+            }
+            // ── P3.a STANDALONE collection rules (PPar-class) ─────────────
+            // When the marker IS the rule frame (the rule's whole syntax is
+            // the delimited sep-list, e.g. rhocalc `PPar . "{" ps "}"`),
+            // classic FIRES the finalize action at the marker's
+            // ConsumeAndPop (apply_pop_body @~37117: CollectionMarker is a
+            // firing kind unless binder-internal). The pure analog: intern
+            // the RULE PACKING `(rule_id, children=[CollectionId])` on a
+            // binarized Symbol spanning the whole `{ … }` (lo = the marker
+            // node's create position = the open delimiter) and pop THAT z,
+            // one packing alternative per surviving flat. Embedded
+            // collections (send-arg slots) keep the B2 pass-through: their
+            // OWNING rule frame's R1/R2 reduce interns the rule packing with
+            // the CollectionId in its flat. Distinguisher = the rule action
+            // is the arity-1 CollectionId-only finalize (standalone
+            // collection rules; embedded owners have arity ≥ 2) and the
+            // marker is not a binder-internal slot (classic suppression —
+            // those drain at the outer RuleAt pop).
+            let fires_standalone = !self.engine.is_binder_internal_collection(cat_u16, rule_u16)
+                && self
+                    .engine
+                    .action_for(cat_u16, rule_u16)
+                    .is_some_and(|entry| entry.arity == 1);
+            if fires_standalone {
+                if collection_zs.is_empty() {
+                    // Every flat coverage-refuted ⇒ the reading is dead
+                    // (classic analog: fire elide errors the cursor).
+                    return;
+                }
+                run.stats.coll_standalone_fires += 1;
+                let cat = cat_u16 as u32;
+                let rule_id = (cat << 16) | (rule_u16 as u32);
+                let lo = self.gss.node(d.u).map(|n| n.pos).unwrap_or(0) as u32;
+                let z = self.sppf.intern_symbol(cat | CGLL_BIN_TAG, lo, i_pop as u32);
+                for cid in collection_zs {
+                    let pk = self.sppf.intern_packing(rule_id, vec![cid], pop_weight.clone());
+                    self.sppf.link_packing_to_symbol(z, pk);
+                }
+                let returns = self.gss.gll_pop(d.u, i_pop, z);
+                run.stats.gll_pops += 1;
+                for ret in &returns {
+                    self.cgll_pure_resume_fold(run, d.u, ret, z, new_state);
+                }
+                return;
             }
             for z in collection_zs {
                 let returns = self.gss.gll_pop(d.u, i_pop, z);
@@ -24342,7 +25278,7 @@ where
             match d.frame_class {
                 CgllFrameClass::D1 => {
                     // R1: one shared `z` for every caller.
-                    let lo = self.sppf.span_lo(d.w).unwrap_or_else(|| {
+                    let lo = self.cgll_pure_span_lo_content(d.w).unwrap_or_else(|| {
                         self.gss.node(d.u).map(|n| n.pos).unwrap_or(0) as u32
                     });
                     let z = self.sppf.intern_symbol(cat | CGLL_BIN_TAG, lo, i_pop as u32);
@@ -24368,19 +25304,48 @@ where
                     let returns = self.gss.gll_pop(d.u, i_pop, d.w);
                     run.stats.gll_pops += 1;
                     for ret in &returns {
-                        let lo = match self.sppf.span_lo(ret.operand_w) {
+                        // ── P3 Pocket-A2: COLLECTION-ELEMENT led split ────
+                        // When the caller frame is a CollectionMarker, the
+                        // edge operand is the ACCUMULATED SPINE (B2 folds
+                        // elements into the marker `w`); joining it whole
+                        // swallows sibling elements + separators into this
+                        // constituent (Bug-A 2-child rule-104 receipt).
+                        // Split: join ONLY the last content element; resume
+                        // with the prefix refolded around `z_e`.
+                        let caller_is_marker = run
+                            .edge_ctx
+                            .get(&(d.u, ret.caller, ret.operand_w))
+                            .is_some_and(|c| {
+                                c.caller_sym.kind == SymbolKind::CollectionMarker
+                            });
+                        let mut spine_prefix = crate::sppf::SPPF_ID_NONE;
+                        let mut spine_trailers: Vec<(u32, crate::sppf::SppfId)> = Vec::new();
+                        let mut refold_slot = 0u32;
+                        let mut join_operand = ret.operand_w;
+                        if caller_is_marker && ret.operand_w != crate::sppf::SPPF_ID_NONE {
+                            if let Some((prefix, trailers, last, slot)) =
+                                self.cgll_pure_spine_split_last(ret.operand_w)
+                            {
+                                run.stats.coll_led_splits += 1;
+                                spine_prefix = prefix;
+                                spine_trailers = trailers;
+                                refold_slot = slot;
+                                join_operand = last;
+                            }
+                        }
+                        let lo = match self.cgll_pure_span_lo_content(join_operand) {
                             Some(l) => l,
                             None => {
                                 run.stats.d2_lo_fallbacks += 1;
                                 self.gss.node(d.u).map(|n| n.pos).unwrap_or(0) as u32
                             },
                         };
-                        let joined = if ret.operand_w == crate::sppf::SPPF_ID_NONE {
+                        let joined = if join_operand == crate::sppf::SPPF_ID_NONE {
                             d.w
                         } else {
                             self.cgll_pure_get_node_p(
                                 rule_id & !CGLL_BIN_TAG,
-                                ret.operand_w,
+                                join_operand,
                                 d.w,
                                 lo,
                                 i_pop as u32,
@@ -24395,7 +25360,35 @@ where
                         };
                         let pk = self.sppf.intern_packing(rule_id, children, pop_weight.clone());
                         self.sppf.link_packing_to_symbol(z_e, pk);
-                        self.cgll_pure_resume_replace(run, d.u, ret, z_e, new_state);
+                        if spine_prefix != crate::sppf::SPPF_ID_NONE {
+                            // Chronological re-fold: prefix ⊕ trailers, then
+                            // the continuation constituent replaces the last
+                            // element ON the spine (resume keeps the fold
+                            // shape the close's flatten expects).
+                            let mut acc = spine_prefix;
+                            for (slot, tr) in &spine_trailers {
+                                if *tr != crate::sppf::SPPF_ID_NONE {
+                                    acc = self.cgll_pure_fold(
+                                        *slot,
+                                        acc,
+                                        *tr,
+                                        ret.at_pos,
+                                        W::one_ref(),
+                                    );
+                                }
+                            }
+                            let resumed = self.cgll_pure_get_node_p(
+                                refold_slot,
+                                acc,
+                                z_e,
+                                self.sppf.span_lo(acc).unwrap_or(lo),
+                                i_pop as u32,
+                                W::one_ref(),
+                            );
+                            self.cgll_pure_resume_replace(run, d.u, ret, resumed, new_state);
+                        } else {
+                            self.cgll_pure_resume_replace(run, d.u, ret, z_e, new_state);
+                        }
                     }
                 },
             }
@@ -24469,7 +25462,29 @@ where
                             WpdaState::InfixLoop { cur_bp: bp }
                         },
                         Some(SymbolKind::GroupingMarker) => {
-                            if matches!(
+                            // P3 Pocket-A5 (2026-07-11): a kind-5
+                            // (`PushCrossCatLhs`) GROUP hosts the SOURCE
+                            // category's continuations after the close —
+                            // classic's CrossCatLhsScoped wrap/resume side
+                            // tables re-tag the morphed CE with the group's
+                            // TARGET cat, not the inner constituent's cat
+                            // (receipt: `(@Nil)<-z& where Nil` — the cat-1
+                            // group morphed to a cat-3 CE, so the `&`/where
+                            // triggers, keyed on the cat-1 row, never fired
+                            // and no ForRow continuation existed). Evidence
+                            // = the caller frame's ret-slot `xcat` (3 =
+                            // kind-5 non-CE push); the group's own
+                            // `category_src_idx` is the target.
+                            let kind5_group_cat = run
+                                .v_slot
+                                .get(&ret.caller)
+                                .filter(|slot| slot.xcat == 3)
+                                .and_then(|_| caller_sym.map(|s| s.category_src_idx));
+                            if let Some(target) = kind5_group_cat {
+                                WpdaState::GroupingClosePreservingInner {
+                                    inner_cat_src_idx: target,
+                                }
+                            } else if matches!(
                                 patched_state,
                                 WpdaState::GroupingClosePreservingInner { .. }
                             ) {
@@ -24512,6 +25527,122 @@ where
     /// hunts. Span-less elements (CollectionId, zero-width carriers) are
     /// skipped. Returns (symbols, packings, flats, issues≤16).
     #[allow(dead_code)] // Reached only under the const (DCE'd while const off).
+    /// P3 Pocket-A diag: env-gated (`PRATTAIL_CGLL_PURE_FDUMP`) forest dump
+    /// from a root — every BIN symbol with its packing family (rule
+    /// cat:local + children ids/tags/spans). Read-only.
+    #[allow(dead_code)] // Reached only under the const (DCE'd while const off).
+    fn cgll_pure_forest_dump(&self, root: crate::sppf::SppfId) {
+        let mut seen: rustc_hash::FxHashSet<crate::sppf::SppfId> = rustc_hash::FxHashSet::default();
+        let mut stack: Vec<crate::sppf::SppfId> = vec![root];
+        while let Some(sym) = stack.pop() {
+            if !seen.insert(sym) {
+                continue;
+            }
+            let Some(crate::sppf::SppfNode::Symbol { lo_pos, hi_pos, non_terminal_tag, .. }) =
+                self.sppf.node(sym)
+            else {
+                continue;
+            };
+            eprintln!(
+                "FDUMP sym={} tag={:#x} span=({},{})",
+                sym, non_terminal_tag, lo_pos, hi_pos
+            );
+            for &p in self.sppf.packings_of(sym) {
+                if let Some(crate::sppf::SppfNode::Packing { rule_idx, children, .. }) =
+                    self.sppf.node(p)
+                {
+                    let kid_desc: Vec<String> = children
+                        .iter()
+                        .map(|&c| match self.sppf.node(c) {
+                            Some(crate::sppf::SppfNode::Symbol {
+                                non_terminal_tag: t,
+                                lo_pos: l,
+                                hi_pos: h,
+                                ..
+                            }) => format!("{c}:Sym(tag={t:#x},{l},{h})"),
+                            Some(crate::sppf::SppfNode::Intermediate { .. }) => {
+                                stack.push(c);
+                                format!("{c}:Int")
+                            },
+                            Some(crate::sppf::SppfNode::CollectionId { id, items }) => {
+                                for &it in items {
+                                    stack.push(it);
+                                }
+                                format!("{c}:Coll(id={id},items={items:?})")
+                            },
+                            other => format!("{c}:{other:?}"),
+                        })
+                        .collect();
+                    eprintln!(
+                        "  FDUMP-PK pk={} rule=({},{}) children=[{}]",
+                        p,
+                        rule_idx >> 16,
+                        rule_idx & 0xFFFF,
+                        kid_desc.join(", ")
+                    );
+                    for &c in children {
+                        stack.push(c);
+                    }
+                    // Also print + descend flattened leaves so nested BIN
+                    // symbols dump and the realize-visible flats are exact.
+                    for flat in self.cgll_flatten_ids_all_of(p) {
+                        let desc: Vec<String> = flat
+                            .iter()
+                            .map(|&el| match self.sppf.node(el) {
+                                Some(crate::sppf::SppfNode::Symbol {
+                                    non_terminal_tag: t,
+                                    lo_pos: l,
+                                    hi_pos: h,
+                                    ..
+                                }) => format!("{el}:S(t={t:#x},{l},{h})"),
+                                Some(crate::sppf::SppfNode::CollectionId { id, items }) => {
+                                    format!("{el}:C(id={id},items={items:?})")
+                                },
+                                other => format!("{el}:{other:?}"),
+                            })
+                            .collect();
+                        eprintln!("    FDUMP-FLAT [{}]", desc.join(", "));
+                        for el in flat {
+                            if let Some(crate::sppf::SppfNode::CollectionId { items, .. }) =
+                                self.sppf.node(el)
+                            {
+                                for &it in items {
+                                    stack.push(it);
+                                }
+                            }
+                            stack.push(el);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Flatten helper for the dump: flats of ONE packing's children.
+    #[allow(dead_code)]
+    fn cgll_flatten_ids_all_of(
+        &self,
+        pk: crate::sppf::SppfId,
+    ) -> Vec<Vec<crate::sppf::SppfId>> {
+        let Some(crate::sppf::SppfNode::Packing { children, .. }) = self.sppf.node(pk) else {
+            return Vec::new();
+        };
+        let mut flats: Vec<Vec<crate::sppf::SppfId>> = vec![Vec::new()];
+        for &c in children {
+            let cf = self.cgll_flatten_ids(c);
+            let mut next = Vec::new();
+            for a in &flats {
+                for b in &cf {
+                    let mut x = a.clone();
+                    x.extend_from_slice(b);
+                    next.push(x);
+                }
+            }
+            flats = next;
+        }
+        flats
+    }
+
     fn cgll_pure_wellformedness_report(
         &self,
         root: crate::sppf::SppfId,
@@ -24635,6 +25766,15 @@ where
                 .node(cursor.node)
                 .map(|n| n.symbol)
                 .unwrap_or_else(|| StackSymbolV2::category_entry(0));
+            // P3 Pocket-A4: the seed category IS the goal category —
+            // recorded on the PURE-side field (NOT `requested_root_cat`,
+            // whose classic resolve pre-filter would DROP source-cat
+            // accepting candidates before the coercion could wrap them)
+            // so `cgll_resolve_binarized`'s goal-coercion (the
+            // TransparentSourceReentry wrap analog) knows the goal.
+            if self.cgll_pure_goal_cat.is_none() {
+                self.cgll_pure_goal_cat = Some(seed_sym.category_src_idx);
+            }
             run.worklist.push_back(CgllPureDescriptor {
                 state: cursor.inner_state.clone(),
                 cur_sym: seed_sym,
@@ -24657,16 +25797,53 @@ where
                 budget_exceeded = true;
                 break;
             }
-            // U: global add-once by the pure key (ALL descriptor fields).
-            if !seen.insert(Self::cgll_pure_key(&d)) {
-                continue;
+            // ── P3.a KV-PHASE PATCH (pure form of `set_cursor_inner_state`
+            // @~33132). The engine's tables emit `CollectionLoop{kv_phase:0}`
+            // always; classic patches the phase from the accumulator-length
+            // parity at its single state-transition choke point. Pure analog:
+            // the marker frame's OWN spine (`d.w`) IS the accumulator — patch
+            // the phase from its non-sep item-count parity (odd ⇒ a key just
+            // folded ⇒ expect the kv separator). Per-frame spine parity also
+            // sidesteps classic's nested-map acc-id LIFO recovery (#307
+            // ROOT-F) — every marker frame carries its own spine. Applied
+            // BEFORE the dedup key so U-identity sees the resolved phase (a
+            // pure function of (state, w) — both are key fields).
+            let mut d = d;
+            if let WpdaState::CollectionLoop {
+                result_src_idx,
+                rule_idx,
+                slot_idx,
+                kv_phase: 0,
+                ..
+            } = &d.state
+            {
+                if self
+                    .engine
+                    .kv_separator_for_collection(*result_src_idx, *rule_idx, *slot_idx)
+                    .is_some()
+                {
+                    let (item_count, diverged) = self.cgll_pure_spine_item_parity(d.w);
+                    if diverged {
+                        run.stats.coll_kv_parity_divergence += 1;
+                    }
+                    if item_count % 2 == 1 {
+                        if let WpdaState::CollectionLoop { kv_phase, .. } = &mut d.state {
+                            *kv_phase = 1;
+                        }
+                    }
+                }
             }
-            run.stats.u_count += 1;
-            *u_by_pos.entry(d.pos.min(max_pos)).or_insert(0) += 1;
-            // L-finiteness sentinel: `PrefixDispatch.pos ≡ i` at every
-            // emission site (plan §1); a desync is a protocol bug — counted
-            // + diagnosed (capped) rather than asserted, so one bad emission
-            // path is attributable instead of aborting the whole battery.
+            // L-finiteness sentinel + REPAIR (P3 Pocket-C3, 2026-07-11):
+            // `PrefixDispatch.pos ≡ i` (plan §1). The engine tables emit
+            // `PrefixDispatch{pos}` values that are STALE on consuming fork
+            // branches (classic treats cursor.pos as authoritative and
+            // ignores state.pos; receipt: class3 nonempty bootstrap kind-16
+            // branch — st=PrefixDispatch{10} enqueued at pos 11; the stale
+            // state re-dispatched token 10 and U-dedup starved the lineage).
+            // The descriptor's own `pos` is the pure cursor.pos analog —
+            // patch the state to it BEFORE the dedup key (like the kv-phase
+            // patch) so the invariant holds BY CONSTRUCTION; counted +
+            // capped-diagnosed for observability.
             if let WpdaState::PrefixDispatch { pos, .. } = &d.state {
                 if *pos != d.pos {
                     run.stats.prefix_pos_desyncs += 1;
@@ -24676,8 +25853,18 @@ where
                             d.state, d.cur_sym, d.frame_class, d.u, d.pos, d.w
                         );
                     }
+                    if let WpdaState::PrefixDispatch { pos, .. } = &mut d.state {
+                        *pos = d.pos;
+                    }
                 }
             }
+            let d = d;
+            // U: global add-once by the pure key (ALL descriptor fields).
+            if !seen.insert(Self::cgll_pure_key(&d)) {
+                continue;
+            }
+            run.stats.u_count += 1;
+            *u_by_pos.entry(d.pos.min(max_pos)).or_insert(0) += 1;
             if dump_stats {
                 // Slot-collision side-map (31-bit hash risk carried by gate).
                 let slot = Self::cgll_pure_slot_hash(&d.cur_sym, &d.state);
@@ -24704,13 +25891,18 @@ where
                 pos: self.gss.node(d.u).map(|n| n.pos).unwrap_or(0),
                 symbol: d.cur_sym,
             };
+            // P3.f: real structural-delimiter FrameCtx (the B0 EMPTY was the
+            // documented interim — pathmap `{| … |}` never engaged under it:
+            // the engine's open/close membership checks need the innermost
+            // enclosing collection's delimiters, receipt `{|1:2|}` accepts=0).
+            let frame_ctx = self.cgll_pure_frame_ctx(&run.v_parent, &d);
             let action = self.engine.step(
                 &d.state,
                 &self.gss,
                 Some(&synthesized),
                 d.pos,
                 tokens,
-                crate::wpda_runtime::FrameCtx::EMPTY,
+                frame_ctx,
             );
             if run.trace_budget > 0 {
                 run.trace_budget -= 1;
@@ -24815,6 +26007,123 @@ where
                 );
             }
         }
+        // P3 Pocket-A diag: env-gated forest dump per accepting root.
+        if std::env::var_os("PRATTAIL_CGLL_PURE_FDUMP").is_some() {
+            for &(root, pos) in &run.accepting {
+                eprintln!("FDUMP-ROOT root={root} pos={pos}");
+                self.cgll_pure_forest_dump(root);
+            }
+        }
+        // P3.e CYCLE FENCE (always on): a cyclic packing DAG for a
+        // non-cyclic grammar is a protocol corruption; letting it reach the
+        // recursive flatten/realize diverges (stack overflow — the PNew
+        // class). Detect per accepting root with the ITERATIVE probe; a
+        // cyclic root is REFUSED (dropped from publish, counted + traced
+        // under stats) rather than allowed to diverge — fail loudly, never
+        // hang.
+        run.accepting.retain(|&(root, _pos)| {
+            match self.cgll_pure_find_cycle(root) {
+                None => true,
+                Some(path) => {
+                    // ── P3 Pocket-A3 (2026-07-11): SYMBOL-MEDIATED cycles are
+                    // LEGITIMATE canonical-SPPF sharing, not corruption — the
+                    // unit-rule label collision (`ForRowSingleNoWhere .
+                    // b:InputBind |- b : ForRow` re-wrapping the cat-changing
+                    // `b where cond` z, both keyed `(ForRow, 0, n)`) puts the
+                    // symbol on its own packing chain. `cgll_flatten_ids`
+                    // stops at Symbol leaves (no divergence) and
+                    // `cgll_realize_bin_symbol`'s memo pre-publish guard
+                    // returns [] on re-entry ⇒ the cyclic packing REFUTES at
+                    // realize exactly like classic's action-elide on the
+                    // wrong-category coercion child. TOLERATE those roots
+                    // (counted). Intermediate-ONLY cycles (the PNew
+                    // recursive-flatten divergence class) remain REFUSED.
+                    let symbol_mediated = path.iter().any(|&n| {
+                        matches!(
+                            self.sppf.node(n),
+                            Some(crate::sppf::SppfNode::Symbol { .. })
+                        )
+                    });
+                    if symbol_mediated {
+                        run.stats.cyclic_roots_tolerated += 1;
+                        return true;
+                    }
+                    run.stats.cyclic_roots_refused += 1;
+                    if dump_stats {
+                        let chain: Vec<String> =
+                            path.iter().map(|&n| self.sppf_trace_summary(n)).collect();
+                        eprintln!("CGLL-PURE-CYCLE root={root} path={chain:?}");
+                        for &n in &path {
+                            let packs: Vec<(crate::sppf::SppfId, Vec<crate::sppf::SppfId>)> = self
+                                .sppf
+                                .packings_of(n)
+                                .iter()
+                                .filter_map(|&p| match self.sppf.node(p) {
+                                    Some(crate::sppf::SppfNode::Packing {
+                                        children, ..
+                                    }) => Some((p, children.clone())),
+                                    _ => None,
+                                })
+                                .collect();
+                            eprintln!("CGLL-PURE-CYCLE-NODE {n}: packings={packs:?}");
+                            for (p, kids) in &packs {
+                                let ksum: Vec<String> = kids
+                                    .iter()
+                                    .map(|&k| self.sppf_trace_summary(k))
+                                    .collect();
+                                eprintln!("CGLL-PURE-CYCLE-KIDS {p}: {ksum:?}");
+                            }
+                        }
+                    }
+                    false
+                },
+            }
+        });
+        // ── P3 Pocket-A4 (2026-07-11): GOAL-CATEGORY coercion at PUBLISH —
+        // the pure analog of classic's TransparentSourceReentry result wrap
+        // (apply_pop_body tail). A cross-cat-LHS route (kind-5 grouped LHS,
+        // e.g. `(@Nil)<-z` at goal ForRow) accepts with the SOURCE-category
+        // root (InputBind); classic wraps it into the goal category via the
+        // single-hop coercion at the reentry pop. Wrapping must happen HERE
+        // (not at resolve): `resolve_at_end_of_input`'s AV5 root-variant
+        // re-filter drops source-cat candidates before
+        // `cgll_resolve_binarized` would see them. Realize refutes the wrap
+        // if the coercion action rejects the body; an existing same-span
+        // goal-cat symbol simply gains a packing-family member.
+        if let Some(goal) = self.cgll_pure_goal_cat {
+            for entry in run.accepting.iter_mut() {
+                let root = entry.0;
+                let Some(produced) = self.sppf_symbol_category(root) else {
+                    continue;
+                };
+                if produced == goal {
+                    continue;
+                }
+                let pick = self
+                    .engine
+                    .single_hop_coercion(produced, goal)
+                    .to_vec()
+                    .into_iter()
+                    .filter(|(c, r)| {
+                        *c == goal
+                            && self.action_accepts_single_body_category(*c, *r, produced)
+                    })
+                    .min_by_key(|(_, r)| *r);
+                if let Some((c, r)) = pick {
+                    let lo = self.sppf.span_lo(root).unwrap_or(0);
+                    let hi = self.sppf.span_hi(root).unwrap_or(lo);
+                    let rule_id = ((c as u32) << 16) | (r as u32);
+                    let z = self.sppf.intern_symbol((c as u32) | CGLL_BIN_TAG, lo, hi);
+                    if !self.sppf.packing_exists(rule_id, &[root]) {
+                        let pk =
+                            self.sppf.intern_packing(rule_id, vec![root], W::one_ref());
+                        self.sppf.link_packing_to_symbol(z, pk);
+                    }
+                    run.stats.goal_coercions += 1;
+                    entry.0 = z;
+                }
+            }
+        }
         if let Some(&(_, pos)) = run.accepting.first() {
             self.pos = pos;
         }
@@ -24860,11 +26169,12 @@ where
                 "CGLL-PURE |U|={} peak_R={} processed={} max_U_per_pos={} n_pos={} accepts={} \
                  gll_creates={} gll_pops={} replays={} replay_structural={} seed_pops={} \
                  seed_pops_at_eoi={} unwind_chain_fired={} slot_collisions={} ctx_conflicts={} \
-                 ctx_misses={} d2_lo_fallbacks={} iterchain_witness={} weight_carriers={} \
+                 ctx_misses={} d2_lo_fallbacks={} fold_overlap_refuted={} cyclic_roots_refused={} cyclic_tol={} iterchain_witness={} weight_carriers={} \
                  replay_weight_drops={} coll_pops_structural={} \
                  coll_closes={} coll_sep_folds={} coll_cov_refuted={} coll_empty={} coll_kv={} \
+                 coll_standalone={} coll_kv_pdiv={} coll_kv_dupmp={} coll_led_splits={} goal_coerce={} opt_fin={} \
                  effects_skipped={} recovery_drops={} weight_drops={} guard_cc_actions={} \
-                 guard1_sites={} guarded_topcat_sites={} unwind_m1={} unwind_m5={} \
+                 guard1_sites={} guarded_topcat_sites={} unwind_m1={} unwind_m5={} unwind_m234={} d2_retags={} \
                  unwind_census={} chain_ctx_div={} grouping_cat_rejects={} \
                  opt_group_absent={} out_of_scope={} engine_errors={} prefix_pos_desyncs={} \
                  accept_action_hits={}",
@@ -24885,6 +26195,9 @@ where
                 s.ctx_conflicts,
                 s.ctx_misses,
                 s.d2_lo_fallbacks,
+                s.fold_overlap_refuted,
+                s.cyclic_roots_refused,
+                s.cyclic_roots_tolerated,
                 s.iterchain_witness,
                 s.weight_carriers,
                 s.replay_weight_drops,
@@ -24894,6 +26207,12 @@ where
                 s.coll_coverage_refuted,
                 s.coll_empty_closes,
                 s.coll_kv_deferred,
+                s.coll_standalone_fires,
+                s.coll_kv_parity_divergence,
+                s.coll_kv_dup_multipack,
+                s.coll_led_splits,
+                s.goal_coercions,
+                s.opt_group_finalizes,
                 s.effects_skipped,
                 s.recovery_drops,
                 s.weight_drops,
@@ -24902,6 +26221,8 @@ where
                 s.guarded_topcat_sites,
                 s.unwind_inject_m1,
                 s.unwind_inject_m5,
+                s.unwind_inject_m234,
+                s.d2_retags,
                 s.unwind_family_census,
                 s.chain_ctx_divergence,
                 s.grouping_cat_rejects,
@@ -25022,6 +26343,47 @@ where
     /// Decide + perform the pure Unwinding injection for one InfixLoop Fork
     /// (see the family doc above). Returns `true` when injected (the caller
     /// counts, the descriptor is enqueued here).
+    /// P3 members-2/3/4 (2026-07-11, first battery demand:
+    /// `uint(a!() , false)` — channel-first send as a mixfix arg;
+    /// unwind_census=2 receipt): the pure form of the classic
+    /// `__under_crosscat_{binder_resume,collection_element,infix_rhs}`
+    /// conditions — from a CrossCatLhs-evidenced CE frame, walk the
+    /// u-ancestry to the innermost STRUCTURED consumer and check it accepts
+    /// the current constituent's category (classic: the per-frame
+    /// `*_accepts_body_category` reads). CollectionMarker frames return
+    /// `true` — the close's element-category + coverage gates are the
+    /// authoritative fence there (P3.a), so over-injection refutes at the
+    /// close instead of ghosting.
+    #[allow(dead_code)] // Reached only under the const (DCE'd while const off).
+    fn cgll_pure_enclosing_acceptor(
+        &self,
+        run: &mut CgllPureRun,
+        u: crate::gss::GssNodeId,
+        body_cat: u16,
+    ) -> bool {
+        let mut cur = u;
+        for _ in 0..24 {
+            let edges = self.gss.gll_edges(cur);
+            let Some(first) = edges.first() else { return false };
+            let Some(ctx) = run.edge_ctx.get(&(cur, first.target, first.operand_w)).copied()
+            else {
+                return false;
+            };
+            match ctx.caller_sym.kind {
+                SymbolKind::MixfixMarker | SymbolKind::RuleAt(_) => {
+                    return self.action_accepts_single_body_category(
+                        ctx.caller_sym.category_src_idx,
+                        ctx.caller_sym.rule_index_in_category,
+                        body_cat,
+                    );
+                },
+                SymbolKind::CollectionMarker => return true,
+                _ => cur = first.target,
+            }
+        }
+        false
+    }
+
     #[allow(dead_code)] // Reached only under the const (DCE'd while const off).
     fn cgll_pure_inject_unwind_reading(
         &mut self,
@@ -25047,6 +26409,7 @@ where
         // classic PrefixRuleEntry{item_pos>0} immediate edge).
         let member1 = matches!(immediate.map(|s| s.kind), Some(SymbolKind::RuleAt(k)) if k > 0);
         let mut member5 = false;
+        let mut member234 = false;
         if !member1 {
             // Member-5 morph evidence: this CategoryEntry frame was MINTED
             // as a GroupingMarker descent (the grouping close's
@@ -25065,21 +26428,29 @@ where
                     }
                 }
             }
-            // Members 2/3/4 candidate census (cross-cat immediate frames —
-            // B2 scope; never silently skipped).
+            // Members 2/3/4 (2026-07-11): ACTIVE — CrossCatLhs evidence +
+            // enclosing-acceptor walk (see `cgll_pure_enclosing_acceptor`).
+            // Census retained for the no-acceptor candidates.
             if !member5
                 && matches!(
                     d.ret_slot.xcat,
                     1 | 2 | 3
                 )
             {
-                run.stats.unwind_family_census += 1;
+                if let Some(body_cat) = self.sppf_symbol_category(d.w) {
+                    member234 = self.cgll_pure_enclosing_acceptor(run, d.u, body_cat);
+                }
+                if !member234 {
+                    run.stats.unwind_family_census += 1;
+                }
             }
         }
         if member1 {
             run.stats.unwind_inject_m1 += 1;
         } else if member5 {
             run.stats.unwind_inject_m5 += 1;
+        } else if member234 {
+            run.stats.unwind_inject_m234 += 1;
         } else {
             return;
         }
@@ -25133,9 +26504,60 @@ where
                 // the token source, which the pure arm has no channel for)
                 // DROPS the descriptor; applying its state mechanics without
                 // the source mutation pins `PrefixDispatch.pos` and spins.
-                if Self::is_recovery_delta(&effect) {
+                if Self::cgll_pure_is_recovery_delta(&effect) {
                     run.stats.recovery_drops += 1;
                     return;
+                }
+                // P3.a value-optional kv (Pathmap bare path): the engine's
+                // phase-1 arm emits `DuplicateLastCollectionElement` for a
+                // key followed directly by close/sep (`{| k |}` ≡
+                // `{| k : k |}`, collection.rs ~880: duplicate the key as
+                // its own value, re-enter kv_phase=0 non-consuming). Pure
+                // form: re-fold the spine's LAST item onto itself — the
+                // right child of the top spine Intermediate's packing (the
+                // most recent fold), or the whole `w` when the spine is a
+                // single item. Multi-packing spines duplicate per the first
+                // packing (counted, `coll_kv_dup_multipack` — 0 on the
+                // battery; escalate if a term ever shows divergent packing
+                // tails here).
+                if let BuilderDelta::DuplicateLastCollectionElement { .. } = &effect {
+                    let last = match self.sppf.node(d.w) {
+                        Some(crate::sppf::SppfNode::Intermediate { .. }) => {
+                            let packs = self.sppf.packings_of(d.w);
+                            if packs.len() > 1 {
+                                run.stats.coll_kv_dup_multipack += 1;
+                            }
+                            packs.first().copied().and_then(|p| {
+                                match self.sppf.node(p) {
+                                    Some(crate::sppf::SppfNode::Packing { children, .. }) => {
+                                        children.last().copied()
+                                    },
+                                    _ => None,
+                                }
+                            })
+                        },
+                        Some(_) => Some(d.w),
+                        None => None,
+                    };
+                    if let Some(last_item) = last {
+                        let lo = self.sppf.span_lo(d.w).unwrap_or(0);
+                        let w2 = self.cgll_pure_get_node_p(
+                            Self::cgll_pure_slot_hash(&d.cur_sym, &d.state),
+                            d.w,
+                            last_item,
+                            lo,
+                            d.pos as u32,
+                            W::one_ref(),
+                        );
+                        run.worklist.push_back(CgllPureDescriptor {
+                            state: new_state,
+                            w: w2,
+                            ..d.clone()
+                        });
+                        return;
+                    }
+                    // No spine to duplicate (defensive): fall through to the
+                    // counted no-op below.
                 }
                 // B0: non-recovery effects are no-ops (EndBinderScope etc. =
                 // B2 scope discipline) — counted, never silent.
@@ -25353,7 +26775,21 @@ where
                 // flatten-time coverage witness as `ConsumeCollectionSep`.
                 // Every other `Consume` (e.g. CollectionOpenParen's `(`) is
                 // a plain discard scan.
-                let w = if matches!(d.state, WpdaState::CollectionLoop { .. }) {
+                //
+                // P3.a kv EXCEPTION: the kv `:` consume is the CollectionLoop
+                // transition INTO `kv_phase: 2` (classic trace receipt:
+                // `Consume(st=CollectionLoop{kv_phase:2})` fires from
+                // `kv_phase: 1` after a key). It separates a key from ITS
+                // value INSIDE one pair — it is NOT an element separator, so
+                // it must NOT fold a coverage witness (a witnessed `:` made
+                // the kv flat `[k, sep, v]` fail the pair-arity gate
+                // `items == 2*(seps+1)` and refuted EVERY kv-map reading —
+                // the `{0:1}` unrealizable bug). Only the inter-pair `,`
+                // (which transitions back to `kv_phase: 0`) is an element
+                // separator.
+                let is_kv_colon =
+                    matches!(new_state, WpdaState::CollectionLoop { kv_phase: 2, .. });
+                let w = if matches!(d.state, WpdaState::CollectionLoop { .. }) && !is_kv_colon {
                     self.cgll_pure_fold_sep_marker(run, d, d.pos)
                 } else {
                     d.w
@@ -25367,21 +26803,47 @@ where
             },
             WpdaStepAction::ConsumeIdentAndReplace { symbol, weight: _, new_state, start_scope } => {
                 // Ident-Terminal leaf fold into the FRAME's `w` (the binder
-                // ident is a child of the current rule); scope discipline
-                // (start_scope → BinderScope leaf shape) is B2 — counted.
-                if start_scope {
+                // ident is a child of the current rule — classic pushes
+                // ActionArg::Ident). P3.e Class-3 exception (2026-07-11): a
+                // `start_scope` ident consumed INSIDE the zip-map-sep
+                // machinery (`d.state == BinderListLoop`) is a BINDER name
+                // (the pair's `x`) — classically scope-only, never an arg —
+                // fold the reserved-owner BINDER-NAME marker instead so the
+                // marker close's coverage gate and name collection see it
+                // (pred3/pred4 receipt: the plain Terminal became a phantom
+                // collection ITEM). BinderRule ident slots keep the classic
+                // Ident-arg fold.
+                let zip_binder =
+                    start_scope && matches!(d.state, WpdaState::BinderListLoop { .. });
+                if start_scope && !zip_binder {
                     run.stats.effects_skipped += 1;
                 }
                 let mut w = d.w;
                 if tokens.peek_kind(d.pos).is_some() {
                     let text = tokens.peek_text(d.pos).unwrap_or("");
-                    let leaf = self.sppf.intern_terminal(
-                        TokenKind::Ident,
-                        crate::sppf::PosOrSynth::Real(d.pos as u32),
-                        Some(text),
-                        true,
-                    );
-                    let slot = Self::cgll_pure_slot_hash(&d.cur_sym, &d.state);
+                    let (leaf, slot) = if zip_binder {
+                        (
+                            self.sppf.intern_trigger_terminal(
+                                TokenKind::Ident,
+                                crate::sppf::PosOrSynth::Real(d.pos as u32),
+                                Some(text),
+                                u16::MAX,
+                                u16::MAX - 1,
+                            ),
+                            Self::cgll_pure_slot_hash(&d.cur_sym, &d.state)
+                                ^ ((d.pos as u32) << 1),
+                        )
+                    } else {
+                        (
+                            self.sppf.intern_terminal(
+                                TokenKind::Ident,
+                                crate::sppf::PosOrSynth::Real(d.pos as u32),
+                                Some(text),
+                                true,
+                            ),
+                            Self::cgll_pure_slot_hash(&d.cur_sym, &d.state),
+                        )
+                    };
                     w = self.cgll_pure_fold(slot, w, leaf, d.pos, W::one_ref());
                 }
                 run.worklist.push_back(CgllPureDescriptor {
@@ -25429,19 +26891,91 @@ where
                 // OUT of PoC → named Stage P3.d (no battery term).
                 run.stats.out_of_scope_actions += 1;
             },
-            WpdaStepAction::OptGroupAbsent { replace_symbol, weight: _, new_state } => {
-                // Included per plan row 18, minus the Optional(None) leaf
-                // (E1-GT optional shape is P3.c) — counted, battery-inert.
+            WpdaStepAction::OptGroupAbsent { replace_symbol, weight, new_state } => {
+                // P3.c (2026-07-11): the SKIP path folds an `OptAbsent`
+                // leaf so the outer rule's flat carries the arg slot —
+                // realize maps it to `ActionArg::Optional(None)` exactly as
+                // classic's skip pushed it (arity receipt: optsmoke
+                // `if true then 1` — the action pops [cond, t, Optional]).
                 run.stats.opt_group_absent += 1;
+                let leaf = self.sppf.intern_opt_absent(d.pos as u32);
+                let slot = Self::cgll_pure_slot_hash(&d.cur_sym, &d.state)
+                    ^ ((d.pos as u32) << 1)
+                    ^ 0x0800_0000;
+                // ELECTION weight: the engine's skip-branch weight rides the
+                // fold packing (classic: child.weight ⊗ branch.weight decides
+                // dangling-else attachment — dropping it tied the take/skip
+                // elections and mis-attached the 3-deep else; receipt
+                // opt3b.log "middle else should be None").
+                let w = self.cgll_pure_fold(slot, d.w, leaf, d.pos, weight.clone());
                 run.worklist.push_back(CgllPureDescriptor {
                     state: new_state,
                     cur_sym: replace_symbol,
+                    w,
                     ..d.clone()
                 });
             },
-            WpdaStepAction::OptGroupFinalize { .. } => {
-                // OUT of PoC → named Stage P3.c (no battery term).
-                run.stats.out_of_scope_actions += 1;
+            WpdaStepAction::OptGroupFinalize { replace_symbol, weight, new_state } => {
+                // P3.c (2026-07-11): the TAKE path — the OptionalGroupAt
+                // FRAME's spine (d.w) holds the group's inner args. Classic
+                // (plan §2 #19 / emit_finalize_optional_scope_present): pop
+                // the group marker (no fire), intern
+                // `Packing(OPTIONAL_PRESENT_RULE_IDX, inner_args)` and push
+                // THE PACKING ID as a stack element, replace the outer
+                // RuleAt with `replace_symbol`, continue in `new_state`.
+                // Pure form: one OPTIONAL_PRESENT packing per spine flat,
+                // popped as `z` to the caller (the outer rule frame) whose
+                // resume folds it into the outer spine — with the caller's
+                // `cur_sym` OVERRIDDEN to `replace_symbol` (classic step 3)
+                // and the resume state = `new_state` (classic step 4). No
+                // token consumption.
+                let flats: Vec<Vec<crate::sppf::SppfId>> = if d.w == crate::sppf::SPPF_ID_NONE {
+                    vec![Vec::new()]
+                } else {
+                    self.cgll_flatten_ids(d.w)
+                };
+                run.stats.opt_group_finalizes += 1;
+                for flat in flats {
+                    // ELECTION weight: the take-branch weight rides the
+                    // OPTIONAL packing (see the Absent arm's note).
+                    let z = self.sppf.intern_packing(
+                        Self::OPTIONAL_PRESENT_RULE_IDX,
+                        flat,
+                        weight.clone(),
+                    );
+                    let returns = self.gss.gll_pop(d.u, d.pos, z);
+                    run.stats.gll_pops += 1;
+                    for ret in &returns {
+                        let Some(ctx) =
+                            run.edge_ctx.get(&(d.u, ret.caller, ret.operand_w)).copied()
+                        else {
+                            run.stats.ctx_misses += 1;
+                            continue;
+                        };
+                        let caller_slot = run
+                            .v_slot
+                            .get(&ret.caller)
+                            .copied()
+                            .unwrap_or_else(|| Self::cgll_pure_seed_slot(&ctx.caller_sym));
+                        let y = if ret.operand_w == crate::sppf::SPPF_ID_NONE {
+                            z
+                        } else {
+                            let slot =
+                                Self::cgll_pure_slot_hash(&replace_symbol, &new_state)
+                                    ^ ((ret.at_pos as u32) << 1);
+                            self.cgll_pure_fold(slot, ret.operand_w, z, ret.at_pos, W::one_ref())
+                        };
+                        run.worklist.push_back(CgllPureDescriptor {
+                            state: new_state.clone(),
+                            cur_sym: replace_symbol,
+                            frame_class: ctx.caller_class,
+                            ret_slot: caller_slot,
+                            u: ret.caller,
+                            pos: ret.at_pos,
+                            w: y,
+                        });
+                    }
+                }
             },
             WpdaStepAction::Accept => {
                 // Engine-side Accept fires only at Unwinding+frontier=None,
@@ -25455,8 +26989,18 @@ where
                     run.accepting.push((d.w, d.pos));
                 }
             },
-            WpdaStepAction::Error(_) => {
+            WpdaStepAction::Error(msg) => {
                 run.stats.engine_errors += 1; // descriptor dies (no recovery — amendment 8)
+                // Capped diagnostic (stats-gated): WHICH configs die tells
+                // the P3 burn-down where a table path is unreachable purely.
+                if run.stats.engine_errors <= 8
+                    && std::env::var_os("PRATTAIL_CANONICAL_GLL_STATS").is_some()
+                {
+                    eprintln!(
+                        "CGLL-PURE-ENGERR #{} pos={} state={:?} sym={:?} msg={}",
+                        run.stats.engine_errors, d.pos, d.state, d.cur_sym, msg
+                    );
+                }
             },
             WpdaStepAction::Idle => {}, // engine parks this config
             WpdaStepAction::Fork { branches, consume_trigger } => {
@@ -25590,8 +27134,15 @@ where
                 None,);
             },
             ForkActionKind::OptGroupAbsent { replace_symbol } => {
+                // P3.c: skip path — fold the OptAbsent leaf (realize →
+                // Optional(None); see the action-level arm's note).
                 run.stats.opt_group_absent += 1;
                 let w = self.cgll_pure_carry_scan_weight(run, d, d.w, pos_after, &br_weight);
+                let leaf = self.sppf.intern_opt_absent(pos_after as u32);
+                let slot = Self::cgll_pure_slot_hash(&d.cur_sym, &d.state)
+                    ^ ((pos_after as u32) << 1)
+                    ^ 0x0800_0000;
+                let w = self.cgll_pure_fold(slot, w, leaf, pos_after, br_weight.clone());
                 run.worklist.push_back(CgllPureDescriptor {
                     state: br_state,
                     cur_sym: replace_symbol,
@@ -25667,19 +27218,42 @@ where
                 None,);
             },
             ForkActionKind::ConsumeIdentAndReplace { start_scope } => {
-                if start_scope {
+                // P3.e Class-3 (2026-07-11): a `start_scope` ident consumed
+                // inside the zip machinery (`d.state == BinderListLoop`) is
+                // a BINDER name — fold the reserved BINDER-NAME marker, not
+                // a plain Terminal (which becomes a phantom collection item
+                // and breaks the close's coverage gate — pred3/4 receipt).
+                let zip_binder =
+                    start_scope && matches!(d.state, WpdaState::BinderListLoop { .. });
+                if start_scope && !zip_binder {
                     run.stats.effects_skipped += 1;
                 }
                 let mut w = self.cgll_pure_carry_scan_weight(run, d, d.w, pos_after, &br_weight);
                 if tokens.peek_kind(pos_after).is_some() {
                     let text = tokens.peek_text(pos_after).unwrap_or("");
-                    let leaf = self.sppf.intern_terminal(
-                        TokenKind::Ident,
-                        crate::sppf::PosOrSynth::Real(pos_after as u32),
-                        Some(text),
-                        true,
-                    );
-                    let slot = Self::cgll_pure_slot_hash(&d.cur_sym, &d.state);
+                    let (leaf, slot) = if zip_binder {
+                        (
+                            self.sppf.intern_trigger_terminal(
+                                TokenKind::Ident,
+                                crate::sppf::PosOrSynth::Real(pos_after as u32),
+                                Some(text),
+                                u16::MAX,
+                                u16::MAX - 1,
+                            ),
+                            Self::cgll_pure_slot_hash(&d.cur_sym, &d.state)
+                                ^ ((pos_after as u32) << 1),
+                        )
+                    } else {
+                        (
+                            self.sppf.intern_terminal(
+                                TokenKind::Ident,
+                                crate::sppf::PosOrSynth::Real(pos_after as u32),
+                                Some(text),
+                                true,
+                            ),
+                            Self::cgll_pure_slot_hash(&d.cur_sym, &d.state),
+                        )
+                    };
                     w = self.cgll_pure_fold(slot, w, leaf, pos_after, W::one_ref());
                 }
                 run.worklist.push_back(CgllPureDescriptor {
@@ -25701,7 +27275,7 @@ where
             },
             ForkActionKind::PopWithEffect { effect } => {
                 // AMENDMENT 8: recovery branch ⇒ DROP (see AdvanceWithEffect).
-                if Self::is_recovery_delta(&effect) {
+                if Self::cgll_pure_is_recovery_delta(&effect) {
                     run.stats.recovery_drops += 1;
                     return;
                 }
@@ -25729,8 +27303,17 @@ where
                 // arm has no channel) ⇒ DROP. Applying the mechanics without
                 // the source mutation pins the state's pos and spins (the
                 // owner_nested loop this fix retires).
-                if Self::is_recovery_delta(&effect) {
+                if Self::cgll_pure_is_recovery_delta(&effect) {
                     run.stats.recovery_drops += 1;
+                    if std::env::var_os("PRATTAIL_CANONICAL_GLL_STATS").is_some()
+                        && run.stats.recovery_drops <= 4
+                    {
+                        eprintln!(
+                            "CGLL-PURE-RECOVERY-DROP kind=ConsumeAndReplaceWithEffect \
+                             effect={effect:?} pos={} sym={:?}",
+                            pos_after, d.cur_sym
+                        );
+                    }
                     return;
                 }
                 run.stats.effects_skipped += 1;
@@ -25874,17 +27457,37 @@ where
                 if tokens.peek_kind(pos_after) != Some(TokenKind::Ident) {
                     return;
                 }
-                if start_scope {
+                // P3.e Class-3: zip-binder idents fold the reserved
+                // BINDER-NAME marker (see ConsumeIdentAndReplace above).
+                let zip_binder =
+                    start_scope && matches!(d.state, WpdaState::BinderListLoop { .. });
+                if start_scope && !zip_binder {
                     run.stats.effects_skipped += 1;
                 }
                 let text = tokens.peek_text(pos_after).unwrap_or("");
-                let leaf = self.sppf.intern_terminal(
-                    TokenKind::Ident,
-                    crate::sppf::PosOrSynth::Real(pos_after as u32),
-                    Some(text),
-                    true,
-                );
-                let slot = Self::cgll_pure_slot_hash(&d.cur_sym, &d.state);
+                let (leaf, slot) = if zip_binder {
+                    (
+                        self.sppf.intern_trigger_terminal(
+                            TokenKind::Ident,
+                            crate::sppf::PosOrSynth::Real(pos_after as u32),
+                            Some(text),
+                            u16::MAX,
+                            u16::MAX - 1,
+                        ),
+                        Self::cgll_pure_slot_hash(&d.cur_sym, &d.state)
+                            ^ ((pos_after as u32) << 1),
+                    )
+                } else {
+                    (
+                        self.sppf.intern_terminal(
+                            TokenKind::Ident,
+                            crate::sppf::PosOrSynth::Real(pos_after as u32),
+                            Some(text),
+                            true,
+                        ),
+                        Self::cgll_pure_slot_hash(&d.cur_sym, &d.state),
+                    )
+                };
                 let w = self.cgll_pure_fold(slot, d.w, leaf, pos_after, W::one_ref());
                 let w = self.cgll_pure_carry_scan_weight(run, d, w, pos_after, &br_weight);
                 run.worklist.push_back(CgllPureDescriptor {
@@ -25911,12 +27514,25 @@ where
                 if tokens.peek_text(pos_after).unwrap_or("") != expected_text.as_str() {
                     return;
                 }
-                if Self::is_recovery_delta(&effect) {
+                if Self::cgll_pure_is_recovery_delta(&effect) {
                     run.stats.recovery_drops += 1; // amendment 8
                     return;
                 }
-                run.stats.effects_skipped += 1;
-                let w = self.cgll_pure_carry_scan_weight(run, d, d.w, pos_after, &br_weight);
+                // P3.e: the binder-list close (`)` + EndBinderScope from
+                // `BinderListLoop`) interns + folds the BinderScope leaf —
+                // the binder rule's fire consumes it as a real child (GT
+                // flat `[trigger, BinderScope, body]`). Other effects stay
+                // counted no-ops.
+                // Carrier FIRST (pre-consume spine), then the BinderScope
+                // fold — monotone-fold ordering (see the binder-ident arm).
+                let w_c = self.cgll_pure_carry_scan_weight(run, d, d.w, pos_after, &br_weight);
+                let w = if matches!(effect, BuilderDelta::EndBinderScope) {
+                    let d_c = CgllPureDescriptor { w: w_c, ..d.clone() };
+                    self.cgll_pure_end_binder_scope(run, &d_c, pos_after, None, tokens)
+                } else {
+                    run.stats.effects_skipped += 1;
+                    w_c
+                };
                 run.worklist.push_back(CgllPureDescriptor {
                     state: br_state,
                     cur_sym: br_symbol,
@@ -25932,12 +27548,66 @@ where
                 if tokens.peek_text(pos_after).unwrap_or("") != expected_text.as_str() {
                     return;
                 }
-                if effects.iter().any(Self::is_recovery_delta) {
+                if effects.iter().any(Self::cgll_pure_is_recovery_delta) {
                     run.stats.recovery_drops += 1; // amendment 8
                     return;
                 }
-                run.stats.effects_skipped += 1;
-                let w = self.cgll_pure_carry_scan_weight(run, d, d.w, pos_after, &br_weight);
+                // P3.e: the ATOMIC empty-binder-list case (`StartBinderScope
+                // {names} + EndBinderScope` on one `)` consume) — the leaf's
+                // names come from the Start effect (normally empty).
+                // P3 Pocket-C: the Class-3 EMPTY-collection bootstrap logs
+                // [StartCollection, PushCollectionId{id}, StartBinderScope]
+                // atomically (classic @~18742: accumulator allocated,
+                // CollectionId arg pushed, scope opened — so the rule
+                // action's arity is met even on the empty-list path). Pure
+                // form: fold an EMPTY `CollectionId(id, [])` leaf into the
+                // spine at a position-salted annotation slot — the RuleAt
+                // pop's flat then carries the arg and realize drains it to
+                // the empty Vec (receipt: class3 `with [ ] ( ) . { 0 }`
+                // Bug-A arity 4≠3 — the missing child was exactly this).
+                let start_names = effects.iter().find_map(|e| match e {
+                    BuilderDelta::StartBinderScope { names } => Some(names.as_slice()),
+                    _ => None,
+                });
+                let has_end =
+                    effects.iter().any(|e| matches!(e, BuilderDelta::EndBinderScope));
+                let coll_id = if effects
+                    .iter()
+                    .any(|e| matches!(e, BuilderDelta::StartCollection))
+                {
+                    effects.iter().find_map(|e| match e {
+                        BuilderDelta::PushCollectionId { id } => Some(*id),
+                        _ => None,
+                    })
+                } else {
+                    None
+                };
+                // Carrier FIRST — monotone-fold ordering (see above).
+                let w_c = self.cgll_pure_carry_scan_weight(run, d, d.w, pos_after, &br_weight);
+                let w_coll = if let Some(id) = coll_id {
+                    run.stats.coll_empty_closes += 1;
+                    let leaf = self.sppf.intern_collection_id(id as u32, Vec::new());
+                    let slot = Self::cgll_pure_slot_hash(&d.cur_sym, &d.state)
+                        ^ ((pos_after as u32) << 1)
+                        ^ 0x2000_0000;
+                    self.cgll_pure_fold(slot, w_c, leaf, pos_after, W::one_ref())
+                } else {
+                    w_c
+                };
+                let w = if has_end {
+                    let d_c = CgllPureDescriptor { w: w_coll, ..d.clone() };
+                    self.cgll_pure_end_binder_scope(run, &d_c, pos_after, start_names, tokens)
+                } else if start_names.is_some() && coll_id.is_some() {
+                    // Start WITHOUT End on the bootstrap: the scope closes at
+                    // the later EndBinderScope; nothing further to fold here
+                    // (binder-name markers arrive per ident consume).
+                    w_coll
+                } else if coll_id.is_some() {
+                    w_coll
+                } else {
+                    run.stats.effects_skipped += 1;
+                    w_coll
+                };
                 run.worklist.push_back(CgllPureDescriptor {
                     state: br_state,
                     cur_sym: br_symbol,
@@ -25946,20 +27616,35 @@ where
                     ..d.clone()
                 });
             },
-            ForkActionKind::ConsumeIdentAndPop { start_scope } => {
-                if start_scope {
-                    run.stats.effects_skipped += 1;
+            ForkActionKind::ConsumeIdentAndPop { start_scope: _ } => {
+                // P3.e Class-3 REVISED (2026-07-11): classic kind-30 is the
+                // zip binder-ident capture — it calls
+                // `emit_extend_binder_scope(child, text)` UNCONDITIONALLY
+                // (@18503; start_scope is irrelevant — the scope was opened
+                // by the marker push side-effects) and the ident NEVER
+                // reaches the arg/collection stack. Pure form: guard on the
+                // Ident token (classic `continue`s otherwise) and ALWAYS
+                // fold the reserved-owner BINDER-NAME MARKER
+                // (realize-invisible; collected by the class-3 close /
+                // EndBinderScope). The earlier start_scope-conditional
+                // Terminal fold made the ident a phantom collection ITEM
+                // and broke the close's coverage gate (items=[Name,
+                // Terminal-Ident], seps=0 on `@(0) ? x` — pred3/4 receipt).
+                if tokens.peek_kind(pos_after) != Some(TokenKind::Ident) {
+                    return;
                 }
                 let mut folded = d.clone();
-                if tokens.peek_kind(pos_after).is_some() {
+                {
                     let text = tokens.peek_text(pos_after).unwrap_or("");
-                    let leaf = self.sppf.intern_terminal(
+                    let leaf = self.sppf.intern_trigger_terminal(
                         TokenKind::Ident,
                         crate::sppf::PosOrSynth::Real(pos_after as u32),
                         Some(text),
-                        true,
+                        u16::MAX,
+                        u16::MAX - 1,
                     );
-                    let slot = Self::cgll_pure_slot_hash(&d.cur_sym, &d.state);
+                    let slot = Self::cgll_pure_slot_hash(&d.cur_sym, &d.state)
+                        ^ ((pos_after as u32) << 1);
                     folded.w = self.cgll_pure_fold(slot, d.w, leaf, pos_after, W::one_ref());
                 }
                 self.cgll_pure_reduce(
@@ -25975,9 +27660,17 @@ where
                 if tokens.peek_text(pos_after).unwrap_or("") != expected_text.as_str() {
                     return;
                 }
-                if Self::is_recovery_delta(&effect) {
+                if Self::cgll_pure_is_recovery_delta(&effect) {
                     run.stats.recovery_drops += 1; // amendment 8
                     return;
+                }
+                if std::env::var_os("PRATTAIL_CANONICAL_GLL_STATS").is_some()
+                    && run.stats.effects_skipped < 6
+                {
+                    eprintln!(
+                        "CGLL-PURE-GCAPE effect={effect:?} pos={} sym={:?} st={:?}",
+                        pos_after, d.cur_sym, br_state
+                    );
                 }
                 run.stats.effects_skipped += 1;
                 self.cgll_pure_reduce(run, d, next_of(pos_after), &br_weight, &br_state, tokens);
@@ -25985,25 +27678,29 @@ where
             ForkActionKind::GuardedConsumeBinderIdentAndReplaceWithEffect {
                 start_scope: _,
                 ref effect,
-            } if Self::is_recovery_delta(effect) => {
+            } if Self::cgll_pure_is_recovery_delta(effect) => {
                 run.stats.recovery_drops += 1; // amendment 8
             },
-            ForkActionKind::GuardedConsumeBinderIdentAndReplace { start_scope: _ }
-            | ForkActionKind::GuardedConsumeBinderIdentAndReplaceWithEffect { .. } => {
-                // Binder-scope name capture (NO builder/args push classically
-                // — the name lives in the scope): B2 scope discipline.
-                if tokens.peek_kind(pos_after) != Some(TokenKind::Ident) {
-                    return;
+            ForkActionKind::GuardedConsumeBinderIdentAndReplace { start_scope: _ } => {
+                self.cgll_pure_binder_ident_consume(
+                    run, d, tokens, pos_after, br_symbol, br_state, &br_weight, false,
+                );
+            },
+            ForkActionKind::GuardedConsumeBinderIdentAndReplaceWithEffect {
+                start_scope: _,
+                effect,
+            } => {
+                // Lambda-style INLINE scope close (`lam x . body`): the
+                // ident consume itself carries `EndBinderScope` (open +
+                // capture + close in ONE action — classic trace receipt
+                // `lam_classic_trace.log`). Other effects: counted no-op.
+                let end_inline = matches!(effect, BuilderDelta::EndBinderScope);
+                if !end_inline {
+                    run.stats.effects_skipped += 1;
                 }
-                run.stats.effects_skipped += 1;
-                let w = self.cgll_pure_carry_scan_weight(run, d, d.w, pos_after, &br_weight);
-                run.worklist.push_back(CgllPureDescriptor {
-                    state: br_state,
-                    cur_sym: br_symbol,
-                    pos: next_of(pos_after),
-                    w,
-                    ..d.clone()
-                });
+                self.cgll_pure_binder_ident_consume(
+                    run, d, tokens, pos_after, br_symbol, br_state, &br_weight, end_inline,
+                );
             },
             ForkActionKind::ReplaceAndPush { replace_symbol } => {
                 self.cgll_pure_descend(
@@ -30889,6 +32586,20 @@ where
     /// gates the Fork-arm "effect" journal pushes: only recovery deltas
     /// land in `cursor.recovery_deltas`.
     #[inline(always)]
+    /// P3 Pocket-C2 (2026-07-11): the PURE arm's recovery classification.
+    /// `CommitLexAlternative` is EXCLUDED: on lattice sources the fork
+    /// branch's `next_pos` IS the alt's DAG target node (M5 doc @~5232) —
+    /// the delta is commit_winner replay bookkeeping for the linear-source
+    /// MutableMultiTokenSource, not a token-source mutation. Amendment 8
+    /// (recovery hard-drop) therefore must not kill lex-alt branches
+    /// (receipt: class3 `with [ ] ( @(0) ? x ) . { 0 }` — the `?` lex-alt
+    /// branch died as recovery_drops=1 ⇒ accepts=0 on well-formed input).
+    #[allow(dead_code)] // Reached only under the const (DCE'd while const off).
+    fn cgll_pure_is_recovery_delta(delta: &BuilderDelta) -> bool {
+        !matches!(delta, BuilderDelta::CommitLexAlternative { .. })
+            && Self::is_recovery_delta(delta)
+    }
+
     fn is_recovery_delta(delta: &BuilderDelta) -> bool {
         matches!(
             delta,
