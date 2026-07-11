@@ -827,6 +827,63 @@ impl RootpMode {
     }
 }
 
+/// P4 HYBRID K-TUPLE (election red-team T4): the per-derivation election
+/// key — (K-A lateness, K-B realized weight, K-C temporal ordinal seq,
+/// K-D insertion order via strict-only replacement at the call sites).
+/// Realize-side ONLY; never touches descriptors, keys, carriers, or `W`
+/// semantics.
+#[derive(Clone, Debug)]
+struct CgllKTuple<W> {
+    /// K-A: predicted acceptance lag (the L2 demand-driver model).
+    lateness: u32,
+    /// K-B: realized weight (packing ⊗ children, goal-wrap re-derived).
+    weight: W,
+    /// K-C: structural decisions (token position, depth, emission ordinal);
+    /// sorted at comparison by (position, innermost-first).
+    decisions: Vec<(u32, u32, u16)>,
+}
+
+impl<W: crate::automata::semiring::StarSemiringRef> CgllKTuple<W> {
+    fn neutral() -> Self {
+        CgllKTuple { lateness: 0, weight: W::one_ref(), decisions: Vec::new() }
+    }
+
+    fn absorb_child(&mut self, child: CgllKTuple<W>) {
+        self.lateness += child.lateness;
+        self.weight = self.weight.times_ref(&child.weight);
+        self.decisions.extend(child.decisions);
+    }
+
+    fn sorted_ordinals(&self) -> Vec<u16> {
+        let mut d = self.decisions.clone();
+        // (token position ASC, innermost-first at equal position = depth DESC).
+        d.sort_by(|a, b| a.0.cmp(&b.0).then(b.1.cmp(&a.1)));
+        d.into_iter().map(|(_, _, o)| o).collect()
+    }
+
+    /// Strict `self < other` under the K-tuple order (K-D = the caller only
+    /// replaces on strict improvement, preserving insertion order on ties).
+    fn lt(&self, other: &Self) -> bool {
+        if self.lateness != other.lateness {
+            return self.lateness < other.lateness;
+        }
+        if !(self.weight == other.weight) {
+            let m = self.weight.plus_ref(&other.weight);
+            return m == self.weight;
+        }
+        let (a, b) = (self.sorted_ordinals(), other.sorted_ordinals());
+        let n = a.len().max(b.len());
+        for i in 0..n {
+            let ai = a.get(i).copied().unwrap_or(u16::MAX);
+            let bi = b.get(i).copied().unwrap_or(u16::MAX);
+            if ai != bi {
+                return ai < bi;
+            }
+        }
+        false
+    }
+}
+
 /// ROOT-P Stage 4c fan-out gate MODE (2026-07-08). Selects WHICH edge-dropped
 /// multi-predecessor pops fan out. Read once per process from
 /// `PRATTAIL_ROOTP_FAN_MODE` (default `All`). A diagnostic A/B lever: the plan's
@@ -1442,6 +1499,29 @@ pub trait WpdaEngine<W: SemiringRef> {
     ///
     /// Default returns `false` for backward compatibility (Class-5
     /// collections fire their own finalize action at marker pop).
+    /// P4 K-C (2026-07-11, election red-team T4): the TEMPORAL STATIC
+    /// ordinal of a fork-emission site — the position of the branch within
+    /// its dispatch's emission order. Site kinds (the six P4-election tests
+    /// need no intra-rule discrimination — red-team T3):
+    ///   0 = optional-group TAKE   (binder.rs:2459 emits take first)  → 0
+    ///   1 = optional-group SKIP                                       → 1
+    ///   2 = grouping-KEPT fire (NParen-class; prefix.rs:1110 grouping-
+    ///       first)                                                    → 0
+    ///   3 = grouping-TRANSPARENT (structurally ABSENT in the forest —
+    ///       compared as the MAX pad)                                  → 1
+    /// Codegen may override with the exact per-grammar emission table
+    /// (lattice-alt order forks.rs; dispatch-descriptor order
+    /// prefix.rs:2185+); the walker consumes it ONLY at realize-time
+    /// election (never in the walk).
+    fn fork_emission_ordinal(&self, site_kind: u8, cat: u16, rule: u16) -> u16 {
+        let _ = (cat, rule);
+        match site_kind {
+            0 | 2 => 0,
+            1 | 3 => 1,
+            _ => u16::MAX,
+        }
+    }
+
     fn is_binder_internal_collection(&self, src_idx: u16, rule_idx: u16) -> bool {
         let _ = (src_idx, rule_idx);
         false
@@ -4503,6 +4583,9 @@ struct CgllPureStats {
     /// P3 Pocket-A5: D2 resume-replace CategoryEntry re-tags (the classic
     /// CategoryEntryContinuation wrap-chain morph analog).
     d2_retags: u64,
+    /// P3.f: collection-separator infix-guard rewrites (element returns at
+    /// maximal extent; the marker consumes the separator).
+    collsep_guard_rewrites: u64,
     /// P3.a: bare-path duplicates applied to a MULTI-packing spine (the
     /// duplicate takes the first packing's tail; nonzero on a green battery
     /// would mean divergent packing tails at a bare-path site — escalate).
@@ -9041,6 +9124,91 @@ where
                         crate::sppf::SppfId,
                         Vec<(ActionArg, W)>,
                     > = std::collections::HashMap::new();
+                    // ── P4 HYBRID K-TUPLE ELECTION (red-team T4): a BOUNDED
+                    // request on the pure family root = single-result
+                    // semantics (classic pre-elects the winner cursor at
+                    // resolve; the facade's min only ever sees one root's
+                    // one derivation). Elect per-node by the K-tuple and
+                    // realize exactly the chosen derivation; any gap falls
+                    // back to the full-family realize below.
+                    // SINGLE-vs-ALL discrimination: the single facades
+                    // realize with Some(1) or the M6 RAW_PROBE_CAPS
+                    // ({128,64,32,16,8,4,2,1} — facade.rs:4206); the _all
+                    // facades probe with REALIZE_CAP+1 = 65 doubling to
+                    // 4096 (facade.rs:4815-4816). The sets are disjoint:
+                    // powers of two ≤ 128 = single-result semantics.
+                    // (COUPLING to the generated facade constants —
+                    // documented; the clean follow-up is an explicit
+                    // realize-mode parameter in the facade codegen.)
+                    let single_result_request =
+                        limit.is_some_and(|c| c <= 128 && c.is_power_of_two());
+                    if single_result_request {
+                        let goal_cat = self.cgll_pure_goal_cat;
+                        // TABU-RETRY: the K-tuple is realizability-blind
+                        // (classic's layers only ever rank realizable
+                        // cursors). A refuted chosen packing is excluded
+                        // and the election re-runs; bounded by the packing
+                        // population.
+                        let mut tabu: rustc_hash::FxHashSet<crate::sppf::SppfId> =
+                            rustc_hash::FxHashSet::default();
+                        for _attempt in 0..64usize {
+                            let mut kmemo: rustc_hash::FxHashMap<
+                                crate::sppf::SppfId,
+                                CgllKTuple<W>,
+                            > = rustc_hash::FxHashMap::default();
+                            let mut choices: rustc_hash::FxHashMap<
+                                crate::sppf::SppfId,
+                                crate::sppf::SppfId,
+                            > = rustc_hash::FxHashMap::default();
+                            let mut on_path: rustc_hash::FxHashSet<crate::sppf::SppfId> =
+                                rustc_hash::FxHashSet::default();
+                            let kt = self.cgll_pure_ktuple(
+                                root,
+                                0,
+                                true,
+                                goal_cat,
+                                &tabu,
+                                &mut kmemo,
+                                &mut choices,
+                                &mut on_path,
+                            );
+                            #[cfg(debug_assertions)]
+                            if std::env::var_os("PRATTAIL_CGLL_REALIZE_DIAG").is_some() {
+                                eprintln!(
+                                    "  [k-elect] root={root} chosen={:?} lateness={} \
+                                     ords={:?} tabu={}",
+                                    choices.get(&root),
+                                    kt.lateness,
+                                    kt.sorted_ordinals(),
+                                    tabu.len()
+                                );
+                            }
+                            if choices.get(&root).is_none() {
+                                break; // every root packing tabu'd — fallback
+                            }
+                            let mut r_on_path: rustc_hash::FxHashSet<crate::sppf::SppfId> =
+                                rustc_hash::FxHashSet::default();
+                            match self.cgll_pure_realize_chosen(
+                                root,
+                                &choices,
+                                &mut memo,
+                                &mut r_on_path,
+                            ) {
+                                Ok((arg, w)) => {
+                                    if let ActionArg::Term { value, .. } = arg {
+                                        return vec![(value, w)];
+                                    }
+                                    break;
+                                },
+                                Err(Some(bad_pk)) => {
+                                    tabu.insert(bad_pk);
+                                    memo.clear();
+                                },
+                                Err(None) => break, // structural gap — fallback
+                            }
+                        }
+                        memo.clear();
+                    }
                     return self
                         .cgll_realize_bin_symbol(root, &mut memo, limit)
                         .into_iter()
@@ -24333,6 +24501,409 @@ where
         }
     }
 
+    /// P4 item-1: the SPINE BODY category — the category of the LAST
+    /// content Symbol in the first flat (classic reads the sppf-stack TOP;
+    /// the pure spine's last content element is the same constituent).
+    #[allow(dead_code)] // Reached only under the const (DCE'd while const off).
+    fn cgll_pure_spine_body_cat(&self, w: crate::sppf::SppfId) -> Option<u16> {
+        if w == crate::sppf::SPPF_ID_NONE {
+            return None;
+        }
+        if let Some(crate::sppf::SppfNode::Symbol { non_terminal_tag, .. }) = self.sppf.node(w) {
+            return Some(*non_terminal_tag as u16);
+        }
+        let flats = self.cgll_flatten_ids(w);
+        let flat = flats.first()?;
+        flat.iter().rev().find_map(|&el| match self.sppf.node(el) {
+            Some(crate::sppf::SppfNode::Symbol { non_terminal_tag, .. }) => {
+                Some(*non_terminal_tag as u16)
+            },
+            _ => None,
+        })
+    }
+
+    /// ── P4 HYBRID K-TUPLE ELECTION (red-team T4 verdict; realize-only,
+    /// ZERO descriptor/key/carrier/W changes). Per candidate derivation:
+    ///   K-A completion-lateness rank — the L2 demand-driver early-stop
+    ///       model: the saturating pure arm PREDICTS which reading classic
+    ///       would have frozen first. PRIMARY formulation = derivation
+    ///       transition count; `CGLL_KA_HOP_PLACEMENT_ONLY` switches to the
+    ///       verdict's FALLBACK (mid-parse coercion-hop count only; EOI
+    ///       goal-wraps cost 0) — see the formulation note at the const.
+    ///   K-B realized weight (packing ⊗ children, BOTH Symbol-side pop/
+    ///       completion weights AND Intermediate join/carrier weights —
+    ///       the min_tagseq operand-set inconsistency FIXED), with the
+    ///       EOI goal-wrap coercion weight RE-DERIVED at election
+    ///       (walker:8124-8130 inputs) since the publish wrap interns one.
+    ///   K-C temporal static ordinals: structural decisions
+    ///       (OPTIONAL_PRESENT packings = TAKE; OptAbsent leaves = SKIP;
+    ///       same-span unary KEPT-wrapper fires), sorted by (token
+    ///       position, innermost-first at equal position), engine
+    ///       `fork_emission_ordinal` values compared lexicographically
+    ///       with u16::MAX padding (a structurally-ABSENT decision — the
+    ///       transparent-group reading — loses to a present one).
+    ///   K-D insertion order: candidates iterate in packing-family
+    ///       (insertion) order and only STRICT improvement replaces.
+    #[allow(dead_code)]
+    fn cgll_pure_ktuple(
+        &self,
+        node: crate::sppf::SppfId,
+        depth: u32,
+        at_root: bool,
+        goal_cat: Option<u16>,
+        tabu: &rustc_hash::FxHashSet<crate::sppf::SppfId>,
+        memo: &mut rustc_hash::FxHashMap<crate::sppf::SppfId, CgllKTuple<W>>,
+        choices: &mut rustc_hash::FxHashMap<crate::sppf::SppfId, crate::sppf::SppfId>,
+        on_path: &mut rustc_hash::FxHashSet<crate::sppf::SppfId>,
+    ) -> CgllKTuple<W>
+    where
+        W: StarSemiringRef,
+    {
+        if !at_root {
+            if let Some(v) = memo.get(&node) {
+                return v.clone();
+            }
+        }
+        if !on_path.insert(node) {
+            return CgllKTuple::neutral(); // symbol-mediated cycle guard
+        }
+        let is_symbol = matches!(self.sppf.node(node), Some(crate::sppf::SppfNode::Symbol { .. }));
+        let is_inter =
+            matches!(self.sppf.node(node), Some(crate::sppf::SppfNode::Intermediate { .. }));
+        let result = if is_symbol || is_inter {
+            let node_cat = if is_symbol {
+                self.sppf_symbol_category(node)
+            } else {
+                None
+            };
+            let node_span = (self.sppf.span_lo(node), self.sppf.span_hi(node));
+            let packings = self.sppf.packings_of(node).to_vec();
+            let mut best: Option<(CgllKTuple<W>, crate::sppf::SppfId)> = None;
+            for p in packings {
+                if tabu.contains(&p) {
+                    continue; // realize-refuted in an earlier attempt
+                }
+                let Some(crate::sppf::SppfNode::Packing { rule_idx, children, weight }) =
+                    self.sppf.node(p)
+                else {
+                    continue;
+                };
+                let (rule_idx, children, pk_weight) =
+                    (*rule_idx, children.clone(), weight.clone());
+                let mut t = CgllKTuple::neutral();
+                t.weight = pk_weight;
+                for c in &children {
+                    let ct = self.cgll_pure_ktuple(
+                        *c,
+                        depth + 1,
+                        false,
+                        goal_cat,
+                        tabu,
+                        memo,
+                        choices,
+                        on_path,
+                    );
+                    t.absorb_child(ct);
+                }
+                // Decision entries + lateness contributions for THIS packing.
+                if rule_idx == Self::OPTIONAL_PRESENT_RULE_IDX {
+                    // TAKE decision at the group content's start position.
+                    let pos = children
+                        .first()
+                        .and_then(|&c| self.sppf.span_lo(c))
+                        .unwrap_or(0);
+                    t.decisions.push((pos, depth, self.engine.fork_emission_ordinal(0, 0, 0)));
+                } else if is_symbol && rule_idx != Self::OPTIONAL_PRESENT_RULE_IDX {
+                    let cat = (rule_idx >> 16) as u16;
+                    let local = (rule_idx & 0xFFFF) as u16;
+                    // Declared coercion hop? (K-A) — EOI goal-wrap costs 0.
+                    let body_cat = children.first().and_then(|&c| {
+                        match self.sppf.node(c) {
+                            Some(crate::sppf::SppfNode::Symbol {
+                                non_terminal_tag, ..
+                            }) => Some(*non_terminal_tag as u16),
+                            Some(crate::sppf::SppfNode::Intermediate { .. }) => {
+                                self.cgll_pure_spine_body_cat(c)
+                            },
+                            _ => None,
+                        }
+                    });
+                    if let Some(bc) = body_cat {
+                        let declared = self
+                            .engine
+                            .single_hop_coercion(bc, cat)
+                            .iter()
+                            .any(|&(cc, rr)| cc == cat && rr == local);
+                        if declared {
+                            let is_goal_wrap = at_root
+                                && goal_cat.map_or(false, |g| g == cat);
+                            if is_goal_wrap {
+                                // K-B: RE-DERIVE the goal-wrap coercion
+                                // weight (the publish wrap interned one() —
+                                // classic charges it on the cursor @8131).
+                                if let (Some(lo), Some(hi)) = node_span {
+                                    let span_len = hi.saturating_sub(lo).max(1);
+                                    let cw = self
+                                        .engine
+                                        .single_hop_coercion_completion_weight(
+                                            bc, cat, cat, local, span_len,
+                                        );
+                                    t.weight = t.weight.times_ref(&cw);
+                                }
+                            } else {
+                                t.lateness += 1; // mid-parse hop
+                            }
+                        }
+                    }
+                    // KEPT-WRAPPER decision (grouping-kept / NParen-class):
+                    // a fire whose trigger-filtered flat is EXACTLY ONE
+                    // inner Symbol and whose rule is NOT a declared
+                    // coercion. The transparent-group twin is structurally
+                    // ABSENT (no fire) and pads MAX at comparison — so the
+                    // kept-wrapper reading wins the K-C slot, matching
+                    // classic's grouping-first emission (prefix.rs:1110).
+                    // Unary content rules that exist in BOTH competing
+                    // readings contribute matching entries that cancel;
+                    // fold-twin asymmetries are post-fold-identical
+                    // (election-unobservable).
+                    {
+                        let mut content: Vec<crate::sppf::SppfId> = Vec::new();
+                        for &c in &children {
+                            match self.sppf.node(c) {
+                                Some(crate::sppf::SppfNode::Intermediate { .. }) => {
+                                    if let Some(f0) = self.cgll_flatten_ids(c).first() {
+                                        content.extend(f0.iter().copied());
+                                    }
+                                },
+                                _ => content.push(c),
+                            }
+                        }
+                        content.retain(|&el| {
+                            matches!(
+                                self.sppf.node(el),
+                                Some(crate::sppf::SppfNode::Symbol { .. })
+                            )
+                        });
+                        if content.len() == 1 {
+                            let declared_coercion = body_cat
+                                .map(|bc| {
+                                    self.engine
+                                        .single_hop_coercion(bc, cat)
+                                        .iter()
+                                        .any(|&(cc, rr)| cc == cat && rr == local)
+                                })
+                                .unwrap_or(false);
+                            if !declared_coercion {
+                                if let (Some(lo), _) = node_span {
+                                    t.decisions.push((
+                                        lo,
+                                        depth,
+                                        self.engine.fork_emission_ordinal(2, cat, local),
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                }
+                if !Self::CGLL_KA_HOP_PLACEMENT_ONLY {
+                    t.lateness += 1; // PRIMARY formulation: every transition counts.
+                }
+                // OptAbsent SKIP decisions live as LEAVES in the flats —
+                // absorbed below via child scan of DIRECT children (leaves
+                // of Intermediates are reached through the recursion since
+                // Intermediate packings also pass here).
+                for c in &children {
+                    match self.sppf.node(*c) {
+                        Some(crate::sppf::SppfNode::OptAbsent { pos }) => {
+                            t.decisions.push((
+                                *pos,
+                                depth,
+                                self.engine.fork_emission_ordinal(1, 0, 0),
+                            ));
+                        },
+                        // The take-path Optional rides as a PACKING LEAF in
+                        // the flat (P3.c OptGroupFinalize) — outside the
+                        // Symbol/Intermediate recursion. Count the TAKE
+                        // decision and absorb the inner args' tuples.
+                        Some(crate::sppf::SppfNode::Packing {
+                            rule_idx: pr,
+                            children: pch,
+                            ..
+                        }) if *pr == Self::OPTIONAL_PRESENT_RULE_IDX => {
+                            let pch = pch.clone();
+                            let pos = pch
+                                .first()
+                                .and_then(|&ic| self.sppf.span_lo(ic))
+                                .unwrap_or(0);
+                            t.decisions.push((
+                                pos,
+                                depth,
+                                self.engine.fork_emission_ordinal(0, 0, 0),
+                            ));
+                            for ic in pch {
+                                let ct = self.cgll_pure_ktuple(
+                                    ic,
+                                    depth + 1,
+                                    false,
+                                    goal_cat,
+                                    tabu,
+                                    memo,
+                                    choices,
+                                    on_path,
+                                );
+                                t.absorb_child(ct);
+                            }
+                        },
+                        _ => {},
+                    }
+                }
+                let better = match &best {
+                    None => true,
+                    Some((bt, _)) => t.lt(bt), // strict ⇒ K-D insertion kept
+                };
+                if better {
+                    best = Some((t, p));
+                }
+            }
+            match best {
+                Some((t, p)) => {
+                    choices.insert(node, p);
+                    t
+                },
+                None => CgllKTuple::neutral(),
+            }
+        } else {
+            CgllKTuple::neutral()
+        };
+        on_path.remove(&node);
+        if !at_root {
+            memo.insert(node, result.clone());
+        }
+        result
+    }
+
+    /// P4 K-A formulation switch (red-team NO-GO 2): `false` = PRIMARY
+    /// (derivation transition count); `true` = FALLBACK (mid-parse
+    /// coercion-hop placement only). The fallback is MANDATED the moment
+    /// any currently-green election flips under the primary — recorded in
+    /// the ledger either way.
+    const CGLL_KA_HOP_PLACEMENT_ONLY: bool = true;
+
+    /// Realize exactly the CHOSEN derivation (one packing per node from
+    /// `cgll_pure_ktuple`'s election). `None` on any gap (missing choice /
+    /// elide) — the caller falls back to the full-family realize.
+    #[allow(dead_code)] // Reached only under the const (DCE'd while const off).
+    /// `Err(pk)` = the packing whose realize refuted (tabu it + re-elect).
+    fn cgll_pure_realize_chosen(
+        &self,
+        sym: crate::sppf::SppfId,
+        choices: &rustc_hash::FxHashMap<crate::sppf::SppfId, crate::sppf::SppfId>,
+        memo: &mut std::collections::HashMap<crate::sppf::SppfId, Vec<(ActionArg, W)>>,
+        on_path: &mut rustc_hash::FxHashSet<crate::sppf::SppfId>,
+    ) -> Result<(ActionArg, W), Option<crate::sppf::SppfId>>
+    where
+        W: StarSemiringRef,
+    {
+        let Some(&pk) = choices.get(&sym) else {
+            #[cfg(debug_assertions)]
+            if std::env::var_os("PRATTAIL_CGLL_REALIZE_DIAG").is_some() {
+                eprintln!("  [k-chosen-bail] no choice for sym={sym}");
+            }
+            return Err(None);
+        };
+        let Some(crate::sppf::SppfNode::Packing { rule_idx, children, weight }) =
+            self.sppf.node(pk)
+        else {
+            return Err(Some(pk));
+        };
+        // CYCLE GUARD (the ForRow unit-rule symbol-mediated cycle class,
+        // tolerated at publish): a chosen derivation that revisits an
+        // on-path symbol is CYCLIC — tabu its packing and re-elect
+        // (receipt: unit_rhocalc_forrow_forrowwhere stack overflow).
+        if !on_path.insert(sym) {
+            return Err(Some(pk));
+        }
+        let (rule_idx, pack_children, weight) = (*rule_idx, children.clone(), weight.clone());
+        // Chosen-flat: follow the chosen packing at every Intermediate.
+        let mut flat: Vec<crate::sppf::SppfId> = Vec::new();
+        let mut stack: Vec<crate::sppf::SppfId> = pack_children.iter().rev().copied().collect();
+        let mut flat_weight = W::one_ref();
+        let mut guard = 0usize;
+        while let Some(c) = stack.pop() {
+            guard += 1;
+            if guard > 100_000 {
+                on_path.remove(&sym);
+                return Err(None);
+            }
+            match self.sppf.node(c) {
+                Some(crate::sppf::SppfNode::Intermediate { .. }) => {
+                    let Some(&ipk) = choices.get(&c) else {
+                        #[cfg(debug_assertions)]
+                        if std::env::var_os("PRATTAIL_CGLL_REALIZE_DIAG").is_some() {
+                            eprintln!("  [k-chosen-bail] no choice for inter={c}");
+                        }
+                        on_path.remove(&sym);
+                        return Err(None);
+                    };
+                    if let Some(crate::sppf::SppfNode::Packing { children, weight, .. }) =
+                        self.sppf.node(ipk)
+                    {
+                        flat_weight = flat_weight.times_ref(weight);
+                        for ch in children.iter().rev() {
+                            stack.push(*ch);
+                        }
+                    } else {
+                        on_path.remove(&sym);
+                        return Err(Some(ipk));
+                    }
+                },
+                _ => flat.push(c),
+            }
+        }
+        for &c in &flat {
+            if memo.contains_key(&c) {
+                continue;
+            }
+            self.cgll_prerealize_deps(c, memo, None);
+            if memo.contains_key(&c) {
+                continue;
+            }
+            let cr = match self.sppf.node(c) {
+                Some(crate::sppf::SppfNode::Symbol { non_terminal_tag, .. })
+                    if non_terminal_tag & CGLL_BIN_TAG != 0 =>
+                {
+                    match self.cgll_pure_realize_chosen(c, choices, memo, on_path) {
+                        Ok(one_result) => vec![one_result],
+                        Err(e) => {
+                            on_path.remove(&sym);
+                            return Err(e);
+                        },
+                    }
+                },
+                _ => {
+                    let empty_colors: std::collections::HashMap<
+                        crate::sppf::SppfId,
+                        RealizeColor,
+                    > = std::collections::HashMap::new();
+                    self.realize_node_leave(c, memo, &empty_colors, None)
+                },
+            };
+            memo.insert(c, cr);
+        }
+        let out = self.realize_packing_call(
+            rule_idx,
+            &flat,
+            weight.times_ref(&flat_weight),
+            memo,
+            Some(1),
+        );
+        on_path.remove(&sym);
+        match out.into_iter().next() {
+            Some(r) => Ok(r),
+            None => Err(Some(pk)), // this packing's action refuted — tabu it
+        }
+    }
+
     /// P3.a: non-separator item count of a marker frame's spine `w` (the
     /// pure accumulator) for the kv-phase parity patch, plus whether the
     /// spine's flats DISAGREE on parity (counted — classically impossible:
@@ -25293,7 +25864,40 @@ where
                     } else {
                         vec![d.w]
                     };
-                    let pk = self.sppf.intern_packing(rule_id, children, pop_weight.clone());
+                    // ── P4 K-B (red-team verdict): the CLASSIC COERCION
+                    // COMPLETION COST restored — classic charges
+                    // `single_hop_coercion_completion_weight(body, target,
+                    // target, rule, span_len)` into the fire's packing
+                    // weight for DECLARED single-hop coercion Returns
+                    // (`apply_crosscat_projection_completion_weight`
+                    // @~38351). Weight-value-only (packing COUNTS and the
+                    // walk untouched — plateau/carrier gate). The P4WIP
+                    // 167→165 regression came from this charge WITHOUT the
+                    // K-A layer above it; under the K-tuple, K-A dominates.
+                    let mut pk_weight = pop_weight.clone();
+                    if matches!(d.cur_sym.kind, SymbolKind::Return) {
+                        if let Some(body_cat) = self.cgll_pure_spine_body_cat(d.w) {
+                            let target = d.cur_sym.category_src_idx;
+                            let rule_in_cat = d.cur_sym.rule_index_in_category;
+                            let declared = self
+                                .engine
+                                .single_hop_coercion(body_cat, target)
+                                .iter()
+                                .any(|&(c, r)| c == target && r == rule_in_cat);
+                            if declared {
+                                let span_len = (i_pop as u32).saturating_sub(lo).max(1);
+                                let cw = self.engine.single_hop_coercion_completion_weight(
+                                    body_cat,
+                                    target,
+                                    target,
+                                    rule_in_cat,
+                                    span_len,
+                                );
+                                pk_weight = pk_weight.times_ref(&cw);
+                            }
+                        }
+                    }
+                    let pk = self.sppf.intern_packing(rule_id, children, pk_weight);
                     self.sppf.link_packing_to_symbol(z, pk);
                     let returns = self.gss.gll_pop(d.u, i_pop, z);
                     run.stats.gll_pops += 1;
@@ -26180,7 +26784,7 @@ where
                  coll_closes={} coll_sep_folds={} coll_cov_refuted={} coll_empty={} coll_kv={} \
                  coll_standalone={} coll_kv_pdiv={} coll_kv_dupmp={} coll_led_splits={} goal_coerce={} opt_fin={} \
                  effects_skipped={} recovery_drops={} weight_drops={} guard_cc_actions={} \
-                 guard1_sites={} guarded_topcat_sites={} unwind_m1={} unwind_m5={} unwind_m234={} d2_retags={} \
+                 guard1_sites={} guarded_topcat_sites={} unwind_m1={} unwind_m5={} unwind_m234={} d2_retags={} collsep_guard={} \
                  unwind_census={} chain_ctx_div={} grouping_cat_rejects={} \
                  opt_group_absent={} out_of_scope={} engine_errors={} prefix_pos_desyncs={} \
                  accept_action_hits={}",
@@ -26229,6 +26833,7 @@ where
                 s.unwind_inject_m5,
                 s.unwind_inject_m234,
                 s.d2_retags,
+                s.collsep_guard_rewrites,
                 s.unwind_family_census,
                 s.chain_ctx_divergence,
                 s.grouping_cat_rejects,
@@ -26390,6 +26995,43 @@ where
         false
     }
 
+    /// P3.f (guard_collection_separator_infix pure form; plan line 65,
+    /// classic @13348 reading `collection_element_direct_separator`): the
+    /// innermost enclosing collection's ELEMENT separator text, from the
+    /// u-ancestry (edge-ctx caller chain), stopping at scope-resetting
+    /// frames exactly like the classic edge-stack walk (GroupingMarker /
+    /// MixfixMarker / RuleAt reset; CollectionMarker answers).
+    #[allow(dead_code)] // Reached only under the const (DCE'd while const off).
+    fn cgll_pure_enclosing_collection_sep(
+        &self,
+        run: &mut CgllPureRun,
+        u: crate::gss::GssNodeId,
+    ) -> Option<&'static str> {
+        let mut cur = u;
+        for _ in 0..24 {
+            let edges = self.gss.gll_edges(cur);
+            let first = edges.first()?;
+            let ctx = run.edge_ctx.get(&(cur, first.target, first.operand_w)).copied()?;
+            match ctx.caller_sym.kind {
+                SymbolKind::CollectionMarker => {
+                    return self
+                        .engine
+                        .collection_spec(
+                            ctx.caller_sym.category_src_idx,
+                            ctx.caller_sym.rule_index_in_category,
+                            ctx.caller_sym.bp.unwrap_or(0),
+                        )
+                        .map(|spec| spec.sep);
+                },
+                SymbolKind::GroupingMarker
+                | SymbolKind::MixfixMarker
+                | SymbolKind::RuleAt(_) => return None,
+                _ => cur = first.target,
+            }
+        }
+        None
+    }
+
     #[allow(dead_code)] // Reached only under the const (DCE'd while const off).
     fn cgll_pure_inject_unwind_reading(
         &mut self,
@@ -26480,6 +27122,28 @@ where
         tokens: &dyn WpdaTokenSource,
     ) {
         let next_of = |p: usize| tokens.next_pos(p, 0).unwrap_or(p + 1);
+        // ── P3.f GUARD (guard_collection_separator_infix pure form): at an
+        // element frame's InfixLoop, a consume of the ENCLOSING collection's
+        // separator as an INFIX trigger is refused — classic rewrites the
+        // action to Advance(Unwinding) so the element returns at maximal
+        // extent and the marker's CollectionLoop consumes the separator
+        // (receipt: `#{ 1 | 2 }#` — the engine's deterministic
+        // ConsumeAndPush(PParInfix) swallowed `1 | 2` into ONE element and
+        // the flat {1,2} reading never parsed; bag_trace.log).
+        let action = if matches!(d.state, WpdaState::InfixLoop { .. })
+            && d.cur_sym.kind == SymbolKind::CategoryEntry
+            && matches!(action, WpdaStepAction::ConsumeAndPush { .. })
+        {
+            match self.cgll_pure_enclosing_collection_sep(run, d.u) {
+                Some(sep) if tokens.peek_text(d.pos) == Some(sep) => {
+                    run.stats.collsep_guard_rewrites += 1;
+                    WpdaStepAction::Advance(WpdaState::Unwinding)
+                },
+                _ => action,
+            }
+        } else {
+            action
+        };
         // D2 = operand-consuming descents: pushes taken FROM the Pratt
         // operator loop states (the caller's running `w` is the LHS).
         let is_d2_source = matches!(
