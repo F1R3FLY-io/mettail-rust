@@ -23760,7 +23760,13 @@ where
         }
         if terms.is_empty() {
             return WpdaResolveResult::ParseError {
-                message: "canonical-GLL binarized: no realizable readings".to_string(),
+                // P4 item-5 (2026-07-11): message aligned with the classic
+                // facade text (prefix kept for arm attribution — the
+                // remaining delta is the parenthesized tag, documented in
+                // the ledger; same `WpdaParseError::ParseFailed` type).
+                message: "no accepting branch reached end of input \
+                          (canonical-GLL: no realizable readings)"
+                    .to_string(),
                 position: self.pos,
             };
         }
