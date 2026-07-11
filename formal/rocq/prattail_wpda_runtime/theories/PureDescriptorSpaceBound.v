@@ -545,6 +545,147 @@ Section PureDescriptorSpaceBound.
 
 End PureDescriptorSpaceBound.
 
+(* ═══════════════════════════════════════════════════════════════════════════
+   R1 (Pocket-F, 2026-07-11) — REPAIR-LATTICE EXTENSIONS.
+
+   The R1 recovery adapter adds (a) VIRTUAL repair positions above the real
+   input (`cgll_pure_virtual_base = n + 1`; one per materialized
+   insert/substitute) and (b) a K-GATED ROUND LOOP that re-enters the SAME
+   drain with reseeded descriptors (`'rounds: loop` around the worklist).
+
+   Two proof obligations, both discharged WITHOUT touching the section
+   theorems (the space model is UNIFORM in `n` — the extension is a
+   constants-only instantiation):
+
+   T7 (round-loop continuation): the K-round loop is EXACTLY one `drain`
+   over the concatenated dequeue stream — `drain seen (p1 ++ p2)` equals
+   the sequential composition of `drain seen p1` and `drain` of `p2` from
+   the FIRST drain's final seen set. Hence T3-T6 (monotone seen /
+   never-reprocess / NoDup / the processed bound) apply UNCHANGED to the
+   round loop: rounds extend `pending`, never reset `seen` (the runtime
+   `run.accept_seen`/U-set persists across rounds; receipt: the reseeds
+   push into the SAME `run.worklist` @'rounds loop).
+
+   T8/T9/T10 (position-axis extension n → n + V): the descriptor space
+   with V virtual positions is the SAME polynomial at input size n + V;
+   with the runtime cap V ≤ 8·K (RECOVERY_FORK_MAX_BRANCHES = 8 proposals
+   per round × K = max_recovery_depth rounds — both CONSTANTS: K default 3,
+   strict 0), the degree-5 bound holds with the constant absorbed into the
+   position base: (n + V + 2)^5 ≤ (n + 8K + 2)^5. Degree in n UNCHANGED.
+   ═══════════════════════════════════════════════════════════════════════ *)
+
+(* T7 — ROUND-LOOP CONTINUATION (monotone-continuation lemma). *)
+Theorem drain_append :
+  forall p1 p2 seen,
+    drain seen (p1 ++ p2)
+    = (fst (drain (fst (drain seen p1)) p2),
+       snd (drain seen p1) ++ snd (drain (fst (drain seen p1)) p2)).
+Proof.
+  induction p1 as [|d rest IH]; intros p2 seen.
+  - cbn [app drain fst snd].
+    destruct (drain seen p2) as [fin proc]; reflexivity.
+  - cbn [app drain].
+    destruct (in_dec descriptor_eq_dec d seen) as [Hin | Hnin].
+    + apply IH.
+    + rewrite IH.
+      destruct (drain (d :: seen) rest) as [fin1 proc1] eqn:E1.
+      cbn [fst snd].
+      destruct (drain fin1 p2) as [fin2 proc2] eqn:E2.
+      cbn [fst snd app]. reflexivity.
+Qed.
+
+(* T7 corollaries: the round loop inherits the add-once discipline. *)
+Corollary drain_append_processed_nodup :
+  forall p1 p2 seen, NoDup (snd (drain seen (p1 ++ p2))).
+Proof. intros; apply drain_processed_nodup. Qed.
+
+Corollary drain_append_seen_monotone :
+  forall p1 p2 seen,
+    incl (fst (drain seen p1)) (fst (drain seen (p1 ++ p2))).
+Proof.
+  intros p1 p2 seen. rewrite drain_append. cbn [fst].
+  apply drain_seen_monotone.
+Qed.
+
+(* T8 — POSITION-AXIS EXTENSION: the space theorems are uniform in `n`, so
+   the repair lattice's V extra positions are a pure instantiation at
+   `n + V` — NO new counting argument is needed. *)
+Theorem pure_descriptor_space_poly_bound_with_repairs :
+  forall grammar_slots gss_label_slots symbol_tags intermediate_base_slots
+         leaf_classes n V (U : list PureDescriptor),
+    NoDup U ->
+    (forall d, In d U ->
+       descriptor_in_range grammar_slots gss_label_slots symbol_tags
+         intermediate_base_slots leaf_classes (n + V) d) ->
+    length U
+    <= descriptor_space_bound grammar_slots gss_label_slots symbol_tags
+         intermediate_base_slots leaf_classes (n + V).
+Proof.
+  intros. apply pure_descriptor_space_poly_bound; assumption.
+Qed.
+
+(* The runtime virtual-position cap: ≤ 8 proposals per round (the
+   RECOVERY_FORK_MAX_BRANCHES emission cap) × K rounds. *)
+Definition repair_virtual_cap (K : nat) : nat := 8 * K.
+
+Lemma position_count_le_mono : forall a b, a <= b ->
+  position_count a <= position_count b.
+Proof. intros a b H. unfold position_count. lia. Qed.
+
+(* T9 — the full factored bound is MONOTONE in the input size. *)
+Lemma descriptor_space_bound_le_mono :
+  forall gs gl st ib lc a b,
+    a <= b ->
+    descriptor_space_bound gs gl st ib lc a
+    <= descriptor_space_bound gs gl st ib lc b.
+Proof.
+  (* Structured monotone descent (a blind `repeat first [mul|add|refl]`
+     leaves open goals — the mul splits need the refl branch on the LEFT
+     factor before HP fires on the right). Shape:
+     `((gs * (gl*P)) * P) * S (st*P*P + ib*P*P*P + lc*P)`. *)
+  intros gs gl st ib lc a b H.
+  unfold descriptor_space_bound, forest_ident_count.
+  pose proof (position_count_le_mono a b H) as HP.
+  apply Nat.mul_le_mono.
+  - apply Nat.mul_le_mono.
+    + apply Nat.mul_le_mono; [apply Nat.le_refl |].
+      apply Nat.mul_le_mono; [apply Nat.le_refl | exact HP].
+    + exact HP.
+  - apply le_n_S.
+    apply Nat.add_le_mono.
+    + apply Nat.add_le_mono.
+      * apply Nat.mul_le_mono; [| exact HP].
+        apply Nat.mul_le_mono; [apply Nat.le_refl | exact HP].
+      * apply Nat.mul_le_mono; [| exact HP].
+        apply Nat.mul_le_mono; [| exact HP].
+        apply Nat.mul_le_mono; [apply Nat.le_refl | exact HP].
+    + apply Nat.mul_le_mono; [apply Nat.le_refl | exact HP].
+Qed.
+
+(* T10 — DEGREE PRESERVATION under the constant cap: with V ≤ 8K the
+   degree-5 bound holds at the CONSTANT-SHIFTED base (n + 8K + 2); the
+   polynomial degree in n is unchanged. *)
+Corollary pure_descriptor_space_degree_five_with_repairs :
+  forall grammar_slots gss_label_slots symbol_tags intermediate_base_slots
+         leaf_classes n V K (U : list PureDescriptor),
+    V <= repair_virtual_cap K ->
+    NoDup U ->
+    (forall d, In d U ->
+       descriptor_in_range grammar_slots gss_label_slots symbol_tags
+         intermediate_base_slots leaf_classes (n + V) d) ->
+    length U
+    <= grammar_slots * gss_label_slots
+       * S (symbol_tags + intermediate_base_slots + leaf_classes)
+       * position_count (n + repair_virtual_cap K) ^ 5.
+Proof.
+  intros gs' gl' st' ib' lc' n V K U Hcap Hnd Hrange.
+  eapply Nat.le_trans;
+    [apply pure_descriptor_space_degree_five_pow; eassumption |].
+  apply Nat.mul_le_mono_l.
+  apply Nat.pow_le_mono_l.
+  apply position_count_le_mono. lia.
+Qed.
+
 (* ── ADMISSION AUDIT — every theorem must print "Closed under the global context". *)
 Print Assumptions pure_descriptor_space_poly_bound.
 Print Assumptions pure_descriptor_space_degree_five.
@@ -553,3 +694,9 @@ Print Assumptions drain_seen_monotone.
 Print Assumptions drain_never_reprocesses.
 Print Assumptions drain_processed_nodup.
 Print Assumptions pure_worklist_processed_bound.
+Print Assumptions drain_append.
+Print Assumptions drain_append_processed_nodup.
+Print Assumptions drain_append_seen_monotone.
+Print Assumptions pure_descriptor_space_poly_bound_with_repairs.
+Print Assumptions descriptor_space_bound_le_mono.
+Print Assumptions pure_descriptor_space_degree_five_with_repairs.

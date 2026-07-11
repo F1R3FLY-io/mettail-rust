@@ -3280,7 +3280,12 @@ pub struct WpdaWalker<W: SemiringRef, E: WpdaEngine<W>> {
     /// rounds. W-generic ⇒ on the walker (CgllPureRun is non-generic).
     cgll_pure_parked: Vec<CgllParkedRepair<W>>,
     /// R1: park dedup per (pos, cat, bp, family, payload).
-    cgll_pure_park_seen: rustc_hash::FxHashSet<(usize, u16, u16, u8, String)>,
+    cgll_pure_park_seen:
+        rustc_hash::FxHashSet<(usize, crate::gss::GssNodeId, u16, u16, u8, String)>,
+    /// R3: reseeded-proposal ATTEMPT log — drained into `recovery_events`
+    /// on total failure ((Err, attempts) parity with classic's per-round
+    /// RecoveryAttempt emission).
+    cgll_pure_round_log: Vec<RecoveryEvent>,
     /// True when the key space is BYTES (lattice sources) — leaf end keys
     /// add the token's UTF-8 length. False = token-index space (linear
     /// sources): leaf end = pos + 1, the classic identity.
@@ -4647,6 +4652,10 @@ impl<'a> crate::wpda_runtime::WpdaTokenSource for CgllRepairSource<'a> {
     }
 }
 
+/// R3 (Pocket-F): separator between a repair marker's SEMANTIC payload
+/// and its uniqueness SERIAL (a control char no lexer token contains).
+const CGLL_REPAIR_PAYLOAD_SEP: char = '\u{1}';
+
 /// R1 amendment-5 (Pocket-F): the decoded family of a PARKED repair
 /// proposal (the engine's own recovery branch, recorded at the former
 /// amendment-8 drop sites instead of being discarded).
@@ -4664,8 +4673,10 @@ enum CgllRepairKind {
     VirtualSubstitute { kind: TokenKind, text: String },
     /// Pos-only skip/delete sequence (`ApplyRecoverySequence` whose
     /// actions are all `SkipToSync`/`DeleteToken`): twin at the real
-    /// `target_pos`; no virtual node.
-    PosOnly { target_pos: usize },
+    /// `target_pos`; no virtual node. `cost` = the sequence's
+    /// `total_cost_tropical` (R3 event convention: skip/delete events
+    /// carry the tropical cost; insert/substitute carry 0.0 — AV7).
+    PosOnly { target_pos: usize, cost: f64 },
 }
 
 /// R1: one parked repair proposal (W-generic ⇒ lives on the WALKER, not
@@ -4774,6 +4785,11 @@ struct CgllPureStats {
     /// R1 (red-team AV6): recovery deltas reaching a GUARDED park site
     /// (guard-precedes-park ⇒ expected 0 — assert-stays-dead as a counter).
     repair_guard_parks: u64,
+    /// R2 amendment-9: REPAIRED accepting roots refused because they do
+    /// not cover the input start (the Cluster-B fence's pure analog —
+    /// keyed on repair-marker presence; classic keys on
+    /// `recovery_depth > 0`, which pure descriptors never set).
+    cluster_b_refused: u64,
     /// R1 amendment-3 (Pocket-F): seed-frame pops at a NON-EOI position —
     /// completed PREFIX parses recorded as trailing-accept candidates
     /// (previously silently returned; R0 receipt: pure "1 2" had
@@ -6776,6 +6792,7 @@ where
             cgll_pure_virtual_base: usize::MAX,
             cgll_pure_parked: Vec::new(),
             cgll_pure_park_seen: rustc_hash::FxHashSet::default(),
+            cgll_pure_round_log: Vec::new(),
             cgll_pure_pos_is_bytes: false,
         }
     }
@@ -6907,6 +6924,7 @@ where
             cgll_pure_virtual_base: usize::MAX,
             cgll_pure_parked: Vec::new(),
             cgll_pure_park_seen: rustc_hash::FxHashSet::default(),
+            cgll_pure_round_log: Vec::new(),
             cgll_pure_pos_is_bytes: false,
         }
     }
@@ -7037,6 +7055,7 @@ where
             cgll_pure_virtual_base: usize::MAX,
             cgll_pure_parked: Vec::new(),
             cgll_pure_park_seen: rustc_hash::FxHashSet::default(),
+            cgll_pure_round_log: Vec::new(),
             cgll_pure_pos_is_bytes: false,
         }
     }
@@ -9311,6 +9330,15 @@ where
         }
         if terms.is_empty() {
             return None;
+        }
+        // R3: the elected PREFIX reading may carry repair markers (a
+        // mid-input repair composing with the trailing channel) — surface
+        // them exactly like the full-accept arm.
+        if let Some(&winner) = roots.first() {
+            let events = self.cgll_repair_events_from_root(winner);
+            if !events.is_empty() {
+                self.recovery_events.extend(events);
+            }
         }
         let position = selected_pos?;
         Some(WpdaResolveResult::AcceptedWithTrailing { weights, terms, roots, position })
@@ -24207,7 +24235,29 @@ where
             let winner_cursor = cand.cursor.clone();
             self.commit_winner_cursor(winner_cursor);
         }
+        // R3 (AV7): populate `recovery_events` AT ELECTION from the
+        // winner root's repair markers (the facade builds attempts from
+        // `recovery_trace()` immediately after resolve returns). Winner =
+        // `roots.first()` — the exact root the recovering facade
+        // re-realizes. Green parses carry no markers ⇒ no events.
+        if let Some(&winner) = roots.first() {
+            let events = self.cgll_repair_events_from_root(winner);
+            if std::env::var_os("PRATTAIL_CGLL_EVENT_DIAG").is_some() {
+                eprintln!("CGLL-EVENTS winner={winner} n={} {:?}", events.len(), events);
+            }
+            if !events.is_empty() {
+                self.recovery_events.extend(events);
+            }
+        }
         if terms.is_empty() {
+            // R3 failure-path: after K exhausted rounds every reseeded
+            // proposal is an ATTEMPT — drain the round log so the facade's
+            // `(Err, attempts)` surface matches classic's per-round
+            // RecoveryAttempt emission.
+            if !self.cgll_pure_round_log.is_empty() {
+                let attempts = std::mem::take(&mut self.cgll_pure_round_log);
+                self.recovery_events.extend(attempts);
+            }
             return WpdaResolveResult::ParseError {
                 // P4 item-5 (2026-07-11): message aligned with the classic
                 // facade text (prefix kept for arm attribution — the
@@ -25329,6 +25379,121 @@ where
         (first.unwrap_or(0), diverged)
     }
 
+    /// R3 (Pocket-F): reconstruct the ELECTED reading's `RecoveryEvent`s
+    /// from the repair markers in a root's FIRST flat (winner-only —
+    /// classic's commit semantics; the facade builds `RecoveryAttempt`s
+    /// from `recovery_trace()` right after `resolve_at_end_of_input`
+    /// returns, so population happens AT ELECTION — the AV7 ordering).
+    /// Event shapes follow the classic conventions: insert/substitute
+    /// events carry the token kind/text with cost 0.0; skip/delete events
+    /// carry `total_cost_tropical` (parsed back from the marker payload
+    /// `at->target:cost`). Green readings contain no markers ⇒ no events.
+    #[allow(dead_code)] // Reached only under the const (DCE'd while const off).
+    fn cgll_repair_events_from_root(&self, root: crate::sppf::SppfId) -> Vec<RecoveryEvent> {
+        let mut events: Vec<RecoveryEvent> = Vec::new();
+        if root == crate::sppf::SPPF_ID_NONE {
+            return events;
+        }
+        let flats = self.cgll_flatten_ids(root);
+        if std::env::var_os("PRATTAIL_CGLL_EVENT_DIAG").is_some() {
+            eprintln!(
+                "CGLL-EVENTS-SCAN root={root} flats={} first={:?}",
+                flats.len(),
+                flats.first()
+            );
+        }
+        let Some(flat) = flats.first() else {
+            return events;
+        };
+        // The flat is the TOP spine only; markers fold into the spine of
+        // the frame that parked them, which may be nested — walk the first
+        // flat RECURSIVELY through Symbol/Intermediate children.
+        let mut stack: Vec<crate::sppf::SppfId> = flat.clone();
+        let mut seen: rustc_hash::FxHashSet<crate::sppf::SppfId> =
+            rustc_hash::FxHashSet::default();
+        while let Some(id) = stack.pop() {
+            if !seen.insert(id) {
+                continue;
+            }
+            match self.sppf.node(id) {
+                Some(crate::sppf::SppfNode::TriggerTerminal {
+                    owner_cat: u16::MAX,
+                    owner_rule_idx,
+                    token_kind,
+                    text_handle,
+                    pos,
+                    ..
+                }) if *owner_rule_idx == u16::MAX - 2 => {
+                    let at = match pos {
+                        crate::sppf::PosOrSynth::Real(p)
+                        | crate::sppf::PosOrSynth::Synthesized(p) => *p as usize,
+                    };
+                    let payload = self.sppf.text(*text_handle).to_string();
+                    let tag = match token_kind {
+                        TokenKind::Fixed(t) => {
+                            t.split(CGLL_REPAIR_PAYLOAD_SEP).next().unwrap_or("")
+                        },
+                        _ => "",
+                    };
+                    events.push(match tag {
+                        "\u{27c2}ins" => RecoveryEvent {
+                            action_kind: 2,
+                            pos: at,
+                            cost_tropical: 0.0,
+                            kind: Some(TokenKind::Fixed(payload.clone())),
+                            text: Some(payload),
+                            alt_idx: None,
+                        },
+                        "\u{27c2}sub" => RecoveryEvent {
+                            action_kind: 3,
+                            pos: at,
+                            cost_tropical: 0.0,
+                            kind: Some(TokenKind::Fixed(payload.clone())),
+                            text: Some(payload),
+                            alt_idx: None,
+                        },
+                        // "⟂skip" — payload `at->target:cost`.
+                        _ => {
+                            let cost = payload
+                                .rsplit(':')
+                                .next()
+                                .and_then(|c| c.parse::<f64>().ok())
+                                .unwrap_or(0.0);
+                            RecoveryEvent::from_action_kind(0, at, cost)
+                        },
+                    });
+                },
+                Some(crate::sppf::SppfNode::Symbol { .. })
+                | Some(crate::sppf::SppfNode::Intermediate { .. }) => {
+                    // Descend via the packing DAG (`cgll_flatten_ids` stops
+                    // AT Symbol leaves — flatten(symbol) = [[symbol]], so
+                    // flattening here would no-op). `seen` dedups shared
+                    // subtrees and defuses the tolerated ForRow cycles.
+                    for &pk in self.sppf.packings_of(id) {
+                        stack.push(pk);
+                    }
+                },
+                Some(crate::sppf::SppfNode::Packing { children, .. }) => {
+                    for &c in children {
+                        stack.push(c);
+                    }
+                },
+                Some(crate::sppf::SppfNode::CollectionId { items, .. }) => {
+                    // Collection items are full constituents — a NESTED
+                    // repaired parse (the 2-repair probe's inner choose)
+                    // carries its marker inside an item.
+                    for &it in items {
+                        stack.push(it);
+                    }
+                },
+                _ => {},
+            }
+        }
+        // Source order (the facade surfaces attempts in trace order).
+        events.sort_by_key(|e| e.pos);
+        events
+    }
+
     /// R1 amendment 2 (Pocket-F): recognize the reserved REPAIR marker
     /// (owner `(u16::MAX, u16::MAX - 2)`) — stripped at EVERY item-counting
     /// gate exactly like the B2 separator marker (a counted repair marker
@@ -26047,18 +26212,22 @@ where
                 CgllRepairKind::VirtualSubstitute { kind: kind.clone(), text: text.clone() },
                 text.clone(),
             )),
-            BuilderDelta::ApplyRecoverySequence { actions, target_pos, .. }
-                if !family_b_pop
-                    && actions.iter().all(|a| {
-                        matches!(
-                            a,
-                            ResolvedRepairAction::SkipToSync { .. }
-                                | ResolvedRepairAction::DeleteToken
-                        )
-                    }) =>
+            BuilderDelta::ApplyRecoverySequence {
+                actions, target_pos, total_cost_tropical, ..
+            } if !family_b_pop
+                && actions.iter().all(|a| {
+                    matches!(
+                        a,
+                        ResolvedRepairAction::SkipToSync { .. }
+                            | ResolvedRepairAction::DeleteToken
+                    )
+                }) =>
             {
                 Some((
-                    CgllRepairKind::PosOnly { target_pos: *target_pos },
+                    CgllRepairKind::PosOnly {
+                        target_pos: *target_pos,
+                        cost: *total_cost_tropical,
+                    },
                     format!("->{target_pos}"),
                 ))
             },
@@ -26076,6 +26245,10 @@ where
         };
         let key = (
             at_pos,
+            // Frame identity: two frames (e.g. INNER and OUTER collection)
+            // can host the SAME proposal at the same position — both are
+            // genuine (the 2-repair probe's second insert).
+            d.u,
             d.cur_sym.category_src_idx,
             d.cur_sym.bp.map(|b| b as u16).unwrap_or(u16::MAX),
             fam,
@@ -26118,35 +26291,87 @@ where
             CgllRepairKind::VirtualSubstitute { .. } => "⟂sub",
             CgllRepairKind::PosOnly { .. } => "⟂skip",
         };
+        // R3: the marker KIND carries a SERIAL suffix — the trigger-
+        // terminal dedup key is `(kind, pos, owner)` (TEXT EXCLUDED), so
+        // two repairs at the SAME position (the 2-repair probe's
+        // inner+outer insert-`)`, both closing at Eof) would otherwise
+        // intern to ONE node and the second event vanished (receipt:
+        // CGLL-RESEED serial=0/1 both → marker=27). The payload stays
+        // purely semantic (event text / skip cost).
+        let serial = run.stats.repair_reseeded;
         let payload = match &kind {
             CgllRepairKind::PopInsert { text, .. }
             | CgllRepairKind::VirtualInsert { text, .. }
             | CgllRepairKind::VirtualSubstitute { text, .. } => text.clone(),
-            CgllRepairKind::PosOnly { target_pos } => format!("{at_pos}->{target_pos}"),
+            // Skip markers carry `at->target:cost` (the event
+            // reconstruction parses the tropical cost back out).
+            CgllRepairKind::PosOnly { target_pos, cost } => {
+                format!("{at_pos}->{target_pos}:{cost}")
+            },
         };
+        // R3 ROUND LOG: every reseeded proposal is an ATTEMPT — on total
+        // failure the log becomes the `(Err, attempts)` surface (classic
+        // emits a RecoveryAttempt per retry round). Cost conventions per
+        // AV7: insert/substitute 0.0; skip/delete = total_cost_tropical.
+        self.cgll_pure_round_log.push(match &kind {
+            CgllRepairKind::PopInsert { kind: tk, text }
+            | CgllRepairKind::VirtualInsert { kind: tk, text } => RecoveryEvent {
+                action_kind: 2,
+                pos: at_pos,
+                cost_tropical: 0.0,
+                kind: Some(tk.clone()),
+                text: Some(text.clone()),
+                alt_idx: None,
+            },
+            CgllRepairKind::VirtualSubstitute { kind: tk, text } => RecoveryEvent {
+                action_kind: 3,
+                pos: at_pos,
+                cost_tropical: 0.0,
+                kind: Some(tk.clone()),
+                text: Some(text.clone()),
+                alt_idx: None,
+            },
+            CgllRepairKind::PosOnly { cost, .. } => {
+                RecoveryEvent::from_action_kind(0, at_pos, *cost)
+            },
+        });
         let marker = self.sppf.intern_trigger_terminal(
-            TokenKind::Fixed(tag.to_string()),
+            TokenKind::Fixed(format!("{tag}{SEP}{serial}", SEP = CGLL_REPAIR_PAYLOAD_SEP)),
             crate::sppf::PosOrSynth::Synthesized(at_pos as u32),
             Some(payload.as_str()),
             u16::MAX,
             u16::MAX - 2,
         );
+        if std::env::var_os("PRATTAIL_CGLL_EVENT_DIAG").is_some() {
+            eprintln!(
+                "CGLL-RESEED serial={serial} marker={marker} at={at_pos} payload={payload:?}                  kind={kind:?} d_u={} d_w={}",
+                d.u, d.w
+            );
+        }
         // Amendment 6: annotation-slot salt bit 28 (29 = empty-close,
         // 30 = WRAP, 31 = BIN), position-salted like every marker fold.
         let slot = Self::cgll_pure_slot_hash(&d.cur_sym, &d.state)
             ^ ((at_pos as u32) << 1)
             ^ 0x1000_0000;
-        let w = self.cgll_pure_fold(slot, d.w, marker, at_pos, br_weight.clone());
+        let family_b = matches!(kind, CgllRepairKind::PopInsert { .. });
+        // Family B folds the marker WEIGHT-ONE: its spine packing is
+        // consumed by the collection close (flats → CollectionId) — the
+        // cost instead rides the POP weight (the resume-fold packing
+        // charge), surviving into the root DAG for K-B. Families A/PosOnly
+        // fold on a RULE-side spine that reaches the root directly — the
+        // branch weight rides the marker packing verbatim (amendment 5).
+        let marker_weight = if family_b { W::one_ref() } else { br_weight.clone() };
+        let w = self.cgll_pure_fold(slot, d.w, marker, at_pos, marker_weight);
         run.stats.repair_reseeded += 1;
         match kind {
             CgllRepairKind::PopInsert { .. } => {
                 // Family B: the branch's own (non-consuming) pop semantics —
-                // the repair is consumed by the frame that wanted it. The
-                // cost already rides the marker packing ⇒ pop weight one.
+                // the repair is consumed by the frame that wanted it; the
+                // cost rides the pop weight (see above).
                 let d2 = CgllPureDescriptor { w, ..d };
-                self.cgll_pure_reduce(run, &d2, at_pos, &W::one_ref(), &br_state, real_tokens);
+                self.cgll_pure_reduce(run, &d2, at_pos, &br_weight, &br_state, real_tokens);
             },
-            CgllRepairKind::PosOnly { target_pos } => {
+            CgllRepairKind::PosOnly { target_pos, .. } => {
                 let state = Self::cgll_pure_repair_state_at(&br_state, target_pos);
                 run.worklist.push_back(CgllPureDescriptor {
                     state,
@@ -26323,12 +26548,17 @@ where
                 let mut items: Vec<crate::sppf::SppfId> = Vec::with_capacity(flat.len());
                 let mut seps: usize = 0;
                 let mut binder_names: Vec<String> = Vec::new();
+                let mut repair_marks: Vec<crate::sppf::SppfId> = Vec::new();
                 for id in flat {
                     if self.cgll_pure_is_sep_marker(id) {
                         seps += 1;
                     } else if self.cgll_pure_is_repair_marker(id) {
                         // R1 amendment 2: repair markers are diagnostic
-                        // witnesses — neither items nor separators.
+                        // witnesses — neither items nor separators. R3:
+                        // COLLECTED — re-emitted onto the close's `z` chain
+                        // so the winner root still witnesses the repair
+                        // (the event reconstruction scans root flats).
+                        repair_marks.push(id);
                     } else if is_class3 {
                         if matches!(
                             self.sppf.node(id),
@@ -26455,6 +26685,29 @@ where
                 } else {
                     cid
                 };
+                // R3: re-attach stripped repair markers OUTSIDE the
+                // CollectionId (realize filters TriggerTerminals — the
+                // binder-name-marker precedent — so rule arity is
+                // untouched; the events walk finds them at the root).
+                // Distinct annotation namespace (bits 28+26) so the refold
+                // never re-hits the class-3 CID/BinderScope pairing above.
+                let mut z = z;
+                for mk in repair_marks {
+                    // FRAME-SALTED (d.u): the inner and outer closes of a
+                    // NESTED 2-repair share (cur_sym, state, i_pop) — the
+                    // CollectionLoop fields (incl. accumulator_id) are
+                    // identical — so an unsalted identity cross-links the
+                    // two closes' packings under ONE Intermediate and the
+                    // outer rule's flat gains a GHOST reading that bypasses
+                    // the inner constituent (receipt: 2-repair probe
+                    // elected the flat `Choose(PZero,[PZero,PZero])` vs
+                    // classic's nested AST).
+                    let slot = Self::cgll_pure_slot_hash(&d.cur_sym, &d.state)
+                        ^ ((i_pop as u32) << 1)
+                        ^ (d.u as u32).rotate_left(16)
+                        ^ 0x1400_0000;
+                    z = self.cgll_pure_fold(slot, z, mk, i_pop, W::one_ref());
+                }
                 collection_zs.push(z);
             }
             // ── P3.a STANDALONE collection rules (PPar-class) ─────────────
@@ -27026,6 +27279,7 @@ where
         self.cgll_pure_virtual_base = tokens.len() + 1;
         self.cgll_pure_parked.clear();
         self.cgll_pure_park_seen.clear();
+        self.cgll_pure_round_log.clear();
         // Capped protocol trace (`PRATTAIL_CGLL_PURE_TRACE=<n>`; any
         // non-numeric value = 400 steps). Diagnostic only.
         run.trace_budget = std::env::var("PRATTAIL_CGLL_PURE_TRACE")
@@ -27403,6 +27657,29 @@ where
                 },
             }
         });
+        // ── R2 amendment-9 (Pocket-F): CLUSTER-B PURE FENCE — a REPAIRED
+        // accepting root (repair marker present) must COVER THE INPUT
+        // START. Classic keys this fence on `recovery_depth > 0` (which
+        // pure descriptors never set); the pure analog keys on marker
+        // presence in the reading. Same span test
+        // (`accept_root_covers_input_start`), same permissive fallbacks.
+        // Non-repaired roots are NEVER checked (grouping legitimately
+        // starts past a leading `(`).
+        // Zero-cost on green: no parked proposal in the whole run ⇒ no
+        // marker can exist in any reading ⇒ skip the flat walks entirely.
+        run.accepting.retain(|&(root, _pos)| {
+            if run.stats.repair_parked == 0 {
+                return true;
+            }
+            if self.cgll_repair_events_from_root(root).is_empty() {
+                return true; // no repair in this reading
+            }
+            if self.accept_root_covers_input_start(root, tokens) {
+                return true;
+            }
+            run.stats.cluster_b_refused += 1;
+            false // refuse: repaired suffix-only root (the Cluster-B ghost)
+        });
         // ── P3 Pocket-A4 (2026-07-11): GOAL-CATEGORY coercion at PUBLISH —
         // the pure analog of classic's TransparentSourceReentry result wrap
         // (apply_pop_body tail). A cross-cat-LHS route (kind-5 grouped LHS,
@@ -27561,7 +27838,7 @@ where
                  opt_group_absent={} out_of_scope={} engine_errors={} prefix_pos_desyncs={} \
                  accept_action_hits={} prefix_seed_pops={} repair_parked={} \
                  repair_reseeded={} repair_rounds={} repair_named_drops={} \
-                 repair_guard_parks={}",
+                 repair_guard_parks={} cluster_b_refused={}",
                 s.u_count,
                 s.peak_r,
                 s.processed,
@@ -27622,6 +27899,7 @@ where
                 s.repair_rounds,
                 s.repair_named_drops,
                 s.repair_guard_parks,
+                s.cluster_b_refused,
             );
         }
         final_state
