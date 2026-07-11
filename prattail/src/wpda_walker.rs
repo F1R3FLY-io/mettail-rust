@@ -3262,6 +3262,17 @@ pub struct WpdaWalker<W: SemiringRef, E: WpdaEngine<W>> {
     /// `requested_root_cat` (whose classic pre-filter drops source-cat
     /// candidates). `None` while the pure engine has not seeded.
     cgll_pure_goal_cat: Option<u16>,
+    /// P4 lattice-order fix: per-position TOTAL-ORDER keys
+    /// (`WpdaTokenSource::position_order_key` — byte offsets on lattice
+    /// sources, identity elsewhere), cached at pure-seed time. Position
+    /// fences and the K-C decision sort compare in THIS space; DAG node
+    /// ids are allocated in DISCOVERY order and are NOT monotonic along
+    /// a path (receipt: `@-1p0!()` traverses nodes 1→3→2).
+    cgll_pure_pos_key: Vec<u32>,
+    /// True when the key space is BYTES (lattice sources) — leaf end keys
+    /// add the token's UTF-8 length. False = token-index space (linear
+    /// sources): leaf end = pos + 1, the classic identity.
+    cgll_pure_pos_is_bytes: bool,
 }
 
 // Phase 5.6-tail-F (2026-05-12): CursorMode enum DELETED. The pre-tail
@@ -6587,6 +6598,8 @@ where
             incoming_edge_stack_arena: crate::edge_stack_arena::EdgeStackArena::new(),
             requested_root_cat: None,
             cgll_pure_goal_cat: None,
+            cgll_pure_pos_key: Vec::new(),
+            cgll_pure_pos_is_bytes: false,
         }
     }
 
@@ -6713,6 +6726,8 @@ where
             incoming_edge_stack_arena: crate::edge_stack_arena::EdgeStackArena::new(),
             requested_root_cat: Some(cat_src_idx),
             cgll_pure_goal_cat: None,
+            cgll_pure_pos_key: Vec::new(),
+            cgll_pure_pos_is_bytes: false,
         }
     }
 
@@ -6838,6 +6853,8 @@ where
             incoming_edge_stack_arena: crate::edge_stack_arena::EdgeStackArena::new(),
             requested_root_cat: None,
             cgll_pure_goal_cat: None,
+            cgll_pure_pos_key: Vec::new(),
+            cgll_pure_pos_is_bytes: false,
         }
     }
 
@@ -24420,17 +24437,18 @@ where
         if w == crate::sppf::SPPF_ID_NONE {
             return None;
         }
-        // Fast path: a plain Symbol leaf.
+        // Fast path: a plain Symbol leaf. (Content checks in ORDER-KEY
+        // space — lattice node ids are non-monotonic along a path.)
         if let Some(crate::sppf::SppfNode::Symbol { lo_pos, hi_pos, .. }) = self.sppf.node(w) {
-            if lo_pos < hi_pos {
+            if self.cgll_pk(*lo_pos) < self.cgll_pk(*hi_pos) {
                 return Some(*lo_pos);
             }
         }
         let flats = self.cgll_flatten_ids(w);
         if let Some(flat) = flats.first() {
             for &el in flat {
-                if let (Some(l), Some(h)) = (self.sppf.span_lo(el), self.sppf.span_hi(el)) {
-                    if l < h {
+                if let (Some(l), Some(h)) = (self.sppf.span_lo(el), self.cgll_hi_key(el)) {
+                    if self.cgll_pk(l) < h {
                         return Some(l);
                     }
                 }
@@ -24477,8 +24495,8 @@ where
                     match children.as_slice() {
                         [left, right] => {
                             let (l, r, slot) = (*left, *right, *rule_idx);
-                            let is_content = match (self.sppf.span_lo(r), self.sppf.span_hi(r)) {
-                                (Some(a), Some(b)) => a < b,
+                            let is_content = match (self.sppf.span_lo(r), self.cgll_hi_key(r)) {
+                                (Some(a), Some(b)) => self.cgll_pk(a) < b,
                                 _ => false,
                             };
                             if is_content {
@@ -24499,6 +24517,107 @@ where
                 _ => return None,
             }
         }
+    }
+
+    /// P4 lattice-order key lookup (identity fallback off the cached map).
+    #[allow(dead_code)] // Reached only under the const (DCE'd while const off).
+    #[inline]
+    fn cgll_pk(&self, pos: u32) -> u32 {
+        self.cgll_pure_pos_key.get(pos as usize).copied().unwrap_or(pos)
+    }
+
+    /// P4 lattice-order fix, END side: the ORDER-KEY of the END of `id`'s
+    /// span. `span_hi` fabricates `pos + 1` for terminal leaves — a
+    /// LINEAR-source identity that is BYTE-NONSENSE on lattice sources
+    /// (node ids are discovery-ordered, so `p + 1` can be an arbitrary
+    /// byte; receipt: `@-1p0!()` — the `-` trigger leaf at node 1 got
+    /// hi=2 = byte 5 and BOTH legitimate operand folds were
+    /// fence-refuted, `fold_overlap_refuted=2`, `CGLL-FENCE` diag). The
+    /// TRUE end key per node kind:
+    ///   • Terminal/TriggerTerminal at `Real(p)`: `key(p)` + the UTF-8
+    ///     byte length of the token text (lex edges end at
+    ///     `byte_start + len(text)`; whitespace gaps to the next node
+    ///     are legal — the adjacency fence permits gaps, refutes
+    ///     overlap). `Synthesized(p)`: `key(p)` (zero-width — recovery
+    ///     leaves have no lattice extent).
+    ///   • Epsilon/OptAbsent: `key(pos)` (zero-width).
+    ///   • Symbol: `key(hi_pos)` — pure BIN Symbols intern `hi` = the
+    ///     resume `at_pos`, a REAL node id.
+    ///   • Intermediate: `hi_pos` is NOT trusted (fold/carrier interns
+    ///     derive it from `span_hi(leaf)` — the fabrication); descend to
+    ///     the FIRST packing's LAST child (the spine's rightmost
+    ///     constituent; fold chains are left-deep so the walk is short).
+    ///     Childless (zero-width weight carriers): `key(hi_pos)` — their
+    ///     `hi` is the fold position, a real node.
+    /// Depth-capped against the tolerated ForRow unit-rule cycles.
+    #[allow(dead_code)] // Reached only under the const (DCE'd while const off).
+    fn cgll_hi_key(&self, id: crate::sppf::SppfId) -> Option<u32> {
+        let leaf_end = |pos: &crate::sppf::PosOrSynth,
+                        text_handle: crate::sppf::TextHandle,
+                        kind: &TokenKind| {
+            match pos {
+                crate::sppf::PosOrSynth::Real(p) => {
+                    if !self.cgll_pure_pos_is_bytes {
+                        // Token-index space (linear sources): one token.
+                        return self.cgll_pk(*p) + 1;
+                    }
+                    let text_len = {
+                        let t = self.sppf.text(text_handle);
+                        if t.is_empty() {
+                            // Fixed triggers may intern without text (the
+                            // kind encodes the lexeme).
+                            match kind {
+                                TokenKind::Fixed(f) => f.len(),
+                                _ => 0,
+                            }
+                        } else {
+                            t.len()
+                        }
+                    };
+                    self.cgll_pk(*p) + text_len as u32
+                },
+                crate::sppf::PosOrSynth::Synthesized(p) => self.cgll_pk(*p),
+            }
+        };
+        let mut cur = id;
+        for _ in 0..128 {
+            match self.sppf.node(cur)? {
+                crate::sppf::SppfNode::Terminal { pos, text_handle, token_kind, .. } => {
+                    return Some(leaf_end(pos, *text_handle, token_kind));
+                },
+                crate::sppf::SppfNode::TriggerTerminal { pos, text_handle, token_kind, .. } => {
+                    return Some(leaf_end(pos, *text_handle, token_kind));
+                },
+                crate::sppf::SppfNode::Epsilon { pos }
+                | crate::sppf::SppfNode::OptAbsent { pos } => return Some(self.cgll_pk(*pos)),
+                crate::sppf::SppfNode::Symbol { hi_pos, .. } => {
+                    return Some(self.cgll_pk(*hi_pos));
+                },
+                crate::sppf::SppfNode::Intermediate { hi_pos, .. } => {
+                    let fallback = self.cgll_pk(*hi_pos);
+                    match self
+                        .sppf
+                        .packings_of(cur)
+                        .first()
+                        .and_then(|&pk| self.sppf.node(pk))
+                    {
+                        Some(crate::sppf::SppfNode::Packing { children, .. })
+                            if !children.is_empty() =>
+                        {
+                            cur = *children.last().expect("non-empty checked");
+                        },
+                        _ => return Some(fallback),
+                    }
+                },
+                crate::sppf::SppfNode::Packing { children, .. } => match children.last() {
+                    Some(&c) => cur = c,
+                    None => return None,
+                },
+                _ => return None,
+            }
+        }
+        // Depth cap hit (tolerated unit-rule cycle): the stored hi.
+        self.sppf.span_hi(cur).map(|h| self.cgll_pk(h))
     }
 
     /// P4 item-1: the SPINE BODY category — the category of the LAST
@@ -24607,12 +24726,17 @@ where
                 }
                 // Decision entries + lateness contributions for THIS packing.
                 if rule_idx == Self::OPTIONAL_PRESENT_RULE_IDX {
-                    // TAKE decision at the group content's start position.
+                    // TAKE decision at the group content's start position
+                    // (ORDER-KEY space for the temporal sort).
                     let pos = children
                         .first()
                         .and_then(|&c| self.sppf.span_lo(c))
                         .unwrap_or(0);
-                    t.decisions.push((pos, depth, self.engine.fork_emission_ordinal(0, 0, 0)));
+                    t.decisions.push((
+                        self.cgll_pk(pos),
+                        depth,
+                        self.engine.fork_emission_ordinal(0, 0, 0),
+                    ));
                 } else if is_symbol && rule_idx != Self::OPTIONAL_PRESENT_RULE_IDX {
                     let cat = (rule_idx >> 16) as u16;
                     let local = (rule_idx & 0xFFFF) as u16;
@@ -24696,7 +24820,7 @@ where
                             if !declared_coercion {
                                 if let (Some(lo), _) = node_span {
                                     t.decisions.push((
-                                        lo,
+                                        self.cgll_pk(lo),
                                         depth,
                                         self.engine.fork_emission_ordinal(2, cat, local),
                                     ));
@@ -24716,7 +24840,7 @@ where
                     match self.sppf.node(*c) {
                         Some(crate::sppf::SppfNode::OptAbsent { pos }) => {
                             t.decisions.push((
-                                *pos,
+                                self.cgll_pk(*pos),
                                 depth,
                                 self.engine.fork_emission_ordinal(1, 0, 0),
                             ));
@@ -24736,7 +24860,7 @@ where
                                 .and_then(|&ic| self.sppf.span_lo(ic))
                                 .unwrap_or(0);
                             t.decisions.push((
-                                pos,
+                                self.cgll_pk(pos),
                                 depth,
                                 self.engine.fork_emission_ordinal(0, 0, 0),
                             ));
@@ -25112,12 +25236,21 @@ where
             if rep.operand_w != crate::sppf::SPPF_ID_NONE
                 && rep.result_w != crate::sppf::SPPF_ID_NONE
             {
-                if let (Some(w_hi), Some(z_lo)) = (
-                    self.sppf.span_hi(rep.operand_w),
+                if let (Some(w_hi_key), Some(z_lo)) = (
+                    self.cgll_hi_key(rep.operand_w),
                     self.sppf.span_lo(rep.result_w),
                 ) {
-                    if z_lo < w_hi {
+                    // ORDER-KEY space (lattice node ids are non-monotonic
+                    // along a path — see `position_order_key` /
+                    // `cgll_hi_key`).
+                    if self.cgll_pk(z_lo) < w_hi_key {
                         run.stats.fold_overlap_refuted += 1;
+                        if std::env::var_os("PRATTAIL_CGLL_FENCE_DIAG").is_some() {
+                            eprintln!(
+                                "CGLL-FENCE replay-adj REFUTE w_hi_key={w_hi_key} z_lo={z_lo}(k{}) op={:?} res={:?}",
+                                self.cgll_pk(z_lo), rep.operand_w, rep.result_w
+                            );
+                        }
                         continue;
                     }
                 }
@@ -25257,10 +25390,22 @@ where
         // extend PAST `at_pos` is a mis-paired pop/edge (recorded-pop
         // replays can pair a late spine with an early pop — the P-replay
         // hazard); folding it interns span-inflated/cyclic Intermediates.
-        if self.sppf.span_hi(ret.operand_w).is_some_and(|h| h as usize > ret.at_pos)
-            || self.sppf.span_hi(z).is_some_and(|h| h as usize > ret.at_pos)
+        let at_key = self.cgll_pk(ret.at_pos as u32);
+        if self.cgll_hi_key(ret.operand_w).is_some_and(|h| h > at_key)
+            || self.cgll_hi_key(z).is_some_and(|h| h > at_key)
         {
             run.stats.fold_overlap_refuted += 1;
+            if std::env::var_os("PRATTAIL_CGLL_FENCE_DIAG").is_some() {
+                eprintln!(
+                    "CGLL-FENCE fold-pos REFUTE at_pos={}(k{at_key}) op_hi={:?} z_hi={:?} slot={:?} op_node={:?} z_node={:?}",
+                    ret.at_pos,
+                    self.sppf.span_hi(ret.operand_w),
+                    self.sppf.span_hi(z),
+                    ret.slot,
+                    self.sppf.node(ret.operand_w),
+                    self.sppf.node(z)
+                );
+            }
             return;
         }
         let caller_slot = run
@@ -25287,11 +25432,18 @@ where
             // this as "every edge into `(A, i)` carries an operand ending
             // exactly at `i`"; the fence enforces the non-overlap half
             // that discard-gaps permit us to check.
-            if let (Some(w_hi), Some(z_lo)) =
-                (self.sppf.span_hi(ret.operand_w), self.sppf.span_lo(z))
+            if let (Some(w_hi_key), Some(z_lo)) =
+                (self.cgll_hi_key(ret.operand_w), self.sppf.span_lo(z))
             {
-                if z_lo < w_hi {
+                if self.cgll_pk(z_lo) < w_hi_key {
                     run.stats.fold_overlap_refuted += 1;
+                    if std::env::var_os("PRATTAIL_CGLL_FENCE_DIAG").is_some() {
+                        eprintln!(
+                            "CGLL-FENCE fold-adj REFUTE w_hi_key={w_hi_key} z_lo={z_lo}(k{}) at_pos={} op_node={:?} z_node={:?}",
+                            self.cgll_pk(z_lo), ret.at_pos,
+                            self.sppf.node(ret.operand_w), self.sppf.node(z)
+                        );
+                    }
                     return;
                 }
             }
@@ -25325,9 +25477,20 @@ where
             run.stats.ctx_misses += 1;
             return;
         };
-        // POSITION-COHERENCE FENCE (see `cgll_pure_resume_fold`).
-        if self.sppf.span_hi(z_e).is_some_and(|h| h as usize > ret.at_pos) {
+        // POSITION-COHERENCE FENCE (see `cgll_pure_resume_fold`) — in
+        // ORDER-KEY space (lattice node ids are non-monotonic).
+        if self
+            .cgll_hi_key(z_e)
+            .is_some_and(|h| h > self.cgll_pk(ret.at_pos as u32))
+        {
             run.stats.fold_overlap_refuted += 1;
+            if std::env::var_os("PRATTAIL_CGLL_FENCE_DIAG").is_some() {
+                eprintln!(
+                    "CGLL-FENCE replace-pos REFUTE at_pos={} z_hi={:?}",
+                    ret.at_pos,
+                    self.sppf.span_hi(z_e)
+                );
+            }
             return;
         }
         let caller_slot = run
@@ -26376,6 +26539,16 @@ where
                 .node(cursor.node)
                 .map(|n| n.symbol)
                 .unwrap_or_else(|| StackSymbolV2::category_entry(0));
+            // P4 lattice-order fix: cache the total-order keys once per
+            // run (len()+1 covers the EOF node; out-of-range falls back to
+            // identity in `cgll_pk`).
+            if self.cgll_pure_pos_key.is_empty() {
+                self.cgll_pure_pos_key =
+                    (0..=tokens.len())
+                        .map(|p| tokens.position_order_key(p).unwrap_or(p) as u32)
+                        .collect();
+                self.cgll_pure_pos_is_bytes = !tokens.positions_are_linear_tokens();
+            }
             // P3 Pocket-A4: the seed category IS the goal category —
             // recorded on the PURE-side field (NOT `requested_root_cat`,
             // whose classic resolve pre-filter would DROP source-cat
@@ -28105,6 +28278,18 @@ where
             },
             ForkActionKind::GuardedConsumeAndReplace { expected_text, required_top_cat } => {
                 if tokens.peek_text(pos_after).unwrap_or("") != expected_text.as_str() {
+                    #[cfg(debug_assertions)]
+                    if std::env::var_os("PRATTAIL_CANONICAL_GLL_STATS").is_some()
+                        && run.stats.effects_skipped < 6
+                    {
+                        eprintln!(
+                            "CGLL-PURE-GCAR-MISS pos={} expected={:?} found={:?} sym={:?}",
+                            pos_after,
+                            expected_text,
+                            tokens.peek_text(pos_after),
+                            d.cur_sym
+                        );
+                    }
                     return; // guard miss: branch dies
                 }
                 if required_top_cat.is_some() {
