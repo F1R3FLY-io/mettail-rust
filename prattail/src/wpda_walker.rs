@@ -3269,6 +3269,18 @@ pub struct WpdaWalker<W: SemiringRef, E: WpdaEngine<W>> {
     /// ids are allocated in DISCOVERY order and are NOT monotonic along
     /// a path (receipt: `@-1p0!()` traverses nodes 1→3→2).
     cgll_pure_pos_key: Vec<u32>,
+    /// R1 amendment-4 (Pocket-F): first VIRTUAL repair position
+    /// (`tokens.len() + 1` set at pure-driver entry; `usize::MAX` when the
+    /// pure driver is not running). Positions `>= base` are virtual:
+    /// excluded from the EOI accept gate and the trailing classification,
+    /// zero-width in `cgll_hi_key`.
+    cgll_pure_virtual_base: usize,
+    /// R1 amendment-5: the PROPOSAL POCKET — engine recovery branches
+    /// parked at the former amendment-8 drop sites, materialized between
+    /// rounds. W-generic ⇒ on the walker (CgllPureRun is non-generic).
+    cgll_pure_parked: Vec<CgllParkedRepair<W>>,
+    /// R1: park dedup per (pos, cat, bp, family, payload).
+    cgll_pure_park_seen: rustc_hash::FxHashSet<(usize, u16, u16, u8, String)>,
     /// True when the key space is BYTES (lattice sources) — leaf end keys
     /// add the token's UTF-8 length. False = token-index space (linear
     /// sources): leaf end = pos + 1, the classic identity.
@@ -4539,6 +4551,139 @@ struct CgllPureCallerCtx {
 /// Instrumentation counters for one `step_canonical_pure` run (printed as a
 /// `CGLL-PURE …` line under `PRATTAIL_CANONICAL_GLL_STATS`).
 #[allow(dead_code)] // Reached only under the const (DCE'd while const off).
+/// R1 (Pocket-F): one VIRTUAL repair token served by [`CgllRepairSource`].
+/// `at_real` = the real position the repair applies at (its order key);
+/// `next_real` = the position stepping continues at after consuming the
+/// virtual token (insert ⇒ `at_real` itself; substitute ⇒ the real
+/// successor of `at_real`).
+#[allow(dead_code)] // Reached only under the const (DCE'd while const off).
+struct CgllRepairVirtual {
+    kind: TokenKind,
+    text: String,
+    at_real: usize,
+    next_real: usize,
+}
+
+/// R1 amendment-4 (Pocket-F): the walker-local REPAIR-LATTICE token-source
+/// adapter. Forwards the REAL source verbatim (identical `len` /
+/// `eof_node` / linearity — AV4: a virtual node must never phantom-EOI)
+/// and serves allocated virtual repair tokens at positions
+/// `base + idx` (strictly above every real position). Zero interior
+/// mutability: virtuals are allocated BETWEEN rounds (the adapter is
+/// rebuilt per round borrowing the updated slice).
+#[allow(dead_code)]
+struct CgllRepairSource<'a> {
+    inner: &'a dyn WpdaTokenSource,
+    /// First virtual position (= real `len() + 1`).
+    base: usize,
+    virtuals: &'a [CgllRepairVirtual],
+}
+
+impl<'a> CgllRepairSource<'a> {
+    #[inline]
+    fn virtual_at(&self, pos: usize) -> Option<&'a CgllRepairVirtual> {
+        pos.checked_sub(self.base).and_then(|i| self.virtuals.get(i))
+    }
+}
+
+impl<'a> crate::wpda_runtime::WpdaTokenSource for CgllRepairSource<'a> {
+    fn peek_kind(&self, pos: usize) -> Option<TokenKind> {
+        match self.virtual_at(pos) {
+            Some(v) => Some(v.kind.clone()),
+            None => self.inner.peek_kind(pos),
+        }
+    }
+    fn peek_text(&self, pos: usize) -> Option<&str> {
+        match self.virtual_at(pos) {
+            Some(v) => Some(v.text.as_str()),
+            None => self.inner.peek_text(pos),
+        }
+    }
+    fn len(&self) -> usize {
+        self.inner.len() // REAL length (AV4: virtuals must not shift EOI)
+    }
+    fn is_empty(&self) -> bool {
+        self.inner.is_empty()
+    }
+    fn peek_alternatives(&self, pos: usize) -> &[crate::lexer_types::LexAlternative] {
+        if self.virtual_at(pos).is_some() {
+            &[] // repair tokens carry no lex alternatives
+        } else {
+            self.inner.peek_alternatives(pos)
+        }
+    }
+    fn is_ambiguous_at(&self, pos: usize) -> bool {
+        if self.virtual_at(pos).is_some() {
+            false
+        } else {
+            self.inner.is_ambiguous_at(pos)
+        }
+    }
+    fn end_byte(&self, pos: usize, alt_idx: usize) -> Option<usize> {
+        match self.virtual_at(pos) {
+            // Zero-width: the repair token occupies no source bytes.
+            Some(v) => self.inner.position_order_key(v.at_real),
+            None => self.inner.end_byte(pos, alt_idx),
+        }
+    }
+    fn next_pos(&self, pos: usize, alt_idx: usize) -> Option<usize> {
+        match self.virtual_at(pos) {
+            Some(v) => Some(v.next_real),
+            None => self.inner.next_pos(pos, alt_idx),
+        }
+    }
+    fn positions_are_linear_tokens(&self) -> bool {
+        self.inner.positions_are_linear_tokens()
+    }
+    fn position_order_key(&self, pos: usize) -> Option<usize> {
+        match self.virtual_at(pos) {
+            // Amendment 4: a virtual position TIES with its real anchor.
+            Some(v) => self.inner.position_order_key(v.at_real),
+            None => self.inner.position_order_key(pos),
+        }
+    }
+    fn eof_node(&self) -> usize {
+        self.inner.eof_node() // REAL EOI sentinel (AV4)
+    }
+}
+
+/// R1 amendment-5 (Pocket-F): the decoded family of a PARKED repair
+/// proposal (the engine's own recovery branch, recorded at the former
+/// amendment-8 drop sites instead of being discarded).
+#[allow(dead_code)]
+#[derive(Clone, Debug, PartialEq)]
+enum CgllRepairKind {
+    /// Family B (G4 — pred5): `PopWithEffect{InsertToken(close)}`. The
+    /// branch's own pop semantics ARE the repair; no virtual node.
+    PopInsert { kind: TokenKind, text: String },
+    /// Family A insert: virtual node consumed at the park position; the
+    /// stream resumes at the SAME real position.
+    VirtualInsert { kind: TokenKind, text: String },
+    /// Family A substitute: virtual node REPLACES the real token; the
+    /// stream resumes at the real successor.
+    VirtualSubstitute { kind: TokenKind, text: String },
+    /// Pos-only skip/delete sequence (`ApplyRecoverySequence` whose
+    /// actions are all `SkipToSync`/`DeleteToken`): twin at the real
+    /// `target_pos`; no virtual node.
+    PosOnly { target_pos: usize },
+}
+
+/// R1: one parked repair proposal (W-generic ⇒ lives on the WALKER, not
+/// the non-generic `CgllPureRun`).
+#[allow(dead_code)]
+struct CgllParkedRepair<W> {
+    d: CgllPureDescriptor,
+    kind: CgllRepairKind,
+    /// The engine branch's weight VERBATIM (amendment 5) — becomes the
+    /// repair-marker fold's packing weight (K-B elects min total cost).
+    br_weight: W,
+    br_state: WpdaState,
+    /// `Some` when the branch replaces the frame symbol
+    /// (ConsumeAndReplace* shapes); `None` keeps `d.cur_sym`.
+    br_symbol: Option<StackSymbolV2>,
+    at_pos: usize,
+}
+
 #[derive(Default)]
 struct CgllPureStats {
     u_count: u64,
@@ -4617,6 +4762,23 @@ struct CgllPureStats {
     engine_errors: u64,
     prefix_pos_desyncs: u64,
     accept_action_hits: u64,
+    /// R1 (Pocket-F): repair proposals PARKED at the former drop sites.
+    repair_parked: u64,
+    /// R1: parked proposals materialized + reseeded in a recovery round.
+    repair_reseeded: u64,
+    /// R1: recovery rounds fired (0 on every green parse — NG-3 witness).
+    repair_rounds: u64,
+    /// R1 amendment-8: Swap / token-mutating ApplyRecoverySequence /
+    /// unsupported-shape proposals — NAMED drops (counted, ledger-noted).
+    repair_named_drops: u64,
+    /// R1 (red-team AV6): recovery deltas reaching a GUARDED park site
+    /// (guard-precedes-park ⇒ expected 0 — assert-stays-dead as a counter).
+    repair_guard_parks: u64,
+    /// R1 amendment-3 (Pocket-F): seed-frame pops at a NON-EOI position —
+    /// completed PREFIX parses recorded as trailing-accept candidates
+    /// (previously silently returned; R0 receipt: pure "1 2" had
+    /// `seed_pops=1, seed_pops_at_eoi=0` and no channel to surface it).
+    prefix_seed_pops: u64,
 }
 
 /// Frame-class bit folded into [`CgllRetSlot::kind_class`] (bit 6): a D1 and
@@ -4675,6 +4837,18 @@ struct CgllPureRun {
     /// seed-frame pop at logical EOI), deduped.
     accepting: Vec<(crate::sppf::SppfId, usize)>,
     accept_seen: rustc_hash::FxHashSet<(crate::sppf::SppfId, usize)>,
+    /// R1 amendment-3: PREFIX `(root, i_pop)` pairs from seed-frame pops at
+    /// a non-EOI position, deduped. Published as amendment-4-shaped
+    /// boundary cursors ONLY when no full accept exists — the classic
+    /// snapshot then routes them into `prefix_trailing_candidates` →
+    /// `resolve_prefix_with_trailing` → `AcceptedWithTrailing` → the
+    /// wrapper's `TrailingTokens` (strict facades convert to the
+    /// structured trailing error; recovering facades to partial-AST +
+    /// error — both classic-proven arms). Green parses (accepting
+    /// non-empty) never publish these ⇒ NG-3 (green perturbation) is
+    /// structurally impossible from this channel.
+    prefix_accepting: Vec<(crate::sppf::SppfId, usize)>,
+    prefix_seen: rustc_hash::FxHashSet<(crate::sppf::SppfId, usize)>,
     /// Debug slot-collision side-map: `slot_id(L)` hash → first-seen
     /// `(cur_sym, state-discriminant)`; a differing re-entry increments
     /// `stats.slot_collisions` (31-bit hash risk accepted into the gate;
@@ -6599,6 +6773,9 @@ where
             requested_root_cat: None,
             cgll_pure_goal_cat: None,
             cgll_pure_pos_key: Vec::new(),
+            cgll_pure_virtual_base: usize::MAX,
+            cgll_pure_parked: Vec::new(),
+            cgll_pure_park_seen: rustc_hash::FxHashSet::default(),
             cgll_pure_pos_is_bytes: false,
         }
     }
@@ -6727,6 +6904,9 @@ where
             requested_root_cat: Some(cat_src_idx),
             cgll_pure_goal_cat: None,
             cgll_pure_pos_key: Vec::new(),
+            cgll_pure_virtual_base: usize::MAX,
+            cgll_pure_parked: Vec::new(),
+            cgll_pure_park_seen: rustc_hash::FxHashSet::default(),
             cgll_pure_pos_is_bytes: false,
         }
     }
@@ -6854,6 +7034,9 @@ where
             requested_root_cat: None,
             cgll_pure_goal_cat: None,
             cgll_pure_pos_key: Vec::new(),
+            cgll_pure_virtual_base: usize::MAX,
+            cgll_pure_parked: Vec::new(),
+            cgll_pure_park_seen: rustc_hash::FxHashSet::default(),
             cgll_pure_pos_is_bytes: false,
         }
     }
@@ -7804,6 +7987,12 @@ where
         // `step_canonical` body it reaches — is dead-code-eliminated and the
         // classic driver stays byte-identical when the const is off.
         if self.canonical_gll_active() {
+            // R1 amendment 7 (Pocket-F pin gap): this branch returns BEFORE
+            // the classic loop's TLS pins below, so the generated engine's
+            // recovery emission saw only infra defaults under the canonical
+            // arms. Pin cache + config for the canonical drive too.
+            let _recovery_cache_guard = self.pin_recovery_cache();
+            let _recovery_config_guard = self.pin_recovery_config();
             let final_state = self.step_canonical(tokens);
             return match final_state {
                 WpdaState::Error { ref message } if message.starts_with("canonical-GLL budget") => {
@@ -8858,6 +9047,17 @@ where
         // `cgll_binarize_active` (leads with the `CANONICAL_GLL_ENABLED` const ⇒
         // DCE'd + byte-identical when the const is `false`).
         if self.cgll_binarize_active() {
+            // R1 amendment-3 (Pocket-F): the binarized TRAILING salvage —
+            // mirror of the classic `accepting.len() == 0` arm below. Fires
+            // ONLY when zero cursors reached logical EOI, so no full parse
+            // ever competes with a prefix (same disambiguation contract).
+            if accepting.is_empty() {
+                if let Some(trailing) = self
+                    .cgll_resolve_binarized_prefix_trailing(&prefix_trailing_candidates, tokens)
+                {
+                    return trailing;
+                }
+            }
             return self.cgll_resolve_binarized(&accepting);
         }
         // ★ ROOT-P Canonical-GLL Stage A SHADOW reading cross-check (2026-07-09).
@@ -9046,6 +9246,70 @@ where
         if terms.is_empty() {
             // No realizable prefix term — not a genuine trailing-tokens
             // case; let the caller surface the generic failure.
+            return None;
+        }
+        let position = selected_pos?;
+        Some(WpdaResolveResult::AcceptedWithTrailing { weights, terms, roots, position })
+    }
+
+    /// R1 amendment-3 (Pocket-F): binarize-arm variant of
+    /// [`Self::resolve_prefix_with_trailing`]. Same furthest-prefix
+    /// (max order key) selection contract, but PURE/BIN-tagged roots
+    /// realize through the binarized enumerator with `Some(1)` (the
+    /// single-facade K-election — classic `realize_root_to_terms(_,
+    /// Some(1))` parity); non-BIN roots (the gated classic-E1 binarize
+    /// arm) fall back to the classic realizer unchanged.
+    fn cgll_resolve_binarized_prefix_trailing(
+        &mut self,
+        prefix_candidates: &[(usize, W, crate::sppf::SppfId)],
+        tokens: &dyn WpdaTokenSource,
+    ) -> Option<WpdaResolveResult<W>>
+    where
+        W: 'static + IdempotentSemiring + StarSemiringRef,
+    {
+        let max_order_key = prefix_candidates
+            .iter()
+            .filter_map(|(p, _, _)| tokens.position_order_key(*p))
+            .max()?;
+        let mut weights: Vec<W> = Vec::new();
+        let mut terms: Vec<Arc<dyn std::any::Any + Send + Sync>> = Vec::new();
+        let mut roots: Vec<crate::sppf::SppfId> = Vec::new();
+        let mut selected_pos: Option<usize> = None;
+        let mut memo: std::collections::HashMap<crate::sppf::SppfId, Vec<(ActionArg, W)>> =
+            std::collections::HashMap::new();
+        for (pos, weight, root) in prefix_candidates.iter().filter(|(p, _, _)| {
+            tokens
+                .position_order_key(*p)
+                .map(|key| key == max_order_key)
+                .unwrap_or(false)
+        }) {
+            let root = *root;
+            if root == crate::sppf::SPPF_ID_NONE {
+                continue;
+            }
+            let is_bin = matches!(
+                self.sppf.node(root),
+                Some(crate::sppf::SppfNode::Symbol { non_terminal_tag, .. })
+                    if non_terminal_tag & CGLL_BIN_TAG != 0
+            );
+            if is_bin {
+                let realized = self.cgll_realize_bin_symbol(root, &mut memo, Some(1));
+                if let Some((ActionArg::Term { value, .. }, w)) = realized.into_iter().next() {
+                    selected_pos.get_or_insert(*pos);
+                    weights.push(w);
+                    terms.push(value);
+                    roots.push(root);
+                }
+            } else if let Some(t) =
+                self.realize_root_to_terms(root, Some(1)).into_iter().next()
+            {
+                selected_pos.get_or_insert(*pos);
+                weights.push(weight.clone());
+                terms.push(t);
+                roots.push(root);
+            }
+        }
+        if terms.is_empty() {
             return None;
         }
         let position = selected_pos?;
@@ -24557,6 +24821,11 @@ where
                         kind: &TokenKind| {
             match pos {
                 crate::sppf::PosOrSynth::Real(p) => {
+                    if (*p as usize) >= self.cgll_pure_virtual_base {
+                        // R1 amendment 4: virtual repair tokens are
+                        // ZERO-WIDTH (they tie with their real anchor).
+                        return self.cgll_pk(*p);
+                    }
                     if !self.cgll_pure_pos_is_bytes {
                         // Token-index space (linear sources): one token.
                         return self.cgll_pk(*p) + 1;
@@ -25044,7 +25313,9 @@ where
         for flat in &flats {
             let n = flat
                 .iter()
-                .filter(|&&id| !self.cgll_pure_is_sep_marker(id))
+                .filter(|&&id| {
+                    !self.cgll_pure_is_sep_marker(id) && !self.cgll_pure_is_repair_marker(id)
+                })
                 .count();
             match first {
                 None => first = Some(n),
@@ -25056,6 +25327,23 @@ where
             }
         }
         (first.unwrap_or(0), diverged)
+    }
+
+    /// R1 amendment 2 (Pocket-F): recognize the reserved REPAIR marker
+    /// (owner `(u16::MAX, u16::MAX - 2)`) — stripped at EVERY item-counting
+    /// gate exactly like the B2 separator marker (a counted repair marker
+    /// would coverage-refute its own repaired flat — the red-team's
+    /// blocking AV3 finding).
+    #[allow(dead_code)]
+    fn cgll_pure_is_repair_marker(&self, id: crate::sppf::SppfId) -> bool {
+        matches!(
+            self.sppf.node(id),
+            Some(crate::sppf::SppfNode::TriggerTerminal {
+                owner_cat: u16::MAX,
+                owner_rule_idx,
+                ..
+            }) if *owner_rule_idx == u16::MAX - 2
+        )
     }
 
     fn cgll_pure_is_sep_marker(&self, id: crate::sppf::SppfId) -> bool {
@@ -25720,6 +26008,200 @@ where
         self.cgll_pure_fold(slot, d.w, sid, close_pos, W::one_ref())
     }
 
+    /// R1 amendment-5 (Pocket-F): PARK a recovery proposal at a former
+    /// amendment-8 drop site. Decodes the delta into a repair family;
+    /// unsupported shapes (Swap, token-mutating sequences) are NAMED drops
+    /// (amendment 8 — counted; no corpus test demands chains, verified in
+    /// the R1 gate). Dedup per `(pos, cat, bp, family, payload)` mirrors
+    /// the classic `visited_recovery` `(pos, cat, bp)` gate with the
+    /// family/payload split (two distinct proposals at one site are both
+    /// genuine engine emissions).
+    #[allow(dead_code)] // Reached only under the const (DCE'd while const off).
+    #[allow(clippy::too_many_arguments)]
+    fn cgll_pure_park_repair(
+        &mut self,
+        run: &mut CgllPureRun,
+        d: &CgllPureDescriptor,
+        effect: &BuilderDelta,
+        br_weight: &W,
+        br_state: &WpdaState,
+        br_symbol: Option<StackSymbolV2>,
+        at_pos: usize,
+        family_b_pop: bool,
+    ) {
+        let decoded: Option<(CgllRepairKind, String)> = match effect {
+            BuilderDelta::InsertToken { kind, text, .. } => {
+                if family_b_pop {
+                    Some((
+                        CgllRepairKind::PopInsert { kind: kind.clone(), text: text.clone() },
+                        text.clone(),
+                    ))
+                } else {
+                    Some((
+                        CgllRepairKind::VirtualInsert { kind: kind.clone(), text: text.clone() },
+                        text.clone(),
+                    ))
+                }
+            },
+            BuilderDelta::SubstituteToken { kind, text, .. } if !family_b_pop => Some((
+                CgllRepairKind::VirtualSubstitute { kind: kind.clone(), text: text.clone() },
+                text.clone(),
+            )),
+            BuilderDelta::ApplyRecoverySequence { actions, target_pos, .. }
+                if !family_b_pop
+                    && actions.iter().all(|a| {
+                        matches!(
+                            a,
+                            ResolvedRepairAction::SkipToSync { .. }
+                                | ResolvedRepairAction::DeleteToken
+                        )
+                    }) =>
+            {
+                Some((
+                    CgllRepairKind::PosOnly { target_pos: *target_pos },
+                    format!("->{target_pos}"),
+                ))
+            },
+            _ => None,
+        };
+        let Some((kind, payload)) = decoded else {
+            run.stats.repair_named_drops += 1;
+            return;
+        };
+        let fam = match &kind {
+            CgllRepairKind::PopInsert { .. } => 0u8,
+            CgllRepairKind::VirtualInsert { .. } => 1,
+            CgllRepairKind::VirtualSubstitute { .. } => 2,
+            CgllRepairKind::PosOnly { .. } => 3,
+        };
+        let key = (
+            at_pos,
+            d.cur_sym.category_src_idx,
+            d.cur_sym.bp.map(|b| b as u16).unwrap_or(u16::MAX),
+            fam,
+            payload,
+        );
+        if !self.cgll_pure_park_seen.insert(key) {
+            return; // duplicate proposal at this (pos, cat, bp)
+        }
+        run.stats.repair_parked += 1;
+        self.cgll_pure_parked.push(CgllParkedRepair {
+            d: d.clone(),
+            kind,
+            br_weight: br_weight.clone(),
+            br_state: br_state.clone(),
+            br_symbol,
+            at_pos,
+        });
+    }
+
+    /// R1 (Pocket-F): materialize + RESEED one parked repair at a round
+    /// boundary. Folds the reserved repair MARKER (owner
+    /// `(u16::MAX, u16::MAX - 2)`, `Synthesized(at_pos)`, salt bit 28 —
+    /// amendment 2/6) carrying the branch weight as the packing weight
+    /// (K-B min-total-cost election), then continues per family:
+    /// PopInsert = the branch's own pop/reduce; PosOnly = twin at the real
+    /// target; VirtualInsert/Substitute = twin at a fresh virtual position
+    /// (amendment 4). The marker is realize-invisible (TriggerTerminal) and
+    /// stripped at every item-counting gate.
+    #[allow(dead_code)]
+    fn cgll_pure_reseed_repair(
+        &mut self,
+        run: &mut CgllPureRun,
+        parked: CgllParkedRepair<W>,
+        real_tokens: &dyn WpdaTokenSource,
+        virtuals: &mut Vec<CgllRepairVirtual>,
+    ) {
+        let CgllParkedRepair { d, kind, br_weight, br_state, br_symbol, at_pos } = parked;
+        let tag = match &kind {
+            CgllRepairKind::PopInsert { .. } | CgllRepairKind::VirtualInsert { .. } => "⟂ins",
+            CgllRepairKind::VirtualSubstitute { .. } => "⟂sub",
+            CgllRepairKind::PosOnly { .. } => "⟂skip",
+        };
+        let payload = match &kind {
+            CgllRepairKind::PopInsert { text, .. }
+            | CgllRepairKind::VirtualInsert { text, .. }
+            | CgllRepairKind::VirtualSubstitute { text, .. } => text.clone(),
+            CgllRepairKind::PosOnly { target_pos } => format!("{at_pos}->{target_pos}"),
+        };
+        let marker = self.sppf.intern_trigger_terminal(
+            TokenKind::Fixed(tag.to_string()),
+            crate::sppf::PosOrSynth::Synthesized(at_pos as u32),
+            Some(payload.as_str()),
+            u16::MAX,
+            u16::MAX - 2,
+        );
+        // Amendment 6: annotation-slot salt bit 28 (29 = empty-close,
+        // 30 = WRAP, 31 = BIN), position-salted like every marker fold.
+        let slot = Self::cgll_pure_slot_hash(&d.cur_sym, &d.state)
+            ^ ((at_pos as u32) << 1)
+            ^ 0x1000_0000;
+        let w = self.cgll_pure_fold(slot, d.w, marker, at_pos, br_weight.clone());
+        run.stats.repair_reseeded += 1;
+        match kind {
+            CgllRepairKind::PopInsert { .. } => {
+                // Family B: the branch's own (non-consuming) pop semantics —
+                // the repair is consumed by the frame that wanted it. The
+                // cost already rides the marker packing ⇒ pop weight one.
+                let d2 = CgllPureDescriptor { w, ..d };
+                self.cgll_pure_reduce(run, &d2, at_pos, &W::one_ref(), &br_state, real_tokens);
+            },
+            CgllRepairKind::PosOnly { target_pos } => {
+                let state = Self::cgll_pure_repair_state_at(&br_state, target_pos);
+                run.worklist.push_back(CgllPureDescriptor {
+                    state,
+                    cur_sym: br_symbol.unwrap_or(d.cur_sym),
+                    pos: target_pos,
+                    w,
+                    ..d
+                });
+            },
+            CgllRepairKind::VirtualInsert { kind: tk, text }
+            | CgllRepairKind::VirtualSubstitute { kind: tk, text } => {
+                let substitute = tag == "⟂sub";
+                let next_real = if substitute {
+                    real_tokens.next_pos(at_pos, 0).unwrap_or(at_pos + 1)
+                } else {
+                    at_pos
+                };
+                let vp = self.cgll_pure_virtual_base + virtuals.len();
+                virtuals.push(CgllRepairVirtual {
+                    kind: tk,
+                    text,
+                    at_real: at_pos,
+                    next_real,
+                });
+                // Extend the order-key cache: the virtual TIES with its
+                // real anchor (amendment 4).
+                let anchor_key = self.cgll_pk(at_pos as u32);
+                while self.cgll_pure_pos_key.len() <= vp {
+                    self.cgll_pure_pos_key.push(anchor_key);
+                }
+                let state = Self::cgll_pure_repair_state_at(&br_state, vp);
+                run.worklist.push_back(CgllPureDescriptor {
+                    state,
+                    cur_sym: br_symbol.unwrap_or(d.cur_sym),
+                    pos: vp,
+                    w,
+                    ..d
+                });
+            },
+        }
+    }
+
+    /// Rebase a branch state's baked position onto the reseed position
+    /// (the engine computed it against the UNMUTATED stream — the
+    /// PrefixDispatch-desync normalization, applied at reseed).
+    #[allow(dead_code)]
+    fn cgll_pure_repair_state_at(state: &WpdaState, pos: usize) -> WpdaState {
+        match state {
+            WpdaState::PrefixDispatch { cur_bp, .. } => {
+                WpdaState::PrefixDispatch { pos, cur_bp: *cur_bp }
+            },
+            other => other.clone(),
+        }
+    }
+
     /// REDUCE (pure form of Pop / ConsumeAndPop / ConsumeAtAndPop and the
     /// Fork pop kinds). `i_pop` = the POST-consume position (so the interned
     /// `z` span `hi`, the recorded P entry, and the resume position agree —
@@ -25747,11 +26229,24 @@ where
                 "amendment-3 invariant: seed node u0 must carry no canonical edges \
                  (the synthesized ret-slot labels make v != u0 for every descent)"
             );
-            if self.is_logical_eoi(i_pop, tokens) {
+            // R1 amendment 4: a VIRTUAL position must never satisfy the
+            // EOI gate (linear `pos >= len` would phantom-EOI) nor the
+            // trailing classification.
+            let virtual_pos = i_pop >= self.cgll_pure_virtual_base;
+            if !virtual_pos && self.is_logical_eoi(i_pop, tokens) {
                 run.stats.seed_pops_at_eoi += 1;
                 if d.w != crate::sppf::SPPF_ID_NONE && run.accept_seen.insert((d.w, i_pop)) {
                     run.accepting.push((d.w, i_pop));
                 }
+            } else if !virtual_pos
+                && d.w != crate::sppf::SPPF_ID_NONE
+                && run.prefix_seen.insert((d.w, i_pop))
+            {
+                // R1 amendment-3: a completed PREFIX parse (the seed frame
+                // popped before EOI). Record as a trailing-accept candidate;
+                // consumed at publish only when no full accept exists.
+                run.stats.prefix_seed_pops += 1;
+                run.prefix_accepting.push((d.w, i_pop));
             }
             return;
         }
@@ -25831,6 +26326,9 @@ where
                 for id in flat {
                     if self.cgll_pure_is_sep_marker(id) {
                         seps += 1;
+                    } else if self.cgll_pure_is_repair_marker(id) {
+                        // R1 amendment 2: repair markers are diagnostic
+                        // witnesses — neither items nor separators.
                     } else if is_class3 {
                         if matches!(
                             self.sppf.node(id),
@@ -26524,6 +27022,10 @@ where
             .unwrap_or(20_000_000);
 
         let mut run = CgllPureRun::default();
+        // R1: virtual repair positions live strictly above every real one.
+        self.cgll_pure_virtual_base = tokens.len() + 1;
+        self.cgll_pure_parked.clear();
+        self.cgll_pure_park_seen.clear();
         // Capped protocol trace (`PRATTAIL_CGLL_PURE_TRACE=<n>`; any
         // non-numeric value = 400 steps). Diagnostic only.
         run.trace_budget = std::env::var("PRATTAIL_CGLL_PURE_TRACE")
@@ -26573,7 +27075,26 @@ where
         let mut u_by_pos: std::collections::HashMap<usize, u64> = std::collections::HashMap::new();
         let max_pos = tokens.len();
         let mut budget_exceeded = false;
-
+        // ── R1 (Pocket-F): K-GATED RECOVERY ROUNDS (amendments 5/7) ──────
+        // K = the walker's own recovery config read DIRECTLY (strict
+        // facades pin 0 ⇒ the loop body runs ONCE and no round ever fires
+        // — byte-equivalent to the pre-R1 single drain). Rounds fire ONLY
+        // on death (worklist drained ∧ no accept ∧ no trailing candidate)
+        // with a non-empty proposal pocket — green parses construct
+        // NOTHING (NG-3).
+        let recovery_rounds_max: usize = self.recovery_config.max_recovery_depth as usize;
+        let mut recovery_round: usize = 0;
+        let mut repair_virtuals: Vec<CgllRepairVirtual> = Vec::new();
+        let real_tokens: &dyn WpdaTokenSource = tokens;
+        'rounds: loop {
+        // Amendment 4: the repair-lattice adapter — transparent forwarding
+        // until virtuals exist; rebuilt per round over the updated slice.
+        let repair_src = CgllRepairSource {
+            inner: real_tokens,
+            base: self.cgll_pure_virtual_base,
+            virtuals: &repair_virtuals,
+        };
+        let tokens: &dyn WpdaTokenSource = &repair_src;
         while let Some(d) = run.worklist.pop_front() {
             run.stats.processed += 1;
             if run.stats.processed as usize > budget {
@@ -26767,6 +27288,26 @@ where
             self.cgll_pure_dispatch_action(&mut run, &d, action, tokens);
             run.stats.peak_r = run.stats.peak_r.max(run.worklist.len());
         }
+        // ── ROUND TRIGGER: death check (worklist drained here) ───────────
+        drop(repair_src);
+        if budget_exceeded
+            || !run.accepting.is_empty()
+            || !run.prefix_accepting.is_empty()
+            || recovery_round >= recovery_rounds_max
+            || self.cgll_pure_parked.is_empty()
+        {
+            break 'rounds;
+        }
+        recovery_round += 1;
+        run.stats.repair_rounds += 1;
+        let parked = std::mem::take(&mut self.cgll_pure_parked);
+        for parked_repair in parked {
+            self.cgll_pure_reseed_repair(&mut run, parked_repair, real_tokens, &mut repair_virtuals);
+        }
+        if run.worklist.is_empty() {
+            break 'rounds; // reseeds all resolved inline (family B) or none
+        }
+        } // 'rounds
 
         // ── Publish: AMENDMENT-4 boundary fill-list per accepting root —
         // `inner_state = Accepted`, `pos = EOI`, `node = GSS_NODE_NONE`,
@@ -26910,9 +27451,67 @@ where
         if let Some(&(_, pos)) = run.accepting.first() {
             self.pos = pos;
         }
+        // ── R1 amendment-3 (Pocket-F): TRAILING-ACCEPT CHANNEL ───────────
+        // No full accept ⇒ surface the completed PREFIX parses (if any) as
+        // boundary cursors so the classic resolution snapshot classifies
+        // them (`is_prefix_trailing_position`) into
+        // `prefix_trailing_candidates` and the binarize-arm salvage builds
+        // `AcceptedWithTrailing`. Same cycle fence as full accepts (a
+        // cyclic prefix root would diverge realize identically). Green
+        // parses never reach this block.
+        if run.accepting.is_empty() && !budget_exceeded && !run.prefix_accepting.is_empty() {
+            run.prefix_accepting.retain(|&(root, _pos)| {
+                match self.cgll_pure_find_cycle(root) {
+                    None => true,
+                    Some(path) => {
+                        let symbol_mediated = path.iter().any(|&n| {
+                            matches!(
+                                self.sppf.node(n),
+                                Some(crate::sppf::SppfNode::Symbol { .. })
+                            )
+                        });
+                        if symbol_mediated {
+                            run.stats.cyclic_roots_tolerated += 1;
+                            return true;
+                        }
+                        run.stats.cyclic_roots_refused += 1;
+                        false
+                    },
+                }
+            });
+            // Furthest-prefix position (order-key space) = the walker
+            // position the facade reports for the trailing boundary.
+            if let Some(&(_, best)) = run
+                .prefix_accepting
+                .iter()
+                .max_by_key(|(_, p)| tokens.position_order_key(*p).unwrap_or(*p))
+            {
+                self.pos = best;
+            }
+        }
+        // ── R1 (R0's C3): STRICT REJECT-POSITION REPORTER — total failure
+        // (no accept, no prefix) reports the FURTHEST position any
+        // descriptor reached (order-key max), not position 0 (receipt:
+        // parse_error_tests::test_eof_error_position — "1 +" must report
+        // byte ≥ 2; classic reports `max_dead_pos`, the same quantity).
+        if run.accepting.is_empty() && run.prefix_accepting.is_empty() {
+            if let Some(&furthest) = u_by_pos
+                .keys()
+                .max_by_key(|&&p| tokens.position_order_key(p).unwrap_or(p))
+            {
+                self.pos = self.pos.max(furthest);
+            }
+        }
+        let publish_prefixes =
+            run.accepting.is_empty() && !budget_exceeded && !run.prefix_accepting.is_empty();
+        let publish_list: &[(crate::sppf::SppfId, usize)] = if publish_prefixes {
+            &run.prefix_accepting
+        } else {
+            &run.accepting
+        };
         let mut published: Vec<crate::cohort_lazy::Frame<W>> =
-            Vec::with_capacity(run.accepting.len());
-        for &(root, pos) in &run.accepting {
+            Vec::with_capacity(publish_list.len());
+        for &(root, pos) in publish_list {
             // AMENDMENT 4 (Stage C): the boundary cursor carries the ELECTED
             // weight — the root Symbol's `weight_sum` (⊕ over its linked
             // packings = the semiring-elected packing weight; Goodman
@@ -26960,7 +27559,9 @@ where
                  guard1_sites={} guarded_topcat_sites={} unwind_m1={} unwind_m5={} unwind_m234={} d2_retags={} collsep_guard={} \
                  unwind_census={} chain_ctx_div={} grouping_cat_rejects={} \
                  opt_group_absent={} out_of_scope={} engine_errors={} prefix_pos_desyncs={} \
-                 accept_action_hits={}",
+                 accept_action_hits={} prefix_seed_pops={} repair_parked={} \
+                 repair_reseeded={} repair_rounds={} repair_named_drops={} \
+                 repair_guard_parks={}",
                 s.u_count,
                 s.peak_r,
                 s.processed,
@@ -27015,6 +27616,12 @@ where
                 s.engine_errors,
                 s.prefix_pos_desyncs,
                 s.accept_action_hits,
+                s.prefix_seed_pops,
+                s.repair_parked,
+                s.repair_reseeded,
+                s.repair_rounds,
+                s.repair_named_drops,
+                s.repair_guard_parks,
             );
         }
         final_state
@@ -27348,7 +27955,11 @@ where
                 // DROPS the descriptor; applying its state mechanics without
                 // the source mutation pins `PrefixDispatch.pos` and spins.
                 if Self::cgll_pure_is_recovery_delta(&effect) {
-                    run.stats.recovery_drops += 1;
+                    // R1: PARK (pos-only sequences twin at the target; other
+                    // shapes named-drop). No symbol change on Advance.
+                    self.cgll_pure_park_repair(
+                        run, &d, &effect, &W::one_ref(), &new_state, None, d.pos, false,
+                    );
                     return;
                 }
                 // P3.a value-optional kv (Pathmap bare path): the engine's
@@ -28117,9 +28728,12 @@ where
                 self.cgll_pure_reduce(run, d, next_pos, &br_weight, &br_state, tokens);
             },
             ForkActionKind::PopWithEffect { effect } => {
-                // AMENDMENT 8: recovery branch ⇒ DROP (see AdvanceWithEffect).
+                // R1 family B (G4 — pred5's collection-close insert): PARK;
+                // the branch's own pop semantics ARE the repair.
                 if Self::cgll_pure_is_recovery_delta(&effect) {
-                    run.stats.recovery_drops += 1;
+                    self.cgll_pure_park_repair(
+                        run, d, &effect, &br_weight, &br_state, None, pos_after, true,
+                    );
                     return;
                 }
                 // Class-3 effect pop: effect skipped + counted (B2).
@@ -28147,16 +28761,28 @@ where
                 // the source mutation pins the state's pos and spins (the
                 // owner_nested loop this fix retires).
                 if Self::cgll_pure_is_recovery_delta(&effect) {
-                    run.stats.recovery_drops += 1;
+                    // R1 family A (WFST/Viterbi PrefixDispatch dead-end):
+                    // PARK — inserts/substitutes twin at a virtual position,
+                    // pos-only sequences at the real target (amendment 4/5).
                     if std::env::var_os("PRATTAIL_CANONICAL_GLL_STATS").is_some()
-                        && run.stats.recovery_drops <= 4
+                        && run.stats.repair_parked < 4
                     {
                         eprintln!(
-                            "CGLL-PURE-RECOVERY-DROP kind=ConsumeAndReplaceWithEffect \
+                            "CGLL-PURE-RECOVERY-PARK kind=ConsumeAndReplaceWithEffect \
                              effect={effect:?} pos={} sym={:?}",
                             pos_after, d.cur_sym
                         );
                     }
+                    self.cgll_pure_park_repair(
+                        run,
+                        d,
+                        &effect,
+                        &br_weight,
+                        &br_state,
+                        Some(br_symbol),
+                        pos_after,
+                        false,
+                    );
                     return;
                 }
                 run.stats.effects_skipped += 1;
@@ -28370,7 +28996,7 @@ where
                     return;
                 }
                 if Self::cgll_pure_is_recovery_delta(&effect) {
-                    run.stats.recovery_drops += 1; // amendment 8
+                    run.stats.repair_guard_parks += 1; // AV6 assert-stays-dead
                     return;
                 }
                 // P3.e: the binder-list close (`)` + EndBinderScope from
@@ -28404,7 +29030,7 @@ where
                     return;
                 }
                 if effects.iter().any(Self::cgll_pure_is_recovery_delta) {
-                    run.stats.recovery_drops += 1; // amendment 8
+                    run.stats.repair_guard_parks += 1; // AV6 assert-stays-dead
                     return;
                 }
                 // P3.e: the ATOMIC empty-binder-list case (`StartBinderScope
@@ -28516,7 +29142,7 @@ where
                     return;
                 }
                 if Self::cgll_pure_is_recovery_delta(&effect) {
-                    run.stats.recovery_drops += 1; // amendment 8
+                    run.stats.repair_guard_parks += 1; // AV6 assert-stays-dead
                     return;
                 }
                 if std::env::var_os("PRATTAIL_CANONICAL_GLL_STATS").is_some()
@@ -28534,7 +29160,7 @@ where
                 start_scope: _,
                 ref effect,
             } if Self::cgll_pure_is_recovery_delta(effect) => {
-                run.stats.recovery_drops += 1; // amendment 8
+                run.stats.repair_guard_parks += 1; // AV6 assert-stays-dead
             },
             ForkActionKind::GuardedConsumeBinderIdentAndReplace { start_scope: _ } => {
                 self.cgll_pure_binder_ident_consume(
