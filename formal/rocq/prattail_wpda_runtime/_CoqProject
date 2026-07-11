@@ -62,3 +62,7 @@ theories/MethodFrameIsolation.v
 theories/InfixReconvergence.v
 theories/PrefixCohortIsolationGeneral.v
 theories/GroupedCollectionAccept.v
+theories/PureDescriptorSpaceBound.v
+theories/PureForestAcyclicity.v
+theories/PurePackingPreservation.v
+theories/LadderReadingCount.v
