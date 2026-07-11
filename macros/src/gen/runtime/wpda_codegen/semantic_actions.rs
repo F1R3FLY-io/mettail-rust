@@ -488,7 +488,14 @@ pub fn emit_single_hop_coercion_body(
     }
 }
 
-fn trigger_unary_wrapper_source_cat(rule: &GrammarRule) -> Option<String> {
+/// S1-FACTORING F0 (2026-07-11): `pub(crate)` so the A2 cast-machinery
+/// eligibility exclusion (`numeric_cast_adapter::cast_machinery_participates`,
+/// consumed by `wpda_codegen::factoring`) keys off the SAME source data that
+/// feeds `emit_trigger_unary_wrappers_into_body` / `emit_prefix_cast_into_body`
+/// / `emit_prefix_cast_keyword_body` — the tables the walker's
+/// `trigger_unary_wrapper_rule_matches` parking gate consults. Visibility-only
+/// change; emission is untouched.
+pub(crate) fn trigger_unary_wrapper_source_cat(rule: &GrammarRule) -> Option<String> {
     use mettail_ast::grammar::{SyntaxExpr, TermParam};
     use mettail_ast::types::TypeExpr;
 

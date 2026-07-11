@@ -51,6 +51,14 @@ pub mod builtin_metadata;
 pub mod collection;
 pub mod engine_impl;
 pub mod facade;
+/// S1-FACTORING Stage F0 (2026-07-11): generic FGLL-style shared-prefix
+/// factoring of the PrefixDispatch fan — eligibility predicate, per-bucket
+/// suffix-trie build, typed spine-pos → member-pos commit maps. PURE data
+/// model in F0 (consumed by its unit tests + the grammar-generality INV-8
+/// prefix-surface no-loss invariant); emission is wired in F1 behind
+/// `forks::S1_FACTORING` (OFF ⇒ generated wpda.rs byte-identical). Plan:
+/// `scratchpad/zz_probes/s1_factoring_plan.md`.
+pub mod factoring;
 /// Stage 3.16/3.17/3.18 (Commit 2, 2026-05-05): unified Fork-emission framework.
 /// Helpers replace deterministic peek-and-decide patterns with
 /// `WpdaStepAction::Fork` per `feedback_use_wpds_disambiguation_not_heuristics.md`.

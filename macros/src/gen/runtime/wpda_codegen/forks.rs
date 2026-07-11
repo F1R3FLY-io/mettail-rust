@@ -1153,6 +1153,39 @@ pub(crate) const CROSSCAT_LEX_COMPAT_GATE: bool = true;
 /// `true` applies → the wrap is a no-op) and the push is byte-identical.
 pub(crate) const CROSSCAT_LEX_COMPAT_RUNTIME_GATE: bool = true;
 
+/// S1_FACTORING — master kill-switch for the generic FGLL-style shared-prefix
+/// factoring of the PrefixDispatch fan (Stage F0, 2026-07-11). Compile-time
+/// `const` resolved at macro expansion (the [`FORROW_PROJ_GATE`] /
+/// [`AT_QUOTED_BIND_GATE`] kill-switch convention — NOT a runtime env var).
+///
+/// Plan of record: `scratchpad/zz_probes/s1_factoring_plan.md` (§0-§5 plus the
+/// red-team amendments A1-A10). Literature anchor: Scott & Johnstone,
+/// *Structuring the GLL parsing algorithm for performance*, SCP 125 (2016).
+/// The fan: at `PrefixDispatch` on `@` in RhoCalc `Proc` the generated engine
+/// forks 15 per-rule branches (rules 10-24) that mirror the SAME `@` token
+/// into the SPPF 15 times and run the inner `Name`/`Proc` sub-parse once per
+/// RULE per nesting level; the factored emission runs it once per GROUP
+/// (`@`-cohort: 16 branches → 4).
+///
+/// When `false` (F0 ships OFF): the factoring model
+/// ([`super::factoring`]) is a PURE data-structure computation exercised only
+/// by its unit tests and by the grammar-generality INV-8 prefix-surface
+/// no-loss invariant — NO emitter consults it, and the generated
+/// `target/generated/<lang>/wpda.rs` files are BYTE-IDENTICAL to the pre-F0
+/// output for every bundled language (receipt:
+/// `scratchpad/zz_probes/logs_s1f0/`).
+///
+/// When `true` (F1+): `factoring::emission_partition` drives the
+/// unified-bucket Fork emission in `prefix.rs` (one spine branch per eligible
+/// group, commit at trie divergence leaves), the `binder.rs` BinderRule key
+/// space gains `(cat, SPINE_ID, spine_pos)` arms, and the lex-alt surface
+/// (`kind_dispatch.rs` + [`emit_lex_fork_at_prefix_dispatch`]) emits GROUP
+/// entries instead of per-member `PrefixOp` entries (red-team AV5 — without
+/// that the lex-fork path re-creates the per-rule fan). Flip criteria: plan
+/// §5 (the F4 gate — d4-under-cap + depth-uniformity primary, ≥5× d3 wall
+/// secondary).
+pub(crate) const S1_FACTORING: bool = false;
+
 // ─────── Branch descriptors ──────────────────────────────────────────────
 
 /// A single Fork branch in a Cluster 1 emission. Stringly-typed via

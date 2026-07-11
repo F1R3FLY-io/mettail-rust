@@ -19,6 +19,17 @@
 //! | INV-5 | no single-winner (group N ⇒ N entries)              | drift    |
 //! | INV-6 | no hardcoded category/delimiter dispatch            | GAP-2    |
 //! | INV-7 | 0-operand-per-kind classifies + dispatch arm        | GAP-3    |
+//! | INV-8 | prefix-surface NO-LOSS (S1-factoring, amendment A5) | drift    |
+//!
+//! INV-8 (S1-FACTORING F0, 2026-07-11 — red-team amendment A5; NOT a
+//! revision of INV-5, which gates the INFIX lex-alt lattice): for every
+//! `(category, leading-literal)` prefix cohort, the factoring partition
+//! loses no member — `Σ member leaves over spine groups + Σ members of
+//! F5-deferred (ineligible) groups + |unfactored singletons| == the original
+//! cohort size` — checked on BOTH the always-computed factoring model AND
+//! the emission-effective partition; under `forks::S1_FACTORING == false`
+//! the latter must additionally degenerate to the identity (every rule its
+//! own singleton, zero groups).
 //!
 //! The harness draws delimiters from a NON-rhocalc alphabet (`«»`, `‹›`, `⟦⟧`,
 //! `⟨⟩`, custom keywords, non-`;` separators) so the rhocalc-specific hardcodes
@@ -916,6 +927,77 @@ fn inv7_nullary_per_kind(lang: &LanguageDef) -> Result<(), String> {
     Ok(())
 }
 
+/// INV-8: prefix-surface NO-LOSS (S1-FACTORING F0, amendment A5). For every
+/// `(category, leading-literal)` prefix cohort discovered by the factoring
+/// member scan (BinderPrefix + NullaryLiteralRun descriptors — the same
+/// insertion conditions as the `prefix.rs` unified bucket), the partition
+/// accounts for every member exactly once:
+///
+/// ```text
+/// Σ leaves(groups) + Σ |members(ineligible)| + |singletons| == cohort_size
+/// ```
+///
+/// Checked on BOTH [`super::factoring::build_prefix_factoring`] (the
+/// always-computed model — the real trie math, meaningful in F0 already) and
+/// [`super::factoring::emission_partition`] (the F1 integration surface).
+/// Under `forks::S1_FACTORING == false` the emission-effective partition must
+/// ALSO be the identity: zero groups, zero deferrals, every member a
+/// `FactoringDisabled` singleton.
+fn inv8_prefix_surface_noloss(lang: &LanguageDef) -> Result<(), String> {
+    let (categories, per_cat) = categories_and_per_cat(lang);
+    let models = [
+        ("factoring model", super::factoring::build_prefix_factoring(lang, &categories, &per_cat)),
+        ("emission partition", super::factoring::emission_partition(lang, &categories, &per_cat)),
+    ];
+    for (which, model) in &models {
+        for cat in model {
+            for bucket in &cat.buckets {
+                let leaves: usize = bucket.groups.iter().map(|g| g.tree.leaf_count()).sum();
+                let deferred: usize =
+                    bucket.ineligible.iter().map(|g| g.member_rule_idxs.len()).sum();
+                let total = leaves + deferred + bucket.singletons.len();
+                if total != bucket.cohort_size {
+                    return Err(format!(
+                        "INV-8 no-loss violated in the {which} at (cat {}, {:?}): \
+                         {leaves} leaves + {deferred} deferred + {} singletons != cohort {}",
+                        cat.category_src_idx,
+                        bucket.leading_literal,
+                        bucket.singletons.len(),
+                        bucket.cohort_size,
+                    ));
+                }
+            }
+        }
+    }
+    if !super::forks::S1_FACTORING {
+        let (_, effective) = &models[1];
+        for cat in effective {
+            for bucket in &cat.buckets {
+                if !bucket.groups.is_empty() || !bucket.ineligible.is_empty() {
+                    return Err(format!(
+                        "INV-8 identity violated: S1_FACTORING is OFF yet (cat {}, {:?}) \
+                         emits {} groups / {} deferrals",
+                        cat.category_src_idx,
+                        bucket.leading_literal,
+                        bucket.groups.len(),
+                        bucket.ineligible.len(),
+                    ));
+                }
+                if bucket.singletons.len() != bucket.cohort_size {
+                    return Err(format!(
+                        "INV-8 identity violated at (cat {}, {:?}): {} singletons != cohort {}",
+                        cat.category_src_idx,
+                        bucket.leading_literal,
+                        bucket.singletons.len(),
+                        bucket.cohort_size,
+                    ));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 // Deterministic witness tests — one clear RED signal per gap.
 // ════════════════════════════════════════════════════════════════════════════
@@ -1023,6 +1105,39 @@ fn grammar_generality_inv1_noloss_symmetry_with_collisions() {
     inv1_inv5_noloss(&lang).expect("INV-1/INV-5: slice == group == lattice for trigger collisions");
 }
 
+/// INV-8 witness: a deliberately factorable prefix cohort mixing BOTH
+/// classifier sources (a BinderPrefix pair sharing `zero « Tee` plus a
+/// NullaryLiteralRun member `zero « »`) alongside an unshared singleton —
+/// the member accounting must balance, and with `S1_FACTORING` OFF the
+/// emission partition must be the identity.
+#[test]
+fn grammar_generality_inv8_prefix_surface_noloss() {
+    let types = vec![lang_type("Expr", None), lang_type("Tee", None)];
+    let terms = vec![
+        // Nullary multi-literal member (the `mixfix_nullary_literals` source).
+        jrule("NZero", "Expr", vec![], vec![lit("zero"), lit("«"), lit("»")]),
+        // Two binder members sharing the « Tee spine, diverging at »/·.
+        jrule(
+            "BClose",
+            "Expr",
+            vec![simple("a", "Tee")],
+            vec![lit("zero"), lit("«"), param("a"), lit("»")],
+        ),
+        jrule(
+            "BSep",
+            "Expr",
+            vec![simple("a", "Tee"), simple("b", "Tee")],
+            vec![lit("zero"), lit("«"), param("a"), lit("·"), param("b"), lit("»")],
+        ),
+        // A lone cohort elsewhere (singleton accounting).
+        jrule("Lone", "Expr", vec![simple("a", "Tee")], vec![lit("unit"), param("a")]),
+        jrule("TAtom", "Tee", vec![], vec![lit("epsilon")]),
+    ];
+    let lang = mk_language("Inv8Lang", types, terms);
+    inv8_prefix_surface_noloss(&lang)
+        .expect("INV-8: prefix-surface member accounting must balance (A5)");
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 // Property tests over random grammars (breadth).
 // ════════════════════════════════════════════════════════════════════════════
@@ -1030,13 +1145,14 @@ fn grammar_generality_inv1_noloss_symmetry_with_collisions() {
 proptest! {
     #![proptest_config(ProptestConfig { cases: 96, max_shrink_iters: 4096, ..ProptestConfig::default() })]
 
-    /// All structure-level invariants (INV-1/2/3/5/7) over random grammars.
+    /// All structure-level invariants (INV-1/2/3/5/7/8) over random grammars.
     #[test]
     fn grammar_generality_props_structure(lang in arb_language_def()) {
         prop_assert!(inv1_inv5_noloss(&lang).is_ok(), "{}", inv1_inv5_noloss(&lang).unwrap_err());
         prop_assert!(inv2_totality(&lang).is_ok(), "{}", inv2_totality(&lang).unwrap_err());
         prop_assert!(inv3_goal_gate(&lang).is_ok(), "{}", inv3_goal_gate(&lang).unwrap_err());
         prop_assert!(inv7_nullary_per_kind(&lang).is_ok(), "{}", inv7_nullary_per_kind(&lang).unwrap_err());
+        prop_assert!(inv8_prefix_surface_noloss(&lang).is_ok(), "{}", inv8_prefix_surface_noloss(&lang).unwrap_err());
     }
 }
 

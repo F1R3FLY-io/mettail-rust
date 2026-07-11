@@ -999,7 +999,12 @@ fn first_param_cat_from_positions(positions: &[BinderPosition]) -> Option<&str> 
     None
 }
 
-fn required_top_cat_after_position(
+/// S1-FACTORING F0 (2026-07-11): `pub(crate)` so the factoring trie's
+/// `SpineItem::Literal` merge key carries the SAME derived
+/// `required_top_cat` payload the `emit_binder_rule_body` Literal arm emits
+/// (emitted-action-shape equality — plan §2). Visibility-only change;
+/// emission is untouched.
+pub(crate) fn required_top_cat_after_position(
     position: Option<&BinderPosition>,
     categories: &[String],
 ) -> Option<u16> {
