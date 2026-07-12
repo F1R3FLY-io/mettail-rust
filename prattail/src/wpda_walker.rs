@@ -715,7 +715,7 @@ const ROOTP_SLOT_PACKING_ENABLED: bool = false;
 /// (plan Stage G) makes the canonical engine LIVE; the per-walker [`RootpMode`]
 /// `canonical_gll` switch (`PRATTAIL_NO_CANONICAL_GLL`) then toggles it for A/B
 /// differentials WITHOUT a recompile.
-const CANONICAL_GLL_ENABLED: bool = false;
+const CANONICAL_GLL_ENABLED: bool = true;
 
 /// ROOT-P Canonical-GLL Stage E1 (2026-07-09): high-bit tag OR'd into a
 /// non-terminal tag to mint a BINARIZED shadow `Symbol` — `intern_symbol(cat |
