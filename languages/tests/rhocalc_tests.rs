@@ -4185,3 +4185,178 @@ mod m6_realize_selection {
         }
     }
 }
+
+// ════════════════════════════════════════════════════════════════════════════════
+// FLIP-GATE ATTEMPT-2 FALLOUT (2026-07-12): repro pins for the pure-arm hole
+// PREFIX-OPERAND × GROUPED-CHANNEL × SEND — `bitnot (a)!(false)` class.
+//
+// Receipts (scratchpad/zz_probes/logs_s2flip2/): the flip-gate battery's
+// gen_rhocalc_prop::proc_display_parse_roundtrip minimized to
+// `bitnot (a)!(false)` (p6_sweep.log); the deterministic A/B (bitnot_ab.log,
+// bitnot_scope.log) shows CLASSIC parses every shape below (unwrapping the
+// parens via the grouped-LHS cross-cat reentry family — channel `NVar(a)` /
+// `NQuoteNil`, no NParen) while the PURE canonical-GLL arm rejects the three
+// hole shapes with TrailingTokens at the `!`: a prefix operator's operand
+// sub-parse completes at the group `(a)` and pure never continues the
+// completed group into the following send. The R-A/R-C boundary-continuation
+// family, in a configuration neither committed arm covers (Arm A fires at
+// InfixLoop-on-CE; Arm C at InfixLoop operand early-stop; this is a
+// PREFIX-rule operand needing the classic TransparentSourceReentry
+// continuation).
+//
+// ARM G v2 LANDED (2026-07-12): the per-cat-marker reentry floor reset
+// (`cgll_pure_group_reentry_floor_reset`) closes the hole — the block is
+// UN-IGNORED and extended with the D3-matrix pins (multisets classic-equal,
+// receipts logs_s2flip2/armg_d3_matrix.log). Historical verification protocol
+// (banked receipts, pre-fix): `--ignored` under a scratch const=true flip ⇒
+// the three hole pins FAILED and the three controls PASSED; under
+// `PRATTAIL_NO_CANONICAL_GLL=1` all six PASSED.
+// ════════════════════════════════════════════════════════════════════════════════
+
+mod flip_blocker_prefix_grouped_send {
+    use super::*;
+
+    /// THE MINIMAL (proptest-minimized): prefix op + grouped channel + send.
+    #[test]
+    fn bitnot_grouped_channel_send_parses() {
+        fresh();
+        let t = parse("bitnot (a)!(false)");
+        // Classic shape receipt: BitNot(POutput(NVar(a), CastBool(false)))
+        // — the parens are unwrapped by the reentry family (no NParen).
+        assert!(
+            format!("{t:?}").starts_with("BitNot(POutput("),
+            "expected BitNot(POutput(..)), got: {t:?}"
+        );
+    }
+
+    /// Hole pin: empty-payload send on a grouped channel under the prefix op.
+    #[test]
+    fn bitnot_grouped_channel_empty_send_parses() {
+        fresh();
+        let t = parse("bitnot (a)!()");
+        assert!(
+            format!("{t:?}").starts_with("BitNot(POutputEmpty("),
+            "expected BitNot(POutputEmpty(..)), got: {t:?}"
+        );
+    }
+
+    /// Hole pin: grouped QUOTED channel under the prefix op.
+    #[test]
+    fn bitnot_grouped_quote_channel_send_parses() {
+        fresh();
+        let t = parse("bitnot (@Nil)!(false)");
+        // Constructor-family prefix: the default facade elects the
+        // @Nil-specialized `POutputNil` here while the with_source facade
+        // shows the generic `POutput(NQuoteNil, ..)` — both are the send.
+        assert!(
+            format!("{t:?}").starts_with("BitNot(POutput"),
+            "expected BitNot(POutput..), got: {t:?}"
+        );
+    }
+
+    /// Control: the grouped-channel send WITHOUT the prefix op parses in
+    /// BOTH arms today (pure keeps the NParen; classic unwraps) — pins that
+    /// the hole is specifically the prefix-operand continuation.
+    #[test]
+    fn control_grouped_channel_send_parses() {
+        fresh();
+        let t = parse("(a)!(false)");
+        assert!(
+            format!("{t:?}").starts_with("POutput("),
+            "expected POutput(..), got: {t:?}"
+        );
+    }
+
+    /// Control: the UNGROUPED channel under the prefix op parses in both
+    /// arms today — the group is load-bearing for the hole.
+    #[test]
+    fn control_ungrouped_channel_send_parses() {
+        fresh();
+        let t = parse("bitnot a!(false)");
+        assert!(
+            format!("{t:?}").starts_with("BitNot(POutput("),
+            "expected BitNot(POutput(..)), got: {t:?}"
+        );
+    }
+
+    /// Control: the prefix op over the bare group (no send) parses in both
+    /// arms today — the SEND continuation is load-bearing for the hole.
+    #[test]
+    fn control_prefix_over_bare_group_parses() {
+        fresh();
+        let _ = parse("bitnot (a)");
+    }
+
+    // ── ARM G D3-matrix pins (2026-07-12): the wider hole family + fences,
+    //    expected values = the classic-adjudicated g5/d3 receipts. ──────────
+
+    /// Persistent send on the grouped channel under the prefix op.
+    #[test]
+    fn bitnot_grouped_channel_persist_send_parses() {
+        fresh();
+        let t = parse("bitnot (a)!!(false)");
+        assert!(
+            format!("{t:?}").starts_with("BitNot(PPersistOutput"),
+            "expected BitNot(PPersistOutput..), got: {t:?}"
+        );
+    }
+
+    /// Polyadic send on the grouped channel under the prefix op (rule 8).
+    #[test]
+    fn bitnot_grouped_channel_polyadic_send_parses() {
+        fresh();
+        let t = parse("bitnot (a)!(0,1)");
+        assert!(
+            format!("{t:?}").starts_with("BitNot(POutput"),
+            "expected BitNot(POutput..), got: {t:?}"
+        );
+    }
+
+    /// Multiset pin: the n=4 payload row equals classic's reading count
+    /// (armg_d3_matrix.log: pure n=4 ≡ classic n=4, md5 EQ).
+    #[test]
+    fn bitnot_grouped_send_payload_multiset_matches_classic() {
+        fresh();
+        let readings =
+            Proc::parse_via_wpda_all("bitnot (a)!(@Nil!() / @Nil!())").expect("parse_all");
+        assert_eq!(readings.len(), 4, "classic multiset is n=4, got {}", readings.len());
+    }
+
+    /// Multiset pin: the nested-group row (double-LHS) equals classic n=2;
+    /// both group frames fire the reset (resets=2 receipt).
+    #[test]
+    fn bitnot_nested_grouped_send_multiset_matches_classic() {
+        fresh();
+        let readings = Proc::parse_via_wpda_all("bitnot ((a))!(false)").expect("parse_all");
+        assert_eq!(readings.len(), 2, "classic multiset is n=2, got {}", readings.len());
+    }
+
+    /// The hole nested inside a send payload (n=1 both arms).
+    #[test]
+    fn send_payload_hosting_the_hole_parses() {
+        fresh();
+        let t = parse("x!(bitnot (a)!(false))");
+        assert!(
+            format!("{t:?}").starts_with("POutput"),
+            "expected POutput..(payload BitNot..), got: {t:?}"
+        );
+    }
+
+    /// Fence (outcome parity): the chained second send is REFUSED by both
+    /// arms — the reset fires at the FIRST `!` then the second-send lineage
+    /// strands (classic-parity ERR; resets ≥ 1 here is EXPECTED, receipts
+    /// armg_d1_chained.log / §1.4 of the v2 plan).
+    #[test]
+    fn fence_chained_send_refused_both_arms() {
+        fresh();
+        assert!(Proc::parse("bitnot (a)!(Nil)!(Nil)").is_err());
+    }
+
+    /// Fence (outcome parity): PDrop over a grouped-channel send is REFUSED
+    /// by both arms (POutput is Proc; PDrop's operand slot is Name).
+    #[test]
+    fn fence_pdrop_grouped_send_refused_both_arms() {
+        fresh();
+        assert!(Proc::parse("*(a)!(false)").is_err());
+    }
+}

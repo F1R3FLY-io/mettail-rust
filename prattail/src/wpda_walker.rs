@@ -5018,6 +5018,16 @@ struct CgllPureStats {
     prefan_reexpansions: u64,
     /// R-D: AmbiguityBudget/BeamSize overflows fired by the pure walk.
     ambiguity_overflows: u64,
+    /// ARM G (2026-07-12): fires of the per-cat-marker reentry floor reset
+    /// (`cgll_pure_group_reentry_floor_reset`) — the pure mirror of classic's
+    /// `crosscat_inherited_floor_reset` keyed on marker-slot evidence.
+    group_floor_resets: u64,
+    /// ARM G (A4, NON-OPTIONAL census): frames where the marker kind-class
+    /// matched (3a) and the token triple passed (5) but the reentry evidence
+    /// failed (3b xcat≠3 or 3c pushed_cat≠cat) — the u=6/GCPI-morph-exclusion
+    /// liveness witness (slot fields are never trace-printed; this counter is
+    /// the only runtime witness of the slot triple).
+    group_floor_reset_excluded: u64,
 }
 
 /// Frame-class bit folded into [`CgllRetSlot::kind_class`] (bit 6): a D1 and
@@ -12422,6 +12432,13 @@ where
             && !self.engine.category_accepts_operator_at_floor(cat, tok, cur_bp)
             && self.engine.category_accepts_operator_at_floor(cat, tok, 0)
         {
+            // ARM-G PROBE-C1 site (a) — env-gated, measurement-only.
+            if std::env::var_os("PRATTAIL_GRP_EMITTER_DIAG").is_some() {
+                eprintln!(
+                    "GRP-DIAG a-floor-reset pos={} cat={} cur_bp={} tok={:?} node_sym={:?}",
+                    pos, cat, cur_bp, tok, node.symbol
+                );
+            }
             return Some(WpdaState::InfixLoop { cur_bp: 0 });
         }
         None
@@ -14277,6 +14294,17 @@ where
                             )
                         });
                         if branches.is_empty() {
+                            // ARM-G KILL-SITE receipt (env-gated): the projection-boundary
+                            // suppress-half emptied a Fork on this cursor.
+                            if std::env::var_os("PRATTAIL_GRP_GUARD_DIAG").is_some() {
+                                eprintln!(
+                                    "GRP-PROJ-SUPPRESS pos={} state={:?} boundary_src={} tok={:?}",
+                                    cursor.pos,
+                                    cursor.inner_state,
+                                    boundary.source_src_idx,
+                                    tokens.peek_text(cursor.pos)
+                                );
+                            }
                             return WpdaStepAction::Advance(WpdaState::Unwinding);
                         }
                         for branch in &mut branches {
@@ -14403,6 +14431,25 @@ where
                 });
                 if branches.len() != before {
                     if branches.is_empty() {
+                        // ARM-G KILL-SITE PROBE (env-gated): the per-ARC veto —
+                        // every category-changing branch refused on THIS arc's
+                        // evidence (the reset fired on SHELL evidence upstream).
+                        if std::env::var_os("PRATTAIL_GRP_GUARD_DIAG").is_some() {
+                            let top_edge = self
+                                .incoming_edge_stack_arena
+                                .top(cursor.incoming_edge_stack_id)
+                                .and_then(|eid| self.gss.edge_kind(eid));
+                            eprintln!(
+                                "GRP-GUARD-VETO pos={} lhs_evidence={:?} has_scope_edge={} top_edge={:?} state={:?}",
+                                cursor.pos,
+                                lhs_evidence,
+                                self.crosscat_lhs_stack_has_scope_edge(
+                                    cursor.incoming_edge_stack_id
+                                ),
+                                top_edge,
+                                cursor.inner_state
+                            );
+                        }
                         return WpdaStepAction::Advance(WpdaState::Unwinding);
                     }
                 }
@@ -28703,8 +28750,45 @@ where
             // the engine's open/close membership checks need the innermost
             // enclosing collection's delimiters, receipt `{|1:2|}` accepts=0).
             let frame_ctx = self.cgll_pure_frame_ctx(&run.v_parent, &d);
+            // ── ARM G hook (2026-07-12): pre-step effective-state correction —
+            // classic's exact alias-when-None pattern at its tomita apply site.
+            // Strictly AFTER the U add-once (the U keyspace is untouched; the
+            // descriptor keeps its stale floor exactly as classic's arcs do —
+            // successors carry engine-computed states); deliberately NOT joined
+            // to the two sanctioned pre-key patches (kv-phase, PrefixDispatch
+            // desync) — step-argument-only, per the standing do-not-resurrect
+            // entry against pre-key `d.state` mutation.
+            let mut __grp_excluded = false;
+            let __grp_reset =
+                self.cgll_pure_group_reentry_floor_reset(&d, tokens, &mut __grp_excluded);
+            if __grp_reset.is_some() {
+                run.stats.group_floor_resets += 1;
+            }
+            if __grp_excluded {
+                run.stats.group_floor_reset_excluded += 1;
+            }
+            // ARM-G OVER-FIRE PROBE (env-gated, measurement-only): per-fire /
+            // per-exclusion descriptor + slot inventory.
+            if (__grp_reset.is_some() || __grp_excluded)
+                && std::env::var_os("PRATTAIL_GRP_FIRE_DIAG").is_some()
+            {
+                eprintln!(
+                    "GRP-FIRE kind={} pos={} u={} w={} wcat={:?} state={:?} slot{{pushed_cat={} kind_class={} outer_bp={} xcat={}}} tok={:?}",
+                    if __grp_reset.is_some() { "FIRE" } else { "EXCL" },
+                    d.pos,
+                    d.u,
+                    d.w,
+                    self.sppf_symbol_category(d.w),
+                    d.state,
+                    d.ret_slot.pushed_cat,
+                    d.ret_slot.kind_class,
+                    d.ret_slot.outer_bp,
+                    d.ret_slot.xcat,
+                    tokens.peek_text(d.pos)
+                );
+            }
             let action = self.engine.step(
-                &d.state,
+                __grp_reset.as_ref().unwrap_or(&d.state),
                 &self.gss,
                 Some(&synthesized),
                 d.pos,
@@ -29248,7 +29332,8 @@ where
                  repair_guard_parks={} cluster_b_refused={} fork_dispatches={} \
                  max_fork_width={} window_closed_at_fork={} \
                  post_window_max_width={} prefan_reexpansions={} \
-                 ambiguity_overflows={}",
+                 ambiguity_overflows={} group_floor_resets={} \
+                 group_floor_reset_excluded={}",
                 s.u_count,
                 s.peak_r,
                 s.processed,
@@ -29326,6 +29411,8 @@ where
                 s.post_window_max_width,
                 s.prefan_reexpansions,
                 s.ambiguity_overflows,
+                s.group_floor_resets,
+                s.group_floor_reset_excluded,
             );
         }
         final_state
@@ -29517,6 +29604,102 @@ where
     }
 
     #[allow(dead_code)] // Reached only under the const (DCE'd while const off).
+    /// ARM G (2026-07-12): pure mirror of classic's `crosscat_inherited_floor_reset`
+    /// (the reset fn + its pre-step apply site in the tomita frontier loop) — the
+    /// PER-CAT-MARKER REENTRY floor reset, the third boundary-continuation
+    /// primitive (siblings: Arm A crosscat boundary guard, Arm C member-1'
+    /// injection). Evidence re-keyed from classic's `CrossCatLhsReentry{source==cat}`
+    /// top edge to the descriptor's ret_slot:
+    ///
+    /// - Classic mints the edge at the `(`-fork's PER-CATEGORY GroupingMarker fan
+    ///   (Discriminant(5)/PushCrossCatLhs members carry
+    ///   `CrossCatLhsReentry{cat, min_bp=outer floor}` — armg_c1_full.log:19,27)
+    ///   and PRESERVES it through the same-cat marker-close `ConsumeAndReplace`
+    ///   BY NOT RE-DERIVING it (`auto_edge_kind_for_replace` never invoked on that
+    ///   close: 0 site-c/site-d fires; the edge rides c1:27→130→176→239).
+    /// - Pure's same fan stamps the marker slot: `kind_class=KC_GROUPING_MARKER ∧
+    ///   xcat=3 (the PushCrossCatLhs channel) ∧ pushed_cat=marker cat ∧
+    ///   outer_bp=the host floor`; the morph (`ConsumeAndReplace` arm, `..d.clone()`)
+    ///   keeps the slot (armg_p2_bitnot.log:79→99, the u=7 winning-analog frame).
+    /// - The GCPI/D8 cross-cat morph route (u=6: pushed_cat≠cat, xcat==0) must NOT
+    ///   fire — classic does not rescue it (receipt = ABSENCE: 0 site-c/d fires,
+    ///   0 GCPI f-steps, 0 CategoryEntryContinuation edges across all 8487 c1
+    ///   lines; the kind-fall claim remains static/counterfactual). Firing there
+    ///   would mint a second POutput packing; the receipted ground for one-leg is
+    ///   that classic never rescues the u=6 shape. THE EXCLUSION IS LOAD-BEARING.
+    /// - Out-of-scope classic feeders of the same reset (detector = the 998-sweep
+    ///   classic-adjudication protocol; all fail loud as pure-ERR): Case-A/B
+    ///   reentry pushes at delegate pops, the cast-only synthesizer, and
+    ///   engine-declared `PushWithEdgeKind{CrossCatLhsReentry}` CE pushes (the
+    ///   third feeder class — NOT live in rhocalc's generated engine: both
+    ///   PushWithEdgeKind sites carry plain CrossCatLhs).
+    /// - REJECTED codegen alternative (do not resurrect): making the engine's
+    ///   marker-close arm emit `InfixLoop{0}` directly is NOT behavior-preserving
+    ///   — it drops the token triple's `¬accepts@cur_bp` self-correction (which
+    ///   keeps the natively-working infix-RHS family byte-stable in BOTH arms)
+    ///   and violates AV7. The walker-side pre-step correction is the right layer.
+    ///
+    /// Returns `Some(InfixLoop{cur_bp: 0})` iff ALL conjuncts hold (each mapped
+    /// 1:1 to classic's gate); `excluded_census` is set when 3a+the triple match
+    /// but the reentry evidence (3b/3c) fails — the A4 exclusion witness.
+    fn cgll_pure_group_reentry_floor_reset(
+        &self,
+        d: &CgllPureDescriptor,
+        tokens: &dyn WpdaTokenSource,
+        excluded_census: &mut bool,
+    ) -> Option<WpdaState> {
+        // Conjunct 1 (classic 12390-12396): a positive inherited floor.
+        let WpdaState::InfixLoop { cur_bp } = &d.state else {
+            return None;
+        };
+        let cur_bp = *cur_bp;
+        if cur_bp == 0 {
+            return None;
+        }
+        // Conjunct 2 (classic 12398-12401): a CategoryEntry frame.
+        if d.cur_sym.kind != SymbolKind::CategoryEntry {
+            return None;
+        }
+        let cat = d.cur_sym.category_src_idx;
+        // Conjunct 3a: a grouping-marker frame morphed in place (only a marker's
+        // same-cat ConsumeAndReplace leaves a marker-slot CE descriptor; the
+        // low-nibble mask covers the D2 bit).
+        if (d.ret_slot.kind_class & 0x0F) != CGLL_KC_GROUPING_MARKER {
+            return None;
+        }
+        // Conjuncts 4+5 evaluated before 3b/3c so the A4 census can witness
+        // triple-passing frames that fail the reentry evidence.
+        let tok = tokens.peek_text(d.pos)?;
+        if tok.is_empty() {
+            return None;
+        }
+        let triple = self.engine.category_recognizes_operator(cat, tok)
+            && !self.engine.category_accepts_operator_at_floor(cat, tok, cur_bp)
+            && self.engine.category_accepts_operator_at_floor(cat, tok, 0);
+        if !triple {
+            return None;
+        }
+        // Conjunct 3b: the PushCrossCatLhs channel (the Discriminant(5) fan
+        // member — classic's edge KIND is CrossCatLhsReentry, not the host
+        // member's GroupingMarker edge). Conjunct 3c: same-cat morph
+        // (classic's `source_src_idx == cat`).
+        if d.ret_slot.xcat != 3 || d.ret_slot.pushed_cat != cat {
+            *excluded_census = true; // A4: the u=6/GCPI-exclusion witness
+            return None;
+        }
+        // ⚠ GATE-FAILURE RECEIPT (2026-07-12, armg gate battery): the red-team's
+        // "safe invariant" `sppf_symbol_category(d.w) == Some(cat)` is REFUTED —
+        // deep-@ tower rungs (grp_d3) reach this point with a PROC w on a
+        // Name-marker frame (panic receipt armg_gate_ladder.log: Some(0) vs
+        // Some(3)), and the fire itself OVER-FIRES vs classic on the lattice
+        // path (grp_d2 pure-lattice n=4 vs classic-lattice n=2,
+        // armg_ladder_adjudication.log) — the §1.3 "slot persistence ≡ edge
+        // persistence" argument fails on tower chains. The asserts are removed
+        // (they were factually wrong invariants); the whole arm is STOPPED
+        // pending a design pass — see ledger §ARM G FIX (v2) — GATE FAILURE.
+        Some(WpdaState::InfixLoop { cur_bp: 0 })
+    }
+
     fn cgll_pure_inject_unwind_reading(
         &mut self,
         run: &mut CgllPureRun,
@@ -29697,7 +29880,23 @@ where
                 _ => None,
             };
             if let Some((target_cat, target_floor)) = target {
-                if target_cat != source_cat
+                // ARM G v3 (2026-07-12): EXPLICIT wrap evidence admits SAME-CAT
+                // boundaries. Classic's `crosscat_boundary_target_for_edge` has
+                // NO same-cat filter — the receipted tower kill IS Name→Name
+                // (armg_ks_suppress.log: boundary_src=3 on the
+                // CrossCatProjection{wrap_cat:3} hop; ledger §ARM G KILL-SITE
+                // PROBE). The `!=` filter REMAINS on the INFERRED rows (xcat
+                // 1/2 — the A1 caller-cat reconstruction is pure-side
+                // inference, not a stored classic payload; widening it is
+                // unreceipted and out of Arm-G scope; the 998 protocol is the
+                // detector if classic ever demands it). The xcat=3-with-wrap
+                // disjunct is dead code today (both xcat_wrap writers are
+                // u16::MAX) — included so a future origin-recording leg
+                // activates with classic's Reentry-origin semantics, which
+                // also has no same-cat filter.
+                let explicit_wrap =
+                    slot.xcat == 4 || (slot.xcat == 3 && slot.xcat_wrap != u16::MAX);
+                if (explicit_wrap || target_cat != source_cat)
                     && self.engine.category_recognizes_operator(target_cat, token)
                 {
                     let floor = if target_floor == u16::MAX {
@@ -29892,6 +30091,19 @@ where
                         });
                         if branches.is_empty() {
                             run.stats.boundary_suppressed += 1;
+                            // ARM G v3 §2.2: the pure kill-site receipt —
+                            // mirror of classic's Fork-empty print (same env
+                            // var, same narrow site) for A/B count-parity
+                            // diffing against the 14+4+4 classic census.
+                            if std::env::var_os("PRATTAIL_GRP_GUARD_DIAG").is_some() {
+                                eprintln!(
+                                    "GRP-PROJ-SUPPRESS-PURE pos={} state={:?} boundary_src={} tok={:?}",
+                                    d.pos,
+                                    d.state,
+                                    boundaries[0].source_src_idx,
+                                    tokens.peek_text(d.pos)
+                                );
+                            }
                             return WpdaStepAction::Advance(WpdaState::Unwinding);
                         }
                         for branch in &mut branches {
@@ -30019,14 +30231,47 @@ where
         // (receipt: `#{ 1 | 2 }#` — the engine's deterministic
         // ConsumeAndPush(PParInfix) swallowed `1 | 2` into ONE element and
         // the flat {1,2} reading never parsed; bag_trace.log).
+        // ARM G v3 F2 (2026-07-12): ARM PARITY with classic's
+        // `guard_collection_separator_infix` — classic handles ConsumeAndPush
+        // | IterativeChainAbsorb (bare consume → Advance(Unwinding)) AND Fork
+        // (retain the non-consuming branches; empty → Advance(Unwinding)),
+        // classic @14521-14534, guard order boundary→cc→sep preserved. The
+        // pure form previously matched ONLY ConsumeAndPush; post-v3 a
+        // same-cat boundary transform can turn a CP into a Fork upstream of
+        // this guard, so the Fork/IterAbsorb arms are one grammar away from
+        // live (currently inert in both bundled grammars — fence row
+        // `[@(Nil), Nil]`-class in PROBE V3-2).
         let action = if matches!(d.state, WpdaState::InfixLoop { .. })
             && d.cur_sym.kind == SymbolKind::CategoryEntry
-            && matches!(action, WpdaStepAction::ConsumeAndPush { .. })
+            && matches!(
+                action,
+                WpdaStepAction::ConsumeAndPush { .. }
+                    | WpdaStepAction::IterativeChainAbsorb { .. }
+                    | WpdaStepAction::Fork { .. }
+            )
         {
             match self.cgll_pure_enclosing_collection_sep(run, d.u) {
-                Some(sep) if tokens.peek_text(d.pos) == Some(sep) => {
-                    run.stats.collsep_guard_rewrites += 1;
-                    WpdaStepAction::Advance(WpdaState::Unwinding)
+                Some(sep) if tokens.peek_text(d.pos) == Some(sep) => match action {
+                    WpdaStepAction::ConsumeAndPush { .. }
+                    | WpdaStepAction::IterativeChainAbsorb { .. } => {
+                        run.stats.collsep_guard_rewrites += 1;
+                        WpdaStepAction::Advance(WpdaState::Unwinding)
+                    },
+                    WpdaStepAction::Fork { mut branches, consume_trigger } => {
+                        let before = branches.len();
+                        branches
+                            .retain(|b| !Self::fork_branch_consumes_current_token(b));
+                        if branches.is_empty() {
+                            run.stats.collsep_guard_rewrites += 1;
+                            WpdaStepAction::Advance(WpdaState::Unwinding)
+                        } else {
+                            if branches.len() != before {
+                                run.stats.collsep_guard_rewrites += 1;
+                            }
+                            WpdaStepAction::Fork { branches, consume_trigger }
+                        }
+                    },
+                    other => other,
                 },
                 _ => action,
             }
@@ -31771,6 +32016,69 @@ where
                 tokens,
                 frame_ctx,
             );
+            // ARM-G PROBE-C1 site (f) — per-frontier-node pre/post-step view.
+            if std::env::var_os("PRATTAIL_GRP_EMITTER_DIAG").is_some() {
+                let top_edge = self
+                    .incoming_edge_stack_arena
+                    .top(node.shell.incoming_edge_stack_id)
+                    .and_then(|eid| self.gss.edge_kind(eid));
+                eprintln!(
+                    "GRP-DIAG f-step pos={} arcs={} node_sym={:?} state={:?} reset={} top_edge={:?} act={}",
+                    node.shell.pos,
+                    node.arcs.len(),
+                    self.gss.node(node.shell.node).map(|g| (g.symbol.kind, g.symbol.category_src_idx)),
+                    node.shell.inner_state,
+                    __reset_shell_state.is_some(),
+                    top_edge,
+                    Self::classic_trace_action_summary(&action)
+                );
+            }
+            // ARM-G OVER-FIRE PROBE (env-gated): at CE frames in InfixLoop{>0}
+            // where the token TRIPLE passes, print the FULL edge stack
+            // top-down — the classic-side distinguisher receipt for the pure
+            // slot-persistence over-fire (ledger §ARM G FIX (v2) — GATE
+            // FAILURE).
+            if std::env::var_os("PRATTAIL_GRP_STACK_DIAG").is_some() {
+                if let WpdaState::InfixLoop { cur_bp } = &node.shell.inner_state {
+                    if *cur_bp > 0 {
+                        if let Some(g) = self.gss.node(node.shell.node) {
+                            if g.symbol.kind == SymbolKind::CategoryEntry {
+                                let cat = g.symbol.category_src_idx;
+                                if let Some(tok) = tokens.peek_text(node.shell.pos) {
+                                    if !tok.is_empty()
+                                        && self.engine.category_recognizes_operator(cat, tok)
+                                        && !self
+                                            .engine
+                                            .category_accepts_operator_at_floor(cat, tok, *cur_bp)
+                                        && self.engine.category_accepts_operator_at_floor(cat, tok, 0)
+                                    {
+                                        let mut kinds: Vec<String> = Vec::new();
+                                        self.incoming_edge_stack_arena.for_each_top_down_until(
+                                            node.shell.incoming_edge_stack_id,
+                                            |eid| {
+                                                kinds.push(format!(
+                                                    "{:?}",
+                                                    self.gss.edge_kind(eid)
+                                                ));
+                                                true
+                                            },
+                                        );
+                                        eprintln!(
+                                            "GRP-STACK pos={} cat={} cur_bp={} tok={:?} reset={} stack_td={:?}",
+                                            node.shell.pos,
+                                            cat,
+                                            cur_bp,
+                                            tok,
+                                            __reset_shell_state.is_some(),
+                                            kinds
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             if Self::action_contains_category_changing_infix(&action) {
                 for arc in &node.arcs {
                     let cursor = crate::tomita_frontier::materialize_branch_cursor_from_arc(
@@ -42361,6 +42669,13 @@ where
                     .map(|n| n.symbol.kind == SymbolKind::GroupingMarker)
                     .unwrap_or(false);
                 if replacing_grouping_marker && sym.category_src_idx == source_src_idx {
+                    // ARM-G PROBE-C1 site (c) arm-1 fire — env-gated.
+                    if std::env::var_os("PRATTAIL_GRP_EMITTER_DIAG").is_some() {
+                        eprintln!(
+                            "GRP-DIAG c-arm1-preserve pos={} source={} min_bp={} sym_cat={}",
+                            cursor.pos, source_src_idx, min_bp, sym.category_src_idx
+                        );
+                    }
                     return crate::gss::EdgeKind::CrossCatLhsReentry {
                         source_src_idx,
                         min_bp,
@@ -42371,6 +42686,17 @@ where
         }
         if let Some(node) = self.gss.node(cursor.node) {
             if node.symbol.kind == SymbolKind::GroupingMarker {
+                // ARM-G PROBE-C1 site (d) — returned kind at a marker replace.
+                if std::env::var_os("PRATTAIL_GRP_EMITTER_DIAG").is_some() {
+                    eprintln!(
+                        "GRP-DIAG d-marker-replace-kind pos={} kind=CategoryEntryContinuation \
+                         min_bp={:?} sym_cat={} marker_bp={:?}",
+                        cursor.pos,
+                        node.symbol.bp.unwrap_or(0),
+                        sym.category_src_idx,
+                        node.symbol.bp
+                    );
+                }
                 return crate::gss::EdgeKind::CategoryEntryContinuation {
                     min_bp: node.symbol.bp.unwrap_or(0),
                 };
@@ -43093,6 +43419,17 @@ where
         if let Some(message) = crosscat_lhs_reentry_error {
             effective_new_state = WpdaState::Error { message };
         }
+        // ARM-G PROBE-C1 site (e) — every pop's edge kind + effective state.
+        if std::env::var_os("PRATTAIL_GRP_EMITTER_DIAG").is_some() {
+            eprintln!(
+                "GRP-DIAG e-pop pos={} popped_edge={:?} popped_sym_kind={:?} eff_state={:?} pred_top={:?}",
+                cursor.pos,
+                popped_edge_kind,
+                popped_symbol.map(|p| (p.kind, p.category_src_idx)),
+                effective_new_state,
+                self.gss.node(cursor.node).map(|n| (n.symbol.kind, n.symbol.category_src_idx))
+            );
+        }
         if let (
             Some(
                 crate::gss::EdgeKind::CrossCatLhs { source_src_idx }
@@ -43145,6 +43482,17 @@ where
                     },
                 );
                 self.record_crosscat_lhs_resume_on_cursor_top(cursor, target_resume_bp);
+                // ARM-G PROBE-C1 site (b/Case-A) — env-gated, measurement-only.
+                if std::env::var_os("PRATTAIL_GRP_EMITTER_DIAG").is_some() {
+                    eprintln!(
+                        "GRP-DIAG b-caseA-reentry pos={} source={} min_bp={} resume_bp={} pred={:?}",
+                        cursor.pos,
+                        source_src_idx,
+                        reentry_min_bp,
+                        target_resume_bp,
+                        self.gss.node(cursor.node).map(|n| n.symbol.kind)
+                    );
+                }
                 effective_new_state = WpdaState::InfixLoop { cur_bp: reentry_min_bp };
             } else if let Some(produced_cat) = produced_exits_source {
                 if popped.kind == SymbolKind::CategoryEntry
@@ -43176,6 +43524,17 @@ where
                         },
                     );
                     self.record_crosscat_lhs_resume_on_cursor_top(cursor, target_resume_bp);
+                    // ARM-G PROBE-C1 site (b/Case-B) — env-gated, measurement-only.
+                    if std::env::var_os("PRATTAIL_GRP_EMITTER_DIAG").is_some() {
+                        eprintln!(
+                            "GRP-DIAG b-caseB-reentry pos={} source={} produced={} resume_bp={} pred={:?}",
+                            cursor.pos,
+                            source_src_idx,
+                            produced_cat,
+                            target_resume_bp,
+                            self.gss.node(cursor.node).map(|n| n.symbol.kind)
+                        );
+                    }
                     effective_new_state = WpdaState::InfixLoop { cur_bp: target_resume_bp };
                 }
             }
@@ -44926,7 +45285,16 @@ mod tests {
     {
         let mut recovery_config = RecoveryConfig::default();
         recovery_config.max_recovery_depth = 0;
-        WpdaWalker::new(ActiveRecoveryPinsProbeEngine, 0).with_recovery_config(recovery_config)
+        let mut w =
+            WpdaWalker::new(ActiveRecoveryPinsProbeEngine, 0).with_recovery_config(recovery_config);
+        // ATTEMPT-2 FALLOUT test scoping (2026-07-12): classic-internal test —
+        // force the classic engine at the walker level (the exact
+        // `PRATTAIL_NO_CANONICAL_GLL=1` lever semantics; see the canonical
+        // rationale note on `cohort_cache_storage_saturation_does_not_block_
+        // accepted_parse`). Assertions UNCHANGED.
+        w.rootp_mode.canonical_gll = false;
+        w.rootp_mode.cgll_binarize = false;
+        w
     }
 
     struct ActiveRecoveryPinsProbeConsumer;
@@ -45622,6 +45990,13 @@ mod tests {
     #[test]
     fn eoi_parse_error_does_not_materialize_lazy_cohort() {
         let mut w: WpdaWalker<LexicographicWeight, _> = WpdaWalker::new(IdleEngine, 0);
+        // ATTEMPT-2 FALLOUT test scoping (2026-07-12): classic-internal test —
+        // force the classic engine at the walker level (the exact
+        // `PRATTAIL_NO_CANONICAL_GLL=1` lever semantics; see the canonical
+        // rationale note on `cohort_cache_storage_saturation_does_not_block_
+        // accepted_parse`). Assertions UNCHANGED.
+        w.rootp_mode.canonical_gll = false;
+        w.rootp_mode.cgll_binarize = false;
         w.deterministic = false;
         w.pos = 7;
         w.state = WpdaState::AmbiguityFanout { branches: vec![10] };
@@ -45665,6 +46040,13 @@ mod tests {
         let token_src =
             crate::wpda_runtime::SliceTokenSource::with_texts(&token_kinds, &token_texts);
         let mut w: WpdaWalker<LexicographicWeight, _> = WpdaWalker::new(AtomicIntEngine, 0);
+        // ATTEMPT-2 FALLOUT test scoping (2026-07-12): classic-internal test —
+        // force the classic engine at the walker level (the exact
+        // `PRATTAIL_NO_CANONICAL_GLL=1` lever semantics; see the canonical
+        // rationale note on `cohort_cache_storage_saturation_does_not_block_
+        // accepted_parse`). Assertions UNCHANGED.
+        w.rootp_mode.canonical_gll = false;
+        w.rootp_mode.cgll_binarize = false;
         w.deterministic = false;
         w.pos = 1;
         w.state = WpdaState::AmbiguityFanout { branches: vec![10] };
@@ -45964,6 +46346,13 @@ mod tests {
         let calls = Rc::new(Cell::new(0));
         let tokens = empty_tokens();
         let mut w = WpdaWalker::new(CountingIdleEngine { calls: Rc::clone(&calls) }, 0);
+        // ATTEMPT-2 FALLOUT test scoping (2026-07-12): classic-internal test —
+        // force the classic engine at the walker level (the exact
+        // `PRATTAIL_NO_CANONICAL_GLL=1` lever semantics; see the canonical
+        // rationale note on `cohort_cache_storage_saturation_does_not_block_
+        // accepted_parse`). Assertions UNCHANGED.
+        w.rootp_mode.canonical_gll = false;
+        w.rootp_mode.cgll_binarize = false;
         w.deterministic = false;
         w.state = WpdaState::AmbiguityFanout {
             branches: vec![crate::gss::GSS_NODE_NONE],
@@ -46020,6 +46409,13 @@ mod tests {
         let token_texts = ["x", "*", "3", ""];
         let tokens = crate::wpda_runtime::SliceTokenSource::with_texts(&token_kinds, &token_texts);
         let mut w = WpdaWalker::new(CountingIdleEngine { calls: Rc::clone(&calls) }, 0);
+        // ATTEMPT-2 FALLOUT test scoping (2026-07-12): classic-internal test —
+        // force the classic engine at the walker level (the exact
+        // `PRATTAIL_NO_CANONICAL_GLL=1` lever semantics; see the canonical
+        // rationale note on `cohort_cache_storage_saturation_does_not_block_
+        // accepted_parse`). Assertions UNCHANGED.
+        w.rootp_mode.canonical_gll = false;
+        w.rootp_mode.cgll_binarize = false;
         w.deterministic = false;
         w.state = WpdaState::AmbiguityFanout {
             branches: vec![crate::gss::GSS_NODE_NONE],
@@ -46119,6 +46515,13 @@ mod tests {
             },
         ]);
         let mut w = WpdaWalker::new(engine, 0);
+        // ATTEMPT-2 FALLOUT test scoping (2026-07-12): classic-internal test —
+        // force the classic engine at the walker level (the exact
+        // `PRATTAIL_NO_CANONICAL_GLL=1` lever semantics; see the canonical
+        // rationale note on `cohort_cache_storage_saturation_does_not_block_
+        // accepted_parse`). Assertions UNCHANGED.
+        w.rootp_mode.canonical_gll = false;
+        w.rootp_mode.cgll_binarize = false;
         let _ = w.process_event(WpdaEvent::Step, &empty_tokens()); // Push entry
         let _ = w.process_event(WpdaEvent::Step, &empty_tokens()); // Fork
                                                                    // Stage 3.5b (2026-05-01): WPDS-correct EOI resolution. The
@@ -46285,6 +46688,13 @@ mod tests {
             },
         ]);
         let mut w = WpdaWalker::new(engine, 0);
+        // ATTEMPT-2 FALLOUT test scoping (2026-07-12): classic-internal test —
+        // force the classic engine at the walker level (the exact
+        // `PRATTAIL_NO_CANONICAL_GLL=1` lever semantics; see the canonical
+        // rationale note on `cohort_cache_storage_saturation_does_not_block_
+        // accepted_parse`). Assertions UNCHANGED.
+        w.rootp_mode.canonical_gll = false;
+        w.rootp_mode.cgll_binarize = false;
         let _ = w.process_event(WpdaEvent::Step, &empty_tokens()); // Push entry
         let _ = w.process_event(WpdaEvent::Step, &empty_tokens()); // Fork
         let final_state = w.run_to_saturation(100, &empty_tokens());
@@ -46342,6 +46752,13 @@ mod tests {
             },
         ]);
         let mut w = WpdaWalker::new(engine, 0);
+        // ATTEMPT-2 FALLOUT test scoping (2026-07-12): classic-internal test —
+        // force the classic engine at the walker level (the exact
+        // `PRATTAIL_NO_CANONICAL_GLL=1` lever semantics; see the canonical
+        // rationale note on `cohort_cache_storage_saturation_does_not_block_
+        // accepted_parse`). Assertions UNCHANGED.
+        w.rootp_mode.canonical_gll = false;
+        w.rootp_mode.cgll_binarize = false;
         let _ = w.process_event(WpdaEvent::Step, &empty_tokens()); // Push entry
         let _ = w.process_event(WpdaEvent::Step, &empty_tokens()); // Fork
                                                                    // Stage 3.5b (2026-05-01): use new EOI-aware resolution API.
@@ -47352,6 +47769,22 @@ mod tests {
         let texts = ["42", ""];
         let token_src = SliceTokenSource::with_texts(&tokens, &texts);
         let mut walker: WpdaWalker<LexicographicWeight, _> = WpdaWalker::new(AtomicIntEngine, 0);
+        // ATTEMPT-2 FALLOUT test scoping (2026-07-12, flip-gate-2 P11): this
+        // test pins CLASSIC cursor-engine internals — the pure canonical-GLL
+        // engine has no BranchCursor recovery depths / cohort caches /
+        // commit-winner overwrite paths to exercise, so under a flipped
+        // `CANONICAL_GLL_ENABLED` default the dispatch would route to the
+        // pure engine and the machinery under test would never engage
+        // (flip-gate receipt: "no accepting branch reached end of input
+        // (canonical-GLL)"). Force the classic engine at the WALKER level —
+        // the exact `PRATTAIL_NO_CANONICAL_GLL=1` lever semantics
+        // (`from_env` derives BOTH fields off that env; the R5 lever fix
+        // couples binarize to it) — instead of `std::env::set_var`, which
+        // would be process-global and unsafe under plain `cargo test`'s
+        // shared-process threads (nextest isolates per test; cargo test
+        // does not). Assertions are UNCHANGED.
+        walker.rootp_mode.canonical_gll = false;
+        walker.rootp_mode.cgll_binarize = false;
         let root = install_atomic_int_success_root(&mut walker);
         let mut accepting_cursor = BranchCursor::seed_from_live(
             crate::gss::GSS_NODE_NONE,
@@ -47977,6 +48410,22 @@ mod tests {
             ]),
         };
         let mut w = WpdaWalker::new(engine, 0);
+        // ATTEMPT-2 FALLOUT test scoping (2026-07-12, flip-gate-2 P11): this
+        // test pins CLASSIC cursor-engine internals — the pure canonical-GLL
+        // engine has no BranchCursor recovery depths / cohort caches /
+        // commit-winner overwrite paths to exercise, so under a flipped
+        // `CANONICAL_GLL_ENABLED` default the dispatch would route to the
+        // pure engine and the machinery under test would never engage
+        // (flip-gate receipt: "no accepting branch reached end of input
+        // (canonical-GLL)"). Force the classic engine at the WALKER level —
+        // the exact `PRATTAIL_NO_CANONICAL_GLL=1` lever semantics
+        // (`from_env` derives BOTH fields off that env; the R5 lever fix
+        // couples binarize to it) — instead of `std::env::set_var`, which
+        // would be process-global and unsafe under plain `cargo test`'s
+        // shared-process threads (nextest isolates per test; cargo test
+        // does not). Assertions are UNCHANGED.
+        w.rootp_mode.canonical_gll = false;
+        w.rootp_mode.cgll_binarize = false;
         let _ = w.process_event(WpdaEvent::Step, &empty_tokens()); // entry
         let _ = w.process_event(WpdaEvent::Step, &empty_tokens()); // Fork
                                                                    // Phase 5.5 (2026-05-12): emit_fire_action now eagerly fires the
@@ -48106,6 +48555,13 @@ mod tests {
             },
         ]);
         let mut w = WpdaWalker::new(engine, 0);
+        // ATTEMPT-2 FALLOUT test scoping (2026-07-12): classic-internal test —
+        // force the classic engine at the walker level (the exact
+        // `PRATTAIL_NO_CANONICAL_GLL=1` lever semantics; see the canonical
+        // rationale note on `cohort_cache_storage_saturation_does_not_block_
+        // accepted_parse`). Assertions UNCHANGED.
+        w.rootp_mode.canonical_gll = false;
+        w.rootp_mode.cgll_binarize = false;
         let _ = w.process_event(WpdaEvent::Step, &empty_tokens()); // Push
         let _ = w.process_event(WpdaEvent::Step, &empty_tokens()); // Fork
         assert!(!w.deterministic());
@@ -48231,6 +48687,13 @@ mod tests {
             },
         ]);
         let mut w = WpdaWalker::new(engine, 0);
+        // ATTEMPT-2 FALLOUT test scoping (2026-07-12): classic-internal test —
+        // force the classic engine at the walker level (the exact
+        // `PRATTAIL_NO_CANONICAL_GLL=1` lever semantics; see the canonical
+        // rationale note on `cohort_cache_storage_saturation_does_not_block_
+        // accepted_parse`). Assertions UNCHANGED.
+        w.rootp_mode.canonical_gll = false;
+        w.rootp_mode.cgll_binarize = false;
         let _ = w.process_event(WpdaEvent::Step, &empty_tokens()); // Fork → nondeterministic
         assert!(!w.deterministic());
         let _ = w.process_event(WpdaEvent::Step, &empty_tokens()); // Push (under fanout)
@@ -49128,6 +49591,13 @@ mod tests {
             },
         ]);
         let mut w = WpdaWalker::new(engine, 0);
+        // ATTEMPT-2 FALLOUT test scoping (2026-07-12): classic-internal test —
+        // force the classic engine at the walker level (the exact
+        // `PRATTAIL_NO_CANONICAL_GLL=1` lever semantics; see the canonical
+        // rationale note on `cohort_cache_storage_saturation_does_not_block_
+        // accepted_parse`). Assertions UNCHANGED.
+        w.rootp_mode.canonical_gll = false;
+        w.rootp_mode.cgll_binarize = false;
         let _ = w.process_event(WpdaEvent::Step, &token_src); // Push
         let _ = w.process_event(WpdaEvent::Step, &token_src); // Fork (guard fail)
         let final_state = w.run_to_saturation(50, &token_src);
@@ -49208,6 +49678,13 @@ mod tests {
             },
         ]);
         let mut w = WpdaWalker::new(engine, 0);
+        // ATTEMPT-2 FALLOUT test scoping (2026-07-12): classic-internal test —
+        // force the classic engine at the walker level (the exact
+        // `PRATTAIL_NO_CANONICAL_GLL=1` lever semantics; see the canonical
+        // rationale note on `cohort_cache_storage_saturation_does_not_block_
+        // accepted_parse`). Assertions UNCHANGED.
+        w.rootp_mode.canonical_gll = false;
+        w.rootp_mode.cgll_binarize = false;
         let _ = w.process_event(WpdaEvent::Step, &token_src); // Push
         let _ = w.process_event(WpdaEvent::Step, &token_src); // Fork (guard fail)
         let final_state = w.run_to_saturation(50, &token_src);
@@ -49761,6 +50238,22 @@ mod tests {
             },
         ]);
         let mut w = WpdaWalker::new(engine, 0);
+        // ATTEMPT-2 FALLOUT test scoping (2026-07-12, flip-gate-2 P11): this
+        // test pins CLASSIC cursor-engine internals — the pure canonical-GLL
+        // engine has no BranchCursor recovery depths / cohort caches /
+        // commit-winner overwrite paths to exercise, so under a flipped
+        // `CANONICAL_GLL_ENABLED` default the dispatch would route to the
+        // pure engine and the machinery under test would never engage
+        // (flip-gate receipt: "no accepting branch reached end of input
+        // (canonical-GLL)"). Force the classic engine at the WALKER level —
+        // the exact `PRATTAIL_NO_CANONICAL_GLL=1` lever semantics
+        // (`from_env` derives BOTH fields off that env; the R5 lever fix
+        // couples binarize to it) — instead of `std::env::set_var`, which
+        // would be process-global and unsafe under plain `cargo test`'s
+        // shared-process threads (nextest isolates per test; cargo test
+        // does not). Assertions are UNCHANGED.
+        w.rootp_mode.canonical_gll = false;
+        w.rootp_mode.cgll_binarize = false;
         let final_state = w.run_to_saturation(50, &empty_tokens());
         match final_state {
             WpdaState::Error { message } => assert!(
@@ -49833,6 +50326,22 @@ mod tests {
             },
         ]);
         let mut w = WpdaWalker::new(engine, 0);
+        // ATTEMPT-2 FALLOUT test scoping (2026-07-12, flip-gate-2 P11): this
+        // test pins CLASSIC cursor-engine internals — the pure canonical-GLL
+        // engine has no BranchCursor recovery depths / cohort caches /
+        // commit-winner overwrite paths to exercise, so under a flipped
+        // `CANONICAL_GLL_ENABLED` default the dispatch would route to the
+        // pure engine and the machinery under test would never engage
+        // (flip-gate receipt: "no accepting branch reached end of input
+        // (canonical-GLL)"). Force the classic engine at the WALKER level —
+        // the exact `PRATTAIL_NO_CANONICAL_GLL=1` lever semantics
+        // (`from_env` derives BOTH fields off that env; the R5 lever fix
+        // couples binarize to it) — instead of `std::env::set_var`, which
+        // would be process-global and unsafe under plain `cargo test`'s
+        // shared-process threads (nextest isolates per test; cargo test
+        // does not). Assertions are UNCHANGED.
+        w.rootp_mode.canonical_gll = false;
+        w.rootp_mode.cgll_binarize = false;
         let final_state = w.run_to_saturation(50, &empty_tokens());
         match final_state {
             WpdaState::Error { message } => assert!(
@@ -49943,6 +50452,13 @@ mod tests {
             },
         ]);
         let mut w = WpdaWalker::new(engine, 0);
+        // ATTEMPT-2 FALLOUT test scoping (2026-07-12): classic-internal test —
+        // force the classic engine at the walker level (the exact
+        // `PRATTAIL_NO_CANONICAL_GLL=1` lever semantics; see the canonical
+        // rationale note on `cohort_cache_storage_saturation_does_not_block_
+        // accepted_parse`). Assertions UNCHANGED.
+        w.rootp_mode.canonical_gll = false;
+        w.rootp_mode.cgll_binarize = false;
         w.set_mutable_token_source(&mut mutable_src);
         // Drive to end-of-input (sets up parked frontier in AmbiguityFanout),
         // then resolve to commit the EOI winner, replaying its
