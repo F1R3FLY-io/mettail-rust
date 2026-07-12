@@ -1212,6 +1212,14 @@ pub(crate) fn emit_binder_rule_body(
     categories: &[String],
     per_cat: &[Vec<GrammarRule>],
     prefix_bp_map: &HashMap<(u16, u16), u8>,
+    // S1-FACTORING F1 (2026-07-12, plan §2 items 2-4): the spine arms from
+    // `factoring::build_spine_emission` — keyed `(cat, SPINE_ID, node_pos)`
+    // where `node_pos` is the trie's preorder node id (root arm = 1, the
+    // coordinate the spine trigger branch pushes). They join THIS match's
+    // key space (`rule_idx = SPINE_ID ∈ 0xF800..` never collides with real
+    // per-category rule indices — factoring.rs A9 asserts). EMPTY while
+    // `S1_FACTORING == false` ⇒ byte-identical emission.
+    s1_spine_arms: &TokenStream,
 ) -> TokenStream {
     let mut arms = Vec::new();
     for (cat_i, rules) in per_cat.iter().enumerate() {
@@ -1698,7 +1706,7 @@ pub(crate) fn emit_binder_rule_body(
             }
         }
     }
-    if arms.is_empty() {
+    if arms.is_empty() && s1_spine_arms.is_empty() {
         return quote! { WpdaStepAction::Idle };
     }
     quote! {
@@ -1713,6 +1721,10 @@ pub(crate) fn emit_binder_rule_body(
             let b_pre_finalize_empty_list = || ();
             match (*result_src_idx, *rule_idx, position) {
                 #(#arms)*
+                // S1-FACTORING F1 spine arms — `(cat, SPINE_ID, node_pos)`
+                // keys, disjoint from every real-rule key above (SPINE_ID ∈
+                // 0xF800..0xFE00). Empty while `S1_FACTORING == false`.
+                #s1_spine_arms
                 _ => WpdaStepAction::Idle,
             }
         }
@@ -3404,7 +3416,7 @@ mod tests {
         let per_cat = vec![vec![lambda_lam_rule()]];
         let prefix_bp_map = std::collections::HashMap::new();
         let ts =
-            emit_binder_rule_body(&synthetic_lang_for_lambda_test(), &categories, &per_cat, &prefix_bp_map);
+            emit_binder_rule_body(&synthetic_lang_for_lambda_test(), &categories, &per_cat, &prefix_bp_map, &proc_macro2::TokenStream::new());
         let s = ts.to_string();
         // Phase 3.B.3 (2026-05-11): single-binder rules are unified
         // into the BinderListLoop dispatch with allow_empty=false,
@@ -3425,7 +3437,7 @@ mod tests {
         let per_cat = vec![Vec::new(), vec![fraction_rule()]];
         let prefix_bp_map = std::collections::HashMap::new();
         let ts =
-            emit_binder_rule_body(&synthetic_lang_for_lambda_test(), &categories, &per_cat, &prefix_bp_map);
+            emit_binder_rule_body(&synthetic_lang_for_lambda_test(), &categories, &per_cat, &prefix_bp_map, &proc_macro2::TokenStream::new());
         let s = ts.to_string();
         // "fraction" is the trigger consumed at open; positions 1+ are
         // "(", a (ParamParse), ",", b (ParamParse), ")". Verify the

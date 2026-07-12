@@ -709,7 +709,12 @@ fn inv1_inv5_noloss(lang: &LanguageDef) -> Result<(), String> {
     }
 
     // Lattice arms: parse the emitted infix lex-alt table and compare per group.
-    let lattice_ts = super::kind_dispatch::emit_lex_alt_rule_for_fn(lang, &per_cat, &categories);
+    // S1-FACTORING F1: thread the emission-effective spine bundle exactly as
+    // the engine assembly does (empty under `S1_FACTORING == false`; INV-5 is
+    // the INFIX lattice, untouched by prefix-surface factoring either way).
+    let s1_spine = super::factoring::build_spine_emission(lang, &categories, &per_cat);
+    let lattice_ts =
+        super::kind_dispatch::emit_lex_alt_rule_for_fn(lang, &per_cat, &categories, &s1_spine);
     let lattice_fns = parse_fns(lattice_ts);
     let lattice_counts = lattice_infix_counts_per_group(&lattice_fns);
     let lattice_total: usize = lattice_counts.values().sum();
@@ -821,7 +826,8 @@ fn inv3_goal_gate(lang: &LanguageDef) -> Result<(), String> {
 /// `if __proj_keep …` gate — never as a sibling statement after it (which would
 /// keep a suppressed projection alive and re-introduce the futile branch).
 fn inv4_fork_symmetry() -> Result<(), String> {
-    let fork_ts = super::forks::emit_lex_fork_at_prefix_dispatch(0u16);
+    // S1-FACTORING F1: OFF-shape lex fork (no factored groups in this probe).
+    let fork_ts = super::forks::emit_lex_fork_at_prefix_dispatch(0u16, false);
     let probe: syn::ItemFn = syn::parse2(quote::quote! { fn __probe() { #fork_ts } })
         .expect("fork code parses inside a probe fn");
     let mut inspector = ForkArmInspector { violations: Vec::new() };

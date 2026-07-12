@@ -717,6 +717,24 @@ const ROOTP_SLOT_PACKING_ENABLED: bool = false;
 /// differentials WITHOUT a recompile.
 const CANONICAL_GLL_ENABLED: bool = true;
 
+/// S1-FACTORING (2026-07-12): the synthetic SPINE rule-id space, mirroring
+/// `macros/src/gen/runtime/wpda_codegen/factoring.rs::SPINE_RULE_BASE`
+/// (0xF800) and the exclusive upper bound `forks.rs::RECOVERY_BASE` (0xFE00
+/// — factoring.rs's A9 assert keeps every allocated spine id inside this
+/// window). Used by the H9 consumption-site asserts: a spine id must NEVER
+/// reach a semantic-action consumption site (fire, pure reduce packing
+/// intern, realize) — commit-before-final-pop replaces it with the member's
+/// real rule id first.
+pub const SPINE_RULE_BASE: u16 = 0xF800;
+/// Exclusive end of the spine id window (= the codegen RECOVERY_BASE).
+pub const SPINE_RULE_END: u16 = 0xFE00;
+
+/// True iff `rule_idx` is a synthetic S1 spine id (see [`SPINE_RULE_BASE`]).
+#[inline]
+pub fn is_spine_rule_id(rule_idx: u16) -> bool {
+    (SPINE_RULE_BASE..SPINE_RULE_END).contains(&rule_idx)
+}
+
 /// ROOT-P Canonical-GLL Stage E1 (2026-07-09): high-bit tag OR'd into a
 /// non-terminal tag to mint a BINARIZED shadow `Symbol` — `intern_symbol(cat |
 /// CGLL_BIN_TAG, lo, hi)`. This keeps the binarized forest's completed-constituent
@@ -1702,6 +1720,37 @@ pub trait WpdaEngine<W: SemiringRef> {
     fn rule_has_leading_structural_trigger(&self, src_idx: u16, rule_idx: u16) -> bool {
         let _ = (src_idx, rule_idx);
         false
+    }
+
+    /// S1-FACTORING F1 (2026-07-12, plan scratchpad/zz_probes/
+    /// s1_factoring_plan.md §3 + delta §D): the grammar-derived
+    /// spine-owner table for the fire-time trigger claim. For a rule that is
+    /// a MEMBER of a factored prefix group, returns `Some(SPINE_ID)` — the
+    /// synthetic owner the group's shared TriggerTerminal was interned under
+    /// (`intern key (kind, pos, owner_cat, owner_rule_idx)`); the claim gate
+    /// extends to `owner_match || group_owner_match || pos_match`. Default
+    /// `None` (the @1702 default-method convention): ungrouped rules and
+    /// engines generated with `S1_FACTORING = false` are byte-equivalent to
+    /// the pre-S1 behavior.
+    fn trigger_spine_owner(&self, src_idx: u16, rule_idx: u16) -> Option<u16> {
+        let _ = (src_idx, rule_idx);
+        None
+    }
+
+    /// S1-FACTORING F1 amendment A-1 (delta red-team, 2026-07-12): the
+    /// members of a factored spine group, keyed by the group's synthetic
+    /// SPINE_ID. Consulted by the ∃-member expansion in
+    /// `action_accepts_single_body_category` — a mid-spine enclosing frame
+    /// carries an uncommitted SPINE_ID, and the H9 poison-arity spine
+    /// `action_for` row would default-refuse every acceptance query there
+    /// (dropping readings in BOTH arms). Union/∃-member semantics are
+    /// classic-unfactored behavior: pre-divergence, classic runs all members
+    /// in parallel, so acceptance-by-any-member IS classic's admission; the
+    /// wrong member dies later at its own divergence guard exactly as in
+    /// classic. Default empty (no groups / factoring off).
+    fn spine_members(&self, src_idx: u16, spine_id: u16) -> &[u16] {
+        let _ = (src_idx, spine_id);
+        &[]
     }
 
     /// ROOT-P Stage 4 (2026-07-08): is category `src_idx` BINDER-SCOPED — a
@@ -10874,6 +10923,14 @@ where
         let arity = action_children.len();
         let cat = (rule_idx >> 16) as u16;
         let local_rule_idx = (rule_idx & 0xFFFF) as u16;
+        // S1-FACTORING H9 + A-5 (2026-07-12): assert BEFORE the read — a
+        // poison-arity spine row would otherwise route into the Pocket-C
+        // arity-refute path below (QUIETER than today, masking the
+        // commit-before-final-pop violation instead of surfacing it).
+        debug_assert!(
+            !is_spine_rule_id(local_rule_idx),
+            "S1 H9: spine id {local_rule_idx:#06x} reached realize (cat {cat})",
+        );
         let action_entry = self.engine.action_for(cat, local_rule_idx);
         let action_fn = match action_entry {
             Some(e) => e.action_fn,
@@ -28063,6 +28120,16 @@ where
                             }
                         }
                     }
+                    // S1-FACTORING H9 (2026-07-12): pure commit-before-
+                    // final-pop invariant — the rule packing must carry the
+                    // COMMITTED member id, never a spine id (AV6/A8: the
+                    // slot label may keep (cat<<16)|SPINE, but the packing/
+                    // fire identity may not).
+                    debug_assert!(
+                        !is_spine_rule_id((rule_id & 0xFFFF) as u16),
+                        "S1 H9: spine id {:#06x} reached the pure reduce packing intern",
+                        rule_id & 0xFFFF,
+                    );
                     let pk = self.sppf.intern_packing(rule_id, children, pk_weight);
                     self.sppf.link_packing_to_symbol(z, pk);
                     let returns = self.gss.gll_pop(d.u, i_pop, z);
@@ -28134,6 +28201,15 @@ where
                         } else {
                             vec![joined]
                         };
+                        // S1-FACTORING H9 (2026-07-12): same commit-before-
+                        // final-pop invariant as the sibling reduce intern
+                        // above — this Return-arm packing must carry the
+                        // COMMITTED member id, never a spine id.
+                        debug_assert!(
+                            !is_spine_rule_id((rule_id & 0xFFFF) as u16),
+                            "S1 H9: spine id {:#06x} reached the pure reduce Return-arm packing intern",
+                            rule_id & 0xFFFF,
+                        );
                         let pk = self.sppf.intern_packing(rule_id, children, pop_weight.clone());
                         self.sppf.link_packing_to_symbol(z_e, pk);
                         if spine_prefix != crate::sppf::SPPF_ID_NONE {
@@ -29687,16 +29763,16 @@ where
             *excluded_census = true; // A4: the u=6/GCPI-exclusion witness
             return None;
         }
-        // ⚠ GATE-FAILURE RECEIPT (2026-07-12, armg gate battery): the red-team's
-        // "safe invariant" `sppf_symbol_category(d.w) == Some(cat)` is REFUTED —
-        // deep-@ tower rungs (grp_d3) reach this point with a PROC w on a
-        // Name-marker frame (panic receipt armg_gate_ladder.log: Some(0) vs
-        // Some(3)), and the fire itself OVER-FIRES vs classic on the lattice
-        // path (grp_d2 pure-lattice n=4 vs classic-lattice n=2,
-        // armg_ladder_adjudication.log) — the §1.3 "slot persistence ≡ edge
-        // persistence" argument fails on tower chains. The asserts are removed
-        // (they were factually wrong invariants); the whole arm is STOPPED
-        // pending a design pass — see ledger §ARM G FIX (v2) — GATE FAILURE.
+        // HISTORY (A-5 hygiene, 2026-07-12): an earlier revision carried a
+        // debug_assert `sppf_symbol_category(d.w) == Some(cat)` here — REFUTED
+        // on deep-@ tower rungs (a Proc w on a Name-marker frame; receipt
+        // armg_gate_ladder.log) and removed. The v2 gate ALSO over-fired on
+        // tower chains (grp_d2 lattice n=4 vs classic n=2); Arm G v3 closed
+        // that downstream via the same-cat projection-boundary admission in
+        // `cgll_pure_crosscat_boundaries` + the landed Arm-A suppress-half
+        // (classic = reset ENABLES + boundary guard DISPOSES) — see ledger
+        // §ARM G FIX (v3), flip-gate-3 GREEN (logs_s2flip3/). This fire gate
+        // is live and classic-parity as shipped.
         Some(WpdaState::InfixLoop { cur_bp: 0 })
     }
 
@@ -38083,6 +38159,21 @@ where
                                 }
                                 let owner_match = *owner_cat == cat_src_idx
                                     && *owner_rule_idx == local_rule_idx;
+                                // S1-FACTORING F1 (2026-07-12): a factored
+                                // group's shared TriggerTerminal is interned
+                                // under the synthetic spine owner
+                                // (owner_rule_idx = SPINE_ID); at fire time
+                                // the reducing rule is the COMMITTED member,
+                                // so re-attribution goes through the
+                                // grammar-derived `trigger_spine_owner`
+                                // table (plan §3; AV3: this is the SOLE
+                                // load-bearing path for factored rules —
+                                // pos_match is an incidental second net).
+                                let group_owner_match = *owner_cat == cat_src_idx
+                                    && self
+                                        .engine
+                                        .trigger_spine_owner(cat_src_idx, local_rule_idx)
+                                        == Some(*owner_rule_idx);
                                 // Trigger-ownership soundness (2026-07-02): the
                                 // pos-only fallback (accept a trigger at THIS
                                 // rule's frame-start regardless of owner) must be
@@ -38111,7 +38202,7 @@ where
                                         )
                                         || std::env::var("PRATTAIL_NO_TRIGGER_LEAD_GATE")
                                             .is_ok());
-                                owner_match || pos_match
+                                owner_match || group_owner_match || pos_match
                             },
                             _ => false,
                         }
@@ -38133,6 +38224,15 @@ where
             // SPPF intern so elide / arity-mismatch can early-return
             // without interning a spurious Packing/Symbol. The transient
             // is the SOLE fire path post-F.3c.3.
+            // S1-FACTORING H9 (2026-07-12): a synthetic spine id must never
+            // reach the fire path — commit-before-final-pop replaces it with
+            // the member's real rule id. The spine `action_for` rows exist
+            // ONLY for the H1/A-1 evidence queries (expected_input_cats =
+            // member union, poisoned arity), never to fire.
+            debug_assert!(
+                !is_spine_rule_id(local_rule_idx),
+                "S1 H9: spine id {local_rule_idx:#06x} reached emit_fire_action (cat {cat_src_idx})",
+            );
             let has_action = self
                 .engine
                 .action_for(cat_src_idx, local_rule_idx)
@@ -42265,6 +42365,21 @@ where
         rule_idx: u16,
         body_cat: u16,
     ) -> bool {
+        // S1-FACTORING A-1 (2026-07-12): ∃-member expansion for uncommitted
+        // spine frames. A factored group's mid-spine enclosing frame carries
+        // the synthetic SPINE_ID; its H9 `action_for` row is poison-arity by
+        // design (arity != 1 ⇒ the plain path below would default-refuse and
+        // DROP readings — e.g. channel-first sends inside an @-led operand).
+        // ∃-member acceptance IS classic-unfactored behavior (all members run
+        // in parallel pre-divergence). `spine_members` is default-empty, so
+        // this is a no-op for real rule ids and factoring-off engines.
+        let members = self.engine.spine_members(cat_src_idx, rule_idx);
+        if !members.is_empty() {
+            let members = members.to_vec(); // end the engine borrow
+            return members
+                .into_iter()
+                .any(|m| self.action_accepts_single_body_category(cat_src_idx, m, body_cat));
+        }
         let Some(entry) = self.engine.action_for(cat_src_idx, rule_idx) else {
             return false;
         };

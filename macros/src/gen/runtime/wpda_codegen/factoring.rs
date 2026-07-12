@@ -106,7 +106,9 @@
 //!     literal yields `sub_pos == parts_len` — the tail-complete
 //!     pop-and-fire arm).
 
-#![allow(dead_code)] // F0: consumed by tests + INV-8 only; F1 wires emission.
+#![allow(dead_code)] // F1 (2026-07-12): emission wired (engine_impl calls
+                     // build_spine_emission unconditionally); the allow stays
+                     // for model-only accessors consumed by tests/INV-8.
 
 use std::collections::BTreeSet;
 
@@ -824,6 +826,665 @@ pub(crate) fn emission_partition(
 // the A2 exclusion receipts, and the synthetic eligibility witnesses.
 // ═══════════════════════════════════════════════════════════════════════════
 
+
+// ═══════════════════════════════════════════════════════════════════════════
+// F1 — EMISSION (plan §D F1 + delta amendments A-1/A-3/A-4/A-5).
+//
+// Everything below is a PURE token producer over `emission_partition`: with
+// `S1_FACTORING = false` the partition has zero groups, every stream/map here
+// is empty, and every consumer emits byte-identically to the pre-F1 output
+// (the F0 receipt discipline). With the const `true`, prefix.rs's
+// multi-branch fork emits ONE spine ConsumeAndPush branch per eligible group
+// (weight identity = (cat, MIN member rule) per AV5 — the trigger stamp joins
+// lex plus()-elections, so a SPINE_ID stamp would flip lattice elections),
+// binder.rs's BinderRule match gains `(cat, SPINE_ID, node_pos)` arms, the
+// lex-alt surface emits GROUP entries (A3 — otherwise the lex-fork path
+// re-creates the per-rule fan), and the engine tables gain the spine rows.
+//
+// SPINE ARM COORDINATES: the marker-position field of the spine arms is a
+// PREORDER NODE ID over the group's trie (root = 1), NOT the literal depth —
+// sibling subtrees at equal depth need distinct arm keys (the Nil-group's
+// `!` and `!!` subtrees both continue at depth 3 with different member
+// sets). Nothing else interprets spine positions; the member-side
+// translation happens at commit via the A4 typed coordinates.
+// ═══════════════════════════════════════════════════════════════════════════
+
+use std::collections::HashMap;
+
+use proc_macro2::TokenStream;
+use quote::quote;
+
+use super::binder::ActionArgKind;
+
+/// How a BinderPrefix/NullaryLiteralRun descriptor is emitted under the
+/// factored partition (absent from the map = ordinary singleton emission,
+/// byte-identical to today).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SpineDisposition {
+    /// First member (bucket discovery order) of an eligible group: emit the
+    /// group's ONE spine trigger branch at this member's position.
+    GroupFirst {
+        spine_id: u16,
+        body_src_idx: u16,
+        /// AV5 weight identity: the MIN member rule idx (never SPINE_ID).
+        weight_rule_idx: u16,
+    },
+    /// Non-first member of an eligible group: emit nothing (the spine branch
+    /// at the first member's position covers it).
+    GroupRest,
+}
+
+/// Per-category lex-alt surface adjustments (A3).
+#[derive(Debug, Default)]
+pub(crate) struct SpineLexAlt {
+    /// Grouped member rule idxs whose per-member PrefixOp/NullaryPrefixRun
+    /// entries are REPLACED by group entries (assert: no per-member entries
+    /// for these under the const).
+    pub grouped: HashMap<u16, SpineDisposition>,
+}
+
+/// The complete F1 emission bundle.
+pub(crate) struct SpineEmission {
+    /// `rule_idx -> disposition` per category index.
+    pub dispositions: Vec<HashMap<u16, SpineDisposition>>,
+    /// `(cat, SPINE_ID, node_pos)` arms for `emit_binder_rule_body`'s match.
+    pub binder_arms: TokenStream,
+    /// `fn trigger_spine_owner` override for the generated engine impl
+    /// (EMPTY stream when no groups ⇒ the prattail trait default `None`
+    /// stands and the generated file is byte-identical).
+    pub trigger_spine_owner_fn: TokenStream,
+    /// `fn spine_members` override (A-1); EMPTY when no groups.
+    pub spine_members_fn: TokenStream,
+    /// Early-return prelude arms for `action_for` (H9: expected_input_cats =
+    /// member union, arity = the u8::MAX poison; the LOUD asserts live at
+    /// the walker consumption sites).
+    pub action_for_prelude: TokenStream,
+    /// Early-return prelude for `rule_has_leading_structural_trigger` (A7:
+    /// conjunction over members — vacuously all-true under F0 eligibility,
+    /// every member leads with the bucket trigger literal; emitted
+    /// regardless per the A7 consumer census, which includes the classic B2
+    /// shape mask @20495, `sppf_shallow_ident_trigger_masked` @20444, the
+    /// stats-only `cgll_w_cond` @34598, and the dormant `step_canonical`
+    /// variant).
+    pub leading_trigger_prelude: TokenStream,
+    /// Early-return prelude for `min_terminal_span` (min over members;
+    /// omitted when the min is 0 = the table default). Parikh needs NO rows:
+    /// `WPDA_MUST_MASK`'s default arm is 0 (all-zero spine rows = the plan's
+    /// sound initial choice = the default).
+    pub min_span_prelude: TokenStream,
+    /// A3 lex-alt adjustments per category index.
+    pub lex_alt: Vec<SpineLexAlt>,
+    /// `fn __s1_spine_weight_rule(cat, rule) -> u16` free fn for the
+    /// lex-fork weight stamps (identity for real ids; MIN member for spine
+    /// ids — AV5). Emitted only when groups exist.
+    pub spine_weight_rule_fn: TokenStream,
+}
+
+impl SpineEmission {
+    /// True iff the emission-effective partition produced ≥1 factored group
+    /// (⇒ the engine-table overrides / the `__s1_spine_weight_rule` free fn
+    /// are emitted and the lex-fork weight sites must route through it).
+    /// `S1_FACTORING == false` ⇒ always `false` — every consumer emits
+    /// byte-identically to the pre-F1 output.
+    pub(crate) fn any_groups(&self) -> bool {
+        !self.trigger_spine_owner_fn.is_empty()
+    }
+}
+
+/// One flattened spine node during emission.
+struct FlatNode<'t> {
+    node_id: u8,
+    children: Vec<(&'t SpineTree, u8)>, // child tree + child node id
+}
+
+/// Preorder node-id assignment over a group tree. Interior nodes get arm
+/// ids; leaves are consumed as EDGES of their parent's arm (no own arm).
+///
+/// EDGE CONVENTION (F1 root-edge fix, 2026-07-12): every `SpineTree` node
+/// carries the item on the edge INTO it (`root.item` = the group's FIRST
+/// post-trigger item), and an ARM consumes EDGES — so the arm at node `n`
+/// emits the actions consuming `n`'s CHILDREN's items. The root edge itself
+/// therefore needs a SYNTHETIC PRE-ROOT arm: node id 1 (the coordinate the
+/// spine trigger branch pushes, `rule_at(cat, SPINE_ID, 1)`) consumes the
+/// root's own item and lands on the root node at id 2 — mirroring the
+/// member-side convention where arm position `p` consumes `positions[p-1]`
+/// (the original arm 1 consumes the first post-trigger item). Without the
+/// pre-root arm the first post-trigger item would never be consumed (arm 1
+/// would fork over the root's CHILDREN edges — e.g. `@ Nil !…` dispatching
+/// `!`/`!!` guards against the `Nil` token).
+fn flatten_tree(tree: &SpineTree) -> Vec<FlatNode<'_>> {
+    let mut out: Vec<FlatNode<'_>> = Vec::new();
+    // An eligible group has ≥2 members and no interior accepts, so its root
+    // is always Interior (build_tree only leafs a len()==1 part).
+    assert!(
+        matches!(tree, SpineTree::Interior { .. }),
+        "S1-FACTORING F1: an eligible group's trie root must be Interior",
+    );
+    // Pre-root arm: node 1 consumes the root EDGE, landing on the root
+    // node's own arm at id 2.
+    out.push(FlatNode { node_id: 1, children: vec![(tree, 2)] });
+    let mut next_id: u8 = 3;
+    // (tree, assigned id) worklist — preorder.
+    let mut stack: Vec<(&SpineTree, u8)> = Vec::new();
+    stack.push((tree, 2));
+    while let Some((node, node_id)) = stack.pop() {
+        let SpineTree::Interior { children, .. } = node else {
+            continue;
+        };
+        let mut child_entries = Vec::with_capacity(children.len());
+        for child in children {
+            let cid = match child {
+                SpineTree::Interior { .. } => {
+                    let cid = next_id;
+                    assert!(
+                        next_id < 250,
+                        "S1-FACTORING F1: spine node-id space exceeded (u8 marker positions)",
+                    );
+                    next_id += 1;
+                    cid
+                },
+                // Leaves carry no arm of their own — the parent's arm
+                // consumes the leaf edge and COMMITS.
+                SpineTree::Leaf { .. } => 0,
+            };
+            child_entries.push((child, cid));
+        }
+        // Push interior children for preorder continuation.
+        for (child, cid) in child_entries.iter().rev() {
+            if *cid != 0 {
+                stack.push((child, *cid));
+            }
+        }
+        out.push(FlatNode { node_id, children: child_entries });
+    }
+    out
+}
+
+/// The (symbol, new_state) target tokens for consuming a child edge.
+/// `cat` = owning category; `spine_id` = the group id.
+fn child_target_tokens(
+    cat: u16,
+    spine_id: u16,
+    child: &SpineTree,
+    child_id: u8,
+) -> (TokenStream, TokenStream) {
+    match child {
+        SpineTree::Interior { .. } => (
+            quote! {
+                StackSymbolV2::rule_at(#cat, #spine_id, #child_id, Some(*outer_bp))
+            },
+            quote! {
+                WpdaState::BinderRule {
+                    result_src_idx: #cat,
+                    rule_idx: #spine_id,
+                    body_src_idx: *_body_src_idx,
+                    outer_bp: *outer_bp,
+                }
+            },
+        ),
+        SpineTree::Leaf { member, .. } => match &member.commit {
+            MemberCommit::Binder { rule_idx, resume_pos } => (
+                quote! {
+                    StackSymbolV2::rule_at(#cat, #rule_idx, #resume_pos, Some(*outer_bp))
+                },
+                quote! {
+                    WpdaState::BinderRule {
+                        result_src_idx: #cat,
+                        rule_idx: #rule_idx,
+                        body_src_idx: *_body_src_idx,
+                        outer_bp: *outer_bp,
+                    }
+                },
+            ),
+            MemberCommit::Nullary { rule_idx, completed_idx, sub_pos } => (
+                quote! {
+                    StackSymbolV2::mixfix_marker(#cat, #rule_idx, 0u8)
+                },
+                quote! {
+                    WpdaState::MixfixLiteralRun {
+                        result_src_idx: #cat,
+                        rule_idx: #rule_idx,
+                        completed_idx: #completed_idx,
+                        kind: 2u8,
+                        sub_pos: #sub_pos,
+                    }
+                },
+            ),
+        },
+    }
+}
+
+/// One Fork BRANCH consuming a child edge (used by divergence arms and, as a
+/// single-branch Fork, by chain Literal arms — the binder.rs Literal-arm
+/// convention, Cluster 1 closure #5).
+fn child_branch_tokens(cat: u16, spine_id: u16, child: &SpineTree, child_id: u8) -> TokenStream {
+    let (sym, state) = child_target_tokens(cat, spine_id, child, child_id);
+    match child.item() {
+        SpineItem::Literal { text, required_top_cat } => {
+            let req = match required_top_cat {
+                Some(c) => quote! { Some(#c) },
+                None => quote! { None },
+            };
+            quote! {
+                mettail_prattail::wpda_walker::ForkBranch {
+                    symbol: #sym,
+                    weight: lex_one(),
+                    new_state: #state,
+                    action_kind:
+                        mettail_prattail::wpda_walker::ForkActionKind::GuardedConsumeAndReplace {
+                            expected_text: #text.to_string(),
+                            required_top_cat: #req,
+                        },
+                }
+            }
+        },
+        SpineItem::ParamParse { cat_src_idx, cur_bp } => {
+            // The branch PUSHES the operand CategoryEntry; the marker
+            // replacement rides the action kind (walker ReplaceAndPush
+            // fork semantics — binder collection-arm precedent).
+            quote! {
+                mettail_prattail::wpda_walker::ForkBranch {
+                    symbol: StackSymbolV2::category_entry(#cat_src_idx),
+                    weight: lex_one(),
+                    new_state: WpdaState::PrefixDispatch {
+                        pos: _pos,
+                        cur_bp: #cur_bp,
+                    },
+                    action_kind:
+                        mettail_prattail::wpda_walker::ForkActionKind::ReplaceAndPush {
+                            replace_symbol: #sym,
+                        },
+                }
+            }
+        },
+    }
+}
+
+/// Build the complete F1 emission bundle from the EMISSION-EFFECTIVE
+/// partition. Call ONCE per language expansion (engine_impl assembly) and
+/// thread the pieces to the consumers.
+pub(crate) fn build_spine_emission(
+    language: &LanguageDef,
+    categories: &[String],
+    per_cat: &[Vec<GrammarRule>],
+) -> SpineEmission {
+    let partition = emission_partition(language, categories, per_cat);
+    build_spine_emission_from(&partition, language, categories, per_cat)
+}
+
+/// The partition-explicit core of [`build_spine_emission`]. Split out so the
+/// unit tests can pin the ON-shape emission against
+/// [`build_prefix_factoring`]'s model without flipping the compile-time
+/// const (the F0 receipt discipline keeps `S1_FACTORING = false` in-tree).
+pub(crate) fn build_spine_emission_from(
+    partition: &[CategoryFactoring],
+    language: &LanguageDef,
+    categories: &[String],
+    per_cat: &[Vec<GrammarRule>],
+) -> SpineEmission {
+    let mut dispositions: Vec<HashMap<u16, SpineDisposition>> =
+        (0..per_cat.len()).map(|_| HashMap::new()).collect();
+    let mut lex_alt: Vec<SpineLexAlt> =
+        (0..per_cat.len()).map(|_| SpineLexAlt::default()).collect();
+    let mut binder_arms: Vec<TokenStream> = Vec::new();
+    let mut owner_arms: Vec<TokenStream> = Vec::new();
+    let mut member_arms: Vec<TokenStream> = Vec::new();
+    let mut action_arms: Vec<TokenStream> = Vec::new();
+    let mut lead_arms: Vec<TokenStream> = Vec::new();
+    let mut span_arms: Vec<TokenStream> = Vec::new();
+    let mut weight_arms: Vec<TokenStream> = Vec::new();
+    let mut any_groups = false;
+
+    for cat_fact in partition {
+        let cat = cat_fact.category_src_idx;
+        let cat_usize = cat as usize;
+        let rules = &per_cat[cat_usize];
+        for bucket in &cat_fact.buckets {
+            for group in &bucket.groups {
+                any_groups = true;
+                let spine_id = group.spine_id;
+                let body_src_idx = group.body_src_idx;
+                let members = group.member_rule_idxs(); // BTreeSet — min first
+                let weight_rule_idx = *members
+                    .iter()
+                    .next()
+                    .expect("an eligible group has members");
+                // Dispositions: first member in BUCKET DISCOVERY ORDER (the
+                // emission order of the per-rule branches) carries the spine
+                // branch; the rest are silent. Discovery order = leaf order
+                // of the tree restricted to... members were bucketed in rule
+                // declaration order, so min rule_idx = the first-emitted
+                // member.
+                let mut first = true;
+                let mut ordered: Vec<u16> = members.iter().copied().collect();
+                ordered.sort_unstable();
+                for m in ordered {
+                    let d = if first {
+                        first = false;
+                        SpineDisposition::GroupFirst { spine_id, body_src_idx, weight_rule_idx }
+                    } else {
+                        SpineDisposition::GroupRest
+                    };
+                    dispositions[cat_usize].insert(m, d);
+                    lex_alt[cat_usize].grouped.insert(m, d);
+                }
+                // ── binder arms ──────────────────────────────────────────
+                for node in flatten_tree(&group.tree) {
+                    let node_id = node.node_id;
+                    let branches: Vec<TokenStream> = node
+                        .children
+                        .iter()
+                        .map(|(child, cid)| child_branch_tokens(cat, spine_id, child, *cid))
+                        .collect();
+                    let arm_body = if node.children.len() == 1 {
+                        // Chain arm. Literal chains keep the single-branch
+                        // Fork convention; ParamParse chains emit the plain
+                        // ReplaceAndPush (binder.rs ParamParse-arm shape).
+                        let (child, cid) = &node.children[0];
+                        match child.item() {
+                            SpineItem::Literal { .. } => {
+                                let b = &branches[0];
+                                quote! {
+                                    return WpdaStepAction::Fork {
+                                        branches: vec![#b],
+                                        consume_trigger: false,
+                                    };
+                                }
+                            },
+                            SpineItem::ParamParse { cat_src_idx, cur_bp } => {
+                                let (sym, state) =
+                                    child_target_tokens(cat, spine_id, child, *cid);
+                                let _ = state; // param chains resume via PrefixDispatch
+                                quote! {
+                                    return WpdaStepAction::ReplaceAndPush {
+                                        replace_symbol: #sym,
+                                        push_symbol: StackSymbolV2::category_entry(#cat_src_idx),
+                                        weight: lex_one(),
+                                        new_state: WpdaState::PrefixDispatch {
+                                            pos: _pos,
+                                            cur_bp: #cur_bp,
+                                        },
+                                    };
+                                }
+                            },
+                        }
+                    } else {
+                        // Divergence arm: one branch per trie child; literal
+                        // branches die on their guards (the shared
+                        // evidence-prune, plan §2 item 3).
+                        quote! {
+                            return WpdaStepAction::Fork {
+                                branches: vec![#(#branches),*],
+                                consume_trigger: false,
+                            };
+                        }
+                    };
+                    binder_arms.push(quote! {
+                        (#cat, #spine_id, #node_id) => { #arm_body }
+                    });
+                }
+                // ── engine table rows ────────────────────────────────────
+                for m in members.iter().copied() {
+                    owner_arms.push(quote! {
+                        (#cat, #m) => Some(#spine_id),
+                    });
+                }
+                let member_list: Vec<u16> = members.iter().copied().collect();
+                member_arms.push(quote! {
+                    (#cat, #spine_id) => &[#(#member_list),*],
+                });
+                // action_for spine row (H9): expected_input_cats = the union
+                // of the members' OWN expected_input_cats, derived EXACTLY as
+                // `binder::emit_binder_action_entry` derives each member's row
+                // (`shape.action_args`: `Term(cat)` → category index with the
+                // same `.position(..).unwrap_or(0)` lookup; every non-Term
+                // slot → the ANY_CAT sentinel `u16::MAX`). ANY_CAT values are
+                // kept in the union — faithful, and inert at both consumers
+                // (`contains(&body_cat)` never matches `MAX` for a real
+                // category; the single-hop-coercion probe on `MAX` hits the
+                // engine table default `&[]`). Nullary members are
+                // `NullaryLiteralRun` shapes whose entries are arity-0 `&[]`
+                // (semantic_actions::emit_action_entry_arm) — they contribute
+                // nothing. Arity = u8::MAX poison; action_fn = debug-trap
+                // no-op (the H9 walker asserts fire first in debug; in
+                // release the poison arity elides at every fire path).
+                let mut union: Vec<u16> = Vec::new();
+                for m in members.iter().copied() {
+                    let Some(shape) = classify_binder_in(&rules[m as usize], language) else {
+                        continue; // Nullary member: arity-0 entry, no cats.
+                    };
+                    for kind in &shape.action_args {
+                        let ci = match kind {
+                            ActionArgKind::Term(cat) => categories
+                                .iter()
+                                .position(|c| c == cat)
+                                .map(|i| i as u16)
+                                .unwrap_or(0),
+                            // binder.rs `any_cat_value` convention: non-Term
+                            // slots (BinderName/BinderList/Predicate/...) are
+                            // ANY_CAT in the member's own row.
+                            _ => u16::MAX,
+                        };
+                        if !union.contains(&ci) {
+                            union.push(ci);
+                        }
+                    }
+                }
+                action_arms.push(quote! {
+                    (#cat, #spine_id) => {
+                        static SPINE_ENTRY: mettail_prattail::wpda_runtime::ActionEntry =
+                            mettail_prattail::wpda_runtime::ActionEntry {
+                                action_fn: |
+                                    _b: &mut mettail_prattail::wpda_runtime::SemanticBuilder,
+                                    _args: Vec<mettail_prattail::wpda_runtime::ActionArg>|
+                                {
+                                    // S1 H9: never fired — commit precedes
+                                    // every fire; the walker consumption
+                                    // sites debug-assert on spine ids.
+                                    debug_assert!(
+                                        false,
+                                        "S1 H9: spine action_fn invoked",
+                                    );
+                                },
+                                arity: u8::MAX,
+                                expected_input_cats: &[#(#union),*],
+                                output_cat: #cat,
+                            };
+                        return Some(&SPINE_ENTRY);
+                    }
+                });
+                // A7: rule_has_leading_structural_trigger spine row =
+                // CONJUNCTION over members, computed from the SAME per-rule
+                // predicate the canonical lookup emits ("first syntax element
+                // is a Literal", collection.rs::
+                // emit_rule_has_leading_structural_trigger_lookup). All-true
+                // is structurally guaranteed under F0 eligibility (binder
+                // members require a leading `SyntaxExpr::Literal` trigger in
+                // `discover_members`; NullaryLiteralRun implies one) —
+                // ASSERTED so an F5-era eligibility change fails codegen
+                // loudly instead of silently emitting a wrong row.
+                let lead_conjunction = members.iter().copied().all(|m| {
+                    rules[m as usize]
+                        .syntax_pattern
+                        .as_ref()
+                        .map(|sp| matches!(sp.first(), Some(SyntaxExpr::Literal(_))))
+                        .unwrap_or(false)
+                });
+                assert!(
+                    lead_conjunction,
+                    "S1-FACTORING A7: group (cat {cat}, spine {spine_id:#06x}) has a member \
+                     without a leading literal trigger — eligibility drifted",
+                );
+                lead_arms.push(quote! {
+                    (#cat, #spine_id) => return true,
+                });
+                // min_terminal_span: min over members' effective rows (0 =
+                // absent = the default ⇒ omit the row when min is 0).
+                let mut min_span: Option<u32> = None;
+                for m in members.iter().copied() {
+                    let v = member_min_span(&rules[m as usize]);
+                    min_span = Some(match min_span {
+                        Some(cur) => cur.min(v),
+                        None => v,
+                    });
+                }
+                if let Some(v) = min_span {
+                    if v > 0 {
+                        span_arms.push(quote! {
+                            (#cat, #spine_id) => return #v,
+                        });
+                    }
+                }
+                weight_arms.push(quote! {
+                    (#cat, #spine_id) => #weight_rule_idx,
+                });
+            }
+        }
+    }
+
+    let binder_arms = quote! { #(#binder_arms)* };
+    let trigger_spine_owner_fn = if any_groups {
+        quote! {
+            fn trigger_spine_owner(&self, src_idx: u16, rule_idx: u16) -> Option<u16> {
+                match (src_idx, rule_idx) {
+                    #(#owner_arms)*
+                    _ => None,
+                }
+            }
+        }
+    } else {
+        TokenStream::new()
+    };
+    let spine_members_fn = if any_groups {
+        quote! {
+            fn spine_members(&self, src_idx: u16, spine_id: u16) -> &[u16] {
+                match (src_idx, spine_id) {
+                    #(#member_arms)*
+                    _ => &[],
+                }
+            }
+        }
+    } else {
+        TokenStream::new()
+    };
+    let action_for_prelude = if any_groups {
+        quote! {
+            match (src_idx, rule_idx) {
+                #(#action_arms)*
+                _ => {},
+            }
+        }
+    } else {
+        TokenStream::new()
+    };
+    let leading_trigger_prelude = if any_groups {
+        quote! {
+            match (result_src_idx, rule_idx) {
+                #(#lead_arms)*
+                _ => {},
+            }
+        }
+    } else {
+        TokenStream::new()
+    };
+    let min_span_prelude = if span_arms.is_empty() {
+        TokenStream::new()
+    } else {
+        quote! {
+            match (src_idx, rule_idx) {
+                #(#span_arms)*
+                _ => {},
+            }
+        }
+    };
+    let spine_weight_rule_fn = if any_groups {
+        quote! {
+            #[allow(dead_code)]
+            fn __s1_spine_weight_rule(cat: u16, rule: u16) -> u16 {
+                match (cat, rule) {
+                    #(#weight_arms)*
+                    _ => rule,
+                }
+            }
+        }
+    } else {
+        TokenStream::new()
+    };
+    SpineEmission {
+        dispositions,
+        binder_arms,
+        trigger_spine_owner_fn,
+        spine_members_fn,
+        action_for_prelude,
+        leading_trigger_prelude,
+        min_span_prelude,
+        lex_alt,
+        spine_weight_rule_fn,
+    }
+}
+
+/// Per-rule min_terminal_span replica (semantic_actions::
+/// emit_min_terminal_span_body's row computation — kept in lockstep; the
+/// table default is 0).
+fn member_min_span(rule: &GrammarRule) -> u32 {
+    let Some(sp) = rule.syntax_pattern.as_ref() else {
+        return 0;
+    };
+    if sp.iter().any(|e| matches!(e, SyntaxExpr::Op(_))) {
+        return 0;
+    }
+    let all_simple = rule
+        .term_context
+        .as_ref()
+        .map(|tc| {
+            tc.iter()
+                .all(|p| matches!(p, mettail_ast::grammar::TermParam::Simple { .. }))
+        })
+        .unwrap_or(true);
+    if !all_simple {
+        return 0;
+    }
+    let mut seen_param = false;
+    let mut n: u32 = 0;
+    for e in sp.iter() {
+        match e {
+            SyntaxExpr::Param(_) => seen_param = true,
+            SyntaxExpr::Literal(_) if seen_param => n += 1,
+            _ => {},
+        }
+    }
+    n
+}
+
+/// The spine TRIGGER branch for prefix.rs's multi-branch fork (one per
+/// eligible group, at the first member's emission position).
+pub(crate) fn emit_spine_trigger_branch(
+    category_src_idx: u16,
+    spine_id: u16,
+    body_src_idx: u16,
+    weight_rule_idx: u16,
+) -> TokenStream {
+    quote! {
+        __pd_branches.push(mettail_prattail::wpda_walker::ForkBranch {
+            symbol: StackSymbolV2::rule_at(
+                #category_src_idx, #spine_id, 1u8, Some(_outer_bp),
+            ),
+            weight: lex_w(0.0, #category_src_idx, #weight_rule_idx),
+            new_state: WpdaState::BinderRule {
+                result_src_idx: #category_src_idx,
+                rule_idx: #spine_id,
+                body_src_idx: #body_src_idx,
+                outer_bp: _outer_bp,
+            },
+            action_kind:
+                mettail_prattail::wpda_walker::ForkActionKind::ConsumeAndPush {
+                    trigger_mode:
+                        mettail_prattail::wpda_walker::TriggerMode::ConsumeAsTriggerOnly,
+                },
+        });
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1328,10 +1989,18 @@ mod tests {
     }
 
     /// ★A2 receipts — Calculator: the flagship RC-B casts (`int(<Bool>)` /
-    /// `int(<Float>)` / `int(<Str>)`) and the same-cat `IntId` (`int(<Int>)`,
-    /// a numeric-domain wrapper row) are all excluded, dissolving the
-    /// (Int, "int") bucket into singletons — `int(...)` NEVER rides a spine,
-    /// so `try_park_direct_prefix_cast_waiter` keeps seeing real rule ids.
+    /// `int(<Float>)` / `int(<Str>)`), the same-cat `IntId` (`int(<Int>)`,
+    /// a numeric-domain wrapper row) AND the binary object cast `IntBin`
+    /// (`int(a, w)` — CastMachinery via `recognize_cast_fold` clause (b);
+    /// delta red-team A-3: the fifth `(Int, "int")` PrefixDispatch fork
+    /// branch) are all excluded, dissolving the (Int, "int") bucket into
+    /// singletons — `int(...)` NEVER rides a spine, so
+    /// `try_park_direct_prefix_cast_waiter` keeps seeing real rule ids AND
+    /// the R-D budget pin (`actual = 5` @languages/tests/calculator.rs:674,
+    /// the PrefixDispatch fork width) survives S1-ON untouched. The
+    /// (Float, "float") bucket is pinned the same way (A-3: the SECOND
+    /// budget test — `float(float(10,64),64)`, `actual > budget` — was
+    /// half-unpinned without it).
     #[test]
     fn calculator_cast_rules_excluded_from_factoring_a2() {
         let def = calculator();
@@ -1345,13 +2014,38 @@ mod tests {
             "the (Int, \"int\") cohort must not factor (all cast rows): {:?}",
             int_bucket.groups.iter().map(|g| g.member_rule_idxs()).collect::<Vec<_>>(),
         );
-        for label in ["FloatToInt", "BoolToInt", "StrToInt", "IntId"] {
+        for label in ["FloatToInt", "BoolToInt", "StrToInt", "IntId", "IntBin"] {
             let idx = rule_idx(&per_cat[int_src as usize], label);
             let s = int_bucket
                 .singletons
                 .iter()
                 .find(|s| s.rule_idx == idx)
                 .unwrap_or_else(|| panic!("{label} present as an (Int, \"int\") singleton"));
+            assert_eq!(
+                s.reason,
+                SingletonReason::CastMachinery,
+                "{label} participates in cast machinery (A2)",
+            );
+        }
+
+        // A-3 (delta red-team, 2026-07-12): the (Float, "float") cohort —
+        // IntToFloat / BoolToFloat / StrToFloat / FloatId / FloatBin, 5/5
+        // CastMachinery — must dissolve into singletons exactly like Int's,
+        // protecting the second calculator budget test's fan width.
+        let float_src = src_idx(&categories, "Float");
+        let float_bucket = bucket(&model, float_src, "float");
+        assert!(
+            float_bucket.groups.is_empty(),
+            "the (Float, \"float\") cohort must not factor (all cast rows): {:?}",
+            float_bucket.groups.iter().map(|g| g.member_rule_idxs()).collect::<Vec<_>>(),
+        );
+        for label in ["IntToFloat", "BoolToFloat", "StrToFloat", "FloatId", "FloatBin"] {
+            let idx = rule_idx(&per_cat[float_src as usize], label);
+            let s = float_bucket
+                .singletons
+                .iter()
+                .find(|s| s.rule_idx == idx)
+                .unwrap_or_else(|| panic!("{label} present as a (Float, \"float\") singleton"));
             assert_eq!(
                 s.reason,
                 SingletonReason::CastMachinery,
@@ -1629,5 +2323,198 @@ mod tests {
         let (items, truncated) = binder_items(&positions, 0, 0, &categories, &bp);
         assert!(items.is_empty());
         assert!(truncated);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // F1 emission pins (2026-07-12). The ON-shape pins go through
+    // `build_spine_emission_from(build_prefix_factoring(..))` so the tree
+    // keeps `S1_FACTORING = false` (dormant-const discipline) while the
+    // emission logic is exercised at full strength.
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /// Whitespace-insensitive TokenStream text (token spacing in
+    /// `TokenStream::to_string` is not load-bearing).
+    fn normalized(ts: &proc_macro2::TokenStream) -> String {
+        ts.to_string().chars().filter(|c| !c.is_whitespace()).collect()
+    }
+
+    /// The window of `s` between `from` (inclusive of content after it) and
+    /// the next occurrence of `to` (or the end).
+    fn window<'s>(s: &'s str, from: &str, to: &str) -> &'s str {
+        let start = s.find(from).unwrap_or_else(|| panic!("{from} present"));
+        let rest = &s[start + from.len()..];
+        match rest.find(to) {
+            Some(end) => &rest[..end],
+            None => rest,
+        }
+    }
+
+    /// The F0 byte-identity stance expressed on the F1 bundle: with the
+    /// shipped `S1_FACTORING == false`, `build_spine_emission` (through
+    /// `emission_partition`) is COMPLETELY inert — zero groups, empty
+    /// streams, empty maps — so every wired consumer (prefix.rs multi-branch
+    /// fork, binder.rs match, kind_dispatch lex-alt surface, the engine_impl
+    /// preludes/overrides, the forks.rs weight wrap) emits byte-identically.
+    #[test]
+    fn spine_emission_off_is_inert_while_const_off() {
+        assert!(
+            !crate::gen::runtime::wpda_codegen::forks::S1_FACTORING,
+            "F1 ships with the kill-switch OFF",
+        );
+        let def = rhocalc();
+        let (categories, per_cat) = cats_per_cat(&def);
+        let bundle = build_spine_emission(&def, &categories, &per_cat);
+        assert!(!bundle.any_groups());
+        assert!(bundle.binder_arms.is_empty());
+        assert!(bundle.trigger_spine_owner_fn.is_empty());
+        assert!(bundle.spine_members_fn.is_empty());
+        assert!(bundle.action_for_prelude.is_empty());
+        assert!(bundle.leading_trigger_prelude.is_empty());
+        assert!(bundle.min_span_prelude.is_empty());
+        assert!(bundle.spine_weight_rule_fn.is_empty());
+        for per_cat_map in &bundle.dispositions {
+            assert!(per_cat_map.is_empty(), "OFF ⇒ no dispositions");
+        }
+        for alt in &bundle.lex_alt {
+            assert!(alt.grouped.is_empty(), "OFF ⇒ no lex-alt group entries");
+        }
+    }
+
+    /// ON-shape pins over the rhocalc `@`-cohort: dispositions (GroupFirst at
+    /// the min member with the AV5 weight identity, GroupRest for the rest),
+    /// the ROOT-EDGE arm (F1 root-edge fix: the pre-root arm at node id 1 —
+    /// the coordinate the trigger branch pushes — consumes the group's FIRST
+    /// post-trigger item; without it `@ Nil !…` would dispatch the `!`/`!!`
+    /// guards against the `Nil` token), typed commit coordinates on the arm
+    /// stream, and the engine-table rows (owner, A-1 members, H9 poison
+    /// union, A7, min-span).
+    #[test]
+    fn spine_emission_on_rhocalc_pins_dispositions_root_edge_and_tables() {
+        let def = rhocalc();
+        let (categories, per_cat) = cats_per_cat(&def);
+        let model = build_prefix_factoring(&def, &categories, &per_cat);
+        let bundle = build_spine_emission_from(&model, &def, &categories, &per_cat);
+        assert!(bundle.any_groups());
+
+        // ── dispositions: Nil group 0xF800 keyed at min member 10 ─────────
+        let proc_dispositions = &bundle.dispositions[0];
+        assert_eq!(
+            proc_dispositions.get(&10),
+            Some(&SpineDisposition::GroupFirst {
+                spine_id: SPINE_RULE_BASE,
+                body_src_idx: 0,
+                weight_rule_idx: 10, // AV5: MIN member, never SPINE_ID
+            }),
+        );
+        for rest in [11u16, 15, 16, 20, 21] {
+            assert_eq!(
+                proc_dispositions.get(&rest),
+                Some(&SpineDisposition::GroupRest),
+                "Nil-group member {rest} is GroupRest",
+            );
+        }
+        assert_eq!(
+            proc_dispositions.get(&12),
+            Some(&SpineDisposition::GroupFirst {
+                spine_id: SPINE_RULE_BASE + 1,
+                body_src_idx: 3,
+                weight_rule_idx: 12,
+            }),
+            "Quoted group leads at rule 12 with the Name body",
+        );
+        assert_eq!(
+            proc_dispositions.get(&13),
+            Some(&SpineDisposition::GroupFirst {
+                spine_id: SPINE_RULE_BASE + 2,
+                body_src_idx: 0,
+                weight_rule_idx: 13,
+            }),
+        );
+        // The lex-alt surface mirrors the dispositions (A3).
+        assert_eq!(bundle.lex_alt[0].grouped.len(), 15, "all 15 @-cohort members");
+
+        // ── the ROOT-EDGE arm (the F1 root-edge fix pin) ───────────────────
+        let arms = normalized(&bundle.binder_arms);
+        // Pre-root arm (node 1) consumes the Nil-group's root item `Nil` —
+        // and does NOT dispatch the divergence guards `!`/`!!` (those live
+        // on the root node's own arm, id 2, which directly follows).
+        let arm1 = window(&arms, "(0u16,63488u16,1u8)=>", "(0u16,63488u16,2u8)=>");
+        assert!(
+            arm1.contains("expected_text:\"Nil\""),
+            "pre-root arm consumes the root edge item: {arm1}",
+        );
+        assert!(
+            !arm1.contains("expected_text:\"!\""),
+            "divergence guards must NOT be on the pre-root arm: {arm1}",
+        );
+        let arm2 = window(&arms, "(0u16,63488u16,2u8)=>", "(0u16,63488u16,3u8)=>");
+        assert!(
+            arm2.contains("expected_text:\"!\"") && arm2.contains("expected_text:\"!!\""),
+            "root-node arm forks the !/!! divergence: {arm2}",
+        );
+        // Quoted group's pre-root arm is the ParamParse chain form: replace
+        // the spine marker to node 2 and push CategoryEntry(Name).
+        let quoted_arm1 = window(&arms, "(0u16,63489u16,1u8)=>", "(0u16,63489u16,2u8)=>");
+        assert!(
+            quoted_arm1.contains("ReplaceAndPush")
+                && quoted_arm1.contains("category_entry(3u16)")
+                && quoted_arm1.contains("rule_at(0u16,63489u16,2u8"),
+            "Quoted pre-root arm pushes the Name operand: {quoted_arm1}",
+        );
+        // Typed commits (A4): rule 10 binder-resumes at its final pos 6;
+        // rule 15 nullary-commits into its MixfixLiteralRun tail complete.
+        assert!(
+            arms.contains("rule_at(0u16,10u16,6u8"),
+            "rule 10 commit coordinate present",
+        );
+        assert!(
+            arms.contains("mixfix_marker(0u16,15u16,0u8)") && arms.contains("sub_pos:4u8"),
+            "rule 15 nullary commit coordinate present",
+        );
+
+        // ── engine-table rows ──────────────────────────────────────────────
+        let owners = normalized(&bundle.trigger_spine_owner_fn);
+        assert!(owners.contains("(0u16,10u16)=>Some(63488u16)"));
+        assert!(owners.contains("(0u16,15u16)=>Some(63488u16)"));
+        assert!(owners.contains("(0u16,12u16)=>Some(63489u16)"));
+        assert!(owners.contains("(0u16,24u16)=>Some(63490u16)"));
+        let members = normalized(&bundle.spine_members_fn);
+        assert!(members.contains("(0u16,63488u16)=>&[10u16,11u16,15u16,16u16,20u16,21u16]"));
+        assert!(members.contains("(0u16,63489u16)=>&[12u16,17u16,22u16]"));
+        assert!(members.contains("(0u16,63490u16)=>&[13u16,14u16,18u16,19u16,23u16,24u16]"));
+        // H9 poison rows: union = the members' canonical expected_input_cats
+        // (Term slots per category; CollectionDrain/other slots = ANY_CAT
+        // 65535), arity = the u8::MAX poison.
+        let actions = normalized(&bundle.action_for_prelude);
+        assert!(actions.contains("arity:u8::MAX"));
+        assert!(
+            actions.contains("expected_input_cats:&[0u16,65535u16]"),
+            "Nil/Short union rows (Proc + CollectionDrain): {actions}",
+        );
+        assert!(
+            actions.contains("expected_input_cats:&[3u16,0u16,65535u16]"),
+            "Quoted union row (Name first, then Proc + drain): {actions}",
+        );
+        // A7 rows: conjunction over members (all-true, asserted at build).
+        let leads = normalized(&bundle.leading_trigger_prelude);
+        for spine in ["63488u16", "63489u16", "63490u16"] {
+            assert!(leads.contains(&format!("(0u16,{spine})=>returntrue")));
+        }
+    }
+
+    /// The spine trigger branch mirrors the per-rule BinderPrefix fork
+    /// branch byte-for-byte except the three factored fields: SPINE_ID
+    /// coordinates, the group body, and the AV5 min-member weight stamp.
+    #[test]
+    fn spine_trigger_branch_shape_pin() {
+        let ts = emit_spine_trigger_branch(0, SPINE_RULE_BASE, 0, 10);
+        let s = normalized(&ts);
+        assert!(s.contains("__pd_branches.push"));
+        // NOTE the trailing comma inside the call — token-exact mirror of the
+        // per-rule BinderPrefix branch's own rendering.
+        assert!(s.contains("rule_at(0u16,63488u16,1u8,Some(_outer_bp),)"), "{s}");
+        assert!(s.contains("lex_w(0.0,0u16,10u16)"), "AV5 weight stamp: {s}");
+        assert!(s.contains("ConsumeAsTriggerOnly"));
+        assert!(s.contains("rule_idx:63488u16"), "BinderRule state carries the SPINE_ID: {s}");
     }
 }

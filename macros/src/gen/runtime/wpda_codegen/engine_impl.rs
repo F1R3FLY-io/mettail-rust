@@ -40,6 +40,23 @@ pub(crate) fn emit_engine_impl_full(
         })
         .collect();
 
+    // S1-FACTORING F1 (2026-07-12, plan scratchpad/zz_probes/
+    // s1_factoring_plan.md §D F1): the ONE-per-expansion spine emission
+    // bundle. With `forks::S1_FACTORING == false` the emission-effective
+    // partition has zero groups, every stream/map in the bundle is empty,
+    // and every consumer threads below emit byte-identically to the pre-F1
+    // output (the F0 receipt discipline). With the const `true`: prefix.rs
+    // emits one spine trigger branch per eligible group, binder.rs's
+    // BinderRule match gains the `(cat, SPINE_ID, node_pos)` arms,
+    // kind_dispatch's lex-alt surface emits group entries (A3), the lex-fork
+    // weight stamps route through `__s1_spine_weight_rule` (AV5), and the
+    // engine tables gain the spine rows (H9 poison `action_for` union rows,
+    // A7 leading-trigger conjunction, min-span min-over-members,
+    // `trigger_spine_owner` + A-1 `spine_members` trait overrides).
+    let s1_spine = super::factoring::build_spine_emission(language, categories, per_cat);
+    let s1_empty_dispositions: std::collections::HashMap<u16, super::factoring::SpineDisposition> =
+        std::collections::HashMap::new();
+
     // Aggregate Phase A.2 prefix arms across all categories. Each arm
     // guards on `state_cat_src_idx` so the same token can produce
     // different AST depending on which category is being parsed.
@@ -50,6 +67,10 @@ pub(crate) fn emit_engine_impl_full(
             i as u16,
             categories.get(i).map(String::as_str).unwrap_or(""),
             rules,
+            s1_spine
+                .dispositions
+                .get(i)
+                .unwrap_or(&s1_empty_dispositions),
         );
         all_prefix_arms.extend(arms);
     }
@@ -98,8 +119,15 @@ pub(crate) fn emit_engine_impl_full(
     // OptionalGroup state bodies. Empty map => non-unary-prefix rules use
     // `cur_bp: 0` per the legacy default.
     let prefix_bp_map = super::binder::build_prefix_bp_map(language, per_cat);
-    let binder_rule_body =
-        super::binder::emit_binder_rule_body(language, categories, per_cat, &prefix_bp_map);
+    let binder_rule_body = super::binder::emit_binder_rule_body(
+        language,
+        categories,
+        per_cat,
+        &prefix_bp_map,
+        // S1-FACTORING F1: the `(cat, SPINE_ID, node_pos)` spine arms
+        // (empty under the OFF const).
+        &s1_spine.binder_arms,
+    );
     // Phase 5b: BinderListLoop body for multi-binder list (^[xs]).
     let binder_list_loop_body =
         super::binder::emit_binder_list_loop_body(language, categories, per_cat);
@@ -249,7 +277,13 @@ pub(crate) fn emit_engine_impl_full(
         super::kind_dispatch::emit_cat_can_reach(language, per_cat, categories);
     // L-substrate Piece #6 (2026-05-13): lex-fork dispatch block,
     // emitted at the top of the WpdaState::PrefixDispatch arm.
-    let lex_fork_dispatch = super::forks::emit_lex_fork_at_prefix_dispatch(primary_src_idx);
+    // S1-FACTORING AV5: when factored groups exist, the PrefixOp lex-alt
+    // weight stamps route through the `__s1_spine_weight_rule` free fn
+    // (min-member identity for spine entries; the fn is emitted below).
+    let lex_fork_dispatch = super::forks::emit_lex_fork_at_prefix_dispatch(
+        primary_src_idx,
+        s1_spine.any_groups(),
+    );
     let lex_fork_infix_dispatch = super::forks::emit_lex_fork_at_infix_loop(primary_src_idx);
 
     // M6c.2 (2026-05-14): per-grammar `lex_alt_rule_for` free fn.
@@ -257,8 +291,9 @@ pub(crate) fn emit_engine_impl_full(
     // literal rules. Emitted as a sibling of the engine impl so the
     // codegen output uses a single match expression with all
     // (cat, kind) entries.
-    let lex_alt_rule_for_fn =
-        super::kind_dispatch::emit_lex_alt_rule_for_fn(language, per_cat, categories);
+    let lex_alt_rule_for_fn = super::kind_dispatch::emit_lex_alt_rule_for_fn(
+        language, per_cat, categories, &s1_spine,
+    );
 
     // SPPF-realize observational-dedup (2026-06-28): the
     // `WpdaEngine::semantic_fingerprint` override. Probe the realized
@@ -288,8 +323,23 @@ pub(crate) fn emit_engine_impl_full(
         })
         .collect();
 
+    // S1-FACTORING F1: the spine-bundle streams interpolated below. ALL are
+    // empty under `forks::S1_FACTORING == false` (byte-identical output).
+    let s1_action_for_prelude = &s1_spine.action_for_prelude;
+    let s1_leading_trigger_prelude = &s1_spine.leading_trigger_prelude;
+    let s1_min_span_prelude = &s1_spine.min_span_prelude;
+    let s1_trigger_spine_owner_fn = &s1_spine.trigger_spine_owner_fn;
+    let s1_spine_members_fn = &s1_spine.spine_members_fn;
+    let s1_spine_weight_rule_fn = &s1_spine.spine_weight_rule_fn;
+
     quote! {
         #lex_alt_rule_for_fn
+
+        // S1-FACTORING AV5 (2026-07-12): `__s1_spine_weight_rule(cat, rule)`
+        // — the lex-fork PrefixOp weight identity redirect (min member for
+        // spine ids, identity otherwise). Emitted ONLY when factored groups
+        // exist; the lex-fork emission references it only in that case.
+        #s1_spine_weight_rule_fn
 
         // GEN-1 goal-gate (2026-06-28): sibling inherent impl carrying the
         // pure `cat_can_reach` predicate. Lives outside the `WpdaEngine` trait
@@ -2393,6 +2443,13 @@ pub(crate) fn emit_engine_impl_full(
                 src_idx: u16,
                 rule_idx: u16,
             ) -> Option<&mettail_prattail::wpda_runtime::ActionEntry> {
+                // S1-FACTORING H9 prelude (empty under the OFF const): spine
+                // rows with expected_input_cats = member union + POISON arity
+                // (u8::MAX) — legitimate for the H1/A-1 evidence queries
+                // (`binder_slot_accepts_body_category`, the ∃-member
+                // acceptor), NEVER for firing (the walker consumption sites
+                // debug-assert `!is_spine_rule_id`).
+                #s1_action_for_prelude
                 #action_for_body
             }
 
@@ -2470,6 +2527,13 @@ pub(crate) fn emit_engine_impl_full(
                 rule_idx: u16,
             ) -> bool {
                 let _ = (result_src_idx, rule_idx);
+                // S1-FACTORING A7 prelude (empty under the OFF const): spine
+                // rows = the CONJUNCTION over group members (all-true under
+                // F0 eligibility, asserted at codegen). Emitted regardless of
+                // arm (consumer census: classic B2 shape mask,
+                // sppf_shallow_ident_trigger_masked, the claim-gate pos_match
+                // path, stats-only cgll_w_cond, the dormant step_canonical).
+                #s1_leading_trigger_prelude
                 #rule_has_leading_structural_trigger_lookup
             }
 
@@ -2557,6 +2621,11 @@ pub(crate) fn emit_engine_impl_full(
             }
 
             fn min_terminal_span(&self, src_idx: u16, rule_idx: u16) -> u32 {
+                // S1-FACTORING prelude (empty under the OFF const): spine
+                // rows = MIN over the group members' effective rows (omitted
+                // when the min is 0 = the table default) — conservative for
+                // any live-frame reader that sees an uncommitted SPINE_ID.
+                #s1_min_span_prelude
                 // Pass-2c token-soundness backstop (2026-05-30): per-rule
                 // count of literal terminals matched STRICTLY WITHIN the
                 // rule's result-Symbol span (literals after the first param).
@@ -2581,6 +2650,21 @@ pub(crate) fn emit_engine_impl_full(
             // emitted ONLY when the codegen realize kill-switch is on;
             // byte-identical (nothing) at baseline.
             #at_quoted_bind_realize_methods
+
+            // S1-FACTORING F1 (2026-07-12): grammar-derived spine-owner +
+            // A-1 member tables, emitted ONLY when factored groups exist
+            // (the `at_quoted_bind_realize_methods` conditional-override
+            // convention — empty ⇒ the prattail trait defaults `None`/`&[]`
+            // stand and the generated impl is byte-identical).
+            //   - `trigger_spine_owner(cat, member) -> Some(SPINE_ID)`: the
+            //     fire-time claim re-attribution (classic gate
+            //     `owner_match || group_owner_match || pos_match`).
+            //   - `spine_members(cat, SPINE_ID) -> &[members]`: the A-1
+            //     ∃-member expansion at `action_accepts_single_body_category`
+            //     (H9 poison-arity rows would otherwise default-refuse every
+            //     mid-spine acceptance query and DROP readings).
+            #s1_trigger_spine_owner_fn
+            #s1_spine_members_fn
 
             fn single_hop_coercion(&self, from_cat: u16, to_cat: u16) -> &[(u16, u16)] {
                 // Sig-B Blocker-3 §2.3 (2026-06-01): grammar single-hop

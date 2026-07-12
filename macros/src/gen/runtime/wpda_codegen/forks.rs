@@ -1274,7 +1274,49 @@ pub(crate) fn emit_first_set_fork(
 /// returns `&[]`, so the lex-fork is dispatched only when a multi-alt token
 /// source is in use (e.g., `MutableMultiTokenSource` after Stage 3.20 recovery
 /// edge work in Commit 4). For default lexers, this emission is inert.
-pub(crate) fn emit_lex_fork_at_prefix_dispatch(primary_src_idx: u16) -> TokenStream {
+pub(crate) fn emit_lex_fork_at_prefix_dispatch(
+    primary_src_idx: u16,
+    // S1-FACTORING F1 amendment AV5 (2026-07-12): when the language has ≥1
+    // factored group, a lex-alt `PrefixOp` entry may carry `rule_idx =
+    // SPINE_ID` (the A3 group entry) — its WEIGHT identity stamp must be the
+    // group's MIN member rule, NEVER the SPINE_ID (lex_w_alt identity fields
+    // join `plus()` elections; a synthetic stamp would flip lattice-only
+    // elected terms). The wrap routes through the generated
+    // `__s1_spine_weight_rule` free fn (identity for real ids). `false` ⇒
+    // the fn is not emitted and the weight expressions below are
+    // byte-identical to the pre-F1 output.
+    s1_any_groups: bool,
+) -> TokenStream {
+    // S1-FACTORING AV5: the two PrefixOp weight identity-stamp expressions
+    // (primary alt_idx = 0u16; secondary alt_idx = the runtime `alt_idx`).
+    let __s1_prefixop_weight_primary: TokenStream = if s1_any_groups {
+        quote! {
+            lex_w_alt_with_len(
+                __open_len, 0.0, primary_src,
+                __s1_spine_weight_rule(primary_src, info.rule_idx), 0u16,
+            )
+        }
+    } else {
+        quote! {
+            lex_w_alt_with_len(
+                __open_len, 0.0, primary_src, info.rule_idx, 0u16,
+            )
+        }
+    };
+    let __s1_prefixop_weight_secondary: TokenStream = if s1_any_groups {
+        quote! {
+            lex_w_alt_with_len(
+                __open_len, 0.0, primary_src,
+                __s1_spine_weight_rule(primary_src, info.rule_idx), alt_idx,
+            )
+        }
+    } else {
+        quote! {
+            lex_w_alt_with_len(
+                __open_len, 0.0, primary_src, info.rule_idx, alt_idx,
+            )
+        }
+    };
     // ForRow F3 (2026-06-28): the kill-switch value, folded into the
     // projection-suppression guard below as a literal `true`/`false`
     // (`bool: ToTokens`). `false` ⇒ `!(false && …) == true` ⇒ projection
@@ -1547,9 +1589,7 @@ pub(crate) fn emit_lex_fork_at_prefix_dispatch(primary_src_idx: u16) -> TokenStr
                             );
                             __branches.push(mettail_prattail::wpda_walker::ForkBranch {
                                 symbol: sym,
-                                weight: lex_w_alt_with_len(
-                                    __open_len, 0.0, primary_src, info.rule_idx, 0u16,
-                                ),
+                                weight: #__s1_prefixop_weight_primary,
                                 new_state: WpdaState::BinderRule {
                                     result_src_idx: primary_src,
                                     rule_idx: info.rule_idx,
@@ -1775,9 +1815,7 @@ pub(crate) fn emit_lex_fork_at_prefix_dispatch(primary_src_idx: u16) -> TokenStr
                             __secondary_survived = true;
                             __branches.push(mettail_prattail::wpda_walker::ForkBranch {
                                 symbol: sym,
-                                weight: lex_w_alt_with_len(
-                                    __open_len, 0.0, primary_src, info.rule_idx, alt_idx,
-                                ),
+                                weight: #__s1_prefixop_weight_secondary,
                                 new_state: WpdaState::BinderRule {
                                     result_src_idx: primary_src,
                                     rule_idx: info.rule_idx,
@@ -2440,7 +2478,7 @@ mod tests {
 
     #[test]
     fn emit_lex_fork_emits_peek_alternatives_check() {
-        let ts = emit_lex_fork_at_prefix_dispatch(0);
+        let ts = emit_lex_fork_at_prefix_dispatch(0, false);
         let s = ts.to_string();
         assert!(s.contains("is_ambiguous_at"), "missing is_ambiguous_at: {}", s);
         assert!(s.contains("LexAlt"), "missing LexAlt action_kind: {}", s);

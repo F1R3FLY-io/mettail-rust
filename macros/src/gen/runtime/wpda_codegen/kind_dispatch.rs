@@ -109,6 +109,17 @@ pub fn emit_lex_alt_rule_for_fn(
     _language: &LanguageDef,
     per_cat: &[Vec<GrammarRule>],
     categories: &[String],
+    // S1-FACTORING F1 amendment A3 (2026-07-12, red-team AV5): the lex-alt
+    // surface is the SECOND dispatch surface for prefix triggers — without
+    // group entries the lex-fork path would re-create the per-rule fan the
+    // spine branch just removed. Grouped members' per-member
+    // `PrefixOp`/`NullaryPrefixRun` entries are REPLACED by ONE
+    // `PrefixOp { body_src_idx: group body }` entry carrying
+    // `rule_idx = SPINE_ID` (the spine is BinderRule machinery regardless of
+    // member kind — forks.rs's `LexAltPrefixOp` arm dispatches
+    // `rule_at(cat, SPINE_ID, 1)`, the pre-root spine arm). EMPTY map while
+    // `S1_FACTORING == false` ⇒ byte-identical emission.
+    s1: &super::factoring::SpineEmission,
 ) -> TokenStream {
     // M6c.6.4.b (2026-05-14): split into two per-site tables —
     // `lex_alt_rules_for_prefix` for PrefixDispatch site (Atomic +
@@ -129,6 +140,57 @@ pub fn emit_lex_alt_rule_for_fn(
         for (rule_idx, rule) in rules.iter().enumerate() {
             let rule_idx_u16 = rule_idx as u16;
             let shape = classify_atomic(rule, _language);
+            // S1-FACTORING A3: grouped members bypass EVERY per-member push
+            // below (the item-3 assert "no per-member PrefixOp entries remain
+            // for grouped members" holds by this `continue` — plus the shape
+            // assert so a classifier/factoring drift fails codegen loudly).
+            // The group's single spine entry rides its GroupFirst member.
+            if let Some(disposition) = s1
+                .dispositions
+                .get(cat_src_idx)
+                .and_then(|m| m.get(&rule_idx_u16))
+            {
+                assert!(
+                    matches!(shape, AtomicShape::NullaryLiteralRun { .. })
+                        || super::binder::classify_binder_in(rule, _language).is_some(),
+                    "S1-FACTORING A3: grouped rule (cat {cat_src_idx_u16}, rule \
+                     {rule_idx_u16}) is neither NullaryLiteralRun nor binder-classified — \
+                     the lex-alt surface would drift from the factoring model",
+                );
+                if let super::factoring::SpineDisposition::GroupFirst {
+                    spine_id,
+                    body_src_idx,
+                    ..
+                } = disposition
+                {
+                    let Some(mettail_ast::grammar::SyntaxExpr::Literal(trigger)) =
+                        rule.syntax_pattern.as_ref().and_then(|sp| sp.first())
+                    else {
+                        panic!(
+                            "S1-FACTORING A3: grouped rule (cat {cat_src_idx_u16}, rule \
+                             {rule_idx_u16}) has no leading literal trigger",
+                        );
+                    };
+                    let spine_id = *spine_id;
+                    let body_src_idx = *body_src_idx;
+                    let trigger_lit = trigger.as_str();
+                    prefix_pushes.push(quote! {
+                        match (cat_src_idx, kind) {
+                            (#cat_src_idx_u16, mettail_prattail::automata::TokenKind::Fixed(__t))
+                                if __t == #trigger_lit => out.push(
+                                    mettail_prattail::wpda_runtime::LexAltRuleInfo {
+                                        rule_idx: #spine_id,
+                                        kind: mettail_prattail::wpda_runtime::LexAltRuleKind::PrefixOp {
+                                            body_src_idx: #body_src_idx,
+                                        },
+                                    }
+                                ),
+                            _ => {},
+                        }
+                    });
+                }
+                continue;
+            }
             emit_prefix_pushes_for_shape(
                 &shape,
                 cat_src_idx_u16,

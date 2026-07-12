@@ -1444,6 +1444,14 @@ pub fn emit_prefix_arms_for_category(
     category_src_idx: u16,
     category_name: &str,
     rules_in_category: &[(u16, &GrammarRule)],
+    // S1-FACTORING F1 (2026-07-12, plan §D F1): this category's
+    // `rule_idx → SpineDisposition` map from
+    // `factoring::build_spine_emission`. EMPTY while `S1_FACTORING == false`
+    // (⇒ every lookup below misses ⇒ the emission is byte-identical to the
+    // pre-F1 output). `GroupFirst` members emit the group's ONE spine
+    // trigger branch at their emission position; `GroupRest` members emit
+    // nothing (the spine branch covers them).
+    s1_dispositions: &std::collections::HashMap<u16, super::factoring::SpineDisposition>,
 ) -> TokenStream {
     let mut arms = Vec::new();
     // Stage 1.2: cross-cat infix LHS delegation. Walk all infix rules
@@ -1750,7 +1758,7 @@ pub fn emit_prefix_arms_for_category(
         let entry = unified_buckets
             .remove(&key)
             .expect("bucket present in order");
-        arms.push(emit_unified_arm(category_src_idx, &entry));
+        arms.push(emit_unified_arm(category_src_idx, &entry, s1_dispositions));
     }
     quote! { #(#arms)* }
 }
@@ -1964,7 +1972,11 @@ fn insert_unified_descriptor(
 /// Lex-min picks atomic-home on parse-success ties (preserves bare
 /// PVar parsing as Proc when no operator follows); cross-cat-LHS wins
 /// when only that branch survives (e.g. `x!(0)` requires Name LHS).
-fn emit_unified_arm(category_src_idx: u16, bucket: &UnifiedBucket) -> TokenStream {
+fn emit_unified_arm(
+    category_src_idx: u16,
+    bucket: &UnifiedBucket,
+    s1_dispositions: &std::collections::HashMap<u16, super::factoring::SpineDisposition>,
+) -> TokenStream {
     let pat = &bucket.pat;
     let guard = match &bucket.extra_guard {
         Some(eg) => quote! { #eg && state_cat_src_idx == #category_src_idx },
@@ -2025,6 +2037,16 @@ fn emit_unified_arm(category_src_idx: u16, bucket: &UnifiedBucket) -> TokenStrea
             UnifiedDescriptor::BinderPrefix { rule_idx, body_src_idx } => {
                 let rule_idx = *rule_idx;
                 let body_src_idx = *body_src_idx;
+                // S1-FACTORING F1: a factored group needs ≥2 members sharing
+                // this bucket's `(pat, guard)` key, so a grouped member can
+                // never reach the SINGLETON (1-descriptor) path — asserted so
+                // a bucketing drift between `factoring::discover_members` and
+                // this insertion chain fails codegen loudly.
+                assert!(
+                    s1_dispositions.get(&rule_idx).is_none(),
+                    "S1-FACTORING F1: grouped rule (cat {category_src_idx}, rule {rule_idx}) \
+                     reached the singleton BinderPrefix emission",
+                );
                 quote! {
                     #pat if #guard => {
                         return WpdaStepAction::ConsumeAndPush {
@@ -2098,6 +2120,14 @@ fn emit_unified_arm(category_src_idx: u16, bucket: &UnifiedBucket) -> TokenStrea
             },
             UnifiedDescriptor::NullaryLiteralRun { rule_idx } => {
                 let rule_idx = *rule_idx;
+                // S1-FACTORING F1: same singleton-unreachability assert as
+                // the BinderPrefix arm above (groups need ≥2 co-bucketed
+                // members).
+                assert!(
+                    s1_dispositions.get(&rule_idx).is_none(),
+                    "S1-FACTORING F1: grouped rule (cat {category_src_idx}, rule {rule_idx}) \
+                     reached the singleton NullaryLiteralRun emission",
+                );
                 quote! {
                     #pat if #guard => {
                         // GAP-3: 0-operand multi-literal keyword prefix. Consume
@@ -2221,24 +2251,44 @@ fn emit_unified_arm(category_src_idx: u16, bucket: &UnifiedBucket) -> TokenStrea
                 UnifiedDescriptor::BinderPrefix { rule_idx, body_src_idx } => {
                     let rule_idx = *rule_idx;
                     let body_src_idx = *body_src_idx;
-                    quote! {
-                        __pd_branches.push(mettail_prattail::wpda_walker::ForkBranch {
-                            symbol: StackSymbolV2::rule_at(
-                                #category_src_idx, #rule_idx, 1u8, Some(_outer_bp),
-                            ),
-                            weight: lex_w(0.0, #category_src_idx, #rule_idx),
-                            new_state: WpdaState::BinderRule {
-                                result_src_idx: #category_src_idx,
-                                rule_idx: #rule_idx,
-                                body_src_idx: #body_src_idx,
-                                outer_bp: _outer_bp,
-                            },
-                            action_kind:
-                                mettail_prattail::wpda_walker::ForkActionKind::ConsumeAndPush {
-                                    trigger_mode:
-                                        mettail_prattail::wpda_walker::TriggerMode::ConsumeAsTriggerOnly,
+                    // S1-FACTORING F1 (plan §2 item 1): a grouped member's
+                    // per-rule branch is replaced by the group's ONE spine
+                    // trigger branch (emitted at the FIRST member's position,
+                    // preserving declaration-order emission), or by nothing
+                    // (GroupRest). The map is EMPTY while `S1_FACTORING ==
+                    // false` ⇒ the `None` arm below is the pre-F1
+                    // byte-identical emission.
+                    match s1_dispositions.get(&rule_idx) {
+                        Some(super::factoring::SpineDisposition::GroupFirst {
+                            spine_id,
+                            body_src_idx: group_body_src_idx,
+                            weight_rule_idx,
+                        }) => super::factoring::emit_spine_trigger_branch(
+                            category_src_idx,
+                            *spine_id,
+                            *group_body_src_idx,
+                            *weight_rule_idx,
+                        ),
+                        Some(super::factoring::SpineDisposition::GroupRest) => TokenStream::new(),
+                        None => quote! {
+                            __pd_branches.push(mettail_prattail::wpda_walker::ForkBranch {
+                                symbol: StackSymbolV2::rule_at(
+                                    #category_src_idx, #rule_idx, 1u8, Some(_outer_bp),
+                                ),
+                                weight: lex_w(0.0, #category_src_idx, #rule_idx),
+                                new_state: WpdaState::BinderRule {
+                                    result_src_idx: #category_src_idx,
+                                    rule_idx: #rule_idx,
+                                    body_src_idx: #body_src_idx,
+                                    outer_bp: _outer_bp,
                                 },
-                        });
+                                action_kind:
+                                    mettail_prattail::wpda_walker::ForkActionKind::ConsumeAndPush {
+                                        trigger_mode:
+                                            mettail_prattail::wpda_walker::TriggerMode::ConsumeAsTriggerOnly,
+                                    },
+                            });
+                        },
                     }
                 }
                 UnifiedDescriptor::CrossCatPrefixUnary {
@@ -2316,32 +2366,52 @@ fn emit_unified_arm(category_src_idx: u16, bucket: &UnifiedBucket) -> TokenStrea
                 }
                 UnifiedDescriptor::NullaryLiteralRun { rule_idx } => {
                     let rule_idx = *rule_idx;
-                    quote! {
-                        // GAP-3: nullary multi-literal keyword prefix Fork branch
-                        // (e.g. `@ Nil` co-bucketed with `@ ( p )` / `@ p`).
-                        // Consume the trigger as a TriggerTerminal, push the
-                        // mixfix marker, enter MixfixLiteralRun(kind=2). Tier 0.0
-                        // (atomic-home) so lex-min picks the lowest-rule_idx branch
-                        // (declaration order) on a parse-success tie — NQuoteNil
-                        // (declared before NQuoteShort) wins for `@Nil`.
-                        __pd_branches.push(mettail_prattail::wpda_walker::ForkBranch {
-                            symbol: StackSymbolV2::mixfix_marker(
-                                #category_src_idx, #rule_idx, 0u8,
-                            ),
-                            weight: lex_w(0.0, #category_src_idx, #rule_idx),
-                            new_state: WpdaState::MixfixLiteralRun {
-                                result_src_idx: #category_src_idx,
-                                rule_idx: #rule_idx,
-                                completed_idx: 0u8,
-                                kind: 2u8,
-                                sub_pos: 0u8,
-                            },
-                            action_kind:
-                                mettail_prattail::wpda_walker::ForkActionKind::ConsumeAndPush {
-                                    trigger_mode:
-                                        mettail_prattail::wpda_walker::TriggerMode::ConsumeAsTriggerOnly,
+                    // S1-FACTORING F1: nullary members join spine groups too
+                    // (the Nil-group's rules 15/16). Same disposition routing
+                    // as the BinderPrefix arm above; the spine trigger branch
+                    // is BinderRule-shaped regardless of member kind — a
+                    // nullary member re-enters its own
+                    // `MixfixLiteralRun{kind:2}` tail only at its COMMIT leaf
+                    // (amendment A4 typed coordinates).
+                    match s1_dispositions.get(&rule_idx) {
+                        Some(super::factoring::SpineDisposition::GroupFirst {
+                            spine_id,
+                            body_src_idx: group_body_src_idx,
+                            weight_rule_idx,
+                        }) => super::factoring::emit_spine_trigger_branch(
+                            category_src_idx,
+                            *spine_id,
+                            *group_body_src_idx,
+                            *weight_rule_idx,
+                        ),
+                        Some(super::factoring::SpineDisposition::GroupRest) => TokenStream::new(),
+                        None => quote! {
+                            // GAP-3: nullary multi-literal keyword prefix Fork branch
+                            // (e.g. `@ Nil` co-bucketed with `@ ( p )` / `@ p`).
+                            // Consume the trigger as a TriggerTerminal, push the
+                            // mixfix marker, enter MixfixLiteralRun(kind=2). Tier 0.0
+                            // (atomic-home) so lex-min picks the lowest-rule_idx branch
+                            // (declaration order) on a parse-success tie — NQuoteNil
+                            // (declared before NQuoteShort) wins for `@Nil`.
+                            __pd_branches.push(mettail_prattail::wpda_walker::ForkBranch {
+                                symbol: StackSymbolV2::mixfix_marker(
+                                    #category_src_idx, #rule_idx, 0u8,
+                                ),
+                                weight: lex_w(0.0, #category_src_idx, #rule_idx),
+                                new_state: WpdaState::MixfixLiteralRun {
+                                    result_src_idx: #category_src_idx,
+                                    rule_idx: #rule_idx,
+                                    completed_idx: 0u8,
+                                    kind: 2u8,
+                                    sub_pos: 0u8,
                                 },
-                        });
+                                action_kind:
+                                    mettail_prattail::wpda_walker::ForkActionKind::ConsumeAndPush {
+                                        trigger_mode:
+                                            mettail_prattail::wpda_walker::TriggerMode::ConsumeAsTriggerOnly,
+                                    },
+                            });
+                        },
                     }
                 }
             })
@@ -2799,7 +2869,7 @@ mod tests {
     #[test]
     fn empty_rule_list_emits_no_arms() {
         let lang = empty_lang();
-        let ts = emit_prefix_arms_for_category(&lang, 0, "Int", &[]);
+        let ts = emit_prefix_arms_for_category(&lang, 0, "Int", &[], &std::collections::HashMap::new());
         assert!(ts.to_string().trim().is_empty());
     }
 
@@ -2807,7 +2877,7 @@ mod tests {
     fn atomic_integer_rule_emits_an_arm() {
         let lang = empty_lang();
         let rule = atomic_rule("IntLit", "Int", NonTerminalKind::Integer);
-        let ts = emit_prefix_arms_for_category(&lang, 2, "Int", &[(0, &rule)]);
+        let ts = emit_prefix_arms_for_category(&lang, 2, "Int", &[(0, &rule)], &std::collections::HashMap::new());
         let s = ts.to_string();
         assert!(s.contains("ConsumeAndPush"));
         assert!(s.contains("Integer"));
@@ -2870,7 +2940,7 @@ mod tests {
     fn terminal_keyword_emits_fixed_match_guard() {
         let lang = empty_lang();
         let rule = terminal_rule("Err", "Int", "error");
-        let ts = emit_prefix_arms_for_category(&lang, 2, "Int", &[(0, &rule)]);
+        let ts = emit_prefix_arms_for_category(&lang, 2, "Int", &[(0, &rule)], &std::collections::HashMap::new());
         let s = ts.to_string();
         assert!(s.contains("ConsumeAndPush"));
         assert!(s.contains("Fixed"));
@@ -2882,7 +2952,7 @@ mod tests {
     fn literal_patterned_int_emits_integer_lit_guard() {
         let lang = lang_with_int_literal();
         let rule = category_rule("IntLit", "Int", "Int");
-        let ts = emit_prefix_arms_for_category(&lang, 2, "Int", &[(0, &rule)]);
+        let ts = emit_prefix_arms_for_category(&lang, 2, "Int", &[(0, &rule)], &std::collections::HashMap::new());
         let s = ts.to_string();
         assert!(s.contains("ConsumeAndPush"));
         assert!(s.contains("IntegerLit"));
@@ -2935,6 +3005,7 @@ mod tests {
             0,
             "UInt32",
             &[(0, &direct_prefix), (1, &projection)],
+            &std::collections::HashMap::new(),
         );
         let s = ts.to_string();
         let guard = "__kw == \"bitnot\" && state_cat_src_idx == 0u16";
