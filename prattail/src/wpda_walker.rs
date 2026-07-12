@@ -4630,7 +4630,27 @@ struct CgllRetSlot {
     /// Cross-cat scope marker (EdgeKind class byte for PushWithEdgeKind /
     /// PushCrossCatLhs descents; 0 otherwise). Preserves the guard-4
     /// cross-cat-LHS evidence on the u-chain (AV6; consumed in B1/B2).
+    /// R-A (2026-07-11): 4 = CrossCatProjection (stamped in
+    /// `cgll_pure_descend` when `new_state == CrossCatDelegate` — the
+    /// pure mirror of classic's fork-apply / edge_kind_for_push_transition
+    /// derivation sites).
     xcat: u8,
+    /// R-A: the boundary FLOOR for the crosscat hop (`u16::MAX` = none).
+    /// xcat=4: the delegate's `inner_cur_bp` (NOT recoverable from
+    /// `outer_bp` — at infix-emitted delegates the branch symbol carries
+    /// `bp = Some(cur_bp)` while the state carries `inner_cur_bp = r_bp`).
+    /// xcat∈{1,2} (A1): the push-time floor (the state's `cur_bp` /
+    /// `inner_cur_bp` payload when present) — under the DEFAULT
+    /// `EpP1Mode::On` config classic fills real boundary targets at every
+    /// fresh CrossCatLhs push, so these hops are NOT transparent.
+    xcat_bp: u16,
+    /// R-A: the boundary WRAP category (`u16::MAX` = none). xcat=4's wrap
+    /// = `pushed_cat` (already a slot field); xcat=3-with-origin would
+    /// carry `origin.wrap_cat` — the pure fork arm has no origin payload,
+    /// so it stays MAX and the walk continues (conservative). xcat∈{1,2}
+    /// resolve their wrap at WALK time from the caller frame's category
+    /// (`v_parent`) per A1 — no stored field needed.
+    xcat_wrap: u16,
 }
 
 /// Kind-class constants for [`CgllRetSlot::kind_class`] (low nibble; the
@@ -4960,6 +4980,23 @@ struct CgllPureStats {
     /// P3.d: guard dispatches refuted (sub-parse Err → descriptor drop —
     /// classic `CursorOutcome::Drop` parity; never parked, §3.6/F6).
     pred_refutes: u64,
+    /// R-A: CrossCatDelegate descents stamped xcat=4.
+    xcat4_stamps: u64,
+    /// R-A: boundary walks attempted (fast-bit-gated InfixLoop-on-CE sites).
+    boundary_walks: u64,
+    /// R-A: yield twins enqueued (the classic fork-add half).
+    boundary_yields: u64,
+    /// R-A: source actions suppressed (classic's Advance(Unwinding)
+    /// replacement; staged behind `PRATTAIL_NO_XCAT_SUPPRESS`).
+    boundary_suppressed: u64,
+    /// A3: multi-chain walks whose per-chain verdicts DISAGREED
+    /// (yield-any vs suppress-all tension) — >0 on any green suite is a
+    /// stage-blocking receipt before suppression-ON.
+    boundary_mixed_verdicts: u64,
+    /// A2(c): xcat stamps whose caller was a walk stop-kind (expected 0).
+    xcat_stop_conflicts: u64,
+    /// R-C: member-1′ operand early-stop twins enqueued.
+    rc_operand_yields: u64,
 }
 
 /// Frame-class bit folded into [`CgllRetSlot::kind_class`] (bit 6): a D1 and
@@ -5012,7 +5049,7 @@ struct CgllPureRun {
     /// the walk sees one shared chain).
     v_parent: rustc_hash::FxHashMap<
         crate::gss::GssNodeId,
-        (StackSymbolV2, crate::gss::GssNodeId, u16),
+        (StackSymbolV2, crate::gss::GssNodeId, u16, bool),
     >,
     /// Accepting `(root, pos)` pairs (amendment 3: recorded ONLY at a
     /// seed-frame pop at logical EOI), deduped.
@@ -14926,6 +14963,13 @@ where
                         cursor, token_text, cur_bp, tokens,
                     ) {
                         TransparentSourceReentryDecision::Reenter(reentry) => {
+                            // PROBE-1 site (a1) — R-C emitter discrimination.
+                            if std::env::var_os("PRATTAIL_RC_EMITTER_DIAG").is_some() {
+                                eprintln!(
+                                    "RC-EMITTER a1-transparent-reentry pos={} state={:?}",
+                                    cursor.pos, cursor.inner_state
+                                );
+                            }
                             self.reenter_transparent_projection_source(cursor, reentry, cur_bp);
                             return self.cursor_resolution_check(cursor);
                         },
@@ -14948,6 +14992,13 @@ where
         // (the reentry then supplies evidence). FV: CastLookaheadHostSynthesis.synth,
         // CastResultCrossCatLhsEvidence.run_cast_fixed_accepts.
         if let Some(source_src_idx) = self.cast_result_hosting_reentry_source(cursor, &action) {
+            // PROBE-1 site (a2) — R-C emitter discrimination.
+            if std::env::var_os("PRATTAIL_RC_EMITTER_DIAG").is_some() {
+                eprintln!(
+                    "RC-EMITTER a2-cast-hosting pos={} src={} state={:?}",
+                    cursor.pos, source_src_idx, cursor.inner_state
+                );
+            }
             self.synthesize_cross_cat_lhs_reentry(cursor, source_src_idx);
             self.set_cursor_inner_state(cursor, WpdaState::InfixLoop { cur_bp: 0 });
             return self.cursor_resolution_check(cursor);
@@ -17918,6 +17969,13 @@ where
                         },
 
                         ForkActionKind::Pop => {
+                            // PROBE-1 site (c) — pop-kind fork child creation.
+                            if std::env::var_os("PRATTAIL_RC_EMITTER_DIAG").is_some() {
+                                eprintln!(
+                                    "RC-EMITTER c-fork-pop-child pos={} sym={:?}",
+                                    cursor.pos, branch.symbol
+                                );
+                            }
                             let mut child = BranchCursor {
                                 node: cursor.node,
                                 pos: pos_after,
@@ -25523,6 +25581,8 @@ where
             kind_class: CGLL_KC_SEED,
             outer_bp: u16::MAX,
             xcat: 0,
+            xcat_bp: u16::MAX,
+            xcat_wrap: u16::MAX,
         }
     }
 
@@ -26652,6 +26712,54 @@ where
                     | (pushed.rule_index_in_category as u32)
             },
         };
+        // ── R-A (2026-07-11): the xcat=4 STAMP — record the CrossCat
+        // PROJECTION evidence on the u-chain. Classic derives the
+        // CrossCatProjection edge kind from `new_state == CrossCatDelegate`
+        // at BOTH its push sites (fork-apply + edge_kind_for_push_
+        // transition); the pure arm funnels every such descent through
+        // here, so one centralized stamp mirrors both. The boundary floor
+        // is the delegate's `inner_cur_bp`. A1: xcat∈{1,2} hops also
+        // capture their push-time floor (their wrap resolves at walk time
+        // from the caller frame's category).
+        let mut xcat = xcat;
+        let mut xcat_bp: u16 = u16::MAX;
+        if xcat == 0 {
+            if let WpdaState::CrossCatDelegate { inner_cur_bp, .. } = new_state {
+                xcat = 4;
+                xcat_bp = inner_cur_bp as u16;
+                run.stats.xcat4_stamps += 1;
+            }
+        } else {
+            xcat_bp = match new_state {
+                WpdaState::CrossCatDelegate { inner_cur_bp, .. } => inner_cur_bp as u16,
+                WpdaState::PrefixDispatch { cur_bp, .. } => cur_bp as u16,
+                _ => outer_bp_hint.map(|b| b as u16).unwrap_or(u16::MAX),
+            };
+        }
+        let xcat_wrap: u16 = u16::MAX;
+        // A2(c) REVISED (2026-07-11, empirically refuted as an assert —
+        // sweep receipt 859/139: `xcat=1 stamped under a stop-kind caller
+        // MixfixMarker` is ROUTINE, e.g. ambient PAmb CrossCatLhs pushes
+        // from mixfix frames). Classic's walk stop set consists of EDGE
+        // KINDS (PrefixRuleEntry / MixfixMarker / CollectionElement are
+        // the AUTO kinds derived from plain pushes); an edge with an
+        // EXPLICIT CrossCat* kind is never a stop regardless of its
+        // pusher (`edge_kind_for_push_transition` assigns
+        // CrossCatProjection from `new_state` alone). The structurally
+        // exact pure mirror is therefore encoded in the WALK, not here:
+        // hop i STOPS iff `slot_i.xcat == 0 ∧ caller_i.kind ∈ stop set`.
+        // This counter stays as the INFORMATIONAL census of
+        // boundary-carrying edges whose caller is a stop-kind (expected
+        // >0; the assert is retired).
+        if xcat != 0 {
+            let caller_is_stop = matches!(
+                caller_sym_now.kind,
+                SymbolKind::MixfixMarker | SymbolKind::CollectionMarker
+            ) || matches!(caller_sym_now.kind, SymbolKind::RuleAt(k) if k > 0);
+            if caller_is_stop {
+                run.stats.xcat_stop_conflicts += 1;
+            }
+        }
         let ret_slot = CgllRetSlot {
             caller_sym_hash: Self::cgll_pure_hash_of(&caller_sym_now),
             pushed_cat: pushed.category_src_idx,
@@ -26668,6 +26776,8 @@ where
                 .or(outer_bp_hint.map(|b| b as u16))
                 .unwrap_or(u16::MAX),
             xcat,
+            xcat_bp,
+            xcat_wrap,
         };
         let v_label = Self::cgll_pure_v_label(&ret_slot);
         let (v, replays) = self.gss.gll_create(
@@ -26704,12 +26814,18 @@ where
             .map(|e| e.2)
             .unwrap_or(0)
             .saturating_add(matches!(caller.state, WpdaState::BinderListLoop { .. }) as u16);
+        // R-A §2.2 ancestry fast-bit: `xcat != 0` here or anywhere above —
+        // the O(1) fast-reject mirror of classic's
+        // `crosscat_lhs_stack_has_scope_edge` (deep-chain inputs must not
+        // pay an O(depth) walk per InfixLoop descriptor).
+        let has_xcat_ancestor = xcat != 0
+            || run.v_parent.get(&caller.u).map(|e| e.3).unwrap_or(false);
         match run.v_parent.entry(v) {
             std::collections::hash_map::Entry::Vacant(e) => {
-                e.insert((caller_sym_now, caller.u, inherited_depth));
+                e.insert((caller_sym_now, caller.u, inherited_depth, has_xcat_ancestor));
             },
             std::collections::hash_map::Entry::Occupied(e) => {
-                if *e.get() != (caller_sym_now, caller.u, inherited_depth) {
+                if *e.get() != (caller_sym_now, caller.u, inherited_depth, has_xcat_ancestor) {
                     run.stats.ctx_conflicts += 1;
                 }
             },
@@ -27122,7 +27238,7 @@ where
         &self,
         v_parent: &rustc_hash::FxHashMap<
             crate::gss::GssNodeId,
-            (StackSymbolV2, crate::gss::GssNodeId, u16),
+            (StackSymbolV2, crate::gss::GssNodeId, u16, bool),
         >,
         d: &CgllPureDescriptor,
     ) -> crate::wpda_runtime::FrameCtx {
@@ -27149,7 +27265,7 @@ where
         let mut u = d.u;
         for _ in 0..64 {
             match v_parent.get(&u) {
-                Some((sym, parent_u, _)) => {
+                Some((sym, parent_u, _, _)) => {
                     if matches!(sym.kind, SymbolKind::CollectionMarker) {
                         if let Some(ctx) = project(sym) {
                             return ctx;
@@ -28904,7 +29020,10 @@ where
                  guard1_sites={} guarded_topcat_sites={} unwind_m1={} unwind_m5={} unwind_m234={} d2_retags={} collsep_guard={} \
                  unwind_census={} chain_ctx_div={} grouping_cat_rejects={} \
                  opt_group_absent={} out_of_scope={} engine_errors={} prefix_pos_desyncs={} \
-                 accept_action_hits={} prefix_seed_pops={} pred_parses={} \
+                 accept_action_hits={} prefix_seed_pops={} xcat4_stamps={} \
+                 boundary_walks={} boundary_yields={} boundary_suppressed={} \
+                 boundary_mixed={} xcat_stop_conflicts={} rc_operand_yields={} \
+                 pred_parses={} \
                  pred_memo_hits={} pred_refutes={} repair_parked={} \
                  repair_reseeded={} repair_rounds={} repair_named_drops={} \
                  repair_guard_parks={} cluster_b_refused={}",
@@ -28963,6 +29082,13 @@ where
                 s.prefix_pos_desyncs,
                 s.accept_action_hits,
                 s.prefix_seed_pops,
+                s.xcat4_stamps,
+                s.boundary_walks,
+                s.boundary_yields,
+                s.boundary_suppressed,
+                s.boundary_mixed_verdicts,
+                s.xcat_stop_conflicts,
+                s.rc_operand_yields,
                 s.pred_parses,
                 s.pred_memo_hits,
                 s.pred_refutes,
@@ -29244,6 +29370,346 @@ where
     /// DESCENT (`cgll_pure_descend`), a REDUCE (`cgll_pure_reduce`), a fan
     /// (Fork → one child per branch), or a named-out-of-scope drop.
     #[allow(dead_code)] // Reached only under the const (DCE'd while const off).
+    /// R-A helper: does ANY boundary keep this consuming branch?
+    #[allow(dead_code)]
+    fn cgll_branch_kept_by_any_boundary(
+        &self,
+        boundaries: &[ProjectionTargetBoundary],
+        branch: &ForkBranch<W>,
+    ) -> bool {
+        boundaries.iter().any(|&b| {
+            !self.suppress_projection_source_action(
+                b,
+                self.source_branch_satisfies_projection_target(branch, b),
+            )
+        })
+    }
+
+    /// R-A (2026-07-11): the pure CROSSCAT PROJECTION BOUNDARY walk — the
+    /// port of classic `crosscat_projection_target_boundary` onto the
+    /// u-chain. Bounded BFS over `gll_edges` callers (A3 —
+    /// `cgll_pure_enclosing_receiver` is first-edge-only and cannot
+    /// implement ANY-yield/ALL-suppress). Per node, in classic's edge
+    /// semantics (A2(c)-revised): a hop STOPS iff its push carried NO
+    /// crosscat kind (`xcat == 0`) AND its caller symbol is a stop kind
+    /// (RuleAt(k>0) / MixfixMarker / CollectionMarker — classic's AUTO
+    /// edge kinds); an explicit CrossCat edge is never a stop. Boundary
+    /// mapping per hop: xcat=4 → (pushed_cat, xcat_bp); xcat∈{1,2} (A1 —
+    /// NOT transparent under the default EpP1Mode::On config) →
+    /// (caller frame's category, xcat_bp); xcat=3 → wrap only when
+    /// recorded (pure descents carry no origin payload ⇒ continue);
+    /// xcat=5 → continue. A target must RECOGNIZE the lookahead or the
+    /// walk continues (classic's closure-None-and-pop).
+    #[allow(dead_code)] // Reached only under the const (DCE'd while const off).
+    fn cgll_pure_crosscat_boundaries(
+        &self,
+        run: &mut CgllPureRun,
+        d: &CgllPureDescriptor,
+        tokens: &dyn WpdaTokenSource,
+    ) -> Vec<ProjectionTargetBoundary> {
+        let mut out: Vec<ProjectionTargetBoundary> = Vec::new();
+        let WpdaState::InfixLoop { cur_bp } = d.state else {
+            return out;
+        };
+        if d.cur_sym.kind != SymbolKind::CategoryEntry {
+            return out;
+        }
+        // Ancestry fast-bit (§2.2): O(1) reject on chains with no crosscat
+        // hop anywhere above (deep-chain inputs must not pay the walk).
+        if !run.v_parent.get(&d.u).map(|e| e.3).unwrap_or(false) {
+            return out;
+        }
+        let Some(token) = tokens.peek_text(d.pos) else {
+            return out;
+        };
+        if token.is_empty() {
+            return out;
+        }
+        run.stats.boundary_walks += 1;
+        let source_cat = d.cur_sym.category_src_idx;
+        let source_accepts = self
+            .engine
+            .category_accepts_operator_at_floor(source_cat, token, cur_bp);
+        let mut frontier: Vec<crate::gss::GssNodeId> = vec![d.u];
+        let mut visited: rustc_hash::FxHashSet<crate::gss::GssNodeId> =
+            rustc_hash::FxHashSet::default();
+        let mut hops = 0usize;
+        while let Some(u) = frontier.pop() {
+            if !visited.insert(u) {
+                continue;
+            }
+            hops += 1;
+            if hops > 64 {
+                break; // the established frame-walk budget
+            }
+            let Some(slot) = run.v_slot.get(&u).copied() else {
+                continue; // seed frame — no push edge, chain ends
+            };
+            let caller = run.v_parent.get(&u).copied();
+            // Stop test (edge-kind precedence — see the stamp-site note):
+            // a NON-crosscat push from a stop-kind caller ends this chain.
+            if slot.xcat == 0 {
+                if let Some((csym, _, _, _)) = caller {
+                    let stop = matches!(
+                        csym.kind,
+                        SymbolKind::MixfixMarker | SymbolKind::CollectionMarker
+                    ) || matches!(csym.kind, SymbolKind::RuleAt(k) if k > 0);
+                    if stop {
+                        continue; // this chain dies without a boundary
+                    }
+                }
+            }
+            // Boundary mapping for THIS hop.
+            let target: Option<(u16, u16)> = match slot.xcat {
+                4 => Some((slot.pushed_cat, slot.xcat_bp)),
+                1 | 2 => caller.map(|(csym, _, _, _)| {
+                    (csym.category_src_idx, slot.xcat_bp)
+                }),
+                3 if slot.xcat_wrap != u16::MAX => Some((slot.xcat_wrap, slot.xcat_bp)),
+                _ => None,
+            };
+            if let Some((target_cat, target_floor)) = target {
+                if target_cat != source_cat
+                    && self.engine.category_recognizes_operator(target_cat, token)
+                {
+                    let floor = if target_floor == u16::MAX {
+                        0
+                    } else {
+                        target_floor as u8
+                    };
+                    let b = ProjectionTargetBoundary {
+                        source_src_idx: source_cat,
+                        target_src_idx: target_cat,
+                        source_accepts_at_source_floor: source_accepts,
+                        target_accepts_at_projection_floor: self
+                            .engine
+                            .category_accepts_operator_at_floor(target_cat, token, floor),
+                    };
+                    if !out.iter().any(|x| {
+                        x.target_src_idx == b.target_src_idx
+                            && x.target_accepts_at_projection_floor
+                                == b.target_accepts_at_projection_floor
+                    }) {
+                        out.push(b);
+                    }
+                    continue; // classic returns at the first boundary per chain
+                }
+                // Target does not recognize the token — continue the walk.
+            }
+            // Ascend to ALL callers (the GSS fan).
+            for e in self.gss.gll_edges(u) {
+                frontier.push(e.target);
+            }
+            if self.gss.gll_edges(u).is_empty() {
+                if let Some((_, pu, _, _)) = caller {
+                    frontier.push(pu);
+                }
+            }
+        }
+        out
+    }
+
+    /// R-A: the pure form of `guard_crosscat_projection_target_boundary` —
+    /// the SAME four-sub-path transform (A2), applied to the engine action
+    /// before dispatch. The boundary branch (`crosscat_lhs_boundary_branch`
+    /// — Advance / category_entry(source) / Unwinding / weight one) routes
+    /// through the existing pure Fork-Advance arm, which enqueues the
+    /// yield twin `{state: Unwinding, ..d}` — classic's exact branch
+    /// semantics. Suppression is staged behind `PRATTAIL_NO_XCAT_SUPPRESS`
+    /// (classic-exact final state = suppression ON).
+    #[allow(dead_code)] // Reached only under the const (DCE'd while const off).
+    fn cgll_pure_guard_crosscat_boundary(
+        &self,
+        run: &mut CgllPureRun,
+        d: &CgllPureDescriptor,
+        action: WpdaStepAction<W>,
+        tokens: &dyn WpdaTokenSource,
+    ) -> WpdaStepAction<W> {
+        let boundaries = self.cgll_pure_crosscat_boundaries(run, d, tokens);
+        if boundaries.is_empty() {
+            return action;
+        }
+        fn suppress_lever_on() -> bool {
+            static GATE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+            *GATE.get_or_init(|| std::env::var_os("PRATTAIL_NO_XCAT_SUPPRESS").is_none())
+        }
+        // A3 aggregation: yield if ANY boundary yields; suppress only if
+        // ALL boundaries suppress. Mixed verdicts are counted — a >0 on
+        // any green suite is a stage-blocking receipt.
+        let eval = |satisfies_of: &dyn Fn(ProjectionTargetBoundary) -> bool| {
+            let mut any_add: Option<ProjectionTargetBoundary> = None;
+            let mut all_suppress = true;
+            let mut any_suppress = false;
+            for &b in &boundaries {
+                if self.suppress_projection_source_action(b, satisfies_of(b)) {
+                    any_suppress = true;
+                    continue;
+                }
+                all_suppress = false;
+                if any_add.is_none() {
+                    any_add = Some(b);
+                }
+            }
+            (any_add, all_suppress, any_suppress)
+        };
+        match action {
+            WpdaStepAction::ConsumeAndPush { symbol, weight, new_state, trigger_mode } => {
+                let (add, all_suppress, any_suppress) = eval(&|b| {
+                    self.source_symbol_transition_satisfies_projection_target(
+                        &symbol, &new_state, b,
+                    )
+                });
+                match add {
+                    None if all_suppress => {
+                        run.stats.boundary_suppressed += 1;
+                        if suppress_lever_on() {
+                            WpdaStepAction::Advance(WpdaState::Unwinding)
+                        } else {
+                            WpdaStepAction::ConsumeAndPush {
+                                symbol,
+                                weight,
+                                new_state,
+                                trigger_mode,
+                            }
+                        }
+                    },
+                    Some(b) => {
+                        if any_suppress {
+                            run.stats.boundary_mixed_verdicts += 1;
+                        }
+                        run.stats.boundary_yields += 1;
+                        WpdaStepAction::Fork {
+                            branches: vec![
+                                Self::consume_and_push_branch(
+                                    symbol,
+                                    weight,
+                                    new_state,
+                                    trigger_mode,
+                                ),
+                                Self::crosscat_lhs_boundary_branch(b.source_src_idx),
+                            ],
+                            consume_trigger: false,
+                        }
+                    },
+                    None => WpdaStepAction::ConsumeAndPush {
+                        symbol,
+                        weight,
+                        new_state,
+                        trigger_mode,
+                    },
+                }
+            },
+            WpdaStepAction::IterativeChainAbsorb { symbol, weight, new_state, spec } => {
+                let (add, all_suppress, any_suppress) = eval(&|b| {
+                    self.source_symbol_transition_satisfies_projection_target(
+                        &symbol, &new_state, b,
+                    )
+                });
+                match add {
+                    None if all_suppress => {
+                        run.stats.boundary_suppressed += 1;
+                        if suppress_lever_on() {
+                            WpdaStepAction::Advance(WpdaState::Unwinding)
+                        } else {
+                            WpdaStepAction::IterativeChainAbsorb {
+                                symbol,
+                                weight,
+                                new_state,
+                                spec,
+                            }
+                        }
+                    },
+                    Some(b) => {
+                        if any_suppress {
+                            run.stats.boundary_mixed_verdicts += 1;
+                        }
+                        run.stats.boundary_yields += 1;
+                        WpdaStepAction::Fork {
+                            branches: vec![
+                                Self::iterative_chain_normal_branch(
+                                    symbol, weight, new_state, spec,
+                                ),
+                                Self::crosscat_lhs_boundary_branch(b.source_src_idx),
+                            ],
+                            consume_trigger: false,
+                        }
+                    },
+                    None => WpdaStepAction::IterativeChainAbsorb {
+                        symbol,
+                        weight,
+                        new_state,
+                        spec,
+                    },
+                }
+            },
+            WpdaStepAction::Fork { mut branches, consume_trigger } => {
+                // A2: classic's FOUR sub-paths verbatim, aggregated over
+                // boundaries (drop a consuming branch only if EVERY
+                // boundary suppresses it; append the yield in the
+                // both-accept case too).
+                let b0 = boundaries[0];
+                let degraded = boundaries.iter().any(|b| {
+                    !b.source_accepts_at_source_floor
+                        || !b.target_accepts_at_projection_floor
+                });
+                if degraded {
+                    if consume_trigger {
+                        branches.retain(|branch| {
+                            boundaries.iter().any(|&b| {
+                                !self.suppress_projection_source_action(
+                                    b,
+                                    self.source_branch_satisfies_projection_target(branch, b),
+                                )
+                            }) || !suppress_lever_on()
+                        });
+                        if branches.is_empty() {
+                            run.stats.boundary_suppressed += 1;
+                            return WpdaStepAction::Advance(WpdaState::Unwinding);
+                        }
+                        for branch in &mut branches {
+                            if matches!(branch.action_kind, ForkActionKind::Push) {
+                                branch.action_kind = ForkActionKind::ConsumeAndPush {
+                                    trigger_mode: TriggerMode::Discard,
+                                };
+                            }
+                        }
+                        run.stats.boundary_yields += 1;
+                        branches
+                            .push(Self::crosscat_lhs_boundary_branch(b0.source_src_idx));
+                        return WpdaStepAction::Fork { branches, consume_trigger: false };
+                    }
+                    branches.retain(|branch| {
+                        !Self::fork_branch_consumes_current_token(branch)
+                            || self.cgll_branch_kept_by_any_boundary(&boundaries, branch)
+                            || !suppress_lever_on()
+                    });
+                    run.stats.boundary_yields += 1;
+                    branches.push(Self::crosscat_lhs_boundary_branch(b0.source_src_idx));
+                    return WpdaStepAction::Fork { branches, consume_trigger: false };
+                }
+                if consume_trigger {
+                    if !branches
+                        .iter()
+                        .all(|branch| matches!(branch.action_kind, ForkActionKind::Push))
+                    {
+                        return WpdaStepAction::Fork { branches, consume_trigger };
+                    }
+                    for branch in &mut branches {
+                        branch.action_kind = ForkActionKind::ConsumeAndPush {
+                            trigger_mode: TriggerMode::Discard,
+                        };
+                    }
+                } else if !branches.iter().any(Self::fork_branch_consumes_current_token) {
+                    return WpdaStepAction::Fork { branches, consume_trigger };
+                }
+                run.stats.boundary_yields += 1;
+                branches.push(Self::crosscat_lhs_boundary_branch(b0.source_src_idx));
+                WpdaStepAction::Fork { branches, consume_trigger: false }
+            },
+            other => other,
+        }
+    }
+
     fn cgll_pure_dispatch_action(
         &mut self,
         run: &mut CgllPureRun,
@@ -29251,6 +29717,71 @@ where
         action: WpdaStepAction<W>,
         tokens: &dyn WpdaTokenSource,
     ) {
+        // ── R-A: the crosscat projection boundary guard (classic's
+        // guard_crosscat_projection_target_boundary port) runs FIRST —
+        // classic order: boundary-guard → category-changing-guard →
+        // sep-guard.
+        let action = self.cgll_pure_guard_crosscat_boundary(run, d, action, tokens);
+        // ── R-C (2026-07-11): the MEMBER-1′ OPERAND EARLY-STOP twin.
+        // PROBE-1 outcome C-iv: classic's missing `(-3)!` reading is
+        // synthesized by the PrefixCastWaiter channel (park receipts:
+        // `d-waiter-park body_cat=2 c_out=2 cast_rule=13` ×17 — Neg IS in
+        // `prefix_cast_keyword`, "including same-category wrappers");
+        // per plan §4.2/A5 the pure port is the member-1′ injection, NOT
+        // a waiter port (the waiter holds a BranchCursor — C7 fence).
+        // Predicate: a token-consuming action at an InfixLoop-on-CE
+        // OPERAND frame whose immediate caller is a MID-RULE frame
+        // (RuleAt(k>0)) with CROSS-CAT LINEAGE ABOVE it (the
+        // root-sensitivity gate: at Int root the Neg frame sits under the
+        // seed with no xcat hop ⇒ no injection ⇒ Int stays 1 reading;
+        // receipt PROBE-7), whose rule slot ACCEPTS the operand's current
+        // category. The twin `{state: Unwinding, ..d}` lets the rule
+        // complete EARLY (classic's waiter-joined completion at pos 2 —
+        // the `Symbol(Int,0,2)` the pure forest lacked); a wrong twin
+        // dies cleanly at the next consume (classic's own injected-cursor
+        // soundness note). A2(b): NO `__already_has_unwind`-style scan —
+        // the `-3!` site's singleton ConsumeAndPush itself carries
+        // st=Unwinding and would mask the twin; U add-once is the dedup.
+        {
+            let consuming = match &action {
+                WpdaStepAction::ConsumeAndPush { .. }
+                | WpdaStepAction::IterativeChainAbsorb { .. } => true,
+                WpdaStepAction::Fork { branches, .. } => {
+                    branches.iter().any(Self::fork_branch_consumes_current_token)
+                },
+                _ => false,
+            };
+            if consuming
+                && matches!(d.state, WpdaState::InfixLoop { .. })
+                && d.cur_sym.kind == SymbolKind::CategoryEntry
+                && d.w != crate::sppf::SPPF_ID_NONE
+            {
+                if let Some(&(csym, cu, _, _)) = run.v_parent.get(&d.u) {
+                    let mid_rule = matches!(csym.kind, SymbolKind::RuleAt(k) if k > 0);
+                    let xcat_above =
+                        run.v_parent.get(&cu).map(|e| e.3).unwrap_or(false);
+                    if mid_rule && xcat_above {
+                        let body_cat = self
+                            .sppf_symbol_category(d.w)
+                            .or_else(|| self.cgll_pure_spine_body_cat(d.w));
+                        let accepts = body_cat.map_or(false, |bc| {
+                            self.action_accepts_single_body_category(
+                                csym.category_src_idx,
+                                csym.rule_index_in_category,
+                                bc,
+                            )
+                        });
+                        if accepts {
+                            run.stats.rc_operand_yields += 1;
+                            run.worklist.push_back(CgllPureDescriptor {
+                                state: WpdaState::Unwinding,
+                                ..d.clone()
+                            });
+                        }
+                    }
+                }
+            }
+        }
         let next_of = |p: usize| tokens.next_pos(p, 0).unwrap_or(p + 1);
         // ── P3.f GUARD (guard_collection_separator_infix pure form): at an
         // element frame's InfixLoop, a consume of the ENCLOSING collection's
@@ -30422,7 +30953,42 @@ where
                 if tokens.peek_text(pos_after).unwrap_or("") != expected_text.as_str() {
                     return;
                 }
-                let w = self.cgll_pure_carry_scan_weight(run, d, d.w, pos_after, &br_weight);
+                // ── R-E FIX (2026-07-11): the CLASS-3 ZIP SEPARATOR must
+                // fold the B2 separator WITNESS. The class-3 close
+                // (CollectionMarker pop overlay in `cgll_pure_reduce`)
+                // reuses the B2 sep-arity coverage gate
+                // (`items == seps + 1`); without a witness every
+                // ≥2-element zip binder list coverage-refutes at its close
+                // `)` (receipt: CGLL-PURE-COLLREFUTE(arity) seps=0
+                // items=2 on `(a?a0, a?a1).{0}`, logs_s2burn/re_p1.log —
+                // the corrected R-E root: MULTI-ELEMENT lists, not quoted
+                // channels). Classic needs no witness because its
+                // fire-time collection arity gate is ENFORCEMENT-REVERTED
+                // (the classic gate over-refuted and was reverted to a
+                // counting substrate that is never read — see the classic
+                // `GuardedConsume` arm: a pure position advance; AM-3).
+                // Malformed-sep divergence (leading/trailing/double `,`):
+                // classic ACCEPTS, pure still refuses — documented, out of
+                // reach of any display output (same strictness class as
+                // the accepted B2/Class-2 precedent).
+                // PNew-style `^[xs]` loops (rhocalc `new(x,y)`, lambda,
+                // ambient) are excluded TWICE: they run on RuleAt frames
+                // (not CollectionMarker) AND their slots are not class-3.
+                // Marker-fold BEFORE carry — the `ConsumeCollectionSep`
+                // arm's exact order (weight-shape parity with Class-2).
+                let w_base = if matches!(d.state, WpdaState::BinderListLoop { .. })
+                    && matches!(d.cur_sym.kind, SymbolKind::CollectionMarker)
+                    && self.engine.is_class3_collection_per_slot(
+                        d.cur_sym.category_src_idx,
+                        d.cur_sym.rule_index_in_category,
+                        d.cur_sym.bp.unwrap_or(0),
+                    )
+                {
+                    self.cgll_pure_fold_sep_marker(run, d, pos_after)
+                } else {
+                    d.w
+                };
+                let w = self.cgll_pure_carry_scan_weight(run, d, w_base, pos_after, &br_weight);
                 run.worklist.push_back(CgllPureDescriptor {
                     state: br_state,
                     pos: next_of(pos_after),
@@ -40280,6 +40846,13 @@ where
     }
 
     fn push_prefix_cast_waiter_once(&mut self, waiter: PrefixCastWaiter<W>) {
+        // PROBE-1 site (d) — waiter channel liveness (C-iv candidate).
+        if std::env::var_os("PRATTAIL_RC_EMITTER_DIAG").is_some() {
+            eprintln!(
+                "RC-EMITTER d-waiter-park body_cat={} body_start={} c_out={} cast_rule={}",
+                waiter.body_cat, waiter.body_start_pos, waiter.c_out, waiter.cast_rule
+            );
+        }
         let key = self.prefix_cast_waiter_key(&waiter);
         if self.parked_prefix_cast_waiter_keys.insert(key) {
             let idx = self.parked_prefix_cast_waiters.len();
@@ -40599,6 +41172,10 @@ where
         body_symbol_id: crate::sppf::SppfId,
         tokens: &dyn WpdaTokenSource,
     ) {
+        // PROBE-1 site (d2) — waiter stage attempts.
+        if std::env::var_os("PRATTAIL_RC_EMITTER_DIAG").is_some() {
+            eprintln!("RC-EMITTER d2-waiter-stage");
+        }
         if self.parked_prefix_cast_waiters.is_empty() {
             return;
         }
@@ -42226,6 +42803,25 @@ where
                     // sidelining). GENERAL — keys on the structural shape, not any rule.
                     Some(SymbolKind::RuleAt(_)) => {
                         let pred_sym = self.gss.node(pred_id).map(|n| n.symbol);
+                        // PROBE-1 site (b) — R-C emitter discrimination
+                        // (A5: caller tag via captured backtrace top).
+                        if std::env::var_os("PRATTAIL_RC_EMITTER_DIAG").is_some() {
+                            let bt = std::backtrace::Backtrace::force_capture();
+                            let bts = format!("{bt}");
+                            let caller: Vec<&str> = bts
+                                .lines()
+                                .filter(|l| l.contains("wpda_walker"))
+                                .take(6)
+                                .collect();
+                            eprintln!(
+                                "RC-EMITTER b-popbody-ruleat pos={} popped={:?} pred={:?} \
+                                 callers={:?}",
+                                cursor.pos,
+                                popped_symbol,
+                                pred_sym,
+                                caller
+                            );
+                        }
                         effective_new_state = WpdaState::BinderRule {
                             result_src_idx: pred_sym.map(|s| s.category_src_idx).unwrap_or(0),
                             rule_idx: pred_sym.map(|s| s.rule_index_in_category).unwrap_or(0),
