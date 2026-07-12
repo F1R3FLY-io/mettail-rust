@@ -39,6 +39,8 @@ pub mod guarded_rho;
 pub mod lambda;
 #[cfg(feature = "led-test")]
 pub mod led_test;
+#[cfg(feature = "guardoptsmoke")]
+pub mod guardoptsmoke;
 #[cfg(feature = "optsmoke")]
 pub mod optsmoke;
 #[cfg(feature = "refinementsmoke")]

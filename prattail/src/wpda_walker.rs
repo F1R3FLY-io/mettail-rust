@@ -787,6 +787,12 @@ struct RootpMode {
     /// from the descriptor-frontier half. `false` when the const is `false` ⇒
     /// [`WpdaWalker::cgll_binarize_active`] dead-code-eliminates every hook.
     cgll_binarize: bool,
+    /// R5 FLIP (2026-07-11): request the HYBRID experimental canonical arm
+    /// (the classic-cursor `{R,U,P}` worklist with the pop-fan levers)
+    /// INSTEAD of the descriptor-pure default. `PRATTAIL_CGLL_HYBRID`
+    /// present ⇒ true. Hoisted here per the red-team's R5 note (no
+    /// per-parse env string compares). The pure arm is the DEFAULT.
+    cgll_hybrid: bool,
 }
 
 impl RootpMode {
@@ -817,14 +823,166 @@ impl RootpMode {
                 // Q1 isolation A/B).
                 // P3 (2026-07-10): `PRATTAIL_CGLL_PURE` IMPLIES the binarized
                 // SPPF/realize half — the pure engine emits `CGLL_BIN_TAG`
-                // roots that only the binarize-gated realize consumes, so the
-                // pure switch is complete on its own (suite runs need exactly
-                // one env var). DCE'd with the const like everything else.
+                // roots that only the binarize-gated realize consumes.
+                // R5 FLIP (2026-07-11): the pure arm is now the DEFAULT, so
+                // pure-implies-binarize holds BY DEFAULT with NO env var.
+                // The historical `PRATTAIL_CGLL_BINARIZE` /
+                // `PRATTAIL_CGLL_PURE` env vars are accepted as NO-OPS
+                // (they used to opt in to exactly this state).
+                // ⚠ R5-BUG FIX (2026-07-11, found by the F2/F4 diagnosis
+                // leg): the LEVER MUST DISABLE BINARIZE TOO. The first
+                // derivation (`CANONICAL_GLL_ENABLED` alone) left the E1
+                // binarize post-pass live under `PRATTAIL_NO_CANONICAL_GLL`
+                // — the classic-lever baselines then ran binarize over
+                // classic cursors and STACK-OVERFLOWED on the class3multi
+                // name shape `@(with[](a?_, a?a0).{…})` (const=false
+                // classic parses it cleanly; receipt logs_s2burn/). The
+                // A/B lever restores the classic walker END-TO-END only if
+                // binarize follows `canonical_gll`. (This retires the old
+                // Q1 isolation lane `NO_CANONICAL_GLL + CGLL_BINARIZE` —
+                // that combination was exactly the crash.)
                 cgll_binarize: CANONICAL_GLL_ENABLED
-                    && (disabled("PRATTAIL_CGLL_BINARIZE") || disabled("PRATTAIL_CGLL_PURE")),
+                    && !disabled("PRATTAIL_NO_CANONICAL_GLL"),
+                cgll_hybrid: disabled("PRATTAIL_CGLL_HYBRID"),
             }
         })
     }
+}
+
+/// S2-F3 (2026-07-11): one suspended activation of the iterative realize
+/// machine (see `cgll_realize_drive`). `Bin` = a `cgll_realize_bin_symbol`
+/// body; `Predep` = a `cgll_prerealize_deps` walk (suspendable at an
+/// unrealized BIN dep).
+#[allow(dead_code)] // Reached only under the const (DCE'd while const off).
+enum CgllRealizeFrame<W> {
+    Bin {
+        sym: crate::sppf::SppfId,
+        sym_lo: u32,
+        sym_hi: u32,
+        packings: Vec<crate::sppf::SppfId>,
+        pk_idx: usize,
+        cur: Option<CgllBinPacking<W>>,
+        out: Vec<(ActionArg, W)>,
+    },
+    Predep {
+        walk: Vec<crate::sppf::SppfId>,
+        seen: rustc_hash::FxHashSet<crate::sppf::SppfId>,
+        deps: Vec<crate::sppf::SppfId>,
+        dep_idx: usize,
+        /// The recursion pushed a BIN dep onto the walk AFTER its realize
+        /// call returned; this defers that push across the suspension.
+        pending_walk_push: Option<crate::sppf::SppfId>,
+    },
+    /// S3: a `cgll_pure_realize_chosen` body (the K-elected single-reading
+    /// realize). The prologue (choices lookup, packing decode, `on_path`
+    /// insert, chosen-flat walk) runs in the FALLIBLE constructor
+    /// `cgll_make_chosen_frame`; element steps here follow the Am-4
+    /// Chosen order (memo pre-check FIRST, then Predep, then re-check).
+    /// `Err` unwind pops the Chosen ancestor chain, removing `on_path`
+    /// per frame IFF `inserted` (Am-5).
+    Chosen {
+        sym: crate::sppf::SppfId,
+        pk: crate::sppf::SppfId,
+        rule_idx: u32,
+        weight: W,
+        flat: Vec<crate::sppf::SppfId>,
+        flat_weight: W,
+        elem_idx: usize,
+        elem_stage: CgllElemStage,
+        inserted: bool,
+    },
+}
+
+/// S2-F3: the packing-in-progress sub-state of a Bin frame.
+#[allow(dead_code)]
+struct CgllBinPacking<W> {
+    rule_idx: u32,
+    weight: W,
+    flats: Vec<(Vec<crate::sppf::SppfId>, W)>,
+    flat_idx: usize,
+    elem_idx: usize,
+    elem_stage: CgllElemStage,
+}
+
+/// S2-F3: element-step stage. Am-4 asymmetry: Bin elements push Predep
+/// UNCONDITIONALLY then memo-check on resume; Chosen elements (S3)
+/// memo-check FIRST, then Predep, then re-check.
+#[allow(dead_code)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CgllElemStage {
+    PredepPending,
+    RealizePending,
+}
+
+/// S5 (S2-F3): one suspended activation of the binarize post-pass machine
+/// (`cgll_binarize_classic_symbol` ⇄ `cgll_binarize_classic_child` — NOT on
+/// the flip battery path: pure roots take the BIN-tag passthrough; live
+/// only under the Q1-isolation / `PRATTAIL_CGLL_HYBRID` arms. Converted
+/// for completeness: deep chains under those arms would overflow).
+#[allow(dead_code)] // Reached only under the const (DCE'd while const off).
+enum CgllBinarizeFrame {
+    Sym {
+        bin: crate::sppf::SppfId,
+        lo: u32,
+        hi: u32,
+        packings: Vec<crate::sppf::SppfId>,
+        pk_idx: usize,
+        /// (rule_idx, children, child_idx, w) of the packing in progress —
+        /// `w` is the ORDER-CRITICAL left fold into `cgll_get_node_p`.
+        cur: Option<(u32, Vec<crate::sppf::SppfId>, usize, crate::sppf::SppfId)>,
+    },
+    Coll {
+        id: u32,
+        items: Vec<crate::sppf::SppfId>,
+        item_idx: usize,
+        bitems: Vec<crate::sppf::SppfId>,
+    },
+}
+
+/// S4 (S2-F3): one suspended `cgll_pure_ktuple` activation. The packing
+/// body's THREE stages run in source order (Children → the straight-line
+/// Decisions block at the transition → Scan); each child evaluation is one
+/// suspension, absorbed on resume in the identical total order (⊗ order +
+/// decision push order preserved — the K-B/K-C byte-identity argument,
+/// plan §4 R3).
+#[allow(dead_code)] // Reached only under the const (DCE'd while const off).
+struct CgllKtupleFrame<W> {
+    node: crate::sppf::SppfId,
+    depth: u32,
+    at_root: bool,
+    is_symbol: bool,
+    node_span: (Option<u32>, Option<u32>),
+    packings: Vec<crate::sppf::SppfId>,
+    pk_idx: usize,
+    cur: Option<CgllKtuplePacking<W>>,
+    best: Option<(CgllKTuple<W>, crate::sppf::SppfId)>,
+}
+
+/// S4: the packing-in-progress sub-state of a ktuple frame.
+#[allow(dead_code)]
+struct CgllKtuplePacking<W> {
+    pk: crate::sppf::SppfId,
+    rule_idx: u32,
+    children: Vec<crate::sppf::SppfId>,
+    t: CgllKTuple<W>,
+    stage: CgllKtStage,
+}
+
+/// S4: resumable position inside a ktuple packing body.
+#[allow(dead_code)]
+enum CgllKtStage {
+    Children {
+        child_idx: usize,
+    },
+    Scan {
+        scan_idx: usize,
+        /// `Some((inner_children, idx))` while absorbing an
+        /// OPTIONAL_PRESENT packing leaf's inner children.
+        inner: Option<(Vec<crate::sppf::SppfId>, usize)>,
+    },
+    /// Scan exhausted — the best-update runs borrow-safely from the
+    /// frame side (`cur.take()`).
+    Finished,
 }
 
 /// P4 HYBRID K-TUPLE (election red-team T4): the per-derivation election
@@ -4795,6 +4953,13 @@ struct CgllPureStats {
     /// (previously silently returned; R0 receipt: pure "1 2" had
     /// `seed_pops=1, seed_pops_at_eoi=0` and no channel to surface it).
     prefix_seed_pops: u64,
+    /// P3.d (F1): predicate sub-parses actually RUN (memo misses).
+    pred_parses: u64,
+    /// P3.d: guard dispatches served from the per-pos memo.
+    pred_memo_hits: u64,
+    /// P3.d: guard dispatches refuted (sub-parse Err → descriptor drop —
+    /// classic `CursorOutcome::Drop` parity; never parked, §3.6/F6).
+    pred_refutes: u64,
 }
 
 /// Frame-class bit folded into [`CgllRetSlot::kind_class`] (bit 6): a D1 and
@@ -4865,6 +5030,16 @@ struct CgllPureRun {
     /// structurally impossible from this channel.
     prefix_accepting: Vec<(crate::sppf::SppfId, usize)>,
     prefix_seen: rustc_hash::FxHashSet<(crate::sppf::SppfId, usize)>,
+    /// P3.d (F1): predicate sub-parses per START pos — `None` = refuted.
+    /// Sound because `(pred, new_pos)` is a PURE function of
+    /// `(tokens, pos)` (predicate.rs:31-72 reads only len/peek_kind/
+    /// peek_text) and real positions are round-invariant
+    /// (`CgllRepairSource` forwards len/peek verbatim below `base`). The
+    /// memo is LOAD-BEARING, not an optimization: a fresh arena handle
+    /// per dispatch would mint distinct leaf ids for identical futures,
+    /// splitting `w` and multiplying U entries per converging lineage
+    /// (plan §3.2/F5 — the lossy-dedup failure the S2 thesis forbids).
+    pred_memo: rustc_hash::FxHashMap<usize, Option<(crate::sppf::SppfId, usize)>>,
     /// Debug slot-collision side-map: `slot_id(L)` hash → first-seen
     /// `(cur_sym, state-discriminant)`; a differing re-entry increments
     /// `stats.slot_collisions` (31-bit hash risk accepted into the gate;
@@ -20704,14 +20879,24 @@ where
         // accepting frontier this driver publishes into `self.branch_cursors`.
         self.deterministic = false;
 
-        // ── ROOT-P S2 Stage B0 (2026-07-10): descriptor-PURE canonical GLL ──
-        // Opt-in dispatch to the pure `(L, u, i, w)` interpreter
-        // (`step_canonical_pure`). Self-contained: depends on NO other CGLL
-        // env lever (RETSLOT / BINARIZE / P2CORE / POC_RECPOP stay untouched
-        // and are NOT read by the pure arm). Reached only inside
-        // `step_canonical`, which the `CANONICAL_GLL_ENABLED` const DCEs when
-        // `false` ⇒ default build byte-identical.
-        if self.rootp_mode.canonical_gll && std::env::var_os("PRATTAIL_CGLL_PURE").is_some() {
+        // ── R5 FLIP (2026-07-11): the descriptor-PURE canonical GLL is the
+        // DEFAULT engine. Dispatch inversion of the S2 Stage-B0 opt-in:
+        //   • default            → `step_canonical_pure` (the `(L,u,i,w)`
+        //     interpreter — S2 campaign result: depth-uniform-polynomial
+        //     |U| with exact reading multisets; flip battery in
+        //     `logs_s2flip/`).
+        //   • `PRATTAIL_CGLL_PURE`      → accepted as a NO-OP (it used to
+        //     opt IN to exactly this default).
+        //   • `PRATTAIL_CGLL_HYBRID`    → the EXPERIMENTAL hybrid arm below
+        //     (the classic-cursor worklist + pop-fan levers). KEPT, not
+        //     deleted: it is the measured-refutation record for the
+        //     redesign (the Stage-E ladder A/B lives on its comments) and
+        //     the only in-tree harness for the k-fan experiments.
+        //   • `PRATTAIL_NO_CANONICAL_GLL` → the CLASSIC walker (handled at
+        //     the `canonical_gll_active` entry gate — never reaches here).
+        // Env reads are HOISTED into `RootpMode::from_env` (OnceLock — no
+        // per-parse string compares; red-team R5 note).
+        if self.rootp_mode.canonical_gll && !self.rootp_mode.cgll_hybrid {
             return self.step_canonical_pure(tokens);
         }
 
@@ -23657,46 +23842,199 @@ where
         classic: crate::sppf::SppfId,
         map: &mut rustc_hash::FxHashMap<crate::sppf::SppfId, crate::sppf::SppfId>,
     ) -> crate::sppf::SppfId {
-        if let Some(&b) = map.get(&classic) {
-            return b;
+        // S5 (S2-F3, 2026-07-11): thin wrapper over the ITERATIVE binarize
+        // machine — the former mutual recursion overflowed on deep chains
+        // under the Q1/hybrid arms (non-battery; converted for
+        // completeness). Entry checks + the map-insert-BEFORE-descent
+        // cycle guard live in the frame constructor.
+        match Self::cgll_make_binarize_sym_frame(&mut self.sppf, map, classic) {
+            Ok(resolved) => resolved,
+            Err(seed) => self.cgll_binarize_drive(seed, map),
         }
-        let (tag, lo, hi) = match self.sppf.node(classic) {
+    }
+
+    /// S5: Sym-frame constructor = the recursion's entry (map hit /
+    /// non-Symbol / already-BIN fast paths; intern + `map.insert` BEFORE
+    /// descent — the cycle guard).
+    #[allow(dead_code)] // Reached only under the const (DCE'd while const off).
+    fn cgll_make_binarize_sym_frame(
+        sppf: &mut crate::sppf::Sppf<W>,
+        map: &mut rustc_hash::FxHashMap<crate::sppf::SppfId, crate::sppf::SppfId>,
+        classic: crate::sppf::SppfId,
+    ) -> Result<crate::sppf::SppfId, CgllBinarizeFrame> {
+        if let Some(&b) = map.get(&classic) {
+            return Ok(b);
+        }
+        let (tag, lo, hi) = match sppf.node(classic) {
             Some(crate::sppf::SppfNode::Symbol { non_terminal_tag, lo_pos, hi_pos, .. }) => {
                 (*non_terminal_tag, *lo_pos, *hi_pos)
             },
             // Non-Symbol (leaf / already-binarized) — shared as-is.
-            _ => return classic,
+            _ => return Ok(classic),
         };
         if tag & CGLL_BIN_TAG != 0 {
-            return classic; // already binarized
+            return Ok(classic); // already binarized
         }
-        let bin = self.sppf.intern_symbol(tag | CGLL_BIN_TAG, lo, hi);
-        map.insert(classic, bin); // cycle guard BEFORE recursion
-        let packings: Vec<crate::sppf::SppfId> = self.sppf.packings_of(classic).to_vec();
-        for p in packings {
-            let (rule_idx, children) = match self.sppf.node(p) {
-                Some(crate::sppf::SppfNode::Packing { rule_idx, children, .. }) => {
-                    (*rule_idx, children.clone())
+        let bin = sppf.intern_symbol(tag | CGLL_BIN_TAG, lo, hi);
+        map.insert(classic, bin); // cycle guard BEFORE descent
+        Err(CgllBinarizeFrame::Sym {
+            bin,
+            lo,
+            hi,
+            packings: sppf.packings_of(classic).to_vec(),
+            pk_idx: 0,
+            cur: None,
+        })
+    }
+
+    /// S5: the iterative binarize driver. Value channel = the binarized
+    /// child id delivered into the left fold (`cgll_get_node_p`, order
+    /// L→R preserved by the indexed child loop — plan §4 R5).
+    #[allow(dead_code)] // Reached only under the const (DCE'd while const off).
+    fn cgll_binarize_drive(
+        &mut self,
+        seed: CgllBinarizeFrame,
+        map: &mut rustc_hash::FxHashMap<crate::sppf::SppfId, crate::sppf::SppfId>,
+    ) -> crate::sppf::SppfId {
+        let mut stack: Vec<CgllBinarizeFrame> = Vec::with_capacity(64);
+        let mut child_result: Option<crate::sppf::SppfId> = None;
+        stack.push(seed);
+        'drive: while let Some(top) = stack.last_mut() {
+            match top {
+                CgllBinarizeFrame::Sym { bin, lo, hi, packings, pk_idx, cur } => {
+                    let (bin, lo, hi) = (*bin, *lo, *hi);
+                    loop {
+                        match cur {
+                            None => {
+                                if *pk_idx == packings.len() {
+                                    stack.pop();
+                                    if stack.is_empty() {
+                                        return bin;
+                                    }
+                                    child_result = Some(bin);
+                                    continue 'drive;
+                                }
+                                let p = packings[*pk_idx];
+                                *pk_idx += 1;
+                                match self.sppf.node(p) {
+                                    Some(crate::sppf::SppfNode::Packing {
+                                        rule_idx,
+                                        children,
+                                        ..
+                                    }) => {
+                                        *cur = Some((
+                                            *rule_idx,
+                                            children.clone(),
+                                            0,
+                                            crate::sppf::SPPF_ID_NONE,
+                                        ));
+                                    },
+                                    _ => continue,
+                                }
+                            },
+                            Some((rule_idx, children, child_idx, w)) => {
+                                if let Some(bc) = child_result.take() {
+                                    let hi_z = self.sppf.span_hi(bc).unwrap_or(hi);
+                                    *w = self.cgll_get_node_p(*rule_idx, *w, bc, lo, hi_z);
+                                    *child_idx += 1;
+                                }
+                                if *child_idx == children.len() {
+                                    let children_bin = if *w == crate::sppf::SPPF_ID_NONE {
+                                        Vec::new()
+                                    } else {
+                                        vec![*w]
+                                    };
+                                    let rule_idx = *rule_idx;
+                                    let packing = self.sppf.intern_packing(
+                                        rule_idx,
+                                        children_bin,
+                                        W::one_ref(),
+                                    );
+                                    self.sppf.link_packing_to_symbol(bin, packing);
+                                    *cur = None;
+                                    continue;
+                                }
+                                let c = children[*child_idx];
+                                match Self::cgll_binarize_child_step(
+                                    &mut self.sppf,
+                                    map,
+                                    c,
+                                ) {
+                                    Ok(bc) => {
+                                        child_result = Some(bc);
+                                        continue;
+                                    },
+                                    Err(f) => {
+                                        stack.push(f);
+                                        continue 'drive;
+                                    },
+                                }
+                            },
+                        }
+                    }
                 },
-                _ => continue,
-            };
-            let mut w = crate::sppf::SPPF_ID_NONE;
-            for &c in &children {
-                let bc = self.cgll_binarize_classic_child(c, map);
-                let hi_z = self.sppf.span_hi(bc).unwrap_or(hi);
-                w = self.cgll_get_node_p(rule_idx, w, bc, lo, hi_z);
+                CgllBinarizeFrame::Coll { id, items, item_idx, bitems } => {
+                    loop {
+                        if let Some(bc) = child_result.take() {
+                            bitems.push(bc);
+                            *item_idx += 1;
+                        }
+                        if *item_idx == items.len() {
+                            let cid = self
+                                .sppf
+                                .intern_collection_id(*id, std::mem::take(bitems));
+                            stack.pop();
+                            if stack.is_empty() {
+                                return cid;
+                            }
+                            child_result = Some(cid);
+                            continue 'drive;
+                        }
+                        let it = items[*item_idx];
+                        match Self::cgll_binarize_child_step(&mut self.sppf, map, it) {
+                            Ok(bc) => {
+                                child_result = Some(bc);
+                                continue;
+                            },
+                            Err(f) => {
+                                stack.push(f);
+                                continue 'drive;
+                            },
+                        }
+                    }
+                },
             }
-            let children_bin = if w == crate::sppf::SPPF_ID_NONE {
-                Vec::new()
-            } else {
-                vec![w]
-            };
-            let packing = self
-                .sppf
-                .intern_packing(rule_idx, children_bin, W::one_ref());
-            self.sppf.link_packing_to_symbol(bin, packing);
         }
-        bin
+        unreachable!("binarize seed frame returns from its completion arm")
+    }
+
+    /// S5: one child evaluation — the recursion's `cgll_binarize_classic_
+    /// child` arms with the recursive cases turned into frames.
+    #[allow(dead_code)] // Reached only under the const (DCE'd while const off).
+    fn cgll_binarize_child_step(
+        sppf: &mut crate::sppf::Sppf<W>,
+        map: &mut rustc_hash::FxHashMap<crate::sppf::SppfId, crate::sppf::SppfId>,
+        c: crate::sppf::SppfId,
+    ) -> Result<crate::sppf::SppfId, CgllBinarizeFrame> {
+        match sppf.node(c) {
+            Some(crate::sppf::SppfNode::Symbol { .. }) => {
+                Self::cgll_make_binarize_sym_frame(sppf, map, c)
+            },
+            Some(crate::sppf::SppfNode::CollectionId { id, items }) => {
+                if items.is_empty() {
+                    return Ok(c); // shared verbatim (deep-@ ladder byte-identity)
+                }
+                let (id, items) = (*id, items.clone());
+                let n = items.len();
+                Err(CgllBinarizeFrame::Coll {
+                    id,
+                    items,
+                    item_idx: 0,
+                    bitems: Vec::with_capacity(n),
+                })
+            },
+            _ => Ok(c),
+        }
     }
 
     /// Binarize one classic packing child: a `Symbol` recurses via
@@ -23709,6 +24047,9 @@ where
         c: crate::sppf::SppfId,
         map: &mut rustc_hash::FxHashMap<crate::sppf::SppfId, crate::sppf::SppfId>,
     ) -> crate::sppf::SppfId {
+        // S5 (S2-F3): wrapper over the iterative machine (see
+        // `cgll_binarize_drive`); the CollectionId rebinarize rationale
+        // below is unchanged.
         match self.sppf.node(c) {
             Some(crate::sppf::SppfNode::Symbol { .. }) => {
                 self.cgll_binarize_classic_symbol(c, map)
@@ -23732,13 +24073,17 @@ where
                 if items.is_empty() {
                     return c;
                 }
-                let id = *id;
-                let items = items.clone();
-                let bitems: Vec<crate::sppf::SppfId> = items
-                    .iter()
-                    .map(|&it| self.cgll_binarize_classic_child(it, map))
-                    .collect();
-                self.sppf.intern_collection_id(id, bitems)
+                let (id, items) = (*id, items.clone());
+                let n = items.len();
+                self.cgll_binarize_drive(
+                    CgllBinarizeFrame::Coll {
+                        id,
+                        items,
+                        item_idx: 0,
+                        bitems: Vec::with_capacity(n),
+                    },
+                    map,
+                )
             },
             _ => c,
         }
@@ -23753,34 +24098,131 @@ where
     /// then filters `TriggerTerminal`). Reached only under `cgll_binarize_active()`.
     #[allow(dead_code)] // Reached only under the const (DCE'd while const off).
     fn cgll_flatten_ids(&self, id: crate::sppf::SppfId) -> Vec<Vec<crate::sppf::SppfId>> {
-        match self.sppf.node(id) {
-            Some(crate::sppf::SppfNode::Intermediate { .. }) => {
-                let packings: Vec<crate::sppf::SppfId> = self.sppf.packings_of(id).to_vec();
-                let mut out: Vec<Vec<crate::sppf::SppfId>> = Vec::new();
-                for p in packings {
-                    let pack_children = match self.sppf.node(p) {
-                        Some(crate::sppf::SppfNode::Packing { children, .. }) => children.clone(),
-                        _ => continue,
-                    };
-                    let mut acc: Vec<Vec<crate::sppf::SppfId>> = vec![Vec::new()];
-                    for &c in &pack_children {
-                        let cf = self.cgll_flatten_ids(c);
-                        let mut next: Vec<Vec<crate::sppf::SppfId>> = Vec::new();
-                        for a in &acc {
-                            for b in &cf {
-                                let mut x = a.clone();
-                                x.extend_from_slice(b);
-                                next.push(x);
-                            }
-                        }
-                        acc = next;
-                    }
-                    out.extend(acc);
-                }
-                out
-            },
-            _ => vec![vec![id]],
+        // ── S2-F3 (2026-07-11): ITERATIVE rewrite (explicit stack) of the
+        // former self-recursion (one Rust frame per Intermediate spine
+        // level — input-linear on collection spines; see the ledger
+        // §FLIP-GATE ATTEMPT 1 F3 + f3_iterative_realize_plan §3.1). The
+        // loops below mirror the recursion LITERALLY: packing outer loop
+        // in `packings_of` insertion order, children left-to-right,
+        // cartesian fold with `acc` outer / `cf` inner — identical output
+        // order. Leaf children fold INLINE (the recursion's base case).
+        // The unweighted/weighted pair stays mirrored; allocation styles
+        // are each original's own (plain `Vec::new` here, the exact
+        // `with_capacity` in the weighted twin).
+        if !matches!(
+            self.sppf.node(id),
+            Some(crate::sppf::SppfNode::Intermediate { .. })
+        ) {
+            return vec![vec![id]];
         }
+        struct Frame {
+            id: crate::sppf::SppfId,
+            packings: Vec<crate::sppf::SppfId>,
+            pk_idx: usize,
+            // (children, child_idx, acc) of the packing in progress.
+            cur: Option<(Vec<crate::sppf::SppfId>, usize, Vec<Vec<crate::sppf::SppfId>>)>,
+            out: Vec<Vec<crate::sppf::SppfId>>,
+            awaiting: bool,
+        }
+        let new_frame = |walker: &Self, fid: crate::sppf::SppfId| Frame {
+            id: fid,
+            packings: walker.sppf.packings_of(fid).to_vec(),
+            pk_idx: 0,
+            cur: None,
+            out: Vec::new(),
+            awaiting: false,
+        };
+        // Defensive divergence guard (plan §3.1): an Intermediate-ONLY
+        // cycle previously CRASHED via stack overflow; iteratively it
+        // would LOOP. Such forests are refused before realize by the
+        // always-on publish fence, so this is unreachable — a re-entered
+        // Intermediate contributes an EMPTY flat set (capped eprintln) —
+        // strictly-better failure on corrupt forests, no observable
+        // change on fence-passed ones.
+        let mut on_path: rustc_hash::FxHashSet<crate::sppf::SppfId> =
+            rustc_hash::FxHashSet::default();
+        let mut guard_hits: u32 = 0;
+        let mut results: Vec<Vec<Vec<crate::sppf::SppfId>>> = Vec::with_capacity(8);
+        let mut stack: Vec<Frame> = Vec::with_capacity(8);
+        on_path.insert(id);
+        stack.push(new_frame(self, id));
+        'drive: while let Some(top) = stack.last_mut() {
+            if top.awaiting {
+                top.awaiting = false;
+                let cf = results.pop().expect("flatten child result present");
+                let (_, ci, acc) = top.cur.as_mut().expect("awaiting implies cur");
+                let mut next: Vec<Vec<crate::sppf::SppfId>> = Vec::new();
+                for a in acc.iter() {
+                    for b in &cf {
+                        let mut x = a.clone();
+                        x.extend_from_slice(b);
+                        next.push(x);
+                    }
+                }
+                *acc = next;
+                *ci += 1;
+            }
+            loop {
+                match &mut top.cur {
+                    None => {
+                        if top.pk_idx == top.packings.len() {
+                            let done = std::mem::take(&mut top.out);
+                            on_path.remove(&top.id);
+                            results.push(done);
+                            stack.pop();
+                            continue 'drive;
+                        }
+                        let p = top.packings[top.pk_idx];
+                        top.pk_idx += 1;
+                        match self.sppf.node(p) {
+                            Some(crate::sppf::SppfNode::Packing { children, .. }) => {
+                                top.cur = Some((children.clone(), 0, vec![Vec::new()]));
+                            },
+                            _ => continue, // recursion's `_ => continue`
+                        }
+                    },
+                    Some((children, ci, acc)) => {
+                        if *ci == children.len() {
+                            let (_, _, acc) =
+                                top.cur.take().expect("cur present at packing exit");
+                            top.out.extend(acc);
+                            continue;
+                        }
+                        let c = children[*ci];
+                        if matches!(
+                            self.sppf.node(c),
+                            Some(crate::sppf::SppfNode::Intermediate { .. })
+                        ) {
+                            if !on_path.insert(c) {
+                                guard_hits += 1;
+                                debug_assert!(
+                                    false,
+                                    "cgll_flatten_ids: Intermediate-only cycle at {c}                                      (publish fence should have refused this forest)"
+                                );
+                                if guard_hits <= 4 {
+                                    eprintln!(
+                                        "CGLL-FLATTEN-CYCLE-GUARD id={c} (contribution: empty)"
+                                    );
+                                }
+                                // Empty contribution: acc × ∅ = ∅.
+                                acc.clear();
+                                *ci += 1;
+                                continue;
+                            }
+                            top.awaiting = true;
+                            stack.push(new_frame(self, c));
+                            continue 'drive;
+                        }
+                        // Leaf base case, folded inline (cf = [[c]]).
+                        for a in acc.iter_mut() {
+                            a.push(c);
+                        }
+                        *ci += 1;
+                    },
+                }
+            }
+        }
+        results.pop().expect("flatten root result")
     }
 
     /// STAGE C / AMENDMENT 6 (2026-07-10) — WEIGHT-THREADING flatten: like
@@ -23796,38 +24238,124 @@ where
         &self,
         id: crate::sppf::SppfId,
     ) -> Vec<(Vec<crate::sppf::SppfId>, W)> {
-        match self.sppf.node(id) {
-            Some(crate::sppf::SppfNode::Intermediate { .. }) => {
-                let packings: Vec<crate::sppf::SppfId> = self.sppf.packings_of(id).to_vec();
-                let mut out: Vec<(Vec<crate::sppf::SppfId>, W)> = Vec::new();
-                for p in packings {
-                    let (pack_children, pack_weight) = match self.sppf.node(p) {
-                        Some(crate::sppf::SppfNode::Packing { children, weight, .. }) => {
-                            (children.clone(), weight.clone())
-                        },
-                        _ => continue,
-                    };
-                    let mut acc: Vec<(Vec<crate::sppf::SppfId>, W)> =
-                        vec![(Vec::new(), pack_weight)];
-                    for &c in &pack_children {
-                        let cf = self.cgll_flatten_ids_weighted(c);
-                        let mut next: Vec<(Vec<crate::sppf::SppfId>, W)> =
-                            Vec::with_capacity(acc.len().saturating_mul(cf.len().max(1)));
-                        for (a, aw) in &acc {
-                            for (b, bw) in &cf {
-                                let mut x = a.clone();
-                                x.extend_from_slice(b);
-                                next.push((x, aw.times_ref(bw)));
-                            }
-                        }
-                        acc = next;
-                    }
-                    out.extend(acc);
-                }
-                out
-            },
-            _ => vec![(vec![id], W::one_ref())],
+        // ── S2-F3 (2026-07-11): ITERATIVE rewrite — the exact mirror of
+        // [`Self::cgll_flatten_ids`]'s machine with the weight thread
+        // (`acc` seeded `(Vec::new(), pack_weight)`; fold weight
+        // `aw.times_ref(bw)` with `acc` outer / `cf` inner; the original
+        // `with_capacity(acc.len() * max(cf,1))` preallocation kept).
+        // Leaf children fold inline: `cf = [([c], one)]` ⇒ extend each
+        // flat by `c`, weight `aw ⊗ one = aw` (identity — unchanged).
+        if !matches!(
+            self.sppf.node(id),
+            Some(crate::sppf::SppfNode::Intermediate { .. })
+        ) {
+            return vec![(vec![id], W::one_ref())];
         }
+        struct FrameW<W> {
+            id: crate::sppf::SppfId,
+            packings: Vec<crate::sppf::SppfId>,
+            pk_idx: usize,
+            cur: Option<(
+                Vec<crate::sppf::SppfId>,
+                usize,
+                Vec<(Vec<crate::sppf::SppfId>, W)>,
+            )>,
+            out: Vec<(Vec<crate::sppf::SppfId>, W)>,
+            awaiting: bool,
+        }
+        let new_frame = |walker: &Self, fid: crate::sppf::SppfId| FrameW::<W> {
+            id: fid,
+            packings: walker.sppf.packings_of(fid).to_vec(),
+            pk_idx: 0,
+            cur: None,
+            out: Vec::new(),
+            awaiting: false,
+        };
+        let mut on_path: rustc_hash::FxHashSet<crate::sppf::SppfId> =
+            rustc_hash::FxHashSet::default();
+        let mut guard_hits: u32 = 0;
+        let mut results: Vec<Vec<(Vec<crate::sppf::SppfId>, W)>> = Vec::with_capacity(8);
+        let mut stack: Vec<FrameW<W>> = Vec::with_capacity(8);
+        on_path.insert(id);
+        stack.push(new_frame(self, id));
+        'drive: while let Some(top) = stack.last_mut() {
+            if top.awaiting {
+                top.awaiting = false;
+                let cf = results.pop().expect("flatten_w child result present");
+                let (_, ci, acc) = top.cur.as_mut().expect("awaiting implies cur");
+                let mut next: Vec<(Vec<crate::sppf::SppfId>, W)> =
+                    Vec::with_capacity(acc.len().saturating_mul(cf.len().max(1)));
+                for (a, aw) in acc.iter() {
+                    for (b, bw) in &cf {
+                        let mut x = a.clone();
+                        x.extend_from_slice(b);
+                        next.push((x, aw.times_ref(bw)));
+                    }
+                }
+                *acc = next;
+                *ci += 1;
+            }
+            loop {
+                match &mut top.cur {
+                    None => {
+                        if top.pk_idx == top.packings.len() {
+                            let done = std::mem::take(&mut top.out);
+                            on_path.remove(&top.id);
+                            results.push(done);
+                            stack.pop();
+                            continue 'drive;
+                        }
+                        let p = top.packings[top.pk_idx];
+                        top.pk_idx += 1;
+                        match self.sppf.node(p) {
+                            Some(crate::sppf::SppfNode::Packing { children, weight, .. }) => {
+                                top.cur =
+                                    Some((children.clone(), 0, vec![(Vec::new(), weight.clone())]));
+                            },
+                            _ => continue,
+                        }
+                    },
+                    Some((children, ci, acc)) => {
+                        if *ci == children.len() {
+                            let (_, _, acc) =
+                                top.cur.take().expect("cur present at packing exit");
+                            top.out.extend(acc);
+                            continue;
+                        }
+                        let c = children[*ci];
+                        if matches!(
+                            self.sppf.node(c),
+                            Some(crate::sppf::SppfNode::Intermediate { .. })
+                        ) {
+                            if !on_path.insert(c) {
+                                guard_hits += 1;
+                                debug_assert!(
+                                    false,
+                                    "cgll_flatten_ids_weighted: Intermediate-only cycle at {c}                                      (publish fence should have refused this forest)"
+                                );
+                                if guard_hits <= 4 {
+                                    eprintln!(
+                                        "CGLL-FLATTEN-CYCLE-GUARD id={c} (contribution: empty)"
+                                    );
+                                }
+                                acc.clear();
+                                *ci += 1;
+                                continue;
+                            }
+                            top.awaiting = true;
+                            stack.push(new_frame(self, c));
+                            continue 'drive;
+                        }
+                        // Leaf inline: flats gain `c`; weight ⊗ one = unchanged.
+                        for (a, _) in acc.iter_mut() {
+                            a.push(c);
+                        }
+                        *ci += 1;
+                    },
+                }
+            }
+        }
+        results.pop().expect("flatten_w root result")
     }
 
     /// Recursively realize a BINARIZED Symbol to its `(Term, W)` readings by
@@ -23845,6 +24373,599 @@ where
     /// optional groups realize too). Structural containers only have their
     /// CONTENTS realized. Cycle-safe via the memo guard + local seen set.
     #[allow(dead_code)] // Reached only under the const (DCE'd while const off).
+    // ═════════════════════════════════════════════════════════════════════
+    // S2-F3 (2026-07-11): ITERATIVE REALIZE MACHINE (explicit stacks) — see
+    // s2_stageA_ledger §"FLIP-GATE ATTEMPT 1" F3 + f3_iterative_realize_plan
+    // §3.2. Replaces the mutual recursion `cgll_realize_bin_symbol` ⇄
+    // `cgll_prerealize_deps` (one Rust frame per nested BIN Symbol — the
+    // 10k-chain SIGABRT; PROBE-1 receipt logs_s2burn/f3_probe1_bt.log:
+    // recurring `cgll_realize_bin_symbol` frames). The frames linearize the
+    // recursion 1:1 (one child frame per suspension point — sibling order
+    // cannot invert; resumable indices; memo timing preserved: provisional-
+    // empty at Bin first-touch, final publish at Bin completion, leaf
+    // inserts at element steps). The ONE dropped write vs the recursion is
+    // the caller-side re-insert of a completed Bin child's value — the
+    // callee's completion publish already wrote the identical bytes with no
+    // intervening reader (plan §5).
+    //
+    // Frame-stack preallocation bound (plan §7): max live depth ≤ the
+    // longest packing-DAG path ≤ `self.sppf.len()`; full-bound reservation
+    // is waste (10k-chain forests ≈ 10^5 nodes × 100-300 B frames) —
+    // reserve `min(sppf.len(), 4096)`: covers the whole 998-sweep corpus
+    // with zero reallocation; deep chains take ≤2 amortized-O(1) geometric
+    // doublings.
+
+    #[allow(dead_code)] // Reached only under the const (DCE'd while const off).
+    fn cgll_realize_drive(
+        &self,
+        seed: CgllRealizeFrame<W>,
+        memo: &mut std::collections::HashMap<crate::sppf::SppfId, Vec<(ActionArg, W)>>,
+        limit: Option<usize>,
+        choices: Option<&rustc_hash::FxHashMap<crate::sppf::SppfId, crate::sppf::SppfId>>,
+        on_path: &mut rustc_hash::FxHashSet<crate::sppf::SppfId>,
+    ) -> Option<Result<(ActionArg, W), Option<crate::sppf::SppfId>>>
+    where
+        W: StarSemiringRef,
+    {
+        let empty_colors: std::collections::HashMap<crate::sppf::SppfId, RealizeColor> =
+            std::collections::HashMap::new();
+        let mut stack: Vec<CgllRealizeFrame<W>> =
+            Vec::with_capacity(self.sppf.len().min(4096));
+        // S3: the Chosen child→parent value channel. `Some(Ok(r))` after a
+        // Chosen child completes; the parent memo-inserts `vec![r]` at
+        // resume (the recursion's :25357-timing — nothing interleaves).
+        let mut chosen_result: Option<Result<(ActionArg, W), Option<crate::sppf::SppfId>>> =
+            None;
+        stack.push(seed);
+        'drive: while let Some(top) = stack.last_mut() {
+            match top {
+                CgllRealizeFrame::Predep { walk, seen, deps, dep_idx, pending_walk_push } => {
+                    // Mirrors the former `cgll_prerealize_deps` while-pop
+                    // loop verbatim: pop node → seen-dedup → snapshot deps
+                    // → FORWARD dep loop (realize-at-discovery) → LIFO
+                    // walk pushes. Am-6: EVERY dep is pushed onto the walk
+                    // (memoized / leaf / `_`-arm included);
+                    // `pending_walk_push` covers only the BIN-suspension
+                    // case (the recursion pushed AFTER the realize call
+                    // returned).
+                    if let Some(it) = pending_walk_push.take() {
+                        walk.push(it);
+                        *dep_idx += 1;
+                    }
+                    loop {
+                        if *dep_idx < deps.len() {
+                            let it = deps[*dep_idx];
+                            if !memo.contains_key(&it) {
+                                match self.sppf.node(it) {
+                                    Some(crate::sppf::SppfNode::Symbol {
+                                        non_terminal_tag, ..
+                                    }) if non_terminal_tag & CGLL_BIN_TAG != 0 => {
+                                        *pending_walk_push = Some(it);
+                                        let child = Self::cgll_make_bin_frame(
+                                            &self.sppf, memo, it,
+                                        );
+                                        match child {
+                                            Some(f) => {
+                                                stack.push(f);
+                                                continue 'drive;
+                                            },
+                                            None => {
+                                                // Memo raced (unreachable
+                                                // here — checked above);
+                                                // treat as realized.
+                                                let it2 = pending_walk_push
+                                                    .take()
+                                                    .expect("pending set");
+                                                walk.push(it2);
+                                                *dep_idx += 1;
+                                                continue;
+                                            },
+                                        }
+                                    },
+                                    Some(crate::sppf::SppfNode::Symbol { .. })
+                                    | Some(crate::sppf::SppfNode::Terminal { .. })
+                                    | Some(crate::sppf::SppfNode::Epsilon { .. })
+                                    | Some(crate::sppf::SppfNode::OptAbsent { .. })
+                                    | Some(crate::sppf::SppfNode::Predicate { .. })
+                                    | Some(crate::sppf::SppfNode::BinderScope { .. })
+                                    // CollectionId: memoize the NODE
+                                    // (realize_node_leave yields
+                                    // ActionArg::CollectionId — the sentinel
+                                    // arm's product needs it); its ITEMS are
+                                    // walked separately below.
+                                    | Some(crate::sppf::SppfNode::CollectionId { .. }) => {
+                                        let ir = self.realize_node_leave(
+                                            it, memo, &empty_colors, limit,
+                                        );
+                                        memo.insert(it, ir);
+                                        walk.push(it);
+                                        *dep_idx += 1;
+                                        continue;
+                                    },
+                                    _ => {
+                                        walk.push(it);
+                                        *dep_idx += 1;
+                                        continue;
+                                    },
+                                }
+                            }
+                            walk.push(it);
+                            *dep_idx += 1;
+                            continue;
+                        }
+                        // Deps exhausted → next walk node.
+                        match walk.pop() {
+                            Some(n) => {
+                                if !seen.insert(n) {
+                                    continue;
+                                }
+                                *deps = match self.sppf.node(n) {
+                                    Some(crate::sppf::SppfNode::CollectionId {
+                                        items, ..
+                                    }) => items.clone(),
+                                    Some(crate::sppf::SppfNode::Packing {
+                                        children, ..
+                                    }) => children.clone(),
+                                    Some(crate::sppf::SppfNode::Intermediate { .. }) => {
+                                        self.sppf.packings_of(n).to_vec()
+                                    },
+                                    _ => Vec::new(),
+                                };
+                                *dep_idx = 0;
+                            },
+                            None => {
+                                stack.pop();
+                                continue 'drive;
+                            },
+                        }
+                    }
+                },
+                CgllRealizeFrame::Bin { sym, sym_lo, sym_hi, packings, pk_idx, cur, out } => {
+                    let (sym, sym_lo, sym_hi) = (*sym, *sym_lo, *sym_hi);
+                    loop {
+                        match cur {
+                            None => {
+                                if *pk_idx == packings.len() {
+                                    // Completion publish (the recursion's
+                                    // final `memo.insert(sym, out)`).
+                                    let done = std::mem::take(out);
+                                    memo.insert(sym, done);
+                                    stack.pop();
+                                    continue 'drive;
+                                }
+                                let p = packings[*pk_idx];
+                                *pk_idx += 1;
+                                let (rule_idx, pack_children, weight) =
+                                    match self.sppf.node(p) {
+                                        Some(crate::sppf::SppfNode::Packing {
+                                            rule_idx,
+                                            children,
+                                            weight,
+                                        }) => (*rule_idx, children.clone(), weight.clone()),
+                                        _ => continue,
+                                    };
+                                // Flatten the packing's binary spine to
+                                // classic n-ary children lists (in-frame
+                                // cartesian; `cgll_flatten_ids_weighted` is
+                                // itself iterative post-S1 — a plain call).
+                                let mut flats: Vec<(Vec<crate::sppf::SppfId>, W)> =
+                                    vec![(Vec::new(), W::one_ref())];
+                                for &c in &pack_children {
+                                    let cf = self.cgll_flatten_ids_weighted(c);
+                                    let mut next: Vec<(Vec<crate::sppf::SppfId>, W)> =
+                                        Vec::new();
+                                    for (a, aw) in &flats {
+                                        for (b, bw) in &cf {
+                                            let mut x = a.clone();
+                                            x.extend_from_slice(b);
+                                            next.push((x, aw.times_ref(bw)));
+                                        }
+                                    }
+                                    flats = next;
+                                }
+                                *cur = Some(CgllBinPacking {
+                                    rule_idx,
+                                    weight,
+                                    flats,
+                                    flat_idx: 0,
+                                    elem_idx: 0,
+                                    elem_stage: CgllElemStage::PredepPending,
+                                });
+                            },
+                            Some(bp) => {
+                                if bp.flat_idx == bp.flats.len() {
+                                    *cur = None;
+                                    continue;
+                                }
+                                // Fresh-flat span filter (once per flat —
+                                // classic soundness parity, the
+                                // `packing_satisfies_min_terminal_span`
+                                // call at flat entry).
+                                if bp.elem_idx == 0
+                                    && matches!(
+                                        bp.elem_stage,
+                                        CgllElemStage::PredepPending
+                                    )
+                                    && !self.packing_satisfies_min_terminal_span(
+                                        bp.rule_idx,
+                                        &bp.flats[bp.flat_idx].0,
+                                        sym_lo,
+                                        sym_hi,
+                                    )
+                                {
+                                    bp.flat_idx += 1;
+                                    continue;
+                                }
+                                let flat_len = bp.flats[bp.flat_idx].0.len();
+                                if bp.elem_idx == flat_len {
+                                    // Flat exit: fire the action tail.
+                                    let (flat, flat_weight) = &bp.flats[bp.flat_idx];
+                                    let terms = self.realize_packing_call(
+                                        bp.rule_idx,
+                                        flat,
+                                        bp.weight.times_ref(flat_weight),
+                                        memo,
+                                        limit,
+                                    );
+                                    out.extend(terms);
+                                    bp.flat_idx += 1;
+                                    bp.elem_idx = 0;
+                                    bp.elem_stage = CgllElemStage::PredepPending;
+                                    continue;
+                                }
+                                let c = bp.flats[bp.flat_idx].0[bp.elem_idx];
+                                match bp.elem_stage {
+                                    CgllElemStage::PredepPending => {
+                                        // Am-4: Bin = UNCONDITIONAL Predep
+                                        // push, then the memo check on
+                                        // resume.
+                                        bp.elem_stage = CgllElemStage::RealizePending;
+                                        stack.push(CgllRealizeFrame::Predep {
+                                            walk: vec![c],
+                                            seen: rustc_hash::FxHashSet::default(),
+                                            deps: Vec::new(),
+                                            dep_idx: 0,
+                                            pending_walk_push: None,
+                                        });
+                                        continue 'drive;
+                                    },
+                                    CgllElemStage::RealizePending => {
+                                        if memo.contains_key(&c) {
+                                            bp.elem_idx += 1;
+                                            bp.elem_stage =
+                                                CgllElemStage::PredepPending;
+                                            continue;
+                                        }
+                                        match self.sppf.node(c) {
+                                            Some(crate::sppf::SppfNode::Symbol {
+                                                non_terminal_tag,
+                                                ..
+                                            }) if non_terminal_tag & CGLL_BIN_TAG != 0 => {
+                                                // Push the BIN child; its
+                                                // completion publishes to
+                                                // memo; the re-check above
+                                                // advances on resume.
+                                                if let Some(f) = Self::cgll_make_bin_frame(
+                                                    &self.sppf, memo, c,
+                                                ) {
+                                                    stack.push(f);
+                                                    continue 'drive;
+                                                }
+                                                // Memo hit (raced) —
+                                                // advance.
+                                                bp.elem_idx += 1;
+                                                bp.elem_stage =
+                                                    CgllElemStage::PredepPending;
+                                                continue;
+                                            },
+                                            _ => {
+                                                let cr = self.realize_node_leave(
+                                                    c,
+                                                    memo,
+                                                    &empty_colors,
+                                                    limit,
+                                                );
+                                                memo.insert(c, cr);
+                                                bp.elem_idx += 1;
+                                                bp.elem_stage =
+                                                    CgllElemStage::PredepPending;
+                                                continue;
+                                            },
+                                        }
+                                    },
+                                }
+                            },
+                        }
+                    }
+                },
+                CgllRealizeFrame::Chosen {
+                    sym,
+                    pk,
+                    rule_idx,
+                    weight,
+                    flat,
+                    flat_weight,
+                    elem_idx,
+                    elem_stage,
+                    inserted,
+                } => {
+                    let (sym, pk) = (*sym, *pk);
+                    loop {
+                        // Chosen-child result delivery (the parent-side
+                        // `memo.insert(c, vec![r])`).
+                        if let Some(res) = chosen_result.take() {
+                            match res {
+                                Ok(r) => {
+                                    let c = flat[*elem_idx];
+                                    memo.insert(c, vec![r]);
+                                    *elem_idx += 1;
+                                    *elem_stage = CgllElemStage::PredepPending;
+                                },
+                                Err(e) => {
+                                    // UNWIND: pop the Chosen ancestor chain
+                                    // (all frames are Chosen at Err time —
+                                    // Predep/Bin children complete before
+                                    // any Chosen push), removing on_path
+                                    // per frame iff inserted (Am-5).
+                                    if *inserted {
+                                        on_path.remove(&sym);
+                                    }
+                                    stack.pop();
+                                    while let Some(f) = stack.pop() {
+                                        if let CgllRealizeFrame::Chosen {
+                                            sym: fs,
+                                            inserted: fi,
+                                            ..
+                                        } = f
+                                        {
+                                            if fi {
+                                                on_path.remove(&fs);
+                                            }
+                                        }
+                                    }
+                                    return Some(Err(e));
+                                },
+                            }
+                        }
+                        if *elem_idx == flat.len() {
+                            // Completion: fire the action tail (Some(1)),
+                            // remove on_path, deliver Ok/Err.
+                            let out = self.realize_packing_call(
+                                *rule_idx,
+                                flat,
+                                weight.times_ref(flat_weight),
+                                memo,
+                                Some(1),
+                            );
+                            if *inserted {
+                                on_path.remove(&sym);
+                            }
+                            let res = match out.into_iter().next() {
+                                Some(r) => Ok(r),
+                                None => Err(Some(pk)), // action refuted — tabu
+                            };
+                            stack.pop();
+                            if stack.is_empty() {
+                                return Some(res);
+                            }
+                            match res {
+                                Ok(_) => {
+                                    chosen_result = Some(res);
+                                    continue 'drive;
+                                },
+                                Err(e) => {
+                                    while let Some(f) = stack.pop() {
+                                        if let CgllRealizeFrame::Chosen {
+                                            sym: fs,
+                                            inserted: fi,
+                                            ..
+                                        } = f
+                                        {
+                                            if fi {
+                                                on_path.remove(&fs);
+                                            }
+                                        }
+                                    }
+                                    return Some(Err(e));
+                                },
+                            }
+                        }
+                        let c = flat[*elem_idx];
+                        match *elem_stage {
+                            CgllElemStage::PredepPending => {
+                                // Am-4 Chosen order: memo PRE-check FIRST
+                                // (the recursion's leading `continue`),
+                                // THEN prerealize, THEN re-check.
+                                if memo.contains_key(&c) {
+                                    *elem_idx += 1;
+                                    continue;
+                                }
+                                *elem_stage = CgllElemStage::RealizePending;
+                                stack.push(CgllRealizeFrame::Predep {
+                                    walk: vec![c],
+                                    seen: rustc_hash::FxHashSet::default(),
+                                    deps: Vec::new(),
+                                    dep_idx: 0,
+                                    pending_walk_push: None,
+                                });
+                                continue 'drive;
+                            },
+                            CgllElemStage::RealizePending => {
+                                if memo.contains_key(&c) {
+                                    *elem_idx += 1;
+                                    *elem_stage = CgllElemStage::PredepPending;
+                                    continue;
+                                }
+                                match self.sppf.node(c) {
+                                    Some(crate::sppf::SppfNode::Symbol {
+                                        non_terminal_tag,
+                                        ..
+                                    }) if non_terminal_tag & CGLL_BIN_TAG != 0 => {
+                                        let choices_map = choices.expect(
+                                            "Chosen frames drive with choices present",
+                                        );
+                                        match self.cgll_make_chosen_frame(
+                                            choices_map,
+                                            on_path,
+                                            c,
+                                        ) {
+                                            Ok(f) => {
+                                                stack.push(f);
+                                                continue 'drive;
+                                            },
+                                            Err(e) => {
+                                                // Constructor-stage Err —
+                                                // same unwind as a child
+                                                // Err.
+                                                chosen_result = Some(Err(e));
+                                                continue;
+                                            },
+                                        }
+                                    },
+                                    _ => {
+                                        let cr = self.realize_node_leave(
+                                            c,
+                                            memo,
+                                            &empty_colors,
+                                            None,
+                                        );
+                                        memo.insert(c, cr);
+                                        *elem_idx += 1;
+                                        *elem_stage = CgllElemStage::PredepPending;
+                                        continue;
+                                    },
+                                }
+                            },
+                        }
+                    }
+                },
+            }
+        }
+        chosen_result
+    }
+
+    /// S3: Chosen-frame constructor = the recursion's PROLOGUE (choices
+    /// lookup → packing decode → `on_path` insert → chosen-flat walk).
+    /// Failures return the recursion's exact `Err` values; post-insert
+    /// failures remove `on_path` first (every recursion exit path did).
+    #[allow(dead_code)] // Reached only under the const (DCE'd while const off).
+    fn cgll_make_chosen_frame(
+        &self,
+        choices: &rustc_hash::FxHashMap<crate::sppf::SppfId, crate::sppf::SppfId>,
+        on_path: &mut rustc_hash::FxHashSet<crate::sppf::SppfId>,
+        sym: crate::sppf::SppfId,
+    ) -> Result<CgllRealizeFrame<W>, Option<crate::sppf::SppfId>> {
+        let Some(&pk) = choices.get(&sym) else {
+            #[cfg(debug_assertions)]
+            if std::env::var_os("PRATTAIL_CGLL_REALIZE_DIAG").is_some() {
+                eprintln!("  [k-chosen-bail] no choice for sym={sym}");
+            }
+            return Err(None);
+        };
+        let Some(crate::sppf::SppfNode::Packing { rule_idx, children, weight }) =
+            self.sppf.node(pk)
+        else {
+            return Err(Some(pk));
+        };
+        // CYCLE GUARD (the ForRow unit-rule symbol-mediated cycle class,
+        // tolerated at publish): a chosen derivation that revisits an
+        // on-path symbol is CYCLIC — tabu its packing and re-elect
+        // (receipt: unit_rhocalc_forrow_forrowwhere stack overflow). The
+        // failed insert leaves the set untouched (owned by a live
+        // ancestor) — `inserted` stays false on this path (Am-5).
+        if !on_path.insert(sym) {
+            return Err(Some(pk));
+        }
+        let (rule_idx, pack_children, weight) = (*rule_idx, children.clone(), weight.clone());
+        // Chosen-flat: follow the chosen packing at every Intermediate
+        // (already-iterative walk, kept verbatim incl. the 100k guard).
+        let mut flat: Vec<crate::sppf::SppfId> = Vec::new();
+        let mut stack: Vec<crate::sppf::SppfId> = pack_children.iter().rev().copied().collect();
+        let mut flat_weight = W::one_ref();
+        let mut guard = 0usize;
+        while let Some(c) = stack.pop() {
+            guard += 1;
+            if guard > 100_000 {
+                on_path.remove(&sym);
+                return Err(None);
+            }
+            match self.sppf.node(c) {
+                Some(crate::sppf::SppfNode::Intermediate { .. }) => {
+                    let Some(&ipk) = choices.get(&c) else {
+                        #[cfg(debug_assertions)]
+                        if std::env::var_os("PRATTAIL_CGLL_REALIZE_DIAG").is_some() {
+                            eprintln!("  [k-chosen-bail] no choice for inter={c}");
+                        }
+                        on_path.remove(&sym);
+                        return Err(None);
+                    };
+                    if let Some(crate::sppf::SppfNode::Packing { children, weight, .. }) =
+                        self.sppf.node(ipk)
+                    {
+                        flat_weight = flat_weight.times_ref(weight);
+                        for ch in children.iter().rev() {
+                            stack.push(*ch);
+                        }
+                    } else {
+                        on_path.remove(&sym);
+                        return Err(Some(ipk));
+                    }
+                },
+                _ => flat.push(c),
+            }
+        }
+        Ok(CgllRealizeFrame::Chosen {
+            sym,
+            pk,
+            rule_idx,
+            weight,
+            flat,
+            flat_weight,
+            elem_idx: 0,
+            elem_stage: CgllElemStage::PredepPending,
+            inserted: true,
+        })
+    }
+
+    /// Bin-frame constructor = the recursion's callee ENTRY (memo check →
+    /// provisional-empty publish → span/packings snapshot). `None` = memo
+    /// hit (caller advances without pushing).
+    #[allow(dead_code)] // Reached only under the const (DCE'd while const off).
+    fn cgll_make_bin_frame(
+        sppf: &crate::sppf::Sppf<W>,
+        memo: &mut std::collections::HashMap<crate::sppf::SppfId, Vec<(ActionArg, W)>>,
+        sym: crate::sppf::SppfId,
+    ) -> Option<CgllRealizeFrame<W>> {
+        if memo.contains_key(&sym) {
+            return None;
+        }
+        // Cycle guard: publish an empty memo before descending (the fence
+        // contract — re-entrant packings read provisional-empty and
+        // refute).
+        memo.insert(sym, Vec::new());
+        let (sym_lo, sym_hi) = match sppf.node(sym) {
+            Some(crate::sppf::SppfNode::Symbol { lo_pos, hi_pos, .. }) => (*lo_pos, *hi_pos),
+            _ => (0, 0),
+        };
+        Some(CgllRealizeFrame::Bin {
+            sym,
+            sym_lo,
+            sym_hi,
+            packings: sppf.packings_of(sym).to_vec(),
+            pk_idx: 0,
+            cur: None,
+            out: Vec::new(),
+        })
+    }
+
+    /// P3.c: bottom-up pre-realization of a flat element's memo
+    /// DEPENDENCIES (CollectionId items, OPTIONAL_PRESENT packing children,
+    /// spine Intermediates — recursively, so collections nested inside
+    /// optional groups realize too). Structural containers only have their
+    /// CONTENTS realized. Cycle-safe via the memo guard + local seen set.
+    /// S2-F3: thin wrapper over the iterative machine (Predep-seeded drive;
+    /// Am-1 — kept as a named entry for the realize-chosen caller).
+    #[allow(dead_code)] // Reached only under the const (DCE'd while const off).
     fn cgll_prerealize_deps(
         &self,
         root: crate::sppf::SppfId,
@@ -23853,53 +24974,21 @@ where
     ) where
         W: StarSemiringRef,
     {
-        let mut stack: Vec<crate::sppf::SppfId> = vec![root];
-        let mut seen: rustc_hash::FxHashSet<crate::sppf::SppfId> =
+        let mut no_on_path: rustc_hash::FxHashSet<crate::sppf::SppfId> =
             rustc_hash::FxHashSet::default();
-        let empty_colors: std::collections::HashMap<crate::sppf::SppfId, RealizeColor> =
-            std::collections::HashMap::new();
-        while let Some(n) = stack.pop() {
-            if !seen.insert(n) {
-                continue;
-            }
-            let deps: Vec<crate::sppf::SppfId> = match self.sppf.node(n) {
-                Some(crate::sppf::SppfNode::CollectionId { items, .. }) => items.clone(),
-                Some(crate::sppf::SppfNode::Packing { children, .. }) => children.clone(),
-                Some(crate::sppf::SppfNode::Intermediate { .. }) => {
-                    self.sppf.packings_of(n).to_vec()
-                },
-                _ => Vec::new(),
-            };
-            for it in deps {
-                if !memo.contains_key(&it) {
-                    match self.sppf.node(it) {
-                        Some(crate::sppf::SppfNode::Symbol { non_terminal_tag, .. })
-                            if non_terminal_tag & CGLL_BIN_TAG != 0 =>
-                        {
-                            let ir = self.cgll_realize_bin_symbol(it, memo, limit);
-                            memo.insert(it, ir);
-                        },
-                        Some(crate::sppf::SppfNode::Symbol { .. })
-                        | Some(crate::sppf::SppfNode::Terminal { .. })
-                        | Some(crate::sppf::SppfNode::Epsilon { .. })
-                        | Some(crate::sppf::SppfNode::OptAbsent { .. })
-                        | Some(crate::sppf::SppfNode::Predicate { .. })
-                        | Some(crate::sppf::SppfNode::BinderScope { .. })
-                        // CollectionId: memoize the NODE (realize_node_leave
-                        // yields ActionArg::CollectionId — the sentinel arm's
-                        // product needs it, e.g. an EMPTY collection inside an
-                        // optional group `with [ ]`) — its ITEMS are walked
-                        // separately below.
-                        | Some(crate::sppf::SppfNode::CollectionId { .. }) => {
-                            let ir = self.realize_node_leave(it, memo, &empty_colors, limit);
-                            memo.insert(it, ir);
-                        },
-                        _ => {},
-                    }
-                }
-                stack.push(it);
-            }
-        }
+        self.cgll_realize_drive(
+            CgllRealizeFrame::Predep {
+                walk: vec![root],
+                seen: rustc_hash::FxHashSet::default(),
+                deps: Vec::new(),
+                dep_idx: 0,
+                pending_walk_push: None,
+            },
+            memo,
+            limit,
+            None,
+            &mut no_on_path,
+        );
     }
 
     fn cgll_realize_bin_symbol(
@@ -23911,92 +25000,25 @@ where
     where
         W: StarSemiringRef,
     {
+        // S2-F3 (2026-07-11): thin wrapper over the ITERATIVE machine
+        // (`cgll_realize_drive`) — the former mutual recursion with
+        // `cgll_prerealize_deps` overflowed at 10k-deep chains (PROBE-1
+        // receipt: recurring `cgll_realize_bin_symbol` frames,
+        // logs_s2burn/f3_probe1_bt.log). The machine linearizes the body
+        // 1:1 (P3.c dependency pre-realization included — the Predep
+        // frame); the recursion's return value was `out` with
+        // `memo.insert(sym, out.clone())` at completion, so reading the
+        // memo back is byte-identical.
         if let Some(v) = memo.get(&sym) {
             return v.clone();
         }
-        // Cycle guard: publish an empty memo before descending (the @-cohort is
-        // acyclic, but a shared-span cycle must not recurse forever).
-        memo.insert(sym, Vec::new());
-        let (sym_lo, sym_hi) = match self.sppf.node(sym) {
-            Some(crate::sppf::SppfNode::Symbol { lo_pos, hi_pos, .. }) => (*lo_pos, *hi_pos),
-            _ => (0, 0),
+        let Some(seed) = Self::cgll_make_bin_frame(&self.sppf, memo, sym) else {
+            return memo.get(&sym).cloned().unwrap_or_default();
         };
-        let packings: Vec<crate::sppf::SppfId> = self.sppf.packings_of(sym).to_vec();
-        let empty_colors: std::collections::HashMap<crate::sppf::SppfId, RealizeColor> =
-            std::collections::HashMap::new();
-        let mut out: Vec<(ActionArg, W)> = Vec::new();
-        for p in packings {
-            let (rule_idx, pack_children, weight) = match self.sppf.node(p) {
-                Some(crate::sppf::SppfNode::Packing { rule_idx, children, weight }) => {
-                    (*rule_idx, children.clone(), weight.clone())
-                },
-                _ => continue,
-            };
-            // Flatten the packing's binary spine to classic n-ary children
-            // lists. STAGE C / AMENDMENT 6: the WEIGHTED flatten also
-            // ⊗-collects the spine/wrapper packing weights per flat (lex
-            // provenance); `⊗`-identity for the E1/k=4 arms (their spine
-            // packings are all `one`).
-            let mut flats: Vec<(Vec<crate::sppf::SppfId>, W)> = vec![(Vec::new(), W::one_ref())];
-            for &c in &pack_children {
-                let cf = self.cgll_flatten_ids_weighted(c);
-                let mut next: Vec<(Vec<crate::sppf::SppfId>, W)> = Vec::new();
-                for (a, aw) in &flats {
-                    for (b, bw) in &cf {
-                        let mut x = a.clone();
-                        x.extend_from_slice(b);
-                        next.push((x, aw.times_ref(bw)));
-                    }
-                }
-                flats = next;
-            }
-            for (flat, flat_weight) in flats {
-                // Classic soundness parity: reject a derivation whose in-span
-                // literal terminals do not fit the span (mirrors the classic
-                // `realize_node_leave` Symbol-arm filter at the
-                // `packing_satisfies_min_terminal_span` call). `flat` is the
-                // classic children list, so the check is byte-identical to classic.
-                if !self.packing_satisfies_min_terminal_span(rule_idx, &flat, sym_lo, sym_hi) {
-                    continue;
-                }
-                for &c in &flat {
-                    // ── P3.c REVISED (2026-07-11): recursive DEPENDENCY
-                    // pre-realization. A flat element's realize can read the
-                    // shared memo for nested structure the flat loop never
-                    // visits directly: OPTIONAL_PRESENT packing children
-                    // (the sentinel arm), CollectionId items (the
-                    // realize_packing_call item loop), and their NESTINGS —
-                    // e.g. a CollectionId INSIDE an optional group
-                    // (`… with [ 0 ]`: F-2 refuted on the unrealized tags
-                    // item — receipt [realize-f2-refute] rule=(0,1)
-                    // collection_ids=[0,1], c3opt4.log). One recursive
-                    // walker realizes every such dependency bottom-up.
-                    self.cgll_prerealize_deps(c, memo, limit);
-                    if memo.contains_key(&c) {
-                        continue;
-                    }
-                    let cr = match self.sppf.node(c) {
-                        Some(crate::sppf::SppfNode::Symbol { non_terminal_tag, .. })
-                            if non_terminal_tag & CGLL_BIN_TAG != 0 =>
-                        {
-                            self.cgll_realize_bin_symbol(c, memo, limit)
-                        },
-                        _ => self.realize_node_leave(c, memo, &empty_colors, limit),
-                    };
-                    memo.insert(c, cr);
-                }
-                let terms = self.realize_packing_call(
-                    rule_idx,
-                    &flat,
-                    weight.times_ref(&flat_weight),
-                    memo,
-                    limit,
-                );
-                out.extend(terms);
-            }
-        }
-        memo.insert(sym, out.clone());
-        out
+        let mut no_on_path: rustc_hash::FxHashSet<crate::sppf::SppfId> =
+            rustc_hash::FxHashSet::default();
+        self.cgll_realize_drive(seed, memo, limit, None, &mut no_on_path);
+        memo.get(&sym).cloned().unwrap_or_default()
     }
 
     /// ROOT-P Stage E1 diagnostic — recursively dump a binarized node's packing
@@ -24298,8 +25320,10 @@ where
     //    passthrough + `collection_pops_structural` counter.
     //  - Binder scopes (`start_scope`, `BinderScope` leaves) are B2:
     //    counted via `effects_skipped`.
-    //  - `ParsePredicate` (P3.d) and `OptGroupFinalize` (P3.c) drop the
-    //    descriptor + `out_of_scope_actions` counter (no battery term).
+    //  - `ParsePredicate` (P3.d): LANDED 2026-07-11 (F1) — the inline
+    //    memoized predicate channel (see the dispatch arm). The former
+    //    drop-with-`out_of_scope_actions` deferral is retired;
+    //    `OptGroupFinalize` (P3.c) landed earlier — neither drops.
     //  - The five classic pre-action guards are NOT run (they read classic
     //    cursor residue). Battery-relevance is instrumented instead:
     //    `guard_cc_actions` (guard-4 category-changing-infix census — the
@@ -24321,8 +25345,11 @@ where
     /// `realize_dedup_enabled`).
     #[allow(dead_code)] // Reached only under the const (DCE'd while const off).
     fn cgll_pure_enabled() -> bool {
-        static GATE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-        *GATE.get_or_init(|| std::env::var_os("PRATTAIL_CGLL_PURE").is_some())
+        // R5 FLIP: pure is the DEFAULT canonical arm — derived from the
+        // hoisted RootpMode (canonical on ∧ hybrid not requested), no env
+        // string compare of its own.
+        let mode = RootpMode::from_env();
+        mode.canonical_gll && !mode.cgll_hybrid
     }
 
     /// FxHash of any hashable value (the pure arm's one hashing primitive).
@@ -24997,6 +26024,44 @@ where
     where
         W: StarSemiringRef,
     {
+        // ── S4 (S2-F3, 2026-07-11): ITERATIVE machine (explicit stack) —
+        // the former self-recursion (2 frames per chain level) was the
+        // post-S2 crash site (Am-2 receipt logs_s2burn/f3_s2_bt.log:
+        // recurring `cgll_pure_ktuple` frames; the M6 belt runs this
+        // election on EVERY accepted parse via
+        // realize_root_to_terms_with_weights(root, Some(128))). Stage
+        // order Children → Decisions (straight-line at the transition) →
+        // Scan is the SOURCE order; one child frame per suspension keeps
+        // the absorb total order — ⊗ order (K-B) and decision push order
+        // (K-C, stable sort) — bit-identical; pk_idx iterates the same
+        // `packings_of` slice (K-D); strict-`lt` best replacement kept.
+        // Child first-touch fast paths reproduce the recursion prologue
+        // (kmemo hit / failed on_path insert / non-Sym-Inter leaf runs the
+        // FULL epilogue incl. its memo insert).
+        let is_sym_or_inter = |walker: &Self, n: crate::sppf::SppfId| {
+            matches!(
+                walker.sppf.node(n),
+                Some(crate::sppf::SppfNode::Symbol { .. })
+                    | Some(crate::sppf::SppfNode::Intermediate { .. })
+            )
+        };
+        let make_frame = |walker: &Self, n: crate::sppf::SppfId, d: u32, root: bool| {
+            CgllKtupleFrame::<W> {
+                node: n,
+                depth: d,
+                at_root: root,
+                is_symbol: matches!(
+                    walker.sppf.node(n),
+                    Some(crate::sppf::SppfNode::Symbol { .. })
+                ),
+                node_span: (walker.sppf.span_lo(n), walker.sppf.span_hi(n)),
+                packings: walker.sppf.packings_of(n).to_vec(),
+                pk_idx: 0,
+                cur: None,
+                best: None,
+            }
+        };
+        // Seed prologue (the recursion's entry for THIS call).
         if !at_root {
             if let Some(v) = memo.get(&node) {
                 return v.clone();
@@ -25005,224 +26070,317 @@ where
         if !on_path.insert(node) {
             return CgllKTuple::neutral(); // symbol-mediated cycle guard
         }
-        let is_symbol = matches!(self.sppf.node(node), Some(crate::sppf::SppfNode::Symbol { .. }));
-        let is_inter =
-            matches!(self.sppf.node(node), Some(crate::sppf::SppfNode::Intermediate { .. }));
-        let result = if is_symbol || is_inter {
-            let node_cat = if is_symbol {
-                self.sppf_symbol_category(node)
-            } else {
-                None
-            };
-            let node_span = (self.sppf.span_lo(node), self.sppf.span_hi(node));
-            let packings = self.sppf.packings_of(node).to_vec();
-            let mut best: Option<(CgllKTuple<W>, crate::sppf::SppfId)> = None;
-            for p in packings {
-                if tabu.contains(&p) {
-                    continue; // realize-refuted in an earlier attempt
-                }
-                let Some(crate::sppf::SppfNode::Packing { rule_idx, children, weight }) =
-                    self.sppf.node(p)
-                else {
-                    continue;
-                };
-                let (rule_idx, children, pk_weight) =
-                    (*rule_idx, children.clone(), weight.clone());
-                let mut t = CgllKTuple::neutral();
-                t.weight = pk_weight;
-                for c in &children {
-                    let ct = self.cgll_pure_ktuple(
-                        *c,
-                        depth + 1,
-                        false,
-                        goal_cat,
-                        tabu,
-                        memo,
-                        choices,
-                        on_path,
-                    );
-                    t.absorb_child(ct);
-                }
-                // Decision entries + lateness contributions for THIS packing.
-                if rule_idx == Self::OPTIONAL_PRESENT_RULE_IDX {
-                    // TAKE decision at the group content's start position
-                    // (ORDER-KEY space for the temporal sort).
-                    let pos = children
-                        .first()
-                        .and_then(|&c| self.sppf.span_lo(c))
-                        .unwrap_or(0);
-                    t.decisions.push((
-                        self.cgll_pk(pos),
-                        depth,
-                        self.engine.fork_emission_ordinal(0, 0, 0),
-                    ));
-                } else if is_symbol && rule_idx != Self::OPTIONAL_PRESENT_RULE_IDX {
-                    let cat = (rule_idx >> 16) as u16;
-                    let local = (rule_idx & 0xFFFF) as u16;
-                    // Declared coercion hop? (K-A) — EOI goal-wrap costs 0.
-                    let body_cat = children.first().and_then(|&c| {
-                        match self.sppf.node(c) {
-                            Some(crate::sppf::SppfNode::Symbol {
-                                non_terminal_tag, ..
-                            }) => Some(*non_terminal_tag as u16),
-                            Some(crate::sppf::SppfNode::Intermediate { .. }) => {
-                                self.cgll_pure_spine_body_cat(c)
-                            },
-                            _ => None,
-                        }
-                    });
-                    if let Some(bc) = body_cat {
-                        let declared = self
-                            .engine
-                            .single_hop_coercion(bc, cat)
-                            .iter()
-                            .any(|&(cc, rr)| cc == cat && rr == local);
-                        if declared {
-                            let is_goal_wrap = at_root
-                                && goal_cat.map_or(false, |g| g == cat);
-                            if is_goal_wrap {
-                                // K-B: RE-DERIVE the goal-wrap coercion
-                                // weight (the publish wrap interned one() —
-                                // classic charges it on the cursor @8131).
-                                if let (Some(lo), Some(hi)) = node_span {
-                                    let span_len = hi.saturating_sub(lo).max(1);
-                                    let cw = self
-                                        .engine
-                                        .single_hop_coercion_completion_weight(
-                                            bc, cat, cat, local, span_len,
-                                        );
-                                    t.weight = t.weight.times_ref(&cw);
-                                }
-                            } else {
-                                t.lateness += 1; // mid-parse hop
-                            }
-                        }
+        if !is_sym_or_inter(self, node) {
+            let result = CgllKTuple::neutral();
+            on_path.remove(&node);
+            if !at_root {
+                memo.insert(node, result.clone());
+            }
+            return result;
+        }
+        let mut stack: Vec<CgllKtupleFrame<W>> =
+            Vec::with_capacity(self.sppf.len().min(4096));
+        let mut child_result: Option<CgllKTuple<W>> = None;
+        stack.push(make_frame(self, node, depth, at_root));
+        'drive: while let Some(f) = stack.last_mut() {
+            let (fdepth, fat_root, fis_symbol, fnode_span, fnode) =
+                (f.depth, f.at_root, f.is_symbol, f.node_span, f.node);
+            loop {
+                // Borrow-safe packing completion.
+                if matches!(&f.cur, Some(kp) if matches!(kp.stage, CgllKtStage::Finished)) {
+                    let kp = f.cur.take().expect("finished packing present");
+                    let better = match &f.best {
+                        None => true,
+                        Some((bt, _)) => kp.t.lt(bt), // strict ⇒ K-D insertion kept
+                    };
+                    if better {
+                        f.best = Some((kp.t, kp.pk));
                     }
-                    // KEPT-WRAPPER decision (grouping-kept / NParen-class):
-                    // a fire whose trigger-filtered flat is EXACTLY ONE
-                    // inner Symbol and whose rule is NOT a declared
-                    // coercion. The transparent-group twin is structurally
-                    // ABSENT (no fire) and pads MAX at comparison — so the
-                    // kept-wrapper reading wins the K-C slot, matching
-                    // classic's grouping-first emission (prefix.rs:1110).
-                    // Unary content rules that exist in BOTH competing
-                    // readings contribute matching entries that cancel;
-                    // fold-twin asymmetries are post-fold-identical
-                    // (election-unobservable).
-                    {
-                        let mut content: Vec<crate::sppf::SppfId> = Vec::new();
-                        for &c in &children {
-                            match self.sppf.node(c) {
-                                Some(crate::sppf::SppfNode::Intermediate { .. }) => {
-                                    if let Some(f0) = self.cgll_flatten_ids(c).first() {
-                                        content.extend(f0.iter().copied());
-                                    }
+                    continue;
+                }
+                match &mut f.cur {
+                    None => {
+                        if f.pk_idx == f.packings.len() {
+                            // Frame epilogue (the recursion's tail).
+                            let result = match f.best.take() {
+                                Some((t, p)) => {
+                                    choices.insert(fnode, p);
+                                    t
                                 },
-                                _ => content.push(c),
+                                None => CgllKTuple::neutral(),
+                            };
+                            on_path.remove(&fnode);
+                            if !fat_root {
+                                memo.insert(fnode, result.clone());
                             }
+                            let is_seed = stack.len() == 1;
+                            stack.pop();
+                            if is_seed {
+                                return result;
+                            }
+                            child_result = Some(result);
+                            continue 'drive;
                         }
-                        content.retain(|&el| {
-                            matches!(
-                                self.sppf.node(el),
-                                Some(crate::sppf::SppfNode::Symbol { .. })
-                            )
+                        let p = f.packings[f.pk_idx];
+                        f.pk_idx += 1;
+                        if tabu.contains(&p) {
+                            continue; // realize-refuted in an earlier attempt
+                        }
+                        let Some(crate::sppf::SppfNode::Packing {
+                            rule_idx,
+                            children,
+                            weight,
+                        }) = self.sppf.node(p)
+                        else {
+                            continue;
+                        };
+                        let mut t = CgllKTuple::neutral();
+                        t.weight = weight.clone();
+                        f.cur = Some(CgllKtuplePacking {
+                            pk: p,
+                            rule_idx: *rule_idx,
+                            children: children.clone(),
+                            t,
+                            stage: CgllKtStage::Children { child_idx: 0 },
                         });
-                        if content.len() == 1 {
-                            let declared_coercion = body_cat
-                                .map(|bc| {
-                                    self.engine
+                    },
+                    Some(kp) => match &mut kp.stage {
+                        CgllKtStage::Children { child_idx } => {
+                            if let Some(ct) = child_result.take() {
+                                kp.t.absorb_child(ct);
+                                *child_idx += 1;
+                                continue;
+                            }
+                            if *child_idx < kp.children.len() {
+                                let c = kp.children[*child_idx];
+                                if let Some(v) = memo.get(&c) {
+                                    child_result = Some(v.clone());
+                                    continue;
+                                }
+                                if !on_path.insert(c) {
+                                    child_result = Some(CgllKTuple::neutral());
+                                    continue;
+                                }
+                                if !is_sym_or_inter(self, c) {
+                                    let r = CgllKTuple::neutral();
+                                    on_path.remove(&c);
+                                    memo.insert(c, r.clone());
+                                    child_result = Some(r);
+                                    continue;
+                                }
+                                let nf = make_frame(self, c, fdepth + 1, false);
+                                stack.push(nf);
+                                continue 'drive;
+                            }
+                            // ── Children → DECISIONS (straight-line; the
+                            // recursion's exact block, source order) → Scan.
+                            let rule_idx = kp.rule_idx;
+                            if rule_idx == Self::OPTIONAL_PRESENT_RULE_IDX {
+                                // TAKE decision at the group content's start
+                                // position (ORDER-KEY space).
+                                let pos = kp
+                                    .children
+                                    .first()
+                                    .and_then(|&c| self.sppf.span_lo(c))
+                                    .unwrap_or(0);
+                                kp.t.decisions.push((
+                                    self.cgll_pk(pos),
+                                    fdepth,
+                                    self.engine.fork_emission_ordinal(0, 0, 0),
+                                ));
+                            } else if fis_symbol
+                                && rule_idx != Self::OPTIONAL_PRESENT_RULE_IDX
+                            {
+                                let cat = (rule_idx >> 16) as u16;
+                                let local = (rule_idx & 0xFFFF) as u16;
+                                // Declared coercion hop? (K-A) — EOI
+                                // goal-wrap costs 0.
+                                let body_cat = kp.children.first().and_then(|&c| {
+                                    match self.sppf.node(c) {
+                                        Some(crate::sppf::SppfNode::Symbol {
+                                            non_terminal_tag,
+                                            ..
+                                        }) => Some(*non_terminal_tag as u16),
+                                        Some(crate::sppf::SppfNode::Intermediate {
+                                            ..
+                                        }) => self.cgll_pure_spine_body_cat(c),
+                                        _ => None,
+                                    }
+                                });
+                                if let Some(bc) = body_cat {
+                                    let declared = self
+                                        .engine
                                         .single_hop_coercion(bc, cat)
                                         .iter()
-                                        .any(|&(cc, rr)| cc == cat && rr == local)
-                                })
-                                .unwrap_or(false);
-                            if !declared_coercion {
-                                if let (Some(lo), _) = node_span {
-                                    t.decisions.push((
-                                        self.cgll_pk(lo),
-                                        depth,
-                                        self.engine.fork_emission_ordinal(2, cat, local),
-                                    ));
+                                        .any(|&(cc, rr)| cc == cat && rr == local);
+                                    if declared {
+                                        let is_goal_wrap = fat_root
+                                            && goal_cat.map_or(false, |g| g == cat);
+                                        if is_goal_wrap {
+                                            // K-B: RE-DERIVE the goal-wrap
+                                            // coercion weight (the publish
+                                            // wrap interned one() — classic
+                                            // charges it on the cursor).
+                                            if let (Some(lo), Some(hi)) = fnode_span {
+                                                let span_len =
+                                                    hi.saturating_sub(lo).max(1);
+                                                let cw = self
+                                                    .engine
+                                                    .single_hop_coercion_completion_weight(
+                                                        bc, cat, cat, local, span_len,
+                                                    );
+                                                kp.t.weight =
+                                                    kp.t.weight.times_ref(&cw);
+                                            }
+                                        } else {
+                                            kp.t.lateness += 1; // mid-parse hop
+                                        }
+                                    }
+                                }
+                                // KEPT-WRAPPER decision (grouping-kept /
+                                // NParen-class): a fire whose
+                                // trigger-filtered flat is EXACTLY ONE inner
+                                // Symbol and whose rule is NOT a declared
+                                // coercion. The transparent-group twin is
+                                // structurally ABSENT (no fire) and pads MAX
+                                // at comparison — so the kept-wrapper
+                                // reading wins the K-C slot, matching
+                                // classic's grouping-first emission
+                                // (prefix.rs:1110).
+                                {
+                                    let mut content: Vec<crate::sppf::SppfId> =
+                                        Vec::new();
+                                    for &c in &kp.children {
+                                        match self.sppf.node(c) {
+                                            Some(crate::sppf::SppfNode::Intermediate {
+                                                ..
+                                            }) => {
+                                                if let Some(f0) =
+                                                    self.cgll_flatten_ids(c).first()
+                                                {
+                                                    content
+                                                        .extend(f0.iter().copied());
+                                                }
+                                            },
+                                            _ => content.push(c),
+                                        }
+                                    }
+                                    content.retain(|&el| {
+                                        matches!(
+                                            self.sppf.node(el),
+                                            Some(crate::sppf::SppfNode::Symbol { .. })
+                                        )
+                                    });
+                                    if content.len() == 1 {
+                                        let declared_coercion = body_cat
+                                            .map(|bc| {
+                                                self.engine
+                                                    .single_hop_coercion(bc, cat)
+                                                    .iter()
+                                                    .any(|&(cc, rr)| {
+                                                        cc == cat && rr == local
+                                                    })
+                                            })
+                                            .unwrap_or(false);
+                                        if !declared_coercion {
+                                            if let (Some(lo), _) = fnode_span {
+                                                kp.t.decisions.push((
+                                                    self.cgll_pk(lo),
+                                                    fdepth,
+                                                    self.engine.fork_emission_ordinal(
+                                                        2, cat, local,
+                                                    ),
+                                                ));
+                                            }
+                                        }
+                                    }
                                 }
                             }
-                        }
-                    }
-                }
-                if !Self::CGLL_KA_HOP_PLACEMENT_ONLY {
-                    t.lateness += 1; // PRIMARY formulation: every transition counts.
-                }
-                // OptAbsent SKIP decisions live as LEAVES in the flats —
-                // absorbed below via child scan of DIRECT children (leaves
-                // of Intermediates are reached through the recursion since
-                // Intermediate packings also pass here).
-                for c in &children {
-                    match self.sppf.node(*c) {
-                        Some(crate::sppf::SppfNode::OptAbsent { pos }) => {
-                            t.decisions.push((
-                                self.cgll_pk(*pos),
-                                depth,
-                                self.engine.fork_emission_ordinal(1, 0, 0),
-                            ));
+                            if !Self::CGLL_KA_HOP_PLACEMENT_ONLY {
+                                kp.t.lateness += 1; // PRIMARY: every transition.
+                            }
+                            kp.stage = CgllKtStage::Scan { scan_idx: 0, inner: None };
                         },
-                        // The take-path Optional rides as a PACKING LEAF in
-                        // the flat (P3.c OptGroupFinalize) — outside the
-                        // Symbol/Intermediate recursion. Count the TAKE
-                        // decision and absorb the inner args' tuples.
-                        Some(crate::sppf::SppfNode::Packing {
-                            rule_idx: pr,
-                            children: pch,
-                            ..
-                        }) if *pr == Self::OPTIONAL_PRESENT_RULE_IDX => {
-                            let pch = pch.clone();
-                            let pos = pch
-                                .first()
-                                .and_then(|&ic| self.sppf.span_lo(ic))
-                                .unwrap_or(0);
-                            t.decisions.push((
-                                self.cgll_pk(pos),
-                                depth,
-                                self.engine.fork_emission_ordinal(0, 0, 0),
-                            ));
-                            for ic in pch {
-                                let ct = self.cgll_pure_ktuple(
-                                    ic,
-                                    depth + 1,
-                                    false,
-                                    goal_cat,
-                                    tabu,
-                                    memo,
-                                    choices,
-                                    on_path,
-                                );
-                                t.absorb_child(ct);
+                        CgllKtStage::Scan { scan_idx, inner } => {
+                            if let Some((pch, idx)) = inner {
+                                if let Some(ct) = child_result.take() {
+                                    kp.t.absorb_child(ct);
+                                    *idx += 1;
+                                }
+                                if *idx < pch.len() {
+                                    let c = pch[*idx];
+                                    if let Some(v) = memo.get(&c) {
+                                        child_result = Some(v.clone());
+                                        continue;
+                                    }
+                                    if !on_path.insert(c) {
+                                        child_result = Some(CgllKTuple::neutral());
+                                        continue;
+                                    }
+                                    if !is_sym_or_inter(self, c) {
+                                        let r = CgllKTuple::neutral();
+                                        on_path.remove(&c);
+                                        memo.insert(c, r.clone());
+                                        child_result = Some(r);
+                                        continue;
+                                    }
+                                    let nf = make_frame(self, c, fdepth + 1, false);
+                                    stack.push(nf);
+                                    continue 'drive;
+                                }
+                                *inner = None;
+                                *scan_idx += 1;
+                                continue;
+                            }
+                            if *scan_idx == kp.children.len() {
+                                kp.stage = CgllKtStage::Finished;
+                                continue;
+                            }
+                            let c = kp.children[*scan_idx];
+                            match self.sppf.node(c) {
+                                Some(crate::sppf::SppfNode::OptAbsent { pos }) => {
+                                    kp.t.decisions.push((
+                                        self.cgll_pk(*pos),
+                                        fdepth,
+                                        self.engine.fork_emission_ordinal(1, 0, 0),
+                                    ));
+                                    *scan_idx += 1;
+                                },
+                                // The take-path Optional rides as a PACKING
+                                // LEAF in the flat (P3.c OptGroupFinalize) —
+                                // outside the Symbol/Intermediate recursion.
+                                // Count the TAKE decision and absorb the
+                                // inner args' tuples.
+                                Some(crate::sppf::SppfNode::Packing {
+                                    rule_idx: pr,
+                                    children: pch,
+                                    ..
+                                }) if *pr == Self::OPTIONAL_PRESENT_RULE_IDX => {
+                                    let pch = pch.clone();
+                                    let pos = pch
+                                        .first()
+                                        .and_then(|&ic| self.sppf.span_lo(ic))
+                                        .unwrap_or(0);
+                                    kp.t.decisions.push((
+                                        self.cgll_pk(pos),
+                                        fdepth,
+                                        self.engine.fork_emission_ordinal(0, 0, 0),
+                                    ));
+                                    *inner = Some((pch, 0));
+                                },
+                                _ => {
+                                    *scan_idx += 1;
+                                },
                             }
                         },
-                        _ => {},
-                    }
-                }
-                let better = match &best {
-                    None => true,
-                    Some((bt, _)) => t.lt(bt), // strict ⇒ K-D insertion kept
-                };
-                if better {
-                    best = Some((t, p));
+                        CgllKtStage::Finished => {
+                            unreachable!("Finished handled before the cur match")
+                        },
+                    },
                 }
             }
-            match best {
-                Some((t, p)) => {
-                    choices.insert(node, p);
-                    t
-                },
-                None => CgllKTuple::neutral(),
-            }
-        } else {
-            CgllKTuple::neutral()
-        };
-        on_path.remove(&node);
-        if !at_root {
-            memo.insert(node, result.clone());
         }
-        result
+        unreachable!("ktuple seed frame returns from its epilogue")
     }
 
     /// P4 K-A formulation switch (red-team NO-GO 2): `false` = PRIMARY
@@ -25247,104 +26405,14 @@ where
     where
         W: StarSemiringRef,
     {
-        let Some(&pk) = choices.get(&sym) else {
-            #[cfg(debug_assertions)]
-            if std::env::var_os("PRATTAIL_CGLL_REALIZE_DIAG").is_some() {
-                eprintln!("  [k-chosen-bail] no choice for sym={sym}");
-            }
-            return Err(None);
-        };
-        let Some(crate::sppf::SppfNode::Packing { rule_idx, children, weight }) =
-            self.sppf.node(pk)
-        else {
-            return Err(Some(pk));
-        };
-        // CYCLE GUARD (the ForRow unit-rule symbol-mediated cycle class,
-        // tolerated at publish): a chosen derivation that revisits an
-        // on-path symbol is CYCLIC — tabu its packing and re-elect
-        // (receipt: unit_rhocalc_forrow_forrowwhere stack overflow).
-        if !on_path.insert(sym) {
-            return Err(Some(pk));
-        }
-        let (rule_idx, pack_children, weight) = (*rule_idx, children.clone(), weight.clone());
-        // Chosen-flat: follow the chosen packing at every Intermediate.
-        let mut flat: Vec<crate::sppf::SppfId> = Vec::new();
-        let mut stack: Vec<crate::sppf::SppfId> = pack_children.iter().rev().copied().collect();
-        let mut flat_weight = W::one_ref();
-        let mut guard = 0usize;
-        while let Some(c) = stack.pop() {
-            guard += 1;
-            if guard > 100_000 {
-                on_path.remove(&sym);
-                return Err(None);
-            }
-            match self.sppf.node(c) {
-                Some(crate::sppf::SppfNode::Intermediate { .. }) => {
-                    let Some(&ipk) = choices.get(&c) else {
-                        #[cfg(debug_assertions)]
-                        if std::env::var_os("PRATTAIL_CGLL_REALIZE_DIAG").is_some() {
-                            eprintln!("  [k-chosen-bail] no choice for inter={c}");
-                        }
-                        on_path.remove(&sym);
-                        return Err(None);
-                    };
-                    if let Some(crate::sppf::SppfNode::Packing { children, weight, .. }) =
-                        self.sppf.node(ipk)
-                    {
-                        flat_weight = flat_weight.times_ref(weight);
-                        for ch in children.iter().rev() {
-                            stack.push(*ch);
-                        }
-                    } else {
-                        on_path.remove(&sym);
-                        return Err(Some(ipk));
-                    }
-                },
-                _ => flat.push(c),
-            }
-        }
-        for &c in &flat {
-            if memo.contains_key(&c) {
-                continue;
-            }
-            self.cgll_prerealize_deps(c, memo, None);
-            if memo.contains_key(&c) {
-                continue;
-            }
-            let cr = match self.sppf.node(c) {
-                Some(crate::sppf::SppfNode::Symbol { non_terminal_tag, .. })
-                    if non_terminal_tag & CGLL_BIN_TAG != 0 =>
-                {
-                    match self.cgll_pure_realize_chosen(c, choices, memo, on_path) {
-                        Ok(one_result) => vec![one_result],
-                        Err(e) => {
-                            on_path.remove(&sym);
-                            return Err(e);
-                        },
-                    }
-                },
-                _ => {
-                    let empty_colors: std::collections::HashMap<
-                        crate::sppf::SppfId,
-                        RealizeColor,
-                    > = std::collections::HashMap::new();
-                    self.realize_node_leave(c, memo, &empty_colors, None)
-                },
-            };
-            memo.insert(c, cr);
-        }
-        let out = self.realize_packing_call(
-            rule_idx,
-            &flat,
-            weight.times_ref(&flat_weight),
-            memo,
-            Some(1),
-        );
-        on_path.remove(&sym);
-        match out.into_iter().next() {
-            Some(r) => Ok(r),
-            None => Err(Some(pk)), // this packing's action refuted — tabu it
-        }
+        // S2-F3/S3 (2026-07-11): thin wrapper over the ITERATIVE machine —
+        // the former self-recursion (one frame per chain level; the E3
+        // facade path of the F3 overflow). The prologue lives in the
+        // fallible constructor; the drive returns the seed's Ok/Err with
+        // the recursion's exact on_path/memo timing.
+        let seed = self.cgll_make_chosen_frame(choices, on_path, sym)?;
+        self.cgll_realize_drive(seed, memo, None, Some(choices), on_path)
+            .expect("Chosen-seeded drive always delivers a result")
     }
 
     /// P3.a: non-separator item count of a marker frame's spine `w` (the
@@ -27836,7 +28904,8 @@ where
                  guard1_sites={} guarded_topcat_sites={} unwind_m1={} unwind_m5={} unwind_m234={} d2_retags={} collsep_guard={} \
                  unwind_census={} chain_ctx_div={} grouping_cat_rejects={} \
                  opt_group_absent={} out_of_scope={} engine_errors={} prefix_pos_desyncs={} \
-                 accept_action_hits={} prefix_seed_pops={} repair_parked={} \
+                 accept_action_hits={} prefix_seed_pops={} pred_parses={} \
+                 pred_memo_hits={} pred_refutes={} repair_parked={} \
                  repair_reseeded={} repair_rounds={} repair_named_drops={} \
                  repair_guard_parks={} cluster_b_refused={}",
                 s.u_count,
@@ -27894,6 +28963,9 @@ where
                 s.prefix_pos_desyncs,
                 s.accept_action_hits,
                 s.prefix_seed_pops,
+                s.pred_parses,
+                s.pred_memo_hits,
+                s.pred_refutes,
                 s.repair_parked,
                 s.repair_reseeded,
                 s.repair_rounds,
@@ -28619,9 +29691,98 @@ where
                     0,
                 None,);
             },
-            WpdaStepAction::ParsePredicate { .. } => {
-                // OUT of PoC → named Stage P3.d (no battery term).
-                run.stats.out_of_scope_actions += 1;
+            WpdaStepAction::ParsePredicate { replace_symbol, weight, new_state } => {
+                // ── P3.d (F1, 2026-07-11): the PREDICATE CHANNEL ─────────
+                // Inline guard sub-parse — a PURE function of (tokens,
+                // d.pos): `parse_predicate_via_token_source` reads only
+                // len/peek_kind/peek_text (predicate.rs:31-72), scans to
+                // the first depth-0 terminator in `) } ] , ;` and returns
+                // `new_pos` = the terminator's index (NOT consumed).
+                // Classic parity: the 6-step apply @~16098 (out-of-band
+                // sub-parse; Ok → emit_push_predicate + ABSOLUTE pos jump;
+                // Err → silent CursorOutcome::Drop — no RecoveryEvent, no
+                // park). Memoized per START pos so the leaf id is
+                // functionally determined by `pos` and the U key stays
+                // lossless (two descriptors equal in the seven key fields
+                // produce identical successors).
+                // EOI fall-through (A-12a): with NO depth-0 terminator
+                // before EOI the scan exits at pos = len and returns
+                // Ok((pred, len)) when the span parses — the successor
+                // then dies at the next consume (e.g. the `)` the grammar
+                // expects). Classic-identical; `cgll_pure_pos_key` covers
+                // 0..=len so the jump stays in-range.
+                let entry = match run.pred_memo.get(&d.pos) {
+                    Some(e) => {
+                        run.stats.pred_memo_hits += 1;
+                        *e
+                    },
+                    None => {
+                        run.stats.pred_parses += 1;
+                        let e = match crate::parser::predicate::parse_predicate_via_token_source(
+                            tokens, d.pos,
+                        ) {
+                            Ok((pred, new_pos)) => {
+                                let handle = self.sppf_predicate_arena.len() as u32;
+                                self.sppf_predicate_arena.push(Arc::new(pred));
+                                Some((self.sppf.intern_predicate(handle), new_pos))
+                            },
+                            Err(_) => None, // classic CursorOutcome::Drop
+                        };
+                        run.pred_memo.insert(d.pos, e);
+                        e
+                    },
+                };
+                let Some((leaf, new_pos)) = entry else {
+                    run.stats.pred_refutes += 1;
+                    return; // descriptor dies — classic Drop parity; NO park (F6)
+                };
+                // Annotation fold slot: position-salted (fold-site pos =
+                // d.pos, the predicate START — the sep-marker convention)
+                // + fresh salt bit 26 (27 = OptAbsent, 28 = reseed/binder-
+                // close, 29 = empty-close, 30 = WRAP, 31 = BIN). A-8: the
+                // salt is collision-free SAME-SITE by construction (the
+                // cycle hazard the salts exist for); CROSS-SITE collisions
+                // are the accepted 32-bit-hash risk class shared with the
+                // existing bit-27/28/29 salts (`slot_seen`-tracked;
+                // escalate to structured ids before relying further).
+                let slot = Self::cgll_pure_slot_hash(&d.cur_sym, &d.state)
+                    ^ ((d.pos as u32) << 1)
+                    ^ 0x0400_0000;
+                // pos_hint = new_pos: the Predicate leaf is span-less
+                // (sppf span_lo/hi → None), so the fold Intermediate's hi
+                // derives from the hint — new_pos is the truthful
+                // EXCLUSIVE end of the consumed span (what a Terminal
+                // fold's `p+1` yields), keeping every order-key fence
+                // coherent (material never over-reports). K-tuple
+                // neutrality (A-9): under the LIVE K-A formulation
+                // (`CGLL_KA_HOP_PLACEMENT_ONLY = true` — coercion-hop
+                // placement only) a predicate contributes ZERO lateness
+                // (it is not a coercion hop); under the primary
+                // (+1-per-transition) formulation it adds the same +1 any
+                // child fold adds, uniformly across competing readings —
+                // NEUTRAL UNDER BOTH. K-B: weight is codegen-pinned
+                // `lex_one()` (binder.rs:1662/2644 — debug-asserted);
+                // K-C: a Predicate child matches no decision scan;
+                // K-D: memo + packing dedup ⇒ no family inflation.
+                // A-12b: if `d.w == SPPF_ID_NONE` (guard as the FIRST
+                // spine element — unreachable in-tree: the rule trigger
+                // folds first), `cgll_pure_fold` returns the BARE leaf:
+                // the fold weight is dropped by the identity short-circuit
+                // (harmless — pinned one) AND the next fold under-reports
+                // the spine lo (span_lo(Predicate) = None) — monotone-SAFE
+                // (fences refute on hi only), documented both halves.
+                debug_assert!(
+                    weight == W::one_ref(),
+                    "ParsePredicate weight expected one (codegen pins lex_one())"
+                );
+                let w = self.cgll_pure_fold(slot, d.w, leaf, new_pos, weight.clone());
+                run.worklist.push_back(CgllPureDescriptor {
+                    state: new_state,
+                    cur_sym: replace_symbol,
+                    pos: new_pos,
+                    w,
+                    ..d.clone()
+                });
             },
             WpdaStepAction::OptGroupAbsent { replace_symbol, weight, new_state } => {
                 // P3.c (2026-07-11): the SKIP path folds an `OptAbsent`

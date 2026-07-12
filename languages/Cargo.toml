@@ -54,6 +54,15 @@ composition = ["calculator", "lambda"]
 fortran_model = []
 reserved_model = []
 guarded-rho = []
+# A-11 (P3.d/F1) site-2 smoke — NOT in all-languages: `*opt(?g:Guard)` hits
+# TWO pre-existing, engine-independent codegen gaps at COMPILE time (the
+# term-ops emitters, not the parser): (1) generated normalize.rs field
+# mismatch (`f1_pred` vs `f1_slot`/`f1_some` for the Option<Guard> slot);
+# (2) eval.rs `classify_hol_rule_for_pda` returns None for a guard-in-opt
+# rule. Classic and pure are blocked identically. Enable once the term-ops
+# emitters support Option<Guard>; the smoke tests are cfg-gated on this
+# feature and become the site-2 gate then.
+guardoptsmoke = []
 lambda = []
 led-test = []
 optsmoke = []

@@ -324,6 +324,22 @@ fn test_ternary_chain_10000() {
     assert!(result.is_ok(), "10000 nested ternaries should parse: {:?}", result.err());
 }
 
+// S2-F3 G2 (2026-07-11): deeper scaling probes for the ITERATIVE realize
+// conversion. Depth 20000 deliberately: pre-fix pure failed at 10k already
+// (clean discriminator), while the pre-existing classic-shared TERM-depth
+// recursions (generated semantic_hash, AST Display/Drop — the "Sprint 2
+// AST Work-Stack" note above) are measured green at 10k and sized
+// ~100-200 B/frame, leaving ≥2× headroom at 20k; 100k would gate on those
+// out-of-scope ceilings, not on this conversion.
+#[test]
+#[ignore = "scaling probe — run explicitly"]
+fn test_ternary_chain_20000() {
+    mettail_runtime::clear_var_cache();
+    let input = ternary_chain(20_000);
+    let result = Int::parse_structured(&input);
+    assert!(result.is_ok(), "20000 nested ternaries should parse: {:?}", result.err());
+}
+
 // ── Tests: Deep unary prefix chains ──
 
 #[test]
@@ -332,6 +348,16 @@ fn test_deep_unary_neg_1000() {
     let input = nested_unary(1_000);
     let result = Int::parse_structured(&input);
     assert!(result.is_ok(), "1000 unary neg should parse: {:?}", result.err());
+}
+
+#[test]
+#[ignore = "scaling probe — run explicitly"]
+fn test_deep_unary_neg_20000() {
+    // S2-F3 G2: see the 20k rationale above.
+    mettail_runtime::clear_var_cache();
+    let input = nested_unary(20_000);
+    let result = Int::parse_structured(&input);
+    assert!(result.is_ok(), "20000 unary neg should parse: {:?}", result.err());
 }
 
 #[test]
