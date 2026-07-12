@@ -66,3 +66,8 @@ theories/PureDescriptorSpaceBound.v
 theories/PureForestAcyclicity.v
 theories/PurePackingPreservation.v
 theories/LadderReadingCount.v
+
+theories/TrieLeafBijection.v
+theories/SpineSimulation.v
+theories/SpineTriggerReattribution.v
+theories/PureCommitFoldIntegrity.v
