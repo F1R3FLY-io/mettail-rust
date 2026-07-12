@@ -993,6 +993,19 @@ pub enum WpdaResolveResult<W: SemiringRef> {
 /// mode is active at a time. `WpdaWalker::with_bounding_mode(mode)`
 /// replaces the prior `with_beam_size(k)` API; the legacy methods are
 /// retained as compatibility shims.
+///
+/// **Canonical-pure engine enforcement scope** (R-D v3, 2026-07-12): under
+/// the descriptor-pure canonical-GLL engine (`step_canonical_pure`) the
+/// budget is enforced through the FIRST multi-way fork event of the walk —
+/// the window in which the pure worklist is provably synchronous with the
+/// classic cursor frontier (`actual` there equals classic's fork width
+/// byte-for-byte). Later fans are NOT enforced: the classic walker keeps
+/// its counted frontier at the contemporaneous fan width by routing
+/// cross-category delegate work through the dispatch-cohort worker table
+/// (which `logical_frontier_len` never counts), a container split the pure
+/// worklist cannot mirror. Post-window fan widths are REPORTED via the
+/// `post_window_max_width` walker stat (`PRATTAIL_CANONICAL_GLL_STATS=1`)
+/// instead of enforced. The classic engine's enforcement is unchanged.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CursorBoundingMode {
     /// Default — pure ambiguity preservation; no cursor dropping.

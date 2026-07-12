@@ -4997,6 +4997,27 @@ struct CgllPureStats {
     xcat_stop_conflicts: u64,
     /// R-C: member-1′ operand early-stop twins enqueued.
     rc_operand_yields: u64,
+    /// R-D (v2 plan §5.1): Fork-arm dispatch count — the ARM detector for the
+    /// budget check (§3.4: the R-A boundary guard SYNTHESIZES Forks from
+    /// non-fork actions mid-dispatch, so a pre-dispatch `matches!` cannot see
+    /// them; conversely the guard's all-suppressed Fork→Advance rewrite must
+    /// count as NON-fork).
+    fork_dispatches: u64,
+    /// R-D: widest single fork (`width` after replay-echo subtraction).
+    max_fork_width: usize,
+    /// R-D v3 (first-fan window): `fork_dispatches` value at which the fan
+    /// window closed (the first event of width ≥ 2); 0 = never closed.
+    window_closed_at_fork: u64,
+    /// R-D v3: widest post-window fork width (diagnostic only — the
+    /// disclosed under-enforcement quantum; N2: twins-only events feed
+    /// `1 + twins`). NOT the check quantity.
+    post_window_max_width: usize,
+    /// R-D v3 (F2): in-window non-fork re-expansions (delta − twins ≥ 2) —
+    /// the window theorem's precondition monitor (observability ONLY; the
+    /// window NEVER closes on these).
+    prefan_reexpansions: u64,
+    /// R-D: AmbiguityBudget/BeamSize overflows fired by the pure walk.
+    ambiguity_overflows: u64,
 }
 
 /// Frame-class bit folded into [`CgllRetSlot::kind_class`] (bit 6): a D1 and
@@ -28513,6 +28534,50 @@ where
         let mut u_by_pos: std::collections::HashMap<usize, u64> = std::collections::HashMap::new();
         let max_pos = tokens.len();
         let mut budget_exceeded = false;
+        // ── R-D AmbiguityBudget/BeamSize channel — v3 FIRST-FAN EXACT-WINDOW
+        // (rd_first_fan_window_v3_plan.md §5 + F1-F9; supersedes the v2 `live`
+        // estimator, V2-refuted at peak_live=77 vs classic ≤5). The budget is
+        // checked at fork/twin events ONLY while the run is provably
+        // classic-synchronous: before the first event of width ≥ 2 every
+        // dispatch has delta − twins ∈ {0,1} (a delta-0 on the 1-pool ends
+        // the run), so the pool is a single chain and the check quantity
+        // `event_width` equals classic's `children.len()` at the SAME first
+        // ForkInto (same tables, same guards, same injection/twin members —
+        // AM-1). The window then CLOSES: later fans are deliberately
+        // unenforced (classic keeps its counted frontier at the
+        // contemporaneous fan width by routing cross-cat delegates through
+        // the dispatch-cohort worker table, which `logical_frontier_len`
+        // never counts — P0 receipt rd_p0_k64.log: the 12-wide Proc-entry
+        // fork's 11 delegate children all STEP at pos 2 yet classic k=5
+        // stays Ok with a strict-`>` pre-merge checkpoint ⇒ they never enter
+        // the counted frontier; no pure-side worklist arithmetic can mirror
+        // that container split). Enforced surface = fire `actual =
+        // first-fan width` for n < width (both repros: 5, byte-equal to
+        // classic mod ESS), never fire for n ≥ width (classic Ok at
+        // k∈{5,16,64} BOTH repros — rd_v4_classic_k5.log,
+        // rd_f1_classic_float.log). `post_window_max_width` reports what is
+        // forgone (N9 rustdoc on CursorBoundingMode discloses the scope).
+        // Window theorem precondition (F2): no pre-fan re-expansion
+        // (create-after-pop replay / OptGroupFinalize multi-enqueue) —
+        // `prefan_reexpansions` monitors it (receipts: echo=0/replays=0
+        // through fork 1 on both repros); the window NEVER closes on it.
+        // Single-seed premise (N3): `new_for_category` seeds exactly one
+        // frame; manual multi-seed callers still get per-event semantics.
+        // Budget(0) parity: deterministic (never-forking) inputs run no
+        // check (classic runs no checkpoint); a width-1 first fork checks
+        // (fires actual=1) but does NOT close the window.
+        let bound = self.bounding_mode;
+        let mut ambiguity_overflow: Option<(usize, usize, usize)> = None;
+        let mut fan_window_open = matches!(
+            bound,
+            crate::wpda_runtime::CursorBoundingMode::BeamSize(_)
+                | crate::wpda_runtime::CursorBoundingMode::AmbiguityBudget(_)
+        );
+        // F9: the per-dispatch delta/echo/twins captures and the post-window
+        // diagnostics run only under a bounded mode, a stats dump, or the
+        // RD-U1 probe env — zero added work on production unbounded parses.
+        let rd_u1_diag = std::env::var_os("PRATTAIL_RD_U1_DIAG").is_some();
+        let rd_track = fan_window_open || dump_stats || rd_u1_diag;
         // ── R1 (Pocket-F): K-GATED RECOVERY ROUNDS (amendments 5/7) ──────
         // K = the walker's own recovery config read DIRECTLY (strict
         // facades pin 0 ⇒ the loop body runs ONCE and no round ever fires
@@ -28723,12 +28788,136 @@ where
                     d.pos, d.u, d.w, d.frame_class, d.state, d.cur_sym, act
                 );
             }
+            // ── R-D v3 first-fan exact-window (plan §5.3 + F7/F9/N2; the
+            // hoist comment above carries the full derivation). All
+            // quantities from len/stat deltas around the single dispatch
+            // call; `forked` is the ARM detector (`stats.fork_dispatches`
+            // first line of the Fork arm — guard-synthesized Forks counted,
+            // the guard's Fork→Advance rewrite is not).
+            let len_before = if rd_track { run.worklist.len() } else { 0 };
+            let forks_before = if rd_track { run.stats.fork_dispatches } else { 0 };
+            let replays_before = if rd_track { run.stats.replays } else { 0 };
+            let twins_before = if rd_track { run.stats.rc_operand_yields } else { 0 };
             self.cgll_pure_dispatch_action(&mut run, &d, action, tokens);
             run.stats.peak_r = run.stats.peak_r.max(run.worklist.len());
+            if rd_track {
+                let len_after = run.worklist.len();
+                let delta = len_after - len_before;
+                let twins = (run.stats.rc_operand_yields - twins_before) as usize;
+                let echo = (run.stats.replays - replays_before) as usize;
+                let forked = run.stats.fork_dispatches > forks_before;
+                if forked {
+                    run.stats.max_fork_width =
+                        run.stats.max_fork_width.max(delta.saturating_sub(echo));
+                }
+                if fan_window_open {
+                    if !forked && delta.saturating_sub(twins) >= 2 {
+                        // F2: pre-fan re-expansion — window-theorem
+                        // precondition monitor. Observability ONLY; the
+                        // window NEVER closes on this.
+                        run.stats.prefan_reexpansions += 1;
+                    }
+                    // Event width (AM-1/F7): forks = delta minus the replay
+                    // echo (twin + injection stay INSIDE the fork delta —
+                    // classic's waiter/InfixLoop-injection widen the same
+                    // ForkInto; adding twins here would double-count). A
+                    // non-fork twin event = classic's fork-at-that-site:
+                    // twins + the forker's own continuation if it survived
+                    // (F7's form — never hard-code survival).
+                    let event_width = if forked {
+                        delta.saturating_sub(echo)
+                    } else if twins > 0 {
+                        twins + if delta > twins { 1 } else { 0 }
+                    } else {
+                        0
+                    };
+                    if event_width >= 1 {
+                        if let crate::wpda_runtime::CursorBoundingMode::BeamSize(n)
+                        | crate::wpda_runtime::CursorBoundingMode::AmbiguityBudget(n) = bound
+                        {
+                            if event_width > n {
+                                // Report position (A2): furthest REAL
+                                // pending position in order-key space
+                                // (mirror of the trailing/reject
+                                // reporters); repair virtuals filtered
+                                // (`p < cgll_pure_virtual_base`), orphan
+                                // soft-fail DAG nodes clamped to eof_node;
+                                // the `d.pos` fallback clamped too.
+                                let eof = tokens.eof_node();
+                                let position = run
+                                    .worklist
+                                    .iter()
+                                    .map(|x| x.pos)
+                                    .filter(|&p| {
+                                        p < self.cgll_pure_virtual_base && p <= eof
+                                    })
+                                    .max_by_key(|&p| {
+                                        tokens.position_order_key(p).unwrap_or(p)
+                                    })
+                                    .unwrap_or_else(|| d.pos.min(eof))
+                                    .min(eof);
+                                run.stats.ambiguity_overflows += 1;
+                                ambiguity_overflow = Some((n, event_width, position));
+                                break;
+                            }
+                        }
+                        if event_width >= 2 {
+                            // The first multi-way event: the run leaves the
+                            // provably classic-synchronous window.
+                            fan_window_open = false;
+                            run.stats.window_closed_at_fork = run.stats.fork_dispatches;
+                        }
+                    }
+                } else if forked {
+                    // Post-window diagnostic: the disclosed
+                    // under-enforcement quantum (never checked).
+                    run.stats.post_window_max_width = run
+                        .stats
+                        .post_window_max_width
+                        .max(delta.saturating_sub(echo));
+                } else if twins > 0 {
+                    // N2: post-window twins-only event — the classic-fork-
+                    // equivalent width feeds the same diagnostic.
+                    run.stats.post_window_max_width =
+                        run.stats.post_window_max_width.max(1 + twins);
+                }
+                // ── R-D U1/V1 probe (env-gated, measurement-only; F8: the
+                // `live` column is retired — `event_width` = the fork's
+                // delta − echo).
+                if forked && rd_u1_diag {
+                    let child_pos: Vec<usize> = run
+                        .worklist
+                        .iter()
+                        .skip(len_before)
+                        .map(|x| x.pos)
+                        .collect();
+                    eprintln!(
+                        "RD-U1 fork d.pos={} len_before={} len_after={} delta={} event_width={} \
+                         child_pos={:?} echo={} twins={} boundary_yields={} replays={} \
+                         unwind_m1={} unwind_m5={} unwind_m234={} rc_yields={} eof={}",
+                        d.pos,
+                        len_before,
+                        len_after,
+                        delta,
+                        delta.saturating_sub(echo),
+                        child_pos,
+                        echo,
+                        twins,
+                        run.stats.boundary_yields,
+                        run.stats.replays,
+                        run.stats.unwind_inject_m1,
+                        run.stats.unwind_inject_m5,
+                        run.stats.unwind_inject_m234,
+                        run.stats.rc_operand_yields,
+                        tokens.eof_node(),
+                    );
+                }
+            }
         }
         // ── ROUND TRIGGER: death check (worklist drained here) ───────────
         drop(repair_src);
         if budget_exceeded
+            || ambiguity_overflow.is_some() // R-D: overflow never seeds a repair round
             || !run.accepting.is_empty()
             || !run.prefix_accepting.is_empty()
             || recovery_round >= recovery_rounds_max
@@ -28742,6 +28931,12 @@ where
         for parked_repair in parked {
             self.cgll_pure_reseed_repair(&mut run, parked_repair, real_tokens, &mut repair_virtuals);
         }
+        // R-D v3 (§5.4): a repair round seeds a multi-descriptor pool with
+        // no fork — the chain invariant is gone, so the window CLOSES (the
+        // budget enforces the primary round's first fan). Bounded facades
+        // pin recovery depth 0; only language-level budget+recovery callers
+        // reach here. Overflow itself never seeds a round (trigger above).
+        fan_window_open = false;
         if run.worklist.is_empty() {
             break 'rounds; // reseeds all resolved inline (family B) or none
         }
@@ -28756,175 +28951,59 @@ where
         // the fields `resolve_at_end_of_input`'s re-filter
         // (`is_logical_eoi` + `is_accepting_config` + root-variant reads)
         // consumes (AV5).
-        // STAGE D: env-gated forest well-formedness self-check per accept.
-        if std::env::var_os("PRATTAIL_CGLL_PURE_WFCHECK").is_some() {
-            for &(root, pos) in &run.accepting {
-                let (symbols, packings, flats_n, issues) =
-                    self.cgll_pure_wellformedness_report(root);
-                eprintln!(
-                    "CGLL-PURE-WF root={root} pos={pos} symbols={symbols} packings={packings} \
-                     flats={flats_n} issues={} {:?}",
-                    issues.len(),
-                    issues
-                );
-            }
-        }
-        // P3 Pocket-A diag: env-gated forest dump per accepting root.
-        if std::env::var_os("PRATTAIL_CGLL_PURE_FDUMP").is_some() {
-            for &(root, pos) in &run.accepting {
-                eprintln!("FDUMP-ROOT root={root} pos={pos}");
-                self.cgll_pure_forest_dump(root);
-            }
-        }
-        // P3.e CYCLE FENCE (always on): a cyclic packing DAG for a
-        // non-cyclic grammar is a protocol corruption; letting it reach the
-        // recursive flatten/realize diverges (stack overflow — the PNew
-        // class). Detect per accepting root with the ITERATIVE probe; a
-        // cyclic root is REFUSED (dropped from publish, counted + traced
-        // under stats) rather than allowed to diverge — fail loudly, never
-        // hang.
-        run.accepting.retain(|&(root, _pos)| {
-            match self.cgll_pure_find_cycle(root) {
-                None => true,
-                Some(path) => {
-                    // ── P3 Pocket-A3 (2026-07-11): SYMBOL-MEDIATED cycles are
-                    // LEGITIMATE canonical-SPPF sharing, not corruption — the
-                    // unit-rule label collision (`ForRowSingleNoWhere .
-                    // b:InputBind |- b : ForRow` re-wrapping the cat-changing
-                    // `b where cond` z, both keyed `(ForRow, 0, n)`) puts the
-                    // symbol on its own packing chain. `cgll_flatten_ids`
-                    // stops at Symbol leaves (no divergence) and
-                    // `cgll_realize_bin_symbol`'s memo pre-publish guard
-                    // returns [] on re-entry ⇒ the cyclic packing REFUTES at
-                    // realize exactly like classic's action-elide on the
-                    // wrong-category coercion child. TOLERATE those roots
-                    // (counted). Intermediate-ONLY cycles (the PNew
-                    // recursive-flatten divergence class) remain REFUSED.
-                    let symbol_mediated = path.iter().any(|&n| {
-                        matches!(
-                            self.sppf.node(n),
-                            Some(crate::sppf::SppfNode::Symbol { .. })
-                        )
-                    });
-                    if symbol_mediated {
-                        run.stats.cyclic_roots_tolerated += 1;
-                        return true;
-                    }
-                    run.stats.cyclic_roots_refused += 1;
-                    if dump_stats {
-                        let chain: Vec<String> =
-                            path.iter().map(|&n| self.sppf_trace_summary(n)).collect();
-                        eprintln!("CGLL-PURE-CYCLE root={root} path={chain:?}");
-                        for &n in &path {
-                            let packs: Vec<(crate::sppf::SppfId, Vec<crate::sppf::SppfId>)> = self
-                                .sppf
-                                .packings_of(n)
-                                .iter()
-                                .filter_map(|&p| match self.sppf.node(p) {
-                                    Some(crate::sppf::SppfNode::Packing {
-                                        children, ..
-                                    }) => Some((p, children.clone())),
-                                    _ => None,
-                                })
-                                .collect();
-                            eprintln!("CGLL-PURE-CYCLE-NODE {n}: packings={packs:?}");
-                            for (p, kids) in &packs {
-                                let ksum: Vec<String> = kids
-                                    .iter()
-                                    .map(|&k| self.sppf_trace_summary(k))
-                                    .collect();
-                                eprintln!("CGLL-PURE-CYCLE-KIDS {p}: {ksum:?}");
-                            }
-                        }
-                    }
-                    false
-                },
-            }
-        });
-        // ── R2 amendment-9 (Pocket-F): CLUSTER-B PURE FENCE — a REPAIRED
-        // accepting root (repair marker present) must COVER THE INPUT
-        // START. Classic keys this fence on `recovery_depth > 0` (which
-        // pure descriptors never set); the pure analog keys on marker
-        // presence in the reading. Same span test
-        // (`accept_root_covers_input_start`), same permissive fallbacks.
-        // Non-repaired roots are NEVER checked (grouping legitimately
-        // starts past a leading `(`).
-        // Zero-cost on green: no parked proposal in the whole run ⇒ no
-        // marker can exist in any reading ⇒ skip the flat walks entirely.
-        run.accepting.retain(|&(root, _pos)| {
-            if run.stats.repair_parked == 0 {
-                return true;
-            }
-            if self.cgll_repair_events_from_root(root).is_empty() {
-                return true; // no repair in this reading
-            }
-            if self.accept_root_covers_input_start(root, tokens) {
-                return true;
-            }
-            run.stats.cluster_b_refused += 1;
-            false // refuse: repaired suffix-only root (the Cluster-B ghost)
-        });
-        // ── P3 Pocket-A4 (2026-07-11): GOAL-CATEGORY coercion at PUBLISH —
-        // the pure analog of classic's TransparentSourceReentry result wrap
-        // (apply_pop_body tail). A cross-cat-LHS route (kind-5 grouped LHS,
-        // e.g. `(@Nil)<-z` at goal ForRow) accepts with the SOURCE-category
-        // root (InputBind); classic wraps it into the goal category via the
-        // single-hop coercion at the reentry pop. Wrapping must happen HERE
-        // (not at resolve): `resolve_at_end_of_input`'s AV5 root-variant
-        // re-filter drops source-cat candidates before
-        // `cgll_resolve_binarized` would see them. Realize refutes the wrap
-        // if the coercion action rejects the body; an existing same-span
-        // goal-cat symbol simply gains a packing-family member.
-        if let Some(goal) = self.cgll_pure_goal_cat {
-            for entry in run.accepting.iter_mut() {
-                let root = entry.0;
-                let Some(produced) = self.sppf_symbol_category(root) else {
-                    continue;
-                };
-                if produced == goal {
-                    continue;
-                }
-                let pick = self
-                    .engine
-                    .single_hop_coercion(produced, goal)
-                    .to_vec()
-                    .into_iter()
-                    .filter(|(c, r)| {
-                        *c == goal
-                            && self.action_accepts_single_body_category(*c, *r, produced)
-                    })
-                    .min_by_key(|(_, r)| *r);
-                if let Some((c, r)) = pick {
-                    let lo = self.sppf.span_lo(root).unwrap_or(0);
-                    let hi = self.sppf.span_hi(root).unwrap_or(lo);
-                    let rule_id = ((c as u32) << 16) | (r as u32);
-                    let z = self.sppf.intern_symbol((c as u32) | CGLL_BIN_TAG, lo, hi);
-                    if !self.sppf.packing_exists(rule_id, &[root]) {
-                        let pk =
-                            self.sppf.intern_packing(rule_id, vec![root], W::one_ref());
-                        self.sppf.link_packing_to_symbol(z, pk);
-                    }
-                    run.stats.goal_coercions += 1;
-                    entry.0 = z;
+        // ── R-D A3 TAIL GATE: on AmbiguityBudget/BeamSize overflow the whole
+        // publish tail is skipped — classic's sentinel decode preempts
+        // election/trailing salvage/everything (decode is the first
+        // substantive act of `resolve_at_end_of_input`), and the
+        // goal-coercion block MUTATES the SPPF (must not run on the error
+        // path). Accept-derived `self.pos` writes stay UNGATED on
+        // non-overflow paths (test 1's k=16 phase asserts pos==eof_node on
+        // success).
+        if ambiguity_overflow.is_none() {
+            // STAGE D: env-gated forest well-formedness self-check per accept.
+            if std::env::var_os("PRATTAIL_CGLL_PURE_WFCHECK").is_some() {
+                for &(root, pos) in &run.accepting {
+                    let (symbols, packings, flats_n, issues) =
+                        self.cgll_pure_wellformedness_report(root);
+                    eprintln!(
+                        "CGLL-PURE-WF root={root} pos={pos} symbols={symbols} packings={packings} \
+                         flats={flats_n} issues={} {:?}",
+                        issues.len(),
+                        issues
+                    );
                 }
             }
-        }
-        if let Some(&(_, pos)) = run.accepting.first() {
-            self.pos = pos;
-        }
-        // ── R1 amendment-3 (Pocket-F): TRAILING-ACCEPT CHANNEL ───────────
-        // No full accept ⇒ surface the completed PREFIX parses (if any) as
-        // boundary cursors so the classic resolution snapshot classifies
-        // them (`is_prefix_trailing_position`) into
-        // `prefix_trailing_candidates` and the binarize-arm salvage builds
-        // `AcceptedWithTrailing`. Same cycle fence as full accepts (a
-        // cyclic prefix root would diverge realize identically). Green
-        // parses never reach this block.
-        if run.accepting.is_empty() && !budget_exceeded && !run.prefix_accepting.is_empty() {
-            run.prefix_accepting.retain(|&(root, _pos)| {
+            // P3 Pocket-A diag: env-gated forest dump per accepting root.
+            if std::env::var_os("PRATTAIL_CGLL_PURE_FDUMP").is_some() {
+                for &(root, pos) in &run.accepting {
+                    eprintln!("FDUMP-ROOT root={root} pos={pos}");
+                    self.cgll_pure_forest_dump(root);
+                }
+            }
+            // P3.e CYCLE FENCE (always on): a cyclic packing DAG for a
+            // non-cyclic grammar is a protocol corruption; letting it reach the
+            // recursive flatten/realize diverges (stack overflow — the PNew
+            // class). Detect per accepting root with the ITERATIVE probe; a
+            // cyclic root is REFUSED (dropped from publish, counted + traced
+            // under stats) rather than allowed to diverge — fail loudly, never
+            // hang.
+            run.accepting.retain(|&(root, _pos)| {
                 match self.cgll_pure_find_cycle(root) {
                     None => true,
                     Some(path) => {
+                        // ── P3 Pocket-A3 (2026-07-11): SYMBOL-MEDIATED cycles are
+                        // LEGITIMATE canonical-SPPF sharing, not corruption — the
+                        // unit-rule label collision (`ForRowSingleNoWhere .
+                        // b:InputBind |- b : ForRow` re-wrapping the cat-changing
+                        // `b where cond` z, both keyed `(ForRow, 0, n)`) puts the
+                        // symbol on its own packing chain. `cgll_flatten_ids`
+                        // stops at Symbol leaves (no divergence) and
+                        // `cgll_realize_bin_symbol`'s memo pre-publish guard
+                        // returns [] on re-entry ⇒ the cyclic packing REFUTES at
+                        // realize exactly like classic's action-elide on the
+                        // wrong-category coercion child. TOLERATE those roots
+                        // (counted). Intermediate-ONLY cycles (the PNew
+                        // recursive-flatten divergence class) remain REFUSED.
                         let symbol_mediated = path.iter().any(|&n| {
                             matches!(
                                 self.sppf.node(n),
@@ -28936,63 +29015,203 @@ where
                             return true;
                         }
                         run.stats.cyclic_roots_refused += 1;
+                        if dump_stats {
+                            let chain: Vec<String> =
+                                path.iter().map(|&n| self.sppf_trace_summary(n)).collect();
+                            eprintln!("CGLL-PURE-CYCLE root={root} path={chain:?}");
+                            for &n in &path {
+                                let packs: Vec<(crate::sppf::SppfId, Vec<crate::sppf::SppfId>)> = self
+                                    .sppf
+                                    .packings_of(n)
+                                    .iter()
+                                    .filter_map(|&p| match self.sppf.node(p) {
+                                        Some(crate::sppf::SppfNode::Packing {
+                                            children, ..
+                                        }) => Some((p, children.clone())),
+                                        _ => None,
+                                    })
+                                    .collect();
+                                eprintln!("CGLL-PURE-CYCLE-NODE {n}: packings={packs:?}");
+                                for (p, kids) in &packs {
+                                    let ksum: Vec<String> = kids
+                                        .iter()
+                                        .map(|&k| self.sppf_trace_summary(k))
+                                        .collect();
+                                    eprintln!("CGLL-PURE-CYCLE-KIDS {p}: {ksum:?}");
+                                }
+                            }
+                        }
                         false
                     },
                 }
             });
-            // Furthest-prefix position (order-key space) = the walker
-            // position the facade reports for the trailing boundary.
-            if let Some(&(_, best)) = run
-                .prefix_accepting
-                .iter()
-                .max_by_key(|(_, p)| tokens.position_order_key(*p).unwrap_or(*p))
-            {
-                self.pos = best;
+            // ── R2 amendment-9 (Pocket-F): CLUSTER-B PURE FENCE — a REPAIRED
+            // accepting root (repair marker present) must COVER THE INPUT
+            // START. Classic keys this fence on `recovery_depth > 0` (which
+            // pure descriptors never set); the pure analog keys on marker
+            // presence in the reading. Same span test
+            // (`accept_root_covers_input_start`), same permissive fallbacks.
+            // Non-repaired roots are NEVER checked (grouping legitimately
+            // starts past a leading `(`).
+            // Zero-cost on green: no parked proposal in the whole run ⇒ no
+            // marker can exist in any reading ⇒ skip the flat walks entirely.
+            run.accepting.retain(|&(root, _pos)| {
+                if run.stats.repair_parked == 0 {
+                    return true;
+                }
+                if self.cgll_repair_events_from_root(root).is_empty() {
+                    return true; // no repair in this reading
+                }
+                if self.accept_root_covers_input_start(root, tokens) {
+                    return true;
+                }
+                run.stats.cluster_b_refused += 1;
+                false // refuse: repaired suffix-only root (the Cluster-B ghost)
+            });
+            // ── P3 Pocket-A4 (2026-07-11): GOAL-CATEGORY coercion at PUBLISH —
+            // the pure analog of classic's TransparentSourceReentry result wrap
+            // (apply_pop_body tail). A cross-cat-LHS route (kind-5 grouped LHS,
+            // e.g. `(@Nil)<-z` at goal ForRow) accepts with the SOURCE-category
+            // root (InputBind); classic wraps it into the goal category via the
+            // single-hop coercion at the reentry pop. Wrapping must happen HERE
+            // (not at resolve): `resolve_at_end_of_input`'s AV5 root-variant
+            // re-filter drops source-cat candidates before
+            // `cgll_resolve_binarized` would see them. Realize refutes the wrap
+            // if the coercion action rejects the body; an existing same-span
+            // goal-cat symbol simply gains a packing-family member.
+            if let Some(goal) = self.cgll_pure_goal_cat {
+                for entry in run.accepting.iter_mut() {
+                    let root = entry.0;
+                    let Some(produced) = self.sppf_symbol_category(root) else {
+                        continue;
+                    };
+                    if produced == goal {
+                        continue;
+                    }
+                    let pick = self
+                        .engine
+                        .single_hop_coercion(produced, goal)
+                        .to_vec()
+                        .into_iter()
+                        .filter(|(c, r)| {
+                            *c == goal
+                                && self.action_accepts_single_body_category(*c, *r, produced)
+                        })
+                        .min_by_key(|(_, r)| *r);
+                    if let Some((c, r)) = pick {
+                        let lo = self.sppf.span_lo(root).unwrap_or(0);
+                        let hi = self.sppf.span_hi(root).unwrap_or(lo);
+                        let rule_id = ((c as u32) << 16) | (r as u32);
+                        let z = self.sppf.intern_symbol((c as u32) | CGLL_BIN_TAG, lo, hi);
+                        if !self.sppf.packing_exists(rule_id, &[root]) {
+                            let pk =
+                                self.sppf.intern_packing(rule_id, vec![root], W::one_ref());
+                            self.sppf.link_packing_to_symbol(z, pk);
+                        }
+                        run.stats.goal_coercions += 1;
+                        entry.0 = z;
+                    }
+                }
             }
-        }
-        // ── R1 (R0's C3): STRICT REJECT-POSITION REPORTER — total failure
-        // (no accept, no prefix) reports the FURTHEST position any
-        // descriptor reached (order-key max), not position 0 (receipt:
-        // parse_error_tests::test_eof_error_position — "1 +" must report
-        // byte ≥ 2; classic reports `max_dead_pos`, the same quantity).
-        if run.accepting.is_empty() && run.prefix_accepting.is_empty() {
-            if let Some(&furthest) = u_by_pos
-                .keys()
-                .max_by_key(|&&p| tokens.position_order_key(p).unwrap_or(p))
-            {
-                self.pos = self.pos.max(furthest);
+            if let Some(&(_, pos)) = run.accepting.first() {
+                self.pos = pos;
             }
+            // ── R1 amendment-3 (Pocket-F): TRAILING-ACCEPT CHANNEL ───────────
+            // No full accept ⇒ surface the completed PREFIX parses (if any) as
+            // boundary cursors so the classic resolution snapshot classifies
+            // them (`is_prefix_trailing_position`) into
+            // `prefix_trailing_candidates` and the binarize-arm salvage builds
+            // `AcceptedWithTrailing`. Same cycle fence as full accepts (a
+            // cyclic prefix root would diverge realize identically). Green
+            // parses never reach this block.
+            if run.accepting.is_empty() && !budget_exceeded && !run.prefix_accepting.is_empty() {
+                run.prefix_accepting.retain(|&(root, _pos)| {
+                    match self.cgll_pure_find_cycle(root) {
+                        None => true,
+                        Some(path) => {
+                            let symbol_mediated = path.iter().any(|&n| {
+                                matches!(
+                                    self.sppf.node(n),
+                                    Some(crate::sppf::SppfNode::Symbol { .. })
+                                )
+                            });
+                            if symbol_mediated {
+                                run.stats.cyclic_roots_tolerated += 1;
+                                return true;
+                            }
+                            run.stats.cyclic_roots_refused += 1;
+                            false
+                        },
+                    }
+                });
+                // Furthest-prefix position (order-key space) = the walker
+                // position the facade reports for the trailing boundary.
+                if let Some(&(_, best)) = run
+                    .prefix_accepting
+                    .iter()
+                    .max_by_key(|(_, p)| tokens.position_order_key(*p).unwrap_or(*p))
+                {
+                    self.pos = best;
+                }
+            }
+            // ── R1 (R0's C3): STRICT REJECT-POSITION REPORTER — total failure
+            // (no accept, no prefix) reports the FURTHEST position any
+            // descriptor reached (order-key max), not position 0 (receipt:
+            // parse_error_tests::test_eof_error_position — "1 +" must report
+            // byte ≥ 2; classic reports `max_dead_pos`, the same quantity).
+            if run.accepting.is_empty() && run.prefix_accepting.is_empty() {
+                if let Some(&furthest) = u_by_pos
+                    .keys()
+                    .max_by_key(|&&p| tokens.position_order_key(p).unwrap_or(p))
+                {
+                    self.pos = self.pos.max(furthest);
+                }
+            }
+            let publish_prefixes =
+                run.accepting.is_empty() && !budget_exceeded && !run.prefix_accepting.is_empty();
+            let publish_list: &[(crate::sppf::SppfId, usize)] = if publish_prefixes {
+                &run.prefix_accepting
+            } else {
+                &run.accepting
+            };
+            let mut published: Vec<crate::cohort_lazy::Frame<W>> =
+                Vec::with_capacity(publish_list.len());
+            for &(root, pos) in publish_list {
+                // AMENDMENT 4 (Stage C): the boundary cursor carries the ELECTED
+                // weight — the root Symbol's `weight_sum` (⊕ over its linked
+                // packings = the semiring-elected packing weight; Goodman
+                // aggregation). `sort_eoi_candidates_by_semiring_priority` and
+                // the winner commit then order pure candidates exactly as the
+                // classic path orders cursor weights.
+                let elected = self.sppf.symbol_weight_sum(root);
+                let mut boundary = BranchCursor::seed_from_live(
+                    crate::gss::GSS_NODE_NONE,
+                    pos,
+                    elected,
+                    WpdaState::Accepted,
+                );
+                boundary.sppf_stack_id = self
+                    .sppf_stack_arena
+                    .intern_push(crate::sppf_stack_arena::STACK_ID_ROOT, root);
+                published.push(crate::cohort_lazy::Frame::Concrete(boundary));
+            }
+            self.branch_cursors = published;
         }
-        let publish_prefixes =
-            run.accepting.is_empty() && !budget_exceeded && !run.prefix_accepting.is_empty();
-        let publish_list: &[(crate::sppf::SppfId, usize)] = if publish_prefixes {
-            &run.prefix_accepting
-        } else {
-            &run.accepting
-        };
-        let mut published: Vec<crate::cohort_lazy::Frame<W>> =
-            Vec::with_capacity(publish_list.len());
-        for &(root, pos) in publish_list {
-            // AMENDMENT 4 (Stage C): the boundary cursor carries the ELECTED
-            // weight — the root Symbol's `weight_sum` (⊕ over its linked
-            // packings = the semiring-elected packing weight; Goodman
-            // aggregation). `sort_eoi_candidates_by_semiring_priority` and
-            // the winner commit then order pure candidates exactly as the
-            // classic path orders cursor weights.
-            let elected = self.sppf.symbol_weight_sum(root);
-            let mut boundary = BranchCursor::seed_from_live(
-                crate::gss::GSS_NODE_NONE,
-                pos,
-                elected,
-                WpdaState::Accepted,
-            );
-            boundary.sppf_stack_id = self
-                .sppf_stack_arena
-                .intern_push(crate::sppf_stack_arena::STACK_ID_ROOT, root);
-            published.push(crate::cohort_lazy::Frame::Concrete(boundary));
-        }
-        self.branch_cursors = published;
-        let final_state = if budget_exceeded {
+        let final_state = if let Some((n, actual, position)) = ambiguity_overflow {
+            // R-D: the classic sentinel, verbatim channel (classic mirror:
+            // `maybe_prune_frontier`'s write; `parse_ambiguity_budget_sentinel`
+            // decodes it in `resolve_at_end_of_input` BEFORE the snapshot and
+            // the binarize hook, so overflow preempts election and trailing
+            // salvage — no facade/resolve/runtime change needed). ess_x1000=0
+            // is the documented "not computed at this emission site" marker
+            // (test-invisible; classic computes 5000/4998 here). Overflow-arm-
+            // first is the deterministic rule vs the step budget (in practice
+            // mutually exclusive per iteration: budget breaks at loop-top,
+            // overflow at loop-bottom).
+            WpdaState::Error {
+                message: format_ambiguity_budget_sentinel(n, actual, position, 0),
+            }
+        } else if budget_exceeded {
             WpdaState::Error {
                 message: format!("canonical-GLL budget {} exceeded", budget),
             }
@@ -29026,7 +29245,10 @@ where
                  pred_parses={} \
                  pred_memo_hits={} pred_refutes={} repair_parked={} \
                  repair_reseeded={} repair_rounds={} repair_named_drops={} \
-                 repair_guard_parks={} cluster_b_refused={}",
+                 repair_guard_parks={} cluster_b_refused={} fork_dispatches={} \
+                 max_fork_width={} window_closed_at_fork={} \
+                 post_window_max_width={} prefan_reexpansions={} \
+                 ambiguity_overflows={}",
                 s.u_count,
                 s.peak_r,
                 s.processed,
@@ -29098,6 +29320,12 @@ where
                 s.repair_named_drops,
                 s.repair_guard_parks,
                 s.cluster_b_refused,
+                s.fork_dispatches,
+                s.max_fork_width,
+                s.window_closed_at_fork,
+                s.post_window_max_width,
+                s.prefan_reexpansions,
+                s.ambiguity_overflows,
             );
         }
         final_state
@@ -30428,6 +30656,13 @@ where
             },
             WpdaStepAction::Idle => {}, // engine parks this config
             WpdaStepAction::Fork { branches, consume_trigger } => {
+                // R-D §3.4: the ARM detector — the R-A crosscat boundary guard
+                // runs FIRST in this dispatcher and SYNTHESIZES Forks from
+                // non-fork actions (ConsumeAndPush/IterativeChainAbsorb → 2-
+                // branch Fork), which a pre-dispatch `matches!` cannot see;
+                // its all-suppressed Fork→Advance rewrite correctly lands in
+                // a NON-fork arm. This counter is the loop's fork detector.
+                run.stats.fork_dispatches += 1;
                 // B1: the classic walker's InfixLoop-Fork Unwinding-injection
                 // family, pure form (see `cgll_pure_inject_unwind_reading`).
                 self.cgll_pure_inject_unwind_reading(run, d, &branches, tokens);
