@@ -2092,28 +2092,62 @@ mod tests {
     }
 
     /// The emission-effective partition under the SHIPPED const
-    /// (`S1_FACTORING == false`) is the identity: zero groups anywhere,
-    /// every member a `FactoringDisabled` singleton — the F0 byte-identity
-    /// stance expressed as data.
+    /// (`S1_FACTORING == true` — the F4 flip, 2026-07-12) IS the factoring
+    /// model: `emission_partition` no longer degenerates to the identity but
+    /// returns `build_prefix_factoring`'s groups/singletons/ineligible
+    /// verbatim. This is the ON-stance twin of the retired F0/F1 dormancy
+    /// pin `emission_partition_is_identity_while_const_off` (which asserted
+    /// `!S1_FACTORING` + all-`FactoringDisabled`); the two pins were
+    /// designed to flip WITH the F4 commit. The kill-switch const is
+    /// RETAINED — one `false` revert restores the dormant stance (and this
+    /// pin plus its emission twin below flip back with it).
     #[test]
-    fn emission_partition_is_identity_while_const_off() {
+    fn emission_partition_is_the_factoring_model_while_const_on() {
         assert!(
-            !crate::gen::runtime::wpda_codegen::forks::S1_FACTORING,
-            "F0 ships with the kill-switch OFF",
+            crate::gen::runtime::wpda_codegen::forks::S1_FACTORING,
+            "F4 ships with the factoring const ON (kill-switch retained)",
         );
         let def = rhocalc();
         let (categories, per_cat) = cats_per_cat(&def);
         let effective = emission_partition(&def, &categories, &per_cat);
-        for cat in &effective {
-            for b in &cat.buckets {
-                assert!(b.groups.is_empty(), "const OFF ⇒ no factored groups");
-                assert!(b.ineligible.is_empty(), "const OFF ⇒ no deferred groups");
-                assert_eq!(b.singletons.len(), b.cohort_size);
-                for s in &b.singletons {
-                    assert_eq!(s.reason, SingletonReason::FactoringDisabled);
+        let model = build_prefix_factoring(&def, &categories, &per_cat);
+        assert_eq!(effective.len(), model.len());
+        for (e_cat, m_cat) in effective.iter().zip(model.iter()) {
+            assert_eq!(e_cat.category_src_idx, m_cat.category_src_idx);
+            assert_eq!(e_cat.buckets.len(), m_cat.buckets.len());
+            for (eb, mb) in e_cat.buckets.iter().zip(m_cat.buckets.iter()) {
+                assert_eq!(eb.leading_literal, mb.leading_literal);
+                assert_eq!(eb.cohort_size, mb.cohort_size);
+                assert_eq!(eb.groups.len(), mb.groups.len());
+                for (eg, mg) in eb.groups.iter().zip(mb.groups.iter()) {
+                    assert_eq!(eg.spine_id, mg.spine_id);
+                    assert_eq!(eg.body_src_idx, mg.body_src_idx);
+                    assert_eq!(eg.member_rule_idxs(), mg.member_rule_idxs());
+                    assert_eq!(eg.tree.leaf_count(), mg.tree.leaf_count());
+                }
+                assert_eq!(eb.singletons.len(), mb.singletons.len());
+                for (es, ms_) in eb.singletons.iter().zip(mb.singletons.iter()) {
+                    assert_eq!(es.rule_idx, ms_.rule_idx);
+                    assert_eq!(es.reason, ms_.reason);
+                }
+                assert_eq!(eb.ineligible.len(), mb.ineligible.len());
+                // The ON const makes the disabled reason unreachable.
+                for s in &eb.singletons {
+                    assert_ne!(
+                        s.reason,
+                        SingletonReason::FactoringDisabled,
+                        "const ON ⇒ FactoringDisabled is unreachable",
+                    );
                 }
             }
         }
+        // The rhocalc @-cohort ships factored: 3 groups, 6/3/6 leaves
+        // (the F0-pinned trie, now emission-effective).
+        let at = bucket(&effective, 0, "@");
+        assert_eq!(at.groups.len(), 3);
+        assert_eq!(at.groups[0].tree.leaf_count(), 6);
+        assert_eq!(at.groups[1].tree.leaf_count(), 3);
+        assert_eq!(at.groups[2].tree.leaf_count(), 6);
     }
 
     /// ★A9: the spine id space sits below RECOVERY_BASE and u16::MAX with
@@ -2349,35 +2383,108 @@ mod tests {
         }
     }
 
-    /// The F0 byte-identity stance expressed on the F1 bundle: with the
-    /// shipped `S1_FACTORING == false`, `build_spine_emission` (through
-    /// `emission_partition`) is COMPLETELY inert — zero groups, empty
-    /// streams, empty maps — so every wired consumer (prefix.rs multi-branch
-    /// fork, binder.rs match, kind_dispatch lex-alt surface, the engine_impl
-    /// preludes/overrides, the forks.rs weight wrap) emits byte-identically.
+    /// The F4 flip stance expressed on the F1 bundle: with the shipped
+    /// `S1_FACTORING == true` (2026-07-12), `build_spine_emission` (through
+    /// `emission_partition`) is LIVE — the const-gated bundle carries the
+    /// groups and is byte-identical to the explicit-model bundle
+    /// (`build_spine_emission_from(build_prefix_factoring(..))`), so every
+    /// wired consumer (prefix.rs multi-branch fork, binder.rs match,
+    /// kind_dispatch lex-alt surface, the engine_impl preludes/overrides,
+    /// the forks.rs weight wrap) emits the FACTORED engine. ON-stance twin
+    /// of the retired F1 dormancy pin `spine_emission_off_is_inert_while_
+    /// const_off` (designed to flip WITH the F4 commit); the kill-switch
+    /// const is retained — one `false` revert restores byte-identical
+    /// dormant emission and flips this pin back.
     #[test]
-    fn spine_emission_off_is_inert_while_const_off() {
+    fn spine_emission_live_while_const_on() {
         assert!(
-            !crate::gen::runtime::wpda_codegen::forks::S1_FACTORING,
-            "F1 ships with the kill-switch OFF",
+            crate::gen::runtime::wpda_codegen::forks::S1_FACTORING,
+            "F4 ships with the factoring const ON (kill-switch retained)",
         );
         let def = rhocalc();
         let (categories, per_cat) = cats_per_cat(&def);
-        let bundle = build_spine_emission(&def, &categories, &per_cat);
-        assert!(!bundle.any_groups());
-        assert!(bundle.binder_arms.is_empty());
-        assert!(bundle.trigger_spine_owner_fn.is_empty());
-        assert!(bundle.spine_members_fn.is_empty());
-        assert!(bundle.action_for_prelude.is_empty());
-        assert!(bundle.leading_trigger_prelude.is_empty());
-        assert!(bundle.min_span_prelude.is_empty());
-        assert!(bundle.spine_weight_rule_fn.is_empty());
-        for per_cat_map in &bundle.dispositions {
-            assert!(per_cat_map.is_empty(), "OFF ⇒ no dispositions");
+        let gated = build_spine_emission(&def, &categories, &per_cat);
+        assert!(gated.any_groups(), "const ON ⇒ the factored emission is LIVE");
+        assert!(!gated.binder_arms.is_empty());
+        assert!(!gated.trigger_spine_owner_fn.is_empty());
+        assert!(!gated.spine_members_fn.is_empty());
+        assert!(!gated.action_for_prelude.is_empty());
+        assert!(!gated.leading_trigger_prelude.is_empty());
+        // A3-corrected (F4 round-1 RED-1; f5_accept_continue_plan §RED-TEAM
+        // item 3, 2026-07-12): min_terminal_span rows are emitted ONLY when
+        // the group min is > 0 (the `if v > 0` row-omission in
+        // `build_spine_emission_from`; 0 = the table default = absent), and
+        // `member_min_span` returns 0 for EVERY member of EVERY current
+        // rhocalc group — each `@`-cohort member's pattern is Op-bearing
+        // (`SyntaxExpr::Op` short-circuits to 0 before literal counting) —
+        // so min = 0 per group ⇒ every span row OMITTED ⇒ the CORRECT
+        // ON-stance `min_span_prelude` is EMPTY (the engine falls through to
+        // the per-rule `min_terminal_span` table default). Re-derived
+        // per-group below once `model` is built (self-adjudicating). The
+        // pre-A3 `!is_empty()` expectation was the F4 round-1 GATE-RED.
+        assert!(
+            gated.min_span_prelude.is_empty(),
+            "min=0 groups must OMIT their span rows (A3); got: {}",
+            gated.min_span_prelude,
+        );
+        assert!(!gated.spine_weight_rule_fn.is_empty());
+        // The const-gated bundle IS the explicit-model bundle — the same
+        // wiring fact the dormant pin guarded, inverted. (Streams compare by
+        // rendering: TokenStream has no PartialEq.)
+        let model = build_prefix_factoring(&def, &categories, &per_cat);
+        // Per-group re-derivation of the A3 emptiness fact, mirroring the
+        // emission loop's own `min over member_min_span(&rules[m])`
+        // (self-adjudicating: an F5-era group with min > 0 would emit a span
+        // row — this loop fails FIRST naming the exact group, so the
+        // emptiness assert above can never go stale silently).
+        let mut groups_seen = 0usize;
+        for cat_fact in &model {
+            let rules = &per_cat[cat_fact.category_src_idx as usize];
+            for bucket in &cat_fact.buckets {
+                for group in &bucket.groups {
+                    groups_seen += 1;
+                    let min = group
+                        .member_rule_idxs()
+                        .iter()
+                        .map(|&m| member_min_span(&rules[m as usize]))
+                        .min()
+                        .expect("an eligible group has members");
+                    assert_eq!(
+                        min,
+                        0,
+                        "group (cat {}, spine {:#06x}) has min_terminal_span > 0 — \
+                         it emits a span row; re-derive the min_span_prelude \
+                         expectation (A3)",
+                        cat_fact.category_src_idx,
+                        group.spine_id,
+                    );
+                }
+            }
         }
-        for alt in &bundle.lex_alt {
-            assert!(alt.grouped.is_empty(), "OFF ⇒ no lex-alt group entries");
-        }
+        assert_eq!(groups_seen, 3, "the rhocalc @-cohort ships 3 groups");
+        let explicit = build_spine_emission_from(&model, &def, &categories, &per_cat);
+        assert_eq!(gated.dispositions, explicit.dispositions);
+        assert_eq!(gated.binder_arms.to_string(), explicit.binder_arms.to_string());
+        assert_eq!(
+            gated.trigger_spine_owner_fn.to_string(),
+            explicit.trigger_spine_owner_fn.to_string(),
+        );
+        assert_eq!(gated.spine_members_fn.to_string(), explicit.spine_members_fn.to_string());
+        assert_eq!(
+            gated.action_for_prelude.to_string(),
+            explicit.action_for_prelude.to_string(),
+        );
+        assert_eq!(
+            gated.leading_trigger_prelude.to_string(),
+            explicit.leading_trigger_prelude.to_string(),
+        );
+        assert_eq!(gated.min_span_prelude.to_string(), explicit.min_span_prelude.to_string());
+        assert_eq!(
+            gated.spine_weight_rule_fn.to_string(),
+            explicit.spine_weight_rule_fn.to_string(),
+        );
+        let grouped_alts: usize = gated.lex_alt.iter().map(|alt| alt.grouped.len()).sum();
+        assert!(grouped_alts > 0, "const ON ⇒ lex-alt group entries present");
     }
 
     /// ON-shape pins over the rhocalc `@`-cohort: dispositions (GroupFirst at

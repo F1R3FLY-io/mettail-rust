@@ -1184,7 +1184,7 @@ pub(crate) const CROSSCAT_LEX_COMPAT_RUNTIME_GATE: bool = true;
 /// that the lex-fork path re-creates the per-rule fan). Flip criteria: plan
 /// §5 (the F4 gate — d4-under-cap + depth-uniformity primary, ≥5× d3 wall
 /// secondary).
-pub(crate) const S1_FACTORING: bool = false;
+pub(crate) const S1_FACTORING: bool = true;
 
 // ─────── Branch descriptors ──────────────────────────────────────────────
 
