@@ -431,3 +431,72 @@ fn test_calc_recovery_power_missing_exponent() {
     let (_result, errors) = Int::parse_recovering("2 ^");
     assert!(!errors.is_empty(), "power missing exponent should produce errors");
 }
+
+// ══════════════════════════════════════════════════════════════════════════════
+// RhoCalc — InputBind-shaped recovery (S1-factoring F5-1 amendment A4,
+// 2026-07-13). The corpus above carries ZERO `for(`/`<-` shapes, so the
+// factored-InputBind spine (the `@ pat <-/<= n` accept+continue group under
+// `S1F5_ACCEPT_CONTINUE`) had no recovery coverage. These probes pin the
+// OBSERVED baseline behavior on truncations of the `for(@y <- z){Nil}`
+// class — recovery behavior itself is NOT expected to change across the
+// F5-1 stances, and the trap-guarded ON window re-runs this suite to prove
+// it (receipts: scratchpad/zz_probes/logs_s1f5_1/).
+// ══════════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_rhocalc_recovery_inputbind_valid_for_comprehension() {
+    mettail_runtime::clear_var_cache();
+    let (result, errors) =
+        mettail_languages::rhocalc::Proc::parse_recovering("for(@y <- z){Nil}");
+    assert!(result.is_some(), "valid for-comprehension should succeed");
+    assert!(errors.is_empty(), "valid for-comprehension should have no errors");
+}
+
+#[test]
+fn test_rhocalc_recovery_inputbind_valid_query_bind() {
+    mettail_runtime::clear_var_cache();
+    // The accept-fork both-survive shape: the `@ pat <- n` spine continues
+    // into the `!?(…)` query tail (InputBindQuotedQuery) instead of
+    // accepting at `n` (InputBindQuoted).
+    let (result, errors) =
+        mettail_languages::rhocalc::Proc::parse_recovering("for(@y <- z!?(Nil)){Nil}");
+    assert!(result.is_some(), "valid query-bind comprehension should succeed");
+    assert!(errors.is_empty(), "valid query-bind comprehension should have no errors");
+}
+
+#[test]
+fn test_rhocalc_recovery_inputbind_missing_channel() {
+    mettail_runtime::clear_var_cache();
+    let (result, errors) =
+        mettail_languages::rhocalc::Proc::parse_recovering("for(@y <- ){Nil}");
+    assert!(result.is_none(), "dropped channel cannot yield a full parse");
+    assert!(!errors.is_empty(), "dropped channel should produce errors");
+}
+
+#[test]
+fn test_rhocalc_recovery_inputbind_unclosed_body() {
+    mettail_runtime::clear_var_cache();
+    let (result, errors) =
+        mettail_languages::rhocalc::Proc::parse_recovering("for(@y <- z){Nil");
+    assert!(result.is_none(), "dropped closing brace cannot yield a full parse");
+    assert!(!errors.is_empty(), "dropped closing brace should produce errors");
+}
+
+#[test]
+fn test_rhocalc_recovery_inputbind_persistent_unclosed_body() {
+    mettail_runtime::clear_var_cache();
+    // The `<=` sibling (InputBindQuotedPersistent) — the OTHER divergence
+    // branch of the factored spine.
+    let (result, errors) =
+        mettail_languages::rhocalc::Proc::parse_recovering("for(@y <= z){Nil");
+    assert!(result.is_none(), "dropped closing brace cannot yield a full parse");
+    assert!(!errors.is_empty(), "dropped closing brace should produce errors");
+}
+
+#[test]
+fn test_rhocalc_recovery_inputbind_missing_body() {
+    mettail_runtime::clear_var_cache();
+    let (result, errors) = mettail_languages::rhocalc::Proc::parse_recovering("for(@y <- z)");
+    assert!(result.is_none(), "dropped body cannot yield a full parse");
+    assert!(!errors.is_empty(), "dropped body should produce errors");
+}

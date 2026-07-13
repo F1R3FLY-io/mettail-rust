@@ -948,7 +948,10 @@ fn inv7_nullary_per_kind(lang: &LanguageDef) -> Result<(), String> {
 /// [`super::factoring::emission_partition`] (the F1 integration surface).
 /// Under `forks::S1_FACTORING == false` the emission-effective partition must
 /// ALSO be the identity: zero groups, zero deferrals, every member a
-/// `FactoringDisabled` singleton.
+/// `FactoringDisabled` singleton. Under `forks::S1F5_ACCEPT_CONTINUE` (F5-1,
+/// with S1 on) the `InteriorAccept` deferral must be UNREACHABLE — former
+/// proper-prefix deferrals are absorbed into groups as sibling accept
+/// leaves, and the no-loss formula counts them as leaves.
 fn inv8_prefix_surface_noloss(lang: &LanguageDef) -> Result<(), String> {
     let (categories, per_cat) = categories_and_per_cat(lang);
     let models = [
@@ -958,7 +961,7 @@ fn inv8_prefix_surface_noloss(lang: &LanguageDef) -> Result<(), String> {
     for (which, model) in &models {
         for cat in model {
             for bucket in &cat.buckets {
-                let leaves: usize = bucket.groups.iter().map(|g| g.tree.leaf_count()).sum();
+                let leaves: usize = bucket.groups.iter().map(|g| g.leaf_count()).sum();
                 let deferred: usize =
                     bucket.ineligible.iter().map(|g| g.member_rule_idxs.len()).sum();
                 let total = leaves + deferred + bucket.singletons.len();
@@ -971,6 +974,31 @@ fn inv8_prefix_surface_noloss(lang: &LanguageDef) -> Result<(), String> {
                         bucket.singletons.len(),
                         bucket.cohort_size,
                     ));
+                }
+            }
+        }
+    }
+    if super::forks::S1_FACTORING && super::forks::S1F5_ACCEPT_CONTINUE {
+        // F5-1 ON-branch census: proper-prefix members are absorbed as
+        // sibling accept leaves ([`super::factoring::build_tree`]), so the
+        // `InteriorAccept` deferral is UNREACHABLE in both models — a
+        // surviving instance means the admission predicate drifted.
+        for (which, model) in &models {
+            for cat in model {
+                for bucket in &cat.buckets {
+                    for group in &bucket.ineligible {
+                        if matches!(
+                            group.reason,
+                            super::factoring::IneligibleReason::InteriorAccept { .. }
+                        ) {
+                            return Err(format!(
+                                "INV-8 F5-1 violated in the {which} at (cat {}, {:?}): \
+                                 InteriorAccept deferral {:?} survives with \
+                                 S1F5_ACCEPT_CONTINUE on",
+                                cat.category_src_idx, bucket.leading_literal, group,
+                            ));
+                        }
+                    }
                 }
             }
         }

@@ -1186,6 +1186,46 @@ pub(crate) const CROSSCAT_LEX_COMPAT_RUNTIME_GATE: bool = true;
 /// secondary).
 pub(crate) const S1_FACTORING: bool = true;
 
+/// S1F5_ACCEPT_CONTINUE — kill-switch for F5-1 accept+continue groups
+/// (interior accept-nodes admitted as SIBLING LEAVES, 2026-07-13).
+/// Compile-time `const` resolved at macro expansion (the [`S1_FACTORING`]
+/// kill-switch convention — NOT a runtime env var). Effective ONLY while
+/// [`S1_FACTORING`] is also `true`: `factoring::emission_partition`
+/// short-circuits to the identity partition otherwise, and the model
+/// (`factoring::build_prefix_factoring`) is consulted by no emitter.
+///
+/// Plan of record: `scratchpad/zz_probes/f5_accept_continue_plan.md` (§0-§9
+/// plus the §RED-TEAM amendments A1-A4). The cohort being admitted: a
+/// proper-prefix member — one whose post-trigger item list is a proper
+/// prefix of a sibling's, e.g. RhoCalc `InputBindQuoted` (`@ pat <- n`)
+/// inside `InputBindQuotedQuery` (`@ pat <- n ! ? ( args… )`) — marks its
+/// whole group `IneligibleReason::InteriorAccept` under F0/F1, so the bucket
+/// emits unfactored per-rule branches. The F5-1 design REJECTS an ε-branch
+/// at the accept node (no non-consuming marker-replace `ForkActionKind`
+/// exists — plan §9-FS1) and instead HOISTS the accept one edge earlier as
+/// an ORDINARY LEAF sharing its edge item with the continuation subtree: the
+/// fork at the arm consuming that edge emits the member's typed commit
+/// branch AND the spine-continue branch. Every emitted construct is an
+/// F1-emitted construct (action-identical replace/push/state species) —
+/// ZERO walker changes, zero prefix/binder/kind_dispatch/engine_impl
+/// changes; the entire delta is the `factoring.rs` model (forest-shaped
+/// tries), its tests, and the INV-8 ON-branch census.
+///
+/// When `false`: `factoring::build_tree` routes exhausted members to
+/// `interior_accepts` exactly as F0 shipped — the model, the emission, and
+/// every generated `target/generated/<lang>/wpda.rs` are byte-identical to
+/// the F4 flip state (receipts: `scratchpad/zz_probes/logs_s1f5_1/`).
+///
+/// When `true`: exhausted members finalize as sibling accept leaves
+/// (`factoring::build_tree`, normative forest order `remainder ++ accepts`
+/// per amendment A1) and the group proceeds to ordinary eligibility.
+/// Exactly ONE bundled cohort changes: rhocalc `(InputBind, "@")`
+/// {QuotedQuery=2, Quoted=3, QuotedPersistent=6} — rhocalc groups 3 → 4,
+/// ineligible 1 → 0, InputBind@ dispatch rule-fan 3 → 1; every other
+/// engine byte-invariant (amendment A2; census + hash gates in
+/// `run_s1f5_1_*.sh`).
+pub(crate) const S1F5_ACCEPT_CONTINUE: bool = true;
+
 // ─────── Branch descriptors ──────────────────────────────────────────────
 
 /// A single Fork branch in a Cluster 1 emission. Stringly-typed via

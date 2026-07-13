@@ -77,10 +77,16 @@
 //!     `POutputQuotedEmpty` stay groupable — the pinned `@`-cohort trie
 //!     depends on it).
 //!   - Proper-prefix members (interior accept-nodes, e.g. RhoCalc
-//!     `InputBindQuoted` inside the `@`-led query row): MODELED (recorded on
-//!     the ineligible group) but DEFERRED to F5 — the whole group falls back
-//!     to unfactored emission. Consequently every leaf of an ELIGIBLE group
-//!     carries exactly one rule (asserted).
+//!     `InputBindQuoted` inside the `@`-led query row): stance-gated by
+//!     [`super::forks::S1F5_ACCEPT_CONTINUE`] (F5-1, plan
+//!     `f5_accept_continue_plan.md`). With the const `false` they are
+//!     recorded on the ineligible group and the whole group falls back to
+//!     unfactored emission (the F0 stance, byte-identical); with the const
+//!     `true` the exhausted member becomes an ordinary SIBLING LEAF sharing
+//!     its edge item with the continuation subtree (see [`build_tree`] — the
+//!     sibling-leaf form; the ε-branch reading is refuted, plan §9-FS1) and
+//!     the group proceeds to ordinary eligibility. Either way every leaf of
+//!     an ELIGIBLE group carries exactly one rule (asserted).
 //!   - `body_src_idx` uniformity across a group's binder members is an
 //!     eligibility assert (red-team AV2 gap b): the spine's single
 //!     `BinderRule { body_src_idx }` state must be well-defined.
@@ -218,9 +224,17 @@ pub(crate) struct GroupMember {
     pub has_post_spine_remainder: bool,
 }
 
-/// The factored suffix trie of one group. The root carries the group's
+/// One tree of a group's factored suffix FOREST. A root carries the group's
 /// shared first post-trigger item; interior nodes are shared spine steps;
 /// each leaf is exactly one member.
+///
+/// Child-item invariant (weakened by F5-1, red-team F-10 / FV-1(e′)): per
+/// node, at most one INTERIOR child per item; leaf children may repeat an
+/// item — an accept leaf shares its edge item with the continuation subtree
+/// when one exists (and identical-sequence twins share theirs with each
+/// other). Under the F0 stance (`S1F5_ACCEPT_CONTINUE == false`) no leaf
+/// ever repeats an item because exhausted members are routed to
+/// `interior_accepts` instead of leafing out.
 #[derive(Debug)]
 pub(crate) enum SpineTree {
     Interior {
@@ -288,12 +302,37 @@ pub(crate) struct SpineGroup {
     /// category's own src_idx for an all-nullary group (no BinderRule state
     /// consumes it before a commit in that case).
     pub body_src_idx: u16,
-    pub tree: SpineTree,
+    /// The factored suffix FOREST (F5-1: [`build_tree`] returns sibling
+    /// accept leaves alongside the interior remainder). Single-root while no
+    /// member's whole item list is the root edge; multiple roots when a
+    /// member accepts at depth 1 (root-accept — the pre-root arm itself
+    /// becomes the accept fork). Root order is the NORMATIVE forest order
+    /// (amendment A1, stated at [`build_tree`]): `remainder ++ accepts`.
+    /// Under the F0 stance every eligible group is single-root.
+    pub roots: Vec<SpineTree>,
 }
 
 impl SpineGroup {
     pub(crate) fn member_rule_idxs(&self) -> BTreeSet<u16> {
-        self.tree.leaves().iter().map(|m| m.rule_idx).collect()
+        self.leaves().iter().map(|m| m.rule_idx).collect()
+    }
+
+    pub(crate) fn leaf_count(&self) -> usize {
+        self.roots.iter().map(SpineTree::leaf_count).sum()
+    }
+
+    pub(crate) fn leaves(&self) -> Vec<&GroupMember> {
+        let mut out = Vec::with_capacity(self.roots.len());
+        for root in &self.roots {
+            out.extend(root.leaves());
+        }
+        out
+    }
+
+    /// The leaf for `rule_idx` together with its leaf EDGE item, if present
+    /// (leaves ↔ members stay a bijection under F5-1 — accepts ARE leaves).
+    pub(crate) fn leaf_for(&self, rule_idx: u16) -> Option<(&SpineItem, &GroupMember)> {
+        self.roots.iter().find_map(|root| root.leaf_for(rule_idx))
     }
 }
 
@@ -550,39 +589,79 @@ fn finalize_leaf(member: CandidateMember, leaf_depth: usize) -> GroupMember {
     }
 }
 
-/// Recursive trie build. `edge_item` is the item that led INTO this node
-/// (`members` all matched `items[0..depth]`; `edge_item == items[depth - 1]`).
-/// A single remaining member commits immediately (earliest-uniqueness leaf);
-/// members whose sequence exhausts at an interior node are recorded as
-/// interior accepts (F5) — the caller marks the group ineligible.
+/// Recursive trie build, returning the FOREST for the node reached by
+/// consuming `edge_item` at `depth` (`members` all matched `items[0..depth]`;
+/// `edge_item == items[depth - 1]`). A single remaining member commits
+/// immediately (earliest-uniqueness leaf).
+///
+/// Members whose sequence exhausts at an interior node while siblings
+/// continue (proper-prefix members, interior accept-nodes) are stance-gated:
+///
+///   - `accept_continue == false` (the F0 stance): recorded in
+///     `interior_accepts`; the caller marks the group ineligible and the
+///     bucket emits unfactored — byte-identical to the pre-F5-1 shipped
+///     model. Identical-twin members (equal full sequences) both land here,
+///     so a multi-member leaf can never form below.
+///   - `accept_continue == true` (F5-1,
+///     [`super::forks::S1F5_ACCEPT_CONTINUE`]): the exhausted member becomes
+///     an ORDINARY LEAF sharing `edge_item` with the continuation subtree —
+///     a SIBLING of the interior node built here (the sibling-leaf form; the
+///     ε-branch reading is refuted — no non-consuming marker-replace
+///     `ForkActionKind` exists, plan §9-FS1). [`finalize_leaf`] at
+///     `depth == items.len()` lands on the member's OWN completion
+///     machinery: a true accept resumes at `positions.len() + 1` (its
+///     final-pos Pop → fire arm) / a nullary accept at `sub_pos ==
+///     parts_len` (its tail-complete arm); a truncated accept (collection
+///     tail) resumes at its own mid-rule arm exactly like today's
+///     `has_post_spine_remainder` leaves (the rule-20 precedent).
+///
+/// ★A1 — NORMATIVE FOREST ORDER: `remainder ++ accepts` — the
+/// interior-continue subtree FIRST, accept leaves LAST. This is the single
+/// normative statement of the branch order; parents splice child forests
+/// into their `children` lists verbatim, [`flatten_forest`] applies the same
+/// rule to multi-root pre-root children, and every emitted divergence fork
+/// therefore puts the spine-continue branch before the accept commit
+/// branches. The choice preserves OFF's relative branch order at the only
+/// real cohort (rhocalc InputBind@ emits [QuotedQuery, Quoted]) and
+/// minimizes `source_priority` order channels; the emission pins assert it.
+///
+/// A part whose members ALL exhaust here (identical-sequence twins) returns
+/// an accepts-only forest — never `Interior { children: [] }` (red-team
+/// F-10; the synthetic all-twins witnesses pin both the root-level and the
+/// spliced form).
 fn build_tree(
     depth: usize,
     edge_item: SpineItem,
     members: Vec<CandidateMember>,
+    accept_continue: bool,
     interior_accepts: &mut Vec<u16>,
-) -> SpineTree {
+) -> Vec<SpineTree> {
     if members.len() == 1 {
         let member = members
             .into_iter()
             .next()
             .expect("a len()==1 vector yields its member");
-        return SpineTree::Leaf {
+        return vec![SpineTree::Leaf {
             item: edge_item,
             member: finalize_leaf(member, depth),
-        };
+        }];
     }
-    // ≥2 members: partition by the next item, preserving first-occurrence
-    // order (rule declaration order — deterministic).
+    // ≥2 members: exhausted members leaf out (or defer, per the stance); the
+    // rest partition by the next item, preserving first-occurrence order
+    // (rule declaration order — deterministic).
     let mut order: Vec<SpineItem> = Vec::new();
     let mut parts: Vec<Vec<CandidateMember>> = Vec::new();
+    let mut accepts: Vec<SpineTree> = Vec::new();
     for member in members {
         if member.items.len() == depth {
-            // Exhausted at an interior node while siblings continue — a
-            // proper-prefix member (interior accept-node). Recorded; the
-            // group becomes ineligible (F5). Identical-twin members (equal
-            // full sequences) both land here, so a multi-member leaf can
-            // never form below.
-            interior_accepts.push(member.rule_idx);
+            if accept_continue {
+                accepts.push(SpineTree::Leaf {
+                    item: edge_item.clone(),
+                    member: finalize_leaf(member, depth),
+                });
+            } else {
+                interior_accepts.push(member.rule_idx);
+            }
             continue;
         }
         let item = member.items[depth].clone();
@@ -594,12 +673,20 @@ fn build_tree(
             },
         }
     }
-    let children: Vec<SpineTree> = order
-        .into_iter()
-        .zip(parts)
-        .map(|(item, part)| build_tree(depth + 1, item, part, interior_accepts))
-        .collect();
-    SpineTree::Interior { item: edge_item, children }
+    let mut children: Vec<SpineTree> = Vec::with_capacity(parts.len());
+    for (item, part) in order.into_iter().zip(parts) {
+        children.extend(build_tree(depth + 1, item, part, accept_continue, interior_accepts));
+    }
+    if children.is_empty() {
+        // Every member exhausted at this node (all-twins part, F-10):
+        // accepts-only forest. Empty overall only under the F0 stance,
+        // where the caller's `interior_accepts` check discards the forest.
+        return accepts;
+    }
+    let mut forest = Vec::with_capacity(1 + accepts.len());
+    forest.push(SpineTree::Interior { item: edge_item, children });
+    forest.extend(accepts);
+    forest
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -607,15 +694,37 @@ fn build_tree(
 // ═══════════════════════════════════════════════════════════════════════════
 
 /// Build the full prefix-factoring model for every category: buckets, groups
-/// (spine tries, SPINE_IDs, typed commit maps), ineligible groups, and
+/// (spine forests, SPINE_IDs, typed commit maps), ineligible groups, and
 /// singletons. PURE — consumes the same classifier outputs as the emission
 /// and produces no tokens. `per_cat` must be the SAME
 /// `synthetic::build_per_category_rules` product the emission uses so
-/// `rule_idx` values agree.
+/// `rule_idx` values agree. Proper-prefix admission follows
+/// [`super::forks::S1F5_ACCEPT_CONTINUE`]; use
+/// [`build_prefix_factoring_with`] to pin a stance explicitly.
 pub(crate) fn build_prefix_factoring(
     language: &LanguageDef,
     categories: &[String],
     per_cat: &[Vec<GrammarRule>],
+) -> Vec<CategoryFactoring> {
+    build_prefix_factoring_with(
+        language,
+        categories,
+        per_cat,
+        super::forks::S1F5_ACCEPT_CONTINUE,
+    )
+}
+
+/// The `accept_continue`-explicit core of [`build_prefix_factoring`] (the F1
+/// `build_spine_emission_from` precedent): tests pin BOTH F5-1 stances
+/// without const flips. `accept_continue == false` reproduces the F0 model
+/// byte-identically (exhausted members defer their group via
+/// `IneligibleReason::InteriorAccept`); `accept_continue == true` admits
+/// them as sibling accept leaves (see [`build_tree`]).
+pub(crate) fn build_prefix_factoring_with(
+    language: &LanguageDef,
+    categories: &[String],
+    per_cat: &[Vec<GrammarRule>],
+    accept_continue: bool,
 ) -> Vec<CategoryFactoring> {
     let prefix_bp_map = build_prefix_bp_map(language, per_cat);
     let mut out = Vec::with_capacity(per_cat.len());
@@ -701,8 +810,12 @@ pub(crate) fn build_prefix_factoring(
                         .collect()
                 };
                 let mut interior_accepts: Vec<u16> = Vec::new();
-                let tree = build_tree(1, root_item, part, &mut interior_accepts);
+                let roots =
+                    build_tree(1, root_item, part, accept_continue, &mut interior_accepts);
                 if !interior_accepts.is_empty() {
+                    // Only reachable with `accept_continue == false` (F5-1
+                    // dormant stance) — [`build_tree`] leafs exhausted
+                    // members out otherwise.
                     ineligible.push(IneligibleGroup {
                         reason: IneligibleReason::InteriorAccept {
                             accepting_rule_idxs: interior_accepts,
@@ -713,7 +826,9 @@ pub(crate) fn build_prefix_factoring(
                 }
                 if body_src_idxs.len() > 1 {
                     // Red-team AV2 gap b: the spine's single BinderRule
-                    // body_src_idx would be ill-defined.
+                    // body_src_idx would be ill-defined. Covers accept
+                    // members' body_src too — `body_src_idxs` is computed
+                    // over the whole part before the trie build.
                     ineligible.push(IneligibleGroup {
                         reason: IneligibleReason::NonUniformBodySrc { body_src_idxs },
                         member_rule_idxs,
@@ -721,10 +836,12 @@ pub(crate) fn build_prefix_factoring(
                     continue;
                 }
                 // Eligible: every leaf carries exactly one rule by
-                // construction (single-member recursion base; twins and
-                // proper prefixes were routed to interior_accepts above).
+                // construction (single-member recursion base; under the F0
+                // stance twins and proper prefixes were routed to
+                // interior_accepts above, under F5-1 they ARE leaves).
+                let leaf_count: usize = roots.iter().map(SpineTree::leaf_count).sum();
                 assert_eq!(
-                    tree.leaf_count(),
+                    leaf_count,
                     member_rule_idxs.len(),
                     "S1-FACTORING: eligible group leaf count must equal its member count \
                      (cat {category_src_idx}, trigger {leading_literal:?})",
@@ -738,7 +855,7 @@ pub(crate) fn build_prefix_factoring(
                 groups.push(SpineGroup {
                     spine_id: SPINE_RULE_BASE + next_spine_ordinal,
                     body_src_idx,
-                    tree,
+                    roots,
                 });
                 next_spine_ordinal += 1;
             }
@@ -842,11 +959,12 @@ pub(crate) fn emission_partition(
 // re-creates the per-rule fan), and the engine tables gain the spine rows.
 //
 // SPINE ARM COORDINATES: the marker-position field of the spine arms is a
-// PREORDER NODE ID over the group's trie (root = 1), NOT the literal depth —
-// sibling subtrees at equal depth need distinct arm keys (the Nil-group's
-// `!` and `!!` subtrees both continue at depth 3 with different member
-// sets). Nothing else interprets spine positions; the member-side
-// translation happens at commit via the A4 typed coordinates.
+// PREORDER NODE ID over the group's forest (pre-root = 1, interior roots
+// from 2 — see `flatten_forest`), NOT the literal depth — sibling subtrees
+// at equal depth need distinct arm keys (the Nil-group's `!` and `!!`
+// subtrees both continue at depth 3 with different member sets). Nothing
+// else interprets spine positions; the member-side translation happens at
+// commit via the A4 typed coordinates.
 // ═══════════════════════════════════════════════════════════════════════════
 
 use std::collections::HashMap;
@@ -937,36 +1055,70 @@ struct FlatNode<'t> {
     children: Vec<(&'t SpineTree, u8)>, // child tree + child node id
 }
 
-/// Preorder node-id assignment over a group tree. Interior nodes get arm
-/// ids; leaves are consumed as EDGES of their parent's arm (no own arm).
+/// Preorder node-id assignment over a group FOREST (F5-1). Interior nodes
+/// get arm ids; leaves are consumed as EDGES of their parent's arm (no own
+/// arm).
 ///
 /// EDGE CONVENTION (F1 root-edge fix, 2026-07-12): every `SpineTree` node
-/// carries the item on the edge INTO it (`root.item` = the group's FIRST
+/// carries the item on the edge INTO it (a root's item = the group's FIRST
 /// post-trigger item), and an ARM consumes EDGES — so the arm at node `n`
-/// emits the actions consuming `n`'s CHILDREN's items. The root edge itself
-/// therefore needs a SYNTHETIC PRE-ROOT arm: node id 1 (the coordinate the
+/// emits the actions consuming `n`'s CHILDREN's items. The root edges
+/// therefore need a SYNTHETIC PRE-ROOT arm: node id 1 (the coordinate the
 /// spine trigger branch pushes, `rule_at(cat, SPINE_ID, 1)`) consumes the
-/// root's own item and lands on the root node at id 2 — mirroring the
-/// member-side convention where arm position `p` consumes `positions[p-1]`
-/// (the original arm 1 consumes the first post-trigger item). Without the
-/// pre-root arm the first post-trigger item would never be consumed (arm 1
-/// would fork over the root's CHILDREN edges — e.g. `@ Nil !…` dispatching
-/// `!`/`!!` guards against the `Nil` token).
-fn flatten_tree(tree: &SpineTree) -> Vec<FlatNode<'_>> {
+/// forest roots' items — mirroring the member-side convention where arm
+/// position `p` consumes `positions[p-1]` (the original arm 1 consumes the
+/// first post-trigger item). Without the pre-root arm the first
+/// post-trigger item would never be consumed (arm 1 would fork over the
+/// root's CHILDREN edges — e.g. `@ Nil !…` dispatching `!`/`!!` guards
+/// against the `Nil` token).
+///
+/// The pre-root children ARE the forest roots in the normative A1 order
+/// (`remainder ++ accepts`, see [`build_tree`]) — a multi-root forest
+/// (root accepts / root twins) makes the pre-root arm itself the accept
+/// fork. Interior roots take ids from 2 in forest order, so a single-root
+/// forest reproduces the F1 id assignment exactly (root = 2, descendants
+/// from 3, preorder).
+fn flatten_forest(roots: &[SpineTree]) -> Vec<FlatNode<'_>> {
     let mut out: Vec<FlatNode<'_>> = Vec::new();
-    // An eligible group has ≥2 members and no interior accepts, so its root
-    // is always Interior (build_tree only leafs a len()==1 part).
+    // The F1 "root must be Interior" assert generalizes (plan §6): the
+    // forest is non-empty and carries one leaf per member of a ≥2-member
+    // group (the leaf/member equality itself is asserted at build).
     assert!(
-        matches!(tree, SpineTree::Interior { .. }),
-        "S1-FACTORING F1: an eligible group's trie root must be Interior",
+        !roots.is_empty(),
+        "S1-FACTORING F5-1: an eligible group's forest must be non-empty",
     );
-    // Pre-root arm: node 1 consumes the root EDGE, landing on the root
-    // node's own arm at id 2.
-    out.push(FlatNode { node_id: 1, children: vec![(tree, 2)] });
-    let mut next_id: u8 = 3;
-    // (tree, assigned id) worklist — preorder.
-    let mut stack: Vec<(&SpineTree, u8)> = Vec::new();
-    stack.push((tree, 2));
+    assert!(
+        roots.iter().map(SpineTree::leaf_count).sum::<usize>() >= 2,
+        "S1-FACTORING F5-1: an eligible group's forest must carry ≥2 leaves \
+         (one per member of a ≥2-member group)",
+    );
+    // Pre-root arm: node 1 consumes the root EDGES; interior roots land on
+    // their own arms at ids assigned from 2, leaf roots commit (id 0).
+    let mut next_id: u8 = 2;
+    let mut pre_root_children: Vec<(&SpineTree, u8)> = Vec::with_capacity(roots.len());
+    for root in roots {
+        let cid = match root {
+            SpineTree::Interior { .. } => {
+                let cid = next_id;
+                assert!(
+                    next_id < 250,
+                    "S1-FACTORING F1: spine node-id space exceeded (u8 marker positions)",
+                );
+                next_id += 1;
+                cid
+            },
+            SpineTree::Leaf { .. } => 0,
+        };
+        pre_root_children.push((root, cid));
+    }
+    // (tree, assigned id) worklist — preorder, root-major.
+    let mut stack: Vec<(&SpineTree, u8)> = Vec::with_capacity(roots.len());
+    for (root, cid) in pre_root_children.iter().rev() {
+        if *cid != 0 {
+            stack.push((root, *cid));
+        }
+    }
+    out.push(FlatNode { node_id: 1, children: pre_root_children });
     while let Some((node, node_id)) = stack.pop() {
         let SpineTree::Interior { children, .. } = node else {
             continue;
@@ -1169,7 +1321,7 @@ pub(crate) fn build_spine_emission_from(
                     lex_alt[cat_usize].grouped.insert(m, d);
                 }
                 // ── binder arms ──────────────────────────────────────────
-                for node in flatten_tree(&group.tree) {
+                for node in flatten_forest(&group.roots) {
                     let node_id = node.node_id;
                     let branches: Vec<TokenStream> = node
                         .children
@@ -1583,7 +1735,9 @@ mod tests {
     /// Compact deterministic rendering of a spine trie: `L(text)` /
     /// `P(cat,bp)` items, `[..]` interior children in build order,
     /// `=>rN` leaves. Pins the generated-arm SHAPES (red-team F0 residual:
-    /// don't just count groups).
+    /// don't just count groups). Repeated items across siblings (F5-1
+    /// accept leaves / twins) render natively — position in the child list
+    /// IS the emitted branch order.
     fn render(tree: &SpineTree) -> String {
         fn item(it: &SpineItem) -> String {
             match it {
@@ -1602,6 +1756,13 @@ mod tests {
                 format!("{}[{}]", item(it), inner.join(" "))
             },
         }
+    }
+
+    /// Forest rendering in the normative A1 root order — a single-root
+    /// forest renders exactly as its root (the pre-F5-1 pin strings hold
+    /// verbatim); multi-root forests join with ` ++ `.
+    fn render_forest(roots: &[SpineTree]) -> String {
+        roots.iter().map(render).collect::<Vec<_>>().join(" ++ ")
     }
 
     // ── tiny positive-AST builders for the synthetic witnesses (same idiom
@@ -1753,22 +1914,28 @@ mod tests {
         assert_eq!(quoted.spine_id, SPINE_RULE_BASE + 1);
         assert_eq!(short.spine_id, SPINE_RULE_BASE + 2);
 
-        assert_eq!(nil.tree.leaf_count(), 6);
-        assert_eq!(quoted.tree.leaf_count(), 3);
-        assert_eq!(short.tree.leaf_count(), 6);
+        assert_eq!(nil.leaf_count(), 6);
+        assert_eq!(quoted.leaf_count(), 3);
+        assert_eq!(short.leaf_count(), 6);
 
         assert_eq!(nil.member_rule_idxs(), BTreeSet::from([10, 11, 15, 16, 20, 21]));
         assert_eq!(quoted.member_rule_idxs(), BTreeSet::from([12, 17, 22]));
         assert_eq!(short.member_rule_idxs(), BTreeSet::from([13, 14, 18, 19, 23, 24]));
 
+        // Divergence-only cohorts stay SINGLE-ROOT forests (F5-1 invariant:
+        // multiple roots require a root accept, which Proc@ has none of).
+        for group in [nil, quoted, short] {
+            assert_eq!(group.roots.len(), 1, "Proc@ groups are single-root");
+        }
+
         // Group roots = the first post-trigger emitted-action shapes.
         assert!(
-            matches!(nil.tree.item(), SpineItem::Literal { text, .. } if text == "Nil"),
+            matches!(nil.roots[0].item(), SpineItem::Literal { text, .. } if text == "Nil"),
             "Nil group root: {:?}",
-            nil.tree.item(),
+            nil.roots[0].item(),
         );
         assert_eq!(
-            quoted.tree.item(),
+            quoted.roots[0].item(),
             &SpineItem::ParamParse { cat_src_idx: name_src, cur_bp: 0 },
             "Quoted group root pushes CategoryEntry(Name) at cur_bp 0",
         );
@@ -1777,7 +1944,7 @@ mod tests {
         // ReplaceAndPush{CategoryEntry(0), cur_bp: 0}, byte-equal across all
         // six members.
         assert_eq!(
-            short.tree.item(),
+            short.roots[0].item(),
             &SpineItem::ParamParse { cat_src_idx: 0, cur_bp: 0 },
             "Short group root pushes CategoryEntry(Proc) at cur_bp 0 (NOT 220)",
         );
@@ -1801,20 +1968,20 @@ mod tests {
         let name_src = src_idx(&categories, "Name");
 
         assert_eq!(
-            render(&proc_at.groups[0].tree),
+            render_forest(&proc_at.groups[0].roots),
             "L(Nil)[L(!)[L(()[P(0,0)[L())=>r10 L(,)=>r20] L())=>r15]] \
              L(!!)[L(()[P(0,0)[L())=>r11 L(,)=>r21] L())=>r16]]]",
             "Nil group divergence structure",
         );
         assert_eq!(
-            render(&proc_at.groups[1].tree),
+            render_forest(&proc_at.groups[1].roots),
             format!(
                 "P({name_src},0)[L(!)[L(()[P(0,0)[L())=>r12 L(,)=>r22] L())=>r17]]]"
             ),
             "Quoted group divergence structure",
         );
         assert_eq!(
-            render(&proc_at.groups[2].tree),
+            render_forest(&proc_at.groups[2].roots),
             "P(0,0)[L(!)[L(()[P(0,0)[L())=>r13 L(,)=>r23] L())=>r18]] \
              L(!!)[L(()[P(0,0)[L())=>r14 L(,)=>r24] L())=>r19]]]",
             "Short group divergence structure",
@@ -1833,7 +2000,7 @@ mod tests {
         let model = build_prefix_factoring(&def, &categories, &per_cat);
         let nil = &bucket(&model, 0, "@").groups[0];
 
-        let (edge15, m15) = nil.tree.leaf_for(15).expect("rule 15 leaf");
+        let (edge15, m15) = nil.leaf_for(15).expect("rule 15 leaf");
         assert_eq!(m15.kind, MemberKind::Nullary);
         assert!(
             matches!(edge15, SpineItem::Literal { text, required_top_cat: None } if text == ")"),
@@ -1851,7 +2018,7 @@ mod tests {
         );
         assert!(!m15.has_post_spine_remainder);
 
-        let (edge20, m20) = nil.tree.leaf_for(20).expect("rule 20 leaf");
+        let (edge20, m20) = nil.leaf_for(20).expect("rule 20 leaf");
         assert_eq!(m20.kind, MemberKind::Binder);
         assert!(
             matches!(edge20, SpineItem::Literal { text, .. } if text == ","),
@@ -1872,7 +2039,7 @@ mod tests {
             "the 2Plus collection tail runs in the member's own machinery",
         );
 
-        let (edge10, m10) = nil.tree.leaf_for(10).expect("rule 10 leaf");
+        let (edge10, m10) = nil.leaf_for(10).expect("rule 10 leaf");
         assert!(matches!(edge10, SpineItem::Literal { text, .. } if text == ")"));
         assert_eq!(
             m10.commit,
@@ -1882,17 +2049,22 @@ mod tests {
         assert!(!m10.has_post_spine_remainder);
     }
 
-    /// Name@ and InputBind@ cohorts: correctly excluded-or-singleton. Name@
-    /// carries NQuote (`@ ( p )`) and NQuoteNil (`@ Nil`) which diverge at
-    /// the root (singletons; NQuoteShort `@ p` is a CrossCatPrefixUnary and
-    /// never a member); InputBind@'s three rows share the `pat <-/<= n`
-    /// spine but `InputBindQuoted` is a proper PREFIX of the query row —
-    /// an interior accept-node — so the whole group is F5-deferred.
+    /// Name@ and InputBind@ cohorts under the F0/legacy stance
+    /// (`accept_continue == false`, pinned explicitly so this test holds at
+    /// BOTH values of the `S1F5_ACCEPT_CONTINUE` const): Name@ carries
+    /// NQuote (`@ ( p )`) and NQuoteNil (`@ Nil`) which diverge at the root
+    /// (singletons; NQuoteShort `@ p` is a CrossCatPrefixUnary and never a
+    /// member); InputBind@'s three rows share the `pat <-/<= n` spine but
+    /// `InputBindQuoted` is a proper PREFIX of the query row — an interior
+    /// accept-node — so the whole group defers. The F5-1 admission of this
+    /// exact cohort is pinned by
+    /// `rhocalc_inputbind_at_cohort_factors_with_accept_continue`; the
+    /// const coupling by `inputbind_at_stance_follows_the_s1f5_const`.
     #[test]
     fn rhocalc_name_and_inputbind_at_cohorts_excluded_or_singleton() {
         let def = rhocalc();
         let (categories, per_cat) = cats_per_cat(&def);
-        let model = build_prefix_factoring(&def, &categories, &per_cat);
+        let model = build_prefix_factoring_with(&def, &categories, &per_cat, false);
         let name_src = src_idx(&categories, "Name");
         let ib_src = src_idx(&categories, "InputBind");
 
@@ -1929,6 +2101,131 @@ mod tests {
                 );
             },
             other => panic!("InputBind@ must defer on InteriorAccept, got {other:?}"),
+        }
+    }
+
+    /// F5-1 — the ONLY real accept+continue cohort, admitted under
+    /// `accept_continue == true` (explicit stance; green at both const
+    /// values): rhocalc `(InputBind, "@")` = {InputBindQuotedQuery=2,
+    /// InputBindQuoted=3 (the accept), InputBindQuotedPersistent=6} —
+    /// index re-pin per plan §1/P1. Pins the sibling-leaf trie (the accept
+    /// leaf SHARES its `P(Name)` edge item with the continuation subtree),
+    /// the ★A1 normative child order (interior-continue FIRST, accept
+    /// LAST), the A4 commit coordinates (the accept's resume_pos =
+    /// positions.len()+1 = its final-pos Pop → fire arm), and the A2
+    /// per-category spine-ordinal isolation (InputBind's first group takes
+    /// 0xF800 in its OWN category; Proc@ ids unshifted).
+    #[test]
+    fn rhocalc_inputbind_at_cohort_factors_with_accept_continue() {
+        let def = rhocalc();
+        let (categories, per_cat) = cats_per_cat(&def);
+        let ib_src = src_idx(&categories, "InputBind");
+        let name_src = src_idx(&categories, "Name");
+        let ib_rules = &per_cat[ib_src as usize];
+        assert_eq!(rule_idx(ib_rules, "InputBindQuotedQuery"), 2, "P1 index re-pin");
+        assert_eq!(rule_idx(ib_rules, "InputBindQuoted"), 3, "P1 index re-pin");
+        assert_eq!(rule_idx(ib_rules, "InputBindQuotedPersistent"), 6, "P1 index re-pin");
+
+        let model = build_prefix_factoring_with(&def, &categories, &per_cat, true);
+        let ib_at = bucket(&model, ib_src, "@");
+        assert_eq!(ib_at.cohort_size, 3);
+        assert!(ib_at.ineligible.is_empty(), "the InteriorAccept deferral is absorbed");
+        assert!(ib_at.singletons.is_empty());
+        assert_eq!(ib_at.groups.len(), 1, "ONE accept+continue group");
+
+        let group = &ib_at.groups[0];
+        assert_eq!(group.spine_id, SPINE_RULE_BASE, "InputBind's FIRST per-category ordinal");
+        assert_eq!(group.body_src_idx, 0, "the shared `pat` operand is Proc");
+        assert_eq!(group.member_rule_idxs(), BTreeSet::from([2, 3, 6]));
+        assert_eq!(group.leaf_count(), 3, "leaves ↔ members bijection incl. the accept");
+        assert_eq!(group.roots.len(), 1, "no root accept — single-root forest");
+        // The full sibling-leaf trie, ★A1 order pinned by position: the
+        // `L(<-)` node lists the interior continuation BEFORE the r3 accept
+        // leaf, both carrying the SAME `P(Name)` edge item.
+        assert_eq!(
+            render_forest(&group.roots),
+            format!("P(0,0)[L(<-)[P({name_src},0)[L(!)=>r2] P({name_src},0)=>r3] L(<=)=>r6]"),
+            "InputBind@ sibling-leaf trie (A1: remainder before accepts)",
+        );
+
+        // A4 commit coordinates. The accept (r3): a TRUE accept — untruncated,
+        // total_positions == leaf_depth — so resume_pos = positions.len()+1 =
+        // 4 = the member's existing final-pos Pop → fire arm.
+        let (edge3, m3) = group.leaf_for(3).expect("rule 3 accept leaf");
+        assert_eq!(
+            edge3,
+            &SpineItem::ParamParse { cat_src_idx: name_src, cur_bp: 0 },
+            "the accept leaf's edge item IS the shared Name operand",
+        );
+        assert_eq!(m3.kind, MemberKind::Binder);
+        assert_eq!(m3.leaf_depth, 3, "spine consumed pat <- n for rule 3");
+        assert_eq!(m3.commit, MemberCommit::Binder { rule_idx: 3, resume_pos: 4 });
+        assert_eq!(m3.pos_map, SpinePosMap::Binder { pos_at_depth: vec![1, 2, 3, 4] });
+        assert!(
+            !m3.has_post_spine_remainder,
+            "a true accept has NO member-side remainder",
+        );
+
+        // r6: ordinary earliest-uniqueness leaf at the `L(<=)` divergence.
+        let (edge6, m6) = group.leaf_for(6).expect("rule 6 leaf");
+        assert!(matches!(edge6, SpineItem::Literal { text, .. } if text == "<="));
+        assert_eq!(m6.leaf_depth, 2);
+        assert_eq!(m6.commit, MemberCommit::Binder { rule_idx: 6, resume_pos: 3 });
+        assert!(m6.has_post_spine_remainder, "the trailing `n` stays member-side");
+
+        // r2: continues past the accept edge, committing on the `!` guard
+        // (truncated at its `args.*sep(",")` collection).
+        let (edge2, m2) = group.leaf_for(2).expect("rule 2 leaf");
+        assert!(matches!(edge2, SpineItem::Literal { text, .. } if text == "!"));
+        assert_eq!(m2.leaf_depth, 4);
+        assert_eq!(m2.commit, MemberCommit::Binder { rule_idx: 2, resume_pos: 5 });
+        assert!(m2.has_post_spine_remainder);
+
+        // A2 — F0-eligible groups are untouched by the admission (per-
+        // category ordinals; exclusions precede partition): the Proc@ trio
+        // is byte-invariant across stances, ids unshifted.
+        let legacy = build_prefix_factoring_with(&def, &categories, &per_cat, false);
+        let proc_at_on = bucket(&model, 0, "@");
+        let proc_at_off = bucket(&legacy, 0, "@");
+        assert_eq!(proc_at_on.groups.len(), 3);
+        for (on, off) in proc_at_on.groups.iter().zip(proc_at_off.groups.iter()) {
+            assert_eq!(on.spine_id, off.spine_id, "Proc@ spine ids unshifted");
+            assert_eq!(on.body_src_idx, off.body_src_idx);
+            assert_eq!(
+                render_forest(&on.roots),
+                render_forest(&off.roots),
+                "Proc@ tries byte-invariant across the F5-1 stances",
+            );
+        }
+    }
+
+    /// The const-following coupling (A3 discipline — green at BOTH stances):
+    /// `build_prefix_factoring` == `build_prefix_factoring_with(const)`, and
+    /// the InputBind@ disposition tracks `S1F5_ACCEPT_CONTINUE` exactly —
+    /// grouped when on, InteriorAccept-deferred when off.
+    #[test]
+    fn inputbind_at_stance_follows_the_s1f5_const() {
+        let s1f5 = crate::gen::runtime::wpda_codegen::forks::S1F5_ACCEPT_CONTINUE;
+        let def = rhocalc();
+        let (categories, per_cat) = cats_per_cat(&def);
+        let ib_src = src_idx(&categories, "InputBind");
+        let const_model = build_prefix_factoring(&def, &categories, &per_cat);
+        let stance_model = build_prefix_factoring_with(&def, &categories, &per_cat, s1f5);
+        let ib_const = bucket(&const_model, ib_src, "@");
+        let ib_stance = bucket(&stance_model, ib_src, "@");
+        assert_eq!(ib_const.groups.len(), ib_stance.groups.len());
+        assert_eq!(ib_const.ineligible.len(), ib_stance.ineligible.len());
+        if s1f5 {
+            assert_eq!(ib_const.groups.len(), 1, "const ON ⇒ InputBind@ grouped");
+            assert!(ib_const.ineligible.is_empty());
+            assert_eq!(ib_const.groups[0].member_rule_idxs(), BTreeSet::from([2, 3, 6]));
+        } else {
+            assert!(ib_const.groups.is_empty(), "const OFF ⇒ InputBind@ deferred");
+            assert_eq!(ib_const.ineligible.len(), 1);
+            assert!(matches!(
+                ib_const.ineligible[0].reason,
+                IneligibleReason::InteriorAccept { .. },
+            ));
         }
     }
 
@@ -2123,7 +2420,7 @@ mod tests {
                     assert_eq!(eg.spine_id, mg.spine_id);
                     assert_eq!(eg.body_src_idx, mg.body_src_idx);
                     assert_eq!(eg.member_rule_idxs(), mg.member_rule_idxs());
-                    assert_eq!(eg.tree.leaf_count(), mg.tree.leaf_count());
+                    assert_eq!(eg.leaf_count(), mg.leaf_count());
                 }
                 assert_eq!(eb.singletons.len(), mb.singletons.len());
                 for (es, ms_) in eb.singletons.iter().zip(mb.singletons.iter()) {
@@ -2145,9 +2442,9 @@ mod tests {
         // (the F0-pinned trie, now emission-effective).
         let at = bucket(&effective, 0, "@");
         assert_eq!(at.groups.len(), 3);
-        assert_eq!(at.groups[0].tree.leaf_count(), 6);
-        assert_eq!(at.groups[1].tree.leaf_count(), 3);
-        assert_eq!(at.groups[2].tree.leaf_count(), 6);
+        assert_eq!(at.groups[0].leaf_count(), 6);
+        assert_eq!(at.groups[1].leaf_count(), 3);
+        assert_eq!(at.groups[2].leaf_count(), 6);
     }
 
     /// ★A9: the spine id space sits below RECOVERY_BASE and u16::MAX with
@@ -2199,25 +2496,24 @@ mod tests {
         let g = &b.groups[0];
         let tee_src = src_idx(&categories, "Tee");
         assert_eq!(
-            render(&g.tree),
+            render_forest(&g.roots),
             format!("L(«)[L(»)=>r0 P({tee_src},0)=>r1]"),
             "one shared literal edge, then nullary-vs-binder divergence",
         );
-        let (_, nullary) = g.tree.leaf_for(0).expect("nullary leaf");
+        let (_, nullary) = g.leaf_for(0).expect("nullary leaf");
         assert_eq!(
             nullary.commit,
             MemberCommit::Nullary { rule_idx: 0, completed_idx: 0, sub_pos: 2 },
         );
-        let (_, binder) = g.tree.leaf_for(1).expect("binder leaf");
+        let (_, binder) = g.leaf_for(1).expect("binder leaf");
         assert_eq!(binder.commit, MemberCommit::Binder { rule_idx: 1, resume_pos: 3 });
         assert!(binder.has_post_spine_remainder, "the trailing » stays member-side");
     }
 
-    /// A proper-prefix member (interior accept-node) defers the WHOLE group
-    /// (F5), preserving today's emission for all members.
-    #[test]
-    fn interior_accept_defers_group_to_f5() {
-        let lang = mk_language(
+    /// The PrefixAccept synthetic (plan P3(a)): Short `quo « a` is a proper
+    /// prefix of Long `quo « a »` — the minimal interior-accept pair.
+    fn prefix_accept_lang() -> LanguageDef {
+        mk_language(
             "PrefixAccept",
             expr_num_types(),
             vec![
@@ -2235,9 +2531,18 @@ mod tests {
                 ),
                 jrule("TAtom", "Tee", vec![], vec![lit("tatom")]),
             ],
-        );
+        )
+    }
+
+    /// A proper-prefix member (interior accept-node) defers the WHOLE group
+    /// under the F0 stance (`accept_continue == false` — explicit, so this
+    /// holds at both const values), preserving today's emission for all
+    /// members.
+    #[test]
+    fn interior_accept_defers_group_to_f5() {
+        let lang = prefix_accept_lang();
         let (categories, per_cat) = cats_per_cat(&lang);
-        let model = build_prefix_factoring(&lang, &categories, &per_cat);
+        let model = build_prefix_factoring_with(&lang, &categories, &per_cat, false);
         let b = bucket(&model, 0, "quo");
         assert!(b.groups.is_empty());
         assert_eq!(b.ineligible.len(), 1);
@@ -2245,6 +2550,211 @@ mod tests {
             &b.ineligible[0].reason,
             IneligibleReason::InteriorAccept { accepting_rule_idxs } if accepting_rule_idxs == &vec![0],
         ));
+    }
+
+    /// F5-1 ON stance of the same pair: the exhausted Short member becomes a
+    /// SIBLING LEAF sharing the `P(Tee)` edge item with Long's continuation
+    /// subtree — ★A1 order (interior first, accept last), the true-accept
+    /// commit arithmetic (resume_pos = positions.len()+1), and the
+    /// leaves ↔ members bijection.
+    #[test]
+    fn interior_accept_becomes_sibling_leaf_with_accept_continue() {
+        let lang = prefix_accept_lang();
+        let (categories, per_cat) = cats_per_cat(&lang);
+        let model = build_prefix_factoring_with(&lang, &categories, &per_cat, true);
+        let b = bucket(&model, 0, "quo");
+        assert!(b.ineligible.is_empty(), "the deferral is absorbed");
+        assert_eq!(b.groups.len(), 1);
+        let g = &b.groups[0];
+        let tee_src = src_idx(&categories, "Tee");
+        assert_eq!(g.member_rule_idxs(), BTreeSet::from([0, 1]));
+        assert_eq!(g.roots.len(), 1, "the accept is at depth 2 — no root accept");
+        assert_eq!(
+            render_forest(&g.roots),
+            format!("L(«)[P({tee_src},0)[L(»)=>r1] P({tee_src},0)=>r0]"),
+            "sibling-leaf trie: continuation subtree FIRST, accept LAST (A1)",
+        );
+        let (edge0, short) = g.leaf_for(0).expect("the Short accept leaf");
+        assert_eq!(edge0, &SpineItem::ParamParse { cat_src_idx: tee_src, cur_bp: 0 });
+        assert_eq!(short.leaf_depth, 2);
+        assert_eq!(
+            short.commit,
+            MemberCommit::Binder { rule_idx: 0, resume_pos: 3 },
+            "true accept: resume_pos = positions.len()+1 = the final-pos Pop arm",
+        );
+        assert!(!short.has_post_spine_remainder);
+        let (_, long) = g.leaf_for(1).expect("the Long leaf");
+        assert_eq!(long.commit, MemberCommit::Binder { rule_idx: 1, resume_pos: 4 });
+        assert!(!long.has_post_spine_remainder, "Long's » IS its last item");
+    }
+
+    /// F5-1 root accept (multi-root forest): a nullary member whose whole
+    /// item list is the root edge (`quo «` inside `quo « »`) becomes a LEAF
+    /// ROOT — the pre-root arm itself becomes the accept fork. The nullary
+    /// accept commits tail-complete (`sub_pos == parts_len`).
+    #[test]
+    fn root_accept_yields_multi_root_forest() {
+        let lang = mk_language(
+            "RootAccept",
+            expr_num_types(),
+            vec![
+                jrule("TShort", "Expr", vec![], vec![lit("quo"), lit("«")]),
+                jrule("TLong", "Expr", vec![], vec![lit("quo"), lit("«"), lit("»")]),
+            ],
+        );
+        let (categories, per_cat) = cats_per_cat(&lang);
+        // The F0 stance defers on the same pair (both-stance dormancy pin).
+        let legacy = build_prefix_factoring_with(&lang, &categories, &per_cat, false);
+        let lb = bucket(&legacy, 0, "quo");
+        assert!(lb.groups.is_empty());
+        assert!(matches!(
+            &lb.ineligible[0].reason,
+            IneligibleReason::InteriorAccept { accepting_rule_idxs } if accepting_rule_idxs == &vec![0],
+        ));
+
+        let model = build_prefix_factoring_with(&lang, &categories, &per_cat, true);
+        let b = bucket(&model, 0, "quo");
+        assert!(b.ineligible.is_empty());
+        assert_eq!(b.groups.len(), 1);
+        let g = &b.groups[0];
+        assert_eq!(g.roots.len(), 2, "root accept ⇒ MULTI-ROOT forest");
+        assert_eq!(
+            render_forest(&g.roots),
+            "L(«)[L(»)=>r1] ++ L(«)=>r0",
+            "A1 at the roots: the remainder tree FIRST, the accept root LAST",
+        );
+        let (edge0, short) = g.leaf_for(0).expect("the TShort accept root");
+        assert!(matches!(edge0, SpineItem::Literal { text, required_top_cat: None } if text == "«"));
+        assert_eq!(short.kind, MemberKind::Nullary);
+        assert_eq!(
+            short.commit,
+            MemberCommit::Nullary { rule_idx: 0, completed_idx: 0, sub_pos: 1 },
+            "nullary accept lands tail-complete (sub_pos == parts_len == 1)",
+        );
+        assert!(!short.has_post_spine_remainder);
+        // The all-nullary group carries the owning category as body.
+        assert_eq!(g.body_src_idx, 0);
+    }
+
+    /// F5-1 truncated accept (collection tail): a member CUT at its
+    /// collection whose cut prefix exhausts at an interior node commits at
+    /// its own MID-RULE arm (the rule-20 precedent) with
+    /// `has_post_spine_remainder` set.
+    #[test]
+    fn truncated_accept_commits_mid_rule_with_remainder() {
+        let lang = mk_language(
+            "TruncAccept",
+            expr_num_types(),
+            vec![
+                jrule(
+                    "WithColl",
+                    "Expr",
+                    vec![simple("t", "Tee"), simple_coll("xs", CollectionType::Vec, "Tee")],
+                    vec![lit("quo"), lit("«"), param("t"), sep("xs", ","), lit("»")],
+                ),
+                jrule(
+                    "Plain",
+                    "Expr",
+                    vec![simple("t", "Tee"), simple("u", "Tee")],
+                    vec![lit("quo"), lit("«"), param("t"), lit("·"), param("u")],
+                ),
+                jrule("TAtom", "Tee", vec![], vec![lit("tatom")]),
+            ],
+        );
+        let (categories, per_cat) = cats_per_cat(&lang);
+        let model = build_prefix_factoring_with(&lang, &categories, &per_cat, true);
+        let b = bucket(&model, 0, "quo");
+        assert!(b.ineligible.is_empty());
+        assert_eq!(b.groups.len(), 1);
+        let g = &b.groups[0];
+        let tee_src = src_idx(&categories, "Tee");
+        assert_eq!(
+            render_forest(&g.roots),
+            format!("L(«)[P({tee_src},0)[L(·)=>r1] P({tee_src},0)=>r0]"),
+        );
+        let (_, with_coll) = g.leaf_for(0).expect("the truncated accept leaf");
+        assert_eq!(with_coll.leaf_depth, 2, "cut prefix « Tee exhausted at depth 2");
+        assert_eq!(
+            with_coll.commit,
+            MemberCommit::Binder { rule_idx: 0, resume_pos: 3 },
+            "truncated accept resumes at its OWN collection arm (mid-rule)",
+        );
+        assert!(
+            with_coll.has_post_spine_remainder,
+            "the collection tail runs in the member's own machinery",
+        );
+    }
+
+    /// Red-team F-10: all-twins parts return an accepts-only forest — never
+    /// `Interior { children: [] }`. Both shapes pinned: twins at the ROOT
+    /// (an all-leaf multi-root forest — the pre-root arm is all commits) and
+    /// twins spliced deeper (leaf children repeating an item under one
+    /// interior node). Under the F0 stance both pairs defer with BOTH
+    /// members listed as accepting.
+    #[test]
+    fn all_twins_part_yields_accepts_only_forest() {
+        // Root-level twins: two nullary rules with the identical `quo «`.
+        let root_twins = mk_language(
+            "RootTwins",
+            expr_num_types(),
+            vec![
+                jrule("T1", "Expr", vec![], vec![lit("quo"), lit("«")]),
+                jrule("T2", "Expr", vec![], vec![lit("quo"), lit("«")]),
+            ],
+        );
+        let (categories, per_cat) = cats_per_cat(&root_twins);
+        let legacy = build_prefix_factoring_with(&root_twins, &categories, &per_cat, false);
+        let lb = bucket(&legacy, 0, "quo");
+        assert!(matches!(
+            &lb.ineligible[0].reason,
+            IneligibleReason::InteriorAccept { accepting_rule_idxs }
+                if accepting_rule_idxs == &vec![0, 1],
+        ));
+        let model = build_prefix_factoring_with(&root_twins, &categories, &per_cat, true);
+        let b = bucket(&model, 0, "quo");
+        assert_eq!(b.groups.len(), 1);
+        let g = &b.groups[0];
+        assert_eq!(g.roots.len(), 2, "accepts-only forest at the root");
+        assert!(
+            g.roots.iter().all(|r| matches!(r, SpineTree::Leaf { .. })),
+            "never Interior {{ children: [] }} — every root is an accept leaf",
+        );
+        assert_eq!(render_forest(&g.roots), "L(«)=>r0 ++ L(«)=>r1");
+        assert_eq!(g.leaf_count(), 2);
+
+        // Spliced twins: two binder rules with the identical `quo « a`.
+        let spliced_twins = mk_language(
+            "SplicedTwins",
+            expr_num_types(),
+            vec![
+                jrule(
+                    "S1",
+                    "Expr",
+                    vec![simple("a", "Tee")],
+                    vec![lit("quo"), lit("«"), param("a")],
+                ),
+                jrule(
+                    "S2",
+                    "Expr",
+                    vec![simple("b", "Tee")],
+                    vec![lit("quo"), lit("«"), param("b")],
+                ),
+                jrule("TAtom", "Tee", vec![], vec![lit("tatom")]),
+            ],
+        );
+        let (categories, per_cat) = cats_per_cat(&spliced_twins);
+        let model = build_prefix_factoring_with(&spliced_twins, &categories, &per_cat, true);
+        let b = bucket(&model, 0, "quo");
+        assert_eq!(b.groups.len(), 1);
+        let g = &b.groups[0];
+        let tee_src = src_idx(&categories, "Tee");
+        assert_eq!(g.roots.len(), 1);
+        assert_eq!(
+            render_forest(&g.roots),
+            format!("L(«)[P({tee_src},0)=>r0 P({tee_src},0)=>r1]"),
+            "twin accept leaves REPEAT their edge item under one interior node",
+        );
+        assert_eq!(g.leaf_count(), 2, "leaf per member holds for twins");
     }
 
     /// A collection item terminates mergeability LEAF-SIDE only: the member
@@ -2285,10 +2795,10 @@ mod tests {
         let g = &b.groups[0];
         let tee_src = src_idx(&categories, "Tee");
         assert_eq!(
-            render(&g.tree),
+            render_forest(&g.roots),
             format!("L(«)[P({tee_src},0)[L(·)=>r0 L(»)=>r1]]"),
         );
-        let (_, with_coll) = g.tree.leaf_for(0).expect("collection member leaf");
+        let (_, with_coll) = g.leaf_for(0).expect("collection member leaf");
         assert!(
             with_coll.has_post_spine_remainder,
             "the collection tail is member-side (never a spine edge)",
@@ -2461,7 +2971,18 @@ mod tests {
                 }
             }
         }
-        assert_eq!(groups_seen, 3, "the rhocalc @-cohort ships 3 groups");
+        // A3/F5-1 stance-follow: the const-gated model gains the InputBind@
+        // accept+continue group when `S1F5_ACCEPT_CONTINUE` is on (3 Proc@
+        // groups + 1 InputBind@), and stays at the Proc@ trio when off —
+        // green at BOTH stances; the min re-derivation loop above already
+        // covered the new group (r2's Op-bearing pattern ⇒ min 0 ⇒ its span
+        // row is ABSENT and the prelude stays empty).
+        let expected_groups =
+            if crate::gen::runtime::wpda_codegen::forks::S1F5_ACCEPT_CONTINUE { 4 } else { 3 };
+        assert_eq!(
+            groups_seen, expected_groups,
+            "rhocalc group census follows the S1F5_ACCEPT_CONTINUE stance",
+        );
         let explicit = build_spine_emission_from(&model, &def, &categories, &per_cat);
         assert_eq!(gated.dispositions, explicit.dispositions);
         assert_eq!(gated.binder_arms.to_string(), explicit.binder_arms.to_string());
@@ -2623,5 +3144,239 @@ mod tests {
         assert!(s.contains("lex_w(0.0,0u16,10u16)"), "AV5 weight stamp: {s}");
         assert!(s.contains("ConsumeAsTriggerOnly"));
         assert!(s.contains("rule_idx:63488u16"), "BinderRule state carries the SPINE_ID: {s}");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // F5-1 emission pins (2026-07-13; plan f5_accept_continue_plan.md §2.2 +
+    // amendments A1/A2/A3). Full-strength through
+    // `build_spine_emission_from(build_prefix_factoring_with(.., true))` —
+    // no const flip needed, green at both stances (the F1 discipline).
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /// P3(b) — the rhocalc InputBind@ accept+continue emission, hand-derived
+    /// in plan §2.2 and pinned arm-by-arm: pre-root Proc push (arm 1), the
+    /// `<-`/`<=` divergence with the r6 commit (arm 2), ★THE
+    /// ACCEPT+CONTINUE FORK (arm 3 — two `ReplaceAndPush` branches BOTH
+    /// pushing `CategoryEntry(Name)`, spine-continue FIRST and the r3
+    /// accept commit LAST per A1; the branches are action-identical to
+    /// F1-emitted constructs, distinguished only by their replace symbols),
+    /// the r2 commit on the `!` guard (arm 4), the A2 dispositions
+    /// (2 → GroupFirst{0xF800, Proc, weight_rule 2}, 3/6 → GroupRest),
+    /// and the engine-table rows incl. the A3 span-row ABSENCE.
+    #[test]
+    fn spine_emission_on_inputbind_accept_fork_pins() {
+        let def = rhocalc();
+        let (categories, per_cat) = cats_per_cat(&def);
+        let ib = src_idx(&categories, "InputBind");
+        let name_src = src_idx(&categories, "Name");
+        let model = build_prefix_factoring_with(&def, &categories, &per_cat, true);
+        let bundle = build_spine_emission_from(&model, &def, &categories, &per_cat);
+        assert!(bundle.any_groups());
+
+        // ── A2 dispositions: GroupFirst at min member 2 with the AV5 weight
+        //    identity; per-category ordinal keeps the ib spine at 0xF800. ──
+        let ib_dispositions = &bundle.dispositions[ib as usize];
+        assert_eq!(
+            ib_dispositions.get(&2),
+            Some(&SpineDisposition::GroupFirst {
+                spine_id: SPINE_RULE_BASE,
+                body_src_idx: 0,
+                weight_rule_idx: 2,
+            }),
+        );
+        for rest in [3u16, 6] {
+            assert_eq!(
+                ib_dispositions.get(&rest),
+                Some(&SpineDisposition::GroupRest),
+                "InputBind@ member {rest} is GroupRest",
+            );
+        }
+        assert_eq!(bundle.lex_alt[ib as usize].grouped.len(), 3);
+        // Proc@ dispositions unshifted (A2: per-category ordinals).
+        assert_eq!(bundle.dispositions[0].len(), 15, "the Proc@ cohort is untouched");
+
+        let arms = normalized(&bundle.binder_arms);
+        let spine = SPINE_RULE_BASE; // 63488
+        // Arm 1 (pre-root): the shared `pat` Proc operand — ONE push where
+        // OFF ran three (the actual fan win).
+        let arm1 = window(
+            &arms,
+            &format!("({ib}u16,{spine}u16,1u8)=>"),
+            &format!("({ib}u16,{spine}u16,2u8)=>"),
+        );
+        assert!(
+            arm1.contains("ReplaceAndPush")
+                && arm1.contains("category_entry(0u16)")
+                && arm1.contains(&format!("rule_at({ib}u16,{spine}u16,2u8")),
+            "pre-root arm pushes the shared Proc operand: {arm1}",
+        );
+        // Arm 2: the <-/<= divergence; the <= branch IS the r6 commit.
+        let arm2 = window(
+            &arms,
+            &format!("({ib}u16,{spine}u16,2u8)=>"),
+            &format!("({ib}u16,{spine}u16,3u8)=>"),
+        );
+        assert!(
+            arm2.contains("expected_text:\"<-\"")
+                && arm2.contains(&format!("rule_at({ib}u16,{spine}u16,3u8")),
+            "arm 2 continues the spine on <-: {arm2}",
+        );
+        assert!(
+            arm2.contains("expected_text:\"<=\"")
+                && arm2.contains(&format!("rule_at({ib}u16,6u16,3u8")),
+            "arm 2 commits r6 on <=: {arm2}",
+        );
+        // ★Arm 3 — THE ACCEPT+CONTINUE FORK: two same-push branches.
+        let arm3 = window(
+            &arms,
+            &format!("({ib}u16,{spine}u16,3u8)=>"),
+            &format!("({ib}u16,{spine}u16,4u8)=>"),
+        );
+        assert_eq!(
+            arm3.matches("ReplaceAndPush").count(),
+            2,
+            "arm 3 is the two-branch accept fork: {arm3}",
+        );
+        assert_eq!(
+            arm3.matches(&format!("category_entry({name_src}u16)")).count(),
+            2,
+            "BOTH branches push the shared CategoryEntry(Name): {arm3}",
+        );
+        let continue_sym = format!("rule_at({ib}u16,{spine}u16,4u8");
+        let accept_sym = format!("rule_at({ib}u16,3u16,4u8");
+        let continue_at = arm3.find(&continue_sym).expect("spine-continue branch present");
+        let accept_at = arm3.find(&accept_sym).expect("accept commit branch present");
+        assert!(
+            continue_at < accept_at,
+            "★A1: interior-continue FIRST, accept commit LAST: {arm3}",
+        );
+        // Arm 4: the chain `!` guard commits r2 — where the spine-continue
+        // lineage dies on plain `for(@y <- z){…}` input (the shared
+        // evidence-prune, exactly where OFF's QuotedQuery cursor dies).
+        let arm4 = window(&arms, &format!("({ib}u16,{spine}u16,4u8)=>"), "];");
+        assert!(
+            arm4.contains("expected_text:\"!\"")
+                && arm4.contains(&format!("rule_at({ib}u16,2u16,5u8")),
+            "arm 4 commits r2 on the ! guard: {arm4}",
+        );
+
+        // ── engine-table rows ──────────────────────────────────────────────
+        let owners = normalized(&bundle.trigger_spine_owner_fn);
+        for member in [2u16, 3, 6] {
+            assert!(
+                owners.contains(&format!("({ib}u16,{member}u16)=>Some({spine}u16)")),
+                "owner row for ib member {member}",
+            );
+        }
+        let members = normalized(&bundle.spine_members_fn);
+        assert!(members.contains(&format!("({ib}u16,{spine}u16)=>&[2u16,3u16,6u16]")));
+        // H9 poison row union: r2 contributes Proc + Name + the ANY_CAT
+        // sentinel for its Vec slot; r3/r6 duplicate Proc/Name.
+        let actions = normalized(&bundle.action_for_prelude);
+        assert!(
+            actions.contains(&format!(
+                "({ib}u16,{spine}u16)=>{{staticSPINE_ENTRY"
+            )),
+            "ib spine action row present: {actions}",
+        );
+        assert!(
+            actions.contains("expected_input_cats:&[0u16,3u16,65535u16]"),
+            "ib union row (Proc, Name, ANY_CAT): {actions}",
+        );
+        let leads = normalized(&bundle.leading_trigger_prelude);
+        assert!(leads.contains(&format!("({ib}u16,{spine}u16)=>returntrue")));
+        // A3: r2's Op-bearing pattern short-circuits member_min_span to 0 ⇒
+        // group min 0 ⇒ the (ib, spine) span row is ABSENT — and since every
+        // rhocalc group is min-0, the whole prelude is EMPTY.
+        assert!(
+            bundle.min_span_prelude.is_empty(),
+            "A3: min=0 ⇒ the span row is omitted; got {}",
+            bundle.min_span_prelude,
+        );
+        let weights = normalized(&bundle.spine_weight_rule_fn);
+        assert!(
+            weights.contains(&format!("({ib}u16,{spine}u16)=>2u16")),
+            "AV5 weight identity = min member 2: {weights}",
+        );
+    }
+
+    /// P3(a) — the PrefixAccept synthetic's emitted accept fork matches the
+    /// hand-derivation: arm 2 forks {spine-continue → node 3, accept commit
+    /// → r0's final-pos arm}, both pushing `CategoryEntry(Tee)`; arm 3
+    /// chain-commits r1 on the `»` guard.
+    #[test]
+    fn prefix_accept_emission_pins_accept_fork() {
+        let lang = prefix_accept_lang();
+        let (categories, per_cat) = cats_per_cat(&lang);
+        let tee = src_idx(&categories, "Tee");
+        let model = build_prefix_factoring_with(&lang, &categories, &per_cat, true);
+        let bundle = build_spine_emission_from(&model, &lang, &categories, &per_cat);
+        let arms = normalized(&bundle.binder_arms);
+        let spine = SPINE_RULE_BASE;
+        let arm2 = window(
+            &arms,
+            &format!("(0u16,{spine}u16,2u8)=>"),
+            &format!("(0u16,{spine}u16,3u8)=>"),
+        );
+        assert_eq!(arm2.matches("ReplaceAndPush").count(), 2, "{arm2}");
+        assert_eq!(arm2.matches(&format!("category_entry({tee}u16)")).count(), 2, "{arm2}");
+        let continue_at = arm2
+            .find(&format!("rule_at(0u16,{spine}u16,3u8"))
+            .expect("spine-continue branch");
+        let accept_at = arm2
+            .find("rule_at(0u16,0u16,3u8")
+            .expect("Short accept commit branch");
+        assert!(continue_at < accept_at, "A1 order: {arm2}");
+        let arm3 = window(&arms, &format!("(0u16,{spine}u16,3u8)=>"), "];");
+        assert!(
+            arm3.contains("expected_text:\"»\"") && arm3.contains("rule_at(0u16,1u16,4u8"),
+            "arm 3 commits Long on the » guard: {arm3}",
+        );
+    }
+
+    /// A root accept makes the PRE-ROOT arm the accept fork: both branches
+    /// consume the root edge `«` — spine-continue to node 2 FIRST, the
+    /// nullary tail-complete commit LAST (A1 applies to pre-root children).
+    #[test]
+    fn root_accept_emission_puts_accept_fork_on_pre_root_arm() {
+        let lang = mk_language(
+            "RootAccept",
+            expr_num_types(),
+            vec![
+                jrule("TShort", "Expr", vec![], vec![lit("quo"), lit("«")]),
+                jrule("TLong", "Expr", vec![], vec![lit("quo"), lit("«"), lit("»")]),
+            ],
+        );
+        let (categories, per_cat) = cats_per_cat(&lang);
+        let model = build_prefix_factoring_with(&lang, &categories, &per_cat, true);
+        let bundle = build_spine_emission_from(&model, &lang, &categories, &per_cat);
+        let arms = normalized(&bundle.binder_arms);
+        let spine = SPINE_RULE_BASE;
+        let arm1 = window(
+            &arms,
+            &format!("(0u16,{spine}u16,1u8)=>"),
+            &format!("(0u16,{spine}u16,2u8)=>"),
+        );
+        assert_eq!(
+            arm1.matches("expected_text:\"«\"").count(),
+            2,
+            "the pre-root arm forks BOTH consumers of the root edge: {arm1}",
+        );
+        let continue_at = arm1
+            .find(&format!("rule_at(0u16,{spine}u16,2u8"))
+            .expect("spine-continue branch");
+        let accept_at = arm1
+            .find("mixfix_marker(0u16,0u16,0u8)")
+            .expect("TShort nullary accept commit branch");
+        assert!(continue_at < accept_at, "A1 order at the pre-root: {arm1}");
+        assert!(
+            arm1.contains("sub_pos:1u8"),
+            "the accept lands tail-complete (sub_pos == parts_len): {arm1}",
+        );
+        let arm2 = window(&arms, &format!("(0u16,{spine}u16,2u8)=>"), "];");
+        assert!(
+            arm2.contains("expected_text:\"»\"") && arm2.contains("mixfix_marker(0u16,1u16,0u8)"),
+            "arm 2 commits TLong on the » guard: {arm2}",
+        );
     }
 }
