@@ -71,3 +71,7 @@ theories/TrieLeafBijection.v
 theories/SpineSimulation.v
 theories/SpineTriggerReattribution.v
 theories/PureCommitFoldIntegrity.v
+
+theories/TrieLeafBijectionAccept.v
+theories/SpineSimulationAccept.v
+theories/PureCommitFoldIntegrityAccept.v
