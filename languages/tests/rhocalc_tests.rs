@@ -4360,3 +4360,116 @@ mod flip_blocker_prefix_grouped_send {
         assert!(Proc::parse("*(a)!(false)").is_err());
     }
 }
+
+// ════════════════════════════════════════════════════════════════════════════════
+// TASK #10 ITEM 2b (2026-07-14, USER-APPROVED): behavioral pins for the two
+// facade realize-mode contract restorations (ledger_followups_plan §ITEM-2
+// design step 6, amendment 4).
+//
+// Pre-2b, the walker inferred single-result semantics from `limit` being a
+// power of two ≤ 128 (the RAW_PROBE_CAPS coupling). Two facade helpers sat in
+// the trap range and silently ELECTED where their contract is ENUMERATION:
+//   - `__mettail_wpda_collect_prefix` (the bounded-prefix `_all` facade):
+//     probe limit = max_alternatives + 1, so `max_alternatives ∈
+//     {1,3,7,15,31,63,127}` collapsed the ambiguity-preserving facade to the
+//     single elected reading.
+//   - `__mettail_wpda_find_surface_exact` (the `Cat::parse` display-exact
+//     surface repair): per-root limit starts at 128, so BIN roots elected 1
+//     reading, `exhausted_all_roots` stayed true, and the probe returned
+//     `Ok(None)` after one pass — surface faithfulness silently dead.
+//
+// Pin family per amendment 4: the grp_d1 twins `@Nil!(@(@Nil)!())` — a
+// display-DISTINCT 2-reading family (kept `NParen` twin displays as the
+// source text; the transparent twin displays `@Nil!(@@Nil!())`), both
+// semantically distinct so the prefix facade's semantic dedup keeps both.
+// `@a!(0,1)` is explicitly EXCLUDED (its 2 raw derivations semantically
+// dedup to 1). P4 classic-lever receipt: reading count = 2 both arms
+// (logs_task10/baseline_head/rows_{pure,lever}.log, AST-COUNT 2).
+// ════════════════════════════════════════════════════════════════════════════════
+
+mod realize_mode_contract_pins {
+    use super::*;
+    use mettail_prattail::wpda_runtime::LatticeTokenSource;
+
+    /// Item-2b pin 1 (collect_prefix): the bounded-prefix facade at
+    /// `max_alternatives = 3` (probe limit 4 — inside the pre-2b trap range)
+    /// on the 2-reading grp_d1 family must return BOTH display-distinct
+    /// alternatives. Pre-2b it returned exactly 1 (the elected reading).
+    #[test]
+    fn prefix_bounded_alternatives_enumerate_display_distinct_family() {
+        fresh();
+        let dag = lex_dag("@Nil!(@(@Nil)!())").expect("grp_d1 lexes");
+        let source = LatticeTokenSource::new(dag);
+        let mut pos = 0usize;
+        let (terms, weights) =
+            parse_Proc_via_wpda_prefix_with_source(&source, &mut pos, 0, 3)
+                .expect("grp_d1 parses through the bounded-prefix facade");
+        assert_eq!(terms.len(), weights.len(), "term-parallel weights");
+        let mut displays: Vec<String> = terms.iter().map(|t| format!("{t}")).collect();
+        displays.sort();
+        assert_eq!(
+            displays,
+            vec![
+                "@Nil!(@(@Nil)!())".to_string(),
+                "@Nil!(@@Nil!())".to_string(),
+            ],
+            "the bounded-prefix facade must enumerate the full 2-reading \
+             display-distinct family (pre-2b trap: collapsed to the single \
+             elected reading)"
+        );
+    }
+
+    /// Item-2b pin 2 (find_surface_exact): the display-exact surface probe
+    /// must FIND the display-exact NON-elected reading. The single-result
+    /// election on `@Nil!(@(@Nil)!())` elects the NParen-kept twin (whose
+    /// display reproduces the source text); the transparent twin displays
+    /// `@Nil!(@@Nil!())` and is reachable only by ENUMERATING the packing
+    /// family. Pre-2b the probe elected, missed, and reported `Ok(None)`.
+    #[test]
+    fn surface_exact_finds_non_elected_display_reading() {
+        fresh();
+        let dag = lex_dag("@Nil!(@(@Nil)!())").expect("grp_d1 lexes");
+        let source = LatticeTokenSource::new(dag);
+        let mut pos = 0usize;
+        let found = parse_Proc_via_wpda_surface_exact_with_source(
+            &source,
+            &mut pos,
+            0,
+            "@Nil!(@@Nil!())",
+            128,
+        )
+        .expect("the surface-exact probe must not error on a parseable input");
+        let (term, _weight) = found.expect(
+            "the display-exact non-elected reading must be FOUND by family \
+             enumeration (pre-2b trap: one elected pass, then Ok(None))",
+        );
+        assert_eq!(
+            format!("{term}"),
+            "@Nil!(@@Nil!())",
+            "the found reading's display must reproduce the requested surface"
+        );
+    }
+
+    /// Fence: the same surface probe still reports `Ok(None)` for a display
+    /// NO reading of this family has — enumeration must not fabricate.
+    #[test]
+    fn surface_exact_still_rejects_unrealizable_display() {
+        fresh();
+        let dag = lex_dag("@Nil!(@(@Nil)!())").expect("grp_d1 lexes");
+        let source = LatticeTokenSource::new(dag);
+        let mut pos = 0usize;
+        let found = parse_Proc_via_wpda_surface_exact_with_source(
+            &source,
+            &mut pos,
+            0,
+            "@Nil!(@(@(@Nil))!())",
+            128,
+        )
+        .expect("the surface-exact probe must not error on a parseable input");
+        assert!(
+            found.is_none(),
+            "no reading of grp_d1 displays the deeper-nested surface; the \
+             probe must exhaust and report None, got {found:?}"
+        );
+    }
+}

@@ -4409,36 +4409,28 @@ pub(crate) fn emit_parse_fns(
                     let mut per_root_limit =
                         max_raw_derivations.min(INITIAL_RAW_SURFACE_PROBE_LIMIT).max(1);
                     loop {
-                        // ★ ITEM-2b STAGING (task #10; the fix is USER-APPROVED
-                        // 2026-07-14 and lands as the immediate NEXT commit):
-                        // this display-exact probe SHOULD request
-                        // `BoundedEnumeration` (it wants the family, not the
-                        // elected reading). In THIS commit (2a = pure
-                        // byte-identical mode threading) the mode is still
-                        // derived from `per_root_limit` by the historical
-                        // power-of-two ≤ 128 inference, REPRODUCING the
-                        // pre-mode behavior byte-for-byte — including the
-                        // known wart: on BIN roots at a power-of-two limit
-                        // the walker ELECTS (1 reading), `realized.len() <
-                        // per_root_limit` keeps `exhausted_all_roots` true,
-                        // and the probe can return `Ok(None)` after one pass
-                        // without enumerating (the flip-era regression the
-                        // red-team confirmed). Item 2b replaces this block
-                        // with an unconditional `BoundedEnumeration` plus
-                        // the behavioral pins.
-                        let realize_mode = if per_root_limit <= 128usize
-                            && per_root_limit.is_power_of_two()
-                        {
-                            mettail_prattail::wpda_walker::RealizeRequestMode::SingleResultElection
-                        } else {
-                            mettail_prattail::wpda_walker::RealizeRequestMode::BoundedEnumeration
-                        };
+                        // Task #10 item 2b (USER-APPROVED 2026-07-14): this
+                        // display-exact probe wants the raw packing FAMILY,
+                        // never the elected reading — `BoundedEnumeration`
+                        // restores the helper's own lazy/fair enumeration
+                        // contract on BIN roots. (Pre-2b, the historical
+                        // power-of-two ≤ 128 inference ELECTED at every
+                        // ladder step ≤ 128: 1 reading realized,
+                        // `exhausted_all_roots` stayed true, and the probe
+                        // returned `Ok(None)` after one pass without ever
+                        // enumerating — `Cat::parse` surface-faithfulness
+                        // was silently dead on BIN roots, the flip-era
+                        // regression the item-2 red-team confirmed.)
+                        // Disclosed single-pick sub-effect (toward pre-flip
+                        // classic): among MULTIPLE display-exact readings
+                        // this returns the FIRST-ENUMERATED one, not a
+                        // weight-min — the helper's pre-flip behavior.
                         let mut exhausted_all_roots = true;
                         for &root in roots {
                             let realized = walker.realize_root_to_terms_with_weights(
                                 root,
                                 Some(per_root_limit),
-                                realize_mode,
+                                mettail_prattail::wpda_walker::RealizeRequestMode::BoundedEnumeration,
                             );
                             if realized.len() >= per_root_limit {
                                 exhausted_all_roots = false;
@@ -4658,29 +4650,22 @@ pub(crate) fn emit_parse_fns(
                     const RAW_PREFIX_CAP: usize = 4096;
                     let mut raw_probe_limit = max_alternatives.saturating_add(1).max(1);
                     loop {
-                        // ★ ITEM-2b STAGING (task #10; the fix is USER-APPROVED
-                        // 2026-07-14 and lands as the immediate NEXT commit):
-                        // this bounded-prefix `_all` enumerator SHOULD request
-                        // `BoundedEnumeration` unconditionally. In THIS commit
-                        // (2a = pure byte-identical mode threading) the mode
-                        // is still derived from `raw_probe_limit` by the
-                        // historical power-of-two ≤ 128 inference,
-                        // REPRODUCING the pre-mode behavior byte-for-byte —
-                        // including the known wart: when `max_alternatives ∈
+                        // Task #10 item 2b (USER-APPROVED 2026-07-14): this
+                        // bounded-prefix `_all` enumerator requests
+                        // `BoundedEnumeration` unconditionally — enumeration
+                        // IS its contract (the ambiguity-preserving prefix
+                        // facade). (Pre-2b, when `max_alternatives ∈
                         // {1,3,7,15,31,63,127}` the probe limit (max_alt+1)
-                        // is a power of two ≤ 128, so BIN roots ELECT and the
-                        // `_all`-semantics facade collapses to 1 alternative
-                        // (the surviving instance of the "caught + fixed"
-                        // 65-doubling bug class per the ledger). Item 2b
-                        // replaces this block with an unconditional
-                        // `BoundedEnumeration` plus the behavioral pins.
-                        let realize_mode = if raw_probe_limit <= 128usize
-                            && raw_probe_limit.is_power_of_two()
-                        {
-                            mettail_prattail::wpda_walker::RealizeRequestMode::SingleResultElection
-                        } else {
-                            mettail_prattail::wpda_walker::RealizeRequestMode::BoundedEnumeration
-                        };
+                        // was a power of two ≤ 128, so BIN roots ELECTED and
+                        // the `_all`-semantics facade collapsed to 1
+                        // alternative regardless of family size — the
+                        // surviving instance of the ledger's "caught +
+                        // fixed" 65-doubling bug class.)
+                        // Disclosed single-pick sub-effect (toward pre-flip
+                        // classic): at `max_alternatives = 1` the returned
+                        // single switches from the K-elected reading to the
+                        // enumeration min-weight representative (the sort
+                        // below still orders by weight).
                         let mut typed_terms: Vec<#cat_ident> = Vec::new();
                         let mut typed_weights:
                             Vec<mettail_prattail::automata::lex_weight::LexicographicWeight> =
@@ -4691,7 +4676,7 @@ pub(crate) fn emit_parse_fns(
                             let realized = walker.realize_root_to_terms_with_weights(
                                 root,
                                 Some(raw_probe_limit),
-                                realize_mode,
+                                mettail_prattail::wpda_walker::RealizeRequestMode::BoundedEnumeration,
                             );
                             if realized.len() >= raw_probe_limit {
                                 exhausted_all_roots = false;
