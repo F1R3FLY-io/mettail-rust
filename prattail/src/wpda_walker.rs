@@ -810,6 +810,14 @@ struct RootpMode {
     /// INSTEAD of the descriptor-pure default. `PRATTAIL_CGLL_HYBRID`
     /// present ⇒ true. Hoisted here per the red-team's R5 note (no
     /// per-parse env string compares). The pure arm is the DEFAULT.
+    ///
+    /// RETIRED (2026-07-13): the hybrid arm is disabled — `from_env` now
+    /// forces this `false` (env read commented out there, with rationale)
+    /// and setting `PRATTAIL_CGLL_HYBRID` warns once; engine selection is
+    /// unchanged (descriptor-pure default; `PRATTAIL_NO_CANONICAL_GLL`
+    /// still selects the classic walker). Field kept: live readers at the
+    /// `step_canonical` dispatch and `cgll_pure_enabled()`. Un-retire =
+    /// restore the `from_env` read.
     cgll_hybrid: bool,
 }
 
@@ -861,7 +869,33 @@ impl RootpMode {
                 // that combination was exactly the crash.)
                 cgll_binarize: CANONICAL_GLL_ENABLED
                     && !disabled("PRATTAIL_NO_CANONICAL_GLL"),
-                cgll_hybrid: disabled("PRATTAIL_CGLL_HYBRID"),
+                // DISABLED(retired 2026-07-13): the experimental HYBRID canonical
+                // arm (classic-cursor {R,U,P} worklist + pop-fan/k-fold levers,
+                // the `step_canonical` tail) is RETIRED. Why: superseded by the
+                // descriptor-pure default engine (THE FLIP, commit 8ce32c43) with
+                // exact reading parity at depth-uniform polynomial |U|; the
+                // hybrid arm carried 3 documented holes — no AmbiguityBudget
+                // checkpoint site (R-D, commit 905854bf notes), and the
+                // polyadic-inputbind coverage holes (`@x!(for…)` hard-ERR; the
+                // k-fold key hard-ERRs at grouping depth ≥ 4 —
+                // docs/design/root-p-strategy-review-2026-07-10.md §6.3: "an
+                // explicitly-gated interim at best, never the fix"). Policy: the
+                // arm's code is preserved compiled-dormant (the `step_canonical`
+                // tail + its helpers), never deleted; ACTUAL REMOVAL of any
+                // retired code requires explicit user approval, which has NOT
+                // been granted — do not delete without it.
+                // Original line (restore to un-retire):
+                //   cgll_hybrid: disabled("PRATTAIL_CGLL_HYBRID"),
+                cgll_hybrid: {
+                    if disabled("PRATTAIL_CGLL_HYBRID") {
+                        eprintln!(
+                            "prattail: PRATTAIL_CGLL_HYBRID is ignored (retired 2026-07-13); \
+                             engine selection is unchanged (descriptor-pure default; \
+                             PRATTAIL_NO_CANONICAL_GLL still selects the classic walker)."
+                        );
+                    }
+                    false
+                },
             }
         })
     }
@@ -933,10 +967,14 @@ enum CgllElemStage {
 }
 
 /// S5 (S2-F3): one suspended activation of the binarize post-pass machine
-/// (`cgll_binarize_classic_symbol` ⇄ `cgll_binarize_classic_child` — NOT on
-/// the flip battery path: pure roots take the BIN-tag passthrough; live
-/// only under the Q1-isolation / `PRATTAIL_CGLL_HYBRID` arms. Converted
-/// for completeness: deep chains under those arms would overflow).
+/// (`cgll_binarize_classic_symbol` ⇄ `cgll_binarize_classic_child`).
+/// Statically reachable via the classic-root fallback in
+/// `cgll_resolve_binarized` (the non-BIN-root arm); runtime-exercised only
+/// under the RETIRED arms — pure roots take the BIN-tag passthrough.
+/// (Q1-isolation was retired 2026-07-11 by the R5-BUG fix in
+/// `RootpMode::from_env`; the `PRATTAIL_CGLL_HYBRID` arm was retired
+/// 2026-07-13. Converted for completeness: deep chains under those arms
+/// would overflow.)
 #[allow(dead_code)] // Reached only under the const (DCE'd while const off).
 enum CgllBinarizeFrame {
     Sym {
@@ -4599,6 +4637,9 @@ pub struct BranchCursor<W: SemiringRef> {
     /// `PRATTAIL_CGLL_BINARIZE`; `SPPF_ID_NONE` (the empty-frame sentinel) on
     /// every classic-path cursor, where it is NEVER read (byte-identical
     /// default — a single idle `u32` per cursor).
+    ///
+    /// RETIRED carrier (2026-07-13): threaded only by the retired hybrid /
+    /// k-fold arms; the field is KEPT — its clone/init plumbing is live.
     pub cgll_w: crate::sppf::SppfId,
     /// ROOT-P Canonical-GLL Stage P1 (2026-07-09): the canonical RETURN-SLOT
     /// GSS node `v = (i = callee-entry pos, L_ret = the caller's return dotted
@@ -4614,6 +4655,9 @@ pub struct BranchCursor<W: SemiringRef> {
     /// classic-path cursor and on every canonical cursor UNTIL its first
     /// descent, where it is NEVER read outside the const-gated `retslot` arm
     /// (byte-identical default — a single idle `u32` per cursor).
+    ///
+    /// RETIRED carrier (2026-07-13): threaded only by the retired hybrid /
+    /// k-fold arms; the field is KEPT — its clone/init plumbing is live.
     pub cgll_ret_node: crate::gss::GssNodeId,
 }
 
@@ -14691,6 +14735,8 @@ where
     /// rejects children that do not belong to that rule (⇒ Error ⇒ dropped),
     /// so only VALID sibling derivations contribute packings. Byte-identical
     /// while the const is off (sole caller is the const-gated `step_canonical`).
+    ///
+    /// RETIRED (2026-07-13): dormant hybrid-arm helper (see the step_canonical banner).
     #[allow(dead_code)] // Reached only from `step_canonical` (DCE'd while const off).
     fn cgll_slot_fan_pop(
         &mut self,
@@ -21087,6 +21133,9 @@ where
     /// tripwire that guarantees Stage C/D must supply the body before the flip.
     /// Signature mirrors [`Self::step_fanout`] (same `&mut self` + `tokens`, same
     /// `WpdaState` return) so the dispatch branch forwards its arguments verbatim.
+    ///
+    /// The post-dispatch tail is the RETIRED hybrid arm (2026-07-13) — see the
+    /// RETIRED-ARM banner below the pure dispatch.
     #[allow(dead_code)] // Unreachable while CANONICAL_GLL_ENABLED is false (DCE'd).
     fn step_canonical(&mut self, tokens: &dyn WpdaTokenSource) -> WpdaState {
         use rustc_hash::FxHashSet;
@@ -21110,11 +21159,11 @@ where
         //     `logs_s2flip/`).
         //   • `PRATTAIL_CGLL_PURE`      → accepted as a NO-OP (it used to
         //     opt IN to exactly this default).
-        //   • `PRATTAIL_CGLL_HYBRID`    → the EXPERIMENTAL hybrid arm below
-        //     (the classic-cursor worklist + pop-fan levers). KEPT, not
-        //     deleted: it is the measured-refutation record for the
-        //     redesign (the Stage-E ladder A/B lives on its comments) and
-        //     the only in-tree harness for the k-fan experiments.
+        //   • `PRATTAIL_CGLL_HYBRID`    → RETIRED (2026-07-13): warns once
+        //     (`RootpMode::from_env`) and is otherwise ignored — engine
+        //     selection is unchanged (this pure default; the arm below is
+        //     preserved compiled-dormant and UNREACHABLE: `cgll_hybrid` is
+        //     forced false at the OnceLock).
         //   • `PRATTAIL_NO_CANONICAL_GLL` → the CLASSIC walker (handled at
         //     the `canonical_gll_active` entry gate — never reaches here).
         // Env reads are HOISTED into `RootpMode::from_env` (OnceLock — no
@@ -21122,6 +21171,20 @@ where
         if self.rootp_mode.canonical_gll && !self.rootp_mode.cgll_hybrid {
             return self.step_canonical_pure(tokens);
         }
+
+        // ══ RETIRED ARM (2026-07-13) ══════════════════════════════════════════
+        // Everything from here to the end of `step_canonical` is the HYBRID
+        // experimental arm. It is UNREACHABLE: `RootpMode::from_env` forces
+        // `cgll_hybrid = false` (env read disabled there, with rationale), so
+        // the dispatch above always returns via `step_canonical_pure`.
+        // Preserved compiled-dormant per the repo dormant-code convention
+        // (cf. ROOTP_SLOT_PACKING_ENABLED) as the measured-refutation record
+        // of the ROOT-P campaign. Do NOT route new work through it. Tests
+        // must not set `rootp_mode.cgll_hybrid` directly (the lever-scoped
+        // tests write only `canonical_gll`/`cgll_binarize`). Un-retire:
+        // restore the from_env env read (and see the k-fold severing at
+        // `let retslot` below — retired independently).
+        // ═══════════════════════════════════════════════════════════════════════
 
         // ══ Stage-E MEASURED OUTCOME (2026-07-09, deep-@ ladder A/B) ══════════
         // Target (classic): @Nil!(@Nil!())=2, @Nil!(@(@Nil)!())=2, d2=2, d3=4;
@@ -21274,7 +21337,26 @@ where
         // with the const off (byte-identical default). The classic
         // `WpdaGssNode` Eq/Hash derive is UNCHANGED (classic keeps `(pos,
         // symbol)`); only the SYMBOL fed to `gll_create` + the `u`-binding move.
-        let retslot = std::env::var_os("PRATTAIL_CGLL_RETSLOT").is_some();
+        // DISABLED(retired 2026-07-13): the K-FOLD (coarse-fan k=4) arm is
+        // RETIRED independently of the hybrid arm that hosts it. The k-fold
+        // descriptor key (`cgll_retslot_key_u`, k = PRATTAIL_CGLL_KLEVEL,
+        // default 4) is exact only for grouping depth ≤ k−1: measured
+        // hard-ERR on valid input at depth ≥ 4 and on `@x!(for…)`, sim ×3
+        // pass notwithstanding — "an explicitly-gated interim at best,
+        // never the fix" (docs/design/root-p-strategy-review-2026-07-10.md
+        // §6.3). The sub-levers gated on THIS binding (P2CORE,
+        // P2_NODECENSUS*, RETSLOT_{EDGES,NOFAN,NORECON}, EXACTFAN*,
+        // EXACTFANB*, POC_*, and OWNER_KEEP's env-UNSET default arm) retire
+        // with it: forcing `false` reproduces the env-unset value of every
+        // downstream binding byte-for-byte — EXCEPT an explicitly-set
+        // PRATTAIL_CGLL_OWNER_KEEP, whose Ok(_) arms are independent of
+        // `retslot` (moot while the hosting hybrid arm is unreachable;
+        // noted so this comment does not overclaim). PRATTAIL_CGLL_KLEVEL
+        // stays readable below but UNCONSUMED — the key's `else if retslot`
+        // arm in `cgll_descriptor_key` is off — not "retired by this line".
+        // Original line (restore to un-retire):
+        //   let retslot = std::env::var_os("PRATTAIL_CGLL_RETSLOT").is_some();
+        let retslot = false;
         // ── ROOT-P PoC-0 RECURSIVE-POP (2026-07-10, opt-in A/B) ───────────────
         // The EARLIEST-CHEAPEST GO/NO-GO for the committed recursive-pop rewrite
         // (Plan agent a9c0c900). Tests the CORRECTED canonical-GLL thesis that the
@@ -21433,6 +21515,7 @@ where
             Ok(_) => true,
             Err(_) => retslot,
         };
+        // RETIRED (2026-07-13): k-fold — see the `let retslot` DISABLED block above.
         // B (bounded-k return key, u-depth-axis): fold the FIRST `k` incoming
         // edges into the return-slot `u` so grouping cursors diverging at DEEPER
         // return-chain levels stay distinct descriptors and BOTH constituents
@@ -21782,6 +21865,7 @@ where
             // GT-closure A: `nomask || owner_keep` DROPS the owner-mask on the
             // retslot arm (owner-unmasked `w` = the shadow's `w_unmask`). B:
             // `klevel` folds the first k return-chain edges into `u`.
+            // RETIRED (2026-07-13): k-fold — see the `let retslot` DISABLED block above.
             let key = self.cgll_descriptor_key(
                 &cursor,
                 sound_key,
@@ -23615,6 +23699,8 @@ where
     /// identity. `cursor.node` STAYS the classic callee frame for `engine.step`;
     /// only `cgll_ret_node` becomes `v`. Reached only under `PRATTAIL_CGLL_RETSLOT`
     /// (DCE'd while the const is off).
+    ///
+    /// RETIRED (2026-07-13): dormant hybrid/k-fold helper (see the step_canonical banner).
     #[allow(dead_code)] // Reached only from `step_canonical` (DCE'd while const off).
     fn cgll_retslot_symbol_from_edge(
         &self,
@@ -23660,6 +23746,8 @@ where
     /// from the frame's entry edge). The classic `(pos, symbol)` GSS is untouched
     /// — this only ADDS synthetic-`Return` nodes (`goal_src_idx = Some(..)`,
     /// disjoint from every classic ctor). Reached only under `PRATTAIL_CGLL_RETSLOT`.
+    ///
+    /// RETIRED (2026-07-13): dormant hybrid/k-fold helper (see the step_canonical banner).
     #[allow(dead_code)] // Reached only from `step_canonical` (DCE'd while const off).
     fn cgll_retslot_node_from(
         &mut self,
@@ -23691,6 +23779,8 @@ where
     /// `O(|G|^k · n)` distinct return-slot ids (poly for constant `k`). READ-ONLY
     /// (`&self`): walks the lazy `incoming_edge_stack` path-tree via
     /// `for_each_top_down_until` (no materialization), mints no node.
+    ///
+    /// RETIRED (2026-07-13): the k-fold key itself — dormant (see the step_canonical banner).
     #[allow(dead_code)] // Reached only from `cgll_descriptor_key` (DCE'd while const off).
     fn cgll_retslot_key_u(&self, cursor: &BranchCursor<W>, k: usize) -> u64 {
         use std::hash::{Hash, Hasher};
@@ -23723,6 +23813,9 @@ where
     /// key). With `sound = true` the deeper per-cursor `sppf_stack` chain + the
     /// `incoming_edge_stack` id are FOLDED IN — the exact-but-exponential key that
     /// reproduces the classic frontier (the A/B ceiling for the poly claim).
+    ///
+    /// RETIRED (2026-07-13): dormant hybrid/k-fold helper — covers the whole
+    /// key/descriptor family (see the step_canonical banner).
     #[allow(dead_code)] // Reached only from `step_canonical` (DCE'd while const off).
     fn cgll_descriptor_key(
         &self,
@@ -23820,6 +23913,8 @@ where
     /// `cgll_w_top`; the conditional `@`-trigger owner mask so the exponential
     /// `@`-attribution multiplicity collapses while genuine multi-step `@`-binders
     /// stay owner-distinct). `(0,0,0,0)` sentinel for an empty stack.
+    ///
+    /// RETIRED (2026-07-13): dormant hybrid/k-fold helper (see the step_canonical banner).
     #[allow(dead_code)] // Reached only from `step_canonical` (DCE'd while const off).
     fn cgll_descriptor_w(&self, cursor: &BranchCursor<W>, nomask: bool) -> (u8, u64, u64, u64) {
         use crate::sppf::PosOrSynth;
@@ -23867,6 +23962,9 @@ where
     /// position (Scott & Johnstone's canonical `(nonterminal X, position j)` GSS
     /// node identity). `None` if `id` is not a `Symbol` (e.g. a bare trigger or a
     /// `SPPF_ID_NONE` sentinel), in which case there is nothing to co-merge.
+    ///
+    /// RETIRED (2026-07-13): dormant hybrid-arm helper (pre-existing zero
+    /// callers, allow-covered; see the step_canonical banner).
     #[allow(dead_code)] // Reached only from `step_canonical` (DCE'd while const off).
     fn cgll_symbol_cat_lo(&self, id: crate::sppf::SppfId) -> Option<(u16, usize)> {
         match self.sppf.node(id) {
@@ -23927,6 +24025,8 @@ where
     /// the intermediate slot namespace stays visibly disjoint from the binarized
     /// Symbol-tag marker. Reached only under `cgll_binarize_active()` +
     /// `PRATTAIL_CGLL_THREAD` (DCE'd while the const is off).
+    ///
+    /// RETIRED (2026-07-13): dormant hybrid-arm helper (see the step_canonical banner).
     #[allow(dead_code)] // Reached only from `step_canonical` (DCE'd while const off).
     fn cgll_thread_slot(&self, cursor: &BranchCursor<W>) -> u32 {
         use std::hash::{Hash, Hasher};
@@ -23941,6 +24041,8 @@ where
     /// start (or `z`'s start when `w` is empty); `hi` = `z`'s end. A NONE child
     /// is a no-op. Reached only under `cgll_binarize_active()` +
     /// `PRATTAIL_CGLL_THREAD` (DCE'd while the const is off).
+    ///
+    /// RETIRED (2026-07-13): dormant hybrid-arm helper (see the step_canonical banner).
     #[allow(dead_code)] // Reached only from `step_canonical` (DCE'd while const off).
     fn cgll_thread_absorb(&mut self, cursor: &mut BranchCursor<W>, z: crate::sppf::SppfId) {
         if z == crate::sppf::SPPF_ID_NONE {
@@ -23967,6 +24069,8 @@ where
     /// shallow ident for every other node (an `Intermediate` `w` is owner-free by
     /// construction). Reached only under `cgll_binarize_active()` +
     /// `PRATTAIL_CGLL_THREAD` (DCE'd while the const is off).
+    ///
+    /// RETIRED (2026-07-13): dormant hybrid-arm helper (see the step_canonical banner).
     #[allow(dead_code)] // Reached only from `cgll_descriptor_key` (DCE'd while const off).
     fn cgll_thread_ident(&self, id: crate::sppf::SppfId) -> (u8, u64, u64, u64) {
         use crate::sppf::PosOrSynth;

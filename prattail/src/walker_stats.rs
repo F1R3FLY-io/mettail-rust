@@ -933,6 +933,9 @@ pub struct WalkerStats {
     /// `stats` field is feature-gated, so adding this is byte-identical for the
     /// default build). The DECISIVE readings are the `CGLL-FANMEASURE` stderr
     /// report lines (driven by `step_canonical` locals), not this counter.
+    ///
+    /// RETIRED (2026-07-13): the hosting hybrid arm is dormant (`cgll_hybrid`
+    /// forced false), so this counter can no longer fire.
     pub cgll_fanmeasure_sites_total: u64,
 }
 

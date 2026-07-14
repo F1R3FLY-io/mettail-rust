@@ -1006,6 +1006,11 @@ pub enum WpdaResolveResult<W: SemiringRef> {
 /// worklist cannot mirror. Post-window fan widths are REPORTED via the
 /// `post_window_max_width` walker stat (`PRATTAIL_CANONICAL_GLL_STATS=1`)
 /// instead of enforced. The classic engine's enforcement is unchanged.
+///
+/// (2026-07-13) The env-opt-in hybrid canonical arm — which had NO budget
+/// checkpoint site — is retired: `PRATTAIL_CGLL_HYBRID` is now ignored
+/// (one-time warning; engine selection unchanged), so the pure-window
+/// scope above is exhaustive for the canonical default.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CursorBoundingMode {
     /// Default — pure ambiguity preservation; no cursor dropping.
