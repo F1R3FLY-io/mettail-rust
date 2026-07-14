@@ -511,6 +511,37 @@ fn realize_dedup_enabled() -> bool {
     })
 }
 
+/// LAZY realize-dedup fingerprinting kill switch (residual #11-3, 2026-07-14).
+///
+/// `PRATTAIL_FP_LAZY` controls whether [`WpdaWalker::dedup_push_realized`] DEFERS
+/// the `semantic_fingerprint` byte-stream key until a SECOND term candidate
+/// actually forces a comparison at a node. Observational dedup can only ever fold
+/// when `≥2` term candidates share one SPPF node; on the deterministic spine of a
+/// deep chain EVERY node is single-candidate, so the eager per-node fingerprint
+/// (`Σ O(subtree) = O(tokens²)` byte-stream work AND, via the numeric-leaf
+/// canonicalization, `O(tokens²)` transient allocation) is pure waste. Deferring
+/// collapses that to `O(Σ over AMBIGUOUS nodes only)`.
+///
+/// EXACT-PRESERVING by construction: the first term at a node is pushed UNKEYED;
+/// the instant a second term arrives the surviving prior representative is
+/// retro-keyed and dedup proceeds byte-identically to the eager path (same
+/// first-seen-on-tie / strict-`⊕`-min winner, same `out`, same `seen`). Every
+/// call site creates `out`/`seen` fresh and populates them ONLY through
+/// `dedup_push_realized`, so at most one unkeyed term is ever pending — the
+/// retro-key is O(1).
+///
+/// DEFAULT: **ON**. Set `PRATTAIL_FP_LAZY=0`/`off` to restore the eager path
+/// verbatim (the rollback lever). Read ONCE per process (`OnceLock`, the P-series
+/// convention).
+#[inline]
+fn fp_lazy_enabled() -> bool {
+    static GATE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *GATE.get_or_init(|| match std::env::var("PRATTAIL_FP_LAZY").ok().as_deref() {
+        Some("0") | Some("off") | Some("OFF") | Some("Off") => false,
+        _ => true,
+    })
+}
+
 /// EP-P1 amended §P1 (2026-06-11; red-team ledger Round 5 + user
 /// decision "Amend §P1 → parking v2"): kill-switch mode for the
 /// CrossCatLhs cohort-parking program. `Off` = shipped behavior (the
@@ -10271,6 +10302,44 @@ where
     ) -> bool {
         if realize_dedup_enabled() {
             if let ActionArg::Term { value, .. } = &entry.0 {
+                // A1 LAZY FINGERPRINTING (residual #11-3, 2026-07-14): dedup only
+                // folds when ≥2 term candidates meet at a node, so the O(subtree)
+                // `semantic_fingerprint` key is wasted on a single-candidate node
+                // (the entire deterministic spine of a deep chain). Defer keying
+                // until a SECOND term forces a comparison; single-candidate nodes
+                // then never fingerprint, collapsing the per-node Σ O(subtree) =
+                // O(tokens²) fingerprint work (time + leaked-CanonicalBigInt
+                // memory). Exact-preserving — see [`fp_lazy_enabled`]. Kill switch
+                // `PRATTAIL_FP_LAZY=0` restores the eager path below.
+                if fp_lazy_enabled() && seen.is_empty() {
+                    match out
+                        .iter()
+                        .position(|(a, _)| matches!(a, ActionArg::Term { .. }))
+                    {
+                        // No prior term representative at this node yet: this is
+                        // the FIRST term candidate. Push it UNKEYED — a
+                        // single-candidate node never computes a fingerprint.
+                        None => {
+                            out.push(entry);
+                            return true;
+                        },
+                        // A prior term already sits in `out` and `seen` is still
+                        // empty ⇒ this is the SECOND term candidate. Retro-key the
+                        // prior representative (the one the eager path would have
+                        // keyed first) so `seen` matches the eager state exactly,
+                        // then fall through to the identical keyed dedup for
+                        // `entry`. Invariant (verified at every call site): `out`
+                        // holds at most one unkeyed term when `seen` is empty, so
+                        // this fires once and is O(1).
+                        Some(first_idx) => {
+                            if let ActionArg::Term { value: prior, .. } = &out[first_idx].0 {
+                                if let Some(k0) = self.engine.semantic_fingerprint(prior) {
+                                    seen.insert(k0, first_idx);
+                                }
+                            }
+                        },
+                    }
+                }
                 if let Some(key) = self.engine.semantic_fingerprint(value) {
                     match seen.get(&key).copied() {
                         Some(idx) => {

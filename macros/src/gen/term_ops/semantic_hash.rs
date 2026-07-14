@@ -428,9 +428,22 @@ fn semantic_hash_numeric_literal_body(native_type: &syn::Type) -> Option<TokenSt
         let canon_bytes = if matches!(nt, NativeType::CanonicalBigInt) {
             quote! { v.to_canonical_bytes() }
         } else {
+            // Residual #11-3 (2026-07-14): compute the SAME canonical bytes
+            // WITHOUT constructing a transient `CanonicalBigInt`.
+            // `CanonicalBigInt::to_canonical_bytes()` is *exactly*
+            // `self.get().to_signed_bytes_le()` (minimal two's-complement LE), so
+            // `BigInt::from(*v).to_signed_bytes_le()` writes a BYTE-IDENTICAL
+            // stream. The wrapper is avoided because `CanonicalBigInt::from`
+            // deliberately LEAKS its boxed `BigInt` payload
+            // (`runtime::canonical_bigint`, `Box::into_raw` — immortal by design
+            // for interned Ascent/op-enum keys). In the realize-dedup fingerprint
+            // that leak fires once PER NUMERIC LEAF PER `semantic_fingerprint`
+            // call; on a deep chain the per-node fingerprint fan makes the leaf
+            // count `Σ O(subtree) = O(tokens²)`, so the leaked (never-reclaimed)
+            // `Box<BigInt>` allocations accumulated `O(tokens²)` resident memory
+            // (the 20k-ternary memcg-OOM). A non-leaking `BigInt` drops normally.
             quote! {
-                ::mettail_runtime::CanonicalBigInt::from(::num_bigint::BigInt::from(*v))
-                    .to_canonical_bytes()
+                ::num_bigint::BigInt::from(*v).to_signed_bytes_le()
             }
         };
         return Some(quote! {

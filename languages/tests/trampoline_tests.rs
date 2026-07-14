@@ -316,6 +316,55 @@ fn test_ternary_chain_2000() {
     assert!(result.is_ok(), "2000 nested ternaries should parse: {:?}", result.err());
 }
 
+// Residual #11-3 D1 (2026-07-14): the EXACT-TOKEN partner of the passing
+// `test_deep_unary_neg_20000`. `ternary_chain(5000)` = `"0 ? 1 : "`×5000 +
+// `"0"` = 20,001 tokens — identical token count to `nested_unary(20000)`
+// (20,000 `-` + `1`). Pre-registered discriminator D1: at equal tokens, if
+// walls/RSS track within ~1.5× the ceiling is token-driven (one shared
+// quadratic law); if the ternary is >~3× the arity/mixfix packing
+// population drives it. `#[ignore]` + run-explicit per the F3 G2
+// scaling-probe convention. Deliberately NOT `unary_40000` (its
+// out-of-scope Display/Drop term-depth recursion would SIGSEGV at the
+// 8 MiB default stack and contaminate D1 with the wrong mechanism).
+#[test]
+#[ignore = "scaling probe — run explicitly"]
+fn test_ternary_chain_5000() {
+    mettail_runtime::clear_var_cache();
+    let input = ternary_chain(5_000);
+    let result = Int::parse_structured(&input);
+    assert!(result.is_ok(), "5000 nested ternaries should parse: {:?}", result.err());
+}
+
+// Residual #11-3 Amendment-8 OUTPUT GATE (2026-07-14): the chain tests assert
+// only `is_ok()`, which cannot catch a realize-output change. This probe emits a
+// deterministic structural fingerprint (hash of the realized AST's `Debug` form)
+// for the shapes the lazy-fingerprint / leak fixes touch. Run it under the fix
+// (`PRATTAIL_FP_LAZY=1`, default), the eager rollback (`PRATTAIL_FP_LAZY=0`), and
+// dedup-off (`PRATTAIL_REALIZE_DEDUP=0`) — an IDENTICAL fingerprint across all
+// three proves the realize output is byte-identical and the chain spine is
+// single-candidate (nothing to dedup), i.e. the lazy skip is exact.
+#[test]
+#[ignore = "output-gate probe — run explicitly"]
+fn probe_chain_output_fingerprint() {
+    fn fp(s: &str) -> u64 {
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        std::hash::Hash::hash(s, &mut h);
+        std::hash::Hasher::finish(&h)
+    }
+    for n in [1000usize, 2000] {
+        mettail_runtime::clear_var_cache();
+        let r = Int::parse_structured(&ternary_chain(n)).expect("ternary parses");
+        let dbg = format!("{r:?}");
+        println!("TERNARY {n} debug_len={} fp={:016x}", dbg.len(), fp(&dbg));
+    }
+    {
+        mettail_runtime::clear_var_cache();
+        let r = Int::parse_structured(&nested_unary(1000)).expect("unary parses");
+        let dbg = format!("{r:?}");
+        println!("UNARY 1000 debug_len={} fp={:016x}", dbg.len(), fp(&dbg));
+    }
+}
+
 #[test]
 fn test_ternary_chain_10000() {
     mettail_runtime::clear_var_cache();
