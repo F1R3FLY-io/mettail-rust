@@ -5034,7 +5034,14 @@ struct CgllPureStats {
     cyclic_roots_tolerated: u64,
     iterchain_witness: u64,
     weight_carriers: u64,
-    replay_weight_drops: u64,
+    // RETIRED (task #10 item 3, per the ledger :884-889 recorded intent):
+    // create-after-pop replays now intern genuinely-new packings with the
+    // RECORDED pop-action weight (`RecordedPop::pop_action_weight`), so the
+    // "replay interned W::one because the pop weight was unknowable" event
+    // this counter counted can no longer occur. Commented out (never
+    // deleted) per the disable policy; its stats-line token was removed
+    // from the CGLL-PURE dump (the one sanctioned ladder byte-delta).
+    // replay_weight_drops: u64,
     collection_pops_structural: u64,
     coll_closes: u64,
     coll_sep_folds: u64,
@@ -22052,7 +22059,11 @@ where
                         });
                         if let CursorOutcome::ForkInto(children) = outcome {
                             let result_w = crate::sppf::SPPF_ID_NONE;
-                            let _ = self.gss.gll_pop(cursor.node, cursor.pos, result_w, CGLL_PURE_RULE_NONE);
+                            // Task #10 item 3: `W::one_ref()` — bookkeeping pop on the
+                            // RETIRED hybrid arm (compiled-dormant since e3ae3835); the
+                            // weight row is dead code (probe P3 moot — no replay
+                            // consumer interns from these P entries).
+                            let _ = self.gss.gll_pop(cursor.node, cursor.pos, result_w, CGLL_PURE_RULE_NONE, &W::one_ref());
                             for c in children {
                                 worklist.push_back(c);
                             }
@@ -22970,7 +22981,9 @@ where
                         };
                         // Record the pop into P (create-after-pop bookkeeping;
                         // parity with the census/edge-graph path).
-                        let _ = self.gss.gll_pop(v, cursor.pos, z, CGLL_PURE_RULE_NONE);
+                        // Task #10 item 3: `W::one_ref()` — RETIRED hybrid arm
+                        // (compiled-dormant since e3ae3835); dead weight row (P3 moot).
+                        let _ = self.gss.gll_pop(v, cursor.pos, z, CGLL_PURE_RULE_NONE, &W::one_ref());
                         gll_pops += 1;
                         // RED-TEAM (action-once): the shared `z` MUST be interned
                         // before we push it onto extras. `z == NONE` ⇒ a structural
@@ -23293,7 +23306,9 @@ where
                             // `@(p)` false-accept + `@a!(0,1)` gain (no spurious
                             // sibling caller is ever reached).
                             let v = retslot_reduce_v.unwrap_or(crate::gss::GSS_NODE_NONE);
-                            let returns = self.gss.gll_pop(v, cursor.pos, result_w, CGLL_PURE_RULE_NONE);
+                            // Task #10 item 3: `W::one_ref()` — RETIRED hybrid arm
+                            // (compiled-dormant since e3ae3835); dead weight row (P3 moot).
+                            let returns = self.gss.gll_pop(v, cursor.pos, result_w, CGLL_PURE_RULE_NONE, &W::one_ref());
                             gll_pops += 1;
                             let edges = self.gss.gll_edges(v).to_vec();
                             // ── ROOT-P Checkpoint 0: reduce census ────────────
@@ -23427,7 +23442,9 @@ where
                             // replays at later descents). The Stage-E2 caller
                             // reconnection fan is applied in the `recon` arm ABOVE
                             // (before `apply_action`), over genuine-descent siblings.
-                            let _returns = self.gss.gll_pop(pre_node, cursor.pos, result_w, CGLL_PURE_RULE_NONE);
+                            // Task #10 item 3: `W::one_ref()` — RETIRED hybrid arm
+                            // (compiled-dormant since e3ae3835); dead weight row (P3 moot).
+                            let _returns = self.gss.gll_pop(pre_node, cursor.pos, result_w, CGLL_PURE_RULE_NONE, &W::one_ref());
                             gll_pops += 1;
                             // ── Stage E2b (c) reduce/complete ────────────────────
                             // The completed constituent `z = result_w` (the classic
@@ -27208,8 +27225,10 @@ where
             if is_r2_replay {
                 // R2 P-set convention: `result_w` = the popped frame's
                 // PRE-JOIN `w`; join with THIS edge's operand per edge
-                // (amendment 2). The original pop action's weight is not
-                // recoverable at replay time — `W::one_ref()` + counted.
+                // (amendment 2). Task #10 item 3: the original pop action's
+                // weight IS recoverable now — the P entry records it
+                // (`RecordedPop::pop_action_weight`), consumed at the
+                // genuinely-new-packing intern below.
                 let cat = pushed.category_src_idx as u32;
                 // F5-2 D-3 (replay-channel identity, the AV6/A8 completion):
                 // reconstruct THIS pop's rule packing under the identity the
@@ -27277,13 +27296,29 @@ where
                 // the true pop weight AND is already linked under the same
                 // `z_e` (identical `(rule, [joined])` ⇒ identical operand ⇒
                 // identical `(lo, at_pos)` ⇒ `intern_symbol` dedups to the
-                // same node) — a replay re-intern with `one` would ⊕-corrupt
-                // it (lex-min pulls toward `one`). Exists ⇒ no-op; else
-                // intern with `one` (the pop weight is genuinely unknowable
-                // at replay time — counted in `replay_weight_drops`).
+                // same node) — a replay re-intern with a DIFFERENT weight
+                // would ⊕-corrupt it (lex-min). Exists ⇒ no-op; else intern
+                // with THE RECORDED pop-action weight (task #10 item 3: the
+                // P entry carries the pop weight, so a genuinely-new replay
+                // packing reproduces the original pop's intern exactly —
+                // the "genuinely unknowable at replay time" era and its
+                // `replay_weight_drops` counter are RETIRED). The lookup
+                // keys the ENTRY identity `(rep.at_pos, rep.result_w,
+                // rep.rule_id)` — note `rep.rule_id`, NOT the derived local
+                // `rule_id` above (whose CGLL_PURE_RULE_NONE fallback
+                // substitutes the pushed symbol's id for the PACKING key;
+                // the P entry is keyed by what the pop RECORDED).
                 if !self.sppf.packing_exists(rule_id, &children) {
-                    run.stats.replay_weight_drops += 1;
-                    let pk = self.sppf.intern_packing(rule_id, children, W::one_ref());
+                    let recorded = self
+                        .gss
+                        .gll_recorded_pop_action_weight(v, rep.at_pos, rep.result_w, rep.rule_id)
+                        .expect(
+                            "create-after-pop replay must originate from a recorded P entry \
+                             (the replay was constructed from this entry in gll_create; \
+                             absence is a protocol violation)",
+                        )
+                        .clone();
+                    let pk = self.sppf.intern_packing(rule_id, children, recorded);
                     self.sppf.link_packing_to_symbol(z_e, pk);
                 }
                 let resumed_w = if spine_prefix != crate::sppf::SPPF_ID_NONE {
@@ -28260,7 +28295,10 @@ where
                     let pk = self.sppf.intern_packing(rule_id, vec![cid], pop_weight.clone());
                     self.sppf.link_packing_to_symbol(z, pk);
                 }
-                let returns = self.gss.gll_pop(d.u, i_pop, z, CGLL_PURE_RULE_NONE);
+                // Task #10 item 3: record `pop_weight` — mirrors the packing
+                // intern above (one packing per surviving flat, all charged
+                // `pop_weight`).
+                let returns = self.gss.gll_pop(d.u, i_pop, z, CGLL_PURE_RULE_NONE, pop_weight);
                 run.stats.gll_pops += 1;
                 for ret in &returns {
                     self.cgll_pure_resume_fold(run, d.u, ret, z, new_state);
@@ -28268,7 +28306,12 @@ where
                 return;
             }
             for z in collection_zs {
-                let returns = self.gss.gll_pop(d.u, i_pop, z, CGLL_PURE_RULE_NONE);
+                // Task #10 item 3: record `pop_weight` (the plan's assignment
+                // for the embedded/pass-through collection pop — red-team
+                // noted this site has no companion intern of its own; the
+                // owning rule frame's reduce interns downstream, so the pop
+                // weight is the honest per-site charge).
+                let returns = self.gss.gll_pop(d.u, i_pop, z, CGLL_PURE_RULE_NONE, pop_weight);
                 run.stats.gll_pops += 1;
                 for ret in &returns {
                     self.cgll_pure_resume_fold(run, d.u, ret, z, new_state);
@@ -28334,9 +28377,13 @@ where
                         "S1 H9: spine id {:#06x} reached the pure reduce packing intern",
                         rule_id & 0xFFFF,
                     );
-                    let pk = self.sppf.intern_packing(rule_id, children, pk_weight);
+                    let pk = self.sppf.intern_packing(rule_id, children, pk_weight.clone());
                     self.sppf.link_packing_to_symbol(z, pk);
-                    let returns = self.gss.gll_pop(d.u, i_pop, z, CGLL_PURE_RULE_NONE);
+                    // Task #10 item 3: record the fire's OWN packing weight
+                    // (incl. the K-B coercion completion charge above) — a
+                    // D1 replay twin never re-interns, but recording the true
+                    // charge keeps the P entry honest.
+                    let returns = self.gss.gll_pop(d.u, i_pop, z, CGLL_PURE_RULE_NONE, &pk_weight);
                     run.stats.gll_pops += 1;
                     for ret in &returns {
                         self.cgll_pure_resume_fold(run, d.u, ret, z, new_state);
@@ -28353,7 +28400,11 @@ where
                     // create-after-pop replay reconstructs this pop's rule
                     // packing and must key it by the committed member id,
                     // never the frame's (possibly spine) pushed symbol.
-                    let returns = self.gss.gll_pop(d.u, i_pop, d.w, rule_id);
+                    // Task #10 item 3: record `pop_weight` — THE consumer
+                    // site: the per-edge `z_e` packing below interns
+                    // `pop_weight.clone()`, and the create-after-pop replay
+                    // must reproduce exactly that intern from the P entry.
+                    let returns = self.gss.gll_pop(d.u, i_pop, d.w, rule_id, pop_weight);
                     run.stats.gll_pops += 1;
                     for ret in &returns {
                         // ── P3 Pocket-A2: COLLECTION-ELEMENT led split ────
@@ -28486,7 +28537,9 @@ where
                 other => other.clone(),
             };
             let z = d.w;
-            let returns = self.gss.gll_pop(d.u, i_pop, z, CGLL_PURE_RULE_NONE);
+            // Task #10 item 3: `W::one_ref()` — structural passthrough pop
+            // (`z := w`): no packing is interned and nothing is charged.
+            let returns = self.gss.gll_pop(d.u, i_pop, z, CGLL_PURE_RULE_NONE, &W::one_ref());
             run.stats.gll_pops += 1;
             let popped_is_category_entry =
                 matches!(d.cur_sym.kind, SymbolKind::CategoryEntry);
@@ -29601,7 +29654,7 @@ where
                  gll_creates={} gll_pops={} replays={} replay_structural={} seed_pops={} \
                  seed_pops_at_eoi={} unwind_chain_fired={} slot_collisions={} ctx_conflicts={} \
                  ctx_misses={} d2_lo_fallbacks={} fold_overlap_refuted={} cyclic_roots_refused={} cyclic_tol={} iterchain_witness={} weight_carriers={} \
-                 replay_weight_drops={} coll_pops_structural={} \
+                 coll_pops_structural={} \
                  coll_closes={} coll_sep_folds={} coll_cov_refuted={} coll_empty={} coll_kv={} \
                  coll_standalone={} coll_kv_pdiv={} coll_kv_dupmp={} coll_led_splits={} goal_coerce={} opt_fin={} \
                  effects_skipped={} recovery_drops={} weight_drops={} guard_cc_actions={} \
@@ -29641,7 +29694,9 @@ where
                 s.cyclic_roots_tolerated,
                 s.iterchain_witness,
                 s.weight_carriers,
-                s.replay_weight_drops,
+                // s.replay_weight_drops, — RETIRED (task #10 item 3; see the
+                // commented-out field above: the `replay_weight_drops={}`
+                // token was removed from the format string in lockstep).
                 s.collection_pops_structural,
                 s.coll_closes,
                 s.coll_sep_folds,
@@ -31125,7 +31180,9 @@ where
                         flat,
                         weight.clone(),
                     );
-                    let returns = self.gss.gll_pop(d.u, d.pos, z, CGLL_PURE_RULE_NONE);
+                    // Task #10 item 3: record the take-branch `weight` —
+                    // mirrors the OPTIONAL_PRESENT packing intern above.
+                    let returns = self.gss.gll_pop(d.u, d.pos, z, CGLL_PURE_RULE_NONE, &weight);
                     run.stats.gll_pops += 1;
                     for ret in &returns {
                         let Some(ctx) =

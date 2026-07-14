@@ -883,9 +883,17 @@ pub(crate) struct CanonicalGllEdge {
 
 /// One recorded pop in a node's `P` set: the input position `pos` (right extent)
 /// at which the node popped and the SPPF node `result_w` (`z`) it produced.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// `Eq` is deliberately NOT derived (task #10 item 3): `W` is
+/// `LexicographicWeight` in production, which holds `f64` components and
+/// implements only `PartialEq`. The P-set dedup compares the identity
+/// fields (`pos`, `result_w`, `rule_id`) directly, never whole-struct
+/// equality, so nothing needs `Eq`. `Copy`/`Clone` are conditional on `W`
+/// (LexicographicWeight is `Copy`, so the production instantiation stays
+/// `Copy`).
+#[derive(Debug, Clone, Copy, PartialEq)]
 #[allow(dead_code)] // Fields read by the canonical driver (Stage D) + gss unit tests.
-pub(crate) struct RecordedPop {
+pub(crate) struct RecordedPop<W> {
     /// Right-extent input position at which this node popped.
     pub pos: usize,
     /// SPPF result node `z` produced by the completed nonterminal.
@@ -901,6 +909,16 @@ pub(crate) struct RecordedPop {
     /// AV6/A8 doctrine: the slot label may keep SPINE, the packing/fire
     /// identity may not), so the replay must carry the recorded identity.
     pub rule_id: u32,
+    /// Task #10 item 3 (ledger :884-889, the P4.b follow-up): the pop
+    /// ACTION's weight, recorded so a create-after-pop REPLAY can intern a
+    /// genuinely-new replay packing with the TRUE weight instead of
+    /// `W::one()` (which retired the `replay_weight_drops` counter). The
+    /// value is whatever the pop site charged into its own packing intern
+    /// (D2: the pre-join frame weight; D1: the fire's packing weight incl.
+    /// the K-B coercion completion charge; standalone collections: the pop
+    /// weight; structural passthrough / bookkeeping pops: `W::one()` — no
+    /// packing, no charge).
+    pub pop_action_weight: W,
 }
 
 /// A return synthesised by a canonical `create`/`pop`: the raw materials for the
@@ -935,16 +953,35 @@ pub(crate) struct GllReturn {
 /// Canonical-GLL GSS side-state: the operand-labelled edge adjacency and the
 /// per-node recorded-pop set `P`. Lazily boxed on [`WpdaGss`] and allocated only
 /// the first time a `gll_*` op runs (i.e. only under `canonical_gll_active()`),
-/// so the classic path never allocates or touches it. Non-generic (holds only
-/// `u32`/`usize` handles) so it adds no weight-type baggage to `WpdaGss<W>`.
-#[derive(Debug, Clone, Default)]
+/// so the classic path never allocates or touches it.
+///
+/// Task #10 item 3 rewrote the former "non-generic, no weight-type baggage"
+/// design note: the state now carries exactly ONE `W` per recorded pop (the
+/// P4.b pop-action-weight follow-up, ledger :884-889) so create-after-pop
+/// replays intern with the true weight; everything else stays handle-only
+/// (`u32`/`usize`).
+///
+/// `Default` is implemented MANUALLY (not derived): a derive would add a
+/// spurious `W: Default` bound, and the fields (two maps) default
+/// independently of `W`.
+#[derive(Debug, Clone)]
 #[allow(dead_code)] // Populated/read by the canonical driver (Stage D) + gss unit tests.
-pub(crate) struct CanonicalGssState {
+pub(crate) struct CanonicalGssState<W> {
     /// `source node → its outgoing canonical operand edges`, deduped by
     /// `(target, operand_w)`.
     edges: FxHashMap<GssNodeId, Vec<CanonicalGllEdge>>,
-    /// `node → its recorded pops P`, deduped by `(pos, result_w)` (P is a SET).
-    recorded_pops: FxHashMap<GssNodeId, Vec<RecordedPop>>,
+    /// `node → its recorded pops P`, deduped by `(pos, result_w, rule_id)`
+    /// (P is a SET over the identity triple; the weight rides the entry).
+    recorded_pops: FxHashMap<GssNodeId, Vec<RecordedPop<W>>>,
+}
+
+impl<W> Default for CanonicalGssState<W> {
+    fn default() -> Self {
+        CanonicalGssState {
+            edges: FxHashMap::default(),
+            recorded_pops: FxHashMap::default(),
+        }
+    }
 }
 
 /// Typed graph-structured stack for the WPDS-runtime walker.
@@ -962,7 +999,9 @@ pub struct WpdaGss<W: SemiringRef> {
     /// (operand-labelled edges + recorded-pop set `P`). `None` on the classic
     /// path — never allocated or touched unless a `gll_*` op runs (i.e. only
     /// under `canonical_gll_active()`), so the classic GSS stays byte-identical.
-    canonical: Option<Box<CanonicalGssState>>,
+    /// W-generic since task #10 item 3 (each P entry carries its pop-action
+    /// weight).
+    canonical: Option<Box<CanonicalGssState<W>>>,
 }
 
 impl<W: SemiringRef> WpdaGss<W> {
@@ -1415,7 +1454,7 @@ impl<W: SemiringRef> WpdaGss<W> {
     /// so the classic path never triggers the allocation.
     #[allow(dead_code)]
     #[inline]
-    fn canonical_mut(&mut self) -> &mut CanonicalGssState {
+    fn canonical_mut(&mut self) -> &mut CanonicalGssState<W> {
         self.canonical
             .get_or_insert_with(|| Box::new(CanonicalGssState::default()))
     }
@@ -1424,7 +1463,7 @@ impl<W: SemiringRef> WpdaGss<W> {
     /// `gll_*` mutation — the classic path always observes `None`).
     #[allow(dead_code)]
     #[inline]
-    fn canonical_ref(&self) -> Option<&CanonicalGssState> {
+    fn canonical_ref(&self) -> Option<&CanonicalGssState<W>> {
         self.canonical.as_deref()
     }
 
@@ -1499,13 +1538,27 @@ impl<W: SemiringRef> WpdaGss<W> {
 
     /// Canonical GLL `pop(u, i, z)` — GSS-layer half (Scott-Johnstone §4).
     ///
-    /// Records `(pos i, result_w z)` into `P[node u]` (P is a SET: a duplicate
-    /// `(i, z)` is ignored and yields NO returns — the returns were already
+    /// Records `(pos i, result_w z, rule_id, pop_action_weight)` into
+    /// `P[node u]` (P is a SET over the `(i, z, rule_id)` identity triple: a
+    /// duplicate is ignored and yields NO returns — the returns were already
     /// produced on the first pop, and any later-added edge is handled by
     /// `gll_create`'s replay). For a genuinely-new pop, one [`GllReturn`] is
     /// produced per current outgoing edge `u → caller` labelled `w` —
     /// `{ slot: L_u, caller, at_pos: i, operand_w: w, result_w: z }` — where
     /// `L_u` is `u`'s own label symbol (the return slot).
+    ///
+    /// Task #10 item 3 — duplicate-pop weight policy: FIRST-WINS. A
+    /// duplicate returns BEFORE any packing intern happens today (this very
+    /// early-return), so the first recorded weight is the counterfactually
+    /// faithful one; an ⊕-merge would mint `min(w1, w2)` — a weight no
+    /// original intern ever carried (red-team amendment 5, refuting the
+    /// earlier ⊕-merge rationale). With `rule_id` in the identity triple
+    /// (F5-2), "duplicate" means SAME-IDENTITY duplicates only: two pops at
+    /// the same `(pos, z)` under DIFFERENT rule identities are separate P
+    /// entries, each carrying its own weight. The `debug_assert` below
+    /// checks that same-identity duplicates carry EQUAL weights (probe P2:
+    /// if it ever fires, the first-wins choice is materially lossy — stop
+    /// and re-derive).
     #[allow(dead_code)]
     pub(crate) fn gll_pop(
         &mut self,
@@ -1513,6 +1566,7 @@ impl<W: SemiringRef> WpdaGss<W> {
         pos: usize,
         result_w: SppfId,
         rule_id: u32,
+        pop_action_weight: &W,
     ) -> Vec<GllReturn> {
         // `L_u` = the popping node's label symbol. StackSymbolV2 is `Copy`, so
         // extract it BEFORE borrowing the canonical side-state (no borrow clash).
@@ -1525,13 +1579,26 @@ impl<W: SemiringRef> WpdaGss<W> {
             let pops = st.recorded_pops.entry(node).or_default();
             // P is a set: skip a duplicate pop (idempotent; no double-emit and no
             // duplicate P entry that a later `gll_create` would over-replay).
-            if pops
+            // FIRST-WINS on the stored weight (see the method doc).
+            if let Some(existing) = pops
                 .iter()
-                .any(|p| p.pos == pos && p.result_w == result_w && p.rule_id == rule_id)
+                .find(|p| p.pos == pos && p.result_w == result_w && p.rule_id == rule_id)
             {
+                debug_assert!(
+                    existing.pop_action_weight == *pop_action_weight,
+                    "same-identity duplicate pop carries a DIFFERENT weight \
+                     (node={node}, pos={pos}, result_w={result_w}, rule_id={rule_id:#x}) — \
+                     first-wins would be lossy; re-derive the duplicate-pop policy (task #10 \
+                     item 3 amendment 5 / probe P2)"
+                );
                 return Vec::new();
             }
-            pops.push(RecordedPop { pos, result_w, rule_id });
+            pops.push(RecordedPop {
+                pos,
+                result_w,
+                rule_id,
+                pop_action_weight: pop_action_weight.clone(),
+            });
         }
         // Emit a return for EVERY current edge of `node` (edges added LATER are
         // handled by `gll_create`'s create-after-pop replay).
@@ -1583,11 +1650,34 @@ impl<W: SemiringRef> WpdaGss<W> {
     /// Read a node's recorded-pop set `P` (`&[]` if none). Exposed for the driver
     /// + tests to assert pop-recording WITHOUT re-triggering emission.
     #[allow(dead_code)]
-    pub(crate) fn gll_recorded_pops(&self, node: GssNodeId) -> &[RecordedPop] {
+    pub(crate) fn gll_recorded_pops(&self, node: GssNodeId) -> &[RecordedPop<W>] {
         match self.canonical_ref().and_then(|st| st.recorded_pops.get(&node)) {
             Some(pops) => pops.as_slice(),
             None => &[],
         }
+    }
+
+    /// Task #10 item 3: borrow the recorded pop-action weight of the P entry
+    /// with identity `(pos, result_w, rule_id)` on `node` — the identity
+    /// triple a create-after-pop replay [`GllReturn`] carries (`at_pos`,
+    /// `result_w`, `rule_id`), so the replay arm can intern a genuinely-new
+    /// replay packing with the TRUE pop weight. A linear scan: P vecs are
+    /// small and the replay arm calls this once per replayed pop.
+    #[allow(dead_code)]
+    pub(crate) fn gll_recorded_pop_action_weight(
+        &self,
+        node: GssNodeId,
+        pos: usize,
+        result_w: SppfId,
+        rule_id: u32,
+    ) -> Option<&W> {
+        self.canonical_ref()
+            .and_then(|st| st.recorded_pops.get(&node))
+            .and_then(|pops| {
+                pops.iter()
+                    .find(|p| p.pos == pos && p.result_w == result_w && p.rule_id == rule_id)
+                    .map(|p| &p.pop_action_weight)
+            })
     }
 
     /// ROOT-P Stage E — every GSS node sharing a `(category, pos)` slot. The
@@ -2112,7 +2202,7 @@ mod tests {
 
         // Pop: the return carries the same operand `w` plus slot/caller/pos/z.
         let z: SppfId = 99;
-        let returns = g.gll_pop(v, 5, z, u32::MAX);
+        let returns = g.gll_pop(v, 5, z, u32::MAX, &lex(0.0, 0, 0));
         assert_eq!(returns.len(), 1);
         let r = returns[0];
         assert_eq!(r.operand_w, w, "operand w round-trips through pop");
@@ -2142,7 +2232,7 @@ mod tests {
         let (v, r0) = g.gll_create(c1, l, 3, w1, crate::path_tree_arena::STACK_ID_ROOT, crate::path_tree_arena::STACK_ID_ROOT);
         assert!(r0.is_empty());
         let z: SppfId = 7;
-        let popret = g.gll_pop(v, 8, z, u32::MAX);
+        let popret = g.gll_pop(v, 8, z, u32::MAX, &lex(0.0, 0, 0));
         assert_eq!(popret.len(), 1);
         assert_eq!(popret[0].caller, c1);
         assert_eq!(g.gll_recorded_pops(v).len(), 1, "z recorded in P[v]");
@@ -2181,7 +2271,7 @@ mod tests {
         assert_eq!(g.gll_edges(v).len(), 3, "three distinct predecessor edges");
 
         let z: SppfId = 555;
-        let mut returns = g.gll_pop(v, 9, z, u32::MAX);
+        let mut returns = g.gll_pop(v, 9, z, u32::MAX, &lex(0.0, 0, 0));
         assert_eq!(returns.len(), 3, "one return per predecessor edge");
         // Each return pairs the correct caller with the correct operand.
         returns.sort_by_key(|r| r.caller);
@@ -2222,7 +2312,7 @@ mod tests {
         // Re-adding an existing edge AFTER a pop must ALSO be idempotent AND must
         // NOT re-fire the replay (double-count guard — the subtle GLL bug class).
         let z: SppfId = 3;
-        let _ = g.gll_pop(v, 6, z, u32::MAX);
+        let _ = g.gll_pop(v, 6, z, u32::MAX, &lex(0.0, 0, 0));
         let (_, replays_after_pop) = g.gll_create(c1, l, 3, w1, crate::path_tree_arena::STACK_ID_ROOT, crate::path_tree_arena::STACK_ID_ROOT); // already present
         assert!(
             replays_after_pop.is_empty(),
@@ -2230,8 +2320,92 @@ mod tests {
         );
 
         // A duplicate pop is a no-op (P is a set).
-        let dup = g.gll_pop(v, 6, z, u32::MAX);
+        let dup = g.gll_pop(v, 6, z, u32::MAX, &lex(0.0, 0, 0));
         assert!(dup.is_empty(), "duplicate pop ⇒ no double-emit");
         assert_eq!(g.gll_recorded_pops(v).len(), 1, "P deduped by (pos, result)");
+    }
+
+    /// Task #10 item 3: P entries record the pop-action weight; the
+    /// duplicate-pop policy is FIRST-WINS over the `(pos, result_w,
+    /// rule_id)` identity triple (same-identity duplicates must carry
+    /// EQUAL weights — the `debug_assert` in `gll_pop`; this test
+    /// re-passes the SAME weight accordingly). A pop at the same
+    /// `(pos, z)` under a DIFFERENT rule identity is a DISTINCT P entry
+    /// carrying its own weight (the F5-2 identity-carry interaction), and
+    /// a later `gll_create` replays BOTH entries.
+    #[test]
+    fn test_canonical_gll_pop_records_action_weight_first_wins() {
+        let mut g: WpdaGss<LexicographicWeight> = WpdaGss::new();
+        let c1 = g.get_or_create_node(WpdaGssNode {
+            pos: 0,
+            symbol: StackSymbolV2::category_entry(0),
+        });
+        let c2 = g.get_or_create_node(WpdaGssNode {
+            pos: 0,
+            symbol: StackSymbolV2::category_entry(1),
+        });
+        let l = slot_sym(1, 0, 1);
+        let (v, _) = g.gll_create(
+            c1,
+            l,
+            3,
+            10,
+            crate::path_tree_arena::STACK_ID_ROOT,
+            crate::path_tree_arena::STACK_ID_ROOT,
+        );
+        let z: SppfId = 7;
+        let w_rule5 = lex(0.25, 0, 5);
+        let w_rule6 = lex(0.5, 0, 6);
+
+        // First pop under rule identity 5 records its weight.
+        let r1 = g.gll_pop(v, 8, z, 5, &w_rule5);
+        assert_eq!(r1.len(), 1, "one return per edge on a genuinely-new pop");
+        assert_eq!(
+            g.gll_recorded_pop_action_weight(v, 8, z, 5),
+            Some(&w_rule5),
+            "the accessor returns the recorded pop-action weight"
+        );
+
+        // Same-identity duplicate (same weight per the equal-weight
+        // invariant): FIRST-WINS — no returns, no new entry, stored weight
+        // unchanged.
+        let dup = g.gll_pop(v, 8, z, 5, &w_rule5);
+        assert!(dup.is_empty(), "same-identity duplicate ⇒ no double-emit");
+        assert_eq!(g.gll_recorded_pops(v).len(), 1, "no duplicate P entry");
+        assert_eq!(
+            g.gll_recorded_pop_action_weight(v, 8, z, 5),
+            Some(&w_rule5),
+            "first-wins: the stored weight is the FIRST pop's"
+        );
+
+        // DIFFERENT rule identity at the same (pos, z): a separate P entry
+        // with its own weight — both weights independently retrievable.
+        let r2 = g.gll_pop(v, 8, z, 6, &w_rule6);
+        assert_eq!(r2.len(), 1, "distinct identity ⇒ a genuinely-new pop");
+        assert_eq!(g.gll_recorded_pops(v).len(), 2, "two identity-distinct entries");
+        assert_eq!(g.gll_recorded_pop_action_weight(v, 8, z, 5), Some(&w_rule5));
+        assert_eq!(g.gll_recorded_pop_action_weight(v, 8, z, 6), Some(&w_rule6));
+        assert_eq!(
+            g.gll_recorded_pop_action_weight(v, 8, z, 7),
+            None,
+            "an unrecorded identity resolves to None"
+        );
+
+        // Create-after-pop: a NEW caller edge replays BOTH recorded pops,
+        // each carrying its own rule identity (the weight is looked up from
+        // the P entry by the replay consumer, not carried on GllReturn).
+        let (v2, replays) = g.gll_create(
+            c2,
+            l,
+            3,
+            20,
+            crate::path_tree_arena::STACK_ID_ROOT,
+            crate::path_tree_arena::STACK_ID_ROOT,
+        );
+        assert_eq!(v2, v, "same (slot, pos) ⇒ same node");
+        assert_eq!(replays.len(), 2, "one replay per recorded pop");
+        let mut replay_rule_ids: Vec<u32> = replays.iter().map(|r| r.rule_id).collect();
+        replay_rule_ids.sort_unstable();
+        assert_eq!(replay_rule_ids, vec![5, 6], "replays carry the recorded identities");
     }
 }
