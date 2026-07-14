@@ -623,8 +623,13 @@ mod tests {
         assert!(ts.contains("actual : REALIZE_CAP + 1"));
         assert!(ts.contains("actual : RAW_REALIZE_CAP + 1"));
         assert!(ts.contains("actual : RAW_PREFIX_CAP + 1"));
+        // Task #10 item 2: the needle is the OPEN-ended call prefix (no
+        // closing paren) so the negative assert keeps matching the
+        // regression shape now that `realize_root_to_terms` takes a third
+        // `RealizeRequestMode` argument — a cap-truncating call would render
+        // as `realize_root_to_terms (root , Some (REALIZE_CAP) , ...)`.
         assert!(
-            !ts.contains("realize_root_to_terms (root , Some (REALIZE_CAP))"),
+            !ts.contains("realize_root_to_terms (root , Some (REALIZE_CAP)"),
             "parse_all must probe for overflow instead of silently truncating at the cap",
         );
         assert!(ts.contains("__mettail_wpda_collect_prefix"));
@@ -638,6 +643,18 @@ mod tests {
         assert!(
             ts.matches("realize_root_to_terms_with_weights").count() >= 2,
             "parse_all must use weighted realization for accepted and trailing roots",
+        );
+        // Task #10 item 2: every realize call now states its request mode
+        // explicitly; both variants must appear in the generated stream
+        // (single facades / recovering picks elect; `_all` facades and the
+        // probe helpers enumerate).
+        assert!(
+            ts.contains("RealizeRequestMode :: SingleResultElection"),
+            "generated facades must request single-result election explicitly",
+        );
+        assert!(
+            ts.contains("RealizeRequestMode :: BoundedEnumeration"),
+            "generated facades must request bounded enumeration explicitly",
         );
         assert!(
             ts.contains("typed_weights . push (weight)"),

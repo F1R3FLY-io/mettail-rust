@@ -2611,6 +2611,27 @@ enum RealizeLazyAbort {
     Cycle,
 }
 
+/// P4 follow-up (task #10 item 2, ledger :1022-1023): how the caller wants a
+/// packing family realized. Replaces the RAW_PROBE_CAPS power-of-two
+/// inference (`limit.is_some_and(|c| c <= 128 && c.is_power_of_two())`) at
+/// the CGLL_BIN branch of `realize_root_to_terms_with_weights` with an
+/// explicit request-mode parameter threaded from every caller. `limit`
+/// KEEPS its role: it is still the bounded-family cap for the fallback and
+/// the lazy/eager enumeration paths — mode selects election; limit sizes
+/// enumeration. Only the CGLL_BIN branch consumes the mode; non-BIN roots
+/// (including the classic lever arm) realize identically under either
+/// variant.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum RealizeRequestMode {
+    /// Single-result facade semantics: run the K-tuple election and return
+    /// exactly the elected derivation; fall back to the bounded family on
+    /// any election gap.
+    SingleResultElection,
+    /// Enumeration semantics (`_all` facades, display-exact probes, counting
+    /// censuses): never elect; realize the bounded packing family.
+    BoundedEnumeration,
+}
+
 /// Body-delivery obligation for a CrossCatLhs dispatch key.
 ///
 /// GSS edges may converge when their future control behavior is identical,
@@ -9259,9 +9280,13 @@ where
                     // of cursor.builder.take_dyn_result(). Same shape:
                     // returns Vec<Arc<dyn Any>>, take first.
                     let term = if det_sppf_root != crate::sppf::SPPF_ID_NONE {
-                        self.realize_root_to_terms(det_sppf_root, Some(1))
-                            .into_iter()
-                            .next()
+                        self.realize_root_to_terms(
+                            det_sppf_root,
+                            Some(1),
+                            RealizeRequestMode::SingleResultElection,
+                        )
+                        .into_iter()
+                        .next()
                     } else {
                         None
                     };
@@ -9488,9 +9513,13 @@ where
                 // with realize_root_to_terms. The fallback case (Accepted
                 // with empty terms but valid root) is preserved.
                 let term = if winner_sppf_root != crate::sppf::SPPF_ID_NONE {
-                    self.realize_root_to_terms(winner_sppf_root, Some(1))
-                        .into_iter()
-                        .next()
+                    self.realize_root_to_terms(
+                        winner_sppf_root,
+                        Some(1),
+                        RealizeRequestMode::SingleResultElection,
+                    )
+                    .into_iter()
+                    .next()
                 } else {
                     None
                 };
@@ -9533,7 +9562,11 @@ where
                     // is structurally redundant with cursor.sppf_stack
                     // for the realize-extract purpose.
                     if cursor_root != crate::sppf::SPPF_ID_NONE {
-                        let realized = self.realize_root_to_terms(cursor_root, Some(1));
+                        let realized = self.realize_root_to_terms(
+                            cursor_root,
+                            Some(1),
+                            RealizeRequestMode::SingleResultElection,
+                        );
                         if let Some(t) = realized.into_iter().next() {
                             weights.push(cursor_weight);
                             terms.push(t);
@@ -9609,7 +9642,11 @@ where
             if root == crate::sppf::SPPF_ID_NONE {
                 continue;
             }
-            if let Some(t) = self.realize_root_to_terms(root, Some(1)).into_iter().next() {
+            if let Some(t) = self
+                .realize_root_to_terms(root, Some(1), RealizeRequestMode::SingleResultElection)
+                .into_iter()
+                .next()
+            {
                 selected_pos.get_or_insert(*pos);
                 weights.push(weight.clone());
                 terms.push(t);
@@ -9673,8 +9710,10 @@ where
                     terms.push(value);
                     roots.push(root);
                 }
-            } else if let Some(t) =
-                self.realize_root_to_terms(root, Some(1)).into_iter().next()
+            } else if let Some(t) = self
+                .realize_root_to_terms(root, Some(1), RealizeRequestMode::SingleResultElection)
+                .into_iter()
+                .next()
             {
                 selected_pos.get_or_insert(*pos);
                 weights.push(weight.clone());
@@ -9741,11 +9780,12 @@ where
         &self,
         root: crate::sppf::SppfId,
         limit: Option<usize>,
+        mode: RealizeRequestMode,
     ) -> Vec<Arc<dyn Any + Send + Sync>>
     where
         W: StarSemiringRef,
     {
-        self.realize_root_to_terms_with_weights(root, limit)
+        self.realize_root_to_terms_with_weights(root, limit, mode)
             .into_iter()
             .map(|(t, _w)| t)
             .collect()
@@ -9767,6 +9807,7 @@ where
         &self,
         root: crate::sppf::SppfId,
         limit: Option<usize>,
+        mode: RealizeRequestMode,
     ) -> Vec<(Arc<dyn Any + Send + Sync>, W)>
     where
         W: StarSemiringRef,
@@ -9787,24 +9828,26 @@ where
                         crate::sppf::SppfId,
                         Vec<(ActionArg, W)>,
                     > = std::collections::HashMap::new();
-                    // ── P4 HYBRID K-TUPLE ELECTION (red-team T4): a BOUNDED
-                    // request on the pure family root = single-result
-                    // semantics (classic pre-elects the winner cursor at
-                    // resolve; the facade's min only ever sees one root's
-                    // one derivation). Elect per-node by the K-tuple and
-                    // realize exactly the chosen derivation; any gap falls
-                    // back to the full-family realize below.
-                    // SINGLE-vs-ALL discrimination: the single facades
-                    // realize with Some(1) or the M6 RAW_PROBE_CAPS
-                    // ({128,64,32,16,8,4,2,1} — facade.rs:4206); the _all
-                    // facades probe with REALIZE_CAP+1 = 65 doubling to
-                    // 4096 (facade.rs:4815-4816). The sets are disjoint:
-                    // powers of two ≤ 128 = single-result semantics.
-                    // (COUPLING to the generated facade constants —
-                    // documented; the clean follow-up is an explicit
-                    // realize-mode parameter in the facade codegen.)
+                    // ── P4 HYBRID K-TUPLE ELECTION (red-team T4): a
+                    // SingleResultElection request on the pure family root
+                    // = single-result semantics (classic pre-elects the
+                    // winner cursor at resolve; the facade's min only ever
+                    // sees one root's one derivation). Elect per-node by
+                    // the K-tuple and realize exactly the chosen
+                    // derivation; any gap falls back to the full-family
+                    // realize below.
+                    // SINGLE-vs-ALL discrimination (task #10 item 2): the
+                    // caller states its intent via the explicit
+                    // `RealizeRequestMode` parameter — the single facades
+                    // and the walker's single-winner resolve paths pass
+                    // `SingleResultElection`; the `_all` facades,
+                    // display-exact probes, and counting censuses pass
+                    // `BoundedEnumeration`. (This replaced the historical
+                    // "powers of two ≤ 128 ⇒ single" inference over
+                    // `limit`, which coupled the walker to the generated
+                    // facade cap constants.)
                     let single_result_request =
-                        limit.is_some_and(|c| c <= 128 && c.is_power_of_two());
+                        matches!(mode, RealizeRequestMode::SingleResultElection);
                     if single_result_request {
                         let goal_cat = self.cgll_pure_goal_cat;
                         // TABU-RETRY: the K-tuple is realizability-blind
@@ -35355,8 +35398,18 @@ where
             roots_maskall.entry(h_mask).or_default().insert(root);
             roots_retslot.entry(h_retslot).or_default().insert(root);
             distinct_roots.insert(root);
+            // Emptiness probe (diagnostics dump only): `BoundedEnumeration`
+            // per the task #10 item-2 mapping table — outcome-identical
+            // (empty iff no realizable reading; the election path falls
+            // back to the bounded family on gaps anyway), work-profile-only
+            // difference vs the historical Some(1)-inferred election.
+            // Red-team P1 caveat: a refutable FIRST packing under cap 1
+            // could in principle diverge the two modes here; this feeds a
+            // census line only, never an election.
             if root != crate::sppf::SPPF_ID_NONE
-                && !self.realize_root_to_terms(root, Some(1)).is_empty()
+                && !self
+                    .realize_root_to_terms(root, Some(1), RealizeRequestMode::BoundedEnumeration)
+                    .is_empty()
             {
                 readings_lim1 += 1;
             }
@@ -35366,7 +35419,10 @@ where
         let readings_allpack: usize = distinct_roots
             .iter()
             .filter(|&&r| r != crate::sppf::SPPF_ID_NONE)
-            .map(|&r| self.realize_root_to_terms(r, Some(65536)).len())
+            .map(|&r| {
+                self.realize_root_to_terms(r, Some(65536), RealizeRequestMode::BoundedEnumeration)
+                    .len()
+            })
             .sum();
         let n_ckeys_full = roots_full.len();
         let n_ckeys_maskall = roots_maskall.len();
@@ -47940,7 +47996,13 @@ mod tests {
             WpdaWalker::new(CountingRealizeEngine, 0);
         let root = install_counting_realize_ambiguous_root(&mut walker);
 
-        let first = walker.realize_root_to_terms_with_weights(root, Some(1));
+        // Non-BIN root: the mode is never consulted; the assertions demand
+        // cap enumeration, so `BoundedEnumeration` states the intent.
+        let first = walker.realize_root_to_terms_with_weights(
+            root,
+            Some(1),
+            RealizeRequestMode::BoundedEnumeration,
+        );
         assert_eq!(first.len(), 1);
         assert_eq!(
             REALIZE_LAZY_ACTION_CALLS.load(std::sync::atomic::Ordering::SeqCst),
@@ -47954,7 +48016,11 @@ mod tests {
         assert_eq!(first[0].1, lex(1.0, 0, 0));
 
         REALIZE_LAZY_ACTION_CALLS.store(0, std::sync::atomic::Ordering::SeqCst);
-        let all = walker.realize_root_to_terms_with_weights(root, Some(2));
+        let all = walker.realize_root_to_terms_with_weights(
+            root,
+            Some(2),
+            RealizeRequestMode::BoundedEnumeration,
+        );
         assert_eq!(all.len(), 2);
         assert_eq!(
             REALIZE_LAZY_ACTION_CALLS.load(std::sync::atomic::Ordering::SeqCst),

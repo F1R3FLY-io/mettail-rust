@@ -4222,7 +4222,11 @@ pub(crate) fn emit_parse_fns(
                     if std::env::var_os("PRATTAIL_NO_M6_SELECT").is_some() {
                         let root = roots.first().copied()?;
                         return walker
-                            .realize_root_to_terms_with_weights(root, Some(128))
+                            .realize_root_to_terms_with_weights(
+                                root,
+                                Some(128),
+                                mettail_prattail::wpda_walker::RealizeRequestMode::SingleResultElection,
+                            )
                             .into_iter()
                             .min_by(|(_, a), (_, b)| a.cmp(b));
                     }
@@ -4232,7 +4236,14 @@ pub(crate) fn emit_parse_fns(
                         // this root; its own min-weight term is the candidate.
                         let mut per_root: Option<(std::sync::Arc<dyn std::any::Any + Send + Sync>, __W)> = None;
                         for &cap in RAW_PROBE_CAPS {
-                            let realized = walker.realize_root_to_terms_with_weights(root, Some(cap));
+                            // Task #10 item 2: single-result facade semantics
+                            // stated explicitly; the descending caps remain
+                            // pure enumeration bounds for the fallback path.
+                            let realized = walker.realize_root_to_terms_with_weights(
+                                root,
+                                Some(cap),
+                                mettail_prattail::wpda_walker::RealizeRequestMode::SingleResultElection,
+                            );
                             if let Some((term, w)) = realized
                                 .into_iter()
                                 .min_by(|(_, a), (_, b)| a.cmp(b))
@@ -4398,10 +4409,37 @@ pub(crate) fn emit_parse_fns(
                     let mut per_root_limit =
                         max_raw_derivations.min(INITIAL_RAW_SURFACE_PROBE_LIMIT).max(1);
                     loop {
+                        // ★ ITEM-2b STAGING (task #10; the fix is USER-APPROVED
+                        // 2026-07-14 and lands as the immediate NEXT commit):
+                        // this display-exact probe SHOULD request
+                        // `BoundedEnumeration` (it wants the family, not the
+                        // elected reading). In THIS commit (2a = pure
+                        // byte-identical mode threading) the mode is still
+                        // derived from `per_root_limit` by the historical
+                        // power-of-two ≤ 128 inference, REPRODUCING the
+                        // pre-mode behavior byte-for-byte — including the
+                        // known wart: on BIN roots at a power-of-two limit
+                        // the walker ELECTS (1 reading), `realized.len() <
+                        // per_root_limit` keeps `exhausted_all_roots` true,
+                        // and the probe can return `Ok(None)` after one pass
+                        // without enumerating (the flip-era regression the
+                        // red-team confirmed). Item 2b replaces this block
+                        // with an unconditional `BoundedEnumeration` plus
+                        // the behavioral pins.
+                        let realize_mode = if per_root_limit <= 128usize
+                            && per_root_limit.is_power_of_two()
+                        {
+                            mettail_prattail::wpda_walker::RealizeRequestMode::SingleResultElection
+                        } else {
+                            mettail_prattail::wpda_walker::RealizeRequestMode::BoundedEnumeration
+                        };
                         let mut exhausted_all_roots = true;
                         for &root in roots {
-                            let realized =
-                                walker.realize_root_to_terms_with_weights(root, Some(per_root_limit));
+                            let realized = walker.realize_root_to_terms_with_weights(
+                                root,
+                                Some(per_root_limit),
+                                realize_mode,
+                            );
                             if realized.len() >= per_root_limit {
                                 exhausted_all_roots = false;
                             }
@@ -4620,6 +4658,29 @@ pub(crate) fn emit_parse_fns(
                     const RAW_PREFIX_CAP: usize = 4096;
                     let mut raw_probe_limit = max_alternatives.saturating_add(1).max(1);
                     loop {
+                        // ★ ITEM-2b STAGING (task #10; the fix is USER-APPROVED
+                        // 2026-07-14 and lands as the immediate NEXT commit):
+                        // this bounded-prefix `_all` enumerator SHOULD request
+                        // `BoundedEnumeration` unconditionally. In THIS commit
+                        // (2a = pure byte-identical mode threading) the mode
+                        // is still derived from `raw_probe_limit` by the
+                        // historical power-of-two ≤ 128 inference,
+                        // REPRODUCING the pre-mode behavior byte-for-byte —
+                        // including the known wart: when `max_alternatives ∈
+                        // {1,3,7,15,31,63,127}` the probe limit (max_alt+1)
+                        // is a power of two ≤ 128, so BIN roots ELECT and the
+                        // `_all`-semantics facade collapses to 1 alternative
+                        // (the surviving instance of the "caught + fixed"
+                        // 65-doubling bug class per the ledger). Item 2b
+                        // replaces this block with an unconditional
+                        // `BoundedEnumeration` plus the behavioral pins.
+                        let realize_mode = if raw_probe_limit <= 128usize
+                            && raw_probe_limit.is_power_of_two()
+                        {
+                            mettail_prattail::wpda_walker::RealizeRequestMode::SingleResultElection
+                        } else {
+                            mettail_prattail::wpda_walker::RealizeRequestMode::BoundedEnumeration
+                        };
                         let mut typed_terms: Vec<#cat_ident> = Vec::new();
                         let mut typed_weights:
                             Vec<mettail_prattail::automata::lex_weight::LexicographicWeight> =
@@ -4630,6 +4691,7 @@ pub(crate) fn emit_parse_fns(
                             let realized = walker.realize_root_to_terms_with_weights(
                                 root,
                                 Some(raw_probe_limit),
+                                realize_mode,
                             );
                             if realized.len() >= raw_probe_limit {
                                 exhausted_all_roots = false;
@@ -4826,9 +4888,14 @@ pub(crate) fn emit_parse_fns(
                             for &root in &roots {
                                 let mut raw_probe_limit = REALIZE_CAP.saturating_add(1);
                                 loop {
+                                    // Task #10 item 2: `_all` enumeration
+                                    // semantics stated explicitly (the 65 →
+                                    // ×2 → 4096 probe ladder never inferred
+                                    // single-result — byte-identical).
                                     let realized = walker.realize_root_to_terms_with_weights(
                                         root,
                                         Some(raw_probe_limit),
+                                        mettail_prattail::wpda_walker::RealizeRequestMode::BoundedEnumeration,
                                     );
                                     let exhausted_root = realized.len() < raw_probe_limit;
                                     for (term, weight) in realized {
@@ -4917,9 +4984,14 @@ pub(crate) fn emit_parse_fns(
                             for &root in &roots {
                                 let mut raw_probe_limit = REALIZE_CAP.saturating_add(1);
                                 loop {
+                                    // Task #10 item 2: `_all` enumeration
+                                    // semantics stated explicitly (the 65 →
+                                    // ×2 → 4096 probe ladder never inferred
+                                    // single-result — byte-identical).
                                     let realized = walker.realize_root_to_terms_with_weights(
                                         root,
                                         Some(raw_probe_limit),
+                                        mettail_prattail::wpda_walker::RealizeRequestMode::BoundedEnumeration,
                                     );
                                     let exhausted_root = realized.len() < raw_probe_limit;
                                     for (term, weight) in realized {
@@ -5128,11 +5200,18 @@ pub(crate) fn emit_parse_fns(
                         *pos = walker.position();
                         // C7b (Phase 3.1.6, 2026-05-15): realize the first
                         // SPPF root for backward-compat single-result return.
+                        // Task #10 item 2 amendment 3: recovering-mode
+                        // single-result pick → `SingleResultElection`
+                        // (byte-identical: Some(1) inferred single before).
                         let pick = roots
                             .first()
                             .and_then(|&root|
                                 walker
-                                    .realize_root_to_terms(root, Some(1))
+                                    .realize_root_to_terms(
+                                        root,
+                                        Some(1),
+                                        mettail_prattail::wpda_walker::RealizeRequestMode::SingleResultElection,
+                                    )
                                     .into_iter()
                                     .next()
                             );
@@ -5155,11 +5234,18 @@ pub(crate) fn emit_parse_fns(
                     // `result.is_some()` for trailing-token inputs).
                     WpdaResolveResult::AcceptedWithTrailing { roots, position, .. } => {
                         *pos = position;
+                        // Task #10 item 2 amendment 3: recovering-mode
+                        // single-result pick → `SingleResultElection`
+                        // (byte-identical: Some(1) inferred single before).
                         let pick = roots
                             .first()
                             .and_then(|&root|
                                 walker
-                                    .realize_root_to_terms(root, Some(1))
+                                    .realize_root_to_terms(
+                                        root,
+                                        Some(1),
+                                        mettail_prattail::wpda_walker::RealizeRequestMode::SingleResultElection,
+                                    )
                                     .into_iter()
                                     .next()
                             );
