@@ -4873,16 +4873,22 @@ struct CgllPureCallerCtx {
 /// `CGLL-PURE …` line under `PRATTAIL_CANONICAL_GLL_STATS`).
 #[allow(dead_code)] // Reached only under the const (DCE'd while const off).
 /// R1 (Pocket-F): one VIRTUAL repair token served by [`CgllRepairSource`].
-/// `at_real` = the real position the repair applies at (its order key);
-/// `next_real` = the position stepping continues at after consuming the
-/// virtual token (insert ⇒ `at_real` itself; substitute ⇒ the real
-/// successor of `at_real`).
+/// `at_real` = the real SLOT the virtual fills (its order key — task #10
+/// item 4 amendment 7: for chain entries this is the real position the
+/// entry REPLACES, e.g. a swap's second-served token anchors at
+/// `second_pos`, not at the chain head);
+/// `resume_pos` = the position stepping continues at after consuming the
+/// virtual token — either a REAL successor (single-token repairs: insert
+/// ⇒ `at_real` itself; substitute ⇒ the real successor of `at_real`) or
+/// the NEXT VIRTUAL position of a chain (task #10 item 4: Swap /
+/// token-mutating ApplyRecoverySequence lowerings — the field was renamed
+/// from `next_real` when chains made non-real successors first-class).
 #[allow(dead_code)] // Reached only under the const (DCE'd while const off).
 struct CgllRepairVirtual {
     kind: TokenKind,
     text: String,
     at_real: usize,
-    next_real: usize,
+    resume_pos: usize,
 }
 
 /// R1 amendment-4 (Pocket-F): the walker-local REPAIR-LATTICE token-source
@@ -4949,7 +4955,7 @@ impl<'a> crate::wpda_runtime::WpdaTokenSource for CgllRepairSource<'a> {
     }
     fn next_pos(&self, pos: usize, alt_idx: usize) -> Option<usize> {
         match self.virtual_at(pos) {
-            Some(v) => Some(v.next_real),
+            Some(v) => Some(v.resume_pos),
             None => self.inner.next_pos(pos, alt_idx),
         }
     }
@@ -4993,6 +4999,32 @@ enum CgllRepairKind {
     /// `total_cost_tropical` (R3 event convention: skip/delete events
     /// carry the tropical cost; insert/substitute carry 0.0 — AV7).
     PosOnly { target_pos: usize, cost: f64 },
+    /// Task #10 item 4 (the amendment-8/AV6 follow-up — the other branch
+    /// of the named-drop decision): direct adjacent transposition
+    /// (`BuilderDelta::SwapTokens`). Lowered at reseed to a 2-token
+    /// virtual CHAIN `[real(second_pos) filling slot first_pos,
+    /// real(first_pos) filling slot second_pos]` anchored per amendment 7
+    /// (each entry's `at_real` = the real SLOT it fills, so order keys
+    /// stay monotone), resuming at the real successor of `second_pos`.
+    /// `cost` = the branch's `cost_tropical` (the classic swap replay's
+    /// event cost — parity target @ the commit-replay SwapTokens arm).
+    SwapAdjacent { first_pos: usize, second_pos: usize, cost: f64 },
+    /// Task #10 item 4: `ApplyRecoverySequence` with at least one
+    /// token-mutating member (by arm order after the PosOnly decode).
+    /// Lowered at reseed by SIMULATING the actions over the real stream
+    /// from `base_pos` into one virtual chain serving every token the
+    /// mutated window yields (parity target: the classic commit-replay's
+    /// per-action mutation), resuming at the real `target_pos`. `actions`
+    /// keeps the source payload type (`Arc<[ResolvedRepairAction]>` — the
+    /// cheap-clone Fork-branch representation). `cost` = the sequence's
+    /// `total_cost_tropical` (AV7: skip/delete-bearing repairs carry the
+    /// tropical cost on their round-log event).
+    MutatingSequence {
+        actions: Arc<[ResolvedRepairAction]>,
+        base_pos: usize,
+        target_pos: usize,
+        cost: f64,
+    },
 }
 
 /// R1: one parked repair proposal (W-generic ⇒ lives on the WALKER, not
@@ -5102,8 +5134,13 @@ struct CgllPureStats {
     repair_reseeded: u64,
     /// R1: recovery rounds fired (0 on every green parse — NG-3 witness).
     repair_rounds: u64,
-    /// R1 amendment-8: Swap / token-mutating ApplyRecoverySequence /
-    /// unsupported-shape proposals — NAMED drops (counted, ledger-noted).
+    /// R1 amendment-8, NARROWED by task #10 item 4: Swap and
+    /// token-mutating ApplyRecoverySequence proposals now MATERIALIZE as
+    /// virtual chains (`CgllRepairKind::SwapAdjacent` /
+    /// `MutatingSequence`), so this counts ONLY the residual `_ => None`
+    /// decode population — family-B-pop MUTATING shapes (a
+    /// `PopWithEffect` whose effect is Substitute/Swap/Sequence), believed
+    /// unreachable per AV6's emitter census and kept as defense-in-depth.
     repair_named_drops: u64,
     /// R1 (red-team AV6): recovery deltas reaching a GUARDED park site
     /// (guard-precedes-park ⇒ expected 0 — assert-stays-dead as a counter).
@@ -27785,6 +27822,59 @@ where
                     format!("->{target_pos}"),
                 ))
             },
+            // Task #10 item 4: direct adjacent transposition — the former
+            // amendment-8 named drop, now lowered as a 2-token virtual
+            // chain at reseed.
+            BuilderDelta::SwapTokens { pos_a, pos_b, cost_tropical } if !family_b_pop => {
+                Some((
+                    CgllRepairKind::SwapAdjacent {
+                        first_pos: *pos_a,
+                        second_pos: *pos_b,
+                        cost: *cost_tropical,
+                    },
+                    format!("swap{pos_a}<>{pos_b}"),
+                ))
+            },
+            // Task #10 item 4: token-MUTATING ApplyRecoverySequence (at
+            // least one Insert/Substitute/Swap member — everything the
+            // all-pos-only arm above did not claim) — the former
+            // amendment-8 named drop, now lowered by window simulation at
+            // reseed. The dedup payload encodes the full action shape so
+            // distinct proposals at one site stay distinct.
+            BuilderDelta::ApplyRecoverySequence {
+                actions,
+                base_pos,
+                target_pos,
+                total_cost_tropical,
+            } if !family_b_pop => {
+                let mut action_summary = String::with_capacity(actions.len() * 4);
+                for action in actions.iter() {
+                    match action {
+                        ResolvedRepairAction::SkipToSync { skip_count } => {
+                            action_summary.push_str(&format!("k{skip_count}"));
+                        },
+                        ResolvedRepairAction::DeleteToken => action_summary.push('d'),
+                        ResolvedRepairAction::InsertToken { text, .. } => {
+                            action_summary.push_str(&format!("i({text})"));
+                        },
+                        ResolvedRepairAction::SubstituteToken { text, .. } => {
+                            action_summary.push_str(&format!("s({text})"));
+                        },
+                        ResolvedRepairAction::SwapTokens { pos_a, pos_b } => {
+                            action_summary.push_str(&format!("w{pos_a}<>{pos_b}"));
+                        },
+                    }
+                }
+                Some((
+                    CgllRepairKind::MutatingSequence {
+                        actions: Arc::clone(actions),
+                        base_pos: *base_pos,
+                        target_pos: *target_pos,
+                        cost: *total_cost_tropical,
+                    },
+                    format!("seq{base_pos}->{target_pos}:{action_summary}"),
+                ))
+            },
             _ => None,
         };
         let Some((kind, payload)) = decoded else {
@@ -27796,6 +27886,8 @@ where
             CgllRepairKind::VirtualInsert { .. } => 1,
             CgllRepairKind::VirtualSubstitute { .. } => 2,
             CgllRepairKind::PosOnly { .. } => 3,
+            CgllRepairKind::SwapAdjacent { .. } => 4,
+            CgllRepairKind::MutatingSequence { .. } => 5,
         };
         let key = (
             at_pos,
@@ -27844,6 +27936,8 @@ where
             CgllRepairKind::PopInsert { .. } | CgllRepairKind::VirtualInsert { .. } => "⟂ins",
             CgllRepairKind::VirtualSubstitute { .. } => "⟂sub",
             CgllRepairKind::PosOnly { .. } => "⟂skip",
+            CgllRepairKind::SwapAdjacent { .. } => "⟂swap",
+            CgllRepairKind::MutatingSequence { .. } => "⟂seq",
         };
         // R3: the marker KIND carries a SERIAL suffix — the trigger-
         // terminal dedup key is `(kind, pos, owner)` (TEXT EXCLUDED), so
@@ -27861,6 +27955,20 @@ where
             // reconstruction parses the tropical cost back out).
             CgllRepairKind::PosOnly { target_pos, cost } => {
                 format!("{at_pos}->{target_pos}:{cost}")
+            },
+            // Task #10 item 4: purely semantic payloads — the swapped
+            // texts in SERVED order / the sequence's window summary.
+            CgllRepairKind::SwapAdjacent { first_pos, second_pos, .. } => {
+                let second_text = real_tokens
+                    .peek_text(*second_pos)
+                    .expect("swap proposal targets in-range real tokens (payload)");
+                let first_text = real_tokens
+                    .peek_text(*first_pos)
+                    .expect("swap proposal targets in-range real tokens (payload)");
+                format!("{second_text}<>{first_text}")
+            },
+            CgllRepairKind::MutatingSequence { base_pos, target_pos, cost, .. } => {
+                format!("{base_pos}->{target_pos}:{cost}")
             },
         };
         // R3 ROUND LOG: every reseeded proposal is an ATTEMPT — on total
@@ -27887,6 +27995,22 @@ where
             },
             CgllRepairKind::PosOnly { cost, .. } => {
                 RecoveryEvent::from_action_kind(0, at_pos, *cost)
+            },
+            // Task #10 item 4 — CLASSIC PARITY (the commit-replay
+            // SwapTokens arm): action_kind 4 at `min(pos_a, pos_b)`
+            // carrying the swap's own tropical cost, no kind/text payload
+            // (the observed classic attempt shape).
+            CgllRepairKind::SwapAdjacent { first_pos, second_pos, cost } => {
+                RecoveryEvent::from_action_kind(4, (*first_pos).min(*second_pos), *cost)
+            },
+            // Task #10 item 4 — Composite (kind 5): the pure round-log's
+            // one-event-per-proposal convention (the committed R1 shape;
+            // classic's replay emits per-action events instead — a
+            // recovery-diagnostic-surface difference only). AV7: the
+            // sequence may bear skip/delete, so the event carries the
+            // sequence's tropical cost.
+            CgllRepairKind::MutatingSequence { cost, .. } => {
+                RecoveryEvent::from_action_kind(5, at_pos, *cost)
             },
         });
         let marker = self.sppf.intern_trigger_terminal(
@@ -27938,7 +28062,7 @@ where
             CgllRepairKind::VirtualInsert { kind: tk, text }
             | CgllRepairKind::VirtualSubstitute { kind: tk, text } => {
                 let substitute = tag == "⟂sub";
-                let next_real = if substitute {
+                let resume_pos = if substitute {
                     real_tokens.next_pos(at_pos, 0).unwrap_or(at_pos + 1)
                 } else {
                     at_pos
@@ -27948,7 +28072,7 @@ where
                     kind: tk,
                     text,
                     at_real: at_pos,
-                    next_real,
+                    resume_pos,
                 });
                 // Extend the order-key cache: the virtual TIES with its
                 // real anchor (amendment 4).
@@ -27965,7 +28089,164 @@ where
                     ..d
                 });
             },
+            // Task #10 item 4: direct adjacent transposition — a 2-token
+            // virtual CHAIN replaying the transposed window.
+            CgllRepairKind::SwapAdjacent { first_pos, second_pos, .. } => {
+                // The engine emitted the proposal against THIS stream, so
+                // in-range reads are a protocol invariant.
+                let second_kind = real_tokens
+                    .peek_kind(second_pos)
+                    .expect("swap proposal targets in-range real tokens (second kind)");
+                let second_text = real_tokens
+                    .peek_text(second_pos)
+                    .expect("swap proposal targets in-range real tokens (second text)")
+                    .to_string();
+                let first_kind = real_tokens
+                    .peek_kind(first_pos)
+                    .expect("swap proposal targets in-range real tokens (first kind)");
+                let first_text = real_tokens
+                    .peek_text(first_pos)
+                    .expect("swap proposal targets in-range real tokens (first text)")
+                    .to_string();
+                // Amendment 7: entry 0 SERVES the second token FILLING
+                // slot `first_pos`; entry 1 serves the first token filling
+                // `second_pos` — each entry's at_real = the SLOT it fills,
+                // keeping the adapter's order keys monotone across the
+                // chain (keys would invert if entries anchored at their
+                // TEXT's source positions).
+                let served = vec![
+                    (second_kind, second_text, first_pos),
+                    (first_kind, first_text, second_pos),
+                ];
+                let resume_real =
+                    real_tokens.next_pos(second_pos, 0).unwrap_or(second_pos + 1);
+                let vp0 = self.cgll_pure_lower_repair_chain(served, resume_real, virtuals);
+                let state = Self::cgll_pure_repair_state_at(&br_state, vp0);
+                run.worklist.push_back(CgllPureDescriptor {
+                    state,
+                    cur_sym: br_symbol.unwrap_or(d.cur_sym),
+                    pos: vp0,
+                    w,
+                    ..d
+                });
+            },
+            // Task #10 item 4: token-mutating sequence — SIMULATE the
+            // classic commit-replay's post-mutation window over the
+            // unmutated real stream into one contiguous chain (parity
+            // target: the classic ApplyRecoverySequence replay arm's
+            // per-action mutation).
+            CgllRepairKind::MutatingSequence { actions, base_pos, target_pos, .. } => {
+                let real_at = |pos: usize| -> (TokenKind, String) {
+                    (
+                        real_tokens.peek_kind(pos).expect(
+                            "mutating-sequence proposal targets in-range real tokens (kind)",
+                        ),
+                        real_tokens
+                            .peek_text(pos)
+                            .expect(
+                                "mutating-sequence proposal targets in-range real tokens (text)",
+                            )
+                            .to_string(),
+                    )
+                };
+                let mut served: Vec<(TokenKind, String, usize)> =
+                    Vec::with_capacity(actions.len() + 2);
+                let mut cursor = base_pos;
+                for action in actions.iter() {
+                    match action {
+                        // Skip/delete: the real cursor advances without
+                        // serving (the tokens vanish from the window).
+                        ResolvedRepairAction::SkipToSync { skip_count } => {
+                            cursor += *skip_count;
+                        },
+                        ResolvedRepairAction::DeleteToken => {
+                            cursor += 1;
+                        },
+                        // Insert: serve the payload WITHOUT advancing
+                        // (fills the slot the next real token would sit in).
+                        ResolvedRepairAction::InsertToken { kind, text } => {
+                            served.push((kind.clone(), text.clone(), cursor));
+                        },
+                        // Substitute: serve the payload AND advance past
+                        // the replaced real token.
+                        ResolvedRepairAction::SubstituteToken { kind, text } => {
+                            served.push((kind.clone(), text.clone(), cursor));
+                            cursor += 1;
+                        },
+                        // Sequence-local swap: serve real(pos_b) filling
+                        // slot pos_a, real(pos_a) filling slot pos_b
+                        // (amendment 7), advance past pos_b.
+                        ResolvedRepairAction::SwapTokens { pos_a, pos_b } => {
+                            let (swapped_in_kind, swapped_in_text) = real_at(*pos_b);
+                            let (swapped_out_kind, swapped_out_text) = real_at(*pos_a);
+                            served.push((swapped_in_kind, swapped_in_text, *pos_a));
+                            served.push((swapped_out_kind, swapped_out_text, *pos_b));
+                            cursor = pos_b + 1;
+                        },
+                    }
+                }
+                // Real tokens the sequence leaves untouched INSIDE the
+                // window are served as copies up to `target_pos` — the
+                // chain must reproduce classic's whole post-mutation
+                // window.
+                while cursor < target_pos {
+                    let (copy_kind, copy_text) = real_at(cursor);
+                    served.push((copy_kind, copy_text, cursor));
+                    cursor += 1;
+                }
+                debug_assert!(
+                    !served.is_empty(),
+                    "the all-pos-only decode claims serve-free sequences; a \
+                     MutatingSequence serves at least one token",
+                );
+                let vp0 = self.cgll_pure_lower_repair_chain(served, target_pos, virtuals);
+                let state = Self::cgll_pure_repair_state_at(&br_state, vp0);
+                run.worklist.push_back(CgllPureDescriptor {
+                    state,
+                    cur_sym: br_symbol.unwrap_or(d.cur_sym),
+                    pos: vp0,
+                    w,
+                    ..d
+                });
+            },
         }
+    }
+
+    /// Task #10 item 4: allocate one CONTIGUOUS virtual chain serving
+    /// `served` (each entry `(kind, text, at_real)` — amendment 7: the
+    /// real SLOT the entry FILLS anchors its order key), linking entry
+    /// `i`'s `resume_pos` to entry `i + 1` and the LAST entry to
+    /// `resume_real` (the first untouched real position). The order-key
+    /// cache is extended with EACH entry's own anchor (generalizing the
+    /// single-token families' single push). Returns the chain head `vp0`
+    /// (the reseeded twin descriptor's position). Served entirely by the
+    /// existing [`CgllRepairSource`] adapter — `resume_pos` is an
+    /// unconstrained position, so virtual→virtual links need no adapter
+    /// changes; the accept/trailing gates already cover chain positions
+    /// via the `virtual_pos` guards and the extended pos-key cache.
+    #[allow(dead_code)] // Reached only under the const (DCE'd while const off).
+    fn cgll_pure_lower_repair_chain(
+        &mut self,
+        served: Vec<(TokenKind, String, usize)>,
+        resume_real: usize,
+        virtuals: &mut Vec<CgllRepairVirtual>,
+    ) -> usize {
+        debug_assert!(!served.is_empty(), "a repair chain serves at least one token");
+        let vp0 = self.cgll_pure_virtual_base + virtuals.len();
+        let chain_len = served.len();
+        virtuals.reserve(chain_len);
+        for (i, (kind, text, at_real)) in served.into_iter().enumerate() {
+            let resume_pos = if i + 1 == chain_len { resume_real } else { vp0 + i + 1 };
+            // Amendment 7 + amendment 4: each entry TIES with ITS OWN real
+            // slot anchor.
+            let anchor_key = self.cgll_pk(at_real as u32);
+            let vp = vp0 + i;
+            while self.cgll_pure_pos_key.len() <= vp {
+                self.cgll_pure_pos_key.push(anchor_key);
+            }
+            virtuals.push(CgllRepairVirtual { kind, text, at_real, resume_pos });
+        }
+        vp0
     }
 
     /// Rebase a branch state's baked position onto the reseed position
@@ -51259,5 +51540,312 @@ mod tests {
                 .any(|f| matches!(f, crate::cohort_lazy::Frame::Cohort(_))),
             "the Cohort frame must still be present after the pass"
         );
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // Task #10 item 4 (2026-07-14): Swap/ApplySeq virtual-chain lowering —
+    // the other branch of the AV6/amendment-8 decision (implement-as-chains,
+    // not named-drop). These pin the two NEW `CgllRepairKind` families'
+    // decode + reseed lowering in ISOLATION (the languages-level probes drive
+    // the full recovering parse end-to-end); the committed recovery corpus is
+    // corpus-DEAD for these arms (repair_named_drops=0 across the sweep), so
+    // these units are the primary walker-side coverage.
+    // ════════════════════════════════════════════════════════════════════════
+
+    /// Amendment 7: the chain-lowering helper anchors EACH entry at the real
+    /// SLOT it fills (not its text's source position), links `resume_pos`
+    /// entry i → i+1 and the last → `resume_real`, and extends the pos-key
+    /// cache per-entry with each entry's own anchor.
+    #[test]
+    fn item4_lower_repair_chain_anchors_each_entry_at_its_filled_slot() {
+        let mut w: WpdaWalker<LexicographicWeight, IdleEngine> =
+            WpdaWalker::new(IdleEngine, 0);
+        let real_len = 5usize;
+        // Mirror `step_canonical_pure`'s seed: virtuals live above every real
+        // position; the pos-key cache is identity over the real range here
+        // (a linear-token stream).
+        w.cgll_pure_virtual_base = real_len + 1;
+        w.cgll_pure_pos_key = (0..=real_len).map(|p| p as u32).collect();
+        let base = w.cgll_pure_virtual_base;
+
+        // A 3-entry chain: entry 0 fills slot 2, entry 1 slot 1, entry 2 slot
+        // 3 (a deliberately NON-monotone slot order — the amendment-7 point).
+        let served = vec![
+            (TokenKind::Fixed("b".into()), "b".to_string(), 2usize),
+            (TokenKind::Fixed("a".into()), "a".to_string(), 1usize),
+            (TokenKind::Fixed("c".into()), "c".to_string(), 3usize),
+        ];
+        let mut virtuals: Vec<CgllRepairVirtual> = Vec::new();
+        let vp0 = w.cgll_pure_lower_repair_chain(served, 4, &mut virtuals);
+
+        assert_eq!(vp0, base, "chain head = the first virtual position");
+        assert_eq!(virtuals.len(), 3, "one virtual per served token");
+        // Contiguity + resume_pos chain: i → i+1, last → resume_real.
+        assert_eq!(virtuals[0].resume_pos, base + 1);
+        assert_eq!(virtuals[1].resume_pos, base + 2);
+        assert_eq!(virtuals[2].resume_pos, 4, "last entry resumes at resume_real");
+        // Amendment 7: at_real = the FILLED SLOT (entry i → the slot it fills).
+        assert_eq!(virtuals[0].at_real, 2);
+        assert_eq!(virtuals[1].at_real, 1);
+        assert_eq!(virtuals[2].at_real, 3);
+        // Served kind/text order preserved.
+        assert_eq!(virtuals[0].text, "b");
+        assert_eq!(virtuals[1].text, "a");
+        assert_eq!(virtuals[2].text, "c");
+        // Pos-key cache extended per-entry with EACH entry's own anchor
+        // (the order keys the adapter ties each virtual to).
+        assert_eq!(w.cgll_pure_pos_key.get(base).copied(), Some(2));
+        assert_eq!(w.cgll_pure_pos_key.get(base + 1).copied(), Some(1));
+        assert_eq!(w.cgll_pure_pos_key.get(base + 2).copied(), Some(3));
+    }
+
+    /// Build a minimal pure-run walker seeded for `real_len` real tokens (the
+    /// `step_canonical_pure` prologue, distilled for direct park/reseed unit
+    /// coverage).
+    fn item4_seed_pure_walker(real_len: usize) -> WpdaWalker<LexicographicWeight, IdleEngine> {
+        let mut w = WpdaWalker::new(IdleEngine, 0);
+        w.cgll_pure_virtual_base = real_len + 1;
+        w.cgll_pure_pos_key = (0..=real_len).map(|p| p as u32).collect();
+        w
+    }
+
+    /// A minimal D1 seed descriptor at `pos` (the park/reseed sites read
+    /// `cur_sym`/`state`/`u`/`pos`/`w`).
+    fn item4_seed_descriptor(pos: usize) -> CgllPureDescriptor {
+        let sym = StackSymbolV2::category_entry(0);
+        CgllPureDescriptor {
+            state: WpdaState::PrefixDispatch { pos, cur_bp: 0 },
+            cur_sym: sym,
+            frame_class: CgllFrameClass::D1,
+            ret_slot: WpdaWalker::<LexicographicWeight, IdleEngine>::cgll_pure_seed_slot(&sym),
+            u: 0,
+            pos,
+            w: crate::sppf::SPPF_ID_NONE,
+        }
+    }
+
+    /// A `SwapTokens` recovery branch DECODES to `SwapAdjacent` (not a named
+    /// drop) and RESEEDS to a 2-token virtual chain `[real(pos_b) filling
+    /// slot pos_a, real(pos_a) filling slot pos_b]` resuming at the real
+    /// successor of `pos_b`; the round-log event is Classic-parity kind 4 at
+    /// `min(pos_a, pos_b)` with the swap cost; `repair_named_drops == 0`.
+    #[test]
+    fn item4_swap_tokens_decodes_and_lowers_to_a_two_token_chain() {
+        let kinds = [
+            TokenKind::Fixed("x".into()),
+            TokenKind::Fixed("a".into()),
+            TokenKind::Fixed("b".into()),
+            TokenKind::Fixed("y".into()),
+        ];
+        let texts = ["x", "a", "b", "y"];
+        let src = crate::wpda_runtime::SliceTokenSource::with_texts(&kinds, &texts);
+        let mut w = item4_seed_pure_walker(texts.len());
+        let d = item4_seed_descriptor(1);
+
+        let mut run = CgllPureRun::default();
+        let effect =
+            BuilderDelta::SwapTokens { pos_a: 1, pos_b: 2, cost_tropical: 1.25 };
+        // Recovery deltas are the park trigger; SwapTokens is one.
+        assert!(WpdaWalker::<LexicographicWeight, IdleEngine>::cgll_pure_is_recovery_delta(&effect));
+        w.cgll_pure_park_repair(
+            &mut run,
+            &d,
+            &effect,
+            &LexicographicWeight::one(),
+            &WpdaState::PrefixDispatch { pos: 1, cur_bp: 0 },
+            Some(StackSymbolV2::category_entry(0)),
+            1,
+            false,
+        );
+        assert_eq!(run.stats.repair_parked, 1, "the swap parks");
+        assert_eq!(run.stats.repair_named_drops, 0, "a swap is no longer a named drop");
+        assert_eq!(w.cgll_pure_parked.len(), 1);
+        assert!(
+            matches!(
+                w.cgll_pure_parked[0].kind,
+                CgllRepairKind::SwapAdjacent { first_pos: 1, second_pos: 2, .. }
+            ),
+            "decoded to SwapAdjacent, got {:?}",
+            w.cgll_pure_parked[0].kind,
+        );
+
+        let parked = std::mem::take(&mut w.cgll_pure_parked).pop().expect("one parked");
+        let mut virtuals: Vec<CgllRepairVirtual> = Vec::new();
+        w.cgll_pure_reseed_repair(&mut run, parked, &src, &mut virtuals);
+
+        assert_eq!(run.stats.repair_reseeded, 1);
+        assert_eq!(virtuals.len(), 2, "a 2-token transposition chain");
+        // Served in swapped order; amendment-7 slot anchors.
+        assert_eq!(virtuals[0].text, "b", "slot pos_a is filled by the second token");
+        assert_eq!(virtuals[0].at_real, 1);
+        assert_eq!(virtuals[1].text, "a", "slot pos_b is filled by the first token");
+        assert_eq!(virtuals[1].at_real, 2);
+        // Chain resume: entry 0 → entry 1 → the real successor of pos_b (=3).
+        let base = w.cgll_pure_virtual_base;
+        assert_eq!(virtuals[0].resume_pos, base + 1);
+        assert_eq!(virtuals[1].resume_pos, 3);
+        // Classic-parity round-log event: kind 4 at min(pos_a,pos_b)=1, cost.
+        assert_eq!(w.cgll_pure_round_log.len(), 1);
+        assert_eq!(w.cgll_pure_round_log[0].action_kind, 4, "swap → action_kind 4");
+        assert_eq!(w.cgll_pure_round_log[0].pos, 1, "swap event at min(pos_a,pos_b)");
+        assert!((w.cgll_pure_round_log[0].cost_tropical - 1.25).abs() < 1e-9);
+    }
+
+    /// A token-MUTATING `ApplyRecoverySequence` (delete + insert) DECODES to
+    /// `MutatingSequence` (not PosOnly, not a named drop) and RESEEDS by
+    /// simulating the window into a chain that serves the inserted token then
+    /// the untouched real tokens up to `target_pos`; the round-log event is
+    /// Composite kind 5; `repair_named_drops == 0`.
+    #[test]
+    fn item4_mutating_sequence_decodes_and_lowers_the_served_window() {
+        let kinds = [
+            TokenKind::Fixed("x".into()),
+            TokenKind::Fixed("a".into()),
+            TokenKind::Fixed("b".into()),
+            TokenKind::Fixed("y".into()),
+        ];
+        let texts = ["x", "a", "b", "y"];
+        let src = crate::wpda_runtime::SliceTokenSource::with_texts(&kinds, &texts);
+        let mut w = item4_seed_pure_walker(texts.len());
+        let d = item4_seed_descriptor(1);
+
+        let mut run = CgllPureRun::default();
+        // base_pos=1: delete token 1 (`a`), then insert `!` — the mutated
+        // window ends at target_pos=3 (token 2 `b` is copied through).
+        let actions: std::sync::Arc<[ResolvedRepairAction]> = std::sync::Arc::from(
+            vec![
+                ResolvedRepairAction::DeleteToken,
+                ResolvedRepairAction::InsertToken {
+                    kind: TokenKind::Fixed("!".into()),
+                    text: "!".into(),
+                },
+            ]
+            .into_boxed_slice(),
+        );
+        let effect = BuilderDelta::ApplyRecoverySequence {
+            actions,
+            base_pos: 1,
+            target_pos: 3,
+            total_cost_tropical: 0.75,
+        };
+        w.cgll_pure_park_repair(
+            &mut run,
+            &d,
+            &effect,
+            &LexicographicWeight::one(),
+            &WpdaState::PrefixDispatch { pos: 1, cur_bp: 0 },
+            Some(StackSymbolV2::category_entry(0)),
+            1,
+            false,
+        );
+        assert_eq!(run.stats.repair_parked, 1, "the mutating sequence parks");
+        assert_eq!(run.stats.repair_named_drops, 0, "not a named drop");
+        assert!(
+            matches!(
+                w.cgll_pure_parked[0].kind,
+                CgllRepairKind::MutatingSequence { target_pos: 3, .. }
+            ),
+            "decoded to MutatingSequence, got {:?}",
+            w.cgll_pure_parked[0].kind,
+        );
+
+        let parked = std::mem::take(&mut w.cgll_pure_parked).pop().expect("one parked");
+        let mut virtuals: Vec<CgllRepairVirtual> = Vec::new();
+        w.cgll_pure_reseed_repair(&mut run, parked, &src, &mut virtuals);
+
+        assert_eq!(run.stats.repair_reseeded, 1);
+        // Window: delete `a`@1 (cursor→2), insert `!`@slot 2 (no advance),
+        // then copy the untouched real token `b`@2 through to target 3.
+        assert_eq!(virtuals.len(), 2, "the inserted `!` + the copied `b`");
+        assert_eq!(virtuals[0].text, "!", "the inserted token is served first");
+        assert_eq!(virtuals[0].at_real, 2, "inserted at the post-delete cursor slot");
+        assert_eq!(virtuals[1].text, "b", "the untouched real token copied through");
+        assert_eq!(virtuals[1].at_real, 2);
+        // Chain resumes at the real target_pos.
+        let base = w.cgll_pure_virtual_base;
+        assert_eq!(virtuals[0].resume_pos, base + 1);
+        assert_eq!(virtuals[1].resume_pos, 3, "last entry resumes at target_pos");
+        // Composite round-log event (kind 5) carrying the tropical cost.
+        assert_eq!(w.cgll_pure_round_log.len(), 1);
+        assert_eq!(w.cgll_pure_round_log[0].action_kind, 5, "sequence → Composite kind 5");
+        assert!((w.cgll_pure_round_log[0].cost_tropical - 0.75).abs() < 1e-9);
+    }
+
+    /// A pos-ONLY `ApplyRecoverySequence` (all skip/delete) STILL decodes to
+    /// `PosOnly` — the item-4 mutating arm must sit AFTER the pos-only arm so
+    /// the byte-identical fast path is preserved (the
+    /// `recovery_accumulation` "1 + + 2" pin depends on this ordering).
+    #[test]
+    fn item4_pos_only_sequence_stays_pos_only_classified() {
+        let kinds = [TokenKind::Fixed("x".into())];
+        let src = crate::wpda_runtime::SliceTokenSource::with_texts(&kinds, &["x"]);
+        let mut w = item4_seed_pure_walker(1);
+        let d = item4_seed_descriptor(0);
+        let mut run = CgllPureRun::default();
+        let actions: std::sync::Arc<[ResolvedRepairAction]> = std::sync::Arc::from(
+            vec![ResolvedRepairAction::SkipToSync { skip_count: 2 }].into_boxed_slice(),
+        );
+        w.cgll_pure_park_repair(
+            &mut run,
+            &d,
+            &BuilderDelta::ApplyRecoverySequence {
+                actions,
+                base_pos: 0,
+                target_pos: 4,
+                total_cost_tropical: 2.0,
+            },
+            &LexicographicWeight::one(),
+            &WpdaState::PrefixDispatch { pos: 0, cur_bp: 0 },
+            None,
+            0,
+            false,
+        );
+        let _ = &src;
+        assert!(
+            matches!(w.cgll_pure_parked[0].kind, CgllRepairKind::PosOnly { target_pos: 4, .. }),
+            "an all-skip/delete sequence stays PosOnly, got {:?}",
+            w.cgll_pure_parked[0].kind,
+        );
+        assert_eq!(run.stats.repair_named_drops, 0);
+    }
+
+    /// Strict mode (K=0): parking is config-FREE (a repair parks regardless
+    /// of `max_recovery_depth`), but the round gate never fires — a strict
+    /// run reseeds NOTHING and allocates NO virtual. This pins the walker's
+    /// `recovery_round >= recovery_rounds_max` break (both 0 under K=0) that
+    /// the round loop enforces, WITHOUT duplicating the driver: parking
+    /// increments the counter, and the K=0-derived `recovery_rounds_max`
+    /// forbids the reseed the chain would otherwise perform.
+    #[test]
+    fn item4_strict_k0_parks_but_never_reseeds() {
+        let mut recovery_config = RecoveryConfig::default();
+        recovery_config.max_recovery_depth = 0;
+        let mut w = WpdaWalker::new(IdleEngine, 0).with_recovery_config(recovery_config);
+        w.cgll_pure_virtual_base = 5;
+        w.cgll_pure_pos_key = (0..=4).map(|p| p as u32).collect();
+        let d = item4_seed_descriptor(1);
+        let mut run = CgllPureRun::default();
+        w.cgll_pure_park_repair(
+            &mut run,
+            &d,
+            &BuilderDelta::SwapTokens { pos_a: 1, pos_b: 2, cost_tropical: 1.25 },
+            &LexicographicWeight::one(),
+            &WpdaState::PrefixDispatch { pos: 1, cur_bp: 0 },
+            Some(StackSymbolV2::category_entry(0)),
+            1,
+            false,
+        );
+        // Parking is config-free.
+        assert_eq!(run.stats.repair_parked, 1, "strict runs still PARK");
+        // The K=0 round gate: `recovery_rounds_max` = max_recovery_depth = 0,
+        // and the first round would be `recovery_round = 1 > 0` — the driver
+        // breaks BEFORE `std::mem::take(&mut self.cgll_pure_parked)`, so no
+        // reseed and no virtual allocation occur.
+        let recovery_rounds_max: usize = w.recovery_config.max_recovery_depth as usize;
+        assert_eq!(recovery_rounds_max, 0, "K=0 ⇒ zero reseed rounds");
+        assert_eq!(run.stats.repair_reseeded, 0, "no reseed happened");
+        // The parked repair remains un-materialized (a strict facade would
+        // reject with the parked frontier un-lowered).
+        assert_eq!(w.cgll_pure_parked.len(), 1, "the repair stays parked, unlowered");
     }
 }

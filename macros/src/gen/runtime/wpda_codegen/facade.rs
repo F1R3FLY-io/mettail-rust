@@ -5171,6 +5171,16 @@ pub(crate) fn emit_parse_fns(
                                 "substitute-token {:?}",
                                 ev.text.as_deref().unwrap_or(""),
                             )),
+                            // Task #10 item 4: swap-tokens (action_kind 4).
+                            // The classic commit-replay's SwapTokens arm AND
+                            // the pure SwapAdjacent virtual-chain lowering
+                            // both log kind-4 events (`min(pos_a, pos_b)`,
+                            // the swap tropical cost) — this arm maps them
+                            // IDENTICALLY for either engine (the shared
+                            // facade; red-team note: classic maps
+                            // identically). Pre-item-4 kind-4 events fell to
+                            // the `_ => None` arm.
+                            4 => Some("swap-tokens".into()),
                             5 => Some("composite-recovery".into()),
                             7 => Some(format!(
                                 "lex-alternative idx={}",
