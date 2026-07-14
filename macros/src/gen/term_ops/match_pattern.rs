@@ -261,14 +261,33 @@ fn generate_match_task_enum(language: &LanguageDef) -> TokenStream {
 /// For Collection/Binder variants, the handler is inline and calls
 /// `match_pattern()` for element/body sub-matches (re-entering the engine
 /// via TLS — bounded by collection size, not nesting depth).
+/// **Frame-size fix (residual #11-2, 2026-07-14):** each category's structural
+/// match is peeled into a `#[inline(never)] match_visit_<cat>` helper (the
+/// Tier-1 idiom `normalize_iterative` uses). Without it, `match_pattern_iterative`'s
+/// -O0 frame is the alloca SUM of every category's variant locals (measured
+/// 1,481,688 B for rhocalc — the second-largest driver, and it runs on the
+/// sim/rewrite path whose `gen_rhocalc_prop` workers use the DEFAULT 2 MiB
+/// stack). Helpers return `Option<()>`: the arms' `return None` propagate as
+/// the engine's failure (the `?` at the call site turns `None` into the
+/// engine's `return None`), and the FreeVar-branch `continue` becomes
+/// `return Some(())`. This is a control-flow-equivalent refactor (the arms
+/// escape via `return None`/`continue`), not the "pure code motion" the
+/// escape-free normalize/subst families use.
 fn generate_iterative_engine(language: &LanguageDef) -> TokenStream {
+    let visit_helper_fns: Vec<TokenStream> = language
+        .types
+        .iter()
+        .map(|lang_type| generate_match_visit_helper(&lang_type.name, language))
+        .collect();
     let category_arms: Vec<TokenStream> = language
         .types
         .iter()
-        .map(|lang_type| generate_iterative_category_arm(&lang_type.name, language))
+        .map(|lang_type| generate_iterative_category_dispatch(&lang_type.name))
         .collect();
 
     quote! {
+        #(#visit_helper_fns)*
+
         /// Iterative match pattern engine.
         ///
         /// Processes the work stack until empty (success) or a constructor
@@ -304,8 +323,14 @@ fn generate_iterative_engine(language: &LanguageDef) -> TokenStream {
 ///     //    - Constructor clash: return None
 /// }
 /// ```
-fn generate_iterative_category_arm(category: &Ident, language: &LanguageDef) -> TokenStream {
-    let variant_name = format_ident!("Match{}", category);
+/// Emit the per-category `#[inline(never)] match_visit_<cat>` helper (residual
+/// #11-2). Frame-bound constraint: this fn's frame carries ONE category's
+/// variant locals, so peeling it out of `match_pattern_iterative` bounds the
+/// driver frame. Returns `Option<()>` — `None` signals a constructor clash
+/// (the engine returns `None`); `Some(())` means the task is done and the
+/// match is still viable (the engine loops).
+fn generate_match_visit_helper(category: &Ident, language: &LanguageDef) -> TokenStream {
+    let helper_fn = format_ident!("match_visit_{}", category.to_string().to_lowercase());
     let var_label = generate_var_label(category);
     let cat_lower = category.to_string().to_lowercase();
     let cat_binding_method = format_ident!("{}", cat_lower);
@@ -317,6 +342,15 @@ fn generate_iterative_category_arm(category: &Ident, language: &LanguageDef) -> 
         .map(|v| generate_iterative_variant_arm(category, v, language))
         .collect();
 
+    // PRE-PEEL body (residual #11-2, 2026-07-14): the FreeVar check + structural
+    // match inlined the whole category into `match_pattern_iterative`.
+    // Commented-out-never-deleted; the body now lives in `match_visit_<cat>` and
+    // `generate_iterative_category_dispatch` emits the thin `?` call arm. The
+    // ONLY generated-code change vs the inline form is `continue` -> `return
+    // Some(())`; every `return None` inside `#variant_arms` is preserved verbatim
+    // (it now returns `Option::<()>::None`, which `?` re-propagates as the
+    // engine's `return None`).
+    /*
     quote! {
         MatchTask::#variant_name(ground, pattern) => {
             // Variable pattern: bind the entire ground term
@@ -337,6 +371,52 @@ fn generate_iterative_category_arm(category: &Ident, language: &LanguageDef) -> 
                 // Constructor clash: no match
                 _ => return None,
             }
+        }
+    }
+    */
+    quote! {
+        #[inline(never)]
+        #[allow(dead_code, unused_variables, non_snake_case)]
+        fn #helper_fn(
+            stack: &mut Vec<MatchTask>,
+            bindings: &mut MatchBindings,
+            ground: #category,
+            pattern: #category,
+        ) -> Option<()> {
+            // Variable pattern: bind the entire ground term
+            if let #category::#var_label(mettail_runtime::OrdVar(
+                mettail_runtime::Var::Free(ref fv)
+            )) = pattern {
+                if let Some(ref pretty_name) = fv.pretty_name {
+                    bindings.merge(MatchBindings::#cat_binding_method(
+                        pretty_name.clone(),
+                        ground.clone(),
+                    ));
+                    // Was `continue` in the driver loop: this task is done and
+                    // the match is still viable — hand control back to the driver.
+                    return Some(());
+                }
+            }
+            // Structural matching per variant
+            match (&ground, &pattern) {
+                #(#variant_arms,)*
+                // Constructor clash: no match
+                _ => return None,
+            }
+            Some(())
+        }
+    }
+}
+
+/// Emit the thin dispatch arm that delegates to the per-category
+/// `#[inline(never)] match_visit_<cat>` helper (residual #11-2). The `?`
+/// propagates a `None` (clash) as the engine's `return None`.
+fn generate_iterative_category_dispatch(category: &Ident) -> TokenStream {
+    let variant_name = format_ident!("Match{}", category);
+    let helper_fn = format_ident!("match_visit_{}", category.to_string().to_lowercase());
+    quote! {
+        MatchTask::#variant_name(ground, pattern) => {
+            #helper_fn(stack, &mut bindings, ground, pattern)?;
         }
     }
 }

@@ -33,10 +33,36 @@
 [unstable]
 codegen-backend = true
 
-# Rhocalc tests use deep stacks in generated code; the default 2 MiB test thread
-# stack can overflow on aarch64 (and under memory pressure). Applies to `cargo test` threads.
-[env]
-RUST_MIN_STACK = "8388608"
+# RETIRED by residual #11-2 (2026-07-14) — comment-out-never-deleted.
+#
+# This pin existed because the generated `normalize_iterative` reserved a ~2.24 MB
+# MONOLITHIC stack frame ON ENTRY (LLVM -O0 sums every match arm's allocas; the
+# five HOL-cross-product Assemble families were unpeeled), overflowing the default
+# 2 MiB test-thread stack for every `beta::*` test (input-independent). Residual
+# #11-2 peeled those families (+ subst Bind/MBind + match_pattern/display/debug)
+# into `#[inline(never)]` helpers. DWARF-CFA census (target/debug/deps/rhocalc_tests,
+# scratchpad/zz_probes/logs_residual_nf/g2_*):
+#   normalize_iterative     2,240,888 B -> 45,096 B  (49.7x)
+#   match_pattern_iterative 1,481,688 B ->  5,272 B  (281x)
+#   subst_iterative           487,976 B -> 45,144 B  (10.8x)
+#   display_iterative         385,544 B ->    152 B  (2536x)
+#   debug_iterative           275,432 B ->    184 B  (1497x)
+# All five term-op drivers (and every peeled helper — max match_visit_proc
+# 118,120 B) are now <= 256 KB. Measured beta:: whole-thread high-water at the
+# default stack: PASSES at 2 MiB and 1.25 MB, ABORTS at 1.1875 MB => minimum
+# ~1.25 MB, ~0.75 MB (60%) headroom. Full rhocalc_tests (402) + sim_rhocalc pass
+# at the default 2 MiB.
+#
+# CAVEAT (do not DELETE this block until resolved): the whole-thread high-water is
+# now set by the OUT-OF-SCOPE prattail parser `RhoCalcWpdaEngine::step` (1,137,256 B
+# = 1.11 MB, unchanged by this fix — a separate residual). That caps the headroom
+# at ~1.7x rather than the ~8x the <=256 KB term-op frames alone would give. The
+# aarch64 L1 ladder is NOT measurable on this box; the retirement argument is the
+# x86_64 receipts + the arch-proportional frame-sum argument. Re-enable instantly
+# (uncomment) if aarch64 CI's step-frame + harness exceeds 2 MiB.
+#
+# [env]
+# RUST_MIN_STACK = "8388608"
 
 # --- Linux x86_64 ---
 [target.x86_64-unknown-linux-gnu]

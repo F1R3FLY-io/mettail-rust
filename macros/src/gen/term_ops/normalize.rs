@@ -1877,9 +1877,22 @@ fn generate_binder_assemble_arm(
     let body_wrap = format_ident!("Wrap{}", body_cat);
 
     let slot_pattern = emit_pre_field_slot_pattern(pre_scope_fields);
+    // Residual #11-2 (2026-07-14): typed helper-param decls for the peel, in
+    // one-to-one arity/name agreement with `slot_pattern` for every in-tree
+    // pre-scope shape (scalar/predicate/Vec/opt-collection — verified: no
+    // HashBag/HashMap pre-scope field exists in any of the 22 languages, so the
+    // latent HashMap decl/pattern asymmetry stays dead).
+    let pre_decls = emit_pre_field_decl_list(pre_scope_fields);
     let pre_extracts = emit_pre_field_extracts(pre_scope_fields);
     let pre_construct = emit_pre_field_constructs(pre_scope_fields);
 
+    // PRE-PEEL body (residual #11-2, 2026-07-14): the arm body inlined directly
+    // in `normalize_iterative`, summing this variant's locals into the driver
+    // frame. Commented-out-never-deleted per the disable policy; replaced by the
+    // `#[inline(never)]` per-arm peel below (pure code motion — same statements,
+    // same `.expect(...)` messages, same drop/eval order; only the machine-code
+    // frame moves into the helper).
+    /*
     quote! {
         NormTask::#assemble_variant { slot, #(#slot_pattern,)* cloned_pattern, body_slot } => {
             #(#pre_extracts)*
@@ -1895,6 +1908,37 @@ fn generate_binder_assemble_arm(
             ));
         }
     }
+    */
+    // Frame-bound constraint: the body must NOT inline in the driver — the
+    // 400 Bind arms (rhocalc) each carry `body`/`new_scope`/ctor locals, whose
+    // -O0 alloca sum overflowed the 2 MiB thread stack. Peel into a local
+    // `#[inline(never)]` fn (touches `results` only — no stack/sources).
+    quote! {
+        NormTask::#assemble_variant { slot, #(#slot_pattern,)* cloned_pattern, body_slot } => {
+            #[inline(never)]
+            #[allow(dead_code, unused_variables, non_snake_case)]
+            fn assemble_binder(
+                results: &mut Vec<Option<AnyNormalizedTerm>>,
+                slot: usize,
+                #(#pre_decls,)*
+                cloned_pattern: mettail_runtime::Binder<String>,
+                body_slot: usize,
+            ) {
+                #(#pre_extracts)*
+                let body = match results[body_slot].take()
+                    .expect("normalize: missing binder body")
+                {
+                    AnyNormalizedTerm::#body_wrap(v) => v,
+                    _ => unreachable!("normalize: wrong category in binder body"),
+                };
+                let new_scope = mettail_runtime::Scope::from_parts_unsafe(cloned_pattern, std::sync::Arc::new(body));
+                results[slot] = Some(AnyNormalizedTerm::#wrap(
+                    #cat::#label(#(#pre_construct)* new_scope)
+                ));
+            }
+            assemble_binder(results, slot, #(#slot_pattern,)* cloned_pattern, body_slot);
+        }
+    }
 }
 
 fn generate_multi_binder_assemble_arm(
@@ -1908,9 +1952,15 @@ fn generate_multi_binder_assemble_arm(
     let body_wrap = format_ident!("Wrap{}", body_cat);
 
     let slot_pattern = emit_pre_field_slot_pattern(pre_scope_fields);
+    // Residual #11-2 (2026-07-14): typed helper-param decls for the peel (see
+    // `generate_binder_assemble_arm` for the arity-agreement argument).
+    let pre_decls = emit_pre_field_decl_list(pre_scope_fields);
     let pre_extracts = emit_pre_field_extracts(pre_scope_fields);
     let pre_construct = emit_pre_field_constructs(pre_scope_fields);
 
+    // PRE-PEEL body (residual #11-2, 2026-07-14): commented-out-never-deleted;
+    // replaced by the `#[inline(never)]` per-arm peel below (pure code motion).
+    /*
     quote! {
         NormTask::#assemble_variant { slot, #(#slot_pattern,)* cloned_pattern, body_slot } => {
             #(#pre_extracts)*
@@ -1924,6 +1974,36 @@ fn generate_multi_binder_assemble_arm(
             results[slot] = Some(AnyNormalizedTerm::#wrap(
                 #cat::#label(#(#pre_construct)* new_scope)
             ));
+        }
+    }
+    */
+    // Frame-bound constraint: the 401 MBind arms (rhocalc) must not inline in
+    // the driver; peel into a local `#[inline(never)]` fn (touches `results`
+    // only). `cloned_pattern` is the multi-binder Vec.
+    quote! {
+        NormTask::#assemble_variant { slot, #(#slot_pattern,)* cloned_pattern, body_slot } => {
+            #[inline(never)]
+            #[allow(dead_code, unused_variables, non_snake_case)]
+            fn assemble_multi_binder(
+                results: &mut Vec<Option<AnyNormalizedTerm>>,
+                slot: usize,
+                #(#pre_decls,)*
+                cloned_pattern: Vec<mettail_runtime::Binder<String>>,
+                body_slot: usize,
+            ) {
+                #(#pre_extracts)*
+                let body = match results[body_slot].take()
+                    .expect("normalize: missing multi-binder body")
+                {
+                    AnyNormalizedTerm::#body_wrap(v) => v,
+                    _ => unreachable!("normalize: wrong category in multi-binder body"),
+                };
+                let new_scope = mettail_runtime::Scope::from_parts_unsafe(cloned_pattern, std::sync::Arc::new(body));
+                results[slot] = Some(AnyNormalizedTerm::#wrap(
+                    #cat::#label(#(#pre_construct)* new_scope)
+                ));
+            }
+            assemble_multi_binder(results, slot, #(#slot_pattern,)* cloned_pattern, body_slot);
         }
     }
 }
@@ -2100,6 +2180,13 @@ fn generate_beta_apply_assemble_arm(
         .map(|d| format_ident!("Lam{}", d.as_str()))
         .collect();
 
+    // PRE-PEEL body (residual #11-2, 2026-07-14): commented-out-never-deleted;
+    // replaced by the `#[inline(never)]` per-arm peel below (pure code motion —
+    // identical statements, `.expect(...)` messages, `drop(lam); drop(arg);`
+    // ordering, and the `sources.push` -> stable-pointer -> `stack.push(Visit)`
+    // sequence; the `src_ptr` raw-pointer idiom is motion-safe because Box heap
+    // addresses are stable).
+    /*
     quote! {
         NormTask::#assemble_variant { slot, lam_slot, arg_slot } => {
             let lam = match results[lam_slot].take()
@@ -2151,6 +2238,74 @@ fn generate_beta_apply_assemble_arm(
             }
         }
     }
+    */
+    // Frame-bound constraint: the 400 BetaApply arms (rhocalc) each carry
+    // `lam`/`arg`/`substituted` (Proc by value), the per-tag scope-clone match,
+    // and staging temps — heaviest unpeeled family. Peel into a local
+    // `#[inline(never)]` fn on the Tier-1 (stack, results, sources) shape.
+    quote! {
+        NormTask::#assemble_variant { slot, lam_slot, arg_slot } => {
+            #[inline(never)]
+            #[allow(dead_code, unused_variables, non_snake_case)]
+            fn assemble_beta_apply(
+                stack: &mut Vec<NormTask>,
+                results: &mut Vec<Option<AnyNormalizedTerm>>,
+                sources: &mut Vec<Box<AnyNormalizedTerm>>,
+                slot: usize,
+                lam_slot: usize,
+                arg_slot: usize,
+            ) {
+                let lam = match results[lam_slot].take()
+                    .expect("normalize β: missing lam")
+                {
+                    AnyNormalizedTerm::#wrap_cat(v) => v,
+                    _ => unreachable!("normalize β: wrong category in lam slot"),
+                };
+                let arg = match results[arg_slot].take()
+                    .expect("normalize β: missing arg")
+                {
+                    AnyNormalizedTerm::#wrap_dom(v) => v,
+                    _ => unreachable!("normalize β: wrong category in arg slot"),
+                };
+
+                // Ref-match to avoid moving out of `lam` (which impls Drop).
+                // Per-tag arms ONLY extract the scope (tiny frames — 13
+                // duplicated full bodies blew the 2MiB test-thread stack in
+                // debug builds); the single β body follows.
+                let __scope = match &lam {
+                    #(
+                        #cat::#lam_variants(scope) => Some(scope.clone()),
+                    )*
+                    _ => None,
+                };
+                if let Some(scope) = __scope {
+                    // β-reduce: unbind, substitute, renormalize.
+                    let (binder, body) = scope.unbind();
+                    let substituted = (*body).#subst_method(&binder.0, &arg);
+                    sources.push(Box::new(AnyNormalizedTerm::#wrap_cat(substituted)));
+                    let src_ptr: *const #cat = {
+                        let last_box = sources.last().expect("just pushed");
+                        match &**last_box {
+                            AnyNormalizedTerm::#wrap_cat(v) => v as *const _,
+                            _ => unreachable!(),
+                        }
+                    };
+                    // Drop lam + arg explicitly so we don't hold them across
+                    // stack push.
+                    drop(lam);
+                    drop(arg);
+                    stack.push(NormTask::#visit_cat { src: src_ptr, slot });
+                } else {
+                    // Not a β-redex — reconstruct Apply with normalized
+                    // subterms.
+                    results[slot] = Some(AnyNormalizedTerm::#wrap_cat(
+                        #cat::#apply_variant(std::sync::Arc::new(lam), std::sync::Arc::new(arg))
+                    ));
+                }
+            }
+            assemble_beta_apply(stack, results, sources, slot, lam_slot, arg_slot);
+        }
+    }
 }
 
 /// Multi-β Assemble arm.
@@ -2176,6 +2331,10 @@ fn generate_beta_mapply_assemble_arm(
         .map(|d| format_ident!("MLam{}", d.as_str()))
         .collect();
 
+    // PRE-PEEL body (residual #11-2, 2026-07-14): commented-out-never-deleted;
+    // replaced by the `#[inline(never)]` per-arm peel below (pure code motion;
+    // `Vec::with_capacity(args_count)` preallocation preserved verbatim).
+    /*
     quote! {
         NormTask::#assemble_variant { slot, lam_slot, args_start, args_count } => {
             let lam = match results[lam_slot].take()
@@ -2221,6 +2380,68 @@ fn generate_beta_mapply_assemble_arm(
             }
         }
     }
+    */
+    // Frame-bound constraint: the 400 BetaMApply arms (rhocalc) add
+    // `args_vec: Vec<Dom>` + per-loop temps to the BetaApply shape. Peel into a
+    // local `#[inline(never)]` fn on the Tier-1 (stack, results, sources) shape.
+    quote! {
+        NormTask::#assemble_variant { slot, lam_slot, args_start, args_count } => {
+            #[inline(never)]
+            #[allow(dead_code, unused_variables, non_snake_case)]
+            fn assemble_beta_mapply(
+                stack: &mut Vec<NormTask>,
+                results: &mut Vec<Option<AnyNormalizedTerm>>,
+                sources: &mut Vec<Box<AnyNormalizedTerm>>,
+                slot: usize,
+                lam_slot: usize,
+                args_start: usize,
+                args_count: usize,
+            ) {
+                let lam = match results[lam_slot].take()
+                    .expect("normalize multi-β: missing lam")
+                {
+                    AnyNormalizedTerm::#wrap_cat(v) => v,
+                    _ => unreachable!("normalize multi-β: wrong category in lam slot"),
+                };
+                let mut args_vec: Vec<#dom_ident> = Vec::with_capacity(args_count);
+                for idx in 0..args_count {
+                    match results[args_start + idx].take()
+                        .expect("normalize multi-β: missing arg")
+                    {
+                        AnyNormalizedTerm::#wrap_dom(v) => args_vec.push(v),
+                        _ => unreachable!("normalize multi-β: wrong category in arg slot"),
+                    }
+                }
+
+                let __scope = match &lam {
+                    #(
+                        #cat::#mlam_variants(scope) => Some(scope.clone()),
+                    )*
+                    _ => None,
+                };
+                if let Some(scope) = __scope {
+                    let (binders, body) = scope.unbind();
+                    let vars: Vec<_> = binders.iter().map(|b| &b.0).collect();
+                    let substituted = (*body).#multi_subst_method(&vars, &args_vec);
+                    sources.push(Box::new(AnyNormalizedTerm::#wrap_cat(substituted)));
+                    let src_ptr: *const #cat = {
+                        let last_box = sources.last().expect("just pushed");
+                        match &**last_box {
+                            AnyNormalizedTerm::#wrap_cat(v) => v as *const _,
+                            _ => unreachable!(),
+                        }
+                    };
+                    drop(lam);
+                    stack.push(NormTask::#visit_cat { src: src_ptr, slot });
+                } else {
+                    results[slot] = Some(AnyNormalizedTerm::#wrap_cat(
+                        #cat::#mapply_variant(std::sync::Arc::new(lam), args_vec)
+                    ));
+                }
+            }
+            assemble_beta_mapply(stack, results, sources, slot, lam_slot, args_start, args_count);
+        }
+    }
 }
 
 /// Cancellation Assemble arm.
@@ -2236,6 +2457,9 @@ fn generate_cancel_assemble_arm(
     let wrap_inner = format_ident!("Wrap{}", inner_cat);
     let visit_cat = format_ident!("Visit{}", cat);
 
+    // PRE-PEEL body (residual #11-2, 2026-07-14): commented-out-never-deleted;
+    // replaced by the `#[inline(never)]` per-arm peel below (pure code motion).
+    /*
     quote! {
         NormTask::#assemble_variant { slot, inner_slot } => {
             let inner = match results[inner_slot].take()
@@ -2263,6 +2487,50 @@ fn generate_cancel_assemble_arm(
                     #cat::#label(std::sync::Arc::new(inner))
                 ));
             }
+        }
+    }
+    */
+    // Frame-bound constraint: the AssembleCancel arm carries `inner`/`peeled`
+    // (Cat by value) + staging temps; peel into a local `#[inline(never)]` fn on
+    // the Tier-1 (stack, results, sources) shape (uniform with the β families).
+    quote! {
+        NormTask::#assemble_variant { slot, inner_slot } => {
+            #[inline(never)]
+            #[allow(dead_code, unused_variables, non_snake_case)]
+            fn assemble_cancel(
+                stack: &mut Vec<NormTask>,
+                results: &mut Vec<Option<AnyNormalizedTerm>>,
+                sources: &mut Vec<Box<AnyNormalizedTerm>>,
+                slot: usize,
+                inner_slot: usize,
+            ) {
+                let inner = match results[inner_slot].take()
+                    .expect("normalize cancel: missing inner")
+                {
+                    AnyNormalizedTerm::#wrap_inner(v) => v,
+                    _ => unreachable!("normalize cancel: wrong category in inner slot"),
+                };
+
+                if let #inner_cat::#inner_ctor(p) = &inner {
+                    // Peel: clone the inner-inner, reschedule for renormalize.
+                    let peeled: #cat = (**p).clone();
+                    sources.push(Box::new(AnyNormalizedTerm::#wrap_cat(peeled)));
+                    let src_ptr: *const #cat = {
+                        let last_box = sources.last().expect("just pushed");
+                        match &**last_box {
+                            AnyNormalizedTerm::#wrap_cat(v) => v as *const _,
+                            _ => unreachable!(),
+                        }
+                    };
+                    drop(inner);
+                    stack.push(NormTask::#visit_cat { src: src_ptr, slot });
+                } else {
+                    results[slot] = Some(AnyNormalizedTerm::#wrap_cat(
+                        #cat::#label(std::sync::Arc::new(inner))
+                    ));
+                }
+            }
+            assemble_cancel(stack, results, sources, slot, inner_slot);
         }
     }
 }

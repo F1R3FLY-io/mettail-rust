@@ -99,7 +99,22 @@ fn generate_debug_task_enum(language: &LanguageDef) -> TokenStream {
 // =============================================================================
 
 /// Generate the `debug_iterative` function that drains the work-stack.
+///
+/// **Frame-size fix (residual #11-2, 2026-07-14):** each category's variant
+/// match is extracted into its own `#[inline(never)]` `debug_visit_<cat>`
+/// helper (the same Tier-1 peel `normalize_iterative` uses for its `Visit`
+/// arms). Without this split, `debug_iterative`'s frame is the -O0 alloca SUM
+/// of every category's variant locals (measured 275,432 B for rhocalc). Each
+/// helper returns `std::fmt::Result`, so the `?` writes inside the arms
+/// propagate through it and the dispatch arm re-propagates with `?` — a
+/// control-flow-equivalent refactor, not "pure code motion" (the arms escape
+/// via `?`; there are no `return`/`continue`/`break` in the generated bodies).
 fn generate_debug_iterative_engine(language: &LanguageDef) -> TokenStream {
+    let visit_helper_fns: Vec<TokenStream> = language
+        .types
+        .iter()
+        .map(|lang_type| generate_debug_visit_helper(&lang_type.name, language))
+        .collect();
     let category_arms: Vec<TokenStream> = language
         .types
         .iter()
@@ -107,6 +122,8 @@ fn generate_debug_iterative_engine(language: &LanguageDef) -> TokenStream {
         .collect();
 
     quote! {
+        #(#visit_helper_fns)*
+
         /// Iterative Debug engine.
         ///
         /// Pops tasks from the work-stack and writes to the formatter.
@@ -134,9 +151,51 @@ fn generate_debug_iterative_engine(language: &LanguageDef) -> TokenStream {
     }
 }
 
+/// Emit the per-category `#[inline(never)] debug_visit_<cat>` helper (residual
+/// #11-2). Frame-bound constraint: this fn's frame carries ONE category's
+/// variant locals; peeling it out of `debug_iterative` keeps the driver frame
+/// bounded (at most one helper frame is live at a time).
+fn generate_debug_visit_helper(category: &Ident, language: &LanguageDef) -> TokenStream {
+    let helper_fn = format_ident!("debug_visit_{}", category.to_string().to_lowercase());
+    let variants = collect_category_variants(category, language);
+
+    let variant_arms: Vec<TokenStream> = variants
+        .iter()
+        .map(|v| generate_debug_variant_arm(category, v, language))
+        .collect();
+
+    quote! {
+        #[inline(never)]
+        #[allow(dead_code, unused_variables, non_snake_case)]
+        fn #helper_fn(
+            stack: &mut Vec<DebugTask>,
+            f: &mut std::fmt::Formatter<'_>,
+            ptr: *const #category,
+        ) -> std::fmt::Result {
+            // SAFETY: ptr was derived from a &Cat reference within the same
+            // fmt() call; the referent is alive for the entire duration.
+            let term = unsafe { &*ptr };
+            match term {
+                #(#variant_arms,)*
+            }
+            Ok(())
+        }
+    }
+}
+
 /// Generate the match arm for one category inside the iterative Debug engine.
-fn generate_debug_category_arm(category: &Ident, language: &LanguageDef) -> TokenStream {
+///
+/// Residual #11-2 (2026-07-14): now a thin dispatch that delegates to the
+/// per-category `#[inline(never)] debug_visit_<cat>` helper (the variant match
+/// moved there — see `generate_debug_visit_helper`).
+fn generate_debug_category_arm(category: &Ident, _language: &LanguageDef) -> TokenStream {
     let variant_name = format_ident!("Debug{}", category);
+    let helper_fn = format_ident!("debug_visit_{}", category.to_string().to_lowercase());
+
+    // PRE-PEEL body (residual #11-2, 2026-07-14): the variant match inlined the
+    // whole category into `debug_iterative`. Commented-out-never-deleted; the
+    // match now lives in `debug_visit_<cat>` and this arm just calls it.
+    /*
     let variants = collect_category_variants(category, language);
 
     let variant_arms: Vec<TokenStream> = variants
@@ -152,6 +211,12 @@ fn generate_debug_category_arm(category: &Ident, language: &LanguageDef) -> Toke
             match term {
                 #(#variant_arms,)*
             }
+        }
+    }
+    */
+    quote! {
+        DebugTask::#variant_name(ptr) => {
+            #helper_fn(stack, f, ptr)?;
         }
     }
 }

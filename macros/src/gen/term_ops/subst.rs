@@ -2349,9 +2349,19 @@ fn generate_binder_assemble_arm(
     let body_wrap = format_ident!("Wrap{}", body_cat);
 
     let slot_pattern = emit_pre_field_assemble_slot_pattern(pre_scope_fields);
+    // Residual #11-2 (2026-07-14): typed helper-param decls for the peel. subst's
+    // `emit_pre_field_decl_list` is symmetric with `emit_pre_field_assemble_slot_pattern`
+    // for every shape (HashBag|HashMap both -> 3 fields), and no HashBag/HashMap
+    // pre-scope field exists in-tree anyway.
+    let pre_decls = emit_pre_field_decl_list(pre_scope_fields);
     let pre_extracts = emit_pre_field_extracts(pre_scope_fields);
     let pre_construct = emit_pre_field_constructs(pre_scope_fields);
 
+    // PRE-PEEL body (residual #11-2, 2026-07-14): commented-out-never-deleted;
+    // replaced by the `#[inline(never)]` per-arm peel below (pure code motion).
+    // `subst_iterative` nests under `normalize_iterative` at β time, so bounding
+    // its ~800 Bind/MBind arms is required for the pin-retirement headroom.
+    /*
     quote! {
         SubstTask::#assemble_variant { slot, #(#slot_pattern,)* cloned_pattern, body_slot } => {
             #(#pre_extracts)*
@@ -2365,6 +2375,33 @@ fn generate_binder_assemble_arm(
             results[slot] = Some(AnySubstTerm::#wrap(
                 #cat::#label(#(#pre_construct)* new_scope)
             ));
+        }
+    }
+    */
+    quote! {
+        SubstTask::#assemble_variant { slot, #(#slot_pattern,)* cloned_pattern, body_slot } => {
+            #[inline(never)]
+            #[allow(dead_code, unused_variables, non_snake_case)]
+            fn assemble_binder(
+                results: &mut Vec<Option<AnySubstTerm>>,
+                slot: usize,
+                #(#pre_decls,)*
+                cloned_pattern: mettail_runtime::Binder<String>,
+                body_slot: usize,
+            ) {
+                #(#pre_extracts)*
+                let body = match results[body_slot].take()
+                    .expect("iterative subst: missing binder body")
+                {
+                    AnySubstTerm::#body_wrap(v) => v,
+                    _ => unreachable!("iterative subst: wrong category in binder body slot"),
+                };
+                let new_scope = mettail_runtime::Scope::from_parts_unsafe(cloned_pattern, std::sync::Arc::new(body));
+                results[slot] = Some(AnySubstTerm::#wrap(
+                    #cat::#label(#(#pre_construct)* new_scope)
+                ));
+            }
+            assemble_binder(results, slot, #(#slot_pattern,)* cloned_pattern, body_slot);
         }
     }
 }
@@ -2381,9 +2418,15 @@ fn generate_multi_binder_assemble_arm(
     let body_wrap = format_ident!("Wrap{}", body_cat);
 
     let slot_pattern = emit_pre_field_assemble_slot_pattern(pre_scope_fields);
+    // Residual #11-2 (2026-07-14): typed helper-param decls for the peel (see
+    // `generate_binder_assemble_arm` for the arity-agreement argument).
+    let pre_decls = emit_pre_field_decl_list(pre_scope_fields);
     let pre_extracts = emit_pre_field_extracts(pre_scope_fields);
     let pre_construct = emit_pre_field_constructs(pre_scope_fields);
 
+    // PRE-PEEL body (residual #11-2, 2026-07-14): commented-out-never-deleted;
+    // replaced by the `#[inline(never)]` per-arm peel below (pure code motion).
+    /*
     quote! {
         SubstTask::#assemble_variant { slot, #(#slot_pattern,)* cloned_pattern, body_slot } => {
             #(#pre_extracts)*
@@ -2399,6 +2442,35 @@ fn generate_multi_binder_assemble_arm(
             results[slot] = Some(AnySubstTerm::#wrap(
                 #cat::#label(#(#pre_construct)* new_scope)
             ));
+        }
+    }
+    */
+    quote! {
+        SubstTask::#assemble_variant { slot, #(#slot_pattern,)* cloned_pattern, body_slot } => {
+            #[inline(never)]
+            #[allow(dead_code, unused_variables, non_snake_case)]
+            fn assemble_multi_binder(
+                results: &mut Vec<Option<AnySubstTerm>>,
+                slot: usize,
+                #(#pre_decls,)*
+                cloned_pattern: Vec<mettail_runtime::Binder<String>>,
+                body_slot: usize,
+            ) {
+                #(#pre_extracts)*
+                let body = match results[body_slot].take()
+                    .expect("iterative subst: missing multi-binder body")
+                {
+                    AnySubstTerm::#body_wrap(v) => v,
+                    _ => unreachable!(
+                        "iterative subst: wrong category in multi-binder body slot"
+                    ),
+                };
+                let new_scope = mettail_runtime::Scope::from_parts_unsafe(cloned_pattern, std::sync::Arc::new(body));
+                results[slot] = Some(AnySubstTerm::#wrap(
+                    #cat::#label(#(#pre_construct)* new_scope)
+                ));
+            }
+            assemble_multi_binder(results, slot, #(#slot_pattern,)* cloned_pattern, body_slot);
         }
     }
 }
