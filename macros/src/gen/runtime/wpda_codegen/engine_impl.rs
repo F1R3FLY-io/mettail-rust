@@ -27,6 +27,12 @@ pub(crate) fn emit_engine_impl_full(
     categories: &[String],
     per_cat: &[Vec<GrammarRule>],
     primary_src_idx: u16,
+    // Task #10 item 1: the fork-emission ordinal collector — filled by the
+    // prefix/paren emitters below as they emit (never re-derived from the
+    // grammar model); `mod.rs` turns it into the module-level
+    // `WPDA_FORK_EMISSION_ORDINAL` table beside the Parikh tables, and the
+    // trait override emitted here delegates to that fn.
+    fork_rows: &mut super::fork_emission::ForkEmissionOrdinalModel,
 ) -> TokenStream {
     // Build the indexed view expected by prefix/semantic_actions.
     let per_cat_indexed: Vec<Vec<(u16, &GrammarRule)>> = per_cat
@@ -56,6 +62,10 @@ pub(crate) fn emit_engine_impl_full(
     let s1_spine = super::factoring::build_spine_emission(language, categories, per_cat);
     let s1_empty_dispositions: std::collections::HashMap<u16, super::factoring::SpineDisposition> =
         std::collections::HashMap::new();
+    // Task #10 item 1: the empty-map mirror for `group_members` (same
+    // shape discipline as the dispositions above).
+    let s1_empty_group_members: std::collections::HashMap<u16, Vec<u16>> =
+        std::collections::HashMap::new();
 
     // Aggregate Phase A.2 prefix arms across all categories. Each arm
     // guards on `state_cat_src_idx` so the same token can produce
@@ -71,6 +81,11 @@ pub(crate) fn emit_engine_impl_full(
                 .dispositions
                 .get(i)
                 .unwrap_or(&s1_empty_dispositions),
+            s1_spine
+                .group_members
+                .get(i)
+                .unwrap_or(&s1_empty_group_members),
+            fork_rows,
         );
         all_prefix_arms.extend(arms);
     }
@@ -170,7 +185,8 @@ pub(crate) fn emit_engine_impl_full(
     // `feedback_use_wpds_disambiguation_not_heuristics.md`. For grammars
     // without a `(`-triggered binder rule (all shipped except Lambda),
     // the output is byte-identical to `emit_grouping_arms`.
-    let grouping_arms = super::prefix::emit_paren_dispatch_arms(categories, language, per_cat);
+    let grouping_arms =
+        super::prefix::emit_paren_dispatch_arms(categories, language, per_cat, fork_rows);
 
     let action_for_body =
         semantic_actions::emit_action_for_body(language, categories, &per_cat_indexed);
@@ -2629,6 +2645,15 @@ pub(crate) fn emit_engine_impl_full(
 
             fn parikh_must_mask(&self, cat: u16, rule: u16, pos: u8) -> u128 {
                 WPDA_MUST_MASK(cat, rule, pos)
+            }
+
+            // Task #10 item 1: the per-grammar K-C election tiebreak — the
+            // ordinals are the emitters' STATIC DECLARATION POSITIONS,
+            // recorded at codegen and emitted as the module-level table
+            // beside the Parikh tables (see WPDA_FORK_EMISSION_ORDINAL's
+            // generated doc for the per-site semantics).
+            fn fork_emission_ordinal(&self, site_kind: u8, cat: u16, rule: u16) -> u16 {
+                WPDA_FORK_EMISSION_ORDINAL(site_kind, cat, rule)
             }
 
             fn is_binder_internal_collection(

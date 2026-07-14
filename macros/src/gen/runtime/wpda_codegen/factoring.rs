@@ -1834,6 +1834,15 @@ pub(crate) struct SpineLexAlt {
 pub(crate) struct SpineEmission {
     /// `rule_idx -> disposition` per category index.
     pub dispositions: Vec<HashMap<u16, SpineDisposition>>,
+    /// Task #10 item 1: `GroupFirst member rule_idx -> ORDERED member rule
+    /// idxs` per category index (built from the SAME `ordered` list the
+    /// disposition loop walks, so it can never diverge from the emission).
+    /// Consumed by the fork-emission ordinal derivation: a `GroupFirst`
+    /// descriptor at static declaration position `i` yields one site-2 row
+    /// per MEMBER at ordinal `i` (the spine trigger branch is every
+    /// member's initiating branch); `GroupRest` descriptors yield nothing
+    /// (their rows were derived at their group's `GroupFirst`).
+    pub group_members: Vec<HashMap<u16, Vec<u16>>>,
     /// `(cat, SPINE_ID, node_pos)` arms for `emit_binder_rule_body`'s match.
     pub binder_arms: TokenStream,
     /// `fn trigger_spine_owner` override for the generated engine impl
@@ -2172,6 +2181,11 @@ pub(crate) fn build_spine_emission_from_parts(
 ) -> SpineEmission {
     let mut dispositions: Vec<HashMap<u16, SpineDisposition>> =
         (0..per_cat.len()).map(|_| HashMap::new()).collect();
+    // Task #10 item 1: `GroupFirst rule -> ordered members` per cat (see the
+    // SpineEmission field doc) — filled in the SAME loop that assigns
+    // dispositions, from the SAME `ordered` list.
+    let mut group_members: Vec<HashMap<u16, Vec<u16>>> =
+        (0..per_cat.len()).map(|_| HashMap::new()).collect();
     let mut lex_alt: Vec<SpineLexAlt> =
         (0..per_cat.len()).map(|_| SpineLexAlt::default()).collect();
     let mut binder_arms: Vec<TokenStream> = Vec::new();
@@ -2206,6 +2220,12 @@ pub(crate) fn build_spine_emission_from_parts(
                 let mut first = true;
                 let mut ordered: Vec<u16> = members.iter().copied().collect();
                 ordered.sort_unstable();
+                // Task #10 item 1: the GroupFirst member keys the group's
+                // ORDERED member list (the same list the disposition loop
+                // walks) for the fork-emission ordinal derivation.
+                if let Some(&first_member) = ordered.first() {
+                    group_members[cat_usize].insert(first_member, ordered.clone());
+                }
                 for m in ordered {
                     let d = if first {
                         first = false;
@@ -2578,6 +2598,7 @@ pub(crate) fn build_spine_emission_from_parts(
     };
     SpineEmission {
         dispositions,
+        group_members,
         binder_arms,
         trigger_spine_owner_fn,
         spine_members_fn,
@@ -4529,12 +4550,146 @@ mod tests {
     /// stream, and the engine-table rows (owner, A-1 members, H9 poison
     /// union, A7, min-span).
     #[test]
+    fn fork_emission_table_is_value_identical_to_the_trait_default_per_grammar() {
+        // Task #10 item 1 F1 (coordinator decision 2026-07-14): the
+        // generated `WPDA_FORK_EMISSION_ORDINAL` is ELECTION-INERT —
+        // value-identical to the walker-trait default (`0|2 => 0,
+        // 1|3 => 1, _ => MAX`) on every input. Pinned here over the FULL
+        // per-grammar census domain (every (cat, rule) the emitters
+        // recorded — derived rows ∪ ambiguous keys — per the requirement:
+        // derive the domain from the census, don't sample blindly), for
+        // both collision-bearing bundled grammars, by rebuilding the model
+        // through the SAME threading `emit_engine_impl_full` uses.
+        let trait_default = |site_kind: u8| -> u16 {
+            match site_kind {
+                0 | 2 => 0,
+                1 | 3 => 1,
+                _ => u16::MAX,
+            }
+        };
+        for (name, def) in [("rhocalc", rhocalc()), ("calculator", calculator())] {
+            let (categories, per_cat) = cats_per_cat(&def);
+            let bundle = build_spine_emission(&def, &categories, &per_cat);
+            let empty_disp: HashMap<u16, SpineDisposition> = HashMap::new();
+            let empty_members: HashMap<u16, Vec<u16>> = HashMap::new();
+            let mut fork_model =
+                crate::gen::runtime::wpda_codegen::fork_emission::ForkEmissionOrdinalModel::new();
+            for (i, _cat) in categories.iter().enumerate() {
+                let indexed: Vec<(u16, &GrammarRule)> = per_cat[i]
+                    .iter()
+                    .enumerate()
+                    .map(|(r, rule)| (r as u16, rule))
+                    .collect();
+                let _ = crate::gen::runtime::wpda_codegen::prefix::emit_prefix_arms_for_category(
+                    &def,
+                    i as u16,
+                    &categories[i],
+                    &indexed,
+                    bundle.dispositions.get(i).unwrap_or(&empty_disp),
+                    bundle.group_members.get(i).unwrap_or(&empty_members),
+                    &mut fork_model,
+                );
+            }
+            let _ = crate::gen::runtime::wpda_codegen::prefix::emit_paren_dispatch_arms(
+                &categories,
+                &def,
+                &per_cat,
+                &mut fork_model,
+            );
+            let domain = fork_model.census_keys();
+            assert!(
+                !domain.is_empty(),
+                "{name}: the census domain is non-empty (the emitters record rows)",
+            );
+            for &(cat, rule) in &domain {
+                for site_kind in [0u8, 1, 2, 3, 4, 255] {
+                    assert_eq!(
+                        fork_model.emitted_value(site_kind, cat, rule),
+                        trait_default(site_kind),
+                        "{name}: F1 value-identity at site {site_kind}, \
+                         (cat {cat}, rule {rule})",
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn fork_emission_rows_share_the_spine_trigger_position_per_group() {
+        // Task #10 item 1 (real-grammar value pin): under the committed
+        // S1-ON emission, EVERY member of a spine group derives its site-2
+        // fork-emission ordinal AT ITS GROUP'S spine-trigger declaration
+        // position — the GroupFirst branch is every member's initiating
+        // branch, so all members of one group share ONE ordinal in the
+        // generated table.
+        let def = rhocalc();
+        let (categories, per_cat) = cats_per_cat(&def);
+        let bundle = build_spine_emission(&def, &categories, &per_cat);
+        let proc_dispositions = &bundle.dispositions[0];
+        let proc_members = &bundle.group_members[0];
+        assert!(
+            !proc_members.is_empty(),
+            "rhocalc Proc carries S1 spine groups under the committed ON stance",
+        );
+        let mut fork_model =
+            crate::gen::runtime::wpda_codegen::fork_emission::ForkEmissionOrdinalModel::new();
+        let indexed: Vec<(u16, &GrammarRule)> = per_cat[0]
+            .iter()
+            .enumerate()
+            .map(|(i, r)| (i as u16, r))
+            .collect();
+        let _ = crate::gen::runtime::wpda_codegen::prefix::emit_prefix_arms_for_category(
+            &def,
+            0,
+            &categories[0],
+            &indexed,
+            proc_dispositions,
+            proc_members,
+            &mut fork_model,
+        );
+        for (first_member, members) in proc_members {
+            let group_ordinal = fork_model.site2_ordinal(0, *first_member);
+            assert!(
+                group_ordinal.is_some(),
+                "GroupFirst member {first_member} derives a row",
+            );
+            for member in members {
+                assert_eq!(
+                    fork_model.site2_ordinal(0, *member),
+                    group_ordinal,
+                    "member {member} shares its group's spine-trigger position",
+                );
+            }
+        }
+    }
+
+    #[test]
     fn spine_emission_on_rhocalc_pins_dispositions_root_edge_and_tables() {
         let def = rhocalc();
         let (categories, per_cat) = cats_per_cat(&def);
         let model = build_prefix_factoring(&def, &categories, &per_cat);
         let bundle = build_spine_emission_from(&model, &def, &categories, &per_cat);
         assert!(bundle.any_groups());
+
+        // Task #10 item 1: `group_members` mirrors the dispositions — one
+        // entry per group, keyed at the GroupFirst (min) member, listing
+        // every member in the same ordered walk the dispositions use.
+        let proc_group_members = &bundle.group_members[0];
+        let n_first = bundle.dispositions[0]
+            .values()
+            .filter(|d| matches!(d, SpineDisposition::GroupFirst { .. }))
+            .count();
+        assert_eq!(
+            proc_group_members.len(),
+            n_first,
+            "one members entry per GroupFirst",
+        );
+        let member_total: usize = proc_group_members.values().map(Vec::len).sum();
+        assert_eq!(
+            member_total,
+            bundle.dispositions[0].len(),
+            "every dispositioned member appears in exactly one group list",
+        );
 
         // ── dispositions: Nil group 0xF800 keyed at min member 10 ─────────
         let proc_dispositions = &bundle.dispositions[0];

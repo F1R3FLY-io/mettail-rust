@@ -1717,16 +1717,22 @@ pub trait WpdaEngine<W: SemiringRef> {
     /// ordinal of a fork-emission site — the position of the branch within
     /// its dispatch's emission order. Site kinds (the six P4-election tests
     /// need no intra-rule discrimination — red-team T3):
-    ///   0 = optional-group TAKE   (binder.rs:2459 emits take first)  → 0
+    ///   0 = optional-group TAKE   (binder.rs emits take first)       → 0
     ///   1 = optional-group SKIP                                       → 1
-    ///   2 = grouping-KEPT fire (NParen-class; prefix.rs:1110 grouping-
-    ///       first)                                                    → 0
+    ///   2 = grouping-KEPT fire (NParen-class; grouping-first layout)  → 0
     ///   3 = grouping-TRANSPARENT (structurally ABSENT in the forest —
     ///       compared as the MAX pad)                                  → 1
-    /// Codegen may override with the exact per-grammar emission table
-    /// (lattice-alt order forks.rs; dispatch-descriptor order
-    /// prefix.rs:2185+); the walker consumes it ONLY at realize-time
-    /// election (never in the walk).
+    /// Task #10 item 1: codegen OVERRIDES this default with the per-grammar
+    /// generated `WPDA_FORK_EMISSION_ORDINAL` table — site-2 values are the
+    /// initiating branch's STATIC DECLARATION POSITION within its dispatch
+    /// bucket, derived BY the emitters as they emit. Boundary (Option A,
+    /// 2026-07-14): a rule initiated from SEVERAL buckets at DIFFERING
+    /// positions has no single static ordinal (this query carries no
+    /// dispatch-token context at realize time), so such rules are
+    /// INTENTIONALLY underived — they resolve through the generated
+    /// site-2 fallback `0`, which is this default's site-2 value (zero
+    /// K-C movement for that class). The walker consumes the ordinal ONLY
+    /// at realize-time election (never in the walk).
     fn fork_emission_ordinal(&self, site_kind: u8, cat: u16, rule: u16) -> u16 {
         let _ = (cat, rule);
         match site_kind {

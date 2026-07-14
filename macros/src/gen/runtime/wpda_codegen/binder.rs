@@ -2412,6 +2412,17 @@ pub(crate) fn emit_binder_list_loop_body(
     }
 }
 
+/// Task #10 item 1: the optional-group Fork's branch emission order — TAKE
+/// first, SKIP second, per the `vec![take, skip]` construction inside
+/// `emit_optional_group_body` below (the Stage 3.12 Class A.i fork). These
+/// constants are the fork-emission ordinal table's site-0/site-1 values
+/// (`fork_emission::ForkEmissionOrdinalModel::into_tokens`), declared HERE
+/// so the ordinal rows and the emitted fork order are lexically bound to
+/// one source of truth; the const assert beside the vec construction pins
+/// the pairing at macros compile time.
+pub(crate) const OPTIONAL_GROUP_TAKE_BRANCH_INDEX: u16 = 0;
+pub(crate) const OPTIONAL_GROUP_SKIP_BRANCH_INDEX: u16 = 1;
+
 /// Opt-Group (2026-04-29): emit the body of `WpdaState::OptionalGroup`.
 /// Dispatches on `(*result_src_idx, *rule_idx, *group_idx, *sub_pos)` to:
 ///   - sub_pos == 0: peek FIRST set, emit `Push(OptionalGroupAt(1))` (take)
@@ -2473,6 +2484,14 @@ pub(crate) fn emit_optional_group_body(
                 // dead-code warning while documenting the source of intent.
                 let _first_set_for_diagnostics_only: Vec<&str> =
                     first_token_set.iter().map(|s| s.as_str()).collect();
+                // Task #10 item 1: the fork-emission ordinal table's
+                // site-0/site-1 rows ARE these indices — pinned against the
+                // `vec![TAKE, SKIP]` order of the Fork constructed just
+                // below (TAKE = branch 0, SKIP = branch 1).
+                const _: () = assert!(
+                    OPTIONAL_GROUP_TAKE_BRANCH_INDEX == 0
+                        && OPTIONAL_GROUP_SKIP_BRANCH_INDEX == 1,
+                );
                 arms.push(quote! {
                     (#result_src_idx, #rule_idx, #group_idx_byte, 0u8) => {
                         // Stage 3.12 / Class A.i (2026-05-01): Opt-Group Fork.

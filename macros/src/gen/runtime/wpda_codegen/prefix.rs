@@ -1062,6 +1062,16 @@ pub fn emit_paren_dispatch_arms(
     categories: &[String],
     language: &mettail_ast::language::LanguageDef,
     per_cat: &[Vec<mettail_ast::grammar::GrammarRule>],
+    // Task #10 item 1: the fork-emission ordinal collector. Only the FORK
+    // case's `(`-binder branches derive rows (a rule's initiating branch at
+    // its static position AFTER the grouping branches). The grouping-marker
+    // branches themselves push category MARKERS, not rules — no `(cat,
+    // rule)` row is derivable from them; the NParen-class kept-wrapper
+    // rules those groupings lead to resolve through the table's site-2
+    // fallback `0`, which IS the grouping branches' grouping-first index
+    // (byte-identical by construction). The simple no-conflict arm is not
+    // a fork — no rows.
+    fork_rows: &mut super::fork_emission::ForkEmissionOrdinalModel,
 ) -> TokenStream {
     let mut arms = Vec::new();
     for (cat_i, _cat_name) in categories.iter().enumerate() {
@@ -1153,11 +1163,22 @@ pub fn emit_paren_dispatch_arms(
             });
         }
         // Branches 1..N: each binder rule with `(` trigger.
-        for (rule_idx, shape) in &paren_binder_rules {
+        for (paren_binder_position, (rule_idx, shape)) in
+            paren_binder_rules.iter().enumerate()
+        {
             let body_src_idx = super::binder::binder_initial_body_cat(shape)
                 .and_then(|name| super::binder::lookup_src_idx(name, categories))
                 .unwrap_or(result_src_idx);
             let rule_idx_lit = *rule_idx;
+            // Task #10 item 1: the binder branch's STATIC position = after
+            // ALL grouping branches (grouping-first layout), in declaration
+            // order.
+            fork_rows.record_site2_row(
+                result_src_idx,
+                rule_idx_lit,
+                (grouping_source_indices.len() + paren_binder_position) as u16,
+                "paren-dispatch \"(\"",
+            );
             branches.push(quote! {
                 mettail_prattail::wpda_walker::ForkBranch {
                     symbol: StackSymbolV2::rule_at(
@@ -1452,6 +1473,11 @@ pub fn emit_prefix_arms_for_category(
     // trigger branch at their emission position; `GroupRest` members emit
     // nothing (the spine branch covers them).
     s1_dispositions: &std::collections::HashMap<u16, super::factoring::SpineDisposition>,
+    // Task #10 item 1: this category's `GroupFirst rule -> ordered members`
+    // map (`factoring::SpineEmission::group_members`) + the fork-emission
+    // ordinal collector threaded down to `emit_unified_arm`.
+    s1_group_members: &std::collections::HashMap<u16, Vec<u16>>,
+    fork_rows: &mut super::fork_emission::ForkEmissionOrdinalModel,
 ) -> TokenStream {
     let mut arms = Vec::new();
     // Stage 1.2: cross-cat infix LHS delegation. Walk all infix rules
@@ -1758,7 +1784,13 @@ pub fn emit_prefix_arms_for_category(
         let entry = unified_buckets
             .remove(&key)
             .expect("bucket present in order");
-        arms.push(emit_unified_arm(category_src_idx, &entry, s1_dispositions));
+        arms.push(emit_unified_arm(
+            category_src_idx,
+            &entry,
+            s1_dispositions,
+            s1_group_members,
+            fork_rows,
+        ));
     }
     quote! { #(#arms)* }
 }
@@ -1972,15 +2004,75 @@ fn insert_unified_descriptor(
 /// Lex-min picks atomic-home on parse-success ties (preserves bare
 /// PVar parsing as Proc when no operator follows); cross-cat-LHS wins
 /// when only that branch survives (e.g. `x!(0)` requires Name LHS).
+/// Task #10 item 1: record the fork-emission site-2 row(s) for a
+/// rule-initiating dispatch branch at its static declaration position,
+/// routing S1 spine dispositions: `GroupFirst` derives one row per group
+/// MEMBER at the spine trigger branch's position (the branch initiates
+/// every member); `GroupRest` derives nothing (no branch is emitted — the
+/// member's row came from its group's `GroupFirst`); undispositioned rules
+/// derive their own row.
+fn record_initiating_rule_rows(
+    fork_rows: &mut super::fork_emission::ForkEmissionOrdinalModel,
+    category_src_idx: u16,
+    rule_idx: u16,
+    branch_position: u16,
+    s1_dispositions: &std::collections::HashMap<u16, super::factoring::SpineDisposition>,
+    s1_group_members: &std::collections::HashMap<u16, Vec<u16>>,
+    bucket_tag: &str,
+) {
+    match s1_dispositions.get(&rule_idx) {
+        Some(super::factoring::SpineDisposition::GroupFirst { .. }) => {
+            let members = s1_group_members.get(&rule_idx).unwrap_or_else(|| {
+                panic!(
+                    "task #10 item 1: GroupFirst rule (cat {category_src_idx}, rule \
+                     {rule_idx}) has no group_members entry — factoring drift",
+                )
+            });
+            for &member in members {
+                fork_rows.record_site2_row(
+                    category_src_idx,
+                    member,
+                    branch_position,
+                    bucket_tag,
+                );
+            }
+        },
+        Some(super::factoring::SpineDisposition::GroupRest) => {},
+        None => {
+            fork_rows.record_site2_row(
+                category_src_idx,
+                rule_idx,
+                branch_position,
+                bucket_tag,
+            );
+        },
+    }
+}
+
 fn emit_unified_arm(
     category_src_idx: u16,
     bucket: &UnifiedBucket,
     s1_dispositions: &std::collections::HashMap<u16, super::factoring::SpineDisposition>,
+    // Task #10 item 1: `GroupFirst rule -> ordered members` for THIS
+    // category (`factoring::SpineEmission::group_members`) — a GroupFirst
+    // descriptor's spine trigger branch is every member's initiating
+    // branch, so each member derives a row at that branch's position.
+    s1_group_members: &std::collections::HashMap<u16, Vec<u16>>,
+    // Task #10 item 1: the fork-emission ordinal collector. Rows are
+    // recorded HERE, as the branches are emitted, at their STATIC
+    // DECLARATION POSITIONS (amendment 6) — runtime-gated pushes (the
+    // CrossCatLhs guard) still occupy their declared slot.
+    fork_rows: &mut super::fork_emission::ForkEmissionOrdinalModel,
 ) -> TokenStream {
     let pat = &bucket.pat;
     let guard = match &bucket.extra_guard {
         Some(eg) => quote! { #eg && state_cat_src_idx == #category_src_idx },
         None => quote! { state_cat_src_idx == #category_src_idx },
+    };
+    // Task #10 item 1: bucket identity for the collision diagnostics.
+    let fork_bucket_tag = match &bucket.extra_guard {
+        Some(eg) => format!("prefix-dispatch {} if {}", bucket.pat, eg),
+        None => format!("prefix-dispatch {}", bucket.pat),
     };
     // CROSSCAT_LEX_COMPAT_GATE (option B backstop): a per-projection compat
     // conjunct appended to the arm GUARD when the runtime kill-switch is on.
@@ -2033,7 +2125,19 @@ fn emit_unified_arm(
                     }
                 }
             },
-            UnifiedDescriptor::Atomic(desc) => emit_atomic_arm_singleton(desc),
+            UnifiedDescriptor::Atomic(desc) => {
+                // Task #10 item 1: the no-fork singleton fast path has no
+                // peer branches — static declaration position 0 (amendment
+                // 6). Recorded (not skipped) so the amendment-6 collision
+                // assert also covers cross-bucket membership.
+                fork_rows.record_site2_row(
+                    desc.category_src_idx,
+                    desc.rule_idx,
+                    0,
+                    &fork_bucket_tag,
+                );
+                emit_atomic_arm_singleton(desc)
+            },
             UnifiedDescriptor::BinderPrefix { rule_idx, body_src_idx } => {
                 let rule_idx = *rule_idx;
                 let body_src_idx = *body_src_idx;
@@ -2047,6 +2151,9 @@ fn emit_unified_arm(
                     "S1-FACTORING F1: grouped rule (cat {category_src_idx}, rule {rule_idx}) \
                      reached the singleton BinderPrefix emission",
                 );
+                // Task #10 item 1: singleton = position 0 (grouped members
+                // asserted unreachable above, so the plain row suffices).
+                fork_rows.record_site2_row(category_src_idx, rule_idx, 0, &fork_bucket_tag);
                 quote! {
                     #pat if #guard => {
                         return WpdaStepAction::ConsumeAndPush {
@@ -2070,6 +2177,8 @@ fn emit_unified_arm(
                 let rule_idx = *rule_idx;
                 let source_src_idx = *source_src_idx;
                 let operand_bp = *operand_bp;
+                // Task #10 item 1: singleton = position 0.
+                fork_rows.record_site2_row(category_src_idx, rule_idx, 0, &fork_bucket_tag);
                 quote! {
                     #pat if #guard => {
                         return WpdaStepAction::ConsumeAndPush {
@@ -2091,6 +2200,8 @@ fn emit_unified_arm(
                 let rule_idx = *rule_idx;
                 let source_src_idx = *source_src_idx;
                 let __compat = compat_guard(source_src_idx);
+                // Task #10 item 1: singleton = position 0.
+                fork_rows.record_site2_row(category_src_idx, rule_idx, 0, &fork_bucket_tag);
                 quote! {
                     #pat if #guard #__compat => {
                         // B10 / Option κ Fix B (2026-05-07): cross-cat
@@ -2128,6 +2239,8 @@ fn emit_unified_arm(
                     "S1-FACTORING F1: grouped rule (cat {category_src_idx}, rule {rule_idx}) \
                      reached the singleton NullaryLiteralRun emission",
                 );
+                // Task #10 item 1: singleton = position 0.
+                fork_rows.record_site2_row(category_src_idx, rule_idx, 0, &fork_bucket_tag);
                 quote! {
                     #pat if #guard => {
                         // GAP-3: 0-operand multi-literal keyword prefix. Consume
@@ -2169,10 +2282,17 @@ fn emit_unified_arm(
         // DECLARATION ORDER, byte-identical to the pre-F1 emission; only the
         // cross-cat-LHS push is wrapped in the runtime gate, preserving order.
         let n_descs = bucket.descs.len();
+        // Task #10 item 1: `branch_position` = the descriptor's STATIC
+        // DECLARATION POSITION within this bucket (amendment 6) — the
+        // enumerate index over the SAME iteration that emits the branches,
+        // so the recorded ordinals can never diverge from the emission.
+        // Runtime-gated pushes (CrossCatLhs) still occupy their declared
+        // slot; GroupRest descriptors emit nothing and record nothing.
         let push_stmts: Vec<TokenStream> = bucket
             .descs
             .iter()
-            .map(|d| match d {
+            .enumerate()
+            .map(|(branch_position, d)| match d {
                 UnifiedDescriptor::CrossCatLhs {
                     source_src_idx,
                     sigil_leads_result_rule,
@@ -2235,6 +2355,13 @@ fn emit_unified_arm(
                 UnifiedDescriptor::Atomic(desc) => {
                     let rule_idx = desc.rule_idx;
                     let csi = desc.category_src_idx;
+                    // Task #10 item 1: static declaration position.
+                    fork_rows.record_site2_row(
+                        csi,
+                        rule_idx,
+                        branch_position as u16,
+                        &fork_bucket_tag,
+                    );
                     quote! {
                         __pd_branches.push(mettail_prattail::wpda_walker::ForkBranch {
                             symbol: StackSymbolV2::rule_at(
@@ -2251,6 +2378,18 @@ fn emit_unified_arm(
                 UnifiedDescriptor::BinderPrefix { rule_idx, body_src_idx } => {
                     let rule_idx = *rule_idx;
                     let body_src_idx = *body_src_idx;
+                    // Task #10 item 1: disposition-routed rows — GroupFirst
+                    // derives every member's row at THIS position; GroupRest
+                    // derives nothing; plain rules derive their own row.
+                    record_initiating_rule_rows(
+                        fork_rows,
+                        category_src_idx,
+                        rule_idx,
+                        branch_position as u16,
+                        s1_dispositions,
+                        s1_group_members,
+                        &fork_bucket_tag,
+                    );
                     // S1-FACTORING F1 (plan §2 item 1): a grouped member's
                     // per-rule branch is replaced by the group's ONE spine
                     // trigger branch (emitted at the FIRST member's position,
@@ -2299,6 +2438,13 @@ fn emit_unified_arm(
                     let rule_idx = *rule_idx;
                     let source_src_idx = *source_src_idx;
                     let operand_bp = *operand_bp;
+                    // Task #10 item 1: static declaration position.
+                    fork_rows.record_site2_row(
+                        category_src_idx,
+                        rule_idx,
+                        branch_position as u16,
+                        &fork_bucket_tag,
+                    );
                     quote! {
                         __pd_branches.push(mettail_prattail::wpda_walker::ForkBranch {
                             symbol: StackSymbolV2::rule_at(
@@ -2323,6 +2469,15 @@ fn emit_unified_arm(
                 } => {
                     let rule_idx = *rule_idx;
                     let src_idx = *source_src_idx;
+                    // Task #10 item 1: static declaration position (the
+                    // lex-compat runtime gate below is runtime-only — the
+                    // declared slot counts per amendment 6).
+                    fork_rows.record_site2_row(
+                        category_src_idx,
+                        rule_idx,
+                        branch_position as u16,
+                        &fork_bucket_tag,
+                    );
                     // CROSSCAT_LEX_COMPAT_GATE (option B backstop): gate THIS
                     // Fork branch's push on runtime lex-compatibility. Other
                     // branches in the same Fork (CrossCatLhs / PVar / other
@@ -2366,6 +2521,17 @@ fn emit_unified_arm(
                 }
                 UnifiedDescriptor::NullaryLiteralRun { rule_idx } => {
                     let rule_idx = *rule_idx;
+                    // Task #10 item 1: same disposition-routed rows as the
+                    // BinderPrefix arm above.
+                    record_initiating_rule_rows(
+                        fork_rows,
+                        category_src_idx,
+                        rule_idx,
+                        branch_position as u16,
+                        s1_dispositions,
+                        s1_group_members,
+                        &fork_bucket_tag,
+                    );
                     // S1-FACTORING F1: nullary members join spine groups too
                     // (the Nil-group's rules 15/16). Same disposition routing
                     // as the BinderPrefix arm above; the spine trigger branch
@@ -2869,7 +3035,7 @@ mod tests {
     #[test]
     fn empty_rule_list_emits_no_arms() {
         let lang = empty_lang();
-        let ts = emit_prefix_arms_for_category(&lang, 0, "Int", &[], &std::collections::HashMap::new());
+        let ts = emit_prefix_arms_for_category(&lang, 0, "Int", &[], &std::collections::HashMap::new(), &std::collections::HashMap::new(), &mut super::super::fork_emission::ForkEmissionOrdinalModel::new());
         assert!(ts.to_string().trim().is_empty());
     }
 
@@ -2877,7 +3043,7 @@ mod tests {
     fn atomic_integer_rule_emits_an_arm() {
         let lang = empty_lang();
         let rule = atomic_rule("IntLit", "Int", NonTerminalKind::Integer);
-        let ts = emit_prefix_arms_for_category(&lang, 2, "Int", &[(0, &rule)], &std::collections::HashMap::new());
+        let ts = emit_prefix_arms_for_category(&lang, 2, "Int", &[(0, &rule)], &std::collections::HashMap::new(), &std::collections::HashMap::new(), &mut super::super::fork_emission::ForkEmissionOrdinalModel::new());
         let s = ts.to_string();
         assert!(s.contains("ConsumeAndPush"));
         assert!(s.contains("Integer"));
@@ -2940,7 +3106,7 @@ mod tests {
     fn terminal_keyword_emits_fixed_match_guard() {
         let lang = empty_lang();
         let rule = terminal_rule("Err", "Int", "error");
-        let ts = emit_prefix_arms_for_category(&lang, 2, "Int", &[(0, &rule)], &std::collections::HashMap::new());
+        let ts = emit_prefix_arms_for_category(&lang, 2, "Int", &[(0, &rule)], &std::collections::HashMap::new(), &std::collections::HashMap::new(), &mut super::super::fork_emission::ForkEmissionOrdinalModel::new());
         let s = ts.to_string();
         assert!(s.contains("ConsumeAndPush"));
         assert!(s.contains("Fixed"));
@@ -2952,7 +3118,7 @@ mod tests {
     fn literal_patterned_int_emits_integer_lit_guard() {
         let lang = lang_with_int_literal();
         let rule = category_rule("IntLit", "Int", "Int");
-        let ts = emit_prefix_arms_for_category(&lang, 2, "Int", &[(0, &rule)], &std::collections::HashMap::new());
+        let ts = emit_prefix_arms_for_category(&lang, 2, "Int", &[(0, &rule)], &std::collections::HashMap::new(), &std::collections::HashMap::new(), &mut super::super::fork_emission::ForkEmissionOrdinalModel::new());
         let s = ts.to_string();
         assert!(s.contains("ConsumeAndPush"));
         assert!(s.contains("IntegerLit"));
@@ -3000,12 +3166,37 @@ mod tests {
         );
         lang.terms = vec![direct_prefix.clone(), projection.clone(), bool_first];
 
+        // Task #10 item 1 (Option A pin, coordinator decision 2026-07-14):
+        // the projection (cat 0, rule 1) dispatches in TWO buckets at
+        // DIFFERING positions — `"bitnot"` @ 1 (after the direct prefix)
+        // vs the boolean-literal bucket @ 0 — the exact P7 shape that
+        // refuted the amendment-6 panic. It must classify
+        // AMBIGUOUS-MULTI-BUCKET (no derived ordinal → the site-2 fallback
+        // 0 = the trait default, zero K-C movement), while the direct
+        // prefix (single-bucket) keeps its derived position.
+        let mut fork_model = super::super::fork_emission::ForkEmissionOrdinalModel::new();
         let ts = emit_prefix_arms_for_category(
             &lang,
             0,
             "UInt32",
             &[(0, &direct_prefix), (1, &projection)],
             &std::collections::HashMap::new(),
+            &std::collections::HashMap::new(),
+            &mut fork_model,
+        );
+        assert!(
+            fork_model.is_ambiguous_multi_bucket(0, 1),
+            "the multi-bucket projection classifies ambiguous (Option A)"
+        );
+        assert_eq!(
+            fork_model.site2_ordinal(0, 1),
+            None,
+            "no guessed ordinal for the ambiguous projection"
+        );
+        assert_eq!(
+            fork_model.site2_ordinal(0, 0),
+            Some(0),
+            "the single-bucket direct prefix keeps its derived position"
         );
         let s = ts.to_string();
         let guard = "__kw == \"bitnot\" && state_cat_src_idx == 0u16";
