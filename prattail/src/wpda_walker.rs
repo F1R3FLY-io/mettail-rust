@@ -3720,14 +3720,32 @@ pub enum ForkActionKind {
     /// + CollectionDelegateDispatch.v. Fork emits `consume_trigger: false`.
     PushProjectionInline,
     /// #307 ROOT-A D3 multi-target literal consume (FV:
-    /// MixfixLiteralAccounting.fork_completeness): a mixfix rule literal
-    /// matched MORE THAN ONE same-text lattice edge with DISTINCT targets
-    /// (reachable only via soft-fail orphan node duplication — same text ⇒
-    /// same end byte ⇒ normally the same node). Every matching target is
-    /// followed (preserve-disambiguation; never pick-one). The branch's
-    /// `symbol` is the SAME marker already on top (a self-replace no-op by
-    /// construction), so the child is the parent cursor advanced to this
-    /// edge's target in the branch's state.
+    /// MixfixLiteralAccounting.fork_completeness), CONTRACT REWRITTEN by
+    /// S1-FACTORING F5-2 (D-3 two-arm, red-team A-M1, 2026-07-13): consume
+    /// the token at the parent's position along the matched lattice edge to
+    /// `next_pos`, REPLACING the GSS top symbol with `branch.symbol`.
+    ///
+    /// Two emitter families ride this kind:
+    ///   - `__checked_literal_consume!`'s multi-target Fork (the original
+    ///     #307 emitter — a mixfix rule literal matching MORE THAN ONE
+    ///     same-text lattice edge with distinct targets, reachable only via
+    ///     soft-fail orphan node duplication; every matching target is
+    ///     followed, never pick-one). Its `branch.symbol` is the SAME marker
+    ///     already on top, so the replace is an IDENTITY (no-op) and the
+    ///     child is simply the parent advanced to the edge's target.
+    ///   - the F5-2 mixfix SPINE prelude's divergence commits: the branch's
+    ///     `symbol` is the MEMBER's own `mixfix_marker`, DIFFERENT from the
+    ///     spine marker on top — the commit MUST land on the GSS (classic:
+    ///     conditional `cursor_gss_replace_top_auto` on symbol inequality —
+    ///     unconditional would mint new GSS nodes for the identity case and
+    ///     perturb today's ROOT-A lattice self-replace forks; pure: the
+    ///     descriptor's `cur_sym` takes `branch.symbol`, a no-op when
+    ///     equal). Without the replace a commit would stay SPINE-stamped and
+    ///     trip the S1 H9 spine-id asserts at fire/packing/realize.
+    ///
+    /// The non-fork `WpdaStepAction::ConsumeAtAndReplace` twin always
+    /// performed the real replace in both engines; this kind now matches it
+    /// modulo the identity short-circuit.
     ConsumeAtAndReplace { next_pos: usize },
 
     /// Push, but first mirror the consumed structural trigger token as a
@@ -17325,12 +17343,34 @@ where
                         },
                         ForkActionKind::ConsumeAtAndReplace { next_pos } => {
                             // #307 ROOT-A D3 multi-target literal consume (FV:
-                            // MixfixLiteralAccounting.fork_completeness): the
-                            // branch's symbol is the SAME marker already on
-                            // top (self-replace no-op), so the child is the
-                            // parent advanced to this matched edge's target in
-                            // the branch's state. No GSS mutation.
+                            // MixfixLiteralAccounting.fork_completeness) +
+                            // S1-FACTORING F5-2 D-3 (red-team A-M1): honor
+                            // `branch.symbol`. Same-symbol branches (the
+                            // `__checked_literal_consume!` family — every
+                            // pre-F5-2 emitter) skip the replace, exactly the
+                            // historical no-op: an UNCONDITIONAL replace would
+                            // mint a new GSS node for the identity case
+                            // (`replace_top_with_edge_id_kind` has no identity
+                            // short-circuit) and perturb the ROOT-A lattice
+                            // self-replace forks. A DIFFERENT symbol is an
+                            // F5-2 mixfix spine COMMIT: replace the spine
+                            // marker with the member marker on the CHILD
+                            // (parent + sibling branches keep the spine top),
+                            // mirroring the non-fork ConsumeAtAndReplace arm's
+                            // order (replace at the pre-consume position,
+                            // then advance).
                             let mut child = cursor.clone();
+                            let top_symbol =
+                                self.gss.node(child.node).map(|n| n.symbol);
+                            if top_symbol != Some(branch.symbol) {
+                                let pre_consume_pos = child.pos;
+                                let _ = self.cursor_gss_replace_top_auto(
+                                    &mut child,
+                                    branch.symbol,
+                                    pre_consume_pos,
+                                    branch.weight.clone(),
+                                );
+                            }
                             child.pos = next_pos;
                             child.weight = cursor.weight.times_ref(&branch.weight);
                             child.inner_state = branch.new_state.clone();
@@ -21885,7 +21925,7 @@ where
                         });
                         if let CursorOutcome::ForkInto(children) = outcome {
                             let result_w = crate::sppf::SPPF_ID_NONE;
-                            let _ = self.gss.gll_pop(cursor.node, cursor.pos, result_w);
+                            let _ = self.gss.gll_pop(cursor.node, cursor.pos, result_w, CGLL_PURE_RULE_NONE);
                             for c in children {
                                 worklist.push_back(c);
                             }
@@ -22803,7 +22843,7 @@ where
                         };
                         // Record the pop into P (create-after-pop bookkeeping;
                         // parity with the census/edge-graph path).
-                        let _ = self.gss.gll_pop(v, cursor.pos, z);
+                        let _ = self.gss.gll_pop(v, cursor.pos, z, CGLL_PURE_RULE_NONE);
                         gll_pops += 1;
                         // RED-TEAM (action-once): the shared `z` MUST be interned
                         // before we push it onto extras. `z == NONE` ⇒ a structural
@@ -23126,7 +23166,7 @@ where
                             // `@(p)` false-accept + `@a!(0,1)` gain (no spurious
                             // sibling caller is ever reached).
                             let v = retslot_reduce_v.unwrap_or(crate::gss::GSS_NODE_NONE);
-                            let returns = self.gss.gll_pop(v, cursor.pos, result_w);
+                            let returns = self.gss.gll_pop(v, cursor.pos, result_w, CGLL_PURE_RULE_NONE);
                             gll_pops += 1;
                             let edges = self.gss.gll_edges(v).to_vec();
                             // ── ROOT-P Checkpoint 0: reduce census ────────────
@@ -23260,7 +23300,7 @@ where
                             // replays at later descents). The Stage-E2 caller
                             // reconnection fan is applied in the `recon` arm ABOVE
                             // (before `apply_action`), over genuine-descent siblings.
-                            let _returns = self.gss.gll_pop(pre_node, cursor.pos, result_w);
+                            let _returns = self.gss.gll_pop(pre_node, cursor.pos, result_w, CGLL_PURE_RULE_NONE);
                             gll_pops += 1;
                             // ── Stage E2b (c) reduce/complete ────────────────────
                             // The completed constituent `z = result_w` (the classic
@@ -27024,7 +27064,24 @@ where
                 // (amendment 2). The original pop action's weight is not
                 // recoverable at replay time — `W::one_ref()` + counted.
                 let cat = pushed.category_src_idx as u32;
-                let rule_id = if pushed_rule == CGLL_PURE_RULE_NONE { cat << 16 } else { pushed_rule };
+                // F5-2 D-3 (replay-channel identity, the AV6/A8 completion):
+                // reconstruct THIS pop's rule packing under the identity the
+                // pop RECORDED (the committed member for a mixfix-spine
+                // frame). Deriving from the frame's pushed symbol is the
+                // pre-F5-2 fallback — exact whenever pop identity equalled
+                // the frame symbol, which was every case before spine
+                // commits existed; a spine-id key here would poison the
+                // reconstructed packing (the realize H9 receipt:
+                // "spine id 0xf803 reached realize" on @(...)-quoted sends,
+                // where the @-lattice's second calling context replays the
+                // popped send frame).
+                let rule_id = if rep.rule_id != CGLL_PURE_RULE_NONE {
+                    rep.rule_id
+                } else if pushed_rule == CGLL_PURE_RULE_NONE {
+                    cat << 16
+                } else {
+                    pushed_rule
+                };
                 // ── P3 Pocket-A2: COLLECTION-ELEMENT led split (replay
                 // mirror of the R2 pop arm — see cgll_pure_spine_split_last).
                 let mut spine_prefix = crate::sppf::SPPF_ID_NONE;
@@ -28056,7 +28113,7 @@ where
                     let pk = self.sppf.intern_packing(rule_id, vec![cid], pop_weight.clone());
                     self.sppf.link_packing_to_symbol(z, pk);
                 }
-                let returns = self.gss.gll_pop(d.u, i_pop, z);
+                let returns = self.gss.gll_pop(d.u, i_pop, z, CGLL_PURE_RULE_NONE);
                 run.stats.gll_pops += 1;
                 for ret in &returns {
                     self.cgll_pure_resume_fold(run, d.u, ret, z, new_state);
@@ -28064,7 +28121,7 @@ where
                 return;
             }
             for z in collection_zs {
-                let returns = self.gss.gll_pop(d.u, i_pop, z);
+                let returns = self.gss.gll_pop(d.u, i_pop, z, CGLL_PURE_RULE_NONE);
                 run.stats.gll_pops += 1;
                 for ret in &returns {
                     self.cgll_pure_resume_fold(run, d.u, ret, z, new_state);
@@ -28132,7 +28189,7 @@ where
                     );
                     let pk = self.sppf.intern_packing(rule_id, children, pk_weight);
                     self.sppf.link_packing_to_symbol(z, pk);
-                    let returns = self.gss.gll_pop(d.u, i_pop, z);
+                    let returns = self.gss.gll_pop(d.u, i_pop, z, CGLL_PURE_RULE_NONE);
                     run.stats.gll_pops += 1;
                     for ret in &returns {
                         self.cgll_pure_resume_fold(run, d.u, ret, z, new_state);
@@ -28144,7 +28201,12 @@ where
                     // `w` and intern the PER-EDGE `z_e` spanning
                     // `(span_lo(operand), i_pop)`; the caller's `w` is
                     // REPLACED by `z_e` (LHS consumed into the constituent).
-                    let returns = self.gss.gll_pop(d.u, i_pop, d.w);
+                    // F5-2 D-3 (replay-channel identity): record the
+                    // COMMITTED pop-time `rule_id` in P — the
+                    // create-after-pop replay reconstructs this pop's rule
+                    // packing and must key it by the committed member id,
+                    // never the frame's (possibly spine) pushed symbol.
+                    let returns = self.gss.gll_pop(d.u, i_pop, d.w, rule_id);
                     run.stats.gll_pops += 1;
                     for ret in &returns {
                         // ── P3 Pocket-A2: COLLECTION-ELEMENT led split ────
@@ -28277,7 +28339,7 @@ where
                 other => other.clone(),
             };
             let z = d.w;
-            let returns = self.gss.gll_pop(d.u, i_pop, z);
+            let returns = self.gss.gll_pop(d.u, i_pop, z, CGLL_PURE_RULE_NONE);
             run.stats.gll_pops += 1;
             let popped_is_category_entry =
                 matches!(d.cur_sym.kind, SymbolKind::CategoryEntry);
@@ -30916,7 +30978,7 @@ where
                         flat,
                         weight.clone(),
                     );
-                    let returns = self.gss.gll_pop(d.u, d.pos, z);
+                    let returns = self.gss.gll_pop(d.u, d.pos, z, CGLL_PURE_RULE_NONE);
                     run.stats.gll_pops += 1;
                     for ret in &returns {
                         let Some(ctx) =
@@ -31027,10 +31089,21 @@ where
                 run.worklist.push_back(CgllPureDescriptor { state: br_state, ..d.clone() });
             },
             ForkActionKind::ConsumeAtAndReplace { next_pos } => {
-                // Classic keeps the node symbol (self-replace no-op by
-                // construction) — mirror: `cur_sym` unchanged.
+                // S1-FACTORING F5-2 D-3 (red-team A-M1): honor `br_symbol` —
+                // the descriptor's `cur_sym` takes the branch's symbol,
+                // mirroring the non-fork ConsumeAtAndReplace arm. A no-op
+                // for the `__checked_literal_consume!` family (every
+                // pre-F5-2 emitter passes the SAME marker already in
+                // `cur_sym` — the historical "self-replace no-op"); LOAD-
+                // BEARING for the F5-2 mixfix spine COMMITS, whose branch
+                // symbol is the MEMBER marker (without it a committing
+                // branch stays SPINE-stamped and trips the S1 H9 spine-id
+                // asserts at reduce/intern). `br_weight` remains discarded
+                // (commit edges are `lex_one()` by design D-6; A-M2 struck
+                // the weight-bearing fallback as unsound in this arm).
                 run.worklist.push_back(CgllPureDescriptor {
                     state: br_state,
+                    cur_sym: br_symbol,
                     pos: next_pos,
                     ..d.clone()
                 });

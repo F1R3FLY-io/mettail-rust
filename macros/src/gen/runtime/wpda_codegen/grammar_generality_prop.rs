@@ -1032,6 +1032,116 @@ fn inv8_prefix_surface_noloss(lang: &LanguageDef) -> Result<(), String> {
     Ok(())
 }
 
+/// INV-8-mixfix: mixfix-surface NO-LOSS (S1-FACTORING F5-2, plan
+/// `f5_mixfix_cohorts_plan.md` §2.3 INV-8-analog). For every
+/// `(dispatch category, trigger)` mixfix cohort discovered by the factoring
+/// slice scan (the SAME `group_ops_by_cat_terminal` grouping +
+/// `GEN1_MAX_SLICE` window as the `mixfix_bp_<cat>` emitters), the partition
+/// accounts for every slice member exactly once:
+///
+/// ```text
+/// Σ leaves(groups) + Σ |members(ineligible)| + |singletons| == slice.len()
+/// ```
+///
+/// D-5 (whole-slice eligibility) additionally requires: at most ONE group
+/// per bucket, and a factored bucket has NO ineligible/singleton residue
+/// (its group's leaves == the whole slice). Checked on BOTH
+/// [`super::factoring::build_mixfix_factoring`] (the always-computed model)
+/// and [`super::factoring::mixfix_emission_partition`] (the F5-2 integration
+/// surface); with `forks::S1_FACTORING && forks::S1F5_MIXFIX_COHORTS` not
+/// both `true`, the latter must degenerate to the identity (every member a
+/// `FactoringDisabled` singleton, zero groups, zero deferrals).
+fn inv8_mixfix_surface_noloss(lang: &LanguageDef) -> Result<(), String> {
+    let (categories, per_cat) = categories_and_per_cat(lang);
+    let prefix = super::factoring::build_prefix_factoring(lang, &categories, &per_cat);
+    let models = [
+        (
+            "mixfix factoring model",
+            super::factoring::build_mixfix_factoring(lang, &categories, &per_cat, &prefix),
+        ),
+        (
+            "mixfix emission partition",
+            super::factoring::mixfix_emission_partition(lang, &categories, &per_cat),
+        ),
+    ];
+    for (which, model) in &models {
+        for fact in model {
+            for bucket in &fact.buckets {
+                let leaves: usize = bucket.groups.iter().map(|g| g.leaves().len()).sum();
+                let deferred: usize =
+                    bucket.ineligible.iter().map(|g| g.member_rule_idxs.len()).sum();
+                let total = leaves + deferred + bucket.singletons.len();
+                if total != bucket.slice.len() {
+                    return Err(format!(
+                        "INV-8-mixfix no-loss violated in the {which} at (cat {}, {:?}): \
+                         {leaves} leaves + {deferred} deferred + {} singletons != slice {}",
+                        fact.dispatch_cat_src_idx,
+                        bucket.trigger,
+                        bucket.singletons.len(),
+                        bucket.slice.len(),
+                    ));
+                }
+                if bucket.groups.len() > 1 {
+                    return Err(format!(
+                        "INV-8-mixfix D-5 violated in the {which} at (cat {}, {:?}): \
+                         {} groups in one bucket (whole-slice ⇒ at most one)",
+                        fact.dispatch_cat_src_idx,
+                        bucket.trigger,
+                        bucket.groups.len(),
+                    ));
+                }
+                if let Some(group) = bucket.groups.first() {
+                    if group.leaves().len() != bucket.slice.len()
+                        || !bucket.ineligible.is_empty()
+                        || !bucket.singletons.is_empty()
+                    {
+                        return Err(format!(
+                            "INV-8-mixfix D-5 violated in the {which} at (cat {}, {:?}): \
+                             a factored bucket must cover the WHOLE slice ({} leaves, \
+                             slice {}, {} ineligible, {} singletons)",
+                            fact.dispatch_cat_src_idx,
+                            bucket.trigger,
+                            group.leaves().len(),
+                            bucket.slice.len(),
+                            bucket.ineligible.len(),
+                            bucket.singletons.len(),
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    if !(super::forks::S1_FACTORING && super::forks::S1F5_MIXFIX_COHORTS) {
+        let (_, effective) = &models[1];
+        for fact in effective {
+            for bucket in &fact.buckets {
+                if !bucket.groups.is_empty() || !bucket.ineligible.is_empty() {
+                    return Err(format!(
+                        "INV-8-mixfix identity violated: the consts are OFF yet \
+                         (cat {}, {:?}) emits {} groups / {} deferrals",
+                        fact.dispatch_cat_src_idx,
+                        bucket.trigger,
+                        bucket.groups.len(),
+                        bucket.ineligible.len(),
+                    ));
+                }
+                if bucket.singletons.len() != bucket.slice.len()
+                    || bucket.singletons.iter().any(|s| {
+                        s.reason != super::factoring::SingletonReason::FactoringDisabled
+                    })
+                {
+                    return Err(format!(
+                        "INV-8-mixfix identity violated at (cat {}, {:?}): every slice \
+                         member must be a FactoringDisabled singleton",
+                        fact.dispatch_cat_src_idx, bucket.trigger,
+                    ));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 // Deterministic witness tests — one clear RED signal per gap.
 // ════════════════════════════════════════════════════════════════════════════
@@ -1172,6 +1282,35 @@ fn grammar_generality_inv8_prefix_surface_noloss() {
         .expect("INV-8: prefix-surface member accounting must balance (A5)");
 }
 
+/// INV-8-mixfix witness: a deliberately factorable mixfix send cohort — two
+/// `!`-triggered postfix-mixfix rules sharing the `«` opener (an
+/// operand-bearing member `a ! « b »` and a nullary member `a ! « »`,
+/// the rhocalc POutput/POutputEmpty shape on a foreign alphabet) — the
+/// slice accounting must balance in both models, and with the F5-2 consts
+/// not both on the emission partition must be the identity.
+#[test]
+fn grammar_generality_inv8_mixfix_surface_noloss() {
+    let types = vec![lang_type("Expr", None)];
+    let terms = vec![
+        jrule("EAtom", "Expr", vec![], vec![lit("e")]),
+        jrule(
+            "MOne",
+            "Expr",
+            vec![simple("a", "Expr"), simple("b", "Expr")],
+            vec![param("a"), lit("!"), lit("«"), param("b"), lit("»")],
+        ),
+        jrule(
+            "MEmpty",
+            "Expr",
+            vec![simple("a", "Expr")],
+            vec![param("a"), lit("!"), lit("«"), lit("»")],
+        ),
+    ];
+    let lang = mk_language("Inv8MixfixLang", types, terms);
+    inv8_mixfix_surface_noloss(&lang)
+        .expect("INV-8-mixfix: mixfix-surface slice accounting must balance (D-5)");
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 // Property tests over random grammars (breadth).
 // ════════════════════════════════════════════════════════════════════════════
@@ -1187,6 +1326,7 @@ proptest! {
         prop_assert!(inv3_goal_gate(&lang).is_ok(), "{}", inv3_goal_gate(&lang).unwrap_err());
         prop_assert!(inv7_nullary_per_kind(&lang).is_ok(), "{}", inv7_nullary_per_kind(&lang).unwrap_err());
         prop_assert!(inv8_prefix_surface_noloss(&lang).is_ok(), "{}", inv8_prefix_surface_noloss(&lang).unwrap_err());
+        prop_assert!(inv8_mixfix_surface_noloss(&lang).is_ok(), "{}", inv8_mixfix_surface_noloss(&lang).unwrap_err());
     }
 }
 

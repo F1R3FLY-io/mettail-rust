@@ -1226,6 +1226,56 @@ pub(crate) const S1_FACTORING: bool = true;
 /// `run_s1f5_1_*.sh`).
 pub(crate) const S1F5_ACCEPT_CONTINUE: bool = true;
 
+/// S1F5_MIXFIX_COHORTS — kill-switch for F5-2 mixfix send cohorts (the
+/// InfixLoop Name-led send fan, 2026-07-13). Compile-time `const` resolved
+/// at macro expansion (the [`S1_FACTORING`] kill-switch convention — NOT a
+/// runtime env var). Effective ONLY while [`S1_FACTORING`] is also `true`:
+/// `factoring::mixfix_emission_partition` short-circuits to the identity
+/// partition otherwise, and the mixfix model
+/// (`factoring::build_mixfix_factoring`) is consulted by no emitter.
+///
+/// Plan of record: `scratchpad/zz_probes/f5_mixfix_cohorts_plan.md` (§1-§8
+/// plus the §RED-TEAM amendments A-M1..A-M5). The fan being factored: at
+/// `InfixLoop` on `!` (resp. `!!`) in RhoCalc `Name` the generated engine
+/// forks 3 per-rule `mixfix_marker` + `MixfixLiteralRun{kind: 2}` branches
+/// — rules {4 POutput, 6 POutputEmpty, 8 POutput2Plus} (resp. {5, 7, 9}) —
+/// so rules 4 and 8 EACH descend the payload sub-parse (×2 per send, and
+/// the distinct marker symbols duplicate the whole payload subtree in the
+/// pure descriptor space). The factored emission pushes ONE spine branch
+/// per cohort (D-1 full-admission-only: admitted iff `min_l_bp >= cur_bp`
+/// with the goal/method-name gates member-uniform; any partial-admission
+/// window falls back to the verbatim per-member loop), runs ONE kind-2 run
+/// and ONE payload walk, and commits to the member rule at the trie
+/// divergence leaves INSIDE a spliced `MixfixLiteralRun` prelude (kind-2
+/// exit for the nullary member; kind-0 step 1 for the operand members —
+/// every commit rides a consuming edge, FS1). D-2 forces the width-1 trigger
+/// Fork (`Fork{ct: true, n: 1}` — the M6c.8.5 precedent) so the action
+/// family at send sites never changes; D-4 keeps every `mixfix_bp_<cat>`
+/// table per-rule (the Arm G reset triple + iter-absorb `.first()` oracles);
+/// D-6 stamps the spine trigger `lex_w(BP_TIER_MIXFIX, result, MIN member)`
+/// (AV5-analog) with commit edges `lex_one()` — the C8-mixfix channel is
+/// pre-classified (member-tail min-member substitution on NULLARY rows
+/// only; payload rows byte-equal).
+///
+/// When `false`: the loop-v2 match, the MLR spine prelude, the
+/// `mixfix_parts_len` poison rows, the lex-alt group entries, and every
+/// mixfix engine-table row are ABSENT — the generated
+/// `target/generated/<lang>/wpda.rs` files are byte-identical to the F5-1
+/// flip state (receipts: `scratchpad/zz_probes/logs_s1f5_2/`).
+///
+/// When `true`: exactly ONE bundled engine changes (rhocalc — the only
+/// language with factorable mixfix cohorts: Name `!` {4,6,8} spine 0xF803
+/// and `!!` {5,7,9} spine 0xF804, per-RESULT-category ordinals continuing
+/// after the Proc `@`-cohort prefix groups); calculator + fortranmodel are
+/// hash-identical controls (census + hash gates in `run_s1f5_2_*.sh`).
+/// The ONE prattail walker change riding this leg (A-M1, D-3 two-arm): the
+/// fork-branch `ConsumeAtAndReplace` arms in BOTH engines honor
+/// `branch.symbol` (pure sets `cur_sym`; classic conditionally
+/// GSS-replaces on symbol inequality) — a no-op for every pre-F5-2 emitter
+/// (`__checked_literal_consume!` is the sole fork-CAR emitter and is always
+/// same-marker) and load-bearing for spine commits.
+pub(crate) const S1F5_MIXFIX_COHORTS: bool = true;
+
 // ─────── Branch descriptors ──────────────────────────────────────────────
 
 /// A single Fork branch in a Cluster 1 emission. Stringly-typed via
@@ -2130,7 +2180,31 @@ pub(crate) fn emit_lex_fork_at_prefix_dispatch(
 /// every surviving lexical alternative at the current token position. Each
 /// branch carries the alternative-specific `next_pos`, so lattice token
 /// sources advance along the chosen DAG edge.
-pub(crate) fn emit_lex_fork_at_infix_loop(_primary_src_idx: u16) -> TokenStream {
+///
+/// S1-FACTORING F5-2 (A3-analog, red-team A-M5): `mixfix_spine_entries` is
+/// `true` iff THIS language's `lex_alt_rules_for_infix` table carries
+/// factored mixfix GROUP entries (`info.rule_idx` = a SPINE id). The two
+/// `MixfixFirstTrigger` sites then route the `lex_w_alt` weight identity AND
+/// the `LexAltMixfixOp.rule_idx` ACTION-KIND field through
+/// `__s1_spine_weight_rule(result, rule)` — MIN member for spine ids
+/// (AV5-mirrored; a SPINE id in either channel would leak into lex-min
+/// elections / the classic `LexForkStamp` conversion), identity for real
+/// ids. The branch `symbol`/`new_state` keep `info.rule_idx` (the spine
+/// coordinates). Admission stays the site's own floor-only predicate
+/// (`l_bp >= *cur_bp`; the group entry carries the cohort MIN l_bp = the
+/// D-1 full-admission gate at this site). `false` ⇒ byte-identical
+/// emission.
+pub(crate) fn emit_lex_fork_at_infix_loop(
+    _primary_src_idx: u16,
+    mixfix_spine_entries: bool,
+) -> TokenStream {
+    // The two identity channels per MixfixFirstTrigger branch (weight rule +
+    // action-kind rule_idx) — redirected only for grouped languages.
+    let mixfix_identity_rule = if mixfix_spine_entries {
+        quote! { __s1_spine_weight_rule(result_src_idx, info.rule_idx) }
+    } else {
+        quote! { info.rule_idx }
+    };
     quote! {
         if tokens.is_ambiguous_at(_pos) {
             let alts = tokens.peek_alternatives(_pos);
@@ -2235,7 +2309,7 @@ pub(crate) fn emit_lex_fork_at_infix_loop(_primary_src_idx: u16) -> TokenStream 
                                     weight: lex_w_alt(
                                         mettail_prattail::automata::lex_weight::BP_TIER_MIXFIX,
                                         result_src_idx,
-                                        info.rule_idx,
+                                        #mixfix_identity_rule,
                                         0u16,
                                     ),
                                     // #307 ROOT-A D2: enter the pre-operand
@@ -2257,7 +2331,7 @@ pub(crate) fn emit_lex_fork_at_infix_loop(_primary_src_idx: u16) -> TokenStream 
                                         mettail_prattail::wpda_walker::ForkActionKind::LexAltMixfixOp {
                                             alt_idx: 0u16,
                                             trigger: primary_text.clone(),
-                                            rule_idx: info.rule_idx,
+                                            rule_idx: #mixfix_identity_rule,
                                             next_pos: primary_next_pos,
                                             l_bp,
                                             result_src_idx,
@@ -2398,7 +2472,7 @@ pub(crate) fn emit_lex_fork_at_infix_loop(_primary_src_idx: u16) -> TokenStream 
                                     weight: lex_w_alt(
                                         mettail_prattail::automata::lex_weight::BP_TIER_MIXFIX,
                                         result_src_idx,
-                                        info.rule_idx,
+                                        #mixfix_identity_rule,
                                         alt_idx,
                                     ),
                                     // #307 ROOT-A D2: enter the pre-operand
@@ -2417,7 +2491,7 @@ pub(crate) fn emit_lex_fork_at_infix_loop(_primary_src_idx: u16) -> TokenStream 
                                         mettail_prattail::wpda_walker::ForkActionKind::LexAltMixfixOp {
                                             alt_idx,
                                             trigger: alt.text.to_string(),
-                                            rule_idx: info.rule_idx,
+                                            rule_idx: #mixfix_identity_rule,
                                             next_pos: alt_next_pos,
                                             l_bp,
                                             result_src_idx,
@@ -2537,12 +2611,28 @@ mod tests {
 
     #[test]
     fn emit_infix_lex_fork_emits_operator_action_variants() {
-        let ts = emit_lex_fork_at_infix_loop(0);
+        let ts = emit_lex_fork_at_infix_loop(0, false);
         let s = ts.to_string();
         assert!(s.contains("lex_alt_rules_for_infix"), "missing infix lookup: {}", s);
         assert!(s.contains("LexAltPostfixOp"), "missing postfix action: {}", s);
         assert!(s.contains("LexAltInfixOp"), "missing infix action: {}", s);
         assert!(s.contains("LexAltMixfixOp"), "missing mixfix action: {}", s);
+        // F5-2 A-M5: without mixfix group entries the identity channels stay
+        // the plain `info.rule_idx` (byte-identity); with them BOTH the
+        // weight rule and the action-kind rule_idx route through
+        // `__s1_spine_weight_rule`.
+        assert!(
+            !s.contains("__s1_spine_weight_rule"),
+            "no-groups emission must not reference the redirect: {}",
+            s
+        );
+        let grouped = emit_lex_fork_at_infix_loop(0, true).to_string();
+        assert_eq!(
+            grouped.matches("__s1_spine_weight_rule").count(),
+            4,
+            "two MixfixFirstTrigger sites × (weight + action-kind) redirects: {}",
+            grouped
+        );
         assert!(
             s.contains("__primary_floor_blocked") && s.contains("ForkActionKind :: Advance"),
             "missing max-munch Pratt-floor boundary branch: {}",

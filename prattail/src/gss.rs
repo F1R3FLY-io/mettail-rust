@@ -890,6 +890,17 @@ pub(crate) struct RecordedPop {
     pub pos: usize,
     /// SPPF result node `z` produced by the completed nonterminal.
     pub result_w: SppfId,
+    /// S1-FACTORING F5-2 D-3 (replay-channel identity, 2026-07-13): the
+    /// POP-TIME rule identity `(cat << 16) | rule` of the popping
+    /// descriptor, `u32::MAX` when the popping site carries none. The
+    /// D2-class (LHS-join) create-after-pop REPLAY reconstructs the
+    /// constituent's rule packing; deriving that rule from the FRAME's
+    /// pushed symbol was correct only while pop identity always equalled
+    /// the frame symbol — a COMMITTED mixfix-spine frame pops with the
+    /// member's identity while its frame symbol keeps the spine id (the
+    /// AV6/A8 doctrine: the slot label may keep SPINE, the packing/fire
+    /// identity may not), so the replay must carry the recorded identity.
+    pub rule_id: u32,
 }
 
 /// A return synthesised by a canonical `create`/`pop`: the raw materials for the
@@ -916,6 +927,9 @@ pub(crate) struct GllReturn {
     pub caller_sppf_stack: crate::path_tree_arena::StackId,
     /// ROOT-P Stage E: caller's incoming-edge chain handle at the call site.
     pub caller_edge_stack: crate::path_tree_arena::StackId,
+    /// F5-2 D-3: the recorded pop-time rule identity (see
+    /// [`RecordedPop::rule_id`]); `u32::MAX` when none was recorded.
+    pub rule_id: u32,
 }
 
 /// Canonical-GLL GSS side-state: the operand-labelled edge adjacency and the
@@ -1475,6 +1489,7 @@ impl<W: SemiringRef> WpdaGss<W> {
                         result_w: p.result_w,
                         caller_sppf_stack,
                         caller_edge_stack,
+                        rule_id: p.rule_id,
                     })
                     .collect()
             })
@@ -1497,6 +1512,7 @@ impl<W: SemiringRef> WpdaGss<W> {
         node: GssNodeId,
         pos: usize,
         result_w: SppfId,
+        rule_id: u32,
     ) -> Vec<GllReturn> {
         // `L_u` = the popping node's label symbol. StackSymbolV2 is `Copy`, so
         // extract it BEFORE borrowing the canonical side-state (no borrow clash).
@@ -1509,10 +1525,13 @@ impl<W: SemiringRef> WpdaGss<W> {
             let pops = st.recorded_pops.entry(node).or_default();
             // P is a set: skip a duplicate pop (idempotent; no double-emit and no
             // duplicate P entry that a later `gll_create` would over-replay).
-            if pops.iter().any(|p| p.pos == pos && p.result_w == result_w) {
+            if pops
+                .iter()
+                .any(|p| p.pos == pos && p.result_w == result_w && p.rule_id == rule_id)
+            {
                 return Vec::new();
             }
-            pops.push(RecordedPop { pos, result_w });
+            pops.push(RecordedPop { pos, result_w, rule_id });
         }
         // Emit a return for EVERY current edge of `node` (edges added LATER are
         // handled by `gll_create`'s create-after-pop replay).
@@ -1529,6 +1548,7 @@ impl<W: SemiringRef> WpdaGss<W> {
                         result_w,
                         caller_sppf_stack: e.caller_sppf_stack,
                         caller_edge_stack: e.caller_edge_stack,
+                        rule_id,
                     })
                     .collect()
             })
@@ -2092,7 +2112,7 @@ mod tests {
 
         // Pop: the return carries the same operand `w` plus slot/caller/pos/z.
         let z: SppfId = 99;
-        let returns = g.gll_pop(v, 5, z);
+        let returns = g.gll_pop(v, 5, z, u32::MAX);
         assert_eq!(returns.len(), 1);
         let r = returns[0];
         assert_eq!(r.operand_w, w, "operand w round-trips through pop");
@@ -2122,7 +2142,7 @@ mod tests {
         let (v, r0) = g.gll_create(c1, l, 3, w1, crate::path_tree_arena::STACK_ID_ROOT, crate::path_tree_arena::STACK_ID_ROOT);
         assert!(r0.is_empty());
         let z: SppfId = 7;
-        let popret = g.gll_pop(v, 8, z);
+        let popret = g.gll_pop(v, 8, z, u32::MAX);
         assert_eq!(popret.len(), 1);
         assert_eq!(popret[0].caller, c1);
         assert_eq!(g.gll_recorded_pops(v).len(), 1, "z recorded in P[v]");
@@ -2161,7 +2181,7 @@ mod tests {
         assert_eq!(g.gll_edges(v).len(), 3, "three distinct predecessor edges");
 
         let z: SppfId = 555;
-        let mut returns = g.gll_pop(v, 9, z);
+        let mut returns = g.gll_pop(v, 9, z, u32::MAX);
         assert_eq!(returns.len(), 3, "one return per predecessor edge");
         // Each return pairs the correct caller with the correct operand.
         returns.sort_by_key(|r| r.caller);
@@ -2202,7 +2222,7 @@ mod tests {
         // Re-adding an existing edge AFTER a pop must ALSO be idempotent AND must
         // NOT re-fire the replay (double-count guard — the subtle GLL bug class).
         let z: SppfId = 3;
-        let _ = g.gll_pop(v, 6, z);
+        let _ = g.gll_pop(v, 6, z, u32::MAX);
         let (_, replays_after_pop) = g.gll_create(c1, l, 3, w1, crate::path_tree_arena::STACK_ID_ROOT, crate::path_tree_arena::STACK_ID_ROOT); // already present
         assert!(
             replays_after_pop.is_empty(),
@@ -2210,7 +2230,7 @@ mod tests {
         );
 
         // A duplicate pop is a no-op (P is a set).
-        let dup = g.gll_pop(v, 6, z);
+        let dup = g.gll_pop(v, 6, z, u32::MAX);
         assert!(dup.is_empty(), "duplicate pop ⇒ no double-emit");
         assert_eq!(g.gll_recorded_pops(v).len(), 1, "P deduped by (pos, result)");
     }

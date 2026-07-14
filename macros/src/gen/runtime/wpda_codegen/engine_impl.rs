@@ -284,7 +284,16 @@ pub(crate) fn emit_engine_impl_full(
         primary_src_idx,
         s1_spine.any_groups(),
     );
-    let lex_fork_infix_dispatch = super::forks::emit_lex_fork_at_infix_loop(primary_src_idx);
+    // S1-FACTORING F5-2 (plan f5_mixfix_cohorts_plan.md, A-M5): when THIS
+    // language has factored mixfix cohorts, the InfixLoop lex-fork's
+    // MixfixFirstTrigger sites route the `lex_w_alt` weight identity AND the
+    // `LexAltMixfixOp.rule_idx` action-kind field through
+    // `__s1_spine_weight_rule` (min member for spine ids, identity
+    // otherwise). Gated per language so every no-mixfix-group engine stays
+    // byte-identical.
+    let mixfix_any = !s1_spine.mixfix_groups.is_empty();
+    let lex_fork_infix_dispatch =
+        super::forks::emit_lex_fork_at_infix_loop(primary_src_idx, mixfix_any);
 
     // M6c.2 (2026-05-14): per-grammar `lex_alt_rule_for` free fn.
     // Used by the lex-Fork emitter (M6c.3) to bind alts to atomic-
@@ -331,6 +340,182 @@ pub(crate) fn emit_engine_impl_full(
     let s1_trigger_spine_owner_fn = &s1_spine.trigger_spine_owner_fn;
     let s1_spine_members_fn = &s1_spine.spine_members_fn;
     let s1_spine_weight_rule_fn = &s1_spine.spine_weight_rule_fn;
+
+    // ── S1-FACTORING F5-2: the InfixLoop mixfix loop-v2 + the spliced
+    // MixfixLiteralRun spine prelude (plan f5_mixfix_cohorts_plan.md §2). ──
+    //
+    // The VERBATIM per-member fan loop, extracted so the no-groups emission
+    // interpolates the byte-identical tokens at the original position and
+    // the grouped emission reuses it as the loop-v2 `_` fallback arm (D-1:
+    // partial floor windows / goal / method-name rejections reproduce
+    // today's per-member behavior exactly).
+    let mixfix_member_fan_loop = quote! {
+        for &(l_bp, result_src, rule_idx) in __mixfix_slice {
+            if l_bp >= *cur_bp
+                && __goal_admits(result_src)
+                && (__mixfix_fallback_full
+                    || __method_name_admits(result_src, rule_idx))
+            {
+                __cands.push(
+                    mettail_prattail::wpda_walker::ForkBranch {
+                        symbol: StackSymbolV2::mixfix_marker(
+                            result_src, rule_idx, 0,
+                        ),
+                        weight: lex_w(
+                            mettail_prattail::automata::lex_weight::BP_TIER_MIXFIX,
+                            result_src, rule_idx,
+                        ),
+                        new_state: WpdaState::MixfixLiteralRun {
+                            result_src_idx: result_src,
+                            rule_idx,
+                            completed_idx: 0,
+                            kind: 2,
+                            sub_pos: 0,
+                        },
+                        action_kind:
+                            mettail_prattail::wpda_walker::ForkActionKind::Push,
+                    },
+                );
+            }
+        }
+    };
+    let s1_mixfix_fan_arms = &s1_spine.mixfix_fan_arms;
+    let mixfix_fan_tokens = if mixfix_any {
+        // Loop v2: ONE spine branch per fully-admitted cohort (the group
+        // arms carry the D-1 guard — min_l_bp floor + the member-uniform
+        // goal/method-name gates on the A-M4 MEMBER id); everything else
+        // falls to the verbatim per-member loop.
+        quote! {
+            let mut __mixfix_spine_pushed = false;
+            match (state_cat_src_idx, token_text) {
+                #s1_mixfix_fan_arms
+                _ => {
+                    #mixfix_member_fan_loop
+                }
+            }
+        }
+    } else {
+        mixfix_member_fan_loop.clone()
+    };
+    // D-2: a pushed spine branch FORCES the Fork family at width 1
+    // (`Fork{ct: true, n: 1}` — the forks.rs M6c.8.5 single-branch-Fork
+    // precedent). The singleton fast-path's `ConsumeAndPush{Discard}` would
+    // change the action FAMILY at every send site (today's sends are always
+    // ≥2-wide Forks) and bypass every Fork-keyed guard/receipt surface.
+    let mixfix_forced_fork_tokens = if mixfix_any {
+        quote! {
+            if __mixfix_spine_pushed && __cands.len() == 1 {
+                return WpdaStepAction::Fork {
+                    branches: __cands,
+                    consume_trigger: true,
+                };
+            }
+        }
+    } else {
+        TokenStream::new()
+    };
+    // The MixfixLiteralRun literal-step helpers, extracted so the ON
+    // emission can HOIST them above the spine prelude (A-M3: macro_rules!
+    // is post-definition-visible and duplicating the fn is E0428) while the
+    // OFF emission interpolates the byte-identical tokens at the original
+    // position. #307 ROOT-A D3 (2026-06-11; FV: MixfixLiteralAccounting.
+    // {checked_run_iff_spells, primary_equality_loses,
+    // unchecked_accepts_mismatch, checked_never_fabricates,
+    // fork_completeness}): membership-checked literal consume — a rule
+    // literal matches iff its TEXT equals some out-edge of the position
+    // (primary OR lattice alternative); the consume advances along the
+    // MATCHED edge's target; no match ⇒ pure Error; multiple distinct
+    // targets ⇒ Fork, never pick-one.
+    let mixfix_literal_helpers = quote! {
+        fn __mixfix_literal_targets(
+            tokens: &dyn mettail_prattail::wpda_runtime::WpdaTokenSource,
+            pos: usize,
+            expected: &str,
+        ) -> Vec<usize> {
+            let mut targets: Vec<usize> = Vec::with_capacity(2);
+            if tokens.peek_text(pos) == Some(expected) {
+                if let Some(np) = tokens.next_pos(pos, 0) {
+                    targets.push(np);
+                }
+            }
+            for (i, alt) in tokens.peek_alternatives(pos).iter().enumerate() {
+                if alt.text == expected {
+                    if let Some(np) = tokens.next_pos(pos, i + 1) {
+                        if !targets.contains(&np) {
+                            targets.push(np);
+                        }
+                    }
+                }
+            }
+            targets
+        }
+        macro_rules! __checked_literal_consume {
+            ($expected:expr, $next_state:expr) => {{
+                let __expected: &str = $expected;
+                let __next_state = $next_state;
+                let __targets =
+                    __mixfix_literal_targets(tokens, _pos, __expected);
+                match __targets.len() {
+                    0 => WpdaStepAction::Error(format!(
+                        "mixfix literal mismatch: expected {:?} at pos {} \
+                                         (rule {}:{}) — no lattice edge matches",
+                        __expected, _pos, result_src_idx, rule_idx,
+                    )),
+                    1 => WpdaStepAction::ConsumeAtAndReplace {
+                        symbol: StackSymbolV2::mixfix_marker(
+                            *result_src_idx,
+                            *rule_idx,
+                            *completed_idx,
+                        ),
+                        weight: lex_one(),
+                        new_state: __next_state,
+                        next_pos: __targets[0],
+                    },
+                    _ => WpdaStepAction::Fork {
+                        branches: __targets
+                            .iter()
+                            .map(|np| {
+                                mettail_prattail::wpda_walker::ForkBranch {
+                                    symbol: StackSymbolV2::mixfix_marker(
+                                        *result_src_idx,
+                                        *rule_idx,
+                                        *completed_idx,
+                                    ),
+                                    weight: lex_one(),
+                                    new_state: __next_state.clone(),
+                                    action_kind:
+                                        mettail_prattail::wpda_walker::ForkActionKind::ConsumeAtAndReplace {
+                                            next_pos: *np,
+                                        },
+                                }
+                            })
+                            .collect(),
+                        consume_trigger: false,
+                    },
+                }
+            }};
+        }
+    };
+    let s1_mixfix_prelude_arms = &s1_spine.mixfix_prelude_arms;
+    // A-M3 hoist: under the grouped emission the helpers move ABOVE the
+    // spine prelude, which sits BEFORE the generic `mixfix_part`/
+    // `mixfix_parts_len` reads (spine ids never reach them — every prelude
+    // arm early-returns). No-groups emission: helpers stay at their
+    // original site, prelude absent — byte-identical.
+    let (mixfix_mlr_head_tokens, mixfix_mlr_helpers_site_tokens) = if mixfix_any {
+        (
+            quote! {
+                #mixfix_literal_helpers
+                match (*result_src_idx, *rule_idx, *kind, *completed_idx, *sub_pos) {
+                    #s1_mixfix_prelude_arms
+                    _ => {},
+                }
+            },
+            TokenStream::new(),
+        )
+    } else {
+        (TokenStream::new(), mixfix_literal_helpers)
+    };
 
     quote! {
         #lex_alt_rule_for_fn
@@ -1509,34 +1694,13 @@ pub(crate) fn emit_engine_impl_full(
                         );
                         let __mixfix_fallback_full =
                             __mixfix_no_survivor && __cands.is_empty();
-                        for &(l_bp, result_src, rule_idx) in __mixfix_slice {
-                            if l_bp >= *cur_bp
-                                && __goal_admits(result_src)
-                                && (__mixfix_fallback_full
-                                    || __method_name_admits(result_src, rule_idx))
-                            {
-                                __cands.push(
-                                    mettail_prattail::wpda_walker::ForkBranch {
-                                        symbol: StackSymbolV2::mixfix_marker(
-                                            result_src, rule_idx, 0,
-                                        ),
-                                        weight: lex_w(
-                                            mettail_prattail::automata::lex_weight::BP_TIER_MIXFIX,
-                                            result_src, rule_idx,
-                                        ),
-                                        new_state: WpdaState::MixfixLiteralRun {
-                                            result_src_idx: result_src,
-                                            rule_idx,
-                                            completed_idx: 0,
-                                            kind: 2,
-                                            sub_pos: 0,
-                                        },
-                                        action_kind:
-                                            mettail_prattail::wpda_walker::ForkActionKind::Push,
-                                    },
-                                );
-                            }
-                        }
+                        // S1-FACTORING F5-2: `#mixfix_fan_tokens` is the
+                        // VERBATIM per-member loop for languages without
+                        // factored mixfix cohorts, and the loop-v2 group
+                        // match (spine push on full admission; `_` arm =
+                        // the same verbatim loop) otherwise — see the
+                        // `mixfix_member_fan_loop` extraction above.
+                        #mixfix_fan_tokens
 
                         // C1-M (WALK-S2, 2026-05-28): pre-fork MIXFIX ternary
                         // absorption trigger. Mixfix operators (`Tern`,
@@ -1675,6 +1839,12 @@ pub(crate) fn emit_engine_impl_full(
                             }
                         }
 
+                        // S1-FACTORING F5-2 D-2: `#mixfix_forced_fork_tokens`
+                        // (grouped languages only) forces the Fork family
+                        // when the mixfix spine branch is the lone
+                        // candidate — see the extraction above. Empty for
+                        // every other language.
+                        #mixfix_forced_fork_tokens
                         match __cands.len() {
                             0 => {
                                 // No tier matched — fall through to Unwinding.
@@ -1883,6 +2053,14 @@ pub(crate) fn emit_engine_impl_full(
                         //         just-completed operand `completed_idx`.
                         // kind=1: consume preceding_terminals before the
                         //         next operand `completed_idx + 1`.
+                        //
+                        // S1-FACTORING F5-2: `#mixfix_mlr_head_tokens` is
+                        // EMPTY for languages without factored mixfix
+                        // cohorts; otherwise it is the A-M3-hoisted literal
+                        // helpers followed by the spine prelude match —
+                        // every prelude arm early-returns, so spine ids
+                        // never reach the generic reads below.
+                        #mixfix_mlr_head_tokens
                         let part = mixfix_part(
                             *result_src_idx, *rule_idx, *completed_idx,
                         );
@@ -1916,74 +2094,15 @@ pub(crate) fn emit_engine_impl_full(
                         // (`_expected` unused) — stealing enclosing
                         // delimiters or fabricating positions: the ROOT-A
                         // defect (rhocalc `x!(0)` never parsed).
-                        fn __mixfix_literal_targets(
-                            tokens: &dyn mettail_prattail::wpda_runtime::WpdaTokenSource,
-                            pos: usize,
-                            expected: &str,
-                        ) -> Vec<usize> {
-                            let mut targets: Vec<usize> = Vec::with_capacity(2);
-                            if tokens.peek_text(pos) == Some(expected) {
-                                if let Some(np) = tokens.next_pos(pos, 0) {
-                                    targets.push(np);
-                                }
-                            }
-                            for (i, alt) in tokens.peek_alternatives(pos).iter().enumerate() {
-                                if alt.text == expected {
-                                    if let Some(np) = tokens.next_pos(pos, i + 1) {
-                                        if !targets.contains(&np) {
-                                            targets.push(np);
-                                        }
-                                    }
-                                }
-                            }
-                            targets
-                        }
-                        macro_rules! __checked_literal_consume {
-                            ($expected:expr, $next_state:expr) => {{
-                                let __expected: &str = $expected;
-                                let __next_state = $next_state;
-                                let __targets =
-                                    __mixfix_literal_targets(tokens, _pos, __expected);
-                                match __targets.len() {
-                                    0 => WpdaStepAction::Error(format!(
-                                        "mixfix literal mismatch: expected {:?} at pos {} \
-                                         (rule {}:{}) — no lattice edge matches",
-                                        __expected, _pos, result_src_idx, rule_idx,
-                                    )),
-                                    1 => WpdaStepAction::ConsumeAtAndReplace {
-                                        symbol: StackSymbolV2::mixfix_marker(
-                                            *result_src_idx,
-                                            *rule_idx,
-                                            *completed_idx,
-                                        ),
-                                        weight: lex_one(),
-                                        new_state: __next_state,
-                                        next_pos: __targets[0],
-                                    },
-                                    _ => WpdaStepAction::Fork {
-                                        branches: __targets
-                                            .iter()
-                                            .map(|np| {
-                                                mettail_prattail::wpda_walker::ForkBranch {
-                                                    symbol: StackSymbolV2::mixfix_marker(
-                                                        *result_src_idx,
-                                                        *rule_idx,
-                                                        *completed_idx,
-                                                    ),
-                                                    weight: lex_one(),
-                                                    new_state: __next_state.clone(),
-                                                    action_kind:
-                                                        mettail_prattail::wpda_walker::ForkActionKind::ConsumeAtAndReplace {
-                                                            next_pos: *np,
-                                                        },
-                                                }
-                                            })
-                                            .collect(),
-                                        consume_trigger: false,
-                                    },
-                                }
-                            }};
-                        }
+                        //
+                        // S1-FACTORING F5-2 (A-M3): the helper fn + macro
+                        // are extracted to `mixfix_literal_helpers` above —
+                        // `#mixfix_mlr_helpers_site_tokens` re-interpolates
+                        // them HERE (byte-identical) for languages without
+                        // factored mixfix cohorts; grouped languages hoist
+                        // them above the spine prelude instead (this site
+                        // is then empty).
+                        #mixfix_mlr_helpers_site_tokens
                         match (*kind, part) {
                             // #307 ROOT-A D1: the NEW pre-operand literal run
                             // — consumes parts[completed_idx].PRECEDING before

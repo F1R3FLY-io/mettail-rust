@@ -168,6 +168,12 @@ pub(crate) enum SpineItem {
 pub(crate) enum MemberKind {
     Binder,
     Nullary,
+    /// F5-2 (2026-07-13, plan `f5_mixfix_cohorts_plan.md`): a member of an
+    /// InfixLoop mixfix send cohort (rhocalc `!`/`!!`). Commits back into the
+    /// member's OWN generic `MixfixLiteralRun` machinery at typed
+    /// `(kind, completed_idx, sub_pos)` coordinates
+    /// ([`MemberCommit::MixfixRun`], the A4-analog).
+    Mixfix,
 }
 
 /// Amendment A4 — TYPED commit coordinates per member kind. The commit
@@ -187,6 +193,21 @@ pub(crate) enum MemberCommit {
         completed_idx: u8,
         sub_pos: u8,
     },
+    /// F5-2 (A4-analog, plan §2.2): resume inside the member's existing
+    /// generic `MixfixLiteralRun` machinery at the full
+    /// `(kind, completed_idx, sub_pos)` coordinate — the commit CAR replaces
+    /// the spine marker with `mixfix_marker(result, rule_idx, completed_idx)`
+    /// and enters `MixfixLiteralRun { rule_idx, completed_idx, kind,
+    /// sub_pos }`. The F0 `Nullary` variant is the `kind: 2, completed: 0`
+    /// special case on the PREFIX surface; mixfix-cohort members (including
+    /// their nullary members, e.g. rhocalc POutputEmpty) always use this
+    /// variant so the coordinate law is stated once per surface.
+    MixfixRun {
+        rule_idx: u16,
+        kind: u8,
+        completed_idx: u8,
+        sub_pos: u8,
+    },
 }
 
 /// SPINE-POS → MEMBER-POS map (amendment A4, typed per member kind). Entry
@@ -203,6 +224,14 @@ pub(crate) enum SpinePosMap {
     Binder { pos_at_depth: Vec<u8> },
     /// `sub_pos_at_depth[d] = d` — the MixfixLiteralRun literal cursor.
     Nullary { sub_pos_at_depth: Vec<u8> },
+    /// F5-2 (A4-analog): `coords_at_depth[d]` = the member-side
+    /// `(kind, completed_idx, sub_pos)` `MixfixLiteralRun` coordinate AFTER
+    /// consuming `d` post-trigger items — recorded by the discovery walk
+    /// that mirrors the generic arm's own transitions (kind-2 pre-operand
+    /// literals; operand → `(0, completed, 0)` via Unwinding; kind-0
+    /// following literals; kind-1 next-part preceding literals; operand k+1
+    /// → `(0, k+1, 0)`).
+    Mixfix { coords_at_depth: Vec<(u8, u8, u8)> },
 }
 
 /// A group member with its leaf assignment.
@@ -353,6 +382,14 @@ pub(crate) enum SingletonReason {
     /// partition degenerates to the identity (every member its own
     /// singleton).
     FactoringDisabled,
+    /// F5-2 D-5 (whole-slice eligibility, mixfix surface only): the member
+    /// belongs to a `(cat, trigger)` mixfix slice whose root partition did
+    /// NOT cover the ENTIRE slice with one ≥2-member group (grouped +
+    /// ungrouped members sharing the trigger) — the whole cohort degrades to
+    /// unfactored per-member emission. Documented limitation; the loop-v2
+    /// runtime shape stays trivial (spine pushed ⇒ skip the slice loop; else
+    /// verbatim loop).
+    PartialSliceCohort,
 }
 
 #[derive(Debug, Clone)]
@@ -373,6 +410,29 @@ pub(crate) enum IneligibleReason {
     /// Binder members disagree on the initial `BinderRule.body_src_idx`
     /// (red-team AV2 gap b — the spine state would be ill-defined).
     NonUniformBodySrc { body_src_idxs: Vec<u16> },
+    /// F5-2 (mixfix surface): members disagree on `result_src_idx` — the
+    /// spine marker's category, the goal-gate check, and the fire output
+    /// category all read it, so a mixed-result cohort cannot share one spine
+    /// branch (`result_src`-uniformity is the mixfix analog of
+    /// `body_src_idx`-uniformity).
+    NonUniformResultSrc { result_src_idxs: Vec<u16> },
+    /// F5-2 A-M5 (mitigant-(a) future-grammar guard): a literal item that a
+    /// member consumes strictly AFTER its first operand is itself an
+    /// operator trigger of the operand's category — the operand could ABSORB
+    /// the divergence token, so two members could close on the SAME span and
+    /// the min-member spine stamp would adjudicate an intra-cohort ⊕-tie
+    /// that OFF adjudicates with distinct member stamps. Next-token-disjoint
+    /// alone does NOT imply span-disjoint; the whole cohort degrades to
+    /// unfactored.
+    OperandAbsorbableDivergence { texts: Vec<String> },
+    /// F5-2 spine-coordinate constraint: the SHARED spine path carries more
+    /// than one operand item. The spine's post-operand re-entry coordinate
+    /// is `(kind 0, marker.bp, 0)` via the Unwinding-MixfixMarker arm, and
+    /// the width-1 spine keeps `marker.bp = 0` (no kind-1 bump runs on the
+    /// spine), so a second shared operand would re-enter at the SAME
+    /// `(0, 0, 0)` key as the first — an arm-key collision. The cohort
+    /// degrades to unfactored (loudly recorded, never silently mis-keyed).
+    MultiOperandSharedSpine,
 }
 
 #[derive(Debug)]
@@ -422,6 +482,12 @@ struct CandidateMember {
     /// per-rule dispatch arm carries (same `unwrap_or(category)` fallback
     /// as `prefix.rs`).
     body_src_idx: Option<u16>,
+    /// F5-2 mixfix members ONLY: the member-side `MixfixLiteralRun`
+    /// coordinate after each consumed item — `mixfix_coords[d]` = the state
+    /// after `d` post-trigger consumes, `d ∈ 0..=items.len()` (entry 0 = the
+    /// initial `(2, 0, 0)`). Empty for Binder/Nullary (prefix-surface)
+    /// members.
+    mixfix_coords: Vec<(u8, u8, u8)>,
 }
 
 /// Map a binder member's `BinderShape.positions` to its mergeable
@@ -502,6 +568,7 @@ fn discover_members(
                         truncated: false,
                         total_positions,
                         body_src_idx: None,
+                        mixfix_coords: Vec::new(),
                     },
                 ));
                 continue;
@@ -539,6 +606,7 @@ fn discover_members(
                 truncated,
                 total_positions: shape.positions.len(),
                 body_src_idx: Some(body_src_idx),
+                mixfix_coords: Vec::new(),
             },
         ));
     }
@@ -578,6 +646,35 @@ fn finalize_leaf(member: CandidateMember, leaf_depth: usize) -> GroupMember {
                 sub_pos_at_depth: (0..=depth_u8).collect(),
             },
         ),
+        MemberKind::Mixfix => {
+            // F5-2 (A4-analog): the commit coordinate is the RECORDED
+            // member-side state after consuming `leaf_depth` items — the
+            // discovery walk mirrored the generic MixfixLiteralRun arm's own
+            // transitions, so the commit lands exactly on the member's
+            // machinery (nullary member at `(2, 0, depth)`; operand members
+            // at `(0, completed, following-consumed)`; the FV-1 coordinate
+            // law).
+            assert!(
+                member.mixfix_coords.len() > leaf_depth,
+                "S1-FACTORING F5-2: mixfix member (rule {}) has {} recorded \
+                 coords but leafs at depth {leaf_depth} — the discovery walk \
+                 drifted from the item list",
+                member.rule_idx,
+                member.mixfix_coords.len(),
+            );
+            let (kind, completed_idx, sub_pos) = member.mixfix_coords[leaf_depth];
+            (
+                MemberCommit::MixfixRun {
+                    rule_idx: member.rule_idx,
+                    kind,
+                    completed_idx,
+                    sub_pos,
+                },
+                SpinePosMap::Mixfix {
+                    coords_at_depth: member.mixfix_coords[..=leaf_depth].to_vec(),
+                },
+            )
+        },
     };
     GroupMember {
         kind: member.kind,
@@ -939,6 +1036,738 @@ pub(crate) fn emission_partition(
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// F5-2 — MIXFIX SEND COHORTS: the SECOND factoring surface (plan
+// `scratchpad/zz_probes/f5_mixfix_cohorts_plan.md` + its §RED-TEAM
+// GO-WITH-AMENDMENTS A-M1..A-M5, 2026-07-13).
+//
+// The InfixLoop mixfix fan (engine_impl.rs `__mixfix_slice` loop) forks one
+// `mixfix_marker` + `MixfixLiteralRun{kind:2}` branch per slice member; the
+// bundled census has exactly TWO factorable cohorts — rhocalc Name `!`
+// {4,6,8} and `!!` {5,7,9} (isomorphic tries: divergences at depths 1 and 2,
+// rule 8/9 truncated at its rep, NO interior accepts). Discovery mirrors the
+// `mixfix_bp_<cat>` slice construction EXACTLY (same
+// `group_ops_by_cat_terminal` grouping, same `GEN1_MAX_SLICE` truncation ⇒
+// cohort membership == emitted slice); the trie build REUSES [`build_tree`]
+// (same `SpineItem` alphabet, operands as `ParamParse{cat, 0}` — the mixfix
+// machine always dispatches operands at `cur_bp: 0`) with
+// `accept_continue == false` ALWAYS: a future interior-accept mixfix group
+// routes to [`IneligibleReason::InteriorAccept`], whole-group-unfactored (the
+// coordinator-mandated exhaustion-at-interior check; the sibling-leaf F5-1
+// mechanism would need the typed mixfix commits this module defines).
+//
+// Eligibility (D-1/D-5 + A-M5), all recorded per-cohort for INV-8-mixfix:
+//   - whole-slice coverage (D-5): one root part covering the ENTIRE slice;
+//   - uniform `result_src_idx` (goal gate / marker category / fire output);
+//   - cast-machinery exclusion mirrored from F0 (vacuous today);
+//   - operand-absorbability guard (A-M5 mitigant-(a)): post-operand literal
+//     items must not be operator triggers of the operand's category;
+//   - single shared operand (spine re-entry key uniqueness).
+//
+// SPINE COORDINATES: the spine's own arms are keyed by the same
+// `(kind, completed_idx, sub_pos)` walk the generic machine performs over
+// the SHARED item prefix (kind-2 literal chain → operand → `(0, 0, j)`
+// post-operand chain); commits carry the member-side coordinate recorded at
+// discovery ([`MemberCommit::MixfixRun`]). The fan pushes
+// `MixfixLiteralRun{spine, kind: 2, completed: 0, sub_pos: 0}` and the
+// post-operand re-entry rides the UNCHANGED Unwinding-MixfixMarker arm (it
+// needs only the `mixfix_parts_len` presence poison row,
+// [`mixfix_spine_parts_len_rows`]).
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// One factorable mixfix cohort (an ELIGIBLE group covering its whole
+/// `(dispatch category, trigger)` slice).
+#[derive(Debug)]
+pub(crate) struct MixfixGroup {
+    /// `SPINE_RULE_BASE + ordinal` in the RESULT category's id space,
+    /// CONTINUING after the category's prefix groups (amendment A9 bounds
+    /// asserted at allocation; the pure sentinel family `u16::MAX-2..` and
+    /// `RECOVERY_BASE` stay disjoint).
+    pub spine_id: u16,
+    /// Uniform member result category (eligibility) — the marker category,
+    /// the goal-gate operand, and the fire output category all read it.
+    pub result_src_idx: u16,
+    /// D-1 full-admission floor: the spine branch is admitted iff
+    /// `min_l_bp >= cur_bp` (all members pass — l_bp is the only
+    /// member-varying admission input; goal/method-name gates are
+    /// member-uniform by construction).
+    pub min_l_bp: u8,
+    /// AV5-analog weight/action identity: the MIN member rule idx (never the
+    /// spine id) — stamps the trigger branch weight, the lex-alt `lex_w_alt`
+    /// wrap, and the `LexAltMixfixOp.rule_idx` action-kind field (A-M5).
+    pub min_member_rule_idx: u16,
+    /// `(l_bp, rule_idx)` per member in slice order — receipts.
+    pub member_l_bps: Vec<(u8, u16)>,
+    /// First-seen-order union of the members' own action-entry
+    /// `expected_input_cats` (mirrors `semantic_actions`' mixfix derivation:
+    /// `[dispatch_cat] ++ per part (operand cat | ANY_CAT for a rep)`;
+    /// nullary members contribute `[dispatch_cat]` only) — the H9 poison
+    /// `action_for` row payload.
+    pub expected_cats_union: Vec<u16>,
+    /// Uniform Fix-B method-name-prune evidence across members (A-M4): the
+    /// first post-trigger literal as `__method_name_admits` derives it
+    /// (`part0.preceding.first()` / `nullary_literals.first()` / `None` for
+    /// an operand-/rep-leading part-0). Uniform by the shared root item;
+    /// asserted at build so spine-prune ≡ member-prune.
+    pub fixb_literal: Option<String>,
+    /// The suffix trie — single-root by construction (the root partition IS
+    /// the group criterion).
+    pub roots: Vec<SpineTree>,
+}
+
+impl MixfixGroup {
+    pub(crate) fn member_rule_idxs(&self) -> Vec<u16> {
+        self.member_l_bps.iter().map(|&(_, r)| r).collect()
+    }
+
+    pub(crate) fn leaves(&self) -> Vec<&GroupMember> {
+        let mut out = Vec::with_capacity(self.roots.len());
+        for root in &self.roots {
+            out.extend(root.leaves());
+        }
+        out
+    }
+}
+
+/// One `(dispatch category, trigger)` mixfix slice with its factoring
+/// outcome — the INV-8-mixfix accounting unit
+/// (`Σ group leaves + Σ ineligible members + |singletons| == slice.len()`).
+#[derive(Debug)]
+pub(crate) struct MixfixBucket {
+    pub trigger: String,
+    /// The EMITTED slice tuples `(l_bp, result_src, rule_idx)` — mirrors
+    /// `mixfix_bp_<cat>` exactly (same grouping, same `GEN1_MAX_SLICE`
+    /// truncation).
+    pub slice: Vec<(u8, u16, u16)>,
+    pub groups: Vec<MixfixGroup>,
+    pub ineligible: Vec<IneligibleGroup>,
+    pub singletons: Vec<SingletonMember>,
+}
+
+#[derive(Debug)]
+pub(crate) struct MixfixFactoring {
+    pub dispatch_cat_src_idx: u16,
+    pub buckets: Vec<MixfixBucket>,
+}
+
+/// A discovered mixfix slice member before trie construction.
+struct MixfixCandidate {
+    member: CandidateMember,
+    l_bp: u8,
+    result_src_idx: u16,
+    expected_cats: Vec<u16>,
+    fixb_literal: Option<String>,
+}
+
+/// Map one mixfix operator's post-trigger surface to its mergeable
+/// [`SpineItem`] prefix PLUS the member-side `MixfixLiteralRun` coordinate
+/// after each consume (the A4-analog walk — mirrors the generic arm's own
+/// transitions). Returns `(items, coords, truncated)`;
+/// `coords.len() == items.len() + 1` (entry 0 = the initial `(2, 0, 0)`).
+fn mixfix_member_items(
+    op: &mettail_prattail::binding_power::InfixOperator,
+    categories: &[String],
+) -> (Vec<SpineItem>, Vec<(u8, u8, u8)>, bool) {
+    let lookup = |name: &str| -> u16 {
+        categories
+            .iter()
+            .position(|c| c == name)
+            .map(|i| i as u16)
+            .unwrap_or(0)
+    };
+    let mut items: Vec<SpineItem> = Vec::new();
+    let mut coords: Vec<(u8, u8, u8)> = vec![(2, 0, 0)];
+    if op.mixfix_parts.is_empty() {
+        // Nullary run (`parts_len == 0`): the whole tail is literals walked
+        // at `(2, 0, sub_pos)` by the `(2, None) if parts_len == 0` arm.
+        items.reserve_exact(op.nullary_literals.len());
+        coords.reserve_exact(op.nullary_literals.len());
+        for (d, text) in op.nullary_literals.iter().enumerate() {
+            items.push(SpineItem::Literal {
+                text: text.clone(),
+                required_top_cat: None,
+            });
+            coords.push((2, 0, (d + 1) as u8));
+        }
+        return (items, coords, false);
+    }
+    for (part_i, part) in op.mixfix_parts.iter().enumerate() {
+        if part.repetition.is_some() {
+            // A `*sep` repetition terminates mergeability (leaf-side only):
+            // the member commits at or before this depth and runs the rep in
+            // its own CollectionLoop machinery.
+            return (items, coords, true);
+        }
+        let completed = part_i as u8;
+        // Preceding literals: part 0 runs at kind 2 (pre-operand run); later
+        // parts at kind 1 with the marker still at `part_i - 1` (the
+        // generic `(1, _)` arm bumps the marker only when preceding is
+        // exhausted).
+        for (j, text) in part.preceding_terminals.iter().enumerate() {
+            items.push(SpineItem::Literal {
+                text: text.clone(),
+                required_top_cat: None,
+            });
+            if part_i == 0 {
+                coords.push((2, 0, (j + 1) as u8));
+            } else {
+                coords.push((1, completed - 1, (j + 1) as u8));
+            }
+        }
+        // The operand: always dispatched at `cur_bp: 0` (the mixfix machine
+        // convention, engine_impl kind-2/kind-1 operand arms). Post-operand
+        // the Unwinding-MixfixMarker arm reads `marker.bp == part_i` and
+        // re-enters at `(0, part_i, 0)`.
+        items.push(SpineItem::ParamParse {
+            cat_src_idx: lookup(&part.operand_category),
+            cur_bp: 0,
+        });
+        coords.push((0, completed, 0));
+        for (j, text) in part.following_terminals.iter().enumerate() {
+            items.push(SpineItem::Literal {
+                text: text.clone(),
+                required_top_cat: None,
+            });
+            coords.push((0, completed, (j + 1) as u8));
+        }
+    }
+    (items, coords, false)
+}
+
+/// The always-computable mixfix cohort model. `prefix_partition` supplies
+/// the per-RESULT-category prefix group counts so mixfix spine ids CONTINUE
+/// each category's ordinal (Proc: prefix `@`-cohort groups 0xF800-0xF802 ⇒
+/// `!` = 0xF803, `!!` = 0xF804). PURE — consumes the SAME
+/// `group_ops_by_cat_terminal` grouping the `mixfix_bp_<cat>` /
+/// `lex_alt_rules_for_infix` emitters consume (NO-LOSS by construction).
+pub(crate) fn build_mixfix_factoring(
+    language: &LanguageDef,
+    categories: &[String],
+    per_cat: &[Vec<GrammarRule>],
+    prefix_partition: &[CategoryFactoring],
+) -> Vec<MixfixFactoring> {
+    let bp_table = super::infix::build_bp_table(language);
+    let label_index = super::infix::build_label_index(categories, per_cat);
+    let grouped = super::infix::group_ops_by_cat_terminal(&bp_table, categories, &label_index);
+    // Operand-absorbability oracle (A-M5): every (category, terminal) that
+    // carries ANY operator row — a post-operand divergence literal matching
+    // one of these could be absorbed INTO the operand sub-parse.
+    let operator_trigger_keys: BTreeSet<(u16, String)> =
+        grouped.keys().cloned().collect();
+    // Per-RESULT-category ordinal continuation after the prefix groups.
+    let mut next_ordinal: Vec<u16> = vec![0; per_cat.len()];
+    for cat_fact in prefix_partition {
+        let groups: usize = cat_fact.buckets.iter().map(|b| b.groups.len()).sum();
+        if let Some(slot) = next_ordinal.get_mut(cat_fact.category_src_idx as usize) {
+            *slot = groups as u16;
+        }
+    }
+
+    let mut per_dispatch: HashMap<u16, Vec<MixfixBucket>> = HashMap::new();
+    // BTreeMap iteration order = deterministic (dispatch cat, terminal)
+    // order — the allocation order for the continued ordinals.
+    for ((dispatch_cat, terminal), ops) in &grouped {
+        let mixfix_ops: Vec<&super::infix::GroupedOp<'_>> = ops
+            .iter()
+            .filter(|g| g.op.is_mixfix)
+            .take(super::infix::GEN1_MAX_SLICE)
+            .collect();
+        if mixfix_ops.is_empty() {
+            continue;
+        }
+        let slice: Vec<(u8, u16, u16)> = mixfix_ops
+            .iter()
+            .map(|g| (g.op.left_bp, g.result_src_idx, g.rule_idx))
+            .collect();
+        let mut candidates: Vec<MixfixCandidate> = Vec::with_capacity(mixfix_ops.len());
+        for g in &mixfix_ops {
+            let (member_items, coords, truncated) = mixfix_member_items(g.op, categories);
+            let total_positions = member_items.len();
+            // The member's own action-entry expected_input_cats (mirrors
+            // semantic_actions' mixfix arm: LHS cat first, then per part).
+            let lookup = |name: &str| -> u16 {
+                categories
+                    .iter()
+                    .position(|c| c == name)
+                    .map(|i| i as u16)
+                    .unwrap_or(0)
+            };
+            let mut expected_cats: Vec<u16> =
+                Vec::with_capacity(1 + g.op.mixfix_parts.len());
+            expected_cats.push(*dispatch_cat);
+            for part in &g.op.mixfix_parts {
+                if part.repetition.is_some() {
+                    expected_cats.push(u16::MAX);
+                } else {
+                    expected_cats.push(lookup(&part.operand_category));
+                }
+            }
+            // Fix-B evidence, EXACTLY as `__method_name_admits` derives it.
+            let fixb_literal = match g.op.mixfix_parts.first() {
+                Some(part) if part.repetition.is_none() => {
+                    part.preceding_terminals.first().cloned()
+                },
+                // Rep part-0: `mixfix_part(.., 0)` is None and
+                // `mixfix_nullary_literals` has no row ⇒ None (always-keep).
+                Some(_) => None,
+                None => op_first_nullary_literal(g.op),
+            };
+            candidates.push(MixfixCandidate {
+                member: CandidateMember {
+                    kind: MemberKind::Mixfix,
+                    rule_idx: g.rule_idx,
+                    items: member_items,
+                    truncated,
+                    total_positions,
+                    body_src_idx: None,
+                    mixfix_coords: coords,
+                },
+                l_bp: g.op.left_bp,
+                result_src_idx: g.result_src_idx,
+                expected_cats,
+                fixb_literal,
+            });
+        }
+
+        // ── member-level exclusions (mirrored from F0) ─────────────────────
+        let mut singletons: Vec<SingletonMember> = Vec::new();
+        let mut groupable: Vec<MixfixCandidate> = Vec::with_capacity(candidates.len());
+        for cand in candidates {
+            let rule = per_cat
+                .get(cand.result_src_idx as usize)
+                .and_then(|rules| rules.get(cand.member.rule_idx as usize));
+            let is_cast = rule
+                .map(|r| {
+                    crate::gen::runtime::numeric_cast_adapter::cast_machinery_participates(
+                        language, r,
+                    )
+                })
+                .unwrap_or(false);
+            if is_cast {
+                singletons.push(SingletonMember {
+                    rule_idx: cand.member.rule_idx,
+                    kind: MemberKind::Mixfix,
+                    reason: SingletonReason::CastMachinery,
+                });
+            } else if cand.member.items.is_empty() {
+                // Rep-part-0 members (rhocalc InputBindPolyadic `,`): no
+                // mergeable post-trigger item at all.
+                singletons.push(SingletonMember {
+                    rule_idx: cand.member.rule_idx,
+                    kind: MemberKind::Mixfix,
+                    reason: SingletonReason::EmptySequence,
+                });
+            } else {
+                groupable.push(cand);
+            }
+        }
+
+        // ── root partition + D-5 whole-slice coverage ──────────────────────
+        let mut root_order: Vec<SpineItem> = Vec::new();
+        let mut root_parts: Vec<Vec<MixfixCandidate>> = Vec::new();
+        for cand in groupable {
+            let item = cand.member.items[0].clone();
+            match root_order.iter().position(|existing| existing == &item) {
+                Some(i) => root_parts[i].push(cand),
+                None => {
+                    root_order.push(item);
+                    root_parts.push(vec![cand]);
+                },
+            }
+        }
+        let whole_slice_one_group = singletons.is_empty()
+            && root_parts.len() == 1
+            && root_parts[0].len() == slice.len()
+            && slice.len() >= 2;
+        let mut groups: Vec<MixfixGroup> = Vec::new();
+        let mut ineligible: Vec<IneligibleGroup> = Vec::new();
+        if whole_slice_one_group {
+            let root_item = root_order
+                .into_iter()
+                .next()
+                .expect("a single root part carries its item");
+            let part = root_parts
+                .into_iter()
+                .next()
+                .expect("a single root part exists");
+            match build_mixfix_group(
+                *dispatch_cat,
+                terminal,
+                root_item,
+                part,
+                &operator_trigger_keys,
+                &mut next_ordinal,
+            ) {
+                Ok(group) => groups.push(group),
+                Err(bad) => ineligible.push(bad),
+            }
+        } else {
+            // D-5 degrade: the cohort stays unfactored. Lone root children
+            // keep the F0 reason; members of a would-be group that does not
+            // cover the whole slice record the partial-slice reason.
+            for (part_i, part) in root_parts.into_iter().enumerate() {
+                let lone = part.len() == 1;
+                let _ = part_i;
+                for cand in part {
+                    singletons.push(SingletonMember {
+                        rule_idx: cand.member.rule_idx,
+                        kind: MemberKind::Mixfix,
+                        reason: if lone {
+                            SingletonReason::LoneRootChild
+                        } else {
+                            SingletonReason::PartialSliceCohort
+                        },
+                    });
+                }
+            }
+        }
+
+        per_dispatch
+            .entry(*dispatch_cat)
+            .or_default()
+            .push(MixfixBucket {
+                trigger: terminal.clone(),
+                slice,
+                groups,
+                ineligible,
+                singletons,
+            });
+    }
+
+    // ★A9-analog: the CONTINUED per-category ordinal end must stay clear of
+    // the recovery offset space and u16 (the prefix-side asserts covered the
+    // prefix count; re-assert over the mixfix-extended end).
+    for (cat_i, ordinal_end) in next_ordinal.iter().enumerate() {
+        let spine_id_end = SPINE_RULE_BASE as u32 + *ordinal_end as u32;
+        assert!(
+            spine_id_end < super::forks::RECOVERY_BASE as u32,
+            "S1-FACTORING F5-2 A9: category {cat_i} mixfix-extended spine ids end at \
+             {spine_id_end:#06x}, colliding with RECOVERY_BASE {:#06x}",
+            super::forks::RECOVERY_BASE,
+        );
+        assert!(
+            spine_id_end < u16::MAX as u32,
+            "S1-FACTORING F5-2 A9: category {cat_i} mixfix-extended spine id end \
+             {spine_id_end:#06x} overflows u16",
+        );
+    }
+
+    let mut out: Vec<MixfixFactoring> = Vec::with_capacity(per_dispatch.len());
+    let mut dispatch_cats: Vec<u16> = per_dispatch.keys().copied().collect();
+    dispatch_cats.sort_unstable();
+    for cat in dispatch_cats {
+        let buckets = per_dispatch
+            .remove(&cat)
+            .expect("dispatch cat key collected from the map");
+        out.push(MixfixFactoring { dispatch_cat_src_idx: cat, buckets });
+    }
+    out
+}
+
+fn op_first_nullary_literal(
+    op: &mettail_prattail::binding_power::InfixOperator,
+) -> Option<String> {
+    op.nullary_literals.first().cloned()
+}
+
+/// Eligibility + trie build for one whole-slice candidate group.
+fn build_mixfix_group(
+    dispatch_cat: u16,
+    trigger: &str,
+    root_item: SpineItem,
+    part: Vec<MixfixCandidate>,
+    operator_trigger_keys: &BTreeSet<(u16, String)>,
+    next_ordinal: &mut [u16],
+) -> Result<MixfixGroup, IneligibleGroup> {
+    let member_rule_idxs: Vec<u16> = part.iter().map(|c| c.member.rule_idx).collect();
+    let member_l_bps: Vec<(u8, u16)> =
+        part.iter().map(|c| (c.l_bp, c.member.rule_idx)).collect();
+    // Uniform result_src (the mixfix analog of body_src uniformity).
+    let result_src_idxs: Vec<u16> = {
+        let mut seen = BTreeSet::new();
+        part.iter()
+            .map(|c| c.result_src_idx)
+            .filter(|r| seen.insert(*r))
+            .collect()
+    };
+    if result_src_idxs.len() > 1 {
+        return Err(IneligibleGroup {
+            reason: IneligibleReason::NonUniformResultSrc { result_src_idxs },
+            member_rule_idxs,
+        });
+    }
+    let result_src_idx = result_src_idxs[0];
+    // A-M5 operand-absorbability guard (mitigant (a) is corpus-scoped —
+    // next-token-disjoint does NOT imply span-disjoint for arbitrary
+    // grammars): a literal consumed strictly AFTER an operand must not be an
+    // operator trigger of that operand's category.
+    let mut absorbable: Vec<String> = Vec::new();
+    for cand in &part {
+        let mut operand_cat: Option<u16> = None;
+        for item in &cand.member.items {
+            match item {
+                SpineItem::ParamParse { cat_src_idx, .. } => {
+                    operand_cat = Some(*cat_src_idx);
+                },
+                SpineItem::Literal { text, .. } => {
+                    if let Some(cat) = operand_cat {
+                        if operator_trigger_keys.contains(&(cat, text.clone()))
+                            && !absorbable.contains(text)
+                        {
+                            absorbable.push(text.clone());
+                        }
+                    }
+                },
+            }
+        }
+    }
+    if !absorbable.is_empty() {
+        return Err(IneligibleGroup {
+            reason: IneligibleReason::OperandAbsorbableDivergence { texts: absorbable },
+            member_rule_idxs,
+        });
+    }
+    // A-M4: the Fix-B method-name-prune evidence is member-uniform (implied
+    // by the shared root item: a Literal root IS every operand-bearing
+    // member's `part0.preceding[0]` and every nullary member's
+    // `nullary_literals[0]`; a ParamParse root ⇒ None for all). Drift =
+    // codegen panic, never a silent spine-vs-member prune divergence.
+    let fixb_literal = part[0].fixb_literal.clone();
+    for cand in &part {
+        assert_eq!(
+            cand.fixb_literal, fixb_literal,
+            "S1-FACTORING F5-2 A-M4: mixfix cohort (dispatch cat {dispatch_cat}, \
+             trigger {trigger:?}) has non-uniform Fix-B first-literal evidence — \
+             spine-prune would diverge from member-prune",
+        );
+    }
+    // Trie build — accept_continue is ALWAYS false on the mixfix surface
+    // (interior accepts route the WHOLE group to ineligible, F0-style).
+    let min_l_bp = part
+        .iter()
+        .map(|c| c.l_bp)
+        .min()
+        .expect("a ≥2-member part has members");
+    let min_member_rule_idx = part
+        .iter()
+        .map(|c| c.member.rule_idx)
+        .min()
+        .expect("a ≥2-member part has members");
+    // First-seen-order union of the members' expected_input_cats.
+    let mut expected_cats_union: Vec<u16> = Vec::new();
+    for cand in &part {
+        for cat in &cand.expected_cats {
+            if !expected_cats_union.contains(cat) {
+                expected_cats_union.push(*cat);
+            }
+        }
+    }
+    let members: Vec<CandidateMember> = part.into_iter().map(|c| c.member).collect();
+    let mut interior_accepts: Vec<u16> = Vec::new();
+    let roots = build_tree(
+        1,
+        root_item,
+        members,
+        /* accept_continue = */ false,
+        &mut interior_accepts,
+    );
+    if !interior_accepts.is_empty() {
+        return Err(IneligibleGroup {
+            reason: IneligibleReason::InteriorAccept {
+                accepting_rule_idxs: interior_accepts,
+            },
+            member_rule_idxs,
+        });
+    }
+    let leaf_count: usize = roots.iter().map(SpineTree::leaf_count).sum();
+    assert_eq!(
+        leaf_count,
+        member_rule_idxs.len(),
+        "S1-FACTORING F5-2: eligible mixfix group leaf count must equal its member \
+         count (dispatch cat {dispatch_cat}, trigger {trigger:?})",
+    );
+    assert_eq!(
+        roots.len(),
+        1,
+        "S1-FACTORING F5-2: a mixfix group is single-root by construction (the root \
+         partition IS the group criterion; dispatch cat {dispatch_cat}, trigger \
+         {trigger:?})",
+    );
+    // Spine re-entry key uniqueness: the width-1 spine keeps marker.bp = 0,
+    // so ≥2 operands on the SHARED path would collide at `(0, 0, 0)`.
+    // Computed directly on the interior coordinates (see
+    // `mixfix_spine_arm_coords`); duplicate ⇒ degrade, loudly recorded.
+    if mixfix_spine_arm_coords(&roots[0]).is_none() {
+        return Err(IneligibleGroup {
+            reason: IneligibleReason::MultiOperandSharedSpine,
+            member_rule_idxs,
+        });
+    }
+    let ordinal = next_ordinal
+        .get_mut(result_src_idx as usize)
+        .expect("result category index in range");
+    let spine_id = SPINE_RULE_BASE + *ordinal;
+    *ordinal += 1;
+    Ok(MixfixGroup {
+        spine_id,
+        result_src_idx,
+        min_l_bp,
+        min_member_rule_idx,
+        member_l_bps,
+        expected_cats_union,
+        fixb_literal,
+        roots,
+    })
+}
+
+/// The SPINE-side arm plan of a single-root mixfix trie: the PRE-ROOT arm
+/// key `(2, 0, 0)` (the state the fan pushes — its arm consumes the ROOT
+/// EDGE itself, the F1 pre-root convention transported to mixfix
+/// coordinates) plus, per INTERIOR node `n` in preorder, the arm key = the
+/// spine state AFTER consuming `n`'s edge item — that arm consumes `n`'s
+/// CHILDREN's edges (chain step or divergence fork). Returns `None` when
+/// two arms would collide on a key (a second shared operand re-enters at
+/// the same `(0, 0, 0)` via the width-1 spine's un-bumped `marker.bp == 0`
+/// — the [`IneligibleReason::MultiOperandSharedSpine`] condition).
+fn mixfix_spine_arm_coords(root: &SpineTree) -> Option<Vec<((u8, u8, u8), &SpineTree)>> {
+    /// The spine state after consuming `item` from `state` (spine
+    /// coordinates use kinds 2 and 0 only — post-operand literals are all
+    /// kind-0; the spine never runs kind 1 because its marker never bumps).
+    fn advance(state: (u8, u8, u8), item: &SpineItem) -> (u8, u8, u8) {
+        match item {
+            SpineItem::Literal { .. } => match state {
+                (2, c, s) => (2, c, s + 1),
+                (0, c, s) => (0, c, s + 1),
+                other => panic!(
+                    "S1-FACTORING F5-2: spine coordinate walk reached kind {} — \
+                     only kinds 2 and 0 occur on a spine path",
+                    other.0,
+                ),
+            },
+            // The descent keeps the SPINE marker (bp = 0) on top; the
+            // Unwinding-MixfixMarker arm re-enters at (0, marker.bp = 0, 0).
+            SpineItem::ParamParse { .. } => (0, 0, 0),
+        }
+    }
+    let mut out: Vec<((u8, u8, u8), &SpineTree)> = Vec::new();
+    let mut seen: BTreeSet<(u8, u8, u8)> = BTreeSet::new();
+    seen.insert((2, 0, 0)); // the pre-root arm key
+    // (interior node, state BEFORE consuming its edge item).
+    let mut stack: Vec<(&SpineTree, (u8, u8, u8))> = vec![(root, (2, 0, 0))];
+    while let Some((node, state_before)) = stack.pop() {
+        let SpineTree::Interior { item, children } = node else {
+            continue;
+        };
+        let arm_key = advance(state_before, item);
+        if !seen.insert(arm_key) {
+            return None;
+        }
+        out.push((arm_key, node));
+        for child in children.iter().rev() {
+            stack.push((child, arm_key));
+        }
+    }
+    Some(out)
+}
+
+/// The EMISSION-EFFECTIVE mixfix partition (the F5-2 integration point).
+/// With [`super::forks::S1_FACTORING`] `&&`
+/// [`super::forks::S1F5_MIXFIX_COHORTS`] it is [`build_mixfix_factoring`]
+/// over the const-following prefix partition; otherwise the identity: every
+/// slice member its own `FactoringDisabled` singleton, zero groups — the
+/// shape whose emission is byte-identical to today's per-member fan.
+pub(crate) fn mixfix_emission_partition(
+    language: &LanguageDef,
+    categories: &[String],
+    per_cat: &[Vec<GrammarRule>],
+) -> Vec<MixfixFactoring> {
+    if super::forks::S1_FACTORING && super::forks::S1F5_MIXFIX_COHORTS {
+        let prefix = build_prefix_factoring(language, categories, per_cat);
+        return build_mixfix_factoring(language, categories, per_cat, &prefix);
+    }
+    mixfix_identity_partition(language, categories, per_cat)
+}
+
+/// The identity mixfix partition: the same cohort census (slice membership),
+/// zero groups, every member a `FactoringDisabled` singleton — the INV-8
+/// OFF-branch shape.
+pub(crate) fn mixfix_identity_partition(
+    language: &LanguageDef,
+    categories: &[String],
+    per_cat: &[Vec<GrammarRule>],
+) -> Vec<MixfixFactoring> {
+    let bp_table = super::infix::build_bp_table(language);
+    let label_index = super::infix::build_label_index(categories, per_cat);
+    let grouped = super::infix::group_ops_by_cat_terminal(&bp_table, categories, &label_index);
+    let mut per_dispatch: HashMap<u16, Vec<MixfixBucket>> = HashMap::new();
+    for ((dispatch_cat, terminal), ops) in &grouped {
+        let mixfix_ops: Vec<&super::infix::GroupedOp<'_>> = ops
+            .iter()
+            .filter(|g| g.op.is_mixfix)
+            .take(super::infix::GEN1_MAX_SLICE)
+            .collect();
+        if mixfix_ops.is_empty() {
+            continue;
+        }
+        let slice: Vec<(u8, u16, u16)> = mixfix_ops
+            .iter()
+            .map(|g| (g.op.left_bp, g.result_src_idx, g.rule_idx))
+            .collect();
+        let singletons: Vec<SingletonMember> = mixfix_ops
+            .iter()
+            .map(|g| SingletonMember {
+                rule_idx: g.rule_idx,
+                kind: MemberKind::Mixfix,
+                reason: SingletonReason::FactoringDisabled,
+            })
+            .collect();
+        per_dispatch
+            .entry(*dispatch_cat)
+            .or_default()
+            .push(MixfixBucket {
+                trigger: terminal.clone(),
+                slice,
+                groups: Vec::new(),
+                ineligible: Vec::new(),
+                singletons,
+            });
+    }
+    let mut out: Vec<MixfixFactoring> = Vec::with_capacity(per_dispatch.len());
+    let mut dispatch_cats: Vec<u16> = per_dispatch.keys().copied().collect();
+    dispatch_cats.sort_unstable();
+    for cat in dispatch_cats {
+        let buckets = per_dispatch
+            .remove(&cat)
+            .expect("dispatch cat key collected from the map");
+        out.push(MixfixFactoring { dispatch_cat_src_idx: cat, buckets });
+    }
+    out
+}
+
+/// The `mixfix_parts_len` SPINE presence rows `(result_src, spine_id)` —
+/// consumed by `infix::emit_mixfix_parts_fn` (the Unwinding-MixfixMarker arm
+/// validates `Some(..)` then DISCARDS the value, so the `u8::MAX` poison is
+/// inert there and an escaped spine id dies LOUDLY at every other
+/// `parts_len` consumer). Empty while the consts are off (byte-identity).
+/// Recomputed from the pure const-gated model — deterministic, so this
+/// agrees with the `build_spine_emission` bundle without threading.
+pub(crate) fn mixfix_spine_parts_len_rows(
+    language: &LanguageDef,
+    categories: &[String],
+    per_cat: &[Vec<GrammarRule>],
+) -> Vec<(u16, u16)> {
+    let partition = mixfix_emission_partition(language, categories, per_cat);
+    let mut rows: Vec<(u16, u16)> = Vec::new();
+    for fact in &partition {
+        for bucket in &fact.buckets {
+            for group in &bucket.groups {
+                rows.push((group.result_src_idx, group.spine_id));
+            }
+        }
+    }
+    rows
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // Tests — the F0 gate's rhocalc trie pins (real grammar, real indices),
 // the A2 exclusion receipts, and the synthetic eligibility witnesses.
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1036,6 +1865,39 @@ pub(crate) struct SpineEmission {
     /// lex-fork weight stamps (identity for real ids; MIN member for spine
     /// ids — AV5). Emitted only when groups exist.
     pub spine_weight_rule_fn: TokenStream,
+    /// F5-2: distilled per-group coordinates for the mixfix consumers
+    /// (kind_dispatch's `lex_alt_rules_for_infix` group entries, the
+    /// engine_impl loop-v2 gating, receipts). EMPTY while
+    /// `S1_FACTORING && S1F5_MIXFIX_COHORTS` is not satisfied.
+    pub mixfix_groups: Vec<MixfixGroupEmission>,
+    /// F5-2: the loop-v2 group match arms spliced into the InfixLoop mixfix
+    /// tier (`match (state_cat_src_idx, token_text) { <these arms> _ =>
+    /// <verbatim per-member loop> }`). EMPTY when no mixfix groups.
+    pub mixfix_fan_arms: TokenStream,
+    /// F5-2: the spine prelude arms spliced at the TOP of the generic
+    /// `MixfixLiteralRun` arm (`match (*result_src_idx, *rule_idx, *kind,
+    /// *completed_idx, *sub_pos) { <these arms> _ => {} }` — every arm
+    /// early-returns, so spine ids never reach the generic
+    /// `mixfix_part`/`mixfix_parts_len` reads). EMPTY when no mixfix groups.
+    pub mixfix_prelude_arms: TokenStream,
+}
+
+/// F5-2: one factored mixfix cohort's emission coordinates.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct MixfixGroupEmission {
+    /// The InfixLoop dispatch category (rhocalc Name = 3).
+    pub dispatch_cat_src_idx: u16,
+    /// The trigger terminal (`"!"` / `"!!"`).
+    pub trigger: String,
+    /// Uniform member result category (rhocalc Proc = 0).
+    pub result_src_idx: u16,
+    pub spine_id: u16,
+    /// D-1 full-admission floor (min over member l_bps).
+    pub min_l_bp: u8,
+    /// AV5-analog identity (min member rule idx — weight stamps + the
+    /// `LexAltMixfixOp.rule_idx` action-kind field, A-M5).
+    pub min_member_rule_idx: u16,
+    pub member_rule_idxs: Vec<u16>,
 }
 
 impl SpineEmission {
@@ -1202,6 +2064,16 @@ fn child_target_tokens(
                     }
                 },
             ),
+            // F5-2: MixfixRun commits belong to the MIXFIX surface — their
+            // branch formers live in the spliced MixfixLiteralRun prelude
+            // (`mixfix_prelude_group_arms`), never in the prefix BinderRule
+            // arm stream. Reaching here means a mixfix member leaked into a
+            // prefix trie — fail codegen loudly.
+            MemberCommit::MixfixRun { rule_idx, .. } => panic!(
+                "S1-FACTORING F5-2: MixfixRun commit (cat {cat}, rule {rule_idx}) \
+                 reached the prefix-surface branch former — mixfix members never \
+                 join prefix tries",
+            ),
         },
     }
 }
@@ -1261,15 +2133,39 @@ pub(crate) fn build_spine_emission(
     per_cat: &[Vec<GrammarRule>],
 ) -> SpineEmission {
     let partition = emission_partition(language, categories, per_cat);
-    build_spine_emission_from(&partition, language, categories, per_cat)
+    // F5-2: the const-following mixfix partition (identity — zero groups —
+    // unless `S1_FACTORING && S1F5_MIXFIX_COHORTS`).
+    let mixfix_partition = mixfix_emission_partition(language, categories, per_cat);
+    build_spine_emission_from_parts(
+        &partition,
+        &mixfix_partition,
+        language,
+        categories,
+        per_cat,
+    )
 }
 
-/// The partition-explicit core of [`build_spine_emission`]. Split out so the
-/// unit tests can pin the ON-shape emission against
-/// [`build_prefix_factoring`]'s model without flipping the compile-time
-/// const (the F0 receipt discipline keeps `S1_FACTORING = false` in-tree).
+/// The prefix-partition-explicit view of [`build_spine_emission`] — the
+/// F0/F1/F5-1 pins' entry point, PRESERVED with an explicitly EMPTY mixfix
+/// contribution so the prefix-surface pins stay stance-independent of
+/// [`super::forks::S1F5_MIXFIX_COHORTS`]. Mixfix-aware tests use
+/// [`build_spine_emission_from_parts`] with an explicit mixfix partition.
 pub(crate) fn build_spine_emission_from(
     partition: &[CategoryFactoring],
+    language: &LanguageDef,
+    categories: &[String],
+    per_cat: &[Vec<GrammarRule>],
+) -> SpineEmission {
+    build_spine_emission_from_parts(partition, &[], language, categories, per_cat)
+}
+
+/// The fully-explicit core of [`build_spine_emission`] (both partitions
+/// pinned by the caller — the F1 `build_spine_emission_from` precedent
+/// extended to the F5-2 mixfix surface; tests pin BOTH stances without
+/// const flips).
+pub(crate) fn build_spine_emission_from_parts(
+    partition: &[CategoryFactoring],
+    mixfix_partition: &[MixfixFactoring],
     language: &LanguageDef,
     categories: &[String],
     per_cat: &[Vec<GrammarRule>],
@@ -1494,6 +2390,124 @@ pub(crate) fn build_spine_emission_from(
         }
     }
 
+    // ── F5-2: the mixfix send-cohort emission ─────────────────────────────
+    let mut mixfix_groups: Vec<MixfixGroupEmission> = Vec::new();
+    let mut mixfix_fan_arm_streams: Vec<TokenStream> = Vec::new();
+    let mut mixfix_prelude_arm_streams: Vec<TokenStream> = Vec::new();
+    for fact in mixfix_partition {
+        let dispatch_cat = fact.dispatch_cat_src_idx;
+        for bucket in &fact.buckets {
+            for group in &bucket.groups {
+                any_groups = true;
+                let result_src = group.result_src_idx;
+                let spine_id = group.spine_id;
+                let min_l_bp = group.min_l_bp;
+                let min_member = group.min_member_rule_idx;
+                let members = group.member_rule_idxs();
+                let rules = &per_cat[result_src as usize];
+                // Engine-table rows (the F1 shapes, keyed in the RESULT
+                // category's id space).
+                for m in members.iter().copied() {
+                    owner_arms.push(quote! {
+                        (#result_src, #m) => Some(#spine_id),
+                    });
+                }
+                member_arms.push(quote! {
+                    (#result_src, #spine_id) => &[#(#members),*],
+                });
+                // H9 poison row: expected_input_cats = the first-seen-order
+                // union of the members' OWN action-entry rows (the
+                // semantic_actions mixfix derivation mirrored at model
+                // build: `[dispatch_cat] ++ per part (operand | ANY_CAT)`;
+                // nullary members contribute `[dispatch_cat]` only).
+                let union = &group.expected_cats_union;
+                action_arms.push(quote! {
+                    (#result_src, #spine_id) => {
+                        static SPINE_ENTRY: mettail_prattail::wpda_runtime::ActionEntry =
+                            mettail_prattail::wpda_runtime::ActionEntry {
+                                action_fn: |
+                                    _b: &mut mettail_prattail::wpda_runtime::SemanticBuilder,
+                                    _args: Vec<mettail_prattail::wpda_runtime::ActionArg>|
+                                {
+                                    // S1 H9: never fired — commit precedes
+                                    // every fire; the walker consumption
+                                    // sites debug-assert on spine ids.
+                                    debug_assert!(
+                                        false,
+                                        "S1 H9: mixfix spine action_fn invoked",
+                                    );
+                                },
+                                arity: u8::MAX,
+                                expected_input_cats: &[#(#union),*],
+                                output_cat: #result_src,
+                            };
+                        return Some(&SPINE_ENTRY);
+                    }
+                });
+                // A7-mixfix (A-M5 flip of the F1 assert): members are
+                // OPERAND-leading — the leading-trigger conjunction is
+                // all-FALSE, so the spine row is OMITTED (the canonical
+                // per-rule lookup's default arm is `false`). Asserted so an
+                // eligibility drift fails codegen loudly.
+                for m in members.iter().copied() {
+                    let leads_with_literal = rules[m as usize]
+                        .syntax_pattern
+                        .as_ref()
+                        .map(|sp| matches!(sp.first(), Some(SyntaxExpr::Literal(_))))
+                        .unwrap_or(false);
+                    assert!(
+                        !leads_with_literal,
+                        "S1-FACTORING F5-2 A7-mixfix: group (result {result_src}, spine \
+                         {spine_id:#06x}) member {m} LEADS with a literal — mixfix \
+                         cohort members are operand-leading by construction",
+                    );
+                }
+                // min_terminal_span: min over members (honest computation;
+                // 0 = the table default ⇒ row omitted — both real cohorts
+                // carry an Op-bearing rep member ⇒ min 0).
+                let mut min_span: Option<u32> = None;
+                for m in members.iter().copied() {
+                    let v = member_min_span(&rules[m as usize]);
+                    min_span = Some(match min_span {
+                        Some(cur) => cur.min(v),
+                        None => v,
+                    });
+                }
+                if let Some(v) = min_span {
+                    if v > 0 {
+                        span_arms.push(quote! {
+                            (#result_src, #spine_id) => return #v,
+                        });
+                    }
+                }
+                // AV5-analog weight identity (also the A-M5 action-kind
+                // redirect payload for the lex-alt surface).
+                weight_arms.push(quote! {
+                    (#result_src, #spine_id) => #min_member,
+                });
+                // The loop-v2 fan arm + the MLR spine prelude arms.
+                let trigger = &bucket.trigger;
+                mixfix_fan_arm_streams.push(mixfix_fan_group_arm(
+                    dispatch_cat,
+                    trigger,
+                    group,
+                ));
+                mixfix_prelude_arm_streams.push(mixfix_prelude_group_arms(group));
+                mixfix_groups.push(MixfixGroupEmission {
+                    dispatch_cat_src_idx: dispatch_cat,
+                    trigger: trigger.clone(),
+                    result_src_idx: result_src,
+                    spine_id,
+                    min_l_bp,
+                    min_member_rule_idx: min_member,
+                    member_rule_idxs: members,
+                });
+            }
+        }
+    }
+    let mixfix_fan_arms = quote! { #(#mixfix_fan_arm_streams)* };
+    let mixfix_prelude_arms = quote! { #(#mixfix_prelude_arm_streams)* };
+
     let binder_arms = quote! { #(#binder_arms)* };
     let trigger_spine_owner_fn = if any_groups {
         quote! {
@@ -1572,6 +2586,447 @@ pub(crate) fn build_spine_emission_from(
         min_span_prelude,
         lex_alt,
         spine_weight_rule_fn,
+        mixfix_groups,
+        mixfix_fan_arms,
+        mixfix_prelude_arms,
+    }
+}
+
+/// F5-2: ONE loop-v2 group match arm for the InfixLoop mixfix tier. The
+/// guard is the D-1 FULL-ADMISSION predicate: `min_l_bp >= cur_bp` (l_bp is
+/// the only member-varying admission input) AND the member-uniform goal +
+/// method-name gates — evaluated on the uniform `result_src` and (A-M4) a
+/// MEMBER rule id (`min_member`; a spine id would hit the metadata-None
+/// `(None, _) => true` silent always-keep). A failed guard falls through to
+/// the `_` arm's verbatim per-member loop — the exact D-1 fallback (partial
+/// floor windows, goal/method-name rejections, and the fallback-full case
+/// all reproduce today's per-member behavior byte-for-byte).
+fn mixfix_fan_group_arm(
+    dispatch_cat: u16,
+    trigger: &str,
+    group: &MixfixGroup,
+) -> TokenStream {
+    let result_src = group.result_src_idx;
+    let spine_id = group.spine_id;
+    let min_l_bp = group.min_l_bp;
+    let min_member = group.min_member_rule_idx;
+    quote! {
+        (#dispatch_cat, #trigger)
+            if #min_l_bp >= *cur_bp
+                && __goal_admits(#result_src)
+                && (__mixfix_fallback_full
+                    || __method_name_admits(#result_src, #min_member)) =>
+        {
+            __cands.push(
+                mettail_prattail::wpda_walker::ForkBranch {
+                    symbol: StackSymbolV2::mixfix_marker(
+                        #result_src, #spine_id, 0,
+                    ),
+                    weight: lex_w(
+                        mettail_prattail::automata::lex_weight::BP_TIER_MIXFIX,
+                        #result_src, #min_member,
+                    ),
+                    new_state: WpdaState::MixfixLiteralRun {
+                        result_src_idx: #result_src,
+                        rule_idx: #spine_id,
+                        completed_idx: 0,
+                        kind: 2,
+                        sub_pos: 0,
+                    },
+                    action_kind:
+                        mettail_prattail::wpda_walker::ForkActionKind::Push,
+                },
+            );
+            __mixfix_spine_pushed = true;
+        }
+    }
+}
+
+/// F5-2: the spliced `MixfixLiteralRun` prelude arms for ONE mixfix group —
+/// the pre-root arm (consumes the root edge from the fan-pushed
+/// `(2, 0, 0)`) plus one arm per interior trie node (consumes the node's
+/// CHILDREN's edges: chain step, divergence fork, or operand descent).
+/// Every arm early-returns; commits replace the SPINE marker with the
+/// member's own `mixfix_marker` and enter the member's generic machinery at
+/// its recorded [`MemberCommit::MixfixRun`] coordinate (FS1: every commit
+/// rides a consuming edge — literal commits ride `ConsumeAtAndReplace`;
+/// operand-edge commits ride `ReplaceAndPush`, consuming via the
+/// sub-parse).
+fn mixfix_prelude_group_arms(group: &MixfixGroup) -> TokenStream {
+    let result_src = group.result_src_idx;
+    let spine_id = group.spine_id;
+    let root = &group.roots[0];
+    let arm_plan = mixfix_spine_arm_coords(root)
+        .expect("eligibility rejected colliding spine coordinates");
+    let mut arms: Vec<TokenStream> = Vec::with_capacity(1 + arm_plan.len());
+    // The PRE-ROOT arm: consume the root edge itself.
+    let root_after = match root.item() {
+        SpineItem::Literal { .. } => {
+            let (k, c, s) = (2u8, 0u8, 1u8);
+            (k, c, s)
+        },
+        SpineItem::ParamParse { .. } => (0u8, 0u8, 0u8),
+    };
+    arms.push(mixfix_spine_step_arm(
+        result_src,
+        spine_id,
+        (2, 0, 0),
+        std::slice::from_ref(&(root, root_after)),
+    ));
+    // Interior-node arms: each consumes its children's edges.
+    for (arm_key, node) in &arm_plan {
+        let SpineTree::Interior { children, .. } = node else {
+            continue;
+        };
+        let child_entries: Vec<(&SpineTree, (u8, u8, u8))> = children
+            .iter()
+            .map(|child| {
+                let after = match child.item() {
+                    SpineItem::Literal { .. } => match *arm_key {
+                        (2, c, s) => (2, c, s + 1),
+                        (0, c, s) => (0, c, s + 1),
+                        other => panic!(
+                            "S1-FACTORING F5-2: spine arm at kind {} — only kinds \
+                             2 and 0 occur on a spine path",
+                            other.0,
+                        ),
+                    },
+                    SpineItem::ParamParse { .. } => (0, 0, 0),
+                };
+                (child, after)
+            })
+            .collect();
+        arms.push(mixfix_spine_step_arm(
+            result_src,
+            spine_id,
+            *arm_key,
+            &child_entries,
+        ));
+    }
+    quote! { #(#arms)* }
+}
+
+/// F5-2: the `(symbol, new_state)` target tokens of ONE spine-arm child
+/// edge. Interior children continue the SPINE (self-marker + the spine
+/// coordinate after the edge); leaf children COMMIT (member marker at the
+/// recorded [`MemberCommit::MixfixRun`] coordinate + the member's own
+/// `MixfixLiteralRun` state).
+fn mixfix_child_target_tokens(
+    result_src: u16,
+    spine_id: u16,
+    child: &SpineTree,
+    child_after: (u8, u8, u8),
+) -> (TokenStream, TokenStream) {
+    match child {
+        SpineTree::Interior { .. } => {
+            let (k, c, s) = child_after;
+            (
+                quote! { StackSymbolV2::mixfix_marker(#result_src, #spine_id, #c) },
+                quote! {
+                    WpdaState::MixfixLiteralRun {
+                        result_src_idx: #result_src,
+                        rule_idx: #spine_id,
+                        completed_idx: #c,
+                        kind: #k,
+                        sub_pos: #s,
+                    }
+                },
+            )
+        },
+        SpineTree::Leaf { member, .. } => {
+            let MemberCommit::MixfixRun { rule_idx, kind, completed_idx, sub_pos } =
+                &member.commit
+            else {
+                panic!(
+                    "S1-FACTORING F5-2: mixfix trie leaf (rule {}) carries a \
+                     non-MixfixRun commit — the discovery kind drifted",
+                    member.rule_idx,
+                );
+            };
+            (
+                quote! {
+                    StackSymbolV2::mixfix_marker(#result_src, #rule_idx, #completed_idx)
+                },
+                quote! {
+                    WpdaState::MixfixLiteralRun {
+                        result_src_idx: #result_src,
+                        rule_idx: #rule_idx,
+                        completed_idx: #completed_idx,
+                        kind: #kind,
+                        sub_pos: #sub_pos,
+                    }
+                },
+            )
+        },
+    }
+}
+
+/// F5-2: ONE spine prelude arm — the arm at `arm_key` consumes the given
+/// child edges. Shapes (structurally exhaustive for eligible mixfix tries —
+/// a single child is always Interior; leaves appear only inside ≥2-child
+/// divergences):
+///
+///   - 1 Literal child: the `__checked_literal_consume!` chain step
+///     (0 targets → Error; 1 → self-replace `ConsumeAtAndReplace`; ≥2 →
+///     Fork of self-replace CARs — the ROOT-A lattice-membership law).
+///   - 1 ParamParse child: the operand descent — same-cat `Advance` into
+///     `PrefixDispatch` under the SPINE marker (the part-0-under-marker
+///     convention) / cross-cat `Push(category_entry_goal)`.
+///   - ≥2 children (divergence): literal children contribute one
+///     `ConsumeAtAndReplace` branch per lattice target (commit or spine
+///     continuation); a ParamParse child contributes one UNCONDITIONAL
+///     branch (descent, or `ReplaceAndPush` commit for an operand-edge
+///     leaf). Zero live branches → `Error`; exactly one → the equivalent
+///     NON-FORK action (plan §2.2: "if only A, the single-target
+///     ConsumeAtAndReplace; B alone, emit the Advance"); otherwise a
+///     `Fork { consume_trigger: false }` in trie child order.
+fn mixfix_spine_step_arm(
+    result_src: u16,
+    spine_id: u16,
+    arm_key: (u8, u8, u8),
+    children: &[(&SpineTree, (u8, u8, u8))],
+) -> TokenStream {
+    let (ak, ac, asub) = arm_key;
+    let key_pat = quote! { (#result_src, #spine_id, #ak, #ac, #asub) };
+    // ── single-child chain forms ──────────────────────────────────────────
+    if children.len() == 1 {
+        let (child, child_after) = &children[0];
+        assert!(
+            matches!(child, SpineTree::Interior { .. }),
+            "S1-FACTORING F5-2: a single spine-arm child is Interior by \
+             construction (single-member parts leaf out at the parent)",
+        );
+        match child.item() {
+            SpineItem::Literal { text, .. } => {
+                let (_, state) =
+                    mixfix_child_target_tokens(result_src, spine_id, child, *child_after);
+                return quote! {
+                    #key_pat => {
+                        return __checked_literal_consume!(#text, #state);
+                    }
+                };
+            },
+            SpineItem::ParamParse { cat_src_idx, cur_bp } => {
+                let descent = if *cat_src_idx == result_src {
+                    quote! {
+                        return WpdaStepAction::Advance(WpdaState::PrefixDispatch {
+                            pos: _pos,
+                            cur_bp: #cur_bp,
+                        });
+                    }
+                } else {
+                    quote! {
+                        return WpdaStepAction::Push {
+                            symbol: StackSymbolV2::category_entry_goal(#cat_src_idx),
+                            weight: lex_one(),
+                            new_state: WpdaState::PrefixDispatch {
+                                pos: _pos,
+                                cur_bp: #cur_bp,
+                            },
+                        };
+                    }
+                };
+                return quote! { #key_pat => { #descent } };
+            },
+        }
+    }
+    // ── divergence arm ────────────────────────────────────────────────────
+    let mut target_lets: Vec<TokenStream> = Vec::new();
+    let mut lit_len_terms: Vec<TokenStream> = Vec::new();
+    let mut singleton_checks: Vec<TokenStream> = Vec::new();
+    let mut push_stmts: Vec<TokenStream> = Vec::new();
+    let mut uncond_nonforks: Vec<TokenStream> = Vec::new();
+    let mut lit_idx: usize = 0;
+    for (child, child_after) in children {
+        let (sym, state) =
+            mixfix_child_target_tokens(result_src, spine_id, child, *child_after);
+        match child.item() {
+            SpineItem::Literal { text, .. } => {
+                let t_ident = quote::format_ident!("__spine_targets_{}", lit_idx);
+                lit_idx += 1;
+                target_lets.push(quote! {
+                    let #t_ident: Vec<usize> =
+                        __mixfix_literal_targets(tokens, _pos, #text);
+                });
+                lit_len_terms.push(quote! { #t_ident.len() });
+                singleton_checks.push(quote! {
+                    if let Some(&__spine_np) = #t_ident.first() {
+                        return WpdaStepAction::ConsumeAtAndReplace {
+                            symbol: #sym,
+                            weight: lex_one(),
+                            new_state: #state,
+                            next_pos: __spine_np,
+                        };
+                    }
+                });
+                push_stmts.push(quote! {
+                    for __spine_np in &#t_ident {
+                        __spine_branches.push(
+                            mettail_prattail::wpda_walker::ForkBranch {
+                                symbol: #sym,
+                                weight: lex_one(),
+                                new_state: #state,
+                                action_kind:
+                                    mettail_prattail::wpda_walker::ForkActionKind::ConsumeAtAndReplace {
+                                        next_pos: *__spine_np,
+                                    },
+                            },
+                        );
+                    }
+                });
+            },
+            SpineItem::ParamParse { cat_src_idx, cur_bp } => {
+                let (branch, nonfork) = match child {
+                    SpineTree::Interior { .. } => {
+                        if *cat_src_idx == result_src {
+                            (
+                                quote! {
+                                    mettail_prattail::wpda_walker::ForkBranch {
+                                        symbol: #sym,
+                                        weight: lex_one(),
+                                        new_state: WpdaState::PrefixDispatch {
+                                            pos: _pos,
+                                            cur_bp: #cur_bp,
+                                        },
+                                        action_kind:
+                                            mettail_prattail::wpda_walker::ForkActionKind::Advance,
+                                    }
+                                },
+                                quote! {
+                                    return WpdaStepAction::Advance(
+                                        WpdaState::PrefixDispatch {
+                                            pos: _pos,
+                                            cur_bp: #cur_bp,
+                                        },
+                                    );
+                                },
+                            )
+                        } else {
+                            (
+                                quote! {
+                                    mettail_prattail::wpda_walker::ForkBranch {
+                                        symbol: StackSymbolV2::category_entry_goal(#cat_src_idx),
+                                        weight: lex_one(),
+                                        new_state: WpdaState::PrefixDispatch {
+                                            pos: _pos,
+                                            cur_bp: #cur_bp,
+                                        },
+                                        action_kind:
+                                            mettail_prattail::wpda_walker::ForkActionKind::Push,
+                                    }
+                                },
+                                quote! {
+                                    return WpdaStepAction::Push {
+                                        symbol: StackSymbolV2::category_entry_goal(#cat_src_idx),
+                                        weight: lex_one(),
+                                        new_state: WpdaState::PrefixDispatch {
+                                            pos: _pos,
+                                            cur_bp: #cur_bp,
+                                        },
+                                    };
+                                },
+                            )
+                        }
+                    },
+                    SpineTree::Leaf { .. } => {
+                        // Operand-edge commit (FS1: consuming via the
+                        // sub-parse): replace the SPINE marker with the
+                        // member marker, push the operand entry. Same-cat
+                        // uses the goal-free entry (mirrors the generic
+                        // part-0 Advance admission); cross-cat the strict
+                        // goal entry (the generic kind-1 form).
+                        let entry = if *cat_src_idx == result_src {
+                            quote! { StackSymbolV2::category_entry(#cat_src_idx) }
+                        } else {
+                            quote! { StackSymbolV2::category_entry_goal(#cat_src_idx) }
+                        };
+                        (
+                            quote! {
+                                mettail_prattail::wpda_walker::ForkBranch {
+                                    symbol: #entry,
+                                    weight: lex_one(),
+                                    new_state: WpdaState::PrefixDispatch {
+                                        pos: _pos,
+                                        cur_bp: #cur_bp,
+                                    },
+                                    action_kind:
+                                        mettail_prattail::wpda_walker::ForkActionKind::ReplaceAndPush {
+                                            replace_symbol: #sym,
+                                        },
+                                }
+                            },
+                            quote! {
+                                return WpdaStepAction::ReplaceAndPush {
+                                    replace_symbol: #sym,
+                                    push_symbol: #entry,
+                                    weight: lex_one(),
+                                    new_state: WpdaState::PrefixDispatch {
+                                        pos: _pos,
+                                        cur_bp: #cur_bp,
+                                    },
+                                };
+                            },
+                        )
+                    },
+                };
+                uncond_nonforks.push(nonfork);
+                push_stmts.push(quote! { __spine_branches.push(#branch); });
+            },
+        }
+    }
+    let n_uncond = uncond_nonforks.len();
+    let lit_total_expr = if lit_len_terms.is_empty() {
+        quote! { 0usize }
+    } else {
+        quote! { #(#lit_len_terms)+* }
+    };
+    // The zero-live and singleton short-circuits (plan §2.2).
+    let zero_handler = match n_uncond {
+        0 => quote! {
+            if __spine_lit_total == 0 {
+                return WpdaStepAction::Error(format!(
+                    "mixfix spine divergence mismatch at pos {} (spine {}:{}) — \
+                     no lattice edge matches any commit literal",
+                    _pos, #result_src, #spine_id,
+                ));
+            }
+        },
+        1 => {
+            let nonfork = &uncond_nonforks[0];
+            quote! {
+                if __spine_lit_total == 0 {
+                    #nonfork
+                }
+            }
+        },
+        // ≥2 unconditional branches always fork.
+        _ => TokenStream::new(),
+    };
+    let singleton_handler = if n_uncond == 0 {
+        quote! {
+            if __spine_lit_total == 1 {
+                #(#singleton_checks)*
+            }
+        }
+    } else {
+        TokenStream::new()
+    };
+    let n_uncond_lit = n_uncond;
+    quote! {
+        #key_pat => {
+            #(#target_lets)*
+            let __spine_lit_total: usize = #lit_total_expr;
+            #zero_handler
+            #singleton_handler
+            let mut __spine_branches: Vec<
+                mettail_prattail::wpda_walker::ForkBranch<__DwW>,
+            > = Vec::with_capacity(#n_uncond_lit + __spine_lit_total);
+            #(#push_stmts)*
+            return WpdaStepAction::Fork {
+                branches: __spine_branches,
+                consume_trigger: false,
+            };
+        }
     }
 }
 
@@ -2983,7 +4438,56 @@ mod tests {
             groups_seen, expected_groups,
             "rhocalc group census follows the S1F5_ACCEPT_CONTINUE stance",
         );
-        let explicit = build_spine_emission_from(&model, &def, &categories, &per_cat);
+        // F5-2 stance-follow (A3 discipline — no pin edits ride the flip):
+        // the const-gated bundle gains the two Name-dispatched send cohorts
+        // (`!` {4,6,8} spine 0xF803, `!!` {5,7,9} spine 0xF804) when
+        // `S1F5_MIXFIX_COHORTS` is on, and stays mixfix-empty when off.
+        // The min_span emptiness re-derivation extends to the mixfix groups
+        // (self-adjudicating: rules 8/9 are Op-bearing ⇒ min 0 ⇒ every
+        // mixfix span row OMITTED and the prelude stays empty).
+        let mixfix_model = mixfix_emission_partition(&def, &categories, &per_cat);
+        let mut mixfix_groups_seen = 0usize;
+        for fact in &mixfix_model {
+            for bucket in &fact.buckets {
+                for group in &bucket.groups {
+                    mixfix_groups_seen += 1;
+                    let rules = &per_cat[group.result_src_idx as usize];
+                    let min = group
+                        .member_rule_idxs()
+                        .iter()
+                        .map(|&m| member_min_span(&rules[m as usize]))
+                        .min()
+                        .expect("an eligible mixfix group has members");
+                    assert_eq!(
+                        min,
+                        0,
+                        "mixfix group (result {}, spine {:#06x}) has \
+                         min_terminal_span > 0 — it emits a span row; re-derive \
+                         the min_span_prelude expectation (A3)",
+                        group.result_src_idx,
+                        group.spine_id,
+                    );
+                }
+            }
+        }
+        let expected_mixfix_groups =
+            if crate::gen::runtime::wpda_codegen::forks::S1F5_MIXFIX_COHORTS { 2 } else { 0 };
+        assert_eq!(
+            mixfix_groups_seen, expected_mixfix_groups,
+            "rhocalc mixfix cohort census follows the S1F5_MIXFIX_COHORTS stance",
+        );
+        assert_eq!(
+            gated.mixfix_groups.len(),
+            expected_mixfix_groups,
+            "the const-gated bundle's mixfix groups follow the stance",
+        );
+        let explicit = build_spine_emission_from_parts(
+            &model,
+            &mixfix_model,
+            &def,
+            &categories,
+            &per_cat,
+        );
         assert_eq!(gated.dispositions, explicit.dispositions);
         assert_eq!(gated.binder_arms.to_string(), explicit.binder_arms.to_string());
         assert_eq!(
@@ -3003,6 +4507,14 @@ mod tests {
         assert_eq!(
             gated.spine_weight_rule_fn.to_string(),
             explicit.spine_weight_rule_fn.to_string(),
+        );
+        // F5-2: the mixfix streams agree between the const-gated and the
+        // explicit bundles at BOTH stances (empty == empty when off).
+        assert_eq!(gated.mixfix_groups, explicit.mixfix_groups);
+        assert_eq!(gated.mixfix_fan_arms.to_string(), explicit.mixfix_fan_arms.to_string());
+        assert_eq!(
+            gated.mixfix_prelude_arms.to_string(),
+            explicit.mixfix_prelude_arms.to_string(),
         );
         let grouped_alts: usize = gated.lex_alt.iter().map(|alt| alt.grouped.len()).sum();
         assert!(grouped_alts > 0, "const ON ⇒ lex-alt group entries present");
@@ -3379,4 +4891,639 @@ mod tests {
             "arm 2 commits TLong on the » guard: {arm2}",
         );
     }
+    // ═══════════════════════════════════════════════════════════════════════
+    // F5-2 — mixfix send-cohort pins (plan f5_mixfix_cohorts_plan.md §1.3/
+    // §2.2 + amendments A-M4/A-M5).
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /// P1 (GO/STOP): the two real cohort tries against the ACTUAL rhocalc
+    /// grammar — leaves {4,6,8}/{5,7,9}, divergences at depths 1 and 2,
+    /// rules 8/9 truncated at their rep, NO interior accepts, whole-slice
+    /// coverage, uniform result_src = 0, spine ids CONTINUING Proc's prefix
+    /// ordinals (3 prefix groups ⇒ `!` = 0xF803, `!!` = 0xF804), the D-1
+    /// floors (min l_bp 2/4), the AV5 identities (min member 4/5), the
+    /// A-M4 Fix-B evidence (both cohorts share "("), and the typed
+    /// MixfixRun commit coordinates.
+    #[test]
+    fn rhocalc_mixfix_send_cohorts_pin_two_groups() {
+        let def = rhocalc();
+        let (categories, per_cat) = cats_per_cat(&def);
+        let name_src = src_idx(&categories, "Name");
+        let proc_src = src_idx(&categories, "Proc");
+        let prefix = build_prefix_factoring(&def, &categories, &per_cat);
+        let proc_prefix_groups: usize = prefix[proc_src as usize]
+            .buckets
+            .iter()
+            .map(|b| b.groups.len())
+            .sum();
+        assert_eq!(proc_prefix_groups, 3, "Proc carries the three @-cohort groups");
+        let model = build_mixfix_factoring(&def, &categories, &per_cat, &prefix);
+        let name_fact = model
+            .iter()
+            .find(|f| f.dispatch_cat_src_idx == name_src)
+            .expect("Name carries mixfix buckets");
+        let bang = name_fact
+            .buckets
+            .iter()
+            .find(|b| b.trigger == "!")
+            .expect("the ! cohort exists");
+        assert_eq!(
+            bang.slice,
+            vec![(2u8, 0u16, 4u16), (6u8, 0u16, 6u16), (10u8, 0u16, 8u16)],
+            "the ! slice mirrors mixfix_bp_name",
+        );
+        assert_eq!(bang.groups.len(), 1);
+        assert!(bang.ineligible.is_empty() && bang.singletons.is_empty());
+        let g = &bang.groups[0];
+        assert_eq!(g.spine_id, SPINE_RULE_BASE + 3, "continues Proc's prefix ordinals");
+        assert_eq!(g.result_src_idx, 0);
+        assert_eq!(g.min_l_bp, 2);
+        assert_eq!(g.min_member_rule_idx, 4);
+        assert_eq!(g.member_l_bps, vec![(2u8, 4u16), (6u8, 6u16), (10u8, 8u16)]);
+        assert_eq!(g.fixb_literal.as_deref(), Some("("), "A-M4 shared Fix-B evidence");
+        assert_eq!(
+            g.expected_cats_union,
+            vec![name_src, 0u16, u16::MAX],
+            "H9 union: Name LHS + Proc operand + the rep's ANY_CAT",
+        );
+        assert_eq!(
+            render(&g.roots[0]),
+            "L(()[P(0,0)[L())=>r4 L(,)=>r8] L())=>r6]",
+            "the §1.3 trie: divergence 1 = operand-vs-close, divergence 2 = close-vs-sep",
+        );
+        let (_, m4) = g.roots[0].leaf_for(4).expect("rule 4 leafs");
+        assert_eq!(
+            m4.commit,
+            MemberCommit::MixfixRun { rule_idx: 4, kind: 0, completed_idx: 0, sub_pos: 1 },
+        );
+        assert!(!m4.has_post_spine_remainder, "rule 4's ) is its final item");
+        let (_, m6) = g.roots[0].leaf_for(6).expect("rule 6 leafs");
+        assert_eq!(
+            m6.commit,
+            MemberCommit::MixfixRun { rule_idx: 6, kind: 2, completed_idx: 0, sub_pos: 2 },
+        );
+        assert!(!m6.has_post_spine_remainder);
+        let (_, m8) = g.roots[0].leaf_for(8).expect("rule 8 leafs");
+        assert_eq!(
+            m8.commit,
+            MemberCommit::MixfixRun { rule_idx: 8, kind: 0, completed_idx: 0, sub_pos: 1 },
+        );
+        assert!(m8.has_post_spine_remainder, "rule 8 truncates at its rep");
+        assert_eq!(
+            m8.pos_map,
+            SpinePosMap::Mixfix {
+                coords_at_depth: vec![(2, 0, 0), (2, 0, 1), (0, 0, 0), (0, 0, 1)],
+            },
+            "the A4-analog member walk",
+        );
+        let bangbang = name_fact
+            .buckets
+            .iter()
+            .find(|b| b.trigger == "!!")
+            .expect("the !! cohort exists");
+        assert_eq!(
+            bangbang.slice,
+            vec![(4u8, 0u16, 5u16), (8u8, 0u16, 7u16), (12u8, 0u16, 9u16)],
+        );
+        assert_eq!(bangbang.groups.len(), 1);
+        let g2 = &bangbang.groups[0];
+        assert_eq!(g2.spine_id, SPINE_RULE_BASE + 4);
+        assert_eq!(g2.min_l_bp, 4);
+        assert_eq!(g2.min_member_rule_idx, 5);
+        assert_eq!(
+            render(&g2.roots[0]),
+            "L(()[P(0,0)[L())=>r5 L(,)=>r9] L())=>r7]",
+            "the !! trie is isomorphic",
+        );
+    }
+
+    /// A-M5 census errata pins: every OTHER bundled mixfix cohort stays
+    /// unfactored with the recorded reason — Name `,` (rep-part-0 ⇒
+    /// EmptySequence ×2), Name `<-` (1-member slice ⇒ LoneRootChild), the
+    /// Proc `.` cohort (40 distinct method names ⇒ 40 LoneRootChild), and
+    /// InputBind `&`/`where` (rep-part-0 ×2 / singleton).
+    #[test]
+    fn rhocalc_mixfix_other_cohorts_stay_unfactored() {
+        let def = rhocalc();
+        let (categories, per_cat) = cats_per_cat(&def);
+        let name_src = src_idx(&categories, "Name");
+        let proc_src = src_idx(&categories, "Proc");
+        let ib_src = src_idx(&categories, "InputBind");
+        let prefix = build_prefix_factoring(&def, &categories, &per_cat);
+        let model = build_mixfix_factoring(&def, &categories, &per_cat, &prefix);
+        let bucket = |cat: u16, trigger: &str| -> &MixfixBucket {
+            model
+                .iter()
+                .find(|f| f.dispatch_cat_src_idx == cat)
+                .and_then(|f| f.buckets.iter().find(|b| b.trigger == trigger))
+                .unwrap_or_else(|| panic!("bucket ({cat}, {trigger:?}) exists"))
+        };
+        let comma = bucket(name_src, ",");
+        assert!(comma.groups.is_empty());
+        assert_eq!(comma.singletons.len(), 2);
+        assert!(comma
+            .singletons
+            .iter()
+            .all(|s| s.reason == SingletonReason::EmptySequence));
+        let query = bucket(name_src, "<-");
+        assert!(query.groups.is_empty());
+        assert_eq!(query.singletons.len(), 1);
+        assert_eq!(query.singletons[0].reason, SingletonReason::LoneRootChild);
+        let dot = bucket(proc_src, ".");
+        assert!(dot.groups.is_empty());
+        assert_eq!(dot.slice.len(), 40, "the 40-method cohort");
+        assert_eq!(dot.singletons.len(), 40);
+        assert!(dot
+            .singletons
+            .iter()
+            .all(|s| s.reason == SingletonReason::LoneRootChild));
+        let amp = bucket(ib_src, "&");
+        assert!(amp.groups.is_empty());
+        assert!(amp
+            .singletons
+            .iter()
+            .all(|s| s.reason == SingletonReason::EmptySequence));
+        // The whole-bundle headline: exactly TWO factorable groups.
+        let total_groups: usize = model
+            .iter()
+            .flat_map(|f| f.buckets.iter())
+            .map(|b| b.groups.len())
+            .sum();
+        assert_eq!(total_groups, 2, "exactly two factorable mixfix cohorts in rhocalc");
+    }
+
+    /// Dormancy pin (stance-adaptive on `S1F5_MIXFIX_COHORTS` — no pin edit
+    /// rides the flip): with the const OFF the emission-effective mixfix
+    /// partition is the identity, every mixfix stream in the const-gated
+    /// bundle is EMPTY, and `mixfix_spine_parts_len_rows` contributes no
+    /// rows (the byte-identity mechanism); with the const ON the partition
+    /// is the model, the streams are live, and the rows carry exactly the
+    /// two Proc-space spine ids.
+    #[test]
+    fn mixfix_emission_follows_the_s1f5_2_const() {
+        let def = rhocalc();
+        let (categories, per_cat) = cats_per_cat(&def);
+        let gated = build_spine_emission(&def, &categories, &per_cat);
+        let rows = mixfix_spine_parts_len_rows(&def, &categories, &per_cat);
+        let partition = mixfix_emission_partition(&def, &categories, &per_cat);
+        let partition_groups: usize = partition
+            .iter()
+            .flat_map(|f| f.buckets.iter())
+            .map(|b| b.groups.len())
+            .sum();
+        if crate::gen::runtime::wpda_codegen::forks::S1_FACTORING
+            && crate::gen::runtime::wpda_codegen::forks::S1F5_MIXFIX_COHORTS
+        {
+            assert_eq!(gated.mixfix_groups.len(), 2);
+            assert!(!gated.mixfix_fan_arms.is_empty());
+            assert!(!gated.mixfix_prelude_arms.is_empty());
+            assert_eq!(
+                rows,
+                vec![(0u16, SPINE_RULE_BASE + 3), (0u16, SPINE_RULE_BASE + 4)],
+            );
+            assert_eq!(partition_groups, 2);
+        } else {
+            assert!(gated.mixfix_groups.is_empty());
+            assert!(gated.mixfix_fan_arms.is_empty());
+            assert!(gated.mixfix_prelude_arms.is_empty());
+            assert!(rows.is_empty());
+            assert_eq!(partition_groups, 0);
+            // Identity twin: same cohort census (slice denominators), every
+            // member a FactoringDisabled singleton.
+            for fact in &partition {
+                for bucket in &fact.buckets {
+                    assert_eq!(bucket.singletons.len(), bucket.slice.len());
+                    assert!(bucket
+                        .singletons
+                        .iter()
+                        .all(|s| s.reason == SingletonReason::FactoringDisabled));
+                }
+            }
+        }
+    }
+
+    /// The identity partition mirrors the model's cohort CENSUS exactly
+    /// (same buckets, same slices — only the outcome differs). The INV-8
+    /// denominators therefore agree across stances.
+    #[test]
+    fn mixfix_identity_partition_census_twin() {
+        let def = rhocalc();
+        let (categories, per_cat) = cats_per_cat(&def);
+        let prefix = build_prefix_factoring(&def, &categories, &per_cat);
+        let model = build_mixfix_factoring(&def, &categories, &per_cat, &prefix);
+        let identity = mixfix_identity_partition(&def, &categories, &per_cat);
+        let census = |m: &[MixfixFactoring]| -> Vec<(u16, String, Vec<(u8, u16, u16)>)> {
+            m.iter()
+                .flat_map(|f| {
+                    f.buckets.iter().map(move |b| {
+                        (f.dispatch_cat_src_idx, b.trigger.clone(), b.slice.clone())
+                    })
+                })
+                .collect()
+        };
+        assert_eq!(census(&model), census(&identity));
+    }
+
+    /// ON-shape emission pins over the explicit-stance core (no const
+    /// flips): the loop-v2 fan arm (D-1 guard on the A-M4 MEMBER id, the
+    /// AV5 min-member weight, the spine push + flag), the three prelude
+    /// arms per plan §2.2 (chain step via `__checked_literal_consume!`,
+    /// divergence 1 = descent-Advance + rule-6 commit CAR with the
+    /// B-alone/zero short-circuit, divergence 2 = rule-4/rule-8 commit CARs
+    /// with the singleton short-circuits + the Error miss shape), and the
+    /// engine-table rows (owner/members/H9 union/weight; A7 rows ABSENT).
+    #[test]
+    fn mixfix_emission_pins_fan_arm_prelude_and_tables() {
+        let def = rhocalc();
+        let (categories, per_cat) = cats_per_cat(&def);
+        let prefix = build_prefix_factoring(&def, &categories, &per_cat);
+        let mixfix = build_mixfix_factoring(&def, &categories, &per_cat, &prefix);
+        let bundle =
+            build_spine_emission_from_parts(&prefix, &mixfix, &def, &categories, &per_cat);
+        assert_eq!(bundle.mixfix_groups.len(), 2);
+        assert_eq!(
+            bundle.mixfix_groups[0],
+            MixfixGroupEmission {
+                dispatch_cat_src_idx: 3,
+                trigger: "!".to_string(),
+                result_src_idx: 0,
+                spine_id: SPINE_RULE_BASE + 3,
+                min_l_bp: 2,
+                min_member_rule_idx: 4,
+                member_rule_idxs: vec![4, 6, 8],
+            },
+        );
+        // ── the fan arm ────────────────────────────────────────────────────
+        let fan = normalized(&bundle.mixfix_fan_arms);
+        let bang_arm = window(&fan, "(3u16,\"!\")", "(3u16,\"!!\")");
+        assert!(
+            bang_arm.contains("if2u8>=*cur_bp")
+                && bang_arm.contains("__goal_admits(0u16)")
+                && bang_arm.contains("__method_name_admits(0u16,4u16)"),
+            "D-1 full-admission guard on the MEMBER id (A-M4): {bang_arm}",
+        );
+        assert!(
+            bang_arm.contains("mixfix_marker(0u16,63491u16,0,)")
+                && bang_arm.contains("BP_TIER_MIXFIX,0u16,4u16")
+                && bang_arm.contains("rule_idx:63491u16")
+                && bang_arm.contains("__mixfix_spine_pushed=true"),
+            "spine push at the AV5 min-member weight: {bang_arm}",
+        );
+        assert!(fan.contains("(3u16,\"!!\")") && fan.contains("mixfix_marker(0u16,63492u16,0,)"));
+        // ── the prelude arms (the ! group; !! isomorphic) ─────────────────
+        let prelude = normalized(&bundle.mixfix_prelude_arms);
+        let chain = window(
+            &prelude,
+            "(0u16,63491u16,2u8,0u8,0u8)=>",
+            "(0u16,63491u16,2u8,0u8,1u8)=>",
+        );
+        assert!(
+            chain.contains("__checked_literal_consume!(\"(\"") && chain.contains("sub_pos:1u8"),
+            "pre-root chain step consumes the root edge: {chain}",
+        );
+        let div1 = window(
+            &prelude,
+            "(0u16,63491u16,2u8,0u8,1u8)=>",
+            "(0u16,63491u16,0u8,0u8,0u8)=>",
+        );
+        assert!(
+            div1.contains("__mixfix_literal_targets(tokens,_pos,\")\")"),
+            "divergence 1 gates the rule-6 commit on the close: {div1}",
+        );
+        assert!(
+            div1.contains("if__spine_lit_total==0{returnWpdaStepAction::Advance(WpdaState::PrefixDispatch"),
+            "divergence 1 B-alone short-circuit (descent when no close): {div1}",
+        );
+        assert!(
+            div1.contains("ForkActionKind::Advance")
+                && div1.contains("mixfix_marker(0u16,6u16,0u8)")
+                && div1.contains("kind:2u8,sub_pos:2u8"),
+            "divergence 1 fork = descent-first + rule-6 commit CAR: {div1}",
+        );
+        assert!(
+            !div1.contains("__spine_lit_total==1"),
+            "divergence 1 has an unconditional branch — no literal-singleton \
+             short-circuit: {div1}",
+        );
+        let div2 = window(&prelude, "(0u16,63491u16,0u8,0u8,0u8)=>", "(0u16,63492u16,2u8,0u8,0u8)=>");
+        assert!(
+            div2.contains("__mixfix_literal_targets(tokens,_pos,\")\")")
+                && div2.contains("__mixfix_literal_targets(tokens,_pos,\",\")"),
+            "divergence 2 gates both commits: {div2}",
+        );
+        assert!(
+            div2.contains("if__spine_lit_total==1")
+                && div2.contains("mixfix_marker(0u16,4u16,0u8)")
+                && div2.contains("mixfix_marker(0u16,8u16,0u8)")
+                && div2.contains("kind:0u8,sub_pos:1u8"),
+            "divergence 2 = the two commit CARs with singleton short-circuits: {div2}",
+        );
+        assert!(
+            div2.contains("WpdaStepAction::Error"),
+            "divergence 2 zero-live miss shape: {div2}",
+        );
+        // ── engine-table rows ─────────────────────────────────────────────
+        let owners = normalized(&bundle.trigger_spine_owner_fn);
+        for (m, spine) in [(4, "63491"), (6, "63491"), (8, "63491"), (5, "63492"), (7, "63492"), (9, "63492")] {
+            assert!(
+                owners.contains(&format!("(0u16,{m}u16)=>Some({spine}u16)")),
+                "owner row for member {m}: {owners}",
+            );
+        }
+        let members = normalized(&bundle.spine_members_fn);
+        assert!(members.contains("(0u16,63491u16)=>&[4u16,6u16,8u16]"));
+        assert!(members.contains("(0u16,63492u16)=>&[5u16,7u16,9u16]"));
+        let actions = normalized(&bundle.action_for_prelude);
+        assert!(
+            actions.contains("(0u16,63491u16)=>")
+                && actions.contains("expected_input_cats:&[3u16,0u16,65535u16]"),
+            "H9 poison union row (Name LHS + Proc + rep ANY_CAT): {actions}",
+        );
+        let weights = normalized(&bundle.spine_weight_rule_fn);
+        assert!(weights.contains("(0u16,63491u16)=>4u16"));
+        assert!(weights.contains("(0u16,63492u16)=>5u16"));
+        // A7-mixfix (A-M5): rows OMITTED — the members are operand-leading.
+        let leads = normalized(&bundle.leading_trigger_prelude);
+        assert!(
+            !leads.contains("63491") && !leads.contains("63492"),
+            "mixfix spine ids must NOT appear on the leading-trigger surface: {leads}",
+        );
+        // min_span stays EMPTY for rhocalc (rules 8/9 are Op-bearing ⇒ min 0).
+        assert!(bundle.min_span_prelude.is_empty());
+    }
+
+    /// A-M5 operand-absorbability witness: a cohort whose post-operand
+    /// divergence literal (`+`) is itself an infix operator of the operand
+    /// category — the whole cohort degrades with
+    /// `OperandAbsorbableDivergence` (next-token-disjoint does NOT imply
+    /// span-disjoint; the min-member spine stamp would adjudicate an
+    /// intra-cohort ⊕-tie OFF adjudicates with member stamps).
+    #[test]
+    fn mixfix_operand_absorbable_divergence_defers() {
+        let types = vec![lang_type("Expr", None)];
+        let terms = vec![
+            jrule("EAtom", "Expr", vec![], vec![lit("e")]),
+            jrule(
+                "Plus",
+                "Expr",
+                vec![simple("a", "Expr"), simple("b", "Expr")],
+                vec![param("a"), lit("+"), param("b")],
+            ),
+            jrule(
+                "MPlusTail",
+                "Expr",
+                vec![simple("a", "Expr"), simple("b", "Expr"), simple("c", "Expr")],
+                vec![param("a"), lit("!"), lit("«"), param("b"), lit("+"), param("c"), lit("»")],
+            ),
+            jrule(
+                "MClose",
+                "Expr",
+                vec![simple("a", "Expr"), simple("b", "Expr")],
+                vec![param("a"), lit("!"), lit("«"), param("b"), lit("»")],
+            ),
+        ];
+        let def = mk_language("AbsorbLang", types, terms);
+        let (categories, per_cat) = cats_per_cat(&def);
+        let prefix = build_prefix_factoring(&def, &categories, &per_cat);
+        let model = build_mixfix_factoring(&def, &categories, &per_cat, &prefix);
+        let bucket = model
+            .iter()
+            .find(|f| f.dispatch_cat_src_idx == 0)
+            .and_then(|f| f.buckets.iter().find(|b| b.trigger == "!"))
+            .expect("the ! bucket exists");
+        assert!(bucket.groups.is_empty(), "absorbable divergence must not factor");
+        assert_eq!(bucket.ineligible.len(), 1);
+        match &bucket.ineligible[0].reason {
+            IneligibleReason::OperandAbsorbableDivergence { texts } => {
+                assert!(texts.contains(&"+".to_string()), "the + literal is absorbable");
+            },
+            other => panic!("expected OperandAbsorbableDivergence, got {other:?}"),
+        }
+    }
+
+    /// The coordinator-mandated exhaustion-at-interior check on the mixfix
+    /// surface: a proper-prefix member routes the WHOLE cohort to
+    /// `InteriorAccept` (accept_continue is ALWAYS false here — the F5-1
+    /// sibling-leaf mechanism needs the typed mixfix commits and its own
+    /// plan pass).
+    #[test]
+    fn mixfix_interior_accept_defers_whole_group() {
+        let types = vec![lang_type("Expr", None)];
+        let terms = vec![
+            jrule("EAtom", "Expr", vec![], vec![lit("e")]),
+            jrule(
+                "MShort",
+                "Expr",
+                vec![simple("a", "Expr"), simple("b", "Expr")],
+                vec![param("a"), lit("!"), lit("«"), param("b"), lit("»")],
+            ),
+            jrule(
+                "MLong",
+                "Expr",
+                vec![simple("a", "Expr"), simple("b", "Expr"), simple("c", "Expr")],
+                vec![
+                    param("a"),
+                    lit("!"),
+                    lit("«"),
+                    param("b"),
+                    lit("»"),
+                    lit("‹"),
+                    param("c"),
+                    lit("›"),
+                ],
+            ),
+        ];
+        let def = mk_language("InteriorLang", types, terms);
+        let (categories, per_cat) = cats_per_cat(&def);
+        let prefix = build_prefix_factoring(&def, &categories, &per_cat);
+        let model = build_mixfix_factoring(&def, &categories, &per_cat, &prefix);
+        let bucket = model
+            .iter()
+            .find(|f| f.dispatch_cat_src_idx == 0)
+            .and_then(|f| f.buckets.iter().find(|b| b.trigger == "!"))
+            .expect("the ! bucket exists");
+        assert!(bucket.groups.is_empty());
+        assert_eq!(bucket.ineligible.len(), 1);
+        assert!(
+            matches!(
+                &bucket.ineligible[0].reason,
+                IneligibleReason::InteriorAccept { accepting_rule_idxs }
+                    if accepting_rule_idxs.len() == 1
+            ),
+            "the proper-prefix member is the interior accept: {:?}",
+            bucket.ineligible[0],
+        );
+    }
+
+    /// D-5 partial-slice witness: a 3-member slice whose root partition
+    /// splits (two share `«`, one opens with `⟦`) degrades the WHOLE cohort
+    /// — the pair records `PartialSliceCohort`, the loner `LoneRootChild`,
+    /// zero groups.
+    #[test]
+    fn mixfix_partial_slice_cohort_degrades() {
+        let types = vec![lang_type("Expr", None)];
+        let terms = vec![
+            jrule("EAtom", "Expr", vec![], vec![lit("e")]),
+            jrule(
+                "MOne",
+                "Expr",
+                vec![simple("a", "Expr"), simple("b", "Expr")],
+                vec![param("a"), lit("!"), lit("«"), param("b"), lit("»")],
+            ),
+            jrule(
+                "MEmpty",
+                "Expr",
+                vec![simple("a", "Expr")],
+                vec![param("a"), lit("!"), lit("«"), lit("»")],
+            ),
+            jrule(
+                "MOther",
+                "Expr",
+                vec![simple("a", "Expr"), simple("b", "Expr")],
+                vec![param("a"), lit("!"), lit("⟦"), param("b"), lit("⟧")],
+            ),
+        ];
+        let def = mk_language("PartialLang", types, terms);
+        let (categories, per_cat) = cats_per_cat(&def);
+        let prefix = build_prefix_factoring(&def, &categories, &per_cat);
+        let model = build_mixfix_factoring(&def, &categories, &per_cat, &prefix);
+        let bucket = model
+            .iter()
+            .find(|f| f.dispatch_cat_src_idx == 0)
+            .and_then(|f| f.buckets.iter().find(|b| b.trigger == "!"))
+            .expect("the ! bucket exists");
+        assert!(bucket.groups.is_empty() && bucket.ineligible.is_empty());
+        assert_eq!(bucket.slice.len(), 3);
+        let mut partial = 0;
+        let mut lone = 0;
+        for s in &bucket.singletons {
+            match s.reason {
+                SingletonReason::PartialSliceCohort => partial += 1,
+                SingletonReason::LoneRootChild => lone += 1,
+                other => panic!("unexpected reason {other:?}"),
+            }
+        }
+        assert_eq!((partial, lone), (2, 1));
+    }
+
+    /// Operand-edge commit witness (plan §8 FS1: "a hypothetical
+    /// operand-vs-operand divergence uses the existing ReplaceAndPush fork
+    /// kind, still consuming via the sub-parse"): a member whose leaf EDGE
+    /// is the operand commits via `ReplaceAndPush { replace_symbol: the
+    /// member marker }` in the emitted prelude.
+    #[test]
+    fn mixfix_param_leaf_commit_uses_replace_and_push() {
+        let types = vec![lang_type("Expr", None)];
+        let terms = vec![
+            jrule("EAtom", "Expr", vec![], vec![lit("e")]),
+            jrule(
+                "MOne",
+                "Expr",
+                vec![simple("a", "Expr"), simple("b", "Expr")],
+                vec![param("a"), lit("!"), lit("«"), param("b"), lit("»")],
+            ),
+            jrule(
+                "MEmpty",
+                "Expr",
+                vec![simple("a", "Expr")],
+                vec![param("a"), lit("!"), lit("«"), lit("»")],
+            ),
+        ];
+        let def = mk_language("ParamLeafLang", types, terms);
+        let (categories, per_cat) = cats_per_cat(&def);
+        let prefix = build_prefix_factoring(&def, &categories, &per_cat);
+        let mixfix = build_mixfix_factoring(&def, &categories, &per_cat, &prefix);
+        let bucket = mixfix
+            .iter()
+            .find(|f| f.dispatch_cat_src_idx == 0)
+            .and_then(|f| f.buckets.iter().find(|b| b.trigger == "!"))
+            .expect("the ! bucket exists");
+        assert_eq!(bucket.groups.len(), 1, "{:?}", bucket);
+        let g = &bucket.groups[0];
+        // MOne (rule 1) leafs on its OPERAND edge at depth 2 with remainder
+        // (its » stays member-side); MEmpty (rule 2) on its » literal.
+        let (leaf_item, m1) = g.roots[0].leaf_for(1).expect("MOne leafs");
+        assert!(matches!(leaf_item, SpineItem::ParamParse { .. }));
+        assert_eq!(
+            m1.commit,
+            MemberCommit::MixfixRun { rule_idx: 1, kind: 0, completed_idx: 0, sub_pos: 0 },
+        );
+        assert!(m1.has_post_spine_remainder);
+        let bundle =
+            build_spine_emission_from_parts(&prefix, &mixfix, &def, &categories, &per_cat);
+        let prelude = normalized(&bundle.mixfix_prelude_arms);
+        assert!(
+            prelude.contains("ForkActionKind::ReplaceAndPush")
+                && prelude.contains("replace_symbol:StackSymbolV2::mixfix_marker(0u16,1u16,0u8)"),
+            "the operand-edge commit rides ReplaceAndPush: {prelude}",
+        );
+    }
+
+    /// Spine re-entry key uniqueness: two members sharing TWO operands on
+    /// the spine path would re-enter at the same `(0, 0, 0)` — the cohort
+    /// degrades with `MultiOperandSharedSpine` (loudly recorded, never
+    /// silently mis-keyed).
+    #[test]
+    fn mixfix_multi_operand_shared_spine_defers() {
+        let types = vec![lang_type("Expr", None)];
+        let terms = vec![
+            jrule("EAtom", "Expr", vec![], vec![lit("e")]),
+            jrule(
+                "MTwoX",
+                "Expr",
+                vec![
+                    simple("a", "Expr"),
+                    simple("b", "Expr"),
+                    simple("c", "Expr"),
+                ],
+                vec![
+                    param("a"),
+                    lit("!"),
+                    lit("«"),
+                    param("b"),
+                    lit("»"),
+                    lit("«"),
+                    param("c"),
+                    lit("»"),
+                    lit("x"),
+                ],
+            ),
+            jrule(
+                "MTwoY",
+                "Expr",
+                vec![
+                    simple("a", "Expr"),
+                    simple("b", "Expr"),
+                    simple("c", "Expr"),
+                ],
+                vec![
+                    param("a"),
+                    lit("!"),
+                    lit("«"),
+                    param("b"),
+                    lit("»"),
+                    lit("«"),
+                    param("c"),
+                    lit("»"),
+                    lit("y"),
+                ],
+            ),
+        ];
+        let def = mk_language("TwoOperandLang", types, terms);
+        let (categories, per_cat) = cats_per_cat(&def);
+        let prefix = build_prefix_factoring(&def, &categories, &per_cat);
+        let model = build_mixfix_factoring(&def, &categories, &per_cat, &prefix);
+        let bucket = model
+            .iter()
+            .find(|f| f.dispatch_cat_src_idx == 0)
+            .and_then(|f| f.buckets.iter().find(|b| b.trigger == "!"))
+            .expect("the ! bucket exists");
+        assert!(bucket.groups.is_empty(), "{:?}", bucket.groups);
+        assert_eq!(bucket.ineligible.len(), 1, "{:?}", bucket);
+        assert!(matches!(
+            bucket.ineligible[0].reason,
+            IneligibleReason::MultiOperandSharedSpine,
+        ));
+    }
+
 }
