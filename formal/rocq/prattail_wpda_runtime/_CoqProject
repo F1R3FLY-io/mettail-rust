@@ -75,3 +75,7 @@ theories/PureCommitFoldIntegrity.v
 theories/TrieLeafBijectionAccept.v
 theories/SpineSimulationAccept.v
 theories/PureCommitFoldIntegrityAccept.v
+
+theories/MixfixSpineCommit.v
+theories/ReplayIdentityIntegrity.v
+theories/MixfixTriggerVacuity.v
