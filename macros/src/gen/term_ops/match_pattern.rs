@@ -443,6 +443,20 @@ fn generate_iterative_regular_arm(
         .zip(ground_field_names.iter().zip(pattern_field_names.iter()))
         .rev() // reverse for correct processing order
         .map(|(field, (gname, pname))| {
+            // Task #14 (Option<Guard>): predicate-FIRST — predicates are
+            // compared structurally BY CONVENTION (BehavioralPred is a
+            // BoundTerm leaf whose term_eq delegates to Eq; its Quantified
+            // variant IS a binder, so alpha-equivalent guards compare
+            // unequal — accepted codebase-wide). Byte-for-byte the Binder
+            // pre-scope arm in `generate_binder_match_arm_inline`; derived
+            // PartialEq covers both the bare and the Option<BehavioralPred>
+            // shapes, so no `MatchGuard` task (the Guard pseudo-category
+            // has none) and no deref is ever emitted.
+            if field.is_predicate {
+                return quote! {
+                    if #gname != #pname { return None; }
+                };
+            }
             let task_variant = format_ident!("Match{}", field.category);
             if field.is_optional {
                 if field.is_collection {
@@ -839,5 +853,47 @@ fn generate_category_match_pattern(category: &Ident, language: &LanguageDef) -> 
 
             #(#cross_methods)*
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn regular_arm_pred_compares_structurally() {
+        // Task #14 gate-1: pre-#14 the Regular arm pushed the nonexistent
+        // `MatchTask::MatchGuard` and deref'd the Option payload. The pred
+        // arm must be a structural `!=` (the Binder pre-scope precedent),
+        // which covers bare AND Option<BehavioralPred> shapes via derived
+        // PartialEq.
+        let language = crate::gen::empty_language_for_tests();
+        let cat = format_ident!("Int");
+        let label = format_ident!("PCheck");
+        let fields = vec![
+            FieldInfo {
+                category: format_ident!("Int"),
+                is_collection: false,
+                coll_type: None,
+                is_predicate: false,
+                is_optional: false,
+            },
+            FieldInfo {
+                category: format_ident!("Guard"),
+                is_collection: false,
+                coll_type: None,
+                is_predicate: true,
+                is_optional: true,
+            },
+        ];
+        let arm = generate_iterative_regular_arm(&cat, &label, &fields, &language).to_string();
+        assert!(
+            arm.contains("if g1 != p1 { return None ; }"),
+            "the pred position must compare structurally: {arm}",
+        );
+        assert!(
+            !arm.contains("MatchGuard"),
+            "no Match task exists for the Guard pseudo-category: {arm}",
+        );
     }
 }

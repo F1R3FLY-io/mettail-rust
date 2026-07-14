@@ -2150,3 +2150,29 @@ pub fn generate_literal_label(native_type: &syn::Type) -> Ident {
         | NativeType::CanonicalBigInt => quote::format_ident!("NumLit"),
     }
 }
+
+/// Task #14 gate-1 support: a field-empty `LanguageDef` for emitter unit
+/// tests whose generators take a `&LanguageDef` they do not consult on the
+/// predicate paths under test (e.g. `generate_iterative_regular_arm`,
+/// `construct_leaf_value`, the tape builders).
+#[cfg(test)]
+pub(crate) fn empty_language_for_tests() -> mettail_ast::language::LanguageDef {
+    mettail_ast::language::LanguageDef {
+        name: quote::format_ident!("TestLang"),
+        options: std::collections::HashMap::new(),
+        extends_names: Vec::new(),
+        include_names: Vec::new(),
+        mixin_names: Vec::new(),
+        types: Vec::new(),
+        refinement_types: Vec::new(),
+        token_defs: Vec::new(),
+        mode_defs: Vec::new(),
+        sync_constraints: Vec::new(),
+        tree_invariants: Vec::new(),
+        terms: Vec::new(),
+        equations: Vec::new(),
+        rewrites: Vec::new(),
+        logic: None,
+        guard_config: None,
+    }
+}

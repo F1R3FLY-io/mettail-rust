@@ -6,14 +6,17 @@
 //! `OPTIONAL_PRESENT` packing into `ActionArg::Optional(Some([Predicate]))`
 //! (guard present), while the skip path yields `Optional(None)` (absent).
 
-//! ⚠ BLOCKED-BY-PREEXISTING (2026-07-11): the whole file is cfg-gated on
-//! the non-default `guardoptsmoke` feature because the grammar cannot
-//! COMPILE today — two engine-independent term-ops codegen gaps (see
-//! languages/Cargo.toml's feature note). The moment those are fixed,
-//! adding the feature to `all-languages` turns this pair into the live
-//! site-2 gate. Nothing here is parser-blocked: binder.rs:836-839 emits
-//! the GuardSlot for optional-group inner positions, and the pure arm is
-//! payload-driven (plan §4 placement 2).
+//! UNBLOCKED by task #14 (Option<Guard> term-ops codegen, 2026-07-13): the
+//! historical blocker was 15 pre-existing, engine-independent term-ops
+//! codegen errors across 8 generated files (normalize/subst/match_pattern/
+//! display/hashes/term_gen/test_gen — receipt:
+//! scratchpad/zz_probes/logs_s2burn/f1_a11_check.log) plus the eval
+//! classify `compile_error!` for the committed Int shape; all closed by
+//! the task-#14 emitter fixes. This pair is now the LIVE site-2 gate,
+//! still cfg-gated on the non-default `guardoptsmoke` feature (promotion
+//! into `all-languages` is a separate decision). Nothing here was ever
+//! parser-blocked: binder.rs emits the GuardSlot for optional-group inner
+//! positions at both sites, and the pure arm is payload-driven.
 #![cfg(feature = "guardoptsmoke")]
 
 use mettail_languages::guardoptsmoke::Int;

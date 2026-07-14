@@ -40,18 +40,18 @@ language! {
     terms {
         PNil . |- "Nil" : Proc ;
 
-        /// A proc wrapper whose guard is OPTIONAL: `check(p)` or
-        /// `check(p where g)` — the guard slot sits inside `*opt(...)`.
-        /// NOTE (A-11 shape): the rule produces the NATIVE category `Int`
-        /// with an eval body — the NON-native normalize PDA emitter has a
-        /// PRE-EXISTING, engine-independent gap for `Option<Guard>`
-        /// fields (`f1_pred` vs `f1_slot/f1_some` field-name mismatch in
-        /// the generated `normalize.rs`; classic hits it identically at
-        /// COMPILE time), so a Proc-producing guarded-opt rule cannot
-        /// build in ANY engine today. The native route exercises the SAME
-        /// site-2 parse path (GuardSlot inside the optional group) while
-        /// bypassing the unrelated term-ops gap. Documented in the F1
-        /// ledger entry.
+        /// A wrapper whose guard is OPTIONAL: `check(k)` or
+        /// `check(k where g)` — the guard slot sits inside `*opt(...)`.
+        /// NOTE (A-11 shape, updated by task #14): the rule produces the
+        /// NATIVE category `Int` with an eval body. Historically that
+        /// choice dodged a then-unfixed term-ops gap (`f1_pred` vs
+        /// `f1_slot/f1_some` in the generated normalize.rs — closed by
+        /// task #14 for BOTH the native and non-native shapes); it is
+        /// KEPT because the Int shape additionally exercises the native
+        /// eval/try_fold path over a guard-bearing variant (the PDA
+        /// classify + guard-arity layers), which a Proc shape would not.
+        /// The site-2 parse path (GuardSlot inside the optional group) is
+        /// identical either way. Documented in the F1 ledger entry.
         PCheck . k:Int, *opt(?g:Guard)
             |- "check" "(" k *opt("where" g) ")" : Int
             ![{ k }] ;

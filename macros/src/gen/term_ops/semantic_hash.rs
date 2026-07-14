@@ -767,6 +767,22 @@ fn generate_semantic_regular_arm(
                         }
                     }
                 });
+            } else if field.is_optional && field.is_predicate {
+                // Task #14 (Option<Guard>): 0/1 discriminant + structural
+                // Hash of the inner predicate (no Arc deref — the Option
+                // payload is a bare BehavioralPred). Predicates carry no
+                // host-term alpha-structure to canonicalize, so structural
+                // Hash IS the semantic hash BY CONVENTION (matches the
+                // bare-predicate arm below; Eq-consistent).
+                final_stmts.push(quote! {
+                    match #name.as_ref() {
+                        None => state.write_u8(0u8),
+                        Some(__b) => {
+                            state.write_u8(1u8);
+                            std::hash::Hash::hash(__b, state);
+                        }
+                    }
+                });
             } else if field.is_optional {
                 // Optional Box<T>: discriminant + recurse via standard
                 // semantic_hash (re-entrant; bounded because the inner
@@ -826,6 +842,18 @@ fn generate_semantic_regular_arm(
                         Some(__c) => {
                             state.write_u8(1u8);
                             #sem
+                        }
+                    }
+                });
+            } else if field.is_optional && field.is_predicate {
+                // Task #14 (Option<Guard>): deferred twin of the eager arm
+                // — 0/1 discriminant + structural Hash, no Arc deref.
+                final_stmts.push(quote! {
+                    match #name.as_ref() {
+                        None => state.write_u8(0u8),
+                        Some(__b) => {
+                            state.write_u8(1u8);
+                            std::hash::Hash::hash(__b, state);
                         }
                     }
                 });
@@ -1093,5 +1121,51 @@ fn generate_semantic_impl(category: &Ident) -> TokenStream {
                 semantic_hash_iterative(&mut stack, state);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod task14_tests {
+    use super::*;
+
+    #[test]
+    fn regular_arm_optional_pred_structural_hash_no_deref() {
+        // Task #14 gate-1: pre-#14 the optional arm emitted
+        // `(&**__b).semantic_hash(state)` — E0614 on the bare
+        // BehavioralPred payload (which has no semantic_hash anyway).
+        // Predicates hash structurally (0/1 discriminant + Hash::hash) —
+        // structural Hash IS the semantic hash for predicates BY
+        // CONVENTION (no host-term alpha-structure; Eq-consistent).
+        let language = crate::gen::empty_language_for_tests();
+        let cat = format_ident!("Int");
+        let label = format_ident!("PCheck");
+        let fields = vec![FieldInfo {
+            category: format_ident!("Guard"),
+            is_collection: false,
+            coll_type: None,
+            is_predicate: true,
+            is_optional: true,
+        }];
+        let arm = generate_semantic_regular_arm(
+            &cat,
+            3u8,
+            &label,
+            &fields,
+            &HashSet::new(),
+            &language,
+        )
+        .to_string();
+        assert!(
+            arm.contains("hash (__b , state)"),
+            "the Some arm must hash the bare inner pred structurally: {arm}",
+        );
+        assert!(
+            !arm.contains("* * __b"),
+            "no Arc deref exists on an Option<BehavioralPred> payload: {arm}",
+        );
+        assert!(
+            arm.contains("write_u8 (0u8)") && arm.contains("write_u8 (1u8)"),
+            "the None/Some discriminant scheme must be kept: {arm}",
+        );
     }
 }

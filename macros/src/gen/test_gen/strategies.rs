@@ -1073,6 +1073,20 @@ fn generate_direct_recursive_build(
                             field_exprs.push(format!("coll_{}", i));
                         },
                     }
+                } else if field.is_optional && field.is_predicate {
+                    // Task #14 (Option<Guard>): `Option<BehavioralPred>`
+                    // guard slot — tape byte picks None / Some(Top). No
+                    // `build_guard_from_tape` exists (Guard is not a
+                    // language category), and the term arm's
+                    // `Option<Arc<{cat}>>` type is wrong here. `Top` per
+                    // the mandatory-guard arm below (renders `true()`,
+                    // display-stable under re-parse — the guarded_rho
+                    // prop suite is green with tape-built Top today).
+                    code.push_str(&format!(
+                        "            let f{i}: Option<mettail_runtime::BehavioralPred> = if reader.next_byte() & 1 == 0 {{ None }} else {{ Some(mettail_runtime::BehavioralPred::Top) }};\n",
+                        i = i,
+                    ));
+                    field_exprs.push(format!("f{}", i));
                 } else if field.is_optional {
                     // F7: Opt-Group — Optional fields visit BOTH None
                     // and Some(...) arms based on a tape byte. Spec
@@ -1283,12 +1297,23 @@ fn generate_binder_direct_build(
             ));
             pre_scope_exprs.push(format!("pre_{}", i));
         } else if field.is_predicate {
-            // Guard slot — spec-derived: same rationale as above.
-            // `Top` is the spec's default for unspecified guards.
-            code.push_str(&format!(
-                "            let pred_{i} = mettail_runtime::BehavioralPred::Top;\n",
-                i = i,
-            ));
+            if field.is_optional {
+                // Task #14 (Option<Guard>): pre-scope twin of the Regular
+                // tape-builder's optional-guard arm — tape byte picks
+                // None / Some(Top) for an `Option<BehavioralPred>` field.
+                // Dormant until a Binder-rule optional guard exists.
+                code.push_str(&format!(
+                    "            let pred_{i}: Option<mettail_runtime::BehavioralPred> = if reader.next_byte() & 1 == 0 {{ None }} else {{ Some(mettail_runtime::BehavioralPred::Top) }};\n",
+                    i = i,
+                ));
+            } else {
+                // Guard slot — spec-derived: same rationale as above.
+                // `Top` is the spec's default for unspecified guards.
+                code.push_str(&format!(
+                    "            let pred_{i} = mettail_runtime::BehavioralPred::Top;\n",
+                    i = i,
+                ));
+            }
             pre_scope_exprs.push(format!("pred_{}", i));
         } else if field.is_collection {
             // F5: spec-derived coll_type — every collection field MUST
@@ -1435,7 +1460,14 @@ fn generate_proptest_blocks(language: &LanguageDef, out: &mut String) {
             cat_lower = cat_lower,
         ));
 
-        // Test 4: Display round-trip (parse(display(term)) == term for ground terms)
+        // Test 4: Display round-trip — CANONICAL-DISPLAY IDEMPOTENCE, not
+        // AST equality: the emitted body asserts
+        // `Display(Parse(Display(Parse(s)))) == Display(Parse(s))` (the
+        // canonical form re-parses to something that displays identically),
+        // NEVER `parse(display(term)) == term`. Guard slots rely on this:
+        // `BehavioralPred::Top` displays as `true()`, which re-parses to
+        // `RelationQuery("true", [])` — display-stable by design, so the
+        // roundtrip holds even though the ASTs differ.
         // Only if the category has a parse method — all categories do via PraTTaIL.
         // Skipped for runtime-only opaque natives (no surface form to parse).
         if !is_runtime_only {
@@ -1890,4 +1922,56 @@ fn generate_public_arb_strategy(category: &syn::Ident, _language: &LanguageDef, 
         cat_lower = cat_lower,
         cat = cat,
     ));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pre_scope_optional_pred_tape_builds_both_arms() {
+        // Task #14 gate-1: the pre-scope tape builder must emit the
+        // None/Some(Top) toggle for an `Option<BehavioralPred>` pre-scope
+        // field (pre-#14 it emitted a bare `Top` — ill-typed), and keep
+        // the bare `Top` for the mandatory shape (byte-identity with the
+        // guarded_rho prop suite).
+        let language = crate::gen::empty_language_for_tests();
+        let opt_pred = FieldInfo {
+            category: quote::format_ident!("Guard"),
+            is_collection: false,
+            coll_type: None,
+            is_predicate: true,
+            is_optional: true,
+        };
+        let code =
+            generate_binder_direct_build("Proc", "PFoo", &[opt_pred], "Proc", false, &language);
+        assert!(
+            code.contains(
+                "let pred_0: Option<mettail_runtime::BehavioralPred> = \
+                 if reader.next_byte() & 1 == 0 { None } else \
+                 { Some(mettail_runtime::BehavioralPred::Top) };"
+            ),
+            "optional pre-scope pred must tape-toggle None/Some(Top): {code}",
+        );
+
+        let mandatory_pred = FieldInfo {
+            category: quote::format_ident!("Guard"),
+            is_collection: false,
+            coll_type: None,
+            is_predicate: true,
+            is_optional: false,
+        };
+        let code = generate_binder_direct_build(
+            "Proc",
+            "PFoo",
+            &[mandatory_pred],
+            "Proc",
+            false,
+            &language,
+        );
+        assert!(
+            code.contains("let pred_0 = mettail_runtime::BehavioralPred::Top;"),
+            "mandatory pre-scope pred keeps the bare Top emission: {code}",
+        );
+    }
 }

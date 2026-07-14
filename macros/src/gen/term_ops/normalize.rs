@@ -449,6 +449,16 @@ fn optional_collection_field_type(field: &FieldInfo) -> TokenStream {
 fn emit_reg_field_decl(i: usize, field: &FieldInfo) -> TokenStream {
     if field.is_predicate {
         let pred_name = format_ident!("f{}_pred", i);
+        // Task #14 (Option<Guard>): a guard inside `#opt(...)` lowers to an
+        // `Option<BehavioralPred>` variant field, so the frame slot must
+        // carry the same type (the Visit-time `#name.clone()` then matches
+        // with zero edits). Predicates are OPAQUE to normalization: cloned
+        // through untouched — `None` normalizes to `None`, NEVER to
+        // `Some(Top)` (that would render a phantom `where true()` and break
+        // the display/parse round-trip).
+        if field.is_optional {
+            return quote! { #pred_name: Option<mettail_runtime::BehavioralPred> };
+        }
         return quote! { #pred_name: mettail_runtime::BehavioralPred };
     }
     if field.is_optional {
@@ -494,6 +504,13 @@ fn emit_pre_field_decl_list(pre_scope_fields: &[FieldInfo]) -> Vec<TokenStream> 
         .map(|(i, field)| {
             if field.is_predicate {
                 let pred_name = format_ident!("pf{}_pred", i);
+                // Task #14 (Option<Guard>): Option-aware pre-scope twin of
+                // `emit_reg_field_decl` — dormant until a Binder-rule
+                // optional guard exists (in-tree Binder guards are all
+                // mandatory), but required for decl/clone type agreement.
+                if field.is_optional {
+                    return quote! { #pred_name: Option<mettail_runtime::BehavioralPred> };
+                }
                 return quote! { #pred_name: mettail_runtime::BehavioralPred };
             }
             // Phase 4 #4 (2026-05-12): Optional-Collection — cloned carrier
@@ -1489,6 +1506,28 @@ fn generate_regular_assemble_arm(
     let mut decl_flat: Vec<TokenStream> = Vec::new();
     let mut call_flat: Vec<TokenStream> = Vec::new();
     for (i, field) in fields.iter().enumerate() {
+        if field.is_predicate {
+            // Task #14 (Option<Guard>): predicate-FIRST, mirroring the
+            // Binder pre-scope precedent (`emit_pre_field_decl_list` /
+            // `emit_reg_field_extract` / `emit_reg_field_construct` are all
+            // predicate-first). Without this arm a NON-optional Regular
+            // predicate fell through to the scalar else (binding
+            // `f{i}_slot: usize` against the decl's `f{i}_pred`), and an
+            // optional one destructured nonexistent `f{i}_slot`/`f{i}_some`
+            // fields (E0026/E0027) while construct referenced the unbound
+            // `f{i}_pred` (E0425). The pred rides the frame by name; the
+            // extract step is a no-op and construct passes it through.
+            let pred_name = format_ident!("f{}_pred", i);
+            let pred_ty = if field.is_optional {
+                quote! { Option<mettail_runtime::BehavioralPred> }
+            } else {
+                quote! { mettail_runtime::BehavioralPred }
+            };
+            pat_flat.push(quote! { #pred_name });
+            decl_flat.push(quote! { #pred_name: #pred_ty });
+            call_flat.push(quote! { #pred_name });
+            continue;
+        }
         if field.is_optional {
             if field.is_collection {
                 // Phase 4 #3 (2026-05-12): Optional-Collection — cloned carrier.
@@ -2281,5 +2320,90 @@ fn generate_norm_wrapper(cat: &Ident) -> TokenStream {
                 result
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn pred_field(optional: bool) -> FieldInfo {
+        FieldInfo {
+            category: format_ident!("Guard"),
+            is_collection: false,
+            coll_type: None,
+            is_predicate: true,
+            is_optional: optional,
+        }
+    }
+
+    fn scalar_field(cat: &str) -> FieldInfo {
+        FieldInfo {
+            category: format_ident!("{}", cat),
+            is_collection: false,
+            coll_type: None,
+            is_predicate: false,
+            is_optional: false,
+        }
+    }
+
+    #[test]
+    fn reg_field_decl_bare_pred_unchanged() {
+        // Task #14 gate-1: the mandatory-guard decl must emit the exact
+        // pre-#14 tokens (byte-identity for guarded_rho's shape).
+        let tokens = emit_reg_field_decl(1, &pred_field(false)).to_string();
+        assert_eq!(tokens, "f1_pred : mettail_runtime :: BehavioralPred");
+    }
+
+    #[test]
+    fn reg_field_decl_optional_pred_is_option_typed() {
+        let tokens = emit_reg_field_decl(1, &pred_field(true)).to_string();
+        assert_eq!(
+            tokens,
+            "f1_pred : Option < mettail_runtime :: BehavioralPred >",
+        );
+    }
+
+    #[test]
+    fn reg_assemble_arm_optional_pred_coherent() {
+        // The guardoptsmoke PCheck shape: (Arc<Int>, Option<BehavioralPred>)
+        // on a native category. Pre-#14 the assemble arm destructured
+        // nonexistent `f1_slot`/`f1_some` (E0026/E0027) and construct
+        // referenced the unbound `f1_pred` (E0425).
+        let cat = format_ident!("Int");
+        let label = format_ident!("PCheck");
+        let fields = vec![scalar_field("Int"), pred_field(true)];
+        let arm = generate_regular_assemble_arm(&cat, &label, &fields, true).to_string();
+        assert!(
+            arm.contains("f1_pred : Option < mettail_runtime :: BehavioralPred >"),
+            "helper decl must carry the Option type: {arm}",
+        );
+        assert!(
+            !arm.contains("f1_slot") && !arm.contains("f1_some"),
+            "the pred slot must not use the Opt-Group slot/some machinery: {arm}",
+        );
+        assert!(
+            arm.contains("f0_slot : usize"),
+            "the scalar slot stays on the slot machinery: {arm}",
+        );
+    }
+
+    #[test]
+    fn reg_assemble_arm_bare_pred_latent_break_fixed() {
+        // The latent NON-optional Regular-pred break: the loop had no
+        // is_predicate arm, so a bare pred fell to the scalar else and
+        // bound `f1_slot: usize` against the decl's `f1_pred`.
+        let cat = format_ident!("Proc");
+        let label = format_ident!("PGuarded");
+        let fields = vec![scalar_field("Proc"), pred_field(false)];
+        let arm = generate_regular_assemble_arm(&cat, &label, &fields, false).to_string();
+        assert!(
+            arm.contains("f1_pred : mettail_runtime :: BehavioralPred"),
+            "bare pred must bind by its decl name/type: {arm}",
+        );
+        assert!(
+            !arm.contains("f1_slot"),
+            "bare pred must not fall through to the scalar slot binding: {arm}",
+        );
     }
 }

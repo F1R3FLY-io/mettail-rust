@@ -1705,6 +1705,13 @@ fn generate_engine_syntax_pattern_arm(
     let mut abstraction_body: Option<String> = None;
     // Map from param name -> TypeExpr for looking up category
     let mut param_types: HashMap<String, &TypeExpr> = HashMap::new();
+    // Task #14 (Option<Guard>): guard slot names. Guards register into
+    // `param_names` but are ABSENT from `param_types` (they have no
+    // TypeExpr) — the same is true of Abstraction binders, so "absent from
+    // param_types" is NOT a usable discriminator; an explicit set is.
+    // Threaded into `generate_engine_pattern_op` so the `#opt(...)` inner
+    // bindings can skip the Arc-deref map for `Option<BehavioralPred>`.
+    let mut guard_params: HashSet<String> = HashSet::new();
 
     // Opt-Group: flatten the term context so inner params of `#opt(...)`
     // are visible to the display generator with the same name resolution
@@ -1745,6 +1752,7 @@ fn generate_engine_syntax_pattern_arm(
                 // syntax pattern's reference resolves and the
                 // per-instance BehavioralPred field is rendered.
                 param_names.push(name.to_string());
+                guard_params.insert(name.to_string());
             },
             TermParam::Optional { .. } => {
                 // Already flattened — unreachable.
@@ -2117,6 +2125,7 @@ fn generate_engine_syntax_pattern_arm(
                     &abstraction_body,
                     &body_cat_ident,
                     &param_types,
+                    &guard_params,
                     prev_outer_is_param,
                     next_outer_is_param,
                 );
@@ -2250,6 +2259,7 @@ fn generate_engine_pattern_op(
     _abstraction_body: &Option<String>,
     _body_cat_ident: &Option<syn::Ident>,
     param_types: &HashMap<String, &TypeExpr>,
+    guard_params: &HashSet<String>,
     prev_outer_is_param: bool,
     next_outer_is_param: bool,
 ) -> TokenStream {
@@ -2377,11 +2387,25 @@ fn generate_engine_pattern_op(
                             let id_ident =
                                 syn::Ident::new(&id.to_string(), proc_macro2::Span::call_site());
                             let inner_var = quote::format_ident!("__opt_{}", id);
-                            Some(quote! {
-                                let #inner_var: &_ = #id_ident.as_ref()
-                                    .map(|__b| __b.as_ref())
-                                    .expect("Opt-Group: inner display ran with None");
-                            })
+                            // Task #14 (Option<Guard>): a guard slot's field
+                            // is `Option<BehavioralPred>` — no Arc layer to
+                            // strip, so the `.map(|__b| __b.as_ref())` of the
+                            // term arm is E0599 (`BehavioralPred: !AsRef`).
+                            // Bind `&BehavioralPred` directly; rendering goes
+                            // through BehavioralPred's Display (`Top` renders
+                            // `true()`, display-stable under re-parse).
+                            if guard_params.contains(&id.to_string()) {
+                                Some(quote! {
+                                    let #inner_var: &_ = #id_ident.as_ref()
+                                        .expect("Opt-Group: inner display ran with None");
+                                })
+                            } else {
+                                Some(quote! {
+                                    let #inner_var: &_ = #id_ident.as_ref()
+                                        .map(|__b| __b.as_ref())
+                                        .expect("Opt-Group: inner display ran with None");
+                                })
+                            }
                         },
                         // Phase 4 #3 (2026-05-12): bind the Sep collection param
                         // to a reference of the inner Vec/HashBag/etc. The field
