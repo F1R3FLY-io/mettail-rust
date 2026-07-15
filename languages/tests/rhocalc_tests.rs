@@ -4473,3 +4473,71 @@ mod realize_mode_contract_pins {
         );
     }
 }
+
+
+/// Residual #11-1 Branch B (USER-APPROVED 2026-07-14) — committed regression
+/// pins for the polyadic-send `semantic_hash` normalization that closes the
+/// facade-vs-walker gap. `parse_via_wpda_all` returns the set DEDUPED BY
+/// semantic fingerprint, so the surviving length IS the distinct-semantic-key
+/// count — a `== 2` pin is simultaneously the UPPER bound (the projection-
+/// isolation prologue's receiver-led fold-duplicate reading is gone, 3->2) and
+/// the LOWER bound / over-prune guard (the two genuine twins — Quoted
+/// `NVar`-channel + Short `PVar`-channel — both survive as distinct keys, so
+/// NOT collapsed to 1). Distinctness is proven by the deduped count, not by
+/// display: the twins display identically as the source text.
+mod branch_b_send_normalization_pins {
+    use super::*;
+
+    /// Output family: the `@`-led polyadic string facade dedups 3->2 to match
+    /// the walker. The folded reading is the prologue's receiver-led
+    /// `POutput2Plus(NQuoteShort(a),..)` == its Short twin.
+    #[test]
+    fn output_polyadic_send_facade_dedups_to_two_twins() {
+        fresh();
+        assert_eq!(Proc::parse_via_wpda_all("@a!(0,1)").expect("parse_all").len(), 2);
+        assert_eq!(Proc::parse_via_wpda_all("@a!(0,1,2)").expect("parse_all").len(), 2);
+        assert_eq!(Proc::parse_via_wpda_all("@a!(1+2,3)").expect("parse_all").len(), 2);
+    }
+
+    /// Over-prune guard (generalized predicate, condition (b) param-bottomed):
+    /// `@Nil!(0,1)` keeps its Nil twin (3->2, NEVER 3->1). `POutputNil2Plus`
+    /// is EXCLUDED from the fold because its channel wraps the `PZero` nullary
+    /// literal, not a receiver parameter — so only the Short spelling folds.
+    #[test]
+    fn nil_channel_polyadic_send_keeps_its_twin() {
+        fresh();
+        assert_eq!(Proc::parse_via_wpda_all("@Nil!(0,1)").expect("parse_all").len(), 2);
+    }
+
+    /// Persist family (red-team A4, measurement-gated): `@a!!(0,1)` walker == 1
+    /// (no Quoted twin), so the facade folds 2->1 to match the walker.
+    #[test]
+    fn persist_polyadic_send_facade_matches_walker() {
+        fresh();
+        assert_eq!(Proc::parse_via_wpda_all("@a!!(0,1)").expect("parse_all").len(), 1);
+        assert_eq!(Proc::parse_via_wpda_all("@a!!(0,1,2)").expect("parse_all").len(), 1);
+    }
+
+    /// Controls (unchanged): the scalar send `@a!(0)` already normalized this
+    /// receiver-led collision (stays 2); the bare-ident send `a!(0,1)` has no
+    /// quote-wrapped channel to fold (stays 1).
+    #[test]
+    fn send_normalization_controls_unchanged() {
+        fresh();
+        assert_eq!(Proc::parse_via_wpda_all("@a!(0)").expect("parse_all").len(), 2);
+        assert_eq!(Proc::parse_via_wpda_all("a!(0,1)").expect("parse_all").len(), 1);
+    }
+
+    /// Red-team A5: the fold drops the receiver-led DUPLICATE, never the
+    /// elected representative — the elected single-result `@a!(0,1)` remains an
+    /// output send (structurally the walker's rep).
+    #[test]
+    fn elected_rep_is_an_unchanged_output_send() {
+        fresh();
+        let t = parse("@a!(0,1)");
+        assert!(
+            format!("{t:?}").starts_with("POutput"),
+            "elected @a!(0,1) rep must be an output send, got: {t:?}"
+        );
+    }
+}

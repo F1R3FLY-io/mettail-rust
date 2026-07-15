@@ -34,7 +34,7 @@
 //! `semantic_actions.rs` is needed for the shared shape recognizers.
 
 use crate::grammar::{GrammarRule, SyntaxExpr, TermParam};
-use crate::types::{EvalMode, TypeExpr};
+use crate::types::{CollectionType, EvalMode, TypeExpr};
 use std::collections::HashSet;
 
 /// Recognized shape of a unary-prefix rule.
@@ -410,6 +410,253 @@ fn is_pascal_case(s: &str) -> bool {
     s.chars().next().map(|c| c.is_ascii_uppercase()).unwrap_or(false)
 }
 
+// ── Fold-alias POLYADIC-SEND shape (trailing-Vec, arity ≥2) ──────────────────
+//
+// Residual #11-1 (2026-07-14). The scalar [`classify_fold_alias_shape`] above
+// requires EVERY param be `Simple { Base(_) }` (grammar_shapes.rs:242) and the
+// body be a SINGLE tail expression (`unwrap_single_expr`) — so it REJECTS the
+// polyadic send sugars (`@p!(a, bs…)`), whose term-context ends in a `Vec`
+// "rest" param and whose body BUILDS the payload `Vec` with `let`-statements
+// before the tail constructor. Those sugars are nonetheless PURE channel-rewrap
+// aliases of a canonical polyadic send: the `@`-projection-isolation prologue
+// emits a THIRD, receiver-led reading `POLY_CANON(NQuoteShort(p), a, bs)` for
+// `@p!(a,bs)` that is the SAME rho term as the `…Short2Plus(p, a, bs)` sugar, so
+// realize-dedup's `semantic_hash` must fold the two (facade 3→2 = walker; see
+// `ProjectionIsolation.v` T7 `fallthrough_refines`). This classifier recognizes
+// that shape by PURE STRUCTURE — no constructor / type / language name is ever
+// matched — so it fires only where the grammar exhibits the shape (rhocalc's
+// send family today) and is byte-inert for every other language.
+
+/// Recognized shape of a **fold-alias polyadic-send** (sugar OR canonical) rule.
+///
+/// Returned by [`classify_fold_alias_send_shape`]. The struct carries the pieces
+/// a `semantic_hash` reconstruction needs: the rewrap-channel expression, the
+/// pairing key (`scalar_target_label`), and whether the rule is the CANONICAL
+/// pairing target (`channel_is_bare_param == true`) or a channel-rewrap SUGAR to
+/// fold (`false`).
+#[derive(Debug, Clone)]
+pub struct FoldAliasSendShape {
+    /// The category produced by the fold (== `rule.category`).
+    pub target_category: String,
+    /// The variant label of the body's TAIL scalar constructor (e.g. `POutput`
+    /// for the send family, `PPersistOutput` for persist). The pairing key that
+    /// matches a channel-rewrap SUGAR to its bare-channel CANONICAL sibling —
+    /// both lower to the same scalar target. READ FROM THE GRAMMAR BODY; never a
+    /// hardcoded constructor name.
+    pub scalar_target_label: String,
+    /// The channel argument lifted VERBATIM from the body tail's FIRST argument
+    /// (`Arc::new(Name::NQuote(Arc::new(p.clone())))` for a `…Short2Plus` sugar;
+    /// `Arc::new(n.clone())` for the canonical `…2Plus`). It is a pure,
+    /// param-bottomed constructor-wrap; the macros-side reconstruction splices it
+    /// as the canonical's channel field and derives the operand smart-pointer
+    /// from its outer `…::new`.
+    pub channel_expr: syn::Expr,
+    /// The single term-context parameter the channel wrap bottoms at (`p` / `n`).
+    /// For the send shape this is ALWAYS the first param (asserted).
+    pub channel_param: String,
+    /// `true` iff the channel is a BARE param quote (`Arc::new(n.clone())`, no
+    /// intermediate constructor) — i.e. this rule is the CANONICAL pairing TARGET
+    /// (`…2Plus`), NOT a sugar to fold. `false` iff there is ≥1 constructor
+    /// between the smart-pointer and the param leaf (`NQuote(p.clone())`) — a
+    /// SUGAR (`…Short2Plus`). The macros-side pairing uses this both to select
+    /// the reconstruction target and to realize the A1c SELF-EXCLUSION guard
+    /// (a canonical is bare, a sugar is not, so `POLY_CANON.label != sugar.label`
+    /// automatically — no self-reconstruction / ∞ codegen recursion).
+    pub channel_is_bare_param: bool,
+}
+
+/// Classify a `GrammarRule` as a [`FoldAliasSendShape`], if it matches. Returns
+/// `None` for the common case (any rule not exhibiting the trailing-Vec send
+/// shape). Every check is GENERIC (structural) — the predicate keys on grammar
+/// SHAPE, not on any constructor / type / language name.
+///
+/// **Predicate (all must hold):**
+/// - **(0)** `eval_mode == Fold` and a `![...]` body is present.
+/// - **(1)** term-context = one-or-more leading `Simple { Base(_) }` param(s)
+///   followed by EXACTLY ONE trailing `Simple { Collection { Vec, _ } }` "rest"
+///   param (total arity ≥2). This is precisely the shape the scalar classifier
+///   rejects at grammar_shapes.rs:242.
+/// - **(2)** the body's TAIL expression (after any leading `let`-statements) is a
+///   constructor call `Cat::Scalar(chan, …)` of the rule's OWN category with ≥1
+///   argument. `chan` = the tail's first argument.
+/// - **(3)** [**A1a PURITY**] `chan` passes [`is_fold_alias_node`] — a pure
+///   constructor / smart-pointer / `param.clone()` wrap with NO free-function
+///   call. This EXCLUDES the `*Quoted*` sugars, whose channel routes through the
+///   snake_case free fn `name_pattern_to_proc` (⇒ impure ⇒ they stay structural,
+///   preserving the Quoted twin the ruling keeps at 2).
+/// - **(4)** [**A1b PARAM-BOTTOMED**] `chan`'s single-argument wrap spine bottoms
+///   at a term-context PARAMETER (`p.clone()` / bare `n`), NOT a nullary-variant
+///   literal. This is the refinement bare [`is_fold_alias_node`] LACKS (it
+///   accepts a nullary-variant leaf as pure): it EXCLUDES the `*Nil*` sugars,
+///   whose channel bottoms at `Proc::PZero` (∉ params) — folding them would
+///   over-prune (`@Nil!(0,1)` 3→1).
+/// - **(5)** the channel-source param is the FIRST param (the universal
+///   `@ chan ! ( ops )` send shape) — asserted so the macros-side reconstruction
+///   can align operands to the canonical's fields by order.
+///
+/// The **A1c SELF-EXCLUSION** guard (`POLY_CANON.label != rule.label`, which
+/// keeps the canonical `…2Plus` OUT of the fold set and prevents ∞ codegen
+/// recursion) is applied by the macros-side pairing via `channel_is_bare_param`,
+/// mirroring the `variant_seg != rule_label` guard at grammar_shapes.rs:293.
+pub fn classify_fold_alias_send_shape(rule: &GrammarRule) -> Option<FoldAliasSendShape> {
+    // (0) Must be a `fold` rule carrying a `![...]` code block.
+    if rule.eval_mode != Some(EvalMode::Fold) {
+        return None;
+    }
+    let code = &rule.rust_code.as_ref()?.code;
+
+    // (1) term-context: ≥1 leading `Simple { Base(_) }` then EXACTLY ONE trailing
+    // `Simple { Collection { Vec } }`. `split_last` isolates the "rest" param.
+    let tc = rule.term_context.as_ref()?;
+    let (last, leading) = tc.split_last()?;
+    if leading.is_empty() {
+        // arity ≥2 required (≥1 leading channel/operand + the Vec rest).
+        return None;
+    }
+    let mut params: HashSet<String> = HashSet::with_capacity(tc.len());
+    for p in leading {
+        match p {
+            TermParam::Simple { name, ty: TypeExpr::Base(_) } => {
+                params.insert(name.to_string());
+            },
+            _ => return None,
+        }
+    }
+    match last {
+        TermParam::Simple {
+            name,
+            ty: TypeExpr::Collection { coll_type: CollectionType::Vec, .. },
+        } => {
+            params.insert(name.to_string());
+        },
+        _ => return None,
+    }
+
+    // (2) body TAIL = `Cat::Scalar(chan, …)` of the rule's OWN category, ≥1 arg.
+    let cat = rule.category.to_string();
+    let tail = block_tail_expr(code)?;
+    let syn::Expr::Call(call) = tail else {
+        return None;
+    };
+    let (type_seg, variant_seg) = constructor_path(&call.func)?;
+    if type_seg != cat {
+        return None;
+    }
+    let channel_expr = call.args.first()?.clone();
+
+    // (3) A1a PURITY — the channel is a pure constructor/smart-ptr/param.clone
+    // wrap (no free-fn call). Excludes `*Quoted*` (npt).
+    if !is_fold_alias_node(&channel_expr, &params) {
+        return None;
+    }
+
+    // (4) A1b PARAM-BOTTOMED — the wrap spine bottoms at a PARAM, not a nullary
+    // variant literal. Excludes `*Nil*` (`NQuote(PZero)`).
+    let channel_param = channel_wrap_leaf_param(&channel_expr, &params)?;
+
+    // (5) the channel-source param must be the FIRST param (send shape).
+    let first_name = match &tc[0] {
+        TermParam::Simple { name, .. } => name.to_string(),
+        _ => return None,
+    };
+    if channel_param != first_name {
+        return None;
+    }
+
+    let channel_is_bare_param = !channel_wrap_has_constructor(&channel_expr);
+
+    Some(FoldAliasSendShape {
+        target_category: cat,
+        scalar_target_label: variant_seg,
+        channel_expr,
+        channel_param,
+        channel_is_bare_param,
+    })
+}
+
+/// Return the TAIL expression of a `{ stmt; …; tail }` block, skipping any
+/// leading statements (unlike [`unwrap_single_expr`], which requires EXACTLY one
+/// tail expression). Used for the send-sugar shape whose body BUILDS a payload
+/// `Vec` with `let`-statements before the tail constructor call. Recurses through
+/// paren/group wrappers. Returns `None` if the block's last statement is not a
+/// tail expression (e.g. it carries a trailing `;`).
+fn block_tail_expr(expr: &syn::Expr) -> Option<&syn::Expr> {
+    match expr {
+        syn::Expr::Block(b) => match b.block.stmts.last()? {
+            // syn 2.x: a trailing tail expression is `Stmt::Expr(_, None)`.
+            syn::Stmt::Expr(inner, None) => block_tail_expr(inner),
+            _ => None,
+        },
+        syn::Expr::Paren(p) => block_tail_expr(&p.expr),
+        syn::Expr::Group(g) => block_tail_expr(&g.expr),
+        other => Some(other),
+    }
+}
+
+/// Follow a channel-wrap's SINGLE-argument spine (smart-pointer `new` /
+/// single-arg constructor / paren/group) to its leaf. Returns `Some(param_name)`
+/// iff the leaf is a `param.clone()` or a bare param reference in `params` (the
+/// channel is "param-bottomed"); returns `None` if the leaf is a nullary-variant
+/// literal (e.g. `Proc::PZero`) or the spine branches / bottoms at anything else.
+///
+/// This is the A1b refinement bare [`is_fold_alias_node`] LACKS: it distinguishes
+/// a RECEIVER-PARAM quote (`NQuote(p.clone())`, foldable — has a param twin) from
+/// a LITERAL-channel quote (`NQuote(PZero)`, NOT foldable — no param twin, its
+/// reading is the standalone `*Nil*` structural variant).
+fn channel_wrap_leaf_param(expr: &syn::Expr, params: &HashSet<String>) -> Option<String> {
+    match expr {
+        syn::Expr::Call(call) => {
+            // `Arc::new(x)` / a single-arg constructor `NQuote(x)` — recurse the
+            // one wrapped expr. A multi-arg node is not a channel-quote spine.
+            if is_smart_ptr_new(&call.func) || constructor_path(&call.func).is_some() {
+                if call.args.len() == 1 {
+                    return channel_wrap_leaf_param(&call.args[0], params);
+                }
+                return None;
+            }
+            None
+        },
+        // `param.clone()` — the param-bottomed leaf.
+        syn::Expr::MethodCall(mc) => {
+            if mc.method == "clone" && mc.args.is_empty() && is_param_ref(&mc.receiver, params) {
+                if let syn::Expr::Path(p) = &*mc.receiver {
+                    return p.path.get_ident().map(|id| id.to_string());
+                }
+            }
+            None
+        },
+        // A bare single-ident param reference (e.g. `n`). A `≥2`-segment path
+        // (`Proc::PZero`, a nullary variant) has no `get_ident()` ⇒ `None` ⇒ NOT
+        // param-bottomed (the A1b exclusion of the `*Nil*` channels).
+        syn::Expr::Path(p) => {
+            p.path.get_ident().map(|id| id.to_string()).filter(|s| params.contains(s))
+        },
+        syn::Expr::Paren(p) => channel_wrap_leaf_param(&p.expr, params),
+        syn::Expr::Group(g) => channel_wrap_leaf_param(&g.expr, params),
+        _ => None,
+    }
+}
+
+/// Whether a channel-wrap spine contains at least one enum-variant CONSTRUCTOR
+/// call between the outer smart-pointer and the param leaf. `Arc::new(n.clone())`
+/// (a BARE param quote, the CANONICAL `…2Plus` channel) has none ⇒ `false`;
+/// `Arc::new(NQuote(Arc::new(p.clone())))` (a channel-rewrap SUGAR) has the
+/// `NQuote` constructor ⇒ `true`. Used to set `channel_is_bare_param`, which the
+/// macros-side pairing uses to tell canonicals from sugars.
+fn channel_wrap_has_constructor(expr: &syn::Expr) -> bool {
+    match expr {
+        syn::Expr::Call(call) => {
+            if is_smart_ptr_new(&call.func) {
+                return call.args.len() == 1 && channel_wrap_has_constructor(&call.args[0]);
+            }
+            constructor_path(&call.func).is_some()
+        },
+        syn::Expr::Paren(p) => channel_wrap_has_constructor(&p.expr),
+        syn::Expr::Group(g) => channel_wrap_has_constructor(&g.expr),
+        _ => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -673,5 +920,233 @@ mod tests {
             syn::parse_quote! {{ Proc::POutput(std::sync::Arc::new(p.clone()), std::sync::Arc::new(p.clone())) }},
         );
         assert!(classify_fold_alias_shape(&rule).is_none());
+    }
+
+    // ── classify_fold_alias_send_shape (Residual #11-1) ──────────────────────
+
+    /// A `Simple { Collection { Vec, Base(elem) } }` "rest" param, e.g. `bs:Vec(Proc)`.
+    fn vec_param(name: &str, elem: &str) -> TermParam {
+        TermParam::Simple {
+            name: ident(name),
+            ty: TypeExpr::Collection {
+                coll_type: crate::types::CollectionType::Vec,
+                element: Box::new(TypeExpr::Base(ident(elem))),
+            },
+        }
+    }
+
+    #[test]
+    fn detects_poutputshort2plus_send_alias() {
+        // POutputShort2Plus . p:Proc, a:Proc, bs:Vec(Proc)
+        //   |- "@" p "!" "(" a "," bs.*sep(",") ")" : Proc
+        //   ![{ let mut items…; Proc::POutput(NQuote(p), mk_proc_list(items)) }] fold;
+        // A channel-rewrap SUGAR: channel `Arc::new(Name::NQuote(Arc::new(p.clone())))`
+        // is pure + param-bottomed + has a constructor ⇒ classifies as a SUGAR.
+        let rule = fold_rule(
+            "POutputShort2Plus",
+            "Proc",
+            vec![simple_param("p", "Proc"), simple_param("a", "Proc"), vec_param("bs", "Proc")],
+            syn::parse_quote! {{
+                let mut items = Vec::with_capacity(1 + bs.len());
+                items.push(a.clone());
+                items.extend(bs.clone());
+                Proc::POutput(
+                    std::sync::Arc::new(Name::NQuote(std::sync::Arc::new(p.clone()))),
+                    std::sync::Arc::new(crate::rhocalc::runtime::mk_proc_list(items)),
+                )
+            }},
+        );
+        let shape = classify_fold_alias_send_shape(&rule).expect("Short2Plus is a fold-alias-send sugar");
+        assert_eq!(shape.target_category, "Proc");
+        assert_eq!(shape.scalar_target_label, "POutput"); // derived from the body, not hardcoded
+        assert_eq!(shape.channel_param, "p");
+        assert!(!shape.channel_is_bare_param, "the sugar channel wraps p in NQuote (not bare)");
+    }
+
+    #[test]
+    fn detects_poutput2plus_canonical_bare_channel() {
+        // POutput2Plus . n:Name, a:Proc, bs:Vec(Proc) — the CANONICAL: bare-param
+        // channel `Arc::new(n.clone())` (no intermediate constructor) ⇒ the
+        // pairing TARGET, excluded from folding by A1c self-exclusion.
+        let rule = fold_rule(
+            "POutput2Plus",
+            "Proc",
+            vec![simple_param("n", "Name"), simple_param("a", "Proc"), vec_param("bs", "Proc")],
+            syn::parse_quote! {{
+                let mut items = Vec::with_capacity(1 + bs.len());
+                items.push(a.clone());
+                items.extend(bs.clone());
+                Proc::POutput(
+                    std::sync::Arc::new(n.clone()),
+                    std::sync::Arc::new(crate::rhocalc::runtime::mk_proc_list(items)),
+                )
+            }},
+        );
+        let shape = classify_fold_alias_send_shape(&rule).expect("POutput2Plus classifies (as canonical)");
+        assert_eq!(shape.scalar_target_label, "POutput");
+        assert_eq!(shape.channel_param, "n");
+        assert!(shape.channel_is_bare_param, "the canonical channel is a bare param quote");
+    }
+
+    #[test]
+    fn rejects_quoted2plus_impure_npt_channel() {
+        // POutputQuoted2Plus — channel routes through the snake_case free fn
+        // `name_pattern_to_proc` ⇒ IMPURE ⇒ A1a rejects (keeps the Quoted twin).
+        let rule = fold_rule(
+            "POutputQuoted2Plus",
+            "Proc",
+            vec![simple_param("n", "Name"), simple_param("a", "Proc"), vec_param("bs", "Proc")],
+            syn::parse_quote! {{
+                let mut items = Vec::with_capacity(1 + bs.len());
+                items.push(a.clone());
+                items.extend(bs.clone());
+                Proc::POutput(
+                    std::sync::Arc::new(Name::NQuote(std::sync::Arc::new(
+                        crate::rhocalc::receive::name_pattern_to_proc(&n),
+                    ))),
+                    std::sync::Arc::new(crate::rhocalc::runtime::mk_proc_list(items)),
+                )
+            }},
+        );
+        assert!(classify_fold_alias_send_shape(&rule).is_none());
+    }
+
+    #[test]
+    fn rejects_nil2plus_nullary_variant_channel() {
+        // POutputNil2Plus — channel bottoms at `Proc::PZero` (a nullary variant,
+        // ∉ params) ⇒ A1b PARAM-BOTTOMED rejects (folding would over-prune
+        // `@Nil!(0,1)` 3→1, dropping the Nil/Short twin). Note it is pure yet
+        // still rejected — this is the refinement bare `is_fold_alias_node` lacks.
+        let rule = fold_rule(
+            "POutputNil2Plus",
+            "Proc",
+            vec![simple_param("a", "Proc"), vec_param("bs", "Proc")],
+            syn::parse_quote! {{
+                let mut items = Vec::with_capacity(1 + bs.len());
+                items.push(a.clone());
+                items.extend(bs.clone());
+                Proc::POutput(
+                    std::sync::Arc::new(Name::NQuote(std::sync::Arc::new(Proc::PZero))),
+                    std::sync::Arc::new(crate::rhocalc::runtime::mk_proc_list(items)),
+                )
+            }},
+        );
+        assert!(classify_fold_alias_send_shape(&rule).is_none());
+    }
+
+    #[test]
+    fn rejects_scalar_short_as_send_no_trailing_vec() {
+        // POutputShort (scalar `@p!(q)`) has NO trailing Vec param ⇒ NOT a
+        // polyadic-send shape (the scalar `classify_fold_alias_shape` handles it).
+        let rule = fold_rule(
+            "POutputShort",
+            "Proc",
+            vec![simple_param("p", "Proc"), simple_param("q", "Proc")],
+            syn::parse_quote! {{
+                Proc::POutput(
+                    std::sync::Arc::new(Name::NQuote(std::sync::Arc::new(p.clone()))),
+                    std::sync::Arc::new(q.clone()),
+                )
+            }},
+        );
+        assert!(classify_fold_alias_send_shape(&rule).is_none());
+    }
+
+    /// ★ GENERALITY (Residual #11-1 generality guard). A SYNTHETIC, non-rhocalc
+    /// grammar (categories `Widget`/`Chan`, constructors `Emit`/`Wrap`/`Zero`,
+    /// helper `synthetic_helper`) exhibiting the SAME fold-alias-send SHAPE — a
+    /// sugar re-expressing a canonical with a constructor-wrapped PARAM channel
+    /// plus passed-through Vec operands. The classifier recognizes it PURELY by
+    /// structure (proving it keys on shape, not on rhocalc names), and rejects
+    /// the free-fn-channel and literal-channel siblings by the SAME A1a / A1b
+    /// gates. No name in this test appears anywhere in rhocalc.
+    #[test]
+    fn generality_synthetic_non_rhocalc_send_alias() {
+        // Sugar: `WrapSend . w:Widget, x:Widget, xs:Vec(Widget)` re-expressing
+        // the canonical `Emit` with the channel `Chan::Wrap(w)`.
+        let sugar = fold_rule(
+            "WrapSend",
+            "Widget",
+            vec![simple_param("w", "Widget"), simple_param("x", "Widget"), vec_param("xs", "Widget")],
+            syn::parse_quote! {{
+                let mut acc = Vec::with_capacity(1 + xs.len());
+                acc.push(x.clone());
+                acc.extend(xs.clone());
+                Widget::Emit(
+                    std::sync::Arc::new(Chan::Wrap(std::sync::Arc::new(w.clone()))),
+                    std::sync::Arc::new(some_crate::mk_widget_list(acc)),
+                )
+            }},
+        );
+        let shape =
+            classify_fold_alias_send_shape(&sugar).expect("synthetic sugar classifies by structure");
+        assert_eq!(shape.target_category, "Widget");
+        assert_eq!(shape.scalar_target_label, "Emit"); // derived from THIS body
+        assert_eq!(shape.channel_param, "w");
+        assert!(!shape.channel_is_bare_param);
+
+        // Canonical: `EmitMulti` with a BARE-param channel `n` — classifies as
+        // the pairing target (bare), never itself folded.
+        let canonical = fold_rule(
+            "EmitMulti",
+            "Widget",
+            vec![simple_param("n", "Chan"), simple_param("x", "Widget"), vec_param("xs", "Widget")],
+            syn::parse_quote! {{
+                let mut acc = Vec::with_capacity(1 + xs.len());
+                acc.push(x.clone());
+                acc.extend(xs.clone());
+                Widget::Emit(
+                    std::sync::Arc::new(n.clone()),
+                    std::sync::Arc::new(some_crate::mk_widget_list(acc)),
+                )
+            }},
+        );
+        let cshape =
+            classify_fold_alias_send_shape(&canonical).expect("synthetic canonical classifies");
+        assert_eq!(cshape.scalar_target_label, "Emit");
+        assert!(cshape.channel_is_bare_param, "bare-param channel ⇒ canonical/pairing target");
+
+        // Free-fn-channel sibling — channel routes through a snake_case free fn
+        // ⇒ A1a PURITY rejects (the SAME gate that excludes rhocalc `*Quoted*`).
+        let impure = fold_rule(
+            "WrapSendImpure",
+            "Widget",
+            vec![simple_param("w", "Widget"), simple_param("x", "Widget"), vec_param("xs", "Widget")],
+            syn::parse_quote! {{
+                let mut acc = Vec::with_capacity(1 + xs.len());
+                acc.push(x.clone());
+                acc.extend(xs.clone());
+                Widget::Emit(
+                    std::sync::Arc::new(Chan::Wrap(std::sync::Arc::new(some_crate::synthetic_helper(&w)))),
+                    std::sync::Arc::new(some_crate::mk_widget_list(acc)),
+                )
+            }},
+        );
+        assert!(
+            classify_fold_alias_send_shape(&impure).is_none(),
+            "free-fn channel must be rejected by A1a purity",
+        );
+
+        // Literal-channel sibling — channel bottoms at a nullary variant
+        // `Widget::Zero` (∉ params) ⇒ A1b PARAM-BOTTOMED rejects (the SAME gate
+        // that excludes rhocalc `*Nil*`).
+        let literal = fold_rule(
+            "WrapSendLit",
+            "Widget",
+            vec![simple_param("x", "Widget"), vec_param("xs", "Widget")],
+            syn::parse_quote! {{
+                let mut acc = Vec::with_capacity(1 + xs.len());
+                acc.push(x.clone());
+                acc.extend(xs.clone());
+                Widget::Emit(
+                    std::sync::Arc::new(Chan::Wrap(std::sync::Arc::new(Widget::Zero))),
+                    std::sync::Arc::new(some_crate::mk_widget_list(acc)),
+                )
+            }},
+        );
+        assert!(
+            classify_fold_alias_send_shape(&literal).is_none(),
+            "literal (nullary-variant) channel must be rejected by A1b param-bottomed",
+        );
     }
 }

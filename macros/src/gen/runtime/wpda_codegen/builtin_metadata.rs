@@ -39,6 +39,7 @@
 // current in-crate callers only name the `classify_*` functions.
 #[allow(unused_imports)]
 pub use mettail_ast::grammar_shapes::{
-    classify_fold_alias_shape, classify_simple_projection_shape, classify_unary_prefix_shape,
-    FoldAliasShape, SimpleProjectionShape, UnaryPrefixShape,
+    classify_fold_alias_send_shape, classify_fold_alias_shape, classify_simple_projection_shape,
+    classify_unary_prefix_shape, FoldAliasSendShape, FoldAliasShape, SimpleProjectionShape,
+    UnaryPrefixShape,
 };
