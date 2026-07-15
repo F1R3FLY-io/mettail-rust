@@ -657,15 +657,12 @@ fn calculator_cast_then_compare_budget_parity_across_ep_p1_modes() {
 
     let input = "int(float(int(3.14))) == 3";
 
-    // A1 (task #18): k=4 is now ENGINE-AWARE. The PURE engine (default) counts
-    // DISTINCT REALIZED TERMS at resolve, and this cast tower's ~110 structural
-    // derivations reconverge to ONE reading (pinned by the k=16 arm below), so
-    // 1 <= 4 => Ok. The CLASSIC lever (PRATTAIL_NO_CANONICAL_GLL=1) still counts
-    // the live cursor frontier (5 at the lex fan) => 5 > 4 => Err. This split is
-    // engine-aware ONLY until #19 removes the classic lever, after which this
-    // simplifies to plain Ok. (N=1 here doubles as the cross-packing-DUP
-    // no-false-fire gate: raw terms.len() would be ~110 > 4, but the DEDUPED
-    // count is 1.)
+    // A1 (task #18): the PURE engine — the SOLE engine after #19b physically
+    // removed the classic lever (2026-07-15) — counts DISTINCT REALIZED TERMS at
+    // resolve, and this cast tower's ~110 structural derivations reconverge to
+    // ONE reading (pinned by the k=16 arm below), so 1 <= 4 => Ok. (This k=4 arm
+    // doubles as the cross-packing-DUP no-false-fire gate: raw terms.len() would
+    // be ~110 > 4, but the DEDUPED count is 1.)
     let dag = calc::lex_dag(input).expect("calculator lex DAG should accept cast-then-compare");
     let source = LatticeTokenSource::new(dag);
     let mut bounded_pos = 0usize;
@@ -675,18 +672,9 @@ fn calculator_cast_then_compare_budget_parity_across_ep_p1_modes() {
         0,
         CursorBoundingMode::AmbiguityBudget(4),
     );
-    if std::env::var_os("PRATTAIL_NO_CANONICAL_GLL").is_some() {
-        let err = k4.expect_err("classic lever: k=4 overflows the 5-wide lex frontier");
-        let msg = format!("{}", err);
-        assert!(
-            msg.contains("ambiguity budget 4 exceeded (actual 5)"),
-            "classic frontier-overflow wording (got: {msg})"
-        );
-    } else {
-        let (terms, weights) = k4.expect("pure engine: 1 distinct reading <= 4 => Ok");
-        assert_eq!(terms.len(), 1, "the cast tower reconverges to one reading");
-        assert_eq!(terms.len(), weights.len());
-    }
+    let (terms, weights) = k4.expect("pure engine: 1 distinct reading <= 4 => Ok");
+    assert_eq!(terms.len(), 1, "the cast tower reconverges to one reading");
+    assert_eq!(terms.len(), weights.len());
 
     // Viable k: exactly one parse, EOI reached, in every EP-P1 mode.
     let dag = calc::lex_dag(input).expect("lex");
@@ -722,15 +710,11 @@ fn calculator_cast_explicit_budget_reports_overflow_without_default_cap() {
         "default unbounded results should include at least one nested cast parse"
     );
 
-    // A1 (task #18): ENGINE-AWARE. `float(float(10, 64), 64)` has exactly ONE
-    // DISTINCT reading (deduped), so the PURE engine (default) returns Ok at
-    // budget=1 (1 <= 1); the CLASSIC lever (PRATTAIL_NO_CANONICAL_GLL=1) still
-    // overflows its 5-wide cursor frontier (5 > 1). Engine-aware ONLY until #19
-    // removes the classic lever, after which this simplifies to plain Ok. The
-    // genuine-overflow witness for the PURE engine is the rhocalc
+    // A1 (task #18): `float(float(10, 64), 64)` has exactly ONE DISTINCT reading
+    // (deduped), so the PURE engine — the SOLE engine after #19b physically
+    // removed the classic lever (2026-07-15) — returns Ok at budget=1 (1 <= 1).
+    // The genuine-overflow witness for the pure engine is the rhocalc
     // `@((a)!(0))!()` pin in `rd_a1_budget.rs` (2 distinct readings, fires at N=1).
-    let classic_lever = std::env::var_os("PRATTAIL_NO_CANONICAL_GLL").is_some();
-
     let mut bounded_pos = 0usize;
     let all_b1 = calc::parse_Float_via_wpda_all_with_source_and_bounding_mode(
         &source,
@@ -738,27 +722,9 @@ fn calculator_cast_explicit_budget_reports_overflow_without_default_cap() {
         0,
         CursorBoundingMode::AmbiguityBudget(1),
     );
-    if classic_lever {
-        match all_b1.expect_err("classic lever: budget=1 overflows the cursor frontier") {
-            calc::WpdaParseError::AmbiguityBudget { budget, actual, position, .. } => {
-                assert_eq!(budget, 1);
-                assert!(
-                    actual > budget,
-                    "classic overflow must report the observed frontier, got budget={budget}, actual={actual}"
-                );
-                assert!(
-                    position <= source.eof_node(),
-                    "overflow position {position} should be within the source DAG"
-                );
-            },
-            other => panic!("expected AmbiguityBudget, got {other:?}"),
-        }
-    } else {
-        let (terms, weights) =
-            all_b1.expect("pure engine: 1 distinct reading <= budget 1 => Ok");
-        assert_eq!(terms.len(), 1, "one distinct reading for the nested float cast");
-        assert_eq!(terms.len(), weights.len());
-    }
+    let (terms, weights) = all_b1.expect("pure engine: 1 distinct reading <= budget 1 => Ok");
+    assert_eq!(terms.len(), 1, "one distinct reading for the nested float cast");
+    assert_eq!(terms.len(), weights.len());
 
     let mut prefix_pos = 0usize;
     let prefix_b1 = calc::parse_Float_via_wpda_prefix_with_source_and_bounding_mode(
@@ -768,26 +734,9 @@ fn calculator_cast_explicit_budget_reports_overflow_without_default_cap() {
         1,
         CursorBoundingMode::AmbiguityBudget(1),
     );
-    if classic_lever {
-        match prefix_b1.expect_err("classic lever: prefix budget=1 overflows the frontier") {
-            calc::WpdaParseError::AmbiguityBudget { budget, actual, position, .. } => {
-                assert_eq!(budget, 1);
-                assert!(
-                    actual > budget,
-                    "prefix overflow must report the observed frontier, got budget={budget}, actual={actual}"
-                );
-                assert!(
-                    position <= source.eof_node(),
-                    "prefix overflow position {position} should be within the source DAG"
-                );
-            },
-            other => panic!("expected prefix AmbiguityBudget, got {other:?}"),
-        }
-    } else {
-        let (terms, _weights) =
-            prefix_b1.expect("pure engine: prefix 1 distinct reading <= budget 1 => Ok");
-        assert_eq!(terms.len(), 1, "one distinct prefix reading for the nested float cast");
-    }
+    let (terms, _weights) =
+        prefix_b1.expect("pure engine: prefix 1 distinct reading <= budget 1 => Ok");
+    assert_eq!(terms.len(), 1, "one distinct prefix reading for the nested float cast");
 }
 
 #[test]

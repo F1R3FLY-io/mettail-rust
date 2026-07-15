@@ -1,21 +1,15 @@
 //! R-D A1 AmbiguityBudget pins (task #18, 2026-07-15).
 //!
-//! The PURE canonical-GLL engine (default) enforces `AmbiguityBudget(n)` as the
-//! count of DISTINCT REALIZED TERMS the goal admits (`|R|_distinct`, the `_all`
-//! facade surface), checked WHOLE-RUN at resolve. These pins fix the corners
-//! that the refuted structural-count v1 (false-fired on reconvergent ambiguity)
-//! and the v3 first-fork window (post-window gap + over-fire on transient fans)
-//! got wrong. Every pin passes under BOTH the pure default and the classic lever
-//! (`PRATTAIL_NO_CANONICAL_GLL=1`); where the two engines enforce different
-//! quantities the assertion is engine-aware. This split is interim — #19 removes
-//! the classic lever, after which the pure semantics are the sole definition.
+//! The PURE canonical-GLL engine (the SOLE engine after #19b physically removed
+//! the classic lever, 2026-07-15) enforces `AmbiguityBudget(n)` as the count of
+//! DISTINCT REALIZED TERMS the goal admits (`|R|_distinct`, the `_all` facade
+//! surface), checked WHOLE-RUN at resolve. These pins fix the corners that the
+//! refuted structural-count v1 (false-fired on reconvergent ambiguity) and the
+//! v3 first-fork window (post-window gap + over-fire on transient fans) got
+//! wrong.
 
 use mettail_languages::{calculator as calc, rhocalc};
 use mettail_prattail::wpda_runtime::{CursorBoundingMode, LatticeTokenSource, WpdaTokenSource};
-
-fn classic_lever() -> bool {
-    std::env::var_os("PRATTAIL_NO_CANONICAL_GLL").is_some()
-}
 
 /// NO-FALSE-FIRE + cross-packing-DUP gate (amdt #1/#6). `int(float(int(3.14)))
 /// == 3` explores ~110 structural derivations (peak_R=110) that RECONVERGE to a
@@ -25,13 +19,6 @@ fn classic_lever() -> bool {
 /// same-semantic-key packings must not be double-counted.
 #[test]
 fn pure_no_false_fire_on_reconvergent_cast_tower() {
-    if classic_lever() {
-        // The no-false-fire guarantee is a PURE-engine property: the classic
-        // lever legitimately fires on this input's transient 5-wide cursor
-        // frontier (pinned engine-aware in calculator.rs). Nothing to assert on
-        // the classic quantity here.
-        return;
-    }
     let input = "int(float(int(3.14))) == 3";
     for n in [1usize, 2, 3, 4, 8, 16] {
         let dag = calc::lex_dag(input).expect("lex cast tower");
@@ -92,14 +79,6 @@ fn genuinely_ambiguous_witness_strict_boundary() {
         Ok(readings) => panic!("N=1 must fire (|R|_distinct=2 > 1); got Ok({readings:?})"),
     }
 
-    if classic_lever() {
-        // Classic counts the live frontier (3), so N=2 still overflows (3 > 2)
-        // and only N>=3 admits (with the classic single-reading count). The pure
-        // distinct-reading boundary below does not apply to the frontier count.
-        assert!(witness_at(2).is_err(), "classic frontier (3) still overflows N=2");
-        return;
-    }
-
     // Pure, at the boundary N=2: admit, and return the FULL exact 2-reading set
     // (P-D exactness — the top-only cap is non-binding when |R|_distinct <= N).
     let readings = witness_at(2).expect("pure: |R|_distinct=2 <= 2 => Ok");
@@ -133,14 +112,6 @@ fn genuinely_ambiguous_witness_strict_boundary() {
 /// gap v3 "reported-but-forgot".
 #[test]
 fn a1_catches_post_first_fork_ambiguity_v3_would_miss() {
-    if classic_lever() {
-        // This pin is a PURE-engine property: it contrasts A1's whole-run
-        // resolve count against the refuted PURE v3 first-fork window. The
-        // classic lever is a different mechanism (a live cursor frontier that
-        // ALSO yields a different reading count for this family — LEVER swaps
-        // `(a)`->`a`), so its N=3 verdict is not comparable here.
-        return;
-    }
     let input = "@((a)!(0))!() | @((b)!(0))!()";
 
     // N=3: the first fork (<= 3, measured `ambiguity_overflows==0`) would let the

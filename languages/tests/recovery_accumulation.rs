@@ -64,27 +64,12 @@ fn parse_recovering_recovers_via_sync_token() {
 /// reseed, no kind-5 event), so the presence of the `composite-recovery`
 /// attempt is a direct, item-4-specific witness that the chain arm fired.
 ///
-/// ENGINE-AWARE (this suite runs under BOTH engines): item 4 lowers chains in
-/// the PURE canonical-GLL recovery path (the default), so the composite
-/// witness is asserted there; the classic lever
-/// (`PRATTAIL_NO_CANONICAL_GLL`) handles such sequences via its own
-/// commit-replay and legitimately reaches a DIFFERENT recovery outcome (a
-/// pre-existing pure≠classic recovery difference, not an item-4 delta) — for
-/// it the probe pins only the corpus convention (no panic, well-formed
-/// result), exactly like `parse_recovering_recovers_via_sync_token`.
+/// Item 4 lowers chains in the PURE canonical-GLL recovery path (the SOLE engine
+/// after #19b physically removed the classic lever, 2026-07-15), so the composite
+/// witness is asserted directly.
 #[test]
 fn parse_recovering_composite_sequence_materializes_a_chain() {
-    let classic_lever = std::env::var_os("PRATTAIL_NO_CANONICAL_GLL").is_some();
-    let (ast, errors) = Proc::parse_recovering("+ 1 2");
-    if classic_lever {
-        // The classic recovery path — just pin well-formedness (the parse
-        // completes without panic; ast/errors are consistent).
-        assert!(
-            ast.is_some() || !errors.is_empty(),
-            "classic recovery must either yield a partial AST or record errors",
-        );
-        return;
-    }
+    let (_ast, errors) = Proc::parse_recovering("+ 1 2");
     // Pure canonical-GLL arm: the item-4 chain-lowering witness.
     assert!(
         !errors.is_empty(),
