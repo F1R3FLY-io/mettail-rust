@@ -389,6 +389,45 @@ fn test_ternary_chain_20000() {
     assert!(result.is_ok(), "20000 nested ternaries should parse: {:?}", result.err());
 }
 
+// TASK-#16 contamination gate (2026-07-14): the chain-peek suffix memo is a
+// thread-local shared across parses; interleaving DISTINCT parse shapes (errors /
+// nested / short chains — incl. the [Err-input, chain-input] vector that motivated
+// red-team A1's clear-point relocation) on ONE thread must NOT leak stale memo
+// entries into a subsequent chain parse. `step_canonical_pure` clears the memo at
+// entry + per round, so a chain parsed AFTER poisoner parses must be byte-identical
+// (realized-AST `Debug`) to the same chain parsed in isolation. Runs on the pure
+// default engine with the memo ON; the A1 `debug_assert`s (pure-scoping + no stale
+// read) are live in this debug test.
+#[test]
+fn task16_chain_peek_memo_no_cross_parse_contamination() {
+    // Reference: each chain parsed fresh.
+    let chains = [ternary_chain(50), ternary_chain(120), ternary_chain(7)];
+    let refs: Vec<String> = chains
+        .iter()
+        .map(|c| {
+            mettail_runtime::clear_var_cache();
+            format!("{:?}", Int::parse_structured(c).expect("reference chain parses"))
+        })
+        .collect();
+    // Poisoners: malformed ternary prefixes (Err ⇒ resolve skipped — the A1
+    // vector), a malformed infix (Err), and valid non-chain shapes (nested parens,
+    // unary run). Each parses between the chains on THIS thread; whatever memo
+    // state they leave must not change the chain result.
+    let poisoners = ["9 ? ", "0 ? 1 :", "1 + + 2", "((((1))))", "- - - 1", "0 ? 1 : 0 ? 1"];
+    for (i, chain) in chains.iter().enumerate() {
+        for p in &poisoners {
+            mettail_runtime::clear_var_cache();
+            let _ = Int::parse_structured(p); // Ok or Err — either way must not poison
+        }
+        mettail_runtime::clear_var_cache();
+        let got = format!(
+            "{:?}",
+            Int::parse_structured(chain).expect("chain parses after poisoners")
+        );
+        assert_eq!(got, refs[i], "chain {i} contaminated by interleaved parses");
+    }
+}
+
 // ── Tests: Deep unary prefix chains ──
 
 #[test]

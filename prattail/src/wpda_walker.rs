@@ -6925,6 +6925,15 @@ fn token_alt_text(tokens: &dyn WpdaTokenSource, pos: usize, alt_idx: usize) -> O
 }
 
 fn primary_next_pos_ordered(tokens: &dyn WpdaTokenSource, pos: usize) -> Option<usize> {
+    // TASK-#16 STEP-0 probe: attribute this primitive (2× `position_order_key`)
+    // to the peek scan vs generic descent. Inert unless the probe env is set.
+    if chain_peek_probe_enabled() {
+        if CHAIN_PEEK_IN_SCAN.with(|f| f.get()) {
+            CHAIN_PNPO_PEEK.with(|c| c.set(c.get() + 1));
+        } else {
+            CHAIN_PNPO_OTHER.with(|c| c.set(c.get() + 1));
+        }
+    }
     let next = tokens.next_pos(pos, 0)?;
     if next == pos {
         return None;
@@ -7063,6 +7072,355 @@ pub fn peek_binary_chain(tokens: &dyn WpdaTokenSource, op_pos: usize, min_atoms:
     atom_count >= min_atoms
 }
 
+// ═══ TASK-#16 STEP-0 ROOT-CAUSE PROBE (measurement-only; env-gated) ══════════
+//
+// Behind `PRATTAIL_CHAIN_PEEK_PROBE=1` (OnceLock — a single relaxed atomic load
+// then a predictable branch on the COLD path when unset ⇒ inert/zero-cost by
+// default; the P-series convention, mirroring `realize_dedup_enabled` @:503).
+// The thread-local `u64` counters attribute the pure-engine ternary-chain wall
+// to prove/refute the plan §1 GO/STOP signature WITHOUT perf stacks:
+//   - CHAIN_PEEK_CALLS       : # `peek_ternary_chain` invocations.
+//   - CHAIN_PEEK_SCAN_STEPS  : Σ levels scanned across ALL peeks (the O(N²)
+//                              suffix re-scan this task targets). GO iff this
+//                              slope ≈2 while `u_count` (CGLL-PURE dump) ≈1.
+//   - CHAIN_SYNTH_CALLS      : # `synth_ternary_chain` invocations. MUST be 0
+//                              on the pure default (synth is classic-only, sole
+//                              caller @:16050) — a non-zero value would mean the
+//                              measured wall is off the memo's target surface.
+//   - CHAIN_SYNTH_SCAN_STEPS : Σ levels walked in synth.
+//   - CHAIN_PNPO_PEEK/OTHER  : `primary_next_pos_ordered` calls made WHILE a
+//                              peek scan is on the stack vs elsewhere (peek's
+//                              share of the hottest primitive — each call issues
+//                              `position_order_key` ×2). Feeds N1's post-fix
+//                              slope prediction (peek's share is removed by the
+//                              memo; the generic-descent share is not).
+// Reset at `step_canonical_pure` entry; dumped at its exit next to the CGLL-PURE
+// line. Independently revertable; never alters parse behavior.
+#[inline]
+fn chain_peek_probe_enabled() -> bool {
+    static GATE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *GATE.get_or_init(|| std::env::var_os("PRATTAIL_CHAIN_PEEK_PROBE").is_some())
+}
+thread_local! {
+    static CHAIN_PEEK_CALLS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    static CHAIN_PEEK_SCAN_STEPS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    static CHAIN_SYNTH_CALLS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    static CHAIN_SYNTH_SCAN_STEPS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    static CHAIN_PNPO_PEEK: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    static CHAIN_PNPO_OTHER: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    // Set while a `peek_ternary_chain`/`chain_scan_memo` forward scan is on the
+    // stack — attributes `primary_next_pos_ordered` to peek vs generic descent.
+    static CHAIN_PEEK_IN_SCAN: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+/// Reset the probe counters (called at `step_canonical_pure` entry ⇒ per-parse
+/// totals). Inert unless the probe env is set.
+#[inline]
+fn chain_probe_reset() {
+    if !chain_peek_probe_enabled() {
+        return;
+    }
+    CHAIN_PEEK_CALLS.with(|c| c.set(0));
+    CHAIN_PEEK_SCAN_STEPS.with(|c| c.set(0));
+    CHAIN_SYNTH_CALLS.with(|c| c.set(0));
+    CHAIN_SYNTH_SCAN_STEPS.with(|c| c.set(0));
+    CHAIN_PNPO_PEEK.with(|c| c.set(0));
+    CHAIN_PNPO_OTHER.with(|c| c.set(0));
+}
+/// RAII: mark a peek forward-scan active for the `primary_next_pos_ordered`
+/// caller-attribution split, restoring the prior value on drop (nestable, so a
+/// classic peek nested under a pure one — impossible today — stays sound). Inert
+/// unless the probe env is set.
+struct ChainPeekScanProbe {
+    prev: bool,
+}
+impl ChainPeekScanProbe {
+    #[inline]
+    fn enter() -> Self {
+        let prev = if chain_peek_probe_enabled() {
+            CHAIN_PEEK_IN_SCAN.with(|f| {
+                let p = f.get();
+                f.set(true);
+                p
+            })
+        } else {
+            false
+        };
+        Self { prev }
+    }
+}
+impl Drop for ChainPeekScanProbe {
+    #[inline]
+    fn drop(&mut self) {
+        if chain_peek_probe_enabled() {
+            CHAIN_PEEK_IN_SCAN.with(|f| f.set(self.prev));
+        }
+    }
+}
+#[inline]
+fn chain_probe_bump_peek_scan_steps(n: u64) {
+    if chain_peek_probe_enabled() {
+        CHAIN_PEEK_SCAN_STEPS.with(|c| c.set(c.get() + n));
+    }
+}
+
+// ═══ TASK-#16 STEP-1 CHAIN-PEEK SUFFIX MEMO (pure-engine-scoped, A1) ══════════
+//
+// The gate `peek_ternary_chain` is consulted once per trigger descriptor and, in
+// the current (oracle) form, RE-SCANS the whole remaining suffix each time —
+// STEP-0 proved `Σ = N(N+1)/2` scan steps (slope 2.0) against a LINEAR descriptor
+// population (`u_count` slope 1.0). Memoizing the per-position suffix result makes
+// each peek O(1) amortized ⇒ the parse-side ternary wall drops from O(N^1.855)
+// toward O(N).
+//
+// SCOPE (red-team A1): the memo is used ONLY under the descriptor-PURE engine —
+// `step_canonical_pure` sets the `CHAIN_PEEK_PURE_ACTIVE` RAII guard for its whole
+// run and clears the memo at entry + at the top of every recovery round (the token
+// source, a per-round `CgllRepairSource`, is the memo's stability domain). The
+// CLASSIC arm (guard unset) and the `PRATTAIL_CHAIN_PEEK_MEMO=0` rollback both take
+// the uncached ORACLE verbatim ⇒ trivially byte-identical there; classic keeps its
+// own synth-absorb path (off the pure hot loop, STEP-0 `synth_calls=0`).
+//
+// BYTE-IDENTITY (the crux): `ChainScan` is the STRUCTURAL suffix result, decoupled
+// from `min_levels`. Its `combine(1, Malformed) = Malformed` is ABSORBING, so a
+// malformation AFTER `min_levels` levels still propagates to `false` — exactly the
+// oracle's post-`min_levels` semantics (the naive `if levels>=min return true`
+// early-exit — which is `peek_binary_chain`'s @:7099, deliberately NOT adopted —
+// would break this). All seven oracle exits map exactly (see `chain_scan_memo`).
+
+/// Structural result of a ternary-chain suffix scan starting at a candidate
+/// trigger position. `Clean(c)` = exactly `c` complete `trigger atom sep atom`
+/// levels begin here (a clean chain end / e_final terminates the run);
+/// `Malformed` = the scan hit a broken level (a missing operand/operator mid
+/// level) and the whole peek must reject regardless of how many levels preceded
+/// it. `Copy` (2-variant, `u32` payload) so memo reads clone trivially.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum ChainScan {
+    Malformed,
+    Clean(u32),
+}
+
+/// `PRATTAIL_CHAIN_PEEK_MEMO` kill-switch (rollback lever). `0`/`off` restores the
+/// uncached oracle path UNCONDITIONALLY (the byte-identity oracle); DEFAULT **ON**.
+/// Read ONCE per process (`OnceLock`, the P-series convention, mirroring
+/// `realize_dedup_enabled` @:503).
+#[inline]
+fn chain_peek_memo_enabled() -> bool {
+    static GATE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *GATE.get_or_init(|| match std::env::var("PRATTAIL_CHAIN_PEEK_MEMO").ok().as_deref() {
+        Some("0") | Some("off") | Some("OFF") | Some("Off") => false,
+        // DEFAULT ON (the explicit `=0` override restores the oracle verbatim).
+        _ => true,
+    })
+}
+
+thread_local! {
+    // The suffix memo. Key `(pos, trigger.as_ptr(), sep.as_ptr())`: the operator
+    // strings are `&'static str` interned in the generated `IterAbsorbSpec`
+    // (binding_power.rs:54/56), so their `as_ptr()` is a stable per-language
+    // identity; distinct ops never collide, equal-text-different-address is a
+    // harmless redundant entry (red-team N3). VALID only within one recovery
+    // round (stable token source) — cleared at round top + pure-loop entry. The
+    // value pairs the structural result with the GENERATION it was written under
+    // (the contamination probe, red-team PROBE #1): every clear bumps the
+    // generation, so any surviving-past-a-clear entry would read with a stale
+    // generation — a `debug_assert` in `chain_scan_memo` trips it (in debug/test;
+    // compiled out in release). With the per-round/per-parse clear it never fires.
+    static CHAIN_PEEK_MEMO: std::cell::RefCell<
+        rustc_hash::FxHashMap<(usize, *const u8, *const u8), (ChainScan, u32)>,
+    > = std::cell::RefCell::new(rustc_hash::FxHashMap::default());
+    // Monotone generation, bumped on every memo clear (parse-loop entry + each
+    // recovery round). Entries written since the last clear carry the current
+    // generation.
+    static CHAIN_PEEK_MEMO_GEN: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+    // Set for the whole `step_canonical_pure` run (A1 pure-scoping gate).
+    static CHAIN_PEEK_PURE_ACTIVE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// RAII: mark the descriptor-PURE engine active (so `peek_ternary_chain` uses the
+/// memo), restoring the prior value on drop. Nestable and save/restore (mirrors
+/// `RecoveryConfigPinGuard` @recovery_cohort.rs:450): even the (today impossible)
+/// nested pure parse stays sound.
+struct ChainPeekPureActiveGuard {
+    prev: bool,
+}
+impl ChainPeekPureActiveGuard {
+    #[inline]
+    fn enter() -> Self {
+        let prev = CHAIN_PEEK_PURE_ACTIVE.with(|f| {
+            let p = f.get();
+            f.set(true);
+            p
+        });
+        Self { prev }
+    }
+}
+impl Drop for ChainPeekPureActiveGuard {
+    #[inline]
+    fn drop(&mut self) {
+        CHAIN_PEEK_PURE_ACTIVE.with(|f| f.set(self.prev));
+    }
+}
+#[inline]
+fn chain_peek_pure_active() -> bool {
+    CHAIN_PEEK_PURE_ACTIVE.with(|f| f.get())
+}
+/// Invalidate the suffix memo. Called at `step_canonical_pure` entry and at the
+/// top of every recovery round (before the round's first peek), because the
+/// per-round `CgllRepairSource` (new virtuals) redefines position semantics.
+/// Bumps the contamination-probe generation so any stale surviving entry reads
+/// under a mismatched generation (caught by the `debug_assert` in
+/// `chain_scan_memo`).
+#[inline]
+fn chain_peek_memo_clear() {
+    CHAIN_PEEK_MEMO.with(|m| m.borrow_mut().clear());
+    CHAIN_PEEK_MEMO_GEN.with(|g| g.set(g.get().wrapping_add(1)));
+}
+
+/// The memoized suffix scan — ITERATIVE (no deep recursion; the whole point is
+/// deep chains), O(1) amortized per position across a whole chain, byte-identical
+/// to `peek_ternary_chain_uncached` by construction. Forward-scan to a memo hit
+/// or a terminal (pushing the "continue" positions), then back-fill in reverse.
+///
+/// The seven oracle exits (@`peek_ternary_chain_uncached`) map exactly:
+///   (1) `has_text(p,trigger)`  None  → `Clean(0)`  [oracle: `None if levels==0
+///        => false` at the top, AND `None => break` mid-chain — BOTH are "0 more
+///        levels start here"]
+///   (2) `same_target(then)`    None  → `Malformed` [oracle: `return false`]
+///   (3) `has_text(sep_p,sep)`  None  → `Malformed` [oracle: `return false`]
+///   (4) `same_target(trailing)`None  → `Malformed` [oracle: `return false`]
+///   (5) bottom, `peek_text(after)!=trigger`  → `Clean(1)`   [oracle: `break`,
+///        this level's trailing atom is e_final]
+///   (6) bottom, `peek_text(after)==trigger`  → `combine(1, scan(after))`
+///        [oracle: `probe = after`, continue] with `combine(1,Malformed)=Malformed`
+///        (ABSORBING) and `combine(1,Clean(c))=Clean(c+1)`.
+/// The scan continues to `after` on EXACTLY the oracle's condition
+/// (`peek_text(after)==trigger`), so it visits the identical positions and never
+/// manufactures a malformation the oracle would not reach. `combine` uses
+/// `saturating_add` (unreachable at realistic depths; a saturated count still
+/// satisfies `>= min_levels`).
+fn chain_scan_memo(
+    tokens: &dyn WpdaTokenSource,
+    trigger_pos: usize,
+    trigger: &str,
+    sep: &str,
+) -> ChainScan {
+    // A1 STRUCTURAL INVARIANT (contamination probe): the memo core runs ONLY
+    // under the descriptor-PURE engine — the dispatcher gates on
+    // `chain_peek_pure_active()`, so the CLASSIC arm can never reach here. In
+    // debug/test builds this trips loudly if the pure-scoping ever regresses;
+    // compiled out in release.
+    debug_assert!(
+        chain_peek_pure_active(),
+        "TASK-#16: chain_scan_memo reached off the pure engine (A1 pure-scoping regressed)"
+    );
+    let cur_gen = CHAIN_PEEK_MEMO_GEN.with(|g| g.get());
+    let forbidden = [trigger, sep];
+    let key = |p: usize| (p, trigger.as_ptr(), sep.as_ptr());
+    // The stack holds only the "continue" positions on the single active scan
+    // path (bounded by chain depth); it is emptied by the back-fill.
+    let mut pending: Vec<usize> = Vec::new();
+    // Mark the scan active for the probe's caller-attribution split (inert off).
+    let _peek_scan_probe = ChainPeekScanProbe::enter();
+    let mut probe = trigger_pos;
+    let (term_pos, base): (usize, ChainScan) = loop {
+        // Base case: memo hit. Scoped borrow (get→copy→drop) — never held across
+        // a token-nav call (N2). `(ChainScan, u32): Copy`.
+        if let Some((cached, entry_gen)) =
+            CHAIN_PEEK_MEMO.with(|m| m.borrow().get(&key(probe)).copied())
+        {
+            // Contamination probe: a hit MUST carry the current generation — a
+            // stale (prior-round/parse) entry means a clear-point was missed.
+            debug_assert_eq!(
+                entry_gen, cur_gen,
+                "TASK-#16: stale chain-peek memo read (a per-round/parse clear was missed)"
+            );
+            break (probe, cached);
+        }
+        // One fresh scan step (probe-counted; inert off). Mirrors the oracle loop
+        // top so the post-fix `peek_scan_steps` counts positions visited ONCE.
+        chain_probe_bump_peek_scan_steps(1);
+        let then_pos = match token_has_only_expected_text_to_next(tokens, probe, trigger) {
+            Some(next) => next,
+            None => break (probe, ChainScan::Clean(0)), // oracle exit (1)
+        };
+        let sep_pos = match same_target_chain_atom_next(tokens, then_pos, &forbidden) {
+            Some(next) => next,
+            None => break (probe, ChainScan::Malformed), // oracle exit (2)
+        };
+        let trailing_pos = match token_has_only_expected_text_to_next(tokens, sep_pos, sep) {
+            Some(next) => next,
+            None => break (probe, ChainScan::Malformed), // oracle exit (3)
+        };
+        let after_trailing = match same_target_chain_atom_next(tokens, trailing_pos, &forbidden) {
+            Some(next) => next,
+            None => break (probe, ChainScan::Malformed), // oracle exit (4)
+        };
+        match tokens.peek_text(after_trailing) {
+            Some(t) if t == trigger => {
+                // oracle exit (6): the trailing atom was a cond; chain continues.
+                pending.push(probe);
+                probe = after_trailing;
+            },
+            _ => break (probe, ChainScan::Clean(1)), // oracle exit (5): e_final
+        }
+    };
+    // Persist the terminal position (idempotent if it was a memo hit), stamped
+    // with the current generation.
+    CHAIN_PEEK_MEMO.with(|m| m.borrow_mut().insert(key(term_pos), (base, cur_gen)));
+    // Back-fill the "continue" positions in reverse: each = combine(1, next).
+    let mut current = base;
+    while let Some(p) = pending.pop() {
+        current = match current {
+            ChainScan::Malformed => ChainScan::Malformed, // ABSORBING
+            ChainScan::Clean(c) => ChainScan::Clean(c.saturating_add(1)),
+        };
+        CHAIN_PEEK_MEMO.with(|m| m.borrow_mut().insert(key(p), (current, cur_gen)));
+    }
+    current // == scan(trigger_pos)
+}
+
+/// TASK-#16 DISPATCHER (2026-07-14): the codegen-invoked gate. Signature
+/// UNCHANGED from the historical `peek_ternary_chain` (the sole production caller
+/// is the generated `engine_impl.rs:1763` via the fully-qualified path) ⇒ ZERO
+/// codegen change, ZERO language regen. Routes to the O(1)-amortized suffix memo
+/// ONLY under the descriptor-PURE engine (the `CHAIN_PEEK_PURE_ACTIVE` guard set
+/// by `step_canonical_pure`) and only when not killed; otherwise takes the
+/// uncached ORACLE ([`peek_ternary_chain_uncached`]) verbatim — so the CLASSIC arm
+/// and the `PRATTAIL_CHAIN_PEEK_MEMO=0` rollback are byte-identical to the
+/// pre-memo behavior. The memo maps its structural [`ChainScan`] to `bool` via
+/// `min_levels` here (decoupling the cache from the codegen constant `2`).
+pub fn peek_ternary_chain(
+    tokens: &dyn WpdaTokenSource,
+    trigger_pos: usize,
+    trigger: &str,
+    sep: &str,
+    min_levels: usize,
+) -> bool {
+    // TASK-#16 probe: count every invocation (both paths). Inert unless probe on.
+    if chain_peek_probe_enabled() {
+        CHAIN_PEEK_CALLS.with(|c| c.set(c.get() + 1));
+    }
+    // A1 pure-scoping + kill-switch: the CLASSIC arm (guard unset) and the
+    // rollback both take the oracle ⇒ trivially byte-identical off the pure path.
+    if !chain_peek_memo_enabled() || !chain_peek_pure_active() {
+        return peek_ternary_chain_uncached(tokens, trigger_pos, trigger, sep, min_levels);
+    }
+    match chain_scan_memo(tokens, trigger_pos, trigger, sep) {
+        ChainScan::Malformed => false,
+        // `Clean(0)` at the TOP position means the trigger position carries NO
+        // trigger at all (`chain_scan_memo` exit (1) with zero levels) — the
+        // oracle's `None if levels == 0 => return false` is an UNCONDITIONAL
+        // false (a non-chain is never absorbed), NOT `0 >= min_levels`. For the
+        // codegen `min_levels = 2` the two coincide; the explicit arm keeps the
+        // memo byte-identical to the oracle for ANY `min_levels` (incl. 0). A
+        // completed run yields `Clean(c>=1)`; `Clean(0)` is only ever the
+        // no-trigger top (mid-chain "clean break" `Clean(0)`s are absorbed by
+        // `combine` into the parent's count, never surfaced here).
+        ChainScan::Clean(0) => false,
+        ChainScan::Clean(c) => c >= min_levels as u32,
+    }
+}
+
 /// C1-M (WALK-S2, 2026-05-28): forward peek confirming a deterministic
 /// MIXFIX ternary chain of `>= min_levels` levels, starting from the
 /// leading trigger (`?`) at `trigger_pos`. The LHS cond `c0` sits at
@@ -7085,17 +7443,29 @@ pub fn peek_binary_chain(tokens: &dyn WpdaTokenSource, op_pos: usize, min_atoms:
 /// Free function (not a `WpdaWalker` method) because it is weight- and
 /// engine-agnostic — the codegen call site invokes it without the
 /// `WpdaWalker<W, E>` turbofish (symmetric with `peek_binary_chain`).
-pub fn peek_ternary_chain(
+///
+/// TASK-#16 (2026-07-14): this is the BYTE-IDENTITY ORACLE — the verbatim
+/// pre-memo body, kept as the reference the dispatcher falls back to (classic arm
+/// / kill-switch) and the differential A/B gate asserts the memo equals. `pub` so
+/// the in-crate differential test can call it directly.
+pub fn peek_ternary_chain_uncached(
     tokens: &dyn WpdaTokenSource,
     trigger_pos: usize,
     trigger: &str,
     sep: &str,
     min_levels: usize,
 ) -> bool {
+    // TASK-#16 probe: mark the peek scan active for the `primary_next_pos_ordered`
+    // caller split (the invocation count is tallied in the dispatcher). Inert
+    // unless the probe env is set.
+    let _peek_scan_probe = ChainPeekScanProbe::enter();
     let forbidden = [trigger, sep];
     let mut levels = 0usize;
     let mut probe = trigger_pos;
     loop {
+        // TASK-#16 STEP-0 probe: one scan step per level examined (the Σ that is
+        // O(N²) pre-fix and must drop to O(N) post-memo). Inert unless probe on.
+        chain_probe_bump_peek_scan_steps(1);
         let then_pos = match token_has_only_expected_text_to_next(tokens, probe, trigger) {
             Some(next) => next,
             None if levels == 0 => return false,
@@ -29214,6 +29584,17 @@ where
     fn step_canonical_pure(&mut self, tokens: &dyn WpdaTokenSource) -> WpdaState {
         use rustc_hash::FxHashSet;
 
+        // TASK-#16 STEP-0 probe: reset the per-parse chain-peek counters at the
+        // pure-loop entry (inert unless the probe env is set).
+        chain_probe_reset();
+        // TASK-#16 A1: mark the descriptor-PURE engine active for the whole run
+        // (Drop restores the prior state) ⇒ `peek_ternary_chain` uses the suffix
+        // memo here and ONLY here; and clear the memo at pure-loop entry
+        // (defensive vs thread reuse — belt-and-suspenders with the load-bearing
+        // per-round clear at the top of `'rounds`; a clear on the empty round-0
+        // map is O(1)).
+        let _chain_peek_pure_guard = ChainPeekPureActiveGuard::enter();
+        chain_peek_memo_clear();
         let dump_stats = std::env::var_os("PRATTAIL_CANONICAL_GLL_STATS").is_some();
         let budget: usize = std::env::var("PRATTAIL_CGLL_BUDGET")
             .ok()
@@ -29331,6 +29712,14 @@ where
         let mut repair_virtuals: Vec<CgllRepairVirtual> = Vec::new();
         let real_tokens: &dyn WpdaTokenSource = tokens;
         'rounds: loop {
+        // TASK-#16 A1 (LOAD-BEARING): invalidate the chain-peek suffix memo at
+        // the top of EVERY round — the token source below (`CgllRepairSource`) is
+        // rebuilt per round with new virtual repair positions, so a memo keyed by
+        // `pos` from a prior round would be stale. This clear precedes the round's
+        // first `peek_ternary_chain`, so the memo only ever caches results of the
+        // CURRENT round's stable source. Round 0 (the green-parse perf case)
+        // clears the already-empty entry-cleared map — O(1).
+        chain_peek_memo_clear();
         // Amendment 4: the repair-lattice adapter — transparent forwarding
         // until virtuals exist; rebuilt per round over the updated slice.
         let repair_src = CgllRepairSource {
@@ -30109,6 +30498,22 @@ where
                 s.ambiguity_overflows,
                 s.group_floor_resets,
                 s.group_floor_reset_excluded,
+            );
+        }
+        // TASK-#16 STEP-0 probe dump: the per-parse chain-peek attribution,
+        // emitted next to the CGLL-PURE line so a single ladder run pairs
+        // (u_count, peek_scan_steps). Inert unless the probe env is set.
+        if chain_peek_probe_enabled() {
+            let peek_calls = CHAIN_PEEK_CALLS.with(|c| c.get());
+            let peek_scan_steps = CHAIN_PEEK_SCAN_STEPS.with(|c| c.get());
+            let synth_calls = CHAIN_SYNTH_CALLS.with(|c| c.get());
+            let synth_scan_steps = CHAIN_SYNTH_SCAN_STEPS.with(|c| c.get());
+            let pnpo_peek = CHAIN_PNPO_PEEK.with(|c| c.get());
+            let pnpo_other = CHAIN_PNPO_OTHER.with(|c| c.get());
+            eprintln!(
+                "CHAIN-PEEK-PROBE peek_calls={peek_calls} peek_scan_steps={peek_scan_steps} \
+                 synth_calls={synth_calls} synth_scan_steps={synth_scan_steps} \
+                 pnpo_peek={pnpo_peek} pnpo_other={pnpo_other}"
             );
         }
         final_state
@@ -40691,6 +41096,13 @@ where
         spec: &crate::binding_power::IterAbsorbSpec,
         weight: W,
     ) -> Option<(crate::sppf::SppfId, W, usize)> {
+        // TASK-#16 STEP-0 probe: count synth invocations. On the pure default
+        // this MUST stay 0 (synth is the classic apply-action path, sole caller
+        // @:16050) ⇒ the memo's peek surface is the whole pure chain cost. Inert
+        // unless the probe env is set.
+        if chain_peek_probe_enabled() {
+            CHAIN_SYNTH_CALLS.with(|c| c.set(c.get() + 1));
+        }
         let (head_symbol, head_lo, _) = self.chain_head_symbol(cursor, spec)?;
         let trigger = spec.trigger;
         let sep = spec.sep;
@@ -40712,6 +41124,11 @@ where
         let mut probe = cursor.pos;
         let e_final: crate::sppf::SppfId;
         loop {
+            // TASK-#16 STEP-0 probe: one synth scan step per level. Inert unless
+            // the probe env is set.
+            if chain_peek_probe_enabled() {
+                CHAIN_SYNTH_SCAN_STEPS.with(|c| c.set(c.get() + 1));
+            }
             let then_pos = token_has_only_expected_text_to_next(tokens, probe, trigger)?;
             let sep_pos = same_target_chain_atom_next(tokens, then_pos, &forbidden)?;
             let then_sym = self.synth_atom_symbol(then_pos, spec, tokens)?;
@@ -51916,5 +52333,148 @@ mod tests {
         // The parked repair remains un-materialized (a strict facade would
         // reject with the parked frontier un-lowered).
         assert_eq!(w.cgll_pure_parked.len(), 1, "the repair stays parked, unlowered");
+    }
+}
+
+// ═══ TASK-#16 CHAIN-PEEK MEMO DIFFERENTIAL TESTS ═════════════════════════════
+//
+// Byte-identity gate: `chain_scan_memo` (mapped by `min_levels`) MUST equal the
+// uncached oracle `peek_ternary_chain_uncached` at every position, over
+// well-formed AND malformed chains, WITHOUT clearing between per-position queries
+// (so memo hits + back-fill reuse — the amortized-O(1) path — are exercised). A
+// proptest covers arbitrary token sequences (every malformation shape).
+#[cfg(test)]
+mod task16_chain_peek_memo_tests {
+    use super::{
+        chain_peek_memo_clear, chain_scan_memo, peek_ternary_chain_uncached,
+        ChainPeekPureActiveGuard, ChainScan,
+    };
+    use crate::automata::TokenKind;
+    use crate::wpda_runtime::WpdaTokenSource;
+
+    /// Minimal linear token source: text + a `Some` kind per position. Only the
+    /// three required trait methods; the defaults (`next_pos = pos+1`,
+    /// `position_order_key = pos`) model the real linear lexer output the ternary
+    /// peek walks.
+    struct MockChainSource {
+        toks: Vec<String>,
+    }
+    impl WpdaTokenSource for MockChainSource {
+        fn peek_kind(&self, pos: usize) -> Option<TokenKind> {
+            self.toks.get(pos).map(|_| TokenKind::Ident)
+        }
+        fn peek_text(&self, pos: usize) -> Option<&str> {
+            self.toks.get(pos).map(|s| s.as_str())
+        }
+        fn len(&self) -> usize {
+            self.toks.len()
+        }
+    }
+
+    // MUST mirror the dispatcher `peek_ternary_chain`'s `ChainScan`→`bool` map.
+    // Enters the pure-active guard so `chain_scan_memo`'s A1 `debug_assert` holds
+    // (the real caller is the dispatcher, only reached under the pure engine).
+    fn memo_bool(src: &MockChainSource, pos: usize, trig: &str, sep: &str, min: usize) -> bool {
+        let _pure = ChainPeekPureActiveGuard::enter();
+        match chain_scan_memo(src, pos, trig, sep) {
+            ChainScan::Malformed => false,
+            ChainScan::Clean(0) => false,
+            ChainScan::Clean(c) => c >= min as u32,
+        }
+    }
+
+    /// "0 ? 1 : 0 ? 1 : … 0" — atom-first linear layout, `depth` levels. If
+    /// `malformed_level` is `Some(l)`, corrupt level `l`'s separator to "X"
+    /// (a post-`min` malformation when `l >= min`, the absorbing case).
+    fn build(depth: usize, malformed_level: Option<usize>) -> MockChainSource {
+        let mut toks = Vec::with_capacity(depth * 4 + 1);
+        toks.push("0".to_string()); // c0 head cond
+        for lvl in 0..depth {
+            toks.push("?".to_string()); // trigger
+            toks.push("1".to_string()); // then
+            toks.push(if malformed_level == Some(lvl) { "X" } else { ":" }.to_string()); // sep
+            toks.push("0".to_string()); // next cond / final else
+        }
+        MockChainSource { toks }
+    }
+
+    /// Assert memo == oracle at EVERY position, several `min_levels`, WITHOUT
+    /// clearing between positions within a min (memo accumulates ⇒ hits + reuse).
+    fn assert_agrees(src: &MockChainSource, trig: &str, sep: &str) {
+        for min in [0usize, 1, 2, 3, 5] {
+            chain_peek_memo_clear();
+            for pos in 0..=src.len() {
+                let oracle = peek_ternary_chain_uncached(src, pos, trig, sep, min);
+                let memo = memo_bool(src, pos, trig, sep, min);
+                assert_eq!(
+                    oracle,
+                    memo,
+                    "mismatch at pos={pos} min={min} len={} trig={trig} sep={sep}",
+                    src.len()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn wellformed_depths_agree() {
+        for depth in 0..40 {
+            assert_agrees(&build(depth, None), "?", ":");
+        }
+    }
+
+    #[test]
+    fn malformed_suffix_agrees_post_min() {
+        // Corrupt each level in turn (incl. deep levels >= min_levels) — proves
+        // the absorbing-Malformed post-min semantics are preserved.
+        for depth in 1..30 {
+            for bad in 0..depth {
+                assert_agrees(&build(depth, Some(bad)), "?", ":");
+            }
+        }
+    }
+
+    #[test]
+    fn empty_and_tiny_agree() {
+        assert_agrees(&MockChainSource { toks: vec![] }, "?", ":");
+        assert_agrees(&MockChainSource { toks: vec!["?".into()] }, "?", ":");
+        assert_agrees(&MockChainSource { toks: vec!["0".into()] }, "?", ":");
+        assert_agrees(
+            &MockChainSource { toks: vec!["?".into(), "1".into(), ":".into()] },
+            "?",
+            ":",
+        );
+    }
+
+    proptest::proptest! {
+        #![proptest_config(proptest::prelude::ProptestConfig::with_cases(400))]
+        // Arbitrary token strings over a small alphabet incl. the operators and
+        // atoms (operators double-weighted) — covers every malformation shape
+        // (missing operand, wrong op, atom==trigger/sep, truncated tail). memo
+        // MUST equal the oracle at every position + min, with memo accumulation.
+        #[test]
+        fn proptest_memo_equals_oracle(
+            seq in proptest::collection::vec(
+                proptest::sample::select(vec!["?", ":", "0", "1", "?", ":"]),
+                0..60usize,
+            ),
+        ) {
+            let src = MockChainSource { toks: seq.iter().map(|s| s.to_string()).collect() };
+            for min in [0usize, 1, 2, 3] {
+                chain_peek_memo_clear();
+                for pos in 0..=src.len() {
+                    let oracle = peek_ternary_chain_uncached(&src, pos, "?", ":", min);
+                    let memo = memo_bool(&src, pos, "?", ":", min);
+                    proptest::prop_assert_eq!(
+                        oracle,
+                        memo,
+                        "pos={} min={} seq={:?}",
+                        pos,
+                        min,
+                        src.toks
+                    );
+                }
+            }
+        }
     }
 }
