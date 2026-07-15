@@ -119,3 +119,17 @@ rustc-ice-*.txt
 .ri
 
 .pgmcp.toml
+
+# ── Campaign scratch (session-local working dirs / one-off dumps — never tracked) ──
+/scratchpad/
+/scratchpad_*.out
+
+# ROOT-P canonical-GLL FV skeletons: SUPERSEDED Stage-B/Stage-1 drafts
+# (statements-only, all-`Admitted`, unregistered in _CoqProject). Their theorems
+# were discharged zero-admission under different filenames and are ALREADY
+# committed — CanonicalGllDescriptorBound.v -> theories/PureDescriptorSpaceBound.v,
+# RootPSlotPackingPreservation.v -> theories/PurePackingPreservation.v (both in
+# 275b0b23, "zero-admission Rocq FV"). Kept on disk for provenance only; not a
+# tracked build input and not an outstanding proof obligation.
+/formal/rocq/prattail_wpda_runtime/theories/CanonicalGllDescriptorBound.v
+/formal/rocq/prattail_wpda_runtime/theories/RootPSlotPackingPreservation.v
