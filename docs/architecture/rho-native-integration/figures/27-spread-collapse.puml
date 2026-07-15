@@ -1,0 +1,30 @@
+@startuml
+' Figure 27-8: spreading a term onto loc:/col:/cap: and collapsing.
+skinparam backgroundColor #FEFEFE
+skinparam defaultFontName monospaced
+skinparam shadowing false
+skinparam rectangle {
+  BorderColor #4A5568
+  FontColor #1A202C
+}
+skinparam ArrowColor #4A5568
+top to bottom direction
+
+title Figure 27-8 — spreading a term and collapsing  (loc: / col: / cap:)
+
+rectangle "spread_term_par_at (structural node f)" as SPREAD #C6E0F5
+rectangle "loc:{root}!(head_tag f)\nthe head tag ALONE (children derived)" as LOC #F6C177
+rectangle "recurse each child at\n{root}/f.i  (loc: / col: / cap:)" as CHILD #DDEBF7
+rectangle "collapse_publish (internal node)\nfor(v_i <- col:{root}/f.i){\n  col!(EList[f, v_0..]) | cap!(EList[f, v_0..]) }" as COLLAPSE #A7D8B6
+
+SPREAD --> LOC
+SPREAD --> CHILD
+CHILD --> COLLAPSE
+
+note right of COLLAPSE #FCF3D0
+  col: (parent fold) and cap: (automaton capture) carry the SAME
+  collapsed subtree on DISJOINT names, each consumed at most once (O1).
+  A Var-leaf cap: read binds full sigma at any depth.
+  AC nodes publish only the col:/cap: soup (no loc: head tag).
+end note
+@enduml

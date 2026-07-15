@@ -5,7 +5,7 @@
  * enumerates EXACTLY the split/join (⊗) decompositions of the signature: every
  * decomposition it emits is a real `And`-node decomposition (SOUND), and every
  * `And` subterm's decomposition is emitted (COMPLETE). No decomposition is
- * fabricated and none is missed — the lane structure the OSLF funding analysis
+ * fabricated and none is missed — the lane structure the funding analysis
  * relies on is preserved by the MeTTaIL re-presentation.
  *
  * Model: the host `Sig` is a binary tree of `Ground` leaves and `And` (split/join,

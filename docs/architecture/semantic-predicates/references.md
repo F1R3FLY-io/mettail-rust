@@ -67,10 +67,26 @@ DOI: [10.1145/357073.357079](https://doi.org/10.1145/357073.357079).
 ### stay-meredith-2016
 
 M. Stay and L. G. Meredith. *Logic as a Distributive Law.* arXiv:1610.02247, 2016.
-The OSLF (Ordered Linear-Substructural Funding) resource-logic reading of a
-calculus that [09 — OSLF Composition](09-oslf-composition.md) composes the predicate
-algebra with. Available at
+Derives a program logic from a term calculus via a distributive law — part of the
+Stay–Meredith categorical-logic program. An earlier version of this suite mislabeled
+this paper with a resource-funding backronym; that was incorrect. The funding
+discipline that [09 — Funding Composition](09-funding-composition.md) composes the
+predicate algebra with is a *separate* cost-accounting extension (the cost-accounted
+rho calculus / cost endofunctor; Meredith, 2026), and the canonical source for
+**OSLF** — Operational Semantics in Logical Form — is
+[stay-meredith-2017](#stay-meredith-2017). Available at
 [arxiv.org/abs/1610.02247](https://arxiv.org/abs/1610.02247).
+
+### stay-meredith-2017
+
+M. Stay and L. G. Meredith. *Representing Operational Semantics with Enriched Lawvere
+Theories.* arXiv:1704.03080, 2017. The canonical **OSLF** (Operational Semantics in
+Logical Form) paper: it presents a calculus's operational semantics as a Gph-enriched
+multisorted Lawvere theory — sorts are grammar categories, morphisms are constructors,
+hom-graph edges are one-step rewrites — and derives behavioral logic and type structure
+functorially. This is the program the glossary attributes to "OSLF"; it is distinct
+from the funding discipline. Available at
+[arxiv.org/abs/1704.03080](https://arxiv.org/abs/1704.03080).
 
 ### tata
 
@@ -369,7 +385,7 @@ Algebra-to-COMM bridges (`FORMAL_CAPPED_TARGET=rocq-rho-bridge`):
 - `formal/rocq/rho_bridge/theories/RhoGuardedCommSoundness.v`
 - `formal/rocq/rho_bridge/theories/GuardedCommSoundness.v`
 - `formal/rocq/rho_bridge/theories/RhoBackendFlipGate.v`
-- `formal/rocq/rho_bridge/theories/MettaOslfLawsConformance.v`
+- `formal/rocq/rho_bridge/theories/MettaFundingLawsConformance.v`
 - `formal/rocq/rho_bridge/theories/MettaGsltPresentation.v`
 
 The zero-admission gate (`FORMAL_CAPPED_TARGET=rocq-critical-zero-admission`):
@@ -383,7 +399,7 @@ The zero-admission gate (`FORMAL_CAPPED_TARGET=rocq-critical-zero-admission`):
 - `prattail/docs/design/symbolic-substrate/any-algebra-substrate.md` — the
   `AnyAlgebra` substrate generalization.
 - `prattail/docs/theory/symbolic/boolean-algebra.md` — the EBA / SFA theory note.
-- `docs/design/dovetail-engine/oslf-gslt-native-fold-reduction.md` — the OSLF/GSLT
+- `docs/design/dovetail-engine/oslf-gslt-native-fold-reduction.md` — the funding/GSLT
   engine treatment.
 - `docs/papers/plan.md` — the GSLT/MeTTaIL paper plan, including the Hennessy–Milner
   correspondence ("processes are bisimilar iff they satisfy the same formulae").

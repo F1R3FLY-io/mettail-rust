@@ -1,6 +1,6 @@
 /*
  * egg-style e-graph term-DAG: the nested fold `int(1+2, 8)` reducing inside
- * OSLF-funded saturation, in three snapshots (left → right).
+ * funding-gated saturation, in three snapshots (left → right).
  *   dashed rounded box  = e-class (an equivalence class of provably-equal terms)
  *   solid box           = e-node  (a labeled operator over child e-classes)
  *   solid edge          = child-class reference
@@ -57,7 +57,7 @@ digraph int_fold {
     lg_leaf  [label="leaf class (GSLT term)", fillcolor="#DBEAFE", color="#2563EB"];
     lg_ctor  [label="constructor e-node", fillcolor="#EDE9FE", color="#7C3AED"];
     lg_nf    [label="native-folded value (NF)", fillcolor="#DCFCE7", color="#16A34A"];
-    lg_w     [label="weight / OSLF funding", shape=note, fillcolor="#FFFBEB", color="#D97706"];
+    lg_w     [label="weight / funding", shape=note, fillcolor="#FFFBEB", color="#D97706"];
     lg_leaf -> lg_ctor [style=invis]; lg_ctor -> lg_nf [style=invis]; lg_nf -> lg_w [style=invis];
   }
 }

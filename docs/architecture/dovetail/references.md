@@ -65,7 +65,7 @@ files that are versioned with the implementation and formal artifacts.
 - `dovetail/formal/rocq/theories/Extraction/CycleCutBoundary.v`
 - `dovetail/formal/rocq/theories/Extraction/CyclicEnumerationImpossibility.v`
 - `dovetail/formal/rocq/theories/InsideWeights/InsideWeightSccClosure.v`
-- `dovetail/formal/rocq/theories/Saturation/DovetailSaturation.v` (saturation soundness + native-fold soundness `native_fold_saturation_sound` / `native_refire_is_noop` + OSLF funding laws `fold_transition_funded` → `funded_fold_saturates_within_budget`)
+- `dovetail/formal/rocq/theories/Saturation/DovetailSaturation.v` (saturation soundness + native-fold soundness `native_fold_saturation_sound` / `native_refire_is_noop` + funding laws `fold_transition_funded` → `funded_fold_saturates_within_budget`)
 - `dovetail/formal/rocq/theories/Requirements/LanguageDefInventory.v`
 - `dovetail/formal/rocq/theories/Requirements/MeTTaILRewriteCoverage.v`
 - `dovetail/formal/rocq/theories/Lowering/PatternLoweringSoundness.v`
@@ -144,7 +144,7 @@ Optimization", POPL 2009, pp. 264–276, DOI:
 doi.org to the ACM Digital Library). The equality-saturation-as-reduction lineage
 behind treating Dovetail's saturation as the GSLT reduction relation `→*`; local
 use:
-[OSLF/GSLT Native Fold Reduction](../../design/dovetail-engine/oslf-gslt-native-fold-reduction.md).
+[Funding/GSLT Native Fold Reduction](../../design/dovetail-engine/oslf-gslt-native-fold-reduction.md).
 
 ### NELSON-OPPEN-1980
 
@@ -153,16 +153,16 @@ of the ACM 27(2):356–364, 1980, DOI:
 [10.1145/322186.322198](https://doi.org/10.1145/322186.322198) (resolves via
 doi.org to the ACM Digital Library). The congruence-closure basis for Dovetail's
 rebuild step (`equal children ⇒ equal same-operator parents`); local use:
-[OSLF/GSLT Native Fold Reduction](../../design/dovetail-engine/oslf-gslt-native-fold-reduction.md).
+[Funding/GSLT Native Fold Reduction](../../design/dovetail-engine/oslf-gslt-native-fold-reduction.md).
 
 ### GIRARD-1987
 
 Girard, "Linear Logic", Theoretical Computer Science 50(1):1–101, 1987, DOI:
 [10.1016/0304-3975(87)90045-4](https://doi.org/10.1016/0304-3975(87)90045-4)
 (resolves via doi.org → Elsevier PII `0304397587900454`, which self-encodes the
-DOI). The substructural-logic source for the OSLF no-contraction reading ("weight
+DOI). The substructural-logic source for the funding discipline's no-contraction reading ("weight
 orders, never prunes"); local use:
-[OSLF/GSLT Native Fold Reduction](../../design/dovetail-engine/oslf-gslt-native-fold-reduction.md).
+[Funding/GSLT Native Fold Reduction](../../design/dovetail-engine/oslf-gslt-native-fold-reduction.md).
 
 ### BAADER-NIPKOW-1998
 
@@ -170,7 +170,7 @@ Baader and Nipkow, "Term Rewriting and All That", Cambridge University Press,
 1998, ISBN 978-0-521-77920-3 (no DOI — a monograph). The term-rewriting reference
 for the redex / normal-form / termination vocabulary the fold fragment uses; local
 use:
-[OSLF/GSLT Native Fold Reduction](../../design/dovetail-engine/oslf-gslt-native-fold-reduction.md).
+[Funding/GSLT Native Fold Reduction](../../design/dovetail-engine/oslf-gslt-native-fold-reduction.md).
 
 ### MOHRI-2002
 
@@ -179,7 +179,7 @@ Journal of Automata, Languages and Combinatorics 7(3):321–350, 2002. No regist
 (resolvable) DOI; the ACM Digital Library internal id `10.5555/639508.639512` uses
 ACM's non-resolvable internal prefix, **not** a real DOI. The semiring / tropical
 (min-plus) shortest-distance basis for `rigail`'s inside-weight algebra; local use:
-[OSLF/GSLT Native Fold Reduction](../../design/dovetail-engine/oslf-gslt-native-fold-reduction.md).
+[Funding/GSLT Native Fold Reduction](../../design/dovetail-engine/oslf-gslt-native-fold-reduction.md).
 
 ### ASCENT-2022
 

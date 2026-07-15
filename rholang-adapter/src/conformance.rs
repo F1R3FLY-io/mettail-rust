@@ -1,4 +1,4 @@
-//! OSLF conformance laws — the linear-resource-logic laws the Rocq
+//! funding conformance laws — the linear-resource-logic laws the Rocq
 //! `OSLF_Funding_Logic_Sound` capstone proves, that EVERY `OslfResourceLogic`
 //! implementation must satisfy.
 //!
@@ -15,7 +15,7 @@
 //! a byte-for-byte-equivalent law suite for this bridge.
 //!
 //! The Rust laws here are mirrored by the zero-admission Rocq proof
-//! `formal/rocq/rho_bridge/theories/MettaOslfLawsConformance.v` (a second instance
+//! `formal/rocq/rho_bridge/theories/MettaFundingLawsConformance.v` (a second instance
 //! of `GSLTOSLFCapstone.v`, reusing `LinearLogicResources.v`).
 
 use rholang::rust::interpreter::accounting::delta_sigma::DemandEntry;
@@ -108,8 +108,8 @@ where
     let _verdict: bool = rl.is_funded(&resolvable(3), 5, 0);
 }
 
-/// Run all four OSLF conformance laws against `rl` (for GSLT presentation `G`).
-pub fn assert_oslf_laws<G, R>(rl: &R)
+/// Run all four funding conformance laws against `rl` (for GSLT presentation `G`).
+pub fn assert_funding_laws<G, R>(rl: &R)
 where
     G: GsltPresentation,
     R: OslfResourceLogic<G>,

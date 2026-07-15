@@ -64,7 +64,7 @@ Tower -[hidden]down- Carrier
 Carrier -[hidden]down- Z3
 
 note bottom of Sub
-  OSLF-substrate modules (AnyAlgebra carrier, bisimulation, letprop→PATA,
+  Substrate modules (AnyAlgebra carrier, bisimulation, letprop→PATA,
   Hindley–Milner, Z3/SMT) are wired behind default-off Cargo features;
   the default build is byte-identical.
 end note

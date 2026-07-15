@@ -313,7 +313,7 @@ COMM it does not truly satisfy.
 > boolean guard, or a host-routed native join. The choice and its run-time
 > semantics are [08 — Runtime COMM Enforcement](08-runtime-comm-enforcement.md);
 > the funding axis it composes with is
-> [09 — OSLF Composition](09-oslf-composition.md).
+> [09 — Funding Composition](09-funding-composition.md).
 
 ## 6. The comprehension contract
 

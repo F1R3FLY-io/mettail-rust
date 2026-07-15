@@ -1,0 +1,50 @@
+@startuml
+' Figure 27-4: the compile-time / run-time boundary. The installed Par is the seam.
+skinparam backgroundColor #FEFEFE
+skinparam defaultFontName monospaced
+skinparam shadowing false
+skinparam rectangle {
+  BorderColor #4A5568
+  FontColor #1A202C
+}
+skinparam ArrowColor #4A5568
+top to bottom direction
+
+title Figure 27-4 — the compile-time / run-time boundary
+
+package "COMPILE TIME (once per language)" #E1EFFA {
+  rectangle "1. parse language! -> LanguageDef (GSLT)" as K1 #C6E0F5
+  rectangle "2. intern the set-automaton quotient (tc(K))" as K2 #F6C177
+  rectangle "3. classify rules (RhoNetProgram)" as K3 #C6E0F5
+  rectangle "4. serialize matching | firing | congruence" as K4 #C6E0F5
+  rectangle "5. fail-closed install gate" as K5 #C6E0F5
+  K1 --> K2
+  K2 --> K3
+  K3 --> K4
+  K4 --> K5
+}
+
+rectangle "<b>installed rhoapi::Par</b>   (the seam)" as SEAM #A7D8B6
+K5 --> SEAM
+
+package "RUN TIME (once per subject, on RSpace)" #E6F4EA {
+  rectangle "6. M-reflect the subject term" as R6 #A7D8B6
+  rectangle "7. spread onto loc: / col: / cap:" as R7 #A7D8B6
+  rectangle "8. locate & match (sa: / eq: tau COMMs)" as R8 #A7D8B6
+  rectangle "9. fire: one visible COMM per redex" as R9 #7FC79B
+  rectangle "10. congruence cascade (beta only)" as R10 #A7D8B6
+  rectangle "11. decode the resting EList" as R11 #A7D8B6
+  R6 --> R7
+  R7 --> R8
+  R8 --> R9
+  R9 --> R10
+  R10 --> R11
+}
+SEAM --> R6
+
+note right of SEAM #FCF3D0
+  Structural congruence is closed at COMPILE time by the e-graph;
+  only beta-substitution congruence runs at run time. Each COMM is
+  metered by the cost-accounting extension (separate from OSLF).
+end note
+@enduml

@@ -11,7 +11,7 @@ Document 05 summarizes *that* the behavioral tier is a Heyting algebra; this doc
 — home for behavioral guards**, why that is non-obvious, **how the truth of a
 behavioral predicate is concretely computed**, how it **completes** Boolean algebra
 for full structural-behavioral predicate types, how **bisimulation** makes behavioral
-predicates well-defined, and why it **aligns with OSLF**.
+predicates well-defined, and why it **aligns with the funding discipline**.
 
 This document is **self-contained**: every result it relies on is stated as a
 Definition, Lemma, Proposition, or Theorem and proved here in ordinary mathematical
@@ -37,8 +37,8 @@ of open sets `O(X)` of any space is a Heyting algebra — the canonical model of
 intuitionistic propositional logic, [Johnstone, 1982](references.md#johnstone-1982));
 and **topos theory** (the subobject classifier of any topos carries a Heyting
 structure, [Mac Lane & Moerdijk, 1992](references.md#maclane-moerdijk-1992)). None of
-these is a resource logic. OSLF, by contrast, is an ordered linear-substructural
-*funding* discipline ([09](09-oslf-composition.md)). Importing a Heyting algebra to
+these is a resource logic. The funding discipline, by contrast, is a cost-accounting
+extension of the rho calculus ([09](09-funding-composition.md)). Importing a Heyting algebra to
 govern behavioral guards *inside a resource logic* therefore crosses two unrelated
 traditions, and a reader is right to demand an argument rather than an analogy.
 
@@ -62,7 +62,7 @@ determinacy is not available *as evidence*. The argument proceeds: §2 the
 mathematics (with proofs); §3 the evidence argument (BHK and topology) and the
 three-valued model where excluded middle provably fails; §4 **how a behavioral
 predicate's truth is concretely computed**, with worked examples; §5 bisimulation as
-the well-definedness of behavioral predicates; §6 the completion; §7 the OSLF
+the well-definedness of behavioral predicates; §6 the completion; §7 the funding
 affinity; §8 a worked logical example; §9–§10 the mechanized account.
 
 ## 2. The mathematics of Heyting algebras
@@ -860,22 +860,22 @@ The test model `TriAlg` (`algebra_tower.rs`) is the Rust mirror of the `TriModel
 region; it and `Chain3` are the minimal witnesses that the middle / lowest tiers are
 strictly larger than Boolean.
 
-## 7. The OSLF affinity
+## 7. The funding affinity
 
 Constructive logic is the natural logic of *resources* and of *provability*, and that
-is why the predicate algebra composes with OSLF. Substructural logics (no weakening or
+is why the predicate algebra composes with the funding discipline. Substructural logics (no weakening or
 contraction) are the proof theory of resource-sensitive reasoning, whose natural
 fragment is intuitionistic; the BHK reading is itself a reading of constructive
 provability. Both traditions reject "true because not-false."
 
 The sharpest correspondence — `reject-underfunded ≈ reject-safe`
-([09 §3](09-oslf-composition.md)) — now has its *logical* explanation. The reject-safe
-pseudo-complement asserts `¬φ` only on refuting evidence (§3.1); OSLF's funding judgment
+([09 §3](09-funding-composition.md)) — now has its *logical* explanation. The reject-safe
+pseudo-complement asserts `¬φ` only on refuting evidence (§3.1); the funding discipline's judgment
 refuses a rewrite only when supply provably fails to cover demand. Both are
 **fail-closed**, for the same constructive reason, and the funding judgment is itself a
 decidable, monotone, fail-closed predicate.
 
-**Proposition 7.1 (OSLF funding is fail-closed and decidable).** Define
+**Proposition 7.1 (the funding discipline is fail-closed and decidable).** Define
 `is_funded(Δ, Σ, margin) := (Δ + margin ≤ Σ)` over the natural numbers. Then:
 
 1. (sound) `is_funded(Δ, Σ, margin) = true ⟺ Δ + margin ≤ Σ`;
@@ -888,17 +888,17 @@ and reflects the order. (2) `is_funded(Δ, 0, 0) = (Δ + 0 ≤ 0) = (Δ ≤ 0)`;
 then `Δ ≤ 0` is false. (3) From `Δ + margin ≤ Σ` and `Σ ≤ Σ + 1` (monotonicity of `+`
 on `ℕ`), `Δ + margin ≤ Σ + 1`. (4) `≤` on `ℕ` is decidable, so its boolean reflection
 is total. `∎` (Mechanized as `law_sound`, `law_reject_underfunded`,
-`law_supply_monotone`, `law_decidable` in `MettaOslfLawsConformance.v`; the capstone
-`metta_resource_logic_is_oslf_sound` conjoins the four.)
+`law_supply_monotone`, `law_decidable` in `MettaFundingLawsConformance.v`; the capstone
+`metta_resource_logic_is_funding_sound` conjoins the four.)
 
-This explains *why* the two axes of [09](09-oslf-composition.md) compose into a plain
+This explains *why* the two axes of [09](09-funding-composition.md) compose into a plain
 conjunction `guard-satisfied ∧ funded`: both are constructive and fail-closed for the
 same reason, each monotone in its "more evidence" order (more facts never retract a
 witness; more supply never revokes funding, Proposition 7.1(3)), each decidable with an
 honest bottom (`Sat3::DontKnow`; the funding judgment is total). A resource logic and an
 evidence logic are both constructive logics, so their `∧` is well-behaved. The honest
-nuance of [09 §5](09-oslf-composition.md) stands: the predicate algebra is not OSLF and
-neither contains the other; the alignment is the shared constructive discipline, the
+nuance of [09 §5](09-funding-composition.md) stands: the predicate algebra is not the funding
+discipline and neither contains the other; the alignment is the shared constructive discipline, the
 cleanliness is the separation. The unifier is the constructive stance — *assertion
 requires construction*; a false grant (firing an unaffordable rewrite, or committing on
 an unproven guard) is **unsound**, whereas a false refusal is merely **incomplete**, and
@@ -965,7 +965,7 @@ front-matter applies: those names are Rust / theory, not Coq.
 | Theorem 6.1, run-time mirror | `comm_fires_iff`, `product_eval_sound`, `mixed_negation_soundness`, `rho_complement_no_commit`, `rho_guard_true_commits` | `RhoGuardedCommSoundness.v` |
 | Proposition 6.2 (EBA implies reject-safe) | `RejectSafeLaws`, `eba_implies_reject_safe` | `EffectiveBooleanAlgebra.v` |
 | Proposition 6.3 (tier ↔ regularity, homomorphism) | `tier_regularity_reg`, `tier_regularity_boundary`, `tier_regularity_closed`, `tier_max_sound_hom`, `tier_max_complete_hom` | `GuardTierCertificate.v` |
-| Proposition 7.1 (OSLF funding laws) | `law_sound`, `law_reject_underfunded`, `law_supply_monotone`, `law_decidable`, `metta_resource_logic_is_oslf_sound` | `MettaOslfLawsConformance.v` |
+| Proposition 7.1 (funding laws) | `law_sound`, `law_reject_underfunded`, `law_supply_monotone`, `law_decidable`, `metta_resource_logic_is_funding_sound` | `MettaFundingLawsConformance.v` |
 
 The Hennessy–Milner correspondence for GSLT/MeTTaIL (Theorem 5.4's "bisimilar iff same
 formulas") is the project's stated behavioral-equivalence result
@@ -981,12 +981,13 @@ formulas") is the project's stated behavioral-equivalence result
 - How the behavioral guard is enforced at run time (mechanism iii of §4.2):
   [08 — Runtime COMM Enforcement](08-runtime-comm-enforcement.md).
 - The two-axis composition this document argues for:
-  [09 — OSLF Composition](09-oslf-composition.md).
+  [09 — Funding Composition](09-funding-composition.md).
 - The full proof ledger and the `Sat3`/`Esakia` caveat:
   [10 — Formal Verification and Tests](10-formal-verification-and-tests.md).
 - Glossary entries for **Regular element**, `Sat3`, `RejectSafeAlgebra`,
   `HeytingAlgebra`, `Classical<A>`, `RejectSafeProduct`:
   [01 — Concepts and Glossary](01-concepts-and-glossary.md).
 - Literature: the Heyting / intuitionistic / topology / duality / bisimulation entries
-  in [References](references.md), plus
-  [Stay & Meredith, 2016](references.md#stay-meredith-2016) for OSLF.
+  in [References](references.md), plus the cost-accounted rho calculus (Meredith, 2026)
+  for the funding discipline of §7 and [Stay & Meredith, 2017](references.md#stay-meredith-2017)
+  for the distinct OSLF program.

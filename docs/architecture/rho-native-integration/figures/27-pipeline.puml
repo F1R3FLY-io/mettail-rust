@@ -1,0 +1,40 @@
+@startuml
+' Figure 27-1: the compile-time translation pipeline. One pass per language:
+' language! (OSLF spec) -> LanguageDef (GSLT) -> Dovetail rules -> set-automaton intern
+' -> classify -> serialize the three layers -> fail-closed gate -> installed rhoapi::Par.
+skinparam backgroundColor #FEFEFE
+skinparam defaultFontName monospaced
+skinparam shadowing false
+skinparam rectangle {
+  BorderColor #4A5568
+  FontColor #1A202C
+}
+skinparam ArrowColor #4A5568
+top to bottom direction
+
+title Figure 27-1 — the compile-time translation pipeline (once per language)
+
+rectangle "language! specification\n(an OSLF spec)" as SPEC #C6E0F5
+rectangle "LanguageDef\n(the GSLT: types, equations, rewrites)" as LDEF #C6E0F5
+rectangle "Dovetail rules-as-data\nRewriteRule<L> carrying Pattern<L>" as RULES #DDEBF7
+rectangle "<b>PatternCompiler::intern</b>\nthe set automaton (interned DAG)\nO1/O3 size-optimal quotient = tc(K)" as INTERN #F6C177
+rectangle "RhoNetProgram::from_language_def\nclassify each rule (BaseRewrite / AC / ...)" as CLASSIFY #DDEBF7
+rectangle "serialize the three layers\nmatching  |  firing  |  congruence" as SERIAL #D6C6EE
+rectangle "installed_program_par\n(fail-closed install gate)" as GATE #FDE9C8
+rectangle "<b>rhoapi::Par</b>\nthe installed program (the seam to runtime)" as PAR #A7D8B6
+
+SPEC --> LDEF
+LDEF --> RULES
+RULES --> INTERN
+INTERN --> CLASSIFY
+CLASSIFY --> SERIAL
+SERIAL --> GATE
+GATE --> PAR
+
+note right of INTERN #FCF3D0
+  The interner is the compile-time partial evaluator:
+  structurally-equal sub-patterns share one StateId.
+  This is the entire tc(K) computation; the runtime
+  pays no pattern-compilation cost.
+end note
+@enduml

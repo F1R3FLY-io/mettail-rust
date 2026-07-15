@@ -1,4 +1,4 @@
-//! `MettaGslt` — the MeTTaIL GSLT presentation for f1r3node-rust's OSLF funding
+//! `MettaGslt` — the MeTTaIL GSLT presentation for f1r3node-rust's funding
 //! analysis (the second `GsltPresentation` instance after the host's `RhoGslt`,
 //! demonstrating the trait's genericity for MeTTaIL).
 //!

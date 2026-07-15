@@ -37,7 +37,7 @@ rectangle "Rho runtime binding\n(MeTTaIL side)" as R #FBCFE8 {
   component "RhoBackend seam +\ninstallers · `rholang-runtime`" as Seam #FBCFE8
   component "Differential oracle\n(real-vs-real) · `rholang-runtime`" as Oracle #FBCFE8
   component "Direct Dovetail path\n`dovetail-runtime`" as DirectPath #FBCFE8
-  component "OSLF cost / funding\n`rholang-adapter`" as Cost #FBCFE8
+  component "funding / cost\n`rholang-adapter`" as Cost #FBCFE8
 }
 
 rectangle "F1r3node / Rholang\nruntime substrate (external)" as F #FCE7F3 {
@@ -73,7 +73,7 @@ Runtime --> RSpace : produce / consume / join
 RSpace --> Scheduler : enabled COMM events
 Scheduler --> RSpace : parallel continuations
 Scheduler --> Replay : event log
-Cost --> Funding : OSLF demand / is-funded
+Cost --> Funding : funding demand / is-funded
 RSpace --> Oracle : resting-space facts
 Report --> Oracle : Dovetail reference facts
 Oracle --> Diff : observed equivalence

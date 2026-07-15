@@ -9,7 +9,7 @@ incoming message satisfies a semantic predicate.** It assembles the authoring su
 ([06 — Guard Syntax and Extensions](06-guard-syntax-and-extensions.md)), the compile-time
 classification ([07 — Language to Rholang Integration](07-language-to-rholang-integration.md)),
 the run-time enforcement ([08 — Runtime COMM Enforcement](08-runtime-comm-enforcement.md)),
-and the OSLF funding axis ([09 — OSLF Composition](09-oslf-composition.md)) into one
+and the funding axis ([09 — Funding Composition](09-funding-composition.md)) into one
 end-to-end account, and states plainly which parts are proven, which are wired, and which
 are absent.
 
@@ -32,7 +32,7 @@ for messages to act on. The design question:
 **Thesis.** This is exactly the *guarded-receive* mechanism the semantic-predicate
 substrate was built for. The predicate `P` is classified once at compile time into an
 enforcement *disposition*; at run time the host enforces the surviving decision at the
-RSpace communication (`COMM`) boundary, composed with the OSLF funding axis as `COMM
+RSpace communication (`COMM`) boundary, composed with the funding axis as `COMM
 fires ⟺ guard-satisfied ∧ funded`; and **guard atomicity** — proved zero-admission in
 Coq — guarantees a failing message is left resting, so the contract keeps awaiting. The
 substrate and its proofs are built for this; the *persistent* contract surface and the
@@ -117,14 +117,14 @@ the default). The fail-closed flip gate `decide_rho_flip` (`flip.rs`, the Rust i
 `RhoBackendFlipGate.v`) admits the contract only when every obligation is covered with a
 non-`Unknown` quality.
 
-### 3.2 Run time: the COMM gate and OSLF composition — ✅ source path / ◐ AST path
+### 3.2 Run time: the COMM gate and funding composition — ✅ source path / ◐ AST path
 
 At the `COMM` boundary the host evaluates the firing condition
 ([08 §2](08-runtime-comm-enforcement.md#2-what-a-comm-is-and-what-enforcement-means)):
 
 `comm_fires(σ) = name_match(σ) ∧ structural_eval(σ) ∧ behavioral_eval(σ)`
 
-composed with OSLF ([09 §4](09-oslf-composition.md#4-how-they-compose-at-the-boundary)) as
+composed with the funding discipline ([09 §4](09-funding-composition.md#4-how-they-compose-at-the-boundary)) as
 the two-axis gate `GuardedFundedCommit`: `name_match → guard_holds → is_funded → commit`,
 i.e. `COMM fires ⟺ guard-satisfied ∧ funded`. The three enforcement mechanisms
 ([08 §3](08-runtime-comm-enforcement.md#3-the-three-enforcement-mechanisms)) are selected
@@ -149,7 +149,7 @@ persistence** — so it is exactly the guarantee a persistent guarded contract n
 ![Guarded contract COMM: classify at compile time, enforce per message](figures/16-guarded-contract-comm.svg)
 
 *The sequence: a message `m` on channel `c` is admitted only when `name_match`, the guard,
-and OSLF funding all hold; a guard failure (or underfunding) leaves `m` resting, and a
+and funding all hold; a guard failure (or underfunding) leaves `m` resting, and a
 persistent contract re-installs to await the next message.*
 
 ## 4. Wiring-status ledger
@@ -162,7 +162,7 @@ contracts; two execution pieces and the persistent surface are what remain.
 | Guard-atomicity model + theorems (`GuardedCommSoundness.v`, `RhoGuardedCommSoundness.v`) | ✅ **proven, zero-admission** (target `rocq-rho-bridge`) |
 | `where` boolean guard on the live `RhoRuntime` (source path) | ✅ **wired + tested** (`rholang-runtime/tests/rho_guard_oracle.rs`, 4 cases) |
 | `RhoNativeJoin` disposition + compatibility matrix + flip-gate planner | ✅ **wired (compile-time)** (`rholang-codegen/src/backend.rs`) |
-| OSLF `is_funded` resource axis + four-law conformance | ✅ **wired + proven** (`rholang-adapter/src/gslt.rs`, `MettaOslfLawsConformance.v`) |
+| The funding `is_funded` resource axis + four-law conformance | ✅ **wired + proven** (`rholang-adapter/src/gslt.rs`, `MettaFundingLawsConformance.v`) |
 | Concrete run-time native-join handler consulting `halts` / `safe` | ◐ **specified; handler not wired** — `guard_codegen.rs` emits no per-guard runtime code |
 | Modal model-check over a real `rhoapi::Par` | ◐ **honest gap** — only `NoTerm` / `TestProc` instances; modal `Sat3` is `DontKnow` |
 | Guard field on `rhoapi::ReceiveBind` (AST path) | ❌ **absent by design** — forces host-routing through `RhoNativeJoin` |
@@ -203,7 +203,7 @@ subject of the companion document
 - The three run-time enforcement mechanisms and the guard-atomicity theorems:
   [08 — Runtime COMM Enforcement](08-runtime-comm-enforcement.md).
 - The funding axis and the two-axis `GuardedFundedCommit` gate:
-  [09 — OSLF Composition](09-oslf-composition.md).
+  [09 — Funding Composition](09-funding-composition.md).
 - Behavioral concretization and the `Sat3::DontKnow` boundary:
   [12 — Heyting Behavioral Logic](12-heyting-behavioral-logic.md#42-the-three-concretization-mechanisms),
   [15 — Modal μ-Calculus](15-mu-calculus.md).

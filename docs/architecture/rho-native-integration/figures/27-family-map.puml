@@ -1,0 +1,21 @@
+@startmindmap
+' Figure 27-9: clause -> RhoNetRuleKind -> RhoNetLoweredRule -> receiver builder.
+caption Figure 27-9 — clause to RhoNetRuleKind to RhoNetLoweredRule to receiver builder
+skinparam backgroundColor #FEFEFE
+skinparam defaultFontName monospaced
+skinparam shadowing false
+
+*[#C6E0F5] language! clause\nfrom_language_def
+**[#DDEBF7] types (native scalar)\nNativeFold\nsigma 1-slot / scalar contract
+**[#DDEBF7] terms (constructor)\nStructuralConstructor\nno Par (inline reflection)
+**[#DDEBF7] equations\nStructuralCongruence\nCongruenceClosure (e-graph, no Par)
+**[#D6C6EE] base rewrite\nBaseRewrite\nsigma_receiver_par
+**[#D6C6EE] congruence rewrite\nContextualRewrite\ncontextual_join_receiver_par
+**[#F6C177] AC rewrite\nAcRewrite / StructuralAcRewrite / NestedStructuralAcRewrite\nac_sigma / structural_ac / nested_structural_ac receiver
+**[#F6C177] comm-shaped rewrite\nCommRewrite\ncomm_rule_receiver
+**[#A7D8B6] binder-beta rewrite\nSubstRewrite\nsubst_seed_receiver_par + subst-TRS
+**[#DDEBF7] native process\nNativeSystemProcess(Rewrite)\nnative_locate_bridge_par
+left side
+**[#FBCFE8] declared join\nComm (UNMATERIALIZED)\nfails the install gate
+**[#FBCFE8] semantic predicate / ?guard\nclassify-only guard obligation\nno COMM (INV-14)
+@endmindmap

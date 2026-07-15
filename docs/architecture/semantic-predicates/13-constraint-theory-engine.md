@@ -389,7 +389,7 @@ Z3 is not the only backend kept out of the default build. The production build l
 solver and enables no optional dependency: every backend in this subsection is **off by
 default**, and each is held to a snapshot or agreement gate so that enabling it leaves the
 default analysis output byte-identical. They fall in two groups — the one external-dependency
-*solver* (Z3, §2.1), and the **OSLF staged analysis engines** wired behind Cargo features for
+*solver* (Z3, §2.1), and the **staged analysis engines** wired behind the `oslf-*` Cargo features for
 the rollout. Each is marked as either a *genuine decision procedure* (it decides a real
 property of the grammar) or mere *routing* (it re-dispatches an engine that is already
 compiled, adding no new algebra).

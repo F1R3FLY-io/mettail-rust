@@ -1,4 +1,5 @@
-//! `MettaResourceLogic` — MeTTaIL's OSLF resource logic (proof checker for the
+//! `MettaResourceLogic` — MeTTaIL's funding resource logic, its `OslfResourceLogic`
+//! impl (proof checker for the
 //! funding judgment `Σ_s ≥ Δ_s`).
 //!
 //! It DELEGATES `demand`/`is_funded` to the already-verified pure analyzer
@@ -6,12 +7,12 @@
 //! `DefaultResourceLogic` and the live D2 acceptance gate use — so the MeTTaIL
 //! adapter and the host gate cannot diverge, and the OSLF conformance laws (see
 //! [`crate::conformance`]) hold by delegation (the Rocq `OSLF_Funding_Logic_Sound`
-//! capstone's image; cf. `formal/rocq/rho_bridge/theories/MettaOslfLawsConformance.v`).
+//! capstone's image; cf. `formal/rocq/rho_bridge/theories/MettaFundingLawsConformance.v`).
 //!
 //! MeTTaIL-specific candidate ordering is implemented in [`crate::delta1`].
 //! This keeps the host funding judgment pure: `demand`/`is_funded` decide
 //! refutation, and Delta-one selection ranks the enabled join candidates without
-//! changing the OSLF funding law.
+//! changing the funding law.
 
 use models::rhoapi::Par;
 

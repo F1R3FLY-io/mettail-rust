@@ -1,8 +1,8 @@
 @startuml
-' Figure 22-1: the FV discharge DAG. The spine (ii)+(viii) => (iii) => (v) threads the
-' O1-optimality upgrade; the seven family arms feed the abstract finite-trace lift (T21)
-' to give the sound-baseline capstone (T22); T23 composes them over optimal matching.
-' Every node prints "Closed under the global context".
+' Figure 22-1: the dependency graph of the argument. The spine (ii)+(viii) => (iii) => (v)
+' threads the O1-optimality upgrade; the seven family arms feed the abstract finite-trace
+' lift (T21) to give the sound-baseline capstone (T22); T23 composes them over optimal
+' matching. Every node is machine-checked (doc 22 section 9).
 skinparam backgroundColor #FEFEFE
 skinparam defaultFontName monospaced
 skinparam shadowing false
@@ -13,9 +13,9 @@ skinparam rectangle {
 skinparam ArrowColor #4A5568
 top to bottom direction
 
-title Figure 22-1 — FV discharge DAG:  (ii)+(viii) => (iii) => (v)\n(every node: "Closed under the global context")
+title Figure 22-1 — dependency graph of the argument:  (ii)+(viii) => (iii) => (v)\n(every node machine-checked)
 
-package "Matching layer  (Prop-level: gstep well-formedness + (iii) premises)" #EDF2F7 {
+package "Matching layer  (match-logic: gstep well-formedness + (iii) premises)" #EDF2F7 {
   rectangle "T2  positions_count\n<size:10>(ii) O1 symbol-once</size>" as T2 #CBD5E0
   rectangle "T3  tc_sound\n<size:10>(viii) tc(K) no cross-talk</size>" as T3 #CBD5E0
   rectangle "T1  sa_matches_positional\n<size:10>(i) match = positional</size>" as T1 #E2E8F0

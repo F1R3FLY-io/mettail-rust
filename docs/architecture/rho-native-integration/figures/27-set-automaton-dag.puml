@@ -1,0 +1,47 @@
+@startuml
+' Figure 27-2: the interned set-automaton DAG for the Beta left-hand side, and the
+' size-optimal quotient -- structurally-equal sub-patterns share one StateId.
+skinparam backgroundColor #FEFEFE
+skinparam defaultFontName monospaced
+skinparam shadowing false
+skinparam rectangle {
+  BorderColor #4A5568
+  FontColor #1A202C
+}
+skinparam ArrowColor #4A5568
+top to bottom direction
+
+title Figure 27-2 — interning the LHS App(Lam(fun), arg)\n(structurally-equal sub-patterns share one StateId)
+
+package "LHS pattern (a nested positional pattern)" #EDF2F7 {
+  rectangle "App\narity 2" as P_App #CBD5E0
+  rectangle "Lam\narity 1" as P_Lam #CBD5E0
+  rectangle "Var(fun)" as P_f #E2E8F0
+  rectangle "Var(arg)" as P_a #E2E8F0
+  P_App --> P_Lam : "child 0"
+  P_App --> P_a : "child 1"
+  P_Lam --> P_f : "child 0"
+}
+
+package "interned states (the tc(K) quotient)" #FDF0E0 {
+  rectangle "s0 = Var(fun)" as S0 #F6C177
+  rectangle "s1 = Lam[s0]" as S1 #F6C177
+  rectangle "s2 = Var(arg)" as S2 #F6C177
+  rectangle "<b>s3 = App[s1, s2]</b>\nentry, RootKey{App, 2}" as S3 #A7D8B6
+  S3 --> S1
+  S3 --> S2
+  S1 --> S0
+}
+
+P_f  ..> S0 : intern
+P_Lam ..> S1 : intern
+P_a  ..> S2 : intern
+P_App ..> S3 : intern
+
+note bottom of S3 #FCF3D0
+  An App-key embeds child StateIds, so two applications intern to one state
+  iff same operator AND children already interned equal. A second occurrence
+  of any sub-pattern reuses its StateId: #states <= #distinct sub-patterns,
+  independent of inspection order (doc 21 section 7.2).
+end note
+@enduml

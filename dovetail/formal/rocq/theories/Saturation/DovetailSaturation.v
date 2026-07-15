@@ -301,20 +301,20 @@ Section DovetailSaturation.
   Qed.
 
   (* ======================================================================= *)
-  (* OSLF funding bridge: a fold transition is funded iff its demand `delta`   *)
+  (* Funding bridge: a fold transition is funded iff its demand `delta` plus   *)
   (* plus a `margin` fits the supply `sigma` (the node budget Sigma). This is  *)
-  (* the OSLF `is_funded` realized at the saturation budget, with its laws.    *)
+  (* the `is_funded` decision realized at the saturation budget, with its laws.*)
   (* ======================================================================= *)
 
   Definition fold_transition_funded (delta margin sigma : nat) : bool :=
     delta + margin <=? sigma.
 
-  (* OSLF law `sound`: funded iff supply meets demand + margin. *)
+  (* funding law `sound`: funded iff supply meets demand + margin. *)
   Theorem fold_funding_sound : forall delta margin sigma,
     fold_transition_funded delta margin sigma = true <-> delta + margin <= sigma.
   Proof. intros. unfold fold_transition_funded. apply Nat.leb_le. Qed.
 
-  (* OSLF law `supply-monotone` (no-contraction): more supply never un-funds. *)
+  (* funding law `supply-monotone` (no-contraction): more supply never un-funds. *)
   Theorem fold_funding_supply_monotone : forall delta margin sigma sigma',
     sigma <= sigma' ->
     fold_transition_funded delta margin sigma = true ->
@@ -324,7 +324,7 @@ Section DovetailSaturation.
     apply fold_funding_sound in Hfund. apply fold_funding_sound. lia.
   Qed.
 
-  (* OSLF law `reject-underfunded`: positive demand against zero supply refused. *)
+  (* funding law `reject-underfunded`: positive demand against zero supply refused. *)
   Theorem fold_funding_rejects_underfunded : forall delta margin,
     0 < delta ->
     fold_transition_funded delta margin 0 = false.

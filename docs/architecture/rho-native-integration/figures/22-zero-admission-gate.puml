@@ -1,7 +1,7 @@
 @startuml
-' Figure 22-3: the zero-admission gate as a top-to-bottom flow. Each theory compiles
-' and prints its assumptions (Closed, or the build halts); the Makefile gate self-tests
-' the scanner and re-scans every source for the banned proof-incompleteness vernaculars.
+' Figure 22-3: the mechanized-rigor check as a top-to-bottom flow. Each theory compiles
+' and its proof-term audit reports closure (or the build halts); the Makefile gate
+' self-tests the scanner and re-scans every source for the banned incompleteness commands.
 ' Rendered with rectangle fills (not activity nodes) so hex colors stay clean in the SVG.
 skinparam backgroundColor #FEFEFE
 skinparam defaultFontName monospaced
@@ -13,7 +13,7 @@ skinparam rectangle {
 skinparam ArrowColor #4A5568
 top to bottom direction
 
-title Figure 22-3 — the zero-admission gate:  Print Assumptions => Closed => Makefile gate
+title Figure 22-3 — the mechanized-rigor check:  closure certificate => corpus => repository gate
 
 rectangle "compile a campaign theory\n(rho_bridge / advanced_automata)" as COMPILE #C6E0F5
 rectangle "Print Assumptions <thm>" as PRINT #C6E0F5
@@ -40,8 +40,8 @@ BANNED -[#C05621]-> FAIL : "yes"
 BANNED -[#2F855A]-> PASS : "no"
 
 note right of PASS #EDF2F7
-  The corpus's 310 "Closed under the global context" certificates plus
-  this source scan are what make every Theorem in doc 22 trustworthy:
+  The corpus's 310 closure certificates plus this source scan
+  establish that every result in doc 22 is machine-checked:
   no axiom, no conjecture, no parameter, no admission.
 end note
 @enduml

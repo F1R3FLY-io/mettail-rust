@@ -31,7 +31,7 @@ facts, each given its own document:
 | Misconception | Reality | Where |
 |---|---|---|
 | "Rholang evaluates the semantic predicate at COMM time." | The substrate runs **at compile time** and is **classify-only**. At run time the surviving predicate is enforced by RSpace structural matching, a host `where` boolean guard, or a host-routed native join — the EBA/SFT is never re-evaluated. | [08 — Runtime COMM Enforcement](08-runtime-comm-enforcement.md) |
-| "The predicate framework and OSLF funding are the same thing." | They are **two distinct effective theories that compose**: a guarded COMM fires iff `guard-satisfied ∧ funded`. They share a fail-closed, tier-decidable, evidence-carrying design but answer different questions (enabled? vs. funded?). | [09 — OSLF Composition](09-oslf-composition.md) |
+| "The predicate framework and the funding discipline are the same thing." | They are **two distinct effective theories that compose**: a guarded COMM fires iff `guard-satisfied ∧ funded`. They share a fail-closed, tier-decidable, evidence-carrying design but answer different questions (enabled? vs. funded?). | [09 — Funding Composition](09-funding-composition.md) |
 
 ## Reading Paths
 
@@ -53,7 +53,7 @@ For implementers:
 6. [Guard Syntax and Extensions](06-guard-syntax-and-extensions.md)
 7. [Language-to-Rholang Integration](07-language-to-rholang-integration.md)
 8. [Runtime COMM Enforcement](08-runtime-comm-enforcement.md)
-9. [OSLF Composition](09-oslf-composition.md)
+9. [Funding Composition](09-funding-composition.md)
 10. [Heyting Behavioral Logic](12-heyting-behavioral-logic.md)
 11. [Constraint-Theory Engine (LogicT)](13-constraint-theory-engine.md)
 12. [Quantification](14-quantification.md)
@@ -91,7 +91,7 @@ Use these questions while reading:
 |---|---|
 | [00 - Executive Brief](00-executive-brief.md) | What is the semantic-predicate substrate, and what does it decide? |
 | [00 - Requirements Traceability](00-requirements-traceability.md) | Where is each documentation requirement satisfied? |
-| [01 - Concepts and Glossary](01-concepts-and-glossary.md) | What do EBA, SFA, SFT, tier, quality, reject-safe, and OSLF mean? |
+| [01 - Concepts and Glossary](01-concepts-and-glossary.md) | What do EBA, SFA, SFT, tier, quality, reject-safe, funding, and OSLF mean? |
 | [02 - Effective Boolean Algebra](02-effective-boolean-algebra.md) | What is the `BooleanAlgebra` trait, what are its instances, and how are predicates decided? |
 | [03 - Symbolic Automata (SFA)](03-symbolic-automata-sfa.md) | How do predicate-labeled automata recognize languages without enumerating an infinite alphabet? |
 | [04 - Symbolic Transducers (SFT / STFT)](04-symbolic-transducers-sft-stft.md) | How do symbolic transducers map inputs to outputs, compose, and stay single-valued? |
@@ -99,10 +99,10 @@ Use these questions while reading:
 | [06 - Guard Syntax and Extensions](06-guard-syntax-and-extensions.md) | What guard syntax is supported today, and what clean syntax is proposed for the features that have algebra but no surface form? |
 | [07 - Language-to-Rholang Integration](07-language-to-rholang-integration.md) | How does a `language!` guard become a classified obligation, a disposition, a quality, and a fail-closed flip decision? |
 | [08 - Runtime COMM Enforcement](08-runtime-comm-enforcement.md) | Once a language is dispatched, how is the surviving predicate enforced at run time — and what does Rholang itself do and not do? |
-| [09 - OSLF Composition](09-oslf-composition.md) | How does the predicate algebra compose with OSLF funding at the guarded-COMM boundary? |
+| [09 - Funding Composition](09-funding-composition.md) | How does the predicate algebra compose with the funding discipline at the guarded-COMM boundary? |
 | [10 - Formal Verification and Tests](10-formal-verification-and-tests.md) | Which Rocq theories and tests cover each claim, and which are zero-admission? |
 | [11 - Worked Example](11-worked-example.md) | How does GuardedRho's `halts`/`safe` guard travel end-to-end to a host-routed join? |
-| [12 - Heyting Behavioral Logic](12-heyting-behavioral-logic.md) | Why is intuitionistic / Heyting logic the correct home for semi-decidable behavioral guards, how does bisimulation make them well-defined, and how does it complete Boolean and align with OSLF? |
+| [12 - Heyting Behavioral Logic](12-heyting-behavioral-logic.md) | Why is intuitionistic / Heyting logic the correct home for semi-decidable behavioral guards, how does bisimulation make them well-defined, and how does it complete Boolean and align with the funding discipline? |
 | [13 - Constraint-Theory Engine (LogicT)](13-constraint-theory-engine.md) | How does the backtracking logic monad evaluate quantified predicates, adapt a domain solver into an effective Boolean algebra, and combine theories? |
 | [14 - Quantification](14-quantification.md) | How are `∃`/`∀` modeled — the three realizations (relational enumeration, modal `⋂`/`⋃`, bounded EBA occupancy atom), the `∀≡¬∃¬` duality, the domain model and lowering, and when is a quantifier exactly decidable versus semi-decidable? |
 | [15 - Modal μ-Calculus](15-mu-calculus.md) | What is the modal/temporal fixpoint logic of the behavioral Heyting algebra — its syntax, the Knaster–Tarski fixpoint semantics, how a process is concretized as an LTS to be predicated against, the model-checking algorithm, and the CTL encoding? |
@@ -133,7 +133,7 @@ each concept and *naming the actors* after the real components:
 | optional / SMT backend | a **two-lane dataflow** contrasting the decidable theories that reach `BooleanAlgebra` with the Z3 leg that stops at `Sat3` | a semi-decidable solver must not reach the classical Boolean consumers; the forbidden lift is drawn as a red dashed edge |
 | end-to-end integration | **sequence diagram** with actors = `language!` author · macro · prattail `PredicateParser` · substrate · Rho backend · flip gate | the integration is a temporal handoff across named components |
 | runtime COMM enforcement | **sequence diagram** (process · RSpace · native-join handler · continuation) | enforcement is a runtime interaction; the figure shows *where* each predicate class is gated |
-| OSLF composition | **two-lane activity diagram** (logic axis and resource axis converging on a guarded COMM) | two independent decisions converge on one COMM-fires verdict |
+| Funding composition | **two-lane activity diagram** (logic axis and resource axis converging on a guarded COMM) | two independent decisions converge on one COMM-fires verdict |
 | obligation to disposition to quality | **activity / decision tree** | classification is a literal decision cascade ending in a flip verdict |
 
 The suite uses a consistent per-concept color legend:
@@ -145,7 +145,7 @@ The suite uses a consistent per-concept color legend:
 | violet `#EDE9FE` | symbolic transducer (SFT / STFT) |
 | amber `#FEF3C7` | the semi-decidable tier — reject-safe / Heyting / behavioral (the "caution" color) |
 | green `#DCFCE7` | guard obligation / disposition / coverage / admitted |
-| indigo `#E0E7FF` | OSLF funding / formal evidence |
+| indigo `#E0E7FF` | funding / formal evidence |
 | pink `#FCE7F3` | Rholang / RSpace / COMM / host runtime |
 
 ## Core Contract
@@ -179,7 +179,7 @@ predicate is enforced by the host, not by the substrate — see
 | Subsystem | Relationship |
 |---|---|
 | `language!` macro | Upstream source of guard declarations (`guards { }`, `?guard:Guard`); the substrate consumes the generated `GuardConfig` / `BehavioralPred`. |
-| `prattail` crate | Owns the entire substrate: `symbolic.rs` (EBA + SFA), `sft.rs` / `sym_tree_transducer.rs` (SFT / STFT), `algebra_tower.rs` (tower), the closure family, `presburger.rs`, `behavioral_algebra.rs`, `any_algebra.rs`, `logict.rs` / `logict_smt.rs` (constraint theories + the Sat3-only Z3 backend), `letprop.rs` / `parity_tree.rs`, `bisimulation.rs`, `hindley_milner.rs`, and the `parser/predicate_pratt.rs` guard parser. The OSLF-substrate wirings are gated behind default-off Cargo features (the default build is byte-identical). |
+| `prattail` crate | Owns the entire substrate: `symbolic.rs` (EBA + SFA), `sft.rs` / `sym_tree_transducer.rs` (SFT / STFT), `algebra_tower.rs` (tower), the closure family, `presburger.rs`, `behavioral_algebra.rs`, `any_algebra.rs`, `logict.rs` / `logict_smt.rs` (constraint theories + the Sat3-only Z3 backend), `letprop.rs` / `parity_tree.rs`, `bisimulation.rs`, `hindley_milner.rs`, and the `parser/predicate_pratt.rs` guard parser. The staged-analysis substrate wirings (the `oslf-*` Cargo features) are gated off by default (the default build is byte-identical). |
 | `rholang-codegen` | Downstream consumer: `backend.rs` collects obligations and runs the coverage gate; `guard_quality.rs` derives the quality tag; `flip.rs` makes the fail-closed flip decision. |
 | Dovetail | Consumes covered guarded rewrite rules and saturates them; pure-structural obligations may be discharged by exact-key semantics. |
 | Rho backend / F1r3node | Lowers a covered language to `rhoapi::Par` and enforces the surviving guard at run time (RSpace match / `where` / native join). |

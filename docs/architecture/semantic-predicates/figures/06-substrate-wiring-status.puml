@@ -19,7 +19,7 @@ skinparam note {
   FontColor #111827
 }
 
-' ── OSLF substrate modules (blue) ──
+' ── substrate modules (blue) ──
 component "any_algebra.rs\n(Ω-carrier)" as M_CAR #DBEAFE
 component "sym_tree structural_types" as M_SYM #DBEAFE
 component "bisimulation.rs" as M_BIS #DBEAFE
@@ -108,7 +108,7 @@ end note
 
 legend right
 |= Color |= Meaning |
-|<#DBEAFE> | OSLF substrate module (input) |
+|<#DBEAFE> | substrate module (input) |
 |<#DCFCE7> | Cargo feature flag (off by default) |
 |<#FEF3C7> | lint / seam the wired algebra fires (semi-decidable / gated) |
 |<#FEE2E2> | surface syntax still proposed — wired is not writable |

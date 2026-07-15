@@ -1,0 +1,42 @@
+@startuml
+' Figure 27-3: serializing the interned DAG into the sa:-receiver network + channel scheme.
+skinparam backgroundColor #FEFEFE
+skinparam defaultFontName monospaced
+skinparam shadowing false
+skinparam rectangle {
+  BorderColor #4A5568
+  FontColor #1A202C
+}
+skinparam ArrowColor #4A5568
+top to bottom direction
+
+title Figure 27-3 — from the interned DAG to the sa:-receiver network
+
+rectangle "SetAutomatonView\n(read-only interned DAG)" as VIEW #C6E0F5
+rectangle "<b>multi_pattern_receiver_network_par</b>\none loc:-rooted for-receive whose body is a\nMatch on the head tag, one case per root op" as NET #F6C177
+rectangle "FLAT case (M1)\nbind children positionally;\neq: guard for repeated vars" as FLAT #D6C6EE
+rectangle "NESTED case (M2)\ndescend loc: head tags;\ncollapse cap: at var leaves" as NESTED #D6C6EE
+rectangle "sigma-receiver (keyed by StateId)\naccept = one COMM emitting the reduct" as SIGMA #A7D8B6
+
+VIEW --> NET
+NET --> FLAT
+NET --> NESTED
+FLAT --> SIGMA
+NESTED --> SIGMA
+
+package "the nu-free channel scheme" #EDF2F7 {
+  rectangle "loc:{root}\nhead-tag positional walk" as C1 #E2E8F0
+  rectangle "{parent}/{op}.{i}\nchild location" as C2 #E2E8F0
+  rectangle "col: chain-collapse\ncap: capture-collapse" as C3 #E2E8F0
+  rectangle "ac:{loc}/{op}\nsite-keyed AC bag" as C4 #E2E8F0
+  rectangle "sa: accept\neq: consistency guard" as C5 #E2E8F0
+}
+
+NET .[#4A5568,dashed].> C1 : "emits onto"
+
+note right of SIGMA #FCF3D0
+  The receiver is keyed by StateId, so structurally-equal contexts
+  share one receiver: the optimal tc(K) naming is that shared receiver,
+  not a distinct runtime channel string.
+end note
+@enduml

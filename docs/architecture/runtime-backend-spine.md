@@ -320,12 +320,12 @@ the fail-closed flip gate. At run time the *surviving* decision is enforced:
 
 | Target | Predicate enforcement |
 |---|---|
-| pure Dovetail | structural shape is the `AcApp` pattern; the OSLF resource axis (`is_funded`) gates native folds; no in-engine guard evaluation |
+| pure Dovetail | structural shape is the `AcApp` pattern; the funding resource axis (`is_funded`) gates native folds; no in-engine guard evaluation |
 | pure Rholang | RSpace spatial match (structural), a `where` boolean, or a host-routed `RhoNativeJoin` (theory / transducer / behavioral) |
 | hybrid | split by layer; the generated-runtime `Comm` path consults a closed-world fact snapshot (`evaluate_pred_with_bindings`) |
 
 Both axes compose at the boundary as `COMM fires ⟺ guard-satisfied ∧ funded`
-([OSLF Composition](semantic-predicates/09-oslf-composition.md)). The full per-target
+([Funding Composition](semantic-predicates/09-funding-composition.md)). The full per-target
 treatment is [Runtime COMM Enforcement](semantic-predicates/08-runtime-comm-enforcement.md).
 
 ### Guarded contracts and their dispatch
@@ -333,7 +333,7 @@ treatment is [Runtime COMM Enforcement](semantic-predicates/08-runtime-comm-enfo
 A contract that awaits messages satisfying a semantic predicate is the guarded-receive
 mechanism above, applied to a persistent receive: the predicate is classified at compile
 time, enforced at the COMM boundary with guard atomicity (a failing message is left
-resting), and composed with OSLF funding. The design, its proven core, and the pieces
+resting), and composed with the funding discipline. The design, its proven core, and the pieces
 that remain to be wired are
 [Predicate-Guarded Contracts](semantic-predicates/16-predicate-guarded-contracts.md); how
 a host dispatches one message to many guarded contracts without evaluating every

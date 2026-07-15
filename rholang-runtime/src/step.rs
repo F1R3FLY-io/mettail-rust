@@ -1,6 +1,6 @@
 //! Reactive, back-pressured **single-step COMM stepper** for the Rho machine — the
 //! `step` command's live evidence when a language's default backend is `RhoMachine`, and the
-//! runtime-observation half of the MeTTaIL/OSLF cost-accounting integration.
+//! runtime-observation half of the MeTTaIL cost-accounting integration.
 //!
 //! ## How it works
 //!

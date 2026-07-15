@@ -1,6 +1,6 @@
 (*
- * MettaOslfLawsConformance: MeTTaIL's OSLF resource logic (`MettaResourceLogic`,
- * rholang-adapter) satisfies the four OSLF linear-resource-logic conformance
+ * MettaFundingLawsConformance: MeTTaIL's funding/resource logic (`MettaResourceLogic`,
+ * rholang-adapter) satisfies the four linear-resource-logic (funding) conformance
  * laws — the SECOND instance of the funding-soundness capstone (after
  * f1r3node-rust's `DefaultResourceLogic` / `RhoGslt`), the way `CAUntypedLambda.v`
  * is a second instance of `GSLTOSLFCapstone.v`.
@@ -31,7 +31,7 @@ From Stdlib Require Import PeanoNat.
 From Stdlib Require Import Arith.
 From Stdlib Require Import Lia.
 
-Section MettaOslfLaws.
+Section MettaFundingLaws.
 
   (* The funding decision `delta_sigma::is_funded` computes for a resolvable demand
      `lb` (= Δ), supply `supply` (= Σ_s), and shard `margin`:
@@ -75,8 +75,8 @@ Section MettaOslfLaws.
   Qed.
 
   (* The capstone (cf. `cost_accounted_calculus_is_gslt_with_oslf_logic`):
-     MeTTaIL's delegating resource logic is a sound OSLF funding proof checker. *)
-  Theorem metta_resource_logic_is_oslf_sound :
+     MeTTaIL's delegating resource logic is a sound funding proof checker. *)
+  Theorem metta_resource_logic_is_funding_sound :
     (forall lb supply margin, is_funded lb supply margin = true <-> lb + margin <= supply)
     /\ (forall lb, 0 < lb -> is_funded lb 0 0 = false)
     /\ (forall lb supply margin,
@@ -90,4 +90,4 @@ Section MettaOslfLaws.
     exact law_decidable.
   Qed.
 
-End MettaOslfLaws.
+End MettaFundingLaws.

@@ -48,7 +48,7 @@ split again
   :`RejectedByGeneratedCompiler`\n(host-routed / unlowerable;\nNON-FATAL on the fold path); <<#FEE2E2>>
 end split
 
-|#FEF3C7|OSLF-funded saturation|
+|#FEF3C7|funding-gated saturation|
 :`saturate_with_native`\n(weight ORDERS, never prunes;\nfold-readiness guard defers a fold\nuntil its children are values); <<#FEF3C7>>
 :Funded 1-best extraction\nsurfaces the folded normal form; <<#DCFCE7>>
 stop
@@ -58,7 +58,7 @@ legend right
   |<#DBEAFE>| GSLT codegen input |
   |<#E5E7EB>| String path (unchanged) |
   |<#EDE9FE>| typed-`L` engine mechanism |
-  |<#FEF3C7>| OSLF funding |
+  |<#FEF3C7>| funding |
   |<#DCFCE7>| reduced result / supported disposition |
   |<#FEE2E2>| rejected / non-fatal |
 endlegend

@@ -31,9 +31,9 @@
 //! - [`settlement`] — Δ4 escrow/refund settlement for guarded candidates:
 //!   reserve before commit, charge only on commit, refund on failure; includes
 //!   `LocatedEscrowLedger` for Δ3 per-purse deterministic settlement.
-//! - [`conformance`] — the four OSLF linear-logic laws (re-hosted, decision B1-a),
+//! - [`conformance`] — the four funding linear-logic laws (re-hosted, decision B1-a),
 //!   proven green for `MettaResourceLogic`; mirrored by
-//!   `formal/rocq/rho_bridge/theories/MettaOslfLawsConformance.v`.
+//!   `formal/rocq/rho_bridge/theories/MettaFundingLawsConformance.v`.
 //!
 //! The cost axis is two-fold (vindicated by the cost-accounting papers' R-C
 //! obstruction): the **refutation** axis (`is_funded`'s verdict; `0̄` = refuted)
@@ -78,11 +78,11 @@ mod tests {
     };
     use rholang::rust::interpreter::accounting::Sig;
 
-    /// `MettaResourceLogic` satisfies all four OSLF conformance laws (the
+    /// `MettaResourceLogic` satisfies all four funding conformance laws (the
     /// `OSLF_Funding_Logic_Sound` capstone's contract) — deliverable #2.
     #[test]
-    fn metta_resource_logic_satisfies_oslf_laws() {
-        conformance::assert_oslf_laws::<MettaGslt, _>(&MettaResourceLogic);
+    fn metta_resource_logic_satisfies_funding_laws() {
+        conformance::assert_funding_laws::<MettaGslt, _>(&MettaResourceLogic);
     }
 
     /// `MettaResourceLogic::demand` agrees with the free `delta_sigma::demand`

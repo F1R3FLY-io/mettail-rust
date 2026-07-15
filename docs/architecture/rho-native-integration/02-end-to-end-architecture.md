@@ -255,7 +255,7 @@ The design uses small one-way bridge crates rather than a runtime fork:
 | `dovetail` | substrate-neutral rewrite engine and formal reference |
 | `rholang-codegen` | compile-time lowering from Dovetail/RhoNet to Rholang-facing artifacts |
 | `rholang-runtime` | binding to F1r3node's RhoRuntime and observation/oracle harness |
-| `rholang-adapter` | OSLF/GSLT cost and funding adapter consumed by F1r3node gates |
+| `rholang-adapter` | GSLT-presentation and funding/cost adapter consumed by F1r3node gates |
 
 The boundary is intentionally asymmetric:
 

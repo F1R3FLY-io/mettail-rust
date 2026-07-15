@@ -1,14 +1,14 @@
 @startmindmap
-' Figure 22-2: the family_of seven-arm case split feeding the capstone T22.
-' Each arm is a Section Hypothesis in the lift's obligation shape, discharged at any
-' concrete instantiation by its cited landed firing theorem. The None branch (an
-' uncovered rule shape) is closed by the install gate (ix).
-caption Figure 22-2 — family_of : CommLabel -> option Family  (the seven-arm split feeding T22)
+' Figure 22-2: the seven-arm family case split feeding the capstone T22.
+' Each arm is a premise in the lift's obligation shape, discharged at any concrete
+' instantiation by its cited per-family result. The None branch (an uncovered rule
+' shape) is closed by the install gate (ix).
+caption Figure 22-2 — the seven-arm family case split feeding T22
 skinparam backgroundColor #FEFEFE
 skinparam defaultFontName monospaced
 skinparam shadowing false
 
-*[#A7D8B6] T22 capstone\nassembled_R_forward / backward\nby family_of case split
+*[#A7D8B6] T22 capstone\nR_forward / R_backward\nby family case split
 **[#D6C6EE] Some FBase\nT7 LinearCommCorrespondence\ncomm_step_sound / complete
 **[#D6C6EE] Some FContextualJoin\nT8 ContextualAtomicJoinPlugging\nnary_join (vii) INV-6/INV-2
 **[#D6C6EE] Some FAcLinear\nT14 CommRuleFiring\n+ T15 AC bundle (payload+atomic)

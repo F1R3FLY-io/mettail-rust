@@ -277,4 +277,4 @@ time:
 
 The resource axis this gate composes with — *a COMM fires iff the guard is
 satisfied **and** the rewrite is funded* — is
-[09 — OSLF Composition](09-oslf-composition.md).
+[09 — Funding Composition](09-funding-composition.md).

@@ -39,12 +39,12 @@ perform*, and the evidence that the decision is sound.
    Rholang apply the semantic predicate at run time" has the answer *it doesn't
    apply the algebra at all*. See [08 — Runtime COMM Enforcement](08-runtime-comm-enforcement.md).
 
-2. **It composes with OSLF, it is not OSLF.** The predicate algebra is the *logic
-   axis* (is the COMM enabled?); OSLF funding is the *resource axis* (is the rewrite
+2. **It composes with the funding discipline, it is not the funding discipline.** The predicate algebra is the *logic
+   axis* (is the COMM enabled?); the funding discipline is the *resource axis* (is the rewrite
    affordable?). A guarded COMM fires iff `guard-satisfied ∧ funded`. The two are
    distinct effective theories that share a fail-closed, tier-decidable,
    evidence-carrying design — which is exactly why they compose cleanly. See
-   [09 — OSLF Composition](09-oslf-composition.md).
+   [09 — Funding Composition](09-funding-composition.md).
 
 ## Why this design
 

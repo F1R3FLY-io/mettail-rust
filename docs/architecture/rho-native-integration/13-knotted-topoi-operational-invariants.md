@@ -298,7 +298,7 @@ in [References](references.md#rho-bridge-formal):
 | total-or-reject; miss nothing | `RhoLoweringTotalOrRejects.v` | every rule is lowered or fail-closed; the install boundary drops nothing silently |
 | freshness / name discipline (INV-7) | `RhoGroundingAndNames.v` | grounding and quoted-name canonicalization are sound |
 | host-machine reuse (INV-12) | `HostRhoMachineReuse.v`, `BridgeInertness.v` | accepted plans depend on the host interpreter and RSpace; the bridge introduces no second Rho machine |
-| GSLT presentation / OSLF laws | `MettaGsltPresentation.v`, `MettaOslfLawsConformance.v` | MeTTaIL presents finitely presentable GSLTs and conforms to the OSLF laws the paper's keystone rests on |
+| GSLT presentation / funding laws | `MettaGsltPresentation.v`, `MettaFundingLawsConformance.v` | MeTTaIL presents finitely presentable GSLTs and conforms to the funding/cost laws the runtime backend meters |
 
 The end-to-end `opcorr` is now landed **for finite executions**:
 `WholeGsltInRhoOpCorrespondence.whole_gslt_in_rho_opcorrespondence` is a single

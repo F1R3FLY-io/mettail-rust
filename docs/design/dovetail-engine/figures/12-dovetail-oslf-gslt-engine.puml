@@ -1,7 +1,7 @@
-' Dovetail as the foundational OSLF/GSLT rewrite engine — ownership + artifact pipeline.
+' Dovetail as the foundational funding/GSLT rewrite engine — ownership + artifact pipeline.
 ' Render: plantuml -tsvg 12-dovetail-oslf-gslt-engine.puml
 @startuml
-title Dovetail as the foundational OSLF/GSLT rewrite engine
+title Dovetail as the foundational funding/GSLT rewrite engine
 
 skinparam backgroundColor #FEFEFE
 skinparam shadowing false
@@ -22,9 +22,9 @@ rectangle "language! · GSLT spec\n(syntax + equations + rewrites + folds + laws
 
 rectangle "Macro lowering\n`dovetail_report.rs`\n→ typed-`L` e-graph" as LOWER #C7D2FE
 
-rectangle "Dovetail core — OSLF-funded GSLT reduction" as CORE #EDE9FE {
+rectangle "Dovetail core — funded GSLT reduction" as CORE #EDE9FE {
   rectangle "saturation = GSLT reduction\ncongruence · AC · native-fold dispatch" as SAT #EDE9FE
-  rectangle "OSLF funding\nrigail weights · max_nodes = Σ · is_funded · 1-best" as FUND #FEF3C7
+  rectangle "Funding\nrigail weights · max_nodes = Σ · is_funded · 1-best" as FUND #FEF3C7
 }
 
 rectangle "Result\nSatReport{Converged} + Extraction{Complete}\n→ DovetailRunReport" as RESULT #DCFCE7
@@ -40,7 +40,7 @@ CORE -[#DC2626]-> REF : Σ exhausted
 legend bottom
   |= color |= concept |
   |<#DBEAFE>| GSLT syntax / terms |
-  |<#FEF3C7>| OSLF funding (weight / budget / is_funded) |
+  |<#FEF3C7>| funding (weight / budget / is_funded) |
   |<#EDE9FE>| engine mechanism (saturate / dispatch) |
   |<#DCFCE7>| reduced result / normal form |
   |<#FCE7F3>| Rho backend / host-routed |

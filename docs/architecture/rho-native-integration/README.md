@@ -77,13 +77,14 @@ For reviewers checking claims and citations:
 For the in-Rho matching campaign (how matching AND firing both moved onto the interpreter):
 
 1. [Rholang Runtime Backend](20-rholang-runtime-backend.md) — how the whole backend runs
-2. [In-Rho Base-Family Reference](25-in-rho-base-family-reference.md) — the base family, reconstruction-grade
-3. [In-Rho AC-Family Reference](26-in-rho-ac-family-reference.md) — the associative-commutative family
-4. [In-Rho Binder Beta-Substitution](19-in-rho-binder-beta-substitution.md) — the binder-β family
-5. [Set-Automata Optimization Theory](21-set-automata-optimization-theory.md) — why it is optimal
-6. [End-to-End Formal Verification](22-end-to-end-formal-verification.md) — the QED proofs
-7. [Coverage and Correctness](23-coverage-and-correctness.md) — what is covered
-8. [In-Rho Completion Audit](24-in-rho-completion-audit.md) — the closing audit
+2. [Compiling OSLF `language!` Specifications to Rholang](27-oslf-language-to-rholang-compilation.md) — how the backend is produced, compile-time, set-automaton spine
+3. [In-Rho Base-Family Reference](25-in-rho-base-family-reference.md) — the base family, reconstruction-grade
+4. [In-Rho AC-Family Reference](26-in-rho-ac-family-reference.md) — the associative-commutative family
+5. [In-Rho Binder Beta-Substitution](19-in-rho-binder-beta-substitution.md) — the binder-β family
+6. [Set-Automata Optimization Theory](21-set-automata-optimization-theory.md) — why it is optimal
+7. [End-to-End Formal Verification](22-end-to-end-formal-verification.md) — the operational-correspondence theorems
+8. [Coverage and Correctness](23-coverage-and-correctness.md) — what is covered
+9. [In-Rho Completion Audit](24-in-rho-completion-audit.md) — the closing audit
 
 ## Cohesive Reading Model
 
@@ -239,11 +240,12 @@ runtime values are normalized AST artifacts, and the executable form is
 | [19 — In-Rho Binder Beta-Substitution](19-in-rho-binder-beta-substitution.md) | How does the lambda-calculus GSLT's beta rewrite fire FULLY in Rho — the MATCH and the capture-avoiding SUBSTITUTION alike — as a metered cascade of COMMs on the reducer? The de-Bruijn substitution TRS (five reserved receivers), the C1/C2/C3 corrections, Driver-B, the honest cost, the corrupted-report empirical proof, and the zero-admission strong-normalization / confluence / normal-form + weak-bisimulation suite. |
 | [20 — Rholang Runtime Backend](20-rholang-runtime-backend.md) | How does the whole backend run — the three layers (matching / firing / congruence), the reflected-`EList` ABI, the `loc:`/`col:`/`cap:`/`sa:`/`eq:`/`ac:` channel scheme, the two paths, the fail-closed install gate, and metering — all on F1r3node's RhoRuntime / RSpace? |
 | [21 — Set-Automata Optimization Theory](21-set-automata-optimization-theory.md) | Why is the in-Rho matching optimal — the Erkens–Groote locate automaton, the O1 / O2 / O3 conditions, Meredith's $`tc(K)`$ channel naming, and the interner as a compile-time partial evaluator computing the size-optimal quotient? |
-| [22 — End-to-End Formal Verification](22-end-to-end-formal-verification.md) | Why is it correct — the ~41-theory, 310-`Print Assumptions` zero-admission Rocq corpus presented as numbered QED proofs (T1–T23), and the whole-⟦G⟧ operational-correspondence capstone proven over O1-optimal matching? |
+| [22 — End-to-End Formal Verification](22-end-to-end-formal-verification.md) | Why is it correct — 37 mechanized theory files carrying 310 closure certificates (161 + 149), presented as numbered results (T1–T23), and the whole-⟦G⟧ operational-correspondence capstone established over O1-optimal matching? |
 | [23 — Coverage and Correctness](23-coverage-and-correctness.md) | What is covered — the family × capability matrix, the corrupted-$`\sigma`$ "replacement not replay" probe methodology, the finite / symbolic complements, and the honest limits? |
 | [24 — In-Rho Completion Audit](24-in-rho-completion-audit.md) | Did the campaign meet its north star — the requirement-to-evidence traceability matrix, the INV-1..14 reconciliation, the no-dual-path verification, and the residuals register? |
 | [25 — In-Rho Base-Family Reference](25-in-rho-base-family-reference.md) | How is the base-rewrite family rebuilt from scratch — reconstruction-grade coverage of reflection, spread, the collapse fold, the automaton network, and locate-all multi-firing? |
 | [26 — In-Rho AC-Family Reference](26-in-rho-ac-family-reference.md) | How is the associative-commutative family rebuilt from scratch — the Scheme-B spread re-sourcing, the site-keyed carrier, and AC4 (`HashSet` / `HashMap` / `Zip`)? |
+| [27 — Compiling OSLF `language!` Specifications to Rholang](27-oslf-language-to-rholang-compilation.md) | How is an OSLF `language!` specification compiled to Rholang — the compile-time set-automaton translation pipeline (spec → `LanguageDef` → interned automaton → installed `Par`)? |
 | [References](references.md) | Which papers, docs, and formal artifacts support the design? |
 | [Validation Script](validate.sh) | How are the documentation structure checks reproduced locally? |
 

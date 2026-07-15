@@ -1,7 +1,7 @@
-' Reducing a fold inside OSLF-funded saturation — control flow (swimlanes = owner).
+' Reducing a fold inside funding-gated saturation — control flow (swimlanes = owner).
 ' Render: plantuml -tsvg 12-native-fold-saturation-flow.puml
 @startuml
-title Reducing a fold inside OSLF-funded saturation
+title Reducing a fold inside funding-gated saturation
 
 skinparam backgroundColor #FEFEFE
 skinparam shadowing false
@@ -24,7 +24,7 @@ else (no)
   stop
 endif
 
-|#FEF3C7|OSLF funding|
+|#FEF3C7|Funding|
 :For each LHS-var child class,\n`best_derivation` = funded 1-best\n(min inside weight); <<#FEF3C7>>
 if (child has a funded reducible derivation?) then (yes)
 else (no)
@@ -62,7 +62,7 @@ stop
 legend right
   |= color |= owner / outcome |
   |<#EDE9FE>| saturation loop |
-  |<#FEF3C7>| OSLF funding |
+  |<#FEF3C7>| funding |
   |<#DDD6FE>| native body |
   |<#DCFCE7>| result / normal form |
   |<#FEE2E2>| no merge / underfunded |

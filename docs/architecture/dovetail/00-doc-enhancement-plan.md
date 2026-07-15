@@ -72,7 +72,7 @@ binder/freshness `#FAE8FF` (lilac).
 | Disposition decision rule | UML activity / decision tree | `ambiguous ∧ host-less` is a literal decision |
 | **Ambient binder `float→AC`** | **swimlane activity (NativeHandler ‖ AC) w/ bounded loop** | the headline missing diagram |
 | **Capture-safety** | **term-DAG before/after** (witness `new(z,in(z,new(x,0)))`) | makes T1/T1' visual |
-| OSLF / guard-quality seam | C4 component fan-out | classification fan-out |
+| funding / guard-quality seam | C4 component fan-out | classification fan-out |
 
 REDRAW with actors/lanes: `02-engine-lifecycle.puml`, `05-extraction-frontier.puml`, `README.puml`.
 KEEP: `07-verification-dag.dot`, `08-production-readiness-dag.dot`, `05-rspace-parallel-scheduling.puml`,
@@ -88,7 +88,7 @@ KEEP: `07-verification-dag.dot`, `08-production-readiness-dag.dot`, `05-rspace-p
 | DEBRUIJN-1972 | de Bruijn, "Lambda calculus notation with nameless dummies," Indag. Math. 34, 1972 | `10.1016/1385-7258(72)90034-0` |
 | PITTS-2003 | Pitts, "Nominal Logic," Inf. & Comput. 186(2), 2003 | `10.1016/S0890-5401(03)00138-X` |
 | AC-MATCH-BKN | Benanav, Kapur, Narendran, "Complexity of matching problems," JSC 3, 1987 | `10.1016/S0747-7171(87)80027-5` |
-| OSLF-2016 | Stay & Meredith, "Logic as a Distributive Law," 2016 | `https://arxiv.org/abs/1610.02247` |
+| STAY-MEREDITH-2016 | Stay & Meredith, "Logic as a Distributive Law," 2016 | `https://arxiv.org/abs/1610.02247` |
 | RHO-2005 | Meredith & Radestock, "A Reflective Higher-Order Calculus," ENTCS, 2005 | `10.1016/j.entcs.2005.05.016` |
 | ESPARZA-KL-2010 | Esparza, Kiefer, Luttenberger, "Computing the LFP of Positive Polynomial Systems," 2010 | `https://arxiv.org/abs/1001.0340` |
 

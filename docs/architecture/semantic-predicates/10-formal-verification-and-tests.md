@@ -117,21 +117,21 @@ Directory: `formal/rocq/predicate_dispatch/theories/`.
 
 Directory: `formal/rocq/rho_bridge/theories/`. These are the bridges that carry
 the algebra's verdict across the classify-only boundary to a live COMM, and
-compose it with OSLF funding and the fail-closed flip gate.
+compose it with the funding discipline and the fail-closed flip gate.
 
 | Claim | File | Key theorem(s) | Target |
 |---|---|---|---|
 | A guarded COMM **fires iff the product guard is satisfied**; the product evaluation is sound; a complemented guard never commits and a true guard does — the run-time reflection of `mixed_negation_soundness`. | `RhoGuardedCommSoundness.v` | `comm_fires_iff`, `product_eval_sound`, `comm_fires_implies_true_guard`, `mixed_negation_soundness`, `rho_complement_no_commit`, `rho_guard_true_commits` | `rocq-rho-bridge` |
 | Guard **atomicity at the host boundary**: a failed guard consumes nothing and emits nothing, a missing premise never commits, no output is fabricated, and a true enabled guard adds exactly its output. | `GuardedCommSoundness.v` | `failed_guard_no_commit`, `missing_premise_no_commit`, `guarded_attempt_no_fabrication`, `true_guard_enabled_adds_output` | `rocq-rho-bridge` |
 | The Rho backend's **flip gate is fail-closed**: a language becomes a production default iff `coverage ∧ artifact-validation ∧ no-new-deadlocks` all hold, and any `Unknown`-quality obligation blocks it. | `RhoBackendFlipGate.v` | `can_flip_iff_all_gates`, `default_backend_gate_iff_all_requirements`, `refuses_production_default_iff_unknown`, `unknown_guard_quality_blocks_flip`, `licensed_flip_is_guard_sound` | `rocq-rho-bridge` |
-| OSLF funding obeys the **four resource laws** (sound, reject-underfunded, supply-monotone, decidable) and the capstone identifies the resource logic as OSLF-sound — the second axis of the guarded-COMM verdict (08). | `MettaOslfLawsConformance.v` | `law_sound`, `law_reject_underfunded`, `law_supply_monotone`, `law_decidable`, `metta_resource_logic_is_oslf_sound` | `rocq-rho-bridge` |
+| The funding discipline obeys the **four resource laws** (sound, reject-underfunded, supply-monotone, decidable) and the capstone identifies the resource logic as funding-sound — the second axis of the guarded-COMM verdict (08). | `MettaFundingLawsConformance.v` | `law_sound`, `law_reject_underfunded`, `law_supply_monotone`, `law_decidable`, `metta_resource_logic_is_funding_sound` | `rocq-rho-bridge` |
 | The GSLT presentation of a language's decompositions is **sound, complete, and characterizing** — Dovetail's saturation is its reduction relation. | `MettaGsltPresentation.v` | `decompositions_sound`, `decompositions_complete`, `decompositions_characterization` | `rocq-rho-bridge` |
 
 > **How the bridges compose.** `RhoGuardedCommSoundness.comm_fires_iff` is the
-> logic axis (`guard-satisfied`); `MettaOslfLawsConformance.law_sound` is the
+> logic axis (`guard-satisfied`); `MettaFundingLawsConformance.law_sound` is the
 > resource axis (`funded`); the run-time verdict
 > `COMM fires ⟺ guard-satisfied ∧ funded` is exactly the two-axis composition
-> documented in [09 — OSLF Composition](09-oslf-composition.md).
+> documented in [09 — Funding Composition](09-funding-composition.md).
 > `RhoBackendFlipGate` then
 > guarantees no language reaches a live COMM at all unless every obligation is
 > covered with non-`Unknown` quality.
@@ -264,7 +264,7 @@ make -C formal check-capped FORMAL_CAPPED_TARGET=rocq-presburger
 # Predicate-feature dispatch completeness + signature-union monoid
 make -C formal check-capped FORMAL_CAPPED_TARGET=rocq-predicate-dispatch
 
-# Algebra-to-COMM bridges: guarded-COMM soundness, flip gate, OSLF laws, GSLT
+# Algebra-to-COMM bridges: guarded-COMM soundness, flip gate, funding laws, GSLT
 make -C formal check-capped FORMAL_CAPPED_TARGET=rocq-rho-bridge
 
 # Advanced automata: bisimulation, letprop→PATA, trace-LTL, Hindley–Milner wiring soundness
@@ -297,8 +297,9 @@ the six proof targets plus the gate; a CI run gates the release on
   `where`-guard / `RhoNativeJoin` enforcement mechanisms:
   [08 — Runtime COMM Enforcement](08-runtime-comm-enforcement.md).
 - The two-axis `guard-satisfied ∧ funded` composition the `rho_bridge` proofs
-  mechanize: [09 — OSLF Composition](09-oslf-composition.md);
-  [Stay & Meredith, 2016](references.md#stay-meredith-2016).
+  mechanize: [09 — Funding Composition](09-funding-composition.md); the funding
+  discipline is the cost-accounted rho calculus (Meredith, 2026), distinct from the
+  OSLF program of [Stay & Meredith, 2017](references.md#stay-meredith-2017).
 - Where each documentation requirement is satisfied:
   [00 — Requirements Traceability](00-requirements-traceability.md).
 - The full bibliography, source-file index, and proof catalog:

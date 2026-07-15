@@ -1,0 +1,39 @@
+@startuml
+' Figure 27-5: the set-automaton compilation and scan internals.
+skinparam backgroundColor #FEFEFE
+skinparam defaultFontName monospaced
+skinparam shadowing false
+skinparam rectangle {
+  BorderColor #4A5568
+  FontColor #1A202C
+}
+skinparam ArrowColor #4A5568
+top to bottom direction
+
+title Figure 27-5 — set-automaton compilation and scan internals
+
+package "COMPILE (build the interned DAG)" #EDF2F7 {
+  rectangle "PatternCompiler::compile\nchildren-first recursion" as COMPILE #C6E0F5
+  rectangle "<b>intern</b> (hash-cons)\nStateKey::App embeds child StateIds\nstructural equality shares one StateId" as INTERN #F6C177
+  rectangle "compile_structural\nentries + app_roots(RootKey{op,arity})\n+ variable_roots ; AcApp REJECTED fail-closed" as CS #C6E0F5
+  COMPILE --> INTERN
+  INTERN --> CS
+}
+
+package "SCAN (symbol-once over the subject e-graph)" #E6F4EA {
+  rectangle "search_egraph\nvisited_roots (each canonical root once)\nRootKey dispatch ; dispatched_keys once/class" as SEARCH #A7D8B6
+  rectangle "eval_state\n(StateId, EClassId) memo" as EVAL #A7D8B6
+  rectangle "eval_app_state\nM1 flat vs M2 nested = recursion depth\npositional cross-product merge" as EVALAPP #A7D8B6
+  rectangle "merge_substs\nnon-linear consistency via eg.find" as MERGE #7FC79B
+  SEARCH --> EVAL
+  EVAL --> EVALAPP
+  EVALAPP --> MERGE
+}
+
+CS --> SEARCH : the compiled automaton
+
+note right of INTERN #FCF3D0
+  #states = #distinct sub-patterns <= #raw nodes,
+  inspection-order-independent = the tc(K) quotient.
+end note
+@enduml

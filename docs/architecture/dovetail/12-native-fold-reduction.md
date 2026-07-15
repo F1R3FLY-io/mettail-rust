@@ -23,7 +23,7 @@ Every symbol/term is defined or glossary-linked before use. **[G]** = defined in
 | fold-readiness guard | The three-way classifier deciding whether a fold may fire on a child class: **value op → fire**, **fold-redex op → defer**, **`Var` → defer**. |
 | `NativeFoldLowered` | The generated-rule disposition for a native fold (its single requirement is the exact content key `ReqExactContentKey`). [G] disposition. |
 | saturation `→*` | Iterative congruence-closing growth of the e-graph to a fixpoint or budget. [G] |
-| OSLF funding | `is_funded(Δ, Σ, margin) = Δ + margin ≤ Σ` — the cost discipline gating which rewrites fire; here `Σ` is the node budget. [G] |
+| Funding | `is_funded(Δ, Σ, margin) = Δ + margin ≤ Σ` — the cost discipline gating which rewrites fire; here `Σ` is the node budget. [G] |
 
 ## 1. Why a separate path
 
@@ -85,14 +85,14 @@ value op, so the inner `Add` fires first, congruence shares the `3`, and only th
 fire — matching the retired Ascent `fold_proc(l, lv)` premise, which always bound `lv` to the
 *fully folded* child.
 
-### Progress weight and OSLF funding
+### Progress weight and funding
 
 Extraction must surface the *reduced* form. The typed report extractor weighs a folded value op
 strictly below its redex op (`__weigh`: value `1.0`, fold-redex `100.0`), so the funded 1-best
-extraction selects the normal form once the fold has fired. This is the OSLF cost discipline
+extraction selects the normal form once the fold has fired. This is the funding cost discipline
 at work: weight **orders, never prunes** (substructural no-contraction), and the node budget
 `Σ` bounds saturation. The fold transition's funding predicate is
-`fold_transition_funded(Δ, margin, Σ) = (Δ + margin ≤ Σ)`, satisfying the four OSLF laws
+`fold_transition_funded(Δ, margin, Σ) = (Δ + margin ≤ Σ)`, satisfying the four funding laws
 (`sound`, `supply-monotone`, `reject-underfunded`, decidable) and bridging to the saturation
 budget: a funded fold reaches `Converged`, never `BudgetOverflow`.
 
@@ -141,7 +141,7 @@ native-fold-specific, zero-admission theorems are:
   `native_fold_saturation_sound` (given the native body computes the GSLT value — a *threaded
   premise*, not an axiom — saturation preserves soundness), `native_refire_is_noop` (a re-fired
   fold whose result is already present adds nothing, since a `Cast*` normal form re-matches no
-  fold LHS), and the OSLF funding laws + the funding-to-budget bridge.
+  fold LHS), and the funding laws + the funding-to-budget bridge.
 
 The native-function soundness is the one trust boundary — the same boundary native eval always
 relied on — and it is named honestly as a hypothesis rather than hidden.

@@ -9,7 +9,7 @@ defines a **type, concept, or operation** in prose, then names its canonical anc
 so a reader can jump straight to the ground truth: a Rust type/operation
 (`module.rs`) for things that exist as code, and — for results that are *proved* —
 the document where the result is **stated and proved as a Definition/Lemma/Theorem**
-(doc 12 for the Heyting/behavioral/tier/OSLF/bisimulation results; doc 02 for the
+(doc 12 for the Heyting/behavioral/tier/funding/bisimulation results; doc 02 for the
 EBA laws; doc 05 for the closure family; doc 03 for dispatch; doc 04 for
 transducers). A Coq theorem name (e.g. `neg_triple`, `excluded_middle_reg`) is given
 **only as a parenthetical citation** of the mechanization, never as the substance of
@@ -92,7 +92,7 @@ the always-false predicate; `≈` is observational/semantic equality.
 | **Quality** | The 7-value evidence grade of a disposition: `ExactDecidable`, `BoundedDecidable`, `RejectSafeApprox`, `TrustedNativeGuard`, `MachineCheckedModel`, `RuntimeObservation`, `Unknown`. Only `Unknown` is fail-closed (refuses the production default). | `RhoGuardQuality` (`guard_quality.rs`) |
 | **Coverage evidence** | The fail-closed gate datum: either `NoGuardObligations` or `CoveredGuardObligations`, requiring an *exact* cover (no uncovered, extraneous, or invalid obligation). | `RhoGuardCoverageEvidence` (`backend.rs`); `guard_disposition_covers` |
 | **Flip / flip gate** | The decision to make the Rho backend a language's production default. Gated by `Coverage(L) ∧ ArtifactValidation(L) ∧ NoNewDeadlocks(L)`; any `Unknown`-quality obligation blocks it. The fail-closed gate is stated and proved in [07 §5](07-language-to-rholang-integration.md#5-admission-the-fail-closed-flip-gate) (mechanized in `RhoBackendFlipGate.v`). | `decide_rho_flip` (`rholang-codegen/src/flip.rs`) |
-| **`HM01` base-sort consistency** | A default-off lint (`hindley_milner.rs`, feature `oslf-hindley-milner`) that re-derives each constructor's principal arrow type from the grammar and flags a base-sort mismatch — a constructor whose inferred result sort differs from its declared category — beneath the OSLF refinements. It is base-*sort* inference, not term inference. Mechanized in `HindleyMilnerWiringSound.v` (`hm_principal_arrow_wf`, `hm_consistency_exact`, `hm01_lint_sound`). | `hindley_milner.rs`; [10 §2.6](10-formal-verification-and-tests.md) |
+| **`HM01` base-sort consistency** | A default-off lint (`hindley_milner.rs`, feature `oslf-hindley-milner`) that re-derives each constructor's principal arrow type from the grammar and flags a base-sort mismatch — a constructor whose inferred result sort differs from its declared category — beneath the staged-analysis refinements. It is base-*sort* inference, not term inference. Mechanized in `HindleyMilnerWiringSound.v` (`hm_principal_arrow_wf`, `hm_consistency_exact`, `hm01_lint_sound`). | `hindley_milner.rs`; [10 §2.6](10-formal-verification-and-tests.md) |
 
 ## The constraint-theory engine (LogicT)
 
@@ -107,13 +107,14 @@ the always-false predicate; `≈` is observational/semantic equality.
 | **`TriState`** | Three-valued `{ True, False, Unknown }` with Kleene `∧`/`∨`/`¬` and `into_safe_bool` (`Unknown → false`) — the in-crate twin of `Sat3`, produced by the theory-guided quantifier evaluator. | `enum TriState` (`logict.rs`) |
 | **`evaluate_quantified`** | The evaluator for a `QuantifiedFormula` (`∀x ∈ dom. φ` / `∃x ∈ dom. φ`); the theory-guided variant returns `TriState`. | `evaluate_quantified` / `evaluate_quantified_with_theory` (`logict.rs`) |
 
-## OSLF, GSLT, and the runtime/host vocabulary
+## Funding, GSLT, and the runtime/host vocabulary
 
 | Term | Definition | Canonical anchor |
 |---|---|---|
-| **GSLT** | *Generalized Syntax/Law Theory* — a language definition viewed as syntax + equations + rewrites + operational laws. Dovetail's saturation **is** its reduction relation. | `docs/design/dovetail-engine/oslf-gslt-native-fold-reduction.md`; `MettaGsltPresentation.v` |
-| **OSLF** | *Ordered Linear-Substructural Funding* — the cost/resource discipline deciding *which* rewrites may fire, via `is_funded(Δ, Σ, margin) = Δ + margin ≤ Σ`. Its funding judgment is fail-closed and decidable, obeying four laws — sound, reject-underfunded, supply-monotone, decidable — stated and proved in [12 — Proposition 7.1](12-heyting-behavioral-logic.md#7-the-oslf-affinity) and [09](09-oslf-composition.md). The logic-from-a-distributive-law of [Stay & Meredith, 2016](references.md#stay-meredith-2016). | `is_funded` (`rholang-adapter/src/gslt.rs`); mechanized in `MettaOslfLawsConformance.v` as `metta_resource_logic_is_oslf_sound` |
-| **Funding** | The OSLF judgment that a rewrite's demand `Δ` is met by the available supply `Σ` with a margin: `Δ + margin ≤ Σ`. Reject-underfunded is the resource-side analog of reject-safe. | `is_funded` (`rholang-adapter/src/gslt.rs`) |
+| **GSLT** | *Graph-structured lambda theory* — a language definition viewed as syntax + equations + rewrites + operational laws. Dovetail's saturation **is** its reduction relation. | `docs/design/dovetail-engine/oslf-gslt-native-fold-reduction.md`; `MettaGsltPresentation.v` |
+| **The funding discipline** | The cost/resource discipline deciding *which* rewrites may fire, via `is_funded(Δ, Σ, margin) = Δ + margin ≤ Σ`. Its funding judgment is fail-closed and decidable, obeying four laws — sound, reject-underfunded, supply-monotone, decidable — stated and proved in [12 — Proposition 7.1](12-heyting-behavioral-logic.md#7-the-funding-affinity) and [09](09-funding-composition.md). A separate cost-accounting extension of the rho calculus (the cost-accounted rho calculus / cost endofunctor; Meredith, 2026) — **not** OSLF (see the OSLF row below). | `is_funded` (`rholang-adapter/src/gslt.rs`); mechanized in `MettaFundingLawsConformance.v` as `metta_resource_logic_is_funding_sound` |
+| **Funding** | The funding-discipline judgment that a rewrite's demand `Δ` is met by the available supply `Σ` with a margin: `Δ + margin ≤ Σ`. Reject-underfunded is the resource-side analog of reject-safe. | `is_funded` (`rholang-adapter/src/gslt.rs`) |
+| **OSLF** | *Operational Semantics in Logical Form* — the Stay–Meredith program presenting a calculus's operational semantics as a Gph-enriched multisorted Lawvere theory (sorts = grammar categories, morphisms = constructors, hom-graph edges = one-step rewrites) and deriving its behavioral logic and type structure functorially. **Distinct from the funding discipline above** — the two were formerly conflated in this suite. | [Stay & Meredith, 2017](references.md#stay-meredith-2017) |
 | **COMM** | A Rholang communication: a `for`-receive meeting a `!`-send on a shared channel, atomically consuming the message and spawning the continuation. The unit of run-time guard enforcement; a guarded COMM commits *iff* names match and the guard holds (the run-time mirror of [12 — Theorem 6.1](12-heyting-behavioral-logic.md), detailed in [08](08-runtime-comm-enforcement.md)). | mechanized in `RhoGuardedCommSoundness.v` as `comm_fires_iff` |
 | **Guard atomicity** | The run-time guarantee that a *failed* guard consumes no facts and emits no output, while a later satisfying datum can still commit (the no-commit-on-false contract of [08](08-runtime-comm-enforcement.md)). | mechanized in `GuardedCommSoundness.v` as `failed_guard_no_commit` |
 | **`where`-guard** | A Rholang receive guard `for(@x <- @c where x > 0){…}` that f1r3node evaluates before commit. Enforceable on source-level boolean predicates over bound ground values. | `rho_guard_oracle.rs` |
@@ -131,8 +132,8 @@ the always-false predicate; `≈` is observational/semantic equality.
 | STFT | Symbolic Tree Transducer |
 | CTL | Computation Tree Logic (the modal/temporal logic of behavioral predicates) |
 | NFA / DFA | Nondeterministic / Deterministic Finite Automaton |
-| OSLF | Ordered Linear-Substructural Funding |
-| GSLT | Generalized Syntax/Law Theory |
+| OSLF | Operational Semantics in Logical Form (distinct from the funding discipline) |
+| GSLT | Graph-structured lambda theory |
 | COMM | Rholang communication reduction |
 | AC | Associative-Commutative (matching) |
 | RSpace | the F1r3node tuple-space that schedules COMMs |

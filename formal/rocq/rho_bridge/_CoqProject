@@ -21,7 +21,7 @@
 theories/BridgeInertness.v
 theories/HostRhoMachineReuse.v
 theories/MettaGsltPresentation.v
-theories/MettaOslfLawsConformance.v
+theories/MettaFundingLawsConformance.v
 theories/RhoLoweringTotalOrRejects.v
 theories/RhoScalarOperatorTyping.v
 theories/RhoRejectedCoverage.v

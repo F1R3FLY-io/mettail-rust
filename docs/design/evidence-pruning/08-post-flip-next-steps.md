@@ -75,8 +75,8 @@ The verification pass **materially reshaped** this plan. Four facts dominate:
 6. **Every live saturation seam is ALREADY evidence-gated — and the native-fold gate
    is PROVEN.** `[VERIFIED 2026-06-17]` Ambient AC: canonical-bag dedup
    (`CollectionAcLowering.v::canon_iff_permutation`) + the non-linear `Var` re-bind
-   prune (`ac_open_rule_shared_name_constraint_prunes_mismatch`). Native-folds: **OSLF
-   funding admission** — a fold fires only if funded, a *sound, monotone, proven*
+   prune (`ac_open_rule_shared_name_constraint_prunes_mismatch`). Native-folds: **funding
+   admission** — a fold fires only if funded, a *sound, monotone, proven*
    demand-/admission gate: `DovetailSaturation.v::{fold_transition_funded,
    fold_funding_sound, fold_funding_supply_monotone, fold_funding_rejects_underfunded,
    funded_fold_demand_within_supply}` (Inc 4+5b) — plus `native_refire_is_noop` (folds
@@ -229,7 +229,7 @@ gate finds nothing left to prune. This makes the DV STOP **more** robust, not a 
 
 **The native-fold path is gated too — by a PROVEN funding admission `[VERIFIED
 2026-06-17]`.** `saturate_with_native` fires a `NativeRule` only when the fold is
-**funded** (OSLF cost admission), and that gate is sound + monotone:
+**funded** (funding/cost admission), and that gate is sound + monotone:
 `DovetailSaturation.v::{fold_transition_funded, fold_funding_sound,
 fold_funding_supply_monotone, fold_funding_rejects_underfunded,
 funded_fold_demand_within_supply}` (Inc 4+5b). Native folds also only *add*

@@ -90,10 +90,10 @@ Rholang enforcement:
 - **`architecture/semantic-predicates/06-guard-syntax-and-extensions.md`** - Supported guard syntax and proposed extensions for the unsupported features
 - **`architecture/semantic-predicates/07-language-to-rholang-integration.md`** - Guard declaration to classified obligation, disposition, quality, and the fail-closed flip gate
 - **`architecture/semantic-predicates/08-runtime-comm-enforcement.md`** - How the surviving guard is enforced at run time (and what Rholang does not do)
-- **`architecture/semantic-predicates/09-oslf-composition.md`** - How the predicate algebra composes with OSLF funding at the guarded-COMM boundary
+- **`architecture/semantic-predicates/09-funding-composition.md`** - How the predicate algebra composes with the funding discipline at the guarded-COMM boundary
 - **`architecture/semantic-predicates/10-formal-verification-and-tests.md`** - The mechanized-proof matrix and the zero-admission gate
 - **`architecture/semantic-predicates/11-worked-example.md`** - GuardedRho end-to-end to a host-routed join
-- **`architecture/semantic-predicates/12-heyting-behavioral-logic.md`** - Why Heyting/intuitionistic logic governs behavioral constraints, bisimulation invariance, and the OSLF affinity
+- **`architecture/semantic-predicates/12-heyting-behavioral-logic.md`** - Why Heyting/intuitionistic logic governs behavioral constraints, bisimulation invariance, and the funding affinity
 - **`architecture/semantic-predicates/references.md`** - Citations, DOI links, and repository-local proof references
 - **`architecture/semantic-predicates/validate.sh`** - Reproducible local validation for the suite
 

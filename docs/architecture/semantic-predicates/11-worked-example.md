@@ -147,7 +147,7 @@ host-routed because the guard is behavioral over an external relation:
 > GuardedRhoCommit(candidate σ on channel n):
 >   if not name_match(σ):            return rest    ▷ RSpace: channels must meet
 >   if not native_join.guard_ok(σ):  return rest    ▷ host join consults `safe`/`halts`
->   if not is_funded(Δ, Σ, margin):  return rest    ▷ OSLF resource axis (08)
+>   if not is_funded(Δ, Σ, margin):  return rest    ▷ funding resource axis (08)
 >   return commit                                   ▷ consume input, spawn p[σ]
 > ```
 
@@ -191,11 +191,11 @@ GuardedRho is the proof, in one language, of the suite's two crux claims:
    quality at compile time; at run time a native join — not generated Rholang and
    not the algebra — gates the COMM ([08](08-runtime-comm-enforcement.md)).
 2. **The logic axis composes with the resource axis.** The COMM fires iff the guard
-   holds *and* the rewrite is funded ([09 — OSLF Composition](09-oslf-composition.md)),
+   holds *and* the rewrite is funded ([09 — Funding Composition](09-funding-composition.md)),
    both checked at the boundary. Both are mechanized in the `rho_bridge` Coq theory
    tree — the zero-admission proof tree at `formal/rocq/rho_bridge/theories/` that
    carries the algebra's verdict across the classify-only boundary to a live COMM and
-   composes it with OSLF funding and the flip gate (its run-time mirror rows are
+   composes it with the funding discipline and the flip gate (its run-time mirror rows are
    catalogued in [12 §9](12-heyting-behavioral-logic.md#9-the-mechanized-account), its
    full proof matrix in [10 — Formal Verification](10-formal-verification-and-tests.md)).
 

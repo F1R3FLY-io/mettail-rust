@@ -10,7 +10,7 @@ skinparam ParticipantFontColor #111827
 participant "Sender\nc!(m)" as S #DCFCE7
 participant "RSpace COMM\nboundary" as R #E5E7EB
 participant "Guard gate\n(host enforcement)" as G #FEF3C7
-participant "OSLF funding\nis_funded(Δ, Σ)" as O #DBEAFE
+participant "Funding\nis_funded(Δ, Σ)" as O #DBEAFE
 participant "Contract body\nfor(@m <= c where P(m)){ ... }" as C #DCFCE7
 
 S -> R : message m on channel c

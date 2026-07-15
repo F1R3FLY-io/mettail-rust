@@ -139,6 +139,72 @@ Used for: the set automaton that visits each subject function symbol exactly onc
 to locate all pattern matches — the O1 "symbol-once" locate discipline the in-Rho
 matcher rides to find the beta-redex before seeding the substitution cascade.
 
+## OSLF, GSLTs, and Cost Accounting (Theory Sources)
+
+### OSLF-2017
+
+Michael Stay and L. G. Meredith. 2017. "Representing Operational Semantics with
+Enriched Lawvere Theories." arXiv:1704.03080.
+[arXiv](https://arxiv.org/abs/1704.03080).
+
+Used for: the foundational **OSLF** (Operational Semantics in Logical Form)
+representation — a language's operational semantics presented as a Gph-enriched
+multisorted Lawvere theory, where sorts are the grammar's syntactic categories,
+morphisms are the term constructors, commuting equations are the structural
+congruence, and the edges of the hom-graphs are the one-step rewrites (the reduction
+relation). This is the categorical reading of a graph-structured lambda theory (GSLT),
+and its Section 6 ("Explicit reduction contexts as gas") is the lineage of the
+cost-accounting extension.
+
+### BEHAVIOR-HOL
+
+C. B. Wells and Michael Stay. 2026. "Behavior in Higher-Order Languages." F1R3FLY.io
+manuscript.
+
+- `../publications/drafts/Behavior_in_higher_order_languages/main.tex`
+
+Used for: the OSLF derivation of a *system of behavior* from a lambda theory / GSLT —
+the Leifer-Milner relative-pushout labelled transition system whose labels are the
+minimal enabling contexts, the congruence of (weak) bisimilarity, and the compilation
+of a source theory into the rho calculus as a bisimulation-preserving encoding functor
+$`[\![ - ]\!] : S \to \mathbb{T}_\rho`$.
+
+### HYPERCUBE
+
+Michael Stay, L. G. Meredith, and Christian Wells. 2026. "Generating Hypercubes of Type
+Systems." F1R3FLY.io manuscript.
+
+- `../publications/drafts/Hypercube/main.tex`
+
+Used for: the OSLF derivation of *type structure* — the endofunctor on lambda theories
+that emits, per base rewrite and redex position, a rely-possibly modality
+$`\langle K\rangle(\vec{x}::\vec{A})B`$, and the self-contained presentation of the rho
+calculus as a lambda theory (the translation target).
+
+### COST-RHO
+
+L. G. Meredith. 2026. "Cost-Accounted Rho Calculus: A Spectral Decomposition of
+Phlogiston." F1R3FLY.io working paper.
+
+- `../publications/cost-accounting/cost-accounted-rho.tex`
+
+Used for: the cost-accounting extension of the rho calculus — Rholang's phlogiston/gas
+accounting recast categorically, the token-gated COMM-rule family that charges one token
+per communication, and the per-COMM metering the runtime backend realizes. This is a
+**separate** extension from OSLF, not the meaning of OSLF.
+
+### COST-MONAD
+
+L. G. Meredith. 2026. "Continued Interactive GSLTs and the Cost Endofunctor: A
+Construction One Level Up from Cost-Accounted Rholang." F1R3FLY.io working paper.
+
+- `../publications/cost-accounting-as-monad/continued-gslt-cost-v2.tex`
+
+Used for: the cost endofunctor $`\mathcal{C}`$ (equivalently the cost monad) on the
+category of continued interactive GSLTs, in which every continuation is a metered thunk
+and the token stack drains in step with reductions — the categorical basis for treating
+each COMM as a charged reduction, and the layer on which OSLF is run to type token usage.
+
 ## Tuple Spaces, RSpace, and Dataflow
 
 ### LINDA-1985
@@ -373,7 +439,7 @@ Repository-local Rho bridge formal suite:
 - `formal/rocq/rho_bridge/theories/BridgeInertness.v`
 - `formal/rocq/rho_bridge/theories/HostRhoMachineReuse.v`
 - `formal/rocq/rho_bridge/theories/MettaGsltPresentation.v`
-- `formal/rocq/rho_bridge/theories/MettaOslfLawsConformance.v`
+- `formal/rocq/rho_bridge/theories/MettaFundingLawsConformance.v`
 - `formal/rocq/rho_bridge/theories/RhoLoweringTotalOrRejects.v`
 - `formal/rocq/rho_bridge/theories/RhoRejectedCoverage.v`
 - `formal/rocq/rho_bridge/theories/RhoParWellFormedness.v`
@@ -426,7 +492,7 @@ live-reducer firing evidence. Primary source for
 
 Repository-local Epic-4 in-Rho matching campaign formal suite. The end-to-end
 verification document [22](22-end-to-end-formal-verification.md) presents these as
-numbered QED theorems; the coverage matrix
+numbered results (Definition / Lemma / Proposition / Theorem / Corollary); the coverage matrix
 [23](23-coverage-and-correctness.md) and the completion audit
 [24](24-in-rho-completion-audit.md) map each theorem to its runtime evidence.
 

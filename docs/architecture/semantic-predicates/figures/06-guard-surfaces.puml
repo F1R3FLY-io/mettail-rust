@@ -48,7 +48,7 @@ note bottom of Where
 end note
 
 note bottom of Built #FEF3C7
-  Beyond these authorable surfaces, the OSLF substrate algebras are now wired into
+  Beyond these authorable surfaces, the staged-analysis substrate algebras are now wired into
   the live pipeline as default-off lints (RT03 / RT07 / LP01 / HM01, the N06-ISO
   bisimulation supersede, the letprop→PATA decision) — see the substrate
   wiring-status map. Wired is not writable: those still have no language! surface.

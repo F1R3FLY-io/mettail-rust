@@ -1,7 +1,7 @@
-' GSLT reduction ≅ OSLF-funded saturation — the central correspondence.
+' GSLT reduction ≅ funding-gated saturation — the central correspondence.
 ' Render: plantuml -tsvg 12-gslt-oslf-correspondence.puml
 @startuml
-title GSLT reduction  ≅  OSLF-funded saturation
+title GSLT reduction  ≅  funding-gated saturation
 
 skinparam backgroundColor #FEFEFE
 skinparam shadowing false
@@ -13,7 +13,7 @@ skinparam rectangle {
 }
 
 rectangle "GSLT — reduction theory" as GH #BFDBFE
-rectangle "OSLF — engine realization" as OH #FDE68A
+rectangle "Funding — engine realization" as OH #FDE68A
 
 rectangle "reduction relation  `→`" as L1 #DBEAFE
 rectangle "equality saturation\n(close under eqs · rewrites · congruence · AC)" as R1 #FEF3C7
@@ -57,7 +57,7 @@ R6 -[hidden]down- R7
 legend bottom
   |= color |= concept |
   |<#DBEAFE>| GSLT reduction theory (left) |
-  |<#FEF3C7>| OSLF funding realization (right) |
+  |<#FEF3C7>| funding realization (right) |
   |<#EDE9FE>| the fold ↔ native-rewrite row |
   |<#DCFCE7>| normal form ↔ funded extraction |
 endlegend

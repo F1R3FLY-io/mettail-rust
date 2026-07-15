@@ -1,12 +1,12 @@
-# OSLF Composition
+# Funding Composition
 
 Last updated: 2026-06-22
 
 All symbols are defined in [Concepts and Glossary](01-concepts-and-glossary.md).
 This document answers the second crux question: **does the semantic-predicate
-integration align with the OSLF design?** The answer is yes, and the precise shape
-of that alignment is the spine of this page — the predicate algebra and OSLF are
-**two distinct effective theories that compose** at the guarded-COMM boundary,
+integration align with the funding discipline?** The answer is yes, and the precise shape
+of that alignment is the spine of this page — the predicate algebra and the funding
+discipline are **two distinct effective theories that compose** at the guarded-COMM boundary,
 sharing one design philosophy but answering two different questions.
 
 ## 1. Two questions, one COMM
@@ -19,8 +19,8 @@ before it may fire:
    classifying and (at run time, [08](08-runtime-comm-enforcement.md)) gating the
    predicate.
 2. **Is it funded?** — is there enough resource budget for the rewrite to fire?
-   This is the *resource axis*: **OSLF**, the Ordered Linear-Substructural Funding
-   discipline.
+   This is the *resource axis*: **the funding discipline**, a separate cost-accounting
+   extension of the rho calculus (the cost-accounted rho calculus / cost endofunctor).
 
 Neither subsumes the other. A guard can hold on an underfunded rewrite (enabled but
 unaffordable); a rewrite can be funded with a failing guard (affordable but
@@ -28,15 +28,15 @@ disabled). The COMM fires only when **both** hold:
 
 `COMM fires ⟺ guard-satisfied ∧ funded`
 
-![OSLF composition: the logic axis and the resource axis converge on one COMM verdict](figures/09-oslf-composition.svg)
+![Funding composition: the logic axis and the resource axis converge on one COMM verdict](figures/09-funding-composition.svg)
 
-PlantUML source: [figures/09-oslf-composition.puml](figures/09-oslf-composition.puml).
+PlantUML source: [figures/09-funding-composition.puml](figures/09-funding-composition.puml).
 
 ## 2. The two theories, defined
 
 ### 2.1 GSLT — the syntax/law side
 
-**GSLT** (Generalized Syntax/Law Theory) views a language definition as syntax +
+**GSLT** (graph-structured lambda theory) views a language definition as syntax +
 equations + rewrites + operational laws, and identifies **Dovetail's saturation as
 its reduction relation**. A language's rewrite rules, equations, and guards are the
 laws; saturating them in Dovetail's e-graph *is* running the calculus. GSLT is the
@@ -51,8 +51,8 @@ citations. A reader who has never opened the Coq sources can follow every argume
 
 **Definition 2.1 (deploy/resource signature).** A **signature** `Sig` is a finite
 binary tree: a leaf `Ground k` carrying a lane key `k ∈ ℕ`, or an internal node
-`And l r` joining two sub-signatures `l, r` — the **split/join** (`⊗`) of OSLF's
-ordered linear-substructural funding. The **lane key** of a signature folds its shape
+`And l r` joining two sub-signatures `l, r` — the **split/join** (`⊗`) of the funding
+discipline's cost algebra. The **lane key** of a signature folds its shape
 to a key: `sig_key(Ground k) = k` and `sig_key(And l r) = 1 + sig_key l + sig_key r`.
 This is the host model of f1r3node-rust's deploy-cost signature, which `MettaSig`
 wraps and delegates to (`rholang-adapter/src/gslt.rs`). Mechanized in
@@ -71,9 +71,9 @@ node's `(compound, left, right)` lane-key split and recurses into both operands:
 `decompositions(Ground k) = []`,
 `decompositions(And l r) = (sig_key(And l r), sig_key l, sig_key r) :: (decompositions l ++ decompositions r)`.
 
-This is exactly the host `ResourceSignature::split_join_decompositions` that the OSLF
-funding analysis consumes. Mechanized as the structurally-terminating
-`Fixpoint decompositions`. The result triples are the lane splits OSLF reasons about;
+This is exactly the host `ResourceSignature::split_join_decompositions` that the funding
+analysis consumes. Mechanized as the structurally-terminating
+`Fixpoint decompositions`. The result triples are the lane splits the funding analysis reasons about;
 the next three theorems say the enumeration is *faithful* — it fabricates no split and
 misses none, the GSLT analog of "Dovetail saturation = its reduction relation."
 
@@ -121,52 +121,53 @@ rewriting `c, a, b` by the supplied key equalities so the target triple is liter
 `(sig_key(And l r), sig_key l, sig_key r)`). The two implications give the
 biconditional. `∎` (Mechanized as `decompositions_characterization`.) This is the
 precise sense in which MeTTaIL's GSLT presentation re-presents the host's lane algebra
-faithfully: the lane structure the OSLF funding analysis relies on is preserved with
+faithfully: the lane structure the funding analysis relies on is preserved with
 no fabricated and no missing split.
 
-### 2.2 OSLF — the funding side
+### 2.2 The funding discipline — the resource side
 
-**OSLF** (Ordered Linear-Substructural Funding) is the resource discipline deciding
+**The funding discipline** is the resource discipline deciding
 *which* of those rewrites may actually fire, given a cost budget. Its core judgment
 is the funding predicate:
 
 `is_funded(Δ, Σ, margin) = Δ + margin ≤ Σ`
 
 — a rewrite whose demand is `Δ` is funded when the available supply `Σ` covers it
-with a safety `margin`. OSLF is the resource-logic reading of
-[Stay & Meredith, 2016](references.md#stay-meredith-2016) ("logic as a distributive
-law"). Its four laws are stated and proved as
-[12 — Proposition 7.1 (OSLF funding is fail-closed and decidable)](12-heyting-behavioral-logic.md#7-the-oslf-affinity),
-mechanized in `MettaOslfLawsConformance.v`:
+with a safety `margin`. It is a separate **cost-accounting extension** of the rho
+calculus (the cost-accounted rho calculus / cost endofunctor; Meredith, 2026),
+distinct from the predicate logic and from OSLF (Operational Semantics in Logical
+Form) proper. Its four laws are stated and proved as
+[12 — Proposition 7.1 (the funding discipline is fail-closed and decidable)](12-heyting-behavioral-logic.md#7-the-funding-affinity),
+mechanized in `MettaFundingLawsConformance.v`:
 
-| OSLF law | Statement | Result (proof-home: [12 Prop 7.1](12-heyting-behavioral-logic.md#7-the-oslf-affinity)) |
+| Funding law | Statement | Result (proof-home: [12 Prop 7.1](12-heyting-behavioral-logic.md#7-the-funding-affinity)) |
 |---|---|---|
 | sound | funded iff `Σ ≥ Δ + margin` (both directions) | `law_sound` |
 | reject-underfunded | a positive demand against zero supply at zero margin is refused | `law_reject_underfunded` |
 | supply-monotone | increasing supply never turns a funded verdict unfunded | `law_supply_monotone` |
 | decidable | the funding judgment is total — a verdict always exists | `law_decidable` |
 
-The capstone `metta_resource_logic_is_oslf_sound` conjoins the four, identifying the
-MeTTaIL resource logic as OSLF-sound (also [12 Prop 7.1](12-heyting-behavioral-logic.md#7-the-oslf-affinity)).
-OSLF is the *what may fire, affordably* theory. The Rust realization is the
+The capstone `metta_resource_logic_is_funding_sound` conjoins the four, identifying the
+MeTTaIL resource logic as funding-sound (also [12 Prop 7.1](12-heyting-behavioral-logic.md#7-the-funding-affinity)).
+The funding discipline is the *what may fire, affordably* theory. The Rust realization is the
 resource-logic adapter in `rholang-adapter/src/gslt.rs`; the deeper engine-side
 treatment is `docs/design/dovetail-engine/oslf-gslt-native-fold-reduction.md`,
-which casts Dovetail as the foundational OSLF/GSLT engine.
+which casts Dovetail as the foundational funding/GSLT engine.
 
 ## 3. Why they are the same *kind* of theory
 
 The alignment the question asks about is real and structural: the predicate algebra
-and OSLF are built on the **same four design principles**, which is why they compose
+and the funding discipline are built on the **same four design principles**, which is why they compose
 cleanly rather than merely coexisting.
 
-| Principle | Predicate algebra (logic axis) | OSLF (resource axis) |
+| Principle | Predicate algebra (logic axis) | The funding discipline (resource axis) |
 |---|---|---|
 | **Fail-closed** | an `Unknown`-quality obligation blocks the flip ([07](07-language-to-rholang-integration.md)); a behavioral guard is reject-safe | `reject-underfunded`: a demand with no covering supply is refused, never speculatively granted |
 | **Tier / monotone** | the decidability-tier lattice is a join-semilattice; combination is a homomorphism ([05 §6](05-algebra-pyramid-and-decidability.md)) | `supply-monotone`: more supply never revokes funding |
 | **Decidable verdict** | classical EBA satisfiability is decidable; `Sat3` makes the semi-decidable case *total* by admitting `DontKnow` | `law_decidable`: the funding judgment is total |
 | **Evidence-carrying** | each obligation carries a quality grade, not a bare yes/no | funding carries the demand/supply/margin, not a bare yes/no |
 
-The sharpest correspondence is `reject-underfunded ≈ reject-safe`. OSLF refuses a
+The sharpest correspondence is `reject-underfunded ≈ reject-safe`. The funding discipline refuses a
 rewrite it cannot prove affordable; the reject-safe algebra refuses a COMM it cannot
 prove enabled. Both choose the conservative direction — never grant on absence of
 evidence — and for the same reason: a false *grant* (firing an unaffordable rewrite,
@@ -188,8 +189,8 @@ true guard does. This is stated and proved as the run-time guarded-COMM theorem 
 [08 §2 — Runtime COMM Enforcement](08-runtime-comm-enforcement.md#2-what-a-comm-is-and-what-enforcement-means)
 (mechanized in `RhoGuardedCommSoundness.v` as `comm_fires_iff`,
 `rho_complement_no_commit`, `rho_guard_true_commits`). The **resource axis** is the
-OSLF funding law [12 — Proposition 7.1](12-heyting-behavioral-logic.md#7-the-oslf-affinity)
-(`law_sound`, with capstone `metta_resource_logic_is_oslf_sound`). Both proofs live in
+funding law [12 — Proposition 7.1](12-heyting-behavioral-logic.md#7-the-funding-affinity)
+(`law_sound`, with capstone `metta_resource_logic_is_funding_sound`). Both proofs live in
 the **same zero-admission `rho_bridge` tree** ([10](10-formal-verification-and-tests.md)),
 and the run-time backend evaluates both before a COMM commits:
 
@@ -202,13 +203,13 @@ and the run-time backend evaluates both before a COMM commits:
 > GuardedFundedCommit(σ, g, Δ, Σ, margin):
 >   if not name_match(σ):           return rest      ▷ channels must meet
 >   if not guard_holds(g, σ):       return rest      ▷ LOGIC axis — §1.1
->   if not is_funded(Δ, Σ, margin): return rest      ▷ RESOURCE axis — OSLF
+>   if not is_funded(Δ, Σ, margin): return rest      ▷ RESOURCE axis — funding
 >   return commit                                    ▷ both axes satisfied
 > ```
 >
 > `guard_holds` is realized by the run-time mechanism of
 > [08](08-runtime-comm-enforcement.md) (RSpace match / `where` / native join) —
-> *not* by re-running the algebra. `is_funded` is the OSLF judgment `Δ + margin ≤ Σ`.
+> *not* by re-running the algebra. `is_funded` is the funding judgment `Δ + margin ≤ Σ`.
 > The two checks are independent and order-insensitive in their verdict (both must
 > pass), so the gate is the conjunction `guard-satisfied ∧ funded`.
 
@@ -221,11 +222,11 @@ resource axis is *evaluated* here against the live budget.
 
 ## 5. The honest nuance
 
-It would be an overstatement to say "the predicate framework *is* OSLF" or that one
+It would be an overstatement to say "the predicate framework *is* the funding discipline" or that one
 theory contains the other. The precise claim is:
 
-> **The semantic-predicate integration aligns with the OSLF design as a
-> *complementary composing axis*.** OSLF governs the resource/funding dimension of
+> **The semantic-predicate integration aligns with the funding discipline as a
+> *complementary composing axis*.** The funding discipline governs the resource/funding dimension of
 > *which rewrites fire*; the predicate algebra governs the logic/enablement
 > dimension of *which COMMs are permitted*. They share a fail-closed, tier-monotone,
 > decidable, evidence-carrying design — which is exactly *why* they compose into a
@@ -235,7 +236,7 @@ theory contains the other. The precise claim is:
 
 That nuance is the useful one for an architect: the two axes can be reasoned about,
 tested, and proven *separately*, and their composition at the COMM boundary is a
-plain conjunction. Adding a new predicate theory does not touch OSLF; changing the
+plain conjunction. Adding a new predicate theory does not touch the funding discipline; changing the
 funding margin does not touch the algebra. The alignment is in the shared
 discipline, and the cleanliness is in the separation.
 
@@ -246,7 +247,9 @@ discipline, and the cleanliness is in the separation.
   (enforcement).
 - The mechanized basis for both axes and how they share the `rho_bridge` tree:
   [10 — Formal Verification and Tests](10-formal-verification-and-tests.md).
-- The engine-side OSLF/GSLT treatment (Dovetail as the foundational engine):
+- The engine-side funding/GSLT treatment (Dovetail as the foundational engine):
   `docs/design/dovetail-engine/oslf-gslt-native-fold-reduction.md` and the
   [Dovetail suite](../dovetail/README.md).
-- The resource-logic origin: [Stay & Meredith, 2016](references.md#stay-meredith-2016).
+- The cost-accounting origin of the funding discipline: the cost-accounted rho
+  calculus / cost endofunctor (Meredith, 2026). The distinct **OSLF** program
+  (Operational Semantics in Logical Form) is [Stay & Meredith, 2017](references.md#stay-meredith-2017).

@@ -352,7 +352,7 @@ base-sort lints, the `N06-ISO` bisimulation supersede, and the `letprop → PATA
 decision. The status map separates **wired-but-gated algebra** from **still-proposed
 surface syntax**: wired is not the same as writable.
 
-![Substrate wiring status: each OSLF module behind a default-off Cargo feature, its lint, and whether its surface syntax is shipped or proposed](figures/06-substrate-wiring-status.svg)
+![Substrate wiring status: each substrate module behind a default-off Cargo feature, its lint, and whether its surface syntax is shipped or proposed](figures/06-substrate-wiring-status.svg)
 
 PlantUML source: [figures/06-substrate-wiring-status.puml](figures/06-substrate-wiring-status.puml).
 

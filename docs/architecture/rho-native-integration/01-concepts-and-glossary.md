@@ -27,7 +27,8 @@ is used formally elsewhere.
 
 | Term | Definition |
 |---|---|
-| GSLT | Generalized syntax/law theory. In this repository, it means a language definition with syntax, equations, rewrites, and operational laws. |
+| GSLT | Graph-structured lambda theory. A language definition given as a grammar (types), a set of equations, and a set of rewrites; the "graph" is the equation/rewrite structure on the freely generated term set. Equivalently a "lambda theory" (equational logic with binding and rewriting) or a Gph-enriched multisorted Lawvere theory ([OSLF-2017](references.md#oslf-2017), [KNOTTED-TOPOI-2026](references.md#knotted-topoi-2026)). A MeTTaIL `language!` definition presents one. |
+| cost accounting (funding) | The discipline charging each reduction (COMM) against a consumable token supply — Rholang's phlogiston/gas, recast categorically as the cost endofunctor on GSLTs ([COST-RHO](references.md#cost-rho), [COST-MONAD](references.md#cost-monad)). Distinct from OSLF; OSLF is run on top of the cost-accounted theory to type token usage. |
 | term | A typed abstract syntax tree node in a modeled language. |
 | category | A type-level family of terms, such as `Proc`, `Name`, `Expr`, or `Int`. |
 | constructor | A grammar/AST production that builds a term. |
@@ -132,7 +133,7 @@ rewrite *matching* (not only firing) onto the Rholang interpreter.
 | IR | Intermediate Representation | A representation between source terms and emitted runtime code. |
 | LTS | Labelled Transition System | A transition system used to state operational correspondence. |
 | NF | Normal Form | A term or process with no enabled reduction under a semantics. |
-| OSLF | Ordered Linear-Substructural Funding | The funding/cost discipline reused from F1r3node's cost-accounted Rho work. |
+| OSLF | Operational Semantics in Logical Form | The Stay–Meredith program ([OSLF-2017](references.md#oslf-2017)) presenting a language's operational semantics as a Gph-enriched multisorted Lawvere theory — sorts are grammar categories, morphisms are constructors, and the hom-graph edges are the one-step rewrites — from which behavioral logic and type structure are derived functorially. The funding/cost discipline reused from F1r3node's cost-accounted Rho work is a SEPARATE cost-accounting extension ([COST-RHO](references.md#cost-rho)), not OSLF. |
 | RHO / `ρ` | Reflective Higher-Order | The process-calculus family underlying Rholang. |
 | SCC | Strongly Connected Component | A mutually recursive component in a graph. |
 | SFA | Symbolic Finite Automaton | A finite automaton over predicates from an effective Boolean algebra. |

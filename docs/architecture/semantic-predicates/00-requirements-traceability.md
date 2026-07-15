@@ -19,10 +19,10 @@ reading the whole suite. It also records the consistency conditions that
 | Document the supported guard syntax and propose syntax for the unsupported features | [06 — Guard Syntax and Extensions](06-guard-syntax-and-extensions.md) |
 | Document the end-to-end `language!` → classification → fail-closed gate path | [07 — Language-to-Rholang Integration](07-language-to-rholang-integration.md) |
 | Answer how a semantic predicate is enforced at run time (the COMM-enforcement crux) | [08 — Runtime COMM Enforcement](08-runtime-comm-enforcement.md) |
-| Answer how the predicate algebra aligns with the OSLF design (the composition crux) | [09 — OSLF Composition](09-oslf-composition.md) |
+| Answer how the predicate algebra aligns with the funding discipline (the composition crux) | [09 — Funding Composition](09-funding-composition.md) |
 | Provide the mechanized-proof matrix, zero-admission gate, and runtime tests | [10 — Formal Verification and Tests](10-formal-verification-and-tests.md) |
 | Provide a concrete end-to-end worked example | [11 — Worked Example: GuardedRho](11-worked-example.md) |
-| Argue why Heyting/intuitionistic logic governs behavioral constraints, how bisimulation makes them well-defined, and how it completes Boolean and aligns with OSLF | [12 — Heyting Behavioral Logic](12-heyting-behavioral-logic.md) |
+| Argue why Heyting/intuitionistic logic governs behavioral constraints, how bisimulation makes them well-defined, and how it completes Boolean and aligns with the funding discipline | [12 — Heyting Behavioral Logic](12-heyting-behavioral-logic.md) |
 | Document the LogicT constraint-theory engine and its integration: quantified-predicate evaluation, the theory-to-EBA bridge, theory combination, and predicated-type enforcement | [13 — Constraint-Theory Engine](13-constraint-theory-engine.md) |
 | Document thoroughly and precisely how existential and universal quantification are modeled: the three realizations, the domain model, the `∀≡¬∃¬` duality, decidability, lowering, and a worked example | [14 — Quantification](14-quantification.md) |
 | Document the modal μ-calculus of the behavioral Heyting algebra: syntax, Knaster–Tarski fixpoint semantics, how a process is concretized as an LTS to be predicated against, the model-checking algorithm and its exactness, and the CTL encoding — all proved | [15 — Modal μ-Calculus](15-mu-calculus.md) |
