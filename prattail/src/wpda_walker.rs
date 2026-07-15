@@ -10163,7 +10163,11 @@ where
                     if non_terminal_tag & CGLL_BIN_TAG != 0
             );
             if is_bin {
-                let realized = self.cgll_realize_bin_symbol(root, &mut memo, Some(1));
+                // R-D A1 over-accept EXACT fix (task #18b): the prefix-trailing
+                // salvage keeps the RAW cap (`false`). `Some(1)` drains after the
+                // 1st raw term = the 1st distinct term, so raw-vs-distinct are
+                // provably identical here; `false` is the self-documenting choice.
+                let realized = self.cgll_realize_bin_symbol(root, &mut memo, Some(1), false);
                 if let Some((ActionArg::Term { value, .. }, w)) = realized.into_iter().next() {
                     selected_pos.get_or_insert(*pos);
                     weights.push(w);
@@ -10376,7 +10380,11 @@ where
                         memo.clear();
                     }
                     return self
-                        .cgll_realize_bin_symbol(root, &mut memo, limit)
+                        // R-D A1 over-accept EXACT fix (task #18b): the facade
+                        // re-realize keeps the RAW cap (`false`) — `facade.rs`
+                        // reads raw `realized.len()` for its exhaustion logic, so
+                        // the distinct cap must NOT apply here.
+                        .cgll_realize_bin_symbol(root, &mut memo, limit, false)
                         .into_iter()
                         .filter_map(|(arg, w)| match arg {
                             ActionArg::Term { value, .. } => Some((value, w)),
@@ -25279,6 +25287,13 @@ where
         seed: CgllRealizeFrame<W>,
         memo: &mut std::collections::HashMap<crate::sppf::SppfId, Vec<(ActionArg, W)>>,
         limit: Option<usize>,
+        // R-D A1 over-accept EXACT fix (task #18b): drives the TOP Bin frame's
+        // drain off a frame-local DISTINCT counter (not raw `out.len()`) so the
+        // cap counts the SAME semantic-key-deduped surface the budget fires on.
+        // `true` ONLY from the resolve realize call (paired with the CONSTANT cap
+        // `n+1`); every other caller passes `false` and takes the byte-identical
+        // raw-length path.
+        budget_distinct_cap: bool,
         choices: Option<&rustc_hash::FxHashMap<crate::sppf::SppfId, crate::sppf::SppfId>>,
         on_path: &mut rustc_hash::FxHashSet<crate::sppf::SppfId>,
     ) -> Option<Result<(ActionArg, W), Option<crate::sppf::SppfId>>>
@@ -25295,6 +25310,17 @@ where
         let mut chosen_result: Option<Result<(ActionArg, W), Option<crate::sppf::SppfId>>> =
             None;
         stack.push(seed);
+        // R-D A1 over-accept EXACT fix (task #18b): the TOP frame's cross-packing
+        // DISTINCT counter. `out` stays RAW (byte-identical return/memo); this
+        // SEPARATE deduped counter drives the drain so truncation happens on the
+        // DISTINCT count (the quantity the budget fires on), not raw `out.len()`
+        // (the committed over-accept residual). Touched ONLY on the
+        // `top && budget_distinct_cap` path; both are lazy-empty (ZERO heap alloc
+        // until first insert) so declaring them costs nothing on every other path
+        // (unbounded, sub-frames, and the two non-budget callers).
+        let mut top_dedup: Vec<(ActionArg, W)> = Vec::new();
+        let mut top_seen: std::collections::HashMap<Vec<u8>, usize> =
+            std::collections::HashMap::new();
         'drive: while let Some(top) = stack.last_mut() {
             match top {
                 CgllRealizeFrame::Predep { walk, seen, deps, dep_idx, pending_walk_push } => {
@@ -25496,21 +25522,61 @@ where
                                         memo,
                                         pk_limit,
                                     );
-                                    out.extend(terms);
-                                    // A1 P-D top-only cap (task #18): once the TOP
-                                    // frame's `out` reaches the remaining budget,
-                                    // drain the rest of the packing family — the
-                                    // `> N` decision is already decidable from
-                                    // `out.len()` (this frame's `out` feeds
-                                    // resolve's budget-dedup directly). `limit ==
-                                    // None` (unbounded) ⇒ never drains ⇒
-                                    // byte-identical. Sub-frames (`top == false`)
-                                    // never drain.
-                                    if let Some(cap) = limit {
-                                        if top && out.len() >= cap {
-                                            *pk_idx = packings.len();
-                                            *cur = None;
-                                            continue;
+                                    // ── R-D A1 over-accept EXACT fix (task #18b) ──
+                                    // The committed drain compared RAW `out.len()`
+                                    // to the cap while the budget FIRES on the
+                                    // semantic-key-DEDUPED count — so a top Symbol
+                                    // whose family emits `>= cap` same-key dupes
+                                    // AHEAD of a distinct reading filled the raw cap
+                                    // with dupes and DROPPED the distinct term
+                                    // (under-fire + incomplete Ok). The fix keeps
+                                    // `out` RAW (byte-identical return/memo) but
+                                    // drives the drain off the frame-local DISTINCT
+                                    // counter `top_dedup` (same `semantic_fingerprint`
+                                    // key as the global `budget_seen`). Scoped to the
+                                    // resolve call via `budget_distinct_cap`; the
+                                    // CONSTANT cap `n+1` resolve now passes makes this
+                                    // exact across bin_roots (plan §4). Every other
+                                    // path (`top == false`, `limit == None`,
+                                    // `budget_distinct_cap == false`) takes the
+                                    // ORIGINAL raw branch verbatim — `top_dedup` /
+                                    // `top_seen` never allocate.
+                                    if top && budget_distinct_cap {
+                                        match limit {
+                                            Some(cap) => {
+                                                for t in terms {
+                                                    self.dedup_push_realized(
+                                                        &mut top_dedup,
+                                                        &mut top_seen,
+                                                        t.clone(),
+                                                    );
+                                                    out.push(t);
+                                                }
+                                                if top_dedup.len() >= cap {
+                                                    *pk_idx = packings.len();
+                                                    *cur = None;
+                                                    continue;
+                                                }
+                                            },
+                                            // `budget_distinct_cap` is only ever
+                                            // paired with `Some(cap)` by resolve; the
+                                            // unbounded resolve arm passes no cap, so
+                                            // this defensive raw extend never drains.
+                                            None => out.extend(terms),
+                                        }
+                                    } else {
+                                        // Unbounded, sub-frame, or non-budget caller:
+                                        // the ORIGINAL raw path, byte-identical
+                                        // (`limit == None` never drains ⇒ unbounded
+                                        // byte-identity; `top == false` never drains
+                                        // ⇒ sub-frame-uncapped invariant preserved).
+                                        out.extend(terms);
+                                        if let Some(cap) = limit {
+                                            if top && out.len() >= cap {
+                                                *pk_idx = packings.len();
+                                                *cur = None;
+                                                continue;
+                                            }
                                         }
                                     }
                                     bp.flat_idx += 1;
@@ -25902,6 +25968,9 @@ where
             },
             memo,
             limit,
+            // R-D A1 over-accept EXACT fix (task #18b): a Predep-seeded drive is
+            // NOT the resolve top-cap path — no distinct-cap.
+            false,
             None,
             &mut no_on_path,
         );
@@ -25912,6 +25981,11 @@ where
         sym: crate::sppf::SppfId,
         memo: &mut std::collections::HashMap<crate::sppf::SppfId, Vec<(ActionArg, W)>>,
         limit: Option<usize>,
+        // R-D A1 over-accept EXACT fix (task #18b): forwarded to the drive's TOP
+        // frame. `true` ONLY from `cgll_resolve_binarized` (paired with the
+        // CONSTANT cap `n+1`); the prefix-trailing salvage and the classic
+        // realize_root_to_terms BIN fallback pass `false` (byte-identical raw-cap).
+        budget_distinct_cap: bool,
     ) -> Vec<(ActionArg, W)>
     where
         W: StarSemiringRef,
@@ -25940,7 +26014,7 @@ where
         };
         let mut no_on_path: rustc_hash::FxHashSet<crate::sppf::SppfId> =
             rustc_hash::FxHashSet::default();
-        self.cgll_realize_drive(seed, memo, limit, None, &mut no_on_path);
+        self.cgll_realize_drive(seed, memo, limit, budget_distinct_cap, None, &mut no_on_path);
         memo.get(&sym).cloned().unwrap_or_default()
     }
 
@@ -26186,11 +26260,17 @@ where
                 );
                 self.cgll_dump_bin(bin_root, 0, &mut rustc_hash::FxHashSet::default());
             }
-            // A1: DECREASING top-only cap = (n+1) − (distinct realized so far).
-            // `None` (unbounded) ⇒ the exact pre-A1 `None`-realize.
-            let cap: Option<usize> =
-                budget_n.map(|n| (n + 1).saturating_sub(budget_dedup.len()));
-            let realized = self.cgll_realize_bin_symbol(bin_root, &mut memo, cap);
+            // ── R-D A1 over-accept EXACT fix (task #18b): CONSTANT cap = n+1 (was
+            // the DECREASING `(n+1) - budget_dedup.len()`). The frame-local
+            // distinct counter (`top_dedup` in cgll_realize_drive) requires a
+            // constant cap for cross-bin_root exactness: a decreasing cap would let
+            // a later bin_root consume its (small) budget on GLOBAL dupes and
+            // truncate a still-needed distinct term (plan §1.3/§4). `None`
+            // (unbounded) ⇒ the exact pre-A1 `None`-realize (byte-identical).
+            let cap: Option<usize> = budget_n.map(|n| n + 1);
+            // Pass `budget_distinct_cap = true`: the TOP frame drains on the
+            // frame-local DISTINCT count, exact against the deduped budget.
+            let realized = self.cgll_realize_bin_symbol(bin_root, &mut memo, cap, true);
             match budget_n {
                 None => {
                     // Unbounded: byte-identical to the pre-A1 accumulation — no
@@ -26209,6 +26289,16 @@ where
                     // same Arc contents); only the budget DECISION reads the
                     // separate DEDUPED surface `budget_dedup` (shared `seen`
                     // across ALL bin_roots).
+                    //
+                    // R-D A1 over-accept EXACT fix (task #18b): fire PER TERM the
+                    // moment the DEDUPED distinct count FIRST exceeds N, so the
+                    // reported `actual` is the deterministic `n+1`. (The former
+                    // per-bin_root post-loop check — kept commented below — could
+                    // report `> n+1` when a single bin_root crossed the threshold
+                    // inside one batch.) Strict `>` — parity with the classic
+                    // frontier check and Budget(0) semantics. The sentinel decoders
+                    // run BEFORE this pure dispatch, so construct `AmbiguityBudget`
+                    // DIRECTLY.
                     for (arg, w) in realized {
                         if let ActionArg::Term { value, .. } = &arg {
                             weights.push(w.clone());
@@ -26219,25 +26309,36 @@ where
                                 &mut budget_seen,
                                 (arg, w),
                             );
+                            if let Some(n) = budget_n {
+                                if budget_dedup.len() > n {
+                                    return WpdaResolveResult::AmbiguityBudget {
+                                        budget: n,
+                                        actual: budget_dedup.len(), // == n+1
+                                        position: self.pos,
+                                        frontier_ess_x1000: 0,
+                                    };
+                                }
+                            }
                         }
                     }
                 },
             }
-            // A1 fire channel (§1.2): construct `AmbiguityBudget` DIRECTLY (the
-            // sentinel decoders run BEFORE this pure dispatch, so a sentinel
-            // would never decode). Strict `>` — parity with the classic frontier
-            // check and Budget(0) semantics. Early-fire the moment the DEDUPED
-            // distinct count exceeds N.
-            if let Some(n) = budget_n {
-                if budget_dedup.len() > n {
-                    return WpdaResolveResult::AmbiguityBudget {
-                        budget: n,
-                        actual: budget_dedup.len(),
-                        position: self.pos,
-                        frontier_ess_x1000: 0,
-                    };
-                }
-            }
+            // R-D A1 over-accept EXACT fix (task #18b): the per-bin_root post-loop
+            // budget check is SUPERSEDED by the per-term fire inside the `Some(_)`
+            // arm above (which returns the instant `budget_dedup.len()` first
+            // exceeds N ⇒ `actual == n+1` deterministically). Commented (NOT
+            // deleted) for provenance; it is now dead — it could only re-detect an
+            // overflow the loop already returned on. Former post-loop check:
+            //     if let Some(n) = budget_n {
+            //         if budget_dedup.len() > n {
+            //             return WpdaResolveResult::AmbiguityBudget {
+            //                 budget: n,
+            //                 actual: budget_dedup.len(),
+            //                 position: self.pos,
+            //                 frontier_ess_x1000: 0,
+            //             };
+            //         }
+            //     }
         }
         // Commit the first accepting cursor for the legacy single-result
         // accessors (mirrors the classic multi-arm contract).
@@ -27401,7 +27502,10 @@ where
         // fallible constructor; the drive returns the seed's Ok/Err with
         // the recursion's exact on_path/memo timing.
         let seed = self.cgll_make_chosen_frame(choices, on_path, sym)?;
-        self.cgll_realize_drive(seed, memo, None, Some(choices), on_path)
+        // R-D A1 over-accept EXACT fix (task #18b): Chosen-seeded realize is not
+        // the resolve top-cap path (and `limit == None` makes the flag inert) —
+        // pass `false` for byte-identical behavior.
+        self.cgll_realize_drive(seed, memo, None, false, Some(choices), on_path)
             .expect("Chosen-seeded drive always delivers a result")
     }
 
@@ -49015,6 +49119,140 @@ mod tests {
         assert_eq!(values, vec![1, 2]);
         let weights: Vec<LexicographicWeight> = all.iter().map(|(_, weight)| *weight).collect();
         assert_eq!(weights, vec![lex(1.0, 0, 0), lex(2.0, 0, 0)]);
+    }
+
+    // ── R-D A1 over-accept EXACT fix — REALIZE-LEVEL witness (task #18b) ──────
+    // Anti-vacuity pin (red-team BLOCKER-1). The over-accept is ORDER-dependent:
+    // it fires only when a top Symbol's packing family enumerates `>= cap`
+    // same-semantic-key dupes AHEAD of a distinct reading. A grammar-driven
+    // witness is vacuous-prone because `packings_of` (sppf.rs) returns GLL
+    // link-INSERTION order, decoupled from grammar declaration — a scheduling
+    // change could silently reorder to `[Ka, Kb, ..]` and un-trigger the bug so a
+    // grammar pin would pass even on the buggy code. This pin instead HAND-BUILDS
+    // the SPPF family in the EXPLICIT link order `[Ka, Ka, Kb]` (test-controlled,
+    // stable across scheduling) and drives the realize primitive directly, so the
+    // drain is genuinely exercised regardless of parser internals.
+    //
+    // `Ka` = an i64 term keyed `[1,..]` (TWO reconvergent packings, rules 0 & 2);
+    // `Kb` = an i64 term keyed `[2,..]` (ONE distinct packing, rule 1, LAST).
+    // At budget N=1 resolve passes the CONSTANT cap `n+1 = 2`. The committed
+    // RAW-length drain fills 2 raw slots with the two `Ka` dupes and DROPS `Kb`
+    // (distinct count 1 ⇒ under-fire, incomplete Ok). The C-count DISTINCT drain
+    // folds the two `Ka` to one, so the frame realizes `Kb` too (distinct 2 ⇒
+    // resolve fires `actual = 2` at N=1).
+    fn witness_action_ka(b: &mut SemanticBuilder, _args: Vec<ActionArg>) {
+        b.push_term::<i64>(1);
+    }
+    fn witness_action_kb(b: &mut SemanticBuilder, _args: Vec<ActionArg>) {
+        b.push_term::<i64>(2);
+    }
+    static WITNESS_ACTION_KA: ActionEntry = ActionEntry {
+        action_fn: witness_action_ka,
+        arity: 0,
+        expected_input_cats: &[],
+        output_cat: 0,
+    };
+    static WITNESS_ACTION_KB: ActionEntry = ActionEntry {
+        action_fn: witness_action_kb,
+        arity: 0,
+        expected_input_cats: &[],
+        output_cat: 0,
+    };
+    struct OverAcceptWitnessEngine;
+    impl WpdaEngine<LexicographicWeight> for OverAcceptWitnessEngine {
+        fn step(
+            &self,
+            _state: &WpdaState,
+            _gss: &WpdaGss<LexicographicWeight>,
+            _frontier_top: Option<&WpdaGssNode>,
+            _pos: usize,
+            _tokens: &dyn WpdaTokenSource,
+            _frame_ctx: crate::wpda_runtime::FrameCtx,
+        ) -> WpdaStepAction<LexicographicWeight> {
+            WpdaStepAction::Idle
+        }
+        fn action_for(&self, src_idx: u16, rule_idx: u16) -> Option<&ActionEntry> {
+            match (src_idx, rule_idx) {
+                // Two reconvergent Ka rules (SAME action ⇒ SAME i64 ⇒ SAME key).
+                (0, 0) | (0, 2) => Some(&WITNESS_ACTION_KA),
+                // The distinct Kb rule.
+                (0, 1) => Some(&WITNESS_ACTION_KB),
+                _ => None,
+            }
+        }
+        fn semantic_fingerprint(
+            &self,
+            term: &Arc<dyn std::any::Any + Send + Sync>,
+        ) -> Option<Vec<u8>> {
+            term.downcast_ref::<i64>().map(|v| v.to_le_bytes().to_vec())
+        }
+    }
+
+    /// Distinct realized terms by the engine's `semantic_fingerprint` — the SAME
+    /// deduped surface `cgll_resolve_binarized`'s budget fires on.
+    fn witness_distinct_count(
+        engine: &OverAcceptWitnessEngine,
+        realized: &[(ActionArg, LexicographicWeight)],
+    ) -> usize {
+        let mut keys: std::collections::HashSet<Vec<u8>> = std::collections::HashSet::new();
+        for (arg, _w) in realized {
+            if let ActionArg::Term { value, .. } = arg {
+                if let Some(k) = engine.semantic_fingerprint(value) {
+                    keys.insert(k);
+                }
+            }
+        }
+        keys.len()
+    }
+
+    #[test]
+    fn cgll_a1_over_accept_reconvergent_dupes_first_witness() {
+        let mut walker: WpdaWalker<LexicographicWeight, _> =
+            WpdaWalker::new(OverAcceptWitnessEngine, 0);
+        // Hand-build the [Ka, Ka, Kb] packing family in EXPLICIT link order
+        // (test-controlled — NOT scheduler-derived, so this pin is anti-vacuous).
+        // Distinct `rule_idx` ⇒ distinct SPPF packing nodes (intern_packing dedups
+        // on (rule_idx, children)); rules 0 & 2 both realize key Ka, rule 1 Kb.
+        let ka0 = walker.sppf.intern_packing(0, Vec::new(), lex(1.0, 0, 0));
+        let ka1 = walker.sppf.intern_packing(2, Vec::new(), lex(1.0, 0, 0));
+        let kb = walker.sppf.intern_packing(1, Vec::new(), lex(1.0, 0, 0));
+        let sym = walker.sppf.intern_symbol(0, 0, 0);
+        walker.sppf.link_packing_to_symbol(sym, ka0);
+        walker.sppf.link_packing_to_symbol(sym, ka1);
+        walker.sppf.link_packing_to_symbol(sym, kb);
+        assert_eq!(
+            walker.sppf.packings_of(sym),
+            &[ka0, ka1, kb],
+            "link order must be the dupes-first [Ka, Ka, Kb] that triggers the drain"
+        );
+
+        // Drive the TOP-frame realize with the budget distinct-cap at N=1 ⇒
+        // cap = n+1 = 2 (the CONSTANT cap resolve now passes).
+        let mut memo = std::collections::HashMap::new();
+        let realized = walker.cgll_realize_bin_symbol(sym, &mut memo, Some(2), true);
+
+        let engine = OverAcceptWitnessEngine;
+        let distinct = witness_distinct_count(&engine, &realized);
+        let values: Vec<i64> = realized
+            .iter()
+            .filter_map(|(arg, _)| match arg {
+                ActionArg::Term { value, .. } => value.downcast_ref::<i64>().copied(),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            distinct, 2,
+            "C-count must realize BOTH distinct readings {{Ka,Kb}} at cap=2 so resolve \
+             fires (actual=2 at N=1); the committed raw-cap drains at packing 1 \
+             (out=[Ka,Ka]) and DROPS Kb (distinct=1 ⇒ under-fire + incomplete Ok). \
+             realized i64 values = {values:?}"
+        );
+        // Kb must be PRESENT (defends against a fix that dedups but still drops
+        // the distinct reading).
+        assert!(
+            values.contains(&2),
+            "the distinct Kb reading (i64=2) must survive the distinct-cap drain: {values:?}"
+        );
     }
 
     /// Accept-present fix (2026-06-12): when an accepting configuration is

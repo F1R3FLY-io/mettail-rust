@@ -564,7 +564,7 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                                 hint: None,
                             })
                         }
-                        Err(WpdaParseError::AmbiguityBudget { budget, actual, position, frontier_ess_x1000 }) => {
+                        Err(WpdaParseError::AmbiguityBudget { budget, actual, position, .. }) => {
                             let range = tokens
                                 .get(position)
                                 .map(|(_, r)| *r)
@@ -573,13 +573,17 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                                 });
                             Err(ParseError::AmbiguityBudget {
                                 budget, actual, range,
-                                // EP-P4 (Stage E): fold the frontier ESS into
-                                // the hint so the surfaced budget error
-                                // distinguishes "1 winner + noise" (ESS≈1)
-                                // from genuine k-way ambiguity (ESS≈k).
+                                // R-D A1 (task #18b): engine-neutral hint. `actual`
+                                // is a DISTINCT-READING count under the pure engine
+                                // and a cursor-FRONTIER count under the classic
+                                // lever, so the surface text must not say "frontier
+                                // ESS of N cursors" (which reads 0.000 under the pure
+                                // engine). Mirrors facade.rs/runtime_types.rs (amdt
+                                // #6); `frontier_ess_x1000` dropped from the pattern
+                                // (`..`) — classic diagnostics read it off the
+                                // variant, not this message.
                                 hint: Some(Cow::Owned(format!(
-                                    "input too ambiguous (frontier ESS≈{:.3} of {} cursors); relax CursorBoundingMode::AmbiguityBudget or simplify grammar",
-                                    (frontier_ess_x1000 as f64) / 1000.0,
+                                    "input too ambiguous (actual {}); relax CursorBoundingMode::AmbiguityBudget or simplify grammar",
                                     actual,
                                 ))),
                             })
@@ -683,14 +687,15 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                                     hint: None,
                                 })
                             }
-                            Err(WpdaParseError::AmbiguityBudget { budget, actual, position, frontier_ess_x1000 }) => {
+                            Err(WpdaParseError::AmbiguityBudget { budget, actual, position, .. }) => {
                                 Err(ParseError::AmbiguityBudget {
                                     budget, actual, range: dag_range(position),
-                                    // EP-P4 (Stage E): fold the frontier ESS
-                                    // into the hint (see the 24sp-family site).
+                                    // R-D A1 (task #18b): engine-neutral hint (see
+                                    // the 24sp-family site). Mirrors facade.rs /
+                                    // runtime_types.rs (amdt #6); `frontier_ess_x1000`
+                                    // dropped from the pattern (`..`).
                                     hint: Some(Cow::Owned(format!(
-                                        "input too ambiguous (frontier ESS≈{:.3} of {} cursors); relax CursorBoundingMode::AmbiguityBudget or simplify grammar",
-                                        (frontier_ess_x1000 as f64) / 1000.0,
+                                        "input too ambiguous (actual {}); relax CursorBoundingMode::AmbiguityBudget or simplify grammar",
                                         actual,
                                     ))),
                                 })
@@ -757,7 +762,7 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                                 hint: None,
                             })
                         }
-                        Err(WpdaParseError::AmbiguityBudget { budget, actual, position, frontier_ess_x1000 }) => {
+                        Err(WpdaParseError::AmbiguityBudget { budget, actual, position, .. }) => {
                             let range = tokens
                                 .get(position)
                                 .map(|(_, r)| *r)
@@ -766,13 +771,17 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                                 });
                             Err(ParseError::AmbiguityBudget {
                                 budget, actual, range,
-                                // EP-P4 (Stage E): fold the frontier ESS into
-                                // the hint so the surfaced budget error
-                                // distinguishes "1 winner + noise" (ESS≈1)
-                                // from genuine k-way ambiguity (ESS≈k).
+                                // R-D A1 (task #18b): engine-neutral hint. `actual`
+                                // is a DISTINCT-READING count under the pure engine
+                                // and a cursor-FRONTIER count under the classic
+                                // lever, so the surface text must not say "frontier
+                                // ESS of N cursors" (which reads 0.000 under the pure
+                                // engine). Mirrors facade.rs/runtime_types.rs (amdt
+                                // #6); `frontier_ess_x1000` dropped from the pattern
+                                // (`..`) — classic diagnostics read it off the
+                                // variant, not this message.
                                 hint: Some(Cow::Owned(format!(
-                                    "input too ambiguous (frontier ESS≈{:.3} of {} cursors); relax CursorBoundingMode::AmbiguityBudget or simplify grammar",
-                                    (frontier_ess_x1000 as f64) / 1000.0,
+                                    "input too ambiguous (actual {}); relax CursorBoundingMode::AmbiguityBudget or simplify grammar",
                                     actual,
                                 ))),
                             })
@@ -1034,14 +1043,15 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                                     hint: None,
                                 })
                             }
-                            Err(WpdaParseError::AmbiguityBudget { budget, actual, position, frontier_ess_x1000 }) => {
+                            Err(WpdaParseError::AmbiguityBudget { budget, actual, position, .. }) => {
                                 Err(ParseError::AmbiguityBudget {
                                     budget, actual, range: dag_range(position),
-                                    // EP-P4 (Stage E): fold the frontier ESS
-                                    // into the hint (see the 24sp-family site).
+                                    // R-D A1 (task #18b): engine-neutral hint (see
+                                    // the 24sp-family site). Mirrors facade.rs /
+                                    // runtime_types.rs (amdt #6); `frontier_ess_x1000`
+                                    // dropped from the pattern (`..`).
                                     hint: Some(Cow::Owned(format!(
-                                        "input too ambiguous (frontier ESS≈{:.3} of {} cursors); relax CursorBoundingMode::AmbiguityBudget or simplify grammar",
-                                        (frontier_ess_x1000 as f64) / 1000.0,
+                                        "input too ambiguous (actual {}); relax CursorBoundingMode::AmbiguityBudget or simplify grammar",
                                         actual,
                                     ))),
                                 })
@@ -1119,7 +1129,7 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                                 hint: None,
                             })
                         }
-                        Err(WpdaParseError::AmbiguityBudget { budget, actual, position, frontier_ess_x1000 }) => {
+                        Err(WpdaParseError::AmbiguityBudget { budget, actual, position, .. }) => {
                             let range = tokens
                                 .get(position)
                                 .map(|(_, r)| *r)
@@ -1128,13 +1138,17 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                                 });
                             Err(ParseError::AmbiguityBudget {
                                 budget, actual, range,
-                                // EP-P4 (Stage E): fold the frontier ESS into
-                                // the hint so the surfaced budget error
-                                // distinguishes "1 winner + noise" (ESS≈1)
-                                // from genuine k-way ambiguity (ESS≈k).
+                                // R-D A1 (task #18b): engine-neutral hint. `actual`
+                                // is a DISTINCT-READING count under the pure engine
+                                // and a cursor-FRONTIER count under the classic
+                                // lever, so the surface text must not say "frontier
+                                // ESS of N cursors" (which reads 0.000 under the pure
+                                // engine). Mirrors facade.rs/runtime_types.rs (amdt
+                                // #6); `frontier_ess_x1000` dropped from the pattern
+                                // (`..`) — classic diagnostics read it off the
+                                // variant, not this message.
                                 hint: Some(Cow::Owned(format!(
-                                    "input too ambiguous (frontier ESS≈{:.3} of {} cursors); relax CursorBoundingMode::AmbiguityBudget or simplify grammar",
-                                    (frontier_ess_x1000 as f64) / 1000.0,
+                                    "input too ambiguous (actual {}); relax CursorBoundingMode::AmbiguityBudget or simplify grammar",
                                     actual,
                                 ))),
                             })
@@ -1231,14 +1245,15 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                                     hint: None,
                                 })
                             }
-                            Err(WpdaParseError::AmbiguityBudget { budget, actual, position, frontier_ess_x1000 }) => {
+                            Err(WpdaParseError::AmbiguityBudget { budget, actual, position, .. }) => {
                                 Err(ParseError::AmbiguityBudget {
                                     budget, actual, range: dag_range(position),
-                                    // EP-P4 (Stage E): fold the frontier ESS
-                                    // into the hint (see the 24sp-family site).
+                                    // R-D A1 (task #18b): engine-neutral hint (see
+                                    // the 24sp-family site). Mirrors facade.rs /
+                                    // runtime_types.rs (amdt #6); `frontier_ess_x1000`
+                                    // dropped from the pattern (`..`).
                                     hint: Some(Cow::Owned(format!(
-                                        "input too ambiguous (frontier ESS≈{:.3} of {} cursors); relax CursorBoundingMode::AmbiguityBudget or simplify grammar",
-                                        (frontier_ess_x1000 as f64) / 1000.0,
+                                        "input too ambiguous (actual {}); relax CursorBoundingMode::AmbiguityBudget or simplify grammar",
                                         actual,
                                     ))),
                                 })
@@ -1320,7 +1335,7 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                                 hint: None,
                             })
                         }
-                        Err(WpdaParseError::AmbiguityBudget { budget, actual, position, frontier_ess_x1000 }) => {
+                        Err(WpdaParseError::AmbiguityBudget { budget, actual, position, .. }) => {
                             let range = tokens
                                 .get(position)
                                 .map(|(_, r)| *r)
@@ -1329,13 +1344,17 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                                 });
                             Err(ParseError::AmbiguityBudget {
                                 budget, actual, range,
-                                // EP-P4 (Stage E): fold the frontier ESS into
-                                // the hint so the surfaced budget error
-                                // distinguishes "1 winner + noise" (ESS≈1)
-                                // from genuine k-way ambiguity (ESS≈k).
+                                // R-D A1 (task #18b): engine-neutral hint. `actual`
+                                // is a DISTINCT-READING count under the pure engine
+                                // and a cursor-FRONTIER count under the classic
+                                // lever, so the surface text must not say "frontier
+                                // ESS of N cursors" (which reads 0.000 under the pure
+                                // engine). Mirrors facade.rs/runtime_types.rs (amdt
+                                // #6); `frontier_ess_x1000` dropped from the pattern
+                                // (`..`) — classic diagnostics read it off the
+                                // variant, not this message.
                                 hint: Some(Cow::Owned(format!(
-                                    "input too ambiguous (frontier ESS≈{:.3} of {} cursors); relax CursorBoundingMode::AmbiguityBudget or simplify grammar",
-                                    (frontier_ess_x1000 as f64) / 1000.0,
+                                    "input too ambiguous (actual {}); relax CursorBoundingMode::AmbiguityBudget or simplify grammar",
                                     actual,
                                 ))),
                             })
@@ -1636,7 +1655,7 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                                 });
                                 (None, errors)
                             }
-                            Err(WpdaParseError::AmbiguityBudget { budget, actual, position, frontier_ess_x1000 }) => {
+                            Err(WpdaParseError::AmbiguityBudget { budget, actual, position, .. }) => {
                                 let range = tokens
                                     .get(position)
                                     .map(|(_, r)| *r)
@@ -1648,11 +1667,12 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                                     });
                                 errors.push(ParseError::AmbiguityBudget {
                                     budget, actual, range,
-                                    // EP-P4 (Stage E): fold the frontier ESS
-                                    // into the hint (see the 24sp-family site).
+                                    // R-D A1 (task #18b): engine-neutral hint (see
+                                    // the 24sp-family site). Mirrors facade.rs /
+                                    // runtime_types.rs (amdt #6); `frontier_ess_x1000`
+                                    // dropped from the pattern (`..`).
                                     hint: Some(Cow::Owned(format!(
-                                        "input too ambiguous (frontier ESS≈{:.3} of {} cursors); relax CursorBoundingMode::AmbiguityBudget or simplify grammar",
-                                        (frontier_ess_x1000 as f64) / 1000.0,
+                                        "input too ambiguous (actual {}); relax CursorBoundingMode::AmbiguityBudget or simplify grammar",
                                         actual,
                                     ))),
                                 });
