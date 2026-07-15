@@ -994,23 +994,41 @@ pub enum WpdaResolveResult<W: SemiringRef> {
 /// replaces the prior `with_beam_size(k)` API; the legacy methods are
 /// retained as compatibility shims.
 ///
-/// **Canonical-pure engine enforcement scope** (R-D v3, 2026-07-12): under
-/// the descriptor-pure canonical-GLL engine (`step_canonical_pure`) the
-/// budget is enforced through the FIRST multi-way fork event of the walk —
-/// the window in which the pure worklist is provably synchronous with the
-/// classic cursor frontier (`actual` there equals classic's fork width
-/// byte-for-byte). Later fans are NOT enforced: the classic walker keeps
-/// its counted frontier at the contemporaneous fan width by routing
-/// cross-category delegate work through the dispatch-cohort worker table
-/// (which `logical_frontier_len` never counts), a container split the pure
-/// worklist cannot mirror. Post-window fan widths are REPORTED via the
-/// `post_window_max_width` walker stat (`PRATTAIL_CANONICAL_GLL_STATS=1`)
-/// instead of enforced. The classic engine's enforcement is unchanged.
+/// **Two-engine enforcement — the quantity DIFFERS by engine** (R-D A1,
+/// task #18, 2026-07-15; supersedes the R-D v3 first-fork-window scope):
 ///
-/// (2026-07-13) The env-opt-in hybrid canonical arm — which had NO budget
-/// checkpoint site — is retired: `PRATTAIL_CGLL_HYBRID` is now ignored
-/// (one-time warning; engine selection unchanged), so the pure-window
-/// scope above is exhaustive for the canonical default.
+/// - **Pure (`step_canonical_pure`, the production default).** The budget is
+///   enforced WHOLE-RUN at resolve (`cgll_resolve_binarized`) as the count of
+///   DISTINCT REALIZED TERMS the goal admits — `|R|_distinct`, the number of
+///   observationally-inequivalent readings the `_all` facade would return
+///   (same semantic-key surface: `WpdaEngine::semantic_fingerprint` ≡ the
+///   facade's `__mettail_wpda_semantic_key`, the output-identity theorem).
+///   The parse runs to completion; the resolve loop folds every accepting
+///   root's realized terms into ONE shared dedup set and emits a structured
+///   `WpdaResolveResult::AmbiguityBudget` the moment `|R|_distinct > n`
+///   (strict `>`). There is NO window and NO frontier estimate: an input with
+///   a wide TRANSIENT fan that reconverges to `k <= n` readings is Ok (e.g. a
+///   cast tower whose ~110 derivations collapse to one term), and an input
+///   whose ambiguity emerges only late is still caught (no post-window gap).
+///   `actual` on the pure error is therefore a READING count, not a cursor
+///   count; `frontier_ess_x1000` is 0 (no live frontier to weight).
+///
+/// - **Classic lever (`PRATTAIL_NO_CANONICAL_GLL=1`).** Unchanged: the budget
+///   is enforced MID-PARSE by `maybe_prune_frontier`, which compares
+///   `logical_frontier_len` (live cursor/cohort count) against `n`. This is a
+///   DIFFERENT quantity — a transient fan width, which routes some
+///   cross-category delegate work through the dispatch-cohort worker table
+///   that `logical_frontier_len` never counts (the documented blind spot).
+///   So the two engines can disagree on the same input (pure Ok / classic
+///   Err) when the frontier momentarily exceeds `n` but the distinct-reading
+///   count does not. The classic lever is a recompile-free diagnostic path,
+///   slated for removal in a separate follow-on (#19), after which the pure
+///   semantics above are the sole definition.
+///
+/// Both engines surface the overflow through the same
+/// `WpdaResolveResult::AmbiguityBudget { budget, actual, position,
+/// frontier_ess_x1000 }` variant and the engine-neutral render "ambiguity
+/// budget {budget} exceeded (actual {actual})".
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CursorBoundingMode {
     /// Default — pure ambiguity preservation; no cursor dropping.

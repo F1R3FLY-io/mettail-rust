@@ -942,6 +942,15 @@ enum CgllRealizeFrame<W> {
         sym: crate::sppf::SppfId,
         sym_lo: u32,
         sym_hi: u32,
+        /// A1 top-only cap (task #18, 2026-07-15): `true` ONLY for the
+        /// outermost (resolve-seed) Bin frame. The AmbiguityBudget cap is
+        /// applied ONLY at this frame — its `out` feeds `cgll_resolve_binarized`'s
+        /// `terms`/budget-dedup DIRECTLY with no downstream cross-dedup, so
+        /// truncating it at the remaining budget is exact for the `> N`
+        /// decision. Sub-Bin frames (`top:false`) realize UNCAPPED so every
+        /// cross-dedup parent sees its full input (prevents a false NON-fire on
+        /// a shared sub-Symbol whose memo would otherwise be truncated).
+        top: bool,
         packings: Vec<crate::sppf::SppfId>,
         pk_idx: usize,
         cur: Option<CgllBinPacking<W>>,
@@ -25311,7 +25320,7 @@ where
                                     }) if non_terminal_tag & CGLL_BIN_TAG != 0 => {
                                         *pending_walk_push = Some(it);
                                         let child = Self::cgll_make_bin_frame(
-                                            &self.sppf, memo, it,
+                                            &self.sppf, memo, it, false,
                                         );
                                         match child {
                                             Some(f) => {
@@ -25343,8 +25352,14 @@ where
                                     // arm's product needs it); its ITEMS are
                                     // walked separately below.
                                     | Some(crate::sppf::SppfNode::CollectionId { .. }) => {
+                                        // A1 (task #18): dependency pre-realization
+                                        // is SUB-realization — always UNCAPPED
+                                        // (`None`) so a shared sub-Symbol's memo is
+                                        // never truncated under a parent that
+                                        // cross-dedups (no false NON-fire). Inert
+                                        // for the unbounded call (`limit == None`).
                                         let ir = self.realize_node_leave(
-                                            it, memo, &empty_colors, limit,
+                                            it, memo, &empty_colors, None,
                                         );
                                         memo.insert(it, ir);
                                         walk.push(it);
@@ -25389,8 +25404,8 @@ where
                         }
                     }
                 },
-                CgllRealizeFrame::Bin { sym, sym_lo, sym_hi, packings, pk_idx, cur, out } => {
-                    let (sym, sym_lo, sym_hi) = (*sym, *sym_lo, *sym_hi);
+                CgllRealizeFrame::Bin { sym, sym_lo, sym_hi, top, packings, pk_idx, cur, out } => {
+                    let (sym, sym_lo, sym_hi, top) = (*sym, *sym_lo, *sym_hi, *top);
                     loop {
                         match cur {
                             None => {
@@ -25469,14 +25484,35 @@ where
                                 if bp.elem_idx == flat_len {
                                     // Flat exit: fire the action tail.
                                     let (flat, flat_weight) = &bp.flats[bp.flat_idx];
+                                    // A1 (task #18): only the TOP frame caps its
+                                    // action tail; sub-frames realize UNCAPPED
+                                    // (`None`) so cross-dedup parents see full
+                                    // input (no false NON-fire).
+                                    let pk_limit = if top { limit } else { None };
                                     let terms = self.realize_packing_call(
                                         bp.rule_idx,
                                         flat,
                                         bp.weight.times_ref(flat_weight),
                                         memo,
-                                        limit,
+                                        pk_limit,
                                     );
                                     out.extend(terms);
+                                    // A1 P-D top-only cap (task #18): once the TOP
+                                    // frame's `out` reaches the remaining budget,
+                                    // drain the rest of the packing family — the
+                                    // `> N` decision is already decidable from
+                                    // `out.len()` (this frame's `out` feeds
+                                    // resolve's budget-dedup directly). `limit ==
+                                    // None` (unbounded) ⇒ never drains ⇒
+                                    // byte-identical. Sub-frames (`top == false`)
+                                    // never drain.
+                                    if let Some(cap) = limit {
+                                        if top && out.len() >= cap {
+                                            *pk_idx = packings.len();
+                                            *cur = None;
+                                            continue;
+                                        }
+                                    }
                                     bp.flat_idx += 1;
                                     bp.elem_idx = 0;
                                     bp.elem_stage = CgllElemStage::PredepPending;
@@ -25515,7 +25551,7 @@ where
                                                 // memo; the re-check above
                                                 // advances on resume.
                                                 if let Some(f) = Self::cgll_make_bin_frame(
-                                                    &self.sppf, memo, c,
+                                                    &self.sppf, memo, c, false,
                                                 ) {
                                                     stack.push(f);
                                                     continue 'drive;
@@ -25528,11 +25564,17 @@ where
                                                 continue;
                                             },
                                             _ => {
+                                                // A1 (task #18): a non-BIN element
+                                                // is SUB-realization — always
+                                                // UNCAPPED (`None`) so a shared
+                                                // sub-Symbol's memo is never
+                                                // truncated (no false NON-fire).
+                                                // Inert for the unbounded call.
                                                 let cr = self.realize_node_leave(
                                                     c,
                                                     memo,
                                                     &empty_colors,
-                                                    limit,
+                                                    None,
                                                 );
                                                 memo.insert(c, cr);
                                                 bp.elem_idx += 1;
@@ -25804,6 +25846,10 @@ where
         sppf: &crate::sppf::Sppf<W>,
         memo: &mut std::collections::HashMap<crate::sppf::SppfId, Vec<(ActionArg, W)>>,
         sym: crate::sppf::SppfId,
+        // A1 (task #18): `true` ONLY for the outermost resolve-seed frame (the
+        // one whose `out` feeds the budget-dedup directly). Every sub-Bin frame
+        // pushed by the drive passes `false` so its realize stays UNCAPPED.
+        top: bool,
     ) -> Option<CgllRealizeFrame<W>> {
         if memo.contains_key(&sym) {
             return None;
@@ -25820,6 +25866,7 @@ where
             sym,
             sym_lo,
             sym_hi,
+            top,
             packings: sppf.packings_of(sym).to_vec(),
             pk_idx: 0,
             cur: None,
@@ -25881,7 +25928,14 @@ where
         if let Some(v) = memo.get(&sym) {
             return v.clone();
         }
-        let Some(seed) = Self::cgll_make_bin_frame(&self.sppf, memo, sym) else {
+        // A1 (task #18): the seed frame is the TOP frame — the ONLY frame the
+        // AmbiguityBudget cap truncates. `cgll_realize_bin_symbol` is the sole
+        // seed builder (resolve @cgll_resolve_binarized, the prefix-trailing
+        // salvage, and the classic realize_root_to_terms BIN fallback all route
+        // here); `limit == None` (the production/unbounded call) makes `top`
+        // inert (the cap check is `if let Some(cap) = limit`), so this stays
+        // byte-identical whenever no budget is active.
+        let Some(seed) = Self::cgll_make_bin_frame(&self.sppf, memo, sym, true) else {
             return memo.get(&sym).cloned().unwrap_or_default();
         };
         let mut no_on_path: rustc_hash::FxHashSet<crate::sppf::SppfId> =
@@ -26058,6 +26112,27 @@ where
         // ONE binarized Symbol (the packing-family sharing the mechanism relies on).
         let mut bin_map: rustc_hash::FxHashMap<crate::sppf::SppfId, crate::sppf::SppfId> =
             rustc_hash::FxHashMap::default();
+        // ── R-D A1 AmbiguityBudget (task #18, 2026-07-15) ────────────────────
+        // The pure engine enforces the budget HERE, whole-run, as the count of
+        // DISTINCT REALIZED TERMS the goal admits — the SAME semantic-key surface
+        // the `_all` facade materializes (`__mettail_wpda_semantic_key` ≡
+        // `WpdaEngine::semantic_fingerprint`, output-identity theorem). `None` ⇒
+        // Unbounded ⇒ byte-identical to the pre-A1 `None`-realize (no cap, no
+        // dedup, no post-loop check). `dedup_push_realized` folds every accepting
+        // `bin_root`'s realized terms into ONE shared `seen` set (cross-packing
+        // AND cross-root), so `budget_dedup.len()` is the deduped distinct count
+        // — NOT raw `terms.len()`, which over-counts reconvergent same-key
+        // packings and would false-fire. The realize cap is the DECREASING
+        // `(n+1) - budget_dedup.len()` so a genuinely-ambiguous parse early-stops
+        // the moment `N + 1` distinct readings exist.
+        let budget_n: Option<usize> = match self.bounding_mode {
+            crate::wpda_runtime::CursorBoundingMode::BeamSize(n)
+            | crate::wpda_runtime::CursorBoundingMode::AmbiguityBudget(n) => Some(n),
+            crate::wpda_runtime::CursorBoundingMode::Unbounded => None,
+        };
+        let mut budget_dedup: Vec<(ActionArg, W)> = Vec::new();
+        let mut budget_seen: std::collections::HashMap<Vec<u8>, usize> =
+            std::collections::HashMap::new();
         for cand in accepting {
             let classic_root = cand.root;
             if classic_root == crate::sppf::SPPF_ID_NONE {
@@ -26111,12 +26186,56 @@ where
                 );
                 self.cgll_dump_bin(bin_root, 0, &mut rustc_hash::FxHashSet::default());
             }
-            let realized = self.cgll_realize_bin_symbol(bin_root, &mut memo, None);
-            for (arg, w) in realized {
-                if let ActionArg::Term { value, .. } = arg {
-                    weights.push(w);
-                    terms.push(value);
-                    roots.push(bin_root);
+            // A1: DECREASING top-only cap = (n+1) − (distinct realized so far).
+            // `None` (unbounded) ⇒ the exact pre-A1 `None`-realize.
+            let cap: Option<usize> =
+                budget_n.map(|n| (n + 1).saturating_sub(budget_dedup.len()));
+            let realized = self.cgll_realize_bin_symbol(bin_root, &mut memo, cap);
+            match budget_n {
+                None => {
+                    // Unbounded: byte-identical to the pre-A1 accumulation — no
+                    // clone, no dedup, no post-loop check.
+                    for (arg, w) in realized {
+                        if let ActionArg::Term { value, .. } = arg {
+                            weights.push(w);
+                            terms.push(value);
+                            roots.push(bin_root);
+                        }
+                    }
+                },
+                Some(_) => {
+                    // Bounded: the raw `weights`/`terms`/`roots` accumulation is
+                    // IDENTICAL to the unbounded arm (the realized values are the
+                    // same Arc contents); only the budget DECISION reads the
+                    // separate DEDUPED surface `budget_dedup` (shared `seen`
+                    // across ALL bin_roots).
+                    for (arg, w) in realized {
+                        if let ActionArg::Term { value, .. } = &arg {
+                            weights.push(w.clone());
+                            terms.push(value.clone());
+                            roots.push(bin_root);
+                            self.dedup_push_realized(
+                                &mut budget_dedup,
+                                &mut budget_seen,
+                                (arg, w),
+                            );
+                        }
+                    }
+                },
+            }
+            // A1 fire channel (§1.2): construct `AmbiguityBudget` DIRECTLY (the
+            // sentinel decoders run BEFORE this pure dispatch, so a sentinel
+            // would never decode). Strict `>` — parity with the classic frontier
+            // check and Budget(0) semantics. Early-fire the moment the DEDUPED
+            // distinct count exceeds N.
+            if let Some(n) = budget_n {
+                if budget_dedup.len() > n {
+                    return WpdaResolveResult::AmbiguityBudget {
+                        budget: n,
+                        actual: budget_dedup.len(),
+                        position: self.pos,
+                        frontier_ess_x1000: 0,
+                    };
                 }
             }
         }
@@ -29689,7 +29808,14 @@ where
         // check (classic runs no checkpoint); a width-1 first fork checks
         // (fires actual=1) but does NOT close the window.
         let bound = self.bounding_mode;
-        let mut ambiguity_overflow: Option<(usize, usize, usize)> = None;
+        // R-D A1 (task #18, 2026-07-15): the pure fan-window no longer ENFORCES
+        // the budget (enforcement moved to `cgll_resolve_binarized`), so this
+        // stays `None` for the whole pure run — the sentinel-emit branches it
+        // still feeds below (`format_ambiguity_budget_sentinel`, the round
+        // trigger, the publish tail-gate) are kept structurally intact but are
+        // now DEAD for the pure engine (the CLASSIC engine keeps its own
+        // frontier sentinel via `maybe_prune_frontier`). No longer `mut`.
+        let ambiguity_overflow: Option<(usize, usize, usize)> = None;
         let mut fan_window_open = matches!(
             bound,
             crate::wpda_runtime::CursorBoundingMode::BeamSize(_)
@@ -30024,8 +30150,29 @@ where
                                     .unwrap_or_else(|| d.pos.min(eof))
                                     .min(eof);
                                 run.stats.ambiguity_overflows += 1;
-                                ambiguity_overflow = Some((n, event_width, position));
-                                break;
+                                // ── R-D A1 (task #18, 2026-07-15): NEUTRALIZED
+                                // fan-window early-abort. AmbiguityBudget/BeamSize
+                                // enforcement moved WHOLE-RUN to
+                                // `cgll_resolve_binarized`, where it counts the
+                                // DISTINCT REALIZED TERMS the goal admits
+                                // (`|R|_distinct > N`) — the same semantic-key
+                                // surface the `_all` facade returns. The former
+                                // abort set an Error SENTINEL that
+                                // `resolve_at_end_of_input` decodes BEFORE the pure
+                                // dispatch, short-circuiting the new resolve check;
+                                // so a bounded parse must NOT abort mid-parse here —
+                                // it runs to completion and fires (or not) at
+                                // resolve. Detection is retained as a DIAGNOSTIC
+                                // (`ambiguity_overflows` above + `post_window_*`
+                                // below); ONLY the enforcement ACTION is removed.
+                                // This is a surgical change: `rd_track` (shared with
+                                // `dump_stats`/`rd_u1_diag`) and every stat/diag
+                                // capture stay byte-identical, and UNBOUNDED parses
+                                // never enter this `fan_window_open` block at all.
+                                // Former abort:
+                                //     ambiguity_overflow = Some((n, event_width, position));
+                                //     break;
+                                let _ = position; // diagnostic-only now; drives no abort
                             }
                         }
                         if event_width >= 2 {

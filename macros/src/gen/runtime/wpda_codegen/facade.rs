@@ -5386,14 +5386,19 @@ pub(crate) fn emit_parse_fns(
                     WpdaParseError::Incomplete { position } => {
                         write!(f, "wpds parse incomplete at position {}", position)
                     }
-                    WpdaParseError::AmbiguityBudget { budget, actual, position, frontier_ess_x1000 } => {
+                    WpdaParseError::AmbiguityBudget { budget, actual, position, .. } => {
+                        // Engine-neutral wording (task #18, amdt #6): the PURE
+                        // engine's `actual` is a DISTINCT-READING count (whole-run
+                        // resolve cardinality `|R|_distinct`) while the CLASSIC
+                        // lever's `actual` is a live cursor-frontier count — so the
+                        // surface text must NOT say "frontier of N cursors".
+                        // `frontier_ess_x1000` stays on the variant (classic
+                        // diagnostics read it) but is omitted from the message.
                         write!(
                             f,
-                            "wpds parse aborted at position {}: ambiguity budget {} exceeded by frontier of {} cursors (frontier ESS≈{:.3} of {})",
+                            "wpds parse aborted at position {}: ambiguity budget {} exceeded (actual {})",
                             position,
                             budget,
-                            actual,
-                            (*frontier_ess_x1000 as f64) / 1000.0,
                             actual,
                         )
                     }

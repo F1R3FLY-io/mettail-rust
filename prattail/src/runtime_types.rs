@@ -267,13 +267,17 @@ impl fmt::Display for ParseError {
                 write!(f, "{} (recovered: {})", original_error, repair_description)
             },
             ParseError::AmbiguityBudget { budget, actual, range, hint } => {
+                // Engine-neutral wording (task #18, amdt #6): `actual` is a
+                // distinct-reading count under the pure engine and a cursor-
+                // frontier count under the classic lever, so do not label it
+                // "frontier of N cursors".
                 write!(
                     f,
-                    "{}:{}: input too ambiguous: frontier of {} cursors exceeds budget of {}",
+                    "{}:{}: ambiguity budget {} exceeded (actual {})",
                     range.start.line + 1,
                     range.start.column + 1,
-                    actual,
                     budget,
+                    actual,
                 )?;
                 if let Some(h) = hint {
                     write!(f, "\n  = hint: {}", h)?;

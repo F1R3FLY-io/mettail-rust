@@ -1109,6 +1109,34 @@ Proof.
     + lia.
 Qed.
 
+(* =========================================================================
+   R-D A1 (task #18, 2026-07-15) -- ENGINE-DIVERGENCE NOTE.
+   Scope: the cursor-count-bounding section that begins here and runs through
+   [calculator_cast_frontier_budget_sound].
+
+   This section models the CLASSIC diagnostic engine's budget: a FRONTIER-LENGTH
+   check. [cursor_bound_check] compares the live cursor/cohort frontier length
+   ([lazy_logical_frontier_len]) against the budget, exactly mirroring the Rust
+   [maybe_prune_frontier] / [logical_frontier_len] path that the classic lever
+   ([PRATTAIL_NO_CANONICAL_GLL=1]) still runs.
+
+   The PRODUCTION engine -- the descriptor-pure canonical GLL
+   ([step_canonical_pure]) -- enforces a DIFFERENT quantity: the cardinality of
+   DISTINCT REALIZED TERMS the goal admits (|R|_distinct <= N, the [_all]
+   facade's semantic-key surface), checked WHOLE-RUN at resolve
+   ([cgll_resolve_binarized]) rather than against a live frontier. That quantity
+   is NOT modeled here; it is validated behaviourally by the calculator/rhocalc
+   flip-set (languages/tests/rd_a1_budget.rs + calculator.rs). No
+   [count = frontier] bridge theorem is stated -- the two quantities genuinely
+   differ (a transient wide fan that reconverges to one reading is over-budget by
+   frontier length yet in-budget by distinct terms), so such a bridge would be
+   false. The lemmas below remain SOUND and UNCHANGED as a model of the retained
+   classic path; [calculator_cast_frontier_budget_sound] names the classic
+   FRONTIER budget specifically (now classic-only). A full abstract-realize model
+   of the pure quantity is out of scope for this leg (it belongs with #19's
+   classic-lever removal).
+   ========================================================================= *)
+
 Inductive cursor_bounding_mode : Type :=
   | CursorUnbounded
   | CursorBeamSize (budget : nat)

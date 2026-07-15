@@ -103,6 +103,14 @@ The active Prattail runtime proof directory includes:
   merge-weight algebra. It also models cursor-count bounding and proves that
   the compatibility `BeamSize(k)` mode has the same structured-overflow
   semantics as `AmbiguityBudget(k)` while preserving the full frontier length.
+  R-D A1 engine-divergence note (task #18, 2026-07-15): this budget section
+  models the **classic** diagnostic engine's *frontier-length* check (the
+  retained `maybe_prune_frontier` path). The production descriptor-pure engine
+  enforces a *different* quantity — the cardinality of **distinct realized
+  terms** (`|R|_distinct <= N`, the `_all` facade surface) checked whole-run at
+  resolve — validated behaviourally by the calculator/rhocalc flip-set, not
+  modeled here (no `count = frontier` bridge is stated, as the two quantities
+  genuinely differ).
   Dispatch cache keys are modeled with full natural-number positions, with a
   generic obligation that distinct positions are not quotiented; Rust also
   exercises the concrete position above `u32::MAX` regression. The
