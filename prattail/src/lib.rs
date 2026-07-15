@@ -173,10 +173,6 @@ pub mod wpda_runtime;
 /// the runtime parser. Stage 4 of W7 plan v5.1.
 pub mod wpda_walker;
 
-/// WPDS incremental parsing session: checkpoint cache + reparse for LSP
-/// integration. Stage 5 of W7 plan v5.1.
-pub mod wpda_session;
-
 /// Shared Packed Parse Forest (SPPF) — the ambiguity-preserving parse-forest
 /// data structure. Option C (2026-05-15); see
 /// `~/.claude/plans/option-c-sppf-on-wpda.md`. Replaces the M11 multiset

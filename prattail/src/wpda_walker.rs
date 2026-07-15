@@ -5437,8 +5437,8 @@ impl<W: SemiringRef> BranchCursor<W> {
     /// constructors and the deterministic→nondeterministic transition (Fork) to ensure
     /// the always-non-empty + always-aligned cursor invariant.
     ///
-    /// Replaces three inlined constructions in `WpdaWalker::{new,
-    /// new_for_category, seeded_from}` — single source of truth.
+    /// Replaces the inlined constructions in `WpdaWalker::{new,
+    /// new_for_category}` — single source of truth.
     // Phase 5.6-tail-G (2026-05-12): `live_collection_stack_depth` parameter
     // dropped. Pre-tail it was used to seed the deleted collection_stack
     // mirror with reserved slots; under always-eager Arc::make_mut, the
@@ -7718,137 +7718,6 @@ where
         }
     }
 
-    /// Construct a walker pre-seeded from a saved [`WpdaConfiguration`].
-    ///
-    /// Used by [`crate::wpda_session::WpdaIncrementalSession::reparse`] to
-    /// resume execution from a checkpoint. Reconstructs the GSS as a linear
-    /// chain matching the saved stack (bottom-to-top).
-    pub fn seeded_from(engine: E, config: WpdaConfiguration<W>) -> Self {
-        let mut gss: WpdaGss<W> = WpdaGss::new();
-        let mut top_node: Option<crate::gss::GssNodeId> = None;
-        // Stack is stored bottom-to-top; rebuild GSS in that order with
-        // each new symbol pushing onto the previous top.
-        for symbol in config.stack.iter() {
-            let new_id = match top_node {
-                None => gss.get_or_create_node(WpdaGssNode { pos: config.pos, symbol: *symbol }),
-                Some(prev) => gss.push_symbol(prev, *symbol, config.pos, W::one_ref()),
-            };
-            top_node = Some(new_id);
-        }
-        // Stage 3.10 / ι Phase 5 (2026-05-01): seed via `seed_from_live`.
-        let initial_cursor = BranchCursor::seed_from_live(
-            top_node.unwrap_or(0),
-            config.pos,
-            config.weight.clone(),
-            config.state.clone(),
-        );
-        WpdaWalker {
-            state: config.state,
-            gss,
-            pos: config.pos,
-            weight: config.weight,
-            engine,
-            top_node,
-            bounding_mode: crate::wpda_runtime::CursorBoundingMode::Unbounded,
-            // Calculator-map cross-cat fan-out fix (§4.5 M1): the demand
-            // driver flips this true at entry; cleared elsewhere.
-            single_result_demand: false,
-            deterministic: true,
-            recognizer_mode: false,
-            pop_fanout_suppress_resolve: false,
-            branch_cursors: vec![crate::cohort_lazy::Frame::Concrete(initial_cursor)],
-            step_counter: 0,
-            recovery_events: Vec::new(),
-            mutable_token_source: None,
-            _mutable_source_lifetime: PhantomData,
-            recovery_config: RecoveryConfig::default(),
-            ep_p1_mode: EpP1Mode::from_env(),
-            crosscat_lhs_wrap: rustc_hash::FxHashMap::default(),
-            crosscat_lhs_min_bp: rustc_hash::FxHashMap::default(),
-            crosscat_lhs_resume_bp: rustc_hash::FxHashMap::default(),
-            crosscat_lhs_live_lineages: rustc_hash::FxHashMap::default(),
-            pushed_crosscat_lhs_edges: rustc_hash::FxHashSet::default(),
-            popped_crosscat_lhs_edges: rustc_hash::FxHashSet::default(),
-            crosscat_proj_registrant_frame: rustc_hash::FxHashMap::default(),
-            pending_crosscat_lhs_drain_keys: rustc_hash::FxHashSet::default(),
-            parked_crosscat_lhs_keys: rustc_hash::FxHashSet::default(),
-            parked_crosscat_lhs_outstanding: 0,
-            crosscat_lhs_key_edges: rustc_hash::FxHashMap::default(),
-            crosscat_lhs_body_origins: rustc_hash::FxHashMap::default(),
-            crosscat_lhs_visible_origins_cache: rustc_hash::FxHashMap::default(),
-            crosscat_lhs_stack_scope_flags: std::cell::RefCell::new(
-                rustc_hash::FxHashMap::default(),
-            ),
-            crosscat_lhs_sppf_body_origins: rustc_hash::FxHashMap::default(),
-            ep_p1_eoi_release: false,
-            ep_p2_mode: EpP2Mode::from_env(),
-            ep_p2_suffix_masks: None,
-            ep_p4_demote: EpP4Demote::from_env(),
-            // Calculator-map cross-cat fan-out fix (§4.5 M3): single-result
-            // weight-dominance subsumption kill switch (default On).
-            sr_subsume_mode: SrSubsumeMode::from_env(),
-            // ROOT-P slot-packing redesign kill switches (Stage 1 scaffolding;
-            // inert while `ROOTP_SLOT_PACKING_ENABLED` is `false`).
-            rootp_mode: RootpMode::from_env(),
-            infix_lexclear_mode: InfixLexclearMode::from_env(),
-            prefix_cast_stage_memo_enabled: prefix_cast_stage_memo_enabled_from_env(),
-            ccl_project_on_unwind: ccl_project_on_unwind_from_env(),            infix_lexclear_watermark: 0,
-            // Option C / C2: fresh empty SPPF arena.
-            sppf: crate::sppf::Sppf::new(),
-            sppf_predicate_arena: Vec::new(),
-            // Phase F.13 H1 (2026-05-20): walker-global memo, lazy init.
-            sppf_symbol_terms: std::collections::HashMap::new(),
-            // Phase F.13 walker-stats (2026-05-20): zero-cost when feature off.
-            // Seed counter incremented below the struct literal so it's
-            // outside the field initializer.
-            #[cfg(feature = "walker-stats")]
-            stats: crate::walker_stats::WalkerStats {
-                cursors_created_via_seed: 1,
-                ..crate::walker_stats::WalkerStats::default()
-            },
-            // Phase F.13 H11b (2026-05-21): dispatch_branch_seen dedup table.
-            dispatch_branch_seen: std::collections::HashMap::new(),
-            dispatch_cohort_cache: crate::dispatch_cohort::DispatchCohortCache::new(),
-            pending_cohort_drain_keys: rustc_hash::FxHashSet::default(),
-            pending_prefix_cast_wrap_jobs: Vec::new(),
-            parked_prefix_cast_waiters: Vec::new(),
-            parked_prefix_cast_waiters_by_cat: rustc_hash::FxHashMap::default(),
-            prefix_cast_stage_watermark: rustc_hash::FxHashMap::default(),
-            pending_prefix_cast_wrap_job_keys: rustc_hash::FxHashSet::default(),
-            parked_prefix_cast_waiter_keys: rustc_hash::FxHashSet::default(),
-            transparent_source_reentry_keys: rustc_hash::FxHashSet::default(),
-            // Cohort-revive-rework M1 (2026-05-29): orphan re-drive cap.
-            revival_rounds: 0,
-            recovery_cohort_cache: crate::recovery_cohort::RecoveryCohortCache::new(),
-            // Phase F.13 chain_10000 Exp 14 Substage 3 (2026-05-27):
-            // walker-global Tomita frontier merge map. Fresh = empty.
-            tomita_frontier_map: crate::tomita_frontier::TomitaFrontierMap::new(),
-            // Phase F.13 chain_10000 Exp 15 Substage 2 (2026-05-27):
-            // walker-global cursor store scaffolding. Fresh = empty.
-            cursor_store: crate::cursor_store::CursorStore::new(),
-            // Phase F.13 chain_10000 Plan v6 H3-bis cache (2026-05-27):
-            // Earley chain absorption result cache. Fresh = empty.
-            chain_earley_cache: rustc_hash::FxHashMap::default(),
-            // Phase F.13 chain_10000 Plan v6 R4 (2026-05-28): absorbed
-            // chain intervals. Fresh = empty.
-            chain_absorbed_intervals: rustc_hash::FxHashMap::default(),
-            // Phase F.13 chain_10000 Plan D E3 Substage 2 (2026-05-26):
-            // walker-global SPPF stack interning arena. Fresh = empty.
-            sppf_stack_arena: crate::sppf_stack_arena::SppfStackArena::new(),
-            // Phase F.13 chain_10000 Plan D E6 Substage 2 (2026-05-26):
-            // walker-global GSS edge-stack interning arena. Fresh = empty.
-            incoming_edge_stack_arena: crate::edge_stack_arena::EdgeStackArena::new(),
-            requested_root_cat: None,
-            cgll_pure_goal_cat: None,
-            cgll_pure_pos_key: Vec::new(),
-            cgll_pure_virtual_base: usize::MAX,
-            cgll_pure_parked: Vec::new(),
-            cgll_pure_park_seen: rustc_hash::FxHashSet::default(),
-            cgll_pure_round_log: Vec::new(),
-            cgll_pure_pos_is_bytes: false,
-        }
-    }
-
     /// Stage 3.9 / ι Phase 4 (2026-05-01): reset the walker between
     /// parses. Returns to deterministic mode with a fresh singleton cursor.
     /// Preserves the engine and beam_size; everything else is
@@ -8571,26 +8440,6 @@ where
     pub fn with_recovery_config(mut self, recovery_config: RecoveryConfig) -> Self {
         self.set_recovery_config(recovery_config);
         self
-    }
-
-    /// Drive `process_event(Step)` repeatedly until a terminal state is
-    /// reached or `max_steps` is exceeded. Returns the final state.
-    ///
-    /// Convenience wrapper for batch consumers (REPL `exec`). External
-    /// consumers wanting fine-grained control should call `process_event`
-    /// directly.
-    pub fn run_to_completion(
-        &mut self,
-        max_steps: usize,
-        tokens: &dyn WpdaTokenSource,
-    ) -> WpdaState {
-        for _ in 0..max_steps {
-            if self.state.is_terminal() {
-                break;
-            }
-            let _ = self.process_event(WpdaEvent::Step, tokens);
-        }
-        self.state.clone()
     }
 
     /// Drive `process_event(Step)` until the engine returns `Idle` or a
@@ -43183,32 +43032,6 @@ mod tests {
         for (i, c) in cursors.iter().enumerate() {
             assert_eq!(c.pos, 1, "cursor[{}].pos should inherit post-advance pos", i);
         }
-    }
-
-
-
-    #[test]
-    fn run_to_completion_terminates_at_accept() {
-        // Engine emits 3 advances then accepts.
-        let engine = ScriptedEngine::new(vec![
-            WpdaStepAction::Accept,
-            WpdaStepAction::Advance(WpdaState::Unwinding),
-            WpdaStepAction::Advance(WpdaState::InfixLoop { cur_bp: 0 }),
-            WpdaStepAction::Advance(WpdaState::PrefixDispatch { pos: 0, cur_bp: 0 }),
-        ]);
-        let mut w = WpdaWalker::new(engine, 0);
-        let final_state = w.run_to_completion(100, &empty_tokens());
-        assert_eq!(final_state, WpdaState::Accepted);
-    }
-
-    #[test]
-    fn run_to_completion_respects_max_steps() {
-        // Engine never accepts; run_to_completion bails after max_steps.
-        let engine = ScriptedEngine::new(vec![]); // returns Idle
-        let mut w = WpdaWalker::new(engine, 0);
-        let final_state = w.run_to_completion(10, &empty_tokens());
-        // Idle from the engine yields NoChange; we stay in Ready.
-        assert_eq!(final_state, WpdaState::Ready { min_bp: 0 });
     }
 
 
