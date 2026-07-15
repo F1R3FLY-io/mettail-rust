@@ -71,8 +71,12 @@ pub(crate) fn emit_engine_impl_full(
     // guards on `state_cat_src_idx` so the same token can produce
     // different AST depending on which category is being parsed.
     let mut all_prefix_arms = TokenStream::new();
+    // Task #15 (frame-bound peel): collect each category's per-arm
+    // `#[inline(never)]` PrefixDispatch helper methods alongside the arms; they
+    // are emitted into the inherent `impl #engine_ident` block below.
+    let mut all_prefix_helpers = TokenStream::new();
     for (i, rules) in per_cat_indexed.iter().enumerate() {
-        let arms = prefix::emit_prefix_arms_for_category(
+        let (arms, helpers) = prefix::emit_prefix_arms_for_category(
             language,
             i as u16,
             categories.get(i).map(String::as_str).unwrap_or(""),
@@ -88,6 +92,7 @@ pub(crate) fn emit_engine_impl_full(
             fork_rows,
         );
         all_prefix_arms.extend(arms);
+        all_prefix_helpers.extend(helpers);
     }
     // Phase 4: prepend collection open-delimiter arms so they run before
     // generic prefix arms. Open delimiters are typically `Fixed("{")` /
@@ -134,7 +139,10 @@ pub(crate) fn emit_engine_impl_full(
     // OptionalGroup state bodies. Empty map => non-unary-prefix rules use
     // `cur_bp: 0` per the legacy default.
     let prefix_bp_map = super::binder::build_prefix_bp_map(language, per_cat);
-    let binder_rule_body = super::binder::emit_binder_rule_body(
+    // Task #15 (frame-bound peel): `emit_binder_rule_body` returns the inline
+    // skeleton body PLUS the per-(cat,rule) `#[inline(never)]` helper methods
+    // that get emitted into the sibling inherent `impl #engine_ident` block.
+    let (binder_rule_body, binder_rule_helpers) = super::binder::emit_binder_rule_body(
         language,
         categories,
         per_cat,
@@ -542,6 +550,30 @@ pub(crate) fn emit_engine_impl_full(
         // exist; the lex-fork emission references it only in that case.
         #s1_spine_weight_rule_fn
 
+        // Task #15 (frame-bound peel, 2026-07-14): module-level imports so the
+        // peeled BinderRule/PrefixDispatch helper methods (in the inherent impl
+        // below) resolve the same SHORT names the trait `step` uses via its
+        // fn-local `use`s — the relocated arm bodies are byte-for-byte verbatim
+        // and reference `WpdaStepAction`/`WpdaState`/`StackSymbolV2`/`lex_w`/
+        // `lex_one` unqualified. These land at the language module's top level
+        // (where the engine impls sit, alongside `ast`/`language`/… includes).
+        // The only sibling generated file with a column-0 `use` is `parser.rs`
+        // (a `runtime_types::*` GLOB + an explicit `Cow`); an explicit `use`
+        // never conflicts with a glob and none of these names is `Cow`, so no
+        // E0252. `#[allow(unused_imports)]` because any one helper body needs
+        // only a subset.
+        #[allow(unused_imports)]
+        use mettail_prattail::wpda_runtime::{
+            StackSymbolV2, WpdaState, lex_w, lex_w_alt, lex_w_alt_with_len,
+            lex_w_with_len, lex_one,
+        };
+        #[allow(unused_imports)]
+        use mettail_prattail::wpda_walker::WpdaStepAction;
+        #[allow(unused_imports)]
+        use mettail_prattail::automata::lex_weight::LexicographicWeight;
+        #[allow(unused_imports)]
+        use mettail_prattail::automata::semiring::Semiring;
+
         // GEN-1 goal-gate (2026-06-28): sibling inherent impl carrying the
         // pure `cat_can_reach` predicate. Lives outside the `WpdaEngine` trait
         // impl (the trait fixes its method set) yet is reachable as
@@ -549,7 +581,13 @@ pub(crate) fn emit_engine_impl_full(
         // `Self == #engine_ident` there and inherent associated fns resolve
         // through `Self::`. `from == goal` short-circuits reflexivity; the
         // emitted `matches!` enumerates only the non-reflexive RTC pairs.
-        #[allow(dead_code)]
+        //
+        // Task #15: ALSO the drop-in home for the peeled `binder_rule_c*_r*`
+        // and `prefix_arm_c*_a*` `#[inline(never)]` helper methods, called via
+        // `self.` from the trait `step`. `#[allow(unused_variables)]` covers
+        // their over-provisioned params (frame_ctx / tokens / _pos / …);
+        // `#[allow(unused_braces)]` the relocated `{ .. }` bodies.
+        #[allow(dead_code, unused_variables, unused_braces)]
         impl #engine_ident {
             fn cat_can_reach(from: u16, goal: u16) -> bool {
                 if from == goal {
@@ -557,6 +595,11 @@ pub(crate) fn emit_engine_impl_full(
                 }
                 #cat_can_reach_body
             }
+            // Task #15: peeled BinderRule per-(cat,rule) dispatch helpers
+            // (each an `#[inline(never)]` `match (cat,rule,position)` group).
+            #binder_rule_helpers
+            // Task #15: peeled PrefixDispatch per-arm-body helpers.
+            #all_prefix_helpers
         }
 
         #[allow(unused_variables, unused_braces)]

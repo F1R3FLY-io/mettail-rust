@@ -14,7 +14,7 @@ use mettail_ast::grammar::{GrammarItem, GrammarRule, NonTerminalKind};
 use mettail_ast::language::{LanguageDef, NativeKind};
 use mettail_prattail::binding_power::compute_prefix_bp;
 use proc_macro2::TokenStream;
-use quote::quote;
+use quote::{format_ident, quote};
 use syn::{Ident, Type};
 
 /// Lexer token family for a literal-patterned rule.
@@ -1478,7 +1478,11 @@ pub fn emit_prefix_arms_for_category(
     // ordinal collector threaded down to `emit_unified_arm`.
     s1_group_members: &std::collections::HashMap<u16, Vec<u16>>,
     fork_rows: &mut super::fork_emission::ForkEmissionOrdinalModel,
-) -> TokenStream {
+    // Task #15 (frame-bound peel): returns `(arms, helpers)` — `arms` are the
+    // PrefixDispatch `match peek` arms (each `#pat if #guard => self.prefix_arm_
+    // c{cat}_a{ord}(..)`), `helpers` are the per-arm `#[inline(never)]` body
+    // methods that get emitted into the sibling inherent `impl #engine_ident`.
+) -> (TokenStream, TokenStream) {
     let mut arms = Vec::new();
     // Stage 1.2: cross-cat infix LHS delegation. Walk all infix rules
     // (not just rules in this category) whose result_cat == this category
@@ -1780,19 +1784,61 @@ pub fn emit_prefix_arms_for_category(
     // and explodes the frontier before realization can reject them. Explicit
     // wrappers still parse through their literal/binder arms; only Pass 2a
     // transparent projections participate in source-FIRST cross-cat wrapping.
+    // Task #15 (frame-bound peel): assemble the PrefixDispatch arms AND their
+    // per-arm `#[inline(never)]` helper methods. Each arm keeps its
+    // pattern+guard inline in `step`'s `match peek`; its body is relocated into
+    // `prefix_arm_c{cat}_a{ord}` so the PrefixDispatch alloca-sum no longer
+    // inflates the `step` frame.
+    let mut helpers: Vec<TokenStream> = Vec::with_capacity(unified_order.len());
+    let mut helper_ord: u32 = 0;
     for key in unified_order {
         let entry = unified_buckets
             .remove(&key)
             .expect("bucket present in order");
-        arms.push(emit_unified_arm(
+        let (head, body) = emit_unified_arm(
             category_src_idx,
             &entry,
             s1_dispositions,
             s1_group_members,
             fork_rows,
-        ));
+        );
+        let helper_ident = format_ident!("prefix_arm_c{}_a{}", category_src_idx, helper_ord);
+        helper_ord += 1;
+        arms.push(quote! {
+            #head => self.#helper_ident(
+                pos,
+                cur_bp,
+                _outer_bp,
+                state_cat_src_idx,
+                tokens,
+                frontier_top,
+                frame_ctx,
+            ),
+        });
+        helpers.push(quote! {
+            // Task #15 (frame-bound peel): one PrefixDispatch arm body,
+            // #[inline(never)] so `step` reserves only skeleton + one-helper
+            // frame. Pure motion — the body is verbatim; `pos`/`cur_bp` pass BY
+            // REFERENCE (A5), `_outer_bp` by value (it is the derived `*cur_bp`
+            // local the bodies read), and frontier_top/frame_ctx/
+            // state_cat_src_idx are over-provisioned for a uniform signature
+            // (silenced by the inherent impl's #[allow(unused_variables)]).
+            #[inline(never)]
+            fn #helper_ident(
+                &self,
+                pos: &usize,
+                cur_bp: &u8,
+                _outer_bp: u8,
+                state_cat_src_idx: u16,
+                tokens: &dyn mettail_prattail::wpda_runtime::WpdaTokenSource,
+                frontier_top: Option<&mettail_prattail::gss::WpdaGssNode>,
+                frame_ctx: mettail_prattail::wpda_runtime::FrameCtx,
+            ) -> mettail_prattail::wpda_walker::WpdaStepAction<
+                mettail_prattail::automata::lex_weight::LexicographicWeight,
+            > #body
+        });
     }
-    quote! { #(#arms)* }
+    (quote! { #(#arms)* }, quote! { #(#helpers)* })
 }
 
 // B10 / Option κ Fix B (2026-05-07): `emit_cross_cat_projection_arms_bucketed`
@@ -2063,7 +2109,13 @@ fn emit_unified_arm(
     // DECLARATION POSITIONS (amendment 6) — runtime-gated pushes (the
     // CrossCatLhs guard) still occupy their declared slot.
     fork_rows: &mut super::fork_emission::ForkEmissionOrdinalModel,
-) -> TokenStream {
+    // Task #15 (frame-bound peel): returns `(head, body)` — `head` is the
+    // arm's `#pat if #guard [#compat]` (kept inline in `step`'s PrefixDispatch
+    // `match peek`), `body` is the `{ .. }` block relocated into a per-arm
+    // `#[inline(never)]` helper. The guard stays with the pattern so any
+    // pattern binding (e.g. `__kw`) and the `tokens`/`*pos` guard references
+    // remain in the skeleton — the split is pure body-relocation (A4).
+) -> (TokenStream, TokenStream) {
     let pat = &bucket.pat;
     let guard = match &bucket.extra_guard {
         Some(eg) => quote! { #eg && state_cat_src_idx == #category_src_idx },
@@ -2103,8 +2155,10 @@ fn emit_unified_arm(
                 sigil_leads_result_rule: _,
             } => {
                 let source_src_idx = *source_src_idx;
-                quote! {
-                    #pat if #guard => {
+                (
+                    quote! { #pat if #guard },
+                    quote! {
+                        {
                         // Cross-category LHS delegation parses a source-category
                         // atom that may later produce the target category via a
                         // category-changing infix. The target Pratt floor is
@@ -2122,8 +2176,9 @@ fn emit_unified_arm(
                                 source_src_idx: #source_src_idx,
                             },
                         };
-                    }
-                }
+                        }
+                    },
+                )
             },
             UnifiedDescriptor::Atomic(desc) => {
                 // Task #10 item 1: the no-fork singleton fast path has no
@@ -2154,8 +2209,10 @@ fn emit_unified_arm(
                 // Task #10 item 1: singleton = position 0 (grouped members
                 // asserted unreachable above, so the plain row suffices).
                 fork_rows.record_site2_row(category_src_idx, rule_idx, 0, &fork_bucket_tag);
-                quote! {
-                    #pat if #guard => {
+                (
+                    quote! { #pat if #guard },
+                    quote! {
+                        {
                         return WpdaStepAction::ConsumeAndPush {
                             symbol: StackSymbolV2::rule_at(
                                 #category_src_idx, #rule_idx, 1u8, Some(_outer_bp),
@@ -2170,8 +2227,9 @@ fn emit_unified_arm(
                             trigger_mode:
                                 mettail_prattail::wpda_walker::TriggerMode::ConsumeAsTriggerOnly,
                         };
-                    }
-                }
+                        }
+                    },
+                )
             },
             UnifiedDescriptor::CrossCatPrefixUnary { rule_idx, source_src_idx, operand_bp } => {
                 let rule_idx = *rule_idx;
@@ -2179,8 +2237,10 @@ fn emit_unified_arm(
                 let operand_bp = *operand_bp;
                 // Task #10 item 1: singleton = position 0.
                 fork_rows.record_site2_row(category_src_idx, rule_idx, 0, &fork_bucket_tag);
-                quote! {
-                    #pat if #guard => {
+                (
+                    quote! { #pat if #guard },
+                    quote! {
+                        {
                         return WpdaStepAction::ConsumeAndPush {
                             symbol: StackSymbolV2::rule_at(
                                 #category_src_idx, #rule_idx, 0, Some(_outer_bp),
@@ -2193,8 +2253,9 @@ fn emit_unified_arm(
                             trigger_mode:
                                 mettail_prattail::wpda_walker::TriggerMode::ConsumeAsTriggerOnly,
                         };
-                    }
-                }
+                        }
+                    },
+                )
             },
             UnifiedDescriptor::CrossCatProjection { rule_idx, source_src_idx } => {
                 let rule_idx = *rule_idx;
@@ -2202,8 +2263,10 @@ fn emit_unified_arm(
                 let __compat = compat_guard(source_src_idx);
                 // Task #10 item 1: singleton = position 0.
                 fork_rows.record_site2_row(category_src_idx, rule_idx, 0, &fork_bucket_tag);
-                quote! {
-                    #pat if #guard #__compat => {
+                (
+                    quote! { #pat if #guard #__compat },
+                    quote! {
+                        {
                         // B10 / Option κ Fix B (2026-05-07): cross-cat
                         // projection singleton — Push the rule's Return
                         // marker and route to CrossCatDelegate so the
@@ -2226,8 +2289,9 @@ fn emit_unified_arm(
                                 inner_cur_bp: *cur_bp,
                             },
                         };
-                    }
-                }
+                        }
+                    },
+                )
             },
             UnifiedDescriptor::NullaryLiteralRun { rule_idx } => {
                 let rule_idx = *rule_idx;
@@ -2241,8 +2305,10 @@ fn emit_unified_arm(
                 );
                 // Task #10 item 1: singleton = position 0.
                 fork_rows.record_site2_row(category_src_idx, rule_idx, 0, &fork_bucket_tag);
-                quote! {
-                    #pat if #guard => {
+                (
+                    quote! { #pat if #guard },
+                    quote! {
+                        {
                         // GAP-3: 0-operand multi-literal keyword prefix. Consume
                         // the trigger (ConsumeAsTriggerOnly mirrors it to the
                         // SPPF as a TriggerTerminal — the SOLE child under the
@@ -2266,8 +2332,9 @@ fn emit_unified_arm(
                             trigger_mode:
                                 mettail_prattail::wpda_walker::TriggerMode::ConsumeAsTriggerOnly,
                         };
-                    }
-                }
+                        }
+                    },
+                )
             },
         }
     } else {
@@ -2582,8 +2649,10 @@ fn emit_unified_arm(
                 }
             })
             .collect();
-        quote! {
-            #pat if #guard => {
+        (
+            quote! { #pat if #guard },
+            quote! {
+                {
                 let mut __pd_branches: Vec<mettail_prattail::wpda_walker::ForkBranch<_>> =
                     Vec::with_capacity(#n_descs);
                 #( #push_stmts )*
@@ -2591,13 +2660,17 @@ fn emit_unified_arm(
                     branches: __pd_branches,
                     consume_trigger: false,
                 };
-            }
-        }
+                }
+            },
+        )
     }
 }
 
-/// Emit a singleton atomic arm with the legacy single-arm token stream shape.
-fn emit_atomic_arm_singleton(desc: &PrefixArmDescriptor) -> TokenStream {
+/// Emit a singleton atomic arm. Task #15 (frame-bound peel): returns the
+/// `(head, body)` split — `head` = `#pat if #guard` (stays inline in `step`),
+/// `body` = the `{ .. }` block (relocated into a per-arm `#[inline(never)]`
+/// helper). Byte-identical parse semantics; pure body-relocation.
+fn emit_atomic_arm_singleton(desc: &PrefixArmDescriptor) -> (TokenStream, TokenStream) {
     let pat = &desc.pattern;
     let category_src_idx = desc.category_src_idx;
     let rule_idx = desc.rule_idx;
@@ -2605,8 +2678,10 @@ fn emit_atomic_arm_singleton(desc: &PrefixArmDescriptor) -> TokenStream {
         Some(eg) => quote! { #eg && state_cat_src_idx == #category_src_idx },
         None => quote! { state_cat_src_idx == #category_src_idx },
     };
-    quote! {
-        #pat if #guard => {
+    (
+        quote! { #pat if #guard },
+        quote! {
+            {
             return WpdaStepAction::ConsumeAndPush {
                 symbol: StackSymbolV2::rule_at(
                     #category_src_idx, #rule_idx, 0, Some(_outer_bp),
@@ -2618,8 +2693,9 @@ fn emit_atomic_arm_singleton(desc: &PrefixArmDescriptor) -> TokenStream {
                 // trigger (no operand sub-parse).
                 trigger_mode: mettail_prattail::wpda_walker::TriggerMode::CaptureForBuilder,
             };
-        }
-    }
+            }
+        },
+    )
 }
 
 /// For a `LiteralPatterned` shape, return the `(pattern, extra_guard)` pair.
@@ -3035,7 +3111,9 @@ mod tests {
     #[test]
     fn empty_rule_list_emits_no_arms() {
         let lang = empty_lang();
-        let ts = emit_prefix_arms_for_category(&lang, 0, "Int", &[], &std::collections::HashMap::new(), &std::collections::HashMap::new(), &mut super::super::fork_emission::ForkEmissionOrdinalModel::new());
+        let (mut ts, __ts_helpers) = emit_prefix_arms_for_category(&lang, 0, "Int", &[], &std::collections::HashMap::new(), &std::collections::HashMap::new(), &mut super::super::fork_emission::ForkEmissionOrdinalModel::new());
+        // Task #15 peel: combine arms + helpers (both empty for no rules).
+        ts.extend(__ts_helpers);
         assert!(ts.to_string().trim().is_empty());
     }
 
@@ -3043,7 +3121,9 @@ mod tests {
     fn atomic_integer_rule_emits_an_arm() {
         let lang = empty_lang();
         let rule = atomic_rule("IntLit", "Int", NonTerminalKind::Integer);
-        let ts = emit_prefix_arms_for_category(&lang, 2, "Int", &[(0, &rule)], &std::collections::HashMap::new(), &std::collections::HashMap::new(), &mut super::super::fork_emission::ForkEmissionOrdinalModel::new());
+        let (mut ts, __ts_helpers) = emit_prefix_arms_for_category(&lang, 2, "Int", &[(0, &rule)], &std::collections::HashMap::new(), &std::collections::HashMap::new(), &mut super::super::fork_emission::ForkEmissionOrdinalModel::new());
+        // Task #15 peel: assert over arms + helpers combined (bodies moved).
+        ts.extend(__ts_helpers);
         let s = ts.to_string();
         assert!(s.contains("ConsumeAndPush"));
         assert!(s.contains("Integer"));
@@ -3106,7 +3186,9 @@ mod tests {
     fn terminal_keyword_emits_fixed_match_guard() {
         let lang = empty_lang();
         let rule = terminal_rule("Err", "Int", "error");
-        let ts = emit_prefix_arms_for_category(&lang, 2, "Int", &[(0, &rule)], &std::collections::HashMap::new(), &std::collections::HashMap::new(), &mut super::super::fork_emission::ForkEmissionOrdinalModel::new());
+        let (mut ts, __ts_helpers) = emit_prefix_arms_for_category(&lang, 2, "Int", &[(0, &rule)], &std::collections::HashMap::new(), &std::collections::HashMap::new(), &mut super::super::fork_emission::ForkEmissionOrdinalModel::new());
+        // Task #15 peel: assert over arms + helpers combined (bodies moved).
+        ts.extend(__ts_helpers);
         let s = ts.to_string();
         assert!(s.contains("ConsumeAndPush"));
         assert!(s.contains("Fixed"));
@@ -3118,7 +3200,9 @@ mod tests {
     fn literal_patterned_int_emits_integer_lit_guard() {
         let lang = lang_with_int_literal();
         let rule = category_rule("IntLit", "Int", "Int");
-        let ts = emit_prefix_arms_for_category(&lang, 2, "Int", &[(0, &rule)], &std::collections::HashMap::new(), &std::collections::HashMap::new(), &mut super::super::fork_emission::ForkEmissionOrdinalModel::new());
+        let (mut ts, __ts_helpers) = emit_prefix_arms_for_category(&lang, 2, "Int", &[(0, &rule)], &std::collections::HashMap::new(), &std::collections::HashMap::new(), &mut super::super::fork_emission::ForkEmissionOrdinalModel::new());
+        // Task #15 peel: assert over arms + helpers combined (bodies moved).
+        ts.extend(__ts_helpers);
         let s = ts.to_string();
         assert!(s.contains("ConsumeAndPush"));
         assert!(s.contains("IntegerLit"));
@@ -3175,7 +3259,7 @@ mod tests {
         // 0 = the trait default, zero K-C movement), while the direct
         // prefix (single-bucket) keeps its derived position.
         let mut fork_model = super::super::fork_emission::ForkEmissionOrdinalModel::new();
-        let ts = emit_prefix_arms_for_category(
+        let (mut ts, __ts_helpers) = emit_prefix_arms_for_category(
             &lang,
             0,
             "UInt32",
@@ -3198,6 +3282,11 @@ mod tests {
             Some(0),
             "the single-bucket direct prefix keeps its derived position"
         );
+        // Task #15 peel: the Fork body moved into the arm's helper; combine so
+        // the WpdaStepAction::Fork / ForkActionKind assertions still see it.
+        // The guard (with `__kw == "bitnot"`) stays in the arm, so its
+        // single-occurrence count is unchanged.
+        ts.extend(__ts_helpers);
         let s = ts.to_string();
         let guard = "__kw == \"bitnot\" && state_cat_src_idx == 0u16";
         assert_eq!(

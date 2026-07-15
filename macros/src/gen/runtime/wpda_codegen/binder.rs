@@ -1220,8 +1220,21 @@ pub(crate) fn emit_binder_rule_body(
     // per-category rule indices — factoring.rs A9 asserts). EMPTY while
     // `S1_FACTORING == false` ⇒ byte-identical emission.
     s1_spine_arms: &TokenStream,
-) -> TokenStream {
-    let mut arms = Vec::new();
+    // Task #15 (frame-bound peel, 2026-07-14): returns `(skeleton_body,
+    // helpers)`. `skeleton_body` is the `WpdaState::BinderRule` arm body that
+    // stays inline in the generated trait `step`; `helpers` are the
+    // per-(cat,rule) `#[inline(never)]` dispatch methods that get emitted into
+    // the sibling inherent `impl #engine_ident` block. The peel collapses the
+    // ~1.11 MB monolithic `step` frame (whose size was the SUM of every
+    // per-arm alloca at `-O0`, no stack coloring) into skeleton + one
+    // helper-at-a-time. This is PURE MOTION: the `(cat,rule,position)` arm
+    // bodies are relocated verbatim; the flat 3-tuple `match` arity (A2) is
+    // kept so the live S1-FACTORING spine arms remain arity-compatible.
+) -> (TokenStream, TokenStream) {
+    // One entry per (cat, rule) group that has a binder shape:
+    // (result_src_idx, rule_idx, that group's arm token streams). The arms are
+    // moved verbatim into the group's `#[inline(never)]` helper below.
+    let mut groups: Vec<(u16, u16, Vec<TokenStream>)> = Vec::new();
     for (cat_i, rules) in per_cat.iter().enumerate() {
         for (rule_i, rule) in rules.iter().enumerate() {
             let Some(shape) = classify_binder_in(rule, language) else {
@@ -1229,6 +1242,8 @@ pub(crate) fn emit_binder_rule_body(
             };
             let result_src_idx = cat_i as u16;
             let rule_idx = rule_i as u16;
+            let mut group_arms: Vec<TokenStream> =
+                Vec::with_capacity(shape.positions.len() + 1);
             // Stage 4 fix: emit a "rule complete" arm at position
             // `positions.len() + 1`. This arm fires when the marker has
             // advanced past the final syntax-pattern position (either via
@@ -1237,7 +1252,7 @@ pub(crate) fn emit_binder_rule_body(
             // semantic action; transitions to InfixLoop so the parent rule
             // can apply postfix/infix operators on the freshly-built result.
             let final_pos = (shape.positions.len() + 1) as u8;
-            arms.push(quote! {
+            group_arms.push(quote! {
                 (#result_src_idx, #rule_idx, #final_pos) => {
                     return WpdaStepAction::Pop {
                         weight: lex_one(),
@@ -1702,14 +1717,71 @@ pub(crate) fn emit_binder_rule_body(
                         }
                     },
                 };
-                arms.push(arm);
+                group_arms.push(arm);
             }
+            groups.push((result_src_idx, rule_idx, group_arms));
         }
     }
-    if arms.is_empty() && s1_spine_arms.is_empty() {
-        return quote! { WpdaStepAction::Idle };
+    if groups.is_empty() && s1_spine_arms.is_empty() {
+        return (quote! { WpdaStepAction::Idle }, proc_macro2::TokenStream::new());
     }
-    quote! {
+    // Task #15: build the two-level dispatch. The skeleton (kept inline in
+    // `step`) matches the flat 3-tuple and, for each real (cat, rule) group,
+    // tail-calls that group's `#[inline(never)]` helper via a POSITION WILDCARD
+    // arm `(cat, rule, _) => self.binder_rule_c{cat}_r{rule}(..)` (A2 — the
+    // arity stays 3 so the S1 spine arms below still type-check). Each helper
+    // re-matches the verbatim `(cat, rule, position)` arms.
+    let mut skeleton_arms: Vec<TokenStream> = Vec::with_capacity(groups.len());
+    let mut helpers: Vec<TokenStream> = Vec::with_capacity(groups.len());
+    for (cat, rule, group_arms) in &groups {
+        let helper_ident = format_ident!("binder_rule_c{}_r{}", cat, rule);
+        skeleton_arms.push(quote! {
+            (#cat, #rule, _) => self.#helper_ident(
+                result_src_idx,
+                rule_idx,
+                position,
+                _pos,
+                tokens,
+                _body_src_idx,
+                outer_bp,
+                frame_ctx,
+            ),
+        });
+        helpers.push(quote! {
+            // Task #15 (frame-bound peel): one BinderRule dispatch group,
+            // relocated out of `step` so `step` reserves only skeleton +
+            // one-helper frame (was: the SUM of every group's alloca in the
+            // 1.11 MB monolithic frame). Pure motion — the arm bodies are
+            // verbatim; state fields pass BY REFERENCE (A5) so the `*x` derefs
+            // in the bodies are unchanged. `frame_ctx`/`tokens`/`_pos` are
+            // over-provisioned for a uniform generic signature (N2), silenced
+            // by the inherent impl's `#[allow(unused_variables)]`.
+            #[inline(never)]
+            fn #helper_ident(
+                &self,
+                result_src_idx: &u16,
+                rule_idx: &u16,
+                position: u8,
+                _pos: usize,
+                tokens: &dyn mettail_prattail::wpda_runtime::WpdaTokenSource,
+                _body_src_idx: &u16,
+                outer_bp: &u8,
+                frame_ctx: mettail_prattail::wpda_runtime::FrameCtx,
+            ) -> mettail_prattail::wpda_walker::WpdaStepAction<
+                mettail_prattail::automata::lex_weight::LexicographicWeight,
+            > {
+                match (*result_src_idx, *rule_idx, position) {
+                    #(#group_arms)*
+                    // A1: known-(cat,rule)-unknown-position ⇒ Idle (NEVER
+                    // unreachable! — the original single catch-all returned
+                    // Idle for this case, so a panic would be a behavior
+                    // change).
+                    _ => WpdaStepAction::Idle,
+                }
+            }
+        });
+    }
+    let body = quote! {
         {
             let position: u8 = match frontier_top.map(|n| n.symbol.kind) {
                 Some(mettail_prattail::wpda_runtime::SymbolKind::RuleAt(p)) => p,
@@ -1717,18 +1789,23 @@ pub(crate) fn emit_binder_rule_body(
             };
             // The empty-list branch needs to push an empty BinderList arg
             // representing zero binders. Use a closure-based local helper.
+            // (N1: dead no-op closure — inert; kept in the skeleton.)
             #[allow(unused_variables)]
             let b_pre_finalize_empty_list = || ();
             match (*result_src_idx, *rule_idx, position) {
-                #(#arms)*
+                #(#skeleton_arms)*
                 // S1-FACTORING F1 spine arms — `(cat, SPINE_ID, node_pos)`
                 // keys, disjoint from every real-rule key above (SPINE_ID ∈
-                // 0xF800..0xFE00). Empty while `S1_FACTORING == false`.
+                // 0xF800..0xFE00). Kept UNCHANGED in the skeleton (A2). Empty
+                // while `S1_FACTORING == false`.
                 #s1_spine_arms
+                // A1: unknown (cat, rule) ⇒ Idle.
                 _ => WpdaStepAction::Idle,
             }
         }
-    }
+    };
+    let helpers_ts = quote! { #(#helpers)* };
+    (body, helpers_ts)
 }
 
 /// B8 / Issue C (2026-05-09): emit a per-(rule, sub_pos) lookup that
@@ -3434,8 +3511,11 @@ mod tests {
         let categories = vec!["Term".to_string()];
         let per_cat = vec![vec![lambda_lam_rule()]];
         let prefix_bp_map = std::collections::HashMap::new();
-        let ts =
+        let (mut ts, __ts_helpers) =
             emit_binder_rule_body(&synthetic_lang_for_lambda_test(), &categories, &per_cat, &prefix_bp_map, &proc_macro2::TokenStream::new());
+        // Task #15 peel: arm bodies now live in the per-(cat,rule) helpers;
+        // assert over skeleton + helpers combined.
+        ts.extend(__ts_helpers);
         let s = ts.to_string();
         // Phase 3.B.3 (2026-05-11): single-binder rules are unified
         // into the BinderListLoop dispatch with allow_empty=false,
@@ -3455,8 +3535,11 @@ mod tests {
         let categories = vec!["BigInt".to_string(), "BigRat".to_string()];
         let per_cat = vec![Vec::new(), vec![fraction_rule()]];
         let prefix_bp_map = std::collections::HashMap::new();
-        let ts =
+        let (mut ts, __ts_helpers) =
             emit_binder_rule_body(&synthetic_lang_for_lambda_test(), &categories, &per_cat, &prefix_bp_map, &proc_macro2::TokenStream::new());
+        // Task #15 peel: arm bodies now live in the per-(cat,rule) helpers;
+        // assert over skeleton + helpers combined.
+        ts.extend(__ts_helpers);
         let s = ts.to_string();
         // "fraction" is the trigger consumed at open; positions 1+ are
         // "(", a (ParamParse), ",", b (ParamParse), ")". Verify the
