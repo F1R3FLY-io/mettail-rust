@@ -157,7 +157,9 @@ pub(crate) fn fold_proc_length(p: &Proc) -> Proc {
     }
 }
 
-/// A/B kill-switch for the @-send-sugar canonicalization (2026-07-06).
+/// The `@`-send-sugar canonicalization (2026-07-06) is UNCONDITIONAL — the former
+/// `PRATTAIL_NO_SEND_SUGAR_CANON` A/B kill-switch (and its pre-fix legacy
+/// normalizer) was collapsed to its shipped default.
 ///
 /// The `@Nil!(n)` number-as-process projection surface (and every `@`-send
 /// sugar) is elected non-deterministically across parse contexts among its
@@ -172,94 +174,9 @@ pub(crate) fn fold_proc_length(p: &Proc) -> Proc {
 ///
 /// RHOCALC-LOCAL: only rhocalc's `term_eq`/COMM comparison path is affected; the
 /// macro-generated `.normalize()`/`semantic_hash` and every other language are
-/// untouched. Set `PRATTAIL_NO_SEND_SUGAR_CANON=1` to disable — reverts to the
-/// pre-fix [`normalize_send_sugar_legacy`] normalizer (reproduces the
-/// non-unification with reservation still ON, isolating this fix from the
-/// keyword-reservation flip).
-pub(crate) fn send_sugar_canon_enabled() -> bool {
-    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ENABLED.get_or_init(|| std::env::var_os("PRATTAIL_NO_SEND_SUGAR_CANON").is_none())
-}
-
+/// untouched.
 fn normalize_query_send_sugar_proc(p: &Proc) -> Proc {
-    if send_sugar_canon_enabled() {
-        normalize_send_sugar_canon(p)
-    } else {
-        normalize_send_sugar_legacy(p)
-    }
-}
-
-/// Pre-fix normalizer (the A/B-OFF branch): query-send desugaring + the EMPTY /
-/// 2Plus / channel-first arity canonicalization only. Byte-identical to the
-/// behavior before the `@`-send canonicalization landed; leaves `POutputNil`
-/// vs `POutputShort(PZero)` etc. DISTINCT (reproduces the tracked
-/// non-unification). Do not extend — the canonical path is
-/// [`normalize_send_sugar_canon`].
-fn normalize_send_sugar_legacy(p: &Proc) -> Proc {
-    match p {
-        Proc::PParInfix(a, b) => {
-            let a_norm = normalize_send_sugar_legacy(a.as_ref());
-            let b_norm = normalize_send_sugar_legacy(b.as_ref());
-            merge_pp_parallel(a_norm, b_norm)
-        },
-        Proc::POutputEmpty(n) => {
-            Proc::POutput(std::sync::Arc::new(n.as_ref().clone()), std::sync::Arc::new(mk_proc_list(vec![])))
-        },
-        Proc::PPersistOutputEmpty(n) => {
-            Proc::PPersistOutput(std::sync::Arc::new(n.as_ref().clone()), std::sync::Arc::new(mk_proc_list(vec![])))
-        },
-        Proc::POutput2Plus(n, a, bs) => {
-            let a_norm = normalize_send_sugar_legacy(a.as_ref());
-            let bs_norm: Vec<Proc> = bs.iter().map(normalize_send_sugar_legacy).collect();
-            let mut items = Vec::with_capacity(1 + bs_norm.len());
-            items.push(a_norm);
-            items.extend(bs_norm);
-            Proc::POutput(std::sync::Arc::new(n.as_ref().clone()), std::sync::Arc::new(mk_proc_list(items)))
-        },
-        Proc::PPersistOutput2Plus(n, a, bs) => {
-            let a_norm = normalize_send_sugar_legacy(a.as_ref());
-            let bs_norm: Vec<Proc> = bs.iter().map(normalize_send_sugar_legacy).collect();
-            let mut items = Vec::with_capacity(1 + bs_norm.len());
-            items.push(a_norm);
-            items.extend(bs_norm);
-            Proc::PPersistOutput(std::sync::Arc::new(n.as_ref().clone()), std::sync::Arc::new(mk_proc_list(items)))
-        },
-        Proc::POutput(n, q) => {
-            let q_norm = crate::rhocalc::receive::canonicalize_arity_payload(q.as_ref());
-            Proc::POutput(std::sync::Arc::new(n.as_ref().clone()), std::sync::Arc::new(q_norm))
-        },
-        Proc::PPersistOutput(n, q) => {
-            let q_norm = crate::rhocalc::receive::canonicalize_arity_payload(q.as_ref());
-            Proc::PPersistOutput(std::sync::Arc::new(n.as_ref().clone()), std::sync::Arc::new(q_norm))
-        },
-        Proc::PForUser(rows, body) => {
-            let body_norm = normalize_send_sugar_legacy(body.as_ref());
-            if crate::rhocalc::receive::pfor_user_still_has_query_rows(rows) {
-                normalize_send_sugar_legacy(&crate::rhocalc::receive::desugar_for_rows(
-                    rows.clone(),
-                    &body_norm,
-                ))
-            } else {
-                Proc::PForUser(rows.clone(), std::sync::Arc::new(body_norm))
-            }
-        },
-        Proc::PPar(ps) => {
-            let mut out = mettail_runtime::HashBag::new();
-            for (elem, count) in ps.iter() {
-                let norm_elem = normalize_send_sugar_legacy(elem);
-                for _ in 0..count {
-                    Proc::insert_into_ppar(&mut out, norm_elem.clone());
-                }
-            }
-            Proc::PPar(out)
-        },
-        Proc::PNew(scope) => {
-            let (binders, body) = scope.clone().unbind();
-            let norm_body = normalize_send_sugar_legacy(&body);
-            Proc::PNew(mettail_runtime::Scope::new(binders, std::sync::Arc::new(norm_body)))
-        },
-        _ => p.clone(),
-    }
+    normalize_send_sugar_canon(p)
 }
 
 // ── canonical channel Name for a send: lower @Nil/@P name sugar, recurse the quoted proc ──

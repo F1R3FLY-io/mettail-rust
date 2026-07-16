@@ -1490,24 +1490,17 @@ pub(crate) fn emit_engine_impl_full(
                         // `element_src_idx == result`) are unaffected — the redirect
                         // is a no-op there (byte-identical). Grammar-derived from
                         // `CollectionSpec.element_src_idx`; no per-rule/keyword
-                        // hardcode. `COLL_ELEMENT_INFIX_CAT_REDIRECT_ENABLED` +
-                        // `PRATTAIL_NO_COLL_ELEM_INFIX_REDIRECT` are the LIFO
-                        // kill-switch (OFF ⇒ pre-fix behavior). NOTE: the
-                        // close/sep detection above already reads the marker's
-                        // `collection_spec` directly, so the redirect changes ONLY
-                        // the operator-dispatch category, never the close/sep
-                        // routing — an element with no operator continuation still
-                        // falls through to Unwinding-CollectionMarker exactly as
-                        // before.
-                        const COLL_ELEMENT_INFIX_CAT_REDIRECT_ENABLED: bool = true;
+                        // hardcode. NOTE: the close/sep detection above already
+                        // reads the marker's `collection_spec` directly, so the
+                        // redirect changes ONLY the operator-dispatch category,
+                        // never the close/sep routing — an element with no operator
+                        // continuation still falls through to Unwinding-
+                        // CollectionMarker exactly as before.
                         let state_cat_src_idx: u16 = {
                             let __raw = frontier_top
                                 .map(|n| n.symbol.category_src_idx)
                                 .unwrap_or(#primary_src_idx);
-                            if COLL_ELEMENT_INFIX_CAT_REDIRECT_ENABLED
-                                && std::env::var("PRATTAIL_NO_COLL_ELEM_INFIX_REDIRECT").is_err()
-                            {
-                                match frontier_top {
+                            match frontier_top {
                                     Some(__ft)
                                         if __ft.symbol.kind
                                             == mettail_prattail::wpda_runtime::SymbolKind::CollectionMarker =>
@@ -1525,9 +1518,6 @@ pub(crate) fn emit_engine_impl_full(
                                     }
                                     _ => __raw,
                                 }
-                            } else {
-                                __raw
-                            }
                         };
                         // GEN-1 goal-gate (2026-06-28): read the STRICT goal off
                         // the frontier-top symbol (Some only for a
@@ -2632,9 +2622,8 @@ pub(crate) fn emit_engine_impl_full(
             }
 
             // SPPF-realize observational-dedup (2026-06-28): per-node dedup key.
-            // INERT until the walker's realize wiring calls it behind
-            // `PRATTAIL_REALIZE_DEDUP`; emitted now so the hook compiles against
-            // the concrete category types.
+            // Consumed by the walker's (unconditional) realize dedup path; emitted
+            // here so the hook compiles against the concrete category types.
             fn semantic_fingerprint(
                 &self,
                 term: &std::sync::Arc<dyn std::any::Any + Send + Sync>,

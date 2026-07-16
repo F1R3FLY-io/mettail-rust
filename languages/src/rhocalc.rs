@@ -30,7 +30,7 @@ language! {
         //      prefix/operand position (`*x | Nil`, `@Nil!(Nil)`) once the `Ident`
         //      co-accept is dropped by reservation.
         //   2. `@`-send-sugar canonicalization (`runtime.rs`:
-        //      `normalize_send_sugar_canon`, gate `PRATTAIL_NO_SEND_SUGAR_CANON`):
+        //      `normalize_send_sugar_canon`, now unconditional):
         //      the number-as-process `@Nil!(n)` projection surface reads as any of
         //      `POutputNil(q)` / `POutputShort(PZero, q)` / `POutput(NQuoteNil, q)`
         //      — all eval-equal to `POutput(NQuote(PZero), q)` but elected

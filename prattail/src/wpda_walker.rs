@@ -215,73 +215,26 @@ thread_local! {
 
 
 
-/// SPPF-realize observational-dedup kill switch (2026-06-28).
-///
-/// `PRATTAIL_REALIZE_DEDUP` controls whether `realize_*` collapses
-/// observationally-equivalent sub-derivations per SPPF node (reusing the
-/// facade's semantic-hash byte key via [`WpdaEngine::semantic_fingerprint`]).
-/// `1`/`on` enables it; `0`/`off` disables it (realize is then byte-identical
-/// to the pre-dedup behavior). Read ONCE per process (`OnceLock`, the
-/// P-series convention, mirroring [`SrSubsumeMode::from_env`]).
-///
-/// DEFAULT: **ON** (Stage 3, 2026-06-29 — flipped on once the numeric-leaf
-/// canonicalization landed, so cast-promotion-tower cohorts collapse instead of
-/// overflowing the realize frontier). Set `PRATTAIL_REALIZE_DEDUP=0`/`off` to
-/// restore the pre-dedup behavior. Even with the switch ON, engines whose
-/// `semantic_fingerprint` returns `None` (handwritten / test engines) get NO
-/// dedup, so the entire `prattail` test suite is byte-identical regardless of
-/// this switch.
-#[inline]
-fn realize_dedup_enabled() -> bool {
-    static GATE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *GATE.get_or_init(|| match std::env::var("PRATTAIL_REALIZE_DEDUP").ok().as_deref() {
-        Some("1") | Some("on") | Some("ON") | Some("On") => true,
-        Some("0") | Some("off") | Some("OFF") | Some("Off") => false,
-        // Stage 3 default ON (the explicit `PRATTAIL_REALIZE_DEDUP=0` override
-        // above restores the Stage-2 dormant behavior).
-        _ => true,
-    })
-}
+// SPPF-realize observational-dedup (2026-06-28) is now UNCONDITIONALLY ON: the
+// former `PRATTAIL_REALIZE_DEDUP` kill switch (and its off/pre-dedup arm) was
+// collapsed to its shipped default. `realize_*` always collapses observationally-
+// equivalent sub-derivations per SPPF node; engines whose `semantic_fingerprint`
+// returns `None` (handwritten / test engines) still get NO dedup. LAZY
+// fingerprinting (residual #11-3, formerly `PRATTAIL_FP_LAZY`, also always ON):
+// `dedup_push_realized` DEFERS the `semantic_fingerprint` byte-stream key until a
+// SECOND term candidate forces a comparison at a node — exact-preserving vs the
+// eager path (retro-keys the surviving prior representative when the second term
+// arrives), collapsing the single-candidate-spine `O(tokens²)` fingerprint waste.
 
-/// LAZY realize-dedup fingerprinting kill switch (residual #11-3, 2026-07-14).
-///
-/// `PRATTAIL_FP_LAZY` controls whether [`WpdaWalker::dedup_push_realized`] DEFERS
-/// the `semantic_fingerprint` byte-stream key until a SECOND term candidate
-/// actually forces a comparison at a node. Observational dedup can only ever fold
-/// when `≥2` term candidates share one SPPF node; on the deterministic spine of a
-/// deep chain EVERY node is single-candidate, so the eager per-node fingerprint
-/// (`Σ O(subtree) = O(tokens²)` byte-stream work AND, via the numeric-leaf
-/// canonicalization, `O(tokens²)` transient allocation) is pure waste. Deferring
-/// collapses that to `O(Σ over AMBIGUOUS nodes only)`.
-///
-/// EXACT-PRESERVING by construction: the first term at a node is pushed UNKEYED;
-/// the instant a second term arrives the surviving prior representative is
-/// retro-keyed and dedup proceeds byte-identically to the eager path (same
-/// first-seen-on-tie / strict-`⊕`-min winner, same `out`, same `seen`). Every
-/// call site creates `out`/`seen` fresh and populates them ONLY through
-/// `dedup_push_realized`, so at most one unkeyed term is ever pending — the
-/// retro-key is O(1).
-///
-/// DEFAULT: **ON**. Set `PRATTAIL_FP_LAZY=0`/`off` to restore the eager path
-/// verbatim (the rollback lever). Read ONCE per process (`OnceLock`, the P-series
-/// convention).
-#[inline]
-fn fp_lazy_enabled() -> bool {
-    static GATE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *GATE.get_or_init(|| match std::env::var("PRATTAIL_FP_LAZY").ok().as_deref() {
-        Some("0") | Some("off") | Some("OFF") | Some("Off") => false,
-        _ => true,
-    })
-}
-
-
-
-/// EP-P2 (Stage B) per-walker mode, read once from `PRATTAIL_EP_P2` at
-/// construction (P-series convention: never per step). Step-0 ships ONLY
-/// the no-behavior-change shadow gate (count would-refutes; refute
-/// nothing). Enforcement (`on`) is NOT part of the Step-0 D-commit — it
-/// lands with the P2 I-commit after the accept/STOP gate; until then the
-/// only modes are `Off` (default) and `Shadow`.
+/// EP-P2 (Stage B) per-walker mode. Step-0 ships ONLY the no-behavior-change
+/// shadow gate (count would-refutes; refute nothing). Enforcement (`on`) is NOT
+/// part of the Step-0 D-commit — it lands with the P2 I-commit after the
+/// accept/STOP gate; until then the only modes are `Off` (default) and `Shadow`.
+/// Every walker construction defaults to `Off`; `Shadow` is selected ONLY by
+/// directly setting the `ep_p2_mode` field (the `ep_p2_gate_fires_*` unit test
+/// exercises the shadow substrate that way). The former `PRATTAIL_EP_P2` env
+/// selector was removed when the settled parser levers were collapsed to their
+/// shipped defaults.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum EpP2Mode {
     /// No Parikh substrate built; zero overhead (the default).
@@ -290,22 +243,10 @@ enum EpP2Mode {
     /// in SHADOW: count would-refutes (partitioned by WpdaState-class ×
     /// recovery_enabled) and the soundness tripwire
     /// (`parikh_shadow_refuted_then_accepted`), but NEVER drop a cursor.
+    /// Constructed ONLY by directly setting `ep_p2_mode` (the unit test); the
+    /// non-test build never builds this variant, hence the targeted allow.
+    #[cfg_attr(not(test), allow(dead_code))]
     Shadow,
-}
-
-impl EpP2Mode {
-    /// Read `PRATTAIL_EP_P2` ONCE per walker construction. `off` (or
-    /// unset) = no substrate; `shadow` = build masks + shadow-gate. Any
-    /// other value (incl. `on`, reserved for the future I-commit) maps to
-    /// `Off` here — the Step-0 D-commit ships no enforcement path.
-    fn from_env() -> Self {
-        match std::env::var("PRATTAIL_EP_P2").ok().as_deref() {
-            Some("shadow") => EpP2Mode::Shadow,
-            // `off`, unset, and (reserved) `on` all fall to Off in the
-            // Step-0 D-commit: enforcement is not wired here.
-            _ => EpP2Mode::Off,
-        }
-    }
 }
 
 
@@ -664,7 +605,7 @@ pub trait WpdaEngine<W: SemiringRef> {
     /// The default is `None`: handwritten / test engines (e.g.
     /// [`ScriptedEngine`], [`IdleEngine`]) keep every derivation distinct, so
     /// `realize_root_to_terms_with_weights` is byte-identical for them
-    /// regardless of the `PRATTAIL_REALIZE_DEDUP` switch. Codegen overrides
+    /// regardless (observational dedup is unconditional). Codegen overrides
     /// this to downcast the term to each declared category and emit
     /// `category_discriminant ‖ term.semantic_hash(..)`.
     fn semantic_fingerprint(&self, term: &Arc<dyn Any + Send + Sync>) -> Option<Vec<u8>> {
@@ -1855,10 +1796,11 @@ pub struct WpdaWalker<W: SemiringRef, E: WpdaEngine<W>> {
     /// + drains before reaching the orphan fixpoint, e.g. the whole
     /// calculator cast corpus). Reset at the parse boundary.
     ep_p1_eoi_release: bool,
-    /// EP-P2 (Stage B) Step-0: the per-walker kill-switch mode, read once
-    /// from `PRATTAIL_EP_P2` at construction. `Off` (default) builds no
-    /// substrate; `Shadow` builds `ep_p2_suffix_masks` and runs the
-    /// obligation gate in shadow (count-only, never drops).
+    /// EP-P2 (Stage B) Step-0: the per-walker mode. `Off` (default, set at every
+    /// construction) builds no substrate; `Shadow` (selected only by directly
+    /// setting this field — the `ep_p2_gate_fires_*` unit test) builds
+    /// `ep_p2_suffix_masks` and runs the obligation gate in shadow (count-only,
+    /// never drops).
     ep_p2_mode: EpP2Mode,
     /// EP-P2 (Stage B) Step-0: per-parse forward suffix-class Parikh masks
     /// `S[pos]`, built ONCE at walker setup (`run_to_end_of_input`) under
@@ -3641,7 +3583,7 @@ struct CgllPureStats {
     /// R-A: yield twins enqueued (the classic fork-add half).
     boundary_yields: u64,
     /// R-A: source actions suppressed (classic's Advance(Unwinding)
-    /// replacement; staged behind `PRATTAIL_NO_XCAT_SUPPRESS`).
+    /// replacement; suppression is now unconditional).
     boundary_suppressed: u64,
     /// A3: multi-chain walks whose per-chain verdicts DISAGREED
     /// (yield-any vs suppress-all tension) — >0 on any green suite is a
@@ -4967,7 +4909,7 @@ pub fn peek_binary_chain(tokens: &dyn WpdaTokenSource, op_pos: usize, min_atoms:
 //
 // Behind `PRATTAIL_CHAIN_PEEK_PROBE=1` (OnceLock — a single relaxed atomic load
 // then a predictable branch on the COLD path when unset ⇒ inert/zero-cost by
-// default; the P-series convention, mirroring `realize_dedup_enabled` @:503).
+// default; the P-series OnceLock convention).
 // The thread-local `u64` counters attribute the pure-engine ternary-chain wall
 // to prove/refute the plan §1 GO/STOP signature WITHOUT perf stacks:
 //   - CHAIN_PEEK_CALLS       : # `peek_ternary_chain` invocations.
@@ -5067,9 +5009,9 @@ fn chain_probe_bump_peek_scan_steps(n: u64) {
 // `step_canonical_pure` sets the `CHAIN_PEEK_PURE_ACTIVE` RAII guard for its whole
 // run and clears the memo at entry + at the top of every recovery round (the token
 // source, a per-round `CgllRepairSource`, is the memo's stability domain). The
-// CLASSIC arm (guard unset) and the `PRATTAIL_CHAIN_PEEK_MEMO=0` rollback both take
-// the uncached ORACLE verbatim ⇒ trivially byte-identical there; classic keeps its
-// own synth-absorb path (off the pure hot loop, STEP-0 `synth_calls=0`).
+// CLASSIC arm (guard unset) takes the uncached ORACLE verbatim ⇒ trivially
+// byte-identical there; classic keeps its own synth-absorb path (off the pure hot
+// loop, STEP-0 `synth_calls=0`).
 //
 // BYTE-IDENTITY (the crux): `ChainScan` is the STRUCTURAL suffix result, decoupled
 // from `min_levels`. Its `combine(1, Malformed) = Malformed` is ABSORBING, so a
@@ -5088,20 +5030,6 @@ fn chain_probe_bump_peek_scan_steps(n: u64) {
 enum ChainScan {
     Malformed,
     Clean(u32),
-}
-
-/// `PRATTAIL_CHAIN_PEEK_MEMO` kill-switch (rollback lever). `0`/`off` restores the
-/// uncached oracle path UNCONDITIONALLY (the byte-identity oracle); DEFAULT **ON**.
-/// Read ONCE per process (`OnceLock`, the P-series convention, mirroring
-/// `realize_dedup_enabled` @:503).
-#[inline]
-fn chain_peek_memo_enabled() -> bool {
-    static GATE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *GATE.get_or_init(|| match std::env::var("PRATTAIL_CHAIN_PEEK_MEMO").ok().as_deref() {
-        Some("0") | Some("off") | Some("OFF") | Some("Off") => false,
-        // DEFAULT ON (the explicit `=0` override restores the oracle verbatim).
-        _ => true,
-    })
 }
 
 thread_local! {
@@ -5275,10 +5203,10 @@ fn chain_scan_memo(
 /// is the generated `engine_impl.rs:1763` via the fully-qualified path) ⇒ ZERO
 /// codegen change, ZERO language regen. Routes to the O(1)-amortized suffix memo
 /// ONLY under the descriptor-PURE engine (the `CHAIN_PEEK_PURE_ACTIVE` guard set
-/// by `step_canonical_pure`) and only when not killed; otherwise takes the
-/// uncached ORACLE ([`peek_ternary_chain_uncached`]) verbatim — so the CLASSIC arm
-/// and the `PRATTAIL_CHAIN_PEEK_MEMO=0` rollback are byte-identical to the
-/// pre-memo behavior. The memo maps its structural [`ChainScan`] to `bool` via
+/// by `step_canonical_pure`); otherwise takes the uncached ORACLE
+/// ([`peek_ternary_chain_uncached`]) verbatim — so the CLASSIC arm is
+/// byte-identical to the pre-memo behavior. The memo maps its structural
+/// [`ChainScan`] to `bool` via
 /// `min_levels` here (decoupling the cache from the codegen constant `2`).
 pub fn peek_ternary_chain(
     tokens: &dyn WpdaTokenSource,
@@ -5291,9 +5219,9 @@ pub fn peek_ternary_chain(
     if chain_peek_probe_enabled() {
         CHAIN_PEEK_CALLS.with(|c| c.set(c.get() + 1));
     }
-    // A1 pure-scoping + kill-switch: the CLASSIC arm (guard unset) and the
-    // rollback both take the oracle ⇒ trivially byte-identical off the pure path.
-    if !chain_peek_memo_enabled() || !chain_peek_pure_active() {
+    // A1 pure-scoping: the CLASSIC arm (guard unset) takes the oracle ⇒ trivially
+    // byte-identical off the pure path.
+    if !chain_peek_pure_active() {
         return peek_ternary_chain_uncached(tokens, trigger_pos, trigger, sep, min_levels);
     }
     match chain_scan_memo(tokens, trigger_pos, trigger, sep) {
@@ -5440,7 +5368,7 @@ where
             crosscat_lhs_visible_origins_cache: rustc_hash::FxHashMap::default(),
             crosscat_lhs_sppf_body_origins: rustc_hash::FxHashMap::default(),
             ep_p1_eoi_release: false,
-            ep_p2_mode: EpP2Mode::from_env(),
+            ep_p2_mode: EpP2Mode::Off,
             ep_p2_suffix_masks: None,
             // Option C / C2: fresh empty SPPF arena.
             sppf: crate::sppf::Sppf::new(),
@@ -5550,7 +5478,7 @@ where
             crosscat_lhs_visible_origins_cache: rustc_hash::FxHashMap::default(),
             crosscat_lhs_sppf_body_origins: rustc_hash::FxHashMap::default(),
             ep_p1_eoi_release: false,
-            ep_p2_mode: EpP2Mode::from_env(),
+            ep_p2_mode: EpP2Mode::Off,
             ep_p2_suffix_masks: None,
             // Option C / C2: fresh empty SPPF arena.
             sppf: crate::sppf::Sppf::new(),
@@ -7667,74 +7595,70 @@ where
     /// congruence, this makes per-node dedup byte-for-byte equal to
     /// root-only dedup (the output-identity theorem).
     ///
-    /// NO-OP (always pushes, returns `true`) when the `PRATTAIL_REALIZE_DEDUP`
-    /// switch is off, OR the engine returns `None` for this term
-    /// (handwritten / test engines, or a non-`Term` arg) — preserving
-    /// byte-identical realize output.
+    /// NO-OP (always pushes, returns `true`) when the engine returns `None`
+    /// for this term (handwritten / test engines, or a non-`Term` arg) —
+    /// preserving byte-identical realize output.
     fn dedup_push_realized(
         &self,
         out: &mut Vec<(ActionArg, W)>,
         seen: &mut std::collections::HashMap<Vec<u8>, usize>,
         entry: (ActionArg, W),
     ) -> bool {
-        if realize_dedup_enabled() {
-            if let ActionArg::Term { value, .. } = &entry.0 {
-                // A1 LAZY FINGERPRINTING (residual #11-3, 2026-07-14): dedup only
-                // folds when ≥2 term candidates meet at a node, so the O(subtree)
-                // `semantic_fingerprint` key is wasted on a single-candidate node
-                // (the entire deterministic spine of a deep chain). Defer keying
-                // until a SECOND term forces a comparison; single-candidate nodes
-                // then never fingerprint, collapsing the per-node Σ O(subtree) =
-                // O(tokens²) fingerprint work (time + leaked-CanonicalBigInt
-                // memory). Exact-preserving — see [`fp_lazy_enabled`]. Kill switch
-                // `PRATTAIL_FP_LAZY=0` restores the eager path below.
-                if fp_lazy_enabled() && seen.is_empty() {
-                    match out
-                        .iter()
-                        .position(|(a, _)| matches!(a, ActionArg::Term { .. }))
-                    {
-                        // No prior term representative at this node yet: this is
-                        // the FIRST term candidate. Push it UNKEYED — a
-                        // single-candidate node never computes a fingerprint.
-                        None => {
-                            out.push(entry);
-                            return true;
-                        },
-                        // A prior term already sits in `out` and `seen` is still
-                        // empty ⇒ this is the SECOND term candidate. Retro-key the
-                        // prior representative (the one the eager path would have
-                        // keyed first) so `seen` matches the eager state exactly,
-                        // then fall through to the identical keyed dedup for
-                        // `entry`. Invariant (verified at every call site): `out`
-                        // holds at most one unkeyed term when `seen` is empty, so
-                        // this fires once and is O(1).
-                        Some(first_idx) => {
-                            if let ActionArg::Term { value: prior, .. } = &out[first_idx].0 {
-                                if let Some(k0) = self.engine.semantic_fingerprint(prior) {
-                                    seen.insert(k0, first_idx);
-                                }
+        if let ActionArg::Term { value, .. } = &entry.0 {
+            // A1 LAZY FINGERPRINTING (residual #11-3, 2026-07-14): dedup only
+            // folds when ≥2 term candidates meet at a node, so the O(subtree)
+            // `semantic_fingerprint` key is wasted on a single-candidate node
+            // (the entire deterministic spine of a deep chain). Defer keying
+            // until a SECOND term forces a comparison; single-candidate nodes
+            // then never fingerprint, collapsing the per-node Σ O(subtree) =
+            // O(tokens²) fingerprint work (time + leaked-CanonicalBigInt
+            // memory). Exact-preserving vs the eager path.
+            if seen.is_empty() {
+                match out
+                    .iter()
+                    .position(|(a, _)| matches!(a, ActionArg::Term { .. }))
+                {
+                    // No prior term representative at this node yet: this is
+                    // the FIRST term candidate. Push it UNKEYED — a
+                    // single-candidate node never computes a fingerprint.
+                    None => {
+                        out.push(entry);
+                        return true;
+                    },
+                    // A prior term already sits in `out` and `seen` is still
+                    // empty ⇒ this is the SECOND term candidate. Retro-key the
+                    // prior representative (the one the eager path would have
+                    // keyed first) so `seen` matches the eager state exactly,
+                    // then fall through to the identical keyed dedup for
+                    // `entry`. Invariant (verified at every call site): `out`
+                    // holds at most one unkeyed term when `seen` is empty, so
+                    // this fires once and is O(1).
+                    Some(first_idx) => {
+                        if let ActionArg::Term { value: prior, .. } = &out[first_idx].0 {
+                            if let Some(k0) = self.engine.semantic_fingerprint(prior) {
+                                seen.insert(k0, first_idx);
                             }
-                        },
-                    }
+                        }
+                    },
                 }
-                if let Some(key) = self.engine.semantic_fingerprint(value) {
-                    match seen.get(&key).copied() {
-                        Some(idx) => {
-                            // Duplicate ≡-class: keep the `⊕`-minimal
-                            // representative (term + weight), first-seen on tie.
-                            if Self::semiring_priority_cmp(&entry.1, &out[idx].1)
-                                == std::cmp::Ordering::Less
-                            {
-                                out[idx] = entry;
-                            }
-                            return false;
-                        },
-                        None => {
-                            seen.insert(key, out.len());
-                            out.push(entry);
-                            return true;
-                        },
-                    }
+            }
+            if let Some(key) = self.engine.semantic_fingerprint(value) {
+                match seen.get(&key).copied() {
+                    Some(idx) => {
+                        // Duplicate ≡-class: keep the `⊕`-minimal
+                        // representative (term + weight), first-seen on tie.
+                        if Self::semiring_priority_cmp(&entry.1, &out[idx].1)
+                            == std::cmp::Ordering::Less
+                        {
+                            out[idx] = entry;
+                        }
+                        return false;
+                    },
+                    None => {
+                        seen.insert(key, out.len());
+                        out.push(entry);
+                        return true;
+                    },
                 }
             }
         }
@@ -9108,7 +9032,7 @@ where
         // "opens · content · closes" obligation the proper-span path proves;
         // and the prefix/suffix all-delimiter checks still reject any leading /
         // trailing non-delimiter garbage (see the fallback below).
-        let effective_lo = if root_lo == root_hi && group_collection_accept_active() {
+        let effective_lo = if root_lo == root_hi {
             self.structural_group_open_pos(tokens, root_hi)
                 .unwrap_or(root_lo)
         } else {
@@ -16254,8 +16178,7 @@ where
     /// — Advance / category_entry(source) / Unwinding / weight one) routes
     /// through the existing pure Fork-Advance arm, which enqueues the
     /// yield twin `{state: Unwinding, ..d}` — classic's exact branch
-    /// semantics. Suppression is staged behind `PRATTAIL_NO_XCAT_SUPPRESS`
-    /// (classic-exact final state = suppression ON).
+    /// semantics. Suppression is unconditional (classic-exact final state).
     #[allow(dead_code)] // Reached only under the const (DCE'd while const off).
     fn cgll_pure_guard_crosscat_boundary(
         &self,
@@ -16267,10 +16190,6 @@ where
         let boundaries = self.cgll_pure_crosscat_boundaries(run, d, tokens);
         if boundaries.is_empty() {
             return action;
-        }
-        fn suppress_lever_on() -> bool {
-            static GATE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-            *GATE.get_or_init(|| std::env::var_os("PRATTAIL_NO_XCAT_SUPPRESS").is_none())
         }
         // A3 aggregation: yield if ANY boundary yields; suppress only if
         // ALL boundaries suppress. Mixed verdicts are counted — a >0 on
@@ -16301,16 +16220,7 @@ where
                 match add {
                     None if all_suppress => {
                         run.stats.boundary_suppressed += 1;
-                        if suppress_lever_on() {
-                            WpdaStepAction::Advance(WpdaState::Unwinding)
-                        } else {
-                            WpdaStepAction::ConsumeAndPush {
-                                symbol,
-                                weight,
-                                new_state,
-                                trigger_mode,
-                            }
-                        }
+                        WpdaStepAction::Advance(WpdaState::Unwinding)
                     },
                     Some(b) => {
                         if any_suppress {
@@ -16347,16 +16257,7 @@ where
                 match add {
                     None if all_suppress => {
                         run.stats.boundary_suppressed += 1;
-                        if suppress_lever_on() {
-                            WpdaStepAction::Advance(WpdaState::Unwinding)
-                        } else {
-                            WpdaStepAction::IterativeChainAbsorb {
-                                symbol,
-                                weight,
-                                new_state,
-                                spec,
-                            }
-                        }
+                        WpdaStepAction::Advance(WpdaState::Unwinding)
                     },
                     Some(b) => {
                         if any_suppress {
@@ -16399,7 +16300,7 @@ where
                                     b,
                                     self.source_branch_satisfies_projection_target(branch, b),
                                 )
-                            }) || !suppress_lever_on()
+                            })
                         });
                         if branches.is_empty() {
                             run.stats.boundary_suppressed += 1;
@@ -16433,7 +16334,6 @@ where
                     branches.retain(|branch| {
                         !Self::fork_branch_consumes_current_token(branch)
                             || self.cgll_branch_kept_by_any_boundary(&boundaries, branch)
-                            || !suppress_lever_on()
                     });
                     run.stats.boundary_yields += 1;
                     branches.push(Self::crosscat_lhs_boundary_branch(b0.source_src_idx));
@@ -19933,22 +19833,6 @@ pub struct StepSnapshot<W: SemiringRef> {
 
 
 
-
-/// Grouped-collection EOI-accept fix gate (2026-07-08). ON by default — it FIXES
-/// a correctness bug (a grouped collection `([...])` on a LINEAR token source was
-/// wrongly rejected by the delimiter-window obligation, because a collection
-/// root's SPPF span is a DEGENERATE zero-width `[after-close, after-close]` and
-/// the window check mistook the collection's own content tokens for a
-/// non-delimiter prefix — see `WpdaWalker::semantic_root_accepts_at_cursor`). The
-/// env `PRATTAIL_NO_GROUP_COLLECTION_ACCEPT` reverts to the pre-fix behaviour
-/// WITHOUT a rebuild (causal A/B — reproduces the false-reject / the fast
-/// `@([]) <- x` auth-reject for study or perf comparison). Cached `OnceLock` —
-/// one relaxed load when consulted (only on the zero-width-root accept path).
-#[inline]
-fn group_collection_accept_active() -> bool {
-    static GATE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *GATE.get_or_init(|| std::env::var_os("PRATTAIL_NO_GROUP_COLLECTION_ACCEPT").is_none())
-}
 
 // ══════════════════════════════════════════════════════════════════════════════
 // WpdaWalker::run_with_consumer

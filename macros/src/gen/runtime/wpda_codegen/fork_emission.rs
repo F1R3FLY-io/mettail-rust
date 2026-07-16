@@ -201,6 +201,9 @@ impl ForkEmissionOrdinalModel {
     /// F1 (coordinator decision, 2026-07-14): ELECTION-INERT — value-
     /// identical to the walker-trait default (`0|2 => 0, 1|3 => 1,
     /// _ => MAX`) on EVERY input, independent of the recorded census.
+    // Consumed only by the cfg(test) value-identity / stream-shape units
+    // (fork_emission.rs + factoring.rs); dead in the non-test lib build.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn emitted_value(&self, site_kind: u8, cat: u16, rule: u16) -> u16 {
         let _ = (cat, rule);
         match site_kind {

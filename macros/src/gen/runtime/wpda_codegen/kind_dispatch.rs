@@ -1820,8 +1820,8 @@ fn emit_prefix_pushes_for_shape(
         // length` holds, the fall-through fires FIRST, and `__branches` (hence
         // this rule) is never consulted. `NULLARY_KEYWORD_LEXFORK_SEED` is the
         // A/B kill-switch (flip to `false` + rebuild to reproduce the pre-fix
-        // reserved-keyword failure with reservation still ON); the umbrella
-        // `PRATTAIL_NO_KW_RESERVE` reverts reservation itself.
+        // reserved-keyword failure with reservation still ON). Keyword
+        // reservation itself is now unconditional (derived per policy).
         AtomicShape::TerminalKeyword { terminal_text, .. } => {
             // Kill-switch `false` ⇒ pre-fix skip (byte-identical to the historical
             // no-op arm); reservation-off ⇒ inert regardless (fall-through
@@ -1856,8 +1856,8 @@ fn emit_prefix_pushes_for_shape(
 /// and rebuild to reproduce the pre-fix behavior — a reserved nullary keyword
 /// (`Nil`, `error`) fails to parse in prefix/operand position because the
 /// lex-Fork carries no rule for its own `Fixed(kw)` reading — WITH reservation
-/// still enabled, isolating this fix from the umbrella `PRATTAIL_NO_KW_RESERVE`
-/// (which reverts reservation itself). Inert without reservation regardless
+/// still enabled, isolating this fix from keyword reservation itself (now
+/// unconditional, derived per policy). Inert without reservation regardless
 /// (the fall-through pre-empts the lex-Fork), so a `false` build is byte-
 /// identical to a `true` build for every non-reserving language.
 pub(crate) const NULLARY_KEYWORD_LEXFORK_SEED: bool = true;

@@ -350,10 +350,9 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
             // also declined, so an infix-of-sends (`@Nil!(0) or @Nil!(0)`) is still
             // recovered. This short-circuits the fork-exploding walker on genuinely
             // non-parseable `@`-led spans (the exponential ROOT-1 residual). Gated on
-            // `proj_enabled` AND the master const ⇒ OFF / non-proj ⇒ empty ⇒
-            // byte-identical. Single-winner seam only (the `_all` body is untouched).
-            let sigil_reject_on =
-                proj_enabled && runtime::wpda_codegen::forks::PROJ_ISO_SIGIL_AUTHORITATIVE_REJECT;
+            // `proj_enabled` ⇒ non-proj ⇒ empty ⇒ byte-identical. Single-winner seam
+            // only (the `_all` body is untouched).
+            let sigil_reject_on = proj_enabled;
             let proj_reject_capture = if sigil_reject_on {
                 quote! {
                     let __proj_sigil_reject = __proj_sigil_reject_take();
@@ -430,9 +429,7 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
             // (`sep ∨ proj ∨ infix`) is IDENTICAL to the facade's per-category
             // `__PROJ_MEMO_<Cat>` map emission, so wrapper and map agree exactly.
             // OFF / non-eligible ⇒ the pre-memo body VERBATIM (byte-identical).
-            let iso_eligible = sep_enabled || proj_enabled || infix_enabled;
-            let memo_on =
-                runtime::wpda_codegen::forks::PROJ_ISO_BESTPARSE_MEMO && iso_eligible;
+            let memo_on = sep_enabled || proj_enabled || infix_enabled;
             let proj_memo_ident = format_ident!("__PROJ_MEMO_{}", cat);
 
             let parse_fn = format_ident!("parse_{}", cat);
@@ -772,13 +769,9 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                     /// miss it computes `parse_via_wpda_uncached` and stores the
                     /// (Ok OR Err) result — a pure function of the trimmed input,
                     /// so the memoized value is byte-identical to the un-memoized
-                    /// parse; only the recursion SHAPE (tree → DAG) changes. The
-                    /// env `PRATTAIL_NO_PROJ_MEMO` bypasses without a rebuild.
+                    /// parse; only the recursion SHAPE (tree → DAG) changes.
                     pub fn parse_via_wpda(input: &str) -> Result<#cat, ParseError> {
                         let _g = __ProjMemoGuard::enter();
-                        if __ProjMemoGuard::bypassed() {
-                            return Self::parse_via_wpda_uncached(input);
-                        }
                         let __epoch = __ProjMemoGuard::epoch();
                         let __key = input.trim();
                         if let Some(__hit) = #proj_memo_ident.with(|__cell| {
@@ -808,11 +801,9 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
 
                     /// Un-memoized WPDS parser entry — the VERBATIM pre-memo
                     /// `parse_via_wpda` body. Called by the memoized wrapper on a
-                    /// cache miss (and directly when `PRATTAIL_NO_PROJ_MEMO`
-                    /// bypasses the memo). Its isolation-recursion sub-parses
-                    /// re-enter through the memoized `parse_via_wpda`, so the
-                    /// enumerating matcher's exponential re-descent collapses to a
-                    /// polynomial DAG.
+                    /// cache miss. Its isolation-recursion sub-parses re-enter
+                    /// through the memoized `parse_via_wpda`, so the enumerating
+                    /// matcher's exponential re-descent collapses to a polynomial DAG.
                     fn parse_via_wpda_uncached(input: &str) -> Result<#cat, ParseError> {
                         #parse_via_wpda_body
                     }
