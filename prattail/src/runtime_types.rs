@@ -201,8 +201,10 @@ pub enum ParseError {
         range: Range,
     },
     /// M11.7 (2026-05-14): the walker was configured with
-    /// `CursorBoundingMode::AmbiguityBudget(budget)` and the live frontier
-    /// exceeded that budget at the indicated `position`.
+    /// `CursorBoundingMode::AmbiguityBudget(budget)` and the number of DISTINCT
+    /// REALIZED TERMS the goal admits exceeded that budget (checked whole-run at
+    /// resolve — see the `CursorBoundingMode` rustdoc). `actual` is therefore a
+    /// reading count, not a live-frontier cursor count.
     ///
     /// Distinct from `UnexpectedToken` / `UnexpectedEof` because the input
     /// IS parseable — the parser just produced more ambiguity than the

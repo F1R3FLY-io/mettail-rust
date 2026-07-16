@@ -312,26 +312,6 @@ impl EpP2Mode {
 
 
 
-/// ROOT-P canonical-GLL slot-packing redesign — MASTER compile-time gate
-/// (Stage 1 scaffolding, 2026-07-08). Design: the staged plan
-/// `$CLAUDE_JOB_DIR/tmp/root-p-redesign-plan.md` and the converged design in
-/// memory `session-2026-07-08-recognizer-cr1-rootc.md` (§"STAGE-0 VERDICT =
-/// PROCEED + DESIGN CONVERGED"). ROOT-P = parse fork-explosion; the fix merges
-/// parse cursors on the grammar SLOT and recovers dropped distinctions via SPPF
-/// packing (Scott-Johnstone/Tomita/Goodman packed forest — the data structure
-/// already exists in [`crate::sppf`]).
-///
-/// `false` (the current default) makes the ENTIRE redesign DEAD CODE. Every
-/// runtime gate is spelled `ROOTP_SLOT_PACKING_ENABLED && …` (via the
-/// [`WpdaWalker`] `rootp_*_active` helpers below), so with the const `false`
-/// the `&&` short-circuits at compile time, the optimizer drops the dormant
-/// Stage-2..4 branches, and the walker is byte-identical to the pre-redesign
-/// behavior. This mirrors the [`SEP_RECONVERGE_ENABLED`] const-gate convention.
-/// Flipping this to `true` (plan Stage 6) makes the redesign LIVE; the
-/// per-walker [`RootpMode`] kill switches then select sub-features for A/B
-/// differentials WITHOUT a recompile.
-const ROOTP_SLOT_PACKING_ENABLED: bool = false;
-
 /// ROOT-P canonical-GLL descriptor-worklist redesign — MASTER compile-time gate
 /// (Stage B scaffolding, 2026-07-09). Design: the staged plan
 /// `$CLAUDE_JOB_DIR/tmp/root-p-canonical-gll-plan.md` and memory
@@ -357,7 +337,7 @@ const ROOTP_SLOT_PACKING_ENABLED: bool = false;
 /// returning it (NOT a bare literal `true`) so the compiled-dormant classic
 /// run-loop in `run_to_end_of_input_with_accept_demand` (collapsed in a later
 /// stage) does not trip `unreachable_code`. Mirrors the
-/// [`ROOTP_SLOT_PACKING_ENABLED`] / [`SEP_RECONVERGE_ENABLED`] const-gate convention.
+/// [`SEP_RECONVERGE_ENABLED`] const-gate convention.
 const CANONICAL_GLL_ENABLED: bool = true;
 
 /// S1-FACTORING (2026-07-12): the synthetic SPINE rule-id space, mirroring
@@ -387,106 +367,6 @@ pub fn is_spine_rule_id(rule_idx: u16) -> bool {
 /// canonical realize enumerates them without seeing classic n-ary packings.
 /// `cat_src_idx` is a small `u16`, so the high bit is always free.
 const CGLL_BIN_TAG: u32 = 0x8000_0000;
-
-/// Per-walker ROOT-P sub-feature kill switches (canonical-GLL slot-packing
-/// redesign). Modeled EXACTLY on [`SrSubsumeMode`]: resolved ONCE at walker
-/// construction and stored as a per-walker field, so a parse can never flip a
-/// switch mid-flight (that would make the frontier nondeterministic). The raw
-/// env reads are additionally memoized in a process-`OnceLock` (mirroring
-/// [`sep_reconverge_active`] / [`realize_dedup_enabled`]) so the MANY
-/// per-segment walkers built by projection isolation all observe one identical,
-/// stable mode.
-///
-/// Each field is the FULLY-RESOLVED enabled state: `true` iff the master
-/// compile-time const [`ROOTP_SLOT_PACKING_ENABLED`] is `true` AND neither the
-/// master `PRATTAIL_NO_ROOTP` switch nor the sub-feature's own
-/// `PRATTAIL_NO_ROOTP_*` switch is set. The `NO_` env vars are DISABLE switches
-/// (present, any value ⇒ that feature off), so an unset switch "follows"
-/// `ROOTP_SLOT_PACKING_ENABLED`. When the const is `false` every field is
-/// `false`, and the const-led gate at each (future Stage-2..4) call site
-/// dead-code-eliminates the reader — the switches are inert in Stage 1.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-#[allow(dead_code)] // Fields read by the `rootp_*_active` gates (wired live in Stages 2-4).
-struct RootpMode {
-    /// Master A/B switch (`PRATTAIL_NO_ROOTP`). When the const is on, setting
-    /// this env var disables the WHOLE redesign (the OFF arm of an A/B run)
-    /// without a recompile. Every sub-feature is `false` when this is `false`.
-    master: bool,
-    /// Stage 2 packing-on-merge-collapse (`PRATTAIL_NO_ROOTP_PACK`): before
-    /// discarding the loser cursor on a merge, link its SPPF packing(s) under
-    /// the survivor's shared Symbol via `sppf.link_packing_to_symbol` instead of
-    /// dropping them.
-    pack: bool,
-    /// Stage 3 SLOT-merge sppf axis + shape-guard (`PRATTAIL_NO_ROOTP_SLOT_SPPF`):
-    /// merge cursors on the grammar SLOT (drop `sppf_top`/`sppf_stack` from the
-    /// merge key) and refuse to collapse shape-unequal (mod-trigger) siblings.
-    slot_sppf: bool,
-    /// Stage 3 conditional owner-masked comparison (`PRATTAIL_NO_ROOTP_LEXWEIGHT`):
-    /// treat same-`(kind,pos)` different-owner `@`-triggers as equal FOR MERGE
-    /// (owner stays ON the SPPF node) — but ONLY for rules with a leading
-    /// structural trigger; multi-step `@`-binders stay owner-distinct.
-    lexweight: bool,
-    /// Stage 4 edge-drop + exact pop fan-out (`PRATTAIL_NO_ROOTP_SLOT_EDGE`):
-    /// drop `incoming_edge`/`incoming_edge_stack` from the merge key for
-    /// CF-interchangeable categories and recover pop-routing by fanning to all
-    /// GSS predecessors (gated on the red-team #2 binder-scope side condition).
-    slot_edge: bool,
-    // CLASSIC-ENGINE SELECTION FIELDS REMOVED (2026-07-15, task #19b S1):
-    // `canonical_gll` (the `PRATTAIL_NO_CANONICAL_GLL` classic-vs-pure selector),
-    // `cgll_binarize` (the E1 binarize A/B toggle), and `cgll_hybrid` (the retired
-    // hybrid-arm request) were physically deleted with the classic engine. The
-    // descriptor-pure canonical-GLL engine is now unconditional; the readers
-    // `canonical_gll_active` / `cgll_binarize_active` / `cgll_pure_enabled` return
-    // the compile-time master const [`CANONICAL_GLL_ENABLED`] directly.
-}
-
-impl RootpMode {
-    /// Resolve every sub-feature from the environment ONCE per process
-    /// (memoized in a `OnceLock`), following [`ROOTP_SLOT_PACKING_ENABLED`] as
-    /// the default and disabling any sub-feature whose `PRATTAIL_NO_ROOTP*`
-    /// kill switch is set. Mirrors [`SrSubsumeMode::from_env`] (a per-walker
-    /// field, read once at construction) fused with the `OnceLock` single-read
-    /// convention of [`realize_dedup_enabled`].
-    fn from_env() -> Self {
-        static GATE: std::sync::OnceLock<RootpMode> = std::sync::OnceLock::new();
-        *GATE.get_or_init(|| {
-            // `PRATTAIL_NO_ROOTP*` present (any value) ⇒ that switch is DISABLED.
-            let disabled = |key: &str| std::env::var_os(key).is_some();
-            let master = ROOTP_SLOT_PACKING_ENABLED && !disabled("PRATTAIL_NO_ROOTP");
-            // CLASSIC-ENGINE LEVERS REMOVED (2026-07-15, task #19b S1): the
-            // descriptor-pure canonical-GLL engine is now the SOLE parser. The
-            // former `canonical_gll` / `cgll_binarize` / `cgll_hybrid` `RootpMode`
-            // fields and their env reads were physically deleted with the classic
-            // engine. `PRATTAIL_NO_CANONICAL_GLL` (the classic-engine A/B selector)
-            // and `PRATTAIL_CGLL_HYBRID` (the retired hybrid arm) no longer select
-            // anything; warn ONCE per process if a stale value is set so operators
-            // notice the lever is inert (mirrors the pre-removal retired-lever
-            // convention). `PRATTAIL_CGLL_PURE` / `PRATTAIL_CGLL_BINARIZE` were
-            // already no-ops (the pure+binarize state is the unconditional default).
-            if disabled("PRATTAIL_NO_CANONICAL_GLL") {
-                eprintln!(
-                    "prattail: PRATTAIL_NO_CANONICAL_GLL is ignored (the classic engine was \
-                     physically removed 2026-07-15); the descriptor-pure canonical-GLL engine \
-                     is the sole parser."
-                );
-            }
-            if disabled("PRATTAIL_CGLL_HYBRID") {
-                eprintln!(
-                    "prattail: PRATTAIL_CGLL_HYBRID is ignored (the hybrid arm was retired \
-                     2026-07-13 and the classic engine removed 2026-07-15); the descriptor-pure \
-                     canonical-GLL engine is the sole parser."
-                );
-            }
-            RootpMode {
-                master,
-                pack: master && !disabled("PRATTAIL_NO_ROOTP_PACK"),
-                slot_sppf: master && !disabled("PRATTAIL_NO_ROOTP_SLOT_SPPF"),
-                lexweight: master && !disabled("PRATTAIL_NO_ROOTP_LEXWEIGHT"),
-                slot_edge: master && !disabled("PRATTAIL_NO_ROOTP_SLOT_EDGE"),
-            }
-        })
-    }
-}
 
 /// S2-F3 (2026-07-11): one suspended activation of the iterative realize
 /// machine (see `cgll_realize_drive`). `Bin` = a `cgll_realize_bin_symbol`
@@ -567,10 +447,10 @@ enum CgllElemStage {
 /// Statically reachable via the classic-root fallback in
 /// `cgll_resolve_binarized` (the non-BIN-root arm); runtime-exercised only
 /// under the RETIRED arms — pure roots take the BIN-tag passthrough.
-/// (Q1-isolation was retired 2026-07-11 by the R5-BUG fix in
-/// `RootpMode::from_env`; the `PRATTAIL_CGLL_HYBRID` arm was retired
-/// 2026-07-13. Converted for completeness: deep chains under those arms
-/// would overflow.)
+/// (Q1-isolation was retired 2026-07-11 by the R5-BUG fix in the ROOT-P mode
+/// resolver — itself removed with the ROOT-P scaffolding in S6; the
+/// `PRATTAIL_CGLL_HYBRID` arm was retired 2026-07-13. Converted for
+/// completeness: deep chains under those arms would overflow.)
 #[allow(dead_code)] // Reached only under the const (DCE'd while const off).
 enum CgllBinarizeFrame {
     Sym {
@@ -694,86 +574,7 @@ impl<W: crate::automata::semiring::StarSemiringRef> CgllKTuple<W> {
     }
 }
 
-/// ROOT-P Stage 4c fan-out gate MODE (2026-07-08). Selects WHICH edge-dropped
-/// multi-predecessor pops fan out. Read once per process from
-/// `PRATTAIL_ROOTP_FAN_MODE` (default `All`). A diagnostic A/B lever: the plan's
-/// design is `All` (fan every edge-dropped multi-pred pop), but that re-expands
-/// the deep-`@` `@`-attribution multiplicity the Stage-4b edge-drop collapsed
-/// (each predecessor child lands at a DISTINCT GSS node ⇒ they do not re-merge
-/// ⇒ frontier blow-up). `Coll` restricts the fan to pops with a live collection
-/// accumulator (`collection_stack_depth > 0`) — the `@a!(0,1)` polyadic-send /
-/// wrapped-body reconnection cases (Stage-4a finding #4: the "edge-dependent
-/// reconnection" property) — while deep-`@` single-payload sends fall through to
-/// the single-edge pop that Stage-4b alone already keeps reading-exact.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum RootpFanMode {
-    /// No fan — Stage-4b edge-drop with the single recorded-edge pop. Isolates
-    /// 4b to confirm it preserves the deep-`@` ladder on its own (Stage-4a).
-    Off,
-    /// Fan every edge-dropped ≥2-predecessor pop (the plan's literal design).
-    All,
-    /// Fan only when a collection accumulator is live (`collection_stack_depth >
-    /// 0`) — the targeted reconnection gate.
-    Coll,
-}
-
-/// Resolve [`RootpFanMode`] once per process from `PRATTAIL_ROOTP_FAN_MODE`
-/// (`off` | `all` | `coll`; default `all`). `OnceLock`-memoized so every
-/// projection-isolation sub-walker observes one stable mode.
-#[inline]
-fn rootp_fan_mode() -> RootpFanMode {
-    static MODE: std::sync::OnceLock<RootpFanMode> = std::sync::OnceLock::new();
-    *MODE.get_or_init(|| match std::env::var("PRATTAIL_ROOTP_FAN_MODE").as_deref() {
-        Ok("off") => RootpFanMode::Off,
-        Ok("coll") => RootpFanMode::Coll,
-        _ => RootpFanMode::All,
-    })
-}
-
-// ROOT-P Stage-1 gate helpers. Each ANDs the compile-time master const with the
-// per-walker [`RootpMode`] kill switch. With `ROOTP_SLOT_PACKING_ENABLED`
-// `false` (Stage 1) the leading const short-circuits at compile time, so every
-// call site is dead-code-eliminated and the walker stays byte-identical.
-// `#[inline(always)]` guarantees the const folds through at the call site. Each
-// helper is `allow(dead_code)` until the stage that wires its first caller
-// (mirroring the `sppf`-arena field convention at the `sppf:` field).
 impl<W: SemiringRef, E: WpdaEngine<W>> WpdaWalker<W, E> {
-    /// Master gate: is the ROOT-P redesign live at all?
-    #[allow(dead_code)] // Stage 2 wires the first caller.
-    #[inline(always)]
-    fn rootp_active(&self) -> bool {
-        ROOTP_SLOT_PACKING_ENABLED && self.rootp_mode.master
-    }
-
-    /// Stage 2 gate — packing-on-merge-collapse (link loser packings, don't drop).
-    #[allow(dead_code)] // Stage 2 wires the first caller.
-    #[inline(always)]
-    fn rootp_pack_active(&self) -> bool {
-        ROOTP_SLOT_PACKING_ENABLED && self.rootp_mode.pack
-    }
-
-    /// Stage 3 gate — SLOT-merge sppf axis + shape-guard.
-    #[allow(dead_code)] // Stage 3 wires the first caller.
-    #[inline(always)]
-    fn rootp_slot_sppf_active(&self) -> bool {
-        ROOTP_SLOT_PACKING_ENABLED && self.rootp_mode.slot_sppf
-    }
-
-    /// Stage 3 gate — conditional owner-masked comparison (lex→weight).
-    #[allow(dead_code)] // Stage 3 wires the first caller.
-    #[inline(always)]
-    fn rootp_lexweight_active(&self) -> bool {
-        ROOTP_SLOT_PACKING_ENABLED && self.rootp_mode.lexweight
-    }
-
-    /// Stage 4 gate — edge-drop + exact pop fan-out.
-    #[allow(dead_code)] // Stage 4 wires the first caller.
-    #[inline(always)]
-    fn rootp_slot_edge_active(&self) -> bool {
-        ROOTP_SLOT_PACKING_ENABLED && self.rootp_mode.slot_edge
-    }
-
-
     /// Is the BINARIZED `getNodeP` SPPF construction + canonical realize live?
     /// Returns the compile-time master const [`CANONICAL_GLL_ENABLED`] (currently
     /// `true`) UNCONDITIONALLY: the `cgll_binarize` A/B toggle field was removed
@@ -1904,17 +1705,6 @@ pub struct WpdaWalker<W: SemiringRef, E: WpdaEngine<W>> {
     /// (the edge-stack cross-product is never materialized). The real parse
     /// leaves this `false` ⇒ byte-identical. Set via `set_recognizer_mode`.
     recognizer_mode: bool,
-    /// Set to `true` ONLY while stepping a NON-canonical fanned-pop child (an
-    /// "extra" out-edge beyond the cursor's own recorded edge). Gates the
-    /// cohort-RESOLVE writes (CrossCatProjection / CrossCatLhs `live_lineages`
-    /// decrement + resolve / CrossCatLhsReentry resolve, and the
-    /// `emit_fire_action` body-origin resolves) so an extra child does not
-    /// double-decrement lineages, overflow the snapshot cap, or pollute the
-    /// cohort cache. Control-flow (node/pos/state/collection-depth) is left
-    /// intact, so the extra still explores its pop target — over-approximation
-    /// only, never under (soundness-preserving). Always `false` outside a
-    /// recognizer fanned pop ⇒ byte-identical to the real parse.
-    pop_fanout_suppress_resolve: bool,
     /// Stage 7+ Fork plan, step 2: per-branch micro-state during
     /// `WpdaState::AmbiguityFanout`. Each entry is a `BranchCursor` that
     /// pairs a GSS-tip node id with the branch's own `pos`, accumulated
@@ -2125,13 +1915,6 @@ pub struct WpdaWalker<W: SemiringRef, E: WpdaEngine<W>> {
     /// Read O(1) by the shadow gate at the three check sites
     /// (`ParikhObligationGate.v` `S` relation).
     ep_p2_suffix_masks: Option<crate::suffix_classes::SuffixClassMasks>,
-    /// ROOT-P canonical-GLL slot-packing redesign kill switches, resolved once
-    /// from the environment at construction (P-series convention; see the
-    /// [`RootpMode`] and [`ROOTP_SLOT_PACKING_ENABLED`] docs). Written by every
-    /// constructor; READ only by the `rootp_*_active` gate helpers, which are
-    /// dead code while the master const is `false` (Stage 1) ⇒ byte-identical.
-    #[allow(dead_code)] // Stages 2-4 wire the first readers via `rootp_*_active`.
-    rootp_mode: RootpMode,
     /// Option C / C2 (2026-05-15): the walker-owned Shared Packed Parse
     /// Forest arena. Cursors carry `SppfId` handles into this arena rather
     /// than per-cursor AST builders; the arena is the central, shared,
@@ -5715,7 +5498,6 @@ where
             single_result_demand: false,
             deterministic: true,
             recognizer_mode: false,
-            pop_fanout_suppress_resolve: false,
             branch_cursors: vec![crate::cohort_lazy::Frame::Concrete(initial_cursor)],
             step_counter: 0,
             recovery_events: Vec::new(),
@@ -5739,9 +5521,6 @@ where
             ep_p1_eoi_release: false,
             ep_p2_mode: EpP2Mode::from_env(),
             ep_p2_suffix_masks: None,
-            // ROOT-P slot-packing redesign kill switches (Stage 1 scaffolding;
-            // inert while `ROOTP_SLOT_PACKING_ENABLED` is `false`).
-            rootp_mode: RootpMode::from_env(),
             // Option C / C2: fresh empty SPPF arena.
             sppf: crate::sppf::Sppf::new(),
             sppf_predicate_arena: Vec::new(),
@@ -5830,7 +5609,6 @@ where
             single_result_demand: false,
             deterministic: true,
             recognizer_mode: false,
-            pop_fanout_suppress_resolve: false,
             branch_cursors: vec![crate::cohort_lazy::Frame::Concrete(initial_cursor)],
             step_counter: 0,
             recovery_events: Vec::new(),
@@ -5854,9 +5632,6 @@ where
             ep_p1_eoi_release: false,
             ep_p2_mode: EpP2Mode::from_env(),
             ep_p2_suffix_masks: None,
-            // ROOT-P slot-packing redesign kill switches (Stage 1 scaffolding;
-            // inert while `ROOTP_SLOT_PACKING_ENABLED` is `false`).
-            rootp_mode: RootpMode::from_env(),
             // Option C / C2: fresh empty SPPF arena.
             sppf: crate::sppf::Sppf::new(),
             sppf_predicate_arena: Vec::new(),
@@ -7016,22 +6791,6 @@ where
                 .unwrap_or(false)
             {
                 eprintln!("{}", self.stats);
-            }
-            // ROOT-P Stage 2/3 acceptance signal (2026-07-08): the packing-link
-            // counters, on a CHEAP dedicated env (`ROOTP_STATS=1`) DECOUPLED from
-            // the O(N²) `GRIND_SPPF_CONTENT` content probe, so the OFF/ARM-1
-            // exponential frontier is not quadratically slowed just to read them.
-            // Expectation: OFF ⇒ all 0 (machinery DCE'd); ARM 1/2 ⇒ `link_noop`
-            // > 0 (machinery reached) and `packings_linked` == 0 (the canonical
-            // Symbol-dedup makes the link a structural no-op — reading
-            // preservation is via Symbol-sharing, delivery via frontier collapse).
-            if std::env::var_os("ROOTP_STATS").map(|v| v == "1").unwrap_or(false) {
-                eprintln!(
-                    "ROOTP-LINK packings_linked={} link_noop={} shape_refusals={}",
-                    self.stats.rootp_packings_linked_total,
-                    self.stats.rootp_link_noop_total,
-                    self.stats.rootp_shape_refusals_total,
-                );
             }
         }
         // AT_QUOTED_BIND_GATE Task-2 (session da0842dc, 2026-07-03): dump the
@@ -9881,132 +9640,6 @@ where
 
 
 
-    /// ROOT-P Stage 4c gate (2026-07-08): should THIS pop fan out over ALL GSS
-    /// predecessors with derivation-EXACT (resolve-ON) children?
-    ///
-    /// True iff the Stage-4 edge-drop is live (`rootp_slot_edge_active`), no
-    /// binder scope is currently open on the cursor (`binder_scope_marks`
-    /// empty), AND the popped node has ≥2 predecessors. This RECOMPUTES the
-    /// exact Stage-4b edge-drop condition (`rootp_slot_edge_active() &&
-    /// binder_scope_marks.is_empty()`): a cursor that dropped its edge in the
-    /// merge key merged with edge-distinct siblings, so its single recorded
-    /// edge no longer routes every collapsed lineage's pop target — the fan
-    /// reconnects them (plan §2 fact #2). With ≤1 predecessor the single-edge
-    /// pop is already exhaustive (no collapse to reconnect). The
-    /// `binder_scope_marks.is_empty()` conjunct is the red-team #2 fence: an
-    /// operand under a live binder scope carries a NON-CF continuation the GSS
-    /// (nt,lo,hi) span does not encode, so fanning it could pair it with a
-    /// scope-continuation it never entered (a spurious reading). Byte-identical
-    /// while the const is `false` (`rootp_slot_edge_active` short-circuits at
-    /// compile time ⇒ the whole predicate folds to `false` and every caller is
-    /// DCE'd).
-    #[allow(dead_code)] // Wired by the Stage-4c Pop / ConsumeAndPop handlers.
-    #[inline]
-    fn rootp_should_exact_fan_pop(&self, cursor: &BranchCursor<W>) -> bool {
-        if !(self.rootp_slot_edge_active()
-            && cursor.binder_scope_marks.is_empty()
-            && self.gss.edges_from(cursor.node).len() > 1)
-        {
-            return false;
-        }
-        // Stage 4c fan-mode gate (diagnostic A/B lever; see `RootpFanMode`).
-        match rootp_fan_mode() {
-            RootpFanMode::Off => false,
-            RootpFanMode::All => true,
-            RootpFanMode::Coll => cursor.collection_stack_depth > 0,
-        }
-    }
-
-    /// ROOT-P Stage 4c (2026-07-08): DERIVATION-EXACT canonical-GLL pop
-    /// fan-out (Scott & Johnstone 2010, §5 "the descriptor's `w` node is read
-    /// off the GSS edge at pop"; Tomita fork-on-pop over a Goodman packed
-    /// forest). Spawns one child per out-edge of `cursor_snapshot.node`, each
-    /// running the caller's full post-pop body through `per_edge`.
-    ///
-    /// ★ WHERE DERIVATION-EXACTNESS COMES FROM (data-driven refinement, 2026-
-    /// 07-08). The plan asked for "resolve ON per child"; running it that way
-    /// (`pop_fanout_suppress_resolve = false` for ALL children) BREAKS the
-    /// deep-`@` battery (`@Nil!(@(@Nil)!())` → "parse incomplete at position 1";
-    /// deeper nests HANG). Root cause: `pop_fanout_suppress_resolve` does NOT
-    /// gate the SPPF packing build — `apply_pop_body_to_cursor`'s
-    /// `emit_fire_action` (`intern_packing` + `link_packing_to_symbol`) runs
-    /// UNCONDITIONALLY, so every predecessor child already contributes its
-    /// packing to the shared `(nt,lo,hi)` Symbol. What the flag gates is the
-    /// dispatch-COHORT sharing side effects (`WorkerSnapshot` accumulation in
-    /// `cursor_gss_pop_via_edge_id`; cross-cat body-origin recording at
-    /// `record_crosscat_lhs_body_origins_for_sppf_id` / `resolve_crosscat_lhs_*`).
-    /// Those are keyed by the DISPATCH position, not by derivation; duplicating
-    /// them across the fan's non-canonical predecessors accumulates redundant
-    /// snapshots (→ `paused × snapshots` blow-up = the HANG) and records
-    /// body-origins for the WRONG predecessor (→ polluted paused-member revival
-    /// = the "parse incomplete"; see the guard comment at
-    /// `record_crosscat_lhs_body_origins_for_sppf_id`).
-    ///
-    /// So the correct EXACT fan keeps the resolve/cohort writes ON for the
-    /// CANONICAL child only (registers each dispatch's worker snapshot ONCE,
-    /// exactly as the non-fan single-edge pop does) and SUPPRESSES them on the
-    /// extras — while `emit_fire_action` still builds every extra's packing.
-    /// This mirrors [`Self::recognizer_fan_pop`]'s resolve handling; the
-    /// reading-EXACTNESS (vs the recognizer's reachability over-approximation)
-    /// comes NOT from the resolve flag but from the caller's merge surface —
-    /// `MergeKey::RootpSlot` with the full masked-shape recheck + Stage-2
-    /// packing-link + Stage-4b edge-drop — which merges cursors on the exact
-    /// GLL SLOT (+shape) rather than the recognizer's coarse `Slot` key. It is
-    /// the pop-side dual of the merge-time [`Self::link_symbol_packings`] (which
-    /// unions the collapsed losers' operand packings under the survivor's
-    /// operand Symbol before this fan runs) — together they retain every
-    /// derivation exactly.
-    ///
-    /// Returns `ForkInto(children)` and flips `deterministic = false` (the
-    /// Fork-action contract the `ForkInto` handlers in `apply_action` /
-    /// `step_fanout` expect). Byte-identical while the const is `false` (only
-    /// reachable from callers gated on `rootp_should_exact_fan_pop`).
-    #[allow(dead_code)] // Wired by the Stage-4c Pop / ConsumeAndPop handlers.
-    fn rootp_exact_fan_pop(
-        &mut self,
-        cursor_snapshot: BranchCursor<W>,
-        per_edge: impl Fn(
-            &mut Self,
-            BranchCursor<W>,
-            Option<crate::gss::GssEdgeId>,
-        ) -> Option<BranchCursor<W>>,
-    ) -> CursorOutcome<W> {
-        let node = cursor_snapshot.node;
-        let canonical = self
-            .incoming_edge_stack_arena
-            .top(cursor_snapshot.incoming_edge_stack_id);
-        let n_edges = self.gss.edges_from(node).len();
-        let mut children: Vec<BranchCursor<W>> = Vec::with_capacity(n_edges);
-        // Canonical child first: resolve/cohort writes ON (byte-identical to the
-        // single-edge pop — registers each dispatch's snapshot exactly once).
-        // `emit_fire_action` (the SPPF packing build) runs on EVERY child
-        // regardless of this flag, so extras still contribute their derivation.
-        let saved_suppress = self.pop_fanout_suppress_resolve;
-        self.pop_fanout_suppress_resolve = false;
-        if let Some(c) = per_edge(self, cursor_snapshot.clone(), canonical) {
-            children.push(c);
-        }
-        // Extra predecessors: SPPF packing ON, dispatch-cohort resolve writes
-        // SUPPRESSED. Duplicating the cohort/body-origin writes across
-        // predecessors pollutes paused-member revival and blows up the
-        // `paused × snapshots` cohort fan (the deep-`@` hang / "incomplete").
-        if canonical.is_some() {
-            self.pop_fanout_suppress_resolve = true;
-            for i in 0..n_edges {
-                let eid = crate::gss::pack_edge_id(node, i);
-                if Some(eid) == canonical {
-                    continue;
-                }
-                if let Some(c) = per_edge(self, cursor_snapshot.clone(), Some(eid)) {
-                    children.push(c);
-                }
-            }
-        }
-        self.pop_fanout_suppress_resolve = saved_suppress;
-        self.deterministic = false;
-        crate::stats_inc!(self, rootp_exact_fan_pops_total);
-        CursorOutcome::ForkInto(children)
-    }
 
 
 

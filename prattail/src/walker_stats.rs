@@ -890,45 +890,12 @@ pub struct WalkerStats {
     /// pop-targets AGREE (a sound share).
     pub dw_count_agreements: u64,
 
-    // ── ROOT-P Stage 2 packing-on-merge acceptance signal (2026-07-08) ─────────
-    /// Total SPPF packings linked under a SURVIVOR Symbol on a merge-collapse
-    /// (`merge_equivalent_cursors` §A, or the Tomita arc-mirror §C) via
-    /// `link_symbol_packings`. This counts only the packings linked when the
-    /// survivor and loser tops are DISTINCT `SppfId`s (the loop body). While the
-    /// SLOT-merge sppf axis (B1, `rootp_slot_sppf_active`) is OFF, two cursors/
-    /// arcs collapse ONLY when they carry the IDENTICAL `sppf_stack_id` ⇒ the
-    /// same top Symbol ⇒ `survivor_top == loser_top` ⇒ the link early-returns and
-    /// this stays `0`. `rootp_packings_linked_total == 0` is therefore the crisp
-    /// Stage-2 "machinery is inert / provable no-op" acceptance signal.
-    pub rootp_packings_linked_total: u64,
-    /// `link_symbol_packings` calls that early-returned because
-    /// `survivor_top == loser_top` (a provable no-op — the same Symbol). Expected
-    /// to be `> 0` in every arm (the dormant-until-B1 path fires it on every
-    /// collapse); tracked to distinguish "machinery never reached" (both 0) from
-    /// "machinery reached but no-op" (noop > 0, linked == 0).
-    pub rootp_link_noop_total: u64,
-    /// `merge_equivalent_cursors` Occupied-arm collapses REFUSED by the §B1
-    /// full-structural shape recheck (`rootp_slot_sppf_active`): the two cursors
-    /// shared a `MergeKey::RootpSlot` bucket (equal SLOT + equal `shape_fp`) but
-    /// their actual masked-ident stack chains differed (a `shape_fp` hash
-    /// collision), so the loser was pushed as a fresh survivor instead of being
-    /// dropped. Guarantees L-SHAPE unconditionally (a `u64` collision can never
-    /// drop a reading). Expected astronomically rare (near-0).
-    pub rootp_shape_refusals_total: u64,
-    /// ROOT-P Stage 4c: number of pops routed through the derivation-EXACT
-    /// canonical-GLL fan-out (`rootp_exact_fan_pop`) rather than the single
-    /// recorded-edge pop. Non-zero iff the Stage-4 edge-drop is live
-    /// (`rootp_slot_edge_active`) and an edge-dropped cursor popped a
-    /// ≥2-predecessor GSS node with no live binder scope. `0` while the const
-    /// is `false` (the fan is unreachable) — the crisp "Stage-4c inert" signal.
-    pub rootp_exact_fan_pops_total: u64,
     /// ROOT-P EXACT-FAN A1 measurement (`PRATTAIL_CGLL_FAN_MEASURE`, 2026-07-09):
     /// number of `Pop` reduce sites at which the READ-ONLY exact-fan counting
     /// pass ran in `step_canonical`'s reduce-reconnection block. The coarse fan
     /// (`cgll_slot_fan_pop`) still runs UNCHANGED at each such site — this pass
     /// only OBSERVES (`C_coarse` vs `C_exact = gll_edges_by_slot(cat,lo)`), so a
-    /// measurement build reverts byte-identical. Mirrors
-    /// `rootp_exact_fan_pops_total`; non-zero only under the const +
+    /// measurement build reverts byte-identical. Non-zero only under the const +
     /// `PRATTAIL_CGLL_FAN_MEASURE` (and only in a `walker-stats` build — the whole
     /// `stats` field is feature-gated, so adding this is byte-identical for the
     /// default build). The DECISIVE readings are the `CGLL-FANMEASURE` stderr

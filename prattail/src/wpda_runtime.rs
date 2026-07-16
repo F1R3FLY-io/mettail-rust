@@ -994,41 +994,35 @@ pub enum WpdaResolveResult<W: SemiringRef> {
 /// replaces the prior `with_beam_size(k)` API; the legacy methods are
 /// retained as compatibility shims.
 ///
-/// **Two-engine enforcement — the quantity DIFFERS by engine** (R-D A1,
-/// task #18, 2026-07-15; supersedes the R-D v3 first-fork-window scope):
+/// **Enforcement — the distinct-reading budget** (R-D A1, task #18,
+/// 2026-07-15; supersedes the R-D v3 first-fork-window scope):
 ///
-/// - **Pure (`step_canonical_pure`, the production default).** The budget is
-///   enforced WHOLE-RUN at resolve (`cgll_resolve_binarized`) as the count of
-///   DISTINCT REALIZED TERMS the goal admits — `|R|_distinct`, the number of
-///   observationally-inequivalent readings the `_all` facade would return
-///   (same semantic-key surface: `WpdaEngine::semantic_fingerprint` ≡ the
-///   facade's `__mettail_wpda_semantic_key`, the output-identity theorem).
-///   The parse runs to completion; the resolve loop folds every accepting
-///   root's realized terms into ONE shared dedup set and emits a structured
-///   `WpdaResolveResult::AmbiguityBudget` the moment `|R|_distinct > n`
-///   (strict `>`). There is NO window and NO frontier estimate: an input with
-///   a wide TRANSIENT fan that reconverges to `k <= n` readings is Ok (e.g. a
-///   cast tower whose ~110 derivations collapse to one term), and an input
-///   whose ambiguity emerges only late is still caught (no post-window gap).
-///   `actual` on the pure error is therefore a READING count, not a cursor
-///   count; `frontier_ess_x1000` is 0 (no live frontier to weight).
+/// The budget is enforced by the descriptor-pure engine (`step_canonical_pure`,
+/// the sole parser) WHOLE-RUN at resolve (`cgll_resolve_binarized`) as the count
+/// of DISTINCT REALIZED TERMS the goal admits — `|R|_distinct`, the number of
+/// observationally-inequivalent readings the `_all` facade would return (same
+/// semantic-key surface: `WpdaEngine::semantic_fingerprint` ≡ the facade's
+/// `__mettail_wpda_semantic_key`, the output-identity theorem). The parse runs
+/// to completion; the resolve loop folds every accepting root's realized terms
+/// into ONE shared dedup set and emits a structured
+/// `WpdaResolveResult::AmbiguityBudget` the moment `|R|_distinct > n` (strict
+/// `>`). There is NO window and NO frontier estimate: an input with a wide
+/// TRANSIENT fan that reconverges to `k <= n` readings is Ok (e.g. a cast tower
+/// whose ~110 derivations collapse to one term), and an input whose ambiguity
+/// emerges only late is still caught (no post-window gap). `actual` on the error
+/// is therefore a READING count, not a cursor count; `frontier_ess_x1000` is 0
+/// (no live frontier to weight).
 ///
-/// - **Classic lever (`PRATTAIL_NO_CANONICAL_GLL=1`).** Unchanged: the budget
-///   is enforced MID-PARSE by `maybe_prune_frontier`, which compares
-///   `logical_frontier_len` (live cursor/cohort count) against `n`. This is a
-///   DIFFERENT quantity — a transient fan width, which routes some
-///   cross-category delegate work through the dispatch-cohort worker table
-///   that `logical_frontier_len` never counts (the documented blind spot).
-///   So the two engines can disagree on the same input (pure Ok / classic
-///   Err) when the frontier momentarily exceeds `n` but the distinct-reading
-///   count does not. The classic lever is a recompile-free diagnostic path,
-///   slated for removal in a separate follow-on (#19), after which the pure
-///   semantics above are the sole definition.
+/// (Historical: before the S1-S6 single-engine re-platform, 2026-07-15, a
+/// classic diagnostic engine enforced this budget MID-PARSE against a live
+/// cursor/cohort frontier length — a genuinely different quantity, so the two
+/// engines could disagree on the same input. That engine and its recompile-free
+/// lever were removed; the distinct-reading semantics above are now the sole
+/// definition.)
 ///
-/// Both engines surface the overflow through the same
-/// `WpdaResolveResult::AmbiguityBudget { budget, actual, position,
-/// frontier_ess_x1000 }` variant and the engine-neutral render "ambiguity
-/// budget {budget} exceeded (actual {actual})".
+/// The overflow is surfaced through the `WpdaResolveResult::AmbiguityBudget {
+/// budget, actual, position, frontier_ess_x1000 }` variant and the render
+/// "ambiguity budget {budget} exceeded (actual {actual})".
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CursorBoundingMode {
     /// Default — pure ambiguity preservation; no cursor dropping.
@@ -1073,8 +1067,10 @@ impl std::error::Error for WpdaMaxStepsExceeded {}
 
 /// Reason a checkpoint is being recorded.
 ///
-/// Used by `WpdaIncrementalSession` (Stage 5) to decide which checkpoints to
-/// retain when memory pressure rises.
+/// Tags why a checkpoint was taken so a checkpoint cache can decide which to
+/// retain under memory pressure. (The Stage-5 `WpdaIncrementalSession` that
+/// consumed this was removed in the S1-S6 single-engine re-platform; the enum
+/// is retained for the checkpoint API.)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CheckpointReason {
     /// Periodic checkpoint at fixed interval (LSP token-level snapshots).
@@ -1090,9 +1086,11 @@ pub enum CheckpointReason {
 
 /// A WPDS configuration snapshot suitable for checkpointing or replay.
 ///
-/// Generic over weight type `W`. Stage 5's `WpdaIncrementalSession` uses
-/// `BTreeMap<usize, WpdaConfiguration<LexicographicWeight>>` for its
-/// checkpoint cache.
+/// Generic over weight type `W`. Still produced live by
+/// `WpdaWalker::current_configuration`. (The Stage-5 `WpdaIncrementalSession`
+/// checkpoint cache that keyed these by position in a
+/// `BTreeMap<usize, WpdaConfiguration<LexicographicWeight>>` was removed in the
+/// S1-S6 single-engine re-platform.)
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WpdaConfiguration<W: SemiringRef> {
     /// Token position at the time of snapshot.

@@ -368,10 +368,11 @@ pub enum SppfNode<W: SemiringRef> {
 
 /// Truncation watermarks for restoring the SPPF arena to a prior state.
 ///
-/// Used by `WpdaIncrementalSession` (plan §11) to support LSP-style
-/// incremental reparse. The append-only arena invariant guarantees that
-/// truncating the three vectors to these lengths produces exactly the state
-/// the arena was in when the checkpoint was recorded.
+/// Supports LSP-style incremental reparse: the append-only arena invariant
+/// guarantees that truncating the three vectors to these lengths produces
+/// exactly the state the arena was in when the checkpoint was recorded. (The
+/// Stage-5 `WpdaIncrementalSession` that drove this reparse was removed in the
+/// S1-S6 single-engine re-platform.)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SppfCheckpoint {
     /// Length of the `nodes` Vec at checkpoint time.
