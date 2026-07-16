@@ -184,10 +184,9 @@ fn test_right_assoc_chain_1000() {
     assert!(result.is_ok(), "1000 right-assoc ops should parse: {:?}", result.err());
 }
 
+// Right-assoc chain of 10k ops; parses in ~1.1s on the descriptor-pure engine
+// (was a BranchCursor::clone memory ceiling pre-flip). ACTIVE regression guard.
 #[test]
-#[ignore = "Architectural ceiling: same root cause as \
-    test_left_assoc_chain_10000 above (BranchCursor::clone per-step \
-    churn dominates). Re-enable in same conditions."]
 fn test_right_assoc_chain_10000() {
     mettail_runtime::clear_var_cache();
     let input = right_assoc_chain(10_000);

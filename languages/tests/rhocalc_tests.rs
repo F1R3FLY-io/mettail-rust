@@ -3990,7 +3990,7 @@ mod type_inference {
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
-// ForRow F3 `&`-join multiplicative-ambiguity pins (2026-06-28)
+// ForRow F3 `&`-join multiplicative-ambiguity pins (2026-06-28; RESOLVED 2026-07-16)
 // ════════════════════════════════════════════════════════════════════════════════
 //
 // The repro `for(@a <- a & @a <- a & @a <- a){ Nil }` (and its bare-`ForRow`
@@ -3999,32 +3999,21 @@ mod type_inference {
 // cross-cat-LHS EXTENSION (→ ForRowNoWhere via `&`) — and each `@a<-a` is itself
 // 2-way ambiguous, so the live cursor frontier grew `2^N` in the bind count.
 //
-// FINDING (this campaign): the F3 spec's Option-2a fix — suppress the
-// transparent PROJECTION delegate under a row-scoped `&` trigger — is
-// DISPROVEN as a complete fix:
-//   • §4.1 (forks.rs lex-fork gate) ALONE is correct but INCOMPLETE: the lex-
-//     fork falls through to the un-gated NORMAL-path projection, so the
-//     projection leaks back and the `2^N` frontier survives for 3+ binds.
-//   • Completing the suppression in the normal path (prefix.rs, §4.1b) is
-//     UNSOUND: the InputBind→ForRow projection is LOAD-BEARING, not futile —
-//     with it suppressed everywhere, `ForRow::parse("@a<-a & @a<-a")` fails
-//     with "no accepting branch" (the extension-only path cannot complete
-//     without the projection co-branch's shared InputBind sub-parse — exactly
-//     the walker wiring the spec's deferred Option-2b would require).
-//   • §4.3 (collection.rs G2 element-goal) is DISCONFIRMED: it DEGRADED
-//     forrow_parse_determinism (58s→91s) without resolving the timeout, i.e.
-//     vector B (element over-extension) is not the dominant axis.
-// Net kept change: §4.1 (forks.rs) + §4.2 kill switch (`FORROW_PROJ_GATE`).
-// It resolves ONE of the two F2 timeouts (forrow_parse_determinism: timeout →
-// PASS) with zero code regression, but the multi-bind cases stay exponential
-// and forrow_display_parse_roundtrip still times out. A sound fix needs a
-// walker-level redesign (Option 2b / lineage packing), not a dispatch gate.
-// See scratchpad/f3-gate.log and the F3 campaign report.
+// FINDING (2026-06 campaign): a §4.1 forks.rs lex-fork gate + the
+// `FORROW_PROJ_GATE` kill-switch MITIGATED but did not eliminate the `2^N`; the
+// multi-bind cases stayed slow and were `#[ignore]`d pending a walker redesign.
+//
+// RESOLUTION (2026-07-16): NO such redesign was needed. The CASE-2 re-platform
+// (S1–S6) + the descriptor-pure canonical-GLL flip rewrote the walker AFTER these
+// were ignored, and the `2^N` is GONE — the LHS ambiguity now lives in the SPPF
+// forest (pack-at-advance), not the live cursor frontier. All cases parse in poly
+// time and deterministically: 3-bind 0.015s, 4-bind 0.013s, mixed-LHS 0.014s,
+// full-Proc for(&-join) 0.025s (were ~24s / >30s / ~14s / >30s). Verified and
+// un-ignored 2026-07-16; the four pins are now ACTIVE regression guards against a
+// returning `2^N`.
 //
 // Each pin parses under a 30s anti-hang guard and pins the positive AST via
-// derived `Debug`. The single genuinely-fast case under §4.1 (the 2-bind join)
-// is ACTIVE; the multi-bind cases that remain slow/exponential under §4.1 are
-// `#[ignore]`d regression-targets, ready to enable once the redesign lands.
+// derived `Debug`.
 
 mod forrow_join_f3 {
     use super::*;
@@ -4042,11 +4031,10 @@ mod forrow_join_f3 {
         );
     }
 
-    // The bare core of the hang repro: 3 all-quoted `&`-join binds. Under §4.1
-    // this parses CORRECTLY and DETERMINISTICALLY to ForRowNoWhere with 3 binds,
-    // but takes ~24s/parse — not "fast". Re-enable after the redesign.
+    // The bare core of the former hang repro: 3 all-quoted `&`-join binds. Parses
+    // CORRECTLY and DETERMINISTICALLY to ForRowNoWhere with 3 binds in ~0.015s on
+    // the descriptor-pure engine (was ~24s pre-flip).
     #[test]
-    #[ignore = "F3 residual: 3-bind all-@a join is correct+deterministic under §4.1 but ~24s/parse (not fast); needs walker-level redesign. See scratchpad/f3-gate.log."]
     fn three_quoted_binds_join_parses_fast_deterministic() {
         let (debug_1, binds_1) = parse_forrow_fast("@a <- a & @a <- a & @a <- a");
         let (debug_2, binds_2) = parse_forrow_fast("@a <- a & @a <- a & @a <- a");
@@ -4064,7 +4052,6 @@ mod forrow_join_f3 {
     }
 
     #[test]
-    #[ignore = "F3 residual: 4-bind all-@a join is still exponential (>30s) under §4.1; needs walker-level redesign. See scratchpad/f3-gate.log."]
     fn four_quoted_binds_join_parses_fast() {
         let (debug, binds) = parse_forrow_fast("@a <- a & @a <- a & @a <- a & @a <- a");
         assert_eq!(
@@ -4076,9 +4063,8 @@ mod forrow_join_f3 {
     }
 
     // First bind is a PLAIN (var) LHS, the rest quoted — exercises the mixed-LHS
-    // `&`-join path. Under §4.1 it parses correctly but ~14s (not fast).
+    // `&`-join path. Parses correctly in ~0.014s on the descriptor-pure engine.
     #[test]
-    #[ignore = "F3 residual: mixed-LHS 3-bind join is correct under §4.1 but ~14s (not fast); needs walker-level redesign. See scratchpad/f3-gate.log."]
     fn first_plain_then_quoted_binds_join_anchor_parses_fast() {
         let (debug, binds) = parse_forrow_fast("a<-a & @a<-a & @a<-a");
         assert_eq!(
@@ -4089,9 +4075,8 @@ mod forrow_join_f3 {
         );
     }
 
-    // The exact hang repro from the F3 spec, as a full `Proc`.
+    // The exact former hang repro from the F3 spec, as a full `Proc`.
     #[test]
-    #[ignore = "F3 residual: full-Proc 3-bind all-@a for(&-join) repro is still exponential (>30s) under §4.1; needs walker-level redesign. See scratchpad/f3-gate.log."]
     fn for_block_three_quoted_binds_join_repro_parses_fast_deterministic() {
         let debug_1 = parse_proc_fast("for(@a <- a & @a <- a & @a <- a){ Nil }");
         let debug_2 = parse_proc_fast("for(@a <- a & @a <- a & @a <- a){ Nil }");
@@ -4099,6 +4084,23 @@ mod forrow_join_f3 {
             debug_1, debug_2,
             "parse determinism: two parses of the for(&-join) repro differ"
         );
+    }
+
+    // Poly-scaling regression guard (2026-07-16): higher-N all-`@a` `&`-joins must
+    // still parse fast and with the exact bind count. If the `2^N` cursor frontier
+    // ever returns, these blow past the 30s anti-hang guard (2^24 never finishes).
+    #[test]
+    fn higher_n_quoted_binds_joins_stay_polynomial() {
+        for n in [8usize, 16, 24] {
+            let input = vec!["@a<-a"; n].join(" & ");
+            let (debug, binds) = parse_forrow_fast(&input);
+            assert_eq!(
+                binds,
+                Some(n),
+                "expected ForRowNoWhere with {} binds; derived AST = {}",
+                n, debug
+            );
+        }
     }
 }
 
