@@ -1070,33 +1070,6 @@ impl std::fmt::Display for WpdaMaxStepsExceeded {
 
 impl std::error::Error for WpdaMaxStepsExceeded {}
 
-/// Events that drive the reactive FSM forward.
-///
-/// Generic over the weight type `W` so consumers can read resolved branch
-/// weights. The `LexicographicWeight` of Stage 2 will be the canonical
-/// instantiation; until then any [`Semiring`] suffices.
-#[derive(Debug, Clone)]
-pub enum WpdaEvent<W: SemiringRef> {
-    /// Advance one transition. The default driver pulse.
-    Step,
-    /// A token was consumed at the given position.
-    TokenConsumed { pos: usize, token: TokenKind },
-    /// A GSS branch fork occurred; multiple stack tops now active.
-    BranchForked {
-        parent: GssNodeId,
-        children: Vec<GssNodeId>,
-    },
-    /// Ambiguity resolved to a single winning branch with given weight.
-    BranchResolved { winner: GssNodeId, weight: W },
-    /// A semantic action fired during AST assembly.
-    /// `action_id` is the codegen-assigned identifier; `args` are token positions
-    /// captured by the action.
-    SemanticActionFired { action_id: u32, args: Vec<usize> },
-    /// Request the walker to record a checkpoint at the current configuration.
-    Checkpoint { reason: CheckpointReason },
-    /// Inspect the current state without mutating it.
-    Inspect,
-}
 
 /// Reason a checkpoint is being recorded.
 ///
@@ -1114,21 +1087,6 @@ pub enum CheckpointReason {
     PrePause,
 }
 
-/// Output of one [`WpdaState`] × [`WpdaEvent`] transition.
-#[derive(Debug, Clone)]
-pub enum WpdaTransition<W: SemiringRef> {
-    /// `Inspect` event; no state change.
-    NoChange,
-    /// State changed; optional trace entry recorded.
-    Transition {
-        new_state: WpdaState,
-        trace: Option<WpdaTraceEntry>,
-    },
-    /// Checkpoint recorded at the current configuration.
-    Checkpoint { config: WpdaConfiguration<W> },
-    /// Parse complete; result is available via the walker.
-    Done { state: WpdaState },
-}
 
 /// A WPDS configuration snapshot suitable for checkpointing or replay.
 ///
@@ -3908,41 +3866,7 @@ mod tests {
         assert!(err.contains("token-addressed"), "unexpected error: {}", err);
     }
 
-    #[test]
-    fn wpds_event_constructible_with_tropical_weight() {
-        let _step: WpdaEvent<TropicalWeight> = WpdaEvent::Step;
-        let _tok: WpdaEvent<TropicalWeight> =
-            WpdaEvent::TokenConsumed { pos: 0, token: TokenKind::Ident };
-        let _fork: WpdaEvent<TropicalWeight> =
-            WpdaEvent::BranchForked { parent: 0, children: vec![1, 2] };
-        let _resolved: WpdaEvent<TropicalWeight> =
-            WpdaEvent::BranchResolved { winner: 1, weight: TropicalWeight::one() };
-        let _action: WpdaEvent<TropicalWeight> =
-            WpdaEvent::SemanticActionFired { action_id: 7, args: vec![0, 1] };
-        let _cp: WpdaEvent<TropicalWeight> = WpdaEvent::Checkpoint {
-            reason: CheckpointReason::NaturalBoundary,
-        };
-        let _ins: WpdaEvent<TropicalWeight> = WpdaEvent::Inspect;
-    }
 
-    #[test]
-    fn wpds_transition_variants_constructible() {
-        let _no: WpdaTransition<TropicalWeight> = WpdaTransition::NoChange;
-        let _t: WpdaTransition<TropicalWeight> = WpdaTransition::Transition {
-            new_state: WpdaState::Accepted,
-            trace: None,
-        };
-        let _cp: WpdaTransition<TropicalWeight> = WpdaTransition::Checkpoint {
-            config: WpdaConfiguration {
-                pos: 5,
-                state: WpdaState::Ready { min_bp: 0 },
-                stack: vec![StackSymbolV2::category_entry(0)],
-                weight: TropicalWeight::one(),
-            },
-        };
-        let _done: WpdaTransition<TropicalWeight> =
-            WpdaTransition::Done { state: WpdaState::Accepted };
-    }
 
     #[test]
     fn wpds_control_pause_exists() {
