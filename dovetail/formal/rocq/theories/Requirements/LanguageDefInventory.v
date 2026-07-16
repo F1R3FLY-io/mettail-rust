@@ -97,6 +97,20 @@ Section LanguageDefInventory.
     ReqEnvRelationPremise
   ].
 
+  (* GuardOptSmoke (task #14): a guard-inside-optional-group smoke grammar. The
+     `?g:Guard` param (a `TermParam::GuardBody`) contributes BehavioralGuard +
+     RhoResourceGuardContract; the `![{ k }]` native fold contributes
+     FoldNativeHandler; the `logic { relation ok(Proc) }` contributes
+     EnvRelationPremise; ExactContentKey is universal. This is exactly the
+     classify_language surface the executable audit computes for it. *)
+  Definition guardopt_smoke_surface : list RewriteRequirement := [
+    ReqBehavioralGuard;
+    ReqRhoResourceGuardContract;
+    ReqFoldNativeHandler;
+    ReqEnvRelationPremise;
+    ReqExactContentKey
+  ].
+
   Definition current_language_inventory : list LanguageInventory := [
     {| inventory_name := "calculator"; inventory_requirements := arithmetic_rewrite_surface ++ collection_rewrite_surface |};
     {| inventory_name := "rhocalc"; inventory_requirements := process_rewrite_surface ++ arithmetic_rewrite_surface |};
@@ -116,7 +130,8 @@ Section LanguageDefInventory.
     {| inventory_name := "extmath"; inventory_requirements := arithmetic_rewrite_surface |};
     {| inventory_name := "importedmath"; inventory_requirements := arithmetic_rewrite_surface |};
     {| inventory_name := "mixedmath"; inventory_requirements := arithmetic_rewrite_surface |};
-    {| inventory_name := "refinementsmoke"; inventory_requirements := refinement_surface |}
+    {| inventory_name := "refinementsmoke"; inventory_requirements := refinement_surface |};
+    {| inventory_name := "guardoptsmoke"; inventory_requirements := guardopt_smoke_surface |}
   ].
 
   Definition flat_inventory : list RewriteRequirement :=
