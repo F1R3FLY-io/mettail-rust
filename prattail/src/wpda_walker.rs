@@ -8927,8 +8927,20 @@ where
             // mismatches surface this diagnostic for investigation
             // rather than panicking.
             if post_len != expected_len {
+                // Elision diagnostic — OPT-IN under PRATTAIL_CGLL_REALIZE_DIAG.
+                // action-elision is a FREQUENT reading-dropper (an action_fn
+                // whose `_ => return` arg-shape arm fires drops the combo), so an
+                // UNCONDITIONAL per-elision debug print floods stderr on ambiguous
+                // grammars — it timed out the `bigrat_display_parse_roundtrip`
+                // proptest under `nextest` (2026-07-16, pre-existing since the
+                // 2026-05-16 Bug-J resolution). Gate the summary line AND the
+                // per-child SPPF dump behind the SAME flag the deeper dump already
+                // used, so a developer investigating an elision opts in and gets
+                // both while normal/test runs stay silent. The DROP behavior below
+                // is UNCHANGED. (The `arity-refute` diagnostic above stays a
+                // capped-log — `if n < 8` — so it can never flood.)
                 #[cfg(debug_assertions)]
-                {
+                if std::env::var_os("PRATTAIL_CGLL_REALIZE_DIAG").is_some() {
                     eprintln!(
                         "[realize_packing_call] action elided (post_len={}, expected={}): \
                          rule_idx={:#x} cat={} local_rule={} arity={} pre_len={} \
@@ -8942,18 +8954,15 @@ where
                         pre_len,
                         arg_shapes_for_diag,
                     );
-                    // P3 Pocket-A diag (env-gated): the arg SHAPES alone cannot
-                    // distinguish which Term arg the action's downcast refused —
-                    // dump each action child's SPPF node (Symbol tag + span
-                    // reveals the realized child's category).
-                    if std::env::var_os("PRATTAIL_CGLL_REALIZE_DIAG").is_some() {
-                        for &c in &action_children {
-                            eprintln!(
-                                "  [realize-diag] child sid={} node={:?}",
-                                c,
-                                self.sppf.node(c)
-                            );
-                        }
+                    // The arg SHAPES alone cannot distinguish which Term arg the
+                    // action's downcast refused — dump each action child's SPPF
+                    // node (Symbol tag + span reveals the realized child's cat).
+                    for &c in &action_children {
+                        eprintln!(
+                            "  [realize-diag] child sid={} node={:?}",
+                            c,
+                            self.sppf.node(c)
+                        );
                     }
                 }
                 // Drain any stale state the action partially produced
