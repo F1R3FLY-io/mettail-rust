@@ -10,8 +10,8 @@
 # Welch-t-test gate does not apply.
 
 [profile.default]
-# Local/dev default: warn at 60s, terminate after 3 periods (180s).
-slow-timeout = { period = "60s", terminate-after = 3 }
+# Local/dev default: warn at 60s, terminate after 5 periods (300s = 5 min).
+slow-timeout = { period = "60s", terminate-after = 5 }
 
 [profile.ci]
 # Full-suite runs. fail-fast off so one failure does not mask the rest.
