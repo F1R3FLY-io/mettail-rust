@@ -325,10 +325,6 @@ pub struct FrontierArc<W: SemiringRef> {
     /// #307 ROOT-F coverage backstop (2026-06-11): parallel per-slot
     /// separator counts (see BranchCursor::collection_sep_counts).
     pub collection_sep_counts: std::sync::Arc<Vec<u32>>,
-    /// D&C `.*sep` reconvergence per-slot loop-entry edge-stack baseline
-    /// (see BranchCursor::collection_loop_edge_baseline). Round-trips through
-    /// the frontier so a merged/reconstructed cursor keeps its baseline.
-    pub collection_loop_edge_baseline: std::sync::Arc<Vec<EdgeStackId>>,
     /// EP-P2 (Stage B) D-4: per-arc shadow-refuted bit, carried verbatim
     /// through Tomita ingest/materialize so a would-refuted cursor that is
     /// absorbed into the frontier and re-materialized stays flagged — the
@@ -380,9 +376,6 @@ impl<W: SemiringRef + Clone> FrontierArc<W> {
         optional_scope_marks: Arc<Vec<usize>>,
         sppf_collection_arena: Arc<Vec<Vec<SppfId>>>,
         collection_sep_counts: Arc<Vec<u32>>,
-        // D&C `.*sep` reconvergence (Plan ad4b660e): appended last to keep the
-        // existing positional args stable.
-        collection_loop_edge_baseline: Arc<Vec<EdgeStackId>>,
     ) -> Self {
         Self {
             weight,
@@ -404,7 +397,6 @@ impl<W: SemiringRef + Clone> FrontierArc<W> {
             binder_scope_marks,
             optional_scope_marks,
             collection_sep_counts,
-            collection_loop_edge_baseline,
             sppf_collection_arena,
             // EP-P2 (Stage B) D-4: the explicit-args test constructor never
             // builds from a refuted cursor; `from_cursor` carries the real
@@ -490,7 +482,6 @@ impl<W: SemiringRef + Clone + LexProvenance> FrontierArc<W> {
             },
             sppf_collection_arena: Arc::clone(&cursor.sppf_collection_arena),
             collection_sep_counts: Arc::clone(&cursor.collection_sep_counts),
-            collection_loop_edge_baseline: Arc::clone(&cursor.collection_loop_edge_baseline),
             // EP-P2 (Stage B) D-4: capture the cursor's shadow-refuted bit
             // so it rides the Tomita round-trip (ingest → materialize).
             ep_shadow_refuted: cursor.ep_shadow_refuted,
@@ -546,7 +537,6 @@ pub fn materialize_branch_cursor_from_arc<W: SemiringRef + Clone>(
         optional_scope_marks: (*arc.optional_scope_marks).clone(),
         sppf_collection_arena: Arc::clone(&arc.sppf_collection_arena),
         collection_sep_counts: Arc::clone(&arc.collection_sep_counts),
-        collection_loop_edge_baseline: Arc::clone(&arc.collection_loop_edge_baseline),
         // EP-P2 (Stage B) D-4: restore the per-arc shadow-refuted bit so
         // an absorbed-then-rematerialized refuted cursor stays flagged.
         ep_shadow_refuted: arc.ep_shadow_refuted,
@@ -1231,8 +1221,6 @@ mod tests {
             Arc::new(Vec::new()),
             Arc::new(Vec::new()),
             Arc::new(Vec::new()),
-            // D&C `.*sep` reconvergence: empty baseline (test helper).
-            Arc::new(Vec::new()),
         )
     }
 
@@ -1273,8 +1261,6 @@ mod tests {
             optional_scope_marks,
             sppf_collection_arena,
             collection_sep_counts,
-            // D&C `.*sep` reconvergence: empty baseline (test helper).
-            Arc::new(Vec::new()),
         )
     }
 
@@ -1306,7 +1292,6 @@ mod tests {
             optional_scope_marks: Vec::new(),
             sppf_collection_arena: Arc::new(Vec::new()),
             collection_sep_counts: Arc::new(Vec::new()),
-            collection_loop_edge_baseline: Arc::new(Vec::new()),
             ep_shadow_refuted: false,
             consumed_since_last_check: false,
             p5_steps_own: 0,
@@ -1828,7 +1813,6 @@ mod tests {
             optional_scope_marks: Vec::new(),
             sppf_collection_arena: Arc::new(Vec::new()),
             collection_sep_counts: Arc::new(Vec::new()),
-            collection_loop_edge_baseline: Arc::new(Vec::new()),
             ep_shadow_refuted: false,
             consumed_since_last_check: false,
             p5_steps_own: 0,

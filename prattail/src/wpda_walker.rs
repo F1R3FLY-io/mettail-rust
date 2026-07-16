@@ -312,33 +312,12 @@ impl EpP2Mode {
 
 
 
-/// ROOT-P canonical-GLL descriptor-worklist redesign — MASTER compile-time gate
-/// (Stage B scaffolding, 2026-07-09). Design: the staged plan
-/// `$CLAUDE_JOB_DIR/tmp/root-p-canonical-gll-plan.md` and memory
-/// `session-2026-07-08-recognizer-cr1-rootc.md` (§"STAGE A = GO"). Stage A PROVED,
-/// read-only, that a faithful canonical Scott-Johnstone GLL descriptor set stays
-/// POLYNOMIAL (|U| = O(n) measured, no overlay re-inflation) AND reading-exact;
-/// this const gates the ENGINE that realizes it.
-///
-/// This const is the compile-time master gate for the descriptor-pure canonical-GLL
-/// engine — the canonical `{R, U, P}` descriptor worklist
-/// ([`WpdaWalker::step_canonical_pure`], reached via [`WpdaWalker::step_canonical`])
-/// with a GSS-by-SLOT node identity and pending operands carried as GSS-edge SPPF
-/// labels.
-///
-/// `true` (the default and, since 2026-07-15, the ONLY supported value): the
-/// canonical-GLL engine is the SOLE parser. The former classic
-/// [`WpdaWalker::step_fanout`] cursor engine — and the per-walker
-/// `PRATTAIL_NO_CANONICAL_GLL` A/B selector that used to toggle between the two
-/// without a recompile — were PHYSICALLY REMOVED (task #19b S1); `step_fanout` now
-/// unconditionally forwards to `step_canonical`. The readers
-/// [`WpdaWalker::canonical_gll_active`] / [`WpdaWalker::cgll_binarize_active`] /
-/// [`WpdaWalker::cgll_pure_enabled`] return this const directly — kept as `fn`s
-/// returning it (NOT a bare literal `true`) so the compiled-dormant classic
-/// run-loop in `run_to_end_of_input_with_accept_demand` (collapsed in a later
-/// stage) does not trip `unreachable_code`. Mirrors the
-/// [`SEP_RECONVERGE_ENABLED`] const-gate convention.
-const CANONICAL_GLL_ENABLED: bool = true;
+// The descriptor-pure canonical-GLL engine (the canonical `{R, U, P}` descriptor
+// worklist — [`WpdaWalker::step_canonical_pure`], reached via
+// [`WpdaWalker::step_canonical`] — with a GSS-by-SLOT node identity and pending
+// operands carried as GSS-edge SPPF labels) is the SOLE parser. The former classic
+// `step_fanout` cursor engine and its `PRATTAIL_NO_CANONICAL_GLL` A/B selector were
+// physically removed (task #19b S1); `step_fanout` forwards to `step_canonical`.
 
 /// S1-FACTORING (2026-07-12): the synthetic SPINE rule-id space, mirroring
 /// `macros/src/gen/runtime/wpda_codegen/factoring.rs::SPINE_RULE_BASE`
@@ -572,22 +551,6 @@ impl<W: crate::automata::semiring::StarSemiringRef> CgllKTuple<W> {
         }
         false
     }
-}
-
-impl<W: SemiringRef, E: WpdaEngine<W>> WpdaWalker<W, E> {
-    /// Is the BINARIZED `getNodeP` SPPF construction + canonical realize live?
-    /// Returns the compile-time master const [`CANONICAL_GLL_ENABLED`] (currently
-    /// `true`) UNCONDITIONALLY: the `cgll_binarize` A/B toggle field was removed
-    /// with the classic engine (2026-07-15, task #19b S1). The binarized SPPF +
-    /// realize is now the sole resolve path. Kept as a `fn` returning the const so
-    /// any remaining guard site stays a runtime branch (no `unreachable_code`).
-    #[inline(always)]
-    fn cgll_binarize_active(&self) -> bool {
-        CANONICAL_GLL_ENABLED
-    }
-
-
-
 }
 
 
@@ -1695,16 +1658,6 @@ pub struct WpdaWalker<W: SemiringRef, E: WpdaEngine<W>> {
     /// deferred drains or replay journal, the walker can resume this direct
     /// singleton mode.
     deterministic: bool,
-    /// ★ RECOGNIZER ORACLE (investigation a166789b). When `true` the walker
-    /// runs as a coarse NON-PARSEABILITY RECOGNIZER: `merge_equivalent_cursors`
-    /// coarsens the merge key to the GLL SLOT (dropping the derivation-provenance
-    /// block), and every pop FANS OUT over `pop_all_predecessors(node)` (Tomita
-    /// fork-on-pop) instead of following the cursor's single recorded edge. This
-    /// recovers pop-target reachability that keep-one-Slot would lose (sound:
-    /// fan-out ⊇ SlotEdge ⊇ true-parser) while keeping the frontier polynomial
-    /// (the edge-stack cross-product is never materialized). The real parse
-    /// leaves this `false` ⇒ byte-identical. Set via `set_recognizer_mode`.
-    recognizer_mode: bool,
     /// Stage 7+ Fork plan, step 2: per-branch micro-state during
     /// `WpdaState::AmbiguityFanout`. Each entry is a `BranchCursor` that
     /// pairs a GSS-tip node id with the branch's own `pos`, accumulated
@@ -3057,30 +3010,6 @@ pub struct BranchCursor<W: SemiringRef> {
     /// refuting splice-divergent sub-multiset lineages (the
     /// "shorter-Ambiguous ghost" packings) as definite token-unsound.
     pub collection_sep_counts: Arc<Vec<u32>>,
-    /// D&C `.*sep` reconvergence (ROOT-P `<-` linearization, Plan ad4b660e,
-    /// 2026-07-05): per-collection-slot LOOP-ENTRY BASELINE of the SOLE
-    /// exponential carrier — the incoming edge-stack (`incoming_edge_stack_id`).
-    ///
-    /// Captured at `emit_start_collection` (loop entry) and RESTORED at each
-    /// `.*sep` element seal (Site A, `emit_splice_into_collection`) + separator
-    /// consume (Site B, `ConsumeCollectionSep`) so the continuation cursor
-    /// re-converges to ONE frontier arc per segment instead of accumulating a
-    /// per-segment-distinct edge-stack chain (`O(dᵏ)`→`O(k·d)`). This GENERALIZES
-    /// the landed Cluster D `lex_fork_path` reset (`:24220`) to the edge-stack —
-    /// the axis the BCC/DW Stage-0 measurements pinned as the exponential carrier
-    /// (GLL floor is already linear; the edge-stack is the sole residual).
-    ///
-    /// Parallel CoW `Arc<Vec<_>>` indexed by collection slot id (exactly like
-    /// `collection_sep_counts`), so it rides every `BranchCursor` clone,
-    /// `CohortShell` materialization, and Tomita frontier round-trip. NOT part of
-    /// any merge key (`ConfigKey`/`SubsumeConfigKey`/`TomitaKey`) — it must not
-    /// discriminate cursors. STAYS EMPTY unless `sep_reconverge_active()`
-    /// (`SEP_RECONVERGE_ENABLED` const + `PRATTAIL_SEP_RECONVERGE` env), so the
-    /// gate-OFF build is byte-identical. Soundness: the baseline preserves the
-    /// enclosing `CollectionMarker`'s own incoming edge (the live `.*sep`→ForRow
-    /// pop target); only the element-internal frames pushed since loop entry —
-    /// dead once the element seals — are discarded. See SepReconvergence.v.
-    pub collection_loop_edge_baseline: Arc<Vec<crate::edge_stack_arena::EdgeStackId>>,
     // Phase F.13 H1 (2026-05-20): `sppf_symbol_terms` PROMOTED from
     // per-cursor `Arc<Vec<(SppfId, Arc<dyn Any>)>>` to walker-global
     // `HashMap<SppfId, Arc<dyn Any>>` at `WpdaWalker::sppf_symbol_terms`.
@@ -3207,10 +3136,9 @@ pub struct BranchCursor<W: SemiringRef> {
     /// It is the left-fold of the current frame's consumed children as ONE
     /// node (a leaf for the first child, then `Intermediate` nodes) — the
     /// canonical replacement for the exponential per-cursor operand STACK.
-    /// Threaded by `step_canonical` ONLY under `CANONICAL_GLL_ENABLED` +
-    /// `PRATTAIL_CGLL_BINARIZE`; `SPPF_ID_NONE` (the empty-frame sentinel) on
-    /// every classic-path cursor, where it is NEVER read (byte-identical
-    /// default — a single idle `u32` per cursor).
+    /// Threaded by `step_canonical` under `PRATTAIL_CGLL_BINARIZE`;
+    /// `SPPF_ID_NONE` (the empty-frame sentinel) when binarization is off,
+    /// where it is NEVER read (a single idle `u32` per cursor).
     ///
     /// RETIRED carrier (2026-07-13): threaded only by the retired hybrid /
     /// k-fold arms; the field is KEPT — its clone/init plumbing is live.
@@ -3260,10 +3188,7 @@ pub struct LexForkStamp {
 // SPPF node. NO classic fields (no sppf_stack_id, no incoming_edge_stack_id,
 // no lex triple, no weight, no collection/binder/recovery state) — the
 // compiler enforces descriptor purity (review §4.4 rule 1). Reached only
-// from `step_canonical_pure`, itself reachable only under the
-// `CANONICAL_GLL_ENABLED` const (+ `PRATTAIL_CGLL_PURE`), so with the const
-// `false` every one of these types is dead code and the default build is
-// byte-identical.
+// from `step_canonical_pure` — the sole canonical arm.
 // ─────────────────────────────────────────────────────────────────────────
 
 /// Frame class of a pure descriptor: `D1` = fresh-constituent descent
@@ -3941,7 +3866,6 @@ impl<W: SemiringRef> Clone for BranchCursor<W> {
             // splice in the cloned cursor triggers Arc::make_mut CoW.
             sppf_collection_arena: Arc::clone(&self.sppf_collection_arena),
             collection_sep_counts: Arc::clone(&self.collection_sep_counts),
-            collection_loop_edge_baseline: Arc::clone(&self.collection_loop_edge_baseline),
             // Phase F.3a (2026-05-20): Option<u16> is Copy.
             last_action_output_cat: self.last_action_output_cat,
             cohort_origin: self.cohort_origin.clone(),
@@ -4064,7 +3988,6 @@ impl<W: SemiringRef> BranchCursor<W> {
             // no collection accumulator state.
             sppf_collection_arena: Arc::new(Vec::new()),
             collection_sep_counts: Arc::new(Vec::new()),
-            collection_loop_edge_baseline: Arc::new(Vec::new()),
             // Phase F.3a (2026-05-20): fresh cursor has no action yet.
             last_action_output_cat: None,
             cohort_origin: None,
@@ -4162,7 +4085,6 @@ impl<W: SemiringRef> BranchCursor<W> {
             // splice in the child cursor.
             sppf_collection_arena: Arc::clone(&parent.sppf_collection_arena),
             collection_sep_counts: Arc::clone(&parent.collection_sep_counts),
-            collection_loop_edge_baseline: Arc::clone(&parent.collection_loop_edge_baseline),
             // Phase F.3a (2026-05-20): inherit parent's mirror.
             last_action_output_cat: parent.last_action_output_cat,
             cohort_origin: parent.cohort_origin.clone(),
@@ -5497,7 +5419,6 @@ where
             // driver flips this true at entry; cleared elsewhere.
             single_result_demand: false,
             deterministic: true,
-            recognizer_mode: false,
             branch_cursors: vec![crate::cohort_lazy::Frame::Concrete(initial_cursor)],
             step_counter: 0,
             recovery_events: Vec::new(),
@@ -5608,7 +5529,6 @@ where
             // driver flips this true at entry; cleared elsewhere.
             single_result_demand: false,
             deterministic: true,
-            recognizer_mode: false,
             branch_cursors: vec![crate::cohort_lazy::Frame::Concrete(initial_cursor)],
             step_counter: 0,
             recovery_events: Vec::new(),
@@ -6166,14 +6086,6 @@ where
         self.recovery_config = recovery_config;
     }
 
-    /// ★ RECOGNIZER ORACLE (a166789b): enable coarse Slot-merge + pop fan-out.
-    /// The real parser never calls this ⇒ default `false` ⇒ byte-identical.
-    #[inline]
-    pub fn set_recognizer_mode(&mut self, on: bool) {
-        self.recognizer_mode = on;
-    }
-
-
     /// Builder-style variant of [`set_recovery_config`](Self::set_recovery_config).
     pub fn with_recovery_config(mut self, recovery_config: RecoveryConfig) -> Self {
         self.set_recovery_config(recovery_config);
@@ -6230,47 +6142,6 @@ where
         W: 'static + std::fmt::Debug + IdempotentSemiring + StarSemiringRef,
     {
         self.run_to_end_of_input_with_accept_demand(max_steps, tokens, true)
-    }
-
-    /// ★ RECOGNIZER ORACLE (investigation a166789b): a one-sided
-    /// NON-PARSEABILITY oracle. Runs a FRESH walker in `recognizer_mode`
-    /// (coarse GLL-Slot merge + Tomita pop fan-out) to end of input and reports
-    /// whether an EOI-accepting configuration is REACHABLE. The recognizer is a
-    /// sound over-approximation of the real parser's reachability (Slot-merge +
-    /// fan-out ⊇ SlotEdge ⊇ true-parser), so:
-    ///   • `false` ⇒ the span is GENUINELY non-parseable — a DEFINITIVE
-    ///     fast-reject. The recognizer frontier stays polynomial even where the
-    ///     full parse is exponential (deep-@ structural-decline), so this
-    ///     rejects the hard unparseable spans in poly time instead of the
-    ///     walker's exponential fail-safe.
-    ///   • `true`  ⇒ the span MAY be parseable; the caller must run the full
-    ///     parser (which produces the actual result / definitive verdict).
-    /// `max_steps` exceeded ⇒ conservatively `true` (inconclusive — NEVER
-    /// false-reject). No SPPF realization is performed (reachability needs none).
-    ///
-    /// Validated by the `zz_gll_recog_gates` harness (G0-SOUND: 0 false-rejects
-    /// over the parseable corpus incl. trailing-comma sends; G0-COMPLETE:
-    /// rejects genuinely non-parseable spans; G0-POLY: frontier ~O(d²) vs the
-    /// full parser's exponential).
-    pub fn recognize_reachable(
-        engine: E,
-        cat_src_idx: u16,
-        initial_min_bp: u8,
-        tokens: &dyn WpdaTokenSource,
-        max_steps: usize,
-    ) -> bool
-    where
-        W: 'static + std::fmt::Debug + IdempotentSemiring + StarSemiringRef,
-    {
-        let mut walker = Self::new_for_category(engine, cat_src_idx, initial_min_bp);
-        walker.set_recognizer_mode(true);
-        let mut recovery_config = crate::recovery::RecoveryConfig::default();
-        recovery_config.max_recovery_depth = 0;
-        walker.set_recovery_config(recovery_config);
-        match walker.run_to_end_of_input_until_accepting(max_steps, tokens) {
-            Ok(()) => walker.live_frontier_has_demand_resolvable_accept(tokens),
-            Err(_) => true,
-        }
     }
 
     fn run_to_end_of_input_with_accept_demand(
@@ -6599,36 +6470,6 @@ where
                 if variant.recovery_depth > 0 && !self.accept_root_covers_input_start(root, tokens)
                 {
                     continue;
-                }
-                // ★ GLL-FLOOR SHADOW RECOGNIZER (investigation a166789b, Stage 0):
-                // record this EOI-accepting config's coarse accept keys — the
-                // recognizer verdict is Reachable. Byte-identical: writes only
-                // the gll_recog thread-local. Gated walker-stats + reset(true).
-                #[cfg(feature = "walker-stats")]
-                if crate::walker_stats::gll_recog::is_active() {
-                    let node_symbol = self.gss.node(variant.node).map(|n| n.symbol);
-                    let node_class = node_symbol.map(|s| crate::gss::node_class(&s)).unwrap_or(
-                        crate::gss::NodeClass {
-                            shape: crate::gss::ContinuationShape::OperandOrReturn,
-                            coll_dispatch_bp: None,
-                            goal_src_idx: None,
-                        },
-                    );
-                    let state_class = crate::walker_stats::wpda_state_class(&variant.inner_state);
-                    let bpf = Self::state_binding_power_floor(&variant.inner_state);
-                    let pos = variant.pos;
-                    let cd = variant.collection_stack_depth as usize;
-                    let cohort = variant.cohort_origin.as_ref().map(|k| k.equiv());
-                    crate::walker_stats::gll_recog::observe_accept(
-                        (state_class, node_class, pos, cd, bpf),
-                        crate::walker_stats::gll_recog::SlotKey {
-                            state: variant.inner_state.clone(),
-                            node_symbol,
-                            pos,
-                            coll_depth: cd,
-                            cohort,
-                        },
-                    );
                 }
                 snapshot.accepting.push(EoiCursorCandidate {
                     weight: variant.weight.clone(),
@@ -7427,13 +7268,12 @@ where
         W: StarSemiringRef,
     {
         // ★ ROOT-P Canonical-GLL Stage E1: BINARIZED root reader. The facade
-        // re-realizes each accepting `root` here; when the binarized mechanism is
-        // live AND `root` is a binarized shadow Symbol (`CGLL_BIN_TAG`), dispatch
-        // to the canonical `flatten`-realize (which enumerates the packing family
-        // = the N owner readings) instead of the classic n-ary DFS (which cannot
-        // consume the binary spine). Gated by `cgll_binarize_active` (leads with
-        // the const ⇒ DCE'd + byte-identical when off).
-        if self.cgll_binarize_active() {
+        // re-realizes each accepting `root` here; when `root` is a binarized
+        // shadow Symbol (`CGLL_BIN_TAG`), dispatch to the canonical
+        // `flatten`-realize (which enumerates the packing family = the N owner
+        // readings) instead of the classic n-ary DFS (which cannot consume the
+        // binary spine).
+        {
             if let Some(crate::sppf::SppfNode::Symbol { non_terminal_tag, .. }) =
                 self.sppf.node(root)
             {
@@ -9644,130 +9484,6 @@ where
     }
 
 
-
-
-
-
-
-
-
-
-    /// Phase F.13 Stage L3.6 (2026-05-25): force-materialize every
-    /// `Frame::Cohort` in `self.branch_cursors` into N `Frame::Concrete`
-    /// cursors via `cohort_lazy::materialize_cohort_to_frames`. Called
-    /// at safety-net entry points (merge, EOI, commit, prune) so
-    /// downstream code that assumes concrete cursors does not see
-    /// cohort frames.
-    ///
-    /// L3.6 invariant: after this call, every entry in
-    /// `self.branch_cursors` is `Frame::Concrete(_)`.
-    /// Cohort-revive-rework M1 (2026-05-29): at an EOI parked fixpoint,
-    /// revive cohort members that are still orphaned on `InFlight`
-    /// dispatch-cache entries (their worker died without resolving, so
-    /// the end-of-step drain never fired for them — the cross-cat cursor
-    /// loss documented in `drive-suite-green-ledger.md` "⚑ Cross-cat
-    /// cluster ROOT CAUSE"). Orphans are drained as keyed member groups and
-    /// re-injected as lazy cohort frames when possible, preserving the
-    /// pre-Fork dispatch state without eagerly cloning every cursor. Removing
-    /// the stale `InFlight` entry means re-driven dispatches register fresh
-    /// (`WorkerInserted`) and can become workers for their own sub-parse.
-    ///
-    /// Returns whether frames were injected or no work remained. The caller
-    /// (`run_to_end_of_input`) re-drives only on `Injected`.
-    ///
-    /// **Bounded.** Guarded by `revival_rounds < MAX_REVIVAL_ROUNDS`.
-    /// Each call that injects ≥1 cursor bumps `revival_rounds`. A
-    /// pathological orphan that re-dies every round (e.g. a genuinely
-    /// unparseable cross-cat alternate) is revived at most
-    /// `MAX_REVIVAL_ROUNDS` times, after which this returns 0 and the
-    /// walker parks normally and resolution proceeds (yielding the same
-    /// "no accepting branch" the pre-M1 walker would have — no
-    /// regression, just a bounded number of extra attempts). Hitting the
-    /// cap is benign (NOT a panic).
-    ///
-    /// **Disambiguation-safe.** Injected cursors carry `cohort_origin =
-    /// None` (the shell's origin, which is `None` for a normal
-    /// pre-dispatch parent) so they behave as ordinary worker cursors:
-    /// they flow through `merge_equivalent_cursors` + SPPF dedup and
-    /// collapse with a live alternate ONLY when observationally
-    /// equivalent (same `ConfigKey` AND same `sppf_stack` tip). A
-    /// genuinely distinct derivation survives as a first-class
-    /// `Ambiguous` alternate; an already-covered one merges (no
-    /// double-count). The `-3!` ladder / `wpda_parity_*` /
-    /// `h3_chain_correctness` invariants are preserved.
-    fn cursor_root_can_satisfy_requested_category(
-        &self,
-        cursor: &BranchCursor<W>,
-        tokens: &dyn WpdaTokenSource,
-    ) -> bool {
-        if !self.is_logical_eoi(cursor.pos, tokens) {
-            return false;
-        }
-        if !self.is_accepting_config(cursor, tokens) {
-            return false;
-        }
-        let Some(target_cat) = self.requested_root_cat else {
-            return true;
-        };
-        let Some(root_sid) = self.cursor_accepting_terminal_root(cursor).flatten() else {
-            return false;
-        };
-        let Some(root_cat) = self.sppf_symbol_category(root_sid) else {
-            return false;
-        };
-        self.category_can_satisfy_expected(root_cat, target_cat)
-    }
-
-    /// True iff at least one LIVE concrete frontier cursor is an accepting
-    /// configuration at EOI (`is_accepting_config`) whose root can actually
-    /// satisfy the requested parse category. Used to suppress the
-    /// InFlight-orphan re-injection recovery (below): that recovery exists to
-    /// surface an accept when NONE is live; when one compatible accept is
-    /// already present, the stranded InFlight members cannot be the sole source
-    /// of an accept, so re-driving them is pure (and — under EP-P1 On —
-    /// actively harmful) churn. Cohort frames are skipped: a `Frame::Cohort`
-    /// is a lazy compression of parked members whose worker has not resolved,
-    /// so it is never itself an EOI accept (consistent with
-    /// `eoi_resolution_snapshot`, which only reads accepts from concrete
-    /// cursors).
-    fn live_frontier_has_accepting_config(&self, tokens: &dyn WpdaTokenSource) -> bool {
-        self.branch_cursors.iter().any(|frame| match frame {
-            crate::cohort_lazy::Frame::Concrete(c) => {
-                self.cursor_root_can_satisfy_requested_category(c, tokens)
-            },
-            crate::cohort_lazy::Frame::Cohort(_) => false,
-        })
-    }
-
-    /// Demand-stop accept predicate for single-result parsing.
-    ///
-    /// The broader EOI predicate above is correct for the fanout snapshot and
-    /// orphan-revival gate because those paths classify parked `InfixLoop` /
-    /// entry-`Unwinding` cursors themselves. Deterministic resolution has a
-    /// stricter contract: it can return immediately only from
-    /// `WpdaState::Accepted`. Keeping this distinction explicit prevents the
-    /// single-result optimization from observing an intermediate EOI state that
-    /// still needs one terminal transition before `resolve_at_end_of_input`.
-    fn live_frontier_has_demand_resolvable_accept(&self, tokens: &dyn WpdaTokenSource) -> bool {
-        if !self.deterministic {
-            return self.live_frontier_has_accepting_config(tokens);
-        }
-        if !matches!(self.state, WpdaState::Accepted) {
-            return false;
-        }
-        self.branch_cursors.iter().any(|frame| match frame {
-            crate::cohort_lazy::Frame::Concrete(c) => {
-                matches!(c.inner_state, WpdaState::Accepted)
-                    && self.cursor_root_can_satisfy_requested_category(c, tokens)
-            },
-            crate::cohort_lazy::Frame::Cohort(_) => false,
-        })
-    }
-
-
-
-
-
     /// Construct a minimal cursor for read-only transient action firing.
     ///
     /// `fire_action_via_transient` reconstructs Symbol args from the
@@ -9911,8 +9627,8 @@ where
     // into the packing family), and the canonical realize UN-binarizes each spine
     // (`flatten`) back to the classic n-ary children — firing the SAME action.
     //
-    // ALL of this is reached ONLY under `cgll_binarize_active()` (leads with the
-    // `CANONICAL_GLL_ENABLED` const ⇒ DCE'd + byte-identical when `false`).
+    // ALL of this is part of the binarized canonical realize path (the sole
+    // resolve path since the classic engine was removed).
 
     /// One binarized `getNodeP` fold step (Scott & Johnstone 2010 §5). Combines
     /// the running left-part `w` with the newly-consumed child `z`:
@@ -11483,22 +11199,15 @@ where
             // `getNodeP`), so the classic binarize post-pass returns the root
             // itself (`tag & CGLL_BIN_TAG` early-return) and the pre-existing
             // `bin_root == classic_root ⇒ continue` guard below would DROP
-            // every pure accept (silent total-reject). Under
-            // `PRATTAIL_CGLL_PURE`, a root already carrying `CGLL_BIN_TAG`
-            // bypasses the post-pass and enumerates directly. Non-pure arms
-            // (k=4 / classic E1) never intern a BIN-tagged root as a cursor
-            // root, so their path is byte-identical.
-            let pure_bin_root = if Self::cgll_pure_enabled() {
-                match self.sppf.node(classic_root) {
-                    Some(crate::sppf::SppfNode::Symbol { non_terminal_tag, .. })
-                        if non_terminal_tag & CGLL_BIN_TAG != 0 =>
-                    {
-                        Some(classic_root)
-                    },
-                    _ => None,
-                }
-            } else {
-                None
+            // every pure accept (silent total-reject). A root already carrying
+            // `CGLL_BIN_TAG` bypasses the post-pass and enumerates directly.
+            let pure_bin_root = match self.sppf.node(classic_root) {
+                Some(crate::sppf::SppfNode::Symbol { non_terminal_tag, .. })
+                    if non_terminal_tag & CGLL_BIN_TAG != 0 =>
+                {
+                    Some(classic_root)
+                },
+                _ => None,
             };
             let bin_root = match pure_bin_root {
                 Some(root) => root,
@@ -11664,9 +11373,7 @@ where
     // emitter reads `frontier_top.pos`), and the existing binarized realize
     // (`cgll_resolve_binarized` with the pure-root passthrough above).
     //
-    // Everything below is reachable ONLY from `step_canonical`'s
-    // `PRATTAIL_CGLL_PURE` dispatch, itself DCE'd when
-    // `CANONICAL_GLL_ENABLED == false` ⇒ default build byte-identical.
+    // Everything below is reachable from `step_canonical`'s pure dispatch.
     //
     // B0 SCOPE NOTES (each named, none silent):
     //  - Collections (`CollectionMarker` pops / sep coverage / CollectionId
@@ -11693,15 +11400,6 @@ where
     //  - Discarded-token lex weights (amendment 6, later stage): a non-one
     //    step weight on a leafless scan is counted in `weight_drops`.
     // ═════════════════════════════════════════════════════════════════════
-
-    /// Is the descriptor-PURE canonical arm live? Returns the compile-time master
-    /// const [`CANONICAL_GLL_ENABLED`] (currently `true`) UNCONDITIONALLY: pure is
-    /// the SOLE canonical arm after the classic engine + hybrid arm were removed
-    /// (2026-07-15, task #19b S1). Kept as a `fn` returning the const so its guard
-    /// site in `cgll_resolve_binarized` stays a runtime branch (no `unreachable_code`).
-    fn cgll_pure_enabled() -> bool {
-        CANONICAL_GLL_ENABLED
-    }
 
     /// FxHash of any hashable value (the pure arm's one hashing primitive).
     #[allow(dead_code)]
@@ -18752,7 +18450,6 @@ where
             // (`fire_action_via_transient`) still reads it before commit.
             sppf_collection_arena: winner.sppf_collection_arena,
             collection_sep_counts: winner.collection_sep_counts,
-            collection_loop_edge_baseline: winner.collection_loop_edge_baseline,
             // Phase F.3a (2026-05-20): preserve winner's mirror.
             last_action_output_cat: winner.last_action_output_cat,
             cohort_origin: winner.cohort_origin.clone(),
@@ -20252,62 +19949,6 @@ fn group_collection_accept_active() -> bool {
     static GATE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *GATE.get_or_init(|| std::env::var_os("PRATTAIL_NO_GROUP_COLLECTION_ACCEPT").is_none())
 }
-
-/// Master compile-time kill-switch for the P1 IN-PLACE D&C `.*sep`
-/// reconvergence attempt (ROOT-P `<-` linearization, Plan ad4b660e, 2026-07-05).
-/// `false` ⇒ the baseline carrier (`collection_loop_edge_baseline`) is never
-/// captured and the Site-A/Site-B edge-stack resets never fire, so behavior is
-/// BYTE-IDENTICAL to the pre-fix baseline (verified: `@x<-@y & …` k=0..3 gives
-/// the identical alts=1 ladder [84, 629, 1544, 13047] OFF).
-///
-/// ★ EMPIRICALLY REFUTED — LABELED CONTROL, DO NOT FLIP TO `true`.
-/// Flipping ON (`PRATTAIL_SEP_RECONVERGE=on`) BREAKS the monolithic ForRow
-/// parse: `@x<-@y & …` yields `total_alts=0` (NO accepting derivation) at every
-/// k≥1 AND stays exponential (1479/5669/35866). ROOT CAUSE (data-driven, A/B
-/// causal): resetting `incoming_edge_stack_id` in place DESYNCS the per-cursor
-/// edge-stack from its GSS node, so `cursor_gss_pop_via_edge` (which routes pops
-/// off the CONCRETE per-cursor edge top; `CrossCatLhs` is identity-strict and
-/// "must not be erased") pops to the wrong node → the `.*sep`→ForRow return pop
-/// fails. The edge-stack cannot be reset in place without also resetting the
-/// node+position — which is precisely what the P2 ISOLATION approach does by
-/// construction (fresh `new_for_category` walker per segment), and which the
-/// Stage-0 measurement PROVED is linear (Σ = 84·(k+1)) AND sound (isolated ==
-/// monolithic alt set incl. d=3). The carrier + gate plumbing is retained
-/// gate-OFF as a documented scientific control per the mandate ("document even
-/// what does not work"; "any revert = labeled control"). The linearizing fix is
-/// P2 isolation, wired at the parse facade — NOT this in-place reset.
-///
-/// Runtime env `PRATTAIL_SEP_RECONVERGE=on` forces it ON (and `=off` OFF),
-/// mirroring [`crate::gss::NODE_CLASS_COARSEN_ENABLED`] — retained only so the
-/// A/B refutation control stays reproducible.
-pub const SEP_RECONVERGE_ENABLED: bool = false;
-
-/// Runtime resolution of the `.*sep` reconvergence switch: the const gates it
-/// OFF unless explicitly overridden. Cached in a `OnceLock` (single env read).
-///   - const `false` (Stage 1): OFF unless `PRATTAIL_SEP_RECONVERGE=on`.
-///   - const `true`  (post-flip): ON  unless `PRATTAIL_SEP_RECONVERGE=off`.
-#[inline]
-pub fn sep_reconverge_active() -> bool {
-    static GATE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *GATE.get_or_init(|| match std::env::var("PRATTAIL_SEP_RECONVERGE") {
-        Ok(v) if v.eq_ignore_ascii_case("on") || v == "1" => true,
-        Ok(v) if v.eq_ignore_ascii_case("off") || v == "0" => false,
-        _ => SEP_RECONVERGE_ENABLED,
-    })
-}
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 // ══════════════════════════════════════════════════════════════════════════════
 // WpdaWalker::run_with_consumer

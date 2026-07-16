@@ -92,84 +92,16 @@ pub enum CohortRoute {
     CrossCatLhs,
 }
 
-/// ROOT-P design-cycle-3 master compile-time switch for the projection-cohort
-/// CACHE pos-quotient. When `false`, [`DispatchKey::cache_key`] preserves `pos`
-/// so the cohort cache keys on the full (pos-bearing) key exactly as before the
-/// quotient landed — byte-identical to the shipped behavior. When `true`, the
-/// runtime env `PRATTAIL_PROJ_CACHE_POS_QUOTIENT=off` can still force it back OFF
-/// (the kill-switch), otherwise the quotient drops `pos` from the cache key so
-/// the structurally-identical `@a` cross-cat projection SHARES its fork-branch
-/// creation across `&`-segments (Stage 3 flip; see `ROOT_P_DESIGN_CYCLE3.md`).
-///
-/// STAGE 1: `false` (carrier plumbing only; kill-switch OFF ⇒ byte-identical).
-/// STAGE 3: flipped to `true` after FV (ProjCohortPosQuotientSoundness.v) is
-/// green, gated by the S-M2 (linear-or-HALT) + S-M3 (alt-count-identical) gates.
-///
-/// STAGE 3 S-M2 DECISIVE GATE — REFUTED (2026-07-03): flipping this to `true`
-/// caused a CATASTROPHIC runaway at `@a<-@b` k=0 (0.14s OFF → >3min ON, RSS
-/// growing ~20MB/s unbounded), reverted cleanly by the kill-switch (control:
-/// `PRATTAIL_PROJ_CACHE_POS_QUOTIENT=off` restores 0.14s). ROOT CAUSE (proven):
-/// the cohort cache's `ResolvedHit`/`InflightCollision` reuse inherently shares
-/// the RESOLVED BODY (`resolved_hit_bodies` returns the first-resolved
-/// position's `symbol_id`/`hi_pos`/`pos_at_dispatch`). Collapsing DISTINCT
-/// positions onto one entry therefore revives a position-P2 dispatch with
-/// position-P1's span — a structurally-wrong cursor that re-dispatches and
-/// cascades. The design premise "shares WORK/branching, NEVER results" is FALSE
-/// for this cache: the entry's payload IS the position-specific result. Even
-/// WITHIN a single `@a<-@b` (k=0, no `&`) GATE 0c found 58 multi-pos quotient
-/// groups, so the collapse mis-fires immediately. HELD OFF pending a redesign
-/// that shares ONLY the branching decision without sharing the resolved body
-/// (see the report / rp3_sm2_findings.md). Kept `false` = byte-identical.
-pub const PROJ_CACHE_POS_QUOTIENT_ENABLED: bool = false;
-
-/// Runtime resolution of the pos-quotient: active iff the compile-time master
-/// switch is `true` AND the env kill-switch is not set to `off`. Cached once via
-/// `OnceLock` (matches the `grind_*_enabled` pattern in `tomita_frontier.rs`) so
-/// the hot cohort-register path pays a single relaxed load.
-#[inline]
-pub fn proj_cache_pos_quotient_enabled() -> bool {
-    use std::sync::OnceLock;
-    static FLAG: OnceLock<bool> = OnceLock::new();
-    *FLAG.get_or_init(|| {
-        if !PROJ_CACHE_POS_QUOTIENT_ENABLED {
-            return false;
-        }
-        // Kill-switch: any of `off`/`0`/`false` (case-insensitive) disables.
-        match std::env::var("PRATTAIL_PROJ_CACHE_POS_QUOTIENT") {
-            Ok(v) => {
-                let v = v.trim().to_ascii_lowercase();
-                !(v == "off" || v == "0" || v == "false" || v == "no")
-            },
-            Err(_) => true,
-        }
-    })
-}
-
-/// The sentinel `pos` value stamped into a [`ProjCacheKey`] when the pos-quotient
-/// is ACTIVE. All keys sharing `(source_src_idx, inner_cur_bp, wrap_cat,
-/// wrap_rule, route)` collapse to this single `pos` so cross-`&`-segment
-/// registrations hit the SAME cache entry (reusing the segment-1 branching
-/// decision + snapshots). Real token positions are ≪ `usize::MAX`, so no
-/// collision with a genuine position when the quotient is OFF.
-pub const PROJ_CACHE_QUOTIENT_POS: usize = usize::MAX;
-
 /// ROOT-P design-cycle-3 (2026-07-02): the projection-cohort CACHE key — the
-/// full [`DispatchKey`] with `pos` REPLACED by a quotient sentinel when the
-/// pos-quotient is active (and preserved verbatim when it is OFF). This is the
-/// key type the cohort cache's `entries` map uses. It intentionally RETAINS
+/// full [`DispatchKey`], carrying the real `pos`. This is the key type the
+/// cohort cache's `entries` map uses. It intentionally RETAINS
 /// `wrap_cat`/`wrap_rule`/`route`/`source`/`bp` (unlike the merge-only
-/// [`EquivKey`], which also drops those) so the quotient shares ONLY the
-/// position axis — the exact axis Stage-0 GATE 0a/0c proved is the fork
-/// multiplier — while every grammar-determined disambiguator survives.
-///
-/// INVARIANT (kill-switch identity, FV T6): when
-/// [`proj_cache_pos_quotient_enabled`] is `false`, `cache_key()` copies the real
-/// `pos`, so the map `DispatchKey ↦ entry` and the map `ProjCacheKey ↦ entry`
-/// are in bijection and the cache behaves byte-identically to the pre-quotient
-/// cohort cache.
+/// [`EquivKey`], which also drops those) so every grammar-determined
+/// disambiguator survives. `cache_key()` copies the real `pos`, so the map
+/// `DispatchKey ↦ entry` and the map `ProjCacheKey ↦ entry` are in bijection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ProjCacheKey {
-    /// Real `pos` when the quotient is OFF; [`PROJ_CACHE_QUOTIENT_POS`] when ON.
+    /// The real dispatch `pos`.
     pub pos: usize,
     pub source_src_idx: u16,
     pub inner_cur_bp: u8,
@@ -284,26 +216,18 @@ impl DispatchKey {
         }
     }
 
-    /// ROOT-P design-cycle-3: project to the projection-cohort CACHE key. When
-    /// the pos-quotient is ACTIVE ([`proj_cache_pos_quotient_enabled`]), `pos`
-    /// is replaced by [`PROJ_CACHE_QUOTIENT_POS`] so all keys sharing the five
-    /// grammar/route axes collapse to ONE cache entry (sharing fork-branch
-    /// creation across `&`-segments — the Stage-0-proven fork multiplier). When
-    /// OFF, the real `pos` is preserved, making this an injective image of the
-    /// full [`DispatchKey`] ⇒ the cohort cache is byte-identical to the shipped
-    /// (pos-bearing) behavior (FV T6 kill-switch identity).
+    /// ROOT-P design-cycle-3: project to the projection-cohort CACHE key — the
+    /// full [`DispatchKey`] with the real `pos` preserved, so this is an injective
+    /// image of the key and the cohort cache is byte-identical to the shipped
+    /// (pos-bearing) behavior.
     ///
     /// RETAINS `wrap_cat`/`wrap_rule`/`route`/`source`/`bp` unconditionally so
     /// the M4 cast-family discriminator (wrap) and the R6-7 route discriminant
-    /// survive — only the position axis is quotiented (FV T1).
+    /// survive.
     #[inline(always)]
     pub fn cache_key(&self) -> ProjCacheKey {
         ProjCacheKey {
-            pos: if proj_cache_pos_quotient_enabled() {
-                PROJ_CACHE_QUOTIENT_POS
-            } else {
-                self.pos
-            },
+            pos: self.pos,
             source_src_idx: self.source_src_idx,
             inner_cur_bp: self.inner_cur_bp,
             wrap_cat: self.wrap_cat,
@@ -2859,28 +2783,13 @@ mod tests {
             RegisterOutcome::WorkerInserted
         ));
         let high_outcome = cache.register(high.clone(), TropicalWeight(0.0));
-        // ROOT-P design-cycle-3: `low` and `high` share (source,bp,wrap), so
-        // under the pos-quotient they collapse to ONE entry (their positions —
-        // including the > u32 one — are preserved IN the entry's `pos_at_dispatch`
-        // Vec, not the key). With the quotient OFF they are two distinct entries.
-        if proj_cache_pos_quotient_enabled() {
-            assert!(matches!(high_outcome, RegisterOutcome::InflightCollision));
-            assert_eq!(cache.entries.len(), 1);
-            assert_eq!(low.cache_key(), high.cache_key());
-            match cache.entries.get(&low.cache_key()) {
-                Some(DispatchCacheEntry::InFlight { pos_at_dispatch, .. }) => {
-                    // both real positions recorded, including the > u32 one.
-                    assert!(pos_at_dispatch.contains(&0));
-                    assert!(pos_at_dispatch.contains(&after_u32));
-                },
-                other => panic!("expected InFlight, got {other:?}"),
-            }
-        } else {
-            assert!(matches!(high_outcome, RegisterOutcome::WorkerInserted));
-            assert_eq!(cache.entries.len(), 2);
-            assert!(cache.entries.contains_key(&low.cache_key()));
-            assert!(cache.entries.contains_key(&high.cache_key()));
-        }
+        // `low` and `high` share (source,bp,wrap) but carry distinct positions,
+        // and the CACHE key preserves the real `pos`, so they are two distinct
+        // entries.
+        assert!(matches!(high_outcome, RegisterOutcome::WorkerInserted));
+        assert_eq!(cache.entries.len(), 2);
+        assert!(cache.entries.contains_key(&low.cache_key()));
+        assert!(cache.entries.contains_key(&high.cache_key()));
     }
 
     #[test]
@@ -2917,20 +2826,13 @@ mod tests {
             .iter()
             .all(|key| cache.entries.contains_key(&key.cache_key())));
 
-        // The pos-variant: collapses onto `base` (InflightCollision) when the
-        // quotient is ON; is a fresh key (WorkerInserted) when OFF.
+        // The pos-variant is a fresh key (WorkerInserted): the CACHE key
+        // preserves the real `pos`, so a differing position separates entries.
         let pos_outcome = cache.register(pos_variant.clone(), TropicalWeight(0.0));
-        if proj_cache_pos_quotient_enabled() {
-            assert_eq!(base.cache_key(), pos_variant.cache_key());
-            assert!(matches!(pos_outcome, RegisterOutcome::InflightCollision));
-            // base + 4 non-pos variants = 5 distinct entries (pos-variant shares).
-            assert_eq!(cache.entries.len(), 1 + non_pos_variants.len());
-        } else {
-            assert_ne!(base.cache_key(), pos_variant.cache_key());
-            assert!(matches!(pos_outcome, RegisterOutcome::WorkerInserted));
-            // base + 4 non-pos + pos-variant = 6 distinct entries.
-            assert_eq!(cache.entries.len(), 2 + non_pos_variants.len());
-        }
+        assert_ne!(base.cache_key(), pos_variant.cache_key());
+        assert!(matches!(pos_outcome, RegisterOutcome::WorkerInserted));
+        // base + 4 non-pos + pos-variant = 6 distinct entries.
+        assert_eq!(cache.entries.len(), 2 + non_pos_variants.len());
     }
 
     #[test]

@@ -139,10 +139,6 @@ pub struct CohortShell<W: SemiringRef> {
     /// #307 ROOT-F coverage backstop (2026-06-11): parallel per-slot
     /// separator counts (see BranchCursor::collection_sep_counts).
     pub collection_sep_counts: std::sync::Arc<Vec<u32>>,
-    /// D&C `.*sep` reconvergence per-slot loop-entry edge-stack baseline
-    /// (see BranchCursor::collection_loop_edge_baseline). Carried through the
-    /// shell so `materialize_branch_cursor` preserves each member's baseline.
-    pub collection_loop_edge_baseline: std::sync::Arc<Vec<crate::edge_stack_arena::EdgeStackId>>,
     /// Shared cycle-defense at the moment the cohort formed. Any
     /// member that would mutate this triggers materialization.
     pub visited_dispatch: im::OrdSet<crate::wpda_walker::PackedDispatchConfig>,
@@ -563,7 +559,6 @@ impl<W: SemiringRef + LexProvenance> CohortShell<W> {
             optional_scope_marks: optional_scope_marks_arc,
             sppf_collection_arena: std::sync::Arc::clone(&parent.sppf_collection_arena),
             collection_sep_counts: std::sync::Arc::clone(&parent.collection_sep_counts),
-            collection_loop_edge_baseline: std::sync::Arc::clone(&parent.collection_loop_edge_baseline),
             visited_dispatch: visited_dispatch_arc,
             visited_recovery: visited_recovery_arc,
             visited_proj_descriptors: visited_proj_descriptors_set,
@@ -702,7 +697,6 @@ pub fn materialize_branch_cursor<W: SemiringRef + Clone>(
         collection_stack_depth: shell.collection_depth,
         sppf_collection_arena: std::sync::Arc::clone(&shell.sppf_collection_arena),
         collection_sep_counts: std::sync::Arc::clone(&shell.collection_sep_counts),
-        collection_loop_edge_baseline: std::sync::Arc::clone(&shell.collection_loop_edge_baseline),
         last_action_output_cat: state.last_action_output_cat,
         cohort_origin: shell.cohort_origin.clone(),
         cohort_revive_depth: state.cohort_revive_depth,
@@ -1150,8 +1144,6 @@ mod tests {
             Arc::new(Vec::new()),
             Arc::new(Vec::new()),
             Arc::new(Vec::new()),
-            Arc::new(Vec::new()),
-            // D&C `.*sep` reconvergence: empty baseline (test helper).
             Arc::new(Vec::new()),
         )
     }

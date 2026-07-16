@@ -361,20 +361,11 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
             } else {
                 quote! {}
             };
-            // ── RECOGNIZER REJECT-GATE (a166789b, 2026-07-08) ──
-            // When `RECOGNIZER_REJECT_GATE` is ON, the authoritative-reject FIRE is
-            // GATED on the SOUND non-parseability recognizer: the reject `Err` returns
-            // ONLY when the recognizer CONFIRMS the span `Unreachable`. This FIXES the
-            // false-reject of valid non-send `@`-quoted binds (`@([]) <= @(Map())`) and
-            // fast-rejects genuinely-unparseable deep-`@`. The gate is inherently narrow
-            // (only `__proj_sigil_reject`-candidate spans pay the recognizer). OFF ⇒ the
-            // VERBATIM unconditional reject (byte-identical). See
-            // `emit_recognizer_reject_gate`.
-            let proj_reject_fire = if sigil_reject_on
-                && runtime::wpda_codegen::forks::RECOGNIZER_REJECT_GATE
-            {
-                runtime::wpda_codegen::facade::emit_recognizer_reject_gate(&cat_str)
-            } else if sigil_reject_on {
+            // The authoritative-reject FIRE: when a σ-frame send skeleton matched the
+            // whole input, enumeration was COMPLETE, and NO tiling parsed,
+            // `__proj_sigil_reject` is set and turned into `Err` here. OFF ⇒ empty
+            // (byte-identical).
+            let proj_reject_fire = if sigil_reject_on {
                 quote! {
                     if __proj_sigil_reject {
                         return Err(ParseError::UnexpectedToken {
@@ -427,21 +418,6 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
             } else {
                 quote! {}
             };
-
-            // ── ROOT-P RECOGNIZER PRE-PASS (non-parseability oracle a166789b) ──
-            // The SINGLE-WINNER seam's poly-time definitive fast-reject FALLBACK for
-            // the σ-led hard cases the authoritative-reject fails safe on. Wired into
-            // the `parse_via_wpda` body at the fall-through point (AFTER
-            // `proj_reject_fire`, BEFORE `lex_dag`). Self-gating: `emit_*` returns
-            // EMPTY unless `RECOGNIZER_PREFILTER` is ON AND this category has a σ-led
-            // `@`-projection shape ⇒ OFF / non-proj ⇒ byte-identical. The `_all`
-            // (ambiguity-preserving) seam is intentionally UNTOUCHED (single-winner
-            // only, mirroring the authoritative-reject's scope).
-            let recognizer_prefilter = runtime::wpda_codegen::facade::emit_recognizer_prefilter(
-                &cat_str,
-                language,
-                &sep_categories_ordered,
-            );
 
             // ── ROOT-P MEMOIZED BEST-PARSE (design af7680e2, "3A LIGHT") ──
             // This category's single-winner `parse_via_wpda` is wrapped with a
@@ -621,13 +597,6 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                     #sep_prologue_single
                     #infix_prologue_single
                     #proj_reject_fire
-                    // ROOT-P RECOGNIZER PRE-PASS (a166789b): the fall-through fallback
-                    // — proj/sep/infix isolation + authoritative-reject have all
-                    // DECLINED, so a known-hard σ-led span is about to hit the walker.
-                    // A DEFINITIVE recognizer `Unreachable` returns the parse `Err`
-                    // here in poly time; any doubt falls through UNCHANGED. Empty
-                    // (byte-identical) unless the const is ON + σ-led proj shape.
-                    #recognizer_prefilter
                     let dag = lex_dag(input).map_err(ParseError::from)?;
                     if dag.has_ambiguity() {
                         let source = mettail_prattail::wpda_runtime::LatticeTokenSource::new(dag);
