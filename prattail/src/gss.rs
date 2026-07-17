@@ -702,7 +702,6 @@ pub struct WpdaGssEdge<W: SemiringRef> {
 /// with a given operand has ONE call-site context), so the context fields do
 /// NOT widen dedup.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)] // Fields read by the canonical driver (Stage D/E) + gss unit tests.
 pub(crate) struct CanonicalGllEdge {
     /// Predecessor (caller) GSS node this edge returns into on pop.
     pub target: GssNodeId,
@@ -725,7 +724,6 @@ pub(crate) struct CanonicalGllEdge {
 /// (LexicographicWeight is `Copy`, so the production instantiation stays
 /// `Copy`).
 #[derive(Debug, Clone, Copy, PartialEq)]
-#[allow(dead_code)] // Fields read by the canonical driver (Stage D) + gss unit tests.
 pub(crate) struct RecordedPop<W> {
     /// Right-extent input position at which this node popped.
     pub pos: usize,
@@ -759,7 +757,6 @@ pub(crate) struct RecordedPop<W> {
 /// descriptor `(slot, caller, at_pos, y)`. The GSS layer deliberately does NOT
 /// touch the SPPF (owned by the walker) or the descriptor set `U`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)] // Consumed by the canonical driver (Stage D) + gss unit tests.
 pub(crate) struct GllReturn {
     /// Return slot `L` = the label symbol of the node being resumed (the popped
     /// node in `gll_pop`; the created node `v` in a `gll_create` replay).
@@ -798,7 +795,6 @@ pub(crate) struct GllReturn {
 /// spurious `W: Default` bound, and the fields (two maps) default
 /// independently of `W`.
 #[derive(Debug, Clone)]
-#[allow(dead_code)] // Populated/read by the canonical driver (Stage D) + gss unit tests.
 pub(crate) struct CanonicalGssState<W> {
     /// `source node → its outgoing canonical operand edges`, deduped by
     /// `(target, operand_w)`.
@@ -1270,22 +1266,18 @@ impl<W: SemiringRef> WpdaGss<W> {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// Canonical-GLL GSS operations (ROOT-P Stage C) — DORMANT
+// Canonical-GLL GSS operations — the LIVE substrate of the canonical driver
 //
-// Reachable ONLY from the canonical descriptor-worklist driver (Stage D,
-// `WpdaWalker::step_canonical`, currently `unimplemented!` and dead-code-
-// eliminated while `CANONICAL_GLL_ENABLED == false`) and from the `gss` unit
-// tests. Every method is `#[allow(dead_code)]`: it has no non-test caller until
-// Stage D wires the driver. None is reachable on the classic parse path, so they
-// add ZERO classic-path cost and cannot change classic behaviour. See the
-// "Canonical-GLL GSS primitives" module section above for the create/pop
-// protocol and the separate-operand-edge-store design rationale.
+// Reachable from the canonical descriptor-worklist driver
+// (`WpdaWalker::step_canonical` → `step_canonical_pure`, the sole parse arm)
+// and from the `gss` unit tests. See the "Canonical-GLL GSS primitives" module
+// section above for the create/pop protocol and the separate-operand-edge-store
+// design rationale.
 // ══════════════════════════════════════════════════════════════════════════════
 impl<W: SemiringRef> WpdaGss<W> {
     /// Lazily obtain the mutable canonical side-state, boxing it on first use.
     /// Called only by the `gll_*` mutators, i.e. only under the canonical engine,
     /// so the classic path never triggers the allocation.
-    #[allow(dead_code)]
     #[inline]
     fn canonical_mut(&mut self) -> &mut CanonicalGssState<W> {
         self.canonical
@@ -1294,7 +1286,6 @@ impl<W: SemiringRef> WpdaGss<W> {
 
     /// Read-only view of the canonical side-state (`None` until the first
     /// `gll_*` mutation — the classic path always observes `None`).
-    #[allow(dead_code)]
     #[inline]
     fn canonical_ref(&self) -> Option<&CanonicalGssState<W>> {
         self.canonical.as_deref()
@@ -1317,7 +1308,6 @@ impl<W: SemiringRef> WpdaGss<W> {
     /// enqueues descriptor `(L, u, k, y)`.
     ///
     /// Returns `(v, replays)`.
-    #[allow(dead_code)]
     pub(crate) fn gll_create(
         &mut self,
         from_node: GssNodeId,
@@ -1392,7 +1382,6 @@ impl<W: SemiringRef> WpdaGss<W> {
     /// checks that same-identity duplicates carry EQUAL weights (probe P2:
     /// if it ever fires, the first-wins choice is materially lossy — stop
     /// and re-derive).
-    #[allow(dead_code)]
     pub(crate) fn gll_pop(
         &mut self,
         node: GssNodeId,
@@ -1461,7 +1450,9 @@ impl<W: SemiringRef> WpdaGss<W> {
     /// enumerates the CLASSIC weighted `edges` map); this reads the
     /// operand-labelled canonical store instead. Empty if the node has no
     /// canonical edges (or no `gll_*` op has run).
-    #[allow(dead_code)]
+    // dead_code: operand-aware companion accessor exercised only by the gss unit tests;
+    // the live driver enumerates via `gll_edges`. Dead in the non-test lib build.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn gll_predecessors(&self, node: GssNodeId) -> Vec<(GssNodeId, SppfId)> {
         match self.canonical_ref().and_then(|st| st.edges.get(&node)) {
             Some(edges) => edges.iter().map(|e| (e.target, e.operand_w)).collect(),
@@ -1472,7 +1463,6 @@ impl<W: SemiringRef> WpdaGss<W> {
     /// Borrow a node's outgoing canonical operand edges (`&[]` if none) — a
     /// borrow-only companion to [`WpdaGss::gll_predecessors`] for the driver's
     /// hot enumerate.
-    #[allow(dead_code)]
     pub(crate) fn gll_edges(&self, node: GssNodeId) -> &[CanonicalGllEdge] {
         match self.canonical_ref().and_then(|st| st.edges.get(&node)) {
             Some(edges) => edges.as_slice(),
@@ -1482,7 +1472,9 @@ impl<W: SemiringRef> WpdaGss<W> {
 
     /// Read a node's recorded-pop set `P` (`&[]` if none). Exposed for the driver
     /// + tests to assert pop-recording WITHOUT re-triggering emission.
-    #[allow(dead_code)]
+    // dead_code: raw `P`-set accessor exercised only by the gss unit tests; production reads
+    // pop weights via `gll_recorded_pop_action_weight`. Dead in the non-test lib build.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn gll_recorded_pops(&self, node: GssNodeId) -> &[RecordedPop<W>] {
         match self.canonical_ref().and_then(|st| st.recorded_pops.get(&node)) {
             Some(pops) => pops.as_slice(),
@@ -1496,7 +1488,6 @@ impl<W: SemiringRef> WpdaGss<W> {
     /// `result_w`, `rule_id`), so the replay arm can intern a genuinely-new
     /// replay packing with the TRUE pop weight. A linear scan: P vecs are
     /// small and the replay arm calls this once per replayed pop.
-    #[allow(dead_code)]
     pub(crate) fn gll_recorded_pop_action_weight(
         &self,
         node: GssNodeId,

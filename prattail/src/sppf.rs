@@ -1100,15 +1100,11 @@ impl<W: SemiringRef> Sppf<W> {
 // decomposition that the Newton-method solver (in
 // `prattail/src/automata/semiring.rs::solve_scc_weights_newton`)
 // consumes.
-//
-// Currently `#[allow(dead_code)]` until Commit 3 wires them into
-// `wpda_walker.rs::realize_root_to_terms_with_weights`.
 // ══════════════════════════════════════════════════════════════════════════════
 
 /// Strongly-connected component identifier (index into the SCC vector
 /// returned by [`Sppf::tarjan_sccs`]). Stable per-realize-call only —
 /// not preserved across calls.
-#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct SccId(pub usize);
 
@@ -1180,7 +1176,6 @@ impl<W: SemiringRef> Sppf<W> {
     ///
     /// Returns an empty vec if `root` is not a Symbol or `root` is
     /// `SPPF_ID_NONE`.
-    #[allow(dead_code)]
     pub fn tarjan_sccs(&self, root: SppfId) -> Vec<Vec<SppfId>> {
         // Map SppfId → contiguous internal index for Vec-based state.
         // Visit all reachable Symbol nodes; assign each a sequential id.
@@ -1333,7 +1328,6 @@ impl<W: SemiringRef> Sppf<W> {
     ///
     /// Used to detect non-trivial singleton SCCs: a 1-Symbol SCC is
     /// non-trivial (cyclic) iff this returns `true`.
-    #[allow(dead_code)]
     pub fn has_self_loop(&self, symbol: SppfId) -> bool {
         if !matches!(self.node(symbol), Some(SppfNode::Symbol { .. })) {
             return false;
@@ -1366,7 +1360,6 @@ impl<W: SemiringRef> Sppf<W> {
     ///   "no contribution" semantics).
     ///
     /// **Panics**: if `packing_id` is not a `SppfNode::Packing`.
-    #[allow(dead_code)]
     pub fn factor_scc_packing(
         &self,
         packing_id: SppfId,

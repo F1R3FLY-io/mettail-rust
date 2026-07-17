@@ -112,10 +112,6 @@
 //!     literal yields `sub_pos == parts_len` — the tail-complete
 //!     pop-and-fire arm).
 
-#![allow(dead_code)] // F1 (2026-07-12): emission wired (engine_impl calls
-                     // build_spine_emission unconditionally); the allow stays
-                     // for model-only accessors consumed by tests/INV-8.
-
 use std::collections::BTreeSet;
 
 use mettail_ast::grammar::{GrammarRule, SyntaxExpr};
@@ -235,21 +231,29 @@ pub(crate) enum SpinePosMap {
 }
 
 /// A group member with its leaf assignment.
+///
+/// The `#[cfg_attr(not(test), allow(dead_code))]` fields below are INV-8 model
+/// data: populated by member discovery and read only by the `#[cfg(test)]`
+/// accounting assertions, so they are dead in the non-test lib build.
 #[derive(Debug, Clone)]
 pub(crate) struct GroupMember {
+    #[cfg_attr(not(test), allow(dead_code))]
     pub kind: MemberKind,
     pub rule_idx: u16,
     /// Trie depth of the member's leaf: post-trigger items consumed on the
     /// spine INCLUDING the leaf edge.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub leaf_depth: u8,
     /// Typed commit coordinates (amendment A4).
     pub commit: MemberCommit,
     /// Spine-pos → member-pos map (amendment A4).
+    #[cfg_attr(not(test), allow(dead_code))]
     pub pos_map: SpinePosMap,
     /// The member continues in its own machinery past the commit (collection
     /// tails, further literals/params) — as opposed to the leaf edge being
     /// its final item (where the commit position IS the final-pos
     /// Pop → fire arm).
+    #[cfg_attr(not(test), allow(dead_code))]
     pub has_post_spine_remainder: bool,
 }
 
@@ -306,6 +310,8 @@ impl SpineTree {
     }
 
     /// The leaf for `rule_idx` together with its leaf EDGE item, if present.
+    // dead_code: model accessor, exercised only by the `#[cfg(test)]` INV-8 assertions.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn leaf_for(&self, rule_idx: u16) -> Option<(&SpineItem, &GroupMember)> {
         match self {
             SpineTree::Leaf { item, member } if member.rule_idx == rule_idx => {
@@ -346,6 +352,8 @@ impl SpineGroup {
         self.leaves().iter().map(|m| m.rule_idx).collect()
     }
 
+    // dead_code: model accessor, exercised only by the `#[cfg(test)]` INV-8 assertions.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn leaf_count(&self) -> usize {
         self.roots.iter().map(SpineTree::leaf_count).sum()
     }
@@ -360,6 +368,8 @@ impl SpineGroup {
 
     /// The leaf for `rule_idx` together with its leaf EDGE item, if present
     /// (leaves ↔ members stay a bijection under F5-1 — accepts ARE leaves).
+    // dead_code: model accessor, exercised only by the `#[cfg(test)]` INV-8 assertions.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn leaf_for(&self, rule_idx: u16) -> Option<(&SpineItem, &GroupMember)> {
         self.roots.iter().find_map(|root| root.leaf_for(rule_idx))
     }
@@ -392,10 +402,11 @@ pub(crate) enum SingletonReason {
     PartialSliceCohort,
 }
 
+// dead_code: whole struct is INV-8 model data — constructed by discovery, read only by the `#[cfg(test)]` accounting assertions.
+#[cfg_attr(not(test), allow(dead_code))]
 #[derive(Debug, Clone)]
 pub(crate) struct SingletonMember {
     pub rule_idx: u16,
-    pub kind: MemberKind,
     pub reason: SingletonReason,
 }
 
@@ -435,6 +446,8 @@ pub(crate) enum IneligibleReason {
     MultiOperandSharedSpine,
 }
 
+// dead_code: whole struct is INV-8 model data — read only by the `#[cfg(test)]` accounting assertions.
+#[cfg_attr(not(test), allow(dead_code))]
 #[derive(Debug)]
 pub(crate) struct IneligibleGroup {
     pub reason: IneligibleReason,
@@ -442,15 +455,23 @@ pub(crate) struct IneligibleGroup {
 }
 
 /// One `(category, leading_literal)` prefix cohort.
+///
+/// `leading_literal` / `cohort_size` / `ineligible` / `singletons` are INV-8
+/// model data read only by the `#[cfg(test)]` accounting assertions (dead in
+/// the non-test lib build); only `groups` is consumed by emission.
 #[derive(Debug)]
 pub(crate) struct FactoringBucket {
+    #[cfg_attr(not(test), allow(dead_code))]
     pub leading_literal: String,
     /// Total members discovered in this bucket BEFORE any exclusion — the
     /// INV-8 no-loss denominator (amendment A5): `Σ group leaves +
     /// Σ ineligible members + |singletons| == cohort_size`.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub cohort_size: usize,
     pub groups: Vec<SpineGroup>,
+    #[cfg_attr(not(test), allow(dead_code))]
     pub ineligible: Vec<IneligibleGroup>,
+    #[cfg_attr(not(test), allow(dead_code))]
     pub singletons: Vec<SingletonMember>,
 }
 
@@ -861,13 +882,11 @@ pub(crate) fn build_prefix_factoring_with(
                 ) {
                     singletons.push(SingletonMember {
                         rule_idx: member.rule_idx,
-                        kind: member.kind,
                         reason: SingletonReason::CastMachinery,
                     });
                 } else if member.items.is_empty() {
                     singletons.push(SingletonMember {
                         rule_idx: member.rule_idx,
-                        kind: member.kind,
                         reason: SingletonReason::EmptySequence,
                     });
                 } else {
@@ -893,7 +912,6 @@ pub(crate) fn build_prefix_factoring_with(
                     let lone = &part[0];
                     singletons.push(SingletonMember {
                         rule_idx: lone.rule_idx,
-                        kind: lone.kind,
                         reason: SingletonReason::LoneRootChild,
                     });
                     continue;
@@ -1008,7 +1026,6 @@ pub(crate) fn emission_partition(
         for (trigger, member) in members {
             let singleton = SingletonMember {
                 rule_idx: member.rule_idx,
-                kind: member.kind,
                 reason: SingletonReason::FactoringDisabled,
             };
             match bucket_order.iter().position(|t| t == &trigger) {
@@ -1108,6 +1125,8 @@ pub(crate) struct MixfixGroup {
     /// (`part0.preceding.first()` / `nullary_literals.first()` / `None` for
     /// an operand-/rep-leading part-0). Uniform by the shared root item;
     /// asserted at build so spine-prune ≡ member-prune.
+    // dead_code: model field read only by the `#[cfg(test)]` assertions.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fixb_literal: Option<String>,
     /// The suffix trie — single-root by construction (the root partition IS
     /// the group criterion).
@@ -1119,6 +1138,8 @@ impl MixfixGroup {
         self.member_l_bps.iter().map(|&(_, r)| r).collect()
     }
 
+    // dead_code: model accessor, exercised only by the `#[cfg(test)]` INV-8 assertions.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn leaves(&self) -> Vec<&GroupMember> {
         let mut out = Vec::with_capacity(self.roots.len());
         for root in &self.roots {
@@ -1137,9 +1158,13 @@ pub(crate) struct MixfixBucket {
     /// The EMITTED slice tuples `(l_bp, result_src, rule_idx)` — mirrors
     /// `mixfix_bp_<cat>` exactly (same grouping, same `GEN1_MAX_SLICE`
     /// truncation).
+    // dead_code: INV-8 model data (`slice`/`ineligible`/`singletons`) read only by `#[cfg(test)]` accounting.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub slice: Vec<(u8, u16, u16)>,
     pub groups: Vec<MixfixGroup>,
+    #[cfg_attr(not(test), allow(dead_code))]
     pub ineligible: Vec<IneligibleGroup>,
+    #[cfg_attr(not(test), allow(dead_code))]
     pub singletons: Vec<SingletonMember>,
 }
 
@@ -1345,7 +1370,6 @@ pub(crate) fn build_mixfix_factoring(
             if is_cast {
                 singletons.push(SingletonMember {
                     rule_idx: cand.member.rule_idx,
-                    kind: MemberKind::Mixfix,
                     reason: SingletonReason::CastMachinery,
                 });
             } else if cand.member.items.is_empty() {
@@ -1353,7 +1377,6 @@ pub(crate) fn build_mixfix_factoring(
                 // mergeable post-trigger item at all.
                 singletons.push(SingletonMember {
                     rule_idx: cand.member.rule_idx,
-                    kind: MemberKind::Mixfix,
                     reason: SingletonReason::EmptySequence,
                 });
             } else {
@@ -1410,7 +1433,6 @@ pub(crate) fn build_mixfix_factoring(
                 for cand in part {
                     singletons.push(SingletonMember {
                         rule_idx: cand.member.rule_idx,
-                        kind: MemberKind::Mixfix,
                         reason: if lone {
                             SingletonReason::LoneRootChild
                         } else {
@@ -1716,7 +1738,6 @@ pub(crate) fn mixfix_identity_partition(
             .iter()
             .map(|g| SingletonMember {
                 rule_idx: g.rule_idx,
-                kind: MemberKind::Mixfix,
                 reason: SingletonReason::FactoringDisabled,
             })
             .collect();
@@ -1869,6 +1890,8 @@ pub(crate) struct SpineEmission {
     /// sound initial choice = the default).
     pub min_span_prelude: TokenStream,
     /// A3 lex-alt adjustments per category index.
+    // dead_code: model field read only by the `#[cfg(test)]` assertions.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub lex_alt: Vec<SpineLexAlt>,
     /// `fn __s1_spine_weight_rule(cat, rule) -> u16` free fn for the
     /// lex-fork weight stamps (identity for real ids; MIN member for spine
@@ -2159,6 +2182,8 @@ pub(crate) fn build_spine_emission(
 /// contribution so the prefix-surface pins stay stance-independent of
 /// [`super::forks::S1F5_MIXFIX_COHORTS`]. Mixfix-aware tests use
 /// [`build_spine_emission_from_parts`] with an explicit mixfix partition.
+// dead_code: F0/F1/F5-1 pins' entry point, called only from the `#[cfg(test)]` suite.
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn build_spine_emission_from(
     partition: &[CategoryFactoring],
     language: &LanguageDef,

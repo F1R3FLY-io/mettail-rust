@@ -4,7 +4,6 @@ use proptest::prelude::*;
 use std::collections::{HashMap, HashSet};
 
 /// Helper: create a RuleInfo with sensible defaults.
-#[allow(dead_code)]
 fn rule(label: &str, category: &str) -> RuleInfo {
     RuleInfo {
         label: label.to_string(),

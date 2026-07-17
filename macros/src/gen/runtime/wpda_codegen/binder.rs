@@ -66,10 +66,8 @@ pub(crate) fn build_prefix_bp_map(
 #[derive(Debug, Clone)]
 pub struct BinderShape {
     /// Constructor label (e.g., `"Lam"`, `"Fraction"`, `"PNew"`).
-    #[allow(dead_code)]
     pub label: String,
     /// Result category name (e.g., `"Term"`, `"BigRat"`, `"Proc"`).
-    #[allow(dead_code)]
     pub result_cat: String,
     /// Per-position dispatch entries (excluding position 0 which is the
     /// trigger consumed at PrefixDispatch open arm).
@@ -85,10 +83,10 @@ pub struct BinderShape {
     /// Cat::Label(...) expression.
     pub action_args: Vec<ActionArgKind>,
     /// Body category (for single-binder rules — None for non-binder).
-    #[allow(dead_code)]
     pub body_cat: Option<String>,
     /// Param categories in declaration order (for non-binder Simple params).
-    #[allow(dead_code)]
+    // dead_code: populated by production codegen but only read by the `#[cfg(test)]` shape assertions.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub param_cats: Vec<String>,
 }
 
@@ -1057,7 +1055,8 @@ pub(crate) fn binder_initial_body_cat(shape: &BinderShape) -> Option<&str> {
 /// (Pre-F7 history: this used a FIRST-set lookup table + paren-depth scan
 /// + fallback-rule heuristic. The principled Fork-based replacement
 /// fulfills `feedback_use_wpds_disambiguation_not_heuristics.md`.)
-#[allow(dead_code)]
+// dead_code: exercised only by the same-file `#[cfg(test)] mod tests`; dead in the non-test lib build.
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn emit_binder_prefix_arms(
     language: &mettail_ast::language::LanguageDef,
     categories: &[String],

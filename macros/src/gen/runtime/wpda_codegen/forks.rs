@@ -38,8 +38,6 @@
 //!   than codegen-time guard evaluation and matches the WPDS principle of
 //!   "emit all valid branches, let lex-min pick the survivor."
 
-#![allow(dead_code)]
-
 use proc_macro2::TokenStream;
 use quote::quote;
 
@@ -47,6 +45,9 @@ use quote::quote;
 
 /// Cluster 1 SKIP-branch weight bias. Reused from `EPSILON_OPT_SKIP` for
 /// consistency with the canonical Opt-Group A.i Fork.
+// dead_code: codegen-side reference value used only by the `#[cfg(test)]` ordering asserts;
+// production emit strings reference `mettail_prattail::automata::lex_weight::*` directly.
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) const SKIP_BIAS: f64 = 0.5;
 
 /// Cluster 5 (Commit 4) base offset for recovery branches.
@@ -54,9 +55,15 @@ pub(crate) const RECOVERY_BASE: u16 = 0xFE00;
 
 /// Cluster 3 BP-tier biases. Lower wins on lex-min; tier 0 (infix) is
 /// preferred over postfix/mixfix when l_bp ties.
+// dead_code: codegen-side reference values used only by the `#[cfg(test)]` ordering asserts;
+// production emit strings reference `mettail_prattail::automata::lex_weight::*` directly.
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) const BP_TIER_INFIX: f64 = 0.00;
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) const BP_TIER_CROSSCAT_LHS: f64 = 0.05;
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) const BP_TIER_POSTFIX: f64 = 0.10;
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) const BP_TIER_MIXFIX: f64 = 0.20;
 
 /// ForRow F3 symmetric projection-suppression gate kill switch (2026-06-28).
@@ -426,6 +433,8 @@ pub(crate) const S1F5_MIXFIX_COHORTS: bool = true;
 /// A single Fork branch in a Cluster 1 emission. Stringly-typed via
 /// TokenStream so callers retain full control of the symbol/state/action
 /// expressions.
+// dead_code: constructed only by the `#[cfg(test)]` `emit_first_set_fork` shape test; not wired into the emit path.
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) struct FirstSetBranch {
     /// Branch identifier for diagnostics (e.g., "close", "sep", "ident").
     pub name: &'static str,
@@ -461,6 +470,8 @@ pub(crate) struct FirstSetBranch {
 /// installs a cursor-count bound, the walker reports structured
 /// ambiguity-budget overflow when the live frontier exceeds it; it does not
 /// silently prune by branch weight.
+// dead_code: exercised only by the same-file `#[cfg(test)]` shape test; not wired into the emit path.
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn emit_first_set_fork(
     branches: &[FirstSetBranch],
     consume_trigger: bool,

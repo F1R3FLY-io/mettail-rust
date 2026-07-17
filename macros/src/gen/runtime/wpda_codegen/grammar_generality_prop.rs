@@ -198,7 +198,6 @@ const COLLS: &[CollectionType] = &[CollectionType::Vec, CollectionType::HashBag,
 // change). It is now drawn by `arb_rule_spec`, present in `witness_spine`, and
 // the two GAP-3 deterministic tests below are un-`#[ignore]`d. `classify_atomic`
 // classifies it as `AtomicShape::NullaryLiteralRun`, so INV-2/INV-7 pass.
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 enum RuleSpec {
     /// `a:C op b:C |- :C` — homogeneous binary infix.

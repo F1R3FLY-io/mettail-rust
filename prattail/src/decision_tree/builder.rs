@@ -12,9 +12,6 @@ pub struct DecisionTreeBuilder {
     first_sets: HashMap<String, FirstSet>,
     /// Category name -> byte ID for NT encoding.
     category_id_map: HashMap<String, u8>,
-    /// Category names in order.
-    #[allow(dead_code)]
-    category_names: Vec<String>,
     /// Built trees per category.
     trees: HashMap<String, CategoryDecisionTree>,
     /// Dead rule labels to exclude.
@@ -60,7 +57,6 @@ impl DecisionTreeBuilder {
             token_ids,
             first_sets,
             category_id_map,
-            category_names,
             trees: HashMap::new(),
             dead_rules,
             nt_boundary_map: HashMap::new(),

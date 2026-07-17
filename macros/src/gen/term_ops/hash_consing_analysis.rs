@@ -5,6 +5,11 @@
 //! This analysis feeds into the ART01 gate in cost_benefit.rs and emits
 //! diagnostic notes when enabled.
 
+// dead_code: the ENTIRE module is currently unreachable — its named consumer
+// (the `cost_benefit.rs` A-RT01 gate) does not exist in the tree, so every
+// item here is exercised only by this module's own `#[cfg(test)]` suite.
+// FLAGGED for a keep-vs-delete decision (see the dead-code cleanup report);
+// retained as-is (not deleted) pending review.
 #![allow(dead_code)]
 
 use mettail_ast::grammar::{GrammarItem, GrammarRule, TermParam};

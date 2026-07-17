@@ -292,7 +292,6 @@ const CGLL_BIN_TAG: u32 = 0x8000_0000;
 /// machine (see `cgll_realize_drive`). `Bin` = a `cgll_realize_bin_symbol`
 /// body; `Predep` = a `cgll_prerealize_deps` walk (suspendable at an
 /// unrealized BIN dep).
-#[allow(dead_code)] // Reached only under the const (DCE'd while const off).
 enum CgllRealizeFrame<W> {
     Bin {
         sym: crate::sppf::SppfId,
@@ -342,7 +341,6 @@ enum CgllRealizeFrame<W> {
 }
 
 /// S2-F3: the packing-in-progress sub-state of a Bin frame.
-#[allow(dead_code)]
 struct CgllBinPacking<W> {
     rule_idx: u32,
     weight: W,
@@ -355,7 +353,6 @@ struct CgllBinPacking<W> {
 /// S2-F3: element-step stage. Am-4 asymmetry: Bin elements push Predep
 /// UNCONDITIONALLY then memo-check on resume; Chosen elements (S3)
 /// memo-check FIRST, then Predep, then re-check.
-#[allow(dead_code)]
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum CgllElemStage {
     PredepPending,
@@ -371,7 +368,6 @@ enum CgllElemStage {
 /// resolver — itself removed with the ROOT-P scaffolding in S6; the
 /// `PRATTAIL_CGLL_HYBRID` arm was retired 2026-07-13. Converted for
 /// completeness: deep chains under those arms would overflow.)
-#[allow(dead_code)] // Reached only under the const (DCE'd while const off).
 enum CgllBinarizeFrame {
     Sym {
         bin: crate::sppf::SppfId,
@@ -397,7 +393,6 @@ enum CgllBinarizeFrame {
 /// suspension, absorbed on resume in the identical total order (⊗ order +
 /// decision push order preserved — the K-B/K-C byte-identity argument,
 /// plan §4 R3).
-#[allow(dead_code)] // Reached only under the const (DCE'd while const off).
 struct CgllKtupleFrame<W> {
     node: crate::sppf::SppfId,
     depth: u32,
@@ -411,7 +406,6 @@ struct CgllKtupleFrame<W> {
 }
 
 /// S4: the packing-in-progress sub-state of a ktuple frame.
-#[allow(dead_code)]
 struct CgllKtuplePacking<W> {
     pk: crate::sppf::SppfId,
     rule_idx: u32,
@@ -421,7 +415,6 @@ struct CgllKtuplePacking<W> {
 }
 
 /// S4: resumable position inside a ktuple packing body.
-#[allow(dead_code)]
 enum CgllKtStage {
     Children {
         child_idx: usize,
@@ -1821,7 +1814,6 @@ pub struct WpdaWalker<W: SemiringRef, E: WpdaEngine<W>> {
     /// `builder` field once the SPPF is the sole AST source.
     ///
     /// See `~/.claude/plans/option-c-sppf-on-wpda.md` §1, §2.
-    #[allow(dead_code)] // C3 wires the first emit-helper writer; C6 wires the first reader.
     sppf: crate::sppf::Sppf<W>,
     // Phase F.4 (2026-05-18): walker-global `sppf_collection_arena:
     // Vec<Vec<SppfId>>` DELETED. Splice events from N concurrent
@@ -1845,7 +1837,6 @@ pub struct WpdaWalker<W: SemiringRef, E: WpdaEngine<W>> {
     /// `ActionArg::Predicate`.
     ///
     /// Append-only.
-    #[allow(dead_code)]
     sppf_predicate_arena: Vec<Arc<dyn Any + Send + Sync>>,
     /// Phase F.13 chain_10000 Plan D E3 Substage 2 (2026-05-26):
     /// walker-global SPPF-stack path-tree arena. Each `BranchCursor`
@@ -3140,7 +3131,6 @@ pub struct LexForkStamp {
 /// LexAltInfix/Postfix/MixfixOp — the caller's running `w` is the LHS and
 /// rides the descent edge as `operand_w`, consumed into the constituent at
 /// the R2 reduce). Constant per frame (set at descent).
-#[allow(dead_code)] // Reached only under the const (DCE'd while const off).
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 enum CgllFrameClass {
     D1,
@@ -3157,7 +3147,6 @@ enum CgllFrameClass {
 /// (`kind_class == Return` ⇒ `InfixLoop { cur_bp: outer_bp }`, mirroring the
 /// generated engine's Return.bp contract at engine_impl.rs ~651-659 — the
 /// AV3 resume-state hole's fix).
-#[allow(dead_code)] // Reached only under the const (DCE'd while const off).
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 struct CgllRetSlot {
     /// FxHash of the caller frame symbol AFTER applying any replace-half
@@ -3207,36 +3196,24 @@ struct CgllRetSlot {
 
 /// Kind-class constants for [`CgllRetSlot::kind_class`] (low nibble; the
 /// 0x40 bit carries the frame class — see [`CgllRetSlot`] docs).
-#[allow(dead_code)]
 const CGLL_KC_SEED: u8 = 0; // seed frame sentinel (never minted by a descent)
-#[allow(dead_code)]
 const CGLL_KC_RETURN: u8 = 1;
-#[allow(dead_code)]
 const CGLL_KC_RULE_AT: u8 = 2;
-#[allow(dead_code)]
 const CGLL_KC_INFIX_CONT: u8 = 3;
-#[allow(dead_code)]
 const CGLL_KC_CATEGORY_ENTRY: u8 = 4;
-#[allow(dead_code)]
 const CGLL_KC_COLLECTION_MARKER: u8 = 5;
-#[allow(dead_code)]
 const CGLL_KC_GROUPING_MARKER: u8 = 6;
-#[allow(dead_code)]
 const CGLL_KC_MIXFIX_MARKER: u8 = 7;
-#[allow(dead_code)]
 const CGLL_KC_OPT_GROUP: u8 = 8;
-#[allow(dead_code)]
 const CGLL_KC_BINDER_LIST: u8 = 9;
 
 /// Sentinel for [`CgllRetSlot::pushed_rule`] when no rule identity applies.
-#[allow(dead_code)]
 const CGLL_PURE_RULE_NONE: u32 = u32::MAX;
 
 /// One descriptor of the pure canonical-GLL arm — the C7 fence. Dedup key =
 /// FxHash of ALL SEVEN fields (nothing else may influence stepping). The
 /// `ret_slot` is the frame's OWN structured return slot (the slot describing
 /// how THIS frame returns — i.e. `u`'s label; amendment 1), NOT the caller's.
-#[allow(dead_code)] // Reached only under the const (DCE'd while const off).
 #[derive(Clone, Debug)]
 struct CgllPureDescriptor {
     /// Grammar slot part 1: the engine state (embeds the Pratt bp;
@@ -3276,7 +3253,6 @@ struct CgllPureDescriptor {
 /// determined by the caller symbol + creation-state class; a conflicting
 /// re-record (same edge, different ctx) would violate purity and is counted
 /// (`ctx_conflicts`) + debug-asserted instead of silently overwritten.
-#[allow(dead_code)] // Reached only under the const (DCE'd while const off).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 struct CgllPureCallerCtx {
     caller_sym: StackSymbolV2,
@@ -3285,7 +3261,6 @@ struct CgllPureCallerCtx {
 
 /// Instrumentation counters for one `step_canonical_pure` run (printed as a
 /// `CGLL-PURE …` line under `PRATTAIL_CANONICAL_GLL_STATS`).
-#[allow(dead_code)] // Reached only under the const (DCE'd while const off).
 /// R1 (Pocket-F): one VIRTUAL repair token served by [`CgllRepairSource`].
 /// `at_real` = the real SLOT the virtual fills (its order key — task #10
 /// item 4 amendment 7: for chain entries this is the real position the
@@ -3297,7 +3272,6 @@ struct CgllPureCallerCtx {
 /// the NEXT VIRTUAL position of a chain (task #10 item 4: Swap /
 /// token-mutating ApplyRecoverySequence lowerings — the field was renamed
 /// from `next_real` when chains made non-real successors first-class).
-#[allow(dead_code)] // Reached only under the const (DCE'd while const off).
 struct CgllRepairVirtual {
     kind: TokenKind,
     text: String,
@@ -3312,7 +3286,6 @@ struct CgllRepairVirtual {
 /// `base + idx` (strictly above every real position). Zero interior
 /// mutability: virtuals are allocated BETWEEN rounds (the adapter is
 /// rebuilt per round borrowing the updated slice).
-#[allow(dead_code)]
 struct CgllRepairSource<'a> {
     inner: &'a dyn WpdaTokenSource,
     /// First virtual position (= real `len() + 1`).
@@ -3395,7 +3368,6 @@ const CGLL_REPAIR_PAYLOAD_SEP: char = '\u{1}';
 /// R1 amendment-5 (Pocket-F): the decoded family of a PARKED repair
 /// proposal (the engine's own recovery branch, recorded at the former
 /// amendment-8 drop sites instead of being discarded).
-#[allow(dead_code)]
 #[derive(Clone, Debug, PartialEq)]
 enum CgllRepairKind {
     /// Family B (G4 — pred5): `PopWithEffect{InsertToken(close)}`. The
@@ -3443,7 +3415,6 @@ enum CgllRepairKind {
 
 /// R1: one parked repair proposal (W-generic ⇒ lives on the WALKER, not
 /// the non-generic `CgllPureRun`).
-#[allow(dead_code)]
 struct CgllParkedRepair<W> {
     d: CgllPureDescriptor,
     kind: CgllRepairKind,
@@ -3630,7 +3601,6 @@ struct CgllPureStats {
 /// a D2 descent of the same pushed symbol mint DISTINCT GSS `v` nodes, so a
 /// pop return always knows which reduce protocol (R1 fold vs R2 per-edge
 /// join) its create-after-pop replays must use.
-#[allow(dead_code)]
 const CGLL_KC_D2_BIT: u8 = 0x40;
 
 /// STAGE C / AMENDMENT 6 (2026-07-10): bit 30 marks a WEIGHT-CARRIER wrapper
@@ -3638,7 +3608,6 @@ const CGLL_KC_D2_BIT: u8 = 0x40;
 /// `cgll_pure_weight_carrier`). Cleared from every fold-slot hash
 /// (`cgll_pure_slot_hash`) so wrapper and fold intermediates can never share
 /// a `(slot, lo, hi)` identity. Bit 31 remains [`CGLL_BIN_TAG`].
-#[allow(dead_code)]
 const CGLL_WRAP_TAG: u32 = 0x4000_0000;
 
 /// Whole-run mutable state of one `step_canonical_pure` invocation: the
@@ -3646,7 +3615,6 @@ const CGLL_WRAP_TAG: u32 = 0x4000_0000;
 /// by GSS node/edge identity, populated at descent, grammar×n bounded — see
 /// [`CgllPureCallerCtx`] for the purity argument), the slot-collision
 /// side-map, and the stats. Non-generic (holds only ids + finite symbols).
-#[allow(dead_code)] // Reached only under the const (DCE'd while const off).
 #[derive(Default)]
 struct CgllPureRun {
     /// Pending descriptors `R` (U add-once applied at dequeue).
@@ -7503,7 +7471,6 @@ where
     // deleted) because they remain a correct LOCAL comparison should a future
     // pass need it, and to keep 655095cf's machinery intact; marked
     // `allow(dead_code)` until then.
-    #[allow(dead_code)]
     fn semiring_priority_cmp(a: &W, b: &W) -> std::cmp::Ordering {
         if a == b {
             return std::cmp::Ordering::Equal;
@@ -7522,6 +7489,8 @@ where
         ))
     }
 
+    // dead_code: dormant local-weight comparator, deliberately retained per the
+    // 655095cf note above (a correct LOCAL comparison should a future pass need it).
     #[allow(dead_code)]
     fn packing_priority_cmp(
         &self,
@@ -9563,7 +9532,6 @@ where
     /// `slot_id` is the production's global rule id; the intermediate packing's
     /// `rule_idx` is that same id (never fired — `flatten` unwraps it before the
     /// action tail runs). Reached only under `cgll_binarize_active()`.
-    #[allow(dead_code)] // Reached only under the const (DCE'd while const off).
     fn cgll_get_node_p(
         &mut self,
         slot_id: u32,
@@ -9579,36 +9547,6 @@ where
         let packing = self.sppf.intern_packing(slot_id, vec![w, z], W::one_ref());
         self.sppf.link_packing_to_symbol(inter, packing);
         inter
-    }
-
-
-    /// Map a CLASSIC child SppfId to its BINARIZED counterpart: a classic
-    /// `Symbol(cat, lo, hi)` → the binarized `Symbol(cat | CGLL_BIN_TAG, lo, hi)`
-    /// built by that constituent's own (earlier, bottom-up) reduce. Leaves
-    /// (terminals / triggers / already-binarized symbols) pass through unchanged,
-    /// so the binarized spine is a SELF-CONTAINED forest (binarized symbols
-    /// reference binarized sub-symbols; leaves are shared with the classic
-    /// forest). Falls back to the classic id when no binarized counterpart exists
-    /// (defensive — should not happen for the `@`-cohort). Reached only under
-    /// `cgll_binarize_active()`.
-    #[allow(dead_code)] // Reached only under the const (DCE'd while const off).
-    fn cgll_map_child_to_binarized(&self, c: crate::sppf::SppfId) -> crate::sppf::SppfId {
-        match self.sppf.node(c) {
-            Some(crate::sppf::SppfNode::Symbol {
-                non_terminal_tag,
-                lo_pos,
-                hi_pos,
-                ..
-            }) => {
-                if non_terminal_tag & CGLL_BIN_TAG != 0 {
-                    return c; // already binarized
-                }
-                self.sppf
-                    .symbol_id(non_terminal_tag | CGLL_BIN_TAG, *lo_pos, *hi_pos)
-                    .unwrap_or(c)
-            },
-            _ => c,
-        }
     }
 
     /// BINARIZE the completed CLASSIC forest reachable from one classic Symbol
@@ -9627,7 +9565,6 @@ where
     /// packing_exists / reconciliation / cast synthesis). `map` memoizes
     /// `classic Symbol → binarized Symbol` (inserted before recursion ⇒ cycle
     /// safe). Reached only under `cgll_binarize_active()`.
-    #[allow(dead_code)] // Reached only under the const (DCE'd while const off).
     fn cgll_binarize_classic_symbol(
         &mut self,
         classic: crate::sppf::SppfId,
@@ -9647,7 +9584,6 @@ where
     /// S5: Sym-frame constructor = the recursion's entry (map hit /
     /// non-Symbol / already-BIN fast paths; intern + `map.insert` BEFORE
     /// descent — the cycle guard).
-    #[allow(dead_code)] // Reached only under the const (DCE'd while const off).
     fn cgll_make_binarize_sym_frame(
         sppf: &mut crate::sppf::Sppf<W>,
         map: &mut rustc_hash::FxHashMap<crate::sppf::SppfId, crate::sppf::SppfId>,
@@ -9681,7 +9617,6 @@ where
     /// S5: the iterative binarize driver. Value channel = the binarized
     /// child id delivered into the left fold (`cgll_get_node_p`, order
     /// L→R preserved by the indexed child loop — plan §4 R5).
-    #[allow(dead_code)] // Reached only under the const (DCE'd while const off).
     fn cgll_binarize_drive(
         &mut self,
         seed: CgllBinarizeFrame,
@@ -9801,7 +9736,6 @@ where
 
     /// S5: one child evaluation — the recursion's `cgll_binarize_classic_
     /// child` arms with the recursive cases turned into frames.
-    #[allow(dead_code)] // Reached only under the const (DCE'd while const off).
     fn cgll_binarize_child_step(
         sppf: &mut crate::sppf::Sppf<W>,
         map: &mut rustc_hash::FxHashMap<crate::sppf::SppfId, crate::sppf::SppfId>,
@@ -9828,58 +9762,6 @@ where
         }
     }
 
-    /// Binarize one classic packing child: a `Symbol` recurses via
-    /// [`Self::cgll_binarize_classic_symbol`]; any leaf (Terminal / TriggerTerminal
-    /// / Epsilon / CollectionId / …) is shared verbatim (leaves are common to both
-    /// forests). Reached only under `cgll_binarize_active()`.
-    #[allow(dead_code)] // Reached only under the const (DCE'd while const off).
-    fn cgll_binarize_classic_child(
-        &mut self,
-        c: crate::sppf::SppfId,
-        map: &mut rustc_hash::FxHashMap<crate::sppf::SppfId, crate::sppf::SppfId>,
-    ) -> crate::sppf::SppfId {
-        // S5 (S2-F3): wrapper over the iterative machine (see
-        // `cgll_binarize_drive`); the CollectionId rebinarize rationale
-        // below is unchanged.
-        match self.sppf.node(c) {
-            Some(crate::sppf::SppfNode::Symbol { .. }) => {
-                self.cgll_binarize_classic_symbol(c, map)
-            },
-            // ── Stage P3 (2026-07-09) COLLECTION overlay: a polyadic-send TAIL
-            // (`@a!(0,1)`'s args `bs.*sep(",")`) rides a `CollectionId` leaf whose
-            // `items` are the CLASSIC element SppfIds. The binarized spine folds
-            // this leaf verbatim (a leaf), so its `items` keep referencing the
-            // CLASSIC element symbols while the binarized realize memo keys on the
-            // BINARIZED symbols ⇒ `realize_packing_call`'s per-item `memo.get`
-            // misses every element ⇒ the WHOLE combo is silently dropped ("no
-            // realizable readings" — the measured P3 @a!(0,1) failure). Rebinarize
-            // each element + intern a fresh `CollectionId` carrying the BINARIZED
-            // element ids so the realize (which now realizes those items into the
-            // shared memo) can rebuild the collection. EMPTY collections (deep-@ /
-            // `@Nil!(0)` — the single/no arg is a DIRECT spine child, `items ==
-            // []`) are shared VERBATIM ⇒ byte-identical to the pre-P3 binarize on
-            // the whole delivered deep-@ ladder. Reached only under
-            // `cgll_binarize_active()` (DCE'd while the const is off).
-            Some(crate::sppf::SppfNode::CollectionId { id, items }) => {
-                if items.is_empty() {
-                    return c;
-                }
-                let (id, items) = (*id, items.clone());
-                let n = items.len();
-                self.cgll_binarize_drive(
-                    CgllBinarizeFrame::Coll {
-                        id,
-                        items,
-                        item_idx: 0,
-                        bitems: Vec::with_capacity(n),
-                    },
-                    map,
-                )
-            },
-            _ => c,
-        }
-    }
-
     /// UN-binarize a spine node into its classic n-ary children list(s). An
     /// `Intermediate` fans over its packings (each a binary `[left, right]`),
     /// cartesian-concatenating `flatten(left) ++ flatten(right)` (so a shared
@@ -9887,7 +9769,6 @@ where
     /// node is a leaf/symbol and yields the singleton `[[id]]`. The result is the
     /// classic children list the action tail consumes (`realize_packing_call`
     /// then filters `TriggerTerminal`). Reached only under `cgll_binarize_active()`.
-    #[allow(dead_code)] // Reached only under the const (DCE'd while const off).
     fn cgll_flatten_ids(&self, id: crate::sppf::SppfId) -> Vec<Vec<crate::sppf::SppfId>> {
         // ── S2-F3 (2026-07-11): ITERATIVE rewrite (explicit stack) of the
         // former self-recursion (one Rust frame per Intermediate spine
@@ -10024,7 +9905,6 @@ where
     /// `W::one_ref()` (their `cgll_get_node_p` is pinned to one), so the
     /// product is the `⊗`-identity and this is observationally byte-identical
     /// for them. Reached only under `cgll_binarize_active()`.
-    #[allow(dead_code)] // Reached only under the const (DCE'd while const off).
     fn cgll_flatten_ids_weighted(
         &self,
         id: crate::sppf::SppfId,
@@ -10157,13 +10037,11 @@ where
     /// `TriggerTerminal`, arity-checks, and fires `action_fn`). N packings ⇒ N
     /// readings — the owner-ambiguity resolved at realize. Reached only under
     /// `cgll_binarize_active()`.
-    #[allow(dead_code)] // Reached only under the const (DCE'd while const off).
     /// P3.c: bottom-up pre-realization of a flat element's memo
     /// DEPENDENCIES (CollectionId items, OPTIONAL_PRESENT packing children,
     /// spine Intermediates — recursively, so collections nested inside
     /// optional groups realize too). Structural containers only have their
     /// CONTENTS realized. Cycle-safe via the memo guard + local seen set.
-    #[allow(dead_code)] // Reached only under the const (DCE'd while const off).
     // ═════════════════════════════════════════════════════════════════════
     // S2-F3 (2026-07-11): ITERATIVE REALIZE MACHINE (explicit stacks) — see
     // s2_stageA_ledger §"FLIP-GATE ATTEMPT 1" F3 + f3_iterative_realize_plan
@@ -10186,7 +10064,6 @@ where
     // with zero reallocation; deep chains take ≤2 amortized-O(1) geometric
     // doublings.
 
-    #[allow(dead_code)] // Reached only under the const (DCE'd while const off).
     fn cgll_realize_drive(
         &self,
         seed: CgllRealizeFrame<W>,
@@ -10730,7 +10607,6 @@ where
     /// lookup → packing decode → `on_path` insert → chosen-flat walk).
     /// Failures return the recursion's exact `Err` values; post-insert
     /// failures remove `on_path` first (every recursion exit path did).
-    #[allow(dead_code)] // Reached only under the const (DCE'd while const off).
     fn cgll_make_chosen_frame(
         &self,
         choices: &rustc_hash::FxHashMap<crate::sppf::SppfId, crate::sppf::SppfId>,
@@ -10812,7 +10688,6 @@ where
     /// Bin-frame constructor = the recursion's callee ENTRY (memo check →
     /// provisional-empty publish → span/packings snapshot). `None` = memo
     /// hit (caller advances without pushing).
-    #[allow(dead_code)] // Reached only under the const (DCE'd while const off).
     fn cgll_make_bin_frame(
         sppf: &crate::sppf::Sppf<W>,
         memo: &mut std::collections::HashMap<crate::sppf::SppfId, Vec<(ActionArg, W)>>,
@@ -10852,7 +10727,9 @@ where
     /// CONTENTS realized. Cycle-safe via the memo guard + local seen set.
     /// S2-F3: thin wrapper over the iterative machine (Predep-seeded drive;
     /// Am-1 — kept as a named entry for the realize-chosen caller).
-    #[allow(dead_code)] // Reached only under the const (DCE'd while const off).
+    // dead_code: named-entry wrapper retained per the doc above; the realize-chosen
+    // caller currently drives the iterative machine directly.
+    #[allow(dead_code)]
     fn cgll_prerealize_deps(
         &self,
         root: crate::sppf::SppfId,
@@ -10926,7 +10803,6 @@ where
     /// ROOT-P Stage E1 diagnostic — recursively dump a binarized node's packing
     /// family + spine flatten (env `PRATTAIL_CGLL_DIAG`). Localizes a lost reading
     /// to getNodeP-span / owner-packing-link / flatten.
-    #[allow(dead_code)]
     /// P3.e diagnostic: iterative DFS cycle detector over the packing DAG.
     /// A binarized forest for a non-cyclic grammar must be ACYCLIC; a cycle
     /// means a completion fed back into its own constituent spine (the PNew
@@ -10934,7 +10810,6 @@ where
     /// chain from the on-stack re-entry, or `None`. Iterative (explicit
     /// stack) so the DETECTOR itself terminates on any input — the very
     /// property the recursive flatten lacks on a corrupt forest.
-    #[allow(dead_code)] // Reached only under the const (DCE'd while const off).
     fn cgll_pure_find_cycle(&self, root: crate::sppf::SppfId) -> Option<Vec<crate::sppf::SppfId>> {
         use rustc_hash::FxHashSet;
         // children(node) = packing children (Symbol/Intermediate) or none.
@@ -11072,7 +10947,6 @@ where
     /// `Symbol(cat | CGLL_BIN_TAG, lo, hi)`, dedups, and realizes each with
     /// `cgll_realize_bin_symbol` (all packings ⇒ all readings). Reached only under
     /// `cgll_binarize_active()` (DCE'd + byte-identical when the const is `false`).
-    #[allow(dead_code)] // Reached only under the const (DCE'd while const off).
     fn cgll_resolve_binarized(
         &mut self,
         accepting: &[EoiCursorCandidate<W>],
@@ -11326,7 +11200,6 @@ where
     // ═════════════════════════════════════════════════════════════════════
 
     /// FxHash of any hashable value (the pure arm's one hashing primitive).
-    #[allow(dead_code)]
     fn cgll_pure_hash_of<T: std::hash::Hash>(value: &T) -> u64 {
         use std::hash::Hasher;
         let mut h = rustc_hash::FxHasher::default();
@@ -11336,7 +11209,6 @@ where
 
     /// U add-once key = FxHash of ALL descriptor fields (and nothing else —
     /// the C7 fence).
-    #[allow(dead_code)]
     fn cgll_pure_key(d: &CgllPureDescriptor) -> u64 {
         Self::cgll_pure_hash_of(&(
             &d.state,
@@ -11354,7 +11226,6 @@ where
     /// `PrefixDispatch.pos` (≡ `i`) EXCLUDED so partials of the same grammar
     /// slot at different positions share `Intermediate` identity (the
     /// packing-family poly-collapse). Exhaustive (in-crate enum).
-    #[allow(dead_code)]
     fn cgll_pure_state_slot_ident(state: &WpdaState) -> (u8, u64) {
         #[inline]
         fn pack4(a: u16, b: u16, c: u16, d: u16) -> u64 {
@@ -11460,7 +11331,6 @@ where
     /// hashed the state alone and would collide all `Unwinding` folds across
     /// rules). 31-bit collision risk carried by the debug side-map
     /// (`CgllPureRun::slot_seen`).
-    #[allow(dead_code)]
     fn cgll_pure_slot_hash(cur_sym: &StackSymbolV2, state: &WpdaState) -> u32 {
         let ident = Self::cgll_pure_state_slot_ident(state);
         // Bit 31 = the binarized-Symbol namespace; bit 30 = the amendment-6
@@ -11470,7 +11340,6 @@ where
 
     /// Kind-class byte of a pushed symbol for [`CgllRetSlot::kind_class`]
     /// (+ the frame-class bit — see [`CGLL_KC_D2_BIT`]).
-    #[allow(dead_code)]
     fn cgll_pure_kind_class(kind: SymbolKind, class: CgllFrameClass) -> u8 {
         let base = match kind {
             SymbolKind::CategoryEntry => CGLL_KC_CATEGORY_ENTRY,
@@ -11487,7 +11356,6 @@ where
     }
 
     /// The seed (goal) frame's sentinel ret-slot.
-    #[allow(dead_code)]
     fn cgll_pure_seed_slot(seed_sym: &StackSymbolV2) -> CgllRetSlot {
         CgllRetSlot {
             caller_sym_hash: 0,
@@ -11512,7 +11380,6 @@ where
     /// frontier node), so the encoding needs only injectivity; field
     /// recovery (kind-class / outer_bp for replay resume) rides the
     /// `CgllPureRun::v_slot` side-map instead of the label bits.
-    #[allow(dead_code)]
     fn cgll_pure_v_label(slot: &CgllRetSlot) -> StackSymbolV2 {
         let h = Self::cgll_pure_hash_of(slot);
         StackSymbolV2 {
@@ -11531,7 +11398,6 @@ where
     /// mint/dedup `Intermediate(slot_id, lo, hi_z)` and link the binary
     /// `[w, z]` packing carrying the STEP's weight (`intern_packing`
     /// ⊕-aggregates on dedup re-intern — the lex-provenance carrier).
-    #[allow(dead_code)]
     fn cgll_pure_get_node_p(
         &mut self,
         slot_id: u32,
@@ -11570,7 +11436,6 @@ where
     /// Span-deriving fold wrapper (mirrors `cgll_thread_absorb`'s lo/hi
     /// derivation): `lo` = the running left-part's start (else `z`'s start),
     /// `hi` = `z`'s end (else the supplied position hint).
-    #[allow(dead_code)]
     fn cgll_pure_fold(
         &mut self,
         slot_id: u32,
@@ -11599,7 +11464,6 @@ where
     /// arity- and reading-invisible (they differ from the E1-GT flats,
     /// which carry only `[trigger, BinderScope, body]` — a documented
     /// diagnostic-diff, not a reading diff).
-    #[allow(dead_code)] // Reached only under the const (DCE'd while const off).
     fn cgll_pure_binder_name_of(&self, id: crate::sppf::SppfId) -> Option<String> {
         match self.sppf.node(id) {
             Some(crate::sppf::SppfNode::TriggerTerminal {
@@ -11624,7 +11488,6 @@ where
     /// (TriggerTerminals never become ActionArgs). Stripped from the
     /// `CollectionId.items` at the marker pop after the coverage gate
     /// counts it.
-    #[allow(dead_code)] // Reached only under the const (DCE'd while const off).
     fn cgll_pure_fold_sep_marker(
         &mut self,
         run: &mut CgllPureRun,
@@ -11666,7 +11529,6 @@ where
     /// `Intermediate` at the same span. `intern_packing` dedup ⊕-aggregates
     /// identical wrappers (lex-min — the correct alternative election).
     /// Weight-one branches pass through unwrapped.
-    #[allow(dead_code)] // Reached only under the const (DCE'd while const off).
     fn cgll_pure_weight_carrier(
         &mut self,
         run: &mut CgllPureRun,
@@ -11704,7 +11566,6 @@ where
     /// fork children also ⊗ the branch weight into `pending_packing_weight`)
     /// into the frame's running `w` as an EMPTY carrier (flattens to `[]` —
     /// shape-safe). No-op for weight-one branches.
-    #[allow(dead_code)] // Reached only under the const (DCE'd while const off).
     fn cgll_pure_carry_scan_weight(
         &mut self,
         run: &mut CgllPureRun,
@@ -11737,7 +11598,6 @@ where
     }
 
     /// Recognize a B2 separator-marker leaf (reserved owner).
-    #[allow(dead_code)]
     /// P3 Pocket-A: CONTENT span-lo of a spine — the `lo` of the first
     /// non-zero-width element of the first flat. Zero-width WEIGHT CARRIERS
     /// attach at their consume position, which for a D2 (operand-carrying)
@@ -11748,7 +11608,6 @@ where
     /// the true `b.keys()` (2,9); root GtEq flats refused; logs_s2p3/
     /// pocketA_fdump2.log + pocketA_rdiag.log). Content-lo restores the
     /// classic z span; carriers keep their weight role untouched.
-    #[allow(dead_code)] // Reached only under the const (DCE'd while const off).
     fn cgll_pure_span_lo_content(&self, w: crate::sppf::SppfId) -> Option<u32> {
         if w == crate::sppf::SPPF_ID_NONE {
             return None;
@@ -11786,7 +11645,6 @@ where
     /// to re-fold into the prefix; `None` when `w` is not a spine
     /// Intermediate (single-element marker `w` = the element itself —
     /// whole-join is already correct).
-    #[allow(dead_code)] // Reached only under the const (DCE'd while const off).
     fn cgll_pure_spine_split_last(
         &self,
         w: crate::sppf::SppfId,
@@ -11836,7 +11694,6 @@ where
     }
 
     /// P4 lattice-order key lookup (identity fallback off the cached map).
-    #[allow(dead_code)] // Reached only under the const (DCE'd while const off).
     #[inline]
     fn cgll_pk(&self, pos: u32) -> u32 {
         self.cgll_pure_pos_key.get(pos as usize).copied().unwrap_or(pos)
@@ -11866,7 +11723,6 @@ where
     ///     Childless (zero-width weight carriers): `key(hi_pos)` — their
     ///     `hi` is the fold position, a real node.
     /// Depth-capped against the tolerated ForRow unit-rule cycles.
-    #[allow(dead_code)] // Reached only under the const (DCE'd while const off).
     fn cgll_hi_key(&self, id: crate::sppf::SppfId) -> Option<u32> {
         let leaf_end = |pos: &crate::sppf::PosOrSynth,
                         text_handle: crate::sppf::TextHandle,
@@ -11944,7 +11800,6 @@ where
     /// P4 item-1: the SPINE BODY category — the category of the LAST
     /// content Symbol in the first flat (classic reads the sppf-stack TOP;
     /// the pure spine's last content element is the same constituent).
-    #[allow(dead_code)] // Reached only under the const (DCE'd while const off).
     fn cgll_pure_spine_body_cat(&self, w: crate::sppf::SppfId) -> Option<u16> {
         if w == crate::sppf::SPPF_ID_NONE {
             return None;
@@ -11984,7 +11839,6 @@ where
     ///       transparent-group reading — loses to a present one).
     ///   K-D insertion order: candidates iterate in packing-family
     ///       (insertion) order and only STRICT improvement replaces.
-    #[allow(dead_code)]
     fn cgll_pure_ktuple(
         &self,
         node: crate::sppf::SppfId,
@@ -12368,7 +12222,6 @@ where
     /// Realize exactly the CHOSEN derivation (one packing per node from
     /// `cgll_pure_ktuple`'s election). `None` on any gap (missing choice /
     /// elide) — the caller falls back to the full-family realize.
-    #[allow(dead_code)] // Reached only under the const (DCE'd while const off).
     /// `Err(pk)` = the packing whose realize refuted (tabu it + re-elect).
     fn cgll_pure_realize_chosen(
         &self,
@@ -12398,7 +12251,6 @@ where
     /// spine's flats DISAGREE on parity (counted — classically impossible:
     /// distinct parities were distinct cursors). First-flat count is
     /// authoritative.
-    #[allow(dead_code)] // Reached only under the const (DCE'd while const off).
     fn cgll_pure_spine_item_parity(&self, w: crate::sppf::SppfId) -> (usize, bool) {
         if w == crate::sppf::SPPF_ID_NONE {
             return (0, false);
@@ -12434,7 +12286,6 @@ where
     /// events carry the token kind/text with cost 0.0; skip/delete events
     /// carry `total_cost_tropical` (parsed back from the marker payload
     /// `at->target:cost`). Green readings contain no markers ⇒ no events.
-    #[allow(dead_code)] // Reached only under the const (DCE'd while const off).
     fn cgll_repair_events_from_root(&self, root: crate::sppf::SppfId) -> Vec<RecoveryEvent> {
         let mut events: Vec<RecoveryEvent> = Vec::new();
         if root == crate::sppf::SPPF_ID_NONE {
@@ -12545,7 +12396,6 @@ where
     /// gate exactly like the B2 separator marker (a counted repair marker
     /// would coverage-refute its own repaired flat — the red-team's
     /// blocking AV3 finding).
-    #[allow(dead_code)]
     fn cgll_pure_is_repair_marker(&self, id: crate::sppf::SppfId) -> bool {
         matches!(
             self.sppf.node(id),
@@ -12578,7 +12428,6 @@ where
     /// `GroupingClosePreservingInner` lookahead special is NOT recomputed at
     /// replay time — counted in `replay_structural_resumes`; B0 battery
     /// predicts 0 replays, reported honestly).
-    #[allow(dead_code)]
     fn cgll_pure_replay_resume_state(
         slot: &CgllRetSlot,
         stats: &mut CgllPureStats,
@@ -12608,7 +12457,6 @@ where
     /// enqueue the child frame `(new_state, pushed, class, v, child_pos,
     /// w₀)`. Create-after-pop replays materialize resume descriptors for
     /// THIS caller exactly like pop returns.
-    #[allow(dead_code)]
     #[allow(clippy::too_many_arguments)]
     fn cgll_pure_descend(
         &mut self,
@@ -12963,7 +12811,6 @@ where
     /// the completed `z` into the caller's edge operand per the R1 formula
     /// (`y = getNodeP(slot(caller L), w_edge, z)`). Used by R1 AND
     /// structural pops (structural `z` = the passthrough `w`).
-    #[allow(dead_code)]
     fn cgll_pure_resume_fold(
         &mut self,
         run: &mut CgllPureRun,
@@ -13054,7 +12901,6 @@ where
     /// Materialize ONE resumed caller descriptor whose `w` is REPLACED by
     /// the per-edge `z_e` (R2: the LHS was consumed into the constituent —
     /// never re-folded into the edge operand).
-    #[allow(dead_code)]
     fn cgll_pure_resume_replace(
         &mut self,
         run: &mut CgllPureRun,
@@ -13128,7 +12974,6 @@ where
     /// carrier on the PRE-consume spine first, then the one-token marker;
     /// `end_inline` additionally folds the BinderScope right after (the
     /// lambda `lam x . body` one-action open+capture+close).
-    #[allow(dead_code)] // Reached only from `step_canonical_pure` (DCE'd while const off).
     #[allow(clippy::too_many_arguments)]
     fn cgll_pure_binder_ident_consume(
         &mut self,
@@ -13186,7 +13031,6 @@ where
     /// levels of *structural collection frames* is beyond any test corpus;
     /// hitting the cap degrades to `EMPTY` exactly like classic's
     /// no-enclosing-frame case.
-    #[allow(dead_code)] // Reached only from `step_canonical_pure` (DCE'd while const off).
     fn cgll_pure_frame_ctx(
         &self,
         v_parent: &rustc_hash::FxHashMap<
@@ -13246,7 +13090,6 @@ where
     /// consume) passes the Start effect's names (normally empty) and the
     /// state is still `BinderRule` — `marker_pos` is absent, names come from
     /// the effect.
-    #[allow(dead_code)] // Reached only from `step_canonical_pure` (DCE'd while const off).
     #[allow(clippy::too_many_arguments)]
     fn cgll_pure_end_binder_scope(
         &mut self,
@@ -13318,7 +13161,6 @@ where
     /// the classic `visited_recovery` `(pos, cat, bp)` gate with the
     /// family/payload split (two distinct proposals at one site are both
     /// genuine engine emissions).
-    #[allow(dead_code)] // Reached only under the const (DCE'd while const off).
     #[allow(clippy::too_many_arguments)]
     fn cgll_pure_park_repair(
         &mut self,
@@ -13469,7 +13311,6 @@ where
     /// target; VirtualInsert/Substitute = twin at a fresh virtual position
     /// (amendment 4). The marker is realize-invisible (TriggerTerminal) and
     /// stripped at every item-counting gate.
-    #[allow(dead_code)]
     fn cgll_pure_reseed_repair(
         &mut self,
         run: &mut CgllPureRun,
@@ -13770,7 +13611,6 @@ where
     /// unconstrained position, so virtual→virtual links need no adapter
     /// changes; the accept/trailing gates already cover chain positions
     /// via the `virtual_pos` guards and the extended pos-key cache.
-    #[allow(dead_code)] // Reached only under the const (DCE'd while const off).
     fn cgll_pure_lower_repair_chain(
         &mut self,
         served: Vec<(TokenKind, String, usize)>,
@@ -13798,7 +13638,6 @@ where
     /// Rebase a branch state's baked position onto the reseed position
     /// (the engine computed it against the UNMUTATED stream — the
     /// PrefixDispatch-desync normalization, applied at reseed).
-    #[allow(dead_code)]
     fn cgll_pure_repair_state_at(state: &WpdaState, pos: usize) -> WpdaState {
         match state {
             WpdaState::PrefixDispatch { cur_bp, .. } => {
@@ -13814,7 +13653,6 @@ where
     /// the coherent reading of plan §1 R1; the classic fire interns
     /// `hi = cursor.pos` AFTER the consume, GT-dump-confirmed root span
     /// `(0,7)` over spine `(0,6)` for `@Nil!(0)`).
-    #[allow(dead_code)]
     fn cgll_pure_reduce(
         &mut self,
         run: &mut CgllPureRun,
@@ -14473,11 +14311,9 @@ where
     /// the literal tables); OVERLAP/REGRESSION is the corruption class this
     /// hunts. Span-less elements (CollectionId, zero-width carriers) are
     /// skipped. Returns (symbols, packings, flats, issues≤16).
-    #[allow(dead_code)] // Reached only under the const (DCE'd while const off).
     /// P3 Pocket-A diag: env-gated (`PRATTAIL_CGLL_PURE_FDUMP`) forest dump
     /// from a root — every BIN symbol with its packing family (rule
     /// cat:local + children ids/tags/spans). Read-only.
-    #[allow(dead_code)] // Reached only under the const (DCE'd while const off).
     fn cgll_pure_forest_dump(&self, root: crate::sppf::SppfId) {
         let mut seen: rustc_hash::FxHashSet<crate::sppf::SppfId> = rustc_hash::FxHashSet::default();
         let mut stack: Vec<crate::sppf::SppfId> = vec![root];
@@ -14566,7 +14402,6 @@ where
     }
 
     /// Flatten helper for the dump: flats of ONE packing's children.
-    #[allow(dead_code)]
     fn cgll_flatten_ids_all_of(
         &self,
         pk: crate::sppf::SppfId,
@@ -14687,7 +14522,6 @@ where
     /// snapshot; publish through `self.branch_cursors` for the existing
     /// `resolve_at_end_of_input` → `cgll_resolve_binarized` pipe with the
     /// amendment-4 boundary fill-list).
-    #[allow(dead_code)] // Reached only under the const (DCE'd while const off).
     fn step_canonical_pure(&mut self, tokens: &dyn WpdaTokenSource) -> WpdaState {
         use rustc_hash::FxHashSet;
 
@@ -15688,7 +15522,6 @@ where
     /// Members 2/3/4 (cross-cat binder-resume / collection-element /
     /// infix-RHS maximal-extent) are B2-scope: their candidate sites are
     /// COUNTED (`unwind_family_census`), never silently skipped.
-    #[allow(dead_code)] // Reached only under the const (DCE'd while const off).
     fn cgll_pure_immediate_caller_sym(
         &self,
         run: &mut CgllPureRun,
@@ -15720,7 +15553,6 @@ where
     /// fresh `RuleAt(0)`); TRANSPARENT through everything else
     /// (CategoryEntry continuations / cross-cat lineages / Return
     /// pass-throughs — the classic `_ => pop` arm). Budget-bounded.
-    #[allow(dead_code)] // Reached only under the const (DCE'd while const off).
     fn cgll_pure_enclosing_receiver(
         &self,
         run: &mut CgllPureRun,
@@ -15772,7 +15604,6 @@ where
     /// `true` — the close's element-category + coverage gates are the
     /// authoritative fence there (P3.a), so over-injection refutes at the
     /// close instead of ghosting.
-    #[allow(dead_code)] // Reached only under the const (DCE'd while const off).
     fn cgll_pure_enclosing_acceptor(
         &self,
         run: &mut CgllPureRun,
@@ -15808,7 +15639,6 @@ where
     /// u-ancestry (edge-ctx caller chain), stopping at scope-resetting
     /// frames exactly like the classic edge-stack walk (GroupingMarker /
     /// MixfixMarker / RuleAt reset; CollectionMarker answers).
-    #[allow(dead_code)] // Reached only under the const (DCE'd while const off).
     fn cgll_pure_enclosing_collection_sep(
         &self,
         run: &mut CgllPureRun,
@@ -15839,7 +15669,6 @@ where
         None
     }
 
-    #[allow(dead_code)] // Reached only under the const (DCE'd while const off).
     /// ARM G (2026-07-12): pure mirror of classic's `crosscat_inherited_floor_reset`
     /// (the reset fn + its pre-step apply site in the tomita frontier loop) — the
     /// PER-CAT-MARKER REENTRY floor reset, the third boundary-continuation
@@ -16016,9 +15845,7 @@ where
     /// slot-change (requeue with mutated `state`/`cur_sym`/`pos`/`w`), a
     /// DESCENT (`cgll_pure_descend`), a REDUCE (`cgll_pure_reduce`), a fan
     /// (Fork → one child per branch), or a named-out-of-scope drop.
-    #[allow(dead_code)] // Reached only under the const (DCE'd while const off).
     /// R-A helper: does ANY boundary keep this consuming branch?
-    #[allow(dead_code)]
     fn cgll_branch_kept_by_any_boundary(
         &self,
         boundaries: &[ProjectionTargetBoundary],
@@ -16047,7 +15874,6 @@ where
     /// recorded (pure descents carry no origin payload ⇒ continue);
     /// xcat=5 → continue. A target must RECOGNIZE the lookahead or the
     /// walk continues (classic's closure-None-and-pop).
-    #[allow(dead_code)] // Reached only under the const (DCE'd while const off).
     fn cgll_pure_crosscat_boundaries(
         &self,
         run: &mut CgllPureRun,
@@ -16179,7 +16005,6 @@ where
     /// through the existing pure Fork-Advance arm, which enqueues the
     /// yield twin `{state: Unwinding, ..d}` — classic's exact branch
     /// semantics. Suppression is unconditional (classic-exact final state).
-    #[allow(dead_code)] // Reached only under the const (DCE'd while const off).
     fn cgll_pure_guard_crosscat_boundary(
         &self,
         run: &mut CgllPureRun,
@@ -17144,7 +16969,6 @@ where
     /// subset). `pos_after` = the fork-level trigger-consume position
     /// (`consume_trigger` handled by the caller); guard kinds are token-text
     /// predicates (pure — AV6).
-    #[allow(dead_code)] // Reached only under the const (DCE'd while const off).
     fn cgll_pure_dispatch_fork_branch(
         &mut self,
         run: &mut CgllPureRun,
@@ -18412,7 +18236,6 @@ where
     /// (recovery hard-drop) therefore must not kill lex-alt branches
     /// (receipt: class3 `with [ ] ( @(0) ? x ) . { 0 }` — the `?` lex-alt
     /// branch died as recovery_drops=1 ⇒ accepts=0 on well-formed input).
-    #[allow(dead_code)] // Reached only under the const (DCE'd while const off).
     fn cgll_pure_is_recovery_delta(delta: &BuilderDelta) -> bool {
         !matches!(delta, BuilderDelta::CommitLexAlternative { .. })
             && Self::is_recovery_delta(delta)
