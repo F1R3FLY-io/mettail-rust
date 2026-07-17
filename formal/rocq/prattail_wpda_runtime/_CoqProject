@@ -79,3 +79,5 @@ theories/PureCommitFoldIntegrityAccept.v
 theories/MixfixSpineCommit.v
 theories/ReplayIdentityIntegrity.v
 theories/MixfixTriggerVacuity.v
+
+theories/KBestExtractionSound.v
