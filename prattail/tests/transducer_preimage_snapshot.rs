@@ -254,24 +254,3 @@ fn fixture_exercises_inhabited_casts() {
         );
     }
 }
-
-#[test]
-#[ignore = "evidence dump only"]
-fn dump_transducer_evidence() {
-    let (all_syntax, categories, refinement) = refinement_cast_fixture();
-    let analysis = analyze_from_bundle(&all_syntax, &categories, &refinement);
-    eprintln!("[refinement_cast]");
-    eprintln!("  non_total_casts = {:?}", analysis.non_total_casts);
-    eprintln!("  dead_casts      = {:?}", analysis.dead_casts);
-    for (label, src) in expected_casts() {
-        let preimage =
-            cast_preimage_automaton(label, &all_syntax, &categories).expect("cast has a pre-image");
-        let alpha = ranked_alphabet(&all_syntax, &categories);
-        let elem = build_tree_algebra(&alpha);
-        let source_auto = category_automaton(src, &alpha, &elem);
-        eprintln!(
-            "  cast {label}: src={src}  preimage≡category={}",
-            languages_equal(&preimage, &source_auto)
-        );
-    }
-}

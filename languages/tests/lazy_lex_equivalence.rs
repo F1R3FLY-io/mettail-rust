@@ -392,59 +392,6 @@ fn report_nodes_materialized() {
     }
 }
 
-/// Focused probe for the cast-then-compare divergence. Drives the lazy parse
-/// for `int(3) == 3`, then dumps the lazy (post-parse, partially materialized)
-/// vs eager (full) DAG observations so we can see WHERE on-demand lazy diverges.
-#[test]
-#[ignore]
-fn probe_int_cast_compare() {
-    let input = "int(3) == 3";
-    // Eager full DAG.
-    let dag = calculator::lex_dag(input).expect("lex");
-    let eager = LatticeTokenSource::new(dag);
-    println!("\n=== EAGER DAG for {:?} ===", input);
-    for pos in 0..eager.len() {
-        println!(
-            "node {:>2}: byte_start={:?} kind={:?} text={:?} alts={} next0={:?}",
-            pos,
-            eager.position_order_key(pos),
-            eager.peek_kind(pos),
-            eager.peek_text(pos),
-            eager.peek_alternatives(pos).len(),
-            eager.next_pos(pos, 0),
-        );
-    }
-    println!("eager eof_node={} len={}", eager.eof_node(), eager.len());
-
-    // Lazy: drive the parse, observe what got materialized + eof_node timing.
-    let lazy = calculator::lex_dag_lazy(input);
-    let mut pos = 0usize;
-    let r = calculator::parse_Proc_via_wpda_with_source(&lazy, &mut pos, 0);
-    println!("\n=== LAZY parse result for {:?} ===", input);
-    println!(
-        "result={:?}\nfinal_pos={} eof_node={} nodes_materialized={}",
-        r,
-        pos,
-        lazy.eof_node(),
-        lazy.nodes_materialized()
-    );
-    // Now force-materialize and dump for comparison.
-    lazy.force_full_materialization();
-    println!("\n=== LAZY DAG (forced full) for {:?} ===", input);
-    for pos in 0..lazy.len() {
-        println!(
-            "node {:>2}: byte_start={:?} kind={:?} text={:?} alts={} next0={:?}",
-            pos,
-            lazy.position_order_key(pos),
-            lazy.peek_kind(pos),
-            lazy.peek_text(pos),
-            lazy.peek_alternatives(pos).len(),
-            lazy.next_pos(pos, 0),
-        );
-    }
-    println!("lazy eof_node={} len={}", lazy.eof_node(), lazy.len());
-}
-
 fn truncate(s: &str, n: usize) -> String {
     if s.len() <= n {
         s.to_string()

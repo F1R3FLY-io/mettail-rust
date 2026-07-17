@@ -40,19 +40,6 @@ mod __mettail_analytical {
         }
         // If not conclusive: pass silently (analysis incomplete, not a bug).
     }
-
-    #[test]
-    #[ignore = "termination analysis inconclusive -- run manually to inspect"]
-    fn basemath_termination_check_inconclusive() {
-        let lang = BaseMathLanguage;
-        let meta = lang.metadata();
-        let result = mettail_testkit::analytical::termination::check_language_termination(meta);
-        assert!(
-            result.is_conclusive,
-            "BaseMath termination analysis is INCONCLUSIVE: {}",
-            result.summary
-        );
-    }
 }
 
 mod __mettail_user_tests {

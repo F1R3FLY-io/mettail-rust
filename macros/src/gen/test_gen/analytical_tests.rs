@@ -61,7 +61,7 @@ pub fn generate_analytical_tests(language: &LanguageDef, _pipeline: &PipelineAna
     out.push_str("}\n\n");
 
     // Termination check — asserts only when the analysis is conclusive.
-    // An inconclusive result silently passes (the separate #[ignore] test catches it).
+    // An inconclusive result silently passes (analysis incomplete, not a bug).
     out.push_str("#[test]\n");
     out.push_str(&format!("fn {}_termination_check() {{\n", lang_name_lower));
     out.push_str(&format!("    let lang = {};\n", lang_struct));
@@ -78,23 +78,6 @@ pub fn generate_analytical_tests(language: &LanguageDef, _pipeline: &PipelineAna
     ));
     out.push_str("    }\n");
     out.push_str("    // If not conclusive: pass silently (analysis incomplete, not a bug).\n");
-    out.push_str("}\n\n");
-
-    // Termination inconclusive check — always #[ignore]d, run manually to inspect.
-    out.push_str("#[test]\n");
-    out.push_str("#[ignore = \"termination analysis inconclusive -- run manually to inspect\"]\n");
-    out.push_str(&format!("fn {}_termination_check_inconclusive() {{\n", lang_name_lower));
-    out.push_str(&format!("    let lang = {};\n", lang_struct));
-    out.push_str("    let meta = lang.metadata();\n");
-    out.push_str("    let result = mettail_testkit::analytical::termination::check_language_termination(meta);\n");
-    out.push_str(&format!(
-        "    assert!(\n\
-         \x20       result.is_conclusive,\n\
-         \x20       \"{lang} termination analysis is INCONCLUSIVE: {{}}\",\n\
-         \x20       result.summary\n\
-         \x20   );\n",
-        lang = lang_name
-    ));
     out.push_str("}\n\n");
 
     out

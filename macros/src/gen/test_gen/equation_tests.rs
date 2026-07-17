@@ -5,8 +5,8 @@
 //! 2. Verifies equation metadata is present and well-formed
 //! 3. Checks that LHS and RHS strings are non-empty
 //!
-//! Equations with freshness conditions are marked `#[ignore]` since they
-//! cannot be instantiated without concrete substitutions.
+//! Equations with freshness conditions cannot be instantiated without concrete
+//! substitutions, so they get a metadata-presence test only (not `#[ignore]`d).
 //!
 //! NOTE: Equation LHS/RHS are pattern strings with meta-variables that cannot
 //! be parsed as concrete terms. Tests verify metadata presence only.
@@ -44,7 +44,8 @@ pub fn generate_equation_tests(language: &LanguageDef) -> String {
         });
 
         if has_complex_premises {
-            // Emit with #[ignore] for equations with complex conditions
+            // Freshness/complex-premise equations cannot be instantiated with
+            // concrete substitutions, so emit a metadata-presence test only.
             out.push_str(&format!("// Equation {} has freshness/complex conditions\n", eq_name));
             // Equation has freshness/complex conditions — metadata test only.
             out.push_str("#[test]\n");

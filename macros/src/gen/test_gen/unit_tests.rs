@@ -5,8 +5,6 @@
 //! 2. Displays it to a string
 //! 3. Parses the string back
 //! 4. Verifies the roundtrip via display-idempotence
-//!
-//! Dead rules (from WFST analysis) are annotated with `#[ignore]`.
 
 use crate::gen::native::native_type_to_string;
 use crate::gen::term_ops::subst::{FieldInfo, VariantKind};
