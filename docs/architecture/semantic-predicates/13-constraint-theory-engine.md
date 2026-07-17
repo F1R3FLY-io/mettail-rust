@@ -383,39 +383,47 @@ All three theories reach the SFA/minterm machinery of [03](03-symbolic-automata-
 through the `TheoryAlgebra<T>` bridge of §2; `Z3Theory` (§2.1) is the deliberate
 semi-decidable exception that never crosses the bridge and stops at `Sat3`.
 
-### 2.3 The feature-gated optional backends
+### 2.3 The always-on OSLF analysis engines and the optional Z3 solver
 
-Z3 is not the only backend kept out of the default build. The production build links no
-solver and enables no optional dependency: every backend in this subsection is **off by
-default**, and each is held to a snapshot or agreement gate so that enabling it leaves the
-default analysis output byte-identical. They fall in two groups — the one external-dependency
-*solver* (Z3, §2.1), and the **OSLF staged analysis engines** wired behind Cargo features for
-the rollout. Each is marked as either a *genuine decision procedure* (it decides a real
-property of the grammar) or mere *routing* (it re-dispatches an engine that is already
-compiled, adding no new algebra).
+Beyond the core deciders sit three groups of backend. The **OSLF analysis engines** are
+**always compiled and always run** — the precise engines are the sole analysis path, with no
+Cargo feature and no opt-out (their string-heuristic fallbacks were deleted in commit
+`2ec8316e`, because correctness by construction forbids an unsound / under-enforcing mode).
+The one external-dependency *solver* (Z3, §2.1) is the **only** member still off by default,
+gated behind `--features smt`; the production build links no solver and enables no optional
+dependency. A test-only completeness algebra rounds out the set. Each engine is marked as
+either a *genuine decision procedure* (it decides a real property of the grammar) or mere
+*routing* (it re-dispatches an engine that is already compiled, adding no new algebra), and
+each carries a snapshot or agreement gate that pins its output. `mettail-ast` is now a normal
+(non-optional) dependency.
 
-| Backend | Feature (default off) | External dep | Decides / provides | Live vs `.0`-inert | Soundness gate | Documented in |
+| Backend | Compiled | External dep | Decides / provides | Role | Soundness gate | Documented in |
 |---|---|---|---|---|---|---|
-| `Z3Theory` (SMT solver) | `smt` | `libz3` | SMT over Bool / LIA / bit-vectors, as a `Sat3` oracle | live gap-filler | re-checked witness + `Z3WitnessChecked.v` | §2.1 above |
-| `AnyAlgebra` carrier route *(routing)* | `any-algebra-carrier` | `mettail-ast` | re-routes guard analysis through the uniform recursive carrier | `.0`-inert | byte-identity snapshot | [02 §6](02-effective-boolean-algebra.md) |
-| structural tree automaton | `sym-tree-structural` | `mettail-ast` (implied) | `SymbolicTreeAutomaton` structural disjointness / subtyping | live analysis | falls back to `Overlapping`; pre-image snapshot | [03](03-symbolic-automata-sfa.md), [04](04-symbolic-transducers-sft-stft.md) |
-| symbolic tree transducer | `oslf-transducer` | `mettail-ast` (implied) | cast totality and pre-image via `SymbolicTreeTransducer` | live analysis | agreement vs the category automaton | [04](04-symbolic-transducers-sft-stft.md) |
-| bisimulation LTS | `oslf-bisimulation` | `mettail-ast` (implied) | coarsest bisimulation by partition refinement | `.0`-inert | self-certifying `is_bisimulation`; snapshot | [12 §5](12-heyting-behavioral-logic.md) |
-| letprop-to-PATA emptiness | `oslf-letprop` | `mettail-ast` (implied) | recursive-predicate emptiness via a Zielonka parity tree automaton — the modal-μ-calculus decider | live on synthetic predicates | Rocq-aligned `PataEmptiness.v`; snapshot | [15](15-mu-calculus.md) |
-| Hindley–Milner sort pass | `oslf-hindley-milner` | `mettail-ast` (implied) | base-sort consistency by unification | live analysis | parity snapshot | §2.2.2 (unification) above, [03](03-symbolic-automata-sfa.md) |
-| behavioral lowering *(routing)* | `oslf-behavioral-lowering` | `mettail-ast` (implied) | lowers the runtime carrier to a `BehavioralFormula` | `.0`-inert | proven-canonical mapping; eval-agreement | [12 §4](12-heyting-behavioral-logic.md), [14](14-quantification.md) |
-| `OrderedFieldAlgebra<i128>` | *(no feature; completeness)* | — | a bounded discrete EBA over `i128` | test-only | inherits the §5.5 exactness theorem | [02 §5.5](02-effective-boolean-algebra.md) |
+| `Z3Theory` (SMT solver) | `--features smt` (off by default) | `libz3` | SMT over Bool / LIA / bit-vectors, as a `Sat3` oracle | live gap-filler | re-checked witness + `Z3WitnessChecked.v` | §2.1 above |
+| `AnyAlgebra` carrier route | **always-on** | `mettail-ast` | re-routes guard analysis through the uniform recursive carrier | routing | byte-identity snapshot (`guard_carrier_snapshot`) | [02 §6](02-effective-boolean-algebra.md) |
+| structural tree automaton | **always-on** | `mettail-ast` | `SymbolicTreeAutomaton` structural disjointness / subtyping; fires **RT03** | decision | falls back to `Overlapping`; pre-image snapshot | [03](03-symbolic-automata-sfa.md), [04](04-symbolic-transducers-sft-stft.md) |
+| symbolic tree transducer | **always-on** | `mettail-ast` | cast totality and pre-image via `SymbolicTreeTransducer`; fires **RT07** | decision | agreement vs the category automaton | [04](04-symbolic-transducers-sft-stft.md) |
+| bisimulation LTS | **always-on** | `mettail-ast` | coarsest bisimulation by partition refinement (supersedes N06-ISO) | decision | self-certifying `is_bisimulation`; snapshot | [12 §5](12-heyting-behavioral-logic.md) |
+| letprop-to-PATA emptiness | **always-on** | `mettail-ast` | recursive-predicate emptiness via a Zielonka parity tree automaton — the modal-μ-calculus decider; fires **LP01** | decision | Rocq-aligned `PataEmptiness.v`; snapshot | [15](15-mu-calculus.md) |
+| Hindley–Milner sort pass | **always-on** | `mettail-ast` | base-sort consistency by unification; fires **HM01** | decision | parity snapshot | §2.2.2 (unification) above, [03](03-symbolic-automata-sfa.md) |
+| behavioral lowering | **always-on** | `mettail-ast` | lowers the runtime carrier to a `BehavioralFormula` | routing | proven-canonical mapping; eval-agreement | [12 §4](12-heyting-behavioral-logic.md), [14](14-quantification.md) |
+| `OrderedFieldAlgebra<i128>` | test-only | — | a bounded discrete EBA over `i128` | completeness | inherits the §5.5 exactness theorem | [02 §5.5](02-effective-boolean-algebra.md) |
+
+The lints these engines carry — **RT03**, **RT07**, **LP01**, **HM01** — fire unconditionally;
+all four are inert on the current grammar corpus (0 firings) but are always active on any future
+grammar that exhibits the defect they detect.
 
 Two cautions complete the picture. First, the conformance capability labels — `buchi`,
 `alternating`, `vpa`, `parity-tree-automata`, `register-automata`, `probabilistic`,
 `multi-tape`, `multiset-automata`, `two-way-transducer` — are **not** algebra gates: their
-automaton engines compile unconditionally, and the flags only assert test-suite capability.
-Second, `any-algebra-carrier` and `oslf-behavioral-lowering` introduce no new algebra — they
+automaton engines compile unconditionally, and the labels only assert test-suite capability.
+Second, the `AnyAlgebra` carrier route and behavioral lowering introduce no new algebra — they
 re-route or lower an algebra that already exists (`AnyAlgebra`, `BehavioralFormula`), which is
-why they are `.0`-inert and snapshot-gated. The genuine optional decision machinery is the Z3
-solver (§2.1), the symbolic tree automaton / transducer / PATA-emptiness / bisimulation /
-Hindley–Milner engines, and the `i128` completeness algebra; everything else optional is
-debug, bench, or capability-label scaffolding.
+why they are marked *routing* and carry a byte-identity / eval-agreement snapshot rather than a
+fresh decision proof; they still run unconditionally. The genuine decision machinery is the Z3
+solver (§2.1, the one optional backend), the always-on symbolic tree automaton / transducer /
+PATA-emptiness / bisimulation / Hindley–Milner engines, and the `i128` completeness algebra;
+everything else optional is debug, bench, or capability-label scaffolding.
 
 ## 3. Quantified-predicate evaluation
 

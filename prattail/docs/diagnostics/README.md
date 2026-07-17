@@ -47,9 +47,11 @@ Two special values appear in the column:
   (`prattail/src/predicate_dispatch/tests.rs`) now runs **unconditionally**.)
 
 For the flags that genuinely change the build — instrumentation, tracing, the SMT/rendering
-back ends, the OSLF analysis substrate, and language selection — see
+back ends, and language selection — see
 [Optional Cargo Features](#optional-cargo-features) and
-[Environment Variables](#environment-variables) at the end of this document.
+[Environment Variables](#environment-variables) at the end of this document. (The **OSLF
+analysis substrate** is no longer among them: its precise engines are always compiled and
+always run — see [OSLF analysis substrate](#oslf-analysis-substrate-prattail-always-on--no-longer-cargo-features).)
 
 ## Quick Reference
 
@@ -495,22 +497,34 @@ the `mettail-macros` codegen-time gate for `PRATTAIL_MACRO_TRACE`).
 | `smt` | `dep:z3` | off | SMT-backed `ConstraintTheory` via in-process Z3 (`prattail/src/logict_smt.rs`), reachable only through three-valued `is_satisfiable_3v` / `checked_witness` (`unknown → Sat3::DontKnow`, never collapsed). Secondary gap-filler where the verified deciders return `DontKnow`. The default build links no libz3 and is byte-identical. |
 | `railroad-diagrams` | *(none)* | off | Optional hand-emitted **SVG** railroad-diagram output (`render_grammar_railroad_svg`). Text/ASCII railroad rendering (`render_grammar_railroad_text`) is **always** available and needs no feature. |
 
-### OSLF analysis substrate (`prattail`, inert)
+### OSLF analysis substrate (`prattail`, always-on — no longer Cargo features)
 
-All off by default and **inert**: each is either `.0`-inert (compiled, but no live caller) or a
-`.1`-wire that falls back to the status-quo verdict on any parse failure, and each is proven
-byte-identical / no-worse than the default by a dedicated snapshot test. The default build is
-byte-for-byte unchanged. (OSLF = the Order-Sorted Logical-Framework analysis tower.)
+The seven OSLF analysis engines below are **not** Cargo features. They were once gated behind
+the default-off `any-algebra-carrier`, `sym-tree-structural`, `oslf-bisimulation`,
+`oslf-transducer`, `oslf-letprop`, `oslf-hindley-milner`, and `oslf-behavioral-lowering`
+features; those features — and the string-heuristic fallbacks they used to guard — were
+**deleted** (commit `2ec8316e`). The precise engines are now the **sole, always-on** analysis
+path: always compiled, always run, with no opt-in and no opt-out. Correctness by construction
+is a primary purpose of the crate, so the analysis substrate must not ship an unsound /
+under-enforcing heuristic mode — the two deleted fallbacks (`category_is_scalar_by_string`,
+which misclassified scalar sorts by string-matching a type-name segment, and the silent
+heuristic `analyze_refinement_dispatch`, which under-enforced RT03) were genuine
+correctness-by-construction violations. `mettail-ast` is now a normal (non-optional)
+dependency. (OSLF = the Order-Sorted Logical-Framework analysis tower.)
 
-| Feature | Enables / deps | Default | Purpose |
-|---------|----------------|:------:|---------|
-| `any-algebra-carrier` | `dep:mettail-ast` | off | Base of the tower: routes `symbolic::analyze_from_bundle` through the `AnyAlgebra` guard-predicate carrier, producing byte-identical `SymbolicAnalysis`. Needed for the real `NativeKind` scalar-sort resolution the other phases reuse. |
-| `sym-tree-structural` | `any-algebra-carrier` | off | Structural refinement-type dispatch via `SymbolicTreeAutomaton<AnyAlgebra>`; decides disjointness/subtype precisely and populates the previously-dead RT03 empty-intersection lint. |
-| `oslf-bisimulation` | `any-algebra-carrier` | off | Exposes the LTS partition-refinement engine as a pipeline entrypoint (`.0`-inert); agreement-gated against `alternating::analyze_from_bundle`. |
-| `oslf-transducer` | `sym-tree-structural` | off | Bottom-up symbolic tree transducer for cast totality / cast reachability (`.0`-inert). |
-| `oslf-letprop` | `any-algebra-carrier` | off | Recursive-predicate → modal-μ → Parity Alternating Tree Automaton decision path; fires the LP01 dead-behavioral-type lint. Inert on every current grammar (no recursive-predicate surface syntax yet). |
-| `oslf-hindley-milner` | `any-algebra-carrier` | off | Base-sort consistency pass: checks each constructor's principal arrow type unifies with its declared category; fires the HM01 sort-mismatch lint. Inert on real grammars. |
-| `oslf-behavioral-lowering` | `any-algebra-carrier` | off | Lowers the runtime `BehavioralPred` carrier into the `BehavioralFormula` relational decider (`.0`-inert); the eval path is untouched. |
+Their lints — **RT03**, **RT07**, **LP01**, **HM01** — therefore fire **unconditionally**. All
+four are **inert on the current grammar corpus** (0 firings across every bundled grammar), but
+they are always active: any future grammar that exhibits the defect they detect will trip them.
+
+| Engine (module) | Decides / provides | Lint fired |
+|---|---|---|
+| `AnyAlgebra` carrier (`any_algebra.rs`) | Sole route for `symbolic::analyze_from_bundle` through the uniform guard-predicate carrier; the real `NativeKind` scalar-sort resolution the other engines reuse. Byte-for-byte agreement with the retained `analyze_from_bundle_string_set` oracle is pinned by `guard_carrier_snapshot`. | — |
+| structural dispatch (`sym_tree`, `structural_types`) | Structural refinement-type dispatch via `SymbolicTreeAutomaton<AnyAlgebra>`; decides disjointness / subtype precisely (conservative `Overlapping` on parse failure — never worse than the status quo). | **RT03** empty-refinement-intersection |
+| symbolic tree transducer (`sym_tree_transducer.rs`) | Bottom-up symbolic tree transducer for cast totality / cast reachability (pre-image ∩ source category). | **RT07** dead-cast |
+| bisimulation LTS (`bisimulation.rs`) | Coarsest bisimulation by partition refinement; supersedes the weaker `alternating` behavioral-iso check (**N06-ISO**); agreement-gated against `alternating::analyze_from_bundle`. | — |
+| letprop→PATA (`letprop.rs` → `parity_tree.rs`) | Recursive-predicate → modal-μ → Parity Alternating Tree Automaton emptiness. Inert on every current grammar (no recursive-predicate **surface syntax** yet — a tracked `ast/` follow-up). | **LP01** dead-behavioral-type |
+| Hindley–Milner sort pass (`hindley_milner.rs`) | Base-sort consistency: checks each constructor's principal arrow type unifies with its declared category. | **HM01** sort-mismatch |
+| behavioral lowering (`behavioral_pred` → `behavioral_algebra`) | Lowers the runtime `BehavioralPred` carrier into the `BehavioralFormula` relational decider; the eval path is untouched. | — |
 
 ### Predicate-dispatch capability labels (`prattail`, not Cargo features)
 

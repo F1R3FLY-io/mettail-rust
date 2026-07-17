@@ -51,9 +51,9 @@ it. Names are exact (read from source). Rows are grouped by theory tree.
 Two kinds of claim appear below. The original rows certify the **algebra** itself
 — Boolean laws, closure, composition, functionality, bridge soundness. The rows
 marked *(wiring)* were added when the substrate was wired into the live pipeline:
-each certifies an **integration seam** where a module was activated behind a
-Cargo feature that is **off by default** (so the default build stays
-byte-identical), and each *reuses* the algebra soundness above rather than
+each certifies an **integration seam** where a module is wired into the always-on
+analysis path (the precise engines are the sole analysis route — no Cargo feature,
+no opt-out), and each *reuses* the algebra soundness above rather than
 re-deriving it. Both kinds are zero-admission and live in the same trees.
 
 ### 2.1 `symbolic_algebra` — target `rocq-symbolic-algebra`
@@ -139,9 +139,9 @@ compose it with OSLF funding and the fail-closed flip gate.
 ### 2.6 `advanced_automata` — target `rocq-advanced-automata`
 
 Directory: `formal/rocq/advanced_automata/theories/`. These certify the four
-wiring seams the substrate-wiring campaign added behind default-off features
-(`oslf-bisimulation`, `oslf-letprop`, the simulation trace-LTL check, and
-`oslf-hindley-milner`); each reuses a shipped automaton/algebra result.
+wiring seams the substrate-wiring campaign added — the now always-on bisimulation,
+letprop→PATA, simulation trace-LTL check, and Hindley–Milner engines; each reuses a
+shipped automaton/algebra result.
 
 | Claim | File | Key theorem(s) | Target |
 |---|---|---|---|
