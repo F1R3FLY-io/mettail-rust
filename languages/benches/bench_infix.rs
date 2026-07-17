@@ -6,13 +6,11 @@
 //!
 //! Run with: cargo bench -p mettail-languages --bench bench_infix
 
-mod bench_common;
-
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use mettail_languages::calculator::*;
 use std::time::Duration;
 
-use bench_common::{
+use mettail_languages::bench_common::{
     gen_alternating_add_sub, gen_infix_chain, gen_mixed_precedence, gen_right_assoc_chain, SIZES,
 };
 

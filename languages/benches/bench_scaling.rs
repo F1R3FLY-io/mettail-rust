@@ -9,8 +9,6 @@
 //!
 //! Run with: cargo bench -p mettail-languages --bench bench_scaling
 
-mod bench_common;
-
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use mettail_languages::ambient;
 use mettail_languages::calculator;
@@ -18,7 +16,7 @@ use mettail_languages::lambda;
 use mettail_languages::rhocalc;
 use std::time::Duration;
 
-use bench_common::{
+use mettail_languages::bench_common::{
     gen_chained_negation, gen_infix_chain, gen_mixed_precedence, gen_nested_application,
     gen_nested_lambda, gen_nested_output, gen_nested_parallel, gen_parallel, gen_parallel_amb,
     gen_right_assoc_chain, SIZES,

@@ -27,7 +27,6 @@ impl AnyTerm {
     fn unwrap_num(self) -> Num {
         match self {
             AnyTerm::WrapNum(v) => v,
-            _ => panic!("AnyTerm::unwrap_num: wrong variant"),
         }
     }
 }

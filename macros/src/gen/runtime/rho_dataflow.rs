@@ -298,6 +298,19 @@ pub fn generate_rho_fold_dataflow(language: &LanguageDef) -> TokenStream {
                 quote! { #inner_enum::#category_ident(value) => #root(value, out_channel), }
             })
             .collect();
+        // The `_ =>` fallback is reachable only when some category lacks a scalar root. When every
+        // category is covered, the dispatch arms plus the `Ambiguous` arm exhaust `#inner_enum`, so
+        // the wildcard would be an unreachable pattern (MixedMath: Bool + Int both scalar).
+        let all_covered = {
+            let covered: std::collections::HashSet<String> =
+                root_categories.iter().map(|c| c.to_string()).collect();
+            language.types.iter().all(|t| covered.contains(&t.name.to_string()))
+        };
+        let dispatch_default = if all_covered {
+            quote! {}
+        } else {
+            quote! { _ => ::core::result::Result::Ok(::mettail_rholang_codegen::RhoFoldDataflowDisposition::Defer), }
+        };
         quote! {
             fn __mettail_rho_dataflow_dispatch(
                 inner: &#inner_enum,
@@ -317,7 +330,7 @@ pub fn generate_rho_fold_dataflow(language: &LanguageDef) -> TokenStream {
                         }
                         ::core::result::Result::Ok(::mettail_rholang_codegen::RhoFoldDataflowDisposition::Defer)
                     },
-                    _ => ::core::result::Result::Ok(::mettail_rholang_codegen::RhoFoldDataflowDisposition::Defer),
+                    #dispatch_default
                 }
             }
 

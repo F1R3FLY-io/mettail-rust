@@ -207,6 +207,31 @@ fn body_returns_option(expr: &syn::Expr) -> bool {
     }
 }
 
+/// Peel redundant single-tail-expression `{ … }` block wrappers off a fold body so the report
+/// emitters below supply bracing exactly once. A body written as `![{ e }]` — or a macro-
+/// synthesized `{ mettail_runtime::numeric_int_bin_i32(a, w) }` — is a `syn::Expr::Block`; splicing
+/// it under an extra `{ · }` / `({ · })?` / `#ctor( · )` yields the `{ { e } }` / `({ { e } })?` /
+/// `#ctor({ e })` shapes that `unused_braces` flags. Unwrapping a block whose sole content is a
+/// trailing expression (no `let`s, no trailing `;`, no label/attrs) is exactly the semantics-
+/// preserving rewrite the lint certifies (`{ e }` ≡ `e` in expression position when `e` binds
+/// nothing); every other body is returned unchanged (its braces are load-bearing).
+fn unwrap_fold_body_block(body: &syn::Expr) -> &syn::Expr {
+    let mut current = body;
+    loop {
+        match current {
+            syn::Expr::Block(b)
+                if b.attrs.is_empty() && b.label.is_none() && b.block.stmts.len() == 1 =>
+            {
+                match &b.block.stmts[0] {
+                    syn::Stmt::Expr(inner, None) => current = inner,
+                    _ => return current,
+                }
+            },
+            _ => return current,
+        }
+    }
+}
+
 /// `__is_redex` / `__is_var_op` / `__is_value_op` / `__weigh` / `__class_is_fold_value` /
 /// `__class_has_normal_form` — the fold/β-readiness guards and the progress weight, keyed off the
 /// generated op-enum.
@@ -388,11 +413,26 @@ fn generate_native_rules_and_dispatch(
 
             // 2. extract all funded 1-best child derivations in ONE Extractor scope that drops
             //    before the mutable `__add` (A4 borrow discipline).
-            let extract = quote! {
-                let ( #(#d_vars),* ) = {
-                    let mut __ex = ::dovetail::extract::Extractor::new(&*__eg, __weigh);
-                    ( #( __ex.kth(__eg.find(#cls_vars), 0).value? ),* )
-                };
+            // A single binding needs no wrapping tuple: `let (x) = { (e) }` trips `unused_parens`
+            // on both the pattern and the block return value. Emit the bare form. Two-or-more
+            // bindings are a genuine tuple `(a, b, …)` (parens load-bearing); zero bindings give
+            // the unit pattern `let () = { () }` — neither is flagged — so both keep the template.
+            let extract = if d_vars.len() == 1 {
+                let d = &d_vars[0];
+                let cls = &cls_vars[0];
+                quote! {
+                    let #d = {
+                        let mut __ex = ::dovetail::extract::Extractor::new(&*__eg, __weigh);
+                        __ex.kth(__eg.find(#cls), 0).value?
+                    };
+                }
+            } else {
+                quote! {
+                    let ( #(#d_vars),* ) = {
+                        let mut __ex = ::dovetail::extract::Extractor::new(&*__eg, __weigh);
+                        ( #( __ex.kth(__eg.find(#cls_vars), 0).value? ),* )
+                    };
+                }
             };
 
             // 3. bind each param BY NAME (the body references them): object → typed AST,
@@ -457,13 +497,16 @@ fn generate_native_rules_and_dispatch(
             // is left unreduced, the report stays Complete) instead of panicking inside the engine
             // closure. This matches the interpreter's `safeify_and_wrap` body handling. Other
             // folds keep the raw / `try_*` body convention.
+            // Peel a redundant `{ … }` off the body so the wrappers below don't double-brace
+            // (`({ { e } })?` / `{ { e } }` / `#ctor({ e })`). See `unwrap_fold_body_block`.
+            let body_inner = unwrap_fold_body_block(body);
             let body_value = if f.is_pure_native_arith {
                 let safeified = crate::gen::native::rust_code_rewrite::safeify_and_wrap(body);
                 quote! { (#safeified)? }
-            } else if body_returns_option(body) {
-                quote! { ({ #body })? }
+            } else if body_returns_option(body_inner) {
+                quote! { (#body_inner)? }
             } else {
-                quote! { { #body } }
+                quote! { #body_inner }
             };
             let result_handling = if out_native {
                 let native_type = out_type
@@ -1077,8 +1120,10 @@ fn generate_step_graph(language: &LanguageDef) -> TokenStream {
         (alts, lower, build, render, quote! { #inner_enum })
     } else {
         // Single-type: one category, index 0; `<Lang>Term` wraps the primary category directly.
+        // Spliced as the tail of `let __alts = { let __input = __state; #alts };`; the outer block
+        // already delimits, so an inner `{ … }` is a redundant block-return-value wrapper.
         let alts = quote! {
-            { vec![(::core::clone::Clone::clone(__input), 0u32)] }
+            vec![(::core::clone::Clone::clone(__input), 0u32)]
         };
         let lower = quote! {
             fn __step_lower(

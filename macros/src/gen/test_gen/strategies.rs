@@ -310,12 +310,21 @@ fn generate_any_term_enum(language: &LanguageDef, out: &mut String) {
     out.push_str("}\n\n");
 
     // Unwrap helpers
+    let multi_category = language.types.len() > 1;
     for lang_type in &language.types {
         let cat = lang_type.name.to_string();
         let cat_lower = cat.to_lowercase();
+        // The `_ => panic!(…)` catch-all is reachable only when `AnyTerm` has >1 variant; for a
+        // single-category language the sole `Wrap<Cat>(v)` arm is exhaustive, so the wildcard would
+        // be an unreachable pattern. Emit it only for multi-category languages.
+        let wrong_variant_arm = if multi_category {
+            format!("\n            _ => panic!(\"AnyTerm::unwrap_{}: wrong variant\"),", cat_lower)
+        } else {
+            String::new()
+        };
         out.push_str(&format!(
-            "impl AnyTerm {{\n    #[allow(dead_code)]\n    fn unwrap_{}(self) -> {} {{\n        match self {{\n            AnyTerm::Wrap{}(v) => v,\n            _ => panic!(\"AnyTerm::unwrap_{}: wrong variant\"),\n        }}\n    }}\n}}\n\n",
-            cat_lower, cat, cat, cat_lower
+            "impl AnyTerm {{\n    #[allow(dead_code)]\n    fn unwrap_{}(self) -> {} {{\n        match self {{\n            AnyTerm::Wrap{}(v) => v,{}\n        }}\n    }}\n}}\n\n",
+            cat_lower, cat, cat, wrong_variant_arm
         ));
     }
 }
@@ -1929,6 +1938,7 @@ fn generate_public_any_term_enum(language: &LanguageDef, out: &mut String) {
 
     // Unwrap helpers (public)
     out.push_str("impl AnyTerm {\n");
+    let multi_category = language.types.len() > 1;
     for lang_type in &language.types {
         let cat = lang_type.name.to_string();
         let cat_lower = cat.to_lowercase();
@@ -1937,15 +1947,25 @@ fn generate_public_any_term_enum(language: &LanguageDef, out: &mut String) {
             cat
         ));
         out.push_str("    #[allow(dead_code)]\n");
+        // Single-category `AnyTerm` has one variant; a `_ =>` arm would be an unreachable pattern.
+        let wrong_variant_arm = if multi_category {
+            format!(
+                "\x20           _ => panic!(\"AnyTerm::unwrap_{cat_lower}: wrong variant\"),\n",
+                cat_lower = cat_lower
+            )
+        } else {
+            String::new()
+        };
         out.push_str(&format!(
             "    pub fn unwrap_{cat_lower}(self) -> {cat} {{\n\
              \x20       match self {{\n\
              \x20           AnyTerm::Wrap{cat}(v) => v,\n\
-             \x20           _ => panic!(\"AnyTerm::unwrap_{cat_lower}: wrong variant\"),\n\
+             {wrong_variant_arm}\
              \x20       }}\n\
              \x20   }}\n\n",
             cat_lower = cat_lower,
             cat = cat,
+            wrong_variant_arm = wrong_variant_arm,
         ));
     }
     out.push_str("}\n\n");

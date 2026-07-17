@@ -251,7 +251,9 @@ fn multi_category_try_fn(language: &LanguageDef, plans: &[RhoScalarInvocationPla
     let name = &language.name;
     let inner_enum = format_ident!("{}TermInner", name);
     let mut inner_arms = Vec::new();
+    let mut covered: std::collections::HashSet<String> = std::collections::HashSet::new();
     for (category, arms) in category_match_arms(plans) {
+        covered.insert(category.clone());
         let category_ident = ident(&category);
         inner_arms.push(quote! {
             #inner_enum::#category_ident(value) => {
@@ -262,6 +264,14 @@ fn multi_category_try_fn(language: &LanguageDef, plans: &[RhoScalarInvocationPla
             }
         });
     }
+    // The outer `_ => None` fallback is reachable only when some inner category lacks a scalar
+    // arm. When every category is covered, the per-category arms plus the explicit `Ambiguous`
+    // arm exhaust `#inner_enum`, so the wildcard would be an unreachable pattern (MixedMath).
+    let all_covered = language
+        .types
+        .iter()
+        .all(|t| covered.contains(&t.name.to_string()));
+    let outer_default = if all_covered { quote! {} } else { quote! { _ => None, } };
 
     quote! {
         fn __mettail_rho_try_scalar_inner(
@@ -277,7 +287,7 @@ fn multi_category_try_fn(language: &LanguageDef, plans: &[RhoScalarInvocationPla
                             __mettail_rho_try_scalar_inner(alternative, out_channel)
                         })
                 },
-                _ => None,
+                #outer_default
             }
         }
     }

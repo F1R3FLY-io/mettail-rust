@@ -27,7 +27,6 @@ impl AnyTerm {
     fn unwrap_proc(self) -> Proc {
         match self {
             AnyTerm::WrapProc(v) => v,
-            _ => panic!("AnyTerm::unwrap_proc: wrong variant"),
         }
     }
 }

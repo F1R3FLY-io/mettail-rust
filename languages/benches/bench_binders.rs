@@ -6,14 +6,12 @@
 //!
 //! Run with: cargo bench -p mettail-languages --bench bench_binders
 
-mod bench_common;
-
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use mettail_languages::ambient;
 use mettail_languages::rhocalc;
 use std::time::Duration;
 
-use bench_common::{gen_chained_new, gen_multi_input, gen_nested_output, DEPTH_SIZES, SIZES};
+use mettail_languages::bench_common::{gen_chained_new, gen_multi_input, gen_nested_output, DEPTH_SIZES, SIZES};
 
 /// Sep(Zip(Map)) sizes: smaller range since each element involves two parallel vectors.
 const SEP_ZIP_MAP_SIZES: &[usize] = &[1, 2, 4, 8, 16, 32];
