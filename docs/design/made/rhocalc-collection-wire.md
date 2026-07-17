@@ -45,7 +45,7 @@ Set/map/bag entries are sorted by encoded `Par` bytes before serialization (bags
 
 Golden bytes are pinned against **f1r3fly-models 0.1.0** / f1r3node `rust/dev` for scalar list/set/map cases (`list_123`, `set_123`, `map_12`). Additional Rhocalc-only vectors cover nested lists and bag multiset expansion in `rhocalc::wire` unit tests and `collection_wire` integration tests.
 
-Enable `rholang-wire` on `mettail-languages` only when running golden-byte integration checks that depend on the reference crate (default tests use the in-tree encoder).
+The in-tree RhoCalc wire encoder and its golden-byte integration checks are always available (the wire proto compiles unconditionally in `build.rs`); no feature flag is needed.
 
 ---
 

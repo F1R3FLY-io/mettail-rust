@@ -43,9 +43,6 @@ rhocalc-runtime = [
     # under the language crate's `dovetail-codegen` feature.
     "mettail-languages/dovetail-codegen",
 ]
-# Backward-compatible test/oracle feature name. New production code should use
-# `rhocalc-runtime` directly.
-oracle-rhocalc = ["rhocalc-runtime"]
 # Enables hand-authored Rholang source evaluation helpers used only by
 # source-oracle regression tests. Generated backend execution remains AST-first:
 # the production boundary is `ValidatedRhoProgram` / `PlannedRhoBackend`, not

@@ -101,8 +101,6 @@ rho-codegen = ["dep:mettail-rholang-codegen"]
 ## values; unsupported side-condition families fail closed instead of falling
 ## back to Ascent/CESK.
 dovetail-codegen = ["dep:dovetail", "dep:mettail-dovetail-runtime", "dep:rigail"]
-## Golden-byte wire tests against f1r3node reference vectors (main-branch RhoCalc Par wire encoding).
-rholang-wire = []
 
 [dependencies]
 mettail-macros = { package = "macros", path = "../macros" }
@@ -140,7 +138,7 @@ clap = { version = "4.5", features = ["derive"] }
 pathmap = { workspace = true }
 
 [build-dependencies]
-# Compile proto/rhocalc_wire.proto for the RhoCalc `Par` wire encoder (rholang-wire feature).
+# Compile proto/rhocalc_wire.proto for the RhoCalc `Par` wire encoder.
 prost-build = "0.13"
 protoc-bin-vendored = "3.2"
 
@@ -148,7 +146,7 @@ protoc-bin-vendored = "3.2"
 criterion = { version = "0.5", features = ["html_reports"] }
 proptest = "1"
 rand_distr = "0.4"
-# Hex encoding for golden-byte wire-format tests (rholang-wire feature).
+# Hex encoding for golden-byte wire-format tests.
 hex = "0.4"
 mettail-testkit = { package = "testkit", path = "../testkit" }
 # Lets the GuardedRho Rho-default backend test (guarded_rho_rho_backend.rs) name

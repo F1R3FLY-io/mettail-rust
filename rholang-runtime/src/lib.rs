@@ -38,9 +38,7 @@
 //! default `runtime-report` feature exposes the generic `Language`
 //! report-adapter and Dovetail+Rho installer surface. Generated language
 //! fixtures, the RhoCalc AST-runtime helper, and source-text oracle helpers
-//! remain opt-in through `rhocalc-runtime` and `source-oracle`; the
-//! compatibility `oracle-rhocalc` feature name is retained only as an alias for
-//! `rhocalc-runtime`.
+//! remain opt-in through `rhocalc-runtime` and `source-oracle`.
 
 #![forbid(unsafe_code)]
 
