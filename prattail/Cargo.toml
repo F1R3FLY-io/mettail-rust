@@ -194,16 +194,6 @@ oslf-behavioral-lowering = ["any-algebra-carrier"]
 ## `cargo check --all-targets` check-cfg clean even when they are off.
 wfst-log = []
 set-theoretic-types = []
-## Capability labels used by predicate-dispatch conformance tests.
-buchi = []
-alternating = []
-vpa = []
-parity-tree-automata = []
-register-automata = []
-probabilistic = []
-multi-tape = []
-multiset-automata = []
-two-way-transducer = []
 ## Author-DX railroad-diagram rendering (OSLF Phase 7a, 2026-06-22). The
 ## `railroad` module (`prattail/src/railroad.rs`) lowers a `LanguageSpec` into
 ## per-category grammar diagrams. Text/ASCII rendering

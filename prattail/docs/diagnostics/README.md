@@ -34,15 +34,17 @@ These entries name the **analysis category / lint namespace** that owns each lin
 Two special values appear in the column:
 
 - **`always-on`** — the lint runs unconditionally (no gate of any kind).
-- **Real, but inert.** Eight labels *do* exist as declared Cargo features in
-  [`prattail/Cargo.toml`](../../Cargo.toml): `alternating`, `vpa`, `parity-tree-automata`,
-  `register-automata`, `probabilistic`, `multi-tape`, `multiset-automata`, and
-  `two-way-transducer` (alongside the sibling `buchi`). They are **capability-label
-  placeholders**: declared so `cargo check --all-targets` stays *check-cfg-clean* and consumed
-  only by the predicate-dispatch conformance test (`prattail/src/predicate_dispatch/tests.rs`,
-  which is gated on all of them at once). They are wired to **no** `#[cfg]` in the parser or
-  analysis code, so enabling them changes nothing in the generated parser and does **not**
-  switch the corresponding analysis on.
+- **Advanced-automata labels are runtime-dispatched, not Cargo features.** The values
+  `alternating`, `vpa`, `parity-tree-automata`, `register-automata`, `probabilistic`,
+  `multi-tape`, `multiset-automata`, `two-way-transducer`, and `buchi` name the
+  advanced-automata analyses. Like every other value in this column they are
+  **analysis-category labels, not `cargo --features` toggles**: the compilers they name
+  (`BuchiCompiler`, `AlternatingCompiler`, `VpaCompiler`, …) are **always compiled** and
+  dispatched at grammar-analysis time by the `predicate_dispatch/signature.rs` runtime registry.
+  (They were previously *also* declared as inert `= []` placeholder Cargo features in
+  [`prattail/Cargo.toml`](../../Cargo.toml); those declarations gated **nothing** and were
+  **removed**, and the predicate-dispatch conformance test
+  (`prattail/src/predicate_dispatch/tests.rs`) now runs **unconditionally**.)
 
 For the flags that genuinely change the build — instrumentation, tracing, the SMT/rendering
 back ends, the OSLF analysis substrate, and language selection — see
@@ -510,21 +512,23 @@ byte-for-byte unchanged. (OSLF = the Order-Sorted Logical-Framework analysis tow
 | `oslf-hindley-milner` | `any-algebra-carrier` | off | Base-sort consistency pass: checks each constructor's principal arrow type unifies with its declared category; fires the HM01 sort-mismatch lint. Inert on real grammars. |
 | `oslf-behavioral-lowering` | `any-algebra-carrier` | off | Lowers the runtime `BehavioralPred` carrier into the `BehavioralFormula` relational decider (`.0`-inert); the eval path is untouched. |
 
-### Predicate-dispatch capability labels (`prattail`, inert placeholders)
+### Predicate-dispatch capability labels (`prattail`, not Cargo features)
 
-All are `= []` (pull in no deps) and are wired to **no** `#[cfg]` in the parser or analysis
-code. They are declared purely so `cargo check --all-targets` stays *check-cfg-clean* and to
-back the predicate-dispatch conformance test (`prattail/src/predicate_dispatch/tests.rs`, which
-is `#[cfg(all(...))]`-gated on the whole set). **Enabling them changes nothing in the build.**
-See [About the Feature Gate Column](#about-the-feature-gate-column).
+The advanced-automata capability labels — `buchi`, `alternating`, `vpa`, `parity-tree-automata`,
+`register-automata`, `probabilistic`, `multi-tape`, `multiset-automata`, and `two-way-transducer`
+— are **not** Cargo features. The automata compilers they name are always compiled and dispatched
+at grammar-analysis time by the `predicate_dispatch/signature.rs` runtime registry, never by a
+Cargo feature. They were formerly declared as inert `= []` placeholder features (present only to
+keep `cargo check --all-targets` *check-cfg-clean* and to gate the predicate-dispatch conformance
+test); those declarations gated **nothing** and were **removed**, and the conformance test
+(`prattail/src/predicate_dispatch/tests.rs`) now runs **unconditionally**. See
+[About the Feature Gate Column](#about-the-feature-gate-column).
 
-`buchi`, `alternating`, `vpa`, `parity-tree-automata`, `register-automata`, `probabilistic`,
-`multi-tape`, `multiset-automata`, `two-way-transducer`.
-
-Two further placeholders, `wfst-log` and `set-theoretic-types`, are declared for the same
-check-cfg reason; they are consumed only by the criterion **benchmarks** (`bench_wfst`,
-`bench_type_system`) — `wfst-log` selects the log-semiring training path there (see
-[WFST Feature Gates](../usage/wfst/feature-gates.md)). Neither affects the default parser build.
+The bench-only toggles `wfst-log` and `set-theoretic-types` **do** remain declared as real `= []`
+Cargo features (to keep `cargo check --all-targets` check-cfg-clean); they are consumed only by
+the criterion **benchmarks** (`bench_wfst`, `bench_type_system`) — `wfst-log` selects the
+log-semiring training path there (see [WFST Feature Gates](../usage/wfst/feature-gates.md)).
+Neither affects the default parser build.
 
 ### Language selection and runtime backends (`languages`, `repl`, `rholang-runtime`)
 
@@ -699,6 +703,8 @@ the **Feature Gate** column of the tables above (e.g. `trs-analysis`, `symbolic-
 These labels are lint namespaces, **not** `cargo --features` toggles: whether a given lint
 fires is decided at grammar-analysis time by predicate dispatch over the grammar's guards, not
 by a Cargo feature. See [About the Feature Gate Column](#about-the-feature-gate-column) for the
-full explanation (including the eight declared-but-inert capability-label placeholders). See
+full explanation (including the advanced-automata capability labels — `buchi`, `alternating`,
+`vpa`, etc. — which name always-compiled compilers dispatched by the `predicate_dispatch`
+runtime registry rather than Cargo features). See
 [advanced-automata-overview.md](../design/advanced-automata-overview.md) for the full module
 architecture.

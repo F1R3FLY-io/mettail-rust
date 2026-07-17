@@ -897,17 +897,12 @@ fn test_two_way_compiler_produces_analysis() {
     assert!(result.deadlock_cycles.is_empty());
 }
 
-#[cfg(all(
-    feature = "buchi",
-    feature = "alternating",
-    feature = "vpa",
-    feature = "parity-tree-automata",
-    feature = "register-automata",
-    feature = "probabilistic",
-    feature = "multi-tape",
-    feature = "multiset-automata",
-    feature = "two-way-transducer",
-))]
+// All 11 automata compilers are always compiled and dispatched at
+// grammar-analysis time by the `predicate_dispatch/signature.rs` runtime
+// registry — not by any Cargo feature — so this conformance check runs
+// unconditionally. (It was formerly gated on nine inert `= []` capability-label
+// features that gated nothing; those declarations were removed once confirmed
+// dead, turning a never-built test into a real always-on conformance check.)
 #[test]
 fn test_all_compilers_implement_predicate_compiler() {
     fn assert_compiler<C: PredicateCompiler>(_c: &C) {}
