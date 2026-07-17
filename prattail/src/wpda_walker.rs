@@ -3069,16 +3069,15 @@ pub struct BranchCursor<W: SemiringRef> {
     /// It is the left-fold of the current frame's consumed children as ONE
     /// node (a leaf for the first child, then `Intermediate` nodes) — the
     /// canonical replacement for the exponential per-cursor operand STACK.
-    /// Threaded by `step_canonical` under `PRATTAIL_CGLL_BINARIZE`;
-    /// `SPPF_ID_NONE` (the empty-frame sentinel) when binarization is off,
-    /// where it is NEVER read (a single idle `u32` per cursor).
+    /// On the live path it always holds `SPPF_ID_NONE` (the empty-frame
+    /// sentinel) and is NEVER read (a single idle `u32` per cursor).
     ///
     /// RETIRED carrier (2026-07-13): threaded only by the retired hybrid /
     /// k-fold arms; the field is KEPT — its clone/init plumbing is live.
     pub cgll_w: crate::sppf::SppfId,
     /// ROOT-P Canonical-GLL Stage P1 (2026-07-09): the canonical RETURN-SLOT
     /// GSS node `v = (i = callee-entry pos, L_ret = the caller's return dotted
-    /// item)` this descriptor keys on under the `PRATTAIL_CGLL_RETSLOT` arm
+    /// item)` this descriptor keys on
     /// (Scott & Johnstone 2010 §4 — the descriptor `u` is the RETURN node, NOT
     /// the shared callee-entry node the E2b diagnosis proved merges the
     /// grouping `G` and non-grouping `O` lineages). Minted at each descent by
@@ -3086,10 +3085,8 @@ pub struct BranchCursor<W: SemiringRef> {
     /// and threaded through the reduce/pop fan (`cgll_ret_node = ret.caller`).
     /// The P0 read-only shadow VALIDATED that keying `u` on this return slot
     /// splits `G`/`O` to the ground-truth reading count while staying
-    /// polynomial. `GSS_NODE_NONE` (the empty-frame sentinel) on every
-    /// classic-path cursor and on every canonical cursor UNTIL its first
-    /// descent, where it is NEVER read outside the const-gated `retslot` arm
-    /// (byte-identical default — a single idle `u32` per cursor).
+    /// polynomial. On the live path it always holds `GSS_NODE_NONE` (the
+    /// empty-frame sentinel) and is NEVER read (a single idle `u32` per cursor).
     ///
     /// RETIRED carrier (2026-07-13): threaded only by the retired hybrid /
     /// k-fold arms; the field is KEPT — its clone/init plumbing is live.
@@ -9404,7 +9401,8 @@ where
     ///
     /// `slot_id` is the production's global rule id; the intermediate packing's
     /// `rule_idx` is that same id (never fired — `flatten` unwraps it before the
-    /// action tail runs). Reached only under `cgll_binarize_active()`.
+    /// action tail runs). Reached on every parse — the binarized canonical-GLL
+    /// path is the sole parser.
     fn cgll_get_node_p(
         &mut self,
         slot_id: u32,
@@ -9437,7 +9435,8 @@ where
     /// reduce) captures EVERY classic packing however it was linked (transient /
     /// packing_exists / reconciliation / cast synthesis). `map` memoizes
     /// `classic Symbol → binarized Symbol` (inserted before recursion ⇒ cycle
-    /// safe). Reached only under `cgll_binarize_active()`.
+    /// safe). Reached on every parse — the binarized canonical-GLL path is the
+    /// sole parser.
     fn cgll_binarize_classic_symbol(
         &mut self,
         classic: crate::sppf::SppfId,
@@ -9641,7 +9640,8 @@ where
     /// intermediate with ambiguous packings yields multiple lists); any other
     /// node is a leaf/symbol and yields the singleton `[[id]]`. The result is the
     /// classic children list the action tail consumes (`realize_packing_call`
-    /// then filters `TriggerTerminal`). Reached only under `cgll_binarize_active()`.
+    /// then filters `TriggerTerminal`). Reached on every parse — the binarized
+    /// canonical-GLL path is the sole parser.
     fn cgll_flatten_ids(&self, id: crate::sppf::SppfId) -> Vec<Vec<crate::sppf::SppfId>> {
         // ── S2-F3 (2026-07-11): ITERATIVE rewrite (explicit stack) of the
         // former self-recursion (one Rust frame per Intermediate spine
@@ -9777,7 +9777,8 @@ where
     /// packings). For the E1/k=4 arms every `Intermediate` packing weight is
     /// `W::one_ref()` (their `cgll_get_node_p` is pinned to one), so the
     /// product is the `⊗`-identity and this is observationally byte-identical
-    /// for them. Reached only under `cgll_binarize_active()`.
+    /// for them. Reached on every parse — the binarized canonical-GLL path is
+    /// the sole parser.
     fn cgll_flatten_ids_weighted(
         &self,
         id: crate::sppf::SppfId,
@@ -9908,8 +9909,8 @@ where
     /// sub-symbol → recurse; leaf → `realize_node_leave`) into the shared `memo`,
     /// then reuse the EXISTING `realize_packing_call` action tail (which filters
     /// `TriggerTerminal`, arity-checks, and fires `action_fn`). N packings ⇒ N
-    /// readings — the owner-ambiguity resolved at realize. Reached only under
-    /// `cgll_binarize_active()`.
+    /// readings — the owner-ambiguity resolved at realize. Reached on every
+    /// parse — the binarized canonical-GLL path is the sole parser.
     /// P3.c: bottom-up pre-realization of a flat element's memo
     /// DEPENDENCIES (CollectionId items, OPTIONAL_PRESENT packing children,
     /// spine Intermediates — recursively, so collections nested inside
@@ -10821,8 +10822,8 @@ where
     /// `Some(1)` realize with a per-`S_bin` `limit=None` packing enumeration: maps
     /// each accepting cursor's classic root `(cat, lo, hi)` to its binarized
     /// `Symbol(cat | CGLL_BIN_TAG, lo, hi)`, dedups, and realizes each with
-    /// `cgll_realize_bin_symbol` (all packings ⇒ all readings). Reached only under
-    /// `cgll_binarize_active()` (DCE'd + byte-identical when the const is `false`).
+    /// `cgll_realize_bin_symbol` (all packings ⇒ all readings). Reached on every
+    /// parse — the binarized canonical-GLL path is the sole parser.
     fn cgll_resolve_binarized(
         &mut self,
         accepting: &[EoiCursorCandidate<W>],

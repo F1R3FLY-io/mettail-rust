@@ -343,11 +343,11 @@ pub enum SppfNode<W: SemiringRef> {
     /// (`slot_id = (global_rule_idx << 8) | dot`) without owner-masking, so a
     /// poly descriptor set keeps every reading's reduce alive.
     ///
-    /// **Constructed ONLY under `CANONICAL_GLL_ENABLED` + `PRATTAIL_CGLL_BINARIZE`**
-    /// (`intern_intermediate`, reached solely from `cgll_get_node_p`). With the
-    /// compile-time const `false` the classic walker NEVER interns one, so
-    /// `span_lo`/`span_hi`/`link_packing_to_symbol`/realize never observe this
-    /// arm — the default build is byte-identical (the arm is dead / DCE'd).
+    /// **Constructed by `intern_intermediate`** (reached solely from
+    /// `cgll_get_node_p`). The binarized canonical-GLL path is the sole parser,
+    /// so this arm is interned on every parse and
+    /// `span_lo`/`span_hi`/`link_packing_to_symbol`/realize observe it
+    /// unconditionally.
     Intermediate {
         /// Grammar slot + dot: `(global_rule_idx << 8) | dot`. Identifies the
         /// production and how many RHS symbols have been folded so far.
@@ -454,9 +454,8 @@ pub struct Sppf<W: SemiringRef> {
     /// ROOT-P Canonical-GLL Stage E1 (2026-07-09): dedup `Intermediate` nodes by
     /// `(slot_id, lo_pos, hi_pos)` — a SEPARATE namespace from `dedup_symbol`
     /// (an Intermediate and a Symbol may share `(lo, hi)` but never collide).
-    /// Populated ONLY by `intern_intermediate` (reached under
-    /// `CANONICAL_GLL_ENABLED` + `PRATTAIL_CGLL_BINARIZE`); empty on the classic
-    /// path ⇒ byte-identical default (the map is one idle `FxHashMap`).
+    /// Populated by `intern_intermediate` (reached from `cgll_get_node_p`) on
+    /// every parse — the binarized canonical-GLL path is the sole parser.
     dedup_intermediate: FxHashMap<(u32, u32, u32), SppfId>,
 
     // Derived indices — strictly rebuildable from `symbol_packings`. Rebuilt
@@ -618,9 +617,8 @@ impl<W: SemiringRef> Sppf<W> {
     /// `Intermediate` as its parent). `weight_sum` initializes to the
     /// `⊕`-identity, `⊕`-aggregated as packings link (mirrors `Symbol`).
     ///
-    /// Reached ONLY from `WpdaWalker::cgll_get_node_p` under
-    /// `CANONICAL_GLL_ENABLED` + `PRATTAIL_CGLL_BINARIZE`; never on the classic
-    /// path (byte-identical default).
+    /// Reached from `WpdaWalker::cgll_get_node_p` on every parse — the
+    /// binarized canonical-GLL path is the sole parser.
     pub fn intern_intermediate(&mut self, slot_id: u32, lo_pos: u32, hi_pos: u32) -> SppfId {
         let key = (slot_id, lo_pos, hi_pos);
         if let Some(&id) = self.dedup_intermediate.get(&key) {

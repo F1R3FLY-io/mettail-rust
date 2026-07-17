@@ -227,10 +227,11 @@ impl ForkEmissionOrdinalModel {
     /// `2u8 => 0u16` below. The use case the ledger names is the
     /// grp_d1-class per-grammar preference (a grammar that wants the
     /// TRANSPARENT kept-vs-transparent twin elected). Any future activation
-    /// REQUIRES this leg's full A/B adjudication discipline: per-input
-    /// election traces against the classic lever
-    /// (`PRATTAIL_NO_CANONICAL_GLL=1`), toward-classic deltas enumerated
-    /// for explicit user sign-off, away-from-classic = derivation bug. The
+    /// REQUIRES per-input election-trace validation against the current
+    /// canonical-GLL baseline — now the SOLE path (the former classic lever
+    /// `PRATTAIL_NO_CANONICAL_GLL=1` it once A/B'd against was removed with the
+    /// classic engine): every election delta enumerated for explicit user
+    /// sign-off, any derivation regression a bug. The
     /// empirical finding that forced F1 (banked in ledger §"#10 item-1"):
     /// K-C compares decisions of candidates whose fires originate in
     /// DIFFERENT dispatch buckets — cross-bucket positions are not a
