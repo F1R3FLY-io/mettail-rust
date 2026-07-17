@@ -311,7 +311,21 @@ pub fn generate_lexer_as_string_hybrid(
     input: &LexerInput,
     hybrid_lexer: bool,
 ) -> (String, LexerStats) {
-    let trace = std::env::var("PRATTAIL_MACRO_TRACE").is_ok();
+    // Stage tracer gated by the `walker-trace` feature + `PRATTAIL_MACRO_TRACE`;
+    // the env read compiles out on the default build (feature off ⇒ `trace` is a
+    // constant `false` and every `stage!` body — including its `$val` operands —
+    // is dead-stripped, so the diagnostic-only stat bindings stay "used"). See
+    // `crate::trace` module docs for the `let`-initializer off-value idiom.
+    let trace = {
+        #[cfg(feature = "walker-trace")]
+        {
+            std::env::var("PRATTAIL_MACRO_TRACE").is_ok()
+        }
+        #[cfg(not(feature = "walker-trace"))]
+        {
+            false
+        }
+    };
     macro_rules! stage {
         ($name:literal, $val:expr) => {
             if trace {

@@ -84,6 +84,12 @@ mimalloc = ["dep:mimalloc"]
 ## default (zero overhead); enable with
 ## `cargo test --features walker-stats ...`.
 walker-stats = ["mettail-prattail/walker-stats"]
+## Walker diagnostics/trace passthrough (2026-07-16): turns on the compile-time
+## `walker-trace` gate in BOTH `prattail` (runtime parser diagnostics) and
+## `macros` (codegen-time `PRATTAIL_MACRO_TRACE`). OFF BY DEFAULT / zero-cost.
+## Enable with `cargo build --features walker-trace`; individual diagnostics are
+## then selected at runtime by their own `PRATTAIL_*` env vars.
+walker-trace = ["mettail-prattail/walker-trace", "mettail-macros/walker-trace"]
 ## Compile the macro-generated AST-first Rho scalar invocation descriptions.
 ## This is part of the default production surface: generated helpers return
 ## `mettail_rho_codegen::RhoScalarContractInvocation` values for the

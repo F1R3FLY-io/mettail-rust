@@ -4726,15 +4726,6 @@ fn token_alt_text(tokens: &dyn WpdaTokenSource, pos: usize, alt_idx: usize) -> O
 }
 
 fn primary_next_pos_ordered(tokens: &dyn WpdaTokenSource, pos: usize) -> Option<usize> {
-    // TASK-#16 STEP-0 probe: attribute this primitive (2× `position_order_key`)
-    // to the peek scan vs generic descent. Inert unless the probe env is set.
-    if chain_peek_probe_enabled() {
-        if CHAIN_PEEK_IN_SCAN.with(|f| f.get()) {
-            CHAIN_PNPO_PEEK.with(|c| c.set(c.get() + 1));
-        } else {
-            CHAIN_PNPO_OTHER.with(|c| c.set(c.get() + 1));
-        }
-    }
     let next = tokens.next_pos(pos, 0)?;
     if next == pos {
         return None;
@@ -4871,97 +4862,6 @@ pub fn peek_binary_chain(tokens: &dyn WpdaTokenSource, op_pos: usize, min_atoms:
         }
     }
     atom_count >= min_atoms
-}
-
-// ═══ TASK-#16 STEP-0 ROOT-CAUSE PROBE (measurement-only; env-gated) ══════════
-//
-// Behind `PRATTAIL_CHAIN_PEEK_PROBE=1` (OnceLock — a single relaxed atomic load
-// then a predictable branch on the COLD path when unset ⇒ inert/zero-cost by
-// default; the P-series OnceLock convention).
-// The thread-local `u64` counters attribute the pure-engine ternary-chain wall
-// to prove/refute the plan §1 GO/STOP signature WITHOUT perf stacks:
-//   - CHAIN_PEEK_CALLS       : # `peek_ternary_chain` invocations.
-//   - CHAIN_PEEK_SCAN_STEPS  : Σ levels scanned across ALL peeks (the O(N²)
-//                              suffix re-scan this task targets). GO iff this
-//                              slope ≈2 while `u_count` (CGLL-PURE dump) ≈1.
-//   - CHAIN_SYNTH_CALLS      : # `synth_ternary_chain` invocations. MUST be 0
-//                              on the pure default (synth is classic-only, sole
-//                              caller @:16050) — a non-zero value would mean the
-//                              measured wall is off the memo's target surface.
-//   - CHAIN_SYNTH_SCAN_STEPS : Σ levels walked in synth.
-//   - CHAIN_PNPO_PEEK/OTHER  : `primary_next_pos_ordered` calls made WHILE a
-//                              peek scan is on the stack vs elsewhere (peek's
-//                              share of the hottest primitive — each call issues
-//                              `position_order_key` ×2). Feeds N1's post-fix
-//                              slope prediction (peek's share is removed by the
-//                              memo; the generic-descent share is not).
-// Reset at `step_canonical_pure` entry; dumped at its exit next to the CGLL-PURE
-// line. Independently revertable; never alters parse behavior.
-#[inline]
-fn chain_peek_probe_enabled() -> bool {
-    static GATE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *GATE.get_or_init(|| std::env::var_os("PRATTAIL_CHAIN_PEEK_PROBE").is_some())
-}
-thread_local! {
-    static CHAIN_PEEK_CALLS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
-    static CHAIN_PEEK_SCAN_STEPS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
-    static CHAIN_SYNTH_CALLS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
-    static CHAIN_SYNTH_SCAN_STEPS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
-    static CHAIN_PNPO_PEEK: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
-    static CHAIN_PNPO_OTHER: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
-    // Set while a `peek_ternary_chain`/`chain_scan_memo` forward scan is on the
-    // stack — attributes `primary_next_pos_ordered` to peek vs generic descent.
-    static CHAIN_PEEK_IN_SCAN: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-}
-/// Reset the probe counters (called at `step_canonical_pure` entry ⇒ per-parse
-/// totals). Inert unless the probe env is set.
-#[inline]
-fn chain_probe_reset() {
-    if !chain_peek_probe_enabled() {
-        return;
-    }
-    CHAIN_PEEK_CALLS.with(|c| c.set(0));
-    CHAIN_PEEK_SCAN_STEPS.with(|c| c.set(0));
-    CHAIN_SYNTH_CALLS.with(|c| c.set(0));
-    CHAIN_SYNTH_SCAN_STEPS.with(|c| c.set(0));
-    CHAIN_PNPO_PEEK.with(|c| c.set(0));
-    CHAIN_PNPO_OTHER.with(|c| c.set(0));
-}
-/// RAII: mark a peek forward-scan active for the `primary_next_pos_ordered`
-/// caller-attribution split, restoring the prior value on drop (nestable, so a
-/// classic peek nested under a pure one — impossible today — stays sound). Inert
-/// unless the probe env is set.
-struct ChainPeekScanProbe {
-    prev: bool,
-}
-impl ChainPeekScanProbe {
-    #[inline]
-    fn enter() -> Self {
-        let prev = if chain_peek_probe_enabled() {
-            CHAIN_PEEK_IN_SCAN.with(|f| {
-                let p = f.get();
-                f.set(true);
-                p
-            })
-        } else {
-            false
-        };
-        Self { prev }
-    }
-}
-impl Drop for ChainPeekScanProbe {
-    #[inline]
-    fn drop(&mut self) {
-        if chain_peek_probe_enabled() {
-            CHAIN_PEEK_IN_SCAN.with(|f| f.set(self.prev));
-        }
-    }
-}
-#[inline]
-fn chain_probe_bump_peek_scan_steps(n: u64) {
-    if chain_peek_probe_enabled() {
-        CHAIN_PEEK_SCAN_STEPS.with(|c| c.set(c.get() + n));
-    }
 }
 
 // ═══ TASK-#16 STEP-1 CHAIN-PEEK SUFFIX MEMO (pure-engine-scoped, A1) ══════════
@@ -5106,8 +5006,6 @@ fn chain_scan_memo(
     // The stack holds only the "continue" positions on the single active scan
     // path (bounded by chain depth); it is emptied by the back-fill.
     let mut pending: Vec<usize> = Vec::new();
-    // Mark the scan active for the probe's caller-attribution split (inert off).
-    let _peek_scan_probe = ChainPeekScanProbe::enter();
     let mut probe = trigger_pos;
     let (term_pos, base): (usize, ChainScan) = loop {
         // Base case: memo hit. Scoped borrow (get→copy→drop) — never held across
@@ -5123,9 +5021,6 @@ fn chain_scan_memo(
             );
             break (probe, cached);
         }
-        // One fresh scan step (probe-counted; inert off). Mirrors the oracle loop
-        // top so the post-fix `peek_scan_steps` counts positions visited ONCE.
-        chain_probe_bump_peek_scan_steps(1);
         let then_pos = match token_has_only_expected_text_to_next(tokens, probe, trigger) {
             Some(next) => next,
             None => break (probe, ChainScan::Clean(0)), // oracle exit (1)
@@ -5183,10 +5078,6 @@ pub fn peek_ternary_chain(
     sep: &str,
     min_levels: usize,
 ) -> bool {
-    // TASK-#16 probe: count every invocation (both paths). Inert unless probe on.
-    if chain_peek_probe_enabled() {
-        CHAIN_PEEK_CALLS.with(|c| c.set(c.get() + 1));
-    }
     // A1 pure-scoping: the CLASSIC arm (guard unset) takes the oracle ⇒ trivially
     // byte-identical off the pure path.
     if !chain_peek_pure_active() {
@@ -5242,17 +5133,10 @@ pub fn peek_ternary_chain_uncached(
     sep: &str,
     min_levels: usize,
 ) -> bool {
-    // TASK-#16 probe: mark the peek scan active for the `primary_next_pos_ordered`
-    // caller split (the invocation count is tallied in the dispatcher). Inert
-    // unless the probe env is set.
-    let _peek_scan_probe = ChainPeekScanProbe::enter();
     let forbidden = [trigger, sep];
     let mut levels = 0usize;
     let mut probe = trigger_pos;
     loop {
-        // TASK-#16 STEP-0 probe: one scan step per level examined (the Σ that is
-        // O(N²) pre-fix and must drop to O(N) post-memo). Inert unless probe on.
-        chain_probe_bump_peek_scan_steps(1);
         let then_pos = match token_has_only_expected_text_to_next(tokens, probe, trigger) {
             Some(next) => next,
             None if levels == 0 => return false,
@@ -6582,23 +6466,6 @@ where
                 eprintln!("{}", CacheSummary(&self.dispatch_cohort_cache));
             }
         }
-        // ROOT-P design-cycle-3 STAGE 0 GATE 0c (THROWAWAY, env-gated by
-        // PRATTAIL_GATE0C): emit the ProjCacheKey-quotient census over the LIVE
-        // cache entries at EOI. Confirms the `pos` axis is the fork multiplier —
-        // distinct DispatchKeys grow with `&`-segments while the ProjCacheKey
-        // quotient stays ~constant, and every multi-pos group differs ONLY in
-        // `pos`.
-        {
-            if std::env::var_os("PRATTAIL_GATE0C").is_some() {
-                let (dk, pck, pos_only, multi_pos, max_pos) =
-                    self.dispatch_cohort_cache.dbg_projcache_quotient_census();
-                let ratio = if pck == 0 { 0.0 } else { dk as f64 / pck as f64 };
-                eprintln!(
-                    "[GATE0c] live entries: distinct_dispatch_keys={} distinct_projcache_keys={} collapse_ratio={:.2}x pos_only_groups={} multi_pos_groups={} max_pos_per_group={}",
-                    dk, pck, ratio, pos_only, multi_pos, max_pos,
-                );
-            }
-        }
         // Lazy-budget fix (2026-06-08): decode structured frontier
         // overflow before any EOI materialization. The sentinel already
         // carries the full logical frontier count, and forcing cohorts
@@ -7218,7 +7085,13 @@ where
                             > = rustc_hash::FxHashMap::default();
                             let mut on_path: rustc_hash::FxHashSet<crate::sppf::SppfId> =
                                 rustc_hash::FxHashSet::default();
-                            let kt = self.cgll_pure_ktuple(
+                            // `_kt`: the k-tuple's VALUE is consumed only by the
+                            // gated `[k-elect]` diagnostic below, but the call is
+                            // load-bearing (it populates `choices`/`on_path`),
+                            // so keep the call and discard the value when the
+                            // `walker-trace` feature is off (`_`-prefixed ⇒ no
+                            // unused-variable warning either way).
+                            let _kt = self.cgll_pure_ktuple(
                                 root,
                                 0,
                                 true,
@@ -7228,14 +7101,14 @@ where
                                 &mut choices,
                                 &mut on_path,
                             );
-                            #[cfg(debug_assertions)]
+                            #[cfg(feature = "walker-trace")]
                             if std::env::var_os("PRATTAIL_CGLL_REALIZE_DIAG").is_some() {
                                 eprintln!(
                                     "  [k-elect] root={root} chosen={:?} lateness={} \
                                      ords={:?} tabu={}",
                                     choices.get(&root),
-                                    kt.lateness,
-                                    kt.sorted_ordinals(),
+                                    _kt.lateness,
+                                    _kt.sorted_ordinals(),
                                     tabu.len()
                                 );
                             }
@@ -8333,9 +8206,9 @@ where
     {
         // P3 Pocket-A diag (env-gated): entry/exit trace of every packing
         // realize so silently-empty chains are attributable.
-        #[cfg(debug_assertions)]
+        #[cfg(feature = "walker-trace")]
         let diag_on = std::env::var_os("PRATTAIL_CGLL_REALIZE_DIAG").is_some();
-        #[cfg(debug_assertions)]
+        #[cfg(feature = "walker-trace")]
         if diag_on {
             eprintln!(
                 "  [realize-enter] rule=({},{}) children={:?} memo_hits={:?}",
@@ -8563,7 +8436,7 @@ where
                 }
             }
             if !collection_items_ok {
-                #[cfg(debug_assertions)]
+                #[cfg(feature = "walker-trace")]
                 if std::env::var_os("PRATTAIL_CGLL_REALIZE_DIAG").is_some() {
                     eprintln!(
                         "  [realize-f2-refute] rule=({},{}) collection_ids={collection_ids:?}",
@@ -8620,7 +8493,7 @@ where
             // elides. The captured shapes reveal which arg the action
             // rejected (e.g., Ident where Term was expected) for any
             // grammar's failing realize reconstruction.
-            #[cfg(debug_assertions)]
+            #[cfg(feature = "walker-trace")]
             let arg_shapes_for_diag: Vec<&'static str> = popped
                 .iter()
                 .map(|a| match a {
@@ -8672,7 +8545,7 @@ where
                 // both while normal/test runs stay silent. The DROP behavior below
                 // is UNCHANGED. (The `arity-refute` diagnostic above stays a
                 // capped-log — `if n < 8` — so it can never flood.)
-                #[cfg(debug_assertions)]
+                #[cfg(feature = "walker-trace")]
                 if std::env::var_os("PRATTAIL_CGLL_REALIZE_DIAG").is_some() {
                     eprintln!(
                         "[realize_packing_call] action elided (post_len={}, expected={}): \
@@ -8726,7 +8599,7 @@ where
                 }
             }
         }
-        #[cfg(debug_assertions)]
+        #[cfg(feature = "walker-trace")]
         if diag_on {
             eprintln!(
                 "  [realize-exit] rule=({},{}) out={}",
@@ -10614,7 +10487,7 @@ where
         sym: crate::sppf::SppfId,
     ) -> Result<CgllRealizeFrame<W>, Option<crate::sppf::SppfId>> {
         let Some(&pk) = choices.get(&sym) else {
-            #[cfg(debug_assertions)]
+            #[cfg(feature = "walker-trace")]
             if std::env::var_os("PRATTAIL_CGLL_REALIZE_DIAG").is_some() {
                 eprintln!("  [k-chosen-bail] no choice for sym={sym}");
             }
@@ -10650,7 +10523,7 @@ where
             match self.sppf.node(c) {
                 Some(crate::sppf::SppfNode::Intermediate { .. }) => {
                     let Some(&ipk) = choices.get(&c) else {
-                        #[cfg(debug_assertions)]
+                        #[cfg(feature = "walker-trace")]
                         if std::env::var_os("PRATTAIL_CGLL_REALIZE_DIAG").is_some() {
                             eprintln!("  [k-chosen-bail] no choice for inter={c}");
                         }
@@ -10863,6 +10736,9 @@ where
         None
     }
 
+    // Diagnostic-only (its sole external caller is the `PRATTAIL_CGLL_DIAG`
+    // accept dump); gated with its caller so the default build carries neither.
+    #[cfg(feature = "walker-trace")]
     fn cgll_dump_bin(
         &self,
         id: crate::sppf::SppfId,
@@ -11023,6 +10899,7 @@ where
             if !seen_bin.insert(bin_root) {
                 continue; // already enumerated this shared S_bin
             }
+            #[cfg(feature = "walker-trace")]
             if std::env::var_os("PRATTAIL_CGLL_DIAG").is_some() {
                 eprintln!(
                     "CGLL-DIAG accept: classic_root={} -> bin_root={} (span {:?})",
@@ -11125,6 +11002,7 @@ where
         // re-realizes. Green parses carry no markers ⇒ no events.
         if let Some(&winner) = roots.first() {
             let events = self.cgll_repair_events_from_root(winner);
+            #[cfg(feature = "walker-trace")]
             if std::env::var_os("PRATTAIL_CGLL_EVENT_DIAG").is_some() {
                 eprintln!("CGLL-EVENTS winner={winner} n={} {:?}", events.len(), events);
             }
@@ -11416,6 +11294,7 @@ where
         // MONOTONE-FOLD TRAP (diagnostic, env-gated): a fold whose result
         // span regresses below the left part's end is the cyclic-forest
         // constructor — print the coordinates + caller chain.
+        #[cfg(feature = "walker-trace")]
         if std::env::var_os("PRATTAIL_CGLL_PURE_FOLDTRAP").is_some() {
             if let Some(w_hi) = self.sppf.span_hi(w) {
                 if hi_z < w_hi {
@@ -12292,6 +12171,7 @@ where
             return events;
         }
         let flats = self.cgll_flatten_ids(root);
+        #[cfg(feature = "walker-trace")]
         if std::env::var_os("PRATTAIL_CGLL_EVENT_DIAG").is_some() {
             eprintln!(
                 "CGLL-EVENTS-SCAN root={root} flats={} first={:?}",
@@ -12648,6 +12528,7 @@ where
                     // `cgll_hi_key`).
                     if self.cgll_pk(z_lo) < w_hi_key {
                         run.stats.fold_overlap_refuted += 1;
+                        #[cfg(feature = "walker-trace")]
                         if std::env::var_os("PRATTAIL_CGLL_FENCE_DIAG").is_some() {
                             eprintln!(
                                 "CGLL-FENCE replay-adj REFUTE w_hi_key={w_hi_key} z_lo={z_lo}(k{}) op={:?} res={:?}",
@@ -12832,6 +12713,7 @@ where
             || self.cgll_hi_key(z).is_some_and(|h| h > at_key)
         {
             run.stats.fold_overlap_refuted += 1;
+            #[cfg(feature = "walker-trace")]
             if std::env::var_os("PRATTAIL_CGLL_FENCE_DIAG").is_some() {
                 eprintln!(
                     "CGLL-FENCE fold-pos REFUTE at_pos={}(k{at_key}) op_hi={:?} z_hi={:?} slot={:?} op_node={:?} z_node={:?}",
@@ -12874,6 +12756,7 @@ where
             {
                 if self.cgll_pk(z_lo) < w_hi_key {
                     run.stats.fold_overlap_refuted += 1;
+                    #[cfg(feature = "walker-trace")]
                     if std::env::var_os("PRATTAIL_CGLL_FENCE_DIAG").is_some() {
                         eprintln!(
                             "CGLL-FENCE fold-adj REFUTE w_hi_key={w_hi_key} z_lo={z_lo}(k{}) at_pos={} op_node={:?} z_node={:?}",
@@ -12920,6 +12803,7 @@ where
             .is_some_and(|h| h > self.cgll_pk(ret.at_pos as u32))
         {
             run.stats.fold_overlap_refuted += 1;
+            #[cfg(feature = "walker-trace")]
             if std::env::var_os("PRATTAIL_CGLL_FENCE_DIAG").is_some() {
                 eprintln!(
                     "CGLL-FENCE replace-pos REFUTE at_pos={} z_hi={:?}",
@@ -13407,6 +13291,7 @@ where
             u16::MAX,
             u16::MAX - 2,
         );
+        #[cfg(feature = "walker-trace")]
         if std::env::var_os("PRATTAIL_CGLL_EVENT_DIAG").is_some() {
             eprintln!(
                 "CGLL-RESEED serial={serial} marker={marker} at={at_pos} payload={payload:?}                  kind={kind:?} d_u={} d_w={}",
@@ -13812,6 +13697,7 @@ where
                     }
                 } else if !(items.is_empty() && seps == 0) && items.len() != seps + 1 {
                     run.stats.coll_coverage_refuted += 1;
+                    #[cfg(feature = "walker-trace")]
                     if std::env::var_os("PRATTAIL_CGLL_PURE_COLLDIAG").is_some() {
                         let its: Vec<String> =
                             items.iter().map(|&it| self.sppf_trace_summary(it)).collect();
@@ -13854,6 +13740,7 @@ where
                         });
                         if cross_cat_item {
                             run.stats.coll_coverage_refuted += 1;
+                            #[cfg(feature = "walker-trace")]
                             if std::env::var_os("PRATTAIL_CGLL_PURE_COLLDIAG").is_some() {
                                 let its: Vec<String> = items
                                     .iter()
@@ -13874,6 +13761,7 @@ where
                 // one line per SURVIVING flat with the per-item node summaries,
                 // so a ghost CollectionId's provenance (which items, which
                 // spans, how many seps) is readable without a debugger.
+                #[cfg(feature = "walker-trace")]
                 if std::env::var_os("PRATTAIL_CGLL_PURE_COLLDIAG").is_some() {
                     let item_summaries: Vec<String> =
                         items.iter().map(|&it| self.sppf_trace_summary(it)).collect();
@@ -14314,6 +14202,9 @@ where
     /// P3 Pocket-A diag: env-gated (`PRATTAIL_CGLL_PURE_FDUMP`) forest dump
     /// from a root — every BIN symbol with its packing family (rule
     /// cat:local + children ids/tags/spans). Read-only.
+    // Diagnostic-only (sole caller is the `PRATTAIL_CGLL_PURE_FDUMP` site);
+    // gated with its caller so the default build carries neither.
+    #[cfg(feature = "walker-trace")]
     fn cgll_pure_forest_dump(&self, root: crate::sppf::SppfId) {
         let mut seen: rustc_hash::FxHashSet<crate::sppf::SppfId> = rustc_hash::FxHashSet::default();
         let mut stack: Vec<crate::sppf::SppfId> = vec![root];
@@ -14402,6 +14293,8 @@ where
     }
 
     /// Flatten helper for the dump: flats of ONE packing's children.
+    /// Diagnostic-only (sole caller is the gated `cgll_pure_forest_dump`).
+    #[cfg(feature = "walker-trace")]
     fn cgll_flatten_ids_all_of(
         &self,
         pk: crate::sppf::SppfId,
@@ -14425,6 +14318,9 @@ where
         flats
     }
 
+    // Diagnostic-only (sole caller is the `PRATTAIL_CGLL_PURE_WFCHECK` site);
+    // gated with its caller so the default build carries neither.
+    #[cfg(feature = "walker-trace")]
     fn cgll_pure_wellformedness_report(
         &self,
         root: crate::sppf::SppfId,
@@ -14525,9 +14421,6 @@ where
     fn step_canonical_pure(&mut self, tokens: &dyn WpdaTokenSource) -> WpdaState {
         use rustc_hash::FxHashSet;
 
-        // TASK-#16 STEP-0 probe: reset the per-parse chain-peek counters at the
-        // pure-loop entry (inert unless the probe env is set).
-        chain_probe_reset();
         // TASK-#16 A1: mark the descriptor-PURE engine active for the whole run
         // (Drop restores the prior state) ⇒ `peek_ternary_chain` uses the suffix
         // memo here and ONLY here; and clear the memo at pure-loop entry
@@ -14536,7 +14429,21 @@ where
         // map is O(1)).
         let _chain_peek_pure_guard = ChainPeekPureActiveGuard::enter();
         chain_peek_memo_clear();
-        let dump_stats = std::env::var_os("PRATTAIL_CANONICAL_GLL_STATS").is_some();
+        // Diagnostic dump selector — gated by the `walker-trace` feature; the
+        // env read compiles out on the default build (⇒ `false`), so the many
+        // `if dump_stats { … }` sites below are dead-stripped. NOT wrapped in
+        // `trace_diag!` because `dump_stats` also feeds `rd_track` (real control
+        // flow), so it must stay a live binding in every build.
+        let dump_stats = {
+            #[cfg(feature = "walker-trace")]
+            {
+                std::env::var_os("PRATTAIL_CANONICAL_GLL_STATS").is_some()
+            }
+            #[cfg(not(feature = "walker-trace"))]
+            {
+                false
+            }
+        };
         let budget: usize = std::env::var("PRATTAIL_CGLL_BUDGET")
             .ok()
             .and_then(|s| s.parse().ok())
@@ -14548,12 +14455,17 @@ where
         self.cgll_pure_parked.clear();
         self.cgll_pure_park_seen.clear();
         self.cgll_pure_round_log.clear();
-        // Capped protocol trace (`PRATTAIL_CGLL_PURE_TRACE=<n>`; any
-        // non-numeric value = 400 steps). Diagnostic only.
-        run.trace_budget = std::env::var("PRATTAIL_CGLL_PURE_TRACE")
-            .ok()
-            .map(|s| s.parse().unwrap_or(400))
-            .unwrap_or(0);
+        // Capped protocol trace (`PRATTAIL_CGLL_PURE_TRACE=<n>`; any non-numeric
+        // value = 400 steps). Diagnostic only — behind the `walker-trace`
+        // feature; on the default build the assignment compiles out and
+        // `run.trace_budget` stays at its `CgllPureRun::default()` value of 0, so
+        // the `if run.trace_budget > 0` trace block below is dead-stripped.
+        trace_diag! {
+            run.trace_budget = std::env::var("PRATTAIL_CGLL_PURE_TRACE")
+                .ok()
+                .map(|s| s.parse().unwrap_or(400))
+                .unwrap_or(0);
+        }
         // Seed: mirror `new_for_category` — the walker's initial frontier IS
         // the seed cursor at `u₀ = (0, CategoryEntry(goal))`.
         for frame in std::mem::take(&mut self.branch_cursors) {
@@ -14646,7 +14558,20 @@ where
         // F9: the per-dispatch delta/echo/twins captures and the post-window
         // diagnostics run only under a bounded mode, a stats dump, or the
         // RD-U1 probe env — zero added work on production unbounded parses.
-        let rd_u1_diag = std::env::var_os("PRATTAIL_RD_U1_DIAG").is_some();
+        // RD-U1 probe selector — gated by the `walker-trace` feature; the env
+        // read compiles out on the default build (⇒ `false`). Off-value (not
+        // `trace_diag!`) because it feeds `rd_track` (real control flow) and so
+        // must remain a live binding.
+        let rd_u1_diag = {
+            #[cfg(feature = "walker-trace")]
+            {
+                std::env::var_os("PRATTAIL_RD_U1_DIAG").is_some()
+            }
+            #[cfg(not(feature = "walker-trace"))]
+            {
+                false
+            }
+        };
         let rd_track = fan_window_open || dump_stats || rd_u1_diag;
         // ── R1 (Pocket-F): K-GATED RECOVERY ROUNDS (amendments 5/7) ──────
         // K = the walker's own recovery config read DIRECTLY (strict
@@ -14800,6 +14725,7 @@ where
             }
             // ARM-G OVER-FIRE PROBE (env-gated, measurement-only): per-fire /
             // per-exclusion descriptor + slot inventory.
+            #[cfg(feature = "walker-trace")]
             if (__grp_reset.is_some() || __grp_excluded)
                 && std::env::var_os("PRATTAIL_GRP_FIRE_DIAG").is_some()
             {
@@ -15097,6 +15023,7 @@ where
         // success).
         if ambiguity_overflow.is_none() {
             // STAGE D: env-gated forest well-formedness self-check per accept.
+            #[cfg(feature = "walker-trace")]
             if std::env::var_os("PRATTAIL_CGLL_PURE_WFCHECK").is_some() {
                 for &(root, pos) in &run.accepting {
                     let (symbols, packings, flats_n, issues) =
@@ -15110,6 +15037,7 @@ where
                 }
             }
             // P3 Pocket-A diag: env-gated forest dump per accepting root.
+            #[cfg(feature = "walker-trace")]
             if std::env::var_os("PRATTAIL_CGLL_PURE_FDUMP").is_some() {
                 for &(root, pos) in &run.accepting {
                     eprintln!("FDUMP-ROOT root={root} pos={pos}");
@@ -15467,22 +15395,6 @@ where
                 s.ambiguity_overflows,
                 s.group_floor_resets,
                 s.group_floor_reset_excluded,
-            );
-        }
-        // TASK-#16 STEP-0 probe dump: the per-parse chain-peek attribution,
-        // emitted next to the CGLL-PURE line so a single ladder run pairs
-        // (u_count, peek_scan_steps). Inert unless the probe env is set.
-        if chain_peek_probe_enabled() {
-            let peek_calls = CHAIN_PEEK_CALLS.with(|c| c.get());
-            let peek_scan_steps = CHAIN_PEEK_SCAN_STEPS.with(|c| c.get());
-            let synth_calls = CHAIN_SYNTH_CALLS.with(|c| c.get());
-            let synth_scan_steps = CHAIN_SYNTH_SCAN_STEPS.with(|c| c.get());
-            let pnpo_peek = CHAIN_PNPO_PEEK.with(|c| c.get());
-            let pnpo_other = CHAIN_PNPO_OTHER.with(|c| c.get());
-            eprintln!(
-                "CHAIN-PEEK-PROBE peek_calls={peek_calls} peek_scan_steps={peek_scan_steps} \
-                 synth_calls={synth_calls} synth_scan_steps={synth_scan_steps} \
-                 pnpo_peek={pnpo_peek} pnpo_other={pnpo_other}"
             );
         }
         final_state
@@ -16133,6 +16045,7 @@ where
                             // mirror of classic's Fork-empty print (same env
                             // var, same narrow site) for A/B count-parity
                             // diffing against the 14+4+4 classic census.
+                            #[cfg(feature = "walker-trace")]
                             if std::env::var_os("PRATTAIL_GRP_GUARD_DIAG").is_some() {
                                 eprintln!(
                                     "GRP-PROJ-SUPPRESS-PURE pos={} state={:?} boundary_src={} tok={:?}",
@@ -16925,16 +16838,17 @@ where
                     run.accepting.push((d.w, d.pos));
                 }
             },
-            WpdaStepAction::Error(msg) => {
+            WpdaStepAction::Error(_msg) => {
                 run.stats.engine_errors += 1; // descriptor dies (no recovery — amendment 8)
                 // Capped diagnostic (stats-gated): WHICH configs die tells
                 // the P3 burn-down where a table path is unreachable purely.
+                #[cfg(feature = "walker-trace")]
                 if run.stats.engine_errors <= 8
                     && std::env::var_os("PRATTAIL_CANONICAL_GLL_STATS").is_some()
                 {
                     eprintln!(
                         "CGLL-PURE-ENGERR #{} pos={} state={:?} sym={:?} msg={}",
-                        run.stats.engine_errors, d.pos, d.state, d.cur_sym, msg
+                        run.stats.engine_errors, d.pos, d.state, d.cur_sym, _msg
                     );
                 }
             },
@@ -17263,6 +17177,7 @@ where
                     // R1 family A (WFST/Viterbi PrefixDispatch dead-end):
                     // PARK — inserts/substitutes twin at a virtual position,
                     // pos-only sequences at the real target (amendment 4/5).
+                    #[cfg(feature = "walker-trace")]
                     if std::env::var_os("PRATTAIL_CANONICAL_GLL_STATS").is_some()
                         && run.stats.repair_parked < 4
                     {
@@ -17403,7 +17318,7 @@ where
             },
             ForkActionKind::GuardedConsumeAndReplace { expected_text, required_top_cat } => {
                 if tokens.peek_text(pos_after).unwrap_or("") != expected_text.as_str() {
-                    #[cfg(debug_assertions)]
+                    #[cfg(feature = "walker-trace")]
                     if std::env::var_os("PRATTAIL_CANONICAL_GLL_STATS").is_some()
                         && run.stats.effects_skipped < 6
                     {
@@ -17679,6 +17594,7 @@ where
                     run.stats.repair_guard_parks += 1; // AV6 assert-stays-dead
                     return;
                 }
+                #[cfg(feature = "walker-trace")]
                 if std::env::var_os("PRATTAIL_CANONICAL_GLL_STATS").is_some()
                     && run.stats.effects_skipped < 6
                 {

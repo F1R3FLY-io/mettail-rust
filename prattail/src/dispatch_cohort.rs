@@ -1589,20 +1589,6 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
             let mut eligible: Vec<(ProjCacheKey, Vec<CohortMember<W>>)> = Vec::new();
             let resolved_ck = resolved_key.cache_key();
             for (k_sib, entry) in self.entries.iter() {
-                // ROOT-P design-cycle-3 SCAN-PROBE (THROWAWAY, env-gated by
-                // PRATTAIL_RP3_SCANPROBE): does the crosswrap sibling scan ever
-                // iterate over route=Projection entries (the `@a<-@b` cohorts the
-                // pos-quotient collapses)? If it only touches route entries that
-                // are cast-family cross-WRAP, the quotient (which targets
-                // Projection cohorts) is disjoint from this scan's pos-identity.
-                if std::env::var_os("PRATTAIL_RP3_SCANPROBE").is_some() {
-                    let _ = entry;
-                    eprintln!(
-                        "[RP3-SCAN crosswrap] k_sib{{route:{:?},pos:{},src:{},bp:{},wrap:({},{})}} R{{pos_disp:{}}}",
-                        k_sib.route, k_sib.pos, k_sib.source_src_idx, k_sib.inner_cur_bp,
-                        k_sib.wrap_cat, k_sib.wrap_rule, r_pos_at_dispatch,
-                    );
-                }
                 // Clause 1 + 2 + 3: equiv match, distinct wrap, dispatch-site
                 // identity (`K_sib.pos == R.pos_at_dispatch`). ROOT-P
                 // design-cycle-3: clause-1 compares CACHE keys (the map's key
@@ -1884,15 +1870,6 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
         }
         let mut pairings: Vec<Pairing<W>> = Vec::new();
         for (k_sib, entry) in self.entries.iter() {
-            // ROOT-P design-cycle-3 SCAN-PROBE (THROWAWAY, env-gated): route of
-            // entries the span-anchored outer-cast scan iterates.
-            if std::env::var_os("PRATTAIL_RP3_SCANPROBE").is_some() {
-                eprintln!(
-                    "[RP3-SCAN spananchor] k_sib{{route:{:?},pos:{},src:{},bp:{},wrap:({},{})}}",
-                    k_sib.route, k_sib.pos, k_sib.source_src_idx, k_sib.inner_cur_bp,
-                    k_sib.wrap_cat, k_sib.wrap_rule,
-                );
-            }
             // Clause 1 + member materialization: own wrap InFlight (with
             // members) OR Resolved with a STRICTLY shorter span (with members)
             // — a self-resolution at `>= some body's hi` is its own body, not
@@ -2125,73 +2102,6 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
             }
         }
         (inflight, inflight_with, resolved, resolved_with)
-    }
-
-    /// ROOT-P design-cycle-3 STAGE 0 GATE 0c (THROWAWAY DIAGNOSTIC, read-only).
-    ///
-    /// Groups the LIVE cache entry keys by the proposed `ProjCacheKey`-shape
-    /// quotient — `(source_src_idx, inner_cur_bp, wrap_cat, wrap_rule, route)`,
-    /// i.e. the full `DispatchKey` MINUS `pos` — and reports:
-    ///   1. `distinct_dispatch_keys`: number of live entries (each a distinct
-    ///      full `DispatchKey`).
-    ///   2. `distinct_projcache_keys`: number of distinct quotient groups (the
-    ///      count that would survive dropping `pos` from the cache key).
-    ///   3. `pos_only_groups`: number of quotient groups whose members differ
-    ///      ONLY in `pos` (all other axes identical — trivially true by
-    ///      construction of the quotient, reported for confirmation).
-    ///   4. `multi_pos_groups`: number of quotient groups with ≥2 distinct
-    ///      `pos` values (these are the cross-`&`-segment re-forks the quotient
-    ///      would collapse).
-    ///   5. `max_pos_per_group`: the largest number of distinct positions
-    ///      sharing one quotient (the per-key fork multiplier).
-    ///
-    /// GATE 0c PASSES iff `distinct_dispatch_keys` grows ~d^k while
-    /// `distinct_projcache_keys` stays ~constant AND every multi-pos group
-    /// differs ONLY in `pos` (the quotient is not inert / does not conflate
-    /// distinct wrap/source axes).
-    pub fn dbg_projcache_quotient_census(&self) -> (u64, u64, u64, u64, u64) {
-        use rustc_hash::FxHashMap;
-        // quotient axes (ProjCacheKey shape) -> set of distinct `pos` values.
-        let mut groups: FxHashMap<(u16, u8, u16, u16, CohortRoute), Vec<usize>> =
-            FxHashMap::default();
-        for key in self.entries.keys() {
-            let q = (
-                key.source_src_idx,
-                key.inner_cur_bp,
-                key.wrap_cat,
-                key.wrap_rule,
-                key.route,
-            );
-            let positions = groups.entry(q).or_default();
-            if !positions.contains(&key.pos) {
-                positions.push(key.pos);
-            }
-        }
-        let distinct_dispatch_keys = self.entries.len() as u64;
-        let distinct_projcache_keys = groups.len() as u64;
-        // By construction every group's members differ ONLY in `pos` (the five
-        // quotient axes are held fixed within a group). We report the count of
-        // groups (pos_only == distinct_projcache_keys) plus the multi-pos
-        // subset that the quotient actually collapses.
-        let pos_only_groups = distinct_projcache_keys;
-        let mut multi_pos_groups = 0u64;
-        let mut max_pos_per_group = 0u64;
-        for positions in groups.values() {
-            let n = positions.len() as u64;
-            if n >= 2 {
-                multi_pos_groups += 1;
-            }
-            if n > max_pos_per_group {
-                max_pos_per_group = n;
-            }
-        }
-        (
-            distinct_dispatch_keys,
-            distinct_projcache_keys,
-            pos_only_groups,
-            multi_pos_groups,
-            max_pos_per_group,
-        )
     }
 
     pub fn drain_orphaned_inflight_member_groups(&mut self) -> Vec<OrphanedInflightMembers<W>> {
@@ -2485,16 +2395,6 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
         // re-pushes `CategoryEntry(source)` with the RESOLVED wrap).
         let mut sources: Vec<(SppfId, usize, usize, u16, u16, Vec<WorkerSnapshot<W>>)> = Vec::new();
         for (k_sib, entry) in self.entries.iter() {
-            // ROOT-P design-cycle-3 SCAN-PROBE (THROWAWAY, env-gated): route of
-            // entries the pausing-member crosswrap backstop scan iterates.
-            if std::env::var_os("PRATTAIL_RP3_SCANPROBE").is_some() {
-                let _ = entry;
-                eprintln!(
-                    "[RP3-SCAN backstop] k_sib{{route:{:?},pos:{},src:{},bp:{},wrap:({},{})}} pause{{pos:{}}}",
-                    k_sib.route, k_sib.pos, k_sib.source_src_idx, k_sib.inner_cur_bp,
-                    k_sib.wrap_cat, k_sib.wrap_rule, k_pause.pos,
-                );
-            }
             // ROOT-P design-cycle-3: compare CACHE keys (exclude K_pause's own
             // entry; distinct-wrap siblings have distinct quotient keys and
             // survive). Byte-identical OFF (cache key preserves pos).

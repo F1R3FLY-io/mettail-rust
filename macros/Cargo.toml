@@ -14,6 +14,18 @@ publish = false
 name = "mettail_macros"
 proc-macro = true
 
+[features]
+## Walker diagnostics/trace (2026-07-16): compile-time gate for the codegen-time
+## `PRATTAIL_MACRO_TRACE` stage instrumentation emitted during `language!`
+## expansion. OFF BY DEFAULT and zero-cost when off — the
+## `std::env::var("PRATTAIL_MACRO_TRACE")` read is compiled out under
+## `#[cfg(feature = "walker-trace")]`. Mirrors `prattail`'s feature of the same
+## name (needed because the `PRATTAIL_MACRO_TRACE` stage tracer lives in this
+## proc-macro crate too); `mettail-languages/walker-trace` turns on both. Enable
+## with `--features walker-trace`, then select at runtime with
+## `PRATTAIL_MACRO_TRACE=1`.
+walker-trace = []
+
 [dependencies]
 proc-macro2 = { workspace = true }
 quote = { workspace = true }

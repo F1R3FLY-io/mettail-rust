@@ -1890,14 +1890,15 @@ pub fn build_dispatch_action_tables(
                             parse_fn: format!("parse_{}", rd_rule.label.to_lowercase()),
                         });
                     },
-                    std::collections::hash_map::Entry::Occupied(e) => {
+                    std::collections::hash_map::Entry::Occupied(_e) => {
                         // DIAGNOSTIC (2026-06-30, gated; REMOVE after): the terminal
                         // already has a Direct dispatch for this first-token variant,
                         // so THIS rule is silently discarded by the table. Log the
                         // kept/dropped pair to pin whether the unreachable longer
                         // rules (InputBindEmptyQuery, NQuote, …) are dropped HERE.
+                        trace_diag! {
                         if std::env::var("PRATTAIL_DISPATCH_TRACE").is_ok() {
-                            let kept = match e.get() {
+                            let kept = match _e.get() {
                                 DispatchAction::Direct { rule_label, .. } => rule_label.clone(),
                                 _ => "<non-Direct>".to_string(),
                             };
@@ -1905,6 +1906,7 @@ pub fn build_dispatch_action_tables(
                                 "[DISPATCH-DROP] cat={} token={:?} variant={} KEPT={} DROPPED={}",
                                 cat, t, variant, kept, rd_rule.label
                             );
+                        }
                         }
                     },
                 }

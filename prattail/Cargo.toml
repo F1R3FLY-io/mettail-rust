@@ -41,6 +41,25 @@ hang-dump = ["dep:signal-hook", "dep:parking_lot"]
 ## Use: `cargo test --features mettail-prattail/walker-stats ... \
 ##       -- --nocapture` with `PRATTAIL_WALKER_STATS=1` env var.
 walker-stats = []
+## Walker diagnostics/trace (2026-07-16): compile-time gate for the parser's
+## per-diagnostic stderr trace/dump statements — the `PRATTAIL_CGLL_*`,
+## `PRATTAIL_GRP_*`, `PRATTAIL_CANONICAL_GLL_STATS`, `PRATTAIL_RD_U1_DIAG`,
+## `PRATTAIL_DISPATCH_TRACE`, `PRATTAIL_ENTROPY`, `PRATTAIL_DUMP_EBNF`,
+## `PRATTAIL_DUMP_PARSER`, and `PRATTAIL_MACRO_TRACE` families. OFF BY DEFAULT.
+##
+## Zero-cost when off: every gated site — INCLUDING the `std::env::var*` read
+## that selects it — is wrapped in `trace_diag! { … }` (⇒ `#[cfg(feature =
+## "walker-trace")] { … }`, see `prattail/src/trace.rs`) or a `#[cfg(feature =
+## "walker-trace")]` binding, so the default build compiles the statement out
+## ENTIRELY: no hot-path env check, no branch. One `PRATTAIL_CGLL_REALIZE_DIAG`
+## flood previously timed out a proptest under `RUST_LOG=debug`; gating removes
+## the read from the default build.
+##
+## Enable with `--features walker-trace`; each diagnostic is then still selected
+## individually at runtime by its own env var (e.g. `PRATTAIL_CGLL_FENCE_DIAG=1`).
+## Replaces the former `#[cfg(debug_assertions)]` guards on the REALIZE/GCAR
+## diagnostics, so a trace build works in ANY profile (debug or release).
+walker-trace = []
 ## OSLF substrate, Phase 1 `.0`-inert (2026-06-22): the M0→M1 *carrier route*
 ## that wires `any_algebra::AnyAlgebra` as the unified guard-predicate carrier
 ## for `symbolic::analyze_from_bundle`. OFF BY DEFAULT and **inert**: when

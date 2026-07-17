@@ -44,6 +44,12 @@
 //!   TokenStream (Rust source code)
 //! ```
 
+// `trace_diag!` (the compile-time `walker-trace` gate for parser diagnostics)
+// must be in textual macro scope for every module below that uses it, so this
+// `#[macro_use]` module is declared before all others. See `src/trace.rs`.
+#[macro_use]
+mod trace;
+
 pub mod automata;
 pub mod binding_power;
 pub mod classify;
