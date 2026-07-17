@@ -494,12 +494,13 @@ impl<W: crate::automata::semiring::StarSemiringRef> CgllKTuple<W> {
 // amendments integrated; verdicts in `kbest_extraction_redteam.md`). One
 // weight-ordered, dedup-aware, feasibility-aware k-best extractor (Huang &
 // Chiang 2005 "Better k-best Parsing", Alg. 3 adapted to this forest's
-// Symbol/Intermediate/Packing shape). S1 lands the machinery + units ONLY —
-// no call-site routing (that is S2/S3, gated on
-// `CGLL_KBEST_EXTRACTION_ENABLED`); every item below is therefore
-// `#[allow(dead_code)]` until S2 routes callers (the `cgll_prerealize_deps`
-// retained-entry precedent), EXCEPT `cgll_kbest_decisions_block`, which the
-// OFF path calls today (amendment A8 factoring).
+// Symbol/Intermediate/Packing shape). S1 landed the machinery + units;
+// S2 routed the SINGLE-RESULT call sites (`cgll_resolve_binarized`, the
+// facade BIN election branch, prefix-trailing) behind
+// `CGLL_KBEST_EXTRACTION_ENABLED`, making the whole family live from the
+// production call graph (the S1-era dead_code allows were removed then);
+// BoundedEnumeration routing is S3. `cgll_kbest_decisions_block` is
+// additionally live from the OFF path (amendment A8 factoring).
 // ═══════════════════════════════════════════════════════════════════════════
 
 /// S1 k-best (plan §2.3/§5.2): the kind of one extraction demand.
@@ -514,7 +515,6 @@ impl<W: crate::automata::semiring::StarSemiringRef> CgllKTuple<W> {
 /// `OPTIONAL_PRESENT` inner-child demands (Election sessions); its inner
 /// child demands are themselves FirstRaw, and it runs under its own
 /// raw-ordered frontier in the node's separate `raw` sub-state.
-#[allow(dead_code)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum KbestOrderKey {
     Election,
@@ -543,7 +543,6 @@ enum KbestOrderKey {
 /// carry `None`: Election parents consume `kt` and the realize walk folds
 /// the Intermediate packing weights directly, so no Election consumer
 /// exists and none is fabricated.
-#[allow(dead_code)]
 enum KbestVal<W> {
     Realized { arg: ActionArg, w: W },
     Fragment { pair: Option<(W, W)> },
@@ -557,7 +556,6 @@ enum KbestVal<W> {
 /// only `(term, w)`), so it is `None` there rather than a fabricated value.
 /// `pk`/`j` are the candidate's provenance (successor generation + the
 /// provenance flat walk at parents; `j` is 1-based per slot).
-#[allow(dead_code)]
 struct KbestEntry<W> {
     val: KbestVal<W>,
     kt: Option<CgllKTuple<W>>,
@@ -568,7 +566,6 @@ struct KbestEntry<W> {
 /// S1 k-best: the pre-evaluated order key carried by a frontier candidate.
 /// One frontier only ever holds ONE variant (the sub-state's kind) — the
 /// cross-variant compare arm is unreachable by construction.
-#[allow(dead_code)]
 enum KbestCandKey<W> {
     Election(CgllKTuple<W>),
     Weight(W),
@@ -603,7 +600,6 @@ enum KbestCandKey<W> {
 /// classes, which the `(pk_idx, j)` legs then decide deterministically;
 /// generic `W` carries no `lex_cmp`). The dedup replace-on-strictly-less
 /// keeps using the METHOD — today's exact `dedup_push_realized` contract.
-#[allow(dead_code)]
 struct KbestCand<W> {
     key: KbestCandKey<W>,
     pk_idx: u32,
@@ -612,7 +608,6 @@ struct KbestCand<W> {
 }
 
 impl<W: crate::automata::semiring::StarSemiringRef> KbestCand<W> {
-    #[allow(dead_code)]
     fn cmp_impl(&self, other: &Self) -> std::cmp::Ordering {
         let key_leg = match (&self.key, &other.key) {
             (KbestCandKey::Election(a), KbestCandKey::Election(b)) => {
@@ -664,7 +659,6 @@ impl<W: crate::automata::semiring::StarSemiringRef> Ord for KbestCand<W> {
 /// (mid-loop hunt pops discharge immediately). Frontier completeness for
 /// later demands is preserved because no pop can happen before the pending
 /// successors are pushed.
-#[allow(dead_code)]
 struct KbestNodeSub<W> {
     seeded: bool,
     list: Vec<KbestEntry<W>>,
@@ -687,7 +681,6 @@ struct KbestNodeSub<W> {
 }
 
 impl<W> KbestNodeSub<W> {
-    #[allow(dead_code)]
     fn new() -> Self {
         KbestNodeSub {
             seeded: false,
@@ -703,7 +696,6 @@ impl<W> KbestNodeSub<W> {
 impl<W> KbestNode<W> {
     /// The kind's sub-state, allocating the `raw` box on first FirstRaw
     /// touch.
-    #[allow(dead_code)]
     fn sub_mut(&mut self, kind: KbestOrderKey) -> &mut KbestNodeSub<W> {
         match kind {
             KbestOrderKey::FirstRaw => {
@@ -726,7 +718,6 @@ impl<W> KbestNode<W> {
 /// the minimal faithful carrier. `truncated` is the A4 PERMANENT per-node
 /// flag (read on memo-hits too; OR'd over the session's demanded set by
 /// `cgll_kbest_session_truncated`).
-#[allow(dead_code)]
 struct KbestNode<W> {
     /// Packing family snapshot (insertion order — the K-D contract).
     packings: Vec<crate::sppf::SppfId>,
@@ -742,7 +733,6 @@ struct KbestNode<W> {
 /// `pops`/`infeasible_pops` additionally feed the committed Phase-4
 /// counter-based perf gate (amendment A9 — the SIGNED no-work-cap
 /// decision: adversarial hunts are caught by receipt, not by cap).
-#[allow(dead_code)]
 #[derive(Default)]
 struct KbestStats {
     pops: u64,
@@ -759,28 +749,36 @@ struct KbestStats {
 /// UNAVAILABLE-NOW to the demanding candidate (family provisional-empty
 /// analog — no retry). `demanded` is the A4 demanded-set: EVERY node whose
 /// `cgll_kbest_next` (any kind, memo-hits included) ran this session.
-#[allow(dead_code)]
 struct KbestState<W> {
     nodes: rustc_hash::FxHashMap<crate::sppf::SppfId, KbestNode<W>>,
     on_stack: rustc_hash::FxHashSet<crate::sppf::SppfId>,
     demanded: rustc_hash::FxHashSet<crate::sppf::SppfId>,
+    /// S2 / risk R-17 Option 1: `true` = Election candidate evaluation in
+    /// THIS session is span-FENCED like Weight/FirstRaw. Set by the
+    /// RESOLVE call sites only (`cgll_resolve_binarized`,
+    /// `cgll_resolve_binarized_prefix_trailing`), where the emptiness
+    /// decision and PER-ROOT inclusion in `roots`/`terms` — including the
+    /// `roots.first()` recovery-events winner — must keep today's
+    /// fenced-family semantics (all-span-refuted forests stay ParseError).
+    /// The FACADE election leaves it `false` (chosen parity: today's
+    /// election path carries no fence).
+    fence_election: bool,
     stats: KbestStats,
 }
 
 impl<W> KbestState<W> {
-    #[allow(dead_code)]
     fn new() -> Self {
         KbestState {
             nodes: rustc_hash::FxHashMap::default(),
             on_stack: rustc_hash::FxHashSet::default(),
             demanded: rustc_hash::FxHashSet::default(),
+            fence_election: false,
             stats: KbestStats::default(),
         }
     }
 
     /// Immutable sub-state view (`None` when the kind's sub-state was
     /// never demanded).
-    #[allow(dead_code)]
     fn sub(&self, node: crate::sppf::SppfId, kind: KbestOrderKey) -> Option<&KbestNodeSub<W>> {
         let n = self.nodes.get(&node)?;
         match kind {
@@ -790,13 +788,11 @@ impl<W> KbestState<W> {
     }
 
     /// Length of the node's list under `kind` (0 when never demanded).
-    #[allow(dead_code)]
     fn list_len(&self, node: crate::sppf::SppfId, kind: KbestOrderKey) -> usize {
         self.sub(node, kind).map_or(0, |s| s.list.len())
     }
 
     /// The `idx`-th entry of the node's list under `kind`.
-    #[allow(dead_code)]
     fn entry(
         &self,
         node: crate::sppf::SppfId,
@@ -813,7 +809,6 @@ impl<W> KbestState<W> {
 /// was UNAVAILABLE-NOW under the A2 on-stack rule). Consumers re-read the
 /// session state for anything finer — the A4 truncation OR distinguishes
 /// capped from exhausted.
-#[allow(dead_code)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum KbestDemandOutcome {
     Available,
@@ -822,19 +817,25 @@ enum KbestDemandOutcome {
 
 /// S1 k-best: one OR-slot of a candidate's `j` vector (see
 /// `cgll_kbest_slot_layout`).
-#[allow(dead_code)]
 struct KbestSlot {
     node: crate::sppf::SppfId,
     /// Direct packing child index; `inner` = `Some(inner_child_idx)` when
     /// the slot is an A10 j-extension over an `OPTIONAL_PRESENT`
     /// packing-leaf's inner Symbol child (Weight/FirstRaw kinds only).
+    // dead_code (NOT stale — verified by the S2 allows sweep): the slot's
+    // provenance identity. Every routed consumer keys on `node` (SeedCands
+    // availability, Succ growth, the walk re-derives positions by
+    // iterating children), so these two fields are unread; they state the
+    // layout contract the fold/walk/key must agree on and are kept as its
+    // self-description.
+    #[allow(dead_code)]
     child_idx: u32,
+    #[allow(dead_code)]
     inner: Option<u32>,
 }
 
 /// S1 k-best: inner-child realization selector of one `OPTIONAL_PRESENT`
 /// packing-leaf element in a candidate's walk plan.
-#[allow(dead_code)]
 enum KbestInnerSel<W> {
     /// Weight/FirstRaw kinds: the candidate's j-selected inner entry.
     SymEntry(crate::sppf::SppfId, ActionArg, W),
@@ -851,7 +852,6 @@ enum KbestInnerSel<W> {
 /// `raw_needed` are satisfied. The pair jointly generalizes
 /// `cgll_make_chosen_frame`'s prologue walk from a global choices-map to
 /// per-candidate provenance.
-#[allow(dead_code)]
 struct KbestWalkPlan<W> {
     rule_idx: u32,
     pk_weight: W,
@@ -878,7 +878,6 @@ struct KbestWalkPlan<W> {
 /// `cgll_kbest_next` machine (house S2-F3 rule: explicit work-stack, NO
 /// Rust recursion — the 10k-chain SIGABRT class,
 /// `logs_s2burn/f3_probe1_bt.log`).
-#[allow(dead_code)]
 struct KbestFrame<W> {
     node: crate::sppf::SppfId,
     kind: KbestOrderKey,
@@ -894,7 +893,6 @@ struct KbestFrame<W> {
     stage: KbestFrameStage<W>,
 }
 
-#[allow(dead_code)]
 enum KbestFrameStage<W> {
     Entry,
     /// A1 pins (ii)/(iii): the seed demand sequence — packings in slice
@@ -7336,6 +7334,26 @@ where
         let mut selected_pos: Option<usize> = None;
         let mut memo: std::collections::HashMap<crate::sppf::SppfId, Vec<(ActionArg, W)>> =
             std::collections::HashMap::new();
+        // ── ROOT-P Phase-2 S2 (plan §5.1, risk R-8): under the const the
+        // salvage takes the k=1 ELECTED reading (today: the FIRST raw
+        // reading, no election — the receipted intentional upgrade; every
+        // AcceptedWithTrailing consumer destructures `roots` and
+        // re-realizes, and item/inner bytes keep the FIRST-RAW discipline).
+        // R-17 Option 1 applies here too — this is a resolve-level
+        // `roots`/`terms` producer, so its Election evaluation is FENCED
+        // (per-root inclusion + the `roots.first()` recovery-events winner
+        // keep today's fenced-family semantics). State shared across the
+        // trailing candidates (the resolve-shared pattern, plan §2.8).
+        let mut kbest_session: Option<(
+            KbestState<W>,
+            rustc_hash::FxHashMap<crate::sppf::SppfId, u32>,
+        )> = if Self::CGLL_KBEST_EXTRACTION_ENABLED {
+            let mut st = KbestState::new();
+            st.fence_election = true;
+            Some((st, rustc_hash::FxHashMap::default()))
+        } else {
+            None
+        };
         for (pos, weight, root) in prefix_candidates.iter().filter(|(p, _, _)| {
             tokens
                 .position_order_key(*p)
@@ -7356,7 +7374,17 @@ where
                 // salvage keeps the RAW cap (`false`). `Some(1)` drains after the
                 // 1st raw term = the 1st distinct term, so raw-vs-distinct are
                 // provably identical here; `false` is the self-documenting choice.
-                let realized = self.cgll_realize_bin_symbol(root, &mut memo, Some(1), false);
+                let realized = match kbest_session.as_mut() {
+                    // S2 gated arm (R-8): k = 1, Election key, fenced (R-17).
+                    Some((st, fd)) => self.cgll_kbest_extract_realized(
+                        st,
+                        fd,
+                        root,
+                        KbestOrderKey::Election,
+                        1,
+                    ),
+                    None => self.cgll_realize_bin_symbol(root, &mut memo, Some(1), false),
+                };
                 if let Some((ActionArg::Term { value, .. }, w)) = realized.into_iter().next() {
                     selected_pos.get_or_insert(*pos);
                     weights.push(w);
@@ -7373,6 +7401,10 @@ where
                 terms.push(t);
                 roots.push(root);
             }
+        }
+        // S2 receipts: session counters under PRATTAIL_CGLL_REALIZE_DIAG.
+        if let Some((st, _)) = &kbest_session {
+            Self::cgll_kbest_receipts_diag(st);
         }
         if terms.is_empty() {
             return None;
@@ -7500,7 +7532,63 @@ where
                     // facade cap constants.)
                     let single_result_request =
                         matches!(mode, RealizeRequestMode::SingleResultElection);
-                    if single_result_request {
+                    if single_result_request && Self::CGLL_KBEST_EXTRACTION_ENABLED {
+                        // ── ROOT-P Phase-2 S2 (plan §5.1/§3.1): elect-then-
+                        // realize via the k-best extractor — k = 1 under the
+                        // Election key, call-local state (the facade
+                        // election stays per-root call-local, plan §2.8),
+                        // UNFENCED Election (chosen parity — the R-17
+                        // Option-1 fence applies at the RESOLVE sites only).
+                        // BoundedEnumeration is NOT routed this stage (S3):
+                        // it falls through to the existing family call. The
+                        // tabu-retry loop and the full-family fallback below
+                        // are DEMOTED to the corruption-only path (plan
+                        // §2.5): frontier exhaustion ⇔ family emptiness
+                        // (Q4), so an empty root list — counted by
+                        // `kbest_root_empty` — falls through to the family
+                        // call, which debug-asserts the agreement and stays
+                        // as release-mode safety.
+                        let mut kb_state: KbestState<W> = KbestState::new();
+                        let mut kb_fdepths: rustc_hash::FxHashMap<crate::sppf::SppfId, u32> =
+                            rustc_hash::FxHashMap::default();
+                        let _ = self.cgll_kbest_next(
+                            &mut kb_state,
+                            &mut kb_fdepths,
+                            root,
+                            KbestOrderKey::Election,
+                            1,
+                            true,
+                            self.cgll_pure_goal_cat,
+                        );
+                        Self::cgll_kbest_receipts_diag(&kb_state);
+                        if let Some(e) = kb_state.entry(root, KbestOrderKey::Election, 0) {
+                            if let KbestVal::Realized {
+                                arg: ActionArg::Term { value, .. },
+                                w,
+                            } = &e.val
+                            {
+                                return vec![(Arc::clone(value), w.clone())];
+                            }
+                        }
+                        #[cfg(debug_assertions)]
+                        {
+                            let mut probe_memo: std::collections::HashMap<
+                                crate::sppf::SppfId,
+                                Vec<(ActionArg, W)>,
+                            > = std::collections::HashMap::new();
+                            debug_assert!(
+                                self.cgll_realize_bin_symbol(
+                                    root,
+                                    &mut probe_memo,
+                                    Some(1),
+                                    false
+                                )
+                                .is_empty(),
+                                "kbest corruption: the family fallback realized a term the \
+                                 exhaustive extractor missed (root {root})"
+                            );
+                        }
+                    } else if single_result_request {
                         let goal_cat = self.cgll_pure_goal_cat;
                         // TABU-RETRY: the K-tuple is realizability-blind
                         // (classic's layers only ever rank realizable
@@ -11301,6 +11389,24 @@ where
         let mut budget_dedup: Vec<(ActionArg, W)> = Vec::new();
         let mut budget_seen: std::collections::HashMap<Vec<u8>, usize> =
             std::collections::HashMap::new();
+        // ── ROOT-P Phase-2 S2 (plan §5.1): the k-best extraction session,
+        // shared across bin_roots (plan §2.8 — exactly like `memo`; the
+        // cross-root fdepth staleness is declared un-observable, A1.3).
+        // R-17 Option 1: Election evaluation at RESOLVE is FENCED, so the
+        // emptiness decision AND per-root inclusion in `roots`/`terms` —
+        // including the `roots.first()` recovery-events winner — keep
+        // today's fenced-family semantics (all-span-refuted forests stay
+        // ParseError). OFF (`None`): zero new code runs.
+        let mut kbest_session: Option<(
+            KbestState<W>,
+            rustc_hash::FxHashMap<crate::sppf::SppfId, u32>,
+        )> = if Self::CGLL_KBEST_EXTRACTION_ENABLED {
+            let mut st = KbestState::new();
+            st.fence_election = true;
+            Some((st, rustc_hash::FxHashMap::default()))
+        } else {
+            None
+        };
         for cand in accepting {
             let classic_root = cand.root;
             if classic_root == crate::sppf::SPPF_ID_NONE {
@@ -11358,7 +11464,31 @@ where
             let cap: Option<usize> = budget_n.map(|n| n + 1);
             // Pass `budget_distinct_cap = true`: the TOP frame drains on the
             // frame-local DISTINCT count, exact against the deduped budget.
-            let realized = self.cgll_realize_bin_symbol(bin_root, &mut memo, cap, true);
+            let realized = match kbest_session.as_mut() {
+                // ── ROOT-P Phase-2 S2 (plan §5.1 gate + the F-1 pins): ONE
+                // extraction demand replaces the full-family
+                // materialization. `k_distinct` is a PLAIN usize — never
+                // the neighboring `cap: Option<usize>` convention whose
+                // `None` means UNBOUNDED (misreading it re-explodes the
+                // 677-reading forests): `Unbounded ⇒ k_distinct = 1` under
+                // the Election key; `AmbiguityBudget(n) | BeamSize(n)`
+                // (both fold to `budget_n = Some(n)` above) ⇒
+                // `k_distinct = n + 1` under the Weight key, feeding the
+                // SAME `budget_dedup` fold + per-term fire below (plan
+                // §3.5 — distinct-set exactness unchanged).
+                Some((st, fd)) => {
+                    let k_distinct: usize = match budget_n {
+                        Some(n) => n + 1,
+                        None => 1,
+                    };
+                    let demand_kind = match budget_n {
+                        Some(_) => KbestOrderKey::Weight,
+                        None => KbestOrderKey::Election,
+                    };
+                    self.cgll_kbest_extract_realized(st, fd, bin_root, demand_kind, k_distinct)
+                },
+                None => self.cgll_realize_bin_symbol(bin_root, &mut memo, cap, true),
+            };
             match budget_n {
                 None => {
                     // Unbounded: byte-identical to the pre-A1 accumulation — no
@@ -11427,6 +11557,11 @@ where
             //             };
             //         }
             //     }
+        }
+        // S2 receipts: the session counters under PRATTAIL_CGLL_REALIZE_DIAG
+        // (kbest_root_empty MUST be 0 on green corpora — the S2 gate).
+        if let Some((st, _)) = &kbest_session {
+            Self::cgll_kbest_receipts_diag(st);
         }
         // Commit the first accepting cursor for the legacy single-result
         // accessors (mirrors the classic multi-arm contract).
@@ -12431,15 +12566,13 @@ where
 
     /// ROOT-P Phase-2 k-best extraction flip gate (design of record:
     /// `scratchpad/zz_probes/kbest_extraction_plan.md` §5.1; red-team
-    /// verdicts: `kbest_extraction_redteam.md`). `false` = the S2/S3 call
-    /// sites (`cgll_resolve_binarized`, the BIN branch of
-    /// `realize_root_to_terms_with_weights`, prefix-trailing) take today's
-    /// full-family/election paths byte-identically; `true` (scratch-only —
-    /// NEVER committed) routes them through `cgll_kbest_next`. S1 lands the
-    /// extractor dormant: no call site branches on this yet.
-    // dead_code: read by the S2/S3 gated call sites; S1 lands it dormant
-    // (unit `kbest_const_is_off` pins the OFF value).
-    #[allow(dead_code)]
+    /// verdicts: `kbest_extraction_redteam.md`). `false` = the routed call
+    /// sites (`cgll_resolve_binarized`, the single-result arm of
+    /// `realize_root_to_terms_with_weights`'s BIN branch, prefix-trailing)
+    /// take today's full-family/election paths byte-identically; `true`
+    /// (scratch-only — NEVER committed) routes them through
+    /// `cgll_kbest_next`. S2 landed the single-result routing;
+    /// BoundedEnumeration stays on the family path until S3.
     pub(crate) const CGLL_KBEST_EXTRACTION_ENABLED: bool = false;
 
     /// Realize exactly the CHOSEN derivation (one packing per node from
@@ -12758,9 +12891,6 @@ where
     /// today's drive routes it through `realize_node_leave`'s fenced Symbol
     /// arm. Unreachable on pure-path forests: the BIN namespace separation
     /// interns only BIN-tagged constituents into BIN flats.
-    // dead_code: S1-dormant extractor (see the block banner above
-    // `cgll_kbest_decisions_block`); S2 routes callers.
-    #[allow(dead_code)]
     fn cgll_kbest_slot_layout(
         &self,
         children: &[crate::sppf::SppfId],
@@ -12834,7 +12964,6 @@ where
     /// child entry is unavailable (defensive — seeded candidates have
     /// their entries by construction). No Election consumer exists
     /// (Election parents consume `kt`) — debug-asserted.
-    #[allow(dead_code)]
     fn cgll_kbest_pair_fold(
         &self,
         state: &KbestState<W>,
@@ -12917,7 +13046,6 @@ where
     /// on_path-fail arm; an entry-less inner absorbs neutral, an
     /// R-4-class divergence by design since today's DP is
     /// feasibility-blind). `None` = a required child entry is unavailable.
-    #[allow(dead_code)]
     #[allow(clippy::too_many_arguments)]
     fn cgll_kbest_candidate_key(
         &self,
@@ -13054,7 +13182,6 @@ where
     /// committed grammar shape) is counted + debug-asserted; release keeps
     /// the last selection (today's CHOSEN path has the same SppfId-keyed
     /// collapse).
-    #[allow(dead_code)]
     fn cgll_kbest_candidate_walk(
         &self,
         state: &mut KbestState<W>,
@@ -13242,11 +13369,14 @@ where
         // still generated). ELECTION candidates stay UNFENCED — today's
         // chosen/election path fires without the fence
         // (`cgll_make_chosen_frame` + the Chosen completion have no span
-        // check), so fencing them would break chosen-parity; the
-        // resolve-emptiness corner this leaves (all-span-refuted forest:
-        // fenced-family ParseError vs unfenced-Election Accepted) is
-        // recorded as risk R-17 in the plan's register for the S2 window.
-        if kind != KbestOrderKey::Election {
+        // check), so fencing them would break chosen-parity — EXCEPT under
+        // the session's R-17 Option-1 flag: the RESOLVE call sites fence
+        // their Election evaluation too (`state.fence_election`), keeping
+        // the resolve-level emptiness decision and per-root
+        // `roots`/`terms` inclusion on today's fenced-family semantics
+        // (risk R-17 in the plan register; witness unit
+        // `kbest_r17_resolve_emptiness_fenced_election`).
+        if kind != KbestOrderKey::Election || state.fence_election {
             if let Some(crate::sppf::SppfNode::Symbol { lo_pos, hi_pos, .. }) =
                 self.sppf.node(node)
             {
@@ -13276,7 +13406,6 @@ where
     /// arity refute / F-2 collection refute / action elision — all inside
     /// the shared call; a missing item or inner FirstRaw entry surfaces
     /// through the same refutes).
-    #[allow(dead_code)]
     fn cgll_kbest_realize_candidate(
         &self,
         state: &KbestState<W>,
@@ -13364,7 +13493,6 @@ where
     /// Fragment entries and engines with `semantic_fingerprint = None`
     /// push-all, exactly like today (F-3: distinct-k then degenerates to
     /// first-k-in-extraction-order — the u7 pin).
-    #[allow(dead_code)]
     fn cgll_kbest_dedup_push(
         &self,
         list: &mut Vec<KbestEntry<W>>,
@@ -13432,7 +13560,6 @@ where
 
     /// S1 k-best: pop the top demand frame, releasing its A2 on-stack
     /// membership iff this frame inserted it.
-    #[allow(dead_code)]
     fn cgll_kbest_pop_frame(frames: &mut Vec<KbestFrame<W>>, state: &mut KbestState<W>) {
         if let Some(fr) = frames.pop() {
             if fr.on_stack_inserted {
@@ -13467,7 +13594,6 @@ where
     /// exposed to callers via [`Self::cgll_kbest_session_truncated`]; the
     /// pad-to-limit and grow-and-re-extract halves live at the S2/S3 call
     /// sites.
-    #[allow(dead_code)]
     #[allow(clippy::too_many_arguments)]
     fn cgll_kbest_next(
         &self,
@@ -14123,7 +14249,6 @@ where
     /// commutative (no iteration-order channel). The S3 call sites consume
     /// this for the pad-to-limit carrier and the empty-root
     /// grow-and-re-extract backstop.
-    #[allow(dead_code)]
     fn cgll_kbest_session_truncated(state: &KbestState<W>) -> bool {
         state
             .demanded
@@ -14131,11 +14256,96 @@ where
             .any(|n| state.nodes.get(n).is_some_and(|k| k.truncated))
     }
 
+    /// S2 (plan §5.1): one gated per-root extraction demand, projected to
+    /// the `(ActionArg, W)` list shape the resolve/prefix-trailing
+    /// accumulation loops consume (list order = extraction order; one
+    /// entry per emitted reading, so the A12 roots-push discipline — one
+    /// `roots` push per term — is preserved by the unchanged downstream
+    /// loops).
+    ///
+    /// Carries the amendment-A4(iii) EMPTY-ROOT + TRUNCATED-INNER
+    /// backstop: if the root's list is empty while any demanded node's
+    /// permanent `truncated` flag is set (possible only in Weight
+    /// sessions — Election/FirstRaw have no per-node cap), GROW k and
+    /// RE-EXTRACT before concluding empty — resolve must never report
+    /// "no realizable readings" on a possibly-nonempty forest.
+    /// Unreachable when R-5 holds (k ≥ 1 ⇒ a truncated node has ≥ 1
+    /// entry), pinned as the soundness backstop rather than assumed —
+    /// and ENGAGED exactly when a feasibility-refuting PARENT (outside
+    /// §3.3's injectivity premise) sits over a child whose distinct count
+    /// exceeds k (unit `kbest_extract_realized_backstop_engages`).
+    ///
+    /// The re-extraction runs on a FRESH session at the doubled k: the
+    /// aborted session cannot be repaired IN PLACE — its skipped
+    /// successors are dead under the A2 no-retry rule (a growth demand
+    /// refused at the old cap is never re-issued for that candidate), so
+    /// its frontier is permanently exhausted; only a fresh seed + hunt
+    /// under the higher per-node cap can reach the previously-capped
+    /// entries (the facade-ladder analog: each rung is a fresh call-local
+    /// extraction). The abandoned attempts' receipts accumulate into the
+    /// replacement state. Termination: k doubles per round, and a fresh
+    /// session that is EMPTY WITHOUT TRUNCATION is genuine emptiness
+    /// (exhaustive — Q4), so the loop exits once k exceeds every
+    /// contributing node's finite distinct count.
+    fn cgll_kbest_extract_realized(
+        &self,
+        state: &mut KbestState<W>,
+        fdepths: &mut rustc_hash::FxHashMap<crate::sppf::SppfId, u32>,
+        root: crate::sppf::SppfId,
+        demand_kind: KbestOrderKey,
+        k_distinct: usize,
+    ) -> Vec<(ActionArg, W)>
+    where
+        W: StarSemiringRef,
+    {
+        let goal_cat = self.cgll_pure_goal_cat;
+        let _ = self.cgll_kbest_next(state, fdepths, root, demand_kind, k_distinct, true, goal_cat);
+        let mut k_cur = k_distinct;
+        while state.list_len(root, demand_kind) == 0
+            && Self::cgll_kbest_session_truncated(state)
+        {
+            k_cur = k_cur.saturating_mul(2);
+            let mut retry: KbestState<W> = KbestState::new();
+            retry.fence_election = state.fence_election;
+            let mut retry_fdepths: rustc_hash::FxHashMap<crate::sppf::SppfId, u32> =
+                rustc_hash::FxHashMap::default();
+            let _ = self.cgll_kbest_next(
+                &mut retry,
+                &mut retry_fdepths,
+                root,
+                demand_kind,
+                k_cur,
+                true,
+                goal_cat,
+            );
+            // Receipts accumulate across the abandoned attempt(s): the
+            // prior root_empty/truncations increments stay visible (they
+            // attribute the engagement, cross-readable against the
+            // repaired outcome — not corruption).
+            retry.stats.pops += state.stats.pops;
+            retry.stats.infeasible_pops += state.stats.infeasible_pops;
+            retry.stats.truncations += state.stats.truncations;
+            retry.stats.root_empty += state.stats.root_empty;
+            retry.stats.dup_flat_occurrence += state.stats.dup_flat_occurrence;
+            *state = retry;
+            *fdepths = retry_fdepths;
+        }
+        let Some(sub) = state.sub(root, demand_kind) else {
+            return Vec::new();
+        };
+        let mut out: Vec<(ActionArg, W)> = Vec::with_capacity(sub.list.len());
+        for e in &sub.list {
+            if let KbestVal::Realized { arg, w } = &e.val {
+                out.push((arg.clone(), w.clone()));
+            }
+        }
+        out
+    }
+
     /// S1 k-best receipts (plan §5.2): print the session counters under
     /// the existing `PRATTAIL_CGLL_REALIZE_DIAG` gating pattern
     /// (walker-trace builds only, like `realize_packing_call`'s
     /// diagnostics).
-    #[allow(dead_code)]
     fn cgll_kbest_receipts_diag(state: &KbestState<W>) {
         #[cfg(feature = "walker-trace")]
         if std::env::var_os("PRATTAIL_CGLL_REALIZE_DIAG").is_some() {
@@ -22306,6 +22516,18 @@ mod tests {
             }
         }
     }
+    /// Refutes every child reading below 3 — the A4(iii) backstop-ENGAGE
+    /// shape (a feasibility-refuting parent over a child whose distinct
+    /// count exceeds the session k).
+    fn kbest_act_refuse_lt_3(b: &mut SemanticBuilder, args: Vec<ActionArg>) {
+        if let [ActionArg::Term { value, .. }] = &args[..] {
+            if let Some(x) = value.downcast_ref::<i64>() {
+                if *x >= 3 {
+                    b.push_term::<i64>(300 + x);
+                }
+            }
+        }
+    }
     fn kbest_act_coll_sum(b: &mut SemanticBuilder, args: Vec<ActionArg>) {
         if let [ActionArg::CollectionId(id)] = &args[..] {
             let mut sum: i64 = 0;
@@ -22392,6 +22614,12 @@ mod tests {
         expected_input_cats: &[],
         output_cat: 1,
     };
+    static KBEST_ACT_REFUSE_LT_3: ActionEntry = ActionEntry {
+        action_fn: kbest_act_refuse_lt_3,
+        arity: 1,
+        expected_input_cats: &[],
+        output_cat: 1,
+    };
     static KBEST_ACT_COLL_SUM: ActionEntry = ActionEntry {
         action_fn: kbest_act_coll_sum,
         arity: 1,
@@ -22435,9 +22663,11 @@ mod tests {
                 (1, 5) => Some(&KBEST_ACT_COLL_SUM),
                 // (1, 6): the span-fence unit's rule (declares
                 // min_terminal_span below); (1, 7): an arity-0 cat-1 leaf
-                // reading for the FirstRaw j-boundary unit.
+                // reading for the FirstRaw j-boundary unit; (1, 8): the
+                // A4(iii) backstop-ENGAGE refuser.
                 (1, 6) => Some(&KBEST_ACT_WRAP),
                 (1, 7) => Some(&KBEST_ACT_PUSH_3),
+                (1, 8) => Some(&KBEST_ACT_REFUSE_LT_3),
                 (3, 0) => Some(&KBEST_ACT_PUSH_7),
                 (5, 8) => Some(&KBEST_ACT_PUSH_20),
                 (5, 9) => Some(&KBEST_ACT_WRAP),
@@ -23037,6 +23267,185 @@ mod tests {
             elected.first().map(|(v, _)| *v),
             Some(1),
             "Election: UNFENCED chosen parity — the ghost (kt-cheapest) is accepted"
+        );
+    }
+
+    /// R-17 synthesized resolve-emptiness witness (S2 receipt (e); route
+    /// choice RECORDED per the coordinator's directive: the resolve fn
+    /// needs live EOI walker machinery a scripted forest cannot supply, so
+    /// the witness pins the RESOLVE-LEVEL DECISION SURFACE directly —
+    /// `cgll_resolve_binarized` returns ParseError iff the per-root
+    /// extraction yields no terms, and under the S2 gate that extraction
+    /// is exactly a fenced-Election `cgll_kbest_extract_realized` session
+    /// (R-17 Option 1). An all-span-refuted forest must extract EMPTY
+    /// under the fenced session (today's ParseError preserved) while the
+    /// unfenced facade session accepts the ghost — the explicitly-rejected
+    /// completeness-positive alternative, asserted as the contrast.
+    #[test]
+    fn kbest_r17_resolve_emptiness_fenced_election() {
+        let mut walker = kbest_walker(true);
+        let a = walker.sppf.intern_symbol(CGLL_BIN_TAG, 0, 2);
+        let ap = walker
+            .sppf
+            .intern_packing(kbest_rule(0, 0), Vec::new(), lex(0.125, 0, 0));
+        walker.sppf.link_packing_to_symbol(a, ap);
+        let p = walker.sppf.intern_symbol(1 | CGLL_BIN_TAG, 0, 2);
+        // The ONLY packing is span-refuted (rule (1,6) demands 1 slack;
+        // the child covers the whole span) — the all-span-refuted forest.
+        let p_ghost = walker
+            .sppf
+            .intern_packing(kbest_rule(1, 6), vec![a], lex(0.0625, 1, 6));
+        walker.sppf.link_packing_to_symbol(p, p_ghost);
+        let family = kbest_family_i64(&walker, p);
+        assert!(
+            family.is_empty(),
+            "today's resolve realize (the fenced family) yields no terms ⇒ ParseError"
+        );
+        let mut state: KbestState<LexicographicWeight> = KbestState::new();
+        state.fence_election = true;
+        let mut fdepths = rustc_hash::FxHashMap::default();
+        let realized = walker.cgll_kbest_extract_realized(
+            &mut state,
+            &mut fdepths,
+            p,
+            KbestOrderKey::Election,
+            1,
+        );
+        assert!(
+            realized.is_empty(),
+            "R-17 Option 1: the fenced-Election resolve extraction is empty too — \
+             ParseError preserved"
+        );
+        assert_eq!(state.stats.root_empty, 1);
+        assert!(state.stats.infeasible_pops >= 1, "the fence counted the ghost");
+        // The UNFENCED facade session accepts the ghost — the rejected
+        // completeness-positive alternative (needs USER sign-off to adopt).
+        let (elected, _) = kbest_extract_i64(&walker, p, KbestOrderKey::Election, 1);
+        assert_eq!(elected.first().map(|(v, _)| *v), Some(1));
+    }
+
+    /// S2 helper shape (`cgll_kbest_extract_realized`): the projection to
+    /// the resolve accumulation shape in extraction order for BOTH gate
+    /// arms — Election k=1 (Unbounded) and Weight k=n+1 (budget, feeding
+    /// the budget_dedup fold downstream) — and the A4(iii)
+    /// grow-and-re-extract backstop staying inert on a truncated-but-
+    /// nonempty root (its trigger is EMPTY + truncated only).
+    #[test]
+    fn kbest_extract_realized_projection_and_backstop_noop() {
+        let mut walker = kbest_walker(true);
+        let (root, _, _) = kbest_install_two_level(&mut walker);
+        let project = |v: &[(ActionArg, LexicographicWeight)]| -> Vec<(i64, LexicographicWeight)> {
+            v.iter()
+                .filter_map(|(arg, w)| match arg {
+                    ActionArg::Term { value, .. } => {
+                        value.downcast_ref::<i64>().map(|x| (*x, *w))
+                    },
+                    _ => None,
+                })
+                .collect()
+        };
+        // Election k=1 (the resolve Unbounded arm; fenced like resolve —
+        // inert on this fence-clean forest).
+        let mut st: KbestState<LexicographicWeight> = KbestState::new();
+        st.fence_election = true;
+        let mut fd = rustc_hash::FxHashMap::default();
+        let one = project(&walker.cgll_kbest_extract_realized(
+            &mut st,
+            &mut fd,
+            root,
+            KbestOrderKey::Election,
+            1,
+        ));
+        assert_eq!(one, vec![(1, lex(0.125, 0, 0).times(&lex(0.25, 1, 0)))]);
+        // Weight k=n+1 (the budget arm, n=1): the top-2 distinct by W; the
+        // root truncates (4 distinct > 2) with a NONEMPTY list, so the
+        // A4(iii) backstop loop never engages (len stays k).
+        let mut st2: KbestState<LexicographicWeight> = KbestState::new();
+        st2.fence_election = true;
+        let mut fd2 = rustc_hash::FxHashMap::default();
+        let two = project(&walker.cgll_kbest_extract_realized(
+            &mut st2,
+            &mut fd2,
+            root,
+            KbestOrderKey::Weight,
+            2,
+        ));
+        assert_eq!(two.iter().map(|(v, _)| *v).collect::<Vec<_>>(), vec![1, 103]);
+        assert!(
+            KbestWalker::cgll_kbest_session_truncated(&st2),
+            "the cap was reached with a live frontier"
+        );
+        assert_eq!(
+            st2.list_len(root, KbestOrderKey::Weight),
+            2,
+            "backstop inert: the list stays at k (its trigger is EMPTY + truncated)"
+        );
+    }
+
+    /// A4(iii) backstop-ENGAGE (S2 review demand — the load-bearing side
+    /// the inertness unit cannot see): a budget-Weight resolve-class
+    /// session (k_distinct = 2) over a feasibility-refuting parent
+    /// (outside §3.3's injectivity premise) whose child carries 3 distinct
+    /// readings, only the THIRD feasible. Attempt 1 truncates the child at
+    /// the k-cap, the parent's hunt dies at the refused growth (A2
+    /// no-retry ⇒ the aborted session is unrepairable in place), the root
+    /// comes back EMPTY + truncated — the backstop must ENGAGE: fresh
+    /// session at doubled k, reaching the third entry and realizing the
+    /// feasible reading. Pins: the engagement receipts (truncations +
+    /// root_empty accumulated from the abandoned attempt), the grown k
+    /// (child list beyond the original cap), the final session clean
+    /// (empty-without-truncation exit condition would be genuine — here
+    /// non-empty), family-oracle byte parity, and termination (the call
+    /// returns).
+    #[test]
+    fn kbest_extract_realized_backstop_engages() {
+        let mut walker = kbest_walker(true);
+        let a = walker.sppf.intern_symbol(CGLL_BIN_TAG, 0, 1);
+        for (local, cost) in [(0u16, 0.125f64), (1, 0.25), (2, 0.5)] {
+            let pk = walker
+                .sppf
+                .intern_packing(kbest_rule(0, local), Vec::new(), lex(cost, 0, local));
+            walker.sppf.link_packing_to_symbol(a, pk);
+        }
+        let p = walker.sppf.intern_symbol(1 | CGLL_BIN_TAG, 0, 1);
+        let ppk = walker
+            .sppf
+            .intern_packing(kbest_rule(1, 8), vec![a], lex(0.125, 1, 8));
+        walker.sppf.link_packing_to_symbol(p, ppk);
+        let family = kbest_family_i64(&walker, p);
+        assert_eq!(
+            family,
+            vec![(303, lex(0.5, 0, 2).times(&lex(0.125, 1, 8)))],
+            "family oracle: only the third child reading fires"
+        );
+        let mut st: KbestState<LexicographicWeight> = KbestState::new();
+        st.fence_election = true;
+        let mut fd = rustc_hash::FxHashMap::default();
+        let realized: Vec<(i64, LexicographicWeight)> = walker
+            .cgll_kbest_extract_realized(&mut st, &mut fd, p, KbestOrderKey::Weight, 2)
+            .iter()
+            .filter_map(|(arg, w)| match arg {
+                ActionArg::Term { value, .. } => value.downcast_ref::<i64>().map(|x| (*x, *w)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(realized, family, "the backstop-repaired extraction ≡ the family");
+        assert!(
+            st.stats.truncations >= 1,
+            "engagement receipt: the abandoned attempt truncated the child at k"
+        );
+        assert!(
+            st.stats.root_empty >= 1,
+            "engagement receipt: the abandoned attempt observed the empty root"
+        );
+        assert_eq!(
+            st.list_len(a, KbestOrderKey::Weight),
+            3,
+            "the fresh session materialized past the original cap (k grew)"
+        );
+        assert!(
+            !KbestWalker::cgll_kbest_session_truncated(&st),
+            "the final session is clean — the loop's genuine-emptiness exit is sound"
         );
     }
 
