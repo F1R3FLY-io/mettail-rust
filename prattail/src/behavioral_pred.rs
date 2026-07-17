@@ -239,7 +239,6 @@ impl PredArg {
 // `.0`-inert: this is a foundation with NO live caller. The eval-path
 // unification (routing `evaluate_pred_with_bindings` through the lowered
 // decider) is a deferred increment; the runtime evaluator is UNTOUCHED.
-#[cfg(feature = "oslf-behavioral-lowering")]
 impl BehavioralPred {
     /// Lower this runtime carrier predicate into the decider's relational
     /// fragment (`crate::behavioral_algebra::BehavioralFormula`).
@@ -327,7 +326,6 @@ impl BehavioralPred {
     }
 }
 
-#[cfg(feature = "oslf-behavioral-lowering")]
 impl PredArg {
     /// Lower a carrier argument into a decider `Arg`.
     ///
@@ -345,7 +343,6 @@ impl PredArg {
     }
 }
 
-#[cfg(feature = "oslf-behavioral-lowering")]
 impl QuantifiedDomain {
     /// Lower a carrier quantifier domain into the closest FAITHFUL decider
     /// `QDomain`. `None` (an inferred domain) maps to `QDomain::Active`.
@@ -382,7 +379,6 @@ impl QuantifiedDomain {
     }
 }
 
-#[cfg(feature = "oslf-behavioral-lowering")]
 impl PredArg {
     /// Render an enumerated-domain element to its decider domain-value string.
     /// Ground literals render exactly as the runtime evaluator's `resolve_arg`

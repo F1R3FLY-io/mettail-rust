@@ -103,7 +103,6 @@ struct CtxBuilder {
     // ── Refinement type analysis result fields ──
     refinement_analysis_data: Option<crate::pipeline::RefinementAnalysisResult>,
     // ── Hindley-Milner base-sort consistency (OSLF Phase 6 `.1`) ──
-    #[cfg(feature = "oslf-hindley-milner")]
     hindley_result_data: Option<crate::hindley_milner::HmInferenceAnalysis>,
 }
 
@@ -175,7 +174,6 @@ impl CtxBuilder {
             // ── Refinement type analysis result fields ──
             refinement_analysis_data: None,
             // ── Hindley-Milner base-sort consistency (OSLF Phase 6 `.1`) ──
-            #[cfg(feature = "oslf-hindley-milner")]
             hindley_result_data: None,
         }
     }
@@ -247,7 +245,6 @@ impl CtxBuilder {
             // ── Refinement type analysis results ──
             refinement_analysis: self.refinement_analysis_data.as_ref(),
             // ── Hindley-Milner base-sort consistency (OSLF Phase 6 `.1`) ──
-            #[cfg(feature = "oslf-hindley-milner")]
             hindley_result: self.hindley_result_data.as_ref(),
         }
     }
@@ -6405,7 +6402,7 @@ fn rt03_fires_on_empty_intersection() {
 /// The `.1` structural path enriches the RT03 hint with an inhabitation witness
 /// for the disjoint pair's shared base category (sourced from
 /// `structural_witnesses`). This mirrors the `RefinementAnalysisResult` the
-/// `sym-tree-structural` pipeline produces: an `empty_intersections` entry, a
+/// pipeline produces: an `empty_intersections` entry, a
 /// `dispatch_analysis.base_type_groups` mapping the two refinements to their base
 /// category, and a `structural_witnesses` entry for that category.
 #[test]
@@ -7233,7 +7230,6 @@ mod predicated_types_lint_coverage {
             max_priority: 0,
             is_empty: true,
             priority_depth: 0,
-            #[cfg(feature = "oslf-letprop")]
             fixpoint_decisions: Vec::new(),
         });
         let mut diags = Vec::new();
@@ -7250,7 +7246,6 @@ mod predicated_types_lint_coverage {
             max_priority: 2,
             is_empty: false,
             priority_depth: 2,
-            #[cfg(feature = "oslf-letprop")]
             fixpoint_decisions: Vec::new(),
         });
         let mut diags = Vec::new();

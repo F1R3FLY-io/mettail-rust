@@ -101,8 +101,8 @@ define_diagnostic_ids! {
     // ── Hindley-Milner base-sort consistency (HM) — OSLF Phase 6 `.1` ──
     // HM01: a constructor's inferred result sort disagrees with its declared
     // category (a base-sort inconsistency — a field references a category that
-    // cannot unify with its use). Emitted only when `oslf-hindley-milner` is on;
-    // the variant is always defined so the ID table stays total.
+    // cannot unify with its use). Emitted whenever the HM base-sort pass finds a
+    // mismatch (inert on well-formed grammars).
     HM01 => "HM01",
 
     // ── Infrastructure (I) ──
@@ -124,8 +124,8 @@ define_diagnostic_ids! {
 
     // ── LetProp behavioral type (LP) — OSLF Phase 5 `.1` ──
     // LP01: a `letprop` recursive guard's PATA is empty (the behavioral type can
-    // never be satisfied — dead). Emitted only when `oslf-letprop` is on; the
-    // variant is always defined so the ID table stays total.
+    // never be satisfied — dead). Emitted whenever a recursive guard's PATA is
+    // empty (inert on every current grammar — no recursive-predicate surface yet).
     LP01 => "LP01",
 
     // ── Morphism (M) ──
@@ -178,8 +178,7 @@ define_diagnostic_ids! {
     RT01 => "RT01", RT02 => "RT02", RT03 => "RT03",
     RT04 => "RT04", RT05 => "RT05", RT06 => "RT06",
     // RT07: OSLF Phase-4 `.1` transducer dead-cast (empty pre-image). Emitted
-    // only when `oslf-transducer` is on; the variant is always defined so the
-    // ID table stays total.
+    // whenever the transducer pre-image is empty (a dead cast).
     RT07 => "RT07",
 
     // ── Syntax (S) ──

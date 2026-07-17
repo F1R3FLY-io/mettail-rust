@@ -23,14 +23,13 @@
 //!
 //! ## `.0`-inert contract
 //!
-//! At `.0` this module is **always compiled** but has **no live caller** — it
+//! This module is **always compiled** and is the live structural recognizer — it
 //! produces a [`StructuralVerdict`] (per-category emptiness + a minimal witness
 //! term) that is proven, by `prattail/tests/sym_tree_structural_snapshot.rs`, to
 //! **agree category-for-category** with `SetTheoreticTypeSystem`'s `is_empty`
-//! verdict over the *same* ranked alphabet. The live flip — routing structural
-//! refinement dispatch through this recognizer and firing RT03 — is `.1`
-//! (`type_system::dispatch::analyze_refinement_dispatch_structural`, gated on
-//! `sym-tree-structural`).
+//! verdict over the *same* ranked alphabet. Structural refinement dispatch is
+//! routed through this recognizer (firing RT03) via
+//! `type_system::dispatch::analyze_refinement_dispatch_structural`.
 //!
 //! ## Payload partition (why the verdict agrees)
 //!
@@ -123,70 +122,12 @@ pub fn collect_structural_child_categories(items: &[SyntaxItemSpec], out: &mut V
 /// Whether a category resolves to a scalar [`Sort`](crate::any_algebra::Sort)
 /// (and hence its constructors are payloaded leaves).
 ///
-/// Under the `any-algebra-carrier` feature this defers to
+/// Defers to
 /// [`any_algebra::sort_of_category`](crate::any_algebra::sort_of_category) — the
 /// *exact* `NativeKind::from_syn_type` classification the parser uses — so the
-/// scalar/structural split tracks the parser precisely. Without that feature the
-/// module is still always compiled, so it falls back to a syntactic classifier
-/// over the stored `native_type` path string that mirrors the same `NativeKind`
-/// → scalar mapping (last path segment).
+/// scalar/structural split tracks the parser precisely.
 fn category_is_scalar(ci: &CategoryInfo) -> bool {
-    #[cfg(feature = "any-algebra-carrier")]
-    {
-        crate::any_algebra::sort_of_category(ci).is_some()
-    }
-    #[cfg(not(feature = "any-algebra-carrier"))]
-    {
-        category_is_scalar_by_string(ci)
-    }
-}
-
-/// Feature-free scalar classifier over the stored `native_type` path string.
-///
-/// `CategoryInfo::native_type` is the bridge's full-path string
-/// (`native_type_to_full_string` — e.g. `"i32"`,
-/// `"mettail_runtime::CanonicalBigRat"`, `"Vec < Proc >"`). A category is scalar
-/// iff its type's **last path segment** is one of the known scalar leaves — the
-/// same segments `NativeKind::from_syn_type` recognizes (every bounded-integer
-/// width, `bool`, `str`, `f32`/`f64`, and the three canonical numeric wrappers).
-/// A container/`None`/user-ADT category is structural. This is only the
-/// `cfg(not(any-algebra-carrier))` fallback; the carrier path is authoritative.
-#[cfg(not(feature = "any-algebra-carrier"))]
-fn category_is_scalar_by_string(ci: &CategoryInfo) -> bool {
-    let type_str = match ci.native_type.as_deref() {
-        Some(s) => s,
-        None => return false,
-    };
-    // Take the last `::`-separated segment, then the bare identifier (drop any
-    // generic args / whitespace the full-string form may carry).
-    let last_segment = type_str.rsplit("::").next().unwrap_or(type_str).trim();
-    let ident = last_segment
-        .split(['<', ' ', '('])
-        .next()
-        .unwrap_or(last_segment)
-        .trim();
-    matches!(
-        ident,
-        "i8" | "i16"
-            | "i32"
-            | "i64"
-            | "i128"
-            | "isize"
-            | "u8"
-            | "u16"
-            | "u32"
-            | "u64"
-            | "u128"
-            | "usize"
-            | "bool"
-            | "str"
-            | "String"
-            | "f32"
-            | "f64"
-            | "CanonicalBigInt"
-            | "CanonicalBigRat"
-            | "CanonicalFixedPoint"
-    )
+    crate::any_algebra::sort_of_category(ci).is_some()
 }
 
 /// Build the [`RankedAlphabet`] from a grammar's rules and categories.

@@ -1807,19 +1807,10 @@ pub fn analyze_from_bundle(
     all_syntax: &[(String, String, Vec<crate::SyntaxItemSpec>)],
     categories: &[crate::pipeline::CategoryInfo],
 ) -> SymbolicAnalysis {
-    // OSLF substrate Phase 1 `.0`-inert: under `any-algebra-carrier`, route the
-    // guard analysis through the `AnyAlgebra` carrier. The carrier is proven
-    // byte-identical (see `analyze_from_bundle_carrier` and
-    // `prattail/tests/guard_carrier_snapshot.rs`), so the call site
-    // (`pipeline/analysis.rs`) is untouched. The live flip is `.1`.
-    #[cfg(feature = "any-algebra-carrier")]
-    {
-        return analyze_from_bundle_carrier(all_syntax, categories);
-    }
-    #[cfg(not(feature = "any-algebra-carrier"))]
-    {
-        analyze_from_bundle_string_set(all_syntax, categories)
-    }
+    // OSLF substrate Phase 1: route the guard analysis through the `AnyAlgebra`
+    // carrier. The carrier is proven byte-identical (see
+    // `analyze_from_bundle_carrier` and `prattail/tests/guard_carrier_snapshot.rs`).
+    analyze_from_bundle_carrier(all_syntax, categories)
 }
 
 /// The historical string-set guard analysis (the `.0` path's reference

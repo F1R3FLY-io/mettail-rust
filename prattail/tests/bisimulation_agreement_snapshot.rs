@@ -26,8 +26,6 @@
 //! `term`/`nonterm`/`rule` bundle helpers the sibling `.0` snapshot tests
 //! (`sym_tree_structural_snapshot.rs`, `guard_carrier_snapshot.rs`) use.
 
-#![cfg(feature = "oslf-bisimulation")]
-
 use std::collections::BTreeSet;
 
 use mettail_prattail::alternating;

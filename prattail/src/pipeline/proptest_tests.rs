@@ -32,7 +32,6 @@ fn empty_bundle<'a>() -> super::AdvancedAnalysisBundle<'a> {
     super::AdvancedAnalysisBundle {
         symbolic: None,
         alternating: None,
-        #[cfg(feature = "oslf-bisimulation")]
         bisimulation: None,
         vpa: None,
         register: None,

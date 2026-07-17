@@ -60,136 +60,6 @@ walker-stats = []
 ## Replaces the former `#[cfg(debug_assertions)]` guards on the REALIZE/GCAR
 ## diagnostics, so a trace build works in ANY profile (debug or release).
 walker-trace = []
-## OSLF substrate, Phase 1 `.0`-inert (2026-06-22): the M0→M1 *carrier route*
-## that wires `any_algebra::AnyAlgebra` as the unified guard-predicate carrier
-## for `symbolic::analyze_from_bundle`. OFF BY DEFAULT and **inert**: when
-## enabled, `analyze_from_bundle` dispatches to `analyze_from_bundle_carrier`,
-## which derives `guard_satisfiability` by lifting the existing
-## terminal/nonterminal-start/empty boolean into an `AnyPred` (`True`/`False`)
-## and deciding it through `AnyAlgebra::is_satisfiable` over a scalar
-## `SortRegistry` — producing **byte-identical** `SymbolicAnalysis` on every
-## grammar (proven by `prattail/tests/guard_carrier_snapshot.rs`). The live
-## flip (`.1`) is a later step. The carrier needs the real `NativeKind`
-## classification, so it pulls in `mettail-ast` as an optional dependency
-## (gated below); the default build is byte-for-byte unchanged.
-any-algebra-carrier = ["dep:mettail-ast"]
-## OSLF substrate, Phase 2 `.1`-wire (2026-06-22): route the STRUCTURAL
-## refinement-type dispatch (`type_system::dispatch`) through the
-## `sym_tree`-based `structural_types` recognizer instead of the string
-## heuristic, so structural disjointness / subtype are decided PRECISELY by the
-## symbolic tree automaton (`SymbolicTreeAutomaton<AnyAlgebra>`) over the
-## grammar's ranked alphabet. When enabled,
-## `pipeline::analysis::analyze_refinement_types` calls
-## `analyze_refinement_dispatch_structural` (which falls back to today's
-## `Overlapping` on any predicate-parse failure — never worse than status quo),
-## populates `RefinementAnalysisResult::empty_intersections` from the
-## structurally-disjoint pairs (so the previously-dead RT03 lint fires), and
-## attaches `structural_witnesses` hints. Presburger / Mixed pairs stay on the
-## existing heuristic. Runtime `match_pattern` codegen is UNTOUCHED (analysis
-## only). Requires the `any-algebra-carrier` scalar-sort resolution, so it
-## implies that feature. OFF BY DEFAULT; the default build is unchanged.
-sym-tree-structural = ["any-algebra-carrier"]
-## OSLF substrate, Phase 4 `.0`-inert (2026-06-22): expose the SHIPPED-but-dead
-## `bisimulation` LTS partition-refinement engine as a pipeline entrypoint
-## (`bisimulation::analyze_from_bundle`) that builds ONE `Lts` over a grammar's
-## categories-as-states (each rule's nonterminal references = labeled
-## transitions; the action is the regularized minterm class of the rule label,
-## decided on the regular Boolean core — `DontKnow` action classes are dropped,
-## never split on, per the `¬¬φ ∖ φ` invariant), runs `Lts::bisimulation`,
-## certifies the partition with `Lts::is_bisimulation`, and returns a
-## `BisimulationAnalysis` shaped IDENTICALLY to `alternating::AlternatingAnalysis`
-## (`non_bisimilar_pairs`) so it is a drop-in at `.1`. The agreement gate
-## (`prattail/tests/bisimulation_agreement_snapshot.rs`) proves it produces the
-## SAME category-pair partition as `alternating::analyze_from_bundle`. `.0`-inert:
-## always compiled, no live caller — the live flip (routing AWA bisimulation
-## dispatch through this engine) is `.1`. The carrier needs the `AnyAlgebra`
-## guard-predicate algebra for the minterm action classes, so it implies
-## `any-algebra-carrier`. OFF BY DEFAULT; the default build is unchanged.
-oslf-bisimulation = ["any-algebra-carrier"]
-## OSLF substrate, Phase 4 `.0`-inert (2026-06-22): expose the SHIPPED-but-dead
-## `sym_tree_transducer` bottom-up symbolic tree transducer as a pipeline
-## entrypoint (`sym_tree_transducer::analyze_from_bundle`) that, for each
-## cast/refinement rule `r : src → tgt`, builds a `SymbolicTreeTransducer`
-## realizing the cast substitution over the grammar's ranked alphabet, computes
-## the pre-image `domain_sta()`, decides cast totality via `is_total()`, and
-## intersects the pre-image with the Phase-2
-## `structural_types::category_automaton` of `src` to decide cast-reachability —
-## producing a `TransducerAnalysis` (`non_total_casts`, `dead_casts`). It reuses
-## the Phase-2 ranked-alphabet/tree-algebra builders, so it implies
-## `sym-tree-structural`. The agreement gate
-## (`prattail/tests/transducer_preimage_snapshot.rs`) proves the transducer
-## pre-image accept-set agrees, category-for-category, with the Phase-2 source
-## `category_automaton`. `.0`-inert: always compiled, no live caller — the live
-## flip is `.1`. OFF BY DEFAULT; the default build is unchanged.
-oslf-transducer = ["sym-tree-structural"]
-## OSLF substrate, Phase 5 `.0`→`.1` (2026-06-22): make the SHIPPED-but-dead
-## `letprop` recursive-predicate → modal-μ-calculus → Parity Alternating Tree
-## Automaton (PATA) decision machinery a LIVE analysis path. When enabled,
-## `parity_tree::analyze_recursive_predicates` walks the grammar's guard
-## predicates for any recursive (`letprop`-style fixpoint) predicate, lowers
-## each through `letprop::letprop_to_pata` (giving that SHIPPED bridge its FIRST
-## real caller), and decides non-emptiness via the Zielonka-aligned
-## `parity_tree::check_emptiness` (Rocq-aligned to `PataEmptiness.v`); the
-## verdicts are surfaced in the `#[cfg]`-gated
-## `ParityTreeAnalysis::fixpoint_decisions` field and routed into the pipeline at
-## the `h_parity_tree` spawn. A dead-behavioral-type lint (`LP01`) fires when a
-## recursive guard's PATA is EMPTY (the behavioral type can never be satisfied).
-## NO surface syntax is added (that is a tracked follow-up that touches `ast/`),
-## so on every current grammar this path finds NO recursive predicate and is
-## fully INERT (empty `fixpoint_decisions`, parity-safe) — proven by the parity
-## arm of `prattail/tests/letprop_pata_snapshot.rs`, while the positive arm
-## exercises the live decision over a SYNTHETIC `RecursivePredicate`. The carrier
-## needs the `any_algebra` guard-predicate algebra plumbing the sibling OSLF
-## phases use, so it implies `any-algebra-carrier`. OFF BY DEFAULT; the default
-## build is byte-for-byte unchanged.
-oslf-letprop = ["any-algebra-carrier"]
-## OSLF substrate, Phase 6 `.0`→`.1` (2026-06-22): make the SHIPPED-but-dead
-## `hindley_milner` module a LIVE, base-sort-consistency analysis pass. When
-## enabled, `hindley_milner::analyze_from_bundle` builds, for each grammar rule,
-## the constructor's principal arrow type
-## `HmType::Arrow(field_sort_1, …Arrow(field_sort_n, result))` from its
-## `SyntaxItemSpec` fields and CHECKS that the inferred result sort `unify`s with
-## the rule's declared category — recording a `sort_mismatch` iff unification
-## fails. It uses ONLY `HmType::{Mono,Arrow}` + the existing `unify`/`apply`: NO
-## `HmTerm`/`infer`/`Abs`/`App`, NO fresh type variables (the global
-## `fresh_type_var` counter is a determinism hazard the base-sort pass never
-## touches). The verdicts are surfaced in the `#[cfg]`-gated
-## `HmInferenceAnalysis::sort_mismatches` field and routed into the pipeline at an
-## unconditional `h_hindley` spawn (HM applies to ALL grammars — no dispatch
-## gate, mirroring the refinement-sync block). A sort-mismatch lint (`HM01`) fires
-## one Note per mismatch. Because every constructor field sort is read from the
-## SAME `SyntaxItemSpec` that names the rule's category, the inferred result sort
-## ALWAYS unifies on real grammars ⇒ this path is fully INERT (empty
-## `sort_mismatches`) — proven by the parity arm of
-## `prattail/tests/hindley_inference_snapshot.rs`, while the positive arm exercises
-## a hand-built bundle with a deliberate sort clash. The carrier needs the
-## `any_algebra` scalar-sort plumbing the sibling OSLF phases use, so it implies
-## `any-algebra-carrier`. OFF BY DEFAULT; the default build is byte-for-byte
-## unchanged.
-oslf-hindley-milner = ["any-algebra-carrier"]
-## OSLF Phase 9 `.0`-inert (2026-06-22): the parity-safe DE-DUP FOUNDATION that
-## reconciles the two parallel behavioral-predicate representations in this crate
-## — the runtime CARRIER `behavioral_pred::BehavioralPred` (produced by the WPDA
-## walker; the runtime crate re-exports it and evaluates it via
-## `evaluate_pred_with_bindings`) and the DECIDER
-## `behavioral_algebra::BehavioralFormula` (the `algebra_tower`-backed relational
-## classifier). When enabled, `BehavioralPred::to_behavioral_formula` lowers the
-## carrier into the decider's RELATIONAL fragment by a PROVEN-CANONICAL mapping
-## (negation→`Not` wrapper, `Implies`→reject-safe `¬a∨b`, `Top`→`Top`, and the
-## structural `AcMatch` leg fail-closed to `None` — recursively), and
-## `BehavioralPred::behavioral_tier` reads the decider's
-## `decidability_tier()` off the lowered image. Because the image is the
-## relational fragment ONLY (never modal), every lowered formula's tier is `T1`
-## (iff `Top`) or `T2` — NEVER `T3`: that is the load-bearing parity fact, proven
-## by `prattail/tests/behavioral_lowering_snapshot.rs` (tier-equivalence + an
-## eval-agreement gate against the runtime evaluator on the literal/relational
-## subset). `.0`-inert: the lowering has NO live caller — the eval-path
-## unification (routing `evaluate_pred_with_bindings` through the lowered
-## decider) is a later increment. The EVAL PATH (`evaluate_pred_with_bindings`)
-## is UNTOUCHED. The carrier reuses the `any_algebra` scalar-sort plumbing the
-## sibling OSLF phases use, so it implies `any-algebra-carrier`. OFF BY DEFAULT;
-## the default build is byte-for-byte unchanged.
-oslf-behavioral-lowering = ["any-algebra-carrier"]
 ## Bench-only toggles used by criterion targets. Declaring them keeps
 ## `cargo check --all-targets` check-cfg clean even when they are off.
 wfst-log = []
@@ -253,13 +123,12 @@ parking_lot = { version = "0.12", optional = true }
 # LexicographicWeight) lives in rigail; this crate re-exports it via
 # the automata::{semiring,lex_weight} facades.
 rigail = { path = "../rigail" }
-# OSLF substrate `.0`-inert carrier route only (feature `any-algebra-carrier`,
-# off by default). Provides the real `NativeKind` classification that
-# `any_algebra::sort_of_native` / `sort_of_category` reuse, so the carrier
-# resolves a category's scalar `Sort` exactly as the parser does. `ast` does
-# not depend on prattail (verified: no cycle). The default build never pulls
-# this in.
-mettail-ast = { package = "ast", path = "../ast", optional = true }
+# OSLF carrier route (non-optional). Provides the real `NativeKind`
+# classification that `any_algebra::sort_of_native` / `sort_of_category` reuse
+# for exact scalar-`Sort` resolution — the carrier resolves a category's scalar
+# `Sort` exactly as the parser does. `ast` does not depend on prattail (verified:
+# no cycle).
+mettail-ast = { package = "ast", path = "../ast" }
 # OSLF Phase 8 SMT backend (feature `smt`, off by default). The in-process Z3
 # library, dynamically linked against the system libz3 (`/usr/lib/libz3.so`). Only
 # pulled in under `--features smt`; the default build links no libz3.
@@ -269,13 +138,11 @@ z3 = { version = "0.12", optional = true }
 criterion = { version = "0.5", features = ["html_reports"] }
 proptest = "1"
 # OSLF Phase 9 eval-agreement gate (test-only). The behavioral-lowering snapshot
-# (`tests/behavioral_lowering_snapshot.rs`, itself `#![cfg(feature =
-# "oslf-behavioral-lowering")]`) cross-checks the lowered `BehavioralFormula`
-# against the runtime carrier evaluator `evaluate_pred_with_bindings`. This is a
-# DEV-dependency cycle (`runtime`'s lib → `prattail`'s lib; `prattail`'s tests →
-# `runtime`), which Cargo permits because dev-dependencies never enter the lib
-# build graph. It adds NO new test in the default build (the snapshot file is
-# feature-gated to zero tests when the feature is off).
+# (`tests/behavioral_lowering_snapshot.rs`) cross-checks the lowered
+# `BehavioralFormula` against the runtime carrier evaluator
+# `evaluate_pred_with_bindings`. This is a DEV-dependency cycle (`runtime`'s lib →
+# `prattail`'s lib; `prattail`'s tests → `runtime`), which Cargo permits because
+# dev-dependencies never enter the lib build graph. The snapshot now always runs.
 mettail-runtime = { package = "runtime", path = "../runtime" }
 
 # Author-DX demo (OSLF Phase 7a): renders the always-on text railroad diagrams

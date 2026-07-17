@@ -32,8 +32,6 @@
 //! `term`/`nonterm`/`rule` helpers the sibling `.0` and refinement pipeline tests
 //! (`prattail/src/pipeline/tests.rs`, `sym_tree_structural_snapshot.rs`) use.
 
-#![cfg(feature = "oslf-transducer")]
-
 use mettail_prattail::any_algebra::AnyAlgebra;
 use mettail_prattail::pipeline::CategoryInfo;
 use mettail_prattail::structural_types::{build_tree_algebra, category_automaton, ranked_alphabet};

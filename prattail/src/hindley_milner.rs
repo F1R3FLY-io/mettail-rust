@@ -414,7 +414,7 @@ impl TypeSystem for HindleyMilnerTypeSystem {
 
 // ══════════════════════════════════════════════════════════════════════════════
 // Pipeline bridge (OSLF substrate, Phase 6 — base-sort consistency over the
-// grammar's constructor arrow types; live when `oslf-hindley-milner` is on)
+// grammar's constructor arrow types; the live base-sort pass)
 // ══════════════════════════════════════════════════════════════════════════════
 //
 // This is the live wire for the SHIPPED-but-otherwise-dead `hindley_milner`
@@ -440,7 +440,6 @@ impl TypeSystem for HindleyMilnerTypeSystem {
 ///
 /// Shaped to feed the lint layer only (HM01) — it is NOT routed into codegen,
 /// so it never extends `AdvancedAnalysisBundle` nor touches a codegen seam.
-#[cfg(feature = "oslf-hindley-milner")]
 #[derive(Debug, Clone)]
 pub struct HmInferenceAnalysis {
     /// Each constructor's principal arrow type, as `(rule_label, rendered_arrow)`
@@ -459,7 +458,6 @@ pub struct HmInferenceAnalysis {
 /// (`a → b → c`, right-associated, parenthesizing nested arrow domains). Used
 /// only to populate the human-readable `inferred_constructor_types` /
 /// `sort_mismatches` strings — never parsed back.
-#[cfg(feature = "oslf-hindley-milner")]
 fn render_hm_type(ty: &HmType) -> String {
     match ty {
         HmType::Var(v) => v.clone(),
@@ -489,7 +487,6 @@ fn render_hm_type(ty: &HmType) -> String {
 /// [`crate::bisimulation::collect_nonterminal_targets`] so the arrow's domains
 /// track the same notion of "structural child sort" the rest of the substrate
 /// uses.
-#[cfg(feature = "oslf-hindley-milner")]
 fn collect_field_sorts(items: &[crate::SyntaxItemSpec], out: &mut Vec<HmType>) {
     use crate::SyntaxItemSpec as Item;
     for item in items {
@@ -522,7 +519,6 @@ fn collect_field_sorts(items: &[crate::SyntaxItemSpec], out: &mut Vec<HmType>) {
 /// declared category by construction.
 ///
 /// Uses ONLY `HmType::{Mono, Arrow}`; introduces NO fresh type variables.
-#[cfg(feature = "oslf-hindley-milner")]
 fn infer_constructor_arrow(
     result_category: &str,
     field_sorts: &[HmType],
@@ -568,7 +564,6 @@ fn infer_constructor_arrow(
 ///   bundle (the same slice [`crate::bisimulation::analyze_from_bundle`] consumes).
 /// * `categories` — the grammar's [`CategoryInfo`](crate::pipeline::CategoryInfo)
 ///   list; declared category names seed the field-consistency canonicalization.
-#[cfg(feature = "oslf-hindley-milner")]
 pub fn analyze_from_bundle(
     all_syntax: &[(String, String, Vec<crate::SyntaxItemSpec>)],
     categories: &[crate::pipeline::CategoryInfo],

@@ -11,7 +11,7 @@
 //!    `max_priority`, `is_empty`, `priority_depth`). No current grammar surface
 //!    syntax produces a `letprop` recursive predicate (that is a tracked
 //!    follow-up touching `ast/`), so the live path finds NONE and is parity-safe.
-//!    This is the `.1`-wire contract: enabling `oslf-letprop` cannot change the
+//!    This is the `.1`-wire contract: the live path cannot change the
 //!    analysis of any grammar that exists today.
 //!
 //! 2. **POSITIVE (the live decision actually runs).** A SYNTHETIC
@@ -26,8 +26,6 @@
 //! On any mismatch the test FAILS LOUDLY with the observed value; the expected
 //! verdict is never adjusted to match buggy output (per the project's
 //! "never weaken a test" discipline).
-
-#![cfg(feature = "oslf-letprop")]
 
 use mettail_prattail::grammar::ir::CollectionKind;
 use mettail_prattail::letprop::{vars, LetPropExpr, RecursivePredicate};

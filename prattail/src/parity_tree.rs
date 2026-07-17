@@ -397,10 +397,9 @@ pub struct ParityTreeAnalysis {
     /// [`check_emptiness`]). EMPTY on every current grammar because no surface
     /// syntax yet produces a `letprop` recursive predicate (that is a tracked
     /// follow-up touching `ast/`), so the live path is parity-safe and inert; the
-    /// `LP01` dead-behavioral-type lint consumes the `false` entries. Only present
-    /// under the `oslf-letprop` feature; absent (and the struct byte-identical) in
-    /// the default build.
-    #[cfg(feature = "oslf-letprop")]
+    /// `LP01` dead-behavioral-type lint consumes the `false` entries. Always
+    /// present; EMPTY on every current grammar (no surface syntax yet produces a
+    /// `letprop` recursive predicate).
     pub fixpoint_decisions: Vec<(String, bool)>,
 }
 
@@ -418,7 +417,6 @@ pub fn analyze_from_bundle(
         max_priority: if categories.is_empty() { 0 } else { 1 },
         is_empty: all_syntax.is_empty(),
         priority_depth: 1,
-        #[cfg(feature = "oslf-letprop")]
         fixpoint_decisions: Vec::new(),
     }
 }
@@ -447,7 +445,6 @@ pub fn analyze_from_bundle(
 /// count (each parameter contributes at most one child direction in the lowered
 /// formula); a parameterless predicate still needs arity ≥ 1 so leaf
 /// transitions are representable.
-#[cfg(feature = "oslf-letprop")]
 pub fn decide_recursive_predicate(rp: &crate::letprop::RecursivePredicate) -> bool {
     let max_arity = rp.params.len().max(1);
     match crate::letprop::letprop_to_pata(rp, max_arity) {
@@ -472,7 +469,6 @@ pub fn decide_recursive_predicate(rp: &crate::letprop::RecursivePredicate) -> bo
 /// *is* present (exercised today by the synthetic positive case in
 /// `prattail/tests/letprop_pata_snapshot.rs`), each is decided via
 /// [`decide_recursive_predicate`].
-#[cfg(feature = "oslf-letprop")]
 pub fn analyze_recursive_predicates(
     all_syntax: &[(String, String, Vec<crate::SyntaxItemSpec>)],
     categories: &[crate::pipeline::CategoryInfo],
@@ -518,7 +514,6 @@ pub fn analyze_recursive_predicates(
 /// present grammar. It is written as a total walk (rather than `unimplemented!`)
 /// so the analysis is a no-op, never a panic, when the feature is enabled on a
 /// real grammar.
-#[cfg(feature = "oslf-letprop")]
 fn collect_recursive_predicates(
     _all_syntax: &[(String, String, Vec<crate::SyntaxItemSpec>)],
     _categories: &[crate::pipeline::CategoryInfo],
@@ -1278,7 +1273,6 @@ pub fn analyze(automaton: &ParityAlternatingTreeAutomaton<BooleanWeight>) -> Par
         priority_depth: automaton.priority_depth(),
         // OSLF Phase 5 `.1`: this summary path has no recursive-predicate
         // context, so there are no per-fixpoint verdicts to report.
-        #[cfg(feature = "oslf-letprop")]
         fixpoint_decisions: Vec::new(),
     }
 }

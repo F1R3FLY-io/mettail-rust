@@ -803,7 +803,7 @@ pub struct SortedGuard {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// NativeKind → Sort  (OSLF carrier route; feature `any-algebra-carrier` only)
+// NativeKind → Sort  (OSLF carrier route)
 // ══════════════════════════════════════════════════════════════════════════════
 
 /// Map the parser's native-type classification ([`mettail_ast::language::NativeKind`])
@@ -818,10 +818,7 @@ pub struct SortedGuard {
 ///
 /// This reuses the *real* `NativeKind` variants (it does not re-classify a
 /// string), so the carrier's scalar resolution tracks the parser's
-/// `NativeKind::from_syn_type` exactly. Gated behind `any-algebra-carrier`
-/// because it is the only thing in this module that needs the `mettail-ast`
-/// dependency; the default build never compiles it.
-#[cfg(feature = "any-algebra-carrier")]
+/// `NativeKind::from_syn_type` exactly.
 pub fn sort_of_native(kind: mettail_ast::language::NativeKind) -> Option<Sort> {
     use mettail_ast::language::NativeKind;
     match kind {
@@ -857,10 +854,6 @@ pub fn sort_of_native(kind: mettail_ast::language::NativeKind) -> Option<Sort> {
 /// off the last path segment), then maps through [`sort_of_native`]. A category
 /// with no `native_type`, an unparseable type, or an `Other` kind has no scalar
 /// sort and returns `None`.
-///
-/// Gated behind `any-algebra-carrier` (needs `mettail-ast`); the default build
-/// never compiles it.
-#[cfg(feature = "any-algebra-carrier")]
 pub fn sort_of_category(ci: &crate::pipeline::CategoryInfo) -> Option<Sort> {
     let type_str = ci.native_type.as_deref()?;
     // Mirror the parser: classify by the last path segment via the real

@@ -29,10 +29,9 @@
 //! MUST agree. This single-process test feeds identical inputs to both code
 //! paths and asserts equal empty-category sets, with a precise diff on failure
 //! (so a recognizer regression is debuggable, never papered over by adjusting
-//! the expectation). It runs and passes in BOTH feature states
-//! (`--features any-algebra-carrier` / default) — the payloaded/structural split
-//! only changes whether a leaf carries a (trivially-satisfiable) `True` guard,
-//! which never alters an emptiness verdict.
+//! the expectation). The payloaded/structural split only changes whether a leaf
+//! carries a (trivially-satisfiable) `True` guard, which never alters an
+//! emptiness verdict.
 
 use std::collections::HashMap;
 

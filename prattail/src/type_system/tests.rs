@@ -238,7 +238,7 @@ fn lattice_extend_env() {
 
 #[test]
 fn dispatch_analysis_empty() {
-    let result = analyze_refinement_dispatch(&[]);
+    let result = analyze_refinement_dispatch_structural(&[], &[], &[]);
     assert!(result.disjoint_pairs.is_empty());
     assert!(result.subtype_pairs.is_empty());
     assert!(result.overlapping_pairs.is_empty());
@@ -263,7 +263,7 @@ fn dispatch_analysis_different_bases() {
             predicate_repr: "len(s)<100".to_string(),
         },
     ];
-    let result = analyze_refinement_dispatch(&specs);
+    let result = analyze_refinement_dispatch_structural(&specs, &[], &[]);
     // Different bases → no pairwise analysis
     assert!(result.disjoint_pairs.is_empty());
     assert!(result.subtype_pairs.is_empty());
@@ -288,7 +288,7 @@ fn dispatch_analysis_complement_predicates() {
             predicate_repr: "x<=0".to_string(),
         },
     ];
-    let result = analyze_refinement_dispatch(&specs);
+    let result = analyze_refinement_dispatch_structural(&specs, &[], &[]);
     assert_eq!(result.disjoint_pairs.len(), 1, "complement predicates should be disjoint");
     assert_eq!(result.disjoint_pairs[0], ("PosInt".to_string(), "NonPosInt".to_string()));
 }
@@ -311,7 +311,7 @@ fn dispatch_analysis_identical_predicates() {
             predicate_repr: "x>0".to_string(),
         },
     ];
-    let result = analyze_refinement_dispatch(&specs);
+    let result = analyze_refinement_dispatch_structural(&specs, &[], &[]);
     assert_eq!(result.subtype_pairs.len(), 1, "identical predicates should be mutual subtypes");
 }
 
@@ -333,7 +333,7 @@ fn dispatch_analysis_overlapping() {
             predicate_repr: "x<10".to_string(),
         },
     ];
-    let result = analyze_refinement_dispatch(&specs);
+    let result = analyze_refinement_dispatch_structural(&specs, &[], &[]);
     assert_eq!(
         result.overlapping_pairs.len(),
         1,
@@ -901,7 +901,6 @@ mod set_theoretic_tests {
 // precise tree-automaton recognizer decides them. The grammar is the classic
 // `List = Nil | Cons(Int, List)` cons-list.
 
-#[cfg(feature = "sym-tree-structural")]
 mod structural_dispatch_tests {
     use super::*;
 
@@ -987,19 +986,6 @@ mod structural_dispatch_tests {
             structural_refinement("TwoPlus", "List", "l == cons(x, cons(y, t))"),
         ];
 
-        // Heuristic baseline: distinct Structural reprs ⇒ Overlapping (MISS).
-        let heuristic = analyze_refinement_dispatch(&specs);
-        assert!(
-            heuristic.disjoint_pairs.is_empty(),
-            "string heuristic must NOT find these disjoint (it returns Overlapping): {:?}",
-            heuristic.disjoint_pairs
-        );
-        assert_eq!(
-            heuristic.overlapping_pairs.len(),
-            1,
-            "heuristic classifies the pair as Overlapping"
-        );
-
         // Structural recognizer: PRECISE Disjoint.
         let structural = analyze_refinement_dispatch_structural(&specs, &all_syntax, &categories);
         assert_eq!(
@@ -1029,14 +1015,6 @@ mod structural_dispatch_tests {
             structural_refinement("TwoPlus", "List", "l == cons(x, cons(y, t))"),
             structural_refinement("OnePlus", "List", "l == cons(x, t)"),
         ];
-
-        // Heuristic baseline: Overlapping (MISS — no Structural subtype rule).
-        let heuristic = analyze_refinement_dispatch(&specs);
-        assert!(
-            heuristic.subtype_pairs.is_empty(),
-            "string heuristic must NOT find the subtype: {:?}",
-            heuristic.subtype_pairs
-        );
 
         // Structural recognizer: PRECISE Subtype (TwoPlus <: OnePlus).
         let structural = analyze_refinement_dispatch_structural(&specs, &all_syntax, &categories);
@@ -1109,13 +1087,11 @@ mod structural_dispatch_tests {
             predicate_repr: "x <= 0".to_string(),
         };
         let specs = vec![pos, nonpos];
-        let heuristic = analyze_refinement_dispatch(&specs);
         let structural = analyze_refinement_dispatch_structural(&specs, &all_syntax, &categories);
-        // Identical disjoint/subtype/overlapping verdicts for the Presburger pair.
-        assert_eq!(heuristic.disjoint_pairs, structural.disjoint_pairs);
-        assert_eq!(heuristic.subtype_pairs, structural.subtype_pairs);
-        assert_eq!(heuristic.overlapping_pairs, structural.overlapping_pairs);
-        // And the heuristic genuinely finds these disjoint (x>0 vs x<=0).
+        // The Presburger pair is decided by the internal `classify_predicate_overlap`
+        // heuristic inside the structural dispatch: x>0 vs x<=0 are disjoint.
         assert_eq!(structural.disjoint_pairs, vec![("Pos".to_string(), "NonPos".to_string())]);
+        assert!(structural.subtype_pairs.is_empty());
+        assert!(structural.overlapping_pairs.is_empty());
     }
 }

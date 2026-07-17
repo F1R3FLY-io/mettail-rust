@@ -695,12 +695,7 @@ mod tests {
     // ── Quantifier + argument-substitution tests ──────────────────────────────
     //
     // These exercise the (additive) quantifier and argument-substitution
-    // surfaces. They are gated on `oslf-letprop` so the DEFAULT build's test
-    // count stays byte-identical: `letprop.rs` itself is NOT feature-gated (so
-    // its module compiles into the default build), and these tests must not
-    // enlarge the default count. The feature build (`--features oslf-letprop`)
-    // runs them, alongside the integration suites in `tests/`.
-    #[cfg(feature = "oslf-letprop")]
+    // surfaces, alongside the integration suites in `tests/`.
     mod quantifier_argsubst {
         use super::*;
 

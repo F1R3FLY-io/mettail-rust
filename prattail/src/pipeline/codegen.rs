@@ -1336,14 +1336,10 @@ fn generate_parser_code(
     let nominal_result = math_results.nominal_result;
     let alternating_result = math_results.alternating_result;
     // OSLF Phase-4 `.1`: bisimulation result threaded into the codegen
-    // `AdvancedAnalysisBundle` (N06-ISO / A3 supersede). Feature-gated so the
-    // default build neither binds nor moves this field.
-    #[cfg(feature = "oslf-bisimulation")]
+    // `AdvancedAnalysisBundle` (N06-ISO / A3 supersede).
     let bisimulation_result = math_results.bisimulation_result;
     // OSLF Phase-6 `.1`: Hindley-Milner base-sort consistency result threaded
-    // into the lint `LintContext` (HM01 only — never codegen). Feature-gated so
-    // the default build neither binds nor moves this field.
-    #[cfg(feature = "oslf-hindley-milner")]
+    // into the lint `LintContext` (HM01 only — never codegen).
     let hindley_result = math_results.hindley_result;
     let ltl_results = math_results.ltl_results;
     let provenance_result = math_results.provenance_result;
@@ -1555,7 +1551,6 @@ fn generate_parser_code(
             // ── Refinement type analysis results ──
             refinement_analysis: refinement_analysis.as_ref(),
             // ── Hindley-Milner base-sort consistency (OSLF Phase 6 `.1`) ──
-            #[cfg(feature = "oslf-hindley-milner")]
             hindley_result: hindley_result.as_ref(),
         };
 
@@ -1852,7 +1847,6 @@ fn generate_parser_code(
     let advanced = AdvancedAnalysisBundle {
         symbolic: symbolic_result.as_ref(),
         alternating: alternating_result.as_ref(),
-        #[cfg(feature = "oslf-bisimulation")]
         bisimulation: bisimulation_result.as_ref(),
         vpa: vpa_result.as_ref(),
         register: register_result.as_ref(),

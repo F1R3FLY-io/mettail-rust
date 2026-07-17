@@ -263,9 +263,8 @@ where
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// Pipeline bridge (OSLF substrate, Phase 4 — `.0` introduced inert; `.1` live:
-// `dead_casts` is consumed by `analyze_refinement_types` and surfaced as the
-// RT07 dead-cast note when `oslf-transducer` is on)
+// Pipeline bridge (OSLF substrate, Phase 4 — `dead_casts` is consumed by
+// `analyze_refinement_types` and surfaced as the RT07 dead-cast note)
 // ══════════════════════════════════════════════════════════════════════════════
 
 /// Pipeline-level cast-transduction analysis result.
@@ -279,7 +278,6 @@ where
 ///     ([`SymbolicTreeTransducer::domain_sta`]) **intersected with** the Phase-2
 ///     `structural_types::category_automaton` of `src` is empty (no source term is
 ///     cast-reachable).
-#[cfg(feature = "oslf-transducer")]
 #[derive(Debug, Clone, Default)]
 pub struct TransducerAnalysis {
     /// `(source_category, target_category)` for each non-total cast.
@@ -309,9 +307,9 @@ pub struct TransducerAnalysis {
 ///
 /// `refinement_types` supplies the declared refinement bases so a *refinement*
 /// downcast (a cast whose owning category is a refinement type over `src`) is
-/// recognized; ordinary casts are analyzed too. Introduced inert at `.0`; at
-/// `.1` this is the live dead-cast entrypoint — `analyze_refinement_types`
-/// calls it under `oslf-transducer` and surfaces `dead_casts` as RT07 notes.
+/// recognized; ordinary casts are analyzed too. This is the live dead-cast
+/// entrypoint — `analyze_refinement_types` calls it and surfaces `dead_casts`
+/// as RT07 notes.
 /// The agreement gate (`prattail/tests/transducer_preimage_snapshot.rs`) proves
 /// the transducer pre-image accept-set agrees, category-for-category, with the
 /// Phase-2 source `category_automaton`.
@@ -324,7 +322,6 @@ pub struct TransducerAnalysis {
 ///   list (declaration order preserved for the output).
 /// * `refinement_types` — declared refinement types (`name → base_category`),
 ///   used to recognize refinement downcasts.
-#[cfg(feature = "oslf-transducer")]
 pub fn analyze_from_bundle(
     all_syntax: &[(String, String, Vec<crate::SyntaxItemSpec>)],
     categories: &[crate::pipeline::CategoryInfo],
@@ -392,7 +389,6 @@ pub fn analyze_from_bundle(
 /// [`structural_types::category_automaton`](crate::structural_types::category_automaton)
 /// of `src` — the agreement is only meaningful if the test sees the *same*
 /// pre-image the analysis derived. At `.1` the dispatch consumes this directly.
-#[cfg(feature = "oslf-transducer")]
 pub fn cast_preimage_automaton(
     cast_label: &str,
     all_syntax: &[(String, String, Vec<crate::SyntaxItemSpec>)],
@@ -434,7 +430,6 @@ pub fn cast_preimage_automaton(
 ///
 /// Reuses the Phase-2 ranked alphabet rather than re-deriving tree-automaton
 /// machinery.
-#[cfg(feature = "oslf-transducer")]
 fn build_cast_transducer(
     cast_label: &str,
     src_cat: &str,
