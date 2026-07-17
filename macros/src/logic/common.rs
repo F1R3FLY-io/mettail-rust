@@ -4,7 +4,6 @@
 //! retired in P6; only the HOL-domain utilities remain.)
 
 use mettail_ast::language::LanguageDef;
-use mettail_ast::types::TypeExpr;
 use std::collections::BTreeSet;
 
 /// Compute which `(category, domain)` pairs should get auto-generated
@@ -43,73 +42,4 @@ pub fn compute_hol_domain_pairs(language: &LanguageDef) -> BTreeSet<(String, Str
         }
     }
     pairs
-}
-
-/// Extract the `(domain, codomain)` as `Ident` names from a `TypeExpr::Arrow`.
-/// Returns `(None, None)` for non-arrow types. For a multi-binder
-/// domain like `Name*` the inner binder name is returned.
-///
-/// Currently unused after HOL-B gating was reverted — kept for a
-/// future re-enablement (which must also teach downstream emitters
-/// to respect the gated set).
-#[allow(dead_code)]
-fn extract_arrow_types(ty: &TypeExpr) -> (Option<String>, Option<String>) {
-    match ty {
-        TypeExpr::Arrow { domain, codomain } => {
-            let dom = match &**domain {
-                TypeExpr::Base(id) => Some(id.to_string()),
-                TypeExpr::MultiBinder(inner) => match &**inner {
-                    TypeExpr::Base(id) => Some(id.to_string()),
-                    _ => None,
-                },
-                _ => None,
-            };
-            let cod = match &**codomain {
-                TypeExpr::Base(id) => Some(id.to_string()),
-                _ => None,
-            };
-            (dom, cod)
-        },
-        _ => (None, None),
-    }
-}
-
-/// Walk a TokenStream collecting identifiers matching
-/// `(Lam|MLam|Apply|MApply)<Suffix>` where `Suffix` is an exact
-/// language-type name. Inserts each matched `Suffix` into `out`.
-///
-/// Non-recursive at token level — but does recurse into groups
-/// `( ... )`, `{ ... }`, `[ ... ]` because the `rust_code` body may
-/// nest arbitrarily.
-///
-/// Currently unused after HOL-B gating was reverted — kept for a
-/// future re-enablement.
-#[allow(dead_code)]
-fn scan_tokens_for_hol_refs(
-    stream: &proc_macro2::TokenStream,
-    type_names: &BTreeSet<&str>,
-    out: &mut BTreeSet<String>,
-) {
-    use proc_macro2::TokenTree;
-    for tt in stream.clone() {
-        match tt {
-            TokenTree::Ident(id) => {
-                let name = id.to_string();
-                if let Some(suffix) = name
-                    .strip_prefix("MLam")
-                    .or_else(|| name.strip_prefix("MApply"))
-                    .or_else(|| name.strip_prefix("Lam"))
-                    .or_else(|| name.strip_prefix("Apply"))
-                {
-                    if !suffix.is_empty() && type_names.contains(suffix) {
-                        out.insert(suffix.to_string());
-                    }
-                }
-            },
-            TokenTree::Group(g) => {
-                scan_tokens_for_hol_refs(&g.stream(), type_names, out);
-            },
-            _ => {},
-        }
-    }
 }

@@ -10,7 +10,6 @@
 
 pub mod depth;
 pub mod ground;
-pub mod hash_consing_analysis;
 pub mod iterative_cmp;
 pub mod iterative_drop;
 pub mod iterative_hash;
