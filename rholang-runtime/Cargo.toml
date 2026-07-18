@@ -213,12 +213,18 @@ oracle-rhocalc = ["rhocalc-runtime"]
 # the production boundary is `ValidatedRhoProgram` / `PlannedRhoBackend`, not
 # source text that will be reparsed.
 source-oracle = []
-# BENCHMARK-ONLY pass-through (Track B): forwards the naive Knotted-Topoi
-# Appendix-A baseline emitter quarantine feature to `rholang-codegen`
-# (`rho_net_naive_kt`) so Track-B benchmarks in this crate can drive the naive
-# emitter against a live RhoRuntime. NO runtime code is gated on it — it only
-# re-exposes the codegen module; production entry points never reference it.
-bench-naive-baseline = ["mettail-rholang-codegen/bench-naive-baseline"]
+# BENCHMARK-ONLY (Track B): forwards the naive Knotted-Topoi Appendix-A
+# baseline emitter quarantine feature to `rholang-codegen` (`rho_net_naive_kt`)
+# AND compiles this crate's `bench_support` module (B3 harness-level
+# fair-comparison hoisting + B4 COMM/match/cost instrumentation:
+# `CountingSpace`, the counting matcher, `bench_runtime_with_counters`,
+# `bench_inj_and_read`, `compile_bench_language`). `dep:mettail-ast` is pulled
+# in ONLY for the `LanguageDef` carried by the B3 `CompiledBenchLanguage`
+# hoist. Production entry points never reference any of it; budgets/metering
+# remain entirely F1r3node's concern and no cost surface exists here (the
+# bench-internal secondary cost read lives inside `bench_support` on the
+# harness's own in-memory runtime).
+bench-naive-baseline = ["mettail-rholang-codegen/bench-naive-baseline", "dep:mettail-ast"]
 
 [dependencies]
 mettail-rholang-codegen = { package = "rholang-codegen", path = "../rholang-codegen" }

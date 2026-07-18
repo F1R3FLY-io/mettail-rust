@@ -43,6 +43,11 @@
 #![forbid(unsafe_code)]
 
 pub mod backend;
+/// Track-B benchmark support (B3 fair-comparison hoisting + B4 COMM/match/cost
+/// instrumentation) — BENCHMARK-ONLY, quarantined behind `bench-naive-baseline`.
+/// No production metering/budget surface: budgets are F1r3node's (wallet.txt).
+#[cfg(feature = "bench-naive-baseline")]
+pub mod bench_support;
 /// Tier-3 held-fold trampoline: Dovetail-backed fold contracts for folds over COMM-received values.
 #[cfg(feature = "rhocalc-runtime")]
 pub mod fold_contract;
@@ -66,6 +71,13 @@ pub use backend::{
 };
 pub use backend::{
     PlannedCallByNeedThunk, PlannedRhoBackend, RhoExecutionBoundary, RhoObservationReport,
+};
+#[cfg(feature = "bench-naive-baseline")]
+pub use bench_support::{
+    bench_inj_and_read, bench_runtime_with_counters, compile_bench_language, count_receive_nodes,
+    BenchRunResult, BenchWorkloadParams, CommChannelClass, CommCounterSnapshot, CommCounters,
+    CompiledBenchLanguage, CountingSpace, MatchAttemptCounters, MatchAttemptSnapshot,
+    MAX_UNKNOWN_CHANNEL_SAMPLES,
 };
 pub use mettail_rholang_codegen::{REFLECTED_TERM_ABI_PREFIX, RHOCALC_BAG_ABI_TAG};
 #[cfg(feature = "rhocalc-runtime")]
