@@ -281,6 +281,24 @@ name = "rho_net_equivalence"
 path = "tests/rho_net_equivalence.rs"
 required-features = ["swap-demo-runtime"]
 
+# Track B — B2: the EMPIRICAL same-CLTS equivalence gate between the optimized
+# set-automaton matcher and the naive Knotted-Topoi Appendix-A baseline
+# (`InRhoSameCLTSWeakBisim.v`'s `same_clts_weak_bisim`, empirically): equal
+# observed OUT multisets against the SAME installed σ-receiver program across the
+# SwapDemo root/nested/comb, LambdaDemo per-step β-chain, and CtxDemo contextual
+# workloads, plus the spread-ablation and divergent-admission probes. Needs the
+# three demo languages AND the quarantined `bench-naive-baseline` pass-through
+# (each demo feature transitively enables `runtime-report`).
+[[test]]
+name = "rho_net_naive_equivalence"
+path = "tests/rho_net_naive_equivalence.rs"
+required-features = [
+    "swap-demo-runtime",
+    "lambda-demo-runtime",
+    "ctx-demo-runtime",
+    "bench-naive-baseline",
+]
+
 [[test]]
 name = "rho_net_ac_firing"
 path = "tests/rho_net_ac_firing.rs"
