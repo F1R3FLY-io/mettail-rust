@@ -70,146 +70,6 @@ use std::sync::Arc;
 
 
 
-/// AT_QUOTED_BIND_GATE Task-2 (session da0842dc, 2026-07-03): the DECISIVE
-/// `sppf_stack_id`-CHAIN content-eq probe for the isolated one-alt `@a<-c`
-/// projection fan-out. THROWAWAY DIAGNOSTIC, gated `GRIND_SPPF_CONTENT=1`
-/// (memoized `OnceLock`, the P-series convention). Re-adds the root-p Phase-1
-/// probe (memory root-p-phase1-content-distinct — that measured the TWO-inequal-
-/// alt `@a<-@b`/`@Nil<=@Nil` case = 100% content-distinct) but now for the
-/// ONE-alt LHS-`@`-only `@a<-c` residual. At each Tomita ingest COLLISION (same
-/// `TomitaKey`, arc lands on a non-empty bucket), resolves BOTH the incoming
-/// arc's and the bucket's FIRST arc's `sppf_stack_id` chains via
-/// `sppf_stack_arena.slice_at` + `sppf.node`, and tallies raw/shallow/deep
-/// equality (see [`WpdaWalker::grind_sppf_content_check`]). Byte-identical when
-/// unset (the flag read short-circuits before any work).
-#[inline]
-fn grind_sppf_content_enabled() -> bool {
-    static GATE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *GATE.get_or_init(|| std::env::var_os("GRIND_SPPF_CONTENT").is_some())
-}
-
-/// AT_QUOTED_BIND_GATE Task-2 content-eq tally (process-global, gated).
-/// Counts, across the whole parse, the `sppf_stack_id`-diverging Tomita
-/// no-merges partitioned by content-eq level. Dumped once at parse end.
-#[derive(Default)]
-struct GrindSppfContentTally {
-    /// Collisions where the incoming and first arc had the SAME `sppf_stack_id`
-    /// (no divergence on this axis — not the driver here).
-    same_stack_id: u64,
-    /// `sppf_stack_id` DIVERGED. This is the population the axes below classify.
-    diverged: u64,
-    /// raw_eq: identical `SppfId` sequences (pure interning artifact — the
-    /// same forest nodes reached via distinct StackIds → MERGEABLE).
-    raw_eq: u64,
-    /// shallow_eq: same length + each position same dedup-identity
-    /// (Symbol→(nt,lo,hi), Terminal→(kind,pos), Packing→(rule,#children),
-    /// CollectionId→(id,#items), Trigger→(kind,pos,cat,rule)) — id-distinct but
-    /// structurally identical at depth 1 → MERGEABLE.
-    shallow_eq: u64,
-    /// deep_eq: recursive structural fingerprint (resolves child SppfIds) —
-    /// structurally identical all the way down → MERGEABLE.
-    deep_eq: u64,
-
-    // ── ROOT-P Stage 0 (2026-07-08) TomitaKey-surface extension ──────────
-    // Trigger-MASKED shape-equality: `sppf_shallow_ident_trigger_masked`
-    // emits `(7, kind_disc, pos, 0)` for TriggerTerminals (owner_cat /
-    // owner_rule_idx dropped), so two stacks that differ ONLY in lex
-    // provenance (which grammar rule consumed the `@`-trigger) count as
-    // shape-equal here. This is the redesign's shape-guard collapse
-    // predicate (L-SHAPE + Stage-3 lex→weight lowering).
-    /// shape-equal under the MASKED ident (same length + same masked
-    /// dedup-identity per level) — the shape-guard COLLAPSE population.
-    shallow_eq_mod_trigger: u64,
-    /// `shallow_eq_mod_trigger` ∧ ¬`shallow_eq`: the ONLY divergence is the
-    /// TriggerTerminal owner attribution (lex provenance) → collapsible AND
-    /// the lex axis folds into `Packing.weight` (Stage 3).
-    lex_provenance_only: u64,
-    /// diverged ∧ ¬`shallow_eq_mod_trigger`: the stacks differ in genuine
-    /// `(nt,lo,hi)`/kind/pos SHAPE at some level → NOT collapsible by the
-    /// shape-guard. On a 1-reading term this SHOULD be ≈ the true reading
-    /// count; a large value HALTS the redesign (L-SHAPE false).
-    genuinely_different_span: u64,
-
-    // ── ROOT-P Stage 0 SLOT-surface probe (the ACTUAL merge surface the
-    //    redesign changes). At merge_equivalent_cursors entry, group the
-    //    pre-merge `drained` cursors by the GLL SLOT tuple
-    //    (state,node,pos,coll_depth,cohort.equiv()); within each bucket, group
-    //    cursors into SHAPE-CLASSES by their sppf_stack's per-level MASKED
-    //    ident (the shape-guard's collapse predicate). O(N) equivalence-class
-    //    counting, NOT O(N²) all-pairs. The # masked shape-classes in a bucket
-    //    IS the # of shape-guard survivors — so Σ over buckets is the frontier
-    //    size the SLOT-merge + shape-guard redesign would keep. ─────────────
-    /// # merge tiers observed (grind_slot_bucket_check invocations).
-    slot_bucket_calls: u64,
-    /// # SLOT buckets (cumulative over tiers) that held ≥2 cursors.
-    slot_buckets_ge2: u64,
-    /// # SLOT buckets (cumulative) with ≥2 DISTINCT masked shape-classes — the
-    /// shape-guard CANNOT fully collapse these (genuine ambiguity or residual).
-    slot_multishape_buckets: u64,
-    /// Σ over buckets (cumulative) of (shallow-classes − masked-classes): the #
-    /// shape-distinctions that are PURELY lex provenance (owner attribution),
-    /// collapsed by trigger-masking → folded into `Packing.weight` (Stage 3).
-    slot_lex_only_collapsed: u64,
-    // Representative-pair top-vs-deeper split (cumulative): within each multi-
-    // shape bucket, one representative per masked-class, classified pairwise
-    // (M small ⇒ O(M²) cheap). Answers: is the residual divergence localized to
-    // the TOP (benign, packs at parent) or DEEPER (dangerous, stays exponential)?
-    /// representative pairs whose stacks differ in DEPTH (length).
-    slot_rep_depth_mismatch: u64,
-    /// representative pairs (same depth) diverging ONLY at the TOP level.
-    slot_rep_top_only: u64,
-    /// representative pairs (same depth) diverging at a DEEPER (non-top) level.
-    slot_rep_deeper: u64,
-    /// per-parse PEAK pre-merge cursor count (`drained.len()`) over all tiers.
-    peak_cursors: u64,
-    /// # distinct SLOT buckets AT the peak-cursor tier — the pure SLOT-merge
-    /// floor (what dropping the derivation-provenance axes collapses to).
-    slot_floor_at_peak: u64,
-    /// Σ masked shape-classes over buckets AT the peak-cursor tier — the SLOT +
-    /// shape-guard floor (what the redesign actually keeps; the HALT metric).
-    shapeguard_floor_at_peak: u64,
-    /// Σ shallow (unmasked) shape-classes over buckets AT the peak-cursor tier
-    /// — the SLOT + shape-guard floor WITHOUT lex→weight lowering (shows how
-    /// much the lex-masking buys vs `shapeguard_floor_at_peak`).
-    shallow_floor_at_peak: u64,
-    /// max over tiers of #SLOT buckets (pure SLOT floor peak).
-    slot_floor_max: u64,
-    /// max over tiers of Σ masked shape-classes (SLOT + shape-guard floor peak
-    /// — the real "does the redesign stay polynomial" metric).
-    shapeguard_floor_max: u64,
-
-    // ── ROOT-P Stage 4a (2026-07-08) EDGE-CONDITIONAL floor probe ──────────
-    // The pop-routing edge pair (incoming_edge, incoming_edge_stack) is the
-    // proven exponential axis (~38×/level). These floors model the three
-    // Stage-4 edge treatments AT the peak tier, so the delivery lever
-    // (conditional edge-drop) can be measured READ-ONLY, without touching the
-    // merge core. Within a SLOT bucket the GSS `node` is fixed ⇒ the category
-    // (and hence `category_is_binder_scoped`) is CONSTANT per bucket.
-    /// ARM(i) floor: Σ over SLOT buckets of distinct (edge_top, edge_stack,
-    /// masked-shape) classes — edge KEPT (current RootpSlot / production merge).
-    edge_kept_floor_at_peak: u64,
-    /// ARM(ii) floor: edge dropped only for buckets whose category the emitted
-    /// `category_is_binder_scoped` predicate marks FALSE (CF-interchangeable);
-    /// kept for binder-scoped buckets. == shape floor for dropped buckets,
-    /// == edge_kept for kept buckets.
-    cond_edge_floor_at_peak: u64,
-    /// ARM(4) floor: edge kept per-CURSOR only while a binder scope is LIVE
-    /// (`!binder_scope_marks.is_empty()`), category ignored — the pure dynamic
-    /// is_empty() guard.
-    dyn_edge_floor_at_peak: u64,
-    edge_kept_floor_max: u64,
-    cond_edge_floor_max: u64,
-    dyn_edge_floor_max: u64,
-    /// Per-category breakdown captured at the peak-cursor tier, one line per
-    /// category that held cursors: which categories carry the edge multiplicity
-    /// (ek ≫ mk) and whether the predicate marks them keep (scoped=1).
-    peak_cat_breakdown: String,
-}
-
-thread_local! {
-    static GRIND_SPPF_CONTENT_TALLY: std::cell::RefCell<GrindSppfContentTally> =
-        std::cell::RefCell::new(GrindSppfContentTally::default());
-}
 
 
 
@@ -320,24 +180,6 @@ enum CgllRealizeFrame<W> {
         /// call returned; this defers that push across the suspension.
         pending_walk_push: Option<crate::sppf::SppfId>,
     },
-    /// S3: a `cgll_pure_realize_chosen` body (the K-elected single-reading
-    /// realize). The prologue (choices lookup, packing decode, `on_path`
-    /// insert, chosen-flat walk) runs in the FALLIBLE constructor
-    /// `cgll_make_chosen_frame`; element steps here follow the Am-4
-    /// Chosen order (memo pre-check FIRST, then Predep, then re-check).
-    /// `Err` unwind pops the Chosen ancestor chain, removing `on_path`
-    /// per frame IFF `inserted` (Am-5).
-    Chosen {
-        sym: crate::sppf::SppfId,
-        pk: crate::sppf::SppfId,
-        rule_idx: u32,
-        weight: W,
-        flat: Vec<crate::sppf::SppfId>,
-        flat_weight: W,
-        elem_idx: usize,
-        elem_stage: CgllElemStage,
-        inserted: bool,
-    },
 }
 
 /// S2-F3: the packing-in-progress sub-state of a Bin frame.
@@ -387,6 +229,13 @@ enum CgllBinarizeFrame {
     },
 }
 
+// Stage-H retention (2026-07-17): the K-tuple DP machinery below is
+// production-retired (the tabu election was deleted at the flip) but KEPT
+// as the committed kt-parity ORACLE for unit
+// `kbest_u6_scan_factoring_off_vs_on_kt_parity` and as the A8 co-user of
+// the shared `cgll_kbest_decisions_block` — the dead_code allows scope
+// that retention (test-only callers).
+#[allow(dead_code)]
 /// S4 (S2-F3): one suspended `cgll_pure_ktuple` activation. The packing
 /// body's THREE stages run in source order (Children → the straight-line
 /// Decisions block at the transition → Scan); each child evaluation is one
@@ -406,6 +255,7 @@ struct CgllKtupleFrame<W> {
 }
 
 /// S4: the packing-in-progress sub-state of a ktuple frame.
+#[allow(dead_code)]
 struct CgllKtuplePacking<W> {
     pk: crate::sppf::SppfId,
     rule_idx: u32,
@@ -415,6 +265,7 @@ struct CgllKtuplePacking<W> {
 }
 
 /// S4: resumable position inside a ktuple packing body.
+#[allow(dead_code)]
 enum CgllKtStage {
     Children {
         child_idx: usize,
@@ -2422,16 +2273,6 @@ pub struct WpdaWalker<W: SemiringRef, E: WpdaEngine<W>> {
     /// each `engine.step` call so the codegen-emitted
     /// `emit_recovery_fork_cached` can read it.
     recovery_cohort_cache: crate::recovery_cohort::RecoveryCohortCache<W>,
-    /// Phase F.13 chain_10000 Exp 14 Substage 3 (2026-05-27): Tomita
-    /// frontier merge map. Populated at `step_fanout` ingest: every
-    /// drained frame becomes an arc in the map. Drained at the same
-    /// step's produce path via `materialize_branch_cursor_from_arc`.
-    /// Substage 3 round-trips through the map (per-cursor step path
-    /// unchanged); Substages 4+ start consuming the map structure for
-    /// shell-broadcast fast paths.
-    ///
-    /// See `prattail/docs/design/plans/exp14-tomita-per-arc-gss-merge.md`.
-    pub tomita_frontier_map: crate::tomita_frontier::TomitaFrontierMap<W>,
     /// Phase F.13 chain_10000 Exp 15 Substage 2 (2026-05-27): walker-
     /// global cursor store scaffolding. Field exists in all builds
     /// (zero per-parse cost for an empty CursorStore); dual-write
@@ -5715,9 +5556,6 @@ where
             // Cohort-revive-rework M1 (2026-05-29): orphan re-drive cap.
             revival_rounds: 0,
             recovery_cohort_cache: crate::recovery_cohort::RecoveryCohortCache::new(),
-            // Phase F.13 chain_10000 Exp 14 Substage 3 (2026-05-27):
-            // walker-global Tomita frontier merge map. Fresh = empty.
-            tomita_frontier_map: crate::tomita_frontier::TomitaFrontierMap::new(),
             // Phase F.13 chain_10000 Exp 15 Substage 2 (2026-05-27):
             // walker-global cursor store scaffolding. Fresh = empty.
             cursor_store: crate::cursor_store::CursorStore::new(),
@@ -5825,9 +5663,6 @@ where
             // Cohort-revive-rework M1 (2026-05-29): orphan re-drive cap.
             revival_rounds: 0,
             recovery_cohort_cache: crate::recovery_cohort::RecoveryCohortCache::new(),
-            // Phase F.13 chain_10000 Exp 14 Substage 3 (2026-05-27):
-            // walker-global Tomita frontier merge map. Fresh = empty.
-            tomita_frontier_map: crate::tomita_frontier::TomitaFrontierMap::new(),
             // Phase F.13 chain_10000 Exp 15 Substage 2 (2026-05-27):
             // walker-global cursor store scaffolding. Fresh = empty.
             cursor_store: crate::cursor_store::CursorStore::new(),
@@ -5944,11 +5779,6 @@ where
         // parse — `tokens` and `infra.token_id_map` keying are
         // parse-local. Clear at reset boundary.
         self.recovery_cohort_cache.clear();
-        // Phase F.13 chain_10000 Exp 14 Substage 3 (2026-05-27):
-        // clear the Tomita frontier merge map at parse boundary.
-        // Per-parse map; cursor ids / arc state are tied to the prior
-        // parse's GSS and SPPF arenas.
-        self.tomita_frontier_map.clear();
         // Phase F.13 chain_10000 Exp 15 Substage 2 (2026-05-27):
         // clear the cursor store scaffolding at parse boundary.
         self.cursor_store.clear();
@@ -6886,10 +6716,6 @@ where
                 eprintln!("{}", self.stats);
             }
         }
-        // AT_QUOTED_BIND_GATE Task-2 (session da0842dc, 2026-07-03): dump the
-        // `sppf_stack_id`-chain content-eq tally at the parse boundary (gated
-        // GRIND_SPPF_CONTENT=1; the dump method is a no-op when unset).
-        self.grind_sppf_content_dump();
         // Cohort-revive-rework M0 (2026-05-29): orphan census at the
         // parse boundary, BEFORE force-materialize / resolution. Snapshot
         // the count of paused cohort members still parked on non-Resolved
@@ -7371,8 +7197,6 @@ where
         let mut terms: Vec<Arc<dyn std::any::Any + Send + Sync>> = Vec::new();
         let mut roots: Vec<crate::sppf::SppfId> = Vec::new();
         let mut selected_pos: Option<usize> = None;
-        let mut memo: std::collections::HashMap<crate::sppf::SppfId, Vec<(ActionArg, W)>> =
-            std::collections::HashMap::new();
         // ── ROOT-P Phase-2 S2 (plan §5.1, risk R-8): under the const the
         // salvage takes the k=1 ELECTED reading (today: the FIRST raw
         // reading, no election — the receipted intentional upgrade; every
@@ -7383,15 +7207,13 @@ where
         // (per-root inclusion + the `roots.first()` recovery-events winner
         // keep today's fenced-family semantics). State shared across the
         // trailing candidates (the resolve-shared pattern, plan §2.8).
-        let mut kbest_session: Option<(
+        let mut kbest_session: (
             KbestState<W>,
             rustc_hash::FxHashMap<crate::sppf::SppfId, u32>,
-        )> = if Self::CGLL_KBEST_EXTRACTION_ENABLED {
+        ) = {
             let mut st = KbestState::new();
             st.fence_election = true;
-            Some((st, rustc_hash::FxHashMap::default()))
-        } else {
-            None
+            (st, rustc_hash::FxHashMap::default())
         };
         for (pos, weight, root) in prefix_candidates.iter().filter(|(p, _, _)| {
             tokens
@@ -7413,16 +7235,11 @@ where
                 // salvage keeps the RAW cap (`false`). `Some(1)` drains after the
                 // 1st raw term = the 1st distinct term, so raw-vs-distinct are
                 // provably identical here; `false` is the self-documenting choice.
-                let realized = match kbest_session.as_mut() {
-                    // S2 gated arm (R-8): k = 1, Election key, fenced (R-17).
-                    Some((st, fd)) => self.cgll_kbest_extract_realized(
-                        st,
-                        fd,
-                        root,
-                        KbestOrderKey::Election,
-                        1,
-                    ),
-                    None => self.cgll_realize_bin_symbol(root, &mut memo, Some(1), false),
+                // R-8 elected salvage (the sole path since the flip):
+                // k = 1, Election key, fenced (R-17 Option 1).
+                let realized = {
+                    let (st, fd) = &mut kbest_session;
+                    self.cgll_kbest_extract_realized(st, fd, root, KbestOrderKey::Election, 1)
                 };
                 if let Some((ActionArg::Term { value, .. }, w)) = realized.into_iter().next() {
                     selected_pos.get_or_insert(*pos);
@@ -7441,10 +7258,8 @@ where
                 roots.push(root);
             }
         }
-        // S2 receipts: session counters under PRATTAIL_CGLL_REALIZE_DIAG.
-        if let Some((st, _)) = &kbest_session {
-            Self::cgll_kbest_receipts_diag(st);
-        }
+        // Session receipts under PRATTAIL_CGLL_REALIZE_DIAG.
+        Self::cgll_kbest_receipts_diag(&kbest_session.0);
         if terms.is_empty() {
             return None;
         }
@@ -7571,22 +7386,19 @@ where
                     // facade cap constants.)
                     let single_result_request =
                         matches!(mode, RealizeRequestMode::SingleResultElection);
-                    if single_result_request && Self::CGLL_KBEST_EXTRACTION_ENABLED {
-                        // ── ROOT-P Phase-2 S2 (plan §5.1/§3.1): elect-then-
-                        // realize via the k-best extractor — k = 1 under the
-                        // Election key, call-local state (the facade
-                        // election stays per-root call-local, plan §2.8),
-                        // UNFENCED Election (chosen parity — the R-17
-                        // Option-1 fence applies at the RESOLVE sites only).
-                        // BoundedEnumeration is NOT routed this stage (S3):
-                        // it falls through to the existing family call. The
-                        // tabu-retry loop and the full-family fallback below
-                        // are DEMOTED to the corruption-only path (plan
-                        // §2.5): frontier exhaustion ⇔ family emptiness
-                        // (Q4), so an empty root list — counted by
-                        // `kbest_root_empty` — falls through to the family
-                        // call, which debug-asserts the agreement and stays
-                        // as release-mode safety.
+                    if single_result_request {
+                        // ── ROOT-P elect-then-realize (plan §5.1/§3.1; the
+                        // sole path since the Phase-4 flip — the Stage-H
+                        // hygiene pass collapsed the now-constant gate
+                        // conditional): k = 1 under the Election key,
+                        // call-local state (the facade election stays
+                        // per-root call-local, plan §2.8), UNFENCED Election
+                        // (chosen parity — the R-17 Option-1 fence applies
+                        // at the RESOLVE sites only). An empty root list —
+                        // counted by `kbest_root_empty` — falls through to
+                        // the KEPT corruption-only family call below, which
+                        // debug-asserts the agreement and stays as
+                        // release-mode safety (plan §2.5/§5.2 disposition).
                         let mut kb_state: KbestState<W> = KbestState::new();
                         let mut kb_fdepths: rustc_hash::FxHashMap<crate::sppf::SppfId, u32> =
                             rustc_hash::FxHashMap::default();
@@ -7600,6 +7412,24 @@ where
                             self.cgll_pure_goal_cat,
                         );
                         Self::cgll_kbest_receipts_diag(&kb_state);
+                        // The `[k-elect]` diagnostic (moved from the retired
+                        // tabu loop per the §5.2 disposition table; `tabu=`
+                        // is replaced by the feasibility hunt's
+                        // `infeasible=` — the S2 tabu-census greps were
+                        // OFF-arm-only receipts and remain historical).
+                        #[cfg(feature = "walker-trace")]
+                        if std::env::var_os("PRATTAIL_CGLL_REALIZE_DIAG").is_some() {
+                            if let Some(e) = kb_state.entry(root, KbestOrderKey::Election, 0) {
+                                eprintln!(
+                                    "  [k-elect] root={root} chosen={:?} lateness={:?} \
+                                     ords={:?} infeasible={}",
+                                    Some(e.pk),
+                                    e.kt.as_ref().map(|t| t.lateness),
+                                    e.kt.as_ref().map(|t| t.sorted_ordinals()),
+                                    kb_state.stats.infeasible_pops,
+                                );
+                            }
+                        }
                         if let Some(e) = kb_state.entry(root, KbestOrderKey::Election, 0) {
                             if let KbestVal::Realized {
                                 arg: ActionArg::Term { value, .. },
@@ -7627,79 +7457,14 @@ where
                                  exhaustive extractor missed (root {root})"
                             );
                         }
-                    } else if single_result_request {
-                        let goal_cat = self.cgll_pure_goal_cat;
-                        // TABU-RETRY: the K-tuple is realizability-blind
-                        // (classic's layers only ever rank realizable
-                        // cursors). A refuted chosen packing is excluded
-                        // and the election re-runs; bounded by the packing
-                        // population.
-                        let mut tabu: rustc_hash::FxHashSet<crate::sppf::SppfId> =
-                            rustc_hash::FxHashSet::default();
-                        for _attempt in 0..64usize {
-                            let mut kmemo: rustc_hash::FxHashMap<
-                                crate::sppf::SppfId,
-                                CgllKTuple<W>,
-                            > = rustc_hash::FxHashMap::default();
-                            let mut choices: rustc_hash::FxHashMap<
-                                crate::sppf::SppfId,
-                                crate::sppf::SppfId,
-                            > = rustc_hash::FxHashMap::default();
-                            let mut on_path: rustc_hash::FxHashSet<crate::sppf::SppfId> =
-                                rustc_hash::FxHashSet::default();
-                            // `_kt`: the k-tuple's VALUE is consumed only by the
-                            // gated `[k-elect]` diagnostic below, but the call is
-                            // load-bearing (it populates `choices`/`on_path`),
-                            // so keep the call and discard the value when the
-                            // `walker-trace` feature is off (`_`-prefixed ⇒ no
-                            // unused-variable warning either way).
-                            let _kt = self.cgll_pure_ktuple(
-                                root,
-                                0,
-                                true,
-                                goal_cat,
-                                &tabu,
-                                &mut kmemo,
-                                &mut choices,
-                                &mut on_path,
-                            );
-                            #[cfg(feature = "walker-trace")]
-                            if std::env::var_os("PRATTAIL_CGLL_REALIZE_DIAG").is_some() {
-                                eprintln!(
-                                    "  [k-elect] root={root} chosen={:?} lateness={} \
-                                     ords={:?} tabu={}",
-                                    choices.get(&root),
-                                    _kt.lateness,
-                                    _kt.sorted_ordinals(),
-                                    tabu.len()
-                                );
-                            }
-                            if choices.get(&root).is_none() {
-                                break; // every root packing tabu'd — fallback
-                            }
-                            let mut r_on_path: rustc_hash::FxHashSet<crate::sppf::SppfId> =
-                                rustc_hash::FxHashSet::default();
-                            match self.cgll_pure_realize_chosen(
-                                root,
-                                &choices,
-                                &mut memo,
-                                &mut r_on_path,
-                            ) {
-                                Ok((arg, w)) => {
-                                    if let ActionArg::Term { value, .. } = arg {
-                                        return vec![(value, w)];
-                                    }
-                                    break;
-                                },
-                                Err(Some(bad_pk)) => {
-                                    tabu.insert(bad_pk);
-                                    memo.clear();
-                                },
-                                Err(None) => break, // structural gap — fallback
-                            }
-                        }
-                        memo.clear();
                     }
+                    // Stage-H retirement (2026-07-17, plan §5.2 disposition
+                    // table): the TABU-RETRY election loop
+                    // (`cgll_pure_ktuple` + `cgll_pure_realize_chosen`, the
+                    // feasibility-blind K-election with global packing tabu)
+                    // was DELETED here — the flipped extractor arm above is
+                    // feasibility-aware by construction (plan §2.5), and the
+                    // `[k-elect]` diagnostic moved onto it.
                     // ── ROOT-P Phase-2 S3 (plan §5.1/§3.2): BoundedEnumeration
                     // via the extractor — Weight key, k = the caller's limit,
                     // per-node distinct-k with observational dedup (per-node
@@ -7712,7 +7477,7 @@ where
                     // family path (the mode table defines no unbounded-k
                     // enumeration). The A4(iii) empty-root backstop rides the
                     // shared helper; the A4(ii) PADDING carrier is below.
-                    if Self::CGLL_KBEST_EXTRACTION_ENABLED && !single_result_request {
+                    if !single_result_request {
                         if let Some(cap) = limit {
                             if cap >= 1 {
                                 let mut kb_state: KbestState<W> = KbestState::new();
@@ -9901,96 +9666,6 @@ where
 
 
 
-    /// AT_QUOTED_BIND_GATE Task-2: dump + reset the content-eq tally. THROWAWAY,
-    /// called at parse end (gated). Prints one `GRIND-SPPFC` summary line.
-    fn grind_sppf_content_dump(&self) {
-        if !grind_sppf_content_enabled() {
-            return;
-        }
-        GRIND_SPPF_CONTENT_TALLY.with(|t| {
-            let mut t = t.borrow_mut();
-            let d = t.diverged.max(1);
-            eprintln!(
-                "GRIND-SPPFC same_stack_id={} diverged={} raw_eq={} ({:.2}%) shallow_eq={} ({:.2}%) deep_eq={} ({:.2}%)",
-                t.same_stack_id,
-                t.diverged,
-                t.raw_eq,
-                100.0 * t.raw_eq as f64 / d as f64,
-                t.shallow_eq,
-                100.0 * t.shallow_eq as f64 / d as f64,
-                t.deep_eq,
-                100.0 * t.deep_eq as f64 / d as f64,
-            );
-            // ROOT-P Stage 0: TomitaKey-surface trigger-masked buckets.
-            eprintln!(
-                "GRIND-SPPFC-MASK diverged={} shallow_eq_mod_trigger={} ({:.2}%) lex_provenance_only={} ({:.2}%) genuinely_different_span={} ({:.2}%)",
-                t.diverged,
-                t.shallow_eq_mod_trigger,
-                100.0 * t.shallow_eq_mod_trigger as f64 / d as f64,
-                t.lex_provenance_only,
-                100.0 * t.lex_provenance_only as f64 / d as f64,
-                t.genuinely_different_span,
-                100.0 * t.genuinely_different_span as f64 / d as f64,
-            );
-            // ROOT-P Stage 0: SLOT-surface (the ACTUAL merge surface).
-            // buckets_ge2 = SLOT buckets with ≥2 cursors; multishape_buckets =
-            // those the shape-guard CANNOT fully collapse (≥2 masked classes);
-            // lex_only_collapsed = shape-distinctions removed by trigger-masking.
-            eprintln!(
-                "GRIND-SLOT tiers={} buckets_ge2={} multishape_buckets={} lex_only_collapsed={}",
-                t.slot_bucket_calls,
-                t.slot_buckets_ge2,
-                t.slot_multishape_buckets,
-                t.slot_lex_only_collapsed,
-            );
-            // ROOT-P Stage 0: representative top-vs-deeper split of the residual
-            // multishape buckets (the shape-guard's irreducible classes). DEEPER
-            // divergence is the exponential-frontier DANGER signal.
-            let rep = (t.slot_rep_depth_mismatch + t.slot_rep_top_only + t.slot_rep_deeper).max(1);
-            eprintln!(
-                "GRIND-SLOT-LEVEL rep_pairs={} depth_mismatch={} ({:.2}%) top_only={} ({:.2}%) deeper={} ({:.2}%)",
-                t.slot_rep_depth_mismatch + t.slot_rep_top_only + t.slot_rep_deeper,
-                t.slot_rep_depth_mismatch,
-                100.0 * t.slot_rep_depth_mismatch as f64 / rep as f64,
-                t.slot_rep_top_only,
-                100.0 * t.slot_rep_top_only as f64 / rep as f64,
-                t.slot_rep_deeper,
-                100.0 * t.slot_rep_deeper as f64 / rep as f64,
-            );
-            // ROOT-P Stage 0: THE VERDICT NUMBERS — peak raw frontier vs the two
-            // floors it collapses to. slot_floor = pure SLOT merge; shapeguard
-            // = SLOT + shape-guard (what the redesign keeps); shallow = SLOT +
-            // shape-guard WITHOUT lex→weight (shapeguard vs shallow = lex gain).
-            eprintln!(
-                "GRIND-PEAK peak_cursors={} @peak[ slot_floor={} shapeguard_floor={} shallow_floor={} ] max_over_tiers[ slot_floor={} shapeguard_floor={} ]",
-                t.peak_cursors,
-                t.slot_floor_at_peak,
-                t.shapeguard_floor_at_peak,
-                t.shallow_floor_at_peak,
-                t.slot_floor_max,
-                t.shapeguard_floor_max,
-            );
-            // ── ROOT-P Stage 4a: EDGE-CONDITIONAL floor collapse (the delivery
-            //    lever). edge_kept = ARM(i) (production); cond_edge = ARM(ii)
-            //    (drop edge for CF-interchangeable cats per the emitted
-            //    predicate); shapeguard_floor above = ARM(iii) uncond-drop;
-            //    dyn_edge = ARM(4) pure is_empty() guard. cond_edge → shapeguard
-            //    ⇒ delivery; cond_edge ≈ edge_kept ⇒ classification too coarse
-            //    (vacuous keep-all).
-            eprintln!(
-                "GRIND-EDGE @peak[ edge_kept_floor={} cond_edge_floor={} dyn_edge_floor={} (shapeguard_floor={}) ] max_over_tiers[ edge_kept={} cond_edge={} dyn_edge={} ]",
-                t.edge_kept_floor_at_peak,
-                t.cond_edge_floor_at_peak,
-                t.dyn_edge_floor_at_peak,
-                t.shapeguard_floor_at_peak,
-                t.edge_kept_floor_max,
-                t.cond_edge_floor_max,
-                t.dyn_edge_floor_max,
-            );
-            eprintln!("GRIND-EDGE-CATS @peak[ {}]", t.peak_cat_breakdown);
-            *t = GrindSppfContentTally::default();
-        });
-    }
 
 
     /// Drive one canonical-GLL step. The descriptor-pure engine is the SOLE
@@ -10576,25 +10251,18 @@ where
         // R-D A1 over-accept EXACT fix (task #18b): drives the TOP Bin frame's
         // drain off a frame-local DISTINCT counter (not raw `out.len()`) so the
         // cap counts the SAME semantic-key-deduped surface the budget fires on.
-        // `true` ONLY from the resolve realize call (paired with the CONSTANT cap
-        // `n+1`); every other caller passes `false` and takes the byte-identical
-        // raw-length path.
+        // Stage-H note: the resolve `true`-caller retired at the Phase-4 flip
+        // (budget resolve now extracts); every remaining caller passes `false`
+        // — the flag stays with the KEPT family machinery for any future
+        // distinct-capped caller of this fallback surface.
         budget_distinct_cap: bool,
-        choices: Option<&rustc_hash::FxHashMap<crate::sppf::SppfId, crate::sppf::SppfId>>,
-        on_path: &mut rustc_hash::FxHashSet<crate::sppf::SppfId>,
-    ) -> Option<Result<(ActionArg, W), Option<crate::sppf::SppfId>>>
-    where
+    ) where
         W: StarSemiringRef,
     {
         let empty_colors: std::collections::HashMap<crate::sppf::SppfId, RealizeColor> =
             std::collections::HashMap::new();
         let mut stack: Vec<CgllRealizeFrame<W>> =
             Vec::with_capacity(self.sppf.len().min(4096));
-        // S3: the Chosen child→parent value channel. `Some(Ok(r))` after a
-        // Chosen child completes; the parent memo-inserts `vec![r]` at
-        // resume (the recursion's :25357-timing — nothing interleaves).
-        let mut chosen_result: Option<Result<(ActionArg, W), Option<crate::sppf::SppfId>>> =
-            None;
         stack.push(seed);
         // R-D A1 over-accept EXACT fix (task #18b): the TOP frame's cross-packing
         // DISTINCT counter. `out` stays RAW (byte-identical return/memo); this
@@ -10941,253 +10609,11 @@ where
                         }
                     }
                 },
-                CgllRealizeFrame::Chosen {
-                    sym,
-                    pk,
-                    rule_idx,
-                    weight,
-                    flat,
-                    flat_weight,
-                    elem_idx,
-                    elem_stage,
-                    inserted,
-                } => {
-                    let (sym, pk) = (*sym, *pk);
-                    loop {
-                        // Chosen-child result delivery (the parent-side
-                        // `memo.insert(c, vec![r])`).
-                        if let Some(res) = chosen_result.take() {
-                            match res {
-                                Ok(r) => {
-                                    let c = flat[*elem_idx];
-                                    memo.insert(c, vec![r]);
-                                    *elem_idx += 1;
-                                    *elem_stage = CgllElemStage::PredepPending;
-                                },
-                                Err(e) => {
-                                    // UNWIND: pop the Chosen ancestor chain
-                                    // (all frames are Chosen at Err time —
-                                    // Predep/Bin children complete before
-                                    // any Chosen push), removing on_path
-                                    // per frame iff inserted (Am-5).
-                                    if *inserted {
-                                        on_path.remove(&sym);
-                                    }
-                                    stack.pop();
-                                    while let Some(f) = stack.pop() {
-                                        if let CgllRealizeFrame::Chosen {
-                                            sym: fs,
-                                            inserted: fi,
-                                            ..
-                                        } = f
-                                        {
-                                            if fi {
-                                                on_path.remove(&fs);
-                                            }
-                                        }
-                                    }
-                                    return Some(Err(e));
-                                },
-                            }
-                        }
-                        if *elem_idx == flat.len() {
-                            // Completion: fire the action tail (Some(1)),
-                            // remove on_path, deliver Ok/Err.
-                            let out = self.realize_packing_call(
-                                *rule_idx,
-                                flat,
-                                weight.times_ref(flat_weight),
-                                memo,
-                                Some(1),
-                            );
-                            if *inserted {
-                                on_path.remove(&sym);
-                            }
-                            let res = match out.into_iter().next() {
-                                Some(r) => Ok(r),
-                                None => Err(Some(pk)), // action refuted — tabu
-                            };
-                            stack.pop();
-                            if stack.is_empty() {
-                                return Some(res);
-                            }
-                            match res {
-                                Ok(_) => {
-                                    chosen_result = Some(res);
-                                    continue 'drive;
-                                },
-                                Err(e) => {
-                                    while let Some(f) = stack.pop() {
-                                        if let CgllRealizeFrame::Chosen {
-                                            sym: fs,
-                                            inserted: fi,
-                                            ..
-                                        } = f
-                                        {
-                                            if fi {
-                                                on_path.remove(&fs);
-                                            }
-                                        }
-                                    }
-                                    return Some(Err(e));
-                                },
-                            }
-                        }
-                        let c = flat[*elem_idx];
-                        match *elem_stage {
-                            CgllElemStage::PredepPending => {
-                                // Am-4 Chosen order: memo PRE-check FIRST
-                                // (the recursion's leading `continue`),
-                                // THEN prerealize, THEN re-check.
-                                if memo.contains_key(&c) {
-                                    *elem_idx += 1;
-                                    continue;
-                                }
-                                *elem_stage = CgllElemStage::RealizePending;
-                                stack.push(CgllRealizeFrame::Predep {
-                                    walk: vec![c],
-                                    seen: rustc_hash::FxHashSet::default(),
-                                    deps: Vec::new(),
-                                    dep_idx: 0,
-                                    pending_walk_push: None,
-                                });
-                                continue 'drive;
-                            },
-                            CgllElemStage::RealizePending => {
-                                if memo.contains_key(&c) {
-                                    *elem_idx += 1;
-                                    *elem_stage = CgllElemStage::PredepPending;
-                                    continue;
-                                }
-                                match self.sppf.node(c) {
-                                    Some(crate::sppf::SppfNode::Symbol {
-                                        non_terminal_tag,
-                                        ..
-                                    }) if non_terminal_tag & CGLL_BIN_TAG != 0 => {
-                                        let choices_map = choices.expect(
-                                            "Chosen frames drive with choices present",
-                                        );
-                                        match self.cgll_make_chosen_frame(
-                                            choices_map,
-                                            on_path,
-                                            c,
-                                        ) {
-                                            Ok(f) => {
-                                                stack.push(f);
-                                                continue 'drive;
-                                            },
-                                            Err(e) => {
-                                                // Constructor-stage Err —
-                                                // same unwind as a child
-                                                // Err.
-                                                chosen_result = Some(Err(e));
-                                                continue;
-                                            },
-                                        }
-                                    },
-                                    _ => {
-                                        let cr = self.realize_node_leave(
-                                            c,
-                                            memo,
-                                            &empty_colors,
-                                            None,
-                                        );
-                                        memo.insert(c, cr);
-                                        *elem_idx += 1;
-                                        *elem_stage = CgllElemStage::PredepPending;
-                                        continue;
-                                    },
-                                }
-                            },
-                        }
-                    }
-                },
             }
         }
-        chosen_result
+
     }
 
-    /// S3: Chosen-frame constructor = the recursion's PROLOGUE (choices
-    /// lookup → packing decode → `on_path` insert → chosen-flat walk).
-    /// Failures return the recursion's exact `Err` values; post-insert
-    /// failures remove `on_path` first (every recursion exit path did).
-    fn cgll_make_chosen_frame(
-        &self,
-        choices: &rustc_hash::FxHashMap<crate::sppf::SppfId, crate::sppf::SppfId>,
-        on_path: &mut rustc_hash::FxHashSet<crate::sppf::SppfId>,
-        sym: crate::sppf::SppfId,
-    ) -> Result<CgllRealizeFrame<W>, Option<crate::sppf::SppfId>> {
-        let Some(&pk) = choices.get(&sym) else {
-            #[cfg(feature = "walker-trace")]
-            if std::env::var_os("PRATTAIL_CGLL_REALIZE_DIAG").is_some() {
-                eprintln!("  [k-chosen-bail] no choice for sym={sym}");
-            }
-            return Err(None);
-        };
-        let Some(crate::sppf::SppfNode::Packing { rule_idx, children, weight }) =
-            self.sppf.node(pk)
-        else {
-            return Err(Some(pk));
-        };
-        // CYCLE GUARD (the ForRow unit-rule symbol-mediated cycle class,
-        // tolerated at publish): a chosen derivation that revisits an
-        // on-path symbol is CYCLIC — tabu its packing and re-elect
-        // (receipt: unit_rhocalc_forrow_forrowwhere stack overflow). The
-        // failed insert leaves the set untouched (owned by a live
-        // ancestor) — `inserted` stays false on this path (Am-5).
-        if !on_path.insert(sym) {
-            return Err(Some(pk));
-        }
-        let (rule_idx, pack_children, weight) = (*rule_idx, children.clone(), weight.clone());
-        // Chosen-flat: follow the chosen packing at every Intermediate
-        // (already-iterative walk, kept verbatim incl. the 100k guard).
-        let mut flat: Vec<crate::sppf::SppfId> = Vec::new();
-        let mut stack: Vec<crate::sppf::SppfId> = pack_children.iter().rev().copied().collect();
-        let mut flat_weight = W::one_ref();
-        let mut guard = 0usize;
-        while let Some(c) = stack.pop() {
-            guard += 1;
-            if guard > 100_000 {
-                on_path.remove(&sym);
-                return Err(None);
-            }
-            match self.sppf.node(c) {
-                Some(crate::sppf::SppfNode::Intermediate { .. }) => {
-                    let Some(&ipk) = choices.get(&c) else {
-                        #[cfg(feature = "walker-trace")]
-                        if std::env::var_os("PRATTAIL_CGLL_REALIZE_DIAG").is_some() {
-                            eprintln!("  [k-chosen-bail] no choice for inter={c}");
-                        }
-                        on_path.remove(&sym);
-                        return Err(None);
-                    };
-                    if let Some(crate::sppf::SppfNode::Packing { children, weight, .. }) =
-                        self.sppf.node(ipk)
-                    {
-                        flat_weight = flat_weight.times_ref(weight);
-                        for ch in children.iter().rev() {
-                            stack.push(*ch);
-                        }
-                    } else {
-                        on_path.remove(&sym);
-                        return Err(Some(ipk));
-                    }
-                },
-                _ => flat.push(c),
-            }
-        }
-        Ok(CgllRealizeFrame::Chosen {
-            sym,
-            pk,
-            rule_idx,
-            weight,
-            flat,
-            flat_weight,
-            elem_idx: 0,
-            elem_stage: CgllElemStage::PredepPending,
-            inserted: true,
-        })
-    }
 
     /// Bin-frame constructor = the recursion's callee ENTRY (memo check →
     /// provisional-empty publish → span/packings snapshot). `None` = memo
@@ -11224,44 +10650,16 @@ where
         })
     }
 
-    /// P3.c: bottom-up pre-realization of a flat element's memo
-    /// DEPENDENCIES (CollectionId items, OPTIONAL_PRESENT packing children,
-    /// spine Intermediates — recursively, so collections nested inside
-    /// optional groups realize too). Structural containers only have their
-    /// CONTENTS realized. Cycle-safe via the memo guard + local seen set.
-    /// S2-F3: thin wrapper over the iterative machine (Predep-seeded drive;
-    /// Am-1 — kept as a named entry for the realize-chosen caller).
-    // dead_code: named-entry wrapper retained per the doc above; the realize-chosen
-    // caller currently drives the iterative machine directly.
-    #[allow(dead_code)]
-    fn cgll_prerealize_deps(
-        &self,
-        root: crate::sppf::SppfId,
-        memo: &mut std::collections::HashMap<crate::sppf::SppfId, Vec<(ActionArg, W)>>,
-        limit: Option<usize>,
-    ) where
-        W: StarSemiringRef,
-    {
-        let mut no_on_path: rustc_hash::FxHashSet<crate::sppf::SppfId> =
-            rustc_hash::FxHashSet::default();
-        self.cgll_realize_drive(
-            CgllRealizeFrame::Predep {
-                walk: vec![root],
-                seen: rustc_hash::FxHashSet::default(),
-                deps: Vec::new(),
-                dep_idx: 0,
-                pending_walk_push: None,
-            },
-            memo,
-            limit,
-            // R-D A1 over-accept EXACT fix (task #18b): a Predep-seeded drive is
-            // NOT the resolve top-cap path — no distinct-cap.
-            false,
-            None,
-            &mut no_on_path,
-        );
-    }
 
+    /// Stage-H disposition (2026-07-17, plan §5.2 KEEP row): the family
+    /// realize is production-RETIRED from the routed surfaces (the
+    /// extractor is the sole live path since the Phase-4 flip) but KEPT
+    /// compiled and reachable as (i) the corruption-only fallback behind
+    /// the `kbest_root_empty` receipt (the facade single-result arm falls
+    /// through here on an empty extraction, debug-asserting agreement),
+    /// (ii) the non-facade BoundedEnumeration surface (`limit
+    /// None`/`Some(0)` — no generated caller), and (iii) the committed
+    /// units' family ORACLE (`kbest_family_i64`).
     fn cgll_realize_bin_symbol(
         &self,
         sym: crate::sppf::SppfId,
@@ -11298,9 +10696,7 @@ where
         let Some(seed) = Self::cgll_make_bin_frame(&self.sppf, memo, sym, true) else {
             return memo.get(&sym).cloned().unwrap_or_default();
         };
-        let mut no_on_path: rustc_hash::FxHashSet<crate::sppf::SppfId> =
-            rustc_hash::FxHashSet::default();
-        self.cgll_realize_drive(seed, memo, limit, budget_distinct_cap, None, &mut no_on_path);
+        self.cgll_realize_drive(seed, memo, limit, budget_distinct_cap);
         memo.get(&sym).cloned().unwrap_or_default()
     }
 
@@ -11464,8 +10860,6 @@ where
         let mut weights: Vec<W> = Vec::new();
         let mut terms: Vec<Arc<dyn std::any::Any + Send + Sync>> = Vec::new();
         let mut roots: Vec<crate::sppf::SppfId> = Vec::new();
-        let mut memo: std::collections::HashMap<crate::sppf::SppfId, Vec<(ActionArg, W)>> =
-            std::collections::HashMap::new();
         let mut seen_bin: rustc_hash::FxHashSet<crate::sppf::SppfId> =
             rustc_hash::FxHashSet::default();
         // Shared classic→binarized map so co-occurring sub-constituents dedup to
@@ -11501,15 +10895,13 @@ where
         // including the `roots.first()` recovery-events winner — keep
         // today's fenced-family semantics (all-span-refuted forests stay
         // ParseError). OFF (`None`): zero new code runs.
-        let mut kbest_session: Option<(
+        let mut kbest_session: (
             KbestState<W>,
             rustc_hash::FxHashMap<crate::sppf::SppfId, u32>,
-        )> = if Self::CGLL_KBEST_EXTRACTION_ENABLED {
+        ) = {
             let mut st = KbestState::new();
             st.fence_election = true;
-            Some((st, rustc_hash::FxHashMap::default()))
-        } else {
-            None
+            (st, rustc_hash::FxHashMap::default())
         };
         for cand in accepting {
             let classic_root = cand.root;
@@ -11565,33 +10957,29 @@ where
             // a later bin_root consume its (small) budget on GLOBAL dupes and
             // truncate a still-needed distinct term (plan §1.3/§4). `None`
             // (unbounded) ⇒ the exact pre-A1 `None`-realize (byte-identical).
-            let cap: Option<usize> = budget_n.map(|n| n + 1);
-            // Pass `budget_distinct_cap = true`: the TOP frame drains on the
-            // frame-local DISTINCT count, exact against the deduped budget.
-            let realized = match kbest_session.as_mut() {
-                // ── ROOT-P Phase-2 S2 (plan §5.1 gate + the F-1 pins): ONE
-                // extraction demand replaces the full-family
-                // materialization. `k_distinct` is a PLAIN usize — never
-                // the neighboring `cap: Option<usize>` convention whose
-                // `None` means UNBOUNDED (misreading it re-explodes the
-                // 677-reading forests): `Unbounded ⇒ k_distinct = 1` under
-                // the Election key; `AmbiguityBudget(n) | BeamSize(n)`
-                // (both fold to `budget_n = Some(n)` above) ⇒
-                // `k_distinct = n + 1` under the Weight key, feeding the
-                // SAME `budget_dedup` fold + per-term fire below (plan
-                // §3.5 — distinct-set exactness unchanged).
-                Some((st, fd)) => {
-                    let k_distinct: usize = match budget_n {
-                        Some(n) => n + 1,
-                        None => 1,
-                    };
-                    let demand_kind = match budget_n {
-                        Some(_) => KbestOrderKey::Weight,
-                        None => KbestOrderKey::Election,
-                    };
-                    self.cgll_kbest_extract_realized(st, fd, bin_root, demand_kind, k_distinct)
-                },
-                None => self.cgll_realize_bin_symbol(bin_root, &mut memo, cap, true),
+            // ── ROOT-P per-root extraction (plan §5.1 + the F-1 pins;
+            // the sole path since the Phase-4 flip — Stage-H collapsed the
+            // gate conditional and retired the OFF family call): ONE
+            // extraction demand replaces the full-family materialization.
+            // `k_distinct` is a PLAIN usize — never an `Option` cap
+            // convention whose `None` means UNBOUNDED (misreading it
+            // re-explodes the 677-reading forests): `Unbounded ⇒
+            // k_distinct = 1` under the Election key;
+            // `AmbiguityBudget(n) | BeamSize(n)` (both fold to
+            // `budget_n = Some(n)` above) ⇒ `k_distinct = n + 1` under the
+            // Weight key, feeding the SAME `budget_dedup` fold + per-term
+            // fire below (plan §3.5 — distinct-set exactness unchanged).
+            let realized = {
+                let (st, fd) = &mut kbest_session;
+                let k_distinct: usize = match budget_n {
+                    Some(n) => n + 1,
+                    None => 1,
+                };
+                let demand_kind = match budget_n {
+                    Some(_) => KbestOrderKey::Weight,
+                    None => KbestOrderKey::Election,
+                };
+                self.cgll_kbest_extract_realized(st, fd, bin_root, demand_kind, k_distinct)
             };
             match budget_n {
                 None => {
@@ -11662,11 +11050,9 @@ where
             //         }
             //     }
         }
-        // S2 receipts: the session counters under PRATTAIL_CGLL_REALIZE_DIAG
-        // (kbest_root_empty MUST be 0 on green corpora — the S2 gate).
-        if let Some((st, _)) = &kbest_session {
-            Self::cgll_kbest_receipts_diag(st);
-        }
+        // Session receipts under PRATTAIL_CGLL_REALIZE_DIAG
+        // (kbest_root_empty MUST be 0 on green corpora).
+        Self::cgll_kbest_receipts_diag(&kbest_session.0);
         // Commit the first accepting cursor for the legacy single-result
         // accessors (mirrors the classic multi-arm contract).
         if let Some(cand) = accepting.first() {
@@ -12396,6 +11782,10 @@ where
     ///       transparent-group reading — loses to a present one).
     ///   K-D insertion order: candidates iterate in packing-family
     ///       (insertion) order and only STRICT improvement replaces.
+    // dead_code: production-retired at the Phase-4 flip (the tabu election
+    // deleted in Stage H); retained as the u6 kt-parity oracle + the A8
+    // Decisions-block co-user (test-module caller only).
+    #[allow(dead_code)]
     fn cgll_pure_ktuple(
         &self,
         node: crate::sppf::SppfId,
@@ -12685,34 +12075,13 @@ where
     /// (workspace suite, ladder n=2..14, the 92-row bank vs the s0
     /// baseline); the committed regression gate is
     /// `kbest_flip_regression_gate_counter_budgets`.
+    // dead_code: the Stage-H hygiene pass collapsed the (now-constant)
+    // call-site conditionals, so the const's remaining reader is the
+    // `kbest_const_is_on` pin — it stays declared as the flip's
+    // provenance record.
+    #[allow(dead_code)]
     pub(crate) const CGLL_KBEST_EXTRACTION_ENABLED: bool = true;
 
-    /// Realize exactly the CHOSEN derivation (one packing per node from
-    /// `cgll_pure_ktuple`'s election). `None` on any gap (missing choice /
-    /// elide) — the caller falls back to the full-family realize.
-    /// `Err(pk)` = the packing whose realize refuted (tabu it + re-elect).
-    fn cgll_pure_realize_chosen(
-        &self,
-        sym: crate::sppf::SppfId,
-        choices: &rustc_hash::FxHashMap<crate::sppf::SppfId, crate::sppf::SppfId>,
-        memo: &mut std::collections::HashMap<crate::sppf::SppfId, Vec<(ActionArg, W)>>,
-        on_path: &mut rustc_hash::FxHashSet<crate::sppf::SppfId>,
-    ) -> Result<(ActionArg, W), Option<crate::sppf::SppfId>>
-    where
-        W: StarSemiringRef,
-    {
-        // S2-F3/S3 (2026-07-11): thin wrapper over the ITERATIVE machine —
-        // the former self-recursion (one frame per chain level; the E3
-        // facade path of the F3 overflow). The prologue lives in the
-        // fallible constructor; the drive returns the seed's Ok/Err with
-        // the recursion's exact on_path/memo timing.
-        let seed = self.cgll_make_chosen_frame(choices, on_path, sym)?;
-        // R-D A1 over-accept EXACT fix (task #18b): Chosen-seeded realize is not
-        // the resolve top-cap path (and `limit == None` makes the flag inert) —
-        // pass `false` for byte-identical behavior.
-        self.cgll_realize_drive(seed, memo, None, false, Some(choices), on_path)
-            .expect("Chosen-seeded drive always delivers a result")
-    }
 
     // ═════════════════════════════════════════════════════════════════════
     // ROOT-P Phase-2 S1: the k-best extractor (dormant — see

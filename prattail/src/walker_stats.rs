@@ -408,15 +408,6 @@ pub struct WalkerStats {
     /// `walker-stats` feature; zero-cost when disabled.
     pub edge_kind_projection: EdgeKindProjection,
 
-    /// Phase F.13 chain_10000 Exp 14 Substage 0 (2026-05-27): TomitaKey
-    /// coarse-merge projection. Counterfactual measurement of what the
-    /// planned `TomitaFrontierMap` (Tomita 1985 / Scott-Johnstone 2010)
-    /// would dedup if the walker keyed cursors on
-    /// `(state, node, pos, edge_top, collection_depth)` per
-    /// `prattail/docs/design/plans/exp14-tomita-per-arc-gss-merge.md`
-    /// §2.3. The gate to proceed past Substage 0 is `projected_dedup_rate()
-    /// >= 5.0` on left_assoc_chain_500.
-    pub tomita_key_projection: TomitaKeyProjection,
 
     /// Phase F.13 chain_10000 Exp 15 Substage 0 (2026-05-27): CPS
     /// continuation size projection. Counterfactual measurement of the
@@ -1022,47 +1013,6 @@ impl EdgeKindProjection {
     }
 }
 
-/// Phase F.13 chain_10000 Exp 14 Substage 0 (2026-05-27): TomitaKey
-/// coarse-merge projection counters. Mirrors what `TomitaFrontierMap`
-/// would dedup if the walker keyed cursors on the 5-tuple
-/// `(state, node, pos, edge_top, collection_depth)` (per Tomita 1985 /
-/// Scott-Johnstone 2010 GLL-descriptor coarsening of the current 11-axis
-/// ConfigKey).
-///
-/// Plan ref: `prattail/docs/design/plans/exp14-tomita-per-arc-gss-merge.md`
-/// §5 Substage 0. The gate is "projected dedup ratio ≥ 5×" on
-/// left_assoc_chain_500. If FAILS, downstream Exp 14 substages SKIP.
-///
-/// Per-step semantics: each `step_fanout` iteration observes the cursor
-/// population pre-step. For Concrete frames, observe once per cursor.
-/// For Cohort frames, observe N times (once per member) — all members
-/// share the same TomitaKey by construction of the cohort. Distinct
-/// TomitaKeys are counted PER STEP (different step generations should
-/// not merge because Tomita-merge is bounded by step boundaries via the
-/// generation counter in the planned TomitaFrontierMap).
-///
-/// Aggregate metric:
-/// `cumulative_cursors_ingested / cumulative_per_step_distinct_keys`
-/// = average per-step merge factor over the parse.
-#[derive(Default, Debug, Clone)]
-pub struct TomitaKeyProjection {
-    /// Per-step working set of distinct TomitaKey values; cleared at
-    /// each `step_fanout` entry via `begin_step`.
-    pub per_step_distinct_keys: FxHashMap<TomitaKey, u64>,
-    /// Total cursor observations across all steps (sum of per-step
-    /// frontier sizes; counts cohort members individually).
-    pub cumulative_cursors_ingested: u64,
-    /// Total distinct TomitaKeys summed across all steps (= sum of
-    /// per_step_distinct_keys.len() at each `end_step`).
-    pub cumulative_per_step_distinct_keys: u64,
-    /// Per-step max ingest count (peak frontier observed at any single
-    /// step, in cursor units).
-    pub max_cursors_per_step: u64,
-    /// Per-step max distinct-key count.
-    pub max_distinct_keys_per_step: u64,
-    /// Step count actually observed.
-    pub observed_steps: u64,
-}
 
 /// Phase F.13 chain_10000 Exp 14 Substage 0 (2026-05-27): the coarse
 /// merge key that the planned `TomitaFrontierMap` would use. Drops the
@@ -1079,67 +1029,6 @@ pub struct TomitaKey {
     pub collection_depth: u8,
 }
 
-impl TomitaKeyProjection {
-    /// Reset to empty (called from walker reset).
-    pub fn clear(&mut self) {
-        self.per_step_distinct_keys.clear();
-        self.cumulative_cursors_ingested = 0;
-        self.cumulative_per_step_distinct_keys = 0;
-        self.max_cursors_per_step = 0;
-        self.max_distinct_keys_per_step = 0;
-        self.observed_steps = 0;
-    }
-
-    /// Begin a new step: clear the per-step distinct-key working set.
-    /// Call at the top of `step_fanout`.
-    pub fn begin_step(&mut self) {
-        self.per_step_distinct_keys.clear();
-    }
-
-    /// Observe one cursor with its TomitaKey + member-multiplicity
-    /// (1 for Concrete, N for a Cohort frame member-count). The
-    /// caller is expected to increment by the per-frame contribution.
-    pub fn observe(&mut self, key: TomitaKey, count: u64) {
-        if count == 0 {
-            return;
-        }
-        let entry = self.per_step_distinct_keys.entry(key).or_insert(0);
-        *entry = entry.saturating_add(count);
-        self.cumulative_cursors_ingested = self.cumulative_cursors_ingested.saturating_add(count);
-    }
-
-    /// End the current step: roll per-step distinct count into cumulative.
-    /// Call after every frame in `step_fanout` is processed.
-    pub fn end_step(&mut self) {
-        let distinct = self.per_step_distinct_keys.len() as u64;
-        if distinct == 0 {
-            return;
-        }
-        let cursors_this_step: u64 = self.per_step_distinct_keys.values().copied().sum();
-        self.cumulative_per_step_distinct_keys = self
-            .cumulative_per_step_distinct_keys
-            .saturating_add(distinct);
-        if cursors_this_step > self.max_cursors_per_step {
-            self.max_cursors_per_step = cursors_this_step;
-        }
-        if distinct > self.max_distinct_keys_per_step {
-            self.max_distinct_keys_per_step = distinct;
-        }
-        self.observed_steps = self.observed_steps.saturating_add(1);
-        self.per_step_distinct_keys.clear();
-    }
-
-    /// Average per-step merge factor = average bucket size under TomitaKey
-    /// keying. Higher = more reduction. Gate: ≥ 5.0 per the plan.
-    pub fn projected_dedup_rate(&self) -> f64 {
-        if self.cumulative_per_step_distinct_keys == 0 {
-            0.0
-        } else {
-            (self.cumulative_cursors_ingested as f64)
-                / (self.cumulative_per_step_distinct_keys as f64)
-        }
-    }
-}
 
 /// Phase F.13 chain_10000 Exp 15 Substage 0 (2026-05-27): CPS
 /// continuation record size projection. Counterfactual measurement of
@@ -2114,23 +2003,6 @@ impl fmt::Display for WalkerStats {
                 self.edge_kind_projection.projected_dedup_hit_ratio(),
             )?;
         }
-        // Phase F.13 chain_10000 Exp 14 Substage 0 (2026-05-27):
-        // TomitaKey projected merge gate. Shows the counterfactual
-        // per-step distinct-key count + merge factor under the planned
-        // TomitaFrontierMap keying.
-        if self.tomita_key_projection.observed_steps > 0 {
-            writeln!(f, "  tomita_key_projection (Exp 14 counterfactual):")?;
-            writeln!(
-                f,
-                "    observed_steps={} cumulative_cursors={} cumulative_distinct_keys={} avg_merge_factor={:.2}x max_cursors_per_step={} max_distinct_per_step={}",
-                self.tomita_key_projection.observed_steps,
-                self.tomita_key_projection.cumulative_cursors_ingested,
-                self.tomita_key_projection.cumulative_per_step_distinct_keys,
-                self.tomita_key_projection.projected_dedup_rate(),
-                self.tomita_key_projection.max_cursors_per_step,
-                self.tomita_key_projection.max_distinct_keys_per_step,
-            )?;
-        }
         // Phase F.13 chain_10000 Exp 15 Substage 0 (2026-05-27):
         // CPS continuation size projection. Shows the counterfactual
         // record size distribution + gate status.
@@ -3080,7 +2952,6 @@ mod tests {
             // Phase F.13 chain_10000 plan-amend Substage 0 (2026-05-26).
             edge_kind_projection: EdgeKindProjection::default(),
             // Phase F.13 chain_10000 Exp 14 Substage 0 (2026-05-27).
-            tomita_key_projection: TomitaKeyProjection::default(),
             // Phase F.13 chain_10000 Exp 15 Substage 0 (2026-05-27).
             continuation_size_projection: ContinuationSizeProjection::default(),
             // Phase F.13 chain_10000 Lazy redesign L0 (2026-05-27).

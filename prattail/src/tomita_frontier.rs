@@ -40,68 +40,6 @@ use std::sync::Arc;
 
 use rustc_hash::FxHashMap;
 
-/// ROOT-P Stage-0 split gate (throwaway diagnostic): cached env flags so
-/// the per-registration diagnostic costs one relaxed atomic load when off
-/// instead of a `std::env::var` syscall-ish lookup on every arc ingest.
-/// `GRIND_NODE=1` emits fresh/collide GSS-node + inner sppf_stack_id;
-/// `GRIND_NOMERGE=1` emits the anti-merge axis breakdown.
-#[inline]
-fn grind_node_enabled() -> bool {
-    use std::sync::OnceLock;
-    static FLAG: OnceLock<bool> = OnceLock::new();
-    *FLAG.get_or_init(|| std::env::var("GRIND_NODE").is_ok())
-}
-#[inline]
-fn grind_nomerge_enabled() -> bool {
-    use std::sync::OnceLock;
-    static FLAG: OnceLock<bool> = OnceLock::new();
-    *FLAG.get_or_init(|| std::env::var("GRIND_NOMERGE").is_ok())
-}
-
-/// ROOT-P Layer-S DIAGNOSTIC CONTROLS (throwaway; NOT a fix — these merge MORE
-/// aggressively and MAY drop genuine readings; used ONLY to identify which
-/// anti-merge axis is the `.*sep` multiplier, then reverted).
-///   GRIND_DROP_SPPF=1     — mask `sppf_stack_id` out of the merge disambiguator.
-///   GRIND_DROP_PROJDESC=1 — skip the `visited_proj_descriptors` merge compare.
-/// If the `@a<-@b&…` blow-up collapses to linear under DROP_SPPF, the residual
-/// is sppf-stack-driven (design's re-root could help IF made sound); if it
-/// collapses only under DROP_PROJDESC, the driver is the proj-descriptor
-/// cycle-defense set and the sppf-only re-root would NOT fix it.
-#[inline]
-fn grind_drop_sppf_enabled() -> bool {
-    use std::sync::OnceLock;
-    static FLAG: OnceLock<bool> = OnceLock::new();
-    *FLAG.get_or_init(|| std::env::var("GRIND_DROP_SPPF").is_ok())
-}
-#[inline]
-fn grind_drop_projdesc_enabled() -> bool {
-    use std::sync::OnceLock;
-    static FLAG: OnceLock<bool> = OnceLock::new();
-    *FLAG.get_or_init(|| std::env::var("GRIND_DROP_PROJDESC").is_ok())
-}
-/// GLL-FRONTIER Stage-0 GATE 0-C (throwaway diagnostic; `GRIND_G0C=1`): the
-/// DECISIVE tractability measurement. On each same-bucket no-merge, partition
-/// the divergence into Class-FOREST (additive/mergeable axes: `sppf_stack_id`,
-/// `sppf_collection_arena` content, `weight_*`, `lex_*`) vs Class-CONTROL
-/// (cycle-defense / cohort facts that MUST stay distinct: `cohort_origin`,
-/// `incoming_edge_stack` beyond the tip, `visited_dispatch`, `visited_recovery`,
-/// and — CRUCIALLY — any `visited_proj_descriptors` divergence that is NOT a
-/// pure `sppf_stack` echo). The CRUX sub-question: is the co-diverging
-/// `visited_proj_descriptors` (which `sole_true=0` from cycle-1 says ALWAYS
-/// accompanies `sppf_stack_id`) a pure ECHO of `sppf_stack_id`
-/// (`ProjDescriptorKey.sppf_stack == cursor.sppf_stack_id.0`, wpda_walker.rs
-/// :4956 → collapses when the SPPF stack collapses → MERGEABLE) or an
-/// INDEPENDENT control fact (gss_node / pos / cat_src / cur_bp diverge too →
-/// INTRACTABLE)? We answer it by PROJECTING each descriptor set with its
-/// `sppf_stack` field zeroed and comparing: equal-projected-but-unequal-raw ⟹
-/// pure echo. `forest_only` (Class-CONTROL identical) is the PASS predicate;
-/// PASS iff forest_only ≈ 100%.
-#[inline]
-fn grind_g0c_enabled() -> bool {
-    use std::sync::OnceLock;
-    static FLAG: OnceLock<bool> = OnceLock::new();
-    *FLAG.get_or_init(|| std::env::var("GRIND_G0C").is_ok())
-}
 
 use crate::automata::semiring::{LexProvenance, SemiringRef};
 use crate::dispatch_cohort::DispatchKey;
@@ -773,19 +711,7 @@ impl<W: SemiringRef> TomitaFrontierMap<W> {
                     // speedup is claimed here (the non-H3 Tomita-merge path
                     // it touches is itself a target for H3 absorption in the
                     // C1 work, see WALK-S3/S5).
-                    // ROOT-P diagnostic control: optionally mask sppf_stack_id
-                    // (disambiguator tuple position 0) to test whether it is the
-                    // `.*sep` multiplier. Byte-identical when GRIND_DROP_SPPF unset.
-                    ({
-                        let e = existing.merge_disambiguator();
-                        if grind_drop_sppf_enabled() {
-                            (e.1, e.2.clone(), e.3, e.4, e.5, e.6)
-                                == (new_disambig.1, new_disambig.2.clone(), new_disambig.3,
-                                    new_disambig.4, new_disambig.5, new_disambig.6)
-                        } else {
-                            e == new_disambig
-                        }
-                    })
+                    (existing.merge_disambiguator() == new_disambig)
                         && Arc::ptr_eq(
                             &existing.recovery_deltas,
                             &arc.recovery_deltas,
@@ -827,12 +753,8 @@ impl<W: SemiringRef> TomitaFrontierMap<W> {
                         // distinct cycle-defense `w` histories and MUST NOT
                         // merge (soundness — preserves the descriptor's
                         // progress discriminant through frontier aggregation).
-                        // ROOT-P diagnostic control: optionally skip this compare
-                        // (GRIND_DROP_PROJDESC) to test whether the descriptor set
-                        // is the `.*sep` multiplier. Byte-identical when unset.
-                        && (grind_drop_projdesc_enabled()
-                            || existing.visited_proj_descriptors
-                                == arc.visited_proj_descriptors)
+                        && existing.visited_proj_descriptors
+                            == arc.visited_proj_descriptors
                 }) {
                     // Aggregate weight: existing.weight ← existing.weight ⊕ arc.weight.
                     let existing = &mut node.arcs[idx];
@@ -866,202 +788,12 @@ impl<W: SemiringRef> TomitaFrontierMap<W> {
                         },
                     )
                 } else {
-                    // GRIND no-merge breakdown (gated on env GRIND_NOMERGE=1): when an
-                    // arc lands on an existing TomitaKey but no arc merges, record which
-                    // anti-merge axis diverged vs the bucket's FIRST arc. This localizes
-                    // the frontier fan-out multiplier for the ForRow/InputBind `.*sep`
-                    // structural-ambiguity blowup (analogue of the collection-fork probe
-                    // in docs/design/rhocalc-collection-fork-explosion.md §2.2). Throwaway.
-                    if grind_nomerge_enabled() {
-                        if let Some(first) = node.arcs.first() {
-                            let a = first.merge_disambiguator();
-                            let b = arc.merge_disambiguator();
-                            let mut which = Vec::new();
-                            if a.0 != b.0 { which.push("sppf_stack_id"); }
-                            if a.1 != b.1 { which.push("edge_stack"); }
-                            if a.2 != b.2 { which.push("cohort_origin"); }
-                            if a.3 != b.3 { which.push("lex_alt_idx"); }
-                            if a.4 != b.4 { which.push("weight_src_idx"); }
-                            if a.5 != b.5 { which.push("weight_rule_idx"); }
-                            if a.6 != b.6 { which.push("lex_fork_path.last"); }
-                            if !Arc::ptr_eq(&first.recovery_deltas, &arc.recovery_deltas) { which.push("recovery_deltas.ptr"); }
-                            if !Arc::ptr_eq(&first.binder_scope_marks, &arc.binder_scope_marks) { which.push("binder_scope_marks.ptr"); }
-                            if !Arc::ptr_eq(&first.optional_scope_marks, &arc.optional_scope_marks) { which.push("optional_scope_marks.ptr"); }
-                            if !(Arc::ptr_eq(&first.sppf_collection_arena, &arc.sppf_collection_arena) || *first.sppf_collection_arena == *arc.sppf_collection_arena) { which.push("arena.content"); }
-                            if first.visited_dispatch != arc.visited_dispatch { which.push("visited_dispatch"); }
-                            if first.visited_recovery != arc.visited_recovery { which.push("visited_recovery"); }
-                            if first.visited_proj_descriptors != arc.visited_proj_descriptors { which.push("visited_proj_descriptors"); }
-                            eprintln!("GRIND-NOMERGE bucket_arcs={} diverge={:?}", node.arcs.len(), which);
-                        }
-                    }
-                    // GLL-FRONTIER Stage-0 GATE 0-C (gated GRIND_G0C=1, throwaway):
-                    // the DECISIVE partition. For every same-bucket no-merge, classify
-                    // each diverging axis as Class-FOREST (mergeable) vs Class-CONTROL
-                    // (must-stay-distinct), and — the crux — decide whether the
-                    // `visited_proj_descriptors` divergence is a pure `sppf_stack` ECHO
-                    // (mergeable when the SPPF stack collapses) or an INDEPENDENT
-                    // control fact. Emits one `GLL-G0C` line per no-merge that a
-                    // post-processor tallies into forest_only %.  We compare against the
-                    // bucket's FIRST arc (same convention as GRIND-NOMERGE) so the
-                    // partition is per-(bucket, incoming-arc).
-                    if grind_g0c_enabled() {
-                        if let Some(first) = node.arcs.first() {
-                            let a = first.merge_disambiguator();
-                            let b = arc.merge_disambiguator();
-                            // ── Class-CONTROL axes (MUST stay distinct; if ANY diverge,
-                            //    this no-merge is NOT forest-only ⇒ the merge would be
-                            //    unsound at the cohort/cycle-defense layer).
-                            //    NB: incoming_edge_stack (disambig .1) is the FULL edge
-                            //    stack id; "beyond-tip" divergence is a control fact.
-                            let ctrl_edge_stack = a.1 != b.1;
-                            let ctrl_cohort_origin = a.2 != b.2;
-                            let ctrl_visited_dispatch =
-                                first.visited_dispatch != arc.visited_dispatch;
-                            let ctrl_visited_recovery =
-                                first.visited_recovery != arc.visited_recovery;
-                            // ── The visited_proj_descriptors ECHO test (THE CRUX).
-                            //    Project each descriptor set with `sppf_stack` zeroed;
-                            //    if the projected sets are EQUAL while the raw sets
-                            //    DIFFER, the whole divergence is a pure sppf_stack echo
-                            //    (collapses when sppf_stack_id collapses → MERGEABLE).
-                            //    If the projected sets DIFFER, some descriptor diverges
-                            //    on gss_node/pos/cat_src/cur_bp — an INDEPENDENT control
-                            //    fact (→ INTRACTABLE for a forest-only merge).
-                            let projset = |s: &im::OrdSet<crate::wpda_walker::ProjDescriptorKey>| {
-                                let mut v: Vec<(u32, u32, u16, u8)> = s
-                                    .iter()
-                                    .map(|d| (d.gss_node, d.pos, d.cat_src, d.cur_bp))
-                                    .collect();
-                                v.sort_unstable();
-                                v.dedup();
-                                v
-                            };
-                            let projdesc_raw_diff =
-                                first.visited_proj_descriptors != arc.visited_proj_descriptors;
-                            let projdesc_projected_diff = projset(&first.visited_proj_descriptors)
-                                != projset(&arc.visited_proj_descriptors);
-                            // pure echo: raw differs but projected (sppf_stack-stripped) equal.
-                            let projdesc_echo_only = projdesc_raw_diff && !projdesc_projected_diff;
-                            // control proj-desc fact: projected sets differ (gss_node/pos/… diverge).
-                            let projdesc_control = projdesc_projected_diff;
-                            // ── DECOMPOSE which descriptor FIELD makes the projected sets
-                            //    differ. For each candidate field we build a set that ALSO
-                            //    zeroes that field (on top of sppf_stack already zeroed); if
-                            //    zeroing it makes the two sets EQUAL, that field is (part of)
-                            //    the sole divergence axis. This distinguishes a `pos`-only
-                            //    (arguably position/forest-adjacent) divergence from a
-                            //    genuine `gss_node`/`cat_src`/`cur_bp` cycle-defense/category
-                            //    control fact.
-                            let (mut pd_gss, mut pd_pos, mut pd_cat, mut pd_bp) =
-                                (false, false, false, false);
-                            if projdesc_projected_diff {
-                                // zero gss_node too:
-                                let z_gss = |s: &im::OrdSet<crate::wpda_walker::ProjDescriptorKey>| {
-                                    let mut v: Vec<(u32, u16, u8)> =
-                                        s.iter().map(|d| (d.pos, d.cat_src, d.cur_bp)).collect();
-                                    v.sort_unstable();
-                                    v.dedup();
-                                    v
-                                };
-                                let z_pos = |s: &im::OrdSet<crate::wpda_walker::ProjDescriptorKey>| {
-                                    let mut v: Vec<(u32, u16, u8)> =
-                                        s.iter().map(|d| (d.gss_node, d.cat_src, d.cur_bp)).collect();
-                                    v.sort_unstable();
-                                    v.dedup();
-                                    v
-                                };
-                                let z_cat = |s: &im::OrdSet<crate::wpda_walker::ProjDescriptorKey>| {
-                                    let mut v: Vec<(u32, u32, u8)> =
-                                        s.iter().map(|d| (d.gss_node, d.pos, d.cur_bp)).collect();
-                                    v.sort_unstable();
-                                    v.dedup();
-                                    v
-                                };
-                                let z_bp = |s: &im::OrdSet<crate::wpda_walker::ProjDescriptorKey>| {
-                                    let mut v: Vec<(u32, u32, u16)> =
-                                        s.iter().map(|d| (d.gss_node, d.pos, d.cat_src)).collect();
-                                    v.sort_unstable();
-                                    v.dedup();
-                                    v
-                                };
-                                // A field is "the/an axis" if additionally zeroing it makes
-                                // the (sppf_stack-already-zeroed) sets equal.
-                                pd_gss = z_gss(&first.visited_proj_descriptors)
-                                    == z_gss(&arc.visited_proj_descriptors);
-                                pd_pos = z_pos(&first.visited_proj_descriptors)
-                                    == z_pos(&arc.visited_proj_descriptors);
-                                pd_cat = z_cat(&first.visited_proj_descriptors)
-                                    == z_cat(&arc.visited_proj_descriptors);
-                                pd_bp = z_bp(&first.visited_proj_descriptors)
-                                    == z_bp(&arc.visited_proj_descriptors);
-                            }
-                            // ── FOREST axes present? (informational)
-                            let forest_sppf = a.0 != b.0;
-                            let forest_arena = !(Arc::ptr_eq(
-                                &first.sppf_collection_arena,
-                                &arc.sppf_collection_arena,
-                            ) || *first.sppf_collection_arena
-                                == *arc.sppf_collection_arena);
-                            let forest_lex = a.3 != b.3 || a.6 != b.6;
-                            let forest_weight = a.4 != b.4 || a.5 != b.5;
-                            // ── FOREST-ONLY = no CONTROL axis diverges (incl. the
-                            //    proj-desc control case). This is the PASS predicate.
-                            let any_control = ctrl_edge_stack
-                                || ctrl_cohort_origin
-                                || ctrl_visited_dispatch
-                                || ctrl_visited_recovery
-                                || projdesc_control;
-                            let forest_only = !any_control;
-                            eprintln!(
-                                "GLL-G0C forest_only={} | ctrl[edge={} cohort={} vdisp={} vrec={} projdesc_control={}] | projdesc[raw_diff={} echo_only={}] | pdfield[gss={} pos={} cat={} bp={}] | forest[sppf={} arena={} lex={} weight={}]",
-                                forest_only as u8,
-                                ctrl_edge_stack as u8,
-                                ctrl_cohort_origin as u8,
-                                ctrl_visited_dispatch as u8,
-                                ctrl_visited_recovery as u8,
-                                projdesc_control as u8,
-                                projdesc_raw_diff as u8,
-                                projdesc_echo_only as u8,
-                                pd_gss as u8,
-                                pd_pos as u8,
-                                pd_cat as u8,
-                                pd_bp as u8,
-                                forest_sppf as u8,
-                                forest_arena as u8,
-                                forest_lex as u8,
-                                forest_weight as u8,
-                            );
-                        }
-                    }
-                    // ROOT-P Stage-0 split gate (gated GRIND_NODE=1, throwaway):
-                    // emit the enclosing GSS node + the arc's inner sppf_stack_id
-                    // on every COLLISION (same TomitaKey bucket, no merge). Lets a
-                    // post-processor confirm whether `<=` spreads arcs across MANY
-                    // distinct `node`s (CLASS-1 multiple-enclosing-rule) vs `<-`
-                    // concentrating at ONE `node` and diverging only on the INNER
-                    // sppf_stack_id (CLASS-2). See ROOT_P_DESIGN_CYCLE2.md Stage 0.
-                    if grind_node_enabled() {
-                        eprintln!(
-                            "GRIND-NODE collide node={:?} sppf_stack_id={:?} pos={} depth={}",
-                            key.node, arc.sppf_stack_id, key.pos, key.collection_depth
-                        );
-                    }
                     node.push_arc(arc, gen);
                     self.dedup_hits = self.dedup_hits.saturating_add(1);
                     (node.arc_count(), ArcMergeOutcome::Pushed)
                 }
             },
             None => {
-                // ROOT-P Stage-0 split gate (gated GRIND_NODE=1, throwaway):
-                // emit each FRESH TomitaKey bucket (a new enclosing GSS node
-                // for this state/pos/depth). The count of distinct `node`
-                // values a parse allocates is the CLASS-1-vs-CLASS-2 signal.
-                if grind_node_enabled() {
-                    eprintln!(
-                        "GRIND-NODE fresh node={:?} sppf_stack_id={:?} pos={} depth={}",
-                        key.node, arc.sppf_stack_id, key.pos, key.collection_depth
-                    );
-                }
                 let stamp = self.next_insertion_stamp;
                 self.next_insertion_stamp = self.next_insertion_stamp.saturating_add(1);
                 let node = FrontierNode::new(shell_if_new, arc, gen, stamp);
