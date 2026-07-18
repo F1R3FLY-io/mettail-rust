@@ -92,7 +92,10 @@ pub enum AutomatonUnsupported {
 }
 
 /// The `locally_free` index set `indices` as a rhoapi bit vector (empty when none).
-fn bits(indices: &[usize]) -> Vec<u8> {
+/// `pub(crate)`: shared with the Track-B naive baseline emitter (`rho_net_naive_kt`,
+/// feature `bench-naive-baseline`) so both emitters compute the De Bruijn frame
+/// identically.
+pub(crate) fn bits(indices: &[usize]) -> Vec<u8> {
     if indices.is_empty() {
         Vec::new()
     } else {
@@ -143,7 +146,12 @@ fn for_receive(channel: &str, body: Par, body_free: &[usize]) -> Par {
 /// reducing to the M1/M2a positional send. Built manually (NOT `term_contract_call`, which
 /// hardcodes empty `locally_free`): the σ args reference BoundVars, so the send is free in
 /// `{arity-1-p : p ∈ first_occ}`.
-fn build_accept_send(
+/// `pub(crate)`: the Track-B naive baseline emitter (`rho_net_naive_kt`, feature
+/// `bench-naive-baseline`) calls THIS function for its innermost accept, so the
+/// naive scheme's accept send is byte-identical to the optimized network's by
+/// construction — the σ-receivers / firing contracts downstream are shared
+/// unchanged between the two emitters.
+pub(crate) fn build_accept_send(
     accept_channel: &str,
     out_channel: &str,
     arity: usize,
@@ -207,7 +215,10 @@ fn wrap_children(capture_root: &str, op: &str, arity: usize, accept: Par) -> Par
 /// `cap:` COLLAPSE channel (a nested pattern's leaves live at arbitrary DFS paths), binding
 /// `⟦subtree⟧`. `capture_channels[i]` is bound as `BoundVar(k-1-i)`, so the DFS-first leaf gets
 /// the highest De Bruijn index — matching [`build_accept_send`]'s `σ_d = BoundVar(k-1-p)`.
-fn wrap_capture_chain(capture_channels: &[String], accept: Par) -> Par {
+/// `pub(crate)`: the Track-B naive baseline emitter (`rho_net_naive_kt`, feature
+/// `bench-naive-baseline`) wraps its Var-leaf captures through THIS function, so its
+/// capture ABI (channel order + De Bruijn frame) is the automaton's by construction.
+pub(crate) fn wrap_capture_chain(capture_channels: &[String], accept: Par) -> Par {
     let k = capture_channels.len();
     let mut body = accept;
     let mut body_free: Vec<usize> = (0..k).collect();
@@ -222,9 +233,12 @@ fn wrap_capture_chain(capture_channels: &[String], accept: Par) -> Par {
 /// One nested App node the automaton must DESCEND into: its `loc:` head-tag channel and the
 /// constructor `op` whose tag the deep `Match` dispatches on (the reified τ symbol inspection at
 /// a deep position of the set-automaton papers).
-struct Descent {
-    loc_channel: String,
-    op: String,
+/// `pub(crate)`: the Track-B naive baseline emitter (`rho_net_naive_kt`, feature
+/// `bench-naive-baseline`) consumes the SAME descent schedule (as pre-order tag
+/// receives instead of `Match` cases).
+pub(crate) struct Descent {
+    pub(crate) loc_channel: String,
+    pub(crate) op: String,
 }
 
 /// DFS a nested pattern subtree rooted at `state` — whose head tag is published on `loc_channel`
@@ -233,7 +247,10 @@ struct Descent {
 /// NAME (for the linearity check). A Var leaf contributes a capture; an App node contributes a
 /// descent and recurses left-to-right, so the capture order is the pattern's first-occurrence
 /// (left-to-right) variable order — the σ-receiver's formal order.
-fn collect_nested_schedule(
+/// `pub(crate)`: the Track-B naive baseline emitter (`rho_net_naive_kt`, feature
+/// `bench-naive-baseline`) collects its per-entry schedule through THIS function, so
+/// its descent/capture order is the automaton's by construction.
+pub(crate) fn collect_nested_schedule(
     view: &SetAutomatonView<'_, String>,
     state: StateId,
     loc_channel: &str,

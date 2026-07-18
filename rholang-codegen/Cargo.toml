@@ -24,6 +24,16 @@ models = { workspace = true }
 # acyclic (dovetail does not depend on rholang-codegen).
 dovetail = { package = "dovetail", path = "../dovetail" }
 
+[features]
+# BENCHMARK-ONLY QUARANTINE (Track B): the naive Knotted-Topoi Appendix-A baseline
+# emitter (`rho_net_naive_kt`) — a per-rule, unshared receiver scheme emitted from
+# the SAME `InRhoMatchingRuleset` as the optimized interned-DAG network, so the two
+# can be benchmarked against each other at identical spread/accept interfaces.
+# Never enabled by default; no production entry point or macro-generated code
+# references the gated module, so a default build is byte-identical with or
+# without this table.
+bench-naive-baseline = []
+
 [dev-dependencies]
 # Property-based tests of the Stage 1 term-spread encoding (arbitrary ground terms
 # must spread to exactly one head-tag send per node on the derived location channel).

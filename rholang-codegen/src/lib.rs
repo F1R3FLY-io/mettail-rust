@@ -87,6 +87,12 @@ pub mod need;
 pub mod rho_net;
 pub mod rho_net_automaton;
 pub mod rho_net_lower;
+/// Track B (BENCHMARK-ONLY, quarantined): the naive Knotted-Topoi Appendix-A
+/// baseline emitter — compiled ONLY under the `bench-naive-baseline` feature.
+/// No production entry point or macro-generated code references it; a default
+/// build contains no trace of the module.
+#[cfg(feature = "bench-naive-baseline")]
+pub mod rho_net_naive_kt;
 pub mod rho_net_ruleset;
 pub mod rho_net_subst_trs;
 pub mod validate;
@@ -134,6 +140,11 @@ pub use rho_net::{
 pub use rho_net_automaton::{
     automaton_receiver_network_par, multi_pattern_receiver_network_par, AutomatonAcceptTarget,
     AutomatonUnsupported,
+};
+#[cfg(feature = "bench-naive-baseline")]
+pub use rho_net_naive_kt::{
+    naive_kt_contextual_match_call_par, naive_kt_entry_receiver_par, naive_kt_match_call_par,
+    NaiveGuardEncoding, NaiveKtContextualUnsupported, NaiveKtUnsupported,
 };
 pub use rho_net_lower::{
     ac_bag_pattern, ac_carrier_channel, ac_collection_pattern, ac_contract_call,

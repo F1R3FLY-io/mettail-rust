@@ -213,6 +213,12 @@ oracle-rhocalc = ["rhocalc-runtime"]
 # the production boundary is `ValidatedRhoProgram` / `PlannedRhoBackend`, not
 # source text that will be reparsed.
 source-oracle = []
+# BENCHMARK-ONLY pass-through (Track B): forwards the naive Knotted-Topoi
+# Appendix-A baseline emitter quarantine feature to `rholang-codegen`
+# (`rho_net_naive_kt`) so Track-B benchmarks in this crate can drive the naive
+# emitter against a live RhoRuntime. NO runtime code is gated on it — it only
+# re-exposes the codegen module; production entry points never reference it.
+bench-naive-baseline = ["mettail-rholang-codegen/bench-naive-baseline"]
 
 [dependencies]
 mettail-rholang-codegen = { package = "rholang-codegen", path = "../rholang-codegen" }
