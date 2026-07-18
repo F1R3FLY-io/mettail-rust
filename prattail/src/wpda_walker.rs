@@ -12668,16 +12668,24 @@ where
     /// the ledger either way.
     const CGLL_KA_HOP_PLACEMENT_ONLY: bool = true;
 
-    /// ROOT-P Phase-2 k-best extraction flip gate (design of record:
-    /// `scratchpad/zz_probes/kbest_extraction_plan.md` §5.1; red-team
-    /// verdicts: `kbest_extraction_redteam.md`). `false` = the routed call
-    /// sites (`cgll_resolve_binarized`, the single-result arm of
-    /// `realize_root_to_terms_with_weights`'s BIN branch, prefix-trailing)
-    /// take today's full-family/election paths byte-identically; `true`
-    /// (scratch-only — NEVER committed) routes them through
-    /// `cgll_kbest_next`. S2 landed the single-result routing;
-    /// BoundedEnumeration stays on the family path until S3.
-    pub(crate) const CGLL_KBEST_EXTRACTION_ENABLED: bool = false;
+    /// ROOT-P Phase-4 k-best extraction gate — **FLIPPED 2026-07-17**
+    /// (design of record: `scratchpad/zz_probes/kbest_extraction_plan.md`
+    /// §5.1; red-team verdicts + the S1-S3 stage reviews:
+    /// `kbest_extraction_redteam.md`). `true` = the extractor
+    /// (`cgll_kbest_next`) is the SOLE LIVE PATH for every routed surface:
+    /// resolve (Election k=1 Unbounded; Weight k=n+1 under
+    /// `AmbiguityBudget`/`BeamSize`, R-17 Option-1 fenced),
+    /// `realize_root_to_terms_with_weights`'s BIN branch
+    /// (SingleResultElection k=1; BoundedEnumeration Weight k=limit with
+    /// the A4(ii) padding), and the prefix-trailing salvage (R-8 elected).
+    /// The `false` branches are RETIRED-IN-PLACE — kept compiled per the
+    /// plan §5.2 disposition table until the Fix-D retirement commit, plus
+    /// the corruption-only family fallback behind `kbest_root_empty`,
+    /// which stays live by design. Flip receipts: `logs_kbest_s4/`
+    /// (workspace suite, ladder n=2..14, the 92-row bank vs the s0
+    /// baseline); the committed regression gate is
+    /// `kbest_flip_regression_gate_counter_budgets`.
+    pub(crate) const CGLL_KBEST_EXTRACTION_ENABLED: bool = true;
 
     /// Realize exactly the CHOSEN derivation (one packing per node from
     /// `cgll_pure_ktuple`'s election). `None` on any gap (missing choice /
@@ -22692,6 +22700,24 @@ mod tests {
             }
         }
     }
+    /// Injective ambiguity composers for the Stage-G regression gate:
+    /// per-path values are binary numbers, so a depth-n chain carries
+    /// exactly 2^n DISTINCT fingerprints (per-node dedup cannot collapse
+    /// them — the family path would genuinely materialize the exponent).
+    fn kbest_act_double(b: &mut SemanticBuilder, args: Vec<ActionArg>) {
+        if let [ActionArg::Term { value, .. }] = &args[..] {
+            if let Some(x) = value.downcast_ref::<i64>() {
+                b.push_term::<i64>(2 * x);
+            }
+        }
+    }
+    fn kbest_act_double_plus(b: &mut SemanticBuilder, args: Vec<ActionArg>) {
+        if let [ActionArg::Term { value, .. }] = &args[..] {
+            if let Some(x) = value.downcast_ref::<i64>() {
+                b.push_term::<i64>(2 * x + 1);
+            }
+        }
+    }
     /// Refutes exactly the (1, 3) combo — the S3 raw-order shape (the
     /// hunt must advance in the family's flats-outer/combos-inner order,
     /// not child-order lex, to land on the family's first survivor).
@@ -22802,6 +22828,18 @@ mod tests {
         expected_input_cats: &[],
         output_cat: 1,
     };
+    static KBEST_ACT_DOUBLE: ActionEntry = ActionEntry {
+        action_fn: kbest_act_double,
+        arity: 1,
+        expected_input_cats: &[],
+        output_cat: 1,
+    };
+    static KBEST_ACT_DOUBLE_PLUS: ActionEntry = ActionEntry {
+        action_fn: kbest_act_double_plus,
+        arity: 1,
+        expected_input_cats: &[],
+        output_cat: 1,
+    };
     static KBEST_ACT_COLL_SUM: ActionEntry = ActionEntry {
         action_fn: kbest_act_coll_sum,
         arity: 1,
@@ -22851,6 +22889,8 @@ mod tests {
                 (1, 7) => Some(&KBEST_ACT_PUSH_3),
                 (1, 8) => Some(&KBEST_ACT_REFUSE_LT_3),
                 (1, 9) => Some(&KBEST_ACT_REFUSE_PAIR_1_3),
+                (1, 10) => Some(&KBEST_ACT_DOUBLE),
+                (1, 11) => Some(&KBEST_ACT_DOUBLE_PLUS),
                 (3, 0) => Some(&KBEST_ACT_PUSH_7),
                 (5, 8) => Some(&KBEST_ACT_PUSH_20),
                 (5, 9) => Some(&KBEST_ACT_WRAP),
@@ -22943,13 +22983,132 @@ mod tests {
         (out, state)
     }
 
-    /// S1 dormancy pin: the extractor gate is OFF (never commit `true`).
+    /// Phase-4 flip pin (2026-07-17, ROOT-P k-best campaign): the gate is
+    /// ON — the extractor is the sole live path for the routed surfaces.
+    /// This test was `kbest_const_is_off` through S1-S3 (the Phase-2
+    /// dormancy protection; it correctly failed inside every scratch-ON
+    /// window, marking the window's signature); it now protects the
+    /// FLIPPED state — an accidental revert of the const fails the suite
+    /// loudly here first.
     #[test]
-    fn kbest_const_is_off() {
+    fn kbest_const_is_on() {
         assert!(
-            !KbestWalker::CGLL_KBEST_EXTRACTION_ENABLED,
-            "CGLL_KBEST_EXTRACTION_ENABLED must stay false through S1-S3 (flip is Phase 4)"
+            KbestWalker::CGLL_KBEST_EXTRACTION_ENABLED,
+            "CGLL_KBEST_EXTRACTION_ENABLED was production-flipped 2026-07-17 (ROOT-P \
+             Phase 4); reverting it reinstates the measured-exponential family paths"
         );
+    }
+
+    /// Phase-4 Stage-G COMMITTED REGRESSION GATE (approved-plan Phase-4
+    /// item 2; counter-based, NOT wall-clock): a depth-48 value-distinct
+    /// ambiguous chain (2^48 ≈ 2.8·10^14 distinct readings — full-family
+    /// materialization is unrunnable) must extract with LINEAR pop counts.
+    ///
+    /// Deterministic layer (direct sessions, exact counters): Election k=1
+    /// and Weight k=3 pop budgets at 16×/32× per level — generous versus
+    /// the measured linear actuals but 11 orders of magnitude under the
+    /// family's candidate space, so the gate discriminates collapse
+    /// re-introduction without being brittle to legitimate constant-factor
+    /// changes; truncations/root_empty/dup_flat pinned 0 on the
+    /// within-cap shapes (R-5's real form).
+    ///
+    /// Loud layer (the ROUTED public surfaces): the same forest through
+    /// `realize_root_to_terms_with_weights` under BOTH routed modes — if
+    /// someone reinstates family materialization on those paths (gate
+    /// removal, arm bypass), these calls stop returning and the suite's
+    /// slow-timeout kills the test loudly.
+    ///
+    /// Stepping-plateau note (recorded per the Stage-G mandate): a
+    /// `max_U_per_pos`-vs-plateau assertion needs a DRIVEN parse (the
+    /// stepping loop), which the scripted-forest layer cannot reach
+    /// cheaply — the languages-level wall gate lives in the roundtrip
+    /// suites at depth 3 post-cap-lift.
+    #[test]
+    fn kbest_flip_regression_gate_counter_budgets() {
+        const DEPTH: usize = 48;
+        let mut walker = kbest_walker(true);
+        // Base: value 2 (never refused by (1,4)).
+        let mut prev = walker.sppf.intern_symbol(100 | CGLL_BIN_TAG, 0, 1);
+        let base = walker
+            .sppf
+            .intern_packing(kbest_rule(0, 1), Vec::new(), lex(0.125, 0, 1));
+        walker.sppf.link_packing_to_symbol(prev, base);
+        for i in 1..=DEPTH {
+            let s = walker
+                .sppf
+                .intern_symbol((100 + i as u32) | CGLL_BIN_TAG, 0, 1);
+            // Two feasible readings per level with INJECTIVE value
+            // composition (2x | 2x+1): path values are binary numbers, so
+            // distinct fingerprints genuinely double per level — 2^DEPTH
+            // total, un-collapsible by any dedup.
+            let pk_w = walker
+                .sppf
+                .intern_packing(kbest_rule(1, 10), vec![prev], lex(0.125, 1, 10));
+            let pk_r = walker
+                .sppf
+                .intern_packing(kbest_rule(1, 11), vec![prev], lex(0.25, 1, 11));
+            walker.sppf.link_packing_to_symbol(s, pk_w);
+            walker.sppf.link_packing_to_symbol(s, pk_r);
+            prev = s;
+        }
+        let root = prev;
+        // ── Deterministic layer: Election k=1. ──
+        let all_double: i64 = 2i64 << DEPTH; // base 2 doubled DEPTH times
+        let (elected, st_e) = kbest_extract_i64(&walker, root, KbestOrderKey::Election, 1);
+        assert_eq!(
+            elected.first().map(|(v, _)| *v),
+            Some(all_double),
+            "the all-double chain (kt-cheapest at every level) is elected"
+        );
+        let budget_e = (16 * (DEPTH as u64 + 1)).max(64);
+        assert!(
+            st_e.stats.pops >= DEPTH as u64 && st_e.stats.pops <= budget_e,
+            "Election pops must stay LINEAR in depth: actual={} budget={budget_e} \
+             (family space = 2^{DEPTH}); a blowout here means family \
+             materialization returned to the extraction core",
+            st_e.stats.pops
+        );
+        assert_eq!(st_e.stats.truncations, 0);
+        assert_eq!(st_e.stats.root_empty, 0);
+        assert_eq!(st_e.stats.dup_flat_occurrence, 0);
+        // ── Deterministic layer: Weight k=3 (the enumeration shape). ──
+        let (all3, st_w) = kbest_extract_i64(&walker, root, KbestOrderKey::Weight, 3);
+        assert_eq!(all3.len(), 3);
+        assert_eq!(
+            all3.first().map(|(v, _)| *v),
+            Some(all_double),
+            "W-min = the all-double chain"
+        );
+        let budget_w = (32 * (DEPTH as u64 + 1)).max(128);
+        assert!(
+            st_w.stats.pops <= budget_w,
+            "Weight k=3 pops must stay linear: actual={} budget={budget_w}",
+            st_w.stats.pops
+        );
+        // Within-cap truncation-zero (R-5's real form): distinct 4 ≤ k=8.
+        let s2 = walker.sppf.intern_symbol(102 | CGLL_BIN_TAG, 0, 1);
+        let (four, st_s2) = kbest_extract_i64(&walker, s2, KbestOrderKey::Weight, 8);
+        assert_eq!(four.len(), 4, "depth-2 sub-chain has 2^2 distinct readings");
+        assert!(!KbestWalker::cgll_kbest_session_truncated(&st_s2));
+        // ── Loud layer: the ROUTED public surfaces (flip-gated arms). ──
+        let single = walker.realize_root_to_terms_with_weights(
+            root,
+            Some(1),
+            RealizeRequestMode::SingleResultElection,
+        );
+        assert_eq!(single.len(), 1);
+        assert_eq!(
+            single[0].0.downcast_ref::<i64>().copied(),
+            Some(all_double),
+            "routed single-result surface elects the same reading"
+        );
+        let bounded = walker.realize_root_to_terms_with_weights(
+            root,
+            Some(3),
+            RealizeRequestMode::BoundedEnumeration,
+        );
+        assert_eq!(bounded.len(), 3);
+        assert_eq!(bounded[0].0.downcast_ref::<i64>().copied(), Some(all_double));
     }
 
     /// Shared two-level ambiguous forest: root(cat 1) = PAIR[A, B] |
