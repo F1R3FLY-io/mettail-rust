@@ -34,8 +34,6 @@ use crate::gen::native::native_type_to_string;
 use crate::gen::term_ops::subst::{rule_to_variant_kind, FieldInfo, VariantKind};
 use crate::gen::{generate_literal_label, generate_var_label};
 use mettail_ast::language::LanguageDef;
-use mettail_ast::grammar::GrammarRule;
-use std::collections::{HashMap, HashSet};
 
 use proc_macro2::TokenStream;
 use quote::quote;
@@ -67,196 +65,6 @@ fn category_has_binders(category: &syn::Ident, language: &LanguageDef) -> bool {
     // Also, every category has auto-generated Lam/MLam binders,
     // but those are internal — check if the category has rules that
     // EXPLICITLY bind variables (user-defined binders).
-    false
-}
-
-/// A flattened surface token, used only for operator-shape / projection
-/// classification of a single rule (see [`is_cross_category_ambiguous`]).
-enum SurfaceTok {
-    /// A quoted literal terminal in the DSL: `"+"`, `"bitnot"`, `"("`, `"error"`, …
-    Term(String),
-    /// A recursive operand whose declared category is a language category.
-    Operand(syn::Ident),
-    /// Anything that disqualifies a simple-operator shape: a binder/guard/body
-    /// param, a pattern-op (`#sep`/`#opt`/`#map`/`#zip`), a collection, or a
-    /// literal-typed nonterminal (`Var`/`Integer`/`Boolean`/…).
-    Opaque,
-}
-
-/// Flatten a rule's concrete surface. Prefers the judgement-style
-/// `syntax_pattern` (which carries operator literals IN POSITION); falls back to
-/// the old-BNF `items` list. `SyntaxExpr::Param` names are resolved to their
-/// category through `term_context` (only `TermParam::Simple` params are
-/// operands; abstractions / guards / optionals are `Opaque`).
-fn rule_surface_tokens(rule: &GrammarRule, language: &LanguageDef) -> Vec<SurfaceTok> {
-    use mettail_ast::grammar::{GrammarItem, NonTerminalKind, SyntaxExpr, TermParam};
-    use mettail_ast::types::TypeExpr;
-    let is_cat = |id: &syn::Ident| language.types.iter().any(|t| t.name == *id);
-
-    if let Some(sp) = &rule.syntax_pattern {
-        let mut param_cat: HashMap<String, syn::Ident> = HashMap::new();
-        if let Some(tc) = &rule.term_context {
-            for p in tc {
-                if let TermParam::Simple { name, ty } = p {
-                    if let TypeExpr::Base(cat) = ty {
-                        param_cat.insert(name.to_string(), cat.clone());
-                    }
-                }
-            }
-        }
-        return sp
-            .iter()
-            .map(|e| match e {
-                SyntaxExpr::Literal(s) => SurfaceTok::Term(s.clone()),
-                SyntaxExpr::Param(id) => match param_cat.get(&id.to_string()) {
-                    Some(cat) if is_cat(cat) => SurfaceTok::Operand(cat.clone()),
-                    _ => SurfaceTok::Opaque,
-                },
-                SyntaxExpr::Op(_) => SurfaceTok::Opaque,
-            })
-            .collect();
-    }
-
-    rule.items
-        .iter()
-        .map(|it| match it {
-            GrammarItem::Terminal(s) => SurfaceTok::Term(s.clone()),
-            GrammarItem::NonTerminal { ident, kind: NonTerminalKind::Category }
-                if is_cat(ident) =>
-            {
-                SurfaceTok::Operand(ident.clone())
-            },
-            _ => SurfaceTok::Opaque,
-        })
-        .collect()
-}
-
-/// The operator terminal of `rule` IFF it has an infix / unary-prefix / postfix
-/// shape over category operands. Function-call casts (`"float" "(" a ")"`),
-/// delimited forms (`"|" s "|"`, `Name "[" Proc "]"`), binders, collections and
-/// atomics all return `None`.
-fn rule_operator_terminal(rule: &GrammarRule, language: &LanguageDef) -> Option<String> {
-    use SurfaceTok::{Operand, Term};
-    match rule_surface_tokens(rule, language).as_slice() {
-        [Operand(_), Term(op), Operand(_)] => Some(op.clone()), // infix
-        [Term(op), Operand(_)] => Some(op.clone()),             // unary prefix
-        [Operand(_), Term(op)] => Some(op.clone()),             // postfix
-        _ => None,
-    }
-}
-
-/// A *syntaxless projection*: a single category operand, no terminals, mapping
-/// `src -> rule.category`. E.g. `IntToBigRat . i:Int |- i : BigRat` → (Int, BigRat).
-fn rule_syntaxless_projection(
-    rule: &GrammarRule,
-    language: &LanguageDef,
-) -> Option<(syn::Ident, syn::Ident)> {
-    match rule_surface_tokens(rule, language).as_slice() {
-        [SurfaceTok::Operand(src)] if *src != rule.category => {
-            Some((src.clone(), rule.category.clone()))
-        },
-        _ => None,
-    }
-}
-
-/// A nullary keyword leaf: a single terminal, no operands.
-/// E.g. `Err . |- "error" : Int` → ("error", Int).
-fn rule_nullary_leaf(rule: &GrammarRule, language: &LanguageDef) -> Option<(String, syn::Ident)> {
-    match rule_surface_tokens(rule, language).as_slice() {
-        [SurfaceTok::Term(s)] => Some((s.clone(), rule.category.clone())),
-        _ => None,
-    }
-}
-
-/// Spec-derived predicate (2026-07-17): is `cat` *cross-category-ambiguous*?
-///
-/// `cat` is ambiguous iff it OWNS an operator production (infix / unary-prefix /
-/// postfix over category operands) whose operator terminal is ALSO owned by a
-/// production of a DIFFERENT category `d`, AND `cat` and `d` lie in the SAME
-/// connected component of the undirected "cross-projection" graph — whose edges
-/// are (a) syntaxless projections and (b) shared nullary-leaf terminals — so a
-/// `cat`-operand can be re-typed as a `d`-operand (directly, through a common
-/// injection hub such as `Proc`, or because the two share a nullary leaf like
-/// `error`). Such a category's parenthesis-minimal operator chains admit
-/// exponentially many well-typed derivations (the walker's ROOT-P ~38x/level
-/// cross-category axis), so its generated roundtrip terms are capped at depth 2
-/// rather than depth 3.
-///
-/// CONSERVATIVE BIAS (deliberate): connectivity is undirected and transitive, so
-/// `cat` is flagged whenever ANY shared operator connects it — even indirectly
-/// through a shared injection target — to another owner. A false POSITIVE costs
-/// one category one level of generation depth (2 vs 3); a false NEGATIVE
-/// re-introduces the ~9s BigRat::parse blow-up and the 300s proptest timeout. We
-/// therefore err toward flagging. (Cross-checked by hand against Calculator /
-/// RhoCalc / Lambda / Ambient / GuardedRho.)
-fn is_cross_category_ambiguous(cat: &syn::Ident, language: &LanguageDef) -> bool {
-    // (1) operator terminal -> set of owning categories.
-    let mut op_owners: HashMap<String, HashSet<String>> = HashMap::new();
-    for rule in &language.terms {
-        if let Some(op) = rule_operator_terminal(rule, language) {
-            op_owners.entry(op).or_default().insert(rule.category.to_string());
-        }
-    }
-
-    // (2) union-find over categories: union each syntaxless projection AND each
-    // shared nullary-leaf terminal.
-    let mut parent: HashMap<String, String> = HashMap::new();
-    for t in &language.types {
-        parent.insert(t.name.to_string(), t.name.to_string());
-    }
-    fn find(parent: &mut HashMap<String, String>, x: &str) -> String {
-        let mut root = x.to_string();
-        while let Some(p) = parent.get(&root) {
-            if *p == root {
-                break;
-            }
-            root = p.clone();
-        }
-        let mut cur = x.to_string();
-        while cur != root {
-            let next = parent.get(&cur).cloned().unwrap_or_else(|| root.clone());
-            parent.insert(cur, root.clone());
-            cur = next;
-        }
-        root
-    }
-    fn union(parent: &mut HashMap<String, String>, a: &str, b: &str) {
-        let (ra, rb) = (find(parent, a), find(parent, b));
-        if ra != rb {
-            parent.insert(ra, rb);
-        }
-    }
-    for rule in &language.terms {
-        if let Some((src, dst)) = rule_syntaxless_projection(rule, language) {
-            union(&mut parent, &src.to_string(), &dst.to_string());
-        }
-    }
-    let mut leaf_cats: HashMap<String, Vec<String>> = HashMap::new();
-    for rule in &language.terms {
-        if let Some((term, c)) = rule_nullary_leaf(rule, language) {
-            leaf_cats.entry(term).or_default().push(c.to_string());
-        }
-    }
-    for cats in leaf_cats.values() {
-        for w in cats.windows(2) {
-            union(&mut parent, &w[0], &w[1]);
-        }
-    }
-
-    // (3) cat is ambiguous iff it owns a shared operator whose OTHER owner is
-    // cross-projection-connected to cat.
-    let cat_s = cat.to_string();
-    let cat_root = find(&mut parent, &cat_s);
-    for owners in op_owners.values() {
-        if !owners.contains(&cat_s) {
-            continue;
-        }
-        for other in owners {
-            if other != &cat_s && find(&mut parent, other) == cat_root {
-                return true;
-            }
-        }
-    }
     false
 }
 
@@ -1642,17 +1450,15 @@ fn generate_proptest_blocks(language: &LanguageDef, out: &mut String) {
         // tests (debug/display/clone) stay, so `arb_<cat>` keeps a referent.
         let is_runtime_only = crate::gen::category_is_runtime_only_native(&lang_type.name, language);
 
-        // Surgical generation depth for the display->parse roundtrip (test 4):
-        // depth 2 ONLY for cross-category-ambiguous categories (a shared
-        // operator terminal lets operands cross-project, so a k-operator chain
-        // has exponentially many parses — the ROOT-P axis); depth 3 otherwise.
-        // Replaces the prior blanket depth-2, which needlessly shallowed every
-        // category — including grammars that never hit the cross-category axis.
-        // `is_cross_category_ambiguous` deliberately OVER-flags (a false negative
-        // re-introduces the ~9s reparse timeout; a false positive costs one
-        // nesting level for one category).
-        let roundtrip_depth =
-            if is_cross_category_ambiguous(&lang_type.name, language) { 2 } else { 3 };
+        // Generation depth for the display->parse roundtrip (test 4): uniform
+        // depth 3 for EVERY category. The former per-category depth-2 cap for
+        // cross-category-ambiguous categories is retired: the walker's k-best
+        // extraction (ROOT-P) elects derivations in weight order instead of
+        // materializing the exponential cross-category parse family, so even
+        // maximally-ambiguous shared-operator chains at depth 3 parse in
+        // milliseconds (acceptance receipts:
+        // `scratchpad/zz_probes/logs_kbest_s4/`).
+        let roundtrip_depth = 3;
 
         // Test 1: Generated terms can be Debug-formatted without panic
         out.push_str(&format!(
@@ -1693,38 +1499,30 @@ fn generate_proptest_blocks(language: &LanguageDef, out: &mut String) {
         // Only if the category has a parse method — all categories do via PraTTaIL.
         // Skipped for runtime-only opaque natives (no surface form to parse).
         //
-        // GENERATION DEPTH is per-category (`roundtrip_depth`, computed above
-        // via `is_cross_category_ambiguous`): depth 2 for cross-category-
-        // ambiguous categories, depth 3 otherwise. The displayed surface is a
-        // parenthesis-minimal operator tree (Display omits precedence-redundant
-        // parens to keep one-cycle idempotence — see
-        // `macros/src/gen/syntax/display.rs`). A category whose operator
-        // terminals are SHARED with other categories over syntaxless cross-
-        // category projections (e.g. Calculator's `+ * / bitand bitor` across
-        // Int/BigInt/BigRat/Float/Fixed/UInt32) multiplies the WPDA parse forest
-        // along the walker's documented cross-category edge axis (~38x/level;
-        // `prattail/src/wpda_walker.rs` ROOT-P notes + the compile-time `D02`
-        // unresolvable-ambiguity lint), so a k-operator chain has exponentially
-        // many parses. Depth 2 bounds such a category's tree to <=3 shared ops
-        // (measured worst case ~1s parse, p99 ~0.5s) while still exercising
-        // nested-operator idempotence; depth 3 is kept for every category that
-        // does NOT hit that axis (Lambda/Ambient/GuardedRho/class-smokes/…),
-        // preserving one more level of nesting coverage. The per-case cost above
-        // the depth-2 bound is the parser's cross-category ambiguity cost (an
-        // open ROOT-P architectural item), not a display or generator bug, so it
-        // is bounded at the generator rather than absorbed into an ever-larger
-        // timeout. (The TapeReader is now non-wrapping, so short/shrunk tapes
-        // yield SIMPLE terms; the depth cap is the deterministic backstop for
-        // long, all-recursive tapes.)
+        // GENERATION DEPTH (`roundtrip_depth`, computed above): uniform depth 3
+        // for every category. The displayed surface is a parenthesis-minimal
+        // operator tree (Display omits precedence-redundant parens to keep
+        // one-cycle idempotence — see `macros/src/gen/syntax/display.rs`).
+        // Categories whose operator terminals are SHARED with other categories
+        // over syntaxless cross-category projections (e.g. Calculator's
+        // `+ * / bitand bitor` across Int/BigInt/BigRat/Float/Fixed/UInt32)
+        // still multiply the WPDA parse forest along the cross-category edge
+        // axis, but the walker's k-best extraction (ROOT-P;
+        // `prattail/src/wpda_walker.rs`) elects derivations in weight order
+        // without materializing the exponential family, so maximally-ambiguous
+        // depth-3 chains parse in milliseconds (acceptance receipts:
+        // `scratchpad/zz_probes/logs_kbest_s4/`). The TapeReader is
+        // non-wrapping, so short/shrunk tapes yield SIMPLE terms and proptest
+        // shrinking converges on minimal counterexamples.
         if !is_runtime_only {
         out.push_str(&format!(
             "    #[test]\n\
              \x20   fn {cat_lower}_display_parse_roundtrip(term in arb_{cat_lower}({depth})) {{\n\
              \x20       let displayed = format!(\"{{}}\", term);\n\
              \x20       // Skip terms whose display is too long (parser may overflow).\n\
-             \x20       // NOTE: length is only a coarse backstop; the real parse-cost\n\
-             \x20       // driver is the count of cross-category-shared operators, which\n\
-             \x20       // the depth-2 generation bound (see above) caps at <=3.\n\
+             \x20       // NOTE: length is only a coarse backstop against degenerate\n\
+             \x20       // displays; cross-category-shared operator chains are parsed\n\
+             \x20       // via the walker's k-best extraction, so depth-3 terms are cheap.\n\
              \x20       if displayed.len() > 500 {{\n\
              \x20           return Ok(());\n\
              \x20       }}\n\

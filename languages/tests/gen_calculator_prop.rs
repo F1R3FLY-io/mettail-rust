@@ -1473,9 +1473,9 @@ proptest! {
     fn proc_display_parse_roundtrip(term in arb_proc(3)) {
         let displayed = format!("{}", term);
         // Skip terms whose display is too long (parser may overflow).
-        // NOTE: length is only a coarse backstop; the real parse-cost
-        // driver is the count of cross-category-shared operators, which
-        // the depth-2 generation bound (see above) caps at <=3.
+        // NOTE: length is only a coarse backstop against degenerate
+        // displays; cross-category-shared operator chains are parsed
+        // via the walker's k-best extraction, so depth-3 terms are cheap.
         if displayed.len() > 500 {
             return Ok(());
         }
@@ -1569,12 +1569,12 @@ proptest! {
     }
 
     #[test]
-    fn int_display_parse_roundtrip(term in arb_int(2)) {
+    fn int_display_parse_roundtrip(term in arb_int(3)) {
         let displayed = format!("{}", term);
         // Skip terms whose display is too long (parser may overflow).
-        // NOTE: length is only a coarse backstop; the real parse-cost
-        // driver is the count of cross-category-shared operators, which
-        // the depth-2 generation bound (see above) caps at <=3.
+        // NOTE: length is only a coarse backstop against degenerate
+        // displays; cross-category-shared operator chains are parsed
+        // via the walker's k-best extraction, so depth-3 terms are cheap.
         if displayed.len() > 500 {
             return Ok(());
         }
@@ -1668,12 +1668,12 @@ proptest! {
     }
 
     #[test]
-    fn uint32_display_parse_roundtrip(term in arb_uint32(2)) {
+    fn uint32_display_parse_roundtrip(term in arb_uint32(3)) {
         let displayed = format!("{}", term);
         // Skip terms whose display is too long (parser may overflow).
-        // NOTE: length is only a coarse backstop; the real parse-cost
-        // driver is the count of cross-category-shared operators, which
-        // the depth-2 generation bound (see above) caps at <=3.
+        // NOTE: length is only a coarse backstop against degenerate
+        // displays; cross-category-shared operator chains are parsed
+        // via the walker's k-best extraction, so depth-3 terms are cheap.
         if displayed.len() > 500 {
             return Ok(());
         }
@@ -1767,12 +1767,12 @@ proptest! {
     }
 
     #[test]
-    fn bigint_display_parse_roundtrip(term in arb_bigint(2)) {
+    fn bigint_display_parse_roundtrip(term in arb_bigint(3)) {
         let displayed = format!("{}", term);
         // Skip terms whose display is too long (parser may overflow).
-        // NOTE: length is only a coarse backstop; the real parse-cost
-        // driver is the count of cross-category-shared operators, which
-        // the depth-2 generation bound (see above) caps at <=3.
+        // NOTE: length is only a coarse backstop against degenerate
+        // displays; cross-category-shared operator chains are parsed
+        // via the walker's k-best extraction, so depth-3 terms are cheap.
         if displayed.len() > 500 {
             return Ok(());
         }
@@ -1866,12 +1866,12 @@ proptest! {
     }
 
     #[test]
-    fn bigrat_display_parse_roundtrip(term in arb_bigrat(2)) {
+    fn bigrat_display_parse_roundtrip(term in arb_bigrat(3)) {
         let displayed = format!("{}", term);
         // Skip terms whose display is too long (parser may overflow).
-        // NOTE: length is only a coarse backstop; the real parse-cost
-        // driver is the count of cross-category-shared operators, which
-        // the depth-2 generation bound (see above) caps at <=3.
+        // NOTE: length is only a coarse backstop against degenerate
+        // displays; cross-category-shared operator chains are parsed
+        // via the walker's k-best extraction, so depth-3 terms are cheap.
         if displayed.len() > 500 {
             return Ok(());
         }
@@ -1965,12 +1965,12 @@ proptest! {
     }
 
     #[test]
-    fn fixed_display_parse_roundtrip(term in arb_fixed(2)) {
+    fn fixed_display_parse_roundtrip(term in arb_fixed(3)) {
         let displayed = format!("{}", term);
         // Skip terms whose display is too long (parser may overflow).
-        // NOTE: length is only a coarse backstop; the real parse-cost
-        // driver is the count of cross-category-shared operators, which
-        // the depth-2 generation bound (see above) caps at <=3.
+        // NOTE: length is only a coarse backstop against degenerate
+        // displays; cross-category-shared operator chains are parsed
+        // via the walker's k-best extraction, so depth-3 terms are cheap.
         if displayed.len() > 500 {
             return Ok(());
         }
@@ -2064,12 +2064,12 @@ proptest! {
     }
 
     #[test]
-    fn float_display_parse_roundtrip(term in arb_float(2)) {
+    fn float_display_parse_roundtrip(term in arb_float(3)) {
         let displayed = format!("{}", term);
         // Skip terms whose display is too long (parser may overflow).
-        // NOTE: length is only a coarse backstop; the real parse-cost
-        // driver is the count of cross-category-shared operators, which
-        // the depth-2 generation bound (see above) caps at <=3.
+        // NOTE: length is only a coarse backstop against degenerate
+        // displays; cross-category-shared operator chains are parsed
+        // via the walker's k-best extraction, so depth-3 terms are cheap.
         if displayed.len() > 500 {
             return Ok(());
         }
@@ -2166,9 +2166,9 @@ proptest! {
     fn bool_display_parse_roundtrip(term in arb_bool(3)) {
         let displayed = format!("{}", term);
         // Skip terms whose display is too long (parser may overflow).
-        // NOTE: length is only a coarse backstop; the real parse-cost
-        // driver is the count of cross-category-shared operators, which
-        // the depth-2 generation bound (see above) caps at <=3.
+        // NOTE: length is only a coarse backstop against degenerate
+        // displays; cross-category-shared operator chains are parsed
+        // via the walker's k-best extraction, so depth-3 terms are cheap.
         if displayed.len() > 500 {
             return Ok(());
         }
@@ -2262,12 +2262,12 @@ proptest! {
     }
 
     #[test]
-    fn str_display_parse_roundtrip(term in arb_str(2)) {
+    fn str_display_parse_roundtrip(term in arb_str(3)) {
         let displayed = format!("{}", term);
         // Skip terms whose display is too long (parser may overflow).
-        // NOTE: length is only a coarse backstop; the real parse-cost
-        // driver is the count of cross-category-shared operators, which
-        // the depth-2 generation bound (see above) caps at <=3.
+        // NOTE: length is only a coarse backstop against degenerate
+        // displays; cross-category-shared operator chains are parsed
+        // via the walker's k-best extraction, so depth-3 terms are cheap.
         if displayed.len() > 500 {
             return Ok(());
         }
@@ -2364,9 +2364,9 @@ proptest! {
     fn list_display_parse_roundtrip(term in arb_list(3)) {
         let displayed = format!("{}", term);
         // Skip terms whose display is too long (parser may overflow).
-        // NOTE: length is only a coarse backstop; the real parse-cost
-        // driver is the count of cross-category-shared operators, which
-        // the depth-2 generation bound (see above) caps at <=3.
+        // NOTE: length is only a coarse backstop against degenerate
+        // displays; cross-category-shared operator chains are parsed
+        // via the walker's k-best extraction, so depth-3 terms are cheap.
         if displayed.len() > 500 {
             return Ok(());
         }
@@ -2463,9 +2463,9 @@ proptest! {
     fn bag_display_parse_roundtrip(term in arb_bag(3)) {
         let displayed = format!("{}", term);
         // Skip terms whose display is too long (parser may overflow).
-        // NOTE: length is only a coarse backstop; the real parse-cost
-        // driver is the count of cross-category-shared operators, which
-        // the depth-2 generation bound (see above) caps at <=3.
+        // NOTE: length is only a coarse backstop against degenerate
+        // displays; cross-category-shared operator chains are parsed
+        // via the walker's k-best extraction, so depth-3 terms are cheap.
         if displayed.len() > 500 {
             return Ok(());
         }
@@ -2562,9 +2562,9 @@ proptest! {
     fn map_display_parse_roundtrip(term in arb_map(3)) {
         let displayed = format!("{}", term);
         // Skip terms whose display is too long (parser may overflow).
-        // NOTE: length is only a coarse backstop; the real parse-cost
-        // driver is the count of cross-category-shared operators, which
-        // the depth-2 generation bound (see above) caps at <=3.
+        // NOTE: length is only a coarse backstop against degenerate
+        // displays; cross-category-shared operator chains are parsed
+        // via the walker's k-best extraction, so depth-3 terms are cheap.
         if displayed.len() > 500 {
             return Ok(());
         }
