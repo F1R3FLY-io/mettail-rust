@@ -566,10 +566,22 @@ struct KbestEntry<W> {
 /// S1 k-best: the pre-evaluated order key carried by a frontier candidate.
 /// One frontier only ever holds ONE variant (the sub-state's kind) — the
 /// cross-variant compare arm is unreachable by construction.
+///
+/// S3 raw-order fix: `Raw` carries the PERMUTED selection vector — the
+/// candidate's `j` rearranged flats-major (Intermediate slots in slot
+/// order, then the combo slots in slot order). Today's raw family order is
+/// packings-outer, then FLATS (the Intermediate expansions), then combos
+/// rightmost-fastest — plain child-order `j`-lex only coincides with it
+/// when every Intermediate child precedes every combo child, which REAL
+/// forests violate (trailing weight-carrier Intermediates in e.g. the
+/// rhocalc optional/collection shapes — the S3 suite-under-ON receipt).
+/// The permutation restores the family nesting for ARBITRARY child
+/// arrangements; on Intermediate-first packings it degenerates to `j`
+/// itself.
 enum KbestCandKey<W> {
     Election(CgllKTuple<W>),
     Weight(W),
-    Raw,
+    Raw { perm: Vec<u32> },
 }
 
 /// S1 k-best (plan §2.2): a frontier candidate `cand(v, e, j)` — packing
@@ -590,7 +602,10 @@ enum KbestCandKey<W> {
 /// including the f64 `==` -0.0/+0.0 class — fall to the deterministic
 /// `(pk_idx, j)` legs). `(pk_idx, j)` uniqueness (the `pushed` set) makes
 /// the order total with no equal elements, so `BinaryHeap` pop order is
-/// fully determined (the A12 determinism unit locks this).
+/// fully determined (the A12 determinism unit locks this). S3 amendment:
+/// RAW ties order by the flats-major permutation of `j` instead of plain
+/// `j`-lex (see `KbestCandKey::Raw` — bijective per (node, pk), so
+/// totality/uniqueness are unchanged).
 ///
 /// S1-review adjudication (Attack 2, mirrored here for S2's A/B readers):
 /// the FREE `semiring_priority_cmp` used for this heap leg and the METHOD
@@ -620,13 +635,25 @@ impl<W: crate::automata::semiring::StarSemiringRef> KbestCand<W> {
                 }
             },
             (KbestCandKey::Weight(a), KbestCandKey::Weight(b)) => semiring_priority_cmp(a, b),
-            (KbestCandKey::Raw, KbestCandKey::Raw) => std::cmp::Ordering::Equal,
+            (KbestCandKey::Raw { .. }, KbestCandKey::Raw { .. }) => std::cmp::Ordering::Equal,
             // One frontier holds one kind by construction (per-sub-state).
             _ => unreachable!("kbest frontier never mixes key kinds"),
         };
         key_leg
             .then(self.pk_idx.cmp(&other.pk_idx))
-            .then_with(|| self.j.cmp(&other.j))
+            .then_with(|| match (&self.key, &other.key) {
+                // Raw ties order by the flats-major PERMUTATION (see the
+                // KbestCandKey doc) — the family's flats-outer/combos-inner
+                // nesting. Family-order-exact on the child arrangements
+                // getNodeP actually emits (every post-combo Intermediate is
+                // an order-trivial single-packing carrier; a multi-entry
+                // fragment AFTER a combo child would break the equivalence
+                // but is unconstructible on this forest shape — S3 review
+                // attack 1). A bijective rearrangement of `j` per (node,
+                // pk), so `(pk_idx, perm)` stays unique and the order total.
+                (KbestCandKey::Raw { perm: a }, KbestCandKey::Raw { perm: b }) => a.cmp(b),
+                _ => self.j.cmp(&other.j),
+            })
     }
 }
 
@@ -834,24 +861,34 @@ struct KbestSlot {
     inner: Option<u32>,
 }
 
-/// S1 k-best: inner-child realization selector of one `OPTIONAL_PRESENT`
-/// packing-leaf element in a candidate's walk plan.
-enum KbestInnerSel<W> {
-    /// Weight/FirstRaw kinds: the candidate's j-selected inner entry.
-    SymEntry(crate::sppf::SppfId, ActionArg, W),
-    /// Election kind: the inner's FirstRaw entry (today's raw-first inner
-    /// bytes — the key/byte split of plan §2.7).
-    SymFirstRaw(crate::sppf::SppfId),
-    /// Non-OR inner child (leaf): realized via `realize_node_leave`.
-    Leaf(crate::sppf::SppfId),
-}
-
 /// S1 k-best: the products of one Symbol candidate's provenance flat walk
 /// (`cgll_kbest_candidate_walk`), consumed by
 /// `cgll_kbest_realize_candidate` after the FirstRaw demands in
 /// `raw_needed` are satisfied. The pair jointly generalizes
 /// `cgll_make_chosen_frame`'s prologue walk from a global choices-map to
 /// per-candidate provenance.
+///
+/// S3 revision (the class3opt suite-under-ON receipt): non-Symbol flat
+/// elements carry their FULL dependency closure — Predep's P3.c contract
+/// ("collections nested inside optional groups realize too", recursively)
+/// — not just one level. The walk's iterative dep collector fills:
+/// level-1 `OPTIONAL_PRESENT` inner Symbols per-mode (`inner_sym_sel`
+/// slot selections under Weight/FirstRaw, `raw_needed` under Election —
+/// the A10 j-extension/key-byte split, unchanged); every DEEPER Symbol
+/// dependency (collection items anywhere, Symbols under nested
+/// containers) joins `raw_needed` in ALL kinds (the items rule of plan
+/// §2.7 — today's `.first()`-of-the-raw-family bytes; safe at any depth:
+/// the kt Scan absorbs level-1 inners only, so a deeper inner's kt never
+/// reaches the Election key — S3 review attack 2); non-OR leaves join
+/// `leaf_nodes`; container Packings (optional groups, nested or not, and
+/// defensive non-OPT packing leaves) join `containers_postorder`
+/// CHILDREN-FIRST so their `realize_node_leave` reads fully-built memos.
+/// DELIBERATE DELTA vs the family Predep (S3 review, disclosed): nested
+/// container Packings get their memos built here, where Predep leaves
+/// them memo-less — toward-complete on OPT-in-OPT-class shapes (a
+/// nested-optional inner that Predep would starve realizes here); and
+/// Intermediate deps are skipped (Predep never memoizes Intermediates —
+/// dead-work elimination, value-exact).
 struct KbestWalkPlan<W> {
     rule_idx: u32,
     pk_weight: W,
@@ -861,16 +898,18 @@ struct KbestWalkPlan<W> {
     flat_weight: W,
     /// Symbol flat elements: the candidate's selected `(arg, w)` per node.
     sym_sel: Vec<(crate::sppf::SppfId, ActionArg, W)>,
-    /// `OPTIONAL_PRESENT` packing-leaf elements with their inner selectors.
-    opt_leaves: Vec<(crate::sppf::SppfId, Vec<KbestInnerSel<W>>)>,
-    /// `CollectionId` flat elements (items read off the node at fire time;
-    /// item values come from the items' FirstRaw entries — plan §2.7).
-    collection_nodes: Vec<crate::sppf::SppfId>,
-    /// Remaining non-Trigger leaves needing `realize_node_leave` memos.
-    plain_leaves: Vec<crate::sppf::SppfId>,
+    /// Level-1 optional-inner Symbols selected by the candidate's j-slots
+    /// (Weight/FirstRaw kinds — the A10 j-extension).
+    inner_sym_sel: Vec<(crate::sppf::SppfId, ActionArg, W)>,
+    /// Non-OR dependency leaves (any depth) needing `realize_node_leave`
+    /// memos, including `CollectionId` markers.
+    leaf_nodes: Vec<crate::sppf::SppfId>,
+    /// Container Packings in CHILDREN-FIRST order (a container's
+    /// `realize_node_leave` consumes its children's memos).
+    containers_postorder: Vec<crate::sppf::SppfId>,
     /// FirstRaw demands this candidate needs before firing: collection
-    /// items (both sessions) + `OPTIONAL_PRESENT` inner Symbols (Election
-    /// sessions), in walk-encounter order (deterministic).
+    /// items (all kinds), Election-mode level-1 optional inners, and every
+    /// deeper Symbol dependency — walk-encounter order (deterministic).
     raw_needed: Vec<crate::sppf::SppfId>,
 }
 
@@ -7661,6 +7700,71 @@ where
                         }
                         memo.clear();
                     }
+                    // ── ROOT-P Phase-2 S3 (plan §5.1/§3.2): BoundedEnumeration
+                    // via the extractor — Weight key, k = the caller's limit,
+                    // per-node distinct-k with observational dedup (per-node
+                    // dedup ≡ root-only dedup by the output-identity theorem);
+                    // FirstRaw item/inner discipline and the W-mode
+                    // j-extension live in the core (amendment A10). Routed
+                    // ONLY for `Some(cap ≥ 1)`: every enumeration facade caps
+                    // (REALIZE_CAP/RAW ladders start ≥ 65 / max_alt+1 ≥ 1);
+                    // `None`/`Some(0)` have no facade consumer and keep the
+                    // family path (the mode table defines no unbounded-k
+                    // enumeration). The A4(iii) empty-root backstop rides the
+                    // shared helper; the A4(ii) PADDING carrier is below.
+                    if Self::CGLL_KBEST_EXTRACTION_ENABLED && !single_result_request {
+                        if let Some(cap) = limit {
+                            if cap >= 1 {
+                                let mut kb_state: KbestState<W> = KbestState::new();
+                                let mut kb_fdepths: rustc_hash::FxHashMap<
+                                    crate::sppf::SppfId,
+                                    u32,
+                                > = rustc_hash::FxHashMap::default();
+                                let realized = self.cgll_kbest_extract_realized(
+                                    &mut kb_state,
+                                    &mut kb_fdepths,
+                                    root,
+                                    KbestOrderKey::Weight,
+                                    cap,
+                                );
+                                Self::cgll_kbest_receipts_diag(&kb_state);
+                                let mut out: Vec<(Arc<dyn Any + Send + Sync>, W)> =
+                                    Vec::with_capacity(realized.len());
+                                for (arg, w) in realized {
+                                    if let ActionArg::Term { value, .. } = arg {
+                                        out.push((value, w));
+                                    }
+                                }
+                                // A4(ii) PADDING (plan §3.2(ii)): the facades
+                                // infer exhaustion EXCLUSIVELY from
+                                // `len >= limit` and macros/facade.rs is frozen
+                                // — when ANY demanded node truncated, PAD to
+                                // `limit` by repeating the LAST entry (pinned
+                                // for determinism) so "not exhausted" is
+                                // reportable. Facade dedup folds pads away
+                                // without consuming REALIZE_CAP; the
+                                // surface-exact probe re-display-checks pads
+                                // harmlessly; at the last rung the pad drives
+                                // `raw_realization_exhausted_budget` ⇒ the
+                                // {4096,4097} arm (the distinct>4096 direction
+                                // of R-15's split). An empty truncated list
+                                // cannot reach here (the A4(iii) backstop exits
+                                // non-truncated on empty) — the `Some` arm is
+                                // the total one; the defensive `None` break
+                                // keeps genuine emptiness reported as
+                                // exhausted.
+                                if Self::cgll_kbest_session_truncated(&kb_state) {
+                                    while out.len() < cap {
+                                        match out.last().cloned() {
+                                            Some(last) => out.push(last),
+                                            None => break,
+                                        }
+                                    }
+                                }
+                                return out;
+                            }
+                        }
+                    }
                     return self
                         // R-D A1 over-accept EXACT fix (task #18b): the facade
                         // re-realize keeps the RAW cap (`false`) — `facade.rs`
@@ -12897,32 +13001,29 @@ where
         kind: KbestOrderKey,
     ) -> Option<Vec<KbestSlot>> {
         let mut slots: Vec<KbestSlot> = Vec::with_capacity(children.len());
-        // FirstRaw raw-order premise (plan §2.3/§2.7): the (pk_idx, j)-lex
-        // comparator equals today's raw family order — packings, then
-        // flats (Intermediate slots vary), then combos (Symbol/leaf-family
-        // slots vary, rightmost fastest) — exactly BECAUSE Intermediate
-        // slots precede combo slots on the binarized getNodeP spine
-        // ([left-spine, right-symbol]). Debug-checked below; plain leaves
-        // are singleton families (they vary nothing) so they do not affect
-        // the premise.
-        let mut saw_combo_slot = false;
+        // FirstRaw raw-order note (S3 fix): today's raw family order is
+        // packings-outer, then FLATS (Intermediate expansions), then combos
+        // rightmost-fastest — REGARDLESS of where the Intermediate children
+        // sit (real forests carry trailing weight-carrier Intermediates
+        // after combo children; the former child-order-lex premise assert
+        // fired on rhocalc's optional/collection shapes in the S3
+        // suite-under-ON window). The raw comparator therefore orders by
+        // the flats-major PERMUTATION of `j` built in
+        // `cgll_kbest_candidate_key`'s FirstRaw arm — slot ORDER here stays
+        // child order (the walk/fold contract); only the raw COMPARATOR
+        // permutes. Plain leaves are singleton families (they vary
+        // nothing) and take no slot.
         for (ci, &c) in children.iter().enumerate() {
             match self.sppf.node(c) {
                 Some(crate::sppf::SppfNode::Intermediate { .. }) => {
-                    debug_assert!(
-                        !(kind == KbestOrderKey::FirstRaw && saw_combo_slot),
-                        "kbest raw-order premise violated: Intermediate slot after a combo slot"
-                    );
                     slots.push(KbestSlot { node: c, child_idx: ci as u32, inner: None });
                 },
                 Some(crate::sppf::SppfNode::Symbol { .. }) => {
-                    saw_combo_slot = true;
                     slots.push(KbestSlot { node: c, child_idx: ci as u32, inner: None });
                 },
                 Some(crate::sppf::SppfNode::Packing { rule_idx: pr, children: pch, .. })
                     if *pr == Self::OPTIONAL_PRESENT_RULE_IDX =>
                 {
-                    saw_combo_slot = true;
                     for (ii, &ic) in pch.iter().enumerate() {
                         match self.sppf.node(ic) {
                             Some(crate::sppf::SppfNode::Intermediate { .. }) => {
@@ -13062,7 +13163,42 @@ where
         W: StarSemiringRef,
     {
         match kind {
-            KbestOrderKey::FirstRaw => Some(KbestCandKey::Raw),
+            KbestOrderKey::FirstRaw => {
+                // The flats-major permutation of `j` (see KbestCandKey::Raw's
+                // doc): Intermediate slots (the flat-shape selectors) in slot
+                // order, then the combo slots in slot order — today's raw
+                // family nesting on the getNodeP-emitted child arrangements
+                // (post-combo Intermediates are order-trivial carriers; see
+                // the Ord-impl comment for the exact equivalence scope).
+                let Some(crate::sppf::SppfNode::Packing { children, .. }) = self.sppf.node(pk)
+                else {
+                    return None;
+                };
+                let slots = self.cgll_kbest_slot_layout(children, kind)?;
+                debug_assert_eq!(
+                    slots.len(),
+                    j.len(),
+                    "kbest raw candidate arity mismatch (layout vs j)"
+                );
+                let mut perm: Vec<u32> = Vec::with_capacity(j.len());
+                for (s, &jv) in slots.iter().zip(j.iter()) {
+                    if matches!(
+                        self.sppf.node(s.node),
+                        Some(crate::sppf::SppfNode::Intermediate { .. })
+                    ) {
+                        perm.push(jv);
+                    }
+                }
+                for (s, &jv) in slots.iter().zip(j.iter()) {
+                    if !matches!(
+                        self.sppf.node(s.node),
+                        Some(crate::sppf::SppfNode::Intermediate { .. })
+                    ) {
+                        perm.push(jv);
+                    }
+                }
+                Some(KbestCandKey::Raw { perm })
+            },
             KbestOrderKey::Weight => {
                 let Some(crate::sppf::SppfNode::Packing { children, weight, .. }) =
                     self.sppf.node(pk)
@@ -13204,9 +13340,9 @@ where
             flat: Vec::with_capacity(children.len()),
             flat_weight: W::one_ref(),
             sym_sel: Vec::new(),
-            opt_leaves: Vec::new(),
-            collection_nodes: Vec::new(),
-            plain_leaves: Vec::new(),
+            inner_sym_sel: Vec::new(),
+            leaf_nodes: Vec::new(),
+            containers_postorder: Vec::new(),
             raw_needed: Vec::new(),
         };
         let mut seen_elems: rustc_hash::FxHashSet<crate::sppf::SppfId> =
@@ -13289,73 +13425,121 @@ where
                     plan.flat.push(c);
                     plan.sym_sel.push((c, arg, w));
                 },
-                Some(crate::sppf::SppfNode::Packing { rule_idx: pr, children: pch, .. })
-                    if *pr == Self::OPTIONAL_PRESENT_RULE_IDX =>
-                {
+                // S3 (the class3opt receipt): container flat elements —
+                // OPTIONAL_PRESENT packing leaves, defensive non-OPT
+                // packing leaves, and CollectionId markers — carry their
+                // FULL dependency closure (Predep's recursive P3.c
+                // contract: collections nested inside optional groups
+                // realize too). Level-1 OPT inner Symbols keep the A10
+                // per-mode discipline (j-slots under Weight/FirstRaw,
+                // FirstRaw under Election); every DEEPER Symbol dependency
+                // takes FirstRaw in ALL kinds (the plan-§2.7 items rule —
+                // today's raw-first bytes; a direct nested-optional Symbol
+                // beyond level 1 therefore keeps raw-first bytes in
+                // enumeration mode too — no committed grammar carries that
+                // shape, and the S3 ordered/multiset A/B would surface it).
+                Some(crate::sppf::SppfNode::Packing { .. })
+                | Some(crate::sppf::SppfNode::CollectionId { .. }) => {
                     tripwire(state, c);
-                    let pch = pch.clone();
-                    let mut sels: Vec<KbestInnerSel<W>> = Vec::with_capacity(pch.len());
-                    for &ic in &pch {
-                        match self.sppf.node(ic) {
-                            Some(crate::sppf::SppfNode::Symbol { .. }) => match kind {
-                                KbestOrderKey::Election => {
-                                    if raw_seen.insert(ic) {
-                                        plan.raw_needed.push(ic);
-                                    }
-                                    sels.push(KbestInnerSel::SymFirstRaw(ic));
-                                },
-                                KbestOrderKey::Weight | KbestOrderKey::FirstRaw => {
+                    plan.flat.push(c);
+                    let is_opt_top = matches!(
+                        self.sppf.node(c),
+                        Some(crate::sppf::SppfNode::Packing { rule_idx: pr, .. })
+                            if *pr == Self::OPTIONAL_PRESENT_RULE_IDX
+                    );
+                    // (node, level1) — level1 = a DIRECT child of a
+                    // top-level OPTIONAL_PRESENT leaf (slot-selected under
+                    // Weight/FirstRaw).
+                    let mut dep_stack: Vec<(crate::sppf::SppfId, bool)> = Vec::with_capacity(8);
+                    match self.sppf.node(c) {
+                        Some(crate::sppf::SppfNode::Packing { children: pch, .. }) => {
+                            for &ic in pch.iter().rev() {
+                                dep_stack.push((ic, is_opt_top));
+                            }
+                        },
+                        Some(crate::sppf::SppfNode::CollectionId { items, .. }) => {
+                            for &it in items.iter().rev() {
+                                dep_stack.push((it, false));
+                            }
+                        },
+                        _ => {},
+                    }
+                    let mut containers_pre: Vec<crate::sppf::SppfId> = Vec::new();
+                    while let Some((d, lvl1)) = dep_stack.pop() {
+                        guard += 1;
+                        if guard > 100_000 {
+                            return None;
+                        }
+                        match self.sppf.node(d) {
+                            Some(crate::sppf::SppfNode::Symbol { .. }) => {
+                                if lvl1 && kind != KbestOrderKey::Election {
                                     let (arg, w) = {
                                         let (_, lj, _, cur) = levels
                                             .last_mut()
                                             .expect("kbest walk level present");
                                         let sel = *lj.get(*cur)? as usize;
                                         *cur += 1;
-                                        let e = state.entry(ic, kind, sel.checked_sub(1)?)?;
+                                        let e = state.entry(d, kind, sel.checked_sub(1)?)?;
                                         let KbestVal::Realized { arg, w } = &e.val else {
                                             return None;
                                         };
                                         (arg.clone(), w.clone())
                                     };
-                                    sels.push(KbestInnerSel::SymEntry(ic, arg, w));
-                                },
+                                    plan.inner_sym_sel.push((d, arg, w));
+                                } else if raw_seen.insert(d) {
+                                    plan.raw_needed.push(d);
+                                }
+                            },
+                            Some(crate::sppf::SppfNode::Packing { children: pch2, .. }) => {
+                                // Nested container: children first (pre-order
+                                // here, reversed below into children-first).
+                                containers_pre.push(d);
+                                for &ic in pch2.iter().rev() {
+                                    dep_stack.push((ic, false));
+                                }
+                            },
+                            Some(crate::sppf::SppfNode::CollectionId { items, .. }) => {
+                                plan.leaf_nodes.push(d);
+                                for &it in items.iter().rev() {
+                                    dep_stack.push((it, false));
+                                }
                             },
                             Some(crate::sppf::SppfNode::Intermediate { .. }) => {
-                                // Layout-dead shape — packings over it are
-                                // never seeded.
+                                // Value-less on every today-path (Predep's `_`
+                                // arm never memoizes an Intermediate): no memo
+                                // ⇒ the owning container's realize refutes ⇒
+                                // eval-observed infeasibility, today-parity.
+                                // The level-1 case is layout-dead (the packing
+                                // is never seeded).
                                 debug_assert!(
-                                    false,
-                                    "kbest: OPTIONAL_PRESENT Intermediate inner reached a walk"
+                                    !lvl1,
+                                    "kbest: layout-dead OPTIONAL_PRESENT Intermediate inner \
+                                     reached a walk"
                                 );
-                                return None;
                             },
-                            _ => sels.push(KbestInnerSel::Leaf(ic)),
+                            // TriggerTerminal deps carry no memo (filtered by
+                            // realize_packing_call).
+                            Some(crate::sppf::SppfNode::TriggerTerminal { .. }) => {},
+                            _ => plan.leaf_nodes.push(d),
                         }
                     }
-                    plan.flat.push(c);
-                    plan.opt_leaves.push((c, sels));
-                },
-                Some(crate::sppf::SppfNode::CollectionId { items, .. }) => {
-                    let items = items.clone();
-                    plan.flat.push(c);
-                    plan.collection_nodes.push(c);
-                    for &it in &items {
-                        if raw_seen.insert(it) {
-                            plan.raw_needed.push(it);
-                        }
+                    // Children-first realize order for nested containers.
+                    containers_pre.reverse();
+                    plan.containers_postorder.extend(containers_pre);
+                    // The top-level element realizes LAST of its closure.
+                    if matches!(self.sppf.node(c), Some(crate::sppf::SppfNode::Packing { .. })) {
+                        plan.containers_postorder.push(c);
+                    } else {
+                        plan.leaf_nodes.push(c);
                     }
                 },
                 // TriggerTerminal: a flat element `realize_packing_call`
                 // filters before the action's cartesian — no memo needed.
                 Some(crate::sppf::SppfNode::TriggerTerminal { .. }) => plan.flat.push(c),
-                // Terminal/Epsilon/OptAbsent/Predicate/BinderScope (and,
-                // defensively, non-OPTIONAL_PRESENT Packing leaves — outside
-                // the committed P3.c BIN shape; `realize_node_leave`'s
-                // Packing arm then owns the Bug-I missing-memo behavior
-                // exactly as the CHOSEN path's `_` element arm does).
+                // Terminal/Epsilon/OptAbsent/Predicate/BinderScope.
                 _ => {
                     plan.flat.push(c);
-                    plan.plain_leaves.push(c);
+                    plan.leaf_nodes.push(c);
                 },
             }
         }
@@ -13416,61 +13600,41 @@ where
     {
         let empty_colors: std::collections::HashMap<crate::sppf::SppfId, RealizeColor> =
             std::collections::HashMap::new();
-        let mut cap = plan.sym_sel.len() + plan.plain_leaves.len() + 2 * plan.collection_nodes.len();
-        for (_, sels) in &plan.opt_leaves {
-            cap += 1 + sels.len();
-        }
+        let cap = plan.sym_sel.len()
+            + plan.inner_sym_sel.len()
+            + plan.raw_needed.len()
+            + plan.leaf_nodes.len()
+            + plan.containers_postorder.len();
         let mut memo: std::collections::HashMap<crate::sppf::SppfId, Vec<(ActionArg, W)>> =
             std::collections::HashMap::with_capacity(cap);
         for (sid, arg, w) in &plan.sym_sel {
             memo.insert(*sid, vec![(arg.clone(), w.clone())]);
         }
-        for &c in &plan.plain_leaves {
+        for (sid, arg, w) in &plan.inner_sym_sel {
+            memo.insert(*sid, vec![(arg.clone(), w.clone())]);
+        }
+        // FirstRaw singletons (items anywhere + Election level-1 inners +
+        // deeper Symbol deps — plan §2.7's raw-first bytes). A missing
+        // entry (family empty after exhaustion) leaves the memo absent:
+        // the shared call's missing-memo/F-2 arms then refute the combo
+        // exactly as today.
+        for &n in &plan.raw_needed {
+            if let Some(e) = state.entry(n, KbestOrderKey::FirstRaw, 0) {
+                if let KbestVal::Realized { arg, w } = &e.val {
+                    memo.insert(n, vec![(arg.clone(), w.clone())]);
+                }
+            }
+        }
+        for &c in &plan.leaf_nodes {
             let v = self.realize_node_leave(c, &memo, &empty_colors, None);
             memo.insert(c, v);
         }
-        for &cid in &plan.collection_nodes {
-            let v = self.realize_node_leave(cid, &memo, &empty_colors, None);
-            memo.insert(cid, v);
-            if let Some(crate::sppf::SppfNode::CollectionId { items, .. }) = self.sppf.node(cid) {
-                for &it in items {
-                    // Item value = the item's FirstRaw entry (plan §2.7 —
-                    // today's `.first()`-of-the-raw-family on BOTH paths).
-                    // A missing entry (family empty after exhaustion) leaves
-                    // the memo absent: `realize_packing_call`'s F-2 arm then
-                    // refutes the combo exactly as today.
-                    if let Some(e) = state.entry(it, KbestOrderKey::FirstRaw, 0) {
-                        if let KbestVal::Realized { arg, w } = &e.val {
-                            memo.insert(it, vec![(arg.clone(), w.clone())]);
-                        }
-                    }
-                }
-            }
-        }
-        for (leaf, sels) in &plan.opt_leaves {
-            for sel in sels {
-                match sel {
-                    KbestInnerSel::SymEntry(n, arg, w) => {
-                        memo.insert(*n, vec![(arg.clone(), w.clone())]);
-                    },
-                    KbestInnerSel::SymFirstRaw(n) => {
-                        // Absent entry ⇒ the OPTIONAL_PRESENT arm returns
-                        // empty (missing-memo class) ⇒ the combo refutes —
-                        // today-parity.
-                        if let Some(e) = state.entry(*n, KbestOrderKey::FirstRaw, 0) {
-                            if let KbestVal::Realized { arg, w } = &e.val {
-                                memo.insert(*n, vec![(arg.clone(), w.clone())]);
-                            }
-                        }
-                    },
-                    KbestInnerSel::Leaf(n) => {
-                        let v = self.realize_node_leave(*n, &memo, &empty_colors, None);
-                        memo.insert(*n, v);
-                    },
-                }
-            }
-            let v = self.realize_node_leave(*leaf, &memo, &empty_colors, None);
-            memo.insert(*leaf, v);
+        // Containers realize CHILDREN-FIRST (the walk's post-order): each
+        // `realize_node_leave` Packing arm consumes its children's memos
+        // built above/before it — Predep's bottom-up P3.c parity.
+        for &c in &plan.containers_postorder {
+            let v = self.realize_node_leave(c, &memo, &empty_colors, None);
+            memo.insert(c, v);
         }
         self.realize_packing_call(
             plan.rule_idx,
@@ -22528,6 +22692,18 @@ mod tests {
             }
         }
     }
+    /// Refutes exactly the (1, 3) combo — the S3 raw-order shape (the
+    /// hunt must advance in the family's flats-outer/combos-inner order,
+    /// not child-order lex, to land on the family's first survivor).
+    fn kbest_act_refuse_pair_1_3(b: &mut SemanticBuilder, args: Vec<ActionArg>) {
+        if let [ActionArg::Term { value: a, .. }, ActionArg::Term { value: c, .. }] = &args[..] {
+            if let (Some(x), Some(y)) = (a.downcast_ref::<i64>(), c.downcast_ref::<i64>()) {
+                if !(*x == 1 && *y == 3) {
+                    b.push_term::<i64>(x * 100 + y);
+                }
+            }
+        }
+    }
     fn kbest_act_coll_sum(b: &mut SemanticBuilder, args: Vec<ActionArg>) {
         if let [ActionArg::CollectionId(id)] = &args[..] {
             let mut sum: i64 = 0;
@@ -22620,6 +22796,12 @@ mod tests {
         expected_input_cats: &[],
         output_cat: 1,
     };
+    static KBEST_ACT_REFUSE_PAIR_1_3: ActionEntry = ActionEntry {
+        action_fn: kbest_act_refuse_pair_1_3,
+        arity: 2,
+        expected_input_cats: &[],
+        output_cat: 1,
+    };
     static KBEST_ACT_COLL_SUM: ActionEntry = ActionEntry {
         action_fn: kbest_act_coll_sum,
         arity: 1,
@@ -22668,6 +22850,7 @@ mod tests {
                 (1, 6) => Some(&KBEST_ACT_WRAP),
                 (1, 7) => Some(&KBEST_ACT_PUSH_3),
                 (1, 8) => Some(&KBEST_ACT_REFUSE_LT_3),
+                (1, 9) => Some(&KBEST_ACT_REFUSE_PAIR_1_3),
                 (3, 0) => Some(&KBEST_ACT_PUSH_7),
                 (5, 8) => Some(&KBEST_ACT_PUSH_20),
                 (5, 9) => Some(&KBEST_ACT_WRAP),
@@ -23503,6 +23686,74 @@ mod tests {
         // order is genuinely not W order on this shape.
         let (weighted, _) = kbest_extract_i64(&walker, p, KbestOrderKey::Weight, 1);
         assert_eq!(weighted.first().map(|(v, _)| *v), Some(3));
+    }
+
+    /// S3 raw-order fix: a packing with a COMBO child BEFORE an
+    /// Intermediate child (the trailing weight-carrier class the S3
+    /// suite-under-ON window exposed — the former child-order-lex raw
+    /// comparator asserted/diverged here). The family enumerates
+    /// flats-outer/combos-inner, so after the refused first combo the raw
+    /// hunt must advance the COMBO slot (same flat) before the
+    /// Intermediate slot (next flat) — the flats-major permutation — and
+    /// land on the family's first survivor byte-for-byte.
+    #[test]
+    fn kbest_first_raw_trailing_intermediate_flats_major_order() {
+        let mut walker = kbest_walker(true);
+        let a = walker.sppf.intern_symbol(CGLL_BIN_TAG, 0, 1);
+        let a1 = walker
+            .sppf
+            .intern_packing(kbest_rule(0, 0), Vec::new(), lex(0.125, 0, 0));
+        let a2 = walker
+            .sppf
+            .intern_packing(kbest_rule(0, 1), Vec::new(), lex(0.25, 0, 1));
+        walker.sppf.link_packing_to_symbol(a, a1);
+        walker.sppf.link_packing_to_symbol(a, a2);
+        let x = walker.sppf.intern_symbol(CGLL_BIN_TAG, 1, 2);
+        let xp = walker
+            .sppf
+            .intern_packing(kbest_rule(0, 2), Vec::new(), lex(0.0625, 0, 2));
+        walker.sppf.link_packing_to_symbol(x, xp);
+        let y = walker.sppf.intern_symbol(4 | CGLL_BIN_TAG, 1, 2);
+        let yp = walker
+            .sppf
+            .intern_packing(kbest_rule(0, 3), Vec::new(), lex(0.5, 0, 3));
+        walker.sppf.link_packing_to_symbol(y, yp);
+        let inter = walker.sppf.intern_intermediate(11, 1, 2);
+        let ip_x = walker
+            .sppf
+            .intern_packing(kbest_rule(0, 0xF803), vec![x], lex(0.0625, 0, 3));
+        let ip_y = walker
+            .sppf
+            .intern_packing(kbest_rule(0, 0xF804), vec![y], lex(0.5, 0, 4));
+        walker.sppf.link_packing_to_symbol(inter, ip_x);
+        walker.sppf.link_packing_to_symbol(inter, ip_y);
+        let p = walker.sppf.intern_symbol(1 | CGLL_BIN_TAG, 0, 2);
+        // COMBO (Symbol) child FIRST, Intermediate child SECOND.
+        let ppk = walker
+            .sppf
+            .intern_packing(kbest_rule(1, 9), vec![a, inter], lex(0.125, 1, 9));
+        walker.sppf.link_packing_to_symbol(p, ppk);
+        let family = kbest_family_i64(&walker, p);
+        assert_eq!(
+            family.iter().map(|(v, _)| *v).collect::<Vec<_>>(),
+            vec![203, 104, 204],
+            "family: flat X first — (1,3) refused, (2,3) fires; then flat Y"
+        );
+        let (raw, rstate) = kbest_extract_i64(&walker, p, KbestOrderKey::FirstRaw, 1);
+        assert_eq!(
+            raw.first().copied(),
+            family.first().copied(),
+            "FirstRaw must advance the combo slot within the flat (flats-major \
+             permutation), landing on 203 — the child-order-lex comparator \
+             would jump flats and yield 104"
+        );
+        assert!(rstate.stats.infeasible_pops >= 1);
+        // Weight set parity on the same shape (the multiset surface).
+        let mut all = kbest_extract_i64(&walker, p, KbestOrderKey::Weight, 4).0;
+        let mut fam_sorted = family.clone();
+        all.sort_by(|q, r| q.0.cmp(&r.0));
+        fam_sorted.sort_by(|q, r| q.0.cmp(&r.0));
+        assert_eq!(all, fam_sorted);
     }
 
     /// u5 (A6.2): the duplicate-occurrence tripwire on a synthetic
