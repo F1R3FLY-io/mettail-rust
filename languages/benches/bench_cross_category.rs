@@ -6,14 +6,12 @@
 //!
 //! Run with: cargo bench -p mettail-languages --bench bench_cross_category
 
-mod bench_common;
-
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use mettail_languages::calculator;
 use mettail_languages::rhocalc;
 use std::time::Duration;
 
-use bench_common::{gen_cast_chain, gen_cross_cat_eq, SIZES};
+use mettail_languages::bench_common::{gen_cast_chain, gen_cross_cat_eq, SIZES};
 
 fn bench_simple_eq(c: &mut Criterion) {
     let mut group = c.benchmark_group("cross_cat/simple_eq");

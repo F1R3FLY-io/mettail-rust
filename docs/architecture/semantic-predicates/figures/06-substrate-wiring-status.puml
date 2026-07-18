@@ -1,5 +1,5 @@
 @startuml
-title Substrate wiring status — module → Cargo feature → lint/seam → wired-but-gated (surface still proposed)
+title Substrate wiring status — module → always-on analysis route → lint/seam → shipped (only Z3/smt still optional; letprop surface still proposed)
 
 skinparam backgroundColor #FEFEFE
 skinparam shadowing false
@@ -29,17 +29,18 @@ component "hindley_milner.rs" as M_HM #DBEAFE
 component "behavioral_pred → behavioral_algebra" as M_BL #DBEAFE
 component "logict_smt.rs (Z3Theory)" as M_Z3 #DBEAFE
 
-' ── Cargo features, OFF by default (green) ──
-component "any-algebra-carrier" as F_CAR #DCFCE7
-component "sym-tree-structural" as F_SYM #DCFCE7
-component "oslf-bisimulation" as F_BIS #DCFCE7
-component "oslf-transducer" as F_TRA #DCFCE7
-component "oslf-letprop" as F_LET #DCFCE7
-component "oslf-hindley-milner" as F_HM #DCFCE7
-component "oslf-behavioral-lowering" as F_BL #DCFCE7
-component "smt (z3)" as F_Z3 #DCFCE7
+' ── Always-on analysis routes, no Cargo feature (green) ──
+' (Z3/smt is the one route still behind an optional Cargo feature — purple.)
+component "carrier route\n(always-on)" as F_CAR #DCFCE7
+component "structural dispatch\n(always-on)" as F_SYM #DCFCE7
+component "bisimulation route\n(always-on)" as F_BIS #DCFCE7
+component "transducer pre-image\n(always-on)" as F_TRA #DCFCE7
+component "letprop → PATA\n(always-on)" as F_LET #DCFCE7
+component "HM sort pass\n(always-on)" as F_HM #DCFCE7
+component "behavioral lowering\n(always-on)" as F_BL #DCFCE7
+component "smt (z3)\n--features smt (off by default)" as F_Z3 #E9D5FF
 
-' ── Lint / seam the wired algebra fires (amber) ──
+' ── Lint / seam the always-on engine fires (amber) ──
 component "RT03 empty-intersection" as L_RT03 #FEF3C7
 component "RT07 dead-cast" as L_RT07 #FEF3C7
 component "LP01 empty PATA" as L_LP01 #FEF3C7
@@ -48,8 +49,9 @@ component "N06-ISO supersede" as L_N06 #FEF3C7
 component "Sat3-only gap-filler" as L_SAT #FEF3C7
 
 ' ── Status sinks ──
-rectangle "WIRED but GATED\n(default-off Cargo feature;\ndefault build byte-identical)" as WG #FEF3C7
-rectangle "Surface syntax: still PROPOSED\n(06 §3 — wired is not writable)" as PROP #FEE2E2
+rectangle "SHIPPED · ALWAYS-ON\n(no Cargo feature; default build\ncompiles AND runs it;\nlints inert on current corpus — 0 firings)" as WG #DCFCE7
+rectangle "OPTIONAL BACKEND\n(smt: --features smt;\nSat3 gap-filler only)" as OPT #E9D5FF
+rectangle "letprop recursive-predicate surface:\nstill PROPOSED (06 §3 — engine runs,\nbut no surface syntax to trigger it yet)" as PROP #FEE2E2
 
 M_CAR -right-> F_CAR
 M_SYM -right-> F_SYM
@@ -74,9 +76,13 @@ L_RT07 -right-> WG
 L_LP01 -right-> WG
 L_HM01 -right-> WG
 L_N06  -right-> WG
-L_SAT  -right-> WG
 
-WG -right-> PROP : no language! surface
+' Z3/smt is the one path still behind an optional Cargo feature.
+F_Z3  -right-> OPT
+L_SAT -right-> OPT
+
+' The engines all run; only letprop lacks a surface to fire on.
+L_LP01 -right-> PROP : no letprop surface yet
 
 ' ── force a 4-column matrix: stack each column vertically ──
 M_CAR -[hidden]down- M_SYM
@@ -98,6 +104,7 @@ L_RT07 -[hidden]down- L_LP01
 L_LP01 -[hidden]down- L_HM01
 L_HM01 -[hidden]down- L_N06
 L_N06  -[hidden]down- L_SAT
+WG -[hidden]down- OPT
 
 note bottom of WG #E0E7FF
   Zero-admission Coq wiring proofs: AnyAlgebraProjectionSound · GuardTierClassificationSound ·
@@ -108,10 +115,11 @@ end note
 
 legend right
 |= Color |= Meaning |
-|<#DBEAFE> | substrate module (input) |
-|<#DCFCE7> | Cargo feature flag (off by default) |
-|<#FEF3C7> | lint / seam the wired algebra fires (semi-decidable / gated) |
-|<#FEE2E2> | surface syntax still proposed — wired is not writable |
+|<#DBEAFE> | substrate module (always compiled) |
+|<#DCFCE7> | always-on analysis route / shipped (no Cargo feature) |
+|<#E9D5FF> | optional Cargo feature (Z3/smt, off by default) |
+|<#FEF3C7> | lint / seam the engine fires (unconditional; inert on current corpus) |
+|<#FEE2E2> | surface syntax still proposed — engine runs, nothing to fire on yet |
 |<#E0E7FF> | zero-admission Coq wiring-soundness proofs |
 endlegend
 @enduml

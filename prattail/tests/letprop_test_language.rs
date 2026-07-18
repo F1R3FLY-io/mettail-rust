@@ -44,7 +44,6 @@
 //!
 //! The lenient tokenizer accepts the proposed Unicode connectives (`∨`/`∧`/`¬`/`⇒`)
 //! as well as their ASCII spellings (`|`/`&`/`~`/`=>`), and `'` in identifiers.
-#![cfg(feature = "oslf-letprop")]
 
 use mettail_prattail::letprop::{LetPropArg, LetPropExpr, RecursivePredicate};
 use mettail_prattail::parity_tree::decide_recursive_predicate;

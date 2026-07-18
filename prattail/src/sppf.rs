@@ -322,6 +322,44 @@ pub enum SppfNode<W: SemiringRef> {
         /// Rule index within `owner_cat` of the owning rule.
         owner_rule_idx: u16,
     },
+
+    /// ROOT-P Canonical-GLL Stage E1 (2026-07-09): a BINARIZED intermediate
+    /// SPPF node — Scott & Johnstone (2010) §5 / BRNGLR `getNodeP`. Represents
+    /// a PARTIAL right-hand-side derivation `slot • ` (the left-fold of the
+    /// first `dot` children of a production) as a SINGLE packed node, so a
+    /// canonical-GLL descriptor can carry ONE owner-free `w` instead of an
+    /// exponential per-cursor operand STACK. Like `Symbol` it carries NO direct
+    /// children: its derivations link via the append-only `symbol_packings`
+    /// side table (each packing is a binary `[left, right]` pair — the prefix
+    /// intermediate and the newly-consumed child). Deduped by
+    /// `(slot_id, lo_pos, hi_pos)`, so two partial derivations of the SAME
+    /// grammar slot reaching the same span collapse to ONE node with multiple
+    /// packings (canonical ambiguity ⇒ packing family, exactly like `Symbol`).
+    ///
+    /// **Owner-free by construction**: the label is `(slot_id, lo, hi)` — the
+    /// grammar production + dot + span — NEVER a trigger's `(owner_cat,
+    /// owner_rule_idx)`. This is what dissolves the Stage-E owner-attribution
+    /// tension: the N `@`-owner rules stay DISTINCT via `slot_id`
+    /// (`slot_id = (global_rule_idx << 8) | dot`) without owner-masking, so a
+    /// poly descriptor set keeps every reading's reduce alive.
+    ///
+    /// **Constructed by `intern_intermediate`** (reached solely from
+    /// `cgll_get_node_p`). The binarized canonical-GLL path is the sole parser,
+    /// so this arm is interned on every parse and
+    /// `span_lo`/`span_hi`/`link_packing_to_symbol`/realize observe it
+    /// unconditionally.
+    Intermediate {
+        /// Grammar slot + dot: `(global_rule_idx << 8) | dot`. Identifies the
+        /// production and how many RHS symbols have been folded so far.
+        slot_id: u32,
+        /// Input span start (inclusive) — the production's frame start.
+        lo_pos: u32,
+        /// Input span end (exclusive) — the right extent of the last folded
+        /// child.
+        hi_pos: u32,
+        /// `⊕`-aggregated weight over linked packings (mirrors `Symbol`).
+        weight_sum: W,
+    },
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -330,10 +368,11 @@ pub enum SppfNode<W: SemiringRef> {
 
 /// Truncation watermarks for restoring the SPPF arena to a prior state.
 ///
-/// Used by `WpdaIncrementalSession` (plan §11) to support LSP-style
-/// incremental reparse. The append-only arena invariant guarantees that
-/// truncating the three vectors to these lengths produces exactly the state
-/// the arena was in when the checkpoint was recorded.
+/// Supports LSP-style incremental reparse: the append-only arena invariant
+/// guarantees that truncating the three vectors to these lengths produces
+/// exactly the state the arena was in when the checkpoint was recorded. (The
+/// Stage-5 `WpdaIncrementalSession` that drove this reparse was removed in the
+/// S1-S6 single-engine re-platform.)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SppfCheckpoint {
     /// Length of the `nodes` Vec at checkpoint time.
@@ -412,6 +451,12 @@ pub struct Sppf<W: SemiringRef> {
     /// an extra `pushed_via_push_ident: bool` discriminator that
     /// TriggerTerminals don't need (they never produce `ActionArg`s).
     dedup_trigger_terminal: FxHashMap<(TokenKind, PosOrSynth, u16, u16), SppfId>,
+    /// ROOT-P Canonical-GLL Stage E1 (2026-07-09): dedup `Intermediate` nodes by
+    /// `(slot_id, lo_pos, hi_pos)` — a SEPARATE namespace from `dedup_symbol`
+    /// (an Intermediate and a Symbol may share `(lo, hi)` but never collide).
+    /// Populated by `intern_intermediate` (reached from `cgll_get_node_p`) on
+    /// every parse — the binarized canonical-GLL path is the sole parser.
+    dedup_intermediate: FxHashMap<(u32, u32, u32), SppfId>,
 
     // Derived indices — strictly rebuildable from `symbol_packings`. Rebuilt
     // on checkpoint restore.
@@ -438,6 +483,7 @@ impl<W: SemiringRef> Default for Sppf<W> {
             dedup_predicate: FxHashMap::default(),
             dedup_binder_scope: FxHashMap::default(),
             dedup_trigger_terminal: FxHashMap::default(),
+            dedup_intermediate: FxHashMap::default(),
             link_dedup: FxHashSet::default(),
             packings_by_symbol: FxHashMap::default(),
         }
@@ -559,6 +605,34 @@ impl<W: SemiringRef> Sppf<W> {
     /// Look up an already-interned Symbol identity node without allocating.
     pub fn symbol_id(&self, nt_tag: u32, lo_pos: u32, hi_pos: u32) -> Option<SppfId> {
         self.dedup_symbol.get(&(nt_tag, lo_pos, hi_pos)).copied()
+    }
+
+    /// ROOT-P Canonical-GLL Stage E1 (2026-07-09): intern a BINARIZED
+    /// `Intermediate` identity node — a clone of [`Sppf::intern_symbol`] against
+    /// the separate [`Sppf::dedup_intermediate`] table. Returns the existing id
+    /// if `(slot_id, lo, hi)` was already interned, else allocates. Two partial
+    /// derivations of the SAME grammar slot reaching the same span collapse to
+    /// ONE node (canonical dedup); their distinct `[left, right]` packings link
+    /// separately via [`Sppf::link_packing_to_symbol`] (which accepts
+    /// `Intermediate` as its parent). `weight_sum` initializes to the
+    /// `⊕`-identity, `⊕`-aggregated as packings link (mirrors `Symbol`).
+    ///
+    /// Reached from `WpdaWalker::cgll_get_node_p` on every parse — the
+    /// binarized canonical-GLL path is the sole parser.
+    pub fn intern_intermediate(&mut self, slot_id: u32, lo_pos: u32, hi_pos: u32) -> SppfId {
+        let key = (slot_id, lo_pos, hi_pos);
+        if let Some(&id) = self.dedup_intermediate.get(&key) {
+            return id;
+        }
+        let id = self.nodes.len() as SppfId;
+        self.nodes.push(SppfNode::Intermediate {
+            slot_id,
+            lo_pos,
+            hi_pos,
+            weight_sum: W::zero_ref(),
+        });
+        self.dedup_intermediate.insert(key, id);
+        id
     }
 
     /// Intern a Packing (one derivation). Returns the existing id if a
@@ -686,8 +760,13 @@ impl<W: SemiringRef> Sppf<W> {
     /// `packing_id` refers to a `SppfNode::Packing`. Debug-asserted.
     pub fn link_packing_to_symbol(&mut self, symbol_id: SppfId, packing_id: SppfId) {
         debug_assert!(
-            matches!(self.node(symbol_id), Some(SppfNode::Symbol { .. })),
-            "link_packing_to_symbol: symbol_id {} is not a Symbol node",
+            // ROOT-P Stage E1: the parent may be a `Symbol` (classic) OR an
+            // `Intermediate` (binarized `getNodeP`; canonical-only, gated).
+            matches!(
+                self.node(symbol_id),
+                Some(SppfNode::Symbol { .. }) | Some(SppfNode::Intermediate { .. })
+            ),
+            "link_packing_to_symbol: symbol_id {} is not a Symbol/Intermediate node",
             symbol_id
         );
         debug_assert!(
@@ -706,10 +785,14 @@ impl<W: SemiringRef> Sppf<W> {
                 Some(SppfNode::Packing { weight, .. }) => weight.clone(),
                 _ => W::one_ref(),
             };
-            if let Some(SppfNode::Symbol { weight_sum, .. }) =
-                self.nodes.get_mut(symbol_id as usize)
-            {
-                *weight_sum = weight_sum.plus_ref(&packing_w);
+            match self.nodes.get_mut(symbol_id as usize) {
+                Some(SppfNode::Symbol { weight_sum, .. })
+                // ROOT-P Stage E1: `Intermediate` aggregates weight exactly like
+                // `Symbol` (canonical-only; never taken on the classic path).
+                | Some(SppfNode::Intermediate { weight_sum, .. }) => {
+                    *weight_sum = weight_sum.plus_ref(&packing_w);
+                },
+                _ => {},
             }
         }
     }
@@ -868,6 +951,9 @@ impl<W: SemiringRef> Sppf<W> {
                     });
                 },
                 SppfNode::Symbol { lo_pos, .. } => return Some(*lo_pos),
+                // ROOT-P Stage E1: Intermediate carries its span explicitly
+                // (like Symbol); canonical-only.
+                SppfNode::Intermediate { lo_pos, .. } => return Some(*lo_pos),
                 SppfNode::Epsilon { pos } => return Some(*pos),
                 SppfNode::OptAbsent { pos } => return Some(*pos),
                 SppfNode::Packing { children, .. } => {
@@ -903,6 +989,9 @@ impl<W: SemiringRef> Sppf<W> {
                     return Some(p + 1);
                 },
                 SppfNode::Symbol { hi_pos, .. } => return Some(*hi_pos),
+                // ROOT-P Stage E1: Intermediate carries its span explicitly
+                // (like Symbol); canonical-only.
+                SppfNode::Intermediate { hi_pos, .. } => return Some(*hi_pos),
                 SppfNode::Epsilon { pos } => return Some(*pos),
                 SppfNode::OptAbsent { pos } => return Some(*pos),
                 SppfNode::Packing { children, .. } => {
@@ -1009,15 +1098,11 @@ impl<W: SemiringRef> Sppf<W> {
 // decomposition that the Newton-method solver (in
 // `prattail/src/automata/semiring.rs::solve_scc_weights_newton`)
 // consumes.
-//
-// Currently `#[allow(dead_code)]` until Commit 3 wires them into
-// `wpda_walker.rs::realize_root_to_terms_with_weights`.
 // ══════════════════════════════════════════════════════════════════════════════
 
 /// Strongly-connected component identifier (index into the SCC vector
 /// returned by [`Sppf::tarjan_sccs`]). Stable per-realize-call only —
 /// not preserved across calls.
-#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct SccId(pub usize);
 
@@ -1089,7 +1174,6 @@ impl<W: SemiringRef> Sppf<W> {
     ///
     /// Returns an empty vec if `root` is not a Symbol or `root` is
     /// `SPPF_ID_NONE`.
-    #[allow(dead_code)]
     pub fn tarjan_sccs(&self, root: SppfId) -> Vec<Vec<SppfId>> {
         // Map SppfId → contiguous internal index for Vec-based state.
         // Visit all reachable Symbol nodes; assign each a sequential id.
@@ -1139,6 +1223,9 @@ impl<W: SemiringRef> Sppf<W> {
                 | Some(SppfNode::OptAbsent { .. })
                 | Some(SppfNode::Predicate { .. })
                 | Some(SppfNode::BinderScope { .. })
+                // ROOT-P Stage E1: Intermediate is canonical-only; the classic
+                // Tarjan-SCC graph never contains one — treat as a leaf.
+                | Some(SppfNode::Intermediate { .. })
                 | None => {
                     // Leaves / non-Symbol — no out-edges in the Symbol graph.
                 },
@@ -1239,7 +1326,6 @@ impl<W: SemiringRef> Sppf<W> {
     ///
     /// Used to detect non-trivial singleton SCCs: a 1-Symbol SCC is
     /// non-trivial (cyclic) iff this returns `true`.
-    #[allow(dead_code)]
     pub fn has_self_loop(&self, symbol: SppfId) -> bool {
         if !matches!(self.node(symbol), Some(SppfNode::Symbol { .. })) {
             return false;
@@ -1272,7 +1358,6 @@ impl<W: SemiringRef> Sppf<W> {
     ///   "no contribution" semantics).
     ///
     /// **Panics**: if `packing_id` is not a `SppfNode::Packing`.
-    #[allow(dead_code)]
     pub fn factor_scc_packing(
         &self,
         packing_id: SppfId,

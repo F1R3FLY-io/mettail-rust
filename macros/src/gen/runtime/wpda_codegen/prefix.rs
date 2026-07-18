@@ -14,7 +14,7 @@ use mettail_ast::grammar::{GrammarItem, GrammarRule, NonTerminalKind};
 use mettail_ast::language::{LanguageDef, NativeKind};
 use mettail_prattail::binding_power::compute_prefix_bp;
 use proc_macro2::TokenStream;
-use quote::quote;
+use quote::{format_ident, quote};
 use syn::{Ident, Type};
 
 /// Lexer token family for a literal-patterned rule.
@@ -1062,6 +1062,16 @@ pub fn emit_paren_dispatch_arms(
     categories: &[String],
     language: &mettail_ast::language::LanguageDef,
     per_cat: &[Vec<mettail_ast::grammar::GrammarRule>],
+    // Task #10 item 1: the fork-emission ordinal collector. Only the FORK
+    // case's `(`-binder branches derive rows (a rule's initiating branch at
+    // its static position AFTER the grouping branches). The grouping-marker
+    // branches themselves push category MARKERS, not rules — no `(cat,
+    // rule)` row is derivable from them; the NParen-class kept-wrapper
+    // rules those groupings lead to resolve through the table's site-2
+    // fallback `0`, which IS the grouping branches' grouping-first index
+    // (byte-identical by construction). The simple no-conflict arm is not
+    // a fork — no rows.
+    fork_rows: &mut super::fork_emission::ForkEmissionOrdinalModel,
 ) -> TokenStream {
     let mut arms = Vec::new();
     for (cat_i, _cat_name) in categories.iter().enumerate() {
@@ -1153,11 +1163,22 @@ pub fn emit_paren_dispatch_arms(
             });
         }
         // Branches 1..N: each binder rule with `(` trigger.
-        for (rule_idx, shape) in &paren_binder_rules {
+        for (paren_binder_position, (rule_idx, shape)) in
+            paren_binder_rules.iter().enumerate()
+        {
             let body_src_idx = super::binder::binder_initial_body_cat(shape)
                 .and_then(|name| super::binder::lookup_src_idx(name, categories))
                 .unwrap_or(result_src_idx);
             let rule_idx_lit = *rule_idx;
+            // Task #10 item 1: the binder branch's STATIC position = after
+            // ALL grouping branches (grouping-first layout), in declaration
+            // order.
+            fork_rows.record_site2_row(
+                result_src_idx,
+                rule_idx_lit,
+                (grouping_source_indices.len() + paren_binder_position) as u16,
+                "paren-dispatch \"(\"",
+            );
             branches.push(quote! {
                 mettail_prattail::wpda_walker::ForkBranch {
                     symbol: StackSymbolV2::rule_at(
@@ -1444,7 +1465,24 @@ pub fn emit_prefix_arms_for_category(
     category_src_idx: u16,
     category_name: &str,
     rules_in_category: &[(u16, &GrammarRule)],
-) -> TokenStream {
+    // S1-FACTORING F1 (2026-07-12, plan §D F1): this category's
+    // `rule_idx → SpineDisposition` map from
+    // `factoring::build_spine_emission`. EMPTY while `S1_FACTORING == false`
+    // (⇒ every lookup below misses ⇒ the emission is byte-identical to the
+    // pre-F1 output). `GroupFirst` members emit the group's ONE spine
+    // trigger branch at their emission position; `GroupRest` members emit
+    // nothing (the spine branch covers them).
+    s1_dispositions: &std::collections::HashMap<u16, super::factoring::SpineDisposition>,
+    // Task #10 item 1: this category's `GroupFirst rule -> ordered members`
+    // map (`factoring::SpineEmission::group_members`) + the fork-emission
+    // ordinal collector threaded down to `emit_unified_arm`.
+    s1_group_members: &std::collections::HashMap<u16, Vec<u16>>,
+    fork_rows: &mut super::fork_emission::ForkEmissionOrdinalModel,
+    // Task #15 (frame-bound peel): returns `(arms, helpers)` — `arms` are the
+    // PrefixDispatch `match peek` arms (each `#pat if #guard => self.prefix_arm_
+    // c{cat}_a{ord}(..)`), `helpers` are the per-arm `#[inline(never)]` body
+    // methods that get emitted into the sibling inherent `impl #engine_ident`.
+) -> (TokenStream, TokenStream) {
     let mut arms = Vec::new();
     // Stage 1.2: cross-cat infix LHS delegation. Walk all infix rules
     // (not just rules in this category) whose result_cat == this category
@@ -1746,13 +1784,61 @@ pub fn emit_prefix_arms_for_category(
     // and explodes the frontier before realization can reject them. Explicit
     // wrappers still parse through their literal/binder arms; only Pass 2a
     // transparent projections participate in source-FIRST cross-cat wrapping.
+    // Task #15 (frame-bound peel): assemble the PrefixDispatch arms AND their
+    // per-arm `#[inline(never)]` helper methods. Each arm keeps its
+    // pattern+guard inline in `step`'s `match peek`; its body is relocated into
+    // `prefix_arm_c{cat}_a{ord}` so the PrefixDispatch alloca-sum no longer
+    // inflates the `step` frame.
+    let mut helpers: Vec<TokenStream> = Vec::with_capacity(unified_order.len());
+    let mut helper_ord: u32 = 0;
     for key in unified_order {
         let entry = unified_buckets
             .remove(&key)
             .expect("bucket present in order");
-        arms.push(emit_unified_arm(category_src_idx, &entry));
+        let (head, body) = emit_unified_arm(
+            category_src_idx,
+            &entry,
+            s1_dispositions,
+            s1_group_members,
+            fork_rows,
+        );
+        let helper_ident = format_ident!("prefix_arm_c{}_a{}", category_src_idx, helper_ord);
+        helper_ord += 1;
+        arms.push(quote! {
+            #head => self.#helper_ident(
+                pos,
+                cur_bp,
+                _outer_bp,
+                state_cat_src_idx,
+                tokens,
+                frontier_top,
+                frame_ctx,
+            ),
+        });
+        helpers.push(quote! {
+            // Task #15 (frame-bound peel): one PrefixDispatch arm body,
+            // #[inline(never)] so `step` reserves only skeleton + one-helper
+            // frame. Pure motion — the body is verbatim; `pos`/`cur_bp` pass BY
+            // REFERENCE (A5), `_outer_bp` by value (it is the derived `*cur_bp`
+            // local the bodies read), and frontier_top/frame_ctx/
+            // state_cat_src_idx are over-provisioned for a uniform signature
+            // (silenced by the inherent impl's #[allow(unused_variables)]).
+            #[inline(never)]
+            fn #helper_ident(
+                &self,
+                pos: &usize,
+                cur_bp: &u8,
+                _outer_bp: u8,
+                state_cat_src_idx: u16,
+                tokens: &dyn mettail_prattail::wpda_runtime::WpdaTokenSource,
+                frontier_top: Option<&mettail_prattail::gss::WpdaGssNode>,
+                frame_ctx: mettail_prattail::wpda_runtime::FrameCtx,
+            ) -> mettail_prattail::wpda_walker::WpdaStepAction<
+                mettail_prattail::automata::lex_weight::LexicographicWeight,
+            > #body
+        });
     }
-    quote! { #(#arms)* }
+    (quote! { #(#arms)* }, quote! { #(#helpers)* })
 }
 
 // B10 / Option κ Fix B (2026-05-07): `emit_cross_cat_projection_arms_bucketed`
@@ -1964,11 +2050,81 @@ fn insert_unified_descriptor(
 /// Lex-min picks atomic-home on parse-success ties (preserves bare
 /// PVar parsing as Proc when no operator follows); cross-cat-LHS wins
 /// when only that branch survives (e.g. `x!(0)` requires Name LHS).
-fn emit_unified_arm(category_src_idx: u16, bucket: &UnifiedBucket) -> TokenStream {
+/// Task #10 item 1: record the fork-emission site-2 row(s) for a
+/// rule-initiating dispatch branch at its static declaration position,
+/// routing S1 spine dispositions: `GroupFirst` derives one row per group
+/// MEMBER at the spine trigger branch's position (the branch initiates
+/// every member); `GroupRest` derives nothing (no branch is emitted — the
+/// member's row came from its group's `GroupFirst`); undispositioned rules
+/// derive their own row.
+fn record_initiating_rule_rows(
+    fork_rows: &mut super::fork_emission::ForkEmissionOrdinalModel,
+    category_src_idx: u16,
+    rule_idx: u16,
+    branch_position: u16,
+    s1_dispositions: &std::collections::HashMap<u16, super::factoring::SpineDisposition>,
+    s1_group_members: &std::collections::HashMap<u16, Vec<u16>>,
+    bucket_tag: &str,
+) {
+    match s1_dispositions.get(&rule_idx) {
+        Some(super::factoring::SpineDisposition::GroupFirst { .. }) => {
+            let members = s1_group_members.get(&rule_idx).unwrap_or_else(|| {
+                panic!(
+                    "task #10 item 1: GroupFirst rule (cat {category_src_idx}, rule \
+                     {rule_idx}) has no group_members entry — factoring drift",
+                )
+            });
+            for &member in members {
+                fork_rows.record_site2_row(
+                    category_src_idx,
+                    member,
+                    branch_position,
+                    bucket_tag,
+                );
+            }
+        },
+        Some(super::factoring::SpineDisposition::GroupRest) => {},
+        None => {
+            fork_rows.record_site2_row(
+                category_src_idx,
+                rule_idx,
+                branch_position,
+                bucket_tag,
+            );
+        },
+    }
+}
+
+fn emit_unified_arm(
+    category_src_idx: u16,
+    bucket: &UnifiedBucket,
+    s1_dispositions: &std::collections::HashMap<u16, super::factoring::SpineDisposition>,
+    // Task #10 item 1: `GroupFirst rule -> ordered members` for THIS
+    // category (`factoring::SpineEmission::group_members`) — a GroupFirst
+    // descriptor's spine trigger branch is every member's initiating
+    // branch, so each member derives a row at that branch's position.
+    s1_group_members: &std::collections::HashMap<u16, Vec<u16>>,
+    // Task #10 item 1: the fork-emission ordinal collector. Rows are
+    // recorded HERE, as the branches are emitted, at their STATIC
+    // DECLARATION POSITIONS (amendment 6) — runtime-gated pushes (the
+    // CrossCatLhs guard) still occupy their declared slot.
+    fork_rows: &mut super::fork_emission::ForkEmissionOrdinalModel,
+    // Task #15 (frame-bound peel): returns `(head, body)` — `head` is the
+    // arm's `#pat if #guard [#compat]` (kept inline in `step`'s PrefixDispatch
+    // `match peek`), `body` is the `{ .. }` block relocated into a per-arm
+    // `#[inline(never)]` helper. The guard stays with the pattern so any
+    // pattern binding (e.g. `__kw`) and the `tokens`/`*pos` guard references
+    // remain in the skeleton — the split is pure body-relocation (A4).
+) -> (TokenStream, TokenStream) {
     let pat = &bucket.pat;
     let guard = match &bucket.extra_guard {
         Some(eg) => quote! { #eg && state_cat_src_idx == #category_src_idx },
         None => quote! { state_cat_src_idx == #category_src_idx },
+    };
+    // Task #10 item 1: bucket identity for the collision diagnostics.
+    let fork_bucket_tag = match &bucket.extra_guard {
+        Some(eg) => format!("prefix-dispatch {} if {}", bucket.pat, eg),
+        None => format!("prefix-dispatch {}", bucket.pat),
     };
     // CROSSCAT_LEX_COMPAT_GATE (option B backstop): a per-projection compat
     // conjunct appended to the arm GUARD when the runtime kill-switch is on.
@@ -1999,8 +2155,10 @@ fn emit_unified_arm(category_src_idx: u16, bucket: &UnifiedBucket) -> TokenStrea
                 sigil_leads_result_rule: _,
             } => {
                 let source_src_idx = *source_src_idx;
-                quote! {
-                    #pat if #guard => {
+                (
+                    quote! { #pat if #guard },
+                    quote! {
+                        {
                         // Cross-category LHS delegation parses a source-category
                         // atom that may later produce the target category via a
                         // category-changing infix. The target Pratt floor is
@@ -2018,15 +2176,43 @@ fn emit_unified_arm(category_src_idx: u16, bucket: &UnifiedBucket) -> TokenStrea
                                 source_src_idx: #source_src_idx,
                             },
                         };
-                    }
-                }
+                        }
+                    },
+                )
             },
-            UnifiedDescriptor::Atomic(desc) => emit_atomic_arm_singleton(desc),
+            UnifiedDescriptor::Atomic(desc) => {
+                // Task #10 item 1: the no-fork singleton fast path has no
+                // peer branches — static declaration position 0 (amendment
+                // 6). Recorded (not skipped) so the amendment-6 collision
+                // assert also covers cross-bucket membership.
+                fork_rows.record_site2_row(
+                    desc.category_src_idx,
+                    desc.rule_idx,
+                    0,
+                    &fork_bucket_tag,
+                );
+                emit_atomic_arm_singleton(desc)
+            },
             UnifiedDescriptor::BinderPrefix { rule_idx, body_src_idx } => {
                 let rule_idx = *rule_idx;
                 let body_src_idx = *body_src_idx;
-                quote! {
-                    #pat if #guard => {
+                // S1-FACTORING F1: a factored group needs ≥2 members sharing
+                // this bucket's `(pat, guard)` key, so a grouped member can
+                // never reach the SINGLETON (1-descriptor) path — asserted so
+                // a bucketing drift between `factoring::discover_members` and
+                // this insertion chain fails codegen loudly.
+                assert!(
+                    s1_dispositions.get(&rule_idx).is_none(),
+                    "S1-FACTORING F1: grouped rule (cat {category_src_idx}, rule {rule_idx}) \
+                     reached the singleton BinderPrefix emission",
+                );
+                // Task #10 item 1: singleton = position 0 (grouped members
+                // asserted unreachable above, so the plain row suffices).
+                fork_rows.record_site2_row(category_src_idx, rule_idx, 0, &fork_bucket_tag);
+                (
+                    quote! { #pat if #guard },
+                    quote! {
+                        {
                         return WpdaStepAction::ConsumeAndPush {
                             symbol: StackSymbolV2::rule_at(
                                 #category_src_idx, #rule_idx, 1u8, Some(_outer_bp),
@@ -2041,15 +2227,20 @@ fn emit_unified_arm(category_src_idx: u16, bucket: &UnifiedBucket) -> TokenStrea
                             trigger_mode:
                                 mettail_prattail::wpda_walker::TriggerMode::ConsumeAsTriggerOnly,
                         };
-                    }
-                }
+                        }
+                    },
+                )
             },
             UnifiedDescriptor::CrossCatPrefixUnary { rule_idx, source_src_idx, operand_bp } => {
                 let rule_idx = *rule_idx;
                 let source_src_idx = *source_src_idx;
                 let operand_bp = *operand_bp;
-                quote! {
-                    #pat if #guard => {
+                // Task #10 item 1: singleton = position 0.
+                fork_rows.record_site2_row(category_src_idx, rule_idx, 0, &fork_bucket_tag);
+                (
+                    quote! { #pat if #guard },
+                    quote! {
+                        {
                         return WpdaStepAction::ConsumeAndPush {
                             symbol: StackSymbolV2::rule_at(
                                 #category_src_idx, #rule_idx, 0, Some(_outer_bp),
@@ -2062,15 +2253,20 @@ fn emit_unified_arm(category_src_idx: u16, bucket: &UnifiedBucket) -> TokenStrea
                             trigger_mode:
                                 mettail_prattail::wpda_walker::TriggerMode::ConsumeAsTriggerOnly,
                         };
-                    }
-                }
+                        }
+                    },
+                )
             },
             UnifiedDescriptor::CrossCatProjection { rule_idx, source_src_idx } => {
                 let rule_idx = *rule_idx;
                 let source_src_idx = *source_src_idx;
                 let __compat = compat_guard(source_src_idx);
-                quote! {
-                    #pat if #guard #__compat => {
+                // Task #10 item 1: singleton = position 0.
+                fork_rows.record_site2_row(category_src_idx, rule_idx, 0, &fork_bucket_tag);
+                (
+                    quote! { #pat if #guard #__compat },
+                    quote! {
+                        {
                         // B10 / Option κ Fix B (2026-05-07): cross-cat
                         // projection singleton — Push the rule's Return
                         // marker and route to CrossCatDelegate so the
@@ -2093,13 +2289,26 @@ fn emit_unified_arm(category_src_idx: u16, bucket: &UnifiedBucket) -> TokenStrea
                                 inner_cur_bp: *cur_bp,
                             },
                         };
-                    }
-                }
+                        }
+                    },
+                )
             },
             UnifiedDescriptor::NullaryLiteralRun { rule_idx } => {
                 let rule_idx = *rule_idx;
-                quote! {
-                    #pat if #guard => {
+                // S1-FACTORING F1: same singleton-unreachability assert as
+                // the BinderPrefix arm above (groups need ≥2 co-bucketed
+                // members).
+                assert!(
+                    s1_dispositions.get(&rule_idx).is_none(),
+                    "S1-FACTORING F1: grouped rule (cat {category_src_idx}, rule {rule_idx}) \
+                     reached the singleton NullaryLiteralRun emission",
+                );
+                // Task #10 item 1: singleton = position 0.
+                fork_rows.record_site2_row(category_src_idx, rule_idx, 0, &fork_bucket_tag);
+                (
+                    quote! { #pat if #guard },
+                    quote! {
+                        {
                         // GAP-3: 0-operand multi-literal keyword prefix. Consume
                         // the trigger (ConsumeAsTriggerOnly mirrors it to the
                         // SPPF as a TriggerTerminal — the SOLE child under the
@@ -2123,8 +2332,9 @@ fn emit_unified_arm(category_src_idx: u16, bucket: &UnifiedBucket) -> TokenStrea
                             trigger_mode:
                                 mettail_prattail::wpda_walker::TriggerMode::ConsumeAsTriggerOnly,
                         };
-                    }
-                }
+                        }
+                    },
+                )
             },
         }
     } else {
@@ -2139,10 +2349,17 @@ fn emit_unified_arm(category_src_idx: u16, bucket: &UnifiedBucket) -> TokenStrea
         // DECLARATION ORDER, byte-identical to the pre-F1 emission; only the
         // cross-cat-LHS push is wrapped in the runtime gate, preserving order.
         let n_descs = bucket.descs.len();
+        // Task #10 item 1: `branch_position` = the descriptor's STATIC
+        // DECLARATION POSITION within this bucket (amendment 6) — the
+        // enumerate index over the SAME iteration that emits the branches,
+        // so the recorded ordinals can never diverge from the emission.
+        // Runtime-gated pushes (CrossCatLhs) still occupy their declared
+        // slot; GroupRest descriptors emit nothing and record nothing.
         let push_stmts: Vec<TokenStream> = bucket
             .descs
             .iter()
-            .map(|d| match d {
+            .enumerate()
+            .map(|(branch_position, d)| match d {
                 UnifiedDescriptor::CrossCatLhs {
                     source_src_idx,
                     sigil_leads_result_rule,
@@ -2205,6 +2422,13 @@ fn emit_unified_arm(category_src_idx: u16, bucket: &UnifiedBucket) -> TokenStrea
                 UnifiedDescriptor::Atomic(desc) => {
                     let rule_idx = desc.rule_idx;
                     let csi = desc.category_src_idx;
+                    // Task #10 item 1: static declaration position.
+                    fork_rows.record_site2_row(
+                        csi,
+                        rule_idx,
+                        branch_position as u16,
+                        &fork_bucket_tag,
+                    );
                     quote! {
                         __pd_branches.push(mettail_prattail::wpda_walker::ForkBranch {
                             symbol: StackSymbolV2::rule_at(
@@ -2221,24 +2445,56 @@ fn emit_unified_arm(category_src_idx: u16, bucket: &UnifiedBucket) -> TokenStrea
                 UnifiedDescriptor::BinderPrefix { rule_idx, body_src_idx } => {
                     let rule_idx = *rule_idx;
                     let body_src_idx = *body_src_idx;
-                    quote! {
-                        __pd_branches.push(mettail_prattail::wpda_walker::ForkBranch {
-                            symbol: StackSymbolV2::rule_at(
-                                #category_src_idx, #rule_idx, 1u8, Some(_outer_bp),
-                            ),
-                            weight: lex_w(0.0, #category_src_idx, #rule_idx),
-                            new_state: WpdaState::BinderRule {
-                                result_src_idx: #category_src_idx,
-                                rule_idx: #rule_idx,
-                                body_src_idx: #body_src_idx,
-                                outer_bp: _outer_bp,
-                            },
-                            action_kind:
-                                mettail_prattail::wpda_walker::ForkActionKind::ConsumeAndPush {
-                                    trigger_mode:
-                                        mettail_prattail::wpda_walker::TriggerMode::ConsumeAsTriggerOnly,
+                    // Task #10 item 1: disposition-routed rows — GroupFirst
+                    // derives every member's row at THIS position; GroupRest
+                    // derives nothing; plain rules derive their own row.
+                    record_initiating_rule_rows(
+                        fork_rows,
+                        category_src_idx,
+                        rule_idx,
+                        branch_position as u16,
+                        s1_dispositions,
+                        s1_group_members,
+                        &fork_bucket_tag,
+                    );
+                    // S1-FACTORING F1 (plan §2 item 1): a grouped member's
+                    // per-rule branch is replaced by the group's ONE spine
+                    // trigger branch (emitted at the FIRST member's position,
+                    // preserving declaration-order emission), or by nothing
+                    // (GroupRest). The map is EMPTY while `S1_FACTORING ==
+                    // false` ⇒ the `None` arm below is the pre-F1
+                    // byte-identical emission.
+                    match s1_dispositions.get(&rule_idx) {
+                        Some(super::factoring::SpineDisposition::GroupFirst {
+                            spine_id,
+                            body_src_idx: group_body_src_idx,
+                            weight_rule_idx,
+                        }) => super::factoring::emit_spine_trigger_branch(
+                            category_src_idx,
+                            *spine_id,
+                            *group_body_src_idx,
+                            *weight_rule_idx,
+                        ),
+                        Some(super::factoring::SpineDisposition::GroupRest) => TokenStream::new(),
+                        None => quote! {
+                            __pd_branches.push(mettail_prattail::wpda_walker::ForkBranch {
+                                symbol: StackSymbolV2::rule_at(
+                                    #category_src_idx, #rule_idx, 1u8, Some(_outer_bp),
+                                ),
+                                weight: lex_w(0.0, #category_src_idx, #rule_idx),
+                                new_state: WpdaState::BinderRule {
+                                    result_src_idx: #category_src_idx,
+                                    rule_idx: #rule_idx,
+                                    body_src_idx: #body_src_idx,
+                                    outer_bp: _outer_bp,
                                 },
-                        });
+                                action_kind:
+                                    mettail_prattail::wpda_walker::ForkActionKind::ConsumeAndPush {
+                                        trigger_mode:
+                                            mettail_prattail::wpda_walker::TriggerMode::ConsumeAsTriggerOnly,
+                                    },
+                            });
+                        },
                     }
                 }
                 UnifiedDescriptor::CrossCatPrefixUnary {
@@ -2249,6 +2505,13 @@ fn emit_unified_arm(category_src_idx: u16, bucket: &UnifiedBucket) -> TokenStrea
                     let rule_idx = *rule_idx;
                     let source_src_idx = *source_src_idx;
                     let operand_bp = *operand_bp;
+                    // Task #10 item 1: static declaration position.
+                    fork_rows.record_site2_row(
+                        category_src_idx,
+                        rule_idx,
+                        branch_position as u16,
+                        &fork_bucket_tag,
+                    );
                     quote! {
                         __pd_branches.push(mettail_prattail::wpda_walker::ForkBranch {
                             symbol: StackSymbolV2::rule_at(
@@ -2273,6 +2536,15 @@ fn emit_unified_arm(category_src_idx: u16, bucket: &UnifiedBucket) -> TokenStrea
                 } => {
                     let rule_idx = *rule_idx;
                     let src_idx = *source_src_idx;
+                    // Task #10 item 1: static declaration position (the
+                    // lex-compat runtime gate below is runtime-only — the
+                    // declared slot counts per amendment 6).
+                    fork_rows.record_site2_row(
+                        category_src_idx,
+                        rule_idx,
+                        branch_position as u16,
+                        &fork_bucket_tag,
+                    );
                     // CROSSCAT_LEX_COMPAT_GATE (option B backstop): gate THIS
                     // Fork branch's push on runtime lex-compatibility. Other
                     // branches in the same Fork (CrossCatLhs / PVar / other
@@ -2316,38 +2588,71 @@ fn emit_unified_arm(category_src_idx: u16, bucket: &UnifiedBucket) -> TokenStrea
                 }
                 UnifiedDescriptor::NullaryLiteralRun { rule_idx } => {
                     let rule_idx = *rule_idx;
-                    quote! {
-                        // GAP-3: nullary multi-literal keyword prefix Fork branch
-                        // (e.g. `@ Nil` co-bucketed with `@ ( p )` / `@ p`).
-                        // Consume the trigger as a TriggerTerminal, push the
-                        // mixfix marker, enter MixfixLiteralRun(kind=2). Tier 0.0
-                        // (atomic-home) so lex-min picks the lowest-rule_idx branch
-                        // (declaration order) on a parse-success tie — NQuoteNil
-                        // (declared before NQuoteShort) wins for `@Nil`.
-                        __pd_branches.push(mettail_prattail::wpda_walker::ForkBranch {
-                            symbol: StackSymbolV2::mixfix_marker(
-                                #category_src_idx, #rule_idx, 0u8,
-                            ),
-                            weight: lex_w(0.0, #category_src_idx, #rule_idx),
-                            new_state: WpdaState::MixfixLiteralRun {
-                                result_src_idx: #category_src_idx,
-                                rule_idx: #rule_idx,
-                                completed_idx: 0u8,
-                                kind: 2u8,
-                                sub_pos: 0u8,
-                            },
-                            action_kind:
-                                mettail_prattail::wpda_walker::ForkActionKind::ConsumeAndPush {
-                                    trigger_mode:
-                                        mettail_prattail::wpda_walker::TriggerMode::ConsumeAsTriggerOnly,
+                    // Task #10 item 1: same disposition-routed rows as the
+                    // BinderPrefix arm above.
+                    record_initiating_rule_rows(
+                        fork_rows,
+                        category_src_idx,
+                        rule_idx,
+                        branch_position as u16,
+                        s1_dispositions,
+                        s1_group_members,
+                        &fork_bucket_tag,
+                    );
+                    // S1-FACTORING F1: nullary members join spine groups too
+                    // (the Nil-group's rules 15/16). Same disposition routing
+                    // as the BinderPrefix arm above; the spine trigger branch
+                    // is BinderRule-shaped regardless of member kind — a
+                    // nullary member re-enters its own
+                    // `MixfixLiteralRun{kind:2}` tail only at its COMMIT leaf
+                    // (amendment A4 typed coordinates).
+                    match s1_dispositions.get(&rule_idx) {
+                        Some(super::factoring::SpineDisposition::GroupFirst {
+                            spine_id,
+                            body_src_idx: group_body_src_idx,
+                            weight_rule_idx,
+                        }) => super::factoring::emit_spine_trigger_branch(
+                            category_src_idx,
+                            *spine_id,
+                            *group_body_src_idx,
+                            *weight_rule_idx,
+                        ),
+                        Some(super::factoring::SpineDisposition::GroupRest) => TokenStream::new(),
+                        None => quote! {
+                            // GAP-3: nullary multi-literal keyword prefix Fork branch
+                            // (e.g. `@ Nil` co-bucketed with `@ ( p )` / `@ p`).
+                            // Consume the trigger as a TriggerTerminal, push the
+                            // mixfix marker, enter MixfixLiteralRun(kind=2). Tier 0.0
+                            // (atomic-home) so lex-min picks the lowest-rule_idx branch
+                            // (declaration order) on a parse-success tie — NQuoteNil
+                            // (declared before NQuoteShort) wins for `@Nil`.
+                            __pd_branches.push(mettail_prattail::wpda_walker::ForkBranch {
+                                symbol: StackSymbolV2::mixfix_marker(
+                                    #category_src_idx, #rule_idx, 0u8,
+                                ),
+                                weight: lex_w(0.0, #category_src_idx, #rule_idx),
+                                new_state: WpdaState::MixfixLiteralRun {
+                                    result_src_idx: #category_src_idx,
+                                    rule_idx: #rule_idx,
+                                    completed_idx: 0u8,
+                                    kind: 2u8,
+                                    sub_pos: 0u8,
                                 },
-                        });
+                                action_kind:
+                                    mettail_prattail::wpda_walker::ForkActionKind::ConsumeAndPush {
+                                        trigger_mode:
+                                            mettail_prattail::wpda_walker::TriggerMode::ConsumeAsTriggerOnly,
+                                    },
+                            });
+                        },
                     }
                 }
             })
             .collect();
-        quote! {
-            #pat if #guard => {
+        (
+            quote! { #pat if #guard },
+            quote! {
+                {
                 let mut __pd_branches: Vec<mettail_prattail::wpda_walker::ForkBranch<_>> =
                     Vec::with_capacity(#n_descs);
                 #( #push_stmts )*
@@ -2355,13 +2660,17 @@ fn emit_unified_arm(category_src_idx: u16, bucket: &UnifiedBucket) -> TokenStrea
                     branches: __pd_branches,
                     consume_trigger: false,
                 };
-            }
-        }
+                }
+            },
+        )
     }
 }
 
-/// Emit a singleton atomic arm with the legacy single-arm token stream shape.
-fn emit_atomic_arm_singleton(desc: &PrefixArmDescriptor) -> TokenStream {
+/// Emit a singleton atomic arm. Task #15 (frame-bound peel): returns the
+/// `(head, body)` split — `head` = `#pat if #guard` (stays inline in `step`),
+/// `body` = the `{ .. }` block (relocated into a per-arm `#[inline(never)]`
+/// helper). Byte-identical parse semantics; pure body-relocation.
+fn emit_atomic_arm_singleton(desc: &PrefixArmDescriptor) -> (TokenStream, TokenStream) {
     let pat = &desc.pattern;
     let category_src_idx = desc.category_src_idx;
     let rule_idx = desc.rule_idx;
@@ -2369,8 +2678,10 @@ fn emit_atomic_arm_singleton(desc: &PrefixArmDescriptor) -> TokenStream {
         Some(eg) => quote! { #eg && state_cat_src_idx == #category_src_idx },
         None => quote! { state_cat_src_idx == #category_src_idx },
     };
-    quote! {
-        #pat if #guard => {
+    (
+        quote! { #pat if #guard },
+        quote! {
+            {
             return WpdaStepAction::ConsumeAndPush {
                 symbol: StackSymbolV2::rule_at(
                     #category_src_idx, #rule_idx, 0, Some(_outer_bp),
@@ -2382,8 +2693,9 @@ fn emit_atomic_arm_singleton(desc: &PrefixArmDescriptor) -> TokenStream {
                 // trigger (no operand sub-parse).
                 trigger_mode: mettail_prattail::wpda_walker::TriggerMode::CaptureForBuilder,
             };
-        }
-    }
+            }
+        },
+    )
 }
 
 /// For a `LiteralPatterned` shape, return the `(pattern, extra_guard)` pair.
@@ -2799,7 +3111,9 @@ mod tests {
     #[test]
     fn empty_rule_list_emits_no_arms() {
         let lang = empty_lang();
-        let ts = emit_prefix_arms_for_category(&lang, 0, "Int", &[]);
+        let (mut ts, __ts_helpers) = emit_prefix_arms_for_category(&lang, 0, "Int", &[], &std::collections::HashMap::new(), &std::collections::HashMap::new(), &mut super::super::fork_emission::ForkEmissionOrdinalModel::new());
+        // Task #15 peel: combine arms + helpers (both empty for no rules).
+        ts.extend(__ts_helpers);
         assert!(ts.to_string().trim().is_empty());
     }
 
@@ -2807,7 +3121,9 @@ mod tests {
     fn atomic_integer_rule_emits_an_arm() {
         let lang = empty_lang();
         let rule = atomic_rule("IntLit", "Int", NonTerminalKind::Integer);
-        let ts = emit_prefix_arms_for_category(&lang, 2, "Int", &[(0, &rule)]);
+        let (mut ts, __ts_helpers) = emit_prefix_arms_for_category(&lang, 2, "Int", &[(0, &rule)], &std::collections::HashMap::new(), &std::collections::HashMap::new(), &mut super::super::fork_emission::ForkEmissionOrdinalModel::new());
+        // Task #15 peel: assert over arms + helpers combined (bodies moved).
+        ts.extend(__ts_helpers);
         let s = ts.to_string();
         assert!(s.contains("ConsumeAndPush"));
         assert!(s.contains("Integer"));
@@ -2870,7 +3186,9 @@ mod tests {
     fn terminal_keyword_emits_fixed_match_guard() {
         let lang = empty_lang();
         let rule = terminal_rule("Err", "Int", "error");
-        let ts = emit_prefix_arms_for_category(&lang, 2, "Int", &[(0, &rule)]);
+        let (mut ts, __ts_helpers) = emit_prefix_arms_for_category(&lang, 2, "Int", &[(0, &rule)], &std::collections::HashMap::new(), &std::collections::HashMap::new(), &mut super::super::fork_emission::ForkEmissionOrdinalModel::new());
+        // Task #15 peel: assert over arms + helpers combined (bodies moved).
+        ts.extend(__ts_helpers);
         let s = ts.to_string();
         assert!(s.contains("ConsumeAndPush"));
         assert!(s.contains("Fixed"));
@@ -2882,7 +3200,9 @@ mod tests {
     fn literal_patterned_int_emits_integer_lit_guard() {
         let lang = lang_with_int_literal();
         let rule = category_rule("IntLit", "Int", "Int");
-        let ts = emit_prefix_arms_for_category(&lang, 2, "Int", &[(0, &rule)]);
+        let (mut ts, __ts_helpers) = emit_prefix_arms_for_category(&lang, 2, "Int", &[(0, &rule)], &std::collections::HashMap::new(), &std::collections::HashMap::new(), &mut super::super::fork_emission::ForkEmissionOrdinalModel::new());
+        // Task #15 peel: assert over arms + helpers combined (bodies moved).
+        ts.extend(__ts_helpers);
         let s = ts.to_string();
         assert!(s.contains("ConsumeAndPush"));
         assert!(s.contains("IntegerLit"));
@@ -2930,12 +3250,43 @@ mod tests {
         );
         lang.terms = vec![direct_prefix.clone(), projection.clone(), bool_first];
 
-        let ts = emit_prefix_arms_for_category(
+        // Task #10 item 1 (Option A pin, coordinator decision 2026-07-14):
+        // the projection (cat 0, rule 1) dispatches in TWO buckets at
+        // DIFFERING positions — `"bitnot"` @ 1 (after the direct prefix)
+        // vs the boolean-literal bucket @ 0 — the exact P7 shape that
+        // refuted the amendment-6 panic. It must classify
+        // AMBIGUOUS-MULTI-BUCKET (no derived ordinal → the site-2 fallback
+        // 0 = the trait default, zero K-C movement), while the direct
+        // prefix (single-bucket) keeps its derived position.
+        let mut fork_model = super::super::fork_emission::ForkEmissionOrdinalModel::new();
+        let (mut ts, __ts_helpers) = emit_prefix_arms_for_category(
             &lang,
             0,
             "UInt32",
             &[(0, &direct_prefix), (1, &projection)],
+            &std::collections::HashMap::new(),
+            &std::collections::HashMap::new(),
+            &mut fork_model,
         );
+        assert!(
+            fork_model.is_ambiguous_multi_bucket(0, 1),
+            "the multi-bucket projection classifies ambiguous (Option A)"
+        );
+        assert_eq!(
+            fork_model.site2_ordinal(0, 1),
+            None,
+            "no guessed ordinal for the ambiguous projection"
+        );
+        assert_eq!(
+            fork_model.site2_ordinal(0, 0),
+            Some(0),
+            "the single-bucket direct prefix keeps its derived position"
+        );
+        // Task #15 peel: the Fork body moved into the arm's helper; combine so
+        // the WpdaStepAction::Fork / ForkActionKind assertions still see it.
+        // The guard (with `__kw == "bitnot"`) stays in the arm, so its
+        // single-occurrence count is unchanged.
+        ts.extend(__ts_helpers);
         let s = ts.to_string();
         let guard = "__kw == \"bitnot\" && state_cat_src_idx == 0u16";
         assert_eq!(

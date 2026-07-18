@@ -27,7 +27,6 @@ impl AnyTerm {
     fn unwrap_proc(self) -> Proc {
         match self {
             AnyTerm::WrapProc(v) => v,
-            _ => panic!("AnyTerm::unwrap_proc: wrong variant"),
         }
     }
 }
@@ -52,17 +51,26 @@ impl<'a> TapeReader<'a> {
         TapeReader { tape, pos: 0 }
     }
 
-    /// Read the next byte, wrapping around if the tape is exhausted.
+    /// Read the next byte. On exhaustion return 0 — do NOT wrap. Byte 0 maps
+    /// to constructor choice `0 % N == 0`, which is ALWAYS a leaf: every
+    /// `build_*_from_tape` match emits its leaf arms before its recursive arms
+    /// (see `classify_variants`), so choice 0 selects `leaves[0]` and the
+    /// recursion bottoms out to the simplest term — the documented intent
+    /// "shorter tapes = simpler terms". The old `pos % len` wrap RE-READ the
+    /// same recursive-constructor byte at every level, so a 1-byte tape
+    /// `[0x38]` built a COMPLETE binary tree down to max_depth (0x38 ->
+    /// `MulBigRat` at all internal nodes -> `error*error*...`), which drove
+    /// BigRat::parse into the exponential cross-category axis (~9s).
     fn next_byte(&mut self) -> u8 {
-        if self.tape.is_empty() {
+        if self.pos >= self.tape.len() {
             return 0;
         }
-        let b = self.tape[self.pos % self.tape.len()];
+        let b = self.tape[self.pos];
         self.pos += 1;
         b
     }
 
-    /// Read a u32 from 4 bytes (little-endian), wrapping tape as needed.
+    /// Read a u32 from 4 bytes (little-endian); reads 0 past end of tape.
     fn next_u32(&mut self) -> u32 {
         let b0 = self.next_byte() as u32;
         let b1 = self.next_byte() as u32;
@@ -211,7 +219,10 @@ proptest! {
     #[test]
     fn proc_display_parse_roundtrip(term in arb_proc(3)) {
         let displayed = format!("{}", term);
-        // Skip terms whose display is too long (parser may overflow)
+        // Skip terms whose display is too long (parser may overflow).
+        // NOTE: length is only a coarse backstop against degenerate
+        // displays; cross-category-shared operator chains are parsed
+        // via the walker's k-best extraction, so depth-3 terms are cheap.
         if displayed.len() > 500 {
             return Ok(());
         }

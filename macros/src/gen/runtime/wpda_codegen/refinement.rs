@@ -580,7 +580,8 @@ pub(crate) fn lookup_refinement_type<'a>(
 
 /// Whether a category is refined. Convenience over `lookup_refinement_type`
 /// for callers that only need the bool.
-#[allow(dead_code)]
+// dead_code: exercised only by the same-file `#[cfg(test)] mod tests`; dead in the non-test lib build.
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn category_is_refined(language: &LanguageDef, cat_name: &str) -> bool {
     lookup_refinement_type(language, cat_name).is_some()
 }

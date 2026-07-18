@@ -684,9 +684,11 @@ are covered in [05](05-algebra-pyramid-and-decidability.md); each is itself a
 `BooleanAlgebra` (or a reject-safe algebra), so the SFA/SFT code is reused verbatim
 and the algebra-agnostic Coq proofs apply unchanged.
 
-The carrier is wired into the live guard pipeline behind the `any-algebra-carrier`
-Cargo feature, **off by default** (the default build is byte-identical), so the
-uniform projection *augments* the per-leaf analyses rather than replacing them.
+The carrier is now the live guard pipeline's **sole** analysis route — always
+compiled and always run, with no Cargo feature — so the uniform projection
+*augments* the per-leaf analyses rather than replacing them. Its byte-for-byte
+agreement with the retained `analyze_from_bundle_string_set` oracle is pinned by
+`guard_carrier_snapshot`.
 
 ## 7. What this buys the rest of the suite
 

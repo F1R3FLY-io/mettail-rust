@@ -105,36 +105,6 @@ pub fn emit_match_arms(tree: &CategoryDecisionTree, _token_ids: &TokenIdMap, buf
     // provides the analysis; the trampoline provides the code generation.
 }
 
-/// Emit code for a DecisionAction.
-#[allow(dead_code)]
-fn emit_action_code(action: &DecisionAction, _category: &str, buf: &mut String) {
-    use std::fmt::Write;
-
-    match action {
-        DecisionAction::Commit { rule_label, .. } => {
-            write!(buf, "/* COMMIT: {} */", rule_label)
-                .expect("decision_tree: codegen write into in-memory String is infallible");
-        },
-        DecisionAction::Ambiguous { candidates } => {
-            write!(
-                buf,
-                "/* AMBIGUOUS: {} candidates [{}] */",
-                candidates.len(),
-                candidates
-                    .iter()
-                    .map(|c| c.rule_label.as_str())
-                    .collect::<Vec<_>>()
-                    .join(", "),
-            )
-            .expect("decision_tree: codegen write into in-memory String is infallible");
-        },
-        DecisionAction::NonterminalBoundary { .. } => {
-            write!(buf, "/* NT_BOUNDARY */")
-                .expect("decision_tree: codegen write into in-memory String is infallible");
-        },
-    }
-}
-
 // ══════════════════════════════════════════════════════════════════════════════
 // Phase 4: Code Emission — Flat Table
 // ══════════════════════════════════════════════════════════════════════════════

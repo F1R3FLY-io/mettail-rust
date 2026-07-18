@@ -11,7 +11,7 @@
     clippy::unnecessary_filter_map
 )]
 
-use crate::gen::term_gen::is_lang_type;
+use crate::gen::term_gen::{count_optional_positions, is_lang_type};
 use mettail_ast::{
     grammar::{GrammarItem, GrammarRule, NonTerminalKind, TermParam},
     language::LanguageDef,
@@ -335,6 +335,25 @@ fn generate_simple_constructor_case(
 ) -> TokenStream {
     let label = &rule.label;
 
+    // Task #14 amendment A4: a TOP-LEVEL (mandatory) `?g:Guard` slot on a
+    // bindings-free rule is unsynthesizable by term generation (no
+    // predicate enumeration exists); without this skip, `arg_cats` (which
+    // never contains the guard) under-fills the constructor → E0061.
+    // Mirrors random.rs's caller-level skip and this file's binder-case
+    // skip in `generate_binder_constructor_case`. OPTIONAL guards do NOT
+    // skip — they generate as `None` via the count split below.
+    let has_top_level_guard_slot = rule
+        .term_context
+        .as_ref()
+        .map(|ctx| {
+            ctx.iter()
+                .any(|p| matches!(p, mettail_ast::grammar::TermParam::GuardBody { .. }))
+        })
+        .unwrap_or(false);
+    if has_top_level_guard_slot {
+        return quote! {};
+    }
+
     // Get argument categories
     let arg_cats: Vec<Ident> = rule
         .items
@@ -349,33 +368,20 @@ fn generate_simple_constructor_case(
         return quote! {};
     }
 
-    // Compute the trailing optional count from term_context (mirrors
+    // Compute the trailing optional counts from term_context (mirrors
     // `convert_term_context_to_items` flattening). For shipped non-Optional
-    // grammars this is 0 — the existing code path runs unchanged.
-    let optional_count: usize = rule
-        .term_context
-        .as_ref()
-        .map(|ctx| {
-            fn count(p: &mettail_ast::grammar::TermParam) -> usize {
-                use mettail_ast::grammar::TermParam;
-                match p {
-                    TermParam::Optional { params: inner } => inner.iter().map(count_one).sum(),
-                    _ => 0,
-                }
-            }
-            fn count_one(p: &mettail_ast::grammar::TermParam) -> usize {
-                use mettail_ast::grammar::TermParam;
-                match p {
-                    TermParam::Simple { .. } | TermParam::GuardBody { .. } => 1,
-                    TermParam::Abstraction { .. } | TermParam::MultiAbstraction { .. } => 1,
-                    TermParam::Optional { params: inner } => inner.iter().map(count_one).sum(),
-                }
-            }
-            ctx.iter().map(count).sum()
-        })
-        .unwrap_or(0);
+    // grammars both are 0 — the existing code path runs unchanged.
+    //
+    // Task #14 (Option<Guard>): the count is SPLIT. Optional TERM positions
+    // (Simple/Abstraction inners) occupy `arg_cats` slots, so ONLY they may
+    // be subtracted from the positional prefix; a guard inside `#opt(...)`
+    // is NEVER present in `rule.items`, so subtracting it dropped a real
+    // positional param (E0061). The `None`-suffix covers BOTH kinds — an
+    // absent guard constructs as `None` exactly like an absent term slot.
+    let (optional_term_count, optional_total_count) =
+        count_optional_positions(rule.term_context.as_deref().unwrap_or(&[]));
 
-    if optional_count > 0 {
+    if optional_total_count > 0 {
         // Optional path: emit a constructor literal with positional
         // arguments built from the leading non-optional cats and `None`
         // for trailing optional positions. We don't reuse the existing
@@ -383,10 +389,11 @@ fn generate_simple_constructor_case(
         // constructor literals — instead, inline a custom n-ary loop.
         let positional_cats: Vec<Ident> = arg_cats
             .iter()
-            .take(arg_cats.len() - optional_count)
+            .take(arg_cats.len() - optional_term_count)
             .cloned()
             .collect();
-        let none_args: Vec<TokenStream> = (0..optional_count).map(|_| quote! { None }).collect();
+        let none_args: Vec<TokenStream> =
+            (0..optional_total_count).map(|_| quote! { None }).collect();
         let n = positional_cats.len();
         let loop_vars: Vec<Ident> = (0..n).map(|i| quote::format_ident!("d{}", i + 1)).collect();
         let arg_vars: Vec<Ident> = (0..n)

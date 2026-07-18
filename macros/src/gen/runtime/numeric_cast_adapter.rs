@@ -691,6 +691,109 @@ pub(crate) fn generate_numeric_cast_adapter(language: &LanguageDef) -> TokenStre
     }
 }
 
+/// S1-FACTORING F0 / red-team amendment A2 (2026-07-11): does `rule`
+/// participate in the `(cat, rule_idx)`-keyed CAST MACHINERY, i.e. must it be
+/// EXCLUDED from shared-prefix spine factoring
+/// (`wpda_codegen::factoring`)?
+///
+/// ## Why the exclusion exists (the A2 blocking hole, red-team AV3)
+///
+/// The walker's direct-prefix-cast waiter parking
+/// (`try_park_direct_prefix_cast_waiter` → `trigger_unary_wrapper_rule_matches`
+/// — prattail `wpda_walker.rs` ~37975/37709) runs on EVERY `ReplaceAndPush`
+/// and validates the enclosing frame's `(cat, rule_idx)` against
+/// action-table + `prefix_cast_keyword` rows. Those lookups are default-false
+/// for the synthetic `SPINE_ID` a factored spine frame carries, so a factored
+/// CAST rule would silently lose its parking (and with it the RC-B pop-site
+/// wrap synthesis that recovers otherwise-lost cast readings such as
+/// Calculator `int(<Bool>)`).
+///
+/// ## The row definition — SAME SOURCE DATA as the consulted tables
+///
+///   (a) cast-WRAPPER candidate rows: the `WrapCand` filter of
+///       [`generate_numeric_cast_adapter`] step 1 (single `Simple` param of a
+///       category with a numeric native kind per [`is_numeric_kind`], no
+///       rust body). Tested WITHOUT the majority `proc_cat` election — a
+///       candidate outside the elected object category is still excluded
+///       (conservative: exclusion only shrinks factoring scope, never
+///       observable behavior; these transparent projections are not
+///       binder-prefix members today anyway).
+///   (b) cast-FOLD redex rows: [`recognize_cast_fold`] against the SAME
+///       elected `proc_cat` as steps 1-2 (empty wrapper-candidate set ⇒ the
+///       adapter emits nothing ⇒ no fold rows — mirrored faithfully). This
+///       catches the binary object casts (RhoCalc `IntBinProc` / `UIntBinProc`
+///       / `FloatBinProc` / `FixedBinProc`: `int(a, w) : Proc` …) and the
+///       native-output casts.
+///   (c) trigger-bearing unary wrappers FROM the numeric-cast domain: the
+///       RC-B prefix-cast shape
+///       ([`super::wpda_codegen::semantic_actions::trigger_unary_wrapper_source_cat`]
+///       — the exact enumeration behind `trigger_unary_wrappers_into` /
+///       `prefix_cast_into` / `prefix_cast_keyword`) restricted to rules
+///       whose SOURCE category carries a numeric native kind (the same
+///       [`is_numeric_kind`] lens the adapter uses). This is Calculator's
+///       `int(<Bool>)` / `float(<Str>)` / `|s|` family — the clientele the
+///       waiter machinery was built for (RC-B 2026-06-17).
+///
+/// ## The boundary (documented deliberately — pinned by the F0 trie tests)
+///
+/// Arity-1 wrapper rows whose source category is NOT native-numeric — RhoCalc
+/// `POutputNil` (`@Nil!(q)`, Proc→Proc), `POutputQuotedEmpty` (`@n!()`,
+/// Name→Proc), `NQuote` (`@(p)`, Proc→Name) — do satisfy the walker's
+/// arity-1 `rule_matches` shape and may park waiters incidentally, but they
+/// are ordinary sends/quotes, not casts: their readings are grammar-reachable
+/// without wrap synthesis, and excluding them would dissolve the very
+/// `@`-cohort the S1 factoring exists to factor (the pinned
+/// `Proc@ = 3 groups, 6/3/6 leaves` trie — plan §5 F0 gate). If F1's parity
+/// batteries ever surface a non-numeric wrapper whose parking is load-bearing,
+/// WIDEN this predicate (factoring eligibility only shrinks — behavior under
+/// the OFF const is unaffected either way).
+pub(crate) fn cast_machinery_participates(language: &LanguageDef, rule: &GrammarRule) -> bool {
+    // (c) numeric-domain trigger-bearing unary wrapper — `int(<Bool>)`.
+    if let Some(src) =
+        crate::gen::runtime::wpda_codegen::semantic_actions::trigger_unary_wrapper_source_cat(rule)
+    {
+        let src_ident = Ident::new(&src, proc_macro2::Span::call_site());
+        if matches!(kind_of(language, &src_ident), Some(k) if is_numeric_kind(k)) {
+            return true;
+        }
+    }
+    // (a) wrapper-candidate row — mirrors the `WrapCand` filter in
+    // `generate_numeric_cast_adapter` step 1 (same helpers, same source data).
+    let is_wrap_candidate = |r: &GrammarRule| -> bool {
+        if r.rust_code.is_some() {
+            return false;
+        }
+        let Some(ps) = r.term_context.as_ref() else {
+            return false;
+        };
+        if ps.len() != 1 {
+            return false;
+        }
+        let Some(inner) = simple_param_cat(&ps[0]) else {
+            return false;
+        };
+        matches!(kind_of(language, inner), Some(k) if is_numeric_kind(k))
+    };
+    if is_wrap_candidate(rule) {
+        return true;
+    }
+    // (b) cast-fold row against the SAME elected object category. Mirrors
+    // `generate_numeric_cast_adapter` steps 1-2: no wrapper candidates ⇒ the
+    // adapter emits nothing ⇒ no fold rows.
+    let mut counts: std::collections::HashMap<String, (&Ident, usize)> =
+        std::collections::HashMap::new();
+    for cand in language.terms.iter().filter(|r| is_wrap_candidate(*r)) {
+        let entry = counts
+            .entry(cand.category.to_string())
+            .or_insert((&cand.category, 0));
+        entry.1 += 1;
+    }
+    let Some(proc_cat) = counts.values().max_by_key(|(_, n)| *n).map(|(id, _)| *id) else {
+        return false;
+    };
+    recognize_cast_fold(language, rule, proc_cat).is_some()
+}
+
 #[cfg(test)]
 mod tests {
     use super::generate_numeric_cast_adapter;

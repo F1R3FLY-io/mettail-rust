@@ -27,7 +27,7 @@ rectangle "prattail substrate\n(theory of guards — compile time, classify-only
   component "SFA\n(predicate-labeled automata)\nsymbolic.rs" as SFA #CCFBF1
   component "SFT / STFT\nsft.rs · sym_tree_transducer.rs" as SFT #EDE9FE
   component "Algebra tower\nRejectSafe / Heyting\nalgebra_tower.rs" as Tower #FEF3C7
-  component "AnyAlgebra carrier\nany_algebra.rs (feat. any-algebra-carrier)" as Carrier #BFDBFE
+  component "AnyAlgebra carrier\nany_algebra.rs (always-on)" as Carrier #BFDBFE
   component "Z3 / SMT — Sat3-only\nlogict_smt.rs (feat. smt)" as Z3 #FEF3C7
 }
 
@@ -65,8 +65,9 @@ Carrier -[hidden]down- Z3
 
 note bottom of Sub
   Substrate modules (AnyAlgebra carrier, bisimulation, letprop→PATA,
-  Hindley–Milner, Z3/SMT) are wired behind default-off Cargo features;
-  the default build is byte-identical.
+  Hindley–Milner) are ALWAYS compiled and ALWAYS run — the sole analysis
+  path, with no Cargo feature. Only Z3/SMT stays optional (--features smt),
+  a Sat3 gap-filler; the default build's analysis output is unchanged.
 end note
 
 legend right

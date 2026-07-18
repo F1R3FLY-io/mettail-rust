@@ -26,10 +26,8 @@
 //!    formula agrees with the runtime carrier evaluator
 //!    `evaluate_pred_with_bindings`.
 //!
-//! The whole file is feature-gated: it contributes ZERO tests to the default
-//! build (keeping `cargo nextest run -p prattail` byte-identical), and runs only
-//! under `--features oslf-behavioral-lowering`.
-#![cfg(feature = "oslf-behavioral-lowering")]
+//! This file exercises `to_behavioral_formula` end-to-end against the runtime
+//! carrier evaluator; it always runs in the default `prattail` test set.
 
 use std::collections::{HashMap, HashSet};
 

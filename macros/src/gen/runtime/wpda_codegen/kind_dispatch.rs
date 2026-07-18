@@ -21,7 +21,7 @@ use proc_macro2::TokenStream;
 use quote::quote;
 
 use super::binder::{binder_initial_body_cat, classify_binder_in};
-use super::infix::{build_bp_table, group_ops_by_cat_terminal};
+use super::infix::{build_bp_table, group_ops_by_cat_terminal, GroupedOp};
 use super::prefix::{classify_atomic, first_set_of_category, AtomicShape, LiteralFamily};
 
 /// GEN-1 GAP-2 (2026-06-28): collect every `*sep` separator literal declared
@@ -109,6 +109,17 @@ pub fn emit_lex_alt_rule_for_fn(
     _language: &LanguageDef,
     per_cat: &[Vec<GrammarRule>],
     categories: &[String],
+    // S1-FACTORING F1 amendment A3 (2026-07-12, red-team AV5): the lex-alt
+    // surface is the SECOND dispatch surface for prefix triggers — without
+    // group entries the lex-fork path would re-create the per-rule fan the
+    // spine branch just removed. Grouped members' per-member
+    // `PrefixOp`/`NullaryPrefixRun` entries are REPLACED by ONE
+    // `PrefixOp { body_src_idx: group body }` entry carrying
+    // `rule_idx = SPINE_ID` (the spine is BinderRule machinery regardless of
+    // member kind — forks.rs's `LexAltPrefixOp` arm dispatches
+    // `rule_at(cat, SPINE_ID, 1)`, the pre-root spine arm). EMPTY map while
+    // `S1_FACTORING == false` ⇒ byte-identical emission.
+    s1: &super::factoring::SpineEmission,
 ) -> TokenStream {
     // M6c.6.4.b (2026-05-14): split into two per-site tables —
     // `lex_alt_rules_for_prefix` for PrefixDispatch site (Atomic +
@@ -129,6 +140,57 @@ pub fn emit_lex_alt_rule_for_fn(
         for (rule_idx, rule) in rules.iter().enumerate() {
             let rule_idx_u16 = rule_idx as u16;
             let shape = classify_atomic(rule, _language);
+            // S1-FACTORING A3: grouped members bypass EVERY per-member push
+            // below (the item-3 assert "no per-member PrefixOp entries remain
+            // for grouped members" holds by this `continue` — plus the shape
+            // assert so a classifier/factoring drift fails codegen loudly).
+            // The group's single spine entry rides its GroupFirst member.
+            if let Some(disposition) = s1
+                .dispositions
+                .get(cat_src_idx)
+                .and_then(|m| m.get(&rule_idx_u16))
+            {
+                assert!(
+                    matches!(shape, AtomicShape::NullaryLiteralRun { .. })
+                        || super::binder::classify_binder_in(rule, _language).is_some(),
+                    "S1-FACTORING A3: grouped rule (cat {cat_src_idx_u16}, rule \
+                     {rule_idx_u16}) is neither NullaryLiteralRun nor binder-classified — \
+                     the lex-alt surface would drift from the factoring model",
+                );
+                if let super::factoring::SpineDisposition::GroupFirst {
+                    spine_id,
+                    body_src_idx,
+                    ..
+                } = disposition
+                {
+                    let Some(mettail_ast::grammar::SyntaxExpr::Literal(trigger)) =
+                        rule.syntax_pattern.as_ref().and_then(|sp| sp.first())
+                    else {
+                        panic!(
+                            "S1-FACTORING A3: grouped rule (cat {cat_src_idx_u16}, rule \
+                             {rule_idx_u16}) has no leading literal trigger",
+                        );
+                    };
+                    let spine_id = *spine_id;
+                    let body_src_idx = *body_src_idx;
+                    let trigger_lit = trigger.as_str();
+                    prefix_pushes.push(quote! {
+                        match (cat_src_idx, kind) {
+                            (#cat_src_idx_u16, mettail_prattail::automata::TokenKind::Fixed(__t))
+                                if __t == #trigger_lit => out.push(
+                                    mettail_prattail::wpda_runtime::LexAltRuleInfo {
+                                        rule_idx: #spine_id,
+                                        kind: mettail_prattail::wpda_runtime::LexAltRuleKind::PrefixOp {
+                                            body_src_idx: #body_src_idx,
+                                        },
+                                    }
+                                ),
+                            _ => {},
+                        }
+                    });
+                }
+                continue;
+            }
             emit_prefix_pushes_for_shape(
                 &shape,
                 cat_src_idx_u16,
@@ -191,7 +253,7 @@ pub fn emit_lex_alt_rule_for_fn(
             )
         }
     };
-    let infix_arms = emit_infix_lex_alt_rule_arms(_language, per_cat, categories);
+    let infix_arms = emit_infix_lex_alt_rule_arms(_language, per_cat, categories, s1);
 
     // GEN-1 GAP-2 (2026-06-28): spec-derived structural-delimiter + row-separator
     // tables for `prefix_crosscat_lhs_trigger_ahead_scoped`, replacing the
@@ -1758,8 +1820,8 @@ fn emit_prefix_pushes_for_shape(
         // length` holds, the fall-through fires FIRST, and `__branches` (hence
         // this rule) is never consulted. `NULLARY_KEYWORD_LEXFORK_SEED` is the
         // A/B kill-switch (flip to `false` + rebuild to reproduce the pre-fix
-        // reserved-keyword failure with reservation still ON); the umbrella
-        // `PRATTAIL_NO_KW_RESERVE` reverts reservation itself.
+        // reserved-keyword failure with reservation still ON). Keyword
+        // reservation itself is now unconditional (derived per policy).
         AtomicShape::TerminalKeyword { terminal_text, .. } => {
             // Kill-switch `false` ⇒ pre-fix skip (byte-identical to the historical
             // no-op arm); reservation-off ⇒ inert regardless (fall-through
@@ -1794,8 +1856,8 @@ fn emit_prefix_pushes_for_shape(
 /// and rebuild to reproduce the pre-fix behavior — a reserved nullary keyword
 /// (`Nil`, `error`) fails to parse in prefix/operand position because the
 /// lex-Fork carries no rule for its own `Fixed(kw)` reading — WITH reservation
-/// still enabled, isolating this fix from the umbrella `PRATTAIL_NO_KW_RESERVE`
-/// (which reverts reservation itself). Inert without reservation regardless
+/// still enabled, isolating this fix from keyword reservation itself (now
+/// unconditional, derived per policy). Inert without reservation regardless
 /// (the fall-through pre-empts the lex-Fork), so a `false` build is byte-
 /// identical to a `true` build for every non-reserving language.
 pub(crate) const NULLARY_KEYWORD_LEXFORK_SEED: bool = true;
@@ -1890,6 +1952,17 @@ fn emit_infix_lex_alt_rule_arms(
     language: &LanguageDef,
     per_cat: &[Vec<GrammarRule>],
     categories: &[String],
+    // S1-FACTORING F5-2 (A3-analog, red-team A-M5): factored mixfix cohorts
+    // must ALSO be grouped on the lex-alt surface — without group entries
+    // the lattice lex-fork path re-creates the per-member fan the spine
+    // branch just removed. Grouped members' per-member `MixfixFirstTrigger`
+    // entries are REPLACED by ONE entry carrying `rule_idx = SPINE_ID` and
+    // `l_bp = the cohort MIN l_bp` (the D-1 full-admission gate expressed
+    // through the site's own floor-only predicate `l_bp >= cur_bp`);
+    // forks.rs's `LexAltMixfixOp` sites redirect the weight/action
+    // identities to the MIN member via `__s1_spine_weight_rule`. EMPTY
+    // `mixfix_groups` ⇒ byte-identical emission.
+    s1: &super::factoring::SpineEmission,
 ) -> Vec<TokenStream> {
     let bp_table = build_bp_table(language);
     let label_index = build_label_index(categories, per_cat);
@@ -1905,15 +1978,81 @@ fn emit_infix_lex_alt_rule_arms(
         .iter()
         .map(|((cat_src_idx, terminal), ops)| {
             let cat_src_idx = *cat_src_idx;
+            let mixfix_group = s1
+                .mixfix_groups
+                .iter()
+                .find(|g| {
+                    g.dispatch_cat_src_idx == cat_src_idx && &g.trigger == terminal
+                });
+            if let Some(group) = mixfix_group {
+                // D-5 whole-slice agreement between the factoring model and
+                // THIS surface's mixfix subset (same grouping + the same
+                // `GEN1_MAX_SLICE` window as `mixfix_bp_<cat>`): drift fails
+                // codegen loudly instead of silently splitting the cohort
+                // across surfaces.
+                let mixfix_rules: Vec<u16> = ops
+                    .iter()
+                    .filter(|g| g.op.is_mixfix)
+                    .take(super::infix::GEN1_MAX_SLICE)
+                    .map(|g| g.rule_idx)
+                    .collect();
+                assert_eq!(
+                    mixfix_rules, group.member_rule_idxs,
+                    "S1-FACTORING F5-2 A3-analog: (cat {cat_src_idx}, {terminal:?}) \
+                     lex-alt mixfix subset diverged from the factored cohort",
+                );
+            }
+            let mut spine_entry_emitted = false;
             let infos: Vec<TokenStream> = ops
                 .iter()
-                .map(|g| {
-                    let op = g.op;
-                    let result_src_idx = g.result_src_idx;
-                    let rule_idx = g.rule_idx;
-                    let l_bp = op.left_bp;
-                    let r_bp = op.right_bp;
-                    let kind = if op.is_postfix {
+                .filter_map(|g| {
+                    // Grouped mixfix members: ONE spine entry at the first
+                    // member's position; the rest are REPLACED (no
+                    // per-member MixfixFirstTrigger entries remain).
+                    if let Some(group) = mixfix_group {
+                        if g.op.is_mixfix
+                            && group.member_rule_idxs.contains(&g.rule_idx)
+                        {
+                            if spine_entry_emitted {
+                                return None;
+                            }
+                            spine_entry_emitted = true;
+                            let spine_id = group.spine_id;
+                            let min_l_bp = group.min_l_bp;
+                            let result_src_idx = group.result_src_idx;
+                            return Some(quote! {
+                                mettail_prattail::wpda_runtime::LexAltRuleInfo {
+                                    rule_idx: #spine_id,
+                                    kind: mettail_prattail::wpda_runtime::LexAltRuleKind::MixfixFirstTrigger {
+                                        l_bp: #min_l_bp,
+                                        result_src_idx: #result_src_idx,
+                                    },
+                                }
+                            });
+                        }
+                    }
+                    Some(emit_infix_lex_alt_info(g))
+                })
+                .collect();
+            quote! {
+                (#cat_src_idx, mettail_prattail::automata::TokenKind::Fixed(__t))
+                    if __t == #terminal => vec![ #( #infos ),* ],
+            }
+        })
+        .collect()
+}
+
+/// One per-op `LexAltRuleInfo` record (the pre-F5-2 inline mapping,
+/// extracted verbatim).
+fn emit_infix_lex_alt_info(g: &GroupedOp<'_>) -> TokenStream {
+    {
+        {
+            let op = g.op;
+            let result_src_idx = g.result_src_idx;
+            let rule_idx = g.rule_idx;
+            let l_bp = op.left_bp;
+            let r_bp = op.right_bp;
+            let kind = if op.is_postfix {
                         quote! {
                             mettail_prattail::wpda_runtime::LexAltRuleKind::PostfixOp {
                                 l_bp: #l_bp,
@@ -1936,18 +2075,12 @@ fn emit_infix_lex_alt_rule_arms(
                             }
                         }
                     };
-                    quote! {
-                        mettail_prattail::wpda_runtime::LexAltRuleInfo {
-                            rule_idx: #rule_idx,
-                            kind: #kind,
-                        }
-                    }
-                })
-                .collect();
             quote! {
-                (#cat_src_idx, mettail_prattail::automata::TokenKind::Fixed(__t))
-                    if __t == #terminal => vec![ #( #infos ),* ],
+                mettail_prattail::wpda_runtime::LexAltRuleInfo {
+                    rule_idx: #rule_idx,
+                    kind: #kind,
+                }
             }
-        })
-        .collect()
+        }
+    }
 }

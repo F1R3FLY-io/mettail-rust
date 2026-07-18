@@ -128,9 +128,13 @@ The active Prattail runtime proof directory includes:
 
 - `RuntimeModel.v`: abstract cursor/config keys, dispatch keys, edge-kind
   wrap identity, quotient keys, EOI delimiter-window acceptance, and
-  merge-weight algebra. It also models cursor-count bounding and proves that
-  the compatibility `BeamSize(k)` mode has the same structured-overflow
-  semantics as `AmbiguityBudget(k)` while preserving the full frontier length.
+  merge-weight algebra. (The former cursor-count *frontier-length* budget
+  section — the `BeamSize`/`AmbiguityBudget` `cursor_bounding_mode` model and
+  its R-D A1 engine-divergence note — was pruned in S6, 2026-07-15, together
+  with the classic diagnostic engine it modeled; the production descriptor-pure
+  engine enforces distinct-realized-term cardinality whole-run at resolve,
+  validated behaviourally by the calculator/rhocalc flip-set rather than in
+  this model.)
   Dispatch cache keys are modeled with full natural-number positions, with a
   generic obligation that distinct positions are not quotiented; Rust also
   exercises the concrete position above `u32::MAX` regression. The

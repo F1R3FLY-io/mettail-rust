@@ -133,6 +133,8 @@ For a comprehensive guide with examples, diagrams, and decision flowcharts:
 ### Diagnostics
 
 - [Diagnostics Catalog](diagnostics/README.md) — All lint diagnostics (G, W, R, C, D, P, A, X, DIS, LEX, PAR, C-AP, I, T, V, S, N, L, E, M, K categories)
+- [Optional Cargo Features](diagnostics/README.md#optional-cargo-features) — Build-surface feature flags: instrumentation & tracing, SMT/rendering, OSLF substrate, capability labels, language selection
+- [Environment Variables](diagnostics/README.md#environment-variables) — `PRATTAIL_*` config/limit vars, the `walker-trace`-gated diagnostics, and the feature-paired instrumentation vars (plus the removed A/B levers)
 - [Lint Layer Design](design/wfst/lint-layer.md) — Unified lint architecture, `LintContext`, `run_lints()`
 
 Diagnostic categories:

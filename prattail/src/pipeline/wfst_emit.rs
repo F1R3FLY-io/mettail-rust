@@ -52,14 +52,9 @@ pub(crate) fn generate_lexer_code_with_map(
     // Derive the reserved keyword set from the language's reservation policy
     // and the FINAL terminal set (after any boolean-literal-driven True/False
     // removal above, so we never reserve a keyword that is no longer a
-    // terminal). The `PRATTAIL_NO_KW_RESERVE` build-time kill-switch forces
-    // reservation OFF regardless of policy, giving a byte-identical A/B lever
-    // and an emergency rollback path.
-    lexer_input.reserved_kinds = if std::env::var_os("PRATTAIL_NO_KW_RESERVE").is_some() {
-        crate::automata::ReservedKeywords::none()
-    } else {
-        bundle.reservation_policy.reserved_kinds(&lexer_input.terminals)
-    };
+    // terminal).
+    lexer_input.reserved_kinds =
+        bundle.reservation_policy.reserved_kinds(&lexer_input.terminals);
 
     let (lexer_str, stats) = generate_lexer_as_string_hybrid(&lexer_input, hybrid_lexer);
     (lexer_str, stats.variant_map, stats.ambiguity_info)

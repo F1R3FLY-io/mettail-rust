@@ -1,4 +1,9 @@
 use super::*;
+// B-M2 fix (DEFECT-B): BTreeMap gives deterministic, lexicographically-ordered
+// iteration for the two-token enrichment maps (`groups`, `token_to_rule`),
+// replacing HashMap's hasher-incidental order that randomized the emitted
+// mid-state transition rows and the new-token-id assignment order.
+use std::collections::BTreeMap;
 
 // ══════════════════════════════════════════════════════════════════════════════
 // A7: Entropy-based adaptive beam width
@@ -292,8 +297,11 @@ pub fn enrich_with_two_token_paths(
             None => continue,
         };
 
-        // Group RD rules by their dispatch token (first terminal)
-        let mut groups: HashMap<String, Vec<&crate::grammar::ir::RDRuleInfo>> = HashMap::new();
+        // Group RD rules by their dispatch token (first terminal). BTreeMap so the
+        // `for (dispatch_token, rules) in &groups` loop below iterates dispatch
+        // tokens in lexicographic order (deterministic mid-state ids + start-
+        // transition append order across builds). (B-M2 fix, DEFECT-B.)
+        let mut groups: BTreeMap<String, Vec<&crate::grammar::ir::RDRuleInfo>> = BTreeMap::new();
         for rule in rd_rules {
             if rule.category != *cat {
                 continue;
@@ -331,7 +339,14 @@ pub fn enrich_with_two_token_paths(
                     all_valid = false;
                     break;
                 }
-                per_rule_second_tokens.push((&rule.label, first.tokens.into_iter().collect()));
+                // Sort the drained FIRST-set tokens: `first.tokens` is a HashSet
+                // whose drain order is hasher-incidental. Belt-and-braces — after
+                // the disjointness gate below each token maps to exactly one rule,
+                // so the per-rule vec is length-1 in practice — but sorting keeps
+                // the intermediate deterministic. (B-M2 fix, DEFECT-B.)
+                let mut second_tokens: Vec<String> = first.tokens.into_iter().collect();
+                second_tokens.sort();
+                per_rule_second_tokens.push((&rule.label, second_tokens));
             }
 
             if !all_valid {
@@ -340,7 +355,14 @@ pub fn enrich_with_two_token_paths(
 
             // Check pairwise disjointness: each second-position token must map to
             // exactly one rule. This is the WFST analog of suffix_disjointness_check().
-            let mut token_to_rule: HashMap<String, Vec<&str>> = HashMap::new();
+            // BTreeMap so the `for (second_token, rule_labels) in &token_to_rule`
+            // loop below iterates second tokens in lexicographic order — the SAME
+            // "alphabetical by disambiguating token" convention as the single-token
+            // `token_order.sort_by(|(a,_),(b,_)| a.cmp(b))` in build_prediction_wfsts
+            // and `TokenIdMap::from_names`. This map is the DIRECT source of both
+            // the emitted mid-state transition row order and the new-token-id
+            // assignment order. (B-M2 fix, DEFECT-B: the actual randomizer.)
+            let mut token_to_rule: BTreeMap<String, Vec<&str>> = BTreeMap::new();
             for (rule_label, tokens) in &per_rule_second_tokens {
                 for token in tokens {
                     token_to_rule
@@ -376,6 +398,14 @@ pub fn enrich_with_two_token_paths(
                     weight: TropicalWeight::new(0.0),
                 });
             }
+
+            // Preallocate the exact number of two-token paths about to be emitted:
+            // one final state + one action + one mid→final transition per disjoint
+            // second token. (DEFECT-B.)
+            let path_count = token_to_rule.len();
+            wfst.states.reserve(path_count);
+            wfst.actions.reserve(path_count);
+            wfst.states[mid_id as usize].transitions.reserve(path_count);
 
             for (second_token, rule_labels) in &token_to_rule {
                 let rule_label = rule_labels[0];
@@ -516,5 +546,122 @@ impl WeightCorrection {
         // If selected had lower weight, primary should go down (this is rarer)
         let raw = self.weight_delta().abs() * learning_rate;
         raw.min(max_adjustment).max(0.0)
+    }
+}
+
+#[cfg(test)]
+mod defect_b_structural_tests {
+    use crate::grammar::ir::{RDRuleInfo, RDSyntaxItem};
+    use crate::prediction::FirstSet;
+    use crate::token_id::TokenIdMap;
+    use crate::wfst::{PredictionWfst, WfstState};
+    use std::collections::HashMap;
+
+    /// Build a two-terminal RD rule `Cat -> t1 t2` (dispatch token `t1`, second
+    /// token `t2`), with every non-relevant flag cleared so `enrich_with_two_token_paths`
+    /// admits it (not a collection, no prefix bp).
+    fn rd_two_terminal(label: &str, category: &str, t1: &str, t2: &str) -> RDRuleInfo {
+        RDRuleInfo {
+            label: label.to_string(),
+            category: category.to_string(),
+            items: vec![
+                RDSyntaxItem::Terminal(t1.to_string()),
+                RDSyntaxItem::Terminal(t2.to_string()),
+            ],
+            has_binder: false,
+            has_multi_binder: false,
+            is_collection: false,
+            collection_type: None,
+            separator: None,
+            prefix_bp: None,
+            eval_mode: None,
+        }
+    }
+
+    /// DEFECT-B B-M2 durable structural guard (amendment 5). All four rules share
+    /// the dispatch token `@` and carry pairwise-disjoint second terminals
+    /// (`!`, `,`, `=`, `;` ⇒ Bang, Comma, Eq, Semi), so `enrich_with_two_token_paths`
+    /// builds ONE mid state with four token2→final transitions. Pre-fix, those
+    /// transitions landed in `HashMap<String, Vec<&str>>` iteration order (the
+    /// randomizer of the emitted `WFST_TRANSITIONS_<Cat>` mid rows); post-fix the
+    /// `BTreeMap` keying makes their order lexicographic by second-token name.
+    ///
+    /// This asserts the emitted mid-row order is sorted-by-second-token — a
+    /// DETERMINISTIC assertion (unlike the probabilistic byte-soak G2), rebuilt
+    /// across 16 fresh rounds so a pre-fix regression (random order) is caught
+    /// with probability 1 − (1/4!)^16 ≈ 1 − 2^-73.
+    #[test]
+    fn two_token_mid_transitions_sorted_by_second_token() {
+        const ROUNDS: usize = 16;
+        let category_names = vec!["Stmt".to_string()];
+        let first_sets: HashMap<String, FirstSet> = HashMap::new();
+        let rd_rules = vec![
+            rd_two_terminal("SendBang", "Stmt", "@", "!"),
+            rd_two_terminal("SendComma", "Stmt", "@", ","),
+            rd_two_terminal("SendEq", "Stmt", "@", "="),
+            rd_two_terminal("SendSemi", "Stmt", "@", ";"),
+        ];
+        let expected = vec!["Bang", "Comma", "Eq", "Semi"];
+
+        let mut divergent_rounds: Vec<(usize, Vec<String>)> = Vec::new();
+        for round in 0..ROUNDS {
+            // Fresh WFST each round: enrich APPENDS, and every round rebuilds the
+            // `groups`/`token_to_rule` maps ⇒ a fresh per-instance RandomState.
+            let mut wfsts: HashMap<String, PredictionWfst> = HashMap::with_capacity(1);
+            wfsts.insert(
+                "Stmt".to_string(),
+                PredictionWfst {
+                    category: "Stmt".to_string(),
+                    states: vec![WfstState::new(0)],
+                    start: 0,
+                    actions: Vec::new(),
+                    token_map: TokenIdMap::new(),
+                    beam_width: None,
+                    context_labels: HashMap::new(),
+                },
+            );
+
+            let added = super::enrich_with_two_token_paths(
+                &mut wfsts,
+                &rd_rules,
+                &category_names,
+                &first_sets,
+            );
+            assert_eq!(added, 4, "all four disjoint second tokens must produce paths");
+
+            let wfst = wfsts.get("Stmt").expect("Stmt wfst present");
+            let start = &wfst.states[wfst.start as usize];
+            assert_eq!(
+                start.transitions.len(),
+                1,
+                "one dispatch group (`@`) ⇒ exactly one start→mid edge",
+            );
+            let mid_id = start.transitions[0].to;
+            let mid = &wfst.states[mid_id as usize];
+
+            let names: Vec<String> = mid
+                .transitions
+                .iter()
+                .map(|t| {
+                    wfst.token_map
+                        .name(t.input)
+                        .expect("every mid transition's token id has a name")
+                        .to_string()
+                })
+                .collect();
+
+            if names != expected {
+                divergent_rounds.push((round, names));
+            }
+        }
+
+        assert!(
+            divergent_rounds.is_empty(),
+            "mid-state two-token transitions must be emitted sorted by second-token \
+             name {expected:?} in EVERY round; diverged in {}/{} rounds: {:?}",
+            divergent_rounds.len(),
+            ROUNDS,
+            divergent_rounds,
+        );
     }
 }

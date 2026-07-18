@@ -6,13 +6,11 @@
 //!
 //! Run with: cargo bench -p mettail-languages --bench bench_collections
 
-mod bench_common;
-
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use mettail_languages::ambient::*;
 use std::time::Duration;
 
-use bench_common::{gen_nested_parallel, gen_parallel, gen_parallel_amb, DEPTH_SIZES, SIZES};
+use mettail_languages::bench_common::{gen_nested_parallel, gen_parallel, gen_parallel_amb, DEPTH_SIZES, SIZES};
 
 fn bench_flat_parallel(c: &mut Criterion) {
     let mut group = c.benchmark_group("collections/flat_parallel");

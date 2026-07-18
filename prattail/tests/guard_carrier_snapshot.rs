@@ -8,13 +8,10 @@
 //! guard predicate; it must not change a single disposition). The live flip to
 //! the carrier is a later step (`.1`).
 //!
-//! Both functions are `pub` and always compiled (only `sort_of_native` /
-//! `sort_of_category`, which the carrier's guard derivation does **not** use,
-//! are gated behind `any-algebra-carrier`). So this single-process test is the
-//! strongest possible byte-identical proof: it feeds *identical* inputs to both
-//! code paths and asserts their rendered `Display` strings are equal. It runs
-//! and passes in **both** feature states (`--features any-algebra-carrier` and
-//! the default), independent of which path `analyze_from_bundle` dispatches to.
+//! Both functions are `pub` and always compiled. So this single-process test is
+//! the strongest possible byte-identical proof: it feeds *identical* inputs to
+//! both code paths and asserts their rendered `Display` strings are equal,
+//! independent of which path `analyze_from_bundle` dispatches to.
 //!
 //! The three fixtures (calculator, rhocalc, ambient) reproduce the real
 //! grammars' category native-types and a representative rule set that exercises

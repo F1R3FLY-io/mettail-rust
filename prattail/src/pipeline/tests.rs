@@ -815,12 +815,10 @@ fn test_db03_parallel_returns_results() {
 // ══════════════════════════════════════════════════════════════════════════
 
 /// Helper: construct an empty AdvancedAnalysisBundle (all fields None).
-#[allow(dead_code)]
 fn empty_bundle<'a>() -> super::AdvancedAnalysisBundle<'a> {
     super::AdvancedAnalysisBundle {
         symbolic: None,
         alternating: None,
-        #[cfg(feature = "oslf-bisimulation")]
         bisimulation: None,
         vpa: None,
         register: None,
@@ -832,7 +830,6 @@ fn empty_bundle<'a>() -> super::AdvancedAnalysisBundle<'a> {
 }
 
 /// Helper: call build_pipeline_analysis with minimal inputs and a given bundle.
-#[allow(dead_code)]
 fn run_build_pipeline(
     dead_rules: &HashSet<String>,
     prediction_wfsts: &HashMap<String, PredictionWfst>,

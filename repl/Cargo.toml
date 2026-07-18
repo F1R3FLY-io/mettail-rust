@@ -24,10 +24,11 @@ rho-languages = [
     "dep:mettail-rholang-codegen",
 ]
 
-[[bin]]
-name = "mettail"
-path = "src/main.rs"
-doc = false  # Same binary as root package; document only from workspace root to avoid path collision
+# No explicit [[bin]]: Cargo auto-detects `src/main.rs` as the `repl` binary. The canonical
+# `mettail` binary is owned solely by the root meta-package (which builds this same
+# `repl/src/main.rs` via its own [[bin]] + `default-run`), so declaring a second `mettail` bin
+# here would collide on the `target/debug/mettail` output path. `cargo run -p repl` runs the
+# auto-detected `repl` bin; `cargo run` / `cargo run --bin mettail` run the root's `mettail`.
 
 [dependencies]
 # Core MeTTaIL

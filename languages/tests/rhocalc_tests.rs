@@ -3990,7 +3990,7 @@ mod type_inference {
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
-// ForRow F3 `&`-join multiplicative-ambiguity pins (2026-06-28)
+// ForRow F3 `&`-join multiplicative-ambiguity pins (2026-06-28; RESOLVED 2026-07-16)
 // ════════════════════════════════════════════════════════════════════════════════
 //
 // The repro `for(@a <- a & @a <- a & @a <- a){ Nil }` (and its bare-`ForRow`
@@ -3999,32 +3999,21 @@ mod type_inference {
 // cross-cat-LHS EXTENSION (→ ForRowNoWhere via `&`) — and each `@a<-a` is itself
 // 2-way ambiguous, so the live cursor frontier grew `2^N` in the bind count.
 //
-// FINDING (this campaign): the F3 spec's Option-2a fix — suppress the
-// transparent PROJECTION delegate under a row-scoped `&` trigger — is
-// DISPROVEN as a complete fix:
-//   • §4.1 (forks.rs lex-fork gate) ALONE is correct but INCOMPLETE: the lex-
-//     fork falls through to the un-gated NORMAL-path projection, so the
-//     projection leaks back and the `2^N` frontier survives for 3+ binds.
-//   • Completing the suppression in the normal path (prefix.rs, §4.1b) is
-//     UNSOUND: the InputBind→ForRow projection is LOAD-BEARING, not futile —
-//     with it suppressed everywhere, `ForRow::parse("@a<-a & @a<-a")` fails
-//     with "no accepting branch" (the extension-only path cannot complete
-//     without the projection co-branch's shared InputBind sub-parse — exactly
-//     the walker wiring the spec's deferred Option-2b would require).
-//   • §4.3 (collection.rs G2 element-goal) is DISCONFIRMED: it DEGRADED
-//     forrow_parse_determinism (58s→91s) without resolving the timeout, i.e.
-//     vector B (element over-extension) is not the dominant axis.
-// Net kept change: §4.1 (forks.rs) + §4.2 kill switch (`FORROW_PROJ_GATE`).
-// It resolves ONE of the two F2 timeouts (forrow_parse_determinism: timeout →
-// PASS) with zero code regression, but the multi-bind cases stay exponential
-// and forrow_display_parse_roundtrip still times out. A sound fix needs a
-// walker-level redesign (Option 2b / lineage packing), not a dispatch gate.
-// See scratchpad/f3-gate.log and the F3 campaign report.
+// FINDING (2026-06 campaign): a §4.1 forks.rs lex-fork gate + the
+// `FORROW_PROJ_GATE` kill-switch MITIGATED but did not eliminate the `2^N`; the
+// multi-bind cases stayed slow and were `#[ignore]`d pending a walker redesign.
+//
+// RESOLUTION (2026-07-16): NO such redesign was needed. The CASE-2 re-platform
+// (S1–S6) + the descriptor-pure canonical-GLL flip rewrote the walker AFTER these
+// were ignored, and the `2^N` is GONE — the LHS ambiguity now lives in the SPPF
+// forest (pack-at-advance), not the live cursor frontier. All cases parse in poly
+// time and deterministically: 3-bind 0.015s, 4-bind 0.013s, mixed-LHS 0.014s,
+// full-Proc for(&-join) 0.025s (were ~24s / >30s / ~14s / >30s). Verified and
+// un-ignored 2026-07-16; the four pins are now ACTIVE regression guards against a
+// returning `2^N`.
 //
 // Each pin parses under a 30s anti-hang guard and pins the positive AST via
-// derived `Debug`. The single genuinely-fast case under §4.1 (the 2-bind join)
-// is ACTIVE; the multi-bind cases that remain slow/exponential under §4.1 are
-// `#[ignore]`d regression-targets, ready to enable once the redesign lands.
+// derived `Debug`.
 
 mod forrow_join_f3 {
     use super::*;
@@ -4042,11 +4031,10 @@ mod forrow_join_f3 {
         );
     }
 
-    // The bare core of the hang repro: 3 all-quoted `&`-join binds. Under §4.1
-    // this parses CORRECTLY and DETERMINISTICALLY to ForRowNoWhere with 3 binds,
-    // but takes ~24s/parse — not "fast". Re-enable after the redesign.
+    // The bare core of the former hang repro: 3 all-quoted `&`-join binds. Parses
+    // CORRECTLY and DETERMINISTICALLY to ForRowNoWhere with 3 binds in ~0.015s on
+    // the descriptor-pure engine (was ~24s pre-flip).
     #[test]
-    #[ignore = "F3 residual: 3-bind all-@a join is correct+deterministic under §4.1 but ~24s/parse (not fast); needs walker-level redesign. See scratchpad/f3-gate.log."]
     fn three_quoted_binds_join_parses_fast_deterministic() {
         let (debug_1, binds_1) = parse_forrow_fast("@a <- a & @a <- a & @a <- a");
         let (debug_2, binds_2) = parse_forrow_fast("@a <- a & @a <- a & @a <- a");
@@ -4064,7 +4052,6 @@ mod forrow_join_f3 {
     }
 
     #[test]
-    #[ignore = "F3 residual: 4-bind all-@a join is still exponential (>30s) under §4.1; needs walker-level redesign. See scratchpad/f3-gate.log."]
     fn four_quoted_binds_join_parses_fast() {
         let (debug, binds) = parse_forrow_fast("@a <- a & @a <- a & @a <- a & @a <- a");
         assert_eq!(
@@ -4076,9 +4063,8 @@ mod forrow_join_f3 {
     }
 
     // First bind is a PLAIN (var) LHS, the rest quoted — exercises the mixed-LHS
-    // `&`-join path. Under §4.1 it parses correctly but ~14s (not fast).
+    // `&`-join path. Parses correctly in ~0.014s on the descriptor-pure engine.
     #[test]
-    #[ignore = "F3 residual: mixed-LHS 3-bind join is correct under §4.1 but ~14s (not fast); needs walker-level redesign. See scratchpad/f3-gate.log."]
     fn first_plain_then_quoted_binds_join_anchor_parses_fast() {
         let (debug, binds) = parse_forrow_fast("a<-a & @a<-a & @a<-a");
         assert_eq!(
@@ -4089,9 +4075,8 @@ mod forrow_join_f3 {
         );
     }
 
-    // The exact hang repro from the F3 spec, as a full `Proc`.
+    // The exact former hang repro from the F3 spec, as a full `Proc`.
     #[test]
-    #[ignore = "F3 residual: full-Proc 3-bind all-@a for(&-join) repro is still exponential (>30s) under §4.1; needs walker-level redesign. See scratchpad/f3-gate.log."]
     fn for_block_three_quoted_binds_join_repro_parses_fast_deterministic() {
         let debug_1 = parse_proc_fast("for(@a <- a & @a <- a & @a <- a){ Nil }");
         let debug_2 = parse_proc_fast("for(@a <- a & @a <- a & @a <- a){ Nil }");
@@ -4099,6 +4084,23 @@ mod forrow_join_f3 {
             debug_1, debug_2,
             "parse determinism: two parses of the for(&-join) repro differ"
         );
+    }
+
+    // Poly-scaling regression guard (2026-07-16): higher-N all-`@a` `&`-joins must
+    // still parse fast and with the exact bind count. If the `2^N` cursor frontier
+    // ever returns, these blow past the 30s anti-hang guard (2^24 never finishes).
+    #[test]
+    fn higher_n_quoted_binds_joins_stay_polynomial() {
+        for n in [8usize, 16, 24] {
+            let input = vec!["@a<-a"; n].join(" & ");
+            let (debug, binds) = parse_forrow_fast(&input);
+            assert_eq!(
+                binds,
+                Some(n),
+                "expected ForRowNoWhere with {} binds; derived AST = {}",
+                n, debug
+            );
+        }
     }
 }
 
@@ -4183,5 +4185,361 @@ mod m6_realize_selection {
         ] {
             assert_parses_idempotent(s);
         }
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// FLIP-GATE ATTEMPT-2 FALLOUT (2026-07-12): repro pins for the pure-arm hole
+// PREFIX-OPERAND × GROUPED-CHANNEL × SEND — `bitnot (a)!(false)` class.
+//
+// Receipts (scratchpad/zz_probes/logs_s2flip2/): the flip-gate battery's
+// gen_rhocalc_prop::proc_display_parse_roundtrip minimized to
+// `bitnot (a)!(false)` (p6_sweep.log); the deterministic A/B (bitnot_ab.log,
+// bitnot_scope.log) shows CLASSIC parses every shape below (unwrapping the
+// parens via the grouped-LHS cross-cat reentry family — channel `NVar(a)` /
+// `NQuoteNil`, no NParen) while the PURE canonical-GLL arm rejects the three
+// hole shapes with TrailingTokens at the `!`: a prefix operator's operand
+// sub-parse completes at the group `(a)` and pure never continues the
+// completed group into the following send. The R-A/R-C boundary-continuation
+// family, in a configuration neither committed arm covers (Arm A fires at
+// InfixLoop-on-CE; Arm C at InfixLoop operand early-stop; this is a
+// PREFIX-rule operand needing the classic TransparentSourceReentry
+// continuation).
+//
+// ARM G v2 LANDED (2026-07-12): the per-cat-marker reentry floor reset
+// (`cgll_pure_group_reentry_floor_reset`) closes the hole — the block is
+// UN-IGNORED and extended with the D3-matrix pins (multisets classic-equal,
+// receipts logs_s2flip2/armg_d3_matrix.log). Historical verification protocol
+// (banked receipts, pre-fix): `--ignored` under a scratch const=true flip ⇒
+// the three hole pins FAILED and the three controls PASSED; under
+// `PRATTAIL_NO_CANONICAL_GLL=1` all six PASSED.
+// ════════════════════════════════════════════════════════════════════════════════
+
+mod flip_blocker_prefix_grouped_send {
+    use super::*;
+
+    /// THE MINIMAL (proptest-minimized): prefix op + grouped channel + send.
+    #[test]
+    fn bitnot_grouped_channel_send_parses() {
+        fresh();
+        let t = parse("bitnot (a)!(false)");
+        // Classic shape receipt: BitNot(POutput(NVar(a), CastBool(false)))
+        // — the parens are unwrapped by the reentry family (no NParen).
+        assert!(
+            format!("{t:?}").starts_with("BitNot(POutput("),
+            "expected BitNot(POutput(..)), got: {t:?}"
+        );
+    }
+
+    /// Hole pin: empty-payload send on a grouped channel under the prefix op.
+    #[test]
+    fn bitnot_grouped_channel_empty_send_parses() {
+        fresh();
+        let t = parse("bitnot (a)!()");
+        assert!(
+            format!("{t:?}").starts_with("BitNot(POutputEmpty("),
+            "expected BitNot(POutputEmpty(..)), got: {t:?}"
+        );
+    }
+
+    /// Hole pin: grouped QUOTED channel under the prefix op.
+    #[test]
+    fn bitnot_grouped_quote_channel_send_parses() {
+        fresh();
+        let t = parse("bitnot (@Nil)!(false)");
+        // Constructor-family prefix: the default facade elects the
+        // @Nil-specialized `POutputNil` here while the with_source facade
+        // shows the generic `POutput(NQuoteNil, ..)` — both are the send.
+        assert!(
+            format!("{t:?}").starts_with("BitNot(POutput"),
+            "expected BitNot(POutput..), got: {t:?}"
+        );
+    }
+
+    /// Control: the grouped-channel send WITHOUT the prefix op parses in
+    /// BOTH arms today (pure keeps the NParen; classic unwraps) — pins that
+    /// the hole is specifically the prefix-operand continuation.
+    #[test]
+    fn control_grouped_channel_send_parses() {
+        fresh();
+        let t = parse("(a)!(false)");
+        assert!(
+            format!("{t:?}").starts_with("POutput("),
+            "expected POutput(..), got: {t:?}"
+        );
+    }
+
+    /// Control: the UNGROUPED channel under the prefix op parses in both
+    /// arms today — the group is load-bearing for the hole.
+    #[test]
+    fn control_ungrouped_channel_send_parses() {
+        fresh();
+        let t = parse("bitnot a!(false)");
+        assert!(
+            format!("{t:?}").starts_with("BitNot(POutput("),
+            "expected BitNot(POutput(..)), got: {t:?}"
+        );
+    }
+
+    /// Control: the prefix op over the bare group (no send) parses in both
+    /// arms today — the SEND continuation is load-bearing for the hole.
+    #[test]
+    fn control_prefix_over_bare_group_parses() {
+        fresh();
+        let _ = parse("bitnot (a)");
+    }
+
+    // ── ARM G D3-matrix pins (2026-07-12): the wider hole family + fences,
+    //    expected values = the classic-adjudicated g5/d3 receipts. ──────────
+
+    /// Persistent send on the grouped channel under the prefix op.
+    #[test]
+    fn bitnot_grouped_channel_persist_send_parses() {
+        fresh();
+        let t = parse("bitnot (a)!!(false)");
+        assert!(
+            format!("{t:?}").starts_with("BitNot(PPersistOutput"),
+            "expected BitNot(PPersistOutput..), got: {t:?}"
+        );
+    }
+
+    /// Polyadic send on the grouped channel under the prefix op (rule 8).
+    #[test]
+    fn bitnot_grouped_channel_polyadic_send_parses() {
+        fresh();
+        let t = parse("bitnot (a)!(0,1)");
+        assert!(
+            format!("{t:?}").starts_with("BitNot(POutput"),
+            "expected BitNot(POutput..), got: {t:?}"
+        );
+    }
+
+    /// Multiset pin: the n=4 payload row equals classic's reading count
+    /// (armg_d3_matrix.log: pure n=4 ≡ classic n=4, md5 EQ).
+    #[test]
+    fn bitnot_grouped_send_payload_multiset_matches_classic() {
+        fresh();
+        let readings =
+            Proc::parse_via_wpda_all("bitnot (a)!(@Nil!() / @Nil!())").expect("parse_all");
+        assert_eq!(readings.len(), 4, "classic multiset is n=4, got {}", readings.len());
+    }
+
+    /// Multiset pin: the nested-group row (double-LHS) equals classic n=2;
+    /// both group frames fire the reset (resets=2 receipt).
+    #[test]
+    fn bitnot_nested_grouped_send_multiset_matches_classic() {
+        fresh();
+        let readings = Proc::parse_via_wpda_all("bitnot ((a))!(false)").expect("parse_all");
+        assert_eq!(readings.len(), 2, "classic multiset is n=2, got {}", readings.len());
+    }
+
+    /// The hole nested inside a send payload (n=1 both arms).
+    #[test]
+    fn send_payload_hosting_the_hole_parses() {
+        fresh();
+        let t = parse("x!(bitnot (a)!(false))");
+        assert!(
+            format!("{t:?}").starts_with("POutput"),
+            "expected POutput..(payload BitNot..), got: {t:?}"
+        );
+    }
+
+    /// Fence (outcome parity): the chained second send is REFUSED by both
+    /// arms — the reset fires at the FIRST `!` then the second-send lineage
+    /// strands (classic-parity ERR; resets ≥ 1 here is EXPECTED, receipts
+    /// armg_d1_chained.log / §1.4 of the v2 plan).
+    #[test]
+    fn fence_chained_send_refused_both_arms() {
+        fresh();
+        assert!(Proc::parse("bitnot (a)!(Nil)!(Nil)").is_err());
+    }
+
+    /// Fence (outcome parity): PDrop over a grouped-channel send is REFUSED
+    /// by both arms (POutput is Proc; PDrop's operand slot is Name).
+    #[test]
+    fn fence_pdrop_grouped_send_refused_both_arms() {
+        fresh();
+        assert!(Proc::parse("*(a)!(false)").is_err());
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// TASK #10 ITEM 2b (2026-07-14, USER-APPROVED): behavioral pins for the two
+// facade realize-mode contract restorations (ledger_followups_plan §ITEM-2
+// design step 6, amendment 4).
+//
+// Pre-2b, the walker inferred single-result semantics from `limit` being a
+// power of two ≤ 128 (the RAW_PROBE_CAPS coupling). Two facade helpers sat in
+// the trap range and silently ELECTED where their contract is ENUMERATION:
+//   - `__mettail_wpda_collect_prefix` (the bounded-prefix `_all` facade):
+//     probe limit = max_alternatives + 1, so `max_alternatives ∈
+//     {1,3,7,15,31,63,127}` collapsed the ambiguity-preserving facade to the
+//     single elected reading.
+//   - `__mettail_wpda_find_surface_exact` (the `Cat::parse` display-exact
+//     surface repair): per-root limit starts at 128, so BIN roots elected 1
+//     reading, `exhausted_all_roots` stayed true, and the probe returned
+//     `Ok(None)` after one pass — surface faithfulness silently dead.
+//
+// Pin family per amendment 4: the grp_d1 twins `@Nil!(@(@Nil)!())` — a
+// display-DISTINCT 2-reading family (kept `NParen` twin displays as the
+// source text; the transparent twin displays `@Nil!(@@Nil!())`), both
+// semantically distinct so the prefix facade's semantic dedup keeps both.
+// `@a!(0,1)` is explicitly EXCLUDED (its 2 raw derivations semantically
+// dedup to 1). P4 classic-lever receipt: reading count = 2 both arms
+// (logs_task10/baseline_head/rows_{pure,lever}.log, AST-COUNT 2).
+// ════════════════════════════════════════════════════════════════════════════════
+
+mod realize_mode_contract_pins {
+    use super::*;
+    use mettail_prattail::wpda_runtime::LatticeTokenSource;
+
+    /// Item-2b pin 1 (collect_prefix): the bounded-prefix facade at
+    /// `max_alternatives = 3` (probe limit 4 — inside the pre-2b trap range)
+    /// on the 2-reading grp_d1 family must return BOTH display-distinct
+    /// alternatives. Pre-2b it returned exactly 1 (the elected reading).
+    #[test]
+    fn prefix_bounded_alternatives_enumerate_display_distinct_family() {
+        fresh();
+        let dag = lex_dag("@Nil!(@(@Nil)!())").expect("grp_d1 lexes");
+        let source = LatticeTokenSource::new(dag);
+        let mut pos = 0usize;
+        let (terms, weights) =
+            parse_Proc_via_wpda_prefix_with_source(&source, &mut pos, 0, 3)
+                .expect("grp_d1 parses through the bounded-prefix facade");
+        assert_eq!(terms.len(), weights.len(), "term-parallel weights");
+        let mut displays: Vec<String> = terms.iter().map(|t| format!("{t}")).collect();
+        displays.sort();
+        assert_eq!(
+            displays,
+            vec![
+                "@Nil!(@(@Nil)!())".to_string(),
+                "@Nil!(@@Nil!())".to_string(),
+            ],
+            "the bounded-prefix facade must enumerate the full 2-reading \
+             display-distinct family (pre-2b trap: collapsed to the single \
+             elected reading)"
+        );
+    }
+
+    /// Item-2b pin 2 (find_surface_exact): the display-exact surface probe
+    /// must FIND the display-exact NON-elected reading. The single-result
+    /// election on `@Nil!(@(@Nil)!())` elects the NParen-kept twin (whose
+    /// display reproduces the source text); the transparent twin displays
+    /// `@Nil!(@@Nil!())` and is reachable only by ENUMERATING the packing
+    /// family. Pre-2b the probe elected, missed, and reported `Ok(None)`.
+    #[test]
+    fn surface_exact_finds_non_elected_display_reading() {
+        fresh();
+        let dag = lex_dag("@Nil!(@(@Nil)!())").expect("grp_d1 lexes");
+        let source = LatticeTokenSource::new(dag);
+        let mut pos = 0usize;
+        let found = parse_Proc_via_wpda_surface_exact_with_source(
+            &source,
+            &mut pos,
+            0,
+            "@Nil!(@@Nil!())",
+            128,
+        )
+        .expect("the surface-exact probe must not error on a parseable input");
+        let (term, _weight) = found.expect(
+            "the display-exact non-elected reading must be FOUND by family \
+             enumeration (pre-2b trap: one elected pass, then Ok(None))",
+        );
+        assert_eq!(
+            format!("{term}"),
+            "@Nil!(@@Nil!())",
+            "the found reading's display must reproduce the requested surface"
+        );
+    }
+
+    /// Fence: the same surface probe still reports `Ok(None)` for a display
+    /// NO reading of this family has — enumeration must not fabricate.
+    #[test]
+    fn surface_exact_still_rejects_unrealizable_display() {
+        fresh();
+        let dag = lex_dag("@Nil!(@(@Nil)!())").expect("grp_d1 lexes");
+        let source = LatticeTokenSource::new(dag);
+        let mut pos = 0usize;
+        let found = parse_Proc_via_wpda_surface_exact_with_source(
+            &source,
+            &mut pos,
+            0,
+            "@Nil!(@(@(@Nil))!())",
+            128,
+        )
+        .expect("the surface-exact probe must not error on a parseable input");
+        assert!(
+            found.is_none(),
+            "no reading of grp_d1 displays the deeper-nested surface; the \
+             probe must exhaust and report None, got {found:?}"
+        );
+    }
+}
+
+
+/// Residual #11-1 Branch B (USER-APPROVED 2026-07-14) — committed regression
+/// pins for the polyadic-send `semantic_hash` normalization that closes the
+/// facade-vs-walker gap. `parse_via_wpda_all` returns the set DEDUPED BY
+/// semantic fingerprint, so the surviving length IS the distinct-semantic-key
+/// count — a `== 2` pin is simultaneously the UPPER bound (the projection-
+/// isolation prologue's receiver-led fold-duplicate reading is gone, 3->2) and
+/// the LOWER bound / over-prune guard (the two genuine twins — Quoted
+/// `NVar`-channel + Short `PVar`-channel — both survive as distinct keys, so
+/// NOT collapsed to 1). Distinctness is proven by the deduped count, not by
+/// display: the twins display identically as the source text.
+mod branch_b_send_normalization_pins {
+    use super::*;
+
+    /// Output family: the `@`-led polyadic string facade dedups 3->2 to match
+    /// the walker. The folded reading is the prologue's receiver-led
+    /// `POutput2Plus(NQuoteShort(a),..)` == its Short twin.
+    #[test]
+    fn output_polyadic_send_facade_dedups_to_two_twins() {
+        fresh();
+        assert_eq!(Proc::parse_via_wpda_all("@a!(0,1)").expect("parse_all").len(), 2);
+        assert_eq!(Proc::parse_via_wpda_all("@a!(0,1,2)").expect("parse_all").len(), 2);
+        assert_eq!(Proc::parse_via_wpda_all("@a!(1+2,3)").expect("parse_all").len(), 2);
+    }
+
+    /// Over-prune guard (generalized predicate, condition (b) param-bottomed):
+    /// `@Nil!(0,1)` keeps its Nil twin (3->2, NEVER 3->1). `POutputNil2Plus`
+    /// is EXCLUDED from the fold because its channel wraps the `PZero` nullary
+    /// literal, not a receiver parameter — so only the Short spelling folds.
+    #[test]
+    fn nil_channel_polyadic_send_keeps_its_twin() {
+        fresh();
+        assert_eq!(Proc::parse_via_wpda_all("@Nil!(0,1)").expect("parse_all").len(), 2);
+    }
+
+    /// Persist family (red-team A4, measurement-gated): `@a!!(0,1)` walker == 1
+    /// (no Quoted twin), so the facade folds 2->1 to match the walker.
+    #[test]
+    fn persist_polyadic_send_facade_matches_walker() {
+        fresh();
+        assert_eq!(Proc::parse_via_wpda_all("@a!!(0,1)").expect("parse_all").len(), 1);
+        assert_eq!(Proc::parse_via_wpda_all("@a!!(0,1,2)").expect("parse_all").len(), 1);
+    }
+
+    /// Controls (unchanged): the scalar send `@a!(0)` already normalized this
+    /// receiver-led collision (stays 2); the bare-ident send `a!(0,1)` has no
+    /// quote-wrapped channel to fold (stays 1).
+    #[test]
+    fn send_normalization_controls_unchanged() {
+        fresh();
+        assert_eq!(Proc::parse_via_wpda_all("@a!(0)").expect("parse_all").len(), 2);
+        assert_eq!(Proc::parse_via_wpda_all("a!(0,1)").expect("parse_all").len(), 1);
+    }
+
+    /// Red-team A5: the fold drops the receiver-led DUPLICATE, never the
+    /// elected representative — the elected single-result `@a!(0,1)` remains an
+    /// output send (structurally the walker's rep).
+    #[test]
+    fn elected_rep_is_an_unchanged_output_send() {
+        fresh();
+        let t = parse("@a!(0,1)");
+        assert!(
+            format!("{t:?}").starts_with("POutput"),
+            "elected @a!(0,1) rep must be an output send, got: {t:?}"
+        );
     }
 }

@@ -26,8 +26,6 @@
 //! `term`/`nonterm`/`rule` bundle helpers the sibling `.0` snapshot tests
 //! (`sym_tree_structural_snapshot.rs`, `guard_carrier_snapshot.rs`) use.
 
-#![cfg(feature = "oslf-bisimulation")]
-
 use std::collections::BTreeSet;
 
 use mettail_prattail::alternating;
@@ -339,24 +337,4 @@ fn fixtures_exercise_non_bisimilar_pairs() {
             .is_empty(),
         "single-category lambda has no category pair ⇒ empty non-bisimilar set"
     );
-}
-
-#[test]
-#[ignore = "evidence dump only"]
-fn dump_agreement_evidence() {
-    for (name, (rules, cats)) in [
-        ("calculator", calculator_fixture()),
-        ("lambda", lambda_fixture()),
-        ("rhocalc", rhocalc_fixture()),
-        ("ambient", ambient_fixture()),
-        ("guarded_rho", guarded_rho_fixture()),
-    ] {
-        let bisim =
-            normalized(&bisimulation::analyze_from_bundle(&rules, &cats).non_bisimilar_pairs);
-        let alt = normalized(&alternating::analyze_from_bundle(&rules, &cats).non_bisimilar_pairs);
-        eprintln!(
-            "[{name}]\n  bisimulation non-bisim = {bisim:?}\n  alternating  non-bisim = {alt:?}\n  AGREE={}",
-            bisim == alt
-        );
-    }
 }

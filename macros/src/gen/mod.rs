@@ -339,6 +339,55 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                 quote! {}
             };
 
+            // ── ROOT-1 AUTHORITATIVE-REJECT (design a9fbeefe) ──
+            // The deep-`@` polynomiality fix. When the proj helper matched a
+            // whole-input σ-led send skeleton whose every tiling failed to parse (and
+            // enumeration was complete), it set the module thread-local reject flag.
+            // `proj_reject_capture` reads+clears it the statement AFTER the proj
+            // prologue declines (before sep/infix can run — their nested sub-parses
+            // consume their own flags). `proj_reject_fire` (emitted AFTER the infix
+            // prologue) turns a captured reject into `Err` ONLY if the infix prologue
+            // also declined, so an infix-of-sends (`@Nil!(0) or @Nil!(0)`) is still
+            // recovered. This short-circuits the fork-exploding walker on genuinely
+            // non-parseable `@`-led spans (the exponential ROOT-1 residual). Gated on
+            // `proj_enabled` ⇒ non-proj ⇒ empty ⇒ byte-identical. Single-winner seam
+            // only (the `_all` body is untouched).
+            let sigil_reject_on = proj_enabled;
+            let proj_reject_capture = if sigil_reject_on {
+                quote! {
+                    let __proj_sigil_reject = __proj_sigil_reject_take();
+                }
+            } else {
+                quote! {}
+            };
+            // The authoritative-reject FIRE: when a σ-frame send skeleton matched the
+            // whole input, enumeration was COMPLETE, and NO tiling parsed,
+            // `__proj_sigil_reject` is set and turned into `Err` here. OFF ⇒ empty
+            // (byte-identical).
+            let proj_reject_fire = if sigil_reject_on {
+                quote! {
+                    if __proj_sigil_reject {
+                        return Err(ParseError::UnexpectedToken {
+                            expected: Cow::Borrowed(
+                                "no valid parse: a projection-sigil-led send frame whose operands do not parse",
+                            ),
+                            found: input
+                                .trim_start()
+                                .chars()
+                                .next()
+                                .map(|__c| __c.to_string())
+                                .unwrap_or_else(|| "end of input".to_string()),
+                            range: Range::from_byte_offsets(input, 0, input.len()),
+                            hint: Some(Cow::Borrowed(
+                                "an `@`-led span that is not a well-formed send (or infix of sends) is not a valid term",
+                            )),
+                        });
+                    }
+                }
+            } else {
+                quote! {}
+            };
+
             // P3 BINARY-INFIX ISOLATION (ROOT-2 `or`, 2026-07-06): the THIRD
             // sibling. Wired AFTER the proj + sep prologues at both string entries
             // (mutually-exclusive by input shape: proj/sep consume a WHOLE
@@ -368,6 +417,21 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
             } else {
                 quote! {}
             };
+
+            // ── ROOT-P MEMOIZED BEST-PARSE (design af7680e2, "3A LIGHT") ──
+            // This category's single-winner `parse_via_wpda` is wrapped with a
+            // per-category, epoch-scoped, thread-local memo IFF the master const
+            // is ON AND the category is ISOLATION-ELIGIBLE (its `parse_via_wpda`
+            // recurses through a divide-and-conquer prologue, so the P1
+            // enumerating matcher's recursive sub-parses re-visit overlapping
+            // `(category, trimmed-span)` subproblems — an exponential TREE that
+            // the memo collapses to a polynomial DAG). The eligibility predicate
+            // (`sep ∨ proj ∨ infix`) is IDENTICAL to the facade's per-category
+            // `__PROJ_MEMO_<Cat>` map emission, so wrapper and map agree exactly.
+            // OFF / non-eligible ⇒ the pre-memo body VERBATIM (byte-identical).
+            let memo_on = sep_enabled || proj_enabled || infix_enabled;
+            let proj_memo_ident = format_ident!("__PROJ_MEMO_{}", cat);
+
             let parse_fn = format_ident!("parse_{}", cat);
             let _parse_fn_recovering = format_ident!("parse_{}_recovering", cat);
 
@@ -473,7 +537,7 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                                 hint: None,
                             })
                         }
-                        Err(WpdaParseError::AmbiguityBudget { budget, actual, position, frontier_ess_x1000 }) => {
+                        Err(WpdaParseError::AmbiguityBudget { budget, actual, position, .. }) => {
                             let range = tokens
                                 .get(position)
                                 .map(|(_, r)| *r)
@@ -482,13 +546,17 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                                 });
                             Err(ParseError::AmbiguityBudget {
                                 budget, actual, range,
-                                // EP-P4 (Stage E): fold the frontier ESS into
-                                // the hint so the surfaced budget error
-                                // distinguishes "1 winner + noise" (ESS≈1)
-                                // from genuine k-way ambiguity (ESS≈k).
+                                // R-D A1 (task #18b): engine-neutral hint. `actual`
+                                // is a DISTINCT-READING count under the pure engine
+                                // and a cursor-FRONTIER count under the classic
+                                // lever, so the surface text must not say "frontier
+                                // ESS of N cursors" (which reads 0.000 under the pure
+                                // engine). Mirrors facade.rs/runtime_types.rs (amdt
+                                // #6); `frontier_ess_x1000` dropped from the pattern
+                                // (`..`) — classic diagnostics read it off the
+                                // variant, not this message.
                                 hint: Some(Cow::Owned(format!(
-                                    "input too ambiguous (frontier ESS≈{:.3} of {} cursors); relax CursorBoundingMode::AmbiguityBudget or simplify grammar",
-                                    (frontier_ess_x1000 as f64) / 1000.0,
+                                    "input too ambiguous (actual {}); relax CursorBoundingMode::AmbiguityBudget or simplify grammar",
                                     actual,
                                 ))),
                             })
@@ -510,18 +578,22 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                 format_ident!("parse_{}_via_wpda_surface_exact", cat);
             let parse_via_wpda_surface_exact_with_source_fn =
                 format_ident!("parse_{}_via_wpda_surface_exact_with_source", cat);
-            let parse_via_wpda_method = quote! {
-                /// WPDS-driven parser entry point.
-                ///
-                /// Uses a `LatticeTokenSource` when `lex_dag(input)` reports
-                /// lexical ambiguity, so the WPDS backend can rule alternatives
-                /// out by parser evidence. Non-ambiguous input keeps the
-                /// existing token-slice path.
-                pub fn parse_via_wpda(input: &str) -> Result<#cat, ParseError> {
+            // ── ROOT-P MEMOIZED BEST-PARSE (design af7680e2) ──
+            // Extract the pre-memo `parse_via_wpda` body into a reusable token
+            // stream so it can be emitted EITHER as the body of a memoized
+            // `parse_via_wpda` + a renamed `parse_via_wpda_uncached` split
+            // (iso-eligible + const ON) OR VERBATIM as the plain `parse_via_wpda`
+            // body (OFF / non-eligible — byte-identical). The body is a PURE
+            // function of the trimmed input (bug-2318 isolation locality), so
+            // memoizing returns the IDENTICAL value; only WHEN sub-parses run
+            // changes, never WHAT.
+            let parse_via_wpda_body = quote! {
                     mettail_prattail::hang_dump::install_hang_dump_handler();
                     #proj_prologue_single
+                    #proj_reject_capture
                     #sep_prologue_single
                     #infix_prologue_single
+                    #proj_reject_fire
                     let dag = lex_dag(input).map_err(ParseError::from)?;
                     if dag.has_ambiguity() {
                         let source = mettail_prattail::wpda_runtime::LatticeTokenSource::new(dag);
@@ -581,14 +653,15 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                                     hint: None,
                                 })
                             }
-                            Err(WpdaParseError::AmbiguityBudget { budget, actual, position, frontier_ess_x1000 }) => {
+                            Err(WpdaParseError::AmbiguityBudget { budget, actual, position, .. }) => {
                                 Err(ParseError::AmbiguityBudget {
                                     budget, actual, range: dag_range(position),
-                                    // EP-P4 (Stage E): fold the frontier ESS
-                                    // into the hint (see the 24sp-family site).
+                                    // R-D A1 (task #18b): engine-neutral hint (see
+                                    // the 24sp-family site). Mirrors facade.rs /
+                                    // runtime_types.rs (amdt #6); `frontier_ess_x1000`
+                                    // dropped from the pattern (`..`).
                                     hint: Some(Cow::Owned(format!(
-                                        "input too ambiguous (frontier ESS≈{:.3} of {} cursors); relax CursorBoundingMode::AmbiguityBudget or simplify grammar",
-                                        (frontier_ess_x1000 as f64) / 1000.0,
+                                        "input too ambiguous (actual {}); relax CursorBoundingMode::AmbiguityBudget or simplify grammar",
                                         actual,
                                     ))),
                                 })
@@ -655,7 +728,7 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                                 hint: None,
                             })
                         }
-                        Err(WpdaParseError::AmbiguityBudget { budget, actual, position, frontier_ess_x1000 }) => {
+                        Err(WpdaParseError::AmbiguityBudget { budget, actual, position, .. }) => {
                             let range = tokens
                                 .get(position)
                                 .map(|(_, r)| *r)
@@ -664,19 +737,92 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                                 });
                             Err(ParseError::AmbiguityBudget {
                                 budget, actual, range,
-                                // EP-P4 (Stage E): fold the frontier ESS into
-                                // the hint so the surfaced budget error
-                                // distinguishes "1 winner + noise" (ESS≈1)
-                                // from genuine k-way ambiguity (ESS≈k).
+                                // R-D A1 (task #18b): engine-neutral hint. `actual`
+                                // is a DISTINCT-READING count under the pure engine
+                                // and a cursor-FRONTIER count under the classic
+                                // lever, so the surface text must not say "frontier
+                                // ESS of N cursors" (which reads 0.000 under the pure
+                                // engine). Mirrors facade.rs/runtime_types.rs (amdt
+                                // #6); `frontier_ess_x1000` dropped from the pattern
+                                // (`..`) — classic diagnostics read it off the
+                                // variant, not this message.
                                 hint: Some(Cow::Owned(format!(
-                                    "input too ambiguous (frontier ESS≈{:.3} of {} cursors); relax CursorBoundingMode::AmbiguityBudget or simplify grammar",
-                                    (frontier_ess_x1000 as f64) / 1000.0,
+                                    "input too ambiguous (actual {}); relax CursorBoundingMode::AmbiguityBudget or simplify grammar",
                                     actual,
                                 ))),
                             })
                         }
                     }
+            };
+            // Assemble the `parse_via_wpda` entry. ON (iso-eligible + const): the
+            // memoized wrapper + the renamed `parse_via_wpda_uncached` (the
+            // extracted body). OFF / non-eligible: the pre-memo body VERBATIM in
+            // the original `parse_via_wpda` (byte-identical). `#proj_memo_ident` /
+            // `__ProjMemoGuard` are the facade-emitted module-scope thread-locals
+            // (same flat include scope as this `impl`).
+            let parse_via_wpda_entry = if memo_on {
+                quote! {
+                    /// WPDS-driven parser entry point — ROOT-P MEMOIZED best-parse
+                    /// wrapper (design af7680e2). Epoch-scoped to the OUTERMOST
+                    /// parse via `__ProjMemoGuard`; consults the per-category
+                    /// thread-local memo keyed on the TRIMMED input content. On a
+                    /// miss it computes `parse_via_wpda_uncached` and stores the
+                    /// (Ok OR Err) result — a pure function of the trimmed input,
+                    /// so the memoized value is byte-identical to the un-memoized
+                    /// parse; only the recursion SHAPE (tree → DAG) changes.
+                    pub fn parse_via_wpda(input: &str) -> Result<#cat, ParseError> {
+                        let _g = __ProjMemoGuard::enter();
+                        let __epoch = __ProjMemoGuard::epoch();
+                        let __key = input.trim();
+                        if let Some(__hit) = #proj_memo_ident.with(|__cell| {
+                            let mut __slot = __cell.borrow_mut();
+                            if __slot.0 != __epoch {
+                                // Stale epoch (a new outermost parse): lazily clear.
+                                __slot.0 = __epoch;
+                                __slot.1.clear();
+                                None
+                            } else {
+                                __slot.1.get(__key).cloned()
+                            }
+                        }) {
+                            return __hit;
+                        }
+                        let __computed = Self::parse_via_wpda_uncached(input);
+                        #proj_memo_ident.with(|__cell| {
+                            let mut __slot = __cell.borrow_mut();
+                            if __slot.0 != __epoch {
+                                __slot.0 = __epoch;
+                                __slot.1.clear();
+                            }
+                            __slot.1.insert(__key.to_string(), __computed.clone());
+                        });
+                        __computed
+                    }
+
+                    /// Un-memoized WPDS parser entry — the VERBATIM pre-memo
+                    /// `parse_via_wpda` body. Called by the memoized wrapper on a
+                    /// cache miss. Its isolation-recursion sub-parses re-enter
+                    /// through the memoized `parse_via_wpda`, so the enumerating
+                    /// matcher's exponential re-descent collapses to a polynomial DAG.
+                    fn parse_via_wpda_uncached(input: &str) -> Result<#cat, ParseError> {
+                        #parse_via_wpda_body
+                    }
                 }
+            } else {
+                quote! {
+                    /// WPDS-driven parser entry point.
+                    ///
+                    /// Uses a `LatticeTokenSource` when `lex_dag(input)` reports
+                    /// lexical ambiguity, so the WPDS backend can rule alternatives
+                    /// out by parser evidence. Non-ambiguous input keeps the
+                    /// existing token-slice path.
+                    pub fn parse_via_wpda(input: &str) -> Result<#cat, ParseError> {
+                        #parse_via_wpda_body
+                    }
+                }
+            };
+            let parse_via_wpda_method = quote! {
+                #parse_via_wpda_entry
 
                 /// Lazy raw-realization probe used only by
                 /// `parse_structured` to choose a surface-faithful
@@ -857,14 +1003,15 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                                     hint: None,
                                 })
                             }
-                            Err(WpdaParseError::AmbiguityBudget { budget, actual, position, frontier_ess_x1000 }) => {
+                            Err(WpdaParseError::AmbiguityBudget { budget, actual, position, .. }) => {
                                 Err(ParseError::AmbiguityBudget {
                                     budget, actual, range: dag_range(position),
-                                    // EP-P4 (Stage E): fold the frontier ESS
-                                    // into the hint (see the 24sp-family site).
+                                    // R-D A1 (task #18b): engine-neutral hint (see
+                                    // the 24sp-family site). Mirrors facade.rs /
+                                    // runtime_types.rs (amdt #6); `frontier_ess_x1000`
+                                    // dropped from the pattern (`..`).
                                     hint: Some(Cow::Owned(format!(
-                                        "input too ambiguous (frontier ESS≈{:.3} of {} cursors); relax CursorBoundingMode::AmbiguityBudget or simplify grammar",
-                                        (frontier_ess_x1000 as f64) / 1000.0,
+                                        "input too ambiguous (actual {}); relax CursorBoundingMode::AmbiguityBudget or simplify grammar",
                                         actual,
                                     ))),
                                 })
@@ -942,7 +1089,7 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                                 hint: None,
                             })
                         }
-                        Err(WpdaParseError::AmbiguityBudget { budget, actual, position, frontier_ess_x1000 }) => {
+                        Err(WpdaParseError::AmbiguityBudget { budget, actual, position, .. }) => {
                             let range = tokens
                                 .get(position)
                                 .map(|(_, r)| *r)
@@ -951,13 +1098,17 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                                 });
                             Err(ParseError::AmbiguityBudget {
                                 budget, actual, range,
-                                // EP-P4 (Stage E): fold the frontier ESS into
-                                // the hint so the surfaced budget error
-                                // distinguishes "1 winner + noise" (ESS≈1)
-                                // from genuine k-way ambiguity (ESS≈k).
+                                // R-D A1 (task #18b): engine-neutral hint. `actual`
+                                // is a DISTINCT-READING count under the pure engine
+                                // and a cursor-FRONTIER count under the classic
+                                // lever, so the surface text must not say "frontier
+                                // ESS of N cursors" (which reads 0.000 under the pure
+                                // engine). Mirrors facade.rs/runtime_types.rs (amdt
+                                // #6); `frontier_ess_x1000` dropped from the pattern
+                                // (`..`) — classic diagnostics read it off the
+                                // variant, not this message.
                                 hint: Some(Cow::Owned(format!(
-                                    "input too ambiguous (frontier ESS≈{:.3} of {} cursors); relax CursorBoundingMode::AmbiguityBudget or simplify grammar",
-                                    (frontier_ess_x1000 as f64) / 1000.0,
+                                    "input too ambiguous (actual {}); relax CursorBoundingMode::AmbiguityBudget or simplify grammar",
                                     actual,
                                 ))),
                             })
@@ -1054,14 +1205,15 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                                     hint: None,
                                 })
                             }
-                            Err(WpdaParseError::AmbiguityBudget { budget, actual, position, frontier_ess_x1000 }) => {
+                            Err(WpdaParseError::AmbiguityBudget { budget, actual, position, .. }) => {
                                 Err(ParseError::AmbiguityBudget {
                                     budget, actual, range: dag_range(position),
-                                    // EP-P4 (Stage E): fold the frontier ESS
-                                    // into the hint (see the 24sp-family site).
+                                    // R-D A1 (task #18b): engine-neutral hint (see
+                                    // the 24sp-family site). Mirrors facade.rs /
+                                    // runtime_types.rs (amdt #6); `frontier_ess_x1000`
+                                    // dropped from the pattern (`..`).
                                     hint: Some(Cow::Owned(format!(
-                                        "input too ambiguous (frontier ESS≈{:.3} of {} cursors); relax CursorBoundingMode::AmbiguityBudget or simplify grammar",
-                                        (frontier_ess_x1000 as f64) / 1000.0,
+                                        "input too ambiguous (actual {}); relax CursorBoundingMode::AmbiguityBudget or simplify grammar",
                                         actual,
                                     ))),
                                 })
@@ -1143,7 +1295,7 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                                 hint: None,
                             })
                         }
-                        Err(WpdaParseError::AmbiguityBudget { budget, actual, position, frontier_ess_x1000 }) => {
+                        Err(WpdaParseError::AmbiguityBudget { budget, actual, position, .. }) => {
                             let range = tokens
                                 .get(position)
                                 .map(|(_, r)| *r)
@@ -1152,13 +1304,17 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                                 });
                             Err(ParseError::AmbiguityBudget {
                                 budget, actual, range,
-                                // EP-P4 (Stage E): fold the frontier ESS into
-                                // the hint so the surfaced budget error
-                                // distinguishes "1 winner + noise" (ESS≈1)
-                                // from genuine k-way ambiguity (ESS≈k).
+                                // R-D A1 (task #18b): engine-neutral hint. `actual`
+                                // is a DISTINCT-READING count under the pure engine
+                                // and a cursor-FRONTIER count under the classic
+                                // lever, so the surface text must not say "frontier
+                                // ESS of N cursors" (which reads 0.000 under the pure
+                                // engine). Mirrors facade.rs/runtime_types.rs (amdt
+                                // #6); `frontier_ess_x1000` dropped from the pattern
+                                // (`..`) — classic diagnostics read it off the
+                                // variant, not this message.
                                 hint: Some(Cow::Owned(format!(
-                                    "input too ambiguous (frontier ESS≈{:.3} of {} cursors); relax CursorBoundingMode::AmbiguityBudget or simplify grammar",
-                                    (frontier_ess_x1000 as f64) / 1000.0,
+                                    "input too ambiguous (actual {}); relax CursorBoundingMode::AmbiguityBudget or simplify grammar",
                                     actual,
                                 ))),
                             })
@@ -1459,7 +1615,7 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                                 });
                                 (None, errors)
                             }
-                            Err(WpdaParseError::AmbiguityBudget { budget, actual, position, frontier_ess_x1000 }) => {
+                            Err(WpdaParseError::AmbiguityBudget { budget, actual, position, .. }) => {
                                 let range = tokens
                                     .get(position)
                                     .map(|(_, r)| *r)
@@ -1471,11 +1627,12 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                                     });
                                 errors.push(ParseError::AmbiguityBudget {
                                     budget, actual, range,
-                                    // EP-P4 (Stage E): fold the frontier ESS
-                                    // into the hint (see the 24sp-family site).
+                                    // R-D A1 (task #18b): engine-neutral hint (see
+                                    // the 24sp-family site). Mirrors facade.rs /
+                                    // runtime_types.rs (amdt #6); `frontier_ess_x1000`
+                                    // dropped from the pattern (`..`).
                                     hint: Some(Cow::Owned(format!(
-                                        "input too ambiguous (frontier ESS≈{:.3} of {} cursors); relax CursorBoundingMode::AmbiguityBudget or simplify grammar",
-                                        (frontier_ess_x1000 as f64) / 1000.0,
+                                        "input too ambiguous (actual {}); relax CursorBoundingMode::AmbiguityBudget or simplify grammar",
                                         actual,
                                     ))),
                                 });
@@ -1971,5 +2128,31 @@ pub fn generate_literal_label(native_type: &syn::Type) -> Ident {
         | NativeType::UInt128
         | NativeType::Usize
         | NativeType::CanonicalBigInt => quote::format_ident!("NumLit"),
+    }
+}
+
+/// Task #14 gate-1 support: a field-empty `LanguageDef` for emitter unit
+/// tests whose generators take a `&LanguageDef` they do not consult on the
+/// predicate paths under test (e.g. `generate_iterative_regular_arm`,
+/// `construct_leaf_value`, the tape builders).
+#[cfg(test)]
+pub(crate) fn empty_language_for_tests() -> mettail_ast::language::LanguageDef {
+    mettail_ast::language::LanguageDef {
+        name: quote::format_ident!("TestLang"),
+        options: std::collections::HashMap::new(),
+        extends_names: Vec::new(),
+        include_names: Vec::new(),
+        mixin_names: Vec::new(),
+        types: Vec::new(),
+        refinement_types: Vec::new(),
+        token_defs: Vec::new(),
+        mode_defs: Vec::new(),
+        sync_constraints: Vec::new(),
+        tree_invariants: Vec::new(),
+        terms: Vec::new(),
+        equations: Vec::new(),
+        rewrites: Vec::new(),
+        logic: None,
+        guard_config: None,
     }
 }

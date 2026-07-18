@@ -408,15 +408,6 @@ pub struct WalkerStats {
     /// `walker-stats` feature; zero-cost when disabled.
     pub edge_kind_projection: EdgeKindProjection,
 
-    /// Phase F.13 chain_10000 Exp 14 Substage 0 (2026-05-27): TomitaKey
-    /// coarse-merge projection. Counterfactual measurement of what the
-    /// planned `TomitaFrontierMap` (Tomita 1985 / Scott-Johnstone 2010)
-    /// would dedup if the walker keyed cursors on
-    /// `(state, node, pos, edge_top, collection_depth)` per
-    /// `prattail/docs/design/plans/exp14-tomita-per-arc-gss-merge.md`
-    /// §2.3. The gate to proceed past Substage 0 is `projected_dedup_rate()
-    /// >= 5.0` on left_assoc_chain_500.
-    pub tomita_key_projection: TomitaKeyProjection,
 
     /// Phase F.13 chain_10000 Exp 15 Substage 0 (2026-05-27): CPS
     /// continuation size projection. Counterfactual measurement of the
@@ -766,129 +757,6 @@ pub struct WalkerStats {
     /// apply_action work. Default 0.
     pub p5_eoi_cursors_examined: u64,
     pub p5_eoi_dead_cursors: u64,
-
-    // ─── BCC shadow (Batched Cross-cat delegate + Continuation-descriptor ───
-    //     sharing, Plan afde9c48, Stage 0). Gated PRATTAIL_BCC_SHADOW=1.
-    //     Distinct from the node-coarsening COARSEN-SHADOW above: BCC models the
-    //     M4 SEAL — both `@a` cross-cat readings sealed to ONE canonical element
-    //     Symbol so their sppf_stack TOP + the `@a`-reading EDGE label + the
-    //     per-reading weight-rule all CANONICALIZE (one packing under one
-    //     continuation), which the COARSEN-SHADOW keys did NOT do (they kept the
-    //     two readings' distinct sppf tags / edge kinds / weight-rules apart).
-    /// ★ S0-G-LINEAR (DECISIVE). Peak distinct BCC-coarsened buckets at the
-    /// merge tier: node→N_cont-class, sppf_stack WHOLE chain projected to tags
-    /// with the cross-cat element TOP sealed to ONE canonical sentinel, edge
-    /// stack projected with BOTH `@a`-reading edge kinds (CrossCatProjection /
-    /// CrossCatLhs*) folded to ONE canonical label, and the lex/weight
-    /// provenance canonicalized. If this goes LINEAR in `k` while
-    /// `branch_cursors_peak_pre_merge` is exponential ⇒ BCC's shared
-    /// continuation linearizes the frontier (S0-G-LINEAR PASS). If it stays
-    /// super-linear ⇒ a deeper multiplier below the `@a` fork ⇒ HALT.
-    pub bcc_shadow_peak_pre_merge: u64,
-    /// BCC control: the SAME BCC key but WITHOUT sealing the sppf-top / edge
-    /// label (i.e. deep-edge-sppf with only the node→N_cont demotion + lex
-    /// canonicalization). Isolates the seal's contribution: if
-    /// `bcc_shadow_peak_pre_merge` ≪ this, the SEAL is what folds; if they are
-    /// equal, the seal contributes nothing (the divergence is below it).
-    pub bcc_shadow_peak_noseal: u64,
-    /// BCC MAXIMAL-seal control (obstruction-naming): the STRONGEST possible
-    /// coarsening — WHOLE sppf-stack chain collapsed + cohort dropped + edges
-    /// folded, retaining only (state_class, node_class, pos, collection_depth,
-    /// edge-fold). If this stays exponential in k, NO element seal can linearize
-    /// the frontier — the residual is the (pos / collection_depth / edge-length)
-    /// derivation multiplicity BCC's single continuation cursor cannot fold.
-    pub bcc_shadow_peak_maximal: u64,
-    /// BCC GLL-INVARIANT FLOOR: the absolute Tomita/GLL continuation key
-    /// `(state/slot, pos)` = (state_class, node_class, pos, collection_depth),
-    /// EVERYTHING else (incl. edge-stack) dropped. If linear ⇒ the edge-stack is
-    /// the sole residual carrier; if ALSO exponential ⇒ `pos`-multiplicity
-    /// itself (many partial derivations at the same position) is irreducible.
-    pub bcc_shadow_peak_gll_floor: u64,
-    /// BCC S0-G-Cont audit: count of merge-tier cursor pairs whose BCC key
-    /// COLLAPSES (would share N_cont) but whose SEALED element Symbol tag
-    /// DIFFERS (e.g. an `InputBind` vs `InputBindQuoted` element = different
-    /// COMM arity). MUST be 0 for a sound two-category seal — any non-zero is
-    /// the cycle-2 unsoundness wall (two different-typed readings forced to one
-    /// continuation). Reported for the gravest gate.
-    pub bcc_shadow_seal_type_conflicts: u64,
-    /// BCC S0-G-Cont audit denominator: count of merge-tier cursor pairs whose
-    /// BCC key collapses AND whose sealed element tag AGREES (a sound share).
-    pub bcc_shadow_seal_agreements: u64,
-    /// BCC number of shadow evaluations (denominator).
-    pub bcc_shadow_calls: u64,
-
-    // ─── DW shadow (DEEP SPPF-continuation-sharing / descriptor-worklist, ───
-    //     Plan aaf070b3 / DESCRIPTOR_WORKLIST_DESIGN.md, Stage 0). Gated
-    //     PRATTAIL_DW_SHADOW=1. Distinct from BCC-SHADOW above: BCC sealed only
-    //     the cross-cat element TOP; DW installs the `.*sep`-return-reconvergence
-    //     projection `R` which folds each MAXIMAL RUN of CrossCatLhs-family edges
-    //     at-or-below a repetition-return (CollectionElement/CollectionMarker)
-    //     frame to ONE canonical `(edge_target, EdgeKind-tag)` label — collapsing
-    //     the per-`&`-segment distinct left-contexts (chain LENGTH) to the shared
-    //     return slot. BCC's `bcc_edge_stack_proj` folded each cross-cat edge
-    //     INDIVIDUALLY but retained chain length → stayed exponential; `R`
-    //     collapses the RUN → O(1) chain per element. This is the mechanical
-    //     discriminator that separates DW from the 3 prior HALTs.
-    /// ★ S0-DW-LINEAR (DECISIVE). Peak distinct DW-reconverged buckets at the
-    /// merge tier: the full ConfigKey axes (state_class, node_class, pos,
-    /// collection_depth) with `incoming_edge_stack` replaced by `R(edge_stack)`
-    /// and the sppf_stack projected to tags. PASS iff LINEAR in `k` (tracks
-    /// GLL_FLOOR) while `branch_cursors_peak_pre_merge` is exponential; HALT if it
-    /// stays super-linear (a multiplier survives below the CrossCatLhs run).
-    pub dw_shadow_peak: u64,
-    /// DW MAXIMAL-R control: `R(edge_stack)` alone (whole sppf-stack dropped +
-    /// cohort dropped), retaining only (state_class, node_class, pos,
-    /// collection_depth, R). The floor of what the `R` edge-stack fold achieves.
-    pub dw_shadow_peak_maximal_r: u64,
-    /// ★ S0-DW-SOUND pop-target conflicts (MUST be 0). For each pair of cursors
-    /// the DW key now co-locates, count those whose concrete `incoming_edge_stack`
-    /// TOPS route to INCOMPATIBLE pop targets (differing `(edge_target,
-    /// EdgeKind.source_src_idx)`). A nonzero is the cycle-3 wrong-body-revive
-    /// condition — HALT. Expected 0: co-located cursors share the `.*sep`-return
-    /// slot; per-reading tails stay on distinct concrete top edges.
-    pub dw_pop_target_conflicts: u64,
-    /// ★ S0-DW-SOUND seal-type conflicts POST-gate (MUST be 0). Within each DW
-    /// bucket folding ≥2 cursors, count pairs whose sealed element top tag DIFFERS
-    /// (two different-typed `@a` readings forced to one continuation). The
-    /// make-or-break gate: BCC measured 13,918 PRE-gate; the design's whole
-    /// feasibility rests on this being 0 now that every `<-` target is alts=Ok(1).
-    pub dw_seal_type_conflicts: u64,
-    /// DW S0-DW-SOUND denominator: DW-bucket pairs whose sealed top tag AGREES.
-    pub dw_seal_agreements: u64,
-    /// ★ RT-7 anti-M0 tripwire: total count of repetition-return
-    /// (CollectionElement/CollectionMarker) frames observed across the drained
-    /// cursors' edge-stacks — the sites `R` folds at. MUST be ≥ k for the
-    /// `@a<-c & …` k-segment `&`-list, else the reconvergence site is WRONG (the
-    /// M0 failure fired 0×) → HALT + re-locate before any further work.
-    pub dw_return_fires: u64,
-    /// DW number of shadow evaluations (denominator).
-    pub dw_shadow_calls: u64,
-
-    // ─── DW LINEARITY BISECTION (Stage-0 diagnostic). Each replaces the ───
-    //     edge-stack axis in an otherwise-GLL_FLOOR key (state_class, node_class,
-    //     pos, coll_depth, [proj]) with a progressively COARSER edge-stack
-    //     projection, to bracket EXACTLY where linearity emerges (mirrors the
-    //     BCC SEALED/MAXIMAL/GLL_FLOOR ladder). Interpretation: the coarsest
-    //     projection that is BOTH linear-in-k AND sound is the fix target; if
-    //     none is, the `<-` residual is a genuine derivation-multiplicity floor.
-    /// Peak buckets keying edge-stack as the variant-only SEQUENCE + seg-block RLE.
-    pub dw_bisect_variant_seq: u64,
-    /// Peak buckets keying edge-stack as the variant-only MULTISET (order-indep).
-    pub dw_bisect_variant_multiset: u64,
-    /// Peak buckets keying edge-stack as the variant-only SET (distinct present).
-    pub dw_bisect_variant_set: u64,
-    /// Peak buckets keying edge-stack as the COUNT of cross-cat-family edges only.
-    pub dw_bisect_crosscat_count: u64,
-    /// Peak buckets keying edge-stack as its LENGTH only.
-    pub dw_bisect_len: u64,
-    /// ★ SOUNDNESS of the LINEAR (crosscat_count) projection: co-located pairs
-    /// under the count-key whose CONCRETE pop-targets are INCOMPATIBLE. Nonzero ⇒
-    /// the ONLY edge-stack projection that linearizes is UNSOUND (over-merges
-    /// distinct continuations that the lossy merge would drop) ⇒ S0-DW-SOUND HALT.
-    pub dw_count_pop_conflicts: u64,
-    /// crosscat_count-key soundness denominator: co-located pairs whose concrete
-    /// pop-targets AGREE (a sound share).
-    pub dw_count_agreements: u64,
 }
 
 /// Phase F.13 chain_10000 Lazy redesign L2 prep-2 (2026-05-27): bucket
@@ -1145,47 +1013,6 @@ impl EdgeKindProjection {
     }
 }
 
-/// Phase F.13 chain_10000 Exp 14 Substage 0 (2026-05-27): TomitaKey
-/// coarse-merge projection counters. Mirrors what `TomitaFrontierMap`
-/// would dedup if the walker keyed cursors on the 5-tuple
-/// `(state, node, pos, edge_top, collection_depth)` (per Tomita 1985 /
-/// Scott-Johnstone 2010 GLL-descriptor coarsening of the current 11-axis
-/// ConfigKey).
-///
-/// Plan ref: `prattail/docs/design/plans/exp14-tomita-per-arc-gss-merge.md`
-/// §5 Substage 0. The gate is "projected dedup ratio ≥ 5×" on
-/// left_assoc_chain_500. If FAILS, downstream Exp 14 substages SKIP.
-///
-/// Per-step semantics: each `step_fanout` iteration observes the cursor
-/// population pre-step. For Concrete frames, observe once per cursor.
-/// For Cohort frames, observe N times (once per member) — all members
-/// share the same TomitaKey by construction of the cohort. Distinct
-/// TomitaKeys are counted PER STEP (different step generations should
-/// not merge because Tomita-merge is bounded by step boundaries via the
-/// generation counter in the planned TomitaFrontierMap).
-///
-/// Aggregate metric:
-/// `cumulative_cursors_ingested / cumulative_per_step_distinct_keys`
-/// = average per-step merge factor over the parse.
-#[derive(Default, Debug, Clone)]
-pub struct TomitaKeyProjection {
-    /// Per-step working set of distinct TomitaKey values; cleared at
-    /// each `step_fanout` entry via `begin_step`.
-    pub per_step_distinct_keys: FxHashMap<TomitaKey, u64>,
-    /// Total cursor observations across all steps (sum of per-step
-    /// frontier sizes; counts cohort members individually).
-    pub cumulative_cursors_ingested: u64,
-    /// Total distinct TomitaKeys summed across all steps (= sum of
-    /// per_step_distinct_keys.len() at each `end_step`).
-    pub cumulative_per_step_distinct_keys: u64,
-    /// Per-step max ingest count (peak frontier observed at any single
-    /// step, in cursor units).
-    pub max_cursors_per_step: u64,
-    /// Per-step max distinct-key count.
-    pub max_distinct_keys_per_step: u64,
-    /// Step count actually observed.
-    pub observed_steps: u64,
-}
 
 /// Phase F.13 chain_10000 Exp 14 Substage 0 (2026-05-27): the coarse
 /// merge key that the planned `TomitaFrontierMap` would use. Drops the
@@ -1202,67 +1029,6 @@ pub struct TomitaKey {
     pub collection_depth: u8,
 }
 
-impl TomitaKeyProjection {
-    /// Reset to empty (called from walker reset).
-    pub fn clear(&mut self) {
-        self.per_step_distinct_keys.clear();
-        self.cumulative_cursors_ingested = 0;
-        self.cumulative_per_step_distinct_keys = 0;
-        self.max_cursors_per_step = 0;
-        self.max_distinct_keys_per_step = 0;
-        self.observed_steps = 0;
-    }
-
-    /// Begin a new step: clear the per-step distinct-key working set.
-    /// Call at the top of `step_fanout`.
-    pub fn begin_step(&mut self) {
-        self.per_step_distinct_keys.clear();
-    }
-
-    /// Observe one cursor with its TomitaKey + member-multiplicity
-    /// (1 for Concrete, N for a Cohort frame member-count). The
-    /// caller is expected to increment by the per-frame contribution.
-    pub fn observe(&mut self, key: TomitaKey, count: u64) {
-        if count == 0 {
-            return;
-        }
-        let entry = self.per_step_distinct_keys.entry(key).or_insert(0);
-        *entry = entry.saturating_add(count);
-        self.cumulative_cursors_ingested = self.cumulative_cursors_ingested.saturating_add(count);
-    }
-
-    /// End the current step: roll per-step distinct count into cumulative.
-    /// Call after every frame in `step_fanout` is processed.
-    pub fn end_step(&mut self) {
-        let distinct = self.per_step_distinct_keys.len() as u64;
-        if distinct == 0 {
-            return;
-        }
-        let cursors_this_step: u64 = self.per_step_distinct_keys.values().copied().sum();
-        self.cumulative_per_step_distinct_keys = self
-            .cumulative_per_step_distinct_keys
-            .saturating_add(distinct);
-        if cursors_this_step > self.max_cursors_per_step {
-            self.max_cursors_per_step = cursors_this_step;
-        }
-        if distinct > self.max_distinct_keys_per_step {
-            self.max_distinct_keys_per_step = distinct;
-        }
-        self.observed_steps = self.observed_steps.saturating_add(1);
-        self.per_step_distinct_keys.clear();
-    }
-
-    /// Average per-step merge factor = average bucket size under TomitaKey
-    /// keying. Higher = more reduction. Gate: ≥ 5.0 per the plan.
-    pub fn projected_dedup_rate(&self) -> f64 {
-        if self.cumulative_per_step_distinct_keys == 0 {
-            0.0
-        } else {
-            (self.cumulative_cursors_ingested as f64)
-                / (self.cumulative_per_step_distinct_keys as f64)
-        }
-    }
-}
 
 /// Phase F.13 chain_10000 Exp 15 Substage 0 (2026-05-27): CPS
 /// continuation record size projection. Counterfactual measurement of
@@ -1594,66 +1360,6 @@ impl fmt::Display for WalkerStats {
             self.branch_cursors_peak_post_merge,
             self.branch_cursors_sum,
         )?;
-        // BCC SHADOW (Plan afde9c48, Stage 0 — the DECISIVE S0-G-LINEAR + the
-        // gravest S0-G-Cont). Prints only when PRATTAIL_BCC_SHADOW populated it.
-        if self.bcc_shadow_calls > 0 {
-            writeln!(
-                f,
-                "  BCC-SHADOW: peak_pre_merge_real={} bcc_peak_SEALED={} bcc_peak_noseal={} bcc_peak_MAXIMAL={} bcc_peak_GLL_FLOOR={}  (S0-G-LINEAR: SEALED linear-in-k ⇒ PASS; MAXIMAL/GLL_FLOOR exponential ⇒ derivation-multiplicity floor, no seal linearizes)",
-                self.branch_cursors_peak_pre_merge,
-                self.bcc_shadow_peak_pre_merge,
-                self.bcc_shadow_peak_noseal,
-                self.bcc_shadow_peak_maximal,
-                self.bcc_shadow_peak_gll_floor,
-            )?;
-            writeln!(
-                f,
-                "  BCC-SHADOW S0-G-Cont: seal_type_CONFLICTS={} seal_agreements={}  (CONFLICTS MUST be 0 — nonzero = two different-typed @a readings forced to one continuation = cycle-2 wall)",
-                self.bcc_shadow_seal_type_conflicts,
-                self.bcc_shadow_seal_agreements,
-            )?;
-        }
-        // DW SHADOW (Plan aaf070b3 / DESCRIPTOR_WORKLIST_DESIGN.md, Stage 0 — the
-        // 3-way gate S0-DW-LINEAR / S0-DW-SOUND / RT-7). Prints only when
-        // PRATTAIL_DW_SHADOW populated it.
-        if self.dw_shadow_calls > 0 {
-            writeln!(
-                f,
-                "  DW-SHADOW S0-DW-LINEAR: peak_pre_merge_real={} dw_shadow_peak(R)={} dw_peak_MAXIMAL_R={} bcc_GLL_FLOOR={}  (PASS iff dw_shadow_peak LINEAR-in-k tracking GLL_FLOOR while real is exponential; HALT if super-linear)",
-                self.branch_cursors_peak_pre_merge,
-                self.dw_shadow_peak,
-                self.dw_shadow_peak_maximal_r,
-                self.bcc_shadow_peak_gll_floor,
-            )?;
-            writeln!(
-                f,
-                "  DW-SHADOW S0-DW-SOUND: pop_target_CONFLICTS={} seal_type_CONFLICTS={} seal_agreements={}  (BOTH conflicts MUST be 0 — pop_target>0 = cycle-3 wrong-body revive; seal_type>0 = different-typed @a readings on one continuation. THE make-or-break.)",
-                self.dw_pop_target_conflicts,
-                self.dw_seal_type_conflicts,
-                self.dw_seal_agreements,
-            )?;
-            writeln!(
-                f,
-                "  DW-SHADOW RT-7 tripwire: dw_return_fires={}  (MUST be >= k for @a<-c & … k-segment list, else the .*sep-return reconvergence site is WRONG = the M0 fires-0x failure → HALT+relocate)",
-                self.dw_return_fires,
-            )?;
-            writeln!(
-                f,
-                "  DW-SHADOW LINEARITY-BISECT (edge-stack axis, coarsest→finest): variant_seq={} variant_multiset={} variant_set={} crosscat_count={} len={} | GLL_FLOOR(drop)={}  (find the coarsest that is LINEAR-in-k)",
-                self.dw_bisect_variant_seq,
-                self.dw_bisect_variant_multiset,
-                self.dw_bisect_variant_set,
-                self.dw_bisect_crosscat_count,
-                self.dw_bisect_len,
-                self.bcc_shadow_peak_gll_floor,
-            )?;
-            writeln!(
-                f,
-                "  DW-SHADOW LINEAR-KEY SOUNDNESS (crosscat_count): pop_target_CONFLICTS={} agreements={}  (the ONLY linear edge-stack key's soundness — nonzero ⇒ the linear projection over-merges incompatible pops ⇒ S0-DW-SOUND HALT)",
-                self.dw_count_pop_conflicts,
-                self.dw_count_agreements,
-            )?;
-        }
         writeln!(
             f,
             "  merge_attempts={}  merge_collapses={}  collapse_ratio={:.3}",
@@ -2295,23 +2001,6 @@ impl fmt::Display for WalkerStats {
                 self.edge_kind_projection.actual_node_count_seen,
                 self.edge_kind_projection.projected_dedup_rate(),
                 self.edge_kind_projection.projected_dedup_hit_ratio(),
-            )?;
-        }
-        // Phase F.13 chain_10000 Exp 14 Substage 0 (2026-05-27):
-        // TomitaKey projected merge gate. Shows the counterfactual
-        // per-step distinct-key count + merge factor under the planned
-        // TomitaFrontierMap keying.
-        if self.tomita_key_projection.observed_steps > 0 {
-            writeln!(f, "  tomita_key_projection (Exp 14 counterfactual):")?;
-            writeln!(
-                f,
-                "    observed_steps={} cumulative_cursors={} cumulative_distinct_keys={} avg_merge_factor={:.2}x max_cursors_per_step={} max_distinct_per_step={}",
-                self.tomita_key_projection.observed_steps,
-                self.tomita_key_projection.cumulative_cursors_ingested,
-                self.tomita_key_projection.cumulative_per_step_distinct_keys,
-                self.tomita_key_projection.projected_dedup_rate(),
-                self.tomita_key_projection.max_cursors_per_step,
-                self.tomita_key_projection.max_distinct_keys_per_step,
             )?;
         }
         // Phase F.13 chain_10000 Exp 15 Substage 0 (2026-05-27):
@@ -3263,7 +2952,6 @@ mod tests {
             // Phase F.13 chain_10000 plan-amend Substage 0 (2026-05-26).
             edge_kind_projection: EdgeKindProjection::default(),
             // Phase F.13 chain_10000 Exp 14 Substage 0 (2026-05-27).
-            tomita_key_projection: TomitaKeyProjection::default(),
             // Phase F.13 chain_10000 Exp 15 Substage 0 (2026-05-27).
             continuation_size_projection: ContinuationSizeProjection::default(),
             // Phase F.13 chain_10000 Lazy redesign L0 (2026-05-27).

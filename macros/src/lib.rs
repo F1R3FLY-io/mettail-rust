@@ -108,12 +108,24 @@ pub fn language(input: TokenStream) -> TokenStream {
         }
     }
 
-    // Stage-instrumentation (gated by `PRATTAIL_MACRO_TRACE=1`): emits a
-    // timestamped `[macro-trace] <lang> <stage>` line before each heavy
-    // phase so the operator can see exactly which stage exceeds the
-    // memory budget when a grammar OOMs. Zero cost when the env var is
-    // unset.
-    let trace = std::env::var("PRATTAIL_MACRO_TRACE").is_ok();
+    // Stage-instrumentation (gated by the `walker-trace` feature +
+    // `PRATTAIL_MACRO_TRACE=1`): emits a `[macro-trace] <lang> <stage>` line
+    // before each heavy phase so the operator can see exactly which stage
+    // exceeds the memory budget when a grammar OOMs. The env read compiles out
+    // entirely on the default build (feature off ⇒ `trace` is a constant
+    // `false` and every `stage!` body below is dead-stripped). `trace_diag!`'s
+    // block form cannot gate a `let` initializer, so this uses the
+    // `#[cfg]`/off-value idiom (see prattail/src/trace.rs module docs).
+    let trace = {
+        #[cfg(feature = "walker-trace")]
+        {
+            std::env::var("PRATTAIL_MACRO_TRACE").is_ok()
+        }
+        #[cfg(not(feature = "walker-trace"))]
+        {
+            false
+        }
+    };
     macro_rules! stage {
         ($name:literal) => {
             if trace {

@@ -7165,12 +7165,11 @@ pub(crate) fn lint_rt06_name_shadow(ctx: &LintContext, diagnostics: &mut Vec<Lin
 /// A cast rule `r : src → tgt` whose symbolic-tree-transducer pre-image has an
 /// empty intersection with the source category's term automaton can never fire
 /// (no source term is cast-reachable). [`analyze_refinement_types`](crate::pipeline::analysis::analyze_refinement_types)
-/// records each such `(cast_label, reason)` in `RefinementAnalysisResult::dead_casts`
-/// under the `oslf-transducer` feature; this lint emits one informational note
-/// per finding. Mirrors the `structural_witnesses` `.1` surfacing pattern.
+/// records each such `(cast_label, reason)` in `RefinementAnalysisResult::dead_casts`;
+/// this lint emits one informational note per finding. Mirrors the
+/// `structural_witnesses` `.1` surfacing pattern.
 ///
 /// Severity: Note (informational — the cast is dead code).
-#[cfg(feature = "oslf-transducer")]
 pub(crate) fn lint_rt07_dead_cast(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
     let result = match ctx.refinement_analysis {
         Some(r) => r,
@@ -7206,7 +7205,6 @@ pub(crate) fn lint_rt07_dead_cast(ctx: &LintContext, diagnostics: &mut Vec<LintD
 /// `ast/`), so this lint is inert and fires nothing.
 ///
 /// Severity: Note (informational — the behavioral type is dead code).
-#[cfg(feature = "oslf-letprop")]
 pub(crate) fn lint_lp01_dead_behavioral_type(
     ctx: &LintContext,
     diagnostics: &mut Vec<LintDiagnostic>,
@@ -7255,7 +7253,6 @@ pub(crate) fn lint_lp01_dead_behavioral_type(
 /// lint is inert and fires nothing.
 ///
 /// Severity: Note (informational — a base-sort inconsistency in the grammar).
-#[cfg(feature = "oslf-hindley-milner")]
 pub(crate) fn lint_hm01_sort_mismatch(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
     let result = match ctx.hindley_result {
         Some(r) => r,

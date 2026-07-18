@@ -29,10 +29,9 @@
 //! MUST agree. This single-process test feeds identical inputs to both code
 //! paths and asserts equal empty-category sets, with a precise diff on failure
 //! (so a recognizer regression is debuggable, never papered over by adjusting
-//! the expectation). It runs and passes in BOTH feature states
-//! (`--features any-algebra-carrier` / default) — the payloaded/structural split
-//! only changes whether a leaf carries a (trivially-satisfiable) `True` guard,
-//! which never alters an emptiness verdict.
+//! the expectation). The payloaded/structural split only changes whether a leaf
+//! carries a (trivially-satisfiable) `True` guard, which never alters an
+//! emptiness verdict.
 
 use std::collections::HashMap;
 
@@ -438,27 +437,4 @@ fn fixtures_exercise_empty_and_inhabited() {
     let expr_auto = mettail_prattail::structural_types::category_automaton("Expr", &alpha, &elem);
     let w = expr_auto.witness().expect("Expr inhabited ⇒ witness");
     assert!(expr_auto.accepts(&w), "Expr witness must be accepted by its automaton");
-}
-
-#[test]
-#[ignore = "evidence dump only"]
-fn dump_agreement_evidence() {
-    for (name, (rules, cats)) in [
-        ("calculator", calculator_fixture()),
-        ("rhocalc", rhocalc_fixture()),
-        ("ambient", ambient_fixture()),
-        ("list_and_expr", list_and_expr_fixture()),
-        ("expr_tree", expr_tree_fixture()),
-    ] {
-        let mut sym = structural_verdict(&rules, &cats).empty_categories;
-        sym.sort();
-        let fin = finite_engine_empty_categories(&rules, &cats);
-        let alpha = ranked_alphabet(&rules, &cats);
-        let mut all_cats: Vec<String> = alpha.categories.iter().cloned().collect();
-        all_cats.sort();
-        eprintln!(
-            "[{name}] categories={all_cats:?}\n        sym_tree empty={sym:?}\n        finite   empty={fin:?}\n        AGREE={}",
-            sym == fin
-        );
-    }
 }

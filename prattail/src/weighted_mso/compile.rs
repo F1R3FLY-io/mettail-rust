@@ -79,9 +79,7 @@
 
 use crate::kat::BooleanTest;
 use crate::symbolic::{BooleanAlgebra, KatBooleanAlgebra, SymbolicAutomaton};
-use crate::weighted_mso::{
-    classify_formula, free_set_variables, free_variables, MsoFormulaClass, WeightedMsoFormula,
-};
+use crate::weighted_mso::{classify_formula, MsoFormulaClass, WeightedMsoFormula};
 use std::collections::{BTreeSet, HashSet};
 
 /// Errors that can arise while compiling an MSO formula to an SFA.
@@ -658,9 +656,3 @@ fn make_empty(algebra: &KatBooleanAlgebra) -> SymbolicAutomaton<KatBooleanAlgebr
 pub use crate::weighted_mso::{
     free_set_variables as exported_free_set_variables, free_variables as exported_free_variables,
 };
-
-#[allow(dead_code)]
-fn _ensure_imports_used() {
-    let _ = free_variables;
-    let _ = free_set_variables;
-}

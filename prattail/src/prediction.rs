@@ -6,7 +6,7 @@
 
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 use crate::automata::codegen::terminal_to_variant_name;
 use crate::lint::DiagnosticId;
@@ -869,6 +869,21 @@ pub fn build_first_set_deps(
     (depends_on, dependents_of)
 }
 
+// ── B-M1 RETIREMENT (DEFECT-B) ───────────────────────────────────────────────
+// `build_follow_set_deps` and its only helper `collect_follow_referenced_categories`
+// are DISABLED (not deleted). They built the WRONG-DIRECTION `dependents_of` map
+// for the FOLLOW worklist: the scheme was copied from `build_first_set_deps`
+// (above) without inverting its direction. For FIRST, processing A's rules WRITES
+// FIRST(A) reading FIRST(refs), so dirtiness flows to A's downstream readers and
+// that direction is correct. For FOLLOW, processing A's rules WRITES FOLLOW(refs)
+// reading FOLLOW(A) (via `copy_follow(A → ref)`), so the ONLY reader of FOLLOW(X)
+// is X's OWN input processing — the changed category must re-mark ITSELF, which
+// `compute_follow_sets_incremental` now does directly. This map is therefore
+// unnecessary, and marking `dependents_of[X]` (one edge downstream) was the
+// root cause of the nondeterministic FOLLOW under-approximation. The FIRST-side
+// `build_first_set_deps` above is correctly directed and stays live. Retained
+// commented for revival/reference only.
+/*
 /// Build a dependency graph for FOLLOW set computation.
 ///
 /// Returns `dependents_of: HashMap<category, Vec<downstream_category>>` where
@@ -951,6 +966,8 @@ fn collect_follow_referenced_categories(items: &[crate::SyntaxItemSpec]) -> Hash
     }
     referenced
 }
+*/
+// ── end B-M1 RETIREMENT ──────────────────────────────────────────────────────
 
 /// Compute FIRST sets using dependency-graph-driven incremental iteration.
 ///
@@ -1112,7 +1129,19 @@ pub fn compute_follow_sets_incremental(
         follow.insert("Eof");
     }
 
-    let dependents_of = build_follow_set_deps(inputs, categories);
+    // B-M1 fix (DEFECT-B): the FOLLOW worklist no longer consults a
+    // `dependents_of` map. `build_follow_set_deps` copied the FIRST-set scheme's
+    // dependency DIRECTION without inverting it. For FIRST, processing A's rules
+    // WRITES FIRST(A) reading FIRST(refs), so dirtiness correctly flows to A's
+    // downstream readers; but for FOLLOW, processing A's rules WRITES FOLLOW(refs)
+    // reading FOLLOW(A) (via `copy_follow(A → ref)` in propagate_follow_from_items),
+    // so the ONLY reader of FOLLOW(X) is X's OWN input processing. On "FOLLOW(X)
+    // changed" the worklist must therefore re-mark X ITSELF (see the change-
+    // detection loop below), not `dependents_of[X]` (one edge DOWNSTREAM) — which,
+    // over randomized HashSet pass order, under-approximated FOLLOW
+    // nondeterministically. `build_follow_set_deps` is retired (commented out at
+    // its definition).
+    // let dependents_of = build_follow_set_deps(inputs, categories);
 
     // Group inputs by category for efficient lookup
     let mut inputs_by_cat: HashMap<&str, Vec<&FollowSetInput>> =
@@ -1126,9 +1155,13 @@ pub fn compute_follow_sets_incremental(
         }
     }
 
-    // Initial pass: all categories dirty
-    let mut dirty: HashSet<String> = categories.iter().cloned().collect();
-    let mut next_dirty: HashSet<String> = HashSet::with_capacity(categories.len());
+    // Initial pass: all categories dirty. BTreeSet (not HashSet) so pass
+    // composition and the IncrementalStats diagnostics are deterministic. The
+    // corrected worklist below reaches the same least fixpoint under ANY order,
+    // so ordered iteration is belt-and-braces determinism (and stabilizes the
+    // I18 visit counts) rather than a correctness requirement.
+    let mut dirty: BTreeSet<String> = categories.iter().cloned().collect();
+    let mut next_dirty: BTreeSet<String> = BTreeSet::new();
 
     let mut stats = IncrementalStats {
         total_categories: categories.len(),
@@ -1179,19 +1212,23 @@ pub fn compute_follow_sets_incremental(
             }
         }
 
-        // Check which categories' FOLLOW sets actually changed
+        // Check which categories' FOLLOW sets actually changed. FOLLOW sets are
+        // insert-only (monotone), so a token-count increase is equivalent to a
+        // set change. B-M1 fix (DEFECT-B): on "FOLLOW(X) changed" re-mark X
+        // ITSELF. The sole reader of FOLLOW(X) is X's own input processing
+        // (`copy_follow(X → ref)` inside propagate_follow_from_items), so
+        // re-running X's inputs is exactly what re-propagates the new FOLLOW(X)
+        // into the categories X references. This is a complete, monotone, bounded
+        // worklist, so it converges to the unique least fixpoint under ANY
+        // iteration order — identical to the reference `compute_follow_sets_from_inputs`.
+        // (The previous code marked `dependents_of[X]` = one edge DOWNSTREAM,
+        // which quiesced early — under-approximating FOLLOW — whenever the write
+        // into FOLLOW(X) landed after X's inputs had already run in that pass.)
         for cat in categories {
             let new_size = follow_sets.get(cat).map_or(0, |fs| fs.tokens.len());
             let old_size = prev_sizes.get(cat).copied().unwrap_or(0);
             if new_size != old_size {
-                // This category's FOLLOW set changed — mark its dependents dirty
-                if let Some(deps) = dependents_of.get(cat) {
-                    for dep in deps {
-                        next_dirty.insert(dep.clone());
-                    }
-                }
-                // Also mark the category itself dirty if it has self-dependencies
-                // (handled by dependents_of if properly built)
+                next_dirty.insert(cat.clone());
             }
         }
 
@@ -1853,14 +1890,15 @@ pub fn build_dispatch_action_tables(
                             parse_fn: format!("parse_{}", rd_rule.label.to_lowercase()),
                         });
                     },
-                    std::collections::hash_map::Entry::Occupied(e) => {
+                    std::collections::hash_map::Entry::Occupied(_e) => {
                         // DIAGNOSTIC (2026-06-30, gated; REMOVE after): the terminal
                         // already has a Direct dispatch for this first-token variant,
                         // so THIS rule is silently discarded by the table. Log the
                         // kept/dropped pair to pin whether the unreachable longer
                         // rules (InputBindEmptyQuery, NQuote, …) are dropped HERE.
+                        trace_diag! {
                         if std::env::var("PRATTAIL_DISPATCH_TRACE").is_ok() {
-                            let kept = match e.get() {
+                            let kept = match _e.get() {
                                 DispatchAction::Direct { rule_label, .. } => rule_label.clone(),
                                 _ => "<non-Direct>".to_string(),
                             };
@@ -1868,6 +1906,7 @@ pub fn build_dispatch_action_tables(
                                 "[DISPATCH-DROP] cat={} token={:?} variant={} KEPT={} DROPPED={}",
                                 cat, t, variant, kept, rd_rule.label
                             );
+                        }
                         }
                     },
                 }
@@ -3035,6 +3074,11 @@ mod incremental_first_follow_tests {
         assert!(dependents_of["D"].is_empty(), "D should have no dependents");
     }
 
+    // DEFECT-B: `follow_set_dependency_graph_correct` is DISABLED — it exercised
+    // `build_follow_set_deps`, which is retired (the FOLLOW worklist now re-marks
+    // the changed category itself; see the B-M1 RETIREMENT note above). Kept
+    // commented for revival/reference only.
+    /*
     #[test]
     fn follow_set_dependency_graph_correct() {
         // Grammar rules with syntax items:
@@ -3074,6 +3118,7 @@ mod incremental_first_follow_tests {
         // D has only a terminal, no NT references
         assert!(dependents_of["D"].is_empty(), "D should have no dependents");
     }
+    */
 
     // ── Test 2: Incremental produces same results as non-incremental ──────
 
@@ -3111,34 +3156,80 @@ mod incremental_first_follow_tests {
         assert_eq!(stats.total_categories, 5);
     }
 
-    #[test]
-    fn incremental_follow_sets_match_baseline() {
-        // Grammar: A -> B "+", B -> "x"
-        // FOLLOW(B) should include {Plus} from the rule in A.
-        let categories: Vec<String> = vec!["A", "B"].into_iter().map(String::from).collect();
-        let rules = vec![rule_nt("ARule", "A", &["B"]), rule_term("BRule", "B", "x")];
-        let first_sets = compute_first_sets(&rules, &categories);
+    /// DEFECT-B fixture: the fortranmodel-shaped FOLLOW chain that exercises the
+    /// `copy_follow` (nullable-suffix) propagation path — the path B-M1's
+    /// mis-scheduled worklist under-approximated.
+    ///
+    /// Grammar shape (Stmt primary):
+    ///   IntTerm  : Term -> Int                 (Int at last position ⇒ FOLLOW(Int) ⊇ FOLLOW(Term))
+    ///   RealTerm : Term -> Real                (Real at last position ⇒ FOLLOW(Real) ⊇ FOLLOW(Term))
+    ///   SendVar  : Stmt -> "@" Term "!"        (Term followed by `!` ⇒ FOLLOW(Term) ∋ Bang)
+    ///   Assign   : Stmt -> Term "=" Real       (Term followed by `=` ⇒ FOLLOW(Term) ∋ Eq)
+    ///
+    /// The true (order-independent) fixpoint is therefore:
+    ///   FOLLOW(Stmt) = {Eof}
+    ///   FOLLOW(Term) = {Bang, Eq}
+    ///   FOLLOW(Int)  = {Bang, Eq}
+    ///   FOLLOW(Real) = {Bang, Eq, Eof}
+    ///
+    /// The pre-fix incremental driver reached this fixpoint only when Stmt's
+    /// inputs happened to run before Term's inputs in pass 1 (a ~coin flip over
+    /// the randomized `HashSet<String>` dirty-set order); otherwise it quiesced
+    /// with FOLLOW(Int)/FOLLOW(Real) UNDER-approximated (missing Bang/Eq),
+    /// because "FOLLOW(Term) changed" wrongly re-marked {Int, Real} (which have
+    /// no inputs of their own) instead of re-marking Term. The worklist fix
+    /// (mark X itself) reaches the fixpoint under every order.
+    fn fortran_shaped_follow_fixture() -> (Vec<String>, HashMap<String, FirstSet>, Vec<FollowSetInput>)
+    {
+        let categories: Vec<String> = vec!["Stmt", "Term", "Int", "Real"]
+            .into_iter()
+            .map(String::from)
+            .collect();
+
+        // Minimal FIRST sets: the FOLLOW propagation here reads only terminal
+        // suffixes (`!`, `=`) and empty suffixes, so token content is never
+        // drawn from FIRST — empty sets suffice and keep the fixture honest.
+        let mut first_sets: HashMap<String, FirstSet> = HashMap::with_capacity(categories.len());
+        for cat in &categories {
+            first_sets.insert(cat.clone(), FirstSet::new());
+        }
+
+        let nt = |category: &str, param: &str| crate::SyntaxItemSpec::NonTerminal {
+            category: category.to_string(),
+            param_name: param.to_string(),
+        };
+        let term = |t: &str| crate::SyntaxItemSpec::Terminal(t.to_string());
 
         let inputs = vec![
+            FollowSetInput { category: "Term".to_string(), syntax: vec![nt("Int", "i")] },
+            FollowSetInput { category: "Term".to_string(), syntax: vec![nt("Real", "r")] },
             FollowSetInput {
-                category: "A".to_string(),
-                syntax: vec![
-                    crate::SyntaxItemSpec::NonTerminal {
-                        category: "B".to_string(),
-                        param_name: "b".to_string(),
-                    },
-                    crate::SyntaxItemSpec::Terminal("+".to_string()),
-                ],
+                category: "Stmt".to_string(),
+                syntax: vec![term("@"), nt("Term", "n"), term("!")],
             },
             FollowSetInput {
-                category: "B".to_string(),
-                syntax: vec![crate::SyntaxItemSpec::Terminal("x".to_string())],
+                category: "Stmt".to_string(),
+                syntax: vec![nt("Term", "v"), term("="), nt("Real", "val")],
             },
         ];
 
-        let baseline = compute_follow_sets_from_inputs(&inputs, &categories, &first_sets, "A");
+        (categories, first_sets, inputs)
+    }
+
+    #[test]
+    fn incremental_follow_sets_match_baseline() {
+        // STRENGTHENED (DEFECT-B, amendment 4): the previous fixture (A -> B "+",
+        // B -> "x") was 1-hop with a non-nullable suffix and NO copy_follow chain,
+        // so it could NEVER exercise B-M1 (structurally blind = false confidence).
+        // This fixture is the fortranmodel-shaped copy_follow chain (see the
+        // fixture doc). A single incremental pass here is already structurally
+        // capable of catching the under-approximation; the 32× randomized-order
+        // witness below drives the probability of a false green to ≈ 2^-32.
+        let (categories, first_sets, inputs) = fortran_shaped_follow_fixture();
+
+        let baseline = compute_follow_sets_from_inputs(&inputs, &categories, &first_sets, "Stmt");
         let (incremental, stats) =
-            compute_follow_sets_incremental(&inputs, &categories, &first_sets, "A");
+            compute_follow_sets_incremental(&inputs, &categories, &first_sets, "Stmt");
 
         for cat in &categories {
             let b_tokens = &baseline[cat].tokens;
@@ -3150,7 +3241,54 @@ mod incremental_first_follow_tests {
             );
         }
 
+        // Pin the true fixpoint so a regression that changes BOTH paths in lockstep
+        // still fails here.
+        assert!(
+            incremental["Int"].tokens.contains("Bang")
+                && incremental["Int"].tokens.contains("Eq"),
+            "FOLLOW(Int) must reach the true fixpoint {{Bang, Eq}}, got {:?}",
+            incremental["Int"].tokens,
+        );
+
         assert!(stats.iterations > 0, "should have at least 1 iteration");
+    }
+
+    #[test]
+    fn incremental_follow_under_randomized_order_matches_reference() {
+        // DEFECT-B P-R1 in-process RED witness (amendment 4). Each call to
+        // `compute_follow_sets_incremental` builds fresh `HashSet<String>` dirty
+        // sets, hence a fresh per-instance `RandomState` (randomized iteration
+        // order). Over 32 independent rounds, the pre-fix driver mis-scheduled
+        // the worklist with probability ≈ 1/2 per round, so the probability that
+        // ALL 32 rounds matched the order-independent reference was ≈ 2^-32 —
+        // i.e. this asserts RED pre-fix and GREEN post-fix (a deterministic
+        // regression guard: the corrected worklist reaches the fixpoint under
+        // every order).
+        const ROUNDS: usize = 32;
+        let (categories, first_sets, inputs) = fortran_shaped_follow_fixture();
+        let reference = compute_follow_sets_from_inputs(&inputs, &categories, &first_sets, "Stmt");
+
+        let mut divergent_rounds: Vec<usize> = Vec::new();
+        for round in 0..ROUNDS {
+            let (incremental, _) =
+                compute_follow_sets_incremental(&inputs, &categories, &first_sets, "Stmt");
+            let equal = categories
+                .iter()
+                .all(|cat| incremental[cat].tokens == reference[cat].tokens);
+            if !equal {
+                divergent_rounds.push(round);
+            }
+        }
+
+        assert!(
+            divergent_rounds.is_empty(),
+            "incremental FOLLOW diverged from the order-independent reference in \
+             {}/{} randomized-order rounds (rounds {:?}); the worklist must reach \
+             the least fixpoint under EVERY dirty-set order",
+            divergent_rounds.len(),
+            ROUNDS,
+            divergent_rounds,
+        );
     }
 
     // ── Test 3: Incremental reduces visits for independent categories ─────

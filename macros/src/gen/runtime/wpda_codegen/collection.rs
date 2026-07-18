@@ -1249,6 +1249,172 @@ pub(crate) fn emit_rule_has_leading_structural_trigger_lookup(
     }
 }
 
+/// ROOT-P Stage 4 (2026-07-08): emit a per-CATEGORY lookup returning `true` when
+/// `src_idx` names a category that is BINDER-SCOPED — a category whose parses
+/// may sit under (or constitute) a NON-context-free binder scope, so the GLL
+/// pop-routing edge pair (`incoming_edge`/`incoming_edge_stack`) MUST be kept in
+/// the merge key. Dropping the edge for such a category could over-merge two
+/// scope-distinct cursors, whose subsequent pop-fan would attach an operand to a
+/// scope-continuation it was never paired with — a category-valid but SPURIOUS
+/// reading (red-team #2, the `@a<-@b` / `for` / `PNew` danger zone). Everything
+/// else is context-free-INTERCHANGEABLE (sends `POutput*`, `NQuote` `@(p)`,
+/// arithmetic, collections): its return context does not change the reading, so
+/// its edge is DROPPABLE — the ROOT-P Stage-4 delivery lever.
+///
+/// A category `C` is marked binder-scoped iff, over the grammar's abstraction
+/// (`BinderShape`) metadata:
+///   (a) `C` is the RESULT category of a rule that opens a binder scope (a
+///       `TermParam::Abstraction`/`MultiAbstraction`, i.e. emits
+///       `StartBinderScope` — e.g. rhocalc `PNew . ^[xs].p:[Name* -> Proc] :
+///       Proc`);
+///   (b) `C` is a binder-PATTERN category — the abstraction DOMAIN (bound
+///       position), e.g. `Name` in `[Name* -> Proc]`;
+///   (c) [conservative closure] `C` is reachable, in the category-reference
+///       graph (rule `A` references cat `B` when `B` is a base category in one
+///       of `A`'s param types), from the BODY (codomain) or PATTERN (domain)
+///       slot of ANY scope-opener. Marks over-broadly on purpose: a false KEEP
+///       costs only delivery, a false DROP costs SOUNDNESS, so unsure ⇒ `true`.
+///
+/// DELIBERATELY NOT `rule_has_leading_structural_trigger` (which keys on "first
+/// `SyntaxExpr` is a `Literal`" — `true` for @-sends AND `NQuote` AND
+/// `InputBindQuoted` alike; the wrong axis for edge-drop).
+///
+/// Category-level (keyed on `src_idx` only). Empty (no scope-openers anywhere —
+/// e.g. the calculator) ⇒ `false` for every category (all CF-interchangeable).
+/// The trait method's own DEFAULT is `true` (keep-edge = safe); this codegen
+/// override supplies the grammar-derived per-category truth.
+pub(crate) fn emit_category_is_binder_scoped_lookup(
+    _language: &LanguageDef,
+    categories: &[String],
+    per_cat: &[Vec<GrammarRule>],
+) -> TokenStream {
+    // Every Base category name mentioned anywhere in a `TypeExpr` (peels Arrow
+    // domain/codomain, MultiBinder, Collection element, Map key/value, Refined
+    // base).
+    fn collect_base_cats(ty: &TypeExpr, out: &mut Vec<String>) {
+        match ty {
+            TypeExpr::Base(id) => out.push(id.to_string()),
+            TypeExpr::Arrow { domain, codomain } => {
+                collect_base_cats(domain, out);
+                collect_base_cats(codomain, out);
+            },
+            TypeExpr::MultiBinder(inner) => collect_base_cats(inner, out),
+            TypeExpr::Collection { element, .. } => collect_base_cats(element, out),
+            TypeExpr::Map { key, value } => {
+                collect_base_cats(key, out);
+                collect_base_cats(value, out);
+            },
+            TypeExpr::Refined { base, .. } => collect_base_cats(base, out),
+        }
+    }
+    fn arrow_domain_cats(ty: &TypeExpr, out: &mut Vec<String>) {
+        if let TypeExpr::Arrow { domain, .. } = ty {
+            collect_base_cats(domain, out);
+        }
+    }
+    fn arrow_codomain_cats(ty: &TypeExpr, out: &mut Vec<String>) {
+        if let TypeExpr::Arrow { codomain, .. } = ty {
+            collect_base_cats(codomain, out);
+        }
+    }
+    // Referenced categories of a rule (category-reference graph out-edges).
+    fn rule_ref_cats(params: &[TermParam], out: &mut Vec<String>) {
+        for p in params {
+            match p {
+                TermParam::Simple { ty, .. } => collect_base_cats(ty, out),
+                TermParam::Abstraction { ty, .. } | TermParam::MultiAbstraction { ty, .. } => {
+                    collect_base_cats(ty, out)
+                },
+                TermParam::GuardBody { .. } => {},
+                TermParam::Optional { params } => rule_ref_cats(params, out),
+            }
+        }
+    }
+    // A rule opens a binder scope iff a param (recursively) is an abstraction.
+    fn opens_scope(params: &[TermParam]) -> bool {
+        params.iter().any(|p| match p {
+            TermParam::Abstraction { .. } | TermParam::MultiAbstraction { .. } => true,
+            TermParam::Optional { params } => opens_scope(params),
+            _ => false,
+        })
+    }
+    // (domain, codomain) base cats of a rule's abstraction params.
+    fn scope_slot_cats(params: &[TermParam], dom: &mut Vec<String>, cod: &mut Vec<String>) {
+        for p in params {
+            match p {
+                TermParam::Abstraction { ty, .. } | TermParam::MultiAbstraction { ty, .. } => {
+                    arrow_domain_cats(ty, dom);
+                    arrow_codomain_cats(ty, cod);
+                },
+                TermParam::Optional { params } => scope_slot_cats(params, dom, cod),
+                _ => {},
+            }
+        }
+    }
+
+    let mut ref_graph: std::collections::BTreeMap<String, BTreeSet<String>> =
+        std::collections::BTreeMap::new();
+    let mut marked: BTreeSet<String> = BTreeSet::new(); // (a)+(b) direct marks
+    let mut seed: BTreeSet<String> = BTreeSet::new(); // (c) closure seeds (body+pattern slots)
+    for rules in per_cat.iter() {
+        for rule in rules.iter() {
+            let Some(params) = rule.term_context.as_ref() else {
+                continue;
+            };
+            let cat = rule.category.to_string();
+            let mut refs = Vec::new();
+            rule_ref_cats(params, &mut refs);
+            let entry = ref_graph.entry(cat.clone()).or_default();
+            for r in refs {
+                entry.insert(r);
+            }
+            if opens_scope(params) {
+                marked.insert(cat.clone()); // (a) result category
+                let (mut dom, mut cod) = (Vec::new(), Vec::new());
+                scope_slot_cats(params, &mut dom, &mut cod);
+                for d in dom {
+                    marked.insert(d.clone()); // (b) pattern category
+                    seed.insert(d); // (c) seed: pattern slot
+                }
+                for c in cod {
+                    seed.insert(c); // (c) seed: body slot
+                }
+            }
+        }
+    }
+    // (c) closure: BFS from the body+pattern slot seeds over the ref graph.
+    let mut queue: std::collections::VecDeque<String> = seed.iter().cloned().collect();
+    let mut reached: BTreeSet<String> = seed;
+    while let Some(cur) = queue.pop_front() {
+        marked.insert(cur.clone());
+        if let Some(neigh) = ref_graph.get(&cur) {
+            for n in neigh {
+                if reached.insert(n.clone()) {
+                    queue.push_back(n.clone());
+                }
+            }
+        }
+    }
+    // Map marked category NAMES → runtime `src_idx` via the categories slice
+    // (per_cat + categories share the runtime `category_src_idx` ordering).
+    let mut arms = Vec::new();
+    for (idx, name) in categories.iter().enumerate() {
+        if marked.contains(name) {
+            let sidx = idx as u16;
+            arms.push(quote! { #sidx => true, });
+        }
+    }
+    if arms.is_empty() {
+        return quote! { false };
+    }
+    quote! {
+        match src_idx {
+            #(#arms)*
+            _ => false,
+        }
+    }
+}
+
 /// B9 / Class 2 (2026-05-08): emit a per-rule lookup that returns true
 /// when `(result_src_idx, rule_idx)` identifies a Class-2 binder rule's
 /// internal collection slot. Used by the walker's CollectionMarker-pop

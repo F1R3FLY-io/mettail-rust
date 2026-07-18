@@ -97,6 +97,20 @@ Section LanguageDefInventory.
     ReqEnvRelationPremise
   ].
 
+  (* GuardOptSmoke (task #14): a guard-inside-optional-group smoke grammar. The
+     `?g:Guard` param (a `TermParam::GuardBody`) contributes BehavioralGuard +
+     RhoResourceGuardContract; the `![{ k }]` native fold contributes
+     FoldNativeHandler; the `logic { relation ok(Proc) }` contributes
+     EnvRelationPremise; ExactContentKey is universal. This is exactly the
+     classify_language surface the executable audit computes for it. *)
+  Definition guardopt_smoke_surface : list RewriteRequirement := [
+    ReqBehavioralGuard;
+    ReqRhoResourceGuardContract;
+    ReqFoldNativeHandler;
+    ReqEnvRelationPremise;
+    ReqExactContentKey
+  ].
+
   Definition current_language_inventory : list LanguageInventory := [
     {| inventory_name := "calculator"; inventory_requirements := arithmetic_rewrite_surface ++ collection_rewrite_surface |};
     {| inventory_name := "rhocalc"; inventory_requirements := process_rewrite_surface ++ arithmetic_rewrite_surface |};
@@ -122,7 +136,27 @@ Section LanguageDefInventory.
        premises — so it classifies to exactly {DirectionalRewrite}. Its requirement
        is already covered (every arithmetic/process language carries it), so all
        coverage proofs below hold unchanged. *)
-    {| inventory_name := "swapdemo"; inventory_requirements := [ ReqDirectionalRewrite ] |}
+    {| inventory_name := "swapdemo"; inventory_requirements := [ ReqDirectionalRewrite ] |};
+    {| inventory_name := "guardoptsmoke"; inventory_requirements := guardopt_smoke_surface |};
+    (* rho_net Dovetail->Rho firing demo languages (Epic 4, `languages/src/*demo.rs`).
+       Each is a real reduction language, so it is inventoried fail-closed (it is NOT a
+       `parse_only` fixture). Requirements mirror the taxonomy that
+       `dovetail/tests/language_inventory.rs::classify_source` derives from each
+       `language!` source; every constructor is a member of
+       `current_mettail_rewrite_requirements` (MeTTaILRewriteCoverage.v) and is discharged
+       by `every_requirement_constructor_is_covered` below. *)
+    {| inventory_name := "acdemo"; inventory_requirements := [ ReqCollectionPattern; ReqCongruencePremise; ReqDirectionalRewrite ] |};
+    {| inventory_name := "acbagdemo"; inventory_requirements := [ ReqBehavioralGuard; ReqCollectionPattern; ReqCongruencePremise; ReqDirectionalRewrite; ReqEquation; ReqSyntheticInjectionGuard ] |};
+    {| inventory_name := "nlacdemo"; inventory_requirements := [ ReqCollectionPattern; ReqCongruencePremise; ReqDirectionalRewrite ] |};
+    {| inventory_name := "ambdemo"; inventory_requirements := [ ReqCollectionPattern; ReqCongruencePremise; ReqDirectionalRewrite ] |};
+    {| inventory_name := "ambnewdemo"; inventory_requirements := [ ReqBinderPattern; ReqCollectionPattern; ReqCongruencePremise; ReqDirectionalRewrite ] |};
+    {| inventory_name := "inoutdemo"; inventory_requirements := [ ReqBehavioralGuard; ReqCollectionPattern; ReqCongruencePremise; ReqDirectionalRewrite; ReqSyntheticInjectionGuard ] |};
+    {| inventory_name := "commdemo"; inventory_requirements := [ ReqBinderPattern; ReqCollectionPattern; ReqCongruencePremise; ReqDirectionalRewrite; ReqRhoCommHandlerContract; ReqSubstitutionPattern ] |};
+    {| inventory_name := "ctxdemo"; inventory_requirements := [ ReqBehavioralGuard; ReqCongruencePremise; ReqDirectionalRewrite; ReqSyntheticInjectionGuard ] |};
+    {| inventory_name := "bicongdemo"; inventory_requirements := [ ReqCongruencePremise; ReqDirectionalRewrite ] |};
+    {| inventory_name := "lambdademo"; inventory_requirements := [ ReqBehavioralGuard; ReqBinderPattern; ReqDirectionalRewrite; ReqSubstitutionPattern; ReqSyntheticInjectionGuard ] |};
+    {| inventory_name := "nativedemo"; inventory_requirements := [ ReqBehavioralGuard; ReqDirectionalRewrite; ReqFoldNativeHandler; ReqSyntheticInjectionGuard ] |};
+    {| inventory_name := "nativefolddemo"; inventory_requirements := [ ReqBehavioralGuard; ReqDirectionalRewrite; ReqFoldNativeHandler; ReqSyntheticInjectionGuard ] |}
   ].
 
   Definition flat_inventory : list RewriteRequirement :=

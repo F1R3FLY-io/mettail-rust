@@ -11,7 +11,6 @@ pub(crate) const IDENT_CAPTURE: u8 = 0x80;
 pub(crate) const BINDER_CAPTURE: u8 = 0x81;
 
 /// Base byte for nonterminal category IDs: category_index + NT_BASE.
-#[allow(dead_code)]
 pub(crate) const NT_BASE: u8 = 0x82;
 
 /// Marker byte for optional group start.

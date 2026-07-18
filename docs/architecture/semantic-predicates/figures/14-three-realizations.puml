@@ -37,7 +37,7 @@ package "D. letprop → modal-μ → PATA (specializes B)" #FEF3C7 {
   note bottom of D
     recursive modal body: DontKnow (T3)
     empty PATA arena ⇒ LP01 (dead behavioral type)
-    feature oslf-letprop (off by default)
+    always-on (no Cargo feature); letprop surface still proposed
   end note
 }
 

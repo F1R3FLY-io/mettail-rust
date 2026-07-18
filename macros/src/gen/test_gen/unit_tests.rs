@@ -5,8 +5,6 @@
 //! 2. Displays it to a string
 //! 3. Parses the string back
 //! 4. Verifies the roundtrip via display-idempotence
-//!
-//! Dead rules (from WFST analysis) are annotated with `#[ignore]`.
 
 use crate::gen::native::native_type_to_string;
 use crate::gen::term_ops::subst::{FieldInfo, VariantKind};
@@ -400,6 +398,14 @@ fn construct_leaf_value(field: &FieldInfo, language: &LanguageDef) -> Option<Str
     // Top is always satisfied regardless of the fact snapshot, enabling
     // structural coverage of guarded constructors without guard evaluation.
     if field.is_predicate {
+        // Task #14 (Option<Guard>): an optional guard's field is
+        // `Option<BehavioralPred>` — a bare `Top` is ill-typed there.
+        // `None` follows the U6 optional precedent below (one
+        // spec-admitted arm per unit test; the prop-test generator
+        // covers the Some(Top) arm).
+        if field.is_optional {
+            return Some("None".to_string());
+        }
         return Some("mettail_runtime::BehavioralPred::Top".to_string());
     }
     if field.is_optional {
@@ -491,4 +497,44 @@ fn construct_leaf_for_category(cat: &str, language: &LanguageDef) -> Option<Stri
         "{}::{}(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var(\"{}\"))))",
         cat, var_label, var_name
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn pred_field(optional: bool) -> FieldInfo {
+        FieldInfo {
+            category: quote::format_ident!("Guard"),
+            is_collection: false,
+            coll_type: None,
+            is_predicate: true,
+            is_optional: optional,
+        }
+    }
+
+    #[test]
+    fn leaf_value_optional_pred_is_none() {
+        // Task #14 gate-1: pre-#14 the pred-first arm returned a bare
+        // `BehavioralPred::Top` for an `Option<BehavioralPred>` field —
+        // ill-typed in the committed snapshot. `None` follows the U6
+        // optional precedent (one spec-admitted arm per unit test; the
+        // prop generator covers Some(Top)).
+        let language = crate::gen::empty_language_for_tests();
+        assert_eq!(
+            construct_leaf_value(&pred_field(true), &language),
+            Some("None".to_string()),
+        );
+    }
+
+    #[test]
+    fn leaf_value_mandatory_pred_stays_top() {
+        // Byte-identity leg: the guarded_rho (mandatory) shape emits the
+        // exact pre-#14 string.
+        let language = crate::gen::empty_language_for_tests();
+        assert_eq!(
+            construct_leaf_value(&pred_field(false), &language),
+            Some("mettail_runtime::BehavioralPred::Top".to_string()),
+        );
+    }
 }

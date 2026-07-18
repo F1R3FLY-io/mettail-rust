@@ -12,8 +12,6 @@ description = "Substrate-agnostic GSLT reduction engine core: a generic-W weight
 
 [features]
 default = []
-# `engine` will gate any future f1r3node binding (none yet — M-E.0 is inert).
-engine = []
 
 [dependencies]
 # The weight algebra (Semiring/StarSemiringRef, weight types, Newton-SCC closure)

@@ -831,7 +831,7 @@ fn finish_single_comm(
     output_key: &Proc,
     recv_ctx: &SingleReceiveCtx<'_>,
 ) -> Option<Proc> {
-    let (n_out, q) = output_parts(output_key)?;
+    let (_n_out, q) = output_parts(output_key)?;
     let new_center = if recv_ctx.empty_bind {
         if !empty_bind_matches_payload(&q) {
             return None;

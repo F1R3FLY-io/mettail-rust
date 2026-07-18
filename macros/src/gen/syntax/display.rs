@@ -336,14 +336,29 @@ fn generate_display_task_enum(language: &LanguageDef) -> TokenStream {
 // =============================================================================
 
 /// Generate the `display_iterative` function that processes the work stack.
+/// **Frame-size fix (residual #11-2, 2026-07-14):** each category's variant
+/// match is peeled into a `#[inline(never)] display_visit_<cat>` helper (the
+/// Tier-1 idiom `normalize_iterative` uses). Without it, `display_iterative`'s
+/// -O0 frame is the alloca SUM of every category's variant locals (measured
+/// 385,544 B for rhocalc). Helpers return `std::fmt::Result`, so the `?` writes
+/// inside the arms propagate through them and the dispatch arm re-propagates
+/// with `?` — control-flow-equivalent (the only generated escapes are `?` and
+/// arm-local `break value` loops; no `return`/`continue` cross an arm).
 fn generate_iterative_engine(language: &LanguageDef, bp_lookup: &BpLookup) -> TokenStream {
+    let visit_helper_fns: Vec<TokenStream> = language
+        .types
+        .iter()
+        .map(|lang_type| generate_display_visit_helper(&lang_type.name, language, bp_lookup))
+        .collect();
     let category_arms: Vec<TokenStream> = language
         .types
         .iter()
-        .map(|lang_type| generate_engine_category_arm(&lang_type.name, language, bp_lookup))
+        .map(|lang_type| generate_engine_category_dispatch(&lang_type.name))
         .collect();
 
     quote! {
+        #(#visit_helper_fns)*
+
         /// Iterative Display engine.
         ///
         /// Pops tasks from the work stack and either writes text directly to
@@ -370,17 +385,32 @@ fn generate_iterative_engine(language: &LanguageDef, bp_lookup: &BpLookup) -> To
     }
 }
 
-/// Generate the match arm for one category inside the iterative engine.
+/// Emit the thin dispatch arm that delegates to the per-category
+/// `#[inline(never)] display_visit_<cat>` helper (residual #11-2).
+fn generate_engine_category_dispatch(category: &syn::Ident) -> TokenStream {
+    let task_variant = format_ident!("Display{}", category);
+    let helper_fn = format_ident!("display_visit_{}", category.to_string().to_lowercase());
+    quote! {
+        DisplayTask::#task_variant(ptr, min_bp) => {
+            #helper_fn(stack, f, ptr, min_bp)?;
+        }
+    }
+}
+
+/// Emit the per-category `#[inline(never)] display_visit_<cat>` helper (residual
+/// #11-2). Builds every variant arm (grammar rules + auto var/literal + the
+/// synthetic HOL lam/apply variants) and wraps them in the helper fn so their
+/// -O0 locals live in the helper frame, not in `display_iterative`.
 ///
 /// For each variant of the category, we generate code that either:
 /// - Writes text directly (literals, vars, nullary constructors)
 /// - Pushes sub-tasks in REVERSE order for child terms (stack is LIFO)
-fn generate_engine_category_arm(
+fn generate_display_visit_helper(
     category: &syn::Ident,
     language: &LanguageDef,
     bp_lookup: &BpLookup,
 ) -> TokenStream {
-    let task_variant = format_ident!("Display{}", category);
+    let helper_fn = format_ident!("display_visit_{}", category.to_string().to_lowercase());
 
     // Group rules by category for lookup
     let mut rules_by_cat: HashMap<String, Vec<&GrammarRule>> = HashMap::new();
@@ -517,6 +547,11 @@ fn generate_engine_category_arm(
         });
     }
 
+    // PRE-PEEL body (residual #11-2, 2026-07-14): the variant match inlined the
+    // whole category into `display_iterative`. Commented-out-never-deleted; the
+    // match now lives in the `#[inline(never)] display_visit_<cat>` helper below
+    // and `generate_engine_category_dispatch` emits the thin call arm.
+    /*
     quote! {
         DisplayTask::#task_variant(ptr, min_bp) => {
             // SAFETY: ptr was derived from a &Cat reference within the same
@@ -527,6 +562,30 @@ fn generate_engine_category_arm(
             match term {
                 #(#variant_arms,)*
             }
+        }
+    }
+    */
+    // Frame-bound constraint: peel the category's variant match into a local-free
+    // `#[inline(never)]` helper returning `std::fmt::Result` (the `?` writes
+    // propagate through it; the dispatch arm re-propagates with `?`).
+    quote! {
+        #[inline(never)]
+        #[allow(dead_code, unused_variables, non_snake_case)]
+        fn #helper_fn(
+            stack: &mut Vec<DisplayTask>,
+            f: &mut std::fmt::Formatter,
+            ptr: *const #category,
+            min_bp: u8,
+        ) -> std::fmt::Result {
+            // SAFETY: ptr was derived from a &Cat reference within the same
+            // fmt() call; the referent is alive for the entire duration.
+            let term = unsafe { &*ptr };
+            // Suppress unused warning for non-operator variants.
+            let _ = min_bp;
+            match term {
+                #(#variant_arms,)*
+            }
+            Ok(())
         }
     }
 }
@@ -1705,6 +1764,13 @@ fn generate_engine_syntax_pattern_arm(
     let mut abstraction_body: Option<String> = None;
     // Map from param name -> TypeExpr for looking up category
     let mut param_types: HashMap<String, &TypeExpr> = HashMap::new();
+    // Task #14 (Option<Guard>): guard slot names. Guards register into
+    // `param_names` but are ABSENT from `param_types` (they have no
+    // TypeExpr) — the same is true of Abstraction binders, so "absent from
+    // param_types" is NOT a usable discriminator; an explicit set is.
+    // Threaded into `generate_engine_pattern_op` so the `#opt(...)` inner
+    // bindings can skip the Arc-deref map for `Option<BehavioralPred>`.
+    let mut guard_params: HashSet<String> = HashSet::new();
 
     // Opt-Group: flatten the term context so inner params of `#opt(...)`
     // are visible to the display generator with the same name resolution
@@ -1745,6 +1811,7 @@ fn generate_engine_syntax_pattern_arm(
                 // syntax pattern's reference resolves and the
                 // per-instance BehavioralPred field is rendered.
                 param_names.push(name.to_string());
+                guard_params.insert(name.to_string());
             },
             TermParam::Optional { .. } => {
                 // Already flattened — unreachable.
@@ -2117,6 +2184,7 @@ fn generate_engine_syntax_pattern_arm(
                     &abstraction_body,
                     &body_cat_ident,
                     &param_types,
+                    &guard_params,
                     prev_outer_is_param,
                     next_outer_is_param,
                 );
@@ -2250,6 +2318,7 @@ fn generate_engine_pattern_op(
     _abstraction_body: &Option<String>,
     _body_cat_ident: &Option<syn::Ident>,
     param_types: &HashMap<String, &TypeExpr>,
+    guard_params: &HashSet<String>,
     prev_outer_is_param: bool,
     next_outer_is_param: bool,
 ) -> TokenStream {
@@ -2377,11 +2446,25 @@ fn generate_engine_pattern_op(
                             let id_ident =
                                 syn::Ident::new(&id.to_string(), proc_macro2::Span::call_site());
                             let inner_var = quote::format_ident!("__opt_{}", id);
-                            Some(quote! {
-                                let #inner_var: &_ = #id_ident.as_ref()
-                                    .map(|__b| __b.as_ref())
-                                    .expect("Opt-Group: inner display ran with None");
-                            })
+                            // Task #14 (Option<Guard>): a guard slot's field
+                            // is `Option<BehavioralPred>` — no Arc layer to
+                            // strip, so the `.map(|__b| __b.as_ref())` of the
+                            // term arm is E0599 (`BehavioralPred: !AsRef`).
+                            // Bind `&BehavioralPred` directly; rendering goes
+                            // through BehavioralPred's Display (`Top` renders
+                            // `true()`, display-stable under re-parse).
+                            if guard_params.contains(&id.to_string()) {
+                                Some(quote! {
+                                    let #inner_var: &_ = #id_ident.as_ref()
+                                        .expect("Opt-Group: inner display ran with None");
+                                })
+                            } else {
+                                Some(quote! {
+                                    let #inner_var: &_ = #id_ident.as_ref()
+                                        .map(|__b| __b.as_ref())
+                                        .expect("Opt-Group: inner display ran with None");
+                                })
+                            }
                         },
                         // Phase 4 #3 (2026-05-12): bind the Sep collection param
                         // to a reference of the inner Vec/HashBag/etc. The field

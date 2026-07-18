@@ -184,10 +184,9 @@ fn test_right_assoc_chain_1000() {
     assert!(result.is_ok(), "1000 right-assoc ops should parse: {:?}", result.err());
 }
 
+// Right-assoc chain of 10k ops; parses in ~1.1s on the descriptor-pure engine
+// (was a BranchCursor::clone memory ceiling pre-flip). ACTIVE regression guard.
 #[test]
-#[ignore = "Architectural ceiling: same root cause as \
-    test_left_assoc_chain_10000 above (BranchCursor::clone per-step \
-    churn dominates). Re-enable in same conditions."]
 fn test_right_assoc_chain_10000() {
     mettail_runtime::clear_var_cache();
     let input = right_assoc_chain(10_000);
@@ -267,7 +266,6 @@ fn test_left_assoc_chain_500() {
 }
 
 #[test]
-#[ignore = "Exp 16 round 3 scaling probe"]
 fn test_left_assoc_chain_1000() {
     mettail_runtime::clear_var_cache();
     let input = left_assoc_chain(1000);
@@ -276,7 +274,6 @@ fn test_left_assoc_chain_1000() {
 }
 
 #[test]
-#[ignore = "Exp 16 round 3 scaling probe: run with --features walker-stats PRATTAIL_WALKER_STATS=1 to capture per-N attribution"]
 fn test_left_assoc_chain_2000() {
     mettail_runtime::clear_var_cache();
     let input = left_assoc_chain(2_000);
@@ -285,7 +282,6 @@ fn test_left_assoc_chain_2000() {
 }
 
 #[test]
-#[ignore = "Exp 16 round 3 scaling probe: run with --features walker-stats PRATTAIL_WALKER_STATS=1 to capture per-N attribution"]
 fn test_left_assoc_chain_5000() {
     mettail_runtime::clear_var_cache();
     let input = left_assoc_chain(5_000);
@@ -299,7 +295,6 @@ fn test_left_assoc_chain_5000() {
 // the Box→Arc AST representation generalizes to multi-operand mixfix nesting.
 
 #[test]
-#[ignore = "scaling probe — run explicitly"]
 fn test_ternary_chain_1000() {
     mettail_runtime::clear_var_cache();
     let input = ternary_chain(1_000);
@@ -308,12 +303,28 @@ fn test_ternary_chain_1000() {
 }
 
 #[test]
-#[ignore = "scaling probe — run explicitly"]
 fn test_ternary_chain_2000() {
     mettail_runtime::clear_var_cache();
     let input = ternary_chain(2_000);
     let result = Int::parse_structured(&input);
     assert!(result.is_ok(), "2000 nested ternaries should parse: {:?}", result.err());
+}
+
+// Residual #11-3 D1 (2026-07-14): the EXACT-TOKEN partner of the passing
+// `test_deep_unary_neg_20000`. `ternary_chain(5000)` = `"0 ? 1 : "`×5000 +
+// `"0"` = 20,001 tokens — identical token count to `nested_unary(20000)`
+// (20,000 `-` + `1`). Pre-registered discriminator D1: at equal tokens, if
+// walls/RSS track within ~1.5× the ceiling is token-driven (one shared
+// quadratic law); if the ternary is >~3× the arity/mixfix packing
+// population drives it. Deliberately NOT `unary_40000` (its out-of-scope
+// Display/Drop term-depth recursion would SIGSEGV at the 8 MiB default
+// stack and contaminate D1 with the wrong mechanism).
+#[test]
+fn test_ternary_chain_5000() {
+    mettail_runtime::clear_var_cache();
+    let input = ternary_chain(5_000);
+    let result = Int::parse_structured(&input);
+    assert!(result.is_ok(), "5000 nested ternaries should parse: {:?}", result.err());
 }
 
 #[test]
@@ -324,6 +335,60 @@ fn test_ternary_chain_10000() {
     assert!(result.is_ok(), "10000 nested ternaries should parse: {:?}", result.err());
 }
 
+// S2-F3 G2 (2026-07-11): deeper scaling probes for the ITERATIVE realize
+// conversion. Depth 20000 deliberately: pre-fix pure failed at 10k already
+// (clean discriminator), while the pre-existing classic-shared TERM-depth
+// recursions (generated semantic_hash, AST Display/Drop — the "Sprint 2
+// AST Work-Stack" note above) are measured green at 10k and sized
+// ~100-200 B/frame, leaving ≥2× headroom at 20k; 100k would gate on those
+// out-of-scope ceilings, not on this conversion.
+#[test]
+fn test_ternary_chain_20000() {
+    mettail_runtime::clear_var_cache();
+    let input = ternary_chain(20_000);
+    let result = Int::parse_structured(&input);
+    assert!(result.is_ok(), "20000 nested ternaries should parse: {:?}", result.err());
+}
+
+// TASK-#16 contamination gate (2026-07-14): the chain-peek suffix memo is a
+// thread-local shared across parses; interleaving DISTINCT parse shapes (errors /
+// nested / short chains — incl. the [Err-input, chain-input] vector that motivated
+// red-team A1's clear-point relocation) on ONE thread must NOT leak stale memo
+// entries into a subsequent chain parse. `step_canonical_pure` clears the memo at
+// entry + per round, so a chain parsed AFTER poisoner parses must be byte-identical
+// (realized-AST `Debug`) to the same chain parsed in isolation. Runs on the pure
+// default engine with the memo ON; the A1 `debug_assert`s (pure-scoping + no stale
+// read) are live in this debug test.
+#[test]
+fn task16_chain_peek_memo_no_cross_parse_contamination() {
+    // Reference: each chain parsed fresh.
+    let chains = [ternary_chain(50), ternary_chain(120), ternary_chain(7)];
+    let refs: Vec<String> = chains
+        .iter()
+        .map(|c| {
+            mettail_runtime::clear_var_cache();
+            format!("{:?}", Int::parse_structured(c).expect("reference chain parses"))
+        })
+        .collect();
+    // Poisoners: malformed ternary prefixes (Err ⇒ resolve skipped — the A1
+    // vector), a malformed infix (Err), and valid non-chain shapes (nested parens,
+    // unary run). Each parses between the chains on THIS thread; whatever memo
+    // state they leave must not change the chain result.
+    let poisoners = ["9 ? ", "0 ? 1 :", "1 + + 2", "((((1))))", "- - - 1", "0 ? 1 : 0 ? 1"];
+    for (i, chain) in chains.iter().enumerate() {
+        for p in &poisoners {
+            mettail_runtime::clear_var_cache();
+            let _ = Int::parse_structured(p); // Ok or Err — either way must not poison
+        }
+        mettail_runtime::clear_var_cache();
+        let got = format!(
+            "{:?}",
+            Int::parse_structured(chain).expect("chain parses after poisoners")
+        );
+        assert_eq!(got, refs[i], "chain {i} contaminated by interleaved parses");
+    }
+}
+
 // ── Tests: Deep unary prefix chains ──
 
 #[test]
@@ -332,6 +397,15 @@ fn test_deep_unary_neg_1000() {
     let input = nested_unary(1_000);
     let result = Int::parse_structured(&input);
     assert!(result.is_ok(), "1000 unary neg should parse: {:?}", result.err());
+}
+
+#[test]
+fn test_deep_unary_neg_20000() {
+    // S2-F3 G2: see the 20k rationale above.
+    mettail_runtime::clear_var_cache();
+    let input = nested_unary(20_000);
+    let result = Int::parse_structured(&input);
+    assert!(result.is_ok(), "20000 unary neg should parse: {:?}", result.err());
 }
 
 #[test]

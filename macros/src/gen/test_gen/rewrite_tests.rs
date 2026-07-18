@@ -7,8 +7,7 @@
 //!    (suffix `_exec`) that runs the rule's LHS constructor through SimulationRunner
 //!    and asserts the result reaches a NormalForm.
 //!
-//! Congruence rules (those with `S ~> T` premises) are annotated with `#[ignore]`.
-//! Dead rules are annotated with `#[ignore]`.
+//! Dead rules (proven unreachable by WFST analysis) are emitted with `#[ignore]`.
 //!
 //! NOTE: Rewrite LHS/RHS are pattern strings with meta-variables (e.g., N, P, ...rest)
 //! that cannot be parsed as concrete terms. The metadata tests verify presence only.

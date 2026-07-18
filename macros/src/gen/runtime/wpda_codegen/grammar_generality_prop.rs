@@ -12,13 +12,37 @@
 //!
 //! | INV   | Property                                            | Catches  |
 //! |-------|-----------------------------------------------------|----------|
-//! | INV-1 | NO-LOSS symmetry: |slice|==|group|==|lattice arm|   | drift    |
+//! | INV-1 | NO-LOSS symmetry (F5-2 cohort-aware; see fn doc)    | drift    |
 //! | INV-2 | classifier totality (rule w/ ≥1 literal ⇒ Some)     | GAP-1,3  |
 //! | INV-3 | goal-gate conservativeness (cross-cat edge ∈ reach) | GAP-1    |
 //! | INV-4 | projection/extension complementarity (flag in gate) | GAP-4    |
-//! | INV-5 | no single-winner (group N ⇒ N entries)              | drift    |
+//! | INV-5 | no single-winner UNLESS whole-slice cohort         | drift    |
 //! | INV-6 | no hardcoded category/delimiter dispatch            | GAP-2    |
 //! | INV-7 | 0-operand-per-kind classifies + dispatch arm        | GAP-3    |
+//! | INV-8 | prefix-surface NO-LOSS (S1-factoring, amendment A5) | drift    |
+//!
+//! INV-8 (S1-FACTORING F0, 2026-07-11 — red-team amendment A5; NOT a
+//! revision of INV-5, which gates the INFIX lex-alt lattice): for every
+//! `(category, leading-literal)` prefix cohort, the factoring partition
+//! loses no member — `Σ member leaves over spine groups + Σ members of
+//! F5-deferred (ineligible) groups + |unfactored singletons| == the original
+//! cohort size` — checked on BOTH the always-computed factoring model AND
+//! the emission-effective partition; under `forks::S1_FACTORING == false`
+//! the latter must additionally degenerate to the identity (every rule its
+//! own singleton, zero groups).
+//!
+//! INV-1/INV-5 (S1-FACTORING F5-2, 2026-07-14 — board task #13 restatement, a
+//! USER-signed-off named-invariant change): a factored mixfix cohort of `M`
+//! members REPLACES its `M` per-member infix lex-alt entries with ONE spine
+//! entry (`kind_dispatch.rs:2005-2036`), so a covered `(cat, terminal)` key
+//! contributes `ops − M + 1` lattice entries and the aggregate lattice total is
+//! `group_total − Σ_covered (M − 1)`. This RESTATES — never weakens — the
+//! no-loss guarantee: the collapse is admitted ONLY when the surviving entry
+//! carries the cohort's `spine_id`/`min_l_bp`/`result_src_idx` (:2023-2031) and
+//! INV-8-mixfix proves `leaves == members`. It degenerates to the pre-F5-2 1:1
+//! statement on every non-cohort grammar and whenever
+//! `S1_FACTORING && S1F5_MIXFIX_COHORTS` is not satisfied (`mixfix_groups`
+//! empty ⇒ byte-identical to the pre-F1 lattice).
 //!
 //! The harness draws delimiters from a NON-rhocalc alphabet (`«»`, `‹›`, `⟦⟧`,
 //! `⟨⟩`, custom keywords, non-`;` separators) so the rhocalc-specific hardcodes
@@ -174,7 +198,6 @@ const COLLS: &[CollectionType] = &[CollectionType::Vec, CollectionType::HashBag,
 // change). It is now drawn by `arb_rule_spec`, present in `witness_spine`, and
 // the two GAP-3 deterministic tests below are un-`#[ignore]`d. `classify_atomic`
 // classifies it as `AtomicShape::NullaryLiteralRun`, so INV-2/INV-7 pass.
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 enum RuleSpec {
     /// `a:C op b:C |- :C` — homogeneous binary infix.
@@ -474,6 +497,56 @@ fn lattice_infix_counts_per_group(fns: &[syn::ItemFn]) -> BTreeMap<(u16, String)
     out
 }
 
+/// Companion to [`lattice_infix_counts_per_group`] (S1-FACTORING F5-2): collect
+/// every integer-literal value present in each `lex_alt_rules_for_infix` arm
+/// body, keyed by `(cat_src_idx, terminal)`. Used by the cohort-aware INV-1
+/// restatement to prove a covered key's ONE surviving lex-alt entry is the
+/// DESIGNATED spine entry — its `rule_idx` (= `spine_id`), `l_bp`
+/// (= `min_l_bp`) and `result_src_idx` literals (`kind_dispatch.rs:2023-2031`)
+/// must all appear in the arm. Parsing is suffix-agnostic (`63488u16`, `0u8`
+/// both parse via `syn::LitInt::base10_parse`).
+fn lattice_infix_arm_ints_per_group(fns: &[syn::ItemFn]) -> BTreeMap<(u16, String), BTreeSet<u64>> {
+    let mut out: BTreeMap<(u16, String), BTreeSet<u64>> = BTreeMap::new();
+    for f in fns {
+        if f.sig.ident != "lex_alt_rules_for_infix" {
+            continue;
+        }
+        for stmt in &f.block.stmts {
+            let expr = match stmt {
+                syn::Stmt::Expr(e, _) => e,
+                _ => continue,
+            };
+            if let syn::Expr::Match(m) = expr {
+                for arm in &m.arms {
+                    let Some(cat) = arm_cat_lit(&arm.pat) else { continue };
+                    let Some(term) = arm_guard_string(arm) else { continue };
+                    let set = out.entry((cat, term)).or_default();
+                    collect_int_literals(arm.body.to_token_stream(), set);
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Recursively collect every integer-literal value (suffix-stripped) in a
+/// TokenStream (descending into groups, mirroring [`count_ident_in_tokens`]).
+fn collect_int_literals(ts: TokenStream, out: &mut BTreeSet<u64>) {
+    for tt in ts {
+        match tt {
+            TokenTree::Literal(l) => {
+                if let Ok(li) = syn::parse_str::<syn::LitInt>(&l.to_string()) {
+                    if let Ok(v) = li.base10_parse::<u64>() {
+                        out.insert(v);
+                    }
+                }
+            }
+            TokenTree::Group(g) => collect_int_literals(g.stream(), out),
+            _ => {}
+        }
+    }
+}
+
 /// From a tuple pattern `(C, TokenKind::Fixed(__t))`, extract the leading u16
 /// literal `C`.
 fn arm_cat_lit(pat: &syn::Pat) -> Option<u16> {
@@ -654,9 +727,29 @@ fn parse_reach_pairs(ts: TokenStream) -> BTreeSet<(u16, u16)> {
 // The seven invariants. Each returns Ok(()) on success, Err(reason) on failure.
 // ════════════════════════════════════════════════════════════════════════════
 
-/// INV-1 + INV-5: NO-LOSS symmetry. For every `(cat, terminal)` trigger group,
-/// the per-tier slice entries, the group size, and the lattice lex-alt arm
-/// entries agree; no single-winner truncation; no tier mis-partition.
+/// INV-1 + INV-5: NO-LOSS symmetry (cohort-aware since S1-FACTORING F5-2,
+/// board task #13). For every `(cat, terminal)` trigger group the per-tier
+/// slice entries and the group size agree with the emitted lattice lex-alt
+/// arm — EXCEPT that a factored mixfix cohort of `M` members collapses to ONE
+/// spine entry, so a COVERED key contributes `ops − M + 1` lattice entries
+/// (`kind_dispatch.rs:2005-2036`, the DESIGNED N→1 replacement) and the
+/// aggregate lattice total is `group_total − Σ_covered (M − 1)`. No
+/// single-winner truncation of a GENUINE multi-winner; no tier mis-partition.
+///
+/// This is a RESTATEMENT, not a relaxation. What INV-1 protects is
+/// REPRESENTATION NO-LOSS: no census op is silently absent from the lex-fork
+/// dispatch surface, each carrying its own `rule_idx`/`l_bp`. The non-mixfix
+/// ops stay reachable through their own entries; the cohort members stay
+/// reachable THROUGH the spine entry whose runtime fan re-expands them — an
+/// integrity the restatement REQUIRES via three receipts: (a) the D-5
+/// whole-slice assert (`kind_dispatch.rs:1999`) + the leaf-count assert
+/// (`:1582`), which panic codegen on membership drift; (b) the surviving
+/// entry carrying the cohort's `spine_id` / `min_l_bp` / `result_src_idx`
+/// (`:2023-2031`, parsed and checked here); and (c) INV-8-mixfix's
+/// `leaves == members` (cross-referenced here whenever any cohort exists). It
+/// DEGENERATES exactly to the pre-F5-2 1:1 statement when no cohort covers a
+/// key — every non-cohort grammar, and the whole OFF stance (`mixfix_groups`
+/// is EMPTY unless `S1_FACTORING && S1F5_MIXFIX_COHORTS`, `forks.rs`).
 fn inv1_inv5_noloss(lang: &LanguageDef) -> Result<(), String> {
     let (categories, per_cat) = categories_and_per_cat(lang);
     let bp_table = build_bp_table(lang);
@@ -698,33 +791,179 @@ fn inv1_inv5_noloss(lang: &LanguageDef) -> Result<(), String> {
     }
 
     // Lattice arms: parse the emitted infix lex-alt table and compare per group.
-    let lattice_ts = super::kind_dispatch::emit_lex_alt_rule_for_fn(lang, &per_cat, &categories);
+    // S1-FACTORING F1: thread the emission-effective spine bundle exactly as
+    // the engine assembly does (empty under `S1_FACTORING == false`; INV-5 is
+    // the INFIX lattice, untouched by prefix-surface factoring either way).
+    let s1_spine = super::factoring::build_spine_emission(lang, &categories, &per_cat);
+    let lattice_ts =
+        super::kind_dispatch::emit_lex_alt_rule_for_fn(lang, &per_cat, &categories, &s1_spine);
     let lattice_fns = parse_fns(lattice_ts);
     let lattice_counts = lattice_infix_counts_per_group(&lattice_fns);
+    // F5-2 strengthening: the integer literals in each arm (spine-identity
+    // proof for covered cohort keys).
+    let lattice_arm_ints = lattice_infix_arm_ints_per_group(&lattice_fns);
     let lattice_total: usize = lattice_counts.values().sum();
 
+    // ════════════════════════════════════════════════════════════════════════
+    // PRE-F5-2 statement (SUPERSEDED; retained per comment-out-never-delete).
+    // The 1:1 arm↔op correspondence held before S1-FACTORING F5-2. The DESIGNED
+    // N→1 lex-alt replacement (kind_dispatch.rs:2005-2036) collapses a mixfix
+    // cohort's M per-member entries into ONE spine entry, so this block fired
+    // "lattice arm has 1 infos, group has 2 ops" on every factorable cohort
+    // (board task #13). The cohort-aware RESTATEMENT follows (USER sign-off).
+    // ────────────────────────────────────────────────────────────────────────
+    // for ((cat, terminal), ops) in grouped.iter() {
+    //     let got = lattice_counts.get(&(*cat, terminal.clone())).copied().unwrap_or(0);
+    //     if got != ops.len() {
+    //         return Err(format!(
+    //             "INV-1 lattice/group mismatch at (cat {cat}, '{terminal}'): \
+    //              lattice arm has {got} infos, group has {} ops",
+    //             ops.len()
+    //         ));
+    //     }
+    //     // INV-5: an N≥2 group must NOT collapse to a single winner.
+    //     if ops.len() >= 2 && got < 2 {
+    //         return Err(format!(
+    //             "INV-5 single-winner collapse at (cat {cat}, '{terminal}'): \
+    //              group {} but only {got} lattice entries",
+    //             ops.len()
+    //         ));
+    //     }
+    // }
+    // if lattice_total != group_total {
+    //     return Err(format!(
+    //         "INV-1 lattice total {lattice_total} != group total {group_total}"
+    //     ));
+    // }
+    // ════════════════════════════════════════════════════════════════════════
+
+    // F5-2 cohort census: index the emission-effective mixfix cohorts by their
+    // dispatch key. `dispatch_cat_src_idx` is the SAME
+    // `collect_category_names_with_literals` coordinate `group_ops_by_cat_terminal`
+    // keys on (factoring.rs:1268), and `mixfix_groups` is EMPTY unless
+    // `S1_FACTORING && S1F5_MIXFIX_COHORTS` — so every branch below degenerates
+    // to the pre-F5-2 statement on non-cohort grammars and under the OFF stance.
+    let mut cohort_by_key: BTreeMap<(u16, String), &super::factoring::MixfixGroupEmission> =
+        BTreeMap::new();
+    for group in &s1_spine.mixfix_groups {
+        // D-5 whole-slice: at most ONE cohort per dispatch key (pinned in
+        // codegen at kind_dispatch.rs:1999 and by INV-8-mixfix). A second group
+        // at one key would silently over-reduce the expected count — surface it.
+        if cohort_by_key
+            .insert((group.dispatch_cat_src_idx, group.trigger.clone()), group)
+            .is_some()
+        {
+            return Err(format!(
+                "INV-1 cohort drift at (cat {}, '{}'): two mixfix cohorts share one \
+                 dispatch key (D-5 whole-slice ⇒ at most one)",
+                group.dispatch_cat_src_idx, group.trigger
+            ));
+        }
+    }
+
+    // The cohort-adjusted expected lattice total, accumulated per key (== the
+    // AM-1 aggregate `group_total − Σ_covered (members − 1)`, computed WITHOUT a
+    // global subtraction so an impossible over-reduction is caught per key).
+    let mut expected_lattice_total = 0usize;
     for ((cat, terminal), ops) in grouped.iter() {
         let got = lattice_counts.get(&(*cat, terminal.clone())).copied().unwrap_or(0);
-        if got != ops.len() {
+        let key = (*cat, terminal.clone());
+        let cohort = cohort_by_key.get(&key).copied();
+        // A cohort collapses its `members` per-member entries into ONE spine
+        // entry ⇒ its key contributes `ops − members + 1` lattice entries
+        // (== `ops` when no cohort covers the key: `reduction == 0`).
+        let members = cohort.map(|g| g.member_rule_idxs.len()).unwrap_or(0);
+        let reduction = members.saturating_sub(1);
+        let Some(expected) = ops.len().checked_sub(reduction) else {
             return Err(format!(
-                "INV-1 lattice/group mismatch at (cat {cat}, '{terminal}'): \
-                 lattice arm has {got} infos, group has {} ops",
+                "INV-1 cohort over-reduction at (cat {cat}, '{terminal}'): cohort claims \
+                 {members} members but the census group has only {} ops",
+                ops.len()
+            ));
+        };
+        expected_lattice_total += expected;
+
+        // INV-1 (RESTATED, cohort-aware). Protects representation no-loss: the
+        // emitted arm's entry count equals the cohort-adjusted census.
+        if got != expected {
+            return Err(format!(
+                "INV-1 lattice/group mismatch at (cat {cat}, '{terminal}'): lattice arm \
+                 has {got} infos, cohort-adjusted expectation is {expected} (group has {} \
+                 ops, {members} in a mixfix cohort)",
                 ops.len()
             ));
         }
-        // INV-5: an N≥2 group must NOT collapse to a single winner.
-        if ops.len() >= 2 && got < 2 {
+
+        // INV-1 STRENGTHENING: a covered key's ONE surviving entry must be the
+        // DESIGNATED spine entry — its spine_id / min_l_bp / result_src_idx
+        // (kind_dispatch.rs:2023-2031) must appear in the emitted arm. This is
+        // what makes the restatement a STRENGTHENING, not a relaxation: dropping
+        // an identity field, or letting an arbitrary member survive instead of
+        // the spine entry, fails here.
+        if let Some(group) = cohort {
+            let carries =
+                |v: u64| lattice_arm_ints.get(&key).is_some_and(|s| s.contains(&v));
+            if !carries(u64::from(group.spine_id)) {
+                return Err(format!(
+                    "INV-1 spine-identity loss at (cat {cat}, '{terminal}'): the collapsed \
+                     lattice arm does not carry the cohort spine_id {:#06x}",
+                    group.spine_id
+                ));
+            }
+            if !carries(u64::from(group.min_l_bp)) {
+                return Err(format!(
+                    "INV-1 spine-identity loss at (cat {cat}, '{terminal}'): the collapsed \
+                     lattice arm does not carry the cohort min_l_bp {}",
+                    group.min_l_bp
+                ));
+            }
+            if !carries(u64::from(group.result_src_idx)) {
+                return Err(format!(
+                    "INV-1 spine-identity loss at (cat {cat}, '{terminal}'): the collapsed \
+                     lattice arm does not carry the cohort result_src_idx {}",
+                    group.result_src_idx
+                ));
+            }
+        }
+
+        // INV-5 (RESTATED, cohort-aware, N-6). An N≥2 group must not collapse to
+        // a single winner UNLESS a whole-slice cohort accounts for it: while the
+        // cohort-adjusted expectation is still ≥2 (a genuine multi-winner
+        // remains — non-cohort ops share the key, or the cohort is partial) the
+        // arm must keep ≥2 entries. When `expected == 1` the sole entry is the
+        // LEGITIMATE spine entry, proven no-loss by the identity fields above
+        // and the INV-8 cross-reference below.
+        if expected >= 2 && got < 2 {
             return Err(format!(
-                "INV-5 single-winner collapse at (cat {cat}, '{terminal}'): \
-                 group {} but only {got} lattice entries",
+                "INV-5 single-winner collapse at (cat {cat}, '{terminal}'): cohort-adjusted \
+                 expectation {expected} (group {} ops, {members} in a cohort) but only {got} \
+                 lattice entries",
                 ops.len()
             ));
         }
     }
-    if lattice_total != group_total {
+
+    // INV-1 AGGREGATE (RESTATED, AM-1). Pre-F5-2 this was
+    // `lattice_total == group_total`; every covered key over-counts the raw
+    // total by `members − 1`, so the faithful total subtracts them.
+    if lattice_total != expected_lattice_total {
+        let total_reduction = group_total.saturating_sub(expected_lattice_total);
         return Err(format!(
-            "INV-1 lattice total {lattice_total} != group total {group_total}"
+            "INV-1 lattice total {lattice_total} != cohort-adjusted group total \
+             {expected_lattice_total} (raw group total {group_total}, sum cohort(members-1) \
+             {total_reduction})"
         ));
+    }
+
+    // INV-1 NO-LOSS cross-reference (INV-8-mixfix). When cohorts exist the
+    // collapse is loss-free ONLY IF every cohort's leaves == its member count;
+    // INV-8-mixfix proves exactly that on BOTH the factoring model and the
+    // emission partition. Requiring it here makes the analytic INV-1 witnesses
+    // (fed to THIS fn directly) enforce the no-loss half too. Degenerates to a
+    // no-op when no cohort covers any key.
+    if !cohort_by_key.is_empty() {
+        inv8_mixfix_surface_noloss(lang)
+            .map_err(|e| format!("INV-1 no-loss cross-reference (INV-8-mixfix) failed: {e}"))?;
     }
 
     // Slice aggregate: per-tier BP tables emit exactly one tuple per grouped op.
@@ -810,7 +1049,8 @@ fn inv3_goal_gate(lang: &LanguageDef) -> Result<(), String> {
 /// `if __proj_keep …` gate — never as a sibling statement after it (which would
 /// keep a suppressed projection alive and re-introduce the futile branch).
 fn inv4_fork_symmetry() -> Result<(), String> {
-    let fork_ts = super::forks::emit_lex_fork_at_prefix_dispatch(0u16);
+    // S1-FACTORING F1: OFF-shape lex fork (no factored groups in this probe).
+    let fork_ts = super::forks::emit_lex_fork_at_prefix_dispatch(0u16, false);
     let probe: syn::ItemFn = syn::parse2(quote::quote! { fn __probe() { #fork_ts } })
         .expect("fork code parses inside a probe fn");
     let mut inspector = ForkArmInspector { violations: Vec::new() };
@@ -910,6 +1150,215 @@ fn inv7_nullary_per_kind(lang: &LanguageDef) -> Result<(), String> {
                     rule.category,
                     sp.len()
                 ));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// INV-8: prefix-surface NO-LOSS (S1-FACTORING F0, amendment A5). For every
+/// `(category, leading-literal)` prefix cohort discovered by the factoring
+/// member scan (BinderPrefix + NullaryLiteralRun descriptors — the same
+/// insertion conditions as the `prefix.rs` unified bucket), the partition
+/// accounts for every member exactly once:
+///
+/// ```text
+/// Σ leaves(groups) + Σ |members(ineligible)| + |singletons| == cohort_size
+/// ```
+///
+/// Checked on BOTH [`super::factoring::build_prefix_factoring`] (the
+/// always-computed model — the real trie math, meaningful in F0 already) and
+/// [`super::factoring::emission_partition`] (the F1 integration surface).
+/// Under `forks::S1_FACTORING == false` the emission-effective partition must
+/// ALSO be the identity: zero groups, zero deferrals, every member a
+/// `FactoringDisabled` singleton. Under `forks::S1F5_ACCEPT_CONTINUE` (F5-1,
+/// with S1 on) the `InteriorAccept` deferral must be UNREACHABLE — former
+/// proper-prefix deferrals are absorbed into groups as sibling accept
+/// leaves, and the no-loss formula counts them as leaves.
+fn inv8_prefix_surface_noloss(lang: &LanguageDef) -> Result<(), String> {
+    let (categories, per_cat) = categories_and_per_cat(lang);
+    let models = [
+        ("factoring model", super::factoring::build_prefix_factoring(lang, &categories, &per_cat)),
+        ("emission partition", super::factoring::emission_partition(lang, &categories, &per_cat)),
+    ];
+    for (which, model) in &models {
+        for cat in model {
+            for bucket in &cat.buckets {
+                let leaves: usize = bucket.groups.iter().map(|g| g.leaf_count()).sum();
+                let deferred: usize =
+                    bucket.ineligible.iter().map(|g| g.member_rule_idxs.len()).sum();
+                let total = leaves + deferred + bucket.singletons.len();
+                if total != bucket.cohort_size {
+                    return Err(format!(
+                        "INV-8 no-loss violated in the {which} at (cat {}, {:?}): \
+                         {leaves} leaves + {deferred} deferred + {} singletons != cohort {}",
+                        cat.category_src_idx,
+                        bucket.leading_literal,
+                        bucket.singletons.len(),
+                        bucket.cohort_size,
+                    ));
+                }
+            }
+        }
+    }
+    if super::forks::S1_FACTORING && super::forks::S1F5_ACCEPT_CONTINUE {
+        // F5-1 ON-branch census: proper-prefix members are absorbed as
+        // sibling accept leaves ([`super::factoring::build_tree`]), so the
+        // `InteriorAccept` deferral is UNREACHABLE in both models — a
+        // surviving instance means the admission predicate drifted.
+        for (which, model) in &models {
+            for cat in model {
+                for bucket in &cat.buckets {
+                    for group in &bucket.ineligible {
+                        if matches!(
+                            group.reason,
+                            super::factoring::IneligibleReason::InteriorAccept { .. }
+                        ) {
+                            return Err(format!(
+                                "INV-8 F5-1 violated in the {which} at (cat {}, {:?}): \
+                                 InteriorAccept deferral {:?} survives with \
+                                 S1F5_ACCEPT_CONTINUE on",
+                                cat.category_src_idx, bucket.leading_literal, group,
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if !super::forks::S1_FACTORING {
+        let (_, effective) = &models[1];
+        for cat in effective {
+            for bucket in &cat.buckets {
+                if !bucket.groups.is_empty() || !bucket.ineligible.is_empty() {
+                    return Err(format!(
+                        "INV-8 identity violated: S1_FACTORING is OFF yet (cat {}, {:?}) \
+                         emits {} groups / {} deferrals",
+                        cat.category_src_idx,
+                        bucket.leading_literal,
+                        bucket.groups.len(),
+                        bucket.ineligible.len(),
+                    ));
+                }
+                if bucket.singletons.len() != bucket.cohort_size {
+                    return Err(format!(
+                        "INV-8 identity violated at (cat {}, {:?}): {} singletons != cohort {}",
+                        cat.category_src_idx,
+                        bucket.leading_literal,
+                        bucket.singletons.len(),
+                        bucket.cohort_size,
+                    ));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// INV-8-mixfix: mixfix-surface NO-LOSS (S1-FACTORING F5-2, plan
+/// `f5_mixfix_cohorts_plan.md` §2.3 INV-8-analog). For every
+/// `(dispatch category, trigger)` mixfix cohort discovered by the factoring
+/// slice scan (the SAME `group_ops_by_cat_terminal` grouping +
+/// `GEN1_MAX_SLICE` window as the `mixfix_bp_<cat>` emitters), the partition
+/// accounts for every slice member exactly once:
+///
+/// ```text
+/// Σ leaves(groups) + Σ |members(ineligible)| + |singletons| == slice.len()
+/// ```
+///
+/// D-5 (whole-slice eligibility) additionally requires: at most ONE group
+/// per bucket, and a factored bucket has NO ineligible/singleton residue
+/// (its group's leaves == the whole slice). Checked on BOTH
+/// [`super::factoring::build_mixfix_factoring`] (the always-computed model)
+/// and [`super::factoring::mixfix_emission_partition`] (the F5-2 integration
+/// surface); with `forks::S1_FACTORING && forks::S1F5_MIXFIX_COHORTS` not
+/// both `true`, the latter must degenerate to the identity (every member a
+/// `FactoringDisabled` singleton, zero groups, zero deferrals).
+fn inv8_mixfix_surface_noloss(lang: &LanguageDef) -> Result<(), String> {
+    let (categories, per_cat) = categories_and_per_cat(lang);
+    let prefix = super::factoring::build_prefix_factoring(lang, &categories, &per_cat);
+    let models = [
+        (
+            "mixfix factoring model",
+            super::factoring::build_mixfix_factoring(lang, &categories, &per_cat, &prefix),
+        ),
+        (
+            "mixfix emission partition",
+            super::factoring::mixfix_emission_partition(lang, &categories, &per_cat),
+        ),
+    ];
+    for (which, model) in &models {
+        for fact in model {
+            for bucket in &fact.buckets {
+                let leaves: usize = bucket.groups.iter().map(|g| g.leaves().len()).sum();
+                let deferred: usize =
+                    bucket.ineligible.iter().map(|g| g.member_rule_idxs.len()).sum();
+                let total = leaves + deferred + bucket.singletons.len();
+                if total != bucket.slice.len() {
+                    return Err(format!(
+                        "INV-8-mixfix no-loss violated in the {which} at (cat {}, {:?}): \
+                         {leaves} leaves + {deferred} deferred + {} singletons != slice {}",
+                        fact.dispatch_cat_src_idx,
+                        bucket.trigger,
+                        bucket.singletons.len(),
+                        bucket.slice.len(),
+                    ));
+                }
+                if bucket.groups.len() > 1 {
+                    return Err(format!(
+                        "INV-8-mixfix D-5 violated in the {which} at (cat {}, {:?}): \
+                         {} groups in one bucket (whole-slice ⇒ at most one)",
+                        fact.dispatch_cat_src_idx,
+                        bucket.trigger,
+                        bucket.groups.len(),
+                    ));
+                }
+                if let Some(group) = bucket.groups.first() {
+                    if group.leaves().len() != bucket.slice.len()
+                        || !bucket.ineligible.is_empty()
+                        || !bucket.singletons.is_empty()
+                    {
+                        return Err(format!(
+                            "INV-8-mixfix D-5 violated in the {which} at (cat {}, {:?}): \
+                             a factored bucket must cover the WHOLE slice ({} leaves, \
+                             slice {}, {} ineligible, {} singletons)",
+                            fact.dispatch_cat_src_idx,
+                            bucket.trigger,
+                            group.leaves().len(),
+                            bucket.slice.len(),
+                            bucket.ineligible.len(),
+                            bucket.singletons.len(),
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    if !(super::forks::S1_FACTORING && super::forks::S1F5_MIXFIX_COHORTS) {
+        let (_, effective) = &models[1];
+        for fact in effective {
+            for bucket in &fact.buckets {
+                if !bucket.groups.is_empty() || !bucket.ineligible.is_empty() {
+                    return Err(format!(
+                        "INV-8-mixfix identity violated: the consts are OFF yet \
+                         (cat {}, {:?}) emits {} groups / {} deferrals",
+                        fact.dispatch_cat_src_idx,
+                        bucket.trigger,
+                        bucket.groups.len(),
+                        bucket.ineligible.len(),
+                    ));
+                }
+                if bucket.singletons.len() != bucket.slice.len()
+                    || bucket.singletons.iter().any(|s| {
+                        s.reason != super::factoring::SingletonReason::FactoringDisabled
+                    })
+                {
+                    return Err(format!(
+                        "INV-8-mixfix identity violated at (cat {}, {:?}): every slice \
+                         member must be a FactoringDisabled singleton",
+                        fact.dispatch_cat_src_idx, bucket.trigger,
+                    ));
+                }
             }
         }
     }
@@ -1023,6 +1472,211 @@ fn grammar_generality_inv1_noloss_symmetry_with_collisions() {
     inv1_inv5_noloss(&lang).expect("INV-1/INV-5: slice == group == lattice for trigger collisions");
 }
 
+/// INV-1/INV-5 RESTATEMENT witness — Literal-root mixfix cohort (PERMANENT
+/// regression pin, board task #13). This is `Inv8MixfixLang` (the
+/// rhocalc-shaped POutput/POutputEmpty `!`+`«` send cohort), the CHEAPEST
+/// decisive probe: an in-tree grammar already fed to
+/// `inv8_mixfix_surface_noloss`, which by construction cannot catch the
+/// INFIX-lattice defect. Hand-walk (red-team 2026-07-13) confirms it forms a
+/// two-member mixfix cohort at (cat 0, '!'). Under the PRE-F5-2 INV-1
+/// statement (1:1 arm↔op) this grammar Err'd with "lattice arm has 1 infos,
+/// group has 2 ops" — the DESIGNED F5-2 N→1 lex-alt replacement
+/// (kind_dispatch.rs:2005-2036) collapses the cohort's per-member
+/// `MixfixFirstTrigger` entries into ONE spine entry. The cohort-aware
+/// RESTATEMENT accepts that single spine entry (expected = ops − members + 1
+/// = 1) while still proving no-loss via the spine-identity fields
+/// (spine_id / min_l_bp / result_src_idx) and the INV-8 leaves==members
+/// cross-reference — so this must now PASS.
+#[test]
+fn grammar_generality_inv1_cohort_litroot_witness() {
+    let types = vec![lang_type("Expr", None)];
+    let terms = vec![
+        jrule("EAtom", "Expr", vec![], vec![lit("e")]),
+        jrule(
+            "MOne",
+            "Expr",
+            vec![simple("a", "Expr"), simple("b", "Expr")],
+            vec![param("a"), lit("!"), lit("«"), param("b"), lit("»")],
+        ),
+        jrule(
+            "MEmpty",
+            "Expr",
+            vec![simple("a", "Expr")],
+            vec![param("a"), lit("!"), lit("«"), lit("»")],
+        ),
+    ];
+    let lang = mk_language("Inv8MixfixLang", types, terms);
+    inv1_inv5_noloss(&lang).expect(
+        "INV-1/INV-5 (restated): a Literal-root mixfix send cohort collapses to ONE \
+         spine entry with no member loss",
+    );
+}
+
+/// INV-1/INV-5 RESTATEMENT witness — ParamParse-root mixfix cohort (PERMANENT
+/// regression pin, board task #13). This is the exact shrunk shape of the
+/// board-#13 proptest seed (entry 3, `cc f016bbb7…`): two `MixfixTernary`
+/// rules `a "++" b "star" d` / `a "++" b "as" d` sharing the `++` trigger
+/// with a NON-absorbable post-operand divergence ("star"/"as" are not
+/// operator triggers of the operand cat Txt ⇒ A-M5 admits the cohort,
+/// factoring.rs:1499-1528). Under the PRE-F5-2 INV-1 statement this Err'd
+/// "lattice arm has 1 infos, group has 2 ops" at (cat 0, '++'); the
+/// cohort-aware RESTATEMENT must PASS. This is the ParamParse-root class the
+/// bundled census never exercises (rhocalc's `!` cohorts are Literal-root),
+/// so it pins the restatement across BOTH root classes.
+#[test]
+fn grammar_generality_inv1_cohort_paramroot_witness() {
+    let types = vec![lang_type("Txt", Some("String"))];
+    let terms = vec![
+        jrule("TAtom", "Txt", vec![], vec![lit("t")]),
+        jrule(
+            "R0Mx",
+            "Txt",
+            vec![simple("a", "Txt"), simple("b", "Txt"), simple("d", "Txt")],
+            vec![param("a"), lit("++"), param("b"), lit("star"), param("d")],
+        ),
+        jrule(
+            "R1Mx",
+            "Txt",
+            vec![simple("a", "Txt"), simple("b", "Txt"), simple("d", "Txt")],
+            vec![param("a"), lit("++"), param("b"), lit("as"), param("d")],
+        ),
+    ];
+    let lang = mk_language("MinLang", types, terms);
+    inv1_inv5_noloss(&lang).expect(
+        "INV-1/INV-5 (restated): a ParamParse-root mixfix cohort collapses to ONE \
+         spine entry with no member loss",
+    );
+}
+
+/// P-A4 receipt (board task #13): the census-vs-emission dump for the MinLang
+/// ParamParse-root cohort — the restatement's receipt TRIPLE. Asserts (a) the
+/// emission produces exactly ONE mixfix group at (cat 0, '++') with two
+/// members and a `SPINE_RULE_BASE` (0xF800)-based spine_id; (b) the parsed
+/// infix lattice count at that key is 1 (the N→1 collapse the restatement now
+/// EXPECTS); (c) the `mixfix_bp_*` slice still emits 2 tuples (the per-member
+/// weight rows are NOT collapsed — the census side stays complete). The
+/// restated INV-1 reconciles lattice(1) against slice(2)/census(2) exactly by
+/// the cohort adjustment.
+#[test]
+fn grammar_generality_inv1_cohort_paramroot_dump() {
+    let types = vec![lang_type("Txt", Some("String"))];
+    let terms = vec![
+        jrule("TAtom", "Txt", vec![], vec![lit("t")]),
+        jrule(
+            "R0Mx",
+            "Txt",
+            vec![simple("a", "Txt"), simple("b", "Txt"), simple("d", "Txt")],
+            vec![param("a"), lit("++"), param("b"), lit("star"), param("d")],
+        ),
+        jrule(
+            "R1Mx",
+            "Txt",
+            vec![simple("a", "Txt"), simple("b", "Txt"), simple("d", "Txt")],
+            vec![param("a"), lit("++"), param("b"), lit("as"), param("d")],
+        ),
+    ];
+    let lang = mk_language("MinLang", types, terms);
+    let (categories, per_cat) = categories_and_per_cat(&lang);
+
+    // (a) emission: exactly one mixfix cohort at (0, "++"), two members.
+    let s1 = super::factoring::build_spine_emission(&lang, &categories, &per_cat);
+    assert_eq!(s1.mixfix_groups.len(), 1, "expected exactly one mixfix cohort");
+    let group = &s1.mixfix_groups[0];
+    eprintln!(
+        "P-A4 MinLang cohort: dispatch_cat={} trigger={:?} spine_id={:#06x} \
+         min_l_bp={} result_src_idx={} members={:?}",
+        group.dispatch_cat_src_idx,
+        group.trigger,
+        group.spine_id,
+        group.min_l_bp,
+        group.result_src_idx,
+        group.member_rule_idxs,
+    );
+    assert_eq!(group.dispatch_cat_src_idx, 0);
+    assert_eq!(group.trigger, "++");
+    assert_eq!(group.member_rule_idxs.len(), 2, "R0Mx + R1Mx");
+    assert!(
+        group.spine_id >= super::factoring::SPINE_RULE_BASE,
+        "spine_id {:#06x} must be in the 0xF800 base band",
+        group.spine_id,
+    );
+
+    // (b) parsed infix lattice count at (0, "++") == 1 (the N→1 collapse).
+    let lattice_ts =
+        super::kind_dispatch::emit_lex_alt_rule_for_fn(&lang, &per_cat, &categories, &s1);
+    let lattice_counts = lattice_infix_counts_per_group(&parse_fns(lattice_ts));
+    eprintln!("P-A4 MinLang lattice_infix_counts = {lattice_counts:?}");
+    assert_eq!(lattice_counts.get(&(0u16, "++".to_string())).copied(), Some(1));
+
+    // (c) the mixfix_bp_* slice still emits 2 tuples (census stays complete).
+    let slice_ts = super::infix::emit_bp_tables(&lang, &categories, &per_cat);
+    let bp_tuples = count_tuples_in_prefixed_fns(&parse_fns(slice_ts), &["mixfix_bp_"]);
+    eprintln!("P-A4 MinLang mixfix_bp tuple count = {bp_tuples}");
+    assert_eq!(bp_tuples, 2, "per-member weight rows are NOT collapsed");
+}
+
+/// INV-8 witness: a deliberately factorable prefix cohort mixing BOTH
+/// classifier sources (a BinderPrefix pair sharing `zero « Tee` plus a
+/// NullaryLiteralRun member `zero « »`) alongside an unshared singleton —
+/// the member accounting must balance, and with `S1_FACTORING` OFF the
+/// emission partition must be the identity.
+#[test]
+fn grammar_generality_inv8_prefix_surface_noloss() {
+    let types = vec![lang_type("Expr", None), lang_type("Tee", None)];
+    let terms = vec![
+        // Nullary multi-literal member (the `mixfix_nullary_literals` source).
+        jrule("NZero", "Expr", vec![], vec![lit("zero"), lit("«"), lit("»")]),
+        // Two binder members sharing the « Tee spine, diverging at »/·.
+        jrule(
+            "BClose",
+            "Expr",
+            vec![simple("a", "Tee")],
+            vec![lit("zero"), lit("«"), param("a"), lit("»")],
+        ),
+        jrule(
+            "BSep",
+            "Expr",
+            vec![simple("a", "Tee"), simple("b", "Tee")],
+            vec![lit("zero"), lit("«"), param("a"), lit("·"), param("b"), lit("»")],
+        ),
+        // A lone cohort elsewhere (singleton accounting).
+        jrule("Lone", "Expr", vec![simple("a", "Tee")], vec![lit("unit"), param("a")]),
+        jrule("TAtom", "Tee", vec![], vec![lit("epsilon")]),
+    ];
+    let lang = mk_language("Inv8Lang", types, terms);
+    inv8_prefix_surface_noloss(&lang)
+        .expect("INV-8: prefix-surface member accounting must balance (A5)");
+}
+
+/// INV-8-mixfix witness: a deliberately factorable mixfix send cohort — two
+/// `!`-triggered postfix-mixfix rules sharing the `«` opener (an
+/// operand-bearing member `a ! « b »` and a nullary member `a ! « »`,
+/// the rhocalc POutput/POutputEmpty shape on a foreign alphabet) — the
+/// slice accounting must balance in both models, and with the F5-2 consts
+/// not both on the emission partition must be the identity.
+#[test]
+fn grammar_generality_inv8_mixfix_surface_noloss() {
+    let types = vec![lang_type("Expr", None)];
+    let terms = vec![
+        jrule("EAtom", "Expr", vec![], vec![lit("e")]),
+        jrule(
+            "MOne",
+            "Expr",
+            vec![simple("a", "Expr"), simple("b", "Expr")],
+            vec![param("a"), lit("!"), lit("«"), param("b"), lit("»")],
+        ),
+        jrule(
+            "MEmpty",
+            "Expr",
+            vec![simple("a", "Expr")],
+            vec![param("a"), lit("!"), lit("«"), lit("»")],
+        ),
+    ];
+    let lang = mk_language("Inv8MixfixLang", types, terms);
+    inv8_mixfix_surface_noloss(&lang)
+        .expect("INV-8-mixfix: mixfix-surface slice accounting must balance (D-5)");
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 // Property tests over random grammars (breadth).
 // ════════════════════════════════════════════════════════════════════════════
@@ -1030,13 +1684,15 @@ fn grammar_generality_inv1_noloss_symmetry_with_collisions() {
 proptest! {
     #![proptest_config(ProptestConfig { cases: 96, max_shrink_iters: 4096, ..ProptestConfig::default() })]
 
-    /// All structure-level invariants (INV-1/2/3/5/7) over random grammars.
+    /// All structure-level invariants (INV-1/2/3/5/7/8) over random grammars.
     #[test]
     fn grammar_generality_props_structure(lang in arb_language_def()) {
         prop_assert!(inv1_inv5_noloss(&lang).is_ok(), "{}", inv1_inv5_noloss(&lang).unwrap_err());
         prop_assert!(inv2_totality(&lang).is_ok(), "{}", inv2_totality(&lang).unwrap_err());
         prop_assert!(inv3_goal_gate(&lang).is_ok(), "{}", inv3_goal_gate(&lang).unwrap_err());
         prop_assert!(inv7_nullary_per_kind(&lang).is_ok(), "{}", inv7_nullary_per_kind(&lang).unwrap_err());
+        prop_assert!(inv8_prefix_surface_noloss(&lang).is_ok(), "{}", inv8_prefix_surface_noloss(&lang).unwrap_err());
+        prop_assert!(inv8_mixfix_surface_noloss(&lang).is_ok(), "{}", inv8_mixfix_surface_noloss(&lang).unwrap_err());
     }
 }
 

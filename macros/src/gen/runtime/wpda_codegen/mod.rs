@@ -51,6 +51,19 @@ pub mod builtin_metadata;
 pub mod collection;
 pub mod engine_impl;
 pub mod facade;
+/// S1-FACTORING Stage F0 (2026-07-11): generic FGLL-style shared-prefix
+/// factoring of the PrefixDispatch fan — eligibility predicate, per-bucket
+/// suffix-trie build, typed spine-pos → member-pos commit maps. PURE data
+/// model in F0 (consumed by its unit tests + the grammar-generality INV-8
+/// prefix-surface no-loss invariant); emission is wired in F1 behind
+/// `forks::S1_FACTORING` (OFF ⇒ generated wpda.rs byte-identical). Plan:
+/// `scratchpad/zz_probes/s1_factoring_plan.md`.
+pub mod factoring;
+/// Task #10 item 1: the per-grammar generated `fork_emission_ordinal` table
+/// (the K-C election tiebreak's ordinal source) — site-2 rows recorded by
+/// the prefix emitters at their static declaration positions, emitted as
+/// `WPDA_FORK_EMISSION_ORDINAL` beside the Parikh tables.
+pub mod fork_emission;
 /// Stage 3.16/3.17/3.18 (Commit 2, 2026-05-05): unified Fork-emission framework.
 /// Helpers replace deterministic peek-and-decide patterns with
 /// `WpdaStepAction::Fork` per `feedback_use_wpds_disambiguation_not_heuristics.md`.
@@ -101,13 +114,21 @@ pub fn generate_wpda_engine_module(language: &LanguageDef) -> TokenStream {
     let rule_table = tables::emit_rule_table_from_per_cat(&per_cat);
     let primary_src_idx = primary_category_idx(&categories);
 
+    // Task #10 item 1: the fork-emission ordinal collector — the prefix/
+    // paren emitters inside `emit_engine_impl_full` record each rule's
+    // initiating-branch static declaration position as they emit; the
+    // filled model is turned into the module-level
+    // `WPDA_FORK_EMISSION_ORDINAL` table below (beside the Parikh tables).
+    let mut fork_emission_model = fork_emission::ForkEmissionOrdinalModel::new();
     let engine_impl = engine_impl::emit_engine_impl_full(
         &engine_ident,
         language,
         &categories,
         &per_cat,
         primary_src_idx,
+        &mut fork_emission_model,
     );
+    let fork_emission_tokens = fork_emission_model.into_tokens(&lang_name);
 
     // Phase 3: per-category BP tables (infix + postfix) — used by the
     // engine's InfixLoop state in subsequent wiring. Pass per_cat so the
@@ -193,6 +214,11 @@ pub fn generate_wpda_engine_module(language: &LanguageDef) -> TokenStream {
         // EP-P2 (Stage B): Parikh obligation tables.
         #[doc = #parikh_inventory_doc]
         #parikh_tokens
+
+        // Task #10 item 1: the per-grammar fork-emission ordinal table
+        // (K-C election tiebreak) — consumed by the engine's
+        // `fork_emission_ordinal` trait override.
+        #fork_emission_tokens
 
         /// WPDS step engine for `#lang_name`.
         ///
@@ -595,6 +621,31 @@ mod tests {
         assert!(ts.contains("dyn mettail_prattail :: wpda_runtime :: WpdaTokenSource"));
     }
 
+    /// Task #10 item 1: the generated module carries the per-grammar
+    /// fork-emission ordinal table AND the engine override delegating to it
+    /// (the K-C election tiebreak); the site-0/1 rows route through the
+    /// binder TAKE/SKIP constants (0/1) and site 3 mirrors the walker-trait
+    /// default.
+    #[test]
+    fn fork_emission_ordinal_table_is_generated_and_overridden() {
+        let lang = synthetic_language();
+        let ts = generate_wpda_engine_module(&lang).to_string();
+        assert!(
+            ts.matches("WPDA_FORK_EMISSION_ORDINAL").count() >= 2,
+            "the table fn definition AND the trait-override delegation must both be present",
+        );
+        assert!(
+            ts.contains("fn fork_emission_ordinal"),
+            "the engine must override the walker-trait default",
+        );
+        assert!(ts.contains("0u8 => 0u16"), "TAKE row = binder const 0");
+        assert!(ts.contains("1u8 => 1u16"), "SKIP row = binder const 1");
+        assert!(
+            ts.contains("3u8 => 1u16"),
+            "site 3 mirrors the walker-trait default's 1",
+        );
+    }
+
     #[test]
     fn parse_all_facade_reports_realization_cap_overflow() {
         let lang = synthetic_language();
@@ -615,8 +666,13 @@ mod tests {
         assert!(ts.contains("actual : REALIZE_CAP + 1"));
         assert!(ts.contains("actual : RAW_REALIZE_CAP + 1"));
         assert!(ts.contains("actual : RAW_PREFIX_CAP + 1"));
+        // Task #10 item 2: the needle is the OPEN-ended call prefix (no
+        // closing paren) so the negative assert keeps matching the
+        // regression shape now that `realize_root_to_terms` takes a third
+        // `RealizeRequestMode` argument — a cap-truncating call would render
+        // as `realize_root_to_terms (root , Some (REALIZE_CAP) , ...)`.
         assert!(
-            !ts.contains("realize_root_to_terms (root , Some (REALIZE_CAP))"),
+            !ts.contains("realize_root_to_terms (root , Some (REALIZE_CAP)"),
             "parse_all must probe for overflow instead of silently truncating at the cap",
         );
         assert!(ts.contains("__mettail_wpda_collect_prefix"));
@@ -630,6 +686,18 @@ mod tests {
         assert!(
             ts.matches("realize_root_to_terms_with_weights").count() >= 2,
             "parse_all must use weighted realization for accepted and trailing roots",
+        );
+        // Task #10 item 2: every realize call now states its request mode
+        // explicitly; both variants must appear in the generated stream
+        // (single facades / recovering picks elect; `_all` facades and the
+        // probe helpers enumerate).
+        assert!(
+            ts.contains("RealizeRequestMode :: SingleResultElection"),
+            "generated facades must request single-result election explicitly",
+        );
+        assert!(
+            ts.contains("RealizeRequestMode :: BoundedEnumeration"),
+            "generated facades must request bounded enumeration explicitly",
         );
         assert!(
             ts.contains("typed_weights . push (weight)"),

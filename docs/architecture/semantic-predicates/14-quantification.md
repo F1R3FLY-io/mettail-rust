@@ -395,8 +395,8 @@ behavioral predicate and refer to it inside its own definition —
 than a flat formula. Such a body is **not** decided by the relational evaluator of §8; it
 is lowered to a **parity tree automaton (PATA)** and decided by non-emptiness.
 
-The lowering `letprop_to_pata` (`prattail/src/letprop.rs`, feature `oslf-letprop`, off by
-default) is a two-step compile:
+The lowering `letprop_to_pata` (`prattail/src/letprop.rs`) — always compiled and always
+run, with no Cargo feature — is a two-step compile:
 
 1. **`LetPropExpr → μ-calculus`.** The recursive definition becomes a modal-`μ` formula. A
    quantifier in the body lowers to a modality over the tree engine: `∀` to

@@ -28,78 +28,6 @@ pub struct RefinementDispatchAnalysis {
     pub base_type_groups: HashMap<String, Vec<String>>,
 }
 
-/// Analyze refinement type dispatch safety using the `TypeSystemAlgebra`.
-///
-/// For each pair of refinement types sharing a base type, checks:
-/// 1. **Disjointness**: `is_satisfiable(P ∧ Q)` — if false, types are disjoint
-/// 2. **Subsumption**: `implies(P, Q)` — if true, P-type is subtype of Q-type
-///
-/// This is the compile-time analogue of SFA intersection/subsumption checking
-/// applied to refinement predicates rather than SFA guard predicates.
-///
-/// Feature-gated on `type-system` (uses `LatticeTypeSystem` and
-/// `RefinementTypeSystem` which require `logict` + `lattice-theory`).
-pub fn analyze_refinement_dispatch(
-    refinement_specs: &[crate::RefinementTypeSpec],
-) -> RefinementDispatchAnalysis {
-    let mut analysis = RefinementDispatchAnalysis::default();
-
-    // Group by base category
-    let mut groups: HashMap<String, Vec<&crate::RefinementTypeSpec>> = HashMap::new();
-    for spec in refinement_specs {
-        groups
-            .entry(spec.base_category.clone())
-            .or_default()
-            .push(spec);
-    }
-
-    for (base, specs) in &groups {
-        let names: Vec<String> = specs.iter().map(|s| s.name.clone()).collect();
-        analysis.base_type_groups.insert(base.clone(), names);
-
-        // Pairwise analysis within each base type group
-        for i in 0..specs.len() {
-            for j in (i + 1)..specs.len() {
-                let a = specs[i];
-                let b = specs[j];
-
-                // Use predicate kind to determine dispatch safety.
-                // If both are Presburger, we can reason about their predicates.
-                // For now, use a conservative heuristic: same predicate kind
-                // + different predicate repr = potentially disjoint.
-                // Full SFA analysis requires constructing actual automata from
-                // the predicate representations, which is done by the
-                // `symbolic-automata` feature.
-                let overlap = classify_predicate_overlap(a, b);
-                match overlap {
-                    PredicateOverlap::Disjoint => {
-                        analysis
-                            .disjoint_pairs
-                            .push((a.name.clone(), b.name.clone()));
-                    },
-                    PredicateOverlap::Subtype => {
-                        analysis
-                            .subtype_pairs
-                            .push((a.name.clone(), b.name.clone()));
-                    },
-                    PredicateOverlap::Supertype => {
-                        analysis
-                            .subtype_pairs
-                            .push((b.name.clone(), a.name.clone()));
-                    },
-                    PredicateOverlap::Overlapping => {
-                        analysis
-                            .overlapping_pairs
-                            .push((a.name.clone(), b.name.clone()));
-                    },
-                }
-            }
-        }
-    }
-
-    analysis
-}
-
 /// Classification of how two refinement predicates overlap.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PredicateOverlap {
@@ -218,11 +146,9 @@ pub(crate) fn is_complement_predicate(a: &str, b: &str) -> bool {
 ///     predicate fails to parse) the existing [`classify_predicate_overlap`]
 ///     heuristic is used — so this is **never worse** than the status quo.
 ///
-/// This is the `.1` live path; it is selected by
-/// [`pipeline::analysis::analyze_refinement_types`](crate::pipeline) under the
-/// `sym-tree-structural` feature. Analysis only — runtime `match_pattern` codegen
-/// is untouched.
-#[cfg(feature = "sym-tree-structural")]
+/// This is the live path; it is selected by
+/// [`pipeline::analysis::analyze_refinement_types`](crate::pipeline). Analysis
+/// only — runtime `match_pattern` codegen is untouched.
 pub fn analyze_refinement_dispatch_structural(
     refinement_specs: &[crate::RefinementTypeSpec],
     all_syntax: &[(String, String, Vec<crate::SyntaxItemSpec>)],
@@ -292,7 +218,6 @@ pub fn analyze_refinement_dispatch_structural(
 /// `Structural`, a `predicate_repr` that does not parse into a tree pattern, or a
 /// tree algebra that is not `AnyAlgebra::Tree` (never happens for
 /// `build_tree_algebra`, but guarded defensively).
-#[cfg(feature = "sym-tree-structural")]
 fn structural_pair_overlap(
     a: &crate::RefinementTypeSpec,
     b: &crate::RefinementTypeSpec,
@@ -338,7 +263,6 @@ fn structural_pair_overlap(
 
 /// The refined automaton for one side of a structural pair: the pattern's
 /// language (equality) or its complement within the base category (inequality).
-#[cfg(feature = "sym-tree-structural")]
 fn refined_side(
     base: &str,
     pattern: &crate::sym_tree::TreePred<crate::any_algebra::AnyPred>,

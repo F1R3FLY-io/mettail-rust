@@ -118,12 +118,21 @@ fn generate_any_term_enum(language: &LanguageDef, out: &mut String) {
     out.push_str("}\n\n");
 
     // Unwrap helpers
+    let multi_category = language.types.len() > 1;
     for lang_type in &language.types {
         let cat = lang_type.name.to_string();
         let cat_lower = cat.to_lowercase();
+        // The `_ => panic!(…)` catch-all is reachable only when `AnyTerm` has >1 variant; for a
+        // single-category language the sole `Wrap<Cat>(v)` arm is exhaustive, so the wildcard would
+        // be an unreachable pattern. Emit it only for multi-category languages.
+        let wrong_variant_arm = if multi_category {
+            format!("\n            _ => panic!(\"AnyTerm::unwrap_{}: wrong variant\"),", cat_lower)
+        } else {
+            String::new()
+        };
         out.push_str(&format!(
-            "impl AnyTerm {{\n    #[allow(dead_code)]\n    fn unwrap_{}(self) -> {} {{\n        match self {{\n            AnyTerm::Wrap{}(v) => v,\n            _ => panic!(\"AnyTerm::unwrap_{}: wrong variant\"),\n        }}\n    }}\n}}\n\n",
-            cat_lower, cat, cat, cat_lower
+            "impl AnyTerm {{\n    #[allow(dead_code)]\n    fn unwrap_{}(self) -> {} {{\n        match self {{\n            AnyTerm::Wrap{}(v) => v,{}\n        }}\n    }}\n}}\n\n",
+            cat_lower, cat, cat, wrong_variant_arm
         ));
     }
 }
@@ -160,17 +169,26 @@ impl<'a> TapeReader<'a> {
         TapeReader { tape, pos: 0 }
     }
 
-    /// Read the next byte, wrapping around if the tape is exhausted.
+    /// Read the next byte. On exhaustion return 0 — do NOT wrap. Byte 0 maps
+    /// to constructor choice `0 % N == 0`, which is ALWAYS a leaf: every
+    /// `build_*_from_tape` match emits its leaf arms before its recursive arms
+    /// (see `classify_variants`), so choice 0 selects `leaves[0]` and the
+    /// recursion bottoms out to the simplest term — the documented intent
+    /// "shorter tapes = simpler terms". The old `pos % len` wrap RE-READ the
+    /// same recursive-constructor byte at every level, so a 1-byte tape
+    /// `[0x38]` built a COMPLETE binary tree down to max_depth (0x38 ->
+    /// `MulBigRat` at all internal nodes -> `error*error*...`), which drove
+    /// BigRat::parse into the exponential cross-category axis (~9s).
     fn next_byte(&mut self) -> u8 {
-        if self.tape.is_empty() {
+        if self.pos >= self.tape.len() {
             return 0;
         }
-        let b = self.tape[self.pos % self.tape.len()];
+        let b = self.tape[self.pos];
         self.pos += 1;
         b
     }
 
-    /// Read a u32 from 4 bytes (little-endian), wrapping tape as needed.
+    /// Read a u32 from 4 bytes (little-endian); reads 0 past end of tape.
     fn next_u32(&mut self) -> u32 {
         let b0 = self.next_byte() as u32;
         let b1 = self.next_byte() as u32;
@@ -1073,6 +1091,20 @@ fn generate_direct_recursive_build(
                             field_exprs.push(format!("coll_{}", i));
                         },
                     }
+                } else if field.is_optional && field.is_predicate {
+                    // Task #14 (Option<Guard>): `Option<BehavioralPred>`
+                    // guard slot — tape byte picks None / Some(Top). No
+                    // `build_guard_from_tape` exists (Guard is not a
+                    // language category), and the term arm's
+                    // `Option<Arc<{cat}>>` type is wrong here. `Top` per
+                    // the mandatory-guard arm below (renders `true()`,
+                    // display-stable under re-parse — the guarded_rho
+                    // prop suite is green with tape-built Top today).
+                    code.push_str(&format!(
+                        "            let f{i}: Option<mettail_runtime::BehavioralPred> = if reader.next_byte() & 1 == 0 {{ None }} else {{ Some(mettail_runtime::BehavioralPred::Top) }};\n",
+                        i = i,
+                    ));
+                    field_exprs.push(format!("f{}", i));
                 } else if field.is_optional {
                     // F7: Opt-Group — Optional fields visit BOTH None
                     // and Some(...) arms based on a tape byte. Spec
@@ -1283,12 +1315,23 @@ fn generate_binder_direct_build(
             ));
             pre_scope_exprs.push(format!("pre_{}", i));
         } else if field.is_predicate {
-            // Guard slot — spec-derived: same rationale as above.
-            // `Top` is the spec's default for unspecified guards.
-            code.push_str(&format!(
-                "            let pred_{i} = mettail_runtime::BehavioralPred::Top;\n",
-                i = i,
-            ));
+            if field.is_optional {
+                // Task #14 (Option<Guard>): pre-scope twin of the Regular
+                // tape-builder's optional-guard arm — tape byte picks
+                // None / Some(Top) for an `Option<BehavioralPred>` field.
+                // Dormant until a Binder-rule optional guard exists.
+                code.push_str(&format!(
+                    "            let pred_{i}: Option<mettail_runtime::BehavioralPred> = if reader.next_byte() & 1 == 0 {{ None }} else {{ Some(mettail_runtime::BehavioralPred::Top) }};\n",
+                    i = i,
+                ));
+            } else {
+                // Guard slot — spec-derived: same rationale as above.
+                // `Top` is the spec's default for unspecified guards.
+                code.push_str(&format!(
+                    "            let pred_{i} = mettail_runtime::BehavioralPred::Top;\n",
+                    i = i,
+                ));
+            }
             pre_scope_exprs.push(format!("pred_{}", i));
         } else if field.is_collection {
             // F5: spec-derived coll_type — every collection field MUST
@@ -1407,6 +1450,16 @@ fn generate_proptest_blocks(language: &LanguageDef, out: &mut String) {
         // tests (debug/display/clone) stay, so `arb_<cat>` keeps a referent.
         let is_runtime_only = crate::gen::category_is_runtime_only_native(&lang_type.name, language);
 
+        // Generation depth for the display->parse roundtrip (test 4): uniform
+        // depth 3 for EVERY category. The former per-category depth-2 cap for
+        // cross-category-ambiguous categories is retired: the walker's k-best
+        // extraction (ROOT-P) elects derivations in weight order instead of
+        // materializing the exponential cross-category parse family, so even
+        // maximally-ambiguous shared-operator chains at depth 3 parse in
+        // milliseconds (acceptance receipts:
+        // `scratchpad/zz_probes/logs_kbest_s4/`).
+        let roundtrip_depth = 3;
+
         // Test 1: Generated terms can be Debug-formatted without panic
         out.push_str(&format!(
             "    #[test]\n\
@@ -1435,15 +1488,41 @@ fn generate_proptest_blocks(language: &LanguageDef, out: &mut String) {
             cat_lower = cat_lower,
         ));
 
-        // Test 4: Display round-trip (parse(display(term)) == term for ground terms)
+        // Test 4: Display round-trip — CANONICAL-DISPLAY IDEMPOTENCE, not
+        // AST equality: the emitted body asserts
+        // `Display(Parse(Display(Parse(s)))) == Display(Parse(s))` (the
+        // canonical form re-parses to something that displays identically),
+        // NEVER `parse(display(term)) == term`. Guard slots rely on this:
+        // `BehavioralPred::Top` displays as `true()`, which re-parses to
+        // `RelationQuery("true", [])` — display-stable by design, so the
+        // roundtrip holds even though the ASTs differ.
         // Only if the category has a parse method — all categories do via PraTTaIL.
         // Skipped for runtime-only opaque natives (no surface form to parse).
+        //
+        // GENERATION DEPTH (`roundtrip_depth`, computed above): uniform depth 3
+        // for every category. The displayed surface is a parenthesis-minimal
+        // operator tree (Display omits precedence-redundant parens to keep
+        // one-cycle idempotence — see `macros/src/gen/syntax/display.rs`).
+        // Categories whose operator terminals are SHARED with other categories
+        // over syntaxless cross-category projections (e.g. Calculator's
+        // `+ * / bitand bitor` across Int/BigInt/BigRat/Float/Fixed/UInt32)
+        // still multiply the WPDA parse forest along the cross-category edge
+        // axis, but the walker's k-best extraction (ROOT-P;
+        // `prattail/src/wpda_walker.rs`) elects derivations in weight order
+        // without materializing the exponential family, so maximally-ambiguous
+        // depth-3 chains parse in milliseconds (acceptance receipts:
+        // `scratchpad/zz_probes/logs_kbest_s4/`). The TapeReader is
+        // non-wrapping, so short/shrunk tapes yield SIMPLE terms and proptest
+        // shrinking converges on minimal counterexamples.
         if !is_runtime_only {
         out.push_str(&format!(
             "    #[test]\n\
-             \x20   fn {cat_lower}_display_parse_roundtrip(term in arb_{cat_lower}(3)) {{\n\
+             \x20   fn {cat_lower}_display_parse_roundtrip(term in arb_{cat_lower}({depth})) {{\n\
              \x20       let displayed = format!(\"{{}}\", term);\n\
-             \x20       // Skip terms whose display is too long (parser may overflow)\n\
+             \x20       // Skip terms whose display is too long (parser may overflow).\n\
+             \x20       // NOTE: length is only a coarse backstop against degenerate\n\
+             \x20       // displays; cross-category-shared operator chains are parsed\n\
+             \x20       // via the walker's k-best extraction, so depth-3 terms are cheap.\n\
              \x20       if displayed.len() > 500 {{\n\
              \x20           return Ok(());\n\
              \x20       }}\n\
@@ -1472,6 +1551,7 @@ fn generate_proptest_blocks(language: &LanguageDef, out: &mut String) {
              \x20   }}\n\n",
             cat_lower = cat_lower,
             cat = cat,
+            depth = roundtrip_depth,
         ));
         }
 
@@ -1656,6 +1736,7 @@ fn generate_public_any_term_enum(language: &LanguageDef, out: &mut String) {
 
     // Unwrap helpers (public)
     out.push_str("impl AnyTerm {\n");
+    let multi_category = language.types.len() > 1;
     for lang_type in &language.types {
         let cat = lang_type.name.to_string();
         let cat_lower = cat.to_lowercase();
@@ -1664,15 +1745,25 @@ fn generate_public_any_term_enum(language: &LanguageDef, out: &mut String) {
             cat
         ));
         out.push_str("    #[allow(dead_code)]\n");
+        // Single-category `AnyTerm` has one variant; a `_ =>` arm would be an unreachable pattern.
+        let wrong_variant_arm = if multi_category {
+            format!(
+                "\x20           _ => panic!(\"AnyTerm::unwrap_{cat_lower}: wrong variant\"),\n",
+                cat_lower = cat_lower
+            )
+        } else {
+            String::new()
+        };
         out.push_str(&format!(
             "    pub fn unwrap_{cat_lower}(self) -> {cat} {{\n\
              \x20       match self {{\n\
              \x20           AnyTerm::Wrap{cat}(v) => v,\n\
-             \x20           _ => panic!(\"AnyTerm::unwrap_{cat_lower}: wrong variant\"),\n\
+             {wrong_variant_arm}\
              \x20       }}\n\
              \x20   }}\n\n",
             cat_lower = cat_lower,
             cat = cat,
+            wrong_variant_arm = wrong_variant_arm,
         ));
     }
     out.push_str("}\n\n");
@@ -1711,17 +1802,21 @@ impl<'a> TapeReader<'a> {
         TapeReader { tape, pos: 0 }
     }
 
-    /// Read the next byte, wrapping around if the tape is exhausted.
+    /// Read the next byte. On exhaustion return 0 — do NOT wrap (byte 0 selects
+    /// constructor choice 0, always a leaf, so an exhausted tape bottoms the
+    /// recursion out to the simplest term). See the private `TapeReader` for the
+    /// full rationale; the old `pos % len` wrap re-read the same recursive
+    /// constructor byte at every level and built complete trees from short tapes.
     pub fn next_byte(&mut self) -> u8 {
-        if self.tape.is_empty() {
+        if self.pos >= self.tape.len() {
             return 0;
         }
-        let b = self.tape[self.pos % self.tape.len()];
+        let b = self.tape[self.pos];
         self.pos += 1;
         b
     }
 
-    /// Read a u32 from 4 bytes (little-endian), wrapping tape as needed.
+    /// Read a u32 from 4 bytes (little-endian); reads 0 past end of tape.
     pub fn next_u32(&mut self) -> u32 {
         let b0 = self.next_byte() as u32;
         let b1 = self.next_byte() as u32;
@@ -1890,4 +1985,56 @@ fn generate_public_arb_strategy(category: &syn::Ident, _language: &LanguageDef, 
         cat_lower = cat_lower,
         cat = cat,
     ));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pre_scope_optional_pred_tape_builds_both_arms() {
+        // Task #14 gate-1: the pre-scope tape builder must emit the
+        // None/Some(Top) toggle for an `Option<BehavioralPred>` pre-scope
+        // field (pre-#14 it emitted a bare `Top` — ill-typed), and keep
+        // the bare `Top` for the mandatory shape (byte-identity with the
+        // guarded_rho prop suite).
+        let language = crate::gen::empty_language_for_tests();
+        let opt_pred = FieldInfo {
+            category: quote::format_ident!("Guard"),
+            is_collection: false,
+            coll_type: None,
+            is_predicate: true,
+            is_optional: true,
+        };
+        let code =
+            generate_binder_direct_build("Proc", "PFoo", &[opt_pred], "Proc", false, &language);
+        assert!(
+            code.contains(
+                "let pred_0: Option<mettail_runtime::BehavioralPred> = \
+                 if reader.next_byte() & 1 == 0 { None } else \
+                 { Some(mettail_runtime::BehavioralPred::Top) };"
+            ),
+            "optional pre-scope pred must tape-toggle None/Some(Top): {code}",
+        );
+
+        let mandatory_pred = FieldInfo {
+            category: quote::format_ident!("Guard"),
+            is_collection: false,
+            coll_type: None,
+            is_predicate: true,
+            is_optional: false,
+        };
+        let code = generate_binder_direct_build(
+            "Proc",
+            "PFoo",
+            &[mandatory_pred],
+            "Proc",
+            false,
+            &language,
+        );
+        assert!(
+            code.contains("let pred_0 = mettail_runtime::BehavioralPred::Top;"),
+            "mandatory pre-scope pred keeps the bare Top emission: {code}",
+        );
+    }
 }

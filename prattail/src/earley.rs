@@ -388,10 +388,10 @@ impl EarleyChart {
     /// Drive `complete` to a fixpoint at `pos`: repeatedly complete every
     /// item in `sets[pos]` until no further item advances. A bounded
     /// iteration cap (`input_len * 8`, floor 64) guards against
-    /// pathological re-insertion. Both the walker chain-absorption drive
-    /// (`earley_outboard_chain`) and the standalone right/left-recursive
-    /// chart unit tests share this so the completion semantics stay in
-    /// one place.
+    /// pathological re-insertion. Driven by the standalone
+    /// right/left-recursive chart unit tests (formerly also by the
+    /// walker's chain-absorption path, since removed), so the completion
+    /// semantics stay in one place.
     pub fn complete_to_fixpoint(&mut self, pos: usize) {
         let cap = self.input_len.saturating_mul(8).max(64);
         let mut iterations = 0usize;
@@ -1162,7 +1162,7 @@ mod tests {
 
     // Phase F.13 chain_10000 Plan v6 H1 (2026-05-27): Earley parity
     // oracle for left-recursive chain workloads. Confirms the existing
-    // earley_outboard_chain substrate (recognizer + emit_sppf_subforest)
+    // Earley chart substrate (recognizer + emit_sppf_subforest)
     // is sound for chain_50/100/200 BEFORE wiring the handoff at H2.
     //
     // The Plan v6 hybrid-Earley-WPDS design hinges on this soundness:

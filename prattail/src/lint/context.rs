@@ -140,9 +140,7 @@ pub struct LintContext<'a> {
 
     // ── Hindley-Milner base-sort consistency (OSLF Phase 6 `.1`) ──────────
     /// HM constructor-arrow base-sort consistency result; the HM01 lint reads
-    /// its `sort_mismatches`. Feature-gated (the field is absent when
-    /// `oslf-hindley-milner` is off), so the default `LintContext` is unchanged.
-    #[cfg(feature = "oslf-hindley-milner")]
+    /// its `sort_mismatches`.
     pub hindley_result: Option<&'a crate::hindley_milner::HmInferenceAnalysis>,
 }
 
@@ -466,8 +464,7 @@ pub fn run_lints(ctx: &LintContext) -> Vec<LintDiagnostic> {
         lint_pt01_pata_emptiness_violation(ctx, &mut diagnostics);
         lint_pt02_pata_subsumption(ctx, &mut diagnostics);
         lint_pt03_pata_high_priority(ctx, &mut diagnostics);
-        // OSLF Phase 5 `.1`: dead behavioral type RT-notes (feature-gated).
-        #[cfg(feature = "oslf-letprop")]
+        // OSLF Phase 5 `.1`: dead behavioral type RT-notes.
         lint_lp01_dead_behavioral_type(ctx, &mut diagnostics);
     }
 
@@ -597,11 +594,9 @@ pub fn run_lints(ctx: &LintContext) -> Vec<LintDiagnostic> {
         lint_rt04_subtype_detected(ctx, &mut diagnostics);
         lint_rt05_decidability_tier(ctx, &mut diagnostics);
         lint_rt06_name_shadow(ctx, &mut diagnostics);
-        // OSLF Phase-4 `.1`: transducer dead-cast RT-notes (feature-gated).
-        #[cfg(feature = "oslf-transducer")]
+        // OSLF Phase-4 `.1`: transducer dead-cast RT-notes.
         lint_rt07_dead_cast(ctx, &mut diagnostics);
-        // OSLF Phase-6 `.1`: Hindley-Milner base-sort mismatch notes (feature-gated).
-        #[cfg(feature = "oslf-hindley-milner")]
+        // OSLF Phase-6 `.1`: Hindley-Milner base-sort mismatch notes.
         lint_hm01_sort_mismatch(ctx, &mut diagnostics);
     }
 

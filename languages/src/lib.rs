@@ -73,6 +73,8 @@ pub mod guarded_rho;
 pub mod lambda;
 #[cfg(feature = "led-test")]
 pub mod led_test;
+#[cfg(feature = "guardoptsmoke")]
+pub mod guardoptsmoke;
 #[cfg(feature = "optsmoke")]
 pub mod optsmoke;
 #[cfg(feature = "refinementsmoke")]
@@ -109,3 +111,8 @@ pub use led_test as ledtest;
 //   use mettail_languages::rhocalc::*;
 //   use mettail_languages::ambient::*;
 //   use mettail_languages::lambda::*;
+
+/// Shared, deterministic input generators for the parser benchmarks (`languages/benches/*`).
+/// Compiled once here so its `pub` helpers are reachable library API — this is what keeps the
+/// per-bench dead-code analysis from firing without any `#[allow(dead_code)]`.
+pub mod bench_common;

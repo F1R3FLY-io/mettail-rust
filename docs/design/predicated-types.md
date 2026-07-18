@@ -5777,21 +5777,22 @@ filters out values guaranteed to make the combined guard fail. This backward
 propagation is the Symbolic Finite Transducer (SFT) pre-image operation (§16)
 applied to the guard's transducer representation.
 
-> **Phase 4 implementation status (OSLF, 2026-06-22; commit `bce952d5` `.0`
-> engines + `58b2afec` `.1` routing).** Two SHIPPED-but-previously-dead engines
-> are now **wired (feature-gated, off-by-default)** as pipeline entrypoints:
+> **Phase 4 implementation status (OSLF; both engines now always-on).** Two engines
+> that were once dead code are now **always compiled and always run** as pipeline
+> entrypoints, with no Cargo feature:
 >
-> - **Symbolic finite-state transducer** (feature `oslf-transducer`): for each
+> - **Symbolic finite-state transducer**: for each
 >   cast / refinement rule `r : src → tgt`, `sym_tree_transducer::analyze_from_bundle`
 >   builds a `SymbolicTreeTransducer`, computes the pre-image `domain_sta()`,
 >   decides cast totality via `is_total()`, and intersects the pre-image with the
 >   Phase-2 `structural_types::category_automaton` of `src` to decide
 >   cast-reachability — yielding `TransducerAnalysis { non_total_casts, dead_casts }`.
->   The **dead-cast lint (RT07)** fires when a cast's pre-image is empty against
->   the source category (the cast can never apply). Pinned by
+>   The **dead-cast lint (RT07)** fires unconditionally when a cast's pre-image is
+>   empty against the source category (the cast can never apply); it is inert on the
+>   current grammar corpus (0 firings). Pinned by
 >   `prattail/tests/transducer_preimage_snapshot.rs`; proven in
 >   `formal/rocq/sft/theories/StftWiringSound.v`.
-> - **Bisimulation** (feature `oslf-bisimulation`): `bisimulation::analyze_from_bundle`
+> - **Bisimulation**: `bisimulation::analyze_from_bundle`
 >   builds one `Lts` over the grammar's categories-as-states, runs
 >   `Lts::bisimulation`, certifies the partition, and returns a
 >   `BisimulationAnalysis { non_bisimilar_pairs }` shaped identically to
@@ -5800,8 +5801,9 @@ applied to the guard's transducer representation.
 >   `prattail/tests/bisimulation_agreement_snapshot.rs`; proven in
 >   `formal/rocq/advanced_automata/theories/BisimulationWiringSound.v`.
 >
-> Both are OFF BY DEFAULT and `.0`-inert when their feature is off; the default
-> build is byte-identical.
+> Both run in the default build. The analysis output is unchanged on the current
+> corpus, but the engines are the sole (precise) analysis path — there is no
+> heuristic fallback and no opt-out.
 
 ### Recursive Predicates (letprop)
 
@@ -6845,20 +6847,20 @@ decidable satisfiability test. The `BooleanAlgebra` trait provides that
 algebraic foundation for the entire predicated types pipeline. (For how SFA
 intersection supports guard selectivity and overlap analysis, see §13.)
 
-> **Phase 1 implementation status (OSLF, 2026-06-22; feature
-> `any-algebra-carrier`).** A unified guard-predicate carrier, `AnyAlgebra`, is
-> compiled behind the off-by-default `any-algebra-carrier` feature as a
-> deliberately **`.0`-inert** route — it is **NOT live**. When the feature is
-> enabled, `symbolic::analyze_from_bundle` dispatches to
-> `analyze_from_bundle_carrier`, which lifts the existing
-> terminal/nonterminal-start/empty boolean into an `AnyPred` (`True`/`False`)
-> and decides it through `AnyAlgebra::is_satisfiable` over a scalar
-> `SortRegistry`, producing **byte-identical** `SymbolicAnalysis` on every
-> grammar — proven by `prattail/tests/guard_carrier_snapshot.rs`. The carrier
-> is the substrate the sibling OSLF phases build on (`sym-tree-structural`,
-> `oslf-bisimulation`, `oslf-letprop`, `oslf-hindley-milner` all imply it); the
-> live flip that would route real guard decisions through `AnyAlgebra` is future
-> work. OFF BY DEFAULT and inert; the default build is byte-for-byte unchanged.
+> **Phase 1 implementation status (OSLF; carrier route now always-on).** A unified
+> guard-predicate carrier, `AnyAlgebra`, is the **sole** route for
+> `symbolic::analyze_from_bundle` — always compiled and always run, with no Cargo
+> feature and no opt-out. It lifts the existing terminal/nonterminal-start/empty
+> boolean into an `AnyPred` (`True`/`False`) and decides it through
+> `AnyAlgebra::is_satisfiable` over a scalar `SortRegistry`, producing
+> `SymbolicAnalysis` that agrees **byte-for-byte** with the retained
+> `analyze_from_bundle_string_set` differential-test oracle on every grammar —
+> pinned by `prattail/tests/guard_carrier_snapshot.rs`. The carrier is the
+> substrate the sibling OSLF engines (structural dispatch, bisimulation,
+> letprop→PATA, Hindley–Milner) build on; enriching the lift beyond the
+> `True`/`False` boolean so that richer guard predicates decide *directly* through
+> `AnyAlgebra` remains an enhancement, but the routing itself is live and
+> unconditional.
 
 ### The BooleanAlgebra Trait
 
@@ -7904,8 +7906,10 @@ guard is a Phase 7 follow-up in the per-tier T2/T3/T4 codegen rewrite.
 ## 17. The Automata Modules (M1–M15)
 
 Each of the 15 predicate-dispatched modules (M1–M15) contributes to the
-predicated types pipeline, alongside additional feature-gated analysis modules.
-The predicate dispatch controller determines the minimal set needed per guard.
+predicated types pipeline, alongside the always-on OSLF analysis modules (the
+`AnyAlgebra` carrier, structural dispatch, bisimulation, transducer, letprop→PATA,
+and Hindley–Milner engines). The predicate dispatch controller determines the
+minimal set needed per guard.
 
 > **Note:** All 15 predicate-dispatched modules are **compile-time analysis only**. They
 > execute during `language!` macro expansion to analyze guards, detect issues,
@@ -8180,20 +8184,19 @@ with nested quantifier scopes or parenthesized expressions.
 
 #### M5: Parity Alternating Tree Automata — Mu-Calculus
 
-> **Phase 5 implementation status (OSLF, 2026-06-22; commit `65c9cd78`,
-> feature `oslf-letprop`).** The `letprop` → modal-μ-calculus → PATA decision
-> machinery described below is **wired (feature-gated, off-by-default)**, not
-> merely planned. When `oslf-letprop` is enabled,
+> **Phase 5 implementation status (OSLF; decision machinery now always-on).** The
+> `letprop` → modal-μ-calculus → PATA decision machinery described below is
+> **always compiled and always run**, with no Cargo feature — not merely planned.
 > `parity_tree::analyze_recursive_predicates` walks the grammar's guard
 > predicates, lowers each recursive (fixpoint) predicate through
-> `letprop::letprop_to_pata` (the SHIPPED bridge's first real caller), and
-> decides non-emptiness via the Zielonka-aligned `parity_tree::check_emptiness`;
-> verdicts surface in `ParityTreeAnalysis::fixpoint_decisions`, and the `LP01`
-> lint fires when a recursive guard's PATA is EMPTY (the behavioral type can
-> never be satisfied). No surface syntax is added yet (a tracked follow-up in
-> `ast/`), so on every *current* grammar this path finds no recursive predicate
-> and is fully inert — the default build is byte-for-byte unchanged. The parity
-> arm of `prattail/tests/letprop_pata_snapshot.rs` proves the inert behavior;
+> `letprop::letprop_to_pata`, and decides non-emptiness via the Zielonka-aligned
+> `parity_tree::check_emptiness`; verdicts surface in
+> `ParityTreeAnalysis::fixpoint_decisions`, and the `LP01` lint fires when a
+> recursive guard's PATA is EMPTY (the behavioral type can never be satisfied).
+> The engine runs unconditionally, but **no recursive-predicate surface syntax
+> exists yet** (a tracked follow-up in `ast/`), so on every *current* grammar this
+> path finds no recursive predicate and LP01 is inert (0 firings). The parity
+> arm of `prattail/tests/letprop_pata_snapshot.rs` exercises the inert behavior;
 > the positive arm exercises the live decision over a synthetic
 > `RecursivePredicate`. Soundness is proven in
 > `formal/rocq/advanced_automata/theories/LetpropPataWiringSound.v`.
@@ -9621,20 +9624,25 @@ representation for compile-time analysis and runtime codegen.
 4. Use `TypeSystemAlgebra<S>` for SFA-based dispatch analysis when multiple
    refinement types refine the same base type
 
-> **Phase 2 implementation status (OSLF, 2026-06-22; commit `bfe0cc0c`,
-> feature `sym-tree-structural`).** The structural refinement-type dispatch is
-> **wired (feature-gated, off-by-default)** through the `sym_tree` recognizer.
-> When `sym-tree-structural` is enabled, `pipeline::analysis::analyze_refinement_types`
-> routes structural disjointness / subtype through
-> `analyze_refinement_dispatch_structural`, deciding them precisely with a
-> `SymbolicTreeAutomaton<AnyAlgebra>` over the grammar's ranked alphabet instead
-> of the string heuristic (falling back to today's `Overlapping` on any
-> predicate-parse failure — never worse than the status quo). This populates
-> `RefinementAnalysisResult::empty_intersections` from the structurally-disjoint
-> pairs, so the previously-dead **RT03** lint (below) now fires. Presburger /
-> Mixed pairs stay on the existing heuristic, and runtime `match_pattern` codegen
-> is untouched (analysis only). OFF BY DEFAULT; the default build is byte-identical.
-> The recognizer agreement is pinned by `prattail/tests/sym_tree_structural_snapshot.rs`.
+> **Phase 2 implementation status (OSLF; structural dispatch now the sole path).**
+> The structural refinement-type dispatch runs through the `sym_tree` recognizer
+> **always** — it is compiled and run unconditionally, with no Cargo feature.
+> `pipeline::analysis::analyze_refinement_types` routes structural disjointness /
+> subtype through `analyze_refinement_dispatch_structural`, deciding them precisely
+> with a `SymbolicTreeAutomaton<AnyAlgebra>` over the grammar's ranked alphabet.
+> This **replaces** the former string heuristic (`category_is_scalar_by_string`
+> and the silent `analyze_refinement_dispatch`, both **deleted** — they
+> under-enforced RT03 and could misclassify a scalar sort by string-matching a
+> type-name segment, so they were correctness-by-construction violations). For
+> pairs that are not both `Structural`, or whose predicate fails to parse, the
+> engine conservatively falls through to `classify_predicate_overlap` (Presburger /
+> Mixed pairs and parse failures yield `Overlapping`) — never worse than the status
+> quo, and always sound. It populates `RefinementAnalysisResult::empty_intersections`
+> from the structurally-disjoint pairs, so the **RT03** lint (below) now fires
+> unconditionally; it is inert on the current grammar corpus (0 firings — the corpus
+> has no genuinely-disjoint structural refinement pairs). Runtime `match_pattern`
+> codegen is untouched (analysis only). The recognizer agreement is pinned by
+> `prattail/tests/sym_tree_structural_snapshot.rs`.
 
 ### Lints
 
@@ -9700,19 +9708,18 @@ predicates incur O(k · |value|) with the user-specified bound `k`.
 
 ### Future Feature: Hindley-Milner Type Inference
 
-> **Phase 6 implementation status (OSLF, 2026-06-22; commit `958deca6`,
-> feature `oslf-hindley-milner`).** A *base-sort-consistency* slice of HM is
-> already **wired (feature-gated, off-by-default)**: when `oslf-hindley-milner`
-> is enabled, `hindley_milner::analyze_from_bundle` builds each rule's principal
-> arrow type `HmType::Arrow(field_sort₁, …Arrow(field_sortₙ, result))` from its
-> `SyntaxItemSpec` fields and checks (via the existing `unify`/`apply`) that the
-> inferred result sort unifies with the rule's declared category, recording a
-> `sort_mismatch` iff unification fails; the **HM01** lint emits one note per
-> mismatch. It uses only `HmType::{Mono,Arrow}` — no `HmTerm`/`infer`/fresh type
-> variables — so on real grammars the inferred result sort always unifies and
-> the path is fully inert (the default build is byte-identical). Pinned by
-> `prattail/tests/hindley_inference_snapshot.rs`; proven in
-> `formal/rocq/advanced_automata/theories/HindleyMilnerWiringSound.v`. The FULL
+> **Phase 6 implementation status (OSLF; base-sort slice now always-on).** A
+> *base-sort-consistency* slice of HM is **always compiled and always run**, with
+> no Cargo feature: `hindley_milner::analyze_from_bundle` builds each rule's
+> principal arrow type `HmType::Arrow(field_sort₁, …Arrow(field_sortₙ, result))`
+> from its `SyntaxItemSpec` fields and checks (via the existing `unify`/`apply`)
+> that the inferred result sort unifies with the rule's declared category,
+> recording a `sort_mismatch` iff unification fails; the **HM01** lint emits one
+> note per mismatch. It uses only `HmType::{Mono,Arrow}` — no `HmTerm`/`infer`/fresh
+> type variables — so on real grammars the inferred result sort always unifies and
+> HM01 is inert (0 firings on the current corpus), though the check runs
+> unconditionally. Pinned by `prattail/tests/hindley_inference_snapshot.rs`; proven
+> in `formal/rocq/advanced_automata/theories/HindleyMilnerWiringSound.v`. The FULL
 > principal-type inference (`HmTerm`/`infer`, let-polymorphism) sketched below
 > remains future work.
 

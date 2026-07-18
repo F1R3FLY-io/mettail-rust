@@ -12,7 +12,7 @@
 )]
 
 use crate::gen::native::NativeType;
-use crate::gen::term_gen::is_lang_type;
+use crate::gen::term_gen::{count_optional_positions, is_lang_type};
 use mettail_ast::{
     grammar::{GrammarItem, GrammarRule, NonTerminalKind, TermParam},
     language::LanguageDef,
@@ -428,10 +428,16 @@ fn generate_random_depth_d(
         // Phase 3A (predicated types): random term generation for
         // guarded constructors requires random predicate generation,
         // which is out of scope for the current term_gen pipeline.
-        // Constructors with `?guard:Guard` slots are skipped from
-        // random generation; tests that need to construct guarded
-        // terms should build them by hand. The same skip is applied
-        // in `exhaustive.rs:478-491` and `logic/helpers.rs`.
+        // Constructors with TOP-LEVEL (mandatory) `?guard:Guard` slots
+        // are skipped from random generation; tests that need to
+        // construct guarded terms should build them by hand. The same
+        // skip is applied in `exhaustive.rs`
+        // (`generate_simple_constructor_case` /
+        // `generate_binder_constructor_case`). Task #14 (Option<Guard>):
+        // the top-level-only scan is INTENTIONAL — a guard inside
+        // `#opt(...)` is generatable (as `None`, via the Optional count
+        // split in `generate_random_simple_constructor`), so
+        // `Optional { GuardBody }` must NOT trip this skip.
         let has_guard_slot = rule
             .term_context
             .as_ref()
@@ -502,7 +508,7 @@ fn generate_random_simple_constructor(
         })
         .collect();
 
-    // Compute the OPTIONAL-suffix count: how many of the trailing arg
+    // Compute the OPTIONAL-suffix counts: how many of the trailing arg
     // positions are Option<Box<T>> per Opt-Group flattening. The
     // `convert_term_context_to_items` helper appends Optional inner items
     // AT THEIR DECLARATION POSITION; for the IfElse pilot, Optional sits
@@ -511,30 +517,15 @@ fn generate_random_simple_constructor(
     // not currently emitted by random.rs (which is a heuristic-driven
     // generator, not a fuzzer-strict one) — defer until a shipped grammar
     // exercises that shape.
-    let optional_count: usize = rule
-        .term_context
-        .as_ref()
-        .map(|ctx| {
-            fn count(p: &mettail_ast::grammar::TermParam) -> usize {
-                use mettail_ast::grammar::TermParam;
-                match p {
-                    TermParam::Optional { params: inner } => inner.iter().map(count_one).sum(),
-                    _ => 0,
-                }
-            }
-            fn count_one(p: &mettail_ast::grammar::TermParam) -> usize {
-                use mettail_ast::grammar::TermParam;
-                match p {
-                    TermParam::Simple { .. } | TermParam::GuardBody { .. } => 1,
-                    TermParam::Abstraction { .. } | TermParam::MultiAbstraction { .. } => 1,
-                    TermParam::Optional { params: inner } => inner.iter().map(count_one).sum(),
-                }
-            }
-            ctx.iter().map(count).sum()
-        })
-        .unwrap_or(0);
+    //
+    // Task #14 (Option<Guard>): SPLIT counts — only Optional TERM
+    // positions occupy `arg_cats` slots and may be subtracted from the
+    // positional prefix; the `None`-suffix covers terms AND guards (see
+    // `count_optional_positions`).
+    let (optional_term_count, optional_total_count) =
+        count_optional_positions(rule.term_context.as_deref().unwrap_or(&[]));
 
-    let positional_count = arg_cats.len().saturating_sub(optional_count);
+    let positional_count = arg_cats.len().saturating_sub(optional_term_count);
     let positional_cats: Vec<Ident> = arg_cats.iter().take(positional_count).cloned().collect();
 
     let core: TokenStream = match positional_cats.len() {
@@ -550,11 +541,12 @@ fn generate_random_simple_constructor(
         _ => generate_random_nary(cat_name, label, &positional_cats, language),
     };
 
-    if optional_count == 0 {
+    if optional_total_count == 0 {
         core
     } else {
         // Re-emit the variant call appending `None` for each Optional position.
-        let none_args: Vec<TokenStream> = (0..optional_count).map(|_| quote! { None }).collect();
+        let none_args: Vec<TokenStream> =
+            (0..optional_total_count).map(|_| quote! { None }).collect();
         // The `core` token stream ends with `Cat::Label(args)`. Inject `None`
         // before the closing paren by re-constructing:
         let positional_args: Vec<TokenStream> = positional_cats

@@ -860,9 +860,11 @@ fn generate_parser_code(
     }
 
     // ── 2a: Dispatch entropy analysis (optional) ───────────────────────────
-    // Gated by PRATTAIL_ENTROPY=1 env var. Reports per-category dispatch
-    // entropy to identify "decision bottlenecks" — tokens where grammar
-    // restructuring would have maximum disambiguation impact.
+    // Gated by the `walker-trace` feature + PRATTAIL_ENTROPY=1. Reports
+    // per-category dispatch entropy to identify "decision bottlenecks" — tokens
+    // where grammar restructuring would have maximum disambiguation impact. The
+    // env read is compiled out on the default build.
+    trace_diag! {
     if std::env::var("PRATTAIL_ENTROPY").is_ok() {
         let dt_trees = decision_trees.trees();
         for (cat_name, tree) in dt_trees {
@@ -893,11 +895,14 @@ fn generate_parser_code(
             }
         }
     }
+    }
 
     // ── 2b: BP/dispatch correlation analysis (optional) ────────────────────
-    // Gated by PRATTAIL_ENTROPY=1 env var (shared with entropy analysis).
-    // Reports per-category BP stratification: how many rules are reachable
-    // at each binding power level, enabling early-commit optimizations.
+    // Gated by the `walker-trace` feature + PRATTAIL_ENTROPY=1 (shared with the
+    // entropy analysis). Reports per-category BP stratification: how many rules
+    // are reachable at each binding power level, enabling early-commit
+    // optimizations. The env read is compiled out on the default build.
+    trace_diag! {
     if std::env::var("PRATTAIL_ENTROPY").is_ok() {
         let dt_trees = decision_trees.trees();
         for (cat_name, tree) in dt_trees {
@@ -932,6 +937,7 @@ fn generate_parser_code(
                 );
             }
         }
+    }
     }
 
     // ── 1.2a: Trie-informed WFST weight scaling ─────────────────────────────
@@ -1330,14 +1336,10 @@ fn generate_parser_code(
     let nominal_result = math_results.nominal_result;
     let alternating_result = math_results.alternating_result;
     // OSLF Phase-4 `.1`: bisimulation result threaded into the codegen
-    // `AdvancedAnalysisBundle` (N06-ISO / A3 supersede). Feature-gated so the
-    // default build neither binds nor moves this field.
-    #[cfg(feature = "oslf-bisimulation")]
+    // `AdvancedAnalysisBundle` (N06-ISO / A3 supersede).
     let bisimulation_result = math_results.bisimulation_result;
     // OSLF Phase-6 `.1`: Hindley-Milner base-sort consistency result threaded
-    // into the lint `LintContext` (HM01 only — never codegen). Feature-gated so
-    // the default build neither binds nor moves this field.
-    #[cfg(feature = "oslf-hindley-milner")]
+    // into the lint `LintContext` (HM01 only — never codegen).
     let hindley_result = math_results.hindley_result;
     let ltl_results = math_results.ltl_results;
     let provenance_result = math_results.provenance_result;
@@ -1549,7 +1551,6 @@ fn generate_parser_code(
             // ── Refinement type analysis results ──
             refinement_analysis: refinement_analysis.as_ref(),
             // ── Hindley-Milner base-sort consistency (OSLF Phase 6 `.1`) ──
-            #[cfg(feature = "oslf-hindley-milner")]
             hindley_result: hindley_result.as_ref(),
         };
 
@@ -1822,7 +1823,9 @@ fn generate_parser_code(
     // `unified_trampoline.rs` and its FrameVariantInfo / UnifiedTrampolineConfig
     // / write_unified_types entry point all deleted in lockstep.
 
-    // Debug dump: write generated parser code to file for inspection
+    // Debug dump: write generated parser code to file for inspection (behind
+    // the `walker-trace` feature; the env read is compiled out by default).
+    trace_diag! {
     if let Ok(dump_dir) = std::env::var("PRATTAIL_DUMP_PARSER") {
         let dir = if dump_dir == "1" {
             ".".to_string()
@@ -1835,6 +1838,7 @@ fn generate_parser_code(
             eprintln!("PraTTaIL: dumped parser code to {}", filename);
         }
     }
+    }
 
     // ── Build PipelineAnalysis from computed data ──────────────────────────
     // Uses all_dead_rule_labels (unconditionally computed) rather than
@@ -1843,7 +1847,6 @@ fn generate_parser_code(
     let advanced = AdvancedAnalysisBundle {
         symbolic: symbolic_result.as_ref(),
         alternating: alternating_result.as_ref(),
-        #[cfg(feature = "oslf-bisimulation")]
         bisimulation: bisimulation_result.as_ref(),
         vpa: vpa_result.as_ref(),
         register: register_result.as_ref(),

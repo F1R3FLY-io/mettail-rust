@@ -574,6 +574,21 @@ fn generate_assemble_variant_decl(
                 .iter()
                 .enumerate()
                 .map(|(i, field)| {
+                    if field.is_predicate {
+                        // Task #14 (Option<Guard>): predicate-FIRST — the
+                        // Regular path previously had NO is_predicate arm
+                        // anywhere (decl/visit/assemble/extract), so a
+                        // Regular-variant guard emitted nonexistent
+                        // `SubstTask::VisitGuard` / `AnySubstTerm::WrapGuard`
+                        // references. Predicates ride the Assemble variant
+                        // as a cloned value (substitution never descends
+                        // into predicates — Phase 3A spec at FieldInfo).
+                        let pred_name = format_ident!("f{}_pred", i);
+                        if field.is_optional {
+                            return quote! { #pred_name: Option<mettail_runtime::BehavioralPred> };
+                        }
+                        return quote! { #pred_name: mettail_runtime::BehavioralPred };
+                    }
                     if field.is_optional {
                         if field.is_collection {
                             // Phase 4 #3 (2026-05-12): Optional-Collection — cloned carrier.
@@ -673,6 +688,12 @@ fn emit_pre_field_decl_list(pre_scope_fields: &[FieldInfo]) -> Vec<TokenStream> 
         .map(|(i, field)| {
             if field.is_predicate {
                 let pred_name = format_ident!("pf{}_pred", i);
+                // Task #14 (Option<Guard>): Option-aware pre-scope decl —
+                // dormant until a Binder-rule optional guard exists, but
+                // required for decl/clone type agreement.
+                if field.is_optional {
+                    return quote! { #pred_name: Option<mettail_runtime::BehavioralPred> };
+                }
                 return quote! { #pred_name: mettail_runtime::BehavioralPred };
             }
             // Phase 4 #4 (2026-05-12): Optional-Collection — cloned carrier
@@ -1199,6 +1220,20 @@ fn generate_regular_visit_arm(cat: &Ident, label: &Ident, fields: &[FieldInfo]) 
     for (i, field) in fields.iter().enumerate() {
         let name = &field_names[i];
         let visit_task = format_ident!("Visit{}", field.category);
+
+        if field.is_predicate {
+            // Task #14 (Option<Guard>): predicates are opaque to
+            // substitution — clone the whole value (bare BehavioralPred or
+            // Option<BehavioralPred>) into the Assemble carrier; no Visit
+            // task exists for the Guard pseudo-category. Mirrors the Binder
+            // pre-scope arm in `emit_pre_field_visit_alloc`.
+            let pred_name = format_ident!("f{}_pred", i);
+            alloc_stmts.push(quote! {
+                let #pred_name = #name.clone();
+            });
+            assemble_fields.push(quote! { #pred_name });
+            continue;
+        }
 
         if field.is_optional {
             if field.is_collection {
@@ -1956,6 +1991,22 @@ fn generate_regular_assemble_arm(cat: &Ident, label: &Ident, fields: &[FieldInfo
     let mut decl_flat: Vec<TokenStream> = Vec::new();
     let mut call_flat: Vec<TokenStream> = Vec::new();
     for (i, field) in fields.iter().enumerate() {
+        if field.is_predicate {
+            // Task #14 (Option<Guard>): predicate-FIRST — pat/decl/call ride
+            // the Assemble variant's `f{i}_pred` field (declared Option-aware
+            // in `generate_subst_task_variant`); extract is a no-op and the
+            // construct closure passes the value through unchanged.
+            let pred_name = format_ident!("f{}_pred", i);
+            let pred_ty = if field.is_optional {
+                quote! { Option<mettail_runtime::BehavioralPred> }
+            } else {
+                quote! { mettail_runtime::BehavioralPred }
+            };
+            pat_flat.push(quote! { #pred_name });
+            decl_flat.push(quote! { #pred_name: #pred_ty });
+            call_flat.push(quote! { #pred_name });
+            continue;
+        }
         if field.is_optional {
             if field.is_collection {
                 // Phase 4 #3 (2026-05-12): Optional-Collection — cloned carrier.
@@ -2014,6 +2065,12 @@ fn generate_regular_assemble_arm(cat: &Ident, label: &Ident, fields: &[FieldInfo
         .iter()
         .enumerate()
         .map(|(i, field)| {
+            if field.is_predicate {
+                // Task #14 (Option<Guard>): the pred is in scope by its
+                // frame name (extract is a no-op); pass through unwrapped.
+                let pred_name = format_ident!("f{}_pred", i);
+                return quote! { #pred_name };
+            }
             let result_ident = format_ident!("field_{}", i);
             if field.is_optional {
                 // Already Option<Arc<T>> or Option<Container> from extract; pass through.
@@ -2060,7 +2117,12 @@ fn optional_collection_field_type_subst(field: &FieldInfo) -> TokenStream {
 }
 
 /// Extract the result for a single field from a slot (or slot range).
+/// Predicate fields are already in scope as `f{i}_pred` — no extract needed
+/// (mirrors `emit_pre_field_extracts`' predicate arm).
 fn emit_field_extract(i: usize, field: &FieldInfo) -> TokenStream {
+    if field.is_predicate {
+        return quote! {};
+    }
     let result_ident = format_ident!("field_{}", i);
     let wrap = format_ident!("Wrap{}", field.category);
 
@@ -2287,9 +2349,19 @@ fn generate_binder_assemble_arm(
     let body_wrap = format_ident!("Wrap{}", body_cat);
 
     let slot_pattern = emit_pre_field_assemble_slot_pattern(pre_scope_fields);
+    // Residual #11-2 (2026-07-14): typed helper-param decls for the peel. subst's
+    // `emit_pre_field_decl_list` is symmetric with `emit_pre_field_assemble_slot_pattern`
+    // for every shape (HashBag|HashMap both -> 3 fields), and no HashBag/HashMap
+    // pre-scope field exists in-tree anyway.
+    let pre_decls = emit_pre_field_decl_list(pre_scope_fields);
     let pre_extracts = emit_pre_field_extracts(pre_scope_fields);
     let pre_construct = emit_pre_field_constructs(pre_scope_fields);
 
+    // PRE-PEEL body (residual #11-2, 2026-07-14): commented-out-never-deleted;
+    // replaced by the `#[inline(never)]` per-arm peel below (pure code motion).
+    // `subst_iterative` nests under `normalize_iterative` at β time, so bounding
+    // its ~800 Bind/MBind arms is required for the pin-retirement headroom.
+    /*
     quote! {
         SubstTask::#assemble_variant { slot, #(#slot_pattern,)* cloned_pattern, body_slot } => {
             #(#pre_extracts)*
@@ -2303,6 +2375,33 @@ fn generate_binder_assemble_arm(
             results[slot] = Some(AnySubstTerm::#wrap(
                 #cat::#label(#(#pre_construct)* new_scope)
             ));
+        }
+    }
+    */
+    quote! {
+        SubstTask::#assemble_variant { slot, #(#slot_pattern,)* cloned_pattern, body_slot } => {
+            #[inline(never)]
+            #[allow(dead_code, unused_variables, non_snake_case)]
+            fn assemble_binder(
+                results: &mut Vec<Option<AnySubstTerm>>,
+                slot: usize,
+                #(#pre_decls,)*
+                cloned_pattern: mettail_runtime::Binder<String>,
+                body_slot: usize,
+            ) {
+                #(#pre_extracts)*
+                let body = match results[body_slot].take()
+                    .expect("iterative subst: missing binder body")
+                {
+                    AnySubstTerm::#body_wrap(v) => v,
+                    _ => unreachable!("iterative subst: wrong category in binder body slot"),
+                };
+                let new_scope = mettail_runtime::Scope::from_parts_unsafe(cloned_pattern, std::sync::Arc::new(body));
+                results[slot] = Some(AnySubstTerm::#wrap(
+                    #cat::#label(#(#pre_construct)* new_scope)
+                ));
+            }
+            assemble_binder(results, slot, #(#slot_pattern,)* cloned_pattern, body_slot);
         }
     }
 }
@@ -2319,9 +2418,15 @@ fn generate_multi_binder_assemble_arm(
     let body_wrap = format_ident!("Wrap{}", body_cat);
 
     let slot_pattern = emit_pre_field_assemble_slot_pattern(pre_scope_fields);
+    // Residual #11-2 (2026-07-14): typed helper-param decls for the peel (see
+    // `generate_binder_assemble_arm` for the arity-agreement argument).
+    let pre_decls = emit_pre_field_decl_list(pre_scope_fields);
     let pre_extracts = emit_pre_field_extracts(pre_scope_fields);
     let pre_construct = emit_pre_field_constructs(pre_scope_fields);
 
+    // PRE-PEEL body (residual #11-2, 2026-07-14): commented-out-never-deleted;
+    // replaced by the `#[inline(never)]` per-arm peel below (pure code motion).
+    /*
     quote! {
         SubstTask::#assemble_variant { slot, #(#slot_pattern,)* cloned_pattern, body_slot } => {
             #(#pre_extracts)*
@@ -2337,6 +2442,35 @@ fn generate_multi_binder_assemble_arm(
             results[slot] = Some(AnySubstTerm::#wrap(
                 #cat::#label(#(#pre_construct)* new_scope)
             ));
+        }
+    }
+    */
+    quote! {
+        SubstTask::#assemble_variant { slot, #(#slot_pattern,)* cloned_pattern, body_slot } => {
+            #[inline(never)]
+            #[allow(dead_code, unused_variables, non_snake_case)]
+            fn assemble_multi_binder(
+                results: &mut Vec<Option<AnySubstTerm>>,
+                slot: usize,
+                #(#pre_decls,)*
+                cloned_pattern: Vec<mettail_runtime::Binder<String>>,
+                body_slot: usize,
+            ) {
+                #(#pre_extracts)*
+                let body = match results[body_slot].take()
+                    .expect("iterative subst: missing multi-binder body")
+                {
+                    AnySubstTerm::#body_wrap(v) => v,
+                    _ => unreachable!(
+                        "iterative subst: wrong category in multi-binder body slot"
+                    ),
+                };
+                let new_scope = mettail_runtime::Scope::from_parts_unsafe(cloned_pattern, std::sync::Arc::new(body));
+                results[slot] = Some(AnySubstTerm::#wrap(
+                    #cat::#label(#(#pre_construct)* new_scope)
+                ));
+            }
+            assemble_multi_binder(results, slot, #(#slot_pattern,)* cloned_pattern, body_slot);
         }
     }
 }
@@ -3166,5 +3300,76 @@ pub(crate) fn field_infos_from_term_param(param: &TermParam, in_optional: bool) 
             }]
         },
         TermParam::Abstraction { .. } | TermParam::MultiAbstraction { .. } => vec![],
+    }
+}
+
+#[cfg(test)]
+mod task14_tests {
+    use super::*;
+
+    fn pred_field(optional: bool) -> FieldInfo {
+        FieldInfo {
+            category: format_ident!("Guard"),
+            is_collection: false,
+            coll_type: None,
+            is_predicate: true,
+            is_optional: optional,
+        }
+    }
+
+    fn scalar_field(cat: &str) -> FieldInfo {
+        FieldInfo {
+            category: format_ident!("{}", cat),
+            is_collection: false,
+            coll_type: None,
+            is_predicate: false,
+            is_optional: false,
+        }
+    }
+
+    #[test]
+    fn regular_visit_arm_pred_clones_no_visit_guard() {
+        // Task #14 gate-1: pre-#14 the Regular visit arm pushed the
+        // nonexistent `SubstTask::VisitGuard` for an optional pred.
+        let cat = format_ident!("Int");
+        let label = format_ident!("PCheck");
+        let fields = vec![scalar_field("Int"), pred_field(true)];
+        let arm = generate_regular_visit_arm(&cat, &label, &fields).to_string();
+        assert!(
+            arm.contains("let f1_pred = f1 . clone ()"),
+            "the pred must be cloned into the assemble carrier: {arm}",
+        );
+        assert!(
+            !arm.contains("VisitGuard"),
+            "no Visit task exists for the Guard pseudo-category: {arm}",
+        );
+    }
+
+    #[test]
+    fn regular_assemble_arm_pred_passthrough_no_wrap_guard() {
+        // Pre-#14 the extract emitted `AnySubstTerm::WrapGuard` (nonexistent)
+        // and the construct Arc-wrapped the pred.
+        let cat = format_ident!("Int");
+        let label = format_ident!("PCheck");
+        let fields = vec![scalar_field("Int"), pred_field(true)];
+        let arm = generate_regular_assemble_arm(&cat, &label, &fields).to_string();
+        assert!(
+            arm.contains("f1_pred : Option < mettail_runtime :: BehavioralPred >"),
+            "the Assemble decl must carry the Option type: {arm}",
+        );
+        assert!(
+            !arm.contains("WrapGuard"),
+            "predicates never round-trip through AnySubstTerm: {arm}",
+        );
+        assert!(
+            !arm.contains("Arc :: new (f1_pred)"),
+            "the pred passes through unwrapped: {arm}",
+        );
+    }
+
+    #[test]
+    fn field_extract_pred_is_noop() {
+        assert!(emit_field_extract(1, &pred_field(true)).is_empty());
+        assert!(emit_field_extract(1, &pred_field(false)).is_empty());
     }
 }

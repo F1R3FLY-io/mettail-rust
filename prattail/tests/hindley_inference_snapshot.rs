@@ -23,14 +23,12 @@
 //!
 //! The parity result/no-Var checks are made by reconstructing each rule's
 //! expected arrow from `Mono` leaves only and asserting the production pass
-//! renders the byte-identical arrow — so enabling `oslf-hindley-milner` cannot
+//! renders the byte-identical arrow — so the pass cannot
 //! change the analysis of any grammar today.
 //!
 //! On any mismatch the test FAILS LOUDLY with the observed value; the expected
 //! verdict is never adjusted to match buggy output (per the project's
 //! "never weaken a test" discipline).
-
-#![cfg(feature = "oslf-hindley-milner")]
 
 use mettail_prattail::grammar::ir::CollectionKind;
 use mettail_prattail::hindley_milner::{self, HmType};

@@ -178,7 +178,21 @@ pub fn run_pipeline(spec: &LanguageSpec) -> TokenStream {
 /// computed. This function captures that data before it would otherwise
 /// be discarded.
 pub fn run_pipeline_with_analysis(spec: &LanguageSpec) -> (TokenStream, crate::PipelineAnalysis) {
-    let trace = std::env::var("PRATTAIL_MACRO_TRACE").is_ok();
+    // Stage tracer gated by the `walker-trace` feature + `PRATTAIL_MACRO_TRACE`;
+    // the env read compiles out on the default build (feature off ⇒ `trace` is a
+    // constant `false` and every `stage!` body is dead-stripped). See
+    // `crate::trace` module docs for why a `let` initializer uses this
+    // `#[cfg]`/off-value idiom rather than `trace_diag!`.
+    let trace = {
+        #[cfg(feature = "walker-trace")]
+        {
+            std::env::var("PRATTAIL_MACRO_TRACE").is_ok()
+        }
+        #[cfg(not(feature = "walker-trace"))]
+        {
+            false
+        }
+    };
     macro_rules! stage {
         ($name:literal) => {
             if trace {
@@ -191,10 +205,12 @@ pub fn run_pipeline_with_analysis(spec: &LanguageSpec) -> (TokenStream, crate::P
     let (lexer_bundle, parser_bundle) = extract_from_spec(spec);
     stage!("extract_from_spec.done");
 
-    // EBNF debug dump (opt-in via environment variable)
-    if let Ok(dump_target) = std::env::var("PRATTAIL_DUMP_EBNF") {
-        let ebnf = crate::ebnf::format_ebnf(spec, &parser_bundle);
-        crate::ebnf::write_ebnf_output(&ebnf, &spec.name, &dump_target);
+    // EBNF debug dump (opt-in via env var, behind the `walker-trace` feature).
+    trace_diag! {
+        if let Ok(dump_target) = std::env::var("PRATTAIL_DUMP_EBNF") {
+            let ebnf = crate::ebnf::format_ebnf(spec, &parser_bundle);
+            crate::ebnf::write_ebnf_output(&ebnf, &spec.name, &dump_target);
+        }
     }
 
     stage!("generate_lexer_code.start");

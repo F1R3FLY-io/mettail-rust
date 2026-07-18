@@ -38,8 +38,6 @@
 //!   than codegen-time guard evaluation and matches the WPDS principle of
 //!   "emit all valid branches, let lex-min pick the survivor."
 
-#![allow(dead_code)]
-
 use proc_macro2::TokenStream;
 use quote::quote;
 
@@ -47,6 +45,9 @@ use quote::quote;
 
 /// Cluster 1 SKIP-branch weight bias. Reused from `EPSILON_OPT_SKIP` for
 /// consistency with the canonical Opt-Group A.i Fork.
+// dead_code: codegen-side reference value used only by the `#[cfg(test)]` ordering asserts;
+// production emit strings reference `mettail_prattail::automata::lex_weight::*` directly.
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) const SKIP_BIAS: f64 = 0.5;
 
 /// Cluster 5 (Commit 4) base offset for recovery branches.
@@ -54,9 +55,15 @@ pub(crate) const RECOVERY_BASE: u16 = 0xFE00;
 
 /// Cluster 3 BP-tier biases. Lower wins on lex-min; tier 0 (infix) is
 /// preferred over postfix/mixfix when l_bp ties.
+// dead_code: codegen-side reference values used only by the `#[cfg(test)]` ordering asserts;
+// production emit strings reference `mettail_prattail::automata::lex_weight::*` directly.
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) const BP_TIER_INFIX: f64 = 0.00;
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) const BP_TIER_CROSSCAT_LHS: f64 = 0.05;
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) const BP_TIER_POSTFIX: f64 = 0.10;
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) const BP_TIER_MIXFIX: f64 = 0.20;
 
 /// ForRow F3 symmetric projection-suppression gate kill switch (2026-06-28).
@@ -80,6 +87,70 @@ pub(crate) const BP_TIER_MIXFIX: f64 = 0.20;
 /// to A/B the gate off without reverting; full revert = restore the pre-F3
 /// snapshot.
 pub(crate) const FORROW_PROJ_GATE: bool = true;
+
+/// KWAMBIG_PROJ_EXEMPT_GATE — the ROOT-A fix (keyword/ident-ambiguous bare
+/// cross-cat PROJECTION exemption from the F3 row-scoped-trigger suppression;
+/// 2026-07-07). Compile-time `const` resolved at macro expansion (the
+/// [`FORROW_PROJ_GATE`] / [`AT_QUOTED_BIND_GATE`] kill-switch convention).
+///
+/// ## The defect it ships the fix for (ROOT A — the display-roundtrip blocker)
+/// A comma-separated `Proc`-operand sequence FAILS to parse when one operand is a
+/// keyword/ident-ambiguous bare cross-cat projection (`CastBool` of `true`/`false`
+/// — the ONLY such trigger in rhocalc: `true`/`false` lex as BOTH a `Bool` literal
+/// keyword AND an `Ident`) AND a LATER comma-operand carries a top-level send
+/// (`!(`/`!!(`). Minimal: `fraction(false, a!(0))` FAILS; `fraction(0, a!(0))`,
+/// `fraction(Nil, a!(0))`, `fraction((false), a!(0))`, `fraction(false, (a!(0)))`
+/// all PASS. Generalizes to `[false, a!(0)]`. The grammar ADMITS the derivation
+/// `FractionProc(CastBool(false), POutput(a,0))`; the parser wrongly cannot build
+/// it (BOTH the demand `parse` and the exhaustive `parse_via_wpda_all` fail).
+///
+/// ## Root cause (measured, impl-step-0 2026-07-07)
+/// When the ambiguous `false` operand is dispatched, its `Bool→Proc` projection
+/// (`CastBool`, `LexAltRuleKind::CrossCatProjection`) is emitted through the F3
+/// [`FORROW_PROJ_GATE`] suppression in [`emit_lex_fork_at_prefix_dispatch`] (both
+/// `CrossCatProjection` arms). That gate suppresses the projection when
+/// `prefix_crosscat_lhs_trigger_ahead_scoped(primary_src, …)` sees a cross-cat-LHS
+/// trigger AT DEPTH 0 ahead AND a transparent `source→result` projection fallback
+/// exists. The scoped scan starts at depth 0 from the operand position and — the
+/// operand separator `,` is NOT a bracket opener and NOT a `row_sep` — it walks
+/// PAST the comma and sees the NEXT operand's send `!` at depth 0, concluding a
+/// send trigger "binds" the `false` LHS. It does not: `!` binds a `Name` send
+/// channel (a metavariable LHS), while `false` is a self-contained `Bool` literal
+/// belonging to a different comma-operand. So the `Bool→Proc` projection is
+/// wrongly suppressed, `false` never reads as `Bool`, `CastBool` never forms, and
+/// no `FractionProc` derivation exists. (`(a!(0))` PASSES because its `!` sits at
+/// depth 1 inside parens — never counted; `(false)` PASSES because a parenthesized
+/// operand is not the ambiguous-token lex-fork path — F3 never applies.)
+///
+/// ## The fix — ADD the missing reading (ambiguity-preserving, one-sided monotone)
+/// EXEMPT from the F3 suppression any projection whose lex-fork trigger token is a
+/// KEYWORD reading (`kind ≠ Ident`) of an IDENT-AMBIGUOUS position (some reading at
+/// `*pos` IS `Ident`). Such a projection reads a self-contained keyword LITERAL of
+/// the source category (`true`/`false` ⇒ a complete `Bool`); a keyword literal can
+/// NEVER be the metavariable LHS the pending cross-cat-LHS extension trigger binds,
+/// so the F3 futility premise never holds for it. This is GRAMMAR-DERIVED (keys on
+/// the token being a keyword-of-an-ambiguous-position, NOT on `fraction`/`Bool`
+/// names) and STRICTLY ADDITIVE: it can only flip `__proj_keep` from `false` to
+/// `true` (keep a projection F3 removed), never the reverse — the REALIZED reading
+/// set only GROWS, restoring the admitted `CastBool` derivation. It is NOT an
+/// early-disambiguation tiebreak (it selects no winner; the added branch competes
+/// on evidence exactly like every other). The `@a<-a & @a<-a` ForRow `&`-join that
+/// F3 protects is UNAFFECTED: its `InputBind→ForRow` projection is triggered by
+/// `@`/`Ident` (not a non-Ident keyword of an ident-ambiguous position — `@` is not
+/// even lexically ambiguous), so the exemption never matches it and the F2 `2^N`
+/// suppression stays intact.
+///
+/// ## Kill-switch / A-B
+/// `false` ⇒ the exemption conjunct + the `__pos_has_ident_reading` decl are
+/// OMITTED ENTIRELY from the emission (the [`AT_QUOTED_BIND_GATE`] convention) ⇒
+/// the generated `wpda.rs` is TEXTUALLY BYTE-IDENTICAL (md5-verified) to the pre-fix
+/// baseline. `true` (SHIP DEFAULT — this IS the fix) ⇒ the exemption is folded into
+/// both `CrossCatProjection` arms' `__proj_keep`. FV: `KwAmbigProjExempt.v` (mirror
+/// `AtQuotedBindGate.v`: exempt_no_loss one-sided monotone — the gated keep-set is a
+/// strict SUPERSET of the F3 keep-set and every added branch is a keyword-literal
+/// projection whose F3 futility premise is false, so no reading is lost and the
+/// realized set only grows).
+pub(crate) const KWAMBIG_PROJ_EXEMPT_GATE: bool = true;
 
 /// AT_QUOTED_BIND_GATE — parse-time evidence gate for the `@`-quoted bind
 /// over-generation (2026-07-03). Kill-switch `const` (compile-time, folded into
@@ -174,425 +245,6 @@ pub(crate) const AT_QUOTED_BIND_GATE: bool = true;
 /// realize_inert_under_parse_gate}`.
 pub(crate) const AT_QUOTED_BIND_REALIZE_GATE: bool = true;
 
-/// ROOT2_DRIVER_FALLTHROUGH — the facade single-result driver fall-through
-/// (Direction A, 2026-07-04, session da0842dc). Kill-switch `const`
-/// (compile-time, folds into the generated `parse_<Cat>_via_wpda_with_source`
-/// body — the same convention as [`AT_QUOTED_BIND_GATE`] / [`FORROW_PROJ_GATE`]).
-///
-/// ## The defect it backstops (ROOT aa8ab54d)
-/// The single-result facade `parse_<Cat>_via_wpda_with_source`
-/// (wpda_codegen/facade.rs) drives the DEMAND EOI driver
-/// (`run_to_end_of_input_until_accepting_env_aware`), which EARLY-STOPS the
-/// moment a live *category-correct* accepting root exists
-/// (`live_frontier_has_demand_resolvable_accept` checks category, NOT
-/// realizability). For a surface like `(@a!!(Nil))` (an `@`-first send wrapped in
-/// transparent Rholang display-parens `_parenthesized`) the demand driver stops
-/// on a root whose SPPF realizes ZERO terms (all raw-probe caps `128..=1`), so
-/// the M6 realize-select (`__mettail_wpda_select_min_weight_realizing`) returns
-/// `None` and the facade unconditionally maps that to
-/// `WpdaParseError::EmptyResult` ("WPDS produced no result"). The EXHAUSTIVE
-/// driver (`run_to_end_of_input_env_aware`, used by the `_all` facades) explores
-/// the alternatives and realizes the canonical send
-/// (`PPersistOutputShort(a, Nil)` → Display `@a!!(Nil)`, parens transparent).
-///
-/// ## The fix
-/// At the demand-path `Accepted` arm, replace the unconditional
-/// `__mettail_wpda_select_min_weight_realizing(..).ok_or(EmptyResult)?` with a
-/// `match`: `Some((term, dw))` ⇒ the VERBATIM current common path
-/// (byte-identical); `None` ⇒ FALL THROUGH to a fresh-walker EXHAUSTIVE run +
-/// re-resolve + M6 min-weight select (the factored helper
-/// `__mettail_wpda_exhaustive_retry`, whose body is the EXACT
-/// `AcceptedWithTrailing` retry — both arms call it). The common path is
-/// BYTE-IDENTICAL: the `None` arm is reached IFF the demand M6-select returns
-/// `None`, which is EXACTLY today's unconditional `EmptyResult`. The recovered
-/// term is the global min-weight realizing root — the SAME canonical policy the
-/// `_all` facades use (grounded concretely by Stage-0 S0-B roundtrip-idempotence,
-/// not by the FV — the honest term-correctness split, like the M6 precedent).
-///
-/// ## Soundness (per feedback_use_wpds_disambiguation_not_heuristics)
-/// This is a RESULT-LAYER backstop that BACKSTOPS (does not mask) the demand
-/// driver's early-stop defect. It relaxes NO acceptance criterion: the
-/// exhaustive re-run's realizable-root set ⊇ the demand run's, and a
-/// genuine-invalid surface still yields `Err` (the exhaustive pass produces no
-/// realizing root → `EmptyResult`, measured S0-A `(@a)` → still Err). It cannot
-/// fabricate a parse for a non-parseable surface (T4). FV:
-/// `FacadeDriverFallThrough.v` (T1 common_path_identity, T2
-/// fallthrough_only_on_unrealizable, T3 fallthrough_picks_realizing_root, T4
-/// no_spurious_parse, T5 output_is_realized_root, T6 refines_empty_result — the
-/// make-or-break: pre=Ok ⟹ post=same Ok; pre=Err ⟹ post ∈ {Ok-realized | Err};
-/// NEVER Ok→Err or Ok→different, T7 composes_with_m6_and_accepted_with_trailing).
-///
-/// ## Kill-switch
-/// When `false`, the `Accepted` arm emits the PRE-EDIT
-/// `.ok_or(WpdaParseError::EmptyResult)?` shape — byte-identical OFF (the
-/// generated `parser.rs`/facade md5 == baseline). Runtime A/B: the env var
-/// `PRATTAIL_NO_ROOT2_FALLTHROUGH` (mirrors `PRATTAIL_NO_M6_SELECT`) forces the
-/// `None` arm to reproduce the `EmptyResult` error even when the const is `true`,
-/// re-exposing the demand-driver defect for study without a rebuild.
-///
-/// ★ 2026-07-04 STAGE-0 (offline, session da0842dc): S0-A recovers
-/// (`(@a!!(Nil))`→`@a!!(Nil)`, `(@a!(Nil))`→`@a!(Nil)`, full-ctx), S0-B
-/// roundtrip-idempotent, S0-C leverage = 16 roundtrip-correct recoveries / 0
-/// mishandled over the ROOT-2 corpus, S0-D 0 common-path fall-through entries.
-/// Enabled (`true`).
-pub(crate) const ROOT2_DRIVER_FALLTHROUGH: bool = true;
-
-/// SEP_ISOLATION_COMBINE — the ROOT-P `.*sep` DIVIDE-AND-CONQUER isolation+combine
-/// facade fast-path (Plan a7986200, 2026-07-05, session da0842dc). Master
-/// compile-time kill-switch (same convention as [`ROOT2_DRIVER_FALLTHROUGH`] /
-/// [`AT_QUOTED_BIND_GATE`]): folds a guarded PROLOGUE into the generated
-/// `parse_<Cat>_via_wpda_with_source` and
-/// `parse_<Cat>_via_wpda_all_with_source_and_bounding_mode` facade bodies for
-/// every category named in [`SEP_ISOLATION_CATEGORIES`].
-///
-/// ## The defect it ships the fix for (ROOT P)
-/// A `.*sep` category (e.g. `ForRow` = `b "&" bs.*sep("&") ["where" cond]`) parsed
-/// monolithically forks `dᵏ` cursor paths across the `k`-segment separator run —
-/// the per-`&`-segment edge-stack blocks never reconverge the Tomita frontier, so
-/// wall-time explodes EXPONENTIALLY in the segment count (Stage-0 measured mono
-/// peak 84→629→1544→13047→123762 for k=0..4; the `forrow_display` roundtrip test
-/// times out). Stage-0 (a7fc5b75) PROVED that parsing each `&`-separated segment in
-/// a TRULY ISOLATED sub-parse (its own walker from ROOT) then COMBINING the
-/// per-segment readings (cartesian product) is BOTH (a) exactly LINEAR
-/// (Σ = 84·(k+1)) and (b) SOUND — the isolated+combined alt SET EXACTLY equals the
-/// monolithic set for every shape incl the d=3 `@(Map()<@Nil!())<=a` (lost=0).
-///
-/// ## The fix (this feature)
-/// Before each facade's `WpdaWalker::new_for_category`, a guarded prologue calls
-/// the emitted per-category helper `__mettail_wpda_sep_isolate_all_<Cat>`. The
-/// helper (i) engages ONLY on a LINEAR / lex-unambiguous token source (else falls
-/// through), (ii) locates the list DOMAIN + optional suffix (`where cond`) via a
-/// grammar-derived bracket-depth scan, (iii) splits the domain at depth-0
-/// separators, (iv) sub-parses each element span through the ELEMENT category's
-/// own `_all_with_source` facade (fresh `new_for_category`, edge-stack from ROOT —
-/// NO cross-segment accumulation), (v) cartesian-combines the per-segment readings
-/// into `Cat` terms via `__mettail_wpda_sep_ctor_<Cat>`, folding segment weights
-/// with the ⊗ semiring product, and (vi) dedups by semantic key + ⊕-min-selects +
-/// weight-sorts (mirroring the monolithic `_all` finalize). It returns
-/// `Some((terms, weights))` on success, `None` for NOT-APPLICABLE or ANY sub-parse
-/// failure — in which case the facade falls through to the UNMODIFIED monolithic
-/// body (byte-identical; the monolithic path stays authoritative — RT-4).
-///
-/// ## Generality (no per-language / per-rule hardcode)
-/// The shape is derived from the grammar IR (`GrammarRule.syntax_pattern`'s
-/// `PatternOp::Sep` ⇔ the classifier's `MixfixRep`; the same classification the
-/// walker uses — RT-1/7) and the SEPARATOR-LOCALITY soundness gate
-/// (`separator ∉ infix-operators(element_category)`) is grammar-checked. Bracket
-/// delimiters come from the language's collection delimiters + structural parens.
-///
-/// ## Kill-switch / A-B
-/// When `false`, NO prologue and NO helper/ctor are emitted for ANY category —
-/// byte-identical (every generated `wpda.rs` md5 == baseline). The per-category
-/// include set [`SEP_ISOLATION_CATEGORIES`] gates WHICH categories opt in (EMPTY =
-/// byte-identical even with the master switch `true`). The runtime env
-/// `PRATTAIL_NO_SEP_ISOLATION` forces the emitted prologue to return early
-/// (reproduces the monolithic path) WITHOUT a rebuild — the causal A/B control.
-///
-/// FV: `formal/rocq/prattail_wpda_runtime/theories/SepReconvergence.v` (T1
-/// combine_equals_monolithic … T9 separator_locality_sound; model
-/// `CollectionForkEvidence.v`; zero-admission).
-pub(crate) const SEP_ISOLATION_COMBINE: bool = true;
-
-/// Per-result-category INCLUDE set for [`SEP_ISOLATION_COMBINE`] (mirrors the
-/// [`GEN1_REP_CLASSIFY_EXCLUDED_CATEGORIES`](super::infix) include/exclude
-/// convention). A `.*sep` category is given the isolation+combine prologue +
-/// helper + ctor ONLY when its name appears here AND [`SEP_ISOLATION_COMBINE`] is
-/// `true` AND a `SepCombineShape` is derivable for it. EMPTY ⇒ byte-identical
-/// (P1 plumbing checkpoint). `{"ForRow"}` at P3 (the DECISIVE `&`-join flip).
-/// Expanded to every `.*sep` category at P4.
-pub(crate) const SEP_ISOLATION_CATEGORIES: &[&str] = &["ForRow"];
-
-/// SEP_ISOLATION_SINGLE_BARE — GROUP-A `<-@Nil!?(…)` fix (2026-07-06, session
-/// da0842dc). Extends the bug-2318 single-element isolation from SUFFIX variants
-/// (`ForRowWhere`→`ForRowSingleWhere`) to the BARE list variant
-/// (`ForRowNoWhere`→`ForRowSingleNoWhere`), in the SINGLE-RESULT seam only.
-///
-/// ## The defect it ships the fix for
-/// The MONOLITHIC ForRow WPDA parse FAILS to form the `InputBindEmptyQuery`
-/// reading when the `!?`-query `args.*sep(",")` list holds an AMBIGUOUS
-/// keyword-collection (`Set`/`Bag`/`List` — which ALSO lex as a bare `PVar`,
-/// unlike the reserved `Map`/`Pathmap`) in a NON-LAST position FOLLOWED by a
-/// SEND element, under the `ForRow`→`InputBind` `CrossCatProjection` frame: the
-/// args collection-element dispatch grabs the bare-`PVar` reading of the keyword
-/// and drops the `CastSet` reading, so the whole `InputBindEmptyQuery` cursor
-/// dies and only `InputBindEmpty` (`<-n`) survives → the `!?` tail is stranded
-/// (`TrailingTokens` at `!`). `InputBind::parse` (NO ForRow frame) forms both
-/// readings correctly. Because `ForRowSingleNoWhere . b:InputBind |- b` is a
-/// DEFINITIONAL projection, isolating the single `InputBind` and wrapping it is
-/// == the monolithic result for every PASSING single-bind (Stage-0 S0-SOUND
-/// 32/0, S0-ALL 32/0) and RECOVERS the failing ones. The single-result seam
-/// engages it (line 709 `__single_winner &&`), so the ambiguity-preserving
-/// `_all` alt-set stays byte-identical (declines single-element, unchanged).
-///
-/// ## Kill-switch / A-B
-/// `false` ⇒ the bare variant is EXCLUDED from `single_allowed_vis` → a
-/// single-element bare domain declines to the walker → generated code
-/// byte-identical to the pre-fix (suffix-only) helper. Runtime env
-/// `PRATTAIL_NO_SEP_SINGLE_BARE` forces the bare single-element path to decline
-/// WITHOUT a rebuild (causal A/B), while keeping the suffix single-element
-/// (bug-2318) path intact.
-pub(crate) const SEP_ISOLATION_SINGLE_BARE: bool = true;
-
-/// PROJ_ISOLATION_COMBINE — the `@`-PROJECTION DIVIDE-AND-CONQUER isolation+combine
-/// facade fast-path (Plan a8b32275, 2026-07-05, session da0842dc). Master
-/// compile-time kill-switch (same convention as [`SEP_ISOLATION_COMBINE`]): folds a
-/// guarded PROLOGUE into the generated `Cat::parse_via_wpda` and
-/// `Cat::parse_via_wpda_all_with_weights` string parse entries for every category
-/// named in [`PROJ_ISOLATION_CATEGORIES`], BEFORE the sep-isolation prologue
-/// (mutually-exclusive by input shape: a leading sigil `σ` vs a depth-0 separator
-/// list).
-///
-/// ## The defect it ships the fix for (AXIS-@ — the exponential-killer)
-/// An `@`-projection category (rules `σ [open] p:D [close] [tail] : C`, σ a
-/// non-ident sigil, `p:D` a NESTED cross-cat operand — rhocalc `NQuote @(p)`,
-/// `NQuoteShort @p`, `POutputShort @p!(q)`, `POutputNil @Nil!(q)`) parsed
-/// MONOLITHICALLY re-enters the SAME walker for the inner `p` while the `@`-prefix
-/// CrossCatLhs/Projection cohort accumulates on the edge-stack, so the frontier
-/// forks `base-11` per nesting level — nested `@Nil!(@Nil!(…))` explodes
-/// EXPONENTIALLY (Stage-0 measured mono peak 20→197→2241→26061 for d=1..4, base~11;
-/// `proc_display` roundtrip times out). Stage-0 (a15ec630, re-confirmed this
-/// session) PROVED that extracting the inner operand and parsing it in a TRULY
-/// ISOLATED sub-parse (fresh `new_for_category(D)` from ROOT — NO CrossCatLhs
-/// accumulation, inner base-2 not base-11) then WRAPPING each inner reading × the
-/// matching frame-variant is BOTH (a) exactly LINEAR (Σ = leaf + d·frame, ratios
-/// →1.0, 283× at d=4) AND (b) SOUND — the isolated+combined alt SET EXACTLY equals
-/// the monolithic set incl the genuine `2^d` keyword-vs-freevar floor (raw==distinct
-/// per level, combine peak BOUNDED at the constant frame, NOT the `11^d` frontier).
-///
-/// ## The fix (this feature)
-/// Before each facade's `WpdaWalker::new_for_category`, a guarded prologue calls the
-/// emitted per-category helper `__mettail_wpda_proj_isolate_all_<Cat>`. The helper
-/// (i) matches each `σ`-led frame-variant's grammar-derived Literal/Param skeleton
-/// against the RAW input via a bracket-depth scan, (ii) extracts each cross-cat
-/// operand substring, (iii) sub-parses each through its OWN category's
-/// `parse_via_wpda_all_with_weights` string entry (fresh walker from ROOT — which
-/// RECURSES through this same prologue for deeper levels), (iv) cartesian-combines
-/// the per-operand readings into `Cat` terms via the surface enum ctor, folding
-/// operand weights with the ⊗ semiring product, and (v) dedups by semantic key +
-/// ⊕-min-selects + weight-sorts (mirroring the monolithic `_all` finalize). It
-/// returns `Some((terms, weights))` on success, `None` for NOT-APPLICABLE (no
-/// leading sigil / no variant matches) or ANY sub-parse failure — in which case the
-/// facade falls through to the UNMODIFIED monolithic body (byte-identical; the
-/// monolithic path stays authoritative — RT-4).
-///
-/// ## Generality (no per-language / per-rule hardcode)
-/// The shape is derived from the grammar IR (`GrammarRule.syntax_pattern`: a leading
-/// `Literal(σ)` with `σ` NON-ident, plus `Param(p)` slots with `TypeExpr::Base(D)`) —
-/// the SAME classification the walker uses. Bracket delimiters come from structural
-/// parens + the language's collection delimiters.
-///
-/// ## Kill-switch / A-B
-/// When `false`, NO prologue and NO helper is emitted for ANY category —
-/// byte-identical (every generated `wpda.rs` md5 == baseline). The per-category
-/// include set [`PROJ_ISOLATION_CATEGORIES`] gates WHICH categories opt in (EMPTY =
-/// byte-identical even with the master switch `true` — the P1 plumbing checkpoint).
-/// The runtime env `PRATTAIL_NO_PROJ_ISOLATION` forces the emitted prologue to
-/// return early (reproduces the monolithic path) WITHOUT a rebuild — the causal A/B
-/// control.
-///
-/// FV: `formal/rocq/prattail_wpda_runtime/theories/ProjectionIsolation.v` (T1
-/// combine_equals_monolithic … T8 isolation_preserves_full_ambiguity … T10 composes;
-/// model `SepReconvergence.v`; zero-admission).
-pub(crate) const PROJ_ISOLATION_COMBINE: bool = true;
-
-/// Per-result-category INCLUDE set for [`PROJ_ISOLATION_COMBINE`] (mirrors the
-/// [`SEP_ISOLATION_CATEGORIES`] convention). An `@`-projection category is given the
-/// isolation+combine prologue + helper ONLY when its name appears here AND
-/// [`PROJ_ISOLATION_COMBINE`] is `true` AND a `ProjIsoShape` is derivable for it.
-/// EMPTY ⇒ byte-identical (P1 plumbing checkpoint). Expanded to
-/// `{"Name","Proc","InputBind","ForRow"}` at P4 (the DECISIVE `@`-nesting flip).
-pub(crate) const PROJ_ISOLATION_CATEGORIES: &[&str] =
-    &["Name", "Proc", "InputBind", "ForRow"];
-
-/// METHOD_FRAME_ISOLATION — extend the `@`-PROJECTION isolation (above) to the
-/// RECEIVER-LED POSTFIX (method-call) frames (ROOT-D, session da0842dc,
-/// 2026-07-06). Compile-time kill-switch (sibling of [`PROJ_ISOLATION_COMBINE`]);
-/// OFF ⇒ [`derive_projection_iso_shape`] does NOT admit method frames ⇒ the
-/// generated facade is BYTE-IDENTICAL to the pre-ROOT-D baseline.
-///
-/// ## The defect it ships the fix for (ROOT D)
-/// A method rule (`m:Proc "." "get" "(" k:Proc ")"`, …) begins with an OPERAND
-/// (the `m:Proc` receiver), not a sigil, and has NO `.*sep` list, so the proj-iso
-/// eligibility (sigil-led ∨ framed-list) DECLINES it. A deep-`@` operand inside a
-/// method-call arg (`Nil.concat(@Nil!(@Nil!(…)))`) then parses MONOLITHICALLY —
-/// EXPONENTIAL (Stage-0 measured `Nil.concat(@^d Nil)` = 23→55→269→1568→7546→
-/// 34666 ms for d=1..6, base~5), while the SAME `@`-nest parsed as an ISOLATED arg
-/// is the linear proj-iso base-2 floor (2→5→10→21→45→86 ms). `proc_display` times
-/// out at CASES=100.
-///
-/// ## The fix (this feature)
-/// Admit a "receiver-led postfix frame" (slot 0 = Param, LAST slot = closing-
-/// bracket Literal — excludes binary-infix which ends in a Param) as a projection
-/// variant. Its LEADING receiver operand is matched GREEDY-LAST (the method `.` is
-/// the unique rightmost depth-0 `.`; args are bracketed) so left-assoc method
-/// CHAINS (`a.b().c()`) recover; its receiver is soundness-gated (a depth-0-
-/// whitespace STRING pre-filter + an AST decline of binary-infix / prefix top-
-/// ctors) so a low-precedence receiver (`Map() % @X` → `Mod`, `-Nil` → `NegProc`)
-/// DECLINES the frame (falls to the monolithic body — sound; the method `.` binds
-/// tighter than every infix and than `-`, so those are NOT the whole receiver).
-/// Args + receiver are sub-parsed through the operand facade (RECURSES through the
-/// proj-iso prologue ⇒ deep-`@` args linearize) and wrapped in the method ctor.
-///
-/// ## Generality
-/// GRAMMAR-DERIVED, no per-language/per-rule hardcode: eligibility is the
-/// slot-shape; the greedy-last flag is "slot0.category is left-recursive via the
-/// slot1 literal" (∃ `cat <delim> … : cat`); the decline-set is "rules producing
-/// the receiver category with syntax `[Param,Lit,Param]` or `[Lit,Param]`".
-/// Calculator has no method rules ⇒ no method frames ⇒ byte-identical.
-///
-/// ## Kill-switch / A-B
-/// `false` ⇒ no method variants for ANY category ⇒ byte-identical. The runtime env
-/// `PRATTAIL_NO_METHOD_ISOLATION` makes the emitted method-variant arms return
-/// early WITHOUT a rebuild — the causal A/B control.
-///
-/// FV: `formal/rocq/prattail_wpda_runtime/theories/MethodFrameIsolation.v`
-/// (combine_equals_monolithic … receiver_gate_declines_nonprimary; zero-admission).
-pub(crate) const METHOD_FRAME_ISOLATION: bool = true;
-
-/// PROJ_ISO_LITERAL_RUN_ANCHOR — the InputBind query-frame `@@`-CHANNEL fix
-/// (session da0842dc, 2026-07-06). Compile-time kill-switch (sibling of
-/// [`METHOD_FRAME_ISOLATION`] / [`PROJ_ISOLATION_COMBINE`]); OFF ⇒ the emitted
-/// `__proj_skeleton_match` matcher ([`super::facade::emit_projection_isolation`])
-/// is BYTE-IDENTICAL to the pre-fix single-next-literal boundary.
-///
-/// ## The defect it ships the fix for (the last on-path `forrow_display` residual)
-/// The `@`-PROJECTION / framed-list isolation matcher delimits each cross-cat
-/// OPERAND by the FIRST depth-0 occurrence of the SINGLE next fixed literal. For a
-/// query bind whose CHANNEL is itself a quoted SEND — the rule
-/// `InputBindEmptyQuery . n:Name, args:Vec(Proc) |- "<-" n "!" "?" "(" args.*sep(",") ")"`
-/// on the surface `<-@@Nil!()!?(true, Pathmap() <= @Nil!!())` — the channel operand
-/// `@@Nil!()` (a VALID Name = `NQuoteShort(POutputNilEmpty)`) CONTAINS a depth-0 `!`
-/// from its OWN send `!()`. The post-channel delimiter literal is `!` (the first
-/// char of the query run `! ? (`), so the greedy-first depth-0 scan matches the
-/// channel-INTERNAL `!` (pos 7) BEFORE the query `!` (pos 10); the very-next literal
-/// `?` then mismatches the channel's `(` ⇒ the matcher returns `None` ⇒ the helper
-/// declines ⇒ the facade falls through to the monolithic body, which ALSO cannot
-/// form the reading for the complex multi-arg query (0 alts) ⇒ `InputBind::parse` /
-/// `ForRow::parse` return `Err`. Each piece parses in isolation
-/// (`Name::parse("@@Nil!()")` OK, each `Proc::parse(arg)` OK); ONLY the frame match
-/// at the InputBind level fails. This is the SAME divide-and-conquer isolation locus
-/// as the polyadic-send / method-arg framing, applied to the InputBind query rules;
-/// the gap is the MATCHER, not the shape (the three query variants are already
-/// derived + emitted as framed-list projection variants — verified in the emitted
-/// helper).
-///
-/// ## The fix (this feature)
-/// Anchor each operand's RIGHT boundary on the MAXIMAL consecutive LITERAL RUN after
-/// its `Op` slot (all `Lit` slots up to the next `Op`), not just the single next
-/// literal: accept a depth-0 delimiter position ONLY when the WHOLE run
-/// (whitespace-flexible, same word-boundary rule as the main Lit arm — via the
-/// emitted `__match_lit_run`) matches there. The channel's internal `!` is followed
-/// by `(`, not the query run `! ? (`, so it is skipped; the run `!?(` matches only
-/// at the genuine query frame ⇒ the channel operand recovers as `@@Nil!()` and the
-/// args region as `true, Pathmap() <= @Nil!!()` (both then sub-parse + combine).
-///
-/// ## Soundness (strict monotone improvement — measured, pure-logic Stage-0a)
-/// The run is GRAMMAR-DERIVED (the skeleton's fixed literals, which the grammar
-/// REQUIRES consecutively after the operand), so the TRUE operand boundary ALWAYS
-/// has the full run matching there — anchoring on it never SKIPS the true boundary.
-/// It only removes SPURIOUS early splits (a position where the first literal matches
-/// but the rest of the run does not — where the pre-fix matcher then mismatched the
-/// next literal and returned `None`). So per operand the anchored scan is a strict
-/// refinement of the boundary set: where the pre-fix matcher returned `Some(ranges)`
-/// it returns the IDENTICAL ranges (the true boundary has the full run; any earlier
-/// full-run match would have been taken by BOTH — greedy-first); where it returned
-/// `None` from a false-early split it now returns the correct `Some`. Pure-logic
-/// Stage-0a confirmed: OLD `None` / NEW correct for every `@@`-channel query surface;
-/// OLD == NEW (byte-identical ranges) for every passing form (`<-a!?(x)`,
-/// `<-@Nil!?(Set(),@Nil!!())`, method frames `.get(`/`.keys(`). The query run `!?(`
-/// is UNIQUE to the query at the Name/Proc level (no `!?(` production), so no false
-/// frame match. FV:
-/// `formal/rocq/prattail_wpda_runtime/theories/ProjectionIsolation.v`
-/// (`literal_run_anchor_*`: anchored-boundary ⊆ single-literal boundary set,
-/// true-boundary preserved, none→some-only; zero-admission).
-///
-/// ## Kill-switch / A-B
-/// `false` ⇒ NO `__match_lit_run` helper, NO env read, the pre-fix `if wb { … }`
-/// single-literal boundary ⇒ BYTE-IDENTICAL (every generated `wpda.rs` md5 ==
-/// baseline). Runtime env `PRATTAIL_NO_PROJ_RUN_ANCHOR` reproduces the single-
-/// literal boundary WITHOUT a rebuild (causal A/B — reproduces the pre-fix decline).
-pub(crate) const PROJ_ISO_LITERAL_RUN_ANCHOR: bool = true;
-
-/// INFIX_ISOLATION_COMBINE — the PRECEDENCE-AWARE BINARY-INFIX operand
-/// DIVIDE-AND-CONQUER isolation+combine facade fast-path (ROOT-2 `or`/PParInfix
-/// locus, 2026-07-06). Master compile-time kill-switch (same convention as
-/// [`SEP_ISOLATION_COMBINE`] / [`PROJ_ISOLATION_COMBINE`]): folds a guarded
-/// PROLOGUE into the generated `parse_<Cat>_via_wpda*` string entries for every
-/// category named in [`INFIX_ISOLATION_CATEGORIES`]. It is the THIRD sibling of
-/// the `.*sep` (P2) and `@`-projection (P1) isolators — those linearize LIST /
-/// FRAME operands; THIS linearizes the two operands of a top-level BINARY INFIX.
-///
-/// ## The defect it ships the fix for (ROOT 2, `or` locus)
-/// A binary-infix composition whose LEFT operand is a POLYADIC persistent send
-/// carrying a division-containing arg — `@Nil!!(true, @Nil!() / @Nil!()) or X` —
-/// parsed MONOLITHICALLY dies with "no accepting branch reached end of input": the
-/// GLR frontier does not RECONVERGE across the infix-operand boundary (the same
-/// edge-stack / cross-cat non-reconvergence as the `.*sep` / `@`-projection loci,
-/// but at the binary-infix-operand level). Each operand parses in ISOLATION
-/// (`@Nil!!(true,@Nil!() / @Nil!())` → Ok in ~6 ms via proj-iso; the RHS send → Ok)
-/// and simpler `or`s parse; only the composition of a complex LEFT send with a
-/// second send explodes. `proc_display_parse_roundtrip` @CASES=100 fails on it.
-///
-/// ## The fix (this feature)
-/// Before each facade's monolithic body, a guarded prologue calls the emitted
-/// per-category helper `__mettail_wpda_infix_isolate_all_<Cat>`. The helper (i)
-/// scans the raw input at bracket-depth 0 for the category's binary-infix operator
-/// terminals (grammar-derived from the SAME binding-power table the walker uses —
-/// [`build_bp_table`](super::infix::build_bp_table)), (ii) elects the ROOT split:
-/// the LOOSEST-precedence (min `left_bp.min(right_bp)`) depth-0 operator; among its
-/// occurrences the RIGHTMOST for left-assoc (`left_bp < right_bp`) / LEFTMOST for
-/// right-assoc — the exact Pratt root, so `a or b / c` splits at `or` and
-/// `a or b or c` at the rightmost `or`, (iii) sub-parses the LEFT and RIGHT operand
-/// spans through the OPERAND category's own string entry (fresh walker from ROOT —
-/// RECURSES through ALL prologues incl proj/sep/infix, so nested infix + framed
-/// sends both linearize), (iv) combines via the operator's binary ctor
-/// `Cat::Label(Arc(l), Arc(r))`, ⊗-folding operand weights, (v) dedups by semantic
-/// key + ⊕-min + weight-sort (the monolithic `_all` finalize). It returns
-/// `Some((terms, weights))` on success, `None` for NOT-APPLICABLE (no depth-0
-/// binary infix — a pure frame/atom, handled by proj/sep/monolithic) or ANY
-/// sub-parse failure ⇒ the facade falls through to the UNMODIFIED monolithic body
-/// (byte-identical — the monolithic path stays authoritative). Wired AFTER the
-/// proj + sep prologues (mutually-exclusive by shape: proj/sep consume a WHOLE
-/// frame/list; infix needs a depth-0 operator with BOTH operands present).
-///
-/// ## Generality (no per-language / per-rule hardcode)
-/// The operator set, precedence, and associativity are read from the binding-power
-/// table (`InfixOperator{terminal,left_bp,right_bp,label,category,result_category}`)
-/// — the SAME classification the walker's InfixLoop consumes. Only HOMOGENEOUS
-/// same-category binary infix (`category == result_category == cat`, `!postfix`,
-/// `!mixfix`) is admitted; cross-category comparisons (`Int×Int→Bool`) are NOT
-/// chainable at one category and fall to the monolithic path (sound). Maximal-munch
-/// (`>=` beats `>`) + word-boundary (alpha `or`/`and`/`bitor`) + a leading-operand
-/// guard (the char before the operator is an operand terminal, not another operator
-/// / open bracket) exclude unary `-`/`*` in operator position.
-///
-/// ## Kill-switch / A-B
-/// When `false`, NO prologue and NO helper are emitted for ANY category —
-/// byte-identical (every generated `wpda.rs` md5 == baseline). The per-category
-/// include set [`INFIX_ISOLATION_CATEGORIES`] gates WHICH categories opt in (EMPTY
-/// = byte-identical even with the master switch `true`). The runtime env
-/// `PRATTAIL_NO_INFIX_ISOLATION` forces the emitted prologue to return early
-/// (reproduces the monolithic path) WITHOUT a rebuild — the causal A/B control.
-///
-/// FV: `formal/rocq/prattail_wpda_runtime/theories/InfixReconvergence.v`
-/// (precedence-root split == monolithic Pratt parse, combine set-eq, linearity,
-/// fallback refinement; zero-admission).
-///
-/// Byte-identical-OFF VERIFIED (2026-07-06): with this `false`, the generated
-/// rhocalc `parser.rs`/`wpda.rs` differ from the `true` build by EXACTLY the infix
-/// helper + the two prologues (0 OFF-only non-whitespace lines); calculator (not in
-/// the include set) is md5-unchanged.
-pub(crate) const INFIX_ISOLATION_COMBINE: bool = true;
-
-/// Per-result-category INCLUDE set for [`INFIX_ISOLATION_COMBINE`] (mirrors the
-/// [`SEP_ISOLATION_CATEGORIES`] / [`PROJ_ISOLATION_CATEGORIES`] convention). A
-/// category is given the binary-infix isolation prologue + helper ONLY when its
-/// name appears here AND [`INFIX_ISOLATION_COMBINE`] is `true` AND an
-/// `InfixIsoShape` is derivable for it (≥1 homogeneous binary-infix operator).
-/// EMPTY ⇒ byte-identical (plumbing checkpoint). `{"Proc"}` ships the `or` locus
-/// (rhocalc's 16 `Proc×Proc→Proc` operators).
-pub(crate) const INFIX_ISOLATION_CATEGORIES: &[&str] = &["Proc"];
-
 /// CROSSCAT_LEX_COMPAT_GATE (option A — PRIMARY, emission-side bucket split;
 /// 2026-07-03). The general, evidence-based first-token lexical-compatibility
 /// FILTER at the cross-cat `Proc` (and any category's) PROJECTION fork.
@@ -653,11 +305,136 @@ pub(crate) const CROSSCAT_LEX_COMPAT_GATE: bool = true;
 /// `true` applies → the wrap is a no-op) and the push is byte-identical.
 pub(crate) const CROSSCAT_LEX_COMPAT_RUNTIME_GATE: bool = true;
 
+/// S1_FACTORING — master kill-switch for the generic FGLL-style shared-prefix
+/// factoring of the PrefixDispatch fan (Stage F0, 2026-07-11). Compile-time
+/// `const` resolved at macro expansion (the [`FORROW_PROJ_GATE`] /
+/// [`AT_QUOTED_BIND_GATE`] kill-switch convention — NOT a runtime env var).
+///
+/// Plan of record: `scratchpad/zz_probes/s1_factoring_plan.md` (§0-§5 plus the
+/// red-team amendments A1-A10). Literature anchor: Scott & Johnstone,
+/// *Structuring the GLL parsing algorithm for performance*, SCP 125 (2016).
+/// The fan: at `PrefixDispatch` on `@` in RhoCalc `Proc` the generated engine
+/// forks 15 per-rule branches (rules 10-24) that mirror the SAME `@` token
+/// into the SPPF 15 times and run the inner `Name`/`Proc` sub-parse once per
+/// RULE per nesting level; the factored emission runs it once per GROUP
+/// (`@`-cohort: 16 branches → 4).
+///
+/// When `false` (F0 ships OFF): the factoring model
+/// ([`super::factoring`]) is a PURE data-structure computation exercised only
+/// by its unit tests and by the grammar-generality INV-8 prefix-surface
+/// no-loss invariant — NO emitter consults it, and the generated
+/// `target/generated/<lang>/wpda.rs` files are BYTE-IDENTICAL to the pre-F0
+/// output for every bundled language (receipt:
+/// `scratchpad/zz_probes/logs_s1f0/`).
+///
+/// When `true` (F1+): `factoring::emission_partition` drives the
+/// unified-bucket Fork emission in `prefix.rs` (one spine branch per eligible
+/// group, commit at trie divergence leaves), the `binder.rs` BinderRule key
+/// space gains `(cat, SPINE_ID, spine_pos)` arms, and the lex-alt surface
+/// (`kind_dispatch.rs` + [`emit_lex_fork_at_prefix_dispatch`]) emits GROUP
+/// entries instead of per-member `PrefixOp` entries (red-team AV5 — without
+/// that the lex-fork path re-creates the per-rule fan). Flip criteria: plan
+/// §5 (the F4 gate — d4-under-cap + depth-uniformity primary, ≥5× d3 wall
+/// secondary).
+pub(crate) const S1_FACTORING: bool = true;
+
+/// S1F5_ACCEPT_CONTINUE — kill-switch for F5-1 accept+continue groups
+/// (interior accept-nodes admitted as SIBLING LEAVES, 2026-07-13).
+/// Compile-time `const` resolved at macro expansion (the [`S1_FACTORING`]
+/// kill-switch convention — NOT a runtime env var). Effective ONLY while
+/// [`S1_FACTORING`] is also `true`: `factoring::emission_partition`
+/// short-circuits to the identity partition otherwise, and the model
+/// (`factoring::build_prefix_factoring`) is consulted by no emitter.
+///
+/// Plan of record: `scratchpad/zz_probes/f5_accept_continue_plan.md` (§0-§9
+/// plus the §RED-TEAM amendments A1-A4). The cohort being admitted: a
+/// proper-prefix member — one whose post-trigger item list is a proper
+/// prefix of a sibling's, e.g. RhoCalc `InputBindQuoted` (`@ pat <- n`)
+/// inside `InputBindQuotedQuery` (`@ pat <- n ! ? ( args… )`) — marks its
+/// whole group `IneligibleReason::InteriorAccept` under F0/F1, so the bucket
+/// emits unfactored per-rule branches. The F5-1 design REJECTS an ε-branch
+/// at the accept node (no non-consuming marker-replace `ForkActionKind`
+/// exists — plan §9-FS1) and instead HOISTS the accept one edge earlier as
+/// an ORDINARY LEAF sharing its edge item with the continuation subtree: the
+/// fork at the arm consuming that edge emits the member's typed commit
+/// branch AND the spine-continue branch. Every emitted construct is an
+/// F1-emitted construct (action-identical replace/push/state species) —
+/// ZERO walker changes, zero prefix/binder/kind_dispatch/engine_impl
+/// changes; the entire delta is the `factoring.rs` model (forest-shaped
+/// tries), its tests, and the INV-8 ON-branch census.
+///
+/// When `false`: `factoring::build_tree` routes exhausted members to
+/// `interior_accepts` exactly as F0 shipped — the model, the emission, and
+/// every generated `target/generated/<lang>/wpda.rs` are byte-identical to
+/// the F4 flip state (receipts: `scratchpad/zz_probes/logs_s1f5_1/`).
+///
+/// When `true`: exhausted members finalize as sibling accept leaves
+/// (`factoring::build_tree`, normative forest order `remainder ++ accepts`
+/// per amendment A1) and the group proceeds to ordinary eligibility.
+/// Exactly ONE bundled cohort changes: rhocalc `(InputBind, "@")`
+/// {QuotedQuery=2, Quoted=3, QuotedPersistent=6} — rhocalc groups 3 → 4,
+/// ineligible 1 → 0, InputBind@ dispatch rule-fan 3 → 1; every other
+/// engine byte-invariant (amendment A2; census + hash gates in
+/// `run_s1f5_1_*.sh`).
+pub(crate) const S1F5_ACCEPT_CONTINUE: bool = true;
+
+/// S1F5_MIXFIX_COHORTS — kill-switch for F5-2 mixfix send cohorts (the
+/// InfixLoop Name-led send fan, 2026-07-13). Compile-time `const` resolved
+/// at macro expansion (the [`S1_FACTORING`] kill-switch convention — NOT a
+/// runtime env var). Effective ONLY while [`S1_FACTORING`] is also `true`:
+/// `factoring::mixfix_emission_partition` short-circuits to the identity
+/// partition otherwise, and the mixfix model
+/// (`factoring::build_mixfix_factoring`) is consulted by no emitter.
+///
+/// Plan of record: `scratchpad/zz_probes/f5_mixfix_cohorts_plan.md` (§1-§8
+/// plus the §RED-TEAM amendments A-M1..A-M5). The fan being factored: at
+/// `InfixLoop` on `!` (resp. `!!`) in RhoCalc `Name` the generated engine
+/// forks 3 per-rule `mixfix_marker` + `MixfixLiteralRun{kind: 2}` branches
+/// — rules {4 POutput, 6 POutputEmpty, 8 POutput2Plus} (resp. {5, 7, 9}) —
+/// so rules 4 and 8 EACH descend the payload sub-parse (×2 per send, and
+/// the distinct marker symbols duplicate the whole payload subtree in the
+/// pure descriptor space). The factored emission pushes ONE spine branch
+/// per cohort (D-1 full-admission-only: admitted iff `min_l_bp >= cur_bp`
+/// with the goal/method-name gates member-uniform; any partial-admission
+/// window falls back to the verbatim per-member loop), runs ONE kind-2 run
+/// and ONE payload walk, and commits to the member rule at the trie
+/// divergence leaves INSIDE a spliced `MixfixLiteralRun` prelude (kind-2
+/// exit for the nullary member; kind-0 step 1 for the operand members —
+/// every commit rides a consuming edge, FS1). D-2 forces the width-1 trigger
+/// Fork (`Fork{ct: true, n: 1}` — the M6c.8.5 precedent) so the action
+/// family at send sites never changes; D-4 keeps every `mixfix_bp_<cat>`
+/// table per-rule (the Arm G reset triple + iter-absorb `.first()` oracles);
+/// D-6 stamps the spine trigger `lex_w(BP_TIER_MIXFIX, result, MIN member)`
+/// (AV5-analog) with commit edges `lex_one()` — the C8-mixfix channel is
+/// pre-classified (member-tail min-member substitution on NULLARY rows
+/// only; payload rows byte-equal).
+///
+/// When `false`: the loop-v2 match, the MLR spine prelude, the
+/// `mixfix_parts_len` poison rows, the lex-alt group entries, and every
+/// mixfix engine-table row are ABSENT — the generated
+/// `target/generated/<lang>/wpda.rs` files are byte-identical to the F5-1
+/// flip state (receipts: `scratchpad/zz_probes/logs_s1f5_2/`).
+///
+/// When `true`: exactly ONE bundled engine changes (rhocalc — the only
+/// language with factorable mixfix cohorts: Name `!` {4,6,8} spine 0xF803
+/// and `!!` {5,7,9} spine 0xF804, per-RESULT-category ordinals continuing
+/// after the Proc `@`-cohort prefix groups); calculator + fortranmodel are
+/// hash-identical controls (census + hash gates in `run_s1f5_2_*.sh`).
+/// The ONE prattail walker change riding this leg (A-M1, D-3 two-arm): the
+/// fork-branch `ConsumeAtAndReplace` arms in BOTH engines honor
+/// `branch.symbol` (pure sets `cur_sym`; classic conditionally
+/// GSS-replaces on symbol inequality) — a no-op for every pre-F5-2 emitter
+/// (`__checked_literal_consume!` is the sole fork-CAR emitter and is always
+/// same-marker) and load-bearing for spine commits.
+pub(crate) const S1F5_MIXFIX_COHORTS: bool = true;
+
 // ─────── Branch descriptors ──────────────────────────────────────────────
 
 /// A single Fork branch in a Cluster 1 emission. Stringly-typed via
 /// TokenStream so callers retain full control of the symbol/state/action
 /// expressions.
+// dead_code: constructed only by the `#[cfg(test)]` `emit_first_set_fork` shape test; not wired into the emit path.
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) struct FirstSetBranch {
     /// Branch identifier for diagnostics (e.g., "close", "sep", "ident").
     pub name: &'static str,
@@ -693,6 +470,8 @@ pub(crate) struct FirstSetBranch {
 /// installs a cursor-count bound, the walker reports structured
 /// ambiguity-budget overflow when the live frontier exceeds it; it does not
 /// silently prune by branch weight.
+// dead_code: exercised only by the same-file `#[cfg(test)]` shape test; not wired into the emit path.
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn emit_first_set_fork(
     branches: &[FirstSetBranch],
     consume_trigger: bool,
@@ -741,12 +520,102 @@ pub(crate) fn emit_first_set_fork(
 /// returns `&[]`, so the lex-fork is dispatched only when a multi-alt token
 /// source is in use (e.g., `MutableMultiTokenSource` after Stage 3.20 recovery
 /// edge work in Commit 4). For default lexers, this emission is inert.
-pub(crate) fn emit_lex_fork_at_prefix_dispatch(primary_src_idx: u16) -> TokenStream {
+pub(crate) fn emit_lex_fork_at_prefix_dispatch(
+    primary_src_idx: u16,
+    // S1-FACTORING F1 amendment AV5 (2026-07-12): when the language has ≥1
+    // factored group, a lex-alt `PrefixOp` entry may carry `rule_idx =
+    // SPINE_ID` (the A3 group entry) — its WEIGHT identity stamp must be the
+    // group's MIN member rule, NEVER the SPINE_ID (lex_w_alt identity fields
+    // join `plus()` elections; a synthetic stamp would flip lattice-only
+    // elected terms). The wrap routes through the generated
+    // `__s1_spine_weight_rule` free fn (identity for real ids). `false` ⇒
+    // the fn is not emitted and the weight expressions below are
+    // byte-identical to the pre-F1 output.
+    s1_any_groups: bool,
+) -> TokenStream {
+    // S1-FACTORING AV5: the two PrefixOp weight identity-stamp expressions
+    // (primary alt_idx = 0u16; secondary alt_idx = the runtime `alt_idx`).
+    let __s1_prefixop_weight_primary: TokenStream = if s1_any_groups {
+        quote! {
+            lex_w_alt_with_len(
+                __open_len, 0.0, primary_src,
+                __s1_spine_weight_rule(primary_src, info.rule_idx), 0u16,
+            )
+        }
+    } else {
+        quote! {
+            lex_w_alt_with_len(
+                __open_len, 0.0, primary_src, info.rule_idx, 0u16,
+            )
+        }
+    };
+    let __s1_prefixop_weight_secondary: TokenStream = if s1_any_groups {
+        quote! {
+            lex_w_alt_with_len(
+                __open_len, 0.0, primary_src,
+                __s1_spine_weight_rule(primary_src, info.rule_idx), alt_idx,
+            )
+        }
+    } else {
+        quote! {
+            lex_w_alt_with_len(
+                __open_len, 0.0, primary_src, info.rule_idx, alt_idx,
+            )
+        }
+    };
     // ForRow F3 (2026-06-28): the kill-switch value, folded into the
     // projection-suppression guard below as a literal `true`/`false`
     // (`bool: ToTokens`). `false` ⇒ `!(false && …) == true` ⇒ projection
     // always kept ⇒ behaviorally byte-identical to the pre-F3 (F2) emission.
     let __forrow_proj_gate_lit = FORROW_PROJ_GATE;
+    // KWAMBIG_PROJ_EXEMPT_GATE (ROOT-A, 2026-07-07): three codegen fragments,
+    // EMPTY when the gate is off (⇒ every interpolation site below is textually
+    // byte-identical to the pre-fix emission — the AT_QUOTED_BIND_GATE
+    // convention). When on: (1) `__kwambig_pos_ident_decl` binds a once-per-fork
+    // runtime bool `__pos_has_ident_reading` (some reading at `*pos` IS `Ident`);
+    // (2)/(3) the primary/secondary `&& !( … )` conjuncts fold the exemption into
+    // each `CrossCatProjection` arm's `__proj_keep`, keying on the projection
+    // trigger being a KEYWORD (`kind ≠ Ident`) reading of that ident-ambiguous
+    // position. `!( keyword ∧ ident-ambiguous )` is appended so a matched
+    // exemption drives the inner `__proj_keep` conjunction false ⇒ `!( … )` ⇒
+    // the projection is KEPT (strictly additive over F3).
+    let __kwambig_pos_ident_decl: TokenStream = if KWAMBIG_PROJ_EXEMPT_GATE {
+        quote! {
+            let __pos_has_ident_reading: bool =
+                matches!(
+                    tokens.peek_kind(*pos),
+                    Some(mettail_prattail::automata::TokenKind::Ident)
+                ) || tokens.peek_alternatives(*pos).iter().any(|__a| {
+                    matches!(__a.kind, mettail_prattail::automata::TokenKind::Ident)
+                });
+        }
+    } else {
+        TokenStream::new()
+    };
+    let __kwambig_exempt_primary: TokenStream = if KWAMBIG_PROJ_EXEMPT_GATE {
+        quote! {
+            && !(
+                !matches!(
+                    primary_kind,
+                    mettail_prattail::automata::TokenKind::Ident
+                ) && __pos_has_ident_reading
+            )
+        }
+    } else {
+        TokenStream::new()
+    };
+    let __kwambig_exempt_secondary: TokenStream = if KWAMBIG_PROJ_EXEMPT_GATE {
+        quote! {
+            && !(
+                !matches!(
+                    alt.kind,
+                    mettail_prattail::automata::TokenKind::Ident
+                ) && __pos_has_ident_reading
+            )
+        }
+    } else {
+        TokenStream::new()
+    };
     quote! {
         // M6c.3 (2026-05-14): lex-Fork emits ALL alternatives — primary
         // (branch[0]) + each secondary that has a literal rule in the
@@ -885,6 +754,7 @@ pub(crate) fn emit_lex_fork_at_prefix_dispatch(primary_src_idx: u16) -> TokenStr
             // anyway, so dropping it removes no admitting parse).
             let __ccl_trigger_scoped: bool =
                 prefix_crosscat_lhs_trigger_ahead_scoped(primary_src, tokens, *pos);
+            #__kwambig_pos_ident_decl
 
             // Branch[0] — PRIMARY (lex_alt_idx = 0).
             // M6c.6.4.d (2026-05-14): activated PrefixOp branch — same-cat
@@ -965,9 +835,7 @@ pub(crate) fn emit_lex_fork_at_prefix_dispatch(primary_src_idx: u16) -> TokenStr
                             );
                             __branches.push(mettail_prattail::wpda_walker::ForkBranch {
                                 symbol: sym,
-                                weight: lex_w_alt_with_len(
-                                    __open_len, 0.0, primary_src, info.rule_idx, 0u16,
-                                ),
+                                weight: #__s1_prefixop_weight_primary,
                                 new_state: WpdaState::BinderRule {
                                     result_src_idx: primary_src,
                                     rule_idx: info.rule_idx,
@@ -1017,7 +885,8 @@ pub(crate) fn emit_lex_fork_at_prefix_dispatch(primary_src_idx: u16) -> TokenStr
                                 && __ccl_trigger_scoped
                                 && crosscat_lhs_has_projection_fallback(
                                     primary_src, source_src_idx,
-                                ));
+                                )
+                                #__kwambig_exempt_primary);
                             if __proj_keep
                                 && __crosscat_projection_seen
                                     .insert((info.rule_idx, source_src_idx))
@@ -1192,9 +1061,7 @@ pub(crate) fn emit_lex_fork_at_prefix_dispatch(primary_src_idx: u16) -> TokenStr
                             __secondary_survived = true;
                             __branches.push(mettail_prattail::wpda_walker::ForkBranch {
                                 symbol: sym,
-                                weight: lex_w_alt_with_len(
-                                    __open_len, 0.0, primary_src, info.rule_idx, alt_idx,
-                                ),
+                                weight: #__s1_prefixop_weight_secondary,
                                 new_state: WpdaState::BinderRule {
                                     result_src_idx: primary_src,
                                     rule_idx: info.rule_idx,
@@ -1226,7 +1093,8 @@ pub(crate) fn emit_lex_fork_at_prefix_dispatch(primary_src_idx: u16) -> TokenStr
                                 && __ccl_trigger_scoped
                                 && crosscat_lhs_has_projection_fallback(
                                     primary_src, source_src_idx,
-                                ));
+                                )
+                                #__kwambig_exempt_secondary);
                             if __proj_keep
                                 && __crosscat_projection_seen
                                     .insert((info.rule_idx, source_src_idx))
@@ -1468,7 +1336,31 @@ pub(crate) fn emit_lex_fork_at_prefix_dispatch(primary_src_idx: u16) -> TokenStr
 /// every surviving lexical alternative at the current token position. Each
 /// branch carries the alternative-specific `next_pos`, so lattice token
 /// sources advance along the chosen DAG edge.
-pub(crate) fn emit_lex_fork_at_infix_loop(_primary_src_idx: u16) -> TokenStream {
+///
+/// S1-FACTORING F5-2 (A3-analog, red-team A-M5): `mixfix_spine_entries` is
+/// `true` iff THIS language's `lex_alt_rules_for_infix` table carries
+/// factored mixfix GROUP entries (`info.rule_idx` = a SPINE id). The two
+/// `MixfixFirstTrigger` sites then route the `lex_w_alt` weight identity AND
+/// the `LexAltMixfixOp.rule_idx` ACTION-KIND field through
+/// `__s1_spine_weight_rule(result, rule)` — MIN member for spine ids
+/// (AV5-mirrored; a SPINE id in either channel would leak into lex-min
+/// elections / the classic `LexForkStamp` conversion), identity for real
+/// ids. The branch `symbol`/`new_state` keep `info.rule_idx` (the spine
+/// coordinates). Admission stays the site's own floor-only predicate
+/// (`l_bp >= *cur_bp`; the group entry carries the cohort MIN l_bp = the
+/// D-1 full-admission gate at this site). `false` ⇒ byte-identical
+/// emission.
+pub(crate) fn emit_lex_fork_at_infix_loop(
+    _primary_src_idx: u16,
+    mixfix_spine_entries: bool,
+) -> TokenStream {
+    // The two identity channels per MixfixFirstTrigger branch (weight rule +
+    // action-kind rule_idx) — redirected only for grouped languages.
+    let mixfix_identity_rule = if mixfix_spine_entries {
+        quote! { __s1_spine_weight_rule(result_src_idx, info.rule_idx) }
+    } else {
+        quote! { info.rule_idx }
+    };
     quote! {
         if tokens.is_ambiguous_at(_pos) {
             let alts = tokens.peek_alternatives(_pos);
@@ -1573,7 +1465,7 @@ pub(crate) fn emit_lex_fork_at_infix_loop(_primary_src_idx: u16) -> TokenStream 
                                     weight: lex_w_alt(
                                         mettail_prattail::automata::lex_weight::BP_TIER_MIXFIX,
                                         result_src_idx,
-                                        info.rule_idx,
+                                        #mixfix_identity_rule,
                                         0u16,
                                     ),
                                     // #307 ROOT-A D2: enter the pre-operand
@@ -1595,7 +1487,7 @@ pub(crate) fn emit_lex_fork_at_infix_loop(_primary_src_idx: u16) -> TokenStream 
                                         mettail_prattail::wpda_walker::ForkActionKind::LexAltMixfixOp {
                                             alt_idx: 0u16,
                                             trigger: primary_text.clone(),
-                                            rule_idx: info.rule_idx,
+                                            rule_idx: #mixfix_identity_rule,
                                             next_pos: primary_next_pos,
                                             l_bp,
                                             result_src_idx,
@@ -1736,7 +1628,7 @@ pub(crate) fn emit_lex_fork_at_infix_loop(_primary_src_idx: u16) -> TokenStream 
                                     weight: lex_w_alt(
                                         mettail_prattail::automata::lex_weight::BP_TIER_MIXFIX,
                                         result_src_idx,
-                                        info.rule_idx,
+                                        #mixfix_identity_rule,
                                         alt_idx,
                                     ),
                                     // #307 ROOT-A D2: enter the pre-operand
@@ -1755,7 +1647,7 @@ pub(crate) fn emit_lex_fork_at_infix_loop(_primary_src_idx: u16) -> TokenStream 
                                         mettail_prattail::wpda_walker::ForkActionKind::LexAltMixfixOp {
                                             alt_idx,
                                             trigger: alt.text.to_string(),
-                                            rule_idx: info.rule_idx,
+                                            rule_idx: #mixfix_identity_rule,
                                             next_pos: alt_next_pos,
                                             l_bp,
                                             result_src_idx,
@@ -1856,7 +1748,7 @@ mod tests {
 
     #[test]
     fn emit_lex_fork_emits_peek_alternatives_check() {
-        let ts = emit_lex_fork_at_prefix_dispatch(0);
+        let ts = emit_lex_fork_at_prefix_dispatch(0, false);
         let s = ts.to_string();
         assert!(s.contains("is_ambiguous_at"), "missing is_ambiguous_at: {}", s);
         assert!(s.contains("LexAlt"), "missing LexAlt action_kind: {}", s);
@@ -1875,12 +1767,28 @@ mod tests {
 
     #[test]
     fn emit_infix_lex_fork_emits_operator_action_variants() {
-        let ts = emit_lex_fork_at_infix_loop(0);
+        let ts = emit_lex_fork_at_infix_loop(0, false);
         let s = ts.to_string();
         assert!(s.contains("lex_alt_rules_for_infix"), "missing infix lookup: {}", s);
         assert!(s.contains("LexAltPostfixOp"), "missing postfix action: {}", s);
         assert!(s.contains("LexAltInfixOp"), "missing infix action: {}", s);
         assert!(s.contains("LexAltMixfixOp"), "missing mixfix action: {}", s);
+        // F5-2 A-M5: without mixfix group entries the identity channels stay
+        // the plain `info.rule_idx` (byte-identity); with them BOTH the
+        // weight rule and the action-kind rule_idx route through
+        // `__s1_spine_weight_rule`.
+        assert!(
+            !s.contains("__s1_spine_weight_rule"),
+            "no-groups emission must not reference the redirect: {}",
+            s
+        );
+        let grouped = emit_lex_fork_at_infix_loop(0, true).to_string();
+        assert_eq!(
+            grouped.matches("__s1_spine_weight_rule").count(),
+            4,
+            "two MixfixFirstTrigger sites × (weight + action-kind) redirects: {}",
+            grouped
+        );
         assert!(
             s.contains("__primary_floor_blocked") && s.contains("ForkActionKind :: Advance"),
             "missing max-munch Pratt-floor boundary branch: {}",

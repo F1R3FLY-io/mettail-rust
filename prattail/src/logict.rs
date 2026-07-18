@@ -64,11 +64,16 @@ use std::hash::Hash;
 /// future direct-`BranchResult`-producing constructors. Match arms
 /// covering them remain in `msplit` and `fair_conjoin` for
 /// exhaustiveness.
-#[allow(dead_code)]
 enum BranchResult<T> {
     /// Yield a value, with additional branches to explore.
+    // dead_code: reserved LogicT `msplit` protocol variant (see the module doc above);
+    // matched for exhaustiveness but not yet constructed by any `BranchResult` producer.
+    #[allow(dead_code)]
     Yield(T, Vec<Branch<T>>),
     /// No result from this branch.
+    // dead_code: reserved LogicT `msplit` protocol variant (see the module doc above);
+    // matched for exhaustiveness but not yet constructed by any `BranchResult` producer.
+    #[allow(dead_code)]
     Fail,
     /// Fork into sub-branches (no immediate result).
     Fork(Vec<Branch<T>>),

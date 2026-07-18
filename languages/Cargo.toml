@@ -76,6 +76,15 @@ bicong-demo = []
 fortran_model = []
 reserved_model = []
 guarded-rho = []
+# A-11 (P3.d/F1) site-2 smoke. Task #14 (2026-07-13) closed the historical
+# compile blockers (15 term-ops codegen errors across 8 generated files +
+# the eval classify compile_error — the emitters now carry Option<Guard>
+# through every term-op opaquely), so this feature COMPILES and its
+# guardopt_smoke.rs pair is the live site-2 gate. Still NOT in
+# all-languages — promotion is a separate decision. The generated
+# gen_guardoptsmoke_* test files are gated via [[test]] required-features
+# below (regeneration-proof), not via in-file cfg.
+guardoptsmoke = []
 lambda = []
 lambda-demo = []
 led-test = []
@@ -101,6 +110,12 @@ mimalloc = ["dep:mimalloc"]
 ## default (zero overhead); enable with
 ## `cargo test --features walker-stats ...`.
 walker-stats = ["mettail-prattail/walker-stats"]
+## Walker diagnostics/trace passthrough (2026-07-16): turns on the compile-time
+## `walker-trace` gate in BOTH `prattail` (runtime parser diagnostics) and
+## `macros` (codegen-time `PRATTAIL_MACRO_TRACE`). OFF BY DEFAULT / zero-cost.
+## Enable with `cargo build --features walker-trace`; individual diagnostics are
+## then selected at runtime by their own `PRATTAIL_*` env vars.
+walker-trace = ["mettail-prattail/walker-trace", "mettail-macros/walker-trace"]
 ## Compile the macro-generated AST-first Rho scalar invocation descriptions.
 ## This is part of the default production surface: generated helpers return
 ## `mettail_rho_codegen::RhoScalarContractInvocation` values for the
@@ -112,8 +127,6 @@ rho-codegen = ["dep:mettail-rholang-codegen"]
 ## values; unsupported side-condition families fail closed instead of falling
 ## back to Ascent/CESK.
 dovetail-codegen = ["dep:dovetail", "dep:mettail-dovetail-runtime", "dep:rigail"]
-## Golden-byte wire tests against f1r3node reference vectors (main-branch RhoCalc Par wire encoding).
-rholang-wire = []
 
 [dependencies]
 mettail-macros = { package = "macros", path = "../macros" }
@@ -151,7 +164,7 @@ clap = { version = "4.5", features = ["derive"] }
 pathmap = { workspace = true }
 
 [build-dependencies]
-# Compile proto/rhocalc_wire.proto for the RhoCalc `Par` wire encoder (rholang-wire feature).
+# Compile proto/rhocalc_wire.proto for the RhoCalc `Par` wire encoder.
 prost-build = "0.13"
 protoc-bin-vendored = "3.2"
 
@@ -159,7 +172,7 @@ protoc-bin-vendored = "3.2"
 criterion = { version = "0.5", features = ["html_reports"] }
 proptest = "1"
 rand_distr = "0.4"
-# Hex encoding for golden-byte wire-format tests (rholang-wire feature).
+# Hex encoding for golden-byte wire-format tests.
 hex = "0.4"
 mettail-testkit = { package = "testkit", path = "../testkit" }
 # Lets the GuardedRho Rho-default backend test (guarded_rho_rho_backend.rs) name
@@ -276,6 +289,31 @@ name = "simulate_class3opt"
 path = "src/bin/simulate_class3opt.rs"
 required-features = ["strategies"]
 
+# Task #14 (Option<Guard>) regeneration-hazard mitigation: the language!
+# macro REWRITES tests/gen_guardoptsmoke_*.rs on every feature-enabled
+# compile, silently dropping any hand-prepended `#![cfg(...)]` header —
+# after which a default (featureless) build would fail on
+# `use mettail_languages::guardoptsmoke::*`. These explicit test targets
+# gate the files declaratively: default `cargo test` SKIPS them (verified:
+# required-features unmet ⇒ target not built), `--features guardoptsmoke`
+# builds each EXACTLY ONCE, and autodiscovery of the other tests/*.rs is
+# unaffected. guardopt_smoke.rs (hand-written, never regenerated) keeps
+# its in-file cfg instead.
+
+[[test]]
+name = "gen_guardoptsmoke_unit"
+path = "tests/gen_guardoptsmoke_unit.rs"
+required-features = ["guardoptsmoke"]
+
+[[test]]
+name = "gen_guardoptsmoke_prop"
+path = "tests/gen_guardoptsmoke_prop.rs"
+required-features = ["guardoptsmoke"]
+
+[[test]]
+name = "gen_guardoptsmoke_analytical"
+path = "tests/gen_guardoptsmoke_analytical.rs"
+required-features = ["guardoptsmoke"]
 
 [[bench]]
 name = "parse_bench"

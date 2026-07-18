@@ -201,8 +201,10 @@ pub enum ParseError {
         range: Range,
     },
     /// M11.7 (2026-05-14): the walker was configured with
-    /// `CursorBoundingMode::AmbiguityBudget(budget)` and the live frontier
-    /// exceeded that budget at the indicated `position`.
+    /// `CursorBoundingMode::AmbiguityBudget(budget)` and the number of DISTINCT
+    /// REALIZED TERMS the goal admits exceeded that budget (checked whole-run at
+    /// resolve — see the `CursorBoundingMode` rustdoc). `actual` is therefore a
+    /// reading count, not a live-frontier cursor count.
     ///
     /// Distinct from `UnexpectedToken` / `UnexpectedEof` because the input
     /// IS parseable — the parser just produced more ambiguity than the
@@ -267,13 +269,17 @@ impl fmt::Display for ParseError {
                 write!(f, "{} (recovered: {})", original_error, repair_description)
             },
             ParseError::AmbiguityBudget { budget, actual, range, hint } => {
+                // Engine-neutral wording (task #18, amdt #6): `actual` is a
+                // distinct-reading count under the pure engine and a cursor-
+                // frontier count under the classic lever, so do not label it
+                // "frontier of N cursors".
                 write!(
                     f,
-                    "{}:{}: input too ambiguous: frontier of {} cursors exceeds budget of {}",
+                    "{}:{}: ambiguity budget {} exceeded (actual {})",
                     range.start.line + 1,
                     range.start.column + 1,
-                    actual,
                     budget,
+                    actual,
                 )?;
                 if let Some(h) = hint {
                     write!(f, "\n  = hint: {}", h)?;

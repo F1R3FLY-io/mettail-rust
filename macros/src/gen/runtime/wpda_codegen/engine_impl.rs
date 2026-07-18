@@ -27,6 +27,12 @@ pub(crate) fn emit_engine_impl_full(
     categories: &[String],
     per_cat: &[Vec<GrammarRule>],
     primary_src_idx: u16,
+    // Task #10 item 1: the fork-emission ordinal collector — filled by the
+    // prefix/paren emitters below as they emit (never re-derived from the
+    // grammar model); `mod.rs` turns it into the module-level
+    // `WPDA_FORK_EMISSION_ORDINAL` table beside the Parikh tables, and the
+    // trait override emitted here delegates to that fn.
+    fork_rows: &mut super::fork_emission::ForkEmissionOrdinalModel,
 ) -> TokenStream {
     // Build the indexed view expected by prefix/semantic_actions.
     let per_cat_indexed: Vec<Vec<(u16, &GrammarRule)>> = per_cat
@@ -40,18 +46,53 @@ pub(crate) fn emit_engine_impl_full(
         })
         .collect();
 
+    // S1-FACTORING F1 (2026-07-12, plan scratchpad/zz_probes/
+    // s1_factoring_plan.md §D F1): the ONE-per-expansion spine emission
+    // bundle. With `forks::S1_FACTORING == false` the emission-effective
+    // partition has zero groups, every stream/map in the bundle is empty,
+    // and every consumer threads below emit byte-identically to the pre-F1
+    // output (the F0 receipt discipline). With the const `true`: prefix.rs
+    // emits one spine trigger branch per eligible group, binder.rs's
+    // BinderRule match gains the `(cat, SPINE_ID, node_pos)` arms,
+    // kind_dispatch's lex-alt surface emits group entries (A3), the lex-fork
+    // weight stamps route through `__s1_spine_weight_rule` (AV5), and the
+    // engine tables gain the spine rows (H9 poison `action_for` union rows,
+    // A7 leading-trigger conjunction, min-span min-over-members,
+    // `trigger_spine_owner` + A-1 `spine_members` trait overrides).
+    let s1_spine = super::factoring::build_spine_emission(language, categories, per_cat);
+    let s1_empty_dispositions: std::collections::HashMap<u16, super::factoring::SpineDisposition> =
+        std::collections::HashMap::new();
+    // Task #10 item 1: the empty-map mirror for `group_members` (same
+    // shape discipline as the dispositions above).
+    let s1_empty_group_members: std::collections::HashMap<u16, Vec<u16>> =
+        std::collections::HashMap::new();
+
     // Aggregate Phase A.2 prefix arms across all categories. Each arm
     // guards on `state_cat_src_idx` so the same token can produce
     // different AST depending on which category is being parsed.
     let mut all_prefix_arms = TokenStream::new();
+    // Task #15 (frame-bound peel): collect each category's per-arm
+    // `#[inline(never)]` PrefixDispatch helper methods alongside the arms; they
+    // are emitted into the inherent `impl #engine_ident` block below.
+    let mut all_prefix_helpers = TokenStream::new();
     for (i, rules) in per_cat_indexed.iter().enumerate() {
-        let arms = prefix::emit_prefix_arms_for_category(
+        let (arms, helpers) = prefix::emit_prefix_arms_for_category(
             language,
             i as u16,
             categories.get(i).map(String::as_str).unwrap_or(""),
             rules,
+            s1_spine
+                .dispositions
+                .get(i)
+                .unwrap_or(&s1_empty_dispositions),
+            s1_spine
+                .group_members
+                .get(i)
+                .unwrap_or(&s1_empty_group_members),
+            fork_rows,
         );
         all_prefix_arms.extend(arms);
+        all_prefix_helpers.extend(helpers);
     }
     // Phase 4: prepend collection open-delimiter arms so they run before
     // generic prefix arms. Open delimiters are typically `Fixed("{")` /
@@ -83,6 +124,11 @@ pub(crate) fn emit_engine_impl_full(
     // frame-start position (the `@Nil!!(…)`→`NVar("Nil")` phantom).
     let rule_has_leading_structural_trigger_lookup =
         super::collection::emit_rule_has_leading_structural_trigger_lookup(language, per_cat);
+    // ROOT-P Stage 4 (2026-07-08): per-CATEGORY binder-scope classifier. Gates
+    // the Stage-4 conditional edge-drop — TRUE (keep edge) for binder-scoped
+    // categories, FALSE (droppable) for context-free-interchangeable ones.
+    let category_is_binder_scoped_lookup =
+        super::collection::emit_category_is_binder_scoped_lookup(language, categories, per_cat);
     // Phase 5: BinderRule state body (multi-step state machine per rule).
     // Literal-leading binder/prefix entry arms are emitted by
     // prefix::emit_prefix_arms_for_category so they share one ambiguity bucket
@@ -93,8 +139,18 @@ pub(crate) fn emit_engine_impl_full(
     // OptionalGroup state bodies. Empty map => non-unary-prefix rules use
     // `cur_bp: 0` per the legacy default.
     let prefix_bp_map = super::binder::build_prefix_bp_map(language, per_cat);
-    let binder_rule_body =
-        super::binder::emit_binder_rule_body(language, categories, per_cat, &prefix_bp_map);
+    // Task #15 (frame-bound peel): `emit_binder_rule_body` returns the inline
+    // skeleton body PLUS the per-(cat,rule) `#[inline(never)]` helper methods
+    // that get emitted into the sibling inherent `impl #engine_ident` block.
+    let (binder_rule_body, binder_rule_helpers) = super::binder::emit_binder_rule_body(
+        language,
+        categories,
+        per_cat,
+        &prefix_bp_map,
+        // S1-FACTORING F1: the `(cat, SPINE_ID, node_pos)` spine arms
+        // (empty under the OFF const).
+        &s1_spine.binder_arms,
+    );
     // Phase 5b: BinderListLoop body for multi-binder list (^[xs]).
     let binder_list_loop_body =
         super::binder::emit_binder_list_loop_body(language, categories, per_cat);
@@ -137,7 +193,8 @@ pub(crate) fn emit_engine_impl_full(
     // `feedback_use_wpds_disambiguation_not_heuristics.md`. For grammars
     // without a `(`-triggered binder rule (all shipped except Lambda),
     // the output is byte-identical to `emit_grouping_arms`.
-    let grouping_arms = super::prefix::emit_paren_dispatch_arms(categories, language, per_cat);
+    let grouping_arms =
+        super::prefix::emit_paren_dispatch_arms(categories, language, per_cat, fork_rows);
 
     let action_for_body =
         semantic_actions::emit_action_for_body(language, categories, &per_cat_indexed);
@@ -151,6 +208,12 @@ pub(crate) fn emit_engine_impl_full(
     // count consumed by the realize-time soundness filter.
     let min_terminal_span_body =
         semantic_actions::emit_min_terminal_span_body(categories, &per_cat_indexed);
+    // ROOT-C structural token-soundness backstop (2026-07-08): per-rule
+    // "leads with a literal" predicate consumed by the realize-time filter to
+    // reject the demand-driver's fabricated leading-literal cast phantom (whose
+    // `children[0]` is the operand `Symbol`, not the realized leading terminal).
+    let rule_leads_with_literal_body =
+        semantic_actions::emit_rule_leads_with_literal_body(&per_cat_indexed);
     // AT_QUOTED_BIND_GATE realize-backstop (option B, 2026-07-03): the two
     // grammar-derived engine helper methods are emitted ONLY when the codegen
     // realize kill-switch is on (in lock-step with the walker-side
@@ -238,16 +301,32 @@ pub(crate) fn emit_engine_impl_full(
         super::kind_dispatch::emit_cat_can_reach(language, per_cat, categories);
     // L-substrate Piece #6 (2026-05-13): lex-fork dispatch block,
     // emitted at the top of the WpdaState::PrefixDispatch arm.
-    let lex_fork_dispatch = super::forks::emit_lex_fork_at_prefix_dispatch(primary_src_idx);
-    let lex_fork_infix_dispatch = super::forks::emit_lex_fork_at_infix_loop(primary_src_idx);
+    // S1-FACTORING AV5: when factored groups exist, the PrefixOp lex-alt
+    // weight stamps route through the `__s1_spine_weight_rule` free fn
+    // (min-member identity for spine entries; the fn is emitted below).
+    let lex_fork_dispatch = super::forks::emit_lex_fork_at_prefix_dispatch(
+        primary_src_idx,
+        s1_spine.any_groups(),
+    );
+    // S1-FACTORING F5-2 (plan f5_mixfix_cohorts_plan.md, A-M5): when THIS
+    // language has factored mixfix cohorts, the InfixLoop lex-fork's
+    // MixfixFirstTrigger sites route the `lex_w_alt` weight identity AND the
+    // `LexAltMixfixOp.rule_idx` action-kind field through
+    // `__s1_spine_weight_rule` (min member for spine ids, identity
+    // otherwise). Gated per language so every no-mixfix-group engine stays
+    // byte-identical.
+    let mixfix_any = !s1_spine.mixfix_groups.is_empty();
+    let lex_fork_infix_dispatch =
+        super::forks::emit_lex_fork_at_infix_loop(primary_src_idx, mixfix_any);
 
     // M6c.2 (2026-05-14): per-grammar `lex_alt_rule_for` free fn.
     // Used by the lex-Fork emitter (M6c.3) to bind alts to atomic-
     // literal rules. Emitted as a sibling of the engine impl so the
     // codegen output uses a single match expression with all
     // (cat, kind) entries.
-    let lex_alt_rule_for_fn =
-        super::kind_dispatch::emit_lex_alt_rule_for_fn(language, per_cat, categories);
+    let lex_alt_rule_for_fn = super::kind_dispatch::emit_lex_alt_rule_for_fn(
+        language, per_cat, categories, &s1_spine,
+    );
 
     // SPPF-realize observational-dedup (2026-06-28): the
     // `WpdaEngine::semantic_fingerprint` override. Probe the realized
@@ -277,8 +356,223 @@ pub(crate) fn emit_engine_impl_full(
         })
         .collect();
 
+    // S1-FACTORING F1: the spine-bundle streams interpolated below. ALL are
+    // empty under `forks::S1_FACTORING == false` (byte-identical output).
+    let s1_action_for_prelude = &s1_spine.action_for_prelude;
+    let s1_leading_trigger_prelude = &s1_spine.leading_trigger_prelude;
+    let s1_min_span_prelude = &s1_spine.min_span_prelude;
+    let s1_trigger_spine_owner_fn = &s1_spine.trigger_spine_owner_fn;
+    let s1_spine_members_fn = &s1_spine.spine_members_fn;
+    let s1_spine_weight_rule_fn = &s1_spine.spine_weight_rule_fn;
+
+    // ── S1-FACTORING F5-2: the InfixLoop mixfix loop-v2 + the spliced
+    // MixfixLiteralRun spine prelude (plan f5_mixfix_cohorts_plan.md §2). ──
+    //
+    // The VERBATIM per-member fan loop, extracted so the no-groups emission
+    // interpolates the byte-identical tokens at the original position and
+    // the grouped emission reuses it as the loop-v2 `_` fallback arm (D-1:
+    // partial floor windows / goal / method-name rejections reproduce
+    // today's per-member behavior exactly).
+    let mixfix_member_fan_loop = quote! {
+        for &(l_bp, result_src, rule_idx) in __mixfix_slice {
+            if l_bp >= *cur_bp
+                && __goal_admits(result_src)
+                && (__mixfix_fallback_full
+                    || __method_name_admits(result_src, rule_idx))
+            {
+                __cands.push(
+                    mettail_prattail::wpda_walker::ForkBranch {
+                        symbol: StackSymbolV2::mixfix_marker(
+                            result_src, rule_idx, 0,
+                        ),
+                        weight: lex_w(
+                            mettail_prattail::automata::lex_weight::BP_TIER_MIXFIX,
+                            result_src, rule_idx,
+                        ),
+                        new_state: WpdaState::MixfixLiteralRun {
+                            result_src_idx: result_src,
+                            rule_idx,
+                            completed_idx: 0,
+                            kind: 2,
+                            sub_pos: 0,
+                        },
+                        action_kind:
+                            mettail_prattail::wpda_walker::ForkActionKind::Push,
+                    },
+                );
+            }
+        }
+    };
+    let s1_mixfix_fan_arms = &s1_spine.mixfix_fan_arms;
+    let mixfix_fan_tokens = if mixfix_any {
+        // Loop v2: ONE spine branch per fully-admitted cohort (the group
+        // arms carry the D-1 guard — min_l_bp floor + the member-uniform
+        // goal/method-name gates on the A-M4 MEMBER id); everything else
+        // falls to the verbatim per-member loop.
+        quote! {
+            let mut __mixfix_spine_pushed = false;
+            match (state_cat_src_idx, token_text) {
+                #s1_mixfix_fan_arms
+                _ => {
+                    #mixfix_member_fan_loop
+                }
+            }
+        }
+    } else {
+        mixfix_member_fan_loop.clone()
+    };
+    // D-2: a pushed spine branch FORCES the Fork family at width 1
+    // (`Fork{ct: true, n: 1}` — the forks.rs M6c.8.5 single-branch-Fork
+    // precedent). The singleton fast-path's `ConsumeAndPush{Discard}` would
+    // change the action FAMILY at every send site (today's sends are always
+    // ≥2-wide Forks) and bypass every Fork-keyed guard/receipt surface.
+    let mixfix_forced_fork_tokens = if mixfix_any {
+        quote! {
+            if __mixfix_spine_pushed && __cands.len() == 1 {
+                return WpdaStepAction::Fork {
+                    branches: __cands,
+                    consume_trigger: true,
+                };
+            }
+        }
+    } else {
+        TokenStream::new()
+    };
+    // The MixfixLiteralRun literal-step helpers, extracted so the ON
+    // emission can HOIST them above the spine prelude (A-M3: macro_rules!
+    // is post-definition-visible and duplicating the fn is E0428) while the
+    // OFF emission interpolates the byte-identical tokens at the original
+    // position. #307 ROOT-A D3 (2026-06-11; FV: MixfixLiteralAccounting.
+    // {checked_run_iff_spells, primary_equality_loses,
+    // unchecked_accepts_mismatch, checked_never_fabricates,
+    // fork_completeness}): membership-checked literal consume — a rule
+    // literal matches iff its TEXT equals some out-edge of the position
+    // (primary OR lattice alternative); the consume advances along the
+    // MATCHED edge's target; no match ⇒ pure Error; multiple distinct
+    // targets ⇒ Fork, never pick-one.
+    let mixfix_literal_helpers = quote! {
+        fn __mixfix_literal_targets(
+            tokens: &dyn mettail_prattail::wpda_runtime::WpdaTokenSource,
+            pos: usize,
+            expected: &str,
+        ) -> Vec<usize> {
+            let mut targets: Vec<usize> = Vec::with_capacity(2);
+            if tokens.peek_text(pos) == Some(expected) {
+                if let Some(np) = tokens.next_pos(pos, 0) {
+                    targets.push(np);
+                }
+            }
+            for (i, alt) in tokens.peek_alternatives(pos).iter().enumerate() {
+                if alt.text == expected {
+                    if let Some(np) = tokens.next_pos(pos, i + 1) {
+                        if !targets.contains(&np) {
+                            targets.push(np);
+                        }
+                    }
+                }
+            }
+            targets
+        }
+        macro_rules! __checked_literal_consume {
+            ($expected:expr, $next_state:expr) => {{
+                let __expected: &str = $expected;
+                let __next_state = $next_state;
+                let __targets =
+                    __mixfix_literal_targets(tokens, _pos, __expected);
+                match __targets.len() {
+                    0 => WpdaStepAction::Error(format!(
+                        "mixfix literal mismatch: expected {:?} at pos {} \
+                                         (rule {}:{}) — no lattice edge matches",
+                        __expected, _pos, result_src_idx, rule_idx,
+                    )),
+                    1 => WpdaStepAction::ConsumeAtAndReplace {
+                        symbol: StackSymbolV2::mixfix_marker(
+                            *result_src_idx,
+                            *rule_idx,
+                            *completed_idx,
+                        ),
+                        weight: lex_one(),
+                        new_state: __next_state,
+                        next_pos: __targets[0],
+                    },
+                    _ => WpdaStepAction::Fork {
+                        branches: __targets
+                            .iter()
+                            .map(|np| {
+                                mettail_prattail::wpda_walker::ForkBranch {
+                                    symbol: StackSymbolV2::mixfix_marker(
+                                        *result_src_idx,
+                                        *rule_idx,
+                                        *completed_idx,
+                                    ),
+                                    weight: lex_one(),
+                                    new_state: __next_state.clone(),
+                                    action_kind:
+                                        mettail_prattail::wpda_walker::ForkActionKind::ConsumeAtAndReplace {
+                                            next_pos: *np,
+                                        },
+                                }
+                            })
+                            .collect(),
+                        consume_trigger: false,
+                    },
+                }
+            }};
+        }
+    };
+    let s1_mixfix_prelude_arms = &s1_spine.mixfix_prelude_arms;
+    // A-M3 hoist: under the grouped emission the helpers move ABOVE the
+    // spine prelude, which sits BEFORE the generic `mixfix_part`/
+    // `mixfix_parts_len` reads (spine ids never reach them — every prelude
+    // arm early-returns). No-groups emission: helpers stay at their
+    // original site, prelude absent — byte-identical.
+    let (mixfix_mlr_head_tokens, mixfix_mlr_helpers_site_tokens) = if mixfix_any {
+        (
+            quote! {
+                #mixfix_literal_helpers
+                match (*result_src_idx, *rule_idx, *kind, *completed_idx, *sub_pos) {
+                    #s1_mixfix_prelude_arms
+                    _ => {},
+                }
+            },
+            TokenStream::new(),
+        )
+    } else {
+        (TokenStream::new(), mixfix_literal_helpers)
+    };
+
     quote! {
         #lex_alt_rule_for_fn
+
+        // S1-FACTORING AV5 (2026-07-12): `__s1_spine_weight_rule(cat, rule)`
+        // — the lex-fork PrefixOp weight identity redirect (min member for
+        // spine ids, identity otherwise). Emitted ONLY when factored groups
+        // exist; the lex-fork emission references it only in that case.
+        #s1_spine_weight_rule_fn
+
+        // Task #15 (frame-bound peel, 2026-07-14): module-level imports so the
+        // peeled BinderRule/PrefixDispatch helper methods (in the inherent impl
+        // below) resolve the same SHORT names the trait `step` uses via its
+        // fn-local `use`s — the relocated arm bodies are byte-for-byte verbatim
+        // and reference `WpdaStepAction`/`WpdaState`/`StackSymbolV2`/`lex_w`/
+        // `lex_one` unqualified. These land at the language module's top level
+        // (where the engine impls sit, alongside `ast`/`language`/… includes).
+        // The only sibling generated file with a column-0 `use` is `parser.rs`
+        // (a `runtime_types::*` GLOB + an explicit `Cow`); an explicit `use`
+        // never conflicts with a glob and none of these names is `Cow`, so no
+        // E0252. `#[allow(unused_imports)]` because any one helper body needs
+        // only a subset.
+        #[allow(unused_imports)]
+        use mettail_prattail::wpda_runtime::{
+            StackSymbolV2, WpdaState, lex_w, lex_w_alt, lex_w_alt_with_len,
+            lex_w_with_len, lex_one,
+        };
+        #[allow(unused_imports)]
+        use mettail_prattail::wpda_walker::WpdaStepAction;
+        #[allow(unused_imports)]
+        use mettail_prattail::automata::lex_weight::LexicographicWeight;
+        #[allow(unused_imports)]
+        use mettail_prattail::automata::semiring::Semiring;
 
         // GEN-1 goal-gate (2026-06-28): sibling inherent impl carrying the
         // pure `cat_can_reach` predicate. Lives outside the `WpdaEngine` trait
@@ -287,7 +581,13 @@ pub(crate) fn emit_engine_impl_full(
         // `Self == #engine_ident` there and inherent associated fns resolve
         // through `Self::`. `from == goal` short-circuits reflexivity; the
         // emitted `matches!` enumerates only the non-reflexive RTC pairs.
-        #[allow(dead_code)]
+        //
+        // Task #15: ALSO the drop-in home for the peeled `binder_rule_c*_r*`
+        // and `prefix_arm_c*_a*` `#[inline(never)]` helper methods, called via
+        // `self.` from the trait `step`. `#[allow(unused_variables)]` covers
+        // their over-provisioned params (frame_ctx / tokens / _pos / …);
+        // `#[allow(unused_braces)]` the relocated `{ .. }` bodies.
+        #[allow(dead_code, unused_variables, unused_braces)]
         impl #engine_ident {
             fn cat_can_reach(from: u16, goal: u16) -> bool {
                 if from == goal {
@@ -295,6 +595,11 @@ pub(crate) fn emit_engine_impl_full(
                 }
                 #cat_can_reach_body
             }
+            // Task #15: peeled BinderRule per-(cat,rule) dispatch helpers
+            // (each an `#[inline(never)]` `match (cat,rule,position)` group).
+            #binder_rule_helpers
+            // Task #15: peeled PrefixDispatch per-arm-body helpers.
+            #all_prefix_helpers
         }
 
         #[allow(unused_variables, unused_braces)]
@@ -1185,24 +1490,17 @@ pub(crate) fn emit_engine_impl_full(
                         // `element_src_idx == result`) are unaffected — the redirect
                         // is a no-op there (byte-identical). Grammar-derived from
                         // `CollectionSpec.element_src_idx`; no per-rule/keyword
-                        // hardcode. `COLL_ELEMENT_INFIX_CAT_REDIRECT_ENABLED` +
-                        // `PRATTAIL_NO_COLL_ELEM_INFIX_REDIRECT` are the LIFO
-                        // kill-switch (OFF ⇒ pre-fix behavior). NOTE: the
-                        // close/sep detection above already reads the marker's
-                        // `collection_spec` directly, so the redirect changes ONLY
-                        // the operator-dispatch category, never the close/sep
-                        // routing — an element with no operator continuation still
-                        // falls through to Unwinding-CollectionMarker exactly as
-                        // before.
-                        const COLL_ELEMENT_INFIX_CAT_REDIRECT_ENABLED: bool = true;
+                        // hardcode. NOTE: the close/sep detection above already
+                        // reads the marker's `collection_spec` directly, so the
+                        // redirect changes ONLY the operator-dispatch category,
+                        // never the close/sep routing — an element with no operator
+                        // continuation still falls through to Unwinding-
+                        // CollectionMarker exactly as before.
                         let state_cat_src_idx: u16 = {
                             let __raw = frontier_top
                                 .map(|n| n.symbol.category_src_idx)
                                 .unwrap_or(#primary_src_idx);
-                            if COLL_ELEMENT_INFIX_CAT_REDIRECT_ENABLED
-                                && std::env::var("PRATTAIL_NO_COLL_ELEM_INFIX_REDIRECT").is_err()
-                            {
-                                match frontier_top {
+                            match frontier_top {
                                     Some(__ft)
                                         if __ft.symbol.kind
                                             == mettail_prattail::wpda_runtime::SymbolKind::CollectionMarker =>
@@ -1220,9 +1518,6 @@ pub(crate) fn emit_engine_impl_full(
                                     }
                                     _ => __raw,
                                 }
-                            } else {
-                                __raw
-                            }
                         };
                         // GEN-1 goal-gate (2026-06-28): read the STRICT goal off
                         // the frontier-top symbol (Some only for a
@@ -1448,34 +1743,13 @@ pub(crate) fn emit_engine_impl_full(
                         );
                         let __mixfix_fallback_full =
                             __mixfix_no_survivor && __cands.is_empty();
-                        for &(l_bp, result_src, rule_idx) in __mixfix_slice {
-                            if l_bp >= *cur_bp
-                                && __goal_admits(result_src)
-                                && (__mixfix_fallback_full
-                                    || __method_name_admits(result_src, rule_idx))
-                            {
-                                __cands.push(
-                                    mettail_prattail::wpda_walker::ForkBranch {
-                                        symbol: StackSymbolV2::mixfix_marker(
-                                            result_src, rule_idx, 0,
-                                        ),
-                                        weight: lex_w(
-                                            mettail_prattail::automata::lex_weight::BP_TIER_MIXFIX,
-                                            result_src, rule_idx,
-                                        ),
-                                        new_state: WpdaState::MixfixLiteralRun {
-                                            result_src_idx: result_src,
-                                            rule_idx,
-                                            completed_idx: 0,
-                                            kind: 2,
-                                            sub_pos: 0,
-                                        },
-                                        action_kind:
-                                            mettail_prattail::wpda_walker::ForkActionKind::Push,
-                                    },
-                                );
-                            }
-                        }
+                        // S1-FACTORING F5-2: `#mixfix_fan_tokens` is the
+                        // VERBATIM per-member loop for languages without
+                        // factored mixfix cohorts, and the loop-v2 group
+                        // match (spine push on full admission; `_` arm =
+                        // the same verbatim loop) otherwise — see the
+                        // `mixfix_member_fan_loop` extraction above.
+                        #mixfix_fan_tokens
 
                         // C1-M (WALK-S2, 2026-05-28): pre-fork MIXFIX ternary
                         // absorption trigger. Mixfix operators (`Tern`,
@@ -1614,6 +1888,12 @@ pub(crate) fn emit_engine_impl_full(
                             }
                         }
 
+                        // S1-FACTORING F5-2 D-2: `#mixfix_forced_fork_tokens`
+                        // (grouped languages only) forces the Fork family
+                        // when the mixfix spine branch is the lone
+                        // candidate — see the extraction above. Empty for
+                        // every other language.
+                        #mixfix_forced_fork_tokens
                         match __cands.len() {
                             0 => {
                                 // No tier matched — fall through to Unwinding.
@@ -1822,6 +2102,14 @@ pub(crate) fn emit_engine_impl_full(
                         //         just-completed operand `completed_idx`.
                         // kind=1: consume preceding_terminals before the
                         //         next operand `completed_idx + 1`.
+                        //
+                        // S1-FACTORING F5-2: `#mixfix_mlr_head_tokens` is
+                        // EMPTY for languages without factored mixfix
+                        // cohorts; otherwise it is the A-M3-hoisted literal
+                        // helpers followed by the spine prelude match —
+                        // every prelude arm early-returns, so spine ids
+                        // never reach the generic reads below.
+                        #mixfix_mlr_head_tokens
                         let part = mixfix_part(
                             *result_src_idx, *rule_idx, *completed_idx,
                         );
@@ -1855,74 +2143,15 @@ pub(crate) fn emit_engine_impl_full(
                         // (`_expected` unused) — stealing enclosing
                         // delimiters or fabricating positions: the ROOT-A
                         // defect (rhocalc `x!(0)` never parsed).
-                        fn __mixfix_literal_targets(
-                            tokens: &dyn mettail_prattail::wpda_runtime::WpdaTokenSource,
-                            pos: usize,
-                            expected: &str,
-                        ) -> Vec<usize> {
-                            let mut targets: Vec<usize> = Vec::with_capacity(2);
-                            if tokens.peek_text(pos) == Some(expected) {
-                                if let Some(np) = tokens.next_pos(pos, 0) {
-                                    targets.push(np);
-                                }
-                            }
-                            for (i, alt) in tokens.peek_alternatives(pos).iter().enumerate() {
-                                if alt.text == expected {
-                                    if let Some(np) = tokens.next_pos(pos, i + 1) {
-                                        if !targets.contains(&np) {
-                                            targets.push(np);
-                                        }
-                                    }
-                                }
-                            }
-                            targets
-                        }
-                        macro_rules! __checked_literal_consume {
-                            ($expected:expr, $next_state:expr) => {{
-                                let __expected: &str = $expected;
-                                let __next_state = $next_state;
-                                let __targets =
-                                    __mixfix_literal_targets(tokens, _pos, __expected);
-                                match __targets.len() {
-                                    0 => WpdaStepAction::Error(format!(
-                                        "mixfix literal mismatch: expected {:?} at pos {} \
-                                         (rule {}:{}) — no lattice edge matches",
-                                        __expected, _pos, result_src_idx, rule_idx,
-                                    )),
-                                    1 => WpdaStepAction::ConsumeAtAndReplace {
-                                        symbol: StackSymbolV2::mixfix_marker(
-                                            *result_src_idx,
-                                            *rule_idx,
-                                            *completed_idx,
-                                        ),
-                                        weight: lex_one(),
-                                        new_state: __next_state,
-                                        next_pos: __targets[0],
-                                    },
-                                    _ => WpdaStepAction::Fork {
-                                        branches: __targets
-                                            .iter()
-                                            .map(|np| {
-                                                mettail_prattail::wpda_walker::ForkBranch {
-                                                    symbol: StackSymbolV2::mixfix_marker(
-                                                        *result_src_idx,
-                                                        *rule_idx,
-                                                        *completed_idx,
-                                                    ),
-                                                    weight: lex_one(),
-                                                    new_state: __next_state.clone(),
-                                                    action_kind:
-                                                        mettail_prattail::wpda_walker::ForkActionKind::ConsumeAtAndReplace {
-                                                            next_pos: *np,
-                                                        },
-                                                }
-                                            })
-                                            .collect(),
-                                        consume_trigger: false,
-                                    },
-                                }
-                            }};
-                        }
+                        //
+                        // S1-FACTORING F5-2 (A-M3): the helper fn + macro
+                        // are extracted to `mixfix_literal_helpers` above —
+                        // `#mixfix_mlr_helpers_site_tokens` re-interpolates
+                        // them HERE (byte-identical) for languages without
+                        // factored mixfix cohorts; grouped languages hoist
+                        // them above the spine prelude instead (this site
+                        // is then empty).
+                        #mixfix_mlr_helpers_site_tokens
                         match (*kind, part) {
                             // #307 ROOT-A D1: the NEW pre-operand literal run
                             // — consumes parts[completed_idx].PRECEDING before
@@ -2382,13 +2611,19 @@ pub(crate) fn emit_engine_impl_full(
                 src_idx: u16,
                 rule_idx: u16,
             ) -> Option<&mettail_prattail::wpda_runtime::ActionEntry> {
+                // S1-FACTORING H9 prelude (empty under the OFF const): spine
+                // rows with expected_input_cats = member union + POISON arity
+                // (u8::MAX) — legitimate for the H1/A-1 evidence queries
+                // (`binder_slot_accepts_body_category`, the ∃-member
+                // acceptor), NEVER for firing (the walker consumption sites
+                // debug-assert `!is_spine_rule_id`).
+                #s1_action_for_prelude
                 #action_for_body
             }
 
             // SPPF-realize observational-dedup (2026-06-28): per-node dedup key.
-            // INERT until the walker's realize wiring calls it behind
-            // `PRATTAIL_REALIZE_DEDUP`; emitted now so the hook compiles against
-            // the concrete category types.
+            // Consumed by the walker's (unconditional) realize dedup path; emitted
+            // here so the hook compiles against the concrete category types.
             fn semantic_fingerprint(
                 &self,
                 term: &std::sync::Arc<dyn std::any::Any + Send + Sync>,
@@ -2444,6 +2679,15 @@ pub(crate) fn emit_engine_impl_full(
                 WPDA_MUST_MASK(cat, rule, pos)
             }
 
+            // Task #10 item 1: the per-grammar K-C election tiebreak — the
+            // ordinals are the emitters' STATIC DECLARATION POSITIONS,
+            // recorded at codegen and emitted as the module-level table
+            // beside the Parikh tables (see WPDA_FORK_EMISSION_ORDINAL's
+            // generated doc for the per-site semantics).
+            fn fork_emission_ordinal(&self, site_kind: u8, cat: u16, rule: u16) -> u16 {
+                WPDA_FORK_EMISSION_ORDINAL(site_kind, cat, rule)
+            }
+
             fn is_binder_internal_collection(
                 &self,
                 result_src_idx: u16,
@@ -2459,7 +2703,19 @@ pub(crate) fn emit_engine_impl_full(
                 rule_idx: u16,
             ) -> bool {
                 let _ = (result_src_idx, rule_idx);
+                // S1-FACTORING A7 prelude (empty under the OFF const): spine
+                // rows = the CONJUNCTION over group members (all-true under
+                // F0 eligibility, asserted at codegen). Emitted regardless of
+                // arm (consumer census: classic B2 shape mask,
+                // sppf_shallow_ident_trigger_masked, the claim-gate pos_match
+                // path, stats-only cgll_w_cond, the dormant step_canonical).
+                #s1_leading_trigger_prelude
                 #rule_has_leading_structural_trigger_lookup
+            }
+
+            fn category_is_binder_scoped(&self, src_idx: u16) -> bool {
+                let _ = src_idx;
+                #category_is_binder_scoped_lookup
             }
 
             fn is_class3_collection_per_slot(
@@ -2541,6 +2797,11 @@ pub(crate) fn emit_engine_impl_full(
             }
 
             fn min_terminal_span(&self, src_idx: u16, rule_idx: u16) -> u32 {
+                // S1-FACTORING prelude (empty under the OFF const): spine
+                // rows = MIN over the group members' effective rows (omitted
+                // when the min is 0 = the table default) — conservative for
+                // any live-frame reader that sees an uncommitted SPINE_ID.
+                #s1_min_span_prelude
                 // Pass-2c token-soundness backstop (2026-05-30): per-rule
                 // count of literal terminals matched STRICTLY WITHIN the
                 // rule's result-Symbol span (literals after the first param).
@@ -2550,10 +2811,36 @@ pub(crate) fn emit_engine_impl_full(
                 #min_terminal_span_body
             }
 
+            fn rule_leads_with_literal(&self, src_idx: u16, rule_idx: u16) -> bool {
+                // ROOT-C structural token-soundness backstop (2026-07-08):
+                // `true` iff this rule's first syntax element is a literal. A
+                // sound packing of a literal-led rule realizes that literal as a
+                // terminal-kind first child; the realize filter rejects a
+                // literal-led packing whose `children[0]` is a `Symbol` (the
+                // fabricated grouping-close cast phantom). See
+                // emit_rule_leads_with_literal_body.
+                #rule_leads_with_literal_body
+            }
+
             // AT_QUOTED_BIND_GATE realize-backstop (option B, 2026-07-03):
             // emitted ONLY when the codegen realize kill-switch is on;
             // byte-identical (nothing) at baseline.
             #at_quoted_bind_realize_methods
+
+            // S1-FACTORING F1 (2026-07-12): grammar-derived spine-owner +
+            // A-1 member tables, emitted ONLY when factored groups exist
+            // (the `at_quoted_bind_realize_methods` conditional-override
+            // convention — empty ⇒ the prattail trait defaults `None`/`&[]`
+            // stand and the generated impl is byte-identical).
+            //   - `trigger_spine_owner(cat, member) -> Some(SPINE_ID)`: the
+            //     fire-time claim re-attribution (classic gate
+            //     `owner_match || group_owner_match || pos_match`).
+            //   - `spine_members(cat, SPINE_ID) -> &[members]`: the A-1
+            //     ∃-member expansion at `action_accepts_single_body_category`
+            //     (H9 poison-arity rows would otherwise default-refuse every
+            //     mid-spine acceptance query and DROP readings).
+            #s1_trigger_spine_owner_fn
+            #s1_spine_members_fn
 
             fn single_hop_coercion(&self, from_cat: u16, to_cat: u16) -> &[(u16, u16)] {
                 // Sig-B Blocker-3 §2.3 (2026-06-01): grammar single-hop

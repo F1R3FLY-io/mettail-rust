@@ -10,11 +10,6 @@ pub const SIZES: &[usize] = &[1, 5, 10, 50, 100, 500, 1000];
 /// Smaller sizes for features where large N causes very deep recursion.
 pub const DEPTH_SIZES: &[usize] = &[1, 5, 10, 25, 50, 100];
 
-/// Variable pool for random generation.
-pub fn var_pool() -> Vec<String> {
-    (0..20).map(|i| format!("v{}", i)).collect()
-}
-
 // =============================================================================
 // Infix generators (Calculator: Int)
 // =============================================================================

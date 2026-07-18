@@ -12,40 +12,73 @@ use mettail_ast::grammar::{GrammarItem, GrammarRule, NonTerminalKind, TermParam}
 use mettail_ast::language::{LanguageDef, NativeKind};
 use mettail_ast::types::TypeExpr;
 
-/// Classify a HOL rule for PDA purposes: determine whether we can generate the
-/// work-stack form (PDA), or whether we must fall back to the recursive match.
+/// Per-field PDA classification of a HOL rule's term context — one entry per
+/// generated variant field, in declaration order.
 ///
-/// The PDA form is generated only when every param is `TermParam::Simple` with
-/// a `TypeExpr::Base(_)` type. Rules with abstractions, multi-abstractions,
-/// guard bodies, or complex type shapes fall back to the recursive form — those
-/// traversal modes are inherently non-linear and don't fit the work-stack
-/// pattern cleanly, but their trees are bounded in depth by their structure
-/// (binder scoping) and so don't pose a realistic stack-overflow risk.
+/// Task #14 (Option<Guard>): predicates are OPAQUE to evaluation. A `Guard`
+/// entry occupies a constructor position (every match pattern over the
+/// variant MUST cover it or the arm's arity is wrong), but it is never
+/// evaluated, captured into the Reduce frame, pushed as a Visit, or popped
+/// from the value stack.
+enum PdaParam<'a> {
+    /// `TermParam::Simple` with a `TypeExpr::Base(_)` type — the only shape
+    /// the PDA visits/reduces.
+    Term {
+        name: syn::Ident,
+        ty: &'a syn::Ident,
+        same_cat: bool,
+        is_optional: bool,
+    },
+    /// A `?g:Guard` predicate slot (top-level or inside `#opt(...)`). The
+    /// name is used only to render an underscore-prefixed pattern binder.
+    Guard { name: syn::Ident },
+}
+
+/// Classify a HOL rule for PDA purposes: determine whether we can generate
+/// the work-stack form (PDA).
 ///
-/// Returns a `Vec<(name, TypeExpr, is_same_category)>` for rules that qualify,
-/// or `None` if the rule has any param that can't be classified for PDA use.
+/// The PDA form is generated when every param is `TermParam::Simple` with a
+/// `TypeExpr::Base(_)` type (optionally nested in `#opt(...)`) or a
+/// `TermParam::GuardBody` (any nesting). There is NO recursive fallback:
+/// rules with abstractions, multi-abstractions, or complex type shapes
+/// return `None`, which the caller turns into a `compile_error!` (silent
+/// recursive fallback was abolished by the WFST-architecture PDA refactor —
+/// see the `None` arm at the sole call site).
+///
+/// Returns one [`PdaParam`] per variant field for rules that qualify, or
+/// `None` if the rule has any param that can't be classified for PDA use.
 fn classify_hol_rule_for_pda<'a>(
     rule: &'a GrammarRule,
     category: &syn::Ident,
-) -> Option<Vec<(syn::Ident, &'a syn::Ident, bool, bool)>> {
+) -> Option<Vec<PdaParam<'a>>> {
     // Zero-ary rules (no term_context) are PDA-compatible: they have no
     // children to recurse into. Returning `Some(Vec::new())` rather than
-    // `None` is the critical difference: `None` disables PDA for the WHOLE
-    // category, while an empty vec just means this particular rule has no
-    // same-cat children.
-    //
-    // Opt-Group: a TermParam::Optional with inner Simple/Base params is
-    // PDA-compatible — each inner becomes a tuple entry with
-    // `is_optional: true`. Inner non-Simple/non-Base params still fall
-    // back to recursive eval.
+    // `None` is the critical difference: `None` aborts the WHOLE category
+    // via compile_error!, while an empty vec just means this particular
+    // rule has no same-cat children.
     let Some(ctx) = rule.term_context.as_ref() else {
         return Some(Vec::new());
     };
+    classify_term_params_for_pda(ctx, category)
+}
+
+/// The recursive body of [`classify_hol_rule_for_pda`], hoisted so unit
+/// tests can exercise the classification over a bare `&[TermParam]`.
+///
+/// Opt-Group: a `TermParam::Optional` with inner Simple/Base params is
+/// PDA-compatible — each inner becomes a [`PdaParam::Term`] with
+/// `is_optional: true`. A `TermParam::GuardBody` (top-level or
+/// Optional-nested) becomes [`PdaParam::Guard`]. Inner non-Simple/non-Base
+/// params abort classification.
+fn classify_term_params_for_pda<'a>(
+    params: &'a [TermParam],
+    category: &syn::Ident,
+) -> Option<Vec<PdaParam<'a>>> {
     fn collect<'a>(
         params: &'a [TermParam],
         category: &syn::Ident,
         in_opt: bool,
-        out: &mut Vec<(syn::Ident, &'a syn::Ident, bool, bool)>,
+        out: &mut Vec<PdaParam<'a>>,
     ) -> Option<()> {
         for p in params {
             match p {
@@ -55,7 +88,15 @@ fn classify_hol_rule_for_pda<'a>(
                         _ => return None,
                     };
                     let same_cat = base == category;
-                    out.push((name.clone(), base, same_cat, in_opt));
+                    out.push(PdaParam::Term {
+                        name: name.clone(),
+                        ty: base,
+                        same_cat,
+                        is_optional: in_opt,
+                    });
+                },
+                TermParam::GuardBody { name } => {
+                    out.push(PdaParam::Guard { name: name.clone() });
                 },
                 TermParam::Optional { params: inner } => {
                     collect(inner, category, true, out)?;
@@ -65,8 +106,8 @@ fn classify_hol_rule_for_pda<'a>(
         }
         Some(())
     }
-    let mut out = Vec::with_capacity(ctx.len());
-    collect(ctx, category, false, &mut out)?;
+    let mut out = Vec::with_capacity(params.len());
+    collect(params, category, false, &mut out)?;
     Some(out)
 }
 
@@ -84,37 +125,81 @@ fn type_has_native_eval(ty: &TypeExpr, language: &LanguageDef) -> bool {
         .is_some()
 }
 
-/// Extract parameter names AND whether each should bind via `.eval()` (true)
-/// or `.clone()` (false). Categories without a native type (collections,
-/// `Proc`, etc.) cannot be `.eval()`'d, so the cross-category bindings have
-/// to clone — matching main's `term_context_params_with_eval`.
+/// Per-field eval-arm parameter — one entry per generated variant field, in
+/// declaration order (the recursive `eval`/`try_eval` match patterns
+/// destructure ALL of them, so the entry count must equal the variant's
+/// field arity).
+enum EvalParam {
+    /// A term-valued field: binds via `.eval()` (native categories) or
+    /// `.as_ref()`/`.clone()` (non-native), Option-mapped when optional.
+    Term {
+        name: syn::Ident,
+        use_eval: bool,
+        is_optional: bool,
+    },
+    /// Task #14 (Option<Guard>): a `?g:Guard` predicate slot (top-level or
+    /// inside `#opt(...)`). It occupies a constructor position — the match
+    /// pattern MUST bind it (underscore-prefixed) or the arm's arity is
+    /// wrong (E0023) — but it contributes no `let` binding: guards are
+    /// opaque to evaluation and unreadable from user `![...]` code.
+    Guard { name: syn::Ident },
+}
+
+/// Extract parameter entries: names AND whether each should bind via
+/// `.eval()` (true) or `.clone()` (false). Categories without a native type
+/// (collections, `Proc`, etc.) cannot be `.eval()`'d, so the cross-category
+/// bindings have to clone — matching main's `term_context_params_with_eval`.
+/// Guard slots yield [`EvalParam::Guard`] entries (previously they were
+/// silently DROPPED, which desynchronized the match-pattern arity from the
+/// variant's field count the moment a guard-bearing rule classified for the
+/// PDA).
 fn term_context_params_with_eval(
     term_context: &[TermParam],
     language: &LanguageDef,
-) -> Vec<(syn::Ident, bool, bool)> {
+) -> Vec<EvalParam> {
     let mut out = Vec::new();
     fn collect(
         params: &[TermParam],
         language: &LanguageDef,
         in_opt: bool,
-        out: &mut Vec<(syn::Ident, bool, bool)>,
+        out: &mut Vec<EvalParam>,
     ) {
         for p in params {
             match p {
                 TermParam::Simple { name, ty } => {
                     let use_eval = type_has_native_eval(ty, language);
-                    out.push((name.clone(), use_eval, in_opt));
+                    out.push(EvalParam::Term {
+                        name: name.clone(),
+                        use_eval,
+                        is_optional: in_opt,
+                    });
                 },
                 TermParam::Abstraction { binder, body, .. } => {
-                    out.push((binder.clone(), false, in_opt));
-                    out.push((body.clone(), false, in_opt));
+                    out.push(EvalParam::Term {
+                        name: binder.clone(),
+                        use_eval: false,
+                        is_optional: in_opt,
+                    });
+                    out.push(EvalParam::Term {
+                        name: body.clone(),
+                        use_eval: false,
+                        is_optional: in_opt,
+                    });
                 },
                 TermParam::MultiAbstraction { binder, body, .. } => {
-                    out.push((binder.clone(), false, in_opt));
-                    out.push((body.clone(), false, in_opt));
+                    out.push(EvalParam::Term {
+                        name: binder.clone(),
+                        use_eval: false,
+                        is_optional: in_opt,
+                    });
+                    out.push(EvalParam::Term {
+                        name: body.clone(),
+                        use_eval: false,
+                        is_optional: in_opt,
+                    });
                 },
-                TermParam::GuardBody { name, .. } => {
-                    let _ = name;
+                TermParam::GuardBody { name } => {
+                    out.push(EvalParam::Guard { name: name.clone() });
                 },
                 TermParam::Optional { params: inner } => {
                     // Inner params are tagged `in_opt: true` so the
@@ -486,8 +571,16 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
                         .as_ref()
                         .map(|ctx| term_context_params_with_eval(ctx, language))
                         .unwrap_or_default();
-                    let param_names: Vec<syn::Ident> =
-                        params_with_eval.iter().map(|(n, _, _)| n.clone()).collect();
+                    let param_names: Vec<syn::Ident> = params_with_eval
+                        .iter()
+                        .map(|p| match p {
+                            EvalParam::Term { name, .. } => name.clone(),
+                            // Task #14 (Option<Guard>): underscore-prefixed
+                            // binder — the pattern must cover the guard
+                            // position (arity) without a usable binding.
+                            EvalParam::Guard { name } => format_ident!("_{}", name),
+                        })
+                        .collect();
                     let param_count = param_names.len();
                     // Opt-Group: when `is_optional`, the variant field is
                     // `Option<Box<Cat>>` (not `Box<Cat>`). The user's eval
@@ -496,7 +589,14 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
                     // Map each binding accordingly.
                     let param_bindings: Vec<_> = params_with_eval
                     .iter()
-                    .map(|(name, use_eval, is_optional)| {
+                    .map(|p| {
+                        let (name, use_eval, is_optional) = match p {
+                            EvalParam::Term { name, use_eval, is_optional } => {
+                                (name, use_eval, is_optional)
+                            },
+                            // Guards get NO `let` binding — opaque to eval.
+                            EvalParam::Guard { .. } => return quote! {},
+                        };
                         if *is_optional {
                             if *use_eval {
                                 quote! { let #name = #name.as_ref().map(|__b| __b.as_ref().eval()); }
@@ -518,7 +618,14 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
                     .collect();
                     let try_param_bindings: Vec<_> = params_with_eval
                         .iter()
-                        .map(|(name, use_eval, is_optional)| {
+                        .map(|p| {
+                            let (name, use_eval, is_optional) = match p {
+                                EvalParam::Term { name, use_eval, is_optional } => {
+                                    (name, use_eval, is_optional)
+                                },
+                                // Guards get NO `let` binding — opaque to eval.
+                                EvalParam::Guard { .. } => return quote! {},
+                            };
                             if *is_optional {
                                 if *use_eval {
                                     quote! {
@@ -651,7 +758,15 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
                                     OptionalBorrow(TokenStream),
                                 }
                                 let mut cross_kinds: Vec<(syn::Ident, CrossKind)> = Vec::new();
-                                for (name, ty_id, same, is_optional) in &classified {
+                                for entry in &classified {
+                                    let (name, ty_id, same, is_optional) = match entry {
+                                        PdaParam::Term { name, ty, same_cat, is_optional } => {
+                                            (name, ty, same_cat, is_optional)
+                                        },
+                                        // Task #14 (Option<Guard>): guards are
+                                        // never captured into the Reduce frame.
+                                        PdaParam::Guard { .. } => continue,
+                                    };
                                     if *same && !*is_optional {
                                         continue;
                                     }
@@ -720,7 +835,16 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
                                 // Pattern: #category::#label(p0, p1, ...).
                                 let param_pat: Vec<_> = classified
                                     .iter()
-                                    .map(|(n, _, _, _)| quote! { #n })
+                                    .map(|entry| match entry {
+                                        PdaParam::Term { name, .. } => quote! { #name },
+                                        // Task #14 (Option<Guard>): the guard
+                                        // position must be covered for arity;
+                                        // underscore-prefixed = never read.
+                                        PdaParam::Guard { name } => {
+                                            let silent = format_ident!("_{}", name);
+                                            quote! { #silent }
+                                        },
+                                    })
                                     .collect();
                                 let eager_cross_evals: Vec<TokenStream> = cross_kinds
                                 .iter()
@@ -771,11 +895,18 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
                                 let same_cat_pushes: Vec<TokenStream> = classified
                                     .iter()
                                     .rev()
-                                    .filter(|(_, _, same, is_opt)| *same && !*is_opt)
-                                    .map(|(n, _, _, _)| {
-                                        quote! {
-                                            work.push(__EvalFrame::Visit(#n.as_ref()));
-                                        }
+                                    .filter_map(|entry| match entry {
+                                        // Task #14 (Option<Guard>): Term-only —
+                                        // guards are never Visit-pushed.
+                                        PdaParam::Term {
+                                            name,
+                                            same_cat: true,
+                                            is_optional: false,
+                                            ..
+                                        } => Some(quote! {
+                                            work.push(__EvalFrame::Visit(#name.as_ref()));
+                                        }),
+                                        _ => None,
                                     })
                                     .collect();
 
@@ -814,17 +945,25 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
                                 let pops: Vec<TokenStream> = classified
                                     .iter()
                                     .rev()
-                                    .filter(|(_, _, same, is_opt)| *same && !*is_opt)
-                                    .map(|(n, _, _, _)| {
-                                        quote! {
+                                    .filter_map(|entry| match entry {
+                                        // Task #14 (Option<Guard>): Term-only —
+                                        // guards were never pushed, so they are
+                                        // never popped.
+                                        PdaParam::Term {
+                                            name,
+                                            same_cat: true,
+                                            is_optional: false,
+                                            ..
+                                        } => Some(quote! {
                                             // Pops are in reverse param order; since we
                                             // push in reverse earlier (so leftmost is
                                             // visited first = processed first = pushed to
                                             // value stack first), popping in reverse gives
                                             // us rightmost-first which matches the name
                                             // binding order below.
-                                            let #n = values.pop().expect("PDA same-cat value");
-                                        }
+                                            let #name = values.pop().expect("PDA same-cat value");
+                                        }),
+                                        _ => None,
                                     })
                                     .collect();
                                 let borrow_rebinds: Vec<TokenStream> = cross_kinds
@@ -1124,5 +1263,127 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
 
     quote! {
         #(#impls)*
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use quote::format_ident;
+
+    fn simple(name: &str, cat: &str) -> TermParam {
+        TermParam::Simple {
+            name: format_ident!("{}", name),
+            ty: TypeExpr::Base(format_ident!("{}", cat)),
+        }
+    }
+
+    #[test]
+    fn classify_guard_free_rule_unchanged() {
+        // Task #14 gate-1: the tuple→enum refactor must classify guard-free
+        // rules exactly as before — same entry count, same (name, ty,
+        // same_cat, is_optional) content, in declaration order. (The
+        // emitted-token byte-identity across the 22 default languages is
+        // enforced by probe P5's sha compare.)
+        let category = format_ident!("Int");
+        let ctx = vec![simple("a", "Int"), simple("b", "Proc")];
+        let classified = classify_term_params_for_pda(&ctx, &category)
+            .expect("guard-free Simple/Base params must classify");
+        assert_eq!(classified.len(), 2);
+        match &classified[0] {
+            PdaParam::Term { name, ty, same_cat, is_optional } => {
+                assert_eq!(name.to_string(), "a");
+                assert_eq!(ty.to_string(), "Int");
+                assert!(*same_cat);
+                assert!(!*is_optional);
+            },
+            PdaParam::Guard { .. } => panic!("`a:Int` must classify as Term"),
+        }
+        match &classified[1] {
+            PdaParam::Term { name, ty, same_cat, is_optional } => {
+                assert_eq!(name.to_string(), "b");
+                assert_eq!(ty.to_string(), "Proc");
+                assert!(!*same_cat);
+                assert!(!*is_optional);
+            },
+            PdaParam::Guard { .. } => panic!("`b:Proc` must classify as Term"),
+        }
+    }
+
+    #[test]
+    fn classify_optional_guard_yields_guard_entry() {
+        // The guardoptsmoke PCheck shape: `k:Int, *opt(?g:Guard)`.
+        // Pre-#14 this returned None → compile_error!.
+        let category = format_ident!("Int");
+        let ctx = vec![
+            simple("k", "Int"),
+            TermParam::Optional {
+                params: vec![TermParam::GuardBody { name: format_ident!("g") }],
+            },
+        ];
+        let classified = classify_term_params_for_pda(&ctx, &category)
+            .expect("Optional{GuardBody} must classify for the PDA");
+        assert_eq!(classified.len(), 2, "one Term + one Guard entry");
+        assert!(
+            matches!(&classified[0], PdaParam::Term { same_cat: true, is_optional: false, .. }),
+            "`k:Int` stays a mandatory same-cat Term",
+        );
+        assert!(
+            matches!(&classified[1], PdaParam::Guard { name } if name == "g"),
+            "`?g:Guard` inside #opt must classify as Guard",
+        );
+    }
+
+    #[test]
+    fn classify_top_level_guard_yields_guard_entry() {
+        let category = format_ident!("Proc");
+        let ctx = vec![
+            simple("p", "Proc"),
+            TermParam::GuardBody { name: format_ident!("guard") },
+        ];
+        let classified = classify_term_params_for_pda(&ctx, &category)
+            .expect("top-level GuardBody must classify for the PDA");
+        assert!(matches!(&classified[1], PdaParam::Guard { name } if name == "guard"));
+    }
+
+    #[test]
+    fn classify_abstraction_still_aborts() {
+        // Non-Simple/non-Guard params must still return None (the caller
+        // turns that into compile_error! — no silent recursive fallback).
+        let category = format_ident!("Proc");
+        let ctx = vec![TermParam::Abstraction {
+            binder: format_ident!("x"),
+            body: format_ident!("p"),
+            ty: TypeExpr::Base(format_ident!("Proc")),
+        }];
+        assert!(classify_term_params_for_pda(&ctx, &category).is_none());
+    }
+
+    #[test]
+    fn eval_params_count_guard_positions() {
+        // Task #14 gate-1 (the MASKED layer): `term_context_params_with_eval`
+        // must yield one entry per variant field INCLUDING guards, so the
+        // recursive/try_eval match patterns cover the guard position (the
+        // pre-#14 drop desynchronized arity → E0023 once classify passed).
+        let language = crate::gen::empty_language_for_tests();
+        let ctx = vec![
+            simple("k", "Int"),
+            TermParam::Optional {
+                params: vec![TermParam::GuardBody { name: format_ident!("g") }],
+            },
+        ];
+        let params = term_context_params_with_eval(&ctx, &language);
+        assert_eq!(params.len(), 2, "guard positions must be counted");
+        match &params[0] {
+            EvalParam::Term { name, is_optional, .. } => {
+                assert_eq!(name.to_string(), "k");
+                assert!(!*is_optional);
+            },
+            EvalParam::Guard { .. } => panic!("`k:Int` must be a Term entry"),
+        }
+        assert!(
+            matches!(&params[1], EvalParam::Guard { name } if name == "g"),
+            "the guard slot must be an EvalParam::Guard entry",
+        );
     }
 }

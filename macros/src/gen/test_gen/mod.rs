@@ -27,7 +27,7 @@ pub mod simulation_binary;
 pub mod simulation_tests;
 
 // ─── W7 Stage 9 (plan v5.1) ─────────────────────────────────────────────────
-// Six test_gen modules covering ambiguity-prone WPDS walker paths. Each
+// Test_gen modules covering ambiguity-prone WPDS walker paths. Each
 // emits baseline tests per language and is wired into the analytical split
 // test binary below.
 
@@ -35,7 +35,13 @@ pub mod ambiguity_exposure;
 pub mod binder_shadowing;
 pub mod cross_cat_ambiguity;
 pub mod pratt_bp_boundaries;
-pub mod recovery_corruption;
+// CASE-2 Stage 3 (2026-07-15): recovery_corruption test generator retired.
+// It emitted 10 per-language tests that drove the WpdaWalker event harness
+// (`process_event` / `WpdaEvent`) — an API deleted in CASE-2 Stage 4 — rather
+// than parsing anything. They have no pure-engine equivalent (the pure engine
+// `step_canonical_pure` is a whole-run drain, not event-driven). Parser-level
+// error recovery stays covered by `recovery_integration_tests` and the pure
+// recovery suites. Module file `recovery_corruption.rs` was deleted.
 // Stage 10.1 (2026-05-04): parity test generator deleted.
 // Pre-Stage-10b parity tests compared `Cat::parse(input)` (trampoline) vs
 // `parse_<Cat>_via_wpda(...)` (WPDS facade); both routes are now Walker-driven
@@ -320,7 +326,6 @@ fn generate_analytical_section(language: &LanguageDef, pipeline: &PipelineAnalys
     let binder = binder_shadowing::generate_binder_shadowing_section(language).to_string();
     let cross_cat = cross_cat_ambiguity::generate_cross_cat_ambiguity_section(language).to_string();
     let pratt_bp = pratt_bp_boundaries::generate_pratt_bp_boundaries_section(language).to_string();
-    let recovery = recovery_corruption::generate_recovery_corruption_section(language).to_string();
 
     if a.trim().is_empty()
         && u.trim().is_empty()
@@ -329,7 +334,6 @@ fn generate_analytical_section(language: &LanguageDef, pipeline: &PipelineAnalys
         && binder.trim().is_empty()
         && cross_cat.trim().is_empty()
         && pratt_bp.trim().is_empty()
-        && recovery.trim().is_empty()
     {
         return String::new();
     }
@@ -342,7 +346,6 @@ fn generate_analytical_section(language: &LanguageDef, pipeline: &PipelineAnalys
             + binder.len()
             + cross_cat.len()
             + pratt_bp.len()
-            + recovery.len()
             + 1024,
     );
     emit_test_file_header(&mut out, &lang_name, &lang_name_lower, "analytical", None);
@@ -353,7 +356,6 @@ fn generate_analytical_section(language: &LanguageDef, pipeline: &PipelineAnalys
     push_analytical_subsection(&mut out, "__mettail_binder_shadowing", &binder);
     push_analytical_subsection(&mut out, "__mettail_cross_cat_ambiguity", &cross_cat);
     push_analytical_subsection(&mut out, "__mettail_pratt_bp_boundaries", &pratt_bp);
-    push_analytical_subsection(&mut out, "__mettail_recovery_corruption", &recovery);
     out
 }
 

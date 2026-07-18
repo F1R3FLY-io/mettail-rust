@@ -4,7 +4,6 @@ use proptest::prelude::*;
 use std::collections::{HashMap, HashSet};
 
 /// Helper: create a RuleInfo with sensible defaults.
-#[allow(dead_code)]
 fn rule(label: &str, category: &str) -> RuleInfo {
     RuleInfo {
         label: label.to_string(),
@@ -33,7 +32,6 @@ fn empty_bundle<'a>() -> super::AdvancedAnalysisBundle<'a> {
     super::AdvancedAnalysisBundle {
         symbolic: None,
         alternating: None,
-        #[cfg(feature = "oslf-bisimulation")]
         bisimulation: None,
         vpa: None,
         register: None,

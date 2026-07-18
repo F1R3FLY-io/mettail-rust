@@ -338,6 +338,22 @@ fn generate_hash_regular_arm(
                         }
                     }
                 });
+            } else if field.is_predicate {
+                // Task #14 (Option<Guard>): same 0/1 discriminant scheme as
+                // the Opt-Group arm below, but the Option payload is a BARE
+                // BehavioralPred (no Arc layer) — hash `__b` directly; the
+                // `&**__b` deref of the sibling arm is E0614 here. Mirrors
+                // the dovetail trio's nested is_optional→is_predicate arms
+                // (dovetail_report.rs / typed_lowering.rs / reconstruct.rs).
+                final_stmts.push(quote! {
+                    match #name.as_ref() {
+                        None => std::hash::Hash::hash(&0u8, state),
+                        Some(__b) => {
+                            std::hash::Hash::hash(&1u8, state);
+                            std::hash::Hash::hash(__b, state);
+                        }
+                    }
+                });
             } else {
                 // Opt-Group: hash a discriminant byte (0=None, 1=Some), then
                 // re-enter Hash on inner if Some. Re-entrant call is bounded
@@ -386,6 +402,20 @@ fn generate_hash_regular_arm(
                         Some(__c) => {
                             std::hash::Hash::hash(&1u8, state);
                             std::hash::Hash::hash(__c, state);
+                        }
+                    }
+                });
+                continue;
+            }
+            if field.is_predicate {
+                // Task #14 (Option<Guard>): deferred twin of the eager arm
+                // — 0/1 discriminant + direct `__b` hash (no Arc deref).
+                final_stmts.push(quote! {
+                    match #name.as_ref() {
+                        None => std::hash::Hash::hash(&0u8, state),
+                        Some(__b) => {
+                            std::hash::Hash::hash(&1u8, state);
+                            std::hash::Hash::hash(__b, state);
                         }
                     }
                 });
@@ -584,5 +614,40 @@ fn generate_hash_impl(category: &Ident) -> TokenStream {
                 hash_iterative(&mut stack, state);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn regular_arm_optional_pred_hashes_inner_without_deref() {
+        // Task #14 gate-1: pre-#14 the Opt-Group arm emitted `&**__b` —
+        // E0614 on the bare BehavioralPred payload. The pred arm keeps the
+        // 0/1 discriminant and hashes `__b` directly.
+        let language = crate::gen::empty_language_for_tests();
+        let cat = format_ident!("Int");
+        let label = format_ident!("PCheck");
+        let fields = vec![FieldInfo {
+            category: format_ident!("Guard"),
+            is_collection: false,
+            coll_type: None,
+            is_predicate: true,
+            is_optional: true,
+        }];
+        let arm = generate_hash_regular_arm(&cat, &label, &fields, &language).to_string();
+        assert!(
+            arm.contains("hash (__b , state)"),
+            "the Some arm must hash the bare inner pred: {arm}",
+        );
+        assert!(
+            !arm.contains("* * __b"),
+            "no Arc deref exists on an Option<BehavioralPred> payload: {arm}",
+        );
+        assert!(
+            arm.contains("0u8") && arm.contains("1u8"),
+            "the None/Some discriminant scheme must be kept: {arm}",
+        );
     }
 }

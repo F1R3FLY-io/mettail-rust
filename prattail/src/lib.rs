@@ -44,6 +44,12 @@
 //!   TokenStream (Rust source code)
 //! ```
 
+// `trace_diag!` (the compile-time `walker-trace` gate for parser diagnostics)
+// must be in textual macro scope for every module below that uses it, so this
+// `#[macro_use]` module is declared before all others. See `src/trace.rs`.
+#[macro_use]
+mod trace;
+
 pub mod automata;
 pub mod binding_power;
 pub mod classify;
@@ -172,10 +178,6 @@ pub mod wpda_runtime;
 /// WPDS walker: pure reactive FSM (`State × Event → Transition`) driving
 /// the runtime parser. Stage 4 of W7 plan v5.1.
 pub mod wpda_walker;
-
-/// WPDS incremental parsing session: checkpoint cache + reparse for LSP
-/// integration. Stage 5 of W7 plan v5.1.
-pub mod wpda_session;
 
 /// Shared Packed Parse Forest (SPPF) — the ambiguity-preserving parse-forest
 /// data structure. Option C (2026-05-15); see

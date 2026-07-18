@@ -305,29 +305,6 @@ fn subterm_at<'a>(term: &'a Term, pos: &[usize]) -> Option<&'a Term> {
     }
 }
 
-/// Replace the subterm at a given position with `replacement`.
-///
-/// Returns `None` if the position is invalid.
-#[allow(dead_code)]
-fn replace_at(term: &Term, pos: &[usize], replacement: &Term) -> Option<Term> {
-    if pos.is_empty() {
-        return Some(replacement.clone());
-    }
-    match term {
-        Term::Var(_) => None,
-        Term::App { symbol, args } => {
-            let idx = pos[0];
-            if idx >= args.len() {
-                return None;
-            }
-            let inner = replace_at(&args[idx], &pos[1..], replacement)?;
-            let mut new_args = args.clone();
-            new_args[idx] = inner;
-            Some(Term::App { symbol: symbol.clone(), args: new_args })
-        },
-    }
-}
-
 /// Enumerate all positions of non-variable subterms in a term.
 ///
 /// Each position is a path of argument indices from the root.

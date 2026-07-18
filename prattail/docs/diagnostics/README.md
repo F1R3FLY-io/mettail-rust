@@ -14,6 +14,45 @@ produced by the PraTTaIL parser generator.
 
 Ordering: `Info < Note < Warning < Error`
 
+## About the Feature Gate Column
+
+Many lint tables below carry a **Feature Gate** column (for example `` `trs-analysis` ``,
+`` `kat` ``, `` `type-system` ``, `` `egraph` ``, `` `symbolic-automata` ``, `` `vpa` ``).
+These entries name the **analysis category / lint namespace** that owns each lint. They are
+**grouping labels, not `cargo --features` toggles.**
+
+> [!IMPORTANT]
+> Do **not** run `cargo build --features type-system` (nor `kat`, `egraph`, `presburger`,
+> `unification`, `sft`, `trs-analysis`, `symbolic-automata`, `tree-automata`, `ltl`, `petri`,
+> `nominal`, `provenance`, `cra`, `morphisms`, `wpds-extended`, `wpds-ara`, `omega`,
+> `weighted-mso`, `lattice-theory`, `logict`, `predicate-dispatch`). None of these is a
+> declared Cargo feature, and **none gates parser compilation through `#[cfg(feature = "…")]`**.
+> Whether one of these mathematical-analysis lints can fire is decided at grammar-analysis time
+> by the analysis pipeline (predicate dispatch over the grammar's guards; see **PD01–PD04**),
+> independent of any Cargo feature.
+
+Two special values appear in the column:
+
+- **`always-on`** — the lint runs unconditionally (no gate of any kind).
+- **Advanced-automata labels are runtime-dispatched, not Cargo features.** The values
+  `alternating`, `vpa`, `parity-tree-automata`, `register-automata`, `probabilistic`,
+  `multi-tape`, `multiset-automata`, `two-way-transducer`, and `buchi` name the
+  advanced-automata analyses. Like every other value in this column they are
+  **analysis-category labels, not `cargo --features` toggles**: the compilers they name
+  (`BuchiCompiler`, `AlternatingCompiler`, `VpaCompiler`, …) are **always compiled** and
+  dispatched at grammar-analysis time by the `predicate_dispatch/signature.rs` runtime registry.
+  (They were previously *also* declared as inert `= []` placeholder Cargo features in
+  [`prattail/Cargo.toml`](../../Cargo.toml); those declarations gated **nothing** and were
+  **removed**, and the predicate-dispatch conformance test
+  (`prattail/src/predicate_dispatch/tests.rs`) now runs **unconditionally**.)
+
+For the flags that genuinely change the build — instrumentation, tracing, the SMT/rendering
+back ends, and language selection — see
+[Optional Cargo Features](#optional-cargo-features) and
+[Environment Variables](#environment-variables) at the end of this document. (The **OSLF
+analysis substrate** is no longer among them: its precise engines are always compiled and
+always run — see [OSLF analysis substrate](#oslf-analysis-substrate-prattail-always-on--no-longer-cargo-features).)
+
 ## Quick Reference
 
 ### Grammar Structure (G01–G10, G24–G32)
@@ -106,7 +145,7 @@ Ordering: `Info < Note < Warning < Error`
 
 | ID | Name | Severity | Description |
 |---|---|---|---|
-| [D14](wpds/D14-wpds-complexity-report.md) | wpds-complexity-report | Info | WPDS analysis size: |Γ|, |Δ|, SCCs, depth bounds |
+| [D14](wpds/D14-wpds-complexity-report.md) | wpds-complexity-report | Info | WPDS analysis size: \|Γ\|, \|Δ\|, SCCs, depth bounds |
 | [D15](wpds/D15-wpds-witness-trace.md) | wpds-witness-trace | Info | BFS shortest path witness for W13 dead rules |
 | [COMP-08](wpds/COMP-08-refactoring-suggestion.md) | wpds-refactoring-suggestion | Note | Grammar restructuring suggestions from WPDS analysis |
 
@@ -428,6 +467,197 @@ Ordering: `Info < Note < Warning < Error`
 | [Parse Errors](runtime/parse-errors.md) | All 5 ParseError variants, triggers, and resolution |
 | [Lex Errors](runtime/lex-errors.md)     | Lexer errors, common causes, and resolution         |
 
+## Optional Cargo Features
+
+Every feature listed here is **off by default**. The **default build is the production
+surface**: no instrumentation, no tracing, no solver, no analysis substrate — just the parser
+generator. Enable a feature with `cargo build --features <name>` (or the crate-qualified form,
+e.g. `--features mettail-prattail/walker-trace`). The `prattail` crate declares **no** default
+features of its own; the default surface comes from the workspace crates that depend on it.
+
+Unless noted otherwise, an "Enables / deps" cell of *(none)* means the feature pulls in no
+extra crates — it is a pure compile-time switch.
+
+### Instrumentation and tracing (`prattail`, `macros`)
+
+| Feature | Enables / deps | Default | Purpose |
+|---------|----------------|:------:|---------|
+| `walker-trace` | *(none)* | off | Compile **in** the parser's per-diagnostic stderr trace/dump statements — the `PRATTAIL_CGLL_*`, `PRATTAIL_GRP_*`, `PRATTAIL_CANONICAL_GLL_STATS`, `PRATTAIL_DISPATCH_TRACE`, `PRATTAIL_ENTROPY`, `PRATTAIL_DUMP_EBNF`/`PRATTAIL_DUMP_PARSER`, `PRATTAIL_RD_U1_DIAG`, and `PRATTAIL_MACRO_TRACE` families. Off ⇒ each gated site (including the `std::env::var*` read) is compiled out entirely via `trace_diag!` / `#[cfg(feature = "walker-trace")]` (`prattail/src/trace.rs`): zero hot-path cost. Under the feature each diagnostic is still selected individually at runtime by its own env var. Works in any profile (debug or release). |
+| `walker-stats` | *(none)* | off | Compile in 19 `u64` walker counters (`apply_action_to_cursor` calls, cursor-proliferation peaks, `merge_equivalent_cursors` collapse ratios, cursor lifecycle sources/sinks, Fork composition by kind). Per-walker scope, no atomics. Output is triggered at parse end by `PRATTAIL_WALKER_STATS=1`. |
+| `hang-dump` | `dep:signal-hook`, `dep:parking_lot` | off | SIGUSR1 handler that snapshots walker state for debugging hangs. Armed at runtime by `PRATTAIL_HANG_DUMP` (+ `PRATTAIL_HANG_DUMP_PATH`, `PRATTAIL_HANG_WATCHDOG`); JSON is hand-formatted. |
+
+The `mettail-languages` and `mettail-macros` crates re-expose `walker-trace` and `walker-stats`
+as pass-throughs (`mettail-languages/walker-trace` turns on both the `prattail` runtime gate and
+the `mettail-macros` codegen-time gate for `PRATTAIL_MACRO_TRACE`).
+
+### Solver and rendering (`prattail`)
+
+| Feature | Enables / deps | Default | Purpose |
+|---------|----------------|:------:|---------|
+| `smt` | `dep:z3` | off | SMT-backed `ConstraintTheory` via in-process Z3 (`prattail/src/logict_smt.rs`), reachable only through three-valued `is_satisfiable_3v` / `checked_witness` (`unknown → Sat3::DontKnow`, never collapsed). Secondary gap-filler where the verified deciders return `DontKnow`. The default build links no libz3 and is byte-identical. |
+| `railroad-diagrams` | *(none)* | off | Optional hand-emitted **SVG** railroad-diagram output (`render_grammar_railroad_svg`). Text/ASCII railroad rendering (`render_grammar_railroad_text`) is **always** available and needs no feature. |
+
+### OSLF analysis substrate (`prattail`, always-on — no longer Cargo features)
+
+The seven OSLF analysis engines below are **not** Cargo features. They were once gated behind
+the default-off `any-algebra-carrier`, `sym-tree-structural`, `oslf-bisimulation`,
+`oslf-transducer`, `oslf-letprop`, `oslf-hindley-milner`, and `oslf-behavioral-lowering`
+features; those features — and the string-heuristic fallbacks they used to guard — were
+**deleted** (commit `2ec8316e`). The precise engines are now the **sole, always-on** analysis
+path: always compiled, always run, with no opt-in and no opt-out. Correctness by construction
+is a primary purpose of the crate, so the analysis substrate must not ship an unsound /
+under-enforcing heuristic mode — the two deleted fallbacks (`category_is_scalar_by_string`,
+which misclassified scalar sorts by string-matching a type-name segment, and the silent
+heuristic `analyze_refinement_dispatch`, which under-enforced RT03) were genuine
+correctness-by-construction violations. `mettail-ast` is now a normal (non-optional)
+dependency. (OSLF = the Order-Sorted Logical-Framework analysis tower.)
+
+Their lints — **RT03**, **RT07**, **LP01**, **HM01** — therefore fire **unconditionally**. All
+four are **inert on the current grammar corpus** (0 firings across every bundled grammar), but
+they are always active: any future grammar that exhibits the defect they detect will trip them.
+
+| Engine (module) | Decides / provides | Lint fired |
+|---|---|---|
+| `AnyAlgebra` carrier (`any_algebra.rs`) | Sole route for `symbolic::analyze_from_bundle` through the uniform guard-predicate carrier; the real `NativeKind` scalar-sort resolution the other engines reuse. Byte-for-byte agreement with the retained `analyze_from_bundle_string_set` oracle is pinned by `guard_carrier_snapshot`. | — |
+| structural dispatch (`sym_tree`, `structural_types`) | Structural refinement-type dispatch via `SymbolicTreeAutomaton<AnyAlgebra>`; decides disjointness / subtype precisely (conservative `Overlapping` on parse failure — never worse than the status quo). | **RT03** empty-refinement-intersection |
+| symbolic tree transducer (`sym_tree_transducer.rs`) | Bottom-up symbolic tree transducer for cast totality / cast reachability (pre-image ∩ source category). | **RT07** dead-cast |
+| bisimulation LTS (`bisimulation.rs`) | Coarsest bisimulation by partition refinement; supersedes the weaker `alternating` behavioral-iso check (**N06-ISO**); agreement-gated against `alternating::analyze_from_bundle`. | — |
+| letprop→PATA (`letprop.rs` → `parity_tree.rs`) | Recursive-predicate → modal-μ → Parity Alternating Tree Automaton emptiness. Inert on every current grammar (no recursive-predicate **surface syntax** yet — a tracked `ast/` follow-up). | **LP01** dead-behavioral-type |
+| Hindley–Milner sort pass (`hindley_milner.rs`) | Base-sort consistency: checks each constructor's principal arrow type unifies with its declared category. | **HM01** sort-mismatch |
+| behavioral lowering (`behavioral_pred` → `behavioral_algebra`) | Lowers the runtime `BehavioralPred` carrier into the `BehavioralFormula` relational decider; the eval path is untouched. | — |
+
+### Predicate-dispatch capability labels (`prattail`, not Cargo features)
+
+The advanced-automata capability labels — `buchi`, `alternating`, `vpa`, `parity-tree-automata`,
+`register-automata`, `probabilistic`, `multi-tape`, `multiset-automata`, and `two-way-transducer`
+— are **not** Cargo features. The automata compilers they name are always compiled and dispatched
+at grammar-analysis time by the `predicate_dispatch/signature.rs` runtime registry, never by a
+Cargo feature. They were formerly declared as inert `= []` placeholder features (present only to
+keep `cargo check --all-targets` *check-cfg-clean* and to gate the predicate-dispatch conformance
+test); those declarations gated **nothing** and were **removed**, and the conformance test
+(`prattail/src/predicate_dispatch/tests.rs`) now runs **unconditionally**. See
+[About the Feature Gate Column](#about-the-feature-gate-column).
+
+The bench-only toggles `wfst-log` and `set-theoretic-types` **do** remain declared as real `= []`
+Cargo features (to keep `cargo check --all-targets` check-cfg-clean); they are consumed only by
+the criterion **benchmarks** (`bench_wfst`, `bench_type_system`) — `wfst-log` selects the
+log-semiring training path there (see [WFST Feature Gates](../usage/wfst/feature-gates.md)).
+Neither affects the default parser build.
+
+### Language selection and runtime backends (`languages`, `repl`, `rholang-runtime`)
+
+These belong to sibling crates, not `prattail`; they select which generated languages and
+runtime backends are compiled. `mettail-languages` defaults to
+`["all-languages", "rho-codegen", "dovetail-codegen"]`.
+
+| Feature (crate) | Enables / deps | Default | Purpose |
+|-----------------|----------------|:------:|---------|
+| `all-languages` (`languages`) | the per-language set below | **on** | Umbrella over every bundled language. |
+| per-language (`languages`) | *(none, except `composition`)* | via `all-languages` | `ambient`, `appsubst`, `calculator`, `class2hashmapsmoke`, `class2multi`, `class2optsmoke`, `class2smoke`, `class3multi`, `class3opt`, `composition` (= `calculator` + `lambda`), `fortran_model`, `reserved_model`, `guarded-rho`, `lambda`, `led-test`, `optsmoke`, `refinementsmoke`, `rhocalc`. `guardoptsmoke` exists but is **not** in `all-languages` (opt-in site-2 smoke). |
+| `rho-codegen` (`languages`) | `dep:mettail-rholang-codegen` | **on** | Macro-generated AST-first Rho scalar invocation descriptions. |
+| `dovetail-codegen` (`languages`) | `dep:dovetail`, `dep:mettail-dovetail-runtime`, `dep:rigail` | **on** | Macro-generated AST-first Dovetail report compiler (general-purpose runtime backend). |
+| `strategies` (`languages`) | `dep:proptest` | off | Public `arb_{cat}` proptest strategies; required by the `simulate_*` CLI binaries. |
+| `mimalloc` (`languages`) | `dep:mimalloc` | off | mimalloc global allocator for the `trampoline_tests` binary. |
+| `rho-languages` (`repl`) | `bundled-languages`, `dep:mettail-rholang-runtime`, `dep:mettail-rholang-codegen` | **on** | Full `exec` surface (RhoCalc/Calculator two-stage Dovetail+Rholang). A Dovetail-only REPL builds `--no-default-features --features bundled-languages`. |
+| `rhocalc-runtime` (`rholang-runtime`) | `runtime-report`, `dep:mettail-ast`, `dep:mettail-languages`, `dep:syn`, `mettail-languages/{rhocalc,dovetail-codegen}` | **on** | Production AST-first RhoCalc-to-Rho wrapper (values are `rhoapi::Par`, never reparsed source). |
+| `source-oracle` (`rholang-runtime`) | *(none)* | **on** | Hand-authored Rholang source-evaluation helpers used only by source-oracle regression tests. |
+
+## Environment Variables
+
+PraTTaIL reads a small set of `PRATTAIL_*` environment variables. They fall into three
+categories, distinguished by **when the read is compiled** and **what enables the effect**:
+
+- **Config / limits** — *always* compiled and read (no feature required). They tune codegen or
+  bound the walker.
+- **Diagnostics (walker-trace-gated)** — stderr trace/dump selectors. The read itself is
+  **compiled out of the default build**; it exists only under `--features walker-trace`. When
+  compiled in, each variable independently selects its diagnostic at runtime. Zero cost by
+  default (see [Optional Cargo Features](#optional-cargo-features)).
+- **Instrumentation (feature-paired)** — read at runtime, but the effect only materialises in a
+  build that also includes the paired feature (`walker-stats` or `hang-dump`).
+
+```
+                       PRATTAIL_* diagnostic env vars
+                                    │
+          ┌─────────────────────────┴─────────────────────────┐
+      default build                          cargo build --features walker-trace
+   (production surface)                          (trace build, any profile)
+          │                                                    │
+  trace_diag!{…} / #[cfg] gate                     trace_diag!{…} / #[cfg] gate
+  expands to NOTHING                               expands the env read + dump IN
+          │                                                    │
+  env var is never read                          each var (e.g. PRATTAIL_CGLL_FENCE_DIAG=1)
+  → no branch, zero hot-path cost                 selects its diagnostic at runtime
+```
+
+### Config / limits (always live)
+
+| Variable | Category | Effect |
+|----------|----------|--------|
+| `PRATTAIL_AUTO_OPTIMIZE` | config | `all` / `none` / (case-insensitive other) — force-on, force-off, or auto-threshold the incremental FIRST/FOLLOW + cost-benefit optimization gates during codegen. Surfaced by lints **I08** (active) / **I09** (parse error). |
+| `PRATTAIL_CGLL_BUDGET` | limit | Step budget for the canonical-GLL pure run. Default `20_000_000`. |
+| `PRATTAIL_MAX_STEPS` | limit | Max walker steps for the end-of-input drivers. Default = the caller's `default_max_steps`. |
+| `PRATTAIL_COVERAGE` | config | If set, emit runtime trie-path coverage instrumentation into the generated parser (drives lint **D07**). |
+| `PRATTAIL_LINT_LEVEL` | config | Minimum lint severity printed: `error`, `note`, or `info` (`all` is an alias for `info`). Default = `warning`. |
+| `PRATTAIL_LINT_VERBOSE` | config | If set, emit individual per-grammar lints, not just the per-grammar summary. |
+
+### Diagnostics (compiled only under `--features walker-trace`)
+
+Each variable is read only when the crate is built `--features walker-trace`; the read is
+otherwise removed before type-checking. When compiled in, setting the variable (any value, or
+`=1` where noted) enables that one diagnostic. `PRATTAIL_MACRO_TRACE` is a **codegen-time**
+(`language!`-expansion) tracer and is additionally gated in `mettail-macros`.
+
+| Variable | Category | Effect |
+|----------|----------|--------|
+| `PRATTAIL_CANONICAL_GLL_STATS` | diagnostic | Canonical-GLL per-run statistics dump. |
+| `PRATTAIL_CGLL_DIAG` | diagnostic | `CGLL-DIAG` accept trace (`classic_root → bin_root`, span). |
+| `PRATTAIL_CGLL_EVENT_DIAG` | diagnostic | `CGLL-EVENTS` GSS event/winner trace. |
+| `PRATTAIL_CGLL_FENCE_DIAG` | diagnostic | `CGLL-FENCE` replay-adjacency / reconnection-refute trace. |
+| `PRATTAIL_CGLL_REALIZE_DIAG` | diagnostic | SPPF realization / ancestor-chain trace. |
+| `PRATTAIL_CGLL_PURE_TRACE` | diagnostic | Capped canonical-GLL protocol trace; `=<n>` steps (non-numeric ⇒ 400). |
+| `PRATTAIL_CGLL_PURE_COLLDIAG` | diagnostic | Canonical-GLL collection-close trace. |
+| `PRATTAIL_CGLL_PURE_FOLDTRAP` | diagnostic | Canonical-GLL fold-trap trace. |
+| `PRATTAIL_CGLL_PURE_WFCHECK` | diagnostic | Canonical-GLL well-formedness check dump. |
+| `PRATTAIL_CGLL_PURE_FDUMP` | diagnostic | Canonical-GLL frontier dump. |
+| `PRATTAIL_GRP_FIRE_DIAG` | diagnostic | `GRP-FIRE` guarded-reconnect fire trace. |
+| `PRATTAIL_GRP_GUARD_DIAG` | diagnostic | `GRP-PROJ-SUPPRESS-PURE` guarded-reconnect projection-suppress trace. |
+| `PRATTAIL_RD_U1_DIAG` | diagnostic | RD-U1 post-window recovery probe. |
+| `PRATTAIL_DISPATCH_TRACE` | diagnostic | `DISPATCH-DROP` dispatch-table shadowing trace. |
+| `PRATTAIL_ENTROPY` | diagnostic | Per-category dispatch-entropy report (codegen). |
+| `PRATTAIL_DUMP_EBNF` | diagnostic | Write the grammar's EBNF (codegen). Value is the output dir/target. |
+| `PRATTAIL_DUMP_PARSER` | diagnostic | Write the generated parser source (codegen). `=1` ⇒ current dir, else the given dir. |
+| `PRATTAIL_MACRO_TRACE` | diagnostic | `language!` macro + lexer pipeline stage tracer (codegen; also gated in `mettail-macros`). |
+
+### Instrumentation (feature-paired)
+
+| Variable | Category | Paired feature | Effect |
+|----------|----------|----------------|--------|
+| `PRATTAIL_WALKER_STATS` | instrumentation | `walker-stats` | `=1` ⇒ print the walker counter summary to stderr at parse end. |
+| `PRATTAIL_HANG_DUMP` | instrumentation | `hang-dump` | If set, install the SIGUSR1 walker-state snapshot handler. |
+| `PRATTAIL_HANG_DUMP_PATH` | instrumentation | `hang-dump` | Destination file for the snapshot (default: stderr). |
+| `PRATTAIL_HANG_WATCHDOG` | instrumentation | `hang-dump` | Watchdog interval in seconds; auto-dumps when the step counter stops advancing. |
+
+### Removed A/B levers
+
+The single-engine re-platform collapsed the parser's former A/B kill-switches and isolation
+levers to their **shipped defaults**; the following variables **no longer exist** as live reads
+(a few survive only inside explanatory comments, and are documented here so readers do not go
+looking for them):
+
+- **`PRATTAIL_NO_*` isolation family** — `PRATTAIL_NO_CANONICAL_GLL`,
+  `PRATTAIL_NO_CHANNEL_FIRST_RECONNECT`, `PRATTAIL_NO_SEND_SUGAR_CANON`.
+- **Other kill-switches / levers** — `PRATTAIL_SEP_RECONVERGE`,
+  `PRATTAIL_PROJ_CACHE_POS_QUOTIENT`, `PRATTAIL_FP_LAZY`, `PRATTAIL_REALIZE_DEDUP`,
+  `PRATTAIL_REALIZE_TRACE`, `PRATTAIL_SR_SUBSUME`, `PRATTAIL_CGLL_HYBRID`,
+  `PRATTAIL_CGLL_BINARIZE`, `PRATTAIL_CGLL_RETSLOT`, `PRATTAIL_EP_P1` / `PRATTAIL_EP_P2` /
+  `PRATTAIL_EP_P4_DEMOTE`, `PRATTAIL_TRACE` / `PRATTAIL_TRACE_STRICT`.
+- **Reserved-but-never-wired** — `PRATTAIL_CACHE_DIR` (an incremental-cache convention kept for
+  a future implementation; reads no value today).
+
+Canonical-GLL parsing, first-token reconnection, send-sugar canonicalization, lazy
+fingerprinting, and realization dedup are now the **unconditional** shipped behavior.
+
 ## Diagnostic Output Format
 
 PraTTaIL diagnostics follow Rust-compiler-style formatting with ANSI colors:
@@ -460,7 +690,7 @@ warning[W01]: rule `FloatToStr` in category `Str` is unreachable (dead code)
 ## Implementation
 
 All diagnostic output routes through `LintDiagnostic` structs and `format_diagnostic_colored()`
-in [`prattail/src/lint.rs`](../../src/lint.rs). The public API includes:
+in [`prattail/src/lint/`](../../src/lint/). The public API includes:
 - `emit_diagnostic()` — emit a single colorized diagnostic to stderr
 - `format_diagnostic_colored()` — format without emitting (for custom output)
 - `colorize_backtick_spans()` — backtick highlighting helper
@@ -473,16 +703,22 @@ and parser lints (PAR01--PAR05) also run in `run_lints()`. Composition lints
 info messages (I01--I19) are emitted inline. Macro-phase lints (G25--G31, W09, I10,
 C-AP01--C-AP05) are emitted by the macros crate via `emit_diagnostic()`.
 Mathematical analysis lints (T/V/S/N/L/E/M/K) run in the same phase, with results
-provided by the 6-phase analysis pipeline (feature-gated).
-Advanced automata lints (SYM/O/N06-07/V05-06/PT/RA/PR/MT/MS/MSO/TW) run in the
-same parallel analysis phase, each gated by its respective feature flag. Results
-are collected into `MathAnalysisResults` fields and fed to `LintContext` for
-emission. Predicated type lints (PB/UN/SL/LT) run in the same phase, gated by
-their respective feature flags (`presburger`, `unification`, `lattice-theory`,
-`logict`). Refinement type lints (RT01–RT06) run in the same phase, gated by
-the `type-system` feature flag. Symbolic finite transducer lints (SFT01–SFT04)
-run in the same phase, gated by the `sft` feature flag. E-graph equality
-saturation lints (EG01–EG04) run in the same phase, gated by the `egraph`
-feature flag; EG04 interacts with TRS confluence analysis to suppress T01
-when joinability witnesses are found. See [advanced-automata-overview.md](../design/advanced-automata-overview.md)
-for the full module architecture.
+provided by the 6-phase analysis pipeline. Advanced automata lints
+(SYM/O/N06-07/V05-06/PT/RA/PR/MT/MS/MSO/TW), predicated type lints (PB/UN/SL/LT),
+refinement type lints (RT01–RT06), symbolic finite transducer lints (SFT01–SFT04),
+and e-graph equality saturation lints (EG01–EG04) all run in the same parallel
+analysis phase; their results are collected into `MathAnalysisResults` fields and
+fed to `LintContext` for emission. EG04 interacts with TRS confluence analysis to
+suppress T01 when joinability witnesses are found.
+
+Each such lint is grouped under an **analysis-category label** — the value shown in
+the **Feature Gate** column of the tables above (e.g. `trs-analysis`, `symbolic-automata`,
+`presburger`, `unification`, `lattice-theory`, `logict`, `type-system`, `sft`, `egraph`).
+These labels are lint namespaces, **not** `cargo --features` toggles: whether a given lint
+fires is decided at grammar-analysis time by predicate dispatch over the grammar's guards, not
+by a Cargo feature. See [About the Feature Gate Column](#about-the-feature-gate-column) for the
+full explanation (including the advanced-automata capability labels — `buchi`, `alternating`,
+`vpa`, etc. — which name always-compiled compilers dispatched by the `predicate_dispatch`
+runtime registry rather than Cargo features). See
+[advanced-automata-overview.md](../design/advanced-automata-overview.md) for the full module
+architecture.

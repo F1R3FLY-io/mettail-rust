@@ -52,16 +52,14 @@ pub struct RefinementAnalysisResult {
     /// SFA dispatch analysis: disjointness, subsumption, overlap (RT10).
     pub dispatch_analysis: Option<crate::type_system::RefinementDispatchAnalysis>,
     /// Per-category structural inhabitation witnesses, surfaced as RT-note hints
-    /// (`(category, witness_term_repr)`). Populated by the `sym-tree-structural`
-    /// `.1` path from `structural_types::structural_verdict().witnesses` (a
-    /// minimal inhabiting term per inhabited category, rendered to a string).
-    /// Empty when the feature is off.
+    /// (`(category, witness_term_repr)`). Populated from
+    /// `structural_types::structural_verdict().witnesses` (a minimal inhabiting
+    /// term per inhabited category, rendered to a string).
     pub structural_witnesses: Vec<(String, String)>,
     /// Casts `r : src → tgt` whose pre-image ∩ source-category is empty — the
     /// cast can never fire (OSLF transducer dead-cast detection). Each entry is
-    /// `(cast_rule_label, reason)`. Populated by the `oslf-transducer` `.1` path
-    /// from [`crate::sym_tree_transducer::analyze_from_bundle`]'s `dead_casts`.
-    /// Empty when `oslf-transducer` is off.
+    /// `(cast_rule_label, reason)`. Populated from
+    /// [`crate::sym_tree_transducer::analyze_from_bundle`]'s `dead_casts`.
     pub dead_casts: Vec<(String, String)>,
 }
 
@@ -98,15 +96,12 @@ pub(crate) struct MathAnalysisResults {
     /// [`crate::bisimulation::analyze_from_bundle`] (Kanellakis–Smolka /
     /// Paige–Tarjan refinement over one LTS). Drop-in for `alternating_result`
     /// at the N06-ISO / A3 codegen seams — the agreement gate proves parity.
-    /// `None` (and the field absent) when `oslf-bisimulation` is off.
-    #[cfg(feature = "oslf-bisimulation")]
     pub bisimulation_result: Option<crate::bisimulation::BisimulationAnalysis>,
     /// OSLF Phase-6 `.1`: Hindley-Milner base-sort consistency over the grammar's
     /// constructor arrow types, computed by
     /// [`crate::hindley_milner::analyze_from_bundle`]. Feeds the HM01 lint only
-    /// (no codegen seam). `None` (and the field absent) when `oslf-hindley-milner`
-    /// is off; on every well-formed grammar its `sort_mismatches` is empty (inert).
-    #[cfg(feature = "oslf-hindley-milner")]
+    /// (no codegen seam). On every well-formed grammar its `sort_mismatches` is
+    /// empty (inert).
     pub hindley_result: Option<crate::hindley_milner::HmInferenceAnalysis>,
     pub ltl_results: Option<Vec<crate::ltl::LtlCheckResult>>,
     pub provenance_result: Option<crate::provenance::ProvenanceAnalysis>,
@@ -343,16 +338,8 @@ pub(crate) fn run_math_analyses_parallel(
             // `letprop::letprop_to_pata` + `check_emptiness`). The dispatch gate
             // above only fires on `has_recursive_predicate`, and no current
             // grammar surface syntax produces one, so on real grammars this is
-            // unreachable and the analysis stays inert. The `#[cfg(not)]` arm is
-            // the original stub, byte-for-byte.
-            #[cfg(feature = "oslf-letprop")]
-            {
-                Some(crate::parity_tree::analyze_recursive_predicates(all_syntax, categories))
-            }
-            #[cfg(not(feature = "oslf-letprop"))]
-            {
-                Some(crate::parity_tree::analyze_from_bundle(all_syntax, categories))
-            }
+            // unreachable and the analysis stays inert.
+            Some(crate::parity_tree::analyze_recursive_predicates(all_syntax, categories))
         });
         let h_multi_tape = s.spawn(|| {
             if !dispatch_plan.requires(crate::predicate_dispatch::ModuleId::MultiTape) {
@@ -386,8 +373,7 @@ pub(crate) fn run_math_analyses_parallel(
         });
         // OSLF Phase-4 `.1`: parallel bisimulation pass gated by the SAME `Awa`
         // dispatch predicate `alternating` uses — the live supersede at the
-        // N06-ISO / A3 seams reads this when `oslf-bisimulation` is on.
-        #[cfg(feature = "oslf-bisimulation")]
+        // N06-ISO / A3 seams reads this.
         let h_bisimulation = s.spawn(|| {
             if !dispatch_plan.requires(crate::predicate_dispatch::ModuleId::Awa) {
                 return None;
@@ -399,7 +385,6 @@ pub(crate) fn run_math_analyses_parallel(
         // mirroring the unconditional refinement-sync block rather than the
         // dispatch-gated automata spawns. Inert on every well-formed grammar
         // (empty `sort_mismatches`).
-        #[cfg(feature = "oslf-hindley-milner")]
         let h_hindley =
             s.spawn(|| Some(crate::hindley_milner::analyze_from_bundle(all_syntax, categories)));
 
@@ -465,11 +450,9 @@ pub(crate) fn run_math_analyses_parallel(
             alternating_result: h_alternating
                 .join()
                 .expect("DB03: alternating analysis thread panicked"),
-            #[cfg(feature = "oslf-bisimulation")]
             bisimulation_result: h_bisimulation
                 .join()
                 .expect("DB03: bisimulation analysis thread panicked"),
-            #[cfg(feature = "oslf-hindley-milner")]
             hindley_result: h_hindley
                 .join()
                 .expect("DB03: Hindley-Milner analysis thread panicked"),
@@ -648,7 +631,6 @@ pub(crate) fn run_math_analyses_sequential(
             None
         },
         // OSLF Phase-4 `.1`: same `Awa` dispatch gate as the alternating pass.
-        #[cfg(feature = "oslf-bisimulation")]
         bisimulation_result: if eligible {
             (|| {
                 dispatch_gate!(Awa);
@@ -663,7 +645,6 @@ pub(crate) fn run_math_analyses_sequential(
         // OSLF Phase-6 `.1`: UNCONDITIONAL (no `eligible`/dispatch gate) — HM
         // applies to ALL grammars, mirroring the unconditional refinement-sync
         // block below rather than the eligibility-gated automata passes above.
-        #[cfg(feature = "oslf-hindley-milner")]
         hindley_result: Some(crate::hindley_milner::analyze_from_bundle(
             &bundle.all_syntax,
             &bundle.categories,
@@ -746,20 +727,10 @@ pub(crate) fn run_math_analyses_sequential(
             (|| {
                 dispatch_gate!(ParityTree);
                 // OSLF Phase 5 `.1`: same live routing as the parallel path.
-                #[cfg(feature = "oslf-letprop")]
-                {
-                    Some(crate::parity_tree::analyze_recursive_predicates(
-                        &bundle.all_syntax,
-                        &bundle.categories,
-                    ))
-                }
-                #[cfg(not(feature = "oslf-letprop"))]
-                {
-                    Some(crate::parity_tree::analyze_from_bundle(
-                        &bundle.all_syntax,
-                        &bundle.categories,
-                    ))
-                }
+                Some(crate::parity_tree::analyze_recursive_predicates(
+                    &bundle.all_syntax,
+                    &bundle.categories,
+                ))
             })()
         } else {
             None
@@ -923,19 +894,16 @@ pub(crate) fn analyze_refinement_types(bundle: &ParserBundle) -> RefinementAnaly
     // Uses the RefinementDispatchAnalysis from type_system.rs for predicate-aware
     // disjointness and subsumption checking.
     //
-    // Under `sym-tree-structural` (`.1`), STRUCTURAL refinement pairs are decided
-    // precisely by the sym_tree recognizer (over the grammar's ranked alphabet)
-    // instead of the string heuristic; Presburger / Behavioral / Mixed pairs stay
-    // on the heuristic, so this is never worse than the default path. Without the
-    // feature, the original heuristic-only dispatch is used unchanged.
-    #[cfg(feature = "sym-tree-structural")]
+    // STRUCTURAL refinement pairs are decided precisely by the sym_tree recognizer
+    // (over the grammar's ranked alphabet) instead of the string heuristic;
+    // Presburger / Behavioral / Mixed pairs stay on the internal
+    // `classify_predicate_overlap` heuristic, so this is never worse than the
+    // heuristic-only path.
     let dispatch = crate::type_system::analyze_refinement_dispatch_structural(
         spec,
         &bundle.all_syntax,
         &bundle.categories,
     );
-    #[cfg(not(feature = "sym-tree-structural"))]
-    let dispatch = crate::type_system::analyze_refinement_dispatch(spec);
 
     // Merge dispatch results into the RT03/RT04 lints
     for (sub, sup) in &dispatch.subtype_pairs {
@@ -956,7 +924,6 @@ pub(crate) fn analyze_refinement_types(bundle: &ParserBundle) -> RefinementAnaly
     // is the RT03 finding the lint was written for, so we populate
     // `empty_intersections` from the structural disjoint pairs (firing the
     // previously-dead RT03 lint).
-    #[cfg(feature = "sym-tree-structural")]
     {
         // Identify which disjoint pairs are STRUCTURAL (both sides Structural and
         // both predicates parse) — only those are precise emptiness findings.
@@ -1015,7 +982,6 @@ pub(crate) fn analyze_refinement_types(bundle: &ParserBundle) -> RefinementAnaly
     // `dead_casts`. `non_total_casts` is intentionally NOT surfaced: every
     // refinement downcast is non-total by nature, so it is noise; `dead_casts`
     // is the genuine unreachability defect signal.
-    #[cfg(feature = "oslf-transducer")]
     {
         let analysis = crate::sym_tree_transducer::analyze_from_bundle(
             &bundle.all_syntax,
@@ -1029,11 +995,6 @@ pub(crate) fn analyze_refinement_types(bundle: &ParserBundle) -> RefinementAnaly
             .collect();
     }
 
-    #[cfg(not(feature = "sym-tree-structural"))]
-    for (a, b) in &dispatch.disjoint_pairs {
-        // Heuristic path: disjointness is informational, not an RT03 warning.
-        let _ = (a, b);
-    }
     for (a, b) in &dispatch.overlapping_pairs {
         // Overlapping predicates: potential dispatch ambiguity.
         // This feeds into future lint for dispatch safety.
@@ -1049,7 +1010,6 @@ pub(crate) fn analyze_refinement_types(bundle: &ParserBundle) -> RefinementAnaly
 /// to a compact `c(child, …)` string for an RT-note hint. Scalar payload leaves
 /// render their constructor only (the structural shape is what matters for the
 /// hint; a concrete payload value is an arbitrary inhabitant).
-#[cfg(feature = "sym-tree-structural")]
 fn render_sym_term(t: &crate::sym_tree::SymTerm<crate::any_algebra::AnyDomain>) -> String {
     if t.children.is_empty() {
         t.constructor.clone()
@@ -1068,9 +1028,8 @@ pub(crate) struct AdvancedAnalysisBundle<'a> {
     pub(crate) symbolic: Option<&'a crate::symbolic::SymbolicAnalysis>,
     pub(crate) alternating: Option<&'a crate::alternating::AlternatingAnalysis>,
     /// OSLF Phase-4 `.1`: bisimulation partition that supersedes `alternating`
-    /// at the N06-ISO / A3 seams when `oslf-bisimulation` is on (falls back to
-    /// `alternating` when this is `None`). Absent when the feature is off.
-    #[cfg(feature = "oslf-bisimulation")]
+    /// at the N06-ISO / A3 seams (falls back to `alternating` when this is
+    /// `None`).
     pub(crate) bisimulation: Option<&'a crate::bisimulation::BisimulationAnalysis>,
     pub(crate) vpa: Option<&'a crate::vpa::VpaAnalysis>,
     pub(crate) register: Option<&'a crate::register_automata::RegisterAnalysis>,
@@ -1194,19 +1153,14 @@ pub(crate) fn build_pipeline_analysis(
 
     // ── OSLF Phase-4 `.1`: select the non-bisimilar-pair source for N06-ISO/A3 ──
     // Both seams below consume `&Vec<(String, String)>` of non-bisimilar category
-    // pairs. When `oslf-bisimulation` is on, the bisimulation pass supersedes
-    // `alternating` (falling back to it when the bisimulation result is absent);
-    // otherwise the source is `alternating` exactly as before. The two analyses
-    // carry the *same* `non_bisimilar_pairs` shape (parity proven by the
-    // agreement gate), so the seam bodies are unchanged.
-    #[cfg(feature = "oslf-bisimulation")]
+    // pairs. The bisimulation pass supersedes `alternating` (falling back to it
+    // when the bisimulation result is absent). The two analyses carry the *same*
+    // `non_bisimilar_pairs` shape (parity proven by the agreement gate), so the
+    // seam bodies are unchanged.
     let equiv_pairs: Option<&Vec<(String, String)>> = _advanced
         .bisimulation
         .map(|b| &b.non_bisimilar_pairs)
         .or_else(|| _advanced.alternating.map(|a| &a.non_bisimilar_pairs));
-    #[cfg(not(feature = "oslf-bisimulation"))]
-    let equiv_pairs: Option<&Vec<(String, String)>> =
-        _advanced.alternating.map(|a| &a.non_bisimilar_pairs);
 
     // ── Sprint 4 (N06-ISO): Extend isomorphic groups with bisimulation equivalences ──
     if let Some(equiv_pairs) = equiv_pairs {

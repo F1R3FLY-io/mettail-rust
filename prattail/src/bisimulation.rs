@@ -152,9 +152,8 @@ impl Lts {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// Pipeline bridge (OSLF substrate, Phase 4 — `.0` introduced inert; `.1` live:
-// supersedes `alternating` at the N06-ISO / A3 codegen seams in
-// `pipeline::analysis` when `oslf-bisimulation` is on)
+// Pipeline bridge (OSLF substrate, Phase 4 — supersedes `alternating` at the
+// N06-ISO / A3 codegen seams in `pipeline::analysis`)
 // ══════════════════════════════════════════════════════════════════════════════
 
 /// Pipeline-level bisimulation analysis result.
@@ -164,7 +163,6 @@ impl Lts {
 /// bisimulation pass at `.1` (the live flip). The agreement gate
 /// (`prattail/tests/bisimulation_agreement_snapshot.rs`) proves the two passes
 /// produce the *same* category-pair partition over the corpus fixtures.
-#[cfg(feature = "oslf-bisimulation")]
 #[derive(Debug, Clone)]
 pub struct BisimulationAnalysis {
     /// Pairs of categories found non-bisimilar (different bisimulation blocks),
@@ -216,7 +214,6 @@ pub struct BisimulationAnalysis {
 ///   bundle (the same slice `alternating::analyze_from_bundle` consumes).
 /// * `categories` — the grammar's [`CategoryInfo`](crate::pipeline::CategoryInfo)
 ///   list (declaration order is preserved for the output pair enumeration).
-#[cfg(feature = "oslf-bisimulation")]
 pub fn analyze_from_bundle(
     all_syntax: &[(String, String, Vec<crate::SyntaxItemSpec>)],
     categories: &[crate::pipeline::CategoryInfo],
@@ -368,7 +365,6 @@ pub fn analyze_from_bundle(
 /// contribute none. Mirrors
 /// `structural_types::collect_structural_child_categories` so the LTS edges track
 /// the same notion of "structural child" the rest of the substrate uses.
-#[cfg(feature = "oslf-bisimulation")]
 fn collect_nonterminal_targets<'a>(items: &'a [crate::SyntaxItemSpec], out: &mut Vec<&'a str>) {
     use crate::SyntaxItemSpec as Item;
     for item in items {

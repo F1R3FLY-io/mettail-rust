@@ -993,6 +993,36 @@ pub enum WpdaResolveResult<W: SemiringRef> {
 /// mode is active at a time. `WpdaWalker::with_bounding_mode(mode)`
 /// replaces the prior `with_beam_size(k)` API; the legacy methods are
 /// retained as compatibility shims.
+///
+/// **Enforcement — the distinct-reading budget** (R-D A1, task #18,
+/// 2026-07-15; supersedes the R-D v3 first-fork-window scope):
+///
+/// The budget is enforced by the descriptor-pure engine (`step_canonical_pure`,
+/// the sole parser) WHOLE-RUN at resolve (`cgll_resolve_binarized`) as the count
+/// of DISTINCT REALIZED TERMS the goal admits — `|R|_distinct`, the number of
+/// observationally-inequivalent readings the `_all` facade would return (same
+/// semantic-key surface: `WpdaEngine::semantic_fingerprint` ≡ the facade's
+/// `__mettail_wpda_semantic_key`, the output-identity theorem). The parse runs
+/// to completion; the resolve loop folds every accepting root's realized terms
+/// into ONE shared dedup set and emits a structured
+/// `WpdaResolveResult::AmbiguityBudget` the moment `|R|_distinct > n` (strict
+/// `>`). There is NO window and NO frontier estimate: an input with a wide
+/// TRANSIENT fan that reconverges to `k <= n` readings is Ok (e.g. a cast tower
+/// whose ~110 derivations collapse to one term), and an input whose ambiguity
+/// emerges only late is still caught (no post-window gap). `actual` on the error
+/// is therefore a READING count, not a cursor count; `frontier_ess_x1000` is 0
+/// (no live frontier to weight).
+///
+/// (Historical: before the S1-S6 single-engine re-platform, 2026-07-15, a
+/// classic diagnostic engine enforced this budget MID-PARSE against a live
+/// cursor/cohort frontier length — a genuinely different quantity, so the two
+/// engines could disagree on the same input. That engine and its recompile-free
+/// lever were removed; the distinct-reading semantics above are now the sole
+/// definition.)
+///
+/// The overflow is surfaced through the `WpdaResolveResult::AmbiguityBudget {
+/// budget, actual, position, frontier_ess_x1000 }` variant and the render
+/// "ambiguity budget {budget} exceeded (actual {actual})".
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CursorBoundingMode {
     /// Default — pure ambiguity preservation; no cursor dropping.
@@ -1034,38 +1064,13 @@ impl std::fmt::Display for WpdaMaxStepsExceeded {
 
 impl std::error::Error for WpdaMaxStepsExceeded {}
 
-/// Events that drive the reactive FSM forward.
-///
-/// Generic over the weight type `W` so consumers can read resolved branch
-/// weights. The `LexicographicWeight` of Stage 2 will be the canonical
-/// instantiation; until then any [`Semiring`] suffices.
-#[derive(Debug, Clone)]
-pub enum WpdaEvent<W: SemiringRef> {
-    /// Advance one transition. The default driver pulse.
-    Step,
-    /// A token was consumed at the given position.
-    TokenConsumed { pos: usize, token: TokenKind },
-    /// A GSS branch fork occurred; multiple stack tops now active.
-    BranchForked {
-        parent: GssNodeId,
-        children: Vec<GssNodeId>,
-    },
-    /// Ambiguity resolved to a single winning branch with given weight.
-    BranchResolved { winner: GssNodeId, weight: W },
-    /// A semantic action fired during AST assembly.
-    /// `action_id` is the codegen-assigned identifier; `args` are token positions
-    /// captured by the action.
-    SemanticActionFired { action_id: u32, args: Vec<usize> },
-    /// Request the walker to record a checkpoint at the current configuration.
-    Checkpoint { reason: CheckpointReason },
-    /// Inspect the current state without mutating it.
-    Inspect,
-}
 
 /// Reason a checkpoint is being recorded.
 ///
-/// Used by `WpdaIncrementalSession` (Stage 5) to decide which checkpoints to
-/// retain when memory pressure rises.
+/// Tags why a checkpoint was taken so a checkpoint cache can decide which to
+/// retain under memory pressure. (The Stage-5 `WpdaIncrementalSession` that
+/// consumed this was removed in the S1-S6 single-engine re-platform; the enum
+/// is retained for the checkpoint API.)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CheckpointReason {
     /// Periodic checkpoint at fixed interval (LSP token-level snapshots).
@@ -1078,27 +1083,14 @@ pub enum CheckpointReason {
     PrePause,
 }
 
-/// Output of one [`WpdaState`] × [`WpdaEvent`] transition.
-#[derive(Debug, Clone)]
-pub enum WpdaTransition<W: SemiringRef> {
-    /// `Inspect` event; no state change.
-    NoChange,
-    /// State changed; optional trace entry recorded.
-    Transition {
-        new_state: WpdaState,
-        trace: Option<WpdaTraceEntry>,
-    },
-    /// Checkpoint recorded at the current configuration.
-    Checkpoint { config: WpdaConfiguration<W> },
-    /// Parse complete; result is available via the walker.
-    Done { state: WpdaState },
-}
 
 /// A WPDS configuration snapshot suitable for checkpointing or replay.
 ///
-/// Generic over weight type `W`. Stage 5's `WpdaIncrementalSession` uses
-/// `BTreeMap<usize, WpdaConfiguration<LexicographicWeight>>` for its
-/// checkpoint cache.
+/// Generic over weight type `W`. Still produced live by
+/// `WpdaWalker::current_configuration`. (The Stage-5 `WpdaIncrementalSession`
+/// checkpoint cache that keyed these by position in a
+/// `BTreeMap<usize, WpdaConfiguration<LexicographicWeight>>` was removed in the
+/// S1-S6 single-engine re-platform.)
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WpdaConfiguration<W: SemiringRef> {
     /// Token position at the time of snapshot.
@@ -3872,41 +3864,7 @@ mod tests {
         assert!(err.contains("token-addressed"), "unexpected error: {}", err);
     }
 
-    #[test]
-    fn wpds_event_constructible_with_tropical_weight() {
-        let _step: WpdaEvent<TropicalWeight> = WpdaEvent::Step;
-        let _tok: WpdaEvent<TropicalWeight> =
-            WpdaEvent::TokenConsumed { pos: 0, token: TokenKind::Ident };
-        let _fork: WpdaEvent<TropicalWeight> =
-            WpdaEvent::BranchForked { parent: 0, children: vec![1, 2] };
-        let _resolved: WpdaEvent<TropicalWeight> =
-            WpdaEvent::BranchResolved { winner: 1, weight: TropicalWeight::one() };
-        let _action: WpdaEvent<TropicalWeight> =
-            WpdaEvent::SemanticActionFired { action_id: 7, args: vec![0, 1] };
-        let _cp: WpdaEvent<TropicalWeight> = WpdaEvent::Checkpoint {
-            reason: CheckpointReason::NaturalBoundary,
-        };
-        let _ins: WpdaEvent<TropicalWeight> = WpdaEvent::Inspect;
-    }
 
-    #[test]
-    fn wpds_transition_variants_constructible() {
-        let _no: WpdaTransition<TropicalWeight> = WpdaTransition::NoChange;
-        let _t: WpdaTransition<TropicalWeight> = WpdaTransition::Transition {
-            new_state: WpdaState::Accepted,
-            trace: None,
-        };
-        let _cp: WpdaTransition<TropicalWeight> = WpdaTransition::Checkpoint {
-            config: WpdaConfiguration {
-                pos: 5,
-                state: WpdaState::Ready { min_bp: 0 },
-                stack: vec![StackSymbolV2::category_entry(0)],
-                weight: TropicalWeight::one(),
-            },
-        };
-        let _done: WpdaTransition<TropicalWeight> =
-            WpdaTransition::Done { state: WpdaState::Accepted };
-    }
 
     #[test]
     fn wpds_control_pause_exists() {

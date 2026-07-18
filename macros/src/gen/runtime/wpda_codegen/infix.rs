@@ -562,7 +562,9 @@ pub(crate) fn emit_bp_tables(
 
 /// Build a map from rule.label → (cat_src_idx, rule_idx). Used to look up
 /// the pair for an operator's `result_category` + `label`.
-fn build_label_index(
+/// F5-2 (2026-07-13): `pub(crate)` so `factoring::discover_mixfix_cohorts`
+/// reads the SAME (cat,terminal) grouping the slice emitters consume.
+pub(crate) fn build_label_index(
     categories: &[String],
     per_cat: &[Vec<mettail_ast::grammar::GrammarRule>],
 ) -> std::collections::HashMap<(String, String), (u16, u16)> {
@@ -1121,6 +1123,24 @@ fn emit_mixfix_parts_fn(
                 });
             }
         }
+    }
+    // S1-FACTORING F5-2 (2026-07-13): mixfix SPINE `parts_len` PRESENCE rows,
+    // `Some(u8::MAX)` poison. The Unwinding-MixfixMarker arm validates
+    // `Some(..)` then DISCARDS the value (engine_impl `let _ = parts_len`),
+    // so a spine-marked operand return re-enters
+    // `MixfixLiteralRun { kind: 0 }` — which the spliced spine prelude
+    // intercepts BEFORE the generic reads. An escaped spine id at any OTHER
+    // `parts_len` consumer dies loudly on the poison. Rows come from the
+    // const-gated partition (`mixfix_emission_partition` — deterministic, so
+    // this agrees with the `build_spine_emission` bundle without threading);
+    // EMPTY while `S1_FACTORING && S1F5_MIXFIX_COHORTS` is off
+    // (byte-identity).
+    for (spine_result_src, spine_id) in
+        super::factoring::mixfix_spine_parts_len_rows(language, categories, per_cat)
+    {
+        len_arms.push(quote! {
+            (#spine_result_src, #spine_id) => Some(u8::MAX),
+        });
     }
     quote! {
         /// Mixfix per-part metadata: returns

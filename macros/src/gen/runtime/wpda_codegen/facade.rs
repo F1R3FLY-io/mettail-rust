@@ -25,7 +25,7 @@
 //! `parse_<Cat>_via_wpda_recovering` entry point keeps the walker's default
 //! recovery config and returns the committed recovery trail.
 
-use mettail_ast::grammar::{PatternOp, SyntaxExpr, TermParam};
+use mettail_ast::grammar::{GrammarRule, PatternOp, SyntaxExpr, TermParam};
 use mettail_ast::language::LanguageDef;
 use mettail_ast::types::{CollectionType, TypeExpr};
 use proc_macro2::TokenStream;
@@ -118,7 +118,7 @@ pub(crate) fn emit_semantic_key_hasher() -> TokenStream {
 // ════════════════════════════════════════════════════════════════════════
 // P2 ISOLATION+COMBINE CODEGEN (Plan a7986200, 2026-07-05) — ships the ROOT-P
 // `.*sep` divide-and-conquer linearization into the generated facade.
-// Gate: `super::forks::SEP_ISOLATION_COMBINE` + `SEP_ISOLATION_CATEGORIES`.
+// Gate: the grammar-derived `eligible_family(IsoFamily::Sep, …)` predicate.
 // ════════════════════════════════════════════════════════════════════════
 
 /// One labeled AST variant a `.*sep` category builds, with the suffix
@@ -403,18 +403,218 @@ pub(crate) fn sep_isolation_helper_ident(cat_name: &str) -> proc_macro2::Ident {
     format_ident!("__mettail_wpda_sep_isolate_all_{}", cat_name)
 }
 
-/// The gated `.*sep` isolation shape for `cat_name`: `Some` iff the master
-/// switch is ON, the category is in the include set, AND a shape is derivable.
-/// The SINGLE source of truth shared by the helper emitter (facade) and the
-/// string-entry prologue emitter (mod.rs).
+// ─────────────────────────────────────────────────────────────────────────
+// P0 — GRAMMAR-DERIVED isolation-category selection (ROOT-P generalization).
+//
+// The three isolation families (sep / proj / infix) select their result
+// categories via a GRAMMAR-DERIVED eligibility predicate ([`eligible_family`]) —
+// a prefix-cohort / list-element / infix-operand REACHABILITY analysis over the
+// grammar IR, with NO hardcoded category names. It is a behavior-preserving
+// REFINEMENT of the former rhocalc-name-coupled hardcoded include-lists: it
+// isolates EXACTLY the categories that fork-explode (a ≥2 shared-prefix cohort
+// whose operands nest back into the category), in ANY language, present or future.
+
+/// The OPERAND-REACHABILITY transitive closure over category names. `(C, D)` is a
+/// member iff there is a path `C → … → D` of length ≥ 1 in the OPERAND GRAPH,
+/// whose direct edge `C → D` holds iff some rule of category `C` has an OPERAND
+/// slot — a simple `Param` of a `Base` category `D`, OR a `.*sep`/collection
+/// element of category `D`. `(C, C)` is present iff `C` participates in a cycle
+/// (`self_nests`), so NO reflexive `a != d` guard is used — the DELIBERATE
+/// difference from [`super::kind_dispatch::emit_cat_can_reach`], which is
+/// cross-cat-only, prefix-edge-EXCLUDING, and reflexive-free (a NARROWER graph
+/// built for a different purpose). Broader-is-safe here: `reaches` only gates
+/// "does an operand nest back into the result category", and the oracle certifies
+/// the resulting sets do not over-include.
+struct OperandReach {
+    reach: std::collections::BTreeSet<(String, String)>,
+}
+
+impl OperandReach {
+    /// Does category `from` reach category `to` via ≥ 1 operand edge?
+    fn reaches(&self, from: &str, to: &str) -> bool {
+        self.reach.contains(&(from.to_string(), to.to_string()))
+    }
+}
+
+/// The categories of a rule's OPERAND slots (edge targets `D`): each simple
+/// `Param` of a `Base` category, plus each `.*sep`/collection element category
+/// (extracted via [`sep_base_ty`] over the collection's element type). Binder /
+/// abstraction / guard / optional params are NOT simple operands and contribute
+/// no edge. Mirrors the slot walk of the `derive_*_iso_shape` derivations.
+fn rule_operand_categories(rule: &GrammarRule) -> Vec<String> {
+    let mut normalized = rule.clone();
+    mettail_ast::grammar::convert_items_to_term_context(&mut normalized);
+    let (Some(tc), Some(sp)) = (&normalized.term_context, &normalized.syntax_pattern) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for e in sp.iter() {
+        match e {
+            SyntaxExpr::Param(p) => {
+                if let Some(cat) = tc.iter().find_map(|tp| match tp {
+                    TermParam::Simple { name, ty } if name == p => sep_base_ty(ty),
+                    _ => None,
+                }) {
+                    out.push(cat);
+                }
+            },
+            SyntaxExpr::Op(PatternOp::Sep { collection, .. }) => {
+                if let Some(cat) = tc.iter().find_map(|tp| match tp {
+                    TermParam::Simple { name, ty: TypeExpr::Collection { element, .. } }
+                        if name == collection =>
+                    {
+                        sep_base_ty(element)
+                    },
+                    _ => None,
+                }) {
+                    out.push(cat);
+                }
+            },
+            _ => {},
+        }
+    }
+    out
+}
+
+/// Build the operand-reachability closure (fixpoint, mirroring the closure loop
+/// in [`super::kind_dispatch::emit_cat_can_reach`] — but WITHOUT the `a != d`
+/// guard, so cyclic categories self-reach).
+fn build_operand_reach(language: &LanguageDef) -> OperandReach {
+    use std::collections::BTreeSet;
+    let mut reach: BTreeSet<(String, String)> = BTreeSet::new();
+    for rule in &language.terms {
+        let c = rule.category.to_string();
+        for d in rule_operand_categories(rule) {
+            reach.insert((c.clone(), d));
+        }
+    }
+    loop {
+        let mut added = false;
+        let snapshot: Vec<(String, String)> = reach.iter().cloned().collect();
+        for (a, b) in &snapshot {
+            for (c, d) in &snapshot {
+                if b == c && reach.insert((a.clone(), d.clone())) {
+                    added = true;
+                }
+            }
+        }
+        if !added {
+            break;
+        }
+    }
+    OperandReach { reach }
+}
+
+/// P0 PROJ eligibility (red-team-tightened A5a form — gated on `cat` ITSELF, NOT
+/// its SCC): a derivable projection shape AND a non-ident-sigil PREFIX COHORT of
+/// size ≥ 2 (≥ 2 rules of `cat` sharing ONE non-ident leading literal `σ`), ≥ 2
+/// of whose members carry an operand slot whose category REACHES `cat` (nests
+/// back — the exponential-blowup shape the isolator linearizes). `K = 2` cohort
+/// floor. `non-ident-shaped` == the existing `derive_projection_iso_shape` test.
+fn eligible_proj(
+    language: &LanguageDef,
+    reach: &OperandReach,
+    cat_name: &str,
+    categories: &[String],
+) -> bool {
+    if derive_projection_iso_shape(language, cat_name, categories).is_none() {
+        return false;
+    }
+    let is_ident_shaped = |s: &str| s.chars().all(|c| c.is_alphanumeric() || c == '_');
+    // Per non-ident sigil σ: (cohort size, count with an operand reaching `cat`).
+    let mut cohort: std::collections::BTreeMap<String, (usize, usize)> =
+        std::collections::BTreeMap::new();
+    for rule in &language.terms {
+        if rule.category.to_string() != cat_name {
+            continue;
+        }
+        let mut normalized = rule.clone();
+        mettail_ast::grammar::convert_items_to_term_context(&mut normalized);
+        let Some(sp) = &normalized.syntax_pattern else { continue };
+        let Some(SyntaxExpr::Literal(sigil)) = sp.first() else { continue };
+        if is_ident_shaped(sigil) {
+            continue;
+        }
+        let nests = rule_operand_categories(rule)
+            .iter()
+            .any(|d| reach.reaches(d, cat_name));
+        let entry = cohort.entry(sigil.clone()).or_insert((0, 0));
+        entry.0 += 1;
+        if nests {
+            entry.1 += 1;
+        }
+    }
+    // ∃ σ : |cohort(σ)| ≥ 2 ∧ ≥ 2 of its members have an operand reaching `cat`.
+    cohort.values().any(|&(size, reaching)| size >= 2 && reaching >= 2)
+}
+
+/// P0 SEP eligibility: a derivable `.*sep` combine shape whose derived ELEMENT
+/// category reaches `cat` (the list element nests back into the list category).
+fn eligible_sep(
+    language: &LanguageDef,
+    reach: &OperandReach,
+    cat_name: &str,
+    categories: &[String],
+) -> bool {
+    match derive_sep_combine_shape(language, cat_name, categories) {
+        Some(shape) => reach.reaches(&shape.element_category, cat_name),
+        None => false,
+    }
+}
+
+/// P0 INFIX eligibility: a derivable homogeneous binary-infix shape AND `cat`
+/// reaches some category `D` that is itself PROJ- or SEP-eligible (the infix
+/// operands recursively descend into an isolation-eligible sub-language).
+fn eligible_infix(
+    language: &LanguageDef,
+    reach: &OperandReach,
+    cat_name: &str,
+    categories: &[String],
+) -> bool {
+    if derive_infix_iso_shape(language, cat_name, categories).is_none() {
+        return false;
+    }
+    categories.iter().any(|d| {
+        reach.reaches(cat_name, d)
+            && (eligible_proj(language, reach, d, categories)
+                || eligible_sep(language, reach, d, categories))
+    })
+}
+
+/// The three isolation families selected by the P0 predicate.
+enum IsoFamily {
+    Sep,
+    Proj,
+    Infix,
+}
+
+/// The GRAMMAR-DERIVED eligibility for one family + category — consumed by the
+/// three `*_iso_shape` gates when [`grammar_derived_isolation_enabled`] is true.
+fn eligible_family(
+    language: &LanguageDef,
+    family: IsoFamily,
+    cat_name: &str,
+    categories: &[String],
+) -> bool {
+    let reach = build_operand_reach(language);
+    match family {
+        IsoFamily::Sep => eligible_sep(language, &reach, cat_name, categories),
+        IsoFamily::Proj => eligible_proj(language, &reach, cat_name, categories),
+        IsoFamily::Infix => eligible_infix(language, &reach, cat_name, categories),
+    }
+}
+
+/// The gated `.*sep` isolation shape for `cat_name`: `Some` iff the category is
+/// selected by the GRAMMAR-DERIVED isolation-eligibility predicate
+/// ([`eligible_family`]) AND a shape is derivable. The SINGLE source of truth
+/// shared by the helper emitter (facade) and the string-entry prologue emitter
+/// (mod.rs).
 pub(crate) fn sep_isolation_shape(
     language: &LanguageDef,
     cat_name: &str,
     categories: &[String],
 ) -> Option<SepCombineShape> {
-    if super::forks::SEP_ISOLATION_COMBINE
-        && super::forks::SEP_ISOLATION_CATEGORIES.contains(&cat_name)
-    {
+    if eligible_family(language, IsoFamily::Sep, cat_name, categories) {
         derive_sep_combine_shape(language, cat_name, categories)
     } else {
         None
@@ -429,9 +629,10 @@ pub(crate) enum SepSeam {
     All,
 }
 
-/// Emit the guarded string-entry prologue that calls the isolation helper with
-/// the RAW input string (before `lex_dag`). Runtime A/B: `PRATTAIL_NO_SEP_ISOLATION`
-/// forces the monolithic path without a rebuild.
+/// Emit the string-entry prologue that calls the isolation helper with the RAW
+/// input string (before `lex_dag`). On `None`/failure the helper declines and the
+/// facade falls through to the UNMODIFIED monolithic body (byte-identical;
+/// monolithic authoritative — RT-4).
 pub(crate) fn emit_sep_isolation_prologue(
     helper_name: &proc_macro2::Ident,
     seam: SepSeam,
@@ -441,25 +642,21 @@ pub(crate) fn emit_sep_isolation_prologue(
             // P2 ISOLATION+COMBINE prologue (Plan a7986200) — single winner.
             // `true` ⇒ per-segment/suffix SINGLE-winner composition (== monolithic
             // single result; bug 2318 — avoids the all-path `open_len` divergence).
-            if std::env::var_os("PRATTAIL_NO_SEP_ISOLATION").is_none() {
-                if let Some((__iso_terms, __iso_weights)) = #helper_name(input, true) {
-                    if let Some((__t, _)) = __iso_terms
-                        .into_iter()
-                        .zip(__iso_weights.into_iter())
-                        .min_by(|(_, __a), (_, __b)| __a.cmp(__b))
-                    {
-                        return Ok(__t);
-                    }
+            if let Some((__iso_terms, __iso_weights)) = #helper_name(input, true) {
+                if let Some((__t, _)) = __iso_terms
+                    .into_iter()
+                    .zip(__iso_weights.into_iter())
+                    .min_by(|(_, __a), (_, __b)| __a.cmp(__b))
+                {
+                    return Ok(__t);
                 }
             }
         },
         SepSeam::All => quote! {
             // P2 ISOLATION+COMBINE prologue (Plan a7986200) — full alt set.
             // `false` ⇒ ambiguity-preserving all-path per segment (cartesian).
-            if std::env::var_os("PRATTAIL_NO_SEP_ISOLATION").is_none() {
-                if let Some(__iso) = #helper_name(input, false) {
-                    return Ok(__iso);
-                }
+            if let Some(__iso) = #helper_name(input, false) {
+                return Ok(__iso);
             }
         },
     }
@@ -496,19 +693,13 @@ fn emit_sep_isolation(cat_ident: &proc_macro2::Ident, shape: &SepCombineShape) -
             // (Scalar HEAD is `Arc<Element>` — mirrors the walker `into_term_arc`;
             // the `.*sep` list field is a plain `Vec<Element>` — mirrors the drain.)
             bare_variant_idx = vi;
-            // GROUP-A single-bare-element fix (2026-07-06, `SEP_ISOLATION_SINGLE_BARE`):
-            // when the `.*sep` domain carries EXACTLY ONE element the bare list rule
-            // (`ForRowNoWhere . b, bs`) cannot construct a 1-element list (its `bs`
-            // would be empty ⇒ a trailing dangling `&`), so build the SINGLE-element
-            // TWIN (`ForRowSingleNoWhere . b:InputBind |- b`) instead. Mirrors the
-            // suffix-variant `build_suffix_term` twin logic (bug 2318). Const-gated so
-            // that `SEP_ISOLATION_SINGLE_BARE == false` emits the EXACT pre-fix arm
-            // (byte-identical) — the single-element path never engages then anyway.
-            let bare_twin = if super::forks::SEP_ISOLATION_SINGLE_BARE {
-                variant.single_twin.as_ref()
-            } else {
-                None
-            };
+            // GROUP-A single-bare-element fix (2026-07-06): when the `.*sep` domain
+            // carries EXACTLY ONE element the bare list rule (`ForRowNoWhere . b, bs`)
+            // cannot construct a 1-element list (its `bs` would be empty ⇒ a trailing
+            // dangling `&`), so build the SINGLE-element TWIN
+            // (`ForRowSingleNoWhere . b:InputBind |- b`) instead. Mirrors the
+            // suffix-variant `build_suffix_term` twin logic (bug 2318).
+            let bare_twin = variant.single_twin.as_ref();
             let bare_construct = if let Some(twin) = bare_twin {
                 let twin_ident = format_ident!("{}", twin);
                 quote! {
@@ -645,40 +836,25 @@ fn emit_sep_isolation(cat_ident: &proc_macro2::Ident, shape: &SepCombineShape) -
     // GROUP-A single-bare-element fix (2026-07-06): also allow the BARE variant
     // (`ForRowNoWhere`, no suffix) whose single-element TWIN is `ForRowSingleNoWhere`
     // to isolate its ONE `InputBind` and wrap it (closes the monolithic
-    // `<-@Nil!?(Set(),send)` gap). Compile-time gated by `SEP_ISOLATION_SINGLE_BARE`
-    // (OFF ⇒ the `allow_single_expr` is EMITTED BYTE-IDENTICALLY to the pre-fix
-    // suffix-only helper) and runtime gated by `PRATTAIL_NO_SEP_SINGLE_BARE` (causal
-    // A/B, no rebuild).
-    let allow_single_expr = if super::forks::SEP_ISOLATION_SINGLE_BARE {
-        let bare_allowed_vis: Vec<usize> = shape
-            .variants
-            .iter()
-            .enumerate()
-            .filter(|(_, v)| v.operand_groups.is_empty() && v.single_twin.is_some())
-            .map(|(vi, _)| vi)
-            .collect();
-        let suffix_allow_expr = if suffix_allowed_vis.is_empty() {
-            quote! { false }
-        } else {
-            quote! { matches!(__variant, #(#suffix_allowed_vis)|*) }
-        };
-        let bare_allow_expr = if bare_allowed_vis.is_empty() {
-            quote! { false }
-        } else {
-            quote! {
-                (matches!(__variant, #(#bare_allowed_vis)|*)
-                    && std::env::var_os("PRATTAIL_NO_SEP_SINGLE_BARE").is_none())
-            }
-        };
-        quote! { ((#suffix_allow_expr) || (#bare_allow_expr)) }
+    // `<-@Nil!?(Set(),send)` gap).
+    let bare_allowed_vis: Vec<usize> = shape
+        .variants
+        .iter()
+        .enumerate()
+        .filter(|(_, v)| v.operand_groups.is_empty() && v.single_twin.is_some())
+        .map(|(vi, _)| vi)
+        .collect();
+    let suffix_allow_expr = if suffix_allowed_vis.is_empty() {
+        quote! { false }
     } else {
-        // Const OFF: EXACT pre-fix tokens (suffix-only, bug-2318).
-        if suffix_allowed_vis.is_empty() {
-            quote! { false }
-        } else {
-            quote! { matches!(__variant, #(#suffix_allowed_vis)|*) }
-        }
+        quote! { matches!(__variant, #(#suffix_allowed_vis)|*) }
     };
+    let bare_allow_expr = if bare_allowed_vis.is_empty() {
+        quote! { false }
+    } else {
+        quote! { matches!(__variant, #(#bare_allowed_vis)|*) }
+    };
+    let allow_single_expr = quote! { ((#suffix_allow_expr) || (#bare_allow_expr)) };
 
     quote! {
         /// P2 ISOLATION+COMBINE (Plan a7986200): STRING-level divide-and-conquer
@@ -878,7 +1054,7 @@ fn emit_sep_isolation(cat_ident: &proc_macro2::Ident, shape: &SepCombineShape) -
 // ════════════════════════════════════════════════════════════════════════
 // P1 `@`-PROJECTION ISOLATION+COMBINE CODEGEN (Plan a8b32275, 2026-07-05) —
 // the SIBLING of the P2 `.*sep` isolation above (ROOT AXIS-@ exponential-killer).
-// Gate: `super::forks::PROJ_ISOLATION_COMBINE` + `PROJ_ISOLATION_CATEGORIES`.
+// Gate: the grammar-derived `eligible_family(IsoFamily::Proj, …)` predicate.
 //
 // Difference from `.*sep`: rather than splitting a list at a separator and
 // cartesian-combining SEGMENTS, projection isolation matches each `σ`-led
@@ -936,6 +1112,23 @@ struct ProjVariant {
     /// whole receiver (`Map() % @X` → `Mod`, `-Nil` → `NegProc`) ⇒ the AST gate
     /// drops it ⇒ the frame declines ⇒ monolithic (sound).
     receiver_decline_labels: Vec<String>,
+    /// ROOT-P (Fix A / P1): one flag per skeleton slot (parallel to `slots`). TRUE
+    /// at an operand slot whose following delimiter δ is AMBIGUOUS for the operand's
+    /// category (δ producible at depth 0 in it — `category_produces_delim_at_depth0`),
+    /// so the enumerating matcher enumerates that operand's boundary
+    /// instead of committing greedy-first. FALSE for `Lit` slots, the last operand
+    /// (no following δ), and non-ambiguous δ (byte-boundary is unique ⇒ greedy-first).
+    ambiguous_by_slot: Vec<bool>,
+    /// ROOT-1 (design a9fbeefe): slot 0 is a NON-ident sigil literal (`@`/`*`/`-`/`(`
+    /// …) — the `σ`-led projection shapes. Consumed by the authoritative-reject
+    /// machinery: when a `sigil_led`
+    /// variant's enumerating matcher returns a non-empty whole-input tiling set the
+    /// helper marks `__sigil_frame_matched`, and if EVERY tiling then fails to parse
+    /// (no cap hit) it signals a DEFINITIVE reject rather than falling to the
+    /// fork-exploding walker. FALSE for framed-list (slot 0 = scalar Name operand)
+    /// and method-frame (slot 0 = receiver operand) variants — those are never the
+    /// authoritative-reject trigger (their decline stays `None` → walker/monolithic).
+    sigil_led: bool,
 }
 
 /// Grammar-derived shape of an `@`-projection category: the σ-led frame-variants.
@@ -946,6 +1139,26 @@ pub(crate) struct ProjIsoShape {
     /// so the scan/dedup elects the specific keyword-send (`@Nil!(q)`) before the
     /// general `@p!(q)` — matching the monolithic rule-order preference.
     variants: Vec<ProjVariant>,
+}
+
+/// Grammar-derived DISTINCT first-bytes of a projection shape's σ-led variants'
+/// leading literal (`@`/`*`/`-`/`(` …) — the projection sigils the category admits.
+/// SINGLE SOURCE OF TRUTH for the authoritative-reject `starts_with_sigil`
+/// gate (`emit_projection_isolation`). No
+/// token hardcode — the bytes come straight from the grammar's leading literals.
+fn proj_sigil_lead_bytes(shape: &ProjIsoShape) -> Vec<u8> {
+    let mut bs: Vec<u8> = shape
+        .variants
+        .iter()
+        .filter(|v| v.sigil_led)
+        .filter_map(|v| match v.slots.first() {
+            Some(ProjSlot::Lit(l)) => l.as_bytes().first().copied(),
+            _ => None,
+        })
+        .collect();
+    bs.sort_unstable();
+    bs.dedup();
+    bs
 }
 
 /// ROOT-D: is `cat` LEFT-RECURSIVE via the literal `delim`? I.e. does the grammar
@@ -979,6 +1192,74 @@ fn category_left_recursive_via(language: &LanguageDef, cat: &str, delim: &str) -
         });
         if p_cat.as_deref() == Some(cat) {
             return true;
+        }
+    }
+    false
+}
+
+/// ROOT-P (Fix A / P1): can some term of category `cat` produce the literal `delim`
+/// at BRACKET-DEPTH 0 — transitively through its DEPTH-0 cross-cat operands? This is
+/// the AMBIGUOUS-BOUNDARY test consumed by the enumerating matcher. When
+/// TRUE, an operand of category `cat` that a frame skeleton delimits by `delim` can
+/// itself CONTAIN `delim` at depth 0 (e.g. a send receiver `p:Proc` = `@Nil!(…)`
+/// whose own `!` sits at depth 0), so the single greedy-first boundary mis-splits
+/// and the matcher must ENUMERATE candidate boundaries. GRAMMAR-DERIVED (walks the
+/// grammar tracking bracket depth via the openers `([{`/`{|` and closers `)]}`/`|}`
+/// counted per literal), no token hardcode. Depth-0 `Param`s enqueue their operand
+/// category (a depth-0 operand can itself carry `delim` at depth 0 — the transitive
+/// case). `Op` (`.*sep`/`#opt`) operands are bracketed in every projection frame, so
+/// they are NOT enqueued (a false negative here only leaves the pre-fix greedy
+/// boundary — never unsound, since enumeration only ADDS valid whole-input splits).
+fn category_produces_delim_at_depth0(language: &LanguageDef, cat: &str, delim: &str) -> bool {
+    // Net bracket delta of a literal: (#openers − #closers) over its bytes, so a
+    // multi-char collection delimiter (`{|` → +1, `|}` → −1) balances correctly.
+    let depth_delta = |l: &str| -> i32 {
+        l.bytes().fold(0i32, |d, c| match c {
+            b'(' | b'[' | b'{' => d + 1,
+            b')' | b']' | b'}' => d - 1,
+            _ => d,
+        })
+    };
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut work: Vec<String> = vec![cat.to_string()];
+    while let Some(c) = work.pop() {
+        if !seen.insert(c.clone()) {
+            continue;
+        }
+        for rule in &language.terms {
+            if rule.category.to_string() != c {
+                continue;
+            }
+            let mut normalized = rule.clone();
+            mettail_ast::grammar::convert_items_to_term_context(&mut normalized);
+            let (Some(tc), Some(sp)) = (&normalized.term_context, &normalized.syntax_pattern)
+            else {
+                continue;
+            };
+            let mut depth: i32 = 0;
+            for expr in sp {
+                match expr {
+                    SyntaxExpr::Literal(l) => {
+                        // A non-bracket literal EQUAL to `delim` seen while depth==0
+                        // ⇒ `cat` produces `delim` at depth 0.
+                        if depth == 0 && depth_delta(l) == 0 && l == delim {
+                            return true;
+                        }
+                        depth += depth_delta(l);
+                    }
+                    SyntaxExpr::Param(name) => {
+                        if depth == 0 {
+                            if let Some(pcat) = tc.iter().find_map(|tp| match tp {
+                                TermParam::Simple { name: n, ty } if n == name => sep_base_ty(ty),
+                                _ => None,
+                            }) {
+                                work.push(pcat);
+                            }
+                        }
+                    }
+                    SyntaxExpr::Op(_) => {}
+                }
+            }
         }
     }
     false
@@ -1030,7 +1311,7 @@ fn is_receiver_led_postfix_frame(sp: &[SyntaxExpr]) -> bool {
 /// isolation-eligible `@`-projection rule (grammar-derived — single source of
 /// truth). Accepts every rule whose syntax pattern is a pure Literal/Param
 /// sequence beginning with a NON-ident sigil and carrying ≥1 `Base`-typed Param,
-/// OR (ROOT-D, gated by `METHOD_FRAME_ISOLATION`) a RECEIVER-LED POSTFIX method
+/// OR (ROOT-D) a RECEIVER-LED POSTFIX method
 /// frame (slot 0 = Operand, last slot = closing bracket).
 /// Rules with a `.*sep`/`#opt`/binder operand (`Op`/non-`Simple` param) are NOT
 /// projection shapes (they fall through to the monolithic body / the sep helper).
@@ -1089,14 +1370,14 @@ fn derive_projection_iso_shape(
         if total_sep != vec_sep_count || vec_sep_count > 1 {
             continue;
         }
-        // A category that the DEDICATED `.*sep` helper owns
-        // (`SEP_ISOLATION_CATEGORIES`, e.g. `ForRow`'s `&`-join) delegates ALL its
-        // list shapes to that (validated, landed) helper — the projection helper
-        // takes only its sigil-led shapes there (ForRow has none ⇒ no proj helper
-        // for ForRow, unchanged). This keeps the two helpers disjoint (proj runs
-        // first, declines, sep handles it) and avoids double-handling the `&`-list.
-        let sep_owned = super::forks::SEP_ISOLATION_CATEGORIES.contains(&cat_name);
-        //   (c) ROOT-D (gated by `METHOD_FRAME_ISOLATION`): a RECEIVER-LED POSTFIX
+        // A category that the DEDICATED `.*sep` helper owns (e.g. `ForRow`'s
+        // `&`-join — i.e. `sep_isolation_shape` is `Some`) delegates ALL its list
+        // shapes to that (validated, landed) helper — the projection helper takes
+        // only its sigil-led shapes there (ForRow has none ⇒ no proj helper for
+        // ForRow, unchanged). This keeps the two helpers disjoint (proj runs first,
+        // declines, sep handles it) and avoids double-handling the `&`-list.
+        let sep_owned = sep_isolation_shape(language, cat_name, categories).is_some();
+        //   (c) ROOT-D: a RECEIVER-LED POSTFIX
         //       (method-call) frame — slot 0 an OPERAND, the LAST slot a closing
         //       bracket (`m "." "get" "(" k ")"`, `m "." "keys" "(" ")"`). Its
         //       leading receiver is matched greedy-last + soundness-gated below.
@@ -1104,8 +1385,7 @@ fn derive_projection_iso_shape(
         //       has slot 0 = Literal (caught by (a)). Sends match here too but are
         //       already covered by (b) — same variant, and their leading channel is
         //       NOT `.`-left-recursive so the gate flag stays false (byte-identical).
-        let method_frame =
-            super::forks::METHOD_FRAME_ISOLATION && is_receiver_led_postfix_frame(sp);
+        let method_frame = is_receiver_led_postfix_frame(sp);
         if !(sigil_led || (vec_sep_count == 1 && !sep_owned) || method_frame) {
             continue;
         }
@@ -1185,11 +1465,43 @@ fn derive_projection_iso_shape(
             }
             _ => (false, Vec::new()),
         };
+        // ROOT-P (Fix A / P1): per-slot ambiguous-boundary flags. An operand slot at
+        // k ≥ 1 is ambiguous iff its following delimiter δ is producible at depth 0
+        // in the operand's category (so the operand can contain δ and greedy-first
+        // mis-splits). k == 0 (sigil Lit, or a method receiver matched greedy-last)
+        // is never enumerated. The last operand (no following δ) runs to end.
+        let ambiguous_by_slot: Vec<bool> = slots
+            .iter()
+            .enumerate()
+            .map(|(k, s)| {
+                if k == 0 {
+                    return false;
+                }
+                let opcat = match s {
+                    ProjSlot::Operand { category } => Some(category.as_str()),
+                    ProjSlot::SepList { element_category, .. } => Some(element_category.as_str()),
+                    ProjSlot::Lit(_) => None,
+                };
+                let Some(opcat) = opcat else { return false };
+                let delim = slots[k + 1..].iter().find_map(|s2| match s2 {
+                    ProjSlot::Lit(l) => Some(l.as_str()),
+                    _ => None,
+                });
+                match delim {
+                    Some(d) => category_produces_delim_at_depth0(language, opcat, d),
+                    None => false,
+                }
+            })
+            .collect();
         variants.push(ProjVariant {
             label: normalized.label.to_string(),
             slots,
             leading_receiver_gated,
             receiver_decline_labels,
+            ambiguous_by_slot,
+            // ROOT-1: carry the already-computed `sigil_led` (slot-0 non-ident
+            // literal) so the arm/helper can mark `__sigil_frame_matched`.
+            sigil_led,
         });
     }
 
@@ -1220,19 +1532,18 @@ pub(crate) fn projection_iso_shape(
     cat_name: &str,
     categories: &[String],
 ) -> Option<ProjIsoShape> {
-    if super::forks::PROJ_ISOLATION_COMBINE
-        && super::forks::PROJ_ISOLATION_CATEGORIES.contains(&cat_name)
-    {
+    if eligible_family(language, IsoFamily::Proj, cat_name, categories) {
         derive_projection_iso_shape(language, cat_name, categories)
     } else {
         None
     }
 }
 
-/// Emit the guarded string-entry prologue that calls the projection-isolation
-/// helper with the RAW input string (before `lex_dag`). Runtime A/B:
-/// `PRATTAIL_NO_PROJ_ISOLATION` forces the monolithic path without a rebuild.
-/// Wired BEFORE the sep-isolation prologue (mutually-exclusive by input shape).
+/// Emit the string-entry prologue that calls the projection-isolation helper with
+/// the RAW input string (before `lex_dag`). On `None`/failure the helper declines
+/// and the facade falls through to the UNMODIFIED monolithic body (byte-identical;
+/// monolithic authoritative). Wired BEFORE the sep-isolation prologue
+/// (mutually-exclusive by input shape).
 pub(crate) fn emit_projection_isolation_prologue(
     helper_name: &proc_macro2::Ident,
     seam: SepSeam,
@@ -1242,25 +1553,21 @@ pub(crate) fn emit_projection_isolation_prologue(
             // P1 `@`-PROJECTION ISOLATION prologue (Plan a8b32275) — single winner.
             // `true` ⇒ compose per-operand SINGLE-winners (== monolithic single
             // result; see the helper's scalar-operand note, bug 2318).
-            if std::env::var_os("PRATTAIL_NO_PROJ_ISOLATION").is_none() {
-                if let Some((__piso_terms, __piso_weights)) = #helper_name(input, true) {
-                    if let Some((__t, _)) = __piso_terms
-                        .into_iter()
-                        .zip(__piso_weights.into_iter())
-                        .min_by(|(_, __a), (_, __b)| __a.cmp(__b))
-                    {
-                        return Ok(__t);
-                    }
+            if let Some((__piso_terms, __piso_weights)) = #helper_name(input, true) {
+                if let Some((__t, _)) = __piso_terms
+                    .into_iter()
+                    .zip(__piso_weights.into_iter())
+                    .min_by(|(_, __a), (_, __b)| __a.cmp(__b))
+                {
+                    return Ok(__t);
                 }
             }
         },
         SepSeam::All => quote! {
             // P1 `@`-PROJECTION ISOLATION prologue (Plan a8b32275) — full alt set.
             // `false` ⇒ ambiguity-preserving all-path per operand (cartesian).
-            if std::env::var_os("PRATTAIL_NO_PROJ_ISOLATION").is_none() {
-                if let Some(__piso) = #helper_name(input, false) {
-                    return Ok(__piso);
-                }
+            if let Some(__piso) = #helper_name(input, false) {
+                return Ok(__piso);
             }
         },
     }
@@ -1312,7 +1619,21 @@ fn emit_proj_variant_arm(
         .collect();
     let n_ops = op_slots.len();
 
-    let label_str = variant.label.clone();
+    // ROOT-1 (design a9fbeefe): the authoritative-reject machinery. The
+    // materialization caps also set `__cap_hit` (so an INCOMPLETE enumeration never
+    // triggers a reject) and a matched `sigil_led` variant sets `__sigil_frame_matched`.
+    let set_cap_hit: TokenStream = quote! { __cap_hit = true; };
+    // Emitted only for `sigil_led` variants: mark that a σ-led send skeleton matched
+    // the WHOLE input (≥1 tiling). The decline site turns this into a reject.
+    let set_sigil_matched: TokenStream = if variant.sigil_led {
+        quote! {
+            if !__assignments.is_empty() {
+                __sigil_frame_matched = true;
+            }
+        }
+    } else {
+        quote! {}
+    };
 
     // ROOT-D method-frame gate pieces (empty for sigil-led / framed-list variants).
     let gated = variant.leading_receiver_gated;
@@ -1354,7 +1675,6 @@ fn emit_proj_variant_arm(
         match slot {
             OpKind::Scalar(cat) => {
                 let ocat = format_ident!("{}", cat);
-                let ocat_str = cat.to_string();
                 // ROOT-D receiver STRING pre-filter: decline (cheaply, before the
                 // sub-parse) when the receiver span has depth-0 whitespace — a
                 // space-surrounded infix/prefix operator at the top (`a % b`,
@@ -1378,6 +1698,14 @@ fn emit_proj_variant_arm(
                                 }
                             }
                             if __has_ws {
+                                // ROOT-1 (a9fbeefe): this is a STRUCTURAL receiver
+                                // gate (a depth-0 whitespace ⇒ the method `.` is not
+                                // the whole receiver), NOT a genuine operand parse-Err.
+                                // Mark enumeration incomplete (`__cap_hit`) so the
+                                // authoritative-reject never escalates this decline to
+                                // `Err` — it must fall to the walker. Empty when the
+                                // reject const is OFF ⇒ byte-identical.
+                                #set_cap_hit
                                 break '__variant;
                             }
                         }
@@ -1396,6 +1724,11 @@ fn emit_proj_variant_arm(
                             .filter(|(__r, _)| !matches!(__r, #pat))
                             .collect();
                         if __pairs.is_empty() {
+                            // ROOT-1 (a9fbeefe): STRUCTURAL AST gate (every receiver
+                            // reading top-ctor'd to a binary-infix/prefix ⇒ not the
+                            // whole receiver), NOT a genuine parse-Err. Mark incomplete
+                            // so the authoritative-reject falls to the walker.
+                            #set_cap_hit
                             break '__variant;
                         }
                         __pairs
@@ -1406,7 +1739,10 @@ fn emit_proj_variant_arm(
                     let #pairs_id: Vec<(#ocat, __W)> = {
                         let (__s, __e) = __ops[#oi];
                         let __seg = input[__s..__e].trim();
-                        if __seg.is_empty() { break '__variant; }
+                        // ROOT-1 (a9fbeefe): empty operand segment is a STRUCTURAL
+                        // decline (a degenerate/empty tiling boundary), NOT a genuine
+                        // parse-Err ⇒ mark incomplete so the reject falls to the walker.
+                        if __seg.is_empty() { #set_cap_hit break '__variant; }
                         #recv_ws_gate
                         // SINGLE-RESULT seam (bug 2318): compose the operand's OWN
                         // single-winner (`parse_via_wpda` → the same M6 min-weight
@@ -1437,20 +1773,25 @@ fn emit_proj_variant_arm(
                                 }
                             }
                         };
-                        if __t.is_empty() { break '__variant; }
+                        // ROOT-1 (a9fbeefe): a successful sub-parse that yielded ZERO
+                        // readings is STRUCTURAL (post-`Ok` empty; dead in the single-
+                        // winner seam where `__t = vec![__one]`), NOT a parse-Err ⇒
+                        // mark incomplete (fail-safe).
+                        if __t.is_empty() { #set_cap_hit break '__variant; }
                         #recv_ast_filter
                     };
                 });
             }
             OpKind::Sep { element, sep_byte } => {
                 let ecat = format_ident!("{}", element);
-                let ecat_str = element.to_string();
                 let sb = *sep_byte;
                 parse_binds.push(quote! {
                     let #pairs_id: Vec<(Vec<#ecat>, __W)> = {
                         let (__s, __e) = __ops[#oi];
                         let __region = input[__s..__e].trim();
-                        if __region.is_empty() { break '__variant; }
+                        // ROOT-1 (a9fbeefe): empty SepList region is STRUCTURAL, NOT a
+                        // parse-Err ⇒ mark incomplete so the reject falls to the walker.
+                        if __region.is_empty() { #set_cap_hit break '__variant; }
                         let __rb = __region.as_bytes();
                         let __rn = __rb.len();
                         // Split the region at depth-0 `sep_byte` (bracket-aware).
@@ -1478,7 +1819,14 @@ fn emit_proj_variant_arm(
                             Vec::with_capacity(__seg_ranges.len());
                         for &(__rs, __re) in &__seg_ranges {
                             let __eseg = __region[__rs..__re].trim();
-                            if __eseg.is_empty() { break '__variant; }
+                            // ROOT-1 (a9fbeefe): an empty ELEMENT segment is STRUCTURAL
+                            // (a trailing/consecutive separator — `@Nil!(0,)` splits
+                            // `"0,"` into `["0",""]`; the grammar's `args.*sep(",")`
+                            // ACCEPTS a trailing separator and the walker parses it),
+                            // NOT a genuine operand parse-Err. Mark incomplete so the
+                            // authoritative-reject never escalates it to `Err` and it
+                            // falls to the walker (the authoritative/complete parser).
+                            if __eseg.is_empty() { #set_cap_hit break '__variant; }
                             // SINGLE-RESULT seam (bug 2318): per-element single-winner
                             // (see the scalar-operand note above). Keeps the framed-
                             // list single result == monolithic; ALL seam stays all-path.
@@ -1497,7 +1845,10 @@ fn emit_proj_variant_arm(
                                     }
                                 }
                             };
-                            if __et.is_empty() { break '__variant; }
+                            // ROOT-1 (a9fbeefe): post-`Ok` empty element readings is
+                            // STRUCTURAL (dead in the single-winner seam), NOT a parse-
+                            // Err ⇒ mark incomplete (fail-safe).
+                            if __et.is_empty() { #set_cap_hit break '__variant; }
                             __per_seg.push((__et, __ew));
                         }
                         // Cartesian combine element readings into `Vec<Element>`.
@@ -1511,6 +1862,11 @@ fn emit_proj_variant_arm(
                                     if __next.len() >= __REALIZE_CAP {
                                         // Too many genuine combos to materialize
                                         // here ⇒ decline (monolithic authoritative).
+                                        // ROOT-1: the enumeration was cut short ⇒ mark
+                                        // `__cap_hit` so the decline stays `None` (never
+                                        // an authoritative reject — a valid parse may
+                                        // be hidden past the cap).
+                                        #set_cap_hit
                                         break '__variant;
                                     }
                                     let mut __v = __pre.clone();
@@ -1527,6 +1883,10 @@ fn emit_proj_variant_arm(
         }
         parse_binds.push(quote! {
             if #pairs_id.is_empty() {
+                // ROOT-1 (a9fbeefe): no combos survived for this operand slot —
+                // STRUCTURAL (defensive; the per-operand binds already `break` on a
+                // genuine Err), NOT a parse-Err ⇒ mark incomplete (fail-safe).
+                #set_cap_hit
                 break '__variant;
             }
         });
@@ -1590,6 +1950,10 @@ fn emit_proj_variant_arm(
     let hole_cost: f64 = n_ops as f64 * PROJ_HOLE_EPSILON;
     let mut body = quote! {
         if __candidates.len() >= __REALIZE_CAP {
+            // ROOT-1: cap reached with ≥ CAP genuine candidates — the span is
+            // parseable (many ways); decline to the walker (which re-derives them).
+            // Mark `__cap_hit` so this is never mistaken for an authoritative reject.
+            #set_cap_hit
             return None;
         }
         let __framing = if __single_winner {
@@ -1615,38 +1979,41 @@ fn emit_proj_variant_arm(
         };
     }
 
-    // ROOT-D: the leading receiver of a method frame matches GREEDY-LAST; and the
-    // whole method-frame arm is skippable at runtime (causal A/B) via
-    // `PRATTAIL_NO_METHOD_ISOLATION`. The matcher's greedy-last param exists ONLY
-    // when this category has method frames (`has_method`) — otherwise the call is
-    // byte-identical to the pre-ROOT-D `__proj_skeleton_match(bytes, n, skel)`.
-    let skel_match_call: TokenStream = if has_method {
+    // ROOT-P (Fix A / P1): emit the ENUMERATING arm — the matcher returns ALL
+    // whole-input operand tilings (branching at ambiguous-δ slots), and the arm runs
+    // the SAME per-operand binds + combine for EACH tiling, reusing `'__variant` as
+    // the PER-ASSIGNMENT label (a `break '__variant` skips THIS tiling and the `for`
+    // moves to the next; `#body` pushes into the SHARED `__candidates`, so tilings
+    // UNION for the ALL seam and the SINGLE seam min-weights over them). The `__AMB`
+    // slice (parallel to `__SKEL`) is the grammar-derived per-slot ambiguous-boundary
+    // flags.
+    let amb_exprs: Vec<TokenStream> = variant
+        .ambiguous_by_slot
+        .iter()
+        .map(|b| quote! { #b })
+        .collect();
+    let match_all_call: TokenStream = if has_method {
         let greedy_last_lit = gated;
-        quote! { __proj_skeleton_match(__bytes, __n, __SKEL, #greedy_last_lit) }
+        quote! { __proj_skeleton_match_all(__bytes, __n, __SKEL, __AMB, #greedy_last_lit) }
     } else {
-        quote! { __proj_skeleton_match(__bytes, __n, __SKEL) }
+        quote! { __proj_skeleton_match_all(__bytes, __n, __SKEL, __AMB) }
     };
-    let method_ab_gate: TokenStream = if gated {
-        quote! {
-            if __no_method_iso {
-                break '__variant;
-            }
-        }
-    } else {
-        quote! {}
-    };
-
     quote! {
         {
-            // Match this variant's skeleton; extract operand ranges.
+            // Match this variant's skeleton; enumerate ALL operand tilings.
             const __SKEL: &[__Slot] = &[ #(#slot_exprs),* ];
-            '__variant: {
-                #method_ab_gate
-                let Some(__ops) = #skel_match_call else {
-                    break '__variant;
-                };
-                #(#parse_binds)*
-                #body
+            const __AMB: &[bool] = &[ #(#amb_exprs),* ];
+            let __assignments: Vec<Vec<(usize, usize)>> = #match_all_call;
+            // ROOT-1: a σ-led send skeleton matched the whole input ⇒ record it,
+            // so an all-tilings-fail decline becomes an authoritative reject
+            // (empty when non-sigil ⇒ byte-identical).
+            #set_sigil_matched
+            for __ops_vec in __assignments.iter() {
+                let __ops: &[(usize, usize)] = &__ops_vec[..];
+                '__variant: {
+                    #(#parse_binds)*
+                    #body
+                }
             }
         }
     }
@@ -1667,10 +2034,9 @@ fn emit_projection_isolation(cat_ident: &proc_macro2::Ident, shape: &ProjIsoShap
     let helper_name = proj_isolation_helper_ident(&cat_ident.to_string());
     let result_src_idx = shape.result_src_idx;
     // ROOT-D: this category carries method frames iff ANY variant is a gated
-    // receiver-led frame. When it does NOT (every non-`Proc` rhocalc category, and
-    // EVERY calculator category, and EVERY category when `METHOD_FRAME_ISOLATION`
-    // is OFF), the matcher/`__no_method_iso` additions are elided ⇒ the emitted
-    // helper is BYTE-IDENTICAL to the pre-ROOT-D baseline.
+    // receiver-led frame. When it does NOT (every non-`Proc` rhocalc category and
+    // EVERY calculator category), the matcher's greedy-last additions are elided ⇒
+    // the emitted helper is BYTE-IDENTICAL to the pre-ROOT-D baseline.
     let has_method = shape.variants.iter().any(|v| v.leading_receiver_gated);
     let variant_arms: Vec<TokenStream> = shape
         .variants
@@ -1679,72 +2045,12 @@ fn emit_projection_isolation(cat_ident: &proc_macro2::Ident, shape: &ProjIsoShap
         .map(|(vi, v)| emit_proj_variant_arm(cat_ident, v, vi, has_method))
         .collect();
 
-    // The greedy-last matcher param + the `__no_method_iso` A/B read exist ONLY
-    // when the category has method frames (byte-identical otherwise).
-    let no_method_binding: TokenStream = if has_method {
-        quote! {
-            // ROOT-D causal A/B — read ONCE per helper call (NOT per method arm; a
-            // per-arm `env::var_os` would be a hot-path regression). When set, every
-            // method-frame variant arm short-circuits, reproducing the pre-ROOT-D
-            // (monolithic) path without a rebuild.
-            let __no_method_iso =
-                std::env::var_os("PRATTAIL_NO_METHOD_ISOLATION").is_some();
-        }
-    } else {
-        quote! {}
-    };
-    // Matcher signature + the greedy-last fragments, elided when !has_method.
-    let recv_param: TokenStream =
-        if has_method { quote! { leading_greedy_last: bool, } } else { quote! {} };
-    let greedy_last_decl: TokenStream = if has_method {
-        quote! { let greedy_last = k == 0 && leading_greedy_last; }
-    } else {
-        quote! {}
-    };
-    // In the "delimiter found" block: greedy-first always breaks; greedy-last keeps
-    // scanning for a LATER depth-0 delimiter.
-    let found_break: TokenStream = if has_method {
-        quote! { if !greedy_last { break; } }
-    } else {
-        quote! { break; }
-    };
-    // On a depth-0 (unbalanced) close: greedy-first ⇒ no match; greedy-last ⇒ stop
-    // and use the last delimiter found so far.
-    let unbalanced_close: TokenStream = if has_method {
-        quote! {
-            if greedy_last {
-                break;
-            }
-            return None;
-        }
-    } else {
-        quote! { return None; }
-    };
-    // The matcher's greedy-last doc paragraph — emitted ONLY with method frames so
-    // the OFF / non-method matcher doc is byte-identical to the pre-ROOT-D baseline.
-    let matcher_rootd_doc: TokenStream = if has_method {
-        quote! {
-            ///
-            /// ROOT-D: when `leading_greedy_last` is set, the FIRST slot (`k == 0`,
-            /// a method-frame RECEIVER operand) is delimited by the RIGHTMOST
-            /// depth-0 occurrence of its delimiter (the method `.` — which is the
-            /// unique rightmost depth-0 `.` since the args are bracketed), so a
-            /// left-assoc method CHAIN (`a.b().c()`) binds the WHOLE prefix
-            /// `a.b()` as the receiver. All other operands stay greedy-first.
-        }
-    } else {
-        quote! {}
-    };
-
     // PROJ_ISO_LITERAL_RUN_ANCHOR (2026-07-06): the InputBind query-frame
-    // `@@`-CHANNEL fix. When ON, emit the `__match_lit_run` helper + a per-call A/B
-    // env read + anchor each operand's right boundary on the FULL consecutive
-    // literal run (not just the single next literal). When OFF, all three pieces
-    // fold away ⇒ the emitted matcher is BYTE-IDENTICAL to the pre-fix single-
-    // literal boundary. See `super::forks::PROJ_ISO_LITERAL_RUN_ANCHOR`.
-    let run_anchor_on = super::forks::PROJ_ISO_LITERAL_RUN_ANCHOR;
-    let run_anchor_helper: TokenStream = if run_anchor_on {
-        quote! {
+    // `@@`-CHANNEL fix. Emit the `__match_lit_run` helper and anchor each operand's
+    // right boundary on the FULL consecutive literal run (not just the single next
+    // literal), so a channel whose own send `!` sits at depth 0 (`@@Nil!()`) is not
+    // split at that `!`.
+    let run_anchor_helper: TokenStream = quote! {
             /// Match the MAXIMAL run of consecutive `Lit` slots of `skel` starting
             /// at slot `ks`, from byte `p0` (whitespace-flexible, with the SAME
             /// word-boundary rule as the main `Lit` arm), returning the byte
@@ -1789,41 +2095,209 @@ fn emit_projection_isolation(cat_ident: &proc_macro2::Ident, shape: &ProjIsoShap
                 }
                 Some(p)
             }
-        }
+        };
+
+    // ROOT-P (Fix A / P1): the ENUMERATING matcher `__proj_skeleton_match_all`
+    // returns ALL whole-input operand tilings, branching at ambiguous-δ operand
+    // slots (`amb[k]`) over run-anchor-passing depth-0 boundaries (the operand can
+    // itself contain δ — a nested send `@Nil!(…)`).
+    let (matchall_recv_param, matchall_lgl_arg): (TokenStream, TokenStream) = if has_method {
+        (quote! { leading_greedy_last: bool, }, quote! { leading_greedy_last })
     } else {
-        quote! {}
+        (quote! {}, quote! { false })
     };
-    let run_anchor_env: TokenStream = if run_anchor_on {
-        quote! {
-            // Per-call A/B (`PRATTAIL_NO_PROJ_RUN_ANCHOR`): when set, reproduce the
-            // pre-fix single-literal boundary. The matcher runs O(variants)/parse
-            // (the non-hot isolation prologue), so a per-call read is negligible.
-            let __no_run_anchor =
-                std::env::var_os("PRATTAIL_NO_PROJ_RUN_ANCHOR").is_some();
+    let matcher_on: TokenStream = quote! {
+        /// ROOT-P (Fix A / P1): ENUMERATE ALL whole-input operand tilings of `skel`
+        /// against `bytes[0..n]`. Each returned `Vec<(usize,usize)>` is one tiling
+        /// (a byte-range per `Op` slot, in order). At an AMBIGUOUS-δ operand slot
+        /// (`amb[k]`) it BRANCHES over every run-anchor-passing depth-0 δ boundary
+        /// (the operand can itself contain δ — a nested send `@Nil!(…)`); at a
+        /// non-ambiguous slot it commits the single greedy-first boundary (`k == 0`
+        /// method receiver keeps greedy-last), so a grammar with no ambiguous δ
+        /// tiles exactly as the pre-P1 matcher. Whole-input consumption + the
+        /// caller's per-operand sub-parse are the soundness filter (invalid tilings
+        /// yield no candidate).
+        fn __proj_skeleton_match_all(
+            bytes: &[u8],
+            n: usize,
+            skel: &[__Slot],
+            amb: &[bool],
+            #matchall_recv_param
+        ) -> Vec<Vec<(usize, usize)>> {
+            fn go(
+                bytes: &[u8],
+                n: usize,
+                skel: &[__Slot],
+                amb: &[bool],
+                k: usize,
+                i0: usize,
+                leading_greedy_last: bool,
+            ) -> Vec<Vec<(usize, usize)>> {
+                let mut i = i0;
+                while i < n && bytes[i].is_ascii_whitespace() {
+                    i += 1;
+                }
+                if k == skel.len() {
+                    let mut j = i;
+                    while j < n && bytes[j].is_ascii_whitespace() {
+                        j += 1;
+                    }
+                    return if j == n { vec![vec![]] } else { vec![] };
+                }
+                match &skel[k] {
+                    __Slot::Lit(l) => {
+                        let lb = l.as_bytes();
+                        if i + lb.len() > n || &bytes[i..i + lb.len()] != lb {
+                            return vec![];
+                        }
+                        if lb.iter().all(|&c| __is_word(c)) {
+                            let before_ok = i == 0 || !__is_word(bytes[i - 1]);
+                            let after_ok =
+                                i + lb.len() == n || !__is_word(bytes[i + lb.len()]);
+                            if !(before_ok && after_ok) {
+                                return vec![];
+                            }
+                        }
+                        go(
+                            bytes, n, skel, amb, k + 1, i + lb.len(),
+                            leading_greedy_last,
+                        )
+                    }
+                    __Slot::Op => {
+                        let next_lit: Option<&'static str> =
+                            skel[k + 1..].iter().find_map(|s| match s {
+                                __Slot::Lit(l) => Some(*l),
+                                __Slot::Op => None,
+                            });
+                        let start = i;
+                        match next_lit {
+                            None => {
+                                let mut subs = go(
+                                    bytes, n, skel, amb, k + 1, n,
+                                    leading_greedy_last,
+                                );
+                                for a in subs.iter_mut() {
+                                    a.insert(0, (start, n));
+                                }
+                                subs
+                            }
+                            Some(l) => {
+                                let lb = l.as_bytes();
+                                let identish = lb.iter().all(|&c| __is_word(c));
+                                let greedy_last = k == 0 && leading_greedy_last;
+                                let enumerate = amb[k] && !greedy_last;
+                                let mut cands: Vec<usize> = Vec::new();
+                                let mut depth: i32 = 0;
+                                let mut j = start;
+                                while j < n {
+                                    let c = bytes[j];
+                                    if depth == 0
+                                        && j + lb.len() <= n
+                                        && &bytes[j..j + lb.len()] == lb
+                                    {
+                                        let wb = !identish
+                                            || ((j == 0 || !__is_word(bytes[j - 1]))
+                                                && (j + lb.len() == n
+                                                    || !__is_word(bytes[j + lb.len()])));
+                                        let __run_ok =
+                                            __match_lit_run(bytes, n, skel, k + 1, j).is_some();
+                                        if wb && __run_ok {
+                                            cands.push(j);
+                                            if !enumerate && !greedy_last {
+                                                break;
+                                            }
+                                        }
+                                    }
+                                    match c {
+                                        b'(' | b'[' | b'{' => depth += 1,
+                                        b')' | b']' | b'}' => {
+                                            if depth == 0 {
+                                                break;
+                                            }
+                                            depth -= 1;
+                                        }
+                                        _ => {}
+                                    }
+                                    j += 1;
+                                }
+                                if greedy_last {
+                                    match cands.last() {
+                                        Some(&last) => cands = vec![last],
+                                        None => cands.clear(),
+                                    }
+                                }
+                                let mut out: Vec<Vec<(usize, usize)>> = Vec::new();
+                                for &end in cands.iter() {
+                                    let mut subs = go(
+                                        bytes, n, skel, amb, k + 1, end,
+                                        leading_greedy_last,
+                                    );
+                                    for a in subs.iter_mut() {
+                                        a.insert(0, (start, end));
+                                    }
+                                    out.append(&mut subs);
+                                }
+                                out
+                            }
+                        }
+                    }
+                }
+            }
+            go(
+                bytes, n, skel, amb, 0, 0,
+                #matchall_lgl_arg,
+            )
         }
-    } else {
-        quote! {}
     };
-    // The `if wb { … }` boundary-accept block: ON anchors on the full literal run;
-    // OFF is the verbatim pre-fix single-literal accept (byte-identical).
-    let run_anchor_wb_guard: TokenStream = if run_anchor_on {
+    let matcher_def: TokenStream = matcher_on;
+
+    // ── ROOT-1 AUTHORITATIVE-REJECT (design a9fbeefe) ──
+    // The two runtime bookkeeping locals + the reject-aware decline.
+    // Grammar-derived DISTINCT first-bytes of the σ-led variants' leading literal
+    // (`@`/`*`/`-`/`(` …) — the projection sigils this category admits. No hardcode.
+    let sigil_lead_bytes: Vec<u8> = proj_sigil_lead_bytes(shape);
+    // The cap sites reference `__cap_hit` regardless of shape; `__sigil_frame_matched`
+    // stays false for a category with no σ-led variant ⇒ that category never rejects.
+    // `#[allow(unused_assignments)]` on the helper covers the never-read case.
+    let reject_locals: TokenStream = quote! {
+        // ROOT-1 authoritative-reject bookkeeping.
+        let mut __sigil_frame_matched = false;
+        let mut __cap_hit = false;
+    };
+    // The reject-aware decline is emitted ONLY for a category that actually has σ-led
+    // variants (`!sigil_lead_bytes.is_empty()`); a proj category with only framed-list
+    // / method-frame variants keeps the plain `return None` decline (it can never
+    // authoritatively reject). `reject_locals` still declares both locals whenever ON
+    // (the cap sites reference `__cap_hit`); an unread local is covered by the helper's
+    // `#[allow(unused_variables, unused_assignments)]`.
+    let decline: TokenStream = if !sigil_lead_bytes.is_empty() {
+        let byte_lits = sigil_lead_bytes.iter().map(|b| quote! { #b });
+        let starts_with_sigil: TokenStream =
+            quote! { matches!(__bytes.first(), Some(#(#byte_lits)|*)) };
         quote! {
-            // Accept this depth-0 delimiter position ONLY when the FULL literal run
-            // (all `Lit` slots after this `Op`) also matches here — so a channel
-            // whose own send `!` sits at depth 0 (`@@Nil!()`) is not split at that
-            // `!` (which is followed by `(`, not the query run `! ? (`).
-            let __run_ok = __no_run_anchor
-                || __match_lit_run(bytes, n, skel, k + 1, j).is_some();
-            if wb && __run_ok {
-                found = Some(j);
-                #found_break
+            if __candidates.is_empty() {
+                // ROOT-1 AUTHORITATIVE-REJECT: a σ-led send skeleton matched the whole
+                // input (`__sigil_frame_matched`), enumeration was COMPLETE (`!__cap_hit`),
+                // the trimmed input starts with a projection sigil, and NO tiling parsed
+                // ⇒ the span is provably not a send. Signal a definitive reject (the
+                // prologue turns it into `Err` — but only AFTER the infix prologue also
+                // declines, so an infix-of-sends like `@Nil!(0) or @Nil!(0)` is still
+                // recovered) instead of falling to the fork-exploding walker. SINGLE
+                // seam only.
+                if __single_winner
+                    && __sigil_frame_matched
+                    && !__cap_hit
+                    && #starts_with_sigil
+                {
+                    __proj_sigil_reject_set();
+                }
+                return None;
             }
         }
     } else {
         quote! {
-            if wb {
-                found = Some(j);
-                #found_break
+            if __candidates.is_empty() {
+                return None;
             }
         }
     };
@@ -1851,7 +2325,6 @@ fn emit_projection_isolation(cat_ident: &proc_macro2::Ident, shape: &ProjIsoShap
             type __W = mettail_prattail::automata::lex_weight::LexicographicWeight;
             const __REALIZE_CAP: usize = 64;
             const __RESULT_SRC_IDX: u16 = #result_src_idx;
-            #no_method_binding
 
             // One skeleton slot: a fixed literal token or a cross-cat operand hole.
             enum __Slot {
@@ -1862,135 +2335,7 @@ fn emit_projection_isolation(cat_ident: &proc_macro2::Ident, shape: &ProjIsoShap
                 c.is_ascii_alphanumeric() || c == b'_'
             }
             #run_anchor_helper
-            /// Match `skel` against `bytes[0..n]`, returning the byte-range of each
-            /// `Op` slot, or `None` if the skeleton does not match. Operands are
-            /// delimited by the NEXT literal at bracket-depth 0 (standard ASCII
-            /// brackets `([{`/`)]}`; multi-char collection delimiters balance via
-            /// their `{`/`}` component). A depth-0 close that is NOT the delimiter
-            /// ⇒ unbalanced ⇒ `None` (this variant does not match).
-            #matcher_rootd_doc
-            fn __proj_skeleton_match(
-                bytes: &[u8],
-                n: usize,
-                skel: &[__Slot],
-                #recv_param
-            ) -> Option<Vec<(usize, usize)>> {
-                #run_anchor_env
-                let mut i = 0usize;
-                let mut ops: Vec<(usize, usize)> = Vec::new();
-                let mut k = 0usize;
-                while k < skel.len() {
-                    while i < n && bytes[i].is_ascii_whitespace() {
-                        i += 1;
-                    }
-                    match &skel[k] {
-                        __Slot::Lit(l) => {
-                            let lb = l.as_bytes();
-                            if i + lb.len() > n || &bytes[i..i + lb.len()] != lb {
-                                return None;
-                            }
-                            if lb.iter().all(|&c| __is_word(c)) {
-                                let before_ok = i == 0 || !__is_word(bytes[i - 1]);
-                                let after_ok =
-                                    i + lb.len() == n || !__is_word(bytes[i + lb.len()]);
-                                if !(before_ok && after_ok) {
-                                    return None;
-                                }
-                            }
-                            i += lb.len();
-                            k += 1;
-                        }
-                        __Slot::Op => {
-                            // The delimiter = the next literal slot's text (if any).
-                            let next_lit: Option<&'static str> =
-                                skel[k + 1..].iter().find_map(|s| match s {
-                                    __Slot::Lit(l) => Some(*l),
-                                    __Slot::Op => None,
-                                });
-                            let start = i;
-                            match next_lit {
-                                None => {
-                                    // Last slot: operand runs to end of input.
-                                    ops.push((start, n));
-                                    i = n;
-                                    k += 1;
-                                }
-                                Some(l) => {
-                                    let lb = l.as_bytes();
-                                    let identish = lb.iter().all(|&c| __is_word(c));
-                                    // ROOT-D: the leading receiver of a method frame
-                                    // (`k == 0`) takes the RIGHTMOST depth-0
-                                    // delimiter; every other operand the first.
-                                    #greedy_last_decl
-                                    let mut depth: i32 = 0;
-                                    let mut j = start;
-                                    let mut found: Option<usize> = None;
-                                    while j < n {
-                                        let c = bytes[j];
-                                        // Depth-0 delimiter match (checked BEFORE
-                                        // adjusting depth for this char, so a close
-                                        // bracket delimiter matches at its own pos).
-                                        if depth == 0
-                                            && j + lb.len() <= n
-                                            && &bytes[j..j + lb.len()] == lb
-                                        {
-                                            let wb = !identish
-                                                || ((j == 0 || !__is_word(bytes[j - 1]))
-                                                    && (j + lb.len() == n
-                                                        || !__is_word(bytes[j + lb.len()])));
-                                            // greedy-first breaks here; greedy-last keeps
-                                            // scanning for a LATER depth-0 delimiter (the
-                                            // delimiter char is not a bracket ⇒ depth
-                                            // unaffected below). PROJ_ISO_LITERAL_RUN_ANCHOR
-                                            // gates whether the boundary anchors on the full
-                                            // literal run.
-                                            #run_anchor_wb_guard
-                                        }
-                                        match c {
-                                            b'(' | b'[' | b'{' => depth += 1,
-                                            b')' | b']' | b'}' => {
-                                                if depth == 0 {
-                                                    // Unbalanced depth-0 close: for
-                                                    // greedy-first no valid delimiter
-                                                    // precedes it (`None`); for
-                                                    // greedy-last the operand cannot
-                                                    // extend past it ⇒ stop and use
-                                                    // the last delimiter found so far.
-                                                    #unbalanced_close
-                                                }
-                                                depth -= 1;
-                                            }
-                                            _ => {}
-                                        }
-                                        j += 1;
-                                    }
-                                    let end = found?;
-                                    ops.push((start, end));
-                                    i = end;
-                                    // Advance PAST this `Op` slot so the next
-                                    // iteration matches the delimiter `Lit` slot
-                                    // (which sits at `bytes[end..]`). Without this
-                                    // increment, `k` would stay on the `Op` slot,
-                                    // re-scan from `i = end`, immediately re-find the
-                                    // delimiter at position `end` (a zero-width
-                                    // operand), and loop forever — the hang that
-                                    // afflicts every non-trailing operand (`Op`
-                                    // followed by more `Lit`/`Op` slots).
-                                    k += 1;
-                                }
-                            }
-                        }
-                    }
-                }
-                // The whole input must be consumed (a `_all` entry is total).
-                while i < n && bytes[i].is_ascii_whitespace() {
-                    i += 1;
-                }
-                if i != n {
-                    return None;
-                }
-                Some(ops)
-            }
+            #matcher_def
 
             let input = input.trim();
             let __bytes = input.as_bytes();
@@ -2000,11 +2345,10 @@ fn emit_projection_isolation(cat_ident: &proc_macro2::Ident, shape: &ProjIsoShap
             }
 
             let mut __candidates: Vec<(#cat_ident, __W)> = Vec::new();
+            #reject_locals
             #(#variant_arms)*
 
-            if __candidates.is_empty() {
-                return None;
-            }
+            #decline
 
             // FINALIZE like the monolithic `_all`: dedup by semantic key,
             // ⊕-min representative, weight-sort.
@@ -2043,8 +2387,8 @@ fn emit_projection_isolation(cat_ident: &proc_macro2::Ident, shape: &ProjIsoShap
 // (ROOT-2 `or`/PParInfix locus, 2026-07-06) — the THIRD sibling of the P2
 // `.*sep` (list) and P1 `@`-projection (frame) isolators. Where those linearize
 // LIST / FRAME operands, this linearizes the two operands of a TOP-LEVEL BINARY
-// INFIX operator. Gate: `super::forks::INFIX_ISOLATION_COMBINE` +
-// `INFIX_ISOLATION_CATEGORIES`.
+// INFIX operator. Gate: the grammar-derived `eligible_family(IsoFamily::Infix, …)`
+// predicate.
 //
 // The root defect: `@Nil!!(true, @Nil!() / @Nil!()) or X` (a polyadic persistent
 // send with a division-arg as the LEFT operand of `or`) dies monolithically ("no
@@ -2143,21 +2487,20 @@ pub(crate) fn infix_iso_shape(
     cat_name: &str,
     categories: &[String],
 ) -> Option<InfixIsoShape> {
-    if super::forks::INFIX_ISOLATION_COMBINE
-        && super::forks::INFIX_ISOLATION_CATEGORIES.contains(&cat_name)
-    {
+    if eligible_family(language, IsoFamily::Infix, cat_name, categories) {
         derive_infix_iso_shape(language, cat_name, categories)
     } else {
         None
     }
 }
 
-/// Emit the guarded string-entry prologue that calls the binary-infix isolation
-/// helper with the RAW input string (before `lex_dag`). Runtime A/B:
-/// `PRATTAIL_NO_INFIX_ISOLATION` forces the monolithic path without a rebuild.
-/// Wired AFTER the proj + sep prologues (mutually-exclusive by input shape: proj /
-/// sep consume a WHOLE frame / list; infix needs a depth-0 operator with BOTH
-/// operands present — a pure frame/atom finds no depth-0 infix ⇒ declines here).
+/// Emit the string-entry prologue that calls the binary-infix isolation helper
+/// with the RAW input string (before `lex_dag`). On `None`/failure the helper
+/// declines and the facade falls through to the UNMODIFIED monolithic body
+/// (byte-identical). Wired AFTER the proj + sep prologues (mutually-exclusive by
+/// input shape: proj / sep consume a WHOLE frame / list; infix needs a depth-0
+/// operator with BOTH operands present — a pure frame/atom finds no depth-0 infix
+/// ⇒ declines here).
 pub(crate) fn emit_infix_isolation_prologue(
     helper_name: &proc_macro2::Ident,
     seam: SepSeam,
@@ -2168,25 +2511,21 @@ pub(crate) fn emit_infix_isolation_prologue(
             // `true` ⇒ compose per-operand SINGLE-winners (== monolithic single
             // result; operands are precedence-delimited ⇒ LOCAL disambiguation ⇒
             // compositional — Stage-0 sound 11/11).
-            if std::env::var_os("PRATTAIL_NO_INFIX_ISOLATION").is_none() {
-                if let Some((__iiso_terms, __iiso_weights)) = #helper_name(input, true) {
-                    if let Some((__t, _)) = __iiso_terms
-                        .into_iter()
-                        .zip(__iiso_weights.into_iter())
-                        .min_by(|(_, __a), (_, __b)| __a.cmp(__b))
-                    {
-                        return Ok(__t);
-                    }
+            if let Some((__iiso_terms, __iiso_weights)) = #helper_name(input, true) {
+                if let Some((__t, _)) = __iiso_terms
+                    .into_iter()
+                    .zip(__iiso_weights.into_iter())
+                    .min_by(|(_, __a), (_, __b)| __a.cmp(__b))
+                {
+                    return Ok(__t);
                 }
             }
         },
         SepSeam::All => quote! {
             // P3 INFIX ISOLATION prologue (ROOT-2 `or`) — full alt set.
             // `false` ⇒ ambiguity-preserving all-path per operand (cartesian).
-            if std::env::var_os("PRATTAIL_NO_INFIX_ISOLATION").is_none() {
-                if let Some(__iiso) = #helper_name(input, false) {
-                    return Ok(__iiso);
-                }
+            if let Some(__iiso) = #helper_name(input, false) {
+                return Ok(__iiso);
             }
         },
     }
@@ -2474,6 +2813,134 @@ fn emit_infix_isolation(cat_ident: &proc_macro2::Ident, shape: &InfixIsoShape) -
     }
 }
 
+/// ROOT-P MEMOIZED BEST-PARSE (design af7680e2, "3A LIGHT") — the SHARED
+/// module-scope preamble: epoch/depth thread-locals + the RAII `__ProjMemoGuard`.
+/// Emitted ONCE per language module (in [`emit_parse_fns`]), gated by the presence
+/// of ≥1 isolation-eligible category — no eligible category ⇒ not emitted ⇒
+/// byte-identical.
+///
+/// `__ProjMemoGuard::enter()` bumps `__PROJ_MEMO_EPOCH` ONLY on the OUTERMOST
+/// `parse_via_wpda` entry (depth 0 → 1), distinguishing it from the nested
+/// isolation-recursion
+/// sub-parses (depth ≥ 1). Each per-category memo map lazily clears when it
+/// observes a stale epoch, so a memoized value never leaks across independent
+/// top-level parses while every sub-parse WITHIN one top-level parse shares the
+/// cache — collapsing the enumerating matcher's `O(n^{m·d})` recursion TREE into a
+/// polynomial DAG. Mirrors the `runtime/src/binding.rs` BCG05_EPOCH /
+/// clear_var_cache pattern. Referenced UNQUALIFIED from the `impl Cat` methods
+/// (`gen/mod.rs`), which share this module's flat include scope.
+fn emit_proj_memo_preamble() -> TokenStream {
+    quote! {
+        thread_local! {
+            /// Bumped on the OUTERMOST `parse_via_wpda` entry; every memo map
+            /// keys its validity on this so entries never cross top-level parses.
+            static __PROJ_MEMO_EPOCH: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+            /// Re-entrancy depth of `parse_via_wpda`. 0 → 1 marks the outermost
+            /// call (epoch bump); Drop decrements it.
+            static __PROJ_MEMO_DEPTH: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+        }
+
+        /// RAII epoch/depth guard for the ROOT-P memoized best-parse. Constructed
+        /// at the top of every memoized `parse_via_wpda`; the depth counter (not a
+        /// per-call flag) distinguishes the outermost parse from nested
+        /// isolation-recursion sub-parses so the epoch is bumped exactly once per
+        /// top-level parse.
+        #[allow(dead_code)]
+        struct __ProjMemoGuard;
+
+        #[allow(dead_code)]
+        impl __ProjMemoGuard {
+            #[inline]
+            fn enter() -> Self {
+                __PROJ_MEMO_DEPTH.with(|__d| {
+                    let __cur = __d.get();
+                    if __cur == 0 {
+                        // Outermost parse: start a fresh memo epoch.
+                        __PROJ_MEMO_EPOCH.with(|__e| __e.set(__e.get().wrapping_add(1)));
+                    }
+                    __d.set(__cur + 1);
+                });
+                __ProjMemoGuard
+            }
+            #[inline]
+            fn epoch() -> u64 {
+                __PROJ_MEMO_EPOCH.with(|__e| __e.get())
+            }
+        }
+
+        impl Drop for __ProjMemoGuard {
+            #[inline]
+            fn drop(&mut self) {
+                __PROJ_MEMO_DEPTH.with(|__d| __d.set(__d.get().saturating_sub(1)));
+            }
+        }
+    }
+}
+
+/// ROOT-1 AUTHORITATIVE-REJECT (design a9fbeefe) — the module-scope thread-local
+/// reject flag + its set/take accessors. Emitted ONCE per language module (in
+/// [`emit_parse_fns`]), gated by the presence of ≥1 `@`-projection-eligible
+/// category. No eligible category ⇒ not emitted ⇒ byte-identical.
+///
+/// The isolation helper calls `__proj_sigil_reject_set()` at its decline when it
+/// matched a whole-input σ-led send skeleton, enumeration was complete, and NO
+/// tiling parsed (single-winner seam only). The `parse_via_wpda_uncached` prologue
+/// calls `__proj_sigil_reject_take()` the statement AFTER the proj prologue declines
+/// — it reads AND clears, so a nested operand sub-parse's flag is consumed by its
+/// OWN prologue (never leaking to an enclosing frame). If the take returns `true`
+/// AND the infix prologue then also declines, the prologue returns `Err` instead of
+/// running the fork-exploding walker. Referenced UNQUALIFIED from the `impl Cat`
+/// methods (`gen/mod.rs`) and the helper fns, which share this module's flat include
+/// scope (mirrors `emit_proj_memo_preamble`).
+fn emit_proj_sigil_reject_preamble() -> TokenStream {
+    quote! {
+        thread_local! {
+            /// Set true by an isolation helper that AUTHORITATIVELY rejects a σ-led
+            /// send frame; taken (read + cleared) by the prologue right after the
+            /// proj prologue declines. Consume-once semantics keep nested sub-parse
+            /// signals from leaking across frames.
+            static __PROJ_SIGIL_REJECT: std::cell::Cell<bool> =
+                const { std::cell::Cell::new(false) };
+        }
+        /// Mark that the current isolation-helper call authoritatively rejects.
+        #[inline]
+        #[allow(dead_code)]
+        fn __proj_sigil_reject_set() {
+            __PROJ_SIGIL_REJECT.with(|__c| __c.set(true));
+        }
+        /// Read AND clear the reject flag (consume-once).
+        #[inline]
+        #[allow(dead_code)]
+        fn __proj_sigil_reject_take() -> bool {
+            __PROJ_SIGIL_REJECT.with(|__c| __c.replace(false))
+        }
+    }
+}
+
+/// ROOT-P MEMOIZED BEST-PARSE (design af7680e2) — the PER-CATEGORY thread-local
+/// memo map `__PROJ_MEMO_<Cat>` consulted by the memoized `Cat::parse_via_wpda`
+/// (`gen/mod.rs`). Emitted in [`emit_parse_fns`] ONLY for isolation-eligible
+/// categories when the master const is ON (byte-identical otherwise). The map is
+/// keyed on the TRIMMED input content (`String`) and stores the FULL
+/// `Result<Cat, ParseError>` (Ok AND Err — the latter is required for
+/// polynomiality). The leading `u64` is the epoch the map's entries belong to;
+/// a stale epoch triggers a lazy clear on next consult.
+fn emit_proj_memo_thread_local(cat_ident: &proc_macro2::Ident) -> TokenStream {
+    let memo_ident = format_ident!("__PROJ_MEMO_{}", cat_ident);
+    quote! {
+        thread_local! {
+            #[allow(non_upper_case_globals, clippy::type_complexity)]
+            static #memo_ident: std::cell::RefCell<(
+                u64,
+                std::collections::HashMap<
+                    std::string::String,
+                    Result<#cat_ident, mettail_prattail::runtime_types::ParseError>,
+                >,
+            )> = std::cell::RefCell::new((0, std::collections::HashMap::new()));
+        }
+    }
+}
+
 /// Emit per-category `parse_<Cat>_via_wpda` wrappers plus the shared
 /// `WpdaParseError` type.
 pub(crate) fn emit_parse_fns(
@@ -2482,6 +2949,15 @@ pub(crate) fn emit_parse_fns(
     engine_ident: &proc_macro2::Ident,
 ) -> TokenStream {
     let mut fns = Vec::new();
+    // ── ROOT-P MEMOIZED BEST-PARSE (design af7680e2, "3A LIGHT") ──
+    // The shared epoch/depth thread-local preamble + RAII `__ProjMemoGuard` is
+    // emitted ONCE per language module, and ONLY when ≥1 category is
+    // isolation-eligible (`any_iso_eligible`). No eligible category ⇒ nothing
+    // emitted ⇒ byte-identical.
+    let mut any_iso_eligible = false;
+    // ROOT-1: whether ≥1 category emits an `@`-projection helper (which references
+    // the reject accessors) ⇒ gates the module-scope reject preamble.
+    let mut any_proj_eligible = false;
     for (cat_src_idx, cat_name) in categories.iter().enumerate() {
         let cat_ident = format_ident!("{}", cat_name);
         let fn_name = format_ident!("parse_{}_via_wpda", cat_name);
@@ -2506,6 +2982,23 @@ pub(crate) fn emit_parse_fns(
         let all_fn_name = format_ident!("parse_{}_via_wpda_all", cat_name);
         let cat_src_idx_u16 = cat_src_idx as u16;
 
+        // ── ROOT-P MEMOIZED BEST-PARSE per-category memo map ──
+        // This category is memo-eligible iff it is isolation-eligible (its
+        // `parse_via_wpda` recurses through a divide-and-conquer prologue), i.e.
+        // ANY of the three isolation shapes is derivable — the SAME predicate the
+        // `gen/mod.rs` `parse_via_wpda` split uses (`memo_on = const && (sep ∨
+        // proj ∨ infix)`), so the emitted memo map and its user agree exactly.
+        // OFF / non-eligible ⇒ empty ⇒ byte-identical.
+        let memo_iso_eligible = sep_isolation_shape(language, cat_name, categories).is_some()
+            || projection_iso_shape(language, cat_name, categories).is_some()
+            || infix_iso_shape(language, cat_name, categories).is_some();
+        let proj_memo_thread_local = if memo_iso_eligible {
+            any_iso_eligible = true;
+            emit_proj_memo_thread_local(&cat_ident)
+        } else {
+            quote! {}
+        };
+
         // ── P2 ISOLATION+COMBINE (Plan a7986200, 2026-07-05) ──
         //
         // When this category is an isolation-enabled `.*sep` shape, emit the
@@ -2529,7 +3022,12 @@ pub(crate) fn emit_parse_fns(
         // prologue (mutually-exclusive by input shape). OFF / not-in-set /
         // no-shape ⇒ empty ⇒ BYTE-IDENTICAL.
         let proj_helper_fns = match projection_iso_shape(language, cat_name, categories) {
-            Some(shape) => emit_projection_isolation(&cat_ident, &shape),
+            Some(shape) => {
+                // ROOT-1: this category emits a proj helper that references the reject
+                // accessors ⇒ the module preamble must be emitted.
+                any_proj_eligible = true;
+                emit_projection_isolation(&cat_ident, &shape)
+            },
             None => quote! {},
         };
 
@@ -2546,20 +3044,16 @@ pub(crate) fn emit_parse_fns(
             None => quote! {},
         };
 
-        // ── ROOT2_DRIVER_FALLTHROUGH (2026-07-04, session da0842dc) ──
+        // ── ROOT2 driver fall-through (2026-07-04, session da0842dc) ──
         //
-        // Three kill-switch-gated token streams interpolated into the
-        // single-result `parse_<Cat>_via_wpda_with_source` facade. When the
-        // const is OFF the emitted body is the EXACT pre-edit shape
-        // (byte-identical); when ON it factors the `AcceptedWithTrailing` retry
-        // into `__mettail_wpda_exhaustive_retry` and adds the demand-`Accepted`
-        // `None` fall-through that calls it.
-        let root2_fallthrough_on = super::forks::ROOT2_DRIVER_FALLTHROUGH;
-
-        // (1) The factored helper — emitted ONLY when ON. Its body is the exact
-        //     (pre-edit) inlined `AcceptedWithTrailing` retry.
-        let exhaustive_retry_helper: TokenStream = if root2_fallthrough_on {
-            quote! {
+        // Three token streams interpolated into the single-result
+        // `parse_<Cat>_via_wpda_with_source` facade: they factor the
+        // `AcceptedWithTrailing` retry into `__mettail_wpda_exhaustive_retry` and
+        // add the demand-`Accepted` `None` fall-through that calls it (recovers the
+        // canonical term on a category-correct but unrealizable accepting root).
+        // (1) The factored `AcceptedWithTrailing` retry helper — the exact
+        //     (pre-edit) inlined retry hoisted into a nested fn.
+        let exhaustive_retry_helper: TokenStream = quote! {
                 // The EXACT body of the historical `AcceptedWithTrailing` retry
                 // (a fresh `WpdaWalker::new_for_category` with
                 // `max_recovery_depth = 0`, the EXHAUSTIVE
@@ -2658,125 +3152,46 @@ pub(crate) fn emit_parse_fns(
                         }),
                     }
                 }
-            }
-        } else {
-            quote! {}
-        };
+            };
 
-        // (2) The demand-`Accepted` arm body. OFF = the pre-edit unconditional
-        //     `.ok_or(EmptyResult)?`. ON = Some(verbatim common path) / None
-        //     (fall through to the exhaustive retry). Env
-        //     `PRATTAIL_NO_ROOT2_FALLTHROUGH` forces the OFF behavior at
-        //     RUNTIME (re-exposes the demand-driver defect without a rebuild).
-        let accepted_arm_body: TokenStream = if root2_fallthrough_on {
-            quote! {
-                match __mettail_wpda_select_min_weight_realizing(&walker, &roots) {
-                    // Common path — BYTE-IDENTICAL to the pre-edit behavior.
-                    Some((term, dw)) => {
-                        let arc = std::sync::Arc::downcast::<#cat_ident>(term)
-                            .map_err(|_| WpdaParseError::EmptyResult)?;
-                        let typed = std::sync::Arc::try_unwrap(arc)
-                            .unwrap_or_else(|arc| (*arc).clone());
-                        Ok((typed, dw))
-                    }
-                    // Fall-through: the demand driver early-stopped on a
-                    // category-correct but UNREALIZABLE accepting root (ROOT
-                    // aa8ab54d). Re-run the EXHAUSTIVE driver + M6 select. The
-                    // `None` arm is reached IFF the demand M6-select returned
-                    // `None` — EXACTLY today's unconditional `EmptyResult` — so
-                    // the common path is untouched.
-                    None => {
-                        if std::env::var_os("PRATTAIL_NO_ROOT2_FALLTHROUGH").is_some() {
-                            // Runtime A/B: reproduce the pre-fix behavior.
-                            return Err(WpdaParseError::EmptyResult);
-                        }
-                        __mettail_wpda_exhaustive_retry(source, pos, min_bp, MAX_STEPS)
-                    }
+        // (2) The demand-`Accepted` arm body: Some(verbatim common path) / None
+        //     (fall through to the exhaustive retry).
+        let accepted_arm_body: TokenStream = quote! {
+            match __mettail_wpda_select_min_weight_realizing(&walker, &roots) {
+                // Common path — BYTE-IDENTICAL to the pre-edit behavior.
+                Some((term, dw)) => {
+                    let arc = std::sync::Arc::downcast::<#cat_ident>(term)
+                        .map_err(|_| WpdaParseError::EmptyResult)?;
+                    let typed = std::sync::Arc::try_unwrap(arc)
+                        .unwrap_or_else(|arc| (*arc).clone());
+                    Ok((typed, dw))
                 }
-            }
-        } else {
-            // Pre-edit shape — byte-identical.
-            quote! {
-                let (term, dw) =
-                    __mettail_wpda_select_min_weight_realizing(&walker, &roots)
-                        .ok_or(WpdaParseError::EmptyResult)?;
-                let arc = std::sync::Arc::downcast::<#cat_ident>(term)
-                    .map_err(|_| WpdaParseError::EmptyResult)?;
-                let typed = std::sync::Arc::try_unwrap(arc)
-                    .unwrap_or_else(|arc| (*arc).clone());
-                Ok((typed, dw))
+                // Fall-through: the demand driver early-stopped on a
+                // category-correct but UNREALIZABLE accepting root (ROOT
+                // aa8ab54d). Re-run the EXHAUSTIVE driver + M6 select. The
+                // `None` arm is reached IFF the demand M6-select returned
+                // `None` — EXACTLY today's unconditional `EmptyResult` — so
+                // the common path is untouched.
+                None => {
+                    __mettail_wpda_exhaustive_retry(source, pos, min_bp, MAX_STEPS)
+                }
             }
         };
 
-        // (3) The `AcceptedWithTrailing` arm body. OFF = the pre-edit inlined
-        //     retry (byte-identical). ON = a call to the factored helper (same
-        //     behavior). `MAX_STEPS` and `min_bp`/`source`/`pos` are in scope.
-        let accepted_with_trailing_arm_body: TokenStream = if root2_fallthrough_on {
-            quote! {
-                __mettail_wpda_exhaustive_retry(source, pos, min_bp, MAX_STEPS)
-            }
-        } else {
-            // Pre-edit shape — byte-identical.
-            quote! {
-                let mut walker = WpdaWalker::<DW, _>::new_for_category(
-                    #engine_ident::default(),
-                    #cat_src_idx_u16,
-                    min_bp,
-                );
-                let mut recovery_config =
-                    mettail_prattail::recovery::RecoveryConfig::default();
-                recovery_config.max_recovery_depth = 0;
-                walker.set_recovery_config(recovery_config);
-                match walker.run_to_end_of_input_env_aware(MAX_STEPS, source) {
-                    Ok(()) => match walker.resolve_at_end_of_input(source) {
-                        WpdaResolveResult::Accepted { roots, .. } => {
-                            *pos = walker.position();
-                            let (term, dw) =
-                                __mettail_wpda_select_min_weight_realizing(&walker, &roots)
-                                    .ok_or(WpdaParseError::EmptyResult)?;
-                            let arc = std::sync::Arc::downcast::<#cat_ident>(term)
-                                .map_err(|_| WpdaParseError::EmptyResult)?;
-                            let typed = std::sync::Arc::try_unwrap(arc)
-                                .unwrap_or_else(|arc| (*arc).clone());
-                            Ok((typed, dw))
-                        }
-                        WpdaResolveResult::AcceptedWithTrailing {
-                            roots,
-                            position,
-                            ..
-                        } => {
-                            *pos = position;
-                            let (term, dw) =
-                                __mettail_wpda_select_min_weight_realizing(&walker, &roots)
-                                    .ok_or(WpdaParseError::EmptyResult)?;
-                            let arc = std::sync::Arc::downcast::<#cat_ident>(term)
-                                .map_err(|_| WpdaParseError::EmptyResult)?;
-                            let typed = std::sync::Arc::try_unwrap(arc)
-                                .unwrap_or_else(|arc| (*arc).clone());
-                            Ok((typed, dw))
-                        }
-                        WpdaResolveResult::ParseError { message, position } => {
-                            Err(WpdaParseError::ParseFailed {
-                                message,
-                                position,
-                                attempts: Vec::new(),
-                            })
-                        }
-                        WpdaResolveResult::MaxStepsExceeded { position } => {
-                            Err(WpdaParseError::Incomplete { position })
-                        }
-                        WpdaResolveResult::AmbiguityBudget { budget, actual, position, frontier_ess_x1000 } => {
-                            Err(WpdaParseError::AmbiguityBudget { budget, actual, position, frontier_ess_x1000 })
-                        }
-                    },
-                    Err(exceeded) => Err(WpdaParseError::Incomplete {
-                        position: exceeded.position,
-                    }),
-                }
-            }
+        // (3) The `AcceptedWithTrailing` arm body: a call to the factored helper.
+        //     `MAX_STEPS` and `min_bp`/`source`/`pos` are in scope.
+        let accepted_with_trailing_arm_body: TokenStream = quote! {
+            __mettail_wpda_exhaustive_retry(source, pos, min_bp, MAX_STEPS)
         };
 
         fns.push(quote! {
+            // ROOT-P MEMOIZED BEST-PARSE (design af7680e2): the per-category
+            // thread-local memo map `__PROJ_MEMO_<Cat>` consulted by the memoized
+            // `Cat::parse_via_wpda` (gen/mod.rs). Emitted ONLY when the master
+            // const is ON AND this category is isolation-eligible; empty otherwise
+            // (byte-identical). Shares the module scope with the `impl Cat` methods.
+            #proj_memo_thread_local
+
             // P2 ISOLATION+COMBINE (Plan a7986200): the per-category
             // `__mettail_wpda_sep_isolate_all_<Cat>` helper (+ its specialized
             // constructor arms). Emitted ONLY when this category is a `.*sep`
@@ -2896,26 +3311,20 @@ pub(crate) fn emit_parse_fns(
                     // ladder descends from here so the common path is
                     // byte-identical.
                     const RAW_PROBE_CAPS: &[usize] = &[128, 64, 32, 16, 8, 4, 2, 1];
-                    // Kill-switch / A-B control: `PRATTAIL_NO_M6_SELECT=1`
-                    // reproduces the PRE-M6 behavior EXACTLY — commit to
-                    // `roots.first()` and realize it once at the fixed cap 128,
-                    // taking that root's min-weight term. Used to prove the M6
-                    // belt is causal for the polyadic-forrow parse-gap and inert
-                    // elsewhere. Default (unset) = the M6 belt.
-                    if std::env::var_os("PRATTAIL_NO_M6_SELECT").is_some() {
-                        let root = roots.first().copied()?;
-                        return walker
-                            .realize_root_to_terms_with_weights(root, Some(128))
-                            .into_iter()
-                            .min_by(|(_, a), (_, b)| a.cmp(b));
-                    }
                     let mut best: Option<(std::sync::Arc<dyn std::any::Any + Send + Sync>, __W)> = None;
                     for &root in roots {
                         // First cap that ACTUALLY realizes this root wins for
                         // this root; its own min-weight term is the candidate.
                         let mut per_root: Option<(std::sync::Arc<dyn std::any::Any + Send + Sync>, __W)> = None;
                         for &cap in RAW_PROBE_CAPS {
-                            let realized = walker.realize_root_to_terms_with_weights(root, Some(cap));
+                            // Task #10 item 2: single-result facade semantics
+                            // stated explicitly; the descending caps remain
+                            // pure enumeration bounds for the fallback path.
+                            let realized = walker.realize_root_to_terms_with_weights(
+                                root,
+                                Some(cap),
+                                mettail_prattail::wpda_walker::RealizeRequestMode::SingleResultElection,
+                            );
                             if let Some((term, w)) = realized
                                 .into_iter()
                                 .min_by(|(_, a), (_, b)| a.cmp(b))
@@ -2937,10 +3346,9 @@ pub(crate) fn emit_parse_fns(
                     best
                 }
 
-                // ROOT2_DRIVER_FALLTHROUGH (2026-07-04, session da0842dc): the
-                // factored EXHAUSTIVE retry helper (emitted ONLY when the
-                // kill-switch const is ON — byte-identical OFF). See
-                // `#exhaustive_retry_helper` construction below.
+                // ROOT2 driver fall-through (2026-07-04, session da0842dc): the
+                // factored EXHAUSTIVE retry helper. See `#exhaustive_retry_helper`
+                // construction above.
                 #exhaustive_retry_helper
 
                 // Stage 6 G6+ (2026-05-02): default 1M; PRATTAIL_MAX_STEPS env
@@ -3081,10 +3489,29 @@ pub(crate) fn emit_parse_fns(
                     let mut per_root_limit =
                         max_raw_derivations.min(INITIAL_RAW_SURFACE_PROBE_LIMIT).max(1);
                     loop {
+                        // Task #10 item 2b (USER-APPROVED 2026-07-14): this
+                        // display-exact probe wants the raw packing FAMILY,
+                        // never the elected reading — `BoundedEnumeration`
+                        // restores the helper's own lazy/fair enumeration
+                        // contract on BIN roots. (Pre-2b, the historical
+                        // power-of-two ≤ 128 inference ELECTED at every
+                        // ladder step ≤ 128: 1 reading realized,
+                        // `exhausted_all_roots` stayed true, and the probe
+                        // returned `Ok(None)` after one pass without ever
+                        // enumerating — `Cat::parse` surface-faithfulness
+                        // was silently dead on BIN roots, the flip-era
+                        // regression the item-2 red-team confirmed.)
+                        // Disclosed single-pick sub-effect (toward pre-flip
+                        // classic): among MULTIPLE display-exact readings
+                        // this returns the FIRST-ENUMERATED one, not a
+                        // weight-min — the helper's pre-flip behavior.
                         let mut exhausted_all_roots = true;
                         for &root in roots {
-                            let realized =
-                                walker.realize_root_to_terms_with_weights(root, Some(per_root_limit));
+                            let realized = walker.realize_root_to_terms_with_weights(
+                                root,
+                                Some(per_root_limit),
+                                mettail_prattail::wpda_walker::RealizeRequestMode::BoundedEnumeration,
+                            );
                             if realized.len() >= per_root_limit {
                                 exhausted_all_roots = false;
                             }
@@ -3303,6 +3730,22 @@ pub(crate) fn emit_parse_fns(
                     const RAW_PREFIX_CAP: usize = 4096;
                     let mut raw_probe_limit = max_alternatives.saturating_add(1).max(1);
                     loop {
+                        // Task #10 item 2b (USER-APPROVED 2026-07-14): this
+                        // bounded-prefix `_all` enumerator requests
+                        // `BoundedEnumeration` unconditionally — enumeration
+                        // IS its contract (the ambiguity-preserving prefix
+                        // facade). (Pre-2b, when `max_alternatives ∈
+                        // {1,3,7,15,31,63,127}` the probe limit (max_alt+1)
+                        // was a power of two ≤ 128, so BIN roots ELECTED and
+                        // the `_all`-semantics facade collapsed to 1
+                        // alternative regardless of family size — the
+                        // surviving instance of the ledger's "caught +
+                        // fixed" 65-doubling bug class.)
+                        // Disclosed single-pick sub-effect (toward pre-flip
+                        // classic): at `max_alternatives = 1` the returned
+                        // single switches from the K-elected reading to the
+                        // enumeration min-weight representative (the sort
+                        // below still orders by weight).
                         let mut typed_terms: Vec<#cat_ident> = Vec::new();
                         let mut typed_weights:
                             Vec<mettail_prattail::automata::lex_weight::LexicographicWeight> =
@@ -3313,6 +3756,7 @@ pub(crate) fn emit_parse_fns(
                             let realized = walker.realize_root_to_terms_with_weights(
                                 root,
                                 Some(raw_probe_limit),
+                                mettail_prattail::wpda_walker::RealizeRequestMode::BoundedEnumeration,
                             );
                             if realized.len() >= raw_probe_limit {
                                 exhausted_all_roots = false;
@@ -3509,9 +3953,14 @@ pub(crate) fn emit_parse_fns(
                             for &root in &roots {
                                 let mut raw_probe_limit = REALIZE_CAP.saturating_add(1);
                                 loop {
+                                    // Task #10 item 2: `_all` enumeration
+                                    // semantics stated explicitly (the 65 →
+                                    // ×2 → 4096 probe ladder never inferred
+                                    // single-result — byte-identical).
                                     let realized = walker.realize_root_to_terms_with_weights(
                                         root,
                                         Some(raw_probe_limit),
+                                        mettail_prattail::wpda_walker::RealizeRequestMode::BoundedEnumeration,
                                     );
                                     let exhausted_root = realized.len() < raw_probe_limit;
                                     for (term, weight) in realized {
@@ -3600,9 +4049,14 @@ pub(crate) fn emit_parse_fns(
                             for &root in &roots {
                                 let mut raw_probe_limit = REALIZE_CAP.saturating_add(1);
                                 loop {
+                                    // Task #10 item 2: `_all` enumeration
+                                    // semantics stated explicitly (the 65 →
+                                    // ×2 → 4096 probe ladder never inferred
+                                    // single-result — byte-identical).
                                     let realized = walker.realize_root_to_terms_with_weights(
                                         root,
                                         Some(raw_probe_limit),
+                                        mettail_prattail::wpda_walker::RealizeRequestMode::BoundedEnumeration,
                                     );
                                     let exhausted_root = realized.len() < raw_probe_limit;
                                     for (term, weight) in realized {
@@ -3797,6 +4251,16 @@ pub(crate) fn emit_parse_fns(
                                 "substitute-token {:?}",
                                 ev.text.as_deref().unwrap_or(""),
                             )),
+                            // Task #10 item 4: swap-tokens (action_kind 4).
+                            // The classic commit-replay's SwapTokens arm AND
+                            // the pure SwapAdjacent virtual-chain lowering
+                            // both log kind-4 events (`min(pos_a, pos_b)`,
+                            // the swap tropical cost) — this arm maps them
+                            // IDENTICALLY for either engine (the shared
+                            // facade; red-team note: classic maps
+                            // identically). Pre-item-4 kind-4 events fell to
+                            // the `_ => None` arm.
+                            4 => Some("swap-tokens".into()),
                             5 => Some("composite-recovery".into()),
                             7 => Some(format!(
                                 "lex-alternative idx={}",
@@ -3811,11 +4275,18 @@ pub(crate) fn emit_parse_fns(
                         *pos = walker.position();
                         // C7b (Phase 3.1.6, 2026-05-15): realize the first
                         // SPPF root for backward-compat single-result return.
+                        // Task #10 item 2 amendment 3: recovering-mode
+                        // single-result pick → `SingleResultElection`
+                        // (byte-identical: Some(1) inferred single before).
                         let pick = roots
                             .first()
                             .and_then(|&root|
                                 walker
-                                    .realize_root_to_terms(root, Some(1))
+                                    .realize_root_to_terms(
+                                        root,
+                                        Some(1),
+                                        mettail_prattail::wpda_walker::RealizeRequestMode::SingleResultElection,
+                                    )
                                     .into_iter()
                                     .next()
                             );
@@ -3838,11 +4309,18 @@ pub(crate) fn emit_parse_fns(
                     // `result.is_some()` for trailing-token inputs).
                     WpdaResolveResult::AcceptedWithTrailing { roots, position, .. } => {
                         *pos = position;
+                        // Task #10 item 2 amendment 3: recovering-mode
+                        // single-result pick → `SingleResultElection`
+                        // (byte-identical: Some(1) inferred single before).
                         let pick = roots
                             .first()
                             .and_then(|&root|
                                 walker
-                                    .realize_root_to_terms(root, Some(1))
+                                    .realize_root_to_terms(
+                                        root,
+                                        Some(1),
+                                        mettail_prattail::wpda_walker::RealizeRequestMode::SingleResultElection,
+                                    )
                                     .into_iter()
                                     .next()
                             );
@@ -3877,7 +4355,34 @@ pub(crate) fn emit_parse_fns(
         });
     }
     let _ = language;
+    // ── ROOT-P MEMOIZED BEST-PARSE shared preamble ──
+    // The epoch/depth thread-locals + `__ProjMemoGuard` RAII struct, emitted ONCE
+    // per language module (module scope, shared by every iso-eligible category's
+    // memoized `parse_via_wpda`). Gate: master const ON AND ≥1 iso-eligible
+    // category. OFF / no eligible category ⇒ empty ⇒ byte-identical.
+    let memo_preamble = if any_iso_eligible {
+        emit_proj_memo_preamble()
+    } else {
+        quote! {}
+    };
+    // ── ROOT-1 AUTHORITATIVE-REJECT shared preamble (design a9fbeefe) ──
+    // The thread-local reject flag + set/take accessors, emitted ONCE per module,
+    // gated by ≥1 `@`-projection-eligible category. No eligible category ⇒ empty ⇒
+    // byte-identical.
+    let sigil_reject_preamble = if any_proj_eligible {
+        emit_proj_sigil_reject_preamble()
+    } else {
+        quote! {}
+    };
     quote! {
+        // ROOT-P MEMOIZED BEST-PARSE (design af7680e2): shared epoch/depth
+        // thread-local preamble + `__ProjMemoGuard`. Empty when OFF / no
+        // iso-eligible category (byte-identical).
+        #memo_preamble
+        // ROOT-1 AUTHORITATIVE-REJECT (design a9fbeefe): shared thread-local reject
+        // flag + accessors. Empty when OFF / no proj-eligible category (byte-identical).
+        #sigil_reject_preamble
+
         /// One round of WPDS-facade recovery — captures the message that
         /// triggered the round, the token position where it surfaced, and
         /// the sync-token-skip action taken (or `None` if recovery
@@ -3959,14 +4464,19 @@ pub(crate) fn emit_parse_fns(
                     WpdaParseError::Incomplete { position } => {
                         write!(f, "wpds parse incomplete at position {}", position)
                     }
-                    WpdaParseError::AmbiguityBudget { budget, actual, position, frontier_ess_x1000 } => {
+                    WpdaParseError::AmbiguityBudget { budget, actual, position, .. } => {
+                        // Engine-neutral wording (task #18, amdt #6): the PURE
+                        // engine's `actual` is a DISTINCT-READING count (whole-run
+                        // resolve cardinality `|R|_distinct`) while the CLASSIC
+                        // lever's `actual` is a live cursor-frontier count — so the
+                        // surface text must NOT say "frontier of N cursors".
+                        // `frontier_ess_x1000` stays on the variant (classic
+                        // diagnostics read it) but is omitted from the message.
                         write!(
                             f,
-                            "wpds parse aborted at position {}: ambiguity budget {} exceeded by frontier of {} cursors (frontier ESS≈{:.3} of {})",
+                            "wpds parse aborted at position {}: ambiguity budget {} exceeded (actual {})",
                             position,
                             budget,
-                            actual,
-                            (*frontier_ess_x1000 as f64) / 1000.0,
                             actual,
                         )
                     }
