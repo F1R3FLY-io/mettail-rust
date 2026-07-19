@@ -36,6 +36,7 @@ companion documents, referenced here rather than re-derived:
 | **Why** the matching is optimal ($`O1`$/$`O2`$/$`O3`$, $`tc(K)`$, the interner as partial evaluator) | doc 21 (optimization theory) |
 | **What** is covered (family matrix, corrupted-$`\sigma`$ probes, honest limits) | doc 23 (coverage) |
 | Paper-mandate mapping (INV-1..14) | [13](13-knotted-topoi-operational-invariants.md) |
+| Per-item paper crosswalk (every labeled KT claim to its mechanized / runtime-tested / denotational-program status) | [29](29-knotted-topoi-satisfaction-crosswalk.md) |
 | Shared vocabulary | [01](01-concepts-and-glossary.md) |
 
 The mechanism-level narratives live in the family references (base matching in

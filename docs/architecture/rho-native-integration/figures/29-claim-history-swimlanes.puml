@@ -1,0 +1,77 @@
+@startuml
+' Figure 29-1: the history of the operational-correspondence claim, as two lanes.
+' PAPER lane (violet): the standing conventions fix c = the sound location reflection,
+'   eq:base states the receiver schema, prop:opcorr is a proof SKETCH, rem:nonopt names
+'   the optimal set-automaton scheme, ASSERTS same-CLTS without proof, and sets the
+'   optimality aside, and ob:opcorr is the full statement, left as an obligation.
+' MECHANIZATION lane (green): positions_count (O1) + tc_sound (O3 soundness facet)
+'   discharge chain_complete + no_crosstalk, same_clts_weak_bisim proves the set-aside
+'   same-CLTS claim, the seven family arms + install gate assemble the finite-trace
+'   capstone, and the (iii) thread upgrades it to the O1-optimal matching.
+' JOIN (gold): the set-aside claim is a machine-checked theorem (finite-trace form).
+skinparam backgroundColor #FEFEFE
+skinparam defaultFontName monospaced
+skinparam shadowing false
+skinparam ArrowColor #4A5568
+skinparam activity {
+  BorderColor #4A5568
+  FontColor #1A202C
+}
+skinparam activityBarColor #4A5568
+
+title Figure 29-1 — the claim and its history\npaper path (violet) : mechanization path (green) : join (gold)
+
+|#E6DBF2|the paper — KNOTTED-TOPOI-2026|
+start
+:standing conventions (end of sec:recap)
+the channel <latex>c</latex> = the SOUND location
+reflection, NOT the optimal set-automaton
+state — optimality is set aside for the lift;
+:eq:base + def:loc + con:functor
+each base rewrite = a guarded receiver on
+<latex>c(\ell) = \ulcorner\ell\urcorner</latex> — injective location channels,
+persistent installation at all matching sites;
+:prop:opcorr — a proof SKETCH
+"the CLTS of <latex>[\![t]\!]</latex> is bisimilar to the
+rewrite system of <latex>t</latex>" — full statement
+delegated to ob:opcorr;
+:rem:nonopt — ASSERTED, not proven
+the optimal scheme recovers O1 and
+"induces the SAME context-labelled
+transition system" — the claim is
+stated and set aside;
+:ob:opcorr — the obligation
+promote prop:opcorr to a theorem and
+confirm independence from the channel
+intension (rem:nonopt);
+
+|#C6E7D2|the mechanization — this repository|
+:provenance (the honest premises)
+positions_count (O1, SymbolOnceInjective.v)
+tc_sound (O3 soundness, TcChannelNamingQuotient.v)
+site_inj + K_M1 as Section Hypotheses;
+:same_clts_weak_bisim
+(InRhoSameCLTSWeakBisim.v)
+sound (location-keyed) and optimal
+(<latex>tc(K)</latex>-keyed) schemes are WEAKLY
+BISIMILAR — the sa:/eq: COMMs are tau;
+:the composition harness
+(WholeGsltInRhoOpCorrespondence.v)
+seven family arms as Section Hypotheses
++ install gate + INV-14 predicate fence;
+:whole_gslt_in_rho_opcorrespondence
+finite-trace, both directions, equal
+barbs — over the SOUND baseline;
+:whole_gslt_opcorr_over_optimal_matching
+the (iii) thread composes transitively —
+the capstone holds over the O1-OPTIMAL
+matching. witnesses: SwapDemo base +
+depth-2 In/Out (InOutViaFiring);
+
+:THE JOIN — the set-aside claim is now a theorem
+ob:opcorr is discharged in finite-trace form, over the
+O1-optimal in-Rho matching, zero-admission (Print
+Assumptions gates) — the paper's "same CLTS" assertion
+(rem:nonopt) is same_clts_weak_bisim, machine-checked;<<#F6C177>>
+stop
+@enduml

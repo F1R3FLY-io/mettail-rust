@@ -1,0 +1,82 @@
+@startuml
+' Figure 29-3: the per-item crosswalk as a status map. One chip per labeled item of
+' the vendored knotted-topoi.tex, grouped by paper section. Colorization:
+'   dark green  = mechanized AND runtime-tested (a Rocq theorem plus a named test);
+'   green       = mechanized (a Rocq theorem / FV file);
+'   grey        = outside the operational scope of this suite (the topos lift and
+'                 full abstraction are the paper's denotational program).
+skinparam backgroundColor #FEFEFE
+skinparam defaultFontName monospaced
+skinparam shadowing false
+skinparam ArrowColor #4A5568
+skinparam rectangle {
+  BorderColor #4A5568
+  FontColor #1A202C
+  roundCorner 6
+}
+
+title Figure 29-3 — crosswalk status map over every labeled item of the vendored tex\ndark green = mechanized + runtime-tested : green = mechanized : grey = outside operational scope
+
+package "sec:recap — the recap (2 items)" #EDF2F7 {
+  rectangle "eq:H\ntwo-sorted endofunctor" as R1 #CBD5E0
+  rectangle "eq:quote\nquote/drop via knot + swap" as R2 #CBD5E0
+}
+
+package "sec:lift — the principal result, the lift (13 items)" #EDF2F7 {
+  rectangle "def:sorttopoi" as L1 #CBD5E0
+  rectangle "def:knots" as L2 #CBD5E0
+  rectangle "def:swap" as L3 #CBD5E0
+  rectangle "eq:cohere" as L4 #CBD5E0
+  rectangle "prop:reflift" as L5 #CBD5E0
+  rectangle "con:knot2" as L6 #CBD5E0
+  rectangle "eq:H2" as L7 #CBD5E0
+  rectangle "rem:knob" as L8 #CBD5E0
+  rectangle "rem:grading" as L9 #CBD5E0
+  rectangle "prop:dual" as L10 #CBD5E0
+  rectangle "def:Blift" as L11 #CBD5E0
+  rectangle "prop:final" as L12 #CBD5E0
+  rectangle "thm:lift" as L13 #CBD5E0
+}
+
+package "sec:app — the application (12 items)" #EDE7F6 {
+  rectangle "def:mettail\n(functor claim; data\nrealized by language!)" as A1 #CBD5E0
+  rectangle "eq:base\nLinearCommCorrespondence" as A2 #7FC79B
+  rectangle "def:loc\nRhoGroundingAndNames\n+ site_inj premise" as A3 #A7D8B6
+  rectangle "rem:fresh\nRhoGroundingAndNames" as A4 #A7D8B6
+  rectangle "con:functor\nRhoLoweringTotalOrRejects\n(installation totality)" as A5 #A7D8B6
+  rectangle "prop:opcorr\nwhole_gslt_in_rho_\nopcorrespondence" as A6 #7FC79B
+  rectangle "rem:nonopt\nsame_clts_weak_bisim\n+ 42-test empirical gate" as A7 #7FC79B
+  rectangle "thm:fullabs" as A8 #CBD5E0
+  rectangle "cor:milner" as A9 #CBD5E0
+  rectangle "def:cl" as A10 #CBD5E0
+  rectangle "thm:keystone" as A11 #CBD5E0
+  rectangle "sec:ledger\n(the risk ledger)" as A12 #CBD5E0
+}
+
+package "sec:obligations — the nine obligations" #FDF0E0 {
+  rectangle "ob:exist" as O1 #CBD5E0
+  rectangle "ob:cohere" as O2 #CBD5E0
+  rectangle "ob:opcorr\nfinite-trace form,\nover O1-optimal matching" as O3 #7FC79B
+  rectangle "ob:classify" as O4 #CBD5E0
+  rectangle "ob:barbed" as O5 #CBD5E0
+  rectangle "ob:functor" as O6 #CBD5E0
+  rectangle "ob:size" as O7 #CBD5E0
+  rectangle "ob:metric" as O8 #CBD5E0
+  rectangle "ob:place" as O9 #CBD5E0
+}
+
+package "app:desugar — the desugaring, in clauses (4 items)" #E6F4EA {
+  rectangle "Terms\nspread_term_par +\nsa_matches_positional" as D1 #7FC79B
+  rectangle "Base rewrites\nsigma_receiver_par +\ncomm_step_sound/complete" as D2 #7FC79B
+  rectangle "Contextual rewrites\nnary_join_sound/complete" as D3 #7FC79B
+  rectangle "A whole GSLT\ncapstone + total-or-reject" as D4 #7FC79B
+}
+
+rectangle "LEGEND\ndark green = mechanized + runtime-tested (8)\ngreen = mechanized (3)\ngrey = outside operational scope (29)\ntotal chips = 40" as LEG #FEFEFE
+
+R2 -[hidden]down- L1
+L13 -[hidden]down- A1
+A12 -[hidden]down- O1
+O9 -[hidden]down- D1
+D4 -[hidden]right- LEG
+@enduml

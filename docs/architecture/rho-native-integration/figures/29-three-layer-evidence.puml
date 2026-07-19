@@ -1,0 +1,101 @@
+@startuml
+' Figure 29-2: the three-layer evidence architecture behind the crosswalk, as three
+' stacked bands.
+'   Band 1 (green): abstract CLTS theorems in advanced_automata — tau-erasure,
+'     same_clts_weak_bisim, contextual-descent invisibility, and the non-vacuity
+'     witness. Honest-premise PORTS: site_inj (def:loc injectivity) and K_M1
+'     (flat-frame scope). Red callout: does NOT model Par/RSpace.
+'   Band 2 (amber): the conditional composition harness in rho_bridge — the seven
+'     family arms as Section Hypotheses, the INV-14 fence, the install gate, the two
+'     capstones, and the concrete witnesses. Red callout: arms are premises,
+'     discharged at concrete instances; semantic predicates excluded by construction.
+'   Band 3 (blue): runtime evidence on the live in-memory f1r3node reducer — the
+'     corrupted-sigma probes and the 42-test equivalence gate (31 + 11), including
+'     the naive-baseline suite that is the EMPIRICAL same-CLTS counterpart.
+skinparam backgroundColor #FEFEFE
+skinparam defaultFontName monospaced
+skinparam shadowing false
+skinparam ArrowColor #4A5568
+skinparam NoteBorderColor #C53030
+skinparam rectangle {
+  BorderColor #4A5568
+  FontColor #1A202C
+  roundCorner 8
+}
+top to bottom direction
+
+title Figure 29-2 — the three-layer evidence architecture\nabstract CLTS theorems (green) : conditional composition harness (amber) : runtime probes (blue)
+
+package "LAYER 1 — abstract CLTS theorems  (formal/rocq/advanced_automata)" #E6F4EA {
+  rectangle "PREMISE PORT  site_inj\ndef:loc injectivity\n(Section Hypothesis)" as P1 #F3F9F4
+  rectangle "PREMISE PORT  K_M1\nflat-frame (M1) scope\n(Section Hypothesis)" as P2 #F3F9F4
+  rectangle "provenance discharge\npositions_count (O1)  =>  chain_complete\ntc_sound (O3 soundness)  =>  no_crosstalk" as PR #C6E7D2
+  rectangle "same_clts_weak_bisim\nsound (per-location) and optimal\n(<latex>tc(K)</latex>-keyed) schemes weakly bisimilar" as L1B #7FC79B
+  rectangle "optimal_visible_equals_sound\ntau-erasure: both schemes erase\nto the same visible schedule" as L1A #A7D8B6
+  rectangle "ctx_descent_is_invisible\nthe loc: context-spine descent\nis tau — rem:nonopt survives it" as L1C #A7D8B6
+  rectangle "optimal_shares_where_sound_separates\nNON-VACUITY: optimal shares a channel\nexactly where sound separates" as L1D #A7D8B6
+  note bottom of L1D #FDE8E8
+    NOT MODELED here: rho-calculus reduction
+    (Par / RSpace). This band is the schedule /
+    labelled-transition level; Par-faithfulness
+    is band 3's and obligation (i)'s job.
+  end note
+}
+
+package "LAYER 2 — the conditional composition harness  (formal/rocq/rho_bridge)" #FDF0E0 {
+  rectangle "seven family arms (Section Hypotheses)\nFBase : FContextualJoin : FAcLinear :\nFAcStructural : FBinderBeta : FNative : FAcNested" as L2A #F6C177
+  rectangle "g_install_gate_admits\ninstall-gate scoping: every fired\nlabel has a covered family" as L2B #FBE0B8
+  rectangle "semantic_predicates_emit_no_comm\nthe INV-14 fence: a predicate\ndisposition emits no <latex>c(\ell)</latex>" as L2C #FBE0B8
+  rectangle "whole_gslt_in_rho_opcorrespondence\nfinite-trace opcorr, sound baseline" as L2D #F6C177
+  rectangle "whole_gslt_opcorr_over_optimal_matching\nfinite-trace opcorr over the\nO1-OPTIMAL matching (the (iii) thread)" as L2E #E8A54C
+  rectangle "concrete witnesses\nswapdemo_base_finite_trace_opcorr (FBase)\ninoutdemo_nested_finite_trace_opcorr\n(FAcNested, companion InOutViaFiring.v)" as L2F #FBE0B8
+  note bottom of L2F #FDE8E8
+    the arms are PREMISES (universally quantified
+    on Section close), each discharged at concrete
+    instances by its cited landed theorem — never
+    Axioms; predicates are outside by construction
+    (no Family constructor).
+  end note
+}
+
+package "LAYER 3 — runtime evidence  (rholang-runtime/tests, live in-memory f1r3node reducer)" #E1EFFA {
+  rectangle "rho_net_* firing suites\nper-family COMM firings on the reducer\n(base, AC, contextual, ambient, binder,\nnative, comm, mapzip, subst-TRS)" as L3B #C6E0F5
+  rectangle "corrupted-sigma probes (doc 23 sec 4)\ncorrupt the report sigma, run the MATCH\npath, assert a still-correct OUT —\nreplacement, not a report duplicate" as L3A #C6E0F5
+  rectangle "the 42-test equivalence gate\nrho_net_equivalence.rs (31)\n+ rho_net_naive_equivalence.rs (11):\nidentical fired MULTISETS — the\nEMPIRICAL same-CLTS counterpart" as L3C #8FBFE8
+  note bottom of L3C #FDE8E8
+    observation discipline: OUT value multisets
+    are compared SORTED — the tau-COMM schedules
+    (arrival orders) are allowed to differ; that
+    difference is exactly what the theorems erase.
+  end note
+}
+
+' band 1 internal wiring
+P1 --> L1B
+P2 --> L1B
+PR --> L1B : discharges the two\nweak-step obligations
+
+' band 1 -> band 2: the (iii) thread
+L1B --> L2E : consumed as the three\nmatching_locus_* hypotheses\n(literal discharge:\nOptimalViaSameClts.v)
+
+' band 2 internal wiring
+L2A --> L2D
+L2B --> L2D
+L2D --> L2E
+L2F --> L2A : inhabit the\nharness context
+
+' band 2 -> band 3: each arm's landed theorem has a runtime shadow
+L2A --> L3B : runtime shadow of each\narm's cited landed theorem
+L3A -up-> L3B : provenance\n(replacement)
+
+' the empirical seal (dashed association, no derivation claimed)
+L1B ..> L3C : empirically sealed by the\n42-test fired-multiset gate
+
+' invisible rank scaffolding: force the three bands to STACK vertically
+L1A -[hidden]-> L2F
+L1C -[hidden]-> L2B
+L1D -[hidden]-> L2C
+L2D -[hidden]-> L3B
+L2E -[hidden]-> L3A
+L2E -[hidden]-> L3C
+@enduml

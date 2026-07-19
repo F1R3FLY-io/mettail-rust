@@ -246,6 +246,7 @@ runtime values are normalized AST artifacts, and the executable form is
 | [25 — In-Rho Base-Family Reference](25-in-rho-base-family-reference.md) | How is the base-rewrite family rebuilt from scratch — reconstruction-grade coverage of reflection, spread, the collapse fold, the automaton network, and locate-all multi-firing? |
 | [26 — In-Rho AC-Family Reference](26-in-rho-ac-family-reference.md) | How is the associative-commutative family rebuilt from scratch — the Scheme-B spread re-sourcing, the site-keyed carrier, and AC4 (`HashSet` / `HashMap` / `Zip`)? |
 | [27 — Compiling OSLF `language!` Specifications to Rholang](27-oslf-language-to-rholang-compilation.md) | How is an OSLF `language!` specification compiled to Rholang — the compile-time set-automaton translation pipeline (spec → `LanguageDef` → interned automaton → installed `Par`)? |
+| [29 — Knotted-Topoi Satisfaction Crosswalk](29-knotted-topoi-satisfaction-crosswalk.md) | Where does the north-star paper stand, item by item — every labeled claim of the vendored tex crosswalked to its mechanized theorem, named runtime test, or place in the denotational program, with the three-layer evidence architecture, the honest-premise inventory, and the measured efficiency-gate results? |
 | [References](references.md) | Which papers, docs, and formal artifacts support the design? |
 | [Validation Script](validate.sh) | How are the documentation structure checks reproduced locally? |
 
