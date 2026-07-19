@@ -439,6 +439,43 @@ required-features = [
     "ctx-demo-runtime",
 ]
 
+# E-6a (pgmcp experiment 145) — the PathMap-backed subject-index treatment arm.
+# Feasibility spike (Phase 1): EPathMap publish/bind, receive-pattern
+# destructuring refutation (U1), query-chain guard+σ+accept mechanics,
+# machine-side site enumeration, and 3× determinism, all on live counting
+# runtimes. Quarantined exactly like the Track-B suite.
+[[test]]
+name = "e6a_pathmap_spike"
+path = "tests/e6a_pathmap_spike.rs"
+required-features = ["bench-naive-baseline"]
+
+# E-6a equivalence gate (Phase 2, BEFORE measurement): control-vs-treatment
+# fired-set multiset equality on every admitted corpus cell + directly-computed
+# expected redex sets and machine-vs-host site pinning on the nested
+# multi-candidate cells the control path fails closed on.
+[[test]]
+name = "rho_net_e6a_equivalence"
+path = "tests/rho_net_e6a_equivalence.rs"
+required-features = [
+    "bench-naive-baseline",
+    "swap-demo-runtime",
+    "lambda-demo-runtime",
+    "ctx-demo-runtime",
+]
+
+# E-6a measurement driver (Phase 3): the JSON-lines control/treatment counter
+# driver over the pre-registered corpus cells (spread_sends + matching COMMs
+# primary metric, machine-enumerated site counts, full COMM snapshots).
+[[bin]]
+name = "bench_e6a_pathmap_driver"
+path = "src/bin/bench_e6a_pathmap_driver.rs"
+required-features = [
+    "bench-naive-baseline",
+    "swap-demo-runtime",
+    "lambda-demo-runtime",
+    "ctx-demo-runtime",
+]
+
 [[test]]
 name = "rho_comm_oracle"
 path = "tests/rho_comm_oracle.rs"

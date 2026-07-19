@@ -1118,6 +1118,7 @@ fn zero_comm_snapshot() -> CommCounterSnapshot {
         subst_tau: 0,
         respread_tau: 0,
         ac_carrier: 0,
+        pathmap_index: 0,
         contextual_plumbing: 0,
         observation: 0,
         other: 0,
@@ -1134,6 +1135,7 @@ fn accumulate_comm(total: &mut CommCounterSnapshot, step: &CommCounterSnapshot) 
     total.subst_tau += step.subst_tau;
     total.respread_tau += step.respread_tau;
     total.ac_carrier += step.ac_carrier;
+    total.pathmap_index += step.pathmap_index;
     total.contextual_plumbing += step.contextual_plumbing;
     total.observation += step.observation;
     total.other += step.other;
@@ -1808,6 +1810,248 @@ pub async fn run_compiled_workload(
                 )));
             }
             Ok(WorkloadRepOutcome { result, emission, bringup })
+        },
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// E-6a (pgmcp experiment 145): the TREATMENT-arm workload drive — the
+// PathMap-index counterpart of [`run_compiled_workload`], shared by the
+// equivalence gate (`tests/rho_net_e6a_equivalence.rs`) and the E-6a driver
+// bin (`src/bin/bench_e6a_pathmap_driver.rs`).
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// One E-6a treatment rep's outcome: the (possibly step-aggregated)
+/// [`BenchRunResult`] plus the treatment-specific accounting.
+pub struct E6aWorkloadOutcome {
+    /// The instrumented run record (step-aggregated for `lambda_chain`).
+    pub result: BenchRunResult,
+    /// The MACHINE-enumerated candidate sites per rule-root op (for
+    /// `lambda_chain`, the FIRST step's enumeration — later steps re-enumerate
+    /// on their own fresh runtimes).
+    pub machine_sites: std::collections::BTreeMap<String, Vec<String>>,
+    /// The treatment's static spread-send count (Σ over injections of
+    /// `1 index publish + #ops discovery-result sends`).
+    pub treatment_spread_sends: usize,
+    /// Total per-call emission span (index build + discovery + query codegen).
+    pub emission: Duration,
+    /// Total counting-runtime construction span.
+    pub bringup: Duration,
+}
+
+/// The CONTROL matcher column of each E-6a corpus cell — the CURRENT
+/// spread+drive path: the `sa` column where the automaton drives (swap_comb
+/// locate-all, multi_rule_shared per-rule, lambda_chain per-step root), and
+/// the `naive` comprehension for `nested_spine` (whose sa locate-all fails
+/// closed — `NestedEntryMultiSite` — leaving naive as the current IN-RHO
+/// column; `replay` is host-side matching and has no spread at all).
+pub fn e6a_control_matcher(kind: WorkloadKind) -> Option<MatcherKind> {
+    match kind {
+        WorkloadKind::LambdaChain
+        | WorkloadKind::SwapComb
+        | WorkloadKind::SwapSmall
+        | WorkloadKind::MultiRuleShared => Some(MatcherKind::Sa),
+        WorkloadKind::NestedSpine => Some(MatcherKind::Naive),
+        // Contextual JOIN reassembly is out of E-6a scope (the treatment fires
+        // entry redexes, not congruence-context reassembly).
+        WorkloadKind::WrapSwapCtx => None,
+    }
+}
+
+/// The control arm's STATIC spread-send count for one cell: the sends of the
+/// per-node [`spread_term_par`] the control call embeds (summed over the
+/// per-step subjects for `lambda_chain` — the ground-truth step ladder, which
+/// the per-step drive verifies the observed reducts against).
+pub fn e6a_control_spread_sends(compiled: &CompiledWorkload) -> usize {
+    let fingerprint = &compiled.ruleset().language_fingerprint;
+    match compiled.kind {
+        WorkloadKind::LambdaChain => {
+            let steps = usize::try_from(compiled.n).expect("n fits usize");
+            (1..=steps)
+                .map(|remaining| {
+                    mettail_rholang_runtime::count_send_nodes(&spread_term_par(
+                        &lambda_chain_subject(remaining),
+                        fingerprint,
+                        ROOT_SITE,
+                    ))
+                })
+                .sum()
+        },
+        _ => mettail_rholang_runtime::count_send_nodes(&spread_term_par(
+            &compiled.subject,
+            fingerprint,
+            ROOT_SITE,
+        )),
+    }
+}
+
+/// Run ONE E-6a TREATMENT rep of a compiled workload cell: the two-phase
+/// PathMap-index drive ([`drive_e6a_treatment`]) with the SAME installed
+/// σ-receiver program / σ-echo observers and the SAME observed-vs-expected
+/// verification as the control's [`run_compiled_workload`]. `lambda_chain`
+/// runs per-step on fresh runtimes with the ROOT-site β-strategy filter
+/// (mirroring the control column's root-restricted per-step discipline),
+/// feeding each next step from the OBSERVED reduct.
+pub async fn run_e6a_treatment_workload(
+    compiled: &CompiledWorkload,
+    rep: u64,
+) -> Result<E6aWorkloadOutcome, WorkloadFailure> {
+    use mettail_rholang_runtime::drive_e6a_treatment;
+
+    if e6a_control_matcher(compiled.kind).is_none() {
+        return Err(WorkloadFailure::new(format!(
+            "workload `{}` is out of E-6a scope (no treatment drive)",
+            compiled.kind.name(),
+        )));
+    }
+    let expected_firings = usize::try_from(compiled.kind.expected_firings(compiled.n))
+        .expect("expected firing count fits usize");
+    if compiled.expected.len() != expected_firings {
+        return Err(WorkloadFailure::new(format!(
+            "registry drift: {} expected values vs expected_firings {expected_firings}",
+            compiled.expected.len(),
+        )));
+    }
+    let params = BenchWorkloadParams {
+        name: compiled.kind.name().to_string(),
+        matcher: "e6a-pathmap".to_string(),
+        encoding: "-".to_string(),
+        n: compiled.n,
+        rep,
+    };
+    let ruleset = compiled.ruleset();
+    let echo = |channel: &str| sigma_echo_receiver(channel, 1);
+
+    match compiled.kind {
+        WorkloadKind::LambdaChain => {
+            // Per-step ROOT drive (the control column's discipline): each step
+            // on a FRESH counting runtime, the treatment restricted to the
+            // machine-enumerated ROOT site, the next subject rebuilt from the
+            // OBSERVED reduct, per-step records SUMMED into one rep record.
+            let steps = expected_firings;
+            let mut subject = compiled.subject.clone();
+            let root_filter: std::collections::BTreeSet<String> =
+                std::iter::once(ROOT_SITE.to_string()).collect();
+            let mut machine_sites_first: Option<
+                std::collections::BTreeMap<String, Vec<String>>,
+            > = None;
+            let mut spread_sends_total = 0usize;
+            let mut emission_total = Duration::ZERO;
+            let mut bringup_total = Duration::ZERO;
+            let mut build_total = Duration::ZERO;
+            let mut inj_total = Duration::ZERO;
+            let mut readback_total = Duration::ZERO;
+            let mut encoded_len_total = 0usize;
+            let mut receiver_count_total = 0usize;
+            let mut consumed_total: i64 = 0;
+            let mut observed_total: Vec<Par> = Vec::with_capacity(steps);
+            let mut comm_total = zero_comm_snapshot();
+            let mut matches_total = MatchAttemptSnapshot { attempts: 0, successes: 0 };
+
+            for step in 0..steps {
+                let outcome = drive_e6a_treatment(
+                    ruleset,
+                    compiled.installed_program(),
+                    &[],
+                    &subject,
+                    ROOT_SITE,
+                    OUT_CHANNEL,
+                    params.clone(),
+                    echo,
+                    Some(&root_filter),
+                )
+                .await
+                .map_err(|failure| {
+                    WorkloadFailure::new(format!("step {step}: {}", failure.reason))
+                })?;
+
+                let step_values = decode_observed(&outcome.result.observed)
+                    .map_err(|e| WorkloadFailure::new(format!("step {step}: {e}")))?;
+                let [reduct] = step_values.as_slice() else {
+                    return Err(WorkloadFailure::new(format!(
+                        "step {step}: the root-restricted treatment fires exactly once, \
+                         observed {} values",
+                        step_values.len(),
+                    )));
+                };
+                if *reduct != compiled.expected[step] {
+                    return Err(WorkloadFailure::new(format!(
+                        "step {step}: observed-mismatch — reduct {reduct:?} vs expected {:?}",
+                        compiled.expected[step],
+                    )));
+                }
+                subject = observation_to_ground(reduct)
+                    .map_err(|e| WorkloadFailure::new(format!("step {step}: {e}")))?;
+
+                if machine_sites_first.is_none() {
+                    machine_sites_first = Some(outcome.machine_sites.clone());
+                }
+                spread_sends_total += outcome.treatment_spread_sends;
+                emission_total += outcome.emission;
+                bringup_total += outcome.bringup;
+                build_total += outcome.result.build;
+                inj_total += outcome.result.inj;
+                readback_total += outcome.result.readback;
+                encoded_len_total += outcome.result.program_encoded_len;
+                receiver_count_total += outcome.result.program_receiver_count;
+                consumed_total += outcome.result.consumed_cost_units;
+                accumulate_comm(&mut comm_total, &outcome.result.comm);
+                matches_total.attempts += outcome.result.matches.attempts;
+                matches_total.successes += outcome.result.matches.successes;
+                observed_total.extend(outcome.result.observed);
+            }
+
+            Ok(E6aWorkloadOutcome {
+                result: BenchRunResult {
+                    workload: params,
+                    build: build_total,
+                    inj: inj_total,
+                    readback: readback_total,
+                    program_encoded_len: encoded_len_total,
+                    program_receiver_count: receiver_count_total,
+                    observed: observed_total,
+                    consumed_cost_units: consumed_total,
+                    comm: comm_total,
+                    matches: matches_total,
+                },
+                machine_sites: machine_sites_first.expect("steps >= 1"),
+                treatment_spread_sends: spread_sends_total,
+                emission: emission_total,
+                bringup: bringup_total,
+            })
+        },
+        _ => {
+            let echo_channels = workload_echo_channels(compiled);
+            let outcome = drive_e6a_treatment(
+                ruleset,
+                compiled.installed_program(),
+                &echo_channels,
+                &compiled.subject,
+                ROOT_SITE,
+                OUT_CHANNEL,
+                params,
+                echo,
+                None,
+            )
+            .await
+            .map_err(|failure| WorkloadFailure::new(failure.reason))?;
+
+            let observed_values =
+                decode_observed(&outcome.result.observed).map_err(WorkloadFailure::new)?;
+            let observed_sorted = sorted_multiset(observed_values);
+            let expected_sorted = sorted_multiset(compiled.expected.clone());
+            if observed_sorted != expected_sorted {
+                return Err(WorkloadFailure::new(format!(
+                    "e6a observed-mismatch: {observed_sorted:?} vs expected {expected_sorted:?}",
+                )));
+            }
+            Ok(E6aWorkloadOutcome {
+                result: outcome.result,
+                machine_sites: outcome.machine_sites,
+                treatment_spread_sends: outcome.treatment_spread_sends,
+                emission: outcome.emission,
+                bringup: outcome.bringup,
+            })
         },
     }
 }

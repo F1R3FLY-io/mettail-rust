@@ -48,6 +48,11 @@ pub mod backend;
 /// No production metering/budget surface: budgets are F1r3node's (wallet.txt).
 #[cfg(feature = "bench-naive-baseline")]
 pub mod bench_support;
+/// E-6a (pgmcp experiment 145): PathMap-backed SUBJECT INDEXING for in-Rho
+/// matching — BENCHMARK-ONLY treatment-arm support, quarantined behind
+/// `bench-naive-baseline` exactly like `bench_support`. No production surface.
+#[cfg(feature = "bench-naive-baseline")]
+pub mod e6a_support;
 /// Tier-3 held-fold trampoline: Dovetail-backed fold contracts for folds over COMM-received values.
 #[cfg(feature = "rhocalc-runtime")]
 pub mod fold_contract;
@@ -85,6 +90,14 @@ pub use bench_support::{
     BenchRunResult, BenchWorkloadParams, CommChannelClass, CommCounterSnapshot, CommCounters,
     CompiledBenchLanguage, CountingSpace, MatchAttemptCounters, MatchAttemptSnapshot,
     MAX_UNKNOWN_CHANNEL_SAMPLES,
+};
+#[cfg(feature = "bench-naive-baseline")]
+pub use e6a_support::{
+    build_pathmap_index, count_send_nodes, decode_sites_par, discovery_call_par,
+    drive_e6a_treatment, e6a_entry_root_ops, e6a_index_channel, e6a_node_count,
+    e6a_omitted_value_locations, e6a_sites_channel, e6a_tag_string, entry_query_match_par,
+    entry_query_shape, pathmap_spread_term_par, sites_non_ancestral, E6aDriveFailure,
+    E6aDriveOutcome, EntryQueryShape, PathmapIndex,
 };
 pub use mettail_rholang_codegen::{REFLECTED_TERM_ABI_PREFIX, RHOCALC_BAG_ABI_TAG};
 pub use native_contract::{

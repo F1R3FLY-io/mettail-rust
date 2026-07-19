@@ -59,13 +59,14 @@
 //! | `GPrivate(mettail.term.{fp}.{^subst,^shift,^shiftk,^cmp,^pred})` | `subst_tau` | `tag_par(fp, label)` over the reserved TRS labels (`rho_net_subst_trs.rs`, `rho_net_lower.rs`) |
 //! | `GPrivate(mettail.term.{fp}.{^respread,^respread-root,^respread-err})` | `respread_tau` | `respread_reserved_labels()` — the R3 self-driving walker family (`rho_net_naive_kt.rs`; EXPLORATORY, pre-registered) |
 //! | `@"ac:…"` (AC bag carrier, bare `ac:{op}` and site-keyed `ac:{loc}/…`) | `ac_carrier` | `ac_carrier_channel` + the `ac:{op}` soup channel (`rho_net_lower.rs`) |
+//! | `@"e6a:…"` (E-6a PathMap subject-index / site-enumeration) | `pathmap_index` | `e6a_index_channel` / `e6a_sites_channel` (`e6a_support.rs`; treatment arm only) |
 //! | `@"ph:…"` (premise-hole bridge) and `@"loc:…/contextual-premise/…"` (join premise) | `contextual_plumbing` | `contextual_premise_hole_channel` (`rho_net_lower.rs`), the `Premise::Congruence` location channel (`rho_net.rs`) |
 //! | `@"{out_channel}"` (the CONFIGURED observation channel) | `observation` | `run::quoted_channel` |
 //! | anything else | `other` | counted AND the first [`MAX_UNKNOWN_CHANNEL_SAMPLES`] renderings retained — never silently bucketed |
 //!
 //! A multi-channel JOIN is classified by the FIRST matching class under the
 //! FIXED precedence `SubstTau > RespreadTau > FiringVisible > AcCarrier >
-//! ContextualPlumbing > MatchingTau > Observation > Other` (the [`Ord`] on
+//! PathMapIndex > ContextualPlumbing > MatchingTau > Observation > Other` (the [`Ord`] on
 //! [`CommChannelClass`], most specific first; reserved prefixes outrank an
 //! `out_channel` that pathologically collides with one), and additionally
 //! bumps `join_arity_gt1`. (The two reserved-`GPrivate` classes never join
@@ -167,6 +168,11 @@ pub enum CommChannelClass {
     /// An `ac:`-prefixed AC bag-carrier channel (bare `ac:{op}` soup or the
     /// site-keyed `ac:{loc}/{op}` carrier).
     AcCarrier,
+    /// An `e6a:`-prefixed PathMap subject-index channel (experiment E-6a,
+    /// `e6a_support`): the persistent index (`e6a:idx:…`) and the machine-side
+    /// site-enumeration results (`e6a:sites:…`) — the treatment arm's QUERY
+    /// COMMs. Never emitted by any production or control-arm path.
+    PathMapIndex,
     /// Contextual (congruence) plumbing: the `ph:`-prefixed premise-hole bridge
     /// channel, or a `loc:…/contextual-premise/…` join premise channel.
     ContextualPlumbing,
@@ -199,6 +205,9 @@ pub struct CommCounters {
     pub respread_tau: AtomicU64,
     /// COMMs whose continuation reads an `ac:` carrier channel.
     pub ac_carrier: AtomicU64,
+    /// COMMs whose continuation reads an `e6a:` PathMap subject-index channel
+    /// (the E-6a treatment arm's query COMMs).
+    pub pathmap_index: AtomicU64,
     /// COMMs whose continuation reads `ph:`/premise contextual channels.
     pub contextual_plumbing: AtomicU64,
     /// COMMs whose continuation reads the configured OUT channel.
@@ -224,6 +233,7 @@ pub struct CommCounterSnapshot {
     pub subst_tau: u64,
     pub respread_tau: u64,
     pub ac_carrier: u64,
+    pub pathmap_index: u64,
     pub contextual_plumbing: u64,
     pub observation: u64,
     pub other: u64,
@@ -242,6 +252,7 @@ impl CommCounters {
             subst_tau: AtomicU64::new(0),
             respread_tau: AtomicU64::new(0),
             ac_carrier: AtomicU64::new(0),
+            pathmap_index: AtomicU64::new(0),
             contextual_plumbing: AtomicU64::new(0),
             observation: AtomicU64::new(0),
             other: AtomicU64::new(0),
@@ -262,6 +273,8 @@ impl CommCounters {
                 CommChannelClass::FiringVisible
             } else if name.starts_with("ac:") {
                 CommChannelClass::AcCarrier
+            } else if name.starts_with("e6a:") {
+                CommChannelClass::PathMapIndex
             } else if name.starts_with("ph:") {
                 CommChannelClass::ContextualPlumbing
             } else if name.starts_with("loc:") {
@@ -317,6 +330,7 @@ impl CommCounters {
             CommChannelClass::RespreadTau => &self.respread_tau,
             CommChannelClass::FiringVisible => &self.firing_visible,
             CommChannelClass::AcCarrier => &self.ac_carrier,
+            CommChannelClass::PathMapIndex => &self.pathmap_index,
             CommChannelClass::ContextualPlumbing => &self.contextual_plumbing,
             CommChannelClass::MatchingTau => &self.matching_tau,
             CommChannelClass::Observation => &self.observation,
@@ -344,6 +358,7 @@ impl CommCounters {
             subst_tau: self.subst_tau.load(Ordering::Relaxed),
             respread_tau: self.respread_tau.load(Ordering::Relaxed),
             ac_carrier: self.ac_carrier.load(Ordering::Relaxed),
+            pathmap_index: self.pathmap_index.load(Ordering::Relaxed),
             contextual_plumbing: self.contextual_plumbing.load(Ordering::Relaxed),
             observation: self.observation.load(Ordering::Relaxed),
             other: self.other.load(Ordering::Relaxed),
@@ -814,6 +829,8 @@ impl BenchRunResult {
         line.push_str(&self.comm.respread_tau.to_string());
         line.push_str(",\"ac_carrier\":");
         line.push_str(&self.comm.ac_carrier.to_string());
+        line.push_str(",\"pathmap_index\":");
+        line.push_str(&self.comm.pathmap_index.to_string());
         line.push_str(",\"contextual_plumbing\":");
         line.push_str(&self.comm.contextual_plumbing.to_string());
         line.push_str(",\"observation\":");
@@ -1276,6 +1293,16 @@ mod tests {
                 "site-keyed AC carrier",
             ),
             (
+                quoted("e6a:idx:site0"),
+                CommChannelClass::PathMapIndex,
+                "the E-6a persistent subject-index channel",
+            ),
+            (
+                quoted("e6a:sites:site0/Swap"),
+                CommChannelClass::PathMapIndex,
+                "an E-6a machine-side site-enumeration result channel",
+            ),
+            (
                 quoted("ph:loc:rewrite/WrapCong/contextual-premise/0/S-to-T"),
                 CommChannelClass::ContextualPlumbing,
                 "premise-hole bridge",
@@ -1552,6 +1579,7 @@ mod tests {
         assert_eq!(snapshot.subst_tau, 0, "no subst TRS in this workload; got {snapshot:?}");
         assert_eq!(snapshot.respread_tau, 0, "no R3 walker in this workload; got {snapshot:?}");
         assert_eq!(snapshot.ac_carrier, 0, "no AC carrier in this workload; got {snapshot:?}");
+        assert_eq!(snapshot.pathmap_index, 0, "no E-6a index in this workload; got {snapshot:?}");
         assert_eq!(
             snapshot.contextual_plumbing, 0,
             "no contextual join in this workload; got {snapshot:?}"
