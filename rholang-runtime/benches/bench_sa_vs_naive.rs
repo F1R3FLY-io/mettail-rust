@@ -125,11 +125,15 @@ fn naive_encoding_from_env() -> GuardEncodingKind {
 }
 
 /// The encoding a cell runs: the env-selected one on the naive column,
-/// `pattern-guard` (ignored downstream, recorded `"-"`) elsewhere.
+/// `pattern-guard` (ignored downstream, recorded `"-"`) elsewhere. The R3
+/// self-driving column is PatternGuard-only by construction
+/// (`naive_kt_selfdriving_call_par`), so it never takes the env selection.
 fn cell_encoding(matcher: MatcherKind, naive_encoding: GuardEncodingKind) -> GuardEncodingKind {
     match matcher {
         MatcherKind::Naive => naive_encoding,
-        MatcherKind::Sa | MatcherKind::Replay => GuardEncodingKind::PatternGuard,
+        MatcherKind::Sa | MatcherKind::Replay | MatcherKind::NaiveR3 => {
+            GuardEncodingKind::PatternGuard
+        },
     }
 }
 
