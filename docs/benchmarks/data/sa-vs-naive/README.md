@@ -45,28 +45,41 @@ Naive guard encodings: `pattern-guard` (default, safe everywhere) and
 `consume-test` (single-candidate subjects only: `swap_small`, `lambda_chain`,
 `wrap_swap_ctx`, `swap_comb` m = 1; the driver and bench refuse the rest).
 
-### KNOWN LIMITATION — the pre-existing f1r3node `split_byte(i8)` panic zone
+### FIXED — the formerly-panicking f1r3node `split_byte(i8)` zone [129, 256]
 
-`DebruijnInterpreter::eval_inner` splits its per-term random with
-`split_byte(id.try_into().unwrap())` for any Par whose top-level term list has
-2 ..= 256 entries (`f1r3node rholang/src/rust/interpreter/reduce.rs:227`), but
+`DebruijnInterpreter::eval` splits its per-term random by the 0-based term
+index; the OLD branch sent every Par whose top-level term list had 2 ..= 256
+entries to `split_byte(id.try_into().unwrap())`
+(`f1r3node rholang/src/rust/interpreter/reduce.rs`), but
 `Blake2b512Random::split_byte` takes an `i8`
 (`crypto/src/rust/hash/blake2b512_random.rs:97`) — so a term index ≥ 128
-panics with `TryFromIntError(PosOverflow)`. A Par with MORE than 256 terms
-routes through the safe `split_short(i16)`. The panic zone is therefore a
-parallel eval width in **[129, 256]**, per eval level, per injection.
+panicked with `TryFromIntError(PosOverflow)`: every parallel eval width in
+**[129, 256]** crashed, per eval level, per injection. FIXED on the
+f1r3node-rust-mettail branch `fix/split-byte-width-range` (commit `31b354e6`,
+the working tree this repository path-depends on): the branch boundary moved
+from `> 256` to `> 128`, so widths in [129, 256] join the `split_short(i16)`
+path used by every larger width, while widths ≤ 128 keep byte-identical
+`split_byte` randomness (the consensus-relevant defined range is untouched; a
+`split_short` child appends two domain-separation path bytes where a
+`split_byte` child appends one, so the rerouted range cannot collide with any
+defined `split_byte` output — see the fix commit message for the full
+argument and the Scala-divergence review note).
 
-The harness NEVER lets that panic happen: every injection is width-probed
-before `inj` and fails CLOSED — the driver emits a structured
-`"dnf":true` line (reason `interpreter-split-hazard`) and the criterion bench
-skips the cell with an explicit note. The pinned ladders themselves are
-unchanged. With the current emitters the affected pattern-guard cells are
-EXACTLY (pinned by the
-`interpreter_split_hazard_zone_is_probed_and_smoke_cells_are_clear` unit
-test; per-step chain width is `10 + 9·links`, so every chain n ≥ 14 passes
-through the zone at its 14-to-27-links-remaining steps, widths 136–253):
+The harness no longer gates on the zone: the fail-closed
+`interpreter-split-hazard` DNF and the criterion skip are RETIRED, and every
+formerly-gated cell now RUNS. The offline width probe remains as PROVENANCE —
+the driver's run header records `max_eval_width` plus
+`in_split_regression_zone` (replacing the retired `interpreter_split_hazard`
+flag) so analysis can tell which results depend on the fixed routing — and
+the per-rep `catch_unwind` panic guard remains as belt-and-suspenders. The
+in-zone pattern-guard cells are EXACTLY (pinned by the
+`interpreter_split_regression_zone_cells_are_pinned_and_smoke_cells_are_clear`
+unit test, with the `interpreter_split_regression_width_129_evaluates`
+actual-eval spot check proving the zone evaluates; per-step chain width is
+`10 + 9·links`, so every chain n ≥ 14 passes through the zone at its
+14-to-27-links-remaining steps, widths 136–253):
 
-| hazard cell | in-zone injection width |
+| regression-zone cell | in-zone injection width |
 |---|---|
 | `lambda_chain/{sa,naive}/16` | 136–154 (steps with 14–16 links left) |
 | `lambda_chain/{sa,naive}/32` | 136–253 (steps with 14–27 links left) |
@@ -75,14 +88,11 @@ through the zone at its 14-to-27-links-remaining steps, widths 136–253):
 | `nested_spine/naive/16` | 174 |
 
 All other cells — including every smoke cell and the n = 32/64 single-
-injection cells (width > 256, `split_short` branch) — are clear. Measurable
-`lambda_chain` coverage on the current interpreter is therefore n ∈ {4, 8}
-(plus the smoke n = 2). Fixing the conversion belongs UPSTREAM in
-f1r3node and is consensus-relevant (the split id feeds unforgeable-name
-derivation), so this repository deliberately does not patch it; if the
-orchestrator wants the full chain ladder, escalate the one-line upstream fix
-(route widths > 128 through `split_short`, mirroring the Scala unsigned-byte
-semantics) and re-run.
+injection cells (width > 256, always the `split_short` branch) — stay clear
+of the zone. Measurable `lambda_chain` coverage is therefore the FULL ladder
+n ∈ {4, 8, 16, 32, 64} (plus the smoke n = 2). The upstream fix is
+consensus-relevant (the split id feeds unforgeable-name derivation) and lives
+only on that f1r3node branch — review before upstreaming further.
 
 Every rep VERIFIES the observed OUT multiset against the workload's
 directly-computed ground truth (per step for `lambda_chain`); a mismatch is a

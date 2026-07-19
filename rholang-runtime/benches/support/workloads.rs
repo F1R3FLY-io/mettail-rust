@@ -115,26 +115,30 @@ pub const NESTED_SPINE_FINGERPRINT: &str = "fp";
 /// `encoded-len-guard`) instead of being injected.
 pub const MAX_PROGRAM_ENCODED_LEN: usize = 8 * 1024 * 1024;
 
-/// The PRE-EXISTING f1r3node interpreter split hazard (fail-closed guard, this
-/// harness modifies no f1r3node code): `DebruijnInterpreter::eval_inner`
-/// splits its per-term `Blake2b512Random` with `split_byte(id.try_into()
-/// .unwrap())` for any Par whose top-level term list has `2 ..= 256` entries
-/// (`rholang/src/rust/interpreter/reduce.rs:227`), but `split_byte` takes an
-/// **`i8`** (`crypto/src/rust/hash/blake2b512_random.rs:97`) — so term index
-/// ≥ 128 overflows (`TryFromIntError(PosOverflow)` panic). A Par with MORE
-/// than 256 terms routes through `split_short(i16)` and is fine. The panic
-/// zone is therefore EXACTLY a parallel width in
-/// `INTERPRETER_SPLIT_HAZARD_MIN ..= INTERPRETER_SPLIT_HAZARD_MAX`, per eval
-/// level. [`max_eval_width`] computes the structural maximum over the eval
-/// levels of a composed program, and [`drive_single_injection`] fails CLOSED
-/// (a structured DNF, never an interpreter panic) when it lands in the zone.
-/// Fixing the conversion belongs upstream in f1r3node (it is
-/// consensus-relevant: the split id feeds unforgeable-name derivation).
-pub const INTERPRETER_SPLIT_HAZARD_MIN: usize = 129;
+/// The FORMERLY-PANICKING f1r3node interpreter split zone, kept as a
+/// REGRESSION zone: `DebruijnInterpreter::eval` splits its per-term
+/// `Blake2b512Random` by the 0-based term index; the old branch sent every
+/// parallel width `2 ..= 256` to `split_byte(i8)`
+/// (`rholang/src/rust/interpreter/reduce.rs`), so a term index ≥ 128
+/// overflowed the `i8` conversion (`crypto/src/rust/hash/
+/// blake2b512_random.rs:97`) and panicked with `TryFromIntError(PosOverflow)`
+/// — every width in `INTERPRETER_SPLIT_REGRESSION_MIN ..=
+/// INTERPRETER_SPLIT_REGRESSION_MAX` crashed, per eval level. FIXED in the
+/// f1r3node-rust-mettail working tree this repo path-depends on (branch
+/// `fix/split-byte-width-range`, commit 31b354e6): widths in [129, 256] now
+/// join the `split_short(i16)` path used by every larger width, and widths
+/// ≤ 128 keep byte-identical `split_byte` randomness. The harness no longer
+/// gates in-zone injections; instead [`cell_width_probe`] records the zone as
+/// PROVENANCE (which cells exercise the fixed range) and the driver-bin unit
+/// tests assert the zone WORKS: the 9-cell in-zone pin plus a width-129
+/// actual-eval spot check (`interpreter_split_regression_*` tests). The
+/// upstream fix is consensus-relevant (the split id feeds unforgeable-name
+/// derivation) — review before upstreaming beyond that branch.
+pub const INTERPRETER_SPLIT_REGRESSION_MIN: usize = 129;
 
-/// Upper bound (inclusive) of the pre-existing f1r3node split hazard zone —
-/// see [`INTERPRETER_SPLIT_HAZARD_MIN`].
-pub const INTERPRETER_SPLIT_HAZARD_MAX: usize = 256;
+/// Upper bound (inclusive) of the formerly-panicking f1r3node split
+/// regression zone — see [`INTERPRETER_SPLIT_REGRESSION_MIN`].
+pub const INTERPRETER_SPLIT_REGRESSION_MAX: usize = 256;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The registry: workloads × matchers × naive guard encodings
@@ -366,7 +370,7 @@ pub fn lambda_chain_subject(n: usize) -> GroundTerm {
 /// `⟦subtree⟧` whatever its tag — the same free-form-leaf discipline as the B2
 /// divergent-admission direct construction), so distinctness costs ONE node
 /// per leaf instead of a log-width encoding tree. That also keeps the comb's
-/// parallel eval width low — see [`INTERPRETER_SPLIT_HAZARD_MIN`].
+/// parallel eval width low — see [`INTERPRETER_SPLIT_REGRESSION_MIN`].
 pub fn swap_comb_leaf(index: usize) -> GroundTerm {
     GroundTerm::nullary(format!("L{index}"))
 }
@@ -985,8 +989,9 @@ fn top_level_width(par: &Par) -> usize {
 /// its own `Par` (`new`/bundle bodies, receive bodies and conditions, match
 /// case bodies, conditional branches). Send DATA is deliberately not walked —
 /// it is produced as data, not evaluated (the Track-B workloads never
-/// re-evaluate received values as processes). Used by the pre-injection
-/// fail-closed guard for the [`INTERPRETER_SPLIT_HAZARD_MIN`] zone.
+/// re-evaluate received values as processes). Used by the offline width probe
+/// ([`cell_width_probe`]) for the [`INTERPRETER_SPLIT_REGRESSION_MIN`]
+/// provenance zone.
 pub fn max_eval_width(par: &Par) -> usize {
     let mut width = top_level_width(par);
     let mut visit = |child: &Option<Par>| {
@@ -1059,21 +1064,20 @@ fn composed_program_for(
     Ok(program.append(call))
 }
 
-/// The pre-injection guards shared by every drive: the pre-existing f1r3node
-/// `split_byte(i8)` hazard zone (see [`INTERPRETER_SPLIT_HAZARD_MIN`]) and the
+/// The pre-injection guard shared by every drive: the
 /// [`MAX_PROGRAM_ENCODED_LEN`] size bound. Fails CLOSED with a structured
-/// reason — never lets the interpreter panic.
+/// reason.
+///
+/// RETIRED (interpreter fix): this guard previously ALSO failed closed on the
+/// f1r3node `split_byte(i8)` panic zone (`interpreter-split-hazard` DNF for
+/// any parallel eval width in [129, 256]). The interpreter is fixed — see
+/// [`INTERPRETER_SPLIT_REGRESSION_MIN`] (f1r3node branch
+/// `fix/split-byte-width-range`, commit 31b354e6) — so the width gate is
+/// gone: in-zone cells now RUN, and the driver-bin unit tests assert the zone
+/// works (9-cell in-zone pin + a width-129 actual-eval spot check). The
+/// driver's per-rep `catch_unwind` panic guard remains as belt-and-suspenders
+/// against any future interpreter panic.
 fn guard_composed_program(program: &Par) -> Result<(), WorkloadFailure> {
-    let width = max_eval_width(program);
-    if (INTERPRETER_SPLIT_HAZARD_MIN..=INTERPRETER_SPLIT_HAZARD_MAX).contains(&width) {
-        return Err(WorkloadFailure::new(format!(
-            "interpreter-split-hazard: composed program has parallel eval width {width}, inside \
-             the pre-existing f1r3node panic zone [{INTERPRETER_SPLIT_HAZARD_MIN}, \
-             {INTERPRETER_SPLIT_HAZARD_MAX}] (reduce.rs:227 `split_byte(id.try_into().unwrap())` \
-             with `split_byte(i8)` — TryFromIntError(PosOverflow) at term index >= 128); failing \
-             closed instead of panicking the interpreter"
-        )));
-    }
     let encoded_len = program.encoded_len();
     if encoded_len >= MAX_PROGRAM_ENCODED_LEN {
         return Err(WorkloadFailure::new(format!(
@@ -1089,25 +1093,29 @@ fn guard_composed_program(program: &Par) -> Result<(), WorkloadFailure> {
 /// `lambda_chain` one composed program per GROUND-TRUTH step subject (the
 /// observed reducts are verified equal to those, so the probe is exact) — and
 /// reports both the maximum width and whether ANY single injection's width
-/// falls in the split hazard zone. A multi-step rep passes through EVERY
-/// intermediate width, so the hazard predicate is per-INJECTION, not
-/// max-based: e.g. an n = 32 λ-chain's first steps are wide (> 256, the safe
-/// `split_short` branch) but its 14-to-16-links-remaining steps land inside
-/// [129, 256] and would panic — the probe flags them.
+/// falls in the formerly-panicking split regression zone. A multi-step rep
+/// passes through EVERY intermediate width, so the zone predicate is
+/// per-INJECTION, not max-based: e.g. an n = 32 λ-chain's first steps are
+/// wide (> 256, the always-safe `split_short` branch) but its
+/// 14-to-27-links-remaining steps land inside [129, 256] — safe only on the
+/// FIXED interpreter (see [`INTERPRETER_SPLIT_REGRESSION_MIN`]); the probe
+/// records them as provenance.
 pub struct CellWidthProbe {
     /// The maximum [`max_eval_width`] across the cell's injections (recorded
     /// in the driver's run header as a size metric).
     pub max_eval_width: usize,
-    /// The FIRST per-injection width inside the split hazard zone, if any —
-    /// `Some` means every rep of this cell fails closed
-    /// (`interpreter-split-hazard`) at that injection.
-    pub hazard_width: Option<usize>,
+    /// The FIRST per-injection width inside the formerly-panicking split
+    /// regression zone, if any — PROVENANCE, not a gate: `Some` means this
+    /// cell's results exercise (and depend on) the fixed interpreter's
+    /// [129, 256] `split_short` routing.
+    pub regression_zone_width: Option<usize>,
 }
 
-/// Probe one cell's injection widths — see [`CellWidthProbe`]. The criterion
-/// bench uses this to SKIP (with an explicit note) cells that would fail
-/// closed on the interpreter split hazard; the driver records it in its run
-/// header.
+/// Probe one cell's injection widths — see [`CellWidthProbe`]. The driver
+/// records the probe in its run header (`max_eval_width` +
+/// `in_split_regression_zone`); the driver-bin unit tests pin which cells
+/// exercise the regression zone. Nothing gates on it anymore (the interpreter
+/// is fixed — [`INTERPRETER_SPLIT_REGRESSION_MIN`]).
 pub fn cell_width_probe(
     compiled: &CompiledWorkload,
     matcher: MatcherKind,
@@ -1118,11 +1126,11 @@ pub fn cell_width_probe(
         WorkloadKind::NestedSpine => usize::try_from(compiled.n).expect("k fits usize"),
         _ => 0,
     };
-    let mut probe = CellWidthProbe { max_eval_width: 0, hazard_width: None };
+    let mut probe = CellWidthProbe { max_eval_width: 0, regression_zone_width: None };
     let mut record = |width: usize| {
         probe.max_eval_width = probe.max_eval_width.max(width);
-        if probe.hazard_width.is_none() && width_in_split_hazard_zone(width) {
-            probe.hazard_width = Some(width);
+        if probe.regression_zone_width.is_none() && width_in_split_regression_zone(width) {
+            probe.regression_zone_width = Some(width);
         }
     };
     match compiled.kind {
@@ -1161,18 +1169,19 @@ pub fn cell_width_probe(
 }
 
 /// Whether `width` (a [`cell_max_eval_width`] result) falls in the
-/// pre-existing f1r3node split hazard zone — the fail-closed predicate the
-/// bench's skip logic and the driver's header share.
-pub fn width_in_split_hazard_zone(width: usize) -> bool {
-    (INTERPRETER_SPLIT_HAZARD_MIN..=INTERPRETER_SPLIT_HAZARD_MAX).contains(&width)
+/// formerly-panicking f1r3node split regression zone — the PROVENANCE
+/// predicate the probe and the driver-bin regression pins share (nothing
+/// fails closed on it anymore; see [`INTERPRETER_SPLIT_REGRESSION_MIN`]).
+pub fn width_in_split_regression_zone(width: usize) -> bool {
+    (INTERPRETER_SPLIT_REGRESSION_MIN..=INTERPRETER_SPLIT_REGRESSION_MAX).contains(&width)
 }
 
 /// Drive ONE injection on a FRESH counting runtime and return its
 /// [`BenchRunResult`] plus the emission/bringup spans. `program` composition
 /// happens inside the measured `emission` span; runtime construction is the
 /// separate `bringup` span; `bench_inj_and_read` provides `build`/`inj`/
-/// `readback`. The [`guard_composed_program`] fail-closed guards (interpreter
-/// split hazard + [`MAX_PROGRAM_ENCODED_LEN`]) run BEFORE any injection.
+/// `readback`. The [`guard_composed_program`] fail-closed guard
+/// ([`MAX_PROGRAM_ENCODED_LEN`]) runs BEFORE any injection.
 async fn drive_single_injection(
     kind: WorkloadKind,
     matcher: MatcherKind,

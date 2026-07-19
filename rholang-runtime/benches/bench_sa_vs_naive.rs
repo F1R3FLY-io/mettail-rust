@@ -58,10 +58,13 @@ use workloads::{
 };
 
 /// Whether a `(workload, matcher, encoding, n)` cell must be SKIPPED, with the
-/// printed reason: the consume-test single-candidate restriction, or the
-/// pre-existing f1r3node `split_byte(i8)` panic zone (the driver records the
-/// same cells as fail-closed `"dnf"` lines; criterion cannot represent a dnf,
-/// so the cell is skipped LOUDLY — the ladder itself stays pinned).
+/// printed reason: the consume-test single-candidate restriction, or an
+/// emitter that fails closed offline. The formerly-skipped f1r3node
+/// `split_byte(i8)` panic zone (parallel eval width in [129, 256]) is FIXED —
+/// see `INTERPRETER_SPLIT_REGRESSION_MIN` in the shared module (f1r3node
+/// branch `fix/split-byte-width-range`, commit 31b354e6) — so in-zone cells
+/// now RUN; the offline probe remains only as the emitter fail-closed check
+/// (and as provenance in the driver's header).
 fn cell_skip_reason(
     kind: WorkloadKind,
     matcher: MatcherKind,
@@ -77,13 +80,7 @@ fn cell_skip_reason(
     let compiled = compile_workload(kind, n)
         .unwrap_or_else(|error| panic!("compile_workload({}, {n}) failed: {error}", kind.name()));
     match cell_width_probe(&compiled, matcher, encoding) {
-        Ok(probe) => probe.hazard_width.map(|width| {
-            format!(
-                "an injection's parallel eval width ({width}) lies in the pre-existing f1r3node \
-                 split_byte(i8) panic zone [129, 256] (reduce.rs:227) — fails closed, see the \
-                 driver's dnf lines"
-            )
-        }),
+        Ok(_probe) => None,
         Err(failure) => Some(format!("emitter fails closed offline: {}", failure.reason)),
     }
 }

@@ -274,17 +274,23 @@ fn header_line(args: &DriverArgs, subject_node_count: usize, probe: &Option<Cell
     }));
     // `max_eval_width = -1` when the offline probe itself fails closed (the
     // per-rep drive then emits the real reason as dnf lines).
-    let (max_eval_width, split_hazard) = match probe {
+    // `in_split_regression_zone` is PROVENANCE: some injection of this cell
+    // has parallel eval width in [129, 256], the formerly-panicking f1r3node
+    // split zone — safe on the fixed interpreter (see
+    // `INTERPRETER_SPLIT_REGRESSION_MIN` in the shared module), recorded so
+    // analysis can tell which cells depend on the fix. (This field replaces
+    // the retired `interpreter_split_hazard` fail-closed flag.)
+    let (max_eval_width, in_regression_zone) = match probe {
         Some(probe) => (
             i64::try_from(probe.max_eval_width).expect("eval width fits i64"),
-            probe.hazard_width.is_some(),
+            probe.regression_zone_width.is_some(),
         ),
         None => (-1, false),
     };
     line.push_str(&format!(
         ",\"n\":{},\"reps\":{},\"subject_node_count\":{subject_node_count},\
          \"expected_firings\":{},\"max_eval_width\":{max_eval_width},\
-         \"interpreter_split_hazard\":{split_hazard}}}}}",
+         \"in_split_regression_zone\":{in_regression_zone}}}}}",
         args.n,
         args.reps,
         args.workload.expected_firings(args.n),
@@ -348,11 +354,11 @@ fn main() -> ExitCode {
     };
     let probe = cell_width_probe(&compiled, args.matcher, args.encoding).ok();
     emit(&header_line(&args, node_count(&compiled.subject), &probe), &mut sink);
-    if let Some(width) = probe.as_ref().and_then(|probe| probe.hazard_width) {
+    if let Some(width) = probe.as_ref().and_then(|probe| probe.regression_zone_width) {
         eprintln!(
             "note: one of this cell's injections has parallel eval width {width}, inside the \
-             pre-existing f1r3node split_byte(i8) panic zone [129, 256]; every rep will fail \
-             CLOSED as \"dnf\":true (interpreter-split-hazard) rather than panic"
+             FORMERLY-panicking f1r3node split zone [129, 256] — running against the fixed \
+             interpreter (fix/split-byte-width-range: [129, 256] routes through split_short)"
         );
     }
 
@@ -717,24 +723,28 @@ mod workloads_tests {
         assert!(WorkloadKind::SwapComb.admitted_size(0).is_err(), "n = 0 is rejected");
     }
 
-    /// The pre-existing f1r3node `split_byte(i8)` hazard zone (parallel eval
-    /// width 129..=256 at ANY single eval level, reduce.rs:227 — see the
-    /// constants' rustdoc in the shared module): the SMOKE cells are all far
-    /// below the zone, and the full-ladder hazard cells are EXACTLY pinned —
-    /// the λ-chain ladder n ∈ {16, 32, 64} (per-step width is 10 + 9·links,
-    /// so every chain n ≥ 14 passes through in-zone steps at 14–27 links
-    /// remaining, widths 136–253), `swap_comb` n = 16 (width 175), and
-    /// `nested_spine` naive n = 16 (width 174). Those cells fail CLOSED
-    /// (driver dnf /
-    /// criterion skip), never panicking the interpreter; every other pinned
-    /// cell is clear (n = 32/64 single-injection cells exceed 256 and take
-    /// the safe `split_short(i16)` branch).
+    /// The FORMERLY-panicking f1r3node `split_byte(i8)` zone (parallel eval
+    /// width 129..=256 at ANY single eval level — see the regression
+    /// constants' rustdoc in the shared module), FIXED on the f1r3node branch
+    /// `fix/split-byte-width-range` (commit 31b354e6: [129, 256] routes
+    /// through `split_short(i16)`; widths ≤ 128 byte-identical): the SMOKE
+    /// cells are all far below the zone, and the full-ladder in-zone cells
+    /// are EXACTLY pinned — the λ-chain ladder n ∈ {16, 32, 64} (per-step
+    /// width is 10 + 9·links, so every chain n ≥ 14 passes through in-zone
+    /// steps at 14–27 links remaining, widths 136–253), `swap_comb` n = 16
+    /// (width 175), and `nested_spine` naive n = 16 (width 174). Those cells
+    /// now RUN — the pin is the regression ASSERTION documenting exactly
+    /// which ladder cells exercise (and depend on) the fixed `split_short`
+    /// routing, and `interpreter_split_regression_width_129_evaluates` below
+    /// proves the zone actually evaluates; every other pinned cell stays
+    /// clear of the zone (n = 32/64 single-injection cells exceed 256 and
+    /// take the always-safe `split_short(i16)` branch).
     #[test]
-    fn interpreter_split_hazard_zone_is_probed_and_smoke_cells_are_clear() {
+    fn interpreter_split_regression_zone_cells_are_pinned_and_smoke_cells_are_clear() {
         use super::workloads::{cell_width_probe, ALL_WORKLOADS};
         mettail_runtime::clear_var_cache();
 
-        // Smoke cells (smoke.sh): every one must be OUTSIDE the hazard zone.
+        // Smoke cells (smoke.sh): every one must be OUTSIDE the zone.
         let smoke_cells: [(WorkloadKind, u64); 5] = [
             (WorkloadKind::LambdaChain, 2),
             (WorkloadKind::SwapComb, 4),
@@ -749,9 +759,9 @@ mod workloads_tests {
                     cell_width_probe(&compiled, matcher, GuardEncodingKind::PatternGuard)
                         .expect("smoke cell emits");
                 assert_eq!(
-                    probe.hazard_width,
+                    probe.regression_zone_width,
                     None,
-                    "smoke cell {}/{} n={n} has an injection INSIDE the hazard zone \
+                    "smoke cell {}/{} n={n} has an injection INSIDE the regression zone \
                      (max width {})",
                     kind.name(),
                     matcher.name(),
@@ -760,11 +770,11 @@ mod workloads_tests {
             }
         }
 
-        // Full-ladder probe: collect and PIN the hazard cells (the protocol
-        // documents these; the harness fails them closed instead of letting
-        // the interpreter panic — the empirically-observed gate-3 panic was
-        // lambda_chain/16).
-        let mut hazard_cells: Vec<String> = Vec::new();
+        // Full-ladder probe: collect and PIN the in-zone cells (the protocol
+        // documents these as the cells whose results depend on the fixed
+        // interpreter; before the fix they failed closed — the
+        // empirically-observed gate-3 panic was lambda_chain/16).
+        let mut in_zone_cells: Vec<String> = Vec::new();
         for kind in ALL_WORKLOADS {
             for &n in kind.full_sizes() {
                 let compiled = compile_workload(kind, n).expect("full-ladder cell compiles");
@@ -777,19 +787,20 @@ mod workloads_tests {
                         kind.name(),
                         matcher.name(),
                         probe.max_eval_width,
-                        match probe.hazard_width {
-                            Some(width) => format!("  << HAZARD (injection width {width})"),
+                        match probe.regression_zone_width {
+                            Some(width) =>
+                                format!("  << REGRESSION ZONE (injection width {width})"),
                             None => String::new(),
                         },
                     );
-                    if probe.hazard_width.is_some() {
-                        hazard_cells.push(format!("{}/{}/{n}", kind.name(), matcher.name()));
+                    if probe.regression_zone_width.is_some() {
+                        in_zone_cells.push(format!("{}/{}/{n}", kind.name(), matcher.name()));
                     }
                 }
             }
         }
         assert_eq!(
-            hazard_cells,
+            in_zone_cells,
             [
                 "lambda_chain/sa/16",
                 "lambda_chain/naive/16",
@@ -801,9 +812,64 @@ mod workloads_tests {
                 "swap_comb/naive/16",
                 "nested_spine/naive/16",
             ],
-            "the pinned full-ladder hazard-cell set changed — update the protocol docs \
-             (README.md) alongside this pin"
+            "the pinned full-ladder regression-zone cell set changed — update the protocol \
+             docs (README.md) alongside this pin"
         );
+    }
+
+    /// The fast ACTUAL-EVAL regression spot check for the formerly-panicking
+    /// f1r3node split zone: a Par of 129 parallel sends (the zone's first
+    /// width, `INTERPRETER_SPLIT_REGRESSION_MIN`) is injected on a real
+    /// counting runtime and must reach quiescence. On the unfixed interpreter
+    /// this panicked with `TryFromIntError(PosOverflow)` at term index 128
+    /// (`split_byte(i8)` in reduce.rs); on the fixed interpreter (f1r3node
+    /// branch `fix/split-byte-width-range`, commit 31b354e6) it routes
+    /// through `split_short(i16)`.
+    #[test]
+    fn interpreter_split_regression_width_129_evaluates() {
+        use super::workloads::INTERPRETER_SPLIT_REGRESSION_MIN;
+        use crypto::rust::hash::blake2b512_random::Blake2b512Random;
+        use mettail_rholang_runtime::bench_runtime_with_counters;
+        use models::rhoapi::{Par, Send};
+        use models::rust::utils::new_gint_par;
+        use rho_pure_eval::Env;
+        use rholang::rust::interpreter::accounting::costs::Cost;
+        use rholang::rust::interpreter::accounting::has_cost::HasCost;
+        use rholang::rust::interpreter::rho_runtime::RhoRuntime;
+
+        let width = INTERPRETER_SPLIT_REGRESSION_MIN; // 129
+        let mut sends: Vec<Send> = Vec::with_capacity(width);
+        for i in 0..width {
+            sends.push(Send {
+                chan: Some(new_gint_par(i as i64, Vec::new(), false)),
+                data: vec![new_gint_par(i as i64, Vec::new(), false)],
+                persistent: false,
+                locally_free: Vec::new(),
+                connective_used: false,
+            });
+        }
+        let mut wide_par = Par::default();
+        wide_par.sends = sends;
+
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("build the current-thread tokio runtime");
+        runtime.block_on(async {
+            let (rho_runtime, _comm_counters, _match_counters) =
+                bench_runtime_with_counters(Vec::new(), OUT_CHANNEL)
+                    .await
+                    .expect("counting runtime bring-up");
+            // The same per-injection funding `bench_inj_and_read` performs
+            // (mirrors `inj_on_runtime`'s `Cost::unsafe_max()`).
+            rho_runtime.cost().set(Cost::unsafe_max());
+            rho_runtime
+                .inj(wide_par, Env::new(), Blake2b512Random::create_from_bytes(&[]))
+                .await
+                .expect(
+                    "width-129 Par must evaluate without the split_byte(i8) PosOverflow panic",
+                );
+        });
     }
 
     /// The stable names round-trip through the registries (the driver's CLI
