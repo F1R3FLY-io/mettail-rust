@@ -519,6 +519,16 @@ the USER's efficiency gate is escalated to the protocol owner with the
 complete evidence pack**. This report is that pack's verdict document: it
 states the rule's mechanical output; the decision rests with the user.
 
+> **Decision (2026-07-19, protocol owner).** Keep **both** strategies. The set-automaton
+> network remains the production in-Rho matcher (the campaign proceeds on it), and the naive
+> per-location emitter remains maintained under the `bench-naive-baseline` feature as the
+> measured, sound-envelope alternative. The pre-registered rule's mechanical output (retarget)
+> is explicitly **not adopted at this time**; the retention is **experiment-contingent** — the
+> scheduled E-6a PathMap subject indexing (which targets the exact per-site static-replication
+> penalty behind the automaton's only measured loss), E-1 scion grafting on the persistent
+> regime, and the post-A-S5 in-Rho-driver rematch are the paths expected to supply the
+> automaton's edge. If they do not, this decision is revisited against this same evidence pack.
+
 **The keep-list — regardless of the decision** (pre-registered in the same
 clause, restated by the decision record):
 
