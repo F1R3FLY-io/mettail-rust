@@ -17,6 +17,62 @@
 //! | (iv) `swap_small(k)` | a single `Swap(A, B)` under k−1 inert `Pair` wrappers (k = 1 is the bare root redex) | both drivers (locate-all vs comprehension) — the crossover floor | 1 firing; { Pair(B, A) } |
 //! | (v) `wrap_swap_ctx(depth)` | CtxDemo `Wrap(Swap(A, B))` (depth 1) | both CONTEXTUAL drivers (`contextual_match_call_par` vs `naive_kt_contextual_match_call_par`) | 1 firing; { Wrap(Pair(B, A)) } |
 //! | (vi) `nested_spine(k)` | direct-construction `f(g(x))` entry over a right `Pair` comb of k head-`f` candidate sites, ONE true redex per site (the B2 divergent-admission test's shape) | naive in-Rho comprehension vs the production host-σ REPLAY fallback (host-computed σ fired as ground accept-send COMMs against the SAME σ-echo receivers) | k firings; multiset { L₀ … L₍ₖ₋₁₎ } |
+//! | (vii) `multi_rule_shared(n = 100·r + s)` | direct-construction r-rule PATTERN SET `Rᵢ(Sˢ(x))`, i ∈ 0..r (pairwise-DISTINCT roots `Rᵢ`, ONE SHARED non-root sub-pattern chain `Sˢ(x)`), over a right `Pair` comb of r redexes `Rᵢ(Sˢ(Kᵢ))` | per-rule drive at admitted sites (the production per-site `multi_pattern_receiver_network_par` — ALL r entries' interned automaton — at each of the r sites over ONE spread) vs ONE naive comprehension call | r firings; multiset { K₀ … K₍ᵣ₋₁₎ } (rule i's σ[x], routed through its OWN accept channel's σ-echo) |
+//!
+//! # (vii) `multi_rule_shared` — the multi-rule pattern-set sharing regime (amended W1)
+//!
+//! The regime the set automaton was DESIGNED for: ONE subject matched against
+//! r rules SIMULTANEOUSLY. The optimized side compiles all r rules into ONE
+//! interned automaton — the `Sˢ(x)` sub-pattern chain interns to a SINGLE
+//! shared state set across every entry (`state_count = r + s + 1` vs the
+//! per-rule sum `r·(s + 2)`; asserted by the
+//! `multi_rule_shared_state_sharing_is_real` unit test) — and matches the
+//! subject once per site through the shared root dispatch. The naive side
+//! installs r independent per-rule receivers (the Appendix-A per-rule
+//! comprehension), each independently descending its own copy of the shared
+//! sub-structure.
+//!
+//! **PRE-REGISTERED prediction (the amended-W1 exponent leg, pgmcp experiment
+//! 144 amendment):** per-cell `matching_tau` and `attempts` scale ~O(subject)
+//! on the sa column but ~O(r · subject-overlap) on the naive column, so the
+//! naive/sa ratio grows with r (and with s at fixed r). The smoke HARD-asserts
+//! the signal exists at r = 4, s = 2 (naive `matching_tau` > sa
+//! `matching_tau`); if it does not hold, that is a REFUTATION to surface —
+//! never weaken the assertion. (Context: the B6 smoke FINDING in
+//! `docs/benchmarks/data/sa-vs-naive/README.md` already established
+//! sa-vs-naive counter EQUALITY on every SINGLE-rule drive, and noted the
+//! naive blow-up "needs multi-RULE root sharing" — which the naive
+//! `OverlappingTagDemand` gate fails closed on. This family is the closest
+//! BOTH-columns-admitted approach to that regime: maximal cross-rule
+//! sub-pattern sharing under pairwise-distinct roots.)
+//!
+//! **Admission (why this exact shape passes BOTH gates):**
+//!
+//! * Naive (`NaiveKtUnsupported::OverlappingTagDemand`): the roots `Rᵢ` are
+//!   pairwise distinct (no duplicate-root demand) and the shared op `S` is not
+//!   any rule's root op (no nested-vs-root demand) — pinned by
+//!   `multi_rule_shared_generator_pins_shape_ground_truth_and_gates`.
+//! * Optimized: the ONE-call locate-all
+//!   ([`in_rho_match_all_sites_call_par`](mettail_rholang_codegen::in_rho_match_all_sites_call_par))
+//!   FAILS CLOSED for r ≥ 2 — its `NestedEntryMultiSite` gate counts candidate
+//!   sites ACROSS entries (`sites.len() > 1 && !ruleset_all_entries_flat`),
+//!   not per entry, so r distinct-rooted nested redexes trip it (pinned by the
+//!   same unit test). The sa column therefore drives PER-RULE AT ADMITTED
+//!   SITES: each of the r sites is exactly the admitted nested-ruleset
+//!   ≤ 1-site install, emitted by the SAME production per-site emitter
+//!   (`multi_pattern_receiver_network_par`, all r entries' shared automaton),
+//!   composed over ONE spread. That composition is contention-free FOR THIS
+//!   FAMILY because (a) the r sites are pairwise non-ancestral comb-leaf
+//!   positions (disjoint `loc:`/`cap:` channel prefixes; pinned by
+//!   `multi_rule_shared_sites_are_pairwise_non_ancestral`) and (b) no rule
+//!   root op occurs at any non-root pattern position (the naive gate's own
+//!   static condition), so no installed network's descent read can alias
+//!   another installed network's root read — exactly the hazard
+//!   `NestedEntryMultiSite` conservatively guards against.
+//!
+//! Size encoding: `n = 100·r + s` (r = `n / 100` rules, s = `n % 100` shared
+//! `S`-chain depth; both ≥ 1). The full ladder is the cross product
+//! r ∈ {2, 4, 8} × s ∈ {1, 2, 3}; the smoke cell is n = 402 (r = 4, s = 2).
 //!
 //! `wrap_swap_ctx` depth 2 (`Wrap(Wrap(Swap(A, B)))`) FAILS CLOSED on BOTH
 //! contextual emitters (the single-congruence hole bijection admits only the
@@ -43,12 +99,17 @@
 //!   locate-all (`AutomatonUnsupported::NestedEntryMultiSite`, the B0 admission
 //!   matrix) — hence the per-step root drive for (i) and the REPLAY column for
 //!   (vi): the honest production comparison in the fail-closed regime.
+//! * `multi_rule_shared` r ≥ 2 likewise fails closed on the ONE-CALL locate-all
+//!   (the same across-entry gate), but its sa column keeps the AUTOMATON via
+//!   the per-rule drive at admitted sites (module rustdoc §(vii)) — the
+//!   amendment's explicit alternative to a replay column.
 //! * `swap_comb` / `swap_small` admit on BOTH columns at every size (flat-entry
 //!   co-installation is contention-free).
 //! * `ConsumeTest` is admitted ONLY where the subject is single-candidate
 //!   (the B2 partial-fire hazard exclusion): `swap_small` (all k),
 //!   `lambda_chain` (each per-step root drive installs exactly one receiver),
-//!   `wrap_swap_ctx` (one hole premise), and `swap_comb` m = 1.
+//!   `wrap_swap_ctx` (one hole premise), `swap_comb` m = 1, and
+//!   `multi_rule_shared` r = 1.
 //!
 //! # What a rep is (and what is timed)
 //!
@@ -65,18 +126,21 @@
 //! can time warm (emission + build + inj + readback) and cold (+ compile +
 //! bringup) regions exactly. Verification/decode time is in NO measured span.
 
+use std::collections::BTreeSet;
 use std::time::{Duration, Instant};
 
 use dovetail::rules::Pattern;
-use dovetail::set_automaton::{PatternId, SetAutomaton};
+use dovetail::set_automaton::{AutomatonNode, PatternId, SetAutomaton};
 use mettail_languages::ctxdemo::CtxDemoLanguage;
 use mettail_languages::lambdademo::LambdaDemoLanguage;
 use mettail_languages::swapdemo::SwapDemoLanguage;
 use mettail_rholang_codegen::{
     contextual_match_call_par, in_rho_match_all_sites_call_par, in_rho_match_call_par,
-    naive_kt_contextual_match_call_par, naive_kt_entry_receiver_par, naive_kt_match_call_par,
-    reflect_ground_term_par, spread_term_par, GroundTerm, InRhoMatchingRuleset,
-    NaiveGuardEncoding, BOUND_VAR_REFLECT_LABEL, LAMBDA_REFLECT_LABEL, PEANO_ZERO_REFLECT_LABEL,
+    multi_pattern_receiver_network_par, naive_kt_contextual_match_call_par,
+    naive_kt_entry_receiver_par, naive_kt_match_call_par, reflect_ground_term_par,
+    spread_child_location, spread_term_par, AutomatonAcceptTarget, GroundTerm,
+    InRhoMatchingRuleset, NaiveGuardEncoding, BOUND_VAR_REFLECT_LABEL, LAMBDA_REFLECT_LABEL,
+    PEANO_ZERO_REFLECT_LABEL,
 };
 use mettail_rholang_runtime::{
     bench_inj_and_read, bench_runtime_with_counters, compile_bench_language,
@@ -109,6 +173,21 @@ pub const NESTED_SPINE_ACCEPT: &str = "sa:fg";
 /// The direct-construction language fingerprint of the `nested_spine` workload
 /// (admission-matrix style — no demo language exists for `f(g(x))`).
 pub const NESTED_SPINE_FINGERPRINT: &str = "fp";
+
+/// The direct-construction language fingerprint of the `multi_rule_shared`
+/// workload (admission-matrix style — no demo language carries a multi-rule
+/// shared-sub-pattern set; the B6 FINDING pinned that no bundled demo language
+/// exercises multi-rule sharing at all).
+pub const MULTI_RULE_SHARED_FINGERPRINT: &str = "fp";
+
+/// The direct-construction accept channel of `multi_rule_shared` rule `i` —
+/// one channel PER RULE, so each firing is routed to its own one-shot σ-echo
+/// and the observed value is attributable to exactly one rule (only entry i's
+/// network/receiver can fire `sa:mrs:i`, and subject site i is the only
+/// head-`Rᵢ` position).
+pub fn multi_rule_shared_accept(rule: usize) -> String {
+    format!("sa:mrs:{rule}")
+}
 
 /// Per-rep emitted-program size guard: an emission whose COMPOSED program
 /// exceeds this `prost` encoding length is recorded as a DNF (reason
@@ -144,7 +223,7 @@ pub const INTERPRETER_SPLIT_REGRESSION_MAX: usize = 256;
 // The registry: workloads × matchers × naive guard encodings
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// The five generated Track-B workload families (see the module rustdoc table;
+/// The six generated Track-B workload families (see the module rustdoc table;
 /// (iii) AC characterization is scoped out and has NO generator).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WorkloadKind {
@@ -158,15 +237,19 @@ pub enum WorkloadKind {
     WrapSwapCtx,
     /// (vi) The nested `f(g(x))` k-candidate spine (naive vs REPLAY).
     NestedSpine,
+    /// (vii) The r-rule shared-sub-pattern set `Rᵢ(Sˢ(x))` over an r-redex
+    /// comb (`n = 100·r + s`) — the amended-W1 pattern-set sharing regime.
+    MultiRuleShared,
 }
 
 /// Every generated workload, in protocol order.
-pub const ALL_WORKLOADS: [WorkloadKind; 5] = [
+pub const ALL_WORKLOADS: [WorkloadKind; 6] = [
     WorkloadKind::LambdaChain,
     WorkloadKind::SwapComb,
     WorkloadKind::SwapSmall,
     WorkloadKind::WrapSwapCtx,
     WorkloadKind::NestedSpine,
+    WorkloadKind::MultiRuleShared,
 ];
 
 /// A matcher column of the head-to-head.
@@ -216,13 +299,14 @@ impl WorkloadKind {
             WorkloadKind::SwapSmall => "swap_small",
             WorkloadKind::WrapSwapCtx => "wrap_swap_ctx",
             WorkloadKind::NestedSpine => "nested_spine",
+            WorkloadKind::MultiRuleShared => "multi_rule_shared",
         }
     }
 
     /// The FULL-protocol size ladder (the smoke ladder is the small prefix
     /// documented in `docs/benchmarks/data/sa-vs-naive/README.md` and driven by
     /// `smoke.sh`: lambda_chain {2, 4}, swap_comb {2, 4}, swap_small {2},
-    /// wrap_swap_ctx {1}, nested_spine {2}).
+    /// wrap_swap_ctx {1}, nested_spine {2}, multi_rule_shared {402}).
     pub fn full_sizes(self) -> &'static [u64] {
         match self {
             WorkloadKind::LambdaChain => &[4, 8, 16, 32, 64],
@@ -233,6 +317,12 @@ impl WorkloadKind {
             // so the admitted ladder is exactly {1}.
             WorkloadKind::WrapSwapCtx => &[1],
             WorkloadKind::NestedSpine => &[2, 4, 8, 16],
+            // The r × s cross product (n = 100·r + s): the r-scaling leg at
+            // every shared depth AND the s-scaling leg at every rule count —
+            // r ∈ {2, 4, 8} × s ∈ {1, 2, 3}.
+            WorkloadKind::MultiRuleShared => {
+                &[201, 202, 203, 401, 402, 403, 801, 802, 803]
+            },
         }
     }
 
@@ -247,6 +337,12 @@ impl WorkloadKind {
             // sites (B0), so the honest optimized-side column is the
             // production host-σ REPLAY fallback.
             WorkloadKind::NestedSpine => &[MatcherKind::Naive, MatcherKind::Replay],
+            // The ONE-CALL locate-all likewise fails closed for r ≥ 2 (its
+            // gate counts candidate sites ACROSS entries), but the per-rule
+            // drive at admitted sites keeps the AUTOMATON on the optimized
+            // column (see the module rustdoc §(vii)) — so this cell is a
+            // genuine sa-vs-naive head-to-head, not a replay comparison.
+            WorkloadKind::MultiRuleShared => &[MatcherKind::Sa, MatcherKind::Naive],
         }
     }
 
@@ -260,6 +356,8 @@ impl WorkloadKind {
             WorkloadKind::SwapSmall => 1,
             WorkloadKind::WrapSwapCtx => 1,
             WorkloadKind::NestedSpine => n,
+            // One firing per rule: r = n / 100 (the `100·r + s` encoding).
+            WorkloadKind::MultiRuleShared => n / 100,
         }
     }
 
@@ -277,8 +375,26 @@ impl WorkloadKind {
                  wrap_swap_ctx_depth_two_fails_closed_on_both_emitters unit test)"
             ));
         }
+        if self == WorkloadKind::MultiRuleShared && (n < 100 || n % 100 == 0) {
+            return Err(format!(
+                "multi_rule_shared sizes encode n = 100·r + s (r = n/100 rules ≥ 1, \
+                 s = n%100 shared-chain depth in 1..=99): {n} decodes to r = {} s = {}",
+                n / 100,
+                n % 100,
+            ));
+        }
         Ok(())
     }
+}
+
+/// Decode a `multi_rule_shared` size parameter `n = 100·r + s` into
+/// `(r, s)` — the rule count and the shared `S`-chain depth. Callers must have
+/// validated `n` through [`WorkloadKind::admitted_size`] first (r ≥ 1, s ≥ 1).
+pub fn multi_rule_shared_params(n: u64) -> (usize, usize) {
+    (
+        usize::try_from(n / 100).expect("rule count fits usize"),
+        usize::try_from(n % 100).expect("shared depth fits usize"),
+    )
 }
 
 impl MatcherKind {
@@ -331,6 +447,9 @@ pub fn consume_test_admitted(workload: WorkloadKind, n: u64) -> bool {
         WorkloadKind::WrapSwapCtx => true,
         // k ≥ 2 candidate receivers by construction.
         WorkloadKind::NestedSpine => false,
+        // r candidate receivers (one per rule); single-candidate only at
+        // r = 1 (n = 100 + s) — the same discipline as `swap_comb` m = 1.
+        WorkloadKind::MultiRuleShared => n / 100 == 1,
     }
 }
 
@@ -490,6 +609,131 @@ pub fn nested_spine_ruleset() -> InRhoMatchingRuleset {
     }
 }
 
+/// The distinct nullary contractum leaf of `multi_rule_shared` rule `i`
+/// (`Kᵢ`; a leaf constructor tag is OPAQUE DATA to the matcher — the same
+/// free-form-leaf discipline as [`swap_comb_leaf`]).
+pub fn multi_rule_shared_leaf(rule: usize) -> GroundTerm {
+    GroundTerm::nullary(format!("K{rule}"))
+}
+
+/// The root op of `multi_rule_shared` rule `i` (`Rᵢ` — pairwise distinct
+/// across the r rules, which is exactly what the naive duplicate-root gate
+/// requires).
+fn multi_rule_shared_root_op(rule: usize) -> String {
+    format!("R{rule}")
+}
+
+/// Rule i's LHS pattern `Rᵢ(Sˢ(x))`: the DISTINCT root over the ONE SHARED
+/// non-root sub-pattern chain `Sˢ(x)`. Every rule uses the SAME var name `x`
+/// and the SAME `S` chain, so the interner shares the whole sub-pattern state
+/// set across all r entries (`state_count = r + s + 1`). (`pub` for the
+/// driver-bin state-sharing unit test, which compares the combined interned
+/// count against the per-rule sum.)
+pub fn multi_rule_shared_pattern(rule: usize, shared_depth: usize) -> Pattern<String> {
+    let mut inner = Pattern::var("x");
+    for _ in 0..shared_depth {
+        inner = Pattern::app("S".to_string(), vec![inner]);
+    }
+    Pattern::app(multi_rule_shared_root_op(rule), vec![inner])
+}
+
+/// (vii) The r-rule shared-sub-pattern subject: a right-leaning inert `Pair`
+/// comb whose r leaves are `Rᵢ(Sˢ(Kᵢ))` — one redex PER RULE, each rule's
+/// DISTINCT root over its own subject copy of the shared `Sˢ` sub-structure.
+/// The expected multiset is the pairwise-distinct { K₀ … K₍ᵣ₋₁₎ } (rule i's
+/// σ[x] = its contractum, forwarded by rule i's OWN accept channel's σ-echo —
+/// so the observation pins each rule fired exactly once). Node count:
+/// `(r − 1) + r·(s + 2)`.
+pub fn multi_rule_shared_subject(
+    r: usize,
+    s: usize,
+) -> (GroundTerm, Vec<RuntimeObservationValue>) {
+    assert!(r >= 1, "the pattern set carries at least one rule");
+    assert!(s >= 1, "the shared sub-pattern chain has at least one level");
+    let redex_at = |i: usize| {
+        let mut term = multi_rule_shared_leaf(i);
+        for _ in 0..s {
+            term = GroundTerm::new("S", vec![term]);
+        }
+        GroundTerm::new(multi_rule_shared_root_op(i), vec![term])
+    };
+    let mut expected: Vec<RuntimeObservationValue> = Vec::with_capacity(r);
+    for i in 0..r {
+        expected.push(ground_to_observation(&multi_rule_shared_leaf(i)));
+    }
+    let mut subject = redex_at(r - 1);
+    for i in (0..r - 1).rev() {
+        subject = GroundTerm::new("Pair", vec![redex_at(i), subject]);
+    }
+    (subject, expected)
+}
+
+/// The direct-construction r-rule ruleset of `multi_rule_shared`
+/// (admission-matrix style — no demo language): ALL r nested entries compiled
+/// into ONE interned automaton (the pattern-set sharing under test: the
+/// `Sˢ(x)` chain interns to a single shared state set across every entry),
+/// each entry routed to its OWN accept channel [`multi_rule_shared_accept`].
+pub fn multi_rule_shared_ruleset(r: usize, s: usize) -> InRhoMatchingRuleset {
+    let patterns: Vec<(PatternId, Pattern<String>)> = (0..r)
+        .map(|i| (PatternId(i), multi_rule_shared_pattern(i, s)))
+        .collect();
+    let automaton = SetAutomaton::compile_structural(patterns)
+        .expect("the r-rule shared-sub-pattern set compiles to a positional automaton");
+    InRhoMatchingRuleset {
+        automaton,
+        accept_channels: (0..r)
+            .map(|i| (PatternId(i), multi_rule_shared_accept(i)))
+            .collect(),
+        language_fingerprint: MULTI_RULE_SHARED_FINGERPRINT.to_string(),
+        deferred: Vec::new(),
+        native_dispatch: Vec::new(),
+        ac_dispatch: Vec::new(),
+        contextual_dispatch: Vec::new(),
+        structural_ac_dispatch: Vec::new(),
+        nested_structural_ac_dispatch: Vec::new(),
+    }
+}
+
+/// The per-position SITE strings of every `subject` node whose head is one of
+/// `ruleset`'s compiled entry root ops — the SAME walk + `spread_child_location`
+/// derivation as the optimized driver's `collect_redex_sites` (re-stated here
+/// because that function is private to `rho_net_ruleset`; the derivation is
+/// shared through [`spread_child_location`], so a network built at a returned
+/// site reads exactly the channels the ONE spread publishes there). This is
+/// the site enumeration of the `multi_rule_shared` sa column's per-rule drive;
+/// for that family it returns exactly r pairwise NON-ANCESTRAL comb-leaf
+/// positions, one per rule (pinned by the driver-bin unit tests).
+pub fn multi_rule_shared_sites(
+    ruleset: &InRhoMatchingRuleset,
+    subject: &GroundTerm,
+    root_site: &str,
+) -> Vec<String> {
+    let view = ruleset.automaton.view();
+    let roots: BTreeSet<String> = (0..view.entry_count())
+        .filter_map(|entry| match view.node(view.entry_root_state(entry)) {
+            AutomatonNode::App { op, .. } => Some(op.to_string()),
+            AutomatonNode::Var(_) => None,
+        })
+        .collect();
+    fn walk(
+        node: &GroundTerm,
+        location: &str,
+        roots: &BTreeSet<String>,
+        sites: &mut Vec<String>,
+    ) {
+        if roots.contains(&node.constructor) {
+            sites.push(location.to_string());
+        }
+        for (index, child) in node.children.iter().enumerate() {
+            let child_location = spread_child_location(location, &node.constructor, index);
+            walk(child, &child_location, roots, sites);
+        }
+    }
+    let mut sites: Vec<String> = Vec::new();
+    walk(subject, root_site, &roots, &mut sites);
+    sites
+}
+
 /// Count the nodes of a `GroundTerm` subject (the generator-size metric the
 /// unit tests pin and the driver's run-header records).
 pub fn node_count(term: &GroundTerm) -> usize {
@@ -566,7 +810,9 @@ fn quoted(name: &str) -> Par {
 /// A σ-echo observer for a direct-construction accept (the B2 shape, verbatim):
 /// `for(y_0,…,y_{k-1}, o <- accept){ o!(y_0) | … | o!(y_{k-1}) }` forwards each
 /// σ slot to the accept's dynamic out channel. ONE-SHOT — the k-firing
-/// `nested_spine` drive appends k copies, one per expected firing.
+/// `nested_spine` drive appends k copies on its one accept channel, and the
+/// r-rule `multi_rule_shared` drive appends one per PER-RULE accept channel
+/// ([`workload_echo_channels`]).
 fn sigma_echo_receiver(accept_channel: &str, arity: usize) -> Par {
     let mut body = Par::default();
     for i in 0..arity {
@@ -755,6 +1001,40 @@ pub fn compile_workload(kind: WorkloadKind, n: u64) -> Result<CompiledWorkload, 
                 source: CompiledSource::Direct(nested_spine_ruleset()),
             })
         },
+        WorkloadKind::MultiRuleShared => {
+            let (r, s) = multi_rule_shared_params(n);
+            let (subject, expected) = multi_rule_shared_subject(r, s);
+            Ok(CompiledWorkload {
+                kind,
+                n,
+                subject,
+                expected,
+                source: CompiledSource::Direct(multi_rule_shared_ruleset(r, s)),
+            })
+        },
+    }
+}
+
+/// The direct-construction σ-echo channels one rep of `compiled` installs
+/// (each gets ONE one-shot arity-1 [`sigma_echo_receiver`]): `nested_spine`
+/// appends k copies of its ONE accept channel (k firings on one channel);
+/// `multi_rule_shared` appends each rule's OWN accept channel once (r firings,
+/// one per channel — the per-rule routing that pins rule attribution). Every
+/// language-compiled workload installs its hoisted σ-receiver program instead
+/// (empty here).
+fn workload_echo_channels(compiled: &CompiledWorkload) -> Vec<String> {
+    match compiled.kind {
+        WorkloadKind::NestedSpine => {
+            let k = usize::try_from(compiled.n).expect("k fits usize");
+            vec![NESTED_SPINE_ACCEPT.to_string(); k]
+        },
+        WorkloadKind::MultiRuleShared => compiled
+            .ruleset()
+            .accept_channels
+            .iter()
+            .map(|(_, channel)| channel.clone())
+            .collect(),
+        _ => Vec::new(),
     }
 }
 
@@ -890,7 +1170,10 @@ pub fn emit_call(
             Ok((call, Some(sites)))
         },
         (
-            WorkloadKind::SwapComb | WorkloadKind::SwapSmall | WorkloadKind::NestedSpine,
+            WorkloadKind::SwapComb
+            | WorkloadKind::SwapSmall
+            | WorkloadKind::NestedSpine
+            | WorkloadKind::MultiRuleShared,
             MatcherKind::Naive,
         ) => {
             let (call, installed) = naive_kt_match_call_par(
@@ -902,6 +1185,47 @@ pub fn emit_call(
             )
             .map_err(|e| WorkloadFailure::new(format!("naive comprehension emitter: {e:?}")))?;
             Ok((call, Some(installed)))
+        },
+        (WorkloadKind::MultiRuleShared, MatcherKind::Sa) => {
+            // The PER-RULE drive at admitted sites (module rustdoc §(vii)):
+            // the ONE-call locate-all fails closed for r ≥ 2 (its
+            // `NestedEntryMultiSite` gate counts candidate sites ACROSS
+            // entries — pinned by the driver-bin unit tests), so the sa column
+            // composes the SAME production per-site emitter — ALL r entries'
+            // shared interned automaton at each site — once per admitted site
+            // (each site in isolation is exactly the admitted nested-ruleset
+            // ≤ 1-site install), then ONE spread of the whole subject.
+            // Contention-free FOR THIS FAMILY: the sites are pairwise
+            // non-ancestral comb-leaf positions and no rule root op occurs at
+            // any non-root pattern position (both pinned), so no installed
+            // network's descent read aliases another's root read.
+            let view = ruleset.automaton.view();
+            let targets: Vec<AutomatonAcceptTarget> = ruleset
+                .accept_channels
+                .iter()
+                .map(|(pattern, accept_channel)| AutomatonAcceptTarget {
+                    pattern: *pattern,
+                    accept_channel: accept_channel.clone(),
+                    out_channel: OUT_CHANNEL.to_string(),
+                })
+                .collect();
+            let sites = multi_rule_shared_sites(ruleset, subject, ROOT_SITE);
+            let mut call = Par::default();
+            for site in &sites {
+                let network = multi_pattern_receiver_network_par(
+                    &view,
+                    site,
+                    &targets,
+                    &ruleset.language_fingerprint,
+                )
+                .map_err(|e| {
+                    WorkloadFailure::new(format!("optimized per-site network emitter: {e:?}"))
+                })?;
+                call = call.append(network);
+            }
+            let call =
+                call.append(spread_term_par(subject, &ruleset.language_fingerprint, ROOT_SITE));
+            Ok((call, Some(sites.len())))
         },
         (WorkloadKind::WrapSwapCtx, MatcherKind::Sa) => {
             let call = contextual_match_call_par(ruleset, subject, ROOT_SITE, OUT_CHANNEL)
@@ -1024,17 +1348,19 @@ pub fn max_eval_width(par: &Par) -> usize {
 /// Compose the FULL injected program for one `(workload, matcher)` injection
 /// over `subject`: the emitted call, the hoisted installed σ-receiver program
 /// (when the workload has one), and the direct-construction σ-echo observers
-/// (when it does not) — the SINGLE composition site shared by the live drive
-/// ([`drive_single_injection`]) and the offline width probe
-/// ([`cell_max_eval_width`]), so the guard can never drift from the drive.
-/// Also enforces the emitter site-count consistency check.
+/// (when it does not; one one-shot arity-1 [`sigma_echo_receiver`] per
+/// `echo_channels` entry — [`workload_echo_channels`]) — the SINGLE
+/// composition site shared by the live drive ([`drive_single_injection`]) and
+/// the offline width probe ([`cell_width_probe`]), so the guard can never
+/// drift from the drive. Also enforces the emitter site-count consistency
+/// check.
 fn composed_program_for(
     kind: WorkloadKind,
     matcher: MatcherKind,
     encoding: GuardEncodingKind,
     ruleset: &InRhoMatchingRuleset,
     installed_program: Option<&Par>,
-    echo_receivers: usize,
+    echo_channels: &[String],
     subject: &GroundTerm,
     n: u64,
 ) -> Result<Par, WorkloadFailure> {
@@ -1058,8 +1384,8 @@ fn composed_program_for(
         Some(installed) => installed.clone(),
         None => Par::default(),
     };
-    for _ in 0..echo_receivers {
-        program = program.append(sigma_echo_receiver(NESTED_SPINE_ACCEPT, 1));
+    for channel in echo_channels {
+        program = program.append(sigma_echo_receiver(channel, 1));
     }
     Ok(program.append(call))
 }
@@ -1122,10 +1448,7 @@ pub fn cell_width_probe(
     encoding: GuardEncodingKind,
 ) -> Result<CellWidthProbe, WorkloadFailure> {
     let ruleset = compiled.ruleset();
-    let echo_receivers = match compiled.kind {
-        WorkloadKind::NestedSpine => usize::try_from(compiled.n).expect("k fits usize"),
-        _ => 0,
-    };
+    let echo_channels = workload_echo_channels(compiled);
     let mut probe = CellWidthProbe { max_eval_width: 0, regression_zone_width: None };
     let mut record = |width: usize| {
         probe.max_eval_width = probe.max_eval_width.max(width);
@@ -1144,7 +1467,7 @@ pub fn cell_width_probe(
                     encoding,
                     ruleset,
                     compiled.installed_program(),
-                    echo_receivers,
+                    &echo_channels,
                     &subject,
                     compiled.n,
                 )?;
@@ -1158,7 +1481,7 @@ pub fn cell_width_probe(
                 encoding,
                 ruleset,
                 compiled.installed_program(),
-                echo_receivers,
+                &echo_channels,
                 &compiled.subject,
                 compiled.n,
             )?;
@@ -1188,7 +1511,7 @@ async fn drive_single_injection(
     encoding: GuardEncodingKind,
     ruleset: &InRhoMatchingRuleset,
     installed_program: Option<&Par>,
-    echo_receivers: usize,
+    echo_channels: &[String],
     subject: &GroundTerm,
     params: BenchWorkloadParams,
 ) -> Result<(BenchRunResult, Duration, Duration), WorkloadFailure> {
@@ -1208,7 +1531,7 @@ async fn drive_single_injection(
         encoding,
         ruleset,
         installed_program,
-        echo_receivers,
+        echo_channels,
         subject,
         params.n,
     )?;
@@ -1301,7 +1624,7 @@ pub async fn run_compiled_workload(
                     encoding,
                     ruleset,
                     compiled.installed_program(),
-                    0,
+                    &[],
                     &subject,
                     params.clone(),
                 )
@@ -1364,21 +1687,20 @@ pub async fn run_compiled_workload(
         WorkloadKind::SwapComb
         | WorkloadKind::SwapSmall
         | WorkloadKind::WrapSwapCtx
-        | WorkloadKind::NestedSpine => {
-            let echo_receivers = match compiled.kind {
-                // Direct construction: one one-shot σ-echo per expected firing
-                // (both the naive and the replay column, so the installed
-                // observer program is IDENTICAL across the cell).
-                WorkloadKind::NestedSpine => expected_firings,
-                _ => 0,
-            };
+        | WorkloadKind::NestedSpine
+        | WorkloadKind::MultiRuleShared => {
+            // Direct construction: one one-shot σ-echo per expected firing
+            // ([`workload_echo_channels`] — identical across the cell's
+            // matcher columns, so the installed observer program never
+            // differs between them).
+            let echo_channels = workload_echo_channels(compiled);
             let (result, emission, bringup) = drive_single_injection(
                 compiled.kind,
                 matcher,
                 encoding,
                 ruleset,
                 compiled.installed_program(),
-                echo_receivers,
+                &echo_channels,
                 &compiled.subject,
                 params,
             )

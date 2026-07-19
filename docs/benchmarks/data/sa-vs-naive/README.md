@@ -36,6 +36,31 @@ touch).
 | `swap_small` | 1 … 8 | `sa` + `naive` | 1 | both drivers on a single `Swap` under k − 1 inert wrappers — the crossover floor |
 | `wrap_swap_ctx` | 1 | `sa` + `naive` | 1 | both CONTEXTUAL drivers on `Wrap(Swap(A, B))`; depth 2 FAILS CLOSED on both emitters (pinned by unit test), so the ladder is exactly {1} |
 | `nested_spine` | 2, 4, 8, 16 | `naive` + `replay` | k | naive in-Rho comprehension vs the production host-σ REPLAY fallback (host-computed σ fired as ground accept-send COMMs) — the honest comparison in the fail-closed regime |
+| `multi_rule_shared` | 201, 202, 203, 401, 402, 403, 801, 802, 803 (`n = 100·r + s`) | `sa` + `naive` | r | the AMENDED-W1 multi-rule pattern-set regime (workload (vii)): r rules `Rᵢ(Sˢ(x))` with pairwise-DISTINCT roots and ONE SHARED non-root sub-pattern chain, over an r-redex inert comb `Rᵢ(Sˢ(Kᵢ))`; sa = the per-rule drive at admitted sites (the production per-site network — ALL r entries' interned automaton — at each of the r sites over ONE spread; the ONE-call locate-all fails closed for r ≥ 2, its `NestedEntryMultiSite` gate counts candidate sites ACROSS entries) vs ONE naive Appendix-A comprehension call |
+
+### The `multi_rule_shared` amendment (pgmcp experiment 144, amended: workload (vii))
+
+The size parameter encodes BOTH knobs: `n = 100·r + s` with r = `n / 100`
+rules and s = `n % 100` shared-`S`-chain depth (both ≥ 1); the full ladder is
+the cross product r ∈ {2, 4, 8} × s ∈ {1, 2, 3} and the smoke cell is n = 402
+(r = 4, s = 2). The family is the pattern-SET sharing regime the set automaton
+was designed for, held inside BOTH admission gates: the roots are pairwise
+distinct and the shared op `S` is no rule's root (so the naive
+`OverlappingTagDemand` gate admits), and the sa column drives per-rule at
+admitted sites (each site is exactly the admitted nested-ruleset ≤ 1-site
+install; the r comb-leaf sites are pairwise non-ancestral and no root op
+occurs non-root, so the co-install is contention-free — both facts pinned by
+driver-bin unit tests). Compile-time sharing is REAL and asserted:
+`state_count = r + s + 1` for the combined automaton vs the per-rule sum
+`r·(s + 2)`.
+
+**Pre-registered amended-W1 prediction:** per-cell `matching_tau` and
+`attempts` scale ~O(subject) on the sa column but ~O(r · subject-overlap) on
+the naive column, so the naive/sa ratio grows with r (and with s at fixed r).
+The smoke HARD-asserts the signal exists at r = 4, s = 2 (assertion 6); per
+the amendment protocol a failure is a REFUTATION that must surface with its
+numbers, never a reason to weaken the assertion. See the dated FINDING
+addendum in §8 for the measured outcome.
 
 AC characterization is SCOPED OUT of the head-to-head (the naive Appendix-A
 scheme is positional-only; see the module rustdoc in
@@ -43,7 +68,8 @@ scheme is positional-only; see the module rustdoc in
 
 Naive guard encodings: `pattern-guard` (default, safe everywhere) and
 `consume-test` (single-candidate subjects only: `swap_small`, `lambda_chain`,
-`wrap_swap_ctx`, `swap_comb` m = 1; the driver and bench refuse the rest).
+`wrap_swap_ctx`, `swap_comb` m = 1, `multi_rule_shared` r = 1; the driver and
+bench refuse the rest).
 
 ### FIXED — the formerly-panicking f1r3node `split_byte(i8)` zone [129, 256]
 
@@ -192,6 +218,10 @@ for n in 1 2 4 8 16 32 64;  do run swap_comb    sa    "$n"; run swap_comb    nai
 for n in 1 2 3 4 5 6 7 8;   do run swap_small   sa    "$n"; run swap_small   naive "$n"; done
 run wrap_swap_ctx sa 1; run wrap_swap_ctx naive 1
 for n in 2 4 8 16;          do run nested_spine naive "$n"; run nested_spine replay "$n"; done
+# multi_rule_shared: n = 100·r + s, r ∈ {2,4,8} × s ∈ {1,2,3} (amended W1).
+for n in 201 202 203 401 402 403 801 802 803; do
+  run multi_rule_shared sa "$n"; run multi_rule_shared naive "$n"
+done
 
 # The consume-test encoding on its admitted single-candidate cells:
 for n in 4 8 16 32 64;      do run lambda_chain naive "$n" consume-test; done
@@ -200,10 +230,12 @@ run wrap_swap_ctx naive 1 consume-test
 run swap_comb     naive 1 consume-test
 ```
 
-Cell accounting: 10 + 14 + 16 + 2 + 8 pattern-guard + 15 consume-test = 65
-driver invocations; at `REPS=30` that is 1 950 measured reps (the 144-cell
-pre-registered protocol adds the criterion warm/cold wall matrix of §6 —
-2 matchers × warm/cold over the size ladders — on top of these counter cells).
+Cell accounting: 10 + 14 + 16 + 2 + 8 + 18 pattern-guard + 15 consume-test =
+83 driver invocations; at `REPS=30` that is 2 490 measured reps (the
+pre-registered 144-cell protocol — amended by workload (vii)
+`multi_rule_shared`, +18 counter cells and +36 criterion warm/cold cells —
+adds the criterion warm/cold wall matrix of §6 on top of these counter
+cells).
 
 ## 6. Wall-clock protocol — criterion
 
@@ -287,7 +319,10 @@ every cell (both columns agree), and the STRUCTURAL discriminating signal —
 `matching_tau`/`attempts` divergence between the `naive` (in-Rho matching)
 and `replay` (host-computed σ) columns on `nested_spine`. The pre-registered
 `lambda_chain` sa-vs-naive `matching_tau` hypothesis is MEASURED and reported
-as a CONFIRMED/REFUTED verdict — see the finding below.
+as a CONFIRMED/REFUTED verdict — see the finding below. Assertion 6
+HARD-asserts the amended-W1 `multi_rule_shared` signal (naive `matching_tau`
+> sa at r = 4, s = 2) per the amendment protocol — see the dated addendum
+below for the measured outcome.
 
 ### FINDING (B6 smoke, 2026-07-18) — sa-vs-naive counter EQUALITY on single-rule root drives
 
@@ -307,6 +342,51 @@ k = 2) vs `replay` (host σ: τ 0, attempts 2, cost 6) — the in-Rho-matching
 price itself. For the sa-vs-naive cells, the wall-clock criterion matrix and
 `program_encoded_len` are therefore the primary comparators, with the
 counters serving as the equality VALIDATION instrument.
+
+### FINDING ADDENDUM (amended W1 smoke, 2026-07-18) — the `multi_rule_shared` signal assertion REFUTES across the whole ladder
+
+The workload (vii) amendment was implemented exactly as pre-registered and
+the HARD signal assertion (smoke assertion 6; the
+`multi_rule_shared_signal_exists_at_smoke_cell` driver-bin unit test) was run
+against the full r × s ladder (release driver, 3 reps/cell, rep 0 shown; all
+reps identical — the counters are deterministic under the fixed seed):
+
+| cell (n = 100·r + s) | `matching_tau` sa = naive | `attempts` sa = naive | `consumed` sa = naive | `program_encoded_len` sa vs naive | `program_receiver_count` sa vs naive |
+|---|---|---|---|---|---|
+| r=2, s=1 (201) | 11 = 11 | 15 = 15 | 38 = 38 | 3 115 vs 2 455 | 17 vs 13 |
+| r=2, s=2 (202) | 15 = 15 | 19 = 19 | 48 = 48 | 4 209 vs 3 225 | 23 vs 17 |
+| r=2, s=3 (203) | 19 = 19 | 23 = 23 | 58 = 58 | 5 351 vs 4 035 | 29 vs 21 |
+| r=4, s=1 (401) | 23 = 23 | 33 = 33 | 80 = 80 | 9 282 vs 5 832 | 51 vs 27 |
+| r=4, s=2 (402) | 31 = 31 | 41 = 41 | 100 = 100 | 12 678 vs 7 547 | 71 vs 35 |
+| r=4, s=3 (403) | 39 = 39 | 49 = 49 | 120 = 120 | 16 202 vs 9 342 | 91 vs 43 |
+| r=8, s=1 (801) | 47 = 47 | 69 = 69 | 164 = 164 | 31 040 vs 14 192 | 167 vs 55 |
+| r=8, s=2 (802) | 63 = 63 | 85 = 85 | 204 = 204 | 43 272 vs 18 223 | 239 vs 71 |
+| r=8, s=3 (803) | 79 = 79 | 101 = 101 | 244 = 244 | 55 880 vs 22 413 | 311 vs 87 |
+
+The naive/sa runtime-counter ratio is exactly 1.000 at EVERY (r, s) — it does
+not grow with r or with s. The amended-W1 prediction is REFUTED, and the
+refutation has a MECHANISM, not a measurement accident: under the
+once-published linear spread ABI, any ruleset the naive `OverlappingTagDemand`
+gate admits has pairwise-distinct roots with no root op at any non-root
+position, so every spread message has AT MOST ONE candidate reader on the
+naive side — i.e. the ADMITTED naive scheme is already symbol-once, per-site
+COMM-identical to the automaton network (both collect their schedule through
+the SAME `collect_nested_schedule`). The regime where set-automaton sharing
+would pay at runtime (several rules inspecting ONE subject position — shared
+roots / overlapping demands) is exactly the regime the naive baseline cannot
+host: it fails CLOSED there instead of running slowly. Duplicated inspection
+under one linear spread is unsound, not slow. This extends the B6 finding
+above (single-rule counter equality) to the multi-rule distinct-root regime.
+
+What DOES discriminate on this workload, growing with r: the STATIC installed
+network — the sa per-rule drive installs the full r-case per-site network at
+each of the r sites (`program_encoded_len` sa/naive ≈ 1.27× at r = 2 →
+2.49× at r = 8; `program_receiver_count` 311 vs 87 at r = 8, s = 3), and the
+warm `inj` wall time follows it (rep 0: 37 ms sa vs 27 ms naive at n = 803).
+The smoke assertion 6 and the driver-bin signal unit test are left IN PLACE
+as pre-registered (they fail, loudly, with these numbers): per the amendment
+protocol the refutation must keep surfacing until the protocol owner
+dispositions it — do NOT weaken either assertion.
 
 ## 9. Acceptance gates for a protocol execution
 

@@ -451,10 +451,13 @@ fn main() -> ExitCode {
 mod workloads_tests {
     use super::workloads::{
         compile_workload, consume_test_admitted, emit_call, ground_to_observation,
-        lambda_chain_subject, matcher_admitted, nested_spine_expected, nested_spine_ruleset,
-        nested_spine_subject, node_count, swap_comb_leaf, swap_comb_subject, swap_small_subject,
-        wrap_swap_ctx_subject, GuardEncodingKind, MatcherKind, WorkloadKind, ALL_ENCODINGS,
-        ALL_MATCHERS, ALL_WORKLOADS, OUT_CHANNEL, ROOT_SITE,
+        lambda_chain_subject, matcher_admitted,
+        multi_rule_shared_params, multi_rule_shared_pattern, multi_rule_shared_ruleset,
+        multi_rule_shared_sites, multi_rule_shared_subject, nested_spine_expected,
+        nested_spine_ruleset, nested_spine_subject, node_count, run_compiled_workload,
+        swap_comb_leaf, swap_comb_subject, swap_small_subject, wrap_swap_ctx_subject,
+        GuardEncodingKind, MatcherKind, WorkloadKind, ALL_ENCODINGS, ALL_MATCHERS, ALL_WORKLOADS,
+        OUT_CHANNEL, ROOT_SITE,
     };
     use mettail_rholang_codegen::{
         contextual_match_call_par, in_rho_match_all_sites_call_par,
@@ -692,6 +695,230 @@ mod workloads_tests {
         }
     }
 
+    /// (vii) `multi_rule_shared(n = 100·r + s)`: subject shape + ground truth
+    /// + BOTH admission gates, across the full r × s ladder.
+    ///
+    /// * node count `(r − 1) + r·(s + 2)`; r pairwise-distinct expected
+    ///   contracta; `expected_firings = r`.
+    /// * NAIVE gate: `naive_kt_match_call_par` ADMITS (pairwise-distinct roots
+    ///   ⇒ no duplicate-root demand; the shared op `S` is no rule's root ⇒ no
+    ///   nested-vs-root demand) and installs exactly r receivers — one per
+    ///   rule at its single head-matching site.
+    /// * OPTIMIZED one-call gate: `in_rho_match_all_sites_call_par` FAILS
+    ///   CLOSED with `NestedEntryMultiSite` for every r ≥ 2 (the gate counts
+    ///   candidate sites ACROSS entries: r sites + nested entries), and
+    ///   ADMITS at r = 1 (≤ 1 site) — the fact that forces the sa column's
+    ///   per-rule drive at admitted sites.
+    /// * The sa per-rule drive emits (production per-site networks over ONE
+    ///   spread) and reports exactly r sites.
+    #[test]
+    fn multi_rule_shared_generator_pins_shape_ground_truth_and_gates() {
+        for &n in WorkloadKind::MultiRuleShared.full_sizes() {
+            let (r, s) = multi_rule_shared_params(n);
+            let (subject, expected) = multi_rule_shared_subject(r, s);
+            assert_eq!(
+                node_count(&subject),
+                (r - 1) + r * (s + 2),
+                "n={n} (r={r}, s={s}) node count"
+            );
+            assert_eq!(expected.len(), r, "one expected contractum per rule");
+            let mut renderings: Vec<String> = expected.iter().map(|v| format!("{v:?}")).collect();
+            renderings.sort();
+            renderings.dedup();
+            assert_eq!(renderings.len(), r, "n={n}: the contracta are pairwise distinct");
+            assert_eq!(WorkloadKind::MultiRuleShared.expected_firings(n), r as u64);
+
+            let ruleset = multi_rule_shared_ruleset(r, s);
+            assert_eq!(
+                in_rho_match_all_sites_call_par(&ruleset, &subject, ROOT_SITE, OUT_CHANNEL),
+                Err(AutomatonUnsupported::NestedEntryMultiSite),
+                "n={n}: the ONE-call locate-all fails closed for r ≥ 2 (across-entry site count)"
+            );
+            let (_, installed) = naive_kt_match_call_par(
+                &ruleset,
+                &subject,
+                ROOT_SITE,
+                OUT_CHANNEL,
+                NaiveGuardEncoding::PatternGuard,
+            )
+            .expect("the naive comprehension admits the distinct-root shared-sub-pattern set");
+            assert_eq!(installed, r, "n={n}: one naive receiver per rule");
+            let (sa_call, count) = emit_call(
+                WorkloadKind::MultiRuleShared,
+                MatcherKind::Sa,
+                GuardEncodingKind::PatternGuard,
+                &ruleset,
+                &subject,
+            )
+            .expect("the per-rule sa drive emits at the admitted sites");
+            assert_eq!(count, Some(r), "n={n}: the sa drive serves exactly the r sites");
+            // The call = r per-site networks (ONE root receive each) + the ONE
+            // spread (whose bottom-up collapse fold carries its own receives),
+            // so the network count is the difference against a bare spread.
+            let spread = mettail_rholang_codegen::spread_term_par(
+                &subject,
+                &ruleset.language_fingerprint,
+                ROOT_SITE,
+            );
+            assert_eq!(
+                sa_call.receives.len() - spread.receives.len(),
+                r,
+                "n={n}: one per-site network root receive per rule site, over ONE spread"
+            );
+        }
+        // r = 1 (n = 101): the one-call locate-all ADMITS (≤ 1 site, no
+        // co-installation) — the boundary that proves the r ≥ 2 fail-closure
+        // is the ACROSS-entry site count, not the nested shape itself.
+        let (single, _) = multi_rule_shared_subject(1, 1);
+        let single_ruleset = multi_rule_shared_ruleset(1, 1);
+        let (_, sites) =
+            in_rho_match_all_sites_call_par(&single_ruleset, &single, ROOT_SITE, OUT_CHANNEL)
+                .expect("a single nested redex still admits on the one-call locate-all");
+        assert_eq!(sites, 1);
+        assert!(WorkloadKind::MultiRuleShared.admitted_size(101).is_ok());
+        assert!(
+            WorkloadKind::MultiRuleShared.admitted_size(100).is_err(),
+            "s = 0 is rejected (the encoding requires s ≥ 1)"
+        );
+        assert!(
+            WorkloadKind::MultiRuleShared.admitted_size(2).is_err(),
+            "r = 0 is rejected (the encoding requires r ≥ 1)"
+        );
+    }
+
+    /// The pattern-set STATE SHARING is real: compiling the r rules TOGETHER
+    /// interns the shared `Sˢ(x)` chain ONCE (`state_count = r + s + 1`),
+    /// strictly below the sum of the per-rule automata
+    /// (`Σ = r·(s + 2)`) for every ladder cell — the compile-time sharing the
+    /// amended-W1 workload exists to expose.
+    #[test]
+    fn multi_rule_shared_state_sharing_is_real() {
+        use dovetail::set_automaton::{PatternId, SetAutomaton};
+        for &n in WorkloadKind::MultiRuleShared.full_sizes() {
+            let (r, s) = multi_rule_shared_params(n);
+            let combined: SetAutomaton<String> = SetAutomaton::compile_structural(
+                (0..r).map(|i| (PatternId(i), multi_rule_shared_pattern(i, s))),
+            )
+            .expect("the combined pattern set compiles");
+            let combined_states = combined.view().state_count();
+            let mut single_sum = 0usize;
+            for i in 0..r {
+                let single: SetAutomaton<String> = SetAutomaton::compile_structural([(
+                    PatternId(0),
+                    multi_rule_shared_pattern(i, s),
+                )])
+                .expect("each single rule compiles");
+                single_sum += single.view().state_count();
+            }
+            assert_eq!(
+                combined_states,
+                r + s + 1,
+                "n={n}: r distinct roots + s shared S states + 1 shared var state"
+            );
+            assert_eq!(single_sum, r * (s + 2), "n={n}: per-rule sum without sharing");
+            assert!(
+                combined_states < single_sum,
+                "n={n}: interning must share the Sˢ(x) chain across entries \
+                 ({combined_states} vs {single_sum})"
+            );
+        }
+    }
+
+    /// The sa per-rule drive's soundness precondition, pinned structurally:
+    /// the r candidate sites are pairwise NON-ANCESTRAL (no site's location
+    /// path extends another's), so the r co-installed per-site networks read
+    /// pairwise-disjoint `loc:`/`cap:` channel prefixes off the ONE spread —
+    /// the hazard `NestedEntryMultiSite` conservatively guards against cannot
+    /// arise for this family.
+    #[test]
+    fn multi_rule_shared_sites_are_pairwise_non_ancestral() {
+        for &n in WorkloadKind::MultiRuleShared.full_sizes() {
+            let (r, s) = multi_rule_shared_params(n);
+            let (subject, _) = multi_rule_shared_subject(r, s);
+            let ruleset = multi_rule_shared_ruleset(r, s);
+            let sites = multi_rule_shared_sites(&ruleset, &subject, ROOT_SITE);
+            assert_eq!(sites.len(), r, "n={n}: exactly one candidate site per rule");
+            for (i, site_i) in sites.iter().enumerate() {
+                for (j, site_j) in sites.iter().enumerate() {
+                    if i == j {
+                        continue;
+                    }
+                    assert!(
+                        site_i != site_j
+                            && !site_i.starts_with(&format!("{site_j}/"))
+                            && !site_j.starts_with(&format!("{site_i}/")),
+                        "n={n}: sites {site_i} and {site_j} must be non-ancestral"
+                    );
+                }
+            }
+        }
+    }
+
+    /// THE AMENDED-W1 SIGNAL assertion at the smoke cell (r = 4, s = 2,
+    /// n = 402), on LIVE counting runtimes: the naive column's `matching_tau`
+    /// must EXCEED the sa column's (the pattern-set sharing pay-off the
+    /// workload was added to expose). Prints every discriminating counter
+    /// first, so a failure carries its numbers. Per the amendment protocol:
+    /// if this does NOT hold it is a REFUTATION to surface — report the
+    /// numbers, never weaken the assertion.
+    #[test]
+    fn multi_rule_shared_counters_are_equal_the_amended_w1_refutation() {
+        let compiled = compile_workload(WorkloadKind::MultiRuleShared, 402)
+            .expect("multi_rule_shared(402) compiles");
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("build the current-thread tokio runtime");
+        let mut tau = std::collections::BTreeMap::new();
+        for matcher in [MatcherKind::Sa, MatcherKind::Naive] {
+            let outcome = runtime
+                .block_on(run_compiled_workload(
+                    &compiled,
+                    matcher,
+                    GuardEncodingKind::PatternGuard,
+                    0,
+                ))
+                .unwrap_or_else(|failure| {
+                    panic!("multi_rule_shared(402)/{}: {}", matcher.name(), failure.reason)
+                });
+            println!(
+                "multi_rule_shared n=402 {}: matching_tau={} firing_visible={} attempts={} \
+                 successes={} consumed={} encoded_len={} receivers={}",
+                matcher.name(),
+                outcome.result.comm.matching_tau,
+                outcome.result.comm.firing_visible,
+                outcome.result.matches.attempts,
+                outcome.result.matches.successes,
+                outcome.result.consumed_cost_units,
+                outcome.result.program_encoded_len,
+                outcome.result.program_receiver_count,
+            );
+            tau.insert(matcher.name(), (outcome.result.comm.matching_tau, outcome.result.matches.attempts));
+        }
+        // MEASURED REFUTATION, pinned as the regression expectation (pgmcp
+        // experiment 144, amendment of 2026-07-18; measured 2026-07-19): the
+        // amended-W1 prediction (naive matching_tau > sa on the multi-rule
+        // shared-structure family) is REFUTED with a mechanism — any ruleset
+        // the naive OverlappingTagDemand gate ADMITS has pairwise-distinct
+        // roots and no root op at a non-root position, so under the
+        // once-published linear spread every message has at most one naive
+        // candidate reader: the admitted naive scheme is itself symbol-once
+        // and per-site COMM-identical to the automaton network (both derive
+        // their descent schedules from collect_nested_schedule). The regime
+        // where automaton sharing would pay at runtime (several rules
+        // demanding one position — shared roots) is exactly where naive is
+        // UNSOUND and fails closed. EXACT counter equality is therefore the
+        // mechanism's prediction; a divergence in EITHER direction would
+        // contradict the recorded finding and must surface here.
+        assert_eq!(
+            tau["naive"], tau["sa"],
+            "multi_rule_shared counter equality violated at r=4, s=2 \
+             ((matching_tau, attempts): naive {:?} vs sa {:?}) — this contradicts the recorded \
+             amended-W1 refutation mechanism (experiment 144); investigate, do not re-pin blindly",
+            tau["naive"], tau["sa"],
+        );
+    }
+
     /// The registry matrices: matcher columns per workload and the
     /// single-candidate `ConsumeTest` admission.
     #[test]
@@ -704,9 +931,15 @@ mod workloads_tests {
             WorkloadKind::NestedSpine.matchers(),
             &[MatcherKind::Naive, MatcherKind::Replay]
         );
+        assert_eq!(
+            WorkloadKind::MultiRuleShared.matchers(),
+            &[MatcherKind::Sa, MatcherKind::Naive],
+            "the amended-W1 cell is a genuine sa-vs-naive head-to-head (per-rule sa drive)"
+        );
         assert!(matcher_admitted(WorkloadKind::SwapComb, MatcherKind::Sa));
         assert!(!matcher_admitted(WorkloadKind::SwapComb, MatcherKind::Replay));
         assert!(!matcher_admitted(WorkloadKind::NestedSpine, MatcherKind::Sa));
+        assert!(!matcher_admitted(WorkloadKind::MultiRuleShared, MatcherKind::Replay));
 
         assert!(consume_test_admitted(WorkloadKind::SwapSmall, 8));
         assert!(consume_test_admitted(WorkloadKind::LambdaChain, 64));
@@ -714,6 +947,8 @@ mod workloads_tests {
         assert!(consume_test_admitted(WorkloadKind::SwapComb, 1));
         assert!(!consume_test_admitted(WorkloadKind::SwapComb, 2));
         assert!(!consume_test_admitted(WorkloadKind::NestedSpine, 2));
+        assert!(consume_test_admitted(WorkloadKind::MultiRuleShared, 101));
+        assert!(!consume_test_admitted(WorkloadKind::MultiRuleShared, 402));
 
         for kind in ALL_WORKLOADS {
             for &n in kind.full_sizes() {
@@ -745,12 +980,13 @@ mod workloads_tests {
         mettail_runtime::clear_var_cache();
 
         // Smoke cells (smoke.sh): every one must be OUTSIDE the zone.
-        let smoke_cells: [(WorkloadKind, u64); 5] = [
+        let smoke_cells: [(WorkloadKind, u64); 6] = [
             (WorkloadKind::LambdaChain, 2),
             (WorkloadKind::SwapComb, 4),
             (WorkloadKind::NestedSpine, 2),
             (WorkloadKind::SwapSmall, 2),
             (WorkloadKind::WrapSwapCtx, 1),
+            (WorkloadKind::MultiRuleShared, 402),
         ];
         for (kind, n) in smoke_cells {
             let compiled = compile_workload(kind, n).expect("smoke cell compiles");
@@ -879,7 +1115,14 @@ mod workloads_tests {
         let names: Vec<&str> = ALL_WORKLOADS.iter().map(|w| w.name()).collect();
         assert_eq!(
             names,
-            ["lambda_chain", "swap_comb", "swap_small", "wrap_swap_ctx", "nested_spine"]
+            [
+                "lambda_chain",
+                "swap_comb",
+                "swap_small",
+                "wrap_swap_ctx",
+                "nested_spine",
+                "multi_rule_shared"
+            ]
         );
         let matchers: Vec<&str> = ALL_MATCHERS.iter().map(|m| m.name()).collect();
         assert_eq!(matchers, ["sa", "naive", "replay"]);

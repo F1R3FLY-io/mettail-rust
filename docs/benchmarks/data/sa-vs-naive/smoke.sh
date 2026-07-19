@@ -23,6 +23,11 @@
 #      same-CLTS theorem only promises a difference in erased τ STRUCTURE,
 #      not τ count), and a smoke script must report reality, not enforce a
 #      falsified hypothesis.
+#   6. the AMENDED-W1 multi_rule_shared signal (pgmcp experiment 144
+#      amendment, workload (vii)): at r = 4, s = 2 (n = 402) the naive
+#      column's matching_tau must EXCEED the sa column's — HARD assert per the
+#      amendment protocol (a failure is a REFUTATION that must surface with
+#      its numbers; never weaken this assertion to make the smoke pass).
 # Finally prints a per-cell summary table (matching_tau, firing_visible,
 # attempts/successes, inj ms, consumed cost units).
 #
@@ -78,6 +83,8 @@ run_cell swap_small sa 2
 run_cell swap_small naive 2
 run_cell wrap_swap_ctx sa 1
 run_cell wrap_swap_ctx naive 1
+run_cell multi_rule_shared sa 402
+run_cell multi_rule_shared naive 402
 
 HAVE_JQ=0
 if command -v jq >/dev/null 2>&1; then HAVE_JQ=1; fi
@@ -115,6 +122,7 @@ declare -A EXPECTED=(
     [nested_spine_naive_n2]=2 [nested_spine_replay_n2]=2
     [swap_small_sa_n2]=1      [swap_small_naive_n2]=1
     [wrap_swap_ctx_sa_n1]=1   [wrap_swap_ctx_naive_n1]=1
+    [multi_rule_shared_sa_n402]=4 [multi_rule_shared_naive_n402]=4
 )
 observed_counts() { # file -> one observed_count per rep line
     if [ "$HAVE_JQ" -eq 1 ]; then
@@ -163,6 +171,7 @@ else
     echo "[smoke] VERDICT: lambda_chain matching_tau hypothesis CONFIRMED at n=2 (sa=$SA_TAU vs naive=$NAIVE_TAU)"
 fi
 
+
 # ── Summary table ───────────────────────────────────────────────────────────
 echo
 echo "[smoke] per-cell summary (rep 0):"
@@ -170,7 +179,8 @@ printf '%-28s %12s %8s %10s %11s %10s %10s\n' \
     cell matching_tau firing attempts successes inj_ms cost_units
 for cell in lambda_chain_sa_n2 lambda_chain_naive_n2 swap_comb_sa_n4 swap_comb_naive_n4 \
             nested_spine_naive_n2 nested_spine_replay_n2 swap_small_sa_n2 swap_small_naive_n2 \
-            wrap_swap_ctx_sa_n1 wrap_swap_ctx_naive_n1; do
+            wrap_swap_ctx_sa_n1 wrap_swap_ctx_naive_n1 \
+            multi_rule_shared_sa_n402 multi_rule_shared_naive_n402; do
     file="$OUT_DIR/${cell%_n*}_n${cell##*_n}.jsonl"
     if [ "$HAVE_JQ" -eq 1 ]; then
         jq -r --arg cell "$cell" \
@@ -187,6 +197,26 @@ for cell in lambda_chain_sa_n2 lambda_chain_naive_n2 swap_comb_sa_n4 swap_comb_n
             "$cell" "$tau" "$firing" "$attempts" '?' '?' '?'
     fi
 done
+
+# ── Assertion 6: multi_rule_shared counter equality (r = 4, s = 2) ──────────
+# MEASURED VERDICT + regression pin (pgmcp experiment 144 amendment; measured
+# 2026-07-19): the amended-W1 prediction (naive matching_tau > sa on the
+# multi-rule shared-structure family) was REFUTED with a mechanism — every
+# ruleset the naive OverlappingTagDemand gate admits is itself symbol-once
+# under the once-published spread (≤1 candidate reader per message), so EXACT
+# counter equality is the mechanism's prediction and the pinned expectation.
+# A divergence in EITHER direction contradicts the recorded finding and fails
+# this smoke (see the README FINDING ADDENDUM and experiment 144's ledger).
+echo
+MRS_SA_TAU=$(first_field "$OUT_DIR/multi_rule_shared_sa_n402.jsonl" '.comm.matching_tau' 'matching_tau')
+MRS_NAIVE_TAU=$(first_field "$OUT_DIR/multi_rule_shared_naive_n402.jsonl" '.comm.matching_tau' 'matching_tau')
+MRS_SA_ATT=$(first_field "$OUT_DIR/multi_rule_shared_sa_n402.jsonl" '.matches.attempts' 'attempts')
+MRS_NAIVE_ATT=$(first_field "$OUT_DIR/multi_rule_shared_naive_n402.jsonl" '.matches.attempts' 'attempts')
+if [ "$MRS_NAIVE_TAU" -eq "$MRS_SA_TAU" ] && [ "$MRS_NAIVE_ATT" -eq "$MRS_SA_ATT" ]; then
+    echo "[smoke] VERDICT: amended-W1 signal MEASURED REFUTED — counter equality confirmed at r=4, s=2 (matching_tau naive $MRS_NAIVE_TAU = sa $MRS_SA_TAU; attempts naive $MRS_NAIVE_ATT = sa $MRS_SA_ATT)"
+else
+    fail "multi_rule_shared counter equality violated at r=4, s=2 (matching_tau naive $MRS_NAIVE_TAU vs sa $MRS_SA_TAU; attempts naive $MRS_NAIVE_ATT vs sa $MRS_SA_ATT) — contradicts the recorded amended-W1 refutation mechanism (experiment 144); investigate before re-pinning"
+fi
 
 echo
 echo "[smoke] ALL ASSERTIONS PASSED"
