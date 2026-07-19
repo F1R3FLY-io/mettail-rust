@@ -224,7 +224,16 @@ source-oracle = []
 # remain entirely F1r3node's concern and no cost surface exists here (the
 # bench-internal secondary cost read lives inside `bench_support` on the
 # harness's own in-memory runtime).
-bench-naive-baseline = ["mettail-rholang-codegen/bench-naive-baseline", "dep:mettail-ast"]
+bench-naive-baseline = [
+    "mettail-rholang-codegen/bench-naive-baseline",
+    "dep:mettail-ast",
+    # `dep:dovetail` is pulled in ONLY for the Track-B harness's
+    # direct-construction workload rulesets (the `nested_spine` `f(g(x))`
+    # entry, built admission-matrix style with `SetAutomaton::compile_structural`
+    # in `benches/support/workloads.rs`, which the DRIVER BIN also compiles —
+    # bins cannot see dev-dependencies). Same path/version as the dev-dependency.
+    "dep:dovetail",
+]
 
 [dependencies]
 mettail-rholang-codegen = { package = "rholang-codegen", path = "../rholang-codegen" }
@@ -252,6 +261,10 @@ syn = { workspace = true, optional = true }
 # separate f1r3node PR.
 crossbeam-channel = "0.5"
 async-trait = "0.1"
+# BENCHMARK-ONLY (Track B, `bench-naive-baseline`): the set automaton, for the
+# harness's direct-construction workload rulesets (see the feature's comment).
+# Inert unless the quarantined bench feature is enabled.
+dovetail = { package = "dovetail", path = "../dovetail", optional = true }
 
 [dev-dependencies]
 # The translator (LanguageDef → Rholang) + a parsed calculator fragment, to drive
@@ -266,6 +279,9 @@ proptest = "1"
 # The set automaton, to compile a pattern into the positional automaton the Stage 1
 # in-Rho matching test (`rho_net_equivalence`) serializes and runs on the interpreter.
 dovetail = { package = "dovetail", path = "../dovetail" }
+# Track B — B6: the criterion wall-clock harness (`benches/bench_sa_vs_naive.rs`).
+# Same version/features as the `languages` crate's criterion dev-dependency.
+criterion = { version = "0.5", features = ["html_reports"] }
 
 [[test]]
 name = "rho_rhocalc_ast"
@@ -380,6 +396,37 @@ required-features = ["amb-demo-runtime"]
 name = "rho_net_inout_firing"
 path = "tests/rho_net_inout_firing.rs"
 required-features = ["in-out-demo-runtime"]
+
+# Track B — B6: the criterion wall-clock bench for the naive-vs-optimized
+# matcher head-to-head. Groups `warm/<workload>/<matcher>` (B3-hoisted
+# compilation + runtime bring-up OUTSIDE the measured region; measured =
+# per-call emission + build + inj + readback via `iter_custom`) and
+# `cold/<workload>/<matcher>` (compilation + counting-runtime bring-up INSIDE).
+# Shares `benches/support/workloads.rs` with the driver bin below.
+[[bench]]
+name = "bench_sa_vs_naive"
+harness = false
+required-features = [
+    "bench-naive-baseline",
+    "swap-demo-runtime",
+    "lambda-demo-runtime",
+    "ctx-demo-runtime",
+]
+
+# Track B — B6: the JSON-lines COUNTER driver (one `BenchRunResult` line per
+# rep + a run-header line + `"dnf":true` lines on guard breaches), for the
+# matching_tau/firing/subst_tau/attempt-count protocol cells. Registered
+# explicitly so the quarantined feature set gates it (absent from any default
+# build).
+[[bin]]
+name = "bench_sa_vs_naive_driver"
+path = "src/bin/bench_sa_vs_naive_driver.rs"
+required-features = [
+    "bench-naive-baseline",
+    "swap-demo-runtime",
+    "lambda-demo-runtime",
+    "ctx-demo-runtime",
+]
 
 [[test]]
 name = "rho_comm_oracle"
