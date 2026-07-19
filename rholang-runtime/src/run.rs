@@ -419,6 +419,20 @@ fn take_pending_fold_definitions() -> Vec<Definition> {
 }
 
 async fn build_runtime() -> Result<impl RhoRuntime, String> {
+    // Tier-3 / A-S3 contracts for this exec (empty for every term without a held fold or an
+    // admitted native rule, so the common path is byte-identical to the prior `&mut Vec::new()`).
+    build_runtime_with_definitions(take_pending_fold_definitions()).await
+}
+
+/// Build an in-memory `RhoRuntime` with EXPLICIT extra system-process `Definition`s (the
+/// MeTTaIL-injected held-fold / A-S3 native-handler contracts) instead of the thread-local
+/// pending slot. The explicit variant exists so a caller that already HOLDS the definitions —
+/// e.g. the A-S3 trusted-handler probes, which drain the recorded
+/// [`NativeHandlerSpec`](mettail_rholang_codegen::NativeHandlerSpec)s themselves — can thread
+/// them without relying on same-thread thread-local discipline.
+async fn build_runtime_with_definitions(
+    mut extra_system_processes: Vec<Definition>,
+) -> Result<impl RhoRuntime, String> {
     let mut kvm = InMemoryStoreManager::new();
     let store = kvm
         .r_space_stores()
@@ -427,14 +441,11 @@ async fn build_runtime() -> Result<impl RhoRuntime, String> {
     let space: RSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation> =
         RSpace::create(store, Arc::new(Box::new(Matcher))).map_err(|e| format!("rspace: {e:?}"))?;
 
-    // Tier-3 held-fold contracts for this exec (empty for every term without a held fold, so the
-    // common path is byte-identical to the prior `&mut Vec::new()`).
-    let mut extra_system_processes = take_pending_fold_definitions();
     Ok(create_rho_runtime(
         space,
         Arc::new(HashMap::new()), // mergeable tags: none (single-node eval)
         false,                    // init_registry: not needed for pure arithmetic
-        &mut extra_system_processes, // held-fold trampoline contracts (usually none)
+        &mut extra_system_processes, // held-fold + native-handler contracts (usually none)
         ExternalServices::noop(), // inert — no ChromaDB/SBERT/OpenAI
     )
     .await)
@@ -846,6 +857,30 @@ pub async fn run_installed_program_with_call_and_read_runtime_values(
 ) -> Result<Vec<RuntimeObservationValue>, String> {
     let composed = installed_program.append(call.clone());
     run_par_and_read_ground(&composed, out_channel, par_as_runtime_observation_value).await
+}
+
+/// [`run_installed_program_with_call_and_read_runtime_values`] with EXPLICIT extra
+/// system-process `Definition`s (the MeTTaIL-injected held-fold / A-S3 native-handler
+/// contracts) installed on the runtime before the composed program runs.
+///
+/// The production exec path threads its definitions through the worker-thread pending slot
+/// (`backend::run_rho_invocation_blocking` → [`set_pending_fold_definitions`]); this explicit
+/// variant serves callers that hold the definitions directly — the A-S3 trusted-handler probes,
+/// which corrupt the call `Par` between compile and run and therefore drive the run themselves.
+#[cfg(feature = "runtime-report")]
+pub async fn run_installed_program_with_call_definitions_and_read_runtime_values(
+    installed_program: &Par,
+    call: &Par,
+    definitions: Vec<Definition>,
+    out_channel: &str,
+) -> Result<Vec<RuntimeObservationValue>, String> {
+    let composed = installed_program.append(call.clone());
+    let runtime = {
+        let mut runtime = build_runtime_with_definitions(definitions).await?;
+        inj_on_runtime(&mut runtime, composed).await?;
+        runtime
+    };
+    Ok(read_ground_from_runtime(&runtime, out_channel, par_as_runtime_observation_value).await)
 }
 
 /// Build an in-memory `RhoRuntime`, inject normalized `program` for an

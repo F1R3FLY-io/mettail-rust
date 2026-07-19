@@ -177,3 +177,66 @@ async fn nativefolddemo_native_scalar_fold_fires_as_a_comm_on_the_reducer() {
         "the native scalar fold fired as a COMM on the reducer and landed the value 5"
     );
 }
+
+/// A-S3 ≥2-site native admission: `1 + 2 + 3` locates TWO `AddInt` sites (the nested redex and
+/// the root), and the REPORT-FREE compile ADMITS them — the report path's single-native-firing
+/// fail-close does not apply to the admitted path, because each located site's accept drives its
+/// OWN contract call against the shared handler `Definition` (the bridges are identical
+/// value-free forwarders, so no cross-talk is possible). Each site's machine-invoked handler
+/// computes ITS OWN located σ's value — the nested `1 + 2 = 3` and the root
+/// `(1 + 2) + 3 = 3 + 3 = 6` (the root's captured operand is the reflected SUBTREE, which the
+/// ground evaluator folds recursively, exactly like the D-stage's recursive `try_eval`) — so OUT
+/// collects BOTH values, mirroring the locate-all multi-firing semantics base rewrites already
+/// have (and the same value multiset today's σ-replay deferral produces for this term).
+#[tokio::test]
+async fn a_s3_multi_site_native_exec_admits_and_fires_each_site() {
+    mettail_runtime::clear_var_cache();
+    let (backend, _fingerprint) = native_fold_demo_backend();
+
+    let term = NativeFoldDemoLanguage
+        .parse_term("1 + 2 + 3")
+        .expect("NativeFoldDemo must parse the two-site native redex 1 + 2 + 3");
+
+    // The REPORT-FREE compile ADMITS ≥2 located native sites (A-S3 lifts the deferral).
+    mettail_rholang_codegen::clear_pending_native_handler_specs();
+    let invocation = NativeFoldDemoLanguage::rho_net_match_invocation_to(term.as_ref(), "OUT")
+        .expect("A-S3: the report-free match must ADMIT a ≥2-site native term");
+    let specs = mettail_rholang_codegen::take_pending_native_handler_specs();
+    assert_eq!(
+        specs.len(),
+        1,
+        "both sites share ONE rule → ONE handler spec (the Definition serves every site)"
+    );
+    assert_eq!(specs[0].fired_rule_label, "Int_AddInt");
+
+    let definitions = mettail_rholang_runtime::native_definitions_for(&specs);
+    let observation = backend
+        .run_rho_net_with_call_definitions_and_observe_runtime_values(
+            &invocation.call,
+            definitions,
+            &invocation.out_channel,
+        )
+        .await
+        .expect("the ≥2-site admitted native call executes with the registered handler");
+
+    assert_eq!(
+        observation.observed_count(),
+        2,
+        "BOTH located sites fire their own machine-invoked handler (got {:?})",
+        observation.values
+    );
+    let three = RuntimeObservationValue::Term {
+        constructor: "NumLit(3)".to_string(),
+        children: Vec::new(),
+    };
+    let six = RuntimeObservationValue::Term {
+        constructor: "NumLit(6)".to_string(),
+        children: Vec::new(),
+    };
+    assert!(
+        observation.values.contains(&three) && observation.values.contains(&six),
+        "the nested site computes 1 + 2 = 3 and the root site computes (1 + 2) + 3 = 6 \
+         (recursive ground evaluation of the captured subtree), got {:?}",
+        observation.values
+    );
+}

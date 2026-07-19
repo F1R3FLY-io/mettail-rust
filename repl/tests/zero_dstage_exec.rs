@@ -21,6 +21,13 @@
 //! they bracket only this test's exec (other tests' D-stage runs can only INCREASE a
 //! non-bracketed counter — which is why each admitted assertion reads the counter immediately
 //! around its own exec and every deferred assertion is `≥ 1`).
+//!
+//! A-S3 (native dispatch boundary tightening): the zero-D-stage NATIVE execs live in the
+//! RUNTIME suites (`rholang-runtime/tests/rho_net_native_firing.rs`
+//! `a_s3_admitted_native_exec_builds_no_dovetail_report` — delta 0 with the machine-invoked
+//! registered handler's value — and `rho_net_native_fold_firing.rs`
+//! `a_s3_multi_site_native_exec_admits_and_fires_each_site`), because NativeDemo /
+//! NativeFoldDemo are runtime test languages, not REPL-registered backends.
 #![cfg(feature = "rho-languages")]
 
 use mettail_repl::rho_backends::{calculator_backed, rhocalc_backed, swapdemo_backed};

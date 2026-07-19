@@ -45,6 +45,28 @@
  * (RhoLoweringTotalOrRejects.v); this file discharges the ADDED native-dispatch
  * total-or-reject + payload-delegation obligation.
  *
+ * A-S3 (native dispatch boundary tightening) ADDS section (4): on the ADMITTED report-free
+ * path the premise "value = the report's contractum" is REPLACED by "value = the REGISTERED
+ * handler's output at COMM time". The report-carrying model of sections (1)-(3) survives
+ * verbatim as the DEFERRAL lane (`rho_net_match_invocation_from_dovetail_to`, byte-identical);
+ * section (4) models the admitted lane (`rho_net_match_invocation_to`): the generated
+ * report-free compile registers the rule's trusted evaluator as a system-process `Definition`
+ * (`rholang-codegen/src/native_handler.rs` + `rholang-runtime/src/native_contract.rs`, the
+ * Tier-3 held-fold `extra_system_processes` seam), the co-installed contract-call bridge
+ * (`native_locate_contract_bridge_par`) forwards the automaton's located σ — and NOTHING else
+ * — to the reserved handler channel, and the MACHINE's COMM invokes the evaluator, whose
+ * produced value the rule's σ-receiver consumes. Modeled as the four-COMM dispatch trampoline
+ * (reusing HeldFoldContractSound.v's linear-COMM trampoline structure) and proved:
+ * no value exists before the handler COMM ([a_s3_no_host_value_rides_the_call] — the formal
+ * analogue of the value-absence probe), the emitted value is EXACTLY the registered handler's
+ * output on the machine-delivered σ ([a_s3_admitted_dispatch_emits_the_handler_output],
+ * with the wrong-σ probe as its instantiation at a corrupted σ —
+ * [a_s3_value_tracks_the_delivered_sigma]), an evaluator deferral fires NOTHING
+ * ([a_s3_deferral_fires_nothing] — the D-stage fold-gate semantics, never a fabricated
+ * value), the run is deterministic ([a_s3_dispatch_deterministic] — the `DeterministicCall`
+ * replay claim), and location AND value are BOTH machine-side
+ * ([a_s3_machine_side_location_and_value], keeping [location_from_automaton_not_report]).
+ *
  * Rocq 9.1 compatible. No Admitted, no Axioms, no Assumptions (Section
  * Variable/Hypothesis only, discharged when the section closes).
  *)
@@ -360,6 +382,306 @@ Section NativeSystemProcessBoundary.
     - apply corrupt_location_preserves_value.
   Qed.
 
+  (* ---------------------------------------------------------------------------
+     (4) A-S3 (native dispatch boundary tightening): the ADMITTED report-free
+     dispatch — the MACHINE invokes the REGISTERED handler at COMM time.
+
+     The report-carrying model above (sections (2)-(3)) reads the value from the
+     firing's report ([rep_value]); it survives verbatim as the DEFERRAL lane. On
+     the ADMITTED lane there is NO report at all: the generated report-free compile
+     registers the rule's trusted evaluator as a system-process Definition on the
+     reserved channel `[0xF1, rule_index]`, and the co-installed contract-call
+     bridge forwards the automaton's located σ operands — and NOTHING else — to
+     it. We model the post-accept state as the four-COMM dispatch trampoline
+     (HeldFoldContractSound.v's structure):
+
+       COMM ①  the accept `trigger!(σ, @out)` → the value-free bridge
+               `for (σ, out <- trigger) { contract!(σ, out) }`      ([bridge_step]);
+       COMM ②  the bridge's forward → the registered handler Definition — THE
+               machine invocation of the trusted evaluator, which `produce`s
+               `reflect (native_eval σ)` iff the evaluator fires   ([handler_step]);
+       COMM ③  the handler's produce → the installed σ-receiver
+               `for (result, out <- dispatch) { out!(result) }`   ([receiver_step]);
+       COMM ④  the σ-receiver's emission on `@out` (the observable barb, folded
+               into [receiver_step]'s output).
+
+     [native_eval] is PARTIAL (`option Val`): `None` models the D-stage fold-gate
+     deferral (a non-value operand, a safe-arithmetic decline) — the rule then
+     does NOT fire, and the trampoline terminates with NO output (never a
+     fabricated value).
+     --------------------------------------------------------------------------- *)
+
+  (* The located σ operand tuple the automaton captures, and the REGISTERED trusted
+     evaluator (the rule's own `![…] fold` body, compiled by the macro): a pure
+     PARTIAL function of the delivered σ. Abstract Section Variables — discharged
+     at section close, no axiom. *)
+  Variable Sigma          : Type.
+  Variable captured_sigma : Subject -> Sigma.      (* the automaton's located captures *)
+  Variable native_eval    : Sigma -> option Val.   (* the registered handler (fold body) *)
+
+  (* State of the admitted dispatch after the automaton's accept fired: the four
+     linear channels/one-shot-or-persistent receives of COMMs ①-④. *)
+  Record DispatchState : Type := {
+    trigger_chan   : list Sigma;  (* the accept's `(σ, out)` message                    *)
+    bridge_armed   : bool;        (* the non-persistent contract-call bridge            *)
+    contract_chan  : list Sigma;  (* the reserved `[0xF1, rule]` handler channel        *)
+    handler_ready  : bool;        (* the registered Definition (installed contract)     *)
+    dispatch_chan  : list Val;    (* the handler's produce `(value, out)`               *)
+    receiver_ready : bool;        (* the installed σ-receiver (persistent)              *)
+    outputs        : list Val     (* observable barbs on `@out`                         *)
+  }.
+
+  (* Immediately AFTER the accept fired: the located σ rests on the trigger channel;
+     the bridge, the registered handler, and the σ-receiver are armed; NO value
+     exists anywhere — the injected call carries ONLY the subject's σ. *)
+  Definition dispatch_init (sg : Sigma) : DispatchState :=
+    {| trigger_chan := [sg];
+       bridge_armed := true;
+       contract_chan := [];
+       handler_ready := true;
+       dispatch_chan := [];
+       receiver_ready := true;
+       outputs := [] |}.
+
+  (* COMM ① — the value-free bridge fires: it consumes the accept's σ and forwards
+     EXACTLY that σ to the handler channel. One linear COMM; no value is read or
+     written (the bridge is a pure forwarder). *)
+  Definition bridge_step (sg : Sigma) (s s' : DispatchState) : Prop :=
+    bridge_armed s = true
+    /\ trigger_chan s = [sg]
+    /\ s' =
+       {| trigger_chan := [];
+          bridge_armed := false;
+          contract_chan := [sg];
+          handler_ready := handler_ready s;
+          dispatch_chan := dispatch_chan s;
+          receiver_ready := receiver_ready s;
+          outputs := outputs s |}.
+
+  (* COMM ② — THE MACHINE INVOKES THE REGISTERED HANDLER: the Definition's contract
+     COMM consumes the delivered σ and produces `reflect (native_eval σ)` on the
+     dispatch channel iff the evaluator FIRES; a deferral (`None`) produces
+     NOTHING (the fold-gate semantics — the redex stays unreduced). This is the
+     A-S3 boundary: the value comes into existence HERE, at COMM time, as a pure
+     function of the MACHINE-DELIVERED σ. *)
+  Definition handler_step (sg : Sigma) (s s' : DispatchState) : Prop :=
+    handler_ready s = true
+    /\ contract_chan s = [sg]
+    /\ s' =
+       {| trigger_chan := trigger_chan s;
+          bridge_armed := bridge_armed s;
+          contract_chan := [];
+          handler_ready := false;
+          dispatch_chan :=
+            match native_eval sg with
+            | Some v => [reflect v]
+            | None => []
+            end;
+          receiver_ready := receiver_ready s;
+          outputs := outputs s |}.
+
+  (* COMMs ③+④ — the installed σ-receiver consumes the RETURNED value from the
+     dispatch channel and emits it on `@out` (the receiver's body `out!(result)`
+     is the emission — the two COMMs share the linear datum, so they are folded
+     into one step over the observable). *)
+  Definition receiver_step (s s' : DispatchState) : Prop :=
+    receiver_ready s = true
+    /\ (exists v,
+          dispatch_chan s = [v]
+          /\ s' =
+             {| trigger_chan := trigger_chan s;
+                bridge_armed := bridge_armed s;
+                contract_chan := contract_chan s;
+                handler_ready := handler_ready s;
+                dispatch_chan := [];
+                receiver_ready := receiver_ready s;
+                outputs := v :: outputs s |}).
+
+  (* An admitted dispatch run: COMMs ① then ②, then — iff the evaluator fired — the
+     receiver's ③+④; a deferral terminates after ② (the empty dispatch channel can
+     never fire the receiver). *)
+  Definition dispatch_run (sg : Sigma) (s_fin : DispatchState) : Prop :=
+    exists s1 s2,
+      bridge_step sg (dispatch_init sg) s1
+      /\ handler_step sg s1 s2
+      /\ ((exists v, native_eval sg = Some v /\ receiver_step s2 s_fin)
+          \/ (native_eval sg = None /\ s_fin = s2)).
+
+  (* NO HOST VALUE RIDES THE CALL (the value-absence probe, formal analogue): the
+     post-accept initial state carries the located σ and NOTHING value-typed — the
+     dispatch channel and the observable outputs are EMPTY before the machine's
+     handler COMM. Contrast [report_emit]/[inject] above, whose injected argument
+     list CARRIES the (host-computed) reflected value from the start. *)
+  Theorem a_s3_no_host_value_rides_the_call : forall sg,
+    dispatch_chan (dispatch_init sg) = [] /\ outputs (dispatch_init sg) = [].
+  Proof. intro sg. split; reflexivity. Qed.
+
+  (* MAIN (A-S3): when the registered evaluator fires on the machine-delivered σ,
+     the admitted dispatch runs to a terminal state whose SINGLE output is EXACTLY
+     `reflect (native_eval σ)` — the value the MACHINE's COMM produced, not any
+     host pre-computation (none exists, by [a_s3_no_host_value_rides_the_call]). *)
+  Theorem a_s3_admitted_dispatch_emits_the_handler_output : forall sg v,
+    native_eval sg = Some v ->
+    exists s_fin,
+      dispatch_run sg s_fin /\ outputs s_fin = [reflect v].
+  Proof.
+    intros sg v Heval.
+    exists
+      {| trigger_chan := [];
+         bridge_armed := false;
+         contract_chan := [];
+         handler_ready := false;
+         dispatch_chan := [];
+         receiver_ready := true;
+         outputs := [reflect v] |}.
+    split.
+    - unfold dispatch_run.
+      exists
+        {| trigger_chan := [];
+           bridge_armed := false;
+           contract_chan := [sg];
+           handler_ready := true;
+           dispatch_chan := [];
+           receiver_ready := true;
+           outputs := [] |}.
+      exists
+        {| trigger_chan := [];
+           bridge_armed := false;
+           contract_chan := [];
+           handler_ready := false;
+           dispatch_chan := [reflect v];
+           receiver_ready := true;
+           outputs := [] |}.
+      split; [| split].
+      + unfold bridge_step, dispatch_init. simpl.
+        split; [reflexivity | split; reflexivity].
+      + unfold handler_step. simpl.
+        split; [reflexivity | split; [reflexivity |]].
+        rewrite Heval. reflexivity.
+      + left. exists v. split; [exact Heval |].
+        unfold receiver_step. simpl.
+        split; [reflexivity |].
+        exists (reflect v). split; reflexivity.
+    - reflexivity.
+  Qed.
+
+  (* DEFERRAL FIRES NOTHING: when the evaluator declines (a non-value operand, a
+     safe-arithmetic decline — the D-stage fold-gate), the run terminates after the
+     handler COMM with NO output: the rule does not fire, and no value is ever
+     fabricated. *)
+  Theorem a_s3_deferral_fires_nothing : forall sg,
+    native_eval sg = None ->
+    exists s_fin,
+      dispatch_run sg s_fin /\ outputs s_fin = [].
+  Proof.
+    intros sg Heval.
+    exists
+      {| trigger_chan := [];
+         bridge_armed := false;
+         contract_chan := [];
+         handler_ready := false;
+         dispatch_chan := [];
+         receiver_ready := true;
+         outputs := [] |}.
+    split.
+    - unfold dispatch_run.
+      exists
+        {| trigger_chan := [];
+           bridge_armed := false;
+           contract_chan := [sg];
+           handler_ready := true;
+           dispatch_chan := [];
+           receiver_ready := true;
+           outputs := [] |}.
+      exists
+        {| trigger_chan := [];
+           bridge_armed := false;
+           contract_chan := [];
+           handler_ready := false;
+           dispatch_chan := [];
+           receiver_ready := true;
+           outputs := [] |}.
+      split; [| split].
+      + unfold bridge_step, dispatch_init. simpl.
+        split; [reflexivity | split; reflexivity].
+      + unfold handler_step. simpl.
+        split; [reflexivity | split; [reflexivity |]].
+        rewrite Heval. reflexivity.
+      + right. split; [exact Heval | reflexivity].
+    - reflexivity.
+  Qed.
+
+  (* DETERMINISM: the terminal outputs are a pure function of the delivered σ (and
+     the registered evaluator), so replay reproduces the dispatch bit-identically —
+     the `DeterministicCall` classification of the reserved `0xF100+rule` body_ref
+     band (NOT in `non_deterministic_ops()`). *)
+  Theorem a_s3_dispatch_deterministic : forall sg s1 s2,
+    dispatch_run sg s1 ->
+    dispatch_run sg s2 ->
+    outputs s1 = outputs s2.
+  Proof.
+    intros sg s1 s2 [m1 [m1' [Hb1 [Hh1 Ht1]]]] [m2 [m2' [Hb2 [Hh2 Ht2]]]].
+    (* COMM ① pins the mid state. *)
+    destruct Hb1 as [_ [_ Hm1]]. destruct Hb2 as [_ [_ Hm2]]. subst m1 m2.
+    (* COMM ② pins the post-handler state. *)
+    destruct Hh1 as [_ [_ Hm1']]. destruct Hh2 as [_ [_ Hm2']]. subst m1' m2'.
+    (* The tail is decided by [native_eval sg] — the same in both runs. *)
+    destruct Ht1 as [[v1 [Hev1 Hr1]] | [Hev1 Hs1]];
+      destruct Ht2 as [[v2 [Hev2 Hr2]] | [Hev2 Hs2]].
+    - (* both fired: the receiver consumed the same pinned dispatch datum. *)
+      destruct Hr1 as [_ [w1 [Hd1 Hs1]]].
+      destruct Hr2 as [_ [w2 [Hd2 Hs2]]].
+      simpl in Hd1, Hd2.
+      rewrite Hev1 in Hd1. rewrite Hev2 in Hd2.
+      rewrite Hev1 in Hev2. injection Hev2 as Hv. subst v2.
+      injection Hd1 as Hw1. injection Hd2 as Hw2. subst w1 w2.
+      subst s1 s2. reflexivity.
+    - rewrite Hev1 in Hev2. discriminate Hev2.
+    - rewrite Hev1 in Hev2. discriminate Hev2.
+    - subst s1 s2. reflexivity.
+  Qed.
+
+  (* THE WRONG-σ PROBE (formal analogue): the emitted value TRACKS the delivered σ
+     through the registered evaluator — deliver a CORRUPTED σ' and the machine
+     emits `reflect (native_eval σ')`, not the honest σ's value. So the fired
+     value is a genuine function of the COMM-delivered operands (directed compute
+     ON the machine), never a constant fixed at compile time. The runtime probe
+     `a_s3_wrong_sigma_probe_handler_computes_from_the_delivered_operands`
+     (rholang-runtime/tests/rho_net_native_firing.rs) is this theorem at
+     σ = (2,3) ↦ 8 and σ' = (5,3) ↦ 125. *)
+  Theorem a_s3_value_tracks_the_delivered_sigma : forall sg sg' v v',
+    native_eval sg = Some v ->
+    native_eval sg' = Some v' ->
+    exists s_fin s_fin',
+      dispatch_run sg s_fin /\ outputs s_fin = [reflect v]
+      /\ dispatch_run sg' s_fin' /\ outputs s_fin' = [reflect v'].
+  Proof.
+    intros sg sg' v v' Hv Hv'.
+    destruct (a_s3_admitted_dispatch_emits_the_handler_output sg v Hv)
+      as [s_fin [Hrun Hout]].
+    destruct (a_s3_admitted_dispatch_emits_the_handler_output sg' v' Hv')
+      as [s_fin' [Hrun' Hout']].
+    exists s_fin, s_fin'. repeat split; assumption.
+  Qed.
+
+  (* END-TO-END (A-S3): on the admitted report-free path, the redex LOCATION and
+     the fired VALUE are BOTH machine-side functions of the SUBJECT alone — the
+     location is the automaton's ([true_location], unchanged from section (3):
+     [location_from_automaton_not_report] is KEPT), and the value is the
+     REGISTERED handler's output on the automaton-captured σ, produced by the
+     machine's COMM. No report field is read — there IS no report on this path. *)
+  Theorem a_s3_machine_side_location_and_value : forall (s : Subject) (r1 r2 : Report) v,
+    native_eval (captured_sigma s) = Some v ->
+    true_location s r1 = true_location s r2
+    /\ (exists s_fin,
+          dispatch_run (captured_sigma s) s_fin
+          /\ outputs s_fin = [reflect v]).
+  Proof.
+    intros s r1 r2 v Heval. split.
+    - apply location_from_automaton_not_report.
+    - apply a_s3_admitted_dispatch_emits_the_handler_output. exact Heval.
+  Qed.
+
 End NativeSystemProcessBoundary.
 
 Print Assumptions lower_total.
@@ -377,3 +699,11 @@ Print Assumptions buggy_report_location_is_corruptible.
 Print Assumptions location_from_automaton_not_report.
 Print Assumptions emitted_is_handler_on_captured_args.
 Print Assumptions native_dispatch_separation.
+
+(* ---- A-S3 (admitted report-free dispatch: machine-invoked registered handler) ---- *)
+Print Assumptions a_s3_no_host_value_rides_the_call.
+Print Assumptions a_s3_admitted_dispatch_emits_the_handler_output.
+Print Assumptions a_s3_deferral_fires_nothing.
+Print Assumptions a_s3_dispatch_deterministic.
+Print Assumptions a_s3_value_tracks_the_delivered_sigma.
+Print Assumptions a_s3_machine_side_location_and_value.

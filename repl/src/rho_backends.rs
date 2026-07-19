@@ -249,10 +249,12 @@ mod rho {
 
     /// A-S2 (D-stage demotion): the SwapDemo REPORT-FREE F2 compile — the generated
     /// `rho_net_match_invocation_to` (the match body with the STATIC gate instead of the
-    /// report's fired-rule gate, and located-site native counting instead of report firings).
-    /// On success the automaton locates + matches every redex in Rho with ZERO Dovetail work.
-    /// Any rejection (static gate, located native site, nested-multi-site scope, serialization)
-    /// is a [`RhoInvocationDeferral::GateReject`]: the wrapper LAZILY builds the checked
+    /// report's fired-rule gate, and located-site native counting instead of report firings;
+    /// A-S3 admits located native sites via registered machine-side handlers — vacuous for
+    /// SwapDemo, which has no native rules). On success the automaton locates + matches every
+    /// redex in Rho with ZERO Dovetail work. Any rejection (static gate, an unregistrable
+    /// located native rule, nested-multi-site scope, serialization) is a
+    /// [`RhoInvocationDeferral::GateReject`]: the wrapper LAZILY builds the checked
     /// Dovetail report and re-runs [`swapdemo_invocation`] — today's match-then-σ-replay
     /// fallback, byte-identical outcomes.
     fn swapdemo_invocation_free(

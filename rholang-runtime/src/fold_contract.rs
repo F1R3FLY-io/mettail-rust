@@ -18,6 +18,12 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use mettail_languages::rhocalc::{Bool, Int, Proc, Str};
+// A-S3: the reserved MeTTaIL system-process bands are enumerated in ONE place —
+// `mettail_rholang_codegen::native_handler` (held-fold `[0xF0, site]` / `0xF000+site` and
+// native-handler `[0xF1, rule]` / `0xF100+rule`, with the collision unit test) — so this module
+// IMPORTS its band rather than redeclaring it. The held-fold channel id is two-byte, so it
+// cannot collide with f1r3node's std (0–36) or test-framework (101–108) single-byte names.
+use mettail_rholang_codegen::{MTL_FOLD_BODY_REF_BASE, MTL_FOLD_CHANNEL_TAG};
 use models::rhoapi::expr::ExprInstance;
 use models::rhoapi::g_unforgeable::UnfInstance::GPrivateBody;
 use models::rhoapi::{GPrivate, GUnforgeable, ListParWithRandom, Par};
@@ -26,15 +32,6 @@ use rholang::rust::interpreter::errors::InterpreterError;
 use rholang::rust::interpreter::system_processes::Definition;
 
 use crate::rhocalc_ast::{lower_rhocalc_proc, RhocalcAstLowerError};
-
-/// First byte of every held-fold contract's unforgeable channel id `[0xF0, site]` — a reserved
-/// MeTTaIL band that cannot collide with f1r3node's std (0–36) or test-framework (101–108) byte
-/// names (those are single-byte `GPrivate{id:[b]}`; ours are two-byte).
-const MTL_FOLD_CHANNEL_TAG: u8 = 0xF0;
-/// Reserved `body_ref` band for held-fold contracts (well clear of std 0–36 / test 101–108, and
-/// NOT in `non_deterministic_ops()` — the folds are pure, so dispatch is a `DeterministicCall` and
-/// replay reproduces bit-identically).
-const MTL_FOLD_BODY_REF_BASE: i64 = 0xF000;
 
 /// Which width/cast native fold a held-fold site runs. Captured *statically* at lift time (the rule
 /// + the ground width literal), so the contract handler is a pure function of the runtime operand.

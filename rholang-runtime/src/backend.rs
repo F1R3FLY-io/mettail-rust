@@ -439,6 +439,36 @@ impl PlannedRhoBackend {
         Ok(RhoObservationReport::planned(self.artifact_kind(), out_channel, values))
     }
 
+    /// [`run_rho_net_with_call_and_observe_runtime_values`](Self::run_rho_net_with_call_and_observe_runtime_values)
+    /// with EXPLICIT extra system-process `Definition`s (the MeTTaIL-injected held-fold / A-S3
+    /// native-handler contracts) installed on the runtime before the composed program runs.
+    ///
+    /// The production exec path (`run_backend_report`) drains the contracts recorded by its
+    /// invocation compiler and threads them through the worker-thread pending slot; this
+    /// explicit variant serves callers that hold the `Definition`s directly — the A-S3
+    /// trusted-handler probes, which corrupt the compiled call `Par` between compile and run
+    /// (wrong-σ delivery) and therefore must drive the run themselves.
+    #[cfg(feature = "runtime-report")]
+    pub async fn run_rho_net_with_call_definitions_and_observe_runtime_values(
+        &self,
+        call: &Par,
+        definitions: Vec<rholang::rust::interpreter::system_processes::Definition>,
+        out_channel: &str,
+    ) -> Result<RhoObservationReport<RuntimeObservationValue>, String> {
+        let installed = self
+            .plan()
+            .installed_rho_net_program_par()
+            .map_err(|err| err.to_string())?;
+        let values = crate::run::run_installed_program_with_call_definitions_and_read_runtime_values(
+            &installed,
+            call,
+            definitions,
+            out_channel,
+        )
+        .await?;
+        Ok(RhoObservationReport::planned(self.artifact_kind(), out_channel, values))
+    }
+
     /// Stage 0 multi-firing replay: install the Rho-net σ-receiver program ONCE,
     /// then run it composed with each firing's σ-injection `call` (each on its own
     /// out channel) and collect every firing's observed closed Rho ground values
@@ -668,10 +698,13 @@ pub enum RhoInvocationDeferral {
     SemanticPredicate { predicate: String },
     /// The report-free compile cannot admit the term: the static capability gate rejected (a
     /// fireable rule is not matchable in Rho), the located shape is out of report-free scope
-    /// (a located native firing needs the host D-stage value; a nested-entry multi-site install
-    /// would contend), or the compile failed outright. The wrapper lazily builds the checked
-    /// Dovetail report and runs the report-carrying fallback compiler — today's exact paths
-    /// (the report-driven match, the σ-replay driver, or the fallback's own error).
+    /// (a located native rule with NO registrable machine-side handler — a non-scalar or
+    /// non-ground-parseable native shape — needs the host D-stage value; a nested-entry
+    /// multi-site install would contend), or the compile failed outright. The wrapper lazily
+    /// builds the checked Dovetail report and runs the report-carrying fallback compiler —
+    /// today's exact paths (the report-driven match, the σ-replay driver, or the fallback's own
+    /// error). A-S3: a located native site whose rule HAS a registrable handler ADMITS instead
+    /// (the machine invokes the registered evaluator at COMM time).
     GateReject { detail: String },
 }
 
@@ -1085,29 +1118,39 @@ impl RhoBackendInvocation {
     }
 }
 
-/// Tier-3: clear the held-fold lowering session state before an invocation compiler runs, so its
-/// lifted fold contracts can be collected afterwards with [`drain_pending_fold_definitions`]. No-op
-/// unless the rhocalc lowering (which defines the fold-contract types) is compiled in — a dependency
-/// boundary, not a behavior gate.
+/// Tier-3 + A-S3: clear the pending system-process session state before an invocation compiler
+/// runs, so the `Definition`s it registers can be collected afterwards with
+/// [`drain_pending_fold_definitions`]. Covers BOTH bands: the rhocalc held-fold lift sites
+/// (no-op unless the rhocalc lowering is compiled in — a dependency boundary, not a behavior
+/// gate) and the A-S3 native-handler specs the generated report-free match body records
+/// (`rho_net_match_invocation_to`).
 #[cfg(feature = "runtime-report")]
 fn clear_pending_fold_sites() {
     #[cfg(feature = "rhocalc-runtime")]
     crate::rhocalc_ast::clear_held_fold_sites();
+    mettail_rholang_codegen::clear_pending_native_handler_specs();
 }
 
-/// Tier-3: drain the held-fold contract `Definition`s recorded by the just-run invocation compiler
-/// (empty unless the term lifted a fold over a COMM-received value).
+/// Tier-3 + A-S3: drain every system-process `Definition` recorded by the just-run invocation
+/// compiler — the held-fold contracts (empty unless the term lifted a fold over a COMM-received
+/// value) plus the A-S3 native-handler contracts (empty unless the report-free compile ADMITTED
+/// located native sites). Both ride the same `extra_system_processes` seam into
+/// [`run_rho_invocation_blocking`]; their reserved bands are disjoint by construction
+/// (`mettail_rholang_codegen::native_handler`, collision-tested). On a DEFERRAL return the
+/// drained definitions are simply dropped — nothing leaks into the fallback compile, which
+/// re-brackets itself.
 #[cfg(feature = "runtime-report")]
 fn drain_pending_fold_definitions() -> Vec<rholang::rust::interpreter::system_processes::Definition>
 {
     #[cfg(feature = "rhocalc-runtime")]
-    {
-        crate::fold_contract::fold_definitions_for(&crate::rhocalc_ast::take_held_fold_sites())
-    }
+    let mut definitions =
+        crate::fold_contract::fold_definitions_for(&crate::rhocalc_ast::take_held_fold_sites());
     #[cfg(not(feature = "rhocalc-runtime"))]
-    {
-        Vec::new()
-    }
+    let mut definitions: Vec<rholang::rust::interpreter::system_processes::Definition> = Vec::new();
+    definitions.extend(crate::native_contract::native_definitions_for(
+        &mettail_rholang_codegen::take_pending_native_handler_specs(),
+    ));
+    definitions
 }
 
 #[cfg(feature = "runtime-report")]

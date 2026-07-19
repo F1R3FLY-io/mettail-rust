@@ -51,6 +51,10 @@ pub mod bench_support;
 /// Tier-3 held-fold trampoline: Dovetail-backed fold contracts for folds over COMM-received values.
 #[cfg(feature = "rhocalc-runtime")]
 pub mod fold_contract;
+/// A-S3 registered native-handler contracts: the machine-invoked trusted evaluator `Definition`s
+/// for admitted `fold` native rules (the held-fold trampoline generalized — same
+/// `extra_system_processes` seam, reserved `[0xF1, rule]` band).
+pub mod native_contract;
 #[cfg(feature = "rhocalc-runtime")]
 pub mod rhocalc_ast;
 pub mod run;
@@ -83,6 +87,9 @@ pub use bench_support::{
     MAX_UNKNOWN_CHANNEL_SAMPLES,
 };
 pub use mettail_rholang_codegen::{REFLECTED_TERM_ABI_PREFIX, RHOCALC_BAG_ABI_TAG};
+pub use native_contract::{
+    native_definition, native_definitions_for, par_to_ground_term, NativeContractError,
+};
 #[cfg(feature = "rhocalc-runtime")]
 pub use rhocalc_ast::{
     dovetail_rho_backed_rhocalc, lower_rhocalc_name, lower_rhocalc_proc, lower_rhocalc_term,

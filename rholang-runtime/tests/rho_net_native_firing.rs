@@ -47,6 +47,7 @@ use mettail_rholang_runtime::{
     build_rho_net_injection_invocation_from_contract, PlannedRhoBackend, RhoMachineInvocation,
 };
 use mettail_runtime::{Language, RuntimeObservationValue, RuntimeReflectedSubterm};
+use prost::Message;
 
 /// Reconstruct NativeDemo's augmented `LanguageDef` from the generated metadata's
 /// `definition_source()` and plan its Rho-default backend (the `PowInt`
@@ -270,5 +271,278 @@ async fn s_native_location_is_produced_by_the_automaton_not_the_report() {
         observation.values[0], eight_value,
         "the native redex was LOCATED by the sa: automaton (from the reflected term, not the \
          corrupted report σ), and the handler's value 8 was delivered on OUT"
+    );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+// A-S3 (native dispatch boundary tightening): the ADMITTED report-free native path — the
+// MACHINE invokes the registered trusted handler at COMM time; no host-pre-computed value
+// rides the call `Par`, and there is NO report at all.
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+
+/// Replace every occurrence of `needle` with `replacement` (same length — protobuf length
+/// prefixes stay valid) in the prost-encoded bytes of `par`, and decode back. The reflected-term
+/// tags are UTF-8 strings embedded verbatim in the encoded `Par`, so a same-length tag rewrite
+/// corrupts EVERY occurrence (the spread's `loc:` head publications and `cap:` collapse values
+/// alike) — a CONSISTENTLY corrupted spread, as if the automaton had been handed a different
+/// subject.
+fn corrupt_par_bytes(par: &models::rhoapi::Par, needle: &[u8], replacement: &[u8]) -> models::rhoapi::Par {
+    assert_eq!(
+        needle.len(),
+        replacement.len(),
+        "same-length replacement keeps the protobuf length prefixes valid"
+    );
+    let mut bytes = par.encode_to_vec();
+    let mut index = 0;
+    let mut replaced = 0;
+    while index + needle.len() <= bytes.len() {
+        if &bytes[index..index + needle.len()] == needle {
+            bytes[index..index + needle.len()].copy_from_slice(replacement);
+            replaced += 1;
+            index += needle.len();
+        } else {
+            index += 1;
+        }
+    }
+    assert!(replaced > 0, "the corruption probe must actually rewrite something");
+    models::rhoapi::Par::decode(bytes.as_slice()).expect("the corrupted bytes re-decode as a Par")
+}
+
+/// Whether the prost-encoded bytes of `par` contain `needle` (an ASCII tag fragment).
+fn par_bytes_contain(par: &models::rhoapi::Par, needle: &[u8]) -> bool {
+    let bytes = par.encode_to_vec();
+    bytes.windows(needle.len()).any(|window| window == needle)
+}
+
+/// A-S3 CORE + trusted-handler probe (lazily-absent report): the REPORT-FREE compile
+/// (`rho_net_match_invocation_to`) ADMITS the located native redex `2 ^ 3` — no deferral, no
+/// report anywhere — and the value `8` is produced by the REGISTERED HANDLER at COMM time, not
+/// by any host pre-computation:
+///
+/// 1. the admitted call `Par` does NOT embed the value (`NumLit(8)` is absent from its bytes),
+///    while the REPORT path's value-bridge call DOES embed it (the contrastive control that
+///    proves the probe is sensitive) — so on the admitted path nothing host-side computed `8`;
+/// 2. running the admitted call WITHOUT the registered handler `Definition`s leaves OUT EMPTY —
+///    no other component can fabricate the value;
+/// 3. running it WITH the drained `Definition`s lands exactly `NumLit(8)` — the machine's
+///    dispatch COMM invoked the trusted evaluator (`a.pow(b as u32)` on the located σ) and the
+///    rule's σ-receiver consumed the RETURNED value.
+#[tokio::test]
+async fn a_s3_admitted_native_value_is_computed_by_the_registered_handler_at_comm_time() {
+    mettail_runtime::clear_var_cache();
+    let (backend, _fingerprint) = native_demo_backend();
+
+    let term = NativeDemoLanguage
+        .parse_term("2 ^ 3")
+        .expect("NativeDemo must parse the native redex 2 ^ 3");
+
+    // The REPORT-FREE compile ADMITS (A-S3): located native sites register handler specs
+    // instead of deferring. Bracket the pending registry ourselves (the production wrapper's
+    // clear/drain bracket, inlined for the probe).
+    mettail_rholang_codegen::clear_pending_native_handler_specs();
+    let invocation = NativeDemoLanguage::rho_net_match_invocation_to(term.as_ref(), "OUT")
+        .expect("A-S3: the report-free match must ADMIT a located native redex");
+    let specs = mettail_rholang_codegen::take_pending_native_handler_specs();
+    assert_eq!(specs.len(), 1, "one located native rule registers one handler spec");
+    assert_eq!(specs[0].fired_rule_label, "Int_PowInt");
+    assert_eq!(specs[0].bare_label, "PowInt");
+    assert_eq!(specs[0].arity, 2);
+    assert!(
+        specs[0].urn.starts_with("mtl:native:") && specs[0].urn.ends_with(":Int_PowInt"),
+        "the URN rides the mtl:native:{{fingerprint}}:{{label}} band, got {}",
+        specs[0].urn
+    );
+
+    // (1) VALUE ABSENCE: the admitted call carries the subject (`NumLit(2)`, `NumLit(3)`) but
+    // NOT the value `NumLit(8)` — the host computed nothing.
+    assert!(
+        par_bytes_contain(&invocation.call, b"NumLit(2)"),
+        "the reflected subject rides the call"
+    );
+    assert!(
+        !par_bytes_contain(&invocation.call, b"NumLit(8)"),
+        "A-S3: no host-pre-computed value may ride the admitted call Par"
+    );
+    // Contrastive control: the REPORT path's value bridge DOES embed the host value — the
+    // probe is sensitive, and the deferral path is byte-compatibly unchanged.
+    let report = NativeDemoLanguage::dovetail_report_for(term.as_ref(), 64, 1_000_000)
+        .expect("NativeDemo Dovetail report must compile");
+    let report_invocation =
+        NativeDemoLanguage::rho_net_match_invocation_from_dovetail_to(term.as_ref(), &report, "OUT")
+            .expect("the report-carrying match still admits");
+    assert!(
+        par_bytes_contain(&report_invocation.call, b"NumLit(8)"),
+        "the report path's value bridge embeds the host-computed contractum (the D-stage lane)"
+    );
+
+    // (2) WITHOUT the registered handler Definitions the value cannot appear: the trigger
+    // accept fires into the contract-call bridge, whose send rests unconsumed on the reserved
+    // contract channel — OUT stays EMPTY (nothing else can produce the value).
+    let without_handlers = backend
+        .run_rho_net_with_call_definitions_and_observe_runtime_values(
+            &invocation.call,
+            Vec::new(),
+            &invocation.out_channel,
+        )
+        .await
+        .expect("the admitted call runs (inertly) without the handler Definitions");
+    assert_eq!(
+        without_handlers.observed_count(),
+        0,
+        "no component but the registered handler can produce the native value (got {:?})",
+        without_handlers.values
+    );
+
+    // (3) WITH the Definitions, the machine's COMM invokes the trusted evaluator at COMM time
+    // and the σ-receiver consumes the RETURNED value: OUT = NumLit(8).
+    let definitions = mettail_rholang_runtime::native_definitions_for(&specs);
+    let observation = backend
+        .run_rho_net_with_call_definitions_and_observe_runtime_values(
+            &invocation.call,
+            definitions,
+            &invocation.out_channel,
+        )
+        .await
+        .expect("the admitted native call executes with the registered handler installed");
+    assert_eq!(
+        observation.observed_count(),
+        1,
+        "the dispatch COMM must fire the handler exactly once (got {:?})",
+        observation.values
+    );
+    let eight_value = RuntimeObservationValue::Term {
+        constructor: "NumLit(8)".to_string(),
+        children: Vec::new(),
+    };
+    assert_eq!(
+        observation.values[0], eight_value,
+        "the observed value is the REGISTERED HANDLER's computation (2^3 = 8) at COMM time"
+    );
+}
+
+/// A-S3 wrong-σ probe: corrupt the SPREAD (the reflected subject inside the admitted call
+/// `Par`: every `NumLit(2)` tag → `NumLit(5)`) and run with the SAME registered handler — the
+/// handler computes from the OPERANDS THE MACHINE DELIVERS, so the observed value tracks the
+/// corrupted σ (`5 ^ 3 = 125`), not any value fixed at compile time. Together with the honest
+/// run (`8`), this proves the fired value is a genuine function of the COMM-delivered σ — the
+/// dispatch is directed compute ON the machine, not a ferried constant.
+#[tokio::test]
+async fn a_s3_wrong_sigma_probe_handler_computes_from_the_delivered_operands() {
+    mettail_runtime::clear_var_cache();
+    let (backend, _fingerprint) = native_demo_backend();
+
+    let term = NativeDemoLanguage
+        .parse_term("2 ^ 3")
+        .expect("NativeDemo must parse the native redex 2 ^ 3");
+
+    mettail_rholang_codegen::clear_pending_native_handler_specs();
+    let invocation = NativeDemoLanguage::rho_net_match_invocation_to(term.as_ref(), "OUT")
+        .expect("A-S3: the report-free match must ADMIT a located native redex");
+    let specs = mettail_rholang_codegen::take_pending_native_handler_specs();
+    assert_eq!(specs.len(), 1, "one located native rule registers one handler spec");
+
+    // Corrupt the spread: every reflected `NumLit(2)` tag becomes `NumLit(5)` (same length, so
+    // the protobuf structure is preserved) — the automaton now locates PowInt(5, 3) and
+    // captures σ = (5, 3).
+    let corrupted = corrupt_par_bytes(&invocation.call, b"NumLit(2)", b"NumLit(5)");
+
+    let definitions = mettail_rholang_runtime::native_definitions_for(&specs);
+    let observation = backend
+        .run_rho_net_with_call_definitions_and_observe_runtime_values(
+            &corrupted,
+            definitions,
+            &invocation.out_channel,
+        )
+        .await
+        .expect("the corrupted-spread call executes with the registered handler installed");
+    assert_eq!(
+        observation.observed_count(),
+        1,
+        "the corrupted spread still locates one PowInt site (got {:?})",
+        observation.values
+    );
+    let one_two_five = RuntimeObservationValue::Term {
+        constructor: "NumLit(125)".to_string(),
+        children: Vec::new(),
+    };
+    assert_eq!(
+        observation.values[0], one_two_five,
+        "the handler computed 5 ^ 3 = 125 from the CORRUPTED machine-delivered σ — the value \
+         is a function of the COMM-delivered operands, not a compile-time constant"
+    );
+}
+
+/// A-S3 zero-D-stage native exec (the runtime-test home of the `zero_dstage_exec` extension —
+/// NativeDemo is not REPL-registered): through the PRODUCTION lazy wrapper, an admitted native
+/// exec runs with ZERO Dovetail work (`checked_complete_dovetail_report` never runs — counter
+/// delta 0) and the observed value equals the registered handler's computation.
+#[cfg(feature = "dstage-instrumentation")]
+#[test]
+fn a_s3_admitted_native_exec_builds_no_dovetail_report() {
+    use mettail_rholang_runtime::dstage_instrumentation::dovetail_report_invocations;
+    use mettail_rholang_runtime::{
+        install_dovetail_rho_runtime_backend_lazy, RhoBackendInvocation, RhoInvocationDeferral,
+    };
+    use mettail_runtime::{RuntimeBackend, RuntimeDovetailRunReport, Term};
+
+    mettail_runtime::clear_var_cache();
+    let (backend, _fingerprint) = native_demo_backend();
+
+    fn dovetail(term: &dyn Term) -> Result<RuntimeDovetailRunReport, String> {
+        NativeDemoLanguage::dovetail_report_for(term, 64, 1_000_000)
+    }
+    fn invocation_free(term: &dyn Term) -> Result<RhoBackendInvocation, RhoInvocationDeferral> {
+        match NativeDemoLanguage::rho_net_match_invocation_to(term, "OUT") {
+            Ok(invocation) => Ok(RhoBackendInvocation::from(
+                build_rho_net_injection_invocation_from_contract(invocation),
+            )),
+            Err(detail) => Err(RhoInvocationDeferral::GateReject { detail }),
+        }
+    }
+    fn invocation(
+        term: &dyn Term,
+        report: &RuntimeDovetailRunReport,
+    ) -> Result<RhoBackendInvocation, String> {
+        let contract =
+            NativeDemoLanguage::rho_net_match_invocation_from_dovetail_to(term, report, "OUT")?;
+        Ok(RhoBackendInvocation::from(build_rho_net_injection_invocation_from_contract(contract)))
+    }
+
+    let language = install_dovetail_rho_runtime_backend_lazy(
+        NativeDemoLanguage,
+        backend,
+        dovetail,
+        dovetail,
+        invocation_free,
+        invocation,
+    )
+    .expect("the NativeDemo lazy Dovetail+Rho wrapper installs");
+
+    let term = NativeDemoLanguage
+        .parse_term("2 ^ 3")
+        .expect("NativeDemo must parse the native redex 2 ^ 3");
+
+    let before = dovetail_report_invocations();
+    let report = language
+        .run_backend_report(RuntimeBackend::RhoMachine, term.as_ref())
+        .expect("the admitted native exec runs report-free on the Rho machine");
+    let after = dovetail_report_invocations();
+
+    assert_eq!(
+        after - before,
+        0,
+        "an ADMITTED native exec must build ZERO Dovetail reports (A-S3: the machine invokes \
+         the registered handler; the D-stage is not consulted)"
+    );
+    let out = report
+        .observations_for_channel("OUT")
+        .expect("the admitted native exec observes OUT");
+    assert_eq!(
+        out.values,
+        vec![RuntimeObservationValue::Term {
+            constructor: "NumLit(8)".to_string(),
+            children: Vec::new(),
+        }],
+        "the observed value equals the registered handler's computation (2^3 = 8)"
     );
 }

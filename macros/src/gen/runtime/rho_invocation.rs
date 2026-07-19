@@ -7,8 +7,9 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use mettail_ast::grammar::NonTerminalKind;
+use mettail_ast::grammar::{NonTerminalKind, TermParam};
 use mettail_ast::language::LanguageDef;
+use mettail_ast::types::{EvalMode, TypeExpr};
 use mettail_rholang_codegen::{
     lower_language_def, plan_scalar_invocations, RhoScalarContractShape, RhoScalarInvocationPlan,
     RhoScalarType,
@@ -813,6 +814,375 @@ fn reflect_subject_binding(language: &LanguageDef) -> TokenStream {
     }
 }
 
+/// A-S3: the native-scalar types whose LITERAL-LEAF ground tags (`"{Lit}({:?})"`, the
+/// [`reflect_category_fn`] literal arm's format) parse back FAITHFULLY via `FromStr` — the
+/// registrability whitelist for machine-side native handlers. For each of these,
+/// `parse ∘ debug-format = identity` on every value the leaf tag can carry (integers, IEEE
+/// floats including `NaN`/`inf`/`-0.0`, booleans), and the generated ground-eval leaf arm
+/// RE-CHECKS the identity at runtime (`format!("{:?}", parsed) == inner`), so an unfaithful
+/// parse can only DEFER (the fold does not fire), never mis-evaluate. `String` is deliberately
+/// absent (its `{:?}` tag is quoted/escaped — `FromStr` would keep the quotes), as is every
+/// non-`FromStr` native type (e.g. `rug` big integers): a native rule over such a type gets NO
+/// registered handler and the report-free match DEFERS it with a typed reason — exactly the
+/// A-S2 behavior, never a silent wrong value.
+const NATIVE_GROUND_PARSEABLE_TYPES: &[&str] = &[
+    "i8", "i16", "i32", "i64", "i128", "u8", "u16", "u32", "u64", "u128", "f32", "f64", "bool",
+];
+
+/// Whether `ty` is a whitelisted ground-parseable native scalar type (token-string compare —
+/// the `![…]` native type of a `types { … }` entry is a bare primitive path when whitelisted).
+fn native_ground_parseable_type(ty: &syn::Type) -> bool {
+    let rendered = quote!(#ty).to_string();
+    NATIVE_GROUND_PARSEABLE_TYPES.contains(&rendered.as_str())
+}
+
+/// The RUNTIME VALUE type of a whitelisted native scalar category — the generated literal
+/// variant's payload type (`macros/src/gen/types/enums.rs`): `f64`/`f32` ride the canonical
+/// wrappers (`CanonicalFloat64`/`CanonicalFloat32`, Debug-transparent, canonicalized `Eq`), so
+/// the fold bodies (written against the wrapper — `.get()`) and the safeified/lifted closures
+/// (which return the wrapper) type-check identically to the D-stage dispatcher's bindings;
+/// integers and `bool` are their declared primitives.
+fn native_runtime_value_type(native: &syn::Type) -> TokenStream {
+    match crate::gen::native::NativeType::from_syn_type(native) {
+        crate::gen::native::NativeType::Float64 => quote! { mettail_runtime::CanonicalFloat64 },
+        crate::gen::native::NativeType::Float32 => quote! { mettail_runtime::CanonicalFloat32 },
+        _ => quote! { #native },
+    }
+}
+
+/// The literal-leaf PARSE binding for a whitelisted native scalar category: bind
+/// `__value: <runtime value type>` from the tag's inner string `__inner`, deferring (`None`) on
+/// any parse failure. Floats parse the RAW primitive via `FromStr` and wrap through the
+/// canonical constructor (`From<f64>`/`From<f32>` — the same canonicalization the literal
+/// variant's payload was constructed with, so the faithfulness guard's re-format compares
+/// canonical-to-canonical); integers and `bool` parse directly.
+fn native_leaf_parse_binding(native: &syn::Type) -> TokenStream {
+    match crate::gen::native::NativeType::from_syn_type(native) {
+        crate::gen::native::NativeType::Float64 => quote! {
+            let __raw: f64 = ::core::str::FromStr::from_str(__inner).ok()?;
+            let __value: mettail_runtime::CanonicalFloat64 = ::core::convert::From::from(__raw);
+        },
+        crate::gen::native::NativeType::Float32 => quote! {
+            let __raw: f32 = ::core::str::FromStr::from_str(__inner).ok()?;
+            let __value: mettail_runtime::CanonicalFloat32 = ::core::convert::From::from(__raw);
+        },
+        _ => quote! {
+            let __value: #native = ::core::str::FromStr::from_str(__inner).ok()?;
+        },
+    }
+}
+
+/// A category usable in A-S3 machine-side ground evaluation: a NON-collection native-scalar
+/// category whose native type is ground-parseable. Returns the native type when so.
+fn native_eval_category<'a>(language: &'a LanguageDef, category: &Ident) -> Option<&'a syn::Type> {
+    let lang_type = language.get_type(category)?;
+    if lang_type.collection_kind.is_some() {
+        return None;
+    }
+    let native = lang_type.native_type.as_ref()?;
+    native_ground_parseable_type(native).then_some(native)
+}
+
+/// One `fold` rule participating in A-S3 machine-side ground evaluation: every parameter a
+/// `Simple`/`Base` typed param of a [`native_eval_category`], with a `![…]` fold body — the
+/// ground-eval mirror of `typed_report.rs`'s `is_pure_native_arith` fold collection, restricted
+/// to the ground-parseable whitelist. `registrable` additionally requires the OUTPUT category to
+/// be a native-eval category (the handler must produce a literal-leaf ground value).
+struct NativeEvalRule<'a> {
+    /// `"{Category}_{Label}"` — the Dovetail firing label (`NativeDispatch::fired_rule_label`).
+    fired_rule_label: String,
+    /// The bare constructor label (`"PowInt"`) — the ground-eval match arm's tag.
+    bare_label: String,
+    /// The rule's typed params `(name, category)` in declaration order.
+    params: Vec<(Ident, Ident)>,
+    /// The `![…]` fold body (safeified at generation: overflow / ÷0 / NaN → defer).
+    body: &'a syn::Expr,
+    /// The output category (the arm's own category; the handler's literal-leaf wrapper).
+    output_cat: Ident,
+}
+
+/// Collect the language's native-eval `fold` rules, grouped by OUTPUT category, plus the
+/// registrable subset's fired labels. Mirrors `collect_fold_rules` (typed_report.rs) restricted
+/// to the ground-parseable whitelist: `eval_mode == Fold`, a `![…]` body, all params
+/// `Simple`/`Base` of native-eval categories. A rule outside the whitelist is simply ABSENT —
+/// its located sites then defer with a typed reason (the fail-closed boundary), never a wrong
+/// arm.
+fn collect_native_eval_rules(language: &LanguageDef) -> Vec<NativeEvalRule<'_>> {
+    let mut out = Vec::new();
+    for rule in &language.terms {
+        if rule.eval_mode != Some(EvalMode::Fold) {
+            continue;
+        }
+        let Some(body) = rule.rust_code.as_ref().map(|rc| &rc.code) else {
+            continue;
+        };
+        let Some(ctx) = rule.term_context.as_ref() else {
+            continue;
+        };
+        if ctx.is_empty() {
+            continue;
+        }
+        let mut params = Vec::with_capacity(ctx.len());
+        let mut all_native_eval = true;
+        for param in ctx {
+            match param {
+                TermParam::Simple { name, ty: TypeExpr::Base(category) }
+                    if native_eval_category(language, category).is_some() =>
+                {
+                    params.push((name.clone(), category.clone()));
+                },
+                _ => {
+                    all_native_eval = false;
+                    break;
+                },
+            }
+        }
+        if !all_native_eval {
+            continue;
+        }
+        // The output category must itself be ground-evaluable (the arm returns its native
+        // value; the handler wraps it as the category's literal leaf).
+        if native_eval_category(language, &rule.category).is_none() {
+            continue;
+        }
+        out.push(NativeEvalRule {
+            fired_rule_label: format!("{}_{}", rule.category, rule.label),
+            bare_label: rule.label.to_string(),
+            params,
+            body,
+            output_cat: rule.category.clone(),
+        });
+    }
+    out
+}
+
+/// The per-category A-S3 ground-eval fn name (`__mettail_native_ground_eval_<Category>`). The
+/// category name rides VERBATIM (collision-free: category names are unique idents; a snake-case
+/// mangle of underscore-joined names could collide and would trip `non_snake_case` on the `__`
+/// seams) — the generated fn carries `#[allow(non_snake_case)]`.
+fn native_ground_eval_fn_name(category: &Ident) -> Ident {
+    format_ident!("__mettail_native_ground_eval_{}", category)
+}
+
+/// The per-rule A-S3 handler fn name (`__mettail_native_handler_<Category>_<Label>`). The fired
+/// label rides VERBATIM (unique per rule); the generated fn carries `#[allow(non_snake_case)]`.
+fn native_handler_fn_name(fired_rule_label: &str) -> Ident {
+    format_ident!("__mettail_native_handler_{}", fired_rule_label)
+}
+
+/// Generate the A-S3 machine-side NATIVE HANDLER TABLE for the report-free match body:
+///
+/// * one GROUND-EVAL fn per reachable native-eval category —
+///   `__mettail_native_ground_eval_<cat>(g: &GroundTerm) -> Option<N>` — evaluating a reflected
+///   ground subtree to its native value: a fold-rule arm per native-eval `fold` rule of that
+///   output category (recursively evaluating the children per their param categories, then
+///   running the rule's OWN safeified `![…]` body — the same `safeify_and_wrap` the D-stage
+///   dispatcher runs, so overflow/÷0/NaN DEFERS instead of panicking), and a literal-leaf
+///   fallback arm that parses the category's `"{Lit}({:?})"` tag with the
+///   `parse ∘ format = identity` faithfulness guard. Every other constructor — a variable leaf
+///   (`^free`/`^bound`), a foreign head, a collection — evaluates to `None`: the fold DEFERS,
+///   mirroring the D-stage `try_eval()?` / `__class_is_fold_value` gate;
+///
+/// * one HANDLER fn per REGISTRABLE native rule —
+///   `__mettail_native_handler_<rule>(args) -> Option<GroundTerm>` — evaluating the located σ
+///   operands and wrapping the reduced value as the output category's literal-leaf ground term
+///   (`"{Lit}({:?})"`, byte-identical to the reflection's literal arm and to the D-stage
+///   contractum's bare form);
+///
+/// * the LOOKUP `__mettail_native_handler_for(fired_rule_label)` the report-free match body
+///   keys `NativeDispatch` entries on. `None` = the rule has no registrable machine-side
+///   handler → the located term DEFERS with a typed reason.
+///
+/// These are the SAME trusted evaluators the D-stage used — the `![…] fold` bodies compiled
+/// against natively-bound operands (`typed_report.rs` binds `try_eval()` values and runs the
+/// same safeified body) — now run by the MACHINE's dispatch COMM instead of ahead of it.
+fn native_handler_table(language: &LanguageDef) -> TokenStream {
+    let rules = collect_native_eval_rules(language);
+
+    // Reachable native-eval categories: registrable-rule param/output categories, closed under
+    // "params of native-eval fold rules of a reachable output category" (the eval fns are
+    // mutually recursive through cross-category folds, e.g. casts).
+    let mut reachable: BTreeSet<String> = BTreeSet::new();
+    let mut frontier: Vec<Ident> = Vec::new();
+    for rule in &rules {
+        for (_, category) in &rule.params {
+            if reachable.insert(category.to_string()) {
+                frontier.push(category.clone());
+            }
+        }
+        if reachable.insert(rule.output_cat.to_string()) {
+            frontier.push(rule.output_cat.clone());
+        }
+    }
+    while let Some(category) = frontier.pop() {
+        for rule in &rules {
+            if rule.output_cat != category {
+                continue;
+            }
+            for (_, param_cat) in &rule.params {
+                if reachable.insert(param_cat.to_string()) {
+                    frontier.push(param_cat.clone());
+                }
+            }
+        }
+    }
+
+    // One ground-eval fn per reachable category (BTreeSet order: deterministic emission).
+    let eval_fns: Vec<TokenStream> = reachable
+        .iter()
+        .map(|category_name| {
+            let category = ident(category_name);
+            let fn_name = native_ground_eval_fn_name(&category);
+            let native_ty = native_eval_category(language, &category)
+                .expect("reachable categories are native-eval categories by construction");
+            let value_ty = native_runtime_value_type(native_ty);
+            let leaf_parse = native_leaf_parse_binding(native_ty);
+            let lit_label = generate_literal_label(native_ty);
+            let lit_prefix = lit(&format!("{lit_label}("));
+            let fold_arms: Vec<TokenStream> = rules
+                .iter()
+                .filter(|rule| rule.output_cat == category)
+                .map(|rule| {
+                    let bare = lit(&rule.bare_label);
+                    let child_idents: Vec<Ident> = (0..rule.params.len())
+                        .map(|i| format_ident!("__mettail_native_child_{i}"))
+                        .collect();
+                    let binds: Vec<TokenStream> = rule
+                        .params
+                        .iter()
+                        .zip(child_idents.iter())
+                        .map(|((name, category), child)| {
+                            let child_eval = native_ground_eval_fn_name(category);
+                            quote! { let #name = #child_eval(#child)?; }
+                        })
+                        .collect();
+                    // The rule's OWN fold body, safeified exactly as the D-stage dispatcher
+                    // safeifies it (arith → SafeArith, Option-returning closure): a decline
+                    // (`None`) defers the fold.
+                    let safeified =
+                        crate::gen::native::rust_code_rewrite::safeify_and_wrap(rule.body);
+                    quote! {
+                        #bare => {
+                            let [#(#child_idents),*] = __g.children.as_slice() else {
+                                return ::core::option::Option::None;
+                            };
+                            #(#binds)*
+                            let __value: #value_ty = (#safeified)?;
+                            ::core::option::Option::Some(__value)
+                        },
+                    }
+                })
+                .collect();
+            quote! {
+                #[allow(non_snake_case)]
+                fn #fn_name(
+                    __g: &::mettail_rholang_codegen::GroundTerm,
+                ) -> ::core::option::Option<#value_ty> {
+                    // A collection has no scalar ground value; a fold over one defers.
+                    if __g.coll_type.is_some() {
+                        return ::core::option::Option::None;
+                    }
+                    match __g.constructor.as_str() {
+                        #(#fold_arms)*
+                        __other => {
+                            // The literal-leaf fallback: parse the category's
+                            // `"{Lit}({:?})"` tag with the faithfulness guard
+                            // (`parse ∘ format = identity`); anything else — a variable
+                            // leaf, a foreign head — DEFERS (`None`), never guesses.
+                            if !__g.children.is_empty() {
+                                return ::core::option::Option::None;
+                            }
+                            let __inner =
+                                __other.strip_prefix(#lit_prefix)?.strip_suffix(')')?;
+                            #leaf_parse
+                            if ::std::format!("{:?}", __value) == __inner {
+                                ::core::option::Option::Some(__value)
+                            } else {
+                                ::core::option::Option::None
+                            }
+                        },
+                    }
+                }
+            }
+        })
+        .collect();
+
+    // One handler fn per registrable rule + the label-keyed lookup.
+    let handler_fns: Vec<TokenStream> = rules
+        .iter()
+        .map(|rule| {
+            let fn_name = native_handler_fn_name(&rule.fired_rule_label);
+            let arg_idents: Vec<Ident> = (0..rule.params.len())
+                .map(|i| format_ident!("__mettail_native_arg_{i}"))
+                .collect();
+            let binds: Vec<TokenStream> = rule
+                .params
+                .iter()
+                .zip(arg_idents.iter())
+                .map(|((name, category), arg)| {
+                    let arg_eval = native_ground_eval_fn_name(category);
+                    quote! { let #name = #arg_eval(#arg)?; }
+                })
+                .collect();
+            let native_out_ty = native_eval_category(language, &rule.output_cat)
+                .expect("registrable rules have native-eval output categories by construction");
+            let out_value_ty = native_runtime_value_type(native_out_ty);
+            let out_lit_label = lit(&generate_literal_label(native_out_ty).to_string());
+            let safeified = crate::gen::native::rust_code_rewrite::safeify_and_wrap(rule.body);
+            quote! {
+                #[allow(non_snake_case)]
+                fn #fn_name(
+                    __args: &[::mettail_rholang_codegen::GroundTerm],
+                ) -> ::core::option::Option<::mettail_rholang_codegen::GroundTerm> {
+                    let [#(#arg_idents),*] = __args else {
+                        return ::core::option::Option::None;
+                    };
+                    #(#binds)*
+                    let __value: #out_value_ty = (#safeified)?;
+                    // The output category's literal-leaf ground form — byte-identical to the
+                    // subject reflection's literal arm (`"{Lit}({:?})"`) and to the D-stage
+                    // contractum's bare form, so the emitted value decodes exactly as the
+                    // report path's did.
+                    ::core::option::Option::Some(::mettail_rholang_codegen::GroundTerm::new(
+                        ::std::format!("{}({:?})", #out_lit_label, __value),
+                        ::std::vec::Vec::new(),
+                    ))
+                }
+            }
+        })
+        .collect();
+
+    let lookup_arms: Vec<TokenStream> = rules
+        .iter()
+        .map(|rule| {
+            let fired = lit(&rule.fired_rule_label);
+            let fn_name = native_handler_fn_name(&rule.fired_rule_label);
+            quote! { #fired => ::core::option::Option::Some(#fn_name), }
+        })
+        .collect();
+
+    quote! {
+        #(#eval_fns)*
+        #(#handler_fns)*
+
+        /// A-S3: the registrable machine-side handler for a native rule's Dovetail firing
+        /// label, or `None` when the rule has no ground-parseable pure-native-scalar shape —
+        /// the located term then DEFERS to the lazy-report path with a typed reason.
+        fn __mettail_native_handler_for(
+            __label: &str,
+        ) -> ::core::option::Option<
+            fn(
+                &[::mettail_rholang_codegen::GroundTerm],
+            ) -> ::core::option::Option<::mettail_rholang_codegen::GroundTerm>,
+        > {
+            match __label {
+                #(#lookup_arms)*
+                _ => ::core::option::Option::None,
+            }
+        }
+    }
+}
+
 /// Generate the opt-in `rho_net_invocation_from_dovetail_to` helper: the Rho-net
 /// σ-injection F-function.
 ///
@@ -1602,22 +1972,29 @@ pub fn generate_rho_net_invocation(language: &LanguageDef) -> TokenStream {
         })
     };
 
-    // A-S2 (D-stage demotion): the REPORT-FREE match body — `match_body` minus every report
-    // read. No `assert_complete` (there is no report), no fired-rule gate (the STATIC gate
-    // `in_rho_static_gate` decides admission term-independently: every FIREABLE rewrite must be
-    // matchable in Rho, congruence-premise rewrites exempt — they never fire), and the native
-    // bridge decision comes from LOCATED sites (`located_native_site_count` over the reflected
-    // subject) instead of report firings. A located native site's VALUE is the trusted host
-    // handler's payload (the inherent `NativeSystemProcessBoundary`), which only the D-stage
-    // computes — so ANY located native site fails closed to the lazy-report path, where the
-    // report-carrying `match_body` builds the value bridge (or the σ-replay driver replays)
-    // exactly as today. Everything else — the M-reflect subject reflection, the memoized
+    // A-S2 (D-stage demotion) + A-S3 (native dispatch boundary tightening): the REPORT-FREE
+    // match body — `match_body` minus every report read. No `assert_complete` (there is no
+    // report), no fired-rule gate (the STATIC gate `in_rho_static_gate` decides admission
+    // term-independently: every FIREABLE rewrite must be matchable in Rho, congruence-premise
+    // rewrites exempt — they never fire). Native site counts still come from LOCATED sites over
+    // the reflected subject (never report firings), but A-S3 ADMITS them: the body registers
+    // one machine-side handler contract per located native rule (the trusted evaluator = the
+    // rule's own `![…] fold` body, run by the MACHINE's dispatch COMM at COMM time — no
+    // host-pre-computed contractum rides the call `Par`) and co-installs one contract-call
+    // bridge per located site; only a native rule with NO registrable handler still defers,
+    // with its typed reason. Everything else — the M-reflect subject reflection, the memoized
     // ruleset, and the locate-all `∏ network_ℓ ‖ spread` call — is the `match_body` code.
+    let native_handlers = native_handler_table(language);
     let match_free_body = quote! {
         // M-reflect: the subject is the WHOLE input `term`, reflected STRUCTURALLY to a
         // `GroundTerm` (`__subject`) — never a report σ (this path has no report at all).
         let out_channel = out_channel.as_ref();
         #reflect_subject
+
+        // A-S3: the machine-side native handler table — the per-category ground evaluators,
+        // the per-rule trusted handlers (the same `![…] fold` bodies the D-stage dispatcher
+        // runs), and the label-keyed lookup the native admission block below uses.
+        #native_handlers
 
         // The per-source MEMOIZED artifacts (same derivation + coherence argument as the
         // report-carrying match body above).
@@ -1657,26 +2034,12 @@ pub fn generate_rho_net_invocation(language: &LanguageDef) -> TokenStream {
             ));
         }
 
-        // Native firings are counted from LOCATED sites (not report firings). ≥1 located native
-        // site needs the host handler's value → defer to the lazy-report path (fail-closed; the
-        // report-carrying body then builds the value bridge from the firing's contractum, or the
-        // σ-replay driver replays — exactly today's behavior for native terms).
-        let __native_sites =
-            ::mettail_rholang_codegen::located_native_site_count(__ruleset, &__subject);
-        if __native_sites > 0 {
-            return ::core::result::Result::Err(::std::format!(
-                "in-Rho report-free match for language {} located {} native firing site(s); \
-                 the native value requires the host D-stage handler (deferring to the report path)",
-                #language_lit, __native_sites,
-            ));
-        }
-
         // The SAME locate-all `∏ network_ℓ ‖ spread` call as the report-carrying match body: the
         // automaton LOCATES every redex (nested + multiple) and each accept fires the σ-receiver
         // on `out_channel`. A normal form locates 0 sites (the bare spread, a no-op). A nested
         // ruleset with ≥2 located sites fails closed here (`NestedEntryMultiSite` → the
         // lazy-report σ-replay), identical to the report-carrying path.
-        let (__call, _sites) = ::mettail_rholang_codegen::in_rho_match_all_sites_call_par(
+        let (mut __call, _sites) = ::mettail_rholang_codegen::in_rho_match_all_sites_call_par(
             __ruleset,
             &__subject,
             "site0",
@@ -1688,6 +2051,90 @@ pub fn generate_rho_net_invocation(language: &LanguageDef) -> TokenStream {
                 #language_lit, __err,
             )
         })?;
+
+        // A-S3 (native dispatch boundary tightening): located native sites ADMIT. Native site
+        // counts still come from LOCATED sites over the reflected subject (never report firings
+        // — `located_native_site_count_for`, the per-rule refinement of A-S2's
+        // `located_native_site_count`), but a located site now REGISTERS the rule's machine-side
+        // handler contract and co-installs a CONTRACT-CALL bridge instead of deferring:
+        //
+        //  * one `NativeHandlerSpec` per located native RULE — the trusted evaluator (the
+        //    rule's own `![…] fold` body, `__mettail_native_handler_for`) plus the reserved
+        //    contract channel `[0xF1, rule_index]`. The runtime's invocation-compiler bracket
+        //    drains the specs into system-process `Definition`s injected via
+        //    `extra_system_processes` (the Tier-3 held-fold trampoline seam), so the MACHINE's
+        //    dispatch COMM invokes the evaluator at COMM time;
+        //  * one value-free `native_locate_contract_bridge_par` per located SITE — the accept's
+        //    captured σ operands forward to the contract channel, and the handler `produce`s
+        //    `[value, out]` on the rule's dispatch channel, where the installed σ-receiver
+        //    consumes the RETURNED value. The bridges are identical pure forwarders (no
+        //    per-site value), so — unlike the report path's single-native-firing value bridge —
+        //    ≥2 located sites CANNOT cross-talk: each accept drives its own handler invocation.
+        //
+        // No host-pre-computed contractum rides the call `Par` (`NativeSystemProcessBoundary.v`
+        // section 4). FAIL-CLOSED residue: a native rule with NO registrable machine-side
+        // handler (a non-scalar or non-ground-parseable native shape) still DEFERS to the
+        // lazy-report path with its typed reason, where the report-carrying value bridge (or
+        // the σ-replay driver) handles it exactly as before.
+        let mut __native_specs: ::std::vec::Vec<::mettail_rholang_codegen::NativeHandlerSpec> =
+            ::std::vec::Vec::new();
+        for (__native_index, __dispatch) in __ruleset.native_dispatch.iter().enumerate() {
+            let __site_count = ::mettail_rholang_codegen::located_native_site_count_for(
+                __ruleset,
+                &__subject,
+                &__dispatch.bare_label,
+            );
+            if __site_count == 0 {
+                continue;
+            }
+            let ::core::option::Option::Some(__evaluator) =
+                __mettail_native_handler_for(&__dispatch.fired_rule_label)
+            else {
+                return ::core::result::Result::Err(::std::format!(
+                    "in-Rho report-free match for language {} located {} native site(s) for rule \
+                     {} with no registrable machine-side handler (a non-scalar or \
+                     non-ground-parseable native shape); the native value requires the host \
+                     D-stage handler (deferring to the report path)",
+                    #language_lit, __site_count, __dispatch.fired_rule_label,
+                ));
+            };
+            let ::core::result::Result::Ok(__rule_index) = u8::try_from(__native_index) else {
+                return ::core::result::Result::Err(::std::format!(
+                    "in-Rho report-free match for language {} has native rule index {} beyond \
+                     the reserved contract band (max {}); deferring to the report path",
+                    #language_lit, __native_index, u8::MAX,
+                ));
+            };
+            let __native_channel =
+                ::mettail_rholang_codegen::native_contract_channel(__rule_index);
+            for _ in 0..__site_count {
+                __call = __call.append(
+                    ::mettail_rholang_codegen::native_locate_contract_bridge_par(
+                        &__dispatch.trigger_channel,
+                        __dispatch.arity,
+                        __native_channel.clone(),
+                    ),
+                );
+            }
+            __native_specs.push(::mettail_rholang_codegen::NativeHandlerSpec {
+                urn: ::mettail_rholang_codegen::native_handler_urn(
+                    &__ruleset.language_fingerprint,
+                    &__dispatch.fired_rule_label,
+                ),
+                fired_rule_label: __dispatch.fired_rule_label.clone(),
+                bare_label: __dispatch.bare_label.clone(),
+                arity: __dispatch.arity,
+                fingerprint: __ruleset.language_fingerprint.clone(),
+                rule_index: __rule_index,
+                dispatch_channel: __dispatch.dispatch_channel.clone(),
+                evaluator: ::std::sync::Arc::new(__evaluator),
+            });
+        }
+        // Record ONLY after every fallible step: a deferral return above records nothing (and
+        // the runtime bracket would discard a stray record anyway).
+        if !__native_specs.is_empty() {
+            ::mettail_rholang_codegen::record_pending_native_handler_specs(__native_specs);
+        }
 
         ::core::result::Result::Ok(::mettail_rholang_codegen::RhoNetInjectionInvocation {
             call: __call,
@@ -1868,7 +2315,8 @@ pub fn generate_rho_net_invocation(language: &LanguageDef) -> TokenStream {
                 #match_body
             }
 
-            /// A-S2 (D-stage demotion): the REPORT-FREE in-Rho set-automaton MATCH call —
+            /// A-S2 (D-stage demotion) + A-S3 (native dispatch boundary tightening): the
+            /// REPORT-FREE in-Rho set-automaton MATCH call —
             /// [`Self::rho_net_match_invocation_from_dovetail_to`] with every Dovetail-report
             /// read removed, so the admitted path runs with ZERO Dovetail work.
             ///
@@ -1878,10 +2326,22 @@ pub fn generate_rho_net_invocation(language: &LanguageDef) -> TokenStream {
             ///   (`in_rho_static_gate`): term-independent admission — every FIREABLE rewrite
             ///   must be matchable in Rho (congruence-premise rewrites are exempt: they never
             ///   appear as fired rules, the e-graph closes contexts implicitly);
-            /// - the native bridge decision is counted from LOCATED sites
-            ///   (`located_native_site_count` over the structurally reflected subject) instead
-            ///   of report firings — ANY located native site fails closed (its value is the
-            ///   host D-stage handler's payload, the inherent `NativeSystemProcessBoundary`).
+            /// - native sites are counted from LOCATED positions
+            ///   (`located_native_site_count_for` over the structurally reflected subject)
+            ///   instead of report firings, and — A-S3 — a located native site ADMITS: the
+            ///   body registers the rule's machine-side handler contract (a
+            ///   `NativeHandlerSpec` the runtime's invocation-compiler bracket drains into an
+            ///   `extra_system_processes` `Definition` — the Tier-3 held-fold trampoline
+            ///   seam) and co-installs one value-free contract-call bridge
+            ///   (`native_locate_contract_bridge_par`) per located site, so the MACHINE's
+            ///   dispatch COMM invokes the trusted evaluator (the rule's own `![…] fold`
+            ///   body) on the automaton-captured σ AT COMM TIME and the rule's σ-receiver
+            ///   consumes the RETURNED value. No host-pre-computed contractum rides the call
+            ///   `Par`, and ≥2 located native sites admit (each site drives its own handler
+            ///   invocation — the identical bridges cannot cross-talk). Only a native rule
+            ///   with NO registrable machine-side handler (a non-scalar or
+            ///   non-ground-parseable native shape) still fails closed, with its typed
+            ///   reason.
             ///
             /// Every `Err` is a DEFERRAL to the lazy-report path: the runtime wrapper then
             /// LAZILY builds the checked Dovetail report and takes today's report-carrying
@@ -2374,23 +2834,46 @@ mod tests {
 
     #[test]
     fn generated_rho_net_invocation_emits_the_report_free_match_method() {
-        // A-S2 (D-stage demotion): the emitted impl carries the REPORT-FREE match invocation —
+        // A-S2 (D-stage demotion) + A-S3 (native dispatch boundary tightening): the emitted
+        // impl carries the REPORT-FREE match invocation —
         // `rho_net_match_invocation_to(term, out_channel)` — which admits via the STATIC gate
-        // (`in_rho_static_gate`, term-independent), counts native firings from LOCATED sites
-        // (`located_native_site_count`, never report firings), reads the memoized artifacts
+        // (`in_rho_static_gate`, term-independent), counts native sites from LOCATED positions
+        // (`located_native_site_count_for`, never report firings), reads the memoized artifacts
         // (`cached_in_rho_artifacts`), and assembles the SAME locate-all call
         // (`in_rho_match_all_sites_call_par`) as the report-carrying body.
         let tokens = generate_rho_net_invocation(&swap_net_fixture()).to_string();
         assert!(tokens.contains("rho_net_match_invocation_to"), "the report-free method exists");
         assert!(tokens.contains("in_rho_static_gate"), "the STATIC gate replaces the fired gate");
         assert!(
-            tokens.contains("located_native_site_count"),
-            "native firings are counted from located sites"
+            tokens.contains("located_native_site_count_for"),
+            "native sites are counted from located positions, per rule"
         );
         assert!(tokens.contains("cached_in_rho_artifacts"), "artifacts are memoized per source");
         assert!(
             tokens.contains("in_rho_match_all_sites_call_par"),
             "the report-free path assembles the same locate-all call"
+        );
+        // A-S3: a located native site ADMITS — the body registers the machine-side handler
+        // contract specs (drained by the runtime bracket into `extra_system_processes`
+        // Definitions) and co-installs the per-site CONTRACT-CALL bridge; the host-value
+        // deferral is gone from the report-free path (only unregistrable handlers defer).
+        assert!(
+            tokens.contains("record_pending_native_handler_specs"),
+            "the report-free path registers machine-side native handler specs"
+        );
+        assert!(
+            tokens.contains("native_locate_contract_bridge_par"),
+            "the report-free path co-installs the per-site contract-call bridge"
+        );
+        assert!(
+            tokens.contains("__mettail_native_handler_for"),
+            "the machine-side handler lookup gates native admission"
+        );
+        // The report-carrying value bridge stays byte-identical on ITS path (the deferral
+        // path): the host-contractum `native_locate_bridge_par` still appears there.
+        assert!(
+            tokens.contains("native_locate_bridge_par"),
+            "the report-carrying value bridge is retained on the deferral path"
         );
         // The report-free method has NO report parameter: the report-carrying signature
         // (`RuntimeDovetailRunReport`) appears only in the `_from_dovetail_to*` fallbacks, which

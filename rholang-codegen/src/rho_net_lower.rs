@@ -1048,6 +1048,83 @@ pub fn native_locate_bridge_par(
     Par::default().with_receives(vec![receive])
 }
 
+/// The A-S3 LOCATE→CONTRACT-CALL bridge: gate the MACHINE-invoked native handler on the
+/// automaton LOCATING the native process head IN RHO, and forward the located σ operands to the
+/// registered handler `Definition`'s reserved channel — the report-free ADMITTED counterpart of
+/// [`native_locate_bridge_par`] (which stays byte-identical on the report-carrying deferral
+/// path, where it forwards the host-computed contractum instead).
+///
+/// The positional network's accept for a native `NativeProc(a₀..a_{k-1})` entry sends
+/// `trigger!(⟦a₀⟧, …, ⟦a_{k-1}⟧, @out)` once it has MATCHED the head tag + arity and CAPTURED
+/// the `k` structural args ON the interpreter. This bridge binds those `k` captures plus the
+/// dynamic `out` and forwards ALL of them — a value-free pure forwarder — to the native
+/// handler contract channel (`[0xF1, rule_index]`,
+/// [`native_contract_channel`](crate::native_contract_channel)):
+///
+/// ```text
+/// for (a₀, …, a_{k-1}, out <- @"trigger") { native_channel!(a₀, …, a_{k-1}, out) }
+/// ```
+///
+/// The installed handler `Definition` (arity `k + 1`) is dispatched by that COMM — the MACHINE
+/// invokes the trusted evaluator on the located σ at COMM time — and `produce`s
+/// `[value, out]` on the rule's dispatch channel, where the installed dispatch receiver
+/// (`for (result, out <- c) { out!(result) }`) consumes the RETURNED value and emits it on
+/// `@out`. So the LOCATION is the automaton's, the VALUE is the registered handler's output at
+/// COMM time, and NO host-pre-computed value rides the call `Par` (the A-S3 boundary,
+/// `NativeSystemProcessBoundary.v` section 4).
+///
+/// Non-persistent: one located native site's accept drives exactly one contract call, so the
+/// caller installs one bridge copy PER located site (the copies are identical — the bridge
+/// carries no per-site value — so any accept↔bridge pairing is correct).
+pub fn native_locate_contract_bridge_par(
+    trigger_channel: &str,
+    k: usize,
+    native_channel: Par,
+) -> Par {
+    let formal_count = k + 1;
+    // Forward every bound formal in binding order: captured arg `i` is `BoundVar(k - i)` (the
+    // reverse De Bruijn convention of the `formal_count` binders), the dynamic out (the LAST
+    // bound formal) is `BoundVar(0)` — exactly the accept send's argument order, so the handler
+    // `Definition` receives `[⟦a₀⟧, …, ⟦a_{k-1}⟧, out]`.
+    let data: Vec<Par> = (0..formal_count)
+        .map(|i| {
+            let idx = formal_count - 1 - i;
+            new_boundvar_par(idx as i32, create_bit_vector(&[idx]), false)
+        })
+        .collect();
+    let all_free = create_bit_vector(&(0..formal_count).collect::<Vec<_>>());
+    // Body: `native_channel!(a₀, …, a_{k-1}, out)` — the channel is the closed unforgeable
+    // `[0xF1, rule_index]` Par, so the send is free exactly in the forwarded formals.
+    let body = new_send_par(
+        native_channel,
+        data,
+        false,
+        all_free.clone(),
+        false,
+        all_free,
+        false,
+    );
+    let source = new_gstring_par(trigger_channel.to_string(), Vec::new(), false);
+    let receive = Receive {
+        binds: vec![ReceiveBind {
+            patterns: (0..formal_count)
+                .map(|i| new_freevar_par(i as i32, Vec::new()))
+                .collect(),
+            source: Some(source),
+            remainder: None,
+            free_count: formal_count as i32,
+        }],
+        body: Some(body),
+        persistent: false,
+        peek: false,
+        bind_count: formal_count as i32,
+        locally_free: Vec::new(),
+        connective_used: false,
+        condition: None,
+    };
+    Par::default().with_receives(vec![receive])
+}
+
 /// The bare RULE LABEL a `fold` native system process's Dovetail firing carries in a runtime
 /// rewrite justification (Stage 3e): `"{Category}_{Label}"` — the op-enum variant identity the
 /// macro's native-fold rule uses (`{Lang}::fold::{Category}_{Label}`), bare-ified by the report
@@ -8764,6 +8841,65 @@ mod tests {
             "the site's rule label is the op-variant identity Int_PowInt the firing bare-ifies to"
         );
         assert!(!sites[0].channel.trim().is_empty(), "the site carries a source channel");
+    }
+
+    /// A-S3: the LOCATE→CONTRACT-CALL bridge is a VALUE-FREE pure forwarder — a single
+    /// non-persistent `(k+1)`-formal receive on the trigger channel whose only body is ONE send
+    /// on the reserved handler contract channel forwarding EXACTLY the bound formals (the
+    /// located σ operands + the dynamic out) in binding order. No ground value of any kind
+    /// rides it — the A-S3 boundary: the value first exists when the machine's handler COMM
+    /// produces it.
+    #[test]
+    fn native_locate_contract_bridge_is_a_value_free_forwarder() {
+        let k = 2;
+        let native_channel = crate::native_handler::native_contract_channel(0);
+        let bridge = native_locate_contract_bridge_par("sa:scalar/PowInt", k, native_channel.clone());
+
+        let [receive] = bridge.receives.as_slice() else {
+            panic!("the bridge is a single receive, got {bridge:?}");
+        };
+        assert!(!receive.persistent, "one located site drives exactly one contract call");
+        assert_eq!(receive.bind_count, (k + 1) as i32, "k captured args + the dynamic out");
+        let [bind] = receive.binds.as_slice() else {
+            panic!("one bind on the trigger channel");
+        };
+        assert_eq!(bind.patterns.len(), k + 1);
+        assert_eq!(
+            bind.source.as_ref().and_then(gstring_value).as_deref(),
+            Some("sa:scalar/PowInt"),
+            "the bridge consumes the native entry's accept"
+        );
+
+        let body = receive.body.as_ref().expect("the bridge has a body");
+        let [send] = body.sends.as_slice() else {
+            panic!("the body is exactly one contract-call send, got {body:?}");
+        };
+        assert_eq!(
+            send.chan.as_ref(),
+            Some(&native_channel),
+            "the send targets the reserved [0xF1, rule_index] handler contract channel"
+        );
+        // Every datum is a BOUND FORMAL (BoundVar), in binding order (arg i = BoundVar(k - i),
+        // out = BoundVar(0)) — no expression anywhere is a ground value.
+        assert_eq!(send.data.len(), k + 1, "forwards all k captured args + out");
+        for (i, datum) in send.data.iter().enumerate() {
+            let [expr] = datum.exprs.as_slice() else {
+                panic!("datum {i} is a single bound-var expr, got {datum:?}");
+            };
+            let Some(ExprInstance::EVarBody(evar)) = expr.expr_instance.as_ref() else {
+                panic!("datum {i} is a var reference, got {expr:?}");
+            };
+            let Some(VarInstance::BoundVar(index)) =
+                evar.v.as_ref().and_then(|v| v.var_instance.as_ref())
+            else {
+                panic!("datum {i} is a BOUND var (a forwarded formal), got {evar:?}");
+            };
+            assert_eq!(
+                *index,
+                (k - i) as i32,
+                "datum {i} forwards formal {i} (reverse De Bruijn: BoundVar(k - i))"
+            );
+        }
     }
 
     /// Stage 3e (fail-closed): [`native_rule_shape`] is `fold`-gated — only a `fold` native

@@ -958,10 +958,11 @@ pub fn in_rho_static_gate(
 /// walk over the STRUCTURALLY REFLECTED subject is exactly the site set the locate-all install
 /// dispatches on, so the count is derived from term + metadata alone.
 ///
-/// The report-free match path uses this to fail closed: a located native site's VALUE is the
-/// trusted host handler's payload (the inherent `NativeSystemProcessBoundary`), which only the
-/// D-stage computes — so ANY located native site defers the invocation to the lazy-report path
-/// (which then builds the value bridge, or σ-replays, exactly as today).
+/// A-S3 (native dispatch boundary tightening): the report-free match path now uses the per-rule
+/// refinement [`located_native_site_count_for`] to ADMIT located native sites (registering the
+/// rule's machine-side handler contract and co-installing one contract-call bridge per site)
+/// rather than failing closed on this aggregate; the aggregate remains the total-count view
+/// (`Σ` of the per-rule counts over `native_dispatch`).
 pub fn located_native_site_count(ruleset: &InRhoMatchingRuleset, subject: &GroundTerm) -> usize {
     if ruleset.native_dispatch.is_empty() {
         return 0;
@@ -973,6 +974,34 @@ pub fn located_native_site_count(ruleset: &InRhoMatchingRuleset, subject: &Groun
         .collect();
     let mut sites: Vec<String> = Vec::new();
     collect_redex_sites(subject, "site0", &native_roots, &mut sites);
+    sites.len()
+}
+
+/// A-S3 (native dispatch boundary tightening): count the LOCATED sites of ONE native rule — the
+/// positions of `subject` whose head constructor is `bare_label` — by the SAME positional walk as
+/// [`located_native_site_count`] restricted to that single head.
+///
+/// The report-free match body uses the per-rule count to co-install one contract-call bridge
+/// ([`native_locate_contract_bridge_par`](crate::native_locate_contract_bridge_par)) PER located
+/// site of each admitted native rule: every site's accept drives its own machine-side handler
+/// invocation (the bridges are identical value-free forwarders, so multiplicity is all that
+/// matters — no cross-talk is possible), which is what lifts the report path's single-native-firing
+/// restriction on the ADMITTED path.
+pub fn located_native_site_count_for(
+    ruleset: &InRhoMatchingRuleset,
+    subject: &GroundTerm,
+    bare_label: &str,
+) -> usize {
+    if !ruleset
+        .native_dispatch
+        .iter()
+        .any(|dispatch| dispatch.bare_label == bare_label)
+    {
+        return 0;
+    }
+    let roots: BTreeSet<String> = std::iter::once(bare_label.to_string()).collect();
+    let mut sites: Vec<String> = Vec::new();
+    collect_redex_sites(subject, "site0", &roots, &mut sites);
     sites.len()
 }
 
@@ -1746,6 +1775,34 @@ mod tests {
         // A ruleset with NO native families short-circuits to 0 for any subject.
         let swap_ruleset = compile_in_rho_matching_ruleset(&swap_demo_def());
         assert_eq!(located_native_site_count(&swap_ruleset, &root), 0);
+    }
+
+    /// A-S3: the per-rule refinement [`located_native_site_count_for`] agrees with the
+    /// aggregate on a single-rule language (its `Σ` decomposition), counts ONLY the named
+    /// rule's head, and returns 0 for a head that is not an admitted native entry — the
+    /// report-free match body installs exactly this many contract-call bridges per rule.
+    #[test]
+    fn located_native_site_count_for_counts_one_rule_positionally() {
+        let ruleset = compile_in_rho_matching_ruleset(&native_demo_def());
+        let two = GroundTerm::new("NumLit", vec![GroundTerm::new("2", Vec::new())]);
+        let three = GroundTerm::new("NumLit", vec![GroundTerm::new("3", Vec::new())]);
+        let root = GroundTerm::new("PowInt", vec![two.clone(), three.clone()]);
+        let nested = GroundTerm::new("PowInt", vec![root.clone(), three.clone()]);
+
+        // Per-rule counts: 1 at the root redex, 2 for the nested pair — and they equal the
+        // aggregate for the single-native-rule NativeDemo (the Σ decomposition).
+        assert_eq!(located_native_site_count_for(&ruleset, &root, "PowInt"), 1);
+        assert_eq!(located_native_site_count_for(&ruleset, &nested, "PowInt"), 2);
+        assert_eq!(
+            located_native_site_count_for(&ruleset, &nested, "PowInt"),
+            located_native_site_count(&ruleset, &nested),
+            "for a single-native-rule language the per-rule count IS the aggregate"
+        );
+
+        // A head that is NOT an admitted native entry counts 0 — even if it occurs in the
+        // subject (the walk is restricted to admitted native heads, never a guess).
+        assert_eq!(located_native_site_count_for(&ruleset, &nested, "NumLit"), 0);
+        assert_eq!(located_native_site_count_for(&ruleset, &two, "PowInt"), 0);
     }
 
     #[test]

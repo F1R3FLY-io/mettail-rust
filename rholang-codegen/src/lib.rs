@@ -83,6 +83,10 @@ pub mod flip;
 pub mod guard_quality;
 pub mod invocation;
 pub mod lower;
+/// A-S3: the registered native-handler contract seam — reserved system-process bands
+/// (held-fold + native, the single enumeration point), the [`NativeHandlerSpec`] the
+/// generated report-free match body records, and its thread-local pending registry.
+pub mod native_handler;
 pub mod need;
 pub mod rho_net;
 pub mod rho_net_automaton;
@@ -126,6 +130,12 @@ pub use lower::{
     RhoProgram, RhoScalarContractAbi, RhoScalarContractShape, RhoScalarType,
 };
 pub use mettail_ast::types::CollectionType;
+pub use native_handler::{
+    clear_pending_native_handler_specs, native_contract_body_ref, native_contract_channel,
+    native_handler_urn, record_pending_native_handler_specs, take_pending_native_handler_specs,
+    NativeHandlerEvaluator, NativeHandlerSpec, MTL_FOLD_BODY_REF_BASE, MTL_FOLD_CHANNEL_TAG,
+    MTL_NATIVE_BODY_REF_BASE, MTL_NATIVE_CHANNEL_TAG,
+};
 pub use need::{
     admit_call_by_need_force, build_call_by_need_thunk_ast, build_call_by_need_thunk_ast_from_spec,
     build_call_by_need_thunk_program, build_call_by_need_thunk_program_from_spec,
@@ -159,6 +169,7 @@ pub use rho_net_lower::{
     comm_rule_receiver, contextual_contract_call, contextual_hole_bridge_par,
     contextual_join_receiver_par, contextual_premise_hole_channel,
     instantiate_ac_reconstruct_template, is_nested_structural_ac_rewrite, native_locate_bridge_par,
+    native_locate_contract_bridge_par,
     nested_structural_ac_match_call_par, nested_structural_ac_rule_receiver, reconstruct_contractum,
     reflect_ground_term_par,
     rho_net_ac_injection_sites, rho_net_ac_match_entries, rho_net_comm_injection_sites,
@@ -188,7 +199,8 @@ pub use rho_net_cache::{cached_in_rho_artifacts, CompiledInRhoArtifacts};
 pub use rho_net_ruleset::{
     compile_in_rho_matching_ruleset, contextual_match_call_par, convert_lhs_pattern,
     in_rho_match_all_sites_call_par, in_rho_match_call_par, in_rho_match_gate_reject,
-    in_rho_static_gate, located_native_site_count, reconstruct_redex_subject,
+    in_rho_static_gate, located_native_site_count, located_native_site_count_for,
+    reconstruct_redex_subject,
     rule_lhs_root_constructor, rule_lhs_root_constructors, ruleset_all_entries_flat, DeferReason,
     DeferredRewrite, InRhoMatchingRuleset, NativeDispatch, PatternConvertReject,
 };
