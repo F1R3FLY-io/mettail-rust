@@ -57,3 +57,9 @@ rand = { workspace = true }
 
 
 [dev-dependencies]
+# A-S2 zero-D-stage exec tests: the instrumentation counter around
+# `checked_complete_dovetail_report` (a test-only feature; production dependencies above never
+# enable it). Feature unification turns the counter on for THIS crate's test builds only.
+mettail-rholang-runtime = { package = "rholang-runtime", path = "../rholang-runtime", features = [
+    "dstage-instrumentation",
+] }

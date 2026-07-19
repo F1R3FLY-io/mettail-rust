@@ -63,12 +63,15 @@ pub use backend::{
     build_rho_net_injection_invocation_from_contract,
     build_rho_net_replay_invocation_from_contracts, build_scalar_contract_invocation,
     build_scalar_contract_invocation_from_contract, install_dovetail_rho_runtime_backend,
-    install_rho_runtime_backend, DovetailCompilerStage, DovetailRhoRuntimeBackedLanguage,
-    IntoRuntimeObservationValue, RhoBackendInvocation, RhoInvocationCompilerStage,
-    RhoInvocationExecutionSite, RhoMachineInvocation, RhoRuntimeBackedLanguage,
-    RhoRuntimeBackedLanguageError, RhoScalarInvocationError, RhoScalarInvocationLiteralType,
-    RuntimeReportConversionError,
+    install_dovetail_rho_runtime_backend_lazy, install_rho_runtime_backend, DovetailCompilerStage,
+    DovetailRhoRuntimeBackedLanguage, IntoRuntimeObservationValue,
+    LazyDovetailRhoRuntimeBackedLanguage, RhoBackendInvocation, RhoInvocationCompilerStage,
+    RhoInvocationDeferral, RhoInvocationExecutionSite, RhoMachineInvocation,
+    RhoRuntimeBackedLanguage, RhoRuntimeBackedLanguageError, RhoScalarInvocationError,
+    RhoScalarInvocationLiteralType, RuntimeReportConversionError,
 };
+#[cfg(feature = "dstage-instrumentation")]
+pub use backend::dstage_instrumentation;
 pub use backend::{
     PlannedCallByNeedThunk, PlannedRhoBackend, RhoExecutionBoundary, RhoObservationReport,
 };

@@ -1459,9 +1459,12 @@ pub fn generate_rho_net_invocation(language: &LanguageDef) -> TokenStream {
         let out_channel = out_channel.as_ref();
         #reflect_subject
 
-        // Reconstruct the def exactly as `rho_net_program()` does, so the ruleset's
-        // fingerprint + accept channels are the ones the installed σ-receivers were
-        // compiled with (one def, one fingerprint, no separate metadata read → no drift).
+        // A-S2: the def + matching ruleset come from the per-source MEMOIZED artifacts
+        // (`cached_in_rho_artifacts`) — the SAME derivation as before (`reconstruct_language_def`
+        // → `compile_in_rho_matching_ruleset`, exactly as `rho_net_program()` does), computed once
+        // per definition source instead of per invocation. The ruleset's fingerprint + accept
+        // channels are therefore STILL the ones the installed σ-receivers were compiled with (one
+        // def, one fingerprint, no separate metadata read → no drift).
         let __source = <#language_struct as mettail_runtime::Language>::metadata(
             &#language_struct,
         )
@@ -1472,14 +1475,14 @@ pub fn generate_rho_net_invocation(language: &LanguageDef) -> TokenStream {
                 #language_lit,
             )
         })?;
-        let __def = ::mettail_rholang_codegen::reconstruct_language_def(__source).map_err(|__err| {
-            ::std::format!(
-                "language {} definition source did not reconstruct for in-Rho matching: {}",
-                #language_lit, __err,
-            )
-        })?;
-
-        let __ruleset = ::mettail_rholang_codegen::compile_in_rho_matching_ruleset(&__def);
+        let __artifacts = ::mettail_rholang_codegen::cached_in_rho_artifacts(__source)
+            .map_err(|__err| {
+                ::std::format!(
+                    "language {} definition source did not reconstruct for in-Rho matching: {}",
+                    #language_lit, __err,
+                )
+            })?;
+        let __ruleset = &__artifacts.ruleset;
 
         // Capability gate (FV ix `install_admits`): fail closed BEFORE any Rho reduction
         // if any FIRED rule is skipped from in-Rho matching.
@@ -1509,7 +1512,7 @@ pub fn generate_rho_net_invocation(language: &LanguageDef) -> TokenStream {
         // ruleset (SwapDemo) locates ALL redexes in Rho, and a single nested-pattern redex still
         // matches. A normal form locates 0 sites (the bare spread, a no-op).
         let (mut __call, _sites) = ::mettail_rholang_codegen::in_rho_match_all_sites_call_par(
-            &__ruleset,
+            __ruleset,
             &__subject,
             "site0",
             out_channel,
@@ -1599,6 +1602,99 @@ pub fn generate_rho_net_invocation(language: &LanguageDef) -> TokenStream {
         })
     };
 
+    // A-S2 (D-stage demotion): the REPORT-FREE match body — `match_body` minus every report
+    // read. No `assert_complete` (there is no report), no fired-rule gate (the STATIC gate
+    // `in_rho_static_gate` decides admission term-independently: every FIREABLE rewrite must be
+    // matchable in Rho, congruence-premise rewrites exempt — they never fire), and the native
+    // bridge decision comes from LOCATED sites (`located_native_site_count` over the reflected
+    // subject) instead of report firings. A located native site's VALUE is the trusted host
+    // handler's payload (the inherent `NativeSystemProcessBoundary`), which only the D-stage
+    // computes — so ANY located native site fails closed to the lazy-report path, where the
+    // report-carrying `match_body` builds the value bridge (or the σ-replay driver replays)
+    // exactly as today. Everything else — the M-reflect subject reflection, the memoized
+    // ruleset, and the locate-all `∏ network_ℓ ‖ spread` call — is the `match_body` code.
+    let match_free_body = quote! {
+        // M-reflect: the subject is the WHOLE input `term`, reflected STRUCTURALLY to a
+        // `GroundTerm` (`__subject`) — never a report σ (this path has no report at all).
+        let out_channel = out_channel.as_ref();
+        #reflect_subject
+
+        // The per-source MEMOIZED artifacts (same derivation + coherence argument as the
+        // report-carrying match body above).
+        let __source = <#language_struct as mettail_runtime::Language>::metadata(
+            &#language_struct,
+        )
+        .definition_source()
+        .ok_or_else(|| {
+            ::std::format!(
+                "language {} has no definition source for in-Rho matching",
+                #language_lit,
+            )
+        })?;
+        let __artifacts = ::mettail_rholang_codegen::cached_in_rho_artifacts(__source)
+            .map_err(|__err| {
+                ::std::format!(
+                    "language {} definition source did not reconstruct for in-Rho matching: {}",
+                    #language_lit, __err,
+                )
+            })?;
+        let __ruleset = &__artifacts.ruleset;
+
+        // A-S2 STATIC capability gate (the term-independent strengthening of FV ix
+        // `install_admits`): fail closed BEFORE any Rho reduction if ANY fireable rewrite is
+        // skipped from in-Rho matching — no report needed to know the located redexes are all
+        // matchable.
+        if let ::core::result::Result::Err(__deferred) =
+            ::mettail_rholang_codegen::in_rho_static_gate(__ruleset, &__artifacts.def)
+        {
+            let __labels: ::std::vec::Vec<::std::string::String> = __deferred
+                .iter()
+                .map(|__entry| ::std::format!("{} ({:?})", __entry.rule_label, __entry.reason))
+                .collect();
+            return ::core::result::Result::Err(::std::format!(
+                "in-Rho static gate for language {} rejects: fireable rule(s) not matchable in Rho: {}",
+                #language_lit, __labels.join(", "),
+            ));
+        }
+
+        // Native firings are counted from LOCATED sites (not report firings). ≥1 located native
+        // site needs the host handler's value → defer to the lazy-report path (fail-closed; the
+        // report-carrying body then builds the value bridge from the firing's contractum, or the
+        // σ-replay driver replays — exactly today's behavior for native terms).
+        let __native_sites =
+            ::mettail_rholang_codegen::located_native_site_count(__ruleset, &__subject);
+        if __native_sites > 0 {
+            return ::core::result::Result::Err(::std::format!(
+                "in-Rho report-free match for language {} located {} native firing site(s); \
+                 the native value requires the host D-stage handler (deferring to the report path)",
+                #language_lit, __native_sites,
+            ));
+        }
+
+        // The SAME locate-all `∏ network_ℓ ‖ spread` call as the report-carrying match body: the
+        // automaton LOCATES every redex (nested + multiple) and each accept fires the σ-receiver
+        // on `out_channel`. A normal form locates 0 sites (the bare spread, a no-op). A nested
+        // ruleset with ≥2 located sites fails closed here (`NestedEntryMultiSite` → the
+        // lazy-report σ-replay), identical to the report-carrying path.
+        let (__call, _sites) = ::mettail_rholang_codegen::in_rho_match_all_sites_call_par(
+            __ruleset,
+            &__subject,
+            "site0",
+            out_channel,
+        )
+        .map_err(|__err| {
+            ::std::format!(
+                "in-Rho match for language {} could not serialize the locate-all match call: {:?}",
+                #language_lit, __err,
+            )
+        })?;
+
+        ::core::result::Result::Ok(::mettail_rholang_codegen::RhoNetInjectionInvocation {
+            call: __call,
+            out_channel: out_channel.to_string(),
+        })
+    };
+
     // Stage 4 (S-contextual): the CONTEXTUAL injection body — the third arm of the σ-injection
     // F-function family (base | AC | contextual), now MATCHING IN RHO. Unlike the base/AC arms (keyed
     // on the fired rule's OWN σ-receiver), a congruence rule fires no explicit Dovetail rule (the
@@ -1629,10 +1725,12 @@ pub fn generate_rho_net_invocation(language: &LanguageDef) -> TokenStream {
         let out_channel = out_channel.as_ref();
         #reflect_subject
 
-        // Reconstruct the def exactly as `rho_net_program()` does, so the contextual join's premise
+        // A-S2: the def + matching ruleset come from the per-source MEMOIZED artifacts
+        // (`cached_in_rho_artifacts`) — the SAME derivation as before, computed once per
+        // definition source instead of per invocation — so the contextual join's premise
         // channels + the ruleset's fingerprint/accept channels are the ones the installed join +
-        // σ-receivers were compiled with (one def, one fingerprint, no separate metadata read → no
-        // drift).
+        // σ-receivers were compiled with (one def, one fingerprint, no separate metadata read →
+        // no drift).
         let __source = <#language_struct as mettail_runtime::Language>::metadata(
             &#language_struct,
         )
@@ -1643,14 +1741,14 @@ pub fn generate_rho_net_invocation(language: &LanguageDef) -> TokenStream {
                 #language_lit,
             )
         })?;
-        let __def = ::mettail_rholang_codegen::reconstruct_language_def(__source).map_err(|__err| {
-            ::std::format!(
-                "language {} definition source did not reconstruct for contextual match: {}",
-                #language_lit, __err,
-            )
-        })?;
-
-        let __ruleset = ::mettail_rholang_codegen::compile_in_rho_matching_ruleset(&__def);
+        let __artifacts = ::mettail_rholang_codegen::cached_in_rho_artifacts(__source)
+            .map_err(|__err| {
+                ::std::format!(
+                    "language {} definition source did not reconstruct for contextual match: {}",
+                    #language_lit, __err,
+                )
+            })?;
+        let __ruleset = &__artifacts.ruleset;
 
         // Capability gate (FV ix `install_admits`): fail closed BEFORE any Rho reduction if any
         // FIRED rule (the premise firing that closes the context) is skipped from in-Rho matching —
@@ -1677,7 +1775,7 @@ pub fn generate_rho_net_invocation(language: &LanguageDef) -> TokenStream {
         // COMM (INV-6). The reduced hole is the automaton's nested firing, NOT `reconstruct_
         // contractum` from the report σ.
         let __call = ::mettail_rholang_codegen::contextual_match_call_par(
-            &__ruleset,
+            __ruleset,
             &__subject,
             "site0",
             out_channel,
@@ -1768,6 +1866,38 @@ pub fn generate_rho_net_invocation(language: &LanguageDef) -> TokenStream {
                 ::std::string::String,
             > {
                 #match_body
+            }
+
+            /// A-S2 (D-stage demotion): the REPORT-FREE in-Rho set-automaton MATCH call —
+            /// [`Self::rho_net_match_invocation_from_dovetail_to`] with every Dovetail-report
+            /// read removed, so the admitted path runs with ZERO Dovetail work.
+            ///
+            /// Differences from the report-carrying body (and nothing else):
+            /// - no `assert_complete` — there is no report;
+            /// - the fired-rule gate is replaced by the STATIC gate
+            ///   (`in_rho_static_gate`): term-independent admission — every FIREABLE rewrite
+            ///   must be matchable in Rho (congruence-premise rewrites are exempt: they never
+            ///   appear as fired rules, the e-graph closes contexts implicitly);
+            /// - the native bridge decision is counted from LOCATED sites
+            ///   (`located_native_site_count` over the structurally reflected subject) instead
+            ///   of report firings — ANY located native site fails closed (its value is the
+            ///   host D-stage handler's payload, the inherent `NativeSystemProcessBoundary`).
+            ///
+            /// Every `Err` is a DEFERRAL to the lazy-report path: the runtime wrapper then
+            /// LAZILY builds the checked Dovetail report and takes today's report-carrying
+            /// paths (the value-bridged match, the σ-replay driver, or the semantic-predicate
+            /// payload), so no input loses its existing behavior — the admitted subset simply
+            /// stops paying for the D-stage. The def + ruleset come from the per-source
+            /// memoized artifacts (`cached_in_rho_artifacts`), so repeated execs also stop
+            /// paying reconstruct+compile.
+            pub fn rho_net_match_invocation_to(
+                term: &dyn mettail_runtime::Term,
+                out_channel: impl ::core::convert::AsRef<str>,
+            ) -> ::core::result::Result<
+                ::mettail_rholang_codegen::RhoNetInjectionInvocation,
+                ::std::string::String,
+            > {
+                #match_free_body
             }
 
             /// Build the CONTEXTUAL (congruence) JOIN injection that MATCHES IN RHO for an already
@@ -2171,9 +2301,11 @@ mod tests {
             "#,
         );
         let tokens = generate_rho_net_invocation(&language).to_string();
-        // The contextual injection method + its distinctive in-Rho MATCH helpers.
+        // The contextual injection method + its distinctive in-Rho MATCH helpers. A-S2: the
+        // def + ruleset come from the per-source memoized artifacts, not a per-invocation
+        // reconstruct+compile.
         assert!(tokens.contains("rho_net_contextual_invocation_from_dovetail_to"));
-        assert!(tokens.contains("compile_in_rho_matching_ruleset"));
+        assert!(tokens.contains("cached_in_rho_artifacts"));
         assert!(tokens.contains("in_rho_match_gate_reject"));
         assert!(tokens.contains("contextual_match_call_par"), "the contextual match call");
         // M-reflect: the contextual path structurally reflects `term` (the greenfield hinge)
@@ -2206,7 +2338,15 @@ mod tests {
         // every redex at any position + emits σ ON the interpreter).
         let tokens = generate_rho_net_invocation(&swap_net_fixture()).to_string();
         assert!(tokens.contains("rho_net_match_invocation_from_dovetail_to"));
-        assert!(tokens.contains("compile_in_rho_matching_ruleset"));
+        // A-S2: the def + ruleset come from the per-source memoized artifacts
+        // (`cached_in_rho_artifacts` — which performs the same reconstruct+compile once), not a
+        // per-invocation `reconstruct_language_def` + `compile_in_rho_matching_ruleset`.
+        assert!(tokens.contains("cached_in_rho_artifacts"));
+        assert!(
+            !tokens.contains("compile_in_rho_matching_ruleset"),
+            "the generated bodies must not re-compile the ruleset per invocation (memoized; \
+             `rho_net_program()` keeps its own reconstruct+lower accessor path)"
+        );
         assert!(tokens.contains("in_rho_match_gate_reject"));
         // Locate-all: the MATCH path co-installs a positional network at EVERY located redex
         // position (nested + multiple), retiring the single-root `in_rho_match_call_par` +
@@ -2229,6 +2369,35 @@ mod tests {
         assert!(
             !tokens.contains("reconstruct_redex_subject"),
             "the MATCH path must not rebuild the redex from the report σ (M-reflect retirement)"
+        );
+    }
+
+    #[test]
+    fn generated_rho_net_invocation_emits_the_report_free_match_method() {
+        // A-S2 (D-stage demotion): the emitted impl carries the REPORT-FREE match invocation —
+        // `rho_net_match_invocation_to(term, out_channel)` — which admits via the STATIC gate
+        // (`in_rho_static_gate`, term-independent), counts native firings from LOCATED sites
+        // (`located_native_site_count`, never report firings), reads the memoized artifacts
+        // (`cached_in_rho_artifacts`), and assembles the SAME locate-all call
+        // (`in_rho_match_all_sites_call_par`) as the report-carrying body.
+        let tokens = generate_rho_net_invocation(&swap_net_fixture()).to_string();
+        assert!(tokens.contains("rho_net_match_invocation_to"), "the report-free method exists");
+        assert!(tokens.contains("in_rho_static_gate"), "the STATIC gate replaces the fired gate");
+        assert!(
+            tokens.contains("located_native_site_count"),
+            "native firings are counted from located sites"
+        );
+        assert!(tokens.contains("cached_in_rho_artifacts"), "artifacts are memoized per source");
+        assert!(
+            tokens.contains("in_rho_match_all_sites_call_par"),
+            "the report-free path assembles the same locate-all call"
+        );
+        // The report-free method has NO report parameter: the report-carrying signature
+        // (`RuntimeDovetailRunReport`) appears only in the `_from_dovetail_to*` fallbacks, which
+        // this stage keeps behaviorally intact for the lazy-report deferral path.
+        assert!(
+            tokens.contains("rho_net_match_invocation_from_dovetail_to"),
+            "the report-carrying fallback method is retained"
         );
     }
 

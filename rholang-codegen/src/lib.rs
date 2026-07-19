@@ -86,6 +86,7 @@ pub mod lower;
 pub mod need;
 pub mod rho_net;
 pub mod rho_net_automaton;
+pub mod rho_net_cache;
 pub mod rho_net_lower;
 /// Track B (BENCHMARK-ONLY, quarantined): the naive Knotted-Topoi Appendix-A
 /// baseline emitter — compiled ONLY under the `bench-naive-baseline` feature.
@@ -183,12 +184,13 @@ pub use rho_net_lower::{
 pub use rho_net_subst_trs::{
     reserved_subst_trs_labels, subst_seed_receiver_par, subst_seed_send_par, subst_trs_program_par,
 };
+pub use rho_net_cache::{cached_in_rho_artifacts, CompiledInRhoArtifacts};
 pub use rho_net_ruleset::{
     compile_in_rho_matching_ruleset, contextual_match_call_par, convert_lhs_pattern,
     in_rho_match_all_sites_call_par, in_rho_match_call_par, in_rho_match_gate_reject,
-    reconstruct_redex_subject, rule_lhs_root_constructor, rule_lhs_root_constructors,
-    ruleset_all_entries_flat, DeferReason, DeferredRewrite, InRhoMatchingRuleset, NativeDispatch,
-    PatternConvertReject,
+    in_rho_static_gate, located_native_site_count, reconstruct_redex_subject,
+    rule_lhs_root_constructor, rule_lhs_root_constructors, ruleset_all_entries_flat, DeferReason,
+    DeferredRewrite, InRhoMatchingRuleset, NativeDispatch, PatternConvertReject,
 };
 pub use validate::{
     validate_rho_program, RhoValidationError, ValidatedRhoAstProgram, ValidatedRhoProgram,

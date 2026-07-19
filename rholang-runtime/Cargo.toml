@@ -41,6 +41,12 @@ default = [
 # Conversion from typed Rho observation reports into mettail_runtime::RuntimeBackendReport
 # plus the generic Language backend installer wrappers.
 runtime-report = ["dep:mettail-runtime", "dep:mettail-prattail"]
+# A-S2 test-only instrumentation: exposes `backend::dstage_instrumentation` (a process-global
+# counter of `checked_complete_dovetail_report` invocations) so downstream integration tests
+# (e.g. the REPL's zero-D-stage exec suite) can assert that an ADMITTED exec builds no Dovetail
+# report while a deferred exec builds ≥ 1. Production builds never enable this; the crate's own
+# unit tests see the counter via `cfg(test)` without it.
+dstage-instrumentation = ["runtime-report"]
 # Pulls in the generated rhocalc language for the production-shaped AST-first
 # rhocalc-to-Rho runtime wrapper. The generated values are `rhoapi::Par`, never
 # Rholang source text that has to be reparsed.

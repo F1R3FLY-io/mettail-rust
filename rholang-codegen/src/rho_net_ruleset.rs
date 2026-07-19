@@ -21,7 +21,7 @@ use dovetail::rules::Pattern as DvPattern;
 use dovetail::set_automaton::{AutomatonNode, PatternId, SetAutomaton};
 use mettail_ast::grammar::{GrammarItem, TermParam};
 use mettail_ast::identity::language_definition_fingerprint;
-use mettail_ast::language::LanguageDef;
+use mettail_ast::language::{LanguageDef, Premise};
 use mettail_ast::pattern::{Pattern, PatternTerm};
 use models::rhoapi::Par;
 
@@ -230,6 +230,11 @@ pub struct DeferredRewrite {
 pub struct NativeDispatch {
     /// The Dovetail firing label (`"{Category}_{Label}"`) the report keys the native firing on.
     pub fired_rule_label: String,
+    /// The BARE head label (`"PowInt"`) — the automaton entry's root op AND the tag the
+    /// structurally reflected subject node carries (A-S2: the report-free match path counts
+    /// LOCATED native sites by walking the reflected subject for these heads, instead of
+    /// counting report firings).
+    pub bare_label: String,
     /// The native entry's accept channel — the automaton's located accept sends
     /// `trigger!(⟦arg₀⟧, …, @out)` here, and the bridge consumes it.
     pub trigger_channel: String,
@@ -474,6 +479,7 @@ pub fn compile_in_rho_matching_ruleset(def: &LanguageDef) -> InRhoMatchingRulese
         accept_channels.push((pid, trigger.clone()));
         native_dispatch.push(NativeDispatch {
             fired_rule_label: entry.fired_rule_label.clone(),
+            bare_label: entry.bare_label.clone(),
             trigger_channel: trigger,
             dispatch_channel: entry.dispatch_channel.clone(),
             arity: entry.arity,
@@ -887,6 +893,87 @@ pub fn in_rho_match_gate_reject<'a>(
     skipped
         .iter()
         .find(|entry| fired_labels.contains(&entry.rule_label.as_str()))
+}
+
+/// A-S2 (D-stage demotion): the STATIC capability gate — the term-INDEPENDENT strengthening of
+/// [`in_rho_match_gate_reject`]. Admits a language for REPORT-FREE in-Rho matching iff every
+/// FIREABLE rewrite is un-deferred, so the report-free match path
+/// (`rho_net_match_invocation_to`) never needs the Dovetail report's fired-rule labels to know
+/// the located redexes are all matchable in Rho.
+///
+/// FIREABLE means the rewrite can appear in `report.rewrite_justifications`: a
+/// CONGRUENCE-PREMISE rewrite (`| S ~> T |- K(S) ~> K(T)`, any rule carrying a
+/// [`Premise::Congruence`]) NEVER does — the e-graph closes contexts implicitly, so its label is
+/// never a fired-rule label and the dynamic gate never consulted it. The static gate therefore
+/// EXEMPTS congruence-premise rewrites (enumerated from `def.rewrites[..].premises`) rather than
+/// demanding their admission; demanding it would reject languages the dynamic gate admits today
+/// (e.g. every language with auto-injected cast congruence rules).
+///
+/// Soundness relative to the dynamic gate: for any complete report,
+/// `fired ⊆ {fireable rewrites}`, so `static-admitted ⇒ dynamic-admitted` — the static gate is
+/// STRICTLY at least as strong on fireable rules, hence a static admission can never let a
+/// firing through that the dynamic gate would have rejected. Model: the FV (ix)
+/// `install_admits` obligation (`InRhoEncoderTotalOrReject.v`); the report-checked ⟺ deferral
+/// coupling lives in `DovetailRhoLanguageBackendWrapper.v`.
+///
+/// Returns `Ok(())` when admitted, `Err(deferred_fireable)` — every genuinely-deferred FIREABLE
+/// rewrite with its [`DeferReason`] — when rejected (fail-closed to the lazy-report path).
+pub fn in_rho_static_gate(
+    ruleset: &InRhoMatchingRuleset,
+    def: &LanguageDef,
+) -> Result<(), Vec<DeferredRewrite>> {
+    // The congruence-premise rewrites: never fireable (no explicit Dovetail firing), so their
+    // deferral is irrelevant to the report-free match path — the e-graph congruence closure (or
+    // the admitted contextual family) covers them, exactly as it does on the dynamic-gate path.
+    let congruence_exempt: HashSet<String> = def
+        .rewrites
+        .iter()
+        .filter(|rewrite| {
+            rewrite
+                .premises
+                .iter()
+                .any(|premise| matches!(premise, Premise::Congruence { .. }))
+        })
+        .map(|rewrite| rewrite.name.to_string())
+        .collect();
+
+    let rejects: Vec<DeferredRewrite> = ruleset
+        .deferred
+        .iter()
+        .filter(|entry| !congruence_exempt.contains(&entry.rule_label))
+        .cloned()
+        .collect();
+
+    if rejects.is_empty() {
+        Ok(())
+    } else {
+        Err(rejects)
+    }
+}
+
+/// A-S2 (D-stage demotion): count the LOCATED native-process sites of `subject` — the positions
+/// whose head constructor is an ADMITTED native entry's bare head label
+/// ([`NativeDispatch::bare_label`]). This replaces the report-firing count of the report-carrying
+/// match path (`rho_invocation.rs`'s per-justification native scan): the automaton's positional
+/// walk over the STRUCTURALLY REFLECTED subject is exactly the site set the locate-all install
+/// dispatches on, so the count is derived from term + metadata alone.
+///
+/// The report-free match path uses this to fail closed: a located native site's VALUE is the
+/// trusted host handler's payload (the inherent `NativeSystemProcessBoundary`), which only the
+/// D-stage computes — so ANY located native site defers the invocation to the lazy-report path
+/// (which then builds the value bridge, or σ-replays, exactly as today).
+pub fn located_native_site_count(ruleset: &InRhoMatchingRuleset, subject: &GroundTerm) -> usize {
+    if ruleset.native_dispatch.is_empty() {
+        return 0;
+    }
+    let native_roots: BTreeSet<String> = ruleset
+        .native_dispatch
+        .iter()
+        .map(|dispatch| dispatch.bare_label.clone())
+        .collect();
+    let mut sites: Vec<String> = Vec::new();
+    collect_redex_sites(subject, "site0", &native_roots, &mut sites);
+    sites.len()
 }
 
 /// The ROOT constructor of a rewrite's LHS (an `Apply`-rooted structural pattern), or a typed
@@ -1504,6 +1591,161 @@ mod tests {
             "#,
         )
         .expect("the declared-join Comm fragment parses")
+    }
+
+    // ————————————————————————————————————————————————————————————————————————————————
+    // A-S2: the STATIC gate (`in_rho_static_gate`) — term-independent admission for the
+    // report-free match path.
+    // ————————————————————————————————————————————————————————————————————————————————
+
+    #[test]
+    fn static_gate_admits_a_fully_matchable_language() {
+        // SwapDemo: one flat structural rewrite, nothing deferred → the static gate admits
+        // without consulting any report.
+        let def = swap_demo_def();
+        let ruleset = compile_in_rho_matching_ruleset(&def);
+        assert!(ruleset.deferred.is_empty(), "SwapDemo defers nothing: {:?}", ruleset.deferred);
+        assert_eq!(in_rho_static_gate(&ruleset, &def), Ok(()));
+    }
+
+    #[test]
+    fn static_gate_exempts_congruence_premise_rules() {
+        // A congruence rewrite (WrapCong: `| S ~> T |- Wrap(S) ~> Wrap(T)`) NEVER appears as a
+        // fired rule in `rewrite_justifications` (the e-graph closes contexts implicitly), so the
+        // static gate must EXEMPT it rather than demand its admission. The compiled CtxDemo
+        // ruleset admits WrapCong contextually (deferred empty); to exercise the exemption we
+        // simulate the deferral a NON-contextual compilation would produce (`deferred` is a `pub`
+        // field — the same supported direct-construction surface the admission-matrix audit uses).
+        let def = ctx_demo_def();
+        let mut ruleset = compile_in_rho_matching_ruleset(&def);
+        assert_eq!(in_rho_static_gate(&ruleset, &def), Ok(()), "CtxDemo admits as compiled");
+
+        ruleset.deferred.push(DeferredRewrite {
+            rule_label: "WrapCong".to_string(),
+            reason: DeferReason::NotBaseRewrite,
+        });
+        assert_eq!(
+            in_rho_static_gate(&ruleset, &def),
+            Ok(()),
+            "a deferred CONGRUENCE-premise rule is exempt — it can never fire, so its deferral \
+             cannot make a located redex unmatchable"
+        );
+    }
+
+    #[test]
+    fn static_gate_rejects_a_genuinely_deferred_fireable_rule() {
+        // `Flip` is a FIREABLE base rewrite (no congruence premise). If it were deferred, the
+        // report-free path could locate a Flip redex the automaton cannot fire → the static gate
+        // must reject (fail-closed to the lazy-report path), returning exactly the deferred entry.
+        let def = ctx_demo_def();
+        let mut ruleset = compile_in_rho_matching_ruleset(&def);
+        let deferred = DeferredRewrite {
+            rule_label: "Flip".to_string(),
+            reason: DeferReason::NotBaseRewrite,
+        };
+        ruleset.deferred.push(deferred.clone());
+        assert_eq!(in_rho_static_gate(&ruleset, &def), Err(vec![deferred]));
+    }
+
+    #[test]
+    fn static_gate_rejects_every_defer_reason_variant() {
+        // Every `DeferReason` variant on a FIREABLE rule rejects — the gate keys on
+        // fireability, not on WHY the rule was deferred (any deferral means the located redex
+        // could not fire in Rho). Covers: NotBaseRewrite, Ac, and all three
+        // `Convert(PatternConvertReject)` sub-reasons.
+        let def = ctx_demo_def();
+        let reasons = [
+            DeferReason::NotBaseRewrite,
+            DeferReason::Ac,
+            DeferReason::Convert(PatternConvertReject::Binder),
+            DeferReason::Convert(PatternConvertReject::Subst),
+            DeferReason::Convert(PatternConvertReject::CollectionSearch),
+        ];
+        for reason in reasons {
+            let mut ruleset = compile_in_rho_matching_ruleset(&def);
+            let deferred = DeferredRewrite {
+                rule_label: "Flip".to_string(),
+                reason: reason.clone(),
+            };
+            ruleset.deferred.push(deferred.clone());
+            assert_eq!(
+                in_rho_static_gate(&ruleset, &def),
+                Err(vec![deferred]),
+                "a fireable rule deferred with {reason:?} must reject"
+            );
+        }
+    }
+
+    #[test]
+    fn static_gate_separates_exempt_from_fireable_deferrals() {
+        // A mixed deferral list: the congruence-premise WrapCong entry is filtered out, the
+        // fireable Flip entry is returned — the reject payload names exactly the genuinely
+        // deferred fireable rules.
+        let def = ctx_demo_def();
+        let mut ruleset = compile_in_rho_matching_ruleset(&def);
+        ruleset.deferred.push(DeferredRewrite {
+            rule_label: "WrapCong".to_string(),
+            reason: DeferReason::NotBaseRewrite,
+        });
+        let fireable = DeferredRewrite {
+            rule_label: "Flip".to_string(),
+            reason: DeferReason::Convert(PatternConvertReject::Binder),
+        };
+        ruleset.deferred.push(fireable.clone());
+        assert_eq!(in_rho_static_gate(&ruleset, &def), Err(vec![fireable]));
+    }
+
+    /// The NativeDemo-shaped fold language (`PowInt . a:Int, b:Int |- a "^" b : Int ![…] fold`):
+    /// one ADMITTED native entry (bare head `PowInt`), no base rewrites.
+    fn native_demo_def() -> LanguageDef {
+        syn::parse_str(
+            r#"
+                name: NativeRulesetGen,
+                types {
+                    ![i64] as Int
+                }
+                terms {
+                    PowInt . a:Int, b:Int |- a "^" b : Int ![a.pow(b as u32)] fold;
+                }
+                equations {}
+                rewrites {}
+            "#,
+        )
+        .expect("the native fold fragment parses")
+    }
+
+    #[test]
+    fn native_dispatch_carries_the_bare_head_label() {
+        // A-S2: `NativeDispatch.bare_label` is the automaton entry's root op — what the
+        // report-free path counts located sites by.
+        let ruleset = compile_in_rho_matching_ruleset(&native_demo_def());
+        assert_eq!(ruleset.native_dispatch.len(), 1, "one admitted native family (PowInt)");
+        assert_eq!(ruleset.native_dispatch[0].bare_label, "PowInt");
+        assert_eq!(ruleset.native_dispatch[0].fired_rule_label, "Int_PowInt");
+        assert_eq!(ruleset.native_dispatch[0].arity, 2);
+    }
+
+    #[test]
+    fn located_native_site_count_counts_native_heads_only() {
+        let ruleset = compile_in_rho_matching_ruleset(&native_demo_def());
+        let two = GroundTerm::new("NumLit", vec![GroundTerm::new("2", Vec::new())]);
+        let three = GroundTerm::new("NumLit", vec![GroundTerm::new("3", Vec::new())]);
+
+        // A root PowInt redex → 1 located native site.
+        let root = GroundTerm::new("PowInt", vec![two.clone(), three.clone()]);
+        assert_eq!(located_native_site_count(&ruleset, &root), 1);
+
+        // A NESTED PowInt inside a PowInt → 2 located native sites (the walk is positional,
+        // pre-order — the same site set the locate-all install dispatches on).
+        let nested = GroundTerm::new("PowInt", vec![root.clone(), three.clone()]);
+        assert_eq!(located_native_site_count(&ruleset, &nested), 2);
+
+        // A native-free subject → 0 (the report-free path needs no host value).
+        assert_eq!(located_native_site_count(&ruleset, &two), 0);
+
+        // A ruleset with NO native families short-circuits to 0 for any subject.
+        let swap_ruleset = compile_in_rho_matching_ruleset(&swap_demo_def());
+        assert_eq!(located_native_site_count(&swap_ruleset, &root), 0);
     }
 
     #[test]

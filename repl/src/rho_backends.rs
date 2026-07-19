@@ -11,6 +11,13 @@
 //! | RhoCalc    | Dovetail + Rholang (two-stage)  | COMM / observed pure values → Rho machine; mixed → pre-fold then Rho |
 //! | Calculator | Dovetail + Rholang (two-stage)  | scalar expr tree → Rho dataflow (E3); non-scalar → rejected at Rho-default boundary; partial arithmetic → semantic predicate |
 //!
+//! A-S2 (D-stage demotion): the two-stage languages (RhoCalc/Calculator/SwapDemo) install the
+//! LAZY wrapper (`install_dovetail_rho_runtime_backend_lazy`) — the report-free F2 compile is
+//! the default exec path (ZERO Dovetail work when admitted); the checked Dovetail report is
+//! built LAZILY only on a typed deferral (semantic predicate → report payload; gate reject →
+//! today's report-carrying fallback), so at runtime Dovetail handles only semantic predicates
+//! and the fail-closed fallback.
+//!
 //! Lambda/Ambient need only `bundled-languages` (the generic
 //! [`mettail_dovetail_runtime::dovetail_backed`], no f1r3node); RhoCalc/Calculator need
 //! `rho-languages` (the Rho machine). A Dovetail-only build (`--no-default-features --features
@@ -56,7 +63,8 @@ mod rho {
         build_fold_dataflow_invocation_from_contract,
         build_rho_net_injection_invocation_from_contract,
         build_rho_net_replay_invocation_from_contracts, dovetail_rho_backed_rhocalc,
-        install_dovetail_rho_runtime_backend, PlannedRhoBackend, RhoBackendInvocation,
+        install_dovetail_rho_runtime_backend_lazy, PlannedRhoBackend, RhoBackendInvocation,
+        RhoInvocationDeferral,
     };
 
     /// Dovetail saturation bounds (match the generated `dovetail_compiler_stage`).
@@ -112,6 +120,11 @@ mod rho {
     /// boundary; partial arithmetic such as `÷0`/overflow is surfaced as a
     /// semantic-predicate block so the runtime audit does not confuse it with
     /// ordinary Rho-machine work.
+    ///
+    /// A-S2 note: this is now the report-CARRYING fallback compiler, reached only on deferral
+    /// (its report parameter feeds `rho_fold_dataflow_invocation_from_dovetail_to`'s
+    /// completeness assertion; the lowering itself never reads the report). The default exec
+    /// path is [`calculator_invocation_free`].
     fn calculator_invocation(
         term: &dyn Term,
         report: &RuntimeDovetailRunReport,
@@ -134,14 +147,46 @@ mod rho {
         }
     }
 
-    /// Calculator → two-stage Dovetail+Rholang backend (E3 fold-dataflow).
+    /// A-S2 (D-stage demotion): the Calculator REPORT-FREE F2 compile — the generated
+    /// `rho_fold_dataflow_invocation_to` seam (the report-carrying
+    /// `_from_dovetail_to` variant only ADDS a completeness assertion over it, so this is the
+    /// same lowering with zero Dovetail work):
+    /// - `Run` → the Rho dataflow invocation executes with NO D-stage;
+    /// - `BlockedBySemanticPredicate` (÷0/overflow) → typed
+    ///   [`RhoInvocationDeferral::SemanticPredicate`]: the wrapper LAZILY builds the checked
+    ///   Dovetail report and returns it as the predicate payload (today's outcome);
+    /// - `Defer` / a lowering error → [`RhoInvocationDeferral::GateReject`]: the wrapper
+    ///   LAZILY builds the checked report and re-runs [`calculator_invocation`], reproducing
+    ///   the eager pipeline's exact error text (D-stage error first if the report fails, else
+    ///   the F-stage "not lowerable" rejection).
+    fn calculator_invocation_free(
+        term: &dyn Term,
+    ) -> Result<RhoBackendInvocation, RhoInvocationDeferral> {
+        match CalculatorLanguage::rho_fold_dataflow_invocation_to(term, OUT) {
+            Ok(RhoFoldDataflowDisposition::Run(invocation)) => Ok(RhoBackendInvocation::from(
+                build_fold_dataflow_invocation_from_contract(invocation),
+            )),
+            Ok(RhoFoldDataflowDisposition::BlockedBySemanticPredicate(reason)) => {
+                Err(RhoInvocationDeferral::SemanticPredicate { predicate: reason.to_string() })
+            },
+            Ok(RhoFoldDataflowDisposition::Defer) => Err(RhoInvocationDeferral::GateReject {
+                detail: "Calculator term is not lowerable to Rho scalar dataflow".to_string(),
+            }),
+            Err(detail) => Err(RhoInvocationDeferral::GateReject { detail }),
+        }
+    }
+
+    /// Calculator → two-stage Dovetail+Rholang backend (E3 fold-dataflow). A-S2: the LAZY
+    /// wrapper — the report-free F2 ([`calculator_invocation_free`]) is the default exec path;
+    /// the D-stage runs only on deferral (semantic predicates and non-lowerable terms).
     pub fn calculator_backed() -> Result<Box<dyn Language>> {
         let backend = calculator_planned_rho_backend()?;
-        let language = install_dovetail_rho_runtime_backend(
+        let language = install_dovetail_rho_runtime_backend_lazy(
             CalculatorLanguage,
             backend,
             calculator_dovetail_report,
             calculator_dovetail_step_graph,
+            calculator_invocation_free,
             calculator_invocation,
         )
         .map_err(|err| anyhow!("Calculator Dovetail+Rho backend install failed: {err:?}"))?;
@@ -181,6 +226,9 @@ mod rho {
     /// σ-receiver. On a gate/scope rejection (a fired rule not matchable in Rho, or a
     /// multi/nested redex), fall CLOSED to the proven Stage-0 host-matched σ-replay driver —
     /// "the language stays on its existing path" — so every input stays correct.
+    ///
+    /// A-S2 note: this is now the report-CARRYING fallback compiler, reached only on deferral.
+    /// The default exec path is [`swapdemo_invocation_free`].
     fn swapdemo_invocation(
         term: &dyn Term,
         report: &RuntimeDovetailRunReport,
@@ -199,15 +247,37 @@ mod rho {
         }
     }
 
+    /// A-S2 (D-stage demotion): the SwapDemo REPORT-FREE F2 compile — the generated
+    /// `rho_net_match_invocation_to` (the match body with the STATIC gate instead of the
+    /// report's fired-rule gate, and located-site native counting instead of report firings).
+    /// On success the automaton locates + matches every redex in Rho with ZERO Dovetail work.
+    /// Any rejection (static gate, located native site, nested-multi-site scope, serialization)
+    /// is a [`RhoInvocationDeferral::GateReject`]: the wrapper LAZILY builds the checked
+    /// Dovetail report and re-runs [`swapdemo_invocation`] — today's match-then-σ-replay
+    /// fallback, byte-identical outcomes.
+    fn swapdemo_invocation_free(
+        term: &dyn Term,
+    ) -> Result<RhoBackendInvocation, RhoInvocationDeferral> {
+        match SwapDemoLanguage::rho_net_match_invocation_to(term, OUT) {
+            Ok(invocation) => Ok(RhoBackendInvocation::from(
+                build_rho_net_injection_invocation_from_contract(invocation),
+            )),
+            Err(detail) => Err(RhoInvocationDeferral::GateReject { detail }),
+        }
+    }
+
     /// SwapDemo → two-stage Dovetail+Rholang backend: base rewrites MATCH in Rho (the campaign
-    /// endpoint), with the host-matched σ-replay as the fail-closed fallback.
+    /// endpoint), with the host-matched σ-replay as the fail-closed fallback. A-S2: the LAZY
+    /// wrapper — the report-free F2 ([`swapdemo_invocation_free`]) is the default exec path;
+    /// the D-stage runs only on deferral.
     pub fn swapdemo_backed() -> Result<Box<dyn Language>> {
         let backend = swapdemo_planned_rho_backend()?;
-        let language = install_dovetail_rho_runtime_backend(
+        let language = install_dovetail_rho_runtime_backend_lazy(
             SwapDemoLanguage,
             backend,
             swapdemo_dovetail_report,
             swapdemo_dovetail_report,
+            swapdemo_invocation_free,
             swapdemo_invocation,
         )
         .map_err(|err| anyhow!("SwapDemo Dovetail+Rho backend install failed: {err:?}"))?;

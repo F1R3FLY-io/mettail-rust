@@ -361,66 +361,96 @@ fn rhocalc_dovetail_step_graph(term: &dyn Term) -> Result<RuntimeDovetailRunRepo
     )
 }
 
+/// The RhoCalc F-stage lowering shared by the report-free compile and the report-carrying
+/// fallback (the closure body of the pre-A-S2 invocation compiler, verbatim).
+///
+/// Lower the ORIGINAL term first: the AST mapper handles COMM (send/receive/`new`) directly
+/// and reduces `int(..)`-cast embedded folds via `try_eval` (so `@("OUT")!(int(1+2,8))`
+/// lowers to `@("OUT")!(3)`). ONLY if the original cannot lower (an un-reduced Proc-level
+/// fold) do we fold-normalize via Dovetail (E2) and lower that. A stuck term — e.g. a
+/// pure-COMM term whose receive does not reduce in Dovetail, where `dovetail_normal_term`
+/// errors "stuck term" — fails the Rho-default invocation instead of falling back to a
+/// Dovetail backend report. Calling `dovetail_normal_term` unconditionally is wrong for
+/// exactly that pure-COMM case. (The E2 fold-normalization is part of the F-stage LOWERING —
+/// reached only when direct lowering fails — not the D-stage report the A-S2 demotion makes
+/// lazy.)
+fn rhocalc_backend_invocation(
+    term: &dyn Term,
+    out_channel: &str,
+) -> Result<crate::backend::RhoBackendInvocation, String> {
+    let call = match lower_rhocalc_term(term) {
+        Ok(par) => par,
+        Err(_) => match RhoCalcLanguage::dovetail_normal_term(
+            term,
+            RHOCALC_DOVETAIL_MAX_ITERS,
+            RHOCALC_DOVETAIL_MAX_NODES,
+        ) {
+            Ok(normal) => lower_rhocalc_term(normal.as_ref()).map_err(|err| {
+                format!("RhoCalc normal form could not be lowered to the Rho machine: {err:?}")
+            })?,
+            Err(err) => {
+                return Err(format!(
+                    "RhoCalc term could not be lowered directly or normalized for Rho-machine execution: {err}"
+                ))
+            },
+        },
+    };
+    let call = if call_has_runtime_effects(&call) {
+        call
+    } else {
+        observe_pure_value_call(call, out_channel)
+    };
+    Ok(crate::backend::RhoBackendInvocation::from(
+        crate::backend::RhoMachineInvocation::RunWithCallAndObserveRuntimeValues {
+            call,
+            out_channel: out_channel.to_string(),
+        },
+    ))
+}
+
 /// Two-stage checked-Dovetail+Rho RhoCalc backend — the production default for the REPL `exec` of
 /// RhoCalc.
 ///
 /// One-way pipeline (no bidirectional bridge; see
-/// `docs/architecture/rho-native-integration/09-term-level-reduction-split.md`): the **D-stage**
-/// Dovetail-saturates the whole term (native folds reduce; COMM/`new` remain for Rho lowering); the
-/// **F-stage** takes the fold-normal term ([`RhoCalcLanguage::dovetail_normal_term`], extension E2),
-/// lowers it to a normalized `Par`, and routes every lowerable result through the real Rho machine.
-/// A term carrying a send/receive/`new` runs as that process. A closed pure value/fold with no Rho
+/// `docs/architecture/rho-native-integration/09-term-level-reduction-split.md`): the **F-stage**
+/// lowers the term to a normalized `Par` ([`rhocalc_backend_invocation`]: direct AST lowering,
+/// with the fold-normal term via [`RhoCalcLanguage::dovetail_normal_term`], extension E2, as the
+/// in-stage fallback) and routes every lowerable result through the real Rho machine. A term
+/// carrying a send/receive/`new` runs as that process. A closed pure value/fold with no Rho
 /// effects is wrapped as `@"OUT"!(value)` so the observable result is still produced by RSpace.
+///
+/// A-S2 (D-stage demotion): the F-stage never read the Dovetail report, so the report-free
+/// compile (`F2`) IS the same lowering; an admitted exec runs with ZERO D-stage. A lowering
+/// failure defers ([`crate::backend::RhoInvocationDeferral::GateReject`]) to the LAZY D-stage:
+/// the wrapper builds the checked report (surfacing the eager pipeline's D-stage error text for
+/// budget-blown/malformed reports) and re-runs the SAME lowering as the report-carrying
+/// fallback — whose error message is then the eager pipeline's F-stage message, byte-identical.
 pub fn dovetail_rho_backed_rhocalc(
     out_channel: impl Into<String>,
 ) -> Result<Box<dyn Language>, String> {
     let out_channel = out_channel.into();
     let backend = rhocalc_planned_rho_backend()?;
+    let invocation_free = {
+        let out_channel = out_channel.clone();
+        move |term: &dyn Term| -> Result<
+            crate::backend::RhoBackendInvocation,
+            crate::backend::RhoInvocationDeferral,
+        > {
+            rhocalc_backend_invocation(term, &out_channel)
+                .map_err(|detail| crate::backend::RhoInvocationDeferral::GateReject { detail })
+        }
+    };
     let invocation = move |term: &dyn Term,
                            _report: &RuntimeDovetailRunReport|
           -> Result<crate::backend::RhoBackendInvocation, String> {
-        // Lower the ORIGINAL term first: the AST mapper handles COMM (send/receive/`new`) directly
-        // and reduces `int(..)`-cast embedded folds via `try_eval` (so `@("OUT")!(int(1+2,8))`
-        // lowers to `@("OUT")!(3)`). ONLY if the original cannot lower (an un-reduced Proc-level
-        // fold) do we fold-normalize via Dovetail (E2) and lower that. A stuck term — e.g. a
-        // pure-COMM term whose receive does not reduce in Dovetail, where `dovetail_normal_term`
-        // errors "stuck term" — now fails the Rho-default invocation instead of falling back to a
-        // Dovetail backend report. Calling `dovetail_normal_term` unconditionally is wrong for
-        // exactly that pure-COMM case.
-        let call = match lower_rhocalc_term(term) {
-            Ok(par) => par,
-            Err(_) => match RhoCalcLanguage::dovetail_normal_term(
-                term,
-                RHOCALC_DOVETAIL_MAX_ITERS,
-                RHOCALC_DOVETAIL_MAX_NODES,
-            ) {
-                Ok(normal) => lower_rhocalc_term(normal.as_ref()).map_err(|err| {
-                    format!("RhoCalc normal form could not be lowered to the Rho machine: {err:?}")
-                })?,
-                Err(err) => {
-                    return Err(format!(
-                        "RhoCalc term could not be lowered directly or normalized for Rho-machine execution: {err}"
-                    ))
-                },
-            },
-        };
-        let call = if call_has_runtime_effects(&call) {
-            call
-        } else {
-            observe_pure_value_call(call, &out_channel)
-        };
-        Ok(crate::backend::RhoBackendInvocation::from(
-            crate::backend::RhoMachineInvocation::RunWithCallAndObserveRuntimeValues {
-                call,
-                out_channel: out_channel.clone(),
-            },
-        ))
+        rhocalc_backend_invocation(term, &out_channel)
     };
-    let language = crate::backend::install_dovetail_rho_runtime_backend(
+    let language = crate::backend::install_dovetail_rho_runtime_backend_lazy(
         RhocalcAstRuntimeLanguage,
         backend,
         rhocalc_dovetail_report,
         rhocalc_dovetail_step_graph,
+        invocation_free,
         invocation,
     )
     .map_err(|err| format!("RhoCalc Dovetail+Rho backend install failed: {err:?}"))?;

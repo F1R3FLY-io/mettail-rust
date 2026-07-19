@@ -649,6 +649,44 @@ impl From<RhoMachineInvocation> for RhoBackendInvocation {
     }
 }
 
+/// A-S2 (D-stage demotion): why a REPORT-FREE invocation compile (`F2`) deferred instead of
+/// producing a Rho-machine invocation.
+///
+/// This is the error type of the lazy wrapper's report-free compiler seam
+/// (`F2: Fn(&dyn Term) -> Result<RhoBackendInvocation, RhoInvocationDeferral>`). A deferral is
+/// NOT a failure: it routes the term to the LAZY D-stage — the wrapper then builds the checked
+/// Dovetail report (`checked_complete_dovetail_report`) and takes today's report-carrying paths.
+/// Only after that lazy stage can a hard error surface, and it surfaces with exactly the message
+/// the eager pipeline produced (the D-stage error, or the report-carrying compiler's error).
+#[cfg(feature = "runtime-report")]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RhoInvocationDeferral {
+    /// The term is admitted structurally but a SEMANTIC PREDICATE (safe-arithmetic ÷0/overflow,
+    /// …) blocks Rho execution. The wrapper lazily builds the checked Dovetail report and returns
+    /// it as the observational payload — the same `DeferToDovetailSemanticPredicate` outcome the
+    /// eager pipeline produced, with the D-stage now run only on this deferral path.
+    SemanticPredicate { predicate: String },
+    /// The report-free compile cannot admit the term: the static capability gate rejected (a
+    /// fireable rule is not matchable in Rho), the located shape is out of report-free scope
+    /// (a located native firing needs the host D-stage value; a nested-entry multi-site install
+    /// would contend), or the compile failed outright. The wrapper lazily builds the checked
+    /// Dovetail report and runs the report-carrying fallback compiler — today's exact paths
+    /// (the report-driven match, the σ-replay driver, or the fallback's own error).
+    GateReject { detail: String },
+}
+
+#[cfg(feature = "runtime-report")]
+impl fmt::Display for RhoInvocationDeferral {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::SemanticPredicate { predicate } => {
+                write!(f, "semantic-predicate deferral: {predicate}")
+            },
+            Self::GateReject { detail } => write!(f, "gate-reject deferral: {detail}"),
+        }
+    }
+}
+
 /// Runtime site selected for a compiled [`RhoBackendInvocation`].
 ///
 /// This is the audit boundary for the Rho-native migration. `RhoMachine`
@@ -1097,6 +1135,35 @@ fn run_rho_invocation_blocking(
         .map_err(|_| "Rho backend runtime worker panicked".to_string())?
 }
 
+/// A-S2 test-only instrumentation: a process-global counter of
+/// [`checked_complete_dovetail_report`] invocations, so the zero-D-stage tests can assert that
+/// an ADMITTED exec never builds a Dovetail report (count delta 0) while a deferred exec does
+/// (delta ≥ 1). Compiled only under `cfg(test)` (this crate's own unit tests) or the
+/// `dstage-instrumentation` feature (downstream integration tests, e.g. the REPL's); production
+/// builds carry no counter and no atomic traffic. Counters are process-global — deterministic
+/// under `cargo nextest` (process-per-test) — so callers should assert DELTAS around their own
+/// exec calls.
+#[cfg(any(test, feature = "dstage-instrumentation"))]
+pub mod dstage_instrumentation {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static DOVETAIL_REPORT_INVOCATIONS: AtomicUsize = AtomicUsize::new(0);
+
+    /// How many times `checked_complete_dovetail_report` (the D-stage build+check) has run in
+    /// this process.
+    pub fn dovetail_report_invocations() -> usize {
+        DOVETAIL_REPORT_INVOCATIONS.load(Ordering::SeqCst)
+    }
+
+    /// Record one D-stage build+check. Only [`super::checked_complete_dovetail_report`]
+    /// (feature `runtime-report`) calls this; the `allow` keeps a
+    /// `dstage-instrumentation`-without-`runtime-report` build warning-free.
+    #[cfg_attr(not(feature = "runtime-report"), allow(dead_code))]
+    pub(crate) fn record_dovetail_report_invocation() {
+        DOVETAIL_REPORT_INVOCATIONS.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
 #[cfg(feature = "runtime-report")]
 fn checked_complete_dovetail_report<L, D>(
     language: &L,
@@ -1107,6 +1174,8 @@ where
     L: Language,
     D: Fn(&dyn Term) -> Result<RuntimeDovetailRunReport, String> + Send + Sync,
 {
+    #[cfg(any(test, feature = "dstage-instrumentation"))]
+    dstage_instrumentation::record_dovetail_report_invocation();
     let report = dovetail(term).map_err(|err| {
         format!(
             "Dovetail stage for language {} could not build a checked report: {err}",
@@ -1158,6 +1227,37 @@ pub struct DovetailRhoRuntimeBackedLanguage<L, D, F> {
     inner: L,
     backend: PlannedRhoBackend,
     dovetail: DovetailCompilerStage<D>,
+    invocation: RhoInvocationCompilerStage<F>,
+}
+
+/// A-S2 (D-stage demotion): the LAZY-report production runtime adapter.
+///
+/// ```text
+/// parsed MeTTaIL term ──F2 (report-free compile)──▶ Rho AST invocation ──▶ RSpace observations
+///          │
+///          └─ deferral (semantic predicate / gate reject)
+///                └──▶ LAZY checked Dovetail report ──▶ today's report-carrying paths
+///                        (predicate payload · report-driven F · σ-replay)
+/// ```
+///
+/// Unlike [`DovetailRhoRuntimeBackedLanguage`] — whose default path builds + checks the Dovetail
+/// report on EVERY exec before the invocation compiler runs — this wrapper compiles the
+/// invocation REPORT-FREE first (`F2`). On success the Rho machine executes with ZERO Dovetail
+/// work; only a typed [`RhoInvocationDeferral`] triggers the D-stage, lazily, after which the
+/// term takes exactly the eager pipeline's paths (so no input loses its existing behavior — the
+/// admitted subset simply stops paying for the D-stage). At runtime Dovetail therefore handles
+/// ONLY semantic predicates (and the fail-closed report-carrying fallback).
+///
+/// `Dovetail` remains exposed as the checked intermediate report for the step/diagnostic
+/// surfaces (`run_step_backend_report`, `start_reduction_stepper`), which stay report-eager by
+/// design — their OUTPUT is derivation evidence. Formal model:
+/// `DovetailRhoLanguageBackendWrapper.v` ("report checked ⟺ deferral path taken").
+#[cfg(feature = "runtime-report")]
+pub struct LazyDovetailRhoRuntimeBackedLanguage<L, D, F2, F> {
+    inner: L,
+    backend: PlannedRhoBackend,
+    dovetail: DovetailCompilerStage<D>,
+    invocation_free: RhoInvocationCompilerStage<F2>,
     invocation: RhoInvocationCompilerStage<F>,
 }
 
@@ -1288,6 +1388,59 @@ where
     );
     let invocation = RhoInvocationCompilerStage::new(definition_fingerprint, invocation);
     DovetailRhoRuntimeBackedLanguage::new(inner, backend, dovetail, invocation)
+}
+
+/// A-S2 (D-stage demotion): install a generated language as the LAZY-report production runtime:
+///
+/// ```text
+/// parsed term ──F2 (report-free)──▶ Rho AST invocation ──▶ RSpace observations
+///      └─ deferral ──▶ LAZY checked Dovetail report ──▶ today's report-carrying paths
+/// ```
+///
+/// The lazy analogue of [`install_dovetail_rho_runtime_backend`], taking one extra stage: the
+/// REPORT-FREE invocation compiler `invocation_free`
+/// (`F2: Fn(&dyn Term) -> Result<RhoBackendInvocation, RhoInvocationDeferral>`). On `Ok` the
+/// term executes with NO D-stage; on [`RhoInvocationDeferral::SemanticPredicate`] the wrapper
+/// lazily builds the checked report and returns it as the predicate payload; on
+/// [`RhoInvocationDeferral::GateReject`] it lazily builds the checked report and runs the
+/// report-carrying fallback `invocation` (today's exact paths — report-driven match, σ-replay,
+/// or the fallback's own error). `dovetail`/`dovetail_step` remain the language's D-stage
+/// producers, now reached only on deferral (exec) or through the step/stepper diagnostic
+/// surfaces (which stay report-eager).
+///
+/// Every compiler-stage identity is derived from the accepted [`PlannedRhoBackend`]'s
+/// definition fingerprint, exactly as the eager installer does, and the wrapper constructor
+/// re-verifies them against the wrapped generated language metadata. Formal model:
+/// `DovetailRhoLanguageBackendWrapper.v` ("report checked ⟺ deferral path taken") on top of
+/// `GeneratedLanguageInstallation.v`'s plan-derived stage lemmas.
+#[cfg(feature = "runtime-report")]
+pub fn install_dovetail_rho_runtime_backend_lazy<L, D, DStep, F2, F>(
+    inner: L,
+    backend: PlannedRhoBackend,
+    dovetail: D,
+    dovetail_step: DStep,
+    invocation_free: F2,
+    invocation: F,
+) -> Result<LazyDovetailRhoRuntimeBackedLanguage<L, D, F2, F>, RhoRuntimeBackedLanguageError>
+where
+    L: Language,
+    D: Fn(&dyn Term) -> Result<RuntimeDovetailRunReport, String> + Send + Sync,
+    DStep: Fn(&dyn Term) -> Result<RuntimeDovetailRunReport, String> + Send + Sync + 'static,
+    F2: Fn(&dyn Term) -> Result<RhoBackendInvocation, RhoInvocationDeferral> + Send + Sync,
+    F: Fn(&dyn Term, &RuntimeDovetailRunReport) -> Result<RhoBackendInvocation, String>
+        + Send
+        + Sync,
+{
+    let definition_fingerprint = backend.plan().definition_fingerprint().to_string();
+    let dovetail = DovetailCompilerStage::new(
+        definition_fingerprint.clone(),
+        dovetail,
+        Box::new(dovetail_step),
+    );
+    let invocation_free =
+        RhoInvocationCompilerStage::new(definition_fingerprint.clone(), invocation_free);
+    let invocation = RhoInvocationCompilerStage::new(definition_fingerprint, invocation);
+    LazyDovetailRhoRuntimeBackedLanguage::new(inner, backend, dovetail, invocation_free, invocation)
 }
 
 /// Failure installing a flip-gated Rho backend plan on a generated language.
@@ -1483,6 +1636,81 @@ where
         }
 
         Ok(Self { inner, backend, dovetail, invocation })
+    }
+
+    pub fn inner(&self) -> &L {
+        &self.inner
+    }
+
+    pub fn backend(&self) -> &PlannedRhoBackend {
+        &self.backend
+    }
+}
+
+#[cfg(feature = "runtime-report")]
+impl<L, D, F2, F> LazyDovetailRhoRuntimeBackedLanguage<L, D, F2, F>
+where
+    L: Language,
+    D: Fn(&dyn Term) -> Result<RuntimeDovetailRunReport, String> + Send + Sync,
+    F2: Fn(&dyn Term) -> Result<RhoBackendInvocation, RhoInvocationDeferral> + Send + Sync,
+    F: Fn(&dyn Term, &RuntimeDovetailRunReport) -> Result<RhoBackendInvocation, String>
+        + Send
+        + Sync,
+{
+    /// Install a generated language as a LAZY-report Dovetail+Rho production runtime (A-S2).
+    ///
+    /// `invocation_free` is the report-free compiler `F2` (the default exec path);
+    /// `invocation` is the report-carrying fallback compiler (today's paths, reached only on
+    /// deferral) and the stepper's compiler; `dovetail` is the lazy D-stage producer. The same
+    /// plan/fingerprint identity checks as [`DovetailRhoRuntimeBackedLanguage::new`] apply to
+    /// EVERY stage, including the new report-free one.
+    pub fn new(
+        inner: L,
+        backend: PlannedRhoBackend,
+        dovetail: DovetailCompilerStage<D>,
+        invocation_free: RhoInvocationCompilerStage<F2>,
+        invocation: RhoInvocationCompilerStage<F>,
+    ) -> Result<Self, RhoRuntimeBackedLanguageError> {
+        let language_name = inner.name();
+        let plan_language_name = backend.plan().language_name();
+        if language_name != plan_language_name {
+            return Err(RhoRuntimeBackedLanguageError::LanguagePlanMismatch {
+                language_name: language_name.to_string(),
+                plan_language_name: plan_language_name.to_string(),
+            });
+        }
+        let language_definition_fingerprint = require_matching_plan_definition(&inner, &backend)?;
+        if language_definition_fingerprint != dovetail.definition_fingerprint() {
+            return Err(RhoRuntimeBackedLanguageError::DovetailCompilerDefinitionMismatch {
+                language_name: language_name.to_string(),
+                language_definition_fingerprint: language_definition_fingerprint.clone(),
+                compiler_definition_fingerprint: dovetail.definition_fingerprint().to_string(),
+            });
+        }
+        if language_definition_fingerprint != invocation_free.definition_fingerprint() {
+            return Err(RhoRuntimeBackedLanguageError::InvocationCompilerDefinitionMismatch {
+                language_name: language_name.to_string(),
+                language_definition_fingerprint: language_definition_fingerprint.clone(),
+                compiler_definition_fingerprint: invocation_free
+                    .definition_fingerprint()
+                    .to_string(),
+            });
+        }
+        if language_definition_fingerprint != invocation.definition_fingerprint() {
+            return Err(RhoRuntimeBackedLanguageError::InvocationCompilerDefinitionMismatch {
+                language_name: language_name.to_string(),
+                language_definition_fingerprint,
+                compiler_definition_fingerprint: invocation.definition_fingerprint().to_string(),
+            });
+        }
+
+        Ok(Self {
+            inner,
+            backend,
+            dovetail,
+            invocation_free,
+            invocation,
+        })
     }
 
     pub fn inner(&self) -> &L {
@@ -1873,6 +2101,358 @@ where
                 };
                 // The held-fold contract `Definition`s the lifted call targets (empty unless the
                 // term had a fold over a COMM-received value).
+                let fold_definitions = drain_pending_fold_definitions();
+                let session =
+                    crate::step::StepSession::start(program, fold_definitions, out_channel)?;
+                Ok(Box::new(session))
+            },
+            RhoBackendInvocation::DeferToDovetailSemanticPredicate { .. } => Err(format!(
+                "term has no Rho-machine program to single-step for language {}; inspect the \
+                 Dovetail derivation graph instead",
+                self.name()
+            )),
+        }
+    }
+
+    fn run_ascent_with_facts(
+        &self,
+        term: &dyn Term,
+        facts: &SeedFacts,
+    ) -> Result<AscentResults, String> {
+        let _ = (term, facts);
+        Err(format!(
+            "legacy Ascent runtime is not exposed by Dovetail+Rho-backed language {}",
+            self.name()
+        ))
+    }
+
+    fn run_backend_report_with_facts(
+        &self,
+        backend: RuntimeBackend,
+        term: &dyn Term,
+        facts: &SeedFacts,
+    ) -> Result<RuntimeBackendReport, String> {
+        match backend {
+            RuntimeBackend::RhoMachine if facts.is_empty() => {
+                self.run_backend_report(backend, term)
+            },
+            RuntimeBackend::RhoMachine => Err(format!(
+                "{} backend for language {} does not accept Ascent-shaped seeded facts",
+                backend,
+                self.name()
+            )),
+            RuntimeBackend::Dovetail => Err(format!(
+                "Dovetail is an internal checked stage for Rho-default language {}; execute with \
+                 RhoMachine or use the step report API for derivation evidence",
+                self.name()
+            )),
+            RuntimeBackend::Ascent => Err(format!(
+                "legacy Ascent runtime is not exposed by Dovetail+Rho-backed language {}",
+                self.name()
+            )),
+            _ => Err(format!(
+                "{} backend is not exposed by Dovetail+Rho-backed language {}",
+                backend,
+                self.name()
+            )),
+        }
+    }
+
+    fn try_direct_eval(&self, term: &dyn Term) -> Option<Box<dyn Term>> {
+        self.inner.try_direct_eval(term)
+    }
+
+    fn normalize_term(&self, term: &dyn Term) -> Box<dyn Term> {
+        self.inner.normalize_term(term)
+    }
+
+    fn format_term(&self, term: &dyn Term) -> String {
+        self.inner.format_term(term)
+    }
+
+    fn create_env(&self) -> Box<dyn Any + Send + Sync> {
+        self.inner.create_env()
+    }
+
+    fn add_to_env(&self, env: &mut dyn Any, name: &str, term: &dyn Term) -> Result<(), String> {
+        self.inner.add_to_env(env, name, term)
+    }
+
+    fn remove_from_env(&self, env: &mut dyn Any, name: &str) -> Result<bool, String> {
+        self.inner.remove_from_env(env, name)
+    }
+
+    fn clear_env(&self, env: &mut dyn Any) {
+        self.inner.clear_env(env)
+    }
+
+    fn substitute_env(&self, term: &dyn Term, env: &dyn Any) -> Result<Box<dyn Term>, String> {
+        self.inner.substitute_env(term, env)
+    }
+
+    fn substitute_env_preserve_structure(
+        &self,
+        term: &dyn Term,
+        env: &dyn Any,
+    ) -> Result<Box<dyn Term>, String> {
+        self.inner.substitute_env_preserve_structure(term, env)
+    }
+
+    fn list_env(&self, env: &dyn Any) -> Vec<(String, String, Option<String>)> {
+        self.inner.list_env(env)
+    }
+
+    fn set_env_comment(
+        &self,
+        env: &mut dyn Any,
+        name: &str,
+        comment: String,
+    ) -> Result<(), String> {
+        self.inner.set_env_comment(env, name, comment)
+    }
+
+    fn is_env_empty(&self, env: &dyn Any) -> bool {
+        self.inner.is_env_empty(env)
+    }
+
+    fn get_env_term(&self, env: &dyn Any, name: &str) -> Option<Box<dyn Term>> {
+        self.inner.get_env_term(env, name)
+    }
+
+    fn infer_term_type(&self, term: &dyn Term) -> TermType {
+        self.inner.infer_term_type(term)
+    }
+
+    fn infer_var_types(&self, term: &dyn Term) -> Vec<VarTypeInfo> {
+        self.inner.infer_var_types(term)
+    }
+
+    fn infer_var_type(&self, term: &dyn Term, var_name: &str) -> Option<TermType> {
+        self.inner.infer_var_type(term, var_name)
+    }
+}
+
+#[cfg(feature = "runtime-report")]
+impl<L, D, F2, F> Language for LazyDovetailRhoRuntimeBackedLanguage<L, D, F2, F>
+where
+    L: Language,
+    D: Fn(&dyn Term) -> Result<RuntimeDovetailRunReport, String> + Send + Sync,
+    F2: Fn(&dyn Term) -> Result<RhoBackendInvocation, RhoInvocationDeferral> + Send + Sync,
+    F: Fn(&dyn Term, &RuntimeDovetailRunReport) -> Result<RhoBackendInvocation, String>
+        + Send
+        + Sync,
+{
+    fn name(&self) -> &'static str {
+        self.inner.name()
+    }
+
+    fn metadata(&self) -> &'static dyn mettail_runtime::LanguageMetadata {
+        self.inner.metadata()
+    }
+
+    fn parse_term(&self, input: &str) -> Result<Box<dyn Term>, String> {
+        self.inner.parse_term(input)
+    }
+
+    fn parse_term_for_env(&self, input: &str) -> Result<Box<dyn Term>, String> {
+        self.inner.parse_term_for_env(input)
+    }
+
+    fn parse_term_with_weighted_seed_ids(
+        &self,
+        input: &str,
+    ) -> Result<(Box<dyn Term>, Vec<WeightedSeedId>), String> {
+        self.inner.parse_term_with_weighted_seed_ids(input)
+    }
+
+    fn parse_term_with_weighted_rewrite_seeds(
+        &self,
+        input: &str,
+    ) -> Result<(Box<dyn Term>, Vec<WeightedRewriteSeed>), String> {
+        self.inner.parse_term_with_weighted_rewrite_seeds(input)
+    }
+
+    fn run_ascent(&self, term: &dyn Term) -> Result<AscentResults, String> {
+        let _ = term;
+        Err(format!(
+            "legacy Ascent runtime is not exposed by Dovetail+Rho-backed language {}",
+            self.name()
+        ))
+    }
+
+    fn default_runtime_backend(&self) -> Option<RuntimeBackend> {
+        Some(RuntimeBackend::RhoMachine)
+    }
+
+    fn runtime_backend_capabilities(&self) -> Vec<RuntimeBackendCapability> {
+        vec![RuntimeBackendCapability {
+            backend: RuntimeBackend::RhoMachine,
+            is_default: true,
+        }]
+    }
+
+    fn supports_runtime_backend(&self, backend: RuntimeBackend) -> bool {
+        match backend {
+            RuntimeBackend::RhoMachine => true,
+            RuntimeBackend::Ascent => false,
+            _ => false,
+        }
+    }
+
+    /// A-S2 (D-stage demotion): the LAZY default path. The report-free compiler `F2` runs
+    /// FIRST; an admitted term executes on the Rho machine with ZERO Dovetail work. Only a
+    /// typed deferral builds the checked Dovetail report — lazily — and then takes exactly the
+    /// eager pipeline's paths: the semantic-predicate payload
+    /// (`RuntimeBackendReport::try_dovetail`) or the report-carrying fallback compiler
+    /// (report-driven match / σ-replay / the fallback's own error). Every error message on the
+    /// deferral paths is the eager pipeline's message, so no caller-observable failure text
+    /// changes. The held-fold `clear_pending_fold_sites`/`drain_pending_fold_definitions`
+    /// bracket wraps EACH invocation-compiler run, exactly as the eager wrapper brackets its
+    /// single run.
+    fn run_backend_report(
+        &self,
+        backend: RuntimeBackend,
+        term: &dyn Term,
+    ) -> Result<RuntimeBackendReport, String> {
+        match backend {
+            RuntimeBackend::RhoMachine => {
+                // Tier-3 bracket around the REPORT-FREE compile: F2 may lift held-fold
+                // contracts (e.g. the RhoCalc AST lowering); they ride the executed invocation.
+                clear_pending_fold_sites();
+                let free = (self.invocation_free.compiler)(term);
+                let free_fold_definitions = drain_pending_fold_definitions();
+                match free {
+                    Ok(RhoBackendInvocation::RhoMachine(machine_invocation)) => {
+                        // The admitted path: NO D-stage ran, no report exists.
+                        run_rho_invocation_blocking(
+                            self.backend.clone(),
+                            machine_invocation,
+                            free_fold_definitions,
+                        )
+                    },
+                    // An F2 that expresses the predicate disposition through the invocation
+                    // type is the same deferral as the typed error: the observational payload
+                    // is the LAZILY checked Dovetail report (today's predicate arm).
+                    Ok(RhoBackendInvocation::DeferToDovetailSemanticPredicate { .. })
+                    | Err(RhoInvocationDeferral::SemanticPredicate { .. }) => {
+                        let dovetail_report = checked_complete_dovetail_report(
+                            &self.inner,
+                            term,
+                            &self.dovetail.compiler,
+                        )?;
+                        RuntimeBackendReport::try_dovetail(dovetail_report).map_err(|err| {
+                            format!(
+                                "semantic-predicate Dovetail stage for language {} produced malformed report: {err}",
+                                self.name()
+                            )
+                        })
+                    },
+                    Err(RhoInvocationDeferral::GateReject { .. }) => {
+                        // The fail-closed path: LAZILY build + check the report, then run
+                        // today's report-carrying compiler (its own fold bracket).
+                        let dovetail_report = checked_complete_dovetail_report(
+                            &self.inner,
+                            term,
+                            &self.dovetail.compiler,
+                        )?;
+                        clear_pending_fold_sites();
+                        let invocation = (self.invocation.compiler)(term, &dovetail_report)
+                            .map_err(|err| {
+                                format!(
+                                    "RhoMachine backend for language {} could not build an AST invocation from the checked Dovetail report: {err}",
+                                    self.name()
+                                )
+                            })?;
+                        let fold_definitions = drain_pending_fold_definitions();
+                        match invocation {
+                            RhoBackendInvocation::DeferToDovetailSemanticPredicate { .. } => {
+                                RuntimeBackendReport::try_dovetail(dovetail_report).map_err(
+                                    |err| {
+                                        format!(
+                                            "semantic-predicate Dovetail stage for language {} produced malformed report: {err}",
+                                            self.name()
+                                        )
+                                    },
+                                )
+                            },
+                            RhoBackendInvocation::RhoMachine(machine_invocation) => {
+                                run_rho_invocation_blocking(
+                                    self.backend.clone(),
+                                    machine_invocation,
+                                    fold_definitions,
+                                )
+                            },
+                        }
+                    },
+                }
+            },
+            RuntimeBackend::Dovetail => Err(format!(
+                "Dovetail is an internal checked stage for Rho-default language {}; execute with \
+                 RhoMachine or use the step report API for derivation evidence",
+                self.name()
+            )),
+            RuntimeBackend::Ascent => Err(format!(
+                "legacy Ascent runtime is not exposed by Dovetail+Rho-backed language {}",
+                self.name()
+            )),
+            _ => Err(format!(
+                "{} backend is not exposed by Dovetail+Rho-backed language {}",
+                backend,
+                self.name()
+            )),
+        }
+    }
+
+    /// Step-mode report: identical to [`DovetailRhoRuntimeBackedLanguage`]'s — a dedicated
+    /// derivation-evidence surface that runs the generated `dovetail_step_report`. The step
+    /// surface stays report-EAGER by design (its output IS the report); the A-S2 laziness
+    /// applies to production `exec` (`run_backend_report`) only.
+    fn run_step_backend_report(&self, term: &dyn Term) -> Result<RuntimeBackendReport, String> {
+        let dovetail_report =
+            checked_complete_dovetail_report(&self.inner, term, &self.dovetail.step_compiler)?;
+        RuntimeBackendReport::try_dovetail(dovetail_report).map_err(|err| {
+            format!(
+                "Dovetail step stage for language {} produced malformed report: {err}",
+                self.name()
+            )
+        })
+    }
+
+    /// Start the reactive single-stepper: identical to
+    /// [`DovetailRhoRuntimeBackedLanguage::start_reduction_stepper`] — the stepper is a
+    /// diagnostic surface that builds the checked Dovetail report eagerly and compiles the
+    /// F-stage invocation through the report-carrying fallback compiler.
+    fn start_reduction_stepper(
+        &self,
+        term: &dyn Term,
+    ) -> Result<Box<dyn mettail_runtime::ReductionStepper>, String> {
+        let dovetail_report =
+            checked_complete_dovetail_report(&self.inner, term, &self.dovetail.compiler)?;
+        // Tier-3: bracket the lowering so we can collect any held-fold contract sites it
+        // records (rhocalc only; empty for Calculator).
+        clear_pending_fold_sites();
+        let invocation = (self.invocation.compiler)(term, &dovetail_report).map_err(|err| {
+            format!(
+                "live single-step for language {} could not build an AST invocation from the \
+                 checked Dovetail report: {err}",
+                self.name()
+            )
+        })?;
+        match invocation {
+            RhoBackendInvocation::RhoMachine(machine_invocation) => {
+                let out_channel = machine_invocation.out_channel().map(String::from);
+                let call = machine_invocation.program_par().ok_or_else(|| {
+                    format!(
+                        "term has no Rho-machine program to single-step for language {}; inspect the Dovetail derivation graph instead",
+                        self.name()
+                    )
+                })?;
+                // Compose the call with the backend's persistent contracts so their COMMs
+                // actually fire — the SAME composition the run path uses.
+                let program = match self.backend.program().ast_par() {
+                    Some(contracts) => contracts.append(call.clone()),
+                    None => call.clone(),
+                };
                 let fold_definitions = drain_pending_fold_definitions();
                 let session =
                     crate::step::StepSession::start(program, fold_definitions, out_channel)?;
@@ -2639,6 +3219,219 @@ mod tests {
             .expect_err("semantic-predicate deferral must require a complete Dovetail report");
         assert!(err.contains("produced incomplete report: BoundedByCycleCut"), "{err}");
         assert!(!err.contains("safe scalar evaluation declined"), "{err}");
+    }
+
+    // ————————————————————————————————————————————————————————————————————————————————
+    // A-S2: the LAZY wrapper (`LazyDovetailRhoRuntimeBackedLanguage`) — report-free default
+    // path, lazy D-stage on deferral, instrumented by `dstage_instrumentation`.
+    // ————————————————————————————————————————————————————————————————————————————————
+
+    /// The Mini report-free F2: the same scalar invocation as [`mini_invocation`], with a
+    /// lowering failure mapped to a `GateReject` deferral.
+    #[cfg(feature = "runtime-report")]
+    fn mini_invocation_free(
+        term: &dyn Term,
+    ) -> Result<RhoBackendInvocation, RhoInvocationDeferral> {
+        mini_invocation(term)
+            .map(RhoBackendInvocation::from)
+            .map_err(|detail| RhoInvocationDeferral::GateReject { detail })
+    }
+
+    /// A D-stage producer that FAILS LOUDLY: installing the lazy wrapper with this producer
+    /// proves the admitted path never consults the D-stage — if it did, the exec would error
+    /// with this marker instead of observing the Rho result.
+    #[cfg(feature = "runtime-report")]
+    fn poisoned_mini_dovetail_report(_term: &dyn Term) -> Result<RuntimeDovetailRunReport, String> {
+        Err("D-stage must not run on the admitted report-free path".to_string())
+    }
+
+    #[cfg(feature = "runtime-report")]
+    #[test]
+    fn lazy_default_surface_executes_report_free_with_zero_dovetail_work() {
+        // The D-stage producer is POISONED and the report-carrying fallback F is poisoned too:
+        // the admitted exec must reach the Rho machine purely through F2. The instrumentation
+        // counter double-checks the D-stage never ran.
+        let language = install_dovetail_rho_runtime_backend_lazy(
+            MiniLanguage,
+            mini_backend(),
+            poisoned_mini_dovetail_report,
+            poisoned_mini_dovetail_report,
+            mini_invocation_free,
+            |_term, _report| Err("fallback F must not run on the admitted path".to_string()),
+        )
+        .expect("the lazy Dovetail+Rho wrapper installs");
+        let term = language.parse_term("2 + 3").expect("mini parse");
+
+        let before = dstage_instrumentation::dovetail_report_invocations();
+        let report = language
+            .run_default_backend_report(term.as_ref())
+            .expect("the admitted exec executes with NO D-stage");
+        let after = dstage_instrumentation::dovetail_report_invocations();
+
+        assert_eq!(after - before, 0, "the admitted path built a Dovetail report");
+        assert_eq!(report.backend(), RuntimeBackend::RhoMachine);
+        assert_eq!(report.artifact(), RuntimeBackendArtifact::RhoNormalizedAst);
+        let out = report
+            .observations_for_channel("OUT")
+            .expect("Rho report must expose OUT observations");
+        assert_eq!(out.values, vec![RuntimeObservationValue::Int(5)]);
+    }
+
+    #[cfg(feature = "runtime-report")]
+    #[test]
+    fn lazy_default_surface_semantic_predicate_defers_to_the_lazy_report() {
+        let language = install_dovetail_rho_runtime_backend_lazy(
+            MiniLanguage,
+            mini_backend(),
+            complete_mini_dovetail_report,
+            complete_mini_dovetail_report,
+            |_term| {
+                Err(RhoInvocationDeferral::SemanticPredicate {
+                    predicate: "safe scalar evaluation declined".to_string(),
+                })
+            },
+            |_term, _report| Err("fallback F must not run on the predicate path".to_string()),
+        )
+        .expect("the lazy Dovetail+Rho wrapper installs");
+        let term = language.parse_term("2 + 3").expect("mini parse");
+
+        let before = dstage_instrumentation::dovetail_report_invocations();
+        let report = language
+            .run_default_backend_report(term.as_ref())
+            .expect("the predicate deferral resolves to the LAZILY checked Dovetail report");
+        let after = dstage_instrumentation::dovetail_report_invocations();
+
+        assert!(after - before >= 1, "the predicate path must build the report lazily");
+        assert_eq!(report.backend(), RuntimeBackend::Dovetail);
+        assert_eq!(report.artifact(), RuntimeBackendArtifact::DovetailRunReport);
+    }
+
+    #[cfg(feature = "runtime-report")]
+    #[test]
+    fn lazy_default_surface_gate_reject_takes_todays_report_carrying_path() {
+        // GateReject → LAZY checked report → the report-carrying fallback compiler → Rho
+        // execution: byte-identical to the eager pipeline's outcome for the same F.
+        let language = install_dovetail_rho_runtime_backend_lazy(
+            MiniLanguage,
+            mini_backend(),
+            complete_mini_dovetail_report,
+            complete_mini_dovetail_report,
+            |_term| {
+                Err(RhoInvocationDeferral::GateReject {
+                    detail: "report-free compile out of scope".to_string(),
+                })
+            },
+            mini_invocation_from_dovetail,
+        )
+        .expect("the lazy Dovetail+Rho wrapper installs");
+        let term = language.parse_term("2 + 3").expect("mini parse");
+
+        let before = dstage_instrumentation::dovetail_report_invocations();
+        let report = language
+            .run_default_backend_report(term.as_ref())
+            .expect("the gate-reject deferral executes through the report-carrying fallback");
+        let after = dstage_instrumentation::dovetail_report_invocations();
+
+        assert!(after - before >= 1, "the gate-reject path must build the report lazily");
+        assert_eq!(report.backend(), RuntimeBackend::RhoMachine);
+        let out = report
+            .observations_for_channel("OUT")
+            .expect("Rho report must expose OUT observations");
+        assert_eq!(
+            out.values,
+            vec![RuntimeObservationValue::Int(5)],
+            "the fallback path produces the eager pipeline's exact observation"
+        );
+    }
+
+    #[cfg(feature = "runtime-report")]
+    #[test]
+    fn lazy_default_surface_gate_reject_surfaces_the_d_stage_error_first() {
+        // On the deferral path the LAZY report is still CHECKED: a bounded report blocks the
+        // fallback with the eager pipeline's exact D-stage error (report checked ⟺ deferral
+        // path taken — `DovetailRhoLanguageBackendWrapper.v`).
+        let language = install_dovetail_rho_runtime_backend_lazy(
+            MiniLanguage,
+            mini_backend(),
+            bounded_mini_dovetail_report,
+            bounded_mini_dovetail_report,
+            |_term| {
+                Err(RhoInvocationDeferral::GateReject {
+                    detail: "report-free compile out of scope".to_string(),
+                })
+            },
+            |_term, _report| Err("invocation should not run after incomplete Dovetail".to_string()),
+        )
+        .expect("the lazy Dovetail+Rho wrapper installs");
+        let term = language.parse_term("2 + 3").expect("mini parse");
+
+        let err = language
+            .run_default_backend_report(term.as_ref())
+            .expect_err("a bounded lazy report must block the fallback");
+        assert!(err.contains("produced incomplete report: BoundedByCycleCut"), "{err}");
+        assert!(!err.contains("invocation should not run"), "{err}");
+    }
+
+    #[cfg(feature = "runtime-report")]
+    #[test]
+    fn lazy_default_surface_fallback_predicate_disposition_returns_the_report() {
+        // A fallback F that itself lands on the semantic-predicate disposition (after a
+        // GateReject deferral) still resolves to the checked report — the eager wrapper's
+        // predicate arm, reproduced on the lazy path.
+        let language = install_dovetail_rho_runtime_backend_lazy(
+            MiniLanguage,
+            mini_backend(),
+            complete_mini_dovetail_report,
+            complete_mini_dovetail_report,
+            |_term| {
+                Err(RhoInvocationDeferral::GateReject {
+                    detail: "report-free compile out of scope".to_string(),
+                })
+            },
+            |_term, _report| {
+                Ok(RhoBackendInvocation::DeferToDovetailSemanticPredicate {
+                    predicate: "safe scalar evaluation declined".to_string(),
+                })
+            },
+        )
+        .expect("the lazy Dovetail+Rho wrapper installs");
+        let term = language.parse_term("2 + 3").expect("mini parse");
+
+        let report = language
+            .run_default_backend_report(term.as_ref())
+            .expect("the fallback predicate disposition resolves to the checked report");
+        assert_eq!(report.backend(), RuntimeBackend::Dovetail);
+        assert_eq!(report.artifact(), RuntimeBackendArtifact::DovetailRunReport);
+    }
+
+    #[cfg(feature = "runtime-report")]
+    #[test]
+    fn lazy_wrapper_rejects_cross_definition_installs() {
+        // The report-free stage carries the SAME plan-derived identity discipline as every
+        // other stage: a wrong fingerprint on the F2 stage blocks installation.
+        let backend = mini_backend();
+        let fingerprint = backend.plan().definition_fingerprint().to_string();
+        let err = match LazyDovetailRhoRuntimeBackedLanguage::new(
+            MiniLanguage,
+            backend,
+            DovetailCompilerStage::new(
+                fingerprint.clone(),
+                complete_mini_dovetail_report,
+                Box::new(complete_mini_dovetail_report),
+            ),
+            RhoInvocationCompilerStage::new("wrong-definition", mini_invocation_free),
+            RhoInvocationCompilerStage::new(fingerprint, mini_invocation_from_dovetail),
+        ) {
+            Ok(_) => panic!("a mismatched report-free compiler must not install"),
+            Err(err) => err,
+        };
+        assert!(
+            matches!(
+                err,
+                RhoRuntimeBackedLanguageError::InvocationCompilerDefinitionMismatch { .. }
+            ),
+            "{err}"
+        );
     }
 
     #[cfg(feature = "runtime-report")]
