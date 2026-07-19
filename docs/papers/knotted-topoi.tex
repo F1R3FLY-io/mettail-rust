@@ -1,0 +1,816 @@
+\documentclass[11pt]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{mathtools}
+\usepackage{xcolor}
+\usepackage{enumitem}
+\usepackage{hyperref}
+\usepackage{geometry}
+\geometry{a4paper,margin=1.1in}
+\hypersetup{colorlinks=true,linkcolor=blue!55!black,citecolor=blue!55!black,urlcolor=blue!55!black}
+
+%% --- notation ---------------------------------------------------------------
+\newcommand{\sem}[1]{[\![#1]\!]}
+\newcommand{\refl}[1]{\ulcorner #1 \urcorner}
+\newcommand{\Proc}{\mathsf{Proc}}
+\newcommand{\Name}{\mathsf{Name}}
+\newcommand{\dT}{\partial T}
+\newcommand{\Top}{\mathfrak{Top}}
+\newcommand{\GSLT}{\mathbf{GSLT}}
+\newcommand{\GSLTsem}{\mathbf{GSLT}_{\!\sim}}
+\newcommand{\GSLTfp}{\mathbf{GSLT}^{\mathrm{fp}}_{\!\sim}}
+\newcommand{\MeTTaIL}{\mathbf{MeTTaIL}}
+\newcommand{\Cl}{\mathrm{Cl}}
+\newcommand{\Sh}{\mathrm{Sh}}
+\newcommand{\Ps}{\mathcal{P}}
+\newcommand{\sH}{\widehat{\mathsf{H}}}
+\newcommand{\Bfun}{\mathsf{B}}
+\newcommand{\sB}{\widehat{\mathsf{B}}}
+\newcommand{\swap}{\mathsf{s}}
+\newcommand{\op}{\mathrm{op}}
+\newcommand{\id}{\mathrm{id}}
+\newcommand{\Sym}{\mathrm{Sym}}
+\newcommand{\sorts}{\mathcal{G}}
+\newcommand{\bEs}{\overline{\mathcal{E}}}
+\newcommand{\Ks}{\mathcal{K}}
+\newcommand{\Av}{\Omega}
+\newcommand{\for}[2]{\mathsf{for}(#1 \Leftarrow #2)}
+\newcommand{\out}[2]{#1\,!\,(#2)}
+\newcommand{\quo}[1]{@#1}
+\newcommand{\drf}[1]{{*}#1}
+
+%% --- colour coding of the knotted copies -----------------------------------
+\definecolor{redcopy}{rgb}{0.78,0.08,0.08}
+\newcommand{\rc}[1]{\textcolor{redcopy}{#1}}   % red copy
+\newcommand{\rSet}{\rc{\mathsf{Set}}}          % red set theory
+\newcommand{\bSet}{\overline{\mathsf{Set}}}    % black set theory
+\newcommand{\Es}{\rc{\mathcal{E}}}             % red copy topos
+\newcommand{\rX}{\rc{X}}
+\newcommand{\Ss}{\rc{S}}
+\newcommand{\As}{\rc{A}}
+\newcommand{\bSs}{\overline{S}}
+\newcommand{\bAs}{\overline{A}}
+\newcommand{\St}{\rc{\mathcal S}}
+\newcommand{\At}{\rc{\mathcal A}}
+\newcommand{\bSt}{\overline{\mathcal S}}
+\newcommand{\bAt}{\overline{\mathcal A}}
+
+%% --- theorem environments ---------------------------------------------------
+\theoremstyle{plain}
+\newtheorem{theorem}{Theorem}
+\newtheorem{proposition}[theorem]{Proposition}
+\newtheorem{lemma}[theorem]{Lemma}
+\newtheorem{corollary}[theorem]{Corollary}
+\theoremstyle{definition}
+\newtheorem{definition}[theorem]{Definition}
+\newtheorem{construction}[theorem]{Construction}
+\newtheorem{obligation}{Obligation}
+\theoremstyle{remark}
+\newtheorem{remark}[theorem]{Remark}
+
+\title{Knotted Topoi:\\
+the lift of the knotted set-theoretic universe, and\\
+fully abstract denotational semantics for the\\
+category of graph-structured lambda theories}
+\author{Lucius Gregory Meredith\\
+CEO, F1R3FLY.io, and Chief Science Officer, F1R3FLY Industries\\
+\texttt{lgreg.meredith@gmail.com}}
+\date{June 2026}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+We lift the knotted set-theoretic universe of \emph{A Knotted Universe} --- two mutually recursive
+copies of set theory tied so that each colour's atoms are the other colour's sets --- one
+categorical level, to a \emph{knotted topos}: four sort-topoi (red sets and atoms, black sets and
+atoms) tied by two geometric knots and an involutive colour-swap, with the reflection law
+$\drf{}\quo{}P\equiv P$ become the involutivity of an equivalence of topoi. This is the principal
+result. As an application we transport the operational view of computation to a denotational one.
+The MeTTaIL language presents the category of finitely presentable graph-structured lambda theories
+(GSLTs); desugaring MeTTaIL into the rho calculus, and composing with the fully abstract rho
+semantics of \emph{Quoting is Colour-Swap} lifted into the knotted topos, gives a compositional
+denotation $\sem{-}_{\Ks}$ that is fully abstract for context bisimulation:
+$\sem{P}_{\Ks}=\sem{Q}_{\Ks}\iff P\sim Q$. Because GSLTs subsume every known classical model of
+computation --- the $\lambda$-calculus and hence PCF, CCS, the $\pi$-calculus~\cite{sangiorgiwalker}, the ambient calculus,
+SKI, Turing machines, and term rewriting, with universal algebra as the dynamics-free slice --- the
+construction supplies a fully abstract denotational semantics for all of them at once, at least in
+the finitely presentable case. When Milner found the full abstraction problem for PCF he is said to
+have quipped, ``so much for denotational semantics''; the linear-logic and game-semantics programme
+answered him for PCF, and the knotted topos answers him uniformly: the model is the bisimulation
+quotient itself --- the final coalgebra of a behaviour functor internal to the topos --- so it is
+fully abstract by construction, compositionality being the theorem and the context-labelled
+(Leifer--Milner) presentation being what makes bisimulation a congruence. The keystone is that the
+OSLF-generated Hennessy--Milner logic is the internal logic of the knotted topos: adequacy is the
+statement that the subobject classifier classifies bisimilarity. The risk ledger of the source
+papers transfers: finitely presentable theories cost no infinite risk, recursion costs one $\omega$
+--- black infinity --- and not one primitive name.
+\end{abstract}
+
+\tableofcontents
+
+\section{Introduction}\label{sec:intro}
+
+\subsection{Milner's lament}
+
+In the nineteen-seventies Milner and Plotkin gave PCF --- a typed $\lambda$-calculus with arithmetic
+and recursion --- both an operational and a denotational semantics, the latter in Scott's domains,
+and asked whether the two agree exactly: whether two terms receive the same denotation precisely when
+no program context can tell them apart. They do not. The Scott model is not \emph{fully abstract};
+the celebrated witness is ``parallel or'', a function definable in the model but not in the language,
+so the model distinguishes terms the language equates~\cite{milnerfa,plotkinlcf,scottdomains}. The
+\emph{full abstraction problem} for PCF --- to build a model that is neither too coarse nor too fine
+--- proved deep and durable, and Milner is said to have summarised the discovery with a quip: ``so
+much for denotational semantics.''
+
+The linear-logic and game-semantics programme answered him for PCF two decades later. Reading a type
+as a game and a program as a strategy, and cutting the model down to the strategies that are
+\emph{innocent} and \emph{history-free}, Abramsky--Jagadeesan--Malacaria and Hyland--Ong built
+genuinely fully abstract models of PCF~\cite{ajm,ho}, in the spirit of Girard's linear
+logic~\cite{girardll}: definability is recovered exactly, the parallel-or is excluded by the
+discipline on plays, and observational equivalence is, on the nose, equality of strategies modulo the
+game's own equivalence. The lesson of that programme is that the right denotational object is an
+\emph{interaction} structure --- plays between a player and an opponent --- rather than a space of
+values.
+
+\subsection{The broader result}
+
+This paper makes the game-semantic moral uniform, and in doing so answers Milner not for one language
+but for a category that contains them all. A \emph{graph-structured lambda theory}
+(GSLT)~\cite{gsltnotes} is a triple (grammar, equations, rewrites): freely generated terms as states,
+equations identifying states, rewrites animating them. The class of GSLTs subsumes every known
+classical model of computation. The $\lambda$-calculus is the GSLT with $\beta$ as its base rewrite,
+and PCF is that GSLT enriched with constants, conditionals and a fixpoint; CCS, the $\pi$-calculus,
+the ambient calculus and the rho calculus are GSLTs whose base rewrite is communication; SKI is a
+GSLT of combinator contraction; a Turing machine is a GSLT of tape rewrites; and a term-rewriting
+system is a GSLT outright~\cite{baadernipkow}. Universal algebra and the Lawvere theories sit inside as the
+dynamics-free slice, where the rewrite component is empty~\cite{gsltnotes}.
+
+For all of these --- at least the finitely presentable ones --- a single construction supplies a
+fully abstract denotational semantics. The construction does not search for a model that happens to
+be neither too coarse nor too fine; it takes the model to \emph{be} the bisimulation quotient, the
+final coalgebra of a behaviour functor, and proves that this quotient is a compositional, internally
+topos-theoretic object. Full abstraction is then by construction: the failure that defeated the
+Scott model --- a model element with no program realising it --- cannot occur, because every element
+of the final coalgebra is the behaviour of a process, and two processes are identified exactly when
+bisimilar. What had to be \emph{proved} is the other half, compositionality: that the denotation is a
+homomorphism and that bisimulation is a congruence. The second source paper supplies precisely this,
+by labelling transitions with contexts after Leifer and Milner~\cite{leifermilner,sewell}, so that
+the bisimulation game already ranges over every environment and congruence holds with no closure
+step~\cite{knotrho}. The interaction structure the game semanticists found necessary is, here, built
+in from the ground: the knot reads red as player and black as opponent~\cite{rset}, and the
+denotation lives in their interaction.
+
+\subsection{The two parts}
+
+This is the third in a sequence. \emph{A Knotted Universe}~\cite{rset} builds a universe of reflective
+set theories from $\varnothing$ alone, as a red copy $\rSet[\rX]$ and a black copy
+$\bSet[\overline X]$ tied by $\rX=\bSet[\overline X]$, $\overline X=\rSet[\rX]$, each colour's atoms
+the other's sets. \emph{Quoting is Colour-Swap}~\cite{knotrho} gives a fully abstract denotation of
+the rho calculus~\cite{rho} there, refining the knot into four sorts with quoting realised as a
+colour-swap and proving full abstraction for the resulting final-coalgebra semantics. The present
+paper has a principal result and an application.
+
+\paragraph{Principal result (\S\ref{sec:lift}): the lift to knotted topoi.} We categorify the
+four-sorted model. The four sorts become four topoi
+$\St,\At,\bSt,\bAt$; the two knots become geometric equivalences; the colour-swap becomes an
+involutive auto-equivalence with $\swap\circ\swap\cong\id$; quoting and dereference are derived,
+$\quo{}=\kappa\circ\swap$, $\drf{}=\swap\circ\kappa^{-1}$, and $\drf{}\quo{}P\equiv P$ becomes the
+involutivity of an equivalence of topoi. The knotted topos $\Ks$ is the (bi)fixpoint of the
+two-sorted endofunctor of~\cite[\S8.1]{rset} read in the $2$-category $\Top$ of Grothendieck topoi.
+Its finitary core is set-sized, its full version class-sized, exactly along the ledger line of the
+source papers. The behaviour functor lifts to an internal endofunctor whose final coalgebra is the
+process object inside $\Ks$, where colour-blind non-well-foundedness supplies recursion and finality
+makes bisimilar processes internally equal. The OSLF-generated logic is the internal logic of $\Ks$.
+
+\paragraph{Application (\S\ref{sec:app}): operational to denotational.} MeTTaIL (rholang
+$1.4$)~\cite{mettail} --- a language of types, equations-on-types and rewrites-on-types --- presents
+the category $\GSLTfp$ of finitely presentable GSLTs: a MeTTaIL program \emph{is} a finite GSLT, and
+a MeTTaIL language map is a GSLT morphism. Desugaring MeTTaIL into core rho (\S\ref{sec:desugar},
+Appendix~\ref{app:desugar}) installs each base rewrite $L\Rightarrow R$ as a guarded receiver at the
+channel naming the redex's location,
+\[
+\sem{L\Rightarrow R}(c)\;=\;\for{\sem{L}}{c}\bigl\{\;\out{c}{\sem{R}}\;\bigr\},
+\]
+and composing with the rho denotation lifted into $\Ks$ yields a compositional
+$\sem{-}_{\Ks}\colon\GSLTfp\to\Ks$ that is fully abstract for context bisimulation. This is the
+transport of the operational view to the denotational view, and the fully abstract model promised
+above.
+
+\subsection{Two standing conventions}
+
+MeTTaIL is used as the legible surface for writing rules and as the presentation of $\GSLTfp$; it is
+\emph{eliminable sugar} over core rho, with its equation component factored through Church encodings,
+and the topos-theoretic recapitulation is carried out in core rho after the sugar is compiled away.
+Nothing in the four-topos picture depends on a MeTTaIL primitive. As to optimality: the channel
+$c$ above is the sound, non-optimal reflection of the location, not the optimal set-automaton state of
+\cite{optimal}; optimality is in tension with what a channel must do here (keep distinct runtime
+locations distinct), is unneeded for the lift, and is deferred together with the channel-naming
+correction noted in~\cite{optimal}. The optimal and the present scheme induce the \emph{same}
+context-labelled transition system, so the choice is invisible to everything downstream.
+
+We write in the programmatic-with-obligations style of the source papers~\cite{rset,knotrho}:
+definitions and constructions are pinned down, the load-bearing existence, coherence and calibration
+facts are collected as numbered obligations (\S\ref{sec:obligations}), and for the finitary core each
+reduces to a statement about hereditarily finite data.
+
+\section{Recap}\label{sec:recap}
+
+We fix notation; \cite{rset,knotrho,gsltnotes} carry the details.
+
+\subsection{The knotted universe and its four sorts}
+
+The red and black copies of set theory are tied by $\rX=\bSet[\overline X]$,
+$\overline X=\rSet[\rX]$. \cite[\S8.1]{rset} exhibits the tie as the fixpoint of the two-sorted
+endofunctor on a category of classes
+\begin{equation}\label{eq:H}
+\mathsf{H}(R,B)\;=\;\bigl(\,B + \Ps R,\;\; R + \Ps B\,\bigr),
+\end{equation}
+whose initial algebra $(\rX,\overline X)$ satisfies $\rX\cong\overline X+\Ps \rX$,
+$\overline X\cong \rX+\Ps\overline X$. The initial algebra is the well-founded reading (ZFA/FM per
+colour); the final coalgebra is the non-well-founded reading, in which colour-blind membership
+$\in_\star$ admits alternating-colour infinite descent~\cite[\S7]{rset}. The model
+$M$ of~\cite[Thm.~1]{rset} is a nominal set~\cite{gabbaypitts,pitts}, hence lives in the Schanuel topos~\cite[\S6.1]{rset}.
+
+\cite{knotrho} keeps four sorts distinct: red sets $\Ss$, red atoms $\As$, black sets $\bSs$, black
+atoms $\bAs$, with knots $\kappa\colon\bSs\xrightarrow{\cong}\As$,
+$\overline\kappa\colon\Ss\xrightarrow{\cong}\bAs$, and a polymorphic involution $\swap$ with
+$\swap\circ\swap=\id$, homomorphic for the set operations and coherent,
+$\swap\circ\kappa=\overline\kappa\circ\swap$. With processes red sets and names red atoms,
+\begin{equation}\label{eq:quote}
+\quo{}:=\kappa\circ\swap\colon\Ss\to\As,\qquad \drf{}:=\swap\circ\kappa^{-1}\colon\As\to\Ss,
+\end{equation}
+and $\drf{}\quo{}P\equiv P$ is the calculation
+$\swap\circ\kappa^{-1}\circ\kappa\circ\swap=\swap\circ\swap=\id$~\cite[Prop.~6]{knotrho}.
+
+\subsection{The rho model}
+
+The rho grammar is $P::=0\mid P\mid Q\mid \for{y}{x}P\mid \out{x}{Q}\mid \drf{}x$, $x::=\quo{}P$;
+there are no primitive names and no restriction $\nu$, and recursion enters through reflection rather
+than replication~\cite[\S2]{knotrho}. Transitions are labelled by contexts $P\xrightarrow{F}P'$,
+$F$ a minimal environment (an idem-pushout after Leifer--Milner) in which $P$ completes a reaction.
+The behaviour functor is $\Bfun(R)=\Ps(\dT_K\times R)$, $\dT_K$ the Fire context-labels; the process
+universe is $\Proc=\nu\Bfun$, and bisimilar processes are equal in it. Full abstraction
+$\sem{P}=\sem{Q}\iff P\sim Q$ holds for a congruence, read through OSLF adequacy as agreement of
+$\dT_K$-indexed Hennessy--Milner formulae~\cite[\S6]{knotrho}.
+
+\subsection{GSLTs, the K-family, and the three views of \texorpdfstring{$\dT$}{dT}}
+
+A GSLT is (grammar, equations, rewrites)~\cite{gsltnotes}. An \emph{interactive} GSLT carries a
+distinguished family $K$ of constructors --- the heads of the hypothesis-free (\emph{base}) rewrites,
+which are the interactions; rules with hypotheses are propagation discipline. A \emph{location} is a
+splitting $(k,t)$ of a term into a context $k$ and a subterm $t$, with the cut between them as the
+place; the splittings $\dT\times T$ fibre over $T$ by plugging, and the sub-bundle \emph{Fire}
+consists of those whose subterm matches a base LHS. The one object $\dT_K$ is read three ways: as
+Firing labels, as Witnessing indices of OSLF modalities $\langle F\rangle\varphi$, and as Placing of
+interactions in term structure. The two categories of GSLTs differ in what morphisms preserve: the
+\emph{syntactic} category preserves term structure, the \emph{semantic} category $\GSLTsem$ preserves
+bisimulation. We work throughout with the semantic category, and write $\GSLTfp$ for its full
+subcategory of finitely presentable objects.
+
+\section{Principal result: the knotted topoi}\label{sec:lift}
+
+Throughout $\Top$ is the $2$-category of Grothendieck topoi, geometric morphisms, and geometric
+transformations; $f^*\dashv f_*$ is a geometric morphism and $\simeq$ equivalence of
+topoi~\cite{maclane,elephant}.
+
+\subsection{Four topoi, two knots, one swap}
+
+\begin{definition}[The sort topoi]\label{def:sorttopoi}
+The four sorts lift to four topoi --- $\St$ (red sets), $\At$ (red atoms), $\bSt$ (black sets),
+$\bAt$ (black atoms) --- organised as a fibration $p\colon\Ks\to\sorts$ over the four-object index
+category $\sorts$ whose objects are the sorts and whose non-identity arrows are the kind-coercions
+$\At\to\St$, $\bAt\to\bSt$ together with the colour edges. The fibre over a sort is that sort's topos;
+the total category $\Ks$ is the \emph{knotted topos}, and $p$ is its \emph{grading}.
+\end{definition}
+
+\begin{definition}[Knots as geometric coercions]\label{def:knots}
+The two knots lift to geometric equivalences
+\[
+\kappa\colon \bSt\ \xrightarrow{\ \simeq\ }\ \At,\qquad
+\overline\kappa\colon \St\ \xrightarrow{\ \simeq\ }\ \bAt,
+\]
+presenting a black-sets topos as the red-atoms topos and vice versa. The presentation is
+\emph{opaque}: the geometric inclusion of an atom topos into the ambient sheaf topos forgets the other
+colour's interior, exactly the forgetfulness by which the atoms of~\cite[\S8.1]{rset} ``acquire no
+members''. Opacity is colour-opacity~\cite[Rem.~2]{rset}.
+\end{definition}
+
+\begin{definition}[The swap as an involutive auto-equivalence]\label{def:swap}
+The colour symmetry lifts to a polymorphic, sort-respecting equivalence
+\[
+\swap\colon\St\simeq\bSt,\qquad \swap\colon\At\simeq\bAt,\qquad \swap\circ\swap\cong\id,
+\]
+homomorphic for the geometric structure (initial object, coproducts, subobject classifier), with the
+coherence $2$-cell
+\begin{equation}\label{eq:cohere}
+\swap\circ\kappa\ \cong\ \overline\kappa\circ\swap \qquad(\text{both }\bSt\to\bAt).
+\end{equation}
+\end{definition}
+
+\begin{proposition}[Reflection, lifted; sketch]\label{prop:reflift}
+Defining $\quo{}:=\kappa\circ\swap\colon\St\to\At$ and $\drf{}:=\swap\circ\kappa^{-1}\colon\At\to\St$
+as geometric morphisms, one has $\drf{}\circ\quo{}\cong\swap\circ\swap\cong\id$ and
+$\quo{}\circ\drf{}\cong\id$, so the model validates $\drf{}\quo{}P\equiv P$ and $\quo{}\drf{}x\equiv_N
+x$ not by an imposed equation but as the involutivity of an equivalence of topoi.
+\end{proposition}
+
+\begin{proof}[Proof sketch]
+The middle isomorphisms are the unit/counit of the knot equivalence (Definition~\ref{def:knots}) and
+the involutivity $2$-cell (Definition~\ref{def:swap}); coherence is~\eqref{eq:cohere}. This is
+\cite[Prop.~6]{knotrho} one level up, equality of maps replaced by canonical isomorphism; the triangle
+and pentagon coherences are Obligation~\ref{ob:cohere}.
+\end{proof}
+
+\subsection{The knotted topos as a bifixpoint}
+
+\begin{construction}[The knot $2$-functor]\label{con:knot2}
+Let $\Ps\colon\Top\to\Top$ be the $2$-functor sending a topos to its topos of internal sheaves on the
+canonical (power) site --- the topos-level analogue of the powerclass operator of~\eqref{eq:H}
+\cite{jm,maclane} --- and let $\ltimes$ denote the atom-coproduct adjoining one topos to another as a
+topos of opaque urelements (the geometric analogue of $A+(-)$, Definition~\ref{def:knots}). Define the
+endo-$2$-functor on $\Top\times\Top$
+\begin{equation}\label{eq:H2}
+\sH(\mathcal R,\mathcal B)\;=\;\bigl(\,\mathcal B\ltimes\Ps\mathcal R,\;\;\mathcal R\ltimes\Ps\mathcal B\,\bigr).
+\end{equation}
+A \emph{red/black pair of knotted topoi} is a (pseudo-)fixpoint $(\Es,\bEs)$ of $\sH$:
+\[
+\Es\ \simeq\ \bEs\ltimes\Ps\Es,\qquad \bEs\ \simeq\ \Es\ltimes\Ps\bEs,
+\]
+each colour's topos its own sheaves with the other's as opaque atoms. The four-sort fibration of
+Definition~\ref{def:sorttopoi} is read off this pair: $\St$ and $\At=\kappa\bSt$ from $\Es$, and
+$\bSt$, $\bAt=\overline\kappa\St$ from $\bEs$.
+\end{construction}
+
+\begin{remark}[Which fixpoint: the knob is the source papers']\label{rem:knob}
+The \emph{initial} algebra of $\sH$ is the well-founded reading; each colour's topos models ZFA/FM
+internally, the picture of~\cite[\S5]{rset} lifted. The \emph{final} coalgebra is the
+non-well-founded reading, admitting the alternating-colour descent of~\cite[\S7]{rset}, and is the
+reading the process semantics needs (\S\ref{sec:proc}). For the \emph{finitary} core --- $\Ps$
+replaced by its finite-power analogue --- the fixpoint exists at the level of topoi as the
+colimit/limit of the evident $\omega$-chain, set-sized; for the full $\Ps$ it lives in the class-sized
+framework, along the finitary/infinitary ledger line of~\cite[\S5.5--5.6, \S8.1]{rset}. Existence is
+Obligation~\ref{ob:exist}.
+\end{remark}
+
+\begin{remark}[The grading is the modality, internalised]\label{rem:grading}
+\cite[\S6.5]{rset} and~\cite[Rem.~8]{knotrho} ask for a graded modality separating colour-respecting
+(equivariant) from reflective computation. The fibration $p\colon\Ks\to\sorts$ \emph{is} that grading:
+a computation over a single colour $\{\St,\At\}$ using only $\quo{},\drf{}$ never observes black
+structure --- the equivariant fragment, ordinary nominal names with every guarantee intact --- while
+applying $\swap$ to a name's interior crosses a colour edge, and reindexing along that edge records the
+reflective surplus. Decidable structural identity of names is the decidability of equality in $\At$,
+settled out of red's sight by black equality of swapped objects.
+\end{remark}
+
+\begin{proposition}[Two dual rho calculi in one universe; sketch]\label{prop:dual}
+With the black reflection $\quo{}_{\!\overline{\phantom{a}}}:=\overline\kappa\circ\swap$, coherence
+\eqref{eq:cohere} gives $\quo{}_{\!\overline{\phantom{a}}}\cong\swap\circ\quo{}\circ\swap$: the two
+colours' quotes are swap-conjugate, one geometric reflection determining the other. The knotted topos
+carries two dual rho calculi at once, recovering the player/opponent duality of~\cite[Cor.~2]{rset} at
+the level of topoi --- the interaction structure the game-semantic full abstraction of
+\cite{ajm,ho} required.
+\end{proposition}
+
+\subsection{The behaviour endofunctor and the process object}\label{sec:proc}
+
+\begin{definition}[Internal behaviour endofunctor and process object]\label{def:Blift}
+Let $\dT_K\in\Ks$ be the object of Fire context-labels (\S\ref{sec:logic} identifies it with the
+site). Define $\sB\colon\Ks\to\Ks$, $\sB(R)=\Ps(\dT_K\times R)$, with $\Ps$ the power object; its
+commitment refinement $\sB^\flat$ --- finite powerobject, products, coproducts, the name-abstraction
+functor $[\,\mathcal N\,](-)$ --- presents the same behaviour finitely, after Milner~\cite{milnerpoly,knotrho}. The
+\emph{process object} is $\Proc:=\nu\sB$, the final $\sB$-coalgebra internal to $\Ks$, with
+$\Name:=\swap(\Proc)$ presented as $\At$ via $\kappa$. For $\sB^\flat$ the final coalgebra exists at
+set size on the finitary core; for the full $\sB$ it is the class-sized, colour-blind non-well-founded
+object of Remark~\ref{rem:knob}, whose alternating-colour descent supplies the recursion of process
+behaviour for free, where Aczel's non-well-founded model imports it by axiom~\cite{aczel}.
+\end{definition}
+
+\begin{proposition}[Finality internalised; sketch]\label{prop:final}
+For the weak-pullback-preserving $\sB^\flat$, internal coalgebraic bisimilarity is the kernel of the
+unique morphism to $\Proc$; hence on $\Proc$ itself two elements are context-bisimilar iff internally
+equal. Bisimulation is the equality of the process object in $\Ks$.
+\end{proposition}
+
+\begin{proof}[Proof sketch]
+$\sB^\flat$ is assembled from constants, products, coproducts, finite powerobject and the abstraction
+functor, each preserving weak pullbacks internally; universal coalgebra~\cite{rutten} identifies
+behavioural equivalence with the kernel of $!\colon C\to\nu\sB^\flat$. This is
+\cite[Lem.~17, Cor.~20]{knotrho} read internally to $\Ks$; the internal weak-pullback preservation of
+the abstraction functor and the agreement of $\nu\sB^\flat$ with the class-sized $\nu\sB$ on equality
+are part of Obligation~\ref{ob:classify}.
+\end{proof}
+
+\subsection{The lift, as a theorem}
+
+\begin{theorem}[The lift]\label{thm:lift}
+The four-sorted model of~\cite{knotrho} lifts to $\Top$: there is a knotted topos $\Ks$, fibred over
+the four-sort index category $\sorts$, carrying geometric knots $\kappa,\overline\kappa$ and an
+involutive colour-swap $\swap$ with $\swap\circ\swap\cong\id$, hence derived reflection
+$\quo{}=\kappa\circ\swap$ and $\drf{}=\swap\circ\kappa^{-1}$ with $\drf{}\quo{}\cong\id$
+(Proposition~\ref{prop:reflift}); presented as the $(\text{bi})$fixpoint of $\sH$
+$(\text{Construction~\ref{con:knot2}})$, set-sized on the finitary core and class-sized in general
+$(\text{Remark~\ref{rem:knob}})$; equipped with an internal behaviour endofunctor $\sB$ whose final
+coalgebra $\Proc$ is an object of $\Ks$ in which context bisimulation is internal equality
+$(\text{Proposition~\ref{prop:final}})$. Modulo Obligations~\ref{ob:exist}--\ref{ob:classify}, $\Ks$
+is the topos-level knotted universe.
+\end{theorem}
+
+\section{Application: from operational to denotational semantics}\label{sec:app}
+
+We now use Theorem~\ref{thm:lift} to transport the operational view of the finitely presentable GSLTs
+to a denotational one, fully abstractly.
+
+\subsection{MeTTaIL presents the finitely presentable GSLTs}
+
+\begin{definition}[MeTTaIL as a presentation]\label{def:mettail}
+A MeTTaIL program~\cite{mettail} is a triple of a finite collection of syntactic types (a grammar), a
+finite collection of equations on types, and a finite collection of rewrites on types. This is exactly
+the data of a finitely presentable GSLT. Sending a program to the GSLT it specifies, and a MeTTaIL
+language map (a translation of types respecting equations and rewrites) to the induced GSLT morphism,
+gives a functor $\MeTTaIL\to\GSLTfp$ that is essentially surjective: \emph{MeTTaIL presents the
+category of finitely presentable GSLTs}. We work with GSLTs through this presentation, writing rules
+in MeTTaIL and compiling them to core rho.
+\end{definition}
+
+\subsection{Desugaring MeTTaIL into rho}\label{sec:desugar}
+
+The schema for a base rewrite is~\eqref{eq:quote}'s companion,
+\begin{equation}\label{eq:base}
+\sem{L\Rightarrow R}(c)\;=\;\for{\sem{L}}{c}\bigl\{\;\out{c}{\sem{R}}\;\bigr\},
+\end{equation}
+a receiver consuming a match of $\sem L$ at channel $c$ and re-emitting $\sem R$ there. The MeTTaIL
+pattern-receive $\for{\sem L}{c}$ is the sugar; under the embedding into core rho it unfolds to nested
+single-name receives with name-equality guards~\cite[\S2.2]{optimal}, and the equation component of
+the source program compiles to Church-encoded normalisation, i.e.\ to structural congruence ---
+colour-respecting, cost-free, \emph{iso} in the target rather than motion. The channel $c$ names the
+runtime location.
+
+\begin{definition}[Location channels]\label{def:loc}
+A \emph{location} is a finite path $\ell=\langle(f_1,i_1),\dots,(f_m,i_m)\rangle$ from the root of a
+term; step $(f,i)$ descends into the $i$-th argument of an $f$-node, $\varepsilon$ is the root, and
+$\ell\cdot(f,i)$ the child. The channel is the reflection $c(\ell):=\refl{\ell}\in\As$; distinct
+locations give distinct channels by injectivity of $\refl{\cdot}$.
+\end{definition}
+
+\begin{remark}[Freshness by quoting]\label{rem:fresh}
+Distinct injected terms must not share a root, lest $\out{a}{0}\mid\out{a}{0}$ collapse to
+$\out{a}{0}$ --- the identification $\Proc$'s parallel is built to avoid~\cite[\S5]{knotrho}.
+Freshness is supplied as rho supplies all freshness, by quoting~\cite[\S2]{knotrho}: an injection
+publishes on a root $\refl{\rho}$ for a quoted nonce $\rho$, and locations within it are
+$\refl{(\rho,\ell)}$. No $\nu$, no central allocator. We suppress the root below.
+\end{remark}
+
+\begin{construction}[The desugaring functor]\label{con:functor}
+For a finitely presentable GSLT $G$ presented in MeTTaIL,
+$\sem{G}=\bigm|_{(L\Rightarrow R)\in\mathcal R}\sem{L\Rightarrow R}$ is the parallel composition of the
+persistent installations of~\eqref{eq:base} at all matching locations (Appendix~\ref{app:desugar}),
+with equations compiled to structural congruence. A $\GSLTfp$-morphism goes to the induced rho-context
+map on installed locations.
+\end{construction}
+
+\begin{proposition}[Operational correspondence; sketch]\label{prop:opcorr}
+The context-labelled transition system of $\sem{t}$ in $\sem{G}$ is bisimilar to the rewrite
+transition system of $t$ in $G$: each base-rewrite firing of $t$ at location $\ell$ is matched by a
+$\sB$-transition of $\sem{t}$ labelled $c(\ell)$, and conversely. Hence $\sem{-}$ is a functor
+$\GSLTfp\to\sB\text{-}\mathbf{Coalg}(\Ks)$ factoring through the bisimulation quotient.
+\end{proposition}
+
+\begin{proof}[Proof sketch]
+$\Leftarrow$ is~\eqref{eq:base}: a fire at $\ell$ is a rendezvous on $c(\ell)$. $\Rightarrow$ uses
+injectivity and plugging-stability of $c(\cdot)$ (Definition~\ref{def:loc}), so no spurious rendezvous
+occurs and the minimal enabling contexts are exactly the location channels; the labels coincide with
+$\dT_K$, and the context-bisimulation game~\cite[Def.~3]{knotrho} is won by the identity on locations.
+Full statement: Obligation~\ref{ob:opcorr}.
+\end{proof}
+
+\begin{remark}[Non-optimality]\label{rem:nonopt}
+This desugaring re-inspects symbols enclosing a redex, failing the symbol-once condition (O1)
+of~\cite{optimal} while satisfying (O2),(O3) trivially --- it is the ``reflect the context verbatim''
+choice of~\cite[\S3.2]{optimal} lifted to the full runtime location. The optimal set-automaton scheme~\cite{bouwmanerkens} recovers (O1);
+its deferred channel-naming correction and the present scheme induce the \emph{same} context-labelled
+transition system, so Proposition~\ref{prop:opcorr} and all below are indifferent to the choice.
+\end{remark}
+
+\subsection{Lifting the rho denotation, and full abstraction}\label{sec:fullabs}
+
+By Proposition~\ref{prop:opcorr} a presented GSLT denotes a $\sB$-coalgebra; by finality
+(Proposition~\ref{prop:final}) it denotes a sub-coalgebra of $\Proc=\nu\sB$ in $\Ks$. Write
+$\sem{-}_{\Ks}$ for the composite.
+
+\begin{theorem}[Fully abstract denotation]\label{thm:fullabs}
+For every finitely presentable GSLT $G$ and processes $P,Q$ of $G$,
+\[
+\sem{P}_{\Ks}=\sem{Q}_{\Ks}\ \text{ in }\Ks \qquad\Longleftrightarrow\qquad P\sim Q,
+\]
+where $\sim$ is context bisimulation. The denotation is compositional --- a homomorphism for the
+GSLT's constructors --- and $\sim$ is a congruence by construction
+$(\text{the context labels are idem-pushouts~\cite{leifermilner,sewell,knotrho}})$, so this is full
+abstraction with respect to a congruence, with no closure step.
+\end{theorem}
+
+\begin{proof}[Proof sketch]
+$\sem{-}_{\Ks}$ is the unique morphism to the final coalgebra (Proposition~\ref{prop:final}); its
+kernel is internal coalgebraic bisimilarity, which by~\cite[Lem.~16]{knotrho} read internally is
+context bisimilarity. Compositionality is the homomorphism property of the rho denotation
+\cite[Thm.~15]{knotrho} transported along the desugaring (Proposition~\ref{prop:opcorr}); congruence
+is~\cite[Prop.~4]{knotrho}. The whole is~\cite[Thm.~18]{knotrho} internalised to $\Ks$.
+\end{proof}
+
+\begin{corollary}[Milner answered, uniformly]\label{cor:milner}
+Every finitely presentable classical model of computation receives a fully abstract denotational
+semantics in the knotted topos: the $\lambda$-calculus and hence PCF, CCS, the $\pi$-calculus, the
+ambient calculus, SKI, Turing machines, and finite term-rewriting systems, with universal algebra as
+the dynamics-free slice~\cite{gsltnotes}. The model is the bisimulation quotient itself, so it is fully
+abstract by construction; the failure that defeats the Scott model of PCF~\cite{milnerfa,plotkinlcf}
+--- a model element with no realising program --- cannot occur. The residual work per language is the
+identification of context bisimulation with that language's own observational equivalence
+$(\text{e.g.\ contextual equivalence for PCF})$: this is the barbed-congruence calibration of
+Obligation~\ref{ob:barbed}, and recasts the classical full-abstraction problem from a
+model-\emph{construction} problem into a model-\emph{calibration} one. The game-semantic models of
+\cite{ajm,ho} are the equivariant, colour-respecting fragment $(\text{Remark~\ref{rem:grading}})$,
+their player/opponent structure the red/black knot.
+\end{corollary}
+
+\subsection{The keystone: OSLF is the internal logic}\label{sec:logic}
+
+\begin{definition}[OSLF classifying topos and internal modalities]\label{def:cl}
+For a presented GSLT $G$, let $\dT_K(G)$ be its Fire context-labels, a site under the minimal-context
+(idem-pushout) covers; put $\Cl(G):=\Sh(\dT_K(G))$. For each label $F$ let
+$\langle F\rangle\colon\Av\to\Av$ be the internal operator on the subobject classifier sending
+$\varphi$ to ``some $F$-labelled transition reaches a state satisfying $\varphi$'', defined by image
+along the $F$-component of the coalgebra structure map. The family $\{\langle F\rangle\}_{F\in\dT_K}$
+is the internal Hennessy--Milner logic of $G$. The assignment $\Cl$ extends to a $2$-functor
+$\GSLTsem\to\Top$, sending a bisimulation-preserving translation to a geometric morphism: the
+\emph{topos-theoretic presentation of the semantic category of GSLTs}, with $\Cl(\text{rho})=\Ks$ the
+universal target through which every desugaring factors.
+\end{definition}
+
+\begin{theorem}[Adequacy is classification; sketch]\label{thm:keystone}
+The internal equality of $\Proc$ coincides with agreement under all internal modal formulae:
+\[
+\sem{P}_{\Ks}=\sem{Q}_{\Ks}\iff P\sim Q\iff \forall\varphi.\ (P\models\varphi\Leftrightarrow Q\models\varphi).
+\]
+Equivalently the subobject classifier $\Av$ of $\Ks$, with the modalities of Definition~\ref{def:cl},
+\emph{classifies bisimilarity}: the OSLF-generated Hennessy--Milner logic is the internal logic of the
+knotted topos. The three readings of $\dT_K$ become site (Placing), labels (Firing), and modal indices
+(Witnessing) --- three roles of one object of the topos. ``Topos-theoretic presentation of GSLTs'' and
+``OSLF adequacy'' are one statement.
+\end{theorem}
+
+\begin{proof}[Proof sketch]
+The first equivalence is Theorem~\ref{thm:fullabs}; the second is OSLF
+adequacy~\cite[Cor.~19]{knotrho} read internally. That the internal modal theory is the
+subobject-classifier logic of $\Sh(\dT_K)$ is Obligation~\ref{ob:classify}.
+\end{proof}
+
+\subsection{The risk ledger, lifted}\label{sec:ledger}
+
+A finitely presentable GSLT with finite synchronisation trees is a hereditarily finite object of the
+finitary-core topos, where $\nu\sB^\flat$ is literal and set-sized; its commitment is the black empty
+set and one successor, no infinite risk. Recursion --- reached through reflection, with no primitive
+replication --- is a non-well-founded inhabitant of $\Proc$, available only in the infinitary reading,
+which by Remark~\ref{rem:knob} costs exactly one $\omega$, black infinity, and lives in the class-sized
+framework. No primitive name is ever reintroduced. ``Finitely presentable'' is therefore not a
+blemish on Corollary~\ref{cor:milner} but the exact regime in which the accounting is cleanest: the
+finite presentation is the finitary core, and only genuine recursion crosses into the one-$\omega$
+ledger.
+
+\section{Toward a rigorous construction}\label{sec:obligations}
+
+In the manner of~\cite[\S8]{rset} and~\cite[\S8]{knotrho}. For the finitary core each obligation
+reduces to a statement about hereditarily finite data.
+
+\begin{obligation}[Existence of the knotted topos]\label{ob:exist}
+Exhibit the (bi)fixpoint of $\sH$ of~\eqref{eq:H2} in $\Top$: for the finitary $\Ps$ as the set-sized
+colimit/limit of the $\omega$-chain, each $\sH^n(\varnothing)$ a topos; for the full $\Ps$ in the
+class-sized framework. The natural route is a bicategorical algebraic set theory~\cite{jm,awodey,elephant}
+run two-sorted on $\sH$, mirroring~\cite[\S8.1]{rset}; an explicit alternative is the \emph{knotted
+site}, two sites each of whose atom-objects are the other's representables.
+\end{obligation}
+
+\begin{obligation}[Coherence of swap and knots]\label{ob:cohere}
+Verify the $2$-level equational theory: $\swap$ an involution and a homomorphism up to coherent
+isomorphism, the coherence $2$-cell~\eqref{eq:cohere} satisfying the triangle and pentagon identities,
+$\kappa,\overline\kappa$ equivalences. Then $\quo{},\drf{}$ are derived and Proposition~\ref{prop:reflift}
+is a calculation; the source papers' collapse (knots literal identities) is a localisation under which
+the reflection law survives.
+\end{obligation}
+
+\begin{obligation}[Operational correspondence of the desugaring]\label{ob:opcorr}
+Promote Proposition~\ref{prop:opcorr} to a theorem: define the desugaring of
+Appendix~\ref{app:desugar} precisely, including persistence and the Church-encoded equation component,
+and prove bisimilarity of the two transition systems with labels matched by location channels; confirm
+independence from the channel intension (Remark~\ref{rem:nonopt}).
+\end{obligation}
+
+\begin{obligation}[The classifier classifies bisimilarity]\label{ob:classify}
+Prove Theorem~\ref{thm:keystone}: that the internal modal theory of Definition~\ref{def:cl} coincides
+with the subobject-classifier logic of $\Sh(\dT_K)$, that $\nu\sB^\flat$ agrees with the class-sized
+$\nu\sB$ on equality, and hence that $\Av$ with its modalities classifies bisimilarity --- internal
+OSLF adequacy, the keystone of Theorem~\ref{thm:keystone}.
+\end{obligation}
+
+\begin{obligation}[Barbed-congruence calibration]\label{ob:barbed}
+For each presented GSLT, calibrate context bisimulation $\sim$ against the language's own observational
+equivalence: reduction-barbed congruence for the process calculi, contextual equivalence at ground
+type for PCF, $\beta\eta$ or applicative bisimilarity for the $\lambda$-calculus. This is the residual
+of Corollary~\ref{cor:milner} --- the classical full-abstraction question recast as calibration ---
+and is expected tight where names are quoted structure and there is no $\nu$~\cite[Obl.~6]{knotrho}.
+\end{obligation}
+
+\begin{obligation}[Functoriality on the encoded regime]\label{ob:functor}
+Prove $\Cl$ functorial on the \emph{encoded} regime of $\GSLTsem$-morphisms --- a source $K$
+implemented by target $K$'s plus structural context ($\pi$-into-rho, $\lambda$-into-SKI) --- so that
+operational-correspondence encodings induce geometric morphisms~\cite{gsltnotes}.
+\end{obligation}
+
+\begin{obligation}[Size calibration]\label{ob:size}
+State the finitary/infinitary calibration: the finitary-core $\Ks$ set-sized and interpretable in
+hereditarily finite data (equiconsistent with arithmetic~\cite[\S8.2]{rset}); the full $\Ks$ raising
+the target by one $\omega$. The well-founded vs non-well-founded knob is the initial- vs final-fixpoint
+choice of Remark~\ref{rem:knob}.
+\end{obligation}
+
+\begin{obligation}[The ultrafilter metric, internally]\label{ob:metric}
+Internalise the ultrafilter metric on bisimulation classes~\cite{gsltnotes}: construct the points of
+the internal modal algebra of $\Cl(G)$, equip them with the metric induced by the site's spatial
+reach, and recover the real/complex-weight dichotomy as classical/Born-rule structure. This is the
+door for the physics reading.
+\end{obligation}
+
+\begin{obligation}[Placing the construction]\label{ob:place}
+Locate the knotted-topos presentation among its neighbours: classifying topoi of geometric theories
+and the topos-as-bridge methodology~\cite{caramello}; the game-semantic models of
+PCF~\cite{ajm,ho,girardll}, of which the equivariant fragment is an instance; the presheaf and nominal
+coalgebraic models of name-passing (Fiore--Turi~\cite{fioreturi}, Stark~\cite{stark}), of which this is
+the reflective, $\nu$-free instance with $\Name\simeq\Proc$; the bialgebraic semantics of
+Turi--Plotkin~\cite{turiplotkin}; and the nominal/Schanuel topos~\cite{pitts}. The feature absent from
+all of these --- $\Name\simeq\Proc$ via $\swap$, the second knot --- is what the lift adds.
+\end{obligation}
+
+\section{Conclusion}\label{sec:conclusion}
+
+The principal result is the lift: the knotted set-theoretic universe rises one categorical level to a
+knotted topos, four sort-topoi tied by two geometric knots and an involutive colour-swap, the
+reflection law become the swap's involutivity, the behaviour functor and its final coalgebra
+recapitulated internally where colour-blind non-well-foundedness gives recursion and finality makes
+bisimilar processes equal. The application transports the operational semantics of the finitely
+presentable GSLTs to a denotational one: MeTTaIL presents that category, desugars to rho, and the rho
+denotation lifted into the knotted topos is fully abstract for context bisimulation. Because GSLTs
+subsume the classical models of computation, this is a fully abstract denotational semantics for all of
+them at once. The model is the bisimulation quotient itself, so full abstraction is by construction;
+what is proved is compositionality, and the context-labelled presentation makes bisimulation a
+congruence with no closure step. The keystone is that the OSLF-generated Hennessy--Milner logic is the
+internal logic of the knotted topos, adequacy the statement that the subobject classifier classifies
+bisimilarity, and the three readings of $\dT_K$ --- Firing, Witnessing, Placing --- its labels,
+modalities and site. Milner's lament was that a denotational model can be too coarse or too fine for
+its language; the knotted topos answers that the right denotational object is neither chosen nor
+guessed but constructed as the interaction quotient, and that one such construction serves every
+finitely presentable model of computation. The risk ledger is unchanged: finite presentations cost
+nothing beyond the empty set, recursion costs one $\omega$, and not one primitive name is ever spent.
+
+\appendix
+
+\section{The desugaring, in clauses}\label{app:desugar}
+
+We record $\sem{\cdot}$ used in \S\ref{sec:desugar}, threading the location $\ell$
+(Definition~\ref{def:loc}); $c(\ell)=\refl{\ell}$ is its channel and $\ell\cdot(f,i)$ the child
+location. The target is core rho; MeTTaIL pattern-receives abbreviate nested single-name receives with
+name-equality guards~\cite[\S2.2]{optimal}, and equations are Church-encoded normalisations suppressed
+here.
+
+\paragraph{Terms.} For a constructor $f$ of arity $n$,
+\[
+\sem{f(t_1,\dots,t_n)}_\ell
+\;=\;
+\out{c(\ell)}{\,\underline{f}\,}
+\ \big|\
+\textstyle\bigm|_{i=1}^{n}\ \sem{t_i}_{\,\ell\cdot(f,i)},
+\]
+publishing the head tag $\underline f$ at the node's channel and installing each argument at its child
+location. A nullary constructor publishes only its tag; a schema variable installs nothing.
+
+\paragraph{Base rewrites.} For $L\Rightarrow R$ with $\mathrm{hd}(L)=f$,
+\[
+\sem{L\Rightarrow R}
+\;=\;
+\textstyle\bigm|_{\ell\,:\,\mathrm{hd}=f}\
+\for{\sem{L}}{c(\ell)}\bigl\{\ \out{c(\ell)}{\sem{R}_\ell}\ \big|\ \sem{L\Rightarrow R}\ \bigr\},
+\]
+the inner copy re-installing the listener after each fire by the reflection idiom
+of~\cite[\S2.1]{knotrho} (no replication). Bound names of $\sem{L}$ are the hole-fillers, delivered on
+$c(\ell)$.
+
+\paragraph{Contextual rewrites.} For
+$L_1\Rightarrow R_1,\dots,L_n\Rightarrow R_n\Rightarrow K\Rightarrow K'$ with outer context $K$ at
+$\ell$,
+\[
+\mathsf{let}\ c=c(\ell)\ \mathsf{in}\
+\for{(\sem{L_1},\dots,\sem{L_n})}{c}\bigl\{\ \out{c}{\sem{K'}(\sem{R_1},\dots,\sem{R_n})}\ \bigr\},
+\]
+blocking until the $n$ hole-fillers arrive, one per inner location $\ell\cdot(K,i)$, each a distinct
+channel by Definition~\ref{def:loc}; the send emits the rewritten outer right-hand side at $\ell$.
+
+\paragraph{A whole GSLT.} $\sem{G}=\bigm|_{(L\Rightarrow R)\in\mathcal R}\sem{L\Rightarrow R}$, with
+equations compiled to structural congruence. A term $t$ is run by injecting $\sem{t}_\varepsilon$ on a
+fresh root (Remark~\ref{rem:fresh}).
+
+\begin{thebibliography}{99}
+
+\bibitem{rset} L.~G.~Meredith. \emph{A Knotted Universe: a new notion of reflective set theories.}
+Manuscript, 2026.
+
+\bibitem{knotrho} L.~G.~Meredith. \emph{Quoting is Colour-Swap: a model of the rho calculus in the
+knotted universe.} Manuscript, 2026.
+
+\bibitem{optimal} L.~G.~Meredith. \emph{Optimal Channel Naming for Compositional Rewrite Translations
+via Set Automaton Partial Evaluation.} F1R3FLY.io, 2026.
+
+\bibitem{gsltnotes} L.~G.~Meredith et al. \emph{Graph-Structured Lambda Theories: conversation
+context.} Working notes, 2026.
+
+\bibitem{rho} L.~G.~Meredith and M.~Radestock. A reflective higher-order calculus. \emph{Electr.
+Notes Theor. Comput. Sci.}, 141(5):49--67, 2005.
+
+\bibitem{mettail} L.~G.~Meredith. \emph{The MeTTaIL language: defining languages as triples of
+syntactic types, equations, and rewrites.} F1R3FLY.io technical report and prototype,
+\url{https://github.com/F1R3FLY-io/mettail-rust}, 2025.
+
+\bibitem{milnerfa} R.~Milner. Fully abstract models of typed $\lambda$-calculi. \emph{Theoret.
+Comput. Sci.}, 4(1):1--22, 1977.
+
+\bibitem{plotkinlcf} G.~D.~Plotkin. LCF considered as a programming language. \emph{Theoret. Comput.
+Sci.}, 5(3):223--255, 1977.
+
+\bibitem{scottdomains} D.~S.~Scott. A type-theoretical alternative to ISWIM, CUCH, OWHY.
+\emph{Theoret. Comput. Sci.}, 121(1--2):411--440, 1993. (Manuscript, 1969.)
+
+\bibitem{ajm} S.~Abramsky, R.~Jagadeesan, and P.~Malacaria. Full abstraction for PCF. \emph{Inform.
+and Comput.}, 163(2):409--470, 2000.
+
+\bibitem{ho} J.~M.~E.~Hyland and C.-H.~L.~Ong. On full abstraction for PCF: I, II, and III.
+\emph{Inform. and Comput.}, 163(2):285--408, 2000.
+
+\bibitem{girardll} J.-Y.~Girard. Linear logic. \emph{Theoret. Comput. Sci.}, 50(1):1--101, 1987.
+
+\bibitem{leifermilner} J.~J.~Leifer and R.~Milner. Deriving bisimulation congruences for reactive
+systems. In \emph{CONCUR 2000}, LNCS 1877, pages 243--258. Springer, 2000.
+
+\bibitem{sewell} P.~Sewell. From rewrite rules to bisimulation congruences. \emph{Theoret. Comput.
+Sci.}, 274(1--2):183--230, 2002.
+
+\bibitem{milnerpoly} R.~Milner. \emph{The Polyadic $\pi$-Calculus: A Tutorial.} In F.~L.~Bauer,
+W.~Brauer, and H.~Schwichtenberg, eds., Logic and Algebra of Specification, NATO ASI Series F~94,
+pages 203--246. Springer, 1993.
+
+\bibitem{sangiorgiwalker} D.~Sangiorgi and D.~Walker. \emph{The $\pi$-Calculus: A Theory of Mobile
+Processes.} Cambridge University Press, 2001.
+
+\bibitem{rutten} J.~J.~M.~M.~Rutten. Universal coalgebra: a theory of systems. \emph{Theoret. Comput.
+Sci.}, 249(1):3--80, 2000.
+
+\bibitem{turiplotkin} D.~Turi and G.~Plotkin. Towards a mathematical operational semantics. In
+\emph{LICS 1997}, pages 280--291. IEEE, 1997.
+
+\bibitem{jm} A.~Joyal and I.~Moerdijk. \emph{Algebraic Set Theory.} London Math. Soc. Lecture Note
+Series 220, Cambridge University Press, 1995.
+
+\bibitem{awodey} S.~Awodey. A brief introduction to algebraic set theory. \emph{Bull. Symbolic
+Logic}, 14(3):281--298, 2008.
+
+\bibitem{maclane} S.~Mac~Lane and I.~Moerdijk. \emph{Sheaves in Geometry and Logic: A First
+Introduction to Topos Theory.} Springer, 1992.
+
+\bibitem{elephant} P.~T.~Johnstone. \emph{Sketches of an Elephant: A Topos Theory Compendium.} Oxford
+University Press, 2002.
+
+\bibitem{caramello} O.~Caramello. \emph{Theories, Sites, Toposes: Relating and Studying Mathematical
+Theories Through Topos-Theoretic `Bridges'.} Oxford University Press, 2018.
+
+\bibitem{fioreturi} M.~Fiore and D.~Turi. Semantics of name and value passing. In \emph{LICS 2001},
+pages 93--104. IEEE, 2001.
+
+\bibitem{stark} I.~Stark. A fully abstract domain model for the $\pi$-calculus. In \emph{LICS 1996},
+pages 36--42. IEEE, 1996.
+
+\bibitem{pitts} A.~M.~Pitts. \emph{Nominal Sets: Names and Symmetry in Computer Science.} Cambridge
+Tracts in Theoretical Computer Science 57, Cambridge University Press, 2013.
+
+\bibitem{gabbaypitts} M.~J.~Gabbay and A.~M.~Pitts. A new approach to abstract syntax with variable
+binding. \emph{Formal Asp. Comput.}, 13(3--5):341--363, 2002.
+
+\bibitem{aczel} P.~Aczel. \emph{Non-Well-Founded Sets.} CSLI Lecture Notes 14, CSLI Publications,
+1988.
+
+\bibitem{bouwmanerkens} M.~Bouwman and R.~Erkens. Term rewriting based on set automaton matching.
+\emph{arXiv:2202.08687}, 2022.
+
+\bibitem{baadernipkow} F.~Baader and T.~Nipkow. \emph{Term Rewriting and All That.} Cambridge
+University Press, 1998.
+
+\end{thebibliography}
+
+\end{document}

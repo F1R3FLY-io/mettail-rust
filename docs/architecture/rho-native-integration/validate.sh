@@ -101,6 +101,27 @@ if rg -n -i '\b(TODO|FIXME|TBD|placeholder|stub|hack|temporary|deferred|future w
   fail "index incompletion marker found"
 fi
 
+# Index coverage: every numbered suite document must be discoverable from BOTH
+# the suite README.md document map and the repository documentation index
+# docs/README.md. A filename match is the contract; descriptions live with the
+# indexes themselves.
+printf 'checking suite index coverage (suite README.md and docs/README.md)...\n'
+index_coverage_errors=0
+while IFS= read -r doc_path; do
+  doc_name="$(basename -- "$doc_path")"
+  if ! rg -qF "$doc_name" "$script_dir/README.md"; then
+    printf 'missing from suite README.md document map: %s\n' "$doc_name" >&2
+    index_coverage_errors=1
+  fi
+  if ! rg -qF "$doc_name" "$root_index"; then
+    printf 'missing from docs/README.md: %s\n' "$doc_name" >&2
+    index_coverage_errors=1
+  fi
+done < <(find "$script_dir" -maxdepth 1 -type f -name '[0-9][0-9]-*.md' | sort)
+if (( index_coverage_errors != 0 )); then
+  fail "suite index coverage check failed"
+fi
+
 printf 'checking fenced block balance...\n'
 for file in "${all_files[@]}"; do
   fence_count="$(rg -c '^\s*```' "$file" || true)"
@@ -296,6 +317,16 @@ if (( online != 0 )); then
         if [[ "$code" == "429" ]]; then
           sleep 2
           code="$(curl -A 'mettail-rust-doc-validation/1.0' -s -o /dev/null -w '%{http_code}' --max-time 20 "https://api.crossref.org/works/$doi" || true)"
+        fi
+        # Crossref resolves only Crossref-agency DOIs; DataCite-registered DOIs
+        # (for example arXiv's 10.48550/* records) return 404 there. Fall back
+        # to the DataCite REST API before declaring the DOI unresolvable.
+        if [[ ! "$code" =~ ^2[0-9][0-9]$ ]]; then
+          code="$(curl -A 'mettail-rust-doc-validation/1.0' -s -o /dev/null -w '%{http_code}' --max-time 20 "https://api.datacite.org/dois/$doi" || true)"
+          if [[ "$code" == "429" ]]; then
+            sleep 2
+            code="$(curl -A 'mettail-rust-doc-validation/1.0' -s -o /dev/null -w '%{http_code}' --max-time 20 "https://api.datacite.org/dois/$doi" || true)"
+          fi
         fi
         ;;
       *)

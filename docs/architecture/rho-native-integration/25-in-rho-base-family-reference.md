@@ -1,4 +1,4 @@
-# In-Rho Set-Automaton Matching: The Base-Rewrite Family
+# 25 — In-Rho Set-Automaton Matching: The Base-Rewrite Family
 
 > **Status.** COMPLETE and formally verified for the **base-rewrite family**
 > (structural, `Apply`-rooted rewrites, linear and flat non-linear, at any depth and

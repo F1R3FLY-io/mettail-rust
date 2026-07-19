@@ -58,6 +58,25 @@ and Rho machine integration:
 - **`architecture/rho-native-integration/06-correctness-and-coverage.md`** - Mathematical prose proofs and non-claims
 - **`architecture/rho-native-integration/07-verification-and-rollout.md`** - M-RHO verification and rollout gates
 - **`architecture/rho-native-integration/08-production-runtime-backend-completion.md`** - Production completion gates for replacing the CESK runtime backend path
+- **`architecture/rho-native-integration/09-term-level-reduction-split.md`** - Dovetail folds and Rholang COMM composed in one term
+- **`architecture/rho-native-integration/10-adaptive-evaluation-model.md`** - Sequential-by-default evaluation, trampoline escalation, and the Tier-3 held-fold contract
+- **`architecture/rho-native-integration/11-reactive-comm-stepper.md`** - Lock-free single-stepping of COMM reductions on the Rho machine
+- **`architecture/rho-native-integration/12-runtime-invocation-migration.md`** - Migration to the `RhoMachineInvocation` / `RhoBackendInvocation` split
+- **`architecture/rho-native-integration/13-knotted-topoi-operational-invariants.md`** - Operational invariants required by the knotted-topoi north-star paper
+- **`architecture/rho-native-integration/14-completion-audit.md`** - Campaign completion audit with the per-epic requirement-to-evidence matrix
+- **`architecture/rho-native-integration/15-in-rho-set-automaton-matching.md`** - Compiling the set automaton into Rho for O1-optimal in-Rho matching
+- **`architecture/rho-native-integration/16-in-rho-verification-plan.md`** - End-to-end formal-verification strategy for the in-Rho matching
+- **`architecture/rho-native-integration/17-stage-3-production-wiring.md`** - Wiring the derived in-Rho matching ruleset as a language's default backend
+- **`architecture/rho-native-integration/18-in-rho-ac-matching.md`** - Order-independent associative-commutative matching on the interpreter
+- **`architecture/rho-native-integration/19-in-rho-binder-beta-substitution.md`** - The in-Rho de-Bruijn substitution TRS cascade for binder beta
+- **`architecture/rho-native-integration/20-rholang-runtime-backend.md`** - How the whole in-Rho backend runs on F1r3node's RhoRuntime and RSpace
+- **`architecture/rho-native-integration/21-set-automata-optimization-theory.md`** - Why the in-Rho matching is optimal: O1/O2/O3 and the channel naming
+- **`architecture/rho-native-integration/22-end-to-end-formal-verification.md`** - The mechanized operational-correspondence theorem suite
+- **`architecture/rho-native-integration/23-coverage-and-correctness.md`** - The family-by-capability coverage matrix and empirical probes
+- **`architecture/rho-native-integration/24-in-rho-completion-audit.md`** - The in-Rho requirement-to-evidence closing audit
+- **`architecture/rho-native-integration/25-in-rho-base-family-reference.md`** - Reconstruction-grade reference for the base-rewrite family
+- **`architecture/rho-native-integration/26-in-rho-ac-family-reference.md`** - Reconstruction-grade reference for the associative-commutative family
+- **`architecture/rho-native-integration/27-oslf-language-to-rholang-compilation.md`** - Compiling OSLF `language!` specifications to Rholang via the set-automaton pipeline
 - **`architecture/rho-native-integration/references.md`** - Citations, DOI links, and repository-local proof references
 - **`architecture/rho-native-integration/validate.sh`** - Reproducible local validation for the suite
 
@@ -220,4 +239,4 @@ Internal documentation about the documentation itself:
 
 ---
 
-**Last Updated**: June 2026
+**Last Updated**: July 2026

@@ -1,4 +1,4 @@
-# In-Rho AC Matching: The Associative-Commutative Family
+# 26 — In-Rho AC Matching: The Associative-Commutative Family
 
 > **Status.** COMPLETE and formally verified for the **associative-commutative (AC)
 > family** — the S-AC slices (HashBag linear, with-`rest`, and non-linear) plus **AC4**

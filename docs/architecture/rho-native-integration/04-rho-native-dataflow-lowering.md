@@ -1,4 +1,4 @@
-# Rho-Native Dataflow Lowering
+# 04 — Rho-Native Dataflow Lowering
 
 > **Superseded (host-matched era).** This document describes the architecture from
 > when rewrite *matching* ran on the host (the Dovetail set automaton) while firing

@@ -1,4 +1,4 @@
-# Reactive Lock-Free COMM Stepper
+# 11 — Reactive Lock-Free COMM Stepper
 
 Last updated: 2026-06-24
 

@@ -1,4 +1,4 @@
-# Adaptive Evaluation Model: Sequential by Default, Trampoline When Needed
+# 10 — Adaptive Evaluation Model: Sequential by Default, Trampoline When Needed
 
 Last updated: 2026-06-24
 

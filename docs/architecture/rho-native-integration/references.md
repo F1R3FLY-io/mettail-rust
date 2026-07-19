@@ -1,6 +1,6 @@
 # References
 
-Last updated: 2026-07-10
+Last updated: 2026-07-18
 
 This bibliography supports the Rho-native MeTTaIL integration documents. DOI
 links are included only where a DOI was verified or is part of a publisher
@@ -9,7 +9,9 @@ Anthology records do not provide DOIs.
 
 Local filesystem paths in this bibliography are written relative to the
 `mettail-rust` repository root. Paths beginning with `../f1r3node-rust/` refer
-to the sibling F1r3node repository in the same workspace.
+to the sibling F1r3node repository in the same workspace, and paths beginning
+with `../publications/` refer to the sibling publications repository. Absolute
+paths refer to the local papers archive on this machine.
 
 ## Process Calculi, Rho Calculus, and Rholang
 
@@ -26,6 +28,7 @@ drop/quote behavior, and COMM-style process reduction.
 
 Stian Lybech. 2022. "Encodability and Separation for a Reflective Higher-Order
 Calculus." arXiv:2209.02356.
+[DOI: 10.48550/arXiv.2209.02356](https://doi.org/10.48550/arXiv.2209.02356).
 [arXiv](https://arxiv.org/abs/2209.02356).
 
 Used for: modern discussion of the Rho calculus, its structured-name behavior,
@@ -78,6 +81,11 @@ universe, and fully abstract denotational semantics for the category of
 graph-structured lambda theories." Manuscript, June 2026.
 
 - `../publications/knotted-topoi/knotted-topoi.tex`
+- `docs/papers/knotted-topoi.tex`
+- `docs/papers/knotted-topoi.pdf`
+
+The `docs/papers/` copies are vendored from the sibling publications
+repository so the manuscript resolves inside this repository.
 
 Used for: the declared north-star operational-to-denotational construction. It
 fixes the MeTTaIL-to-core-rho desugaring schema, the location channels
@@ -111,6 +119,9 @@ installation of receivers without replication.
 L. G. Meredith. 2026. "Optimal Channel Naming for Compositional Rewrite
 Translations via Set Automaton Partial Evaluation." F1R3FLY.io, 2026.
 
+- `docs/papers/optimal-channels.tex`
+- `docs/papers/optimal-channels.pdf`
+
 Used for: the optimal (symbol-once, condition O1) set-automaton channel-naming
 scheme; the pattern-receive unfolding into nested single-name receives with
 name-equality guards (its Section 2.2); and the statement that the optimal
@@ -121,11 +132,42 @@ transition system.
 
 M. Bouwman and R. Erkens. 2022. "Term rewriting based on set automaton
 matching." arXiv:2202.08687.
+[DOI: 10.48550/arXiv.2202.08687](https://doi.org/10.48550/arXiv.2202.08687).
 [arXiv](https://arxiv.org/abs/2202.08687).
+
+Archival status: the paper was not accepted at a venue; its content is
+Chapter 5 of the Erkens thesis (ERKENS-THESIS-2024), which is its archival
+record. arXiv v3 (April 2023) is the final preprint record.
 
 Used for: the set-automaton matching algorithm underlying the optimal
 channel-naming scheme, and the host-side match that the corrected
 set-automaton-assisted lowering model uses to produce a substitution.
+
+### ERKENS-THESIS-2024
+
+R. Erkens. 2024. "Automaton-based Techniques for Optimized Term Rewriting."
+PhD thesis, Eindhoven University of Technology, defended 2024-09-30. ISBN
+978-90-386-6099-8. IPA Dissertation Series 2024-09.
+[TU/e Pure](https://research.tue.nl/en/publications/automaton-based-techniques-for-optimized-term-rewriting).
+
+- `/home/dylon/Papers/Pattern Matching/Automaton-based Techniques for Optimized Term Rewriting.pdf`
+
+Used for: the archival record of the set-automaton program this suite builds
+on. Chapter 4 extends SET-AUTOMATON-LOCATE-2021 with an optimized automaton
+construction and a complexity analysis; Chapter 5 is the archival form of
+SET-AUTOMATON-MATCHING-2022; Chapter 6 (grafting and scions) and Chapter 7
+(creeper trace transducers, published separately as ERKENS-CREEPER-2024) are
+the basis of scheduled optimization experiments.
+
+### ERKENS-CREEPER-2024
+
+R. Erkens. 2024. "Optimizing term rewriting with creeper trace transducers."
+Journal of Logical and Algebraic Methods in Programming 141: 100987.
+[DOI: 10.1016/j.jlamp.2024.100987](https://doi.org/10.1016/j.jlamp.2024.100987).
+
+Used for: the journal form of the creeper-trace-transducer technique (the
+Erkens thesis, Chapter 7), the basis of one of the scheduled optimization
+experiments.
 
 ### SET-AUTOMATON-LOCATE-2021
 
@@ -145,6 +187,7 @@ matcher rides to find the beta-redex before seeding the substitution cascade.
 
 Michael Stay and L. G. Meredith. 2017. "Representing Operational Semantics with
 Enriched Lawvere Theories." arXiv:1704.03080.
+[DOI: 10.48550/arXiv.1704.03080](https://doi.org/10.48550/arXiv.1704.03080).
 [arXiv](https://arxiv.org/abs/1704.03080).
 
 Used for: the foundational **OSLF** (Operational Semantics in Logical Form)
@@ -155,6 +198,19 @@ congruence, and the edges of the hom-graphs are the one-step rewrites (the reduc
 relation). This is the categorical reading of a graph-structured lambda theory (GSLT),
 and its Section 6 ("Explicit reduction contexts as gas") is the lineage of the
 cost-accounting extension.
+
+### GSLT-CONTEXT
+
+Repository-local theory context:
+
+- `context/gslt-context.md`
+
+Used for: the graph-structured lambda theory (GSLT) definition (grammar,
+equations, rewrites), the syntactic and semantic categories of GSLTs, the
+interactive refinement with its distinguished K-family of term constructors,
+and the three views of $`\partial T`$ (witnessing, firing, placing) that
+identify OSLF-generated modalities, derived LTS labels, and
+locations-as-splittings as one index set.
 
 ### BEHAVIOR-HOL
 
@@ -332,6 +388,7 @@ complete-on-demand best-first derivation enumeration.
 
 Javier Esparza, Stefan Kiefer, and Michael Luttenberger. 2010. "Computing the
 Least Fixed Point of Positive Polynomial Systems." arXiv:1001.0340.
+[DOI: 10.48550/arXiv.1001.0340](https://doi.org/10.48550/arXiv.1001.0340).
 [arXiv](https://arxiv.org/abs/1001.0340).
 
 Used for: Newton-style least-fixed-point computation background for recursive

@@ -132,8 +132,20 @@ Stage 1 moves the MATCHING onto the interpreter: the host `SetAutomaton` is
 compiled into a network of `sa:` receivers that consume a *spread* subject and, on
 an accepting match, hand the substitution to the Stage 0 firing layer. Recognizing
 a redex is now itself a sequence of Rho COMMs (the internal, $`\tau`$-labelled
-symbol inspections), not a host computation. The flow is shown in
-Figure [15-1](figures/15-in-rho-matching-flow.svg).
+symbol inspections), not a host computation. The flow is shown in Figure 15-1.
+
+![Figure 15-1 — in-Rho set-automaton matching and firing: the spread subject feeds the sa: automaton network, whose accept hands the substitution to the Stage 0 sigma-receiver](figures/15-in-rho-matching-flow.svg)
+
+*Figure 15-1. The Stage-1 flow. The spread subject $`[\![ t ]\!]`$ publishes one
+head tag per node on its quoted location channel; the `sa:` automaton network
+consumes the tags as internal $`\tau`$-labelled symbol inspections (one
+`for`-receive per interned state — the O1 symbol-once discipline), binds the
+substitution as it recurses, and on the accepting configuration hands
+$`\sigma`$ to the Stage 0 $`\sigma`$-receiver, which fires the rewrite onto
+`@OUT` in one atomic COMM.*
+
+PlantUML source:
+[figures/15-in-rho-matching-flow.puml](figures/15-in-rho-matching-flow.puml).
 
 ### 3.1 The spread subject (M0)
 

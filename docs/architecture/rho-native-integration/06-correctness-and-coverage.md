@@ -1,4 +1,4 @@
-# Correctness and Coverage
+# 06 — Correctness and Coverage
 
 > **Superseded (host-matched era).** This document states the prose correctness
 > argument from when rewrite *matching* ran on the host (the Dovetail set automaton)

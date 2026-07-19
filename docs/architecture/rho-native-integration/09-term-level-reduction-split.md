@@ -1,4 +1,4 @@
-# Term-Level Reduction Split: Dovetail Folds and Rholang COMM in One Term
+# 09 — Term-Level Reduction Split: Dovetail Folds and Rholang COMM in One Term
 
 Last updated: 2026-06-23
 

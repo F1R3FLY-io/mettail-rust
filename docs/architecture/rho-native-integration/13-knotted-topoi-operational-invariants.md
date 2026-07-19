@@ -1,4 +1,4 @@
-# Knotted-Topoi Operational Invariants
+# 13 — Knotted-Topoi Operational Invariants
 
 Last updated: 2026-07-10
 

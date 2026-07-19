@@ -1,4 +1,4 @@
-# Dovetail Rewrite Semantics
+# 03 — Dovetail Rewrite Semantics
 
 Last updated: 2026-06-14
 

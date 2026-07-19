@@ -1,4 +1,4 @@
-# End-to-End Architecture
+# 02 — End-to-End Architecture
 
 > **Superseded (host-matched era).** This document describes the architecture from
 > when rewrite *matching* ran on the host (the Dovetail set automaton) while firing

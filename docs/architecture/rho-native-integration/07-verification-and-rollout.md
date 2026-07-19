@@ -1,4 +1,4 @@
-# Verification and Rollout
+# 07 — Verification and Rollout
 
 Last updated: 2026-06-15
 
