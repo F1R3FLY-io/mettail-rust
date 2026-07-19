@@ -1,0 +1,9 @@
+sanity checks — sa-vs-naive full run 2026-07-19 (2026-07-19T02:08:39-04:00)
+
+PASS: every jsonl parses and has 1 header + 33 rep lines
+
+PASS: observed_count == header.expected_firings on every non-dnf rep of every cell
+
+PASS: zero rep-to-rep counter variance in every cell (deterministic seed confirmed)
+
+dnf lines by cell (empty = none):

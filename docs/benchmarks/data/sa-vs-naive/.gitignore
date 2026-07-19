@@ -1,0 +1,6 @@
+# Bulk raw data stays OUT of git (stored in pgmcp; user directive 2026-07-19)
+2026-*/driver/
+2026-*/summary.csv
+2026-*/csv/driver_cells.csv
+2026-*/*.tar.zst
+2026-*/*-run.log
