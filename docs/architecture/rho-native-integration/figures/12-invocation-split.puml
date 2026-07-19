@@ -1,0 +1,82 @@
+@startuml
+' Figure 12-1: the RhoBackendInvocation split (rholang-runtime/src/backend.rs). Every
+' executable branch is a RhoMachineInvocation (blue) executed on the host Rho machine
+' (RSpace COMM); the SOLE non-machine branch is the checked semantic-predicate deferral
+' (amber). The audit boundary is a value — RhoInvocationExecutionSite — and the
+' admissibility rule is enforced by types: direct installers
+' (run_rho_invocation_blocking, backend.rs:1076) accept ONLY
+' Result<RhoMachineInvocation, String>, so a deferral cannot compile through the direct
+' path; only the composed Dovetail+Rho wrapper can carry it.
+skinparam backgroundColor #FEFEFE
+skinparam defaultFontName monospaced
+skinparam shadowing false
+skinparam componentStyle rectangle
+skinparam ArrowColor #4A5568
+skinparam component {
+  BorderColor #4A5568
+  FontColor #1A202C
+}
+skinparam package {
+  BorderColor #7A7A7A
+  FontColor #202020
+}
+skinparam NoteBorderColor #C53030
+
+title Figure 12-1 — the RhoBackendInvocation split and the RhoInvocationExecutionSite audit boundary\nevery executable branch a RhoMachineInvocation (blue); the sole off-machine branch the checked semantic-predicate deferral (amber)
+
+component "checked Dovetail+Rho wrapper\n(the composed backend — owns the\ncomplete Dovetail report)" as WRAP #EDEDED
+
+package "RhoBackendInvocation   (backend.rs:640)" #F4F4F4 {
+
+  package "RhoMachine(RhoMachineInvocation)   (backend.rs:584)" #E1EFFA {
+    component "RunAndObserveInts { out_channel }\nRunAndObserveBools { out_channel }\nRunAndObserveStrings { out_channel }\nRunAndObserveRuntimeValues { out_channel }" as OBS #C6E0F5
+    component "RunWithCallAndObserveInts { call, out_channel }\nRunWithCallAndObserveBools { call, out_channel }\nRunWithCallAndObserveStrings { call, out_channel }\nRunWithCallAndObserveRuntimeValues { call, out_channel }" as CALL #C6E0F5
+    component "RunRhoNetWithCallAndObserveRuntimeValues\n{ call, out_channel }   — the Epic 4 injection bridge\nRunRhoNetReplayAndObserveRuntimeValues\n{ firings: Vec<(Par, String)> }   — the Stage 0 replay" as NET #8FBFE8
+    component "RunCallByNeedThunk\n{ plan: Box<CallByNeedThunkPlan> }" as THUNK #C6E0F5
+  }
+
+  package "the sole non-machine branch" #FDF0E0 {
+    component "DeferToDovetailSemanticPredicate\n{ predicate: String }\nadmissible for a declared semantic\npredicate ONLY; resolved by the composed\nwrapper returning the checked report" as DEFER #F6C177
+  }
+}
+
+component "RhoInvocationExecutionSite   (backend.rs:661)\nRhoMachine | SemanticPredicateHost\nthe audit boundary as a value:\nexecution_site() / is_rho_machine_execution()" as SITE #E2E8F0
+
+component "direct installers\nrun_rho_invocation_blocking (backend.rs:1076)\naccepts ONLY Result<RhoMachineInvocation, String>" as DIRECT #C6E0F5
+
+component "host Rho machine\nRhoRuntime + RSpace (COMM)" as RT #A7D8B6
+component "Dovetail semantic-predicate host\n(the already-checked report)" as DOVE #FBE0B8
+
+WRAP --> OBS : selects
+WRAP --> CALL : selects
+WRAP --> NET : selects
+WRAP --> THUNK : selects
+WRAP --> DEFER : selects —\nsemantic predicates ONLY
+
+OBS --> DIRECT
+CALL --> DIRECT
+NET --> DIRECT
+THUNK --> DIRECT : .into() —\nFrom<RhoMachineInvocation>
+DIRECT --> RT : inject + observe
+DEFER --> DOVE : checked-report\ndeferral
+
+OBS ..> SITE : RhoMachine
+NET ..> SITE : RhoMachine
+DEFER ..> SITE : SemanticPredicateHost
+
+note bottom of DEFER #FDE8E8
+  ADMISSIBILITY RULE (type-enforced): a semantic-predicate
+  deferral CANNOT compile through the direct-install path —
+  run_rho_invocation_blocking takes RhoMachineInvocation, not
+  RhoBackendInvocation. There is NO variant meaning "run
+  arbitrary work off the Rho machine".
+end note
+
+legend bottom
+  |= color |= concept |
+  |<#C6E0F5>| Rho-machine execution (RSpace COMM) — RhoMachineInvocation |
+  |<#8FBFE8>| Rho-net machine variants (installed σ-receiver program) |
+  |<#F6C177>| the checked semantic-predicate deferral — the ONLY off-machine branch |
+  |<#A7D8B6>| the host runtime (RhoRuntime + RSpace) |
+endlegend
+@enduml

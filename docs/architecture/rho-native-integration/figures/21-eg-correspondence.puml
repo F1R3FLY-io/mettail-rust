@@ -1,0 +1,75 @@
+@startuml
+' Figure 21-5: the Erkens–Groote match-goal automaton (violet, left) and the campaign's
+' interned DAG (amber, right) for the FIXED running pattern set L = {app(lam(M),N)},
+' joined by the green specialization quotient. For a fixed L, with the locate-all fan-out
+' carried by the per-site descent, each reachable goal-set state is determined by its one
+' residual sub-pattern, so quotienting by the interning key collapses the goal-set
+' automaton onto the sub-pattern DAG (TcChannelNamingQuotient.v: tc_sound /
+' tc_is_the_op_quotient; SymbolOnceInjective.v: positions_count). The state-label choice
+' L(s) that swings the general goal-set automaton by a quadratic factor (Erkens thesis
+' section 4.7: 2n rightmost vs n^2+n leftmost) has no purchase on the quotient, whose
+' size is the distinct-sub-pattern count (languages/tests/set_automaton_size_optimal.rs).
+skinparam backgroundColor #FEFEFE
+skinparam defaultFontName monospaced
+skinparam shadowing false
+skinparam ArrowColor #4A5568
+skinparam rectangle {
+  BorderColor #4A5568
+  FontColor #1A202C
+}
+left to right direction
+
+title Figure 21-5 — EG match-goal states (violet) and interned StateIds (amber): the specialization quotient (green)\nfixed pattern set <latex>\mathcal{L}=\{\mathrm{app}(\mathrm{lam}(M),N)\}</latex> — states-as-goal-sets collapse onto the sub-pattern DAG
+
+package "Erkens–Groote match-goal automaton  (states = sets of match goals)" #EDE7F6 {
+  rectangle "<latex>s_0=\{\,\mathrm{app}(\mathrm{lam}(M),N)\;\text{at}\;\epsilon \hookrightarrow \mathrm{app}(\mathrm{lam}(M),N)\;\text{at}\;\epsilon\,\}</latex>\nstate label <latex>L(s_0)=\epsilon</latex> — inspect the root" as G0 #D6C6EE
+  rectangle "<latex>s_{\mathrm{app}}=\{\,\mathrm{lam}(M)\;\text{at}\;1 \hookrightarrow \mathrm{app}(\mathrm{lam}(M),N)\;\text{at}\;\epsilon\,\}</latex>\nstate label <latex>L(s_{\mathrm{app}})=1</latex> — inspect child 1" as G1 #D6C6EE
+  rectangle "output <latex>\eta</latex>\nreading <latex>\mathrm{lam}</latex> completes the goal:\nannounce the <latex>\beta</latex>-redex" as G2 #D6C6EE
+  rectangle "derivative partitioning\n<latex>[\mathrm{deriv}(s,f)]_{\sim}</latex> splits the goals\nacross successor states" as G3 #E6DBF2
+  rectangle "configuration-tree prune\nafter a fire (the pruning lemma):\nwork above the redex is retained" as G4 #E6DBF2
+  rectangle "gcp lifting\n<latex>(\mathrm{lift}(K),\mathrm{gcp}(K))</latex> renormalizes goal\npositions by their greatest common prefix" as G5 #E6DBF2
+}
+
+package "interned DAG  (states = distinct sub-patterns, PatternCompiler::intern)" #FDF0E0 {
+  rectangle "<latex>S_3 : \mathrm{App}\{\,\mathrm{app},[S_2,S_1]\,\}</latex>\nroot residual — the whole LHS" as A0 #F6C177
+  rectangle "<latex>S_2 : \mathrm{App}\{\,\mathrm{lam},[S_0]\,\}</latex>\nresidual at position 1" as A1 #F6C177
+  rectangle "<latex>S_0 : \mathrm{Var}(M)</latex>    <latex>S_1 : \mathrm{Var}(N)</latex>\nsuspension points — the holes\nat which <latex>tc(K)</latex> suspends" as AV #FBE0B8
+  rectangle "accept target   sa:<latex>\ulcorner S_3\urcorner</latex>\nthe <latex>\sigma</latex>-receiver dispatch\nthat fires the rule" as A2 #F6C177
+  rectangle "per-child descent\none loc: receive per child\nposition of the spread" as A3 #FBE0B8
+  rectangle "persistent sa: installation\nreceivers survive every firing —\nnothing outside the redex re-established (O2)" as A4 #FBE0B8
+  rectangle "trie-prefix sharing\na common sub-pattern prefix\nis one shared DAG node" as A5 #FBE0B8
+}
+
+' violet column: the automaton's own transitions
+G0 -[#805AD5]-> G1 : <latex>\delta(s_0,\mathrm{app})</latex>
+G1 -[#805AD5]-> G2 : <latex>\delta(s_{\mathrm{app}},\mathrm{lam})</latex>
+
+' amber column: the sub-pattern DAG edges
+A0 -[#2B6CB0]-> A1 : arg 0
+A0 -[#2B6CB0]-> AV : arg 1
+A1 -[#2B6CB0]-> AV : arg 0
+A0 -[#2B6CB0]-> A2 : accept
+
+' the specialization quotient (green), row by row
+G0 -[#2F855A,bold]-> A0 : the interning-key quotient\n(tc_is_the_op_quotient)
+G1 -[#2F855A]-> A1 : residual sub-pattern
+G2 -[#2F855A]-> A2 : <latex>\eta</latex> = accept target
+G3 -[#2F855A]-> A3 : fan-out carried\nby the descent
+G4 -[#2F855A]-> A4 : prune = persistence
+G5 -[#2F855A]-> A5 : gcp = prefix sharing
+
+note bottom of A5 #FCF3D0
+  Fixed <latex>\mathcal{L}</latex>: number of states = number of DISTINCT sub-patterns,
+  for EVERY state-label choice <latex>L</latex>. The thesis section-4.7 swing on
+  <latex>t_0=x_0,\ t_{n+1}=+(t_n,s(x_{n+1}))</latex> — <latex>2n</latex> states rightmost
+  vs <latex>n^2+n</latex> leftmost — collapses to the linear sub-pattern count
+  <latex>3n+1</latex> (locked: languages/tests/set_automaton_size_optimal.rs).
+end note
+
+legend bottom
+  |= color |= concept |
+  |<#D6C6EE>| EG match-goal states (sets of residual obligations) |
+  |<#F6C177>| interned StateIds (distinct sub-patterns) |
+  |<#2F855A>| the specialization quotient — the interning key (green arrows) |
+endlegend
+@enduml

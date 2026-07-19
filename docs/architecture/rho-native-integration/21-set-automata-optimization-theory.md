@@ -419,6 +419,76 @@ $`\mathrm{lam}`$ tag by the state-$`s_{\mathrm{app}}`$ receive — each exactly
 once — and the accept fires the single visible COMM. Source:
 [figures/21-symbol-once-sequence.puml](figures/21-symbol-once-sequence.puml).*
 
+### 7.3 The interned DAG and the Erkens–Groote match-goal automaton
+
+§7.1–§7.2 presented the interner on its own terms; this section closes the loop
+back to §3–§4 by exhibiting the interned DAG as a **specialization** of the
+Erkens–Groote match-goal-set automaton — the same device, partially evaluated
+against a fixed pattern set until only the sub-pattern quotient remains.
+
+A state of the Bouwman–Erkens automaton is a *set of match goals* (§1): residual
+obligations $`\ell_1@p_1,\dots,\ell_n@p_n\hookrightarrow\ell@p`$ still to be
+observed before an announcement. Three ingredients parameterize that state
+space: the pattern set $`\mathcal{L}`$, the state label $`L(s)`$ (which position
+is inspected next), and the derivative construction — reading a symbol computes
+$`\mathrm{deriv}(s,f)`$, partitions it into equivalence classes
+$`[\mathrm{deriv}(s,f)]_{\sim}`$, and lifts each class by its greatest common
+prefix (gcp), $`\delta(s,f)=\{(\mathrm{lift}(K),\mathrm{gcp}(K))\}`$
+([ERKENS-THESIS-2024](references.md#erkens-thesis-2024) §4.2). For the matching
+problem in general — arbitrary subjects, streamed symbol-by-symbol — the goal
+sets are genuinely richer than sub-patterns, and the label choice $`L`$ matters:
+thesis §4.7 measures the swing at a **quadratic factor** on the nested family
+$`t_0 = x_0`$, $`t_{n+1} = {+}(t_n,\, s(x_{n+1}))`$ — a rightmost label choice
+yields $`2n`$ states while a leftmost choice yields $`n^2 + n`$.
+
+For a **fixed** pattern set, however — the campaign's situation, where
+$`\mathcal{L}`$ is frozen at compile time and every subject position is walked
+by its own `loc:` receive — each reachable goal-set state is determined by the
+one residual sub-pattern it still has to observe at its inspected position: the
+locate-all fan-out (fresh root goals at child positions) is carried by the
+per-site descent rather than by the state, and what remains of the goal set is
+exactly a sub-pattern of $`\mathcal{L}`$. Quotienting states by the interning
+key therefore collapses the goal-set automaton onto the sub-pattern DAG of
+§7.1 — states-as-goal-sets **specialize under the interning key to the
+sub-pattern quotient**. That quotient is mechanized: `tc_sound` proves the
+interned trace never merges contexts that fire different rules (the O3
+soundness facet) and `tc_is_the_op_quotient` proves it is exactly the
+$`R_{\mathrm{op}}`$ equivalence, both directions (`TcChannelNamingQuotient.v`,
+§9); `positions_count` (`SymbolOnceInjective.v`) supplies the O1 side — the
+bijection between surface positions and consuming receives. And because the
+sub-pattern count is independent of any inspection order (§7.2), the §4.7
+quadratic swing has no purchase here: on the same family $`\{t_n\}`$ the
+interning key yields exactly the distinct sub-patterns $`t_1,\dots,t_n`$,
+$`s(x_1),\dots,s(x_n)`$, and $`x_0,\dots,x_n`$ — $`3n+1`$ states, linear for
+**every** label choice — the behavior
+`languages/tests/set_automaton_size_optimal.rs` locks as a regression invariant
+on the analogous diagonal, spine, wide, and multi-pattern families.
+
+Row by row, the correspondence is:
+
+| Erkens–Groote / Bouwman–Erkens concept | Campaign artifact (the specialization) |
+|---|---|
+| match-goal state — a set of residual obligations | interned `StateId` — the one residual sub-pattern (§7.1) |
+| state label $`L(s)`$ — the single position inspected next | the positional recursion of `compile` — children interned before parents, one inspected position per state |
+| output $`\eta`$ — announce a completed match | the accept target — the `sa:`-keyed $`\sigma`$-receiver dispatch that fires the rule |
+| configuration-tree prune after a fire (pruning lemma, §4) | the persistent `sa:` installation — receivers survive every firing, nothing outside the redex is re-established (O2, §6.2) |
+| derivative partitioning — $`[\mathrm{deriv}(s,f)]_{\sim}`$ splits the goals across successor states | per-child descent — one `loc:` receive per child position of the spread |
+| gcp lifting — every goal position renormalized by $`\mathrm{gcp}(K)`$ on entry to a state | trie-prefix sharing in the interned DAG — a common sub-pattern prefix is one shared node (§7.1) |
+
+Figure 21-5 draws the two columns and the quotient between them on the running
+$`\beta`$ pattern set $`\mathcal{L}=\{\mathrm{app}(\mathrm{lam}(M),N)\}`$.
+
+![Figure 21-5 — EG match-goal states and interned StateIds, joined by the tc quotient](figures/21-eg-correspondence.svg)
+
+*Figure 21-5. The Erkens–Groote match-goal automaton (violet, left) and the
+interned DAG (amber, right) for the running $`\beta`$ pattern set, joined by the
+green specialization quotient: each reachable goal-set state maps to the
+interned `StateId` of its residual sub-pattern (`tc_is_the_op_quotient`), the
+output $`\eta`$ to the accept target, derivative partitioning to the per-child
+descent, configuration-tree pruning to the persistent installation, and gcp
+lifting to the DAG's trie-prefix sharing. Source:
+[figures/21-eg-correspondence.puml](figures/21-eg-correspondence.puml).*
+
 ## 8. The associative-commutative exclusion boundary
 
 Positional set-automaton matching assumes **ordered, fixed-arity** children. An
@@ -493,6 +563,9 @@ sub-pattern interner is the partial evaluator that computes that quotient at com
 time, with an interned-DAG size independent of the inspection order and linear in the
 pattern set; and moving matching onto the reducer under this optimal naming changes no
 observable behavior, because the optimal and sound schemes induce the same CLTS.
+The measured shadow of this WHY-tier — the pre-registered efficiency gate, its
+counter-identical refutations, and the capability split the numbers exposed — is
+recorded in [29 §5](29-knotted-topoi-satisfaction-crosswalk.md).
 
 ## References
 

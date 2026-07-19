@@ -1,0 +1,100 @@
+@startuml
+' Figure 16-1: the verification plan's obligation map, from doc 16's own tables
+' (sections 2.1, 2.2, 3, 4). Every obligation (i)-(x) + O2 + the five AC obligations is
+' discharged by its named landed theory (green — all zero-admission, "Closed under the
+' global context"); the amber spine is the load-bearing discharge chain
+' (ii)+(viii) => (iii) => (v); solid grey arrows land family arms consumed by the
+' capstone's case split; dashed arrows are per-slice support in the section-4 authoring
+' order. Gold = the capstone (v), which instantiates the assumption-free finite-trace
+' lift EndToEndCommCorrespondence.v and flips INV-2/6/13 in doc 13.
+skinparam backgroundColor #FEFEFE
+skinparam defaultFontName monospaced
+skinparam shadowing false
+skinparam ArrowColor #4A5568
+skinparam rectangle {
+  BorderColor #4A5568
+  FontColor #1A202C
+}
+top to bottom direction
+
+title Figure 16-1 — the obligation map:  (i)-(x) + O2 + the five AC obligations, their landed theories, and the capstone (v)\namber spine = the discharge chain (ii)+(viii) => (iii) => (v); green = landed zero-admission; gold = the capstone
+
+package "A — matching core" #E6F4EA {
+  rectangle "(ii)  O1 symbol-once:\nsymbol -> sa:-receive total + injective\nSymbolOnceInjective.v" as OII #A7D8B6
+  rectangle "(i)  in-Rho match set =\npositional matching relation\nInRhoMatchPositional.v" as OI #A7D8B6
+  rectangle "(x)  compile-once / reuse\ndeterminism in Rho\nInRhoReuseDeterminism.v" as OX #A7D8B6
+}
+
+package "B — channel naming" #E6F4EA {
+  rectangle "(viii)  injective + coarsest-sound\ntc(K) naming (O3, R_op)\nTcChannelNamingQuotient.v" as OVIII #A7D8B6
+  rectangle "O2  prune-preserves-work\nPrunePreservesWork.v" as OO2 #A7D8B6
+}
+
+package "C — the rem:nonopt discharge" #E6F4EA {
+  rectangle "(iii)  sa:/eq: are tau => same CLTS\n(weak bisimulation)\nInRhoSameCLTSWeakBisim.v" as OIII #7FC79B
+}
+
+package "D — guards" #E6F4EA {
+  rectangle "(iv)  atomic firing /\nno partial-match state\nAtomicFiringNoPartialMatch.v" as OIV #A7D8B6
+  rectangle "(vi)  non-linear eq: commit\n<=> name-equality, reject-safe\nNonLinearEqConsistency.v" as OVI #A7D8B6
+}
+
+package "E — contextual" #E6F4EA {
+  rectangle "(vii)  contextual atomic join (INV-6)\n+ plugging-stability (INV-2)\nContextualAtomicJoinPlugging.v" as OVII #A7D8B6
+}
+
+package "F — encoder" #E6F4EA {
+  rectangle "(ix)  total-or-reject + persistence\nfor the in-Rho encoder\nInRhoEncoderTotalOrReject.v" as OIX #A7D8B6
+}
+
+package "Stage AC — the multiset algebra (section 2.2)" #E6F4EA {
+  rectangle "(AC-rest)  rest reconstruction\nAcRestReconstruction.v" as ACR #C6E7D2
+  rectangle "(AC-atom)  atomic consume\nAcAtomicNoPartialConsume.v" as ACA #C6E7D2
+  rectangle "(AC-map)  MapAc key uniqueness\nAcMapKeyUniqueness.v" as ACM #C6E7D2
+  rectangle "(AC-nl)  non-linear AC commit\nAcNonLinearConsistency.v" as ACN #C6E7D2
+  rectangle "(AC-i)  AC match set = multiset\nmatching relation\nInRhoAcMatchMultiset.v" as ACI #C6E7D2
+}
+
+rectangle "the assumption-free finite-trace lift\nEndToEndCommCorrespondence.v" as LIFT #E2E8F0
+
+package "G — the CAPSTONE" #FDF0E0 {
+  rectangle "(v)  whole-GSLT opcorr with in-Rho matching\nwhole_gslt_in_rho_opcorrespondence +\nwhole_gslt_opcorr_over_optimal_matching\nWholeGsltInRhoOpCorrespondence.v" as OV #E8A54C
+}
+
+' the load-bearing discharge chain (amber)
+OII -[#C05621,bold]-> OIII : O1 chain totality
+OVIII -[#C05621,bold]-> OIII : O3 no cross-talk
+OIII -[#C05621,bold]-> OV : the (iii) thread —\nsound = optimal at the CLTS
+
+' family arms consumed by the capstone's case split
+OVII --> OV : contextual-join\nfamily arm
+ACR --> ACA
+ACR --> ACI
+OVI --> ACN : slot-gather reuse
+ACI --> OV : AC family arms\n(one rule-family arm each)
+
+' per-slice support in the section-4 authoring order
+OI ..> OV
+OX ..> OV
+OO2 ..> OV
+OIV ..> OV
+OVI ..> OV
+OIX ..> OV : install-gate scoping
+LIFT --> OV : instantiated by (v)
+
+note bottom of OV #FCF3D0
+  Every slice of the section-4 authoring order A -> B -> C -> D -> E -> F -> G
+  (+ Stage AC) has landed zero-admission ("Closed under the global context");
+  the capstone (v) case-splits by rule family and flipped INV-2/6/13 in doc 13.
+  Each Rocq theory is paired with the finite / symbolic complements and runtime
+  tests of the section-2 tables.
+end note
+
+legend bottom
+  |= color |= concept |
+  |<#A7D8B6>| landed zero-admission theory (structural obligations) |
+  |<#C6E7D2>| landed zero-admission theory (AC obligations) |
+  |<#E8A54C>| the capstone (v) |
+  |<#C05621>| the load-bearing discharge chain (ii)+(viii) => (iii) => (v) |
+endlegend
+@enduml

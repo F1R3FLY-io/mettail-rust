@@ -82,6 +82,17 @@ weak bisimulation on `RegisterEquivalence.v`'s `is_bisimulation`; (v) instantiat
 the assumption-free abstract lift `EndToEndCommCorrespondence.v` and case-splits by
 rule family.
 
+![Figure 16-1 — the obligation map: obligations, landed theories, and the capstone](figures/16-obligation-map.svg)
+
+*Figure 16-1. The plan's obligation map. Every obligation of §2.1 and §2.2 is
+discharged by its named landed theory (green — all zero-admission); the amber
+spine is the §3 discharge chain (ii)+(viii) $`\Rightarrow`$ (iii)
+$`\Rightarrow`$ (v); solid arrows land family arms consumed by the capstone's
+rule-family case split, dashed arrows are per-slice support in the §4 authoring
+order; and the capstone (v) (gold) instantiates the assumption-free finite-trace
+lift `EndToEndCommCorrespondence.v`. Source:
+[figures/16-obligation-map.puml](figures/16-obligation-map.puml).*
+
 ## 4. Authoring order (each proof lands with its implementation slice)
 
 `A` (ii $`\to`$ i $`\to`$ x, matching core) $`\to`$ `B` (viii $`\to`$ O2, channel

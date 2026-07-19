@@ -27,7 +27,7 @@ is used formally elsewhere.
 
 | Term | Definition |
 |---|---|
-| GSLT | Graph-structured lambda theory. A language definition given as a grammar (types), a set of equations, and a set of rewrites; the "graph" is the equation/rewrite structure on the freely generated term set. Equivalently a "lambda theory" (equational logic with binding and rewriting) or a Gph-enriched multisorted Lawvere theory ([OSLF-2017](references.md#oslf-2017), [KNOTTED-TOPOI-2026](references.md#knotted-topoi-2026)). A MeTTaIL `language!` definition presents one. |
+| GSLT | Graph-structured lambda theory. A language definition given as a grammar (types), a set of equations, and a set of rewrites; the "graph" is the equation/rewrite structure on the freely generated term set. Equivalently a "lambda theory" (equational logic with binding and rewriting) or a Gph-enriched multisorted Lawvere theory ([OSLF-2017](references.md#oslf-2017), [KNOTTED-TOPOI-2026](references.md#knotted-topoi-2026)). A MeTTaIL `language!` definition presents one. The repository-local theory context is [`context/gslt-context.md`](../../../context/gslt-context.md) ([GSLT-CONTEXT](references.md#gslt-context)). |
 | cost accounting (funding) | The discipline charging each reduction (COMM) against a consumable token supply — Rholang's phlogiston/gas, recast categorically as the cost endofunctor on GSLTs ([COST-RHO](references.md#cost-rho), [COST-MONAD](references.md#cost-monad)). Distinct from OSLF; OSLF is run on top of the cost-accounted theory to type token usage. |
 | term | A typed abstract syntax tree node in a modeled language. |
 | category | A type-level family of terms, such as `Proc`, `Name`, `Expr`, or `Int`. |
@@ -76,11 +76,13 @@ is used formally elsewhere.
 
 These terms are shared by documents [20](20-rholang-runtime-backend.md) through
 [26](26-in-rho-ac-family-reference.md), which document the campaign that moved
-rewrite *matching* (not only firing) onto the Rholang interpreter.
+rewrite *matching* (not only firing) onto the Rholang interpreter, and by the
+satisfaction crosswalk [29](29-knotted-topoi-satisfaction-crosswalk.md).
 
 | Term | Definition |
 |---|---|
 | set automaton | The compiled matcher that locates every redex by visiting each subject function symbol exactly once — the Erkens–Groote locate automaton ([SET-AUTOMATON-LOCATE-2021](references.md#set-automaton-locate-2021)), serialized into Rholang `for`-receives so the match runs as interpreter COMMs. |
+| match goal | A residual matching obligation $`\ell_1@p_1,\dots,\ell_n@p_n\hookrightarrow\ell@p`$ — "to announce $`\ell`$ at $`p`$, still observe each $`\ell_i`$ at $`p_i`$" — the Erkens–Groote reading in which a set-automaton state is a set of such goals; for a fixed pattern set the goal-set states specialize, under the interning key, to the sub-pattern quotient ([21 §7.3](21-set-automata-optimization-theory.md#73-the-interned-dag-and-the-erkensgroote-match-goal-automaton)). |
 | spread | The in-Rho reflection of a whole subject term across per-location channels; `spread_term_par` publishes each node's head tag on its `loc:` channel and its collapse values on `col:` / `cap:`, so the automaton walks the subject by receiving. |
 | M-reflect | The compile-time reflection of a runtime category value into its canonical `Par` (the reflected-`EList` ABI), performed by the generated `reflect_category_fn`. |
 | reflected-`EList` ABI | The canonical `Par` encoding of a ground term, $`[\![ f(t_1,\dots,t_n) ]\!] = \mathtt{EList}[\underline{f}, [\![ t_1 ]\!], \dots, [\![ t_n ]\!]]`$ — head tag first, then reflected children. |
@@ -94,6 +96,7 @@ rewrite *matching* (not only firing) onto the Rholang interpreter.
 | corrupted-σ probe | The decisive "replacement, not replay" test: corrupt the host report's $`\sigma`$ (leaving only the gate fields), run the MATCH path, and observe that the fired output is still correct because $`\sigma`$ is re-sourced from the in-Rho spread, not the report. |
 | rem:nonopt | The north-star paper's "non-optimality" remark: the optimal set-automaton scheme and the sound location scheme induce the *same* CLTS, so operational correspondence is indifferent to the choice. Discharged in Rocq by `InRhoSameCLTSWeakBisim.same_clts_weak_bisim`. |
 | SN / CR / NF | Strong normalization, Church-Rosser confluence, and normal form — proved for the in-Rho de-Bruijn substitution TRS, so β reduces to a unique de-Bruijn normal form in Rho. |
+| claim architecture | The three-layer evidence reading of the campaign's claims — Layer 1 abstract CLTS theorems (`advanced_automata`), Layer 2 the conditional composition harness (`rho_bridge`, Section-Hypothesis arms discharged at concrete instances), Layer 3 runtime evidence on the live reducer — with the honest premises joining the layers inventoried explicitly ([29 §2](29-knotted-topoi-satisfaction-crosswalk.md#2-the-three-layer-evidence-architecture)). |
 | zero-admission | A Rocq corpus containing no `Axiom`, `Conjecture`, `Parameter`, `Admitted.`, or `admit`; every theorem's `Print Assumptions` reports "Closed under the global context". A Section `Variable` / `Hypothesis` discharged on `End` is a premise, not an admitted assumption. |
 
 ## Formal Relations and Symbols

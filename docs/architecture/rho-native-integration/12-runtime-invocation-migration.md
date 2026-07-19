@@ -55,6 +55,21 @@ impl From<RhoMachineInvocation> for RhoBackendInvocation { /* wraps in RhoMachin
 pub enum RhoInvocationExecutionSite { RhoMachine, SemanticPredicateHost }
 ```
 
+![Figure 12-1 — the RhoBackendInvocation split and the RhoInvocationExecutionSite audit boundary](figures/12-invocation-split.svg)
+
+*Figure 12-1. The split as components: every executable branch is a
+`RhoMachineInvocation` (blue) selected by the checked Dovetail+Rho wrapper and
+executed on the host Rho machine through the direct installers
+(`run_rho_invocation_blocking`, which accepts only
+`Result<RhoMachineInvocation, String>`); the sole non-machine branch is
+`DeferToDovetailSemanticPredicate` (amber), resolved by the composed wrapper
+returning the checked report. `RhoInvocationExecutionSite` is the audit boundary
+as a value. The two `RunRhoNet*` variants are post-split additions — the Epic 4
+injection bridge and the Stage 0 replay driver — with no legacy counterpart in
+the migration table above; the diagram shows the enum as it stands in
+`rholang-runtime/src/backend.rs`. Source:
+[figures/12-invocation-split.puml](figures/12-invocation-split.puml).*
+
 ## How to migrate downstream code
 
 1. **Constructing executable invocations.** Replace `RhoBackendInvocation::RunAndObserve*`

@@ -298,7 +298,15 @@ in [References](references.md#rho-bridge-formal):
 | total-or-reject; miss nothing | `RhoLoweringTotalOrRejects.v` | every rule is lowered or fail-closed; the install boundary drops nothing silently |
 | freshness / name discipline (INV-7) | `RhoGroundingAndNames.v` | grounding and quoted-name canonicalization are sound |
 | host-machine reuse (INV-12) | `HostRhoMachineReuse.v`, `BridgeInertness.v` | accepted plans depend on the host interpreter and RSpace; the bridge introduces no second Rho machine |
-| GSLT presentation / funding laws | `MettaGsltPresentation.v`, `MettaFundingLawsConformance.v` | MeTTaIL presents finitely presentable GSLTs and conforms to the funding/cost laws the runtime backend meters |
+| deploy-signature lane algebra / funding laws | `MettaGsltPresentation.v`, `MettaFundingLawsConformance.v` | `MettaGsltPresentation.v` proves the deploy-signature funding-lane algebra — `decompositions_sound` / `decompositions_complete` / `decompositions_characterization`: the `Sig`/`MettaSig` split-join decompositions MeTTaIL re-presents are exactly the host lane algebra's — not the categorical claim that MeTTaIL presents finitely presentable GSLTs, which is the paper's definitional item (KT `def:mettail`), carried by the `language!`-to-`LanguageDef` correspondence and given its precise status in the crosswalk's `def:mettail` row ([29 §3](29-knotted-topoi-satisfaction-crosswalk.md#3-the-per-item-crosswalk)); `MettaFundingLawsConformance.v` proves the four funding/cost conformance laws the runtime backend meters |
+
+This table names, for each obligation, exactly the theory that discharges it and
+no more; the per-item ownership of every labeled claim in the paper —
+mechanized, runtime-tested, or outside the operational scope, together with the
+honest-premise inventory behind each status — is the satisfaction crosswalk
+[29](29-knotted-topoi-satisfaction-crosswalk.md)
+([§2.1](29-knotted-topoi-satisfaction-crosswalk.md#21-the-honest-premise-inventory),
+[§3](29-knotted-topoi-satisfaction-crosswalk.md#3-the-per-item-crosswalk)).
 
 The end-to-end `opcorr` is now landed **for finite executions**:
 `WholeGsltInRhoOpCorrespondence.whole_gslt_in_rho_opcorrespondence` is a single
@@ -365,6 +373,13 @@ that the invariants above do not constrain.
   matching via obligation (iii), and contextual joins + structural premises (INV-6)
   fire as atomic COMMs; the residual is divergent / infinite executions and rule
   families beyond the covered six + slotted In/Out.
+- The per-item crosswalk and the claim architecture are owned by
+  [29 — Knotted-Topoi Satisfaction Crosswalk](29-knotted-topoi-satisfaction-crosswalk.md):
+  every labeled item of the paper receives a status row there
+  ([§3](29-knotted-topoi-satisfaction-crosswalk.md#3-the-per-item-crosswalk)), and its
+  three-layer evidence architecture
+  ([§2](29-knotted-topoi-satisfaction-crosswalk.md#2-the-three-layer-evidence-architecture))
+  states which layer carries each claim and on which honest premises.
 
 ## Sources
 
@@ -379,3 +394,6 @@ that the invariants above do not constrain.
   two set-automata sources the north-star optimizes toward.
 - [References](references.md#rho-bridge-formal) — the Rho-bridge FV suite that
   discharges the invariants above.
+- [29 — Knotted-Topoi Satisfaction Crosswalk](29-knotted-topoi-satisfaction-crosswalk.md) —
+  the per-item satisfaction crosswalk and claim-architecture owner: every
+  labeled item of the paper mapped to its evidence layer.
