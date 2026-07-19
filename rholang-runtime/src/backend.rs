@@ -1131,9 +1131,10 @@ fn clear_pending_fold_sites() {
     mettail_rholang_codegen::clear_pending_native_handler_specs();
 }
 
-/// Tier-3 + A-S3: drain every system-process `Definition` recorded by the just-run invocation
-/// compiler — the held-fold contracts (empty unless the term lifted a fold over a COMM-received
-/// value) plus the A-S3 native-handler contracts (empty unless the report-free compile ADMITTED
+/// Tier-3 + A-S3 + A-S4: drain every system-process `Definition` recorded by the just-run
+/// invocation compiler — the fold contracts (A-S4: one per lifted width/precision fold site,
+/// GROUND operands included — pre-A-S4 only COMM-held folds lifted) plus the A-S3 native-handler
+/// contracts (empty unless the report-free compile ADMITTED
 /// located native sites). Both ride the same `extra_system_processes` seam into
 /// [`run_rho_invocation_blocking`]; their reserved bands are disjoint by construction
 /// (`mettail_rholang_codegen::native_handler`, collision-tested). On a DEFERRAL return the

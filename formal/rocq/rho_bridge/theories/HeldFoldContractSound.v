@@ -1,14 +1,24 @@
 (*
- * HeldFoldContractSound: Tier-3 held-fold trampoline soundness.
+ * HeldFoldContractSound: Tier-3 fold-trampoline soundness.
  *
  * A "held fold" is a MeTTaIL-native width fold (e.g. `int( *(x), 8)`) whose operand
  * is bound by a COMM `receive`: it cannot pre-reduce in Dovetail (the operand is
  * free until the rendezvous fires) and has no Rholang primitive.  The lowering
- * LIFTS it (rholang-runtime/src/rhocalc_ast.rs `lower_receive_body`):
+ * LIFTS it (rholang-runtime/src/rhocalc_ast.rs `lower_body_lifting_folds`):
  *
  *     (@("c")?x).{ C[int( *(x), 8)] }
  *       ==>  (@("c")?x).{ new ret in { @"<fold>"!( *(x), ret)
  *                                    | for(@r <- ret){ C[int( *(x),8) |-> *r] } } }
+ *
+ * A-S4 (lowering purity) generalizes the SAME lift to EVERY fold site — statically
+ * GROUND operands included (the pre-A-S4 Tier-1 in-place host fold is deleted) — and
+ * extends the band with the unary precision casts `bigint(a)`/`bigrat(a)`.  The model
+ * below is agnostic to WHY the operand is ground when the trampoline fires: a binding
+ * COMM (`x := datum`) and a statically ground / machine-send-evaluated operand both
+ * instantiate `tramp_init datum`, and `fold_eval` is an abstract total function that
+ * the unary casts (`proc_bigint_unary`/`proc_bigrat_unary`, width unused) instantiate
+ * exactly as the width folds do.  Every theorem therefore covers the A-S4 ground-fold
+ * trampoline unchanged.
  *
  * and injects a Dovetail-backed system-process `Definition` on the private channel
  * `@"<fold>"` (rholang-runtime/src/fold_contract.rs `fold_definition`): a one-shot,

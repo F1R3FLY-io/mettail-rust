@@ -63,3 +63,9 @@ rand = { workspace = true }
 mettail-rholang-runtime = { package = "rholang-runtime", path = "../rholang-runtime", features = [
     "dstage-instrumentation",
 ] }
+# A-S4 value-absence probes (`zero_dstage_exec.rs`): byte-level checks that the injected call
+# `Par` does NOT embed the host-computed result literal (prost encoding of `models::rhoapi::Par`,
+# the A-S3 probe style) — and the arbitrary-precision expected values for RhoCalc observations.
+models = { workspace = true }
+prost = "0.14"
+num-bigint = "0.4"

@@ -30,9 +30,13 @@
 //! NativeFoldDemo are runtime test languages, not REPL-registered backends.
 #![cfg(feature = "rho-languages")]
 
+use mettail_languages::calculator::CalculatorLanguage;
 use mettail_repl::rho_backends::{calculator_backed, rhocalc_backed, swapdemo_backed};
+use mettail_rholang_codegen::RhoFoldDataflowDisposition;
 use mettail_rholang_runtime::dstage_instrumentation::dovetail_report_invocations;
-use mettail_runtime::{RuntimeBackend, RuntimeBackendArtifact, RuntimeObservationValue};
+use mettail_runtime::{Language, RuntimeBackend, RuntimeBackendArtifact, RuntimeObservationValue};
+use models::rhoapi::Par;
+use prost::Message;
 
 fn term_obs(constructor: &str, children: Vec<RuntimeObservationValue>) -> RuntimeObservationValue {
     RuntimeObservationValue::Term {
@@ -153,6 +157,108 @@ fn admitted_rhocalc_exec_builds_no_dovetail_report() {
         out.values,
         vec![RuntimeObservationValue::Text("p".to_string())],
         "the COMM fired and the dropped process emitted \"p\", exactly as the eager pipeline did"
+    );
+}
+
+/// A-S3/A-S4 probe helper: whether the prost-encoded bytes of `par` contain `needle`.
+fn par_bytes_contain(par: &Par, needle: &[u8]) -> bool {
+    let bytes = par.encode_to_vec();
+    bytes.windows(needle.len()).any(|window| window == needle)
+}
+
+/// The byte needle for "the ground `GInt` literal `value` rides this `Par`" (a `Par` embedded in
+/// any message field serializes its own content contiguously).
+fn gint_par_needle(value: i64) -> Vec<u8> {
+    models::rust::utils::new_gint_par(value, Vec::new(), false).encode_to_vec()
+}
+
+/// A-S4 deliverable-3 probe (Calculator `2 + 3 * 4`): the RAW parse tree lowers to the E3
+/// metered-expression dataflow — the injected call `Par` carries the OPERANDS (2, 3, 4) but NOT
+/// the result literal 14 (byte-level, A-S3 style; the single-literal dataflow of `14` is the
+/// contrastive control proving needle sensitivity) — and the exec through the production wrapper
+/// computes 14 ON the machine with zero D-stage.
+#[test]
+fn a_s4_calculator_call_par_does_not_embed_the_result_literal() {
+    // The injected call: the report-free E3 dataflow of the RAW tree.
+    let term = CalculatorLanguage
+        .parse_term("2 + 3 * 4")
+        .expect("2 + 3 * 4 parses");
+    let invocation = match CalculatorLanguage::rho_fold_dataflow_invocation_to(term.as_ref(), "OUT")
+    {
+        Ok(RhoFoldDataflowDisposition::Run(invocation)) => invocation,
+        other => panic!("the raw arithmetic tree must lower to a Run dataflow, got {other:?}"),
+    };
+    assert!(par_bytes_contain(&invocation.call, &gint_par_needle(2)), "operand 2 rides the call");
+    assert!(par_bytes_contain(&invocation.call, &gint_par_needle(3)), "operand 3 rides the call");
+    assert!(par_bytes_contain(&invocation.call, &gint_par_needle(4)), "operand 4 rides the call");
+    assert!(
+        !par_bytes_contain(&invocation.call, &gint_par_needle(14)),
+        "A-S4: no host-pre-computed value may ride the injected call Par"
+    );
+
+    // Contrastive control: the single-literal dataflow of `14` DOES embed the literal — the
+    // needle is sensitive.
+    let literal = CalculatorLanguage.parse_term("14").expect("14 parses");
+    let control = match CalculatorLanguage::rho_fold_dataflow_invocation_to(literal.as_ref(), "OUT")
+    {
+        Ok(RhoFoldDataflowDisposition::Run(invocation)) => invocation,
+        other => panic!("the literal must lower to a Run dataflow, got {other:?}"),
+    };
+    assert!(
+        par_bytes_contain(&control.call, &gint_par_needle(14)),
+        "the needle detects an embedded result literal (control)"
+    );
+
+    // The MACHINE computes 14 (zero D-stage): the production wrapper execs the same raw tree.
+    let language = calculator_backed().expect("Calculator lazy backend installs");
+    let before = dovetail_report_invocations();
+    let report = language
+        .run_backend_report(RuntimeBackend::RhoMachine, term.as_ref())
+        .expect("the raw arithmetic exec runs report-free on the Rho dataflow");
+    let after = dovetail_report_invocations();
+    assert_eq!(after - before, 0, "the admitted raw-tree exec builds ZERO Dovetail reports");
+    let out = report
+        .observations_for_channel("OUT")
+        .expect("an OUT observation");
+    assert_eq!(
+        out.values,
+        vec![RuntimeObservationValue::Int(14)],
+        "2 + 3 * 4 computes 14 on the Rho machine (E3 metered exprs)"
+    );
+}
+
+/// A-S4 (RhoCalc): raw Proc-level arithmetic execs through the PURE lowering (the E2
+/// fold-normalization fallback is deleted) — the machine's metered `EPlus` computes the value;
+/// zero Dovetail reports. Plain rhocalc literals are arbitrary-precision (`GBigInt`), so the
+/// observed value is `BigIntBytes`.
+#[test]
+fn a_s4_admitted_rhocalc_arithmetic_exec_computes_on_machine_with_no_dovetail_report() {
+    let language = rhocalc_backed().expect("RhoCalc lazy backend installs");
+    let term = language.parse_term("1 + 2").expect("1 + 2 parses");
+
+    let before = dovetail_report_invocations();
+    let report = language
+        .run_backend_report(RuntimeBackend::RhoMachine, term.as_ref())
+        .expect("the raw RhoCalc arithmetic exec runs report-free on the Rho machine");
+    let after = dovetail_report_invocations();
+
+    assert_eq!(
+        after - before,
+        0,
+        "A-S4: the raw arithmetic exec lowers directly (metered EPlus) — ZERO Dovetail reports \
+         (pre-A-S4 this shape rode the E2 dovetail_normal_term fallback)"
+    );
+    assert_eq!(report.backend(), RuntimeBackend::RhoMachine);
+    assert_eq!(report.artifact(), RuntimeBackendArtifact::RhoNormalizedAst);
+    let out = report
+        .observations_for_channel("OUT")
+        .expect("an OUT observation");
+    assert_eq!(
+        out.values,
+        vec![RuntimeObservationValue::BigIntBytes(
+            num_bigint::BigInt::from(3).to_signed_bytes_be()
+        )],
+        "1 + 2 computes 3 on the Rho machine (arbitrary-precision literals)"
     );
 }
 

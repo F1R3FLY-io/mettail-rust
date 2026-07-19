@@ -8,17 +8,20 @@ use std::sync::Arc;
 
 use mettail_ast::language::LanguageDef;
 use mettail_languages::rhocalc::{
-    Bag, Int, List, Map, Name, Proc, RhoCalcTerm, RhoCalcTermInner, Str,
+    Bag, Int, List, Map, Name, Proc, RhoCalcLanguage, RhoCalcTerm, RhoCalcTermInner, Str,
 };
 use mettail_rholang_codegen::{
     lower_language_def, plan_rho_default_backend, suggest_rejected_rule_dispositions,
     RhoCoverageEvidence, RhoDefaultBackendRequirements, RhoGuardCoverageEvidence,
 };
+use mettail_rholang_runtime::fold_contract::FoldKind;
 use mettail_rholang_runtime::{
     dovetail_rho_backed_rhocalc, lower_rhocalc_proc, lower_rhocalc_term,
-    rho_runtime_backed_rhocalc_strings, rho_runtime_backed_rhocalc_values, rhocalc_ast_runtime_def,
-    run_normalized_par_for_oracle, run_normalized_par_for_oracle_and_read_strings,
-    PlannedRhoBackend, RhocalcAstLowerError, RHOCALC_BAG_ABI_TAG,
+    lower_rhocalc_term_with_folds, rho_runtime_backed_rhocalc_strings,
+    rho_runtime_backed_rhocalc_values, rhocalc_ast_runtime_def, run_normalized_par_for_oracle,
+    run_normalized_par_for_oracle_and_read_runtime_values,
+    run_normalized_par_for_oracle_and_read_strings, PlannedRhoBackend, RhocalcAstLowerError,
+    RHOCALC_BAG_ABI_TAG,
 };
 use mettail_runtime::{
     clear_var_cache, Language, RuntimeBackend, RuntimeBackendArtifact, RuntimeObservationValue,
@@ -27,6 +30,8 @@ use models::rhoapi::expr::ExprInstance;
 use models::rhoapi::EList;
 use models::rhoapi::Par;
 use models::rust::rholang::implicits::GPrivateBuilder;
+use models::rust::utils::new_gint_par;
+use prost::Message;
 
 fn parse_lower(source: &str) -> Par {
     clear_var_cache();
@@ -475,6 +480,176 @@ fn bag_literal_lowers_to_tagged_elist_preserving_multiplicity() {
     assert_eq!(entries.ps.len(), 2);
     assert_list_count_pair(&entries.ps[0], "alpha", 2);
     assert_list_count_pair(&entries.ps[1], "beta", 1);
+}
+
+// ────────────────────────────── A-S4: lowering-purity probes ──────────────────────────────
+//
+// The host computes NO values at lowering time: arithmetic lowers to the machine's metered
+// `Expr`s; width/precision folds lift into fold-contract trampolines the machine drives at COMM
+// time. The probes are byte-level value-absence checks in the A-S3 style (`par_bytes_contain`
+// over the prost encoding, with a contrastive control proving needle sensitivity) plus
+// machine-computed evidence: without the registered fold contract nothing can produce the value
+// (OUT stays empty); with it, OUT carries exactly the fold result.
+
+/// Whether the prost-encoded bytes of `par` contain `needle` (the A-S3 probe helper).
+fn par_bytes_contain(par: &Par, needle: &[u8]) -> bool {
+    let bytes = par.encode_to_vec();
+    bytes.windows(needle.len()).any(|window| window == needle)
+}
+
+/// The byte needle for "the ground literal `value` rides this `Par`": the encoded bytes of a bare
+/// `GInt` value `Par`. A `Par` embedded in any message field serializes its own content
+/// contiguously, so the needle matches wherever the literal value-leaf appears.
+fn gint_par_needle(value: i64) -> Vec<u8> {
+    new_gint_par(value, Vec::new(), false).encode_to_vec()
+}
+
+/// The `GBigInt` twin of [`gint_par_needle`]: plain rhocalc integer literals lex to `BigInt`
+/// (the Rholang 1.4 arbitrary-precision default), so raw arithmetic operands ride the call as
+/// `GBigInt` value leaves (signed big-endian two's-complement bytes).
+fn gbigint_par_needle(value: i64) -> Vec<u8> {
+    Par::default()
+        .with_exprs(vec![models::rust::utils::new_gbigint_expr(
+            num_bigint::BigInt::from(value).to_signed_bytes_be(),
+        )])
+        .encode_to_vec()
+}
+
+/// A-S4 deliverable-3 probe (RhoCalc arithmetic): the RAW parse tree `@("OUT")!(1 + 2 * 3)`
+/// lowers to metered machine `Expr`s — the injected call carries the OPERANDS but NOT the result
+/// literal `7` (no host pre-computation), and the machine's send-data evaluation produces `7` on
+/// OUT.
+#[tokio::test]
+async fn a_s4_raw_arithmetic_lowers_to_metered_exprs_and_the_machine_computes_the_value() {
+    let par = parse_lower(r#"@("OUT")!(1 + 2 * 3)"#);
+
+    // Value absence: the call embeds 1, 2, 3 (the operands, `GBigInt` literals) and not 7 (the
+    // result) in either ground encoding.
+    assert!(par_bytes_contain(&par, &gbigint_par_needle(1)), "operand 1 rides the call");
+    assert!(par_bytes_contain(&par, &gbigint_par_needle(2)), "operand 2 rides the call");
+    assert!(par_bytes_contain(&par, &gbigint_par_needle(3)), "operand 3 rides the call");
+    assert!(
+        !par_bytes_contain(&par, &gbigint_par_needle(7))
+            && !par_bytes_contain(&par, &gint_par_needle(7)),
+        "A-S4: no host-pre-computed value may ride the injected call Par"
+    );
+    // Contrastive control: a call that DOES embed the literal is matched by the needle — the
+    // probe is sensitive.
+    let literal_par = parse_lower(r#"@("OUT")!(7)"#);
+    assert!(
+        par_bytes_contain(&literal_par, &gbigint_par_needle(7)),
+        "the needle detects an embedded literal (control)"
+    );
+
+    // The MACHINE computes: the metered send-data evaluation reduces `1 + 2 * 3` to 7 on OUT
+    // (a `GBigInt` value — plain literals are arbitrary-precision).
+    let values = run_normalized_par_for_oracle_and_read_runtime_values(&par, "OUT")
+        .await
+        .expect("the metered expression call executes on the Rho machine");
+    assert_eq!(
+        values,
+        vec![RuntimeObservationValue::BigIntBytes(
+            num_bigint::BigInt::from(7).to_signed_bytes_be()
+        )],
+        "1 + 2 * 3 = 7, machine-computed"
+    );
+}
+
+/// A-S4 string-concat parity: RhoCalc `+` on ground strings is Rholang `++` (`EPlusPlus`) — the
+/// machine concatenates; the host does not.
+#[tokio::test]
+async fn a_s4_ground_string_add_lowers_to_eplusplus_and_concatenates_on_machine() {
+    let source = r#"@("OUT")!("con" + "cat")"#;
+    assert_eq!(read_strings(source).await, vec!["concat".to_string()]);
+}
+
+/// A-S4 deliverable-3 probe (RhoCalc width cast): `@("OUT")!(int(2 + 3, 8))` lifts the fold into
+/// a fold-contract trampoline. Three-part machine-computed evidence (A-S3 style):
+///   1. VALUE ABSENCE — the call carries the operands (2, 3) but not the folded value 5;
+///      the contrastive control (an explicit `@("OUT")!(5)`) proves needle sensitivity;
+///   2. WITHOUT the registered fold `Definition` the value cannot appear (OUT stays EMPTY —
+///      nothing else can fabricate it);
+///   3. WITH the production wrapper (which drains + registers the recorded fold contract), the
+///      machine's trampoline COMM computes `int(5, 8) = 5` and OUT carries exactly it.
+#[tokio::test]
+async fn a_s4_ground_width_fold_value_is_computed_by_the_fold_contract_at_comm_time() {
+    clear_var_cache();
+    let term = RhoCalcLanguage
+        .parse_term(r#"@("OUT")!(int(2 + 3, 8))"#)
+        .expect("the width-fold send parses");
+    let (par, specs) =
+        lower_rhocalc_term_with_folds(term.as_ref()).expect("the ground fold lifts and lowers");
+
+    // The lift recorded exactly one Int-width-8 fold site.
+    assert_eq!(specs.len(), 1, "one fold ⇒ one fold-contract spec");
+    assert_eq!(specs[0].kind, FoldKind::Int);
+    assert_eq!(specs[0].width, 8);
+
+    // (1) Value absence + operand presence, with the contrastive control. The operands are
+    // `GBigInt` literals; the folded result would be a `GInt` (the `int(·, w)` class) — assert
+    // the value 5 is absent in BOTH ground encodings.
+    assert!(par_bytes_contain(&par, &gbigint_par_needle(2)), "operand 2 rides the call");
+    assert!(par_bytes_contain(&par, &gbigint_par_needle(3)), "operand 3 rides the call");
+    assert!(
+        !par_bytes_contain(&par, &gint_par_needle(5))
+            && !par_bytes_contain(&par, &gbigint_par_needle(5)),
+        "A-S4: the folded value must NOT be pre-computed into the call Par"
+    );
+    let control = parse_lower(r#"@("OUT")!(5)"#);
+    assert!(
+        par_bytes_contain(&control, &gbigint_par_needle(5)),
+        "the needle detects an embedded folded value (control)"
+    );
+
+    // (2) Without the registered fold contract the trampoline send rests unconsumed: OUT EMPTY.
+    let without_contract = run_normalized_par_for_oracle_and_read_runtime_values(&par, "OUT")
+        .await
+        .expect("the lifted call runs (inertly) without the fold Definition");
+    assert!(
+        without_contract.is_empty(),
+        "no component but the registered fold contract can produce the value \
+         (got {without_contract:?})"
+    );
+
+    // (3) With the production wrapper the drained fold Definition is registered and the machine
+    // computes the fold at COMM time.
+    let language =
+        dovetail_rho_backed_rhocalc("OUT").expect("the dovetail+Rho RhoCalc wrapper installs");
+    let exec_term = language
+        .parse_term(r#"int(2 + 3, 8)"#)
+        .expect("the pure width-fold term parses");
+    let report = language
+        .run_default_backend_report(exec_term.as_ref())
+        .expect("the fold execs on the Rho machine via the trampoline");
+    assert_eq!(report.backend(), RuntimeBackend::RhoMachine);
+    let out = report
+        .observations_for_channel("OUT")
+        .expect("the machine-computed fold value lands on OUT");
+    assert_eq!(
+        out.values,
+        vec![RuntimeObservationValue::Int(5)],
+        "int(2 + 3, 8) = 5, computed by the fold contract on the machine"
+    );
+}
+
+/// A-S4 deliverable-1a: with the E2 Dovetail fold-normalization fallback DELETED, a construct
+/// with no machine algebra fails CLOSED with the typed lowering error NAMING it (here the
+/// bitwise operator, which has no Rholang `Expr`).
+#[test]
+fn a_s4_unlowerable_construct_fails_closed_with_a_named_typed_error() {
+    clear_var_cache();
+    let proc = Proc::parse_via_wpda("5 bitand 3").expect("the bitand term parses");
+    let err = lower_rhocalc_proc(&proc)
+        .expect_err("bitand has no Rholang bitwise Expr; the lowering must fail closed");
+    match err {
+        RhocalcAstLowerError::UnsupportedProc(name) => {
+            assert!(
+                name.contains("bitand"),
+                "the typed error names the construct, got {name:?}"
+            );
+        },
+        other => panic!("expected a typed UnsupportedProc naming the construct, got {other:?}"),
+    }
 }
 
 fn only_expr(par: &Par) -> &ExprInstance {

@@ -521,6 +521,224 @@ mod tests {
         }
     }
 
+    /// A-S4 exec input-formation recorders: which host-side seams ran during ONE `exec`.
+    #[derive(Default)]
+    struct InputFormationRecord {
+        normalized: std::sync::atomic::AtomicBool,
+        folding_substitution: std::sync::atomic::AtomicBool,
+        preserving_substitution: std::sync::atomic::AtomicBool,
+    }
+
+    impl InputFormationRecord {
+        fn set(flag: &std::sync::atomic::AtomicBool) {
+            flag.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+
+        fn get(flag: &std::sync::atomic::AtomicBool) -> bool {
+            flag.load(std::sync::atomic::Ordering::SeqCst)
+        }
+    }
+
+    /// A-S4 probe language: records which input-formation seams (`normalize_term`,
+    /// `substitute_env`, `substitute_env_preserve_structure`) the REPL `exec` path invokes.
+    /// `is_env_empty` reports `false` so the substitution seam always runs. The Rho-default
+    /// variant serves observations; the Dovetail-default variant serves the Dovetail probe
+    /// report — both let `exec` complete so the assertions cover the WHOLE path.
+    struct InputFormationProbeLanguage {
+        rho_default: bool,
+        record: std::sync::Arc<InputFormationRecord>,
+    }
+
+    impl Language for InputFormationProbeLanguage {
+        fn name(&self) -> &'static str {
+            if self.rho_default {
+                "BypassProbe"
+            } else {
+                "DovetailProbe"
+            }
+        }
+
+        fn metadata(&self) -> &'static dyn LanguageMetadata {
+            if self.rho_default {
+                &RHO_DEFAULT_METADATA
+            } else {
+                &DOVETAIL_DEFAULT_METADATA
+            }
+        }
+
+        fn parse_term(&self, _input: &str) -> Result<Box<dyn Term>, String> {
+            Ok(Box::new(TestTerm { display: "raw", id: 71 }))
+        }
+
+        fn parse_term_for_env(&self, input: &str) -> Result<Box<dyn Term>, String> {
+            self.parse_term(input)
+        }
+
+        fn run_ascent(&self, _term: &dyn Term) -> Result<AscentResults, String> {
+            panic!("the input-formation probe must not run Ascent")
+        }
+
+        fn run_backend_report(
+            &self,
+            backend: RuntimeBackend,
+            _term: &dyn Term,
+        ) -> Result<RuntimeBackendReport, String> {
+            match backend {
+                RuntimeBackend::RhoMachine => RuntimeBackendReport::try_observations(
+                    RuntimeBackend::RhoMachine,
+                    RuntimeBackendArtifact::RhoNormalizedAst,
+                    vec![RuntimeChannelObservation::new(
+                        "OUT",
+                        vec![RuntimeObservationValue::Text("machine".to_string())],
+                    )],
+                )
+                .map_err(|err| err.to_string()),
+                RuntimeBackend::Dovetail => {
+                    RuntimeBackendReport::try_dovetail(dovetail_probe_report())
+                        .map_err(|err| err.to_string())
+                },
+                other => Err(format!("unexpected backend: {other}")),
+            }
+        }
+
+        fn normalize_term(&self, term: &dyn Term) -> Box<dyn Term> {
+            InputFormationRecord::set(&self.record.normalized);
+            term.clone_box()
+        }
+
+        fn create_env(&self) -> Box<dyn Any + Send + Sync> {
+            Box::new(())
+        }
+
+        fn add_to_env(
+            &self,
+            _env: &mut dyn Any,
+            _name: &str,
+            _term: &dyn Term,
+        ) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn remove_from_env(&self, _env: &mut dyn Any, _name: &str) -> Result<bool, String> {
+            Ok(false)
+        }
+
+        fn clear_env(&self, _env: &mut dyn Any) {}
+
+        fn substitute_env(&self, term: &dyn Term, _env: &dyn Any) -> Result<Box<dyn Term>, String> {
+            InputFormationRecord::set(&self.record.folding_substitution);
+            Ok(term.clone_box())
+        }
+
+        fn substitute_env_preserve_structure(
+            &self,
+            term: &dyn Term,
+            _env: &dyn Any,
+        ) -> Result<Box<dyn Term>, String> {
+            InputFormationRecord::set(&self.record.preserving_substitution);
+            Ok(term.clone_box())
+        }
+
+        fn list_env(&self, _env: &dyn Any) -> Vec<(String, String, Option<String>)> {
+            Vec::new()
+        }
+
+        fn set_env_comment(
+            &self,
+            _env: &mut dyn Any,
+            _name: &str,
+            _comment: String,
+        ) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn is_env_empty(&self, _env: &dyn Any) -> bool {
+            // Force the substitution seam so the probe observes WHICH variant runs.
+            false
+        }
+
+        fn infer_term_type(&self, _term: &dyn Term) -> TermType {
+            TermType::Unknown
+        }
+
+        fn infer_var_types(&self, _term: &dyn Term) -> Vec<VarTypeInfo> {
+            Vec::new()
+        }
+
+        fn infer_var_type(&self, _term: &dyn Term, _var_name: &str) -> Option<TermType> {
+            None
+        }
+    }
+
+    /// A-S4 (exec-path hygiene): a RhoMachine-default `exec` submits the RAW parsed term — env
+    /// substitution is the STRUCTURE-PRESERVING variant (input formation only, no folding) and
+    /// `normalize_term` (β + constant folding) never runs. The machine, not the host, reduces.
+    #[test]
+    fn a_s4_rho_machine_exec_submits_the_raw_term_with_structure_preserving_substitution() {
+        let record = std::sync::Arc::new(InputFormationRecord::default());
+        let mut registry = LanguageRegistry::new();
+        registry.register(Box::new(InputFormationProbeLanguage {
+            rho_default: true,
+            record: std::sync::Arc::clone(&record),
+        }));
+        let mut repl = Repl::new(registry).expect("test REPL can be constructed");
+        repl.load_language("BypassProbe")
+            .expect("probe language is registered");
+        // Seed the (unit) environment so the substitution seam runs (`exec` substitutes only
+        // when an environment exists; the probe's `is_env_empty` reports non-empty).
+        repl.state.ensure_environment(|| Box::new(()));
+
+        repl.cmd_exec_term("input")
+            .expect("the RhoMachine exec completes on the raw term");
+
+        assert!(
+            !InputFormationRecord::get(&record.normalized),
+            "A-S4: a RhoMachine exec must NOT pre-normalize (β/constant-fold) on the host"
+        );
+        assert!(
+            !InputFormationRecord::get(&record.folding_substitution),
+            "A-S4: a RhoMachine exec must NOT use the folding env substitution"
+        );
+        assert!(
+            InputFormationRecord::get(&record.preserving_substitution),
+            "A-S4: env substitution still happens as INPUT FORMATION (structure-preserving)"
+        );
+    }
+
+    /// Dovetail-default languages (Lambda/Ambient) keep today's behavior: folding env
+    /// substitution + host-side `normalize_term` before the Dovetail backend (Dovetail IS the
+    /// evaluator there — nothing is being taken off a machine).
+    #[test]
+    fn a_s4_dovetail_exec_keeps_normalization_and_folding_substitution() {
+        let record = std::sync::Arc::new(InputFormationRecord::default());
+        let mut registry = LanguageRegistry::new();
+        registry.register(Box::new(InputFormationProbeLanguage {
+            rho_default: false,
+            record: std::sync::Arc::clone(&record),
+        }));
+        let mut repl = Repl::new(registry).expect("test REPL can be constructed");
+        repl.load_language("DovetailProbe")
+            .expect("probe language is registered");
+        // Seed the (unit) environment so the substitution seam runs.
+        repl.state.ensure_environment(|| Box::new(()));
+
+        repl.cmd_exec_term("input")
+            .expect("the Dovetail exec completes");
+
+        assert!(
+            InputFormationRecord::get(&record.normalized),
+            "a Dovetail-default exec keeps the host normalize (unchanged behavior)"
+        );
+        assert!(
+            InputFormationRecord::get(&record.folding_substitution),
+            "a Dovetail-default exec keeps the folding env substitution (unchanged behavior)"
+        );
+        assert!(
+            !InputFormationRecord::get(&record.preserving_substitution),
+            "a Dovetail-default exec does not switch to the preserve-structure variant"
+        );
+    }
+
     #[test]
     fn exec_uses_selected_backend_report_instead_of_legacy_direct_eval() {
         let mut registry = LanguageRegistry::new();
@@ -2166,10 +2384,27 @@ impl Repl {
             println!("{}", "✓ Resolved from environment".green());
         }
 
+        // Resolve the selected backend FIRST: A-S4 gates the exec input formation on it (below),
+        // and execution needs it regardless.
+        let backend = language.selected_default_runtime_backend().ok_or_else(|| {
+            anyhow::anyhow!(
+                "language {} does not advertise a default runtime backend. Raw generated languages are parse/introspection substrates; install a checked Dovetail/Rho runtime wrapper before executing them.",
+                language.name()
+            )
+        })?;
+        // A-S4 (exec-path hygiene): when the selected default backend is the Rho MACHINE, `exec`
+        // submits the RAW parsed term — the machine, not the host, performs every reduction
+        // (β, constant folding, arithmetic). Env substitution still happens (input formation)
+        // but STRUCTURE-PRESERVING: names are replaced by their bound terms with no folding.
+        // Dovetail-default languages (Lambda/Ambient) keep the host-side normalize (Dovetail IS
+        // the evaluator there); `step` keeps its raw+preserve behavior for both (report-eager by
+        // design per A-S2).
+        let preserve_raw_term = step_mode || backend == RuntimeBackend::RhoMachine;
+
         let term = if let Some(env) = self.state.environment() {
             if !language.is_env_empty(env) {
                 print!("Substituting environment... ");
-                let substituted = if step_mode {
+                let substituted = if preserve_raw_term {
                     language
                         .substitute_env_preserve_structure(term.as_ref(), env)
                         .map_err(|e| anyhow::anyhow!("{}", e))?
@@ -2188,24 +2423,16 @@ impl Repl {
         };
 
         // Normalize (beta-reduce Apply/MApply of Lam/MLam, and constant-fold arithmetic) before
-        // evaluation — but ONLY for `exec`. In `step` mode the whole point is to show those
-        // reductions one small step at a time, so normalizing here would hand the stepper an
-        // already-reduced normal form (it would report "0 rewrites, already a normal form"). This
-        // mirrors the step-mode choice above to use `substitute_env_preserve_structure` (no
-        // constant folding) rather than `substitute_env`.
-        let term = if step_mode {
+        // evaluation — ONLY for a Dovetail-default `exec`. In `step` mode the whole point is to
+        // show those reductions one small step at a time, so normalizing here would hand the
+        // stepper an already-reduced normal form (it would report "0 rewrites, already a normal
+        // form"). For a RhoMachine-default `exec` (A-S4) pre-normalizing would let the HOST
+        // compute values the machine is supposed to compute — the raw term goes to the backend.
+        let term = if preserve_raw_term {
             term
         } else {
             language.normalize_term(term.as_ref())
         };
-
-        // Execute using the language's selected backend.
-        let backend = language.selected_default_runtime_backend().ok_or_else(|| {
-            anyhow::anyhow!(
-                "language {} does not advertise a default runtime backend. Raw generated languages are parse/introspection substrates; install a checked Dovetail/Rho runtime wrapper before executing them.",
-                language.name()
-            )
-        })?;
         // Step mode needs a navigable rewrite/derivation graph; the RhoMachine backend yields
         // runtime observations, not a graph. When the default backend is RhoMachine, ask the
         // language's dedicated step-report API for the faithful one-step REWRITE graph (Increment 4): a

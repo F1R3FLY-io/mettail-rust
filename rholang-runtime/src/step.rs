@@ -740,18 +740,26 @@ mod tests {
 
     #[test]
     fn held_fold_lowering_emits_one_fold_contract_spec() {
-        // The held fold `int(*(x),8)` lifts (1 fold-spec); the ground send-side `int(5,8)` folds in
-        // place; the lifted call has the original send + receive.
+        // A-S4 (lowering purity): EVERY fold lifts — the held `int(*(x),8)` AND the ground
+        // send-side `int(5,8)` (which pre-A-S4 folded in place, host-side). Two folds ⇒ two
+        // fold-contract specs, both Int width 8. The top level is now the ground fold's
+        // trampoline scope (`new ret0 { @fold0!(5, ret0) | for(@r0 <- ret0){ … } }`), so the
+        // original send/receive pair sits INSIDE that `new`.
         let term = RhoCalcLanguage
             .parse_term(r#"{ for(x <- @("c")){ int(*(x), 8) } | @("c")!(int(5,8)) }"#)
             .expect("parse");
         let (par, specs) = crate::rhocalc_ast::lower_rhocalc_term_with_folds(term.as_ref())
-            .expect("the held fold lifts, so lowering succeeds");
-        assert_eq!(specs.len(), 1, "one held fold ⇒ one fold-contract spec");
-        assert_eq!(specs[0].kind, crate::fold_contract::FoldKind::Int);
-        assert_eq!(specs[0].width, 8);
-        assert_eq!(par.sends.len(), 1, "the original `@(\"c\")!(5)` send");
-        assert_eq!(par.receives.len(), 1, "the original `@(\"c\")?x` receive");
+            .expect("both folds lift, so lowering succeeds");
+        assert_eq!(specs.len(), 2, "held fold + ground fold ⇒ two fold-contract specs (A-S4)");
+        for spec in &specs {
+            assert_eq!(spec.kind, crate::fold_contract::FoldKind::Int);
+            assert_eq!(spec.width, 8);
+        }
+        assert_eq!(
+            par.news.len(),
+            1,
+            "the top level is the ground fold's trampoline `new` scope"
+        );
     }
 
     #[test]
@@ -782,30 +790,37 @@ mod tests {
 
     #[test]
     fn wrapper_pure_fold_term_steps_to_output_only() {
-        // A pure value/fold has no COMM rendezvous, but the production wrapper now observes it via a
-        // Rho output send instead of returning a Dovetail report.
+        // A-S4: a pure ground fold is no longer host-folded at lowering time — the trace now
+        // SHOWS the machine computing it: the fold-contract COMM step(s) first (the trampoline
+        // rendezvous that produces the folded value), then the terminal output observing the
+        // machine-computed result on OUT.
         use crate::rhocalc_ast::dovetail_rho_backed_rhocalc;
         let language = dovetail_rho_backed_rhocalc("OUT").expect("build RhoCalc wrapper");
         let term = pure_int_fold_term(5, 8);
         let mut stepper = language
             .start_reduction_stepper(&term)
             .expect("pure fold has a Rho observation program");
-        let first = stepper
-            .next_step()
-            .expect("first step must not error")
-            .expect("pure fold emits one terminal output step");
-        assert_eq!(first.kind, RuntimeReductionKind::Output);
+        let mut steps = Vec::new();
+        while let Some(step) = stepper.next_step().expect("next_step must not error") {
+            steps.push(step);
+        }
         assert!(
-            first.display.contains("OUT") && first.display.contains("5"),
-            "pure fold output should observe 5 on OUT: {}",
-            first.display
+            steps.len() >= 2,
+            "the ground fold trampolines on the machine (fold-contract COMM) before the \
+             terminal output; got {} step(s): {:?}",
+            steps.len(),
+            steps.iter().map(|s| &s.display).collect::<Vec<_>>()
+        );
+        let last = steps.last().expect("checked non-empty");
+        assert_eq!(
+            last.kind,
+            RuntimeReductionKind::Output,
+            "the trace ends with the terminal OUT observation"
         );
         assert!(
-            stepper
-                .next_step()
-                .expect("second step must not error")
-                .is_none(),
-            "pure fold has no COMM step after its terminal output"
+            last.display.contains("OUT") && last.display.contains("5"),
+            "pure fold output should observe the machine-computed 5 on OUT: {}",
+            last.display
         );
     }
 

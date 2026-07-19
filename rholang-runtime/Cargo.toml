@@ -267,6 +267,11 @@ syn = { workspace = true, optional = true }
 # separate f1r3node PR.
 crossbeam-channel = "0.5"
 async-trait = "0.1"
+# A-S4 (fold-contract operand decode): invert the extended-numeric ground `Expr`s
+# (`GBigInt`/`GBigRat`/`GFixedPoint` — signed big-endian two's-complement bytes) back to the
+# canonical MeTTaIL numerics so the trusted native fold runs on the machine-delivered operand.
+# Same version the `runtime` crate's canonical numeric types are built on.
+num-bigint = "0.4"
 # BENCHMARK-ONLY (Track B, `bench-naive-baseline`): the set automaton, for the
 # harness's direct-construction workload rulesets (see the feature's comment).
 # Inert unless the quarantined bench feature is enabled.

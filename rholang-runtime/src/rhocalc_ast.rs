@@ -11,8 +11,8 @@ use std::sync::Arc;
 
 use crate::fold_contract::{fold_channel, FoldKind, FoldSpec};
 use mettail_languages::rhocalc::{
-    Bag, Bytes, ForRow, InputBind, Int, List, Map, Name, Pathmap, Proc, RhoCalcLanguage,
-    RhoCalcTerm, RhoCalcTermInner, Set,
+    Bag, BigInt, BigRat, Bool, Bytes, Fixed, Float, ForRow, InputBind, Int, List, Map, Name,
+    Pathmap, Proc, RhoCalcLanguage, RhoCalcTerm, RhoCalcTermInner, Set, Str, UInt32,
 };
 use mettail_rholang_codegen::{
     lower_language_def, plan_rho_default_backend, suggest_rejected_rule_dispositions,
@@ -25,7 +25,8 @@ use mettail_runtime::{
 };
 use models::rhoapi::expr::ExprInstance;
 use models::rhoapi::{
-    EAnd, EEq, EGt, EGte, ELt, ELte, ENeq, ENot, EOr, Expr, Par, ReceiveBind,
+    EAnd, EDiv, EEq, EGt, EGte, ELt, ELte, EMinus, EMod, EMult, ENeg, ENeq, ENot, EOr, EPlus,
+    EPlusPlus, Expr, Par, ReceiveBind,
 };
 use models::rust::rholang::implicits::GPrivateBuilder;
 use models::rust::utils::{
@@ -362,39 +363,34 @@ fn rhocalc_dovetail_step_graph(term: &dyn Term) -> Result<RuntimeDovetailRunRepo
 }
 
 /// The RhoCalc F-stage lowering shared by the report-free compile and the report-carrying
-/// fallback (the closure body of the pre-A-S2 invocation compiler, verbatim).
+/// fallback.
 ///
-/// Lower the ORIGINAL term first: the AST mapper handles COMM (send/receive/`new`) directly
-/// and reduces `int(..)`-cast embedded folds via `try_eval` (so `@("OUT")!(int(1+2,8))`
-/// lowers to `@("OUT")!(3)`). ONLY if the original cannot lower (an un-reduced Proc-level
-/// fold) do we fold-normalize via Dovetail (E2) and lower that. A stuck term — e.g. a
-/// pure-COMM term whose receive does not reduce in Dovetail, where `dovetail_normal_term`
-/// errors "stuck term" — fails the Rho-default invocation instead of falling back to a
-/// Dovetail backend report. Calling `dovetail_normal_term` unconditionally is wrong for
-/// exactly that pure-COMM case. (The E2 fold-normalization is part of the F-stage LOWERING —
-/// reached only when direct lowering fails — not the D-stage report the A-S2 demotion makes
-/// lazy.)
+/// A-S4 (lowering purity): the lowering is PURE structural translation — the host computes no
+/// values. COMM (send/receive/`new`) lowers directly; arithmetic/comparison/logic lower to the
+/// machine's own metered `Expr` algebra (`EPlus`/`EMinus`/…); width/precision folds lift into
+/// fold-contract trampolines the MACHINE drives at COMM time (ground operands included — the
+/// former Tier-1 in-place `try_eval` fold is deleted); a construct with no machine algebra fails
+/// CLOSED with the typed lowering error naming it. The pre-A-S4 E2 fallback (fold-normalize via
+/// `dovetail_normal_term`, then lower the host-computed normal form) is DELETED: it was the last
+/// host-evaluation lane on the admitted exec path.
+///
+/// Pure VALUE terms (no machine effects — `1 + 2`, `int(5,8)`, `"hi"`) are wrapped as
+/// `@("OUT")!(term)` BEFORE lowering ([`wrap_pure_value_term`]), so the observable result is
+/// produced by RSpace and any fold trampoline lifts AROUND the observation send (the machine
+/// computes, then sends the result to `OUT`). For a value term with no fold this produces the
+/// byte-identical `Par` the post-lowering [`observe_pure_value_call`] wrap produced (the wrap
+/// commutes with lowering: `lower(@("OUT")!(v)) == observe_pure_value_call(lower(v), "OUT")`),
+/// which remains in place for the multi-alternative and lowers-to-pure cases.
 fn rhocalc_backend_invocation(
     term: &dyn Term,
     out_channel: &str,
 ) -> Result<crate::backend::RhoBackendInvocation, String> {
-    let call = match lower_rhocalc_term(term) {
-        Ok(par) => par,
-        Err(_) => match RhoCalcLanguage::dovetail_normal_term(
-            term,
-            RHOCALC_DOVETAIL_MAX_ITERS,
-            RHOCALC_DOVETAIL_MAX_NODES,
-        ) {
-            Ok(normal) => lower_rhocalc_term(normal.as_ref()).map_err(|err| {
-                format!("RhoCalc normal form could not be lowered to the Rho machine: {err:?}")
-            })?,
-            Err(err) => {
-                return Err(format!(
-                    "RhoCalc term could not be lowered directly or normalized for Rho-machine execution: {err}"
-                ))
-            },
-        },
-    };
+    let call = lower_rhocalc_exec_term(term, out_channel).map_err(|err| {
+        format!(
+            "RhoCalc term could not be lowered to the Rho machine \
+             (A-S4 fail-closed lowering; no host fold-normalization fallback): {err:?}"
+        )
+    })?;
     let call = if call_has_runtime_effects(&call) {
         call
     } else {
@@ -408,16 +404,101 @@ fn rhocalc_backend_invocation(
     ))
 }
 
+/// Lower a term for EXEC, wrapping a single-alternative pure VALUE term as `@(out_channel)!(term)`
+/// at the AST level first — see [`rhocalc_backend_invocation`]. Multi-alternative (ambiguous)
+/// terms keep the historical par-level wrap ([`observe_pure_value_call`], applied by the caller):
+/// per-alternative AST wrapping would change the observation shape (one send per alternative
+/// instead of one send of the union), so it is not applied there.
+fn lower_rhocalc_exec_term(
+    term: &dyn Term,
+    out_channel: &str,
+) -> Result<Par, RhocalcAstLowerError> {
+    let alternatives = rhocalc_proc_alternatives_from_term(term)?;
+    if let [only] = alternatives.as_slice() {
+        if !proc_has_machine_effects(only) {
+            let wrapped = wrap_pure_value_term(only, out_channel);
+            return lower_proc_alternatives([&wrapped]);
+        }
+    } else if alternatives
+        .iter()
+        .any(|alt| !proc_has_machine_effects(alt) && find_fold(alt).is_some())
+    {
+        // An AMBIGUOUS pure-value alternative containing a fold: the historical par-level wrap
+        // observes the union par as one value, but a lifted fold makes the alternative
+        // EFFECTFUL, so its trampolined result would rest in the space unobserved — a silent
+        // value drop. Fail closed instead (honest, typed) until an ambiguous-value observation
+        // shape is designed.
+        return Err(RhocalcAstLowerError::UnsupportedProc(
+            "ambiguous pure-value term containing a width/precision fold",
+        ));
+    }
+    lower_proc_alternatives(alternatives)
+}
+
+/// `@(out_channel)!(term)` at the AST level: the value-observation input formation for a pure
+/// value term. Uses the same channel construction the lowered [`observe_pure_value_call`] targets
+/// (`NQuote(CastStr(out_channel))` lowers to the identical `GString` channel `Par`).
+fn wrap_pure_value_term(value: &Proc, out_channel: &str) -> Proc {
+    Proc::POutput(
+        Arc::new(Name::NQuote(Arc::new(Proc::CastStr(Arc::new(Str::StringLit(
+            out_channel.to_string(),
+        )))))),
+        Arc::new(value.clone()),
+    )
+}
+
+/// Conservative AST-level effect analysis for the exec value-wrap: does lowering this proc yield
+/// top-level machine effects (sends/receives/news)? Mirrors [`call_has_runtime_effects`] over the
+/// AST — values (casts, literals, collections, arithmetic/comparison/logic exprs, folds) report
+/// `false`; process constructs report `true`. Send sugar is desugared first so every send shape
+/// is seen as a send. A free proc variable lowers to an `mtl#out` send, hence `true`.
+fn proc_has_machine_effects(proc: &Proc) -> bool {
+    if let Some(desugared) = desugar_send_node(proc) {
+        return proc_has_machine_effects(&desugared);
+    }
+    match proc {
+        Proc::POutput(..)
+        | Proc::PPersistOutput(..)
+        | Proc::POutputShort(..)
+        | Proc::PPersistOutputShort(..)
+        | Proc::PForUser(..)
+        | Proc::CommWhere(..)
+        | Proc::PNew(..)
+        | Proc::PVar(..) => true,
+        Proc::PPar(parts) => parts.iter_elements().any(proc_has_machine_effects),
+        Proc::PParInfix(left, right) => {
+            proc_has_machine_effects(left.as_ref()) || proc_has_machine_effects(right.as_ref())
+        },
+        Proc::GuardThen(cond, body) => {
+            proc_has_machine_effects(cond.as_ref()) || proc_has_machine_effects(body.as_ref())
+        },
+        // `*(@(P))` inlines `P`; effects ride inside. `*(x)` / `*(@Nil)` lower to value pars.
+        Proc::PDrop(name) => name_has_machine_effects(name.as_ref()),
+        _ => false,
+    }
+}
+
+fn name_has_machine_effects(name: &Name) -> bool {
+    match name {
+        Name::NQuote(proc) | Name::NQuoteShort(proc) => proc_has_machine_effects(proc.as_ref()),
+        Name::NParen(inner) => name_has_machine_effects(inner.as_ref()),
+        _ => false,
+    }
+}
+
 /// Two-stage checked-Dovetail+Rho RhoCalc backend — the production default for the REPL `exec` of
 /// RhoCalc.
 ///
 /// One-way pipeline (no bidirectional bridge; see
 /// `docs/architecture/rho-native-integration/09-term-level-reduction-split.md`): the **F-stage**
-/// lowers the term to a normalized `Par` ([`rhocalc_backend_invocation`]: direct AST lowering,
-/// with the fold-normal term via [`RhoCalcLanguage::dovetail_normal_term`], extension E2, as the
-/// in-stage fallback) and routes every lowerable result through the real Rho machine. A term
-/// carrying a send/receive/`new` runs as that process. A closed pure value/fold with no Rho
-/// effects is wrapped as `@"OUT"!(value)` so the observable result is still produced by RSpace.
+/// lowers the term to a normalized `Par` ([`rhocalc_backend_invocation`]: PURE structural AST
+/// lowering — A-S4 deleted the E2 `dovetail_normal_term` fold-normalization fallback, the last
+/// host-evaluation lane) and routes every lowerable result through the real Rho machine. A term
+/// carrying a send/receive/`new` runs as that process; arithmetic runs as the machine's metered
+/// `Expr`s; width/precision folds run as machine-driven fold-contract COMMs. A closed pure
+/// value/fold with no Rho effects is wrapped as `@"OUT"!(value)` so the observable result is
+/// still produced by RSpace. An un-lowerable construct fails CLOSED with the typed lowering
+/// error naming it.
 ///
 /// A-S2 (D-stage demotion): the F-stage never read the Dovetail report, so the report-free
 /// compile (`F2`) IS the same lowering; an admitted exec runs with ZERO D-stage. A lowering
@@ -466,8 +547,14 @@ fn observe_pure_value_call(value: Par, out_channel: &str) -> Par {
 }
 
 /// Lower a rhocalc process into normalized Rholang `Par`.
+///
+/// A-S4: width/precision folds ANYWHERE in the process (top level, send payloads, receive
+/// bodies, `new` bodies — ground or COMM-held operands alike) lift into fold-contract
+/// trampolines the machine drives; the host computes no fold values. Callers that execute the
+/// result must register the recorded fold `Definition`s (the `clear_held_fold_sites` /
+/// `take_held_fold_sites` bracket, or [`lower_rhocalc_term_with_folds`]).
 pub fn lower_rhocalc_proc(proc: &Proc) -> Result<Par, RhocalcAstLowerError> {
-    lower_proc(proc, &BoundEnv::new())
+    lower_body_lifting_folds(proc, &BoundEnv::new())
 }
 
 /// Lower a parsed `RhoCalcLanguage` term into normalized Rholang `Par`.
@@ -548,6 +635,13 @@ fn rhocalc_proc_semantic_key(proc: &Proc) -> Vec<u8> {
 }
 
 fn lower_proc(proc: &Proc, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> {
+    // A-S4: exec submits the RAW parse tree (no pre-normalization), so the send-sugar nodes
+    // (`x!()`, `c!(a,b)`, `@Nil!(q)`, `@n!(…)`, …) arrive unfolded. Desugar the HEAD node to its
+    // canonical channel-first form first — a pure structural rearrangement (the same constructor
+    // rewrite the rule's `fold` body performs, no value computation) — then lower that.
+    if let Some(desugared) = desugar_send_node(proc) {
+        return lower_proc(&desugared, env);
+    }
     match proc {
         Proc::PZero => Ok(Par::default()),
         Proc::PDrop(name) => lower_drop(name.as_ref(), env),
@@ -594,7 +688,9 @@ fn lower_proc(proc: &Proc, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> 
         Proc::PNew(scope) => {
             let (binders, body) = scope.clone().unbind::<String>();
             let extended_env = extend_env(env, &binders);
-            let body = lower_proc(body.as_ref(), &extended_env)?;
+            // A-S4: the `new` body is a fold-lift scope — a width/precision fold inside it
+            // trampolines here (mirrors receive bodies and the top level).
+            let body = lower_body_lifting_folds(body.as_ref(), &extended_env)?;
             let locally_free = filter_and_adjust_bitset(&body.locally_free, binders.len());
 
             Ok(new_new_par(
@@ -607,59 +703,68 @@ fn lower_proc(proc: &Proc, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> 
                 false,
             ))
         },
-        Proc::CastInt(value) => value
-            .as_ref()
-            .try_eval()
-            .map(|value| new_gint_par(value, Vec::new(), false))
-            .ok_or(RhocalcAstLowerError::UnsupportedProc("non-ground integer process")),
-        Proc::CastBool(value) => value
-            .as_ref()
-            .try_eval()
-            .map(|value| new_gbool_par(value, Vec::new(), false))
-            .ok_or(RhocalcAstLowerError::UnsupportedProc("non-ground boolean process")),
-        Proc::CastStr(value) => value
-            .as_ref()
-            .try_eval()
-            .map(|value| new_gstring_par(value, Vec::new(), false))
-            .ok_or(RhocalcAstLowerError::UnsupportedProc("non-ground string process")),
+        // ── A-S4 cast purity: casts lower STRUCTURALLY ─────────────────────────────────────
+        // A literal leaf is DATA (embedding `GInt(5)` is translation, not evaluation); a
+        // structural node lowers to the machine's own metered `Expr` (`-a` → `ENeg`); anything
+        // with no machine algebra (the macro-injected cross-type conversion constructors, an
+        // unsubstituted category variable, a lambda) fails closed, typed and named. The former
+        // `.try_eval()` arms computed those values host-side at lowering time.
+        Proc::CastInt(value) => lower_int_value(value.as_ref(), env),
+        Proc::CastBool(value) => match value.as_ref() {
+            Bool::BoolLit(literal) => Ok(new_gbool_par(*literal, Vec::new(), false)),
+            _ => Err(RhocalcAstLowerError::UnsupportedProc(
+                "non-literal boolean expression (Bool category)",
+            )),
+        },
+        Proc::CastStr(value) => match value.as_ref() {
+            Str::StringLit(literal) => Ok(new_gstring_par(literal.clone(), Vec::new(), false)),
+            _ => Err(RhocalcAstLowerError::UnsupportedProc(
+                "non-literal string expression (Str category)",
+            )),
+        },
         Proc::PVar(var) => lower_proc_var(var, env),
         Proc::Err => Err(RhocalcAstLowerError::UnsupportedProc("error process")),
-        Proc::CastBigRat(value) => value
-            .as_ref()
-            .try_eval()
-            .map(|value| {
-                let rational = value.get();
-                expr_par(new_gbigrat_expr(
+        Proc::CastBigRat(value) => match value.as_ref() {
+            BigRat::RatLit(literal) => {
+                let rational = literal.get();
+                Ok(expr_par(new_gbigrat_expr(
                     rational.numer().to_signed_bytes_be(),
                     rational.denom().to_signed_bytes_be(),
-                ))
-            })
-            .ok_or(RhocalcAstLowerError::UnsupportedProc("non-ground big rational process")),
-        Proc::CastFixed(value) => value
-            .as_ref()
-            .try_eval()
-            .map(|value| {
-                expr_par(new_gfixedpoint_expr(
-                    value.unscaled().to_signed_bytes_be(),
-                    value.places(),
-                ))
-            })
-            .ok_or(RhocalcAstLowerError::UnsupportedProc("non-ground fixed-point process")),
-        Proc::CastFloat(value) => value
-            .as_ref()
-            .try_eval()
-            .map(|value| expr_par(new_gdouble_expr(value.get())))
-            .ok_or(RhocalcAstLowerError::UnsupportedProc("non-ground float process")),
-        Proc::CastBigInt(value) => value
-            .as_ref()
-            .try_eval()
-            .map(|value| expr_par(new_gbigint_expr(value.get().to_signed_bytes_be())))
-            .ok_or(RhocalcAstLowerError::UnsupportedProc("non-ground big integer process")),
-        Proc::CastUInt32(value) => value
-            .as_ref()
-            .try_eval()
-            .map(|value| new_gint_par(i64::from(value), Vec::new(), false))
-            .ok_or(RhocalcAstLowerError::UnsupportedProc("non-ground u32 process")),
+                )))
+            },
+            _ => Err(RhocalcAstLowerError::UnsupportedProc(
+                "non-literal big-rational expression (BigRat category)",
+            )),
+        },
+        Proc::CastFixed(value) => match value.as_ref() {
+            Fixed::FixedLit(literal) => Ok(expr_par(new_gfixedpoint_expr(
+                literal.unscaled().to_signed_bytes_be(),
+                literal.places(),
+            ))),
+            _ => Err(RhocalcAstLowerError::UnsupportedProc(
+                "non-literal fixed-point expression (Fixed category)",
+            )),
+        },
+        Proc::CastFloat(value) => match value.as_ref() {
+            Float::FloatLit(literal) => Ok(expr_par(new_gdouble_expr(literal.get()))),
+            _ => Err(RhocalcAstLowerError::UnsupportedProc(
+                "non-literal float expression (Float category)",
+            )),
+        },
+        Proc::CastBigInt(value) => match value.as_ref() {
+            BigInt::NumLit(literal) => {
+                Ok(expr_par(new_gbigint_expr(literal.get().to_signed_bytes_be())))
+            },
+            _ => Err(RhocalcAstLowerError::UnsupportedProc(
+                "non-literal big-integer expression (BigInt category)",
+            )),
+        },
+        Proc::CastUInt32(value) => match value.as_ref() {
+            UInt32::NumLit(literal) => Ok(new_gint_par(i64::from(*literal), Vec::new(), false)),
+            _ => Err(RhocalcAstLowerError::UnsupportedProc(
+                "non-literal u32 expression (UInt32 category)",
+            )),
+        },
         Proc::CastList(value) => lower_list(value.as_ref(), env),
         Proc::CastBag(value) => lower_bag(value.as_ref(), env),
         Proc::CastMap(value) => lower_map(value.as_ref(), env),
@@ -671,69 +776,169 @@ fn lower_proc(proc: &Proc, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> 
             Bytes::StringLit(string) => Ok(new_gstring_par(string.clone(), Vec::new(), false)),
             _ => Err(RhocalcAstLowerError::UnsupportedProc("non-ground bytes process")),
         },
-        // Ground width folds (operand statically known — NOT bound by a COMM): run the EXACT native
-        // fold in place (`proc_*_bin` — the rule's own `![{…}]` body), recursively folding nested
-        // ground folds via the operand's own lowering (`int(int(5,8),16) → 5`). A HELD fold (operand
-        // bound by a receive) is lifted earlier in `lower_receive_body`; one reaching here was not in
-        // a receive body, so it stays unsupported. This replaces the prior reliance on a two-stage
-        // Dovetail normal-term pass for ground folds — needed so a term that ALSO contains a held
-        // fold lowers in one pass (the Dovetail pass intentionally leaves the held fold stuck).
-        Proc::IntBinProc(..)
-        | Proc::UIntBinProc(..)
-        | Proc::FloatBinProc(..)
-        | Proc::FixedBinProc(..) => match try_eval_fold_proc(proc) {
-            // Ground fold: reduced in place to a value leaf via the EXACT native fold (`proc_*_bin`,
-            // nested ground folds and all). A HELD fold (operand bound by a COMM receive) reduces to
-            // `None` here and is instead lifted to a trampoline in `lower_receive_body` before it
-            // reaches this point.
-            Some(folded) => lower_proc(&folded, env),
-            None => Err(RhocalcAstLowerError::UnsupportedProc("computed rhocalc expression")),
+        // ── A-S4 fold purity: EVERY width/precision fold trampolines on the machine ─────────
+        // Fold nodes are lifted into fold-contract trampolines by [`lower_body_lifting_folds`]
+        // BEFORE `lower_proc` descends (ground operands included — the former Tier-1 in-place
+        // `try_eval_fold_proc` host fold is deleted). A fold reaching THIS arm sits in a position
+        // the lift traversal cannot reach (inside a hashed-collection literal, a receive
+        // pattern, or a fold with a non-ground width) — fail closed, typed and named.
+        Proc::IntBinProc(..) => Err(RhocalcAstLowerError::UnsupportedProc(
+            "int(a, w) width fold outside a fold-liftable position (or non-ground width)",
+        )),
+        Proc::UIntBinProc(..) => Err(RhocalcAstLowerError::UnsupportedProc(
+            "uint(a, w) width fold outside a fold-liftable position (or non-ground width)",
+        )),
+        Proc::FloatBinProc(..) => Err(RhocalcAstLowerError::UnsupportedProc(
+            "float(a, w) width fold outside a fold-liftable position (or non-ground width)",
+        )),
+        Proc::FixedBinProc(..) => Err(RhocalcAstLowerError::UnsupportedProc(
+            "fixed(a, w) width fold outside a fold-liftable position (or non-ground width)",
+        )),
+        Proc::BigintCastProc(..) => Err(RhocalcAstLowerError::UnsupportedProc(
+            "bigint(a) precision cast outside a fold-liftable position",
+        )),
+        Proc::BigratCastProc(..) => Err(RhocalcAstLowerError::UnsupportedProc(
+            "bigrat(a) precision cast outside a fold-liftable position",
+        )),
+        // ── A-S4 metered machine arithmetic (the RhoCalc face of the E3 pattern) ────────────
+        // Operands lower STRUCTURALLY; the machine's reducer evaluates the expression with its
+        // size-dependent primitive costs (f1r3node `reduce.rs`: `EPlus`/`EMinus`/`EMult`/`EDiv`/
+        // `EMod`/`ENeg` over GInt/GDouble/GBigInt/GBigRat/GFixedPoint). String `+` is Rholang
+        // `++` (`EPlusPlus`): when BOTH operands lower to ground string leaves the concat parity
+        // arm is chosen; `EPlus` has no GString algebra.
+        Proc::Add(a, b) => {
+            let lhs = lower_proc(a.as_ref(), env)?;
+            let rhs = lower_proc(b.as_ref(), env)?;
+            if is_single_gstring_value(&lhs) && is_single_gstring_value(&rhs) {
+                Ok(binary_expr_par(lhs, rhs, |p1, p2| {
+                    ExprInstance::EPlusPlusBody(EPlusPlus { p1, p2 })
+                }))
+            } else {
+                Ok(binary_expr_par(lhs, rhs, |p1, p2| {
+                    ExprInstance::EPlusBody(EPlus { p1, p2 })
+                }))
+            }
+        },
+        Proc::Sub(a, b) => lower_binary_expr(a.as_ref(), b.as_ref(), env, |p1, p2| {
+            ExprInstance::EMinusBody(EMinus { p1, p2 })
+        }),
+        Proc::Mul(a, b) => lower_binary_expr(a.as_ref(), b.as_ref(), env, |p1, p2| {
+            ExprInstance::EMultBody(EMult { p1, p2 })
+        }),
+        Proc::Div(a, b) => lower_binary_expr(a.as_ref(), b.as_ref(), env, |p1, p2| {
+            ExprInstance::EDivBody(EDiv { p1, p2 })
+        }),
+        Proc::Mod(a, b) => lower_binary_expr(a.as_ref(), b.as_ref(), env, |p1, p2| {
+            ExprInstance::EModBody(EMod { p1, p2 })
+        }),
+        Proc::NegProc(a) => {
+            let operand = lower_proc(a.as_ref(), env)?;
+            Ok(unary_expr_par(operand, |p| ExprInstance::ENegBody(ENeg { p })))
         },
         // Boolean/comparison guard operators (used by `where`-conditions and boolean payloads):
         // lower both operands and wrap in the matching Rholang comparison/logical `Expr`.
         Proc::Eq(a, b) => {
-            lower_binary_bool(a.as_ref(), b.as_ref(), env, |p1, p2| ExprInstance::EEqBody(EEq { p1, p2 }))
+            lower_binary_expr(a.as_ref(), b.as_ref(), env, |p1, p2| ExprInstance::EEqBody(EEq { p1, p2 }))
         },
         Proc::Ne(a, b) => {
-            lower_binary_bool(a.as_ref(), b.as_ref(), env, |p1, p2| ExprInstance::ENeqBody(ENeq { p1, p2 }))
+            lower_binary_expr(a.as_ref(), b.as_ref(), env, |p1, p2| ExprInstance::ENeqBody(ENeq { p1, p2 }))
         },
         Proc::Lt(a, b) => {
-            lower_binary_bool(a.as_ref(), b.as_ref(), env, |p1, p2| ExprInstance::ELtBody(ELt { p1, p2 }))
+            lower_binary_expr(a.as_ref(), b.as_ref(), env, |p1, p2| ExprInstance::ELtBody(ELt { p1, p2 }))
         },
         Proc::Gt(a, b) => {
-            lower_binary_bool(a.as_ref(), b.as_ref(), env, |p1, p2| ExprInstance::EGtBody(EGt { p1, p2 }))
+            lower_binary_expr(a.as_ref(), b.as_ref(), env, |p1, p2| ExprInstance::EGtBody(EGt { p1, p2 }))
         },
         Proc::LtEq(a, b) => {
-            lower_binary_bool(a.as_ref(), b.as_ref(), env, |p1, p2| ExprInstance::ELteBody(ELte { p1, p2 }))
+            lower_binary_expr(a.as_ref(), b.as_ref(), env, |p1, p2| ExprInstance::ELteBody(ELte { p1, p2 }))
         },
         Proc::GtEq(a, b) => {
-            lower_binary_bool(a.as_ref(), b.as_ref(), env, |p1, p2| ExprInstance::EGteBody(EGte { p1, p2 }))
+            lower_binary_expr(a.as_ref(), b.as_ref(), env, |p1, p2| ExprInstance::EGteBody(EGte { p1, p2 }))
         },
         Proc::And(a, b) => {
-            lower_binary_bool(a.as_ref(), b.as_ref(), env, |p1, p2| ExprInstance::EAndBody(EAnd { p1, p2 }))
+            lower_binary_expr(a.as_ref(), b.as_ref(), env, |p1, p2| ExprInstance::EAndBody(EAnd { p1, p2 }))
         },
         Proc::Or(a, b) => {
-            lower_binary_bool(a.as_ref(), b.as_ref(), env, |p1, p2| ExprInstance::EOrBody(EOr { p1, p2 }))
+            lower_binary_expr(a.as_ref(), b.as_ref(), env, |p1, p2| ExprInstance::EOrBody(EOr { p1, p2 }))
         },
         Proc::Not(a) => {
             let operand = lower_proc(a.as_ref(), env)?;
-            let locally_free = operand.locally_free.clone();
-            let connective_used = operand.connective_used;
-            let mut par = Par::default().with_exprs(vec![Expr {
-                expr_instance: Some(ExprInstance::ENotBody(ENot { p: Some(operand) })),
-            }]);
-            par.locally_free = locally_free;
-            par.connective_used = connective_used;
-            Ok(par)
+            Ok(unary_expr_par(operand, |p| ExprInstance::ENotBody(ENot { p })))
         },
-        _ => Err(RhocalcAstLowerError::UnsupportedProc("computed rhocalc expression")),
+        // A-S4 fail-closed: every remaining construct has no machine algebra (bitwise ops,
+        // cross-type conversions, collection/zipper methods, lambda forms, internal gates). The
+        // typed error NAMES the construct; nothing silently host-evaluates.
+        other => Err(RhocalcAstLowerError::UnsupportedProc(unsupported_construct_name(other))),
     }
 }
 
-/// Lower a binary boolean/comparison `Proc` (both operands lowered in `env`) into a Rholang
-/// comparison/logical `Expr` `Par`, propagating `locally_free` and `connective_used` from the
-/// operands so a guard or boolean payload that references bound/free variables is tracked correctly.
-fn lower_binary_bool(
+/// The static construct name for the A-S4 fail-closed lowering error — every `Proc` variant the
+/// lowering does not translate is named here, so the error message identifies the exact syntax
+/// (deliverable: "typed, naming the construct"). Variants handled by `lower_proc` never reach
+/// this table.
+fn unsupported_construct_name(proc: &Proc) -> &'static str {
+    match proc {
+        Proc::GuardThen(..) => "__guard_then internal guard gate",
+        Proc::CommWhere(..) => "comm-where internal receive form",
+        Proc::FractionProc(..) => "fraction(a, b) rational constructor",
+        Proc::BitOr(..) => "bitor bitwise-or (no Rholang bitwise Expr)",
+        Proc::BitAnd(..) => "bitand bitwise-and (no Rholang bitwise Expr)",
+        Proc::BitNot(..) => "bitnot bitwise-not (no Rholang bitwise Expr)",
+        Proc::MapEmpty => "Map() empty-map constructor",
+        Proc::PathmapEmpty => "Pathmap() empty-pathmap constructor",
+        Proc::MGet(..) => "m.get(k) map method",
+        Proc::MSet(..) => "m.set(k, v) map method",
+        Proc::MContains(..) => "m.contains(k) map method",
+        Proc::MDelete(..) => "m.delete(k) map method",
+        Proc::MUnion(..) => "m.union(n) map method",
+        Proc::MSize(..) => "m.size() map method",
+        Proc::MToByteArray(..) => "m.toByteArray() map method",
+        Proc::MKeys(..) => "m.keys() map method",
+        Proc::MValues(..) => "m.values() map method",
+        Proc::LLength(..) => "l.length() list method",
+        Proc::LNth(..) => "l.nth(i) list method",
+        Proc::LConcat(..) => "l.concat(m) list method",
+        Proc::BCount(..) => "b.count(e) bag method",
+        Proc::BDiff(..) => "b.diff(c) bag method",
+        Proc::BRemove(..) => "b.remove(e) bag method",
+        Proc::PRestrict(..) => "p.restrict(q) pathmap method",
+        Proc::PSubtract(..) => "p.subtract(q) pathmap method",
+        Proc::PMeet(..) => "p.meet(q) pathmap method",
+        Proc::PGetSubtrie(..) => "p.getSubtrie() pathmap method",
+        Proc::PGetSubtrieAt(..) => "p.getSubtrieAt(q) pathmap method",
+        Proc::PReadZipper(..) => "p.readZipper() zipper method",
+        Proc::PReadZipperAt(..) => "p.readZipperAt(q) zipper method",
+        Proc::PWriteZipper(..) => "p.writeZipper() zipper method",
+        Proc::PWriteZipperAt(..) => "p.writeZipperAt(q) zipper method",
+        Proc::RZGetLeaf(..) => "z.getLeaf() read-zipper method",
+        Proc::RZDescendTo(..) => "z.descendTo(p) read-zipper method",
+        Proc::RZChildCount(..) => "z.childCount() read-zipper method",
+        Proc::RZDescendFirst(..) => "z.descendFirst() read-zipper method",
+        Proc::RZToNextSibling(..) => "z.toNextSibling() read-zipper method",
+        Proc::RZToPrevSibling(..) => "z.toPrevSibling() read-zipper method",
+        Proc::RZDescendIndexedBranch(..) => "z.descendIndexedBranch(i) read-zipper method",
+        Proc::RZAscendOne(..) => "z.ascendOne() read-zipper method",
+        Proc::RZAscend(..) => "z.ascend(n) read-zipper method",
+        Proc::WZSetLeaf(..) => "z.setLeaf(…) write-zipper method",
+        Proc::WZSetSubtrie(..) => "z.setSubtrie(…) write-zipper method",
+        Proc::WZRemoveLeaf(..) => "z.removeLeaf() write-zipper method",
+        Proc::WZRemoveBranches(..) => "z.removeBranches() write-zipper method",
+        Proc::WZGraft(..) => "z.graft(…) write-zipper method",
+        Proc::WZJoinInto(..) => "z.joinInto(…) write-zipper method",
+        Proc::SAdd(..) => "s.add(e) set method",
+        Proc::ToBool(..) => "bool(a) boolean conversion",
+        Proc::ToStr(..) => "str(a) string conversion",
+        Proc::CastReadZipper(..) => "read-zipper literal",
+        Proc::CastWriteZipper(..) => "write-zipper literal",
+        _ => "computed rhocalc expression",
+    }
+}
+
+/// Lower a binary expression `Proc` (comparison, logic, or A-S4 arithmetic; both operands lowered
+/// in `env`) into the corresponding Rholang `Expr` `Par`, propagating `locally_free` and
+/// `connective_used` from the operands so an expression that references bound/free variables is
+/// tracked correctly. The machine's reducer evaluates the expression (metered).
+fn lower_binary_expr(
     a: &Proc,
     b: &Proc,
     env: &BoundEnv,
@@ -741,6 +946,17 @@ fn lower_binary_bool(
 ) -> Result<Par, RhocalcAstLowerError> {
     let lhs = lower_proc(a, env)?;
     let rhs = lower_proc(b, env)?;
+    Ok(binary_expr_par(lhs, rhs, build))
+}
+
+/// Assemble a binary Rholang `Expr` `Par` from two already-lowered operand `Par`s
+/// (`locally_free`/`connective_used` propagation shared by [`lower_binary_expr`] and the
+/// ground-string `Add` dispatch).
+fn binary_expr_par(
+    lhs: Par,
+    rhs: Par,
+    build: impl FnOnce(Option<Par>, Option<Par>) -> ExprInstance,
+) -> Par {
     let locally_free = union(lhs.locally_free.clone(), rhs.locally_free.clone());
     let connective_used = lhs.connective_used || rhs.connective_used;
     let mut par = Par::default().with_exprs(vec![Expr {
@@ -748,179 +964,201 @@ fn lower_binary_bool(
     }]);
     par.locally_free = locally_free;
     par.connective_used = connective_used;
-    Ok(par)
+    par
 }
 
-// ── Tier-3 held-fold trampoline lifting ──────────────────────────────────────────────────────────
+/// Assemble a unary Rholang `Expr` `Par` from an already-lowered operand `Par` (the `ENeg`/`ENot`
+/// propagation shape).
+fn unary_expr_par(operand: Par, build: impl FnOnce(Option<Par>) -> ExprInstance) -> Par {
+    let locally_free = operand.locally_free.clone();
+    let connective_used = operand.connective_used;
+    let mut par = Par::default().with_exprs(vec![Expr {
+        expr_instance: Some(build(Some(operand))),
+    }]);
+    par.locally_free = locally_free;
+    par.connective_used = connective_used;
+    par
+}
+
+/// Is this lowered `Par` a single ground string leaf (`GString`, nothing else)? Drives the
+/// `Add` → `EPlusPlus` string-concat parity arm (Rholang `+` has no GString algebra; RhoCalc `+`
+/// concatenates ground strings).
+fn is_single_gstring_value(par: &Par) -> bool {
+    par.sends.is_empty()
+        && par.receives.is_empty()
+        && par.news.is_empty()
+        && par.matches.is_empty()
+        && par.bundles.is_empty()
+        && par.unforgeables.is_empty()
+        && par.connectives.is_empty()
+        && matches!(
+            par.exprs.as_slice(),
+            [Expr {
+                expr_instance: Some(ExprInstance::GString(_)),
+            }]
+        )
+}
+
+/// Structural lowering of an `Int`-category value (the payload of `Proc::CastInt` and the only
+/// grammar-reachable structural Int shape, unary minus). A literal is data; `-a` is the machine's
+/// metered `ENeg`; the macro-injected conversion constructors (`BoolToInt`/`UInt32ToInt`), an
+/// unsubstituted `IVar`, and lambdas have no machine algebra and fail closed, named.
+fn lower_int_value(value: &Int, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> {
+    match value {
+        Int::NumLit(literal) => Ok(new_gint_par(*literal, Vec::new(), false)),
+        Int::NegInt(inner) => {
+            let operand = lower_int_value(inner.as_ref(), env)?;
+            Ok(unary_expr_par(operand, |p| ExprInstance::ENegBody(ENeg { p })))
+        },
+        _ => Err(RhocalcAstLowerError::UnsupportedProc(
+            "non-literal integer expression (Int category)",
+        )),
+    }
+}
+
+// ── Fold trampoline lifting (Tier-3, generalized by A-S4 to EVERY fold site) ─────────────────────
 //
-// A held fold (e.g. `int(*(x), 8)` whose operand is bound by an enclosing COMM `receive`) cannot be
-// lowered to a Rho primitive and cannot be folded by Dovetail (the operand is free until the COMM
-// fires). Lift it: replace the fold with `*r`, send the operand to a Dovetail-backed fold contract,
-// and bind its reply `r` via `for(@r <- ret){…}`. The contract runs the exact native fold on the
-// now-ground operand. See `crate::fold_contract`.
+// Pre-A-S4 only HELD folds lifted (e.g. `int(*(x), 8)` whose operand is bound by an enclosing COMM
+// `receive` — no Rho primitive, and Dovetail cannot fold it before the rendezvous). A-S4 lowering
+// purity lifts EVERY width/precision fold, ground operands included: the host never computes a
+// fold value at lowering time. The lift replaces the fold with `*r`, sends the operand to the fold
+// contract, and binds its reply `r` via `for(@r <- ret){…}`; the contract runs the exact native
+// fold on the machine-delivered ground operand (a statically ground operand expression — e.g.
+// `5 + 3` — is evaluated by the machine's metered send-data evaluation before the contract COMM).
+// See `crate::fold_contract` and `formal/rocq/rho_bridge/theories/HeldFoldContractSound.v`.
 
 thread_local! {
-    // Held-fold sites collected during ONE lowering (cleared per `lower_rhocalc_term_with_folds`).
+    // Fold sites collected during ONE lowering (cleared per `lower_rhocalc_term_with_folds`).
     // Mirrors the thread-local var-cache pattern in `mettail_runtime::binding` — single-threaded
     // lowering-session state, no locks.
     static HELD_FOLD_SITES: std::cell::RefCell<Vec<FoldSpec>> =
         const { std::cell::RefCell::new(Vec::new()) };
 }
 
-/// The fold kind of a Proc width-fold constructor, if it is a trampolinable one.
-fn fold_kind_of(proc: &Proc) -> Option<FoldKind> {
+/// A liftable fold node's static spec pieces: `(operand, kind, width)`. `None` if `proc` is not a
+/// fold constructor OR its width is not a ground literal (the latter falls through to
+/// `lower_proc`'s typed fold error). The unary precision casts carry width 0 (unused).
+fn liftable_fold_parts(proc: &Proc) -> Option<(&Proc, FoldKind, i64)> {
     match proc {
-        Proc::IntBinProc(..) => Some(FoldKind::Int),
-        Proc::UIntBinProc(..) => Some(FoldKind::UInt),
-        Proc::FloatBinProc(..) => Some(FoldKind::Float),
-        Proc::FixedBinProc(..) => Some(FoldKind::Fixed),
+        Proc::IntBinProc(a, w) => Some((a.as_ref(), FoldKind::Int, w.as_ref().try_eval()?)),
+        Proc::UIntBinProc(a, w) => Some((a.as_ref(), FoldKind::UInt, w.as_ref().try_eval()?)),
+        Proc::FloatBinProc(a, w) => Some((a.as_ref(), FoldKind::Float, w.as_ref().try_eval()?)),
+        Proc::FixedBinProc(a, w) => Some((a.as_ref(), FoldKind::Fixed, w.as_ref().try_eval()?)),
+        Proc::BigintCastProc(a) => Some((a.as_ref(), FoldKind::BigIntCast, 0)),
+        Proc::BigratCastProc(a) => Some((a.as_ref(), FoldKind::BigRatCast, 0)),
         _ => None,
     }
+    // NOTE on the width `try_eval`: the width slot `w:Int` is a STATIC rule-shape parameter (a
+    // literal, possibly `NegInt`-negated — the grammar's only structural Int shapes). Reading it
+    // with `try_eval` is literal decoding of a compile-time constant (the same standing as
+    // A-S3's `rule_index`), not runtime value computation; the runtime OPERAND is never
+    // host-evaluated.
 }
 
-/// Recursively reduce a *ground* width fold to its value-leaf `Proc` via the EXACT native folds
-/// (`proc_*_bin` — the rules' own `![{…}]` bodies), folding nested ground folds innermost-first
-/// (`int(int(5,8),16) → 5`). Returns `None` if any leaf is not a ground numeric value (e.g. a fold
-/// over a COMM-bound variable, which is instead lifted to a trampoline) or a fold errors
-/// (`Proc::Err`).
-fn try_eval_fold_proc(proc: &Proc) -> Option<Proc> {
-    use mettail_runtime::ProcToNumericInput;
-    match proc {
-        Proc::IntBinProc(a, w)
-        | Proc::UIntBinProc(a, w)
-        | Proc::FloatBinProc(a, w)
-        | Proc::FixedBinProc(a, w) => {
-            let reduced = try_eval_fold_proc(a.as_ref())?;
-            let width = w.as_ref().try_eval()?;
-            let folded = match fold_kind_of(proc)? {
-                FoldKind::Int => mettail_runtime::proc_int_bin::<Proc, i64>(&reduced, width),
-                FoldKind::UInt => mettail_runtime::proc_uint_bin::<Proc, i64>(&reduced, width),
-                FoldKind::Float => mettail_runtime::proc_float_bin::<Proc, i64>(&reduced, width),
-                FoldKind::Fixed => mettail_runtime::proc_fixed_bin::<Proc, i64>(&reduced, width),
-            };
-            (!matches!(folded, Proc::Err)).then_some(folded)
-        },
-        // A ground numeric value leaf reduces to itself (`proc_*_bin` consumes it directly).
-        _ if proc.to_numeric_input().is_some() => Some(proc.clone()),
-        _ => None,
+/// Find the first (innermost) liftable fold in `proc`, NOT descending into nested binders
+/// (`PForUser`/`PNew` — their bodies are lifted separately as their own fold-lift scopes).
+/// Returns `(operand, kind, width)`. Send sugar is desugared in place so folds inside sugar
+/// payloads (`c!(int(5,8), 7)`) are found; the traversal mirrors [`replace_fold`] exactly.
+fn find_fold(proc: &Proc) -> Option<(Proc, FoldKind, i64)> {
+    if let Some(desugared) = desugar_send_node(proc) {
+        return find_fold(&desugared);
     }
-}
-
-/// An operand is *held* iff it references a name/proc variable bound in `env` — i.e. it becomes
-/// ground only after a COMM binds that variable. A statically ground operand (e.g. `int(5,8)`) is
-/// not held (it folds in place / via the D-stage); a free var not in `env` is a genuine error (left
-/// to the existing `UnsupportedProc` path). We test the AST, not `locally_free`, because a lowered
-/// bound var carries no `locally_free`.
-fn operand_is_held(operand: &Proc, env: &BoundEnv) -> bool {
-    proc_references_bound_var(operand, env)
-}
-
-/// Does `proc` reference a name/proc variable bound in `env`?
-fn proc_references_bound_var(proc: &Proc, env: &BoundEnv) -> bool {
     match proc {
-        Proc::PDrop(name) => name_references_bound_var(name, env),
         Proc::IntBinProc(a, _)
         | Proc::UIntBinProc(a, _)
         | Proc::FloatBinProc(a, _)
-        | Proc::FixedBinProc(a, _) => proc_references_bound_var(a, env),
-        Proc::POutput(name, payload) | Proc::PPersistOutput(name, payload) => {
-            name_references_bound_var(name, env) || proc_references_bound_var(payload, env)
-        },
-        // Short sends `@P!(q)` / `@P!!(q)`: the channel `P` is itself a `Proc`, so check both it and
-        // the payload (a held fold can ride either position once the sugar is lowered).
-        Proc::POutputShort(channel_proc, payload)
-        | Proc::PPersistOutputShort(channel_proc, payload) => {
-            proc_references_bound_var(channel_proc, env)
-                || proc_references_bound_var(payload, env)
-        },
-        Proc::PParInfix(left, right) => {
-            proc_references_bound_var(left, env) || proc_references_bound_var(right, env)
-        },
-        Proc::PPar(parts) => {
-            parts.iter_elements().any(|part| proc_references_bound_var(part, env))
-        },
-        Proc::PVar(var) => var_is_bound(var, env),
-        _ => false,
-    }
-}
-
-fn name_references_bound_var(name: &Name, env: &BoundEnv) -> bool {
-    match name {
-        Name::NVar(var) => var_is_bound(var, env),
-        // `@(P)` / `@P` quote a process; a held var rides inside `P`.
-        Name::NQuote(proc) | Name::NQuoteShort(proc) => proc_references_bound_var(proc, env),
-        // Parenthesized grouping is transparent.
-        Name::NParen(inner) => name_references_bound_var(inner, env),
-        _ => false,
-    }
-}
-
-fn var_is_bound(var: &OrdVar, env: &BoundEnv) -> bool {
-    matches!(&var.0, Var::Free(free_var) if env.contains_key(free_var))
-}
-
-/// Find the first (innermost) held fold in `proc`, NOT descending into nested binders
-/// (`PForUser`/`PNew` — their bodies are lifted separately). Returns `(operand, kind, width)`.
-fn find_held_fold(proc: &Proc, env: &BoundEnv) -> Option<(Proc, FoldKind, i64)> {
-    match proc {
-        Proc::IntBinProc(a, w)
-        | Proc::UIntBinProc(a, w)
-        | Proc::FloatBinProc(a, w)
-        | Proc::FixedBinProc(a, w) => {
+        | Proc::FixedBinProc(a, _)
+        | Proc::BigintCastProc(a)
+        | Proc::BigratCastProc(a) => {
             // Innermost-first: a nested fold inside the operand lifts before this one.
-            if let Some(found) = find_held_fold(a.as_ref(), env) {
+            if let Some(found) = find_fold(a.as_ref()) {
                 return Some(found);
             }
-            if operand_is_held(a.as_ref(), env) {
-                let kind = fold_kind_of(proc)?;
-                let width = w.as_ref().try_eval()?;
-                return Some(((*a.as_ref()).clone(), kind, width));
-            }
-            None
+            let (operand, kind, width) = liftable_fold_parts(proc)?;
+            Some((operand.clone(), kind, width))
         },
         Proc::POutput(_, payload)
         | Proc::PPersistOutput(_, payload)
         | Proc::POutputShort(_, payload)
-        | Proc::PPersistOutputShort(_, payload) => find_held_fold(payload.as_ref(), env),
+        | Proc::PPersistOutputShort(_, payload) => find_fold(payload.as_ref()),
         Proc::PParInfix(left, right) => {
-            find_held_fold(left.as_ref(), env).or_else(|| find_held_fold(right.as_ref(), env))
+            find_fold(left.as_ref()).or_else(|| find_fold(right.as_ref()))
         },
-        Proc::PPar(parts) => parts.iter_elements().find_map(|part| find_held_fold(part, env)),
-        // Binder constructs (both the `PInputs` for-receive and the generalized
-        // `PForUser` where-receive, plus `PNew`) have their bodies lifted separately,
-        // so we do not descend here; anything else falls to the catch-all below.
+        Proc::PPar(parts) => parts.iter_elements().find_map(find_fold),
+        // Expression operands: a fold there becomes `*r` and the machine evaluates the
+        // expression after the trampoline COMM substitutes the folded value.
+        Proc::Add(a, b)
+        | Proc::Sub(a, b)
+        | Proc::Mul(a, b)
+        | Proc::Div(a, b)
+        | Proc::Mod(a, b)
+        | Proc::Eq(a, b)
+        | Proc::Ne(a, b)
+        | Proc::Lt(a, b)
+        | Proc::Gt(a, b)
+        | Proc::LtEq(a, b)
+        | Proc::GtEq(a, b)
+        | Proc::And(a, b)
+        | Proc::Or(a, b) => find_fold(a.as_ref()).or_else(|| find_fold(b.as_ref())),
+        Proc::NegProc(a) | Proc::Not(a) => find_fold(a.as_ref()),
+        // `*(@(P))` inlines `P` — folds inside it lift at this scope.
+        Proc::PDrop(name) => find_fold_in_name(name.as_ref()),
+        // Ordered list literals: a fold element lifts (the literal is rebuilt around `*r`).
+        // Hashed collections (Map/Set/Bag/Pathmap) are NOT descended: replacing inside them
+        // would re-key the literal; a fold there fails closed via `lower_proc`'s typed error.
+        Proc::CastList(list) => match list.as_ref() {
+            List::ListLit(items) => items.iter().find_map(find_fold),
+            _ => None,
+        },
+        // Binder constructs (`PForUser` receive rows and `PNew`) have their bodies lifted
+        // separately, so we do not descend here; anything else has no liftable position.
         Proc::PForUser(..) | Proc::PNew(..) => None,
         _ => None,
     }
 }
 
-/// Rebuild a width-fold constructor with a replaced operand.
-fn rebuild_fold(orig: &Proc, operand: Arc<Proc>, width: Arc<Int>) -> Proc {
+fn find_fold_in_name(name: &Name) -> Option<(Proc, FoldKind, i64)> {
+    match name {
+        Name::NQuote(proc) | Name::NQuoteShort(proc) => find_fold(proc.as_ref()),
+        Name::NParen(inner) => find_fold_in_name(inner.as_ref()),
+        _ => None,
+    }
+}
+
+/// Rebuild a fold constructor with a replaced operand (widths keep their original literal).
+fn rebuild_fold(orig: &Proc, operand: Arc<Proc>) -> Proc {
     match orig {
-        Proc::IntBinProc(..) => Proc::IntBinProc(operand, width),
-        Proc::UIntBinProc(..) => Proc::UIntBinProc(operand, width),
-        Proc::FloatBinProc(..) => Proc::FloatBinProc(operand, width),
-        Proc::FixedBinProc(..) => Proc::FixedBinProc(operand, width),
+        Proc::IntBinProc(_, w) => Proc::IntBinProc(operand, w.clone()),
+        Proc::UIntBinProc(_, w) => Proc::UIntBinProc(operand, w.clone()),
+        Proc::FloatBinProc(_, w) => Proc::FloatBinProc(operand, w.clone()),
+        Proc::FixedBinProc(_, w) => Proc::FixedBinProc(operand, w.clone()),
+        Proc::BigintCastProc(_) => Proc::BigintCastProc(operand),
+        Proc::BigratCastProc(_) => Proc::BigratCastProc(operand),
         _ => orig.clone(),
     }
 }
 
-/// Replace the first (innermost) held fold in `proc` with `r_drop` (`*r`), mirroring
-/// `find_held_fold`'s traversal. Sets `replaced` once a replacement is made.
-fn replace_held_fold(proc: &Proc, env: &BoundEnv, r_drop: &Proc, replaced: &mut bool) -> Proc {
+/// Replace the first (innermost) liftable fold in `proc` with `r_drop` (`*r`), mirroring
+/// [`find_fold`]'s traversal (desugaring included). Sets `replaced` once a replacement is made.
+fn replace_fold(proc: &Proc, r_drop: &Proc, replaced: &mut bool) -> Proc {
     if *replaced {
         return proc.clone();
     }
+    if let Some(desugared) = desugar_send_node(proc) {
+        return replace_fold(&desugared, r_drop, replaced);
+    }
     match proc {
-        Proc::IntBinProc(a, w)
-        | Proc::UIntBinProc(a, w)
-        | Proc::FloatBinProc(a, w)
-        | Proc::FixedBinProc(a, w) => {
-            let new_a = replace_held_fold(a.as_ref(), env, r_drop, replaced);
+        Proc::IntBinProc(a, _)
+        | Proc::UIntBinProc(a, _)
+        | Proc::FloatBinProc(a, _)
+        | Proc::FixedBinProc(a, _)
+        | Proc::BigintCastProc(a)
+        | Proc::BigratCastProc(a) => {
+            let new_a = replace_fold(a.as_ref(), r_drop, replaced);
             if *replaced {
-                return rebuild_fold(proc, Arc::new(new_a), w.clone());
+                return rebuild_fold(proc, Arc::new(new_a));
             }
-            if operand_is_held(a.as_ref(), env) {
+            if liftable_fold_parts(proc).is_some() {
                 *replaced = true;
                 return r_drop.clone();
             }
@@ -928,46 +1166,120 @@ fn replace_held_fold(proc: &Proc, env: &BoundEnv, r_drop: &Proc, replaced: &mut 
         },
         Proc::POutput(name, payload) => Proc::POutput(
             name.clone(),
-            Arc::new(replace_held_fold(payload.as_ref(), env, r_drop, replaced)),
+            Arc::new(replace_fold(payload.as_ref(), r_drop, replaced)),
         ),
         Proc::PPersistOutput(name, payload) => Proc::PPersistOutput(
             name.clone(),
-            Arc::new(replace_held_fold(payload.as_ref(), env, r_drop, replaced)),
+            Arc::new(replace_fold(payload.as_ref(), r_drop, replaced)),
         ),
-        // Short sends: replace the held fold in the payload, keep the channel proc intact (mirrors
-        // `find_held_fold`, which descends only into the payload).
+        // Short sends: replace the fold in the payload, keep the channel proc intact (mirrors
+        // `find_fold`, which descends only into the payload).
         Proc::POutputShort(channel_proc, payload) => Proc::POutputShort(
             channel_proc.clone(),
-            Arc::new(replace_held_fold(payload.as_ref(), env, r_drop, replaced)),
+            Arc::new(replace_fold(payload.as_ref(), r_drop, replaced)),
         ),
         Proc::PPersistOutputShort(channel_proc, payload) => Proc::PPersistOutputShort(
             channel_proc.clone(),
-            Arc::new(replace_held_fold(payload.as_ref(), env, r_drop, replaced)),
+            Arc::new(replace_fold(payload.as_ref(), r_drop, replaced)),
         ),
         // Infix parallel: descend left then right. The top-of-function `*replaced` guard ensures the
-        // right branch is left untouched once the (single) innermost held fold has been replaced.
+        // right branch is left untouched once the (single) innermost fold has been replaced.
         Proc::PParInfix(left, right) => {
-            let new_left = replace_held_fold(left.as_ref(), env, r_drop, replaced);
-            let new_right = replace_held_fold(right.as_ref(), env, r_drop, replaced);
+            let new_left = replace_fold(left.as_ref(), r_drop, replaced);
+            let new_right = replace_fold(right.as_ref(), r_drop, replaced);
             Proc::PParInfix(Arc::new(new_left), Arc::new(new_right))
         },
         Proc::PPar(parts) => Proc::PPar(
             parts
                 .iter_elements()
-                .map(|part| replace_held_fold(part, env, r_drop, replaced))
+                .map(|part| replace_fold(part, r_drop, replaced))
                 .collect(),
         ),
+        Proc::Add(a, b) => rebuild_binary(proc, a, b, r_drop, replaced),
+        Proc::Sub(a, b) => rebuild_binary(proc, a, b, r_drop, replaced),
+        Proc::Mul(a, b) => rebuild_binary(proc, a, b, r_drop, replaced),
+        Proc::Div(a, b) => rebuild_binary(proc, a, b, r_drop, replaced),
+        Proc::Mod(a, b) => rebuild_binary(proc, a, b, r_drop, replaced),
+        Proc::Eq(a, b) => rebuild_binary(proc, a, b, r_drop, replaced),
+        Proc::Ne(a, b) => rebuild_binary(proc, a, b, r_drop, replaced),
+        Proc::Lt(a, b) => rebuild_binary(proc, a, b, r_drop, replaced),
+        Proc::Gt(a, b) => rebuild_binary(proc, a, b, r_drop, replaced),
+        Proc::LtEq(a, b) => rebuild_binary(proc, a, b, r_drop, replaced),
+        Proc::GtEq(a, b) => rebuild_binary(proc, a, b, r_drop, replaced),
+        Proc::And(a, b) => rebuild_binary(proc, a, b, r_drop, replaced),
+        Proc::Or(a, b) => rebuild_binary(proc, a, b, r_drop, replaced),
+        Proc::NegProc(a) => {
+            Proc::NegProc(Arc::new(replace_fold(a.as_ref(), r_drop, replaced)))
+        },
+        Proc::Not(a) => Proc::Not(Arc::new(replace_fold(a.as_ref(), r_drop, replaced))),
+        Proc::PDrop(name) => {
+            Proc::PDrop(Arc::new(replace_fold_in_name(name.as_ref(), r_drop, replaced)))
+        },
+        Proc::CastList(list) => match list.as_ref() {
+            List::ListLit(items) => Proc::CastList(Arc::new(List::ListLit(
+                items
+                    .iter()
+                    .map(|item| replace_fold(item, r_drop, replaced))
+                    .collect(),
+            ))),
+            _ => proc.clone(),
+        },
         _ => proc.clone(),
     }
 }
 
-/// Lower a receive body, lifting each held fold into a Dovetail-backed fold-contract trampoline.
-/// With no held fold this is exactly `lower_proc`. For one it emits
+/// Rebuild a binary expression node with the fold replaced in its first-found operand (left then
+/// right, mirroring [`find_fold`]).
+fn rebuild_binary(
+    orig: &Proc,
+    a: &Arc<Proc>,
+    b: &Arc<Proc>,
+    r_drop: &Proc,
+    replaced: &mut bool,
+) -> Proc {
+    let new_a = Arc::new(replace_fold(a.as_ref(), r_drop, replaced));
+    let new_b = Arc::new(replace_fold(b.as_ref(), r_drop, replaced));
+    match orig {
+        Proc::Add(..) => Proc::Add(new_a, new_b),
+        Proc::Sub(..) => Proc::Sub(new_a, new_b),
+        Proc::Mul(..) => Proc::Mul(new_a, new_b),
+        Proc::Div(..) => Proc::Div(new_a, new_b),
+        Proc::Mod(..) => Proc::Mod(new_a, new_b),
+        Proc::Eq(..) => Proc::Eq(new_a, new_b),
+        Proc::Ne(..) => Proc::Ne(new_a, new_b),
+        Proc::Lt(..) => Proc::Lt(new_a, new_b),
+        Proc::Gt(..) => Proc::Gt(new_a, new_b),
+        Proc::LtEq(..) => Proc::LtEq(new_a, new_b),
+        Proc::GtEq(..) => Proc::GtEq(new_a, new_b),
+        Proc::And(..) => Proc::And(new_a, new_b),
+        Proc::Or(..) => Proc::Or(new_a, new_b),
+        _ => orig.clone(),
+    }
+}
+
+fn replace_fold_in_name(name: &Name, r_drop: &Proc, replaced: &mut bool) -> Name {
+    match name {
+        Name::NQuote(proc) => {
+            Name::NQuote(Arc::new(replace_fold(proc.as_ref(), r_drop, replaced)))
+        },
+        Name::NQuoteShort(proc) => {
+            Name::NQuoteShort(Arc::new(replace_fold(proc.as_ref(), r_drop, replaced)))
+        },
+        Name::NParen(inner) => {
+            Name::NParen(Arc::new(replace_fold_in_name(inner.as_ref(), r_drop, replaced)))
+        },
+        _ => name.clone(),
+    }
+}
+
+/// Lower a fold-lift scope body (the top level, a receive body, or a `new` body), lifting each
+/// width/precision fold — ground or COMM-held — into a fold-contract trampoline. With no fold this
+/// is exactly `lower_proc`. For one it emits
 /// `new ret in { @"<fold>"!(operand, ret) | for(@r <- ret){ body[fold ↦ *r] } }` and records the
 /// `FoldSpec`; the `for` body is lifted recursively (nested folds). All de Bruijn bookkeeping rides
 /// `extend_env`.
-fn lower_receive_body(body: &Proc, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> {
-    let Some((operand, kind, width)) = find_held_fold(body, env) else {
+fn lower_body_lifting_folds(body: &Proc, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> {
+    let Some((operand, kind, width)) = find_fold(body) else {
         return lower_proc(body, env);
     };
     let site_index = HELD_FOLD_SITES.with(|sites| sites.borrow().len()) as u8;
@@ -984,19 +1296,21 @@ fn lower_receive_body(body: &Proc, env: &BoundEnv) -> Result<Par, RhocalcAstLowe
     let r_drop = Proc::PDrop(Arc::new(Name::NVar(OrdVar(Var::Free(r_var.clone())))));
 
     let mut replaced = false;
-    let transformed = replace_held_fold(body, env, &r_drop, &mut replaced);
+    let transformed = replace_fold(body, &r_drop, &mut replaced);
 
     // `new ret` shifts `env` by 1; the `for` then binds `r` (index 0), `ret` (index 1).
     let env_new = extend_env(env, &[Binder(ret_var)]);
     let env_for = extend_env(&env_new, &[Binder(r_var)]);
 
-    // Send `@channel!(operand, ret)` at the `new` level (ret = boundvar 0).
+    // Send `@channel!(operand, ret)` at the `new` level (ret = boundvar 0). A statically ground
+    // operand EXPRESSION (`5 + 3`) lowers to its metered `Expr`; the machine evaluates it at
+    // send time, so the contract always receives a ground value leaf.
     let operand_par = lower_proc(&operand, &env_new)?;
     let ret_channel = new_boundvar_par(0, Vec::new(), false);
     let send = send_par(channel, vec![operand_par, ret_channel.clone()]);
 
     // `for(@r <- ret){ <recursively-lifted transformed body> }`.
-    let for_body = lower_receive_body(&transformed, &env_for)?;
+    let for_body = lower_body_lifting_folds(&transformed, &env_for)?;
     let bind = ReceiveBind {
         patterns: vec![new_freevar_par(0, Vec::new())],
         source: Some(ret_channel),
@@ -1030,10 +1344,10 @@ fn lower_receive_body(body: &Proc, env: &BoundEnv) -> Result<Par, RhocalcAstLowe
     ))
 }
 
-/// Lower a term to a `Par` PLUS the held-fold contract `Definition` specs its trampolines need. The
-/// `Par` already targets the fold channels; the caller registers the contracts via the runtime's
-/// `extra_system_processes` seam. Equivalent to `lower_rhocalc_term` when the term has no held folds
-/// (empty `Vec`).
+/// Lower a term to a `Par` PLUS the fold contract `Definition` specs its trampolines need (A-S4:
+/// every width/precision fold lifts — ground or COMM-held). The `Par` already targets the fold
+/// channels; the caller registers the contracts via the runtime's `extra_system_processes` seam.
+/// Equivalent to `lower_rhocalc_term` when the term has no folds (empty `Vec`).
 pub fn lower_rhocalc_term_with_folds(
     term: &dyn Term,
 ) -> Result<(Par, Vec<FoldSpec>), RhocalcAstLowerError> {
@@ -1042,7 +1356,7 @@ pub fn lower_rhocalc_term_with_folds(
     Ok((par, take_held_fold_sites()))
 }
 
-/// Clear the held-fold session state. Call before a lowering whose fold contracts you intend to
+/// Clear the fold-site session state. Call before a lowering whose fold contracts you intend to
 /// collect with [`take_held_fold_sites`], so stale sites from a prior lowering don't leak. Used by
 /// the wrapper's `start_reduction_stepper` / the exec path, which lower through the invocation
 /// compiler (not [`lower_rhocalc_term_with_folds`] directly).
@@ -1050,9 +1364,10 @@ pub fn clear_held_fold_sites() {
     HELD_FOLD_SITES.with(|sites| sites.borrow_mut().clear());
 }
 
-/// Take (and clear) the held-fold sites recorded since the last clear. Empty if the lowering had no
-/// held folds (e.g. Calculator, whose invocation compiler never lifts). The caller materializes the
-/// contracts with [`crate::fold_contract::fold_definitions_for`].
+/// Take (and clear) the fold sites recorded since the last clear. Empty if the lowering had no
+/// folds (e.g. Calculator, whose invocation compiler never lifts; A-S4: RhoCalc records a site
+/// for EVERY fold, ground or COMM-held). The caller materializes the contracts with
+/// [`crate::fold_contract::fold_definitions_for`].
 pub fn take_held_fold_sites() -> Vec<FoldSpec> {
     HELD_FOLD_SITES.with(|sites| std::mem::take(&mut *sites.borrow_mut()))
 }
@@ -1198,7 +1513,7 @@ fn lower_pathmap(pathmap: &Pathmap, env: &BoundEnv) -> Result<Par, RhocalcAstLow
 /// - each bind's pattern free variables are numbered LOCALLY (0,1,… reset per bind) and become the
 ///   bind's `free_count`; their `Binder`s are concatenated across binds (bind order) and fed to
 ///   [`extend_env`] for the body, so the body's de Bruijn indices line up with the Rho machine;
-/// - the innermost user body lifts held folds via [`lower_receive_body`]; a nested row recurses;
+/// - the innermost user body lifts folds via [`lower_body_lifting_folds`]; a nested row recurses;
 /// - a `where`-guard is lowered (in the extended env) and attached as `Receive.condition`.
 fn lower_pfor_user(
     rows: &[ForRow],
@@ -1207,7 +1522,7 @@ fn lower_pfor_user(
 ) -> Result<Par, RhocalcAstLowerError> {
     if rows.is_empty() {
         // No rows left: the body is the whole process.
-        return lower_receive_body(body, env);
+        return lower_body_lifting_folds(body, env);
     }
     let row = &rows[0];
 
@@ -1261,7 +1576,7 @@ fn lower_pfor_user(
         Proc::PForUser(rest_rows, rest_body) => {
             lower_pfor_user(rest_rows, rest_body.as_ref(), &extended_env)?
         },
-        other => lower_receive_body(other, &extended_env)?,
+        other => lower_body_lifting_folds(other, &extended_env)?,
     };
 
     // `where`-guard (if any) is an ordinary boolean `Proc`, lowered in the extended env.
@@ -1466,6 +1781,55 @@ fn send_par_persistent(channel: Par, data: Vec<Par>) -> Par {
 /// `Proc::CastList([..])` constructor (the canonical arity list used by receive patterns).
 fn mk_proc_list(items: Vec<Proc>) -> Proc {
     Proc::CastList(Arc::new(List::ListLit(items)))
+}
+
+/// A-S4: desugar ONE raw send-sugar node (`x!()`, `c!(a,b)`, `@Nil!(q)`, `@n!(…)`, their `!!`
+/// twins, and the internal `__ppar`) to its canonical channel-first form. Returns `None` for
+/// every non-sugar node. Each arm performs EXACTLY the constructor rewrite the rule's `![{…}]
+/// fold` body performs (`languages/src/rhocalc.rs`) — a pure structural rearrangement, no value
+/// computation — so lowering the desugared node is byte-identical to lowering the eval-time fold
+/// target. Exec submits the RAW parse tree post-A-S4, so these nodes reach the lowering unfolded.
+fn desugar_send_node(proc: &Proc) -> Option<Proc> {
+    let quote = |p: &Arc<Proc>| Arc::new(Name::NQuote(p.clone()));
+    let quote_nil = || Arc::new(Name::NQuote(Arc::new(Proc::PZero)));
+    let quote_name = |n: &Arc<Name>| {
+        Arc::new(Name::NQuote(Arc::new(name_pattern_to_proc(n.as_ref()))))
+    };
+    let list1 = |a: &Arc<Proc>, bs: &[Proc]| {
+        let mut items = Vec::with_capacity(1 + bs.len());
+        items.push(a.as_ref().clone());
+        items.extend(bs.iter().cloned());
+        Arc::new(mk_proc_list(items))
+    };
+    let empty = || Arc::new(mk_proc_list(Vec::new()));
+    Some(match proc {
+        // Empty sends: `x!()` / `x!!()` — payload is the empty canonical arity list.
+        Proc::POutputEmpty(n) => Proc::POutput(n.clone(), empty()),
+        Proc::PPersistOutputEmpty(n) => Proc::PPersistOutput(n.clone(), empty()),
+        // Polyadic sends: `x!(a, b…)` — payload is the canonical arity list.
+        Proc::POutput2Plus(n, a, bs) => Proc::POutput(n.clone(), list1(a, bs)),
+        Proc::PPersistOutput2Plus(n, a, bs) => Proc::PPersistOutput(n.clone(), list1(a, bs)),
+        // `@Nil` sends: channel is the quote of `Nil`.
+        Proc::POutputNil(q) => Proc::POutput(quote_nil(), q.clone()),
+        Proc::PPersistOutputNil(q) => Proc::PPersistOutput(quote_nil(), q.clone()),
+        Proc::POutputNilEmpty => Proc::POutput(quote_nil(), empty()),
+        Proc::PPersistOutputNilEmpty => Proc::PPersistOutput(quote_nil(), empty()),
+        Proc::POutputNil2Plus(a, bs) => Proc::POutput(quote_nil(), list1(a, bs)),
+        Proc::PPersistOutputNil2Plus(a, bs) => Proc::PPersistOutput(quote_nil(), list1(a, bs)),
+        // `@n` (Name-shaped) sends: channel is the quote of the name's process image.
+        Proc::POutputQuoted(n, q) => Proc::POutput(quote_name(n), q.clone()),
+        Proc::POutputQuotedEmpty(n) => Proc::POutput(quote_name(n), empty()),
+        Proc::POutputQuoted2Plus(n, a, bs) => Proc::POutput(quote_name(n), list1(a, bs)),
+        // `@P` (Proc-shaped) empty/polyadic sends: channel is the quote of `P`. (The scalar
+        // `POutputShort`/`PPersistOutputShort` are lowered directly by their own arms.)
+        Proc::POutputShortEmpty(p) => Proc::POutput(quote(p), empty()),
+        Proc::PPersistOutputShortEmpty(p) => Proc::PPersistOutput(quote(p), empty()),
+        Proc::POutputShort2Plus(p, a, bs) => Proc::POutput(quote(p), list1(a, bs)),
+        Proc::PPersistOutputShort2Plus(p, a, bs) => Proc::PPersistOutput(quote(p), list1(a, bs)),
+        // Internal `__ppar(…)` constructor exposure: the multiset it denotes.
+        Proc::PParInternal(parts) => Proc::PPar(parts.clone()),
+        _ => return None,
+    })
 }
 
 /// Map a name PATTERN to the `Proc` whose `PVar` leaves mark the bound positions.
