@@ -161,4 +161,4 @@ cost. Engine-side generic wins to date: **O1** (FxHash keys), **O2** (extractor 
 | Dovetail saturation | **this ledger** (`dovetail_saturation/*`) |
 | RhoNet planning / Rho `Par` generation | **this ledger** (`rho_net_lowering/*`) |
 | Dovetail extraction | folded into `dovetail_report_for` (saturation + extraction) |
-| Rho runtime execution, REPL exec / step | gap — needs a runtime bench driving `PlannedRhoBackend` (a Rho machine spin-up per iter; deferred to a runtime-bench slice, tracked under Epic 9) |
+| Rho runtime execution, REPL exec / step | Rho runtime execution: **covered** by the Track B matcher head-to-head — 86 driver cells × 33 reps + criterion warm/cold matrices on the live counting `RhoRuntime` ([set-automaton-vs-naive.md](set-automaton-vs-naive.md), pgmcp experiment 144); REPL exec / step remains open (Epic 9) |
