@@ -77,13 +77,16 @@
 //! macro-generated code references this module; budgets/metering remain
 //! entirely F1r3node's concern and no cost surface exists here.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use dovetail::set_automaton::{AutomatonNode, PatternId, SetAutomatonView};
-use models::rhoapi::{MatchCase, Par, Receive, ReceiveBind};
+use models::rhoapi::expr::ExprInstance;
+use models::rhoapi::var::{VarInstance, WildcardMsg};
+use models::rhoapi::{EPlusPlus, Expr, MatchCase, Par, Receive, ReceiveBind, Var};
 use models::rust::rholang::implicits::GPrivateBuilder;
 use models::rust::utils::{
-    new_boundvar_par, new_freevar_par, new_gstring_par, new_match_par, new_send_par,
+    new_boundvar_par, new_elist_par, new_freevar_par, new_gstring_par, new_match_par, new_send_par,
     new_wildcard_par,
 };
 
@@ -96,6 +99,7 @@ use crate::rho_net_lower::{
     reflect_tag, spread_child_location, spread_root_location, spread_term_par, GroundTerm,
 };
 use crate::rho_net_ruleset::InRhoMatchingRuleset;
+use crate::rho_net_subst_trs as trs;
 
 /// How a naive receiver DEMANDS an expected head tag at a `loc:` channel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -167,6 +171,35 @@ pub enum NaiveKtUnsupported {
         /// The entry whose ROOT op owns the first demand at that head.
         root_entry: PatternId,
     },
+    /// R3 (self-driving) only: the subject uses one constructor label at two
+    /// DIFFERENT arities, so the `^respread` walker cannot carry one exact-arity
+    /// dispatch arm per label — the emitter fails closed rather than emit a
+    /// walker whose wildcard arm would swallow a live constructor shape.
+    SelfDrivingArityConflict {
+        /// The conflicting constructor label.
+        op: String,
+        /// The first arity observed for `op` (subject pre-order).
+        arity_a: usize,
+        /// The conflicting arity observed later.
+        arity_b: usize,
+    },
+    /// R3 (self-driving) only: a subject constructor label collides with one of
+    /// the reserved `^respread` rendezvous labels (`^respread` /
+    /// `^respread-root` / `^respread-err`) — a walker arm for it would alias the
+    /// walker's own channels, so the emitter fails closed.
+    SelfDrivingReservedLabel {
+        /// The colliding constructor label.
+        op: String,
+    },
+    /// R3 (self-driving) only: the subject contains an AC operand COLLECTION
+    /// node (`GroundTerm::coll_type = Some(_)`). The `^respread` walker is a
+    /// POSITIONAL tagged-`EList` decomposer (the Appendix-A positional scheme's
+    /// re-spread); an AC carrier has no positional spread to re-emit, so the
+    /// emitter fails closed.
+    SelfDrivingCollectionSubject {
+        /// The collection node's constructor label.
+        op: String,
+    },
 }
 
 impl fmt::Display for NaiveKtUnsupported {
@@ -186,6 +219,22 @@ impl fmt::Display for NaiveKtUnsupported {
                 "naive Knotted-Topoi baseline: entry {demanding_entry:?} demands head tag `{op}` \
                  also demanded by root entry {root_entry:?} — two readers for one location \
                  message would drop a match"
+            ),
+            Self::SelfDrivingArityConflict { op, arity_a, arity_b } => write!(
+                f,
+                "naive Knotted-Topoi R3 (self-driving): subject constructor `{op}` occurs at \
+                 arity {arity_a} AND arity {arity_b} — the ^respread walker needs one exact-arity \
+                 arm per label"
+            ),
+            Self::SelfDrivingReservedLabel { op } => write!(
+                f,
+                "naive Knotted-Topoi R3 (self-driving): subject constructor `{op}` collides with \
+                 a reserved ^respread rendezvous label"
+            ),
+            Self::SelfDrivingCollectionSubject { op } => write!(
+                f,
+                "naive Knotted-Topoi R3 (self-driving): subject node `{op}` is an AC operand \
+                 collection — the positional ^respread walker has no carrier re-spread"
             ),
         }
     }
@@ -753,6 +802,497 @@ fn collect_ruleset_sites(
         let child_location = spread_child_location(location, &node.constructor, index);
         collect_ruleset_sites(child, &child_location, roots, sites);
     }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// R3 — the SELF-DRIVING exploratory variant (the PERSISTENT-fire regime probe)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// USER-approved, PRE-REGISTERED, clearly-labeled EXPLORATORY column
+// (Track B R3, 2026-07-19). It DEVIATES from the same-firing-contract
+// constraint every measured column above observes — BY DESIGN: instead of one
+// matcher session per rewrite step (the per-invocation architecture of the
+// per-step `lambda_chain` drives; see
+// `docs/benchmarks/data/sa-vs-naive/README.md`), the fired rule's REDUCT is
+// re-spread IN-SESSION at the fired site, so the PERSISTENT Appendix-A root
+// receiver keeps matching and a β chain normalizes in ONE injection. This is
+// the paper's actual runtime model — the first probe of the regime where
+// matching work SURVIVES across steps.
+
+/// The reserved rendezvous label of the R3 `^respread` WALKER receiver
+/// (`GPrivate(reflect_tag(fp, "^respread"))`): a 3-ary persistent contract
+/// `^respread(t, loc, cap)` that decomposes one reflected node and emits its
+/// spread sends (see [`respread_walker_receiver_par`]). `^`-prefixed, so it can
+/// never collide with a user constructor (a Rust `Ident`).
+pub const RESPREAD_RESERVED_LABEL: &str = "^respread";
+
+/// The reserved rendezvous label of the R3 ROOT dispatcher
+/// (`GPrivate(reflect_tag(fp, "^respread-root"))`): the 1-ary persistent
+/// contract every R3 firing's reduct is DELIVERED to (the accept's dynamic
+/// `out` slot), which either seeds a walk (redex-rooted reduct) or lands the
+/// session normal form on OUT (see [`respread_root_receiver_par`]).
+pub const RESPREAD_ROOT_RESERVED_LABEL: &str = "^respread-root";
+
+/// The reserved FAIL-CLOSED error channel of the R3 walker family
+/// (`GPrivate(reflect_tag(fp, "^respread-err"))`): any reflected node whose
+/// head tag is outside the emitter-derived admitted constructor set is SENT
+/// here (typed, resting — no receiver consumes it), never silently spread or
+/// silently dropped. A test / driver reads the channel to observe the breach;
+/// the session's OUT then fails its observed-value expectation loudly.
+pub const RESPREAD_ERR_RESERVED_LABEL: &str = "^respread-err";
+
+/// The three reserved `^respread`-family rendezvous labels, for the B4
+/// counter classification (`bench_support`'s `respread_tau` bucket) — the
+/// analogue of `reserved_subst_trs_labels` for the R3 walker family.
+pub fn respread_reserved_labels() -> [&'static str; 3] {
+    [
+        RESPREAD_RESERVED_LABEL,
+        RESPREAD_ROOT_RESERVED_LABEL,
+        RESPREAD_ERR_RESERVED_LABEL,
+    ]
+}
+
+/// GString `++` concatenation `a ++ b` as a TRS [`trs::Node`] — the ONE
+/// combinator the walker needs beyond the subst-TRS set: a child's `loc:`/`cap:`
+/// channel NAME is computed IN RHOLANG from the parent's name plus the constant
+/// suffix `"/{op}.{index}"`, exactly [`spread_child_location`]'s derivation
+/// (`format!("{parent}/{op}.{index}")`), so the walker's re-spread rendezvouses
+/// with the SAME channels the matcher's static schedule reads. The reducer
+/// evaluates `EPlusPlus` over two `GString`s to their concatenation (reduce.rs
+/// `ExprInstance::EPlusPlusBody`, the string arm) both in channel and in data
+/// position, so the computed name is materialized before every produce.
+fn concat_str(a: trs::Node, b: trs::Node) -> trs::Node {
+    let free = trs::union_free(&[a.free.as_slice(), b.free.as_slice()]);
+    let free_bits = trs::free_bits(&free);
+    let par = Par {
+        exprs: vec![Expr {
+            expr_instance: Some(ExprInstance::EPlusPlusBody(EPlusPlus {
+                p1: Some(a.par),
+                p2: Some(b.par),
+            })),
+        }],
+        locally_free: free_bits,
+        ..Default::default()
+    };
+    trs::Node { par, free }
+}
+
+/// A HEAD-tag dispatch pattern `[⌜label⌝ ...]` — a tagged `EList` whose single
+/// listed element is the ground tag and whose REMAINDER is a wildcard, so it
+/// matches a reflected node of ANY arity with that head (the arity-erased
+/// dispatch the `^respread-root` dispatcher needs: it routes on the head alone
+/// and forwards the WHOLE node `t`, never destructuring children).
+fn head_tag_remainder_pattern(language_fingerprint: &str, label: &str) -> Par {
+    let wildcard_remainder = Var {
+        var_instance: Some(VarInstance::Wildcard(WildcardMsg {})),
+    };
+    new_elist_par(
+        vec![trs::tag_par(language_fingerprint, label)],
+        Vec::new(),
+        true,
+        Some(wildcard_remainder),
+        Vec::new(),
+        true,
+    )
+}
+
+/// [`build_accept_send`] with the trailing OUT slot replaced by an ARBITRARY
+/// ground channel NAME `Par` (here: the `^respread-root` `GPrivate`). Byte-for-
+/// byte the shared accept otherwise — same accept channel, same σ `BoundVar`
+/// frame, same slot order — so the language's INSTALLED σ-receiver (which binds
+/// `out` as its LAST formal and threads it dynamically: `sigma_receiver_par`
+/// sends the reduct on `BoundVar(0)`; `subst_seed_receiver_par` threads it as
+/// the β cascade's continuation) delivers the fired reduct TO THE DISPATCHER
+/// with no change to the installed program. This is R3's ONE deviation from the
+/// shared firing contract (pre-registered, by design): the reduct's DESTINATION
+/// is the in-session dispatcher instead of the observation channel.
+fn build_accept_send_to_name(
+    accept_channel: &str,
+    out_name: Par,
+    arity: usize,
+    first_occ: &[usize],
+) -> Par {
+    let mut data: Vec<Par> = first_occ
+        .iter()
+        .map(|&p| {
+            let idx = arity - 1 - p;
+            new_boundvar_par(idx as i32, bits(&[idx]), false)
+        })
+        .collect();
+    data.push(out_name);
+    let free_indices: Vec<usize> = first_occ.iter().map(|&p| arity - 1 - p).collect();
+    let accept_free = bits(&free_indices);
+    new_send_par(
+        new_gstring_par(accept_channel.to_string(), Vec::new(), false),
+        data,
+        false,
+        accept_free.clone(),
+        false,
+        accept_free,
+        false,
+    )
+}
+
+/// ONE entry's R3 receiver at the ROOT site: the SAME persistent-root /
+/// one-shot-descent / capture-chain schedule as [`naive_kt_entry_receiver_par`]
+/// (PatternGuard demand — R3 is PatternGuard-only), with the innermost accept
+/// swapped to [`build_accept_send_to_name`] targeting the `^respread-root`
+/// dispatcher. Deliberately NOT refactored into the frozen primary emitter
+/// (its byte-shape is pinned by the pre-registered protocol's tests); the
+/// ~15 duplicated lines are annotated against it.
+fn selfdriving_entry_receiver_par(
+    view: &SetAutomatonView<'_, String>,
+    entry: usize,
+    site: &str,
+    accept_channel: &str,
+    language_fingerprint: &str,
+) -> Result<Par, NaiveKtUnsupported> {
+    let schedule = collect_entry_schedule(view, entry, site)?;
+    // Linear entry ⇒ first_occ = [0,…,k-1] (see `naive_kt_entry_receiver_par`).
+    let k = schedule.captures.len();
+    let first_occ: Vec<usize> = (0..k).collect();
+    let respread_root = trs::tag_par(language_fingerprint, RESPREAD_ROOT_RESERVED_LABEL);
+    let accept = build_accept_send_to_name(accept_channel, respread_root, k, &first_occ);
+    let mut body = wrap_capture_chain(&schedule.captures, accept);
+    for descent in schedule.descents.iter().rev() {
+        let tag = GPrivateBuilder::new_par_from_string(reflect_tag(
+            language_fingerprint,
+            &descent.op,
+        ));
+        body = naive_tag_receive(
+            &descent.loc_channel,
+            tag,
+            body,
+            false,
+            NaiveGuardEncoding::PatternGuard,
+        );
+    }
+    let root_tag = GPrivateBuilder::new_par_from_string(reflect_tag(
+        language_fingerprint,
+        &schedule.root_op,
+    ));
+    Ok(naive_tag_receive(
+        &spread_root_location(site),
+        root_tag,
+        body,
+        true,
+        NaiveGuardEncoding::PatternGuard,
+    ))
+}
+
+/// Collect the subject's constructor → arity map (pre-order), running the R3
+/// admission gates: an AC collection node fails closed
+/// ([`NaiveKtUnsupported::SelfDrivingCollectionSubject`]), a label colliding
+/// with a `^respread`-family rendezvous label fails closed
+/// ([`NaiveKtUnsupported::SelfDrivingReservedLabel`]), and one label at two
+/// arities fails closed ([`NaiveKtUnsupported::SelfDrivingArityConflict`]).
+/// This map IS the walker's admitted dispatch set: β (the subst TRS) can only
+/// rearrange/duplicate subject subtrees and rebuild `^bound`/Peano leaves that
+/// already occur in the subject, so for the λ-chain family every reduct's
+/// constructors are covered; anything else hits the walker's fail-closed
+/// wildcard arm at runtime (a typed `^respread-err` send).
+fn collect_selfdriving_arity_map(
+    term: &GroundTerm,
+    map: &mut BTreeMap<String, usize>,
+) -> Result<(), NaiveKtUnsupported> {
+    if term.coll_type.is_some() {
+        return Err(NaiveKtUnsupported::SelfDrivingCollectionSubject {
+            op: term.constructor.clone(),
+        });
+    }
+    if respread_reserved_labels().contains(&term.constructor.as_str()) {
+        return Err(NaiveKtUnsupported::SelfDrivingReservedLabel {
+            op: term.constructor.clone(),
+        });
+    }
+    match map.get(&term.constructor) {
+        Some(&arity) if arity != term.children.len() => {
+            return Err(NaiveKtUnsupported::SelfDrivingArityConflict {
+                op: term.constructor.clone(),
+                arity_a: arity,
+                arity_b: term.children.len(),
+            });
+        },
+        Some(_) => {},
+        None => {
+            map.insert(term.constructor.clone(), term.children.len());
+        },
+    }
+    for child in &term.children {
+        collect_selfdriving_arity_map(child, map)?;
+    }
+    Ok(())
+}
+
+/// The R3 ROOT DISPATCHER `for(t <= ⌜^respread-root⌝){ match t { … } }` — the
+/// persistent 1-ary contract every R3 firing's reduct is delivered to (it is
+/// the accept's dynamic `out`; the installed σ-receiver / β-cascade sends
+/// `out!(⟦reduct⟧)` and that send IS this contract's COMM):
+///
+/// * head tag ∈ `redex_root_ops` (the ruleset's entry root ops) → the reduct
+///   can match again at the root: seed the walker
+///   `^respread!(t, "loc:{root_site}", "cap:{root_site}")` so its spread
+///   re-materializes at the SAME site prefix the persistent matcher reads —
+///   matching continues in-session;
+/// * head tag ∈ `nf_labels` (subject constructors that are NOT rule roots) →
+///   the session normal form: `@out_channel!(t)` lands the reflected NF ONCE
+///   on the observation channel (the R3 analogue of the per-step drive's final
+///   observed reduct — the in-Rho replacement of the host's
+///   inject-next-or-stop loop);
+/// * anything else → fail closed: `⌜^respread-err⌝!(t)`.
+///
+/// Dispatch is on the HEAD TAG ALONE ([`head_tag_remainder_pattern`], arity-
+/// erased); arms are emitted in sorted label order (deterministic bytes), and
+/// all arms' patterns are pairwise-disjoint ground tags, so arm order never
+/// affects which arm fires.
+pub fn respread_root_receiver_par(
+    language_fingerprint: &str,
+    root_site: &str,
+    out_channel: &str,
+    redex_root_ops: &BTreeSet<String>,
+    nf_labels: &BTreeSet<String>,
+) -> Par {
+    let fp = language_fingerprint;
+    let chan = trs::tag_par(fp, RESPREAD_ROOT_RESERVED_LABEL);
+    let env = trs::Env::root(&["t"]);
+    let mut cases: Vec<trs::Case> =
+        Vec::with_capacity(redex_root_ops.len() + nf_labels.len() + 1);
+    for op in redex_root_ops {
+        cases.push(trs::Case {
+            pattern: head_tag_remainder_pattern(fp, op),
+            free_count: 0,
+            body: trs::send(
+                trs::ground(trs::tag_par(fp, RESPREAD_RESERVED_LABEL)),
+                vec![
+                    env.var("t"),
+                    trs::ground(new_gstring_par(
+                        spread_root_location(root_site),
+                        Vec::new(),
+                        false,
+                    )),
+                    trs::ground(new_gstring_par(
+                        collapse_capture_location(root_site),
+                        Vec::new(),
+                        false,
+                    )),
+                ],
+            ),
+        });
+    }
+    for label in nf_labels {
+        cases.push(trs::Case {
+            pattern: head_tag_remainder_pattern(fp, label),
+            free_count: 0,
+            body: trs::send(
+                trs::ground(new_gstring_par(out_channel.to_string(), Vec::new(), false)),
+                vec![env.var("t")],
+            ),
+        });
+    }
+    cases.push(trs::Case {
+        pattern: trs::pat_wildcard(),
+        free_count: 0,
+        body: trs::send(
+            trs::ground(trs::tag_par(fp, RESPREAD_ERR_RESERVED_LABEL)),
+            vec![env.var("t")],
+        ),
+    });
+    let body = trs::match_(env.var("t"), cases);
+    trs::persistent_contract(chan, 1, body).par
+}
+
+/// The R3 WALKER `for(t, loc, cap <= ⌜^respread⌝){ match t { … } }` — the
+/// persistent 3-ary reflected-term walker that re-emits one subtree's SPREAD at
+/// a site prefix, fully in Rho (the `^subst`/`^shift` cascade's Match-dispatch
+/// pattern over the reflected-term ABI, specialized from term REWRITING to term
+/// RE-SPREADING). One exact-arity arm per admitted `(label, arity)`:
+///
+/// ```text
+/// [⌜L⌝, c₀, …, c_{m-1}] =>
+///     @loc!(⌜L⌝)                                  ← the head tag at loc:π
+///   | @cap!(t)                                    ← ⟦subtree⟧ at cap:π (M-collapse)
+///   | ^respread!(cᵢ, loc ++ "/L.i", cap ++ "/L.i")  per child  ← recurse
+/// ```
+///
+/// so after a walk of `⟦t⟧` seeded at `(loc:π, cap:π)`, every node of `t` has
+/// its head tag on its `loc:` channel and its reflected subtree on its `cap:`
+/// channel — exactly the channels [`spread_term_par`]'s spread publishes at π
+/// and the matcher's static schedule reads (child names derived by the SAME
+/// `"{parent}/{op}.{index}"` rule, computed in-Rho by [`concat_str`]).
+///
+/// DELIBERATE difference from the host spread: NO `col:` publication. The
+/// spread's `col:` channels exist only as the bottom-up collapse fold's
+/// internal rendezvous (each consumed exactly once by the parent's fold); the
+/// walker already HOLDS every node's collapsed value (`t` itself — a reflected
+/// node IS its collapse, byte-identical per the `spread_term_par` rustdoc), so
+/// it publishes `cap:` directly, installs no fold, and emitting `col:` values
+/// would only rest as dead messages no receiver ever reads. Consequence for
+/// the B4 counters: a re-spread contributes NO `col:`-join `matching_tau`
+/// COMMs — its volume is measured by the NEW `respread_tau` class (one COMM
+/// per walked node) instead.
+///
+/// Fail-closed: a head tag outside `arity_map` hits the wildcard arm — a typed
+/// `⌜^respread-err⌝!(t)` send (resting; no receiver) — never a silent spread.
+pub fn respread_walker_receiver_par(
+    language_fingerprint: &str,
+    arity_map: &BTreeMap<String, usize>,
+) -> Par {
+    let fp = language_fingerprint;
+    let chan = trs::tag_par(fp, RESPREAD_RESERVED_LABEL);
+    let env = trs::Env::root(&["t", "loc", "cap"]);
+    let mut cases: Vec<trs::Case> = Vec::with_capacity(arity_map.len() + 1);
+    for (label, &arity) in arity_map {
+        let child_pats: Vec<Par> = (0..arity).map(trs::pat_free).collect();
+        cases.push(trs::Case {
+            pattern: trs::pat_tagged(fp, label, child_pats),
+            free_count: arity,
+            body: {
+                // The `arity` captured children bind innermost (`FreeVar(i)` ⟹
+                // `BoundVar(arity-1-i)`) — the subst-TRS congruence-arm frame.
+                let child_names: Vec<String> = (0..arity).map(|i| format!("c{i}")).collect();
+                let child_refs: Vec<&str> = child_names.iter().map(String::as_str).collect();
+                let env = env.push(&child_refs);
+                // @loc!(⌜L⌝) — this node's head tag on its location channel.
+                let mut composed =
+                    trs::send(env.var("loc"), vec![trs::ground(trs::tag_par(fp, label))]);
+                // @cap!(t) — the reflected node IS its own collapse value.
+                composed = trs::par2(
+                    composed,
+                    trs::send(env.var("cap"), vec![env.var("t")]),
+                );
+                for (i, child) in child_refs.iter().enumerate() {
+                    // The `spread_child_location` suffix "/{op}.{index}",
+                    // appended in-Rho to BOTH prefixes.
+                    let suffix = new_gstring_par(format!("/{label}.{i}"), Vec::new(), false);
+                    let recurse = trs::send(
+                        trs::ground(trs::tag_par(fp, RESPREAD_RESERVED_LABEL)),
+                        vec![
+                            env.var(child),
+                            concat_str(env.var("loc"), trs::ground(suffix.clone())),
+                            concat_str(env.var("cap"), trs::ground(suffix)),
+                        ],
+                    );
+                    composed = trs::par2(composed, recurse);
+                }
+                composed
+            },
+        });
+    }
+    cases.push(trs::Case {
+        pattern: trs::pat_wildcard(),
+        free_count: 0,
+        body: trs::send(
+            trs::ground(trs::tag_par(fp, RESPREAD_ERR_RESERVED_LABEL)),
+            vec![env.var("t")],
+        ),
+    });
+    let body = trs::match_(env.var("t"), cases);
+    trs::persistent_contract(chan, 3, body).par
+}
+
+/// Track B — R3, the SELF-DRIVING naive call (EXPLORATORY; PRE-REGISTERED
+/// deviation from the shared firing contract, USER-approved 2026-07-19;
+/// PatternGuard only): ONE session that installs, at `root_site`,
+///
+/// 1. every entry's R3 receiver ([`selfdriving_entry_receiver_par`]) — the
+///    Appendix-A persistent per-site receiver whose accept's OUT slot is the
+///    `^respread-root` dispatcher instead of the observation channel;
+/// 2. the `^respread-root` dispatcher + `^respread` walker family
+///    ([`respread_root_receiver_par`] / [`respread_walker_receiver_par`]),
+///    whose admitted constructor set is the SUBJECT's own constructor → arity
+///    map ([`collect_selfdriving_arity_map`], fail-closed);
+/// 3. ONE [`spread_term_par`] of the whole subject.
+///
+/// # The self-driving loop (why one injection normalizes a chain)
+///
+/// firing k: the persistent root receiver consumes the CURRENT root spread
+/// (`loc:`/`cap:` — `matching_tau`), its accept COMM fires the installed
+/// σ-receiver (`sa:` — `firing_visible`, exactly one per firing, so
+/// `firing_visible` remains the per-session firing count the ground truth
+/// pins), the language's OWN firing machinery computes the reduct (for a
+/// `SubstRewrite` β entry: the reserved `^subst` cascade — `subst_tau`,
+/// identical work to the per-step column) and delivers it on the accept's
+/// dynamic `out` = the `^respread-root` dispatcher (`respread_tau`), which
+/// re-spreads a redex-rooted reduct at `root_site` (walker COMMs —
+/// `respread_tau`, one per node) — re-arming the SAME persistent receiver —
+/// or lands a normal-form reduct ONCE on `out_channel`. NOTE the reduct is
+/// COMPUTED by the installed firing contract, never assumed: R3 does not
+/// special-case the identity-λ chain (re-spreading the captured argument
+/// directly would); the walker re-spreads whatever the cascade delivered.
+///
+/// # Determinism (per-channel single-liveness)
+///
+/// Rounds are causally ordered (walk k's sends exist only after firing k's
+/// captures were consumed), and per round each channel the matcher reads
+/// carries exactly ONE live message: the round's own re-spread value. Stale
+/// deep messages accumulate on channels no receiver demands (exactly as the
+/// per-step architecture's unconsumed spread rests, but in ONE runtime) — they
+/// are dead by construction, so scheduling nondeterminism never becomes value
+/// nondeterminism.
+///
+/// Returns the call and the installed ENTRY-receiver count (the matcher
+/// installs; the dispatcher/walker contracts are firing-side infrastructure,
+/// counted with the installed program like the subst TRS receivers, not here).
+pub fn naive_kt_selfdriving_call_par(
+    ruleset: &InRhoMatchingRuleset,
+    subject: &GroundTerm,
+    root_site: &str,
+    out_channel: &str,
+) -> Result<(Par, usize), NaiveKtUnsupported> {
+    let view = ruleset.automaton.view();
+    validate_naive_ruleset(&view)?;
+    let mut arity_map: BTreeMap<String, usize> = BTreeMap::new();
+    collect_selfdriving_arity_map(subject, &mut arity_map)?;
+
+    // The dispatcher's redex set: the ruleset's entry ROOT ops (a reduct with
+    // such a head can fire again at the root). NF labels: every OTHER subject
+    // constructor. A redex-rooted reduct whose deeper nodes leave the admitted
+    // map fails closed in the walker (wildcard → ^respread-err), and a reduct
+    // whose ROOT leaves both sets fails closed in the dispatcher.
+    let mut redex_root_ops: BTreeSet<String> = BTreeSet::new();
+    for entry in 0..view.entry_count() {
+        match view.node(view.entry_root_state(entry)) {
+            AutomatonNode::App { op, .. } => {
+                redex_root_ops.insert(op.to_string());
+            },
+            // Unreachable past `validate_naive_ruleset`, kept total + typed.
+            AutomatonNode::Var(_) => return Err(NaiveKtUnsupported::VariableRootPattern),
+        }
+    }
+    let nf_labels: BTreeSet<String> = arity_map
+        .keys()
+        .filter(|label| !redex_root_ops.contains(*label))
+        .cloned()
+        .collect();
+
+    let mut call = Par::default();
+    let mut installed = 0usize;
+    for entry in 0..view.entry_count() {
+        let accept_channel = entry_accept_channel(ruleset, view.entry_id(entry));
+        let receiver = selfdriving_entry_receiver_par(
+            &view,
+            entry,
+            root_site,
+            accept_channel,
+            &ruleset.language_fingerprint,
+        )?;
+        call = call.append(receiver);
+        installed += 1;
+    }
+    call = call.append(respread_root_receiver_par(
+        &ruleset.language_fingerprint,
+        root_site,
+        out_channel,
+        &redex_root_ops,
+        &nf_labels,
+    ));
+    call = call.append(respread_walker_receiver_par(
+        &ruleset.language_fingerprint,
+        &arity_map,
+    ));
+
+    let spread = spread_term_par(subject, &ruleset.language_fingerprint, root_site);
+    Ok((call.append(spread), installed))
 }
 
 #[cfg(test)]
@@ -1519,6 +2059,302 @@ mod tests {
         let wrapped =
             NaiveKtContextualUnsupported::Naive(NaiveKtUnsupported::NonLinearEntry);
         assert!(!wrapped.to_string().is_empty());
+    }
+
+    // ── R3 (self-driving) unit tests ─────────────────────────────────────────
+
+    /// The β-shaped direct ruleset `App(^lambda(fun), arg) → sa:beta` and the
+    /// depth-2 identity chain subject the R3 tests share.
+    fn beta_ruleset_and_chain() -> (InRhoMatchingRuleset, GroundTerm) {
+        let ruleset = direct_ruleset(
+            vec![(
+                PatternId(0),
+                Pattern::app(
+                    "App".to_string(),
+                    vec![
+                        Pattern::app(
+                            crate::rho_net_lower::LAMBDA_REFLECT_LABEL.to_string(),
+                            vec![Pattern::var("fun")],
+                        ),
+                        Pattern::var("arg"),
+                    ],
+                ),
+            )],
+            vec![(PatternId(0), "sa:beta")],
+            Vec::new(),
+        );
+        let identity = GroundTerm::new(
+            crate::rho_net_lower::LAMBDA_REFLECT_LABEL,
+            vec![GroundTerm::new(
+                crate::rho_net_lower::BOUND_VAR_REFLECT_LABEL,
+                vec![GroundTerm::nullary(crate::rho_net_lower::PEANO_ZERO_REFLECT_LABEL)],
+            )],
+        );
+        let chain = GroundTerm::new(
+            "App",
+            vec![
+                identity.clone(),
+                GroundTerm::new("App", vec![identity, GroundTerm::nullary("A")]),
+            ],
+        );
+        (ruleset, chain)
+    }
+
+    /// The persistent receive of `call` whose single-bind SOURCE is exactly
+    /// `source` (a ground channel `Par`), or panic.
+    fn persistent_receive_on<'a>(call: &'a Par, source: &Par, what: &str) -> &'a Receive {
+        call.receives
+            .iter()
+            .find(|receive| {
+                receive.persistent && receive.binds[0].source.as_ref() == Some(source)
+            })
+            .unwrap_or_else(|| panic!("{what}: no persistent receive on {source:?}"))
+    }
+
+    /// R3 emission shape: one installed entry receiver whose innermost accept
+    /// targets the `^respread-root` dispatcher; the dispatcher (1 formal) and
+    /// the walker (3 formals) are persistent contracts on their reserved
+    /// `GPrivate` channels; exactly ONE spread is appended; the whole call is
+    /// a closed contract.
+    #[test]
+    fn selfdriving_call_emits_dispatcher_walker_and_the_rerouted_accept() {
+        let (ruleset, chain) = beta_ruleset_and_chain();
+        let (call, installed) =
+            naive_kt_selfdriving_call_par(&ruleset, &chain, "site0", "OUT", )
+                .expect("the β chain admits the R3 self-driving call");
+        assert_eq!(installed, 1, "one entry ⇒ one installed R3 root receiver");
+        assert_closed(&call, "the R3 self-driving call");
+
+        // The matcher: persistent on loc:site0, tag-as-pattern ⌜App⌝.
+        let loc_root = new_gstring_par("loc:site0".to_string(), Vec::new(), false);
+        let matcher = persistent_receive_on(&call, &loc_root, "R3 matcher");
+        assert_eq!(matcher.binds[0].patterns[0], tag_par("App"));
+        assert_eq!(matcher.bind_count, 0, "PatternGuard binds nothing at the tag");
+
+        // The innermost accept: sa:beta!(σ_fun, σ_arg, ⌜^respread-root⌝) — the
+        // shared σ frame with the OUT slot swapped to the dispatcher channel.
+        let descent = &matcher.body.as_ref().expect("matcher body").receives[0];
+        let cap_fun = &descent.body.as_ref().expect("descent body").receives[0];
+        let cap_arg = &cap_fun.body.as_ref().expect("fun body").receives[0];
+        let accept = &cap_arg.body.as_ref().expect("arg body").sends[0];
+        assert_eq!(gstring(accept.chan.as_ref().expect("chan")), Some("sa:beta"));
+        assert_eq!(accept.data.len(), 3, "σ_fun, σ_arg, dispatcher");
+        assert_eq!(boundvar_index(&accept.data[0]), Some(1), "σ[fun] = BoundVar(1)");
+        assert_eq!(boundvar_index(&accept.data[1]), Some(0), "σ[arg] = BoundVar(0)");
+        assert_eq!(
+            accept.data[2],
+            trs::tag_par(FP, RESPREAD_ROOT_RESERVED_LABEL),
+            "the accept's OUT slot is the ^respread-root dispatcher channel"
+        );
+        // Byte-identity of everything EXCEPT the swapped slot: the σ prefix
+        // equals the shared build_accept_send's σ prefix.
+        let shared = build_accept_send("sa:beta", "OUT", 2, &[0, 1]);
+        assert_eq!(accept.data[..2], shared.sends[0].data[..2]);
+        assert_eq!(accept.chan, shared.sends[0].chan);
+
+        // The dispatcher: persistent 1-formal contract on ⌜^respread-root⌝.
+        let dispatcher = persistent_receive_on(
+            &call,
+            &trs::tag_par(FP, RESPREAD_ROOT_RESERVED_LABEL),
+            "R3 dispatcher",
+        );
+        assert_eq!(dispatcher.bind_count, 1, "dispatcher binds the delivered reduct");
+
+        // The walker: persistent 3-formal contract on ⌜^respread⌝.
+        let walker =
+            persistent_receive_on(&call, &trs::tag_par(FP, RESPREAD_RESERVED_LABEL), "R3 walker");
+        assert_eq!(walker.bind_count, 3, "walker binds (t, loc, cap)");
+
+        // Exactly ONE spread: one head-tag send rests on loc:site0.
+        let root_tag_sends = call
+            .sends
+            .iter()
+            .filter(|send| gstring(send.chan.as_ref().expect("chan")) == Some("loc:site0"))
+            .count();
+        assert_eq!(root_tag_sends, 1, "exactly ONE spread is appended");
+    }
+
+    /// The dispatcher routes a REDEX-rooted reduct to the walker seeded with
+    /// the root-site prefixes, an admitted NF-rooted reduct to OUT, and any
+    /// alien head to the typed `^respread-err` channel (fail-closed).
+    #[test]
+    fn selfdriving_dispatcher_routes_redex_nf_and_alien_heads() {
+        let (ruleset, chain) = beta_ruleset_and_chain();
+        let (call, _) = naive_kt_selfdriving_call_par(&ruleset, &chain, "site0", "OUT")
+            .expect("the β chain admits");
+        let dispatcher = persistent_receive_on(
+            &call,
+            &trs::tag_par(FP, RESPREAD_ROOT_RESERVED_LABEL),
+            "R3 dispatcher",
+        );
+        let dispatch = &dispatcher.body.as_ref().expect("dispatcher body").matches[0];
+        // Arms: 1 redex root (App) + 4 NF labels (A, Z, ^bound, ^lambda) + 1
+        // wildcard = 6, sorted-label deterministic.
+        assert_eq!(dispatch.cases.len(), 6, "1 redex + 4 NF + wildcard arms");
+
+        // The App arm seeds the walker with (t, "loc:site0", "cap:site0").
+        let app_arm = dispatch
+            .cases
+            .iter()
+            .find(|case| {
+                case.pattern
+                    .as_ref()
+                    .is_some_and(|pattern| format!("{pattern:?}").contains("EListBody"))
+                    && format!("{:?}", case.pattern).contains(&format!("{:?}", tag_par("App").unforgeables[0]))
+            })
+            .expect("the App redex arm exists");
+        let seed = &app_arm.source.as_ref().expect("App arm body").sends[0];
+        assert_eq!(
+            seed.chan.as_ref(),
+            Some(&trs::tag_par(FP, RESPREAD_RESERVED_LABEL)),
+            "a redex-rooted reduct is sent to the walker"
+        );
+        assert_eq!(seed.data.len(), 3, "^respread!(t, loc, cap)");
+        assert_eq!(boundvar_index(&seed.data[0]), Some(0), "t is the bound reduct");
+        assert_eq!(gstring(&seed.data[1]), Some("loc:site0"));
+        assert_eq!(gstring(&seed.data[2]), Some("cap:site0"));
+
+        // An NF arm (the terminal atom A) sends the reduct to OUT.
+        let a_arm = dispatch
+            .cases
+            .iter()
+            .find(|case| {
+                format!("{:?}", case.pattern).contains(&format!("{:?}", tag_par("A").unforgeables[0]))
+            })
+            .expect("the A NF arm exists");
+        let out_send = &a_arm.source.as_ref().expect("A arm body").sends[0];
+        assert_eq!(gstring(out_send.chan.as_ref().expect("chan")), Some("OUT"));
+        assert_eq!(boundvar_index(&out_send.data[0]), Some(0), "the NF is forwarded whole");
+
+        // The LAST arm is the fail-closed wildcard → ^respread-err.
+        let last = dispatch.cases.last().expect("wildcard arm");
+        assert_eq!(last.pattern.as_ref(), Some(&new_wildcard_par(Vec::new(), true)));
+        let err_send = &last.source.as_ref().expect("wildcard body").sends[0];
+        assert_eq!(
+            err_send.chan.as_ref(),
+            Some(&trs::tag_par(FP, RESPREAD_ERR_RESERVED_LABEL)),
+            "an alien head fails closed to the typed error channel"
+        );
+    }
+
+    /// The walker carries one exact-arity arm per subject constructor plus the
+    /// fail-closed wildcard, and each arm re-emits the head tag on @loc, the
+    /// whole node on @cap, and one recursion per child whose channel names are
+    /// computed with the `spread_child_location` suffix.
+    #[test]
+    fn selfdriving_walker_arms_cover_the_subject_map_and_fail_closed() {
+        let (ruleset, chain) = beta_ruleset_and_chain();
+        let (call, _) = naive_kt_selfdriving_call_par(&ruleset, &chain, "site0", "OUT")
+            .expect("the β chain admits");
+        let walker =
+            persistent_receive_on(&call, &trs::tag_par(FP, RESPREAD_RESERVED_LABEL), "R3 walker");
+        let dispatch = &walker.body.as_ref().expect("walker body").matches[0];
+        // Subject map {App:2, ^lambda:1, ^bound:1, Z:0, A:0} + wildcard = 6.
+        assert_eq!(dispatch.cases.len(), 6, "5 constructor arms + the wildcard");
+
+        // The App arm: free_count 2, body = @loc!(⌜App⌝) | @cap!(t) | 2 recursions.
+        let app_arm = dispatch
+            .cases
+            .iter()
+            .find(|case| {
+                case.free_count == 2
+                    && format!("{:?}", case.pattern)
+                        .contains(&format!("{:?}", tag_par("App").unforgeables[0]))
+            })
+            .expect("the binary App arm exists");
+        let body = app_arm.source.as_ref().expect("App arm body");
+        assert_eq!(body.sends.len(), 4, "tag + cap + one recursion per child");
+        let recursions: Vec<_> = body
+            .sends
+            .iter()
+            .filter(|send| send.chan.as_ref() == Some(&trs::tag_par(FP, RESPREAD_RESERVED_LABEL)))
+            .collect();
+        assert_eq!(recursions.len(), 2, "one ^respread recursion per App child");
+        for recursion in &recursions {
+            assert_eq!(recursion.data.len(), 3, "^respread!(child, loc', cap')");
+            // The child channel names are ++-computed with the shared suffix.
+            let rendered = format!("{:?}", recursion.data[1]);
+            assert!(
+                rendered.contains("EPlusPlusBody"),
+                "the child loc name is a ++ concat, got {rendered}"
+            );
+        }
+
+        // The wildcard arm fails closed to ^respread-err.
+        let last = dispatch.cases.last().expect("wildcard arm");
+        assert_eq!(last.pattern.as_ref(), Some(&new_wildcard_par(Vec::new(), true)));
+        let err_send = &last.source.as_ref().expect("wildcard body").sends[0];
+        assert_eq!(err_send.chan.as_ref(), Some(&trs::tag_par(FP, RESPREAD_ERR_RESERVED_LABEL)));
+    }
+
+    /// The walker's in-Rho child-suffix rule IS `spread_child_location`'s:
+    /// `parent ++ "/{op}.{i}"` (pinned so the derivations can never drift).
+    #[test]
+    fn selfdriving_child_suffix_matches_spread_child_location() {
+        for (op, index) in [("App", 0usize), ("App", 1), ("^lambda", 0), ("^bound", 0)] {
+            assert_eq!(
+                spread_child_location("", op, index),
+                format!("/{op}.{index}"),
+                "the walker's baked suffix must equal the shared derivation"
+            );
+        }
+    }
+
+    /// R3 admission fail-closed matrix: an arity-conflicted subject, a subject
+    /// label colliding with a reserved `^respread` rendezvous label, and an AC
+    /// collection subject each reject BEFORE any emission.
+    #[test]
+    fn selfdriving_rejects_conflicting_reserved_and_collection_subjects() {
+        let (ruleset, _) = beta_ruleset_and_chain();
+        // One label at two arities: f(A, f(B)) uses f at arity 2 and arity 1.
+        let conflicted = GroundTerm::new(
+            "f",
+            vec![
+                GroundTerm::nullary("A"),
+                GroundTerm::new("f", vec![GroundTerm::nullary("B")]),
+            ],
+        );
+        assert_eq!(
+            naive_kt_selfdriving_call_par(&ruleset, &conflicted, "site0", "OUT"),
+            Err(NaiveKtUnsupported::SelfDrivingArityConflict {
+                op: "f".to_string(),
+                arity_a: 2,
+                arity_b: 1,
+            })
+        );
+        // A reserved rendezvous label as a subject constructor.
+        let reserved = GroundTerm::new(
+            RESPREAD_RESERVED_LABEL,
+            vec![GroundTerm::nullary("A")],
+        );
+        assert_eq!(
+            naive_kt_selfdriving_call_par(&ruleset, &reserved, "site0", "OUT"),
+            Err(NaiveKtUnsupported::SelfDrivingReservedLabel {
+                op: RESPREAD_RESERVED_LABEL.to_string(),
+            })
+        );
+        // An AC collection node.
+        let bag = GroundTerm::collection(
+            mettail_ast::types::CollectionType::HashBag,
+            "PPar",
+            vec![GroundTerm::nullary("A")],
+        );
+        assert_eq!(
+            naive_kt_selfdriving_call_par(&ruleset, &bag, "site0", "OUT"),
+            Err(NaiveKtUnsupported::SelfDrivingCollectionSubject { op: "PPar".to_string() })
+        );
+        // The new variants render (fail-closed Display surface).
+        for variant in [
+            NaiveKtUnsupported::SelfDrivingArityConflict {
+                op: "f".to_string(),
+                arity_a: 2,
+                arity_b: 1,
+            },
+            NaiveKtUnsupported::SelfDrivingReservedLabel { op: "^respread".to_string() },
+            NaiveKtUnsupported::SelfDrivingCollectionSubject { op: "PPar".to_string() },
+        ] {
+            assert!(!variant.to_string().is_empty(), "{variant:?} must render");
+        }
     }
 
     /// A random LINEAR, App-ROOTED pattern for the accept byte-identity

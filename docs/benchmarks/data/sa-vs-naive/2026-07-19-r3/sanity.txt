@@ -1,0 +1,67 @@
+R3 sanity — lambda_chain naive-r3 (pattern-guard), 33 reps/cell (3 warmup + 30 measured)
+
+n=2:
+  [PASS] parse
+  [PASS] determinism (1 counter profile over 33 reps)
+  [PASS] observed = terminal atom ONCE (in-drive verified per rep; observed_count=1)
+  [PASS] firing_visible = n (= 2)
+  [PASS] matching_tau = 7n (one collapse fold + 4 matcher COMMs/firing)
+  [PASS] subst_tau = 3n (identical per-firing cascade to per-step)
+  [PASS] respread_tau = 2n^2 - 1 (dispatcher deliveries + walked nodes)
+  [PASS] other = n (the cascade's per-firing fresh-name ^cmp-result COMM)
+  [PASS] observation = ac_carrier = contextual = 0
+n=4:
+  [PASS] parse
+  [PASS] determinism (1 counter profile over 33 reps)
+  [PASS] observed = terminal atom ONCE (in-drive verified per rep; observed_count=1)
+  [PASS] firing_visible = n (= 4)
+  [PASS] matching_tau = 7n (one collapse fold + 4 matcher COMMs/firing)
+  [PASS] subst_tau = 3n (identical per-firing cascade to per-step)
+  [PASS] respread_tau = 2n^2 - 1 (dispatcher deliveries + walked nodes)
+  [PASS] other = n (the cascade's per-firing fresh-name ^cmp-result COMM)
+  [PASS] observation = ac_carrier = contextual = 0
+n=8:
+  [PASS] parse
+  [PASS] determinism (1 counter profile over 33 reps)
+  [PASS] observed = terminal atom ONCE (in-drive verified per rep; observed_count=1)
+  [PASS] firing_visible = n (= 8)
+  [PASS] matching_tau = 7n (one collapse fold + 4 matcher COMMs/firing)
+  [PASS] subst_tau = 3n (identical per-firing cascade to per-step)
+  [PASS] respread_tau = 2n^2 - 1 (dispatcher deliveries + walked nodes)
+  [PASS] other = n (the cascade's per-firing fresh-name ^cmp-result COMM)
+  [PASS] observation = ac_carrier = contextual = 0
+n=16:
+  [PASS] parse
+  [PASS] determinism (1 counter profile over 33 reps)
+  [PASS] observed = terminal atom ONCE (in-drive verified per rep; observed_count=1)
+  [PASS] firing_visible = n (= 16)
+  [PASS] matching_tau = 7n (one collapse fold + 4 matcher COMMs/firing)
+  [PASS] subst_tau = 3n (identical per-firing cascade to per-step)
+  [PASS] respread_tau = 2n^2 - 1 (dispatcher deliveries + walked nodes)
+  [PASS] other = n (the cascade's per-firing fresh-name ^cmp-result COMM)
+  [PASS] observation = ac_carrier = contextual = 0
+n=32:
+  [PASS] parse
+  [PASS] determinism (1 counter profile over 33 reps)
+  [PASS] observed = terminal atom ONCE (in-drive verified per rep; observed_count=1)
+  [PASS] firing_visible = n (= 32)
+  [PASS] matching_tau = 7n (one collapse fold + 4 matcher COMMs/firing)
+  [PASS] subst_tau = 3n (identical per-firing cascade to per-step)
+  [PASS] respread_tau = 2n^2 - 1 (dispatcher deliveries + walked nodes)
+  [PASS] other = n (the cascade's per-firing fresh-name ^cmp-result COMM)
+  [PASS] observation = ac_carrier = contextual = 0
+n=64:
+  [PASS] parse
+  [PASS] determinism (1 counter profile over 33 reps)
+  [PASS] observed = terminal atom ONCE (in-drive verified per rep; observed_count=1)
+  [PASS] firing_visible = n (= 64)
+  [PASS] matching_tau = 7n (one collapse fold + 4 matcher COMMs/firing)
+  [PASS] subst_tau = 3n (identical per-firing cascade to per-step)
+  [PASS] respread_tau = 2n^2 - 1 (dispatcher deliveries + walked nodes)
+  [PASS] other = n (the cascade's per-firing fresh-name ^cmp-result COMM)
+  [PASS] observation = ac_carrier = contextual = 0
+
+Equivalence discipline: every rep's observed OUT value is verified IN-DRIVE against
+compiled.expected.last() — the SAME terminal-NF object the per-step column verifies its
+final step against (ground A) — so 0 dnf across all cells IS the per-rep equivalence proof.
+OVERALL: PASS

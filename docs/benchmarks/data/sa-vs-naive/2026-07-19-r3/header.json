@@ -1,0 +1,43 @@
+{
+  "date": "2026-07-19-r3",
+  "git_sha": "1ed4feeca5f9be110e26a75c1956dd903d7857bb",
+  "git_branch": "feature/rho-native-set-automata",
+  "hostname": "arch-workstation",
+  "uname": "Linux arch-workstation 7.1.3-arch2-2 #1 SMP PREEMPT_DYNAMIC Thu, 16 Jul 2026 17:41:28 +0000 x86_64 GNU/Linux",
+  "rustc": "rustc 1.99.0-nightly (eff8269f7 2026-07-18)",
+  "cpu": {
+    "governors_cpu0_7": "cpu0=performance cpu1=performance cpu2=performance cpu3=performance cpu4=performance cpu5=performance cpu6=performance cpu7=performance ",
+    "scaling_driver": "amd-pstate-epp",
+    "boost": "1",
+    "amd_pstate_status": "active",
+    "governor_all_performance": true
+  },
+  "shell_cpus_allowed_list": "0-31",
+  "measured_invocation_wrapper": "systemd-run --user --scope -q -p MemoryMax=28G env RUST_MIN_STACK=8388608 taskset -c 0-7",
+  "driver_binary_sha256": "50d4627860b3b79a103c1fd604ae8a26acb1c990a56f23f03d6c2169c9c038be",
+  "protocol": {
+    "total_reps_per_cell": 33,
+    "warmup_reps": 3,
+    "measured_reps": 30,
+    "warmup_marking": "post-hoc jq wrapper field \"warmup\":true on lines with workload.rep < 3 (dnf lines included); measured reps are workload.rep in [3,32]",
+    "rep_timeout_secs": 60,
+    "emitted_program_guard_bytes": 8388608,
+    "cells": {
+      "r3_exploratory": 6,
+      "column": "lambda_chain naive-r3 (pattern-guard) n in {2,4,8,16,32,64}",
+      "deviation": "R3 SELF-DRIVING exploratory column — pre-registered, USER-approved 2026-07-19; DEVIATES from the same-firing-contract constraint BY DESIGN (single-session persistent-fire regime; the reduct is delivered to the in-session ^respread walker family, not OUT). Compare against the frozen primary per-step dataset 2026-07-19/ (its lambda cells are per-step SUMS per rep)."
+    }
+  },
+  "recorded_at": "2026-07-19T07:01:34Z",
+  "tree_state": {
+    "note": "EXPLORATORY R3 run: the R3 implementation (rholang-codegen rho_net_naive_kt.rs/rho_net_subst_trs.rs/lib.rs; rholang-runtime bench_support.rs/workloads.rs/bench_sa_vs_naive_driver.rs) was UNCOMMITTED by instruction at run time — git_sha records the base commit (1ed4feec, the primary-dataset record commit on top of 5c985622), not the R3 code itself",
+    "uncommitted_r3_files": [
+      "rholang-codegen/src/rho_net_naive_kt.rs",
+      "rholang-codegen/src/rho_net_subst_trs.rs",
+      "rholang-codegen/src/lib.rs",
+      "rholang-runtime/src/bench_support.rs",
+      "rholang-runtime/benches/support/workloads.rs",
+      "rholang-runtime/src/bin/bench_sa_vs_naive_driver.rs"
+    ]
+  }
+}

@@ -125,14 +125,20 @@ pub fn reserved_subst_trs_labels() -> [&'static str; 11] {
 /// A built process `Par` paired with its free-variable set (the De Bruijn indices it references in
 /// the CURRENT frame), sorted + de-duplicated. `locally_free` on the `Par` is kept in sync with
 /// `free` so the reducer's substitution / COMM read the correct set.
+///
+/// `pub(crate)` (fields included): the Track-B R3 self-driving emitter
+/// (`rho_net_naive_kt`, feature `bench-naive-baseline`) builds its `^respread`
+/// reserved-receiver family with THESE combinators, so its De Bruijn/free-set
+/// discipline is the TRS's by construction (and its one extra combinator — a
+/// GString `++` concat — is assembled from the exposed fields).
 #[derive(Clone)]
-struct Node {
-    par: Par,
-    free: Vec<usize>,
+pub(crate) struct Node {
+    pub(crate) par: Par,
+    pub(crate) free: Vec<usize>,
 }
 
 /// Sorted-unique union of De Bruijn free-sets.
-fn union_free(sets: &[&[usize]]) -> Vec<usize> {
+pub(crate) fn union_free(sets: &[&[usize]]) -> Vec<usize> {
     let mut all: Vec<usize> = sets.iter().flat_map(|s| s.iter().copied()).collect();
     all.sort_unstable();
     all.dedup();
@@ -146,7 +152,7 @@ fn shift_down(free: &[usize], n: usize) -> Vec<usize> {
 }
 
 /// Encode a free-set as the reducer's `locally_free` bit vector (one byte per index; empty ⟹ `[]`).
-fn free_bits(free: &[usize]) -> Vec<u8> {
+pub(crate) fn free_bits(free: &[usize]) -> Vec<u8> {
     if free.is_empty() {
         Vec::new()
     } else {
@@ -155,24 +161,24 @@ fn free_bits(free: &[usize]) -> Vec<u8> {
 }
 
 /// A `BoundVar(i)` reference — free in `{i}`.
-fn bv(i: usize) -> Node {
+pub(crate) fn bv(i: usize) -> Node {
     Node { par: new_boundvar_par(i as i32, Vec::new(), false), free: vec![i] }
 }
 
 /// A GROUND `Par` (a reflected term, a tag, a reserved channel) — no free variables.
-fn ground(par: Par) -> Node {
+pub(crate) fn ground(par: Par) -> Node {
     Node { par, free: Vec::new() }
 }
 
 /// The reserved unforgeable channel / tag `GPrivate(reflect_tag(fp, label))`.
-fn tag_par(fp: &str, label: &str) -> Par {
+pub(crate) fn tag_par(fp: &str, label: &str) -> Par {
     GPrivateBuilder::new_par_from_string(reflect_tag(fp, label))
 }
 
 /// A reflected NULLARY term `EList[ GPrivate(⌜label⌝) ]` — used for Peano `Z`, the `^cmp` results,
 /// and (as a ground pattern) their `Match` cases. Byte-identical to
 /// `reflect_ground_term_par(&GroundTerm::nullary(label), fp)`.
-fn nullary_term(fp: &str, label: &str) -> Par {
+pub(crate) fn nullary_term(fp: &str, label: &str) -> Par {
     reflect_ground_term_par(&GroundTerm::nullary(label), fp)
 }
 
@@ -194,7 +200,7 @@ fn tagged(fp: &str, label: &str, children: Vec<Node>) -> Node {
 }
 
 /// A NON-persistent send `chan!(data…)`, free in `chan.free ∪ ⋃ data.free`.
-fn send(chan: Node, data: Vec<Node>) -> Node {
+pub(crate) fn send(chan: Node, data: Vec<Node>) -> Node {
     let mut free_refs: Vec<&[usize]> = vec![chan.free.as_slice()];
     free_refs.extend(data.iter().map(|d| d.free.as_slice()));
     let free = union_free(&free_refs);
@@ -206,15 +212,15 @@ fn send(chan: Node, data: Vec<Node>) -> Node {
 /// One `Match` case: a `(pattern, free_count, body)` where `pattern` is a GROUND-relative pattern
 /// `Par` (its `free_count` `FreeVar`s bind innermost in `body`), and `body` is a [`Node`] built in
 /// the frame with those `free_count` vars pushed.
-struct Case {
-    pattern: Par,
-    free_count: usize,
-    body: Node,
+pub(crate) struct Case {
+    pub(crate) pattern: Par,
+    pub(crate) free_count: usize,
+    pub(crate) body: Node,
 }
 
 /// `match target { case₀ ; case₁ ; … }` — free in `target.free ∪ ⋃ᵢ shift_down(caseᵢ.body.free,
 /// caseᵢ.free_count)` (each case pattern binds `free_count` innermost vars in its body).
-fn match_(target: Node, cases: Vec<Case>) -> Node {
+pub(crate) fn match_(target: Node, cases: Vec<Case>) -> Node {
     let mut free_sets: Vec<Vec<usize>> = vec![target.free.clone()];
     let mut match_cases = Vec::with_capacity(cases.len());
     for case in cases {
@@ -252,7 +258,7 @@ fn new_scope(n: usize, body: Node) -> Node {
 /// `FreeVar` patterns over the GROUND reserved channel `chan`, body in the frame with the `n`
 /// formals pushed (formal `i` ⟹ `BoundVar(n-1-i)`, the `sigma_receiver_par` frame). Top-level (its
 /// free-set is `shift_down(body.free, n)`, which is `[]` for a closed receiver).
-fn persistent_contract(chan: Par, n_formals: usize, body: Node) -> Node {
+pub(crate) fn persistent_contract(chan: Par, n_formals: usize, body: Node) -> Node {
     polyadic_receive(chan, n_formals, body, true)
 }
 
@@ -346,7 +352,7 @@ fn join(sources: Vec<Node>, body: Node) -> Node {
 /// A tagged pattern `EList[ GPrivate(⌜label⌝), children… ]` with `connective_used` set (it carries
 /// `FreeVar`/`Wildcard` leaves), `locally_free = []` (pattern free vars are binders, not
 /// locally-free bound vars) — the [`crate::rho_net_lower`] `comm_element_pattern` convention.
-fn pat_tagged(fp: &str, label: &str, children: Vec<Par>) -> Par {
+pub(crate) fn pat_tagged(fp: &str, label: &str, children: Vec<Par>) -> Par {
     let mut items = Vec::with_capacity(children.len() + 1);
     items.push(tag_par(fp, label));
     items.extend(children);
@@ -354,7 +360,7 @@ fn pat_tagged(fp: &str, label: &str, children: Vec<Par>) -> Par {
 }
 
 /// `FreeVar(level)` — a pattern binder at the given local free-var level.
-fn pat_free(level: usize) -> Par {
+pub(crate) fn pat_free(level: usize) -> Par {
     new_freevar_par(level as i32, Vec::new())
 }
 
@@ -371,18 +377,18 @@ fn pat_nullary(fp: &str, label: &str) -> Par {
 /// A De Bruijn environment: `names[0]` is OUTERMOST, `names.last()` is innermost (`BoundVar(0)`).
 /// Entering a binder [`Env::push`]es its formals (innermost last).
 #[derive(Clone)]
-struct Env {
+pub(crate) struct Env {
     names: Vec<String>,
 }
 
 impl Env {
     /// A receiver's root frame: `formals[0]` outermost … `formals.last()` = `BoundVar(0)`.
-    fn root(formals: &[&str]) -> Env {
+    pub(crate) fn root(formals: &[&str]) -> Env {
         Env { names: formals.iter().map(|s| s.to_string()).collect() }
     }
 
     /// Extend the frame with a binder's formals (innermost last).
-    fn push(&self, new: &[&str]) -> Env {
+    pub(crate) fn push(&self, new: &[&str]) -> Env {
         let mut names = self.names.clone();
         names.extend(new.iter().map(|s| s.to_string()));
         Env { names }
@@ -399,7 +405,7 @@ impl Env {
     }
 
     /// A [`Node`] referencing `name`.
-    fn var(&self, name: &str) -> Node {
+    pub(crate) fn var(&self, name: &str) -> Node {
         bv(self.get(name))
     }
 }
@@ -486,7 +492,7 @@ fn cmp_body(fp: &str, env: &Env) -> Node {
     )
 }
 
-fn pat_wildcard() -> Par {
+pub(crate) fn pat_wildcard() -> Par {
     new_wildcard_par(Vec::new(), true)
 }
 
@@ -885,7 +891,7 @@ fn descend_child_call(
 }
 
 /// Parallel composition `p | q` — the free-set is the union (parallel composition binds nothing).
-fn par2(p: Node, q: Node) -> Node {
+pub(crate) fn par2(p: Node, q: Node) -> Node {
     let free = union_free(&[p.free.as_slice(), q.free.as_slice()]);
     let par = p.par.append(q.par);
     Node { par, free }

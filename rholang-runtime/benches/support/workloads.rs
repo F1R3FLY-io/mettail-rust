@@ -137,7 +137,8 @@ use mettail_languages::swapdemo::SwapDemoLanguage;
 use mettail_rholang_codegen::{
     contextual_match_call_par, in_rho_match_all_sites_call_par, in_rho_match_call_par,
     multi_pattern_receiver_network_par, naive_kt_contextual_match_call_par,
-    naive_kt_entry_receiver_par, naive_kt_match_call_par, reflect_ground_term_par,
+    naive_kt_entry_receiver_par, naive_kt_match_call_par, naive_kt_selfdriving_call_par,
+    reflect_ground_term_par,
     spread_child_location, spread_term_par, AutomatonAcceptTarget, GroundTerm,
     InRhoMatchingRuleset, NaiveGuardEncoding, BOUND_VAR_REFLECT_LABEL, LAMBDA_REFLECT_LABEL,
     PEANO_ZERO_REFLECT_LABEL,
@@ -267,11 +268,22 @@ pub enum MatcherKind {
     /// receivers — the honest production comparison where the optimized
     /// locate-all fails closed (`nested_spine` only).
     Replay,
+    /// R3 — the SELF-DRIVING naive variant (EXPLORATORY, pre-registered,
+    /// USER-approved 2026-07-19; `lambda_chain` only, PatternGuard only). ONE
+    /// session installs the persistent R3 receivers + ONE spread; each firing's
+    /// reduct is delivered to the in-session `^respread` walker family
+    /// (`naive_kt_selfdriving_call_par`), so the chain normalizes in ONE
+    /// injection — the first probe of the PERSISTENT-fire regime, DEVIATING
+    /// from the same-firing-contract constraint BY DESIGN (the reduct's
+    /// destination is the walker, not OUT). Ground truth: `firing_visible = n`
+    /// (one accept COMM per β step) and the observed OUT multiset is the
+    /// TERMINAL ATOM once.
+    NaiveR3,
 }
 
-/// Every matcher column, in protocol order.
-pub const ALL_MATCHERS: [MatcherKind; 3] =
-    [MatcherKind::Sa, MatcherKind::Naive, MatcherKind::Replay];
+/// Every matcher column, in protocol order (R3 exploratory last).
+pub const ALL_MATCHERS: [MatcherKind; 4] =
+    [MatcherKind::Sa, MatcherKind::Naive, MatcherKind::Replay, MatcherKind::NaiveR3];
 
 /// The naive Appendix-A guard encoding selector (forwarded to
 /// [`NaiveGuardEncoding`] on the naive column; the optimized and replay columns
@@ -329,8 +341,12 @@ impl WorkloadKind {
     /// The matcher columns of this workload's head-to-head cell.
     pub fn matchers(self) -> &'static [MatcherKind] {
         match self {
-            WorkloadKind::LambdaChain
-            | WorkloadKind::SwapComb
+            // λ-chain additionally carries the R3 exploratory self-driving
+            // column (single-session persistent-fire; see `MatcherKind::NaiveR3`).
+            WorkloadKind::LambdaChain => {
+                &[MatcherKind::Sa, MatcherKind::Naive, MatcherKind::NaiveR3]
+            },
+            WorkloadKind::SwapComb
             | WorkloadKind::SwapSmall
             | WorkloadKind::WrapSwapCtx => &[MatcherKind::Sa, MatcherKind::Naive],
             // The optimized locate-all fails closed on k ≥ 2 nested candidate
@@ -404,6 +420,7 @@ impl MatcherKind {
             MatcherKind::Sa => "sa",
             MatcherKind::Naive => "naive",
             MatcherKind::Replay => "replay",
+            MatcherKind::NaiveR3 => "naive-r3",
         }
     }
 }
@@ -1082,7 +1099,10 @@ fn bench_params(
         // Only the naive column HAS a guard encoding (bench_support convention:
         // "-" for the non-naive columns).
         encoding: match matcher {
-            MatcherKind::Naive => encoding.name().to_string(),
+            // R3 is PatternGuard-only BY CONSTRUCTION (ConsumeTest is rejected
+            // up front), so its recorded encoding is the genuine demand
+            // encoding, mirroring the naive column.
+            MatcherKind::Naive | MatcherKind::NaiveR3 => encoding.name().to_string(),
             MatcherKind::Sa | MatcherKind::Replay => "-".to_string(),
         },
         n,
@@ -1096,6 +1116,7 @@ fn zero_comm_snapshot() -> CommCounterSnapshot {
         matching_tau: 0,
         firing_visible: 0,
         subst_tau: 0,
+        respread_tau: 0,
         ac_carrier: 0,
         contextual_plumbing: 0,
         observation: 0,
@@ -1111,6 +1132,7 @@ fn accumulate_comm(total: &mut CommCounterSnapshot, step: &CommCounterSnapshot) 
     total.matching_tau += step.matching_tau;
     total.firing_visible += step.firing_visible;
     total.subst_tau += step.subst_tau;
+    total.respread_tau += step.respread_tau;
     total.ac_carrier += step.ac_carrier;
     total.contextual_plumbing += step.contextual_plumbing;
     total.observation += step.observation;
@@ -1139,6 +1161,20 @@ pub fn emit_call(
             let call = in_rho_match_call_par(ruleset, subject, ROOT_SITE, OUT_CHANNEL)
                 .map_err(|e| WorkloadFailure::new(format!("optimized root emitter: {e:?}")))?;
             Ok((call, None))
+        },
+        (WorkloadKind::LambdaChain, MatcherKind::NaiveR3) => {
+            // R3 (EXPLORATORY, pre-registered): the SELF-DRIVING single-session
+            // call — persistent R3 root receiver + `^respread` dispatcher/walker
+            // family + ONE spread of the whole chain; the session normalizes
+            // in-runtime (see `naive_kt_selfdriving_call_par`'s rustdoc).
+            // PatternGuard-only by construction (the encoding parameter is
+            // rejected as ConsumeTest before any drive reaches this arm).
+            let (call, installed) =
+                naive_kt_selfdriving_call_par(ruleset, subject, ROOT_SITE, OUT_CHANNEL)
+                    .map_err(|e| {
+                        WorkloadFailure::new(format!("R3 self-driving emitter: {e:?}"))
+                    })?;
+            Ok((call, Some(installed)))
         },
         (WorkloadKind::LambdaChain, MatcherKind::Naive) => {
             // The root-restricted Appendix-A drive (B2's `naive_root_beta_call`):
@@ -1457,7 +1493,9 @@ pub fn cell_width_probe(
         }
     };
     match compiled.kind {
-        WorkloadKind::LambdaChain => {
+        // The R3 self-driving column is ONE injection of the FULL chain (no
+        // per-step programs exist), so it probes like a single-injection cell.
+        WorkloadKind::LambdaChain if matcher != MatcherKind::NaiveR3 => {
             let steps = usize::try_from(compiled.n).expect("n fits usize");
             for remaining in (1..=steps).rev() {
                 let subject = lambda_chain_subject(remaining);
@@ -1584,6 +1622,15 @@ pub async fn run_compiled_workload(
             compiled.n,
         )));
     }
+    // R3 is PatternGuard-ONLY (the emitter has no ConsumeTest form): a
+    // consume-test request on the R3 column is a typed rejection, never a
+    // silent encoding downgrade.
+    if matcher == MatcherKind::NaiveR3 && encoding == GuardEncodingKind::ConsumeTest {
+        return Err(WorkloadFailure::new(
+            "the R3 self-driving column is PatternGuard-only: consume-test is not admitted"
+                .to_string(),
+        ));
+    }
     // Registry consistency: the compiled expected values ARE the ground truth
     // firing count (each firing lands exactly one observed value).
     let expected_firings = usize::try_from(compiled.kind.expected_firings(compiled.n))
@@ -1599,6 +1646,51 @@ pub async fn run_compiled_workload(
     let ruleset = compiled.ruleset();
 
     match compiled.kind {
+        // R3 (EXPLORATORY, pre-registered): ONE session — one counting
+        // runtime, one injection of installed-program ∥ R3 call; the chain
+        // self-normalizes in-runtime. Verification: the observed OUT multiset
+        // is the TERMINAL atom exactly once (`compiled.expected.last()` — the
+        // per-step ladder's final reduct, so R3's observed value equals the
+        // per-step column's terminal NF by construction), and the per-session
+        // FIRING count is pinned through the `firing_visible` COMM counter
+        // (= expected_firings: one accept COMM per β step — the counter-based
+        // firing ground truth the pre-registration names).
+        WorkloadKind::LambdaChain if matcher == MatcherKind::NaiveR3 => {
+            let (result, emission, bringup) = drive_single_injection(
+                compiled.kind,
+                matcher,
+                encoding,
+                ruleset,
+                compiled.installed_program(),
+                &[],
+                &compiled.subject,
+                params,
+            )
+            .await?;
+
+            let observed_values =
+                decode_observed(&result.observed).map_err(WorkloadFailure::new)?;
+            let terminal = compiled
+                .expected
+                .last()
+                .expect("expected_firings >= 1 was checked above")
+                .clone();
+            if observed_values != vec![terminal.clone()] {
+                return Err(WorkloadFailure::new(format!(
+                    "R3 observed-mismatch: {observed_values:?} vs the terminal NF {terminal:?} \
+                     exactly once",
+                )));
+            }
+            let expected = u64::try_from(expected_firings).expect("firing count fits u64");
+            if result.comm.firing_visible != expected {
+                return Err(WorkloadFailure::new(format!(
+                    "R3 firing-count-mismatch: firing_visible = {} but the ground truth is {} \
+                     (one accept COMM per β step)",
+                    result.comm.firing_visible, expected,
+                )));
+            }
+            Ok(WorkloadRepOutcome { result, emission, bringup })
+        },
         WorkloadKind::LambdaChain => {
             // Per-step root drive (B2 discipline): each step on a FRESH
             // counting runtime, the next subject rebuilt from the OBSERVED

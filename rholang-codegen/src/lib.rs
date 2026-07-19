@@ -144,7 +144,10 @@ pub use rho_net_automaton::{
 #[cfg(feature = "bench-naive-baseline")]
 pub use rho_net_naive_kt::{
     naive_kt_contextual_match_call_par, naive_kt_entry_receiver_par, naive_kt_match_call_par,
-    NaiveGuardEncoding, NaiveKtContextualUnsupported, NaiveKtUnsupported,
+    naive_kt_selfdriving_call_par, respread_reserved_labels, respread_root_receiver_par,
+    respread_walker_receiver_par, NaiveGuardEncoding, NaiveKtContextualUnsupported,
+    NaiveKtUnsupported, RESPREAD_ERR_RESERVED_LABEL, RESPREAD_RESERVED_LABEL,
+    RESPREAD_ROOT_RESERVED_LABEL,
 };
 pub use rho_net_lower::{
     ac_bag_pattern, ac_carrier_channel, ac_collection_pattern, ac_contract_call,

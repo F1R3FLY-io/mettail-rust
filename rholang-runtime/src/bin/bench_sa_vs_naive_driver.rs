@@ -183,6 +183,13 @@ fn parse_args(args: &[String]) -> Result<DriverArgs, String> {
             workload.name(),
         ));
     }
+    if matcher == MatcherKind::NaiveR3 && encoding == GuardEncodingKind::ConsumeTest {
+        return Err(
+            "the R3 self-driving matcher (naive-r3) is PatternGuard-only: consume-test is not \
+             admitted"
+                .to_string(),
+        );
+    }
     Ok(DriverArgs { workload, matcher, encoding, n, reps, out })
 }
 
@@ -269,7 +276,7 @@ fn header_line(args: &DriverArgs, subject_node_count: usize, probe: &Option<Cell
     line.push_str(&json_string(args.matcher.name()));
     line.push_str(",\"encoding\":");
     line.push_str(&json_string(match args.matcher {
-        MatcherKind::Naive => args.encoding.name(),
+        MatcherKind::Naive | MatcherKind::NaiveR3 => args.encoding.name(),
         MatcherKind::Sa | MatcherKind::Replay => "-",
     }));
     // `max_eval_width = -1` when the offline probe itself fails closed (the
@@ -306,7 +313,7 @@ fn dnf_line(args: &DriverArgs, rep: u64, reason: &str) -> String {
     line.push_str(&json_string(args.matcher.name()));
     line.push_str(",\"encoding\":");
     line.push_str(&json_string(match args.matcher {
-        MatcherKind::Naive => args.encoding.name(),
+        MatcherKind::Naive | MatcherKind::NaiveR3 => args.encoding.name(),
         MatcherKind::Sa | MatcherKind::Replay => "-",
     }));
     line.push_str(&format!(",\"n\":{},\"rep\":{rep}}},\"reason\":", args.n));
@@ -523,6 +530,131 @@ mod workloads_tests {
                 assert_eq!(count, Some(1), "the root-restricted naive drive installs ONE receiver");
             }
         }
+    }
+
+    /// (i, R3) The EXPLORATORY self-driving column admits on `lambda_chain`
+    /// only, emits ONE installed entry receiver, and rejects consume-test at
+    /// BOTH the CLI and the drive level (PatternGuard-only by construction).
+    #[test]
+    fn lambda_chain_r3_admission_emission_and_consume_test_rejection() {
+        mettail_runtime::clear_var_cache();
+        let compiled =
+            compile_workload(WorkloadKind::LambdaChain, 2).expect("lambda_chain(2) compiles");
+        let (call, count) = emit_call(
+            WorkloadKind::LambdaChain,
+            MatcherKind::NaiveR3,
+            GuardEncodingKind::PatternGuard,
+            compiled.ruleset(),
+            &compiled.subject,
+        )
+        .expect("the R3 self-driving emitter admits the λ chain");
+        assert_eq!(count, Some(1), "one entry ⇒ one installed R3 root receiver");
+        assert!(!call.receives.is_empty(), "the R3 call installs persistent receivers");
+
+        // Other workloads: naive-r3 is not a registered column (typed rejection
+        // through the emit registry).
+        assert!(
+            emit_call(
+                WorkloadKind::SwapComb,
+                MatcherKind::NaiveR3,
+                GuardEncodingKind::PatternGuard,
+                compiled.ruleset(),
+                &compiled.subject,
+            )
+            .is_err(),
+            "naive-r3 is a lambda_chain-only column"
+        );
+
+        // CLI-level consume-test rejection.
+        let args: Vec<String> = [
+            "--workload", "lambda_chain", "--matcher", "naive-r3",
+            "--encoding", "consume-test", "--n", "2", "--reps", "1",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        assert!(
+            super::parse_args(&args).is_err(),
+            "naive-r3 + consume-test must be rejected at the CLI"
+        );
+
+        // Drive-level consume-test rejection (belt-and-suspenders).
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("build the current-thread tokio runtime");
+        let rejected = runtime.block_on(run_compiled_workload(
+            &compiled,
+            MatcherKind::NaiveR3,
+            GuardEncodingKind::ConsumeTest,
+            0,
+        ));
+        assert!(rejected.is_err(), "naive-r3 + consume-test must be rejected at the drive");
+    }
+
+    /// (i, R3, LIVE) The single-session self-driving drive at n = 2 on a real
+    /// counting runtime: the chain normalizes IN ONE INJECTION; the observed
+    /// OUT multiset is the terminal atom exactly once; and the DETERMINISTIC
+    /// counter profile is pinned from the mechanism —
+    ///
+    /// * `firing_visible = 2` (one accept COMM per β step — the ground truth);
+    /// * `matching_tau = 14` (the ONE initial spread's 6 collapse-fold COMMs
+    ///   for the 3n = 6 internal nodes of the 4n+1-node chain + 4 matcher
+    ///   COMMs per firing × 2 — re-spreads add NO fold COMMs: the walker
+    ///   publishes `cap:` directly);
+    /// * `subst_tau = 6` (3 cascade COMMs per identity-β firing: ^subst,
+    ///   ^cmp, ^shiftk — identical to the per-step column's per-step cost);
+    /// * `respread_tau = 2n² − 1 = 7` (2 dispatcher deliveries + the 4·1+1 = 5
+    ///   walked nodes of the ONE re-spread of the remaining chain of length 1);
+    /// * `other = 2` (the cascade's one fresh-name ^cmp-result COMM per
+    ///   firing — the SAME per-firing `other` the per-step column records);
+    /// * `join_arity_gt1 = 2` (the initial spread's 2 binary App folds);
+    /// * `observation = 0` (the NF rests on OUT; nothing consumes it).
+    ///
+    /// Two reps must produce IDENTICAL counter snapshots (the fixed-seed
+    /// determinism discipline).
+    #[test]
+    fn lambda_chain_r3_single_session_ground_truth_and_counters() {
+        mettail_runtime::clear_var_cache();
+        let compiled =
+            compile_workload(WorkloadKind::LambdaChain, 2).expect("lambda_chain(2) compiles");
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("build the current-thread tokio runtime");
+        let mut snapshots = Vec::with_capacity(2);
+        for rep in 0..2 {
+            let outcome = runtime
+                .block_on(run_compiled_workload(
+                    &compiled,
+                    MatcherKind::NaiveR3,
+                    GuardEncodingKind::PatternGuard,
+                    rep,
+                ))
+                .unwrap_or_else(|failure| {
+                    panic!("lambda_chain(2)/naive-r3 rep {rep}: {}", failure.reason)
+                });
+            assert_eq!(
+                outcome.result.observed.len(),
+                1,
+                "the session lands the terminal atom ONCE on OUT"
+            );
+            let comm = outcome.result.comm.clone();
+            assert_eq!(comm.firing_visible, 2, "one accept COMM per β step; got {comm:?}");
+            assert_eq!(comm.matching_tau, 14, "6 fold + 8 matcher COMMs; got {comm:?}");
+            assert_eq!(comm.subst_tau, 6, "3 cascade COMMs per firing; got {comm:?}");
+            assert_eq!(comm.respread_tau, 7, "2n² − 1 walker-family COMMs; got {comm:?}");
+            assert_eq!(comm.other, 2, "one fresh-name ^cmp-result COMM per firing; got {comm:?}");
+            assert_eq!(comm.join_arity_gt1, 2, "the initial spread's App folds; got {comm:?}");
+            assert_eq!(comm.observation, 0, "the NF rests on OUT unconsumed; got {comm:?}");
+            assert_eq!(comm.ac_carrier, 0, "no AC traffic; got {comm:?}");
+            assert_eq!(comm.contextual_plumbing, 0, "no contextual traffic; got {comm:?}");
+            snapshots.push(comm);
+        }
+        assert_eq!(
+            snapshots[0], snapshots[1],
+            "the fixed-seed single-session drive is counter-deterministic across reps"
+        );
     }
 
     /// (ii) `swap_comb(m)`: m pairwise-distinct redexes AND contracta, pinned
@@ -925,8 +1057,15 @@ mod workloads_tests {
     fn registry_matrices_are_pinned() {
         assert_eq!(
             WorkloadKind::LambdaChain.matchers(),
-            &[MatcherKind::Sa, MatcherKind::Naive]
+            &[MatcherKind::Sa, MatcherKind::Naive, MatcherKind::NaiveR3],
+            "λ-chain carries the R3 exploratory self-driving column"
         );
+        assert!(matcher_admitted(WorkloadKind::LambdaChain, MatcherKind::NaiveR3));
+        assert!(!matcher_admitted(WorkloadKind::SwapComb, MatcherKind::NaiveR3));
+        assert!(!matcher_admitted(WorkloadKind::SwapSmall, MatcherKind::NaiveR3));
+        assert!(!matcher_admitted(WorkloadKind::WrapSwapCtx, MatcherKind::NaiveR3));
+        assert!(!matcher_admitted(WorkloadKind::NestedSpine, MatcherKind::NaiveR3));
+        assert!(!matcher_admitted(WorkloadKind::MultiRuleShared, MatcherKind::NaiveR3));
         assert_eq!(
             WorkloadKind::NestedSpine.matchers(),
             &[MatcherKind::Naive, MatcherKind::Replay]
@@ -1040,6 +1179,12 @@ mod workloads_tests {
             [
                 "lambda_chain/sa/16",
                 "lambda_chain/naive/16",
+                // R3: ONE injection of the FULL n=16 chain (width 156). Unlike
+                // the per-step columns, R3's n ∈ {32, 64} cells are NOT in the
+                // zone: their single full-chain injection exceeds width 256
+                // (the always-safe split_short branch) and no intermediate
+                // per-step injection exists to pass through [129, 256].
+                "lambda_chain/naive-r3/16",
                 "lambda_chain/sa/32",
                 "lambda_chain/naive/32",
                 "lambda_chain/sa/64",
@@ -1125,7 +1270,7 @@ mod workloads_tests {
             ]
         );
         let matchers: Vec<&str> = ALL_MATCHERS.iter().map(|m| m.name()).collect();
-        assert_eq!(matchers, ["sa", "naive", "replay"]);
+        assert_eq!(matchers, ["sa", "naive", "replay", "naive-r3"]);
         let encodings: Vec<&str> = ALL_ENCODINGS.iter().map(|e| e.name()).collect();
         assert_eq!(encodings, ["pattern-guard", "consume-test"]);
     }

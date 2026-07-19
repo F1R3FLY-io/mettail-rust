@@ -57,17 +57,20 @@
 //! | `@"cap:…"` (capture collapse) | `matching_tau` | `collapse_capture_location` (`rho_net_lower.rs`) |
 //! | `@"sa:…"` (accept / σ-receiver source / native trigger-dispatch, incl. `sa:pattern/…`, `sa:scalar/…`) | `firing_visible` | `RhoNetChannel::set_automaton_trace` (`rho_net.rs`) |
 //! | `GPrivate(mettail.term.{fp}.{^subst,^shift,^shiftk,^cmp,^pred})` | `subst_tau` | `tag_par(fp, label)` over the reserved TRS labels (`rho_net_subst_trs.rs`, `rho_net_lower.rs`) |
+//! | `GPrivate(mettail.term.{fp}.{^respread,^respread-root,^respread-err})` | `respread_tau` | `respread_reserved_labels()` — the R3 self-driving walker family (`rho_net_naive_kt.rs`; EXPLORATORY, pre-registered) |
 //! | `@"ac:…"` (AC bag carrier, bare `ac:{op}` and site-keyed `ac:{loc}/…`) | `ac_carrier` | `ac_carrier_channel` + the `ac:{op}` soup channel (`rho_net_lower.rs`) |
 //! | `@"ph:…"` (premise-hole bridge) and `@"loc:…/contextual-premise/…"` (join premise) | `contextual_plumbing` | `contextual_premise_hole_channel` (`rho_net_lower.rs`), the `Premise::Congruence` location channel (`rho_net.rs`) |
 //! | `@"{out_channel}"` (the CONFIGURED observation channel) | `observation` | `run::quoted_channel` |
 //! | anything else | `other` | counted AND the first [`MAX_UNKNOWN_CHANNEL_SAMPLES`] renderings retained — never silently bucketed |
 //!
 //! A multi-channel JOIN is classified by the FIRST matching class under the
-//! FIXED precedence `SubstTau > FiringVisible > AcCarrier >
+//! FIXED precedence `SubstTau > RespreadTau > FiringVisible > AcCarrier >
 //! ContextualPlumbing > MatchingTau > Observation > Other` (the [`Ord`] on
 //! [`CommChannelClass`], most specific first; reserved prefixes outrank an
 //! `out_channel` that pathologically collides with one), and additionally
-//! bumps `join_arity_gt1`.
+//! bumps `join_arity_gt1`. (The two reserved-`GPrivate` classes never join
+//! with each other — every reserved contract is single-channel — so their
+//! relative order is documentation, not behavior.)
 //!
 //! # Determinism
 //!
@@ -98,10 +101,10 @@ use crypto::rust::hash::blake2b512_random::Blake2b512Random;
 use mettail_ast::language::LanguageDef;
 use mettail_rholang_codegen::{
     compile_in_rho_matching_ruleset, lower_language_def, plan_rho_default_backend,
-    reconstruct_language_def, suggest_rejected_rule_dispositions, InRhoMatchingRuleset,
-    RhoCoverageEvidence, RhoDefaultBackendRequirements, RhoGuardCoverageEvidence, RhoLowering,
-    CMP_RESERVED_LABEL, PRED_RESERVED_LABEL, SHIFTK_RESERVED_LABEL, SHIFT_RESERVED_LABEL,
-    SUBST_RESERVED_LABEL,
+    reconstruct_language_def, respread_reserved_labels, suggest_rejected_rule_dispositions,
+    InRhoMatchingRuleset, RhoCoverageEvidence, RhoDefaultBackendRequirements,
+    RhoGuardCoverageEvidence, RhoLowering, CMP_RESERVED_LABEL, PRED_RESERVED_LABEL,
+    SHIFTK_RESERVED_LABEL, SHIFT_RESERVED_LABEL, SUBST_RESERVED_LABEL,
 };
 use models::rhoapi::connective::ConnectiveInstance;
 use models::rhoapi::expr::ExprInstance;
@@ -150,6 +153,13 @@ pub enum CommChannelClass {
     /// `GPrivate(mettail.term.{fp}.{label})` for `label` ∈
     /// {`^subst`, `^shift`, `^shiftk`, `^cmp`, `^pred`}.
     SubstTau,
+    /// A reserved R3 `^respread`-family rendezvous channel (the self-driving
+    /// walker; EXPLORATORY, pre-registered): `GPrivate(mettail.term.{fp}.
+    /// {label})` for `label` ∈ {`^respread`, `^respread-root`,
+    /// `^respread-err`} — one COMM per delivered reduct (the dispatcher) plus
+    /// one per re-spread WALKED NODE, so this counter IS the in-session
+    /// re-spread volume metric.
+    RespreadTau,
     /// A `sa:`-prefixed set-automaton trace channel — the accept / σ-receiver
     /// source (`sa:pattern/…`), the native scalar dispatch (`sa:scalar/…`), and
     /// the native locate trigger (`sa:scalar/…/sa-locate`).
@@ -185,6 +195,8 @@ pub struct CommCounters {
     pub firing_visible: AtomicU64,
     /// COMMs whose continuation reads a reserved subst-TRS tag channel.
     pub subst_tau: AtomicU64,
+    /// COMMs whose continuation reads a reserved R3 `^respread`-family channel.
+    pub respread_tau: AtomicU64,
     /// COMMs whose continuation reads an `ac:` carrier channel.
     pub ac_carrier: AtomicU64,
     /// COMMs whose continuation reads `ph:`/premise contextual channels.
@@ -210,6 +222,7 @@ pub struct CommCounterSnapshot {
     pub matching_tau: u64,
     pub firing_visible: u64,
     pub subst_tau: u64,
+    pub respread_tau: u64,
     pub ac_carrier: u64,
     pub contextual_plumbing: u64,
     pub observation: u64,
@@ -227,6 +240,7 @@ impl CommCounters {
             matching_tau: AtomicU64::new(0),
             firing_visible: AtomicU64::new(0),
             subst_tau: AtomicU64::new(0),
+            respread_tau: AtomicU64::new(0),
             ac_carrier: AtomicU64::new(0),
             contextual_plumbing: AtomicU64::new(0),
             observation: AtomicU64::new(0),
@@ -270,6 +284,8 @@ impl CommCounters {
         } else if let Some(tag) = private_channel_tag(channel) {
             if is_subst_trs_channel_tag(&tag) {
                 CommChannelClass::SubstTau
+            } else if is_respread_channel_tag(&tag) {
+                CommChannelClass::RespreadTau
             } else {
                 CommChannelClass::Other
             }
@@ -298,6 +314,7 @@ impl CommCounters {
         }
         let counter = match comm_class {
             CommChannelClass::SubstTau => &self.subst_tau,
+            CommChannelClass::RespreadTau => &self.respread_tau,
             CommChannelClass::FiringVisible => &self.firing_visible,
             CommChannelClass::AcCarrier => &self.ac_carrier,
             CommChannelClass::ContextualPlumbing => &self.contextual_plumbing,
@@ -325,6 +342,7 @@ impl CommCounters {
             matching_tau: self.matching_tau.load(Ordering::Relaxed),
             firing_visible: self.firing_visible.load(Ordering::Relaxed),
             subst_tau: self.subst_tau.load(Ordering::Relaxed),
+            respread_tau: self.respread_tau.load(Ordering::Relaxed),
             ac_carrier: self.ac_carrier.load(Ordering::Relaxed),
             contextual_plumbing: self.contextual_plumbing.load(Ordering::Relaxed),
             observation: self.observation.load(Ordering::Relaxed),
@@ -394,6 +412,22 @@ fn is_subst_trs_channel_tag(tag: &str) -> bool {
             || label == CMP_RESERVED_LABEL
             || label == PRED_RESERVED_LABEL
     )
+}
+
+/// Whether a decoded `GPrivate` tag names one of the THREE reserved R3
+/// `^respread`-family rendezvous channels: `mettail.term.{fp}.{label}` with
+/// `label` ∈ {`^respread`, `^respread-root`, `^respread-err`}
+/// (`respread_reserved_labels()` in `rho_net_naive_kt.rs` — the self-driving
+/// walker family; `^respread-err` has no receiver on any sound run, so a COMM
+/// classifying through it would itself be diagnostic).
+fn is_respread_channel_tag(tag: &str) -> bool {
+    let Some(suffix) = tag.strip_prefix(crate::REFLECTED_TERM_ABI_PREFIX) else {
+        return false;
+    };
+    let Some((_fingerprint, label)) = suffix.rsplit_once('.') else {
+        return false;
+    };
+    respread_reserved_labels().contains(&label)
 }
 
 /// A compact, printer-free rendering of a channel for the unknown-channel
@@ -776,6 +810,8 @@ impl BenchRunResult {
         line.push_str(&self.comm.firing_visible.to_string());
         line.push_str(",\"subst_tau\":");
         line.push_str(&self.comm.subst_tau.to_string());
+        line.push_str(",\"respread_tau\":");
+        line.push_str(&self.comm.respread_tau.to_string());
         line.push_str(",\"ac_carrier\":");
         line.push_str(&self.comm.ac_carrier.to_string());
         line.push_str(",\"contextual_plumbing\":");
@@ -1257,6 +1293,21 @@ mod tests {
             (subst_tag_channel(CMP_RESERVED_LABEL), CommChannelClass::SubstTau, "^cmp"),
             (subst_tag_channel(PRED_RESERVED_LABEL), CommChannelClass::SubstTau, "^pred"),
             (
+                subst_tag_channel(mettail_rholang_codegen::RESPREAD_RESERVED_LABEL),
+                CommChannelClass::RespreadTau,
+                "^respread (the R3 walker)",
+            ),
+            (
+                subst_tag_channel(mettail_rholang_codegen::RESPREAD_ROOT_RESERVED_LABEL),
+                CommChannelClass::RespreadTau,
+                "^respread-root (the R3 dispatcher)",
+            ),
+            (
+                subst_tag_channel(mettail_rholang_codegen::RESPREAD_ERR_RESERVED_LABEL),
+                CommChannelClass::RespreadTau,
+                "^respread-err (the R3 fail-closed channel)",
+            ),
+            (
                 // A reflected TERM tag (an ordinary constructor) is data, never
                 // a reserved rendezvous channel — it must NOT classify SubstTau.
                 subst_tag_channel("Pair"),
@@ -1499,6 +1550,7 @@ mod tests {
             "the root collapse joins two col: channels; got {snapshot:?}"
         );
         assert_eq!(snapshot.subst_tau, 0, "no subst TRS in this workload; got {snapshot:?}");
+        assert_eq!(snapshot.respread_tau, 0, "no R3 walker in this workload; got {snapshot:?}");
         assert_eq!(snapshot.ac_carrier, 0, "no AC carrier in this workload; got {snapshot:?}");
         assert_eq!(
             snapshot.contextual_plumbing, 0,
