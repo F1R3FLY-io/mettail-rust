@@ -1,0 +1,66 @@
+@startuml
+' Figure 28-1: the three-lane reading of one language — the OSLF/GSLT theory objects
+' (violet), the language! specification clauses that present them (blue), and the
+' compiler IR that carries them (amber). Each row is one object of the Gph-enriched
+' multisorted Lawvere theory (OSLF-2017); the LanguageDef field names are the REAL
+' fields of ast/src/language/model.rs:27, and the IR types are the real compiler
+' types (dovetail/src/rules.rs, dovetail/src/set_automaton.rs, rholang-codegen).
+skinparam backgroundColor #FEFEFE
+skinparam defaultFontName monospaced
+skinparam shadowing false
+skinparam rectangle {
+  BorderColor #4A5568
+  FontColor #1A202C
+}
+skinparam package {
+  BorderColor #4A5568
+  FontColor #1A202C
+}
+skinparam ArrowColor #4A5568
+left to right direction
+
+title Figure 28-1 — one language, three lanes: OSLF theory object → language! clause → compiler IR
+
+package "OSLF theory (Gph-enriched Lawvere theory)" as THEORY #EDE7F6 {
+  rectangle "sorts\n(objects of the theory)" as T1 #D6C6EE
+  rectangle "generators / morphisms\n(term constructors)" as T2 #D6C6EE
+  rectangle "commuting cells\n(equations)" as T3 #D6C6EE
+  rectangle "hom-graph edges\n(one-step rewrites, 2-cells)" as T4 #D6C6EE
+  rectangle "observational logic\n(predicates over behavior)" as T5 #D6C6EE
+}
+
+package "language! specification (LanguageDef, model.rs:27)" as SPEC #E3EEFA {
+  rectangle "types { ... }\nLanguageDef.types: Vec<LangType>\n{name, native_type, collection_kind}" as S1 #C6E0F5
+  rectangle "terms { ... }\nLanguageDef.terms: Vec<GrammarRule>" as S2 #C6E0F5
+  rectangle "equations { ... }\nLanguageDef.equations: Vec<Equation>" as S3 #C6E0F5
+  rectangle "rewrites { ... }\nLanguageDef.rewrites: Vec<RewriteRule>" as S4 #C6E0F5
+  rectangle "logic { } / guards { } / ?g:Guard\nLanguageDef.logic: Option<LogicBlock>\nLanguageDef.guard_config: Option<GuardConfig>" as S5 #C6E0F5
+}
+
+package "compiler IR (dovetail + rholang-codegen)" as IR #FDF3E3 {
+  rectangle "CollectionType routing (types.rs:8)\n+ reflect_tag namespace\nmettail.term.{fp}.{label}" as I1 #F6C177
+  rectangle "RhoNetRuleKind::StructuralConstructor\n+ the reflected-EList ABI\n(no receiver)" as I2 #F6C177
+  rectangle "RhoNetRuleKind::StructuralCongruence\n→ CongruenceClosure\n(compile-time e-graph, no receiver)" as I3 #F6C177
+  rectangle "Pattern<L> (rules.rs:20)\n→ StateKey / StateId intern (set_automaton.rs)\n→ RhoNetRuleKind::{BaseRewrite, ContextualRewrite}" as I4 #F6C177
+  rectangle "RhoNetSemanticPredicate obligations\n(classify-and-gate; INV-14: no COMM)" as I5 #F6C177
+}
+
+T1 -[#805AD5]-> S1
+T2 -[#805AD5]-> S2
+T3 -[#805AD5]-> S3
+T4 -[#805AD5]-> S4
+T5 -[#805AD5]-> S5
+
+S1 -[#2B6CB0]-> I1
+S2 -[#2B6CB0]-> I2
+S3 -[#2B6CB0]-> I3
+S4 -[#2B6CB0]-> I4
+S5 -[#2B6CB0]-> I5
+
+note bottom of IR #FCF3D0
+  The GSLT triple is (terms, equations, rewrites); the remaining
+  LanguageDef fields (literals/tokens/options/extends/includes/mixins)
+  configure lexing, native evaluation, and composition — presentation
+  apparatus, not theory objects (28 §2).
+end note
+@enduml

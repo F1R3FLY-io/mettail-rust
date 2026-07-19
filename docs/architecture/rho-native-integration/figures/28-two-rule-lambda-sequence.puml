@@ -1,0 +1,55 @@
+@startuml
+' Figure 28-4: TwoRuleLambda end to end — the compile-time band (amber, once per
+' language) produces the installed Par whose complete listing is 28 §7.2; the
+' run-time band (blue, once per subject) drives one Beta reduction. Grey arrows
+' are tau COMMs (invisible to the CLTS: matching, collapse, cascade); the single
+' red arrow is the observable beta-fire (the ^subst seed COMM); the green arrow
+' is the resting normal form on the dynamic out channel.
+skinparam backgroundColor #FEFEFE
+skinparam defaultFontName monospaced
+skinparam shadowing false
+skinparam sequence {
+  ArrowColor #4A5568
+  LifeLineBorderColor #4A5568
+  ParticipantBorderColor #4A5568
+  ParticipantFontColor #1A202C
+  ActorBorderColor #4A5568
+}
+skinparam ArrowColor #4A5568
+title Figure 28-4 — TwoRuleLambda: compile once (amber), run one beta subject (blue)\nsubject App(Lam(^x. x), A) — one located site — grey = tau, red = the observable beta-fire COMM
+
+box "compile time — once per language" #FDE9C8
+  participant "language!\nTwoRuleLambda" as SPEC #F6C177
+  participant "intern + classify\n6 states; Beta→SubstRewrite\nUnwrap→BaseRewrite" as COMP #F6C177
+  participant "installed ⟦G⟧ Par\n(listing, 28 §7.2)" as PAR #F6C177
+end box
+box "run time — once per subject, on RSpace" #DCEAF7
+  participant "spread ⟦t⟧ at site ρ\nloc: / col: / cap:" as SPREAD #C6E0F5
+  participant "sa: network\n(Match on head tags)" as NET #C3DAF7
+  participant "Beta σ-receiver\n(the seed, 28 §4.9)" as SIG #B7E4C7
+  participant "^subst TRS\n(five reserved receivers)" as TRS #C8E6D0
+  participant "@out" as OUT #9FD3B4
+end box
+
+SPEC -[#C05621]> COMP : parse LanguageDef;\nintern both LHSs (s0..s5)
+COMP -[#C05621]> PAR : install gate Ok:\nseed ∥ σ-receiver ∥ TRS (once)
+
+PAR -[#4A5568]->> SPREAD : compose with the per-subject call\n(network_ρ ∥ spread; one located site)
+SPREAD -[#9AA5B1]->> NET : tau — loc:ρ!(⌜App⌝), loc:ρ/App.0!(⌜^lambda⌝),\nloc:ρ/App.0/^lambda.0!(⌜^bound⌝), ...
+SPREAD -[#9AA5B1]->> NET : tau — collapse: cap:ρ/App.0/^lambda.0!(⟦^bound(Z)⟧),\ncap:ρ/App.1!(⟦A⟧)
+NET -[#9AA5B1]->> SIG : tau — accept: sa:...Beta...!(⟦^bound(Z)⟧, ⟦A⟧, @out)
+SIG -[#C53030]->> TRS : <b>^subst!(⟦Z⟧, ⟦A⟧, ⟦^bound(Z)⟧, out)</b>\nTHE observable beta-fire COMM
+TRS -[#9AA5B1]->> TRS : tau — cascade: ^bound arm, ^cmp(Z,Z) = Eq,\n^shiftk(Z, ⟦A⟧) returns the replacement
+TRS -[#2F855A]->> OUT : out!(⟦A⟧) — the resting EList NF
+
+note over NET #FCF3D0
+  Matching and collapse COMMs erase to tau
+  (T6, same-CLTS); only the beta-fire and the
+  resting send are CLTS-visible (13 INV-3).
+end note
+note over PAR #FCF3D0
+  The SAME installed Par serves every
+  invocation path (MATCH / CONTEXTUAL /
+  REPLAY) — no dual program (27 §10).
+end note
+@enduml

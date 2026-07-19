@@ -78,13 +78,14 @@ For the in-Rho matching campaign (how matching AND firing both moved onto the in
 
 1. [Rholang Runtime Backend](20-rholang-runtime-backend.md) — how the whole backend runs
 2. [Compiling OSLF `language!` Specifications to Rholang](27-oslf-language-to-rholang-compilation.md) — how the backend is produced, compile-time, set-automaton spine
-3. [In-Rho Base-Family Reference](25-in-rho-base-family-reference.md) — the base family, reconstruction-grade
-4. [In-Rho AC-Family Reference](26-in-rho-ac-family-reference.md) — the associative-commutative family
-5. [In-Rho Binder Beta-Substitution](19-in-rho-binder-beta-substitution.md) — the binder-β family
-6. [Set-Automata Optimization Theory](21-set-automata-optimization-theory.md) — why it is optimal
-7. [End-to-End Formal Verification](22-end-to-end-formal-verification.md) — the operational-correspondence theorems
-8. [Coverage and Correctness](23-coverage-and-correctness.md) — what is covered
-9. [In-Rho Completion Audit](24-in-rho-completion-audit.md) — the closing audit
+3. [The Translation-Rule System](28-translation-rule-system.md) — the specification-level calculus: all thirteen clause-kind rules, whole-language assembly, and worked whole-language instances
+4. [In-Rho Base-Family Reference](25-in-rho-base-family-reference.md) — the base family, reconstruction-grade
+5. [In-Rho AC-Family Reference](26-in-rho-ac-family-reference.md) — the associative-commutative family
+6. [In-Rho Binder Beta-Substitution](19-in-rho-binder-beta-substitution.md) — the binder-β family
+7. [Set-Automata Optimization Theory](21-set-automata-optimization-theory.md) — why it is optimal
+8. [End-to-End Formal Verification](22-end-to-end-formal-verification.md) — the operational-correspondence theorems
+9. [Coverage and Correctness](23-coverage-and-correctness.md) — what is covered
+10. [In-Rho Completion Audit](24-in-rho-completion-audit.md) — the closing audit
 
 ## Cohesive Reading Model
 
@@ -246,6 +247,7 @@ runtime values are normalized AST artifacts, and the executable form is
 | [25 — In-Rho Base-Family Reference](25-in-rho-base-family-reference.md) | How is the base-rewrite family rebuilt from scratch — reconstruction-grade coverage of reflection, spread, the collapse fold, the automaton network, and locate-all multi-firing? |
 | [26 — In-Rho AC-Family Reference](26-in-rho-ac-family-reference.md) | How is the associative-commutative family rebuilt from scratch — the Scheme-B spread re-sourcing, the site-keyed carrier, and AC4 (`HashSet` / `HashMap` / `Zip`)? |
 | [27 — Compiling OSLF `language!` Specifications to Rholang](27-oslf-language-to-rholang-compilation.md) | How is an OSLF `language!` specification compiled to Rholang — the compile-time set-automaton translation pipeline (spec → `LanguageDef` → interned automaton → installed `Par`)? |
+| [28 — The Translation-Rule System](28-translation-rule-system.md) | What is the specification-level translation calculus — the master table of all thirteen clause-kind rules in the paper's clause style with per-rule templates and fail-closed conditions, the whole-language assembly formula, a worked multi-rule automaton with its full interning trace and shared state, and a complete test-pinned installed-`Par` listing for a whole two-rule lambda language? |
 | [29 — Knotted-Topoi Satisfaction Crosswalk](29-knotted-topoi-satisfaction-crosswalk.md) | Where does the north-star paper stand, item by item — every labeled claim of the vendored tex crosswalked to its mechanized theorem, named runtime test, or place in the denotational program, with the three-layer evidence architecture, the honest-premise inventory, and the measured efficiency-gate results? |
 | [References](references.md) | Which papers, docs, and formal artifacts support the design? |
 | [Validation Script](validate.sh) | How are the documentation structure checks reproduced locally? |

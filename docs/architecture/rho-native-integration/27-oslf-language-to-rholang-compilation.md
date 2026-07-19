@@ -567,7 +567,8 @@ with a `sa:term/{i}/{label}/syntax` input, per-child `loc:term/…/{item|binder|
 and a `loc:term/{i}/{label}/value` output. It lowers to `RhoNetLoweredRule::StructuralConstructor` —
 **no `Par`**: a constructor contributes no receiver; it is realized by the reflected-`EList` ABI
 (§9), which reflects $`C(t_0,\dots)`$ to `EList[GPrivate(⌜C⌝), …]` wherever the term appears. Runtime:
-[25](25-in-rho-base-family-reference.md).
+[25](25-in-rho-base-family-reference.md). Formal rule:
+[28 §4.1](28-translation-rule-system.md#41-terms-spread-and-reflection).
 
 ### 8.2 Equations → `StructuralCongruence`
 
@@ -575,7 +576,8 @@ Every `equations` identity is classified `StructuralCongruence` (`add_equations`
 to `RhoNetLoweredRule::CongruenceClosure` — **no `Par`**: structural congruence is closed at
 **compile time** by the e-graph (`dovetail/src/egraph.rs`), which folds equal forms into one class
 before the automaton runs, so the automaton matches modulo the equations for free. Runtime: the only
-congruence that runs at run time is binder-$`\beta`$ substitution (§8.9).
+congruence that runs at run time is binder-$`\beta`$ substitution (§8.9). Formal rule:
+[28 §4.2](28-translation-rule-system.md#42-equations-compile-time-congruence).
 
 ### 8.3 Base rewrites → `sigma_receiver_par`
 
@@ -590,7 +592,8 @@ for (x_0, …, x_{k-1}, out <- source) { out!( ⟦R⟧σ ) }
 `source` is the rule's own `sa:` trace channel (accept-triad coherence: the receiver source is
 byte-identical to the automaton's accept channel and to the host injection channel). The RHS
 references slot $`i`$ as $`\mathrm{BoundVar}(k-i)`$ (`rhs_var_index`). Runtime:
-[25](25-in-rho-base-family-reference.md).
+[25](25-in-rho-base-family-reference.md). Formal rule:
+[28 §4.3](28-translation-rule-system.md#43-base-rewrites-the-flat-sigma-receiver).
 
 ### 8.4 Contextual rewrites → `contextual_join_receiver_par`
 
@@ -603,7 +606,8 @@ emits the rewritten outer right-hand side:
 for (T_0 <- c(ℓ_0) ; … ; (T_{n-1}, out) <- c(ℓ_{n-1})) { out!( ⟦K'⟧(T_0, …, T_{n-1}) ) }
 ```
 
-Runtime: [25](25-in-rho-base-family-reference.md); proof: `ContextualAtomicJoinPlugging.v`.
+Runtime: [25](25-in-rho-base-family-reference.md); proof: `ContextualAtomicJoinPlugging.v`. Formal
+rule: [28 §4.4](28-translation-rule-system.md#44-contextual-rewrites-the-atomic-join).
 
 ### 8.5 AC-linear → `ac_sigma_receiver_par`
 
@@ -626,7 +630,8 @@ var, re-spliced in the body via parallel composition. The AC path exists precise
 is rejected from the positional automaton (§5.3): AC is combinatorial, not positional. The host
 differential oracle (`collect_ac_matches` `rules.rs:574`, the lazy size-$`k`$ selection iterator
 `lazy_ac_select` `:153`, `pair_fixed` `:636`, budget-gated `add_canonical_bag` `:681`) is used only
-for offline checks, never at run time. Runtime: [26](26-in-rho-ac-family-reference.md).
+for offline checks, never at run time. Runtime: [26](26-in-rho-ac-family-reference.md). Formal rule:
+[28 §4.5](28-translation-rule-system.md#45-ac-linear-the-one-consume-multiset-receiver).
 
 ### 8.6 Structural AC (Open) → `structural_ac_rule_receiver`
 
@@ -640,14 +645,16 @@ for ( <rest | @"ac:op"!(⟦E_0⟧) | … >, r_0, …, r_{m-1}, out <- source ) w
 
 The guard enforces the ambient-name agreement; the body splices the $`m`$ $`\sigma`$-delivered
 reducts back with `...rest`. Runtime: [26](26-in-rho-ac-family-reference.md); proof:
-`AmbientOpenFiring.v`.
+`AmbientOpenFiring.v`. Formal rule:
+[28 §4.6](28-translation-rule-system.md#46-structural-ac-the-open-shape).
 
 ### 8.7 Nested structural AC (In/Out) → `nested_structural_ac_rule_receiver`
 
 The depth-2 ambient `In`/`Out` shape lowers via `nested_structural_ac_rule_receiver` (`:5824`), gated
 to binder-free languages (`def.equations.is_empty()`). Its guard is a **depth-agnostic** cross-level
 name-equality $`\mathrm{EEq}(M_a, M_b)`$ over the shared channel occurrence slots of the flattened
-frame. Runtime: [26](26-in-rho-ac-family-reference.md); proof: `AmbientInOutFiring.v`.
+frame. Runtime: [26](26-in-rho-ac-family-reference.md); proof: `AmbientInOutFiring.v`. Formal rule:
+[28 §4.7](28-translation-rule-system.md#47-nested-structural-ac-the-in-and-out-shapes).
 
 ### 8.8 COMM-shaped rewrite → `comm_rule_receiver`
 
@@ -663,7 +670,8 @@ for ( <rest | @"ac:op"!(⟦E_0⟧) | @"ac:op"!(⟦E_1⟧)>, reduct, out <- sourc
 The repeated channel `N` becomes the `EEq` guard; the reduct is host-computed and delivered on a
 $`\sigma`$ slot. **This is distinct from a declared join** (`RhoNetRuleKind::Comm` from
 `add_join_patterns`), which is classified but **unmaterialized** and fails the install gate (§8.13,
-§10). Runtime: [26](26-in-rho-ac-family-reference.md); proof: `CommRuleFiring.v`.
+§10). Runtime: [26](26-in-rho-ac-family-reference.md); proof: `CommRuleFiring.v`. Formal rule:
+[28 §4.8](28-translation-rule-system.md#48-comm-shaped-rewrites).
 
 ### 8.9 Binder-$`\beta`$ → the substitution seed + subst-TRS
 
@@ -683,7 +691,8 @@ object term is never observable; the load-bearing invariant (`object_congruence_
 is that emitted object constructors are disjoint from `reserved_subst_trs_labels()` (`:105`, the 11
 `^`-prefixed labels) — else `^lambda` would lose its depth increment. Reflection totality/injectivity
 is the compile-time well-definedness obligation (`BinderReflectionTotalOrReject.v`). Runtime cascade
-(SN/CR/NF and the weak bisimulation): [19](19-in-rho-binder-beta-substitution.md).
+(SN/CR/NF and the weak bisimulation): [19](19-in-rho-binder-beta-substitution.md). Formal rule:
+[28 §4.9](28-translation-rule-system.md#49-binder-beta-the-substitution-seed-and-the-subst-trs).
 
 ### 8.10 Native fold → `NativeFold`
 
@@ -692,7 +701,8 @@ A native-wrapped scalar op that lowers to an in-Rho scalar contract is classifie
 `fold` op installs the one-slot dispatch receiver `sigma_receiver_par(1, …)` =
 `for(result, out <- c){ out!(result) }` (the host delegates the reduced value); a non-`fold` op
 keeps the Model-T scalar contract `contract @"L"(@a,@b,ret){ ret!(a op b) }`. Runtime:
-[20](20-rholang-runtime-backend.md).
+[20](20-rholang-runtime-backend.md). Formal rule:
+[28 §4.10](28-translation-rule-system.md#410-native-fold).
 
 ### 8.11 Native system process → `native_locate_bridge_par`
 
@@ -704,7 +714,8 @@ A term the report rejects that also `term_requires_native_system_process` (`:952
 dispatch channel, where the installed dispatch receiver forwards it on `@out`. The **location** is
 the automaton's; only the **value** is the handler's payload (FV `NativeSystemProcessBoundary.v`:
 `emitted_is_reflected_handler_value`, and the location-from-capture-not-report separation). Runtime:
-[20](20-rholang-runtime-backend.md).
+[20](20-rholang-runtime-backend.md). Formal rule:
+[28 §4.11](28-translation-rule-system.md#411-native-system-process-the-locate-to-value-bridge).
 
 ### 8.12 Literals → the `NativeFold` path
 
@@ -714,7 +725,8 @@ contract ABI and is classified `NativeFold` (§8.10) or, if it has no scalar con
 `macros/src/gen/runtime/dovetail_report/typed_report.rs:299`: `__is_fold_redex`, `__is_value_op`,
 `__class_is_fold_value`, `__weigh`, `body_returns_option`) defers a fold until every object child is
 a reduced value op, and gives a redex a high extraction weight so bottom-up saturation prefers the
-contractum after the fire.
+contractum after the fire. Formal rule:
+[28 §4.12](28-translation-rule-system.md#412-literals-and-ground-values-the-reflected-carrier).
 
 ### 8.13 Logic / guards (predicated types)
 
@@ -740,6 +752,9 @@ contractum after the fire.
 - **`?guard:Guard` slot.** `add_term_guard_predicates_for_rule` (`:577`) pushes a
   `RhoNetSemanticPredicate("term:{label}:guard:{name}", RuntimeObservation)` — again no receiver, no
   COMM, only a runtime-observation guard obligation.
+
+Formal rule:
+[28 §4.13](28-translation-rule-system.md#413-guards-semantic-predicates-and-declared-joins).
 
 ## 9. RHS lowering and the reflected-`EList` ABI
 
@@ -818,11 +833,17 @@ installed program (`installed_program_par` composed with the call) — the no-du
 the *producer* of the $`\sigma`$ tuple differs (in-Rho accept vs host injection). The subst-TRS is
 appended once inside the install gate, so both paths run against the same $`\beta`$ cascade.
 
-## 11. The desugaring, in the Knotted-Topoi style
+## 11. The desugaring, in the Knotted-Topoi style: the specification core
 
 The specification viewpoint (§1) records the desugaring $`[\![ \cdot ]\!]`$ in the clause form of
 [KNOTTED-TOPOI-2026](references.md#knotted-topoi-2026), threading the location $`\ell`$; the location
-channel is $`c(\ell) = \ulcorner\ell\urcorner`$.
+channel is $`c(\ell) = \ulcorner\ell\urcorner`$. The four clauses below are the paper's Appendix-A
+**specification core** — Terms, Base rewrites, Contextual rewrites, and A whole GSLT. The
+normative, per-clause statement of the *full* translation calculus — these four plus the nine
+conservative extensions this compiler adds (equations, the AC families, COMM-shaped, binder-$`\beta`$,
+native, literals, guards) — is the master rule table of
+[28 §4](28-translation-rule-system.md#4-the-master-rule-table), with the whole-language assembly in
+[28 §5](28-translation-rule-system.md#5-whole-language-assembly).
 
 **Terms.**
 

@@ -1,0 +1,83 @@
+@startuml
+' Figure 28-2: the rule map — all thirteen clause-kind rules of the master table
+' (28 §4), each routed to the form it emits. Hues per family: blue = structural
+' (no receiver), violet = positional receiver families, amber = AC receiver
+' families, green = binder-beta, blue-grey = native, pink = guards. Red dashed
+' edges are fail-closed routes to the typed-rejection gate; the grey package is
+' the INV-14 fence (semantic predicates emit NO receiver and NO COMM).
+skinparam backgroundColor #FEFEFE
+skinparam defaultFontName monospaced
+skinparam shadowing false
+skinparam rectangle {
+  BorderColor #4A5568
+  FontColor #1A202C
+}
+skinparam package {
+  BorderColor #4A5568
+  FontColor #1A202C
+}
+skinparam ArrowColor #4A5568
+left to right direction
+
+title Figure 28-2 — the thirteen translation rules and what each emits (App-A core marked ★)
+
+package "clause-kind rules (28 §4)" as RULES #F5F7FA {
+  rectangle "★ 4.1 terms\n(spread + reflection)" as R1 #C6E0F5
+  rectangle "4.2 equations\n(compile-time congruence)" as R2 #C6E0F5
+  rectangle "4.12 literals /\nground values" as R12 #C6E0F5
+  rectangle "★ 4.3 base rewrite" as R3 #D6C6EE
+  rectangle "★ 4.4 contextual rewrite" as R4 #D6C6EE
+  rectangle "4.5 AC linear" as R5 #F6C177
+  rectangle "4.6 structural AC (Open)" as R6 #F6C177
+  rectangle "4.7 nested structural AC\n(In/Out, depth 2)" as R7 #F6C177
+  rectangle "4.8 COMM-shaped rewrite" as R8 #F6C177
+  rectangle "4.9 binder-beta\n+ subst-TRS seed" as R9 #A7D8B6
+  rectangle "4.10 native fold" as R10 #B8C9DB
+  rectangle "4.11 native system process" as R11 #B8C9DB
+  rectangle "4.13 guards / semantic\npredicates / declared joins" as R13 #FBCFE8
+}
+
+package "emitted forms" as OUT #F5F7FA {
+  rectangle "subject spread + collapse\nloc: / col: / cap: (+ ac: carrier)\nspread_term_par (:2832)" as O1 #DDEBF7
+  rectangle "no receiver — e-graph merge\nCongruenceClosure (INV-9)" as O2 #DDEBF7
+  rectangle "reflected-EList ABI value\nreflect_ground_term_par (:2303)\nHashBag soup / ESet / EMap / EList" as O3 #DDEBF7
+  rectangle "persistent guarded receiver\nsa: source, eq: guard, ph: bridge\nsigma / contextual / ac_sigma /\nstructural_ac / nested / comm receivers" as O4 #E5DAF5
+  rectangle "seed receiver + subst TRS (once)\n^subst ^shift ^shiftk ^cmp ^pred\nsubst_seed_receiver_par (subst_trs:1021)" as O5 #C8E6D0
+  rectangle "one-slot dispatch receiver /\nscalar contract / locate→value bridge\nlower_native_fold (:640)\nnative_locate_bridge_par (:1008)" as O6 #CBD9E8
+}
+
+package "INV-14 fence — no receiver, no COMM" as FENCE #E2E5E9 {
+  rectangle "RhoNetSemanticPredicate\nobligation (off-machine)\nsemantic_predicates_emit_no_comm" as F1 #D3D7DC
+}
+
+rectangle "typed rejection ⊥\ninstall gate fails closed\ninstalled_program_par (:404)\nRhoLoweringTotalOrRejects.v" as BOT #F8B4B4
+
+R1 -[#2B6CB0]-> O1
+R1 -[#2B6CB0]-> O3
+R2 -[#2B6CB0]-> O2
+R12 -[#2B6CB0]-> O3
+R3 -[#805AD5]-> O4
+R4 -[#805AD5]-> O4
+R5 -[#C05621]-> O4
+R6 -[#C05621]-> O4
+R7 -[#C05621]-> O4
+R8 -[#C05621]-> O4
+R9 -[#2F855A]-> O5
+R10 -[#4A6FA5]-> O6
+R11 -[#4A6FA5]-> O6
+R13 -[#B83280]-> F1
+
+R3 .[#C53030].> BOT : dangling RHS var /\nunsafe premise
+R4 .[#C53030].> BOT : ContextualHoleMismatch
+R5 .[#C53030].> BOT : nested / no-rest /\nunconfirmed kind
+R7 .[#C53030].> BOT : gated: equations\nnot empty
+R9 .[#C53030].> BOT : open / non-var scope;\nreflection reject (T20)
+R11 .[#C53030].> BOT : NativeSystemProcessNotFold
+R13 .[#C53030].> BOT : declared join =\nunmaterialized Comm
+
+note bottom of BOT #FCF3D0
+  Every undefined case of the translation is a typed
+  rejection BEFORE install — never a wrong program
+  (28 §8 tabulates every rejection constructor).
+end note
+@enduml

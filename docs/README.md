@@ -77,6 +77,7 @@ and Rho machine integration:
 - **`architecture/rho-native-integration/25-in-rho-base-family-reference.md`** - Reconstruction-grade reference for the base-rewrite family
 - **`architecture/rho-native-integration/26-in-rho-ac-family-reference.md`** - Reconstruction-grade reference for the associative-commutative family
 - **`architecture/rho-native-integration/27-oslf-language-to-rholang-compilation.md`** - Compiling OSLF `language!` specifications to Rholang via the set-automaton pipeline
+- **`architecture/rho-native-integration/28-translation-rule-system.md`** - The specification-level translation calculus: the thirteen-rule master table, whole-language assembly, and worked whole-language instances with a test-pinned installed-program listing
 - **`architecture/rho-native-integration/29-knotted-topoi-satisfaction-crosswalk.md`** - Per-item crosswalk of the knotted-topoi paper's labeled claims to their mechanized, runtime-tested, or denotational-program status
 - **`architecture/rho-native-integration/references.md`** - Citations, DOI links, and repository-local proof references
 - **`architecture/rho-native-integration/validate.sh`** - Reproducible local validation for the suite
