@@ -565,7 +565,14 @@ pattern set; and moving matching onto the reducer under this optimal naming chan
 observable behavior, because the optimal and sound schemes induce the same CLTS.
 The measured shadow of this WHY-tier — the pre-registered efficiency gate, its
 counter-identical refutations, and the capability split the numbers exposed — is
-recorded in [29 §5](29-knotted-topoi-satisfaction-crosswalk.md).
+recorded in [29 §5](29-knotted-topoi-satisfaction-crosswalk.md); the full
+protocol run's verdict report, carrying the protocol owner's decision record —
+keep both strategies, experiment-contingent — is
+[docs/benchmarks/set-automaton-vs-naive.md](../../benchmarks/set-automaton-vs-naive.md).
+The decision leaves this WHY-tier intact where it lives: the O1/O2/O3 theory
+and the interning quotient are compile-time results about the naming, proven
+zero-admission, and the same-CLTS theorem is exactly what licenses measuring
+the runtime encodings against each other without touching correctness.
 
 ## References
 

@@ -1,6 +1,6 @@
 # Rho-Native MeTTaIL Integration
 
-Last updated: 2026-07-10
+Last updated: 2026-07-19
 
 This documentation explains how MeTTaIL, Dovetail, Rholang, F1r3node, RSpace,
 and the Rho machine fit together.
@@ -84,8 +84,9 @@ For the in-Rho matching campaign (how matching AND firing both moved onto the in
 6. [In-Rho Binder Beta-Substitution](19-in-rho-binder-beta-substitution.md) — the binder-β family
 7. [Set-Automata Optimization Theory](21-set-automata-optimization-theory.md) — why it is optimal
 8. [End-to-End Formal Verification](22-end-to-end-formal-verification.md) — the operational-correspondence theorems
-9. [Coverage and Correctness](23-coverage-and-correctness.md) — what is covered
-10. [In-Rho Completion Audit](24-in-rho-completion-audit.md) — the closing audit
+9. [Knotted-Topoi Satisfaction Crosswalk](29-knotted-topoi-satisfaction-crosswalk.md) — where the north-star paper stands, item by item
+10. [Coverage and Correctness](23-coverage-and-correctness.md) — what is covered
+11. [In-Rho Completion Audit](24-in-rho-completion-audit.md) — the closing audit
 
 ## Cohesive Reading Model
 

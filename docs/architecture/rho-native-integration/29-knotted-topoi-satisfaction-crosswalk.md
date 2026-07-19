@@ -1,6 +1,6 @@
 # 29 — Knotted-Topoi Satisfaction Crosswalk
 
-Last updated: 2026-07-18
+Last updated: 2026-07-19
 
 This document is the per-item satisfaction crosswalk between the north-star
 paper *Knotted Topoi* ([KNOTTED-TOPOI-2026](references.md#knotted-topoi-2026),
@@ -285,8 +285,9 @@ rather than duplicates:
 The production deviations visible in doc 07's flip table (host-routed COMM and
 guard dispositions, in-engine Ambient reduction, host-side native dispatch)
 are exactly the subject of those scheduled enforcement stages; the stages use
-the benchmark's winning matcher (§5), so the boundary work and the efficiency
-gate compose rather than race.
+the matcher the §5 decision record keeps in production (the set-automaton
+network), so the boundary work and the efficiency gate compose rather than
+race.
 
 ## 5. The efficiency gate — measured results
 
@@ -365,10 +366,16 @@ labels exploratory, to be re-run against the in-Rho automaton driver once
 enforcement stage A-S5 lands it (§4), together with the scion-grafting
 experiment E-1 ([ERKENS-THESIS-2024](references.md#erkens-thesis-2024),
 Chapter 6, whose per-state canned send bundles target exactly the re-spread
-cost the persistent regime pays). The verdict document is scheduled at
-`docs/benchmarks/set-automaton-vs-naive.md`, and the verdict itself is the
-protocol owner's decision, informed by the full pinned protocol run — not a
-conclusion this crosswalk draws for it.
+cost the persistent regime pays). The verdict document now exists at
+[docs/benchmarks/set-automaton-vs-naive.md](../../benchmarks/set-automaton-vs-naive.md):
+it records the full pinned protocol run — including R3's measured split, in
+which the self-driving naive column wins every matching-work counter yet
+loses wall-clock about 1.7 times at scale — the frozen rule's mechanical
+output, and the protocol owner's decision: **keep both strategies**. The
+set-automaton network remains the production in-Rho matcher, the naive
+per-location emitter remains maintained as the measured sound-envelope
+alternative, and the retention is **experiment-contingent** on the E-6a /
+E-1 / post-A-S5 re-runs the decision record schedules.
 
 One scheduled direction deserves its own paragraph, because it reframes the
 machine rather than tuning it. Greg Meredith's framing: **the set automaton is
