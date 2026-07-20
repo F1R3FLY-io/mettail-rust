@@ -438,6 +438,318 @@ Proof.
   - unfold represents. apply norm_embed.
 Qed.
 
+(* =================================================================================
+   A-S5.5: the BAG DRIVER model — the AC-family arms' peel/join/three-case-splice
+   reassembly (rho_net_drive.rs `bag_fragment_dispatch` + the bag arm + the carrier's
+   contractum entry) modeled as a big-step LTS over an ABSTRACT bag-value fragment,
+   with the FLATTENING agreement lemma (plan v2 section 7.2).
+
+   Conservative extension (the task mandate): the Lambda `Obj` fragment above carries no
+   AC bag, and adding a bag constructor to `Obj`/`Tm` (DeBruijnSubstTRS) would disturb
+   every landed theorem.  So the bag arm is modeled in its OWN self-contained fragment
+   `bval` — a tree of op-bags over never-driven leaf atoms — exactly the shape the driver
+   sees: a HashBag `Par` soup whose elements are either same-op sub-bags (spliced) or
+   opaque values (wrapped).  Nothing above is touched; every landed Lambda theorem and
+   its proof is intact.
+
+   WHAT IS MODELED.  The driver's bag arm peels one element, drives it, drives the
+   remainder, and splices the driven element's fragment back via the AM-3 THREE-CASE
+   dispatch (Nil / same-op soup / wrap) before the post-join re-check.  The host's
+   value-level `add_flattened_bag` (dovetail/src/rules.rs:707) splices any member that is
+   itself an op-bag, multiplicity-preserving, on tree-shaped values (no cycle case).  The
+   theorems:
+
+     driver_flatten_agrees_with_add_flattened_bag : the driver's one-level-per-reassembly
+                                                     splice (`bdrive`) computes the SAME
+                                                     value as the host flatten (`bflatten`).
+     bag_flatness_sound      : a driven bag is FLAT (no nested-bag element) — the AM-2
+                               flatness obligation that makes the top-level NF-scan
+                               complete (a nested `{{A,B},C}` would hide sibling redexes).
+     bag_atoms_preserved     : the driven bag's leaf-atom multiset EQUALS the subject's
+                               (`bflatten` only re-associates; multiplicity-preserving).
+     bag_quiescence_sound    : PER-TRACE — EVERY `bdrives` derivation rests a FLAT bag
+                               (the F14 join hypothesis, `Forall2 bdrives`, carries each
+                               driven element's flatness; the AM-3 splice preserves it).
+     bdrives_computes_bflatten / bdrives_deterministic : the relation computes exactly the
+                               host flatten (per-trace determinism of the descent).
+
+   The AC-FIRING fuel discipline (the redex arms consulting `MatchCase.guard` + the ground
+   `GInt 0` case) is the SHARED `dres`/`DFuel` mechanism proven in DriverModel above:
+   `fuel_exhaustion_never_wrong` / `exhaustion_datum_is_not_nf` bind the AC arms verbatim
+   (an AC arm's `DFuel` datum is its subject soup — a redex — never an NF claim).  This
+   section adds only the reassembly/flattening content the bag arm introduces.
+   ================================================================================= *)
+
+Section BagDriverModel.
+
+  (* ── generic list helpers (uniquely prefixed to avoid any Stdlib name clash) ── *)
+
+  (* Forall over an append. *)
+  Lemma bag_Forall_app {A} (P : A -> Prop) (a b : list A) :
+    Forall P a -> Forall P b -> Forall P (a ++ b).
+  Proof.
+    intros Ha Hb. induction Ha as [| x l0 Hx Hl0 IH]; simpl.
+    - exact Hb.
+    - apply Forall_cons; [exact Hx | exact IH].
+  Qed.
+
+  (* Forall distributes over flat_map when each image is Forall. *)
+  Lemma bag_Forall_flat_map {A B} (P : B -> Prop) (f : A -> list B) (l : list A) :
+    Forall (fun x => Forall P (f x)) l -> Forall P (flat_map f l).
+  Proof.
+    intro H. induction H as [| x l0 Hx Hl0 IH]; simpl.
+    - apply Forall_nil.
+    - apply bag_Forall_app; [exact Hx | exact IH].
+  Qed.
+
+  (* Pointwise-equal functions give equal flat_map (unconditional). *)
+  Lemma bag_flat_map_ext {A B} (f g : A -> list B) (l : list A) :
+    (forall x, f x = g x) -> flat_map f l = flat_map g l.
+  Proof.
+    intro Hext. induction l as [| a l0 IH]; simpl.
+    - reflexivity.
+    - rewrite Hext, IH. reflexivity.
+  Qed.
+
+  (* Forall-conditioned flat_map extensionality (the per-element IH form). *)
+  Lemma bag_flat_map_ext_forall {A B} (f g : A -> list B) (l : list A) :
+    Forall (fun x => f x = g x) l -> flat_map f l = flat_map g l.
+  Proof.
+    intro H. induction H as [| x l0 Hx Hl0 IH]; simpl.
+    - reflexivity.
+    - rewrite Hx, IH. reflexivity.
+  Qed.
+
+  (* flat_map fusion. *)
+  Lemma bag_flat_map_flat_map {A B C} (f : B -> list C) (g : A -> list B) (l : list A) :
+    flat_map f (flat_map g l) = flat_map (fun x => flat_map f (g x)) l.
+  Proof.
+    induction l as [| a l0 IH]; simpl.
+    - reflexivity.
+    - rewrite flat_map_app, IH. reflexivity.
+  Qed.
+
+  (* ── the abstract bag fragment ── *)
+
+  (* An abstract bag value: an op-bag of children, or a never-driven leaf atom (a
+     capability continuation / opaque value the driver wraps).  `nat` identifies atoms so
+     the multiplicity argument has a concrete carrier. *)
+  Inductive bval : Type :=
+    | BAtom : nat -> bval
+    | BBag  : list bval -> bval.
+
+  (* The list-aware induction principle (the default `bval_ind` gives no hypothesis for
+     the `list bval` children).  Proved by an inner fix over the children list; `REC` is
+     applied only to `c`, a subterm of `l` hence of `BBag l` — guarded. *)
+  Lemma bval_ind2 : forall (P : bval -> Prop),
+    (forall n, P (BAtom n)) ->
+    (forall l, Forall P l -> P (BBag l)) ->
+    forall v, P v.
+  Proof.
+    intros P Hatom Hbag. fix REC 1.
+    intro v; destruct v as [n | l].
+    - apply Hatom.
+    - apply Hbag. induction l as [| c cs IH].
+      + apply Forall_nil.
+      + apply Forall_cons; [apply REC | exact IH].
+  Qed.
+
+  (* The leaf-atom multiset of a bag value (order-preserving list), for multiplicity. *)
+  Fixpoint atoms (v : bval) : list nat :=
+    match v with
+    | BAtom n => n :: nil
+    | BBag l => flat_map atoms l
+    end.
+
+  (* The host `add_flattened_bag` mirror: flatten a value, splicing any member that is
+     itself an op-bag.  `frag` is the one-member fragment (a sub-bag's elements, or the
+     singleton wrap).  Structurally recursive: `bflatten c` on children `c` of `l`. *)
+  Definition frag (w : bval) : list bval :=
+    match w with
+    | BBag cs => cs
+    | BAtom n => BAtom n :: nil
+    end.
+
+  Fixpoint bflatten (v : bval) : bval :=
+    match v with
+    | BAtom n => BAtom n
+    | BBag l => BBag (flat_map (fun c => frag (bflatten c)) l)
+    end.
+
+  (* The driver's AM-3 THREE-CASE splice (rho_net_drive.rs `bag_fragment_dispatch`): the
+     DRIVEN element's fragment contributed to the accumulator — Nil (empty bag) splices
+     NOTHING, a same-op soup splices its elements, anything else wraps as one element. *)
+  Definition splice_fragment (driven : bval) (acc : list bval) : list bval :=
+    match driven with
+    | BBag nil          => acc                    (* Nil: splice-as-nothing *)
+    | BBag (c :: cs)    => (c :: cs) ++ acc        (* same-op soup: splice its sends *)
+    | BAtom n           => BAtom n :: acc          (* wrap one element send *)
+    end.
+
+  (* The driver's bag drive: fold the three-case splice over the DRIVEN elements (each
+     `bdrive e` already flattened by the recursion — the AM-3(b) drive induction). *)
+  Fixpoint bdrive (v : bval) : bval :=
+    match v with
+    | BAtom n => BAtom n
+    | BBag l => BBag (fold_right (fun e acc => splice_fragment (bdrive e) acc) nil l)
+    end.
+
+  (* The three-case splice equals prepending the host fragment: the AM-3 dispatch is
+     exactly the `add_flattened_bag` member splice (the Nil case = the empty prefix). *)
+  Lemma splice_fragment_is_frag_app : forall w acc,
+    splice_fragment w acc = frag w ++ acc.
+  Proof.
+    intros w acc. destruct w as [n | l].
+    - reflexivity.
+    - destruct l as [| c cs]; reflexivity.
+  Qed.
+
+  (* The bag arm's fold IS the host flatten's flat_map, once the splice is the fragment
+     append. *)
+  Lemma fold_right_frag_is_flat_map :
+    forall (f : bval -> bval) (l : list bval),
+      fold_right (fun e acc => splice_fragment (f e) acc) nil l
+        = flat_map (fun c => frag (f c)) l.
+  Proof.
+    intros f l. induction l as [| c cs IH]; simpl.
+    - reflexivity.
+    - rewrite splice_fragment_is_frag_app, IH. reflexivity.
+  Qed.
+
+  (* ★ THE AGREEMENT LEMMA (plan v2 section 7.2): the driver's one-level-per-reassembly
+     three-case splice computes the SAME value as the host's value-level flatten on
+     tree-shaped values. *)
+  Theorem driver_flatten_agrees_with_add_flattened_bag :
+    forall v, bdrive v = bflatten v.
+  Proof.
+    intro v; induction v as [n | l IHl] using bval_ind2.
+    - reflexivity.
+    - cbn [bdrive bflatten]. rewrite (fold_right_frag_is_flat_map bdrive l). f_equal.
+      apply bag_flat_map_ext_forall.
+      eapply Forall_impl; [| exact IHl]. intros c Hc. rewrite Hc. reflexivity.
+  Qed.
+
+  (* Flatness: a value is flat iff every bag element is an atom (no nested bag). *)
+  Definition atom_elem (c : bval) : Prop := exists n, c = BAtom n.
+  Definition is_flat (v : bval) : Prop :=
+    match v with
+    | BAtom _ => True
+    | BBag l => Forall atom_elem l
+    end.
+
+  (* `frag` of a FLAT value is a list of atoms (so prepending it keeps an all-atoms
+     accumulator all-atoms). *)
+  Lemma frag_of_flat_is_atoms : forall w,
+    is_flat w -> Forall atom_elem (frag w).
+  Proof.
+    intros w Hflat. destruct w as [n | l]; simpl in *.
+    - apply Forall_cons; [exists n; reflexivity | apply Forall_nil].
+    - exact Hflat.
+  Qed.
+
+  (* ★ FLATNESS SOUNDNESS (the AM-2 obligation): a driven bag is flat. *)
+  Theorem bag_flatness_sound : forall v, is_flat (bdrive v).
+  Proof.
+    intro v; induction v as [n | l IHl] using bval_ind2.
+    - exact I.
+    - cbn [bdrive]. rewrite (fold_right_frag_is_flat_map bdrive l). cbn [is_flat].
+      apply bag_Forall_flat_map.
+      eapply Forall_impl; [| exact IHl]. intros c Hc. apply frag_of_flat_is_atoms. exact Hc.
+  Qed.
+
+  (* `flat_map atoms (frag w) = atoms w` for ANY w — the fragment of a value re-exposes
+     exactly its leaves. *)
+  Lemma flat_map_atoms_frag : forall w,
+    flat_map atoms (frag w) = atoms w.
+  Proof.
+    intro w. destruct w as [n | l]; reflexivity.
+  Qed.
+
+  (* ★ MULTIPLICITY PRESERVATION: the driven bag's leaf-atom multiset EQUALS the
+     subject's (`bflatten` only re-associates the nesting, left-to-right — so even the
+     ORDER is preserved, hence list equality, a fortiori multiset equality). *)
+  Theorem bag_atoms_preserved : forall v, atoms (bflatten v) = atoms v.
+  Proof.
+    intro v; induction v as [n | l IHl] using bval_ind2.
+    - reflexivity.
+    - cbn [bflatten atoms].
+      rewrite (bag_flat_map_flat_map atoms (fun c => frag (bflatten c)) l).
+      transitivity (flat_map (fun c => atoms (bflatten c)) l).
+      + apply bag_flat_map_ext. intro x. apply flat_map_atoms_frag.
+      + apply bag_flat_map_ext_forall. exact IHl.
+  Qed.
+
+  (* The bag arm as a big-step LTS: a leaf is inert; a bag drives EVERY element (the F14
+     concurrent child drives), then splices the driven elements (the AM-3 reassembly).
+     `Forall2 bdrives l ws` is the atomic JOIN — the reassembly sees only fully-driven
+     children. *)
+  Inductive bdrives : bval -> bval -> Prop :=
+    | bd_atom : forall n, bdrives (BAtom n) (BAtom n)
+    | bd_bag  : forall l ws,
+        Forall2 bdrives l ws ->
+        bdrives (BBag l) (BBag (fold_right (fun w acc => splice_fragment w acc) nil ws)).
+
+  (* fold over `map bdrive l` = fold over `l` with the splice pre-composed with bdrive. *)
+  Lemma fold_right_splice_map : forall l,
+    fold_right (fun w acc => splice_fragment w acc) nil (map bdrive l)
+      = fold_right (fun e acc => splice_fragment (bdrive e) acc) nil l.
+  Proof.
+    induction l as [| c cs IH]; simpl.
+    - reflexivity.
+    - rewrite IH. reflexivity.
+  Qed.
+
+  (* The relation computes exactly the driver's `bdrive` function. *)
+  Lemma bdrives_computes_bdrive : forall v, bdrives v (bdrive v).
+  Proof.
+    intro v; induction v as [n | l IHl] using bval_ind2.
+    - apply bd_atom.
+    - cbn [bdrive]. rewrite <- fold_right_splice_map. apply bd_bag.
+      induction IHl as [| c cs Hc Hcs IH]; simpl.
+      + apply Forall2_nil.
+      + apply Forall2_cons; [exact Hc | exact IH].
+  Qed.
+
+  (* From the per-element determinism (the structural IH) + the Forall2 join, the driven
+     children are exactly `map bdrive l`. *)
+  Lemma forall2_bdrives_map : forall l ws,
+    Forall (fun c => forall w, bdrives c w -> w = bdrive c) l ->
+    Forall2 bdrives l ws ->
+    ws = map bdrive l.
+  Proof.
+    intros l ws HF H2. generalize dependent ws.
+    induction HF as [| c cs Hc Hcs IH]; intros ws H2.
+    - inversion H2; subst; reflexivity.
+    - inversion H2; subst; simpl. f_equal.
+      + apply Hc. assumption.
+      + apply IH. assumption.
+  Qed.
+
+  (* Per-trace determinism of the descent (there is no schedule choice in the pure
+     flattening reassembly). *)
+  Lemma bdrives_deterministic : forall v w, bdrives v w -> w = bdrive v.
+  Proof.
+    intro v; induction v as [n | l IHl] using bval_ind2; intros w H.
+    - inversion H; subst; reflexivity.
+    - inversion H; subst; cbn [bdrive]; f_equal.
+      match goal with
+      | [ HF : Forall2 bdrives l ?ws |- _ ] =>
+          rewrite (forall2_bdrives_map l ws IHl HF)
+      end.
+      apply fold_right_splice_map.
+  Qed.
+
+  (* ★ PER-TRACE QUIESCENCE (the F14 join + AM-3 splice induction): EVERY `bdrives`
+     derivation rests a FLAT bag — the reassembly's `Forall2 bdrives` hypothesis carries
+     each driven child's flatness (through determinism), and the three-case splice
+     preserves it, so no nested bag hides a sibling redex from the top-level scan. *)
+  Theorem bag_quiescence_sound : forall v w, bdrives v w -> is_flat w.
+  Proof.
+    intros v w H. rewrite (bdrives_deterministic v w H). apply bag_flatness_sound.
+  Qed.
+
+End BagDriverModel.
+
 (* Zero-admission confirmation. *)
 Print Assumptions drive_steps_sound.
 Print Assumptions quiescence_sound.
@@ -446,3 +758,10 @@ Print Assumptions exhaustion_datum_is_not_nf.
 Print Assumptions binder_rewrap_needs_no_recheck.
 Print Assumptions drive_weak_bisim.
 Print Assumptions drive_two_firing_nonvacuous.
+(* A-S5.5 bag-driver additions. *)
+Print Assumptions driver_flatten_agrees_with_add_flattened_bag.
+Print Assumptions bag_flatness_sound.
+Print Assumptions bag_atoms_preserved.
+Print Assumptions bag_quiescence_sound.
+Print Assumptions bdrives_computes_bdrive.
+Print Assumptions bdrives_deterministic.

@@ -154,6 +154,21 @@ lambda-runtime = [
     "mettail-languages/dovetail-codegen",
     "mettail-languages/rho-codegen",
 ]
+# A-S5.5: pulls in the PRODUCTION `Ambient` language for the end-to-end in-Rho
+# QUIESCENCE-DRIVER firing suite (`rho_net_ambient_full`) — the generated
+# `rho_net_drive_invocation_to` seed driving REAL Ambient subjects (Open/In/the
+# C-G-redeclared Out, cascades, the F1 extrusion/float-boundary subject, the AM-3
+# flattening subjects, fuel exhaustion, guard vetoes, the non-confluent valid-NF-set
+# membership) to quiescence fully on the reducer via the installed `^drive` receiver
+# family + the three per-rule AC-carrier receivers. Needs the generated drive invocation
+# (`rho-codegen`) and `dovetail-codegen` for the backend plan surface.
+ambient-runtime = [
+    "runtime-report",
+    "dep:mettail-languages",
+    "mettail-languages/ambient",
+    "mettail-languages/dovetail-codegen",
+    "mettail-languages/rho-codegen",
+]
 # Stage 3e: pulls in the generated `NativeDemo` language for the end-to-end in-Rho
 # NATIVE-SYSTEM-PROCESS firing test (`rho_net_native_firing`) — a generated `fold` native process
 # `PowInt(a, b) ~> a^b` firing as a COMM on the reducer, emitting the value the host's TRUSTED
@@ -393,6 +408,19 @@ required-features = ["lambda-demo-runtime"]
 name = "rho_net_lambda_firing"
 path = "tests/rho_net_lambda_firing.rs"
 required-features = ["lambda-runtime"]
+
+# A-S5.5 (leg 2): the full Ambient in-Rho quiescence-driver suite over the REAL
+# production Ambient — Open/In firings, the C-G (Red Out) redeclared OutRule (residual
+# kept INSIDE m; singleton fires to {n[{0}], m[{}]}), the in-then-open cascade, the F1
+# extrusion/float-boundary subject, guard vetoes, the three MANDATORY flattening
+# subjects (bag-bodied open / empty-bag Nil / double-nested never-driven), fuel
+# exhaustion, the corrupted-σ probe, the decision-(3) non-confluent valid-NF-set
+# membership, and the AM-5 search-for-a-valid-order replay — all under the always-on
+# flattened cross-check.
+[[test]]
+name = "rho_net_ambient_full"
+path = "tests/rho_net_ambient_full.rs"
+required-features = ["ambient-runtime"]
 
 # The COMMITTED randomized PROPERTY floor for `DeBruijnSubstTRS.v`'s NF theorem
 # (`NF(subst(0, a, b)) = b[a/0]`): a proptest that cross-checks the live in-Rho

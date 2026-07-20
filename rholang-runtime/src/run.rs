@@ -204,6 +204,24 @@ fn par_is_only_sends(par: &Par) -> bool {
         && !par.connective_used
 }
 
+/// Whether a `Par` is the fully-empty Nil process — the A-S5.5 (AM-3) reflection of an
+/// EMPTY AC bag (`op{}` reflects as `Par::default()`), decoded by
+/// [`par_as_runtime_observation_value`] as the empty multiset `Bag`.
+#[cfg(feature = "runtime-report")]
+fn par_is_empty_nil(par: &Par) -> bool {
+    par.sends.is_empty()
+        && par.exprs.is_empty()
+        && par.receives.is_empty()
+        && par.news.is_empty()
+        && par.matches.is_empty()
+        && par.bundles.is_empty()
+        && par.connectives.is_empty()
+        && par.conditionals.is_empty()
+        && par.unforgeables.is_empty()
+        && par.locally_free.is_empty()
+        && !par.connective_used
+}
+
 /// The AC bag-carrier operator label `op` a soup send's channel `@"ac:{op}"` carries, when the
 /// channel is a quoted `GString` with the reserved `"ac:"` prefix and a non-empty operator.
 #[cfg(feature = "runtime-report")]
@@ -323,6 +341,16 @@ pub fn par_as_runtime_observation_value(par: &Par) -> Option<RuntimeObservationV
     // `single_expr_instance` head below, so this claims only the AC carrier.
     if let Some(entries) = decode_ac_bag_soup(par) {
         return Some(RuntimeObservationValue::Bag(entries));
+    }
+
+    // A-S5.5 (AM-3): the EMPTY bag reflects as `Par::default()` (Nil) — the zero-send
+    // degenerate of the process-soup carrier above (`decode_ac_bag_soup` requires ≥ 1
+    // send, so Nil falls through to here). It decodes as the empty multiset `Bag`, which
+    // is how a driven `op{}` — e.g. the redeclared Ambient `OutRule`'s singleton firing
+    // `m[{n[{out(m,p)}]}] ⇒ {n[{p}], m[{}]}` — observes: `m[{}]`'s second child is Nil.
+    // No other reflected value is the empty `Par`, so the claim is unambiguous.
+    if par_is_empty_nil(par) {
+        return Some(RuntimeObservationValue::Bag(Vec::new()));
     }
 
     match single_expr_instance(par)? {
