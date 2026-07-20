@@ -40,12 +40,13 @@ use crate::run::{
 };
 #[cfg(feature = "runtime-report")]
 use crate::run::{
+    drive_cross_check, par_as_runtime_observation_value,
     run_installed_program_with_call_and_read_observation_set,
     run_installed_program_with_call_and_read_runtime_values,
     run_validated_program_and_read_runtime_value_and_string_channels,
     run_validated_program_and_read_runtime_values,
-    run_validated_program_with_call_and_read_runtime_values, DriveObservationChannels,
-    DriveObservationSet,
+    run_validated_program_with_call_and_read_runtime_values, DriveNfScan,
+    DriveObservationChannels, DriveObservationSet,
 };
 
 /// Runtime boundary that produced a Rho observation report.
@@ -686,6 +687,28 @@ pub enum RhoMachineInvocation {
     /// `(call, out_channel)` from
     /// `<Lang>::rho_net_invocation_from_dovetail_to_firing`.
     RunRhoNetReplayAndObserveRuntimeValues { firings: Vec<(Par, String)> },
+    /// A-S5.6 (the production flip): run this backend's INSTALLED Rho-net program
+    /// composed with the `^drive` QUIESCENCE-DRIVER seed `call`
+    /// (`⌜^drive⌝!(⟦subject⟧, fuel, @out)` from the generated
+    /// `rho_net_drive_invocation_to`), read back the FULL four-channel drive
+    /// observation set, run the ALWAYS-ON cross-check (plan v2 §4.7 — err/fuel
+    /// channels empty, exactly one OUT resting term, the [`DriveNfScan`] static
+    /// redex mirror over the flattened resting term, and ledger consistency
+    /// `fired ≥ 1 ⟺ the seed subject had a redex`, the subject scanned from the
+    /// seed's own reflected datum), and report the resting term as the exec
+    /// observation. A cross-check violation is a typed exec error naming the
+    /// offending channel ([`DriveCrossCheckError`]); it never surfaces as a
+    /// silent result.
+    RunRhoNetDriveAndReadObservationSet {
+        /// The closed drive seed `Par` (`RhoNetDriveInvocation::call`).
+        call: Par,
+        /// The four observation channels (OUT + fired/err/fuel, fingerprint-derived).
+        channels: DriveObservationChannels,
+        /// The per-path fuel the seed threads (for the fuel-exhaustion error text).
+        per_path_fuel: i64,
+        /// The language's static NF-scan mirror (plan v2 §4.7).
+        nf_scan: DriveNfScan,
+    },
     /// Run a generated-language call-by-need thunk plan and report the
     /// spec-named value/evaluation channels.
     RunCallByNeedThunk { plan: Box<CallByNeedThunkPlan> },
@@ -984,6 +1007,75 @@ pub fn build_rho_net_replay_invocation_from_contracts(
     RhoMachineInvocation::RunRhoNetReplayAndObserveRuntimeValues { firings }
 }
 
+/// Build the A-S5.6 production-exec invocation from a codegen-owned **`^drive`
+/// quiescence-driver seed** description
+/// ([`mettail_rholang_codegen::RhoNetDriveInvocation`], produced by the generated
+/// `<Lang>::rho_net_drive_invocation_to` after its admission checks).
+///
+/// The whole-subject generalization of
+/// [`build_rho_net_injection_invocation_from_contract`] (which fires ONE
+/// host-located redex): the drive seed hands the entire reflected subject to the
+/// installed `^drive` receiver family, which matches, fires, re-drives every
+/// contractum, and rests the quiescent term on OUT — with the four-channel
+/// readback and the always-on §4.7 cross-check run by the invocation's execute
+/// arm. `nf_scan` is the language's static redex mirror (supplied by the
+/// per-language production wrapper); the per-path fuel is read back from the
+/// seed's own fuel datum (`⌜^drive⌝!(⟦subject⟧, fuel:GInt, @out)` — the
+/// [`mettail_rholang_codegen::rho_net_drive_call_par`] ABI), so the invocation
+/// can never disagree with what the driver actually threads.
+#[cfg(feature = "runtime-report")]
+pub fn build_rho_net_drive_invocation_from_contract(
+    invocation: mettail_rholang_codegen::RhoNetDriveInvocation,
+    nf_scan: DriveNfScan,
+) -> RhoMachineInvocation {
+    let channels = DriveObservationChannels::from_invocation(&invocation);
+    let per_path_fuel = drive_seed_fuel(&invocation.call);
+    RhoMachineInvocation::RunRhoNetDriveAndReadObservationSet {
+        call: invocation.call,
+        channels,
+        per_path_fuel,
+        nf_scan,
+    }
+}
+
+/// The per-path fuel datum of a drive seed `⌜^drive⌝!(⟦subject⟧, fuel:GInt, @out)` —
+/// the second send datum, a ground `GInt`, by the
+/// [`mettail_rholang_codegen::rho_net_drive_call_par`] ABI. A seed violating that ABI is
+/// a codegen-contract defect, never valid input, so this fails loud.
+#[cfg(feature = "runtime-report")]
+fn drive_seed_fuel(call: &Par) -> i64 {
+    call.sends
+        .first()
+        .and_then(|send| send.data.get(1))
+        .and_then(|datum| datum.exprs.first())
+        .and_then(|expr| match expr.expr_instance {
+            Some(models::rhoapi::expr::ExprInstance::GInt(fuel)) => Some(fuel),
+            _ => None,
+        })
+        .expect(
+            "the drive seed carries (subject, fuel:GInt, out) — the rho_net_drive_call_par ABI",
+        )
+}
+
+/// The reflected SUBJECT datum of a drive seed (the first send datum), decoded as a
+/// runtime observation value — the §4.7 ledger check's `subject had a redex` input is
+/// computed by scanning exactly what the seed delivered (the A-S5.5 test-tier
+/// `decode_seed_subject` pattern, promoted). Fail-loud: an undecodable subject is a
+/// reflection-ABI defect.
+#[cfg(feature = "runtime-report")]
+fn drive_seed_subject(call: &Par) -> Result<RuntimeObservationValue, String> {
+    let datum = call
+        .sends
+        .first()
+        .and_then(|send| send.data.first())
+        .ok_or_else(|| {
+            "the drive seed carries (subject, fuel, out) — the rho_net_drive_call_par ABI"
+                .to_string()
+        })?;
+    par_as_runtime_observation_value(datum)
+        .ok_or_else(|| "the drive seed's reflected subject must decode".to_string())
+}
+
 #[cfg(feature = "runtime-report")]
 impl RhoMachineInvocation {
     /// Which runtime site executes this invocation.
@@ -998,14 +1090,17 @@ impl RhoMachineInvocation {
 
     /// The lowered program `Par` this invocation runs on the Rho machine, if any. The
     /// `RunWithCall*` variants carry it (a COMM / dataflow program — exactly what the reactive
-    /// single-stepper `inj`s); the pure-observe and call-by-need variants do not.
+    /// single-stepper `inj`s), and the A-S5.6 drive variant carries its `^drive` seed (the
+    /// stepper composes it with the installed program exactly like the run path); the
+    /// pure-observe and call-by-need variants do not.
     pub fn program_par(&self) -> Option<&Par> {
         match self {
             RhoMachineInvocation::RunWithCallAndObserveInts { call, .. }
             | RhoMachineInvocation::RunWithCallAndObserveBools { call, .. }
             | RhoMachineInvocation::RunWithCallAndObserveStrings { call, .. }
             | RhoMachineInvocation::RunWithCallAndObserveRuntimeValues { call, .. }
-            | RhoMachineInvocation::RunRhoNetWithCallAndObserveRuntimeValues { call, .. } => {
+            | RhoMachineInvocation::RunRhoNetWithCallAndObserveRuntimeValues { call, .. }
+            | RhoMachineInvocation::RunRhoNetDriveAndReadObservationSet { call, .. } => {
                 Some(call)
             },
             _ => None,
@@ -1025,6 +1120,9 @@ impl RhoMachineInvocation {
             | RhoMachineInvocation::RunWithCallAndObserveRuntimeValues { out_channel, .. }
             | RhoMachineInvocation::RunRhoNetWithCallAndObserveRuntimeValues { out_channel, .. } => {
                 Some(out_channel)
+            },
+            RhoMachineInvocation::RunRhoNetDriveAndReadObservationSet { channels, .. } => {
+                Some(&channels.out)
             },
             RhoMachineInvocation::RunRhoNetReplayAndObserveRuntimeValues { .. }
             | RhoMachineInvocation::RunCallByNeedThunk { .. } => None,
@@ -1109,6 +1207,35 @@ impl RhoMachineInvocation {
                     .map_err(|err| {
                         format!("failed to convert Rho runtime value replay report: {err:?}")
                     })
+            },
+            RhoMachineInvocation::RunRhoNetDriveAndReadObservationSet {
+                call,
+                channels,
+                per_path_fuel,
+                nf_scan,
+            } => {
+                // A-S5.6: the production in-Rho quiescence-drive exec. The subject-had-redex
+                // bit of the §4.7 ledger check is computed by scanning the seed's OWN
+                // reflected subject datum (no oracle, no Dovetail work), then the whole
+                // observation set is read back from one execution and cross-checked.
+                let subject = drive_seed_subject(&call)?;
+                let subject_had_redex = nf_scan.redex_present(&subject);
+                let set = backend
+                    .run_rho_net_with_call_and_read_observation_set(&call, &channels)
+                    .await?;
+                drive_cross_check(&set, &channels, subject_had_redex, per_path_fuel, &|value| {
+                    nf_scan.redex_present(value)
+                })
+                .map_err(|err| format!("in-Rho drive cross-check violation: {err}"))?;
+                RhoObservationReport::planned(
+                    backend.artifact_kind(),
+                    channels.out.clone(),
+                    set.out_values,
+                )
+                .try_into_runtime_backend_report()
+                .map_err(|err| {
+                    format!("failed to convert Rho drive observation report: {err:?}")
+                })
             },
             RhoMachineInvocation::RunCallByNeedThunk { plan } => {
                 PlannedCallByNeedThunk::from_plan(*plan)

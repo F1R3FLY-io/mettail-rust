@@ -80,8 +80,9 @@ impl Default for LanguageRegistry {
 /// Build the default registry with all available languages, each wrapped in its checked production
 /// runtime backend so `exec` works (a raw `language!` value advertises no default backend).
 pub fn build_registry() -> Result<LanguageRegistry> {
-    // Default build: every bundled language wrapped in its production backend (Dovetail for
-    // Lambda/Ambient; two-stage Dovetail+Rholang for RhoCalc/Calculator).
+    // Default build: every bundled language wrapped in its production two-stage
+    // Dovetail+Rholang backend (A-S5.6: Lambda/Ambient exec on the in-Rho quiescence driver;
+    // RhoCalc/Calculator on COMM / scalar dataflow; SwapDemo on the in-Rho locate-all match).
     #[cfg(feature = "rho-languages")]
     {
         let mut registry = LanguageRegistry::new();
@@ -93,7 +94,9 @@ pub fn build_registry() -> Result<LanguageRegistry> {
         Ok(registry)
     }
 
-    // Dovetail-only build (no f1r3node): Lambda/Ambient still get the generic Dovetail backend;
+    // Dovetail-only build (no f1r3node): Lambda/Ambient register through the decision-(4)
+    // fail-closed wrapper (parse/introspection work; exec errors pointing at the rho build —
+    // A-S5.6 removed their generic-Dovetail exec path, no dual runtime path remains);
     // RhoCalc/Calculator (whose production default is the Rho machine) register raw.
     #[cfg(all(feature = "bundled-languages", not(feature = "rho-languages")))]
     {

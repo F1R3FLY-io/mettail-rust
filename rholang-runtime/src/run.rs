@@ -1244,6 +1244,235 @@ pub fn binder_apply_redex_present(apply_label: &str, value: &RuntimeObservationV
     }
 }
 
+/// The host value-level flatten over a decoded observation value — the mirror of the
+/// host's `add_flattened_bag` (`dovetail/src/rules.rs:707` semantics: splice any bag
+/// member that is itself a bag, multiplicity-preserving; driver values are trees, so no
+/// cycle guard is needed) — plan v2 §4.7's canonicalization step. One splice level per
+/// recursion suffices because the recursion flattens each member BEFORE splicing
+/// (identical to the A-S5.5 test-tier mirror it is promoted from,
+/// `rho_net_ambient_full.rs`).
+///
+/// A-S5.6: promoted into the runtime so the PRODUCTION exec cross-check (the
+/// [`crate::RhoMachineInvocation`] drive arm) and the test tier share one flatten.
+#[cfg(feature = "runtime-report")]
+pub fn flatten_observation_value(value: &RuntimeObservationValue) -> RuntimeObservationValue {
+    match value {
+        RuntimeObservationValue::Bag(entries) => {
+            let mut flat: Vec<(RuntimeObservationValue, usize)> =
+                Vec::with_capacity(entries.len());
+            for (element, count) in entries {
+                let element = flatten_observation_value(element);
+                for _ in 0..*count {
+                    match &element {
+                        RuntimeObservationValue::Bag(inner) => {
+                            for (inner_element, inner_count) in inner {
+                                for _ in 0..*inner_count {
+                                    flat.push((inner_element.clone(), 1));
+                                }
+                            }
+                        },
+                        other => flat.push((other.clone(), 1)),
+                    }
+                }
+            }
+            RuntimeObservationValue::Bag(flat)
+        },
+        RuntimeObservationValue::Term { constructor, children } => {
+            RuntimeObservationValue::Term {
+                constructor: constructor.clone(),
+                children: children.iter().map(flatten_observation_value).collect(),
+            }
+        },
+        other => other.clone(),
+    }
+}
+
+/// The DATA-shaped host NF-scan of one drive-admitted language (A-S5.6, plan v2 §4.7 /
+/// §6.1): the static mirror of the driver's redex-arm FAMILY over a decoded observation
+/// value, carried inside the production drive invocation
+/// ([`crate::RhoMachineInvocation::RunRhoNetDriveAndReadObservationSet`]) so the
+/// always-on exec cross-check can run without language-specific closures. Two arm
+/// families exist today, parameterized by their constructor labels (never by language
+/// name):
+///
+/// * [`BinderApply`](Self::BinderApply) — the β family: `apply_label(^lambda(_), _)`
+///   anywhere ([`binder_apply_redex_present`]; production `Lambda`, `apply_label =
+///   "App"`).
+/// * [`GuardedAcMobilityTrio`](Self::GuardedAcMobilityTrio) — the guarded AC mobility
+///   family (C-G In/Out/Open with cross-level name-equality guards) over `HashBag` soups
+///   (production `Ambient`) — the host mirror of ALL three driver redex arms, evaluated
+///   over the FLATTENED term (plan v2 §4.7's canonicalization; the flatten is applied
+///   inside [`redex_present`](Self::redex_present) so no caller can forget it).
+#[cfg(feature = "runtime-report")]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DriveNfScan {
+    /// The β arm family: a redex is `apply_label(^lambda(_), _)` anywhere.
+    BinderApply {
+        /// The application constructor label (`"App"` for the production Lambda).
+        apply_label: String,
+    },
+    /// The guarded AC mobility trio (C-G Red In / Red Out / Red Open shapes with their
+    /// cross-level name-equality guards) over bag soups.
+    GuardedAcMobilityTrio {
+        /// The ambient/membrane constructor label (`"PAmb"`).
+        amb_label: String,
+        /// The `in` capability constructor label (`"PIn"`).
+        in_label: String,
+        /// The `out` capability constructor label (`"POut"`).
+        out_label: String,
+        /// The `open` capability constructor label (`"POpen"`).
+        open_label: String,
+    },
+}
+
+#[cfg(feature = "runtime-report")]
+impl DriveNfScan {
+    /// `true` iff the language's static redex mirror finds a redex anywhere in `value`.
+    /// The value is FLATTENED first (plan v2 §4.7: the NF-scan runs over the
+    /// canonicalized, flattened term; a no-op for bag-free languages).
+    pub fn redex_present(&self, value: &RuntimeObservationValue) -> bool {
+        let canonical = flatten_observation_value(value);
+        match self {
+            DriveNfScan::BinderApply { apply_label } => {
+                binder_apply_redex_present(apply_label, &canonical)
+            },
+            DriveNfScan::GuardedAcMobilityTrio { amb_label, in_label, out_label, open_label } => {
+                guarded_ac_trio_redex_present(
+                    amb_label, in_label, out_label, open_label, &canonical,
+                )
+            },
+        }
+    }
+}
+
+/// The bag elements of a decoded value, multiplicity-expanded, or `None` when the value
+/// is not a bag.
+#[cfg(feature = "runtime-report")]
+fn observation_bag_elements(value: &RuntimeObservationValue) -> Option<Vec<&RuntimeObservationValue>> {
+    match value {
+        RuntimeObservationValue::Bag(entries) => {
+            let mut elements = Vec::with_capacity(entries.len());
+            for (element, count) in entries {
+                for _ in 0..*count {
+                    elements.push(element);
+                }
+            }
+            Some(elements)
+        },
+        _ => None,
+    }
+}
+
+/// The guarded-AC-mobility-trio redex scan over an (already flattened) decoded value —
+/// the host mirror of the three driver redex arms, guards included (A-S5.6; the boolean
+/// projection of the A-S5.5 test-tier rule mirrors in `rho_net_ambient_full.rs`):
+///
+/// * **Open**: some top-level bag holds `open_label(n, _)` and a SIBLING `amb_label(n, _)`
+///   with the SAME name `n` (decoded-value equality — `^free` atoms compare by content).
+/// * **In**: some top-level bag holds `amb_label(n, body)` whose bag body holds
+///   `in_label(m, _)`, and a SIBLING `amb_label(m, _)`.
+/// * **Out**: some node is `amb_label(m, body)` whose bag body holds `amb_label(n, inner)`
+///   whose bag `inner` holds `out_label(m, _)` — the single-rooted (Red Out) shape.
+///
+/// Recurses through every structured observation shape, so under-binder (`^lambda`) and
+/// nested-membrane redexes are found wherever the driver's descent arms would reach them.
+#[cfg(feature = "runtime-report")]
+fn guarded_ac_trio_redex_present(
+    amb_label: &str,
+    in_label: &str,
+    out_label: &str,
+    open_label: &str,
+    value: &RuntimeObservationValue,
+) -> bool {
+    let recurse = |child: &RuntimeObservationValue| {
+        guarded_ac_trio_redex_present(amb_label, in_label, out_label, open_label, child)
+    };
+    // (Out) — single-rooted at an ambient node.
+    if let RuntimeObservationValue::Term { constructor, children } = value {
+        if constructor == amb_label && children.len() == 2 {
+            let outer_name = &children[0];
+            if let Some(body) = observation_bag_elements(&children[1]) {
+                for element in &body {
+                    let RuntimeObservationValue::Term { constructor, children } = element else {
+                        continue;
+                    };
+                    if constructor != amb_label || children.len() != 2 {
+                        continue;
+                    }
+                    let Some(inner) = observation_bag_elements(&children[1]) else {
+                        continue;
+                    };
+                    let out_here = inner.iter().any(|inner_element| {
+                        matches!(
+                            inner_element,
+                            RuntimeObservationValue::Term { constructor, children }
+                                if constructor == out_label
+                                    && children.first() == Some(outer_name)
+                        )
+                    });
+                    if out_here {
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+    // (Open) + (In) — pair-rooted at a bag's top level.
+    if let Some(elements) = observation_bag_elements(value) {
+        for (index, element) in elements.iter().enumerate() {
+            let RuntimeObservationValue::Term { constructor, children } = element else {
+                continue;
+            };
+            let sibling_amb_named = |name: &RuntimeObservationValue| {
+                elements.iter().enumerate().any(|(sibling_index, sibling)| {
+                    sibling_index != index
+                        && matches!(
+                            sibling,
+                            RuntimeObservationValue::Term { constructor, children }
+                                if constructor == amb_label && children.first() == Some(name)
+                        )
+                })
+            };
+            // (Open): open(n, _) beside n[_].
+            if constructor == open_label && children.len() == 2 && sibling_amb_named(&children[0])
+            {
+                return true;
+            }
+            // (In): n[{in(m, _), …}] beside m[_].
+            if constructor == amb_label && children.len() == 2 {
+                if let Some(body) = observation_bag_elements(&children[1]) {
+                    let in_fires = body.iter().any(|body_element| {
+                        matches!(
+                            body_element,
+                            RuntimeObservationValue::Term { constructor, children }
+                                if constructor == in_label
+                                    && children.len() == 2
+                                    && sibling_amb_named(&children[0])
+                        )
+                    });
+                    if in_fires {
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+    // Congruence descent — every structured child position.
+    match value {
+        RuntimeObservationValue::Term { children, .. } => children.iter().any(recurse),
+        RuntimeObservationValue::List(items)
+        | RuntimeObservationValue::Tuple(items)
+        | RuntimeObservationValue::Set(items) => items.iter().any(recurse),
+        RuntimeObservationValue::Bag(entries) => {
+            entries.iter().any(|(element, _)| recurse(element))
+        },
+        RuntimeObservationValue::Map(entries) => entries
+            .iter()
+            .any(|(key, value)| recurse(key) || recurse(value)),
+        _ => false,
+    }
+}
+
 /// Build an in-memory `RhoRuntime`, inject an installed Rho-net program composed
 /// with a dynamic call (the `^drive` seed), run to quiescence, and read back the
 /// FULL drive observation set — decoded OUT values plus the raw resting data of

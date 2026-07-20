@@ -69,6 +69,7 @@ pub mod step;
 #[cfg(feature = "runtime-report")]
 pub use backend::{
     build_fold_dataflow_invocation_from_contract,
+    build_rho_net_drive_invocation_from_contract,
     build_rho_net_injection_invocation_from_contract,
     build_rho_net_replay_invocation_from_contracts, build_scalar_contract_invocation,
     build_scalar_contract_invocation_from_contract, install_dovetail_rho_runtime_backend,
@@ -114,12 +115,13 @@ pub use rhocalc_ast::{
 };
 #[cfg(feature = "runtime-report")]
 pub use run::{
-    binder_apply_redex_present, drive_cross_check, par_as_runtime_observation_value,
+    binder_apply_redex_present, drive_cross_check, flatten_observation_value,
+    par_as_runtime_observation_value,
     run_installed_program_with_call_and_read_observation_set,
     run_normalized_par_for_oracle_and_read_runtime_values,
     run_validated_program_and_read_runtime_values,
     run_validated_program_with_call_and_read_runtime_values, DriveCrossCheckError,
-    DriveObservationChannels, DriveObservationSet,
+    DriveNfScan, DriveObservationChannels, DriveObservationSet,
 };
 pub use run::{
     run_normalized_par_for_oracle, run_normalized_par_for_oracle_and_read_bools,

@@ -28,10 +28,18 @@
 //! registered handler's value — and `rho_net_native_fold_firing.rs`
 //! `a_s3_multi_site_native_exec_admits_and_fires_each_site`), because NativeDemo /
 //! NativeFoldDemo are runtime test languages, not REPL-registered backends.
+//!
+//! A-S5.6 (the production flip): Lambda + Ambient join the admitted set — their default exec
+//! path is the in-Rho QUIESCENCE DRIVER (`rho_net_drive_invocation_to` seeding the installed
+//! `^drive` receiver family), so an admitted exec builds ZERO Dovetail reports while the whole
+//! reduction (β chains / guarded AC mobility firings, contractum re-drives, quiescence) runs as
+//! COMMs on the Rho machine, cross-checked by the always-on §4.7 ledger/NF-scan.
 #![cfg(feature = "rho-languages")]
 
 use mettail_languages::calculator::CalculatorLanguage;
-use mettail_repl::rho_backends::{calculator_backed, rhocalc_backed, swapdemo_backed};
+use mettail_repl::rho_backends::{
+    ambient_backed, calculator_backed, lambda_backed, rhocalc_backed, swapdemo_backed,
+};
 use mettail_rholang_codegen::RhoFoldDataflowDisposition;
 use mettail_rholang_runtime::dstage_instrumentation::dovetail_report_invocations;
 use mettail_runtime::{Language, RuntimeBackend, RuntimeBackendArtifact, RuntimeObservationValue};
@@ -158,6 +166,91 @@ fn admitted_rhocalc_exec_builds_no_dovetail_report() {
         vec![RuntimeObservationValue::Text("p".to_string())],
         "the COMM fired and the dropped process emitted \"p\", exactly as the eager pipeline did"
     );
+}
+
+/// A-S5.6: an ADMITTED Lambda exec drives the whole β-chain to NF fully in-Rho — ZERO
+/// Dovetail reports; the observed resting term is the reflected NF (K = `^lambda(^lambda
+/// (^bound 1))` for `(λx.x) K`).
+#[test]
+fn a_s5_6_admitted_lambda_exec_builds_no_dovetail_report() {
+    let language = lambda_backed().expect("Lambda lazy backend installs");
+    let term = language
+        .parse_term("(lam x. x, lam a. lam b. a)")
+        .expect("the single-β subject parses");
+
+    let before = dovetail_report_invocations();
+    let report = language
+        .run_backend_report(RuntimeBackend::RhoMachine, term.as_ref())
+        .expect("the admitted Lambda exec drives to NF in-Rho");
+    let after = dovetail_report_invocations();
+
+    assert_eq!(
+        after - before,
+        0,
+        "an ADMITTED Lambda exec must build ZERO Dovetail reports (the in-Rho quiescence \
+         driver is the default exec path)"
+    );
+    assert_eq!(report.backend(), RuntimeBackend::RhoMachine);
+    let out = report
+        .observations_for_channel("OUT")
+        .expect("an OUT observation");
+    // K = λ.λ.1 — the α-erased de Bruijn image of `lam a. lam b. a` (Peano depth `S(Z)`).
+    let konst = term_obs(
+        "^lambda",
+        vec![term_obs(
+            "^lambda",
+            vec![term_obs("^bound", vec![term_obs("S", vec![term_obs("Z", Vec::new())])])],
+        )],
+    );
+    assert_eq!(
+        out.values,
+        vec![konst],
+        "(λx.x) K rests at K fully in-Rho — β fired through the σ ABI + subst TRS"
+    );
+}
+
+/// A-S5.6: an ADMITTED Ambient exec fires the guarded AC redex fully in-Rho — ZERO Dovetail
+/// reports; `{open(n, a[{0}]) | n[{b[{0}]}]}` rests at the flat bag `{a[{0}], b[{0}]}`.
+#[test]
+fn a_s5_6_admitted_ambient_exec_builds_no_dovetail_report() {
+    let language = ambient_backed().expect("Ambient lazy backend installs");
+    let term = language
+        .parse_term("{open(n, a[{0}]) | n[{b[{0}]}]}")
+        .expect("the open subject parses");
+
+    let before = dovetail_report_invocations();
+    let report = language
+        .run_backend_report(RuntimeBackend::RhoMachine, term.as_ref())
+        .expect("the admitted Ambient exec drives to quiescence in-Rho");
+    let after = dovetail_report_invocations();
+
+    assert_eq!(
+        after - before,
+        0,
+        "an ADMITTED Ambient exec must build ZERO Dovetail reports (the in-Rho quiescence \
+         driver is the default exec path)"
+    );
+    assert_eq!(report.backend(), RuntimeBackend::RhoMachine);
+    let out = report
+        .observations_for_channel("OUT")
+        .expect("an OUT observation");
+    assert_eq!(out.observed_count(), 1, "one quiescent resting term: {:?}", out.values);
+    // The resting term is a FLAT two-element bag of ambients `a[{0}]` / `b[{0}]` — free
+    // Ambient names decode as `^free(<moniker debug>)` leaves whose exact strings are
+    // gensym-dependent, so this pins the structure (flat multiset of two 2-child PAmb
+    // nodes), not name bytes; the α-exact golden lives in `a_s5_6_exec_goldens.rs`.
+    let RuntimeObservationValue::Bag(entries) = &out.values[0] else {
+        panic!("the Ambient resting term decodes as a bag soup: {:?}", out.values[0]);
+    };
+    let element_count: usize = entries.iter().map(|(_, count)| count).sum();
+    assert_eq!(element_count, 2, "open fired: {{a[{{0}}], b[{{0}}]}} is FLAT: {entries:?}");
+    for (element, _) in entries {
+        let RuntimeObservationValue::Term { constructor, children } = element else {
+            panic!("each resting element is an ambient node: {element:?}");
+        };
+        assert_eq!(constructor, "PAmb", "each resting element is an ambient: {element:?}");
+        assert_eq!(children.len(), 2, "PAmb(name, body): {element:?}");
+    }
 }
 
 /// A-S3/A-S4 probe helper: whether the prost-encoded bytes of `par` contain `needle`.

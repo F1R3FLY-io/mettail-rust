@@ -49,15 +49,17 @@ fn default_backends_are_capability_based() {
         Some(&Some(RuntimeBackend::RhoMachine)),
         "Calculator defaults to the two-stage Dovetail+Rholang backend (E3 fold-dataflow)"
     );
-    // Lambda + Ambient run on Dovetail (β / AC reduction); no Rho machine in their default.
+    // A-S5.6 (the production flip): Lambda + Ambient run on the Rho machine too — the in-Rho
+    // quiescence driver (`^drive` seed) is their default exec path; Dovetail remains only the
+    // lazy deferral stage inside the two-stage wrapper.
     assert_eq!(
         by_name.get("Lambda"),
-        Some(&Some(RuntimeBackend::Dovetail)),
-        "Lambda defaults to the generic Dovetail backend"
+        Some(&Some(RuntimeBackend::RhoMachine)),
+        "Lambda defaults to the two-stage Dovetail+Rholang backend (in-Rho quiescence driver)"
     );
     assert_eq!(
         by_name.get("Ambient"),
-        Some(&Some(RuntimeBackend::Dovetail)),
-        "Ambient defaults to the generic Dovetail backend"
+        Some(&Some(RuntimeBackend::RhoMachine)),
+        "Ambient defaults to the two-stage Dovetail+Rholang backend (in-Rho quiescence driver)"
     );
 }
