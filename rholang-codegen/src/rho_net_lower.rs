@@ -4102,24 +4102,45 @@ pub(crate) fn ac_effective_bare_var_kind(
     pattern_kind.or(resolved_kind).cloned().unwrap_or(CollectionType::HashBag)
 }
 
-/// Resolve the collection kind a CONSTRUCTOR declares (`op . ps:HashBag(..) |- ..`), keyed on the
-/// op label. The parser leaves a rewrite pattern collection's `coll_type` as `None` ("inferred from
-/// the enclosing constructor's grammar"), so BOTH the AC LHS un-skip ([`resolve_ac_collection_type`])
-/// AND the AC bag-VALUED RHS reflection ([`reflect_hashbag_soup_par`], Stage AC2b) resolve it from
-/// `op`'s declared collection parameter in `def.terms` (the type alias is inlined to a
-/// `TypeExpr::Collection`). Returns `None` when `op` is not a constructor over a collection
-/// parameter — so a non-collection or unknown constructor is never mis-classified as a HashBag.
+/// Resolve the collection kind a CONSTRUCTOR declares, keyed on the op label, from EITHER
+/// declaration syntax:
+///
+/// * the NEW judgement form `op . ps:HashBag(..) |- ..` — the kind sits in a `term_context`
+///   collection parameter (the type alias is inlined to a `TypeExpr::Collection`); this scan stays
+///   PRIMARY, so every already-admitted (term-context-declared) language resolves byte-identically;
+/// * the old-BNFC production form `op . Cat ::= HashBag(Cat) sep ".." delim ".." ".."` (the
+///   production `Ambient` `PPar`, `languages/src/ambient.rs`) — `term_context` is `None` while the
+///   kind sits in `rule.items` as a [`mettail_ast::grammar::GrammarItem::Collection`]; the FIRST
+///   such item is the A-S5.3 fallback. `items` is the uniform source for both forms
+///   (`convert_term_context_to_items` populates it for the new syntax too), but term-context stays
+///   the primary read to keep the admitted corpus byte-identical.
+///
+/// The parser leaves a rewrite pattern collection's `coll_type` as `None` ("inferred from the
+/// enclosing constructor's grammar"), so BOTH the AC LHS un-skip ([`resolve_ac_collection_type`])
+/// AND the AC bag-VALUED RHS reflection ([`reflect_hashbag_soup_par`], Stage AC2b) resolve it here.
+/// Returns `None` when `op` is not a constructor over a collection parameter under EITHER form — so
+/// a non-collection or unknown constructor is never mis-classified as a HashBag.
 fn resolve_constructor_collection_type(def: &LanguageDef, op: &str) -> Option<CollectionType> {
     let rule = def.terms.iter().find(|rule| rule.label.to_string() == op)?;
     rule.term_context
-        .as_ref()?
-        .iter()
-        .find_map(|param| match param {
-            mettail_ast::grammar::TermParam::Simple {
-                ty: mettail_ast::types::TypeExpr::Collection { coll_type, .. },
-                ..
-            } => Some(coll_type.clone()),
-            _ => None,
+        .as_ref()
+        .and_then(|params| {
+            params.iter().find_map(|param| match param {
+                mettail_ast::grammar::TermParam::Simple {
+                    ty: mettail_ast::types::TypeExpr::Collection { coll_type, .. },
+                    ..
+                } => Some(coll_type.clone()),
+                _ => None,
+            })
+        })
+        .or_else(|| {
+            // A-S5.3 (leg ii): the `::=`-declared fallback — the first grammar-item collection.
+            rule.items.iter().find_map(|item| match item {
+                mettail_ast::grammar::GrammarItem::Collection { coll_type, .. } => {
+                    Some(coll_type.clone())
+                },
+                _ => None,
+            })
         })
 }
 
@@ -7027,6 +7048,23 @@ mod tests {
         }
     "##;
 
+    // A-S5.3 (leg ii): the OLD-BNFC `::=` twin of AC_DEMO_FRAGMENT — the production `Ambient`
+    // declaration shape (`PPar . Proc ::= HashBag(Proc) sep "|" delim "{" "}"`,
+    // `languages/src/ambient.rs`), whose `term_context` is `None` while the HashBag kind sits in
+    // `rule.items` as a `GrammarItem::Collection`. The resolver must fall back to the grammar
+    // items here.
+    const AC_COLONS_FRAGMENT: &str = r##"
+        name: AcColonsFrag,
+        types {
+            Proc
+        }
+        terms {
+            PZero . Proc ::= "0" ;
+            Wrap . Proc ::= "wrap" "(" Proc ")" ;
+            PPar . Proc ::= HashBag(Proc) sep "|" delim "{" "}" ;
+        }
+    "##;
+
     const MINIRHO_FOR_FRAGMENT: &str = r#"
         name: RhoNetLowerMiniRhoFor,
         options {
@@ -9667,6 +9705,65 @@ mod tests {
             resolve_ac_collection_type(&def, &apply("Wrap", vec![var_pattern("x")])),
             None,
             "a non-collection constructor is not an AC HashBag rule"
+        );
+    }
+
+    #[test]
+    fn resolve_collection_type_falls_back_to_colons_declared_grammar_items() {
+        // A-S5.3 (leg ii): the production `Ambient` declares `PPar` through the old-BNFC `::=`
+        // form, so `term_context` is None and the kind must resolve from the FIRST
+        // `GrammarItem::Collection` in `rule.items` — the items fallback that admits the real
+        // Ambient AC family (the term-context scan stays primary, so the admitted corpus is
+        // byte-identical).
+        let def: LanguageDef =
+            syn::parse_str(AC_COLONS_FRAGMENT).expect("the ::= fragment parses");
+        let ppar = def
+            .terms
+            .iter()
+            .find(|rule| rule.label == "PPar")
+            .expect("PPar is declared");
+        assert!(
+            ppar.term_context.is_none(),
+            "a `::=`-declared collection rule carries NO term-context params"
+        );
+        assert_eq!(
+            resolve_constructor_collection_type(&def, "PPar"),
+            Some(CollectionType::HashBag),
+            "the HashBag kind resolves from the grammar items (the A-S5.3 fallback)"
+        );
+        // The same resolution reaches the AC recognizers through the LHS-keyed entry point the
+        // un-skip chain uses (a parser-produced LHS collection carries `coll_type: None`).
+        let lhs = apply(
+            "PPar",
+            vec![Pattern::Collection {
+                coll_type: None,
+                elements: vec![var_pattern("x")],
+                rest: Some(ident("rest")),
+            }],
+        );
+        assert_eq!(
+            resolve_ac_collection_type(&def, &lhs),
+            Some(CollectionType::HashBag),
+            "a parser-None LHS collection resolves through the items fallback too"
+        );
+    }
+
+    #[test]
+    fn resolve_collection_type_stays_none_for_colons_rules_without_a_collection() {
+        // A-S5.3 (leg ii): a `::=`-declared NON-collection rule must stay `None` under the items
+        // fallback — never mis-classified as a HashBag (the resolver's fail-closed contract is
+        // syntax-form-independent).
+        let def: LanguageDef =
+            syn::parse_str(AC_COLONS_FRAGMENT).expect("the ::= fragment parses");
+        assert_eq!(
+            resolve_constructor_collection_type(&def, "Wrap"),
+            None,
+            "a `::=` rule with no grammar-item collection resolves to None"
+        );
+        assert_eq!(
+            resolve_constructor_collection_type(&def, "PZero"),
+            None,
+            "a `::=` terminal-only rule resolves to None"
         );
     }
 
