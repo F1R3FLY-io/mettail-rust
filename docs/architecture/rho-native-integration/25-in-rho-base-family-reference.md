@@ -710,8 +710,8 @@ and a specialized *accept lane*.
 
 | Family | Rewrite shape | Fires as | Matches in Rho by | Reference |
 |---|---|---|---|---|
-| **AC** | associative-commutative bag (`HashBag`; AC4 `HashSet`/`HashMap`/`Zip`) | one atomic `consume` | order-independent `ac_bag_pattern` connective over the spread process-soup (Scheme B), re-sourced from the reflected subject | [26](26-in-rho-ac-family-reference.md); `InRhoAcMatchMultiset.v` |
-| **Contextual** | congruence-closed rule (Ambient `OpenRule`) | one COMM (n-ary premise join) | a contextual atomic join whose plugging is barb-stable | [22](22-end-to-end-formal-verification.md) §5; `ContextualAtomicJoinPlugging.v` |
+| **AC** | associative-commutative bag (`HashBag`; AC4 `HashSet`/`HashMap`/`Zip`); structural-AC (Ambient `OpenRule`) and nested structural-AC (Ambient `InRule`/`OutRule`, depth-2) | one atomic `consume` | order-independent `ac_bag_pattern` connective over the spread process-soup (Scheme B), re-sourced from the reflected subject; the Ambient trio is aligned to Cardelli–Gordon ([26 §13](26-in-rho-ac-family-reference.md#13-the-ambient-fragment-cardelligordon-alignment)) | [26](26-in-rho-ac-family-reference.md); `InRhoAcMatchMultiset.v`, `AmbientOpenFiring.v`, `AmbientInOutFiring.v` |
+| **Contextual** | congruence-closed rule (the `ctxdemo` wrap rewrite) | one COMM (n-ary premise join) | a contextual atomic join whose plugging is barb-stable | [22](22-end-to-end-formal-verification.md) §5; `ContextualAtomicJoinPlugging.v`; `rho_net_contextual_firing.rs` |
 | **Binder** | scope-substituting rewrite (β) | a metered de-Bruijn substitution TRS cascade of COMMs | a total-or-reject binder reflection that *reduces* in Rho (SN/CR/NF proven) | [19](19-in-rho-binder-beta-substitution.md); `DeBruijnSubstTRS.v`, `BinderReflectionTotalOrReject.v` |
 | **Native** | trusted `fold` (system process / scalar) | one COMM (contractum-lane injection) | a system-process boundary — the fold is a delegated value dispatched Rho-side | [22](22-end-to-end-formal-verification.md) §5; `NativeSystemProcessBoundary.v` |
 

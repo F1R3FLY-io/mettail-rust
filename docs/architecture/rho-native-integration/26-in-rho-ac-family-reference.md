@@ -39,8 +39,9 @@
 10. [The zero-new-tau economy](#10-the-zero-new-tau-economy)
 11. [Worked examples](#11-worked-examples)
 12. [The formal-verification backing](#12-the-formal-verification-backing)
-13. [Scope and status](#13-scope-and-status)
-14. [References](#14-references)
+13. [The Ambient fragment: Cardelli–Gordon alignment](#13-the-ambient-fragment-cardelligordon-alignment)
+14. [Scope and status](#14-scope-and-status)
+15. [References](#15-references)
 
 ---
 
@@ -509,7 +510,7 @@ $`\mathrm{PPar}\{\mathrm{Mark}(e), \langle\text{the rest}\rangle\}`$ on `@OUT` a
 `decode_ac_bag_soup`.
 
 The complementary boundary — a collection-*valued* RHS whose remainder must be preserved rather than
-spliced — is discussed in [section 13](#13-scope-and-status).
+spliced — is discussed in [section 14](#14-scope-and-status).
 
 ---
 
@@ -634,7 +635,99 @@ AC-rest.
 
 ---
 
-## 13. Scope and status
+## 13. The Ambient fragment: Cardelli–Gordon alignment
+
+The structural-AC and nested-structural-AC families' flagship language is **Ambient** —
+mettail's declaration of the ambient calculus (Cardelli & Gordon, *Mobile Ambients*
+[MOBILE-AMBIENTS-1998](references.md#mobile-ambients-1998)). The Knotted-Topoi paper names
+the ambient calculus only as an example GSLT and carries no equation table for it, so
+`languages/src/ambient.rs` is mettail's own declaration and MUST align with Cardelli–Gordon
+directly. The A-S5.4b campaign performed and mechanized that alignment; this section is the
+authoritative record.
+
+### 13.1 The equation set: three C-G axioms plus three documented extensions
+
+The Cardelli–Gordon structural congruence for restriction is (in the paper's orientation):
+(Struct Res Res) $`(n)(m)P \equiv (m)(n)P`$; (Struct Res Par)
+$`(n)(P \mid Q) \equiv P \mid (n)Q`$ if $`n \notin fn(P)`$; (Struct Res Amb)
+$`(n)(m[P]) \equiv m[(n)P]`$ if $`n \neq m`$; plus (Struct Par Comm/Assoc) and the Zero
+rules, with $`\alpha`$-conversion as definitional identity. The declared equation set maps
+onto it as:
+
+| Equation (`ambient.rs`) | Premise (post-A-S5.4b) | C-G status |
+|---|---|---|
+| `NewComm` | none | **axiom** — (Struct Res Res) verbatim |
+| `ScopeExtrusion` | `x # ...rest` | **axiom** — (Struct Res Par), freshness on the floated-past material, lifted pointwise over the AC bag |
+| `AmbNew` | `x # N` | **axiom** — (Struct Res Amb) verbatim: the premise `x # N` coincides with $`x \neq N`$ because `Name` is variable-only in this grammar, so $`fn(N) = \{N\}`$ |
+| `InNew` / `OutNew` / `OpenNew` | `x # N` | **documented sound extensions** — NOT C-G axioms; a $`\nu`$-float through a capability prefix is sound here because capability prefixes are inert until exercised, and the trio is NOT load-bearing for matching (every rewrite LHS binds its capability continuation as a pattern variable) — it matters only for restriction-normal-form canonicality |
+
+The A-S5.4b premise correction (`x # P` to `x # N` on the four prefix-float equations) is
+what makes `AmbNew` the C-G rule verbatim: the earlier `x # P` premise restricted each
+float to VACUOUS binders — the opposite of what extrusion exists for (Res Par / Res Amb
+move USED binders; that is their purpose), and not any rule of the theory.
+
+### 13.2 The fragment boundaries (declared, with their discharges)
+
+- **Replication-free.** The fragment has no $`!P`$, so the one classical $`\nu`$-float
+  failure C-G itself flags ($`!(n)P \not\equiv (n)!P`$) is structurally absent —
+  corroborating the capability-trio extensions' soundness here.
+- **No Zero rules.** $`P \mid 0 \equiv P`$ and $`(\nu n)0 \equiv 0`$ are not declared.
+  Harmless for In/Open redex exposure (the rewrite patterns' `...rest` absorbs a `PZero`
+  element), and discharged for Out's singleton case by the redeclaration's empty-rest form
+  (§13.3).
+- **Par Comm/Assoc are representational.** The `HashBag` carrier absorbs commutativity and
+  associativity by construction — WITH one proof obligation this creates: **bag
+  FLATNESS**. Every bag producer (the float's extrusion seam, the driver's reassembly and
+  contractum seams) must preserve flatness, because a nested $`\{\{A,B\},C\}`$ hides
+  sibling redexes and no declared equation dissolves the nesting. The unconditional float
+  SPLICES a bag-bodied $`\nu`$ body via the generated `insert_into_<label>` mirror of the
+  host flatten; the driver's three-case splice is proven equal to the host
+  `add_flattened_bag` (`driver_flatten_agrees_with_add_flattened_bag`,
+  `InRhoQuiescenceDriver.v`), and every bag drive rests FLAT (`bag_quiescence_sound`).
+- **`n[p]` versus `n[{p}]`.** A bagless ambient body and a singleton-bag body are distinct
+  terms with no relating equation; the In/Out/Open rewrites fire only on **bag-bodied**
+  ambients. This is a declared convention of the fragment, and the A-S5.4b test pins carry
+  it (the `m[r]`-to-`m[{r}]` convention shift in the OutRule subjects).
+
+### 13.3 The OutRule redeclaration: (Red Out), restored
+
+The pre-A-S5.4b OutRule ejected the parent's residual `...rest2` through the ambient
+membrane — for bodies of three or more elements the residual landed at TOP level, outside
+`M` (an ambient-locality violation not derivable by C-G's $`\equiv`$ plus reduction), and
+a singleton body `m[{n[{out(m,p)}]}]` could never fire (C-G fires it via Struct Zero Par,
+which this fragment does not declare). The divergence was masked by the corpus: its only
+Out subject was the exactly-two-element body on which the two forms coincide. The
+redeclared rule keeps the residual INSIDE `M` — Cardelli–Gordon (Red Out)
+($`m[\,n[\mathit{out}\ m.P \mid Q] \mid R\,] \to n[P \mid Q] \mid m[R]`$) verbatim modulo
+the bag-body convention:
+
+```text
+(PAmb M (PPar {(PAmb N (PPar {(POut M P), ...rest1})), ...rest2}))
+  ~> (PPar {(PAmb N (PPar {P, ...rest1})), (PAmb M (PPar {...rest2}))})
+```
+
+An empty `...rest2` is legal (the OpenRule precedent), so the singleton fires to
+$`\{n[\{p\}],\ m[\{\}]\}`$ — where `m[{}]` versus C-G's $`m[0]`$ is exactly the
+documented empty-bag-for-$`0`$ fragment deviation. This is a **breaking
+language-semantics fix** (the rewrite fingerprint changed with A-S5.4b's); the
+three-element-body and singleton subjects are pinned as tests, and
+`AmbientInOutFiring.v` was re-proved against the corrected shape (`inout_step_complete` /
+`inout_step_sound`, zero-admission).
+
+### 13.4 The unconditional unbind-first float is pure theory
+
+$`\alpha`$-conversion is definitional identity in C-G, so freshen-then-float — one
+$`\alpha`$ step followed by an instance of Res Par / Res Amb / (extension) whose side
+condition holds BY CONSTRUCTION (the freshened binder occurs in no pre-existing sibling;
+moniker's unbind is a process-global gensym) — is a sequence of theory steps. The
+conditional stall the A-S5.4a change replaced was an implementation artifact, not a theory
+constraint. The match-completeness theorem (`float_nf_exposes_redexes_in` / `_open`,
+`BinderFloatCanonicalization.v`) is proven over exactly the C-G subset — the capability-
+trio extensions are not load-bearing for it — with the AM-2 flatness obligation carried
+through the extrusion seam, and the Out-redex exposure re-proved after the §13.3
+redeclaration.
+
+## 14. Scope and status
 
 This section records, precisely and honestly, the two boundaries of the delivered mechanism.
 
@@ -671,7 +764,7 @@ already-correct f1r3node behavior.
 
 ---
 
-## 14. References
+## 15. References
 
 Full bibliographic detail (with verified DOIs where available) is in [`references.md`](references.md);
 the entries this document depends on:
@@ -699,6 +792,12 @@ the entries this document depends on:
   49–67. DOI: [10.1016/j.entcs.2005.05.016](https://doi.org/10.1016/j.entcs.2005.05.016). *The
   rho-calculus basis — quoted processes as names, reflection, and the associative-commutative parallel
   composition the process-soup carrier matches against.*
+- **Cardelli, L. and Gordon, A. D. (1998).** *Mobile Ambients.* In *FoSSaCS 1998*, LNCS 1378, pp.
+  140–155. Springer. DOI: [10.1007/BFb0053547](https://doi.org/10.1007/BFb0053547); journal version
+  *TCS* 240(1), 177–213 (2000),
+  DOI: [10.1016/S0304-3975(99)00231-5](https://doi.org/10.1016/S0304-3975%2899%2900231-5). *The
+  normative ambient-calculus theory `languages/src/ambient.rs` is aligned against
+  ([section 13](#13-the-ambient-fragment-cardelligordon-alignment)).*
 
 **f1r3node spatial matcher** (the native par-bag AC engine this design reuses):
 `f1r3node/rholang/src/rust/interpreter/matcher/` — `sub_pars.rs` (selection / complement),

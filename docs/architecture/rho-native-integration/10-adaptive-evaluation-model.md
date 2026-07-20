@@ -1,6 +1,17 @@
 # 10 — Adaptive Evaluation Model: Sequential by Default, Trampoline When Needed
 
-Last updated: 2026-06-24
+Last updated: 2026-07-20
+
+> **A-S5 flip note (2026-07-20).** The tier model below concerns the
+> fold-bearing languages (RhoCalc / Rholang); the width-cast Tier-3 held-fold
+> trampoline remains one of the three host evaluations on admitted paths
+> (with semantic predicates and injection-boundary canonicalization —
+> [29 §4](29-knotted-topoi-satisfaction-crosswalk.md#4-the-runtime-boundary-today)).
+> Production **Lambda and Ambient** exec runs on the in-Rho quiescence driver
+> with zero D-stage work on admitted paths
+> ([24 §5.1](24-in-rho-completion-audit.md#51-the-a-s5-quiescence-driver-exec-drives-to-rest-in-rho)).
+> The step-policy rewrite of the surrounding routing text is owned by
+> enforcement stage A-S6.
 
 This document specifies how a MeTTaIL `language!` reduction is evaluated across the
 Dovetail rewrite engine and the f1r3node Rho machine, and how the one remaining

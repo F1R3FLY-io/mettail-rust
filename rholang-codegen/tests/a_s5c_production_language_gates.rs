@@ -3,13 +3,15 @@
 //! (`languages/src/ambient.rs`) language definitions — NOT the demo languages.
 //!
 //! Every test asserts what the Rho-default plan gate and the in-Rho admission
-//! machinery say TODAY, so the A-S5 Lambda/Ambient flip lands against a pinned,
-//! honest baseline. On ANY deviation the affected table is printed in full and
-//! the test panics: a deviation means the machinery moved, and the flip design
-//! must be re-checked against it — a deviation must be reported, never silently
-//! adjusted.
+//! machinery say TODAY. The A-S5 Lambda/Ambient flip LANDED against these pins
+//! (A-S5.6: both languages execute on the in-Rho quiescence driver; A-S5.7
+//! closed the FV + docs), and the file now serves as the admission/gate
+//! REGRESSION pin-set for the flipped production state. On ANY deviation the
+//! affected table is printed in full and the test panics: a deviation means the
+//! machinery moved and must be re-checked against the landed flip — reported,
+//! never silently adjusted.
 //!
-//! # Flip-readiness picture (the pinned TODAY state, post-A-S5.1)
+//! # The pinned production state (through A-S5.5; exec-side flip = A-S5.6)
 //!
 //! **Lambda** — static gate ADMITS, plan gate PASSES, install ADMITS with the
 //! three congruence lowerings RECORDED EXEMPT (A-S5.1 leg i):
@@ -27,12 +29,17 @@
 //!   an install error: the e-graph closes contexts implicitly on host paths, the
 //!   locate-all/driver descent carries the context closure in Rho, and a
 //!   congruence label is never a fired-rule label.
-//! - Per-site admission (the honest boundary the flip must lift): a single-App
-//!   subject admits locate-all with exactly 1 site; every subject with ≥ 2
-//!   head-`App` candidate sites fails closed
-//!   `AutomatonUnsupported::NestedEntryMultiSite` (a nested entry's `loc:`
-//!   descent would contend with a co-installed root attempt). The single-root
-//!   drive (`in_rho_match_call_par`) admits every chain length.
+//! - Per-site admission (the honest boundary of the single-shot SPREAD path —
+//!   LIFTED on the driver path by A-S5.2/A-S5.6): a single-App subject admits
+//!   locate-all with exactly 1 site; every subject with ≥ 2 head-`App`
+//!   candidate sites fails closed `AutomatonUnsupported::NestedEntryMultiSite`
+//!   (a nested entry's `loc:` descent would contend with a co-installed root
+//!   attempt). The single-root drive (`in_rho_match_call_par`) admits every
+//!   chain length, and the production exec path — the `^drive` quiescence
+//!   driver's per-node congruence descent — needs no locate-all at all, so
+//!   multi-site subjects drive to NF in-Rho (`rho_net_lambda_firing.rs`, the
+//!   chain ladder n ≤ 8). The spread-path pin below stays as the boundary's
+//!   regression guard.
 //! - `plan_rho_default_backend` passes with
 //!   `CoveredRejectedRules([Lam, App → RhoAstContract])` +
 //!   `NoGuardObligations` (no premise induces a guard obligation —
@@ -830,8 +837,12 @@ fn lambda_multi_app_subjects_fail_closed_nested_entry_multi_site() {
         assert_eq!(
             in_rho_match_all_sites_call_par(&ruleset, &lambda_chain(n), "site0", "OUT"),
             Err(AutomatonUnsupported::NestedEntryMultiSite),
-            "an App-chain of {n} head-App candidate sites must fail closed — the \
-             honest multi-site boundary the A-S5 flip must lift"
+            "an App-chain of {n} head-App candidate sites must fail closed on the \
+             single-shot SPREAD path — the honest locate-all boundary. The A-S5 \
+             flip LIFTED it on the production exec path (the ^drive quiescence \
+             driver's per-node descent needs no locate-all; \
+             rho_net_lambda_firing.rs drives these chains to NF in-Rho); this \
+             spread-path pin stays as the boundary's regression guard"
         );
     }
 }

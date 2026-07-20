@@ -1,6 +1,6 @@
 # 29 — Knotted-Topoi Satisfaction Crosswalk
 
-Last updated: 2026-07-19
+Last updated: 2026-07-20
 
 This document is the per-item satisfaction crosswalk between the north-star
 paper *Knotted Topoi* ([KNOTTED-TOPOI-2026](references.md#knotted-topoi-2026),
@@ -186,6 +186,13 @@ transcribes and the runtime mechanism that guarantees it:
 | barb preservation | `prop:opcorr`'s "equal observations" reading (barbs = resting sends) | `Rgio_barb`, Section Hypothesis (`WholeGsltInRhoOpCorrespondence.v:178`) | the per-family `lower_*_preserves_barbs` lemmas (`LinearCommCorrespondence.v` and kin) |
 | install-gate scoping | `con:functor` — $`[\![ G ]\!]`$ installs **every** rule (total-or-reject) | `g_install_gate_admits` (`WholeGsltInRhoOpCorrespondence.v:258`), citing `InRhoEncoderTotalOrReject.gate_admits_iff_all_fired_matchable` | the fail-closed install boundary (`RhoLoweringTotalOrRejects.v`; INV-11) — an uncovered rule shape produces no installed program, hence no configuration in scope |
 | the (iii) transfer | `rem:nonopt`'s same-CLTS assertion | `matching_locus_barb`/`_fwd`/`_bwd`, Section Hypotheses (`WholeGsltInRhoOpCorrespondence.v:392`–`:400`); literally discharged from `same_clts_weak_bisim` in `WholeGsltInRhoOpCorrespondenceOptimalViaSameClts.v` | the 42-test equivalence gate (identical fired multisets, §2 Layer 3) |
+| congruence-closure totality (`congruence_closure_total`) | `con:functor` — equations compiled to structural congruence, so a congruence-only rewrite needs no installed receiver | the A-S5.1 exemption discipline: `install_admits_iff_no_nonexempt_unlowered`, `exempt_only_at_the_seam`, `mixed_premise_never_exempt`, `empty_premises_never_exempt` (`RhoLoweringTotalOrRejects.v`) prove the exemption is precisely scoped and RECORDED, never silent; the closure's totality over the exempt rules is the premise | `RhoNetLowered::congruence_exempt_rules` records every exemption; the compile-time equation e-graph plus the unconditional binder float (next row) carry the exempt rules' semantics |
+| binder-float completeness — **a theorem now, demoted from premise** | `con:functor` — the congruence action must expose every redex the equations relate | `float_nf_exposes_redexes_in` / `float_nf_exposes_redexes_open` + freshening totality + NewComm-permutation redex invariance (`BinderFloatCanonicalization.v`), proven over the Cardelli–Gordon subset with the AM-2 bag-flatness obligation | the A-S5.4a **unconditional unbind-first** float with the bag-flat splice (`macros/src/gen/runtime/binder_congruence.rs`); the earlier conditional float's stall was an implementation artifact, not a theory constraint ([26 §13](26-in-rho-ac-family-reference.md#13-the-ambient-fragment-cardelligordon-alignment)) |
+| flattened-semantics equivalence | the `app:desugar` RHS reassembly over AC bags — a bag-valued reduct must re-enter as a FLAT soup | `driver_flatten_agrees_with_add_flattened_bag` + `bag_atoms_preserved` + `bag_flatness_sound` (`InRhoQuiescenceDriver.v`, the A-S5.5 bag model) | the driver's three-case splice (Nil / same-op soup / wrap) at both reassembly seams equals the host's `add_flattened_bag` (`dovetail/src/rules.rs`), multiplicity-preserving |
+| per-path fuel policy | none — an implementation-layer termination envelope (the paper's CLTS has no fuel) | `fuel_exhaustion_never_wrong` / `exhaustion_datum_is_not_nf` (`InRhoQuiescenceDriver.v`): an exhausted drive surfaces the STUCK REDEX as a typed datum, never mistakable for a normal form | the `GInt` fuel seed (fixed 64, Dovetail-saturation parity): decremented on firing only, COPIED on congruence descent (per-path semantics); the typed `^drive-fuel` channel |
+| per-trace quiescence | `prop:opcorr`'s endpoint observation — what a resting drive claims | `quiescence_sound` (Lambda: every `DDone` drive rests beta-normal) and `bag_quiescence_sound` (Ambient: every bag drive rests FLAT) in `InRhoQuiescenceDriver.v`; lifted to the harness as `whole_gslt_per_trace_quiescence_forward`/`_backward` (§3.1) | the drive's OUT datum lands only at rest; the always-on fired-vs-NF-scan exec cross-check; user decision (3): any-valid-reduction, PER-TRACE — no unique-normal-form claim for the non-confluent Ambient |
+| capability-trio MA-extension status | none — a language-fidelity premise against Cardelli–Gordon (*Mobile Ambients*), not a KT clause | the C-G alignment record: [26 §13](26-in-rho-ac-family-reference.md#13-the-ambient-fragment-cardelligordon-alignment); `BinderFloatCanonicalization.v` proves match-completeness over the C-G subset WITHOUT the trio | `InNew`/`OutNew`/`OpenNew` are documented sound extensions (capability prefixes are inert until exercised) with the `x # N` capture-avoidance premise; `NewComm`/`ScopeExtrusion`/`AmbNew` are the C-G axioms verbatim; the trio is not load-bearing for matching |
+| moniker `UniqueId` width (AM-6d) | `rem:fresh` — freshness by quoting, transcribed at the HOST float layer's freshener | stated here as an honest premise; the id allocator is not modeled in Rocq | moniker's `UniqueId` is a process-global `AtomicUsize` narrowed usize-to-u32 at construction (noted in moniker's source); id recycling would require $`2^{32}`$ freshenings within one process before any collision is possible |
 
 ## 3. The per-item crosswalk
 
@@ -264,6 +271,25 @@ operational scope (29) — the denotational program the paper reserves for
 itself. PlantUML source:
 [figures/29-crosswalk-status-map.puml](figures/29-crosswalk-status-map.puml).*
 
+### 3.1 The A-S5 mechanized additions (the Lambda/Ambient flip)
+
+The A-S5 enforcement campaign (the production flip of Lambda and Ambient onto
+the in-Rho quiescence driver, §4) added the following zero-admission theories.
+They introduce **no new paper labels** — the 40-row table above is unchanged —
+but they deepen the evidence behind existing rows, so each is anchored to the
+KT item whose evidence it strengthens:
+
+| Theory (theorems) | KT-item anchor | What it adds |
+|---|---|---|
+| `InRhoQuiescenceDriver.v` — `drive_steps_sound`, `quiescence_sound`, `fuel_exhaustion_never_wrong`, `drive_weak_bisim`, `drive_two_firing_nonvacuous` | `app:desugar` "A whole GSLT" + `ob:opcorr` | the generated `^drive` receiver family (one exec = drive-to-quiescence) modeled as a big-step LTS: every resting drive is an iterated genuine object reduction ending beta-normal; fuel exhaustion surfaces the stuck redex as a typed datum, never an NF claim; `drive_weak_bisim` is the ITERATED beta weak bisimulation (`aiter`/`citer` chains) — the single-step-to-iterated upgrade the capstone consumes |
+| `InRhoQuiescenceDriver.v` (bag model) — `driver_flatten_agrees_with_add_flattened_bag`, `bag_flatness_sound`, `bag_atoms_preserved`, `bag_quiescence_sound`, `bdrives_deterministic` | `app:desugar` "Base rewrites" over AC bags + `prop:opcorr` (the resting observation) | the A-S5.5 AC-arm reassembly: the driver's three-case splice equals the host `add_flattened_bag`, preserves the leaf multiset, and EVERY bag drive rests FLAT — no nested bag hides a sibling redex from the NF scan (per-trace, decision (3)) |
+| `BinderFloatCanonicalization.v` — `float_nf_exposes_redexes_in`/`_open`, freshening totality, NewComm-permutation invariance, Out-redex exposure (A-S5.4b) | `con:functor` (equations as structural congruence) + `rem:fresh` | the unconditional unbind-first binder float canonicalizes Ambient-shaped terms: over the Cardelli–Gordon subset a bag/nested redex exists modulo the equations **iff** it is syntactically present in the float normal form; the completeness claim is a THEOREM, demoted from premise (§2.1) |
+| `AmbientInOutFiring.v` — re-proved over the (Red Out) redeclaration | `prop:opcorr` per-family arm (`FAcNested`) | the A-S5.4b OutRule redeclaration keeps the residual INSIDE the parent membrane (Cardelli–Gordon (Red Out) verbatim, modulo the documented $`\{\}`$-for-$`0`$ fragment convention); `inout_step_complete`/`inout_step_sound` re-proved against the corrected shape ([26 §13](26-in-rho-ac-family-reference.md#13-the-ambient-fragment-cardelligordon-alignment)) |
+| `RhoLoweringTotalOrRejects.v` — the A-S5.1 exemption extension: `install_admits_iff_no_nonexempt_unlowered`, `exempt_only_at_the_seam`, `mixed_premise_never_exempt`, `empty_premises_never_exempt` | `con:functor` (total-or-reject) | the install boundary refined: a congruence-only rewrite (all premises congruence-shaped) is RECORDED-exempt rather than blocking — total-or-reject stays fail-closed for every fireable rule, and the exemption always carries its evidence |
+| `WholeGsltInRhoOpCorrespondence.v` §5 (A-S5.7) — `whole_gslt_in_rho_opcorrespondence_iterated`, `drive_burst_forward`/`backward_correspondence`, `whole_gslt_opcorr_over_drive_schedules`, `related_states_equi_quiescent`, `whole_gslt_per_trace_quiescence_forward`/`_backward` | `ob:opcorr` (the drive-granularity restatement) | the per-family premises RE-STATED over drive-mediated multi-step traces (family-homogeneous bursts — the production granularity of the flip), with conservativity proven both ways; the capstone re-proved over whole drive schedules plus per-trace quiescence transfer; SwapDemo, In/Out, and beta re-instantiated against the upgraded shapes (`swapdemo_base_iterated_opcorr`, `inoutdemo_nested_iterated_opcorr`, `betadrive_iterated_opcorr`) |
+| `WholeGsltInRhoOpCorrespondenceIteratedViaDriver.v` — `beta_burst_discharged_by_drive_weak_bisim` (+ backward dual), `ambient_burst_rest_flat_and_host_agreeing` | `ob:opcorr` + `rem:nonopt`'s discharge discipline | the upgraded burst premises are backed LITERALLY by the driver theorems: harness bursts project to the driver's `aiter`/`citer` chains and the matching chain is delivered by `drive_weak_bisim`; the A-S5.5 bag-model pair grounds the AC families' rest condition |
+| `DovetailRhoLanguageBackendWrapper.v` — the driver-admitted branch (A-S5.7): `admitted_report_free_shape_is_observation_via_drive`, `layered_deferral_is_base_deferral`, `not_requested_layer_is_base`, `unsupported_forces_deferral_path`, the `DriveAdmission` algebra | `con:functor` (the installed program's runtime face) | the production wrapper model: an ADMITTED language's report-free exec is the quiescence drive; a NOT-REQUESTED language is byte-identical to pre-flip; UNSUPPORTED fails closed into the deferral path with every failed conjunct recorded; the A-S2 deferral surface is unchanged |
+
 ## 4. The runtime boundary, today
 
 The boundary the paper's fragment induces — and the capstone's INV-14 fence
@@ -278,16 +304,30 @@ rather than duplicates:
 |---|---|
 | the type-level split: every executable action is a `RhoMachineInvocation`; the sole off-machine action is the semantic-predicate deferral | [12 — Runtime Invocation Migration](12-runtime-invocation-migration.md) |
 | the mechanized fence: predicates emit no COMM, excluded from every opcorr trace by construction | INV-14 in [13 §5](13-knotted-topoi-operational-invariants.md); `WholeGsltInRhoOpCorrespondence.v:277` |
-| what runs where in the landed backend (matching / firing / congruence layers, channel scheme, metering) | [20 §1](20-rholang-runtime-backend.md) |
-| the per-language flip status and its gates (which languages still host-route which dispositions) | [07 — Verification and Rollout](07-verification-and-rollout.md) |
-| the enforcement campaign closing the remaining production deviations (lazy report + static gate + ruleset memoization; native dispatch as metered system processes; RhoCalc lowering purity; the Lambda/Ambient flip with per-site spreads and the in-Rho quiescence driver; step policy) | the scheduled stages A-S2 through A-S6, tracked as the pgmcp work item `track-a-runtime-boundary-enforcement-dovetail-semantic-predicates-only-4557ba5e` |
+| what runs where in the landed backend (matching / firing / congruence layers, channel scheme, metering, the A-S5 quiescence driver) | [20 §1](20-rholang-runtime-backend.md) |
+| the per-language flip status and its gates | [07 — Verification and Rollout](07-verification-and-rollout.md), with the A-S5c flip-readiness probes (`rholang-codegen/tests/a_s5c_production_language_gates.rs`) |
+| the enforcement campaign that closed the production deviations | **A-S2 through A-S5 are LANDED**: A-S2 lazy report + static gate + ruleset memoization (the D-stage demotion — report checked $`\iff`$ deferral taken); A-S3 native dispatch as metered system processes; A-S4 lowering purity + REPL raw-term gating; A-S5.1–.7 the Lambda/Ambient PRODUCTION FLIP onto the generated in-Rho quiescence driver with its FV and docs closure. A-S6 (step policy + registry hygiene) remains scheduled. Tracked as the pgmcp work item `track-a-runtime-boundary-enforcement-dovetail-semantic-predicates-only-4557ba5e` |
 
-The production deviations visible in doc 07's flip table (host-routed COMM and
-guard dispositions, in-engine Ambient reduction, host-side native dispatch)
-are exactly the subject of those scheduled enforcement stages; the stages use
-the matcher the §5 decision record keeps in production (the set-automaton
-network), so the boundary work and the efficiency gate compose rather than
-race.
+**The flip is COMPLETE.** Production Lambda and Ambient `exec` runs on the
+RhoMachine via the generated `rho_net_drive_invocation_to` quiescence-driver
+seed (the `^drive` receiver family, [20 §1](20-rholang-runtime-backend.md)):
+matching, firing, congruence descent, binder-arm driving, AC-bag reassembly,
+and the whole-subject drive to rest are all COMMs on the live reducer, with a
+four-channel readback and an always-on fired-vs-NF-scan cross-check. The
+Dovetail D-stage is DEMOTED to the deferral path (A-S2): an admitted term
+executes with ZERO Dovetail work, pinned by `repl/tests/zero_dstage_exec.rs`.
+The only host evaluation remaining on admitted paths is: **semantic
+predicates** (INV-14, by construction), the **width-cast Tier-3 held-fold
+trampoline** ([10 — Adaptive Evaluation Model](10-adaptive-evaluation-model.md)),
+and **injection-boundary canonicalization** (the A-S5.4a unconditional binder
+float run once at the invocation boundary, [26 §13](26-in-rho-ac-family-reference.md#13-the-ambient-fragment-cardelligordon-alignment)).
+The stages used the matcher the §5 decision record keeps in production (the
+set-automaton network), so the boundary work and the efficiency gate composed
+rather than raced — and the driver path additionally lifts the
+`NestedEntryMultiSite` boundary: the per-node congruence descent needs no
+locate-all pass, so multi-site subjects (the $`\lambda`$-chain ladder
+$`n \le 8`$, `rholang-runtime/tests/rho_net_lambda_firing.rs`) drive to rest
+in-Rho where the single-shot spread path fails closed.
 
 ## 5. The efficiency gate — measured results
 
@@ -377,19 +417,49 @@ per-location emitter remains maintained as the measured sound-envelope
 alternative, and the retention is **experiment-contingent** on the E-6a /
 E-1 / post-A-S5 re-runs the decision record schedules.
 
-One scheduled direction deserves its own paragraph, because it reframes the
-machine rather than tuning it. Greg Meredith's framing: **the set automaton is
-a path machine** — its positions are paths, its greatest-common-prefix
-computation is prefix compression, and the location channels are path-keyed
-names. That reading makes PathMap's structure-sharing tries the natural
-carrier: experiment E-6 evaluates spreading a subject as **one** `EPathMap`
-value instead of a per-node send spread, with site enumeration performed by
+One direction deserves its own paragraphs, because it reframes the machine
+rather than tuning it. Greg Meredith's framing: **the set automaton is a path
+machine** — its positions are paths, its greatest-common-prefix computation is
+prefix compression, and the location channels are path-keyed names. That
+reading makes PathMap's structure-sharing tries the natural carrier:
+experiment E-6 evaluates spreading a subject as **one** `EPathMap` value
+instead of a per-node send spread, with site enumeration performed by
 prefix-restricted zipper queries **on the machine** — which would carry the
-automaton's compile-time sharing into the runtime encoding, and could dissolve
-the `NestedEntryMultiSite` fail-closed boundary that forced the per-site drive
-in the first place. E-6 is scheduled first after the Track B verdict precisely
-because its subject-indexing leg can reshape the enforcement campaign's
-per-site spreads before they are built.
+automaton's compile-time sharing into the runtime encoding and could dissolve
+the `NestedEntryMultiSite` fail-closed boundary that forced the per-site
+drive in the first place. E-6's subject-indexing leg (E-6a) was run FIRST,
+before the enforcement campaign's per-site spreads were built, exactly so it
+could reshape them.
+
+**E-6a — measured (experiment 145).** The PathMap subject index does
+**dissolve** `NestedEntryMultiSite` and wins the COMM economy decisively —
+6.4 to 18.6 times fewer COMMs than the per-node spread — but its **wall time
+stays adverse**. The first-round profile localized the cost to f1r3node's
+`EPathMap` handling; the f1r3node fix `fix/epathmap-trie-cache` (commit
+`84a0fbe4`: a prost-keyed LRU memo plus terminator-first native descent;
+counters byte-identical, all suites green) improved the treatment wall by
+4.9–13.3 percent on re-measurement, but the ratios against the value-carrier
+control remained 2.44 to 37.33 times — the wall does **not** flip. Per the
+pre-agreed contingency, the A-S5 driver therefore shipped on the
+**value-carrier branch (PS)**, with the PathMap carrier preserved behind the
+`DriveCarrier` swap seam (one trait implementation away, no re-architecture).
+The re-measurement's profile banked the root cause for the record: **by-value
+`Par` transport dominates** — clone 16.5 percent + drop 14.0 percent +
+`to_vec` 15.9 percent of the treatment profile — which is also the candidate
+mechanism for R3's counter-win/wall-loss split above. The principled
+`EPathMap` value-handling fix (interned payloads, reference-shaped RSpace
+transport) is a tracked follow-up owned jointly with F1r3node.
+
+**The rematch the verdict scheduled is now runnable.** With A-S5 landed (§4),
+the in-Rho automaton driver exists in production form, so the post-A-S5
+R3-vs-driver re-run the keep-both decision is contingent on can proceed.
+Experiments **146** (E-3 lazy/incremental install: the cached installed `Par`
+currently has zero consumers; the incremental ceiling is the
+fingerprint-independent share) and **147** (E-1 scion grafting: per-state
+canned send bundles targeting the re-spread cost, [ERKENS-THESIS-2024](references.md#erkens-thesis-2024)
+Chapter 6) have locked pre-registration ledgers and are the next scheduled
+runs; the keep-both retention stands, experiment-contingent, until they and
+the rematch report.
 
 ## 6. References
 

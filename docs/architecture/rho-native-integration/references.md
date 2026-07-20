@@ -52,6 +52,22 @@ Processes, II." Information and Computation.
 
 Used for: continuation of the π-calculus foundations.
 
+### MOBILE-AMBIENTS-1998
+
+Luca Cardelli and Andrew D. Gordon. 1998. "Mobile Ambients." In Foundations of
+Software Science and Computation Structures (FoSSaCS 1998), LNCS 1378, pp.
+140–155. Springer.
+[DOI: 10.1007/BFb0053547](https://doi.org/10.1007/BFb0053547).
+Journal version: 2000, Theoretical Computer Science 240(1), 177–213.
+[DOI: 10.1016/S0304-3975(99)00231-5](https://doi.org/10.1016/S0304-3975%2899%2900231-5).
+
+Used for: the normative ambient-calculus theory — the structural congruence
+(Struct Res Res / Res Par / Res Amb, Par Comm/Assoc, the Zero rules), the
+reduction rules (Red In / Red Out / Red Open / Red Res / Red Amb / Red Par),
+and α-conversion as definitional identity — against which
+`languages/src/ambient.rs` is aligned
+([26 §13](26-in-rho-ac-family-reference.md#13-the-ambient-fragment-cardelligordon-alignment)).
+
 ### JOIN-2000
 
 Cédric Fournet and Georges Gonthier. 2002. "The Join Calculus: A Language for

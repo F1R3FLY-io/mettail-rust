@@ -1,6 +1,15 @@
 # 09 — Term-Level Reduction Split: Dovetail Folds and Rholang COMM in One Term
 
-Last updated: 2026-06-23
+Last updated: 2026-07-20
+
+> **A-S5 flip note (2026-07-20).** This document's term-level split concerns
+> the fold-bearing languages (RhoCalc / Rholang). Production **Lambda and
+> Ambient** exec no longer takes any Dovetail D-stage on admitted paths: one
+> `exec` is one generated in-Rho quiescence-driver seed
+> ([20 §1](20-rholang-runtime-backend.md#1-landed-state-what-runs-where);
+> [24 §5.1](24-in-rho-completion-audit.md#51-the-a-s5-quiescence-driver-exec-drives-to-rest-in-rho)).
+> The step-policy and registry-hygiene rewrite of the surrounding routing text
+> is owned by enforcement stage A-S6.
 
 This document answers a precise architectural question:
 

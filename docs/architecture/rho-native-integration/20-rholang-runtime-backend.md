@@ -36,9 +36,30 @@ Rho communication. The landed system is stronger:
   reserved de-Bruijn channels (the substitution term-rewriting system, or TRS),
   so capture-avoiding substitution itself is host-machine work — the terminal
   endpoint documented in [19](19-in-rho-binder-beta-substitution.md).
+- **Whole executions drive to rest in Rho (A-S5).** For a drive-admitted
+  language (production Lambda and Ambient — the `DRIVE_OPT_IN` const,
+  `rholang-codegen/src/rho_net_drive.rs`) one `exec` is one generated
+  `rho_net_drive_invocation_to` seed: the **`^drive` receiver family** — the
+  redex arms (fuel-gated, firing through the $`\sigma`$ ABI, contractum
+  re-driven), the congruence-descent arm (concurrent child drives with
+  per-path fuel, atomic join, inline post-join re-check), the binder arm, and
+  the AC bag arms (peel / drive / three-case splice, flatness-preserving) —
+  drives the reflected subject to quiescence with **zero host work between
+  firings**. The host reads back four observation channels (OUT value, fired
+  multiset, typed error, typed `^drive-fuel`) and runs an always-on
+  fired-vs-NF-scan cross-check. The admission is recorded per language
+  (`DriveAdmission`: `Admitted` / `NotRequested` / `Unsupported` with every
+  failed conjunct named); a non-opted-in language's generated module is
+  byte-identical to the pre-driver form. On this path the
+  `NestedEntryMultiSite` locate-all boundary cannot arise — the per-node
+  descent replaces the single-shot locate-all, so multi-site subjects (the
+  $`\lambda`$-chain ladder $`n \le 8`$,
+  `rholang-runtime/tests/rho_net_lambda_firing.rs`) drive to rest in-Rho.
+  Audit detail: [24 §5.1](24-in-rho-completion-audit.md#51-the-a-s5-quiescence-driver-exec-drives-to-rest-in-rho);
+  FV: `InRhoQuiescenceDriver.v`.
 
 What survives of the host Dovetail engine is exactly two roles, both
-compile-time or gate-only:
+compile-time or gate/deferral-only:
 
 1. **A partial evaluator.** The set-automaton interner
    (`PatternCompiler::intern`, `dovetail/src/set_automaton.rs:140`) computes the
@@ -46,10 +67,13 @@ compile-time or gate-only:
    result is serialized into the installed Rho program. The runtime pays no
    pattern-compilation cost. This is the optimization whose theory is
    [21](21-set-automata-optimization-theory.md).
-2. **A $`\sigma`$-source and gate.** A completed Dovetail run report supplies the fired
-   rule labels that *gate* the install (an off-machine rule fails the install
-   closed) and, on the fallback firing path only (§5), the host-computed
-   substitution that is replayed into the same installed receivers.
+2. **A lazy $`\sigma`$-source behind a static gate.** Since A-S2 the install
+   capability gate is STATIC (`in_rho_static_gate` — an off-machine rule fails
+   the install closed with no report built), and the Dovetail run report is
+   built LAZILY, exactly on the deferral path (report checked $`\iff`$
+   deferral taken); only there does it supply the host-computed substitution
+   replayed into the same installed receivers (§5). An admitted term executes
+   with ZERO Dovetail work (`repl/tests/zero_dstage_exec.rs`).
 
 Everything downstream of the installed program — scheduling, communication,
 substitution charging, checkpoint, replay — is f1r3node's existing RhoRuntime

@@ -237,14 +237,19 @@ report survives solely as the compile-time partial-evaluator and a fail-closed f
 Three independent lines of evidence establish it.
 
 **(1) The install gate + spread-default (the code).** The generated invocation method
-`rho_net_match_invocation_from_dovetail_to` (`macros/src/gen/runtime/rho_invocation.rs:1765`)
-is the default backend's entry point: it applies the capability gate
-(`in_rho_match_gate_reject`, fail-closed before any Rho reduction), then **spreads the
-subject and lets the automaton locate and bind the redex**. The report path
-`rho_net_replay_invocation_from_dovetail_to` (`:1827`) is a *fallback*, reached only when
-the gate rejects (an as-yet-unrouted shape); it never runs alongside the spread path for
-an admitted rule. The two paths are mutually exclusive by the gate, so there is no dual
-runtime path.
+`rho_net_match_invocation_from_dovetail_to` (`macros/src/gen/runtime/rho_invocation.rs`)
+is the default backend's entry point for a non-drive-admitted language: it applies the
+capability gate (`in_rho_match_gate_reject`, fail-closed before any Rho reduction), then
+**spreads the subject and lets the automaton locate and bind the redex**. For a
+DRIVE-ADMITTED language (A-S5.6: exactly Lambda and Ambient, the `DRIVE_OPT_IN` const)
+the default entry point is instead the generated `rho_net_drive_invocation_to`
+quiescence-driver seed (§5.1 below) — still one in-Rho path, never a host match. The
+report path `rho_net_replay_invocation_from_dovetail_to` is a *fallback*, reached only
+when the gate (or the drive seed) rejects (an as-yet-unrouted shape); it never runs
+alongside the in-Rho path for an admitted rule, and Lambda's fallback carries **no**
+$`\sigma`$-replay Beta arm at all (a $`\sigma`$-replayed $`\beta`$ would
+double-substitute — the F16 discipline; `repl/src/rho_backends.rs`). The paths are
+mutually exclusive by the gate, so there is no dual runtime path.
 
 **(2) The retirement commits (the history).** The host match-decision was explicitly
 removed, not merely bypassed:
@@ -285,6 +290,41 @@ the reduct is entirely the reducer's. Its formal analogue is
 sole match locus for every admitted rule; the report path is a mutually-exclusive
 fail-closed fallback; and the corrupted-$`\sigma`$ probes prove — behaviorally, per family
 — that the reduct is a function of the in-Rho captures, not of the host report.
+
+### 5.1 The A-S5 quiescence driver: exec drives to rest, in Rho
+
+The A-S5 enforcement campaign extended the no-dual-path discipline from single firings to
+**whole executions**. For a drive-admitted language (Lambda and Ambient — the
+`DRIVE_OPT_IN` const, `rholang-codegen/src/rho_net_drive.rs`) the production `exec` path
+is one generated `rho_net_drive_invocation_to` seed: the **`^drive` receiver family**
+drives the reflected subject to quiescence entirely in-Rho — per-node Match arms realize
+the redex arms (fuel-gated, firing through the $`\sigma`$ ABI with the contractum
+re-driven), the congruence-descent arm (concurrent child drives with per-path fuel, an
+atomic join, and an inline post-join re-check), the binder arm, and the A-S5.5 AC bag
+arms (peel / drive / three-case splice reassembly, flatness-preserving). Four observation
+channels are read back (the OUT value, the fired-label multiset, the typed error channel,
+and the typed `^drive-fuel` channel), and an always-on **fired-vs-NF-scan cross-check**
+compares the resting term against the language's static NF-scan mirror on every exec.
+
+The admission is RECORDED, never silent: `drive_admissible` computes a per-language
+`DriveAdmission` (`Admitted` / `NotRequested` / `Unsupported` with every failed conjunct
+named), carried on the lowering artifact; a non-opted-in language's generated module is
+byte-identical to pre-A-S5.2 (`rholang-codegen/tests/a_s5_6_byte_identity_pins.rs`). The
+Dovetail D-stage is DEMOTED to the deferral path (A-S2 discipline preserved: report
+checked $`\iff`$ deferral taken), pinned by `repl/tests/zero_dstage_exec.rs` — an
+admitted term executes with zero Dovetail work. The wrapper-model face is
+`DovetailRhoLanguageBackendWrapper.v`'s driver-admitted branch (the `DriveAdmission`
+algebra, the mechanism split, and the theorem that the deferral surface is unchanged);
+the driver-model FV is `InRhoQuiescenceDriver.v` (soundness, per-trace quiescence, typed
+fuel exhaustion, the iterated weak bisimulation, and the A-S5.5 bag model), consumed by
+the capstone's §5 iterated premises ([29 §3.1](29-knotted-topoi-satisfaction-crosswalk.md#31-the-a-s5-mechanized-additions-the-lambdaambient-flip)).
+
+A structural consequence: the `NestedEntryMultiSite` fail-closed boundary of the
+single-shot spread path **cannot arise on the driver path** — the per-node congruence
+descent needs no locate-all pass, so multi-site subjects (the $`\lambda`$-chain ladder
+$`n \le 8`$ and the fun-position spines, `rholang-runtime/tests/rho_net_lambda_firing.rs`)
+drive to rest in-Rho where the spread path fails closed
+(`rholang-codegen/src/rho_net_drive.rs`).
 
 ## 6. Residuals register
 
@@ -335,6 +375,14 @@ The seven residuals are bounded known-scope with named additive continuations
 against its north-star**: every non-semantic-predicate rewrite family matches and fires as
 a COMM on the f1r3node interpreter, $`O1`$-optimally, with the whole-$`[\![ G ]\!]`$
 operational correspondence proved over the optimal matching for finite executions.
+
+**A-S5 extension of the verdict (2026-07-20).** The claim now holds at EXECUTION
+granularity, not only firing granularity: production Lambda and Ambient `exec` drives to
+quiescence on the Rho machine via the generated `^drive` family ([§5.1](#51-the-a-s5-quiescence-driver-exec-drives-to-rest-in-rho)),
+with zero Dovetail work on admitted paths, the deferral surface unchanged, and the
+capstone's premises upgraded to the same iterated-driving granularity
+(`whole_gslt_in_rho_opcorrespondence_iterated`, drive schedules, per-trace quiescence —
+all `Closed under the global context`).
 
 ## Sources
 

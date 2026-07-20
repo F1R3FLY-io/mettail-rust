@@ -1,5 +1,32 @@
 # Inc 1 — Moniker NativeHandler Float for Ambient (implementable spec)
 
+> **SUPERSEDED IN PART (A-S5.4a, 2026-07-19; commit `050e57e6`) — the float is now
+> UNCONDITIONAL unbind-first with a bag-flat splice.** The FIX-B `is_fresh` gates this
+> spec introduces (the ScopeExtrusion residual gate and the prefix-float
+> `is_fresh(s.unsafe_pattern(), N)` gate below) are RETIRED: the production float
+> freshens FIRST (moniker `unbind` is a process-global gensym, so the freshened binder
+> occurs in no pre-existing sibling) and then floats — one α step (definitional identity
+> in Cardelli–Gordon) followed by a Res Par / Res Amb / extension instance whose side
+> condition holds BY CONSTRUCTION. The capture hazard the gates guarded against is
+> DISSOLVED, not disabled: gating on the ORIGINAL binder was only needed because the
+> pre-A-S5.4a algorithm floated the original binder; the freshen-then-float order makes
+> the guard's condition always true for the binder actually floated. Additionally, the
+> ScopeExtrusion arm now SPLICES a bag-bodied ν body into the surrounding bag (the AM-2
+> bag-FLATNESS obligation, via the generated `insert_into_<label>` mirror of the host
+> flatten) instead of pushing the opened body as one member — a nested bag would hide
+> sibling redexes with no equation to dissolve it. The generated `is_fresh` per-language
+> fn remains generated (an uncalled pub API). Mechanized record:
+> `formal/rocq/rho_bridge/theories/BinderFloatCanonicalization.v`
+> (`float_nf_exposes_redexes_in`/`_open` over the C-G subset, freshening totality,
+> NewComm-permutation redex invariance, Out-redex exposure) and the Cardelli–Gordon
+> alignment note
+> `docs/architecture/rho-native-integration/26-in-rho-ac-family-reference.md` §13.
+> Tests: `languages/tests/ambient_binder_handler.rs` (headers updated in A-S5.4a; the
+> old FIX-B-blocked subjects now FLOAT, pinned by the F1 and AM-2 discriminating
+> subjects). The sections below are retained as the Inc-1 historical design record;
+> where they state the FIX-B gate or the one-member ScopeExtrusion reassembly they
+> describe the RETIRED behavior.
+
 Converged design: `README.md` + `design-v4-converged.md`. Inc 0 (FIX-A) committed `4ba72e09`.
 This spec is implemented foreground. NO AC composition (Inc 2). The pure binder-congruence NF is total,
 so the seam's `Complete` is honest for Inc 1.
