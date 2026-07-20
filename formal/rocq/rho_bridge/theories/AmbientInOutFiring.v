@@ -7,11 +7,17 @@
  *     { n[{ in(m,P), ...rest1 }], m[R], ...rest2 } ~> { m[{ n[{ P, ...rest1 }], R }], ...rest2 }
  *
  * (an ambient `n` carrying an `in(m,·)` capability MOVES INTO the sibling ambient `m`) and its dual
- * `OutRule`
+ * `OutRule` — A-S5.4b (AM-1, USER approved) REDECLARED to Cardelli-Gordon (Red Out), the residual
+ * KEPT INSIDE `m`:
  *
- *     m[{ n[{ out(m,P), ...rest1 }], R, ...rest2 }] ~> { n[{ P, ...rest1 }], m[R], ...rest2 }
+ *     m[{ n[{ out(m,P), ...rest1 }], ...rest2 }] ~> { n[{ P, ...rest1 }], m[{ ...rest2 }] }
  *
- * (the ambient `n` carrying `out(m,·)` MOVES OUT of `m`) fire, in ONE ATOMIC guarded consume on the
+ * (the ambient `n` carrying `out(m,·)` MOVES OUT of `m`; the whole residual `...rest2` rides the
+ * rest-only inner bag of the emitted `m[...]` — the TEMPLATE-CONSUMED rest placement; empty rest
+ * legal, so the singleton `m[{n[{out(m,p)}]}]` FIRES to `{n[{p}], m[{}]}`. The pre-A-S5.4b
+ * declaration's ejection shape — `R` + a top-spliced `...rest2` — remains InOutDemo's demo
+ * declaration, its two-level splice equation retained as InRhoAcMatchMultiset's
+ * `outrule_reduct_ids_two_level`) fire, in ONE ATOMIC guarded consume on the
  * installed nested AC σ-receiver (`rho_net_lower::nested_structural_ac_match_receiver_par`), by
  * COMPOSING — EXACTLY as AmbientOpenFiring does for the flat OpenRule, but one nesting level deeper:
  *
@@ -54,9 +60,12 @@
  * consume commits (splicing the nested reduct) when they agree and consumes NO data when they
  * disagree (`inout_commits_when_M_agrees` / `inout_disagree_no_commit`, reject-safe); every emitted
  * fact is a structural reduct or was already present (`inout_no_fabrication`); the fired bag
- * reassembles NESTED with `rest1` inner + `rest2` outer, at BOTH the InRule and OutRule shapes
- * (`inrule_emits_nested_reduct_and_splices_both_rests` /
- * `outrule_emits_nested_reduct_and_splices_both_rests`); the InRule single-top-reduct outer splice
+ * reassembles NESTED — the InRule with `rest1` inner + `rest2` outer
+ * (`inrule_emits_nested_reduct_and_splices_both_rests`), the REDECLARED OutRule with `rest1`
+ * inside `n[...]` AND `rest2` inside `m[...]`, nothing at the top
+ * (`outrule_emits_residual_kept_inside_and_splices_both_rests`, its reduct-id equation
+ * `outrule_residual_kept_inside_reduct_ids`, and the empty-rest singleton firing
+ * `outrule_singleton_fires`); the InRule single-top-reduct outer splice
  * coincides with the Comm `insert_exact` emit (`inrule_single_top_reduct_is_insert_exact`); the
  * receiver's `condition` guard equals the host's cross-level non-linear name check
  * (`inout_oracle_agreement`); the guarded-attempt form of the commit/reject is inherited VERBATIM
@@ -136,9 +145,12 @@ Section AmbientInOutFiring.
   (*                                                                                             *)
   (* REUSES AmbientOpenFiring's `struct_attempt` (the atomic m-reduct STRUCTURAL firing) at the   *)
   (* OUTER bag level: `sr_reducts` are the OUTER-level reassembled top elements (InRule: the one   *)
-  (* moving `m[…]`; OutRule: `n[…]` and `m[R]`), `sr_guard` is the cross-level `inout_guard`, and  *)
-  (* the commit splices those outer reducts with `...rest2` (= `facts`). The INNER `...rest1`       *)
-  (* splice is certified by the depth-2 reduct-id equations (`inrule/outrule_reduct_ids_two_level`).*)
+  (* moving `m[…]`; the REDECLARED OutRule: `n[…]` and the residual-keeping `m[{...rest2}]`),      *)
+  (* `sr_guard` is the cross-level `inout_guard`, and the commit inserts those outer reducts.      *)
+  (* The rest splices are certified by the reduct-id equations: the InRule's `rest1`-inner +        *)
+  (* `rest2`-outer by `inrule_reduct_ids_two_level` (InRhoAcMatchMultiset), the redeclared          *)
+  (* OutRule's rest1-inside-`n` + rest2-inside-`m` (NOTHING at the top — the residual never         *)
+  (* crosses the membrane) by the LOCAL `outrule_residual_kept_inside_reduct_ids` below.            *)
   (* ========================================================================================= *)
 
   (* The In/Out firing rule: under the cross-level ambient-name guard, splice the OUTER STRUCTURAL
@@ -235,37 +247,80 @@ Section AmbientInOutFiring.
     - apply inrule_reduct_ids_two_level.
   Qed.
 
-  (* (InOut.5-Out) THE FIRED BAG IS THE Out-REDUCT `{ n[{P, ...rest1}], m[R], ...rest2 }` (ATOMIC,
-     TWO-LEVEL): on commit, the result contains BOTH outer reducts — the moving ambient
-     `n[{P, ...rest1}]` AND the opaque sibling `m[R]` (= `E_id`) — AND every element of `...rest2`,
-     with the INNER `...rest1` spliced inside `n[…]` (`outrule_reduct_ids_two_level`). The dual
+  (* The REDECLARED-Out two-level reduct-id equation, proved LOCALLY (the ejection-shaped
+     NS.4-Out `outrule_reduct_ids_two_level` remains in InRhoAcMatchMultiset as the InOutDemo demo
+     family's equation): the fired bag is EXACTLY the two outer reducts — NO top-level `Sub`
+     splice — with `rest1` spliced inside the moving `n[…]` AND `rest2` spliced inside the
+     residual-keeping `m[…]` (the A-S5.4b TEMPLATE-CONSUMED rest placement; `map Leaf nil` is the
+     rest-only inner bag's empty fixed-element list). Each bag level is an independent
+     `fired_bag_is_reducts_splice_rest`; the top level is a pure `flatten_map_leaf` (two Leaf
+     reducts, nothing spliced). *)
+  Lemma outrule_residual_kept_inside_reduct_ids :
+    forall (wrap_ambient : list nat -> nat) (P_id : nat) (rest1_ids rest2_ids : list nat),
+      flatten (map Leaf
+                 (wrap_ambient (flatten (map Leaf (P_id :: nil) ++ (Sub rest1_ids :: nil)))
+                  :: wrap_ambient (flatten (map Leaf nil ++ (Sub rest2_ids :: nil))) :: nil))
+      = wrap_ambient (P_id :: rest1_ids) :: wrap_ambient rest2_ids :: nil.
+  Proof.
+    intros wrap_ambient P_id rest1_ids rest2_ids.
+    rewrite !fired_bag_is_reducts_splice_rest. rewrite flatten_map_leaf. reflexivity.
+  Qed.
+
+  (* (InOut.5-Out) THE FIRED BAG IS THE REDECLARED (Red Out) REDUCT `{ n[{P, ...rest1}],
+     m[{...rest2}] }` (ATOMIC, TWO-LEVEL, RESIDUAL KEPT INSIDE): on commit, the result contains
+     BOTH outer reducts — the moving ambient `n[{P, ...rest1}]` AND the residual-keeping
+     `m[{...rest2}]` — and every prior fact is preserved; the reduct-id equation certifies the
+     TEMPLATE-CONSUMED placement (rest1 inside `n[…]`, rest2 inside `m[…]`, NOTHING at the top —
+     the residual never crosses the ambient membrane, per C-G (Red Out) / AM-1). The dual
      two-level splice; the OutRule emits TWO outer reducts exactly as `OpenRule` emits P and Q. *)
-  Theorem outrule_emits_nested_reduct_and_splices_both_rests :
+  Theorem outrule_emits_residual_kept_inside_and_splices_both_rests :
     forall facts premises m_outer m_inner
-           (wrap_ambient : list nat -> nat) (P_id E_id : nat) (rest1_ids rest2_ids : list nat),
+           (wrap_ambient : list nat -> nat) (P_id : nat) (rest1_ids rest2_ids : list nat),
       all_present facts premises ->
       m_outer = m_inner ->
       exists next,
         struct_attempt facts
           (inout_rule premises m_outer m_inner
-             [wrap_ambient (P_id :: rest1_ids); E_id]) next
+             [wrap_ambient (P_id :: rest1_ids); wrap_ambient rest2_ids]) next
         /\ In (wrap_ambient (P_id :: rest1_ids)) next
-        /\ In E_id next
+        /\ In (wrap_ambient rest2_ids) next
         /\ (forall r, In r facts -> In r next)
         /\ flatten (map Leaf
                       (wrap_ambient (flatten (map Leaf (P_id :: nil) ++ (Sub rest1_ids :: nil)))
-                       :: E_id :: nil)
-                    ++ (Sub rest2_ids :: nil))
-           = wrap_ambient (P_id :: rest1_ids) :: E_id :: rest2_ids.
+                       :: wrap_ambient (flatten (map Leaf nil ++ (Sub rest2_ids :: nil))) :: nil))
+           = wrap_ambient (P_id :: rest1_ids) :: wrap_ambient rest2_ids :: nil.
   Proof.
-    intros facts premises m_outer m_inner wrap_ambient P_id E_id rest1_ids rest2_ids Hpres Heq.
-    exists (insert_all [wrap_ambient (P_id :: rest1_ids); E_id] facts).
+    intros facts premises m_outer m_inner wrap_ambient P_id rest1_ids rest2_ids Hpres Heq.
+    exists (insert_all [wrap_ambient (P_id :: rest1_ids); wrap_ambient rest2_ids] facts).
     split; [| split; [| split; [| split ] ] ].
     - apply inout_commits_when_M_agrees; assumption.
     - apply insert_all_membership. left. simpl. left. reflexivity.
     - apply insert_all_membership. left. simpl. right. left. reflexivity.
     - intros r Hr. apply insert_all_membership. right. exact Hr.
-    - apply outrule_reduct_ids_two_level.
+    - apply outrule_residual_kept_inside_reduct_ids.
+  Qed.
+
+  (* (InOut.5-Out-singleton) THE SINGLETON FIRES: the empty-rest instantiation
+     `rest1 = rest2 = []` is the C-G singleton `m[{n[{out(m,p)}]}] → {n[{p}], m[{}]}` — the redex
+     the pre-A-S5.4b ejection shape could NEVER fire (C-G reaches it via (Struct Zero Par); the
+     redeclaration's empty-rest legality discharges it directly; the emitted `m[{}]` vs C-G's
+     `m[0]` is the documented `{}`/`0` fragment deviation). *)
+  Corollary outrule_singleton_fires :
+    forall facts premises m_outer m_inner (wrap_ambient : list nat -> nat) (P_id : nat),
+      all_present facts premises ->
+      m_outer = m_inner ->
+      exists next,
+        struct_attempt facts
+          (inout_rule premises m_outer m_inner
+             [wrap_ambient (P_id :: nil); wrap_ambient nil]) next
+        /\ In (wrap_ambient (P_id :: nil)) next
+        /\ In (wrap_ambient nil) next.
+  Proof.
+    intros facts premises m_outer m_inner wrap_ambient P_id Hpres Heq.
+    destruct (outrule_emits_residual_kept_inside_and_splices_both_rests
+                facts premises m_outer m_inner wrap_ambient P_id nil nil Hpres Heq)
+      as (next & Hatt & Hmoving & Hresidual & _).
+    exists next. split; [exact Hatt | split; [exact Hmoving | exact Hresidual]].
   Qed.
 
   (* (InOut.6) GENERALIZES the Comm single-reduct emit: the InRule fires ONE outer reduct (the
@@ -533,7 +588,9 @@ Print Assumptions inout_commits_when_M_agrees.
 Print Assumptions inout_disagree_no_commit.
 Print Assumptions inout_no_fabrication.
 Print Assumptions inrule_emits_nested_reduct_and_splices_both_rests.
-Print Assumptions outrule_emits_nested_reduct_and_splices_both_rests.
+Print Assumptions outrule_residual_kept_inside_reduct_ids.
+Print Assumptions outrule_emits_residual_kept_inside_and_splices_both_rests.
+Print Assumptions outrule_singleton_fires.
 Print Assumptions inrule_single_top_reduct_is_insert_exact.
 Print Assumptions inout_oracle_agreement.
 Print Assumptions inout_cross_level_guarded_commit.

@@ -50,11 +50,20 @@
  *          deeper nesting is dissolved by Part 2's helper before this fragment is
  *          reached).  The C-G subset acts through five documented composite axioms
  *          (`cstep`), the float is the canonicalizer `float`, and
- *          `float_nf_exposes_redexes_{in,open}` is the iff of design v2 section 3.3.
- *          The In and Open redex families are instantiated (the bag-level and
- *          ambient/bag-seam hiding positions); the Out family is A-S5.4b scope — it is
- *          being REDECLARED to (Red Out) per AM-1 and its firing FV lives in
- *          AmbientInOutFiring.v's re-proof, not here.
+ *          `float_nf_exposes_redexes_{in,open,out}` is the iff of design v2 section 3.3.
+ *          The In and Open families read the configuration as a TOP-LEVEL bag; the Out
+ *          family (A-S5.4b — the rule is now REDECLARED to (Red Out) per AM-1, the
+ *          residual kept inside `m`) reads it as the ENCLOSING AMBIENT `m`'s BODY bag,
+ *          with `m` a parameter: `out_redex m body` holds when some member is an ambient
+ *          `n[...]` whose inner bag carries the prefix-free `out(m)` capability — exactly
+ *          the sub-configuration the redeclared LHS `m[{ n[{out(m,P),...}], ... }]`
+ *          inspects below its root.  The per-level reading is FAITHFUL to the
+ *          implementation: the generated float recurses bottom-up (children normalize
+ *          first), so every bag level — the top level AND each ambient body — is
+ *          float-canonicalized by the SAME canonicalizer, and the hoist through `m`'s own
+ *          wall into the level above is that level's (E-hoist-amb) step.  The Out FIRING
+ *          (commit/reject/reduct shape) lives in AmbientInOutFiring.v's re-proof; here we
+ *          prove EXPOSURE.
  *
  *  Part 4  `newcomm_permutation_redex_invariance`: redex exposure is invariant under
  *          ANY permutation of the nu-prefix (Struct Res Res).  The implementation's
@@ -358,6 +367,17 @@ Definition open_redex (body : list OMem) : Prop :=
     Permutation body
       (([], OBase (KCap COpen n)) :: ([], OBase (KAmb n inner)) :: rest).
 
+(* The REDECLARED (Red Out) OutRule LHS shape BELOW ITS ROOT (A-S5.4b, AM-1): the configuration
+   is the enclosing ambient `m`'s BODY bag (`m` a parameter — the redeclared LHS
+   `m[{ n[{out(m,P), ...rest1}], ...rest2 }]` binds the root name `m` and inspects exactly this
+   bag), and the redex is ONE member `n[...]` whose inner bag carries the prefix-free `out(m)`
+   capability; `rest` is the whole residual `...rest2` (EMPTY rest legal — the singleton fires,
+   the redeclaration's discharge of C-G (Struct Zero Par)). *)
+Definition out_redex (m : nat) (body : list OMem) : Prop :=
+  exists n inner rest,
+    Permutation body (([], OBase (KAmb n inner)) :: rest)
+    /\ In ([], ICap COut m) inner.
+
 Lemma in_redex_perm : forall body body',
   Permutation body body' -> in_redex body -> in_redex body'.
 Proof.
@@ -371,6 +391,14 @@ Lemma open_redex_perm : forall body body',
 Proof.
   intros body body' Hperm (n & inner & rest & Hp).
   exists n, inner, rest.
+  eapply Permutation_trans; [apply Permutation_sym; exact Hperm | exact Hp].
+Qed.
+
+Lemma out_redex_perm : forall m body body',
+  Permutation body body' -> out_redex m body -> out_redex m body'.
+Proof.
+  intros m body body' Hperm (n & inner & rest & Hp & Hin).
+  exists n, inner, rest. split; [| exact Hin].
   eapply Permutation_trans; [apply Permutation_sym; exact Hperm | exact Hp].
 Qed.
 
@@ -544,6 +572,21 @@ Proof.
   simpl. apply Permutation_refl.
 Qed.
 
+Lemma out_redex_monotone : forall m nus body,
+  out_redex m body -> out_redex m (c_body (float (mkCfg nus body))).
+Proof.
+  intros m nus body (n & inner & rest & Hp & Hin).
+  rewrite float_body_of.
+  exists n, (map strip_imem inner),
+         (flat_map (fun x => snd (float_omem x)) rest).
+  split.
+  - eapply Permutation_trans;
+      [apply Permutation_flat_map; exact Hp |].
+    simpl. apply Permutation_refl.
+  - change ([], ICap COut m) with (strip_imem ([], ICap COut m)).
+    apply in_map. exact Hin.
+Qed.
+
 (* ------------------------------------------------------------------------------------
    Reachability: the float is a cequiv chain (each move a documented subset axiom).
    ------------------------------------------------------------------------------------ *)
@@ -677,6 +720,26 @@ Proof.
     + exact Hred.
 Qed.
 
+(* A-S5.4b: the Out-redex exposure — over the ENCLOSING AMBIENT `m`'s body configuration (the
+   per-level reading documented at `out_redex`): an Out-redex below `m`'s root exists modulo the
+   C-G subset IFF it is syntactically present in the float normal form of `m`'s body. With the
+   In and Open exposures this completes design v2 section 3.3 over all three rewrite families of
+   the REDECLARED (Red Out) rule set. *)
+Theorem float_nf_exposes_redexes_out : forall m cfg,
+  (exists cfg', cequiv cfg cfg' /\ out_redex m (c_body cfg'))
+  <-> out_redex m (c_body (float cfg)).
+Proof.
+  intros m cfg. split.
+  - intros (cfg' & Heq & Hred).
+    destruct cfg' as [nus' body']. simpl in Hred.
+    apply (out_redex_perm m _ _ (Permutation_sym
+             (cequiv_float_body_perm _ _ Heq))).
+    exact (out_redex_monotone m nus' body' Hred).
+  - intros Hred. exists (float cfg). split.
+    + apply float_reachable.
+    + exact Hred.
+Qed.
+
 (* =====================================================================================
    Part 4 — NewComm (Struct Res Res) permutation invariance: the nu-prefix order never
    affects exposure, so the implementation's <=6-binder canonical-run DISPLAY cap
@@ -690,12 +753,16 @@ Theorem newcomm_permutation_redex_invariance : forall nus nus' body,
   /\ (in_redex (c_body (float (mkCfg nus body)))
       <-> in_redex (c_body (float (mkCfg nus' body))))
   /\ (open_redex (c_body (float (mkCfg nus body)))
-      <-> open_redex (c_body (float (mkCfg nus' body)))).
+      <-> open_redex (c_body (float (mkCfg nus' body))))
+  /\ (forall m,
+        out_redex m (c_body (float (mkCfg nus body)))
+        <-> out_redex m (c_body (float (mkCfg nus' body)))).
 Proof.
-  intros nus nus' body Hp. split; [| split].
+  intros nus nus' body Hp. split; [| split; [| split]].
   - apply cequiv_step_1. apply cs_perm_nus. exact Hp.
   - rewrite !float_body_of. tauto.
   - rewrite !float_body_of. tauto.
+  - intros m. rewrite !float_body_of. tauto.
 Qed.
 
 (* =====================================================================================
@@ -742,12 +809,32 @@ Qed.
 Example am2_subject_floats_flat : canonical (float am2_cfg).
 Proof. apply float_canonicalizes. Qed.
 
+(* The A-S5.4b Out-redex witness — the SINGLETON body of the enclosing ambient `m = 2`:
+   `m[{ new(x, n[{out(m).-}]) }]`.  The nu hides the moving ambient `n[...]` syntactically
+   (member 0 is nu-prefixed), the float hoists it, and the exposed redex has EMPTY rest —
+   exactly the redeclaration's empty-rest-legal singleton `m[{n[{out(m,p)}]}]`, which the
+   pre-A-S5.4b ejection-shaped rule could never fire. *)
+Definition out_singleton_cfg : Config :=
+  mkCfg [] [ ([7], OBase (KAmb 1 [([], ICap COut 2)])) ].  (* new(x=7, n=1[{out(m=2).-}]) *)
+
+Example out_singleton_subject_exposes_out_redex_after_float :
+  out_redex 2 (c_body (float out_singleton_cfg)).
+Proof.
+  unfold out_singleton_cfg. rewrite float_body_of. simpl.
+  exists 1, [([], ICap COut 2)], [].
+  split.
+  - apply Permutation_refl.
+  - left. reflexivity.
+Qed.
+
 (* Zero-admission confirmation. *)
 Print Assumptions freshening_totality.
 Print Assumptions float_preserves_bag_flatness.
 Print Assumptions float_canonicalizes.
 Print Assumptions float_nf_exposes_redexes_in.
 Print Assumptions float_nf_exposes_redexes_open.
+Print Assumptions float_nf_exposes_redexes_out.
 Print Assumptions newcomm_permutation_redex_invariance.
 Print Assumptions f1_subject_exposes_in_redex_after_float.
 Print Assumptions am2_subject_exposes_in_redex_after_float.
+Print Assumptions out_singleton_subject_exposes_out_redex_after_float.
