@@ -137,6 +137,16 @@ theories/DeBruijnSubstTRS.v
 # CommReductionCorrespondence (a genuine REDUCTION bisimulation, NOT the vacuous τ-erasure of
 # advanced_automata/InRhoSameCLTSWeakBisim): R o c := norm c = o, proved a weak bisimulation.
 theories/InRhoBetaCascadeWeakBisim.v
+# A-S5.2 — the in-Rho QUIESCENCE DRIVER (the generated `^drive` receiver family, Lambda core,
+# PS value carrier) as a big-step LTS over the reflected object fragment
+# (InRhoQuiescenceDriver): drive_steps_sound (each DDone drive is an iterated genuine object
+# beta reduction), quiescence_sound (PER-TRACE: every DDone rests a beta-NF — the structural
+# induction whose post-join RE-CHECK case carries the children-normal hypothesis),
+# fuel_exhaustion_never_wrong (the typed `^drive-fuel` datum is the stuck redex, never
+# mistakable for an NF), the ITERATED beta weak bisimulation drive_weak_bisim (aiter/citer
+# chains lifting InRhoBetaCascadeWeakBisim's single-fire clauses — cascade legs SN+CR-unique),
+# and the two-firing non-vacuity witness.
+theories/InRhoQuiescenceDriver.v
 # Stage 3e — the native-system-process dispatch (NativeProc(a..) ~> <native value>) is
 # TOTAL-OR-REJECT + the emitted payload is EXACTLY the trusted handler's value
 # (NativeSystemProcessBoundary): lower_native_system_process either materializes the flat one-slot

@@ -142,6 +142,18 @@ lambda-demo-runtime = [
     "mettail-languages/dovetail-codegen",
     "mettail-languages/rho-codegen",
 ]
+# A-S5.2: pulls in the PRODUCTION `Lambda` language for the end-to-end in-Rho QUIESCENCE-DRIVER
+# firing tests (`rho_net_lambda_firing`) — the generated `rho_net_drive_invocation_to` seed
+# driving REAL Lambda subjects (β chains, under-binder redexes, Ω fuel exhaustion) to normal
+# form fully on the reducer via the installed `^drive` receiver family. Needs the generated
+# drive invocation (`rho-codegen`) and `dovetail-codegen` for the backend plan surface.
+lambda-runtime = [
+    "runtime-report",
+    "dep:mettail-languages",
+    "mettail-languages/lambda",
+    "mettail-languages/dovetail-codegen",
+    "mettail-languages/rho-codegen",
+]
 # Stage 3e: pulls in the generated `NativeDemo` language for the end-to-end in-Rho
 # NATIVE-SYSTEM-PROCESS firing test (`rho_net_native_firing`) — a generated `fold` native process
 # `PowInt(a, b) ~> a^b` firing as a COMM on the reducer, emitting the value the host's TRUSTED
@@ -371,6 +383,16 @@ required-features = ["runtime-report"]
 name = "rho_net_beta_firing"
 path = "tests/rho_net_beta_firing.rs"
 required-features = ["lambda-demo-runtime"]
+
+# A-S5.2 (leg 3): the in-Rho quiescence-driver firing suite over the REAL production Lambda —
+# single β, the n∈2..=8 chain ladder (THE lifted NestedEntryMultiSite boundary), the
+# fun-position re-check spine, an under-binder redex, a normal form, Ω fuel exhaustion, the
+# corrupted-σ (corrupted-subject-payload) probe, and the AM-5 fired-multiset replay — all
+# cross-checked by the always-on drive cross-check.
+[[test]]
+name = "rho_net_lambda_firing"
+path = "tests/rho_net_lambda_firing.rs"
+required-features = ["lambda-runtime"]
 
 # The COMMITTED randomized PROPERTY floor for `DeBruijnSubstTRS.v`'s NF theorem
 # (`NF(subst(0, a, b)) = b[a/0]`): a proptest that cross-checks the live in-Rho

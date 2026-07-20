@@ -996,6 +996,226 @@ fn par_verbatim(par: &Par) -> Option<Par> {
     Some(par.clone())
 }
 
+/// A typed violation of the ALWAYS-ON drive cross-check (A-S5.2, plan v2 §4.7)
+/// — each variant names the observation channel it was found on.
+#[cfg(feature = "runtime-report")]
+#[derive(Debug, Clone, PartialEq)]
+pub enum DriveCrossCheckError {
+    /// The typed fail-close channel `^drive-err:{fp}` is non-empty: the driver
+    /// met an unrecognized head.
+    ErrChannel {
+        /// The err channel name.
+        channel: String,
+        /// The number of resting error data.
+        count: usize,
+    },
+    /// The fuel channel `^drive-fuel:{fp}` is non-empty: some firing path
+    /// exhausted its per-path bound. The report carries BOTH bounds (plan v2
+    /// §4.2 / F10, AM-5 wording): the per-path fuel the seed threaded and the
+    /// GLOBAL fired count the ledger recorded.
+    FuelChannel {
+        /// The fuel channel name.
+        channel: String,
+        /// The number of resting exhaustion data.
+        count: usize,
+        /// The per-path fuel bound the seed threaded.
+        per_path_fuel: i64,
+        /// The global fired count read from the ledger.
+        global_fired: usize,
+    },
+    /// OUT did not rest exactly one value (a quiescent drive publishes exactly
+    /// its resting term).
+    OutCount {
+        /// The OUT channel name.
+        channel: String,
+        /// The observed OUT value count.
+        count: usize,
+    },
+    /// The host NF-scan (the static mirror of the driver's redex arms) found a
+    /// redex in an OUT value — the driver claimed quiescence on a non-normal
+    /// term.
+    OutNotNormal {
+        /// The OUT channel name.
+        channel: String,
+        /// The offending decoded value.
+        value: RuntimeObservationValue,
+    },
+    /// A firing-ledger datum did not decode as a GString rule label.
+    LedgerDecode {
+        /// The ledger channel name.
+        channel: String,
+        /// The decode failure detail.
+        detail: String,
+    },
+    /// Ledger consistency violated: `fired ≥ 1 ⟺ the subject had a redex`.
+    Ledger {
+        /// The ledger channel name.
+        channel: String,
+        /// The global fired count.
+        fired_count: usize,
+        /// Whether the subject had a redex (the host-side scan of the SUBJECT).
+        subject_had_redex: bool,
+    },
+}
+
+#[cfg(feature = "runtime-report")]
+impl std::fmt::Display for DriveCrossCheckError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DriveCrossCheckError::ErrChannel { channel, count } => write!(
+                f,
+                "drive cross-check: the typed error channel {channel:?} holds {count} datum(s) \
+                 — the driver met an unrecognized head"
+            ),
+            DriveCrossCheckError::FuelChannel {
+                channel,
+                count,
+                per_path_fuel,
+                global_fired,
+            } => write!(
+                f,
+                "drive cross-check: fuel exhausted — channel {channel:?} holds {count} \
+                 exhaustion datum(s) after the per-path bound of {per_path_fuel} firing(s) \
+                 along some causal chain; the ledger records {global_fired} firing(s) globally"
+            ),
+            DriveCrossCheckError::OutCount { channel, count } => write!(
+                f,
+                "drive cross-check: OUT channel {channel:?} rests {count} value(s) — a \
+                 quiescent drive publishes exactly one resting term"
+            ),
+            DriveCrossCheckError::OutNotNormal { channel, value } => write!(
+                f,
+                "drive cross-check: OUT channel {channel:?} rests a NON-NORMAL term (the host \
+                 redex scan found a redex): {value:?}"
+            ),
+            DriveCrossCheckError::LedgerDecode { channel, detail } => write!(
+                f,
+                "drive cross-check: firing-ledger channel {channel:?} datum did not decode: \
+                 {detail}"
+            ),
+            DriveCrossCheckError::Ledger {
+                channel,
+                fired_count,
+                subject_had_redex,
+            } => write!(
+                f,
+                "drive cross-check: ledger channel {channel:?} consistency violated — \
+                 fired_count = {fired_count} but subject_had_redex = {subject_had_redex} \
+                 (fired ≥ 1 ⟺ the subject had a redex)"
+            ),
+        }
+    }
+}
+
+#[cfg(feature = "runtime-report")]
+impl std::error::Error for DriveCrossCheckError {}
+
+/// The ALWAYS-ON fired-vs-observed drive cross-check (A-S5.2, plan v2 §4.7),
+/// over one decoded [`DriveObservationSet`]:
+///
+/// 1. the typed `^drive-err` channel is EMPTY;
+/// 2. the `^drive-fuel` channel is EMPTY (violation reports BOTH the per-path
+///    bound and the ledger's global fired count — F10/AM-5 wording);
+/// 3. OUT rests exactly ONE value, and the host NF-scan — `redex_scan`, the
+///    static host mirror of the driver's redex arms over the decoded term (a
+///    predicate, no evaluation; for Lambda no flattening is needed) — finds NO
+///    redex in it;
+/// 4. ledger consistency: `fired ≥ 1 ⟺ subject_had_redex` (the caller scans
+///    the SUBJECT with the same mirror).
+///
+/// Consumed by the driver firing tests now and by the A-S5.6 exec path. Every
+/// violation is a typed [`DriveCrossCheckError`] naming the channel.
+#[cfg(feature = "runtime-report")]
+pub fn drive_cross_check(
+    set: &DriveObservationSet,
+    channels: &DriveObservationChannels,
+    subject_had_redex: bool,
+    per_path_fuel: i64,
+    redex_scan: &dyn Fn(&RuntimeObservationValue) -> bool,
+) -> Result<(), DriveCrossCheckError> {
+    if !set.err_data.is_empty() {
+        return Err(DriveCrossCheckError::ErrChannel {
+            channel: channels.err.clone(),
+            count: set.err_data.len(),
+        });
+    }
+    if !set.fuel_data.is_empty() {
+        let global_fired = set.fired_data.len();
+        return Err(DriveCrossCheckError::FuelChannel {
+            channel: channels.fuel.clone(),
+            count: set.fuel_data.len(),
+            per_path_fuel,
+            global_fired,
+        });
+    }
+    if set.out_values.len() != 1 {
+        return Err(DriveCrossCheckError::OutCount {
+            channel: channels.out.clone(),
+            count: set.out_values.len(),
+        });
+    }
+    for value in &set.out_values {
+        if redex_scan(value) {
+            return Err(DriveCrossCheckError::OutNotNormal {
+                channel: channels.out.clone(),
+                value: value.clone(),
+            });
+        }
+    }
+    let fired = set.fired_labels().map_err(|detail| DriveCrossCheckError::LedgerDecode {
+        channel: channels.fired.clone(),
+        detail,
+    })?;
+    if (!fired.is_empty()) != subject_had_redex {
+        return Err(DriveCrossCheckError::Ledger {
+            channel: channels.fired.clone(),
+            fired_count: fired.len(),
+            subject_had_redex,
+        });
+    }
+    Ok(())
+}
+
+/// The host mirror of a BINDER-APPLY β redex arm over a decoded observation
+/// value (A-S5.2, plan v2 §4.7): `true` iff a node
+/// `apply_label(^lambda(_), _)` is present anywhere in the term — the static
+/// NF-scan predicate for a Lambda-shaped language (`apply_label = "App"`), with
+/// the reflected-binder constructor name fixed by the reflection ABI
+/// (`^lambda`). Recurses through every structured observation shape; scalar
+/// leaves carry no redex.
+#[cfg(feature = "runtime-report")]
+pub fn binder_apply_redex_present(apply_label: &str, value: &RuntimeObservationValue) -> bool {
+    match value {
+        RuntimeObservationValue::Term { constructor, children } => {
+            if constructor == apply_label {
+                if let Some(RuntimeObservationValue::Term { constructor: head, .. }) =
+                    children.first()
+                {
+                    if head == "^lambda" {
+                        return true;
+                    }
+                }
+            }
+            children
+                .iter()
+                .any(|child| binder_apply_redex_present(apply_label, child))
+        },
+        RuntimeObservationValue::List(items)
+        | RuntimeObservationValue::Tuple(items)
+        | RuntimeObservationValue::Set(items) => items
+            .iter()
+            .any(|item| binder_apply_redex_present(apply_label, item)),
+        RuntimeObservationValue::Bag(entries) => entries
+            .iter()
+            .any(|(value, _)| binder_apply_redex_present(apply_label, value)),
+        RuntimeObservationValue::Map(entries) => entries.iter().any(|(key, value)| {
+            binder_apply_redex_present(apply_label, key)
+                || binder_apply_redex_present(apply_label, value)
+        }),
+        _ => false,
+    }
+}
+
 /// Build an in-memory `RhoRuntime`, inject an installed Rho-net program composed
 /// with a dynamic call (the `^drive` seed), run to quiescence, and read back the
 /// FULL drive observation set — decoded OUT values plus the raw resting data of
