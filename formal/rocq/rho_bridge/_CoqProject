@@ -202,6 +202,19 @@ theories/WholeGsltInRhoOpCorrespondenceOptimalViaSameClts.v
 # proof the In/Out arm is dischargeable, putting it on EQUAL FOOTING with FAcStructural (OpenRule). Yields
 # a concrete Closed In/Out finite-trace opcorr through the capstone (+ the O1-optimal parity corollary).
 theories/WholeGsltInRhoOpCorrespondenceInOutViaFiring.v
+# A-S5.7 — the ITERATED-DRIVING DISCHARGE WITNESS: the capstone's §5 upgraded FBinderBeta burst
+# premises are backed LITERALLY by the landed InRhoQuiescenceDriver theorems (plan v2 §7.4
+# "discharged by (1)"). Instantiates the §5 iterated harness with the beta common-carrier sum
+# DCbeta (DAbs Obj | DConc Tm, the InRhoBetaCascadeWeakBisim carriers): (a) the FBinderBeta BURST
+# arms discharged non-vacuously from forward_/backward_simulation via the §5.0 pointwise lift
+# (betadrive_iterated_opcorr); (b) the CHAIN face consumed from drive_weak_bisim proj1/proj2 —
+# harness bursts project to aiter/citer and back, the matching chain is DELIVERED by the driver
+# theorem (beta_burst_discharged_by_drive_weak_bisim + backward dual), non-vacuous via the
+# two-firing witness chain; (c) the A-S5.5 bag-model REST grounding consumed literally
+# (bag_quiescence_sound + driver_flatten_agrees_with_add_flattened_bag + bdrives_deterministic:
+# every bag drive rests FLAT and host-flatten-agreeing — PER-TRACE, decision (3), no unique-NF
+# claim for the non-confluent Ambient).
+theories/WholeGsltInRhoOpCorrespondenceIteratedViaDriver.v
 # A-S5.4a — the UNCONDITIONAL unbind-first binder float (binder_congruence.rs, gates dropped)
 # canonicalizes Ambient-shaped terms: freshening totality (the gensym supply never exhausts, so the
 # float never stalls — the F1 stall is an artifact of the retired gates); AM-2 bag flatness at the

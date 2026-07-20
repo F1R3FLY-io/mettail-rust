@@ -31,6 +31,13 @@
  * transitively depends on `AdvancedAutomata.InRhoAcMatchMultiset`) resolves via the
  * `-Q ../advanced_automata/theories AdvancedAutomata` edge already in rho_bridge/_CoqProject.
  *
+ * A-S5.7 (the trailing section below): the In/Out arm is RE-INSTANTIATED against the harness's
+ * §5 UPGRADED (iterated-driving) premise shapes — the FAcNested BURST arms discharged from the
+ * same landed inout_step_complete/sound via the §5.0 pointwise burst lift, the other families
+ * vacuous-or-empty, yielding the In/Out iterated finite-trace opcorr plus the decision-(3)
+ * PER-TRACE quiescence instance (any-valid-reduction; no unique-NF claim — Ambient is
+ * non-confluent, and only THE GIVEN schedule's resting endpoint is spoken of).
+ *
  * Rocq 9.1 compatible. No Admitted, no Axioms, no Assumptions, no Parameters.
  *)
 
@@ -214,3 +221,137 @@ Qed.
 Print Assumptions inoutdemo_nested_finite_trace_opcorr.
 Print Assumptions inoutdemo_nested_opcorr_over_optimal.
 Print Assumptions inoutdemo_nested_opcorr_over_optimal_concrete.
+
+(* ================================================================================
+   A-S5.7 — the In/Out arm RE-INSTANTIATED against the UPGRADED (iterated-driving)
+   premise shapes (harness §5, plan v2 §7.4): the FAcNested BURST arms are discharged
+   from the SAME landed AmbientInOutFiring.inout_step_complete/sound via the §5.0
+   pointwise burst lift; the other families' bursts are vacuous-or-empty under
+   nvio_family. Quiescence is PER-TRACE (user decision (3)): the instance below
+   speaks only of THE GIVEN drive schedule's resting endpoint — Ambient is
+   non-confluent and no unique-normal-form claim is made.
+   ================================================================================ *)
+
+Lemma nvio_fwd_ac_nested_burst : forall s t ls s',
+  Forall (fun l => nvio_family l = Some FAcNested) ls -> nvio_R s t ->
+  steps GCio nat nvio_step s ls s' ->
+  exists t', steps GCio nat nvio_step t ls t' /\ nvio_R s' t'.
+Proof.
+  exact (per_step_arm_lifts_to_burst_forward GCio nat nvio_step nvio_R
+           (fun l => nvio_family l = Some FAcNested) nvio_fwd_ac_nested).
+Qed.
+
+Lemma nvio_bwd_ac_nested_burst : forall s t ls t',
+  Forall (fun l => nvio_family l = Some FAcNested) ls -> nvio_R s t ->
+  steps GCio nat nvio_step t ls t' ->
+  exists s', steps GCio nat nvio_step s ls s' /\ nvio_R s' t'.
+Proof.
+  exact (per_step_arm_lifts_to_burst_backward GCio nat nvio_step nvio_R
+           (fun l => nvio_family l = Some FAcNested) nvio_bwd_ac_nested).
+Qed.
+
+(* A nonempty family-homogeneous burst of any family other than FAcNested is
+   uninhabited under nvio_family; the empty burst is matched reflexively. *)
+Lemma nvio_vacuous_burst_fwd : forall F, F <> FAcNested -> forall s t ls s',
+  Forall (fun l => nvio_family l = Some F) ls -> nvio_R s t ->
+  steps GCio nat nvio_step s ls s' ->
+  exists t', steps GCio nat nvio_step t ls t' /\ nvio_R s' t'.
+Proof.
+  intros F Hne s t ls s' Hfam HR Hs.
+  destruct ls as [| l ls0].
+  - apply steps_nil_inv in Hs. subst s'.
+    exists t. split; [constructor | exact HR].
+  - exfalso.
+    inversion Hfam as [| x xs Hhead Htail]; subst.
+    cbn in Hhead. injection Hhead as Heq. subst F.
+    apply Hne. reflexivity.
+Qed.
+
+Lemma nvio_vacuous_burst_bwd : forall F, F <> FAcNested -> forall s t ls t',
+  Forall (fun l => nvio_family l = Some F) ls -> nvio_R s t ->
+  steps GCio nat nvio_step t ls t' ->
+  exists s', steps GCio nat nvio_step s ls s' /\ nvio_R s' t'.
+Proof.
+  intros F Hne s t ls t' Hfam HR Ht.
+  destruct ls as [| l ls0].
+  - apply steps_nil_inv in Ht. subst t'.
+    exists s. split; [constructor | exact HR].
+  - exfalso.
+    inversion Hfam as [| x xs Hhead Htail]; subst.
+    cbn in Hhead. injection Hhead as Heq. subst F.
+    apply Hne. reflexivity.
+Qed.
+
+(* The In/Out iterated finite-trace opcorr THROUGH THE §5 ITERATED HARNESS: every
+   burst premise discharged, the FAcNested pair SATISFIED (not vacuous). *)
+Theorem inoutdemo_nested_iterated_opcorr : forall (s : InOutSrcState) ls,
+  (forall a', steps GCio nat nvio_step (GSrcIO s) ls a' ->
+      exists b', steps GCio nat nvio_step (GRhoIO (lower_inout s)) ls b'
+                 /\ nvio_barb a' = nvio_barb b') /\
+  (forall b', steps GCio nat nvio_step (GRhoIO (lower_inout s)) ls b' ->
+      exists a', steps GCio nat nvio_step (GSrcIO s) ls a'
+                 /\ nvio_barb a' = nvio_barb b').
+Proof.
+  intros s ls.
+  apply (whole_gslt_in_rho_opcorrespondence_iterated GCio nat (list nat)
+           nvio_step nvio_barb nvio_R nvio_family).
+  - exact nvio_Rgio_barb.
+  - apply nvio_vacuous_burst_fwd; discriminate.
+  - apply nvio_vacuous_burst_bwd; discriminate.
+  - apply nvio_vacuous_burst_fwd; discriminate.
+  - apply nvio_vacuous_burst_bwd; discriminate.
+  - apply nvio_vacuous_burst_fwd; discriminate.
+  - apply nvio_vacuous_burst_bwd; discriminate.
+  - apply nvio_vacuous_burst_fwd; discriminate.
+  - apply nvio_vacuous_burst_bwd; discriminate.
+  - apply nvio_vacuous_burst_fwd; discriminate.
+  - apply nvio_vacuous_burst_bwd; discriminate.
+  - apply nvio_vacuous_burst_fwd; discriminate.
+  - apply nvio_vacuous_burst_bwd; discriminate.
+  - exact nvio_fwd_ac_nested_burst.
+  - exact nvio_bwd_ac_nested_burst.
+  - intros l; cbn; discriminate.
+  - cbn. reflexivity.
+Qed.
+
+(* The In/Out PER-TRACE quiescence instance (decision (3)): a resting source drive
+   schedule is mirrored by a resting in-Rho drive schedule — equal barbs, related
+   endpoints, THIS schedule only (membership form, no unique-NF claim). *)
+Theorem inoutdemo_nested_per_trace_quiescence : forall (s : InOutSrcState) sched s',
+  drive_schedule GCio nat nvio_step nvio_family (GSrcIO s) sched s' ->
+  gquiescent GCio nat nvio_step s' ->
+  exists t', drive_schedule GCio nat nvio_step nvio_family
+               (GRhoIO (lower_inout s)) sched t'
+             /\ nvio_R s' t' /\ nvio_barb s' = nvio_barb t'
+             /\ gquiescent GCio nat nvio_step t'.
+Proof.
+  intros s sched s' Hsched Hq.
+  refine (whole_gslt_per_trace_quiescence_forward GCio nat (list nat)
+            nvio_step nvio_barb nvio_R nvio_family
+            nvio_Rgio_barb
+            _ _ _ _ _ _ _ _ _ _ _ _
+            nvio_fwd_ac_nested_burst nvio_bwd_ac_nested_burst
+            _
+            (GSrcIO s) (GRhoIO (lower_inout s)) sched s'
+            _ Hsched Hq).
+  - apply nvio_vacuous_burst_fwd; discriminate.
+  - apply nvio_vacuous_burst_bwd; discriminate.
+  - apply nvio_vacuous_burst_fwd; discriminate.
+  - apply nvio_vacuous_burst_bwd; discriminate.
+  - apply nvio_vacuous_burst_fwd; discriminate.
+  - apply nvio_vacuous_burst_bwd; discriminate.
+  - apply nvio_vacuous_burst_fwd; discriminate.
+  - apply nvio_vacuous_burst_bwd; discriminate.
+  - apply nvio_vacuous_burst_fwd; discriminate.
+  - apply nvio_vacuous_burst_bwd; discriminate.
+  - apply nvio_vacuous_burst_fwd; discriminate.
+  - apply nvio_vacuous_burst_bwd; discriminate.
+  - intros l; cbn; discriminate.
+  - cbn. reflexivity.
+Qed.
+
+(* Zero-admission confirmation (A-S5.7 iterated re-instantiation). *)
+Print Assumptions nvio_fwd_ac_nested_burst.
+Print Assumptions nvio_bwd_ac_nested_burst.
+Print Assumptions inoutdemo_nested_iterated_opcorr.
+Print Assumptions inoutdemo_nested_per_trace_quiescence.

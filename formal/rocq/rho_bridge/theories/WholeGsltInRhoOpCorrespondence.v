@@ -104,6 +104,30 @@
  * source-tagged config to its lowered image. This matches the arm theorem types
  * (comm_step_complete/sound over SourceState/RhoState) exactly.
  *
+ * ---------------------------------------------------------------------------------
+ * A-S5.7 (§5 below): THE ITERATED-DRIVING UPGRADE (plan v2 §7.4)
+ * ---------------------------------------------------------------------------------
+ *
+ * Since the A-S5.6 production flip, one `exec` of a drive-admitted language is one
+ * generated `rho_net_drive_invocation_to` seed — the in-Rho quiescence driver firing
+ * an ITERATED CHAIN of family COMMs to rest (InRhoQuiescenceDriver.v), not one COMM
+ * per invocation. §5 RE-STATES the per-family premises at exactly that granularity:
+ * per-family fwd/bwd premises over DRIVE-MEDIATED MULTI-STEP TRACES (family-
+ * homogeneous `steps` bursts), assembled into the capstone over whole DRIVE
+ * SCHEDULES plus the decision-(3) PER-TRACE quiescence transfer. The upgraded
+ * premises are EQUIVALENT in strength to the §4.1 single-step set (each direction is
+ * proven: `iterated_premises_recover_step_*` recovers the single-step obligations
+ * from singleton bursts, and `per_step_arm_lifts_to_burst_*` lifts any single-step
+ * discharge to the burst shape — the same pointwise lift
+ * InRhoQuiescenceDriver.drive_weak_bisim performs for beta), so §5 is a CONSERVATIVE
+ * EXTENSION: every §4 theorem and Print Assumptions gate below stays in force,
+ * byte-identical. The SwapDemo witness is re-instantiated against the upgraded
+ * shapes in §5.4; the In/Out and beta-via-driver re-instantiations live in the
+ * companions WholeGsltInRhoOpCorrespondenceInOutViaFiring.v and
+ * WholeGsltInRhoOpCorrespondenceIteratedViaDriver.v (the latter consumes
+ * InRhoQuiescenceDriver.drive_weak_bisim and the A-S5.5 bag-model theorems
+ * literally).
+ *
  * Rocq 9.1 compatible. No Admitted, no Axioms, no Assumptions, no Parameters (the
  * per-family arms and the (iii) transfer are Section Hypotheses — universally
  * quantified premises on Section close, NOT Axioms).
@@ -645,3 +669,595 @@ Print Assumptions swapdemo_base_finite_trace_opcorr.
 Print Assumptions whole_gslt_opcorr_over_optimal_matching.
 Print Assumptions swapdemo_base_opcorr_over_optimal.
 Print Assumptions swapdemo_base_opcorr_over_optimal_concrete.
+
+(* ================================================================================
+   5.  A-S5.7 — THE ITERATED-DRIVING UPGRADE (plan v2 §7.4).
+
+   Everything above is the landed single-step harness, byte-identical. This section
+   re-states the per-family premises at the PRODUCTION granularity of the A-S5.6
+   flip: one exec = one in-Rho quiescence-driver invocation = an ITERATED chain of
+   family COMMs (InRhoQuiescenceDriver.v), so the premises range over DRIVE-MEDIATED
+   MULTI-STEP TRACES — a family-homogeneous `steps` burst (the visible label chain
+   of one driver-invocation segment; the EMPTY burst is the already-quiescent drive,
+   the aiter_refl/citer_refl case).
+
+   DISCHARGE MAP (what stands behind each upgraded premise at a concrete
+   instantiation — plan v2 §7.4 "discharged by (1)"):
+   - FBinderBeta   <- InRhoQuiescenceDriver.drive_weak_bisim, THE iterated beta weak
+     bisimulation: its two clauses are exactly this premise pair in chain form at
+     the `represents` instantiation; the label-preserving burst form is its per-link
+     refinement, obtained from InRhoBetaCascadeWeakBisim.forward_/backward_simulation
+     by `per_step_arm_lifts_to_burst_*` — the SAME pointwise lift drive_weak_bisim
+     itself performs over aiter/citer. Consumed LITERALLY (proj1/proj2) in the
+     companion WholeGsltInRhoOpCorrespondenceIteratedViaDriver.v.
+   - FBase / FContextualJoin / FAcLinear / FAcStructural / FNative / FAcNested
+     <- their §4.1-cited landed per-step theorems, lifted by
+     `per_step_arm_lifts_to_burst_*`; the SwapDemo base arms are re-instantiated
+     against the upgraded shapes in §5.4 below, the In/Out arms in the companion
+     WholeGsltInRhoOpCorrespondenceInOutViaFiring.v.
+   - The AC families' REST condition (the shape of a burst's quiescent endpoint) is
+     grounded driver-side by the A-S5.5 bag model: InRhoQuiescenceDriver.
+     bag_quiescence_sound (EVERY bag drive rests FLAT — no nested bag hides a
+     sibling redex from the NF scan) + driver_flatten_agrees_with_add_flattened_bag
+     (the driver's reassembly splice = the host's add_flattened_bag), and
+     Lambda-side by InRhoQuiescenceDriver.quiescence_sound (every DDone drive rests
+     beta-NF). Quiescence here is PER-TRACE (user decision (3)): the §5.3 theorems
+     speak only of THE GIVEN schedule's resting endpoint — no unique-normal-form
+     claim is made for the non-confluent families (Ambient).
+
+   CONSERVATIVE EXTENSION: the burst premises are EQUIVALENT to the §4.1 single-step
+   premises — `iterated_premises_recover_step_forward/_backward` recover the §4.1
+   obligations from singleton bursts (so every §4 conclusion is re-derivable from
+   the §5 premise set), and `per_step_arm_lifts_to_burst_*` derive the §5 premises
+   from any §4.1-style discharge. No landed statement is weakened; the §4 Print
+   Assumptions gates above stay in force.
+   ================================================================================ *)
+
+(* ────────────────────────────────────────────────────────────────────────────────
+   5.0  Generic trace toolkit: nil/singleton inversions for the closed `steps`
+   family, and the pointwise burst lift (the label-preserving form of the
+   drive_weak_bisim chain lift).
+   ──────────────────────────────────────────────────────────────────────────────── *)
+
+Lemma steps_nil_inv : forall (State Label : Type)
+    (step : State -> Label -> State -> Prop) (s s' : State),
+  steps State Label step s [] s' -> s' = s.
+Proof.
+  intros State Label step s s' H.
+  remember [] as ls eqn:Hls.
+  destruct H as [s0 | s0 l0 s1 ls0 s2 Hstep Htail].
+  - reflexivity.
+  - discriminate Hls.
+Qed.
+
+Lemma steps_singleton_intro : forall (State Label : Type)
+    (step : State -> Label -> State -> Prop) (s : State) (l : Label) (s' : State),
+  step s l s' -> steps State Label step s [l] s'.
+Proof.
+  intros State Label step s l s' H.
+  eapply steps_cons; [exact H | constructor].
+Qed.
+
+Lemma steps_singleton_inv : forall (State Label : Type)
+    (step : State -> Label -> State -> Prop) (s : State) (l : Label) (s' : State),
+  steps State Label step s [l] s' -> step s l s'.
+Proof.
+  intros State Label step s l s' H.
+  remember [l] as ls eqn:Hls.
+  destruct H as [s0 | s0 l0 s1 ls0 s2 Hstep Htail].
+  - discriminate Hls.
+  - injection Hls as Hl0 Hls0. subst l0 ls0.
+    apply steps_nil_inv in Htail. subst s2. exact Hstep.
+Qed.
+
+(* The pointwise burst lift, FORWARD: a per-step arm (the §4.1 discharge shape,
+   guarded by the label predicate P — concretely `fun l => family_of l = Some F`)
+   lifts to the whole family-homogeneous burst. This is the label-preserving form
+   of the lift InRhoQuiescenceDriver.drive_weak_bisim performs over aiter/citer
+   chains (its proof is the same induction, pointwise over the chain). *)
+Lemma per_step_arm_lifts_to_burst_forward :
+  forall (GConfig CommLabel : Type)
+         (gstep : GConfig -> CommLabel -> GConfig -> Prop)
+         (Rgio : GConfig -> GConfig -> Prop)
+         (P : CommLabel -> Prop),
+    (forall s t l s', P l -> Rgio s t -> gstep s l s' ->
+        exists t', gstep t l t' /\ Rgio s' t') ->
+    forall s t ls s', Forall P ls -> Rgio s t ->
+      steps GConfig CommLabel gstep s ls s' ->
+      exists t', steps GConfig CommLabel gstep t ls t' /\ Rgio s' t'.
+Proof.
+  intros GConfig CommLabel gstep Rgio P Harm s t ls s' Hfam HR Hsteps.
+  revert t HR Hfam.
+  induction Hsteps as [s0 | s0 l s1 ls0 s2 Hstep Hsteps IH]; intros t HR Hfam.
+  - exists t. split; [constructor | exact HR].
+  - inversion Hfam as [| x xs HPl Hfam0]; subst.
+    destruct (Harm s0 t l s1 HPl HR Hstep) as [t1 [Ht1 HR1]].
+    destruct (IH t1 HR1 Hfam0) as [t' [Ht' HR']].
+    exists t'. split; [econstructor; [exact Ht1 | exact Ht'] | exact HR'].
+Qed.
+
+(* The pointwise burst lift, BACKWARD (the dual: the burst runs on the in-Rho
+   side). *)
+Lemma per_step_arm_lifts_to_burst_backward :
+  forall (GConfig CommLabel : Type)
+         (gstep : GConfig -> CommLabel -> GConfig -> Prop)
+         (Rgio : GConfig -> GConfig -> Prop)
+         (P : CommLabel -> Prop),
+    (forall s t l t', P l -> Rgio s t -> gstep t l t' ->
+        exists s', gstep s l s' /\ Rgio s' t') ->
+    forall s t ls t', Forall P ls -> Rgio s t ->
+      steps GConfig CommLabel gstep t ls t' ->
+      exists s', steps GConfig CommLabel gstep s ls s' /\ Rgio s' t'.
+Proof.
+  intros GConfig CommLabel gstep Rgio P Harm s t ls t' Hfam HR Hsteps.
+  revert s HR Hfam.
+  induction Hsteps as [t0 | t0 l t1 ls0 t2 Hstep Hsteps IH]; intros s HR Hfam.
+  - exists s. split; [constructor | exact HR].
+  - inversion Hfam as [| x xs HPl Hfam0]; subst.
+    destruct (Harm s t0 l t1 HPl HR Hstep) as [s1 [Hs1 HR1]].
+    destruct (IH s1 HR1 Hfam0) as [s' [Hs' HR']].
+    exists s'. split; [econstructor; [exact Hs1 | exact Hs'] | exact HR'].
+Qed.
+
+(* ────────────────────────────────────────────────────────────────────────────────
+   5.1  The iterated harness: per-family premises over drive-mediated multi-step
+   traces, the assembled capstone, drive schedules, and per-trace quiescence.
+   ──────────────────────────────────────────────────────────────────────────────── *)
+
+Section WholeGsltInRhoIteratedDriving.
+
+  (* The same whole-⟦G⟧ carrier surface as §4.0. *)
+  Variable GConfig : Type.
+  Variable CommLabel : Type.
+  Variable Barb : Type.
+  Variable gstep : GConfig -> CommLabel -> GConfig -> Prop.
+  Variable gbarb : GConfig -> Barb.
+  Variable Rgio : GConfig -> GConfig -> Prop.
+  Variable family_of : CommLabel -> option Family.
+
+  (* A family-homogeneous label list: the visible chain of ONE driver-invocation
+     segment for family F. The empty list is the already-quiescent drive. *)
+  Definition family_labels (F : Family) (ls : list CommLabel) : Prop :=
+    Forall (fun l => family_of l = Some F) ls.
+
+  (* One drive BURST of family F: a drive-mediated multi-step trace. *)
+  Definition drive_burst (F : Family) (s : GConfig) (ls : list CommLabel)
+      (s' : GConfig) : Prop :=
+    family_labels F ls /\ steps GConfig CommLabel gstep s ls s'.
+
+  (* Rgio preserves barbs (as §4.1). *)
+  Hypothesis Rgio_barb : forall s t, Rgio s t -> gbarb s = gbarb t.
+
+  (* ── The UPGRADED per-family premises (plan v2 §7.4): fwd/bwd over bursts. ──
+     Discharge citations per family are in the §5 banner above; each is obtained
+     from its §4.1-cited landed per-step theorem via `per_step_arm_lifts_to_burst_*`
+     (done literally for FBase in §5.4 and for FAcNested / FBinderBeta in the
+     companions), and for FBinderBeta the chain form IS
+     InRhoQuiescenceDriver.drive_weak_bisim. *)
+
+  Hypothesis drive_fwd_base : forall s t ls s',
+    family_labels FBase ls -> Rgio s t ->
+    steps GConfig CommLabel gstep s ls s' ->
+    exists t', steps GConfig CommLabel gstep t ls t' /\ Rgio s' t'.
+  Hypothesis drive_bwd_base : forall s t ls t',
+    family_labels FBase ls -> Rgio s t ->
+    steps GConfig CommLabel gstep t ls t' ->
+    exists s', steps GConfig CommLabel gstep s ls s' /\ Rgio s' t'.
+
+  Hypothesis drive_fwd_join : forall s t ls s',
+    family_labels FContextualJoin ls -> Rgio s t ->
+    steps GConfig CommLabel gstep s ls s' ->
+    exists t', steps GConfig CommLabel gstep t ls t' /\ Rgio s' t'.
+  Hypothesis drive_bwd_join : forall s t ls t',
+    family_labels FContextualJoin ls -> Rgio s t ->
+    steps GConfig CommLabel gstep t ls t' ->
+    exists s', steps GConfig CommLabel gstep s ls s' /\ Rgio s' t'.
+
+  Hypothesis drive_fwd_ac_linear : forall s t ls s',
+    family_labels FAcLinear ls -> Rgio s t ->
+    steps GConfig CommLabel gstep s ls s' ->
+    exists t', steps GConfig CommLabel gstep t ls t' /\ Rgio s' t'.
+  Hypothesis drive_bwd_ac_linear : forall s t ls t',
+    family_labels FAcLinear ls -> Rgio s t ->
+    steps GConfig CommLabel gstep t ls t' ->
+    exists s', steps GConfig CommLabel gstep s ls s' /\ Rgio s' t'.
+
+  Hypothesis drive_fwd_ac_structural : forall s t ls s',
+    family_labels FAcStructural ls -> Rgio s t ->
+    steps GConfig CommLabel gstep s ls s' ->
+    exists t', steps GConfig CommLabel gstep t ls t' /\ Rgio s' t'.
+  Hypothesis drive_bwd_ac_structural : forall s t ls t',
+    family_labels FAcStructural ls -> Rgio s t ->
+    steps GConfig CommLabel gstep t ls t' ->
+    exists s', steps GConfig CommLabel gstep s ls s' /\ Rgio s' t'.
+
+  Hypothesis drive_fwd_binder_beta : forall s t ls s',
+    family_labels FBinderBeta ls -> Rgio s t ->
+    steps GConfig CommLabel gstep s ls s' ->
+    exists t', steps GConfig CommLabel gstep t ls t' /\ Rgio s' t'.
+  Hypothesis drive_bwd_binder_beta : forall s t ls t',
+    family_labels FBinderBeta ls -> Rgio s t ->
+    steps GConfig CommLabel gstep t ls t' ->
+    exists s', steps GConfig CommLabel gstep s ls s' /\ Rgio s' t'.
+
+  Hypothesis drive_fwd_native : forall s t ls s',
+    family_labels FNative ls -> Rgio s t ->
+    steps GConfig CommLabel gstep s ls s' ->
+    exists t', steps GConfig CommLabel gstep t ls t' /\ Rgio s' t'.
+  Hypothesis drive_bwd_native : forall s t ls t',
+    family_labels FNative ls -> Rgio s t ->
+    steps GConfig CommLabel gstep t ls t' ->
+    exists s', steps GConfig CommLabel gstep s ls s' /\ Rgio s' t'.
+
+  Hypothesis drive_fwd_ac_nested : forall s t ls s',
+    family_labels FAcNested ls -> Rgio s t ->
+    steps GConfig CommLabel gstep s ls s' ->
+    exists t', steps GConfig CommLabel gstep t ls t' /\ Rgio s' t'.
+  Hypothesis drive_bwd_ac_nested : forall s t ls t',
+    family_labels FAcNested ls -> Rgio s t ->
+    steps GConfig CommLabel gstep t ls t' ->
+    exists s', steps GConfig CommLabel gstep s ls s' /\ Rgio s' t'.
+
+  (* (ix) install-gate scoping, as §4.1. *)
+  Hypothesis g_install_gate_admits : forall l, family_of l <> None.
+
+  (* Family dispatch: pick the burst premise for a family. *)
+  Lemma drive_fwd_family : forall F s t ls s',
+    family_labels F ls -> Rgio s t ->
+    steps GConfig CommLabel gstep s ls s' ->
+    exists t', steps GConfig CommLabel gstep t ls t' /\ Rgio s' t'.
+  Proof.
+    intros F. destruct F.
+    - exact drive_fwd_base.
+    - exact drive_fwd_join.
+    - exact drive_fwd_ac_linear.
+    - exact drive_fwd_ac_structural.
+    - exact drive_fwd_binder_beta.
+    - exact drive_fwd_native.
+    - exact drive_fwd_ac_nested.
+  Qed.
+
+  Lemma drive_bwd_family : forall F s t ls t',
+    family_labels F ls -> Rgio s t ->
+    steps GConfig CommLabel gstep t ls t' ->
+    exists s', steps GConfig CommLabel gstep s ls s' /\ Rgio s' t'.
+  Proof.
+    intros F. destruct F.
+    - exact drive_bwd_base.
+    - exact drive_bwd_join.
+    - exact drive_bwd_ac_linear.
+    - exact drive_bwd_ac_structural.
+    - exact drive_bwd_binder_beta.
+    - exact drive_bwd_native.
+    - exact drive_bwd_ac_nested.
+  Qed.
+
+  (* ── 5.1a  Conservativity: the upgraded premises RECOVER the §4.1 single-step
+     obligations (a singleton burst is one step; the gate closes `None`). ── *)
+
+  Lemma iterated_premises_recover_step_forward : forall s t l s',
+    Rgio s t -> gstep s l s' ->
+    exists t', gstep t l t' /\ Rgio s' t'.
+  Proof.
+    intros s t l s' HR Hstep.
+    destruct (family_of l) as [f | ] eqn:E.
+    - assert (Hfam : family_labels f [l])
+        by (constructor; [exact E | constructor]).
+      destruct (drive_fwd_family f s t [l] s' Hfam HR
+                  (steps_singleton_intro GConfig CommLabel gstep s l s' Hstep))
+        as [t' [Ht' HR']].
+      exists t'. split;
+        [exact (steps_singleton_inv GConfig CommLabel gstep t l t' Ht') | exact HR'].
+    - destruct (g_install_gate_admits l E).
+  Qed.
+
+  Lemma iterated_premises_recover_step_backward : forall s t l t',
+    Rgio s t -> gstep t l t' ->
+    exists s', gstep s l s' /\ Rgio s' t'.
+  Proof.
+    intros s t l t' HR Hstep.
+    destruct (family_of l) as [f | ] eqn:E.
+    - assert (Hfam : family_labels f [l])
+        by (constructor; [exact E | constructor]).
+      destruct (drive_bwd_family f s t [l] t' Hfam HR
+                  (steps_singleton_intro GConfig CommLabel gstep t l t' Hstep))
+        as [s' [Hs' HR']].
+      exists s'. split;
+        [exact (steps_singleton_inv GConfig CommLabel gstep s l s' Hs') | exact HR'].
+    - destruct (g_install_gate_admits l E).
+  Qed.
+
+  (* ── 5.1b  The finite-trace capstone from the UPGRADED premise set: same
+     conclusion as §4.7, premised on bursts (via the recovered obligations fed to
+     the landed lift). ── *)
+  Theorem whole_gslt_in_rho_opcorrespondence_iterated : forall s t ls, Rgio s t ->
+    (forall s', steps GConfig CommLabel gstep s ls s' ->
+        exists t', steps GConfig CommLabel gstep t ls t' /\ gbarb s' = gbarb t') /\
+    (forall t', steps GConfig CommLabel gstep t ls t' ->
+        exists s', steps GConfig CommLabel gstep s ls s' /\ gbarb s' = gbarb t').
+  Proof.
+    exact (finite_trace_barb_equivalence GConfig CommLabel Barb gstep gbarb Rgio
+             Rgio_barb
+             iterated_premises_recover_step_forward
+             iterated_premises_recover_step_backward).
+  Qed.
+
+  (* ── 5.2  ONE driver invocation corresponds: burst-level correspondence, both
+     directions (at the FBinderBeta instantiation this is the labelled refinement
+     of drive_weak_bisim's clauses). ── *)
+
+  Theorem drive_burst_forward_correspondence : forall F s t ls s',
+    Rgio s t -> drive_burst F s ls s' ->
+    exists t', drive_burst F t ls t' /\ Rgio s' t' /\ gbarb s' = gbarb t'.
+  Proof.
+    intros F s t ls s' HR [Hfam Hs].
+    destruct (drive_fwd_family F s t ls s' Hfam HR Hs) as [t' [Ht' HR']].
+    exists t'. split; [split; [exact Hfam | exact Ht'] |].
+    split; [exact HR' | apply Rgio_barb; exact HR'].
+  Qed.
+
+  Theorem drive_burst_backward_correspondence : forall F s t ls t',
+    Rgio s t -> drive_burst F t ls t' ->
+    exists s', drive_burst F s ls s' /\ Rgio s' t' /\ gbarb s' = gbarb t'.
+  Proof.
+    intros F s t ls t' HR [Hfam Ht].
+    destruct (drive_bwd_family F s t ls t' Hfam HR Ht) as [s' [Hs' HR']].
+    exists s'. split; [split; [exact Hfam | exact Hs'] |].
+    split; [exact HR' | apply Rgio_barb; exact HR'].
+  Qed.
+
+  (* A DRIVE SCHEDULE: the whole execution as the flipped runtime performs it — a
+     sequence of family-tagged bursts (each one driver-invocation segment). *)
+  Inductive drive_schedule : GConfig -> list (Family * list CommLabel) -> GConfig -> Prop :=
+    | dsched_nil : forall s, drive_schedule s [] s
+    | dsched_cons : forall s F ls s' rest s'',
+        drive_burst F s ls s' ->
+        drive_schedule s' rest s'' ->
+        drive_schedule s ((F, ls) :: rest) s''.
+
+  Theorem drive_schedule_forward_correspondence : forall s t sched s',
+    Rgio s t -> drive_schedule s sched s' ->
+    exists t', drive_schedule t sched t' /\ Rgio s' t' /\ gbarb s' = gbarb t'.
+  Proof.
+    intros s t sched s' HR Hsched. revert t HR.
+    induction Hsched as [s0 | s0 F ls s1 rest s2 Hburst Hsched IH]; intros t HR.
+    - exists t. split; [constructor | split; [exact HR | apply Rgio_barb; exact HR]].
+    - destruct Hburst as [Hfam Hs].
+      destruct (drive_fwd_family F s0 t ls s1 Hfam HR Hs) as [t1 [Ht1 HR1]].
+      destruct (IH t1 HR1) as [t' [Ht' [HR' Hb']]].
+      exists t'. split.
+      + econstructor; [split; [exact Hfam | exact Ht1] | exact Ht'].
+      + split; [exact HR' | exact Hb'].
+  Qed.
+
+  Theorem drive_schedule_backward_correspondence : forall s t sched t',
+    Rgio s t -> drive_schedule t sched t' ->
+    exists s', drive_schedule s sched s' /\ Rgio s' t' /\ gbarb s' = gbarb t'.
+  Proof.
+    intros s t sched t' HR Hsched. revert s HR.
+    induction Hsched as [t0 | t0 F ls t1 rest t2 Hburst Hsched IH]; intros s HR.
+    - exists s. split; [constructor | split; [exact HR | apply Rgio_barb; exact HR]].
+    - destruct Hburst as [Hfam Ht].
+      destruct (drive_bwd_family F s t0 ls t1 Hfam HR Ht) as [s1 [Hs1 HR1]].
+      destruct (IH s1 HR1) as [s' [Hs' [HR' Hb']]].
+      exists s'. split.
+      + econstructor; [split; [exact Hfam | exact Hs1] | exact Hs'].
+      + split; [exact HR' | exact Hb'].
+  Qed.
+
+  (* THE ITERATED CAPSTONE over drive schedules — burst-for-burst, label-for-label,
+     both directions, barb-equal at rest. *)
+  Theorem whole_gslt_opcorr_over_drive_schedules : forall s t sched, Rgio s t ->
+    (forall s', drive_schedule s sched s' ->
+        exists t', drive_schedule t sched t' /\ gbarb s' = gbarb t') /\
+    (forall t', drive_schedule t sched t' ->
+        exists s', drive_schedule s sched s' /\ gbarb s' = gbarb t').
+  Proof.
+    intros s t sched HR. split.
+    - intros s' Hs.
+      destruct (drive_schedule_forward_correspondence s t sched s' HR Hs)
+        as [t' [Ht' [_ Hb]]].
+      exists t'. split; [exact Ht' | exact Hb].
+    - intros t' Ht.
+      destruct (drive_schedule_backward_correspondence s t sched t' HR Ht)
+        as [s' [Hs' [_ Hb]]].
+      exists s'. split; [exact Hs' | exact Hb].
+  Qed.
+
+  (* ── 5.3  PER-TRACE QUIESCENCE (user decision (3)). ── *)
+
+  (* Harness-level quiescence: no visible COMM fires — the driver's REST condition
+     (the OUT datum lands). Grounded model-side by InRhoQuiescenceDriver.
+     quiescence_sound (Lambda: every DDone drive rests beta-NF) and
+     bag_quiescence_sound (Ambient: every bag drive rests FLAT). *)
+  Definition gquiescent (s : GConfig) : Prop := forall l s', ~ gstep s l s'.
+
+  (* Related states are EQUI-QUIESCENT: the correspondence can neither invent nor
+     lose a redex (from the recovered single-step obligations, both directions). *)
+  Theorem related_states_equi_quiescent : forall s t,
+    Rgio s t -> (gquiescent s <-> gquiescent t).
+  Proof.
+    intros s t HR. split.
+    - intros Hq l t' Hstep.
+      destruct (iterated_premises_recover_step_backward s t l t' HR Hstep)
+        as [s' [Hs' _]].
+      exact (Hq l s' Hs').
+    - intros Hq l s' Hstep.
+      destruct (iterated_premises_recover_step_forward s t l s' HR Hstep)
+        as [t' [Ht' _]].
+      exact (Hq l t' Ht').
+  Qed.
+
+  (* PER-TRACE quiescence, forward: if THIS schedule rests (its endpoint is
+     quiescent), its mirrored schedule rests too, related and barb-equal. No claim
+     relates DIFFERENT schedules' resting states — sound for the non-confluent
+     families (decision (3): any-valid-reduction, membership-form). *)
+  Theorem whole_gslt_per_trace_quiescence_forward : forall s t sched s',
+    Rgio s t -> drive_schedule s sched s' -> gquiescent s' ->
+    exists t', drive_schedule t sched t' /\ Rgio s' t'
+               /\ gbarb s' = gbarb t' /\ gquiescent t'.
+  Proof.
+    intros s t sched s' HR Hsched Hq.
+    destruct (drive_schedule_forward_correspondence s t sched s' HR Hsched)
+      as [t' [Ht' [HR' Hb]]].
+    exists t'. split; [exact Ht' | split; [exact HR' | split; [exact Hb |]]].
+    exact (proj1 (related_states_equi_quiescent s' t' HR') Hq).
+  Qed.
+
+  (* PER-TRACE quiescence, backward: an in-Rho schedule that rests is mirrored by
+     a source schedule that rests. *)
+  Theorem whole_gslt_per_trace_quiescence_backward : forall s t sched t',
+    Rgio s t -> drive_schedule t sched t' -> gquiescent t' ->
+    exists s', drive_schedule s sched s' /\ Rgio s' t'
+               /\ gbarb s' = gbarb t' /\ gquiescent s'.
+  Proof.
+    intros s t sched t' HR Hsched Hq.
+    destruct (drive_schedule_backward_correspondence s t sched t' HR Hsched)
+      as [s' [Hs' [HR' Hb]]].
+    exists s'. split; [exact Hs' | split; [exact HR' | split; [exact Hb |]]].
+    exact (proj2 (related_states_equi_quiescent s' t' HR') Hq).
+  Qed.
+
+End WholeGsltInRhoIteratedDriving.
+
+(* ================================================================================
+   5.4  SwapDemo RE-INSTANTIATED against the UPGRADED shapes (plan v2 §7.4): the
+   base burst arms are discharged from the LANDED comm_step_complete/sound via the
+   pointwise burst lift (§5.0); the other families' bursts are vacuous-or-empty
+   under `nv_family` (a nonempty burst of any non-base family contradicts
+   `nv_family ≡ Some FBase`; the empty burst is matched reflexively — the
+   already-quiescent drive). The conclusion coincides with the landed
+   `swapdemo_base_finite_trace_opcorr`; what is NEW is the premise route: every
+   §5.1 burst premise is dischargeable, so the iterated harness context is
+   inhabited (no vacuously-true iterated capstone).
+   ================================================================================ *)
+
+Lemma nv_fwd_base_burst : forall s t ls s',
+  Forall (fun l => nv_family l = Some FBase) ls -> nv_R s t ->
+  steps GC Fact nv_step s ls s' ->
+  exists t', steps GC Fact nv_step t ls t' /\ nv_R s' t'.
+Proof.
+  exact (per_step_arm_lifts_to_burst_forward GC Fact nv_step nv_R
+           (fun l => nv_family l = Some FBase) nv_fwd_base).
+Qed.
+
+Lemma nv_bwd_base_burst : forall s t ls t',
+  Forall (fun l => nv_family l = Some FBase) ls -> nv_R s t ->
+  steps GC Fact nv_step t ls t' ->
+  exists s', steps GC Fact nv_step s ls s' /\ nv_R s' t'.
+Proof.
+  exact (per_step_arm_lifts_to_burst_backward GC Fact nv_step nv_R
+           (fun l => nv_family l = Some FBase) nv_bwd_base).
+Qed.
+
+(* A nonempty family-homogeneous burst of any family other than FBase is
+   uninhabited under nv_family; the empty burst is matched reflexively. *)
+Lemma nv_vacuous_burst_fwd : forall F, F <> FBase -> forall s t ls s',
+  Forall (fun l => nv_family l = Some F) ls -> nv_R s t ->
+  steps GC Fact nv_step s ls s' ->
+  exists t', steps GC Fact nv_step t ls t' /\ nv_R s' t'.
+Proof.
+  intros F Hne s t ls s' Hfam HR Hs.
+  destruct ls as [| l ls0].
+  - apply steps_nil_inv in Hs. subst s'.
+    exists t. split; [constructor | exact HR].
+  - exfalso.
+    inversion Hfam as [| x xs Hhead Htail]; subst.
+    cbn in Hhead. injection Hhead as Heq. subst F.
+    apply Hne. reflexivity.
+Qed.
+
+Lemma nv_vacuous_burst_bwd : forall F, F <> FBase -> forall s t ls t',
+  Forall (fun l => nv_family l = Some F) ls -> nv_R s t ->
+  steps GC Fact nv_step t ls t' ->
+  exists s', steps GC Fact nv_step s ls s' /\ nv_R s' t'.
+Proof.
+  intros F Hne s t ls t' Hfam HR Ht.
+  destruct ls as [| l ls0].
+  - apply steps_nil_inv in Ht. subst t'.
+    exists s. split; [constructor | exact HR].
+  - exfalso.
+    inversion Hfam as [| x xs Hhead Htail]; subst.
+    cbn in Hhead. injection Hhead as Heq. subst F.
+    apply Hne. reflexivity.
+Qed.
+
+(* The SwapDemo base finite-trace opcorr THROUGH THE ITERATED HARNESS: every §5.1
+   burst premise discharged (base via the pointwise lift of the landed theorems;
+   the rest vacuous-or-empty), the gate holds, the initial Rgio is the lowering. *)
+Theorem swapdemo_base_iterated_opcorr : forall (s : SourceState) ls,
+  (forall a', steps GC Fact nv_step (GSrc s) ls a' ->
+      exists b', steps GC Fact nv_step (GRho (lower_state s)) ls b' /\ nv_barb a' = nv_barb b') /\
+  (forall b', steps GC Fact nv_step (GRho (lower_state s)) ls b' ->
+      exists a', steps GC Fact nv_step (GSrc s) ls a' /\ nv_barb a' = nv_barb b').
+Proof.
+  intros s ls.
+  apply (whole_gslt_in_rho_opcorrespondence_iterated GC Fact (list Fact)
+           nv_step nv_barb nv_R nv_family).
+  - exact nv_Rgio_barb.
+  - exact nv_fwd_base_burst.
+  - exact nv_bwd_base_burst.
+  - apply nv_vacuous_burst_fwd; discriminate.
+  - apply nv_vacuous_burst_bwd; discriminate.
+  - apply nv_vacuous_burst_fwd; discriminate.
+  - apply nv_vacuous_burst_bwd; discriminate.
+  - apply nv_vacuous_burst_fwd; discriminate.
+  - apply nv_vacuous_burst_bwd; discriminate.
+  - apply nv_vacuous_burst_fwd; discriminate.
+  - apply nv_vacuous_burst_bwd; discriminate.
+  - apply nv_vacuous_burst_fwd; discriminate.
+  - apply nv_vacuous_burst_bwd; discriminate.
+  - apply nv_vacuous_burst_fwd; discriminate.
+  - apply nv_vacuous_burst_bwd; discriminate.
+  - intros l; cbn; discriminate.
+  - cbn. reflexivity.
+Qed.
+
+(* The SwapDemo per-trace quiescence instance: a resting source drive schedule is
+   mirrored by a resting in-Rho drive schedule (equal barbs, related endpoints). *)
+Theorem swapdemo_base_per_trace_quiescence : forall (s : SourceState) sched s',
+  drive_schedule GC Fact nv_step nv_family (GSrc s) sched s' ->
+  gquiescent GC Fact nv_step s' ->
+  exists t', drive_schedule GC Fact nv_step nv_family (GRho (lower_state s)) sched t'
+             /\ nv_R s' t' /\ nv_barb s' = nv_barb t'
+             /\ gquiescent GC Fact nv_step t'.
+Proof.
+  intros s sched s' Hsched Hq.
+  refine (whole_gslt_per_trace_quiescence_forward GC Fact (list Fact)
+            nv_step nv_barb nv_R nv_family
+            nv_Rgio_barb
+            nv_fwd_base_burst nv_bwd_base_burst
+            _ _ _ _ _ _ _ _ _ _ _ _
+            _
+            (GSrc s) (GRho (lower_state s)) sched s'
+            _ Hsched Hq).
+  - apply nv_vacuous_burst_fwd; discriminate.
+  - apply nv_vacuous_burst_bwd; discriminate.
+  - apply nv_vacuous_burst_fwd; discriminate.
+  - apply nv_vacuous_burst_bwd; discriminate.
+  - apply nv_vacuous_burst_fwd; discriminate.
+  - apply nv_vacuous_burst_bwd; discriminate.
+  - apply nv_vacuous_burst_fwd; discriminate.
+  - apply nv_vacuous_burst_bwd; discriminate.
+  - apply nv_vacuous_burst_fwd; discriminate.
+  - apply nv_vacuous_burst_bwd; discriminate.
+  - apply nv_vacuous_burst_fwd; discriminate.
+  - apply nv_vacuous_burst_bwd; discriminate.
+  - intros l; cbn; discriminate.
+  - cbn. reflexivity.
+Qed.
+
+(* Zero-admission confirmation (A-S5.7 iterated upgrade). *)
+Print Assumptions steps_nil_inv.
+Print Assumptions steps_singleton_inv.
+Print Assumptions per_step_arm_lifts_to_burst_forward.
+Print Assumptions per_step_arm_lifts_to_burst_backward.
+Print Assumptions whole_gslt_in_rho_opcorrespondence_iterated.
+Print Assumptions drive_burst_forward_correspondence.
+Print Assumptions drive_burst_backward_correspondence.
+Print Assumptions whole_gslt_opcorr_over_drive_schedules.
+Print Assumptions related_states_equi_quiescent.
+Print Assumptions whole_gslt_per_trace_quiescence_forward.
+Print Assumptions whole_gslt_per_trace_quiescence_backward.
+Print Assumptions swapdemo_base_iterated_opcorr.
+Print Assumptions swapdemo_base_per_trace_quiescence.

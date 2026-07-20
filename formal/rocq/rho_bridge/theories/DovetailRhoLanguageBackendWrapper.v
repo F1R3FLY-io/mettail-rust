@@ -30,6 +30,25 @@
  *     native-fold terms via their lazily checked Dovetail report.
  *   - The legacy Ascent runtime and Ascent-shaped seeded facts are rejected
  *     through the production wrapped value.
+ *   - A-S5.7 (plan v2 §7.6 / F9 — the A-S5.6 flip): the wrapper model gains
+ *     the DRIVER-ADMITTED branch.  `rholang-codegen/src/rho_net_drive.rs`
+ *     records one `DriveAdmission` per lowered language
+ *     (`RhoNetLowered.drive_admission`, computed by `drive_admissible`):
+ *     NOT-REQUESTED when the language is not named in the codegen-visible
+ *     `DRIVE_OPT_IN` const (AM-4 — exactly {"Lambda", "Ambient"}), ADMITTED
+ *     when every admission conjunct holds (static gate Ok ∧ driver-supported
+ *     matching families ∧ every fireable rewrite transcribes to a driver redex
+ *     arm), UNSUPPORTED with EVERY failed conjunct recorded otherwise
+ *     (recorded-never-silent).  For an ADMITTED language the REPORT-FREE
+ *     invocation slot IS the generated `rho_net_drive_invocation_to`
+ *     quiescence-driver seed: `exec` = drive-to-quiescence on the Rho machine
+ *     (`lambda_invocation_free` / `ambient_invocation_free` in
+ *     repl/src/rho_backends.rs); a rejected seed is a typed GateReject
+ *     DEFERRAL, and the A-S2 deferral surface above is UNCHANGED (report
+ *     checked ⟺ deferral taken, verbatim).  For a NOT-REQUESTED language the
+ *     report-free slot remains the single-shot `rho_net_match_invocation_to`
+ *     and the whole generated module is byte-identical (the SwapDemo pin).
+ *     The flip changes the report-free MECHANISM, never the shape routing.
  *
  * Rocq 9.1 compatible. No Admitted, no Axioms, no Assumptions.
  *)
@@ -765,4 +784,267 @@ Section DovetailRhoLanguageBackendWrapper.
     wrapper_report_with_facts wrapper backend SeedFactsPresent = false.
   Proof. intros wrapper backend. destruct backend; reflexivity. Qed.
 
+  (* ————————————————————————————————————————————————————————————————————
+     A-S5.7 (plan v2 §7.6 / F9): the DRIVER-ADMITTED branch.
+
+     The A-S5.6 flip changes WHAT the report-free slot runs, not the A-S2
+     routing algebra above: for a drive-admitted language the slot is the
+     generated `rho_net_drive_invocation_to` quiescence-driver seed (exec =
+     drive-to-quiescence, `RhoExecMechanism.QuiescenceDrive`), for a
+     not-requested language it remains the pre-flip single-shot
+     `rho_net_match_invocation_to` (`SingleShotMatch`), and for an
+     opted-in-but-unsupported language the seed rejects every term so each
+     exec takes the DEFERRAL path.  The admission disposition is RECORDED
+     (`DriveAdmission`, mirroring rho_net_drive.rs), never silent.
+     ———————————————————————————————————————————————————————————————————— *)
+
+  (* The recorded admission disposition (the `DriveAdmission` enum of
+     rho_net_drive.rs).  `DriveUnsupported` carries the number of failed
+     admission conjuncts it recorded (the Rust `reason` string names every
+     one, `; `-joined; the model keeps the count). *)
+  Inductive DriveAdmission : Type :=
+  | DriveAdmitted
+  | DriveNotRequested
+  | DriveUnsupported (failed_conjuncts : nat).
+
+  (* The `drive_admissible` disposition algebra: the AM-4 name gate
+     (`DRIVE_OPT_IN` membership) short-circuits first; an opted-in language is
+     admitted iff ZERO conjuncts fail; every failure records its conjuncts. *)
+  Definition drive_admission_of (opted_in : bool) (failed_conjuncts : nat)
+      : DriveAdmission :=
+    if opted_in
+    then match failed_conjuncts with
+         | O => DriveAdmitted
+         | S n => DriveUnsupported (S n)
+         end
+    else DriveNotRequested.
+
+  (* The report-free slot's EXECUTION MECHANISM under the flip: the quiescence
+     driver for an admitted language, the pre-flip single-shot match for a
+     not-requested one, and NO report-free mechanism at all for an
+     opted-in-but-unsupported language (its generated seed rejects every term
+     — each exec defers). *)
+  Inductive RhoExecMechanism : Type :=
+  | QuiescenceDrive
+  | SingleShotMatch.
+
+  Definition report_free_mechanism (admission : DriveAdmission)
+      : option RhoExecMechanism :=
+    match admission with
+    | DriveAdmitted => Some QuiescenceDrive
+    | DriveNotRequested => Some SingleShotMatch
+    | DriveUnsupported _ => None
+    end.
+
+  (* The drive-layered wrapper: the A-S2 wrapper plus its recorded admission
+     (the model face of `RhoNetLowered.drive_admission`). *)
+  Record DriveLayeredWrapper : Type := {
+    drive_base : DovetailRhoWrapper;
+    drive_admission : DriveAdmission
+  }.
+
+  (* The layered report-free bit: an UNSUPPORTED admission forces the deferral
+     path for every term (the seed always rejects); otherwise the base bit —
+     which, for an ADMITTED language, now means "the drive seed admitted the
+     term" (the seed compile IS the report-free F2 compile post-flip). *)
+  Definition layered_report_free (wrapper : DriveLayeredWrapper) : bool :=
+    match drive_admission wrapper with
+    | DriveUnsupported _ => false
+    | _ => invocation_report_free (drive_base wrapper)
+    end.
+
+  (* The layered default-path shape: the SAME routing algebra as
+     `wrapper_report_shape` with the layered report-free bit — the flip changes
+     the report-free MECHANISM (QuiescenceDrive vs SingleShotMatch), never the
+     shape routing. *)
+  Definition layered_report_shape (wrapper : DriveLayeredWrapper)
+      : option ReportShape :=
+    if wrapper_installs_rho (drive_base wrapper)
+    then
+      if layered_report_free wrapper
+      then Some ObservationShape
+      else
+        if dovetail_report_checked (drive_base wrapper)
+        then if invocation_total_after_dovetail (drive_base wrapper)
+             then Some ObservationShape
+             else Some DovetailReportShape
+        else None
+    else None.
+
+  (* The layered coupling bit (the A-S2 `wrapper_default_checks_report` with
+     the layered report-free bit). *)
+  Definition layered_default_checks_report
+      (wrapper : DriveLayeredWrapper) : bool :=
+    wrapper_installs_rho (drive_base wrapper) &&
+    negb (layered_report_free wrapper).
+
+  (* — The mechanism algebra — *)
+
+  Theorem admitted_report_free_mechanism_is_drive :
+    report_free_mechanism DriveAdmitted = Some QuiescenceDrive.
+  Proof. reflexivity. Qed.
+
+  Theorem not_requested_report_free_mechanism_is_single_shot :
+    report_free_mechanism DriveNotRequested = Some SingleShotMatch.
+  Proof. reflexivity. Qed.
+
+  Theorem unsupported_has_no_report_free_mechanism : forall failed,
+    report_free_mechanism (DriveUnsupported failed) = None.
+  Proof. intros failed. reflexivity. Qed.
+
+  (* — The admission algebra (F9) — *)
+
+  (* AM-4 name gate: a language outside DRIVE_OPT_IN is never driven, whatever
+     its conjunct evaluation would have been (the zero-cost default). *)
+  Theorem not_opted_in_never_drives : forall failed,
+    drive_admission_of false failed = DriveNotRequested.
+  Proof. intros failed. reflexivity. Qed.
+
+  (* Admission is exactly opt-in plus a clean conjunct sweep. *)
+  Theorem admitted_iff_opted_in_and_no_failed_conjunct : forall opted failed,
+    drive_admission_of opted failed = DriveAdmitted <->
+    (opted = true /\ failed = 0).
+  Proof.
+    intros opted failed. split.
+    - intros H. destruct opted.
+      + destruct failed as [| n]; [split; reflexivity | discriminate H].
+      + discriminate H.
+    - intros [Ho Hf]. subst. reflexivity.
+  Qed.
+
+  (* Recorded-never-silent: an unsupported disposition names at least one
+     failed conjunct. *)
+  Theorem unsupported_records_failed_conjuncts : forall opted failed n,
+    drive_admission_of opted failed = DriveUnsupported n -> n > 0.
+  Proof.
+    intros opted failed n H. destruct opted; cbn in H.
+    - destruct failed as [| m]; [discriminate H |].
+      injection H as H. subst n. apply Nat.lt_0_succ.
+    - discriminate H.
+  Qed.
+
+  (* Unsupported implies opted-in (the name gate short-circuits first). *)
+  Theorem unsupported_requires_opt_in : forall opted failed n,
+    drive_admission_of opted failed = DriveUnsupported n -> opted = true.
+  Proof.
+    intros opted failed n H. destruct opted; [reflexivity | discriminate H].
+  Qed.
+
+  (* The recorded disposition is TOTAL — every layered wrapper carries exactly
+     one of the three cases, never a silent fourth state. *)
+  Theorem drive_admission_recorded_total : forall wrapper,
+    drive_admission wrapper = DriveAdmitted \/
+    drive_admission wrapper = DriveNotRequested \/
+    (exists failed, drive_admission wrapper = DriveUnsupported failed).
+  Proof.
+    intros wrapper. destruct (drive_admission wrapper) as [| | failed].
+    - left. reflexivity.
+    - right. left. reflexivity.
+    - right. right. exists failed. reflexivity.
+  Qed.
+
+  (* — The exec routing under the flip — *)
+
+  (* THE DRIVER-ADMITTED BRANCH: an admitted, installed wrapper whose drive
+     seed admitted the term observes Rho output through the QUIESCENCE DRIVE —
+     exec = drive-to-quiescence with ZERO Dovetail work. *)
+  Theorem admitted_report_free_shape_is_observation_via_drive : forall wrapper,
+    wrapper_installs_rho (drive_base wrapper) = true ->
+    drive_admission wrapper = DriveAdmitted ->
+    invocation_report_free (drive_base wrapper) = true ->
+    layered_report_shape wrapper = Some ObservationShape /\
+    report_free_mechanism (drive_admission wrapper) = Some QuiescenceDrive.
+  Proof.
+    intros wrapper Hinstall Hadm Hfree.
+    unfold layered_report_shape, layered_report_free.
+    rewrite Hinstall, Hadm, Hfree. split; reflexivity.
+  Qed.
+
+  (* THE DEFERRAL SURFACE IS UNCHANGED (v2 §7.6): whenever the base wrapper
+     defers, the layered shape IS the base A-S2 shape — every landed deferral
+     theorem above applies to the layered wrapper verbatim. *)
+  Theorem layered_deferral_is_base_deferral : forall wrapper,
+    invocation_report_free (drive_base wrapper) = false ->
+    layered_report_shape wrapper =
+      wrapper_report_shape (drive_base wrapper) RhoMachine.
+  Proof.
+    intros wrapper Hdefer.
+    unfold layered_report_shape, layered_report_free, wrapper_report_shape.
+    rewrite Hdefer.
+    destruct (drive_admission wrapper); reflexivity.
+  Qed.
+
+  (* An UNSUPPORTED admission fails CLOSED into the deferral path for every
+     term, whatever the base report-free bit claims. *)
+  Theorem unsupported_forces_deferral_path : forall wrapper failed,
+    drive_admission wrapper = DriveUnsupported failed ->
+    layered_report_free wrapper = false.
+  Proof.
+    intros wrapper failed Hadm.
+    unfold layered_report_free. rewrite Hadm. reflexivity.
+  Qed.
+
+  (* The layered coupling: REPORT CHECKED ⟺ DEFERRAL TAKEN carries to the
+     drive layer verbatim (the A-S2 invariant over the layered bit). *)
+  Theorem layered_report_checked_iff_deferral_taken : forall wrapper,
+    wrapper_installs_rho (drive_base wrapper) = true ->
+    (layered_default_checks_report wrapper = true <->
+     layered_report_free wrapper = false).
+  Proof.
+    intros wrapper Hinstalls.
+    unfold layered_default_checks_report.
+    rewrite Hinstalls. cbn. split.
+    - intros H. destruct (layered_report_free wrapper);
+        [discriminate H | reflexivity].
+    - intros H. rewrite H. reflexivity.
+  Qed.
+
+  (* NOT-REQUESTED is the identity layer: report-free bit AND shape equal the
+     base wrapper's — the model face of the AM-4 byte-identity pin (a
+     non-opted-in language's generated module and exec surface are untouched
+     by the flip; pinned Rust-side by a_s5_6_byte_identity_pins.rs). *)
+  Theorem not_requested_layer_is_base : forall wrapper,
+    drive_admission wrapper = DriveNotRequested ->
+    layered_report_free wrapper = invocation_report_free (drive_base wrapper) /\
+    layered_report_shape wrapper =
+      wrapper_report_shape (drive_base wrapper) RhoMachine.
+  Proof.
+    intros wrapper Hadm. split.
+    - unfold layered_report_free. rewrite Hadm. reflexivity.
+    - unfold layered_report_shape, layered_report_free, wrapper_report_shape.
+      rewrite Hadm. reflexivity.
+  Qed.
+
+  (* An ADMITTED layer preserves the shape algebra too: the flip changes the
+     report-free MECHANISM (QuiescenceDrive), never the observable routing. *)
+  Theorem admitted_layer_shape_is_base_shape : forall wrapper,
+    drive_admission wrapper = DriveAdmitted ->
+    layered_report_shape wrapper =
+      wrapper_report_shape (drive_base wrapper) RhoMachine.
+  Proof.
+    intros wrapper Hadm.
+    unfold layered_report_shape, layered_report_free, wrapper_report_shape.
+    rewrite Hadm. reflexivity.
+  Qed.
+
 End DovetailRhoLanguageBackendWrapper.
+
+(* Zero-admission confirmation (A-S5.7 driver-admitted branch + the A-S2 core). *)
+Print Assumptions wrapper_default_backend_is_rho.
+Print Assumptions report_checked_iff_deferral_taken.
+Print Assumptions report_free_default_ignores_report_fields.
+Print Assumptions bounded_dovetail_does_not_block_report_free_rho.
+Print Assumptions admitted_report_free_mechanism_is_drive.
+Print Assumptions not_requested_report_free_mechanism_is_single_shot.
+Print Assumptions unsupported_has_no_report_free_mechanism.
+Print Assumptions not_opted_in_never_drives.
+Print Assumptions admitted_iff_opted_in_and_no_failed_conjunct.
+Print Assumptions unsupported_records_failed_conjuncts.
+Print Assumptions unsupported_requires_opt_in.
+Print Assumptions drive_admission_recorded_total.
+Print Assumptions admitted_report_free_shape_is_observation_via_drive.
+Print Assumptions layered_deferral_is_base_deferral.
+Print Assumptions unsupported_forces_deferral_path.
+Print Assumptions layered_report_checked_iff_deferral_taken.
+Print Assumptions not_requested_layer_is_base.
+Print Assumptions admitted_layer_shape_is_base_shape.
