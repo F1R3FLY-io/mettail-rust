@@ -202,3 +202,13 @@ theories/WholeGsltInRhoOpCorrespondenceOptimalViaSameClts.v
 # proof the In/Out arm is dischargeable, putting it on EQUAL FOOTING with FAcStructural (OpenRule). Yields
 # a concrete Closed In/Out finite-trace opcorr through the capstone (+ the O1-optimal parity corollary).
 theories/WholeGsltInRhoOpCorrespondenceInOutViaFiring.v
+# A-S5.4a — the UNCONDITIONAL unbind-first binder float (binder_congruence.rs, gates dropped)
+# canonicalizes Ambient-shaped terms: freshening totality (the gensym supply never exhausts, so the
+# float never stalls — the F1 stall is an artifact of the retired gates); AM-2 bag flatness at the
+# extrusion seam (the insert_into_<label> work-stack peel modeled at ALL depths);
+# float_nf_exposes_redexes_{in,open} — over the C-G subset (Res Par + Res Amb + Res Res +
+# representational Par Comm/Assoc), a bag/nested redex exists modulo == IFF it is syntactically
+# present in the float NF (depth-2 fragment = exactly what the rewrite patterns inspect; Out is
+# A-S5.4b scope, re-proved in AmbientInOutFiring.v post-redeclaration per AM-1); NewComm-permutation
+# redex invariance (the <=6 canonical-run cap is display-only). Theory note: ma_theory_alignment.md.
+theories/BinderFloatCanonicalization.v

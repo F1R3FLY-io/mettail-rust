@@ -1,4 +1,4 @@
-//! Inc 1 — Moniker binder-congruence direct evaluator: normal form.
+//! Inc 1 / A-S5.4a — Moniker binder-congruence direct evaluator: normal form.
 //!
 //! Generates, for a language without a RhoNativeJoin obligation but with
 //! structural-congruence equations (e.g. Ambient), a capture-safe
@@ -8,12 +8,31 @@
 //! recomputing de-Bruijn coordinates LOCALLY) — NEVER `from_parts_unsafe`, which
 //! is the capture-unsoundness `run_ascent` exhibits.
 //!
-//! The single load-bearing correctness detail: every freshness GATE is checked
-//! against the ORIGINAL binder (`scope.unsafe_pattern()`), NOT the
-//! `unbind`-freshened one. `is_fresh(Binder(x'), N)` with `x'` from `unbind`
-//! always returns true (x' is brand-new and cannot occur in any pre-existing N),
-//! which would silently disable the guard and re-introduce capture. See
-//! `docs/architecture/dovetail/ambient-binder/inc1-handler-spec.md`.
+//! A-S5.4a (design v2 §3.2, AM-2/AM-6): the float is UNCONDITIONAL —
+//! freshen-then-float, never gated. `unbind` freshens the binder to a
+//! globally-fresh name (moniker's process-global gensym), so the freshened
+//! binder cannot occur free in any pre-existing sibling/field and re-closing
+//! over the widened body captures nothing; the float therefore NEVER stalls.
+//! Theory (`ma_theory_alignment.md`): α-conversion is definitional identity in
+//! Cardelli–Gordon, so freshen-then-float is one free α step followed by a
+//! (Struct Res Par) / (Struct Res Amb) / documented-extension instance whose
+//! side condition holds BY CONSTRUCTION. The pre-A-S5.4a freshness gates
+//! (`is_fresh` against the ORIGINAL binder) made the NF hint-sensitive and
+//! non-maximal (the refuted F1 stall); with the gates dropped, the outer
+//! `term_eq`-terminated fixpoint loop in `binder_congruence_nf` drives every
+//! `new` maximally outward. The generated per-language `is_fresh` fn remains an
+//! uncalled pub API (AM-6b) — freshness is now discharged by construction, not
+//! checked. FV: `formal/rocq/rho_bridge/theories/BinderFloatCanonicalization.v`
+//! (freshening totality; redex exposure over the C-G subset).
+//!
+//! FLATNESS OBLIGATION (AM-2): at the bag arm's extrusion seam, a `new` whose
+//! opened body is ITSELF the same collection constructor is SPLICED into the
+//! widened bag (via the generated `insert_into_<label>` auto-flatten helper —
+//! the exact host mirror of `add_flattened_bag`'s work-stack peel), never
+//! pushed as one nested element: mettail absorbs (Struct Par Comm/Assoc)
+//! REPRESENTATIONALLY in the HashBag, so every bag producer must preserve
+//! bag-flatness or sibling redexes stay hidden with no ≡ rule to dissolve them
+//! (`float_preserves_bag_flatness` in the FV file).
 //!
 //! Disposition gate: emitted iff the language declares equations AND has no
 //! `RhoNativeJoin` obligation (no host RSpace). Ambient qualifies; rhocalc /
@@ -122,8 +141,10 @@ pub fn generate_binder_congruence(language: &LanguageDef) -> TokenStream {
                 });
             },
             // A surface prefix `C(N.., P)` with exactly one primary-category field:
-            // float a `new` out of P iff its (ORIGINAL) binder is fresh in the
-            // other fields (FIX-B = the standard `x ∉ fn(N)`).
+            // ALWAYS float a `new` out of P (A-S5.4a unconditional unbind-first
+            // float — the pre-A-S5.4a `is_fresh` gate against the original binder
+            // is dropped; `unbind` freshens, so the float is capture-safe by
+            // construction and never stalls).
             VariantKind::Regular { label, fields } if user_labels.contains(&label.to_string()) => {
                 let proc_field_positions: Vec<usize> = fields
                     .iter()
@@ -142,18 +163,6 @@ pub fn generate_binder_congruence(language: &LanguageDef) -> TokenStream {
                     .map(|i| quote::format_ident!("__f{}", i))
                     .collect();
                 let body_bind = &binds[body_pos];
-                // Freshness against every OTHER field (each is a `BoundTerm`).
-                let other_fresh: Vec<TokenStream> = binds
-                    .iter()
-                    .enumerate()
-                    .filter(|(i, _)| *i != body_pos)
-                    .map(|(_, b)| quote! { is_fresh(__s.unsafe_pattern(), #b.as_ref()) })
-                    .collect();
-                let fresh_guard = if other_fresh.is_empty() {
-                    quote! { true }
-                } else {
-                    quote! { #(#other_fresh)&&* }
-                };
                 // Rebuild the prefix with the floated (opened) body.
                 let rebuild_opened: Vec<TokenStream> = binds
                     .iter()
@@ -166,7 +175,8 @@ pub fn generate_binder_congruence(language: &LanguageDef) -> TokenStream {
                         }
                     })
                     .collect();
-                // Rebuild with the normalized (not floated) body.
+                // Rebuild with the normalized (not floated) body — the no-`new`
+                // case (the body NF is not binder-headed; nothing to float).
                 let rebuild_nf: Vec<TokenStream> = binds
                     .iter()
                     .enumerate()
@@ -182,27 +192,39 @@ pub fn generate_binder_congruence(language: &LanguageDef) -> TokenStream {
                     #proc_cat::#label(#(#binds),*) => {
                         let __body_nf = (** #body_bind).binder_congruence_nf();
                         if let #proc_cat::#binder_label(__s) = &__body_nf {
-                            if #fresh_guard {
-                                let (__fb, __opened) = __s.clone().unbind();
-                                return #proc_cat::#binder_label(
-                                    ::mettail_runtime::Scope::new(
-                                        __fb,
-                                        ::std::sync::Arc::new(
-                                            #proc_cat::#label(#(#rebuild_opened),*),
-                                        ),
+                            // A-S5.4a: unconditional unbind-first float — freshen
+                            // (moniker `unbind`, a process-global gensym) then
+                            // float. The freshened binder cannot occur free in
+                            // any other field, so re-closing captures nothing.
+                            let (__fb, __opened) = __s.clone().unbind();
+                            return #proc_cat::#binder_label(
+                                ::mettail_runtime::Scope::new(
+                                    __fb,
+                                    ::std::sync::Arc::new(
+                                        #proc_cat::#label(#(#rebuild_opened),*),
                                     ),
-                                );
-                            }
+                                ),
+                            );
                         }
                         #proc_cat::#label(#(#rebuild_nf),*)
                     }
                 });
             },
-            // The parallel bag (`PPar`): scope-extrude a `new` member outward iff
-            // its ORIGINAL binder is fresh in the residual multiset.
+            // The parallel bag (`PPar`): scope-extrude the FIRST `new` member
+            // outward unconditionally (A-S5.4a — the pre-A-S5.4a `is_fresh`
+            // residual gate is dropped; `unbind` freshens, so extrusion is
+            // capture-safe by construction). Successive `new`s are pulled into
+            // the canonical run by the enclosing fixpoint + binder-arm
+            // run-collection.
             VariantKind::Collection { label, element_cat, .. }
                 if user_labels.contains(&label.to_string()) && *element_cat == proc_cat =>
             {
+                // AM-2: the generated auto-flatten insert (`insert_into_<label>`,
+                // term_ops/normalize.rs — the host mirror of `add_flattened_bag`)
+                // splices a same-constructor opened body's members into the
+                // widened bag instead of nesting one bag element.
+                let insert_helper =
+                    quote::format_ident!("insert_into_{}", label.to_string().to_lowercase());
                 arms.push(quote! {
                     #proc_cat::#label(__bag) => {
                         // Normalize each distinct member, count-preserving.
@@ -213,34 +235,38 @@ pub fn generate_binder_congruence(language: &LanguageDef) -> TokenStream {
                         for __i in 0..__nfd.len() {
                             if let #proc_cat::#binder_label(__s) = &__nfd[__i].0 {
                                 // Residual = all members minus ONE occurrence of member __i.
-                                let mut __residual: ::std::vec::Vec<#proc_cat> = ::std::vec::Vec::new();
+                                let __total: usize = __nfd.iter().map(|(_, __c)| *__c).sum();
+                                let mut __residual: ::std::vec::Vec<#proc_cat> =
+                                    ::std::vec::Vec::with_capacity(__total - 1);
                                 for __j in 0..__nfd.len() {
                                     let __take = if __j == __i { __nfd[__j].1 - 1 } else { __nfd[__j].1 };
                                     for _ in 0..__take {
                                         __residual.push(__nfd[__j].0.clone());
                                     }
                                 }
-                                let __residual_bag = #proc_cat::#label(
-                                    __residual.iter().cloned().collect(),
-                                );
-                                if is_fresh(__s.unsafe_pattern(), &__residual_bag) {
-                                    let (__fb, __opened) = __s.clone().unbind();
-                                    let mut __inner = __residual;
-                                    __inner.push((*__opened).clone());
-                                    return #proc_cat::#binder_label(
-                                        ::mettail_runtime::Scope::new(
-                                            __fb,
-                                            ::std::sync::Arc::new(
-                                                #proc_cat::#label(
-                                                    __inner.into_iter().collect(),
-                                                ),
-                                            ),
+                                // A-S5.4a: unconditional extrusion — `unbind`
+                                // freshens the binder (process-global gensym), so
+                                // it cannot occur free in the residual and
+                                // re-closing captures nothing.
+                                let (__fb, __opened) = __s.clone().unbind();
+                                // AM-2 (bag-flatness at the extrusion seam): a
+                                // same-constructor opened body SPLICES its members
+                                // into the widened bag (work-stack peel, any
+                                // depth); any other body inserts as one member.
+                                let mut __inner_bag: ::mettail_runtime::HashBag<#proc_cat> =
+                                    __residual.into_iter().collect();
+                                #proc_cat::#insert_helper(&mut __inner_bag, (*__opened).clone());
+                                return #proc_cat::#binder_label(
+                                    ::mettail_runtime::Scope::new(
+                                        __fb,
+                                        ::std::sync::Arc::new(
+                                            #proc_cat::#label(__inner_bag),
                                         ),
-                                    );
-                                }
+                                    ),
+                                );
                             }
                         }
-                        // No extrusion: rebuild with normalized members.
+                        // No `new` member: rebuild with normalized members.
                         let mut __all: ::std::vec::Vec<#proc_cat> = ::std::vec::Vec::new();
                         for (__m, __c) in __nfd {
                             for _ in 0..__c {
