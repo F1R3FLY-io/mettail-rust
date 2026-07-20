@@ -225,3 +225,29 @@ theories/WholeGsltInRhoOpCorrespondenceIteratedViaDriver.v
 # A-S5.4b scope, re-proved in AmbientInOutFiring.v post-redeclaration per AM-1); NewComm-permutation
 # redex invariance (the <=6 canonical-run cap is display-only). Theory note: ma_theory_alignment.md.
 theories/BinderFloatCanonicalization.v
+
+# A-S5.8 — the in-Rho ^float receiver family (rho_net_float.rs) modeled over the NAMELESS
+# (de Bruijn) reflected ABI in the RUN-LENGTH configuration representation
+# (InRhoFloatCanonicalization): hoist_side_condition_by_shift_image + fstep_side_condition (the
+# C-G freshness side condition of every extrusion instance held by the SHIFT-IMAGE argument — no
+# gensym in-Rho); float_step_sound = fstep_side_condition + float_reachable (the float function is
+# an fstep chain of documented C-G composites); float_functional_up_to_NewComm (F8-AM-4 first
+# half: ANY peel order floats to the same run mass with bodies related by a run-permutation
+# renaming carrying an explicit two-sided inverse — schedule confluence, variance exactly the
+# NewComm class, the Q-NC record) + float_identity_on_canonical (second half: EXACT identity on
+# canonical configs); redex_invariant_under_run_permutation (F8-AM-3 — the NEW de Bruijn lemma:
+# redex predicates closed under injective index renamings; BinderFloatCanonicalization:381-397
+# cover BAG permutation only); float_preserves_bag_flatness (the merge base's three-case dispatch,
+# AM-2 in-Rho); float_exposes_redexes_{in,open,out} (over the extrusion + bag-permutation
+# equivalence, a redex exists modulo == IFF syntactically present in the float NF).
+theories/InRhoFloatCanonicalization.v
+# A-S5.8 — the DRIVER FLOAT PHASE (InRhoDriveWithFloat): the bval fragment + a BINDER (fval =
+# bval + FNu), the value-level float ffloat (canonical + idempotent), the float-routed driver
+# fdrives whose d_redex_fire analogue tests/fires on the FLOATED value (decisions Q-AB=A /
+# Q-SEED=S2), THE PREMISE DISCHARGE drive_with_float_on_raw_eq_drive_on_canonical (driving raw =
+# driving canonical, for EVERY firing relation — the boundary-float premise discharged
+# constructively), the nu-hidden-contractum witness (Seal-shaped: raw contractum matches NO rule,
+# the per-firing float exposes and fires — with the load-bearing contrast lemma), and
+# float_phase_conservative (ffloat . embed = embed . bdrive — every landed bag theorem transfers
+# as a corollary; conservative extension, InRhoQuiescenceDriver untouched).
+theories/InRhoDriveWithFloat.v

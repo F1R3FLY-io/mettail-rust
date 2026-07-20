@@ -7,6 +7,75 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### A-S5.8 — the in-Rho `^float` receiver family: the boundary-float premise discharged constructively (2026-07-20)
+
+#### Added
+
+- **The `^float` receiver family (leg 1, `rholang-codegen/src/rho_net_float.rs`)**: the
+  per-iteration binder-float canonicalizer for FLOAT-BEARING drive-admitted languages
+  (gate: `language_has_float_handler` ∧ `equations_boundary_canonicalizable` ∧
+  `DriveAdmission::Admitted` — bundled corpus: exactly the production Ambient). The
+  8-arm `^float` dispatcher (`^lambda` rewrap / float-across-ctor hoist dispatch /
+  other-ctor descend+rewrap / nullary / soup peel→merge / Nil / `^free`+`^bound`
+  passthrough / the EXISTING `^drive-err` wildcard), the `^float-merge:{op}` satellite
+  (ScopeExtrusion: u-first deterministic strip order, shift-the-other-side by 1 at
+  cutoff 0 per stripped binder — capture avoidance by the SHIFT-IMAGE argument, no
+  gensym — base = the three-case `bag_fragment_dispatch` splice), and the
+  `^float-hoist:{C}` satellites (shift every other field per hoisted binder, rewrap) —
+  ALL satellites DERIVED from the landed float-equation recognizer classification
+  (`float_satellite_table`), never hardcoded to Ambient. Reserved labels `^float` /
+  `^float-hoist` / `^float-merge` (registry 16 → 19); `^shift` gains soup + Nil arms
+  GATED on `hashbag_collection_ops` non-empty (Lambda byte-identical); installed as the
+  third `Option<Par>` beside `subst_trs`/`drive` — Ambient 7 → 15 receives.
+- **Always-float firing + the S2 float-routed seed (USER decisions Q-AB = A,
+  Q-SEED = S2)**: both firing emitters route every contractum through `⌜^float⌝` before
+  the re-drive (float COMMs consume NO drive fuel; non-float languages BYTE-IDENTICAL —
+  the Lambda pins hold unchanged); the generated drive fn assembles the float-routed
+  seed `new rf { ⌜^float⌝!(⟦t⟧, rf) | for(@cf <- rf){ ⌜^drive⌝!(cf, fuel, @out) } }` for
+  float-bearing languages while the HOST boundary float is RETAINED (defense-in-depth +
+  the NewComm display ordering the run-order-sensitive α goldens ride, F8-AM-5b).
+  `RhoNetDriveInvocation` carries the raw `subject` and the backend seed readers are
+  S2-aware (F8-AM-5a).
+- **`AcReconstructTemplate::Binder` (F8-AM-1)**: RHS-introduced binder scopes at
+  ELEMENT template positions (ctor tag erased, mirroring the `^lambda` reflection) with
+  the F8-AM-1c depth-`k` PRE-SPLICE σ-slot shift rule — host side via the new
+  `^shift` mirror on `GroundTerm`s, drive side via the carrier's asynchronous
+  chained-`^shift(Z,·)` pre-stage; the MATCH path gives binder-templated rules the
+  FAIL-CLOSED NO-MATCH-ENTRY disposition `NestedStructuralAcBinderTemplated` (recorded,
+  never an install error), and `drive_admissible` discharges a static-gate defer exactly
+  when the rewrite transcribes to a self-contained driver AC-carrier arm.
+- **The runtime witness suite (leg 2, `rholang-runtime/tests/rho_net_ambient_float.rs`)**:
+  THE CONSTRUCTIVE-DISCHARGE WITNESS (the F8-AM-1a `Seal` shape in a name-keyed test
+  `Ambient` def, decision Q-W) — drive fires `Seal`, the contractum hides `Open` under
+  the fresh ν, `^float` extrudes, `OpenRule` fires, ledger `{Seal, OpenRule}` — plus the
+  NewComm double-binder subject under the NEW run-permutation-insensitive membership
+  helper (F8-AM-4), raw F1/AM-2 subjects with NO host float and no `^bound` leakage,
+  run length 8 (beyond the host's display-only ≤6 cap), multi-seam nests, the Nil family
+  (ν over the empty bag, element `^lambda(Nil)` — F8-AM-5g, the LOAD-BEARING
+  `^shift`-Nil case — F8-AM-5f), the in-float same-op-soup splice, and the AM-3 Nil
+  cases through the float path.
+- **`[τ float]` (F8-AM-2)**: `RuntimeTauClass::Float` + the classifier's float family
+  (the exact `^float` tag + the `^float-hoist:`/`^float-merge:` prefixes; families
+  disjoint — the `^shift`/`^cmp` satellites stay `[τ subst]`, nothing reclassifies),
+  WITNESSED by a new drive-seeded `StepSession` trace test; the
+  `a_s5_6_step_routing.rs:125` match-fallback trace pin is byte-identical (MUST-NOT-MOVE
+  honored).
+- **FV (leg 3, zero admissions)**: `InRhoFloatCanonicalization.v` — the de Bruijn
+  float over run-length configurations: `float_step_sound` (=`fstep_side_condition` +
+  `float_reachable`; the C-G freshness side condition held by
+  `hoist_side_condition_by_shift_image`), the F8-AM-4 split
+  `float_functional_up_to_NewComm` (any peel order lands in the same NewComm class,
+  explicit two-sided-inverse renamings) / `float_identity_on_canonical`, the F8-AM-3
+  lemma `redex_invariant_under_run_permutation` (BFC.v:381-397 cover bag permutation
+  only), `float_preserves_bag_flatness`, `float_exposes_redexes_{in,open,out}`; and
+  `InRhoDriveWithFloat.v` — the driver float phase (`fval` = `bval` + `FNu`): THE
+  PREMISE DISCHARGE `drive_with_float_on_raw_eq_drive_on_canonical`, the ν-hidden
+  contractum witness + its load-bearing contrast, and `float_phase_conservative`
+  (landed bag-driver theorems become corollaries; conservative extension). DOC29
+  §2.1/§3/§4 rewritten (per-iteration in-Rho canonicalization; host float →
+  defense-in-depth + display ordering; the moniker u32 premise narrowed to host paths;
+  the corrected Q-NC rationale).
+
 ### A-S6 — the DEMO FLIP + step-policy hygiene: the runtime mandate is registry-wide (2026-07-20)
 
 #### Changed
