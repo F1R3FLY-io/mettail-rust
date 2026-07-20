@@ -2,7 +2,8 @@
 //! backend, so `exec` failed with "language X does not advertise a default runtime backend". The
 //! production `build_registry` now wraps every bundled language in its checked backend. This test
 //! asserts the fix end-to-end at the registry boundary — and, by building the registry, exercises
-//! the runtime install (fingerprint + plan-gate checks) of all four wrappers.
+//! the runtime install (fingerprint + plan-gate checks) of every wrapper: the four production
+//! languages plus, since A-S6 (the demo flip), SwapDemo and the 12 rho_net demo languages.
 #![cfg(feature = "rho-languages")]
 
 use std::collections::HashMap;
@@ -19,11 +20,32 @@ fn default_backends() -> HashMap<String, Option<RuntimeBackend>> {
         .collect()
 }
 
+/// A-S6: every rho_net demo language registered by the production `build_registry`.
+const A_S6_DEMOS: [&str; 13] = [
+    "SwapDemo",
+    "AcDemo",
+    "AcBagDemo",
+    "NlAcDemo",
+    "AmbDemo",
+    "AmbNewDemo",
+    "InOutDemo",
+    "CommDemo",
+    "CtxDemo",
+    "BiCongDemo",
+    "LambdaDemo",
+    "NativeDemo",
+    "NativeFoldDemo",
+];
+
 #[test]
 fn every_bundled_language_advertises_a_default_runtime_backend() {
     let by_name = default_backends();
     for expected in ["RhoCalc", "Calculator", "Lambda", "Ambient"] {
         assert!(by_name.contains_key(expected), "registry must contain {expected}");
+    }
+    // A-S6: the demo languages are registry members too (the runtime mandate is universal).
+    for expected in A_S6_DEMOS {
+        assert!(by_name.contains_key(expected), "registry must contain the demo {expected}");
     }
     for (name, backend) in &by_name {
         assert!(
@@ -62,4 +84,15 @@ fn default_backends_are_capability_based() {
         Some(&Some(RuntimeBackend::RhoMachine)),
         "Ambient defaults to the two-stage Dovetail+Rholang backend (in-Rho quiescence driver)"
     );
+    // A-S6 (the demo flip): every rho_net demo runs on the Rho machine — the report-free
+    // in-Rho set-automaton match (`rho_net_match_invocation_to`) is the default exec path;
+    // demos are NOT drive-opted (`DRIVE_OPT_IN` stays exactly {Lambda, Ambient}).
+    for demo in A_S6_DEMOS {
+        assert_eq!(
+            by_name.get(demo),
+            Some(&Some(RuntimeBackend::RhoMachine)),
+            "{demo} defaults to the two-stage Dovetail+Rholang backend (in-Rho set-automaton \
+             match)"
+        );
+    }
 }

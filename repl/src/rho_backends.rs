@@ -10,6 +10,7 @@
 //! | Ambient    | Dovetail + Rholang (two-stage)  | A-S5.6: the in-Rho QUIESCENCE DRIVER fires the guarded AC mobility trio (In/Out/Open) to quiescence on the Rho machine |
 //! | RhoCalc    | Dovetail + Rholang (two-stage)  | COMM / observed pure values → Rho machine; mixed → pre-fold then Rho |
 //! | Calculator | Dovetail + Rholang (two-stage)  | scalar expr tree → Rho dataflow (E3); non-scalar → rejected at Rho-default boundary; partial arithmetic → semantic predicate |
+//! | SwapDemo + the 12 rho_net demos | Dovetail + Rholang (two-stage) | A-S6: the in-Rho set-automaton MATCH (single-shot locate-and-fire) is the default exec path; the D-stage runs only on typed deferrals |
 //!
 //! A-S2 (D-stage demotion): the two-stage languages install the LAZY wrapper
 //! (`install_dovetail_rho_runtime_backend_lazy`) — the report-free F2 compile is the default exec
@@ -32,36 +33,66 @@
 //! double-substitute); Ambient keeps the SwapDemo-shaped match-then-σ-replay fallback (its
 //! report-path arms exist).
 //!
+//! A-S6 (THE DEMO FLIP — USER decision 2026-07-20): the runtime mandate is UNIVERSAL — every
+//! demo language with an admitted rho_net path joins the default registry on the same two-stage
+//! lazy shape, with `invocation_free` = the generated `rho_net_match_invocation_to` (single-shot
+//! locate-and-fire; demos are NOT drive-opted — `DRIVE_OPT_IN` stays exactly {Lambda, Ambient}).
+//! At runtime Dovetail's roles registry-wide are exactly: semantic predicates, labeled host
+//! introspection (the REPL `step` Layer-1 rewrite-graph evidence — display-only, no exec result
+//! flows from it), and lazy deferral reports.
+//!
 //! A Dovetail-only build (`--no-default-features --features bundled-languages`, no f1r3node)
-//! FAILS CLOSED for Lambda/Ambient exec (campaign decision (4)): parse/introspection still work,
-//! but `exec` returns a typed error pointing at the rho build. See
-//! `docs/design/dovetail-rho-macro-extensions/` (E1–E3) and
+//! FAILS CLOSED for the exec of every machine-defaulted wrapped language (campaign decision (4),
+//! universal since A-S6): parse/introspection still work, but `exec` returns a typed error
+//! pointing at the rho build. See `docs/design/dovetail-rho-macro-extensions/` (E1–E3) and
 //! `docs/architecture/rho-native-integration/09-term-level-reduction-split.md`.
 #![cfg(feature = "bundled-languages")]
 
 #[cfg(not(feature = "rho-languages"))]
 mod dovetail_only {
-    //! Decision (4) — the Dovetail-only (no f1r3node) profile: Lambda/Ambient still REGISTER
-    //! (parse/introspection/env work through delegation), but their production reduction
-    //! semantics live on the Rho machine since A-S5.6, so `exec` FAILS CLOSED with a typed
-    //! error pointing at the rho build instead of silently running a divergent host path.
+    //! Decision (4) — the Dovetail-only (no f1r3node) profile: Lambda/Ambient (A-S5.6) and
+    //! every rho_net demo language (A-S6) still REGISTER (parse/introspection/env work
+    //! through delegation), but their production reduction semantics live on the Rho machine,
+    //! so `exec` FAILS CLOSED with a typed error pointing at the rho build instead of
+    //! silently running a divergent host path.
 
     use anyhow::Result;
     use std::any::Any;
 
+    use mettail_languages::acbagdemo::AcBagDemoLanguage;
+    use mettail_languages::acdemo::AcDemoLanguage;
+    use mettail_languages::ambdemo::AmbDemoLanguage;
     use mettail_languages::ambient::AmbientLanguage;
+    use mettail_languages::ambnewdemo::AmbNewDemoLanguage;
+    use mettail_languages::bicongdemo::BiCongDemoLanguage;
+    use mettail_languages::commdemo::CommDemoLanguage;
+    use mettail_languages::ctxdemo::CtxDemoLanguage;
+    use mettail_languages::inoutdemo::InOutDemoLanguage;
     use mettail_languages::lambda::LambdaLanguage;
+    use mettail_languages::lambdademo::LambdaDemoLanguage;
+    use mettail_languages::nativedemo::NativeDemoLanguage;
+    use mettail_languages::nativefolddemo::NativeFoldDemoLanguage;
+    use mettail_languages::nlacdemo::NlAcDemoLanguage;
+    use mettail_languages::swapdemo::SwapDemoLanguage;
     use mettail_runtime::{
         AscentResults, Language, LanguageMetadata, RuntimeBackend, RuntimeBackendCapability,
         RuntimeBackendReport, Term, TermType, VarTypeInfo,
     };
 
-    /// The typed decision-(4) exec error for one language.
-    fn rho_build_required(language: &str) -> String {
+    /// The production in-Rho execution mechanism of the two drive-opted languages
+    /// (Lambda/Ambient — A-S5.6).
+    const QUIESCENCE_DRIVER: &str = "the in-Rho quiescence driver";
+    /// The production in-Rho execution mechanism of every non-drive-opted wrapped
+    /// language (SwapDemo + the 12 rho_net demos — A-S6).
+    const SET_AUTOMATON_MATCH: &str = "the in-Rho set-automaton match";
+
+    /// The typed decision-(4) exec error for one language, naming its production in-Rho
+    /// mechanism.
+    fn rho_build_required(language: &str, mechanism: &str) -> String {
         format!(
-            "{language} executes on the in-Rho quiescence driver (A-S5.6); this Dovetail-only \
-             build has no Rho machine. Rebuild with `--features rho-languages` (the default) to \
-             exec {language} terms — parse and introspection remain available here."
+            "{language} executes on {mechanism} (A-S5.6/A-S6); this Dovetail-only build has \
+             no Rho machine. Rebuild with `--features rho-languages` (the default) to exec \
+             {language} terms — parse and introspection remain available here."
         )
     }
 
@@ -72,6 +103,7 @@ mod dovetail_only {
     /// exists.
     struct RhoBuildRequiredLanguage<L: Language> {
         inner: L,
+        mechanism: &'static str,
     }
 
     impl<L: Language> Language for RhoBuildRequiredLanguage<L> {
@@ -92,7 +124,7 @@ mod dovetail_only {
         }
 
         fn run_ascent(&self, _term: &dyn Term) -> Result<AscentResults, String> {
-            Err(rho_build_required(self.name()))
+            Err(rho_build_required(self.name(), self.mechanism))
         }
 
         fn default_runtime_backend(&self) -> Option<RuntimeBackend> {
@@ -115,7 +147,7 @@ mod dovetail_only {
             _backend: RuntimeBackend,
             _term: &dyn Term,
         ) -> Result<RuntimeBackendReport, String> {
-            Err(rho_build_required(self.name()))
+            Err(rho_build_required(self.name(), self.mechanism))
         }
 
         fn create_env(&self) -> Box<dyn Any + Send + Sync> {
@@ -179,26 +211,116 @@ mod dovetail_only {
     /// Lambda in the Dovetail-only profile: parse/introspection delegate; exec fails closed
     /// pointing at the rho build (decision (4)).
     pub fn lambda_backed() -> Result<Box<dyn Language>> {
-        Ok(Box::new(RhoBuildRequiredLanguage { inner: LambdaLanguage }))
+        Ok(Box::new(RhoBuildRequiredLanguage {
+            inner: LambdaLanguage,
+            mechanism: QUIESCENCE_DRIVER,
+        }))
     }
 
     /// Ambient in the Dovetail-only profile: parse/introspection delegate; exec fails closed
     /// pointing at the rho build (decision (4)).
     pub fn ambient_backed() -> Result<Box<dyn Language>> {
-        Ok(Box::new(RhoBuildRequiredLanguage { inner: AmbientLanguage }))
+        Ok(Box::new(RhoBuildRequiredLanguage {
+            inner: AmbientLanguage,
+            mechanism: QUIESCENCE_DRIVER,
+        }))
     }
+
+    /// Expands one A-S6 fail-closed demo wrapper for the Dovetail-only profile:
+    /// parse/introspection delegate; exec fails closed pointing at the rho build
+    /// (decision (4), universal since the demo flip).
+    macro_rules! demo_fail_closed {
+        ($(#[$doc:meta])* $fn_name:ident, $lang:path) => {
+            $(#[$doc])*
+            pub fn $fn_name() -> Result<Box<dyn Language>> {
+                Ok(Box::new(RhoBuildRequiredLanguage {
+                    inner: $lang,
+                    mechanism: SET_AUTOMATON_MATCH,
+                }))
+            }
+        };
+    }
+
+    demo_fail_closed!(
+        /// SwapDemo in the Dovetail-only profile (fail-closed, A-S6).
+        swapdemo_backed, SwapDemoLanguage
+    );
+    demo_fail_closed!(
+        /// AcDemo in the Dovetail-only profile (fail-closed, A-S6).
+        acdemo_backed, AcDemoLanguage
+    );
+    demo_fail_closed!(
+        /// AcBagDemo in the Dovetail-only profile (fail-closed, A-S6).
+        acbagdemo_backed, AcBagDemoLanguage
+    );
+    demo_fail_closed!(
+        /// NlAcDemo in the Dovetail-only profile (fail-closed, A-S6).
+        nlacdemo_backed, NlAcDemoLanguage
+    );
+    demo_fail_closed!(
+        /// AmbDemo in the Dovetail-only profile (fail-closed, A-S6).
+        ambdemo_backed, AmbDemoLanguage
+    );
+    demo_fail_closed!(
+        /// AmbNewDemo in the Dovetail-only profile (fail-closed, A-S6).
+        ambnewdemo_backed, AmbNewDemoLanguage
+    );
+    demo_fail_closed!(
+        /// InOutDemo in the Dovetail-only profile (fail-closed, A-S6).
+        inoutdemo_backed, InOutDemoLanguage
+    );
+    demo_fail_closed!(
+        /// CommDemo in the Dovetail-only profile (fail-closed, A-S6).
+        commdemo_backed, CommDemoLanguage
+    );
+    demo_fail_closed!(
+        /// CtxDemo in the Dovetail-only profile (fail-closed, A-S6).
+        ctxdemo_backed, CtxDemoLanguage
+    );
+    demo_fail_closed!(
+        /// BiCongDemo in the Dovetail-only profile (fail-closed, A-S6).
+        bicongdemo_backed, BiCongDemoLanguage
+    );
+    demo_fail_closed!(
+        /// LambdaDemo in the Dovetail-only profile (fail-closed, A-S6).
+        lambdademo_backed, LambdaDemoLanguage
+    );
+    demo_fail_closed!(
+        /// NativeDemo in the Dovetail-only profile (fail-closed, A-S6).
+        nativedemo_backed, NativeDemoLanguage
+    );
+    demo_fail_closed!(
+        /// NativeFoldDemo in the Dovetail-only profile (fail-closed, A-S6).
+        nativefolddemo_backed, NativeFoldDemoLanguage
+    );
 }
 
 #[cfg(not(feature = "rho-languages"))]
-pub use dovetail_only::{ambient_backed, lambda_backed};
+pub use dovetail_only::{
+    acbagdemo_backed, acdemo_backed, ambdemo_backed, ambient_backed, ambnewdemo_backed,
+    bicongdemo_backed, commdemo_backed, ctxdemo_backed, inoutdemo_backed, lambda_backed,
+    lambdademo_backed, nativedemo_backed, nativefolddemo_backed, nlacdemo_backed, swapdemo_backed,
+};
 
 #[cfg(feature = "rho-languages")]
 mod rho {
     use anyhow::{anyhow, Result};
 
+    use mettail_languages::acbagdemo::AcBagDemoLanguage;
+    use mettail_languages::acdemo::AcDemoLanguage;
+    use mettail_languages::ambdemo::AmbDemoLanguage;
     use mettail_languages::ambient::AmbientLanguage;
+    use mettail_languages::ambnewdemo::AmbNewDemoLanguage;
+    use mettail_languages::bicongdemo::BiCongDemoLanguage;
     use mettail_languages::calculator::CalculatorLanguage;
+    use mettail_languages::commdemo::CommDemoLanguage;
+    use mettail_languages::ctxdemo::CtxDemoLanguage;
+    use mettail_languages::inoutdemo::InOutDemoLanguage;
     use mettail_languages::lambda::LambdaLanguage;
+    use mettail_languages::lambdademo::LambdaDemoLanguage;
+    use mettail_languages::nativedemo::NativeDemoLanguage;
+    use mettail_languages::nativefolddemo::NativeFoldDemoLanguage;
+    use mettail_languages::nlacdemo::NlAcDemoLanguage;
     use mettail_languages::swapdemo::SwapDemoLanguage;
     use mettail_runtime::{Language, RuntimeDovetailRunReport, Term};
 
@@ -580,7 +702,237 @@ mod rho {
         .map_err(|err| anyhow!("Ambient Dovetail+Rho backend install failed: {err:?}"))?;
         Ok(Box::new(language))
     }
+
+    // ── A-S6: the DEMO-LANGUAGE registry flip — every admitted rho_net demo on the machine ──
+    //
+    // USER decision (2026-07-20): the runtime mandate — "Dovetail handles only semantic
+    // predicates at runtime" — is UNIVERSAL. Every bundled demo language with an admitted
+    // rho_net path joins the default registry on the SAME two-stage lazy wrapper as
+    // SwapDemo/Lambda/Ambient:
+    //
+    // * `invocation_free` = the generated report-free `rho_net_match_invocation_to`
+    //   (single-shot locate-and-fire; demos are NOT drive-opted — `DRIVE_OPT_IN` stays
+    //   exactly {Lambda, Ambient});
+    // * the report-carrying fallback is per-language: match-then-σ-replay (the SwapDemo
+    //   shape) where the σ-replay driver has arms for the language's families, and
+    //   match-then-TYPED-ERROR where it does not (LambdaDemo — the F16 discipline: the
+    //   replay driver has NO Beta arm, so a σ-replayed β would double-substitute);
+    // * the step slot is the generated `dovetail_step_graph` for TYPED-path demos
+    //   (AmbDemo/AmbNewDemo/InOutDemo/CommDemo/LambdaDemo/NativeDemo/NativeFoldDemo) and
+    //   `dovetail_report_for` for UNTYPED demos (AcDemo/AcBagDemo/NlAcDemo/CtxDemo/
+    //   BiCongDemo — the SwapDemo pattern; its derivation graph fails the REPL Layer-1
+    //   keep condition, so `step` falls through to the Layer-2 live COMM trace).
+    //
+    // Probed reality (2026-07-20, `scratchpad/as6_probe2.log`): every demo below plans,
+    // installs, and — except CommDemo — ADMITS its representative redex subjects on the
+    // report-free match path with ZERO D-stage work. CommDemo's `PFor` carries a
+    // pre-scope Name field the match-path reflection does not support ("binder node with
+    // pre-scope fields — no single-child ^lambda ground image in this slice"), so its
+    // exec rides the BY-DESIGN deferral: lazy D-stage → report-match rejects for the
+    // same reason → the σ-replay driver fires the Comm through its comm arm.
+
+    /// Expands one demo wrapper's STEP slot: the generated navigable one-step rewrite
+    /// graph for typed-path demos, the D-stage report (derivation graph — the SwapDemo
+    /// pattern) for untyped demos. Reached only via REPL `step` routing
+    /// (`Language::run_step_backend_report`); production `exec` never calls it.
+    macro_rules! demo_step_slot {
+        ($lang:path, typed_step_graph) => {
+            |term: &dyn Term| <$lang>::dovetail_step_graph(term, MAX_ITERS, MAX_NODES)
+        };
+        ($lang:path, report_as_step) => {
+            |term: &dyn Term| <$lang>::dovetail_report_for(term, MAX_ITERS, MAX_NODES)
+        };
+    }
+
+    /// Expands one demo wrapper's report-CARRYING fallback compiler (deferral-only):
+    /// `match_then_replay` = the SwapDemo shape (report-driven match, else fall closed to
+    /// the host-matched σ-replay driver); `match_then_typed_error` = the Lambda/F16 shape
+    /// (report-driven match, else a TYPED error — the σ-replay driver has no substitution
+    /// arm for the language's firing family, so replaying would double-substitute).
+    macro_rules! demo_fallback_slot {
+        ($lang:path, $name:literal, match_then_replay) => {
+            |term: &dyn Term, report: &RuntimeDovetailRunReport| {
+                match <$lang>::rho_net_match_invocation_from_dovetail_to(term, report, OUT) {
+                    Ok(invocation) => Ok(RhoBackendInvocation::from(
+                        build_rho_net_injection_invocation_from_contract(invocation),
+                    )),
+                    Err(_gate_or_scope_reject) => {
+                        let injections =
+                            <$lang>::rho_net_replay_invocation_from_dovetail_to(term, report, OUT)?;
+                        Ok(RhoBackendInvocation::from(
+                            build_rho_net_replay_invocation_from_contracts(injections),
+                        ))
+                    },
+                }
+            }
+        };
+        ($lang:path, $name:literal, match_then_typed_error) => {
+            |term: &dyn Term, report: &RuntimeDovetailRunReport| {
+                match <$lang>::rho_net_match_invocation_from_dovetail_to(term, report, OUT) {
+                    Ok(invocation) => Ok(RhoBackendInvocation::from(
+                        build_rho_net_injection_invocation_from_contract(invocation),
+                    )),
+                    Err(match_reject) => Err(format!(
+                        "{} in-Rho exec deferred: the report-free match was rejected and the \
+                         report-driven match also rejects ({match_reject}). {} has NO σ-replay \
+                         fallback by design (F16): the replay driver carries no substitution \
+                         arm — σ-replaying a substitution firing would double-substitute.",
+                        $name, $name,
+                    )),
+                }
+            }
+        };
+    }
+
+    /// Expands one A-S6 demo-language production wrapper: the two-stage LAZY
+    /// Dovetail+Rholang backend on the `swapdemo_backed` shape — the report-free
+    /// `rho_net_match_invocation_to` is the default exec path (in-Rho locate-all match,
+    /// ZERO Dovetail work when admitted); the D-stage runs only on a typed deferral,
+    /// resolved by the selected fallback shape.
+    macro_rules! demo_rho_backed {
+        (
+            $(#[$doc:meta])*
+            $fn_name:ident, $lang:path, $name:literal,
+            step: $step_kind:ident, fallback: $fallback_kind:ident
+        ) => {
+            $(#[$doc])*
+            pub fn $fn_name() -> Result<Box<dyn Language>> {
+                let backend = planned_rho_backend_for(
+                    $name,
+                    <$lang as Language>::metadata(&$lang).definition_source(),
+                )?;
+                let language = install_dovetail_rho_runtime_backend_lazy(
+                    $lang,
+                    backend,
+                    |term: &dyn Term| <$lang>::dovetail_report_for(term, MAX_ITERS, MAX_NODES),
+                    demo_step_slot!($lang, $step_kind),
+                    |term: &dyn Term| match <$lang>::rho_net_match_invocation_to(term, OUT) {
+                        Ok(invocation) => Ok(RhoBackendInvocation::from(
+                            build_rho_net_injection_invocation_from_contract(invocation),
+                        )),
+                        Err(detail) => Err(RhoInvocationDeferral::GateReject { detail }),
+                    },
+                    demo_fallback_slot!($lang, $name, $fallback_kind),
+                )
+                .map_err(|err| {
+                    anyhow!("{} Dovetail+Rho backend install failed: {err:?}", $name)
+                })?;
+                Ok(Box::new(language))
+            }
+        };
+    }
+
+    demo_rho_backed!(
+        /// AcDemo (flat HashBag AC rewrite `{x, ...rest} ~> wrap(x)`) → two-stage lazy
+        /// Dovetail+Rholang backend (A-S6). Untyped path: the step slot serves the
+        /// D-stage derivation report (Layer-2 fall-through in REPL `step`).
+        acdemo_backed, AcDemoLanguage, "AcDemo",
+        step: report_as_step, fallback: match_then_replay
+    );
+
+    demo_rho_backed!(
+        /// AcBagDemo (bag-TRANSFORMING AC rewrite `{x, ...rest} ~> {mark(x), ...rest}` +
+        /// the `MarkIdem` equation) → two-stage lazy Dovetail+Rholang backend (A-S6).
+        /// Probed: the equation does NOT gate the match path — the bag-valued RHS
+        /// re-sources from the subject spread and admits with zero D-stage.
+        acbagdemo_backed, AcBagDemoLanguage, "AcBagDemo",
+        step: report_as_step, fallback: match_then_replay
+    );
+
+    demo_rho_backed!(
+        /// NlAcDemo (non-linear `{x, x, ...rest}` bare-var AC rewrite) → two-stage lazy
+        /// Dovetail+Rholang backend (A-S6). The reducer enforces the non-linear
+        /// consistency guard over the subject spread.
+        nlacdemo_backed, NlAcDemoLanguage, "NlAcDemo",
+        step: report_as_step, fallback: match_then_replay
+    );
+
+    demo_rho_backed!(
+        /// AmbDemo (the Ambient-calculus `OpenRule` STRUCTURAL non-linear AC family) →
+        /// two-stage lazy Dovetail+Rholang backend (A-S6). Typed path (structural-AC,
+        /// binder-free): the step slot is the generated `dovetail_step_graph`.
+        ambdemo_backed, AmbDemoLanguage, "AmbDemo",
+        step: typed_step_graph, fallback: match_then_replay
+    );
+
+    demo_rho_backed!(
+        /// AmbNewDemo (`OpenRule` + the `PNew` binder CONSTRUCTOR, no binder rewrites) →
+        /// two-stage lazy Dovetail+Rholang backend (A-S6). Probed: redexes under
+        /// `new(x, …)` locate and fire in Rho too.
+        ambnewdemo_backed, AmbNewDemoLanguage, "AmbNewDemo",
+        step: typed_step_graph, fallback: match_then_replay
+    );
+
+    demo_rho_backed!(
+        /// InOutDemo (the DEPTH-2 NESTED structural non-linear AC family — Ambient
+        /// `InRule`/`OutRule`) → two-stage lazy Dovetail+Rholang backend (A-S6).
+        inoutdemo_backed, InOutDemoLanguage, "InOutDemo",
+        step: typed_step_graph, fallback: match_then_replay
+    );
+
+    demo_rho_backed!(
+        /// CommDemo (the canonical single-receive communication rewrite with an `eval`
+        /// substitution RHS) → two-stage lazy Dovetail+Rholang backend (A-S6). Probed
+        /// reality: the report-free match DEFERS — `PFor` is a binder node with a
+        /// PRE-SCOPE Name field, which the match-path reflection does not support — so
+        /// an exec rides the BY-DESIGN lazy deferral: the D-stage report is built, the
+        /// report-driven match rejects for the same reason, and the σ-replay driver
+        /// fires the Comm through its comm arm (per-firing channels `OUT0`, `OUT1`, …).
+        commdemo_backed, CommDemoLanguage, "CommDemo",
+        step: typed_step_graph, fallback: match_then_replay
+    );
+
+    demo_rho_backed!(
+        /// CtxDemo (the unary-congruence contextual family: `Flip` under `WrapCong`) →
+        /// two-stage lazy Dovetail+Rholang backend (A-S6). The congruence-only
+        /// `WrapCong` is statically exempt (A-S5.1); `Flip` locates and fires in Rho at
+        /// the root AND under `wrap(…)` contexts.
+        ctxdemo_backed, CtxDemoLanguage, "CtxDemo",
+        step: report_as_step, fallback: match_then_replay
+    );
+
+    demo_rho_backed!(
+        /// BiCongDemo (the 2-ary-congruence n-hole contextual family: `Flip` under
+        /// `NodeCong`) → two-stage lazy Dovetail+Rholang backend (A-S6). Both holes'
+        /// redexes locate and fire in Rho. Untyped path (like CtxDemo): the step slot
+        /// serves the D-stage derivation report.
+        bicongdemo_backed, BiCongDemoLanguage, "BiCongDemo",
+        step: report_as_step, fallback: match_then_replay
+    );
+
+    demo_rho_backed!(
+        /// LambdaDemo (the untyped λ-calculus binder/β-substitution demonstration) →
+        /// two-stage lazy Dovetail+Rholang backend (A-S6). β fires in-Rho through the
+        /// TRS seed on the match path. The fallback is the Lambda/F16 shape: the
+        /// σ-replay driver has NO Beta arm, so the deferral fallback returns a TYPED
+        /// error instead of replaying (a σ-replayed β would double-substitute).
+        lambdademo_backed, LambdaDemoLanguage, "LambdaDemo",
+        step: typed_step_graph, fallback: match_then_typed_error
+    );
+
+    demo_rho_backed!(
+        /// NativeDemo (the native-system-process `PowInt` `![…] fold` demonstration) →
+        /// two-stage lazy Dovetail+Rholang backend (A-S6). A located native site ADMITS
+        /// (A-S3): the wrapper's clear/drain bracket registers the rule's machine-side
+        /// handler contract and the machine's dispatch COMM computes the value at COMM
+        /// time — no host-pre-computed contractum rides the call.
+        nativedemo_backed, NativeDemoLanguage, "NativeDemo",
+        step: typed_step_graph, fallback: match_then_replay
+    );
+
+    demo_rho_backed!(
+        /// NativeFoldDemo (the native scalar-fold `AddInt` demonstration) → two-stage
+        /// lazy Dovetail+Rholang backend (A-S6). Multi-site subjects admit — each
+        /// located site drives its own machine-side handler invocation.
+        nativefolddemo_backed, NativeFoldDemoLanguage, "NativeFoldDemo",
+        step: typed_step_graph, fallback: match_then_replay
+    );
 }
 
 #[cfg(feature = "rho-languages")]
-pub use rho::{ambient_backed, calculator_backed, lambda_backed, rhocalc_backed, swapdemo_backed};
+pub use rho::{
+    acbagdemo_backed, acdemo_backed, ambdemo_backed, ambient_backed, ambnewdemo_backed,
+    bicongdemo_backed, calculator_backed, commdemo_backed, ctxdemo_backed, inoutdemo_backed,
+    lambda_backed, lambdademo_backed, nativedemo_backed, nativefolddemo_backed, nlacdemo_backed,
+    rhocalc_backed, swapdemo_backed,
+};

@@ -22,23 +22,29 @@
 //! non-bracketed counter — which is why each admitted assertion reads the counter immediately
 //! around its own exec and every deferred assertion is `≥ 1`).
 //!
-//! A-S3 (native dispatch boundary tightening): the zero-D-stage NATIVE execs live in the
-//! RUNTIME suites (`rholang-runtime/tests/rho_net_native_firing.rs`
+//! A-S3 (native dispatch boundary tightening): the zero-D-stage NATIVE exec MECHANISM probes
+//! live in the RUNTIME suites (`rholang-runtime/tests/rho_net_native_firing.rs`
 //! `a_s3_admitted_native_exec_builds_no_dovetail_report` — delta 0 with the machine-invoked
 //! registered handler's value — and `rho_net_native_fold_firing.rs`
-//! `a_s3_multi_site_native_exec_admits_and_fires_each_site`), because NativeDemo /
-//! NativeFoldDemo are runtime test languages, not REPL-registered backends.
+//! `a_s3_multi_site_native_exec_admits_and_fires_each_site`). Since A-S6 NativeDemo /
+//! NativeFoldDemo ARE REPL-registered backends, so the registered-wrapper native exec is
+//! additionally pinned zero-D-stage HERE (`a_s6_admitted_nativefolddemo_exec…` below).
 //!
 //! A-S5.6 (the production flip): Lambda + Ambient join the admitted set — their default exec
 //! path is the in-Rho QUIESCENCE DRIVER (`rho_net_drive_invocation_to` seeding the installed
 //! `^drive` receiver family), so an admitted exec builds ZERO Dovetail reports while the whole
 //! reduction (β chains / guarded AC mobility firings, contractum re-drives, quiescence) runs as
 //! COMMs on the Rho machine, cross-checked by the always-on §4.7 ledger/NF-scan.
+//!
+//! A-S6 (the demo flip): every rho_net demo joins the admitted set on the report-free
+//! set-automaton match path — pinned below for one AC demo (AcDemo), one base-rewrite demo
+//! (CtxDemo's root-position `Flip`), and one native demo (NativeFoldDemo).
 #![cfg(feature = "rho-languages")]
 
 use mettail_languages::calculator::CalculatorLanguage;
 use mettail_repl::rho_backends::{
-    ambient_backed, calculator_backed, lambda_backed, rhocalc_backed, swapdemo_backed,
+    acdemo_backed, ambient_backed, calculator_backed, ctxdemo_backed, lambda_backed,
+    nativefolddemo_backed, rhocalc_backed, swapdemo_backed,
 };
 use mettail_rholang_codegen::RhoFoldDataflowDisposition;
 use mettail_rholang_runtime::dstage_instrumentation::dovetail_report_invocations;
@@ -251,6 +257,104 @@ fn a_s5_6_admitted_ambient_exec_builds_no_dovetail_report() {
         assert_eq!(constructor, "PAmb", "each resting element is an ambient: {element:?}");
         assert_eq!(children.len(), 2, "PAmb(name, body): {element:?}");
     }
+}
+
+/// A-S6: an ADMITTED AC-demo exec locates and fires the bag redex fully in-Rho — ZERO
+/// Dovetail reports; `#{A | B | C}#` fires `AcStep . {x, ...rest} ~> wrap(x)` for one
+/// located pick.
+#[test]
+fn a_s6_admitted_acdemo_exec_builds_no_dovetail_report() {
+    let language = acdemo_backed().expect("AcDemo lazy backend installs");
+    let term = language
+        .parse_term("#{A | B | C}#")
+        .expect("the AC bag subject parses");
+
+    let before = dovetail_report_invocations();
+    let report = language
+        .run_backend_report(RuntimeBackend::RhoMachine, term.as_ref())
+        .expect("the admitted AcDemo exec runs report-free in Rho");
+    let after = dovetail_report_invocations();
+
+    assert_eq!(
+        after - before,
+        0,
+        "an ADMITTED AcDemo exec must build ZERO Dovetail reports (the report-free \
+         set-automaton match is the default exec path — A-S6)"
+    );
+    assert_eq!(report.backend(), RuntimeBackend::RhoMachine);
+    let out = report
+        .observations_for_channel("OUT")
+        .expect("an OUT observation");
+    assert_eq!(out.observed_count(), 1, "one located AC firing (got {:?})", out.values);
+    assert!(
+        matches!(
+            &out.values[0],
+            RuntimeObservationValue::Term { constructor, .. } if constructor == "Wrap"
+        ),
+        "AcStep fired {{x, ...rest}} ~> wrap(x): {:?}",
+        out.values
+    );
+}
+
+/// A-S6: an ADMITTED base-rewrite demo exec fires in-Rho with ZERO Dovetail reports —
+/// CtxDemo's `swap(A, B)` at the ROOT fires the flat base rewrite `Flip` (`~> pair(B, A)`),
+/// exactly the SwapDemo family shape.
+#[test]
+fn a_s6_admitted_ctxdemo_base_flip_exec_builds_no_dovetail_report() {
+    let language = ctxdemo_backed().expect("CtxDemo lazy backend installs");
+    let term = language.parse_term("swap(A, B)").expect("the flat Flip subject parses");
+
+    let before = dovetail_report_invocations();
+    let report = language
+        .run_backend_report(RuntimeBackend::RhoMachine, term.as_ref())
+        .expect("the admitted CtxDemo exec runs report-free in Rho");
+    let after = dovetail_report_invocations();
+
+    assert_eq!(
+        after - before,
+        0,
+        "an ADMITTED CtxDemo exec must build ZERO Dovetail reports (A-S6)"
+    );
+    assert_eq!(report.backend(), RuntimeBackend::RhoMachine);
+    let out = report
+        .observations_for_channel("OUT")
+        .expect("an OUT observation");
+    assert_eq!(
+        out.values,
+        vec![term_obs("Pair", vec![term_obs("B", Vec::new()), term_obs("A", Vec::new())])],
+        "Flip fired swap(A, B) ~> pair(B, A) in Rho"
+    );
+}
+
+/// A-S6: an ADMITTED native-demo exec through the REGISTERED wrapper computes on the
+/// machine with ZERO Dovetail reports — the located AddInt site registers its machine-side
+/// handler (the wrapper's clear/drain bracket) and the dispatch COMM computes `2 + 3 = 5`
+/// at COMM time (closing the A-S3 note above: the native demos are REPL backends now).
+#[test]
+fn a_s6_admitted_nativefolddemo_exec_builds_no_dovetail_report() {
+    let language = nativefolddemo_backed().expect("NativeFoldDemo lazy backend installs");
+    let term = language.parse_term("2 + 3").expect("the native redex parses");
+
+    let before = dovetail_report_invocations();
+    let report = language
+        .run_backend_report(RuntimeBackend::RhoMachine, term.as_ref())
+        .expect("the admitted NativeFoldDemo exec runs report-free on the machine");
+    let after = dovetail_report_invocations();
+
+    assert_eq!(
+        after - before,
+        0,
+        "an ADMITTED NativeFoldDemo exec must build ZERO Dovetail reports (A-S6)"
+    );
+    assert_eq!(report.backend(), RuntimeBackend::RhoMachine);
+    let out = report
+        .observations_for_channel("OUT")
+        .expect("an OUT observation");
+    assert_eq!(
+        out.values,
+        vec![term_obs("NumLit(5)", Vec::new())],
+        "the registered handler computed 2 + 3 = 5 at COMM time"
+    );
 }
 
 /// A-S3/A-S4 probe helper: whether the prost-encoded bytes of `par` contain `needle`.

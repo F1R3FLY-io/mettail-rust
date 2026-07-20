@@ -82,7 +82,10 @@ impl Default for LanguageRegistry {
 pub fn build_registry() -> Result<LanguageRegistry> {
     // Default build: every bundled language wrapped in its production two-stage
     // Dovetail+Rholang backend (A-S5.6: Lambda/Ambient exec on the in-Rho quiescence driver;
-    // RhoCalc/Calculator on COMM / scalar dataflow; SwapDemo on the in-Rho locate-all match).
+    // RhoCalc/Calculator on COMM / scalar dataflow; A-S6: SwapDemo AND every rho_net demo on
+    // the in-Rho locate-all set-automaton match — the runtime mandate is registry-wide, so at
+    // runtime Dovetail handles only semantic predicates, labeled step introspection, and lazy
+    // deferral reports).
     #[cfg(feature = "rho-languages")]
     {
         let mut registry = LanguageRegistry::new();
@@ -91,13 +94,27 @@ pub fn build_registry() -> Result<LanguageRegistry> {
         registry.register(crate::rho_backends::rhocalc_backed()?);
         registry.register(crate::rho_backends::calculator_backed()?);
         registry.register(crate::rho_backends::swapdemo_backed()?);
+        // A-S6 (USER decision 2026-07-20): the demo languages flip to the machine too.
+        registry.register(crate::rho_backends::acdemo_backed()?);
+        registry.register(crate::rho_backends::acbagdemo_backed()?);
+        registry.register(crate::rho_backends::nlacdemo_backed()?);
+        registry.register(crate::rho_backends::ambdemo_backed()?);
+        registry.register(crate::rho_backends::ambnewdemo_backed()?);
+        registry.register(crate::rho_backends::inoutdemo_backed()?);
+        registry.register(crate::rho_backends::commdemo_backed()?);
+        registry.register(crate::rho_backends::ctxdemo_backed()?);
+        registry.register(crate::rho_backends::bicongdemo_backed()?);
+        registry.register(crate::rho_backends::lambdademo_backed()?);
+        registry.register(crate::rho_backends::nativedemo_backed()?);
+        registry.register(crate::rho_backends::nativefolddemo_backed()?);
         Ok(registry)
     }
 
-    // Dovetail-only build (no f1r3node): Lambda/Ambient register through the decision-(4)
-    // fail-closed wrapper (parse/introspection work; exec errors pointing at the rho build —
-    // A-S5.6 removed their generic-Dovetail exec path, no dual runtime path remains);
-    // RhoCalc/Calculator (whose production default is the Rho machine) register raw.
+    // Dovetail-only build (no f1r3node): Lambda/Ambient (A-S5.6) and SwapDemo + the 12 rho_net
+    // demos (A-S6) register through the decision-(4) fail-closed wrapper (parse/introspection
+    // work; exec errors pointing at the rho build — their production semantics run ONLY on the
+    // Rho machine, no dual runtime path remains); RhoCalc/Calculator (whose production default
+    // is the Rho machine but which keep a raw parse/introspection surface here) register raw.
     #[cfg(all(feature = "bundled-languages", not(feature = "rho-languages")))]
     {
         let mut registry = LanguageRegistry::new();
@@ -105,6 +122,19 @@ pub fn build_registry() -> Result<LanguageRegistry> {
         registry.register(crate::rho_backends::ambient_backed()?);
         registry.register(Box::new(CalculatorLanguage));
         registry.register(Box::new(RhoCalcLanguage));
+        registry.register(crate::rho_backends::swapdemo_backed()?);
+        registry.register(crate::rho_backends::acdemo_backed()?);
+        registry.register(crate::rho_backends::acbagdemo_backed()?);
+        registry.register(crate::rho_backends::nlacdemo_backed()?);
+        registry.register(crate::rho_backends::ambdemo_backed()?);
+        registry.register(crate::rho_backends::ambnewdemo_backed()?);
+        registry.register(crate::rho_backends::inoutdemo_backed()?);
+        registry.register(crate::rho_backends::commdemo_backed()?);
+        registry.register(crate::rho_backends::ctxdemo_backed()?);
+        registry.register(crate::rho_backends::bicongdemo_backed()?);
+        registry.register(crate::rho_backends::lambdademo_backed()?);
+        registry.register(crate::rho_backends::nativedemo_backed()?);
+        registry.register(crate::rho_backends::nativefolddemo_backed()?);
         Ok(registry)
     }
 

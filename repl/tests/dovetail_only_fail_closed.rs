@@ -5,9 +5,15 @@
 //! no Rho machine to run it on (no dual runtime path: the old generic-Dovetail exec is
 //! NOT silently substituted).
 //!
+//! A-S6 (the demo flip) makes the discipline UNIVERSAL: SwapDemo and the 12 rho_net demo
+//! languages register through the same fail-closed wrapper — their production semantics
+//! are the in-Rho set-automaton match, so this profile's `exec` fails closed for them
+//! too, naming the mechanism and the rho build flag.
+//!
 //! This suite compiles ONLY in that profile (it is feature-gated OUT of the default
 //! `rho-languages` build, whose expectations live in `registry_exec.rs` /
-//! `zero_dstage_exec.rs`). Gate evidence: `scratchpad/as56_dovetail_only_gate.log`.
+//! `zero_dstage_exec.rs`). Gate evidence: `scratchpad/as56_dovetail_only_gate.log`
+//! (A-S5.6) and `scratchpad/as6_dovetail_only_gate.log` (A-S6).
 #![cfg(all(feature = "bundled-languages", not(feature = "rho-languages")))]
 
 use mettail_repl::build_registry;
@@ -43,6 +49,49 @@ fn lambda_and_ambient_exec_fail_closed_pointing_at_the_rho_build() {
                 && err.contains(name),
             "{name}'s fail-closed error must name the driver, the language, and the rho \
              build flag: {err}"
+        );
+    }
+}
+
+/// A-S6: every flipped demo language registers, parses, advertises its production
+/// `RhoMachine` default, and fails exec CLOSED with the decision-(4) typed error naming
+/// the in-Rho set-automaton match and the rho build.
+#[test]
+fn a_s6_demos_exec_fail_closed_pointing_at_the_rho_build() {
+    let registry = build_registry().expect("the Dovetail-only registry builds");
+    for (name, subject) in [
+        ("SwapDemo", "swap(A, B)"),
+        ("AcDemo", "#{A | B | C}#"),
+        ("AcBagDemo", "#{A | B | C}#"),
+        ("NlAcDemo", "#{A | A | B}#"),
+        ("AmbDemo", "{ open(na, A) | na[B] }"),
+        ("AmbNewDemo", "new(x, { open(na, A) | na[B] })"),
+        ("InOutDemo", "{ na[{ in(nb, A) }] | nb[B] }"),
+        ("CommDemo", "{ for(y <- na){ y!(nc) } | na!(nb) }"),
+        ("CtxDemo", "wrap(swap(A, B))"),
+        ("BiCongDemo", "node(swap(A, B), swap(C, D))"),
+        ("LambdaDemo", "(lam x. f(x), A)"),
+        ("NativeDemo", "2 ^ 3"),
+        ("NativeFoldDemo", "2 + 3"),
+    ] {
+        let language = registry.get(name).expect("the demo registers");
+        let term = language
+            .parse_term(subject)
+            .unwrap_or_else(|err| panic!("{name} must still parse in this profile: {err}"));
+        assert_eq!(
+            language.selected_default_runtime_backend(),
+            Some(RuntimeBackend::RhoMachine),
+            "{name} advertises its production RhoMachine default even here"
+        );
+        let err = language
+            .run_backend_report(RuntimeBackend::RhoMachine, term.as_ref())
+            .expect_err("demo exec must fail closed in the Dovetail-only profile");
+        assert!(
+            err.contains("in-Rho set-automaton match")
+                && err.contains("rho-languages")
+                && err.contains(name),
+            "{name}'s fail-closed error must name the match mechanism, the language, and \
+             the rho build flag: {err}"
         );
     }
 }
