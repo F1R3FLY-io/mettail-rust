@@ -40,10 +40,12 @@ use crate::run::{
 };
 #[cfg(feature = "runtime-report")]
 use crate::run::{
+    run_installed_program_with_call_and_read_observation_set,
     run_installed_program_with_call_and_read_runtime_values,
     run_validated_program_and_read_runtime_value_and_string_channels,
     run_validated_program_and_read_runtime_values,
-    run_validated_program_with_call_and_read_runtime_values,
+    run_validated_program_with_call_and_read_runtime_values, DriveObservationChannels,
+    DriveObservationSet,
 };
 
 /// Runtime boundary that produced a Rho observation report.
@@ -437,6 +439,35 @@ impl PlannedRhoBackend {
             run_installed_program_with_call_and_read_runtime_values(&installed, call, out_channel)
                 .await?;
         Ok(RhoObservationReport::planned(self.artifact_kind(), out_channel, values))
+    }
+
+    /// Run this backend's **installed Rho-net program** composed with a dynamic
+    /// call (the `^drive` seed) and read back the FULL drive observation set —
+    /// decoded OUT values plus the raw resting data of the three reserved
+    /// GString observation channels (`^fired:{fp}` / `^drive-err:{fp}` /
+    /// `^drive-fuel:{fp}`) — from ONE execution.
+    ///
+    /// The A-S5.2 (F7) multi-channel twin of
+    /// [`run_rho_net_with_call_and_observe_runtime_values`](Self::run_rho_net_with_call_and_observe_runtime_values):
+    /// same fail-closed install boundary
+    /// ([`RhoDefaultBackendPlan::installed_rho_net_program_par`]), same
+    /// composition, but the readback also surfaces the driver's firing ledger
+    /// and typed fail-close channels, which the single-OUT observe seam cannot
+    /// see. The drive cross-check and the driver firing tests consume this; the
+    /// A-S5.6 exec path will consume it through the same wrapper.
+    #[cfg(feature = "runtime-report")]
+    pub async fn run_rho_net_with_call_and_read_observation_set(
+        &self,
+        call: &Par,
+        channels: &DriveObservationChannels,
+    ) -> Result<DriveObservationSet, String> {
+        // Fail-closed install boundary (Epic 4 #2011): refuse to run a σ-receiver
+        // program that dropped unlowered work, BEFORE any Rho reduction.
+        let installed = self
+            .plan()
+            .installed_rho_net_program_par()
+            .map_err(|err| err.to_string())?;
+        run_installed_program_with_call_and_read_observation_set(&installed, call, channels).await
     }
 
     /// [`run_rho_net_with_call_and_observe_runtime_values`](Self::run_rho_net_with_call_and_observe_runtime_values)

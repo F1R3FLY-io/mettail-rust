@@ -383,6 +383,16 @@ name = "rho_net_subst_trs_prop"
 path = "tests/rho_net_subst_trs_prop.rs"
 required-features = ["runtime-report"]
 
+# A-S5.2 open probe P2 (AM-7) + the F7 observation-set readback API unit tests: the GInt
+# fuel-arm reducer facts (ground-0-first case order, EMinus-in-datum evaluation, exhaustion
+# from fuel 2) proven on the live reducer BEFORE the quiescence-driver codegen depends on
+# them, plus the four-channel readback surface against hand-built programs. Hand-built
+# `Par`s only — no demo language needed.
+[[test]]
+name = "drive_fuel_probe"
+path = "tests/drive_fuel_probe.rs"
+required-features = ["runtime-report"]
+
 [[test]]
 name = "rho_net_native_firing"
 path = "tests/rho_net_native_firing.rs"

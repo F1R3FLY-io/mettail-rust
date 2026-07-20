@@ -114,9 +114,11 @@ pub use rhocalc_ast::{
 };
 #[cfg(feature = "runtime-report")]
 pub use run::{
-    par_as_runtime_observation_value, run_normalized_par_for_oracle_and_read_runtime_values,
+    par_as_runtime_observation_value, run_installed_program_with_call_and_read_observation_set,
+    run_normalized_par_for_oracle_and_read_runtime_values,
     run_validated_program_and_read_runtime_values,
-    run_validated_program_with_call_and_read_runtime_values,
+    run_validated_program_with_call_and_read_runtime_values, DriveObservationChannels,
+    DriveObservationSet,
 };
 pub use run::{
     run_normalized_par_for_oracle, run_normalized_par_for_oracle_and_read_bools,

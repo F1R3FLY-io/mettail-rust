@@ -883,6 +883,141 @@ pub async fn run_installed_program_with_call_definitions_and_read_runtime_values
     Ok(read_ground_from_runtime(&runtime, out_channel, par_as_runtime_observation_value).await)
 }
 
+/// The four observation channels of one in-Rho quiescence-driver execution
+/// (A-S5.2, plan v2 §4.5 / F7): the resting-term channel plus the three reserved
+/// GString observation channels the generated `^drive` receiver family emits on.
+///
+/// All four are **GString names** (host readback uses the proven `get_data`
+/// path — the E-6a multi-channel precedent); every in-Rho-only rendezvous
+/// (`^drive` itself, the fresh per-node returns, the σ-ABI accepts) stays
+/// `GPrivate` and is deliberately NOT readable here. The names are derived from
+/// the language fingerprint by the codegen naming helpers
+/// (`mettail_rholang_codegen::drive_fired_channel` et al.); this struct carries
+/// them as plain strings so the runtime surface stays codegen-shape-agnostic.
+#[cfg(feature = "runtime-report")]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DriveObservationChannels {
+    /// The quoted channel the driver's quiescent resting term lands on (the
+    /// `ret` threaded from the seed).
+    pub out: String,
+    /// The firing ledger `@"^fired:{fp}"` — one GString rule label per firing.
+    pub fired: String,
+    /// The typed fail-close channel `@"^drive-err:{fp}"` — an unrecognized
+    /// driven head rests here (never silently normal).
+    pub err: String,
+    /// The typed fuel-exhaustion channel `@"^drive-fuel:{fp}"` — the stuck
+    /// redex node rests here when a firing arm sees fuel 0.
+    pub fuel: String,
+}
+
+/// The decoded observation set of one in-Rho quiescence-driver execution
+/// (A-S5.2, plan v2 §4.5): decoded OUT values plus the RAW resting data of the
+/// three reserved observation channels.
+///
+/// OUT is decoded through [`par_as_runtime_observation_value`] (fail-loud at
+/// the read: an undecodable OUT datum is an error, never silently dropped).
+/// The ledger / error / fuel channels are kept as raw `Par` data: their
+/// payloads are diagnostic (a GString rule label; the offending reflected
+/// node), and the always-on cross-check wants to see EXACTLY what rested there
+/// — including malformed data, which is itself a violation.
+#[cfg(feature = "runtime-report")]
+#[derive(Debug, Clone, PartialEq)]
+pub struct DriveObservationSet {
+    /// Decoded closed ground values resting on the OUT channel.
+    pub out_values: Vec<RuntimeObservationValue>,
+    /// Raw firing-ledger data (`@"^fired:{fp}"`) — expected: one GString rule
+    /// label per firing.
+    pub fired_data: Vec<Par>,
+    /// Raw typed-error data (`@"^drive-err:{fp}"`) — expected EMPTY on a green
+    /// drive.
+    pub err_data: Vec<Par>,
+    /// Raw fuel-exhaustion data (`@"^drive-fuel:{fp}"`) — expected EMPTY on a
+    /// green drive.
+    pub fuel_data: Vec<Par>,
+}
+
+#[cfg(feature = "runtime-report")]
+impl DriveObservationSet {
+    /// The firing-ledger rule labels, decoded from [`fired_data`](Self::fired_data).
+    /// `Err` (naming the ledger channel shape) if any ledger datum is not a
+    /// single ground GString — a malformed ledger is a driver defect, never
+    /// silently skipped.
+    pub fn fired_labels(&self) -> Result<Vec<String>, String> {
+        let mut labels = Vec::with_capacity(self.fired_data.len());
+        for par in &self.fired_data {
+            match par_as_string(par) {
+                Some(label) => labels.push(label),
+                None => {
+                    return Err(format!(
+                        "drive firing-ledger datum is not a single ground GString rule label: {par:?}"
+                    ));
+                },
+            }
+        }
+        Ok(labels)
+    }
+}
+
+/// A raw pass-through reader for [`read_ground_from_runtime`] — captures every
+/// resting datum verbatim (never `None`), so the observation-channel readback
+/// cannot silently drop malformed data.
+#[cfg(feature = "runtime-report")]
+fn par_verbatim(par: &Par) -> Option<Par> {
+    Some(par.clone())
+}
+
+/// Build an in-memory `RhoRuntime`, inject an installed Rho-net program composed
+/// with a dynamic call (the `^drive` seed), run to quiescence, and read back the
+/// FULL drive observation set — decoded OUT values plus the raw resting data of
+/// the three reserved GString observation channels — from ONE execution.
+///
+/// This is the A-S5.2 (F7) multi-channel readback surface: the single-channel
+/// observe seam ([`run_installed_program_with_call_and_read_runtime_values`])
+/// reads only OUT, which cannot see the driver's firing ledger or its typed
+/// fail-close channels. Composition mirrors the single-channel path
+/// (`installed.append(call)`); the four reads share one runtime (the
+/// [`run_validated_program_and_read_string_channels`] / E-6a `get_data`
+/// multi-channel precedent).
+///
+/// Fail-loud decode: an OUT datum that does not decode as a closed runtime
+/// observation value is an `Err` naming the OUT channel — never a silent drop
+/// (the drive cross-check depends on OUT being fully accounted for).
+#[cfg(feature = "runtime-report")]
+pub async fn run_installed_program_with_call_and_read_observation_set(
+    installed_program: &Par,
+    call: &Par,
+    channels: &DriveObservationChannels,
+) -> Result<DriveObservationSet, String> {
+    let composed = installed_program.append(call.clone());
+    let runtime = evaluate_par(&composed).await?;
+
+    let out_raw = read_ground_from_runtime(&runtime, &channels.out, par_verbatim).await;
+    let mut out_values = Vec::with_capacity(out_raw.len());
+    for par in &out_raw {
+        match par_as_runtime_observation_value(par) {
+            Some(value) => out_values.push(value),
+            None => {
+                return Err(format!(
+                    "drive OUT channel {:?} datum did not decode as a closed runtime \
+                     observation value: {par:?}",
+                    channels.out,
+                ));
+            },
+        }
+    }
+
+    let fired_data = read_ground_from_runtime(&runtime, &channels.fired, par_verbatim).await;
+    let err_data = read_ground_from_runtime(&runtime, &channels.err, par_verbatim).await;
+    let fuel_data = read_ground_from_runtime(&runtime, &channels.fuel, par_verbatim).await;
+
+    Ok(DriveObservationSet {
+        out_values,
+        fired_data,
+        err_data,
+        fuel_data,
+    })
+}
+
 /// Build an in-memory `RhoRuntime`, inject normalized `program` for an
 /// oracle/debug test, and return every ground boolean left resting on the quoted
 /// channel `@"<out_channel>"`.
