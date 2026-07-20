@@ -1,0 +1,11 @@
+workload,n,control_reps,treatment_reps,control_primary_median,treatment_primary_median,effect,effect_sign,p_welch_primary,control_inj_ns_median,treatment_inj_ns_median,p_welch_inj_ns,q_bh_primary,q_bh_inj_ns,significant_primary,significant_inj_ns
+lambda_chain,4,30,30,178.0,16.0,-162.0,treatment_lower,0.0,20472773.0,24614130.0,7.067300662839242e-24,0.0,7.067300662839242e-24,True,True
+lambda_chain,8,30,30,596.0,32.0,-564.0,treatment_lower,0.0,69984895.5,83288814.5,3.208989210632758e-41,0.0,4.813483815949137e-41,True,True
+multi_rule_shared,402,30,30,88.0,13.0,-75.0,treatment_lower,0.0,6919857.0,16294718.5,2.466307089013967e-51,0.0,4.43935276022514e-51,True,True
+multi_rule_shared,803,30,30,220.0,25.0,-195.0,treatment_lower,0.0,26466594.0,109207210.5,1.3510962670771885e-52,0.0,3.0399666009236742e-52,True,True
+nested_spine,2,30,30,32.0,5.0,-27.0,treatment_lower,0.0,1901820.0,3190107.5,1.3835091342775423e-80,0.0,6.2257911042489404e-80,True,True
+nested_spine,8,30,30,140.0,11.0,-129.0,treatment_lower,0.0,12448061.0,44673521.5,5.263147850756804e-40,0.0,6.766904379544462e-40,True,True
+nested_spine,16,30,30,284.0,19.0,-265.0,treatment_lower,0.0,44256897.0,246227310.5,1.3565800700318128e-82,0.0,1.2209220630286314e-81,True,True
+swap_comb,4,30,30,64.0,7.0,-57.0,treatment_lower,0.0,3935470.0,10318940.5,2.1206328384207355e-33,0.0,2.3857119432233273e-33,True,True
+swap_comb,16,30,30,268.0,19.0,-249.0,treatment_lower,0.0,39481129.5,250734686.5,2.5043013575526316e-80,0.0,7.512904072657896e-80,True,True
+swap_comb,64,30,0,1084.0,,,treatment_dnf: E-6a index «s» entry exceeds the machine trie-key caps at location `site0/Pair.1/Pair.1/Pair.1/Pair.1/Pair.1/Pair.1/Pair,,,,,,,False,False
