@@ -7,7 +7,7 @@ use colored::Colorize;
 use mettail_query::run_query_report as query_run_query_report;
 use mettail_runtime::{
     Language, RelationData, RuntimeBackend, RuntimeBackendOutput, RuntimeBackendReport,
-    RuntimeDovetailGraphKind, RuntimeDovetailRunReport,
+    RuntimeDovetailGraphKind, RuntimeDovetailRunReport, RuntimeReductionTrace,
 };
 use rustyline::error::ReadlineError;
 use rustyline::{DefaultEditor, Result as RustyResult};
@@ -906,6 +906,7 @@ mod tests {
                 kind: RuntimeReductionKind::Comm,
                 display: "@1!(42)".to_string(),
                 comm: None,
+                tau: None,
             },
             RuntimeReductionStep {
                 ordinal: 1,
@@ -913,6 +914,7 @@ mod tests {
                 kind: RuntimeReductionKind::Output,
                 display: "OUT => 42".to_string(),
                 comm: None,
+                tau: None,
             },
         ]));
         let trace_graph = runtime_graph_view(&trace_report)
@@ -1293,7 +1295,13 @@ fn runtime_graph_view(report: &RuntimeBackendReport) -> Result<RuntimeGraphView>
                     id: step.ordinal,
                     // "[Rho <kind>]" — the per-reduction node tag (COMM, deref, output, …); all live
                     // Rho-machine steps share the RhoComm engine, so the kind carries the distinction.
-                    display: format!("[Rho {}] {}", step.kind.label(), step.display),
+                    // A-S5.6: a τ-classified COMM (reserved internal-machinery channel — driver
+                    // dispatch / subst TRS / AC carrier) is tagged "[τ drive]"/"[τ subst]"/"[τ ac]"
+                    // instead, per the plan v2 §6.4 Layer-2 τ-COMM UX.
+                    display: match step.tau {
+                        Some(tau) => format!("[{}] {}", tau.label(), step.display),
+                        None => format!("[Rho {}] {}", step.kind.label(), step.display),
+                    },
                     is_normal_form: index == last,
                     is_root: index == 0,
                 });
@@ -1419,6 +1427,11 @@ pub struct Repl {
     state: ReplState,
     registry: LanguageRegistry,
     editor: DefaultEditor,
+    /// A-S5.6 (Q-τ, USER-overridable default): show τ-classified internal-machinery
+    /// COMMs (driver dispatch / subst TRS / AC carriers) in the Layer-2 `step` trace.
+    /// Default OFF — the trace shows firing/visible COMMs and outputs; toggle with the
+    /// `taus` command or one-shot with `step --taus <term>`.
+    show_taus: bool,
 }
 
 impl Repl {
@@ -1429,6 +1442,7 @@ impl Repl {
             state: ReplState::new(),
             registry,
             editor,
+            show_taus: false,
         })
     }
 
@@ -1558,6 +1572,7 @@ impl Repl {
             },
             "exec" => self.cmd_exec_term(line.strip_prefix("exec").unwrap()),
             "step" => self.cmd_step_term(line.strip_prefix("step").unwrap()),
+            "taus" => self.cmd_taus(),
             _ => {
                 anyhow::bail!(
                     "Unknown command: '{}'. Type 'help' for available commands.",
@@ -1621,6 +1636,12 @@ impl Repl {
             "    {}    Step-by-step: show initial term, use {} to reduce",
             "step <term>".green(),
             "apply 0".cyan()
+        );
+        println!(
+            "    {}           Toggle τ-COMM visibility in step traces (internal machinery: \
+             [τ drive]/[τ subst]/[τ ac]); one-shot: {}",
+            "taus".green(),
+            "step --taus <term>".cyan()
         );
         println!("    {}    Load example program", "example <name>".green());
         println!("    {}    List available examples", "list-examples".green());
@@ -2313,15 +2334,35 @@ impl Repl {
     }
 
     fn cmd_exec_term(&mut self, term_str: &str) -> Result<()> {
-        self.exec_or_step_term(term_str.trim(), /* step_mode: */ false)
+        let show_taus = self.show_taus;
+        self.exec_or_step_term(term_str.trim(), /* step_mode: */ false, show_taus)
     }
 
     /// Step-by-step execution: run Ascent but leave current term at the initial term
     /// so the user can type `apply 0` to apply one rewrite at a time.
     /// Step mode requires an Ascent-shaped graph so the user always sees the initial
     /// term and can apply rewrites.
+    ///
+    /// A-S5.6: `step --taus <term>` one-shot-shows the τ-classified internal-machinery
+    /// COMMs in the Layer-2 trace (the persistent toggle is the `taus` command).
     fn cmd_step_term(&mut self, term_str: &str) -> Result<()> {
-        self.exec_or_step_term(term_str.trim(), /* step_mode: */ true)
+        let trimmed = term_str.trim();
+        let (term_str, show_taus) = match trimmed.strip_prefix("--taus") {
+            Some(rest) => (rest.trim(), true),
+            None => (trimmed, self.show_taus),
+        };
+        self.exec_or_step_term(term_str, /* step_mode: */ true, show_taus)
+    }
+
+    /// A-S5.6 (Q-τ): toggle the persistent τ-COMM step-display filter.
+    fn cmd_taus(&mut self) -> Result<()> {
+        self.show_taus = !self.show_taus;
+        if self.show_taus {
+            println!("τ-COMMs shown: step traces include internal machinery COMMs ([τ drive]/[τ subst]/[τ ac]).");
+        } else {
+            println!("τ-COMMs hidden (default): step traces show firing/visible COMMs and outputs; 'taus' to toggle.");
+        }
+        Ok(())
     }
 
     /// Shared parse + substitute + selected backend execution.
@@ -2330,7 +2371,7 @@ impl Repl {
     /// non-Ascent backends can return their checked runtime reports. `step`
     /// requires the selected backend to produce an Ascent-shaped graph because
     /// graph-navigation commands operate over Ascent results.
-    fn exec_or_step_term(&mut self, term_str: &str, step_mode: bool) -> Result<()> {
+    fn exec_or_step_term(&mut self, term_str: &str, step_mode: bool, show_taus: bool) -> Result<()> {
         let language_name = self
             .state
             .language_name()
@@ -2396,9 +2437,10 @@ impl Repl {
         // submits the RAW parsed term — the machine, not the host, performs every reduction
         // (β, constant folding, arithmetic). Env substitution still happens (input formation)
         // but STRUCTURE-PRESERVING: names are replaced by their bound terms with no folding.
-        // Dovetail-default languages (Lambda/Ambient) keep the host-side normalize (Dovetail IS
-        // the evaluator there); `step` keeps its raw+preserve behavior for both (report-eager by
-        // design per A-S2).
+        // A-S5.6: Lambda/Ambient are RhoMachine-default now, so this raw-term discipline covers
+        // them too (the in-Rho quiescence driver performs every reduction); only a language
+        // still Dovetail-default would keep the host-side normalize. `step` keeps its
+        // raw+preserve behavior for all (report-eager by design per A-S2).
         let preserve_raw_term = step_mode || backend == RuntimeBackend::RhoMachine;
 
         let term = if let Some(env) = self.state.environment() {
@@ -2492,6 +2534,33 @@ impl Repl {
         let end_time = Instant::now();
         println!("Time taken: {:?}", end_time.duration_since(start_time));
         println!("{}", "Done!".green());
+
+        // A-S5.6 (Q-τ, USER-overridable default): the Layer-2 τ-COMM DISPLAY filter —
+        // τ-classified machinery COMMs (driver dispatch / subst TRS / AC carriers, the
+        // reserved `^…` channel families) are hidden from the step trace unless `taus`
+        // (or `step --taus`) shows them. The ROUTING above used the UNFILTERED trace
+        // (F5: Layer-1/Layer-2 selection is pinned); this is display-side only, and
+        // Output steps are never τ, so a drive trace always keeps its resting values.
+        let report = match report.output() {
+            RuntimeBackendOutput::ReductionTrace(trace) if step_mode && !show_taus => {
+                let visible: Vec<_> = trace
+                    .steps
+                    .iter()
+                    .filter(|step| step.tau.is_none())
+                    .cloned()
+                    .collect();
+                let hidden = trace.steps.len() - visible.len();
+                if hidden == 0 {
+                    report
+                } else {
+                    println!(
+                        "  (τ filter: {hidden} internal machinery COMM(s) hidden — 'taus' or                          'step --taus' shows them)"
+                    );
+                    RuntimeBackendReport::reduction_trace(RuntimeReductionTrace::new(visible))
+                }
+            },
+            _ => report,
+        };
 
         let initial_id = term.term_id();
 
@@ -2611,6 +2680,39 @@ impl Repl {
                     );
                 }
 
+                // A-S5.6 (F6): display-side DE-REFLECTION — a constructor-term / bag-soup
+                // observation (the in-Rho quiescence driver's reflected resting NF: α-erased
+                // `^lambda` scopes, de Bruijn `^bound` leaves, `^free` variables, AC bag
+                // soups) is rendered back into the CURRENT LANGUAGE'S surface syntax via its
+                // reconstructed grammar (`observation_surface::SurfaceRenderer`) — parseable
+                // by construction, α-correct fresh binder names, deterministic (sorted) bag
+                // print order. Scalar observations and any shape outside the language's
+                // productions keep the raw rendering (fail-loud renderer, fall-back-raw
+                // display). Applies to every Observations-returning language uniformly (the
+                // general mechanism — e.g. SwapDemo's reflected Pair results also gain
+                // surface rendering).
+                #[cfg(feature = "rho-languages")]
+                let surface_renderer = language.metadata().definition_source().and_then(
+                    |source| {
+                        crate::observation_surface::SurfaceRenderer::for_definition_source(
+                            source,
+                        )
+                        .ok()
+                    },
+                );
+                let render_observation =
+                    |value: &mettail_runtime::RuntimeObservationValue| -> String {
+                        #[cfg(feature = "rho-languages")]
+                        if crate::observation_surface::is_surface_renderable_shape(value) {
+                            if let Some(renderer) = surface_renderer.as_ref() {
+                                if let Ok(surface) = renderer.render(value) {
+                                    return surface;
+                                }
+                            }
+                        }
+                        format!("{}", value)
+                    };
+
                 println!();
                 println!("Computed:");
                 println!("  - backend: {}", report.backend());
@@ -2620,7 +2722,7 @@ impl Repl {
                     let rendered_values = observation
                         .values
                         .iter()
-                        .map(|value| format!("{}", value))
+                        .map(&render_observation)
                         .collect::<Vec<_>>()
                         .join(", ");
                     println!(
@@ -2633,7 +2735,7 @@ impl Repl {
                 println!();
 
                 let display = if observations.len() == 1 && observations[0].values.len() == 1 {
-                    format!("{}", observations[0].values[0])
+                    render_observation(&observations[0].values[0])
                 } else {
                     let channels = observations
                         .iter()
@@ -2641,7 +2743,7 @@ impl Repl {
                             let values = observation
                                 .values
                                 .iter()
-                                .map(|value| format!("{}", value))
+                                .map(&render_observation)
                                 .collect::<Vec<_>>()
                                 .join(", ");
                             format!("{}: [{}]", observation.channel, values)

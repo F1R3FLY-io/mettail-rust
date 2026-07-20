@@ -22,6 +22,7 @@ rho-languages = [
     "bundled-languages",
     "dep:mettail-rholang-runtime",
     "dep:mettail-rholang-codegen",
+    "dep:mettail-ast",
 ]
 
 # No explicit [[bin]]: Cargo auto-detects `src/main.rs` as the `repl` binary. The canonical
@@ -41,6 +42,8 @@ mettail-query = { package = "query", path = "../query" }
 mettail-dovetail-runtime = { package = "dovetail-runtime", path = "../dovetail-runtime", optional = true }
 mettail-rholang-runtime = { package = "rholang-runtime", path = "../rholang-runtime", optional = true }
 mettail-rholang-codegen = { package = "rholang-codegen", path = "../rholang-codegen", optional = true }
+# A-S5.6 (F6): the grammar model behind the observation-surface de-reflection renderer.
+mettail-ast = { package = "ast", path = "../ast", optional = true }
 
 moniker = {workspace = true}
 

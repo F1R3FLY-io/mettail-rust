@@ -56,8 +56,130 @@ use rspace_plus_plus::rspace::trace::Log;
 
 use mettail_runtime::{
     ReductionStepper, RuntimeCommEvent, RuntimeReductionEngine, RuntimeReductionKind,
-    RuntimeReductionStep,
+    RuntimeReductionStep, RuntimeTauClass,
 };
+
+/// A-S5.6 (plan v2 §6.4 — Layer-2 τ-COMM UX): the channel classifier over one language's
+/// DETERMINISTIC reserved channel names. A live-trace COMM whose rendezvous channel is
+/// one of the language's reserved internal-machinery names is a **τ step** — driver
+/// dispatch (`^drive` + the `^fired`/`^drive-err`/`^drive-fuel` observation GStrings),
+/// subst-TRS computation (the `^subst` family), or AC-carrier plumbing
+/// (`^drive-ac:{Rule}`) — and the REPL filters τ steps out of the step display by
+/// default (`:taus` shows all).
+///
+/// Both reserved families are RECONSTRUCTIBLE, never sniffed: the GString names come
+/// from the public `drive_*_channel` helpers and the GPrivate rendezvous tags from
+/// [`mettail_rholang_codegen::reflected_tag_string`] — the same functions the emitted
+/// program's channels are built from, so classifier and program can never drift.
+///
+/// Channels OUTSIDE these families (the legacy set-automaton `sa:`/`loc:`/`cap:`/`col:`/
+/// `ac:loc:` matching machinery, user channels, fresh unforgeables) are UNCLASSIFIED and
+/// stay visible — the F5 pin: current Layer-2 traces (which ride the report-carrying
+/// match fallback, not the drive) display exactly as before.
+#[derive(Debug, Clone)]
+pub struct TauChannelClassifier {
+    /// `[τ drive]` GPrivate rendezvous tag strings (`⌜^drive⌝`).
+    drive_tags: Vec<String>,
+    /// `[τ drive]` GString observation channel names (`^fired:{fp}` / `^drive-err:{fp}`
+    /// / `^drive-fuel:{fp}`).
+    drive_strings: Vec<String>,
+    /// `[τ subst]` GPrivate rendezvous tag strings (the `^subst` TRS family).
+    subst_tags: Vec<String>,
+    /// `[τ ac]` GPrivate tag PREFIX (`…{fp}.^drive-ac:` — every per-rule carrier
+    /// `^drive-ac:{RuleLabel}` starts with it).
+    ac_tag_prefix: String,
+}
+
+impl TauChannelClassifier {
+    /// Build the classifier for one language fingerprint (the drive-flipped wrapper's
+    /// plan fingerprint). Total: every name is derived, none is looked up.
+    pub fn for_language_fingerprint(fingerprint: &str) -> Self {
+        use mettail_rholang_codegen::{
+            drive_err_channel, drive_fired_channel, drive_fuel_channel, reflected_tag_string,
+            CMP_RESERVED_LABEL, DRIVE_AC_RESERVED_LABEL, DRIVE_RESERVED_LABEL,
+            PRED_RESERVED_LABEL, SB_RESERVED_LABEL, SHB_RESERVED_LABEL, SHIFTK_RESERVED_LABEL,
+            SHIFT_RESERVED_LABEL, SUBST_RESERVED_LABEL,
+        };
+        Self {
+            drive_tags: vec![reflected_tag_string(fingerprint, DRIVE_RESERVED_LABEL)],
+            drive_strings: vec![
+                drive_fired_channel(fingerprint),
+                drive_err_channel(fingerprint),
+                drive_fuel_channel(fingerprint),
+            ],
+            subst_tags: [
+                SUBST_RESERVED_LABEL,
+                SHIFT_RESERVED_LABEL,
+                SHIFTK_RESERVED_LABEL,
+                CMP_RESERVED_LABEL,
+                PRED_RESERVED_LABEL,
+                SB_RESERVED_LABEL,
+                SHB_RESERVED_LABEL,
+            ]
+            .iter()
+            .map(|label| reflected_tag_string(fingerprint, label))
+            .collect(),
+            ac_tag_prefix: reflected_tag_string(
+                fingerprint,
+                &format!("{DRIVE_AC_RESERVED_LABEL}:"),
+            ),
+        }
+    }
+
+    /// Classify one COMM by its rendezvous channels: the FIRST channel matching a
+    /// reserved family decides (a COMM never rendezvouses across families).
+    pub fn classify(&self, channels: &[Par]) -> Option<RuntimeTauClass> {
+        channels.iter().find_map(|channel| self.classify_channel(channel))
+    }
+
+    fn classify_channel(&self, channel: &Par) -> Option<RuntimeTauClass> {
+        if let Some(tag) = channel_gprivate_string(channel) {
+            if self.drive_tags.iter().any(|drive| *drive == tag) {
+                return Some(RuntimeTauClass::Drive);
+            }
+            if self.subst_tags.iter().any(|subst| *subst == tag) {
+                return Some(RuntimeTauClass::Subst);
+            }
+            if tag.starts_with(&self.ac_tag_prefix) {
+                return Some(RuntimeTauClass::Ac);
+            }
+            return None;
+        }
+        let name = channel_gstring(channel)?;
+        if self.drive_strings.iter().any(|drive| *drive == name) {
+            return Some(RuntimeTauClass::Drive);
+        }
+        None
+    }
+}
+
+/// The GPrivate id STRING of a single-unforgeable channel `Par`
+/// (`GPrivateBuilder::new_par_from_string` stores the prost-encoded string as the id),
+/// or `None` when the channel is not that shape.
+fn channel_gprivate_string(channel: &Par) -> Option<String> {
+    use models::rhoapi::g_unforgeable::UnfInstance;
+    let [unforgeable] = channel.unforgeables.as_slice() else {
+        return None;
+    };
+    match &unforgeable.unf_instance {
+        Some(UnfInstance::GPrivateBody(private)) => {
+            <String as prost::Message>::decode(private.id.as_slice()).ok()
+        },
+        _ => None,
+    }
+}
+
+/// The ground GString name of a channel `Par`, or `None`.
+fn channel_gstring(channel: &Par) -> Option<String> {
+    use models::rhoapi::expr::ExprInstance;
+    let [expr] = channel.exprs.as_slice() else {
+        return None;
+    };
+    match &expr.expr_instance {
+        Some(ExprInstance::GString(name)) => Some(name.clone()),
+        _ => None,
+    }
+}
 
 /// Deterministic seed for the stepper's `inj`. Mirrors the fixed-bytes pattern of f1r3node's
 /// `bootstrap_rand` (NOT the entropy `create_from_length`), so the COMM trace reproduces
@@ -364,6 +486,10 @@ pub struct StepSession {
     gate: Arc<StepGate>,
     worker: Option<JoinHandle<Result<(), String>>>,
     done: bool,
+    /// A-S5.6: the τ-COMM channel classifier ([`TauChannelClassifier`]) — `Some` for
+    /// languages whose installed program carries reserved-machinery channels; `None`
+    /// keeps every step unclassified (pre-A-S5.6 behavior).
+    tau: Option<TauChannelClassifier>,
 }
 
 impl StepSession {
@@ -375,11 +501,14 @@ impl StepSession {
     /// `None`. `out_channel`, when `Some`, is the program's observation channel: after `inj` reaches
     /// quiescence the worker reads its resting value(s) and emits them as terminal `Output` steps
     /// (the same channel-scoped tuplespace read the `exec` path uses); `None` for Dovetail-only
-    /// languages, preserving today's behavior.
+    /// languages, preserving today's behavior. `tau`, when `Some`, classifies each COMM's
+    /// rendezvous channel against the language's reserved internal-machinery names
+    /// (A-S5.6 — see [`TauChannelClassifier`]); `None` leaves every step unclassified.
     pub fn start(
         par: Par,
         fold_defs: Vec<Definition>,
         out_channel: Option<String>,
+        tau: Option<TauChannelClassifier>,
     ) -> Result<StepSession, String> {
         let (sender, receiver) = bounded::<RawStepEvent>(STEP_QUEUE_CAP);
         let gate = Arc::new(StepGate::new());
@@ -397,6 +526,7 @@ impl StepSession {
             gate,
             worker: Some(worker),
             done: false,
+            tau,
         })
     }
 
@@ -422,7 +552,7 @@ impl ReductionStepper for StepSession {
         // finishes and drops the observer's `Sender` (disconnect = quiescence).
         self.gate.release_one();
         match self.receiver.recv() {
-            Ok(raw) => Ok(Some(render_step(raw))),
+            Ok(raw) => Ok(Some(render_step(raw, self.tau.as_ref()))),
             Err(_) => {
                 self.done = true;
                 self.join_worker()?;
@@ -516,9 +646,13 @@ fn tagged_continuation_body(continuation: &TaggedContinuation) -> Option<Par> {
 
 /// Render a raw step (COMM rendezvous or terminal output) into a [`RuntimeReductionStep`]
 /// (rendering happens on a large stack).
-fn render_step(raw: RawStepEvent) -> RuntimeReductionStep {
+fn render_step(raw: RawStepEvent, tau: Option<&TauChannelClassifier>) -> RuntimeReductionStep {
     match raw {
         RawStepEvent::Comm(raw) => {
+            // A-S5.6: classify the RAW rendezvous channels BEFORE rendering — the
+            // reserved GPrivate reflect tags are only reconstructible from the raw
+            // `Par`s (the pretty-printer renders them as opaque `Unforgeable(0x…)`).
+            let tau_class = tau.and_then(|classifier| classifier.classify(&raw.channels));
             let (channels, consumed, continuation) =
                 render_payload(&raw.channels, &raw.consumed, raw.continuation.as_ref());
             let display = format_comm(&raw.label, &channels, &consumed, continuation.as_deref());
@@ -533,11 +667,12 @@ fn render_step(raw: RawStepEvent) -> RuntimeReductionStep {
                     label: raw.label,
                     continuation,
                 }),
+                tau: tau_class,
             }
         },
         RawStepEvent::Output(raw) => {
             // A value resting on the observation channel at quiescence — the program's observable
-            // output, rendered as `<channel> observes <value>`.
+            // output, rendered as `<channel> observes <value>`. Never a τ step.
             let value = render_redex(&raw.value);
             RuntimeReductionStep {
                 ordinal: raw.ordinal,
@@ -545,6 +680,7 @@ fn render_step(raw: RawStepEvent) -> RuntimeReductionStep {
                 kind: RuntimeReductionKind::Output,
                 display: format!("{} observes {}", raw.channel, value),
                 comm: None,
+                tau: None,
             }
         },
     }
@@ -639,7 +775,7 @@ mod tests {
     fn drive(par: Par) -> Vec<RuntimeReductionStep> {
         // RhoCalc observes `"OUT"`; the stepper reads its resting output post-quiescence. (A term
         // whose send rests on a different channel simply yields no output step.)
-        let mut session = StepSession::start(par, Vec::new(), Some("OUT".to_string()))
+        let mut session = StepSession::start(par, Vec::new(), Some("OUT".to_string()), None)
             .expect("start step session");
         let mut steps = Vec::new();
         while let Some(step) = session.next_step().expect("next_step must not error") {
@@ -828,9 +964,76 @@ mod tests {
     fn dropping_a_session_mid_trace_aborts_cleanly() {
         // Start a session, take one step, then drop it: the gate aborts the paused worker and the
         // Drop impl joins it without leaking a thread or panicking.
-        let mut session = StepSession::start(lower(COMM_SRC), Vec::new(), Some("OUT".to_string()))
+        let mut session = StepSession::start(lower(COMM_SRC), Vec::new(), Some("OUT".to_string()), None)
             .expect("start");
         let _first = session.next_step().expect("first step");
         drop(session); // must not hang or panic
+    }
+
+    // ─── A-S5.6: the τ-COMM channel classifier ─────────────────────────────────────────
+
+    /// Every reserved rendezvous family classifies to its design class ([τ drive]/
+    /// [τ subst]/[τ ac]), each name RECONSTRUCTED from the same public helpers the
+    /// emitted program uses; unreserved channels (user GStrings, the legacy `sa:`/
+    /// `ac:loc:` matching machinery, foreign GPrivates, other fingerprints) stay
+    /// unclassified — the F5 pin that today's Layer-2 traces display unchanged.
+    #[test]
+    fn tau_classifier_classifies_exactly_the_reserved_families() {
+        use mettail_rholang_codegen::{
+            drive_err_channel, drive_fired_channel, drive_fuel_channel, reflected_tag_string,
+        };
+        use models::rust::rholang::implicits::GPrivateBuilder;
+        use models::rust::utils::new_gstring_par;
+
+        let fp = "fp-tau-test";
+        let classifier = TauChannelClassifier::for_language_fingerprint(fp);
+        let gpriv = |tag: String| GPrivateBuilder::new_par_from_string(tag);
+        let gstr = |name: String| new_gstring_par(name, Vec::new(), false);
+
+        // [τ drive]: the ^drive rendezvous tag + the three observation GStrings.
+        assert_eq!(
+            classifier.classify(&[gpriv(reflected_tag_string(fp, "^drive"))]),
+            Some(RuntimeTauClass::Drive)
+        );
+        for name in
+            [drive_fired_channel(fp), drive_err_channel(fp), drive_fuel_channel(fp)]
+        {
+            assert_eq!(classifier.classify(&[gstr(name)]), Some(RuntimeTauClass::Drive));
+        }
+        // [τ subst]: the whole ^subst TRS family.
+        for label in ["^subst", "^shift", "^shiftk", "^cmp", "^pred", "^sb", "^shb"] {
+            assert_eq!(
+                classifier.classify(&[gpriv(reflected_tag_string(fp, label))]),
+                Some(RuntimeTauClass::Subst),
+                "{label} classifies as τ subst"
+            );
+        }
+        // [τ ac]: every per-rule carrier `^drive-ac:{Rule}`.
+        for rule in ["InRule", "OutRule", "OpenRule"] {
+            assert_eq!(
+                classifier.classify(&[gpriv(reflected_tag_string(fp, &format!("^drive-ac:{rule}")))]),
+                Some(RuntimeTauClass::Ac),
+                "^drive-ac:{rule} classifies as τ ac"
+            );
+        }
+        // Unclassified: user + legacy matching machinery + reflected CONSTRUCTOR tags +
+        // the same reserved names under a DIFFERENT fingerprint.
+        for name in ["OUT", "sa:pattern/lhs:abc", "ac:loc:site0/PPar", "loc:site0"] {
+            assert_eq!(classifier.classify(&[gstr(name.to_string())]), None, "{name} stays visible");
+        }
+        assert_eq!(classifier.classify(&[gpriv(reflected_tag_string(fp, "App"))]), None);
+        assert_eq!(
+            classifier.classify(&[gpriv(reflected_tag_string("other-fp", "^drive"))]),
+            None,
+            "another language's ^drive tag is NOT this classifier's"
+        );
+        // Multi-channel COMM: the first reserved channel decides.
+        assert_eq!(
+            classifier.classify(&[
+                gstr("OUT".to_string()),
+                gpriv(reflected_tag_string(fp, "^subst")),
+            ]),
+            Some(RuntimeTauClass::Subst)
+        );
     }
 }

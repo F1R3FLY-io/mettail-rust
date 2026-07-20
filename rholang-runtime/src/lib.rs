@@ -145,4 +145,4 @@ pub use run::{
     run_rholang_source_sequence_for_oracle_and_read_strings,
 };
 #[cfg(feature = "runtime-report")]
-pub use step::StepSession;
+pub use step::{StepSession, TauChannelClassifier};

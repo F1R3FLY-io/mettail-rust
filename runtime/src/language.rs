@@ -735,6 +735,36 @@ pub struct RuntimeCommEvent {
     pub continuation: Option<String>,
 }
 
+/// A-S5.6 (F5, τ-COMM UX): the internal-machinery class of one live-trace COMM, decided
+/// by the channel classifier over the DETERMINISTIC reserved channel names (the
+/// `^…:{fp}` observation GStrings + the reconstructible GPrivate reflect tags). A
+/// classified COMM is a τ step — reduction MACHINERY (driver dispatch, subst-TRS
+/// computation, AC-carrier plumbing), not a surface-visible firing — and the REPL
+/// step display filters τ steps out by default (`:taus` / `step --taus` shows all;
+/// USER-overridable Q-τ default).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuntimeTauClass {
+    /// The `^drive` quiescence-driver family: the driver rendezvous tag plus the
+    /// `^fired`/`^drive-err`/`^drive-fuel` observation channels.
+    Drive,
+    /// The `^subst` de-Bruijn TRS family (`^subst`/`^shift`/`^shiftk`/`^cmp`/`^pred`/
+    /// `^sb`/`^shb`).
+    Subst,
+    /// The per-rule AC carrier family (`^drive-ac:{RuleLabel}`).
+    Ac,
+}
+
+impl RuntimeTauClass {
+    /// The REPL display label (`[τ drive]` / `[τ subst]` / `[τ ac]`).
+    pub fn label(&self) -> &'static str {
+        match self {
+            RuntimeTauClass::Drive => "τ drive",
+            RuntimeTauClass::Subst => "τ subst",
+            RuntimeTauClass::Ac => "τ ac",
+        }
+    }
+}
+
 /// One reduction step in a live Rho-machine COMM trace (the reactive single-stepper).
 #[derive(Debug, Clone)]
 pub struct RuntimeReductionStep {
@@ -748,6 +778,9 @@ pub struct RuntimeReductionStep {
     pub display: String,
     /// The structured COMM payload when `kind == Comm`.
     pub comm: Option<RuntimeCommEvent>,
+    /// A-S5.6: `Some` iff this COMM fired on a reserved internal-machinery channel
+    /// (see [`RuntimeTauClass`]); `None` for surface-visible COMMs and outputs.
+    pub tau: Option<RuntimeTauClass>,
 }
 
 /// An ordered live single-step reduction trace from the Rho machine. Each entry is one COMM (the

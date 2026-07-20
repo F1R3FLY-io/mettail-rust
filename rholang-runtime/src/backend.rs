@@ -2297,15 +2297,34 @@ where
                 // fire — the SAME composition the wrapper's run path uses
                 // (`run::evaluate_validated_program_with_call` → `par.append(call)`). For RhoCalc
                 // the contract program is empty, so this is just the call (a direct COMM term).
-                let program = match self.backend.program().ast_par() {
-                    Some(contracts) => contracts.append(call.clone()),
-                    None => call.clone(),
+                // A-S5.6: a `^drive` SEED composes with the INSTALLED Rho-net program (the
+                // receiver family lives there, not in the scalar program) — the same
+                // composition its run path uses.
+                let program = match &machine_invocation {
+                    RhoMachineInvocation::RunRhoNetDriveAndReadObservationSet { .. } => self
+                        .backend
+                        .plan()
+                        .installed_rho_net_program_par()
+                        .map_err(|err| err.to_string())?
+                        .append(call.clone()),
+                    _ => match self.backend.program().ast_par() {
+                        Some(contracts) => contracts.append(call.clone()),
+                        None => call.clone(),
+                    },
                 };
                 // The held-fold contract `Definition`s the lifted call targets (empty unless the
                 // term had a fold over a COMM-received value).
                 let fold_definitions = drain_pending_fold_definitions();
-                let session =
-                    crate::step::StepSession::start(program, fold_definitions, out_channel)?;
+                // A-S5.6: classify τ-COMMs against this language's reserved channel names.
+                let tau = crate::step::TauChannelClassifier::for_language_fingerprint(
+                    self.backend.plan().definition_fingerprint(),
+                );
+                let session = crate::step::StepSession::start(
+                    program,
+                    fold_definitions,
+                    out_channel,
+                    Some(tau),
+                )?;
                 Ok(Box::new(session))
             },
             RhoBackendInvocation::DeferToDovetailSemanticPredicate { .. } => Err(format!(
@@ -2650,14 +2669,32 @@ where
                     )
                 })?;
                 // Compose the call with the backend's persistent contracts so their COMMs
-                // actually fire — the SAME composition the run path uses.
-                let program = match self.backend.program().ast_par() {
-                    Some(contracts) => contracts.append(call.clone()),
-                    None => call.clone(),
+                // actually fire — the SAME composition the run path uses. A-S5.6: a
+                // `^drive` SEED composes with the INSTALLED Rho-net program (the receiver
+                // family lives there, not in the scalar program).
+                let program = match &machine_invocation {
+                    RhoMachineInvocation::RunRhoNetDriveAndReadObservationSet { .. } => self
+                        .backend
+                        .plan()
+                        .installed_rho_net_program_par()
+                        .map_err(|err| err.to_string())?
+                        .append(call.clone()),
+                    _ => match self.backend.program().ast_par() {
+                        Some(contracts) => contracts.append(call.clone()),
+                        None => call.clone(),
+                    },
                 };
                 let fold_definitions = drain_pending_fold_definitions();
-                let session =
-                    crate::step::StepSession::start(program, fold_definitions, out_channel)?;
+                // A-S5.6: classify τ-COMMs against this language's reserved channel names.
+                let tau = crate::step::TauChannelClassifier::for_language_fingerprint(
+                    self.backend.plan().definition_fingerprint(),
+                );
+                let session = crate::step::StepSession::start(
+                    program,
+                    fold_definitions,
+                    out_channel,
+                    Some(tau),
+                )?;
                 Ok(Box::new(session))
             },
             RhoBackendInvocation::DeferToDovetailSemanticPredicate { .. } => Err(format!(

@@ -1621,6 +1621,16 @@ pub(crate) fn reflect_tag(language_fingerprint: &str, constructor_label: &str) -
     format!("{}{language_fingerprint}.{constructor_label}", crate::REFLECTED_TERM_ABI_PREFIX)
 }
 
+/// The PUBLIC read surface of [`reflect_tag`] (A-S5.6): the deterministic reflect-tag
+/// STRING for one `(fingerprint, label)` pair, so runtime-side channel classifiers (the
+/// Layer-2 τ-COMM classifier over "reconstructible GPrivate reflect tags", plan v2 §6.4)
+/// can reconstruct reserved rendezvous names — `^drive`, `^drive-ac:{Rule}`, the
+/// `^subst` TRS family — without duplicating the ABI format. Purely a naming helper: no
+/// emission goes through it.
+pub fn reflected_tag_string(language_fingerprint: &str, constructor_label: &str) -> String {
+    reflect_tag(language_fingerprint, constructor_label)
+}
+
 /// A ground (variable-free) constructor term: a constructor label applied to
 /// ground children. This is the caller-facing input to
 /// [`reflect_ground_term_par`] — the closed value a runtime injection supplies as
