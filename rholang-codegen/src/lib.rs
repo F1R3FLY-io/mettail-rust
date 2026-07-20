@@ -205,8 +205,8 @@ pub use rho_net_drive::{
     DRIVE_DEFAULT_FUEL, DRIVE_OPT_IN,
 };
 pub use rho_net_lower::{
-    DRIVE_ERR_RESERVED_LABEL, DRIVE_FUEL_RESERVED_LABEL, DRIVE_RESERVED_LABEL,
-    FIRED_RESERVED_LABEL,
+    DRIVE_AC_RESERVED_LABEL, DRIVE_ERR_RESERVED_LABEL, DRIVE_FUEL_RESERVED_LABEL,
+    DRIVE_RESERVED_LABEL, FIRED_RESERVED_LABEL,
 };
 pub use rho_net_subst_trs::{
     reserved_subst_trs_labels, subst_seed_receiver_par, subst_seed_send_par, subst_trs_program_par,

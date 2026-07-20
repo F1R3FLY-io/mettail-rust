@@ -38,3 +38,8 @@ bench-naive-baseline = []
 # Property-based tests of the Stage 1 term-spread encoding (arbitrary ground terms
 # must spread to exactly one head-tag send per node on the derived location channel).
 proptest = "1"
+# A-S5.5 no-regression pins: the Lambda `^drive` receiver family and the legacy Ambient
+# AC σ-receivers are pinned BYTE-identical across the AC-arm extension by prost-encoding
+# the generated `Par`s and comparing length + hash goldens. Same prost version (0.14)
+# f1r3node-rust's `models` uses.
+prost = "0.14"

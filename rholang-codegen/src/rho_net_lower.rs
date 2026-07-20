@@ -3464,6 +3464,17 @@ pub const DRIVE_ERR_RESERVED_LABEL: &str = "^drive-err";
 pub const DRIVE_FUEL_RESERVED_LABEL: &str = "^drive-fuel";
 pub const FIRED_RESERVED_LABEL: &str = "^fired";
 
+/// The reserved PER-RULE AC-carrier tag PREFIX of the A-S5.5 driver AC arms (plan v2
+/// §4.3.1): an admitted structural-AC / nested-structural-AC rule `R` fires through ONE
+/// reserved `GPrivate` carrier channel `⌜^drive-ac:R⌝ = GPrivate(reflect_tag(fp,
+/// "^drive-ac:R"))` — the fixed-channel persistent AC-carrier receiver (the driver-path
+/// variant of the site-keyed `ac:` match receivers) rests on it. The `^` prefix keeps the
+/// whole per-rule label family (`"^drive-ac:{RuleLabel}"`) collision-free with user
+/// constructors (Rust `Ident`s contain neither `^` nor `:`); the BASE label joins
+/// [`crate::rho_net_subst_trs::reserved_subst_trs_labels`] so the C2 assertion guards it
+/// like every other reserved tag.
+pub const DRIVE_AC_RESERVED_LABEL: &str = "^drive-ac";
+
 /// Reflect an RHS pattern term to a normalized `Par`, threading a **binder
 /// environment** (the RHS binders currently in scope, De Bruijn stack). A variable
 /// occurrence that names an in-scope binder reflects to a distinguished bound-var
@@ -4126,7 +4137,7 @@ pub(crate) fn ac_effective_bare_var_kind(
 /// AND the AC bag-VALUED RHS reflection ([`reflect_hashbag_soup_par`], Stage AC2b) resolve it here.
 /// Returns `None` when `op` is not a constructor over a collection parameter under EITHER form — so
 /// a non-collection or unknown constructor is never mis-classified as a HashBag.
-fn resolve_constructor_collection_type(def: &LanguageDef, op: &str) -> Option<CollectionType> {
+pub(crate) fn resolve_constructor_collection_type(def: &LanguageDef, op: &str) -> Option<CollectionType> {
     let rule = def.terms.iter().find(|rule| rule.label.to_string() == op)?;
     rule.term_context
         .as_ref()
@@ -4153,7 +4164,7 @@ fn resolve_constructor_collection_type(def: &LanguageDef, op: &str) -> Option<Co
 /// Resolve the collection kind the AC rule's constructor declares (`op . ps:HashBag(..) |- ..`) —
 /// [`resolve_constructor_collection_type`] keyed on the LHS `Apply`'s constructor. Returns `None`
 /// when the LHS is not a constructor application.
-fn resolve_ac_collection_type(def: &LanguageDef, left: &Pattern) -> Option<CollectionType> {
+pub(crate) fn resolve_ac_collection_type(def: &LanguageDef, left: &Pattern) -> Option<CollectionType> {
     let op = match left {
         Pattern::Term(PatternTerm::Apply { constructor, .. }) => constructor.to_string(),
         _ => return None,
@@ -4438,7 +4449,12 @@ fn comm_consistency_condition(occurrence_levels: &[usize]) -> Par {
 /// (the receive binds flattened, so body + condition share the reverse De Bruijn frame). Shared by
 /// the Comm receiver ([`comm_consistency_condition`], `free_count = COMM_FREE_COUNT`) and the
 /// structural-AC receiver ([`structural_ac_receiver_par`]).
-fn nonlinear_consistency_condition(occurrence_levels: &[usize], free_count: usize) -> Par {
+///
+/// `pub(crate)`: the A-S5.5 driver AC arms (`crate::rho_net_drive`) ride the SAME
+/// conjunction as a `MatchCase.guard` (evaluated in the case env, which shares the
+/// reverse-De-Bruijn frame convention with a receive of the same `free_count` — F12), so
+/// the driver's non-linear checks can never drift from the installed receivers'.
+pub(crate) fn nonlinear_consistency_condition(occurrence_levels: &[usize], free_count: usize) -> Par {
     let mut conjuncts: Vec<(Par, Vec<usize>)> = Vec::with_capacity(occurrence_levels.len());
     let idx0 = free_count - 1 - occurrence_levels[0];
     for &level in &occurrence_levels[1..] {
@@ -5157,7 +5173,7 @@ impl RhoNetStructuralAcMatchEntry {
 /// binding, so it is exempt. Fail-closed (returns `false`) for a within-element repeated argument
 /// (e.g. `C(P, P)`) — a degenerate shape that would need an intra-element non-linear guard — which
 /// then routes that firing to the host-σ replay path rather than a wrong in-Rho pattern.
-fn structural_ac_shape_is_match_representable(shape: &StructuralAcShape) -> bool {
+pub(crate) fn structural_ac_shape_is_match_representable(shape: &StructuralAcShape) -> bool {
     let nonlinear = shape.nonlinear_var.to_string();
     shape
         .reduct_vars
@@ -5595,7 +5611,10 @@ impl AcReconstructTemplate {
 
     /// Collect every LHS-variable name the template references (the `Var` leaves + each `Bag`'s
     /// `rest`) into `out`. Used to check the RHS reduct templates are σ-closed (every var an LHS var).
-    fn collect_vars(&self, out: &mut HashSet<String>) {
+    ///
+    /// `pub(crate)`: the A-S5.5 driver AC-carrier receivers (`crate::rho_net_drive`) compute
+    /// the SAME referenced-name set to lay out their bind-pattern slots.
+    pub(crate) fn collect_vars(&self, out: &mut HashSet<String>) {
         match self {
             Self::Var(name) => {
                 out.insert(name.clone());
@@ -5715,7 +5734,7 @@ fn collect_pattern_var_counts(pattern: &Pattern, counts: &mut HashMap<String, us
 
 /// The number of `PatternTerm::Var(var)` occurrences in `pattern` (the cross-level `M`'s occurrence
 /// count = the number of guard σ slots the receiver's match pattern binds).
-fn count_var_occurrences(pattern: &Pattern, var: &Ident) -> usize {
+pub(crate) fn count_var_occurrences(pattern: &Pattern, var: &Ident) -> usize {
     let mut counts = HashMap::new();
     collect_pattern_var_counts(pattern, &mut counts);
     counts.get(&var.to_string()).copied().unwrap_or(0)
@@ -5960,8 +5979,13 @@ fn count_template_name_occurrences(template: &AcReconstructTemplate, name: &str)
 /// [`reflect_ground_term_par`]). The guard slot counter is threaded via `next_guard_slot`, so a
 /// nested `M` (inside the inner capability) and an outer `M` bind DISTINCT slots joined by the
 /// depth-agnostic `EEq` guard.
+///
+/// `pub(crate)`: the A-S5.5 driver (`crate::rho_net_drive`) transcribes each admitted
+/// structural-AC / nested-structural-AC rule's CHECK pattern with this SAME builder in
+/// `Match`-case position over the driven value (plan v2 §4.3.1), so the driver's redex
+/// checks can never drift from the installed receivers' operand patterns.
 #[allow(clippy::too_many_arguments)]
-fn nested_match_pattern_for(
+pub(crate) fn nested_match_pattern_for(
     pattern: &Pattern,
     nonlinear_var: &Ident,
     spliced_rest: &Ident,
@@ -7029,7 +7053,9 @@ fn nested_root_constructor(pattern: &Pattern) -> Option<String> {
 /// is an LHS var, so this passes for every recognized In/Out shape; it is the defensive fail-closed
 /// gate that keeps a degenerate future shape (a repeated non-channel reduct arg) on the host-σ replay
 /// path rather than a wrong in-Rho pattern.
-fn nested_structural_ac_shape_is_match_representable(shape: &NestedStructuralAcShape) -> bool {
+pub(crate) fn nested_structural_ac_shape_is_match_representable(
+    shape: &NestedStructuralAcShape,
+) -> bool {
     let nonlinear = shape.nonlinear_var.to_string();
     let mut referenced: HashSet<String> = HashSet::new();
     for template in &shape.reduct_templates {
@@ -7056,10 +7082,14 @@ fn nested_structural_ac_shape_is_match_representable(shape: &NestedStructuralAcS
 /// ([`nested_match_bind_pattern_for`]): the next unused receive-frame free level, the map from a
 /// bound σ var/rest NAME to its assigned level, and the cross-level `M`'s occurrence levels (for the
 /// `EEq` guard).
-struct NestedBindState {
-    next_level: usize,
-    slot_of: HashMap<String, usize>,
-    occurrence_levels: Vec<usize>,
+/// `pub(crate)` (fields included): the A-S5.5 driver AC-CARRIER receivers
+/// (`crate::rho_net_drive::ac_carrier_receiver_par`) run the same bind walk to lay out
+/// their σ-slot frame, so the carrier's slot map can never drift from the site-keyed
+/// receivers'.
+pub(crate) struct NestedBindState {
+    pub(crate) next_level: usize,
+    pub(crate) slot_of: HashMap<String, usize>,
+    pub(crate) occurrence_levels: Vec<usize>,
 }
 
 /// Build the SPREAD nested-AC receiver's match PATTERN by walking the LHS root pattern, BINDING every
@@ -7075,7 +7105,10 @@ struct NestedBindState {
 /// `EList[ GPrivate(tag), … ]` (byte-identical to [`reflect_ground_term_par`]). `referenced` is the
 /// set of var/rest NAMES the reducts (plus the spliced outer rest) reference — only those are bound;
 /// the rest ride nothing and stay wildcards.
-fn nested_match_bind_pattern_for(
+///
+/// `pub(crate)`: shared with the A-S5.5 driver AC-carrier receivers
+/// (`crate::rho_net_drive`) — see [`NestedBindState`].
+pub(crate) fn nested_match_bind_pattern_for(
     pattern: &Pattern,
     nonlinear_var: &Ident,
     referenced: &HashSet<String>,

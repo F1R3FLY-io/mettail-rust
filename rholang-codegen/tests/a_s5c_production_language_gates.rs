@@ -83,12 +83,12 @@
 //!   congruence rewrites are `congruence_exempt_rules()` entries (ParCong →
 //!   `CollectionAc`, NewCong → `LambdaBinder`, AmbCong →
 //!   `DanglingRhsVariable`), recorded and error-free (A-S5.1).
-//! - The DRIVER is still `Unsupported` until A-S5.5 — no longer via the
-//!   lowering-diagnostics short-circuit (the lowering is error-free now) but
-//!   via `drive_admissible`'s own conjuncts: the structural-AC /
-//!   nested-structural-AC matching families are not driver-supported this
-//!   stage, and the three AC LHS shapes do not transcribe to driver redex
-//!   arms (pinned verbatim below).
+//! - ★ A-S5.5: the DRIVER is ADMITTED — the structural-AC + nested-structural-AC
+//!   families transcribe to carrier-ABI redex arms, so `drive_admissible`'s
+//!   every conjunct holds; the drive program = the `^drive` receiver + the
+//!   three per-rule AC-carrier receivers (installed receives 3 + 4 = 7). The
+//!   pre-A-S5.5 `Unsupported` pin is INVERTED below (the same discipline as
+//!   the A-S5.4b install-pin inversion).
 //!
 //! Placement: this test lives in `rholang-codegen` (not `languages`) because
 //! every gate under audit is `pub` here and the REAL definitions are reachable
@@ -112,8 +112,8 @@ use mettail_rholang_codegen::{
     rho_net_subst_injection_sites, rule_lhs_root_constructors, ruleset_all_entries_flat,
     suggest_rejected_rule_dispositions, AutomatonUnsupported, DeferReason, GroundTerm,
     InRhoMatchingRuleset, RhoCoverageEvidence, RhoDefaultBackendPlan,
-    RhoDefaultBackendRequirements, RhoGuardCoverageEvidence, RhoNetInstallError,
-    RhoNetLoweredRule, RhoNetLoweringError, RhoRejectedRuleDisposition,
+    RhoDefaultBackendRequirements, RhoGuardCoverageEvidence,
+    RhoNetLoweredRule, RhoRejectedRuleDisposition,
     RhoRejectedRuleDispositionKind, UnsupportedFamily, LAMBDA_REFLECT_LABEL,
 };
 
@@ -1099,12 +1099,15 @@ fn ambient_installs_with_the_exempt_trio_recorded_and_in_out_open_materialized()
     let installed = plan
         .installed_rho_net_program_par()
         .expect("A-S5.4b: Ambient's σ-receiver program must install (In/Out/Open materialized)");
+    // A-S5.5 appends the drive program (the ^drive receiver + the three per-rule
+    // AC-carrier receivers) to the three A-S5.4b AC σ-receivers: 3 + 4 = 7. The three
+    // legacy receivers stay BYTE-IDENTICAL (`a_s5_5_byte_identity_pins.rs`).
     assert_eq!(
         installed.receives.len(),
-        3,
-        "the installed program carries exactly the three AC receivers: the \
-         InRule nested σ-receiver, the redeclared OutRule nested σ-receiver, \
-         and the OpenRule flat structural-AC σ-receiver"
+        7,
+        "the installed program carries the three AC receivers (the InRule nested \
+         σ-receiver, the redeclared OutRule nested σ-receiver, the OpenRule flat \
+         structural-AC σ-receiver) + the A-S5.5 drive program (^drive + 3 carriers)"
     );
     assert!(
         installed.receives.iter().all(|receive| receive.persistent),
@@ -1179,54 +1182,51 @@ fn lambda_drive_admission_is_admitted_and_the_driver_installs_once() {
 }
 
 #[test]
-fn ambient_drive_admission_is_unsupported_with_the_blocking_reason_recorded() {
-    // A-S5.2: production Ambient is OPTED IN (DRIVE_OPT_IN — the A-S5 intent) but
-    // records `Unsupported` until A-S5.5. A-S5.4b re-shapes the recorded reason
-    // (pinned here as OBSERVED REALITY): the lowering is now ERROR-FREE (the
-    // install admits — see the install pin), so the pre-A-S5.4b
-    // fail-closed-diagnostics SHORT-CIRCUIT no longer fires; the reason comes
-    // from `drive_admissible`'s OWN conjuncts instead — (conjunct 2) the
-    // admitted structural-AC + nested-structural-AC matching families are not
-    // driver-supported this stage, and (conjunct 3) the three AC-LHS rewrites
-    // (`InRule`/`OutRule`/`OpenRule`) do not transcribe to driver redex arms
-    // (both A-S5.5's scope; the static-gate conjunct now PASSES and contributes
-    // nothing). RECORDED, never silent — and the generated
-    // `rho_net_drive_invocation_to` (emitted for Ambient because it IS opted in)
-    // re-checks this same predicate per exec, so a premature seed fails typed
-    // instead of resting unanswered.
+fn ambient_drive_admission_is_admitted_and_the_driver_installs_with_the_carriers() {
+    // ★ A-S5.5 (the deliberate INVERSION of the A-S5.2..A-S5.4b Unsupported pin):
+    // production Ambient — opted in (DRIVE_OPT_IN), static gate Ok, its admitted
+    // matching families NOW driver-supported (structural-AC + nested-structural-AC
+    // transcribe to carrier-ABI redex arms), all three AC rewrites transcribing — is
+    // ADMITTED. The drive program is the persistent `^drive` receiver (whose Match
+    // opens with the three GUARDED AC redex arms — nested InRule, OutRule, then
+    // structural OpenRule — before the congruence/binder/bag/Nil arms) plus the THREE
+    // fixed-channel persistent AC-carrier receivers (`⌜^drive-ac:InRule⌝` /
+    // `⌜^drive-ac:OutRule⌝` / `⌜^drive-ac:OpenRule⌝`), appended once by the install.
+    // The generated `rho_net_drive_invocation_to` re-checks this same predicate per
+    // exec, so the flip needs no macro regeneration (AM-4: Ambient was opted in all
+    // along; admission was the only gate).
     let plan = plan_with_suggested_coverage(&ambient_def());
     let lowered = plan.rho_net_lowered();
-    match lowered.drive_admission() {
-        mettail_rholang_codegen::DriveAdmission::Unsupported { reason } => {
-            eprintln!("Ambient DriveAdmission reason: {reason}");
-            assert!(
-                reason.starts_with(
-                    "matching families not yet driver-supported (A-S5.5): \
-                     structural-ac(1), nested-structural-ac(2)"
-                ),
-                "conjunct 2 names the admitted-but-undrivable AC families: {reason}"
-            );
-            for rule in ["InRule", "OutRule", "OpenRule"] {
-                assert!(
-                    reason.contains(&format!(
-                        "rewrite {rule} does not transcribe to a driver redex arm: \
-                         a collection (AC) LHS is not driver-supported this stage (A-S5.5)"
-                    )),
-                    "conjunct 3 names {rule}'s AC-LHS transcription gap: {reason}"
-                );
-            }
-            assert!(
-                !reason.contains("static gate rejects") && !reason.contains("diagnostic"),
-                "neither the static gate nor the lowering-diagnostics short-circuit \
-                 contributes post-A-S5.4b (the lowering is error-free): {reason}"
-            );
-        },
-        other => panic!(
-            "production Ambient must record DriveAdmission::Unsupported until A-S5.5, \
-             got {other:?}"
-        ),
-    }
-    assert!(lowered.drive().is_none(), "no partial Ambient driver is ever built");
+    assert_eq!(
+        lowered.drive_admission(),
+        &mettail_rholang_codegen::DriveAdmission::Admitted,
+        "A-S5.5: production Ambient admits the in-Rho quiescence driver"
+    );
+    let drive = lowered
+        .drive()
+        .expect("an admitted language carries the generated drive program");
+    assert_eq!(
+        drive.receives.len(),
+        4,
+        "the Ambient drive program = the ^drive receiver + the three per-rule \
+         AC-carrier receivers"
+    );
+    assert!(
+        drive.receives.iter().all(|receive| receive.persistent),
+        "every drive-program receiver is persistent"
+    );
+    // Installed ONCE alongside the three legacy AC σ-receivers (whose bytes the
+    // A-S5.5 pin `a_s5_5_byte_identity_pins.rs` holds fixed):
+    // 3 (InRule/OutRule/OpenRule) + 4 (drive program) = 7.
+    let installed = plan
+        .installed_rho_net_program_par()
+        .expect("Ambient installs (A-S5.4b receivers + the A-S5.5 driver)");
+    assert_eq!(
+        installed.receives.len(),
+        7,
+        "installed = the three AC σ-receivers + ^drive + the three carriers, \
+         appended once"
+    );
 }
 
 #[test]

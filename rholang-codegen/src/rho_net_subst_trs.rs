@@ -81,7 +81,8 @@ use models::rust::utils::{
 
 use crate::rho_net_lower::{
     reflect_ground_term_par, reflect_tag, BOUND_VAR_REFLECT_LABEL,
-    CMP_RESERVED_LABEL, DRIVE_ERR_RESERVED_LABEL, DRIVE_FUEL_RESERVED_LABEL, DRIVE_RESERVED_LABEL,
+    CMP_RESERVED_LABEL, DRIVE_AC_RESERVED_LABEL, DRIVE_ERR_RESERVED_LABEL,
+    DRIVE_FUEL_RESERVED_LABEL, DRIVE_RESERVED_LABEL,
     FIRED_RESERVED_LABEL, FREE_VAR_REFLECT_LABEL, GroundTerm, LAMBDA_REFLECT_LABEL,
     MULTILAMBDA_REFLECT_LABEL, PEANO_SUCC_REFLECT_LABEL, PEANO_ZERO_REFLECT_LABEL, PRED_RESERVED_LABEL,
     SB_RESERVED_LABEL, SHB_RESERVED_LABEL, SHIFTK_RESERVED_LABEL, SHIFT_RESERVED_LABEL,
@@ -103,7 +104,7 @@ const CMP_GT_LABEL: &str = "^Gt";
 /// constructor (a user `Ident`) is disjoint from this set BY CONSTRUCTION; the codegen assertion in
 /// [`object_congruence_constructors`] is the defensive guard that keeps it that way (e.g. if a future
 /// binder-tag mapping regressed).
-pub fn reserved_subst_trs_labels() -> [&'static str; 15] {
+pub fn reserved_subst_trs_labels() -> [&'static str; 16] {
     [
         LAMBDA_REFLECT_LABEL,
         MULTILAMBDA_REFLECT_LABEL,
@@ -125,6 +126,11 @@ pub fn reserved_subst_trs_labels() -> [&'static str; 15] {
         DRIVE_ERR_RESERVED_LABEL,
         DRIVE_FUEL_RESERVED_LABEL,
         FIRED_RESERVED_LABEL,
+        // A-S5.5: the per-rule AC-carrier tag PREFIX — every driver AC-carrier channel is
+        // `⌜^drive-ac:{RuleLabel}⌝`; reserving the base label keeps the whole `:`-suffixed
+        // family unforgeable vs user constructors (a Rust `Ident` contains neither `^` nor
+        // `:`), and the C2 assertion guards the base like every other reserved tag.
+        DRIVE_AC_RESERVED_LABEL,
     ]
 }
 
@@ -235,15 +241,46 @@ pub(crate) struct Case {
 /// `match target { case₀ ; case₁ ; … }` — free in `target.free ∪ ⋃ᵢ shift_down(caseᵢ.body.free,
 /// caseᵢ.free_count)` (each case pattern binds `free_count` innermost vars in its body).
 pub(crate) fn match_(target: Node, cases: Vec<Case>) -> Node {
+    match_guarded(target, cases.into_iter().map(|case| (case, None)).collect())
+}
+
+/// [`match_`] with an OPTIONAL per-case `MatchCase.guard` (A-S5.5, plan v2 §4.1 / F12): the
+/// guard `Par` is evaluated by the reducer IN THE CASE ENV (the pattern's `free_count`
+/// binders pushed, reverse-De-Bruijn — `f1r3node reduce.rs:1290-1298` via rho_pure_eval);
+/// the case fires iff it extracts `GBool(true)`, and `false`/non-bool/error falls through
+/// to the NEXT case — exactly the non-linear cross-level checks the driver's AC redex arms
+/// ride (`rho_net_lower::nonlinear_consistency_condition` over the case frame).
+///
+/// A guard may reference ONLY the case's own binders (`BoundVar < free_count`), so it
+/// contributes nothing to the surrounding free-set — asserted here (fail-closed at
+/// codegen time), which is what keeps the [`Node`] free-set bookkeeping exact without
+/// threading guard frees.
+pub(crate) fn match_guarded(target: Node, cases: Vec<(Case, Option<Par>)>) -> Node {
     let mut free_sets: Vec<Vec<usize>> = vec![target.free.clone()];
     let mut match_cases = Vec::with_capacity(cases.len());
-    for case in cases {
+    for (case, guard) in cases {
+        if let Some(guard) = &guard {
+            // `locally_free` is the reducer's index-per-byte bit vector
+            // (`models::create_bit_vector`: `bit_vector[index] = 1`), so the highest
+            // referenced De Bruijn index is the last set position.
+            let highest_set = guard
+                .locally_free
+                .iter()
+                .rposition(|&bit| bit != 0);
+            assert!(
+                highest_set.is_none_or(|index| index < case.free_count),
+                "match_guarded: a case guard references BoundVar(s) beyond the case's own \
+                 {} binder(s) (locally_free = {:?}) — guards must be case-closed",
+                case.free_count,
+                guard.locally_free,
+            );
+        }
         free_sets.push(shift_down(&case.body.free, case.free_count));
         match_cases.push(MatchCase {
             pattern: Some(case.pattern),
             source: Some(case.body.par),
             free_count: case.free_count as i32,
-            guard: None,
+            guard,
         });
     }
     let free = union_free(&free_sets.iter().map(|s| s.as_slice()).collect::<Vec<_>>());

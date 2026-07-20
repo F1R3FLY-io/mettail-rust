@@ -2303,8 +2303,9 @@ pub fn generate_rho_net_invocation(language: &LanguageDef) -> TokenStream {
     // pre-A-S5.2 (the SwapDemo pin below) and `rho_net_match_invocation_to` is untouched
     // for every language. The generated body re-checks the FULL `drive_admissible`
     // predicate per exec against the memoized artifacts (fail-closed: an opted-in but
-    // not-yet-supported language — Ambient until A-S5.5 — errors typed instead of seeding
-    // a channel with no installed receivers).
+    // not-yet-supported language errors typed instead of seeding a channel with no
+    // installed receivers; A-S5.5 flipped Ambient's predicate to Admitted — the AC
+    // carrier arms — with NO change to this emission, exactly the AM-4 design).
     let drive_opted_in =
         mettail_rholang_codegen::DRIVE_OPT_IN.contains(&language_name.as_str());
     let drive_fn = if drive_opted_in {

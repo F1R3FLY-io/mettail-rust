@@ -21,12 +21,19 @@
 //! ```text
 //! for(@t, @fuel, @ret <= ⌜^drive⌝) {
 //!   match t {
-//!     ⟦LHSᵢ⟧-pattern =>                                     -- 1. redex arms (declaration order)
-//!         match fuel {
-//!           0 => @"^drive-fuel:{fp}"!(⟦redex-node⟧)          --    exhaustion: typed, 0-case FIRST (AM-7)
-//!           _ => new r in { acceptᵢ!(σ…, r)                  --    fire through the EXISTING σ ABI
-//!                         | @"^fired:{fp}"!("RuleLabelᵢ")    --    the firing ledger
-//!                         | for(@c <- r){ ⌜^drive⌝!(c, fuel - 1, ret) } }   -- contractum re-drive
+//!     ⟦LHSᵢ⟧-pattern =>                                     -- 1. redex arms — POSITIONAL first (Lambda Beta),
+//!         match fuel {                                       --    then NESTED-AC (In, Out — declaration order),
+//!           0 => @"^drive-fuel:{fp}"!(⟦redex-node⟧)          --    then STRUCTURAL-AC (Open) — the documented
+//!           _ => new r in { acceptᵢ!(σ…, r)                  --    deterministic order. Exhaustion: 0-case FIRST
+//!                         | @"^fired:{fp}"!("RuleLabelᵢ")    --    (AM-7). Positional arms fire through the
+//!                         | for(@c <- r){ ⌜^drive⌝!(c, fuel - 1, ret) } }   -- EXISTING σ ABI + re-drive.
+//!         }
+//!     ⟦AC-LHSⱼ⟧-check-pattern  guard (Mₐ == M_b) =>         --    A-S5.5 AC arms: the operand CHECK pattern
+//!         match fuel {                                       --    (nested_match_pattern_for — guard slots +
+//!           0 => @"^drive-fuel:{fp}"!(t)                     --    the bound outer rest, all else wildcarded)
+//!           _ => new r in { ⌜^drive-ac:Rⱼ⌝!(t, r)            --    + the cross-level EEq as MatchCase.guard
+//!                         | @"^fired:{fp}"!("RuleLabelⱼ")    --    (F12); fire through the CARRIER ABI
+//!                         | for(@c <- r){ ⌜^drive⌝!(c, fuel - 1, ret) } }   -- (plan v2 §4.3.1), then re-drive.
 //!         }
 //!     [⌜C⌝, c₀, …, c_{m-1}] =>                              -- 2. congruence-descent arms (one per object ctor)
 //!         new r₀…r_{m-1} in {
@@ -39,15 +46,39 @@
 //!     [⌜C⌝] => ret!([⌜C⌝])                                   --    (m = 0: a nullary leaf)
 //!     [⌜^lambda⌝, b] =>                                      -- 3. binder arm: drive the body, rewrap
 //!         new r in { ⌜^drive⌝!(b, fuel, r) | for(@rb <- r){ ret!([⌜^lambda⌝, rb]) } }
-//!     [⌜^free⌝, x]  => ret!([⌜^free⌝, x])                    -- 4. reserved passthroughs
+//!     {@"ac:op"!(e) | rem} =>                                -- 4. BAG arm (A-S5.5, one per HashBag op):
+//!         new re, rr in {                                    --    peel ONE element (send-pattern + free
+//!           ⌜^drive⌝!(e, fuel, re)                           --    remainder), drive the element AND the
+//!         | ⌜^drive⌝!(rem, fuel, rr)                         --    remainder concurrently (NO decrement),
+//!         | for(@ve <- re & @vr <- rr){                      --    atomic join, then
+//!             new f in {
+//!               match ve {                                   --    the AM-3 THREE-CASE reassembly splice:
+//!                 Nil => f!(Nil)                             --      Nil ⇒ splice-as-nothing
+//!                 {@"ac:op"!(_) | _} => f!(ve)               --      same-op soup ⇒ compose its sends (splice)
+//!                 _ => f!(@"ac:op"!(ve))                     --      else ⇒ wrap one element send
+//!               }
+//!             | for(@w <- f){                                --    then the POST-JOIN RE-CHECK of the
+//!                 match {w | vr} {                           --    re-composed soup (redex arms ONLY —
+//!                   <redex arms, fuel-gated>                 --    catches redexes formed ACROSS the
+//!                   _ => ret!({w | vr})                      --    reassembled siblings)
+//!                 } } } } }
+//!     Nil => ret!(Nil)                                       -- 5. the EMPTY BAG is its own NF (AM-3 Nil leaf)
+//!     [⌜^free⌝, x]  => ret!([⌜^free⌝, x])                    -- 6. reserved passthroughs
 //!     [⌜^bound⌝, n] => ret!([⌜^bound⌝, n])
-//!     _ => @"^drive-err:{fp}"!(t)                            -- 5. typed fail-close wildcard
+//!     _ => @"^drive-err:{fp}"!(t)                            -- 7. typed fail-close wildcard
 //!   }
 //! }
 //! ```
 //!
 //! * **Strategy**: redex arms precede descent ⟹ per-node outermost-first
-//!   (normal-order-flavored); a fired contractum is fully re-driven.
+//!   (normal-order-flavored); a fired contractum is fully re-driven. A guard-vetoed AC
+//!   arm (the reducer evaluates `MatchCase.guard` in the case env and FALLS THROUGH on
+//!   `false` — F12, `f1r3node reduce.rs:1290-1303`) reaches the bag arm, so a
+//!   name-mismatched soup still descends and rests.
+//! * **Bag-arm termination**: each peel strictly shrinks the soup (the remainder has one
+//!   element fewer, the empty remainder is the Nil leaf), the element/remainder drives are
+//!   strict sub-value descents, and the post-join re-check fires (fuel-bounded) or
+//!   returns — no descent loop.
 //! * **Post-join re-check**: catches redexes *enabled by* child normalization (e.g.
 //!   `App(x, a)` whose function position normalized to a `^lambda`) without re-descending
 //!   normal children. Termination: every `^drive` call either strictly descends or
@@ -74,6 +105,39 @@
 //!   GString `get_data` path and the `^`-prefix + fingerprint suffix keep them
 //!   collision-free with user constructors (Rust `Ident`s never contain `^` or `:`).
 //!
+//! # The AC carrier ABI (A-S5.5, plan v2 §4.3.1 / F4 / AM-3)
+//!
+//! Every admitted structural-AC / nested-structural-AC rule `R` gets ONE reserved
+//! per-rule `GPrivate` carrier channel `⌜^drive-ac:R⌝`
+//! ([`crate::rho_net_lower::DRIVE_AC_RESERVED_LABEL`], joined to the reserved registry +
+//! C2 collision assertion) and a FIXED-CHANNEL persistent AC-CARRIER receiver
+//! ([`ac_carrier_receiver_par`]) installed beside `^drive`: the SAME operand bind pattern
+//! + cross-level non-linear `Receive.condition` as the site-keyed `ac:` MATCH receivers
+//! landed through A-S5.4b ([`crate::rho_net_lower::nested_match_bind_pattern_for`] —
+//! every σ slot re-bound from the DELIVERED operand, no host σ), the source channel the
+//! reserved per-rule carrier instead of the site-keyed `ac:` name. The site-keyed
+//! receivers on the non-driver locate-all path are UNTOUCHED (byte-identity pinned).
+//!
+//! ONE deliberate body difference from the site-keyed receivers (plan v2 §4.3.3
+//! "contractum entry" + AM-3): every reduct element that is a bound σ SLOT (an
+//! [`AcReconstructTemplate::Var`] at a bag-element position) is emitted through the
+//! THREE-CASE bag-fragment dispatch —
+//!
+//! ```text
+//! match σ[v] { Nil => f!(Nil)                 -- an empty bag splices as NOTHING
+//!            ; {@"ac:op"!(_) | _} => f!(σ[v]) -- a same-op soup composes its sends DIRECTLY (one-level splice)
+//!            ; _ => f!(@"ac:op"!(σ[v])) }     -- anything else wraps as ONE element send
+//! ```
+//!
+//! — so a bag-valued σ slot SPLICES instead of nesting, matching the host's value-level
+//! `add_flattened_bag` (`dovetail/src/rules.rs:707`; multiplicity-preserving). One level
+//! of splice per reassembly suffices BY THE DRIVE INDUCTION (AM-3(b)): a never-driven
+//! value (a capability continuation) can arrive arbitrarily deeply nested in ONE firing,
+//! but the contractum's own re-drive descends every element (the bag arm) and each
+//! reassembly seam — the carrier's contractum emission AND the bag arm's element
+//! re-composition — splices one layer, so the resting term is flat. FV:
+//! `driver_flatten_agrees_with_add_flattened_bag` (`InRhoQuiescenceDriver.v`).
+//!
 //! # Carrier seam (plan v2 §5 — Branch PS ACTIVE, PM parked)
 //!
 //! The candidate-carrier surface is the [`DriveCarrier`] trait (v1 §5.3):
@@ -88,50 +152,70 @@
 //! # Scion seam (plan v2 §4.6 — the E-1 drop-in)
 //!
 //! The firing arm's contractum re-entry is factored through [`FiringEmission`] /
-//! [`firing_emission_node`]: `ContractumRedrive` (today's re-drive `for`) is implemented;
-//! `ScionBundle` is the E-1 forward-compatibility variant — PRESENT, CONSTRUCTED NOWHERE
-//! (deliberately: it is the seam, not dead code). Seam invariant a bundle must preserve:
-//! the value ultimately reaching `ret` is `norm(contractum)` under the SAME `^drive`
-//! semantics.
+//! [`firing_emission_node`] (positional σ-ABI arms) and its A-S5.5 carrier-ABI twin
+//! [`ac_firing_emission_node`] (AC arms): `ContractumRedrive` (today's re-drive `for`) is
+//! implemented; `ScionBundle` is the E-1 forward-compatibility variant — PRESENT,
+//! CONSTRUCTED NOWHERE (deliberately: it is the seam, not dead code). Seam invariant a
+//! bundle must preserve (the SM-7 wording, issued here because A-S5.5 landed first): for
+//! every schedule, the value ultimately reaching `ret` is a member of
+//! `NF_drive(contractum)` — the set of values some `^drive` trace rests at from the
+//! contractum at the arm's post-firing fuel. On confluent (or root-stable orthogonal)
+//! fragments this set is a singleton and the clause degenerates to `norm(contractum)`.
+//! Fired-multiset and exhaustion observations are per-trace, compared under the
+//! decision-(3)/AM-5 regime: strict equality on confluent cells; valid-NF-set membership
+//! + ledger consistency on non-confluent cells.
 //!
 //! # Admission (plan v2 §4.4 / F9, amendment AM-4)
 //!
 //! `drive_admissible(def, ruleset)` = static-gate-Ok ∧ every admitted matching family is
-//! driver-supported (THIS stage: positional/subst σ-ABI entries only — AC / nested-AC /
-//! contextual / native / comm families land with A-S5.5) ∧ the language is opted in via
-//! the codegen-visible [`DRIVE_OPT_IN`] const (consulted by the macro emitter, so a
-//! non-opted-in language's generated module is byte-identical — the AM-4 pin). The
-//! disposition is RECORDED on [`crate::rho_net_lower::RhoNetLowered`] as
-//! [`DriveAdmission`], never silent. Ambient is opted in but `Unsupported` until A-S5.5
-//! (its AC families have no driver arms yet) — exactly the recorded state the sub-stage
-//! sequence expects.
+//! driver-supported (positional/subst σ-ABI entries since A-S5.2; structural-AC +
+//! nested-structural-AC carrier-ABI entries since A-S5.5 — native / linear-AC /
+//! contextual / comm families remain unsupported) ∧ the language is opted in via the
+//! codegen-visible [`DRIVE_OPT_IN`] const (consulted by the macro emitter, so a
+//! non-opted-in language's generated module is byte-identical — the AM-4 pin) ∧ every
+//! fireable rewrite transcribes to a driver redex arm (positional transcription, or the
+//! AC shape recognition + match-representability for a collection LHS). The disposition
+//! is RECORDED on [`crate::rho_net_lower::RhoNetLowered`] as [`DriveAdmission`], never
+//! silent. Both A-S5 languages now admit: Lambda (positional Beta, A-S5.2) and Ambient
+//! (nested In/Out + structural Open through the carrier ABI, A-S5.5).
 //!
-//! FV: `formal/rocq/rho_bridge/theories/InRhoQuiescenceDriver.v` (A-S5.2) — the driver as
-//! a big-step LTS over the reflected object fragment: `drive_steps_sound`,
+//! FV: `formal/rocq/rho_bridge/theories/InRhoQuiescenceDriver.v` — the driver as a
+//! big-step LTS over the reflected object fragment: `drive_steps_sound`,
 //! `quiescence_sound` (per-trace, join re-check case included),
-//! `fuel_exhaustion_never_wrong`, and the iterated β weak bisimulation
-//! (`drive_weak_bisim`) discharged through `DeBruijnSubstTRS.v`'s SN + confluence.
+//! `fuel_exhaustion_never_wrong`, the iterated β weak bisimulation (`drive_weak_bisim`)
+//! discharged through `DeBruijnSubstTRS.v`'s SN + confluence, and — A-S5.5 — the BAG
+//! driver model (`bdrives`: the peel/join/three-case-splice arm over an abstract redex
+//! relation; `bag_quiescence_sound`, `bag_flatness_sound`, `bag_fuel_exhaustion_is_redex`)
+//! plus the flattening agreement lemma `driver_flatten_agrees_with_add_flattened_bag`
+//! (plan v2 §7.2).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use mettail_ast::grammar::TermParam;
 use mettail_ast::language::{LanguageDef, RewriteRule};
 use mettail_ast::pattern::{Pattern, PatternTerm};
+use mettail_ast::types::CollectionType;
 use models::rhoapi::expr::ExprInstance;
-use models::rhoapi::{EMinus, Expr, Par};
-use models::rust::utils::{new_gint_par, new_gstring_par};
+use models::rhoapi::{EMinus, Expr, Par, Receive, ReceiveBind};
+use models::rust::utils::{new_freevar_par, new_gint_par, new_gstring_par, new_send_par};
+use syn::Ident;
 
 use crate::rho_net::RhoNetProgram;
 use crate::rho_net_lower::{
-    lower_lhs_vars, RhoNetLoweredRule, RhoNetLoweringError, DRIVE_ERR_RESERVED_LABEL,
-    DRIVE_FUEL_RESERVED_LABEL, DRIVE_RESERVED_LABEL, FIRED_RESERVED_LABEL,
-    BOUND_VAR_REFLECT_LABEL, FREE_VAR_REFLECT_LABEL, LAMBDA_REFLECT_LABEL,
+    count_var_occurrences, lower_lhs_vars, nested_match_bind_pattern_for,
+    nested_match_pattern_for, nested_structural_ac_rule_shape,
+    nested_structural_ac_shape_is_match_representable, nonlinear_consistency_condition,
+    resolve_ac_collection_type, resolve_constructor_collection_type, structural_ac_rule_shape,
+    structural_ac_shape_is_match_representable, AcReconstructTemplate, NestedBindState,
+    RhoNetLoweredRule, RhoNetLoweringError, UnsupportedFamily, BOUND_VAR_REFLECT_LABEL,
+    DRIVE_AC_RESERVED_LABEL, DRIVE_ERR_RESERVED_LABEL, DRIVE_FUEL_RESERVED_LABEL,
+    DRIVE_RESERVED_LABEL, FIRED_RESERVED_LABEL, FREE_VAR_REFLECT_LABEL, LAMBDA_REFLECT_LABEL,
 };
 use crate::rho_net_ruleset::{compile_in_rho_matching_ruleset, in_rho_static_gate, InRhoMatchingRuleset};
 use crate::rho_net_subst_trs::{
-    for1, free_bits, ground, is_binder_term, join, match_, new_scope, object_congruence_constructors,
-    par2, pat_free, pat_tagged, pat_wildcard, persistent_contract, send, tag_par, tagged, union_free,
-    Case, Env, Node,
+    for1, free_bits, ground, is_binder_term, join, match_, match_guarded, new_scope,
+    object_congruence_constructors, par2, pat_free, pat_tagged, pat_wildcard,
+    persistent_contract, send, tag_par, tagged, union_free, Case, Env, Node,
 };
 
 // ─────────────────────────────────────────────────────────────────────────────────────────────
@@ -144,9 +228,9 @@ use crate::rho_net_subst_trs::{
 /// language never receives a generated `rho_net_drive_invocation_to` — the SwapDemo
 /// byte-identity pin depends on exactly this.
 ///
-/// Ambient is opted in but stays [`DriveAdmission::Unsupported`] until A-S5.5 lands its AC
-/// driver arms — opt-in expresses INTENT; admission is the conjunction in
-/// [`drive_admissible`].
+/// Opt-in expresses INTENT; admission is the conjunction in [`drive_admissible`]. Both
+/// opted-in languages ADMIT since A-S5.5: Lambda through its positional σ-ABI Beta arm
+/// (A-S5.2), Ambient through the AC carrier-ABI arms (A-S5.5).
 pub const DRIVE_OPT_IN: &[&str] = &["Lambda", "Ambient"];
 
 /// The per-path fuel value the generated drive seed threads (plan v2 §4.2, user decision
@@ -176,20 +260,22 @@ pub enum DriveAdmission {
     },
 }
 
-/// The A-S5.2 driver-admission predicate (plan v2 §4.4): **opted in** (AM-4, by name in
-/// [`DRIVE_OPT_IN`]) ∧ **static gate Ok** ([`in_rho_static_gate`] — every fireable rewrite
-/// matchable in Rho, congruence-only rewrites exempt) ∧ **every admitted matching family
-/// driver-supported** (this stage: positional/subst σ-ABI entries only — a non-empty
-/// native / AC / contextual / structural-AC / nested-structural-AC dispatch family or a
-/// multi-binder term is not yet drivable; Ambient therefore records `Unsupported` until
-/// A-S5.5) ∧ **every fireable seed transcribes** to a driver redex arm (linear,
-/// constructor-rooted LHS whose σ variables avoid the driver frame names).
+/// The driver-admission predicate (plan v2 §4.4; A-S5.2, AC families A-S5.5): **opted
+/// in** (AM-4, by name in [`DRIVE_OPT_IN`]) ∧ **static gate Ok** ([`in_rho_static_gate`]
+/// — every fireable rewrite matchable in Rho, congruence-only rewrites exempt) ∧ **every
+/// admitted matching family driver-supported** (positional/subst σ-ABI entries +
+/// structural-AC / nested-structural-AC carrier-ABI entries; a non-empty native /
+/// linear-AC / contextual dispatch family or a multi-binder term is not drivable) ∧
+/// **every fireable seed transcribes** to a driver redex arm (a linear,
+/// constructor-rooted positional LHS whose σ variables avoid the driver frame names, OR
+/// a match-representable structural/nested-structural AC shape whose carrier builds).
 ///
 /// A PURE function of `(def, ruleset)` — both live in the memoized
 /// [`crate::rho_net_cache::CompiledInRhoArtifacts`], so the generated
-/// `rho_net_drive_invocation_to` body re-checks admission per exec at cache-hit cost (the
-/// fail-closed guard for the A-S5.4b→A-S5.5 window where Ambient's static gate passes but
-/// its driver arms do not yet exist: without this check the seed would rest unanswered).
+/// `rho_net_drive_invocation_to` body re-checks admission per exec at cache-hit cost
+/// (the fail-closed guard that kept the A-S5.4b→A-S5.5 window typed: Ambient's static
+/// gate passed while its driver arms did not yet exist, and the seed would otherwise
+/// have rested unanswered).
 pub fn drive_admissible(def: &LanguageDef, ruleset: &InRhoMatchingRuleset) -> DriveAdmission {
     let name = def.name.to_string();
     if !DRIVE_OPT_IN.contains(&name.as_str()) {
@@ -210,9 +296,10 @@ pub fn drive_admissible(def: &LanguageDef, ruleset: &InRhoMatchingRuleset) -> Dr
         ));
     }
 
-    // Conjunct 2: every admitted matching family must be driver-supported. This stage
-    // supports the positional/subst σ-ABI entries only (plan v2 §8 row A-S5.2); the AC
-    // family arms land with A-S5.5.
+    // Conjunct 2: every admitted matching family must be driver-supported. Since A-S5.5
+    // the structural-AC + nested-structural-AC families ARE driver-supported (carrier-ABI
+    // arms; each entry's transcription is validated per-rewrite in conjunct 3); the
+    // native / linear-AC / contextual families remain unsupported.
     let mut unsupported_families: Vec<String> = Vec::new();
     if !ruleset.native_dispatch.is_empty() {
         unsupported_families.push(format!("native({})", ruleset.native_dispatch.len()));
@@ -223,21 +310,9 @@ pub fn drive_admissible(def: &LanguageDef, ruleset: &InRhoMatchingRuleset) -> Dr
     if !ruleset.contextual_dispatch.is_empty() {
         unsupported_families.push(format!("contextual({})", ruleset.contextual_dispatch.len()));
     }
-    if !ruleset.structural_ac_dispatch.is_empty() {
-        unsupported_families.push(format!(
-            "structural-ac({})",
-            ruleset.structural_ac_dispatch.len()
-        ));
-    }
-    if !ruleset.nested_structural_ac_dispatch.is_empty() {
-        unsupported_families.push(format!(
-            "nested-structural-ac({})",
-            ruleset.nested_structural_ac_dispatch.len()
-        ));
-    }
     if !unsupported_families.is_empty() {
         reasons.push(format!(
-            "matching families not yet driver-supported (A-S5.5): {}",
+            "matching families not driver-supported: {}",
             unsupported_families.join(", ")
         ));
     }
@@ -252,13 +327,22 @@ pub fn drive_admissible(def: &LanguageDef, ruleset: &InRhoMatchingRuleset) -> Dr
     }
 
     // Conjunct 3: every fireable (non-congruence-only) rewrite's LHS must transcribe to a
-    // driver redex arm — the same first-occurrence σ order the σ-receiver binds.
+    // driver redex arm. The routing mirrors `lower_base_rewrite` exactly: a flat-σ LHS
+    // (`lower_lhs_vars` Ok, or any non-collection failure) takes the POSITIONAL
+    // transcription (A-S5.2 — the σ-receiver first-occurrence order); a collection LHS
+    // (`Err(CollectionAc)`) takes the A-S5.5 AC-CARRIER transcription (the nested /
+    // structural shape recognition + match-representability + the carrier build).
     for rewrite in &def.rewrites {
         if crate::rho_net_lower::congruence_only_premises(&rewrite.premises) {
             continue;
         }
-        if let Err(error) = validate_seed_transcription(rewrite, def, &ruleset.language_fingerprint)
-        {
+        let validation = match lower_lhs_vars(&rewrite.left) {
+            Err(UnsupportedFamily::CollectionAc) => {
+                build_drive_ac_arm(rewrite, def, &ruleset.language_fingerprint).map(|_| ())
+            },
+            _ => validate_seed_transcription(rewrite, def, &ruleset.language_fingerprint),
+        };
+        if let Err(error) = validation {
             reasons.push(format!(
                 "rewrite {} does not transcribe to a driver redex arm: {error}",
                 rewrite.name
@@ -404,6 +488,569 @@ pub struct DriveRedexArm {
     pub(crate) root_is_binder: bool,
 }
 
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+// A-S5.5: the AC carrier-ABI redex arms (structural-AC + nested-structural-AC families).
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+
+/// One compiled AC-family redex arm (A-S5.5, plan v2 §4.3.1): an admitted structural-AC
+/// (`OpenRule`) or nested-structural-AC (`InRule`/`OutRule`) rewrite transcribed to a
+/// driver `Match` arm — the operand CHECK pattern
+/// ([`crate::rho_net_lower::nested_match_pattern_for`]: one guard slot per cross-level /
+/// non-linear channel occurrence + the bound outer rest, all else wildcarded), the
+/// non-linear `EEq` conjunction as the per-case `MatchCase.guard` (F12), and the firing
+/// through the CARRIER ABI: `new r { ⌜^drive-ac:R⌝!(t, r) | ledger |
+/// for(@c <- r){ ^drive!(c, fuel-1, ret) } }`, where the fixed-channel persistent
+/// AC-carrier receiver ([`Self::receiver`]) re-binds every σ slot from the delivered
+/// operand and emits the contractum (three-case-spliced, F4/AM-3) to the fresh `r`.
+///
+/// The POSITIONAL twin is [`DriveRedexArm`]; the two are joined by [`DriveArm`] in the
+/// documented deterministic arm order (positional, then nested-AC, then structural-AC).
+#[derive(Debug, Clone)]
+pub(crate) struct DriveAcArm {
+    /// The bare source rewrite label (the ledger datum).
+    pub(crate) rule_label: String,
+    /// The reserved per-rule carrier tag label `"^drive-ac:{rule_label}"` — the arm fires
+    /// `⌜carrier⌝!(t, r)` on `tag_par(fp, carrier_label)`, the SAME `GPrivate` channel
+    /// [`Self::receiver`] rests on.
+    pub(crate) carrier_label: String,
+    /// The transcribed operand CHECK `Match` pattern (guard slots + the bound outer rest;
+    /// every reduct position wildcarded — the carrier re-binds those itself).
+    pub(crate) pattern: Par,
+    /// The pattern's bound-slot count (`guard occurrences + 1` for the outer rest).
+    pub(crate) free_count: usize,
+    /// The cross-level / non-linear consistency conjunction
+    /// ([`crate::rho_net_lower::nonlinear_consistency_condition`] over the case frame) —
+    /// carried as `MatchCase.guard`, evaluated by the reducer in the case env; a `false`
+    /// falls through to the next arm (guard-veto ⟹ descent).
+    pub(crate) guard: Par,
+    /// Synthetic case-frame binder names for the pattern's slots (`__ac0…`, innermost
+    /// last) — pushed on the [`Env`] so the case body's `t`/`fuel`/`ret` references
+    /// resolve at the right depth; the slots themselves are never read by the arm body
+    /// (the carrier re-binds from the delivered operand).
+    pub(crate) case_names: Vec<String>,
+    /// The fixed-channel persistent AC-CARRIER receiver ([`ac_carrier_receiver_par`]) —
+    /// appended to the drive program once per AC arm.
+    pub(crate) receiver: Par,
+}
+
+/// A compiled driver redex arm of either family, in the documented deterministic order
+/// (positional first, then nested-AC, then structural-AC; declaration order within each).
+#[derive(Debug, Clone)]
+pub(crate) enum DriveArm {
+    /// A positional/subst σ-ABI arm (A-S5.2) — fires `accept!(σ…, r)` through the
+    /// EXISTING installed σ-receiver.
+    Positional(DriveRedexArm),
+    /// An AC carrier-ABI arm (A-S5.5) — fires `⌜^drive-ac:R⌝!(t, r)` through the
+    /// fixed-channel persistent AC-carrier receiver.
+    AcCarrier(DriveAcArm),
+}
+
+/// The unified RHS/operand description one AC carrier receiver is built from — the
+/// structural (`OpenRule`) and nested (`InRule`/`OutRule`) shapes projected onto ONE
+/// surface so [`ac_carrier_receiver_par`] has a single builder:
+///
+/// * a [`crate::rho_net_lower::NestedStructuralAcShape`] maps verbatim (its
+///   `reduct_templates` are already [`AcReconstructTemplate`]s);
+/// * a [`crate::rho_net_lower::StructuralAcShape`] (flat, `OpenRule`) maps with
+///   `root_pattern = LHS`, `reduct_templates = reduct_vars.map(Var)`, and
+///   `rest_splices_at_top = true` (its RHS is always `op{ r₀, …, ...rest }`).
+pub(crate) struct AcCarrierSpec {
+    /// The HashBag operand/reduct bag constructor (e.g. `PPar`).
+    op: String,
+    /// The LHS root pattern (bag-rooted or wrapper-rooted) — both the carrier's bind
+    /// pattern and the arm's check pattern walk it.
+    root_pattern: Pattern,
+    /// The cross-level / shared non-linear channel variable.
+    nonlinear_var: Ident,
+    /// The outer bag's `...rest` remainder variable.
+    spliced_rest: Ident,
+    /// The RHS reduct element templates, in RHS order.
+    reduct_templates: Vec<AcReconstructTemplate>,
+    /// Where the outer rest is consumed (A-S5.4b AM-1 exactly-once): `true` ⟹ spliced at
+    /// the top of the RHS bag; `false` ⟹ referenced exactly once inside a template (the
+    /// redeclared `OutRule`).
+    rest_splices_at_top: bool,
+}
+
+/// The reserved per-rule AC carrier tag label `"^drive-ac:{rule_label}"` (module docs:
+/// the `^` prefix keeps the whole suffixed family collision-free with user constructors).
+pub(crate) fn drive_ac_carrier_label(rule_label: &str) -> String {
+    format!("{DRIVE_AC_RESERVED_LABEL}:{rule_label}")
+}
+
+/// Recognize one fireable collection-LHS rewrite as an AC carrier spec (A-S5.5): the
+/// NESTED shape first (the depth-2 `InRule`/`OutRule` recognizer — it rejects flat
+/// shapes), then the FLAT structural shape (`OpenRule`), each REQUIRING
+/// match-representability (a shape the carrier cannot faithfully bind stays
+/// driver-unsupported — never a wrong in-Rho arm). `Err` carries the fail-closed reason
+/// surfaced by [`DriveAdmission::Unsupported`].
+fn ac_carrier_spec(rewrite: &RewriteRule, def: &LanguageDef) -> Result<AcCarrierSpec, String> {
+    if let Some(shape) = nested_structural_ac_rule_shape(&rewrite.left, &rewrite.right, def) {
+        if !nested_structural_ac_shape_is_match_representable(&shape) {
+            return Err(format!(
+                "nested structural-AC rewrite {} is not match-representable (a reduct \
+                 variable has no single unambiguous bind position)",
+                rewrite.name
+            ));
+        }
+        return Ok(AcCarrierSpec {
+            op: shape.op,
+            root_pattern: shape.root_pattern,
+            nonlinear_var: shape.nonlinear_var,
+            spliced_rest: shape.spliced_rest,
+            reduct_templates: shape.reduct_templates,
+            rest_splices_at_top: shape.rest_splices_at_top,
+        });
+    }
+    let resolved_kind = resolve_ac_collection_type(def, &rewrite.left);
+    if let Some(shape) = structural_ac_rule_shape(&rewrite.left, &rewrite.right, resolved_kind.as_ref())
+    {
+        if !structural_ac_shape_is_match_representable(&shape) {
+            return Err(format!(
+                "structural-AC rewrite {} is not match-representable (a reduct variable \
+                 occurs at multiple element-argument positions)",
+                rewrite.name
+            ));
+        }
+        return Ok(AcCarrierSpec {
+            op: shape.op.clone(),
+            root_pattern: rewrite.left.clone(),
+            nonlinear_var: shape.nonlinear_var.clone(),
+            spliced_rest: shape.rest.clone(),
+            reduct_templates: shape
+                .reduct_vars
+                .iter()
+                .map(|var| AcReconstructTemplate::Var(var.to_string()))
+                .collect(),
+            rest_splices_at_top: true,
+        });
+    }
+    Err(
+        "a collection (AC) LHS that is neither a nested structural-AC nor a flat \
+         structural-AC shape has no driver carrier arm (linear-AC / Comm families are \
+         not driver-supported)"
+            .to_string(),
+    )
+}
+
+/// Build one AC carrier-ABI redex arm (check pattern + guard + carrier receiver) from a
+/// fireable collection-LHS rewrite — the single derivation shared by
+/// [`drive_admissible`]'s conjunct-3 validation and [`drive_lowering`]'s arm
+/// materialization (a PURE function of `(rewrite, def, fingerprint)`, so the two can
+/// never drift).
+fn build_drive_ac_arm(
+    rewrite: &RewriteRule,
+    def: &LanguageDef,
+    fingerprint: &str,
+) -> Result<DriveAcArm, String> {
+    let spec = ac_carrier_spec(rewrite, def)?;
+
+    // The arm's CHECK pattern: the report-path operand walk (guard slot per non-linear
+    // occurrence, the bound outer rest, wildcards elsewhere) transcribed into Match-case
+    // position over the driven value.
+    let guard_occurrences = count_var_occurrences(&spec.root_pattern, &spec.nonlinear_var);
+    if guard_occurrences < 2 {
+        return Err(format!(
+            "rewrite {}: the non-linear channel variable {} occurs {guard_occurrences} \
+             time(s) — an AC arm needs the cross-level pair for its guard",
+            rewrite.name, spec.nonlinear_var
+        ));
+    }
+    let spliced_rest_slot = guard_occurrences;
+    let mut next_guard_slot = 0usize;
+    let mut occurrence_levels = Vec::with_capacity(guard_occurrences);
+    let pattern = nested_match_pattern_for(
+        &spec.root_pattern,
+        &spec.nonlinear_var,
+        &spec.spliced_rest,
+        spliced_rest_slot,
+        &mut next_guard_slot,
+        &mut occurrence_levels,
+        fingerprint,
+    );
+    debug_assert_eq!(
+        next_guard_slot, guard_occurrences,
+        "the check-pattern walk binds exactly one guard slot per non-linear occurrence"
+    );
+    let free_count = guard_occurrences + 1;
+    let guard = nonlinear_consistency_condition(&occurrence_levels, free_count);
+    let case_names: Vec<String> = (0..free_count).map(|i| format!("__ac{i}")).collect();
+
+    let receiver = ac_carrier_receiver_par(&spec, rewrite, fingerprint)?;
+
+    Ok(DriveAcArm {
+        rule_label: rewrite.name.to_string(),
+        carrier_label: drive_ac_carrier_label(&rewrite.name.to_string()),
+        pattern,
+        free_count,
+        guard,
+        case_names,
+        receiver,
+    })
+}
+
+/// The `Match`-case pattern claiming a SAME-`op` process soup — one send-pattern on the
+/// `"ac:{op}"` GString carrier plus a WILDCARD remainder (`{@"ac:op"!(_) | _}`): matches
+/// any Par with ≥ 1 element send on the op's carrier (an empty bag — Nil — does NOT
+/// match, which is exactly why the AM-3 dispatch is THREE-case).
+fn soup_case_pattern(op: &str) -> Par {
+    let send_pattern = new_send_par(
+        new_gstring_par(format!("ac:{op}"), Vec::new(), false),
+        vec![pat_wildcard()],
+        false,
+        Vec::new(),
+        true,
+        Vec::new(),
+        true,
+    );
+    send_pattern.append(pat_wildcard())
+}
+
+/// The `Match`-case pattern claiming a soup while PEELING one element: one send-pattern
+/// binding the element datum (`FreeVar(0)`) plus the free-Par remainder (`FreeVar(1)`) —
+/// the bag arm's `{@"ac:op"!(e) | rem}` (the delta-verified spatial-matcher Par-Par
+/// send-pattern + free-remainder shape).
+fn soup_peel_pattern(op: &str) -> Par {
+    let send_pattern = new_send_par(
+        new_gstring_par(format!("ac:{op}"), Vec::new(), false),
+        vec![pat_free(0)],
+        false,
+        Vec::new(),
+        true,
+        Vec::new(),
+        true,
+    );
+    send_pattern.append(pat_free(1))
+}
+
+/// The VALUE `@"ac:{op}"!(element)` — one wrapped bag-element send, used as (part of) a
+/// send DATUM (the WRAP leg of the three-case dispatch and the rebuild of a
+/// statically-non-bag template element).
+fn wrap_element_send(op: &str, element: Node) -> Node {
+    send(
+        ground(new_gstring_par(format!("ac:{op}"), Vec::new(), false)),
+        vec![element],
+    )
+}
+
+/// Emit the AM-3 THREE-CASE bag-fragment dispatch for one σ-slot / driven value `value`
+/// (plan v2 §4.3.3 as amended by AM-3(a)): deliver `value`'s contribution to a same-`op`
+/// soup as a Par FRAGMENT on the fresh channel `dest` —
+///
+/// ```text
+/// match value { Nil                => dest!(Nil)              -- splice-as-nothing
+///             ; {@"ac:op"!(_) | _} => dest!(value)            -- same-op soup: compose its sends (splice)
+///             ; _                  => dest!(@"ac:op"!(value)) -- wrap one element send
+/// }
+/// ```
+///
+/// Composing the delivered fragment in parallel with the other fragments/remainder IS the
+/// splice (Par-valued substitution splices sends); the Nil case exists so an empty bag
+/// contributes NOTHING (the wrap leg would otherwise manufacture a spurious
+/// `@"ac:op"!(Nil)` element — AM-3's exact defect). The dispatch is ONE level deep by
+/// design: deeper never-driven nesting flattens through the contractum's own re-drive
+/// (the AM-3(b) drive induction, module docs).
+fn bag_fragment_dispatch(op: &str, value: Node, dest: Node) -> Node {
+    match_(
+        value.clone(),
+        vec![
+            // Nil ⟹ the empty-bag fragment (contributes nothing when composed).
+            Case {
+                pattern: Par::default(),
+                free_count: 0,
+                body: send(dest.clone(), vec![ground(Par::default())]),
+            },
+            // A same-op soup ⟹ the value ITSELF is the fragment (its sends splice).
+            Case {
+                pattern: soup_case_pattern(op),
+                free_count: 0,
+                body: send(dest.clone(), vec![value.clone()]),
+            },
+            // Anything else ⟹ one wrapped element send.
+            Case {
+                pattern: pat_wildcard(),
+                free_count: 0,
+                body: send(dest, vec![wrap_element_send(op, value)]),
+            },
+        ],
+    )
+}
+
+/// Collect (first-appearance order, deduplicated) every template VARIABLE sitting at a
+/// bag-ELEMENT position — the σ slots whose values need the [`bag_fragment_dispatch`]
+/// (they may be bags/Nil at runtime). A `Var` at a NODE-child position (a name argument)
+/// and a `Bag`'s `...rest` remainder need no dispatch (the rest slot is always a
+/// soup/Nil, composed directly); a `Node` element is statically non-bag (wrapped
+/// unconditionally).
+fn collect_bag_element_vars(template: &AcReconstructTemplate, at_bag_element: bool, out: &mut Vec<String>) {
+    match template {
+        AcReconstructTemplate::Var(name) => {
+            if at_bag_element && !out.contains(name) {
+                out.push(name.clone());
+            }
+        },
+        AcReconstructTemplate::Node { children, .. } => {
+            for child in children {
+                collect_bag_element_vars(child, false, out);
+            }
+        },
+        AcReconstructTemplate::Bag { elements, .. } => {
+            for element in elements {
+                collect_bag_element_vars(element, true, out);
+            }
+        },
+    }
+}
+
+/// Rebuild one reduct template as a receiver-body [`Node`] over the carrier's bound σ
+/// slots (the [`Env`]-combinator twin of
+/// `rho_net_lower::reflect_ac_template_bound_par`, with the F4/AM-3 difference at
+/// bag-element positions):
+///
+/// * `Var(v)` at a NODE-child position ⟹ the raw slot value `env.var(v)`;
+/// * `Node { C, children }` ⟹ the tagged `EList[⌜C⌝, …]` (byte-compatible with
+///   `reflect_ground_term_par`'s constructor image);
+/// * `Bag { op, elements, rest }` ⟹ the process soup: each element emitted per its
+///   STATIC kind — a `Var` composes its PRE-COMPUTED three-case FRAGMENT
+///   (`env.var(__frag_v)` — the splice), a `Node` wraps unconditionally (statically
+///   non-bag), a same-`op` inner `Bag` composes its rebuilt soup directly (a static
+///   splice — the AM-2 `insert_into` mirror), a different-op inner `Bag` wraps its soup
+///   as one element — plus the `...rest` slot composed directly (always a soup/Nil).
+fn rebuild_template_node(
+    template: &AcReconstructTemplate,
+    env: &Env,
+    fingerprint: &str,
+) -> Node {
+    match template {
+        AcReconstructTemplate::Var(name) => env.var(name),
+        AcReconstructTemplate::Node { constructor, children } => tagged(
+            fingerprint,
+            constructor,
+            children
+                .iter()
+                .map(|child| rebuild_template_node(child, env, fingerprint))
+                .collect(),
+        ),
+        AcReconstructTemplate::Bag { op, elements, rest } => {
+            let mut soup: Option<Node> = None;
+            let push = |node: Node, soup: &mut Option<Node>| {
+                *soup = Some(match soup.take() {
+                    None => node,
+                    Some(acc) => par2(acc, node),
+                });
+            };
+            for element in elements {
+                let node = match element {
+                    // A σ-slot element: its THREE-CASE fragment was pre-computed onto
+                    // `__frag_{v}` (see [`ac_carrier_receiver_par`]) — composing it IS
+                    // the one-level splice.
+                    AcReconstructTemplate::Var(name) => env.var(&fragment_value_name(name)),
+                    // A constructor element is statically non-bag ⟹ wrap.
+                    AcReconstructTemplate::Node { .. } => wrap_element_send(
+                        op,
+                        rebuild_template_node(element, env, fingerprint),
+                    ),
+                    // An inner literal bag: same-op ⟹ static splice; different-op ⟹ its
+                    // soup wrapped as one element.
+                    AcReconstructTemplate::Bag { op: inner_op, .. } => {
+                        let rebuilt = rebuild_template_node(element, env, fingerprint);
+                        if inner_op == op {
+                            rebuilt
+                        } else {
+                            wrap_element_send(op, rebuilt)
+                        }
+                    },
+                };
+                push(node, &mut soup);
+            }
+            if let Some(rest_name) = rest {
+                push(env.var(rest_name), &mut soup);
+            }
+            soup.unwrap_or_else(|| ground(Par::default()))
+        },
+    }
+}
+
+/// The synthetic frame name carrying a σ slot's pre-computed three-case FRAGMENT value.
+fn fragment_value_name(slot: &str) -> String {
+    format!("__frag_{slot}")
+}
+
+/// Build the FIXED-CHANNEL persistent AC-CARRIER receiver for one admitted AC rule
+/// (A-S5.5, plan v2 §4.3.1 — module docs "The AC carrier ABI"):
+///
+/// ```text
+/// for( <operand bind pattern>, out <- ⌜^drive-ac:R⌝ )
+///   where ( Mₐ == M_b )
+///   { new f₀…f_{q-1} in {
+///       <three-case dispatch: σ[v₀] → f₀> | … |
+///       for(@__frag_v₀ <- f₀ & …){ out!( ⟦RHS bag⟧ ) } } }
+/// ```
+///
+/// The operand bind pattern + non-linear `Receive.condition` are the SAME derivation as
+/// the site-keyed `ac:` match receivers
+/// ([`crate::rho_net_lower::nested_match_bind_pattern_for`] over the reduct-referenced
+/// slot set — the carrier re-binds EVERYTHING from the delivered operand, no host σ);
+/// the source channel is the reserved per-rule carrier; and the body emits each
+/// σ-slot reduct element through the AM-3 three-case fragment dispatch before composing
+/// the RHS bag (the F4 "contractum entry" splice). Fail-closed (`Err`) on a slot-name
+/// collision with the carrier's own frame names (`out` / `__frag_*` / `__g*` / `__f*`).
+fn ac_carrier_receiver_par(
+    spec: &AcCarrierSpec,
+    rewrite: &RewriteRule,
+    fingerprint: &str,
+) -> Result<Par, String> {
+    // The reduct-referenced slot set (+ the outer spliced rest), mirroring the site-keyed
+    // receiver's derivation.
+    let mut referenced: HashSet<String> = HashSet::new();
+    for template in &spec.reduct_templates {
+        template.collect_vars(&mut referenced);
+    }
+    referenced.insert(spec.spliced_rest.to_string());
+
+    // Fail-closed frame-name hygiene: a user σ variable named like the carrier's own
+    // frame names would shadow-resolve inside the body.
+    for name in &referenced {
+        if name == "out" || name.starts_with("__") {
+            return Err(format!(
+                "rewrite {}: σ variable {name:?} collides with the AC carrier frame \
+                 (`out` / `__*` are reserved)",
+                rewrite.name
+            ));
+        }
+    }
+
+    let mut state = NestedBindState {
+        next_level: 0,
+        slot_of: HashMap::new(),
+        occurrence_levels: Vec::new(),
+    };
+    let bind_pattern = nested_match_bind_pattern_for(
+        &spec.root_pattern,
+        &spec.nonlinear_var,
+        &referenced,
+        &mut state,
+        fingerprint,
+    );
+    let out_level = state.next_level;
+    let free_count = out_level + 1;
+    let condition = nonlinear_consistency_condition(&state.occurrence_levels, free_count);
+
+    // The receive frame names, by slot level: named σ slots from the bind walk, synthetic
+    // `__g{level}` for the unnamed extra guard occurrences (the non-linear var's
+    // occurrences beyond its first), `out` last.
+    let mut names: Vec<String> = (0..out_level).map(|level| format!("__g{level}")).collect();
+    for (name, level) in &state.slot_of {
+        names[*level] = name.clone();
+    }
+    names.push("out".to_string());
+    let name_refs: Vec<&str> = names.iter().map(String::as_str).collect();
+    let env = Env::root(&name_refs);
+
+    // The σ slots needing the three-case fragment dispatch: every template Var at a
+    // bag-element position (first-appearance order — the emission order of the
+    // dispatches and join binds).
+    let mut fragment_slots: Vec<String> = Vec::new();
+    for template in &spec.reduct_templates {
+        collect_bag_element_vars(template, true, &mut fragment_slots);
+    }
+
+    // The RHS top-level bag emission, built in a frame where every fragment value is
+    // bound as `__frag_{v}` (or the root frame when no dispatch is needed).
+    let top_soup = |env: &Env| -> Node {
+        let mut soup: Option<Node> = None;
+        let push = |node: Node, soup: &mut Option<Node>| {
+            *soup = Some(match soup.take() {
+                None => node,
+                Some(acc) => par2(acc, node),
+            });
+        };
+        for template in &spec.reduct_templates {
+            let node = match template {
+                AcReconstructTemplate::Var(name) => env.var(&fragment_value_name(name)),
+                AcReconstructTemplate::Node { .. } => wrap_element_send(
+                    &spec.op,
+                    rebuild_template_node(template, env, fingerprint),
+                ),
+                AcReconstructTemplate::Bag { op: inner_op, .. } => {
+                    let rebuilt = rebuild_template_node(template, env, fingerprint);
+                    if *inner_op == spec.op {
+                        rebuilt
+                    } else {
+                        wrap_element_send(&spec.op, rebuilt)
+                    }
+                },
+            };
+            push(node, &mut soup);
+        }
+        if spec.rest_splices_at_top {
+            push(env.var(&spec.spliced_rest.to_string()), &mut soup);
+        }
+        soup.unwrap_or_else(|| ground(Par::default()))
+    };
+
+    let body = if fragment_slots.is_empty() {
+        // No σ-slot bag-element positions (impossible for the bundled Ambient rules, kept
+        // total): emit the RHS bag directly.
+        send(env.var("out"), vec![top_soup(&env)])
+    } else {
+        let q = fragment_slots.len();
+        new_scope(q, {
+            let dispatch_names: Vec<String> =
+                (0..q).map(|i| format!("__f{i}")).collect();
+            let dispatch_refs: Vec<&str> = dispatch_names.iter().map(String::as_str).collect();
+            let env = env.push(&dispatch_refs);
+            // One three-case dispatch per fragment slot, concurrent.
+            let mut composed: Option<Node> = None;
+            for (i, slot) in fragment_slots.iter().enumerate() {
+                let dispatch = bag_fragment_dispatch(
+                    &spec.op,
+                    env.var(slot),
+                    env.var(&dispatch_names[i]),
+                );
+                composed = Some(match composed {
+                    None => dispatch,
+                    Some(acc) => par2(acc, dispatch),
+                });
+            }
+            // The atomic fragment join, then the single out-emission of the RHS bag.
+            let join_sources: Vec<Node> =
+                dispatch_names.iter().map(|f| env.var(f)).collect();
+            let join_node = join(join_sources, {
+                let frag_names: Vec<String> = fragment_slots
+                    .iter()
+                    .map(|slot| fragment_value_name(slot))
+                    .collect();
+                let frag_refs: Vec<&str> = frag_names.iter().map(String::as_str).collect();
+                let env = env.push(&frag_refs);
+                send(env.var("out"), vec![top_soup(&env)])
+            });
+            par2(composed.expect("q ≥ 1"), join_node)
+        })
+    };
+
+    // The receiver: [operand bind pattern, FreeVar(out)] over the reserved per-rule
+    // carrier channel, the non-linear condition, persistent — the 2-value message
+    // `⌜^drive-ac:R⌝!(⟦operand⟧, r)` the driver's AC arm sends.
+    let carrier_channel = tag_par(fingerprint, &drive_ac_carrier_label(&rewrite.name.to_string()));
+    let receive = Receive {
+        binds: vec![ReceiveBind {
+            patterns: vec![bind_pattern, new_freevar_par(out_level as i32, Vec::new())],
+            source: Some(carrier_channel),
+            remainder: None,
+            free_count: free_count as i32,
+        }],
+        body: Some(body.par),
+        persistent: true,
+        peek: false,
+        bind_count: free_count as i32,
+        locally_free: Vec::new(),
+        connective_used: false,
+        condition: Some(condition),
+    };
+    Ok(Par::default().with_receives(vec![receive]))
+}
+
 /// The redex-check a carrier realizes for one arm: for PS a `Match` pattern (+ optional
 /// per-case guard — the machine's `MatchCase.guard`, F12-confirmed; `None` for every
 /// linear arm, populated by the A-S5.5 non-linear Ambient arms); for a future PM carrier,
@@ -435,6 +1082,17 @@ pub(crate) trait DriveCarrier {
     fn frame_formals(&self) -> DriveFrame;
     /// The redex-check for one compiled arm.
     fn redex_check(&self, arm: &DriveRedexArm, env: &Env) -> DriveCheck;
+    /// The redex-check for one compiled AC carrier-ABI arm (A-S5.5): for PS the
+    /// transcribed operand check pattern + the non-linear conjunction as the per-case
+    /// `MatchCase.guard` (F12). Provided (PS-shaped) because the check data live on the
+    /// arm; a future PM carrier overrides with its guard-expression + σ-extraction plan.
+    fn ac_redex_check(&self, arm: &DriveAcArm) -> DriveCheck {
+        DriveCheck {
+            pattern: arm.pattern.clone(),
+            free_count: arm.free_count,
+            guard: Some(arm.guard.clone()),
+        }
+    }
     /// The descent payload for child `i` of an m-ary node (the frame binds the captured
     /// children as `c0…c_{m-1}`, innermost-last).
     fn child_payload(&self, env: &Env, child_index: usize) -> Node;
@@ -499,11 +1157,17 @@ pub enum FiringEmission {
     /// E-1: a per-(entry, rule) precompiled scion bundle `Par`, emitted INSTEAD of the
     /// redrive `for` — it publishes the contractum's pre-analyzed drive decomposition
     /// (known-RHS structure never re-scanned; only RHS variable positions re-enter
-    /// `^drive`). THE SEAM, deliberately constructed nowhere in A-S5.2. Contract a bundle
-    /// must satisfy: (a) compiled against the firing frame this emitter builds (`r` =
+    /// `^drive`). THE SEAM, deliberately constructed nowhere. Contract a bundle must
+    /// satisfy: (a) compiled against the firing frame the emitter builds (`r` =
     /// `BoundVar(0)` inside the `new r` scope, `fuel`/`ret` at the enclosing arm frame);
-    /// (b) the value ultimately reaching `ret` is `norm(contractum)` under the SAME
-    /// `^drive` semantics — the acceptance surface of §5.2 binds it.
+    /// (b) the SM-7 seam invariant — for every schedule, the value ultimately reaching
+    /// `ret` is a member of `NF_drive(contractum)`, the set of values some `^drive` trace
+    /// rests at from the contractum at the arm's post-firing fuel. On confluent (or
+    /// root-stable orthogonal) fragments this set is a singleton and the clause
+    /// degenerates to `norm(contractum)`. Fired-multiset and exhaustion observations are
+    /// per-trace, compared under the decision-(3)/AM-5 regime: strict equality on
+    /// confluent cells; valid-NF-set membership + ledger consistency on non-confluent
+    /// cells. The acceptance surface of §5.2 binds it.
     ScionBundle {
         /// The precompiled emission `Par`.
         bundle: Par,
@@ -572,6 +1236,64 @@ pub(crate) fn firing_emission_node(
     })
 }
 
+/// Emit ONE fired AC CARRIER-ABI arm's firing body (A-S5.5, plan v2 §4.3.1) — the
+/// carrier-ABI twin of [`firing_emission_node`], covered by the SAME [`FiringEmission`]
+/// seam (an E-1 `ScionBundle` swaps in per (entry, rule) here too, under the SM-7
+/// invariant on the enum):
+///
+/// ```text
+/// new r in { ⌜^drive-ac:R⌝!(subject, r) | @"^fired:{fp}"!("RuleLabel") | <emission> }
+/// ```
+///
+/// The delivered operand is the WHOLE matched subject ([`drive_subject_node`] — the
+/// driver's own `Match` + guard already decided the redex, so the carrier's re-match is
+/// redundancy, not risk); the fixed-channel persistent AC-carrier receiver re-binds every
+/// σ slot from it and emits the three-case-spliced contractum to the fresh `r`, which the
+/// `ContractumRedrive` emission re-drives with `fuel - 1`.
+#[allow(clippy::too_many_arguments)]
+fn ac_firing_emission_node(
+    arm: &DriveAcArm,
+    emission: &FiringEmission,
+    fingerprint: &str,
+    env: &Env,
+    fuel_var: &str,
+    ret_var: &str,
+    carrier: &dyn DriveCarrier,
+    subject: &DriveSubject<'_>,
+) -> Node {
+    new_scope(1, {
+        let env = env.push(&["r"]);
+        // Deliver the whole subject operand + the fresh return through the carrier ABI.
+        let operand = drive_subject_node(subject, &env, carrier);
+        let carrier_send = send(
+            ground(tag_par(fingerprint, &arm.carrier_label)),
+            vec![operand, env.var("r")],
+        );
+        // The firing ledger: `@"^fired:{fp}"!("RuleLabel")`.
+        let ledger = send(
+            ground(new_gstring_par(drive_fired_channel(fingerprint), Vec::new(), false)),
+            vec![ground(new_gstring_par(arm.rule_label.clone(), Vec::new(), false))],
+        );
+        let emission_node = match emission {
+            FiringEmission::ContractumRedrive => for1(env.var("r"), {
+                let env = env.push(&["c"]);
+                send(
+                    ground(tag_par(fingerprint, DRIVE_RESERVED_LABEL)),
+                    vec![
+                        carrier.contractum_payload(&env, env.var("c")),
+                        eminus(env.var(fuel_var), gint(1)),
+                        env.var(ret_var),
+                    ],
+                )
+            }),
+            // The E-1 seam: the precompiled bundle replaces the redrive `for` (see the
+            // [`FiringEmission::ScionBundle`] contract). Constructed nowhere this stage.
+            FiringEmission::ScionBundle { bundle } => ground(bundle.clone()),
+        };
+        par2(par2(carrier_send, ledger), emission_node)
+    })
+}
+
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 // Node helpers: GInt / EMinus (the F10 fuel arithmetic).
 // ─────────────────────────────────────────────────────────────────────────────────────────────
@@ -630,9 +1352,11 @@ fn collides_with_drive_frame(name: &str) -> bool {
 /// (asserted below).
 ///
 /// Fail-closed (`Err`, surfaced as [`DriveAdmission::Unsupported`]) on every
-/// out-of-this-stage shape: a repeated σ variable (non-linear — needs the A-S5.5
-/// `MatchCase.guard` arms), a literal binder pattern, a substitution node, a collection
-/// (AC — A-S5.5), a multi-binder constructor, or an unknown constructor.
+/// out-of-scope shape: a repeated σ variable (POSITIONAL non-linearity stays
+/// unsupported — `MatchCase.guard` equalities ride the AC carrier arms only, where the
+/// shape recognizers bound them), a literal binder pattern, a substitution node, a
+/// collection (rides the A-S5.5 AC carrier path, never this transcription), a
+/// multi-binder constructor, or an unknown constructor.
 fn transcribe_lhs_pattern(
     pattern: &Pattern,
     def: &LanguageDef,
@@ -644,8 +1368,9 @@ fn transcribe_lhs_pattern(
             let name = name.to_string();
             if order.contains(&name) {
                 return Err(format!(
-                    "repeated LHS variable {name:?} (a non-linear redex arm needs the A-S5.5 \
-                     MatchCase.guard equality)"
+                    "repeated LHS variable {name:?} (a non-linear POSITIONAL redex arm is \
+                     not driver-supported; MatchCase.guard equalities ride the AC carrier \
+                     arms only)"
                 ));
             }
             if collides_with_drive_frame(&name) {
@@ -696,9 +1421,11 @@ fn transcribe_lhs_pattern(
         Pattern::Term(PatternTerm::Subst { .. }) | Pattern::Term(PatternTerm::MultiSubst { .. }) => {
             Err("a substitution node in a redex-arm LHS has no matching image".to_string())
         },
-        Pattern::Collection { .. } => {
-            Err("a collection (AC) LHS is not driver-supported this stage (A-S5.5)".to_string())
-        },
+        Pattern::Collection { .. } => Err(
+            "a collection inside a POSITIONAL redex-arm LHS has no σ-ABI image (a \
+             collection-rooted LHS rides the A-S5.5 AC carrier arms instead)"
+                .to_string(),
+        ),
         Pattern::Map { .. } => Err("a map (AC) LHS is not driver-supported this stage".to_string()),
         Pattern::Zip { .. } => Err("a zip (AC) LHS is not driver-supported this stage".to_string()),
     }
@@ -760,13 +1487,6 @@ fn validate_seed_transcription(
 // The lowering entry point + the `^drive` receiver generator.
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 
-/// The A-S5.2 driver lowering (called by [`crate::rho_net_lower::lower`]): decide (and
-/// RECORD) admission, and for admitted languages build the `^drive` receiver family from
-/// the SAME lowered rules / program channels the installed σ-receivers were compiled
-/// with.
-///
-/// The opt-in short-circuit is a name comparison ([`DRIVE_OPT_IN`], AM-4), so every
-/// non-opted-in language pays nothing and lowers byte-identically to pre-A-S5.2.
 thread_local! {
     /// Re-entrancy guard for [`drive_lowering`]'s admission ruleset compile.
     ///
@@ -808,6 +1528,13 @@ impl Drop for AdmissionGuard {
     }
 }
 
+/// The driver lowering (called by [`crate::rho_net_lower::lower`]; A-S5.2, AC arms
+/// A-S5.5): decide (and RECORD) admission, and for admitted languages build the `^drive`
+/// receiver family (+ the per-rule AC-carrier receivers) from the SAME lowered rules /
+/// program channels the installed σ-receivers were compiled with.
+///
+/// The opt-in short-circuit is a name comparison ([`DRIVE_OPT_IN`], AM-4), so every
+/// non-opted-in language pays nothing and lowers byte-identically to pre-A-S5.2.
 pub(crate) fn drive_lowering(
     def: &LanguageDef,
     program: &RhoNetProgram,
@@ -849,15 +1576,23 @@ pub(crate) fn drive_lowering(
         other => return (None, other),
     }
 
-    // Extract one redex-arm seed per fired-through-σ-ABI lowered rule (SubstRewrite — the
-    // β SEED — and positional BaseRewrite; the admission conjuncts above guarantee no
-    // other fireable family is present).
+    // Extract one redex arm per fireable lowered rule: positional/subst arms fire through
+    // the σ ABI (SubstRewrite — the β SEED — and positional BaseRewrite); AC arms
+    // (A-S5.5: StructuralAcRewrite / NestedStructuralAcRewrite) fire through the
+    // per-rule CARRIER ABI. The admission conjuncts above guarantee no other fireable
+    // family is present. Arms are assembled in the DOCUMENTED deterministic order:
+    // positional first, then nested-AC, then structural-AC — declaration order within
+    // each (the `rules` slice is already declaration-ordered).
     let fingerprint = program.language_fingerprint.as_str();
-    let mut arms: Vec<DriveRedexArm> = Vec::with_capacity(rules.len());
+    let mut positional_arms: Vec<DriveArm> = Vec::with_capacity(rules.len());
+    let mut nested_ac_arms: Vec<DriveArm> = Vec::with_capacity(rules.len());
+    let mut structural_ac_arms: Vec<DriveArm> = Vec::with_capacity(rules.len());
     for rule in rules {
-        let rule_id = match rule {
+        let (rule_id, is_ac, is_nested) = match rule {
             RhoNetLoweredRule::SubstRewrite { rule_id, .. }
-            | RhoNetLoweredRule::BaseRewrite { rule_id, .. } => rule_id,
+            | RhoNetLoweredRule::BaseRewrite { rule_id, .. } => (rule_id, false, false),
+            RhoNetLoweredRule::NestedStructuralAcRewrite { rule_id, .. } => (rule_id, true, true),
+            RhoNetLoweredRule::StructuralAcRewrite { rule_id, .. } => (rule_id, true, false),
             _ => continue,
         };
         let Some(rewrite) = rewrite_by_id.get(rule_id) else {
@@ -868,6 +1603,32 @@ pub(crate) fn drive_lowering(
                 },
             );
         };
+        if is_ac {
+            // A-S5.5: an AC-family rule fires through its reserved per-rule carrier.
+            match build_drive_ac_arm(rewrite, def, fingerprint) {
+                Ok(arm) => {
+                    if is_nested {
+                        nested_ac_arms.push(DriveArm::AcCarrier(arm));
+                    } else {
+                        structural_ac_arms.push(DriveArm::AcCarrier(arm));
+                    }
+                },
+                Err(error) => {
+                    // Unreachable when `drive_admissible` validated the same rewrites;
+                    // recorded defensively (never a partial driver).
+                    return (
+                        None,
+                        DriveAdmission::Unsupported {
+                            reason: format!(
+                                "rewrite {} does not transcribe: {error}",
+                                rewrite.name
+                            ),
+                        },
+                    );
+                },
+            }
+            continue;
+        }
         let Some(program_rule) = program.rules.iter().find(|r| r.id == *rule_id) else {
             return (
                 None,
@@ -906,27 +1667,92 @@ pub(crate) fn drive_lowering(
                     .iter()
                     .any(|term| term.label == constructor.to_string() && is_binder_term(term))
         );
-        arms.push(DriveRedexArm {
+        positional_arms.push(DriveArm::Positional(DriveRedexArm {
             rule_label: rewrite.name.to_string(),
             accept_channel: accept_channel.clone(),
             sigma_vars: order,
             lhs: rewrite.left.clone(),
             pattern,
             root_is_binder,
-        });
+        }));
     }
+    let mut arms = positional_arms;
+    arms.extend(nested_ac_arms);
+    arms.extend(structural_ac_arms);
 
     let carrier = PsValueCarrier { fingerprint: fingerprint.to_string() };
     match drive_program_par(def, fingerprint, &arms, &carrier) {
-        Ok(par) => (Some(par), DriveAdmission::Admitted),
+        Ok(par) => {
+            // Append the fixed-channel persistent AC-carrier receivers (one per AC arm,
+            // arm order — deterministic). Empty for Lambda, so its drive `Par` is
+            // byte-identical to A-S5.2 (the no-regression pin).
+            let mut par = par;
+            for arm in &arms {
+                if let DriveArm::AcCarrier(ac) = arm {
+                    par = par.append(ac.receiver.clone());
+                }
+            }
+            (Some(par), DriveAdmission::Admitted)
+        },
         Err(reason) => (None, DriveAdmission::Unsupported { reason }),
     }
 }
 
-/// The fuel-gated firing body of one redex arm (plan v2 §4.2): the ground `GInt(0)`
-/// exhaustion case FIRST (AM-7 — arm order is load-bearing under `wrapping_sub`), then
-/// the wildcard firing case through the [`firing_emission_node`] seam. `env` carries the
-/// arm's σ captures.
+/// WHERE a redex-arm `Match` sits — the expression naming the matched SUBJECT value in
+/// the current frame (A-S5.5). A positional arm never needs it (its exhaustion datum is
+/// [`rebuild_from_pattern`] over its own σ, byte-identical to A-S5.2); an AC arm fires
+/// the WHOLE subject through the carrier and rests it as the exhaustion datum, and the
+/// subject expression differs per position: the `^drive` formal `t` at the top level, the
+/// reassembled node in a post-join re-check, the re-composed soup in a bag-arm re-check.
+/// Carried as NAMES (not [`Node`]s) because a `Node` is frame-relative and each case body
+/// pushes its own binders — the expression is rebuilt name-late inside the case env.
+#[derive(Debug, Clone)]
+pub(crate) enum DriveSubject<'a> {
+    /// The `^drive` receive formal `t` (top-level arm position).
+    FrameT,
+    /// The reassembled congruence/binder node `[⌜label⌝, s₀, …]` (post-join / post-rewrap
+    /// re-check position).
+    ReassembledNode {
+        /// The reflected constructor label.
+        label: &'a str,
+        /// The join-formal names holding the driven children.
+        child_names: &'a [String],
+    },
+    /// The re-composed soup `{fragment | remainder}` (bag-arm reassembly re-check
+    /// position — the fragment is the three-case-dispatched element contribution).
+    ReassembledSoup {
+        /// The frame name holding the element's bag-fragment value.
+        fragment: &'a str,
+        /// The frame name holding the driven remainder soup.
+        remainder: &'a str,
+    },
+}
+
+/// Build the subject expression for the current frame (see [`DriveSubject`]). The
+/// carrier supplies the node reassembly (its reflected-tag discipline), so no
+/// fingerprint threads through here.
+fn drive_subject_node(
+    subject: &DriveSubject<'_>,
+    env: &Env,
+    carrier: &dyn DriveCarrier,
+) -> Node {
+    match subject {
+        DriveSubject::FrameT => env.var("t"),
+        DriveSubject::ReassembledNode { label, child_names } => {
+            let children: Vec<Node> = child_names.iter().map(|name| env.var(name)).collect();
+            carrier.reassemble(env, label, &children)
+        },
+        DriveSubject::ReassembledSoup { fragment, remainder } => {
+            par2(env.var(fragment), env.var(remainder))
+        },
+    }
+}
+
+/// The fuel-gated firing body of one POSITIONAL redex arm (plan v2 §4.2): the ground
+/// `GInt(0)` exhaustion case FIRST (AM-7 — arm order is load-bearing under
+/// `wrapping_sub`), then the wildcard firing case through the [`firing_emission_node`]
+/// seam. `env` carries the arm's σ captures. Byte-identical to the A-S5.2 emission (the
+/// Lambda no-regression pin).
 fn fuel_gated_firing(
     arm: &DriveRedexArm,
     def: &LanguageDef,
@@ -963,72 +1789,142 @@ fn fuel_gated_firing(
     ))
 }
 
-/// The redex `Case`s (pattern + σ frame + fuel-gated firing body) — shared between the
-/// top-level `match t` and every post-join / post-rewrap re-check (the re-check re-tests
-/// the reassembled node against the redex arms ONLY: its children are already normal
-/// forms, so descent would be redundant).
+/// The fuel-gated firing body of one AC CARRIER-ABI redex arm (A-S5.5): the ground
+/// `GInt(0)` exhaustion case FIRST (AM-7), the exhaustion datum the SUBJECT expression
+/// itself (an AC arm's check pattern binds only guard slots — the redex node is the
+/// whole matched value, current-by-construction in every position via
+/// [`drive_subject_node`]), then the wildcard firing case through the
+/// [`ac_firing_emission_node`] seam.
+fn ac_fuel_gated_firing(
+    arm: &DriveAcArm,
+    fingerprint: &str,
+    env: &Env,
+    carrier: &dyn DriveCarrier,
+    subject: &DriveSubject<'_>,
+) -> Node {
+    match_(
+        env.var("fuel"),
+        vec![
+            Case {
+                pattern: new_gint_par(0, Vec::new(), false),
+                free_count: 0,
+                body: send(
+                    ground(new_gstring_par(drive_fuel_channel(fingerprint), Vec::new(), false)),
+                    vec![drive_subject_node(subject, env, carrier)],
+                ),
+            },
+            Case {
+                pattern: pat_wildcard(),
+                free_count: 0,
+                body: ac_firing_emission_node(
+                    arm,
+                    &FiringEmission::ContractumRedrive,
+                    fingerprint,
+                    env,
+                    "fuel",
+                    "ret",
+                    carrier,
+                    subject,
+                ),
+            },
+        ],
+    )
+}
+
+/// The redex cases (pattern + guard + frame + fuel-gated firing body), one per compiled
+/// [`DriveArm`] in the documented deterministic order — shared between the top-level
+/// `match t` and every post-join / post-rewrap / bag-arm re-check (a re-check re-tests
+/// the reassembled subject against the redex arms ONLY: its children are already normal
+/// forms, so descent would be redundant). Positional arms are byte-identical to the
+/// A-S5.2 emission (guard `None`, [`rebuild_from_pattern`] datum); AC arms carry the
+/// non-linear `MatchCase.guard` and fire the SUBJECT through the carrier ABI.
 fn redex_cases(
-    arms: &[DriveRedexArm],
+    arms: &[DriveArm],
     def: &LanguageDef,
     fingerprint: &str,
     env: &Env,
     carrier: &dyn DriveCarrier,
-) -> Result<Vec<Case>, String> {
+    subject: &DriveSubject<'_>,
+) -> Result<Vec<(Case, Option<Par>)>, String> {
     let mut cases = Vec::with_capacity(arms.len());
     for arm in arms {
-        let check = carrier.redex_check(arm, env);
-        debug_assert!(check.guard.is_none(), "linear arms carry no guard this stage");
-        let sigma_refs: Vec<&str> = arm.sigma_vars.iter().map(String::as_str).collect();
-        let body = {
-            let env = env.push(&sigma_refs);
-            fuel_gated_firing(arm, def, fingerprint, &env, carrier)?
-        };
-        cases.push(Case { pattern: check.pattern, free_count: check.free_count, body });
+        match arm {
+            DriveArm::Positional(arm) => {
+                let check = carrier.redex_check(arm, env);
+                debug_assert!(check.guard.is_none(), "positional arms carry no guard");
+                let sigma_refs: Vec<&str> = arm.sigma_vars.iter().map(String::as_str).collect();
+                let body = {
+                    let env = env.push(&sigma_refs);
+                    fuel_gated_firing(arm, def, fingerprint, &env, carrier)?
+                };
+                cases.push((
+                    Case { pattern: check.pattern, free_count: check.free_count, body },
+                    None,
+                ));
+            },
+            DriveArm::AcCarrier(arm) => {
+                let check = carrier.ac_redex_check(arm);
+                let case_refs: Vec<&str> = arm.case_names.iter().map(String::as_str).collect();
+                let body = {
+                    let env = env.push(&case_refs);
+                    ac_fuel_gated_firing(arm, fingerprint, &env, carrier, subject)
+                };
+                cases.push((
+                    Case { pattern: check.pattern, free_count: check.free_count, body },
+                    check.guard,
+                ));
+            },
+        }
     }
     Ok(cases)
 }
 
-/// The post-join re-check node (v1 §4.3.2): match the reassembled `[⌜label⌝, s₀, …]`
-/// against the redex arms only; the wildcard default publishes it as this subtree's
-/// normal form.
+/// The re-check node (v1 §4.3.2, A-S5.5-generalized): match the reassembled SUBJECT
+/// (node or soup — [`DriveSubject`]) against the redex arms only; the wildcard default
+/// publishes it as this subtree's normal form.
 fn recheck_node(
-    arms: &[DriveRedexArm],
+    arms: &[DriveArm],
     def: &LanguageDef,
     fingerprint: &str,
     env: &Env,
-    label: &str,
-    child_names: &[String],
+    subject: &DriveSubject<'_>,
     carrier: &dyn DriveCarrier,
 ) -> Result<Node, String> {
-    let children: Vec<Node> = child_names.iter().map(|name| env.var(name)).collect();
-    let assembled = carrier.reassemble(env, label, &children);
-    let mut cases = redex_cases(arms, def, fingerprint, env, carrier)?;
-    let default_children: Vec<Node> = child_names.iter().map(|name| env.var(name)).collect();
-    cases.push(Case {
-        pattern: pat_wildcard(),
-        free_count: 0,
-        body: send(env.var("ret"), vec![carrier.reassemble(env, label, &default_children)]),
-    });
-    Ok(match_(assembled, cases))
+    let assembled = drive_subject_node(subject, env, carrier);
+    let mut cases = redex_cases(arms, def, fingerprint, env, carrier, subject)?;
+    cases.push((
+        Case {
+            pattern: pat_wildcard(),
+            free_count: 0,
+            body: send(
+                env.var("ret"),
+                vec![drive_subject_node(subject, env, carrier)],
+            ),
+        },
+        None,
+    ));
+    Ok(match_guarded(assembled, cases))
 }
 
 /// Build the persistent `^drive` receiver family for one admitted language (see the
-/// module docs for the emitted shape). Deterministic arm order: redex arms (declaration
-/// order), congruence-descent arms (constructor declaration order), the binder arm, the
-/// `^free`/`^bound` passthroughs, the `^drive-err` wildcard.
+/// module docs for the emitted shape). Deterministic arm order: redex arms (positional,
+/// then nested-AC, then structural-AC — declaration order within each, pre-ordered by
+/// [`drive_lowering`]), congruence-descent arms (constructor declaration order), the
+/// binder arm, the bag arms (one per HashBag collection constructor, A-S5.5) + the Nil
+/// empty-bag leaf, the `^free`/`^bound` passthroughs, the `^drive-err` wildcard.
 pub(crate) fn drive_program_par(
     def: &LanguageDef,
     fingerprint: &str,
-    arms: &[DriveRedexArm],
+    arms: &[DriveArm],
     carrier: &dyn DriveCarrier,
 ) -> Result<Par, String> {
     let frame = carrier.frame_formals();
     let env = Env::root(&frame.formals);
-    let mut cases: Vec<Case> = Vec::new();
+    let mut cases: Vec<(Case, Option<Par>)> = Vec::new();
 
     // 1. Redex arms — outermost-first strategy: a redex at this node fires before any
-    //    descent.
-    cases.extend(redex_cases(arms, def, fingerprint, &env, carrier)?);
+    //    descent. The subject at the top level is the `^drive` formal `t`.
+    cases.extend(redex_cases(arms, def, fingerprint, &env, carrier, &DriveSubject::FrameT)?);
 
     // 2. Congruence-descent arms — one per non-reserved object constructor (the C2
     //    enumeration the subst TRS uses, minus nothing: binders are excluded there and
@@ -1070,17 +1966,27 @@ pub(crate) fn drive_program_par(
                         let s_names: Vec<String> = (0..arity).map(|i| format!("s{i}")).collect();
                         let s_refs: Vec<&str> = s_names.iter().map(String::as_str).collect();
                         let env = env.push(&s_refs);
-                        recheck_node(arms, def, fingerprint, &env, &label, &s_names, carrier)?
+                        recheck_node(
+                            arms,
+                            def,
+                            fingerprint,
+                            &env,
+                            &DriveSubject::ReassembledNode { label: &label, child_names: &s_names },
+                            carrier,
+                        )?
                     });
                     par2(composed.expect("arity ≥ 1"), join_node)
                 })
             }
         };
-        cases.push(Case {
-            pattern: pat_tagged(fingerprint, &label, child_pats),
-            free_count: arity,
-            body,
-        });
+        cases.push((
+            Case {
+                pattern: pat_tagged(fingerprint, &label, child_pats),
+                free_count: arity,
+                body,
+            },
+            None,
+        ));
     }
 
     // 3. The binder arm (`[⌜^lambda⌝, b]` ⟹ drive the body, rewrap) — emitted when the
@@ -1093,7 +1999,9 @@ pub(crate) fn drive_program_par(
         .iter()
         .any(|term| is_binder_term(term) && !is_multi_binder_term(term));
     if has_single_binder {
-        let binder_rooted_entry = arms.iter().any(|arm| arm.root_is_binder);
+        let binder_rooted_entry = arms.iter().any(|arm| {
+            matches!(arm, DriveArm::Positional(positional) if positional.root_is_binder)
+        });
         let body = {
             let env = env.push(&["b"]);
             new_scope(1, {
@@ -1107,13 +2015,16 @@ pub(crate) fn drive_program_par(
                     if binder_rooted_entry {
                         // A binder-rooted entry exists: the rewrapped node may itself be
                         // a redex — re-check it against the redex arms only.
+                        let rb_names = ["rb".to_string()];
                         recheck_node(
                             arms,
                             def,
                             fingerprint,
                             &env,
-                            LAMBDA_REFLECT_LABEL,
-                            &["rb".to_string()],
+                            &DriveSubject::ReassembledNode {
+                                label: LAMBDA_REFLECT_LABEL,
+                                child_names: &rb_names,
+                            },
                             carrier,
                         )?
                     } else {
@@ -1126,46 +2037,144 @@ pub(crate) fn drive_program_par(
                 par2(drive_body, rewrap)
             })
         };
-        cases.push(Case {
-            pattern: pat_tagged(fingerprint, LAMBDA_REFLECT_LABEL, vec![pat_free(0)]),
-            free_count: 1,
-            body,
-        });
+        cases.push((
+            Case {
+                pattern: pat_tagged(fingerprint, LAMBDA_REFLECT_LABEL, vec![pat_free(0)]),
+                free_count: 1,
+                body,
+            },
+            None,
+        ));
     }
 
-    // 4. Reserved passthroughs: a free-variable leaf and a bound-variable leaf are inert
-    //    under the drive (the `^subst`/`^shift` `:787-796` / `:831-833` shape).
-    cases.push(Case {
-        pattern: pat_tagged(fingerprint, FREE_VAR_REFLECT_LABEL, vec![pat_free(0)]),
-        free_count: 1,
-        body: {
-            let env = env.push(&["x"]);
-            send(env.var("ret"), vec![tagged(fingerprint, FREE_VAR_REFLECT_LABEL, vec![env.var("x")])])
-        },
-    });
-    cases.push(Case {
-        pattern: pat_tagged(fingerprint, BOUND_VAR_REFLECT_LABEL, vec![pat_free(0)]),
-        free_count: 1,
-        body: {
-            let env = env.push(&["n"]);
-            send(env.var("ret"), vec![tagged(fingerprint, BOUND_VAR_REFLECT_LABEL, vec![env.var("n")])])
-        },
-    });
+    // 4. BAG arms (A-S5.5, plan v2 §4.3.3 — the R3 `SelfDrivingCollectionSubject` gap
+    //    closed) — one per HashBag collection constructor: peel ONE element off the soup
+    //    (send-pattern + free-Par remainder), drive the element and the remainder
+    //    CONCURRENTLY (fuel copied, never decremented — descent), atomically join, splice
+    //    the element's THREE-CASE fragment back into the remainder (AM-3), and re-check
+    //    the re-composed soup against the redex arms only (a redex formed ACROSS the
+    //    reassembled siblings — e.g. In/Open needing ≥ 2 normalized elements — fires
+    //    here). Followed by the Nil leaf: the EMPTY bag (`Par::default()`, the AM-3
+    //    reflection of `op{}`) is its own normal form — without it a Nil element value
+    //    would fall to the `^drive-err` wildcard (AM-3's exact defect).
+    let bag_ops = hashbag_collection_ops(def);
+    for op in &bag_ops {
+        let body = {
+            let env = env.push(&["e", "rem"]);
+            new_scope(2, {
+                let env = env.push(&["re", "rr"]);
+                let drive_element = send(
+                    ground(tag_par(fingerprint, DRIVE_RESERVED_LABEL)),
+                    vec![env.var("e"), env.var("fuel"), env.var("re")],
+                );
+                let drive_remainder = send(
+                    ground(tag_par(fingerprint, DRIVE_RESERVED_LABEL)),
+                    vec![env.var("rem"), env.var("fuel"), env.var("rr")],
+                );
+                let join_node = join(vec![env.var("re"), env.var("rr")], {
+                    let env = env.push(&["ve", "vr"]);
+                    new_scope(1, {
+                        let env = env.push(&["f"]);
+                        let dispatch = bag_fragment_dispatch(op, env.var("ve"), env.var("f"));
+                        let observe = for1(env.var("f"), {
+                            let env = env.push(&["w"]);
+                            recheck_node(
+                                arms,
+                                def,
+                                fingerprint,
+                                &env,
+                                &DriveSubject::ReassembledSoup {
+                                    fragment: "w",
+                                    remainder: "vr",
+                                },
+                                carrier,
+                            )?
+                        });
+                        par2(dispatch, observe)
+                    })
+                });
+                par2(par2(drive_element, drive_remainder), join_node)
+            })
+        };
+        cases.push((
+            Case { pattern: soup_peel_pattern(op), free_count: 2, body },
+            None,
+        ));
+    }
+    if !bag_ops.is_empty() {
+        // The Nil empty-bag leaf (AM-3 case (a)): `op{}` reflects as `Par::default()`
+        // and is its own normal form.
+        cases.push((
+            Case {
+                pattern: Par::default(),
+                free_count: 0,
+                body: send(env.var("ret"), vec![ground(Par::default())]),
+            },
+            None,
+        ));
+    }
 
-    // 5. The typed fail-close wildcard: an unrecognized head is NEVER silently normal
+    // 5. Reserved passthroughs: a free-variable leaf and a bound-variable leaf are inert
+    //    under the drive (the `^subst`/`^shift` `:787-796` / `:831-833` shape).
+    cases.push((
+        Case {
+            pattern: pat_tagged(fingerprint, FREE_VAR_REFLECT_LABEL, vec![pat_free(0)]),
+            free_count: 1,
+            body: {
+                let env = env.push(&["x"]);
+                send(env.var("ret"), vec![tagged(fingerprint, FREE_VAR_REFLECT_LABEL, vec![env.var("x")])])
+            },
+        },
+        None,
+    ));
+    cases.push((
+        Case {
+            pattern: pat_tagged(fingerprint, BOUND_VAR_REFLECT_LABEL, vec![pat_free(0)]),
+            free_count: 1,
+            body: {
+                let env = env.push(&["n"]);
+                send(env.var("ret"), vec![tagged(fingerprint, BOUND_VAR_REFLECT_LABEL, vec![env.var("n")])])
+            },
+        },
+        None,
+    ));
+
+    // 6. The typed fail-close wildcard: an unrecognized head is NEVER silently normal
     //    (the R3 `^respread-err` discipline) — it rests on the GString err channel where
     //    the host cross-check sees it.
-    cases.push(Case {
-        pattern: pat_wildcard(),
-        free_count: 0,
-        body: send(
-            ground(new_gstring_par(drive_err_channel(fingerprint), Vec::new(), false)),
-            vec![env.var("t")],
-        ),
-    });
+    cases.push((
+        Case {
+            pattern: pat_wildcard(),
+            free_count: 0,
+            body: send(
+                ground(new_gstring_par(drive_err_channel(fingerprint), Vec::new(), false)),
+                vec![env.var("t")],
+            ),
+        },
+        None,
+    ));
 
-    let body = match_(env.var("t"), cases);
+    let body = match_guarded(env.var("t"), cases);
     Ok(persistent_contract(tag_par(fingerprint, DRIVE_RESERVED_LABEL), frame.formals.len(), body).par)
+}
+
+/// The HashBag collection constructors of a language (`op` labels), in term-declaration
+/// order — the bag arms' enumeration. Resolves each term's collection kind through the
+/// A-S5.3 [`resolve_constructor_collection_type`] (term-context first, `::=`-declared
+/// grammar-item fallback), so the driver's bag arms can never disagree with the AC
+/// lowering about which constructors are bags.
+fn hashbag_collection_ops(def: &LanguageDef) -> Vec<String> {
+    def.terms
+        .iter()
+        .filter_map(|term| {
+            let label = term.label.to_string();
+            matches!(
+                resolve_constructor_collection_type(def, &label),
+                Some(CollectionType::HashBag)
+            )
+            .then_some(label)
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -1357,18 +2366,255 @@ mod tests {
     }
 
     #[test]
-    fn reserved_registry_carries_the_four_drive_labels() {
+    fn reserved_registry_carries_the_five_drive_labels() {
+        // A-S5.5 extends the A-S5.2 four with the per-rule AC-carrier tag PREFIX
+        // (`^drive-ac`): reserving the base label keeps the whole `:`-suffixed per-rule
+        // family (`"^drive-ac:{RuleLabel}"`) collision-free with user constructors (a
+        // Rust `Ident` contains neither `^` nor `:`), and the C2 object-congruence
+        // assertion guards the base like every other reserved tag.
         let reserved = crate::rho_net_subst_trs::reserved_subst_trs_labels();
         for label in [
             DRIVE_RESERVED_LABEL,
             DRIVE_ERR_RESERVED_LABEL,
             DRIVE_FUEL_RESERVED_LABEL,
             FIRED_RESERVED_LABEL,
+            DRIVE_AC_RESERVED_LABEL,
         ] {
             assert!(
                 reserved.contains(&label),
                 "the C2 reserved registry must guard {label:?}"
             );
         }
+    }
+
+    // ─── A-S5.5: the Ambient AC carrier-ABI arms ─────────────────────────────────────────
+
+    /// The REAL production Ambient definition, reconstructed the production way (the
+    /// a_s5c path) — the AC-arm tests run against the exact shipped declarations.
+    fn production_ambient_def() -> LanguageDef {
+        let source = include_str!("../../languages/src/ambient.rs");
+        let start =
+            source.find("language! {").expect("language! block") + "language! {".len();
+        let end = source.rfind('}').expect("closing brace");
+        crate::reconstruct_language_def(&source[start..end])
+            .expect("the production Ambient body must reconstruct")
+    }
+
+    /// ★ A-S5.5: production Ambient ADMITS the driver — the exact inversion of the
+    /// A-S5.2..A-S5.4b `Unsupported` pin — and its drive program is the `^drive`
+    /// receiver plus THREE fixed-channel persistent AC-carrier receivers (one per
+    /// admitted AC rule), installed once.
+    #[test]
+    fn ambient_def_is_drive_admitted_with_the_three_carrier_receivers() {
+        let def = production_ambient_def();
+        let lowered = lowered_for(&def);
+        assert_eq!(
+            lowered.drive_admission(),
+            &DriveAdmission::Admitted,
+            "A-S5.5: production Ambient admits the in-Rho quiescence driver"
+        );
+        let drive = lowered.drive().expect("an admitted language carries the drive program");
+        assert_eq!(
+            drive.receives.len(),
+            4,
+            "the Ambient drive program = the ^drive receiver + 3 AC-carrier receivers"
+        );
+        assert!(
+            drive.receives.iter().all(|receive| receive.persistent),
+            "every drive-program receiver is persistent"
+        );
+        // The ^drive receiver listens on the reserved channel; the three carriers on
+        // their per-rule reserved channels (deterministic arm order: the nested arms
+        // InRule, OutRule — declaration order — then the structural OpenRule).
+        let fp = lowered.language_fingerprint.as_str();
+        let mut sources: Vec<Par> = drive
+            .receives
+            .iter()
+            .map(|receive| {
+                receive.binds[0]
+                    .source
+                    .clone()
+                    .expect("every drive receiver has a ground source")
+            })
+            .collect();
+        let expected = vec![
+            tag_par(fp, DRIVE_RESERVED_LABEL),
+            tag_par(fp, &drive_ac_carrier_label("InRule")),
+            tag_par(fp, &drive_ac_carrier_label("OutRule")),
+            tag_par(fp, &drive_ac_carrier_label("OpenRule")),
+        ];
+        sources.sort_by_key(|par| format!("{par:?}"));
+        let mut expected_sorted = expected.clone();
+        expected_sorted.sort_by_key(|par| format!("{par:?}"));
+        assert_eq!(
+            sources, expected_sorted,
+            "the drive program's receivers rest on ^drive + the three per-rule carriers"
+        );
+        // Each carrier receiver binds the 2-value message `carrier!(⟦operand⟧, r)` and
+        // carries the non-linear cross-level condition.
+        for receive in drive.receives.iter().filter(|receive| {
+            receive.binds[0].source.as_ref() != Some(&tag_par(fp, DRIVE_RESERVED_LABEL))
+        }) {
+            assert_eq!(
+                receive.binds[0].patterns.len(),
+                2,
+                "a carrier receiver binds [operand pattern, out]"
+            );
+            assert!(
+                receive.condition.is_some(),
+                "a carrier receiver carries the non-linear Receive.condition"
+            );
+        }
+        // Installed once: 3 legacy AC σ-receivers + the 4 drive-program receivers.
+        let installed = lowered
+            .installed_program_par()
+            .expect("A-S5.5: production Ambient installs with the driver");
+        assert_eq!(
+            installed.receives.len(),
+            7,
+            "installed = InRule + OutRule + OpenRule σ-receivers + ^drive + 3 carriers"
+        );
+    }
+
+    /// ★ A-S5.5 arm transcription (the three production rules): the check pattern binds
+    /// exactly the guard-slot pair + the outer rest (free_count 3), the cross-level /
+    /// non-linear `EEq` rides `MatchCase.guard`, the carrier label is the reserved
+    /// per-rule tag, and the ^drive receiver's Match opens with the three AC redex arms
+    /// in the documented order (nested InRule, OutRule; then structural OpenRule) —
+    /// GUARDED — before the congruence-descent arms.
+    #[test]
+    fn ambient_arm_transcription_patterns_guards_and_carrier_wiring() {
+        let def = production_ambient_def();
+        let fingerprint = "fp-test";
+        for (rule_name, expected_label) in [
+            ("InRule", "^drive-ac:InRule"),
+            ("OutRule", "^drive-ac:OutRule"),
+            ("OpenRule", "^drive-ac:OpenRule"),
+        ] {
+            let rewrite = def
+                .rewrites
+                .iter()
+                .find(|rewrite| rewrite.name == rule_name)
+                .expect("the production rule exists");
+            let arm = build_drive_ac_arm(rewrite, &def, fingerprint)
+                .unwrap_or_else(|error| panic!("{rule_name} must transcribe: {error}"));
+            assert_eq!(arm.carrier_label, expected_label, "{rule_name} carrier label");
+            assert_eq!(
+                arm.free_count, 3,
+                "{rule_name}: 2 guard slots (the cross-level / non-linear pair) + the \
+                 bound outer rest"
+            );
+            assert_eq!(
+                arm.case_names,
+                vec!["__ac0", "__ac1", "__ac2"],
+                "{rule_name}: synthetic case-frame names"
+            );
+            // The guard is the EEq over the two guard slots — case-closed (BoundVar < 3).
+            assert!(
+                !arm.guard.exprs.is_empty(),
+                "{rule_name}: the non-linear guard is a real expression"
+            );
+            assert_eq!(arm.receiver.receives.len(), 1, "{rule_name}: one carrier receiver");
+            let receive = &arm.receiver.receives[0];
+            assert!(receive.persistent, "{rule_name}: the carrier receiver is persistent");
+            assert_eq!(
+                receive.binds[0].source,
+                Some(tag_par(fingerprint, expected_label)),
+                "{rule_name}: the carrier receiver rests on the reserved per-rule channel"
+            );
+        }
+
+        // The ^drive receiver's Match arm ORDER over the real lowering: 3 AC redex arms
+        // first (each guarded), then the congruence/binder/bag/Nil/passthrough/wildcard
+        // arms (unguarded).
+        let lowered = lowered_for(&def);
+        let drive = lowered.drive().expect("Ambient admits");
+        let fp = lowered.language_fingerprint.as_str();
+        let drive_receive = drive
+            .receives
+            .iter()
+            .find(|receive| {
+                receive.binds[0].source.as_ref() == Some(&tag_par(fp, DRIVE_RESERVED_LABEL))
+            })
+            .expect("the ^drive receiver is present");
+        let body = drive_receive.body.as_ref().expect("the ^drive receiver has a body");
+        let top_match = &body.matches[0];
+        // Arms: 3 AC redex + 5 congruence (PZero, PIn, POut, POpen, PAmb) + 1 binder
+        // (PNew) + 1 bag (PPar) + 1 Nil + 2 passthroughs + 1 wildcard = 14.
+        assert_eq!(top_match.cases.len(), 14, "the Ambient ^drive Match arm count");
+        for (index, expect_guard) in [(0, true), (1, true), (2, true), (3, false)] {
+            assert_eq!(
+                top_match.cases[index].guard.is_some(),
+                expect_guard,
+                "case {index}: exactly the three leading AC redex arms are guarded"
+            );
+        }
+    }
+
+    /// ★ A-S5.5 AM-3: the three-case bag-fragment dispatch emits EXACTLY the
+    /// Nil / same-op-soup / wildcard-wrap cases, in that order (Nil first — the wrap leg
+    /// must never see an empty bag).
+    #[test]
+    fn three_case_bag_fragment_dispatch_shape() {
+        let env = Env::root(&["v", "dest"]);
+        let node = bag_fragment_dispatch("PPar", env.var("v"), env.var("dest"));
+        assert_eq!(node.par.matches.len(), 1, "the dispatch is one Match");
+        let cases = &node.par.matches[0].cases;
+        assert_eq!(cases.len(), 3, "Nil / soup / wrap — exactly three cases");
+        assert_eq!(
+            cases[0].pattern,
+            Some(Par::default()),
+            "case 0 claims Nil (the empty bag) — splice-as-nothing"
+        );
+        assert_eq!(
+            cases[1].pattern.as_ref(),
+            Some(&soup_case_pattern("PPar")),
+            "case 1 claims a same-op soup — compose its sends directly"
+        );
+        assert_eq!(
+            cases[2].pattern.as_ref(),
+            Some(&pat_wildcard()),
+            "case 2 is the wildcard — wrap one element send"
+        );
+        // The wrap leg sends `@\"ac:PPar\"!(v)` as its datum.
+        let wrap_body = cases[2].source.as_ref().expect("wrap body");
+        let datum = &wrap_body.sends[0].data[0];
+        assert_eq!(datum.sends.len(), 1, "the wrapped fragment is one element send");
+        assert_eq!(
+            datum.sends[0].chan,
+            Some(new_gstring_par("ac:PPar".to_string(), Vec::new(), false)),
+            "the wrap rides the op's ac: carrier"
+        );
+    }
+
+    /// A-S5.5: a language with an AC rewrite whose shape is NOT a recognized
+    /// structural/nested structural AC form still records `Unsupported` (fail-closed) —
+    /// the linear-AC family has no carrier arm.
+    #[test]
+    fn linear_ac_rewrite_records_unsupported() {
+        let fragment = r#"
+            name: Ambient,
+            types { Elem },
+            terms {
+                EA . |- "a" : Elem ;
+                Bag . Elem ::= HashBag(Elem) sep "|" delim "{" "}" ;
+            },
+            equations {},
+            rewrites {
+                Drop . |- (Bag {x, ...rest}) ~> (Bag {...rest}) ;
+            },
+        "#;
+        let def = syn::parse_str::<LanguageDef>(fragment).expect("the linear-AC def parses");
+        let lowered = lowered_for(&def);
+        match lowered.drive_admission() {
+            DriveAdmission::Unsupported { reason } => {
+                assert!(
+                    reason.contains("Drop") || reason.contains("ac("),
+                    "the reason names the linear-AC rewrite or family: {reason}"
+                );
+            },
+            other => panic!("a linear-AC rewrite must stay Unsupported, got {other:?}"),
+        }
+        assert!(lowered.drive().is_none(), "no partial driver is ever built");
     }
 }
