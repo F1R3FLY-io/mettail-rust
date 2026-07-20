@@ -1038,38 +1038,67 @@ pub fn build_rho_net_drive_invocation_from_contract(
     }
 }
 
-/// The per-path fuel datum of a drive seed `⌜^drive⌝!(⟦subject⟧, fuel:GInt, @out)` —
-/// the second send datum, a ground `GInt`, by the
-/// [`mettail_rholang_codegen::rho_net_drive_call_par`] ABI. A seed violating that ABI is
-/// a codegen-contract defect, never valid input, so this fails loud.
+/// The BODY `Par` of the A-S5.8 FLOAT-ROUTED drive seed's `new rf { … }` scope
+/// (`mettail_rholang_codegen::rho_net_drive_float_call_par` — decision Q-SEED = S2:
+/// `new rf { ⌜^float⌝!(⟦subject⟧, rf) | for(@cf <- rf){ ⌜^drive⌝!(cf, fuel, @out) } }`),
+/// or `None` when the call is the legacy bare-send seed shape.
+#[cfg(feature = "runtime-report")]
+fn float_routed_seed_body(call: &Par) -> Option<&Par> {
+    if !call.sends.is_empty() {
+        return None;
+    }
+    call.news.first().and_then(|new| new.p.as_ref())
+}
+
+/// The per-path fuel datum of a drive seed — the ground `GInt` of the `^drive` send, by
+/// the [`mettail_rholang_codegen::rho_net_drive_call_par`] ABI
+/// (`⌜^drive⌝!(⟦subject⟧, fuel:GInt, @out)` — the second send datum) or its A-S5.8
+/// float-routed sibling ([`float_routed_seed_body`] — the re-drive `for`'s body send,
+/// F8-AM-5a). A seed violating both ABIs is a codegen-contract defect, never valid
+/// input, so this fails loud.
 #[cfg(feature = "runtime-report")]
 fn drive_seed_fuel(call: &Par) -> i64 {
-    call.sends
-        .first()
-        .and_then(|send| send.data.get(1))
+    let drive_send_datum = match float_routed_seed_body(call) {
+        // S2: the fuel rides the redrive send inside `for(@cf <- rf){ ⌜^drive⌝!(cf, fuel, @out) }`.
+        Some(body) => body
+            .receives
+            .first()
+            .and_then(|receive| receive.body.as_ref())
+            .and_then(|redrive| redrive.sends.first())
+            .and_then(|send| send.data.get(1)),
+        // Legacy: the bare seed send's second datum.
+        None => call.sends.first().and_then(|send| send.data.get(1)),
+    };
+    drive_send_datum
         .and_then(|datum| datum.exprs.first())
         .and_then(|expr| match expr.expr_instance {
             Some(models::rhoapi::expr::ExprInstance::GInt(fuel)) => Some(fuel),
             _ => None,
         })
         .expect(
-            "the drive seed carries (subject, fuel:GInt, out) — the rho_net_drive_call_par ABI",
+            "the drive seed carries (subject, fuel:GInt, out) — the rho_net_drive_call_par \
+             ABI or its A-S5.8 float-routed sibling",
         )
 }
 
-/// The reflected SUBJECT datum of a drive seed (the first send datum), decoded as a
-/// runtime observation value — the §4.7 ledger check's `subject had a redex` input is
-/// computed by scanning exactly what the seed delivered (the A-S5.5 test-tier
-/// `decode_seed_subject` pattern, promoted). Fail-loud: an undecodable subject is a
-/// reflection-ABI defect.
+/// The reflected SUBJECT datum of a drive seed, decoded as a runtime observation value —
+/// the §4.7 ledger check's `subject had a redex` input is computed by scanning exactly
+/// what the seed delivered (the A-S5.5 test-tier `decode_seed_subject` pattern,
+/// promoted). S2-aware (F8-AM-5a): the legacy seed's subject is the first send datum;
+/// the float-routed seed's is the `⌜^float⌝` send's first datum inside the `new rf`
+/// scope. Fail-loud: an undecodable subject is a reflection-ABI defect.
 #[cfg(feature = "runtime-report")]
 fn drive_seed_subject(call: &Par) -> Result<RuntimeObservationValue, String> {
-    let datum = call
-        .sends
+    let seed_sends = match float_routed_seed_body(call) {
+        Some(body) => &body.sends,
+        None => &call.sends,
+    };
+    let datum = seed_sends
         .first()
         .and_then(|send| send.data.first())
         .ok_or_else(|| {
-            "the drive seed carries (subject, fuel, out) — the rho_net_drive_call_par ABI"
+            "the drive seed carries (subject, fuel, out) — the rho_net_drive_call_par ABI \
+             or its A-S5.8 float-routed sibling"
                 .to_string()
         })?;
     par_as_runtime_observation_value(datum)

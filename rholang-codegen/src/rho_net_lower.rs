@@ -183,6 +183,24 @@ pub enum RhoNetLoweredRule {
     /// Gated to binder-free languages (empty `equations`); a `new`-scoped language (the full
     /// `Ambient`) keeps its In/Out on the untyped binder-congruence path and stays `Unsupported`.
     NestedStructuralAcRewrite { rule_id: String, par: Par },
+    /// A-S5.8 (F8-AM-1b): a recognized DEPTH-2 nested structural-AC rewrite whose RHS
+    /// reduct templates INTRODUCE a binder ([`AcReconstructTemplate::Binder`] — the
+    /// constructive-discharge witness shape `… ~> op{ B(^x. …), … }`) — the fail-closed
+    /// NO-MATCH-ENTRY disposition, RECORDED, NEVER an install error.
+    ///
+    /// The site-keyed match receiver cannot carry the rule: the F8-AM-1c σ-slot shift rule
+    /// requires each slot value under `k` template binders to be pre-shifted by `k`
+    /// applications of the ASYNC `^shift(Z, ·)` receiver, and a value-position reduct
+    /// rebuild ([`reflect_ac_template_bound_par`]) cannot inline an async COMM. So the rule
+    /// contributes NO receiver `Par`, surfaces in NO match entry / injection site (the
+    /// locate-all match paths stay fail-closed for it — the A-S2 static gate keeps
+    /// deferring it), and never blocks [`RhoNetLowered::installed_program_par`] (like the
+    /// other recognized no-`Par` dispositions). Its FIRING mechanism is the A-S5.8 DRIVE
+    /// carrier ([`crate::rho_net_drive`]), which pre-computes the shifted σ slots on fresh
+    /// channels before its join and emits the ctor-erased `⌜^lambda⌝` node — the drive
+    /// admission discharges the static-gate defer for exactly this driver-transcribable
+    /// shape (`drive_admissible`, the A-S5.8 conjunct-1 refinement).
+    NestedStructuralAcBinderTemplated { rule_id: String },
     /// A grammar structural constructor. In model b a constructor is realized
     /// inline via RHS term reflection (see [`reflect_term_par`]), never as a
     /// standalone installed contract, so this classification contributes no `Par`
@@ -295,6 +313,7 @@ impl RhoNetLoweredRule {
             | Self::CommRewrite { rule_id, .. }
             | Self::StructuralAcRewrite { rule_id, .. }
             | Self::NestedStructuralAcRewrite { rule_id, .. }
+            | Self::NestedStructuralAcBinderTemplated { rule_id }
             | Self::ContextualRewrite { rule_id, .. }
             | Self::SubstRewrite { rule_id, .. }
             | Self::NativeSystemProcessRewrite { rule_id, .. }
@@ -414,6 +433,16 @@ pub struct RhoNetLowered {
     /// not yet driver-supported, or a seed does not transcribe). Recorded-never-silent, the
     /// same discipline as [`Self::congruence_exempt_rules`].
     drive_admission: crate::rho_net_drive::DriveAdmission,
+    /// The generated in-Rho `^float` receiver family (A-S5.8): the per-iteration binder-float
+    /// canonicalizer — the `^float` dispatcher, the equation-derived `^float-hoist:{C}` /
+    /// `^float-merge:{op}` satellites, and (first-time, when the language carries no subst
+    /// TRS) the shared `^shift`/`^cmp` satellites
+    /// ([`crate::rho_net_float::float_program_par`]). `Some` iff the language passes the
+    /// A-S5.8 gate: [`language_has_float_handler`] ∧ [`equations_boundary_canonicalizable`]
+    /// ∧ [`Self::drive_admission`] is `Admitted` (bundled corpus: exactly the production
+    /// Ambient). Appended ONCE by [`Self::installed_program_par`] — persistent, on disjoint
+    /// reserved roots, disturbing no landed receiver.
+    float: Option<Par>,
 }
 
 impl RhoNetLowered {
@@ -461,6 +490,12 @@ impl RhoNetLowered {
         self.drive.as_ref()
     }
 
+    /// The generated in-Rho `^float` receiver family (A-S5.8; `Some` iff the language
+    /// passes the float gate — see the [`Self`] field docs).
+    pub fn float(&self) -> Option<&Par> {
+        self.float.as_ref()
+    }
+
     /// Parallel-compose every materialized contract `Par` (`NativeFold` +
     /// `BaseRewrite`) into a single installable Rho program — FAIL-CLOSED at the
     /// install boundary (Epic 4 #2011).
@@ -498,6 +533,11 @@ impl RhoNetLowered {
                 | RhoNetLoweredRule::CommRewrite { .. }
                 | RhoNetLoweredRule::StructuralAcRewrite { .. }
                 | RhoNetLoweredRule::NestedStructuralAcRewrite { .. }
+                // A-S5.8 (F8-AM-1b): a binder-templated nested-AC rewrite is a RECORDED
+                // NO-MATCH-ENTRY disposition, not silently dropped work — its firing
+                // mechanism is the A-S5.8 drive carrier (which pre-shifts σ slots async),
+                // so no receiver is missing from the installed program.
+                | RhoNetLoweredRule::NestedStructuralAcBinderTemplated { .. }
                 | RhoNetLoweredRule::ContextualRewrite { .. }
                 | RhoNetLoweredRule::SubstRewrite { .. }
                 | RhoNetLoweredRule::NativeSystemProcessRewrite { .. }
@@ -536,6 +576,15 @@ impl RhoNetLowered {
         // the disposition is RECORDED in [`Self::drive_admission`], never silent.
         if let Some(drive) = &self.drive {
             program = program.append(drive.clone());
+        }
+        // A-S5.8: append the in-Rho `^float` receiver family ONCE for languages passing the
+        // float gate (float-bearing ∧ drive-admitted — bundled corpus: exactly Ambient), the
+        // third `Option<Par>` beside `subst_trs`/`drive`. Persistent, on the disjoint
+        // reserved `^float`/`^float-hoist:{C}`/`^float-merge:{op}` roots (plus the shared
+        // `^shift`/`^cmp` when the language installs them here first-time); non-float
+        // languages append nothing — their installed program is byte-identical to pre-A-S5.8.
+        if let Some(float) = &self.float {
+            program = program.append(float.clone());
         }
         Ok(program)
     }
@@ -669,6 +718,22 @@ pub(crate) fn lower(
     let (drive, drive_admission) =
         crate::rho_net_drive::drive_lowering(def, program, &rules, &errors, &rewrite_by_id);
 
+    // A-S5.8: the in-Rho `^float` receiver family — generated + installed iff the language
+    // passes the float gate (`language_has_float_handler` ∧
+    // `equations_boundary_canonicalizable` ∧ drive Admitted). The `^shift`/`^cmp` shared
+    // satellites join the family exactly when the language installs no subst TRS (Ambient:
+    // first-time install — no `SubstRewrite`); a language whose TRS already carries them
+    // never double-installs a reserved receiver.
+    let float = (matches!(drive_admission, crate::rho_net_drive::DriveAdmission::Admitted)
+        && crate::rho_net_float::language_is_float_bearing(def))
+    .then(|| {
+        crate::rho_net_float::float_program_par(
+            def,
+            &program.language_fingerprint,
+            subst_trs.is_none(),
+        )
+    });
+
     RhoNetLowered {
         language_fingerprint: program.language_fingerprint.clone(),
         rules,
@@ -676,6 +741,7 @@ pub(crate) fn lower(
         subst_trs,
         drive,
         drive_admission,
+        float,
     }
 }
 
@@ -908,6 +974,24 @@ fn lower_base_rewrite(
             // `BinderFloatCanonicalization.v`), so the nested receiver sees float-canonical
             // subjects. Any OTHER equation keeps the fail-closed decline (stays `Unsupported`).
             if equations_boundary_canonicalizable(def) {
+                // A-S5.8 (F8-AM-1b): a RECOGNIZED nested shape whose reduct templates
+                // introduce a binder takes the fail-closed NO-MATCH-ENTRY disposition
+                // BEFORE the receiver build — recorded, no `Par`, no install error (the
+                // firing mechanism is the A-S5.8 drive carrier; the site-keyed receiver
+                // cannot inline the async `^shift` the F8-AM-1c σ-slot shift rule needs).
+                if let Some(shape) =
+                    nested_structural_ac_rule_shape(&rewrite.left, &rewrite.right, def)
+                {
+                    if shape
+                        .reduct_templates
+                        .iter()
+                        .any(AcReconstructTemplate::contains_binder)
+                    {
+                        return Some(RhoNetLoweredRule::NestedStructuralAcBinderTemplated {
+                            rule_id: rule.id.clone(),
+                        });
+                    }
+                }
                 if let Some(par) = source.and_then(|source| {
                     nested_structural_ac_rule_receiver(
                         &rewrite.left,
@@ -3485,6 +3569,24 @@ pub const FIRED_RESERVED_LABEL: &str = "^fired";
 /// like every other reserved tag.
 pub const DRIVE_AC_RESERVED_LABEL: &str = "^drive-ac";
 
+/// The reserved tags of the A-S5.8 in-Rho `^float` receiver family (design
+/// `a_s5_8_float_design_v1.md` §2) — the per-iteration binder-float canonicalizer that
+/// constructively discharges the boundary-float premise for float-bearing languages.
+///
+/// `^float` names the DISPATCHER's persistent rendezvous channel
+/// (`GPrivate(reflect_tag(fp, "^float"))`); the other two are per-constructor /
+/// per-collection-op SATELLITE tag PREFIXES — `⌜^float-hoist:{C}⌝` (one per recognized
+/// float-across-constructor equation's constructor, e.g. Ambient `PIn`/`POut`/`POpen`/
+/// `PAmb`) and `⌜^float-merge:{op}⌝` (one per recognized collection-form float equation's
+/// bag op, e.g. Ambient `PPar` — the ScopeExtrusion merge). The `^` prefix keeps the whole
+/// `:`-suffixed families collision-free with user constructors (Rust `Ident`s contain
+/// neither `^` nor `:`); all three BASE labels join
+/// [`crate::rho_net_subst_trs::reserved_subst_trs_labels`] (registry 16 → 19), so the C2
+/// object-congruence exclusion assertion guards them like every other reserved tag.
+pub const FLOAT_RESERVED_LABEL: &str = "^float";
+pub const FLOAT_HOIST_RESERVED_LABEL: &str = "^float-hoist";
+pub const FLOAT_MERGE_RESERVED_LABEL: &str = "^float-merge";
+
 /// Reflect an RHS pattern term to a normalized `Par`, threading a **binder
 /// environment** (the RHS binders currently in scope, De Bruijn stack). A variable
 /// occurrence that names an in-scope binder reflects to a distinguished bound-var
@@ -5578,14 +5680,34 @@ pub enum AcReconstructTemplate {
         /// The `...rest` remainder variable, if any — its σ children are spliced in.
         rest: Option<String>,
     },
+    /// A-S5.8 (F8-AM-1): a RHS-introduced SINGLE-binder scope `B(^x. body)` — the reflected
+    /// image is the ctor-tag-ERASED `^lambda([⟦body⟧])` node (exactly the M-reflect image of a
+    /// runtime binder, `rho_invocation.rs`), so the template erases the surface constructor too
+    /// and carries only the body. σ-SLOT SHIFT RULE (F8-AM-1c): every σ slot referenced UNDER
+    /// `k` template binders is instantiated as `k` composed applications of the de Bruijn shift
+    /// `^shift(Z, ·)` to its matched value, PRE-SPLICE — never by shifting a composed body
+    /// (which would corrupt template-introduced `^bound(0)` coordinates) and never
+    /// depth-plus-per-level (a double shift). A template binder's own bound occurrences CANNOT
+    /// appear in the body (the AST has no bound-var pattern leaf, and a `Var` naming the binder
+    /// would fail the σ-closure check), so the body's `Var` leaves are exactly the shifted σ
+    /// slots. Constructed only by [`Self::from_pattern`]'s binder-constructor arm — a binder at
+    /// the RHS ROOT is rejected upstream (`resolve_bag_apply` demands a bag root), so a
+    /// `Binder` sits only at ELEMENT/child template positions (the F8-AM-1a witness shape).
+    Binder {
+        /// The scope-body template (under ONE more binder than this node's position).
+        body: Box<AcReconstructTemplate>,
+    },
 }
 
 impl AcReconstructTemplate {
     /// Convert an AST rewrite pattern into a σ-reconstruction template. Returns `None` for a node the
-    /// nested structural-AC reconstruction does not model (a substitution / lambda / map / zip — never
-    /// present in a well-formed In/Out rule). A constructor applied to a SINGLE HashBag collection
-    /// lowers to [`Self::Bag`]; every other `Apply` to [`Self::Node`]; a bare `Var` to [`Self::Var`].
-    fn from_pattern(pattern: &Pattern) -> Option<Self> {
+    /// nested structural-AC reconstruction does not model (a substitution / bare lambda / map / zip —
+    /// never present in a well-formed In/Out rule). A constructor applied to a SINGLE HashBag
+    /// collection lowers to [`Self::Bag`]; a SINGLE-binder constructor applied to one `^x. body`
+    /// lambda lowers to [`Self::Binder`] (A-S5.8, F8-AM-1 — the ctor tag is ERASED, mirroring the
+    /// `^lambda` M-reflect image; a multi-binder or a pre-scope-field binder stays `None`,
+    /// fail-closed); every other `Apply` to [`Self::Node`]; a bare `Var` to [`Self::Var`].
+    fn from_pattern(pattern: &Pattern, def: &LanguageDef) -> Option<Self> {
         match pattern {
             Pattern::Term(PatternTerm::Var(name)) => Some(Self::Var(name.to_string())),
             Pattern::Term(PatternTerm::Apply { constructor, args }) => {
@@ -5597,17 +5719,39 @@ impl AcReconstructTemplate {
                     }
                     let mut element_templates = Vec::with_capacity(elements.len());
                     for element in elements {
-                        element_templates.push(Self::from_pattern(element)?);
+                        element_templates.push(Self::from_pattern(element, def)?);
                     }
                     Some(Self::Bag {
                         op: constructor.to_string(),
                         elements: element_templates,
                         rest: rest.as_ref().map(|r| r.to_string()),
                     })
+                } else if let [Pattern::Term(PatternTerm::Lambda { body, .. })] = args.as_slice() {
+                    // A-S5.8 (F8-AM-1): `B(^x. body)` — a RHS-introduced binder scope. Accepted
+                    // ONLY for a declared surface SINGLE-binder constructor (the reflection
+                    // erases the ctor tag to `^lambda`, so the template must too); any other
+                    // constructor applied to a bare lambda is out of the modeled fragment
+                    // (fail-closed `None`, exactly the pre-A-S5.8 disposition).
+                    let label = constructor.to_string();
+                    let is_single_binder = def.terms.iter().any(|term| {
+                        term.label == label
+                            && crate::rho_net_subst_trs::is_binder_term(term)
+                            && !term.term_context.as_ref().is_some_and(|params| {
+                                params.iter().any(|param| {
+                                    matches!(param, TermParam::MultiAbstraction { .. })
+                                })
+                            })
+                    });
+                    if !is_single_binder {
+                        return None;
+                    }
+                    Some(Self::Binder {
+                        body: Box::new(Self::from_pattern(body, def)?),
+                    })
                 } else {
                     let mut children = Vec::with_capacity(args.len());
                     for arg in args {
-                        children.push(Self::from_pattern(arg)?);
+                        children.push(Self::from_pattern(arg, def)?);
                     }
                     Some(Self::Node {
                         constructor: constructor.to_string(),
@@ -5642,6 +5786,24 @@ impl AcReconstructTemplate {
                     out.insert(rest.clone());
                 }
             },
+            // A-S5.8 (F8-AM-1b): a binder scope references exactly its body's variables (the
+            // binder itself is de-Bruijn-implicit — it binds no template name).
+            Self::Binder { body } => body.collect_vars(out),
+        }
+    }
+
+    /// A-S5.8 (F8-AM-1): whether this template introduces a binder anywhere — the
+    /// fail-closed routing predicate: a binder-templated nested structural-AC rule gets the
+    /// NO-MATCH-ENTRY disposition ([`RhoNetLoweredRule::NestedStructuralAcBinderTemplated`])
+    /// instead of a site-keyed match receiver (the receiver's VALUE-position rebuild cannot
+    /// inline the async `^shift` the σ-slot shift rule requires), while the DRIVE carrier —
+    /// which pre-computes shifted slots on fresh channels before its join — carries the rule.
+    pub(crate) fn contains_binder(&self) -> bool {
+        match self {
+            Self::Var(_) => false,
+            Self::Node { children, .. } => children.iter().any(Self::contains_binder),
+            Self::Bag { elements, .. } => elements.iter().any(Self::contains_binder),
+            Self::Binder { .. } => true,
         }
     }
 }
@@ -5651,26 +5813,64 @@ impl AcReconstructTemplate {
 /// reduct the nested structural-AC σ-injection reflects. Returns `None` if σ is missing any variable
 /// the template references (fail-closed: the σ-injection then declines rather than reflect a partial
 /// term). `Bag` splices `σ[rest].children` (the residual bag the AC match bound the remainder to).
+///
+/// A-S5.8 (F8-AM-1b/1c): a [`AcReconstructTemplate::Binder`] wraps its instantiated body in the
+/// ctor-erased `^lambda` node, and every σ-slot value fetched UNDER `k` template binders is
+/// pre-shifted by `k` composed applications of the HOST de Bruijn shift
+/// ([`shift_reflected_ground_term`], the `^shift(Z, ·)` mirror) — PRE-SPLICE, per slot, never by
+/// shifting a composed body. A slot value the mirror cannot shift (a reserved shape `^shift` has
+/// no arm for, e.g. a `^multilambda`) fails closed (`None`).
 pub fn instantiate_ac_reconstruct_template(
     template: &AcReconstructTemplate,
     find_sigma: &impl Fn(&str) -> Option<GroundTerm>,
 ) -> Option<GroundTerm> {
+    instantiate_ac_reconstruct_template_at_depth(template, find_sigma, 0)
+}
+
+/// The depth-threaded core of [`instantiate_ac_reconstruct_template`]: `binder_depth` counts the
+/// enclosing [`AcReconstructTemplate::Binder`] scopes (the F8-AM-1c statically-known `k`); every
+/// σ fetch at this depth is shifted `k` times before splicing.
+fn instantiate_ac_reconstruct_template_at_depth(
+    template: &AcReconstructTemplate,
+    find_sigma: &impl Fn(&str) -> Option<GroundTerm>,
+    binder_depth: usize,
+) -> Option<GroundTerm> {
+    // `k` composed `^shift(Z, ·)` applications to one σ-slot value (identity at depth 0 and on
+    // `^bound`-free values).
+    let shifted_sigma = |name: &str| -> Option<GroundTerm> {
+        let mut value = find_sigma(name)?;
+        for _ in 0..binder_depth {
+            value = shift_reflected_ground_term(&value, 0)?;
+        }
+        Some(value)
+    };
     match template {
-        AcReconstructTemplate::Var(name) => find_sigma(name),
+        AcReconstructTemplate::Var(name) => shifted_sigma(name),
         AcReconstructTemplate::Node { constructor, children } => {
             let mut ground_children = Vec::with_capacity(children.len());
             for child in children {
-                ground_children.push(instantiate_ac_reconstruct_template(child, find_sigma)?);
+                ground_children.push(instantiate_ac_reconstruct_template_at_depth(
+                    child,
+                    find_sigma,
+                    binder_depth,
+                )?);
             }
             Some(GroundTerm::new(constructor.clone(), ground_children))
         },
         AcReconstructTemplate::Bag { op, elements, rest } => {
             let mut ground_children = Vec::with_capacity(elements.len());
             for element in elements {
-                ground_children.push(instantiate_ac_reconstruct_template(element, find_sigma)?);
+                ground_children.push(instantiate_ac_reconstruct_template_at_depth(
+                    element,
+                    find_sigma,
+                    binder_depth,
+                )?);
             }
             if let Some(rest_var) = rest {
-                let rest_ground = find_sigma(rest_var)?;
+                // The rest slot is a σ slot too (F8-AM-1c): its spliced children arrive
+                // pre-shifted by the SAME depth `k` (shifting a bag = shifting its elements at
+                // an unchanged cutoff — a bag crosses no binder).
+                let rest_ground = shifted_sigma(rest_var)?;
                 ground_children.extend(rest_ground.children.iter().cloned());
             }
             Some(GroundTerm::collection(
@@ -5679,7 +5879,119 @@ pub fn instantiate_ac_reconstruct_template(
                 ground_children,
             ))
         },
+        AcReconstructTemplate::Binder { body } => {
+            let ground_body = instantiate_ac_reconstruct_template_at_depth(
+                body,
+                find_sigma,
+                binder_depth + 1,
+            )?;
+            Some(GroundTerm::new(LAMBDA_REFLECT_LABEL, vec![ground_body]))
+        },
     }
+}
+
+/// A-S5.8: the HOST-side mirror of the in-Rho `^shift(c, t, ret)` receiver over the reflected
+/// [`GroundTerm`] encoding (`rho_net_subst_trs.rs` — the σ-slot pre-shift of the F8-AM-1c rule):
+///
+/// * `^bound(peano(n))` — increment `n ≥ cutoff` (the Peano numeral re-encoded), else unchanged;
+/// * `^lambda(b)` — descend with `cutoff + 1` (the depth increment);
+/// * `^free(x)` — inert;
+/// * a HashBag collection — descend every element at an UNCHANGED cutoff (a bag crosses no
+///   binder — the mirror of the A-S5.8 `^shift` soup arm, F8-AM-5e);
+/// * any other positional constructor — structural descent (the C2 congruence arms).
+///
+/// `None` (fail-closed) exactly where the in-Rho `^shift` has NO arm and would stall: a
+/// `^multilambda`, a reserved reduction tag, a malformed `^bound` payload, or a non-HashBag
+/// collection — the host mirror never invents semantics the receiver family lacks.
+fn shift_reflected_ground_term(term: &GroundTerm, cutoff: usize) -> Option<GroundTerm> {
+    if let Some(kind) = &term.coll_type {
+        // Only the HashBag process-soup carrier has an in-Rho `^shift` arm (the A-S5.8
+        // soup/Nil arms); Set/Map carriers have none — fail closed.
+        if *kind != CollectionType::HashBag {
+            return None;
+        }
+        let mut children = Vec::with_capacity(term.children.len());
+        for child in &term.children {
+            children.push(shift_reflected_ground_term(child, cutoff)?);
+        }
+        return Some(GroundTerm::collection(
+            CollectionType::HashBag,
+            term.constructor.clone(),
+            children,
+        ));
+    }
+    match term.constructor.as_str() {
+        BOUND_VAR_REFLECT_LABEL => {
+            let [numeral] = term.children.as_slice() else {
+                return None;
+            };
+            let n = decode_peano_ground(numeral)?;
+            if n >= cutoff {
+                Some(GroundTerm::new(
+                    BOUND_VAR_REFLECT_LABEL,
+                    vec![encode_peano_ground(n + 1)],
+                ))
+            } else {
+                Some(term.clone())
+            }
+        },
+        LAMBDA_REFLECT_LABEL => {
+            let [body] = term.children.as_slice() else {
+                return None;
+            };
+            Some(GroundTerm::new(
+                LAMBDA_REFLECT_LABEL,
+                vec![shift_reflected_ground_term(body, cutoff + 1)?],
+            ))
+        },
+        FREE_VAR_REFLECT_LABEL => Some(term.clone()),
+        // Reserved reduction machinery the in-Rho `^shift` has no arm for (it would stall):
+        // fail closed rather than guess. (`Z`/`S` are only meaningful UNDER `^bound`, which the
+        // `^bound` arm consumed; a bare numeral here is a malformed subject.)
+        MULTILAMBDA_REFLECT_LABEL | SUBST_RESERVED_LABEL | SHIFT_RESERVED_LABEL
+        | SHIFTK_RESERVED_LABEL | CMP_RESERVED_LABEL | PRED_RESERVED_LABEL
+        | PEANO_ZERO_REFLECT_LABEL | PEANO_SUCC_REFLECT_LABEL => None,
+        _ => {
+            // A positional object constructor: structural descent, cutoff unchanged.
+            let mut children = Vec::with_capacity(term.children.len());
+            for child in &term.children {
+                children.push(shift_reflected_ground_term(child, cutoff)?);
+            }
+            Some(GroundTerm::new(term.constructor.clone(), children))
+        },
+    }
+}
+
+/// Decode a reflected Peano numeral `S(S(…(Z)))` [`GroundTerm`] to its `usize`, `None` on any
+/// non-numeral shape (fail-closed).
+fn decode_peano_ground(term: &GroundTerm) -> Option<usize> {
+    let mut n = 0usize;
+    let mut cursor = term;
+    loop {
+        if cursor.coll_type.is_some() {
+            return None;
+        }
+        match cursor.constructor.as_str() {
+            PEANO_ZERO_REFLECT_LABEL if cursor.children.is_empty() => return Some(n),
+            PEANO_SUCC_REFLECT_LABEL => {
+                let [inner] = cursor.children.as_slice() else {
+                    return None;
+                };
+                n += 1;
+                cursor = inner;
+            },
+            _ => return None,
+        }
+    }
+}
+
+/// Encode a `usize` as the reflected Peano numeral `S^n(Z)` [`GroundTerm`].
+fn encode_peano_ground(n: usize) -> GroundTerm {
+    let mut numeral = GroundTerm::nullary(PEANO_ZERO_REFLECT_LABEL);
+    for _ in 0..n {
+        numeral = GroundTerm::new(PEANO_SUCC_REFLECT_LABEL, vec![numeral]);
+    }
+    numeral
 }
 
 /// Extract `op{ elements, ...rest }` from a constructor applied to a SINGLE HashBag collection,
@@ -5917,7 +6229,7 @@ pub(crate) fn nested_structural_ac_rule_shape(
     }
     let mut reduct_templates = Vec::with_capacity(rhs_elements.len());
     for element in rhs_elements {
-        reduct_templates.push(AcReconstructTemplate::from_pattern(element)?);
+        reduct_templates.push(AcReconstructTemplate::from_pattern(element, def)?);
     }
     let rest_template_occurrences: usize = reduct_templates
         .iter()
@@ -5975,6 +6287,8 @@ fn count_template_name_occurrences(template: &AcReconstructTemplate, name: &str)
                     .map(|element| count_template_name_occurrences(element, name))
                     .sum::<usize>()
         },
+        // A-S5.8 (F8-AM-1b): a binder scope's references are its body's.
+        AcReconstructTemplate::Binder { body } => count_template_name_occurrences(body, name),
     }
 }
 
@@ -6210,6 +6524,19 @@ pub fn nested_structural_ac_rule_receiver(
     def: &LanguageDef,
 ) -> Option<Par> {
     let shape = nested_structural_ac_rule_shape(left, right, def)?;
+    // A-S5.8 (F8-AM-1b): a BINDER-TEMPLATED shape has no site-keyed match receiver — the
+    // σ-slot shift rule (F8-AM-1c) needs the ASYNC `^shift`, which the receiver's
+    // value-position reduct rebuild cannot inline. Decline fail-closed; the rule's lowering
+    // disposition is [`RhoNetLoweredRule::NestedStructuralAcBinderTemplated`] (NO-MATCH-ENTRY,
+    // recorded, never an install error) and its FIRING mechanism is the A-S5.8 drive
+    // carrier, which pre-computes the shifted slots on fresh channels before its join.
+    if shape
+        .reduct_templates
+        .iter()
+        .any(AcReconstructTemplate::contains_binder)
+    {
+        return None;
+    }
     Some(nested_structural_ac_receiver_par(&shape, source, language_fingerprint))
 }
 
@@ -6277,6 +6604,52 @@ pub fn equations_boundary_canonicalizable(def: &LanguageDef) -> bool {
     def.equations
         .iter()
         .all(|equation| is_binder_float_equation(def, equation, &binder_label))
+}
+
+/// A-S5.8: the equation-DERIVED satellite table of the in-Rho `^float` receiver family — one
+/// `^float-hoist:{C}` satellite per recognized PREFIX float-across-constructor equation
+/// (deduplicated by constructor, declaration order) and one `^float-merge:{op}` satellite per
+/// recognized COLLECTION float equation (deduplicated by op, declaration order). Read off the
+/// SAME per-equation recognizer walk [`equations_boundary_canonicalizable`] admits with
+/// ([`classify_float_across_constructor_equation`]), so the emitted family can never drift
+/// from the admission (never hardcoded to Ambient). A binder-commutation equation (`NewComm`)
+/// derives NO satellite — the Q-NC user decision: in-Rho NewComm reordering is DELIBERATELY
+/// omitted (the host's α-canonical-key minimization is not Match-expressible; redex exposure
+/// is NewComm-invariant), so the float NF is unique UP TO the NewComm run permutation.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct FloatSatelliteTable {
+    /// The `^float-hoist:{C}` satellites: `(constructor, float_index, arity)` per recognized
+    /// prefix float equation.
+    pub(crate) hoist: Vec<(String, usize, usize)>,
+    /// The `^float-merge:{op}` satellites: the bag op per recognized collection float
+    /// equation.
+    pub(crate) merge_ops: Vec<String>,
+}
+
+/// Derive the [`FloatSatelliteTable`] of `def`'s declared float equations (A-S5.8). Total:
+/// unrecognized/commutation equations contribute nothing — callers gate on
+/// [`equations_boundary_canonicalizable`] ∧ [`language_has_float_handler`] before emitting.
+pub(crate) fn float_satellite_table(def: &LanguageDef) -> FloatSatelliteTable {
+    let mut table = FloatSatelliteTable::default();
+    let Some(binder_label) = float_surface_binder_label(def) else {
+        return table;
+    };
+    for equation in &def.equations {
+        match classify_float_across_constructor_equation(def, equation, &binder_label) {
+            Some(FloatAcrossClassification::Prefix { constructor, float_index, arity }) => {
+                if !table.hoist.iter().any(|(label, _, _)| *label == constructor) {
+                    table.hoist.push((constructor, float_index, arity));
+                }
+            },
+            Some(FloatAcrossClassification::Collection { op }) => {
+                if !table.merge_ops.contains(&op) {
+                    table.merge_ops.push(op);
+                }
+            },
+            None => {},
+        }
+    }
+    table
 }
 
 /// A-S5.4b: whether the macros side generates the binder-congruence float handler for `def` — the
@@ -6423,45 +6796,86 @@ fn binder_scope<'a>(pattern: &'a Pattern, binder_label: &str) -> Option<(String,
     Some((binder.to_string(), body.as_ref()))
 }
 
+/// A-S5.8: the CLASSIFICATION a recognized float-across-constructor equation carries — the
+/// satellite-derivation record ([`float_satellite_table`]) the `^float` family's emitters
+/// consume, read off the SAME recognizer walk `equations_boundary_canonicalizable` admits
+/// with (never a parallel hand-maintained table).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum FloatAcrossClassification {
+    /// The PREFIX form (`InNew`-family + `AmbNew`): `C(a₁, …, B(^x. P), …) = B(^x. C(…))` —
+    /// the `^float-hoist:{C}` satellite's derivation.
+    Prefix {
+        /// The floated-across constructor label `C`.
+        constructor: String,
+        /// The binder-scoped argument's position (the single plain primary-category field).
+        float_index: usize,
+        /// `C`'s total field count.
+        arity: usize,
+    },
+    /// The COLLECTION form (`ScopeExtrusion`): `op{ …, B(^x. P), …, ...rest } = B(^x. op{…})`
+    /// — the `^float-merge:{op}` satellite's derivation.
+    Collection {
+        /// The AC bag operator constructor `op`.
+        op: String,
+    },
+}
+
 /// Family (ii): FLOAT-ACROSS-CONSTRUCTOR, either orientation.
 fn is_float_across_constructor_equation(
     def: &LanguageDef,
     equation: &Equation,
     binder_label: &str,
 ) -> bool {
+    classify_float_across_constructor_equation(def, equation, binder_label).is_some()
+}
+
+/// A-S5.8: the classification core of [`is_float_across_constructor_equation`] — the SAME
+/// recognizer walk, returning WHICH satellite the equation derives (either orientation).
+fn classify_float_across_constructor_equation(
+    def: &LanguageDef,
+    equation: &Equation,
+    binder_label: &str,
+) -> Option<FloatAcrossClassification> {
     float_across_sides(def, &equation.left, &equation.right, binder_label, &equation.premises)
-        || float_across_sides(def, &equation.right, &equation.left, binder_label, &equation.premises)
+        .or_else(|| {
+            float_across_sides(
+                def,
+                &equation.right,
+                &equation.left,
+                binder_label,
+                &equation.premises,
+            )
+        })
 }
 
 /// One orientation of family (ii): `c_side = C(a₁, …, B(^x. P), …)` (prefix form) or
 /// `C{ …, (B ^x. P), …, ...rest }` (collection form), `b_side = B(^x. C(a₁, …, P, …))` — same
 /// constructor, same argument variables, the freshness premises exactly covering every
 /// floated-past field, and `C` in the exact shape the generated float handler floats (AM-6e).
+/// Returns the A-S5.8 satellite classification on recognition (`None` = not this family).
 fn float_across_sides(
     def: &LanguageDef,
     c_side: &Pattern,
     b_side: &Pattern,
     binder_label: &str,
     premises: &[Premise],
-) -> bool {
-    let Some((binder_name, b_inner)) = binder_scope(b_side, binder_label) else {
-        return false;
-    };
+) -> Option<FloatAcrossClassification> {
+    let (binder_name, b_inner) = binder_scope(b_side, binder_label)?;
     let Pattern::Term(PatternTerm::Apply { constructor: c_ctor, args: c_args }) = c_side else {
-        return false;
+        return None;
     };
     // The floated-across constructor must not be the binder itself (a binder-over-binder equation
     // is family (i)'s commutation, never a float-across).
     if c_ctor == binder_label {
-        return false;
+        return None;
     }
     let Pattern::Term(PatternTerm::Apply { constructor: b_inner_ctor, args: b_inner_args }) =
         b_inner
     else {
-        return false;
+        return None;
     };
     if b_inner_ctor != c_ctor {
-        return false;
+        return None;
     }
     match (c_args.as_slice(), b_inner_args.as_slice()) {
         // COLLECTION form (`ScopeExtrusion`): both sides one collection literal.
@@ -6495,7 +6909,8 @@ fn float_across_sides(
 /// The PREFIX float form: exactly one `C` argument is `B(^x. Var(P))` (the same binder and body
 /// variable reappearing on the `b_side` at the same position), every other argument a bare
 /// variable equal on both sides; freshness declared on every other argument; `C` in the handler's
-/// prefix shape with the binder at the single plain primary-category field (AM-6e).
+/// prefix shape with the binder at the single plain primary-category field (AM-6e). Returns the
+/// `^float-hoist:{C}` satellite classification on recognition.
 #[allow(clippy::too_many_arguments)]
 fn float_across_prefix(
     def: &LanguageDef,
@@ -6505,9 +6920,9 @@ fn float_across_prefix(
     binder_name: &str,
     binder_label: &str,
     premises: &[Premise],
-) -> bool {
+) -> Option<FloatAcrossClassification> {
     if c_args.len() != b_args.len() {
-        return false;
+        return None;
     }
     let mut float_position: Option<(usize, String)> = None;
     let mut floated_past: Vec<String> = Vec::with_capacity(c_args.len().saturating_sub(1));
@@ -6516,55 +6931,59 @@ fn float_across_prefix(
             // The floated position: same binder as the b_side scope, bare-variable body, and the
             // b_side carries exactly that body variable here.
             if scope_binder != binder_name {
-                return false;
+                return None;
             }
             let Pattern::Term(PatternTerm::Var(body_var)) = scope_body else {
-                return false;
+                return None;
             };
             let Pattern::Term(PatternTerm::Var(b_var)) = b_arg else {
-                return false;
+                return None;
             };
             if b_var.to_string() != body_var.to_string() {
-                return false;
+                return None;
             }
             if float_position.replace((index, body_var.to_string())).is_some() {
                 // Two binder-scoped arguments — not the single-float shape.
-                return false;
+                return None;
             }
         } else {
             let (Pattern::Term(PatternTerm::Var(c_var)), Pattern::Term(PatternTerm::Var(b_var))) =
                 (c_arg, b_arg)
             else {
-                return false;
+                return None;
             };
             if c_var.to_string() != b_var.to_string() {
-                return false;
+                return None;
             }
             floated_past.push(c_var.to_string());
         }
     }
-    let Some((float_index, body_var)) = float_position else {
-        return false;
-    };
+    let (float_index, body_var) = float_position?;
     if !float_metavariables_distinct(binder_name, &body_var, &floated_past) {
-        return false;
+        return None;
     }
     // AM-6e: `C` must be the handler's prefix shape — exactly one plain primary-category field —
     // and the equation's binder argument must sit AT that field.
-    match float_constructor_shape(def, c_ctor) {
+    let shape_matches = match float_constructor_shape(def, c_ctor) {
         FloatConstructorShape::Prefix { primary_field_index, field_count } => {
             field_count == c_args.len() && primary_field_index == float_index
         },
-        _ => return false,
-    }
-    .then(|| premises_are_exactly_float_freshness(premises, binder_name, &floated_past, None))
-    .unwrap_or(false)
+        _ => return None,
+    };
+    (shape_matches
+        && premises_are_exactly_float_freshness(premises, binder_name, &floated_past, None))
+    .then(|| FloatAcrossClassification::Prefix {
+        constructor: c_ctor.to_string(),
+        float_index,
+        arity: c_args.len(),
+    })
 }
 
 /// The COLLECTION float form (`ScopeExtrusion`): exactly one collection element is `B(^x. Var(P))`
 /// (reappearing as `Var(P)` at the same position on the `b_side`), every other element a bare
 /// variable equal on both sides, the same `...rest` on both sides; freshness declared on every
 /// other element and on the rest; `C` the primary-category collection constructor (AM-6e).
+/// Returns the `^float-merge:{op}` satellite classification on recognition.
 #[allow(clippy::too_many_arguments)]
 fn float_across_collection(
     def: &LanguageDef,
@@ -6576,59 +6995,58 @@ fn float_across_collection(
     binder_name: &str,
     binder_label: &str,
     premises: &[Premise],
-) -> bool {
+) -> Option<FloatAcrossClassification> {
     if c_elements.len() != b_elements.len() {
-        return false;
+        return None;
     }
     if c_rest.map(ToString::to_string) != b_rest.map(ToString::to_string) {
-        return false;
+        return None;
     }
     let mut float_position: Option<(usize, String)> = None;
     let mut floated_past: Vec<String> = Vec::with_capacity(c_elements.len().saturating_sub(1));
     for (index, (c_element, b_element)) in c_elements.iter().zip(b_elements).enumerate() {
         if let Some((scope_binder, scope_body)) = binder_scope(c_element, binder_label) {
             if scope_binder != binder_name {
-                return false;
+                return None;
             }
             let Pattern::Term(PatternTerm::Var(body_var)) = scope_body else {
-                return false;
+                return None;
             };
             let Pattern::Term(PatternTerm::Var(b_var)) = b_element else {
-                return false;
+                return None;
             };
             if b_var.to_string() != body_var.to_string() {
-                return false;
+                return None;
             }
             if float_position.replace((index, body_var.to_string())).is_some() {
-                return false;
+                return None;
             }
         } else {
             let (Pattern::Term(PatternTerm::Var(c_var)), Pattern::Term(PatternTerm::Var(b_var))) =
                 (c_element, b_element)
             else {
-                return false;
+                return None;
             };
             if c_var.to_string() != b_var.to_string() {
-                return false;
+                return None;
             }
             floated_past.push(c_var.to_string());
         }
     }
-    let Some((_, body_var)) = float_position else {
-        return false;
-    };
+    let (_, body_var) = float_position?;
     if !float_metavariables_distinct(binder_name, &body_var, &floated_past) {
-        return false;
+        return None;
     }
     // AM-6e: `C` must be the handler's bag-extrusion shape — the primary-category collection
     // constructor (the bag arm extrudes a binder MEMBER against the whole residual).
-    matches!(float_constructor_shape(def, c_ctor), FloatConstructorShape::CollectionOverPrimary)
+    (matches!(float_constructor_shape(def, c_ctor), FloatConstructorShape::CollectionOverPrimary)
         && premises_are_exactly_float_freshness(
             premises,
             binder_name,
             &floated_past,
             c_rest.map(|rest| rest.to_string()).as_deref(),
-        )
+        ))
+    .then(|| FloatAcrossClassification::Collection { op: c_ctor.to_string() })
 }
 
 /// The float's metavariables must be pairwise distinct — the binder, the body variable, and every
@@ -6957,7 +7375,7 @@ pub fn rho_net_nested_structural_ac_injection_sites(
             continue;
         };
         // The operand reconstruction template is the LHS root walked with σ.
-        let Some(operand_template) = AcReconstructTemplate::from_pattern(&rewrite.left) else {
+        let Some(operand_template) = AcReconstructTemplate::from_pattern(&rewrite.left, def) else {
             continue;
         };
         sites.push(RhoNetNestedStructuralAcInjectionSite {
@@ -7283,6 +7701,19 @@ fn reflect_ac_template_bound_par(
             }
             soup
         },
+        // A-S5.8 (F8-AM-1b): UNREACHABLE BY CONSTRUCTION — a binder-templated rule never
+        // builds a site-keyed match receiver (its σ-slot shift rule needs the ASYNC
+        // `^shift`, which a value-position rebuild cannot inline): `lower_base_rewrite`
+        // routes such a rule to the fail-closed NO-MATCH-ENTRY disposition
+        // (`NestedStructuralAcBinderTemplated`) and `nested_structural_ac_rule_receiver`
+        // declines it, so this builder is only ever called on binder-free templates. The
+        // assertion is the codegen-time guard that keeps it that way (the C2-assertion
+        // discipline).
+        AcReconstructTemplate::Binder { .. } => unreachable!(
+            "reflect_ac_template_bound_par reached a Binder template — binder-templated \
+             nested-AC rules take the NO-MATCH-ENTRY disposition (A-S5.8 F8-AM-1b) and \
+             never build a site-keyed match receiver"
+        ),
     }
 }
 
@@ -8156,6 +8587,7 @@ mod tests {
             subst_trs: None,
             drive: None,
             drive_admission: crate::rho_net_drive::DriveAdmission::NotRequested,
+            float: None,
         };
         match lowered.installed_program_par() {
             Err(RhoNetInstallError::LoweringErrors(errors)) => assert_eq!(errors.len(), 1),
@@ -8183,6 +8615,7 @@ mod tests {
             subst_trs: None,
             drive: None,
             drive_admission: crate::rho_net_drive::DriveAdmission::NotRequested,
+            float: None,
         };
         match lowered.installed_program_par() {
             Err(RhoNetInstallError::UnmaterializedRule { rule_id, family }) => {
@@ -8208,6 +8641,7 @@ mod tests {
             subst_trs: None,
             drive: None,
             drive_admission: crate::rho_net_drive::DriveAdmission::NotRequested,
+            float: None,
         };
         let installed = lowered
             .installed_program_par()

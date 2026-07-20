@@ -392,7 +392,9 @@ fn replay_search(current: &Value, remaining: &[String], target: &Value) -> bool 
 // ── shared runners + the always-on cross-check ─────────────────────────────────────────
 
 /// Decode the SEED's reflected subject (the first datum of the `^drive` seed send) —
-/// boundary-canonicalized for the generated invocation, verbatim for a direct seed.
+/// verbatim for a direct seed. (The GENERATED invocation's subject is read off
+/// `RhoNetDriveInvocation::subject` instead — A-S5.8 F8-AM-5a: under the S2 float-routed
+/// seed the subject is no longer the call's first top-level send datum.)
 fn decode_seed_subject(call: &models::rhoapi::Par) -> Value {
     let datum = &call.sends[0].data[0];
     par_as_runtime_observation_value(datum)
@@ -400,8 +402,10 @@ fn decode_seed_subject(call: &models::rhoapi::Par) -> Value {
 }
 
 /// Drive one PARSED production-Ambient subject through the generated seed invocation
-/// (boundary canonicalization + admission re-check + default fuel), returning the
-/// observation set, the channels, and the DECODED (canonicalized) seed subject.
+/// (boundary canonicalization + admission re-check + default fuel; A-S5.8: the S2
+/// FLOAT-ROUTED seed — the installed `^float` dispatcher re-canonicalizes in-Rho, an
+/// identity pass on the host-floated subject), returning the observation set, the
+/// channels, and the DECODED (canonicalized) seed subject.
 async fn drive_parsed(
     backend: &PlannedRhoBackend,
     source: &str,
@@ -411,7 +415,9 @@ async fn drive_parsed(
         .unwrap_or_else(|err| panic!("production Ambient must parse {source:?}: {err:?}"));
     let invocation = AmbientLanguage::rho_net_drive_invocation_to(term.as_ref(), "OUT")
         .expect("production Ambient is drive-admitted (A-S5.5)");
-    let subject = decode_seed_subject(&invocation.call);
+    // F8-AM-5a: the raw reflected subject rides the invocation itself (S2-shape-agnostic).
+    let subject = par_as_runtime_observation_value(&invocation.subject)
+        .expect("the drive invocation's reflected subject must decode");
     let channels = DriveObservationChannels::from_invocation(&invocation);
     let set = backend
         .run_rho_net_with_call_and_read_observation_set(&invocation.call, &channels)

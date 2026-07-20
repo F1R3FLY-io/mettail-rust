@@ -319,6 +319,11 @@ fn lowered_family_name(rule: &RhoNetLoweredRule) -> String {
         R::CommRewrite { .. } => "CommRewrite".to_string(),
         R::StructuralAcRewrite { .. } => "StructuralAcRewrite".to_string(),
         R::NestedStructuralAcRewrite { .. } => "NestedStructuralAcRewrite".to_string(),
+        // A-S5.8 (F8-AM-1b): the binder-templated NO-MATCH-ENTRY disposition — recorded,
+        // drive-carried, never an install error.
+        R::NestedStructuralAcBinderTemplated { .. } => {
+            "NestedStructuralAcBinderTemplated".to_string()
+        },
         R::ContextualRewrite { .. } => "ContextualRewrite".to_string(),
         R::SubstRewrite { .. } => "SubstRewrite".to_string(),
         R::NativeSystemProcessRewrite { .. } => "NativeSystemProcessRewrite".to_string(),
@@ -1111,14 +1116,17 @@ fn ambient_installs_with_the_exempt_trio_recorded_and_in_out_open_materialized()
         .installed_rho_net_program_par()
         .expect("A-S5.4b: Ambient's σ-receiver program must install (In/Out/Open materialized)");
     // A-S5.5 appends the drive program (the ^drive receiver + the three per-rule
-    // AC-carrier receivers) to the three A-S5.4b AC σ-receivers: 3 + 4 = 7. The three
-    // legacy receivers stay BYTE-IDENTICAL (`a_s5_5_byte_identity_pins.rs`).
+    // AC-carrier receivers) to the three A-S5.4b AC σ-receivers, and A-S5.8 appends the
+    // 8-receiver `^float` family (dispatcher + merge:PPar + 4 hoists + first-time
+    // `^shift`/`^cmp`): 3 + 4 + 8 = 15. The three legacy receivers stay BYTE-IDENTICAL
+    // (`a_s5_5_byte_identity_pins.rs`).
     assert_eq!(
         installed.receives.len(),
-        7,
+        15,
         "the installed program carries the three AC receivers (the InRule nested \
          σ-receiver, the redeclared OutRule nested σ-receiver, the OpenRule flat \
-         structural-AC σ-receiver) + the A-S5.5 drive program (^drive + 3 carriers)"
+         structural-AC σ-receiver) + the A-S5.5 drive program (^drive + 3 carriers) + \
+         the A-S5.8 ^float family (8 receivers)"
     );
     assert!(
         installed.receives.iter().all(|receive| receive.persistent),
@@ -1227,16 +1235,17 @@ fn ambient_drive_admission_is_admitted_and_the_driver_installs_with_the_carriers
         "every drive-program receiver is persistent"
     );
     // Installed ONCE alongside the three legacy AC σ-receivers (whose bytes the
-    // A-S5.5 pin `a_s5_5_byte_identity_pins.rs` holds fixed):
-    // 3 (InRule/OutRule/OpenRule) + 4 (drive program) = 7.
+    // A-S5.5 pin `a_s5_5_byte_identity_pins.rs` holds fixed) and — A-S5.8 — the
+    // 8-receiver `^float` family: 3 (InRule/OutRule/OpenRule) + 4 (drive program)
+    // + 8 (^float + merge:PPar + 4 hoists + first-time ^shift/^cmp) = 15.
     let installed = plan
         .installed_rho_net_program_par()
         .expect("Ambient installs (A-S5.4b receivers + the A-S5.5 driver)");
     assert_eq!(
         installed.receives.len(),
-        7,
-        "installed = the three AC σ-receivers + ^drive + the three carriers, \
-         appended once"
+        15,
+        "installed = the three AC σ-receivers + ^drive + the three carriers + the \
+         A-S5.8 ^float family, appended once"
     );
 }
 

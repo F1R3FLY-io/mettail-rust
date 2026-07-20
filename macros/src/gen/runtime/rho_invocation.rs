@@ -83,6 +83,18 @@ fn ac_template_tokens(template: &mettail_rholang_codegen::AcReconstructTemplate)
                 }
             }
         },
+        // A-S5.8 (F8-AM-1b): the RHS-introduced binder scope. Totality arm only — a
+        // binder-templated rule takes the NO-MATCH-ENTRY lowering disposition and surfaces
+        // in NO injection site, so these tokens are never emitted for a bundled language;
+        // the arm keeps this tokenizer total over the extended template enum.
+        T::Binder { body } => {
+            let body = ac_template_tokens(body);
+            quote! {
+                ::mettail_rholang_codegen::AcReconstructTemplate::Binder {
+                    body: ::std::boxed::Box::new(#body),
+                }
+            }
+        },
     }
 }
 
@@ -2308,6 +2320,27 @@ pub fn generate_rho_net_invocation(language: &LanguageDef) -> TokenStream {
     // carrier arms — with NO change to this emission, exactly the AM-4 design).
     let drive_opted_in =
         mettail_rholang_codegen::DRIVE_OPT_IN.contains(&language_name.as_str());
+    // A-S5.8 (decision Q-SEED = S2): a FLOAT-BEARING language's drive fn assembles the
+    // FLOAT-ROUTED seed (`rho_net_drive_float_invocation` — `new rf { ⌜^float⌝!(⟦t⟧, rf)
+    // | for(@cf <- rf){ ⌜^drive⌝!(cf, fuel, @out) } }`) so the installed `^float`
+    // dispatcher canonicalizes the subject IN-RHO before the first drive frame; the host
+    // boundary float above is RETAINED (defense-in-depth + the ONLY place the NewComm
+    // display ordering exists — load-bearing for the run-order-sensitive α goldens,
+    // F8-AM-5b; under S2 the in-Rho seed float is an identity pass on the already-
+    // canonical subject). The expansion-time condition is the SAME gate the float family
+    // installs under (`language_is_float_bearing` = the macros-side
+    // `should_emit_binder_congruence` restatement ∧ `equations_boundary_canonicalizable`;
+    // drive admission is re-checked in the body), so a float-routed seed always has its
+    // `^float` receivers. A NON-float language's drive fn is BYTE-IDENTICAL to pre-A-S5.8
+    // (the F8-AM-5c Lambda fn-item pin).
+    let drive_float_seeded = drive_opted_in
+        && crate::gen::runtime::binder_congruence::should_emit_binder_congruence(language)
+        && mettail_rholang_codegen::equations_boundary_canonicalizable(language);
+    let drive_invocation_assembler = if drive_float_seeded {
+        quote! { ::mettail_rholang_codegen::rho_net_drive_float_invocation }
+    } else {
+        quote! { ::mettail_rholang_codegen::rho_net_drive_invocation }
+    };
     let drive_fn = if drive_opted_in {
         quote! {
             /// A-S5.2: seed the in-Rho QUIESCENCE DRIVER for the whole subject `term` —
@@ -2398,7 +2431,7 @@ pub fn generate_rho_net_invocation(language: &LanguageDef) -> TokenStream {
                     &__subject,
                     &__ruleset.language_fingerprint,
                 );
-                ::core::result::Result::Ok(::mettail_rholang_codegen::rho_net_drive_invocation(
+                ::core::result::Result::Ok(#drive_invocation_assembler(
                     &__ruleset.language_fingerprint,
                     __subject_par,
                     out_channel,
@@ -2891,6 +2924,57 @@ mod tests {
         assert!(
             !opted_match.contains("drive"),
             "the match fn item carries no drive reference"
+        );
+    }
+
+    /// ★ F8-AM-5c (A-S5.8): the Lambda `rho_net_drive_invocation_to` fn-item BYTE PIN —
+    /// the S2 seed switch edits exactly this emission for FLOAT-BEARING languages, so the
+    /// non-float branch must stay byte-identical: (a) the (length, `DefaultHasher`)
+    /// fingerprint of the extracted fn item is pinned (captured pre-S2 at `3530df05` —
+    /// re-capture only with an explained diff); (b) the item calls the LEGACY
+    /// `rho_net_drive_invocation` assembler and carries NO float token.
+    #[test]
+    fn lambda_drive_fn_item_is_byte_identical_across_the_s2_seed_switch() {
+        use std::hash::{Hash, Hasher};
+        let tokens = generate_rho_net_invocation(&lambda_shaped_fragment("Lambda")).to_string();
+        let item = extract_fn_item(&tokens, "rho_net_drive_invocation_to");
+        assert!(
+            item.contains("rho_net_drive_invocation ("),
+            "Lambda's drive fn assembles through the LEGACY seed"
+        );
+        assert!(
+            !item.contains("float"),
+            "no float token leaks into a non-float language's drive fn (F8-AM-5c)"
+        );
+        let mut hasher = std::hash::DefaultHasher::new();
+        item.hash(&mut hasher);
+        assert_eq!(
+            (item.len(), hasher.finish()),
+            (5027, 0x4eab1db65f87da63),
+            "the Lambda drive fn item must be byte-identical to the pre-A-S5.8 emission \
+             (the S2 switch's non-float branch interpolates the SAME \
+             `::mettail_rholang_codegen::rho_net_drive_invocation` path tokens the \
+             pre-A-S5.8 quote! wrote literally — identical token stream by construction; \
+             captured at the A-S5.8 leg-1 tree; re-capture only with an explained diff)"
+        );
+    }
+
+    /// ★ A-S5.8 (decision Q-SEED = S2): a FLOAT-BEARING drive-opted language's drive fn
+    /// assembles the FLOAT-ROUTED seed (`rho_net_drive_float_invocation`), while the rest
+    /// of the fn body — admission chain, boundary canonicalization, reflection — is the
+    /// shared emission.
+    #[test]
+    fn float_bearing_drive_fn_assembles_the_float_routed_seed() {
+        let tokens = generate_rho_net_invocation(&ambient_shaped_fragment()).to_string();
+        let item = extract_fn_item(&tokens, "rho_net_drive_invocation_to");
+        assert!(
+            item.contains("rho_net_drive_float_invocation"),
+            "the float-bearing drive fn routes the seed through ^float (S2)"
+        );
+        assert!(
+            item.contains("binder_congruence_nf_term"),
+            "the HOST boundary float is RETAINED above the S2 seed (defense-in-depth + \
+             the NewComm display ordering — F8-AM-5b)"
         );
     }
 

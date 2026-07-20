@@ -6,9 +6,13 @@
 //! (the pre-flip HEAD, `scratchpad/as56_byte_pin_capture.log`):
 //!
 //! * production **Lambda**'s `^drive` receiver family `Par` and its full installed
-//!   program (β seed + 5 TRS receivers + driver, 7 receives);
+//!   program (β seed + 5 TRS receivers + driver, 7 receives) — STILL the `a9193914`
+//!   values (the A-S5.8 no-regression half: a non-float language's emissions are
+//!   byte-identical);
 //! * production **Ambient**'s `^drive` receiver family `Par` (the A-S5.5 bag/nested-AC
-//!   driver + the three per-rule AC-carrier receivers) and its full installed program.
+//!   driver + the three per-rule AC-carrier receivers) and its full installed program —
+//!   RE-CAPTURED at A-S5.8 (float-routed firing emissions + the 8-receiver `^float`
+//!   family, 7 → 15 receives; the per-value diffs are explained on the pin itself).
 //!
 //! The hash is `std::hash::DefaultHasher` over the prost bytes — deterministic across
 //! processes (SipHash-1-3 with fixed keys) — paired with the exact byte length; a codegen
@@ -110,12 +114,19 @@ fn lambda_driver_par_is_byte_identical_to_the_pre_a_s5_6_golden() {
     );
 }
 
-/// ★ The Ambient no-regression pin: the emitted `^drive` receiver family (the A-S5.5
-/// bag/nested-AC driver + the three per-rule AC-carrier receivers) and the full installed
-/// program (3 AC σ-receivers + `^drive` + 3 carriers, 7 receives) are BYTE-IDENTICAL
-/// across the A-S5.6 flip commits.
+/// ★ The Ambient pin, RE-CAPTURED at A-S5.8 (the pin file's re-capture protocol — a
+/// DELIBERATE move, diff explained): the `^drive` receiver family moved because BOTH
+/// firing-emission seams now route every contractum through the installed `^float`
+/// dispatcher before the re-drive (decision Q-AB = A — `for(@c <- r){ new rf {
+/// ⌜^float⌝!(c, rf) | for(@cf <- rf){ ⌜^drive⌝!(cf, fuel - 1, ret) } } }`), growing the
+/// drive `Par` 29640 → 33330 bytes (the drive still has exactly its 4 receives — the
+/// `^drive` receiver + 3 UNCHANGED carriers); and the installed program gained the
+/// 8-receiver `^float` family (dispatcher + `^float-merge:PPar` + 4 `^float-hoist` +
+/// first-time `^shift`/`^cmp`), 7 → 15 receives, 31301 → 50744 bytes. Captured at the
+/// A-S5.8 leg-1 tree (`scratchpad/as58_pin_capture.log`); the Lambda pins above are
+/// UNCHANGED (the A-S5.8 no-regression half).
 #[test]
-fn ambient_driver_par_is_byte_identical_to_the_pre_a_s5_6_golden() {
+fn ambient_driver_par_is_byte_identical_to_the_a_s5_8_golden() {
     let plan = plan_for(include_str!("../../languages/src/ambient.rs"));
     let drive = plan
         .rho_net_lowered()
@@ -123,18 +134,22 @@ fn ambient_driver_par_is_byte_identical_to_the_pre_a_s5_6_golden() {
         .expect("production Ambient is drive-admitted");
     assert_eq!(
         par_fingerprint(drive),
-        (29640, 0xdf369fa1497e84c3),
-        "the Ambient ^drive receiver family must be byte-identical to the pre-A-S5.6 \
-         golden (captured at a9193914)"
+        (33330, 0x8a08afb0ac0ddf23),
+        "the Ambient ^drive receiver family must be byte-identical to the A-S5.8 golden \
+         (float-routed firing emissions; captured at the A-S5.8 leg-1 tree)"
     );
     let installed = plan
         .installed_rho_net_program_par()
         .expect("production Ambient installs");
-    assert_eq!(installed.receives.len(), 7, "3 AC σ-receivers + ^drive + 3 carriers");
+    assert_eq!(
+        installed.receives.len(),
+        15,
+        "3 AC σ-receivers + ^drive + 3 carriers + the 8 A-S5.8 ^float-family receivers"
+    );
     assert_eq!(
         par_fingerprint(&installed),
-        (31301, 0xf7ff78aeca8ce63c),
-        "the full Ambient installed program must be byte-identical to the pre-A-S5.6 \
-         golden (captured at a9193914)"
+        (50744, 0x2c975a412838fbc6),
+        "the full Ambient installed program must be byte-identical to the A-S5.8 golden \
+         (the ^float family appended; captured at the A-S5.8 leg-1 tree)"
     );
 }

@@ -214,7 +214,7 @@ use crate::rho_net_lower::{
 use crate::rho_net_ruleset::{compile_in_rho_matching_ruleset, in_rho_static_gate, InRhoMatchingRuleset};
 use crate::rho_net_subst_trs::{
     for1, free_bits, ground, is_binder_term, join, match_, match_guarded, new_scope,
-    object_congruence_constructors, par2, pat_free, pat_tagged, pat_wildcard,
+    nullary_term, object_congruence_constructors, par2, pat_free, pat_tagged, pat_wildcard,
     persistent_contract, send, tag_par, tagged, union_free, Case, Env, Node,
 };
 
@@ -284,16 +284,42 @@ pub fn drive_admissible(def: &LanguageDef, ruleset: &InRhoMatchingRuleset) -> Dr
 
     let mut reasons: Vec<String> = Vec::new();
 
-    // Conjunct 1: the A-S2 static capability gate.
+    // Conjunct 1: the A-S2 static capability gate. A-S5.8 refinement (F8-AM-1b — the
+    // constructive-discharge witness's admission): a static-gate DEFER is DISCHARGED when
+    // its fireable rewrite is a collection-LHS rule that TRANSCRIBES to a driver AC-carrier
+    // arm ([`build_drive_ac_arm`] — the carrier is SELF-CONTAINED: the drive's own `Match`
+    // arm decides the redex and the carrier receiver rebuilds the contractum, needing no
+    // locate-all match entry). This is exactly the binder-templated nested-AC shape
+    // ([`crate::rho_net_lower::RhoNetLoweredRule::NestedStructuralAcBinderTemplated`]):
+    // recorded NO-MATCH-ENTRY on the locate-all paths (which stay fail-closed — the
+    // report-free MATCH body still rejects such a def, correctly, because the locate-all
+    // network genuinely cannot fire the rule), while the DRIVE path — whose matching is its
+    // own arms — admits it. Every bundled production language passes the gate outright, so
+    // this discharge changes NO bundled admission; a defer that does NOT transcribe still
+    // rejects, fail-closed.
     if let Err(deferred) = in_rho_static_gate(ruleset, def) {
-        let labels: Vec<String> = deferred
+        let undischarged: Vec<String> = deferred
             .iter()
+            .filter(|entry| {
+                let carrier_transcribes = def.rewrites.iter().any(|rewrite| {
+                    rewrite.name.to_string() == entry.rule_label
+                        && !crate::rho_net_lower::congruence_only_premises(&rewrite.premises)
+                        && matches!(
+                            lower_lhs_vars(&rewrite.left),
+                            Err(UnsupportedFamily::CollectionAc)
+                        )
+                        && build_drive_ac_arm(rewrite, def, &ruleset.language_fingerprint).is_ok()
+                });
+                !carrier_transcribes
+            })
             .map(|entry| format!("{} ({:?})", entry.rule_label, entry.reason))
             .collect();
-        reasons.push(format!(
-            "static gate rejects: fireable rule(s) not matchable in Rho: {}",
-            labels.join(", ")
-        ));
+        if !undischarged.is_empty() {
+            reasons.push(format!(
+                "static gate rejects: fireable rule(s) not matchable in Rho: {}",
+                undischarged.join(", ")
+            ));
+        }
     }
 
     // Conjunct 2: every admitted matching family must be driver-supported. Since A-S5.5
@@ -396,8 +422,14 @@ pub fn drive_fuel_channel(language_fingerprint: &str) -> String {
 /// [`crate::rho_net_lower::RhoNetInjectionInvocation`].
 #[derive(Debug, Clone, PartialEq)]
 pub struct RhoNetDriveInvocation {
-    /// The closed seed `Par`: `⌜^drive⌝!(⟦term⟧, fuel, @out_channel)`.
+    /// The closed seed `Par`: `⌜^drive⌝!(⟦term⟧, fuel, @out_channel)` — or, for a
+    /// float-bearing language (A-S5.8 decision Q-SEED = S2), the float-routed sibling
+    /// `new rf { ⌜^float⌝!(⟦term⟧, rf) | for(@cf <- rf){ ⌜^drive⌝!(cf, fuel, @out) } }`.
     pub call: Par,
+    /// A-S5.8 (F8-AM-5a): the RAW reflected subject `⟦term⟧` the seed carries — surfaced
+    /// directly so harness/ledger readers survive BOTH seed shapes without navigating the
+    /// call structure (under S2 the subject is no longer `call.sends[0].data[0]`).
+    pub subject: Par,
     /// The quoted channel the quiescent resting term lands on.
     pub out_channel: String,
     /// [`drive_fired_channel`] of the language fingerprint.
@@ -442,7 +474,83 @@ pub fn rho_net_drive_invocation(
     out_channel: &str,
 ) -> RhoNetDriveInvocation {
     RhoNetDriveInvocation {
-        call: rho_net_drive_call_par(language_fingerprint, subject, out_channel),
+        call: rho_net_drive_call_par(language_fingerprint, subject.clone(), out_channel),
+        subject,
+        out_channel: out_channel.to_string(),
+        fired_channel: drive_fired_channel(language_fingerprint),
+        err_channel: drive_err_channel(language_fingerprint),
+        fuel_channel: drive_fuel_channel(language_fingerprint),
+    }
+}
+
+/// A-S5.8 (decision Q-SEED = S2): the FLOAT-ROUTED drive seed with an EXPLICIT per-path
+/// fuel — the sibling of [`rho_net_drive_call_par_with_fuel`] for float-bearing languages:
+///
+/// ```text
+/// new rf in { ⌜^float⌝!(⟦subject⟧, rf) | for(@cf <- rf){ ⌜^drive⌝!(cf, fuel, @out) } }
+/// ```
+///
+/// The installed `^float` dispatcher canonicalizes the RAW subject (every extrudable
+/// binder to the top run, every bag flat) BEFORE the first `^drive` frame sees it, so a
+/// raw direct injection is correct WITHOUT the host boundary float. Under S2 the
+/// production seed's subject is ALREADY host-float-canonical (the retained boundary float,
+/// INV — load-bearing for the run-order-sensitive α goldens, F8-AM-5b), so this float is
+/// an identity pass (≈ 2 COMMs per node, once per exec).
+pub fn rho_net_drive_float_call_par_with_fuel(
+    language_fingerprint: &str,
+    subject: Par,
+    fuel: i64,
+    out_channel: &str,
+) -> Par {
+    new_scope(1, {
+        let env = Env::root(&["rf"]);
+        let float_call = send(
+            ground(tag_par(language_fingerprint, crate::rho_net_lower::FLOAT_RESERVED_LABEL)),
+            vec![ground(subject), env.var("rf")],
+        );
+        let redrive = for1(env.var("rf"), {
+            let env = env.push(&["cf"]);
+            send(
+                ground(tag_par(language_fingerprint, DRIVE_RESERVED_LABEL)),
+                vec![
+                    env.var("cf"),
+                    ground(new_gint_par(fuel, Vec::new(), false)),
+                    ground(new_gstring_par(out_channel.to_string(), Vec::new(), false)),
+                ],
+            )
+        });
+        par2(float_call, redrive)
+    })
+    .par
+}
+
+/// The FLOAT-ROUTED drive seed with the production per-path fuel ([`DRIVE_DEFAULT_FUEL`]).
+pub fn rho_net_drive_float_call_par(
+    language_fingerprint: &str,
+    subject: Par,
+    out_channel: &str,
+) -> Par {
+    rho_net_drive_float_call_par_with_fuel(
+        language_fingerprint,
+        subject,
+        DRIVE_DEFAULT_FUEL,
+        out_channel,
+    )
+}
+
+/// Assemble the full [`RhoNetDriveInvocation`] whose seed routes through the installed
+/// `^float` dispatcher (A-S5.8, decision Q-SEED = S2) — the float-bearing sibling of
+/// [`rho_net_drive_invocation`], emitted by the generated `rho_net_drive_invocation_to`
+/// for exactly the languages passing the float gate. Same observation channels; the
+/// [`RhoNetDriveInvocation::subject`] field carries the raw reflected subject (F8-AM-5a).
+pub fn rho_net_drive_float_invocation(
+    language_fingerprint: &str,
+    subject: Par,
+    out_channel: &str,
+) -> RhoNetDriveInvocation {
+    RhoNetDriveInvocation {
+        call: rho_net_drive_float_call_par(language_fingerprint, subject.clone(), out_channel),
+        subject,
         out_channel: out_channel.to_string(),
         fired_channel: drive_fired_channel(language_fingerprint),
         err_channel: drive_err_channel(language_fingerprint),
@@ -693,7 +801,10 @@ fn build_drive_ac_arm(
 /// `"ac:{op}"` GString carrier plus a WILDCARD remainder (`{@"ac:op"!(_) | _}`): matches
 /// any Par with ≥ 1 element send on the op's carrier (an empty bag — Nil — does NOT
 /// match, which is exactly why the AM-3 dispatch is THREE-case).
-fn soup_case_pattern(op: &str) -> Par {
+///
+/// `pub(crate)`: shared with the A-S5.8 `^float` family (`crate::rho_net_float`), whose
+/// merge base case rides the SAME three-case dispatch.
+pub(crate) fn soup_case_pattern(op: &str) -> Par {
     let send_pattern = new_send_par(
         new_gstring_par(format!("ac:{op}"), Vec::new(), false),
         vec![pat_wildcard()],
@@ -710,7 +821,11 @@ fn soup_case_pattern(op: &str) -> Par {
 /// binding the element datum (`FreeVar(0)`) plus the free-Par remainder (`FreeVar(1)`) —
 /// the bag arm's `{@"ac:op"!(e) | rem}` (the delta-verified spatial-matcher Par-Par
 /// send-pattern + free-remainder shape).
-fn soup_peel_pattern(op: &str) -> Par {
+///
+/// `pub(crate)`: shared with the A-S5.8 `^float` dispatcher's soup-peel arm
+/// (`crate::rho_net_float`) and the A-S5.8 `^shift` soup arm
+/// (`crate::rho_net_subst_trs::shift_receiver_par` — F8-AM-5d/5e).
+pub(crate) fn soup_peel_pattern(op: &str) -> Par {
     let send_pattern = new_send_par(
         new_gstring_par(format!("ac:{op}"), Vec::new(), false),
         vec![pat_free(0)],
@@ -726,7 +841,10 @@ fn soup_peel_pattern(op: &str) -> Par {
 /// The VALUE `@"ac:{op}"!(element)` — one wrapped bag-element send, used as (part of) a
 /// send DATUM (the WRAP leg of the three-case dispatch and the rebuild of a
 /// statically-non-bag template element).
-fn wrap_element_send(op: &str, element: Node) -> Node {
+///
+/// `pub(crate)`: shared with the A-S5.8 `^float` family and the `^shift` soup arm's
+/// rewrap (`crate::rho_net_float` / `crate::rho_net_subst_trs` — F8-AM-5d/5e).
+pub(crate) fn wrap_element_send(op: &str, element: Node) -> Node {
     send(
         ground(new_gstring_par(format!("ac:{op}"), Vec::new(), false)),
         vec![element],
@@ -750,7 +868,10 @@ fn wrap_element_send(op: &str, element: Node) -> Node {
 /// `@"ac:op"!(Nil)` element — AM-3's exact defect). The dispatch is ONE level deep by
 /// design: deeper never-driven nesting flattens through the contractum's own re-drive
 /// (the AM-3(b) drive induction, module docs).
-fn bag_fragment_dispatch(op: &str, value: Node, dest: Node) -> Node {
+///
+/// `pub(crate)`: shared with the A-S5.8 `^float-merge:{op}` satellite's base case
+/// (`crate::rho_net_float` — the AM-2/AM-3 splice INSIDE the float).
+pub(crate) fn bag_fragment_dispatch(op: &str, value: Node, dest: Node) -> Node {
     match_(
         value.clone(),
         vec![
@@ -777,29 +898,122 @@ fn bag_fragment_dispatch(op: &str, value: Node, dest: Node) -> Node {
 }
 
 /// Collect (first-appearance order, deduplicated) every template VARIABLE sitting at a
-/// bag-ELEMENT position — the σ slots whose values need the [`bag_fragment_dispatch`]
-/// (they may be bags/Nil at runtime). A `Var` at a NODE-child position (a name argument)
-/// and a `Bag`'s `...rest` remainder need no dispatch (the rest slot is always a
-/// soup/Nil, composed directly); a `Node` element is statically non-bag (wrapped
-/// unconditionally).
-fn collect_bag_element_vars(template: &AcReconstructTemplate, at_bag_element: bool, out: &mut Vec<String>) {
+/// bag-ELEMENT position, WITH its enclosing template-binder depth (A-S5.8) — the σ slots
+/// whose (depth-shifted) values need the [`bag_fragment_dispatch`] (they may be bags/Nil
+/// at runtime). A `Var` at a NODE-child position (a name argument) and a `Bag`'s `...rest`
+/// remainder need no dispatch (the rest slot is always a soup/Nil, composed directly); a
+/// `Node` element is statically non-bag (wrapped unconditionally); a `Binder` element is
+/// the statically-non-bag `^lambda` node (wrapped), its BODY recursing one binder deeper
+/// (F8-AM-1c).
+fn collect_bag_element_vars(
+    template: &AcReconstructTemplate,
+    at_bag_element: bool,
+    depth: usize,
+    out: &mut Vec<(String, usize)>,
+) {
     match template {
         AcReconstructTemplate::Var(name) => {
-            if at_bag_element && !out.contains(name) {
-                out.push(name.clone());
+            if at_bag_element && !out.iter().any(|(n, d)| n == name && *d == depth) {
+                out.push((name.clone(), depth));
             }
         },
         AcReconstructTemplate::Node { children, .. } => {
             for child in children {
-                collect_bag_element_vars(child, false, out);
+                collect_bag_element_vars(child, false, depth, out);
             }
         },
         AcReconstructTemplate::Bag { elements, .. } => {
             for element in elements {
-                collect_bag_element_vars(element, true, out);
+                collect_bag_element_vars(element, true, depth, out);
             }
         },
+        AcReconstructTemplate::Binder { body } => {
+            collect_bag_element_vars(body, false, depth + 1, out);
+        },
     }
+}
+
+/// Collect (first-appearance order, deduplicated) every `(σ-slot name, binder depth ≥ 1)`
+/// pair a template references UNDER a [`AcReconstructTemplate::Binder`] — the F8-AM-1c
+/// σ-slot shift requirements: each pair's matched value is pre-shifted by `depth` composed
+/// `^shift(Z, ·)` applications on a fresh channel BEFORE the carrier's rebuild composes it
+/// (never by shifting a composed body — that would corrupt template-introduced de Bruijn
+/// coordinates — and never depth-plus-per-level, a double shift). Bag `...rest` slots
+/// count too (shifting a bag = shifting its elements at an unchanged cutoff — the A-S5.8
+/// `^shift` soup arm, F8-AM-5e).
+fn collect_shift_requirements(
+    template: &AcReconstructTemplate,
+    depth: usize,
+    out: &mut Vec<(String, usize)>,
+) {
+    fn push(name: &str, depth: usize, out: &mut Vec<(String, usize)>) {
+        if depth >= 1 && !out.iter().any(|(n, d)| n == name && *d == depth) {
+            out.push((name.to_string(), depth));
+        }
+    }
+    match template {
+        AcReconstructTemplate::Var(name) => push(name, depth, out),
+        AcReconstructTemplate::Node { children, .. } => {
+            for child in children {
+                collect_shift_requirements(child, depth, out);
+            }
+        },
+        AcReconstructTemplate::Bag { elements, rest, .. } => {
+            for element in elements {
+                collect_shift_requirements(element, depth, out);
+            }
+            if let Some(rest) = rest {
+                push(rest, depth, out);
+            }
+        },
+        AcReconstructTemplate::Binder { body } => {
+            collect_shift_requirements(body, depth + 1, out);
+        },
+    }
+}
+
+/// The carrier frame name holding a σ slot's DEPTH-SHIFTED value (A-S5.8, F8-AM-1c):
+/// depth 0 is the raw receive-frame slot itself; depth `k ≥ 1` is the `k`-fold-shifted
+/// value bound by the shift pre-stage's join.
+fn slot_value_name(slot: &str, depth: usize) -> String {
+    if depth == 0 {
+        slot.to_string()
+    } else {
+        format!("__sh{depth}_{slot}")
+    }
+}
+
+/// Emit the `k`-fold `^shift(Z, ·)` chain for one σ slot (A-S5.8, F8-AM-1c): shift the
+/// value named `value_name` `k ≥ 1` times at cutoff `Z`, resting the result on the channel
+/// named `dest_name`. `k` composed applications — the exact F8-AM-1c form (each
+/// application increments every `^bound(n)` with `n ≥ 0` by one).
+fn chained_shift_node(
+    fingerprint: &str,
+    env: &Env,
+    value_name: &str,
+    dest_name: &str,
+    k: usize,
+) -> Node {
+    debug_assert!(k >= 1, "a shift chain has at least one application");
+    let zero = || ground(nullary_term(fingerprint, crate::rho_net_lower::PEANO_ZERO_REFLECT_LABEL));
+    if k == 1 {
+        return send(
+            ground(tag_par(fingerprint, crate::rho_net_lower::SHIFT_RESERVED_LABEL)),
+            vec![zero(), env.var(value_name), env.var(dest_name)],
+        );
+    }
+    new_scope(1, {
+        let env = env.push(&["__t"]);
+        let first = send(
+            ground(tag_par(fingerprint, crate::rho_net_lower::SHIFT_RESERVED_LABEL)),
+            vec![zero(), env.var(value_name), env.var("__t")],
+        );
+        let rest = for1(env.var("__t"), {
+            let env = env.push(&["__w"]);
+            chained_shift_node(fingerprint, &env, "__w", dest_name, k - 1)
+        });
+        par2(first, rest)
+    })
 }
 
 /// Rebuild one reduct template as a receiver-body [`Node`] over the carrier's bound σ
@@ -807,29 +1021,40 @@ fn collect_bag_element_vars(template: &AcReconstructTemplate, at_bag_element: bo
 /// `rho_net_lower::reflect_ac_template_bound_par`, with the F4/AM-3 difference at
 /// bag-element positions):
 ///
-/// * `Var(v)` at a NODE-child position ⟹ the raw slot value `env.var(v)`;
+/// * `Var(v)` at a NODE-child position ⟹ the slot's DEPTH-shifted value
+///   (`env.var(slot_value_name(v, depth))` — the raw slot at depth 0, the pre-shifted
+///   `__sh{k}_{v}` under `k` template binders, F8-AM-1c);
 /// * `Node { C, children }` ⟹ the tagged `EList[⌜C⌝, …]` (byte-compatible with
 ///   `reflect_ground_term_par`'s constructor image);
+/// * `Binder { body }` (A-S5.8) ⟹ the ctor-erased `EList[⌜^lambda⌝, ⟦body⟧]` with the body
+///   rebuilt one binder DEEPER (its σ slots resolve to their `depth + 1` shifted values);
 /// * `Bag { op, elements, rest }` ⟹ the process soup: each element emitted per its
 ///   STATIC kind — a `Var` composes its PRE-COMPUTED three-case FRAGMENT
-///   (`env.var(__frag_v)` — the splice), a `Node` wraps unconditionally (statically
-///   non-bag), a same-`op` inner `Bag` composes its rebuilt soup directly (a static
-///   splice — the AM-2 `insert_into` mirror), a different-op inner `Bag` wraps its soup
-///   as one element — plus the `...rest` slot composed directly (always a soup/Nil).
+///   (`env.var(__frag…)` — the splice), a `Node`/`Binder` wraps unconditionally
+///   (statically non-bag), a same-`op` inner `Bag` composes its rebuilt soup directly (a
+///   static splice — the AM-2 `insert_into` mirror), a different-op inner `Bag` wraps its
+///   soup as one element — plus the `...rest` slot composed directly (always a soup/Nil;
+///   depth-shifted like every σ slot).
 fn rebuild_template_node(
     template: &AcReconstructTemplate,
     env: &Env,
     fingerprint: &str,
+    depth: usize,
 ) -> Node {
     match template {
-        AcReconstructTemplate::Var(name) => env.var(name),
+        AcReconstructTemplate::Var(name) => env.var(&slot_value_name(name, depth)),
         AcReconstructTemplate::Node { constructor, children } => tagged(
             fingerprint,
             constructor,
             children
                 .iter()
-                .map(|child| rebuild_template_node(child, env, fingerprint))
+                .map(|child| rebuild_template_node(child, env, fingerprint, depth))
                 .collect(),
+        ),
+        AcReconstructTemplate::Binder { body } => tagged(
+            fingerprint,
+            LAMBDA_REFLECT_LABEL,
+            vec![rebuild_template_node(body, env, fingerprint, depth + 1)],
         ),
         AcReconstructTemplate::Bag { op, elements, rest } => {
             let mut soup: Option<Node> = None;
@@ -842,18 +1067,22 @@ fn rebuild_template_node(
             for element in elements {
                 let node = match element {
                     // A σ-slot element: its THREE-CASE fragment was pre-computed onto
-                    // `__frag_{v}` (see [`ac_carrier_receiver_par`]) — composing it IS
+                    // `__frag…` (see [`ac_carrier_receiver_par`]) — composing it IS
                     // the one-level splice.
-                    AcReconstructTemplate::Var(name) => env.var(&fragment_value_name(name)),
-                    // A constructor element is statically non-bag ⟹ wrap.
-                    AcReconstructTemplate::Node { .. } => wrap_element_send(
-                        op,
-                        rebuild_template_node(element, env, fingerprint),
-                    ),
+                    AcReconstructTemplate::Var(name) => {
+                        env.var(&fragment_value_name(name, depth))
+                    },
+                    // A constructor / binder element is statically non-bag ⟹ wrap.
+                    AcReconstructTemplate::Node { .. } | AcReconstructTemplate::Binder { .. } => {
+                        wrap_element_send(
+                            op,
+                            rebuild_template_node(element, env, fingerprint, depth),
+                        )
+                    },
                     // An inner literal bag: same-op ⟹ static splice; different-op ⟹ its
                     // soup wrapped as one element.
                     AcReconstructTemplate::Bag { op: inner_op, .. } => {
-                        let rebuilt = rebuild_template_node(element, env, fingerprint);
+                        let rebuilt = rebuild_template_node(element, env, fingerprint, depth);
                         if inner_op == op {
                             rebuilt
                         } else {
@@ -864,16 +1093,23 @@ fn rebuild_template_node(
                 push(node, &mut soup);
             }
             if let Some(rest_name) = rest {
-                push(env.var(rest_name), &mut soup);
+                push(env.var(&slot_value_name(rest_name, depth)), &mut soup);
             }
             soup.unwrap_or_else(|| ground(Par::default()))
         },
     }
 }
 
-/// The synthetic frame name carrying a σ slot's pre-computed three-case FRAGMENT value.
-fn fragment_value_name(slot: &str) -> String {
-    format!("__frag_{slot}")
+/// The synthetic frame name carrying a σ slot's pre-computed three-case FRAGMENT value at
+/// one template-binder depth: `__frag_{slot}` at depth 0 (BYTE-STABLE with the A-S5.5
+/// emission — the production Ambient carriers are binder-free) and `__frag{k}_{slot}`
+/// under `k` template binders (A-S5.8, reachable only with a `Binder` template).
+fn fragment_value_name(slot: &str, depth: usize) -> String {
+    if depth == 0 {
+        format!("__frag_{slot}")
+    } else {
+        format!("__frag{depth}_{slot}")
+    }
 }
 
 /// Build the FIXED-CHANNEL persistent AC-CARRIER receiver for one admitted AC rule
@@ -948,15 +1184,24 @@ fn ac_carrier_receiver_par(
     let env = Env::root(&name_refs);
 
     // The σ slots needing the three-case fragment dispatch: every template Var at a
-    // bag-element position (first-appearance order — the emission order of the
-    // dispatches and join binds).
-    let mut fragment_slots: Vec<String> = Vec::new();
+    // bag-element position, WITH its template-binder depth (first-appearance order — the
+    // emission order of the dispatches and join binds).
+    let mut fragment_slots: Vec<(String, usize)> = Vec::new();
     for template in &spec.reduct_templates {
-        collect_bag_element_vars(template, true, &mut fragment_slots);
+        collect_bag_element_vars(template, true, 0, &mut fragment_slots);
+    }
+    // A-S5.8 (F8-AM-1c): the σ slots referenced UNDER template binders — each `(name, k)`
+    // pair's value is pre-shifted by `k` composed `^shift(Z, ·)` applications on a fresh
+    // channel (stage A) before the fragment dispatches / rebuild compose it. Empty for
+    // every binder-free rule (the whole production Ambient corpus), so the A-S5.5 carrier
+    // emission is BYTE-IDENTICAL there.
+    let mut shift_requirements: Vec<(String, usize)> = Vec::new();
+    for template in &spec.reduct_templates {
+        collect_shift_requirements(template, 0, &mut shift_requirements);
     }
 
     // The RHS top-level bag emission, built in a frame where every fragment value is
-    // bound as `__frag_{v}` (or the root frame when no dispatch is needed).
+    // bound as `__frag…` (or the root frame when no dispatch is needed).
     let top_soup = |env: &Env| -> Node {
         let mut soup: Option<Node> = None;
         let push = |node: Node, soup: &mut Option<Node>| {
@@ -967,13 +1212,15 @@ fn ac_carrier_receiver_par(
         };
         for template in &spec.reduct_templates {
             let node = match template {
-                AcReconstructTemplate::Var(name) => env.var(&fragment_value_name(name)),
-                AcReconstructTemplate::Node { .. } => wrap_element_send(
-                    &spec.op,
-                    rebuild_template_node(template, env, fingerprint),
-                ),
+                AcReconstructTemplate::Var(name) => env.var(&fragment_value_name(name, 0)),
+                AcReconstructTemplate::Node { .. } | AcReconstructTemplate::Binder { .. } => {
+                    wrap_element_send(
+                        &spec.op,
+                        rebuild_template_node(template, env, fingerprint, 0),
+                    )
+                },
                 AcReconstructTemplate::Bag { op: inner_op, .. } => {
-                    let rebuilt = rebuild_template_node(template, env, fingerprint);
+                    let rebuilt = rebuild_template_node(template, env, fingerprint, 0);
                     if *inner_op == spec.op {
                         rebuilt
                     } else {
@@ -989,23 +1236,27 @@ fn ac_carrier_receiver_par(
         soup.unwrap_or_else(|| ground(Par::default()))
     };
 
-    let body = if fragment_slots.is_empty() {
-        // No σ-slot bag-element positions (impossible for the bundled Ambient rules, kept
-        // total): emit the RHS bag directly.
-        send(env.var("out"), vec![top_soup(&env)])
-    } else {
+    // Stage B: the fragment dispatches + the atomic fragment join + the single
+    // out-emission of the RHS bag — built in a frame where every SHIFTED slot value
+    // (stage A) is already bound.
+    let stage_b = |env: &Env| -> Node {
+        if fragment_slots.is_empty() {
+            // No σ-slot bag-element positions (impossible for the bundled Ambient rules,
+            // kept total): emit the RHS bag directly.
+            return send(env.var("out"), vec![top_soup(env)]);
+        }
         let q = fragment_slots.len();
         new_scope(q, {
-            let dispatch_names: Vec<String> =
-                (0..q).map(|i| format!("__f{i}")).collect();
+            let dispatch_names: Vec<String> = (0..q).map(|i| format!("__f{i}")).collect();
             let dispatch_refs: Vec<&str> = dispatch_names.iter().map(String::as_str).collect();
             let env = env.push(&dispatch_refs);
-            // One three-case dispatch per fragment slot, concurrent.
+            // One three-case dispatch per fragment slot, concurrent — the dispatched
+            // value is the slot's DEPTH-shifted value (raw at depth 0).
             let mut composed: Option<Node> = None;
-            for (i, slot) in fragment_slots.iter().enumerate() {
+            for (i, (slot, depth)) in fragment_slots.iter().enumerate() {
                 let dispatch = bag_fragment_dispatch(
                     &spec.op,
-                    env.var(slot),
+                    env.var(&slot_value_name(slot, *depth)),
                     env.var(&dispatch_names[i]),
                 );
                 composed = Some(match composed {
@@ -1014,18 +1265,54 @@ fn ac_carrier_receiver_par(
                 });
             }
             // The atomic fragment join, then the single out-emission of the RHS bag.
-            let join_sources: Vec<Node> =
-                dispatch_names.iter().map(|f| env.var(f)).collect();
+            let join_sources: Vec<Node> = dispatch_names.iter().map(|f| env.var(f)).collect();
             let join_node = join(join_sources, {
                 let frag_names: Vec<String> = fragment_slots
                     .iter()
-                    .map(|slot| fragment_value_name(slot))
+                    .map(|(slot, depth)| fragment_value_name(slot, *depth))
                     .collect();
                 let frag_refs: Vec<&str> = frag_names.iter().map(String::as_str).collect();
                 let env = env.push(&frag_refs);
                 send(env.var("out"), vec![top_soup(&env)])
             });
             par2(composed.expect("q ≥ 1"), join_node)
+        })
+    };
+
+    let body = if shift_requirements.is_empty() {
+        stage_b(&env)
+    } else {
+        // Stage A (A-S5.8, F8-AM-1c): one fresh channel + one `k`-fold `^shift(Z, ·)`
+        // chain per `(slot, depth)` requirement, concurrent; the atomic join binds each
+        // shifted value as `__sh{k}_{slot}`, and stage B runs in that frame.
+        let p = shift_requirements.len();
+        new_scope(p, {
+            let shift_chan_names: Vec<String> = (0..p).map(|i| format!("__fs{i}")).collect();
+            let shift_chan_refs: Vec<&str> =
+                shift_chan_names.iter().map(String::as_str).collect();
+            let env = env.push(&shift_chan_refs);
+            let mut composed: Option<Node> = None;
+            for (i, (slot, depth)) in shift_requirements.iter().enumerate() {
+                let chain =
+                    chained_shift_node(fingerprint, &env, slot, &shift_chan_names[i], *depth);
+                composed = Some(match composed {
+                    None => chain,
+                    Some(acc) => par2(acc, chain),
+                });
+            }
+            let join_sources: Vec<Node> =
+                shift_chan_names.iter().map(|c| env.var(c)).collect();
+            let join_node = join(join_sources, {
+                let shifted_names: Vec<String> = shift_requirements
+                    .iter()
+                    .map(|(slot, depth)| slot_value_name(slot, *depth))
+                    .collect();
+                let shifted_refs: Vec<&str> =
+                    shifted_names.iter().map(String::as_str).collect();
+                let env = env.push(&shifted_refs);
+                stage_b(&env)
+            });
+            par2(composed.expect("p ≥ 1"), join_node)
         })
     };
 
@@ -1188,6 +1475,17 @@ pub enum FiringEmission {
 /// across the `new r` / `for(@c <- r)` binders; the module's [`Env`] discipline requires
 /// name-late resolution). The `carrier` supplies the contractum payload (the seam sits
 /// above the carrier).
+///
+/// A-S5.8 (decision Q-AB = A, always-float): for a FLOAT-BEARING language
+/// (`route_through_float`, [`crate::rho_net_float::language_is_float_bearing`]) the
+/// `ContractumRedrive` emission routes the contractum through the installed `^float`
+/// dispatcher BEFORE the re-drive — `for(@c <- r){ new rf { ⌜^float⌝!(c, rf) |
+/// for(@cf <- rf){ ⌜^drive⌝!(cf, fuel - 1, ret) } } }` — establishing the uniform
+/// invariant "every `^drive` subject is float-canonical" per firing. Float COMMs consume
+/// NO drive fuel (a `≡` canonicalization, not a `→` step) and the family carries no fuel
+/// of its own (termination is structural). A non-float language's emission is
+/// BYTE-IDENTICAL to pre-A-S5.8 (the Lambda no-regression pin).
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn firing_emission_node(
     arm: &DriveRedexArm,
     emission: &FiringEmission,
@@ -1196,6 +1494,7 @@ pub(crate) fn firing_emission_node(
     fuel_var: &str,
     ret_var: &str,
     carrier: &dyn DriveCarrier,
+    route_through_float: bool,
 ) -> Node {
     new_scope(1, {
         let env = env.push(&["r"]);
@@ -1219,20 +1518,57 @@ pub(crate) fn firing_emission_node(
         let emission_node = match emission {
             FiringEmission::ContractumRedrive => for1(env.var("r"), {
                 let env = env.push(&["c"]);
-                send(
-                    ground(tag_par(fingerprint, DRIVE_RESERVED_LABEL)),
-                    vec![
-                        carrier.contractum_payload(&env, env.var("c")),
-                        eminus(env.var(fuel_var), gint(1)),
-                        env.var(ret_var),
-                    ],
-                )
+                contractum_redrive_node(fingerprint, &env, fuel_var, ret_var, carrier, route_through_float)
             }),
             // The E-1 seam: the precompiled bundle replaces the redrive `for` (see the
             // [`FiringEmission::ScionBundle`] contract). Constructed nowhere this stage.
             FiringEmission::ScionBundle { bundle } => ground(bundle.clone()),
         };
         par2(par2(accept, ledger), emission_node)
+    })
+}
+
+/// The shared contractum RE-ENTRY node of both firing emitters, built in the frame where
+/// `c` names the delivered contractum: the direct re-drive `⌜^drive⌝!(c, fuel - 1, ret)`
+/// (non-float languages, byte-identical to pre-A-S5.8), or the A-S5.8 float-routed form
+/// `new rf { ⌜^float⌝!(c, rf) | for(@cf <- rf){ ⌜^drive⌝!(cf, fuel - 1, ret) } }`
+/// (name-late [`Env`] discipline — `fuel_var`/`ret_var` resolve inside the nested scopes).
+fn contractum_redrive_node(
+    fingerprint: &str,
+    env: &Env,
+    fuel_var: &str,
+    ret_var: &str,
+    carrier: &dyn DriveCarrier,
+    route_through_float: bool,
+) -> Node {
+    if !route_through_float {
+        return send(
+            ground(tag_par(fingerprint, DRIVE_RESERVED_LABEL)),
+            vec![
+                carrier.contractum_payload(env, env.var("c")),
+                eminus(env.var(fuel_var), gint(1)),
+                env.var(ret_var),
+            ],
+        );
+    }
+    new_scope(1, {
+        let env = env.push(&["rf"]);
+        let float_call = send(
+            ground(tag_par(fingerprint, crate::rho_net_lower::FLOAT_RESERVED_LABEL)),
+            vec![carrier.contractum_payload(&env, env.var("c")), env.var("rf")],
+        );
+        let redrive = for1(env.var("rf"), {
+            let env = env.push(&["cf"]);
+            send(
+                ground(tag_par(fingerprint, DRIVE_RESERVED_LABEL)),
+                vec![
+                    env.var("cf"),
+                    eminus(env.var(fuel_var), gint(1)),
+                    env.var(ret_var),
+                ],
+            )
+        });
+        par2(float_call, redrive)
     })
 }
 
@@ -1260,6 +1596,7 @@ fn ac_firing_emission_node(
     ret_var: &str,
     carrier: &dyn DriveCarrier,
     subject: &DriveSubject<'_>,
+    route_through_float: bool,
 ) -> Node {
     new_scope(1, {
         let env = env.push(&["r"]);
@@ -1277,14 +1614,7 @@ fn ac_firing_emission_node(
         let emission_node = match emission {
             FiringEmission::ContractumRedrive => for1(env.var("r"), {
                 let env = env.push(&["c"]);
-                send(
-                    ground(tag_par(fingerprint, DRIVE_RESERVED_LABEL)),
-                    vec![
-                        carrier.contractum_payload(&env, env.var("c")),
-                        eminus(env.var(fuel_var), gint(1)),
-                        env.var(ret_var),
-                    ],
-                )
+                contractum_redrive_node(fingerprint, &env, fuel_var, ret_var, carrier, route_through_float)
             }),
             // The E-1 seam: the precompiled bundle replaces the redrive `for` (see the
             // [`FiringEmission::ScionBundle`] contract). Constructed nowhere this stage.
@@ -1328,8 +1658,11 @@ fn eminus(a: Node, b: Node) -> Node {
 
 /// The driver frame names a σ variable must not shadow — [`Env::get`] resolves
 /// innermost-first, so a σ capture named `fuel` would corrupt the firing arm's fuel
-/// resolution. Checked (fail-closed) by the seed transcription.
-const DRIVE_FRAME_NAMES: [&str; 6] = ["t", "fuel", "ret", "r", "c", "rb"];
+/// resolution. Checked (fail-closed) by the seed transcription. A-S5.8 adds `rf`/`cf`
+/// (the float-routed contractum re-entry's fresh return + floated-contractum formals) —
+/// pure admission-time hygiene (no emitted byte depends on the const), and no bundled
+/// language declares a σ variable named either.
+const DRIVE_FRAME_NAMES: [&str; 8] = ["t", "fuel", "ret", "r", "c", "rb", "rf", "cf"];
 
 /// Whether a σ variable name collides with the driver's frame discipline (the fixed
 /// frame/scope names, or the generated `c{i}`/`r{i}`/`s{i}` descent names).
@@ -1592,6 +1925,13 @@ pub(crate) fn drive_lowering(
             RhoNetLoweredRule::SubstRewrite { rule_id, .. }
             | RhoNetLoweredRule::BaseRewrite { rule_id, .. } => (rule_id, false, false),
             RhoNetLoweredRule::NestedStructuralAcRewrite { rule_id, .. } => (rule_id, true, true),
+            // A-S5.8 (F8-AM-1b): a binder-templated nested-AC rule has NO site-keyed match
+            // receiver (the NO-MATCH-ENTRY disposition) but its DRIVE carrier — which
+            // pre-shifts σ slots asynchronously before the join — carries it: same nested
+            // AC-arm family, declaration order preserved.
+            RhoNetLoweredRule::NestedStructuralAcBinderTemplated { rule_id } => {
+                (rule_id, true, true)
+            },
             RhoNetLoweredRule::StructuralAcRewrite { rule_id, .. } => (rule_id, true, false),
             _ => continue,
         };
@@ -1759,6 +2099,7 @@ fn fuel_gated_firing(
     fingerprint: &str,
     env: &Env,
     carrier: &dyn DriveCarrier,
+    route_through_float: bool,
 ) -> Result<Node, String> {
     let exhaustion_datum = rebuild_from_pattern(&arm.lhs, def, fingerprint, env)?;
     Ok(match_(
@@ -1783,6 +2124,7 @@ fn fuel_gated_firing(
                     "fuel",
                     "ret",
                     carrier,
+                    route_through_float,
                 ),
             },
         ],
@@ -1801,6 +2143,7 @@ fn ac_fuel_gated_firing(
     env: &Env,
     carrier: &dyn DriveCarrier,
     subject: &DriveSubject<'_>,
+    route_through_float: bool,
 ) -> Node {
     match_(
         env.var("fuel"),
@@ -1825,6 +2168,7 @@ fn ac_fuel_gated_firing(
                     "ret",
                     carrier,
                     subject,
+                    route_through_float,
                 ),
             },
         ],
@@ -1846,6 +2190,10 @@ fn redex_cases(
     carrier: &dyn DriveCarrier,
     subject: &DriveSubject<'_>,
 ) -> Result<Vec<(Case, Option<Par>)>, String> {
+    // A-S5.8 (decision Q-AB = A): a float-bearing language's firing emissions route EVERY
+    // contractum through the installed `^float` dispatcher before the re-drive; every other
+    // language's emissions are byte-identical to pre-A-S5.8.
+    let route_through_float = crate::rho_net_float::language_is_float_bearing(def);
     let mut cases = Vec::with_capacity(arms.len());
     for arm in arms {
         match arm {
@@ -1855,7 +2203,7 @@ fn redex_cases(
                 let sigma_refs: Vec<&str> = arm.sigma_vars.iter().map(String::as_str).collect();
                 let body = {
                     let env = env.push(&sigma_refs);
-                    fuel_gated_firing(arm, def, fingerprint, &env, carrier)?
+                    fuel_gated_firing(arm, def, fingerprint, &env, carrier, route_through_float)?
                 };
                 cases.push((
                     Case { pattern: check.pattern, free_count: check.free_count, body },
@@ -1867,7 +2215,14 @@ fn redex_cases(
                 let case_refs: Vec<&str> = arm.case_names.iter().map(String::as_str).collect();
                 let body = {
                     let env = env.push(&case_refs);
-                    ac_fuel_gated_firing(arm, fingerprint, &env, carrier, subject)
+                    ac_fuel_gated_firing(
+                        arm,
+                        fingerprint,
+                        &env,
+                        carrier,
+                        subject,
+                        route_through_float,
+                    )
                 };
                 cases.push((
                     Case { pattern: check.pattern, free_count: check.free_count, body },
@@ -2163,7 +2518,12 @@ pub(crate) fn drive_program_par(
 /// A-S5.3 [`resolve_constructor_collection_type`] (term-context first, `::=`-declared
 /// grammar-item fallback), so the driver's bag arms can never disagree with the AC
 /// lowering about which constructors are bags.
-fn hashbag_collection_ops(def: &LanguageDef) -> Vec<String> {
+///
+/// `pub(crate)` (A-S5.8, F8-AM-5d): shared with the `^shift` soup-arm gate
+/// (`crate::rho_net_subst_trs::shift_receiver_par` — the arms are emitted iff this is
+/// non-empty, keeping bag-free languages byte-identical) and the `^float` family's
+/// soup-peel enumeration (`crate::rho_net_float`).
+pub(crate) fn hashbag_collection_ops(def: &LanguageDef) -> Vec<String> {
     def.terms
         .iter()
         .filter_map(|term| {
@@ -2371,7 +2731,10 @@ mod tests {
         // (`^drive-ac`): reserving the base label keeps the whole `:`-suffixed per-rule
         // family (`"^drive-ac:{RuleLabel}"`) collision-free with user constructors (a
         // Rust `Ident` contains neither `^` nor `:`), and the C2 object-congruence
-        // assertion guards the base like every other reserved tag.
+        // assertion guards the base like every other reserved tag. A-S5.8 extends the
+        // registry again (16 → 19) with the `^float` family — the dispatcher rendezvous
+        // plus the two satellite tag prefixes (`^float-hoist:{C}` / `^float-merge:{op}`),
+        // guarded identically.
         let reserved = crate::rho_net_subst_trs::reserved_subst_trs_labels();
         for label in [
             DRIVE_RESERVED_LABEL,
@@ -2379,6 +2742,9 @@ mod tests {
             DRIVE_FUEL_RESERVED_LABEL,
             FIRED_RESERVED_LABEL,
             DRIVE_AC_RESERVED_LABEL,
+            crate::rho_net_lower::FLOAT_RESERVED_LABEL,
+            crate::rho_net_lower::FLOAT_HOIST_RESERVED_LABEL,
+            crate::rho_net_lower::FLOAT_MERGE_RESERVED_LABEL,
         ] {
             assert!(
                 reserved.contains(&label),
@@ -2465,14 +2831,17 @@ mod tests {
                 "a carrier receiver carries the non-linear Receive.condition"
             );
         }
-        // Installed once: 3 legacy AC σ-receivers + the 4 drive-program receivers.
+        // Installed once: 3 legacy AC σ-receivers + the 4 drive-program receivers + the
+        // A-S5.8 `^float` family (dispatcher + merge:PPar + 4 hoists + first-time
+        // `^shift`/`^cmp` — Ambient carries no subst TRS) = 15.
         let installed = lowered
             .installed_program_par()
             .expect("A-S5.5: production Ambient installs with the driver");
         assert_eq!(
             installed.receives.len(),
-            7,
-            "installed = InRule + OutRule + OpenRule σ-receivers + ^drive + 3 carriers"
+            15,
+            "installed = InRule + OutRule + OpenRule σ-receivers + ^drive + 3 carriers + \
+             the 8 A-S5.8 ^float-family receivers"
         );
     }
 
@@ -2584,6 +2953,181 @@ mod tests {
             datum.sends[0].chan,
             Some(new_gstring_par("ac:PPar".to_string(), Vec::new(), false)),
             "the wrap rides the op's ac: carrier"
+        );
+    }
+
+    /// The A-S5.8 constructive-discharge WITNESS def (F8-AM-1a, decision Q-W): a
+    /// name-keyed test `LanguageDef` named `Ambient` (DRIVE_OPT_IN unchanged) whose
+    /// `Seal` rewrite's RHS introduces a `PNew` over a ν-split `POpen` redex. The LHS is
+    /// DEPTH-2 NESTED (the `PAmb N (PPar {Q, ...rest1})` element — the F8-AM-1a step-2
+    /// requirement, so the RHS flows through the TEMPLATE path where
+    /// `AcReconstructTemplate::Binder` applies); the binder sits at an ELEMENT template
+    /// position.
+    fn witness_seal_def() -> LanguageDef {
+        let fragment = r#"
+            name: Ambient,
+            types { Proc Name },
+            terms {
+                PZero . Proc ::= "0" ;
+                PSeal . Proc ::= "seal(" Name "," Proc ")" ;
+                POpen . Proc ::= "open(" Name "," Proc ")" ;
+                PAmb . Proc ::= Name "[" Proc "]" ;
+                PNew . ^x.p:[Name -> Proc] |- "new" "(" x "," p ")" : Proc;
+                PPar . Proc ::= HashBag(Proc) sep "|" delim "{" "}" ;
+            },
+            equations {
+                NewComm . |- (PNew ^x.(PNew ^y.P)) = (PNew ^y.(PNew ^x.P));
+                ScopeExtrusion . | x # ...rest |- (PPar {(PNew ^x.P), ...rest}) = (PNew ^x.(PPar {P, ...rest}));
+                OpenNew . | x # N |- (POpen N (PNew ^x.P)) = (PNew ^x.(POpen N P));
+                SealNew . | x # N |- (PSeal N (PNew ^x.P)) = (PNew ^x.(PSeal N P));
+                AmbNew . | x # N |- (PAmb N (PNew ^x.P)) = (PNew ^x.(PAmb N P));
+            },
+            rewrites {
+                Seal . |- (PPar {(PSeal N P), (PAmb N (PPar {Q, ...rest1})), ...rest})
+                    ~> (PPar {(PNew ^x.(PPar {(POpen N P)})), (PAmb N (PPar {Q, ...rest1})), ...rest});
+                OpenRule . |- (PPar {(POpen N P), (PAmb N Q), ...rest})
+                    ~> (PPar {P, Q, ...rest});
+            },
+        "#;
+        syn::parse_str::<LanguageDef>(fragment).expect("the witness Seal def parses")
+    }
+
+    /// ★ A-S5.8 (F8-AM-1b): the witness `Seal` rule takes the fail-closed NO-MATCH-ENTRY
+    /// disposition (`NestedStructuralAcBinderTemplated` — recorded, no `Par`, no install
+    /// error), the def still INSTALLS, the drive ADMITS it (the conjunct-1 discharge for
+    /// driver-transcribable carrier defers), the drive program carries the Seal + OpenRule
+    /// carriers, and the `^float` family is installed (the witness is float-bearing).
+    #[test]
+    fn witness_seal_rule_takes_the_binder_templated_disposition_and_the_drive_admits() {
+        let def = witness_seal_def();
+        assert!(
+            crate::rho_net_float::language_is_float_bearing(&def),
+            "the witness def is float-bearing (its equations are all recognized floats)"
+        );
+        let lowered = lowered_for(&def);
+        assert!(
+            lowered.errors().is_empty(),
+            "the binder-templated disposition pushes NO install error: {:?}",
+            lowered.errors()
+        );
+        let seal = lowered
+            .rules()
+            .iter()
+            .find(|rule| rule.rule_id().ends_with(":Seal"))
+            .expect("the Seal rule lowers");
+        assert!(
+            matches!(seal, RhoNetLoweredRule::NestedStructuralAcBinderTemplated { .. }),
+            "Seal takes the NO-MATCH-ENTRY disposition, got {seal:?}"
+        );
+        assert!(seal.par().is_none(), "no site-keyed match receiver is built for Seal");
+        assert_eq!(
+            lowered.drive_admission(),
+            &DriveAdmission::Admitted,
+            "the drive ADMITS the witness def (the A-S5.8 conjunct-1 discharge)"
+        );
+        let drive = lowered.drive().expect("the witness def carries the drive program");
+        assert_eq!(
+            drive.receives.len(),
+            3,
+            "the witness drive program = ^drive + the Seal carrier + the OpenRule carrier"
+        );
+        let fp = lowered.language_fingerprint.as_str();
+        assert!(
+            drive.receives.iter().any(|receive| {
+                receive.binds[0].source.as_ref()
+                    == Some(&tag_par(fp, &drive_ac_carrier_label("Seal")))
+            }),
+            "the Seal AC carrier rests on its reserved per-rule channel"
+        );
+        assert!(
+            lowered.float().is_some(),
+            "the witness def installs the ^float family (float-bearing ∧ admitted)"
+        );
+        lowered
+            .installed_program_par()
+            .expect("the witness def INSTALLS (the disposition never blocks the boundary)");
+    }
+
+    /// ★ A-S5.8 (F8-AM-1): the Seal carrier's Binder-template rebuild — the carrier
+    /// receiver pre-shifts the under-binder σ slots (`N`/`P` at depth 1 — ONE
+    /// `^shift(Z, ·)` application each, the F8-AM-1c rule) on fresh channels and emits
+    /// the ctor-erased `⌜^lambda⌝` node; the whole-arm transcription carries the
+    /// cross-level guard exactly like a binder-free nested rule.
+    #[test]
+    fn witness_seal_carrier_pre_shifts_the_under_binder_slots() {
+        let def = witness_seal_def();
+        let rewrite = def
+            .rewrites
+            .iter()
+            .find(|rewrite| rewrite.name.to_string() == "Seal")
+            .expect("the Seal rewrite exists");
+        let arm = build_drive_ac_arm(rewrite, &def, "fp-witness")
+            .expect("the Seal rewrite transcribes to a driver AC-carrier arm");
+        assert_eq!(arm.carrier_label, "^drive-ac:Seal");
+        assert_eq!(
+            arm.free_count, 3,
+            "2 cross-level guard slots (N × 2) + the bound outer rest"
+        );
+        assert!(!arm.guard.exprs.is_empty(), "the non-linear guard is real");
+        // The carrier receiver: persistent, on the reserved channel, with the shift
+        // pre-stage (a `^shift` send appears in its body — the F8-AM-1c σ-slot shifts)
+        // and the ctor-erased `^lambda` tag in its rebuild.
+        assert_eq!(arm.receiver.receives.len(), 1);
+        let receive = &arm.receiver.receives[0];
+        assert!(receive.persistent);
+        let body_debug = format!("{:?}", receive.body.as_ref().expect("carrier body"));
+        let shift_tag =
+            format!("{:?}", tag_par("fp-witness", crate::rho_net_lower::SHIFT_RESERVED_LABEL));
+        assert!(
+            body_debug.contains(&shift_tag),
+            "the carrier body pre-shifts under-binder σ slots through ⌜^shift⌝"
+        );
+        let lambda_tag = format!("{:?}", tag_par("fp-witness", LAMBDA_REFLECT_LABEL));
+        assert!(
+            body_debug.contains(&lambda_tag),
+            "the carrier rebuild emits the ctor-erased ⌜^lambda⌝ node"
+        );
+    }
+
+    /// A-S5.8 fail-closed (every non-witness shape): a binder at the RHS-bag ROOT is
+    /// rejected by `resolve_bag_apply` (the RHS must be bag-rooted), so the rule stays
+    /// `Unsupported{CollectionAc}` — recorded loud, never a wrong carrier.
+    #[test]
+    fn binder_at_the_rhs_root_stays_fail_closed() {
+        let fragment = r#"
+            name: Ambient,
+            types { Proc Name },
+            terms {
+                PZero . Proc ::= "0" ;
+                PSeal . Proc ::= "seal(" Name "," Proc ")" ;
+                PAmb . Proc ::= Name "[" Proc "]" ;
+                PNew . ^x.p:[Name -> Proc] |- "new" "(" x "," p ")" : Proc;
+                PPar . Proc ::= HashBag(Proc) sep "|" delim "{" "}" ;
+            },
+            equations {
+                ScopeExtrusion . | x # ...rest |- (PPar {(PNew ^x.P), ...rest}) = (PNew ^x.(PPar {P, ...rest}));
+                SealNew . | x # N |- (PSeal N (PNew ^x.P)) = (PNew ^x.(PSeal N P));
+                AmbNew . | x # N |- (PAmb N (PNew ^x.P)) = (PNew ^x.(PAmb N P));
+            },
+            rewrites {
+                BadSeal . |- (PPar {(PSeal N P), (PAmb N (PPar {Q, ...rest1})), ...rest})
+                    ~> (PNew ^x.(PPar {(PSeal N P), ...rest}));
+            },
+        "#;
+        let def = syn::parse_str::<LanguageDef>(fragment).expect("the bad-shape def parses");
+        let lowered = lowered_for(&def);
+        let bad = lowered
+            .rules()
+            .iter()
+            .find(|rule| rule.rule_id().ends_with(":BadSeal"))
+            .expect("the BadSeal rule lowers");
+        assert!(
+            matches!(bad, RhoNetLoweredRule::Unsupported { .. }),
+            "a binder at the RHS root is fail-closed Unsupported, got {bad:?}"
+        );
+        assert!(
+            matches!(lowered.drive_admission(), DriveAdmission::Unsupported { .. }),
+            "the drive records Unsupported for the untranscribable shape"
         );
     }
 

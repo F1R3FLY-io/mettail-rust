@@ -96,6 +96,11 @@ pub mod rho_net_cache;
 /// ([`DRIVE_OPT_IN`] / [`DriveAdmission`] / [`drive_admissible`]), the drive-seed
 /// invocation helpers, and the E-1 scion seam.
 pub mod rho_net_drive;
+/// A-S5.8: the in-Rho `^float` receiver family — the per-iteration binder-float
+/// canonicalizer for float-bearing languages (the dispatcher, the equation-derived
+/// `^float-hoist:{C}` / `^float-merge:{op}` satellites, the shared `^shift`/`^cmp`
+/// install, and the [`language_is_float_bearing`] gate).
+pub mod rho_net_float;
 pub mod rho_net_lower;
 /// Track B (BENCHMARK-ONLY, quarantined): the naive Knotted-Topoi Appendix-A
 /// baseline emitter — compiled ONLY under the `bench-naive-baseline` feature.
@@ -200,13 +205,16 @@ pub use rho_net_lower::{
 };
 pub use rho_net_drive::{
     drive_admissible, drive_err_channel, drive_fired_channel, drive_fuel_channel,
-    rho_net_drive_call_par, rho_net_drive_call_par_with_fuel, rho_net_drive_invocation,
-    DriveAdmission, DriveCheck, DriveFrame, DriveRedexArm, FiringEmission, RhoNetDriveInvocation,
-    DRIVE_DEFAULT_FUEL, DRIVE_OPT_IN,
+    rho_net_drive_call_par, rho_net_drive_call_par_with_fuel, rho_net_drive_float_call_par,
+    rho_net_drive_float_call_par_with_fuel, rho_net_drive_float_invocation,
+    rho_net_drive_invocation, DriveAdmission, DriveCheck, DriveFrame, DriveRedexArm,
+    FiringEmission, RhoNetDriveInvocation, DRIVE_DEFAULT_FUEL, DRIVE_OPT_IN,
 };
+pub use rho_net_float::language_is_float_bearing;
 pub use rho_net_lower::{
     reflected_tag_string, DRIVE_AC_RESERVED_LABEL, DRIVE_ERR_RESERVED_LABEL,
     DRIVE_FUEL_RESERVED_LABEL, DRIVE_RESERVED_LABEL, FIRED_RESERVED_LABEL,
+    FLOAT_HOIST_RESERVED_LABEL, FLOAT_MERGE_RESERVED_LABEL, FLOAT_RESERVED_LABEL,
 };
 pub use rho_net_subst_trs::{
     reserved_subst_trs_labels, subst_seed_receiver_par, subst_seed_send_par, subst_trs_program_par,

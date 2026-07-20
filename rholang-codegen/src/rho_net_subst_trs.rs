@@ -83,7 +83,8 @@ use crate::rho_net_lower::{
     reflect_ground_term_par, reflect_tag, BOUND_VAR_REFLECT_LABEL,
     CMP_RESERVED_LABEL, DRIVE_AC_RESERVED_LABEL, DRIVE_ERR_RESERVED_LABEL,
     DRIVE_FUEL_RESERVED_LABEL, DRIVE_RESERVED_LABEL,
-    FIRED_RESERVED_LABEL, FREE_VAR_REFLECT_LABEL, GroundTerm, LAMBDA_REFLECT_LABEL,
+    FIRED_RESERVED_LABEL, FLOAT_HOIST_RESERVED_LABEL, FLOAT_MERGE_RESERVED_LABEL,
+    FLOAT_RESERVED_LABEL, FREE_VAR_REFLECT_LABEL, GroundTerm, LAMBDA_REFLECT_LABEL,
     MULTILAMBDA_REFLECT_LABEL, PEANO_SUCC_REFLECT_LABEL, PEANO_ZERO_REFLECT_LABEL, PRED_RESERVED_LABEL,
     SB_RESERVED_LABEL, SHB_RESERVED_LABEL, SHIFTK_RESERVED_LABEL, SHIFT_RESERVED_LABEL,
     SUBST_RESERVED_LABEL,
@@ -104,7 +105,7 @@ const CMP_GT_LABEL: &str = "^Gt";
 /// constructor (a user `Ident`) is disjoint from this set BY CONSTRUCTION; the codegen assertion in
 /// [`object_congruence_constructors`] is the defensive guard that keeps it that way (e.g. if a future
 /// binder-tag mapping regressed).
-pub fn reserved_subst_trs_labels() -> [&'static str; 16] {
+pub fn reserved_subst_trs_labels() -> [&'static str; 19] {
     [
         LAMBDA_REFLECT_LABEL,
         MULTILAMBDA_REFLECT_LABEL,
@@ -131,6 +132,14 @@ pub fn reserved_subst_trs_labels() -> [&'static str; 16] {
         // family unforgeable vs user constructors (a Rust `Ident` contains neither `^` nor
         // `:`), and the C2 assertion guards the base like every other reserved tag.
         DRIVE_AC_RESERVED_LABEL,
+        // A-S5.8: the in-Rho `^float` receiver-family tags — the dispatcher's rendezvous
+        // (`^float`) plus the two per-constructor / per-collection-op satellite tag PREFIXES
+        // (`⌜^float-hoist:{C}⌝` / `⌜^float-merge:{op}⌝`, the `^drive-ac` prefix precedent) —
+        // registry 16 → 19 (`crate::rho_net_float`). The C2 assertion guards the bases like
+        // every other reserved tag.
+        FLOAT_RESERVED_LABEL,
+        FLOAT_HOIST_RESERVED_LABEL,
+        FLOAT_MERGE_RESERVED_LABEL,
     ]
 }
 
@@ -722,6 +731,65 @@ fn shift_cases(def: &LanguageDef, fp: &str, env: &Env) -> Vec<Case> {
         free_passthrough_case(fp, env),
     ];
     cases.extend(object_congruence_cases(def, fp, env, SHIFT_RESERVED_LABEL, "c"));
+    // A-S5.8 (F8-AM-5e): the SOUP + Nil arms — one peel arm per HashBag collection op, plus
+    // the shared Nil (empty-bag) leaf — GATED on the language declaring HashBag ops at all,
+    // so a bag-free language's `^shift` (Lambda) is BYTE-IDENTICAL to pre-A-S5.8. Without
+    // them, `^shift` on a bag-carrying value SILENTLY STALLS (the C2 congruence enumeration
+    // excludes collections and the receiver has no wildcard) — and the A-S5.8 `^float`
+    // hoist/merge satellites shift values that carry bags. Both arms keep the cutoff `c`
+    // UNCHANGED (a bag crosses no binder) and REWRAP without splice logic (shift is a
+    // congruence — it never changes a value's shape, so the shifted element re-wraps as the
+    // one element send it was and the shifted remainder composes directly):
+    //
+    // ```text
+    // {@"ac:op"!(e) | rem} => new re, rr in {
+    //     ^shift(c, e, re) | ^shift(c, rem, rr)
+    //   | for(@se <- re & @sr <- rr){ ret!( @"ac:op"!(se) | sr ) } }
+    // Nil => ret!(Nil)
+    // ```
+    //
+    // The Nil arm is FIRST-CLASS, not merely the peel recursion's base: `@"ac:op"!(Nil)` is
+    // the legitimate reflection image of a nested EMPTY bag, and a `^float-merge` v-strip
+    // shifts a Nil u (F8-AM-5f) — without this arm that shift stalls.
+    let bag_ops = crate::rho_net_drive::hashbag_collection_ops(def);
+    for op in &bag_ops {
+        cases.push(Case {
+            pattern: crate::rho_net_drive::soup_peel_pattern(op),
+            free_count: 2,
+            body: {
+                let env = env.push(&["e", "rem"]);
+                new_scope(2, {
+                    let env = env.push(&["re", "rr"]);
+                    let shift_element = send(
+                        ground(tag_par(fp, SHIFT_RESERVED_LABEL)),
+                        vec![env.var("c"), env.var("e"), env.var("re")],
+                    );
+                    let shift_remainder = send(
+                        ground(tag_par(fp, SHIFT_RESERVED_LABEL)),
+                        vec![env.var("c"), env.var("rem"), env.var("rr")],
+                    );
+                    let join_node = join(vec![env.var("re"), env.var("rr")], {
+                        let env = env.push(&["se", "sr"]);
+                        send(
+                            env.var("ret"),
+                            vec![par2(
+                                crate::rho_net_drive::wrap_element_send(op, env.var("se")),
+                                env.var("sr"),
+                            )],
+                        )
+                    });
+                    par2(par2(shift_element, shift_remainder), join_node)
+                })
+            },
+        });
+    }
+    if !bag_ops.is_empty() {
+        cases.push(Case {
+            pattern: Par::default(),
+            free_count: 0,
+            body: send(env.var("ret"), vec![ground(Par::default())]),
+        });
+    }
     cases
 }
 
