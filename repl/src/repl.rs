@@ -2784,6 +2784,18 @@ impl Repl {
                 println!("Computed:");
                 println!("  - backend: {}", report.backend());
                 println!("  - artifact: {}", report.artifact());
+                // A-S6 (step-policy hygiene): in step mode the Dovetail graph is LABELED
+                // host introspection — display-only navigation evidence; production `exec`
+                // results never flow from this graph (every registered language's admitted
+                // exec runs on the Rho machine; the Layer-2 StepSession is the only
+                // EXECUTABLE stepper).
+                if step_mode {
+                    println!(
+                        "  - evidence: {}-graph evidence (host introspection, display-only — \
+                         exec results never flow from this graph)",
+                        if is_rewrite_graph { "rewrite" } else { "derivation" }
+                    );
+                }
                 println!("  - completeness: {}", dovetail_report.completeness);
                 if is_rewrite_graph {
                     println!("  - {} program state(s)", dovetail_report.terms.len());

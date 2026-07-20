@@ -2,14 +2,22 @@
 
 Last updated: 2026-07-20
 
-> **A-S5 flip note (2026-07-20).** This document's term-level split concerns
-> the fold-bearing languages (RhoCalc / Rholang). Production **Lambda and
-> Ambient** exec no longer takes any Dovetail D-stage on admitted paths: one
-> `exec` is one generated in-Rho quiescence-driver seed
-> ([20 §1](20-rholang-runtime-backend.md#1-landed-state-what-runs-where);
-> [24 §5.1](24-in-rho-completion-audit.md#51-the-a-s5-quiescence-driver-exec-drives-to-rest-in-rho)).
-> The step-policy and registry-hygiene rewrite of the surrounding routing text
-> is owned by enforcement stage A-S6.
+> **A-S6 universal-mandate note (2026-07-20).** This document's term-level
+> split concerns the fold-bearing languages (RhoCalc / Rholang). Registry-wide,
+> the runtime mandate is now **universal**: every registered language's admitted
+> `exec` runs on the Rho machine — Lambda and Ambient on the in-Rho
+> quiescence-driver seed (A-S5.6,
+> [20 §1](20-rholang-runtime-backend.md#1-landed-state-what-runs-where);
+> [24 §5.1](24-in-rho-completion-audit.md#51-the-a-s5-quiescence-driver-exec-drives-to-rest-in-rho)),
+> and SwapDemo plus the 12 rho_net demo languages on the in-Rho set-automaton
+> match (A-S6, `repl/src/registry.rs` / `repl/src/rho_backends.rs`). At runtime
+> Dovetail's roles are exactly three: **semantic predicates**, **labeled host
+> introspection** (the REPL `step` Layer-1 rewrite-graph evidence — display-only,
+> no exec result flows from it; the Layer-2 `StepSession` COMM trace is the only
+> executable stepper — `repl/tests/a_s6_demo_step_policy.rs`), and **lazy
+> deferral reports** (built only on a typed deferral, e.g. CommDemo's
+> pre-scope-field reflection reject). A Dovetail-only build fails every
+> machine-defaulted exec closed, pointing at the rho build.
 
 This document answers a precise architectural question:
 

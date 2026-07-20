@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### A-S6 — the DEMO FLIP + step-policy hygiene: the runtime mandate is registry-wide (2026-07-20)
+
+#### Changed
+
+- **BREAKING (registry membership + demo exec routing, A-S6 — USER decision
+  2026-07-20)**: every rho_net demo language joins the production REPL registry on the
+  two-stage LAZY Dovetail+Rholang wrapper — AcDemo, AcBagDemo, NlAcDemo, AmbDemo,
+  AmbNewDemo, InOutDemo, CommDemo, CtxDemo, BiCongDemo, LambdaDemo, NativeDemo,
+  NativeFoldDemo (SwapDemo was already flipped). The default exec path is the generated
+  report-free `rho_net_match_invocation_to` (the in-Rho locate-all set-automaton match,
+  single-shot locate-and-fire; demos are NOT drive-opted — `DRIVE_OPT_IN` stays exactly
+  `{"Lambda", "Ambient"}`); the Dovetail D-stage runs only on typed deferrals. The
+  runtime mandate — "Dovetail handles only semantic predicates at runtime", plus labeled
+  step introspection and lazy deferral reports — now holds for EVERY registered
+  language. Per-family exec pins: `repl/tests/a_s6_demo_registry_exec.rs`; zero-D-stage
+  extension (AcDemo / CtxDemo / NativeFoldDemo): `repl/tests/zero_dstage_exec.rs`.
+- **Per-demo fallback shapes (probed reality, 2026-07-20)**: LambdaDemo's
+  report-carrying fallback is the Lambda/F16 shape (match-then-TYPED-ERROR — the
+  sigma-replay driver has no Beta arm; a replayed beta would double-substitute); every
+  other demo keeps the SwapDemo match-then-sigma-replay shape. CommDemo is the one
+  BY-DESIGN deferring demo: its `PFor` binder carries a pre-scope Name field the
+  match-path reflection does not support, so an exec lazily builds the report and the
+  sigma-replay driver fires the Comm (per-firing replay channels `OUT0`, ...).
+- **Step-policy hygiene**: `dovetail_step_graph` is KEPT everywhere as LABELED host
+  introspection — the REPL `step` Layer-1 display now prints "rewrite-graph evidence
+  (host introspection, display-only — exec results never flow from this graph)"; the
+  Layer-2 `StepSession` COMM trace is the ONLY executable stepper. Typed-path demos
+  (AmbDemo/AmbNewDemo/InOutDemo/CommDemo/LambdaDemo/NativeDemo/NativeFoldDemo) keep
+  Layer-1 rewrite graphs; untyped demos (AcDemo/AcBagDemo/NlAcDemo/CtxDemo/BiCongDemo)
+  fall through to the Layer-2 trace, whose legacy `sa:`/`loc:`/`ac:` COMMs are
+  unclassified-VISIBLE by design (the tau classifier labels only the reserved `^...`
+  families). Pins: `repl/tests/a_s6_demo_step_policy.rs`.
+- **Dovetail-only build (decision (4), now universal)**: SwapDemo and the 12 demos
+  register through the fail-closed wrapper in the no-f1r3node profile — parse and
+  introspection work; `exec` returns the typed error naming the in-Rho set-automaton
+  match and the rho build flag (`repl/tests/dovetail_only_fail_closed.rs`).
+- Docs: 09/10 rewritten to the post-A-S6 universal runtime split; 24/29 status updates
+  (A-S6 landed).
+
 ### A-S5 — the Lambda/Ambient production flip onto the in-Rho quiescence driver (2026-07-19..20)
 
 #### Added

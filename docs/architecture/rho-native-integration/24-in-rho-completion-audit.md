@@ -249,7 +249,11 @@ when the gate (or the drive seed) rejects (an as-yet-unrouted shape); it never r
 alongside the in-Rho path for an admitted rule, and Lambda's fallback carries **no**
 $`\sigma`$-replay Beta arm at all (a $`\sigma`$-replayed $`\beta`$ would
 double-substitute — the F16 discipline; `repl/src/rho_backends.rs`). The paths are
-mutually exclusive by the gate, so there is no dual runtime path.
+mutually exclusive by the gate, so there is no dual runtime path. **A-S6 (landed
+2026-07-20)** made this wrapper surface REGISTRY-WIDE: SwapDemo and the 12 rho_net demo
+languages register on the same two-stage lazy machine wrapper (`repl/src/registry.rs`;
+exec pins `repl/tests/a_s6_demo_registry_exec.rs`), so the no-dual-path claim holds for
+every registered language.
 
 **(2) The retirement commits (the history).** The host match-decision was explicitly
 removed, not merely bypassed:

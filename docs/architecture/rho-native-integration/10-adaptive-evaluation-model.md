@@ -2,16 +2,19 @@
 
 Last updated: 2026-07-20
 
-> **A-S5 flip note (2026-07-20).** The tier model below concerns the
-> fold-bearing languages (RhoCalc / Rholang); the width-cast Tier-3 held-fold
-> trampoline remains one of the three host evaluations on admitted paths
-> (with semantic predicates and injection-boundary canonicalization —
+> **A-S6 universal-mandate note (2026-07-20).** The tier model below concerns
+> the fold-bearing languages (RhoCalc / Rholang); the width-cast Tier-3
+> held-fold trampoline remains one of the three host evaluations on admitted
+> paths (with semantic predicates and injection-boundary canonicalization —
 > [29 §4](29-knotted-topoi-satisfaction-crosswalk.md#4-the-runtime-boundary-today)).
-> Production **Lambda and Ambient** exec runs on the in-Rho quiescence driver
-> with zero D-stage work on admitted paths
-> ([24 §5.1](24-in-rho-completion-audit.md#51-the-a-s5-quiescence-driver-exec-drives-to-rest-in-rho)).
-> The step-policy rewrite of the surrounding routing text is owned by
-> enforcement stage A-S6.
+> Registry-wide the runtime mandate is now **universal**: production Lambda and
+> Ambient exec runs on the in-Rho quiescence driver (A-S5.6,
+> [24 §5.1](24-in-rho-completion-audit.md#51-the-a-s5-quiescence-driver-exec-drives-to-rest-in-rho)),
+> and every rho_net demo language execs on the in-Rho set-automaton match
+> (A-S6) — all with zero D-stage work on admitted paths. The `step` routing is
+> policy-pinned: the Dovetail step graph is labeled host introspection
+> (display-only); the Layer-2 `StepSession` COMM trace is the only executable
+> stepper (`repl/tests/a_s6_demo_step_policy.rs`).
 
 This document specifies how a MeTTaIL `language!` reduction is evaluated across the
 Dovetail rewrite engine and the f1r3node Rho machine, and how the one remaining
