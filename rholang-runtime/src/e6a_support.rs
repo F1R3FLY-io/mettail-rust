@@ -393,12 +393,16 @@ pub fn build_pathmap_index(
         &mut omitted,
     )?;
     let index = Par::default().with_exprs(vec![Expr {
-        expr_instance: Some(ExprInstance::EPathmapBody(EPathMap {
-            ps: entries,
-            locally_free: Vec::new(),
-            connective_used: false,
-            remainder: None,
-        })),
+        // EPathMap fix P3 (f1r3node-rust-mettail, PM-2): `EPathMap` is now the
+        // hand-maintained extern_path wrapper with a private shadow cell —
+        // struct literals are impossible out of crate; construct via
+        // `EPathMap::new` (same four proto fields, cell starts empty).
+        expr_instance: Some(ExprInstance::EPathmapBody(EPathMap::new(
+            entries,
+            Vec::new(),
+            false,
+            None,
+        ))),
     }]);
     Ok(PathmapIndex {
         index,

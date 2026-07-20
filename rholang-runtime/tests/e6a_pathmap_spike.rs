@@ -174,12 +174,14 @@ async fn u1_receive_pattern_cannot_destructure_epathmap() {
     // Destructuring attempt: pattern = {| free-var |} (connective marked).
     let destructuring_pattern = Par {
         exprs: vec![Expr {
-            expr_instance: Some(ExprInstance::EPathmapBody(EPathMap {
-                ps: vec![new_freevar_par(0, Vec::new())],
-                locally_free: Vec::new(),
-                connective_used: true,
-                remainder: None,
-            })),
+            // EPathMap fix P3 (PM-2): constructor instead of a struct literal
+            // (the wrapper's shadow cell is private).
+            expr_instance: Some(ExprInstance::EPathmapBody(EPathMap::new(
+                vec![new_freevar_par(0, Vec::new())],
+                Vec::new(),
+                true,
+                None,
+            ))),
         }],
         locally_free: Vec::new(),
         connective_used: true,
