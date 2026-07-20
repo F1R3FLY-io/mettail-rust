@@ -81,7 +81,8 @@ use models::rust::utils::{
 
 use crate::rho_net_lower::{
     reflect_ground_term_par, reflect_tag, BOUND_VAR_REFLECT_LABEL,
-    CMP_RESERVED_LABEL, FREE_VAR_REFLECT_LABEL, GroundTerm, LAMBDA_REFLECT_LABEL,
+    CMP_RESERVED_LABEL, DRIVE_ERR_RESERVED_LABEL, DRIVE_FUEL_RESERVED_LABEL, DRIVE_RESERVED_LABEL,
+    FIRED_RESERVED_LABEL, FREE_VAR_REFLECT_LABEL, GroundTerm, LAMBDA_REFLECT_LABEL,
     MULTILAMBDA_REFLECT_LABEL, PEANO_SUCC_REFLECT_LABEL, PEANO_ZERO_REFLECT_LABEL, PRED_RESERVED_LABEL,
     SB_RESERVED_LABEL, SHB_RESERVED_LABEL, SHIFTK_RESERVED_LABEL, SHIFT_RESERVED_LABEL,
     SUBST_RESERVED_LABEL,
@@ -102,7 +103,7 @@ const CMP_GT_LABEL: &str = "^Gt";
 /// constructor (a user `Ident`) is disjoint from this set BY CONSTRUCTION; the codegen assertion in
 /// [`object_congruence_constructors`] is the defensive guard that keeps it that way (e.g. if a future
 /// binder-tag mapping regressed).
-pub fn reserved_subst_trs_labels() -> [&'static str; 11] {
+pub fn reserved_subst_trs_labels() -> [&'static str; 15] {
     [
         LAMBDA_REFLECT_LABEL,
         MULTILAMBDA_REFLECT_LABEL,
@@ -115,6 +116,15 @@ pub fn reserved_subst_trs_labels() -> [&'static str; 11] {
         PRED_RESERVED_LABEL,
         SB_RESERVED_LABEL,
         SHB_RESERVED_LABEL,
+        // A-S5.2 (leg v): the in-Rho quiescence-driver tags — `^drive` (the driver's
+        // GPrivate rendezvous) plus the three GString observation-channel labels
+        // (`crate::rho_net_drive`). Reserved so no user constructor can shadow the driver's
+        // dispatch or forge its observation channels; the C2 assertion below now guards
+        // these too.
+        DRIVE_RESERVED_LABEL,
+        DRIVE_ERR_RESERVED_LABEL,
+        DRIVE_FUEL_RESERVED_LABEL,
+        FIRED_RESERVED_LABEL,
     ]
 }
 
@@ -192,7 +202,11 @@ fn elist(children: Vec<Node>) -> Node {
 
 /// A tagged reflected value `EList[ GPrivate(⌜label⌝), children… ]` (`^bound(n)`, `^lambda(b)`,
 /// `^free(x)`, `S(n)`, or an object ctor `C(t…)`), free in the union of the children.
-fn tagged(fp: &str, label: &str, children: Vec<Node>) -> Node {
+///
+/// `pub(crate)`: the A-S5.2 quiescence driver (`crate::rho_net_drive`) rebuilds driven
+/// nodes with the SAME combinator so its reflected-ABI discipline is the TRS's by
+/// construction (the `:129-133` sharing precedent).
+pub(crate) fn tagged(fp: &str, label: &str, children: Vec<Node>) -> Node {
     let mut items = Vec::with_capacity(children.len() + 1);
     items.push(ground(tag_par(fp, label)));
     items.extend(children);
@@ -239,7 +253,10 @@ pub(crate) fn match_(target: Node, cases: Vec<Case>) -> Node {
 
 /// `new r₀, …, r_{n-1} in { body }` — the `n` fresh names bind innermost (`r_{n-1} = BoundVar(0)`,
 /// matching f1r3node's reverse-syntactic-order normalization). Free in `shift_down(body.free, n)`.
-fn new_scope(n: usize, body: Node) -> Node {
+///
+/// `pub(crate)`: shared with the A-S5.2 quiescence driver (`crate::rho_net_drive`) — the
+/// `:129-133` combinator-sharing precedent.
+pub(crate) fn new_scope(n: usize, body: Node) -> Node {
     let free = shift_down(&body.free, n);
     let bits = free_bits(&free);
     let par = new_new_par(
@@ -289,7 +306,9 @@ fn polyadic_receive(source: Par, n_formals: usize, body: Node, persistent: bool)
 }
 
 /// A single non-persistent `for(@x <- source){ body }` (used for a fresh return-channel read).
-fn for1(source: Node, body: Node) -> Node {
+///
+/// `pub(crate)`: shared with the A-S5.2 quiescence driver (`crate::rho_net_drive`).
+pub(crate) fn for1(source: Node, body: Node) -> Node {
     // The source is evaluated in the OUTER frame; the one formal binds innermost in `body`.
     let free = union_free(&[source.free.as_slice(), shift_down(&body.free, 1).as_slice()]);
     let bits = free_bits(&free);
@@ -315,7 +334,11 @@ fn for1(source: Node, body: Node) -> Node {
 /// single-formal binds; the formals flatten bind-0-first so `sᵢ ⟹ BoundVar(n-1-i)` in `body`
 /// (the reverse-De-Bruijn frame `contextual_join_receiver_par` uses). The join publishes `body`
 /// only after EVERY child channel `rᵢ` delivered, so a partial object term is never observable.
-fn join(sources: Vec<Node>, body: Node) -> Node {
+///
+/// `pub(crate)`: shared with the A-S5.2 quiescence driver (`crate::rho_net_drive`) — the
+/// driver's congruence-descent reassembly IS this join generalized from "substitute" to
+/// "reduce" (plan v2 §4, F2/F14).
+pub(crate) fn join(sources: Vec<Node>, body: Node) -> Node {
     let n = sources.len();
     // The `n` sources are read in the OUTER frame; the `n` formals flatten bind-0-first and bind
     // innermost in `body`.
@@ -949,7 +972,11 @@ pub(crate) fn object_congruence_constructors(def: &LanguageDef) -> Vec<(String, 
 
 /// Whether a term is a single- or multi-binder (has an `Abstraction`/`MultiAbstraction` term-context
 /// param, or an old-syntax `Binder` grammar item) — the reflection tags it `^lambda`/`^multilambda`.
-fn is_binder_term(term: &mettail_ast::grammar::GrammarRule) -> bool {
+///
+/// `pub(crate)`: the A-S5.2 quiescence driver's LHS-pattern transcription and binder-arm
+/// emission (`crate::rho_net_drive`) consult the SAME predicate so the driver's binder
+/// remap can never drift from the TRS's.
+pub(crate) fn is_binder_term(term: &mettail_ast::grammar::GrammarRule) -> bool {
     if let Some(params) = &term.term_context {
         if params
             .iter()

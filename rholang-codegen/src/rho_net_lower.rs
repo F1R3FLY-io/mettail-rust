@@ -396,6 +396,22 @@ pub struct RhoNetLowered {
     /// [`Self::installed_program_par`]) alongside the β SEED σ-receiver — persistent, on disjoint
     /// reserved roots, disturbing no landed receiver.
     subst_trs: Option<Par>,
+    /// The generated in-Rho quiescence-DRIVER program (A-S5.2, plan v2 §4): the persistent
+    /// `^drive` receiver family ([`crate::rho_net_drive::drive_program_par`]) that normalizes
+    /// a seeded reflected subject to quiescence fully in-Rho — redex arms firing through the
+    /// EXISTING σ ABI, congruence-descent arms with the post-join re-check, the binder arm,
+    /// leaf/reserved passthroughs, and the typed `^drive-err` wildcard. `Some` iff
+    /// [`drive_admission`](Self::drive_admission) is
+    /// [`DriveAdmission::Admitted`](crate::rho_net_drive::DriveAdmission::Admitted); appended
+    /// ONCE by [`Self::installed_program_par`] — persistent, on a disjoint reserved root,
+    /// disturbing no landed receiver.
+    drive: Option<Par>,
+    /// The RECORDED driver-admission disposition (A-S5.2, plan v2 §4.4 / F9): `Admitted` /
+    /// `NotRequested` (not opted in — every non-`DRIVE_OPT_IN` language, zero-cost) /
+    /// `Unsupported { reason }` (opted in, but the static gate rejects, a matching family is
+    /// not yet driver-supported, or a seed does not transcribe). Recorded-never-silent, the
+    /// same discipline as [`Self::congruence_exempt_rules`].
+    drive_admission: crate::rho_net_drive::DriveAdmission,
 }
 
 impl RhoNetLowered {
@@ -429,6 +445,18 @@ impl RhoNetLowered {
                 _ => None,
             })
             .collect()
+    }
+
+    /// The RECORDED in-Rho quiescence-driver admission disposition (A-S5.2, plan v2 §4.4 /
+    /// F9). `Admitted` iff [`Self::drive`] carries the generated `^drive` receiver family.
+    pub fn drive_admission(&self) -> &crate::rho_net_drive::DriveAdmission {
+        &self.drive_admission
+    }
+
+    /// The generated in-Rho quiescence-driver program (`Some` iff
+    /// [`Self::drive_admission`] is `Admitted`).
+    pub fn drive(&self) -> Option<&Par> {
+        self.drive.as_ref()
     }
 
     /// Parallel-compose every materialized contract `Par` (`NativeFold` +
@@ -498,6 +526,14 @@ impl RhoNetLowered {
         // reserved roots — disturbs no landed base/AC/contextual/native receiver.
         if let Some(trs) = &self.subst_trs {
             program = program.append(trs.clone());
+        }
+        // A-S5.2 (leg v): append the in-Rho quiescence-DRIVER receiver family ONCE for
+        // driver-admitted languages (the subst-TRS append pattern above) — persistent, on the
+        // disjoint reserved `^drive` root, disturbing no landed receiver. Non-admitted
+        // languages append nothing (their installed program is byte-identical to pre-A-S5.2);
+        // the disposition is RECORDED in [`Self::drive_admission`], never silent.
+        if let Some(drive) = &self.drive {
+            program = program.append(drive.clone());
         }
         Ok(program)
     }
@@ -623,11 +659,21 @@ pub(crate) fn lower(
             crate::rho_net_subst_trs::subst_trs_program_par(def, &program.language_fingerprint)
         });
 
+    // A-S5.2 (leg v): the in-Rho quiescence-driver lowering — admission is decided (and
+    // RECORDED) here, and the `^drive` receiver family is built for admitted languages. The
+    // opt-in check is a name comparison against `crate::rho_net_drive::DRIVE_OPT_IN`
+    // (AM-4), so every non-opted-in language takes the `NotRequested` arm at zero cost and
+    // its lowering artifact is byte-identical to pre-A-S5.2.
+    let (drive, drive_admission) =
+        crate::rho_net_drive::drive_lowering(def, program, &rules, &errors, &rewrite_by_id);
+
     RhoNetLowered {
         language_fingerprint: program.language_fingerprint.clone(),
         rules,
         errors,
         subst_trs,
+        drive,
+        drive_admission,
     }
 }
 
@@ -3395,6 +3441,22 @@ pub const SHIFTK_RESERVED_LABEL: &str = "^shiftk";
 pub const PRED_RESERVED_LABEL: &str = "^pred";
 pub const SB_RESERVED_LABEL: &str = "^sb";
 pub const SHB_RESERVED_LABEL: &str = "^shb";
+
+/// The reserved tags of the A-S5.2 in-Rho quiescence DRIVER (plan v2 §4, leg v).
+///
+/// `^drive` names the driver's persistent rendezvous channel
+/// (`GPrivate(reflect_tag(fp, "^drive"))` — like every in-Rho-only rendezvous, unforgeable
+/// and NOT host-readable). The other three name the driver's HOST-READABLE observation
+/// channels, which are **GString** — `"{label}:{fp}"` via
+/// [`crate::rho_net_drive::drive_fired_channel`] et al. (plan v2 §4.5 rationale: host
+/// readback rides the proven GString `get_data` path; the `^` prefix + fingerprint suffix
+/// keep them collision-free with user constructors, which are Rust `Ident`s). All four join
+/// [`crate::rho_net_subst_trs::reserved_subst_trs_labels`], so the C2 object-congruence
+/// exclusion assertion also guards them against any user-constructor collision.
+pub const DRIVE_RESERVED_LABEL: &str = "^drive";
+pub const DRIVE_ERR_RESERVED_LABEL: &str = "^drive-err";
+pub const DRIVE_FUEL_RESERVED_LABEL: &str = "^drive-fuel";
+pub const FIRED_RESERVED_LABEL: &str = "^fired";
 
 /// Reflect an RHS pattern term to a normalized `Par`, threading a **binder
 /// environment** (the RHS binders currently in scope, De Bruijn stack). A variable
@@ -7278,6 +7340,8 @@ mod tests {
                 family: UnsupportedFamily::CollectionAc,
             }],
             subst_trs: None,
+            drive: None,
+            drive_admission: crate::rho_net_drive::DriveAdmission::NotRequested,
         };
         match lowered.installed_program_par() {
             Err(RhoNetInstallError::LoweringErrors(errors)) => assert_eq!(errors.len(), 1),
@@ -7303,6 +7367,8 @@ mod tests {
             ],
             errors: Vec::new(),
             subst_trs: None,
+            drive: None,
+            drive_admission: crate::rho_net_drive::DriveAdmission::NotRequested,
         };
         match lowered.installed_program_par() {
             Err(RhoNetInstallError::UnmaterializedRule { rule_id, family }) => {
@@ -7326,6 +7392,8 @@ mod tests {
             ],
             errors: Vec::new(),
             subst_trs: None,
+            drive: None,
+            drive_admission: crate::rho_net_drive::DriveAdmission::NotRequested,
         };
         let installed = lowered
             .installed_program_par()

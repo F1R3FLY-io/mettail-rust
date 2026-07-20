@@ -2240,6 +2240,118 @@ pub fn generate_rho_net_invocation(language: &LanguageDef) -> TokenStream {
         })
     };
 
+    // A-S5.2 (plan v2 §4.4 / F9, amendment AM-4): the in-Rho QUIESCENCE-DRIVER seed
+    // invocation — emitted ONLY for languages opted into the driver via the
+    // codegen-visible `DRIVE_OPT_IN` const (consulted HERE, at expansion time, exactly as
+    // AM-4 mandates), so a non-opted-in language's generated module is BYTE-IDENTICAL to
+    // pre-A-S5.2 (the SwapDemo pin below) and `rho_net_match_invocation_to` is untouched
+    // for every language. The generated body re-checks the FULL `drive_admissible`
+    // predicate per exec against the memoized artifacts (fail-closed: an opted-in but
+    // not-yet-supported language — Ambient until A-S5.5 — errors typed instead of seeding
+    // a channel with no installed receivers).
+    let drive_opted_in =
+        mettail_rholang_codegen::DRIVE_OPT_IN.contains(&language_name.as_str());
+    let drive_fn = if drive_opted_in {
+        quote! {
+            /// A-S5.2: seed the in-Rho QUIESCENCE DRIVER for the whole subject `term` —
+            /// the report-free, locate-all-free execution surface for driver-admitted
+            /// languages. Reflects the subject structurally (M-reflect), gates admission
+            /// (the A-S2 static gate PLUS the full
+            /// [`drive_admissible`](mettail_rholang_codegen::drive_admissible) predicate,
+            /// both against the per-source memoized artifacts), and assembles the seed
+            /// `⌜^drive⌝!(⟦term⟧, fuel₀, @out)` plus the fingerprint-derived observation
+            /// channel names. The installed program's persistent `^drive` receiver family
+            /// then matches, fires (through the existing σ ABI), re-drives every
+            /// contractum, and rests the quiescent term on `out` — the resting-term /
+            /// ledger / typed-error / fuel channels are read back with
+            /// `DriveObservationChannels` (rholang-runtime).
+            pub fn rho_net_drive_invocation_to(
+                term: &dyn mettail_runtime::Term,
+                out_channel: impl ::core::convert::AsRef<str>,
+            ) -> ::core::result::Result<
+                ::mettail_rholang_codegen::RhoNetDriveInvocation,
+                ::std::string::String,
+            > {
+                let out_channel = out_channel.as_ref();
+                #reflect_subject
+
+                let __source = <#language_struct as mettail_runtime::Language>::metadata(
+                    &#language_struct,
+                )
+                .definition_source()
+                .ok_or_else(|| {
+                    ::std::format!(
+                        "language {} has no definition source for the in-Rho drive",
+                        #language_lit,
+                    )
+                })?;
+                let __artifacts = ::mettail_rholang_codegen::cached_in_rho_artifacts(__source)
+                    .map_err(|__err| {
+                        ::std::format!(
+                            "language {} definition source did not reconstruct for the \
+                             in-Rho drive: {}",
+                            #language_lit, __err,
+                        )
+                    })?;
+                let __ruleset = &__artifacts.ruleset;
+
+                // The A-S2 STATIC capability gate (term-independent), exactly as the
+                // report-free match body runs it: fail closed BEFORE any Rho reduction.
+                if let ::core::result::Result::Err(__deferred) =
+                    ::mettail_rholang_codegen::in_rho_static_gate(__ruleset, &__artifacts.def)
+                {
+                    let __labels: ::std::vec::Vec<::std::string::String> = __deferred
+                        .iter()
+                        .map(|__entry| {
+                            ::std::format!("{} ({:?})", __entry.rule_label, __entry.reason)
+                        })
+                        .collect();
+                    return ::core::result::Result::Err(::std::format!(
+                        "in-Rho drive for language {} rejects: fireable rule(s) not \
+                         matchable in Rho: {}",
+                        #language_lit, __labels.join(", "),
+                    ));
+                }
+
+                // The FULL driver-admission predicate (plan v2 §4.4) — a pure function of
+                // the memoized `(def, ruleset)`, so this per-exec re-check costs a cache
+                // hit and can never drift from the install-time recorded disposition.
+                match ::mettail_rholang_codegen::drive_admissible(
+                    &__artifacts.def,
+                    __ruleset,
+                ) {
+                    ::mettail_rholang_codegen::DriveAdmission::Admitted => {},
+                    ::mettail_rholang_codegen::DriveAdmission::NotRequested => {
+                        return ::core::result::Result::Err(::std::format!(
+                            "language {} is not opted into the in-Rho quiescence driver",
+                            #language_lit,
+                        ));
+                    },
+                    ::mettail_rholang_codegen::DriveAdmission::Unsupported {
+                        reason: __reason,
+                    } => {
+                        return ::core::result::Result::Err(::std::format!(
+                            "in-Rho drive for language {} is not admitted: {}",
+                            #language_lit, __reason,
+                        ));
+                    },
+                }
+
+                let __subject_par = ::mettail_rholang_codegen::reflect_ground_term_par(
+                    &__subject,
+                    &__ruleset.language_fingerprint,
+                );
+                ::core::result::Result::Ok(::mettail_rholang_codegen::rho_net_drive_invocation(
+                    &__ruleset.language_fingerprint,
+                    __subject_par,
+                    out_channel,
+                ))
+            }
+        }
+    } else {
+        quote! {}
+    };
+
     quote! {
         #[cfg(feature = "rho-codegen")]
         impl #language_struct {
@@ -2359,6 +2471,8 @@ pub fn generate_rho_net_invocation(language: &LanguageDef) -> TokenStream {
             > {
                 #match_free_body
             }
+
+            #drive_fn
 
             /// Build the CONTEXTUAL (congruence) JOIN injection that MATCHES IN RHO for an already
             /// complete Dovetail report (Stage 4, S-contextual) — the third arm of the σ-injection
@@ -2603,6 +2717,124 @@ mod tests {
         assert!(tokens.contains("\"AcStep\""));
         // A pure-AC language surfaces no flat base-rewrite site, so no `term_contract_call`.
         assert!(!tokens.contains("term_contract_call"));
+    }
+
+    /// Extract one `pub fn <name>` item substring from an expansion's token string — from
+    /// the fn's `pub fn <name>` head through its final closing brace (the slice to the
+    /// NEXT `pub fn ` also captures the FOLLOWING item's leading `#[doc]` attributes, so
+    /// the item boundary is the last `}` before it). Token-level (the
+    /// `TokenStream::to_string` spacing), sufficient for the AM-4 byte-identity pins.
+    fn extract_fn_item<'a>(tokens: &'a str, fn_name: &str) -> &'a str {
+        let head = format!("pub fn {fn_name}");
+        let start = tokens
+            .find(&head)
+            .unwrap_or_else(|| panic!("expansion must contain `{head}`"));
+        let rest = &tokens[start + head.len()..];
+        let end = rest.find("pub fn ").map_or(tokens.len(), |offset| start + head.len() + offset);
+        let slice = &tokens[start..end];
+        let brace = slice.rfind('}').expect("a fn item ends with a closing brace");
+        &slice[..=brace]
+    }
+
+    /// The production-Lambda-shaped grammar under a configurable name (the AM-4 pin
+    /// subject: name `Lambda` IS in `DRIVE_OPT_IN`; any other name is not).
+    fn lambda_shaped_fragment(name: &str) -> LanguageDef {
+        parse(&format!(
+            r#"
+                name: {name},
+                types {{ Term }},
+                terms {{
+                    Lam . ^x.body:[Term -> Term] |- "lam " x "." body : Term ;
+                    App . fun:Term, arg:Term |- "(" fun "," arg ")" : Term ;
+                }},
+                equations {{}},
+                rewrites {{
+                    Beta . |- (App (Lam fun) arg) ~> (eval fun arg) ;
+                    AppCongL . | M0 ~> M1 |- (App M0 N) ~> (App M1 N) ;
+                    AppCongR . | N0 ~> N1 |- (App M N0) ~> (App M N1) ;
+                    LamCong . | S ~> T |- (Lam ^x.S) ~> (Lam ^x.T) ;
+                }},
+            "#
+        ))
+    }
+
+    /// ★ AM-4 pin (A-S5.2), non-opted-in half: a language whose name is NOT in
+    /// `DRIVE_OPT_IN` receives NO generated drive fn — the emitted module carries no
+    /// drive token at all, so the WHOLE generated module is byte-identical to the
+    /// pre-A-S5.2 emission (the drive stage's only insertion point is the conditional
+    /// `#drive_fn`, and it is empty here).
+    #[test]
+    fn generated_rho_net_invocation_omits_the_drive_fn_for_non_opted_in_languages() {
+        let language = parse(
+            r#"
+                name: SwapNetGen,
+                types { Proc }
+                terms {
+                    A . |- "A" : Proc ;
+                    B . |- "B" : Proc ;
+                    Pair . x:Proc, y:Proc |- "pair" "(" x "," y ")" : Proc ;
+                    Swap . x:Proc, y:Proc |- "swap" "(" x "," y ")" : Proc ;
+                }
+                equations {}
+                rewrites {
+                    SwapStep . |- (Swap x y) ~> (Pair y x) ;
+                }
+            "#,
+        );
+        let tokens = generate_rho_net_invocation(&language).to_string();
+        assert!(
+            !tokens.contains("rho_net_drive_invocation_to"),
+            "a non-opted-in language must not receive the generated drive fn (AM-4)"
+        );
+        assert!(
+            !tokens.contains("drive_admissible") && !tokens.contains("RhoNetDriveInvocation"),
+            "no drive machinery leaks into a non-opted-in module (AM-4 byte-identity)"
+        );
+        // The report-free match fn item is present and drive-free.
+        let match_item = extract_fn_item(&tokens, "rho_net_match_invocation_to");
+        assert!(
+            !match_item.contains("drive"),
+            "rho_net_match_invocation_to is untouched by the drive stage"
+        );
+    }
+
+    /// ★ AM-4 pin (A-S5.2), opted-in half + the cross-toggle byte-identity of
+    /// `rho_net_match_invocation_to`: the SAME grammar expanded under the opted-in name
+    /// `Lambda` and under a non-opted-in twin name emits (a) the drive fn ONLY for
+    /// `Lambda`, with the full fail-closed admission chain, and (b) a
+    /// `rho_net_match_invocation_to` fn item that is BYTE-IDENTICAL across the toggle
+    /// after normalizing the name-derived identifiers — the executable form of "the
+    /// match fn item is byte-identical for all languages".
+    #[test]
+    fn generated_rho_net_invocation_emits_the_drive_fn_for_opted_in_lambda_only() {
+        let opted = generate_rho_net_invocation(&lambda_shaped_fragment("Lambda")).to_string();
+        let twin =
+            generate_rho_net_invocation(&lambda_shaped_fragment("LambdaDrivePinTwin")).to_string();
+
+        // (a) presence + the fail-closed admission chain for the opted-in expansion…
+        assert!(opted.contains("rho_net_drive_invocation_to"));
+        assert!(opted.contains("drive_admissible"));
+        assert!(opted.contains("rho_net_drive_invocation"));
+        assert!(opted.contains("in_rho_static_gate"));
+        assert!(opted.contains("is not opted into the in-Rho quiescence driver"));
+        assert!(opted.contains("is not admitted"));
+        // …and absence for the twin.
+        assert!(!twin.contains("rho_net_drive_invocation_to"));
+
+        // (b) the match fn item is byte-identical across the opt-in toggle (modulo the
+        // name-derived identifiers, normalized by the rename).
+        let opted_match = extract_fn_item(&opted, "rho_net_match_invocation_to").to_string();
+        let twin_match = extract_fn_item(&twin, "rho_net_match_invocation_to")
+            .replace("LambdaDrivePinTwin", "Lambda");
+        assert_eq!(
+            opted_match, twin_match,
+            "rho_net_match_invocation_to must be byte-identical whether or not the \
+             language is drive-opted-in (AM-4)"
+        );
+        assert!(
+            !opted_match.contains("drive"),
+            "the match fn item carries no drive reference"
+        );
     }
 
     #[test]

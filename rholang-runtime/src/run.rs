@@ -910,6 +910,36 @@ pub struct DriveObservationChannels {
     pub fuel: String,
 }
 
+#[cfg(feature = "runtime-report")]
+impl DriveObservationChannels {
+    /// The channel set of one language's drive execution: `out` as given, the three
+    /// observation names derived from the language fingerprint by the codegen naming
+    /// helpers — BYTE-COHERENT with the names the installed `^drive` receiver family
+    /// emits on (both sides call the same `drive_*_channel` functions).
+    pub fn for_fingerprint(language_fingerprint: &str, out: impl Into<String>) -> Self {
+        Self {
+            out: out.into(),
+            fired: mettail_rholang_codegen::drive_fired_channel(language_fingerprint),
+            err: mettail_rholang_codegen::drive_err_channel(language_fingerprint),
+            fuel: mettail_rholang_codegen::drive_fuel_channel(language_fingerprint),
+        }
+    }
+
+    /// The channel set of one generated drive invocation
+    /// ([`mettail_rholang_codegen::RhoNetDriveInvocation`]) — carries the invocation's
+    /// four channel names verbatim.
+    pub fn from_invocation(
+        invocation: &mettail_rholang_codegen::RhoNetDriveInvocation,
+    ) -> Self {
+        Self {
+            out: invocation.out_channel.clone(),
+            fired: invocation.fired_channel.clone(),
+            err: invocation.err_channel.clone(),
+            fuel: invocation.fuel_channel.clone(),
+        }
+    }
+}
+
 /// The decoded observation set of one in-Rho quiescence-driver execution
 /// (A-S5.2, plan v2 §4.5): decoded OUT values plus the RAW resting data of the
 /// three reserved observation channels.

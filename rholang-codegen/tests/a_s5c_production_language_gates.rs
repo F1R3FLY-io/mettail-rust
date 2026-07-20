@@ -993,3 +993,80 @@ fn ambient_install_fails_closed_on_exactly_the_three_non_congruence_rewrites() {
         "exactly the three congruence exemptions, recorded — never silent"
     );
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// (6) A-S5.2: the in-Rho quiescence-driver admission dispositions, RECORDED on
+// the production definitions (plan v2 §4.4 / F9, amendment AM-4).
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn lambda_drive_admission_is_admitted_and_the_driver_installs_once() {
+    // A-S5.2: production Lambda — opted in (DRIVE_OPT_IN), static gate Ok
+    // (congruence-only deferrals exempt), one positional/subst matching family
+    // (the ^lambda-remapped nested Beta entry), Beta transcribes — ADMITTED.
+    let plan = plan_with_suggested_coverage(&lambda_def());
+    let lowered = plan.rho_net_lowered();
+    assert_eq!(
+        lowered.drive_admission(),
+        &mettail_rholang_codegen::DriveAdmission::Admitted,
+        "production Lambda admits the in-Rho quiescence driver"
+    );
+    let drive = lowered
+        .drive()
+        .expect("an admitted language carries the generated ^drive receiver family");
+    assert_eq!(drive.receives.len(), 1, "the driver is ONE persistent ^drive receiver");
+    assert!(drive.receives[0].persistent, "the ^drive receiver is persistent");
+    assert_eq!(
+        drive.receives[0].binds[0].patterns.len(),
+        3,
+        "the PS value-carrier frame is (t, fuel, ret)"
+    );
+    // Installed ONCE alongside the β seed + the five TRS receivers:
+    // 1 (Beta SubstRewrite σ-receiver) + 5 (subst TRS) + 1 (^drive) = 7.
+    let installed = plan
+        .installed_rho_net_program_par()
+        .expect("Lambda installs (A-S5.1 exemptions + the A-S5.2 driver)");
+    assert_eq!(
+        installed.receives.len(),
+        7,
+        "installed = β seed + five TRS receivers + the ^drive receiver, appended once"
+    );
+}
+
+#[test]
+fn ambient_drive_admission_is_unsupported_with_the_blocking_reason_recorded() {
+    // A-S5.2: production Ambient is OPTED IN (DRIVE_OPT_IN — the A-S5 intent) but
+    // records `Unsupported`: its In/Out/Open rewrites still fail-close as
+    // `CollectionAc` (pre-A-S5.3/.4), and its AC matching families have no driver
+    // arms until A-S5.5. RECORDED, never silent — and the generated
+    // `rho_net_drive_invocation_to` (emitted for Ambient because it IS opted in)
+    // re-checks this same predicate per exec, so a premature seed fails typed
+    // instead of resting unanswered.
+    let plan = plan_with_suggested_coverage(&ambient_def());
+    let lowered = plan.rho_net_lowered();
+    match lowered.drive_admission() {
+        mettail_rholang_codegen::DriveAdmission::Unsupported { reason } => {
+            assert!(
+                reason.contains("CollectionAc") || reason.contains("static gate"),
+                "the recorded reason names the blocking family/gate: {reason}"
+            );
+        },
+        other => panic!(
+            "production Ambient must record DriveAdmission::Unsupported until A-S5.5, \
+             got {other:?}"
+        ),
+    }
+    assert!(lowered.drive().is_none(), "no partial Ambient driver is ever built");
+}
+
+#[test]
+fn drive_opt_in_is_exactly_the_a_s5_scope() {
+    // AM-4: the codegen-visible opt-in const is the A-S5 scope — {Lambda, Ambient}
+    // — consulted by BOTH the macro emitter (fn emission) and `drive_admissible`
+    // (the recorded disposition), so the two surfaces cannot drift.
+    assert_eq!(
+        mettail_rholang_codegen::DRIVE_OPT_IN,
+        &["Lambda", "Ambient"],
+        "the driver opt-in scope is exactly the A-S5 pair"
+    );
+}
