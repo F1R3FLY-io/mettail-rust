@@ -21,7 +21,7 @@ use dovetail::rules::Pattern as DvPattern;
 use dovetail::set_automaton::{AutomatonNode, PatternId, SetAutomaton};
 use mettail_ast::grammar::{GrammarItem, TermParam};
 use mettail_ast::identity::language_definition_fingerprint;
-use mettail_ast::language::{LanguageDef, Premise};
+use mettail_ast::language::LanguageDef;
 use mettail_ast::pattern::{Pattern, PatternTerm};
 use models::rhoapi::Par;
 
@@ -29,11 +29,11 @@ use crate::rho_net_automaton::{
     multi_pattern_receiver_network_par, AutomatonAcceptTarget, AutomatonUnsupported,
 };
 use crate::rho_net_lower::{
-    ac_match_call_par, contextual_hole_bridge_par, contextual_premise_hole_channel,
-    nested_structural_ac_match_call_par, spread_child_location, spread_term_par,
-    structural_ac_match_call_par, GroundTerm, RhoNetAcMatchEntry, RhoNetContextualMatchEntry,
-    RhoNetNestedStructuralAcMatchEntry, RhoNetStructuralAcMatchEntry, LAMBDA_REFLECT_LABEL,
-    MULTILAMBDA_REFLECT_LABEL,
+    ac_match_call_par, congruence_only_premises, contextual_hole_bridge_par,
+    contextual_premise_hole_channel, nested_structural_ac_match_call_par, spread_child_location,
+    spread_term_par, structural_ac_match_call_par, GroundTerm, RhoNetAcMatchEntry,
+    RhoNetContextualMatchEntry, RhoNetNestedStructuralAcMatchEntry,
+    RhoNetStructuralAcMatchEntry, LAMBDA_REFLECT_LABEL, MULTILAMBDA_REFLECT_LABEL,
 };
 
 /// Why an LHS pattern has no structural set-automaton image (fail-closed to a later
@@ -902,12 +902,20 @@ pub fn in_rho_match_gate_reject<'a>(
 /// the located redexes are all matchable in Rho.
 ///
 /// FIREABLE means the rewrite can appear in `report.rewrite_justifications`: a
-/// CONGRUENCE-PREMISE rewrite (`| S ~> T |- K(S) ~> K(T)`, any rule carrying a
-/// [`Premise::Congruence`]) NEVER does — the e-graph closes contexts implicitly, so its label is
-/// never a fired-rule label and the dynamic gate never consulted it. The static gate therefore
-/// EXEMPTS congruence-premise rewrites (enumerated from `def.rewrites[..].premises`) rather than
-/// demanding their admission; demanding it would reject languages the dynamic gate admits today
-/// (e.g. every language with auto-injected cast congruence rules).
+/// CONGRUENCE-ONLY rewrite (`| S ~> T |- K(S) ~> K(T)`, a rule whose NON-EMPTY premise set is
+/// ALL [`mettail_ast::language::Premise::Congruence`] — [`congruence_only_premises`], the
+/// A-S5.1 `any→all` hardening)
+/// NEVER does — the e-graph closes contexts implicitly, so its label is never a fired-rule label
+/// and the dynamic gate never consulted it. The static gate therefore EXEMPTS congruence-only
+/// rewrites (enumerated from `def.rewrites[..].premises`) rather than demanding their admission;
+/// demanding it would reject languages the dynamic gate admits today (e.g. every language with
+/// auto-injected cast congruence rules — all singleton-congruence-premise, for which `all` ≡
+/// `any`). A MIXED-premise rewrite (congruence + a freshness / guard / relation side condition)
+/// is deliberately NOT exempt under the hardened predicate: its non-congruence side condition
+/// makes "never fireable" unestablishable from the congruence fact alone, so it fails closed.
+/// The hardening is proven outcome-neutral corpus-wide (red-team F13): the only bundled
+/// multi-premise rewrite, `bicongdemo`'s `NodeCong`, carries two congruence premises and stays
+/// exempt.
 ///
 /// Soundness relative to the dynamic gate: for any complete report,
 /// `fired ⊆ {fireable rewrites}`, so `static-admitted ⇒ dynamic-admitted` — the static gate is
@@ -922,18 +930,17 @@ pub fn in_rho_static_gate(
     ruleset: &InRhoMatchingRuleset,
     def: &LanguageDef,
 ) -> Result<(), Vec<DeferredRewrite>> {
-    // The congruence-premise rewrites: never fireable (no explicit Dovetail firing), so their
+    // The congruence-ONLY rewrites: never fireable (no explicit Dovetail firing), so their
     // deferral is irrelevant to the report-free match path — the e-graph congruence closure (or
     // the admitted contextual family) covers them, exactly as it does on the dynamic-gate path.
+    // A-S5.1 hardening: the SHARED `congruence_only_premises` predicate (all + non-empty, the
+    // same predicate the install boundary's exempt disposition tests in
+    // `rho_net_lower::exempt_or_record`) replaces the previous `any(Premise::Congruence)` scan,
+    // so a future mixed-premise rewrite can never ride the exemption past its side condition.
     let congruence_exempt: HashSet<String> = def
         .rewrites
         .iter()
-        .filter(|rewrite| {
-            rewrite
-                .premises
-                .iter()
-                .any(|premise| matches!(premise, Premise::Congruence { .. }))
-        })
+        .filter(|rewrite| congruence_only_premises(&rewrite.premises))
         .map(|rewrite| rewrite.name.to_string())
         .collect();
 

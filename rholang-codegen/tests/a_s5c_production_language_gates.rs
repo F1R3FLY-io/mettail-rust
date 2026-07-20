@@ -9,20 +9,24 @@
 //! must be re-checked against it — a deviation must be reported, never silently
 //! adjusted.
 //!
-//! # Flip-readiness picture (the pinned TODAY state)
+//! # Flip-readiness picture (the pinned TODAY state, post-A-S5.1)
 //!
-//! **Lambda** — static gate ADMITS, plan gate PASSES, install FAILS CLOSED:
+//! **Lambda** — static gate ADMITS, plan gate PASSES, install ADMITS with the
+//! three congruence lowerings RECORDED EXEMPT (A-S5.1 leg i):
 //! - `Beta` compiles to the ONE automaton entry `App(^lambda(fun), arg)` — a
 //!   NESTED entry (root `App` over a `^lambda` child), routed to its
 //!   `SubstRewrite` σ-receiver source channel.
 //! - `AppCongL`/`AppCongR`/`LamCong` defer `NotBaseRewrite`: no contextual join
-//!   materializes for them (`AppCongL`/`AppCongR` lower
-//!   `Unsupported(DanglingRhsVariable)` — the premise target `M1`/`N1` has no σ
-//!   slot and the passenger variable rides the LHS trace only; `LamCong` lowers
-//!   `Unsupported(LambdaBinder)`). All three carry `Premise::Congruence`, so the
-//!   static gate EXEMPTS them (`in_rho_static_gate` = `Ok(())`): the e-graph
-//!   closes contexts implicitly, and a congruence label is never a fired-rule
-//!   label.
+//!   materializes for them (`AppCongL`/`AppCongR` fail joining on
+//!   `DanglingRhsVariable` — the premise target `M1`/`N1` has no σ slot and the
+//!   passenger variable rides the LHS trace only; `LamCong` fails on
+//!   `LambdaBinder`). All three are congruence-ONLY rewrites
+//!   (`congruence_only_premises` — the A-S5.1-hardened all-non-empty predicate),
+//!   so the static gate EXEMPTS them (`in_rho_static_gate` = `Ok(())`) AND the
+//!   install boundary disposes them `CongruenceExempt(family)` — recorded, never
+//!   an install error: the e-graph closes contexts implicitly on host paths, the
+//!   locate-all/driver descent carries the context closure in Rho, and a
+//!   congruence label is never a fired-rule label.
 //! - Per-site admission (the honest boundary the flip must lift): a single-App
 //!   subject admits locate-all with exactly 1 site; every subject with ≥ 2
 //!   head-`App` candidate sites fails closed
@@ -34,10 +38,14 @@
 //!   `NoGuardObligations` (no premise induces a guard obligation —
 //!   `backend.rs` `collect_premise_guard_obligations`: the
 //!   `Freshness | Congruence | RelationQuery | SyntheticInjGuard` arm adds
-//!   nothing). BUT `installed_rho_net_program_par()` FAILS CLOSED on the three
-//!   unmaterialized congruence lowerings — plan-accepted ≠ installable.
+//!   nothing). AND (A-S5.1) `installed_rho_net_program_par()` is now `Ok`: the
+//!   three congruence lowerings are `congruence_exempt_rules()` entries
+//!   (AppCongL/AppCongR → `DanglingRhsVariable`, LamCong → `LambdaBinder`), not
+//!   install errors — plan-accepted AND installable, with the exemptions on the
+//!   record.
 //!
-//! **Ambient** — static gate REJECTS, plan gate PASSES, install FAILS CLOSED:
+//! **Ambient** — static gate REJECTS, plan gate PASSES, install FAILS CLOSED
+//! on exactly the three NON-congruence rewrites (A-S5.1 shrinks the error set):
 //! - ALL SIX rewrites defer `NotBaseRewrite`; every dispatch family (linear AC,
 //!   contextual, structural-AC, nested-structural-AC, native) is EMPTY and the
 //!   automaton has ZERO entries — the in-Rho match call for any Ambient subject
@@ -50,8 +58,9 @@
 //!   `ps:HashBag(Proc)` parameters) cannot resolve the HashBag kind; the parsed
 //!   rewrite patterns' `Collection::coll_type` is also `None`. Every
 //!   AC-family recognizer (`collection_apply` / `resolve_bag_apply`) therefore
-//!   declines, and `InRule`/`OutRule`/`OpenRule`/`ParCong` lower
-//!   `Unsupported(CollectionAc)` — this is why the demo twins (`ambdemo` /
+//!   declines, and `InRule`/`OutRule`/`OpenRule` lower `Unsupported(CollectionAc)`
+//!   while `ParCong` (congruence-only) lowers `CongruenceExempt(CollectionAc)`
+//!   — this is why the demo twins (`ambdemo` /
 //!   `ambnewdemo` / `inoutdemo`, term-context-declared bags) admit while the
 //!   REAL Ambient does not. `InRule`/`OutRule` are ALSO independently gated to
 //!   binder-free languages (`def.equations.is_empty()`,
@@ -62,13 +71,18 @@
 //!   `rho_net_nested_structural_ac_match_entries` (In/Out) are EMPTY.
 //! - `in_rho_static_gate` = `Err([InRule, OutRule, OpenRule])` — the BLOCKING
 //!   FINDING for the flip: three fireable rewrites are deferred and not
-//!   congruence-exempt. `ParCong`/`NewCong`/`AmbCong` carry
-//!   `Premise::Congruence` and are exempt.
+//!   congruence-exempt. `ParCong`/`NewCong`/`AmbCong` are congruence-ONLY
+//!   (single `Premise::Congruence` each — exempt under the hardened
+//!   `congruence_only_premises` too).
 //! - `plan_rho_default_backend` STILL passes (the scalar-coverage flip gate:
 //!   all 7 rejected constructors covered by suggested `RhoAstContract`
 //!   dispositions; freshness premises in the 6 equations induce NO guard
-//!   obligations, so `NoGuardObligations` holds). Install fails closed on all
-//!   six unmaterialized rewrites.
+//!   obligations, so `NoGuardObligations` holds). Install fails closed on
+//!   exactly the three non-congruence rewrites (`InRule`/`OutRule`/`OpenRule`,
+//!   `CollectionAc` — the legs-ii/iii residue); the three congruence rewrites
+//!   are `congruence_exempt_rules()` entries (ParCong → `CollectionAc`,
+//!   NewCong → `LambdaBinder`, AmbCong → `DanglingRhsVariable`), recorded and
+//!   error-free (A-S5.1).
 //!
 //! Placement: this test lives in `rholang-codegen` (not `languages`) because
 //! every gate under audit is `pub` here and the REAL definitions are reachable
@@ -287,6 +301,7 @@ fn lowered_family_name(rule: &RhoNetLoweredRule) -> String {
         R::NativeSystemProcessRewrite { .. } => "NativeSystemProcessRewrite".to_string(),
         R::StructuralConstructor { .. } => "StructuralConstructor".to_string(),
         R::CongruenceClosure { .. } => "CongruenceClosure".to_string(),
+        R::CongruenceExemptRewrite { family, .. } => format!("CongruenceExempt({family:?})"),
         R::Comm { .. } => "Comm".to_string(),
         R::NativeSystemProcess { .. } => "NativeSystemProcess".to_string(),
         R::Unsupported { family, .. } => format!("Unsupported({family:?})"),
@@ -837,9 +852,11 @@ fn lambda_lowered_families_pin_the_why_per_rule() {
             ("rule:term:0:Lam", "StructuralConstructor"),
             ("rule:term:1:App", "StructuralConstructor"),
             ("rule:rewrite:0:Beta", "SubstRewrite"),
-            ("rule:rewrite:1:AppCongL", "Unsupported(DanglingRhsVariable)"),
-            ("rule:rewrite:2:AppCongR", "Unsupported(DanglingRhsVariable)"),
-            ("rule:rewrite:3:LamCong", "Unsupported(LambdaBinder)"),
+            // A-S5.1 (leg i): the three congruence-ONLY lowering failures are the
+            // RECORDED install-exempt disposition, not fail-closed Unsupported.
+            ("rule:rewrite:1:AppCongL", "CongruenceExempt(DanglingRhsVariable)"),
+            ("rule:rewrite:2:AppCongR", "CongruenceExempt(DanglingRhsVariable)"),
+            ("rule:rewrite:3:LamCong", "CongruenceExempt(LambdaBinder)"),
         ],
     );
 }
@@ -869,40 +886,70 @@ fn ambient_lowered_families_pin_the_why_per_rule() {
             ("rule:rewrite:0:InRule", "Unsupported(CollectionAc)"),
             ("rule:rewrite:1:OutRule", "Unsupported(CollectionAc)"),
             ("rule:rewrite:2:OpenRule", "Unsupported(CollectionAc)"),
-            ("rule:rewrite:3:ParCong", "Unsupported(CollectionAc)"),
-            ("rule:rewrite:4:NewCong", "Unsupported(LambdaBinder)"),
-            ("rule:rewrite:5:AmbCong", "Unsupported(DanglingRhsVariable)"),
+            // A-S5.1 (leg i): the three congruence-ONLY rewrites are recorded
+            // exempt; the non-congruence In/Out/Open stay fail-closed until the
+            // A-S5.3/.4 legs admit them.
+            ("rule:rewrite:3:ParCong", "CongruenceExempt(CollectionAc)"),
+            ("rule:rewrite:4:NewCong", "CongruenceExempt(LambdaBinder)"),
+            ("rule:rewrite:5:AmbCong", "CongruenceExempt(DanglingRhsVariable)"),
         ],
     );
 }
 
 #[test]
-fn lambda_install_fails_closed_on_the_three_unmaterialized_congruences() {
+fn lambda_installs_with_the_three_congruence_exemptions_recorded() {
+    // A-S5.1 (leg i) — the deliberate inversion of the pre-A-S5 pin
+    // `lambda_install_fails_closed_on_the_three_unmaterialized_congruences`:
+    // Lambda's three congruence-ONLY lowering failures are now the RECORDED
+    // install-exempt disposition, so plan-accepted AND installable — the leg-i
+    // seam (plan Ok + static gate Ok + install Ok) is closed for Lambda.
     let plan = plan_with_suggested_coverage(&lambda_def());
+    let installed = plan
+        .installed_rho_net_program_par()
+        .expect("A-S5.1: Lambda's σ-receiver program must install (exemptions recorded)");
+    assert!(
+        !installed.receives.is_empty(),
+        "the installed program carries the Beta SubstRewrite σ-receiver + the subst TRS"
+    );
+    // The exemptions are ON THE RECORD — exactly the three, matched on
+    // (rule id, failed family), order-insensitively (sorted by unique rule id).
+    let mut exempt: Vec<(String, UnsupportedFamily)> = plan
+        .rho_net_lowered()
+        .congruence_exempt_rules()
+        .into_iter()
+        .map(|(rule_id, family)| (rule_id.to_string(), *family))
+        .collect();
+    exempt.sort_by(|a, b| a.0.cmp(&b.0));
     assert_eq!(
-        plan.installed_rho_net_program_par(),
-        Err(RhoNetInstallError::LoweringErrors(vec![
-            RhoNetLoweringError::UnsupportedFamily {
-                rule_id: "rule:rewrite:1:AppCongL".to_string(),
-                family: UnsupportedFamily::DanglingRhsVariable,
-            },
-            RhoNetLoweringError::UnsupportedFamily {
-                rule_id: "rule:rewrite:2:AppCongR".to_string(),
-                family: UnsupportedFamily::DanglingRhsVariable,
-            },
-            RhoNetLoweringError::UnsupportedFamily {
-                rule_id: "rule:rewrite:3:LamCong".to_string(),
-                family: UnsupportedFamily::LambdaBinder,
-            },
-        ])),
-        "FLIP-BLOCKING: Lambda's plan is accepted and its static gate admits, \
-         yet the installed σ-receiver program fails closed — the congruence \
-         lowerings must materialize (or be install-exempted) before A-S5"
+        exempt,
+        vec![
+            (
+                "rule:rewrite:1:AppCongL".to_string(),
+                UnsupportedFamily::DanglingRhsVariable,
+            ),
+            (
+                "rule:rewrite:2:AppCongR".to_string(),
+                UnsupportedFamily::DanglingRhsVariable,
+            ),
+            ("rule:rewrite:3:LamCong".to_string(), UnsupportedFamily::LambdaBinder),
+        ],
+        "exactly the three congruence exemptions, recorded — never silent"
+    );
+    // And no fail-closed diagnostic remains: exempt ≠ errored.
+    assert!(
+        plan.rho_net_lowered().errors().is_empty(),
+        "an exemption is a recorded disposition, not a lowering diagnostic: {:?}",
+        plan.rho_net_lowered().errors()
     );
 }
 
 #[test]
-fn ambient_install_fails_closed_on_all_six_unmaterialized_rewrites() {
+fn ambient_install_fails_closed_on_exactly_the_three_non_congruence_rewrites() {
+    // A-S5.1 (leg i) shrinks the pre-A-S5 six-error pin to the NON-congruence
+    // residue: `ParCong`/`NewCong`/`AmbCong` are congruence-ONLY and now recorded
+    // exempt, while `InRule`/`OutRule`/`OpenRule` (premise-free, fireable) stay
+    // fail-closed until the A-S5.3/.4 legs admit them (kind resolution + nested
+    // gate) — Ambient remains FLIP-BLOCKED, for exactly these three.
     let plan = plan_with_suggested_coverage(&ambient_def());
     assert_eq!(
         plan.installed_rho_net_program_par(),
@@ -919,21 +966,30 @@ fn ambient_install_fails_closed_on_all_six_unmaterialized_rewrites() {
                 rule_id: "rule:rewrite:2:OpenRule".to_string(),
                 family: UnsupportedFamily::CollectionAc,
             },
-            RhoNetLoweringError::UnsupportedFamily {
-                rule_id: "rule:rewrite:3:ParCong".to_string(),
-                family: UnsupportedFamily::CollectionAc,
-            },
-            RhoNetLoweringError::UnsupportedFamily {
-                rule_id: "rule:rewrite:4:NewCong".to_string(),
-                family: UnsupportedFamily::LambdaBinder,
-            },
-            RhoNetLoweringError::UnsupportedFamily {
-                rule_id: "rule:rewrite:5:AmbCong".to_string(),
-                family: UnsupportedFamily::DanglingRhsVariable,
-            },
         ])),
-        "FLIP-BLOCKING: Ambient's plan is accepted, yet not one rewrite \
-         materializes a receiver — the whole AC family must be admitted (kind \
-         resolution + nested gate) before A-S5"
+        "FLIP-BLOCKING (A-S5.3/.4 residue): Ambient's plan is accepted, yet the \
+         three non-congruence rewrites materialize no receiver — the AC family \
+         must be admitted (kind resolution + nested gate) before the flip"
+    );
+    // The three congruence-ONLY rewrites are exempt — recorded, never silent,
+    // and no longer error contributors. Order-insensitive on (rule id, family).
+    let mut exempt: Vec<(String, UnsupportedFamily)> = plan
+        .rho_net_lowered()
+        .congruence_exempt_rules()
+        .into_iter()
+        .map(|(rule_id, family)| (rule_id.to_string(), *family))
+        .collect();
+    exempt.sort_by(|a, b| a.0.cmp(&b.0));
+    assert_eq!(
+        exempt,
+        vec![
+            ("rule:rewrite:3:ParCong".to_string(), UnsupportedFamily::CollectionAc),
+            ("rule:rewrite:4:NewCong".to_string(), UnsupportedFamily::LambdaBinder),
+            (
+                "rule:rewrite:5:AmbCong".to_string(),
+                UnsupportedFamily::DanglingRhsVariable,
+            ),
+        ],
+        "exactly the three congruence exemptions, recorded — never silent"
     );
 }

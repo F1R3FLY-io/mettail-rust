@@ -232,6 +232,42 @@ mod tests {
         cached_in_rho_artifacts(SWAP_SOURCE).expect("valid source still derives after a failure");
     }
 
+    /// Extract the verbatim `language! { … }` body from a production language
+    /// source file — the same extraction `tests/a_s5c_production_language_gates.rs`
+    /// uses: everything between the macro invocation's opening `{` and the LAST
+    /// `}` in the file (the macro's own closing brace).
+    fn extract_language_body(source: &str) -> &str {
+        let macro_at = source
+            .find("language!")
+            .expect("the production language file must invoke language!");
+        let open = source[macro_at..]
+            .find('{')
+            .map(|offset| macro_at + offset)
+            .expect("the language! invocation must open a brace");
+        let close = source.rfind('}').expect("the language! invocation must close its brace");
+        &source[open + 1..close]
+    }
+
+    #[test]
+    fn lambda_source_now_derives_an_installed_par() {
+        // A-S5.1 (leg i): the REAL production Lambda body — through the SAME
+        // source-keyed artifact surface the generated invocation bodies consume —
+        // now derives `installed_par: Ok(_)`: the three congruence-only lowering
+        // failures (AppCongL/AppCongR/LamCong) are the recorded install-EXEMPT
+        // disposition instead of fail-closed install errors. (The exemption
+        // record itself is pinned by `tests/a_s5c_production_language_gates.rs`;
+        // this pin covers the cache's drive-through-transparent install surface.)
+        let body = extract_language_body(include_str!("../../languages/src/lambda.rs"));
+        let artifacts =
+            cached_in_rho_artifacts(body).expect("the production Lambda body derives artifacts");
+        assert_eq!(artifacts.def.name.to_string(), "Lambda");
+        assert!(
+            artifacts.installed_par.is_ok(),
+            "A-S5.1: Lambda's σ-receiver program installs through the cache surface: {:?}",
+            artifacts.installed_par.as_ref().err()
+        );
+    }
+
     #[test]
     fn concurrent_threads_agree_on_the_derived_artifacts() {
         // Thread-safety + cross-thread determinism: N threads derive the same source

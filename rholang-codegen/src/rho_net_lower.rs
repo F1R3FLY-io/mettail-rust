@@ -198,6 +198,35 @@ pub enum RhoNetLoweredRule {
     /// carries a non-congruence side condition, has no flat join image and stays
     /// `Unsupported` (fail-closed).
     ContextualRewrite { rule_id: String, par: Par },
+    /// A congruence (contextual) rewrite whose flat join image FAILED to materialize
+    /// (binder / collection / dangling-passenger context / unenforceable premise —
+    /// exactly the reasons that fail [`Self::ContextualRewrite`] closed) but whose
+    /// premise set is NON-EMPTY and ALL-congruence ([`congruence_only_premises`]):
+    /// the A-S5.1 (leg i) install-EXEMPT disposition — RECORDED, NEVER SILENT.
+    ///
+    /// Like [`Self::CongruenceClosure`] it contributes no `Par` and never blocks
+    /// [`RhoNetLowered::installed_program_par`], because a congruence-only rewrite
+    /// declares no motion of its own — it only closes a context around premise
+    /// reductions, and that context closure is already carried WITHOUT a dedicated
+    /// receiver: by the locate-all / driver descent IN RHO (every candidate subterm
+    /// position is visited and its redex fired at its own site) and by the e-graph
+    /// congruence closure on the host (Dovetail) paths (a congruence label is never
+    /// a fired-rule label — the same fact the A-S2 static gate's exemption rests
+    /// on). The failed [`UnsupportedFamily`] is retained as the recorded WHY and
+    /// surfaced by [`RhoNetLowered::congruence_exempt_rules`] plus the A-S5c family
+    /// table — an exemption is evidence, never an omission.
+    ///
+    /// A lowering failure on a rewrite with ANY non-congruence premise (mixed
+    /// premises) stays [`Self::Unsupported`] with a fail-closed diagnostic: its
+    /// side condition has no in-Rho image and must never be silently dropped.
+    ///
+    /// FV: `formal/rocq/rho_bridge/theories/RhoLoweringTotalOrRejects.v`
+    /// (`Section CongruenceExemptInstallBoundary`,
+    /// `install_admits_iff_no_nonexempt_unlowered`).
+    CongruenceExemptRewrite {
+        rule_id: String,
+        family: UnsupportedFamily,
+    },
     /// A binder/β-substitution base rewrite `App(Lam(^x. b), a) ~> subst(b, x := a)`
     /// lowered to a flat σ-receiver whose body FORWARDS the host-computed reduct
     /// (Stage 3c). The receiver is a plain `(k+1)`-ary σ-receiver
@@ -269,6 +298,7 @@ impl RhoNetLoweredRule {
             | Self::NativeSystemProcessRewrite { rule_id, .. }
             | Self::StructuralConstructor { rule_id }
             | Self::CongruenceClosure { rule_id }
+            | Self::CongruenceExemptRewrite { rule_id, .. }
             | Self::Comm { rule_id }
             | Self::NativeSystemProcess { rule_id }
             | Self::Unsupported { rule_id, .. } => rule_id,
@@ -381,6 +411,26 @@ impl RhoNetLowered {
         &self.errors
     }
 
+    /// The congruence-exempt unmaterialized rewrites (A-S5.1 leg i), each as
+    /// `(rule_id, the failed lowering family)` — the RECORDED-never-silent
+    /// diagnostic surface for [`RhoNetLoweredRule::CongruenceExemptRewrite`].
+    /// These rules contribute no receiver `Par` and never block
+    /// [`Self::installed_program_par`]; their context closure is carried by the
+    /// locate-all / driver descent in Rho and by the e-graph congruence closure
+    /// on host paths. Empty for every language whose contextual lowerings all
+    /// materialize (e.g. SwapDemo / CtxDemo / BiCongDemo).
+    pub fn congruence_exempt_rules(&self) -> Vec<(&str, &UnsupportedFamily)> {
+        self.rules
+            .iter()
+            .filter_map(|rule| match rule {
+                RhoNetLoweredRule::CongruenceExemptRewrite { rule_id, family } => {
+                    Some((rule_id.as_str(), family))
+                },
+                _ => None,
+            })
+            .collect()
+    }
+
     /// Parallel-compose every materialized contract `Par` (`NativeFold` +
     /// `BaseRewrite`) into a single installable Rho program — FAIL-CLOSED at the
     /// install boundary (Epic 4 #2011).
@@ -396,11 +446,13 @@ impl RhoNetLowered {
     ///   recognized-but-not-yet-lowered family (`Comm` / `NativeSystemProcess` /
     ///   `Unsupported`) that [`RhoNetLoweredRule::par`] would silently omit.
     ///
-    /// `StructuralConstructor` / `CongruenceClosure` legitimately contribute no
-    /// `Par` (inline RHS reflection / compile-time e-graph closure) and never block
-    /// the install. Formal model:
+    /// `StructuralConstructor` / `CongruenceClosure` / `CongruenceExemptRewrite`
+    /// legitimately contribute no `Par` (inline RHS reflection / compile-time
+    /// e-graph closure / the A-S5.1 recorded congruence exemption — see
+    /// [`RhoNetLoweredRule::CongruenceExemptRewrite`]) and never block the
+    /// install. Formal model:
     /// `formal/rocq/rho_bridge/theories/RhoLoweringTotalOrRejects.v`
-    /// (`Section RhoNetInstallBoundary`).
+    /// (`Section RhoNetInstallBoundary` + `Section CongruenceExemptInstallBoundary`).
     pub fn installed_program_par(&self) -> Result<Par, RhoNetInstallError> {
         if !self.errors.is_empty() {
             return Err(RhoNetInstallError::LoweringErrors(self.errors.clone()));
@@ -420,7 +472,13 @@ impl RhoNetLowered {
                 | RhoNetLoweredRule::SubstRewrite { .. }
                 | RhoNetLoweredRule::NativeSystemProcessRewrite { .. }
                 | RhoNetLoweredRule::StructuralConstructor { .. }
-                | RhoNetLoweredRule::CongruenceClosure { .. } => continue,
+                | RhoNetLoweredRule::CongruenceClosure { .. }
+                // A-S5.1 (leg i): a congruence-exempt unmaterialized rewrite is a
+                // RECORDED disposition (`congruence_exempt_rules`), not silently
+                // dropped work — its context closure is carried by the locate-all /
+                // driver descent in Rho and the e-graph congruence closure on host
+                // paths, so no receiver is missing from the installed program.
+                | RhoNetLoweredRule::CongruenceExemptRewrite { .. } => continue,
             };
             return Err(RhoNetInstallError::UnmaterializedRule {
                 rule_id: rule.rule_id().to_string(),
@@ -1220,6 +1278,15 @@ fn lower_native_system_process(
 ///    query, universal) appears as a premise — it has no join slot ([`congruence_targets`]);
 ///  - the reduced context RHS `K'` is unreflectable (binder / collection / substitution /
 ///    dangling hole) — caught by [`reflect_term_par`].
+///
+/// A-S5.1 (leg i) refinement: when the failing rewrite's premise set is NON-EMPTY and
+/// ALL-congruence ([`congruence_only_premises`]), BOTH failure sites dispose it as the
+/// install-exempt [`RhoNetLoweredRule::CongruenceExemptRewrite`] (recorded — never an
+/// `errors` push) instead of fail-closing the whole program: a congruence-only rewrite
+/// declares no motion of its own, and its context closure is carried by the locate-all /
+/// driver descent in Rho and the e-graph congruence closure on host paths. A mixed-premise
+/// failure keeps the pre-A-S5.1 fail-closed behavior byte-identically
+/// ([`exempt_or_record`]).
 fn lower_contextual_rewrite(
     rule: &RhoNetRule,
     rewrite_by_id: &HashMap<String, &RewriteRule>,
@@ -1234,11 +1301,11 @@ fn lower_contextual_rewrite(
     // ParCong over an AC PPar bag) has no flat contextual-join image — fail closed with the
     // out-of-scope family, exactly as the classify-only predecessor did.
     if let Some(family) = rewrite_pattern_unsupported(&rewrite.left, &rewrite.right) {
-        return Some(record_unsupported(rule, family, errors));
+        return Some(exempt_or_record(rule, rewrite, family, errors));
     }
     match contextual_join_rule_par(rewrite, rule, language_fingerprint) {
         Ok(par) => Some(RhoNetLoweredRule::ContextualRewrite { rule_id: rule.id.clone(), par }),
-        Err(family) => Some(record_unsupported(rule, family, errors)),
+        Err(family) => Some(exempt_or_record(rule, rewrite, family, errors)),
     }
 }
 
@@ -1305,6 +1372,52 @@ fn record_unsupported(
 ) -> RhoNetLoweredRule {
     errors.push(RhoNetLoweringError::UnsupportedFamily { rule_id: rule.id.clone(), family });
     RhoNetLoweredRule::Unsupported { rule_id: rule.id.clone(), family }
+}
+
+/// A-S5.1 (leg i): dispose one contextual-lowering FAILURE. Congruence-exempt
+/// ([`RhoNetLoweredRule::CongruenceExemptRewrite`] — recorded, no diagnostic
+/// pushed, never blocks the install) iff the source rewrite's premises are
+/// all-congruence and non-empty ([`congruence_only_premises`]); otherwise exactly
+/// the pre-A-S5.1 fail-closed behavior ([`record_unsupported`]) — a mixed-premise
+/// side condition is never silently dropped.
+fn exempt_or_record(
+    rule: &RhoNetRule,
+    rewrite: &RewriteRule,
+    family: UnsupportedFamily,
+    errors: &mut Vec<RhoNetLoweringError>,
+) -> RhoNetLoweredRule {
+    if congruence_only_premises(&rewrite.premises) {
+        RhoNetLoweredRule::CongruenceExemptRewrite { rule_id: rule.id.clone(), family }
+    } else {
+        record_unsupported(rule, family, errors)
+    }
+}
+
+/// The A-S5.1 (leg i) congruence-exemption predicate, SHARED verbatim by the
+/// contextual lowering ([`exempt_or_record`], both failure sites of
+/// [`lower_contextual_rewrite`]) and the A-S2 static capability gate
+/// (`rho_net_ruleset::in_rho_static_gate`): a rewrite is congruence-exempt iff
+/// its premise set is NON-EMPTY and EVERY premise is a `Premise::Congruence`
+/// hole.
+///
+/// `all(..)` + non-empty (not `any(..)`) is the A-S5.1 hardening: a MIXED-premise
+/// rewrite (a congruence hole plus a freshness / guard / relation side condition)
+/// is NEVER exempt — exempting it would silently drop the side condition — and an
+/// empty premise list (a base rewrite) is never exempt either. Proven
+/// outcome-neutral corpus-wide (red-team F13): every bundled congruence rewrite
+/// carries only congruence premises — the only multi-premise rewrite,
+/// `bicongdemo`'s `NodeCong` (`languages/src/bicongdemo.rs`), carries two
+/// congruence premises and stays exempt under `all`; auto-injected `NormCast`
+/// rules carry only `SyntheticInjGuard` (no congruence premise) and are unaffected.
+///
+/// FV mirror (1:1): `congruence_only_premises` in
+/// `formal/rocq/rho_bridge/theories/RhoLoweringTotalOrRejects.v`
+/// (`Section CongruenceExemptInstallBoundary`).
+pub fn congruence_only_premises(premises: &[Premise]) -> bool {
+    !premises.is_empty()
+        && premises
+            .iter()
+            .all(|premise| matches!(premise, Premise::Congruence { .. }))
 }
 
 /// A base rewrite's premises are receiver-safe iff every premise is a
@@ -6603,7 +6716,7 @@ mod tests {
     // every type defined in this module; only the extras below are new.
     use super::*;
     use crate::lower::lower_language_def;
-    use mettail_ast::language::Equation;
+    use mettail_ast::language::{Equation, FreshnessCondition, FreshnessTarget};
     use models::rhoapi::expr::ExprInstance;
     use models::rhoapi::var::VarInstance;
 
@@ -7767,7 +7880,7 @@ mod tests {
     }
 
     #[test]
-    fn minirho_comm_materializes_and_parcong_is_unsupported() {
+    fn minirho_comm_materializes_and_parcong_is_congruence_exempt() {
         let def = syn::parse_str::<LanguageDef>(MINIRHO_FOR_FRAGMENT).expect("fragment must parse");
         let lowering = lower_language_def(&def);
         let program = RhoNetProgram::from_language_def(&def, &lowering);
@@ -7787,7 +7900,10 @@ mod tests {
         );
 
         // ParCong is a CONTEXTUAL rewrite whose Collection LHS is caught by the
-        // independent P2 detector — still fail-closed (a congruence over an AC context).
+        // independent P2 detector; being congruence-ONLY (one `S ~> T` premise), it is the
+        // A-S5.1 recorded install-exempt disposition at that detector site — the failed
+        // `CollectionAc` family retained as the WHY, no fail-closed diagnostic pushed
+        // (pre-A-S5.1 this row pinned `Unsupported(CollectionAc)` + an install error).
         let parcong = lowered
             .rules()
             .iter()
@@ -7795,10 +7911,15 @@ mod tests {
             .expect("ParCong must be lowered");
         assert_eq!(
             *parcong,
-            RhoNetLoweredRule::Unsupported {
+            RhoNetLoweredRule::CongruenceExemptRewrite {
                 rule_id: "rule:rewrite:1:ParCong".to_string(),
                 family: UnsupportedFamily::CollectionAc,
             }
+        );
+        assert_eq!(
+            lowered.congruence_exempt_rules(),
+            vec![("rule:rewrite:1:ParCong", &UnsupportedFamily::CollectionAc)],
+            "the P2-detector-site exemption is on the record"
         );
 
         // The independent id re-derivation matched program.rules exactly.
@@ -9891,6 +10012,215 @@ mod tests {
                 family: UnsupportedFamily::NonCongruenceSideCondition,
             },
             "a mixed-premise congruence rule fails closed on its side condition"
+        );
+    }
+
+    #[test]
+    fn contextual_congruence_only_failure_is_recorded_exempt_and_installs() {
+        // A-S5.1 (leg i): a congruence-ONLY rewrite whose flat join image FAILS
+        // (the Lambda `AppCongL` shape — the passenger `N` is no premise target,
+        // so the RHS reflect dangles) is the RECORDED install-exempt disposition:
+        // no diagnostic pushed, the install admits, and the exemption (with its
+        // failed family) surfaces via `congruence_exempt_rules`.
+        let (lowered, id) = lower_single_rewrite_full(RewriteRule {
+            name: ident("CongL"),
+            type_context: Vec::new(),
+            premises: vec![Premise::Congruence { source: ident("M0"), target: ident("M1") }],
+            left: apply("Pair", vec![var_pattern("M0"), var_pattern("N")]),
+            right: apply("Pair", vec![var_pattern("M1"), var_pattern("N")]),
+            is_auto_injected: false,
+        });
+        let rule = lowered
+            .rules()
+            .iter()
+            .find(|rule| rule.rule_id() == id)
+            .expect("CongL must be lowered");
+        assert_eq!(
+            *rule,
+            RhoNetLoweredRule::CongruenceExemptRewrite {
+                rule_id: id.clone(),
+                family: UnsupportedFamily::DanglingRhsVariable,
+            },
+            "a congruence-only join failure is exempt, retaining the failed family as the WHY"
+        );
+        assert!(
+            lowered.errors().is_empty(),
+            "an exemption pushes no fail-closed diagnostic: {:?}",
+            lowered.errors()
+        );
+        assert_eq!(
+            lowered.congruence_exempt_rules(),
+            vec![(id.as_str(), &UnsupportedFamily::DanglingRhsVariable)],
+            "the exemption is on the record — never silent"
+        );
+        lowered
+            .installed_program_par()
+            .expect("a recorded congruence exemption never blocks the install");
+    }
+
+    #[test]
+    fn contextual_mixed_premise_failure_still_fails_install_closed() {
+        // A-S5.1 hardening (`congruence_only_premises` = all + non-empty, never
+        // `any`): a MIXED-premise congruence rewrite — one congruence hole plus a
+        // FRESHNESS side condition — is NEVER exempt: the freshness premise has
+        // no join slot, and exempting the rule would silently drop it. The
+        // fail-closed behavior is byte-identical to pre-A-S5.1.
+        let (lowered, id) = lower_single_rewrite_full(RewriteRule {
+            name: ident("FreshGuardedCong"),
+            type_context: Vec::new(),
+            premises: vec![
+                Premise::Congruence { source: ident("S"), target: ident("T") },
+                Premise::Freshness(FreshnessCondition {
+                    var: ident("x"),
+                    term: FreshnessTarget::Var(ident("S")),
+                }),
+            ],
+            left: apply("Wrap", vec![var_pattern("S")]),
+            right: apply("Wrap", vec![var_pattern("T")]),
+            is_auto_injected: false,
+        });
+        let rule = lowered
+            .rules()
+            .iter()
+            .find(|rule| rule.rule_id() == id)
+            .expect("FreshGuardedCong must be lowered");
+        assert_eq!(
+            *rule,
+            RhoNetLoweredRule::Unsupported {
+                rule_id: id.clone(),
+                family: UnsupportedFamily::NonCongruenceSideCondition,
+            },
+            "mixed premises stay fail-closed Unsupported — never exempt"
+        );
+        assert!(
+            lowered.congruence_exempt_rules().is_empty(),
+            "a mixed-premise rewrite must never appear in the exemption record"
+        );
+        assert_eq!(
+            lowered.errors().to_vec(),
+            vec![RhoNetLoweringError::UnsupportedFamily {
+                rule_id: id.clone(),
+                family: UnsupportedFamily::NonCongruenceSideCondition,
+            }],
+            "the fail-closed diagnostic is recorded"
+        );
+        match lowered.installed_program_par() {
+            Err(RhoNetInstallError::LoweringErrors(errors)) => {
+                assert_eq!(errors.len(), 1, "the mixed-premise failure blocks the install");
+            },
+            other => panic!("expected LoweringErrors, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn swap_demo_records_zero_exemptions_and_installs_deterministically() {
+        // A-S5.1 commit-boundary evidence (SwapDemo byte-identical): a language
+        // whose every rewrite MATERIALIZES is untouched by the exemption seam —
+        // zero `congruence_exempt_rules`, the install stays Ok, and two
+        // independent compilations through the changed path produce EQUAL
+        // installed `Par`s (prost message equality ⇒ identical encodings).
+        // Subject: the module's canonical `SWAP_DEMO_FRAGMENT` (the real SwapDemo).
+        let compile = || {
+            let def = syn::parse_str::<LanguageDef>(SWAP_DEMO_FRAGMENT)
+                .expect("the SwapDemo fragment parses");
+            let lowering = lower_language_def(&def);
+            let program = RhoNetProgram::from_language_def(&def, &lowering);
+            program.lower_to_par(&def, &lowering)
+        };
+        let first = compile();
+        assert!(
+            first.congruence_exempt_rules().is_empty(),
+            "SwapDemo has no congruence rewrite — nothing to exempt"
+        );
+        assert!(first.errors().is_empty(), "SwapDemo lowers cleanly: {:?}", first.errors());
+        let first_par = first
+            .installed_program_par()
+            .expect("the SwapDemo σ-receiver program installs");
+        let second_par = compile()
+            .installed_program_par()
+            .expect("the SwapDemo σ-receiver program installs again");
+        assert_eq!(
+            first_par, second_par,
+            "the installed program is value-deterministic through the A-S5.1 path"
+        );
+        assert!(!first_par.receives.is_empty(), "the SwapStep σ-receiver is installed");
+    }
+
+    /// The BiCongDemo shape (mirrors `languages/src/bicongdemo.rs` — `NodeCong`
+    /// carries TWO congruence premises): the red-team F13 regression pin for the
+    /// `any→all` hardening.
+    const BICONG_DEMO_FRAGMENT: &str = r#"
+        name: RhoNetBiCongFrag,
+        types { Proc },
+        terms {
+            A . |- "A" : Proc ;
+            B . |- "B" : Proc ;
+            C . |- "C" : Proc ;
+            D . |- "D" : Proc ;
+            Pair . x:Proc, y:Proc |- "pair" "(" x "," y ")" : Proc ;
+            Swap . x:Proc, y:Proc |- "swap" "(" x "," y ")" : Proc ;
+            Node . x:Proc, y:Proc |- "node" "(" x "," y ")" : Proc ;
+        },
+        equations {},
+        rewrites {
+            Flip . |- (Swap x y) ~> (Pair y x) ;
+            NodeCong . | S0 ~> T0, S1 ~> T1 |- (Node S0 S1) ~> (Node T0 T1) ;
+        }
+    "#;
+
+    #[test]
+    fn bicong_two_congruence_premises_stay_exempt_under_all_and_materialize() {
+        // Red-team F13 pin: `bicongdemo`'s `NodeCong` is the ONLY bundled
+        // multi-premise rewrite — two congruence premises. Under the hardened
+        // `congruence_only_premises` (all + non-empty) it remains in the static
+        // gate's exemption basis, AND (pinning reality, not the design's guess)
+        // its lowering still MATERIALIZES the 2-ary contextual join — so the
+        // exempt disposition never triggers, no exemption is recorded, and the
+        // program installs exactly as before A-S5.1.
+        use crate::rho_net_ruleset::{compile_in_rho_matching_ruleset, in_rho_static_gate};
+
+        let def = syn::parse_str::<LanguageDef>(BICONG_DEMO_FRAGMENT)
+            .expect("the BiCongDemo fragment parses");
+        let node_cong = def
+            .rewrites
+            .iter()
+            .find(|rewrite| rewrite.name == "NodeCong")
+            .expect("NodeCong is a fragment rewrite");
+        assert_eq!(node_cong.premises.len(), 2, "NodeCong carries two premises");
+        assert!(
+            congruence_only_premises(&node_cong.premises),
+            "two congruence premises remain exempt under all(..) + non-empty"
+        );
+
+        let lowering = lower_language_def(&def);
+        let program = RhoNetProgram::from_language_def(&def, &lowering);
+        let lowered = program.lower_to_par(&def, &lowering);
+        assert!(
+            lowered
+                .rules()
+                .iter()
+                .any(|rule| matches!(
+                    rule,
+                    RhoNetLoweredRule::ContextualRewrite { rule_id, .. }
+                        if rule_id == "rule:rewrite:1:NodeCong"
+                )),
+            "NodeCong MATERIALIZES the 2-ary contextual join (reality pin)"
+        );
+        assert!(
+            lowered.congruence_exempt_rules().is_empty(),
+            "a materialized congruence rewrite records no exemption"
+        );
+        assert!(lowered.errors().is_empty(), "BiCongDemo lowers cleanly: {:?}", lowered.errors());
+        lowered
+            .installed_program_par()
+            .expect("BiCongDemo installs — gate admission and install are unchanged");
+
+        // And the static capability gate still admits under the hardened predicate.
+        let ruleset = compile_in_rho_matching_ruleset(&def);
+        assert_eq!(
+            in_rho_static_gate(&ruleset, &def),
+            Ok(()),
+            "the hardened exemption basis leaves the BiCongDemo gate admission unchanged"
         );
     }
 
