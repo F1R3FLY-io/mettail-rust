@@ -450,3 +450,148 @@ pub fn generate_binder_congruence_term_wrapper(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mettail_rholang_codegen::{
+        equations_boundary_canonicalizable, language_has_float_handler, reconstruct_language_def,
+    };
+
+    /// Reconstruct a bundled language definition from its source file: the body is everything
+    /// between the real `language!` invocation's opening `{` and the LAST `}` in the file (the
+    /// macro's own closing brace — the same body-text convention the `rholang-codegen` a_s5c
+    /// suite uses, i.e. what the macro embeds as `LanguageMetadata::definition_source`). A file's
+    /// comments may mention `language!` before OR after the invocation (`acdemo.rs`,
+    /// `calculator.rs`), so every mention is tried and the one that reconstructs wins — exactly
+    /// one does (the invocation), and a file where none does panics with the last error.
+    fn bundled_def(name: &str, source: &str) -> mettail_ast::language::LanguageDef {
+        let close = source.rfind('}').expect("a language file closes the macro brace");
+        let mut search_from = 0;
+        let mut last_error = String::from("no language! mention found");
+        while let Some(found) = source[search_from..].find("language!") {
+            let macro_at = search_from + found;
+            if let Some(open_offset) = source[macro_at..].find('{') {
+                let open = macro_at + open_offset;
+                if open < close {
+                    match reconstruct_language_def(&source[open + 1..close]) {
+                        Ok(def) => return def,
+                        Err(error) => last_error = error.to_string(),
+                    }
+                }
+            }
+            search_from = macro_at + "language!".len();
+        }
+        panic!("bundled language {name} must reconstruct: {last_error}");
+    }
+
+    /// Every bundled standalone language definition (all `language!` files under `languages/src`;
+    /// `bench_common.rs` declares no language and the `composition/` / `rhocalc/` subdirectories
+    /// hold fragments, not standalone definitions).
+    const BUNDLED_LANGUAGES: &[(&str, &str)] = &[
+        ("acbagdemo", include_str!("../../../../languages/src/acbagdemo.rs")),
+        ("acdemo", include_str!("../../../../languages/src/acdemo.rs")),
+        ("ambdemo", include_str!("../../../../languages/src/ambdemo.rs")),
+        ("ambient", include_str!("../../../../languages/src/ambient.rs")),
+        ("ambnewdemo", include_str!("../../../../languages/src/ambnewdemo.rs")),
+        ("appsubst", include_str!("../../../../languages/src/appsubst.rs")),
+        ("bicongdemo", include_str!("../../../../languages/src/bicongdemo.rs")),
+        ("calculator", include_str!("../../../../languages/src/calculator.rs")),
+        (
+            "class2hashmapsmoke",
+            include_str!("../../../../languages/src/class2hashmapsmoke.rs"),
+        ),
+        ("class2multi", include_str!("../../../../languages/src/class2multi.rs")),
+        ("class2optsmoke", include_str!("../../../../languages/src/class2optsmoke.rs")),
+        ("class2smoke", include_str!("../../../../languages/src/class2smoke.rs")),
+        ("class3multi", include_str!("../../../../languages/src/class3multi.rs")),
+        ("class3opt", include_str!("../../../../languages/src/class3opt.rs")),
+        ("commdemo", include_str!("../../../../languages/src/commdemo.rs")),
+        ("ctxdemo", include_str!("../../../../languages/src/ctxdemo.rs")),
+        ("fortran_model", include_str!("../../../../languages/src/fortran_model.rs")),
+        ("guarded_rho", include_str!("../../../../languages/src/guarded_rho.rs")),
+        ("guardoptsmoke", include_str!("../../../../languages/src/guardoptsmoke.rs")),
+        ("inoutdemo", include_str!("../../../../languages/src/inoutdemo.rs")),
+        ("lambdademo", include_str!("../../../../languages/src/lambdademo.rs")),
+        ("lambda", include_str!("../../../../languages/src/lambda.rs")),
+        ("led_test", include_str!("../../../../languages/src/led_test.rs")),
+        ("nativedemo", include_str!("../../../../languages/src/nativedemo.rs")),
+        ("nativefolddemo", include_str!("../../../../languages/src/nativefolddemo.rs")),
+        ("nlacdemo", include_str!("../../../../languages/src/nlacdemo.rs")),
+        ("optsmoke", include_str!("../../../../languages/src/optsmoke.rs")),
+        ("refinementsmoke", include_str!("../../../../languages/src/refinementsmoke.rs")),
+        ("reserved_model", include_str!("../../../../languages/src/reserved_model.rs")),
+        ("rhocalc", include_str!("../../../../languages/src/rhocalc.rs")),
+        ("swapdemo", include_str!("../../../../languages/src/swapdemo.rs")),
+    ];
+
+    /// A-S5.4b CROSS-CRATE AGREEMENT (design v2 §3.2): for EVERY bundled language definition, the
+    /// `rholang-codegen` restatement `language_has_float_handler` (the equations-gate recognizer's
+    /// handler leg) must agree with this module's `should_emit_binder_congruence` (the emission
+    /// disposition). This test lives in `macros` because only `macros` sees BOTH predicates; any
+    /// drift in either crate's three conditions (equations non-empty / no `RhoNativeJoin`
+    /// obligation / surface single binder) fails loudly, per language.
+    #[test]
+    fn language_has_float_handler_agrees_with_should_emit_binder_congruence() {
+        for (name, source) in BUNDLED_LANGUAGES {
+            let def = bundled_def(name, source);
+            assert_eq!(
+                should_emit_binder_congruence(&def),
+                language_has_float_handler(&def),
+                "cross-crate drift on {name}: macros should_emit_binder_congruence != \
+                 rholang-codegen language_has_float_handler"
+            );
+        }
+    }
+
+    /// The bundled corpus fact the A-S5.4b admission rests on: Ambient is the ONLY float-handler
+    /// language (equations + host-less + surface single binder), and its corrected equation set is
+    /// boundary-canonicalizable — the production admission the a_s5c suite pins end-to-end.
+    #[test]
+    fn ambient_is_the_only_bundled_float_handler_language_and_is_canonicalizable() {
+        let float_bearing: Vec<&str> = BUNDLED_LANGUAGES
+            .iter()
+            .filter(|(name, source)| should_emit_binder_congruence(&bundled_def(name, source)))
+            .map(|(name, _)| *name)
+            .collect();
+        assert_eq!(
+            float_bearing,
+            ["ambient"],
+            "the float handler's bundled corpus is exactly the production Ambient"
+        );
+        let ambient = BUNDLED_LANGUAGES
+            .iter()
+            .find(|(name, _)| *name == "ambient")
+            .map(|(name, source)| bundled_def(name, source))
+            .expect("ambient is bundled");
+        assert!(
+            equations_boundary_canonicalizable(&ambient),
+            "the production Ambient's corrected equations are fully float-discharged"
+        );
+    }
+
+    /// A-S5.4b BUILD CHECK (design v2 §3.4, inverted to unconditional-float-required): the
+    /// equations-gate recognizer's soundness is VERSIONED on the A-S5.4a unconditional
+    /// unbind-first float — a conditional (gated) float would re-open the refuted F1
+    /// incompleteness, so the generated handler must carry NO `is_fresh` gate and must
+    /// freshen-then-float through moniker `unbind`.
+    #[test]
+    fn generated_float_is_unconditional_no_is_fresh_gate() {
+        let ambient = BUNDLED_LANGUAGES
+            .iter()
+            .find(|(name, _)| *name == "ambient")
+            .map(|(name, source)| bundled_def(name, source))
+            .expect("ambient is bundled");
+        assert!(should_emit_binder_congruence(&ambient), "ambient generates the float handler");
+        let tokens = generate_binder_congruence(&ambient).to_string();
+        assert!(
+            !tokens.contains("is_fresh"),
+            "A-S5.4a regression: the generated float must be UNCONDITIONAL (no is_fresh gate) — \
+             the A-S5.4b equations-gate admission is unsound over a conditional float"
+        );
+        assert!(
+            tokens.contains("unbind"),
+            "the unconditional float freshen-then-floats through moniker unbind"
+        );
+    }
+}

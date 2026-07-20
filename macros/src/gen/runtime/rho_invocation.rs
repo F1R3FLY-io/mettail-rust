@@ -741,6 +741,30 @@ fn reflect_category_fn(language: &LanguageDef, category: &Ident) -> TokenStream 
 /// is the `…TermInner` cross-category enum, whose first structurally-reflectable alternative is
 /// taken (fail-closed otherwise). The subject is then spread and LOCATED by the automaton.
 fn reflect_subject_binding(language: &LanguageDef) -> TokenStream {
+    reflect_subject_binding_inner(language, false)
+}
+
+/// A-S5.4b (design v2 §3.2): the M-reflect subject binding for the REPORT-FREE bodies
+/// (`rho_net_match_invocation_to` / `rho_net_drive_invocation_to`) — for a FLOAT-BEARING language
+/// (one the macros side generates the binder-congruence handler for,
+/// `should_emit_binder_congruence`), the subject is BOUNDARY-CANONICALIZED through the
+/// unconditional unbind-first float BEFORE M-reflect:
+/// `binder_congruence_nf_term().unwrap_or_else(original)` (the F17 `Some`-iff-progress contract,
+/// per the `dovetail_report.rs` source-binding precedent). The canonicalized subject is
+/// float-canonical — every binder outermost, every bag flat — so every redex modulo the declared
+/// binder-float equational theory is SYNTACTICALLY present for the automaton/receivers
+/// (`equations_boundary_canonicalizable`'s admission rests on exactly this; FV:
+/// `BinderFloatCanonicalization.v`). For every other language this is BYTE-IDENTICAL to
+/// [`reflect_subject_binding`] (the report-carrying bodies keep the uncanonicalized binding
+/// unconditionally — they gate on the Dovetail report, whose producer already floats).
+fn reflect_subject_binding_boundary_canonicalized(language: &LanguageDef) -> TokenStream {
+    reflect_subject_binding_inner(
+        language,
+        crate::gen::runtime::binder_congruence::should_emit_binder_congruence(language),
+    )
+}
+
+fn reflect_subject_binding_inner(language: &LanguageDef, canonicalize: bool) -> TokenStream {
     let name = &language.name;
     let language_lit = lit(&name.to_string());
     let term_name = format_ident!("{}Term", name);
@@ -754,6 +778,33 @@ fn reflect_subject_binding(language: &LanguageDef) -> TokenStream {
         .first()
         .map(|ty| ty.name.clone())
         .expect("a language declares at least one category");
+
+    // A-S5.4b: the report-free bodies of a float-bearing language canonicalize the subject
+    // through the unconditional binder float BEFORE M-reflect; every other emission reads the
+    // downcast term directly (byte-identical tokens to pre-A-S5.4b).
+    let subject_source = if canonicalize {
+        quote! { __canonical }
+    } else {
+        quote! { __typed_term.0 }
+    };
+    let canonical_binding = if canonicalize {
+        quote! {
+            // A-S5.4b boundary canonicalization (design v2 §3.2, F17): float-canonicalize the
+            // subject through the generated UNCONDITIONAL unbind-first binder float before
+            // M-reflect. `binder_congruence_nf_term` returns `Some` iff observable progress;
+            // an already-canonical subject reflects unchanged (the
+            // `dovetail_report.rs` source-binding precedent). The float NF has every binder
+            // outermost and every bag flat, so every redex modulo the declared binder-float
+            // equations is SYNTACTICALLY present in the reflected subject — the discharge the
+            // `equations_boundary_canonicalizable` admission (rho_net_lower) rests on.
+            let __canonical = __typed_term
+                .0
+                .binder_congruence_nf_term()
+                .unwrap_or_else(|| __typed_term.0.clone());
+        }
+    } else {
+        quote! {}
+    };
 
     let subject_expr = if language.types.len() > 1 {
         let inner_enum = format_ident!("{}TermInner", name);
@@ -775,7 +826,7 @@ fn reflect_subject_binding(language: &LanguageDef) -> TokenStream {
                     "in-Rho match for language {} has no structurally reflectable subject alternative",
                     #language_lit,
                 ));
-                for __alt in __typed_term.0.all_alts() {
+                for __alt in #subject_source.all_alts() {
                     __reflected = match __alt {
                         #(#arms)*
                         #inner_enum::Ambiguous(_) => ::core::result::Result::Err(
@@ -794,7 +845,7 @@ fn reflect_subject_binding(language: &LanguageDef) -> TokenStream {
     } else {
         let reflect_primary = reflect_fn_name(&primary);
         quote! {
-            let __subject = #reflect_primary(&__typed_term.0)?;
+            let __subject = #reflect_primary(&#subject_source)?;
         }
     };
 
@@ -810,6 +861,7 @@ fn reflect_subject_binding(language: &LanguageDef) -> TokenStream {
                     #language_lit, #language_lit, term,
                 )
             })?;
+        #canonical_binding
         #subject_expr
     }
 }
@@ -1985,11 +2037,15 @@ pub fn generate_rho_net_invocation(language: &LanguageDef) -> TokenStream {
     // with its typed reason. Everything else — the M-reflect subject reflection, the memoized
     // ruleset, and the locate-all `∏ network_ℓ ‖ spread` call — is the `match_body` code.
     let native_handlers = native_handler_table(language);
+    // A-S5.4b: the REPORT-FREE bodies (this match-free body + the drive body below) reflect the
+    // BOUNDARY-CANONICALIZED subject for a float-bearing language; byte-identical for every other
+    // language (`reflect_subject_binding_boundary_canonicalized`).
+    let reflect_subject_report_free = reflect_subject_binding_boundary_canonicalized(language);
     let match_free_body = quote! {
         // M-reflect: the subject is the WHOLE input `term`, reflected STRUCTURALLY to a
         // `GroundTerm` (`__subject`) — never a report σ (this path has no report at all).
         let out_channel = out_channel.as_ref();
-        #reflect_subject
+        #reflect_subject_report_free
 
         // A-S3: the machine-side native handler table — the per-category ground evaluators,
         // the per-rule trusted handlers (the same `![…] fold` bodies the D-stage dispatcher
@@ -2273,7 +2329,7 @@ pub fn generate_rho_net_invocation(language: &LanguageDef) -> TokenStream {
                 ::std::string::String,
             > {
                 let out_channel = out_channel.as_ref();
-                #reflect_subject
+                #reflect_subject_report_free
 
                 let __source = <#language_struct as mettail_runtime::Language>::metadata(
                     &#language_struct,
@@ -2835,6 +2891,93 @@ mod tests {
             !opted_match.contains("drive"),
             "the match fn item carries no drive reference"
         );
+    }
+
+    /// The mini Ambient-shaped fragment (corrected A-S5.4b declarations): equations + the single
+    /// `PNew` surface binder + no `RhoNativeJoin` obligation, under the drive-opted-in name
+    /// `Ambient` — the float-bearing boundary-canonicalization subject.
+    fn ambient_shaped_fragment() -> LanguageDef {
+        parse(
+            r#"
+                name: Ambient,
+                types {
+                    Proc
+                    Name
+                },
+                terms {
+                    PZero . |- "0" : Proc ;
+                    PIn . n:Name, p:Proc |- "in" "(" n "," p ")" : Proc ;
+                    PAmb . n:Name, p:Proc |- n "[" p "]" : Proc ;
+                    PNew . ^x.p:[Name -> Proc] |- "new" "(" x "," p ")" : Proc ;
+                    PPar . ps:HashBag(Proc) |- "{" ps.*sep("|") "}" : Proc ;
+                },
+                equations {
+                    NewComm . |- (PNew ^x.(PNew ^y.P)) = (PNew ^y.(PNew ^x.P));
+                    ScopeExtrusion . | x # ...rest |- (PPar {(PNew ^x.P), ...rest}) = (PNew ^x.(PPar {P, ...rest}));
+                    InNew . | x # N |- (PIn N (PNew ^x.P)) = (PNew ^x.(PIn N P));
+                    AmbNew . | x # N |- (PAmb N (PNew ^x.P)) = (PNew ^x.(PAmb N P));
+                },
+                rewrites {}
+            "#,
+        )
+    }
+
+    /// ★ A-S5.4b boundary-canonicalization pin, float-bearing half: a float-bearing language's
+    /// REPORT-FREE bodies (`rho_net_match_invocation_to` + `rho_net_drive_invocation_to`)
+    /// canonicalize the subject through `binder_congruence_nf_term().unwrap_or_else(original)`
+    /// BEFORE M-reflect (F17: `Some` iff progress), while the REPORT-CARRYING bodies
+    /// (`rho_net_match_invocation_from_dovetail_to`, the contextual body) stay uncanonicalized —
+    /// design v2 §3.3 leaves the typed-path gates and the report-carrying paths as-is.
+    #[test]
+    fn report_free_bodies_canonicalize_for_a_float_bearing_language() {
+        let language = ambient_shaped_fragment();
+        assert!(
+            crate::gen::runtime::binder_congruence::should_emit_binder_congruence(&language),
+            "the fragment is float-bearing (equations + single binder + no RhoNativeJoin)"
+        );
+        let tokens = generate_rho_net_invocation(&language).to_string();
+
+        let match_free = extract_fn_item(&tokens, "rho_net_match_invocation_to");
+        assert!(
+            match_free.contains("binder_congruence_nf_term"),
+            "the report-free match body canonicalizes before M-reflect"
+        );
+        assert!(
+            match_free.contains("unwrap_or_else"),
+            "the canonicalization keeps the F17 Some-iff-progress contract (original on None)"
+        );
+
+        let drive = extract_fn_item(&tokens, "rho_net_drive_invocation_to");
+        assert!(
+            drive.contains("binder_congruence_nf_term"),
+            "the drive body canonicalizes before M-reflect"
+        );
+
+        let report_carrying = extract_fn_item(&tokens, "rho_net_match_invocation_from_dovetail_to");
+        assert!(
+            !report_carrying.contains("binder_congruence_nf_term"),
+            "the report-carrying match body stays uncanonicalized (design v2 §3.3)"
+        );
+    }
+
+    /// ★ A-S5.4b boundary-canonicalization pin, non-float half: a language WITHOUT the float
+    /// handler (empty equations — SwapDemo-shaped AND the production-Lambda shape) emits NO
+    /// canonicalization tokens anywhere — the generated module is byte-identical to the
+    /// pre-A-S5.4b emission (the only insertion point is the conditional canonical binding,
+    /// empty here).
+    #[test]
+    fn report_free_bodies_stay_uncanonicalized_for_non_float_languages() {
+        for language in [lambda_shaped_fragment("Lambda"), lambda_shaped_fragment("SwapNetShape")] {
+            assert!(
+                !crate::gen::runtime::binder_congruence::should_emit_binder_congruence(&language),
+                "an equations-free language generates no float handler"
+            );
+            let tokens = generate_rho_net_invocation(&language).to_string();
+            assert!(
+                !tokens.contains("binder_congruence_nf_term"),
+                "a non-float language's generated module carries NO boundary canonicalization"
+            );
+        }
     }
 
     #[test]

@@ -44,47 +44,51 @@
 //!   install errors — plan-accepted AND installable, with the exemptions on the
 //!   record.
 //!
-//! **Ambient** — static gate REJECTS, plan gate PASSES, install FAILS CLOSED
-//! on exactly the two NESTED non-congruence rewrites (A-S5.3 admits OpenRule):
+//! **Ambient** — static gate ADMITS, plan gate PASSES, install ADMITS with the
+//! three congruence rewrites RECORDED EXEMPT and In/Out/Open MATERIALIZED
+//! (A-S5.4b replaced the equations gate; the DECLARATION also changed — the
+//! premise fix `x # P → x # N` on the capability trio + `AmbNew`, and the
+//! OutRule REDECLARATION to C-G (Red Out), both moving the language
+//! FINGERPRINT, so every fingerprint-derived artifact below recompiled):
 //! - A-S5.3 (leg ii): `resolve_constructor_collection_type` falls back to the
 //!   FIRST `GrammarItem::Collection` in `rule.items` when the term-context scan
 //!   yields nothing, so the production `::=`-declared
 //!   `PPar . Proc ::= HashBag(Proc) sep "|" delim "{" "}"` RESOLVES its HashBag
 //!   kind even though `GrammarRule::term_context` is `None` and the parsed
 //!   rewrite patterns' `Collection::coll_type` is `None` (both facts still
-//!   pinned — now as the sources the resolver does NOT need — by
-//!   `ambient_collection_kind_resolves_from_grammar_items`). This closes the
-//!   pre-A-S5.3 gap that made the demo twins (`ambdemo` / `ambnewdemo` /
-//!   `inoutdemo`, term-context-declared bags) admit while the REAL Ambient did
-//!   not.
-//! - `OpenRule` is ADMITTED on the flat structural-AC match path:
-//!   `StructuralAcRewrite` lowering, a `rho_net_structural_ac_match_entries`
-//!   entry, `StructuralAcDispatch` in the admission table — and the entry is
-//!   IDENTICAL to its `ambdemo` demo twin's (the demo-parity pin: both spell
-//!   the rule `OpenRule . |- (PPar {(POpen N P), (PAmb N Q), ...rest}) ~>
-//!   (PPar {P, Q, ...rest})`, and the shape carries no fingerprint). The real
-//!   Ambient now has ONE fireable in-Rho family.
-//! - `InRule`/`OutRule`: `is_nested_structural_ac_rewrite` is now TRUE for
-//!   both (kind resolution unblocked shape recognition), but the nested
-//!   receiver stays GATED to binder-free languages (`def.equations.is_empty()`,
-//!   `rho_net_lower.rs` nested-receiver gate) — Ambient has 6 equations, so
-//!   both still lower `Unsupported(CollectionAc)` and
-//!   `rho_net_nested_structural_ac_match_entries` stays EMPTY. The equations
-//!   gate is the SOLE remaining blocker (the A-S5.4 legs' target).
-//! - `in_rho_static_gate` = `Err([InRule, OutRule])` — the remaining BLOCKING
-//!   FINDING for the flip: two fireable rewrites are deferred and not
-//!   congruence-exempt. `ParCong`/`NewCong`/`AmbCong` are congruence-ONLY
-//!   (single `Premise::Congruence` each — exempt under the hardened
-//!   `congruence_only_premises` too).
-//! - `plan_rho_default_backend` STILL passes (the scalar-coverage flip gate:
-//!   all 7 rejected constructors covered by suggested `RhoAstContract`
-//!   dispositions; freshness premises in the 6 equations induce NO guard
-//!   obligations, so `NoGuardObligations` holds). Install fails closed on
-//!   exactly the two nested non-congruence rewrites (`InRule`/`OutRule`,
-//!   `CollectionAc` — the equations-gate residue); the three congruence
-//!   rewrites are `congruence_exempt_rules()` entries (ParCong →
+//!   pinned by `ambient_collection_kind_resolves_from_grammar_items`).
+//! - `OpenRule` is ADMITTED on the flat structural-AC match path, IDENTICAL to
+//!   its `ambdemo` demo twin's entry (the demo-parity pin — the shape carries
+//!   no fingerprint).
+//! - A-S5.4b (leg iii): the nested receiver's binder-free gate
+//!   (`def.equations.is_empty()`) is REPLACED by
+//!   `equations_boundary_canonicalizable` — Ambient's six CORRECTED equations
+//!   (`NewComm` = (Struct Res Res); `ScopeExtrusion` = (Struct Res Par);
+//!   `InNew`/`OutNew`/`OpenNew` capture-avoidance extensions; `AmbNew` =
+//!   (Struct Res Amb)) are ALL recognized binder-float congruences discharged
+//!   by the A-S5.4a unconditional float at the invocation boundary
+//!   (`binder_congruence_nf_term` before M-reflect in the report-free bodies),
+//!   so `InRule`/`OutRule` now lower `NestedStructuralAcRewrite` and surface
+//!   `rho_net_nested_structural_ac_match_entries` (In bag-rooted `PPar`, Out
+//!   wrapper-rooted `PAmb`). The redeclared OutRule (`...rest2` = the whole
+//!   residual KEPT INSIDE `M`, per Cardelli–Gordon (Red Out)) is the
+//!   TEMPLATE-CONSUMED rest placement the A-S5.4b recognizer extension accepts.
+//! - `in_rho_static_gate` = `Ok(())` — every fireable rewrite is matchable in
+//!   Rho; `ParCong`/`NewCong`/`AmbCong` are congruence-ONLY (exempt under the
+//!   hardened `congruence_only_premises`).
+//! - `plan_rho_default_backend` passes (all 7 rejected constructors covered by
+//!   suggested `RhoAstContract` dispositions; freshness premises induce NO
+//!   guard obligations) AND `installed_rho_net_program_par()` is `Ok`: the
+//!   installed program carries the three In/Out/Open receivers; the three
+//!   congruence rewrites are `congruence_exempt_rules()` entries (ParCong →
 //!   `CollectionAc`, NewCong → `LambdaBinder`, AmbCong →
 //!   `DanglingRhsVariable`), recorded and error-free (A-S5.1).
+//! - The DRIVER is still `Unsupported` until A-S5.5 — no longer via the
+//!   lowering-diagnostics short-circuit (the lowering is error-free now) but
+//!   via `drive_admissible`'s own conjuncts: the structural-AC /
+//!   nested-structural-AC matching families are not driver-supported this
+//!   stage, and the three AC LHS shapes do not transcribe to driver redex
+//!   arms (pinned verbatim below).
 //!
 //! Placement: this test lives in `rholang-codegen` (not `languages`) because
 //! every gate under audit is `pub` here and the REAL definitions are reachable
@@ -459,13 +463,14 @@ fn lambda_admission_table_is_beta_entry_plus_congruence_deferrals() {
 }
 
 #[test]
-fn ambient_admission_table_admits_open_rule_structural_ac_and_defers_the_rest() {
-    // A-S5.3 (leg ii) — the deliberate inversion of the pre-A-S5.3 pin
-    // `ambient_admission_table_defers_every_rewrite_not_base_rewrite`: with the
-    // HashBag kind resolving from `PPar`'s grammar items, `OpenRule` is admitted
-    // on the flat structural-AC match path. `InRule`/`OutRule` still defer (the
-    // nested receiver is equations-gated — the sole remaining blocker), and the
-    // three congruence rewrites defer as before (exempt at the gate).
+fn ambient_admission_table_admits_in_out_open_and_defers_only_the_congruences() {
+    // A-S5.4b (leg iii) — the deliberate inversion of the A-S5.3 pin
+    // `ambient_admission_table_admits_open_rule_structural_ac_and_defers_the_rest`:
+    // with the equations gate replaced by `equations_boundary_canonicalizable`
+    // (Ambient's six corrected equations are all float-discharged binder
+    // congruences), `InRule`/`OutRule` are admitted on the DEPTH-2 nested
+    // structural-AC match path beside the flat `OpenRule`. Only the three
+    // congruence rewrites still defer (exempt at the gate — never fireable).
     let def = ambient_def();
     let ruleset = compile_in_rho_matching_ruleset(&def);
     let actual = admission_table(&def, &ruleset);
@@ -474,8 +479,8 @@ fn ambient_admission_table_admits_open_rule_structural_ac_and_defers_the_rest() 
         "Ambient",
         &actual,
         &[
-            ("InRule", Verdict::Deferred(DeferReason::NotBaseRewrite)),
-            ("OutRule", Verdict::Deferred(DeferReason::NotBaseRewrite)),
+            ("InRule", Verdict::NestedStructuralAcDispatch),
+            ("OutRule", Verdict::NestedStructuralAcDispatch),
             ("OpenRule", Verdict::StructuralAcDispatch),
             ("ParCong", Verdict::Deferred(DeferReason::NotBaseRewrite)),
             ("NewCong", Verdict::Deferred(DeferReason::NotBaseRewrite)),
@@ -517,9 +522,10 @@ fn lambda_dispatch_families_are_all_empty() {
 }
 
 #[test]
-fn ambient_has_zero_automaton_entries_and_only_the_open_rule_structural_ac_family() {
-    // A-S5.3 (leg ii): the structural-AC family is no longer empty — OpenRule is
-    // its one entry. Every OTHER family stays empty, and the automaton still has
+fn ambient_has_zero_automaton_entries_and_the_full_ac_family_admission() {
+    // A-S5.4b (leg iii): beside OpenRule's flat structural-AC entry, the nested
+    // structural-AC family now carries `InRule` + `OutRule` (the equations gate
+    // replaced by `equations_boundary_canonicalizable`). The automaton still has
     // ZERO positional entries (an AC redex has no positional image, so it never
     // contributes an accept channel or an LHS-root constructor).
     let ruleset = compile_in_rho_matching_ruleset(&ambient_def());
@@ -532,7 +538,7 @@ fn ambient_has_zero_automaton_entries_and_only_the_open_rule_structural_ac_famil
     assert!(
         ruleset.ac_dispatch.is_empty(),
         "no LINEAR AC admission (all Ambient AC rules are STRUCTURED — the kind \
-         now resolves (A-S5.3), but structured elements are not the linear \
+         resolves (A-S5.3), but structured elements are not the linear \
          bare-var family)"
     );
     assert!(ruleset.contextual_dispatch.is_empty(), "no contextual join materializes");
@@ -546,17 +552,21 @@ fn ambient_has_zero_automaton_entries_and_only_the_open_rule_structural_ac_famil
         "A-S5.3: OpenRule IS admitted on the flat structural-AC match path (the \
          kind resolves from PPar's grammar items)"
     );
-    assert!(
-        ruleset.nested_structural_ac_dispatch.is_empty(),
-        "InRule/OutRule are still NOT admitted on the nested structural-AC match \
-         path: the nested receiver is gated to binder-free languages \
-         (`def.equations.is_empty()`) and Ambient has six equations — the SOLE \
-         remaining blocker post-A-S5.3"
+    assert_eq!(
+        ruleset
+            .nested_structural_ac_dispatch
+            .iter()
+            .map(|entry| entry.fired_rule_label.as_str())
+            .collect::<Vec<_>>(),
+        ["InRule", "OutRule"],
+        "A-S5.4b: InRule/OutRule ARE admitted on the nested structural-AC match \
+         path — the equations gate is replaced by the boundary-canonicalization \
+         recognizer, which Ambient's corrected equation set satisfies"
     );
     assert!(
         rule_lhs_root_constructors(&ruleset).is_empty(),
         "zero automaton entries ⇒ zero POSITIONAL dispatch root constructors \
-         (the structural-AC family is located by its own bag walk, not by \
+         (the structural-AC families are located by their own walks, not by \
          `collect_redex_sites`)"
     );
 }
@@ -596,27 +606,20 @@ fn lambda_static_gate_admits_because_every_deferral_is_congruence_exempt() {
 }
 
 #[test]
-fn ambient_static_gate_rejects_on_exactly_in_and_out() {
-    // A-S5.3 (leg ii) shrinks the pre-A-S5.3 three-rule rejection: OpenRule is
-    // structural-AC-admitted (no longer deferred), so the gate's reject set is
-    // exactly the two nested rewrites the equations gate still blocks.
+fn ambient_static_gate_admits_post_a_s5_4b() {
+    // A-S5.4b (leg iii) — the deliberate inversion of the A-S5.3 pin
+    // `ambient_static_gate_rejects_on_exactly_in_and_out`: with `InRule`/`OutRule`
+    // admitted on the nested structural-AC path, every FIREABLE Ambient rewrite
+    // is matchable in Rho and the three congruence-only rewrites are exempt —
+    // the static gate ADMITS. The pre-A-S5.4b blocking finding (`Err([InRule,
+    // OutRule])`, the equations-gate residue) is CLOSED.
     let def = ambient_def();
     let ruleset = compile_in_rho_matching_ruleset(&def);
-    let rejects = in_rho_static_gate(&ruleset, &def)
-        .expect_err("BLOCKING FINDING: the static gate must reject Ambient today");
     assert_eq!(
-        rejects
-            .iter()
-            .map(|deferred| (deferred.rule_label.as_str(), deferred.reason.clone()))
-            .collect::<Vec<_>>(),
-        [
-            ("InRule", DeferReason::NotBaseRewrite),
-            ("OutRule", DeferReason::NotBaseRewrite),
-        ],
-        "the two FIREABLE non-exempt deferrals — the exact set the A-S5.4 legs \
-         must admit (the nested receiver's `def.equations.is_empty()` gate is \
-         the sole remaining blocker); ParCong/NewCong/AmbCong are \
-         congruence-exempt and absent, OpenRule is structural-AC-admitted"
+        in_rho_static_gate(&ruleset, &def),
+        Ok(()),
+        "A-S5.4b: Ambient's fireable rewrites (InRule/OutRule/OpenRule) are all \
+         matchable in Rho; ParCong/NewCong/AmbCong are congruence-exempt"
     );
 }
 
@@ -625,27 +628,24 @@ fn ambient_static_gate_rejects_on_exactly_in_and_out() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn ambient_nested_shape_predicate_recognizes_in_and_out_but_the_gate_blocks() {
-    // A-S5.3 (leg ii) — the deliberate inversion of the pre-A-S5.3 pin
-    // `ambient_nested_shape_predicate_is_false_for_the_real_in_and_out_rules`:
-    // with the HashBag kind resolving, `nested_structural_ac_rule_shape` now
-    // RECOGNIZES the real `InRule`/`OutRule` (the single-source-of-truth
-    // predicate is TRUE for exactly those two). They are still NOT admitted —
-    // the nested receiver lowering is gated to binder-free languages
-    // (`def.equations.is_empty()`, `rho_net_lower.rs` nested-receiver gate) and
-    // Ambient has six equations — so shape recognition is now the NON-blocking
-    // half and the equations gate is the SOLE remaining blocker (see the
-    // nested-family emptiness pin below).
+fn ambient_nested_shape_predicate_recognizes_in_and_out_and_the_gate_admits() {
+    // A-S5.3 made `nested_structural_ac_rule_shape` recognize the real
+    // `InRule`/`OutRule` (kind resolution); A-S5.4b keeps the predicate TRUE for
+    // both — including the REDECLARED C-G (Red Out) `OutRule`, whose rest-only
+    // inner-bag LHS (one fixed inner element + `...rest2`) and TEMPLATE-CONSUMED
+    // rest placement (`...rest2` kept inside `M` on the RHS) are the AM-1
+    // recognizer extension — and the gate now ADMITS them (the equations gate is
+    // replaced by `equations_boundary_canonicalizable`; see the nested-family
+    // entries pin below).
     let def = ambient_def();
     for rewrite in &def.rewrites {
         let expected = matches!(rewrite.name.to_string().as_str(), "InRule" | "OutRule");
         assert_eq!(
             is_nested_structural_ac_rewrite(&rewrite.left, &rewrite.right, &def),
             expected,
-            "{}: the nested-shape predicate must be {expected} post-A-S5.3 \
-             (TRUE for exactly the depth-2 nested InRule/OutRule now that the \
-             kind resolves; FALSE for the flat OpenRule and the congruence \
-             rewrites)",
+            "{}: the nested-shape predicate must be {expected} (TRUE for exactly \
+             the depth-2 nested InRule + the redeclared OutRule; FALSE for the \
+             flat OpenRule and the congruence rewrites)",
             rewrite.name
         );
     }
@@ -694,25 +694,41 @@ fn ambient_open_rule_entry_equals_the_ambdemo_twin_entry() {
 }
 
 #[test]
-fn ambient_in_out_rules_are_not_admitted_by_the_nested_structural_ac_family() {
-    // Post-A-S5.3 the kind RESOLVES and the nested shape IS recognized (see
-    // `ambient_nested_shape_predicate_recognizes_in_and_out_but_the_gate_blocks`),
-    // so the SOLE remaining blocker is the nested-receiver equations gate
-    // (`def.equations.is_empty()`, `rho_net_lower.rs`): Ambient declares six
-    // structural-congruence equations, the receiver never lowers, and no
-    // injection site — hence no match entry — surfaces. The A-S5.4 legs
-    // (unconditional float + the boundary-canonicalizable recognizer) target
-    // exactly this gate.
+fn ambient_in_out_rules_surface_their_nested_structural_ac_match_entries() {
+    // A-S5.4b (leg iii) — the deliberate inversion of the A-S5.3 pin
+    // `ambient_in_out_rules_are_not_admitted_by_the_nested_structural_ac_family`:
+    // the equations gate is replaced by `equations_boundary_canonicalizable`
+    // (Ambient's corrected equations are all float-discharged), so the REAL
+    // `InRule`/`OutRule` now surface their DEPTH-2 nested structural-AC match
+    // entries — the data the spread path co-installs per-site MATCH receivers
+    // from. The entry shapes are pinned: both operate over the `PPar` bag op;
+    // `InRule` is BAG-rooted (its LHS root TOP constructor is `PPar`) while the
+    // redeclared `OutRule` is WRAPPER-rooted (`PAmb` — the C-G (Red Out) root
+    // ambient `m[{…}]` whose residual stays inside).
     let entries = rho_net_nested_structural_ac_match_entries(&ambient_def());
     assert_eq!(
         entries
             .iter()
             .map(|entry| entry.fired_rule_label.as_str())
             .collect::<Vec<_>>(),
-        Vec::<&str>::new(),
-        "the REAL InRule/OutRule surface NO nested structural-AC match entries: \
-         the equations gate (binder-free languages only) is the sole remaining \
-         blocker post-A-S5.3"
+        ["InRule", "OutRule"],
+        "the REAL InRule/OutRule surface their nested structural-AC match \
+         entries post-A-S5.4b"
+    );
+    let in_entry = &entries[0];
+    assert_eq!(in_entry.op(), "PPar", "InRule's operand bag op");
+    assert_eq!(
+        in_entry.root_constructor().as_deref(),
+        Some("PPar"),
+        "InRule is bag-rooted — its LHS root TOP constructor is the bag op"
+    );
+    let out_entry = &entries[1];
+    assert_eq!(out_entry.op(), "PPar", "OutRule's operand bag op");
+    assert_eq!(
+        out_entry.root_constructor().as_deref(),
+        Some("PAmb"),
+        "the redeclared OutRule is wrapper-rooted — its LHS root TOP constructor \
+         is the ambient wrapper the residual stays inside"
     );
 }
 
@@ -840,7 +856,10 @@ fn ambient_locate_all_has_zero_automaton_sites_but_co_installs_the_open_rule() {
     // is NO LONGER a bare spread: the structural-AC walk co-installs the
     // OpenRule match receiver at the subject's root bag (a bare spread is
     // sends-only; a co-installed AC receiver is a receive). The pre-A-S5.3
-    // "fires nothing" half of the flip gap is closed for OpenRule.
+    // "fires nothing" half of the flip gap is closed for OpenRule. A-S5.4b
+    // widens the co-installs further (unasserted here beyond non-emptiness):
+    // the nested walk also co-installs In/Out match receivers at every
+    // `PPar`/`PAmb`-rooted node of the spread subject.
     let ruleset = compile_in_rho_matching_ruleset(&ambient_def());
     let (call, sites) =
         in_rho_match_all_sites_call_par(&ruleset, &ambient_open_redex(), "site0", "OUT")
@@ -1001,12 +1020,13 @@ fn ambient_lowered_families_pin_the_why_per_rule() {
             ("rule:equation:4:OpenNew", "CongruenceClosure"),
             ("rule:equation:5:AmbNew", "CongruenceClosure"),
             // A-S5.3 (leg ii): with the kind resolving from PPar's grammar
-            // items, the flat OpenRule materializes its structural-AC receiver;
-            // the nested InRule/OutRule stay fail-closed — the nested receiver
-            // is equations-gated (Ambient has six equations), the sole
-            // remaining blocker the A-S5.4 legs target.
-            ("rule:rewrite:0:InRule", "Unsupported(CollectionAc)"),
-            ("rule:rewrite:1:OutRule", "Unsupported(CollectionAc)"),
+            // items, the flat OpenRule materializes its structural-AC receiver.
+            // A-S5.4b (leg iii): the equations gate is replaced by
+            // `equations_boundary_canonicalizable`, so the nested InRule and the
+            // redeclared (Red Out) OutRule now materialize their DEPTH-2 nested
+            // structural-AC receivers too — no `Unsupported` residue remains.
+            ("rule:rewrite:0:InRule", "NestedStructuralAcRewrite"),
+            ("rule:rewrite:1:OutRule", "NestedStructuralAcRewrite"),
             ("rule:rewrite:2:OpenRule", "StructuralAcRewrite"),
             // A-S5.1 (leg i): the three congruence-ONLY rewrites are recorded
             // exempt (ParCong's recorded family is unchanged by A-S5.3 — its
@@ -1067,31 +1087,28 @@ fn lambda_installs_with_the_three_congruence_exemptions_recorded() {
 }
 
 #[test]
-fn ambient_install_fails_closed_on_exactly_the_two_nested_non_congruence_rewrites() {
-    // A-S5.1 (leg i) shrank the pre-A-S5 six-error pin to the non-congruence
-    // residue; A-S5.3 (leg ii) shrinks it again: `OpenRule` now MATERIALIZES its
-    // structural-AC receiver (the kind resolves from PPar's grammar items), so
-    // only the nested `InRule`/`OutRule` (premise-free, fireable) stay
-    // fail-closed — the nested receiver is equations-gated
-    // (`def.equations.is_empty()`) and Ambient declares six equations. Ambient
-    // remains FLIP-BLOCKED, for exactly these two, until the A-S5.4 legs.
+fn ambient_installs_with_the_exempt_trio_recorded_and_in_out_open_materialized() {
+    // A-S5.4b (leg iii) — the deliberate inversion of the A-S5.3 pin
+    // `ambient_install_fails_closed_on_exactly_the_two_nested_non_congruence_rewrites`:
+    // the equations gate is replaced by `equations_boundary_canonicalizable`, so
+    // the nested `InRule` + the redeclared `OutRule` materialize their receivers
+    // beside `OpenRule`'s and the install boundary ADMITS. Ambient is no longer
+    // FLIP-BLOCKED at the install seam (the driver stays A-S5.5's — see the
+    // DriveAdmission pin).
     let plan = plan_with_suggested_coverage(&ambient_def());
+    let installed = plan
+        .installed_rho_net_program_par()
+        .expect("A-S5.4b: Ambient's σ-receiver program must install (In/Out/Open materialized)");
     assert_eq!(
-        plan.installed_rho_net_program_par(),
-        Err(RhoNetInstallError::LoweringErrors(vec![
-            RhoNetLoweringError::UnsupportedFamily {
-                rule_id: "rule:rewrite:0:InRule".to_string(),
-                family: UnsupportedFamily::CollectionAc,
-            },
-            RhoNetLoweringError::UnsupportedFamily {
-                rule_id: "rule:rewrite:1:OutRule".to_string(),
-                family: UnsupportedFamily::CollectionAc,
-            },
-        ])),
-        "FLIP-BLOCKING (A-S5.4 residue): Ambient's plan is accepted and OpenRule \
-         materializes, yet the two nested non-congruence rewrites materialize no \
-         receiver — the equations gate must be replaced by the A-S5.4b \
-         recognizer before the flip"
+        installed.receives.len(),
+        3,
+        "the installed program carries exactly the three AC receivers: the \
+         InRule nested σ-receiver, the redeclared OutRule nested σ-receiver, \
+         and the OpenRule flat structural-AC σ-receiver"
+    );
+    assert!(
+        installed.receives.iter().all(|receive| receive.persistent),
+        "every AC σ-receiver is persistent"
     );
     // The three congruence-ONLY rewrites are exempt — recorded, never silent,
     // and no longer error contributors. Order-insensitive on (rule id, family).
@@ -1113,6 +1130,12 @@ fn ambient_install_fails_closed_on_exactly_the_two_nested_non_congruence_rewrite
             ),
         ],
         "exactly the three congruence exemptions, recorded — never silent"
+    );
+    // And no fail-closed diagnostic remains: exempt ≠ errored.
+    assert!(
+        plan.rho_net_lowered().errors().is_empty(),
+        "A-S5.4b: the Ambient lowering is error-free: {:?}",
+        plan.rho_net_lowered().errors()
     );
 }
 
@@ -1158,37 +1181,44 @@ fn lambda_drive_admission_is_admitted_and_the_driver_installs_once() {
 #[test]
 fn ambient_drive_admission_is_unsupported_with_the_blocking_reason_recorded() {
     // A-S5.2: production Ambient is OPTED IN (DRIVE_OPT_IN — the A-S5 intent) but
-    // records `Unsupported`. The recorded reason is `drive_lowering`'s
-    // FAIL-CLOSED-DIAGNOSTICS SHORT-CIRCUIT (it fires BEFORE the
-    // `drive_admissible` conjuncts whenever the lowering carries errors), and
-    // A-S5.3 re-shapes it (pinned here as REALITY): the diagnostics dump now
-    // names exactly the TWO remaining errors — `InRule`/`OutRule`
-    // (`CollectionAc`) — where pre-A-S5.3 it named three (OpenRule now
-    // materializes `StructuralAcRewrite` and is absent). RECORDED, never silent
-    // — and the generated `rho_net_drive_invocation_to` (emitted for Ambient
-    // because it IS opted in) re-checks this same predicate per exec, so a
-    // premature seed fails typed instead of resting unanswered.
+    // records `Unsupported` until A-S5.5. A-S5.4b re-shapes the recorded reason
+    // (pinned here as OBSERVED REALITY): the lowering is now ERROR-FREE (the
+    // install admits — see the install pin), so the pre-A-S5.4b
+    // fail-closed-diagnostics SHORT-CIRCUIT no longer fires; the reason comes
+    // from `drive_admissible`'s OWN conjuncts instead — (conjunct 2) the
+    // admitted structural-AC + nested-structural-AC matching families are not
+    // driver-supported this stage, and (conjunct 3) the three AC-LHS rewrites
+    // (`InRule`/`OutRule`/`OpenRule`) do not transcribe to driver redex arms
+    // (both A-S5.5's scope; the static-gate conjunct now PASSES and contributes
+    // nothing). RECORDED, never silent — and the generated
+    // `rho_net_drive_invocation_to` (emitted for Ambient because it IS opted in)
+    // re-checks this same predicate per exec, so a premature seed fails typed
+    // instead of resting unanswered.
     let plan = plan_with_suggested_coverage(&ambient_def());
     let lowered = plan.rho_net_lowered();
     match lowered.drive_admission() {
         mettail_rholang_codegen::DriveAdmission::Unsupported { reason } => {
             eprintln!("Ambient DriveAdmission reason: {reason}");
             assert!(
-                reason.starts_with("lowering recorded 2 fail-closed diagnostic(s):"),
-                "the errors short-circuit records exactly TWO diagnostics \
-                 post-A-S5.3 (was three): {reason}"
+                reason.starts_with(
+                    "matching families not yet driver-supported (A-S5.5): \
+                     structural-ac(1), nested-structural-ac(2)"
+                ),
+                "conjunct 2 names the admitted-but-undrivable AC families: {reason}"
             );
+            for rule in ["InRule", "OutRule", "OpenRule"] {
+                assert!(
+                    reason.contains(&format!(
+                        "rewrite {rule} does not transcribe to a driver redex arm: \
+                         a collection (AC) LHS is not driver-supported this stage (A-S5.5)"
+                    )),
+                    "conjunct 3 names {rule}'s AC-LHS transcription gap: {reason}"
+                );
+            }
             assert!(
-                reason.contains("rule:rewrite:0:InRule")
-                    && reason.contains("rule:rewrite:1:OutRule")
-                    && reason.contains("CollectionAc"),
-                "the recorded diagnostics name the two nested rewrites and the \
-                 blocking family: {reason}"
-            );
-            assert!(
-                !reason.contains("OpenRule"),
-                "OpenRule no longer contributes a fail-closed diagnostic \
-                 (structural-AC-admitted, A-S5.3): {reason}"
+                !reason.contains("static gate rejects") && !reason.contains("diagnostic"),
+                "neither the static gate nor the lowering-diagnostics short-circuit \
+                 contributes post-A-S5.4b (the lowering is error-free): {reason}"
             );
         },
         other => panic!(
