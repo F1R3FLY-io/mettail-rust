@@ -1179,7 +1179,9 @@ pub async fn drive_e6a_treatment(
     let mut observed: Vec<Par> =
         Vec::with_capacity(out_data.iter().map(|datum| datum.a.pars.len()).sum());
     for datum in out_data {
-        for par in datum.a.pars {
+        // EPathMap fix P4.1 coupling: Datum.a is Arc-shared — materialize
+        // the readback (cold path, once per run).
+        for par in std::sync::Arc::unwrap_or_clone(datum.a).pars {
             observed.push(par);
         }
     }
