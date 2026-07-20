@@ -107,3 +107,6 @@ Cross-references: baselines `../2026-07-19-e6a/` (pre-fix), `../2026-07-19-e6a-p
 (post trie-cache), `../2026-07-20-e6d1/` (P0–P2); pgmcp experiments 145/148/149; f1r3node
 commits `602144bd`/`c3d5b3f2`/`351e494d`/`4e422b6b`/`60aaa02e`/`6c0a90cb`/`ead2f152`
 (consensus-relevance: review before upstreaming, same standing as `31b354e6`).
+Merge-back 2026-07-20: `fix/epathmap-value-handling` was fast-forwarded into `feature/mettail`
+(both refs carry the measured `ead2f152` stack); the upstream review packet is
+`f1r3node docs/epathmap-value-handling-review.md`.
