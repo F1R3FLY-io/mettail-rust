@@ -88,6 +88,15 @@ pub struct TauChannelClassifier {
     /// `[τ ac]` GPrivate tag PREFIX (`…{fp}.^drive-ac:` — every per-rule carrier
     /// `^drive-ac:{RuleLabel}` starts with it).
     ac_tag_prefix: String,
+    /// A-S5.8 (F8-AM-2) `[τ float]`: the `^float` dispatcher's EXACT GPrivate tag.
+    float_tag: String,
+    /// `[τ float]` satellite tag PREFIXES (`…{fp}.^float-hoist:` / `…{fp}.^float-merge:`
+    /// — every per-constructor/per-op satellite starts with one). The four families are
+    /// pairwise disjoint by construction: the exact `^float` tag vs the
+    /// `^float-hoist:`/`^float-merge:`/`^drive-ac:` prefixes vs the exact `^subst`-family
+    /// tags — NO existing label reclassifies (the `^shift`/`^cmp` satellites the float
+    /// calls stay `[τ subst]`).
+    float_prefixes: [String; 2],
 }
 
 impl TauChannelClassifier {
@@ -97,6 +106,7 @@ impl TauChannelClassifier {
         use mettail_rholang_codegen::{
             drive_err_channel, drive_fired_channel, drive_fuel_channel, reflected_tag_string,
             CMP_RESERVED_LABEL, DRIVE_AC_RESERVED_LABEL, DRIVE_RESERVED_LABEL,
+            FLOAT_HOIST_RESERVED_LABEL, FLOAT_MERGE_RESERVED_LABEL, FLOAT_RESERVED_LABEL,
             PRED_RESERVED_LABEL, SB_RESERVED_LABEL, SHB_RESERVED_LABEL, SHIFTK_RESERVED_LABEL,
             SHIFT_RESERVED_LABEL, SUBST_RESERVED_LABEL,
         };
@@ -123,6 +133,11 @@ impl TauChannelClassifier {
                 fingerprint,
                 &format!("{DRIVE_AC_RESERVED_LABEL}:"),
             ),
+            float_tag: reflected_tag_string(fingerprint, FLOAT_RESERVED_LABEL),
+            float_prefixes: [
+                reflected_tag_string(fingerprint, &format!("{FLOAT_HOIST_RESERVED_LABEL}:")),
+                reflected_tag_string(fingerprint, &format!("{FLOAT_MERGE_RESERVED_LABEL}:")),
+            ],
         }
     }
 
@@ -142,6 +157,16 @@ impl TauChannelClassifier {
             }
             if tag.starts_with(&self.ac_tag_prefix) {
                 return Some(RuntimeTauClass::Ac);
+            }
+            // A-S5.8 (F8-AM-2): the ^float family — the dispatcher's EXACT tag plus the
+            // hoist/merge satellite prefixes. Disjoint from every family above (the
+            // exact-tag check keeps `^float` from matching the `^float-hoist:…` tags,
+            // and no `^…` label above shares these spellings), so no existing label
+            // reclassifies.
+            if tag == self.float_tag
+                || self.float_prefixes.iter().any(|prefix| tag.starts_with(prefix))
+            {
+                return Some(RuntimeTauClass::Float);
             }
             return None;
         }
@@ -1016,6 +1041,26 @@ mod tests {
                 "^drive-ac:{rule} classifies as τ ac"
             );
         }
+        // A-S5.8 (F8-AM-2) [τ float]: the dispatcher's exact tag + the hoist/merge
+        // satellite families; the `^shift`/`^cmp` satellites the float calls STAY
+        // [τ subst] (asserted in the subst loop above — no reclassification).
+        assert_eq!(
+            classifier.classify(&[gpriv(reflected_tag_string(fp, "^float"))]),
+            Some(RuntimeTauClass::Float),
+            "^float classifies as τ float"
+        );
+        for label in ["^float-hoist:PIn", "^float-hoist:PAmb", "^float-merge:PPar"] {
+            assert_eq!(
+                classifier.classify(&[gpriv(reflected_tag_string(fp, label))]),
+                Some(RuntimeTauClass::Float),
+                "{label} classifies as τ float"
+            );
+        }
+        assert_eq!(
+            classifier.classify(&[gpriv(reflected_tag_string("other-fp", "^float"))]),
+            None,
+            "another language's ^float tag is NOT this classifier's"
+        );
         // Unclassified: user + legacy matching machinery + reflected CONSTRUCTOR tags +
         // the same reserved names under a DIFFERENT fingerprint.
         for name in ["OUT", "sa:pattern/lhs:abc", "ac:loc:site0/PPar", "loc:site0"] {

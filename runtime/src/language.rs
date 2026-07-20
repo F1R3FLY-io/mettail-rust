@@ -752,15 +752,24 @@ pub enum RuntimeTauClass {
     Subst,
     /// The per-rule AC carrier family (`^drive-ac:{RuleLabel}`).
     Ac,
+    /// A-S5.8 (F8-AM-2): the `^float` binder-float canonicalizer family — the `^float`
+    /// dispatcher rendezvous plus the per-constructor / per-op satellites
+    /// (`^float-hoist:{C}` / `^float-merge:{op}`). Float COMMs are `≡`-canonicalization
+    /// machinery (cost-free iso in KT terms — never in the firing ledger, never drive
+    /// fuel), filtered like every τ family. The shared `^shift`/`^cmp` satellites the
+    /// float calls stay `[τ subst]` (families disjoint — no existing label
+    /// reclassifies).
+    Float,
 }
 
 impl RuntimeTauClass {
-    /// The REPL display label (`[τ drive]` / `[τ subst]` / `[τ ac]`).
+    /// The REPL display label (`[τ drive]` / `[τ subst]` / `[τ ac]` / `[τ float]`).
     pub fn label(&self) -> &'static str {
         match self {
             RuntimeTauClass::Drive => "τ drive",
             RuntimeTauClass::Subst => "τ subst",
             RuntimeTauClass::Ac => "τ ac",
+            RuntimeTauClass::Float => "τ float",
         }
     }
 }
