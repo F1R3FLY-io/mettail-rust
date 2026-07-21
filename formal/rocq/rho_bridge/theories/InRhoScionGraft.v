@@ -1,0 +1,415 @@
+(*
+ * InRhoScionGraft: the E-1 DEMAND-DRIVEN SLOT-SCION for the in-Rho quiescence
+ * driver's FiringEmission seam (rholang-codegen/src/rho_net_drive.rs `ScionBundle`),
+ * modeled as a big-step LTS over the SAME reflected object fragment `Obj` used by the
+ * landed driver (DeBruijnSubstTRS `Obj`), with the FIRED-MULTISET carried in the result
+ * so control-vs-treatment agreement is a genuine "same normal form AND same fired
+ * multiset" statement (the runtime gate, scion_grafting.rs).
+ *
+ * ---------------------------------------------------------------------------------
+ * R-10 RESOLUTION (the plan's core structural claim, de-risked in STEP 0)
+ * ---------------------------------------------------------------------------------
+ *
+ * This file is ADDITIVE over the shared `Obj` of DeBruijnSubstTRS.  It touches NOTHING
+ * in InRhoQuiescenceDriver.v — it MIRRORS that file's style (a `drives`/`recheck`
+ * big-step, a `dres` result split, mutual `Scheme`s, an `ostar`/`obeta` soundness
+ * pattern) rather than editing it.  The scion ladder lives NATIVELY in the existing
+ * arity-general constructor node `oNode : nat -> list Obj -> Obj`
+ * (DeBruijnSubstTRS.v:96):
+ *
+ *     End       = oNode c_end  []
+ *     Step u    = oNode c_step [u]
+ *     Wrap u    = oNode c_wrap [u]
+ *     D1 u      = oNode c_d1   [u]        (a known-RHS "scion node")
+ *     C(t1,t2)  = oNode c      [t1; t2]   (any arity — the model is arity-general)
+ *
+ * so NO new term constructor and NO edit to the driver is needed.  (The design's
+ * alternative (a) — a beta-fragment port — is vacuous: SubstRewrite (beta) arms are
+ * definitionally `ContractumRedrive`, they carry no scion; see e1_scion_design_v1.md
+ * section 2.2.)
+ *
+ * ---------------------------------------------------------------------------------
+ * WHAT IS MODELED
+ * ---------------------------------------------------------------------------------
+ *
+ * A finite, deeply-embedded rule table `R : list rule` of linear constructor patterns
+ * `pat` and constructor-tree right-hand sides `rhs` over slot indices.  From it we
+ * derive (all decidable bool `Fixpoint`s):
+ *
+ *   could_unify p s      : might pattern `p` match SOME instantiation of rhs-subtree `s`?
+ *   mark s               : = scion_position_is_recheck (rho_net_drive.rs:2179) — does
+ *                          any rule LHS could_unify with the rhs-position `s`?  false =
+ *                          SKIP (the codegen savings), true = RECHECK.
+ *   is_ever_redex_root c : = redex_root_ctors (rho_net_drive.rs:2453) — is `c` any
+ *                          rule's LHS root constructor?
+ *   graft_safe           : the FOLD-1 GUARD (scion_emit_point :2401) — every SKIP
+ *                          constructor sitting ABOVE a RECHECK is never a redex root.
+ *   root_stable          : the section-4.2 side condition (no constructor demanded at
+ *                          LHS depth >= 1 is any rule's LHS root).
+ *
+ * TWO big-step relations over `Obj`, carrying the fired-rule multiset (`list nat` of
+ * rule indices) in the result:
+ *
+ *   gdrives  — the CONTRACTUM-REDRIVE reference (the landed driver, generalized to the
+ *              rule table and to arity-general `oNode`): on firing, the WHOLE contractum
+ *              is re-driven; descent drives every child at the SAME fuel, joins, and
+ *              re-checks the reassembled node.
+ *   sdrives  — the SCION: on firing, the RHS skeleton is GRAFTED (known constructors are
+ *              rebuilt inert, `mark=false` SKIP positions), only `mark=true` RECHECK
+ *              positions RESUBMIT their raw subtree by re-entering `gdrives` at fuel-1,
+ *              and slot occurrences are driven at fuel-1.  `gdrives` is defined FIRST and
+ *              `sdrives`/`sgraft` reference it (gdrives never mentions sdrives), so the
+ *              blocks type-check cleanly with strict positivity.
+ *
+ * fuel is decremented ONLY on firing (descent copies it — per-path semantics, exactly
+ * the driver's discipline); the result type `dres` separates the quiescent value
+ * (`Done v fired`) from the typed fuel-exhaustion datum (`Fuel u`, the stuck redex).
+ *
+ * Rocq 9.1 compatible.  No Admitted, no Axioms, no Assumptions, no Parameters (the rule
+ * table `R` is a `Section` `Variable`, discharged to a universally-quantified hypothesis
+ * before the `Print Assumptions` gate — never an axiom).
+ *)
+
+From Stdlib Require Import List PeanoNat Permutation Lia.
+From RhoBridge Require Import DeBruijnSubstTRS InRhoBetaCascadeWeakBisim.
+
+Import ListNotations.
+
+(* =================================================================================
+   1.  The result type: value + FIRED MULTISET, or the typed fuel-exhaustion datum.
+
+   `Done v fired` is the quiescent OUT value together with the multiset (order-carrying
+   list) of rule indices that fired to reach it — the SM-10 fired-multiset carry that
+   makes control-vs-treatment agreement a genuine "same NF AND same fired bag"
+   statement.  `Fuel u` is the `^drive-fuel` datum (the stuck redex `u`).  Distinct from
+   the landed `InRhoQuiescenceDriver.dres` (this file does NOT import the driver), so no
+   name clash across files.
+   ================================================================================= *)
+
+Inductive dres : Type :=
+  | Done : Obj -> list nat -> dres
+  | Fuel : Obj -> dres.
+
+(* Prepend a batch of child-fired labels to a result (the join's label accumulation). *)
+Definition rlabels_prepend (fs : list nat) (r : dres) : dres :=
+  match r with
+  | Done v gs => Done v (fs ++ gs)
+  | Fuel u => Fuel u
+  end.
+
+(* Cons one firing label onto a result (a single fire's label). *)
+Definition rlabel_cons (i : nat) (r : dres) : dres :=
+  match r with
+  | Done v gs => Done v (i :: gs)
+  | Fuel u => Fuel u
+  end.
+
+(* The list-drive result: all children driven to values (with concatenated labels), or
+   some child exhausted fuel. *)
+Inductive dres_list : Type :=
+  | DoneL : list Obj -> list nat -> dres_list
+  | FuelL : Obj -> dres_list.
+
+(* =================================================================================
+   2.  The deeply-embedded rule table: linear constructor patterns and constructor-tree
+       RHSs over slot indices.  Constructors are `nat` tags (the reflected `^C` op
+       numerals); slots are `nat` variable indices.
+   ================================================================================= *)
+
+Inductive pat : Type :=
+  | PVar : nat -> pat
+  | PApp : nat -> list pat -> pat.
+
+Inductive rhs : Type :=
+  | RVar : nat -> rhs
+  | RApp : nat -> list rhs -> rhs.
+
+Definition rule : Type := (pat * rhs)%type.
+
+(* Nested induction principles (the auto-generated ones give no hypothesis for the list
+   children), mirroring DeBruijnSubstTRS.Obj_ind'. *)
+Definition pat_ind' (P : pat -> Prop)
+  (Hv : forall i, P (PVar i))
+  (Ha : forall c args, Forall P args -> P (PApp c args))
+  : forall p, P p :=
+  fix F (p : pat) : P p :=
+    match p with
+    | PVar i => Hv i
+    | PApp c args =>
+        Ha c args
+           ((fix G (l : list pat) : Forall P l :=
+               match l with
+               | [] => Forall_nil P
+               | x :: xs => Forall_cons x (F x) (G xs)
+               end) args)
+    end.
+
+Definition rhs_ind' (P : rhs -> Prop)
+  (Hv : forall i, P (RVar i))
+  (Ha : forall c args, Forall P args -> P (RApp c args))
+  : forall r, P r :=
+  fix F (r : rhs) : P r :=
+    match r with
+    | RVar i => Hv i
+    | RApp c args =>
+        Ha c args
+           ((fix G (l : list rhs) : Forall P l :=
+               match l with
+               | [] => Forall_nil P
+               | x :: xs => Forall_cons x (F x) (G xs)
+               end) args)
+    end.
+
+(* =================================================================================
+   3.  Matching and instantiation (total Fixpoints; linear patterns keep them
+       decidable).  Bindings are an association list slot-index -> matched Obj.
+   ================================================================================= *)
+
+Fixpoint lookup (i : nat) (b : list (nat * Obj)) : option Obj :=
+  match b with
+  | [] => None
+  | (j, o) :: b' => if Nat.eqb i j then Some o else lookup i b'
+  end.
+
+(* pat_match p o = Some binds iff p matches o, collecting the left-to-right slot
+   bindings.  PApp only matches an oNode of the same tag and arity; a variable pattern
+   matches anything.  The inner `go` recurses on the child pattern list (subterms of
+   `PApp c ps`), so the Fixpoint is guarded. *)
+Fixpoint pat_match (p : pat) (o : Obj) : option (list (nat * Obj)) :=
+  match p with
+  | PVar i => Some [(i, o)]
+  | PApp c ps =>
+      match o with
+      | oNode c' os =>
+          if andb (Nat.eqb c c') (Nat.eqb (length ps) (length os))
+          then (fix go (ps0 : list pat) (os0 : list Obj) : option (list (nat * Obj)) :=
+                  match ps0, os0 with
+                  | [], [] => Some []
+                  | p0 :: ps', o0 :: os' =>
+                      match pat_match p0 o0, go ps' os' with
+                      | Some b1, Some b2 => Some (b1 ++ b2)
+                      | _, _ => None
+                      end
+                  | _, _ => None
+                  end) ps os
+          else None
+      | _ => None
+      end
+  end.
+
+(* Instantiate an RHS skeleton with a slot binding.  An unbound RHS variable defaults to
+   `oFree 0` (never happens for well-formed rules — every RHS var is a pattern var). *)
+Fixpoint inst (r : rhs) (b : list (nat * Obj)) : Obj :=
+  match r with
+  | RVar i => match lookup i b with Some o => o | None => oFree 0 end
+  | RApp c rs => oNode c (map (fun r0 => inst r0 b) rs)
+  end.
+
+(* =================================================================================
+   4.  could_unify: might pattern `p` match SOME slot-instantiation of rhs-subtree `s`?
+       A variable pattern matches anything (true); an rhs variable can be instantiated
+       to anything, so any pattern MIGHT match it (true); two constructor nodes could
+       unify iff same tag, same arity, and children pairwise could_unify.
+   ================================================================================= *)
+
+Fixpoint could_unify (p : pat) (s : rhs) : bool :=
+  match p, s with
+  | PVar _, _ => true
+  | _, RVar _ => true
+  | PApp c1 ps, RApp c2 rs =>
+      andb (andb (Nat.eqb c1 c2) (Nat.eqb (length ps) (length rs)))
+           ((fix go (ps0 : list pat) (rs0 : list rhs) : bool :=
+               match ps0, rs0 with
+               | [], [] => true
+               | p0 :: ps', r0 :: rs' => andb (could_unify p0 r0) (go ps' rs')
+               | _, _ => false
+               end) ps rs)
+  end.
+
+Definition root_ctor (p : pat) : option nat :=
+  match p with PApp c _ => Some c | PVar _ => None end.
+
+(* =================================================================================
+   5.  The rule table `R` as a Section Variable (discharged before Print Assumptions —
+       a universally-quantified hypothesis, NOT an axiom).  Everything R-dependent lives
+       inside.
+   ================================================================================= *)
+
+Section ScionModel.
+
+  Variable R : list rule.
+
+  (* Rule `i` fires at the ROOT of `t`, producing contractum `u`. *)
+  Definition fires (i : nat) (t u : Obj) : Prop :=
+    exists p r binds,
+      nth_error R i = Some (p, r) /\ pat_match p t = Some binds /\ u = inst r binds.
+
+  (* No rule matches at the root of `t` (the wildcard side of every redex Match arm —
+     the descent/re-check arms carry exactly this negative premise). *)
+  Definition no_root_redex (t : Obj) : Prop := forall i u, ~ fires i t u.
+
+  (* mark: is the rhs-position `s` a RECHECK (some LHS could_unify) or a SKIP (none)? *)
+  Definition mark (s : rhs) : bool := existsb (fun rl => could_unify (fst rl) s) R.
+
+  (* is `c` ever a rule LHS root constructor? *)
+  Definition is_ever_redex_root (c : nat) : bool :=
+    existsb (fun rl => match root_ctor (fst rl) with
+                       | Some c' => Nat.eqb c c'
+                       | None => false
+                       end) R.
+
+  (* Does the rhs-subtree contain a RECHECK anywhere (mark true at some position)? *)
+  Fixpoint has_recheck (s : rhs) : bool :=
+    orb (mark s)
+        (match s with
+         | RVar _ => false
+         | RApp _ rs => existsb has_recheck rs
+         end).
+
+  (* graft_safe over ONE rhs skeleton: every SKIP node (mark=false) that sits ABOVE a
+     RECHECK (has_recheck true among its children) must have a constructor that is NEVER
+     a redex root.  (A skip node with no recheck below, or a recheck node, imposes
+     nothing.)  This is the Fold-1 guard. *)
+  Fixpoint rhs_graft_safe (s : rhs) : bool :=
+    match s with
+    | RVar _ => true
+    | RApp c rs =>
+        andb (if mark s then true
+              else if existsb has_recheck rs then negb (is_ever_redex_root c) else true)
+             (forallb rhs_graft_safe rs)
+    end.
+
+  Definition graft_safe : bool := forallb (fun rl => rhs_graft_safe (snd rl)) R.
+
+  (* root_stable (section-4.2): no constructor demanded at LHS depth >= 1 is any rule's
+     LHS root.  Used only for the optional full <-> direction of agreement. *)
+  Fixpoint pat_ctors_incl (p : pat) : list nat :=
+    match p with
+    | PVar _ => []
+    | PApp c args =>
+        c :: (fix fl (l : list pat) : list nat :=
+                match l with [] => [] | x :: xs => pat_ctors_incl x ++ fl xs end) args
+    end.
+
+  Definition pat_ctors_below_root (p : pat) : list nat :=
+    match p with PVar _ => [] | PApp _ args => flat_map pat_ctors_incl args end.
+
+  Definition root_stable : bool :=
+    forallb (fun rl => forallb (fun c => negb (is_ever_redex_root c))
+                               (pat_ctors_below_root (fst rl))) R.
+
+  (* ===============================================================================
+     6.  BLOCK 1 — gdrives (the CONTRACTUM-REDRIVE reference), arity-general and
+         table-driven, mutually with the child-list drive and the post-join re-check.
+         One constructor per generated arm disposition.
+     =============================================================================== *)
+
+  Inductive gdrives : nat -> Obj -> dres -> Prop :=
+    (* leaf / reserved passthrough arms: inert, fuel NOT consulted. *)
+    | g_free  : forall f x, gdrives f (oFree x) (Done (oFree x) [])
+    | g_bound : forall f n, gdrives f (oBound n) (Done (oBound n) [])
+    (* binder arm (oLam is unused by the scion fragment, but kept total). *)
+    | g_lam   : forall f b v gs, gdrives f b (Done v gs) -> gdrives f (oLam b) (Done (oLam v) gs)
+    | g_lam_fuel : forall f b u, gdrives f b (Fuel u) -> gdrives f (oLam b) (Fuel u)
+    (* redex arm, fuel-gated: ground 0 FIRST (typed exhaustion = the stuck redex node),
+       else FIRE (re-drive the WHOLE contractum) with fuel-1. *)
+    | g_fuel0 : forall i t u, fires i t u -> gdrives 0 t (Fuel t)
+    | g_fire  : forall f i t u r,
+        fires i t u -> gdrives f u r -> gdrives (S f) t (rlabel_cons i r)
+    (* congruence-descent arm (no root redex): concurrent child drives at the SAME fuel,
+       the atomic join, then the inline post-join re-check of the reassembled node. *)
+    | g_descend : forall f op ts vs fss r,
+        no_root_redex (oNode op ts) ->
+        gdrives_list f ts (DoneL vs fss) ->
+        grecheck f (oNode op vs) r ->
+        gdrives f (oNode op ts) (rlabels_prepend fss r)
+    | g_descend_fuel : forall f op ts u,
+        no_root_redex (oNode op ts) ->
+        gdrives_list f ts (FuelL u) ->
+        gdrives f (oNode op ts) (Fuel u)
+
+  with gdrives_list : nat -> list Obj -> dres_list -> Prop :=
+    | gdl_nil : forall f, gdrives_list f [] (DoneL [] [])
+    | gdl_cons : forall f t ts v gs vs fss,
+        gdrives f t (Done v gs) ->
+        gdrives_list f ts (DoneL vs fss) ->
+        gdrives_list f (t :: ts) (DoneL (v :: vs) (gs ++ fss))
+    | gdl_cons_fuel_head : forall f t ts u,
+        gdrives f t (Fuel u) -> gdrives_list f (t :: ts) (FuelL u)
+    | gdl_cons_fuel_tail : forall f t ts v gs u,
+        gdrives f t (Done v gs) -> gdrives_list f ts (FuelL u) ->
+        gdrives_list f (t :: ts) (FuelL u)
+
+  (* post-join re-check: the reassembled node against the REDEX ARMS ONLY (children
+     already normal); the wildcard default publishes the node as this subtree's NF. *)
+  with grecheck : nat -> Obj -> dres -> Prop :=
+    | grc_fuel0 : forall i t u, fires i t u -> grecheck 0 t (Fuel t)
+    | grc_fire  : forall f i t u r,
+        fires i t u -> gdrives f u r -> grecheck (S f) t (rlabel_cons i r)
+    | grc_done  : forall f t, no_root_redex t -> grecheck f t (Done t []).
+
+  (* ===============================================================================
+     7.  BLOCK 2 — sgraft (the scion RHS-skeleton graft), referencing gdrives (block 1)
+         for slot drives and RECHECK resubmits.  gdrives never mentions sgraft, so this
+         is a clean second block.
+     =============================================================================== *)
+
+  Inductive sgraft : nat -> rhs -> list (nat * Obj) -> dres -> Prop :=
+    (* a SLOT: drive the bound value via gdrives at the (already decremented) fuel. *)
+    | sg_var : forall f j binds o r,
+        lookup j binds = Some o -> gdrives f o r -> sgraft f (RVar j) binds r
+    (* a RECHECK node (mark=true): RESUBMIT the RAW instantiated subtree to gdrives. *)
+    | sg_recheck : forall f c rs binds r,
+        mark (RApp c rs) = true ->
+        gdrives f (inst (RApp c rs) binds) r ->
+        sgraft f (RApp c rs) binds r
+    (* a SKIP node (mark=false): graft the known constructor inert, recursing into
+       children (slots driven, sub-rechecks resubmitted, sub-skips grafted). *)
+    | sg_skip : forall f c rs binds vs fss,
+        mark (RApp c rs) = false ->
+        sgraft_list f rs binds (DoneL vs fss) ->
+        sgraft f (RApp c rs) binds (Done (oNode c vs) fss)
+    | sg_skip_fuel : forall f c rs binds u,
+        mark (RApp c rs) = false ->
+        sgraft_list f rs binds (FuelL u) ->
+        sgraft f (RApp c rs) binds (Fuel u)
+
+  with sgraft_list : nat -> list rhs -> list (nat * Obj) -> dres_list -> Prop :=
+    | sgl_nil : forall f binds, sgraft_list f [] binds (DoneL [] [])
+    | sgl_cons : forall f r rs binds v gs vs fss,
+        sgraft f r binds (Done v gs) ->
+        sgraft_list f rs binds (DoneL vs fss) ->
+        sgraft_list f (r :: rs) binds (DoneL (v :: vs) (gs ++ fss))
+    | sgl_cons_fuel_head : forall f r rs binds u,
+        sgraft f r binds (Fuel u) -> sgraft_list f (r :: rs) binds (FuelL u)
+    | sgl_cons_fuel_tail : forall f r rs binds v gs u,
+        sgraft f r binds (Done v gs) -> sgraft_list f rs binds (FuelL u) ->
+        sgraft_list f (r :: rs) binds (FuelL u).
+
+  (* ===============================================================================
+     8.  BLOCK 3 — sdrives (the scion driver).  On a ROOT redex it fires ONE scion
+         graft (`sgraft` of the RHS skeleton, fuel-1); a non-redex node descends exactly
+         as gdrives (the scion and the redrive share their descent — the optimization is
+         only at firing), so it delegates to gdrives there; leaves are inert.  sdrives
+         references sgraft + gdrives; nothing references sdrives.
+     =============================================================================== *)
+
+  Inductive sdrives : nat -> Obj -> dres -> Prop :=
+    | s_free  : forall f x, sdrives f (oFree x) (Done (oFree x) [])
+    | s_bound : forall f n, sdrives f (oBound n) (Done (oBound n) [])
+    (* a ROOT redex at fuel 0: typed exhaustion (the stuck redex itself). *)
+    | s_fuel0 : forall i t u, fires i t u -> sdrives 0 t (Fuel t)
+    (* a ROOT redex at fuel S f: fire rule i, GRAFT the RHS skeleton at fuel f, cons the
+       firing label. *)
+    | s_fire  : forall f i t p rr binds r,
+        nth_error R i = Some (p, rr) ->
+        pat_match p t = Some binds ->
+        sgraft f rr binds r ->
+        sdrives (S f) t (rlabel_cons i r)
+    (* a non-redex node: the scion descends exactly as the redrive (identical descent). *)
+    | s_nonredex : forall f op ts r,
+        no_root_redex (oNode op ts) ->
+        gdrives f (oNode op ts) r ->
+        sdrives f (oNode op ts) r.
+
+End ScionModel.

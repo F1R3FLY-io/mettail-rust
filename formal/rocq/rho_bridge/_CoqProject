@@ -147,6 +147,17 @@ theories/InRhoBetaCascadeWeakBisim.v
 # chains lifting InRhoBetaCascadeWeakBisim's single-fire clauses — cascade legs SN+CR-unique),
 # and the two-firing non-vacuity witness.
 theories/InRhoQuiescenceDriver.v
+# E-1 — the DEMAND-DRIVEN SLOT-SCION for the driver's FiringEmission seam (ScionBundle,
+# rho_net_drive.rs) as a big-step LTS over the SAME reflected `Obj` fragment, carrying the
+# FIRED MULTISET in the result (InRhoScionGraft): ADDITIVE (no InRhoQuiescenceDriver edit);
+# scion_graft_sound (SKIP-mark soundness — an unmarked position can never match under ANY
+# slot instantiation, the Lemma-6.2.3 analogue), sdrives soundness / per-trace quiescence /
+# typed fuel exhaustion, sdrives_gdrives_agree (SCION graft = CONTRACTUM redrive: same NF AND
+# Permutation of fired multisets, under the graft_safe Fold-1 guard — SM-10), the reused
+# weak-bisimulation kit instantiated for the cascade-FREE structural fire (cheaper than beta),
+# the no-slot-redescent efficiency counter, the ladder non-vacuity witness, and the NEGATIVE
+# TEST pinning the Fold-1 guard's necessity (without it, scion under-reduces).
+theories/InRhoScionGraft.v
 # Stage 3e — the native-system-process dispatch (NativeProc(a..) ~> <native value>) is
 # TOTAL-OR-REJECT + the emitted payload is EXACTLY the trusted handler's value
 # (NativeSystemProcessBoundary): lower_native_system_process either materializes the flat one-slot
