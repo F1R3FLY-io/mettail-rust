@@ -1,0 +1,456 @@
+{
+  "wb": {
+    "100": {
+      "full": {
+        "appends_recorded": 1500,
+        "per_append_wall_ns_p50": 28673030.5,
+        "fell_back": 0,
+        "dnf": 0,
+        "not_installed": 0,
+        "header_unix_time_secs": 1784616369
+      },
+      "incremental": {
+        "appends_recorded": 1500,
+        "per_append_wall_ns_p50": 18987932.5,
+        "fell_back": 0,
+        "dnf": 0,
+        "not_installed": 0,
+        "header_unix_time_secs": 1784616336
+      },
+      "savings_fraction_p50": 0.33777727122356316
+    },
+    "250": {
+      "full": {
+        "appends_recorded": 1500,
+        "per_append_wall_ns_p50": 114498161.0,
+        "fell_back": 0,
+        "dnf": 0,
+        "not_installed": 0,
+        "header_unix_time_secs": 1784616569
+      },
+      "incremental": {
+        "appends_recorded": 1500,
+        "per_append_wall_ns_p50": 86742673.0,
+        "fell_back": 0,
+        "dnf": 0,
+        "not_installed": 0,
+        "header_unix_time_secs": 1784616418
+      },
+      "savings_fraction_p50": 0.24240990211187763
+    },
+    "500": {
+      "full": {
+        "appends_recorded": 1500,
+        "per_append_wall_ns_p50": 373737460.0,
+        "fell_back": 0,
+        "dnf": 0,
+        "not_installed": 0,
+        "header_unix_time_secs": 1784617320
+      },
+      "incremental": {
+        "appends_recorded": 1500,
+        "per_append_wall_ns_p50": 320939243.5,
+        "fell_back": 0,
+        "dnf": 0,
+        "not_installed": 0,
+        "header_unix_time_secs": 1784616761
+      },
+      "savings_fraction_p50": 0.1412708710012638
+    },
+    "1000": {
+      "full": {
+        "appends_recorded": 1500,
+        "per_append_wall_ns_p50": 1374893314.0,
+        "fell_back": 0,
+        "dnf": 0,
+        "not_installed": 0,
+        "header_unix_time_secs": 1784620055
+      },
+      "incremental": {
+        "appends_recorded": 1500,
+        "per_append_wall_ns_p50": 1232642285.0,
+        "fell_back": 0,
+        "dnf": 0,
+        "not_installed": 0,
+        "header_unix_time_secs": 1784617949
+      },
+      "savings_fraction_p50": 0.10346332151848692
+    }
+  },
+  "wb_spans_shares": {
+    "100": {
+      "phase_self_share_p50": {
+        "reconstruct": 0.04645077613829605,
+        "lower_language_def": 0.025056200351243344,
+        "from_language_def": 0.20623556053331218,
+        "compile_in_rho_matching_ruleset": 0.04468842374238882,
+        "lower_to_par": 0.09961434972075635,
+        "installed_program_par": 0.5779546895140032
+      },
+      "reused_phase_self_share": 0.09113919988068486,
+      "par_emission_self_share": 0.8838045997680717,
+      "par_emission_plus_scalar_lowering_share": 0.908860800119315,
+      "self_ns_sum_p50": 21185720.5
+    },
+    "250": {
+      "phase_self_share_p50": {
+        "reconstruct": 0.023162233337391862,
+        "lower_language_def": 0.01313543487402571,
+        "from_language_def": 0.1467392924127944,
+        "compile_in_rho_matching_ruleset": 0.02309183390337277,
+        "lower_to_par": 0.053046706542677534,
+        "installed_program_par": 0.7408244989297377
+      },
+      "reused_phase_self_share": 0.04625406724076463,
+      "par_emission_self_share": 0.9406104978852097,
+      "par_emission_plus_scalar_lowering_share": 0.9537459327592354,
+      "self_ns_sum_p50": 98180852.5
+    },
+    "500": {
+      "phase_self_share_p50": {
+        "reconstruct": 0.012186370602628534,
+        "lower_language_def": 0.0073026188768744605,
+        "from_language_def": 0.1333881699838601,
+        "compile_in_rho_matching_ruleset": 0.012674063806510007,
+        "lower_to_par": 0.027182624838152546,
+        "installed_program_par": 0.8072661518919744
+      },
+      "reused_phase_self_share": 0.024860434409138543,
+      "par_emission_self_share": 0.967836946713987,
+      "par_emission_plus_scalar_lowering_share": 0.9751395655908615,
+      "self_ns_sum_p50": 347599427.5
+    },
+    "1000": {
+      "phase_self_share_p50": {
+        "reconstruct": 0.005882956557407234,
+        "lower_language_def": 0.0038701441484508227,
+        "from_language_def": 0.13111754529864642,
+        "compile_in_rho_matching_ruleset": 0.006952238438449787,
+        "lower_to_par": 0.01475547137344752,
+        "installed_program_par": 0.8374216441835982
+      },
+      "reused_phase_self_share": 0.012835194995857021,
+      "par_emission_self_share": 0.9832946608556922,
+      "par_emission_plus_scalar_lowering_share": 0.9871648050041429,
+      "self_ns_sum_p50": 1306171722.5
+    }
+  },
+  "h1": {
+    "direct/mixed/distinct": {
+      "1000": {
+        "wall_ns_p50": 473642.5,
+        "n": 30,
+        "pattern_nodes": 3000
+      },
+      "128": {
+        "wall_ns_p50": 39559.5,
+        "n": 30,
+        "pattern_nodes": 383
+      },
+      "16": {
+        "wall_ns_p50": 6201.5,
+        "n": 30,
+        "pattern_nodes": 47
+      },
+      "250": {
+        "wall_ns_p50": 94168.0,
+        "n": 30,
+        "pattern_nodes": 750
+      },
+      "32": {
+        "wall_ns_p50": 11281.0,
+        "n": 30,
+        "pattern_nodes": 94
+      },
+      "500": {
+        "wall_ns_p50": 222972.5,
+        "n": 30,
+        "pattern_nodes": 1500
+      },
+      "64": {
+        "wall_ns_p50": 18520.0,
+        "n": 30,
+        "pattern_nodes": 192
+      },
+      "750": {
+        "wall_ns_p50": 407752.5,
+        "n": 30,
+        "pattern_nodes": 2250
+      },
+      "8": {
+        "wall_ns_p50": 3406.5,
+        "n": 30,
+        "pattern_nodes": 23
+      },
+      "local_loglog_slope_500_750_1000": 1.1133
+    },
+    "direct/multi1/distinct": {
+      "1000": {
+        "wall_ns_p50": 499522.0,
+        "n": 30,
+        "pattern_nodes": 3000
+      },
+      "128": {
+        "wall_ns_p50": 33904.5,
+        "n": 30,
+        "pattern_nodes": 384
+      },
+      "16": {
+        "wall_ns_p50": 6252.0,
+        "n": 30,
+        "pattern_nodes": 48
+      },
+      "250": {
+        "wall_ns_p50": 107338.5,
+        "n": 30,
+        "pattern_nodes": 750
+      },
+      "32": {
+        "wall_ns_p50": 11296.5,
+        "n": 30,
+        "pattern_nodes": 96
+      },
+      "500": {
+        "wall_ns_p50": 208404.5,
+        "n": 30,
+        "pattern_nodes": 1500
+      },
+      "64": {
+        "wall_ns_p50": 21320.0,
+        "n": 30,
+        "pattern_nodes": 192
+      },
+      "750": {
+        "wall_ns_p50": 290134.5,
+        "n": 30,
+        "pattern_nodes": 2250
+      },
+      "8": {
+        "wall_ns_p50": 3217.0,
+        "n": 30,
+        "pattern_nodes": 24
+      },
+      "local_loglog_slope_500_750_1000": 1.2319
+    },
+    "direct/multi1/shared16": {
+      "750": {
+        "wall_ns_p50": 1652025.0,
+        "n": 30,
+        "pattern_nodes": 19454
+      }
+    },
+    "direct/multi3/distinct": {
+      "1000": {
+        "wall_ns_p50": 562575.5,
+        "n": 30,
+        "pattern_nodes": 5000
+      },
+      "128": {
+        "wall_ns_p50": 49008.5,
+        "n": 30,
+        "pattern_nodes": 640
+      },
+      "16": {
+        "wall_ns_p50": 7624.5,
+        "n": 30,
+        "pattern_nodes": 80
+      },
+      "250": {
+        "wall_ns_p50": 132160.5,
+        "n": 30,
+        "pattern_nodes": 1250
+      },
+      "32": {
+        "wall_ns_p50": 11973.5,
+        "n": 30,
+        "pattern_nodes": 160
+      },
+      "500": {
+        "wall_ns_p50": 298435.5,
+        "n": 30,
+        "pattern_nodes": 2500
+      },
+      "64": {
+        "wall_ns_p50": 23034.0,
+        "n": 30,
+        "pattern_nodes": 320
+      },
+      "750": {
+        "wall_ns_p50": 389343.0,
+        "n": 30,
+        "pattern_nodes": 3750
+      },
+      "8": {
+        "wall_ns_p50": 4238.0,
+        "n": 30,
+        "pattern_nodes": 40
+      },
+      "local_loglog_slope_500_750_1000": 0.8976
+    },
+    "direct/multi3/shared16": {
+      "750": {
+        "wall_ns_p50": 1808291.0,
+        "n": 30,
+        "pattern_nodes": 20954
+      }
+    },
+    "spans/mixed/distinct": {
+      "1000": {
+        "wall_ns_p50": 1298080829.5,
+        "n": 30,
+        "pattern_nodes": 3000
+      },
+      "128": {
+        "wall_ns_p50": 31750383.0,
+        "n": 30,
+        "pattern_nodes": 383
+      },
+      "16": {
+        "wall_ns_p50": 2024987.0,
+        "n": 30,
+        "pattern_nodes": 47
+      },
+      "250": {
+        "wall_ns_p50": 98754202.5,
+        "n": 30,
+        "pattern_nodes": 750
+      },
+      "32": {
+        "wall_ns_p50": 4358959.0,
+        "n": 30,
+        "pattern_nodes": 94
+      },
+      "500": {
+        "wall_ns_p50": 355118131.5,
+        "n": 30,
+        "pattern_nodes": 1500
+      },
+      "64": {
+        "wall_ns_p50": 11084096.0,
+        "n": 30,
+        "pattern_nodes": 192
+      },
+      "750": {
+        "wall_ns_p50": 769033728.5,
+        "n": 30,
+        "pattern_nodes": 2250
+      },
+      "8": {
+        "wall_ns_p50": 1032626.5,
+        "n": 30,
+        "pattern_nodes": 23
+      },
+      "local_loglog_slope_500_750_1000": 1.8724
+    },
+    "spans/multi1/distinct": {
+      "1000": {
+        "wall_ns_p50": 1317403900.0,
+        "n": 30,
+        "pattern_nodes": 3000
+      },
+      "128": {
+        "wall_ns_p50": 31475318.0,
+        "n": 30,
+        "pattern_nodes": 384
+      },
+      "16": {
+        "wall_ns_p50": 1885558.0,
+        "n": 30,
+        "pattern_nodes": 48
+      },
+      "250": {
+        "wall_ns_p50": 98225226.0,
+        "n": 30,
+        "pattern_nodes": 750
+      },
+      "32": {
+        "wall_ns_p50": 4252773.0,
+        "n": 30,
+        "pattern_nodes": 96
+      },
+      "500": {
+        "wall_ns_p50": 348166715.0,
+        "n": 30,
+        "pattern_nodes": 1500
+      },
+      "64": {
+        "wall_ns_p50": 10889537.5,
+        "n": 30,
+        "pattern_nodes": 192
+      },
+      "750": {
+        "wall_ns_p50": 750575372.5,
+        "n": 30,
+        "pattern_nodes": 2250
+      },
+      "8": {
+        "wall_ns_p50": 978013.0,
+        "n": 30,
+        "pattern_nodes": 24
+      },
+      "local_loglog_slope_500_750_1000": 1.9182
+    },
+    "spans/multi1/shared16": {
+      "750": {
+        "wall_ns_p50": 726197999.0,
+        "n": 30,
+        "pattern_nodes": 19454
+      }
+    },
+    "spans/multi3/distinct": {
+      "1000": {
+        "wall_ns_p50": 1325948298.0,
+        "n": 30,
+        "pattern_nodes": 5000
+      },
+      "128": {
+        "wall_ns_p50": 32677119.5,
+        "n": 30,
+        "pattern_nodes": 640
+      },
+      "16": {
+        "wall_ns_p50": 2046903.0,
+        "n": 30,
+        "pattern_nodes": 80
+      },
+      "250": {
+        "wall_ns_p50": 99912396.5,
+        "n": 30,
+        "pattern_nodes": 1250
+      },
+      "32": {
+        "wall_ns_p50": 4498323.0,
+        "n": 30,
+        "pattern_nodes": 160
+      },
+      "500": {
+        "wall_ns_p50": 350584518.5,
+        "n": 30,
+        "pattern_nodes": 2500
+      },
+      "64": {
+        "wall_ns_p50": 11273049.0,
+        "n": 30,
+        "pattern_nodes": 320
+      },
+      "750": {
+        "wall_ns_p50": 770533498.0,
+        "n": 30,
+        "pattern_nodes": 3750
+      },
+      "8": {
+        "wall_ns_p50": 1064917.5,
+        "n": 30,
+        "pattern_nodes": 40
+      },
+      "local_loglog_slope_500_750_1000": 1.9207
+    },
+    "spans/multi3/shared16": {
+      "750": {
+        "wall_ns_p50": 730424821.5,
+        "n": 30,
+        "pattern_nodes": 20954
+      }
+    }
+  }
+}
