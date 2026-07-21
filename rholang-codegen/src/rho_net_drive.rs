@@ -214,8 +214,8 @@ use crate::rho_net_lower::{
 use crate::rho_net_ruleset::{compile_in_rho_matching_ruleset, in_rho_static_gate, InRhoMatchingRuleset};
 use crate::rho_net_subst_trs::{
     for1, free_bits, ground, is_binder_term, join, match_, match_guarded, new_scope,
-    nullary_term, object_congruence_constructors, par2, pat_free, pat_tagged, pat_wildcard,
-    persistent_contract, send, tag_par, tagged, union_free, Case, Env, Node,
+    node_from_par, nullary_term, object_congruence_constructors, par2, pat_free, pat_tagged,
+    pat_wildcard, persistent_contract, send, tag_par, tagged, union_free, Case, Env, Node,
 };
 
 // ─────────────────────────────────────────────────────────────────────────────────────────────
@@ -1496,36 +1496,46 @@ pub(crate) fn firing_emission_node(
     carrier: &dyn DriveCarrier,
     route_through_float: bool,
 ) -> Node {
-    new_scope(1, {
-        let env = env.push(&["r"]);
-        // Fire through the EXISTING σ ABI: `accept!(σ₀, …, σ_{k-1}, r)` — the installed
-        // σ-receiver (β SEED / base receiver) binds `(σ…, out=r)` and delivers the
-        // contractum (for β: the subst-TRS cascade NF) to the fresh `r`.
-        let mut accept_data: Vec<Node> = Vec::with_capacity(arm.sigma_vars.len() + 1);
-        for sigma in &arm.sigma_vars {
-            accept_data.push(env.var(sigma));
-        }
-        accept_data.push(env.var("r"));
-        let accept = send(
-            ground(new_gstring_par(arm.accept_channel.clone(), Vec::new(), false)),
-            accept_data,
-        );
-        // The firing ledger: `@"^fired:{fp}"!("RuleLabel")`.
-        let ledger = send(
+    // The firing ledger `@"^fired:{fp}"!("RuleLabel")` — all-ground (no frame references),
+    // so it is byte-identical whether assembled inside the `new r` scope (ContractumRedrive)
+    // or in the arm frame (ScionBundle).
+    let ledger = || {
+        send(
             ground(new_gstring_par(drive_fired_channel(fingerprint), Vec::new(), false)),
             vec![ground(new_gstring_par(arm.rule_label.clone(), Vec::new(), false))],
-        );
-        let emission_node = match emission {
-            FiringEmission::ContractumRedrive => for1(env.var("r"), {
+        )
+    };
+    match emission {
+        // Byte-identical to pre-E-1: `new r { accept!(σ…, r) | @^fired!(label) | redrive-for }`.
+        FiringEmission::ContractumRedrive => new_scope(1, {
+            let env = env.push(&["r"]);
+            // Fire through the EXISTING σ ABI: `accept!(σ₀, …, σ_{k-1}, r)` — the installed
+            // σ-receiver (β SEED / base receiver) binds `(σ…, out=r)` and delivers the
+            // contractum (for β: the subst-TRS cascade NF) to the fresh `r`.
+            let mut accept_data: Vec<Node> = Vec::with_capacity(arm.sigma_vars.len() + 1);
+            for sigma in &arm.sigma_vars {
+                accept_data.push(env.var(sigma));
+            }
+            accept_data.push(env.var("r"));
+            let accept = send(
+                ground(new_gstring_par(arm.accept_channel.clone(), Vec::new(), false)),
+                accept_data,
+            );
+            let emission_node = for1(env.var("r"), {
                 let env = env.push(&["c"]);
                 contractum_redrive_node(fingerprint, &env, fuel_var, ret_var, carrier, route_through_float)
-            }),
-            // The E-1 seam: the precompiled bundle replaces the redrive `for` (see the
-            // [`FiringEmission::ScionBundle`] contract). Constructed nowhere this stage.
-            FiringEmission::ScionBundle { bundle } => ground(bundle.clone()),
-        };
-        par2(par2(accept, ledger), emission_node)
-    })
+            });
+            par2(par2(accept, ledger()), emission_node)
+        }),
+        // E-1 §3.3 (accept-bypass): the precompiled scion bundle owns its own fresh scopes and
+        // reassembles the contractum directly from the frame σ captures — NO `new r`, NO accept
+        // round-trip (a retained accept would leak 1 COMM + 1 resting produce per firing, SM-11).
+        // The bundle references σ / `fuel` / `ret` at the arm-frame depth; [`node_from_par`]
+        // recovers its free-set from `locally_free` (a plain `ground` would zero it, corrupting
+        // the enclosing `Match`-case COMM). The `^fired:` ledger is RETAINED — it is the
+        // treatment arm's ONLY firing observable (`fired_labels()`, SM-3).
+        FiringEmission::ScionBundle { bundle } => par2(ledger(), node_from_par(bundle.clone())),
+    }
 }
 
 /// The shared contractum RE-ENTRY node of both firing emitters, built in the frame where
@@ -1598,30 +1608,36 @@ fn ac_firing_emission_node(
     subject: &DriveSubject<'_>,
     route_through_float: bool,
 ) -> Node {
-    new_scope(1, {
-        let env = env.push(&["r"]);
-        // Deliver the whole subject operand + the fresh return through the carrier ABI.
-        let operand = drive_subject_node(subject, &env, carrier);
-        let carrier_send = send(
-            ground(tag_par(fingerprint, &arm.carrier_label)),
-            vec![operand, env.var("r")],
-        );
-        // The firing ledger: `@"^fired:{fp}"!("RuleLabel")`.
-        let ledger = send(
+    // Byte-identical whether inside the `new r` scope or the arm frame (all-ground).
+    let ledger = || {
+        send(
             ground(new_gstring_par(drive_fired_channel(fingerprint), Vec::new(), false)),
             vec![ground(new_gstring_par(arm.rule_label.clone(), Vec::new(), false))],
-        );
-        let emission_node = match emission {
-            FiringEmission::ContractumRedrive => for1(env.var("r"), {
+        )
+    };
+    match emission {
+        // Byte-identical to pre-E-1: `new r { ⌜^drive-ac:R⌝!(subject, r) | @^fired!(label) |
+        // redrive-for }`.
+        FiringEmission::ContractumRedrive => new_scope(1, {
+            let env = env.push(&["r"]);
+            // Deliver the whole subject operand + the fresh return through the carrier ABI.
+            let operand = drive_subject_node(subject, &env, carrier);
+            let carrier_send = send(
+                ground(tag_par(fingerprint, &arm.carrier_label)),
+                vec![operand, env.var("r")],
+            );
+            let emission_node = for1(env.var("r"), {
                 let env = env.push(&["c"]);
                 contractum_redrive_node(fingerprint, &env, fuel_var, ret_var, carrier, route_through_float)
-            }),
-            // The E-1 seam: the precompiled bundle replaces the redrive `for` (see the
-            // [`FiringEmission::ScionBundle`] contract). Constructed nowhere this stage.
-            FiringEmission::ScionBundle { bundle } => ground(bundle.clone()),
-        };
-        par2(par2(carrier_send, ledger), emission_node)
-    })
+            });
+            par2(par2(carrier_send, ledger()), emission_node)
+        }),
+        // E-1 §3.3 (accept-bypass): the scion bundle owns its own scopes and reassembles the
+        // contractum from the frame slots directly — NO `new r`, NO carrier round-trip; the
+        // `^fired:` ledger is retained (`fired_labels()`, SM-3). (AC-carrier scion bundles are
+        // the L4 / W-D stage; the seam accepts them here under the SM-7 invariant.)
+        FiringEmission::ScionBundle { bundle } => par2(ledger(), node_from_par(bundle.clone())),
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────────────────────

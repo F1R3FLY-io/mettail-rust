@@ -195,6 +195,23 @@ pub(crate) fn ground(par: Par) -> Node {
     Node { par, free: Vec::new() }
 }
 
+/// Recover a [`Node`] from a `Par` whose `locally_free` bit-vector already encodes its
+/// De Bruijn free-set (one byte per index, `1` ⟹ referenced — the [`free_bits`] /
+/// `models::create_bit_vector` encoding). Unlike [`ground`] (which asserts the Par has NO
+/// free variables), this PRESERVES a frame-relative Par's free-set: the E-1 scion bundle
+/// (`crate::rho_net_drive::FiringEmission::ScionBundle`) references its arm frame's σ /
+/// `fuel` / `ret` slots, so the enclosing `Match`-case + receiver binders MUST see those
+/// indices or the reducer's COMM/substitution reads a corrupt `locally_free`.
+pub(crate) fn node_from_par(par: Par) -> Node {
+    let free: Vec<usize> = par
+        .locally_free
+        .iter()
+        .enumerate()
+        .filter_map(|(index, &byte)| (byte != 0).then_some(index))
+        .collect();
+    Node { par, free }
+}
+
 /// The reserved unforgeable channel / tag `GPrivate(reflect_tag(fp, label))`.
 pub(crate) fn tag_par(fp: &str, label: &str) -> Par {
     GPrivateBuilder::new_par_from_string(reflect_tag(fp, label))
