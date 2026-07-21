@@ -6,7 +6,7 @@
   "verdict_deterministic": {
     "ii_invalidation_exactness": "CONFIRMED: actual==expected on all 12000 rows",
     "iii_wall_guard": "CONFIRMED: pathmap within \u00b10.5% of hashmap at every r (|\u0394|\u22645% two-sided guard)",
-    "i_retained_bytes": "NOT RENDERED \u2014 harness emitted store_entries (count, 1.00x both arms) but not the retained-BYTES field the frozen (i) requires; a byte-emitting deterministic re-run is needed to render (i)."
+    "i_retained_bytes": "CONFIRMED (corrected 2026-07-21): the retained-bytes were on the e6b_rep summary line all along (earlier 'harness gap' was an analysis-parse miss). retained_fragment_bytes vs whole_artifact_bytes: 25692/682812 (r100, 26.6x) -> 123143/5646438 (r1000, 45.9x); 96-98% fewer bytes, margin grows with r; retained_lt_whole=true at every r. Mechanism: across-snapshot Arc-identity CoW dedup (dedup_hits 6175->51175), NOT cross-key content dedup (0). Full rendering: ../2026-07-21-e6b-bytes/ @ cbac25af."
   },
   "cells": {
     "r100": {
@@ -57,5 +57,6 @@
       },
       "fell_back": 0
     }
-  }
+  },
+  "H4v2_verdict": "CONFIRMED \u2014 (i) HOLDS (26.6x-45.9x), (ii) exact, (iii) wall-neutral."
 }

@@ -15,14 +15,22 @@ gate (`--mode wb-gate`) ran green before the cells at every r.
   HashMap twin: pm/hm = 1.000 / 1.000 / 1.005 / 0.993 at r = 100 / 250 / 500 /
   1000 — within the ±5% two-sided guard everywhere. Zero fallbacks; all
   installs Ok.
-- **(i) retained-bytes benefit — NOT RENDERED (harness gap).** The bench
-  emitted `store_entries` (a COUNT — identical 1.00× between arms at every r)
-  but not the retained-*bytes* field the frozen (i) requires ("retained
-  serialized-fragment bytes deduped by Arc identity < per-variant
-  whole-artifact maps"). Equal entry counts do not settle the byte comparison
-  (deduped fragments vs. whole artifacts can differ in bytes at equal counts).
-  A byte-emitting deterministic re-run renders (i); tracked as the follow-up.
+- **(i) retained-bytes benefit — HOLDS at every r (CORRECTED 2026-07-21).**
+  The retained-bytes ARE emitted — on the terminal `e6b_rep` summary line of
+  each JSONL (`retained_fragment_bytes` / `whole_artifact_bytes` /
+  `retained_lt_whole`); an earlier analysis parsed only the per-append `e6b`
+  lines (which carry `store_entries`, a count) and wrongly reported a "harness
+  gap." Rendered: retained vs whole = 25,692 / 682,812 (r100, 26.6×) →
+  123,143 / 5,646,438 (r1000, **45.9×**); 96–98% fewer bytes, margin GROWING
+  with r; `retained_lt_whole = true` at every r. Mechanism: NOT cross-key
+  content dedup (`content_dedup_hits = 0`; `store_entries` 1.00× both arms) but
+  ACROSS-SNAPSHOT Arc-identity CoW dedup (`dedup_hits` 6,175 → 51,175) — each
+  unchanged fragment's `Arc` persists across all 51 snapshots counted ONCE,
+  while the whole-artifact baseline re-counts per snapshot; the per-rule
+  fragment granularity enables it. Full rendering + provenance:
+  `../2026-07-21-e6b-bytes/` (@ commit `cbac25af`).
 
 Per-cell medians and the full row data are in `e6b_summary.json` and the
-`e6b_r{r}_{store}.jsonl` files. This record is complete and authoritative for
-(ii) and (iii); (i) is appended by the byte-emit re-run.
+`e6b_r{r}_{store}.jsonl` files. This record is authoritative for (ii)/(iii)
+and carries the (i) bytes on its `e6b_rep` lines; `../2026-07-21-e6b-bytes/`
+renders (i) explicitly. H4v2 CONFIRMED on all three sub-metrics.
