@@ -778,3 +778,141 @@ Proof.
   split; [apply sdrives_ladder_witness |].
   split; [apply gdrives_ladder_witness | apply Permutation_refl].
 Qed.
+
+(* =================================================================================
+   ★ THE NEGATIVE TEST — the FOLD-1 GUARD IS NECESSARY.
+
+   Rule table `rtrig_R` (NOT graft-safe):
+
+       R_trig :  Trig x   ~>  Bar (Wrap x)     (index 0)
+       R_bar  :  Bar End  ~>  EndB             (index 1)   -- Bar is a redex ROOT
+       R_wrap :  Wrap x   ~>  End              (index 2)
+
+   In `R_trig`'s RHS `Bar (Wrap x)`, the `Bar` node is a SKIP (`mark = false`: no LHS
+   syntactically could_unify with `Bar (Wrap _)` — `R_bar` demands `Bar End`, and
+   `End <> Wrap _`), yet `Bar` IS a redex root (`R_bar`).  So `graft_safe rtrig_R = false`.
+
+   On subject `Trig A` the two drivers DISAGREE:
+     - `gdrives` (redrive) fully reduces: `Trig A` -> `Bar (Wrap A)`; re-driving,
+       `Wrap A -> End`, and the post-join re-check of the reassembled `Bar End` FIRES
+       `R_bar` -> `EndB`.  Result `Done EndB [0; 2; 1]`.
+     - `sdrives` (scion) UNDER-reduces: it fires `R_trig`, drives the `Wrap` RECHECK
+       (`Wrap A -> End`), but GRAFTS the `Bar` SKIP INERT — never re-checking it — so it
+       misses the fresh `Bar End` redex.  Result `Done (Bar End) [0; 2]` — a DIFFERENT
+       normal form AND a fired multiset MISSING `R_bar`.
+
+   Hence the `graft_safe` hypothesis of `sdrives_included_in_gdrives` (L3.3) is NECESSARY:
+   drop it and the scion is unsound.  This is the mechanized form of the runtime
+   scion_grafting.rs guard-necessity probe.
+   ================================================================================= *)
+
+Definition c_trig : nat := 4.
+Definition c_bar : nat := 5.
+Definition c_endb : nat := 6.
+
+Definition R_trig : rule := (PApp c_trig [PVar 0], RApp c_bar [RApp c_wrap [RVar 0]]).
+Definition R_bar : rule := (PApp c_bar [PApp c_end []], RApp c_endb []).
+Definition R_wrap : rule := (PApp c_wrap [PVar 0], RApp c_end []).
+Definition rtrig_R : list rule := [R_trig; R_bar; R_wrap].
+
+Definition tA : Obj := oFree 0.
+Definition tBar (u : Obj) : Obj := oNode c_bar [u].
+Definition tEndB : Obj := oNode c_endb [].
+Definition tTrig (u : Obj) : Obj := oNode c_trig [u].
+
+(* atomic gdrives facts for rtrig_R *)
+Lemma gd_End_rt : forall f, gdrives rtrig_R f tEnd (Done tEnd []).
+Proof.
+  intro f. unfold tEnd.
+  apply (g_descend rtrig_R f c_end [] [] [] (Done (oNode c_end []) [])).
+  - apply root_fires_false_no_root_redex. reflexivity.
+  - apply gdl_nil.
+  - apply grc_done. apply root_fires_false_no_root_redex. reflexivity.
+Qed.
+
+Lemma gd_EndB : forall f, gdrives rtrig_R f tEndB (Done tEndB []).
+Proof.
+  intro f. unfold tEndB.
+  apply (g_descend rtrig_R f c_endb [] [] [] (Done (oNode c_endb []) [])).
+  - apply root_fires_false_no_root_redex. reflexivity.
+  - apply gdl_nil.
+  - apply grc_done. apply root_fires_false_no_root_redex. reflexivity.
+Qed.
+
+Lemma gd_WrapA : forall f, gdrives rtrig_R (S f) (tWrap tA) (Done tEnd [2]).
+Proof.
+  intro f. unfold tWrap, tA, tEnd.
+  apply (g_fire rtrig_R f 2 (oNode c_wrap [oFree 0]) (oNode c_end []) (Done (oNode c_end []) [])).
+  - exists (PApp c_wrap [PVar 0]), (RApp c_end []), [(0, oFree 0)].
+    split; [reflexivity | split; reflexivity].
+  - apply gd_End_rt.
+Qed.
+
+Lemma gd_BarWrapA : forall f, gdrives rtrig_R (S (S f)) (tBar (tWrap tA)) (Done tEndB [2; 1]).
+Proof.
+  intro f. unfold tBar, tWrap, tA, tEndB.
+  apply (g_descend rtrig_R (S (S f)) c_bar [oNode c_wrap [oFree 0]]
+                   [oNode c_end []] [2] (Done (oNode c_endb []) [1])).
+  - apply root_fires_false_no_root_redex. reflexivity.
+  - apply (gdl_cons rtrig_R (S (S f)) (oNode c_wrap [oFree 0]) []
+                    (oNode c_end []) [2] [] []).
+    + apply gd_WrapA.
+    + apply gdl_nil.
+  - apply (grc_fire rtrig_R (S f) 1 (oNode c_bar [oNode c_end []]) (oNode c_endb [])
+                    (Done (oNode c_endb []) [])).
+    + exists (PApp c_bar [PApp c_end []]), (RApp c_endb []), [].
+      split; [reflexivity | split; reflexivity].
+    + apply gd_EndB.
+Qed.
+
+Lemma gdrives_trig_witness : gdrives rtrig_R 5 (tTrig tA) (Done tEndB [0; 2; 1]).
+Proof.
+  unfold tTrig, tA.
+  apply (g_fire rtrig_R 4 0 (oNode c_trig [oFree 0]) (oNode c_bar [oNode c_wrap [oFree 0]])
+                (Done tEndB [2; 1])).
+  - exists (PApp c_trig [PVar 0]), (RApp c_bar [RApp c_wrap [RVar 0]]), [(0, oFree 0)].
+    split; [reflexivity | split; reflexivity].
+  - apply (gd_BarWrapA 2).
+Qed.
+
+(* the scion UNDER-reduces: Bar is grafted inert, its fresh redex missed *)
+Lemma sgraft_Bar_Wrap : forall f,
+  sgraft rtrig_R (S f) (RApp c_bar [RApp c_wrap [RVar 0]]) [(0, tA)] (Done (tBar tEnd) [2]).
+Proof.
+  intro f. unfold tBar, tEnd, tA.
+  apply (sg_skip rtrig_R (S f) c_bar [RApp c_wrap [RVar 0]] [(0, oFree 0)]
+                 [oNode c_end []] [2]).
+  - reflexivity.
+  - apply (sgl_cons rtrig_R (S f) (RApp c_wrap [RVar 0]) [] [(0, oFree 0)]
+                    (oNode c_end []) [2] [] []).
+    + apply (sg_recheck rtrig_R (S f) c_wrap [RVar 0] [(0, oFree 0)]
+                        (Done (oNode c_end []) [2])).
+      * reflexivity.
+      * apply gd_WrapA.
+    + apply sgl_nil.
+Qed.
+
+Lemma sdrives_trig_witness : sdrives rtrig_R 5 (tTrig tA) (Done (tBar tEnd) [0; 2]).
+Proof.
+  unfold tTrig, tA.
+  apply (s_fire rtrig_R 4 0 (oNode c_trig [oFree 0])
+                (PApp c_trig [PVar 0]) (RApp c_bar [RApp c_wrap [RVar 0]])
+                [(0, oFree 0)] (Done (tBar tEnd) [2])).
+  - reflexivity.
+  - reflexivity.
+  - apply (sgraft_Bar_Wrap 3).
+Qed.
+
+Theorem negative_test_fold1_guard_necessary :
+  graft_safe rtrig_R = false
+  /\ rules_constructor_rooted rtrig_R = true
+  /\ sdrives rtrig_R 5 (tTrig tA) (Done (tBar tEnd) [0; 2])
+  /\ gdrives rtrig_R 5 (tTrig tA) (Done tEndB [0; 2; 1])
+  /\ tBar tEnd <> tEndB.
+Proof.
+  split; [reflexivity |].
+  split; [reflexivity |].
+  split; [apply sdrives_trig_witness |].
+  split; [apply gdrives_trig_witness |].
+  unfold tBar, tEnd, tEndB. intro H. discriminate H.
+Qed.
