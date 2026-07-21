@@ -1,0 +1,104 @@
+{
+  "experiment": "E-3 T-E6B / H4v2 metric (i) retained-BYTES rendering (byte-emit re-run)",
+  "git": "f65daef1",
+  "store_impl": "5f442ff7",
+  "harness": "c4d3be6c",
+  "bin_sha256": "6e80d242\u2026",
+  "window_utc": "2026-07-21T11:53:56Z..11:56:23Z",
+  "protocol": {
+    "mode": "e6b",
+    "warmup": 0,
+    "reps": 1,
+    "appends": 50,
+    "shape": "multi1",
+    "alphabet": "distinct",
+    "taskset": "none (deterministic)",
+    "wb_gate": "green 4/4 at every r"
+  },
+  "provenance_finding": "The retained-BYTES field was ALREADY emitted by the harness (bin e6b_rep summary line: retained_fragment_bytes/whole_artifact_bytes/retained_lt_whole) and ALREADY present in the committed 2026-07-21-e6b reps=30 record. The sibling record's 'harness gap' was an analysis-rendering miss (only the per-append e6b lines with store_entries were parsed). No harness edit was required.",
+  "verdict_i": "HOLDS at every r: retained_fragment_bytes < whole_artifact_bytes, strict, both arms; margin grows 26.58x (r=100) -> 45.85x (r=1000).",
+  "mechanism": "Across-snapshot CoW Arc-identity dedup (dedup_hits 6175->51175; distinct=r+151 = base r+1 plus 3 new Arcs/append*50). Cross-key content sharing does NOT fire (content_dedup_hits=0; store_entries 1.00x both arms) \u2014 the granularity ENABLES the across-snapshot Arc dedup, it is not a dedup-absent size artifact.",
+  "determinism_crosscheck": "reps=1 (retained,whole) byte-identical to committed 2026-07-21-e6b reps=30 at all 8 cells, both arms.",
+  "cells": {
+    "r100": {
+      "retained_fragment_bytes": {
+        "pathmap": 25692,
+        "hashmap": 25692
+      },
+      "whole_artifact_bytes": {
+        "pathmap": 682812,
+        "hashmap": 682812
+      },
+      "delta_whole_minus_retained": 657120,
+      "whole_over_retained": 26.5768,
+      "savings_pct": 96.2373,
+      "retained_lt_whole": true,
+      "arms_agree": true,
+      "snapshots": 51,
+      "total_fragment_refs": 6426,
+      "distinct_fragments": 251,
+      "dedup_hits": 6175,
+      "content_dedup_hits": 0
+    },
+    "r250": {
+      "retained_fragment_bytes": {
+        "pathmap": 41742,
+        "hashmap": 41742
+      },
+      "whole_artifact_bytes": {
+        "pathmap": 1501362,
+        "hashmap": 1501362
+      },
+      "delta_whole_minus_retained": 1459620,
+      "whole_over_retained": 35.9677,
+      "savings_pct": 97.2197,
+      "retained_lt_whole": true,
+      "arms_agree": true,
+      "snapshots": 51,
+      "total_fragment_refs": 14076,
+      "distinct_fragments": 401,
+      "dedup_hits": 13675,
+      "content_dedup_hits": 0
+    },
+    "r500": {
+      "retained_fragment_bytes": {
+        "pathmap": 68492,
+        "hashmap": 68492
+      },
+      "whole_artifact_bytes": {
+        "pathmap": 2865612,
+        "hashmap": 2865612
+      },
+      "delta_whole_minus_retained": 2797120,
+      "whole_over_retained": 41.8386,
+      "savings_pct": 97.6099,
+      "retained_lt_whole": true,
+      "arms_agree": true,
+      "snapshots": 51,
+      "total_fragment_refs": 26826,
+      "distinct_fragments": 651,
+      "dedup_hits": 26175,
+      "content_dedup_hits": 0
+    },
+    "r1000": {
+      "retained_fragment_bytes": {
+        "pathmap": 123143,
+        "hashmap": 123143
+      },
+      "whole_artifact_bytes": {
+        "pathmap": 5646438,
+        "hashmap": 5646438
+      },
+      "delta_whole_minus_retained": 5523295,
+      "whole_over_retained": 45.8527,
+      "savings_pct": 97.8191,
+      "retained_lt_whole": true,
+      "arms_agree": true,
+      "snapshots": 51,
+      "total_fragment_refs": 52326,
+      "distinct_fragments": 1151,
+      "dedup_hits": 51175,
+      "content_dedup_hits": 0
+    }
+  }
+}
