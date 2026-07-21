@@ -2181,7 +2181,7 @@ fn scion_position_is_recheck(sub: &Pattern, fireable_lhs: &[&Pattern]) -> bool {
 }
 
 /// Whether `pat` or any constructor descendant is a re-check position (a σ-slot leaf is
-/// never one). Drives the Skip-vs-spine split in [`scion_emit_spine`].
+/// never one). Drives the Skip-vs-recheck partition in [`scion_emit_point`].
 fn scion_contains_recheck(pat: &Pattern, fireable_lhs: &[&Pattern]) -> bool {
     match pat {
         Pattern::Term(PatternTerm::Apply { args, .. }) => {
@@ -2262,18 +2262,41 @@ fn scion_build_pure(
     }
 }
 
-/// Emit the P-resubmit re-check of an all-pure re-check node (design v1 §3.2.2 / §3.4):
-/// `new r' { match assembled { <redex-arm patterns> ⇒ ⌜^drive⌝!(assembled, fuel-1, r') ;
-/// _ ⇒ r'!(assembled) } | for(@v <- r'){ <tail v> } }`. A hit RESUBMITS the whole
-/// assembled node to the generic `^drive` (which fires it — no static regress, +1 `^drive`
-/// COMM/chained-firing); a miss publishes it as this position's normal form. `r'`/`v` use
-/// the `r#`/`c#` fresh-name namespace guarded by [`collides_with_drive_frame`] (SM-8c).
-#[allow(clippy::too_many_arguments)]
-fn scion_emit_recheck(
+/// Rebuild the reflected value of a RECHECK subtree in RAW form (design v2 §1.2 `build_raw`):
+/// identical to [`scion_build_pure`] EXCEPT a σ-slot leaf resolves to its RAW arm-frame capture
+/// `env.var(σ)` (the UN-driven slot) rather than a joined normal form `s{i}`. The reassembled raw
+/// node is resubmitted to the generic `^drive` AT THE PARENT (recheck) node, where the redex-arm-
+/// before-descent discipline ([`drive_program_par`] step 1: "a redex at this node fires before any
+/// descent") fires the head redex per firing WITHOUT ever descending the slot spine — recovering
+/// the linear, ΔDriveTau/firing = s behavior the v1 eager-slot drive lost to a ½m² spine re-drive.
+/// `env` MUST be the drive-point frame where σ is in scope (R-9 frame discipline — NOT a detached
+/// ground context; the σ names live in the arm frame the reassembly threads through).
+fn scion_build_raw(pat: &Pattern, env: &Env, fingerprint: &str) -> Node {
+    match pat {
+        Pattern::Term(PatternTerm::Var(name)) => env.var(&name.to_string()),
+        Pattern::Term(PatternTerm::Apply { constructor, args }) => {
+            let label = constructor.to_string();
+            let children: Vec<Node> =
+                args.iter().map(|arg| scion_build_raw(arg, env, fingerprint)).collect();
+            tagged(fingerprint, &label, children)
+        },
+        // Unreachable: `scion_collect_slots` fail-closed on every other shape before build.
+        _ => tagged(fingerprint, "^scion-bug", Vec::new()),
+    }
+}
+
+/// Emit the demand-driven DRIVE-POINT of a recheck subtree (design v2 §1.2 — the head-inspection
+/// recovery): `new r' { ⌜^drive⌝!(build_raw(subtree), fuel-1, r') | for(@c <- r'){ <tail c> } }`.
+/// The whole recheck subtree is resubmitted RAW (its σ-slots un-driven, [`scion_build_raw`]) to the
+/// generic `^drive`, which — because a redex at the resubmitted (parent) node fires BEFORE any
+/// congruence descent — peels the head redex per firing WITHOUT re-descending the un-fired slot
+/// spine (the v1 eager-slot ½m² is eliminated). A hit re-fires through `^drive` (chained,
+/// outermost-first, +1 `^drive` COMM/firing); a quiesced subtree is published as this position's
+/// normal form on `r'`. `r'`/`c` use the `r#`/`c#` fresh-name namespace (SM-8c). The subtree is
+/// PURE below its recheck root (no nested recheck) — the Fold 3 guard, checked by the caller.
+/// `next_index` is SHARED with the bare-slot returns so no channel aliases (R-5).
+fn scion_emit_recheck_point(
     subtree: &Pattern,
-    path: &[usize],
-    slot_index: &HashMap<Vec<usize>, usize>,
-    arms: &[DriveArm],
     fingerprint: &str,
     env: &Env,
     fuel_var: &str,
@@ -2283,87 +2306,113 @@ fn scion_emit_recheck(
     let idx = next_index.get();
     next_index.set(idx + 1);
     let r_name = format!("r{idx}");
-    let v_name = format!("c{idx}");
+    let c_name = format!("c{idx}");
     let renv = env.push(&[r_name.as_str()]);
-    let mut cases: Vec<(Case, Option<Par>)> = Vec::new();
-    for arm in arms {
-        if let DriveArm::Positional(positional) = arm {
-            let free_count = positional.sigma_vars.len();
-            let dummies: Vec<String> = (0..free_count).map(|i| format!("_p{i}")).collect();
-            let dummy_refs: Vec<&str> = dummies.iter().map(String::as_str).collect();
-            let cenv = renv.push(&dummy_refs);
-            let body = send(
-                ground(tag_par(fingerprint, DRIVE_RESERVED_LABEL)),
-                vec![
-                    scion_build_pure(subtree, path, slot_index, &cenv, fingerprint),
-                    eminus(cenv.var(fuel_var), gint(1)),
-                    cenv.var(&r_name),
-                ],
-            );
-            cases.push((Case { pattern: positional.pattern.clone(), free_count, body }, None));
-        }
-    }
-    cases.push((
-        Case {
-            pattern: pat_wildcard(),
-            free_count: 0,
-            body: send(
-                renv.var(&r_name),
-                vec![scion_build_pure(subtree, path, slot_index, &renv, fingerprint)],
-            ),
-        },
-        None,
-    ));
-    let match_node =
-        match_guarded(scion_build_pure(subtree, path, slot_index, &renv, fingerprint), cases);
-    let venv = renv.push(&[v_name.as_str()]);
-    let tail_node = tail(venv.var(&v_name), &venv)?;
-    let for_node = for1(renv.var(&r_name), tail_node);
-    Ok(new_scope(1, par2(match_node, for_node)))
+    let drive_call = send(
+        ground(tag_par(fingerprint, DRIVE_RESERVED_LABEL)),
+        vec![
+            scion_build_raw(subtree, &renv, fingerprint),
+            eminus(renv.var(fuel_var), gint(1)),
+            renv.var(&r_name),
+        ],
+    );
+    let cenv = renv.push(&[c_name.as_str()]);
+    let for_body = tail(cenv.var(&c_name), &cenv)?;
+    let for_node = for1(renv.var(&r_name), for_body);
+    Ok(new_scope(1, par2(drive_call, for_node)))
 }
 
-/// Reassemble `pat`'s value in the join body, threading a continuation `tail` (given this
-/// position's value node + the env it is live in, produce the rest). Pure subtrees graft
-/// directly; a Skip constructor with a re-check-bearing child recurses into that child and
-/// wraps the result; a re-check node emits [`scion_emit_recheck`]. Fail-closed on branching
-/// re-check (>1 re-check-bearing child) or a re-check above another re-check — L1 supports a
-/// single re-check per root-to-leaf path (the ladder); every other shape stays
-/// `ContractumRedrive`.
+/// Whether a σ-slot at `slot_path` is a BARE slot (design v2 §1.2): NO proper ancestor position on
+/// its root-to-leaf path is a [`scion_position_is_recheck`] root. A bare slot is driven ONCE and
+/// joined (the v1 eager path — no resubmit covers it, so no quadratic); a slot BELOW a recheck
+/// instead rides RAW into that recheck's drive-point ([`scion_build_raw`]) and is never separately
+/// driven. Fail-safe `false` on a malformed path (treats it as recheck-internal — conservative).
+fn scion_slot_is_bare(rhs: &Pattern, slot_path: &[usize], fireable_lhs: &[&Pattern]) -> bool {
+    let mut node = rhs;
+    for &child in slot_path {
+        // `node` is a proper ANCESTOR of the slot leaf; a recheck ancestor ⟹ the slot is internal.
+        if scion_position_is_recheck(node, fireable_lhs) {
+            return false;
+        }
+        let Pattern::Term(PatternTerm::Apply { args, .. }) = node else {
+            return false;
+        };
+        node = &args[child];
+    }
+    true
+}
+
+/// Reassemble `pat`'s value in the demand-driven scion bundle (design v2 §1.2), threading a
+/// continuation `tail` (given this position's value node + the env it is live in, produce the
+/// rest). Partitions each position into the three v2 roles:
+///  * PURE (no recheck below): grafted directly ([`scion_build_pure`]; bare σ-slots resolve to
+///    their joined NF `s{i}`) — the thesis-Ch6 inert graft, ZERO `^drive`.
+///  * RECHECK subtree (a [`scion_position_is_recheck`] root): ONE demand-driven drive-point
+///    ([`scion_emit_recheck_point`]) — the whole subtree resubmitted raw and driven head-first.
+///  * SKIP constructor above a recheck: grafted, recursing into its (single) recheck-bearing
+///    child — the D1..Ds ladder wrap.
+///
+/// FOLD 1 (R-3, the inert-graft ROOTEDNESS guard, MANDATORY): a Skip constructor that is EVER a
+/// rule redex root (`redex_root_ctors`) above a reducible subtree can BECOME a redex once its
+/// children reduce — which [`scion_could_unify`]'s static-shape check misses — so control would
+/// fire it and grafting it inert would UNDER-REDUCE. Such a position fails CLOSED (`Err` → the arm
+/// stays `ContractumRedrive`), closing the gap the shape check leaves open. FOLD 3 (kept for L1):
+/// branching recheck (>1 recheck child) and nested recheck (recheck above recheck) also fail
+/// closed this stage.
 #[allow(clippy::too_many_arguments)]
-fn scion_emit_spine(
+fn scion_emit_point(
     pat: &Pattern,
     path: &[usize],
     slot_index: &HashMap<Vec<usize>, usize>,
     fireable_lhs: &[&Pattern],
-    arms: &[DriveArm],
+    redex_root_ctors: &HashSet<String>,
     fingerprint: &str,
     env: &Env,
     fuel_var: &str,
     next_index: &std::cell::Cell<usize>,
     tail: &dyn Fn(Node, &Env) -> Result<Node, String>,
 ) -> Result<Node, String> {
+    // PURE (no recheck anywhere below) → graft directly (bare σ-slots → joined NF `s{i}`).
     if !scion_contains_recheck(pat, fireable_lhs) {
         return tail(scion_build_pure(pat, path, slot_index, env, fingerprint), env);
     }
+    // Contains a recheck ⟹ `pat` is an `Apply` (a σ-slot leaf never contains one).
     let Pattern::Term(PatternTerm::Apply { constructor, args }) = pat else {
         return Err("scion: re-check at a non-constructor RHS position".to_string());
     };
     let label = constructor.to_string();
+    // RECHECK subtree root — the whole subtree is ONE demand-driven drive-point.
+    if scion_position_is_recheck(pat, fireable_lhs) {
+        // FOLD 3 (kept): a nested recheck (recheck strictly below this recheck root) is
+        // unsupported this stage — `build_raw` reassembles the subtree raw and cannot host a
+        // second drive-point below it. Fail closed.
+        if args.iter().any(|arg| scion_contains_recheck(arg, fireable_lhs)) {
+            return Err(
+                "scion: nested re-check (re-check above a re-check) unsupported this stage"
+                    .to_string(),
+            );
+        }
+        return scion_emit_recheck_point(pat, fingerprint, env, fuel_var, next_index, tail);
+    }
+    // A SKIP constructor above a recheck. FOLD 1 (R-3): reject the inert graft when the ctor is
+    // ever a rule redex root — after its reducible child normalizes it could BECOME a redex that
+    // control fires, so grafting it inert would under-reduce (fail closed → `ContractumRedrive`).
+    if redex_root_ctors.contains(&label) {
+        return Err(format!(
+            "scion: inert-graft rootedness (Fold 1) — Skip ctor {label:?} is a rule redex root \
+             above a reducible subtree; grafting it inert could under-reduce vs control"
+        ));
+    }
+    // FOLD 3 (kept): branching recheck (>1 recheck-bearing child) unsupported this stage.
     let non_pure: Vec<usize> =
         (0..args.len()).filter(|&i| scion_contains_recheck(&args[i], fireable_lhs)).collect();
     if non_pure.len() > 1 {
-        return Err("scion: branching re-check (>1 re-check child) unsupported this stage".to_string());
+        return Err(
+            "scion: branching re-check (>1 re-check child) unsupported this stage".to_string(),
+        );
     }
-    let recheck_here = scion_position_is_recheck(pat, fireable_lhs);
-    if recheck_here && !non_pure.is_empty() {
-        return Err("scion: nested re-check (re-check above a re-check) unsupported this stage".to_string());
-    }
-    if recheck_here {
-        // All children pure — this whole node is the re-check subject.
-        return scion_emit_recheck(pat, path, slot_index, arms, fingerprint, env, fuel_var, next_index, tail);
-    }
-    // A Skip constructor whose one non-pure child carries the re-check below it: recurse and
-    // wrap the returned value in this constructor (pure siblings grafted at the tail env).
+    // Recurse into the single recheck-bearing child, grafting THIS constructor around the result
+    // (pure siblings built with bare-slot NFs at the tail env).
     let j = non_pure[0];
     let mut child_path = path.to_vec();
     child_path.push(j);
@@ -2383,18 +2432,24 @@ fn scion_emit_spine(
             .collect();
         tail(tagged(fingerprint, &label, children), tail_env)
     };
-    scion_emit_spine(
-        &args[j], &child_path, slot_index, fireable_lhs, arms, fingerprint, env, fuel_var,
-        next_index, &child_tail,
+    scion_emit_point(
+        &args[j], &child_path, slot_index, fireable_lhs, redex_root_ctors, fingerprint, env,
+        fuel_var, next_index, &child_tail,
     )
 }
 
-/// Build the E-1 scion bundle Node for one positional structural (`BaseRewrite`) arm
-/// (design v1 §3.2): `new r0..r_{k-1} { drive(σ_i, fuel-1, r_i) | join(r_i){ reassemble
-/// → ret } }`. The k σ-slot occurrences (per-occurrence, matching `ContractumRedrive`) are
-/// driven concurrently at `fuel-1`, joined, and the RHS reassembled bottom-up with re-check
-/// P-resubmits at marked positions. Built in the arm frame `env` (σ innermost). Fail-closed
-/// `Err` on any RHS outside the positional-scion scope → the arm stays `ContractumRedrive`.
+/// Build the E-1 scion bundle Node for one positional structural (`BaseRewrite`) arm (design v2
+/// §1.2 — the DEMAND-DRIVEN slot-scion): the RHS is reassembled with each recheck subtree emitted
+/// as ONE drive-point that resubmits the subtree RAW to the generic `^drive` (head-first firing,
+/// [`scion_emit_recheck_point`]) and each inert Skip constructor grafted; only BARE σ-slots (none
+/// under a recheck) are driven concurrently at `fuel-1` and joined
+/// (`new r0..r_{kb-1} { drive(σ_i, fuel-1, r_i) | join(r_i){ reassemble → ret } }`). This
+/// REPLACES the v1 eager scion (which drove EVERY slot to NF and re-descended the un-fired slot
+/// spine per firing → the measured ½m² pessimization); driving the recheck NODE rather than the
+/// slot recovers ΔDriveTau/firing = s (linear). Built in the arm frame `env` (σ innermost).
+/// Fail-closed `Err` on any RHS outside the positional-scion scope (dangling var, non-positional
+/// shape, Fold 1 rootedness, or a Fold 3 branching/nested recheck) → the arm stays
+/// `ContractumRedrive`.
 fn scion_bundle_for_rule(
     rhs: &Pattern,
     sigma_vars: &[String],
@@ -2407,8 +2462,6 @@ fn scion_bundle_for_rule(
     let sigma_set: HashSet<String> = sigma_vars.iter().cloned().collect();
     let mut slots: Vec<(Vec<usize>, String)> = Vec::new();
     scion_collect_slots(rhs, &mut Vec::new(), &sigma_set, &mut slots)?;
-    let slot_index: HashMap<Vec<usize>, usize> =
-        slots.iter().enumerate().map(|(i, (p, _))| (p.clone(), i)).collect();
     let fireable_lhs: Vec<&Pattern> = arms
         .iter()
         .filter_map(|arm| match arm {
@@ -2416,26 +2469,44 @@ fn scion_bundle_for_rule(
             DriveArm::AcCarrier(_) => None,
         })
         .collect();
-    let k = slots.len();
-    // Fresh `r#`/`c#` return indices start after the k slot returns (SM-8c namespace).
-    let next_index = std::cell::Cell::new(k);
+    // FOLD 1 (R-3): the constructors that are EVER a positional rule's LHS redex root. A Skip ctor
+    // in this set above a reducible subtree cannot be grafted inert (it could BECOME a redex once
+    // its children reduce). AC-family roots are out of L1 scope — the scion is positional-only
+    // (`fireable_lhs` already drops AC arms, matching the recheck marks) and dormant in production.
+    let redex_root_ctors: HashSet<String> = fireable_lhs
+        .iter()
+        .filter_map(|lhs| match lhs {
+            Pattern::Term(PatternTerm::Apply { constructor, .. }) => Some(constructor.to_string()),
+            _ => None,
+        })
+        .collect();
+    // Partition the σ-slots: BARE (driven + joined, v1-style — no resubmit covers them) vs
+    // RECHECK-INTERNAL (ride RAW into a recheck drive-point via `scion_build_raw`). Only bare slots
+    // get a join return channel + `s{i}` NF value; `slot_index` is over the bare slots alone.
+    let bare_slots: Vec<&(Vec<usize>, String)> =
+        slots.iter().filter(|(path, _)| scion_slot_is_bare(rhs, path, &fireable_lhs)).collect();
+    let slot_index: HashMap<Vec<usize>, usize> =
+        bare_slots.iter().enumerate().map(|(i, (p, _))| (p.clone(), i)).collect();
+    let k_bare = bare_slots.len();
+    // Fresh `r#`/`c#` recheck indices start after the k_bare slot returns (SM-8c / R-5 namespace).
+    let next_index = std::cell::Cell::new(k_bare);
     let tail = |value: Node, tail_env: &Env| -> Result<Node, String> {
         Ok(send(tail_env.var(ret_var), vec![value]))
     };
-    if k == 0 {
-        // Ground RHS (e.g. `R2 . Step End ~> End`): no slots / no join — reassemble + an
-        // optional root re-check straight to `ret`.
-        return scion_emit_spine(
-            rhs, &[], &slot_index, &fireable_lhs, arms, fingerprint, env, fuel_var, &next_index,
-            &tail,
+    if k_bare == 0 {
+        // No bare slots (every slot rides raw into a recheck drive-point, or the RHS is ground) —
+        // no join; the reassembly (with its drive-points) is emitted straight in the arm frame.
+        return scion_emit_point(
+            rhs, &[], &slot_index, &fireable_lhs, &redex_root_ctors, fingerprint, env, fuel_var,
+            &next_index, &tail,
         );
     }
-    let slot_r_names: Vec<String> = (0..k).map(|i| format!("r{i}")).collect();
+    let slot_r_names: Vec<String> = (0..k_bare).map(|i| format!("r{i}")).collect();
     let slot_r_refs: Vec<&str> = slot_r_names.iter().map(String::as_str).collect();
     let inner_env = env.push(&slot_r_refs);
-    // Concurrent slot drives at `fuel-1` (the single per-firing decrement, v1 §3.4).
+    // Concurrent BARE-slot drives at `fuel-1` (the single per-firing decrement, v2 §1.2).
     let mut composed: Option<Node> = None;
-    for (i, (_, sigma)) in slots.iter().enumerate() {
+    for (i, (_, sigma)) in bare_slots.iter().enumerate() {
         let call = send(
             ground(tag_par(fingerprint, DRIVE_RESERVED_LABEL)),
             vec![
@@ -2450,15 +2521,15 @@ fn scion_bundle_for_rule(
         });
     }
     let join_sources: Vec<Node> = slot_r_names.iter().map(|r| inner_env.var(r)).collect();
-    let slot_val_names: Vec<String> = (0..k).map(|i| format!("s{i}")).collect();
+    let slot_val_names: Vec<String> = (0..k_bare).map(|i| format!("s{i}")).collect();
     let slot_val_refs: Vec<&str> = slot_val_names.iter().map(String::as_str).collect();
     let join_body_env = inner_env.push(&slot_val_refs);
-    let reassembly = scion_emit_spine(
-        rhs, &[], &slot_index, &fireable_lhs, arms, fingerprint, &join_body_env, fuel_var,
-        &next_index, &tail,
+    let reassembly = scion_emit_point(
+        rhs, &[], &slot_index, &fireable_lhs, &redex_root_ctors, fingerprint, &join_body_env,
+        fuel_var, &next_index, &tail,
     )?;
     let join_node = join(join_sources, reassembly);
-    Ok(new_scope(k, par2(composed.expect("k ≥ 1"), join_node)))
+    Ok(new_scope(k_bare, par2(composed.expect("k_bare ≥ 1"), join_node)))
 }
 
 /// The fuel-gated firing body of one POSITIONAL redex arm (plan v2 §4.2): the ground
