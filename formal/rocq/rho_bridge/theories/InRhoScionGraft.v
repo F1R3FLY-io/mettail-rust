@@ -516,6 +516,22 @@ Section ScionModel.
         gdrives f (oNode op ts) r ->
         sdrives f (oNode op ts) r.
 
+  (* A decidable "some rule fires at the root" test, bridging the relational
+     `no_root_redex` to a boolean the concrete witnesses discharge by computation. *)
+  Definition root_fires (t : Obj) : bool :=
+    existsb (fun rl => match pat_match (fst rl) t with Some _ => true | None => false end) R.
+
+  Lemma root_fires_false_no_root_redex :
+    forall t, root_fires t = false -> no_root_redex t.
+  Proof.
+    intros t Hrf i u (p & r & bs & Hn & Hm & _).
+    assert (Hin : In (p, r) R) by (eapply nth_error_In; exact Hn).
+    assert (Htrue : root_fires t = true).
+    { unfold root_fires. apply existsb_exists. exists (p, r).
+      split; [exact Hin | simpl; rewrite Hm; reflexivity]. }
+    rewrite Hrf in Htrue. discriminate.
+  Qed.
+
   Scheme sgraft_mut := Minimality for sgraft Sort Prop
     with sgraft_list_mut := Minimality for sgraft_list Sort Prop.
   Combined Scheme sgraft_sgraft_list_mut from sgraft_mut, sgraft_list_mut.
@@ -661,3 +677,104 @@ Section ScionModel.
   Qed.
 
 End ScionModel.
+
+(* =================================================================================
+   L3.6 — NON-VACUITY WITNESS (the W-B ladder, rung s=1).
+
+   Rule table `ladder_R` (both rules root at `c_step`, mutually exclusive on the child
+   tag, so root-DETERMINISTIC):
+
+       R_step_wrap :  Step (Wrap x)  ~>  D1 (Step x)      (index 0)
+       R_step_end  :  Step End       ~>  End              (index 1)
+
+   graft-safe: the only SKIP constructor in an RHS skeleton is `D1` (and the ground
+   `End`), neither a redex root.  On subject `Step (Wrap End)` BOTH the scion `sdrives`
+   and the reference `gdrives` reach `Done (D1 End) [0; 1]` — the fired multiset {R_step_wrap,
+   R_step_end} in the SAME order — witnessing the model is non-vacuous and the agreement
+   (L3.3) is inhabited by a real two-firing chain (the R_step_wrap fire's RECHECK resubmit
+   re-fires R_step_end through gdrives).
+   ================================================================================= *)
+
+Definition c_end : nat := 0.
+Definition c_step : nat := 1.
+Definition c_wrap : nat := 2.
+Definition c_d1 : nat := 3.
+
+Definition R_step_wrap : rule := (PApp c_step [PApp c_wrap [PVar 0]], RApp c_d1 [RApp c_step [RVar 0]]).
+Definition R_step_end : rule := (PApp c_step [PApp c_end []], RApp c_end []).
+Definition ladder_R : list rule := [R_step_wrap; R_step_end].
+
+Definition tEnd : Obj := oNode c_end [].
+Definition tStep (u : Obj) : Obj := oNode c_step [u].
+Definition tWrap (u : Obj) : Obj := oNode c_wrap [u].
+Definition tD1 (u : Obj) : Obj := oNode c_d1 [u].
+
+Lemma ladder_constructor_rooted : rules_constructor_rooted ladder_R = true.
+Proof. reflexivity. Qed.
+
+Lemma ladder_graft_safe : graft_safe ladder_R = true.
+Proof. reflexivity. Qed.
+
+(* atomic gdrives facts *)
+Lemma gd_End : forall f, gdrives ladder_R f tEnd (Done tEnd []).
+Proof.
+  intro f. unfold tEnd.
+  apply (g_descend ladder_R f c_end [] [] [] (Done (oNode c_end []) [])).
+  - apply root_fires_false_no_root_redex. reflexivity.
+  - apply gdl_nil.
+  - apply grc_done. apply root_fires_false_no_root_redex. reflexivity.
+Qed.
+
+Lemma gd_StepEnd : forall f, gdrives ladder_R (S f) (tStep tEnd) (Done tEnd [1]).
+Proof.
+  intro f. unfold tStep, tEnd.
+  apply (g_fire ladder_R f 1 (oNode c_step [oNode c_end []]) (oNode c_end []) (Done (oNode c_end []) [])).
+  - exists (PApp c_step [PApp c_end []]), (RApp c_end []), [].
+    split; [reflexivity | split; reflexivity].
+  - apply gd_End.
+Qed.
+
+Lemma sgraft_D1_Step : forall f,
+  sgraft ladder_R (S f) (RApp c_d1 [RApp c_step [RVar 0]]) [(0, tEnd)] (Done (tD1 tEnd) [1]).
+Proof.
+  intro f. unfold tD1, tEnd.
+  apply (sg_skip ladder_R (S f) c_d1 [RApp c_step [RVar 0]] [(0, oNode c_end [])]
+                 [oNode c_end []] [1]).
+  - reflexivity.
+  - apply (sgl_cons ladder_R (S f) (RApp c_step [RVar 0]) [] [(0, oNode c_end [])]
+                    (oNode c_end []) [1] [] []).
+    + apply (sg_recheck ladder_R (S f) c_step [RVar 0] [(0, oNode c_end [])]
+                        (Done (oNode c_end []) [1])).
+      * reflexivity.
+      * apply gd_StepEnd.
+    + apply sgl_nil.
+Qed.
+
+Lemma sdrives_ladder_witness :
+  sdrives ladder_R 5 (tStep (tWrap tEnd)) (Done (tD1 tEnd) [0; 1]).
+Proof.
+  unfold tStep, tWrap, tEnd, tD1.
+  apply (s_fire ladder_R 4 0 (oNode c_step [oNode c_wrap [oNode c_end []]])
+                (PApp c_step [PApp c_wrap [PVar 0]]) (RApp c_d1 [RApp c_step [RVar 0]])
+                [(0, oNode c_end [])] (Done (oNode c_d1 [oNode c_end []]) [1])).
+  - reflexivity.
+  - reflexivity.
+  - apply (sgraft_D1_Step 3).
+Qed.
+
+Lemma gdrives_ladder_witness :
+  gdrives ladder_R 5 (tStep (tWrap tEnd)) (Done (tD1 tEnd) [0; 1]).
+Proof.
+  apply (sdrives_included_in_gdrives ladder_R ladder_constructor_rooted ladder_graft_safe).
+  apply sdrives_ladder_witness.
+Qed.
+
+(* The witness, assembled: both drivers agree (same NF, same fired multiset). *)
+Theorem ladder_scion_agrees :
+  sdrives ladder_R 5 (tStep (tWrap tEnd)) (Done (tD1 tEnd) [0; 1])
+  /\ gdrives ladder_R 5 (tStep (tWrap tEnd)) (Done (tD1 tEnd) [0; 1])
+  /\ Permutation [0; 1] [0; 1].
+Proof.
+  split; [apply sdrives_ladder_witness |].
+  split; [apply gdrives_ladder_witness | apply Permutation_refl].
+Qed.
