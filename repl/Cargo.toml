@@ -25,11 +25,19 @@ rho-languages = [
     "dep:mettail-ast",
 ]
 
-# No explicit [[bin]]: Cargo auto-detects `src/main.rs` as the `repl` binary. The canonical
-# `mettail` binary is owned solely by the root meta-package (which builds this same
-# `repl/src/main.rs` via its own [[bin]] + `default-run`), so declaring a second `mettail` bin
-# here would collide on the `target/debug/mettail` output path. `cargo run -p repl` runs the
-# auto-detected `repl` bin; `cargo run` / `cargo run --bin mettail` run the root's `mettail`.
+# The `repl` binary is auto-detected from `src/main.rs`. The canonical `mettail` binary is owned
+# solely by the root meta-package (which builds this same `repl/src/main.rs` via its own [[bin]] +
+# `default-run`), so declaring a second `mettail` bin here would collide on the
+# `target/debug/mettail` output path. `cargo run -p repl` runs the auto-detected `repl` bin;
+# `cargo run` / `cargo run --bin mettail` run the root's `mettail`.
+#
+# The `flt_demo` bin (the Foreign Exchange phase-now ABI demo) is declared explicitly ONLY to
+# gate it on `rho-languages`: it reads the reflect + drive + de-reflection surface, none of which
+# exists in a `--no-default-features` build. It is on by default (default = ["rho-languages"]).
+[[bin]]
+name = "flt_demo"
+path = "src/bin/flt_demo.rs"
+required-features = ["rho-languages"]
 
 [dependencies]
 # Core MeTTaIL
@@ -46,6 +54,9 @@ mettail-rholang-codegen = { package = "rholang-codegen", path = "../rholang-code
 mettail-ast = { package = "ast", path = "../ast", optional = true }
 
 moniker = {workspace = true}
+
+# The `flt_demo` bin's drive API (`run_rho_net_with_call_and_read_observation_set`) is async.
+tokio = { workspace = true }
 
 # CLI
 rustyline = "14.0"
