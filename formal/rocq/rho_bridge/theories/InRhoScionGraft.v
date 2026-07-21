@@ -173,8 +173,8 @@ Fixpoint lookup (i : nat) (b : list (nat * Obj)) : option Obj :=
 
 (* pat_match p o = Some binds iff p matches o, collecting the left-to-right slot
    bindings.  PApp only matches an oNode of the same tag and arity; a variable pattern
-   matches anything.  The inner `go` recurses on the child pattern list (subterms of
-   `PApp c ps`), so the Fixpoint is guarded. *)
+   matches anything.  NAMED mutual list helper `pat_match_list` (rather than an anonymous
+   inner fix) so the skip-soundness / agreement inductions reason about it cleanly. *)
 Fixpoint pat_match (p : pat) (o : Obj) : option (list (nat * Obj)) :=
   match p with
   | PVar i => Some [(i, o)]
@@ -196,6 +196,32 @@ Fixpoint pat_match (p : pat) (o : Obj) : option (list (nat * Obj)) :=
       | _ => None
       end
   end.
+
+(* The list matcher as a STANDALONE fixpoint (calls the completed `pat_match`), so the
+   skip-soundness / agreement inductions have a NAMED handle.  `pat_match_app` below
+   proves the `PApp`/`oNode` unfolding routes through it (the anonymous inner fix and
+   this share the same recurrence). *)
+Fixpoint pat_match_list (ps : list pat) (os : list Obj) : option (list (nat * Obj)) :=
+  match ps, os with
+  | [], [] => Some []
+  | p0 :: ps', o0 :: os' =>
+      match pat_match p0 o0, pat_match_list ps' os' with
+      | Some b1, Some b2 => Some (b1 ++ b2)
+      | _, _ => None
+      end
+  | _, _ => None
+  end.
+
+(* The inner fix of `pat_match` on a `PApp`/`oNode` pair equals `pat_match_list`. *)
+Lemma pat_match_app : forall c ps c' os,
+  pat_match (PApp c ps) (oNode c' os)
+    = if andb (Nat.eqb c c') (Nat.eqb (length ps) (length os))
+      then pat_match_list ps os else None.
+Proof.
+  (* the anonymous inner fix of `pat_match` and `pat_match_list` have identical bodies,
+     so they are alpha-convertible — conversion closes it. *)
+  intros c ps c' os. reflexivity.
+Qed.
 
 (* Instantiate an RHS skeleton with a slot binding.  An unbound RHS variable defaults to
    `oFree 0` (never happens for well-formed rules — every RHS var is a pattern var). *)
@@ -226,8 +252,76 @@ Fixpoint could_unify (p : pat) (s : rhs) : bool :=
                end) ps rs)
   end.
 
+(* The list could-unify as a STANDALONE fixpoint, with the unfolding lemma. *)
+Fixpoint could_unify_list (ps : list pat) (rs : list rhs) : bool :=
+  match ps, rs with
+  | [], [] => true
+  | p0 :: ps', r0 :: rs' => andb (could_unify p0 r0) (could_unify_list ps' rs')
+  | _, _ => false
+  end.
+
+Lemma could_unify_app : forall c1 ps c2 rs,
+  could_unify (PApp c1 ps) (RApp c2 rs)
+    = andb (andb (Nat.eqb c1 c2) (Nat.eqb (length ps) (length rs)))
+           (could_unify_list ps rs).
+Proof.
+  intros c1 ps c2 rs. reflexivity.
+Qed.
+
 Definition root_ctor (p : pat) : option nat :=
   match p with PApp c _ => Some c | PVar _ => None end.
+
+(* =================================================================================
+   L3.1 — SCION SKIP SOUNDNESS (the Lemma 6.2.3 analogue, the load-bearing NEW content).
+
+   An UNMARKED rhs-position — one where `could_unify p s = false` for a pattern `p` — can
+   NEVER be matched by `p` under ANY slot instantiation `binds`.  So the codegen's SKIP
+   verdict (no re-check emitted there) loses nothing: no rule can fire at a position the
+   mark analysis pruned.  This is what licenses the scion's inert graft of SKIP
+   constructors.  R-free (depends only on the syntactic could_unify / pat_match / inst),
+   so it is proved OUTSIDE the section.
+   ================================================================================= *)
+
+(* The list form (the PApp/RApp recursive step), carrying the per-child skip-soundness
+   IH from `pat_ind'`. *)
+Lemma pat_match_list_skip_none :
+  forall ps rs,
+    Forall (fun p => forall s, could_unify p s = false ->
+                    forall binds, pat_match p (inst s binds) = None) ps ->
+    length ps = length rs ->
+    could_unify_list ps rs = false ->
+    forall binds, pat_match_list ps (map (fun r0 => inst r0 binds) rs) = None.
+Proof.
+  induction ps as [| p ps IH]; intros rs HF Hlen Hcul binds.
+  - destruct rs; simpl in *; [discriminate Hcul | discriminate Hlen].
+  - destruct rs as [| r rs]; simpl in Hlen; [discriminate |].
+    injection Hlen as Hlen.
+    inversion HF as [| p0 ps0 Hp Hps]; subst.
+    simpl. cbn [could_unify_list] in Hcul.
+    destruct (could_unify p r) eqn:Ecu.
+    + (* head could_unify: the FALSE must come from the tail *)
+      simpl in Hcul.
+      rewrite (IH rs Hps Hlen Hcul binds).
+      destruct (pat_match p (inst r binds)); reflexivity.
+    + (* head is a proven skip: pat_match p (inst r binds) = None *)
+      rewrite (Hp r Ecu binds). reflexivity.
+Qed.
+
+Lemma scion_skip_sound :
+  forall p s, could_unify p s = false ->
+  forall binds, pat_match p (inst s binds) = None.
+Proof.
+  intro p. induction p as [i | c1 ps IHps] using pat_ind'; intros s Hcu binds.
+  - destruct s; simpl in Hcu; discriminate.
+  - destruct s as [j | c2 rs].
+    + simpl in Hcu; discriminate.
+    + cbn [inst]. rewrite pat_match_app, length_map.
+      rewrite could_unify_app in Hcu.
+      destruct (Nat.eqb c1 c2) eqn:Ec; cbn [andb] in Hcu |- *; [| reflexivity].
+      destruct (Nat.eqb (length ps) (length rs)) eqn:El; cbn [andb] in Hcu |- *; [| reflexivity].
+      apply Nat.eqb_eq in El.
+      exact (pat_match_list_skip_none ps rs IHps El Hcu binds).
+Qed.
 
 (* =================================================================================
    5.  The rule table `R` as a Section Variable (discharged before Print Assumptions —
