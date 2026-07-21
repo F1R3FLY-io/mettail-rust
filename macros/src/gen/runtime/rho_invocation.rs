@@ -1896,7 +1896,10 @@ pub fn generate_rho_net_invocation(language: &LanguageDef) -> TokenStream {
         // A-S2: the def + matching ruleset come from the per-source MEMOIZED artifacts
         // (`cached_in_rho_artifacts`) — the SAME derivation as before (`reconstruct_language_def`
         // → `compile_in_rho_matching_ruleset`, exactly as `rho_net_program()` does), computed once
-        // per definition source instead of per invocation. The ruleset's fingerprint + accept
+        // per definition source instead of per invocation. E-3 T-LAZY: the ruleset is a
+        // demand-forced cell now — `__artifacts.ruleset()` forces exactly the artifact this
+        // path consumes (the unconsumed installed-par emission stays unforced, EM-1). The
+        // ruleset's fingerprint + accept
         // channels are therefore STILL the ones the installed σ-receivers were compiled with (one
         // def, one fingerprint, no separate metadata read → no drift).
         let __source = <#language_struct as mettail_runtime::Language>::metadata(
@@ -1916,7 +1919,7 @@ pub fn generate_rho_net_invocation(language: &LanguageDef) -> TokenStream {
                     #language_lit, __err,
                 )
             })?;
-        let __ruleset = &__artifacts.ruleset;
+        let __ruleset = __artifacts.ruleset();
 
         // Capability gate (FV ix `install_admits`): fail closed BEFORE any Rho reduction
         // if any FIRED rule is skipped from in-Rho matching.
@@ -2083,7 +2086,7 @@ pub fn generate_rho_net_invocation(language: &LanguageDef) -> TokenStream {
                     #language_lit, __err,
                 )
             })?;
-        let __ruleset = &__artifacts.ruleset;
+        let __ruleset = __artifacts.ruleset();
 
         // A-S2 STATIC capability gate (the term-independent strengthening of FV ix
         // `install_admits`): fail closed BEFORE any Rho reduction if ANY fireable rewrite is
@@ -2242,7 +2245,8 @@ pub fn generate_rho_net_invocation(language: &LanguageDef) -> TokenStream {
 
         // A-S2: the def + matching ruleset come from the per-source MEMOIZED artifacts
         // (`cached_in_rho_artifacts`) — the SAME derivation as before, computed once per
-        // definition source instead of per invocation — so the contextual join's premise
+        // definition source instead of per invocation (E-3 T-LAZY: `__artifacts.ruleset()`
+        // demand-forces exactly this path's artifact) — so the contextual join's premise
         // channels + the ruleset's fingerprint/accept channels are the ones the installed join +
         // σ-receivers were compiled with (one def, one fingerprint, no separate metadata read →
         // no drift).
@@ -2263,7 +2267,7 @@ pub fn generate_rho_net_invocation(language: &LanguageDef) -> TokenStream {
                     #language_lit, __err,
                 )
             })?;
-        let __ruleset = &__artifacts.ruleset;
+        let __ruleset = __artifacts.ruleset();
 
         // Capability gate (FV ix `install_admits`): fail closed BEFORE any Rho reduction if any
         // FIRED rule (the premise firing that closes the context) is skipped from in-Rho matching —
@@ -2383,7 +2387,7 @@ pub fn generate_rho_net_invocation(language: &LanguageDef) -> TokenStream {
                             #language_lit, __err,
                         )
                     })?;
-                let __ruleset = &__artifacts.ruleset;
+                let __ruleset = __artifacts.ruleset();
 
                 // The A-S2 STATIC capability gate (term-independent), exactly as the
                 // report-free match body runs it: fail closed BEFORE any Rho reduction.
@@ -2933,6 +2937,15 @@ mod tests {
     /// fingerprint of the extracted fn item is pinned (captured pre-S2 at `3530df05` —
     /// re-capture only with an explained diff); (b) the item calls the LEGACY
     /// `rho_net_drive_invocation` assembler and carries NO float token.
+    ///
+    /// RE-CAPTURED (E-3 T-LAZY, 2026-07-20) — explained diff: the drive fn's artifact
+    /// preamble switched from the eager field read `let __ruleset = &__artifacts.ruleset;`
+    /// to the demand-forcing accessor `let __ruleset = __artifacts.ruleset();`
+    /// (`CompiledInRhoArtifacts`' lazy cells, EM-1: the unconsumed installed-par emission
+    /// is deferred; exec paths force exactly the ruleset). Token delta: `&` dropped,
+    /// `()` appended — +1 byte on the rendered item (5027 → 5028) and a new hash. No
+    /// other token changed; the S2 float-branch invariants (legacy seed path, no float
+    /// token) are unaffected and still asserted above the pin.
     #[test]
     fn lambda_drive_fn_item_is_byte_identical_across_the_s2_seed_switch() {
         use std::hash::{Hash, Hasher};
@@ -2950,12 +2963,14 @@ mod tests {
         item.hash(&mut hasher);
         assert_eq!(
             (item.len(), hasher.finish()),
-            (5027, 0x4eab1db65f87da63),
-            "the Lambda drive fn item must be byte-identical to the pre-A-S5.8 emission \
+            (5028, 0x06029c0cdafad64a),
+            "the Lambda drive fn item must be byte-identical to the E-3 T-LAZY emission \
              (the S2 switch's non-float branch interpolates the SAME \
              `::mettail_rholang_codegen::rho_net_drive_invocation` path tokens the \
              pre-A-S5.8 quote! wrote literally — identical token stream by construction; \
-             captured at the A-S5.8 leg-1 tree; re-capture only with an explained diff)"
+             captured at the A-S5.8 leg-1 tree, RE-CAPTURED at the E-3 T-LAZY accessor \
+             switch [see the doc comment's explained diff]; re-capture only with an \
+             explained diff)"
         );
     }
 

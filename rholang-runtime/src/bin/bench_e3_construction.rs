@@ -21,6 +21,12 @@
 //!    * `--mode direct` — the W-A(b) entry mode: `SetAutomaton::compile_structural`
 //!      alone on the ladder's pattern set
 //!      (`{"direct":{rep, wall_ns, entry_count, state_count, pattern_nodes}}`).
+//!    * `--mode h2 --arm <eager-control|lazy-gate-only|lazy-force-installed>` — one
+//!      H2v2 first-touch arm (EM-1; ONE arm per invocation, per the one-cell-per-run
+//!      protocol): `{"h2":{rep, arm, wall_ns, installed_ok,
+//!      forced:{lowered, ruleset, installed_par}}}` (`installed_ok`/`forced` are `null`
+//!      on the eager-control arm, which has no cells). A lazy rep whose cell-state
+//!      validation fails (a forcing set that does not match its arm) is a DNF line.
 //! 3. on a failure (a source that does not reconstruct): one
 //!    `{"dnf":true,"reason":…}` line, then the driver CONTINUES with the next rep.
 //!
@@ -38,7 +44,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use e3_construction::{
     in_fresh_thread, ladder_patterns, ladder_source, pattern_node_count, run_direct_compile_once,
-    run_spans_once, validate_ladder_cell, AnchorLanguage, LadderAlphabet, LadderShape,
+    run_eager_control_once, run_lazy_force_installed_once, run_lazy_gate_only_once,
+    run_spans_once, validate_ladder_cell, AnchorLanguage, LadderAlphabet, LadderShape, LazyCell,
     ALL_ANCHORS, DEFAULT_LADDER_R,
 };
 
@@ -49,6 +56,8 @@ enum Mode {
     Spans,
     /// W-A(b): direct `compile_structural` on the ladder pattern set.
     Direct,
+    /// One H2v2 first-touch arm (EM-1; requires `--arm`).
+    H2,
 }
 
 impl Mode {
@@ -56,11 +65,51 @@ impl Mode {
         match self {
             Mode::Spans => "spans",
             Mode::Direct => "direct",
+            Mode::H2 => "h2",
         }
     }
 
     fn from_name(name: &str) -> Option<Self> {
-        [Mode::Spans, Mode::Direct].into_iter().find(|mode| mode.name() == name)
+        [Mode::Spans, Mode::Direct, Mode::H2].into_iter().find(|mode| mode.name() == name)
+    }
+}
+
+/// The H2v2 arms (support-module docs: the EM-1 arm table).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum H2Arm {
+    /// The pre-T-LAZY eager pipeline sequence — the control.
+    EagerControl,
+    /// Cache first-touch + `ruleset()` — the exec/gate forcing set (the win state).
+    LazyGateOnly,
+    /// Cache first-touch + `ruleset()` + `installed_par()` — the named forcing consumer
+    /// (the ≤ 2% full-path guard state).
+    LazyForceInstalled,
+}
+
+impl H2Arm {
+    fn name(self) -> &'static str {
+        match self {
+            H2Arm::EagerControl => "eager-control",
+            H2Arm::LazyGateOnly => "lazy-gate-only",
+            H2Arm::LazyForceInstalled => "lazy-force-installed",
+        }
+    }
+
+    fn from_name(name: &str) -> Option<Self> {
+        [H2Arm::EagerControl, H2Arm::LazyGateOnly, H2Arm::LazyForceInstalled]
+            .into_iter()
+            .find(|arm| arm.name() == name)
+    }
+
+    /// The arm's REQUIRED post-rep cell states `(lowered, ruleset, installed_par)`
+    /// (`None` for the cell-free control arm) — a lazy rep observing anything else is a
+    /// DNF.
+    fn required_forcing(self) -> Option<(bool, bool, bool)> {
+        match self {
+            H2Arm::EagerControl => None,
+            H2Arm::LazyGateOnly => Some((false, true, false)),
+            H2Arm::LazyForceInstalled => Some((true, true, true)),
+        }
     }
 }
 
@@ -84,6 +133,8 @@ impl Workload {
 struct DriverArgs {
     mode: Mode,
     workload: Workload,
+    /// The H2v2 arm (`Some` exactly when `mode == Mode::H2`).
+    arm: Option<H2Arm>,
     warmup: u64,
     reps: u64,
     out: Option<String>,
@@ -95,16 +146,19 @@ fn usage() -> String {
     format!(
         "bench_e3_construction — E-3 construction-cost driver (JSON lines)\n\
          \n\
-         USAGE:\n  bench_e3_construction --mode <spans|direct> --workload <name> \\\n    \
+         USAGE:\n  bench_e3_construction --mode <spans|direct|h2> --workload <name> \\\n    \
+         [--arm <eager-control|lazy-gate-only|lazy-force-installed>] \\\n    \
          [--r <int> --shape <multi1|multi3|mixed> --alphabet <distinct|shared16>] \\\n    \
          [--warmup <int>] --reps <int> [--out <path>]\n\
          \n\
          WORKLOADS:\n  \
-         anchors: {}   (W-C production language bodies; --mode spans)\n  \
+         anchors: {}   (W-C production language bodies; --mode spans|h2)\n  \
          ladder:  --workload ladder --r <int> --shape … --alphabet …\n           \
-         (W-A generated definitions; default r ladder {{{}}}; --mode spans|direct)\n\
+         (W-A generated definitions; default r ladder {{{}}}; --mode spans|direct|h2)\n\
          \n\
          NOTES:\n  \
+         --mode h2 requires --arm (ONE arm per invocation — the one-cell-per-run\n  \
+         protocol; the win/guard comparisons are computed offline from the JSONL).\n  \
          --mode direct requires the ladder workload (the anchors have no direct\n  \
          pattern-set arm — their patterns come from the full pipeline itself).\n  \
          --alphabet shared16 is defined for the multi* shapes only.\n  \
@@ -118,6 +172,7 @@ fn usage() -> String {
 fn parse_args(args: &[String]) -> Result<DriverArgs, String> {
     let mut mode: Option<Mode> = None;
     let mut workload_token: Option<String> = None;
+    let mut arm: Option<H2Arm> = None;
     let mut r: Option<usize> = None;
     let mut shape: Option<LadderShape> = None;
     let mut alphabet: Option<LadderAlphabet> = None;
@@ -142,6 +197,12 @@ fn parse_args(args: &[String]) -> Result<DriverArgs, String> {
                 );
             },
             "--workload" => workload_token = Some(value.clone()),
+            "--arm" => {
+                arm = Some(
+                    H2Arm::from_name(value)
+                        .ok_or_else(|| format!("unknown arm `{value}`\n\n{}", usage()))?,
+                );
+            },
             "--r" => {
                 r = Some(
                     value
@@ -208,7 +269,16 @@ fn parse_args(args: &[String]) -> Result<DriverArgs, String> {
                 .to_string(),
         );
     }
-    Ok(DriverArgs { mode, workload, warmup, reps, out })
+    match (mode, arm) {
+        (Mode::H2, None) => {
+            return Err(format!("--mode h2 requires --arm\n\n{}", usage()));
+        },
+        (Mode::Spans | Mode::Direct, Some(_)) => {
+            return Err("--arm applies to --mode h2 only".to_string());
+        },
+        _ => {},
+    }
+    Ok(DriverArgs { mode, workload, arm, warmup, reps, out })
 }
 
 /// Append `value` with JSON string escaping (the driver-local mirror of the Track-B
@@ -290,6 +360,8 @@ fn header_line(args: &DriverArgs, source_bytes: usize, pattern_nodes: Option<usi
     line.push_str(&format!(",\"unix_time_secs\":{unix_time_secs}"));
     line.push_str(",\"mode\":");
     line.push_str(&json_string(args.mode.name()));
+    line.push_str(",\"arm\":");
+    line.push_str(&json_string(args.arm.map_or("-", H2Arm::name)));
     line.push_str(",\"workload\":");
     line.push_str(&json_string(&args.workload.name()));
     line.push_str(&format!(",\"r\":{r},\"shape\":"));
@@ -334,8 +406,10 @@ fn main() -> ExitCode {
     // The cell's source (spans mode) / pattern-node count (direct mode), computed once
     // as setup — generation cost is NOT part of any measured region.
     let source: Option<String> = match (args.mode, args.workload) {
-        (Mode::Spans, Workload::Anchor(anchor)) => Some(anchor.definition_source().to_string()),
-        (Mode::Spans, Workload::Ladder { r, shape, alphabet }) => {
+        (Mode::Spans | Mode::H2, Workload::Anchor(anchor)) => {
+            Some(anchor.definition_source().to_string())
+        },
+        (Mode::Spans | Mode::H2, Workload::Ladder { r, shape, alphabet }) => {
             Some(ladder_source(r, shape, alphabet))
         },
         (Mode::Direct, _) => None,
@@ -407,6 +481,88 @@ fn main() -> ExitCode {
             },
             (Mode::Direct, Workload::Anchor(_)) => {
                 unreachable!("parse_args rejects direct mode over anchors")
+            },
+            (Mode::H2, _) => {
+                let arm = args.arm.expect("parse_args requires --arm for h2 mode");
+                let cell_source = source.clone().expect("h2 mode always carries a source");
+                match arm {
+                    H2Arm::EagerControl => {
+                        match in_fresh_thread(move || run_eager_control_once(&cell_source)) {
+                            Ok(cell) => format!(
+                                "{{\"h2\":{{\"rep\":{record_index},\"arm\":{},\"wall_ns\":{},\
+                                 \"installed_ok\":{},\"forced\":null}}}}",
+                                json_string(arm.name()),
+                                cell.wall_ns,
+                                cell.installed_ok,
+                            ),
+                            Err(reason) => {
+                                failures += 1;
+                                format!(
+                                    "{{\"dnf\":true,\"rep\":{record_index},\"reason\":{}}}",
+                                    json_string(&reason)
+                                )
+                            },
+                        }
+                    },
+                    H2Arm::LazyGateOnly | H2Arm::LazyForceInstalled => {
+                        let outcome: Result<LazyCell, String> =
+                            in_fresh_thread(move || match arm {
+                                H2Arm::LazyGateOnly => run_lazy_gate_only_once(&cell_source),
+                                H2Arm::LazyForceInstalled => {
+                                    run_lazy_force_installed_once(&cell_source)
+                                },
+                                H2Arm::EagerControl => {
+                                    unreachable!("the outer match routes eager-control")
+                                },
+                            });
+                        match outcome {
+                            Ok(cell) => {
+                                let required = arm
+                                    .required_forcing()
+                                    .expect("lazy arms declare required cell states");
+                                let observed = (
+                                    cell.forced_lowered,
+                                    cell.forced_ruleset,
+                                    cell.forced_installed_par,
+                                );
+                                if observed != required {
+                                    failures += 1;
+                                    format!(
+                                        "{{\"dnf\":true,\"rep\":{record_index},\"reason\":\
+                                         {}}}",
+                                        json_string(&format!(
+                                            "arm {} cell-state validation failed: required \
+                                             (lowered,ruleset,installed_par)={required:?}, \
+                                             observed {observed:?}",
+                                            arm.name()
+                                        )),
+                                    )
+                                } else {
+                                    format!(
+                                        "{{\"h2\":{{\"rep\":{record_index},\"arm\":{},\
+                                         \"wall_ns\":{},\"installed_ok\":{},\
+                                         \"forced\":{{\"lowered\":{},\"ruleset\":{},\
+                                         \"installed_par\":{}}}}}}}",
+                                        json_string(arm.name()),
+                                        cell.wall_ns,
+                                        cell.installed_ok
+                                            .map_or("null".to_string(), |ok| ok.to_string()),
+                                        cell.forced_lowered,
+                                        cell.forced_ruleset,
+                                        cell.forced_installed_par,
+                                    )
+                                }
+                            },
+                            Err(reason) => {
+                                failures += 1;
+                                format!(
+                                    "{{\"dnf\":true,\"rep\":{record_index},\"reason\":{}}}",
+                                    json_string(&reason)
+                                )
+                            },
+                        }
+                    },
+                }
             },
         };
         if recorded {

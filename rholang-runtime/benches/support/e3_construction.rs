@@ -55,6 +55,23 @@
 //! path — it does NOT sit in the derivation pipeline measured here, but any future
 //! exec-time cell at the r = 750 `distinct` axis inherits it.
 //!
+//! # The H2v2 first-touch arms (T-LAZY; red-team amendment EM-1)
+//!
+//! EM-1 re-scoped H2 as DEAD-WEIGHT ELIMINATION: the cache's eager installed-par
+//! emission had ZERO consumers, so deferring it wins its Stage-0 SELF-time share on
+//! every first touch. Three arms, one per invocation, so BOTH cell states are measured:
+//!
+//! | arm | what one rep times (fresh thread each) | validated cell state |
+//! |---|---|---|
+//! | `eager-control` | the full pure pipeline sequence — exactly the pre-T-LAZY `derive` body ("today's eager memoized pipeline") | n/a (no cells) |
+//! | `lazy-gate-only` | `cached_in_rho_artifacts` + `ruleset()` — the exec/gate forcing set | `ruleset` forced; `lowered`/`installed_par` UNFORCED |
+//! | `lazy-force-installed` | `cached_in_rho_artifacts` + `ruleset()` + `installed_par()` — THE named forcing consumer (bench-only; production accessor adoption is a D3 question) | all three forced |
+//!
+//! The H2v2 win claim compares `lazy-gate-only` against `eager-control` (expected ≥ the
+//! Stage-0 SELF-time share of the deferred phases); `lazy-force-installed` against
+//! `eager-control` is the ≤ 2% full-path regression guard. A rep whose cell-state
+//! validation fails is emitted as a DNF, never silently kept.
+//!
 //! # Cell discipline
 //!
 //! Every cell rep runs on a FRESH thread ([`in_fresh_thread`]): the artifact cache is
@@ -438,6 +455,73 @@ pub fn run_spans_once(source: &str) -> Result<SpanCell, String> {
     Ok(SpanCell { wall_ns, report, installed_ok })
 }
 
+/// One eager-control first-touch cell (no spans — the H2v2 control arm's wall clock).
+#[derive(Clone, Copy, Debug)]
+pub struct EagerCell {
+    /// Wall nanoseconds of the whole pipeline sequence.
+    pub wall_ns: u64,
+    /// Whether `installed_program_par` produced `Ok`.
+    pub installed_ok: bool,
+}
+
+/// One lazy first-touch cell (a T-LAZY treatment arm's wall clock + its validated cell
+/// states).
+#[derive(Clone, Copy, Debug)]
+pub struct LazyCell {
+    /// Wall nanoseconds of the arm's forcing sequence (cache first-touch + accessors).
+    pub wall_ns: u64,
+    /// The post-arm cell states (`lowered`, `ruleset`, `installed_par`) — the bench-side
+    /// witness that BOTH cell states are measured (EM-1).
+    pub forced_lowered: bool,
+    pub forced_ruleset: bool,
+    pub forced_installed_par: bool,
+    /// `Some(install outcome)` when the arm forced the installed program, `None` on the
+    /// gate-only arm.
+    pub installed_ok: Option<bool>,
+}
+
+/// Run one eager-control rep on the CALLING thread (no spans): the H2v2 control arm.
+pub fn run_eager_control_once(source: &str) -> Result<EagerCell, String> {
+    let (wall_ns, installed_ok) = run_full_pipeline(source)?;
+    Ok(EagerCell { wall_ns, installed_ok })
+}
+
+/// Run one `lazy-gate-only` rep on the CALLING thread: the exec/gate forcing set —
+/// cache first touch (reconstruct only, T-LAZY) + `ruleset()`.
+pub fn run_lazy_gate_only_once(source: &str) -> Result<LazyCell, String> {
+    let started = Instant::now();
+    let artifacts = mettail_rholang_codegen::cached_in_rho_artifacts(source)?;
+    let ruleset = artifacts.ruleset();
+    std::hint::black_box(ruleset);
+    let wall_ns = u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX);
+    Ok(LazyCell {
+        wall_ns,
+        forced_lowered: artifacts.lowered_forced(),
+        forced_ruleset: artifacts.ruleset_forced(),
+        forced_installed_par: artifacts.installed_par_forced(),
+        installed_ok: None,
+    })
+}
+
+/// Run one `lazy-force-installed` rep on the CALLING thread: the named forcing arm —
+/// the gate-only sequence PLUS `installed_par()` (which forces `lowered()` first,
+/// mirroring the old eager derivation).
+pub fn run_lazy_force_installed_once(source: &str) -> Result<LazyCell, String> {
+    let started = Instant::now();
+    let artifacts = mettail_rholang_codegen::cached_in_rho_artifacts(source)?;
+    let ruleset = artifacts.ruleset();
+    std::hint::black_box(ruleset);
+    let installed_ok = artifacts.installed_par().is_ok();
+    let wall_ns = u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX);
+    Ok(LazyCell {
+        wall_ns,
+        forced_lowered: artifacts.lowered_forced(),
+        forced_ruleset: artifacts.ruleset_forced(),
+        forced_installed_par: artifacts.installed_par_forced(),
+        installed_ok: Some(installed_ok),
+    })
+}
+
 /// Run one direct-construction rep on the CALLING thread: `compile_structural` on the
 /// pre-built pattern set (the set's construction is setup, not measurement).
 pub fn run_direct_compile_once(patterns: Vec<(PatternId, Pattern<String>)>) -> DirectCell {
@@ -608,6 +692,32 @@ mod tests {
     #[test]
     fn mixed_shape_rejects_the_alphabet_axis() {
         assert!(validate_ladder_cell(8, LadderShape::Mixed, LadderAlphabet::Shared16).is_err());
+    }
+
+    #[test]
+    fn h2_arms_pin_their_cell_states() {
+        // EM-1: BOTH cell states are measured — the gate-only arm leaves the emission
+        // cells unforced; the forcing arm forces everything (installed_par forces the
+        // lowering first). Small ladder source so the pin is cheap.
+        let source = ladder_source(8, LadderShape::Multi1, LadderAlphabet::Distinct);
+        let gate_source = source.clone();
+        let gate = in_fresh_thread(move || {
+            run_lazy_gate_only_once(&gate_source).expect("the ladder source derives")
+        });
+        assert!(gate.forced_ruleset, "the gate arm forces the ruleset");
+        assert!(!gate.forced_lowered, "the gate arm must not force the lowering (EM-10)");
+        assert!(!gate.forced_installed_par, "the gate arm must not force the emission");
+        assert!(gate.installed_ok.is_none());
+
+        let force = in_fresh_thread(move || {
+            run_lazy_force_installed_once(&source).expect("the ladder source derives")
+        });
+        assert!(force.forced_ruleset && force.forced_lowered && force.forced_installed_par);
+        assert_eq!(
+            force.installed_ok,
+            Some(true),
+            "the all-base-rewrite ladder language installs"
+        );
     }
 }
 
