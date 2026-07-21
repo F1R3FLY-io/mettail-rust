@@ -1012,3 +1012,227 @@ Proof.
       destruct (IH o1 Hrep1) as [o2 [Ho2 Hrep2]].
       exists o2. split; [eapply siter_cons; [exact Ho1 | exact Ho2] | exact Hrep2].
 Qed.
+
+
+(* =================================================================================
+   L3.2 — sdrives SOUNDNESS / PER-TRACE QUIESCENCE / TYPED FUEL EXHAUSTION.
+
+   Mirrors the landed driver's drive_steps_sound / quiescence_sound /
+   fuel_exhaustion_never_wrong, generalized to the rule table and arity-general `oNode`.
+   Proved for the reference `gdrives` by the mutual scheme, then transported to the scion
+   `sdrives` through the L3.3 forward inclusion (`sdrives ⊆ gdrives`).
+   ================================================================================= *)
+
+Scheme gdrives_mut := Minimality for gdrives Sort Prop
+  with gdrives_list_mut := Minimality for gdrives_list Sort Prop
+  with grecheck_mut := Minimality for grecheck Sort Prop.
+Combined Scheme gdrives_all_mut from gdrives_mut, gdrives_list_mut, grecheck_mut.
+
+Section ScionSoundness.
+
+  Variable R : list rule.
+
+  (* one-step contextual structural rewrite: a root fire, a fire in one child (arity-
+     general via a pre/post split), or under a binder. *)
+  Inductive gstep : Obj -> Obj -> Prop :=
+    | gstep_root : forall i t u, fires R i t u -> gstep t u
+    | gstep_node : forall op pre x x' post,
+        gstep x x' -> gstep (oNode op (pre ++ x :: post)) (oNode op (pre ++ x' :: post))
+    | gstep_lam : forall b b', gstep b b' -> gstep (oLam b) (oLam b').
+
+  Inductive gstar : Obj -> Obj -> Prop :=
+    | gstar_refl : forall t, gstar t t
+    | gstar_cons : forall t u v, gstep t u -> gstar u v -> gstar t v.
+
+  (* structural normal form: no rule fires at any node. *)
+  Inductive struct_nf : Obj -> Prop :=
+    | snf_free  : forall x, struct_nf (oFree x)
+    | snf_bound : forall n, struct_nf (oBound n)
+    | snf_lam   : forall b, struct_nf b -> struct_nf (oLam b)
+    | snf_node  : forall op vs, no_root_redex R (oNode op vs) -> Forall struct_nf vs ->
+                  struct_nf (oNode op vs).
+
+  (* the "children normal" witness carried through the re-check motive. *)
+  Definition nf_children (t : Obj) : Prop :=
+    match t with
+    | oNode _ vs => Forall struct_nf vs
+    | oLam b => struct_nf b
+    | _ => True
+    end.
+
+  Lemma gstar_trans : forall t u v, gstar t u -> gstar u v -> gstar t v.
+  Proof.
+    intros t u v Htu Huv. induction Htu as [t | t w u Hs Hstar IH].
+    - exact Huv.
+    - eapply gstar_cons; [exact Hs | apply IH; exact Huv].
+  Qed.
+
+  Lemma gstar_lift_child : forall op pre x x' post,
+    gstar x x' -> gstar (oNode op (pre ++ x :: post)) (oNode op (pre ++ x' :: post)).
+  Proof.
+    intros op pre x x' post H. induction H as [x | x y x' Hs Hstar IH].
+    - apply gstar_refl.
+    - eapply gstar_cons; [apply gstep_node; exact Hs | exact IH].
+  Qed.
+
+  Lemma gstar_lam : forall b b', gstar b b' -> gstar (oLam b) (oLam b').
+  Proof.
+    intros b b' H. induction H as [b | b y b' Hs Hstar IH].
+    - apply gstar_refl.
+    - eapply gstar_cons; [apply gstep_lam; exact Hs | exact IH].
+  Qed.
+
+  Lemma gstar_node_cong_aux : forall op pre ts vs,
+    Forall2 gstar ts vs -> gstar (oNode op (pre ++ ts)) (oNode op (pre ++ vs)).
+  Proof.
+    intros op pre ts vs H. revert pre.
+    induction H as [| t v ts vs Htv Hts IH]; intro pre.
+    - rewrite !app_nil_r. apply gstar_refl.
+    - eapply gstar_trans.
+      + apply (gstar_lift_child op pre t v ts Htv).
+      + specialize (IH (pre ++ [v])). rewrite <- !app_assoc in IH. simpl in IH. exact IH.
+  Qed.
+
+  Lemma gstar_node_cong : forall op ts vs,
+    Forall2 gstar ts vs -> gstar (oNode op ts) (oNode op vs).
+  Proof. intros op ts vs H. apply (gstar_node_cong_aux op [] ts vs H). Qed.
+
+  Lemma fires_gstep : forall i t u, fires R i t u -> gstep t u.
+  Proof. intros i t u H. eapply gstep_root; exact H. Qed.
+
+  (* ---- soundness ---- *)
+  Lemma gdrives_steps_sound_mut :
+    (forall f t r, gdrives R f t r -> forall v fs, r = Done v fs -> gstar t v)
+    /\ (forall f ts dl, gdrives_list R f ts dl ->
+          forall vs fss, dl = DoneL vs fss -> Forall2 gstar ts vs)
+    /\ (forall f t r, grecheck R f t r -> forall v fs, r = Done v fs -> gstar t v).
+  Proof.
+    apply (gdrives_all_mut R
+      (fun f t r => forall v fs, r = Done v fs -> gstar t v)
+      (fun f ts dl => forall vs fss, dl = DoneL vs fss -> Forall2 gstar ts vs)
+      (fun f t r => forall v fs, r = Done v fs -> gstar t v)).
+    - intros f x v fs Heq. injection Heq as <- <-. apply gstar_refl.
+    - intros f n v fs Heq. injection Heq as <- <-. apply gstar_refl.
+    - intros f b v gs Hb IH v0 fs Heq. injection Heq as <- <-. apply gstar_lam. apply (IH v gs eq_refl).
+    - intros f b u Hb IH v fs Heq. discriminate Heq.
+    - intros i t u Hf v fs Heq. discriminate Heq.
+    - intros f i t u r Hf Hg IH v fs Heq.
+      destruct r as [v0 gs | u0]; [| discriminate Heq]. simpl in Heq. injection Heq as <- <-.
+      eapply gstar_cons; [apply (fires_gstep i t u Hf) | apply (IH v0 gs eq_refl)].
+    - intros f op ts vs fss r Hnr Hgl IHl Hrc IHrc v fs Heq.
+      destruct r as [v0 gs | u0]; [| simpl in Heq; discriminate Heq]. simpl in Heq. injection Heq as <- <-.
+      eapply gstar_trans; [apply gstar_node_cong; apply (IHl vs fss eq_refl) | apply (IHrc v0 gs eq_refl)].
+    - intros f op ts u Hnr Hgl IHl v fs Heq. discriminate Heq.
+    - intros f vs fss Heq. injection Heq as <- <-. apply Forall2_nil.
+    - intros f t ts v gs vs fss Hg IHg Hgl IHl vs0 fss0 Heq. injection Heq as <- <-.
+      apply Forall2_cons; [apply (IHg v gs eq_refl) | apply (IHl vs fss eq_refl)].
+    - intros f t ts u Hg IH vs fss Heq. discriminate Heq.
+    - intros f t ts v gs u Hg IHg Hgl IHl vs fss Heq. discriminate Heq.
+    - intros i t u Hf v fs Heq. discriminate Heq.
+    - intros f i t u r Hf Hg IH v fs Heq.
+      destruct r as [v0 gs | u0]; [| discriminate Heq]. simpl in Heq. injection Heq as <- <-.
+      eapply gstar_cons; [apply (fires_gstep i t u Hf) | apply (IH v0 gs eq_refl)].
+    - intros f t Hnr v fs Heq. injection Heq as <- <-. apply gstar_refl.
+  Qed.
+
+  (* ---- per-trace quiescence ---- *)
+  Lemma gdrives_quiescence_mut :
+    (forall f t r, gdrives R f t r -> forall v fs, r = Done v fs -> struct_nf v)
+    /\ (forall f ts dl, gdrives_list R f ts dl ->
+          forall vs fss, dl = DoneL vs fss -> Forall struct_nf vs)
+    /\ (forall f t r, grecheck R f t r ->
+          nf_children t -> forall v fs, r = Done v fs -> struct_nf v).
+  Proof.
+    apply (gdrives_all_mut R
+      (fun f t r => forall v fs, r = Done v fs -> struct_nf v)
+      (fun f ts dl => forall vs fss, dl = DoneL vs fss -> Forall struct_nf vs)
+      (fun f t r => nf_children t -> forall v fs, r = Done v fs -> struct_nf v)).
+    - intros f x v fs Heq. injection Heq as <- <-. apply snf_free.
+    - intros f n v fs Heq. injection Heq as <- <-. apply snf_bound.
+    - intros f b v gs Hb IH v0 fs Heq. injection Heq as <- <-. apply snf_lam. apply (IH v gs eq_refl).
+    - intros f b u Hb IH v fs Heq. discriminate Heq.
+    - intros i t u Hf v fs Heq. discriminate Heq.
+    - intros f i t u r Hf Hg IH v fs Heq.
+      destruct r as [v0 gs | u0]; [| discriminate Heq]. simpl in Heq. injection Heq as <- <-.
+      apply (IH v0 gs eq_refl).
+    - intros f op ts vs fss r Hnr Hgl IHl Hrc IHrc v fs Heq.
+      destruct r as [v0 gs | u0]; [| simpl in Heq; discriminate Heq]. simpl in Heq. injection Heq as <- <-.
+      apply (IHrc (IHl vs fss eq_refl) v0 gs eq_refl).
+    - intros f op ts u Hnr Hgl IHl v fs Heq. discriminate Heq.
+    - intros f vs fss Heq. injection Heq as <- <-. apply Forall_nil.
+    - intros f t ts v gs vs fss Hg IHg Hgl IHl vs0 fss0 Heq. injection Heq as <- <-.
+      apply Forall_cons; [apply (IHg v gs eq_refl) | apply (IHl vs fss eq_refl)].
+    - intros f t ts u Hg IH vs fss Heq. discriminate Heq.
+    - intros f t ts v gs u Hg IHg Hgl IHl vs fss Heq. discriminate Heq.
+    - intros i t u Hf Hch v fs Heq. discriminate Heq.
+    - intros f i t u r Hf Hg IH Hch v fs Heq.
+      destruct r as [v0 gs | u0]; [| discriminate Heq]. simpl in Heq. injection Heq as <- <-.
+      apply (IH v0 gs eq_refl).
+    - intros f t Hnr Hch v fs Heq. injection Heq as <- <-.
+      destruct t as [n | x | b | op vs].
+      + apply snf_bound.
+      + apply snf_free.
+      + apply snf_lam. exact Hch.
+      + apply snf_node; [exact Hnr | exact Hch].
+  Qed.
+
+  (* ---- typed fuel exhaustion: the Fuel datum is always a stuck redex ---- *)
+  Lemma gdrives_fuel_mut :
+    (forall f t r, gdrives R f t r -> forall u, r = Fuel u -> exists i u', fires R i u u')
+    /\ (forall f ts dl, gdrives_list R f ts dl ->
+          forall u, dl = FuelL u -> exists i u', fires R i u u')
+    /\ (forall f t r, grecheck R f t r -> forall u, r = Fuel u -> exists i u', fires R i u u').
+  Proof.
+    apply (gdrives_all_mut R
+      (fun f t r => forall u, r = Fuel u -> exists i u', fires R i u u')
+      (fun f ts dl => forall u, dl = FuelL u -> exists i u', fires R i u u')
+      (fun f t r => forall u, r = Fuel u -> exists i u', fires R i u u')).
+    - intros f x u Heq. discriminate Heq.
+    - intros f n u Heq. discriminate Heq.
+    - intros f b v gs Hb IH u Heq. discriminate Heq.
+    - intros f b u Hb IH u0 Heq. injection Heq as <-. apply (IH u eq_refl).
+    - intros i t u Hf u0 Heq. injection Heq as <-. exists i, u. exact Hf.
+    - intros f i t u r Hf Hg IH u0 Heq. destruct r as [v gs | u1]; [discriminate Heq |].
+      simpl in Heq. apply (IH u0 Heq).
+    - intros f op ts vs fss r Hnr Hgl IHl Hrc IHrc u0 Heq.
+      destruct r as [v gs | u1]; [simpl in Heq; discriminate Heq |]. simpl in Heq. apply (IHrc u0 Heq).
+    - intros f op ts u Hnr Hgl IHl u0 Heq. injection Heq as <-. apply (IHl u eq_refl).
+    - intros f u Heq. discriminate Heq.
+    - intros f t ts v gs vs fss Hg IHg Hgl IHl u Heq. discriminate Heq.
+    - intros f t ts u Hg IH u0 Heq. injection Heq as <-. apply (IH u eq_refl).
+    - intros f t ts v gs u Hg IHg Hgl IHl u0 Heq. injection Heq as <-. apply (IHl u eq_refl).
+    - intros i t u Hf u0 Heq. injection Heq as <-. exists i, u. exact Hf.
+    - intros f i t u r Hf Hg IH u0 Heq. destruct r as [v gs | u1]; [discriminate Heq |].
+      simpl in Heq. apply (IH u0 Heq).
+    - intros f t Hnr u Heq. discriminate Heq.
+  Qed.
+
+  (* ---- the sdrives corollaries via the L3.3 forward inclusion ---- *)
+  Hypothesis Hcr : rules_constructor_rooted R = true.
+  Hypothesis Hgs : graft_safe R = true.
+
+  Theorem sdrives_steps_sound : forall f t v fs,
+    sdrives R f t (Done v fs) -> gstar t v.
+  Proof.
+    intros f t v fs Hs.
+    exact (proj1 gdrives_steps_sound_mut f t (Done v fs)
+             (sdrives_included_in_gdrives R Hcr Hgs f t (Done v fs) Hs) v fs eq_refl).
+  Qed.
+
+  Theorem sdrives_quiescence : forall f t v fs,
+    sdrives R f t (Done v fs) -> struct_nf v.
+  Proof.
+    intros f t v fs Hs.
+    exact (proj1 gdrives_quiescence_mut f t (Done v fs)
+             (sdrives_included_in_gdrives R Hcr Hgs f t (Done v fs) Hs) v fs eq_refl).
+  Qed.
+
+  Theorem sdrives_fuel_exhaustion_never_wrong : forall f t u,
+    sdrives R f t (Fuel u) -> exists i u', fires R i u u'.
+  Proof.
+    intros f t u Hs.
+    exact (proj1 gdrives_fuel_mut f t (Fuel u)
+             (sdrives_included_in_gdrives R Hcr Hgs f t (Fuel u) Hs) u eq_refl).
+  Qed.
+
+End ScionSoundness.
