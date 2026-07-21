@@ -58,6 +58,7 @@
 //! | `@"sa:…"` (accept / σ-receiver source / native trigger-dispatch, incl. `sa:pattern/…`, `sa:scalar/…`) | `firing_visible` | `RhoNetChannel::set_automaton_trace` (`rho_net.rs`) |
 //! | `GPrivate(mettail.term.{fp}.{^subst,^shift,^shiftk,^cmp,^pred})` | `subst_tau` | `tag_par(fp, label)` over the reserved TRS labels (`rho_net_subst_trs.rs`, `rho_net_lower.rs`) |
 //! | `GPrivate(mettail.term.{fp}.{^respread,^respread-root,^respread-err})` | `respread_tau` | `respread_reserved_labels()` — the R3 self-driving walker family (`rho_net_naive_kt.rs`; EXPLORATORY, pre-registered) |
+//! | `GPrivate(mettail.term.{fp}.^drive)` | `drive_tau` | `tag_par(fp, DRIVE_RESERVED_LABEL)` — the in-Rho quiescence driver's per-node `^drive!(t, fuel, ret)` rendezvous (`rho_net_drive.rs`; E-1 leg 0, the scion-grafting PRIMARY metric). The GString firing-ledger (`^fired:{fp}`) and the typed fail-close channels (`^drive-err:{fp}` / `^drive-fuel:{fp}`) are RESTING PRODUCES — nothing in-Rho consumes them, so they contribute ZERO COMMs and are read back by peek (`run::DriveObservationSet`), never classified here |
 //! | `@"ac:…"` (AC bag carrier, bare `ac:{op}` and site-keyed `ac:{loc}/…`) | `ac_carrier` | `ac_carrier_channel` + the `ac:{op}` soup channel (`rho_net_lower.rs`) |
 //! | `@"e6a:…"` (E-6a PathMap subject-index / site-enumeration) | `pathmap_index` | `e6a_index_channel` / `e6a_sites_channel` (`e6a_support.rs`; treatment arm only) |
 //! | `@"ph:…"` (premise-hole bridge) and `@"loc:…/contextual-premise/…"` (join premise) | `contextual_plumbing` | `contextual_premise_hole_channel` (`rho_net_lower.rs`), the `Premise::Congruence` location channel (`rho_net.rs`) |
@@ -65,13 +66,16 @@
 //! | anything else | `other` | counted AND the first [`MAX_UNKNOWN_CHANNEL_SAMPLES`] renderings retained — never silently bucketed |
 //!
 //! A multi-channel JOIN is classified by the FIRST matching class under the
-//! FIXED precedence `SubstTau > RespreadTau > FiringVisible > AcCarrier >
+//! FIXED precedence `SubstTau > RespreadTau > DriveTau > FiringVisible > AcCarrier >
 //! PathMapIndex > ContextualPlumbing > MatchingTau > Observation > Other` (the [`Ord`] on
 //! [`CommChannelClass`], most specific first; reserved prefixes outrank an
 //! `out_channel` that pathologically collides with one), and additionally
-//! bumps `join_arity_gt1`. (The two reserved-`GPrivate` classes never join
-//! with each other — every reserved contract is single-channel — so their
-//! relative order is documentation, not behavior.)
+//! bumps `join_arity_gt1`. (The three reserved-`GPrivate` classes — `SubstTau`,
+//! `RespreadTau`, `DriveTau` — never join with each other OR with any other
+//! class: every reserved contract is single-channel — the `^drive` receiver
+//! binds `(t, fuel, ret)` from the ONE `^drive` channel, and the scion bundle's
+//! k-ary slot join reads only fresh unforgeable returns (class `Other`) — so
+//! their relative order is documentation, not behavior.)
 //!
 //! # Determinism
 //!
@@ -104,8 +108,8 @@ use mettail_rholang_codegen::{
     compile_in_rho_matching_ruleset, lower_language_def, plan_rho_default_backend,
     reconstruct_language_def, respread_reserved_labels, suggest_rejected_rule_dispositions,
     InRhoMatchingRuleset, RhoCoverageEvidence, RhoDefaultBackendRequirements,
-    RhoGuardCoverageEvidence, RhoLowering, CMP_RESERVED_LABEL, PRED_RESERVED_LABEL,
-    SHIFTK_RESERVED_LABEL, SHIFT_RESERVED_LABEL, SUBST_RESERVED_LABEL,
+    RhoGuardCoverageEvidence, RhoLowering, CMP_RESERVED_LABEL, DRIVE_RESERVED_LABEL,
+    PRED_RESERVED_LABEL, SHIFTK_RESERVED_LABEL, SHIFT_RESERVED_LABEL, SUBST_RESERVED_LABEL,
 };
 use models::rhoapi::connective::ConnectiveInstance;
 use models::rhoapi::expr::ExprInstance;
@@ -161,6 +165,17 @@ pub enum CommChannelClass {
     /// one per re-spread WALKED NODE, so this counter IS the in-session
     /// re-spread volume metric.
     RespreadTau,
+    /// A reserved in-Rho quiescence-DRIVER rendezvous channel
+    /// `GPrivate(mettail.term.{fp}.^drive)` (E-1 leg 0, the scion-grafting
+    /// PRIMARY metric): the persistent `^drive` receiver reads
+    /// `^drive!(t, fuel, ret)` here on every node visit — the top-level seed,
+    /// each concurrent child descent, each firing arm's contractum re-drive
+    /// (control `ContractumRedrive`) or per-slot bud drive + re-check resubmit
+    /// (treatment `ScionBundle`). Single-channel by contract, so it never joins.
+    /// The GString firing-ledger / typed fail-close channels are resting
+    /// produces (zero COMMs) and are peeked from `run::DriveObservationSet`, not
+    /// classified here.
+    DriveTau,
     /// A `sa:`-prefixed set-automaton trace channel — the accept / σ-receiver
     /// source (`sa:pattern/…`), the native scalar dispatch (`sa:scalar/…`), and
     /// the native locate trigger (`sa:scalar/…/sa-locate`).
@@ -203,6 +218,9 @@ pub struct CommCounters {
     pub subst_tau: AtomicU64,
     /// COMMs whose continuation reads a reserved R3 `^respread`-family channel.
     pub respread_tau: AtomicU64,
+    /// COMMs whose continuation reads the reserved `^drive` quiescence-driver
+    /// channel (E-1 leg 0, the scion-grafting PRIMARY metric).
+    pub drive_tau: AtomicU64,
     /// COMMs whose continuation reads an `ac:` carrier channel.
     pub ac_carrier: AtomicU64,
     /// COMMs whose continuation reads an `e6a:` PathMap subject-index channel
@@ -232,6 +250,7 @@ pub struct CommCounterSnapshot {
     pub firing_visible: u64,
     pub subst_tau: u64,
     pub respread_tau: u64,
+    pub drive_tau: u64,
     pub ac_carrier: u64,
     pub pathmap_index: u64,
     pub contextual_plumbing: u64,
@@ -251,6 +270,7 @@ impl CommCounters {
             firing_visible: AtomicU64::new(0),
             subst_tau: AtomicU64::new(0),
             respread_tau: AtomicU64::new(0),
+            drive_tau: AtomicU64::new(0),
             ac_carrier: AtomicU64::new(0),
             pathmap_index: AtomicU64::new(0),
             contextual_plumbing: AtomicU64::new(0),
@@ -299,6 +319,8 @@ impl CommCounters {
                 CommChannelClass::SubstTau
             } else if is_respread_channel_tag(&tag) {
                 CommChannelClass::RespreadTau
+            } else if is_drive_channel_tag(&tag) {
+                CommChannelClass::DriveTau
             } else {
                 CommChannelClass::Other
             }
@@ -328,6 +350,7 @@ impl CommCounters {
         let counter = match comm_class {
             CommChannelClass::SubstTau => &self.subst_tau,
             CommChannelClass::RespreadTau => &self.respread_tau,
+            CommChannelClass::DriveTau => &self.drive_tau,
             CommChannelClass::FiringVisible => &self.firing_visible,
             CommChannelClass::AcCarrier => &self.ac_carrier,
             CommChannelClass::PathMapIndex => &self.pathmap_index,
@@ -357,6 +380,7 @@ impl CommCounters {
             firing_visible: self.firing_visible.load(Ordering::Relaxed),
             subst_tau: self.subst_tau.load(Ordering::Relaxed),
             respread_tau: self.respread_tau.load(Ordering::Relaxed),
+            drive_tau: self.drive_tau.load(Ordering::Relaxed),
             ac_carrier: self.ac_carrier.load(Ordering::Relaxed),
             pathmap_index: self.pathmap_index.load(Ordering::Relaxed),
             contextual_plumbing: self.contextual_plumbing.load(Ordering::Relaxed),
@@ -443,6 +467,26 @@ fn is_respread_channel_tag(tag: &str) -> bool {
         return false;
     };
     respread_reserved_labels().contains(&label)
+}
+
+/// Whether a decoded `GPrivate` tag names the reserved in-Rho quiescence-driver
+/// rendezvous channel `mettail.term.{fp}.^drive` (E-1 leg 0). Matches the base
+/// [`DRIVE_RESERVED_LABEL`] EXACTLY — the per-rule AC-carrier family
+/// (`^drive-ac:{RuleLabel}`, whose full label survives the last-`.` split intact
+/// because it carries no `.`) is DELIBERATELY not matched here: it is AC firing
+/// traffic re-pinned with the W-D Ambient cells (A-S5.5), not the structural
+/// `^drive` descent the L2 cells measure, so it stays `Other` until that leg
+/// classifies it. The GString observation channels (`^drive-err:`/`^drive-fuel:`/
+/// `^fired:`) are NOT `GPrivate` and never reach this helper — they are resting
+/// produces read back by peek, never COMM channels.
+fn is_drive_channel_tag(tag: &str) -> bool {
+    let Some(suffix) = tag.strip_prefix(crate::REFLECTED_TERM_ABI_PREFIX) else {
+        return false;
+    };
+    let Some((_fingerprint, label)) = suffix.rsplit_once('.') else {
+        return false;
+    };
+    label == DRIVE_RESERVED_LABEL
 }
 
 /// A compact, printer-free rendering of a channel for the unknown-channel
@@ -831,6 +875,8 @@ impl BenchRunResult {
         line.push_str(&self.comm.subst_tau.to_string());
         line.push_str(",\"respread_tau\":");
         line.push_str(&self.comm.respread_tau.to_string());
+        line.push_str(",\"drive_tau\":");
+        line.push_str(&self.comm.drive_tau.to_string());
         line.push_str(",\"ac_carrier\":");
         line.push_str(&self.comm.ac_carrier.to_string());
         line.push_str(",\"pathmap_index\":");
@@ -1339,6 +1385,19 @@ mod tests {
                 subst_tag_channel(mettail_rholang_codegen::RESPREAD_ERR_RESERVED_LABEL),
                 CommChannelClass::RespreadTau,
                 "^respread-err (the R3 fail-closed channel)",
+            ),
+            (
+                subst_tag_channel(mettail_rholang_codegen::DRIVE_RESERVED_LABEL),
+                CommChannelClass::DriveTau,
+                "^drive (the E-1 quiescence-driver rendezvous)",
+            ),
+            (
+                // The per-rule AC-carrier tag is DELIBERATELY not DriveTau — it is
+                // AC firing traffic re-pinned with the W-D Ambient cells, not the
+                // structural `^drive` descent, so it stays Other until that leg.
+                subst_tag_channel("^drive-ac:OpenRule"),
+                CommChannelClass::Other,
+                "^drive-ac:{rule} (AC carrier, not the structural ^drive metric)",
             ),
             (
                 // A reflected TERM tag (an ordinary constructor) is data, never

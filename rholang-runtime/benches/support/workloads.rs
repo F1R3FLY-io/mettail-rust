@@ -1117,6 +1117,7 @@ fn zero_comm_snapshot() -> CommCounterSnapshot {
         firing_visible: 0,
         subst_tau: 0,
         respread_tau: 0,
+        drive_tau: 0,
         ac_carrier: 0,
         pathmap_index: 0,
         contextual_plumbing: 0,
@@ -1134,6 +1135,7 @@ fn accumulate_comm(total: &mut CommCounterSnapshot, step: &CommCounterSnapshot) 
     total.firing_visible += step.firing_visible;
     total.subst_tau += step.subst_tau;
     total.respread_tau += step.respread_tau;
+    total.drive_tau += step.drive_tau;
     total.ac_carrier += step.ac_carrier;
     total.pathmap_index += step.pathmap_index;
     total.contextual_plumbing += step.contextual_plumbing;
