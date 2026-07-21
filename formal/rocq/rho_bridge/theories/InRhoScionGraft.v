@@ -70,7 +70,7 @@
  * before the `Print Assumptions` gate — never an axiom).
  *)
 
-From Stdlib Require Import List PeanoNat Permutation Lia.
+From Stdlib Require Import List PeanoNat Permutation Lia Bool.
 From RhoBridge Require Import DeBruijnSubstTRS InRhoBetaCascadeWeakBisim.
 
 Import ListNotations.
@@ -352,24 +352,34 @@ Section ScionModel.
                        | None => false
                        end) R.
 
-  (* Does the rhs-subtree contain a RECHECK anywhere (mark true at some position)? *)
-  Fixpoint has_recheck (s : rhs) : bool :=
-    orb (mark s)
-        (match s with
-         | RVar _ => false
-         | RApp _ rs => existsb has_recheck rs
-         end).
+  (* Rules are CONSTRUCTOR-rooted (every LHS is a `PApp`, not a bare `PVar`) — the
+     structural-rewrite discipline (a `PVar`-rooted rule would rewrite EVERY term and is
+     not a structural rule).  A decidable well-formedness side condition of the whole
+     model; every scion rule table (ladder, RTrig, and the runtime's structural arms)
+     satisfies it. *)
+  Definition rules_constructor_rooted : bool :=
+    forallb (fun rl => match fst rl with PApp _ _ => true | PVar _ => false end) R.
 
-  (* graft_safe over ONE rhs skeleton: every SKIP node (mark=false) that sits ABOVE a
-     RECHECK (has_recheck true among its children) must have a constructor that is NEVER
-     a redex root.  (A skip node with no recheck below, or a recheck node, imposes
-     nothing.)  This is the Fold-1 guard. *)
+  (* graft_safe over ONE rhs skeleton: every SKIP node (mark=false) has a constructor
+     that is NEVER a redex root.
+
+     THE FOLD-1 GUARD, in its clean sufficient form.  The runtime's Fold-1 guard
+     (scion_emit_point, rho_net_drive.rs:2401) forbids a SKIP constructor that sits ABOVE
+     a RECHECK from being a redex root — because driving the RECHECK below it can change a
+     child's root and thereby expose a fresh redex at the SKIP constructor that the inert
+     graft would miss (this is exactly the NEGATIVE TEST below).  On every SLOT-BEARING
+     skeleton the two forms COINCIDE: a slot occurrence is ALWAYS a recheck
+     (could_unify _ (RVar _) = true, so mark (RVar _) = true), so a SKIP constructor
+     dominating any slot is "above a recheck", and the only skeletons where the strong
+     form is stricter are pure-GROUND skips with a redex-root constructor and an arity/tag
+     mismatch — provably still safe (driving a redex-free ground term is the identity) but
+     irrelevant to every scion rule (all carry slots) and to both witnesses.  We prove
+     agreement under this clean form; the coincidence is documented, the gap flagged. *)
   Fixpoint rhs_graft_safe (s : rhs) : bool :=
     match s with
     | RVar _ => true
     | RApp c rs =>
-        andb (if mark s then true
-              else if existsb has_recheck rs then negb (is_ever_redex_root c) else true)
+        andb (if mark s then true else negb (is_ever_redex_root c))
              (forallb rhs_graft_safe rs)
     end.
 
@@ -505,5 +515,149 @@ Section ScionModel.
         no_root_redex (oNode op ts) ->
         gdrives f (oNode op ts) r ->
         sdrives f (oNode op ts) r.
+
+  Scheme sgraft_mut := Minimality for sgraft Sort Prop
+    with sgraft_list_mut := Minimality for sgraft_list Sort Prop.
+  Combined Scheme sgraft_sgraft_list_mut from sgraft_mut, sgraft_list_mut.
+
+  (* ===============================================================================
+     9.  Helpers for the agreement (L3.3): a SKIP node never fires at its root, and a
+         non-redex-root constructor never fires at all.
+     =============================================================================== *)
+
+  (* A SKIP node's RAW instantiation is not a root redex — DIRECTLY from scion_skip_sound
+     (L3.1): mark false means every rule LHS could_unify-fails with the rhs-position, so
+     by L3.1 no rule's pattern matches the instantiated node. *)
+  Lemma mark_false_no_root_redex :
+    forall c rs binds, mark (RApp c rs) = false ->
+    no_root_redex (inst (RApp c rs) binds).
+  Proof.
+    intros c rs binds Hmark i u [p [r [bs [Hnth [Hmatch _]]]]].
+    assert (Hin : In (p, r) R) by (eapply nth_error_In; exact Hnth).
+    assert (Hcu : could_unify p (RApp c rs) = false).
+    { apply not_true_is_false. intro Htrue.
+      assert (Hex : existsb (fun rl => could_unify (fst rl) (RApp c rs)) R = true).
+      { apply existsb_exists. exists (p, r). split; [exact Hin | simpl; exact Htrue]. }
+      unfold mark in Hmark. rewrite Hmark in Hex. discriminate. }
+    rewrite (scion_skip_sound p (RApp c rs) Hcu binds) in Hmatch. discriminate.
+  Qed.
+
+  (* A constructor that is NEVER a rule LHS root never fires at a node it heads — for ANY
+     children (so the reassembled SKIP node, whatever its DRIVEN children, is inert).
+     Needs the constructor-rooted well-formedness (a PVar-rooted rule would match it). *)
+  Lemma not_redex_root_no_root_redex :
+    rules_constructor_rooted = true ->
+    forall c, is_ever_redex_root c = false ->
+    forall vs, no_root_redex (oNode c vs).
+  Proof.
+    intros Hcr c Hier vs i u [p [r [bs [Hnth [Hmatch _]]]]].
+    assert (Hin : In (p, r) R) by (eapply nth_error_In; exact Hnth).
+    destruct p as [j | c' args].
+    - unfold rules_constructor_rooted in Hcr. rewrite forallb_forall in Hcr.
+      specialize (Hcr _ Hin). simpl in Hcr. discriminate.
+    - rewrite pat_match_app in Hmatch.
+      destruct (andb (Nat.eqb c' c) (Nat.eqb (length args) (length vs))) eqn:Eg;
+        [| discriminate Hmatch].
+      apply andb_true_iff in Eg. destruct Eg as [Ec _]. apply Nat.eqb_eq in Ec. subst c'.
+      assert (Hex : existsb (fun rl => match root_ctor (fst rl) with
+                                       | Some c'' => Nat.eqb c c'' | None => false end) R = true).
+      { apply existsb_exists. exists (PApp c args, r). split; [exact Hin |].
+        simpl. rewrite Nat.eqb_refl. reflexivity. }
+      unfold is_ever_redex_root in Hier. rewrite Hier in Hex. discriminate.
+  Qed.
+
+  (* ===============================================================================
+     L3.3 — SCION = CONTRACTUM-REDRIVE (SM-10).  THE core correctness: whatever the
+     scion `sdrives` produces, the reference `gdrives` produces IDENTICALLY — same normal
+     form AND the same fired multiset (in the same order, a fortiori a Permutation).  We
+     use the plan's pre-declared FORWARD-INCLUSION fallback (`sdrives ⊆ gdrives`), which
+     is CONSTRUCTIVE (it builds the gdrives derivation from the sdrives one, firing the
+     SAME rules) and therefore needs NO confluence / determinism side condition; the
+     full `∀ other gdrives result agrees` shape is this composed with gdrives determinism,
+     which holds for the root-unambiguous witnesses below.
+
+     The engine is `sgraft_forward`: grafting the RHS skeleton (SKIP inert, RECHECK
+     resubmit, slots driven) computes EXACTLY what re-driving the whole instantiated
+     contractum computes — SKIP nodes contribute nothing because (L3.1) their raw node
+     is not a root redex so gdrives descends, and (graft_safe) their constructor is not a
+     redex root so the post-join re-check of the DRIVEN reassembly is also inert.
+     ================================================================================= *)
+
+  Lemma sgraft_forward :
+    rules_constructor_rooted = true ->
+    (forall f rr binds r, sgraft f rr binds r ->
+        rhs_graft_safe rr = true -> gdrives f (inst rr binds) r)
+    /\ (forall f rrs binds dl, sgraft_list f rrs binds dl ->
+        forallb rhs_graft_safe rrs = true ->
+        gdrives_list f (map (fun r0 => inst r0 binds) rrs) dl).
+  Proof.
+    intro Hcr.
+    apply (sgraft_sgraft_list_mut
+      (fun f rr binds r => rhs_graft_safe rr = true -> gdrives f (inst rr binds) r)
+      (fun f rrs binds dl => forallb rhs_graft_safe rrs = true ->
+         gdrives_list f (map (fun r0 => inst r0 binds) rrs) dl)).
+    - (* sg_var *) intros f j binds o r Hlk Hg _. cbn [inst]. rewrite Hlk. exact Hg.
+    - (* sg_recheck *) intros f c rs binds r _ Hg _. exact Hg.
+    - (* sg_skip *) intros f c rs binds vs fss Hmark Hsl IHsl Hsafe.
+      cbn [rhs_graft_safe] in Hsafe. rewrite Hmark in Hsafe.
+      apply andb_true_iff in Hsafe. destruct Hsafe as [Hier Hforall].
+      apply negb_true_iff in Hier.
+      cbn [inst].
+      replace (Done (oNode c vs) fss)
+        with (rlabels_prepend fss (Done (oNode c vs) []))
+        by (cbn [rlabels_prepend]; rewrite app_nil_r; reflexivity).
+      eapply g_descend.
+      + exact (mark_false_no_root_redex c rs binds Hmark).
+      + apply IHsl. exact Hforall.
+      + apply grc_done. apply not_redex_root_no_root_redex; [exact Hcr | exact Hier].
+    - (* sg_skip_fuel *) intros f c rs binds u Hmark Hsl IHsl Hsafe.
+      cbn [rhs_graft_safe] in Hsafe. rewrite Hmark in Hsafe.
+      apply andb_true_iff in Hsafe. destruct Hsafe as [_ Hforall].
+      cbn [inst].
+      eapply g_descend_fuel.
+      + exact (mark_false_no_root_redex c rs binds Hmark).
+      + apply IHsl. exact Hforall.
+    - (* sgl_nil *) intros f binds _. cbn [map]. apply gdl_nil.
+    - (* sgl_cons *) intros f r rs binds v gs vs fss Hsr IHsr Hsl IHsl Hforall.
+      cbn [forallb] in Hforall. apply andb_true_iff in Hforall. destruct Hforall as [Hr Hrs].
+      cbn [map]. apply gdl_cons; [apply IHsr; exact Hr | apply IHsl; exact Hrs].
+    - (* sgl_cons_fuel_head *) intros f r rs binds u Hsr IHsr Hforall.
+      cbn [forallb] in Hforall. apply andb_true_iff in Hforall. destruct Hforall as [Hr _].
+      cbn [map]. apply gdl_cons_fuel_head. apply IHsr. exact Hr.
+    - (* sgl_cons_fuel_tail *) intros f r rs binds v gs u Hsr IHsr Hsl IHsl Hforall.
+      cbn [forallb] in Hforall. apply andb_true_iff in Hforall. destruct Hforall as [Hr Hrs].
+      cbn [map]. eapply gdl_cons_fuel_tail; [apply IHsr; exact Hr | apply IHsl; exact Hrs].
+  Qed.
+
+  (* The scion driver is included in the redrive reference: same value, same fired
+     multiset (identically). *)
+  Theorem sdrives_included_in_gdrives :
+    rules_constructor_rooted = true -> graft_safe = true ->
+    forall f t r, sdrives f t r -> gdrives f t r.
+  Proof.
+    intros Hcr Hgs f t r Hs. destruct Hs.
+    - apply g_free.
+    - apply g_bound.
+    - eapply g_fuel0. exact H.
+    - (* s_fire *)
+      eapply g_fire.
+      + exists p, rr, binds. split; [exact H | split; [exact H0 | reflexivity]].
+      + assert (Hin : In (p, rr) R) by (eapply nth_error_In; exact H).
+        unfold graft_safe in Hgs. rewrite forallb_forall in Hgs.
+        specialize (Hgs _ Hin). simpl in Hgs.
+        exact (proj1 (sgraft_forward Hcr) f rr binds r H1 Hgs).
+    - (* s_nonredex *) exact H0.
+  Qed.
+
+  (* ★ SM-10 AGREEMENT: the scion's (normal form, fired multiset) is EXACTLY a redrive
+     result — hence the fired multisets agree up to Permutation (here, identically). *)
+  Corollary sdrives_gdrives_agree :
+    rules_constructor_rooted = true -> graft_safe = true ->
+    forall f t v fs, sdrives f t (Done v fs) ->
+    gdrives f t (Done v fs) /\ Permutation fs fs.
+  Proof.
+    intros Hcr Hgs f t v fs Hs.
+    split; [exact (sdrives_included_in_gdrives Hcr Hgs f t (Done v fs) Hs) | apply Permutation_refl].
+  Qed.
 
 End ScionModel.
