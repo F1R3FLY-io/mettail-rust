@@ -23,6 +23,13 @@ models = { workspace = true }
 # in-Rho lowering serializes into an sa:-receiver network. codegen → dovetail is
 # acyclic (dovetail does not depend on rholang-codegen).
 dovetail = { package = "dovetail", path = "../dovetail" }
+# BENCHMARK-ONLY (E-3 T-E6B, pgmcp experiment 146 H4v2): the pathmap-0.2.2 trie
+# backing the quarantined construction-side fragment store
+# (`rho_net_fragment_store`, feature `bench-fragment-store`). Same crates.io
+# pin as `runtime`/`languages`/f1r3node `models` (0.2.2 — NOT the 0.3.0 git
+# fork macros/prattail use internally). Optional: a default build of this crate
+# carries no pathmap linkage.
+pathmap = { workspace = true, optional = true }
 
 [features]
 # BENCHMARK-ONLY QUARANTINE (Track B): the naive Knotted-Topoi Appendix-A baseline
@@ -33,6 +40,15 @@ dovetail = { package = "dovetail", path = "../dovetail" }
 # references the gated module, so a default build is byte-identical with or
 # without this table.
 bench-naive-baseline = []
+# BENCHMARK-ONLY QUARANTINE (E-3 T-E6B, pgmcp experiment 146 H4v2): the
+# pathmap-0.2.2-backed construction-side fragment store
+# (`rho_net_fragment_store`) — the EM-8 content-hash-equality Lattice over
+# `Arc<Fragment>`, the `HashMap` twin arm, and the deterministic
+# retained-bytes/invalidation accounting the `--mode e6b` harness consumes.
+# Never enabled by default (user decision D3: bench-only extension surface);
+# no production entry point or macro-generated code references the gated
+# module, and the `pathmap` dependency itself is gated with it.
+bench-fragment-store = ["dep:pathmap"]
 
 [dev-dependencies]
 # Property-based tests of the Stage 1 term-spread encoding (arbitrary ground terms

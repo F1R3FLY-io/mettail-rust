@@ -123,6 +123,17 @@ pub mod rho_net_float;
 /// non-admitted family. BENCH-ONLY extension surface (user decision D3): the
 /// E-3 harness + the equivalence gate are its only consumers.
 pub mod rho_net_incremental;
+/// E-3 T-E6B (BENCHMARK-ONLY, quarantined): the pathmap-0.2.2-backed
+/// construction-side fragment store (pgmcp experiment 146 H4v2; EM-8 BINDING:
+/// a newtype over `Arc<Fragment>` with a content-hash-equality `Lattice`;
+/// fragments syn-free) plus the `HashMap` twin arm and the deterministic
+/// retained-bytes/invalidation accounting — compiled ONLY under the
+/// `bench-fragment-store` feature (user decision D3: bench-only extension
+/// surface). The `--mode e6b` harness + this module's tests are its only
+/// consumers; a default build carries no trace of the module or its
+/// `pathmap` dependency.
+#[cfg(feature = "bench-fragment-store")]
+pub mod rho_net_fragment_store;
 pub mod rho_net_lower;
 /// Track B (BENCHMARK-ONLY, quarantined): the naive Knotted-Topoi Appendix-A
 /// baseline emitter — compiled ONLY under the `bench-naive-baseline` feature.
