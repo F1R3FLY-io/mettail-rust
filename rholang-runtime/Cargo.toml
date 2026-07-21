@@ -257,6 +257,16 @@ source-oracle = []
 # remain entirely F1r3node's concern and no cost surface exists here (the
 # bench-internal secondary cost read lives inside `bench_support` on the
 # harness's own in-memory runtime).
+# BENCHMARK-ONLY (E-3, pgmcp experiment 146): compiles the construction-cost
+# driver `bench_e3_construction` + its support module
+# (`benches/support/e3_construction.rs`). The driver measures the in-Rho
+# FIRST-COMPILE pipeline (Stage-0 SELF-time phase splits via
+# `mettail_rholang_codegen::pipeline_spans`, first-touch cells, and the W-A(b)
+# direct `compile_structural` entry mode) — no runtime, no demo languages, no
+# naive baseline. `dep:dovetail` is pulled in ONLY for the direct entry mode's
+# pattern types (`Pattern`/`PatternId`/`SetAutomaton`), same path/version as
+# the dev-dependency. Production entry points never reference any of it.
+bench-e3-construction = ["dep:dovetail"]
 bench-naive-baseline = [
     "mettail-rholang-codegen/bench-naive-baseline",
     "dep:mettail-ast",
@@ -498,6 +508,17 @@ required-features = [
     "lambda-demo-runtime",
     "ctx-demo-runtime",
 ]
+
+# E-3 (pgmcp experiment 146) — the JSON-lines construction-cost driver: Stage-0
+# phase-split cells (SELF-time spans over the six-phase first-compile pipeline)
+# and the direct `compile_structural` entry mode, one line per recorded rep +
+# a run-header line + `"dnf":true` lines on reconstruction failures. Registered
+# explicitly so the quarantined feature gates it (absent from any default
+# build).
+[[bin]]
+name = "bench_e3_construction"
+path = "src/bin/bench_e3_construction.rs"
+required-features = ["bench-e3-construction"]
 
 # E-6a (pgmcp experiment 145) — the PathMap-backed subject-index treatment arm.
 # Feasibility spike (Phase 1): EPathMap publish/bind, receive-pattern

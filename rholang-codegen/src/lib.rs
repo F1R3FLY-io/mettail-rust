@@ -68,12 +68,23 @@ pub const REFLECTED_TERM_ABI_PREFIX: &str = "mettail.term.";
 /// Reconstruct a generated language's exact macro-time augmented `LanguageDef`
 /// from its `LanguageMetadata::definition_source()`.
 ///
-/// Re-exported from `mettail_ast` so backend-planning callers can rebuild the
-/// real augmented definition (composition + auto-injection) that a generated
-/// language's `definition_fingerprint()` was computed over — instead of
-/// fingerprint-spoofing fragment shims. See
-/// [`mettail_ast::auto_inject::reconstruct_language_def`] for exactness scope.
-pub use mettail_ast::auto_inject::reconstruct_language_def;
+/// A signature-identical wrapper over
+/// [`mettail_ast::auto_inject::reconstruct_language_def`] (formerly a bare
+/// re-export) so backend-planning callers can rebuild the real augmented
+/// definition (composition + auto-injection) that a generated language's
+/// `definition_fingerprint()` was computed over — instead of
+/// fingerprint-spoofing fragment shims. See the `mettail_ast` function for
+/// exactness scope. The wrapper's ONLY addition is the E-3 Stage-0
+/// [`pipeline_spans`] `Reconstruct` span (a no-op unless the calling thread
+/// has an active collection window), so every crate-routed reconstruction —
+/// notably [`rho_net_cache::CompiledInRhoArtifacts`]'s derivation — is
+/// phase-attributable.
+pub fn reconstruct_language_def(
+    raw_source: &str,
+) -> syn::Result<mettail_ast::language::LanguageDef> {
+    let _reconstruct_span = pipeline_spans::phase_span(pipeline_spans::PipelinePhase::Reconstruct);
+    mettail_ast::auto_inject::reconstruct_language_def(raw_source)
+}
 
 pub mod ast;
 pub mod backend;
@@ -88,6 +99,10 @@ pub mod lower;
 /// generated report-free match body records, and its thread-local pending registry.
 pub mod native_handler;
 pub mod need;
+/// E-3 Stage-0: SELF-time span instrumentation of the six-phase in-Rho compilation
+/// pipeline (thread-local span stack; collection off by default). The phases re-enter
+/// each other (EM-4), so naive per-phase wall timers double-count — see the module docs.
+pub mod pipeline_spans;
 pub mod rho_net;
 pub mod rho_net_automaton;
 pub mod rho_net_cache;

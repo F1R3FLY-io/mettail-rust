@@ -309,6 +309,14 @@ pub struct InRhoMatchingRuleset {
 /// its LHS converts structurally AND compiles AC-free. Coherence: the accept channel is
 /// the SAME `rho_net_injection_sites` channel the installed σ-receiver was compiled with.
 pub fn compile_in_rho_matching_ruleset(def: &LanguageDef) -> InRhoMatchingRuleset {
+    // E-3 Stage-0: SELF-time phase span (no-op without an active collection window).
+    // This phase RE-ENTERS the lowering pipeline through `rho_net_injection_sites`
+    // below (EM-4), so its nested `LowerLanguageDef`/`FromLanguageDef`/`LowerToPar`
+    // activations are attributed to THOSE phases and excluded from this span's
+    // self time.
+    let _compile_ruleset_span = crate::pipeline_spans::phase_span(
+        crate::pipeline_spans::PipelinePhase::CompileInRhoMatchingRuleset,
+    );
     let language_fingerprint = language_definition_fingerprint(def);
     let sites = crate::rho_net_injection_sites(def);
     let site_channel: HashMap<&str, &str> = sites

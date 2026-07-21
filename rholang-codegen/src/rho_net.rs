@@ -227,6 +227,10 @@ impl RhoNetProgram {
     /// predicates remain explicit guard obligations; structural premises are
     /// modeled as Rho-machine consistency inputs instead of host fallback work.
     pub fn from_language_def(def: &LanguageDef, lowering: &RhoLowering) -> Self {
+        // E-3 Stage-0: SELF-time phase span (no-op without an active collection window).
+        let _from_language_def_span = crate::pipeline_spans::phase_span(
+            crate::pipeline_spans::PipelinePhase::FromLanguageDef,
+        );
         let mut program = Self::new(language_definition_fingerprint(def));
         program.add_scalar_lowering(lowering);
         program.add_constructor_rules(&def.terms);

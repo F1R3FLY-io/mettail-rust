@@ -519,6 +519,10 @@ impl RhoNetLowered {
     /// `formal/rocq/rho_bridge/theories/RhoLoweringTotalOrRejects.v`
     /// (`Section RhoNetInstallBoundary` + `Section CongruenceExemptInstallBoundary`).
     pub fn installed_program_par(&self) -> Result<Par, RhoNetInstallError> {
+        // E-3 Stage-0: SELF-time phase span (no-op without an active collection window).
+        let _installed_program_par_span = crate::pipeline_spans::phase_span(
+            crate::pipeline_spans::PipelinePhase::InstalledProgramPar,
+        );
         if !self.errors.is_empty() {
             return Err(RhoNetInstallError::LoweringErrors(self.errors.clone()));
         }
@@ -594,6 +598,12 @@ impl RhoNetProgram {
     /// Lower this planning artifact to concrete Rho AST under the corrected
     /// set-automaton-assisted model. See the module documentation.
     pub fn lower_to_par(&self, def: &LanguageDef, lowering: &RhoLowering) -> RhoNetLowered {
+        // E-3 Stage-0: SELF-time phase span (no-op without an active collection window).
+        // DRIVE_OPT_IN languages re-enter `compile_in_rho_matching_ruleset` from
+        // `drive_lowering` inside this call (EM-4); that nested activation is attributed
+        // to the ruleset phase and excluded from this span's self time.
+        let _lower_to_par_span =
+            crate::pipeline_spans::phase_span(crate::pipeline_spans::PipelinePhase::LowerToPar);
         lower(self, def, lowering)
     }
 }
