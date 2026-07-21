@@ -1,0 +1,12 @@
+── W-D (Ambient payoff) — demand-driven ΔDriveTau/firing = 0 (scion INERT on AC rules) ──
+   treatment == control : true (both 50744 bytes) — the scion emits NO bundle for any Ambient rule
+   subject                 | fires   | DriveTau(c/t) ΔDrive | firing_visible(c/t)=accept/sa | total(c/t) | fired
+  open g1 bag-bodied      | OpenRule |    20/20        0 |    0/0                        |    82/82    | ["OpenRule"]
+  open g2 empty-bag       | OpenRule |     8/8         0 |    0/0                        |    32/32    | ["OpenRule"]
+  open g3 double-nested   | OpenRule |    32/32        0 |    0/0                        |   142/142   | ["OpenRule"]
+  in                      | InRule  |    18/18        0 |    0/0                        |    73/73    | ["InRule"]
+  out 3-elem residual     | OutRule |    28/28        0 |    0/0                        |   114/114   | ["OutRule"]
+  out singleton empty-bag | OutRule |    12/12        0 |    0/0                        |    48/48    | ["OutRule"]
+test w_d_ambient::w_d_ambient_scion_delta_zero ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 6 filtered out; finished in 6.75s

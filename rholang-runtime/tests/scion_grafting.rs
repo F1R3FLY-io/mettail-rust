@@ -72,13 +72,17 @@
 
 use mettail_rholang_codegen::{
     reconstruct_language_def, reflect_ground_term_par, rho_net_drive_call_par_with_fuel,
-    BOUND_VAR_REFLECT_LABEL, GroundTerm, LAMBDA_REFLECT_LABEL, PEANO_SUCC_REFLECT_LABEL,
-    PEANO_ZERO_REFLECT_LABEL,
+    BOUND_VAR_REFLECT_LABEL, CollectionType, FREE_VAR_REFLECT_LABEL, GroundTerm,
+    LAMBDA_REFLECT_LABEL, PEANO_SUCC_REFLECT_LABEL, PEANO_ZERO_REFLECT_LABEL,
 };
 use mettail_rholang_runtime::{
     corrupt_reflected_label, drive_arm_with_counters, scion_arm_programs, CommCounterSnapshot,
     DriveObservationChannels, DriveObservationSet,
 };
+// W-D (Ambient payoff) reuses the PRODUCTION Ambient language + the decoded-observation
+// vocabulary (`bench-scion` now enables `ambient-runtime`, Cargo.toml).
+use mettail_languages::ambient::AmbientLanguage;
+use mettail_runtime::{Language, RuntimeObservationValue};
 
 /// Per-path fuel pinned ≫ every cell's causal-chain depth (max = W-A/W-B n/m =
 /// 16, well under this) so no measured cell straddles the exhaustion boundary
@@ -715,4 +719,315 @@ fn drive_both_arms_big_stack(
         .expect("spawn big-stack drive thread")
         .join()
         .expect("big-stack drive thread joined")
+}
+
+// ══ W-D — the Ambient payoff cell: the demand-driven scion is INERT on Ambient (ΔDriveTau = 0) ══
+//
+// E-1 leg W-D (pgmcp experiment 147). Design v2 §5 (re-measure) + §7 (Ambient residual); SM-1
+// (the locked re-derivation procedure). Re-derived prediction (`scratchpad/e1_wd_predictions.md`,
+// written BEFORE this measurement per Fold 2): under the DEMAND-DRIVEN M1, the three Ambient
+// structural rewrites In/Out/Open predict `ΔDriveTau/firing = 0`.
+//
+// MECHANISM (re-derived from the LANDED A-S5.5 arm shapes, SM-1): In/Out/Open are AC-family arms —
+// `InRule`/`OutRule` are NestedStructuralAcRewrite (`rho_net_inout_firing.rs:66-69` pins them as the
+// two nested structural-AC injection sites) and `OpenRule` is StructuralAcRewrite. AC arms fire
+// through `ac_fuel_gated_firing`, whose emission is HARD-WIRED `FiringEmission::ContractumRedrive`
+// (`rho_net_drive.rs:2621`) — there is NO scion branch. (And even a hypothetical POSITIONAL bag RHS
+// fails `scion_collect_slots` closed at `:2223` — a `PPar{…}` / rest-slot RHS is a "collection"
+// shape → ContractumRedrive.) So `StructuralScion` emits NO bundle for any Ambient rule ⇒ the
+// treatment installed program is BYTE-IDENTICAL to the AllRedrive control ⇒ Δ = 0 on EVERY counter.
+//
+// This is the HONEST M1 Ambient result (v2 §7): Δ=0 satisfies the `ΔDriveTau ≥ 0` invariant. The
+// task's "In 5/5 Recheck → maximal-recheck-subtree = ROOT → resubmit-whole = redrive-whole → Δ=0"
+// reaches the SAME value idealizedly; the landed L1 reaches it by the STRONGER fail-closed route
+// (the scion is never even emitted). The `recheck-not-redrive Δ>0` (eager SM-1's In Δ=3) is the
+// DOCUMENTED depth-d follow-on (v2 §7 — a bounded-depth `^drive-to-depth` receiver), NOT this leg.
+//
+// Correctness (Ambient is NON-confluent ⇒ valid-NF-set MEMBERSHIP, SM-7/R-4): each subject below
+// contains exactly ONE redex pair (a single In/Out/Open firing) ⇒ the valid-NF-set is a SINGLETON
+// ⇒ membership degenerates to equality with the known flat NF (the A-S5.5-validated NFs from
+// `rho_net_ambient_full.rs`). The three AM-3 flattening subjects (g1 bag-bodied, g2 empty-bag, g3
+// double-nested never-driven) are re-run under the treatment arm as the acceptance gates.
+//
+// Kept in its OWN module (`use super::*`) so the Ambient helpers cannot collide with anything else
+// in this file (concurrent-agent hygiene).
+mod w_d_ambient {
+    use super::*;
+
+    type Value = RuntimeObservationValue;
+
+    /// The PRODUCTION Ambient `LanguageDef` (In/Out/Open C-G rules) — the SAME source
+    /// `rho_net_ambient_full.rs` drives, reconstructed from the generated metadata.
+    fn ambient_def() -> mettail_ast::language::LanguageDef {
+        let source = AmbientLanguage
+            .metadata()
+            .definition_source()
+            .expect("AmbientLanguage exposes its definition_source");
+        reconstruct_language_def(source).expect("production Ambient def reconstructs")
+    }
+
+    // ── direct-seed GroundTerm builders (mirror rho_net_ambient_full.rs) ──
+    fn g_bag(elements: Vec<GroundTerm>) -> GroundTerm {
+        GroundTerm::collection(CollectionType::HashBag, "PPar", elements)
+    }
+    fn g_zero() -> GroundTerm {
+        GroundTerm::nullary("PZero")
+    }
+    fn g_name(atom: &str) -> GroundTerm {
+        GroundTerm::new(FREE_VAR_REFLECT_LABEL, vec![GroundTerm::nullary(atom)])
+    }
+    fn g_amb(name: GroundTerm, body: GroundTerm) -> GroundTerm {
+        GroundTerm::new("PAmb", vec![name, body])
+    }
+    fn g_in(name: GroundTerm, cont: GroundTerm) -> GroundTerm {
+        GroundTerm::new("PIn", vec![name, cont])
+    }
+    fn g_out(name: GroundTerm, cont: GroundTerm) -> GroundTerm {
+        GroundTerm::new("POut", vec![name, cont])
+    }
+    fn g_open(name: GroundTerm, cont: GroundTerm) -> GroundTerm {
+        GroundTerm::new("POpen", vec![name, cont])
+    }
+    fn g_leaf_amb(atom: &str) -> GroundTerm {
+        g_amb(g_name(atom), g_bag(vec![g_zero()]))
+    }
+
+    // ── expected-NF decoded-observation builders (mirror rho_net_ambient_full.rs) ──
+    fn oterm(constructor: &str, children: Vec<Value>) -> Value {
+        Value::Term { constructor: constructor.to_string(), children }
+    }
+    fn ozero() -> Value {
+        oterm("PZero", Vec::new())
+    }
+    fn oname(atom: &str) -> Value {
+        oterm(FREE_VAR_REFLECT_LABEL, vec![oterm(atom, Vec::new())])
+    }
+    fn oamb(name: Value, body: Value) -> Value {
+        oterm("PAmb", vec![name, body])
+    }
+    fn obag(values: Vec<Value>) -> Value {
+        let mut counts = std::collections::BTreeMap::<Value, usize>::new();
+        for value in values {
+            *counts.entry(value).or_insert(0) += 1;
+        }
+        Value::Bag(counts.into_iter().collect())
+    }
+    fn o_leaf_amb(atom: &str) -> Value {
+        oamb(oname(atom), obag(vec![ozero()]))
+    }
+
+    /// The host FLATTEN mirror (`add_flattened_bag`) — canonicalizes every bag to FLAT form so the
+    /// membership comparison is over the AM-3-canonical NF (idempotent on already-flat OUT).
+    fn flatten(value: &Value) -> Value {
+        match value {
+            Value::Bag(entries) => {
+                let mut flat: Vec<Value> = Vec::with_capacity(entries.len());
+                for (element, count) in entries {
+                    let element = flatten(element);
+                    for _ in 0..*count {
+                        match &element {
+                            Value::Bag(inner) => {
+                                for (inner_element, inner_count) in inner {
+                                    for _ in 0..*inner_count {
+                                        flat.push(inner_element.clone());
+                                    }
+                                }
+                            },
+                            other => flat.push(other.clone()),
+                        }
+                    }
+                }
+                obag(flat)
+            },
+            Value::Term { constructor, children } => {
+                oterm(constructor, children.iter().map(flatten).collect())
+            },
+            other => other.clone(),
+        }
+    }
+
+    /// The W-D subjects: `(label, fired-rule, direct-seed subject, expected flat NF)`. Each is a
+    /// SINGLE-redex subject (one In/Out/Open firing) — the g1/g2/g3 rows are the three MANDATORY
+    /// AM-3 flattening subjects (`rho_net_ambient_full.rs:749-841`).
+    fn w_d_subjects() -> Vec<(&'static str, &'static str, GroundTerm, Value)> {
+        vec![
+            // OpenRule — the three AM-3 flattening acceptance gates.
+            (
+                "open g1 bag-bodied",
+                "OpenRule",
+                g_bag(vec![
+                    g_open(g_name("n"), g_bag(vec![g_leaf_amb("a"), g_leaf_amb("b")])),
+                    g_amb(g_name("n"), g_bag(vec![g_leaf_amb("c")])),
+                ]),
+                obag(vec![o_leaf_amb("a"), o_leaf_amb("b"), o_leaf_amb("c")]),
+            ),
+            (
+                "open g2 empty-bag",
+                "OpenRule",
+                g_bag(vec![
+                    g_open(g_name("n"), g_bag(Vec::new())),
+                    g_amb(g_name("n"), g_bag(vec![g_leaf_amb("c")])),
+                ]),
+                obag(vec![o_leaf_amb("c")]),
+            ),
+            (
+                "open g3 double-nested",
+                "OpenRule",
+                g_bag(vec![
+                    g_open(
+                        g_name("n"),
+                        g_bag(vec![
+                            g_leaf_amb("a"),
+                            g_bag(vec![
+                                g_leaf_amb("b"),
+                                g_bag(vec![g_leaf_amb("c"), g_leaf_amb("d")]),
+                            ]),
+                        ]),
+                    ),
+                    g_amb(g_name("n"), g_bag(vec![g_leaf_amb("r")])),
+                ]),
+                obag(vec![
+                    o_leaf_amb("a"),
+                    o_leaf_amb("b"),
+                    o_leaf_amb("c"),
+                    o_leaf_amb("d"),
+                    o_leaf_amb("r"),
+                ]),
+            ),
+            // InRule — n moves INTO m; the delivered R splices flat.
+            (
+                "in",
+                "InRule",
+                g_bag(vec![
+                    g_amb(g_name("n"), g_bag(vec![g_in(g_name("m"), g_zero())])),
+                    g_amb(g_name("m"), g_bag(vec![g_leaf_amb("r")])),
+                ]),
+                obag(vec![oamb(
+                    oname("m"),
+                    obag(vec![oamb(oname("n"), obag(vec![ozero()])), o_leaf_amb("r")]),
+                )]),
+            ),
+            // OutRule (post-AM-1) — the residual stays INSIDE m: 3-element residual + singleton.
+            (
+                "out 3-elem residual",
+                "OutRule",
+                g_amb(
+                    g_name("m"),
+                    g_bag(vec![
+                        g_amb(g_name("n"), g_bag(vec![g_out(g_name("m"), g_leaf_amb("a"))])),
+                        g_leaf_amb("b"),
+                        g_leaf_amb("c"),
+                    ]),
+                ),
+                obag(vec![
+                    oamb(oname("n"), obag(vec![o_leaf_amb("a")])),
+                    oamb(oname("m"), obag(vec![o_leaf_amb("b"), o_leaf_amb("c")])),
+                ]),
+            ),
+            (
+                "out singleton empty-bag",
+                "OutRule",
+                g_amb(
+                    g_name("m"),
+                    g_bag(vec![g_amb(g_name("n"), g_bag(vec![g_out(g_name("m"), g_zero())]))]),
+                ),
+                obag(vec![
+                    oamb(oname("n"), obag(vec![ozero()])),
+                    oamb(oname("m"), obag(Vec::new())),
+                ]),
+            ),
+        ]
+    }
+
+    #[tokio::test]
+    async fn w_d_ambient_scion_delta_zero() {
+        mettail_runtime::clear_var_cache();
+        let def = ambient_def();
+        let arms = scion_arm_programs(&def).expect("production Ambient def plans + installs both arms");
+
+        // THE W-D STRUCTURAL RESULT (the re-derived prediction): no Ambient rule scions ⇒ the
+        // StructuralScion treatment program is BYTE-IDENTICAL to the AllRedrive control. This is
+        // WHY ΔDriveTau/firing = 0 on In/Out/Open (a stronger statement than equal-DriveTau).
+        assert_eq!(
+            arms.control_installed, arms.treatment_installed,
+            "W-D: no Ambient rule scions (In/Out/Open are AC arms → always ContractumRedrive; a bag \
+             RHS would also fail scion_collect_slots closed), so the StructuralScion treatment \
+             program must be BYTE-IDENTICAL to the AllRedrive control"
+        );
+
+        let mut deviations: Vec<String> = Vec::new();
+        println!("── W-D (Ambient payoff) — demand-driven ΔDriveTau/firing = 0 (scion INERT on AC rules) ──");
+        println!(
+            "   treatment == control : {} (both {} bytes) — the scion emits NO bundle for any \
+             Ambient rule",
+            arms.control_installed == arms.treatment_installed,
+            prost::Message::encoded_len(&arms.control_installed),
+        );
+        println!("   subject                 | fires   | DriveTau(c/t) ΔDrive | firing_visible(c/t)=accept/sa | total(c/t) | fired");
+
+        for (name, rule, subject, expected_nf) in w_d_subjects() {
+            let (control, treatment) = drive_installed_arms(
+                &arms.control_installed,
+                &arms.treatment_installed,
+                &arms.fingerprint,
+                &subject,
+            )
+            .await;
+            let c = &control.comm;
+            let t = &treatment.comm;
+            let delta_drive = c.drive_tau as i64 - t.drive_tau as i64;
+            let fired = fired_sorted(&control.set);
+            let n_fired = fired_count(&control.set, rule);
+            println!(
+                "  {name:23} | {rule:7} | {:5}/{:<5} {delta_drive:5} | {:4}/{:<4}                     | {:5}/{:<5} | {fired:?}",
+                c.drive_tau, t.drive_tau, c.firing_visible, t.firing_visible,
+                total_comms(c), total_comms(t),
+            );
+
+            // (1) FROZEN: ΔDriveTau/firing = 0 (the re-derived M1 prediction; `rule` is an AC arm
+            // ⇒ ContractumRedrive on BOTH arms ⇒ 0). A deviation is REPORTED, never adjusted.
+            check(
+                delta_drive == 0,
+                format!("W-D {name}: ΔDriveTau = {delta_drive}, predicted 0 ({rule} is an AC arm → no scion)"),
+                &mut deviations,
+            );
+            // (2) Δ on EVERY counter = 0 (byte-identical installed programs). Δ(accept/sa) =
+            // Δfiring_visible = 0 REFINES the design §5 "Δ(accept/sa)=1": with no ScionBundle
+            // emitted there is NO accept bypass (SM-1 re-pin against the landed AC arms).
+            check(c.matching_tau == t.matching_tau, format!("W-D {name}: Δmatching_tau={}", c.matching_tau as i64 - t.matching_tau as i64), &mut deviations);
+            check(c.firing_visible == t.firing_visible, format!("W-D {name}: Δ(accept/sa)=Δfiring_visible={}, predicted 0", c.firing_visible as i64 - t.firing_visible as i64), &mut deviations);
+            check(c.subst_tau == t.subst_tau, format!("W-D {name}: Δsubst_tau={}", c.subst_tau as i64 - t.subst_tau as i64), &mut deviations);
+            check(c.respread_tau == t.respread_tau, format!("W-D {name}: Δrespread_tau={}", c.respread_tau as i64 - t.respread_tau as i64), &mut deviations);
+            check(c.ac_carrier == t.ac_carrier, format!("W-D {name}: Δac_carrier={}", c.ac_carrier as i64 - t.ac_carrier as i64), &mut deviations);
+            check(c.pathmap_index == t.pathmap_index, format!("W-D {name}: Δpathmap_index"), &mut deviations);
+            check(c.contextual_plumbing == t.contextual_plumbing, format!("W-D {name}: Δcontextual_plumbing"), &mut deviations);
+            check(c.observation == t.observation, format!("W-D {name}: Δobservation={}", c.observation as i64 - t.observation as i64), &mut deviations);
+            check(c.other == t.other, format!("W-D {name}: Δother={}", c.other as i64 - t.other as i64), &mut deviations);
+            check(total_comms(c) == total_comms(t), format!("W-D {name}: Δtotal={}", total_comms(c) as i64 - total_comms(t) as i64), &mut deviations);
+
+            // (3) fired-multiset / ledger consistency: exactly `[rule]` on BOTH arms.
+            check(fired == vec![rule.to_string()], format!("W-D {name}: control fired {fired:?}, expected [{rule:?}]"), &mut deviations);
+            check(n_fired == 1, format!("W-D {name}: expected exactly 1 {rule} firing, got {n_fired}"), &mut deviations);
+            check(fired == fired_sorted(&treatment.set), format!("W-D {name}: fired multisets differ across arms"), &mut deviations);
+
+            // (4) valid-NF-set MEMBERSHIP (singleton set = the known flat NF) on BOTH arms.
+            if control.set.out_values.is_empty() || treatment.set.out_values.is_empty() {
+                check(false, format!("W-D {name}: OUT is empty (subject did not reach a resting NF)"), &mut deviations);
+                continue;
+            }
+            let observed_c = flatten(&control.set.out_values[0]);
+            let observed_t = flatten(&treatment.set.out_values[0]);
+            check(observed_c == expected_nf, format!("W-D {name}: control NF membership — flatten(OUT)={observed_c:?} != expected {expected_nf:?}"), &mut deviations);
+            check(observed_t == expected_nf, format!("W-D {name}: treatment NF membership — flatten(OUT)={observed_t:?} != expected {expected_nf:?}"), &mut deviations);
+
+            // (5) typed fail-close channels EMPTY on both arms.
+            check_err_fuel_empty(&format!("W-D {name}"), &control, &treatment, &mut deviations);
+        }
+        assert!(
+            deviations.is_empty(),
+            "W-D FROZEN-prediction deviations (report, do NOT adjust — a counter ≠ 0 or a broken \
+             NF/fired gate is a finding):\n{}",
+            deviations.join("\n")
+        );
+    }
 }

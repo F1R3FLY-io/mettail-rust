@@ -298,6 +298,12 @@ bench-scion = [
     "bench-naive-baseline",
     "runtime-report",
     "mettail-rholang-codegen/bench-scion",
+    # E-1 leg W-D (Ambient payoff cell): the W-D scion cell drives the PRODUCTION
+    # `Ambient` def (In/Out/Open) through both arms, so the bench-scion surface pulls
+    # in the same production Ambient language `rho_net_ambient_full` uses. Bench-only;
+    # never default. `--all-features` (the CI gate) already enables `ambient-runtime`,
+    # so this only affects a targeted `--features bench-scion` build.
+    "ambient-runtime",
 ]
 
 [dependencies]
