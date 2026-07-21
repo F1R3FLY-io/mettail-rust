@@ -1291,3 +1291,30 @@ Qed.
 Theorem ladder_scion_saves_descents :
   scost ladder_R (snd R_step_wrap) < gcost (snd R_step_wrap).
 Proof. vm_compute. lia. Qed.
+
+(* =================================================================================
+   L3.7 — ZERO-ADMISSION GATE.  Every L3.1-L3.6 theorem (and the negative test and the
+   efficiency measure) must report "Closed under the global context": no Admitted, no
+   Axiom, no Parameter, no Assumption.  The rule table `R` is a discharged Section
+   `Variable`/`Hypothesis` (a universally-quantified premise on section close), never an
+   axiom, so it does NOT appear here.
+   ================================================================================= *)
+
+(* L3.1 *)
+Print Assumptions scion_skip_sound.
+(* L3.2 *)
+Print Assumptions sdrives_steps_sound.
+Print Assumptions sdrives_quiescence.
+Print Assumptions sdrives_fuel_exhaustion_never_wrong.
+(* L3.3 (SM-10) *)
+Print Assumptions sdrives_included_in_gdrives.
+Print Assumptions sdrives_gdrives_agree.
+(* L3.4 *)
+Print Assumptions sdrives_weak_bisim.
+(* L3.5 *)
+Print Assumptions scost_le_gcost.
+Print Assumptions ladder_scion_saves_descents.
+(* L3.6 *)
+Print Assumptions ladder_scion_agrees.
+(* the negative test (guard necessity) *)
+Print Assumptions negative_test_fold1_guard_necessary.
