@@ -281,6 +281,24 @@ bench-naive-baseline = [
     # bins cannot see dev-dependencies). Same path/version as the dev-dependency.
     "dep:dovetail",
 ]
+# BENCHMARK-ONLY QUARANTINE (E-1 scion grafting, pgmcp experiment 147): the L2
+# semantic-validator surface. Supersets `bench-naive-baseline` (the `bench_support`
+# `CountingSpace` + counting runtime + the leg-0 DriveTau taxonomy) and
+# `runtime-report` (the `DriveObservationSet` OUT/fired/err/fuel readback), and
+# forwards `mettail-rholang-codegen/bench-scion` (the
+# `RhoNetProgram::lower_to_par_with_scion_policy` StructuralScion codegen). The A/B
+# arm-builder (`scion_arm_programs`) + the counting drive-observe
+# (`drive_arm_with_counters`) live in `bench_support` under this gate; the
+# deterministic W-A/W-B/W-C cells + the SM-8 corrupt-bundle probe run in the
+# `scion_grafting` integration test. Never enabled by default (user decision D3:
+# bench-only surface, `DRIVE_OPT_IN` untouched — the synthetic ladder defs NAME
+# themselves `Lambda` to ride the existing name-gate, SM-8b). No production
+# metering/budget surface: budgets are F1r3node's (wallet.txt).
+bench-scion = [
+    "bench-naive-baseline",
+    "runtime-report",
+    "mettail-rholang-codegen/bench-scion",
+]
 
 [dependencies]
 mettail-rholang-codegen = { package = "rholang-codegen", path = "../rholang-codegen" }

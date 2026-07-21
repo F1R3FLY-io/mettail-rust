@@ -1273,6 +1273,147 @@ pub fn compile_bench_language(definition_source: &str) -> Result<CompiledBenchLa
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// E-1 scion grafting (pgmcp experiment 147, design v1 §3.6 / delta SM-8b/SM-9):
+// the L2 A/B measurement surface — build BOTH arms' installed programs from ONE
+// `LanguageDef` and drive each on a counting runtime. Quarantined behind
+// `bench-scion`; `DRIVE_OPT_IN` is untouched (the caller NAMES its ladder def
+// `Lambda` to ride the existing name-gate). No production path reaches any of it.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// The two seam-swapped arms' installed programs for one `LanguageDef` (E-1
+/// design v1 §3.6, decision D3): CONTROL = the production `AllRedrive` lowering
+/// (byte-identical to [`RhoLowering::lower_to_par`] — every firing arm re-drives
+/// its whole contractum); TREATMENT = the SAME `RhoNetProgram` + lowering
+/// re-lowered under [`ScionPolicy::StructuralScion`](mettail_rholang_codegen::ScionPolicy)
+/// (positional `BaseRewrite` arms emit per-rule scion bundles; β `SubstRewrite`
+/// and every AC arm stay `ContractumRedrive`). Same def, same lowered rules, same
+/// fingerprint, same reserved observation channels — the seam-swapped A/B the
+/// seam was built for.
+#[cfg(feature = "bench-scion")]
+#[derive(Debug, Clone)]
+pub struct ScionArmPrograms {
+    /// The shared language fingerprint (both arms derive it from the one def).
+    pub fingerprint: String,
+    /// The CONTROL installed program (`AllRedrive`).
+    pub control_installed: Par,
+    /// The TREATMENT installed program (`StructuralScion`).
+    pub treatment_installed: Par,
+}
+
+/// Build both E-1 arms' installed programs from `def` (see [`ScionArmPrograms`]).
+/// Fail-loud (`String`) at every planning/install boundary — the harness never
+/// measures a half-compiled language. Both arms flow from ONE
+/// [`plan_rho_default_backend`] so they share the def fingerprint, the lowered
+/// rules, and the reserved `^drive`/`^fired`/`^drive-err`/`^drive-fuel` channel
+/// names; only the per-arm [`FiringEmission`](mettail_rholang_codegen::FiringEmission)
+/// selection differs.
+#[cfg(feature = "bench-scion")]
+pub fn scion_arm_programs(def: &LanguageDef) -> Result<ScionArmPrograms, String> {
+    let lowering = lower_language_def(def);
+    let requirements = RhoDefaultBackendRequirements {
+        coverage: RhoCoverageEvidence::CoveredRejectedRules(suggest_rejected_rule_dispositions(
+            def, &lowering,
+        )),
+        guard_coverage: RhoGuardCoverageEvidence::NoGuardObligations,
+    };
+    let plan = plan_rho_default_backend(def, requirements)
+        .map_err(|error| format!("Rho-default backend plan rejected: {error:?}"))?;
+    // CONTROL: the production `AllRedrive` installed program (byte-identical to
+    // `lower_to_par` — the a_s5_6 / a_s5_8 pins guard this).
+    let control_installed = plan
+        .installed_rho_net_program_par()
+        .map_err(|error| format!("control (AllRedrive) installed program: {error:?}"))?;
+    // TREATMENT: the SAME RhoNetProgram + lowering, re-lowered under StructuralScion.
+    let treatment_installed = plan
+        .rho_net_program()
+        .lower_to_par_with_scion_policy(
+            def,
+            &plan.lowering,
+            mettail_rholang_codegen::ScionPolicy::StructuralScion,
+        )
+        .installed_program_par()
+        .map_err(|error| format!("treatment (StructuralScion) installed program: {error:?}"))?;
+    let fingerprint = plan.definition_fingerprint().to_string();
+    Ok(ScionArmPrograms { fingerprint, control_installed, treatment_installed })
+}
+
+/// Drive one arm's `installed` program composed with the `^drive` seed `call` on
+/// a FRESH counting runtime and read back BOTH the COMM-classification snapshot
+/// AND the full drive observation set (design v1 §6 leg-0). The four reserved
+/// observation channels are PEEKED via `get_data` — a non-consuming read that
+/// records no COMM — so the returned [`CommCounterSnapshot`] is the
+/// reduction-only total (`DriveTau` is the scion-grafting primary metric).
+///
+/// The counting runtime is the exact [`bench_runtime_with_counters`] bring-up;
+/// the seed is the fixed [`BENCH_FIXED_SEED`] (deterministic COMM trace), the
+/// budget [`Cost::unsafe_max()`] (mirroring [`bench_inj_and_read`] — budgets
+/// remain F1r3node's). ONE arm per fresh runtime, so the post-`inj` snapshot IS
+/// the per-drive count. Fail-loud on `inj` error and on an OUT datum that does
+/// not decode as a closed runtime observation value.
+#[cfg(feature = "bench-scion")]
+pub async fn drive_arm_with_counters(
+    installed: &Par,
+    call: &Par,
+    channels: &crate::run::DriveObservationChannels,
+) -> Result<(crate::run::DriveObservationSet, CommCounterSnapshot), String> {
+    // The concrete `RhoRuntimeImpl` has a `cost` FIELD that shadows the trait
+    // method; bring `HasCost` into scope so `runtime.cost()` resolves to it (the
+    // generic `bench_inj_and_read` gets this for free via its `R: RhoRuntime`
+    // bound).
+    use rholang::rust::interpreter::accounting::has_cost::HasCost;
+    let (runtime, comm_counters, _match_counters) =
+        bench_runtime_with_counters(Vec::new(), &channels.out).await?;
+    runtime.cost().set(Cost::unsafe_max());
+    let rand = Blake2b512Random::create_from_bytes(BENCH_FIXED_SEED);
+    let composed = installed.append(call.clone());
+    runtime
+        .inj(composed, Env::new(), rand)
+        .await
+        .map_err(|error| format!("scion drive inj: {error:?}"))?;
+    // Snapshot BEFORE any readback: `get_data` below is non-consuming, but taking
+    // the snapshot at quiescence makes the reduction-only invariant explicit.
+    let snapshot = comm_counters.snapshot();
+
+    let out_raw = drive_peek_channel(&runtime, &channels.out).await;
+    let mut out_values = Vec::with_capacity(out_raw.len());
+    for par in &out_raw {
+        match crate::run::par_as_runtime_observation_value(par) {
+            Some(value) => out_values.push(value),
+            None => {
+                return Err(format!(
+                    "scion drive OUT channel {:?} datum did not decode as a closed runtime \
+                     observation value: {par:?}",
+                    channels.out
+                ));
+            },
+        }
+    }
+    let fired_data = drive_peek_channel(&runtime, &channels.fired).await;
+    let err_data = drive_peek_channel(&runtime, &channels.err).await;
+    let fuel_data = drive_peek_channel(&runtime, &channels.fuel).await;
+    Ok((
+        crate::run::DriveObservationSet { out_values, fired_data, err_data, fuel_data },
+        snapshot,
+    ))
+}
+
+/// Peek every resting `Par` on a quoted channel (`get_data` — NON-consuming, so
+/// no COMM is recorded on the counting space), the counting-runtime twin of
+/// `run::read_ground_from_runtime` with the verbatim reader.
+#[cfg(feature = "bench-scion")]
+async fn drive_peek_channel<R: RhoRuntime>(runtime: &R, channel: &str) -> Vec<Par> {
+    let channel = quoted_channel(channel);
+    let data = runtime.get_data(&channel).await;
+    let mut out = Vec::with_capacity(data.iter().map(|datum| datum.a.pars.len()).sum());
+    for datum in data {
+        for par in &datum.a.pars {
+            out.push(par.clone());
+        }
+    }
+    out
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // In-module tests
 // ─────────────────────────────────────────────────────────────────────────────
 

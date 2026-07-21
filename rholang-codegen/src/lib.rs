@@ -241,7 +241,7 @@ pub use rho_net_drive::{
     rho_net_drive_call_par, rho_net_drive_call_par_with_fuel, rho_net_drive_float_call_par,
     rho_net_drive_float_call_par_with_fuel, rho_net_drive_float_invocation,
     rho_net_drive_invocation, DriveAdmission, DriveCheck, DriveFrame, DriveRedexArm,
-    FiringEmission, RhoNetDriveInvocation, DRIVE_DEFAULT_FUEL, DRIVE_OPT_IN,
+    FiringEmission, RhoNetDriveInvocation, ScionPolicy, DRIVE_DEFAULT_FUEL, DRIVE_OPT_IN,
 };
 pub use rho_net_float::language_is_float_bearing;
 pub use rho_net_lower::{

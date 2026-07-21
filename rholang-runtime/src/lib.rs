@@ -92,6 +92,10 @@ pub use bench_support::{
     CompiledBenchLanguage, CountingSpace, MatchAttemptCounters, MatchAttemptSnapshot,
     MAX_UNKNOWN_CHANNEL_SAMPLES,
 };
+/// E-1 scion grafting (pgmcp experiment 147): the L2 A/B measurement surface —
+/// BENCHMARK-ONLY, quarantined behind `bench-scion`.
+#[cfg(feature = "bench-scion")]
+pub use bench_support::{drive_arm_with_counters, scion_arm_programs, ScionArmPrograms};
 #[cfg(feature = "bench-naive-baseline")]
 pub use e6a_support::{
     build_pathmap_index, count_send_nodes, decode_sites_par, discovery_call_par,
