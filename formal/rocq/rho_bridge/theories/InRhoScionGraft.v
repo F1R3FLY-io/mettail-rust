@@ -916,3 +916,99 @@ Proof.
   split; [apply gdrives_trig_witness |].
   unfold tBar, tEnd, tEndB. intro H. discriminate H.
 Qed.
+
+(* =================================================================================
+   L3.4 — THE STRUCTURAL-FIRE WEAK BISIMULATION (reusing the landed kit).
+
+   We instantiate InRhoBetaCascadeWeakBisim's `is_weak_bisimulation` / `represents`
+   (norm-equality) for the SCION's structural firing, exactly as the driver's
+   `drive_weak_bisim` did for beta — but structural firing is CHEAPER: a structural rule's
+   RHS is a pure constructor tree over slots, so the sigma-receiver template
+   `for(sigma.., out<-c){out!(rhs_par)}` (rho_net_lower.rs) lands the visible fire
+   DIRECTLY on `embed (reduct)`, an object already in normal form (`norm_embed`).  There is
+   NO `^subst`/`^shift` tau-cascade to collapse (that is beta-only), so the weak
+   transition's tau-suffix is EMPTY (`star_refl`) and the bisimulation needs NO
+   SN/confluence argument — a strictly weaker dependency than the beta cascade's.
+
+   The `op` index is a phantom inherited from the generic kit's beta-specialized
+   transition signature: the structural fire is not root-ctor-indexed (every rule in `R`
+   is available at every node), so `op` is ignored by `asfire`.
+   ================================================================================= *)
+
+(* abstract single structural ROOT fire by SOME rule of R *)
+Definition asfire (R : list rule) (op : nat) (o o' : Obj) : Prop :=
+  exists i, fires R i o o'.
+
+(* concrete single structural fire: land DIRECTLY on the embedded reduct (no cascade) *)
+Inductive csfire (R : list rule) (op : nat) : Tm -> Tm -> Prop :=
+  | csfire_fire : forall o o', asfire R op o o' -> csfire R op (embed o) (embed o').
+
+(* concrete WEAK visible transition: tau* (reflect the redex) ; fire ; tau* (EMPTY here) *)
+Definition cswvis (R : list rule) (op : nat) (c c' : Tm) : Prop :=
+  exists c1 c2, star c c1 /\ csfire R op c1 c2 /\ star c2 c'.
+
+Inductive siter (R : list rule) (op : nat) : Obj -> Obj -> Prop :=
+  | siter_refl : forall o, siter R op o o
+  | siter_cons : forall o o' o'',
+      asfire R op o o' -> siter R op o' o'' -> siter R op o o''.
+
+Inductive csiter (R : list rule) (op : nat) : Tm -> Tm -> Prop :=
+  | csiter_refl : forall c, csiter R op c c
+  | csiter_cons : forall c c' c'',
+      cswvis R op c c' -> csiter R op c' c'' -> csiter R op c c''.
+
+(* FORWARD (single fire): an abstract structural fire is matched by an in-Rho weak
+   transition landing on the embedded reduct (empty tau-suffix). *)
+Lemma sfire_forward : forall R op o c o',
+  represents o c -> asfire R op o o' ->
+  exists c', cswvis R op c c' /\ represents o' c'.
+Proof.
+  intros R op o c o' Hrep Hfire.
+  exists (embed o'). split.
+  - exists (embed o), (embed o'). split; [| split].
+    + pose proof (reduces_to_norm c) as H. unfold represents in Hrep. rewrite Hrep in H. exact H.
+    + apply csfire_fire. exact Hfire.
+    + apply star_refl.
+  - unfold represents. apply norm_embed.
+Qed.
+
+(* BACKWARD (single fire): an in-Rho structural weak transition is matched by an abstract
+   fire; the tau-prefix cannot change `norm`, the fire lands on an embedded object, and the
+   (empty) tau-suffix preserves `norm`. *)
+Lemma sfire_backward : forall R op o c c',
+  represents o c -> cswvis R op c c' ->
+  exists o', asfire R op o o' /\ represents o' c'.
+Proof.
+  intros R op o c c' Hrep Hcwvis.
+  destruct Hcwvis as [c1 [c2 [Hpre [Hfire Hpost]]]].
+  inversion Hfire as [o0 o0' Hasf Hc1 Hc2]. subst c1 c2.
+  exists o0'. split.
+  - assert (Ho : o = o0).
+    { unfold represents in Hrep. rewrite <- Hrep.
+      rewrite (star_preserves_norm c (embed o0) Hpre). apply norm_embed. }
+    rewrite Ho. exact Hasf.
+  - unfold represents. rewrite <- (star_preserves_norm (embed o0') c' Hpost).
+    apply norm_embed.
+Qed.
+
+(* THE ITERATED weak bisimulation (single-fire clauses lifted to chains, exactly the
+   `drive_weak_bisim` shape). *)
+Theorem sdrives_weak_bisim :
+  forall R, is_weak_bisimulation represents (siter R) (csiter R).
+Proof.
+  intro R. split.
+  - (* forward: abstract chain matched by concrete chain *)
+    intros o c op o' Hrep Hiter. revert c Hrep.
+    induction Hiter as [o | o o1 o2 Hstep Hiter IH]; intros c Hrep.
+    + exists c. split; [apply csiter_refl | exact Hrep].
+    + destruct (sfire_forward R op o c o1 Hrep Hstep) as [c1 [Hc1 Hrep1]].
+      destruct (IH c1 Hrep1) as [c2 [Hc2 Hrep2]].
+      exists c2. split; [eapply csiter_cons; [exact Hc1 | exact Hc2] | exact Hrep2].
+  - (* backward: concrete chain matched by abstract chain *)
+    intros o c op c' Hrep Hiter. revert o Hrep.
+    induction Hiter as [c | c c1 c2 Hstep Hiter IH]; intros o Hrep.
+    + exists o. split; [apply siter_refl | exact Hrep].
+    + destruct (sfire_backward R op o c c1 Hrep Hstep) as [o1 [Ho1 Hrep1]].
+      destruct (IH o1 Hrep1) as [o2 [Ho2 Hrep2]].
+      exists o2. split; [eapply siter_cons; [exact Ho1 | exact Ho2] | exact Hrep2].
+Qed.
