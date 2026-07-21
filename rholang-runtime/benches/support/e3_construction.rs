@@ -84,16 +84,29 @@
 //! cells; the asymmetry DISFAVORS the treatment arms, i.e. it is conservative for every
 //! win claim).
 
+use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::Instant;
 
+use dovetail::egraph::{EClassId, EGraph, ENode};
 use dovetail::rules::Pattern;
-use dovetail::set_automaton::{PatternId, SetAutomaton};
+use dovetail::set_automaton::{
+    AutomatonNode, PatternId, SetAutomaton, SetAutomatonView, StateId,
+};
 use mettail_rholang_codegen::pipeline_spans::{
     begin_phase_span_collection, take_phase_span_report, PhaseSpanReport,
 };
 use mettail_rholang_codegen::rho_net::RhoNetProgram;
-use mettail_rholang_codegen::rho_net_ruleset::compile_in_rho_matching_ruleset;
+use mettail_rholang_codegen::rho_net_cache::cached_in_rho_artifacts;
+use mettail_rholang_codegen::rho_net_incremental::{
+    extend_in_rho_artifacts, IncrementalExtendOutcome,
+};
+use mettail_rholang_codegen::rho_net_ruleset::{
+    compile_in_rho_matching_ruleset, InRhoMatchingRuleset,
+};
+use mettail_rholang_codegen::splice_rewrite_into_source;
 use mettail_rholang_codegen::{lower::lower_language_def, reconstruct_language_def};
+use prost::Message;
 
 // ─────────────────────────────────────────────────────────────────────────────────────
 // W-C anchors: the production language bodies, extracted verbatim.
@@ -536,6 +549,445 @@ pub fn run_direct_compile_once(patterns: Vec<(PatternId, Pattern<String>)>) -> D
     DirectCell { wall_ns, entry_count, state_count, pattern_nodes }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────────────
+// W-B extension ladder (E-3 T-INCR, H3v2) + the pre-registered equivalence gate.
+// ─────────────────────────────────────────────────────────────────────────────────────
+
+/// The two W-B policies (frozen H3v2: "extension_ladder(r, K=50) both policies").
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WbPolicy {
+    /// The T-INCR treatment: `extend_in_rho_artifacts` per append (fragment parse +
+    /// EM-2 def rebuild + fingerprint recompute + automaton extend + per-rule accept
+    /// channel), then force ruleset + installed par (the FULL Par re-emission — the
+    /// measured ceiling).
+    Incremental,
+    /// The control: full re-derivation of the extended source per append — the exact
+    /// eager pipeline sequence ([`run_full_pipeline`]'s body, `CompiledInRhoArtifacts`
+    /// phase-for-phase).
+    Full,
+}
+
+impl WbPolicy {
+    /// The stable CLI / JSON name of this policy.
+    pub fn name(self) -> &'static str {
+        match self {
+            WbPolicy::Incremental => "incremental",
+            WbPolicy::Full => "full",
+        }
+    }
+
+    /// Parse a CLI policy name.
+    pub fn from_name(name: &str) -> Option<Self> {
+        [WbPolicy::Incremental, WbPolicy::Full].into_iter().find(|policy| policy.name() == name)
+    }
+}
+
+/// The `j`-th W-B appended rewrite line over a `multi*`/`distinct` ladder base at
+/// `r` rules: `MX{j} . |- (R{j} (Sˢ⁺¹(x))) ~> (Wrap x) ;` — a base-shape rule over
+/// DECLARED constructors only (root `R{j}` requires `j < r`; every W-B r ∈
+/// {100, 250, 500, 1000} satisfies `K = 50 ≤ r`), pairwise distinct from every base
+/// rule (one `S` deeper) and from every other append (distinct roots). Single
+/// source of truth for BOTH policies (the incremental arm splices it via
+/// `extend_in_rho_artifacts`; the full arm splices it directly).
+pub fn wb_append_fragment(append: usize, r: usize, shape: LadderShape) -> String {
+    let base_depth = shape
+        .shared_depth()
+        .expect("the W-B extension ladder rides the multi* shapes (design §3 W-B)");
+    assert!(
+        append < r,
+        "append {append} needs a declared root R{append} — the ladder declares R0..R{}",
+        r - 1
+    );
+    let mut lhs = String::from("x");
+    for _ in 0..(base_depth + 1) {
+        lhs = format!("(S {lhs})");
+    }
+    format!("MX{append} . |- (R{append} {lhs}) ~> (Wrap x) ;")
+}
+
+/// The EM-2 anti-vacuity W-B base: the ladder language with native `Int`/`BigInt`
+/// type declarations, so `reconstruct_language_def`'s auto-injection emits a
+/// NON-EMPTY synthetic set (the `IntToBigInt` term + the `IntToBigIntCong`
+/// congruence rewrite) — exercising the T-INCR strip/push/re-run ordering repair
+/// on a base whose rewrite list genuinely carries an auto-injected suffix.
+/// Derived from [`ladder_source`] by replacing the type block (and renaming), so
+/// the rule ladder itself stays byte-identical to the plain W-B base.
+pub fn auto_inject_ladder_source(r: usize, shape: LadderShape, alphabet: LadderAlphabet) -> String {
+    let plain = ladder_source(r, shape, alphabet);
+    let renamed = plain.replacen("name: E3Ladder", "name: E3AutoInject", 1);
+    assert_ne!(renamed, plain, "the ladder source names must carry the E3Ladder prefix");
+    let with_types = renamed.replacen(
+        "types { Proc }",
+        "types {\n            Proc\n            ![i32] as Int\n            \
+         ![mettail_runtime::CanonicalBigInt] as BigInt\n        }",
+        1,
+    );
+    assert_ne!(with_types, renamed, "the ladder source declares `types {{ Proc }}`");
+    with_types
+}
+
+/// One W-B append measurement (one policy, one append step).
+#[derive(Clone, Copy, Debug)]
+pub struct WbAppendCell {
+    /// The 0-based append index within the K-append ladder.
+    pub append: usize,
+    /// Wall nanoseconds of the append's derivation (policy docs on [`WbPolicy`]).
+    pub wall_ns: u64,
+    /// Whether the extended installed program derived `Ok` (a fail-closed install is
+    /// a valid, recorded cell state — the emission work ran).
+    pub installed_ok: bool,
+    /// Whether the incremental policy FELL BACK to the full re-derivation (always
+    /// `false` on the full policy). The W-B ladder is inside the admitted family by
+    /// construction, so `true` is an arm-voiding anomaly the analysis must treat as
+    /// a DNF.
+    pub fell_back: bool,
+    /// The extended source's byte length after this append.
+    pub source_bytes: usize,
+}
+
+/// Run ONE W-B rep — the whole K-append extension ladder under one policy — on the
+/// CALLING thread (the caller wraps it in [`in_fresh_thread`]; the K appends of one
+/// rep deliberately share the thread-local artifact cache, exactly as K successive
+/// runtime extensions would).
+///
+/// Timing discipline: the BASE language's full bring-up (derive + ruleset +
+/// installed par) is SETUP, outside every timed region, for both policies. Per
+/// append, the INCREMENTAL timed region spans `extend_in_rho_artifacts` (which
+/// includes the source SPLICE — producing the memo key is treatment work — plus the
+/// fragment parse, the EM-2 def rebuild, the fingerprint recompute, the automaton
+/// extend, the accept-channel derivation, and the memo insert) plus forcing
+/// `ruleset()` + `installed_par()` (the FULL Par re-emission). The FULL timed
+/// region is exactly [`run_full_pipeline`] on the pre-spliced extended source (the
+/// splice is that arm's INPUT, outside its timer — an asymmetry that DISFAVORS the
+/// treatment, i.e. conservative for the H3 win claim).
+pub fn run_wb_rep(
+    policy: WbPolicy,
+    r: usize,
+    shape: LadderShape,
+    appends: usize,
+) -> Result<Vec<WbAppendCell>, String> {
+    let base_source = ladder_source(r, shape, LadderAlphabet::Distinct);
+    let mut cells = Vec::with_capacity(appends);
+    match policy {
+        WbPolicy::Incremental => {
+            let base = cached_in_rho_artifacts(&base_source)?;
+            // Warm base bring-up (setup): the production-analogue state before an
+            // extension arrives is a fully derived base language.
+            std::hint::black_box(base.ruleset());
+            std::hint::black_box(base.installed_par());
+            let mut current = base;
+            for append in 0..appends {
+                let fragment = wb_append_fragment(append, r, shape);
+                let started = Instant::now();
+                let outcome = extend_in_rho_artifacts(&current, &fragment)?;
+                let artifacts = Arc::clone(outcome.artifacts());
+                std::hint::black_box(artifacts.ruleset());
+                let installed_ok = artifacts.installed_par().is_ok();
+                let wall_ns = u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX);
+                cells.push(WbAppendCell {
+                    append,
+                    wall_ns,
+                    installed_ok,
+                    fell_back: outcome.fallback_reason().is_some(),
+                    source_bytes: artifacts.definition_source.len(),
+                });
+                current = artifacts;
+            }
+        },
+        WbPolicy::Full => {
+            // Warm parity with the incremental arm: the base derivation runs once
+            // as setup (outside every timed region).
+            run_full_pipeline(&base_source)?;
+            let mut source = base_source;
+            for append in 0..appends {
+                let fragment = wb_append_fragment(append, r, shape);
+                let extended = splice_rewrite_into_source(&source, &fragment)
+                    .map_err(|err| format!("the W-B full-arm splice failed: {err}"))?;
+                let (wall_ns, installed_ok) = run_full_pipeline(&extended)?;
+                cells.push(WbAppendCell {
+                    append,
+                    wall_ns,
+                    installed_ok,
+                    fell_back: false,
+                    source_bytes: extended.len(),
+                });
+                source = extended;
+            }
+        },
+    }
+    Ok(cells)
+}
+
+/// One equivalence-gate case's outcome — every pre-registered component explicit
+/// (`Send`-safe: the gate runs on a fresh thread per case).
+///
+/// The FROZEN arm-voiding components (H3v2): `fingerprint_equal`,
+/// `state_count_*` equality, `deferred_equal`, `installed_par_bytes_equal`,
+/// `fired_multiset_equal` — plus the EM-2 anti-vacuity observables
+/// (`auto_injected_rewrites`, `auto_entry_violations`) and the coordinator-pinned
+/// path expectation (`expected_path_ok` — the non-base case must FALL BACK and
+/// still produce batch-identical artifacts).
+#[derive(Clone, Debug)]
+pub struct GateCaseReport {
+    pub case_name: String,
+    pub r: usize,
+    /// `"incremental"` or `"fallback:<reason>"` — the path the LAST append took.
+    pub path: String,
+    pub expected_path_ok: bool,
+    pub fingerprint_equal: bool,
+    pub state_count_incremental: usize,
+    pub state_count_batch: usize,
+    pub deferred_equal: bool,
+    pub installed_ok_incremental: bool,
+    pub installed_ok_batch: bool,
+    pub installed_par_bytes_equal: bool,
+    pub fired_multiset_equal: bool,
+    /// Total matches the shared corpus produced (identical for both arms when
+    /// `fired_multiset_equal`; the batch arm's count is reported).
+    pub fired_matches: usize,
+    /// `is_auto_injected` rewrites in the final incremental def (EM-2 anti-vacuity:
+    /// the auto-inject case requires ≥ 1).
+    pub auto_injected_rewrites: usize,
+    /// Automaton entries (either arm) whose `PatternId` names an auto-injected
+    /// rewrite — MUST be 0 (the frozen "assert no auto-injected rewrite is an
+    /// automaton entry").
+    pub auto_entry_violations: usize,
+}
+
+impl GateCaseReport {
+    /// Every pre-registered component holds.
+    pub fn pass(&self) -> bool {
+        self.expected_path_ok
+            && self.fingerprint_equal
+            && self.state_count_incremental == self.state_count_batch
+            && self.deferred_equal
+            && self.installed_par_bytes_equal
+            && self.fired_multiset_equal
+            && self.auto_entry_violations == 0
+    }
+}
+
+/// Run one equivalence-gate case on the CALLING thread (wrap in
+/// [`in_fresh_thread`]): apply `fragments` in order through the INCREMENTAL path
+/// (chained — append `j+1` extends append `j`'s artifacts), derive the BATCH arm
+/// independently on the final spliced source through the pure pipeline functions
+/// (never the cache — the incremental path memoizes under the same key, so the
+/// cache would alias the arms), and compare every pre-registered component.
+pub fn run_gate_case(
+    case_name: &str,
+    r: usize,
+    base_source: &str,
+    fragments: &[String],
+    expect_incremental: bool,
+) -> Result<GateCaseReport, String> {
+    // Incremental arm.
+    let base = cached_in_rho_artifacts(base_source)?;
+    std::hint::black_box(base.ruleset());
+    let mut current = base;
+    let mut last_path = String::from("unextended");
+    for fragment in fragments {
+        let outcome = extend_in_rho_artifacts(&current, fragment)?;
+        last_path = match &outcome {
+            IncrementalExtendOutcome::Incremental(_) => "incremental".to_string(),
+            IncrementalExtendOutcome::FellBack { reason, .. } => format!("fallback:{reason}"),
+        };
+        current = Arc::clone(outcome.artifacts());
+    }
+    let expected_path_ok = if expect_incremental {
+        last_path == "incremental"
+    } else {
+        last_path.starts_with("fallback:")
+    };
+
+    // Batch arm: the final extended source, derived through PURE pipeline fns.
+    let mut batch_source = base_source.to_string();
+    for fragment in fragments {
+        batch_source = splice_rewrite_into_source(&batch_source, fragment)
+            .map_err(|err| format!("the gate batch-arm splice failed: {err}"))?;
+    }
+    assert_eq!(
+        batch_source, current.definition_source,
+        "both arms must key the SAME extended source (EM-3: one splice function)"
+    );
+    let batch_def = reconstruct_language_def(&batch_source)
+        .map_err(|err| format!("the gate batch arm did not reconstruct: {err}"))?;
+    let batch_ruleset = compile_in_rho_matching_ruleset(&batch_def);
+    let batch_lowering = lower_language_def(&batch_def);
+    // Mirror `CompiledInRhoArtifacts::installed_par`'s error mapping verbatim so an
+    // Err-Err case stays comparable.
+    let batch_installed: Result<models::rhoapi::Par, String> =
+        RhoNetProgram::from_language_def(&batch_def, &batch_lowering)
+            .lower_to_par(&batch_def, &batch_lowering)
+            .installed_program_par()
+            .map_err(|err| format!("in-Rho installed program is fail-closed: {err:?}"));
+
+    // The frozen five.
+    let incremental_ruleset = current.ruleset();
+    let fingerprint_equal =
+        incremental_ruleset.language_fingerprint == batch_ruleset.language_fingerprint;
+    let state_count_incremental = incremental_ruleset.automaton.view().state_count();
+    let state_count_batch = batch_ruleset.automaton.view().state_count();
+    let deferred_equal =
+        deferred_multiset(incremental_ruleset) == deferred_multiset(&batch_ruleset);
+    let incremental_installed = current.installed_par();
+    let installed_ok_incremental = incremental_installed.is_ok();
+    let installed_ok_batch = batch_installed.is_ok();
+    let installed_par_bytes_equal = installed_result_bytes(incremental_installed)
+        == installed_result_bytes(&batch_installed);
+    let (fired_multiset_equal, fired_matches) =
+        fired_multisets_agree(incremental_ruleset, &batch_ruleset);
+
+    // The EM-2 observables (both arms' automata checked). The per-index auto flags
+    // are extracted HERE (field access on the inferred def type) so the helper
+    // below never has to NAME the ast `LanguageDef` type — the
+    // `bench-e3-construction` feature deliberately carries no ast dependency.
+    let incremental_auto_flags: Vec<bool> =
+        current.def.rewrites.iter().map(|rewrite| rewrite.is_auto_injected).collect();
+    let batch_auto_flags: Vec<bool> =
+        batch_def.rewrites.iter().map(|rewrite| rewrite.is_auto_injected).collect();
+    let auto_injected_rewrites =
+        incremental_auto_flags.iter().filter(|&&auto| auto).count();
+    let auto_entry_violations = auto_entry_violation_count(
+        incremental_ruleset,
+        &incremental_auto_flags,
+    ) + auto_entry_violation_count(&batch_ruleset, &batch_auto_flags);
+
+    Ok(GateCaseReport {
+        case_name: case_name.to_string(),
+        r,
+        path: last_path,
+        expected_path_ok,
+        fingerprint_equal,
+        state_count_incremental,
+        state_count_batch,
+        deferred_equal,
+        installed_ok_incremental,
+        installed_ok_batch,
+        installed_par_bytes_equal,
+        fired_multiset_equal,
+        fired_matches,
+        auto_injected_rewrites,
+        auto_entry_violations,
+    })
+}
+
+/// The four pre-registered gate cases at one ladder size `r` (multi1/distinct):
+/// the base-shape single append, the EM-2 NON-EMPTY auto-inject append, the
+/// coordinator-pinned non-base FALLBACK append (a congruence rewrite), and the
+/// chained K=3 ladder (the W-B ladder's inductive validity). Each runs on a fresh
+/// thread; every `.pass()` must hold BEFORE any W-B cell is measured (a failure
+/// VOIDS the incremental arm — report, never measure a voided arm).
+pub fn run_gate_cases_for(r: usize) -> Vec<Result<GateCaseReport, String>> {
+    let base = ladder_source(r, LadderShape::Multi1, LadderAlphabet::Distinct);
+    let auto_base =
+        auto_inject_ladder_source(r, LadderShape::Multi1, LadderAlphabet::Distinct);
+    let single = vec![wb_append_fragment(0, r, LadderShape::Multi1)];
+    let congruence = vec!["E3GateCong . | S ~> T |- (Wrap S) ~> (Wrap T) ;".to_string()];
+    let chained: Vec<String> =
+        (0..3).map(|j| wb_append_fragment(j, r, LadderShape::Multi1)).collect();
+
+    let cases: Vec<(&str, String, Vec<String>, bool)> = vec![
+        ("base-shape", base.clone(), single.clone(), true),
+        ("auto-inject-nonempty", auto_base, single, true),
+        ("non-base-fallback", base.clone(), congruence, false),
+        ("chained-k3", base, chained, true),
+    ];
+    cases
+        .into_iter()
+        .map(|(name, source, fragments, expect_incremental)| {
+            let case_name = name.to_string();
+            in_fresh_thread(move || {
+                run_gate_case(&case_name, r, &source, &fragments, expect_incremental)
+            })
+        })
+        .collect()
+}
+
+/// A deferred set as a comparison-stable multiset (label + reason, sorted).
+fn deferred_multiset(ruleset: &InRhoMatchingRuleset) -> Vec<(String, String)> {
+    let mut entries: Vec<(String, String)> = ruleset
+        .deferred
+        .iter()
+        .map(|deferred| (deferred.rule_label.clone(), format!("{:?}", deferred.reason)))
+        .collect();
+    entries.sort();
+    entries
+}
+
+/// An installed-program result as comparable bytes (`prost` encoding — the
+/// "byte-equal installed Par" gate component) or its fail-closed diagnostic.
+fn installed_result_bytes(
+    installed: &Result<models::rhoapi::Par, String>,
+) -> Result<Vec<u8>, String> {
+    installed.as_ref().map(Message::encode_to_vec).map_err(Clone::clone)
+}
+
+/// Automaton entries whose `PatternId` names an auto-injected rewrite (must be 0 —
+/// the frozen "assert no auto-injected rewrite is an automaton entry").
+/// `auto_flags[i]` is the `is_auto_injected` flag of the def's `i`-th rewrite; an
+/// entry id beyond the rewrite list (a native entry) counts as a violation too —
+/// the gate languages have none by construction.
+fn auto_entry_violation_count(ruleset: &InRhoMatchingRuleset, auto_flags: &[bool]) -> usize {
+    let view = ruleset.automaton.view();
+    (0..view.entry_count())
+        .filter(|&entry| {
+            let id = view.entry_id(entry);
+            auto_flags.get(id.0).is_none_or(|&auto| auto)
+        })
+        .count()
+}
+
+/// The "fired-set multisets on the shared corpus" gate component: instantiate every
+/// BATCH automaton entry's pattern as a ground subject (each pattern variable ⇒ a
+/// shared `cvar:{name}` leaf) in ONE e-graph, run BOTH automata over it, and compare
+/// the `(PatternId, root)` count-multisets. Returns `(equal, batch_match_count)`.
+fn fired_multisets_agree(
+    incremental: &InRhoMatchingRuleset,
+    batch: &InRhoMatchingRuleset,
+) -> (bool, usize) {
+    let mut eg: EGraph<String> = EGraph::new();
+    let batch_view = batch.automaton.view();
+    for entry in 0..batch_view.entry_count() {
+        instantiate_state(&batch_view, batch_view.entry_root_state(entry), &mut eg);
+    }
+    let incremental_run = incremental.automaton.search_egraph(&eg);
+    let batch_run = batch.automaton.search_egraph(&eg);
+    let count = batch_run.matches.len();
+    (
+        match_multiset(&incremental_run.matches) == match_multiset(&batch_run.matches),
+        count,
+    )
+}
+
+/// Ground-instantiate one interned pattern state in the corpus e-graph: a variable
+/// becomes the shared `cvar:{name}` leaf (the e-graph hash-conses repeats), an
+/// application becomes its node over the instantiated children.
+fn instantiate_state(
+    view: &SetAutomatonView<'_, String>,
+    state: StateId,
+    eg: &mut EGraph<String>,
+) -> EClassId {
+    match view.node(state) {
+        AutomatonNode::Var(name) => eg.add(ENode::leaf(format!("cvar:{name}"))),
+        AutomatonNode::App { op, args } => {
+            let children: Vec<EClassId> =
+                args.iter().map(|&arg| instantiate_state(view, arg, eg)).collect();
+            eg.add(ENode::new(op.clone(), children))
+        },
+    }
+}
+
+/// The `(pattern, root)` count-multiset of a match list.
+fn match_multiset(
+    matches: &[dovetail::set_automaton::SetAutomatonMatch],
+) -> HashMap<(usize, EClassId), usize> {
+    let mut counts: HashMap<(usize, EClassId), usize> = HashMap::with_capacity(matches.len());
+    for matched in matches {
+        *counts.entry((matched.pattern.0, matched.root)).or_insert(0) += 1;
+    }
+    counts
+}
+
 /// Run `f` on a FRESH thread (fresh `thread_local!` artifact cache ⇒ a true first
 /// touch) with a stack of at least 8 MiB (the workspace's `RUST_MIN_STACK` floor;
 /// a larger env value is honored), returning its `Send`-safe result.
@@ -727,5 +1179,95 @@ fn capitalized(name: &str) -> String {
     match chars.next() {
         Some(first) => first.to_ascii_uppercase().to_string() + chars.as_str(),
         None => String::new(),
+    }
+}
+
+#[cfg(test)]
+mod wb_tests {
+    use super::*;
+
+    /// THE pre-registered H3v2 equivalence gate, standing as a TEST (not just
+    /// harness logic): all four cases — base-shape, EM-2 NON-EMPTY auto-inject,
+    /// the coordinator-pinned non-base FALLBACK, and the chained K=3 ladder —
+    /// must pass every frozen component at a ladder size. (The measurement
+    /// session re-runs the same gate at every W-B r in release BEFORE any cell;
+    /// in debug builds each incremental step is additionally cross-checked
+    /// field-by-field against batch inside `extend_in_rho_artifacts`.)
+    #[test]
+    fn equivalence_gate_passes_at_ladder_r8() {
+        for outcome in run_gate_cases_for(8) {
+            let report = outcome.expect("every gate case derives");
+            assert!(
+                report.pass(),
+                "gate case `{}` failed: {report:?}",
+                report.case_name
+            );
+            match report.case_name.as_str() {
+                "auto-inject-nonempty" => {
+                    assert!(
+                        report.auto_injected_rewrites >= 1,
+                        "EM-2 anti-vacuity: the auto-inject case must carry a NON-EMPTY \
+                         auto-injected rewrite set: {report:?}"
+                    );
+                    assert_eq!(report.path, "incremental");
+                },
+                "non-base-fallback" => {
+                    assert!(
+                        report.path.starts_with("fallback:"),
+                        "the congruence append must fail closed: {report:?}"
+                    );
+                },
+                _ => assert_eq!(report.path, "incremental", "{report:?}"),
+            }
+            assert!(
+                report.installed_ok_incremental && report.installed_ok_batch,
+                "every gate-case language installs: {report:?}"
+            );
+            assert!(report.fired_matches >= 1, "the corpus must exercise the automata");
+        }
+    }
+
+    #[test]
+    fn wb_reps_run_both_policies_without_fallbacks() {
+        // A K=3 smoke of the W-B rep runner at r=8: the incremental policy never
+        // falls back (the ladder is inside the admitted family by construction),
+        // both policies install every append, and walls are non-zero.
+        for policy in [WbPolicy::Incremental, WbPolicy::Full] {
+            let cells = in_fresh_thread(move || {
+                run_wb_rep(policy, 8, LadderShape::Multi1, 3).expect("the W-B rep derives")
+            });
+            assert_eq!(cells.len(), 3);
+            for cell in &cells {
+                assert!(!cell.fell_back, "{policy:?} append {} fell back", cell.append);
+                assert!(cell.installed_ok, "{policy:?} append {} did not install", cell.append);
+                assert!(cell.wall_ns > 0);
+                assert!(cell.source_bytes > 0);
+            }
+        }
+    }
+
+    #[test]
+    fn wb_append_fragments_are_declared_op_only_and_pairwise_distinct() {
+        // Every appended rule references only DECLARED constructors (root R{j}
+        // needs j < r) and the K fragments are pairwise distinct.
+        let r = 8;
+        let fragments: Vec<String> =
+            (0..r).map(|j| wb_append_fragment(j, r, LadderShape::Multi1)).collect();
+        for (j, fragment) in fragments.iter().enumerate() {
+            assert!(fragment.contains(&format!("(R{j} ")));
+            assert!(fragment.starts_with(&format!("MX{j} ")));
+        }
+        let unique: std::collections::HashSet<&String> = fragments.iter().collect();
+        assert_eq!(unique.len(), fragments.len());
+    }
+
+    #[test]
+    fn auto_inject_ladder_source_reconstructs_with_a_nonempty_auto_set() {
+        let source = auto_inject_ladder_source(8, LadderShape::Multi1, LadderAlphabet::Distinct);
+        let def = reconstruct_language_def(&source)
+            .expect("the auto-inject ladder source reconstructs");
+        let autos = def.rewrites.iter().filter(|rewrite| rewrite.is_auto_injected).count();
+        assert!(autos >= 1, "the Int/BigInt lossless edge must auto-inject a congruence");
+        assert!(def.name.to_string().starts_with("E3AutoInject"));
     }
 }

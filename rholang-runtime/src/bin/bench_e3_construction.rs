@@ -44,9 +44,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use e3_construction::{
     in_fresh_thread, ladder_patterns, ladder_source, pattern_node_count, run_direct_compile_once,
-    run_eager_control_once, run_lazy_force_installed_once, run_lazy_gate_only_once,
-    run_spans_once, validate_ladder_cell, AnchorLanguage, LadderAlphabet, LadderShape, LazyCell,
-    ALL_ANCHORS, DEFAULT_LADDER_R,
+    run_eager_control_once, run_gate_cases_for, run_lazy_force_installed_once,
+    run_lazy_gate_only_once, run_spans_once, run_wb_rep, validate_ladder_cell, AnchorLanguage,
+    LadderAlphabet, LadderShape, LazyCell, WbPolicy, ALL_ANCHORS, DEFAULT_LADDER_R,
 };
 
 /// The driver's cell modes.
@@ -58,6 +58,14 @@ enum Mode {
     Direct,
     /// One H2v2 first-touch arm (EM-1; requires `--arm`).
     H2,
+    /// W-B extension ladder (H3v2, E-3 T-INCR): K single-rewrite appends over the
+    /// ladder base under ONE policy (requires `--policy`; `--appends` defaults to
+    /// the frozen K = 50).
+    Wb,
+    /// The pre-registered H3v2 equivalence gate at `--r` (all four cases, once per
+    /// invocation) — MUST pass before any W-B cell is measured (a failure voids the
+    /// incremental arm and exits non-zero).
+    WbGate,
 }
 
 impl Mode {
@@ -66,11 +74,15 @@ impl Mode {
             Mode::Spans => "spans",
             Mode::Direct => "direct",
             Mode::H2 => "h2",
+            Mode::Wb => "wb",
+            Mode::WbGate => "wb-gate",
         }
     }
 
     fn from_name(name: &str) -> Option<Self> {
-        [Mode::Spans, Mode::Direct, Mode::H2].into_iter().find(|mode| mode.name() == name)
+        [Mode::Spans, Mode::Direct, Mode::H2, Mode::Wb, Mode::WbGate]
+            .into_iter()
+            .find(|mode| mode.name() == name)
     }
 }
 
@@ -135,6 +147,10 @@ struct DriverArgs {
     workload: Workload,
     /// The H2v2 arm (`Some` exactly when `mode == Mode::H2`).
     arm: Option<H2Arm>,
+    /// The W-B policy (`Some` exactly when `mode == Mode::Wb`).
+    policy: Option<WbPolicy>,
+    /// The W-B append count K (frozen default 50; `mode == Mode::Wb` only).
+    appends: u64,
     warmup: u64,
     reps: u64,
     out: Option<String>,
@@ -146,21 +162,28 @@ fn usage() -> String {
     format!(
         "bench_e3_construction — E-3 construction-cost driver (JSON lines)\n\
          \n\
-         USAGE:\n  bench_e3_construction --mode <spans|direct|h2> --workload <name> \\\n    \
+         USAGE:\n  bench_e3_construction --mode <spans|direct|h2|wb|wb-gate> --workload <name> \\\n    \
          [--arm <eager-control|lazy-gate-only|lazy-force-installed>] \\\n    \
+         [--policy <incremental|full>] [--appends <int>] \\\n    \
          [--r <int> --shape <multi1|multi3|mixed> --alphabet <distinct|shared16>] \\\n    \
          [--warmup <int>] --reps <int> [--out <path>]\n\
          \n\
          WORKLOADS:\n  \
          anchors: {}   (W-C production language bodies; --mode spans|h2)\n  \
          ladder:  --workload ladder --r <int> --shape … --alphabet …\n           \
-         (W-A generated definitions; default r ladder {{{}}}; --mode spans|direct|h2)\n\
+         (W-A generated definitions; default r ladder {{{}}}; --mode spans|direct|h2|wb|wb-gate)\n\
          \n\
          NOTES:\n  \
          --mode h2 requires --arm (ONE arm per invocation — the one-cell-per-run\n  \
          protocol; the win/guard comparisons are computed offline from the JSONL).\n  \
          --mode direct requires the ladder workload (the anchors have no direct\n  \
          pattern-set arm — their patterns come from the full pipeline itself).\n  \
+         --mode wb (E-3 T-INCR, H3v2) requires the ladder workload (multi* shape,\n  \
+         distinct alphabet) + --policy; one rep = one K-append extension ladder\n  \
+         (--appends, frozen default 50), one JSON line per append.\n  \
+         --mode wb-gate runs the pre-registered equivalence gate at --r ONCE\n  \
+         (all four cases; --reps must be 1); ANY failure exits non-zero — the\n  \
+         incremental arm is then VOID and must not be measured.\n  \
          --alphabet shared16 is defined for the multi* shapes only.\n  \
          --warmup defaults to 3 (recorded in the header; warmup reps are not emitted).\n  \
          --out defaults to stdout.\n",
@@ -173,6 +196,9 @@ fn parse_args(args: &[String]) -> Result<DriverArgs, String> {
     let mut mode: Option<Mode> = None;
     let mut workload_token: Option<String> = None;
     let mut arm: Option<H2Arm> = None;
+    let mut policy: Option<WbPolicy> = None;
+    // The frozen H3v2 K (design §3: "W-B extension_ladder(r, K=50)").
+    let mut appends: u64 = 50;
     let mut r: Option<usize> = None;
     let mut shape: Option<LadderShape> = None;
     let mut alphabet: Option<LadderAlphabet> = None;
@@ -202,6 +228,17 @@ fn parse_args(args: &[String]) -> Result<DriverArgs, String> {
                     H2Arm::from_name(value)
                         .ok_or_else(|| format!("unknown arm `{value}`\n\n{}", usage()))?,
                 );
+            },
+            "--policy" => {
+                policy = Some(
+                    WbPolicy::from_name(value)
+                        .ok_or_else(|| format!("unknown policy `{value}`\n\n{}", usage()))?,
+                );
+            },
+            "--appends" => {
+                appends = value
+                    .parse::<u64>()
+                    .map_err(|e| format!("--appends must be an integer, got `{value}`: {e}"))?;
             },
             "--r" => {
                 r = Some(
@@ -273,12 +310,44 @@ fn parse_args(args: &[String]) -> Result<DriverArgs, String> {
         (Mode::H2, None) => {
             return Err(format!("--mode h2 requires --arm\n\n{}", usage()));
         },
-        (Mode::Spans | Mode::Direct, Some(_)) => {
+        (Mode::Spans | Mode::Direct | Mode::Wb | Mode::WbGate, Some(_)) => {
             return Err("--arm applies to --mode h2 only".to_string());
         },
         _ => {},
     }
-    Ok(DriverArgs { mode, workload, arm, warmup, reps, out })
+    match (mode, policy) {
+        (Mode::Wb, None) => {
+            return Err(format!("--mode wb requires --policy\n\n{}", usage()));
+        },
+        (Mode::Spans | Mode::Direct | Mode::H2 | Mode::WbGate, Some(_)) => {
+            return Err("--policy applies to --mode wb only".to_string());
+        },
+        _ => {},
+    }
+    if matches!(mode, Mode::Wb | Mode::WbGate) {
+        let Workload::Ladder { shape, alphabet, .. } = workload else {
+            return Err(format!(
+                "--mode {} requires the ladder workload (the W-B extension ladder rides the \
+                 generated definitions)\n\n{}",
+                mode.name(),
+                usage()
+            ));
+        };
+        if shape == LadderShape::Mixed || alphabet != LadderAlphabet::Distinct {
+            return Err(
+                "--mode wb/wb-gate is defined for the multi* shapes over the distinct alphabet \
+                 (the W-B appends extend the shared S-chain one level over declared roots)"
+                    .to_string(),
+            );
+        }
+        if mode == Mode::Wb && appends == 0 {
+            return Err("--appends must be >= 1".to_string());
+        }
+        if mode == Mode::WbGate && reps != 1 {
+            return Err("--mode wb-gate runs its cases once: --reps must be 1".to_string());
+        }
+    }
+    Ok(DriverArgs { mode, workload, arm, policy, appends, warmup, reps, out })
 }
 
 /// Append `value` with JSON string escaping (the driver-local mirror of the Track-B
@@ -362,6 +431,12 @@ fn header_line(args: &DriverArgs, source_bytes: usize, pattern_nodes: Option<usi
     line.push_str(&json_string(args.mode.name()));
     line.push_str(",\"arm\":");
     line.push_str(&json_string(args.arm.map_or("-", H2Arm::name)));
+    line.push_str(",\"policy\":");
+    line.push_str(&json_string(args.policy.map_or("-", WbPolicy::name)));
+    line.push_str(&format!(
+        ",\"appends\":{}",
+        if args.mode == Mode::Wb { args.appends } else { 0 }
+    ));
     line.push_str(",\"workload\":");
     line.push_str(&json_string(&args.workload.name()));
     line.push_str(&format!(",\"r\":{r},\"shape\":"));
@@ -409,10 +484,15 @@ fn main() -> ExitCode {
         (Mode::Spans | Mode::H2, Workload::Anchor(anchor)) => {
             Some(anchor.definition_source().to_string())
         },
-        (Mode::Spans | Mode::H2, Workload::Ladder { r, shape, alphabet }) => {
+        // The W-B modes record the BASE ladder source in the header (the reps build
+        // their own base + appends internally).
+        (Mode::Spans | Mode::H2 | Mode::Wb | Mode::WbGate, Workload::Ladder { r, shape, alphabet }) => {
             Some(ladder_source(r, shape, alphabet))
         },
         (Mode::Direct, _) => None,
+        (Mode::Wb | Mode::WbGate, Workload::Anchor(_)) => {
+            unreachable!("parse_args enforces the ladder workload for the W-B modes")
+        },
     };
     let pattern_nodes: Option<usize> = match (args.mode, args.workload) {
         (Mode::Direct, Workload::Ladder { r, shape, alphabet }) => {
@@ -426,6 +506,69 @@ fn main() -> ExitCode {
     if writeln!(sink, "{header}").is_err() {
         eprintln!("cannot write the header line");
         return ExitCode::FAILURE;
+    }
+
+    // The equivalence gate runs its four cases ONCE per invocation (no rep loop) and
+    // exits non-zero on ANY failed component — the session protocol treats that as
+    // the incremental arm being VOID (report, never measure a voided arm).
+    if args.mode == Mode::WbGate {
+        let Workload::Ladder { r, .. } = args.workload else {
+            unreachable!("parse_args enforces the ladder workload for wb-gate")
+        };
+        let mut all_pass = true;
+        for outcome in run_gate_cases_for(r) {
+            let line = match outcome {
+                Ok(report) => {
+                    if !report.pass() {
+                        all_pass = false;
+                    }
+                    format!(
+                        "{{\"wb_gate\":{{\"case\":{},\"r\":{},\"path\":{},\
+                         \"expected_path_ok\":{},\"fingerprint_equal\":{},\
+                         \"state_count_incremental\":{},\"state_count_batch\":{},\
+                         \"deferred_equal\":{},\"installed_ok_incremental\":{},\
+                         \"installed_ok_batch\":{},\"installed_par_bytes_equal\":{},\
+                         \"fired_multiset_equal\":{},\"fired_matches\":{},\
+                         \"auto_injected_rewrites\":{},\"auto_entry_violations\":{},\
+                         \"pass\":{}}}}}",
+                        json_string(&report.case_name),
+                        report.r,
+                        json_string(&report.path),
+                        report.expected_path_ok,
+                        report.fingerprint_equal,
+                        report.state_count_incremental,
+                        report.state_count_batch,
+                        report.deferred_equal,
+                        report.installed_ok_incremental,
+                        report.installed_ok_batch,
+                        report.installed_par_bytes_equal,
+                        report.fired_multiset_equal,
+                        report.fired_matches,
+                        report.auto_injected_rewrites,
+                        report.auto_entry_violations,
+                        report.pass(),
+                    )
+                },
+                Err(reason) => {
+                    all_pass = false;
+                    format!("{{\"dnf\":true,\"reason\":{}}}", json_string(&reason))
+                },
+            };
+            if writeln!(sink, "{line}").is_err() {
+                eprintln!("cannot write a gate line");
+                return ExitCode::FAILURE;
+            }
+        }
+        if sink.flush().is_err() {
+            eprintln!("cannot flush the output sink");
+            return ExitCode::FAILURE;
+        }
+        return if all_pass {
+            ExitCode::SUCCESS
+        } else {
+            eprintln!("bench_e3_construction: the H3v2 equivalence gate FAILED — the incremental arm is VOID");
+            ExitCode::FAILURE
+        };
     }
 
     let mut failures = 0u64;
@@ -481,6 +624,46 @@ fn main() -> ExitCode {
             },
             (Mode::Direct, Workload::Anchor(_)) => {
                 unreachable!("parse_args rejects direct mode over anchors")
+            },
+            (Mode::Wb, Workload::Ladder { r, shape, .. }) => {
+                let policy = args.policy.expect("parse_args requires --policy for wb mode");
+                let appends = usize::try_from(args.appends)
+                    .expect("--appends fits a usize on every supported target");
+                match in_fresh_thread(move || run_wb_rep(policy, r, shape, appends)) {
+                    Ok(cells) => {
+                        // A fell-back append inside the W-B ladder is an arm-voiding
+                        // anomaly (the ladder is inside the admitted family by
+                        // construction) — counted as a failure AND recorded on the line.
+                        failures += cells.iter().filter(|cell| cell.fell_back).count() as u64;
+                        cells
+                            .iter()
+                            .map(|cell| {
+                                format!(
+                                    "{{\"wb\":{{\"rep\":{record_index},\"append\":{},\
+                                     \"policy\":{},\"wall_ns\":{},\"installed_ok\":{},\
+                                     \"fell_back\":{},\"source_bytes\":{}}}}}",
+                                    cell.append,
+                                    json_string(policy.name()),
+                                    cell.wall_ns,
+                                    cell.installed_ok,
+                                    cell.fell_back,
+                                    cell.source_bytes,
+                                )
+                            })
+                            .collect::<Vec<String>>()
+                            .join("\n")
+                    },
+                    Err(reason) => {
+                        failures += 1;
+                        format!(
+                            "{{\"dnf\":true,\"rep\":{record_index},\"reason\":{}}}",
+                            json_string(&reason)
+                        )
+                    },
+                }
+            },
+            (Mode::Wb | Mode::WbGate, Workload::Anchor(_)) | (Mode::WbGate, _) => {
+                unreachable!("wb requires the ladder workload; wb-gate returned above")
             },
             (Mode::H2, _) => {
                 let arm = args.arm.expect("parse_args requires --arm for h2 mode");
