@@ -116,6 +116,13 @@ pub mod rho_net_drive;
 /// `^float-hoist:{C}` / `^float-merge:{op}` satellites, the shared `^shift`/`^cmp`
 /// install, and the [`language_is_float_bearing`] gate).
 pub mod rho_net_float;
+/// E-3 T-INCR: incremental single-rewrite append over the memoized in-Rho
+/// artifacts — the EM-3 fragment-parse/splice seam consumer, the EM-2
+/// auto-inject ordering repair, and the EM-4b per-rule ruleset bypass, with
+/// fail-closed [`IncrementalUnsupported`] → full re-derive fallback for every
+/// non-admitted family. BENCH-ONLY extension surface (user decision D3): the
+/// E-3 harness + the equivalence gate are its only consumers.
+pub mod rho_net_incremental;
 pub mod rho_net_lower;
 /// Track B (BENCHMARK-ONLY, quarantined): the naive Knotted-Topoi Appendix-A
 /// baseline emitter — compiled ONLY under the `bench-naive-baseline` feature.
@@ -235,6 +242,13 @@ pub use rho_net_subst_trs::{
     reserved_subst_trs_labels, subst_seed_receiver_par, subst_seed_send_par, subst_trs_program_par,
 };
 pub use rho_net_cache::{cached_in_rho_artifacts, CompiledInRhoArtifacts};
+/// E-3 T-INCR (EM-3): the fragment-parse + source-splice seam, re-exported from
+/// `mettail_ast` so the bench harness reaches the extension surface through this
+/// crate alone (no direct ast dependency in the `bench-e3-construction` feature).
+pub use mettail_ast::language::{parse_rewrite_fragment, splice_rewrite_into_source};
+pub use rho_net_incremental::{
+    extend_in_rho_artifacts, IncrementalExtendOutcome, IncrementalUnsupported,
+};
 pub use rho_net_ruleset::{
     compile_in_rho_matching_ruleset, contextual_match_call_par, convert_lhs_pattern,
     in_rho_match_all_sites_call_par, in_rho_match_call_par, in_rho_match_gate_reject,

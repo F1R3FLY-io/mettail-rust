@@ -712,10 +712,7 @@ impl RhoNetProgram {
     }
 
     fn pattern_trace_channel(&self, pattern: &mettail_ast::pattern::Pattern) -> RhoNetChannel {
-        RhoNetChannel::set_automaton_trace(format!(
-            "pattern/{}",
-            fingerprint_fragment("lhs", &pattern_identity(pattern))
-        ))
+        lhs_pattern_trace_channel(pattern)
     }
 
     fn push_channel(&mut self, channel: RhoNetChannel) {
@@ -906,6 +903,23 @@ fn collect_unique<'a>(
         }
     }
     UniqueIndex { values, diagnostics }
+}
+
+/// The set-automaton TRACE channel of one rule-spec LHS pattern —
+/// `sa:pattern/lhs:{fnv1a64(pattern_identity(lhs))}`. The SINGLE derivation both
+/// the plan builder ([`RhoNetProgram::pattern_trace_channel`], which delegates
+/// here) and the E-3 T-INCR per-rule bypass (`rho_net_incremental`) use, so the
+/// incremental accept channel can never drift from the batch site channel.
+///
+/// Pattern-CONTENT-hashed and therefore fingerprint- AND declaration-index-
+/// independent (red-team amendment EM-6): a rule append never changes an existing
+/// rule's trace channel, and the appended rule's channel is derivable per-rule
+/// without re-running the lowering pipeline (EM-4b).
+pub(crate) fn lhs_pattern_trace_channel(pattern: &mettail_ast::pattern::Pattern) -> RhoNetChannel {
+    RhoNetChannel::set_automaton_trace(format!(
+        "pattern/{}",
+        fingerprint_fragment("lhs", &pattern_identity(pattern))
+    ))
 }
 
 fn fingerprint_fragment(prefix: &str, text: &str) -> String {

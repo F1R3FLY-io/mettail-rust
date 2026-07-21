@@ -3080,6 +3080,168 @@ fn parse_rewrite_rule(input: ParseStream) -> SynResult<RewriteRule> {
     })
 }
 
+/// E-3 T-INCR (red-team amendment EM-3): parse a bare REWRITE-RULE FRAGMENT — one or
+/// more `Name . |- lhs ~> rhs ;` lines exactly as they appear inside a `language!`
+/// body's `rewrites { … }` block — through the SAME private [`parse_rewrites`]
+/// production parser (including its comment skipping and optional semicolons), by
+/// wrapping the fragment in a synthetic `rewrites { … }` block.
+///
+/// This is the fragment-parse seam the incremental rule-append path
+/// (`rholang-codegen::extend_in_rho_artifacts`) uses so a single-rewrite append never
+/// re-parses the whole definition source. Every parsed rule carries
+/// `is_auto_injected: false` (a user-authored fragment), exactly as a full-source
+/// parse would. Trailing garbage after the last rule fails closed with the production
+/// parser's own error (nothing is silently dropped).
+pub fn parse_rewrite_fragment(fragment: &str) -> SynResult<Vec<RewriteRule>> {
+    syn::parse::Parser::parse_str(parse_rewrites, &format!("rewrites {{ {fragment} }}"))
+}
+
+/// E-3 T-INCR (red-team amendment EM-3): splice a rewrite-rule fragment into a
+/// `language!` definition source's `rewrites { … }` block, producing the EXTENDED
+/// source string — the memo key of the extended artifacts AND the input of the
+/// batch (full re-derive) arm, so both arms derive from one identical source.
+///
+/// The fragment is inserted immediately before the block's closing `}`; because
+/// `LanguageDef` sources carry a SINGLE `rewrites` block per language, the splice
+/// point is unambiguous — this function REQUIRES exactly one block and fails closed
+/// otherwise (zero blocks: nothing to extend; multiple: ambiguous). The scan honors
+/// `//` line comments and string literals (a `rewrites` keyword or brace inside
+/// either never counts), and the block's braces are depth-matched (rewrite patterns
+/// may contain `{…}` collection literals).
+pub fn splice_rewrite_into_source(source: &str, fragment: &str) -> Result<String, String> {
+    let block = find_sole_rewrites_block(source)?;
+    let mut extended = String::with_capacity(source.len() + fragment.len() + 2);
+    extended.push_str(&source[..block.close_index]);
+    // Keep the appended rule on its own line — whitespace never enters the
+    // span-independent definition identity, this is purely for readability.
+    extended.push('\n');
+    extended.push_str(fragment);
+    extended.push('\n');
+    extended.push_str(&source[block.close_index..]);
+    Ok(extended)
+}
+
+/// The sole `rewrites { … }` block of a definition source: the byte index of its
+/// opening `{` and of its matching closing `}` (the splice point).
+struct RewritesBlock {
+    close_index: usize,
+}
+
+/// Scan for the definition source's `rewrites` blocks (comment/string-aware) and
+/// return the sole one; `Err` on zero or more than one (see
+/// [`splice_rewrite_into_source`]).
+fn find_sole_rewrites_block(source: &str) -> Result<RewritesBlock, String> {
+    let bytes = source.as_bytes();
+    let mut blocks: Vec<RewritesBlock> = Vec::with_capacity(1);
+    let mut index = 0usize;
+    while index < bytes.len() {
+        match bytes[index] {
+            // `//` line comment: skip to end of line.
+            b'/' if bytes.get(index + 1) == Some(&b'/') => {
+                while index < bytes.len() && bytes[index] != b'\n' {
+                    index += 1;
+                }
+            },
+            // String literal: skip to the closing quote (honoring escapes).
+            b'"' => {
+                index += 1;
+                while index < bytes.len() {
+                    match bytes[index] {
+                        b'\\' => index += 2,
+                        b'"' => {
+                            index += 1;
+                            break;
+                        },
+                        _ => index += 1,
+                    }
+                }
+            },
+            // Candidate `rewrites` keyword at an identifier boundary.
+            b'r' if source[index..].starts_with("rewrites")
+                && !prev_is_ident_byte(bytes, index)
+                && !next_is_ident_byte(bytes, index + "rewrites".len()) =>
+            {
+                let after_keyword = index + "rewrites".len();
+                if let Some(open) = next_non_ws(bytes, after_keyword).filter(|&at| bytes[at] == b'{')
+                {
+                    let close = matching_close_brace(source, open)?;
+                    blocks.push(RewritesBlock { close_index: close });
+                    index = close + 1;
+                    continue;
+                }
+                index = after_keyword;
+            },
+            _ => index += 1,
+        }
+    }
+    match blocks.len() {
+        1 => Ok(blocks.pop().expect("exactly one rewrites block was collected")),
+        0 => Err("definition source has no `rewrites { … }` block to splice into".to_string()),
+        n => Err(format!(
+            "definition source has {n} `rewrites {{ … }}` blocks — the splice point is ambiguous"
+        )),
+    }
+}
+
+fn prev_is_ident_byte(bytes: &[u8], index: usize) -> bool {
+    index
+        .checked_sub(1)
+        .is_some_and(|prev| bytes[prev].is_ascii_alphanumeric() || bytes[prev] == b'_')
+}
+
+fn next_is_ident_byte(bytes: &[u8], index: usize) -> bool {
+    bytes
+        .get(index)
+        .is_some_and(|&byte| byte.is_ascii_alphanumeric() || byte == b'_')
+}
+
+/// The index of the first non-whitespace byte at or after `from`.
+fn next_non_ws(bytes: &[u8], from: usize) -> Option<usize> {
+    (from..bytes.len()).find(|&at| !bytes[at].is_ascii_whitespace())
+}
+
+/// The index of the `}` matching the `{` at `open` (depth-matched, comment/string-aware).
+fn matching_close_brace(source: &str, open: usize) -> Result<usize, String> {
+    let bytes = source.as_bytes();
+    debug_assert_eq!(bytes[open], b'{');
+    let mut depth = 0usize;
+    let mut index = open;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'/' if bytes.get(index + 1) == Some(&b'/') => {
+                while index < bytes.len() && bytes[index] != b'\n' {
+                    index += 1;
+                }
+                continue;
+            },
+            b'"' => {
+                index += 1;
+                while index < bytes.len() {
+                    match bytes[index] {
+                        b'\\' => index += 2,
+                        b'"' => {
+                            index += 1;
+                            break;
+                        },
+                        _ => index += 1,
+                    }
+                }
+                continue;
+            },
+            b'{' => depth += 1,
+            b'}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Ok(index);
+                }
+            },
+            _ => {},
+        }
+        index += 1;
+    }
+    Err("unbalanced braces in the `rewrites { … }` block".to_string())
+}
+
 /// Parse logic block: custom Ascent relations and rules
 /// Syntax: logic { <ascent-syntax> }
 ///
@@ -3135,3 +3297,104 @@ fn parse_logic(input: ParseStream) -> SynResult<LogicBlock> {
 // These tests verify the parser can handle the four sub-block forms (direct
 // predicates, connectives, theories, channels) plus annotations and the
 // variadic/typed parameter forms. Comprehensive tests live in Phase 9.
+
+// ══════════════════════════════════════════════════════════════════════════════
+// E-3 T-INCR (EM-3): fragment-parse + source-splice seam tests
+// ══════════════════════════════════════════════════════════════════════════════
+
+#[cfg(test)]
+mod rewrite_fragment_tests {
+    use super::*;
+
+    #[test]
+    fn parses_a_single_base_rewrite_fragment() {
+        let rules = parse_rewrite_fragment("MX0 . |- (R0 (S (S x))) ~> (Wrap x) ;")
+            .expect("a base-shape rewrite line parses");
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].name.to_string(), "MX0");
+        assert!(rules[0].premises.is_empty());
+        assert!(rules[0].type_context.is_empty());
+        assert!(!rules[0].is_auto_injected, "a user fragment is never auto-injected");
+    }
+
+    #[test]
+    fn parses_a_congruence_fragment_with_its_premise() {
+        let rules = parse_rewrite_fragment("WrapCong . | S ~> T |- (Wrap S) ~> (Wrap T) ;")
+            .expect("a congruence rewrite line parses");
+        assert_eq!(rules.len(), 1);
+        assert!(rules[0].is_congruence_rule(), "the premise survives the fragment parse");
+    }
+
+    #[test]
+    fn parses_multiple_rules_and_rejects_garbage() {
+        let rules = parse_rewrite_fragment(
+            "A0 . |- (R0 x) ~> (Wrap x) ; A1 . |- (R1 x) ~> (Wrap x) ;",
+        )
+        .expect("two rewrite lines parse");
+        assert_eq!(rules.len(), 2);
+        assert!(
+            parse_rewrite_fragment("not a rewrite ~~~").is_err(),
+            "garbage fails closed through the production parser"
+        );
+    }
+
+    #[test]
+    fn splice_extends_the_sole_rewrites_block_and_reparses() {
+        let source = r#"
+            name: SpliceSmoke,
+            types { Proc }
+            terms {
+                Wrap . x:Proc |- "wrap" "(" x ")" : Proc ;
+                R0 . x:Proc |- "r0" "(" x ")" : Proc ;
+                S . x:Proc |- "s" "(" x ")" : Proc ;
+            }
+            equations {}
+            rewrites {
+                M0 . |- (R0 (S x)) ~> (Wrap x) ;
+            }
+        "#;
+        let extended = splice_rewrite_into_source(source, "MX0 . |- (R0 (S (S x))) ~> (Wrap x) ;")
+            .expect("the sole rewrites block splices");
+        let def = syn::parse_str::<LanguageDef>(&extended).expect("the extended source parses");
+        let names: Vec<String> = def.rewrites.iter().map(|r| r.name.to_string()).collect();
+        assert_eq!(names, ["M0", "MX0"], "the spliced rule lands at the END of the block");
+    }
+
+    #[test]
+    fn splice_is_comment_and_string_aware() {
+        // A `rewrites` keyword inside a comment and a brace inside a display string
+        // must not confuse the scanner.
+        let source = r#"
+            name: SpliceGuards,
+            // the rewrites { of this comment is not a block
+            types { Proc }
+            terms {
+                Brace . x:Proc |- "{" x "}" : Proc ;
+            }
+            equations {}
+            rewrites {
+                // rewrites } comment inside the block
+                M0 . |- (Brace x) ~> (Brace x) ;
+            }
+        "#;
+        let extended = splice_rewrite_into_source(source, "M1 . |- (Brace (Brace x)) ~> (Brace x) ;")
+            .expect("comment/string guards hold");
+        let def = syn::parse_str::<LanguageDef>(&extended).expect("the extended source parses");
+        assert_eq!(def.rewrites.len(), 2);
+    }
+
+    #[test]
+    fn splice_fails_closed_without_exactly_one_block() {
+        assert!(
+            splice_rewrite_into_source("name: NoBlock, types { Proc }", "M . |- x ~> x ;")
+                .expect_err("zero blocks fail closed")
+                .contains("no `rewrites"),
+        );
+        let two = "rewrites { } rewrites { }";
+        assert!(
+            splice_rewrite_into_source(two, "M . |- x ~> x ;")
+                .expect_err("two blocks fail closed")
+                .contains("ambiguous"),
+        );
+    }
+}

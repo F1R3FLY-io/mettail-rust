@@ -135,6 +135,39 @@ impl CompiledInRhoArtifacts {
         })
     }
 
+    /// E-3 T-INCR: assemble artifacts from an INCREMENTAL rule-append derivation
+    /// (`crate::rho_net_incremental::extend_in_rho_artifacts`) — the extended
+    /// source, the EM-2-repaired extended [`LanguageDef`], and the bypass-derived
+    /// [`InRhoMatchingRuleset`], which SEEDS the `ruleset` cell.
+    ///
+    /// The seeded value is REQUIRED to equal what the cell's own init closure
+    /// would derive (`compile_in_rho_matching_ruleset(&def)`) — that is exactly
+    /// the T-INCR equivalence obligation, enforced by the fail-closed admission
+    /// checks + the debug-build batch cross-check in `rho_net_incremental` and by
+    /// the standing E-3 equivalence-gate tests — so memoization transparency (the
+    /// EM-10 payoff) is preserved: no observer can distinguish a seeded cell from
+    /// a demand-derived one. The `lowered`/`installed_par` cells start UNSET and
+    /// derive on demand from `def` through the SAME pure pipeline functions as any
+    /// batch-derived artifacts (which is what reduces the incremental installed-Par
+    /// byte-equality to LanguageDef identity).
+    pub(crate) fn from_incremental_parts(
+        definition_source: String,
+        def: LanguageDef,
+        ruleset: InRhoMatchingRuleset,
+    ) -> Self {
+        let seeded = OnceCell::new();
+        seeded
+            .set(ruleset)
+            .unwrap_or_else(|_| unreachable!("a freshly created OnceCell accepts one set"));
+        Self {
+            definition_source,
+            def,
+            lowered: OnceCell::new(),
+            ruleset: seeded,
+            installed_par: OnceCell::new(),
+        }
+    }
+
     /// The scalar/contract lowering of [`def`](Self::def), derived on first call
     /// (`lower_language_def` — a pure pipeline function, per the EM-10 invariant).
     pub fn lowered(&self) -> &RhoLowering {
@@ -229,18 +262,31 @@ pub fn cached_in_rho_artifacts(
     }
 
     let artifacts = Arc::new(CompiledInRhoArtifacts::derive(definition_source)?);
+    insert_in_rho_artifacts(&artifacts);
+    Ok(artifacts)
+}
+
+/// Insert already-derived artifacts into the calling thread's cache under their own
+/// source's hash — the ONE key scheme (`memo stays one-key-per-source`, E-3 design
+/// §4.3). Shared by [`cached_in_rho_artifacts`] (batch derivation) and the E-3
+/// T-INCR incremental append path (`crate::rho_net_incremental`), which derives the
+/// EXTENDED source's artifacts without re-parsing it and then memoizes them exactly
+/// where a batch derivation of that source would land. The same collision guard
+/// applies: a verified `u64` collision keeps the existing slot (the fresh artifacts
+/// stay correct, merely uncached).
+pub(crate) fn insert_in_rho_artifacts(artifacts: &Arc<CompiledInRhoArtifacts>) {
+    let key = source_hash(&artifacts.definition_source);
     IN_RHO_ARTIFACTS.with(|cache| {
         let mut cache = cache.borrow_mut();
         match cache.get(&key) {
             // A verified `u64` collision (astronomically unlikely): keep the existing slot and
             // hand back the freshly derived artifacts uncached — correct, never aliased.
-            Some(existing) if existing.definition_source != definition_source => {},
+            Some(existing) if existing.definition_source != artifacts.definition_source => {},
             _ => {
-                cache.insert(key, Arc::clone(&artifacts));
+                cache.insert(key, Arc::clone(artifacts));
             },
         }
     });
-    Ok(artifacts)
 }
 
 #[cfg(test)]
