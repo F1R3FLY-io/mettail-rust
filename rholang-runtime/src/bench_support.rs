@@ -1397,6 +1397,56 @@ pub async fn drive_arm_with_counters(
     ))
 }
 
+/// Rewrite EVERY occurrence of the reflected-constructor tag
+/// `mettail.term.{fingerprint}.{from_label}` to `…{to_label}` in `program`'s
+/// serialized bytes and re-decode (the SM-8 corrupt-bundle probe). The rewrite
+/// MUST be length-preserving (`from_label.len() == to_label.len()`) so every
+/// protobuf length prefix stays valid — a targeted, byte-exact skeleton
+/// corruption that needs no `Par`-walker. Fail-loud (`Err`) if the lengths
+/// differ, the target tag is absent, or the mutated bytes do not re-decode.
+///
+/// Corrupting a scion bundle's graft label this way makes the TREATMENT
+/// reassemble a `{to_label}`-headed term where control rests a
+/// `{from_label}`-headed NF, so the resting-term (OUT) gate detects the
+/// divergence WHILE the firing sequence is unchanged — the fail-closed
+/// demonstration SM-8a asks for.
+#[cfg(feature = "bench-scion")]
+pub fn corrupt_reflected_label(
+    program: &Par,
+    fingerprint: &str,
+    from_label: &str,
+    to_label: &str,
+) -> Result<Par, String> {
+    let from = format!("{}{fingerprint}.{from_label}", crate::REFLECTED_TERM_ABI_PREFIX);
+    let to = format!("{}{fingerprint}.{to_label}", crate::REFLECTED_TERM_ABI_PREFIX);
+    if from.len() != to.len() {
+        return Err(format!(
+            "corrupt_reflected_label: rewrite must be length-preserving — {from:?} ({} B) vs \
+             {to:?} ({} B)",
+            from.len(),
+            to.len()
+        ));
+    }
+    let (from_bytes, to_bytes) = (from.as_bytes(), to.as_bytes());
+    let mut bytes = program.encode_to_vec();
+    let mut count = 0usize;
+    let mut index = 0usize;
+    while index + from_bytes.len() <= bytes.len() {
+        if &bytes[index..index + from_bytes.len()] == from_bytes {
+            bytes[index..index + from_bytes.len()].copy_from_slice(to_bytes);
+            count += 1;
+            index += from_bytes.len();
+        } else {
+            index += 1;
+        }
+    }
+    if count == 0 {
+        return Err(format!("corrupt_reflected_label: target tag {from:?} not found in program"));
+    }
+    Par::decode(bytes.as_slice())
+        .map_err(|error| format!("corrupt_reflected_label: mutated bytes did not re-decode: {error}"))
+}
+
 /// Peek every resting `Par` on a quoted channel (`get_data` — NON-consuming, so
 /// no COMM is recorded on the counting space), the counting-runtime twin of
 /// `run::read_ground_from_runtime` with the verbatim reader.
