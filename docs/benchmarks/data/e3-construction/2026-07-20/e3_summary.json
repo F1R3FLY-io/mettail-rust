@@ -1,0 +1,382 @@
+{
+  "spans": {
+    "lambda": {
+      "source_bytes": 540,
+      "wall": {
+        "n": 30,
+        "mean_ns": 27405953.333333332,
+        "sd_ns": 104783.36638178243,
+        "median_ns": 27392948.5,
+        "min_ns": 27188045,
+        "max_ns": 27648047
+      },
+      "installed_ok_all": true,
+      "mismatched_spans_total": 0,
+      "dnfs": 0,
+      "self_ns_sum_median": 27363503.0,
+      "phases": {
+        "reconstruct": {
+          "activations_median": 1.0,
+          "self_ns_median": 62954.5,
+          "self_share_of_wall": 0.0022982009402894325,
+          "total_ns_median": 62954.5
+        },
+        "lower_language_def": {
+          "activations_median": 81.0,
+          "self_ns_median": 442118.0,
+          "self_share_of_wall": 0.01613984708509929,
+          "total_ns_median": 442118.0
+        },
+        "from_language_def": {
+          "activations_median": 81.0,
+          "self_ns_median": 1338560.0,
+          "self_share_of_wall": 0.048865130382003234,
+          "total_ns_median": 1338560.0
+        },
+        "compile_in_rho_matching_ruleset": {
+          "activations_median": 10.0,
+          "self_ns_median": 1734878.5,
+          "self_share_of_wall": 0.06333303258683526,
+          "total_ns_median": 47069435.0
+        },
+        "lower_to_par": {
+          "activations_median": 81.0,
+          "self_ns_median": 23472334.0,
+          "self_share_of_wall": 0.8568750457804861,
+          "total_ns_median": 46488789.5
+        },
+        "installed_program_par": {
+          "activations_median": 1.0,
+          "self_ns_median": 311626.0,
+          "self_share_of_wall": 0.011376139373970641,
+          "total_ns_median": 311626.0
+        }
+      },
+      "deferred_phases_self_share": 0.9332561626215593
+    },
+    "ambient": {
+      "source_bytes": 3586,
+      "wall": {
+        "n": 30,
+        "mean_ns": 47267025.766666666,
+        "sd_ns": 199950.3447908459,
+        "median_ns": 47235370.0,
+        "min_ns": 46993627,
+        "max_ns": 47862193
+      },
+      "installed_ok_all": true,
+      "mismatched_spans_total": 0,
+      "dnfs": 0,
+      "self_ns_sum_median": 47124995.0,
+      "phases": {
+        "reconstruct": {
+          "activations_median": 1.0,
+          "self_ns_median": 161215.5,
+          "self_share_of_wall": 0.00341302502764348,
+          "total_ns_median": 161215.5
+        },
+        "lower_language_def": {
+          "activations_median": 81.0,
+          "self_ns_median": 945962.0,
+          "self_share_of_wall": 0.02002656060490264,
+          "total_ns_median": 945962.0
+        },
+        "from_language_def": {
+          "activations_median": 81.0,
+          "self_ns_median": 4465529.0,
+          "self_share_of_wall": 0.09453782197535449,
+          "total_ns_median": 4465529.0
+        },
+        "compile_in_rho_matching_ruleset": {
+          "activations_median": 10.0,
+          "self_ns_median": 2088127.5,
+          "self_share_of_wall": 0.044206862357593475,
+          "total_ns_median": 50995125.5
+        },
+        "lower_to_par": {
+          "activations_median": 81.0,
+          "self_ns_median": 37595002.0,
+          "self_share_of_wall": 0.7959078546436706,
+          "total_ns_median": 48293610.0
+        },
+        "installed_program_par": {
+          "activations_median": 1.0,
+          "self_ns_median": 1866568.0,
+          "self_share_of_wall": 0.039516320079635237,
+          "total_ns_median": 1866568.0
+        }
+      },
+      "deferred_phases_self_share": 0.949988557303563
+    },
+    "calculator": {
+      "source_bytes": 39927,
+      "wall": {
+        "n": 30,
+        "mean_ns": 49114642.86666667,
+        "sd_ns": 223151.2346115774,
+        "median_ns": 49071149.5,
+        "min_ns": 48686185,
+        "max_ns": 49776692
+      },
+      "installed_ok_all": false,
+      "mismatched_spans_total": 0,
+      "dnfs": 0,
+      "self_ns_sum_median": 48899097.5,
+      "phases": {
+        "reconstruct": {
+          "activations_median": 1.0,
+          "self_ns_median": 3292521.0,
+          "self_share_of_wall": 0.06709687939957469,
+          "total_ns_median": 3292521.0
+        },
+        "lower_language_def": {
+          "activations_median": 9.0,
+          "self_ns_median": 14496023.0,
+          "self_share_of_wall": 0.29540826224174754,
+          "total_ns_median": 14496023.0
+        },
+        "from_language_def": {
+          "activations_median": 9.0,
+          "self_ns_median": 24021674.0,
+          "self_share_of_wall": 0.4895274360752442,
+          "total_ns_median": 24021674.0
+        },
+        "compile_in_rho_matching_ruleset": {
+          "activations_median": 1.0,
+          "self_ns_median": 2944818.0,
+          "self_share_of_wall": 0.06001118844790868,
+          "total_ns_median": 40970625.0
+        },
+        "lower_to_par": {
+          "activations_median": 9.0,
+          "self_ns_median": 4159118.5,
+          "self_share_of_wall": 0.08475689977468329,
+          "total_ns_median": 4159118.5
+        },
+        "installed_program_par": {
+          "activations_median": 1.0,
+          "self_ns_median": 1102.0,
+          "self_share_of_wall": 2.245718739480517e-05,
+          "total_ns_median": 1102.0
+        }
+      },
+      "deferred_phases_self_share": 0.8697150552790698
+    },
+    "rhocalc": {
+      "source_bytes": 111007,
+      "wall": {
+        "n": 30,
+        "mean_ns": 91408402.66666667,
+        "sd_ns": 350983.67133915593,
+        "median_ns": 91390786.5,
+        "min_ns": 90684232,
+        "max_ns": 92053267
+      },
+      "installed_ok_all": false,
+      "mismatched_spans_total": 0,
+      "dnfs": 0,
+      "self_ns_sum_median": 91233409.0,
+      "phases": {
+        "reconstruct": {
+          "activations_median": 1.0,
+          "self_ns_median": 10744431.0,
+          "self_share_of_wall": 0.117565800793278,
+          "total_ns_median": 10744431.0
+        },
+        "lower_language_def": {
+          "activations_median": 9.0,
+          "self_ns_median": 15923611.5,
+          "self_share_of_wall": 0.17423650796571272,
+          "total_ns_median": 15923611.5
+        },
+        "from_language_def": {
+          "activations_median": 9.0,
+          "self_ns_median": 56022390.0,
+          "self_share_of_wall": 0.612998226030148,
+          "total_ns_median": 56022390.0
+        },
+        "compile_in_rho_matching_ruleset": {
+          "activations_median": 1.0,
+          "self_ns_median": 5249275.5,
+          "self_share_of_wall": 0.05743768820722426,
+          "total_ns_median": 72048027.0
+        },
+        "lower_to_par": {
+          "activations_median": 9.0,
+          "self_ns_median": 3261302.5,
+          "self_share_of_wall": 0.035685243829256245,
+          "total_ns_median": 3261302.5
+        },
+        "installed_program_par": {
+          "activations_median": 1.0,
+          "self_ns_median": 185.5,
+          "self_share_of_wall": 2.029745088144088e-06,
+          "total_ns_median": 185.5
+        }
+      },
+      "deferred_phases_self_share": 0.8229220075702051
+    }
+  },
+  "h2": {
+    "lambda": {
+      "eager-control": {
+        "n": 30,
+        "mean_ns": 27425239.666666668,
+        "sd_ns": 114601.69246939843,
+        "median_ns": 27403153.0,
+        "min_ns": 27193726,
+        "max_ns": 27668486,
+        "dnfs": 0
+      },
+      "lazy-gate-only": {
+        "n": 30,
+        "mean_ns": 24114520.2,
+        "sd_ns": 80144.70539115158,
+        "median_ns": 24099565.5,
+        "min_ns": 23934267,
+        "max_ns": 24294090,
+        "dnfs": 0
+      },
+      "lazy-force-installed": {
+        "n": 30,
+        "mean_ns": 27454807.733333334,
+        "sd_ns": 141782.06738583796,
+        "median_ns": 27449811.0,
+        "min_ns": 27123333,
+        "max_ns": 27740913,
+        "dnfs": 0
+      },
+      "h2v2_win": {
+        "absolute_ns_median": 3303587.5,
+        "relative_of_eager_median": 0.12055501423504077,
+        "welch_t_eager_gt_gate": 129.66864773286554,
+        "welch_df": 51.89070714440146,
+        "cohens_d": 33.480300879641625
+      },
+      "full_path_guard": {
+        "relative_delta_of_eager_median": 0.001702650786206974,
+        "guard_2pct_pass_on_medians": true
+      }
+    },
+    "ambient": {
+      "eager-control": {
+        "n": 30,
+        "mean_ns": 47355133.03333333,
+        "sd_ns": 209604.62330589406,
+        "median_ns": 47328095.0,
+        "min_ns": 47001912,
+        "max_ns": 47838619,
+        "dnfs": 0
+      },
+      "lazy-gate-only": {
+        "n": 30,
+        "mean_ns": 40648590.8,
+        "sd_ns": 223830.56733107683,
+        "median_ns": 40584943.5,
+        "min_ns": 40326218,
+        "max_ns": 41355239,
+        "dnfs": 0
+      },
+      "lazy-force-installed": {
+        "n": 30,
+        "mean_ns": 47178322.4,
+        "sd_ns": 238402.09541294465,
+        "median_ns": 47144953.5,
+        "min_ns": 46731369,
+        "max_ns": 47713862,
+        "dnfs": 0
+      },
+      "h2v2_win": {
+        "absolute_ns_median": 6743151.5,
+        "relative_of_eager_median": 0.14247671494067107,
+        "welch_t_eager_gt_gate": 119.78883070889901,
+        "welch_df": 57.75168478831911,
+        "cohens_d": 30.929343093148365
+      },
+      "full_path_guard": {
+        "relative_delta_of_eager_median": -0.003869614866180437,
+        "guard_2pct_pass_on_medians": true
+      }
+    },
+    "calculator": {
+      "eager-control": {
+        "n": 30,
+        "mean_ns": 49165751.13333333,
+        "sd_ns": 250510.489990936,
+        "median_ns": 49147329.0,
+        "min_ns": 48706824,
+        "max_ns": 49692722,
+        "dnfs": 0
+      },
+      "lazy-gate-only": {
+        "n": 30,
+        "mean_ns": 44166703.56666667,
+        "sd_ns": 193498.40042993554,
+        "median_ns": 44139511.5,
+        "min_ns": 43872220,
+        "max_ns": 44547350,
+        "dnfs": 0
+      },
+      "lazy-force-installed": {
+        "n": 30,
+        "mean_ns": 49213037.733333334,
+        "sd_ns": 262432.0097897192,
+        "median_ns": 49193447.0,
+        "min_ns": 48865154,
+        "max_ns": 50276469,
+        "dnfs": 0
+      },
+      "h2v2_win": {
+        "absolute_ns_median": 5007817.5,
+        "relative_of_eager_median": 0.10189399102441558,
+        "welch_t_eager_gt_gate": 86.50082335297726,
+        "welch_df": 54.52012629819143,
+        "cohens_d": 22.334416551954035
+      },
+      "full_path_guard": {
+        "relative_delta_of_eager_median": 0.0009383622861783597,
+        "guard_2pct_pass_on_medians": true
+      }
+    },
+    "rhocalc": {
+      "eager-control": {
+        "n": 30,
+        "mean_ns": 97751054.46666667,
+        "sd_ns": 330611.9733609731,
+        "median_ns": 97795807.5,
+        "min_ns": 97181508,
+        "max_ns": 98345705,
+        "dnfs": 0
+      },
+      "lazy-gate-only": {
+        "n": 30,
+        "mean_ns": 82631587.2,
+        "sd_ns": 495254.456333962,
+        "median_ns": 82558049.0,
+        "min_ns": 81871167,
+        "max_ns": 83784834,
+        "dnfs": 0
+      },
+      "lazy-force-installed": {
+        "n": 30,
+        "mean_ns": 91078718.36666666,
+        "sd_ns": 391615.46162050375,
+        "median_ns": 91026706.5,
+        "min_ns": 90588271,
+        "max_ns": 92275539,
+        "dnfs": 0
+      },
+      "h2v2_win": {
+        "absolute_ns_median": 15237758.5,
+        "relative_of_eager_median": 0.15581198099928772,
+        "welch_t_eager_gt_gate": 139.0718497174216,
+        "welch_df": 50.56438898722614,
+        "cohens_d": 35.908197192122294
+      },
+      "full_path_guard": {
+        "relative_delta_of_eager_median": -0.06921667884382467,
+        "guard_2pct_pass_on_medians": true
+      }
+    }
+  }
+}
