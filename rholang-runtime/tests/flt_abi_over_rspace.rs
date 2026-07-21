@@ -17,15 +17,19 @@
 //!   * Beat 5 (Ω) — fuel exhaustion is typed and fail-closed: Ω fires exactly per-path-fuel
 //!     times, the stuck redex rests on `^drive-fuel`, and OUT never claims an NF.
 //!
-//! ── What is NOT wireable phase-now (Beats 1/2/3, see the ignored ledger test below) ───────
+//! ── The typed-hole FLT receive (Beats 1/2/3), hand-built against the matcher contract ──────
 //!   The FLT receive-with-typed-hole (`for( @[⌜App⌝, ${f}, ⟦K⟧] <- @"fltX" ){…}`) needs a
 //!   receive whose `BindPattern` is a reflected EList carrying a `FreeVar` at the hole and a
-//!   GROUND reflected subterm elsewhere. The only reflector that admits variables in a pattern,
-//!   `reflect_term_par_env` (rho_net_lower.rs:3607), is PRIVATE, and no public "`^free` leaf →
-//!   match `FreeVar`" transformation is exported (`lib.rs` exports only the GROUND
-//!   `reflect_ground_term_par`). So the run sheet's hole convention is not wireable from the
-//!   public surface today; those observables stay VALIDATE, not asserted. Details in the
-//!   ignored test.
+//!   GROUND reflected subterm elsewhere. No PUBLIC reflector emits such a pattern —
+//!   `reflect_ground_term_par` is ground-only, and `reflect_term_par_env` (rho_net_lower.rs:3607)
+//!   is private and emits σ-slot `BoundVar`s, not receive `FreeVar`s. But the pattern is
+//!   realizable TEST-SIDE with the `models` builders (mirroring the proven in-tree
+//!   `e6a_support::discovery_call_par` receive shape): a reflected tagged-EList whose head is the
+//!   unforgeable `GPrivate` tag (from the public `reflect_ground_term_par`), whose function
+//!   position is `EVar(FreeVar(0))`, and whose argument position is a ground reflected subterm.
+//!   This lands all three beats on the reducer with ZERO production change (no reflector API is
+//!   exposed) — validated below: the hole binds ⟦id⟧, the ground subpattern discriminates a
+//!   foreign argument, and the unforgeable tag rejects a GString-tagged counterfeit.
 #![cfg(feature = "lambda-runtime")]
 
 use mettail_languages::lambda::LambdaLanguage;
@@ -39,9 +43,17 @@ use mettail_rholang_codegen::{
 };
 use mettail_rholang_runtime::{
     binder_apply_redex_present, drive_cross_check, par_as_runtime_observation_value,
-    DriveObservationChannels, PlannedRhoBackend,
+    run_normalized_par_for_oracle_and_read_runtime_values, DriveObservationChannels,
+    PlannedRhoBackend,
 };
 use mettail_runtime::{Language, RuntimeObservationValue};
+use models::create_bit_vector;
+use models::rhoapi::expr::ExprInstance;
+use models::rhoapi::{Par, ReceiveBind};
+use models::rust::utils::{
+    new_boundvar_par, new_elist_par, new_freevar_par, new_gstring_par, new_receive_par,
+    new_send_par,
+};
 
 // ── the shared Lambda Rho-default backend (identical derivation to rho_net_lambda_firing.rs) ──
 
@@ -229,38 +241,160 @@ async fn beat5_omega_exhausts_fuel_with_the_typed_datum() {
     assert!(set.err_data.is_empty(), "no unrecognized head — the err channel stays empty");
 }
 
-// ── Beats 1/2/3 — the typed-hole FLT rendezvous (NOT wireable from the public surface) ──────
+// ── Beats 1/2/3 — the typed-hole FLT rendezvous (hand-built against the matcher contract) ────
+//
+// VALIDATE-FIRST OUTCOME: the run sheet's hole convention IS realizable phase-now by
+// hand-constructing the receive `BindPattern` directly with the `models` crate — no production
+// reflector API is exposed and no production code changes. The public surface still lacks a
+// `^free`→`FreeVar` reflector (`reflect_ground_term_par` is ground-only; `reflect_term_par_env`,
+// rho_net_lower.rs:3607, is private and emits σ-slot `BoundVar`s, NOT receive `FreeVar`s), so the
+// pattern is assembled TEST-SIDE: a reflected tagged-EList `[⌜App⌝, EVar(FreeVar(0)), ⟦K⟧]` whose
+// head is the unforgeable `GPrivate` tag (from the public `reflect_ground_term_par`), whose
+// function position is a match `FreeVar` hole, and whose argument position is a GROUND reflected
+// subterm. The receive shape mirrors the proven in-tree builder `e6a_support::discovery_call_par`.
+//
+// This lands all three beats on the running reducer with zero production change:
+//   * Beat 1 — the hole binds: ⟦App(id, K)⟧ matches `[⌜App⌝, ${f}, ⟦K⟧]`, f ← ⟦id⟧, OUT = [⟦id⟧].
+//   * Beat 2 — veto on a foreign subterm (run-sheet D2 ground-subpattern form): ⟦App(id, id)⟧ has
+//     ⟦id⟧ ≠ ⟦K⟧ at the argument position, so it does NOT match and rests; OUT stays empty. (The
+//     equivalent `where a == ⟦K⟧` guard form is ALSO viable — `rho_pure_eval`'s `EEq` is a
+//     structural `Par` equality, not a numeric op — but the ground-subpattern is the wired form.)
+//   * Beat 3 — the counterfeit is rejected: a GString-tagged `["App", ⟦id⟧, ⟦K⟧]` fake carries the
+//     ground string head, not the `GPrivate` tag, so it never matches; OUT stays empty.
 
-/// LEDGER (ignored): Beats 1, 2, and 3 all pivot on a `for`-comprehension whose receive pattern
-/// is a reflected tagged-EList carrying a TYPED HOLE — a `FreeVar` at the function position —
-/// plus (Beat 1) a ground `⟦K⟧` subpattern, (Beat 2) a `where a == ⟦K⟧` guard on `Receive.
-/// condition`, and (Beat 3) the string-tagged counterfeit that must NOT match.
-///
-/// The run sheet's hole convention ("a free variable in the guest pattern source … its `^free`
-/// leaf transformed to a match `FreeVar`") has NO public realization today:
-///   * `reflect_ground_term_par` (the only public reflector) is GROUND-ONLY — it cannot place a
-///     `FreeVar` at a hole.
-///   * `reflect_term_par_env` (rho_net_lower.rs:3607), which DOES admit pattern variables, is a
-///     private `fn` inside rholang-codegen; no "`^free` → `FreeVar`" transformer is exported.
-///   * There is therefore no public builder for an FLT receive `BindPattern`, and no test/helper
-///     precedent for a hand-built mixed `FreeVar`+ground reflected-EList receive.
-///
-/// Consequently the Beat 1/2/3 OBSERVABLES stay VALIDATE — they must not be asserted as fact
-/// from the current public surface. To land them, EITHER expose the pattern reflector +
-/// `^free`→`FreeVar` transform from rholang-codegen (a production-code change, out of scope for
-/// this phase-now demo), OR hand-construct the `Receive`/`ReceiveBind`/`EList`/`Var(FreeVar)` by
-/// hand against the spatial-matcher contract and VALIDATE the observable on the running reducer
-/// before pinning it. This ignored test is the standing record of that gap.
-#[test]
-#[ignore = "VALIDATE: FLT typed-hole receive pattern (^free → FreeVar) has no public builder; see body"]
-fn beats_1_2_3_flt_typed_hole_rendezvous_await_free_var_pattern_builder() {
-    // Intentionally unimplemented: asserting any observable here would be a guess, which the
-    // task forbids. The intended programs (narrated by the demo bin) are, per the run sheet:
-    //   Beat 1:  @"fltX"!(⟦App(id, K)⟧) | for( @[⌜App⌝, ${f}, ⟦K⟧] <- @"fltX" ){ @"OUT"!(f) }
-    //            expected (VALIDATE): OUT [⟦id⟧] (de-reflected `lam x. x`); wrong-shape rests.
-    //   Beat 2:  for( @[⌜App⌝, ${f}, ${a}] <- @"fltX" where a == ⟦K⟧ ){ @"OUT"!(f) }
-    //            expected (VALIDATE): match ⟦App(id,K)⟧ → OUT [⟦id⟧]; ⟦App(id,id)⟧ → veto, rests.
-    //   Beat 3:  send the GString-tagged fake ["App", ⟦id⟧, ⟦K⟧] at the same receive
-    //            expected (VALIDATE): no match; the datum rests (tags compared by identity).
-    panic!("unreachable: ignored ledger test documenting the non-wireable FLT hole mechanism");
+/// The reflected `(⌜App⌝, ⟦id⟧, ⟦K⟧)` triple decomposed from `⟦App(id, K)⟧`
+/// (`EList[GPrivate(⌜App⌝), ⟦id⟧, ⟦K⟧]`) — the unforgeable head tag, plus the two ground children.
+fn reflected_app_parts(fp: &str) -> (Par, Par, Par) {
+    let subject = reflect_ground_term_par(&g_app(g_id(), g_k()), fp);
+    match subject.exprs.first().and_then(|e| e.expr_instance.as_ref()) {
+        Some(ExprInstance::EListBody(list)) => {
+            (list.ps[0].clone(), list.ps[1].clone(), list.ps[2].clone())
+        },
+        other => panic!("⟦App(id, K)⟧ must reflect to a 3-element EList, got {other:?}"),
+    }
+}
+
+fn quoted_name(name: &str) -> Par {
+    new_gstring_par(name.to_string(), Vec::new(), false)
+}
+
+/// Assemble `@"fltX"!(subject) | for( @[tag, ${f}, ground_arg] <- @"fltX" ){ @"OUT"!(f) }` purely
+/// with the `models` builders. The receive `BindPattern` is the reflected tagged-EList carrying a
+/// `FreeVar` hole at the function position and a GROUND subterm at the argument position; the body
+/// republishes the bound hole to `@"OUT"`. Shape mirrors `e6a_support::discovery_call_par`.
+fn hole_rendezvous_program(subject: Par, tag: Par, ground_arg: Par) -> Par {
+    let producer =
+        new_send_par(quoted_name("fltX"), vec![subject], false, Vec::new(), false, Vec::new(), false);
+    // Pattern `[⌜tag⌝, ${f}, ground_arg]`: the FreeVar makes the EList (and its Par) connective-used.
+    let pattern = new_elist_par(
+        vec![tag, new_freevar_par(0, Vec::new()), ground_arg],
+        Vec::new(),
+        true,
+        None,
+        Vec::new(),
+        true,
+    );
+    // Body `@"OUT"!(f)`: the matched hole is BoundVar(0) in the continuation scope.
+    let body = new_send_par(
+        quoted_name("OUT"),
+        vec![new_boundvar_par(0, create_bit_vector(&[0]), false)],
+        false,
+        create_bit_vector(&[0]),
+        false,
+        create_bit_vector(&[0]),
+        false,
+    );
+    let receive = new_receive_par(
+        vec![ReceiveBind {
+            patterns: vec![pattern],
+            source: Some(quoted_name("fltX")),
+            remainder: None,
+            free_count: 1,
+        }],
+        body,
+        false,
+        false,
+        1,
+        Vec::new(),
+        false,
+        Vec::new(),
+        false,
+    );
+    producer.append(receive)
+}
+
+async fn out_values(program: &Par) -> Vec<RuntimeObservationValue> {
+    run_normalized_par_for_oracle_and_read_runtime_values(program, "OUT")
+        .await
+        .expect("the hole-rendezvous program runs to rest on the reducer")
+}
+
+/// Beat 1 — ship an FLT and destructure it with a typed hole: `⟦App(id, K)⟧` matches
+/// `[⌜App⌝, ${f}, ⟦K⟧]`, the function-position hole binds to `⟦id⟧`, and the body republishes it —
+/// OUT decodes to `id = λ.0`. The 1b negative: `⟦K⟧` shipped alone is not an `App` node, so the
+/// receive never fires and OUT stays empty.
+#[tokio::test]
+async fn beat1_typed_hole_binds_the_function_position() {
+    mettail_runtime::clear_var_cache();
+    let (_backend, fp) = lambda_backend();
+    let (tag, _id_reflected, k_reflected) = reflected_app_parts(&fp);
+
+    let subject = reflect_ground_term_par(&g_app(g_id(), g_k()), &fp);
+    let fired = out_values(&hole_rendezvous_program(subject, tag.clone(), k_reflected.clone())).await;
+    assert_eq!(fired, vec![oid()], "the ${{f}} hole binds ⟦id⟧ — OUT de-reflects to λ.0");
+
+    // 1b — ship ⟦K⟧ alone (a λ node, not an App): the App-shaped pattern never fires.
+    let lone_k = reflect_ground_term_par(&g_k(), &fp);
+    let rested = out_values(&hole_rendezvous_program(lone_k, tag, k_reflected)).await;
+    assert!(rested.is_empty(), "⟦K⟧ alone is no App node — no COMM, OUT empty, datum rests on fltX");
+}
+
+/// Beat 2 — the guard vetoes on a foreign subterm (run-sheet D2 ground-subpattern form). Against
+/// the pattern `[⌜App⌝, ${f}, ⟦K⟧]`, `⟦App(id, K)⟧` matches (argument `⟦K⟧` = `⟦K⟧`) and OUT is
+/// `[⟦id⟧]`, whereas `⟦App(id, id)⟧` fails (argument `⟦id⟧` ≠ `⟦K⟧`) and rests — a pure structural
+/// veto, zero partial effects.
+#[tokio::test]
+async fn beat2_where_guard_vetoes_on_foreign_subterm() {
+    mettail_runtime::clear_var_cache();
+    let (_backend, fp) = lambda_backend();
+    let (tag, _id_reflected, k_reflected) = reflected_app_parts(&fp);
+
+    let matches = out_values(&hole_rendezvous_program(
+        reflect_ground_term_par(&g_app(g_id(), g_k()), &fp),
+        tag.clone(),
+        k_reflected.clone(),
+    ))
+    .await;
+    assert_eq!(matches, vec![oid()], "⟦App(id, K)⟧ satisfies the ⟦K⟧ argument subpattern → OUT [⟦id⟧]");
+
+    let vetoed = out_values(&hole_rendezvous_program(
+        reflect_ground_term_par(&g_app(g_id(), g_id()), &fp),
+        tag,
+        k_reflected,
+    ))
+    .await;
+    assert!(vetoed.is_empty(), "⟦App(id, id)⟧ has ⟦id⟧ ≠ ⟦K⟧ at the argument — veto, OUT empty, rests");
+}
+
+/// Beat 3 — the counterfeit is rejected: a `GString`-tagged fake `["App", ⟦id⟧, ⟦K⟧]` carries the
+/// ground string head instead of the unforgeable `GPrivate` tag, so it never matches the
+/// `[⌜App⌝, ${f}, ⟦K⟧]` pattern — the runtime face of the FIP No-Injection property (no surface
+/// syntax spells a `GPrivate`, so a term claiming to be Lambda by NAME cannot match).
+#[tokio::test]
+async fn beat3_counterfeit_tag_rejected() {
+    mettail_runtime::clear_var_cache();
+    let (_backend, fp) = lambda_backend();
+    let (tag, id_reflected, k_reflected) = reflected_app_parts(&fp);
+
+    // Counterfeit datum: a ground-string head where the genuine subject carries the GPrivate tag.
+    let counterfeit = new_elist_par(
+        vec![quoted_name("App"), id_reflected, k_reflected.clone()],
+        Vec::new(),
+        false,
+        None,
+        Vec::new(),
+        false,
+    );
+    let rested = out_values(&hole_rendezvous_program(counterfeit, tag, k_reflected)).await;
+    assert!(rested.is_empty(), "the GString-tagged counterfeit ≠ the GPrivate ⌜App⌝ tag — no match");
 }
