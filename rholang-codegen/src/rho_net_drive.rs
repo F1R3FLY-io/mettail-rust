@@ -2623,6 +2623,51 @@ mod tests {
         );
     }
 
+    /// The (prost length, `DefaultHasher`) fingerprint of an encoded `Par` — the
+    /// `a_s5_6_byte_identity_pins` convention (SipHash-1-3, fixed keys ⇒ cross-process
+    /// deterministic), paired with the exact byte length so any codegen perturbation flips
+    /// at least one component.
+    fn par_fingerprint(par: &Par) -> (usize, u64) {
+        use prost::Message;
+        let bytes = par.encode_to_vec();
+        let mut hasher = std::hash::DefaultHasher::new();
+        std::hash::Hash::hash(&bytes, &mut hasher);
+        (bytes.len(), std::hash::Hasher::finish(&hasher))
+    }
+
+    /// SM-6 (E-1 precondition, delta amendment 2026-07-20): the byte-golden of the admitted
+    /// **synthetic Lambda-shaped** driver — its `^drive` receiver family `Par` and its full
+    /// installed program (β seed + 5 TRS receivers + driver, 7 receives) — captured BEFORE
+    /// the E-1 `firing_emission_node` restructure (design v1 §3.3). Every firing arm here is
+    /// the β `SubstRewrite`, which emits through `firing_emission_node` with
+    /// [`FiringEmission::ContractumRedrive`]; the restructure widens the seam so the
+    /// `ScionBundle` variant bypasses the accept, but `ContractumRedrive` MUST stay
+    /// byte-for-byte identical. This pin — synthetic-def-stable, unlike the
+    /// production-fingerprint-sensitive `a_s5_6` pins — makes that verifiable at the exact
+    /// code path E-1 restructures.
+    #[test]
+    fn sm6_contractum_redrive_synthetic_driver_par_byte_golden() {
+        let def = production_lambda_shaped_def();
+        let lowered = lowered_for(&def);
+        let drive = lowered.drive().expect("the Lambda-shaped def is drive-admitted");
+        assert_eq!(
+            par_fingerprint(drive),
+            (3659, 3607143158242659380),
+            "SM-6: the synthetic-Lambda ^drive receiver family (ContractumRedrive) — pin \
+             pre-restructure; the E-1 firing_emission_node restructure must keep this exact"
+        );
+        let installed = lowered
+            .installed_program_par()
+            .expect("the Lambda-shaped def installs");
+        assert_eq!(installed.receives.len(), 7, "β seed + 5 TRS + ^drive");
+        assert_eq!(
+            par_fingerprint(&installed),
+            (11067, 11426072336861483516),
+            "SM-6: the full synthetic-Lambda installed program (ContractumRedrive) — pin \
+             pre-restructure; ContractumRedrive byte-identity across the E-1 restructure"
+        );
+    }
+
     #[test]
     fn non_opted_in_language_records_not_requested_and_installs_byte_identically() {
         let def = renamed_lambda_shaped_def();
