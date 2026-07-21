@@ -1,0 +1,61 @@
+{
+  "experiment": "E-3 T-E6B / H4v2 (PathMap-backed construction-side fragment store)",
+  "git": "c4d3be6c",
+  "window_utc": "2026-07-21T09:44:07Z..11:18:50Z",
+  "bin_sha256": "6e80d242\u2026",
+  "verdict_deterministic": {
+    "ii_invalidation_exactness": "CONFIRMED: actual==expected on all 12000 rows",
+    "iii_wall_guard": "CONFIRMED: pathmap within \u00b10.5% of hashmap at every r (|\u0394|\u22645% two-sided guard)",
+    "i_retained_bytes": "NOT RENDERED \u2014 harness emitted store_entries (count, 1.00x both arms) but not the retained-BYTES field the frozen (i) requires; a byte-emitting deterministic re-run is needed to render (i)."
+  },
+  "cells": {
+    "r100": {
+      "wall_ms": {
+        "pathmap": 966.9,
+        "hashmap": 966.5,
+        "pm_over_hm": 1.0
+      },
+      "store_entries_final": {
+        "pathmap": 151,
+        "hashmap": 151
+      },
+      "fell_back": 0
+    },
+    "r250": {
+      "wall_ms": {
+        "pathmap": 4434.2,
+        "hashmap": 4436.2,
+        "pm_over_hm": 1.0
+      },
+      "store_entries_final": {
+        "pathmap": 301,
+        "hashmap": 301
+      },
+      "fell_back": 0
+    },
+    "r500": {
+      "wall_ms": {
+        "pathmap": 16622.1,
+        "hashmap": 16537.3,
+        "pm_over_hm": 1.005
+      },
+      "store_entries_final": {
+        "pathmap": 551,
+        "hashmap": 551
+      },
+      "fell_back": 0
+    },
+    "r1000": {
+      "wall_ms": {
+        "pathmap": 61623.8,
+        "hashmap": 62031.8,
+        "pm_over_hm": 0.993
+      },
+      "store_entries_final": {
+        "pathmap": 1051,
+        "hashmap": 1051
+      },
+      "fell_back": 0
+    }
+  }
+}
