@@ -604,7 +604,26 @@ impl RhoNetProgram {
         // to the ruleset phase and excluded from this span's self time.
         let _lower_to_par_span =
             crate::pipeline_spans::phase_span(crate::pipeline_spans::PipelinePhase::LowerToPar);
-        lower(self, def, lowering)
+        // PRODUCTION always lowers under `AllRedrive` — every emitted driver Par is
+        // byte-identical to pre-E-1 (the a_s5_6 / a_s5_8 byte pins guard this).
+        lower(self, def, lowering, crate::rho_net_drive::ScionPolicy::AllRedrive)
+    }
+
+    /// E-1 `bench-scion` surface (design v1 §3.6): lower under a chosen [`ScionPolicy`], so
+    /// the measurement harness can build the TREATMENT installed program (positional
+    /// `BaseRewrite` arms scion'd) alongside the CONTROL ([`Self::lower_to_par`], all
+    /// re-drive). Feature-gated: production never reaches it, and `DRIVE_OPT_IN` is
+    /// untouched.
+    #[cfg(feature = "bench-scion")]
+    pub fn lower_to_par_with_scion_policy(
+        &self,
+        def: &LanguageDef,
+        lowering: &RhoLowering,
+        scion_policy: crate::rho_net_drive::ScionPolicy,
+    ) -> RhoNetLowered {
+        let _lower_to_par_span =
+            crate::pipeline_spans::phase_span(crate::pipeline_spans::PipelinePhase::LowerToPar);
+        lower(self, def, lowering, scion_policy)
     }
 }
 
@@ -622,6 +641,7 @@ pub(crate) fn lower(
     program: &RhoNetProgram,
     def: &LanguageDef,
     lowering: &RhoLowering,
+    scion_policy: crate::rho_net_drive::ScionPolicy,
 ) -> RhoNetLowered {
     let mut rules = Vec::with_capacity(program.rules.len());
     let mut errors = Vec::new();
@@ -725,8 +745,14 @@ pub(crate) fn lower(
     // opt-in check is a name comparison against `crate::rho_net_drive::DRIVE_OPT_IN`
     // (AM-4), so every non-opted-in language takes the `NotRequested` arm at zero cost and
     // its lowering artifact is byte-identical to pre-A-S5.2.
-    let (drive, drive_admission) =
-        crate::rho_net_drive::drive_lowering(def, program, &rules, &errors, &rewrite_by_id);
+    let (drive, drive_admission) = crate::rho_net_drive::drive_lowering(
+        def,
+        program,
+        &rules,
+        &errors,
+        &rewrite_by_id,
+        scion_policy,
+    );
 
     // A-S5.8: the in-Rho `^float` receiver family — generated + installed iff the language
     // passes the float gate (`language_has_float_handler` ∧

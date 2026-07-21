@@ -49,6 +49,14 @@ bench-naive-baseline = []
 # no production entry point or macro-generated code references the gated
 # module, and the `pathmap` dependency itself is gated with it.
 bench-fragment-store = ["dep:pathmap"]
+# BENCHMARK-ONLY QUARANTINE (E-1 scion grafting, pgmcp experiment 147): the
+# `ScionPolicy::StructuralScion` codegen surface (`lower_to_par_with_scion_policy`)
+# that emits per-rule scion bundles for positional `BaseRewrite` arms, so the
+# measurement harness can build the TREATMENT installed program against the CONTROL
+# (all-`ContractumRedrive`) arm. Never enabled by default (user decision D3:
+# bench-only surface, `DRIVE_OPT_IN` untouched); the scion BUILDER itself is always
+# compiled but is only reachable under `StructuralScion`, which this feature gates.
+bench-scion = []
 
 [dev-dependencies]
 # Property-based tests of the Stage 1 term-spread encoding (arbitrary ground terms

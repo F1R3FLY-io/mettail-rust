@@ -587,6 +587,9 @@ pub struct DriveRedexArm {
     pub sigma_vars: Vec<String>,
     /// The source LHS pattern (retained for the fuel-exhaustion datum rebuild).
     pub(crate) lhs: Pattern,
+    /// The source RHS pattern (E-1: retained for the scion-bundle construction —
+    /// [`scion_bundle_for_rule`]; unused when the arm re-drives).
+    pub(crate) rhs: Pattern,
     /// The transcribed tagged-`EList` `Match` pattern (σ variables as `FreeVar`s in
     /// first-occurrence order; binder constructors remapped to their reflected tags).
     pub(crate) pattern: Par,
@@ -594,6 +597,11 @@ pub struct DriveRedexArm {
     /// post-rewrap re-check emission rule (plan v2 §4.3.2; `false` for every bundled
     /// driver language).
     pub(crate) root_is_binder: bool,
+    /// E-1: emit a scion bundle for this arm instead of `ContractumRedrive`. Set only under
+    /// [`ScionPolicy::StructuralScion`] for a positional `BaseRewrite` arm (never β
+    /// `SubstRewrite`); ALWAYS `false` on the production path ([`ScionPolicy::AllRedrive`]),
+    /// keeping every emitted driver byte-identical.
+    pub(crate) scion: bool,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────────────────────
@@ -1890,6 +1898,7 @@ pub(crate) fn drive_lowering(
     rules: &[RhoNetLoweredRule],
     errors: &[RhoNetLoweringError],
     rewrite_by_id: &HashMap<String, &RewriteRule>,
+    policy: ScionPolicy,
 ) -> (Option<Par>, DriveAdmission) {
     let name = def.name.to_string();
     if !DRIVE_OPT_IN.contains(&name.as_str()) {
@@ -1937,18 +1946,24 @@ pub(crate) fn drive_lowering(
     let mut nested_ac_arms: Vec<DriveArm> = Vec::with_capacity(rules.len());
     let mut structural_ac_arms: Vec<DriveArm> = Vec::with_capacity(rules.len());
     for rule in rules {
-        let (rule_id, is_ac, is_nested) = match rule {
-            RhoNetLoweredRule::SubstRewrite { rule_id, .. }
-            | RhoNetLoweredRule::BaseRewrite { rule_id, .. } => (rule_id, false, false),
-            RhoNetLoweredRule::NestedStructuralAcRewrite { rule_id, .. } => (rule_id, true, true),
+        // `is_subst_beta`: the β SEED (`SubstRewrite`) — its contractum is the subst-TRS
+        // cascade result, unknowable at codegen, so it is NEVER scion'd (v1 §2.2: the β
+        // bundle is definitionally `ContractumRedrive`); a positional `BaseRewrite` is the
+        // structural scion target.
+        let (rule_id, is_ac, is_nested, is_subst_beta) = match rule {
+            RhoNetLoweredRule::SubstRewrite { rule_id, .. } => (rule_id, false, false, true),
+            RhoNetLoweredRule::BaseRewrite { rule_id, .. } => (rule_id, false, false, false),
+            RhoNetLoweredRule::NestedStructuralAcRewrite { rule_id, .. } => {
+                (rule_id, true, true, false)
+            },
             // A-S5.8 (F8-AM-1b): a binder-templated nested-AC rule has NO site-keyed match
             // receiver (the NO-MATCH-ENTRY disposition) but its DRIVE carrier — which
             // pre-shifts σ slots asynchronously before the join — carries it: same nested
             // AC-arm family, declaration order preserved.
             RhoNetLoweredRule::NestedStructuralAcBinderTemplated { rule_id } => {
-                (rule_id, true, true)
+                (rule_id, true, true, false)
             },
-            RhoNetLoweredRule::StructuralAcRewrite { rule_id, .. } => (rule_id, true, false),
+            RhoNetLoweredRule::StructuralAcRewrite { rule_id, .. } => (rule_id, true, false, false),
             _ => continue,
         };
         let Some(rewrite) = rewrite_by_id.get(rule_id) else {
@@ -2023,13 +2038,19 @@ pub(crate) fn drive_lowering(
                     .iter()
                     .any(|term| term.label == constructor.to_string() && is_binder_term(term))
         );
+        // E-1: scion-select a positional `BaseRewrite` arm iff the policy asks for it (β
+        // `SubstRewrite` never scions). The actual bundle build (and its fail-closed
+        // fallback to `ContractumRedrive`) happens in-frame at `fuel_gated_firing`.
+        let scion = matches!(policy, ScionPolicy::StructuralScion) && !is_subst_beta;
         positional_arms.push(DriveArm::Positional(DriveRedexArm {
             rule_label: rewrite.name.to_string(),
             accept_channel: accept_channel.clone(),
             sigma_vars: order,
             lhs: rewrite.left.clone(),
+            rhs: rewrite.right.clone(),
             pattern,
             root_is_binder,
+            scion,
         }));
     }
     let mut arms = positional_arms;
@@ -2104,13 +2125,350 @@ fn drive_subject_node(
     }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+// E-1 scion grafting (design v1 §3; delta amendments SM-1..11): the per-rule precompiled
+// drive decomposition of a positional structural (`BaseRewrite`) rule's RHS. Known
+// constructor positions are GRAFTED (Skip — no re-drive); σ-slot occurrences are DRIVEN
+// (buds, at `fuel-1`); positions whose slot-as-unknown sub-instance could match a redex arm
+// are RE-CHECKED (P-resubmit at `fuel-1`). Built with the `rho_net_subst_trs` De Bruijn
+// combinators in the arm frame, so the emitted Par's `locally_free` tracks the σ/fuel/ret
+// slots (recovered by `node_from_par` at the seam). Thesis Ch. 6: `scion(s, ℓ→r)` / `graft`.
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+
+/// Per-rule firing-emission policy (design v1 §3.6): the codegen selector the E-1 A/B
+/// measurement swaps. Production ALWAYS lowers under [`ScionPolicy::AllRedrive`] — every
+/// emitted driver Par is then byte-identical to pre-E-1 (the a_s5_6 / a_s5_8 pins guard
+/// this). The `bench-scion` surface lowers a second copy under
+/// [`ScionPolicy::StructuralScion`], selecting a scion bundle for each admitted POSITIONAL
+/// `BaseRewrite` arm; β `SubstRewrite` and every AC arm stay `ContractumRedrive` (L1 scope).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScionPolicy {
+    /// Every arm re-drives its whole contractum — the production default, byte-identical
+    /// to pre-E-1.
+    AllRedrive,
+    /// Positional `BaseRewrite` arms emit a scion bundle; β and AC arms re-drive.
+    StructuralScion,
+}
+
+/// Conservative slot-as-unknown unification of a rule LHS against an RHS subterm (design
+/// v1 §2.1 / §3.2.1 `harvest`): `true` (⟹ Re-check the position) UNLESS the two roots are
+/// DEFINITELY distinct constructors. A variable on either side (an LHS pattern var, or an
+/// RHS σ-slot whose normal form is unknown) could unify. Re-check-when-uncertain is always
+/// SOUND (a spurious re-check is a redundant `Match`, never a wrong step); only a definite
+/// constructor / arity mismatch licenses the Skip (the graft — the savings).
+fn scion_could_unify(lhs: &Pattern, sub: &Pattern) -> bool {
+    match (lhs, sub) {
+        (Pattern::Term(PatternTerm::Var(_)), _) | (_, Pattern::Term(PatternTerm::Var(_))) => true,
+        (
+            Pattern::Term(PatternTerm::Apply { constructor: c1, args: a1 }),
+            Pattern::Term(PatternTerm::Apply { constructor: c2, args: a2 }),
+        ) => {
+            c1.to_string() == c2.to_string()
+                && a1.len() == a2.len()
+                && a1.iter().zip(a2).all(|(x, y)| scion_could_unify(x, y))
+        },
+        // Any other shape pairing (binder / subst / collection LHS vs a constructor RHS) —
+        // conservatively re-check (sound); the L1 positional cells never reach this arm.
+        _ => true,
+    }
+}
+
+/// Whether the constructor at RHS position `sub` could be a redex root for SOME fireable
+/// rule (design v1 §3.2.1 `mark = Recheck`). Only called on `Apply` positions (a σ-slot is
+/// a bud, driven — never a re-check).
+fn scion_position_is_recheck(sub: &Pattern, fireable_lhs: &[&Pattern]) -> bool {
+    fireable_lhs.iter().any(|lhs| scion_could_unify(lhs, sub))
+}
+
+/// Whether `pat` or any constructor descendant is a re-check position (a σ-slot leaf is
+/// never one). Drives the Skip-vs-spine split in [`scion_emit_spine`].
+fn scion_contains_recheck(pat: &Pattern, fireable_lhs: &[&Pattern]) -> bool {
+    match pat {
+        Pattern::Term(PatternTerm::Apply { args, .. }) => {
+            scion_position_is_recheck(pat, fireable_lhs)
+                || args.iter().any(|arg| scion_contains_recheck(arg, fireable_lhs))
+        },
+        _ => false,
+    }
+}
+
+/// Collect the σ-slot occurrences of `rhs` in left-to-right DFS order, each paired with its
+/// position PATH (child-index list). Fail-closed (`Err`) on a dangling RHS variable (not a
+/// σ capture) or any non-positional shape (binder / substitution / collection RHS) — such a
+/// rule stays `ContractumRedrive` (SM-8 fail-closed).
+fn scion_collect_slots(
+    rhs: &Pattern,
+    path: &mut Vec<usize>,
+    sigma_set: &HashSet<String>,
+    out: &mut Vec<(Vec<usize>, String)>,
+) -> Result<(), String> {
+    match rhs {
+        Pattern::Term(PatternTerm::Var(name)) => {
+            let name = name.to_string();
+            if sigma_set.contains(&name) {
+                out.push((path.clone(), name));
+                Ok(())
+            } else {
+                Err(format!("scion: RHS variable {name:?} is not a σ capture (dangling)"))
+            }
+        },
+        Pattern::Term(PatternTerm::Apply { args, .. }) => {
+            for (index, arg) in args.iter().enumerate() {
+                path.push(index);
+                scion_collect_slots(arg, path, sigma_set, out)?;
+                path.pop();
+            }
+            Ok(())
+        },
+        _ => Err(
+            "scion: non-positional RHS shape (binder / substitution / collection) is not \
+             driver-scion-supported this stage"
+                .to_string(),
+        ),
+    }
+}
+
+/// Rebuild the reflected value of a PURE (no re-check) RHS subtree at `env`: a σ-slot leaf
+/// resolves to its joined normal form `s{i}` (the `i`-th slot in DFS order), a constructor
+/// to `tagged(fp, label, children)`. Env-parametric (name-late `env.var`) so it is safe to
+/// re-invoke at any De Bruijn depth (inside a re-check `Match` case, the join body, …).
+fn scion_build_pure(
+    pat: &Pattern,
+    path: &[usize],
+    slot_index: &HashMap<Vec<usize>, usize>,
+    env: &Env,
+    fingerprint: &str,
+) -> Node {
+    match pat {
+        Pattern::Term(PatternTerm::Var(_)) => {
+            let idx = slot_index.get(path).copied().unwrap_or(0);
+            env.var(&format!("s{idx}"))
+        },
+        Pattern::Term(PatternTerm::Apply { constructor, args }) => {
+            let label = constructor.to_string();
+            let children: Vec<Node> = args
+                .iter()
+                .enumerate()
+                .map(|(index, arg)| {
+                    let mut child_path = path.to_vec();
+                    child_path.push(index);
+                    scion_build_pure(arg, &child_path, slot_index, env, fingerprint)
+                })
+                .collect();
+            tagged(fingerprint, &label, children)
+        },
+        // Unreachable: `scion_collect_slots` fail-closed on every other shape before build.
+        _ => tagged(fingerprint, "^scion-bug", Vec::new()),
+    }
+}
+
+/// Emit the P-resubmit re-check of an all-pure re-check node (design v1 §3.2.2 / §3.4):
+/// `new r' { match assembled { <redex-arm patterns> ⇒ ⌜^drive⌝!(assembled, fuel-1, r') ;
+/// _ ⇒ r'!(assembled) } | for(@v <- r'){ <tail v> } }`. A hit RESUBMITS the whole
+/// assembled node to the generic `^drive` (which fires it — no static regress, +1 `^drive`
+/// COMM/chained-firing); a miss publishes it as this position's normal form. `r'`/`v` use
+/// the `r#`/`c#` fresh-name namespace guarded by [`collides_with_drive_frame`] (SM-8c).
+#[allow(clippy::too_many_arguments)]
+fn scion_emit_recheck(
+    subtree: &Pattern,
+    path: &[usize],
+    slot_index: &HashMap<Vec<usize>, usize>,
+    arms: &[DriveArm],
+    fingerprint: &str,
+    env: &Env,
+    fuel_var: &str,
+    next_index: &std::cell::Cell<usize>,
+    tail: &dyn Fn(Node, &Env) -> Result<Node, String>,
+) -> Result<Node, String> {
+    let idx = next_index.get();
+    next_index.set(idx + 1);
+    let r_name = format!("r{idx}");
+    let v_name = format!("c{idx}");
+    let renv = env.push(&[r_name.as_str()]);
+    let mut cases: Vec<(Case, Option<Par>)> = Vec::new();
+    for arm in arms {
+        if let DriveArm::Positional(positional) = arm {
+            let free_count = positional.sigma_vars.len();
+            let dummies: Vec<String> = (0..free_count).map(|i| format!("_p{i}")).collect();
+            let dummy_refs: Vec<&str> = dummies.iter().map(String::as_str).collect();
+            let cenv = renv.push(&dummy_refs);
+            let body = send(
+                ground(tag_par(fingerprint, DRIVE_RESERVED_LABEL)),
+                vec![
+                    scion_build_pure(subtree, path, slot_index, &cenv, fingerprint),
+                    eminus(cenv.var(fuel_var), gint(1)),
+                    cenv.var(&r_name),
+                ],
+            );
+            cases.push((Case { pattern: positional.pattern.clone(), free_count, body }, None));
+        }
+    }
+    cases.push((
+        Case {
+            pattern: pat_wildcard(),
+            free_count: 0,
+            body: send(
+                renv.var(&r_name),
+                vec![scion_build_pure(subtree, path, slot_index, &renv, fingerprint)],
+            ),
+        },
+        None,
+    ));
+    let match_node =
+        match_guarded(scion_build_pure(subtree, path, slot_index, &renv, fingerprint), cases);
+    let venv = renv.push(&[v_name.as_str()]);
+    let tail_node = tail(venv.var(&v_name), &venv)?;
+    let for_node = for1(renv.var(&r_name), tail_node);
+    Ok(new_scope(1, par2(match_node, for_node)))
+}
+
+/// Reassemble `pat`'s value in the join body, threading a continuation `tail` (given this
+/// position's value node + the env it is live in, produce the rest). Pure subtrees graft
+/// directly; a Skip constructor with a re-check-bearing child recurses into that child and
+/// wraps the result; a re-check node emits [`scion_emit_recheck`]. Fail-closed on branching
+/// re-check (>1 re-check-bearing child) or a re-check above another re-check — L1 supports a
+/// single re-check per root-to-leaf path (the ladder); every other shape stays
+/// `ContractumRedrive`.
+#[allow(clippy::too_many_arguments)]
+fn scion_emit_spine(
+    pat: &Pattern,
+    path: &[usize],
+    slot_index: &HashMap<Vec<usize>, usize>,
+    fireable_lhs: &[&Pattern],
+    arms: &[DriveArm],
+    fingerprint: &str,
+    env: &Env,
+    fuel_var: &str,
+    next_index: &std::cell::Cell<usize>,
+    tail: &dyn Fn(Node, &Env) -> Result<Node, String>,
+) -> Result<Node, String> {
+    if !scion_contains_recheck(pat, fireable_lhs) {
+        return tail(scion_build_pure(pat, path, slot_index, env, fingerprint), env);
+    }
+    let Pattern::Term(PatternTerm::Apply { constructor, args }) = pat else {
+        return Err("scion: re-check at a non-constructor RHS position".to_string());
+    };
+    let label = constructor.to_string();
+    let non_pure: Vec<usize> =
+        (0..args.len()).filter(|&i| scion_contains_recheck(&args[i], fireable_lhs)).collect();
+    if non_pure.len() > 1 {
+        return Err("scion: branching re-check (>1 re-check child) unsupported this stage".to_string());
+    }
+    let recheck_here = scion_position_is_recheck(pat, fireable_lhs);
+    if recheck_here && !non_pure.is_empty() {
+        return Err("scion: nested re-check (re-check above a re-check) unsupported this stage".to_string());
+    }
+    if recheck_here {
+        // All children pure — this whole node is the re-check subject.
+        return scion_emit_recheck(pat, path, slot_index, arms, fingerprint, env, fuel_var, next_index, tail);
+    }
+    // A Skip constructor whose one non-pure child carries the re-check below it: recurse and
+    // wrap the returned value in this constructor (pure siblings grafted at the tail env).
+    let j = non_pure[0];
+    let mut child_path = path.to_vec();
+    child_path.push(j);
+    let child_tail = |child_value: Node, tail_env: &Env| -> Result<Node, String> {
+        let children: Vec<Node> = args
+            .iter()
+            .enumerate()
+            .map(|(index, arg)| {
+                if index == j {
+                    child_value.clone()
+                } else {
+                    let mut cp = path.to_vec();
+                    cp.push(index);
+                    scion_build_pure(arg, &cp, slot_index, tail_env, fingerprint)
+                }
+            })
+            .collect();
+        tail(tagged(fingerprint, &label, children), tail_env)
+    };
+    scion_emit_spine(
+        &args[j], &child_path, slot_index, fireable_lhs, arms, fingerprint, env, fuel_var,
+        next_index, &child_tail,
+    )
+}
+
+/// Build the E-1 scion bundle Node for one positional structural (`BaseRewrite`) arm
+/// (design v1 §3.2): `new r0..r_{k-1} { drive(σ_i, fuel-1, r_i) | join(r_i){ reassemble
+/// → ret } }`. The k σ-slot occurrences (per-occurrence, matching `ContractumRedrive`) are
+/// driven concurrently at `fuel-1`, joined, and the RHS reassembled bottom-up with re-check
+/// P-resubmits at marked positions. Built in the arm frame `env` (σ innermost). Fail-closed
+/// `Err` on any RHS outside the positional-scion scope → the arm stays `ContractumRedrive`.
+fn scion_bundle_for_rule(
+    rhs: &Pattern,
+    sigma_vars: &[String],
+    arms: &[DriveArm],
+    fingerprint: &str,
+    env: &Env,
+    fuel_var: &str,
+    ret_var: &str,
+) -> Result<Node, String> {
+    let sigma_set: HashSet<String> = sigma_vars.iter().cloned().collect();
+    let mut slots: Vec<(Vec<usize>, String)> = Vec::new();
+    scion_collect_slots(rhs, &mut Vec::new(), &sigma_set, &mut slots)?;
+    let slot_index: HashMap<Vec<usize>, usize> =
+        slots.iter().enumerate().map(|(i, (p, _))| (p.clone(), i)).collect();
+    let fireable_lhs: Vec<&Pattern> = arms
+        .iter()
+        .filter_map(|arm| match arm {
+            DriveArm::Positional(positional) => Some(&positional.lhs),
+            DriveArm::AcCarrier(_) => None,
+        })
+        .collect();
+    let k = slots.len();
+    // Fresh `r#`/`c#` return indices start after the k slot returns (SM-8c namespace).
+    let next_index = std::cell::Cell::new(k);
+    let tail = |value: Node, tail_env: &Env| -> Result<Node, String> {
+        Ok(send(tail_env.var(ret_var), vec![value]))
+    };
+    if k == 0 {
+        // Ground RHS (e.g. `R2 . Step End ~> End`): no slots / no join — reassemble + an
+        // optional root re-check straight to `ret`.
+        return scion_emit_spine(
+            rhs, &[], &slot_index, &fireable_lhs, arms, fingerprint, env, fuel_var, &next_index,
+            &tail,
+        );
+    }
+    let slot_r_names: Vec<String> = (0..k).map(|i| format!("r{i}")).collect();
+    let slot_r_refs: Vec<&str> = slot_r_names.iter().map(String::as_str).collect();
+    let inner_env = env.push(&slot_r_refs);
+    // Concurrent slot drives at `fuel-1` (the single per-firing decrement, v1 §3.4).
+    let mut composed: Option<Node> = None;
+    for (i, (_, sigma)) in slots.iter().enumerate() {
+        let call = send(
+            ground(tag_par(fingerprint, DRIVE_RESERVED_LABEL)),
+            vec![
+                inner_env.var(sigma),
+                eminus(inner_env.var(fuel_var), gint(1)),
+                inner_env.var(&slot_r_names[i]),
+            ],
+        );
+        composed = Some(match composed {
+            None => call,
+            Some(acc) => par2(acc, call),
+        });
+    }
+    let join_sources: Vec<Node> = slot_r_names.iter().map(|r| inner_env.var(r)).collect();
+    let slot_val_names: Vec<String> = (0..k).map(|i| format!("s{i}")).collect();
+    let slot_val_refs: Vec<&str> = slot_val_names.iter().map(String::as_str).collect();
+    let join_body_env = inner_env.push(&slot_val_refs);
+    let reassembly = scion_emit_spine(
+        rhs, &[], &slot_index, &fireable_lhs, arms, fingerprint, &join_body_env, fuel_var,
+        &next_index, &tail,
+    )?;
+    let join_node = join(join_sources, reassembly);
+    Ok(new_scope(k, par2(composed.expect("k ≥ 1"), join_node)))
+}
+
 /// The fuel-gated firing body of one POSITIONAL redex arm (plan v2 §4.2): the ground
 /// `GInt(0)` exhaustion case FIRST (AM-7 — arm order is load-bearing under
 /// `wrapping_sub`), then the wildcard firing case through the [`firing_emission_node`]
 /// seam. `env` carries the arm's σ captures. Byte-identical to the A-S5.2 emission (the
-/// Lambda no-regression pin).
+/// Lambda no-regression pin) UNLESS this arm is scion-selected (E-1 `StructuralScion`).
 fn fuel_gated_firing(
     arm: &DriveRedexArm,
+    all_arms: &[DriveArm],
     def: &LanguageDef,
     fingerprint: &str,
     env: &Env,
@@ -2118,6 +2476,18 @@ fn fuel_gated_firing(
     route_through_float: bool,
 ) -> Result<Node, String> {
     let exhaustion_datum = rebuild_from_pattern(&arm.lhs, def, fingerprint, env)?;
+    // E-1: a scion-selected arm emits its precompiled bundle (built in THIS arm frame) in
+    // place of the redrive `for`; any RHS outside the positional-scion scope fails closed to
+    // `ContractumRedrive` (SM-8). Production lowers under `AllRedrive` (`arm.scion == false`),
+    // so this is inert and the emission is byte-identical.
+    let emission = if arm.scion {
+        match scion_bundle_for_rule(&arm.rhs, &arm.sigma_vars, all_arms, fingerprint, env, "fuel", "ret") {
+            Ok(bundle) => FiringEmission::ScionBundle { bundle: bundle.par },
+            Err(_) => FiringEmission::ContractumRedrive,
+        }
+    } else {
+        FiringEmission::ContractumRedrive
+    };
     Ok(match_(
         env.var("fuel"),
         vec![
@@ -2134,7 +2504,7 @@ fn fuel_gated_firing(
                 free_count: 0,
                 body: firing_emission_node(
                     arm,
-                    &FiringEmission::ContractumRedrive,
+                    &emission,
                     fingerprint,
                     env,
                     "fuel",
@@ -2219,7 +2589,7 @@ fn redex_cases(
                 let sigma_refs: Vec<&str> = arm.sigma_vars.iter().map(String::as_str).collect();
                 let body = {
                     let env = env.push(&sigma_refs);
-                    fuel_gated_firing(arm, def, fingerprint, &env, carrier, route_through_float)?
+                    fuel_gated_firing(arm, arms, def, fingerprint, &env, carrier, route_through_float)?
                 };
                 cases.push((
                     Case { pattern: check.pattern, free_count: check.free_count, body },
