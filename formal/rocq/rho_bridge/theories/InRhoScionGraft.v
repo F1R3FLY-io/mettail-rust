@@ -1236,3 +1236,58 @@ Section ScionSoundness.
   Qed.
 
 End ScionSoundness.
+
+(* =================================================================================
+   L3.5 — EFFICIENCY: NO SLOT RE-DESCENT (the descent-cost measure).
+
+   `gcost r` counts the constructor (RApp) nodes the REDRIVE re-descends when re-driving
+   the instantiated contractum (every RApp node of the RHS skeleton is descended; slot
+   subtrees are common-mode and excluded).  `scost R r` counts what the SCION descends: a
+   SKIP node (mark=false) is GRAFTED inert (0 descent for that node, recurse into
+   children), a RECHECK node RESUBMITS its raw subtree to gdrives (which re-descends it in
+   full, `gcost`), a slot costs 0.
+
+   Tier-1 (the per-firing claim): the scion NEVER re-descends more than the redrive
+   (`scost_le_gcost`), and on the ladder's D-wrapper skeleton it descends STRICTLY fewer
+   — by exactly s = 1 (the single grafted `D1` node) — `ladder_scion_saves_descents`.
+   (Tier-2, the global linear-vs-quadratic bound over `Step Wrap^m End`, is dominated by
+   the common-mode resubmit re-descent — the E-2 creeper-trace target — and is deferred,
+   per the plan.)
+   ================================================================================= *)
+
+Definition lsum (l : list nat) : nat := fold_right Nat.add 0 l.
+
+Fixpoint gcost (r : rhs) : nat :=
+  match r with
+  | RVar _ => 0
+  | RApp _ rs => S (lsum (map gcost rs))
+  end.
+
+Fixpoint scost (R : list rule) (r : rhs) : nat :=
+  match r with
+  | RVar _ => 0
+  | RApp c rs => if mark R (RApp c rs) then gcost (RApp c rs)
+                 else lsum (map (scost R) rs)
+  end.
+
+Lemma lsum_le : forall (f g : rhs -> nat) rs,
+  Forall (fun r => f r <= g r) rs -> lsum (map f rs) <= lsum (map g rs).
+Proof.
+  intros f g rs H. induction H as [| r rs Hr Hrs IH]; simpl.
+  - apply le_n.
+  - unfold lsum in *. simpl. apply Nat.add_le_mono; [exact Hr | exact IH].
+Qed.
+
+Theorem scost_le_gcost : forall R r, scost R r <= gcost r.
+Proof.
+  intros R. induction r as [i | c rs IH] using rhs_ind'.
+  - apply le_n.
+  - cbn [scost gcost]. destruct (mark R (RApp c rs)).
+    + apply le_n.
+    + apply Nat.le_le_succ_r. apply lsum_le. exact IH.
+Qed.
+
+(* the per-firing saving on the ladder's D-wrapper is exactly s = 1 (D1 grafted). *)
+Theorem ladder_scion_saves_descents :
+  scost ladder_R (snd R_step_wrap) < gcost (snd R_step_wrap).
+Proof. vm_compute. lia. Qed.
