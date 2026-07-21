@@ -98,6 +98,10 @@ use mettail_rholang_codegen::pipeline_spans::{
 };
 use mettail_rholang_codegen::rho_net::RhoNetProgram;
 use mettail_rholang_codegen::rho_net_cache::cached_in_rho_artifacts;
+use mettail_rholang_codegen::rho_net_fragment_store::{
+    appended_rule_root_op, ladder_accounting, ConstructionFragmentStore, FragmentStoreBackend,
+    HashMapFragmentStore, PathMapFragmentStore,
+};
 use mettail_rholang_codegen::rho_net_incremental::{
     extend_in_rho_artifacts, IncrementalExtendOutcome,
 };
@@ -718,6 +722,208 @@ pub fn run_wb_rep(
     Ok(cells)
 }
 
+// ─────────────────────────────────────────────────────────────────────────────────────
+// T-E6B (H4v2): the construction-side fragment-store arms over the W-B ladder.
+// ─────────────────────────────────────────────────────────────────────────────────────
+
+/// The two `--mode e6b` store arms (frozen H4v2: the pathmap-0.2.2-backed store
+/// vs the `HashMap`-backed twin with identical semantics — the (iii) wall
+/// comparand). ONE arm per invocation, per the one-cell-per-run protocol.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum E6bStoreArm {
+    /// The pathmap-0.2.2 trie store (EM-8 content-hash-equality Lattice values).
+    PathMapArm,
+    /// The flat-`HashMap` twin (same encoded keys, same reconciliation logic).
+    HashMapArm,
+}
+
+impl E6bStoreArm {
+    /// The stable CLI / JSON name of this arm.
+    pub fn name(self) -> &'static str {
+        match self {
+            E6bStoreArm::PathMapArm => "pathmap",
+            E6bStoreArm::HashMapArm => "hashmap",
+        }
+    }
+
+    /// Parse a CLI arm name.
+    pub fn from_name(name: &str) -> Option<Self> {
+        [E6bStoreArm::PathMapArm, E6bStoreArm::HashMapArm]
+            .into_iter()
+            .find(|arm| arm.name() == name)
+    }
+}
+
+/// One T-E6B append measurement: the W-B incremental append (extend + force
+/// ruleset + installed par) PLUS the store maintenance (dirty-group reconcile +
+/// snapshot retention), with every invalidation component OBSERVED (the store
+/// counts byte-compared changes, never touched keys).
+#[derive(Clone, Copy, Debug)]
+pub struct E6bAppendCell {
+    /// The 0-based append index within the K-append ladder.
+    pub append: usize,
+    /// Wall nanoseconds of the append: `extend_in_rho_artifacts` + ruleset +
+    /// installed-par forces + store reconcile + snapshot clone. Both arms run
+    /// the IDENTICAL sequence; only the container operations differ (the (iii)
+    /// comparison).
+    pub wall_ns: u64,
+    /// Whether the extended installed program derived `Ok`.
+    pub installed_ok: bool,
+    /// Whether the incremental extend FELL BACK (an arm-voiding anomaly inside
+    /// the admitted W-B family — same discipline as `--mode wb`).
+    pub fell_back: bool,
+    /// The extended source's byte length after this append.
+    pub source_bytes: usize,
+    /// Store fragments under the appended rule's root-op group BEFORE the
+    /// append.
+    pub group_before: usize,
+    /// Rules in that root-op group AFTER the append (per the extended def).
+    pub group_after: usize,
+    /// Previously retained group fragments whose recomputed bytes DIFFER.
+    pub invalidated_existing: usize,
+    /// Previously retained group fragments removed (0 on the append-only ladder).
+    pub invalidated_removed: usize,
+    /// `1` iff the manifest changed (always, on a real append — the
+    /// whole-definition fingerprint taint).
+    pub manifest_invalidated: usize,
+    /// Fresh group inserts (the appended rule's own fragment).
+    pub inserted_new: usize,
+    /// Group fragments recomputed byte-identical (old `Arc` kept).
+    pub unchanged_group: usize,
+    /// The H4v2 (ii) registered expectation: `group_before + 1` (stale group
+    /// members + the manifest; the fresh insert is reported separately, so the
+    /// after-insert reading `group_after + 1` is derivable from this record).
+    pub expected_invalidated: usize,
+    /// What ACTUALLY invalidated: `invalidated_existing + invalidated_removed +
+    /// manifest_invalidated`.
+    pub actual_invalidated: usize,
+    /// Store fragments after the reconcile.
+    pub store_entries: usize,
+}
+
+/// One T-E6B rep's deterministic retention summary (metric (i)) — computed
+/// AFTER the K appends, outside every timed region.
+#[derive(Clone, Copy, Debug)]
+pub struct E6bRepSummary {
+    /// Total wall nanoseconds of the K timed appends (Σ of the cells).
+    pub total_wall_ns: u64,
+    /// Retained snapshots (base + one per append = K + 1).
+    pub snapshots: usize,
+    /// Fragment references across all snapshots.
+    pub total_fragment_refs: u64,
+    /// Distinct `Arc<Fragment>` allocations across all snapshots.
+    pub distinct_fragments: u64,
+    /// `total_fragment_refs − distinct_fragments` (references served by
+    /// sharing).
+    pub dedup_hits: u64,
+    /// Content-level intern hits (a recomputed payload byte-equal to an
+    /// already-retained fragment) across the whole rep.
+    pub content_dedup_hits: u64,
+    /// Metric (i) treatment: Σ of distinct fragments' serialized lengths.
+    pub retained_fragment_bytes: u64,
+    /// Metric (i) baseline: the per-variant whole-artifact retention (Σ over
+    /// snapshots of Σ of fragment lengths).
+    pub whole_artifact_bytes: u64,
+    /// The (i) predicate: `retained_fragment_bytes < whole_artifact_bytes`.
+    pub retained_lt_whole: bool,
+    /// The (ii) predicate over the whole rep: every append's
+    /// `actual_invalidated == expected_invalidated`.
+    pub invalidation_exact_all: bool,
+}
+
+/// Run ONE T-E6B rep — the K-append W-B extension ladder under one STORE arm —
+/// on the CALLING thread (the caller wraps it in [`in_fresh_thread`]).
+///
+/// Timing discipline (extends the `--mode wb` incremental arm's verbatim): the
+/// BASE bring-up (derive + ruleset + installed par) AND the base store seeding
+/// (one fragment per rule + the manifest) plus the base snapshot are SETUP,
+/// outside every timed region. Per append, the timed region spans
+/// `extend_in_rho_artifacts` + forcing `ruleset()` + `installed_par()` (the
+/// W-B incremental treatment, unchanged) PLUS the store maintenance: the
+/// dirty root-op resolution, the group reconcile (recompute + byte-compare +
+/// container writes), and the snapshot clone. The post-ladder retention
+/// accounting (metric (i)) is analysis, outside every timed region.
+pub fn run_e6b_rep(
+    arm: E6bStoreArm,
+    r: usize,
+    shape: LadderShape,
+    appends: usize,
+) -> Result<(Vec<E6bAppendCell>, E6bRepSummary), String> {
+    match arm {
+        E6bStoreArm::PathMapArm => run_e6b_rep_impl::<PathMapFragmentStore>(r, shape, appends),
+        E6bStoreArm::HashMapArm => run_e6b_rep_impl::<HashMapFragmentStore>(r, shape, appends),
+    }
+}
+
+fn run_e6b_rep_impl<B: FragmentStoreBackend>(
+    r: usize,
+    shape: LadderShape,
+    appends: usize,
+) -> Result<(Vec<E6bAppendCell>, E6bRepSummary), String> {
+    let base_source = ladder_source(r, shape, LadderAlphabet::Distinct);
+    // Setup: warm base bring-up (the production-analogue state before an
+    // extension arrives) + the base store seeding + the base snapshot.
+    let base = cached_in_rho_artifacts(&base_source)?;
+    std::hint::black_box(base.ruleset());
+    std::hint::black_box(base.installed_par());
+    let mut store: ConstructionFragmentStore<B> = ConstructionFragmentStore::new();
+    store.seed_from_artifacts(&base)?;
+    let mut snapshots: Vec<B> = Vec::with_capacity(appends + 1);
+    snapshots.push(store.snapshot());
+
+    let mut cells = Vec::with_capacity(appends);
+    let mut current = base;
+    for append in 0..appends {
+        let fragment = wb_append_fragment(append, r, shape);
+        let started = Instant::now();
+        let outcome = extend_in_rho_artifacts(&current, &fragment)?;
+        let artifacts = Arc::clone(outcome.artifacts());
+        std::hint::black_box(artifacts.ruleset());
+        let installed_ok = artifacts.installed_par().is_ok();
+        // Store maintenance: dirty root-op group reconcile + snapshot.
+        let dirty_root_op = appended_rule_root_op(&artifacts)?;
+        let report = store.reconcile_append(&artifacts, &dirty_root_op)?;
+        snapshots.push(store.snapshot());
+        let wall_ns = u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX);
+        cells.push(E6bAppendCell {
+            append,
+            wall_ns,
+            installed_ok,
+            fell_back: outcome.fallback_reason().is_some(),
+            source_bytes: artifacts.definition_source.len(),
+            group_before: report.group_before,
+            group_after: report.group_after,
+            invalidated_existing: report.invalidated_existing,
+            invalidated_removed: report.invalidated_removed,
+            manifest_invalidated: report.manifest_invalidated,
+            inserted_new: report.inserted_new,
+            unchanged_group: report.unchanged_group,
+            expected_invalidated: report.expected_invalidated(),
+            actual_invalidated: report.actual_invalidated(),
+            store_entries: report.store_entries,
+        });
+        current = artifacts;
+    }
+
+    // Metric (i): the deterministic retention accounting (analysis, untimed).
+    let accounting = ladder_accounting(&snapshots);
+    let summary = E6bRepSummary {
+        total_wall_ns: cells.iter().map(|cell| cell.wall_ns).sum(),
+        snapshots: accounting.snapshots,
+        total_fragment_refs: accounting.total_fragment_refs,
+        distinct_fragments: accounting.distinct_fragments,
+        dedup_hits: accounting.dedup_hits,
+        content_dedup_hits: store.content_dedup_hits(),
+        retained_fragment_bytes: accounting.retained_fragment_bytes,
+        whole_artifact_bytes: accounting.whole_artifact_bytes,
+        retained_lt_whole: accounting.retained_lt_whole_artifact(),
+        invalidation_exact_all: cells
+            .iter()
+            .all(|cell| cell.actual_invalidated == cell.expected_invalidated),
+    };
+    Ok((cells, summary))
+}
+
 /// One equivalence-gate case's outcome — every pre-registered component explicit
 /// (`Send`-safe: the gate runs on a fresh thread per case).
 ///
@@ -1269,5 +1475,94 @@ mod wb_tests {
         let autos = def.rewrites.iter().filter(|rewrite| rewrite.is_auto_injected).count();
         assert!(autos >= 1, "the Int/BigInt lossless edge must auto-inject a congruence");
         assert!(def.name.to_string().starts_with("E3AutoInject"));
+    }
+
+    /// One e6b append's deterministic components (walls excluded), as
+    /// `(append, (installed_ok, fell_back, group_before, group_after,
+    /// invalidated_existing, invalidated_removed, manifest_invalidated,
+    /// inserted_new, unchanged_group, expected_invalidated,
+    /// actual_invalidated, store_entries))`.
+    type E6bAppendDeterministic =
+        (usize, (bool, bool, usize, usize, usize, usize, usize, usize, usize, usize, usize, usize));
+
+    /// The `Send`-safe deterministic observables of one e6b rep (walls excluded).
+    type E6bDeterministic =
+        (Vec<E6bAppendDeterministic>, (usize, u64, u64, u64, u64, u64, u64, bool, bool));
+
+    fn e6b_deterministic(arm: E6bStoreArm) -> E6bDeterministic {
+        let (cells, summary) = in_fresh_thread(move || {
+            run_e6b_rep(arm, 8, LadderShape::Multi1, 3).expect("the e6b rep derives")
+        });
+        (
+            cells
+                .iter()
+                .map(|cell| {
+                    (
+                        cell.append,
+                        (
+                            cell.installed_ok,
+                            cell.fell_back,
+                            cell.group_before,
+                            cell.group_after,
+                            cell.invalidated_existing,
+                            cell.invalidated_removed,
+                            cell.manifest_invalidated,
+                            cell.inserted_new,
+                            cell.unchanged_group,
+                            cell.expected_invalidated,
+                            cell.actual_invalidated,
+                            cell.store_entries,
+                        ),
+                    )
+                })
+                .collect(),
+            (
+                summary.snapshots,
+                summary.total_fragment_refs,
+                summary.distinct_fragments,
+                summary.dedup_hits,
+                summary.content_dedup_hits,
+                summary.retained_fragment_bytes,
+                summary.whole_artifact_bytes,
+                summary.retained_lt_whole,
+                summary.invalidation_exact_all,
+            ),
+        )
+    }
+
+    #[test]
+    fn e6b_rep_pins_the_deterministic_metrics_exactly() {
+        // The H4v2 (i)/(ii) shapes at r = 8, K = 3: every append j extends the
+        // group {M{j}} to {M{j}, MX{j}} — group_before 1, one genuine group
+        // invalidation, one manifest invalidation, one fresh insert; expected =
+        // actual = 2. Snapshots: base r+1 = 9 entries, then 10, 11, 12 →
+        // 42 refs; distinct = 9 seed + 3 per append = 18; dedup = 24.
+        let (cells, summary) = e6b_deterministic(E6bStoreArm::PathMapArm);
+        assert_eq!(cells.len(), 3);
+        for (append, cell) in cells.iter().enumerate() {
+            assert_eq!(
+                *cell,
+                (append, (true, false, 1, 2, 1, 0, 1, 1, 0, 2, 2, 9 + append + 1)),
+                "append {append} deterministic components"
+            );
+        }
+        let (snapshots, refs, distinct, dedup, content_hits, retained, whole, lt, exact) = summary;
+        assert_eq!(snapshots, 4, "base + 3 append snapshots");
+        assert_eq!(refs, 9 + 10 + 11 + 12, "per-snapshot entry counts sum");
+        assert_eq!(distinct, 18, "9 seed fragments + 3 new versions per append");
+        assert_eq!(dedup, refs - distinct);
+        assert_eq!(content_hits, 0, "no payload recurs in this ladder");
+        assert!(retained < whole, "retained bytes < whole-artifact bytes");
+        assert!(lt, "the (i) predicate holds");
+        assert!(exact, "the (ii) predicate holds on every append");
+    }
+
+    #[test]
+    fn e6b_arms_agree_on_every_deterministic_component() {
+        // The (iii) twin discipline observed end-to-end: both store arms emit
+        // IDENTICAL deterministic records (walls are the only difference).
+        let pathmap_arm = e6b_deterministic(E6bStoreArm::PathMapArm);
+        let hashmap_arm = e6b_deterministic(E6bStoreArm::HashMapArm);
+        assert_eq!(pathmap_arm, hashmap_arm, "the store arms are semantically identical");
     }
 }

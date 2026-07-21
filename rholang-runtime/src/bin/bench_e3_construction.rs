@@ -44,9 +44,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use e3_construction::{
     in_fresh_thread, ladder_patterns, ladder_source, pattern_node_count, run_direct_compile_once,
-    run_eager_control_once, run_gate_cases_for, run_lazy_force_installed_once,
+    run_e6b_rep, run_eager_control_once, run_gate_cases_for, run_lazy_force_installed_once,
     run_lazy_gate_only_once, run_spans_once, run_wb_rep, validate_ladder_cell, AnchorLanguage,
-    LadderAlphabet, LadderShape, LazyCell, WbPolicy, ALL_ANCHORS, DEFAULT_LADDER_R,
+    E6bStoreArm, LadderAlphabet, LadderShape, LazyCell, WbPolicy, ALL_ANCHORS, DEFAULT_LADDER_R,
 };
 
 /// The driver's cell modes.
@@ -66,6 +66,13 @@ enum Mode {
     /// invocation) — MUST pass before any W-B cell is measured (a failure voids the
     /// incremental arm and exits non-zero).
     WbGate,
+    /// T-E6B (H4v2): the W-B incremental extension ladder PLUS the
+    /// construction-side fragment store under ONE store arm (requires `--store`;
+    /// `--appends` defaults to the frozen K = 50). Emits one line per append
+    /// (wall + the observed invalidation components) and one deterministic
+    /// retention summary per rep. The H3v2 equivalence-gate discipline carries:
+    /// `--mode wb-gate` must pass on the same tree BEFORE any e6b cell.
+    E6b,
 }
 
 impl Mode {
@@ -76,11 +83,12 @@ impl Mode {
             Mode::H2 => "h2",
             Mode::Wb => "wb",
             Mode::WbGate => "wb-gate",
+            Mode::E6b => "e6b",
         }
     }
 
     fn from_name(name: &str) -> Option<Self> {
-        [Mode::Spans, Mode::Direct, Mode::H2, Mode::Wb, Mode::WbGate]
+        [Mode::Spans, Mode::Direct, Mode::H2, Mode::Wb, Mode::WbGate, Mode::E6b]
             .into_iter()
             .find(|mode| mode.name() == name)
     }
@@ -149,7 +157,9 @@ struct DriverArgs {
     arm: Option<H2Arm>,
     /// The W-B policy (`Some` exactly when `mode == Mode::Wb`).
     policy: Option<WbPolicy>,
-    /// The W-B append count K (frozen default 50; `mode == Mode::Wb` only).
+    /// The T-E6B store arm (`Some` exactly when `mode == Mode::E6b`).
+    store: Option<E6bStoreArm>,
+    /// The W-B / T-E6B append count K (frozen default 50).
     appends: u64,
     warmup: u64,
     reps: u64,
@@ -162,16 +172,16 @@ fn usage() -> String {
     format!(
         "bench_e3_construction — E-3 construction-cost driver (JSON lines)\n\
          \n\
-         USAGE:\n  bench_e3_construction --mode <spans|direct|h2|wb|wb-gate> --workload <name> \\\n    \
+         USAGE:\n  bench_e3_construction --mode <spans|direct|h2|wb|wb-gate|e6b> --workload <name> \\\n    \
          [--arm <eager-control|lazy-gate-only|lazy-force-installed>] \\\n    \
-         [--policy <incremental|full>] [--appends <int>] \\\n    \
+         [--policy <incremental|full>] [--store <pathmap|hashmap>] [--appends <int>] \\\n    \
          [--r <int> --shape <multi1|multi3|mixed> --alphabet <distinct|shared16>] \\\n    \
          [--warmup <int>] --reps <int> [--out <path>]\n\
          \n\
          WORKLOADS:\n  \
          anchors: {}   (W-C production language bodies; --mode spans|h2)\n  \
          ladder:  --workload ladder --r <int> --shape … --alphabet …\n           \
-         (W-A generated definitions; default r ladder {{{}}}; --mode spans|direct|h2|wb|wb-gate)\n\
+         (W-A generated definitions; default r ladder {{{}}}; --mode spans|direct|h2|wb|wb-gate|e6b)\n\
          \n\
          NOTES:\n  \
          --mode h2 requires --arm (ONE arm per invocation — the one-cell-per-run\n  \
@@ -184,6 +194,12 @@ fn usage() -> String {
          --mode wb-gate runs the pre-registered equivalence gate at --r ONCE\n  \
          (all four cases; --reps must be 1); ANY failure exits non-zero — the\n  \
          incremental arm is then VOID and must not be measured.\n  \
+         --mode e6b (T-E6B, H4v2) requires the ladder workload (multi* shape,\n  \
+         distinct alphabet) + --store (ONE store arm per invocation); one rep =\n  \
+         the W-B incremental K-append ladder PLUS the construction-side fragment\n  \
+         store — one JSON line per append (wall + observed invalidation\n  \
+         components) and one deterministic retention summary per rep. The\n  \
+         wb-gate discipline carries: it must pass on the same tree first.\n  \
          --alphabet shared16 is defined for the multi* shapes only.\n  \
          --warmup defaults to 3 (recorded in the header; warmup reps are not emitted).\n  \
          --out defaults to stdout.\n",
@@ -197,7 +213,9 @@ fn parse_args(args: &[String]) -> Result<DriverArgs, String> {
     let mut workload_token: Option<String> = None;
     let mut arm: Option<H2Arm> = None;
     let mut policy: Option<WbPolicy> = None;
-    // The frozen H3v2 K (design §3: "W-B extension_ladder(r, K=50)").
+    let mut store: Option<E6bStoreArm> = None;
+    // The frozen H3v2 K (design §3: "W-B extension_ladder(r, K=50)"; the H4v2
+    // registration rides the same ladder).
     let mut appends: u64 = 50;
     let mut r: Option<usize> = None;
     let mut shape: Option<LadderShape> = None;
@@ -233,6 +251,12 @@ fn parse_args(args: &[String]) -> Result<DriverArgs, String> {
                 policy = Some(
                     WbPolicy::from_name(value)
                         .ok_or_else(|| format!("unknown policy `{value}`\n\n{}", usage()))?,
+                );
+            },
+            "--store" => {
+                store = Some(
+                    E6bStoreArm::from_name(value)
+                        .ok_or_else(|| format!("unknown store arm `{value}`\n\n{}", usage()))?,
                 );
             },
             "--appends" => {
@@ -310,7 +334,7 @@ fn parse_args(args: &[String]) -> Result<DriverArgs, String> {
         (Mode::H2, None) => {
             return Err(format!("--mode h2 requires --arm\n\n{}", usage()));
         },
-        (Mode::Spans | Mode::Direct | Mode::Wb | Mode::WbGate, Some(_)) => {
+        (Mode::Spans | Mode::Direct | Mode::Wb | Mode::WbGate | Mode::E6b, Some(_)) => {
             return Err("--arm applies to --mode h2 only".to_string());
         },
         _ => {},
@@ -319,12 +343,21 @@ fn parse_args(args: &[String]) -> Result<DriverArgs, String> {
         (Mode::Wb, None) => {
             return Err(format!("--mode wb requires --policy\n\n{}", usage()));
         },
-        (Mode::Spans | Mode::Direct | Mode::H2 | Mode::WbGate, Some(_)) => {
+        (Mode::Spans | Mode::Direct | Mode::H2 | Mode::WbGate | Mode::E6b, Some(_)) => {
             return Err("--policy applies to --mode wb only".to_string());
         },
         _ => {},
     }
-    if matches!(mode, Mode::Wb | Mode::WbGate) {
+    match (mode, store) {
+        (Mode::E6b, None) => {
+            return Err(format!("--mode e6b requires --store\n\n{}", usage()));
+        },
+        (Mode::Spans | Mode::Direct | Mode::H2 | Mode::Wb | Mode::WbGate, Some(_)) => {
+            return Err("--store applies to --mode e6b only".to_string());
+        },
+        _ => {},
+    }
+    if matches!(mode, Mode::Wb | Mode::WbGate | Mode::E6b) {
         let Workload::Ladder { shape, alphabet, .. } = workload else {
             return Err(format!(
                 "--mode {} requires the ladder workload (the W-B extension ladder rides the \
@@ -335,19 +368,20 @@ fn parse_args(args: &[String]) -> Result<DriverArgs, String> {
         };
         if shape == LadderShape::Mixed || alphabet != LadderAlphabet::Distinct {
             return Err(
-                "--mode wb/wb-gate is defined for the multi* shapes over the distinct alphabet \
-                 (the W-B appends extend the shared S-chain one level over declared roots)"
+                "--mode wb/wb-gate/e6b is defined for the multi* shapes over the distinct \
+                 alphabet (the W-B appends extend the shared S-chain one level over declared \
+                 roots)"
                     .to_string(),
             );
         }
-        if mode == Mode::Wb && appends == 0 {
+        if matches!(mode, Mode::Wb | Mode::E6b) && appends == 0 {
             return Err("--appends must be >= 1".to_string());
         }
         if mode == Mode::WbGate && reps != 1 {
             return Err("--mode wb-gate runs its cases once: --reps must be 1".to_string());
         }
     }
-    Ok(DriverArgs { mode, workload, arm, policy, appends, warmup, reps, out })
+    Ok(DriverArgs { mode, workload, arm, policy, store, appends, warmup, reps, out })
 }
 
 /// Append `value` with JSON string escaping (the driver-local mirror of the Track-B
@@ -433,9 +467,11 @@ fn header_line(args: &DriverArgs, source_bytes: usize, pattern_nodes: Option<usi
     line.push_str(&json_string(args.arm.map_or("-", H2Arm::name)));
     line.push_str(",\"policy\":");
     line.push_str(&json_string(args.policy.map_or("-", WbPolicy::name)));
+    line.push_str(",\"store\":");
+    line.push_str(&json_string(args.store.map_or("-", E6bStoreArm::name)));
     line.push_str(&format!(
         ",\"appends\":{}",
-        if args.mode == Mode::Wb { args.appends } else { 0 }
+        if matches!(args.mode, Mode::Wb | Mode::E6b) { args.appends } else { 0 }
     ));
     line.push_str(",\"workload\":");
     line.push_str(&json_string(&args.workload.name()));
@@ -484,14 +520,15 @@ fn main() -> ExitCode {
         (Mode::Spans | Mode::H2, Workload::Anchor(anchor)) => {
             Some(anchor.definition_source().to_string())
         },
-        // The W-B modes record the BASE ladder source in the header (the reps build
-        // their own base + appends internally).
-        (Mode::Spans | Mode::H2 | Mode::Wb | Mode::WbGate, Workload::Ladder { r, shape, alphabet }) => {
-            Some(ladder_source(r, shape, alphabet))
-        },
+        // The W-B / T-E6B modes record the BASE ladder source in the header (the
+        // reps build their own base + appends internally).
+        (
+            Mode::Spans | Mode::H2 | Mode::Wb | Mode::WbGate | Mode::E6b,
+            Workload::Ladder { r, shape, alphabet },
+        ) => Some(ladder_source(r, shape, alphabet)),
         (Mode::Direct, _) => None,
-        (Mode::Wb | Mode::WbGate, Workload::Anchor(_)) => {
-            unreachable!("parse_args enforces the ladder workload for the W-B modes")
+        (Mode::Wb | Mode::WbGate | Mode::E6b, Workload::Anchor(_)) => {
+            unreachable!("parse_args enforces the ladder workload for the W-B/T-E6B modes")
         },
     };
     let pattern_nodes: Option<usize> = match (args.mode, args.workload) {
@@ -662,8 +699,82 @@ fn main() -> ExitCode {
                     },
                 }
             },
-            (Mode::Wb | Mode::WbGate, Workload::Anchor(_)) | (Mode::WbGate, _) => {
-                unreachable!("wb requires the ladder workload; wb-gate returned above")
+            (Mode::E6b, Workload::Ladder { r, shape, .. }) => {
+                let store = args.store.expect("parse_args requires --store for e6b mode");
+                let appends = usize::try_from(args.appends)
+                    .expect("--appends fits a usize on every supported target");
+                match in_fresh_thread(move || run_e6b_rep(store, r, shape, appends)) {
+                    Ok((cells, summary)) => {
+                        // A fell-back append or a violated deterministic predicate
+                        // inside the T-E6B ladder is an arm-voiding anomaly —
+                        // counted as a failure AND recorded on the lines.
+                        failures += cells.iter().filter(|cell| cell.fell_back).count() as u64;
+                        if !summary.retained_lt_whole || !summary.invalidation_exact_all {
+                            failures += 1;
+                        }
+                        let mut lines: Vec<String> = cells
+                            .iter()
+                            .map(|cell| {
+                                format!(
+                                    "{{\"e6b\":{{\"rep\":{record_index},\"append\":{},\
+                                     \"store\":{},\"wall_ns\":{},\"installed_ok\":{},\
+                                     \"fell_back\":{},\"source_bytes\":{},\
+                                     \"group_before\":{},\"group_after\":{},\
+                                     \"invalidated_existing\":{},\"invalidated_removed\":{},\
+                                     \"manifest_invalidated\":{},\"inserted_new\":{},\
+                                     \"unchanged_group\":{},\"expected_invalidated\":{},\
+                                     \"actual_invalidated\":{},\"store_entries\":{}}}}}",
+                                    cell.append,
+                                    json_string(store.name()),
+                                    cell.wall_ns,
+                                    cell.installed_ok,
+                                    cell.fell_back,
+                                    cell.source_bytes,
+                                    cell.group_before,
+                                    cell.group_after,
+                                    cell.invalidated_existing,
+                                    cell.invalidated_removed,
+                                    cell.manifest_invalidated,
+                                    cell.inserted_new,
+                                    cell.unchanged_group,
+                                    cell.expected_invalidated,
+                                    cell.actual_invalidated,
+                                    cell.store_entries,
+                                )
+                            })
+                            .collect();
+                        lines.push(format!(
+                            "{{\"e6b_rep\":{{\"rep\":{record_index},\"store\":{},\
+                             \"total_wall_ns\":{},\"snapshots\":{},\
+                             \"total_fragment_refs\":{},\"distinct_fragments\":{},\
+                             \"dedup_hits\":{},\"content_dedup_hits\":{},\
+                             \"retained_fragment_bytes\":{},\"whole_artifact_bytes\":{},\
+                             \"retained_lt_whole\":{},\"invalidation_exact_all\":{}}}}}",
+                            json_string(store.name()),
+                            summary.total_wall_ns,
+                            summary.snapshots,
+                            summary.total_fragment_refs,
+                            summary.distinct_fragments,
+                            summary.dedup_hits,
+                            summary.content_dedup_hits,
+                            summary.retained_fragment_bytes,
+                            summary.whole_artifact_bytes,
+                            summary.retained_lt_whole,
+                            summary.invalidation_exact_all,
+                        ));
+                        lines.join("\n")
+                    },
+                    Err(reason) => {
+                        failures += 1;
+                        format!(
+                            "{{\"dnf\":true,\"rep\":{record_index},\"reason\":{}}}",
+                            json_string(&reason)
+                        )
+                    },
+                }
+            },
+            (Mode::Wb | Mode::WbGate | Mode::E6b, Workload::Anchor(_)) | (Mode::WbGate, _) => {
+                unreachable!("wb/e6b require the ladder workload; wb-gate returned above")
             },
             (Mode::H2, _) => {
                 let arm = args.arm.expect("parse_args requires --arm for h2 mode");

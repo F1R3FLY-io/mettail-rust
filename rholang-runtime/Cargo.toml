@@ -266,7 +266,11 @@ source-oracle = []
 # naive baseline. `dep:dovetail` is pulled in ONLY for the direct entry mode's
 # pattern types (`Pattern`/`PatternId`/`SetAutomaton`), same path/version as
 # the dev-dependency. Production entry points never reference any of it.
-bench-e3-construction = ["dep:dovetail"]
+# T-E6B (H4v2): forwards `rholang-codegen`'s `bench-fragment-store` quarantine
+# feature for the `--mode e6b` construction-side fragment-store arms (the
+# pathmap-0.2.2 store + the `HashMap` twin + the deterministic
+# retained-bytes/invalidation accounting).
+bench-e3-construction = ["dep:dovetail", "mettail-rholang-codegen/bench-fragment-store"]
 bench-naive-baseline = [
     "mettail-rholang-codegen/bench-naive-baseline",
     "dep:mettail-ast",
