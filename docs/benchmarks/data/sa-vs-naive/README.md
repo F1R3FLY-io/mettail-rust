@@ -37,16 +37,21 @@ touch).
 | `2026-07-19-e6a-postfix/` | E-6a re-measure after the f1r3node trie-cache fix (`84a0fbe4`) | 145 | `06e1d9f0` | counters byte-identical; wall does NOT flip (band → 2.44×–37.33×); residual root-caused to by-value EPathMap transport → spawned the EPathMap value-handling fix |
 | `2026-07-20-e6d1/` | **E-6d #1** — E-6a re-measure after EPM P0–P2 (intern store + chain fusion, `351e494d`) | 148 | `c631c051` | counters byte-identical; swap16 **4.31×** / nested16 **3.97×** vs postfix (all completed cells 1.90×–4.31×); band → 1.30×–8.34×; new #1 cost = the P1 digest pipeline |
 | `2026-07-20-e6d2/` | **E-6d #2** — final re-measure after the FULL stack (P3 wrapper + P4 transport, `ead2f152`) | 149 | `7b4d5663` | counters byte-identical to ALL THREE baselines; further **1.43×/1.34×**, cumulative **6.15×/5.34×**; band → 1.19×–6.35×; residual = the ≈45 ms/inj ps-deep-copy floor (the L2 junction, user decision) |
+| `2026-07-20-e6d3/` | **E-6d #3** — the L2 falsification re-measure (shared-`ps` `SharedPars`, `131aecee`) | 150 | `e8bc939c` | counters byte-identical to ALL FOUR baselines; **attribution CONFIRMED** — boxed `to_vec` 44.83 → 5.38 ms/inj (−88.0%); further **4.73×/4.89×**, cumulative **29.10×/26.12×**; band → **0.79×–1.37×** (treatment FASTER than control on 4/9); residual = digest ≈15.0 > clone ≈10.4 > drop ≈5.2 ms/inj → the USER-owned byte-array protobuf effort |
 
-The four E-6a/E-6d records (rows 3–6) form the EPathMap-fix measurement arc
-against the f1r3node-rust-mettail stack `31b354e6` (split-byte routing) →
+The five E-6a/E-6d records (rows 3–7) form the EPathMap-fix measurement arc —
+CLOSED 2026-07-20 by the E-6d #3 confirmed verdict — against the
+f1r3node-rust-mettail stack `31b354e6` (split-byte routing) →
 `84a0fbe4` (trie-cache) → `602144bd` (P0 parity harness) → `c3d5b3f2` (P1
 intern store) → `351e494d` (P2 chain fusion) → `4e422b6b` (P3 wrapper) →
-`60aaa02e`/`6c0a90cb`/`ead2f152` (P4.1–P4.3 transport/matcher/hashing), on
+`60aaa02e`/`6c0a90cb`/`ead2f152` (P4.1–P4.3 transport/matcher/hashing) →
+`131aecee` (L2 shared-`ps` SharedPars), on
 branch `fix/epathmap-value-handling` == `feature/mettail` (fast-forward
-merge-back 2026-07-20). The per-commit consensus analysis, Scala-divergence
-flags, gate inventory, and the upstream review checklist live in the f1r3node
-review packet: `f1r3node docs/epathmap-value-handling-review.md`.
+merge-back 2026-07-20, re-applied after L2). The per-commit consensus
+analysis, Scala-divergence flags, gate inventory, and the upstream review
+checklist live in the f1r3node review packet:
+`f1r3node docs/epathmap-value-handling-review.md` (§12 carries the L2 entry
+and the E-6d #3 verdict).
 
 ## 1. The workload matrix
 
