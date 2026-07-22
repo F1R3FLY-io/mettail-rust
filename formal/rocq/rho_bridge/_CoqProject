@@ -158,6 +158,17 @@ theories/InRhoQuiescenceDriver.v
 # the no-slot-redescent efficiency counter, the ladder non-vacuity witness, and the NEGATIVE
 # TEST pinning the Fold-1 guard's necessity (without it, scion under-reduces).
 theories/InRhoScionGraft.v
+# E-2 MECHANISM D — the SOUNDNESS kernel for the hereditary-GROUND subst/shift short-circuit at
+# the SHARED de-Bruijn subst-cascade entry (rho_net_subst_trs.rs `^subst`/`^shift` receiver head
+# guard) (InRhoCreeperTrace): ADDITIVE over DeBruijnSubstTRS's Obj + osubst/oshift/oshiftk. Defines
+# the decidable `oground` (hereditary-ground = no oBound leaf anywhere = the host-side reflected
+# marker) and proves oground_subst_id (`oground t` ⟹ `osubst j a t = t` under ANY depth j — the
+# `^subst`-entry guard is sound + DEPTH-INDEPENDENT, no `^cmp`), oground_shift_id (the `^shift`-entry
+# guard), and oground_shiftk_id (the iterated `^shiftk` is identity on ground — the `^shift` guard's
+# transitive `^shiftk` coverage), plus non-vacuity witnesses (a closed constant FIRES, the identity
+# combinator body `oLam(oBound 0)` DECLINES). Grounds the E-2-D production tax: NF results stay
+# byte-identical (the guard replaces identity subst/shift chains with one `ret!(t)`).
+theories/InRhoCreeperTrace.v
 # Stage 3e — the native-system-process dispatch (NativeProc(a..) ~> <native value>) is
 # TOTAL-OR-REJECT + the emitted payload is EXACTLY the trusted handler's value
 # (NativeSystemProcessBoundary): lower_native_system_process either materializes the flat one-slot
