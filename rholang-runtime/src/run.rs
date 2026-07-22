@@ -313,10 +313,23 @@ fn decode_reflected_term(list: &models::rhoapi::EList) -> Option<RuntimeObservat
     let (head, children) = list.ps.split_first()?;
     let tag = private_name_tag(head)?;
     let suffix = tag.strip_prefix(crate::REFLECTED_TERM_ABI_PREFIX)?;
-    let (_fingerprint, label) = suffix.rsplit_once('.')?;
+    let (fingerprint, label) = suffix.rsplit_once('.')?;
     if label.is_empty() {
         return None;
     }
+    // E-2-D (reflected-ABI v2): a marked-object node carries the `^gnd`/`^nog` hereditary-ground
+    // marker at index 1 — skip it so the DECODED term is byte-identical to the pre-D observation
+    // (the marker is codegen metadata, never an observable child). A bare marker GPrivate never
+    // occurs as a genuine child, so this claims only the marker.
+    let children =
+        match children.first() {
+            Some(first)
+                if mettail_rholang_codegen::is_ground_marker_par(first, fingerprint) =>
+            {
+                &children[1..]
+            },
+            _ => children,
+        };
     let children = children
         .iter()
         .map(par_as_runtime_observation_value)

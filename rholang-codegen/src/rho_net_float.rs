@@ -697,25 +697,24 @@ mod tests {
         let ambient = production_ambient_def();
         let shift = shift_receiver_par(&ambient, "fp-gate");
         let body = shift.receives[0].body.as_ref().expect("shift body");
-        // ^bound + ^lambda + ^free + 5 object arms (PZero/PIn/POut/POpen/PAmb; PNew is
-        // the binder, PPar the collection — both excluded from C2) + 1 soup peel (PPar)
-        // + 1 Nil = 10.
+        // E-2-D ground guard + ^bound + ^lambda + ^free + 5 object arms (PZero/PIn/POut/POpen/PAmb;
+        // PNew is the binder, PPar the collection — both excluded from C2) + 1 soup peel (PPar)
+        // + 1 Nil = 11.
         assert_eq!(
             body.matches[0].cases.len(),
-            10,
-            "Ambient ^shift = 3 fixed + 5 object + soup + Nil arms"
+            11,
+            "Ambient ^shift = E-2-D guard + 3 fixed + 5 object + soup + Nil arms"
         );
 
         let lambda = production_lambda_def();
         let shift = shift_receiver_par(&lambda, "fp-gate");
         let body = shift.receives[0].body.as_ref().expect("shift body");
-        // ^bound + ^lambda + ^free + 1 object arm (App; Lam is the binder) = 4 — NO soup
-        // or Nil arm (byte-identity with pre-A-S5.8; the a_s5_6 Lambda pins are the
-        // full-program executable form).
+        // E-2-D ground guard + ^bound + ^lambda + ^free + 1 object arm (App; Lam is the binder)
+        // = 5 — NO soup or Nil arm (bag-op gate; byte-identity with pre-A-S5.8 modulo the guard).
         assert_eq!(
             body.matches[0].cases.len(),
-            4,
-            "Lambda ^shift gains NO soup/Nil arm (bag-op gate)"
+            5,
+            "Lambda ^shift = E-2-D guard + 3 fixed + 1 object arm (no soup/Nil, bag-op gate)"
         );
     }
 

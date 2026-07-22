@@ -69,7 +69,7 @@ fn lambda_driver_par_is_byte_identical_to_the_pre_a_s5_5_golden() {
     let drive = lowered.drive().expect("production Lambda is drive-admitted");
     assert_eq!(
         par_fingerprint(drive),
-        (3659, 0x320f25974908cc34),
+        (4357, 0xcd74c7d13495d5d5),
         "the Lambda ^drive receiver family must be byte-identical to the pre-A-S5.5 \
          golden (captured at ee1514da)"
     );
@@ -79,7 +79,7 @@ fn lambda_driver_par_is_byte_identical_to_the_pre_a_s5_5_golden() {
     assert_eq!(installed.receives.len(), 7, "β seed + 5 TRS + ^drive");
     assert_eq!(
         par_fingerprint(&installed),
-        (11067, 0x9e919040a08bd1fc),
+        (12807, 0xa6eaeb15696e7583),
         "the full Lambda installed program must be byte-identical to the pre-A-S5.5 \
          golden (captured at ee1514da)"
     );
@@ -94,9 +94,9 @@ fn ambient_legacy_ac_receivers_are_byte_identical_to_the_pre_a_s5_5_goldens() {
     let plan = plan_for(include_str!("../../languages/src/ambient.rs"));
     let lowered = plan.rho_net_lowered();
     let goldens: &[(&str, (usize, u64))] = &[
-        ("rule:rewrite:0:InRule", (569, 0x0e37339f70868dfa)),
-        ("rule:rewrite:1:OutRule", (587, 0xc44180c18406c1ac)),
-        ("rule:rewrite:2:OpenRule", (505, 0xad1c278bd8154c5d)),
+        ("rule:rewrite:0:InRule", (610, 0xf464b25652689343)),
+        ("rule:rewrite:1:OutRule", (627, 0x08d041e371a31213)),
+        ("rule:rewrite:2:OpenRule", (533, 0xa7f563b1a93f4595)),
     ];
     for (rule_id, expected) in goldens {
         let par = lowered
@@ -113,3 +113,4 @@ fn ambient_legacy_ac_receivers_are_byte_identical_to_the_pre_a_s5_5_goldens() {
         );
     }
 }
+

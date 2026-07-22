@@ -3109,9 +3109,10 @@ mod tests {
         let drive = lowered.drive().expect("the Lambda-shaped def is drive-admitted");
         assert_eq!(
             par_fingerprint(drive),
-            (3659, 3607143158242659380),
+            (4357, 14804677576417990101),
             "SM-6: the synthetic-Lambda ^drive receiver family (ContractumRedrive) — pin \
-             pre-restructure; the E-1 firing_emission_node restructure must keep this exact"
+             pre-restructure; the E-1 firing_emission_node restructure must keep this exact \
+             (E-2-D re-pin: reflected-ABI v2 adds the hereditary-ground marker at index 1)"
         );
         let installed = lowered
             .installed_program_par()
@@ -3119,9 +3120,10 @@ mod tests {
         assert_eq!(installed.receives.len(), 7, "β seed + 5 TRS + ^drive");
         assert_eq!(
             par_fingerprint(&installed),
-            (11067, 11426072336861483516),
+            (12807, 12027684232042018179),
             "SM-6: the full synthetic-Lambda installed program (ContractumRedrive) — pin \
-             pre-restructure; ContractumRedrive byte-identity across the E-1 restructure"
+             pre-restructure; ContractumRedrive byte-identity across the E-1 restructure \
+             (E-2-D re-pin: reflected-ABI v2 adds the hereditary-ground marker at index 1)"
         );
     }
 

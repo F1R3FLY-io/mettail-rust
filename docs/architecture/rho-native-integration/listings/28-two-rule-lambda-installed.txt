@@ -55,57 +55,63 @@ for (fv(0), fv(1), fv(2) <= priv(mettail.term.fp.^shiftk)) {
 } |
 for (fv(0), fv(1), fv(2) <= priv(mettail.term.fp.^shift)) {
   match bv(1) {
-    [priv(mettail.term.fp.^bound), fv(0)] => {
+    [_, priv(mettail.term.fp.^gnd), ..._] => {
+      bv(0)!(bv(1))
+    } |
+    [priv(mettail.term.fp.^bound), _, fv(0)] => {
       new 1 {
         priv(mettail.term.fp.^cmp)!(bv(1), bv(4), bv(0)) |
         for (fv(0) <- bv(0)) {
           match bv(0) {
             [priv(mettail.term.fp.^Lt)] => {
-              bv(3)!([priv(mettail.term.fp.^bound), bv(2)])
+              bv(3)!([priv(mettail.term.fp.^bound), priv(mettail.term.fp.^nog), bv(2)])
             } |
             _ => {
-              bv(3)!([priv(mettail.term.fp.^bound), [priv(mettail.term.fp.S), bv(2)]])
+              bv(3)!([priv(mettail.term.fp.^bound), priv(mettail.term.fp.^nog), [priv(mettail.term.fp.S), bv(2)]])
             }
           }
         }
       }
     } |
-    [priv(mettail.term.fp.^lambda), fv(0)] => {
+    [priv(mettail.term.fp.^lambda), _, fv(0)] => {
       new 1 {
         priv(mettail.term.fp.^shift)!([priv(mettail.term.fp.S), bv(4)], bv(1), bv(0)) |
         for (fv(0) <- bv(0)) {
-          bv(3)!([priv(mettail.term.fp.^lambda), bv(0)])
+          bv(3)!([priv(mettail.term.fp.^lambda), priv(mettail.term.fp.^nog), bv(0)])
         }
       }
     } |
-    [priv(mettail.term.fp.^free), fv(0)] => {
-      bv(1)!([priv(mettail.term.fp.^free), bv(0)])
+    [priv(mettail.term.fp.^free), _, fv(0)] => {
+      bv(1)!([priv(mettail.term.fp.^free), priv(mettail.term.fp.^gnd), bv(0)])
     } |
-    [priv(mettail.term.fp.App), fv(0), fv(1)] => {
+    [priv(mettail.term.fp.App), _, fv(0), fv(1)] => {
       new 2 {
         priv(mettail.term.fp.^shift)!(bv(6), bv(3), bv(1)) |
         priv(mettail.term.fp.^shift)!(bv(6), bv(2), bv(0)) |
         for (fv(0) <- bv(1) ; fv(0) <- bv(0)) {
-          bv(6)!([priv(mettail.term.fp.App), bv(1), bv(0)])
+          bv(6)!([priv(mettail.term.fp.App), priv(mettail.term.fp.^nog), bv(1), bv(0)])
         }
       }
     } |
-    [priv(mettail.term.fp.F), fv(0)] => {
+    [priv(mettail.term.fp.F), _, fv(0)] => {
       new 1 {
         priv(mettail.term.fp.^shift)!(bv(4), bv(1), bv(0)) |
         for (fv(0) <- bv(0)) {
-          bv(3)!([priv(mettail.term.fp.F), bv(0)])
+          bv(3)!([priv(mettail.term.fp.F), priv(mettail.term.fp.^nog), bv(0)])
         }
       }
     } |
-    [priv(mettail.term.fp.A)] => {
-      bv(0)!([priv(mettail.term.fp.A)])
+    [priv(mettail.term.fp.A), _] => {
+      bv(0)!([priv(mettail.term.fp.A), priv(mettail.term.fp.^gnd)])
     }
   }
 } |
 for (fv(0), fv(1), fv(2), fv(3) <= priv(mettail.term.fp.^subst)) {
   match bv(1) {
-    [priv(mettail.term.fp.^bound), fv(0)] => {
+    [_, priv(mettail.term.fp.^gnd), ..._] => {
+      bv(0)!(bv(1))
+    } |
+    [priv(mettail.term.fp.^bound), _, fv(0)] => {
       new 1 {
         priv(mettail.term.fp.^cmp)!(bv(1), bv(5), bv(0)) |
         for (fv(0) <- bv(0)) {
@@ -117,47 +123,47 @@ for (fv(0), fv(1), fv(2), fv(3) <= priv(mettail.term.fp.^subst)) {
               new 1 {
                 priv(mettail.term.fp.^pred)!(bv(3), bv(0)) |
                 for (fv(0) <- bv(0)) {
-                  bv(5)!([priv(mettail.term.fp.^bound), bv(0)])
+                  bv(5)!([priv(mettail.term.fp.^bound), priv(mettail.term.fp.^nog), bv(0)])
                 }
               }
             } |
             [priv(mettail.term.fp.^Lt)] => {
-              bv(3)!([priv(mettail.term.fp.^bound), bv(2)])
+              bv(3)!([priv(mettail.term.fp.^bound), priv(mettail.term.fp.^nog), bv(2)])
             }
           }
         }
       }
     } |
-    [priv(mettail.term.fp.^lambda), fv(0)] => {
+    [priv(mettail.term.fp.^lambda), _, fv(0)] => {
       new 1 {
         priv(mettail.term.fp.^subst)!([priv(mettail.term.fp.S), bv(5)], bv(4), bv(1), bv(0)) |
         for (fv(0) <- bv(0)) {
-          bv(3)!([priv(mettail.term.fp.^lambda), bv(0)])
+          bv(3)!([priv(mettail.term.fp.^lambda), priv(mettail.term.fp.^nog), bv(0)])
         }
       }
     } |
-    [priv(mettail.term.fp.^free), fv(0)] => {
-      bv(1)!([priv(mettail.term.fp.^free), bv(0)])
+    [priv(mettail.term.fp.^free), _, fv(0)] => {
+      bv(1)!([priv(mettail.term.fp.^free), priv(mettail.term.fp.^gnd), bv(0)])
     } |
-    [priv(mettail.term.fp.App), fv(0), fv(1)] => {
+    [priv(mettail.term.fp.App), _, fv(0), fv(1)] => {
       new 2 {
         priv(mettail.term.fp.^subst)!(bv(7), bv(6), bv(3), bv(1)) |
         priv(mettail.term.fp.^subst)!(bv(7), bv(6), bv(2), bv(0)) |
         for (fv(0) <- bv(1) ; fv(0) <- bv(0)) {
-          bv(6)!([priv(mettail.term.fp.App), bv(1), bv(0)])
+          bv(6)!([priv(mettail.term.fp.App), priv(mettail.term.fp.^nog), bv(1), bv(0)])
         }
       }
     } |
-    [priv(mettail.term.fp.F), fv(0)] => {
+    [priv(mettail.term.fp.F), _, fv(0)] => {
       new 1 {
         priv(mettail.term.fp.^subst)!(bv(5), bv(4), bv(1), bv(0)) |
         for (fv(0) <- bv(0)) {
-          bv(3)!([priv(mettail.term.fp.F), bv(0)])
+          bv(3)!([priv(mettail.term.fp.F), priv(mettail.term.fp.^nog), bv(0)])
         }
       }
     } |
-    [priv(mettail.term.fp.A)] => {
-      bv(0)!([priv(mettail.term.fp.A)])
+    [priv(mettail.term.fp.A), _] => {
+      bv(0)!([priv(mettail.term.fp.A), priv(mettail.term.fp.^gnd)])
     }
   }
 }

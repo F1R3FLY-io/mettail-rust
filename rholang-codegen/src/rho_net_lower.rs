@@ -2656,6 +2656,88 @@ fn instantiate_rhs(
     }
 }
 
+/// E-2-D: does a reflected node with head `label` carry the hereditary-ground marker?
+///
+/// TRUE for OBJECT nodes — the binder/variable leaves (`^lambda`/`^multilambda`/`^bound`/
+/// `^free`) and every USER constructor (a Rust `Ident`, so NEVER `^`-prefixed). FALSE for
+/// MACHINERY — the Peano numerals `Z`/`S`, the `^cmp` results, the reserved reduction tags
+/// (`^subst`/`^shift`/`^cmp`/…), and the marker tokens themselves (every `^`-prefixed label
+/// that is not a binder/variable leaf). The subst cascade dispatches on OBJECT nodes; the
+/// numeric machinery is byte-unchanged. (A rare USER constructor literally named `Z`/`S` is
+/// treated as UNMARKED too — CONSISTENTLY: its emitter and its `pat_tagged` matcher agree, so
+/// there is no shape mismatch; it merely forgoes the ground short-circuit — sound + correct.)
+pub fn is_marked_object_label(label: &str) -> bool {
+    match label {
+        LAMBDA_REFLECT_LABEL | MULTILAMBDA_REFLECT_LABEL | BOUND_VAR_REFLECT_LABEL
+        | FREE_VAR_REFLECT_LABEL => true,
+        PEANO_ZERO_REFLECT_LABEL | PEANO_SUCC_REFLECT_LABEL => false,
+        other => !other.starts_with('^'),
+    }
+}
+
+/// E-2-D: the hereditary-ground marker token `GPrivate(reflect_tag(fp, ^gnd | ^nog))`.
+pub(crate) fn ground_marker_tag_par(fp: &str, is_ground: bool) -> Par {
+    GPrivateBuilder::new_par_from_string(reflect_tag(
+        fp,
+        if is_ground { GROUND_MARK_REFLECT_LABEL } else { NONGROUND_MARK_REFLECT_LABEL },
+    ))
+}
+
+/// E-2-D: is `par` one of the two hereditary-ground marker tokens for `fp`? The DECODERS
+/// (`run::decode_reflected_term`, `native_contract::par_to_ground_term`, `rho_net_naive_kt`)
+/// SKIP it when it sits at a reflected object node's index 1, recovering the pre-D positional
+/// child sequence. A bare marker GPrivate never occurs as a genuine reflected child (children
+/// are tagged `EList`s / `GString` names / scalars), so the skip is unambiguous.
+pub fn is_ground_marker_par(par: &Par, fp: &str) -> bool {
+    par == &ground_marker_tag_par(fp, true) || par == &ground_marker_tag_par(fp, false)
+}
+
+/// E-2-D: does the reflected object node `par` carry the `^gnd` (GROUND) marker at index 1?
+/// The combinator [`crate::rho_net_subst_trs::tagged`] uses this to fold a reassembled node's
+/// marker from its ALREADY-reflected children (a runtime σ-var child is a BoundVar, not a marked
+/// `EList`, so it reads false — the conservative `^nog`). Cheap O(1): peek the second element.
+pub(crate) fn par_carries_ground_marker(par: &Par, fingerprint: &str) -> bool {
+    matches!(
+        par.exprs.first().and_then(|expr| expr.expr_instance.as_ref()),
+        Some(ExprInstance::EListBody(list))
+            if list.ps.get(1) == Some(&ground_marker_tag_par(fingerprint, true))
+    )
+}
+
+/// E-2-D: is a reflected object `GroundTerm` HEREDITARILY GROUND (contains no `^bound` leaf
+/// anywhere)? = the FV `InRhoCreeperTrace.oground`. `^bound` ⟹ false (the substitutable leaf),
+/// `^free` ⟹ true (inert), else ⟹ all children ground. An AC collection carrier is conservatively
+/// NOT ground (it has no positional marker slot; a parent with a collection child stays `^nog`).
+pub(crate) fn ground_term_is_hereditarily_ground(term: &GroundTerm) -> bool {
+    if term.coll_type.is_some() {
+        return false;
+    }
+    match term.constructor.as_str() {
+        BOUND_VAR_REFLECT_LABEL => false,
+        FREE_VAR_REFLECT_LABEL => true,
+        _ => term.children.iter().all(ground_term_is_hereditarily_ground),
+    }
+}
+
+/// E-2-D: is a reflected RHS `Pattern` node HEREDITARILY GROUND? A variable occurrence (a σ-slot
+/// hole OR a bound-var leaf) is NEVER ground; a constructor/binder node is ground iff its body /
+/// all args are. Mirrors [`ground_term_is_hereditarily_ground`] so the RHS reflector's marker
+/// AGREES with [`reflect_ground_term_par`]'s on the ground (variable-free) overlap — preserving
+/// the shared-ABI byte identity.
+fn pattern_is_hereditarily_ground(pattern: &Pattern) -> bool {
+    match pattern {
+        Pattern::Term(PatternTerm::Var(_)) => false,
+        Pattern::Term(PatternTerm::Apply { args, .. }) => {
+            args.iter().all(pattern_is_hereditarily_ground)
+        },
+        Pattern::Term(PatternTerm::Lambda { body, .. })
+        | Pattern::Term(PatternTerm::MultiLambda { body, .. }) => {
+            pattern_is_hereditarily_ground(body)
+        },
+        _ => false,
+    }
+}
+
 /// Reflect a GROUND constructor term to a normalized `Par` value under the SAME
 /// constructor reflection ABI as the internal RHS reflector `reflect_term_par`:
 ///
@@ -2673,27 +2755,58 @@ fn instantiate_rhs(
 /// the same shape would emit, and the runtime `decode_reflected_term` counterpart
 /// decodes both identically.
 pub fn reflect_ground_term_par(term: &GroundTerm, language_fingerprint: &str) -> Par {
+    reflect_ground_term_marked(term, language_fingerprint).0
+}
+
+/// [`reflect_ground_term_par`] threading the E-2-D hereditary-ground bit bottom-up in ONE O(n)
+/// pass: an OBJECT node (`is_marked_object_label`) interposes the `^gnd`/`^nog` marker at index 1
+/// (right after the head tag), with `^gnd` iff the subtree contains no `^bound` leaf (`^bound` ⟹
+/// false, `^free` ⟹ true, else ⟹ all children ground — the FV `oground`). Machinery labels + AC
+/// carriers get NO marker (and count as NOT ground for a parent's marker). Returns the reflected
+/// `Par` and its ground bit (so a parent computes its marker without re-traversing — no O(n²)).
+fn reflect_ground_term_marked(term: &GroundTerm, language_fingerprint: &str) -> (Par, bool) {
     // Stage AC / AC4: an AC operand COLLECTION reflects as its kind's native matching CARRIER,
     // not the positional tagged `EList`. A `HashBag` reflects to the order-independent process-`Par`
     // soup; a `HashSet` to a native `ESet`; a `HashMap` to a native `EMap` (key-uniqueness enforced
-    // by `ParMap`'s sorted-dedup). See [`reflect_ac_collection_par`].
+    // by `ParMap`'s sorted-dedup). See [`reflect_ac_collection_par`]. No positional marker; a
+    // collection is conservatively NOT ground for its parent's marker.
     if matches!(
         term.coll_type,
         Some(CollectionType::HashBag | CollectionType::HashSet | CollectionType::HashMap)
     ) {
-        return reflect_ac_collection_par(term, language_fingerprint);
+        return (reflect_ac_collection_par(term, language_fingerprint), false);
     }
     let tag =
         GPrivateBuilder::new_par_from_string(reflect_tag(language_fingerprint, &term.constructor));
-    let mut elements = Vec::with_capacity(term.children.len() + 1);
+    let marked = is_marked_object_label(&term.constructor);
+    let mut elements = Vec::with_capacity(term.children.len() + 2);
     let mut locally_free = tag.locally_free.clone();
     elements.push(tag);
+    // Reserve the marker slot (filled after the children so ground-ness is known); a GPrivate
+    // marker has empty `locally_free`, so it never contributes to the node's free-set.
+    let marker_slot = marked.then(|| {
+        elements.push(Par::default());
+        elements.len() - 1
+    });
+    let mut children_ground = true;
     for child in &term.children {
-        let child = reflect_ground_term_par(child, language_fingerprint);
-        locally_free = union(locally_free, child.locally_free.clone());
-        elements.push(child);
+        let (child_par, child_ground) = reflect_ground_term_marked(child, language_fingerprint);
+        children_ground &= child_ground;
+        locally_free = union(locally_free, child_par.locally_free.clone());
+        elements.push(child_par);
     }
-    new_elist_par(elements, locally_free.clone(), false, None, locally_free, false)
+    let is_ground = match term.constructor.as_str() {
+        BOUND_VAR_REFLECT_LABEL => false,
+        FREE_VAR_REFLECT_LABEL => true,
+        _ => children_ground,
+    };
+    if let Some(index) = marker_slot {
+        elements[index] = ground_marker_tag_par(language_fingerprint, is_ground);
+    }
+    (
+        new_elist_par(elements, locally_free.clone(), false, None, locally_free, false),
+        is_ground,
+    )
 }
 
 /// Reflect a HashBag AC operand bag as the process-`Par` matching CARRIER: each element is a
@@ -2876,8 +2989,14 @@ pub fn ac_bag_pattern(op: &str, k: usize) -> Par {
 /// carrier's, so the pattern's head tag equals the reflected element's.
 pub fn ac_set_element_pattern(op: &str, arity: usize, base: usize, fingerprint: &str) -> Par {
     let tag = GPrivateBuilder::new_par_from_string(reflect_tag(fingerprint, op));
-    let mut elements = Vec::with_capacity(arity + 1);
+    let mut elements = Vec::with_capacity(arity + 2);
     elements.push(tag);
+    // E-2-D: the reflected op-headed element carries the marker at index 1 — this positional
+    // pattern absorbs it with a wildcard (the paired match is over head + args, not the marker),
+    // keeping the arg FreeVar σ levels unchanged (a wildcard binds nothing).
+    if is_marked_object_label(op) {
+        elements.push(new_wildcard_par(Vec::new(), true));
+    }
     for i in 0..arity {
         elements.push(new_freevar_par((base + i) as i32, Vec::new()));
     }
@@ -3392,11 +3511,17 @@ fn spread_term_par_at(
         ));
     }
     // Bottom-up collapse: publish `⟦subtree⟧` on this node's `col:` (chain) and `cap:`
-    // (capture) channels.
+    // (capture) channels. E-2-D: a marked-object node carries the `^gnd`/`^nog` marker at index
+    // 1, its ground-ness computed host-side from THIS subtree (so a production σ-value bound off
+    // `cap:` carries the SAME marker `reflect_ground_term_par` would — byte-identity preserved).
+    let marker = is_marked_object_label(&term.constructor).then(|| {
+        ground_marker_tag_par(language_fingerprint, ground_term_is_hereditarily_ground(term))
+    });
     par.append(collapse_publish(
         chain_location,
         capture_location,
         head_tag,
+        marker,
         &child_chain_channels,
     ))
 }
@@ -3417,12 +3542,19 @@ fn collapse_publish(
     chain_location: &str,
     capture_location: &str,
     head_tag: Par,
+    marker: Option<Par>,
     child_chain_channels: &[String],
 ) -> Par {
     let n = child_chain_channels.len();
     if n == 0 {
-        // Leaf: ⟦leaf⟧ = EList[tag]; two linear ground sends (chain + capture).
-        let collapsed = new_elist_par(vec![head_tag], Vec::new(), false, None, Vec::new(), false);
+        // Leaf: ⟦leaf⟧ = EList[tag] (+ E-2-D marker at index 1 for a marked-object leaf);
+        // two linear ground sends (chain + capture).
+        let leaf_elements = match marker {
+            Some(m) => vec![head_tag, m],
+            None => vec![head_tag],
+        };
+        let collapsed =
+            new_elist_par(leaf_elements, Vec::new(), false, None, Vec::new(), false);
         let chain = new_send_par(
             new_gstring_par(chain_location.to_string(), Vec::new(), false),
             vec![collapsed.clone()],
@@ -3456,8 +3588,14 @@ fn collapse_publish(
         .collect();
     let all_free: Vec<usize> = (0..n).collect();
     let free_bits = create_bit_vector(&all_free);
-    let mut elements = Vec::with_capacity(n + 1);
+    let mut elements = Vec::with_capacity(n + 2);
     elements.push(head_tag);
+    // E-2-D: interpose the marker at index 1 for a marked-object node (a GPrivate marker has
+    // empty `locally_free`, and the child BoundVar indices are join-binder-relative, NOT EList
+    // positions, so the marker shifts nothing) — byte-identical to `reflect_ground_term_par`.
+    if let Some(m) = marker {
+        elements.push(m);
+    }
     for i in 0..n {
         let idx = n - 1 - i;
         elements.push(new_boundvar_par(idx as i32, create_bit_vector(&[idx]), false));
@@ -3555,6 +3693,31 @@ pub const FREE_VAR_REFLECT_LABEL: &str = "^free";
 /// (its own `Z`/`S` term reflects structurally, never mistaken for a Peano index).
 pub const PEANO_ZERO_REFLECT_LABEL: &str = "Z";
 pub const PEANO_SUCC_REFLECT_LABEL: &str = "S";
+
+/// E-2 MECHANISM D — the reflected-ABI HEREDITARY-GROUND MARKER (reflected-ABI v2).
+///
+/// Every reflected OBJECT node (`is_marked_object_label`) carries, as its FIRST element
+/// right after the head tag, one of these two distinguished GPrivate tokens:
+///
+/// ```text
+/// ⟦f(t₁,…,tₙ)⟧ = EList[ GPrivate(reflect_tag(f)), GROUND-or-NONGROUND, ⟦t₁⟧, …, ⟦tₙ⟧ ]
+/// ```
+///
+/// `^gnd` = HEREDITARILY GROUND (the subtree contains NO `^bound` de-Bruijn leaf, so
+/// `^subst`/`^shift` is the IDENTITY on it — the FV `InRhoCreeperTrace.oground_subst_id`
+/// / `oground_shift_id`), `^nog` = NOT (provably) ground. The `^subst`/`^shift` receiver
+/// ENTRY guard fires `ret!(t)` immediately on `^gnd`, skipping the dispatch + reassembly
+/// joins for the whole closed subtree. `^`-prefixed + fingerprint-namespaced ⟹ unforgeable
+/// vs any user `Ident` and vs every other reserved tag; dot-free ⟹ the decoders' `{fp}.{label}`
+/// split is unambiguous. The marker is SOUND under-approximation: `^gnd` ⟹ ground, but a
+/// runtime-reassembled node conservatively carries `^nog` (never wrong, only a missed skip).
+///
+/// This is the reflected-ABI VERSION BUMP: pre-D reflected object nodes were `EList[tag,
+/// children…]`; v2 interposes the marker at index 1. Machinery labels (Peano `Z`/`S`, `^cmp`
+/// results, reserved reduction tags) are NOT marked (`is_marked_object_label` = false), so the
+/// numeric cascade is byte-unchanged.
+pub const GROUND_MARK_REFLECT_LABEL: &str = "^gnd";
+pub const NONGROUND_MARK_REFLECT_LABEL: &str = "^nog";
 
 /// The reserved reduction-channel / rule tags for the generated de-Bruijn substitution
 /// term-rewriting system (Stage 4 S-binder SLICE 2a — the in-Rho β cascade). Each names one
@@ -3681,13 +3844,22 @@ fn reflect_term_par_env(
                     );
                 }
             }
-            let tag = GPrivateBuilder::new_par_from_string(reflect_tag(
-                language_fingerprint,
-                &constructor.to_string(),
-            ));
-            let mut elements = Vec::with_capacity(args.len() + 1);
+            let label = constructor.to_string();
+            let tag =
+                GPrivateBuilder::new_par_from_string(reflect_tag(language_fingerprint, &label));
+            let mut elements = Vec::with_capacity(args.len() + 2);
             let mut locally_free = tag.locally_free.clone();
             elements.push(tag);
+            // E-2-D: a USER constructor node is marked-object — interpose the hereditary-ground
+            // marker at index 1, AGREEING with `reflect_ground_term_par`'s on the ground overlap
+            // (both `^gnd` iff all args are variable/`^bound`-free) so the shared ABI stays
+            // byte-identical for a ground RHS constructor of the same shape.
+            if is_marked_object_label(&label) {
+                elements.push(ground_marker_tag_par(
+                    language_fingerprint,
+                    args.iter().all(pattern_is_hereditarily_ground),
+                ));
+            }
             for arg in args {
                 let child =
                     reflect_term_par_env(arg, vars, k, language_fingerprint, binder_env, def)?;
@@ -3757,7 +3929,15 @@ fn reflect_bound_var_leaf(name: &Ident, language_fingerprint: &str) -> Par {
     ));
     let name_leaf = new_gstring_par(name.to_string(), Vec::new(), false);
     let locally_free = union(tag.locally_free.clone(), name_leaf.locally_free.clone());
-    new_elist_par(vec![tag, name_leaf], locally_free.clone(), false, None, locally_free, false)
+    // E-2-D: `^bound` is the substitutable de-Bruijn leaf — NEVER hereditarily ground (`^nog`).
+    new_elist_par(
+        vec![tag, ground_marker_tag_par(language_fingerprint, false), name_leaf],
+        locally_free.clone(),
+        false,
+        None,
+        locally_free,
+        false,
+    )
 }
 
 /// Reflect a binder node (`Lambda`/`MultiLambda`) as a tagged `EList`
@@ -3776,9 +3956,15 @@ fn reflect_binder_node(
     def: Option<&LanguageDef>,
 ) -> Result<Par, UnsupportedFamily> {
     let tag = GPrivateBuilder::new_par_from_string(reflect_tag(language_fingerprint, label));
-    let mut elements = Vec::with_capacity(binders.len() + 2);
+    let mut elements = Vec::with_capacity(binders.len() + 3);
     let mut locally_free = tag.locally_free.clone();
     elements.push(tag);
+    // E-2-D: `^lambda`/`^multilambda` are marked-object — `^gnd` iff the body is hereditarily
+    // ground (no σ-var / bound-var occurrence in the body), matching `reflect_ground_term_par`.
+    elements.push(ground_marker_tag_par(
+        language_fingerprint,
+        pattern_is_hereditarily_ground(body),
+    ));
     for binder in binders {
         let leaf = reflect_bound_var_leaf(binder, language_fingerprint);
         locally_free = union(locally_free, leaf.locally_free.clone());
@@ -4567,8 +4753,14 @@ fn comm_element_pattern(element: &CommElement, nl_level: usize, language_fingerp
         language_fingerprint,
         &element.constructor,
     ));
-    let mut items = Vec::with_capacity(element.args.len() + 1);
+    let mut items = Vec::with_capacity(element.args.len() + 2);
     items.push(tag);
+    // E-2-D: the reflected element carries the marker at index 1 — absorb it with a wildcard
+    // (this channel/consistency match is over head + args, not the marker); the arg σ levels
+    // are unchanged (a wildcard binds nothing).
+    if is_marked_object_label(&element.constructor) {
+        items.push(new_wildcard_par(Vec::new(), true));
+    }
     for index in 0..element.args.len() {
         if index == element.nonlinear_index {
             items.push(new_freevar_par(nl_level as i32, Vec::new()));
@@ -5495,8 +5687,13 @@ fn structural_ac_match_element_pattern(
         language_fingerprint,
         &element.constructor,
     ));
-    let mut items = Vec::with_capacity(element.args.len() + 1);
+    let mut items = Vec::with_capacity(element.args.len() + 2);
     items.push(tag);
+    // E-2-D: the reflected element carries the marker at index 1 — absorb it with a wildcard
+    // (the match is over head + args; the arg σ levels are unchanged, a wildcard binds nothing).
+    if is_marked_object_label(&element.constructor) {
+        items.push(new_wildcard_par(Vec::new(), true));
+    }
     for (index, arg) in element.args.iter().enumerate() {
         if index == element.nonlinear_index {
             // The non-linear channel occurrence — the guard slot (`FreeVar(nl_level)`).
@@ -6399,12 +6596,17 @@ pub(crate) fn nested_match_pattern_for(
                 soup
             } else {
                 // A plain constructor node → the tagged `EList[ GPrivate(tag), <arg patterns> ]`.
-                let tag = GPrivateBuilder::new_par_from_string(reflect_tag(
-                    language_fingerprint,
-                    &constructor.to_string(),
-                ));
-                let mut items = Vec::with_capacity(args.len() + 1);
+                let label = constructor.to_string();
+                let tag =
+                    GPrivateBuilder::new_par_from_string(reflect_tag(language_fingerprint, &label));
+                let mut items = Vec::with_capacity(args.len() + 2);
                 items.push(tag);
+                // E-2-D: a marked-object node carries the marker at index 1 — absorb it with a
+                // wildcard so this drive-AC-carrier bind/check pattern matches the reflected
+                // operand (the arg patterns keep their positions, a wildcard binds nothing).
+                if is_marked_object_label(&label) {
+                    items.push(new_wildcard_par(Vec::new(), true));
+                }
                 for arg in args {
                     items.push(nested_match_pattern_for(
                         arg,
@@ -7638,12 +7840,17 @@ pub(crate) fn nested_match_bind_pattern_for(
                 soup
             } else {
                 // A plain constructor node → the tagged `EList[ GPrivate(tag), <arg patterns> ]`.
-                let tag = GPrivateBuilder::new_par_from_string(reflect_tag(
-                    language_fingerprint,
-                    &constructor.to_string(),
-                ));
-                let mut items = Vec::with_capacity(args.len() + 1);
+                let label = constructor.to_string();
+                let tag =
+                    GPrivateBuilder::new_par_from_string(reflect_tag(language_fingerprint, &label));
+                let mut items = Vec::with_capacity(args.len() + 2);
                 items.push(tag);
+                // E-2-D: a marked-object node carries the marker at index 1 — absorb it with a
+                // wildcard so this drive-AC-carrier bind/check pattern matches the reflected
+                // operand (the arg patterns keep their positions, a wildcard binds nothing).
+                if is_marked_object_label(&label) {
+                    items.push(new_wildcard_par(Vec::new(), true));
+                }
                 for arg in args {
                     items.push(nested_match_bind_pattern_for(
                         arg,
@@ -8899,22 +9106,31 @@ mod tests {
             "out channel must be BoundVar(0)"
         );
 
-        // Payload is the reflected Pair term: EList[ GPrivate(tag), b, a ].
+        // Payload is the reflected Pair term: EList[ GPrivate(tag), ^nog, b, a ] (E-2-D v2:
+        // the `^nog` marker at index 1 — a σ-var RHS is not hereditarily ground).
         assert_eq!(send.data.len(), 1);
         let elist = elist_body(&send.data[0]);
-        assert_eq!(elist.ps.len(), 3, "head tag + two children");
+        assert_eq!(elist.ps.len(), 4, "head tag + ^nog marker + two children");
 
         let expected_tag = GPrivateBuilder::new_par_from_string(format!(
             "mettail.term.{}.Pair",
             lowered.language_fingerprint
         ));
         assert_eq!(elist.ps[0], expected_tag, "head is the unforgeable Pair reflection tag");
+        assert_eq!(
+            elist.ps[1],
+            GPrivateBuilder::new_par_from_string(format!(
+                "mettail.term.{}.^nog",
+                lowered.language_fingerprint
+            )),
+            "index 1 is the ^nog marker (a σ-var-bearing RHS is not hereditarily ground)"
+        );
 
         // RHS order (b, a): b = rhs_var_index(2, 1) = 1, a = rhs_var_index(2, 0) = 2.
         assert_eq!(rhs_var_index(2, 1), 1);
         assert_eq!(rhs_var_index(2, 0), 2);
-        assert_eq!(boundvar_index(&elist.ps[1]), Some(1), "first child is b");
-        assert_eq!(boundvar_index(&elist.ps[2]), Some(2), "second child is a");
+        assert_eq!(boundvar_index(&elist.ps[2]), Some(1), "first child is b");
+        assert_eq!(boundvar_index(&elist.ps[3]), Some(2), "second child is a");
 
         assert!(lowered.errors().is_empty(), "a reflectable constructor RHS must not error");
     }
@@ -8948,7 +9164,7 @@ mod tests {
             .expect("σ-receiver body")
             .sends[0];
         let outer = elist_body(&send.data[0]);
-        assert_eq!(outer.ps.len(), 2, "outer head tag + one child");
+        assert_eq!(outer.ps.len(), 3, "outer head tag + E-2-D marker + one child");
         assert_eq!(
             outer.ps[0],
             GPrivateBuilder::new_par_from_string(format!(
@@ -8958,8 +9174,8 @@ mod tests {
             "outer head is the unforgeable Outer reflection tag"
         );
 
-        let inner = elist_body(&outer.ps[1]);
-        assert_eq!(inner.ps.len(), 2, "inner head tag + one child");
+        let inner = elist_body(&outer.ps[2]);
+        assert_eq!(inner.ps.len(), 3, "inner head tag + E-2-D marker + one child");
         assert_eq!(
             inner.ps[0],
             GPrivateBuilder::new_par_from_string(format!(
@@ -8970,7 +9186,7 @@ mod tests {
         );
         // x = rhs_var_index(1, 0) = 1.
         assert_eq!(rhs_var_index(1, 0), 1);
-        assert_eq!(boundvar_index(&inner.ps[1]), Some(1), "inner child is x");
+        assert_eq!(boundvar_index(&inner.ps[2]), Some(1), "inner child is x (E-2-D marker at ps[1])");
 
         assert!(lowered.errors().is_empty());
     }
@@ -10858,21 +11074,24 @@ mod tests {
         // The head element carries the reserved `^lambda` tag (a GPrivate, collision-free with
         // any Apply node and any σ-slot).
         let elements = &elist_body(&reflected).ps;
-        assert_eq!(elements.len(), 3, "EList[^lambda tag, ⟦binder⟧, ⟦body⟧]");
+        // E-2-D v2: EList[^lambda tag, marker, ⟦binder⟧, ⟦body⟧] — the marker at index 1.
+        assert_eq!(elements.len(), 4, "EList[^lambda tag, marker, ⟦binder⟧, ⟦body⟧]");
         assert_eq!(elements[0], lambda_tag, "the head tag is the reserved ^lambda binder tag");
-        // The binder leaf is a `^bound` node (not a σ-slot BoundVar).
-        let binder_leaf = &elist_body(&elements[1]).ps;
+        // The binder leaf is a `^bound` node (not a σ-slot BoundVar) — head tag at index 0, its
+        // own `^nog` marker at index 1.
+        let binder_leaf = &elist_body(&elements[2]).ps;
         assert_eq!(binder_leaf[0], bound_tag, "the binder reflects to a ^bound leaf");
-        // Inside the body `Pair(x, y)`: x is a ^bound leaf, y is a σ-slot BoundVar(1).
-        let body = &elist_body(&elements[2]).ps; // [Pair tag, ⟦x⟧, ⟦y⟧]
+        // Inside the body `Pair(x, y)`: x is a ^bound leaf, y is a σ-slot BoundVar(1). The body's
+        // own marker sits at body[1]; children shift to body[2] / body[3].
+        let body = &elist_body(&elements[3]).ps; // [Pair tag, marker, ⟦x⟧, ⟦y⟧]
         assert_eq!(body[0], pair_tag, "the body head tag is the Pair constructor tag");
-        let x_leaf = &elist_body(&body[1]).ps;
+        let x_leaf = &elist_body(&body[2]).ps;
         assert_eq!(
             x_leaf[0], bound_tag,
             "the bound occurrence x reflects to a ^bound leaf, not a σ-slot"
         );
         assert_eq!(
-            boundvar_index(&body[2]),
+            boundvar_index(&body[3]),
             Some(rhs_var_index(1, 0)),
             "the free body var y reflects to its σ-slot BoundVar"
         );
@@ -10924,18 +11143,24 @@ mod tests {
         let par = reflect_ground_term_par(&pair, fp);
 
         let outer = elist_body(&par);
-        assert_eq!(outer.ps.len(), 3, "head tag + two ground children");
+        // E-2-D (reflected-ABI v2): head tag + `^gnd` marker at index 1 + two ground children.
+        assert_eq!(outer.ps.len(), 4, "head tag + ^gnd marker + two ground children");
         assert_eq!(
             outer.ps[0],
             GPrivateBuilder::new_par_from_string(format!("mettail.term.{fp}.Pair")),
             "head is the shared unforgeable Pair reflection tag"
         );
+        assert_eq!(
+            outer.ps[1],
+            GPrivateBuilder::new_par_from_string(format!("mettail.term.{fp}.^gnd")),
+            "index 1 is the hereditary-ground marker (Pair(B, A) contains no ^bound leaf)"
+        );
 
-        let b = elist_body(&outer.ps[1]);
-        assert_eq!(b.ps.len(), 1, "nullary B is a lone head tag");
+        let b = elist_body(&outer.ps[2]);
+        assert_eq!(b.ps.len(), 2, "nullary B: head tag + ^gnd marker");
         assert_eq!(b.ps[0], GPrivateBuilder::new_par_from_string(format!("mettail.term.{fp}.B")));
-        let a = elist_body(&outer.ps[2]);
-        assert_eq!(a.ps.len(), 1, "nullary A is a lone head tag");
+        let a = elist_body(&outer.ps[3]);
+        assert_eq!(a.ps.len(), 2, "nullary A: head tag + ^gnd marker");
         assert_eq!(a.ps[0], GPrivateBuilder::new_par_from_string(format!("mettail.term.{fp}.A")));
 
         // Ground reflection binds no σ variable: no BoundVar leaves anywhere and
@@ -10966,7 +11191,11 @@ mod tests {
                 &new_gstring_par("ac:PPar".to_string(), Vec::new(), false),
                 "elements are sent on the AC element channel ac:{{op}}"
             );
-            assert_eq!(elist_body(&send.data[0]).ps.len(), 1, "nullary element = lone head tag");
+            assert_eq!(
+                elist_body(&send.data[0]).ps.len(),
+                2,
+                "nullary element = head tag + E-2-D ^gnd marker"
+            );
         }
 
         // Multiplicity: a duplicate element yields a duplicate send (2 x A + B -> 3 sends).
@@ -11005,16 +11234,16 @@ mod tests {
         let vars = vec![ident("x"), ident("rest")]; // [element, rest] — the AC σ order
         let reflected = reflect_term_par(&rhs, &vars, 2, fp, None).expect("Wrap(x) reflects");
         let outer = elist_body(&reflected);
-        assert_eq!(outer.ps.len(), 2, "head tag + one element σ");
+        assert_eq!(outer.ps.len(), 3, "head tag + E-2-D marker + one element σ");
         assert_eq!(
             outer.ps[0],
             GPrivateBuilder::new_par_from_string(format!("mettail.term.{fp}.Wrap")),
             "the RHS head is the Wrap reflection tag"
         );
         assert_eq!(
-            boundvar_index(&outer.ps[1]),
+            boundvar_index(&outer.ps[2]),
             Some(2),
-            "element x = BoundVar(2) — the AC receiver frame (k+2-1 for k=1)"
+            "element x = BoundVar(2) — the AC receiver frame (k+2-1 for k=1); E-2-D marker at ps[1]"
         );
     }
 
@@ -11055,9 +11284,9 @@ mod tests {
             "the fixed element head is the Wrap reflection tag"
         );
         assert_eq!(
-            boundvar_index(&elem.ps[1]),
+            boundvar_index(&elem.ps[2]),
             Some(2),
-            "x = element BoundVar(2) (the AC receiver's k+2-formal frame, k=1)"
+            "x = element BoundVar(2) (the AC receiver's k+2-formal frame, k=1); E-2-D marker at ps[1]"
         );
 
         // The `rest` σ-slot is the one top-level process var BoundVar(1) — the AC receiver's
@@ -11148,7 +11377,7 @@ mod tests {
             GPrivateBuilder::new_par_from_string(format!("mettail.term.{fp}.Wrap")),
             "the transformed element is Wrap(...)"
         );
-        assert_eq!(boundvar_index(&elem.ps[1]), Some(2), "x = element BoundVar(2)");
+        assert_eq!(boundvar_index(&elem.ps[2]), Some(2), "x = element BoundVar(2) (E-2-D marker at ps[1])");
         // The rest σ-slot BoundVar(1) at the soup top level splices the residual bag.
         assert_eq!(
             boundvar_index(soup),
@@ -11196,8 +11425,8 @@ mod tests {
             "fires on out = BoundVar(0)"
         );
         let rhs = elist_body(&send.data[0]);
-        assert_eq!(rhs.ps.len(), 2, "Wrap tag + the element σ");
-        assert_eq!(boundvar_index(&rhs.ps[1]), Some(2), "element x = BoundVar(2) (the AC frame)");
+        assert_eq!(rhs.ps.len(), 3, "Wrap tag + E-2-D marker + the element σ");
+        assert_eq!(boundvar_index(&rhs.ps[2]), Some(2), "element x = BoundVar(2) (the AC frame; E-2-D marker at ps[1])");
 
         // A non-AC rule (structural Swap) is NOT un-skipped — stays on its existing path.
         let swap = apply("Swap", vec![var_pattern("a"), var_pattern("b")]);
@@ -11620,9 +11849,9 @@ mod tests {
             "the reduced context head is the Wrap reflection tag"
         );
         assert_eq!(
-            boundvar_index(&list.ps[1]),
+            boundvar_index(&list.ps[2]),
             Some(1),
-            "the reduced hole T sits at BoundVar(rhs_var_index(1,0)) = BoundVar(1)"
+            "the reduced hole T sits at BoundVar(rhs_var_index(1,0)) = BoundVar(1) (E-2-D marker at ps[1])"
         );
     }
 
@@ -11665,14 +11894,14 @@ mod tests {
         let body = receive.body.as_ref().expect("join body");
         let list = elist_body(&body.sends[0].data[0]);
         assert_eq!(
-            boundvar_index(&list.ps[1]),
+            boundvar_index(&list.ps[2]),
             Some(2),
-            "hole T0 at BoundVar(n - 0) = BoundVar(2)"
+            "hole T0 at BoundVar(n - 0) = BoundVar(2) (E-2-D marker at ps[1])"
         );
         assert_eq!(
-            boundvar_index(&list.ps[2]),
+            boundvar_index(&list.ps[3]),
             Some(1),
-            "hole T1 at BoundVar(n - 1) = BoundVar(1)"
+            "hole T1 at BoundVar(n - 1) = BoundVar(1) (E-2-D marker at ps[1] shifts children +1)"
         );
     }
 

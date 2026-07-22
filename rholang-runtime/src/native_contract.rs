@@ -135,6 +135,15 @@ pub fn par_to_ground_term(
             actual: fingerprint.to_string(),
         });
     }
+    // E-2-D (reflected-ABI v2): a marked-object node carries the `^gnd`/`^nog` hereditary-ground
+    // marker at index 1 — skip it so `par_to_ground_term ∘ reflect_ground_term_par` stays the
+    // identity on positional ground terms (the marker is codegen metadata, not a σ operand).
+    let children = match children.first() {
+        Some(first) if mettail_rholang_codegen::is_ground_marker_par(first, fingerprint) => {
+            &children[1..]
+        },
+        _ => children,
+    };
     let children = children
         .iter()
         .map(|child| par_to_ground_term(child, expected_fingerprint))

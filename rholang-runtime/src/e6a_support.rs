@@ -93,6 +93,7 @@ use crypto::rust::hash::blake2b512_random::Blake2b512Random;
 use models::create_bit_vector;
 use models::rhoapi::expr::ExprInstance;
 use models::rhoapi::{EAnd, EList, EMethod, EPathMap, ETuple, Expr, MatchCase, Par, ReceiveBind};
+use models::rust::canonical_path::encode_trie_path;
 use models::rust::par_to_sexpr::ParToSExpr;
 use models::rust::utils::{
     new_boundvar_par, new_elist_par, new_freevar_par, new_gbool_par, new_gstring_par,
@@ -392,6 +393,14 @@ pub fn build_pathmap_index(
         &mut value_entries,
         &mut omitted,
     )?;
+    // E-2-D (reflected-ABI v2): the reducer NORMALIZES an `EPathMap` to its TRIE-CANONICAL entry
+    // order (`canonical_path`: "trie order = canonical order", a lexicographic walk over each
+    // entry's `encode_trie_path` bytes) on reduction. Emit the entries in that canonical order
+    // HOST-side too, so the whole-value bind+forward round-trip stays byte-identical: the
+    // hereditary-ground marker enlarged each «v» value, which reordered the trie walk relative to
+    // the DFS traversal order these were pushed in (they coincided pre-marker). Sorting by the
+    // f1r3node-exposed `encode_trie_path` reproduces the reducer's order exactly (no f1r3node edit).
+    entries.sort_by_cached_key(encode_trie_path);
     let index = Par::default().with_exprs(vec![Expr {
         // EPathMap fix P3 (f1r3node-rust-mettail, PM-2): `EPathMap` is now the
         // hand-maintained extern_path wrapper with a private shadow cell —

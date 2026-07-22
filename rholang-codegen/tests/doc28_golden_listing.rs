@@ -373,8 +373,12 @@ fn decode_gprivate(id: &[u8]) -> String {
 fn render_expr(expr: &Expr) -> String {
     match expr.expr_instance.as_ref().expect("an expr must carry its instance") {
         ExprInstance::EListBody(list) => {
-            assert!(list.remainder.is_none(), "no EList remainder occurs here");
-            let elements: Vec<String> = list.ps.iter().map(render_par_inline).collect();
+            // E-2-D: the `^subst`/`^shift` hereditary-ground ENTRY guard matches
+            // `[ _, ^gnd, ...rest ]` — an EList pattern WITH a wildcard remainder. Render it.
+            let mut elements: Vec<String> = list.ps.iter().map(render_par_inline).collect();
+            if let Some(remainder) = list.remainder.as_ref() {
+                elements.push(format!("...{}", render_var(remainder)));
+            }
             format!("[{}]", elements.join(", "))
         },
         ExprInstance::EVarBody(evar) => {

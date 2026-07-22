@@ -72,7 +72,8 @@
 
 use mettail_ast::grammar::{GrammarItem, TermParam};
 use mettail_ast::language::LanguageDef;
-use models::rhoapi::{MatchCase, Par, Receive, ReceiveBind};
+use models::rhoapi::var::{VarInstance, WildcardMsg};
+use models::rhoapi::{MatchCase, Par, Receive, ReceiveBind, Var};
 use models::rust::rholang::implicits::GPrivateBuilder;
 use models::rust::utils::{
     new_boundvar_par, new_elist_par, new_freevar_par, new_match_par, new_new_par, new_send_par,
@@ -80,11 +81,13 @@ use models::rust::utils::{
 };
 
 use crate::rho_net_lower::{
+    ground_marker_tag_par, is_marked_object_label, par_carries_ground_marker,
     reflect_ground_term_par, reflect_tag, BOUND_VAR_REFLECT_LABEL,
     CMP_RESERVED_LABEL, DRIVE_AC_RESERVED_LABEL, DRIVE_ERR_RESERVED_LABEL,
     DRIVE_FUEL_RESERVED_LABEL, DRIVE_RESERVED_LABEL,
     FIRED_RESERVED_LABEL, FLOAT_HOIST_RESERVED_LABEL, FLOAT_MERGE_RESERVED_LABEL,
-    FLOAT_RESERVED_LABEL, FREE_VAR_REFLECT_LABEL, GroundTerm, LAMBDA_REFLECT_LABEL,
+    FLOAT_RESERVED_LABEL, FREE_VAR_REFLECT_LABEL, GroundTerm,
+    LAMBDA_REFLECT_LABEL,
     MULTILAMBDA_REFLECT_LABEL, PEANO_SUCC_REFLECT_LABEL, PEANO_ZERO_REFLECT_LABEL, PRED_RESERVED_LABEL,
     SB_RESERVED_LABEL, SHB_RESERVED_LABEL, SHIFTK_RESERVED_LABEL, SHIFT_RESERVED_LABEL,
     SUBST_RESERVED_LABEL,
@@ -239,8 +242,21 @@ fn elist(children: Vec<Node>) -> Node {
 /// nodes with the SAME combinator so its reflected-ABI discipline is the TRS's by
 /// construction (the `:129-133` sharing precedent).
 pub(crate) fn tagged(fp: &str, label: &str, children: Vec<Node>) -> Node {
-    let mut items = Vec::with_capacity(children.len() + 1);
+    let mut items = Vec::with_capacity(children.len() + 2);
     items.push(ground(tag_par(fp, label)));
+    // E-2-D: a marked-object node interposes the `^gnd`/`^nog` marker at index 1. The
+    // reassembled node's ground-ness is folded from its ALREADY-reflected children: `^bound`
+    // is never ground, `^free` always is, and any other object node is `^gnd` iff EVERY child
+    // carries `^gnd` (a runtime σ-var child is a BoundVar — not a marked `EList` — so it reads
+    // `^nog`, the SOUND conservative value: a reassembly output is never wrongly `^gnd`).
+    if is_marked_object_label(label) {
+        let is_ground = match label {
+            BOUND_VAR_REFLECT_LABEL => false,
+            FREE_VAR_REFLECT_LABEL => true,
+            _ => children.iter().all(|child| par_carries_ground_marker(&child.par, fp)),
+        };
+        items.push(ground(ground_marker_tag_par(fp, is_ground)));
+    }
     items.extend(children);
     elist(items)
 }
@@ -439,8 +455,15 @@ pub(crate) fn join(sources: Vec<Node>, body: Node) -> Node {
 /// `FreeVar`/`Wildcard` leaves), `locally_free = []` (pattern free vars are binders, not
 /// locally-free bound vars) — the [`crate::rho_net_lower`] `comm_element_pattern` convention.
 pub(crate) fn pat_tagged(fp: &str, label: &str, children: Vec<Par>) -> Par {
-    let mut items = Vec::with_capacity(children.len() + 1);
+    let mut items = Vec::with_capacity(children.len() + 2);
     items.push(tag_par(fp, label));
+    // E-2-D: a marked-object node carries the marker at index 1 — absorb it with a wildcard
+    // (a congruence / dispatch arm matches head + children, not the marker value; the `^subst`
+    // ENTRY guard has its OWN marker-reading pattern, `ground_guard_case`). A wildcard binds
+    // nothing, so the children's `FreeVar` σ levels are unchanged.
+    if is_marked_object_label(label) {
+        items.push(new_wildcard_par(Vec::new(), true));
+    }
     items.extend(children);
     new_elist_par(items, Vec::new(), true, None, Vec::new(), true)
 }
@@ -448,6 +471,37 @@ pub(crate) fn pat_tagged(fp: &str, label: &str, children: Vec<Par>) -> Par {
 /// `FreeVar(level)` — a pattern binder at the given local free-var level.
 pub(crate) fn pat_free(level: usize) -> Par {
     new_freevar_par(level as i32, Vec::new())
+}
+
+/// E-2 MECHANISM D — the hereditary-GROUND ENTRY GUARD shared by the `^subst`/`^shift` receivers.
+///
+/// Prepended to the receiver's `match t`, it fires FIRST on any reflected object node whose
+/// index-1 hereditary-ground marker is `^gnd`: `ret!(t)` IMMEDIATELY, skipping the per-arm
+/// dispatch AND the C2 object-congruence reassembly joins for the WHOLE closed subtree. This IS
+/// the production subst-cascade short-circuit — installed policy-independently at the SHARED
+/// entry ([`subst_trs_program_par`]), so it applies to production β (NO drive-side `ScionPolicy`
+/// arm, NO second subst family / dual path).
+///
+/// SOUND by [`InRhoCreeperTrace`](../../formal/rocq/rho_bridge/theories/InRhoCreeperTrace.v):
+/// `^gnd` ⟹ hereditarily ground (no `^bound` leaf) ⟹ `^subst`/`^shift` is the IDENTITY, for ANY
+/// depth `j` / cutoff `c` (`oground_subst_id` / `oground_shift_id`) — so the guard needs NO `^cmp`
+/// numeric test. A reassembled node is only ever `^nog` when its groundness is not host-certain,
+/// so the guard never fires wrongly; production NF results stay byte-identical.
+///
+/// Pattern `EList[ _, ^gnd, ...rest ]`: element 0 wildcards the head tag, element 1 pins the
+/// `^gnd` marker literal, and the wildcard remainder absorbs the children — matching exactly the
+/// GROUND-marked object nodes (a `^nog` node or an unmarked numeral falls through). `free_count`
+/// is 0; the body reads the receiver-frame subject `t` (still in scope inside the `match` body).
+fn ground_guard_case(fp: &str, env: &Env) -> Case {
+    let pattern = new_elist_par(
+        vec![new_wildcard_par(Vec::new(), true), ground_marker_tag_par(fp, true)],
+        Vec::new(),
+        true,
+        Some(Var { var_instance: Some(VarInstance::Wildcard(WildcardMsg {})) }),
+        Vec::new(),
+        true,
+    );
+    Case { pattern, free_count: 0, body: send(env.var("ret"), vec![env.var("t")]) }
 }
 
 /// A GROUND nullary pattern `EList[ GPrivate(⌜label⌝) ]` (Peano `Z`, a `^cmp` result) — no free
@@ -668,6 +722,9 @@ pub(crate) fn shift_receiver_par(def: &LanguageDef, fp: &str) -> Par {
 /// non-reserved constructor.
 fn shift_cases(def: &LanguageDef, fp: &str, env: &Env) -> Vec<Case> {
     let mut cases = vec![
+        // E-2-D: the hereditary-GROUND short-circuit — MUST be first (fires on `^gnd` before any
+        // per-arm dispatch). `oground_shift_id`: shift is the identity on a ground subject.
+        ground_guard_case(fp, env),
         // ^bound n => new r in { ^cmp(n, c, r) | for(@cr <- r){ match cr { Lt => ^bound n ; _ => ^bound(S n) } } }
         Case {
             pattern: pat_tagged(fp, BOUND_VAR_REFLECT_LABEL, vec![pat_free(0)]),
@@ -822,6 +879,9 @@ pub(crate) fn subst_receiver_par(def: &LanguageDef, fp: &str) -> Par {
 /// object-congruence arm per non-reserved constructor.
 fn subst_cases(def: &LanguageDef, fp: &str, env: &Env) -> Vec<Case> {
     let mut cases = vec![
+        // E-2-D: the hereditary-GROUND short-circuit — MUST be first (fires on `^gnd` before any
+        // per-arm dispatch). `oground_subst_id`: subst is the identity on a ground subject.
+        ground_guard_case(fp, env),
         // ^bound n => new r in { ^cmp(n, j, r) |
         //   for(@cr <- r){ match cr { Eq => ^shiftk(j, a, ret)
         //                             Gt => new rp in { ^pred(n, rp) | for(@pn <- rp){ ret!(^bound pn) } }

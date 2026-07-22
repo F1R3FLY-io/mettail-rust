@@ -98,7 +98,7 @@ fn lambda_driver_par_is_byte_identical_to_the_pre_a_s5_6_golden() {
         .expect("production Lambda is drive-admitted");
     assert_eq!(
         par_fingerprint(drive),
-        (3659, 0x320f25974908cc34),
+        (4357, 0xcd74c7d13495d5d5),
         "the Lambda ^drive receiver family must be byte-identical to the pre-A-S5.6 \
          golden (captured at a9193914)"
     );
@@ -108,7 +108,7 @@ fn lambda_driver_par_is_byte_identical_to_the_pre_a_s5_6_golden() {
     assert_eq!(installed.receives.len(), 7, "β seed + 5 TRS + ^drive");
     assert_eq!(
         par_fingerprint(&installed),
-        (11067, 0x9e919040a08bd1fc),
+        (12807, 0xa6eaeb15696e7583),
         "the full Lambda installed program must be byte-identical to the pre-A-S5.6 \
          golden (captured at a9193914)"
     );
@@ -134,7 +134,7 @@ fn ambient_driver_par_is_byte_identical_to_the_a_s5_8_golden() {
         .expect("production Ambient is drive-admitted");
     assert_eq!(
         par_fingerprint(drive),
-        (33330, 0x8a08afb0ac0ddf23),
+        (36836, 0xf2001e22a109b902),
         "the Ambient ^drive receiver family must be byte-identical to the A-S5.8 golden \
          (float-routed firing emissions; captured at the A-S5.8 leg-1 tree)"
     );
@@ -148,7 +148,7 @@ fn ambient_driver_par_is_byte_identical_to_the_a_s5_8_golden() {
     );
     assert_eq!(
         par_fingerprint(&installed),
-        (50744, 0x2c975a412838fbc6),
+        (56314, 0x4d95f2df46f3450a),
         "the full Ambient installed program must be byte-identical to the A-S5.8 golden \
          (the ^float family appended; captured at the A-S5.8 leg-1 tree)"
     );

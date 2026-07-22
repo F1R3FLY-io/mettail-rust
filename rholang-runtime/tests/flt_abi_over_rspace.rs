@@ -267,10 +267,12 @@ async fn beat5_omega_exhausts_fuel_with_the_typed_datum() {
 fn reflected_app_parts(fp: &str) -> (Par, Par, Par) {
     let subject = reflect_ground_term_par(&g_app(g_id(), g_k()), fp);
     match subject.exprs.first().and_then(|e| e.expr_instance.as_ref()) {
+        // E-2-D (reflected-ABI v2): ⟦App(id, K)⟧ = [App_tag, ^nog, ⟦id⟧, ⟦K⟧] — the hereditary-
+        // ground marker sits at index 1, so the head tag / id / K are ps[0] / ps[2] / ps[3].
         Some(ExprInstance::EListBody(list)) => {
-            (list.ps[0].clone(), list.ps[1].clone(), list.ps[2].clone())
+            (list.ps[0].clone(), list.ps[2].clone(), list.ps[3].clone())
         },
-        other => panic!("⟦App(id, K)⟧ must reflect to a 3-element EList, got {other:?}"),
+        other => panic!("⟦App(id, K)⟧ must reflect to a 4-element EList (marker at 1), got {other:?}"),
     }
 }
 
@@ -285,9 +287,16 @@ fn quoted_name(name: &str) -> Par {
 fn hole_rendezvous_program(subject: Par, tag: Par, ground_arg: Par) -> Par {
     let producer =
         new_send_par(quoted_name("fltX"), vec![subject], false, Vec::new(), false, Vec::new(), false);
-    // Pattern `[⌜tag⌝, ${f}, ground_arg]`: the FreeVar makes the EList (and its Par) connective-used.
+    // Pattern `[⌜tag⌝, _, ${f}, ground_arg]`: E-2-D v2 puts the hereditary-ground marker at index
+    // 1, so a wildcard absorbs it; the FreeVar (function-position hole) then binds at index 2. The
+    // FreeVar makes the EList (and its Par) connective-used.
     let pattern = new_elist_par(
-        vec![tag, new_freevar_par(0, Vec::new()), ground_arg],
+        vec![
+            tag,
+            models::rust::utils::new_wildcard_par(Vec::new(), true),
+            new_freevar_par(0, Vec::new()),
+            ground_arg,
+        ],
         Vec::new(),
         true,
         None,
