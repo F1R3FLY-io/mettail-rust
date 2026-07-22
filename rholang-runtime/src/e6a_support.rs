@@ -22,13 +22,18 @@
 //!    * «s» (site/tag): `[tag(f), c₀, …, c_d]` — op-FIRST, so ONE
 //!      `readZipperAt([tag(op)]).getSubtrie()` query selects every candidate
 //!      site of a rule-root op;
-//!    * «v» (value): `["v", c₀, …, c_d, (⟦t⟧,)]` — the σ carrier: the
+//!    * «v» (value): `["v", c₀, …, c_d, @val, (⟦t⟧,)]` — the σ carrier: the
 //!      reflected subtree [`reflect_ground_term_par`], wrapped in a 1-TUPLE,
-//!      rides as the last list element, recovered in-process by
-//!      `readZipperAt(["v", c₀…c_d]).descendFirst().getLeaf()` (the stored
-//!      trie VALUE is the ORIGINAL entry `Par`, lossless; only the trie KEY
-//!      is the lossy S-expression encoding, and below the `["v", c₀…c_d]`
-//!      prefix there is exactly one entry, so key lossiness cannot collide).
+//!      rides as the last list element after the [`VALUE_LEAF_SENTINEL`]
+//!      (`@val`) segment, recovered in-process by
+//!      `readZipperAt(["v", c₀…c_d, @val]).descendFirst().getLeaf()` (the
+//!      stored trie VALUE is the ORIGINAL entry `Par`, lossless). The `@val`
+//!      sentinel guarantees that below the `["v", c₀…c_d, @val]` prefix there
+//!      is EXACTLY the value tuple — even when the σ position binds a NON-LEAF
+//!      subtree whose DEEPER «v» entries would otherwise share the `["v",
+//!      c₀…c_d]` prefix (they carry a `{op}.{i}` descent component at the
+//!      sentinel's position, never `@val`). See [`VALUE_LEAF_SENTINEL`] for the
+//!      full root cause (the `lambda_chain` binder-body σ fire-0).
 //!
 //! 2. [`discovery_call_par`] installs, per rule-root op, the MACHINE-side
 //!    site enumeration (`getSubtrie` on the op prefix, result published on
@@ -117,6 +122,39 @@ use crate::bench_support::{
 /// The «v» (σ-carrier) family discriminant — the first path segment of every
 /// value entry. Distinct from every tag segment (tags start `t.`).
 const VALUE_FAMILY: &str = "v";
+
+/// The «v» value-leaf SENTINEL segment, interposed between a value entry's
+/// LOCATION components and its σ-value tuple: `["v", c₀…c_d, @val, (⟦t⟧,)]`.
+///
+/// # Why (root cause of the `lambda_chain` fire-0)
+///
+/// σ-retrieval is `readZipperAt(["v", c₀…c_d, @val]).descendFirst().getLeaf()`.
+/// Without the sentinel the query prefix was `["v", c₀…c_d]`, and the design
+/// (see the retired module-rustdoc claim) ASSUMED exactly one entry sits below
+/// it. That holds only when the σ position binds a LEAF subterm. When it binds
+/// a NON-LEAF (e.g. `lambda_chain`'s β rule `App(Lam(fun), arg) ~> eval fun
+/// arg` binds `fun` = the lambda BODY `^bound(Z)`, and `arg` = the chain tail),
+/// the subject node has CHILDREN, so DEEPER «v» entries share the `["v",
+/// c₀…c_d]` prefix (`["v", c₀…c_d, {op}.{i}, …]`). Their next segment is a
+/// descent-component `GString` (canonical-codec tag `0x04`), which sorts BEFORE
+/// the value tuple's `ETuple` segment (tag `0x0C`), so `descendFirst`
+/// (byte-lex-smallest child) selected a DEEPER descent branch and `getLeaf`
+/// returned Nil — the σ match then never fired. (Under the reducer's former
+/// S-expression trie codec a list/arity tag byte sorted BEFORE a symbol tag
+/// byte, so the tuple WAS picked first and the bug was latent; the f1r3node
+/// "Job-A" canonical-path re-key flipped that ordering. The bug is INDEPENDENT
+/// of the E-2-D `^gnd`/`^nog` marker — the marker enlarges the tuple's CONTENT
+/// but never changes the descent CHOICE, since the tuple's leading `0x0C` and
+/// the descent `GString`'s leading `0x04` are both marker-invariant.)
+///
+/// The sentinel makes each location's σ value uniquely addressable: below
+/// `["v", c₀…c_d, @val]` there is EXACTLY the value tuple (a deeper «v» entry
+/// carries a `{op}.{i}` component at that position, never `@val`), so
+/// `descendFirst` unambiguously descends the tuple regardless of σ arity. It is
+/// collision-free with every location component (`root_site` = `site0`; every
+/// descent component is `{op}.{index}`, which always contains a `.` — `@val`
+/// contains none) and with the family discriminant (`v`).
+const VALUE_LEAF_SENTINEL: &str = "@val";
 
 /// The SAFE S-expression symbol budget: the encoder panics outside 1..=63 and
 /// `Symbol(63)`'s tag byte is `0xFF` (the segment separator), so 62 is the
@@ -329,12 +367,16 @@ fn push_index_entries(
     }
     entries.push(ground_list(s_elements));
 
-    // «v»: [ "v", c₀, …, c_d, (⟦t⟧,) ] — OMITTED (recorded) when over-cap.
-    let mut v_elements: Vec<Par> = Vec::with_capacity(2 + components.len());
+    // «v»: [ "v", c₀, …, c_d, @val, (⟦t⟧,) ] — OMITTED (recorded) when over-cap.
+    // The `@val` sentinel isolates the σ value below `["v", c₀…c_d, @val]` so it
+    // stays uniquely addressable when the σ position binds a NON-LEAF (deeper
+    // «v» entries share `["v", c₀…c_d]`); see [`VALUE_LEAF_SENTINEL`].
+    let mut v_elements: Vec<Par> = Vec::with_capacity(3 + components.len());
     v_elements.push(quoted(VALUE_FAMILY));
     for component in components.iter() {
         v_elements.push(quoted(component));
     }
+    v_elements.push(quoted(VALUE_LEAF_SENTINEL));
     v_elements.push(ground_tuple(reflect_ground_term_par(term, language_fingerprint)));
     if entry_fits_machine_caps(&v_elements) {
         entries.push(ground_list(v_elements));
@@ -690,6 +732,21 @@ fn query_path_list(first: &str, components: &[String]) -> Par {
     ground_list(elements)
 }
 
+/// The «v» value-leaf query PREFIX `Par` `["v", c₀, …, c_d, @val]` — the
+/// sentinel-terminated prefix below which sits EXACTLY the σ-value tuple (see
+/// [`VALUE_LEAF_SENTINEL`]). Both the σ-existence guard and the σ chain address
+/// the value through THIS prefix so `descendFirst` cannot mis-descend into a
+/// deeper «v» entry when the σ position binds a non-leaf subtree.
+fn value_query_path(components: &[String]) -> Par {
+    let mut elements: Vec<Par> = Vec::with_capacity(2 + components.len());
+    elements.push(quoted(VALUE_FAMILY));
+    for component in components {
+        elements.push(quoted(component));
+    }
+    elements.push(quoted(VALUE_LEAF_SENTINEL));
+    ground_list(elements)
+}
+
 /// `idx.readZipperAt([tag(op), c₀…c_d]).pathExists()` — TRUE iff the subject
 /// node at the location exists with head constructor `op`.
 fn tag_guard_expr(tag: &str, components: &[String]) -> Par {
@@ -702,27 +759,29 @@ fn tag_guard_expr(tag: &str, components: &[String]) -> Par {
     method_par(zipper, "pathExists", Vec::new(), &[0])
 }
 
-/// `idx.readZipperAt(["v", c₀…c_d]).pathExists()` — the σ-position existence
-/// guard (defensive totality: keeps `getLeaf` unreachable on any malformed or
-/// cap-omitted index entry rather than aborting the injection).
+/// `idx.readZipperAt(["v", c₀…c_d, @val]).pathExists()` — the σ-position
+/// existence guard (defensive totality: keeps `getLeaf` unreachable on any
+/// malformed or cap-omitted index entry rather than aborting the injection).
 fn value_exists_guard_expr(components: &[String]) -> Par {
     let zipper = method_par(
         new_boundvar_par(0, create_bit_vector(&[0]), false),
         "readZipperAt",
-        vec![query_path_list(VALUE_FAMILY, components)],
+        vec![value_query_path(components)],
         &[0],
     );
     method_par(zipper, "pathExists", Vec::new(), &[0])
 }
 
-/// `idx.readZipperAt(["v", c₀…c_d]).descendFirst().getLeaf()` — navigate to
-/// the single «v» entry below the prefix and return the ORIGINAL entry `Par`
-/// `["v", c₀, …, c_d, (⟦t⟧,)]`.
+/// `idx.readZipperAt(["v", c₀…c_d, @val]).descendFirst().getLeaf()` — navigate
+/// to the σ value below the sentinel-terminated prefix and return the ORIGINAL
+/// entry `Par` `["v", c₀, …, c_d, @val, (⟦t⟧,)]`. The `@val` sentinel makes the
+/// value tuple the SOLE child below the prefix even when the σ position binds a
+/// non-leaf subtree (see [`VALUE_LEAF_SENTINEL`]).
 fn sigma_chain_expr(components: &[String]) -> Par {
     let zipper = method_par(
         new_boundvar_par(0, create_bit_vector(&[0]), false),
         "readZipperAt",
-        vec![query_path_list(VALUE_FAMILY, components)],
+        vec![value_query_path(components)],
         &[0],
     );
     let descended = method_par(zipper, "descendFirst", Vec::new(), &[0]);
@@ -831,9 +890,9 @@ pub fn entry_query_match_par(
         connective_used: false,
         ..Par::default()
     };
-    // Pattern: per slot, the «v» entry list ["v", c₀, …, c_d, (⟦t⟧,)] matched
-    // as [_ × (d+2), (s,)] — wildcards for the family+components, a 1-tuple
-    // pattern binding the σ slot.
+    // Pattern: per slot, the «v» entry list ["v", c₀, …, c_d, @val, (⟦t⟧,)]
+    // matched as [_ × (d+3), (s,)] — wildcards for the family+components+@val
+    // sentinel, a 1-tuple pattern binding the σ slot.
     let sigma_pattern = Par {
         exprs: vec![Expr {
             expr_instance: Some(ExprInstance::EListBody(EList {
@@ -841,7 +900,7 @@ pub fn entry_query_match_par(
                     .iter()
                     .enumerate()
                     .map(|(slot, components)| {
-                        let arity = components.len() + 2; // "v" + components + tuple
+                        let arity = components.len() + 3; // "v" + components + @val + tuple
                         let mut elements: Vec<Par> = Vec::with_capacity(arity);
                         for _ in 0..arity - 1 {
                             elements.push(new_wildcard_par(Vec::new(), true));
