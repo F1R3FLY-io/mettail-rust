@@ -2928,6 +2928,9 @@ fn write_accept_token_suffixed(
         suffix.to_lowercase()
     )
     .expect("codegen: write into in-memory String is infallible");
+    // A mode whose accept states are all unit variants (e.g. a fixed closer +
+    // a payload-free GuestChunk) never references `text`; keep it live.
+    buf.push_str("let _ = text;");
     buf.push_str("match state {");
     for (state_idx, state) in dfa.states.iter().enumerate() {
         if let Some(ref kind) = state.accept {
@@ -3003,6 +3006,227 @@ fn write_push_pop_tables(
         }
     }
     buf.push_str("_ => false } }");
+}
+
+/// Write a suffixed `accept_alternatives_{suffix}` function — the (Token, weight)
+/// alternatives per accept state for ONE mode's DFA (mirrors the non-modal
+/// [`write_accept_alternatives`]). Consumed by the modal DAG/weighted/lattice/
+/// stream scanners via the `m_accept_alternatives` shim. [L9-1]
+fn write_accept_alternatives_suffixed(
+    buf: &mut String,
+    dfa: &Dfa,
+    custom_tokens: &[CustomTokenSpec],
+    suffix: &str,
+) {
+    write!(
+        buf,
+        "fn accept_alternatives_{}<'a>(state: u32, text: &'a str) -> Vec<(Token<'a>, f64)> {{",
+        suffix.to_lowercase()
+    )
+    .expect("codegen: write into in-memory String is infallible");
+    // Some modes' accept states are unit variants that never reference `text`
+    // (e.g. a fixed closer with no payload); keep the parameter live.
+    buf.push_str("let _ = text;");
+    buf.push_str("match state {");
+    for (state_idx, state) in dfa.states.iter().enumerate() {
+        if let Some(ref primary_kind) = state.accept {
+            if state.alt_accepts.is_empty() {
+                let primary_variant =
+                    token_kind_to_constructor(primary_kind, "text", custom_tokens);
+                write!(
+                    buf,
+                    "{}u32 => vec![({}, {:.1}_f64)],",
+                    state_idx,
+                    primary_variant,
+                    state.weight.value()
+                )
+                .expect("codegen: write into in-memory String is infallible");
+            } else {
+                write!(buf, "{}u32 => vec![", state_idx)
+                    .expect("codegen: write into in-memory String is infallible");
+                let primary_variant =
+                    token_kind_to_constructor(primary_kind, "text", custom_tokens);
+                write!(buf, "({}, {:.1}_f64),", primary_variant, state.weight.value())
+                    .expect("codegen: write into in-memory String is infallible");
+                for (alt_kind, alt_weight) in &state.alt_accepts {
+                    let alt_variant = token_kind_to_constructor(alt_kind, "text", custom_tokens);
+                    write!(buf, "({}, {:.1}_f64),", alt_variant, alt_weight.value())
+                        .expect("codegen: write into in-memory String is infallible");
+                }
+                buf.push_str("],");
+            }
+        }
+    }
+    buf.push_str("_ => Vec::new() } }");
+}
+
+/// Write the mode-dispatch shims that wrap the per-mode DFA tables behind a
+/// uniform mode-indexed signature. The runtime `*_core_modal` scanners and
+/// `compute_mode_map` consume these; one match arm per mode (0 = default). The
+/// `m_is_raw` shim returns `false` for every mode until L9-4 wires per-mode raw
+/// flags. [L9-1]
+fn write_mode_dispatch_shims(buf: &mut String, mode_results: &[crate::lexer::ModeDfaResult]) {
+    buf.push_str("#[allow(dead_code)] fn m_char_class(mode: u8, b: u8) -> u8 { match mode {");
+    buf.push_str("0u8 => CHAR_CLASS_DEFAULT[b as usize],");
+    for mode in mode_results {
+        write!(buf, "{}u8 => CHAR_CLASS_{}[b as usize],", mode.mode_id, mode.name.to_uppercase())
+            .expect("codegen: write into in-memory String is infallible");
+    }
+    buf.push_str("_ => 0u8 } }");
+
+    buf.push_str(
+        "#[allow(dead_code)] fn m_dfa_next(mode: u8, state: u32, class: u8) -> u32 { match mode {",
+    );
+    buf.push_str("0u8 => dfa_next_default(state, class),");
+    for mode in mode_results {
+        write!(buf, "{}u8 => dfa_next_{}(state, class),", mode.mode_id, mode.name.to_lowercase())
+            .expect("codegen: write into in-memory String is infallible");
+    }
+    buf.push_str("_ => u32::MAX } }");
+
+    buf.push_str(
+        "#[allow(dead_code)] fn m_is_accepting(mode: u8, state: u32) -> bool { match mode {",
+    );
+    buf.push_str("0u8 => is_accepting_state_default(state),");
+    for mode in mode_results {
+        write!(
+            buf,
+            "{}u8 => is_accepting_state_{}(state),",
+            mode.mode_id,
+            mode.name.to_lowercase()
+        )
+        .expect("codegen: write into in-memory String is infallible");
+    }
+    buf.push_str("_ => false } }");
+
+    buf.push_str(
+        "#[allow(dead_code)] fn m_accept_alternatives<'a>(mode: u8, state: u32, text: &'a str) \
+         -> Vec<(Token<'a>, f64)> { match mode {",
+    );
+    buf.push_str("0u8 => accept_alternatives_default(state, text),");
+    for mode in mode_results {
+        write!(
+            buf,
+            "{}u8 => accept_alternatives_{}(state, text),",
+            mode.mode_id,
+            mode.name.to_lowercase()
+        )
+        .expect("codegen: write into in-memory String is infallible");
+    }
+    buf.push_str("_ => Vec::new() } }");
+
+    buf.push_str("#[allow(dead_code)] fn m_push_target(mode: u8, state: u32) -> u8 { match mode {");
+    buf.push_str("0u8 => push_target_default(state),");
+    for mode in mode_results {
+        write!(buf, "{}u8 => push_target_{}(state),", mode.mode_id, mode.name.to_lowercase())
+            .expect("codegen: write into in-memory String is infallible");
+    }
+    buf.push_str("_ => u8::MAX } }");
+
+    buf.push_str("#[allow(dead_code)] fn m_should_pop(mode: u8, state: u32) -> bool { match mode {");
+    buf.push_str("0u8 => should_pop_default(state),");
+    for mode in mode_results {
+        write!(buf, "{}u8 => should_pop_{}(state),", mode.mode_id, mode.name.to_lowercase())
+            .expect("codegen: write into in-memory String is infallible");
+    }
+    buf.push_str("_ => false } }");
+
+    // No mode is RAW until L9-4 threads the per-mode raw flag; a constant-false
+    // shim keeps the whitespace-skip behavior identical to today for now.
+    buf.push_str("#[allow(dead_code)] fn m_is_raw(mode: u8) -> bool { let _ = mode; false }");
+}
+
+/// Write the modal DAG/WFST interface — `lex_weighted`, `lex_lattice`,
+/// `lex_stream`, `lex_dag`, `lex_dag_lazy` — each computing the byte→mode map
+/// once (`compute_mode_map`) then delegating to the matching `*_core_modal`
+/// runtime with the mode-dispatch shims. Mirrors the non-modal
+/// `write_lex_*_via_core` writers so the generated WPDA parser resolves the same
+/// entry points on a modal grammar. [L9-1]
+fn write_modal_dag_functions(buf: &mut String, _mode_results: &[crate::lexer::ModeDfaResult]) {
+    // lex_weighted / lex_weighted_with_file_id
+    buf.push_str(
+        "pub fn lex_weighted<'a>(input: &'a str) -> Result<Vec<(Token<'a>, Range, f64)>, String> { \
+         lex_weighted_with_file_id(input, None) \
+         }\n\
+         pub fn lex_weighted_with_file_id<'a>(input: &'a str, file_id: Option<u32>) -> Result<Vec<(Token<'a>, Range, f64)>, String> { \
+         let mode_at = mettail_prattail::runtime_types::compute_mode_map(input, m_char_class, m_dfa_next, m_is_accepting, m_push_target, m_should_pop, m_is_raw)?; \
+         let (mut tokens, eof_pos) = mettail_prattail::runtime_types::lex_weighted_core_modal( \
+         input, file_id, &mode_at, m_char_class, m_dfa_next, m_is_accepting, m_accept_alternatives, m_is_raw)?; \
+         tokens.push((Token::Eof, Range { start: eof_pos, end: eof_pos, file_id }, 0.0_f64)); \
+         Ok(tokens) }",
+    );
+
+    // lex_lattice / lex_lattice_with_file_id
+    buf.push_str(
+        "pub fn lex_lattice<'a>(input: &'a str) \
+         -> Result<(mettail_prattail::lattice::TokenSource<Token<'a>, Range>, Range), String> { \
+         lex_lattice_with_file_id(input, None) \
+         }\n\
+         pub fn lex_lattice_with_file_id<'a>(input: &'a str, file_id: Option<u32>) \
+         -> Result<(mettail_prattail::lattice::TokenSource<Token<'a>, Range>, Range), String> { \
+         let mode_at = mettail_prattail::runtime_types::compute_mode_map(input, m_char_class, m_dfa_next, m_is_accepting, m_push_target, m_should_pop, m_is_raw)?; \
+         let (source, eof_pos) = mettail_prattail::runtime_types::lex_lattice_core_modal( \
+         input, file_id, &mode_at, m_char_class, m_dfa_next, m_is_accepting, m_accept_alternatives, m_is_raw)?; \
+         let eof_range = Range { start: eof_pos, end: eof_pos, file_id }; \
+         match source { \
+         mettail_prattail::lattice::TokenSource::Linear(mut tokens) => { \
+             tokens.push((Token::Eof, eof_range)); \
+             Ok((mettail_prattail::lattice::TokenSource::Linear(tokens), eof_range)) \
+         } \
+         lattice => Ok((lattice, eof_range)) \
+         } }",
+    );
+
+    // lex_stream / lex_stream_with_file_id + lex_dag + lex_dag_lazy
+    buf.push_str(
+        "pub fn lex_stream<'a>(input: &'a str) \
+         -> Result<mettail_prattail::lexer_types::LexStream, String> { \
+         lex_stream_with_file_id(input, None) \
+         }\n\
+         pub fn lex_stream_with_file_id<'a>(input: &'a str, file_id: Option<u32>) \
+         -> Result<mettail_prattail::lexer_types::LexStream, String> { \
+         let mode_at = mettail_prattail::runtime_types::compute_mode_map(input, m_char_class, m_dfa_next, m_is_accepting, m_push_target, m_should_pop, m_is_raw)?; \
+         let (mut stream, eof_pos) = mettail_prattail::runtime_types::lex_stream_core_modal( \
+         input, file_id, &mode_at, m_char_class, m_dfa_next, m_is_accepting, m_accept_alternatives, token_to_kind, m_is_raw)?; \
+         stream.entries.push(mettail_prattail::lexer_types::LexEntry { \
+             byte_start: eof_pos.byte_offset, \
+             alternatives: vec![mettail_prattail::lexer_types::LexAlternative { \
+                 kind: mettail_prattail::automata::TokenKind::Eof, \
+                 text: String::new(), \
+                 end_byte: eof_pos.byte_offset, \
+                 weight: mettail_prattail::automata::semiring::TropicalWeight::new(0.0), \
+             }], \
+         }); \
+         Ok(stream) }\n\
+         pub fn lex_dag<'a>(input: &'a str) \
+         -> Result<mettail_prattail::lexer_types::LexDag, String> { \
+         let mode_at = mettail_prattail::runtime_types::compute_mode_map(input, m_char_class, m_dfa_next, m_is_accepting, m_push_target, m_should_pop, m_is_raw)?; \
+         mettail_prattail::runtime_types::lex_dag_core_modal( \
+         input, None, &mode_at, m_char_class, m_dfa_next, m_is_accepting, m_accept_alternatives, token_to_kind, m_is_raw) \
+         }\n\
+         // L9-1: LAZY modal lattice token source. The byte→mode map is computed \n\
+         // ONCE up front (deterministic per position under the DUI) and captured \n\
+         // in the expander closure, so on-demand node expansion stays parser- \n\
+         // order-independent. A mode-map failure (unbalanced region) surfaces as \n\
+         // an expansion error the first time the walker reads a position. \n\
+         pub fn lex_dag_lazy(input: &str) \
+         -> mettail_prattail::wpda_runtime::LazyLatticeTokenSource { \
+         let expander_input: String = input.to_string(); \
+         let mode_at_result = mettail_prattail::runtime_types::compute_mode_map( \
+         input, m_char_class, m_dfa_next, m_is_accepting, m_push_target, m_should_pop, m_is_raw); \
+         let expander: Box<dyn Fn(usize, bool) \
+         -> Result<mettail_prattail::runtime_types::ExpandedLexNode, String>> = \
+         Box::new(move |start: usize, start_is_primary: bool| { \
+         match &mode_at_result { \
+         Ok(mode_at) => mettail_prattail::runtime_types::expand_lex_node_modal( \
+         expander_input.as_str(), start, mode_at, &m_char_class, &m_dfa_next, &m_is_accepting, \
+         &m_accept_alternatives, &token_to_kind, &m_is_raw, start_is_primary), \
+         Err(e) => Err(e.clone()), \
+         } }); \
+         mettail_prattail::wpda_runtime::LazyLatticeTokenSource::from_expander( \
+         input.to_string(), expander) \
+         }",
+    );
 }
 
 /// Write the modal lex loop: `lex()` and `lex_with_file_id()` with mode stack dispatch.
@@ -3468,6 +3692,11 @@ pub fn generate_modal_lexer_string(
     // 2. Write Token enum + display (shared across all modes)
     write_token_enum(&mut buf, &all_token_kinds, all_custom_tokens);
     write_token_display(&mut buf, &all_token_kinds, all_custom_tokens);
+    // token_to_kind + token_text are mode-INDEPENDENT (a Token variant maps to
+    // the same kind/text regardless of the mode it was lexed in), so the same
+    // writer used by the non-modal lexer applies verbatim. Emitting them here is
+    // what closes the L9 "22-error set" (the WPDA parser calls both). [L9-1]
+    write_token_to_kind(&mut buf, &all_token_kinds, all_custom_tokens);
     write_runtime_types_import(&mut buf);
 
     // 3. Mode constants
@@ -3482,6 +3711,9 @@ pub fn generate_modal_lexer_string(
     write_is_accepting_suffixed(&mut buf, default_dfa, "DEFAULT");
     write_dfa_next_suffixed(&mut buf, default_dfa, "DEFAULT");
     write_accept_token_suffixed(&mut buf, default_dfa, default_custom_tokens, "DEFAULT");
+    // accept_alternatives_default — the (Token, weight) alternatives per accept
+    // state, consumed by the modal DAG/weighted/lattice/stream scanners (L9-1).
+    write_accept_alternatives_suffixed(&mut buf, default_dfa, default_custom_tokens, "DEFAULT");
     write_push_pop_tables(&mut buf, default_dfa, default_custom_tokens, mode_results, "DEFAULT");
 
     // 5. Named mode DFA tables
@@ -3491,6 +3723,7 @@ pub fn generate_modal_lexer_string(
         write_is_accepting_suffixed(&mut buf, &mode.min_dfa, &suffix);
         write_dfa_next_suffixed(&mut buf, &mode.min_dfa, &suffix);
         write_accept_token_suffixed(&mut buf, &mode.min_dfa, &mode.custom_tokens, &suffix);
+        write_accept_alternatives_suffixed(&mut buf, &mode.min_dfa, &mode.custom_tokens, &suffix);
         write_push_pop_tables(&mut buf, &mode.min_dfa, &mode.custom_tokens, mode_results, &suffix);
     }
 
@@ -3539,6 +3772,17 @@ pub fn generate_modal_lexer_string(
 
     // 7. Modal lex functions (main stream only)
     write_modal_lex_functions(&mut buf, mode_results);
+
+    // 7b. Mode-dispatch shims + the modal DAG/WFST interface (lex_dag,
+    // lex_dag_lazy, lex_weighted, lex_stream, lex_lattice). Without these the
+    // generated WPDA parser cannot resolve its lexer entry points on a modal
+    // grammar (the L9 "22-error set"). The shims wrap the per-mode DFA tables
+    // (dfa_next_*, CHAR_CLASS_*, is_accepting_state_*, accept_alternatives_*,
+    // push_target_*, should_pop_*) behind a uniform mode-indexed signature; the
+    // scanners then delegate to the *_core_modal runtime after computing the
+    // byte→mode map once via compute_mode_map. [L9-1]
+    write_mode_dispatch_shims(&mut buf, mode_results);
+    write_modal_dag_functions(&mut buf, mode_results);
 
     // 8. If streams are used, add lex_with_streams()
     if has_streams {
