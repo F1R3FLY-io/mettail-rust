@@ -443,6 +443,30 @@ pub fn generate_lexer_as_string_hybrid(
             })
             .collect();
 
+        // L9-2: Delimiter Unambiguity Invariant (DUI). Mode segmentation
+        // (compute_mode_map) is sound ONLY if the active mode is a pure function
+        // of byte position — i.e. every push/pop token is the unique
+        // mode-changing accept at its position. Reject the grammar at COMPILE
+        // time if any DFA state (default or a named mode) accepts a push/pop
+        // token alongside a co-accept/alt-accept with a DIFFERENT mode effect,
+        // which would make the post-position mode depend on the lattice path.
+        // The check is a no-op for every non-modal grammar (no token carries a
+        // push/pop effect, so no state can conflict). A violation is a hard
+        // rejection: `generate_lexer` runs inside the `#[proc_macro_error]`
+        // language! expansion, so the panic surfaces as a clear compile error.
+        if let Err(msg) = check_dui_soundness("default", &min_dfa, &input.custom_tokens) {
+            panic!("{}", msg);
+        }
+        for mode_result in &mode_results {
+            if let Err(msg) = check_dui_soundness(
+                &mode_result.name,
+                &mode_result.min_dfa,
+                &mode_result.custom_tokens,
+            ) {
+                panic!("{}", msg);
+            }
+        }
+
         // Merge all mode token kinds into a combined list for the Token enum
         let mut all_custom_tokens = input.custom_tokens.clone();
         for mode in &input.modes {
@@ -474,6 +498,129 @@ pub fn generate_lexer_as_string_hybrid(
     };
 
     (code, stats)
+}
+
+/// The lexer-mode effect a token's accept carries (L9-2 DUI analysis).
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ModeEffect {
+    /// Ordinary token — no mode change.
+    None,
+    /// Push the named mode after accepting.
+    Push(String),
+    /// Pop the current mode after accepting.
+    Pop,
+}
+
+/// Resolve a token kind's mode effect against a mode's custom-token specs.
+/// Only `Custom` tokens can carry push/pop; everything else is `None`.
+fn token_mode_effect(kind: &TokenKind, custom_tokens: &[CustomTokenSpec]) -> ModeEffect {
+    if let TokenKind::Custom(name) = kind {
+        if let Some(spec) = custom_tokens.iter().find(|s| s.name == *name) {
+            if let Some(target) = &spec.push_mode {
+                return ModeEffect::Push(target.clone());
+            }
+            if spec.is_pop {
+                return ModeEffect::Pop;
+            }
+        }
+    }
+    ModeEffect::None
+}
+
+/// L9-2: enforce the Delimiter Unambiguity Invariant for ONE mode's DFA.
+///
+/// For every accepting state, the set of accepting token kinds must induce a
+/// SINGLE mode effect whenever any of them is a push/pop token. A state that
+/// accepts a push/pop token alongside a co-accept / alt-accept with a DIFFERENT
+/// effect makes the post-position mode depend on which lattice path the parser
+/// follows — [`compute_mode_map`](crate::runtime_types::compute_mode_map) would
+/// no longer be a pure function of position. Ordinary intra-mode ambiguity (all
+/// co-accepts carry the SAME effect, e.g. two closers that both pop, or the
+/// classic `-` / integer overlap where neither changes mode) is sound and
+/// accepted.
+///
+/// Returns `Err(diagnostic)` describing the first violating state, else `Ok(())`.
+/// The diagnostic tailors its remediation hint to whether one of the colliding
+/// kinds is a bare identifier (a keyword-reservation problem) or a longer
+/// distinguishing delimiter is needed.
+fn check_dui_soundness(
+    mode_label: &str,
+    dfa: &crate::automata::Dfa,
+    custom_tokens: &[CustomTokenSpec],
+) -> Result<(), String> {
+    for (state_idx, state) in dfa.states.iter().enumerate() {
+        // Gather the DISTINCT accepting kinds at this state. `alt_accepts`
+        // already includes the primary winner when non-empty; union with
+        // `accept` and dedupe so a lone accept (empty `alt_accepts`) is covered.
+        let mut kinds: Vec<TokenKind> = Vec::new();
+        if let Some(k) = &state.accept {
+            if !kinds.contains(k) {
+                kinds.push(k.clone());
+            }
+        }
+        for (k, _w) in &state.alt_accepts {
+            if !kinds.contains(k) {
+                kinds.push(k.clone());
+            }
+        }
+        if kinds.len() < 2 {
+            continue; // a single accepting kind cannot conflict with itself
+        }
+
+        // Distinct mode effects among the co-accepts.
+        let mut distinct: Vec<ModeEffect> = Vec::new();
+        for k in &kinds {
+            let effect = token_mode_effect(k, custom_tokens);
+            if !distinct.contains(&effect) {
+                distinct.push(effect);
+            }
+        }
+        let has_push_pop = distinct.iter().any(|e| *e != ModeEffect::None);
+        if !has_push_pop || distinct.len() < 2 {
+            // All-`None` (ordinary intra-mode ambiguity) or a single shared
+            // effect (e.g. two closers popping the same way) is sound.
+            continue;
+        }
+
+        // Violation — describe every conflicting token and its effect.
+        let mut parts: Vec<String> = Vec::with_capacity(kinds.len());
+        for k in &kinds {
+            let name = match k {
+                TokenKind::Custom(n) => n.clone(),
+                TokenKind::Ident => "<identifier>".to_string(),
+                TokenKind::Fixed(t) => format!("\"{}\"", t),
+                other => format!("{:?}", other),
+            };
+            let effect = match token_mode_effect(k, custom_tokens) {
+                ModeEffect::Push(m) => format!("push({})", m),
+                ModeEffect::Pop => "pop".to_string(),
+                ModeEffect::None => "no mode change".to_string(),
+            };
+            parts.push(format!("`{}` [{}]", name, effect));
+        }
+        let mentions_ident = kinds.iter().any(|k| matches!(k, TokenKind::Ident));
+        let hint = if mentions_ident {
+            " Hint: a mode-changing delimiter must not also lex as a bare identifier — \
+             reserve it as a keyword or give it a distinguishing delimiter so maximal \
+             munch selects a unique token at this position."
+        } else {
+            " Hint: make the mode-changing delimiter strictly longer than the colliding \
+             token (e.g. a reserved-keyword tag) so maximal munch selects a unique \
+             mode-changing token at this position."
+        };
+        return Err(format!(
+            "DUI violation in mode `{}`: DFA state {} accepts {} at the SAME position with \
+             DIFFERENT mode effects. Multi-mode lexing requires the active mode to be a pure \
+             function of byte position; a position where one alternative pushes/pops a mode \
+             and another does not (or pushes a different mode) makes the mode path-dependent \
+             and unsound.{}",
+            mode_label,
+            state_idx,
+            parts.join(" vs "),
+            hint,
+        ));
+    }
+    Ok(())
 }
 
 /// Extract terminal patterns and builtin needs from grammar rules.
@@ -642,5 +789,175 @@ impl PartialOrd for TerminalPattern {
 impl Ord for TerminalPattern {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         self.text.cmp(&other.text)
+    }
+}
+
+#[cfg(test)]
+mod dui_tests {
+    use super::*;
+    use crate::automata::semiring::TropicalWeight;
+    use crate::automata::{Dfa, DfaState};
+
+    /// Build a `CustomTokenSpec` with the given name/pattern and mode effect.
+    fn dui_spec(name: &str, pattern: &str, push: Option<&str>, pop: bool) -> CustomTokenSpec {
+        CustomTokenSpec {
+            name: name.to_string(),
+            pattern: pattern.to_string(),
+            category: None,
+            payload_type: None,
+            constructor_code: None,
+            is_builtin_override: false,
+            priority: 2,
+            push_mode: push.map(|s| s.to_string()),
+            is_pop: pop,
+            stream: None,
+        }
+    }
+
+    /// A two-state DFA whose state 1 accepts `primary` plus the given alternates.
+    fn dfa_with_accepts(primary: TokenKind, alts: Vec<TokenKind>) -> Dfa {
+        let mut accepting = DfaState::with_classes(1);
+        accepting.accept = Some(primary.clone());
+        if !alts.is_empty() {
+            // `alt_accepts` includes the primary winner (per DfaState docs).
+            accepting.alt_accepts.push((primary, TropicalWeight::new(1.0)));
+            for (i, a) in alts.into_iter().enumerate() {
+                accepting.alt_accepts.push((a, TropicalWeight::new(2.0 + i as f64)));
+            }
+        }
+        Dfa { states: vec![DfaState::with_classes(1), accepting], start: 0, num_classes: 1 }
+    }
+
+    fn build_default_dfa(custom_tokens: &[CustomTokenSpec], needs: BuiltinNeeds) -> Dfa {
+        let lp = LiteralPatterns::default();
+        let terminals: Vec<TerminalPattern> = Vec::new();
+        let nfa = build_nfa_with_custom(&terminals, &needs, &lp, custom_tokens);
+        let partition = compute_equivalence_classes(&nfa);
+        let dfa = subset_construction(&nfa, &partition);
+        minimize_dfa(&dfa)
+    }
+
+    #[test]
+    fn dui_single_push_accept_ok() {
+        let dfa = dfa_with_accepts(TokenKind::Custom("FltOpenBacktick".into()), vec![]);
+        let specs = vec![dui_spec("FltOpenBacktick", "x`", Some("guest"), false)];
+        assert!(check_dui_soundness("default", &dfa, &specs).is_ok());
+    }
+
+    #[test]
+    fn dui_plain_multilength_ambiguity_ok() {
+        // `-`/integer overlap: two co-accepts, NEITHER changes mode → sound.
+        let dfa = dfa_with_accepts(
+            TokenKind::Integer,
+            vec![TokenKind::Fixed("-".into()), TokenKind::Integer],
+        );
+        assert!(check_dui_soundness("default", &dfa, &[]).is_ok());
+    }
+
+    #[test]
+    fn dui_two_closers_same_pop_ok() {
+        // Two closers that both pop induce a SINGLE effect (Pop) → sound.
+        let dfa = dfa_with_accepts(
+            TokenKind::Custom("CloseA".into()),
+            vec![TokenKind::Custom("CloseB".into())],
+        );
+        let specs = vec![
+            dui_spec("CloseA", "`", None, true),
+            dui_spec("CloseB", "`", None, true),
+        ];
+        assert!(check_dui_soundness("m", &dfa, &specs).is_ok());
+    }
+
+    #[test]
+    fn dui_push_vs_plain_rejected() {
+        let dfa = dfa_with_accepts(
+            TokenKind::Custom("PushBang".into()),
+            vec![TokenKind::Custom("PlainBang".into())],
+        );
+        let specs = vec![
+            dui_spec("PushBang", "!", Some("inner"), false),
+            dui_spec("PlainBang", "!", None, false),
+        ];
+        let err = check_dui_soundness("default", &dfa, &specs).expect_err("must reject");
+        assert!(err.contains("DUI violation"), "clear diagnostic: {err}");
+        assert!(err.contains("PushBang") && err.contains("PlainBang"));
+    }
+
+    #[test]
+    fn dui_conflicting_push_targets_rejected() {
+        let dfa = dfa_with_accepts(
+            TokenKind::Custom("OpenA".into()),
+            vec![TokenKind::Custom("OpenB".into())],
+        );
+        let specs = vec![
+            dui_spec("OpenA", "@", Some("modeA"), false),
+            dui_spec("OpenB", "@", Some("modeB"), false),
+        ];
+        let err = check_dui_soundness("default", &dfa, &specs).expect_err("must reject");
+        assert!(err.contains("push(modeA)") && err.contains("push(modeB)"));
+    }
+
+    #[test]
+    fn dui_push_vs_ident_rejected_with_keyword_hint() {
+        // A push token that ALSO lexes as a bare identifier → keyword-reservation
+        // flavored diagnostic.
+        let dfa = dfa_with_accepts(
+            TokenKind::Custom("BareOpener".into()),
+            vec![TokenKind::Ident],
+        );
+        let specs = vec![dui_spec("BareOpener", "[a-z]+", Some("guest"), false)];
+        let err = check_dui_soundness("default", &dfa, &specs).expect_err("must reject");
+        assert!(err.contains("reserve it as a keyword"), "keyword hint: {err}");
+    }
+
+    #[test]
+    fn dui_real_pipeline_same_pattern_conflict_rejected() {
+        // Real NFA→DFA pipeline: two tokens sharing the pattern "!" with
+        // different mode effects collapse to one accepting state → rejected.
+        let specs = vec![
+            dui_spec("PushBang", "!", Some("inner"), false),
+            dui_spec("PlainBang", "!", None, false),
+        ];
+        let dfa = build_default_dfa(&specs, BuiltinNeeds::default());
+        let res = check_dui_soundness("default", &dfa, &specs);
+        assert!(res.is_err(), "real-DFA same-pattern conflict must be rejected: {res:?}");
+    }
+
+    #[test]
+    fn dui_real_pipeline_backtick_opener_ok() {
+        // FltOpenBacktick = "[a-z]+`" is longer than the built-in Ident, so the
+        // opener accepts at its OWN post-backtick state — no same-state conflict.
+        let needs = BuiltinNeeds { ident: true, ..Default::default() };
+        let specs = vec![dui_spec("FltOpenBacktick", "[a-z]+`", Some("guest"), false)];
+        let dfa = build_default_dfa(&specs, needs);
+        assert!(
+            check_dui_soundness("default", &dfa, &specs).is_ok(),
+            "conformant backtick opener must pass"
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "DUI violation")]
+    fn dui_generate_lexer_rejects_violation_grammar() {
+        // End-to-end: a modal grammar whose default mode has the "!" push/plain
+        // conflict is rejected by generate_lexer_as_string_hybrid — the
+        // modal-capable pipeline the language! macro uses. The hard rejection is
+        // a panic that surfaces as a clear compile error under #[proc_macro_error].
+        let input = LexerInput {
+            language_name: "DuiViolation".to_string(),
+            terminals: Vec::new(),
+            needs: BuiltinNeeds::default(),
+            literal_patterns: LiteralPatterns::default(),
+            custom_tokens: vec![
+                dui_spec("PushBang", "!", Some("inner"), false),
+                dui_spec("PlainBang", "!", None, false),
+            ],
+            modes: vec![LexerModeInput {
+                name: "inner".to_string(),
+                custom_tokens: vec![dui_spec("CloseInner", "!", None, true)],
+            }],
+            reserved_kinds: ReservedKeywords::default(),
+        };
+        let _ = generate_lexer_as_string_hybrid(&input, false);
     }
 }
