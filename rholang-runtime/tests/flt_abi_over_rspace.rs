@@ -46,13 +46,14 @@ use std::collections::BTreeMap;
 
 use mettail_languages::lambda::LambdaLanguage;
 use mettail_rholang_codegen::{
-    ground_marker_tag_par, lower_language_def, plan_rho_default_backend, reconstruct_language_def,
-    reflect_flt_construction, reflect_ground_term_par, reflected_tag_string, rho_net_drive_call_par,
-    rho_net_drive_call_par_with_fuel, suggest_rejected_rule_dispositions, GroundTerm,
-    RhoCoverageEvidence, RhoDefaultBackendRequirements, RhoGuardCoverageEvidence,
-    BOUND_VAR_REFLECT_LABEL, DRIVE_DEFAULT_FUEL, DRIVE_RESERVED_LABEL, FREE_VAR_REFLECT_LABEL,
-    LAMBDA_REFLECT_LABEL, NONGROUND_MARK_REFLECT_LABEL, PEANO_SUCC_REFLECT_LABEL,
-    PEANO_ZERO_REFLECT_LABEL,
+    ground_marker_tag_par, lower_language_def, peano_par, plan_rho_default_backend,
+    reconstruct_language_def, reflect_flt_construction, reflect_ground_term_par,
+    reflected_tag_string, rho_net_drive_call_par, rho_net_drive_call_par_with_fuel,
+    shift_fill_for_depth, suggest_rejected_rule_dispositions, GroundTerm, RhoCoverageEvidence,
+    RhoDefaultBackendRequirements, RhoGuardCoverageEvidence, BOUND_VAR_REFLECT_LABEL,
+    DRIVE_DEFAULT_FUEL, DRIVE_RESERVED_LABEL, FREE_VAR_REFLECT_LABEL, LAMBDA_REFLECT_LABEL,
+    NONGROUND_MARK_REFLECT_LABEL, PEANO_SUCC_REFLECT_LABEL, PEANO_ZERO_REFLECT_LABEL,
+    SHIFT_RESERVED_LABEL,
 };
 use mettail_rholang_runtime::{
     binder_apply_redex_present, drive_cross_check, par_as_runtime_observation_value,
@@ -709,6 +710,84 @@ fn nested_marker_mut<'a>(par: &'a mut Par, path: &[usize]) -> &'a mut Par {
         node = &mut ps_mut(node)[index];
     }
     &mut ps_mut(node)[1]
+}
+
+// ── P4 (D-A completeness proof-by-test) — shift_fill_for_depth == the in-Rho ^shift, on RSpace ──
+//
+// The COMPLETE host-side oshift `shift_fill_for_depth(v, depth)` (D-A) is proven equal, on the live
+// reducer, to the in-Rho `^shift(peano(depth), v)` TRS rule driven to its NF: for depth 0 it is the
+// identity; for depth ≥ 1 it computes the actual shift, byte-for-byte the reducer's result. This is
+// the operational half of the D-A completeness argument (the codegen twin asserts the host oshift
+// equals the reflected image of the hand-computed shift; here the reducer confirms that image IS
+// the in-Rho ^shift NF).
+
+/// Seed `@⌜^shift⌝!(⟦peano(cutoff)⟧, ⟦v⟧, "OUT")` against the backend's installed subst/shift TRS.
+fn shift_seed(fp: &str, cutoff: usize, v: &Par) -> Par {
+    let shift_channel = models::rust::rholang::implicits::GPrivateBuilder::new_par_from_string(
+        reflected_tag_string(fp, SHIFT_RESERVED_LABEL),
+    );
+    new_send_par(
+        shift_channel,
+        vec![
+            peano_par(cutoff, fp),
+            v.clone(),
+            new_gstring_par("OUT".to_string(), Vec::new(), false),
+        ],
+        false,
+        Vec::new(),
+        false,
+        Vec::new(),
+        false,
+    )
+}
+
+/// P4 shift-equivalence — `shift_fill_for_depth(v, 1)` decodes IDENTICALLY to the in-Rho
+/// `^shift(S Z, v)` NF on the reducer, for two non-ground opens: `App(^bound 0, ^bound 1)` (a
+/// top-level shift) and `^lambda(App(^bound 1, ^bound 2))` (the cutoff descending under a binder).
+/// `shift_fill_for_depth(v, 0)` is the identity. This is the D-A completeness proof-by-test.
+#[tokio::test]
+async fn flt_shift_fill_for_depth_equals_in_rho_shift() {
+    mettail_runtime::clear_var_cache();
+    let (backend, fp) = lambda_backend();
+
+    // Case 1: App(^bound 0, ^bound 1) — oshift 1 keeps ^bound 0, sends ^bound 1 → ^bound 2.
+    let v1 = reflect_ground_term_par(&g_app(g_bound(0), g_bound(1)), &fp);
+    let host1 = shift_fill_for_depth(v1.clone(), 1, &fp);
+    // depth 0 is the identity.
+    assert_eq!(shift_fill_for_depth(v1.clone(), 0, &fp), v1, "shift_fill_for_depth(v, 0) == v");
+
+    let channels = DriveObservationChannels::for_fingerprint(&fp, "OUT");
+    let set1 = backend
+        .run_rho_net_with_call_and_read_observation_set(&shift_seed(&fp, 1, &v1), &channels)
+        .await
+        .expect("the in-Rho ^shift(S Z, App(0,1)) drives to its NF");
+    let expected1 = oapp(obound(0), obound(2));
+    assert_eq!(set1.out_values, vec![expected1.clone()], "in-Rho ^shift(S Z, App(0,1)) = App(0, 2)");
+    assert_eq!(
+        par_as_runtime_observation_value(&host1),
+        Some(expected1),
+        "the host oshift decodes identically to the in-Rho ^shift NF — D-A completeness"
+    );
+
+    // Case 2: ^lambda(App(^bound 1, ^bound 2)) — under the ^lambda the cutoff is 2, so ^bound 1 is
+    // kept and ^bound 2 → ^bound 3.
+    let v2 = reflect_ground_term_par(&g_lambda(g_app(g_bound(1), g_bound(2))), &fp);
+    let host2 = shift_fill_for_depth(v2.clone(), 1, &fp);
+    let set2 = backend
+        .run_rho_net_with_call_and_read_observation_set(&shift_seed(&fp, 1, &v2), &channels)
+        .await
+        .expect("the in-Rho ^shift(S Z, ^lambda(App(1,2))) drives to its NF");
+    let expected2 = olambda(oapp(obound(1), obound(3)));
+    assert_eq!(
+        set2.out_values,
+        vec![expected2.clone()],
+        "in-Rho ^shift(S Z, ^lambda(App(1,2))) = ^lambda(App(1, 3)) — cutoff descends under the binder"
+    );
+    assert_eq!(
+        par_as_runtime_observation_value(&host2),
+        Some(expected2),
+        "the host oshift matches under a binder too"
+    );
 }
 
 // ── Beat 5 (positive) — the same-language inter-FLT re-ship: NF produced by one FLT, matched by ──

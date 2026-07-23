@@ -38,9 +38,9 @@ use models::rust::utils::{
 };
 
 use crate::rho_net_lower::{
-    ground_marker_tag_par, is_marked_object_label, par_carries_ground_marker,
+    ground_marker_tag_par, is_ground_marker_par, is_marked_object_label, par_carries_ground_marker,
     reflect_ground_term_par, reflect_tag, GroundTerm, BOUND_VAR_REFLECT_LABEL,
-    FREE_VAR_REFLECT_LABEL,
+    FREE_VAR_REFLECT_LABEL, LAMBDA_REFLECT_LABEL, PEANO_SUCC_REFLECT_LABEL, PEANO_ZERO_REFLECT_LABEL,
 };
 
 // ── Public types ────────────────────────────────────────────────────────────────────────────
@@ -459,6 +459,157 @@ fn reflect_construction_node(
     ))
 }
 
+// ── P4 — runtime-Peano binder reflectors + the D-A host-side oshift ──────────────────────────
+
+/// The reflected Peano numeral `⟦S(S(…Z))⟧` with `n` successors — byte-for-byte the runtime twin's
+/// `opeano`/`g_bound` peano construction (`Z`/`S` are UNMARKED nullary/unary tags; the reserved-ness
+/// rides the enclosing `^bound`).
+pub fn peano_par(n: usize, fingerprint: &str) -> Par {
+    reflect_ground_term_par(&peano_ground_term(n), fingerprint)
+}
+
+/// The reflected bound-variable leaf `⟦^bound(peano(depth))⟧` — a tagged `EList`
+/// `[⌜^bound⌝, ⌜^nog⌝, ⟦peano(depth)⟧]`, OPAQUE to the host RhoCalc binder machinery (a plain
+/// `EList`, not a host `BoundVar` Par), so a guest binder depth SURVIVES the RhoCalc boundary
+/// (invisible to `locally_free`/`filter_and_adjust_bitset`).
+pub fn bound_var_par(depth: usize, fingerprint: &str) -> Par {
+    reflect_ground_term_par(
+        &GroundTerm::new(BOUND_VAR_REFLECT_LABEL, vec![peano_ground_term(depth)]),
+        fingerprint,
+    )
+}
+
+/// D-A — the COMPLETE host-side de-Bruijn shift for splicing a fill under `depth` guest binders at
+/// CONSTRUCTION time. A total, pure `Par → Par` function, PROVABLY equal to the in-Rho `^shift` TRS
+/// rule (proven byte-for-byte on the reducer in the runtime twin's shift-equivalence test).
+///
+/// * `depth == 0` (no enclosing template binders) → identity.
+/// * a `^gnd` (hereditarily-ground) fill → identity at ANY depth (`oground_shift_id`:
+///   `oground t ⟹ oshift c t = t`) — this, with `depth == 0`, covers the ENTIRE primary demo.
+/// * otherwise → [`host_oshift`] at cutoff `depth`, the exact image of the in-Rho
+///   `^shift(peano(depth), ·)`: every `^bound n` with `n ≥ cutoff` increments (`n → S n`), a
+///   `^lambda` body recurses at `cutoff + 1`, a `^free` / ground subtree is fixed, and every object
+///   constructor recurses structurally at the same cutoff.
+pub fn shift_fill_for_depth(fill: Par, depth: usize, fingerprint: &str) -> Par {
+    if depth == 0 || par_carries_ground_marker(&fill, fingerprint) {
+        return fill;
+    }
+    host_oshift(&fill, depth, fingerprint)
+}
+
+/// The reflected Peano numeral GroundTerm `S(S(…Z))` with `n` successors.
+fn peano_ground_term(n: usize) -> GroundTerm {
+    let mut peano = GroundTerm::nullary(PEANO_ZERO_REFLECT_LABEL);
+    for _ in 0..n {
+        peano = GroundTerm::new(PEANO_SUCC_REFLECT_LABEL, vec![peano]);
+    }
+    peano
+}
+
+/// The complete host-side `oshift` at cutoff `cutoff` over a reflected `Par` — the pure mirror of
+/// the in-Rho `^shift` TRS receiver's arms, in the SAME dispatch order:
+///
+/// 1. a `^gnd` (hereditarily-ground) node is shift-invariant → returned VERBATIM (the
+///    `ground_guard_case`, which fires first; also subsumes the `^free` passthrough — `^free` is
+///    `^gnd`).
+/// 2. `^bound n` → `n < cutoff` keeps the leaf; `n ≥ cutoff` increments to `^bound(S n)`.
+/// 3. `^lambda b` → `^lambda(oshift (cutoff + 1) b)` (the cutoff descends under the binder).
+/// 4. any other object node → recurse every child at the SAME cutoff, preserving the head tag and
+///    (groundness-invariant under `oshift`) the E-2-D marker.
+///
+/// `oshift` never adds or removes a `^bound` leaf — it only renames indices — so `oground` (and
+/// hence every ancestor marker) is preserved; preserving the existing marker on a rebuild is
+/// therefore identical to the reducer's `tagged` recompute, keeping the shared ABI byte-identical.
+fn host_oshift(par: &Par, cutoff: usize, fingerprint: &str) -> Par {
+    // (1) ground short-circuit — verbatim identity (matches `ground_guard_case`; covers `^free`).
+    if par_carries_ground_marker(par, fingerprint) {
+        return par.clone();
+    }
+    let ps = match elist_ps(par) {
+        Some(ps) if !ps.is_empty() => ps,
+        // A non-EList leaf (a bare scalar / GString) carries no `^bound` — passthrough.
+        _ => return par.clone(),
+    };
+    let head = &ps[0];
+    if head == &flt_tag_par(fingerprint, BOUND_VAR_REFLECT_LABEL) {
+        // (2) `[⌜^bound⌝, ⌜^nog⌝, ⟦n⟧]`.
+        match peano_value(ps.get(2), fingerprint) {
+            Some(n) if n >= cutoff => bound_var_par(n + 1, fingerprint),
+            // n < cutoff (keep) or a malformed index (e.g. a `^multilambda` GString binder leaf) →
+            // verbatim, matching the reducer's `Lt` rebuild of the unchanged leaf.
+            _ => par.clone(),
+        }
+    } else if head == &flt_tag_par(fingerprint, LAMBDA_REFLECT_LABEL) {
+        // (3) `[⌜^lambda⌝, marker, ⟦b⟧]` → recurse the body at `cutoff + 1`.
+        let marker = ps.get(1).cloned();
+        let body = host_oshift(&ps[2], cutoff + 1, fingerprint);
+        rebuild_object_node(head, marker, vec![body])
+    } else {
+        // (4) a generic object node → recurse every child at the SAME cutoff, preserving the marker.
+        let marked = ps.len() >= 2 && is_ground_marker_par(&ps[1], fingerprint);
+        let (marker, children_start) = if marked { (ps.get(1).cloned(), 2) } else { (None, 1) };
+        let children: Vec<Par> = ps[children_start..]
+            .iter()
+            .map(|child| host_oshift(child, cutoff, fingerprint))
+            .collect();
+        rebuild_object_node(head, marker, children)
+    }
+}
+
+/// Rebuild a reflected object `EList[head, marker?, children…]` (the shared reflected-ABI shape:
+/// `locally_free` = union of the parts, both `EList`- and `Par`-level, `connective_used = false`).
+/// The `marker` is threaded through unchanged (groundness is invariant under `oshift`).
+fn rebuild_object_node(head: &Par, marker: Option<Par>, children: Vec<Par>) -> Par {
+    let mut elements = Vec::with_capacity(children.len() + 2);
+    let mut locally_free = head.locally_free.clone();
+    elements.push(head.clone());
+    if let Some(marker) = marker {
+        // A `^gnd`/`^nog` GPrivate marker has empty `locally_free` — it never widens the free-set.
+        elements.push(marker);
+    }
+    for child in children {
+        locally_free = union(locally_free, child.locally_free.clone());
+        elements.push(child);
+    }
+    new_elist_par(elements, locally_free.clone(), false, None, locally_free, false)
+}
+
+/// The unforgeable `GPrivate` tag `⌜label⌝` for `fingerprint` — the head-tag comparison key
+/// [`host_oshift`] dispatches on (built the same way [`reflect_ground_term_par`] does).
+fn flt_tag_par(fingerprint: &str, label: &str) -> Par {
+    GPrivateBuilder::new_par_from_string(reflect_tag(fingerprint, label))
+}
+
+/// Decode a reflected Peano numeral `⟦S(S(…Z))⟧` back to its integer value; `None` if `par` is not
+/// a well-formed Peano numeral (`Z`/`S` are UNMARKED, so the successor child is at index 1).
+fn peano_value(par: Option<&Par>, fingerprint: &str) -> Option<usize> {
+    let zero = flt_tag_par(fingerprint, PEANO_ZERO_REFLECT_LABEL);
+    let succ = flt_tag_par(fingerprint, PEANO_SUCC_REFLECT_LABEL);
+    let mut node = par?;
+    let mut count = 0usize;
+    loop {
+        let ps = elist_ps(node)?;
+        let head = ps.first()?;
+        if head == &zero {
+            return Some(count);
+        }
+        if head == &succ {
+            count += 1;
+            node = ps.get(1)?;
+        } else {
+            return None;
+        }
+    }
+}
+
+/// Borrow a reflected object `Par`'s `EList.ps`, or `None` if `par` is not a single-`EList` Par.
+fn elist_ps(par: &Par) -> Option<&Vec<Par>> {
+    match par.exprs.first().and_then(|expr| expr.expr_instance.as_ref()) {
+        Some(ExprInstance::EListBody(list)) => Some(&list.ps),
+        _ => None,
+    }
+}
+
 // ── Shared helpers ──────────────────────────────────────────────────────────────────────────
 
 /// Wrap one `Expr` in a `Par` carrying `free` as its `locally_free` bitset (empty → empty vec, so a
@@ -603,6 +754,9 @@ mod tests {
     /// A `^free(name)` hole/free leaf, exactly as the guest `Term → GroundTerm` reflector emits it.
     fn g_free(name: &str) -> GroundTerm {
         GroundTerm::new(FREE_VAR_REFLECT_LABEL, vec![GroundTerm::nullary(name)])
+    }
+    fn g_app(fun: GroundTerm, arg: GroundTerm) -> GroundTerm {
+        GroundTerm::new("App", vec![fun, arg])
     }
 
     /// THE Stage-1 anchor: `reflect_flt_pattern(App(^free(f), K), [{f}], fp).pattern` is
@@ -843,5 +997,87 @@ mod tests {
             panic!("EList");
         };
         list.ps[1].clone()
+    }
+
+    // ── P4 — runtime-Peano binder reflectors + host-side oshift ───────────────────────────────
+
+    /// `peano_par`/`bound_var_par` reflect the same shapes the runtime twin's `opeano`/`g_bound`
+    /// build (self-consistent with the ground reflector).
+    #[test]
+    fn peano_and_bound_var_reflect_the_twin_shapes() {
+        assert_eq!(peano_par(0, FP), reflect_ground_term_par(&peano_ground_term(0), FP));
+        assert_eq!(peano_par(3, FP), reflect_ground_term_par(&peano_ground_term(3), FP));
+        assert_eq!(bound_var_par(0, FP), reflect_ground_term_par(&g_bound(0), FP));
+        assert_eq!(bound_var_par(2, FP), reflect_ground_term_par(&g_bound(2), FP));
+        // Peano round-trips through the private decoder.
+        assert_eq!(peano_value(Some(&peano_par(4, FP)), FP), Some(4));
+    }
+
+    /// GATE (binder-depth preservation): a `^bound(peano(n))` leaf under a `^lambda` in an FLT
+    /// pattern is preserved as `⟦^bound(peano(n))⟧` — the guest binder depth survives reflection.
+    #[test]
+    fn reflect_flt_pattern_preserves_binder_depth() {
+        // Pattern `^lambda(App(${f}, ^bound(1)))`.
+        let term = g_lambda(g_app(g_free("f"), g_bound(1)));
+        let reflection = reflect_flt_pattern(&term, &[FltHole::new("f")], FP).expect("reflects");
+
+        // pattern = [⌜^lambda⌝, wildcard, body]; body = [⌜App⌝, wildcard, FreeVar(0), ⟦^bound(1)⟧].
+        let lambda_ps = elist_ps(&reflection.pattern).expect("^lambda EList");
+        let body_ps = elist_ps(&lambda_ps[2]).expect("App EList");
+        assert_eq!(body_ps.len(), 4, "[⌜App⌝, marker, hole, ⟦^bound(1)⟧]");
+        assert_eq!(
+            body_ps[3],
+            bound_var_par(1, FP),
+            "the ^bound(1) leaf under the ^lambda is preserved at depth 1"
+        );
+    }
+
+    /// GATE (identity cases): `depth == 0` and a `^gnd` fill are the identity; a CLOSED non-ground
+    /// term (every `^bound` below its binder) is also unchanged by the structural oshift.
+    #[test]
+    fn shift_fill_for_depth_identity_cases() {
+        let open = reflect_ground_term_par(&g_app(g_bound(0), g_bound(1)), FP);
+        assert_eq!(
+            shift_fill_for_depth(open.clone(), 0, FP),
+            open,
+            "depth 0 is the identity (no enclosing template binder)"
+        );
+
+        let ground = reflect_ground_term_par(&g_nullary("A"), FP); // ⟦A⟧ is ^gnd
+        assert_eq!(
+            shift_fill_for_depth(ground.clone(), 5, FP),
+            ground,
+            "a ^gnd fill is shift-invariant at any depth (oground_shift_id)"
+        );
+
+        let closed = reflect_ground_term_par(&g_k(), FP); // K = λλ.^bound(1), closed (^nog)
+        assert_eq!(
+            shift_fill_for_depth(closed.clone(), 1, FP),
+            closed,
+            "a closed term (every ^bound below its binder) is unchanged by oshift"
+        );
+    }
+
+    /// The host-side oshift EQUALS the reflected image of the hand-computed shift: `oshift 1` keeps
+    /// `^bound 0`, sends `^bound 1 → ^bound 2`, and descends a `^lambda` at `cutoff + 1`. (The
+    /// runtime twin proves this equals the in-Rho `^shift(S Z, ·)` NF byte-for-byte on the reducer.)
+    #[test]
+    fn host_oshift_matches_the_hand_computed_shift() {
+        // oshift 1 (App(^bound 0, ^bound 1)) = App(^bound 0, ^bound 2).
+        let open = reflect_ground_term_par(&g_app(g_bound(0), g_bound(1)), FP);
+        assert_eq!(
+            shift_fill_for_depth(open, 1, FP),
+            reflect_ground_term_par(&g_app(g_bound(0), g_bound(2)), FP),
+            "oshift 1 keeps ^bound 0 and shifts ^bound 1 → ^bound 2"
+        );
+
+        // oshift 1 (^lambda(App(^bound 1, ^bound 2))) = ^lambda(App(^bound 1, ^bound 3)): under the
+        // ^lambda the cutoff is 2, so ^bound 1 stays and ^bound 2 → ^bound 3.
+        let under_binder = reflect_ground_term_par(&g_lambda(g_app(g_bound(1), g_bound(2))), FP);
+        assert_eq!(
+            shift_fill_for_depth(under_binder, 1, FP),
+            reflect_ground_term_par(&g_lambda(g_app(g_bound(1), g_bound(3))), FP),
+            "the cutoff descends under the ^lambda: ^bound 1 kept, ^bound 2 → ^bound 3"
+        );
     }
 }

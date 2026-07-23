@@ -245,8 +245,8 @@ pub use rho_net_lower::{
     SUBST_RESERVED_LABEL,
 };
 pub use rho_net_flt::{
-    flt_receive_par, reflect_flt_construction, reflect_flt_pattern, FltHole, FltPatternReflection,
-    FltReflectError,
+    bound_var_par, flt_receive_par, peano_par, reflect_flt_construction, reflect_flt_pattern,
+    shift_fill_for_depth, FltHole, FltPatternReflection, FltReflectError,
 };
 pub use rho_net_drive::{
     drive_admissible, drive_err_channel, drive_fired_channel, drive_fuel_channel,
