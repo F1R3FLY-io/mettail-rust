@@ -1676,24 +1676,41 @@ pub fn emit_prefix_arms_for_category(
             continue;
         }
         if let Some(shape) = super::binder::classify_binder_in(rule, language) {
-            let Some(mettail_ast::grammar::SyntaxExpr::Literal(trigger)) =
-                rule.syntax_pattern.as_ref().and_then(|sp| sp.first())
-            else {
-                continue;
-            };
-            if trigger == "(" {
-                continue;
-            }
             let body_src_idx = super::binder::binder_initial_body_cat(&shape)
                 .and_then(|name| categories.iter().position(|c| c == name).map(|i| i as u16))
                 .unwrap_or(category_src_idx);
-            insert_unified_descriptor(
-                &mut unified_buckets,
-                &mut unified_order,
-                quote! { Some(mettail_prattail::automata::TokenKind::Fixed(__kw)) },
-                Some(quote! { __kw == #trigger }),
-                UnifiedDescriptor::BinderPrefix { rule_idx, body_src_idx },
-            );
+            match rule.syntax_pattern.as_ref().and_then(|sp| sp.first()) {
+                Some(mettail_ast::grammar::SyntaxExpr::Literal(trigger)) => {
+                    if trigger == "(" {
+                        continue;
+                    }
+                    insert_unified_descriptor(
+                        &mut unified_buckets,
+                        &mut unified_order,
+                        quote! { Some(mettail_prattail::automata::TokenKind::Fixed(__kw)) },
+                        Some(quote! { __kw == #trigger }),
+                        UnifiedDescriptor::BinderPrefix { rule_idx, body_src_idx },
+                    );
+                },
+                // L9-3: a LEADING custom-kind capture — dispatch on the specific
+                // custom kind (guard-based, mirroring the Fixed trigger path;
+                // TokenKind::Custom(String) has no bare-literal pattern).
+                Some(mettail_ast::grammar::SyntaxExpr::TokenKind { name, .. }) => {
+                    let kind_name = name.to_string();
+                    insert_unified_descriptor(
+                        &mut unified_buckets,
+                        &mut unified_order,
+                        quote! { Some(mettail_prattail::automata::TokenKind::Custom(ref __k)) },
+                        Some(quote! { __k == #kind_name }),
+                        UnifiedDescriptor::LeadingTokenKindCapture {
+                            rule_idx,
+                            body_src_idx,
+                            kind_name,
+                        },
+                    );
+                },
+                _ => continue,
+            }
         }
     }
     for desc in atomic_descriptors {
@@ -1983,6 +2000,14 @@ enum UnifiedDescriptor {
     /// Literal-leading binder/prefix rule. Consumes its own trigger token,
     /// pushes `RuleAt(slot=1)`, and enters `BinderRule`.
     BinderPrefix { rule_idx: u16, body_src_idx: u16 },
+    /// L9-3: a rule whose FIRST syntax element is a custom-kind capture
+    /// (`b@GuestChunk …`). The prefix dispatch consumes+captures the leading
+    /// token via `GuardedConsumeTokenKindAndReplace` (gated on
+    /// `peek_kind == Custom(kind_name)`), pushes `RuleAt(slot=1)`, and enters
+    /// `BinderRule`; the mid-rule positions (slots 1..) parse the rest. The
+    /// leading capture's `ActionArg::Token` is prepended to the action args by
+    /// `classify_binder_in`.
+    LeadingTokenKindCapture { rule_idx: u16, body_src_idx: u16, kind_name: String },
     /// Cross-category prefix-unary rule. Consumes its own trigger token,
     /// pushes the wrapper Return frame, and delegates the operand to the
     /// source category at that source's prefix floor.
@@ -2226,6 +2251,50 @@ fn emit_unified_arm(
                             },
                             trigger_mode:
                                 mettail_prattail::wpda_walker::TriggerMode::ConsumeAsTriggerOnly,
+                        };
+                        }
+                    },
+                )
+            },
+            UnifiedDescriptor::LeadingTokenKindCapture { rule_idx, body_src_idx, kind_name } => {
+                let rule_idx = *rule_idx;
+                let body_src_idx = *body_src_idx;
+                // L9-3: leading custom-kind capture — never S1-grouped (it
+                // terminates mergeability), so it always reaches the singleton
+                // path. Emit a single-branch Fork carrying
+                // GuardedConsumeTokenKindAndReplace (a ForkActionKind — hence a
+                // Fork rather than the non-capturing ConsumeAndPush the Literal
+                // trigger uses): the walker gates peek_kind == Custom(kind_name),
+                // captures the token as an ActionArg::Token leaf, pushes
+                // RuleAt(slot=1), and enters BinderRule for the mid-rule positions.
+                assert!(
+                    s1_dispositions.get(&rule_idx).is_none(),
+                    "S1-FACTORING F1: grouped rule (cat {category_src_idx}, rule {rule_idx}) \
+                     reached the singleton LeadingTokenKindCapture emission",
+                );
+                fork_rows.record_site2_row(category_src_idx, rule_idx, 0, &fork_bucket_tag);
+                (
+                    quote! { #pat if #guard },
+                    quote! {
+                        {
+                        return WpdaStepAction::Fork {
+                            branches: vec![mettail_prattail::wpda_walker::ForkBranch {
+                                symbol: StackSymbolV2::rule_at(
+                                    #category_src_idx, #rule_idx, 1u8, Some(_outer_bp),
+                                ),
+                                weight: lex_w(0.0, #category_src_idx, #rule_idx),
+                                new_state: WpdaState::BinderRule {
+                                    result_src_idx: #category_src_idx,
+                                    rule_idx: #rule_idx,
+                                    body_src_idx: #body_src_idx,
+                                    outer_bp: _outer_bp,
+                                },
+                                action_kind:
+                                    mettail_prattail::wpda_walker::ForkActionKind::GuardedConsumeTokenKindAndReplace {
+                                        kind_name: #kind_name.to_string(),
+                                    },
+                            }],
+                            consume_trigger: false,
                         };
                         }
                     },
@@ -2495,6 +2564,43 @@ fn emit_unified_arm(
                                     },
                             });
                         },
+                    }
+                }
+                UnifiedDescriptor::LeadingTokenKindCapture { rule_idx, body_src_idx, kind_name } => {
+                    let rule_idx = *rule_idx;
+                    let body_src_idx = *body_src_idx;
+                    // L9-3: leading custom-kind capture in a Fork bucket (a
+                    // co-bucketed same-kind sibling, or shared with other
+                    // descriptors on the same (pat,guard)). Never S1-grouped ⇒
+                    // a plain row + a capturing branch
+                    // (GuardedConsumeTokenKindAndReplace instead of the
+                    // non-capturing ConsumeAsTriggerOnly the Literal trigger uses).
+                    record_initiating_rule_rows(
+                        fork_rows,
+                        category_src_idx,
+                        rule_idx,
+                        branch_position as u16,
+                        s1_dispositions,
+                        s1_group_members,
+                        &fork_bucket_tag,
+                    );
+                    quote! {
+                        __pd_branches.push(mettail_prattail::wpda_walker::ForkBranch {
+                            symbol: StackSymbolV2::rule_at(
+                                #category_src_idx, #rule_idx, 1u8, Some(_outer_bp),
+                            ),
+                            weight: lex_w(0.0, #category_src_idx, #rule_idx),
+                            new_state: WpdaState::BinderRule {
+                                result_src_idx: #category_src_idx,
+                                rule_idx: #rule_idx,
+                                body_src_idx: #body_src_idx,
+                                outer_bp: _outer_bp,
+                            },
+                            action_kind:
+                                mettail_prattail::wpda_walker::ForkActionKind::GuardedConsumeTokenKindAndReplace {
+                                    kind_name: #kind_name.to_string(),
+                                },
+                        });
                     }
                 }
                 UnifiedDescriptor::CrossCatPrefixUnary {

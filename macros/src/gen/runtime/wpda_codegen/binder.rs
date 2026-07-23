@@ -291,9 +291,13 @@ pub(crate) fn classify_binder_in(
         .find(|t| t.name == rule.category)
         .and_then(|t| t.collection_kind.as_ref())
         .map(|c| c.delimiters());
-    // Position 0 must be a Literal trigger (otherwise it's an infix/prefix
-    // Pratt rule handled by Phase 3).
-    if !matches!(&sp[0], SyntaxExpr::Literal(_)) {
+    // Position 0 must be a Literal trigger — OR (L9-3) a LEADING custom-kind
+    // capture (`b@GuestChunk …`), whose consume is emitted by the prefix
+    // dispatch (UnifiedDescriptor::LeadingTokenKindCapture). The `.skip(1)`
+    // position loop below treats sp[0] as the trigger either way, so positions
+    // start at slot 1 (= sp[1]). Otherwise it's an infix/prefix Pratt rule
+    // handled by Phase 3.
+    if !matches!(&sp[0], SyntaxExpr::Literal(_) | SyntaxExpr::TokenKind { .. }) {
         return None;
     }
 
@@ -507,6 +511,18 @@ pub(crate) fn classify_binder_in(
     // iteration.
     let mut positions = Vec::new();
     let mut action_args = Vec::new();
+    // L9-3: a LEADING custom-kind capture (sp[0] is a TokenKind) is consumed by
+    // the prefix dispatch, which interns its ActionArg::Token FIRST. The
+    // `.skip(1)` loop treats sp[0] as the trigger and does not re-push it, so
+    // PREPEND its TokenText arg here — action_args = [leading, …positions]
+    // matches the runtime intern order (else the action arity is off by one).
+    if let SyntaxExpr::TokenKind { name, bind } = &sp[0] {
+        let param_name = bind
+            .as_ref()
+            .map(|b| b.to_string())
+            .unwrap_or_else(|| format!("__tok_{}", name));
+        action_args.push(ActionArgKind::TokenText { param_name });
+    }
     let mut skip_next: bool = false;
     // Phase 4 #1.B (2026-05-11): track collection-slot index. Each
     // SimpleCollection / Class-3 BinderListLoop push increments.
