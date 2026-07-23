@@ -2676,7 +2676,12 @@ pub fn is_marked_object_label(label: &str) -> bool {
 }
 
 /// E-2-D: the hereditary-ground marker token `GPrivate(reflect_tag(fp, ^gnd | ^nog))`.
-pub(crate) fn ground_marker_tag_par(fp: &str, is_ground: bool) -> Par {
+///
+/// FLT Phase 2 (P3): `pub` so the public reflector API ([`crate::rho_net_flt`]) can build the
+/// exact `^gnd`/`^nog` marker a hole-free FLT subtree carries and the C2 construction path can
+/// recompute a filled node's marker — the same token every reflected object node interposes at
+/// index 1.
+pub fn ground_marker_tag_par(fp: &str, is_ground: bool) -> Par {
     GPrivateBuilder::new_par_from_string(reflect_tag(
         fp,
         if is_ground { GROUND_MARK_REFLECT_LABEL } else { NONGROUND_MARK_REFLECT_LABEL },
@@ -2696,7 +2701,10 @@ pub fn is_ground_marker_par(par: &Par, fp: &str) -> bool {
 /// The combinator [`crate::rho_net_subst_trs::tagged`] uses this to fold a reassembled node's
 /// marker from its ALREADY-reflected children (a runtime σ-var child is a BoundVar, not a marked
 /// `EList`, so it reads false — the conservative `^nog`). Cheap O(1): peek the second element.
-pub(crate) fn par_carries_ground_marker(par: &Par, fingerprint: &str) -> bool {
+// FLT Phase 2 (P3): `pub` so the public construction reflector (`crate::rho_net_flt`) can
+// recompute EVERY ancestor's marker from its FILLED subtree's own ground bit (C2), never keeping
+// a stale template `^gnd` over a `^bound`-carrying fill.
+pub fn par_carries_ground_marker(par: &Par, fingerprint: &str) -> bool {
     matches!(
         par.exprs.first().and_then(|expr| expr.expr_instance.as_ref()),
         Some(ExprInstance::EListBody(list))
