@@ -134,6 +134,11 @@ pub mod rho_net_incremental;
 /// `pathmap` dependency.
 #[cfg(feature = "bench-fragment-store")]
 pub mod rho_net_fragment_store;
+/// FLT (Foreign Language Term) Phase 2: the PUBLIC reflector API — the syntax-independent hinge
+/// that GENERATES the hand-built marked-`Par` FLT shapes (pattern + construction + runtime-Peano
+/// binder reflectors) from a guest [`rho_net_lower::GroundTerm`] template with `^free(name)` holes,
+/// reusing the landed reflected-term ABI (no new reduction machinery).
+pub mod rho_net_flt;
 pub mod rho_net_lower;
 /// Track B (BENCHMARK-ONLY, quarantined): the naive Knotted-Topoi Appendix-A
 /// baseline emitter — compiled ONLY under the `bench-naive-baseline` feature.
@@ -238,6 +243,9 @@ pub use rho_net_lower::{
     PRED_RESERVED_LABEL,
     SB_RESERVED_LABEL, SHB_RESERVED_LABEL, SHIFTK_RESERVED_LABEL, SHIFT_RESERVED_LABEL,
     SUBST_RESERVED_LABEL,
+};
+pub use rho_net_flt::{
+    flt_receive_par, reflect_flt_pattern, FltHole, FltPatternReflection, FltReflectError,
 };
 pub use rho_net_drive::{
     drive_admissible, drive_err_channel, drive_fired_channel, drive_fuel_channel,
