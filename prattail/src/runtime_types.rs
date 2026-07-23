@@ -1025,26 +1025,83 @@ pub fn expand_lex_node<'a, T: Clone>(
     token_to_kind: &impl Fn(&T) -> crate::automata::TokenKind,
     start_is_primary: bool,
 ) -> Result<ExpandedLexNode, String> {
+    // Non-modal path: ONE DFA governs every byte (mode is the constant 0) and
+    // whitespace is ALWAYS skipped (no mode is `raw`). Drive the shared
+    // `expand_lex_node_impl` with constant mode-0 / never-raw closures — the
+    // edge-survival, successor discovery, and soft-fail logic are then
+    // BYTE-IDENTICAL to the pre-L9 inline body (guarded by this module's
+    // `lex_dag_*` unit tests, which route the non-modal DAG through here).
+    // [L9 decision D-2 — share the body rather than duplicate it.]
+    expand_lex_node_impl(
+        input,
+        start,
+        |_pos| 0u8,
+        |_mode| false,
+        |_mode, b| char_class[b as usize],
+        |_mode, s, c| dfa_next(s, c),
+        |_mode, s| is_accepting(s),
+        |_mode, s, text| accept_alternatives(s, text),
+        |t| token_to_kind(t),
+        start_is_primary,
+    )
+}
+
+/// Shared per-node expansion body for BOTH the non-modal [`expand_lex_node`]
+/// and the multi-mode [`expand_lex_node_modal`] (L9). Everything that differs
+/// between the two paths is a closure parameter:
+///
+/// - `resolve_mode(byte) -> u8`: the lexer mode active at `byte`. The non-modal
+///   wrapper passes a constant `0`; the modal wrapper indexes its precomputed
+///   `mode_at` map (a pure function of position under the Delimiter Unambiguity
+///   Invariant, so memoization-by-position stays sound).
+/// - `is_raw(mode) -> bool`: whether `mode` is a RAW guest mode (whitespace is
+///   token content ⇒ the leading-whitespace skip is suppressed). Non-modal
+///   passes constant `false` ⇒ the unconditional skip of the original body.
+/// - `char_class(mode, byte)`, `dfa_next(mode, state, class)`,
+///   `is_accepting(mode, state)`, `accept_alternatives(mode, state, text)`: the
+///   per-mode DFA tables. The non-modal wrapper ignores `mode`.
+///
+/// A whole token is lexed in ONE mode (the DFA never changes mode mid-token) and
+/// a whitespace run never crosses a push/pop boundary, so the mode is resolved
+/// once and the inner DFA walk / edge discovery are structurally identical to
+/// the single-DFA body.
+#[inline]
+#[allow(clippy::too_many_arguments)]
+fn expand_lex_node_impl<'a, T: Clone>(
+    input: &'a str,
+    start: usize,
+    resolve_mode: impl Fn(usize) -> u8,
+    is_raw: impl Fn(u8) -> bool,
+    char_class: impl Fn(u8, u8) -> u8,
+    dfa_next: impl Fn(u8, u32, u8) -> u32,
+    is_accepting: impl Fn(u8, u32) -> bool,
+    accept_alternatives: impl Fn(u8, u32, &'a str) -> Vec<(T, f64)>,
+    token_to_kind: impl Fn(&T) -> crate::automata::TokenKind,
+    start_is_primary: bool,
+) -> Result<ExpandedLexNode, String> {
     use crate::automata::semiring::TropicalWeight;
 
     let bytes = input.as_bytes();
 
-    // Skip whitespace at this position; the resulting `pos` becomes the
-    // actual node's byte_start. This keeps the DAG semantically aligned with
-    // `lex_stream_core` (whitespace is non-token). line/col tracking is not
-    // needed here — the DAG only carries byte positions; error reporting
-    // upstream handles line/col.
+    // Skip whitespace at this position (unless the mode active at `start` is a
+    // RAW guest mode); the resulting `pos` becomes the node's byte_start. This
+    // keeps the DAG aligned with `lex_stream_core` (whitespace is non-token).
+    // A whitespace run never crosses a push/pop boundary, so the mode at
+    // `start` equals the mode at the post-skip token start. line/col tracking is
+    // not needed here — the DAG only carries byte positions.
     let mut pos = start;
-    {
-        let result = skip_whitespace_simd(bytes, pos, 0, 0);
-        pos = result.pos;
-    }
-    while pos < bytes.len() && bytes[pos] >= 0x80 {
-        match decode_char_at(input, pos) {
-            Some((ch, ch_len)) if ch.is_whitespace() => {
-                pos += ch_len;
-            },
-            _ => break,
+    if start < bytes.len() && !is_raw(resolve_mode(start)) {
+        {
+            let result = skip_whitespace_simd(bytes, pos, 0, 0);
+            pos = result.pos;
+        }
+        while pos < bytes.len() && bytes[pos] >= 0x80 {
+            match decode_char_at(input, pos) {
+                Some((ch, ch_len)) if ch.is_whitespace() => {
+                    pos += ch_len;
+                },
+                _ => break,
+            }
         }
     }
 
@@ -1059,22 +1116,25 @@ pub fn expand_lex_node<'a, T: Clone>(
         });
     }
 
+    // The mode governing the token that starts at `pos`.
+    let mode = resolve_mode(pos);
+
     // Walk the DFA from `pos`, recording every accepting state.
     let mut walk_pos = pos;
     let mut state: u32 = 0;
     let mut accepts: Vec<(u32, usize)> = Vec::new();
-    if is_accepting(0) {
+    if is_accepting(mode, 0) {
         accepts.push((0, walk_pos));
     }
     while walk_pos < bytes.len() {
-        let class = char_class[bytes[walk_pos] as usize];
-        let next = dfa_next(state, class);
+        let class = char_class(mode, bytes[walk_pos]);
+        let next = dfa_next(mode, state, class);
         if next == u32::MAX {
             break;
         }
         state = next;
         walk_pos += 1;
-        if is_accepting(state) {
+        if is_accepting(mode, state) {
             accepts.push((state, walk_pos));
         }
     }
@@ -1122,7 +1182,7 @@ pub fn expand_lex_node<'a, T: Clone>(
     let mut alt_idx_counter: u16 = 0;
     for (accept_state, end_byte) in accepts.iter() {
         let text = &input[pos..*end_byte];
-        let alt_tokens = accept_alternatives(*accept_state, text);
+        let alt_tokens = accept_alternatives(mode, *accept_state, text);
         let mut emitted_any_for_this_accept = false;
         for (token, weight) in alt_tokens {
             let kind = token_to_kind(&token);
@@ -1164,6 +1224,44 @@ pub fn expand_lex_node<'a, T: Clone>(
     })
 }
 
+/// Multi-mode (L9) analogue of [`expand_lex_node`]: expands ONE byte position
+/// into a lex-DAG node using the DFA of the mode active at that position.
+///
+/// `mode_at` is the byte→mode map from [`compute_mode_map`] (a pure function of
+/// position under the Delimiter Unambiguity Invariant). `char_class`,
+/// `dfa_next`, `is_accepting`, `accept_alternatives` are the mode-dispatched
+/// lexer shims (their first parameter is the mode id); `is_raw` reports whether
+/// a mode suppresses the leading-whitespace skip. All other semantics —
+/// soft-fail on a secondary-only dead-end, longest-per-kind edge survival,
+/// successor ordering — are shared verbatim with the non-modal path via
+/// [`expand_lex_node_impl`].
+#[allow(clippy::too_many_arguments)]
+pub fn expand_lex_node_modal<'a, T: Clone>(
+    input: &'a str,
+    start: usize,
+    mode_at: &[u8],
+    char_class: &impl Fn(u8, u8) -> u8,
+    dfa_next: &impl Fn(u8, u32, u8) -> u32,
+    is_accepting: &impl Fn(u8, u32) -> bool,
+    accept_alternatives: &impl Fn(u8, u32, &'a str) -> Vec<(T, f64)>,
+    token_to_kind: &impl Fn(&T) -> crate::automata::TokenKind,
+    is_raw: &impl Fn(u8) -> bool,
+    start_is_primary: bool,
+) -> Result<ExpandedLexNode, String> {
+    expand_lex_node_impl(
+        input,
+        start,
+        |pos| mode_at[pos],
+        |mode| is_raw(mode),
+        |mode, b| char_class(mode, b),
+        |mode, s, c| dfa_next(mode, s, c),
+        |mode, s| is_accepting(mode, s),
+        |mode, s, text| accept_alternatives(mode, s, text),
+        |t| token_to_kind(t),
+        start_is_primary,
+    )
+}
+
 pub fn lex_dag_core<'a, T: Clone>(
     input: &'a str,
     file_id: Option<u32>,
@@ -1173,11 +1271,74 @@ pub fn lex_dag_core<'a, T: Clone>(
     accept_alternatives: impl Fn(u32, &'a str) -> Vec<(T, f64)>,
     token_to_kind: impl Fn(&T) -> crate::automata::TokenKind,
 ) -> Result<crate::lexer_types::LexDag, String> {
+    let _ = file_id;
+    // The eager worklist discipline is shared with `lex_dag_core_modal` via
+    // `lex_dag_build`; the only per-path difference is which expander produces
+    // each node (single-DFA `expand_lex_node` here).
+    lex_dag_build(|start, start_is_primary| {
+        expand_lex_node(
+            input,
+            start,
+            char_class,
+            &dfa_next,
+            &is_accepting,
+            &accept_alternatives,
+            &token_to_kind,
+            start_is_primary,
+        )
+    })
+}
+
+/// Multi-mode (L9) analogue of [`lex_dag_core`]: builds a [`crate::lexer_types::LexDag`]
+/// over `input` where each byte position is expanded with the DFA of its mode
+/// (from `mode_at`, a pure function of position under the Delimiter Unambiguity
+/// Invariant). The worklist discipline — FIFO order, `byte_to_node` dedup,
+/// M6c.7.1 primary-chain propagation, EOF-first-writer, per-kind longest-match
+/// fixup — is shared verbatim with the non-modal path via [`lex_dag_build`], so
+/// memoization-by-position stays sound (mode is a pure function of position).
+#[allow(clippy::too_many_arguments)]
+pub fn lex_dag_core_modal<'a, T: Clone>(
+    input: &'a str,
+    file_id: Option<u32>,
+    mode_at: &[u8],
+    char_class: impl Fn(u8, u8) -> u8,
+    dfa_next: impl Fn(u8, u32, u8) -> u32,
+    is_accepting: impl Fn(u8, u32) -> bool,
+    accept_alternatives: impl Fn(u8, u32, &'a str) -> Vec<(T, f64)>,
+    token_to_kind: impl Fn(&T) -> crate::automata::TokenKind,
+    is_raw: impl Fn(u8) -> bool,
+) -> Result<crate::lexer_types::LexDag, String> {
+    let _ = file_id;
+    lex_dag_build(|start, start_is_primary| {
+        expand_lex_node_modal(
+            input,
+            start,
+            mode_at,
+            &char_class,
+            &dfa_next,
+            &is_accepting,
+            &accept_alternatives,
+            &token_to_kind,
+            &is_raw,
+            start_is_primary,
+        )
+    })
+}
+
+/// Shared eager DAG-builder driver for [`lex_dag_core`] and
+/// [`lex_dag_core_modal`]. `expand(start, start_is_primary)` yields the node at
+/// a byte position (single-DFA or mode-dispatched); everything else — the FIFO
+/// worklist, `byte_to_node` dedup, M6c.7.1 primary-chain propagation,
+/// EOF-first-writer-wins, and the per-kind longest-match edge fixup — is
+/// identical across both paths, so the non-modal DAG output is byte-for-byte
+/// unchanged (guarded by this module's `lex_dag_*` unit tests).
+fn lex_dag_build(
+    expand: impl Fn(usize, bool) -> Result<ExpandedLexNode, String>,
+) -> Result<crate::lexer_types::LexDag, String> {
     use crate::automata::semiring::TropicalWeight;
     use crate::lexer_types::{LexDag, LexDagEdge, LexDagNode};
     use std::collections::{BTreeMap, VecDeque};
 
-    let _ = file_id;
     let mut byte_to_node: BTreeMap<usize, usize> = BTreeMap::new();
     let mut nodes: Vec<LexDagNode> = Vec::new();
     // (raw edges with `target_byte` instead of `target_node` — fix up after
@@ -1223,16 +1384,7 @@ pub fn lex_dag_core<'a, T: Clone>(
             continue;
         }
         let start_is_primary = primary_targets.contains(&start);
-        let expanded = expand_lex_node(
-            input,
-            start,
-            char_class,
-            &dfa_next,
-            &is_accepting,
-            &accept_alternatives,
-            &token_to_kind,
-            start_is_primary,
-        )?;
+        let expanded = expand(start, start_is_primary)?;
 
         let node_idx = nodes.len();
         byte_to_node.insert(start, node_idx);
@@ -1353,12 +1505,514 @@ pub fn lex_dag_core<'a, T: Clone>(
     // allocates node 0 at byte 0 (= `bytes.len()`); that's the EOF
     // sentinel.
     let eof_node = eof_node_idx.unwrap_or_else(|| {
-        debug_assert!(false, "EOF sentinel must be allocated by lex_dag_core");
+        debug_assert!(false, "EOF sentinel must be allocated by lex_dag_build");
         // Defensive fallback: last node (may be an orphan, but
         // better than panicking in release).
         nodes.len().saturating_sub(1)
     });
     Ok(LexDag { nodes, byte_to_node, eof_node })
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// L9 multi-mode runtime cores (additive — no non-modal consumer). `compute_mode_map`
+// segments the input into per-byte modes; the `*_core_modal` scanners mirror their
+// non-modal siblings but select each token's DFA by position. See the L9 design.
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// L9 mode segmentation: compute the byte→mode map for `input` in ONE
+/// left-to-right maximal-munch scan, maintaining the lexer mode stack exactly as
+/// the generated linear modal lexer does (push on a `push_target` accept, pop on
+/// a `should_pop` accept). Under the Delimiter Unambiguity Invariant the mode is
+/// a step function that changes only at push/pop boundaries on the unique primary
+/// chain, so `mode_at[b]` is well-defined for EVERY byte `b` and per-position DAG
+/// expansion ([`expand_lex_node_modal`]) can select each token's DFA by position
+/// alone (memoization-by-position stays sound — mode is a pure fn of position).
+///
+/// Returns `Err` if a byte cannot be lexed in its active mode, or if the mode
+/// stack does not return to `[0]` at end of input (an opener whose closer never
+/// arrived — an unterminated guest region).
+///
+/// The closures are the mode-dispatched lexer shims: `char_class(mode, byte)`,
+/// `dfa_next(mode, state, class)`, `is_accepting(mode, state)`,
+/// `push_target(mode, accept_state) -> u8` (`u8::MAX` = no push),
+/// `should_pop(mode, accept_state) -> bool`, and `is_raw(mode) -> bool` (a RAW
+/// guest mode does not skip leading whitespace — it is token content).
+#[allow(clippy::too_many_arguments)]
+pub fn compute_mode_map(
+    input: &str,
+    char_class: impl Fn(u8, u8) -> u8,
+    dfa_next: impl Fn(u8, u32, u8) -> u32,
+    is_accepting: impl Fn(u8, u32) -> bool,
+    push_target: impl Fn(u8, u32) -> u8,
+    should_pop: impl Fn(u8, u32) -> bool,
+    is_raw: impl Fn(u8) -> bool,
+) -> Result<Vec<u8>, String> {
+    let bytes = input.as_bytes();
+    let n = bytes.len();
+    // Preallocate the full map; every byte is assigned its enclosing mode.
+    let mut mode_at: Vec<u8> = vec![0u8; n];
+    let mut mode_stack: Vec<u8> = vec![0u8];
+    let mut pos: usize = 0;
+
+    while pos < n {
+        let mode = *mode_stack.last().expect("mode stack is never empty");
+
+        // Leading-whitespace skip (non-raw modes only). Whitespace never carries
+        // a push/pop token, so each skipped byte keeps the enclosing mode.
+        if !is_raw(mode) {
+            let ws_start = pos;
+            let result = skip_whitespace_simd(bytes, pos, 0, 0);
+            pos = result.pos;
+            while pos < n && bytes[pos] >= 0x80 {
+                match decode_char_at(input, pos) {
+                    Some((ch, ch_len)) if ch.is_whitespace() => {
+                        pos += ch_len;
+                    },
+                    _ => break,
+                }
+            }
+            mode_at[ws_start..pos].fill(mode);
+            if pos >= n {
+                break;
+            }
+        }
+
+        // Maximal-munch DFA walk in the active mode.
+        let start_pos = pos;
+        let mut state: u32 = 0;
+        let mut last_accept: Option<(u32, usize)> = None;
+        if is_accepting(mode, 0) {
+            last_accept = Some((0, pos));
+        }
+        let mut walk = pos;
+        while walk < n {
+            let class = char_class(mode, bytes[walk]);
+            let next = dfa_next(mode, state, class);
+            if next == u32::MAX {
+                break;
+            }
+            state = next;
+            walk += 1;
+            if is_accepting(mode, state) {
+                last_accept = Some((state, walk));
+            }
+        }
+
+        match last_accept {
+            Some((accept_state, end)) => {
+                // Advance over the token, assigning the active mode to its bytes.
+                // A zero-length accept (an epsilon-accepting start state) cannot
+                // occur for token DFAs, but guard against a non-advancing loop.
+                if end > start_pos {
+                    mode_at[start_pos..end].fill(mode);
+                    pos = end;
+                } else {
+                    mode_at[start_pos] = mode;
+                    pos = start_pos + 1;
+                }
+                // Apply push/pop AFTER the token — identical order to the
+                // generated linear modal lexer (codegen write_modal_lex_functions).
+                let target = push_target(mode, accept_state);
+                if target != u8::MAX {
+                    mode_stack.push(target);
+                }
+                if should_pop(mode, accept_state) {
+                    mode_stack.pop();
+                    if mode_stack.is_empty() {
+                        mode_stack.push(0u8);
+                    }
+                }
+            },
+            None => {
+                let (ch, _ch_len) = decode_char_at(input, start_pos).unwrap_or(('\u{FFFD}', 1));
+                return Err(format!(
+                    "unexpected character '{}' at byte {}",
+                    ch.escape_debug(),
+                    start_pos
+                ));
+            },
+        }
+    }
+
+    // DUI end-of-input invariant: the mode stack must have returned to [0].
+    // A residual named mode means a guest-region opener was never balanced.
+    if mode_stack.len() != 1 || mode_stack[0] != 0 {
+        return Err(format!(
+            "unterminated region: mode stack {:?} at end of input (expected [0]) — \
+             a guest-mode opener has no matching closer",
+            mode_stack
+        ));
+    }
+
+    Ok(mode_at)
+}
+
+/// Multi-mode (L9) analogue of [`lex_weighted_core`]. Mirrors the maximal-munch
+/// weighted scan but selects each token's DFA by `mode_at[pos]` and takes the
+/// primary (best-weight, longest) alternative from the mode-dispatched
+/// `accept_alternatives` — which is exactly `(accept_token, accept_weight)` for
+/// that accept state, so the token stream matches the non-modal path.
+#[allow(clippy::too_many_arguments)]
+pub fn lex_weighted_core_modal<'a, T: Clone>(
+    input: &'a str,
+    file_id: Option<u32>,
+    mode_at: &[u8],
+    char_class: impl Fn(u8, u8) -> u8,
+    dfa_next: impl Fn(u8, u32, u8) -> u32,
+    is_accepting: impl Fn(u8, u32) -> bool,
+    accept_alternatives: impl Fn(u8, u32, &'a str) -> Vec<(T, f64)>,
+    is_raw: impl Fn(u8) -> bool,
+) -> Result<(Vec<(T, Range, f64)>, Position), String> {
+    let bytes = input.as_bytes();
+    let mut pos: usize = 0;
+    let mut line: usize = 0;
+    let mut col: usize = 0;
+    let mut tokens: Vec<(T, Range, f64)> = Vec::with_capacity(input.len() / 2);
+
+    while pos < bytes.len() {
+        let mode = mode_at[pos];
+        if !is_raw(mode) {
+            {
+                let result = skip_whitespace_simd(bytes, pos, line, col);
+                pos = result.pos;
+                line = result.line;
+                col = result.col;
+            }
+            while pos < bytes.len() && bytes[pos] >= 0x80 {
+                match decode_char_at(input, pos) {
+                    Some((ch, ch_len)) if ch.is_whitespace() => {
+                        col += 1;
+                        pos += ch_len;
+                    },
+                    _ => break,
+                }
+            }
+            if pos >= bytes.len() {
+                break;
+            }
+        }
+
+        let start = pos;
+        let start_line = line;
+        let start_col = col;
+        let mut state: u32 = 0;
+        let mut last_accept: Option<(u32, usize, usize, usize)> = None;
+        if is_accepting(mode, 0) {
+            last_accept = Some((0, pos, line, col));
+        }
+        while pos < bytes.len() {
+            let class = char_class(mode, bytes[pos]);
+            let next = dfa_next(mode, state, class);
+            if next == u32::MAX {
+                break;
+            }
+            state = next;
+            if bytes[pos] == b'\n' {
+                line += 1;
+                col = 0;
+            } else if bytes[pos] & 0xC0 != 0x80 {
+                col += 1;
+            }
+            pos += 1;
+            if is_accepting(mode, state) {
+                last_accept = Some((state, pos, line, col));
+            }
+        }
+
+        match last_accept {
+            Some((accept_state, end, end_line, end_col)) => {
+                pos = end;
+                line = end_line;
+                col = end_col;
+                let text = &input[start..end];
+                if let Some((token, weight)) =
+                    accept_alternatives(mode, accept_state, text).into_iter().next()
+                {
+                    tokens.push((
+                        token,
+                        Range {
+                            start: Position {
+                                byte_offset: start,
+                                line: start_line,
+                                column: start_col,
+                            },
+                            end: Position { byte_offset: end, line: end_line, column: end_col },
+                            file_id,
+                        },
+                        weight,
+                    ));
+                }
+            },
+            None => {
+                let (ch, _ch_len) = decode_char_at(input, start).unwrap_or(('\u{FFFD}', 1));
+                return Err(format!(
+                    "{}:{}: unexpected character '{}'",
+                    line + 1,
+                    col + 1,
+                    ch.escape_debug(),
+                ));
+            },
+        }
+    }
+
+    let eof_pos = Position { byte_offset: pos, line, column: col };
+    Ok((tokens, eof_pos))
+}
+
+/// Multi-mode (L9) analogue of [`lex_lattice_core`]. Same maximal-munch scan and
+/// lazy `Linear`-vs-`Lattice` decision, but selects each token's DFA by
+/// `mode_at[pos]` (whitespace skip suppressed in RAW modes).
+#[allow(clippy::too_many_arguments)]
+pub fn lex_lattice_core_modal<'a, T: Clone>(
+    input: &'a str,
+    file_id: Option<u32>,
+    mode_at: &[u8],
+    char_class: impl Fn(u8, u8) -> u8,
+    dfa_next: impl Fn(u8, u32, u8) -> u32,
+    is_accepting: impl Fn(u8, u32) -> bool,
+    accept_alternatives: impl Fn(u8, u32, &'a str) -> Vec<(T, f64)>,
+    is_raw: impl Fn(u8) -> bool,
+) -> Result<(crate::lattice::TokenSource<T, Range>, Position), String> {
+    use crate::automata::semiring::TropicalWeight;
+    use crate::lattice::{TokenLattice, TokenSource};
+
+    let bytes = input.as_bytes();
+    let mut pos: usize = 0;
+    let mut line: usize = 0;
+    let mut col: usize = 0;
+    let mut linear_tokens: Vec<(T, Range)> = Vec::with_capacity(input.len() / 2);
+    let mut has_ambiguity = false;
+    struct TokenAlts<T> {
+        range: Range,
+        alternatives: Vec<(T, f64)>,
+    }
+    let mut token_alts: Vec<TokenAlts<T>> = Vec::new();
+
+    while pos < bytes.len() {
+        let mode = mode_at[pos];
+        if !is_raw(mode) {
+            {
+                let result = skip_whitespace_simd(bytes, pos, line, col);
+                pos = result.pos;
+                line = result.line;
+                col = result.col;
+            }
+            while pos < bytes.len() && bytes[pos] >= 0x80 {
+                match decode_char_at(input, pos) {
+                    Some((ch, ch_len)) if ch.is_whitespace() => {
+                        col += 1;
+                        pos += ch_len;
+                    },
+                    _ => break,
+                }
+            }
+            if pos >= bytes.len() {
+                break;
+            }
+        }
+
+        let start = pos;
+        let start_line = line;
+        let start_col = col;
+        let mut state: u32 = 0;
+        let mut last_accept: Option<(u32, usize, usize, usize)> = None;
+        if is_accepting(mode, 0) {
+            last_accept = Some((0, pos, line, col));
+        }
+        while pos < bytes.len() {
+            let class = char_class(mode, bytes[pos]);
+            let next = dfa_next(mode, state, class);
+            if next == u32::MAX {
+                break;
+            }
+            state = next;
+            if bytes[pos] == b'\n' {
+                line += 1;
+                col = 0;
+            } else if bytes[pos] & 0xC0 != 0x80 {
+                col += 1;
+            }
+            pos += 1;
+            if is_accepting(mode, state) {
+                last_accept = Some((state, pos, line, col));
+            }
+        }
+
+        match last_accept {
+            Some((accept_state, end, end_line, end_col)) => {
+                pos = end;
+                line = end_line;
+                col = end_col;
+                let text = &input[start..end];
+                let alts = accept_alternatives(mode, accept_state, text);
+                if alts.is_empty() {
+                    continue;
+                }
+                let range = Range {
+                    start: Position { byte_offset: start, line: start_line, column: start_col },
+                    end: Position { byte_offset: end, line: end_line, column: end_col },
+                    file_id,
+                };
+                if alts.len() > 1 {
+                    has_ambiguity = true;
+                }
+                if !has_ambiguity && alts.len() == 1 {
+                    linear_tokens.push((alts[0].0.clone(), range));
+                }
+                token_alts.push(TokenAlts { range, alternatives: alts });
+            },
+            None => {
+                let (ch, _ch_len) = decode_char_at(input, start).unwrap_or(('\u{FFFD}', 1));
+                return Err(format!(
+                    "{}:{}: unexpected character '{}'",
+                    line + 1,
+                    col + 1,
+                    ch.escape_debug(),
+                ));
+            },
+        }
+    }
+
+    let eof_pos = Position { byte_offset: pos, line, column: col };
+
+    if !has_ambiguity {
+        Ok((TokenSource::Linear(linear_tokens), eof_pos))
+    } else {
+        let num_nodes = token_alts.len() + 1;
+        let mut lattice: TokenLattice<T, Range> = TokenLattice::with_capacity(num_nodes);
+        lattice.ensure_nodes(num_nodes);
+        for (i, ta) in token_alts.iter().enumerate() {
+            for (token, weight) in &ta.alternatives {
+                lattice.add_edge(i, i + 1, token.clone(), ta.range, TropicalWeight::new(*weight));
+            }
+        }
+        Ok((TokenSource::Lattice(lattice), eof_pos))
+    }
+}
+
+/// Multi-mode (L9) analogue of [`lex_stream_core`]. Records EVERY accepting state
+/// visited (multi-LENGTH alternatives, longest-first) at each position, using the
+/// DFA of `mode_at[pos]`; whitespace skip is suppressed in RAW modes.
+#[allow(clippy::too_many_arguments)]
+pub fn lex_stream_core_modal<'a, T: Clone>(
+    input: &'a str,
+    file_id: Option<u32>,
+    mode_at: &[u8],
+    char_class: impl Fn(u8, u8) -> u8,
+    dfa_next: impl Fn(u8, u32, u8) -> u32,
+    is_accepting: impl Fn(u8, u32) -> bool,
+    accept_alternatives: impl Fn(u8, u32, &'a str) -> Vec<(T, f64)>,
+    token_to_kind: impl Fn(&T) -> crate::automata::TokenKind,
+    is_raw: impl Fn(u8) -> bool,
+) -> Result<(crate::lexer_types::LexStream, Position), String> {
+    use crate::automata::semiring::TropicalWeight;
+    use crate::lexer_types::{LexAlternative, LexEntry, LexStream};
+
+    let _ = file_id;
+    let bytes = input.as_bytes();
+    let mut pos: usize = 0;
+    let mut line: usize = 0;
+    let mut col: usize = 0;
+    let mut stream = LexStream::new();
+    stream.entries.reserve(input.len() / 2);
+
+    while pos < bytes.len() {
+        let mode = mode_at[pos];
+        if !is_raw(mode) {
+            {
+                let result = skip_whitespace_simd(bytes, pos, line, col);
+                pos = result.pos;
+                line = result.line;
+                col = result.col;
+            }
+            while pos < bytes.len() && bytes[pos] >= 0x80 {
+                match decode_char_at(input, pos) {
+                    Some((ch, ch_len)) if ch.is_whitespace() => {
+                        col += 1;
+                        pos += ch_len;
+                    },
+                    _ => break,
+                }
+            }
+            if pos >= bytes.len() {
+                break;
+            }
+        }
+
+        let start = pos;
+        let mut walk_pos = pos;
+        let mut walk_line = line;
+        let mut walk_col = col;
+        let mut state: u32 = 0;
+        let mut accepts: Vec<(u32, usize, usize, usize)> = Vec::new();
+        if is_accepting(mode, 0) {
+            accepts.push((0, walk_pos, walk_line, walk_col));
+        }
+        while walk_pos < bytes.len() {
+            let class = char_class(mode, bytes[walk_pos]);
+            let next = dfa_next(mode, state, class);
+            if next == u32::MAX {
+                break;
+            }
+            state = next;
+            if bytes[walk_pos] == b'\n' {
+                walk_line += 1;
+                walk_col = 0;
+            } else if bytes[walk_pos] & 0xC0 != 0x80 {
+                walk_col += 1;
+            }
+            walk_pos += 1;
+            if is_accepting(mode, state) {
+                accepts.push((state, walk_pos, walk_line, walk_col));
+            }
+        }
+
+        if accepts.is_empty() {
+            let (ch, _ch_len) = decode_char_at(input, start).unwrap_or(('\u{FFFD}', 1));
+            return Err(format!(
+                "{}:{}: unexpected character '{}'",
+                line + 1,
+                col + 1,
+                ch.escape_debug(),
+            ));
+        }
+
+        let mut alternatives: Vec<LexAlternative> = Vec::with_capacity(accepts.len() * 2);
+        for &(accept_state, accept_end, _, _) in accepts.iter().rev() {
+            let alt_text = &input[start..accept_end];
+            let alt_tokens = accept_alternatives(mode, accept_state, alt_text);
+            for (token, weight) in alt_tokens {
+                let kind = token_to_kind(&token);
+                alternatives.push(LexAlternative {
+                    kind,
+                    text: alt_text.to_string(),
+                    end_byte: accept_end,
+                    weight: TropicalWeight::new(weight),
+                });
+            }
+        }
+
+        if alternatives.is_empty() {
+            let (longest_state, longest_end, longest_line, longest_col) =
+                *accepts.last().expect("accepts non-empty above");
+            let _ = longest_state;
+            pos = longest_end;
+            line = longest_line;
+            col = longest_col;
+            continue;
+        }
+
+        let (_, longest_end, longest_line, longest_col) =
+            *accepts.last().expect("accepts non-empty above");
+        pos = longest_end;
+        line = longest_line;
+        col = longest_col;
+
+        stream.entries.push(LexEntry { byte_start: start, alternatives });
+    }
+
+    let eof_pos = Position { byte_offset: pos, line, column: col };
+    Ok((stream, eof_pos))
 }
 
 #[inline(always)]
@@ -2014,5 +2668,394 @@ mod tests {
         let (cc, dfa_next, is_acc, accept_alts, to_kind) = make_test_dfa();
         let result = lex_dag_core("abc", None, &cc, dfa_next, is_acc, accept_alts, to_kind);
         assert!(result.is_err());
+    }
+
+    // ──────────────────────────────────────────────────────────────────
+    // L9 (2026-07-23): multi-mode runtime-core tests. A hand-coded 3-mode
+    // FLT-like toy: default mode recognizes Ident=[a-z]+ and three openers —
+    // `lam\`` (push flt_body_backtick), `box{` (push flt_body_brace), and
+    // ``` fen``` ``` (push flt_body_fence). Each guest mode recognizes its own
+    // closer + a shared GuestChunk kind; the brace mode also nests on `{`.
+    // ──────────────────────────────────────────────────────────────────
+
+    fn tk(name: &str) -> crate::automata::TokenKind {
+        crate::automata::TokenKind::Custom(name.to_string())
+    }
+
+    /// Union-alphabet char class (mode-independent for the toy): the tag letters
+    /// get distinct classes; every other lowercase letter shares class 9; the
+    /// delimiter bytes get 10..13; all else is 255 (no transition).
+    fn toy_cc(_mode: u8, b: u8) -> u8 {
+        match b {
+            b'a' => 0,
+            b'b' => 1,
+            b'e' => 2,
+            b'f' => 3,
+            b'l' => 4,
+            b'm' => 5,
+            b'n' => 6,
+            b'o' => 7,
+            b'x' => 8,
+            b'`' => 10,
+            b'{' => 11,
+            b'}' => 12,
+            b'$' => 13,
+            c if c.is_ascii_lowercase() => 9,
+            _ => 255,
+        }
+    }
+
+    fn toy_dnext(mode: u8, state: u32, c: u8) -> u32 {
+        match mode {
+            // Default mode: Ident + the three openers.
+            0 => match state {
+                0 => match c {
+                    4 => 1,               // 'l' → lam-prefix
+                    1 => 10,              // 'b' → box-prefix
+                    3 => 20,              // 'f' → fen-prefix
+                    x if x <= 9 => 5,     // any other letter → generic Ident
+                    _ => u32::MAX,
+                },
+                1 => match c {
+                    0 => 2,
+                    x if x <= 9 => 5,
+                    _ => u32::MAX,
+                },
+                2 => match c {
+                    5 => 3,
+                    x if x <= 9 => 5,
+                    _ => u32::MAX,
+                },
+                3 => match c {
+                    10 => 4, // "lam" + '`' → FltOpenBacktick
+                    x if x <= 9 => 5,
+                    _ => u32::MAX,
+                },
+                10 => match c {
+                    7 => 11,
+                    x if x <= 9 => 5,
+                    _ => u32::MAX,
+                },
+                11 => match c {
+                    8 => 12,
+                    x if x <= 9 => 5,
+                    _ => u32::MAX,
+                },
+                12 => match c {
+                    11 => 13, // "box" + '{' → FltOpenBrace
+                    x if x <= 9 => 5,
+                    _ => u32::MAX,
+                },
+                20 => match c {
+                    2 => 21,
+                    x if x <= 9 => 5,
+                    _ => u32::MAX,
+                },
+                21 => match c {
+                    6 => 22,
+                    x if x <= 9 => 5,
+                    _ => u32::MAX,
+                },
+                22 => match c {
+                    10 => 23,
+                    x if x <= 9 => 5,
+                    _ => u32::MAX,
+                },
+                23 => match c {
+                    10 => 24,
+                    _ => u32::MAX,
+                },
+                24 => match c {
+                    10 => 25, // "fen" + "```" → FltOpenFence
+                    _ => u32::MAX,
+                },
+                5 => match c {
+                    x if x <= 9 => 5,
+                    _ => u32::MAX,
+                },
+                _ => u32::MAX,
+            },
+            // flt_body_backtick: '`' closer, GuestChunk = [^`]+.
+            1 => match state {
+                0 => {
+                    if c == 10 {
+                        1
+                    } else {
+                        2
+                    }
+                },
+                2 => {
+                    if c == 10 {
+                        u32::MAX
+                    } else {
+                        2
+                    }
+                },
+                _ => u32::MAX,
+            },
+            // flt_body_brace: '{' nests, '}' closes, GuestChunk = [^{}]+.
+            2 => match state {
+                0 => match c {
+                    11 => 1,
+                    12 => 2,
+                    _ => 3,
+                },
+                3 => match c {
+                    11 | 12 => u32::MAX,
+                    _ => 3,
+                },
+                _ => u32::MAX,
+            },
+            // flt_body_fence: "```" closer, GuestChunk = [^`]+.
+            3 => match state {
+                0 => {
+                    if c == 10 {
+                        1
+                    } else {
+                        4
+                    }
+                },
+                1 => {
+                    if c == 10 {
+                        2
+                    } else {
+                        u32::MAX
+                    }
+                },
+                2 => {
+                    if c == 10 {
+                        3
+                    } else {
+                        u32::MAX
+                    }
+                },
+                4 => {
+                    if c == 10 {
+                        u32::MAX
+                    } else {
+                        4
+                    }
+                },
+                _ => u32::MAX,
+            },
+            _ => u32::MAX,
+        }
+    }
+
+    fn toy_isacc(mode: u8, state: u32) -> bool {
+        match mode {
+            0 => matches!(state, 1 | 2 | 3 | 4 | 5 | 10 | 11 | 12 | 13 | 20 | 21 | 22 | 25),
+            1 => matches!(state, 1 | 2),
+            2 => matches!(state, 1 | 2 | 3),
+            3 => matches!(state, 3 | 4),
+            _ => false,
+        }
+    }
+
+    fn toy_alts(mode: u8, state: u32, _text: &str) -> Vec<(crate::automata::TokenKind, f64)> {
+        use crate::automata::TokenKind;
+        match mode {
+            0 => match state {
+                4 => vec![(tk("FltOpenBacktick"), 0.0)],
+                13 => vec![(tk("FltOpenBrace"), 0.0)],
+                25 => vec![(tk("FltOpenFence"), 0.0)],
+                1 | 2 | 3 | 5 | 10 | 11 | 12 | 20 | 21 | 22 => vec![(TokenKind::Ident, 0.0)],
+                _ => vec![],
+            },
+            1 => match state {
+                1 => vec![(tk("FltCloseBacktick"), 0.0)],
+                2 => vec![(tk("GuestChunk"), 0.0)],
+                _ => vec![],
+            },
+            2 => match state {
+                1 => vec![(tk("FltBraceNest"), 0.0)],
+                2 => vec![(tk("FltCloseBrace"), 0.0)],
+                3 => vec![(tk("GuestChunk"), 0.0)],
+                _ => vec![],
+            },
+            3 => match state {
+                3 => vec![(tk("FltCloseFence"), 0.0)],
+                4 => vec![(tk("GuestChunk"), 0.0)],
+                _ => vec![],
+            },
+            _ => vec![],
+        }
+    }
+
+    fn toy_push(mode: u8, state: u32) -> u8 {
+        match mode {
+            0 => match state {
+                4 => 1,
+                13 => 2,
+                25 => 3,
+                _ => u8::MAX,
+            },
+            2 => match state {
+                1 => 2, // nested '{' re-pushes the brace mode
+                _ => u8::MAX,
+            },
+            _ => u8::MAX,
+        }
+    }
+
+    fn toy_pop(mode: u8, state: u32) -> bool {
+        match mode {
+            1 => state == 1,
+            2 => state == 2,
+            3 => state == 3,
+            _ => false,
+        }
+    }
+
+    fn toy_israw(_mode: u8) -> bool {
+        false
+    }
+
+    fn toy_to_kind(t: &crate::automata::TokenKind) -> crate::automata::TokenKind {
+        t.clone()
+    }
+
+    #[test]
+    fn compute_mode_map_backtick_balanced() {
+        let map = compute_mode_map(
+            "lam`hi`", toy_cc, toy_dnext, toy_isacc, toy_push, toy_pop, toy_israw,
+        )
+        .expect("balanced backtick region");
+        assert_eq!(map, vec![0, 0, 0, 0, 1, 1, 1]);
+    }
+
+    #[test]
+    fn compute_mode_map_brace_nested() {
+        // "box{a{b}c}" — the mode stack IS the brace balancer; the whole
+        // region is mode 2 (flt_body_brace) after the 4-byte opener.
+        let map = compute_mode_map(
+            "box{a{b}c}", toy_cc, toy_dnext, toy_isacc, toy_push, toy_pop, toy_israw,
+        )
+        .expect("balanced nested braces");
+        assert_eq!(map, vec![0, 0, 0, 0, 2, 2, 2, 2, 2, 2]);
+    }
+
+    #[test]
+    fn compute_mode_map_fence_balanced() {
+        let map = compute_mode_map(
+            "fen```hi```", toy_cc, toy_dnext, toy_isacc, toy_push, toy_pop, toy_israw,
+        )
+        .expect("balanced fence region");
+        assert_eq!(map, vec![0, 0, 0, 0, 0, 0, 3, 3, 3, 3, 3]);
+    }
+
+    #[test]
+    fn compute_mode_map_unbalanced_errors() {
+        // Opener with no closer → the mode stack is [0, 1] at EOF.
+        let err = compute_mode_map(
+            "lam`hi", toy_cc, toy_dnext, toy_isacc, toy_push, toy_pop, toy_israw,
+        )
+        .expect_err("unterminated backtick region must error");
+        assert!(err.contains("unterminated"), "diagnostic should mention unterminated: {err}");
+    }
+
+    #[test]
+    fn compute_mode_map_empty_and_ws_only() {
+        let empty =
+            compute_mode_map("", toy_cc, toy_dnext, toy_isacc, toy_push, toy_pop, toy_israw)
+                .expect("empty input");
+        assert!(empty.is_empty());
+        // Whitespace-only stays in the default mode (non-raw ⇒ skipped).
+        let ws = compute_mode_map(
+            "   ", toy_cc, toy_dnext, toy_isacc, toy_push, toy_pop, toy_israw,
+        )
+        .expect("whitespace-only input");
+        assert_eq!(ws, vec![0, 0, 0]);
+    }
+
+    #[test]
+    fn expand_modal_primary_opener_wins_secondary_ident() {
+        // At byte 0 of "lam`x`", maximal munch selects FltOpenBacktick@4; the
+        // shorter Ident@3 survives as the SECONDARY edge (intra-mode ambiguity
+        // preserved — two surviving edges of different kinds).
+        let map = compute_mode_map(
+            "lam`x`", toy_cc, toy_dnext, toy_isacc, toy_push, toy_pop, toy_israw,
+        )
+        .expect("balanced");
+        assert_eq!(map, vec![0, 0, 0, 0, 1, 1]);
+        let node = expand_lex_node_modal(
+            "lam`x`", 0, &map, &toy_cc, &toy_dnext, &toy_isacc, &toy_alts, &toy_to_kind,
+            &toy_israw, true,
+        )
+        .expect("expand ok");
+        assert_eq!(node.edges.len(), 2, "opener + ident co-accepts survive");
+        assert_eq!(node.edges[0].kind, tk("FltOpenBacktick"));
+        assert_eq!(node.edges[0].end_byte, 4);
+        assert_eq!(node.edges[1].kind, crate::automata::TokenKind::Ident);
+        assert_eq!(node.edges[1].end_byte, 3);
+        assert_eq!(node.successors.len(), 2);
+        assert_eq!(node.successors[0].byte, 4);
+        assert!(node.successors[0].is_primary);
+        assert_eq!(node.successors[1].byte, 3);
+        assert!(!node.successors[1].is_primary);
+    }
+
+    #[test]
+    fn expand_modal_secondary_deadend_soft_fails() {
+        // Following the secondary Ident@3 edge lands the cursor at byte 3 (the
+        // '`'), still in the DEFAULT mode where a bare '`' has no token. As a
+        // NON-primary position this is a structural rule-out (soft-fail: an
+        // orphan node), NOT an input error.
+        let map = compute_mode_map(
+            "lam`x`", toy_cc, toy_dnext, toy_isacc, toy_push, toy_pop, toy_israw,
+        )
+        .expect("balanced");
+        let orphan = expand_lex_node_modal(
+            "lam`x`", 3, &map, &toy_cc, &toy_dnext, &toy_isacc, &toy_alts, &toy_to_kind,
+            &toy_israw, false,
+        )
+        .expect("secondary dead-end is a soft-fail (Ok orphan)");
+        assert!(orphan.edges.is_empty());
+        assert!(orphan.successors.is_empty());
+        assert!(!orphan.is_eof);
+        // The SAME dead-end on the primary chain is a hard input error.
+        let hard = expand_lex_node_modal(
+            "lam`x`", 3, &map, &toy_cc, &toy_dnext, &toy_isacc, &toy_alts, &toy_to_kind,
+            &toy_israw, true,
+        );
+        assert!(hard.is_err(), "primary-chain dead-end must hard-fail");
+    }
+
+    #[test]
+    fn lex_dag_core_modal_primary_chain() {
+        // The DAG's primary (maximal-munch) chain over "lam`hi`" is
+        // FltOpenBacktick · GuestChunk · FltCloseBacktick.
+        let map = compute_mode_map(
+            "lam`hi`", toy_cc, toy_dnext, toy_isacc, toy_push, toy_pop, toy_israw,
+        )
+        .expect("balanced");
+        let dag = lex_dag_core_modal(
+            "lam`hi`", None, &map, toy_cc, toy_dnext, toy_isacc, toy_alts, toy_to_kind, toy_israw,
+        )
+        .expect("modal dag builds");
+        assert!(dag.has_ambiguity(), "opener vs ident is genuine intra-mode ambiguity");
+        let path = dag.linear_path();
+        let kinds: Vec<_> = path.iter().map(|(k, _)| k.clone()).collect();
+        assert_eq!(
+            kinds,
+            vec![tk("FltOpenBacktick"), tk("GuestChunk"), tk("FltCloseBacktick")]
+        );
+    }
+
+    #[test]
+    fn lex_weighted_core_modal_token_stream() {
+        let map = compute_mode_map(
+            "lam`hi`", toy_cc, toy_dnext, toy_isacc, toy_push, toy_pop, toy_israw,
+        )
+        .expect("balanced");
+        let (tokens, _eof) = lex_weighted_core_modal(
+            "lam`hi`", None, &map, toy_cc, toy_dnext, toy_isacc, toy_alts, toy_israw,
+        )
+        .expect("modal weighted lex");
+        let kinds: Vec<_> = tokens.iter().map(|(k, _, _)| k.clone()).collect();
+        assert_eq!(
+            kinds,
+            vec![tk("FltOpenBacktick"), tk("GuestChunk"), tk("FltCloseBacktick")]
+        );
     }
 }
