@@ -102,8 +102,13 @@ identical either way, and is the same theorem-backed guard physics (`GuardedComm
 
 ## Beat 3 — The counterfeit is rejected: tags are unforgeable (1.5 min)
 
-Send the string-tagged fake `["App", ⟦id⟧, ⟦K⟧]` (GString head) at the same receive.
-Expected **(to validate)**: no match; the datum rests.
+Send the string-tagged fake `["App", ⌜^nog⌝, ⟦id⟧, ⟦K⟧]` — a GString `"App"` head, but
+otherwise byte-identical to `⟦App(id,K)⟧`: it matches the marked pattern's 4-element arity, its
+wildcarded marker slot, and the ground `⟦K⟧` — at the same receive.
+Expected **(to validate)**: no match; the datum rests. The mismatch is isolated to the head
+tag — `⌜App⌝` is an unforgeable `GPrivate` compared by identity, and the GString `"App"` is a
+different value; nothing else differs, so the rejection is a *pure* unforgeable-tag failure,
+not an incidental arity mismatch.
 
 > "This is why FLTs are not string interpolation. A term claiming to be Lambda by *name*
 > doesn't match — the language tag is an unforgeable private name compared by identity, not
