@@ -777,12 +777,7 @@ pub fn apply_action_variant_index<W: crate::automata::semiring::SemiringRef>(
         WpdaStepAction::IterativeChainAbsorb { .. } => 7,
         WpdaStepAction::ConsumeAndPop { .. } => 8,
         WpdaStepAction::Consume { .. } => 9,
-        // L9-3: a custom-kind capture-consume is observationally an
-        // ident-consume for this histogram — share bucket 10 (keeps the [u64;21]
-        // struct + Display byte-identical; own-bucket attribution is a profiled
-        // follow-up if STAGE 2+ needs it).
-        WpdaStepAction::ConsumeIdentAndReplace { .. }
-        | WpdaStepAction::ConsumeTokenKindAndReplace { .. } => 10,
+        WpdaStepAction::ConsumeIdentAndReplace { .. } => 10,
         WpdaStepAction::ConsumeAndReplace { .. } => 11,
         // #307 ROOT-A red-team fix (2026-06-11): own bucket 19 — sharing
         // bucket 11 with ConsumeAndReplace conflated the two actions in

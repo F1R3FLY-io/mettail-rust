@@ -1706,18 +1706,6 @@ pub enum WpdaStepAction<W: SemiringRef> {
         new_state: WpdaState,
         start_scope: bool,
     },
-    /// L9-3: consume the current token IFF its kind is `TokenKind::Custom(kind_name)`
-    /// (advance `pos` by 1), push it as `ActionArg::Token { kind, text, pos }` to
-    /// the builder, and replace the GSS top with `symbol`. The engine-step mirror
-    /// of `ConsumeIdentAndReplace` for a specific custom kind (no binder scope —
-    /// a token capture never opens one). The Fork/trial analogue is
-    /// `ForkActionKind::GuardedConsumeTokenKindAndReplace`.
-    ConsumeTokenKindAndReplace {
-        symbol: StackSymbolV2,
-        weight: W,
-        new_state: WpdaState,
-        kind_name: String,
-    },
     /// Phase 5: consume the current token (advance `pos` by 1) and
     /// replace the GSS top with `symbol`, then transition to `new_state`.
     /// Used by the binder-rule state machine to advance through literal
@@ -16619,11 +16607,6 @@ where
                     WpdaStepAction::ConsumeIdentAndReplace { symbol, new_state, .. } => {
                         format!("ConsumeIdentAndReplace(sym={symbol:?}, st={new_state:?})")
                     },
-                    WpdaStepAction::ConsumeTokenKindAndReplace {
-                        symbol, new_state, kind_name, ..
-                    } => format!(
-                        "ConsumeTokenKindAndReplace(sym={symbol:?}, st={new_state:?}, kind={kind_name})"
-                    ),
                     WpdaStepAction::ConsumeAndReplace { symbol, new_state, .. } => {
                         format!("ConsumeAndReplace(sym={symbol:?}, st={new_state:?})")
                     },
@@ -18379,36 +18362,6 @@ where
                     w,
                     ..d.clone()
                 });
-            },
-            WpdaStepAction::ConsumeTokenKindAndReplace {
-                symbol,
-                weight: _,
-                new_state,
-                kind_name,
-            } => {
-                // L9-3: deterministic (non-Fork) mid-rule consume of a specific
-                // custom KIND. On a kind match, fold the token as an
-                // ActionArg::Token leaf (intern with pushed_via_push_ident=false)
-                // and advance; on a mismatch, push NO successor so this cursor
-                // dies (the rule fails at this position).
-                if tokens.peek_kind(d.pos) == Some(TokenKind::Custom(kind_name.clone())) {
-                    let text = tokens.peek_text(d.pos).unwrap_or("");
-                    let leaf = self.sppf.intern_terminal(
-                        TokenKind::Custom(kind_name.clone()),
-                        crate::sppf::PosOrSynth::Real(d.pos as u32),
-                        Some(text),
-                        false,
-                    );
-                    let slot = Self::cgll_pure_slot_hash(&d.cur_sym, &d.state);
-                    let w = self.cgll_pure_fold(slot, d.w, leaf, d.pos, W::one_ref());
-                    run.worklist.push_back(CgllPureDescriptor {
-                        state: new_state,
-                        cur_sym: symbol,
-                        pos: next_of(d.pos),
-                        w,
-                        ..d.clone()
-                    });
-                }
             },
             WpdaStepAction::ConsumeIdentAndReplace { symbol, weight: _, new_state, start_scope } => {
                 // Ident-Terminal leaf fold into the FRAME's `w` (the binder
