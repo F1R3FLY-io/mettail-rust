@@ -199,7 +199,7 @@ impl Parse for LanguageDef {
         let _guard = ConnectiveMapGuard::install(active_map);
 
         // Parse: terms { ... }
-        let terms = if input.peek(Ident) {
+        let mut terms = if input.peek(Ident) {
             let lookahead = input.fork().parse::<Ident>()?;
             if lookahead == "terms" {
                 parse_terms(input)?
@@ -246,6 +246,34 @@ impl Parse for LanguageDef {
             None
         };
 
+        // L9-3: post-parse token-kind classification. A bare `Param(x)` in a
+        // rule's syntax pattern whose `x` is a DECLARED token kind (top-level
+        // `tokens {}` or any mode) and is NOT a term-context param of that rule
+        // is reclassified to `TokenKind{name:x, bind:None}` (match the kind, no
+        // capture). This is the ONLY step that makes a `TokenKind` constructible
+        // from source WITHOUT the `@` bind form. A genuine typed param shadows a
+        // like-named token (decision D-3). Recurses into `#opt`/`#map` bodies.
+        {
+            let mut declared_kinds: std::collections::HashSet<String> =
+                std::collections::HashSet::new();
+            for td in &token_defs {
+                declared_kinds.insert(td.name.to_string());
+            }
+            for md in &mode_defs {
+                for td in &md.token_defs {
+                    declared_kinds.insert(td.name.to_string());
+                }
+            }
+            if !declared_kinds.is_empty() {
+                for rule in &mut terms {
+                    let ctx_names = term_context_param_names(rule.term_context.as_ref());
+                    if let Some(sp) = rule.syntax_pattern.as_mut() {
+                        reclassify_token_kinds(sp, &declared_kinds, &ctx_names);
+                    }
+                }
+            }
+        }
+
         Ok(LanguageDef {
             name,
             options,
@@ -264,6 +292,82 @@ impl Parse for LanguageDef {
             logic,
             guard_config,
         })
+    }
+}
+
+/// L9-3: collect the names BOUND by a rule's term-context params, so a
+/// like-named declared token does NOT shadow a genuine typed param (D-3).
+fn term_context_param_names(
+    tc: Option<&Vec<crate::grammar::TermParam>>,
+) -> std::collections::HashSet<String> {
+    use crate::grammar::TermParam;
+    fn collect(params: &[TermParam], out: &mut std::collections::HashSet<String>) {
+        for p in params {
+            match p {
+                TermParam::Simple { name, .. } | TermParam::GuardBody { name } => {
+                    out.insert(name.to_string());
+                },
+                TermParam::Abstraction { binder, body, .. }
+                | TermParam::MultiAbstraction { binder, body, .. } => {
+                    out.insert(binder.to_string());
+                    out.insert(body.to_string());
+                },
+                TermParam::Optional { params } => collect(params, out),
+            }
+        }
+    }
+    let mut out = std::collections::HashSet::new();
+    if let Some(params) = tc {
+        collect(params, &mut out);
+    }
+    out
+}
+
+/// L9-3: reclassify a bare `Param(x)` → `TokenKind{name:x, bind:None}` when `x`
+/// is a declared token kind and not a term-context param. Recurses into
+/// `#opt`/`#map` bodies (a `#map` closure param shadows a like-named token
+/// inside its body).
+fn reclassify_token_kinds(
+    exprs: &mut [crate::grammar::SyntaxExpr],
+    declared_kinds: &std::collections::HashSet<String>,
+    ctx_names: &std::collections::HashSet<String>,
+) {
+    use crate::grammar::SyntaxExpr;
+    for e in exprs.iter_mut() {
+        match e {
+            SyntaxExpr::Param(id) => {
+                let n = id.to_string();
+                if declared_kinds.contains(&n) && !ctx_names.contains(&n) {
+                    *e = SyntaxExpr::TokenKind { name: id.clone(), bind: None };
+                }
+            },
+            SyntaxExpr::Op(op) => reclassify_op_token_kinds(op, declared_kinds, ctx_names),
+            SyntaxExpr::Literal(_) | SyntaxExpr::TokenKind { .. } => {},
+        }
+    }
+}
+
+fn reclassify_op_token_kinds(
+    op: &mut crate::grammar::PatternOp,
+    declared_kinds: &std::collections::HashSet<String>,
+    ctx_names: &std::collections::HashSet<String>,
+) {
+    use crate::grammar::PatternOp;
+    match op {
+        PatternOp::Opt { inner } => reclassify_token_kinds(inner, declared_kinds, ctx_names),
+        PatternOp::Map { source, params, body } => {
+            reclassify_op_token_kinds(source, declared_kinds, ctx_names);
+            // A #map closure param shadows a like-named token inside the body.
+            let mut extended = ctx_names.clone();
+            for p in params.iter() {
+                extended.insert(p.to_string());
+            }
+            reclassify_token_kinds(body, declared_kinds, &extended);
+        },
+        PatternOp::Sep { source: Some(inner), .. } => {
+            reclassify_op_token_kinds(inner, declared_kinds, ctx_names)
+        },
+        PatternOp::Sep { .. } | PatternOp::Zip { .. } | PatternOp::Var(_) => {},
     }
 }
 

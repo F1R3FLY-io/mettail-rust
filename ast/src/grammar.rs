@@ -870,6 +870,18 @@ pub(crate) fn parse_syntax_expr(input: ParseStream) -> SynResult<SyntaxExpr> {
     if input.peek(Ident) {
         let id = input.parse::<Ident>()?;
 
+        // L9-3: `v@Tok` bind form — `v` binds the text of a token of the custom
+        // KIND `Tok`. `@` is unused elsewhere in syntax patterns, so this is
+        // unambiguous (decision D-1; `v:Tok` is NOT supported — a colon collides
+        // with the `:Category` rule terminator). A bare `Tok` (no bind) is parsed
+        // as `Param(Tok)` below and reclassified to `TokenKind{bind:None}` by the
+        // post-parse pass when `Tok` is a declared token name.
+        if input.peek(Token![@]) {
+            let _ = input.parse::<Token![@]>()?;
+            let tok = input.parse::<Ident>()?;
+            return Ok(SyntaxExpr::TokenKind { name: tok, bind: Some(id) });
+        }
+
         // Check for method chain: ident.#name(...)
         if input.peek(Token![.]) && input.peek2(Token![*]) {
             let _ = input.parse::<Token![.]>()?;
