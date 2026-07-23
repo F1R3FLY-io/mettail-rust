@@ -121,6 +121,10 @@ impl DecisionTreeBuilder {
                     }
                     elements.push(PatternElement::OptionalEnd);
                 },
+                // L9-3 Option A: a custom-kind capture has no fixed dispatch byte,
+                // so it does not contribute a PatternElement — stop here (the
+                // walker's kind gate resolves it by trial). Explicit for intent.
+                RDSyntaxItem::TokenKindCapture { .. } => break,
                 // Collection, Sep, Map, Zip, SepList, BinderCollection
                 // are complex constructs — they don't participate in prefix dispatch.
                 // Rules with these items are handled by standalone functions.
@@ -185,10 +189,14 @@ impl DecisionTreeBuilder {
             if rule.is_collection || rule.prefix_bp.is_some() {
                 continue;
             }
-            // Skip rules starting with nonterminal or ident capture
+            // Skip rules starting with nonterminal or ident capture — and (L9-3
+            // Option A) a leading custom-kind capture, which likewise has no
+            // fixed dispatch byte (the walker's kind gate resolves it by trial).
             let starts_with_nt = matches!(
                 rule.items.first(),
-                Some(RDSyntaxItem::NonTerminal { .. }) | Some(RDSyntaxItem::IdentCapture { .. })
+                Some(RDSyntaxItem::NonTerminal { .. })
+                    | Some(RDSyntaxItem::IdentCapture { .. })
+                    | Some(RDSyntaxItem::TokenKindCapture { .. })
             );
             if starts_with_nt {
                 continue;

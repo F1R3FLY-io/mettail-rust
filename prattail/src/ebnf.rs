@@ -854,6 +854,7 @@ fn format_syntax_item(item: &SyntaxItemSpec) -> String {
         SyntaxItemSpec::Terminal(t) => format!("\"{}\"", t),
         SyntaxItemSpec::NonTerminal { category, param_name: _ } => category.clone(),
         SyntaxItemSpec::IdentCapture { param_name: _ } => "<ident>".to_string(),
+        SyntaxItemSpec::TokenKindCapture { kind_name, .. } => format!("<{}>", kind_name),
         SyntaxItemSpec::Binder { param_name, category, .. } => {
             format!("^{}:{}", param_name, category)
         },
@@ -1652,6 +1653,12 @@ mod tests {
             },
             SyntaxItemSpec::IdentCapture { param_name } => {
                 RDSyntaxItem::IdentCapture { param_name: param_name.clone() }
+            },
+            SyntaxItemSpec::TokenKindCapture { param_name, kind_name } => {
+                RDSyntaxItem::TokenKindCapture {
+                    param_name: param_name.clone(),
+                    kind_name: kind_name.clone(),
+                }
             },
             SyntaxItemSpec::Binder { param_name, category, .. } => RDSyntaxItem::Binder {
                 param_name: param_name.clone(),

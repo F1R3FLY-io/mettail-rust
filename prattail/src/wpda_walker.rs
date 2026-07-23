@@ -1706,6 +1706,18 @@ pub enum WpdaStepAction<W: SemiringRef> {
         new_state: WpdaState,
         start_scope: bool,
     },
+    /// L9-3: consume the current token IFF its kind is `TokenKind::Custom(kind_name)`
+    /// (advance `pos` by 1), push it as `ActionArg::Token { kind, text, pos }` to
+    /// the builder, and replace the GSS top with `symbol`. The engine-step mirror
+    /// of `ConsumeIdentAndReplace` for a specific custom kind (no binder scope —
+    /// a token capture never opens one). The Fork/trial analogue is
+    /// `ForkActionKind::GuardedConsumeTokenKindAndReplace`.
+    ConsumeTokenKindAndReplace {
+        symbol: StackSymbolV2,
+        weight: W,
+        new_state: WpdaState,
+        kind_name: String,
+    },
     /// Phase 5: consume the current token (advance `pos` by 1) and
     /// replace the GSS top with `symbol`, then transition to `new_state`.
     /// Used by the binder-rule state machine to advance through literal
@@ -2798,6 +2810,17 @@ pub enum ForkActionKind {
     /// no child allocated. See `GuardedConsumeAndReplace` for the
     /// fanout-survival rationale.
     GuardedConsumeIdentAndReplace { start_scope: bool },
+
+    /// L9-3 — closure for a LEADING (dispatch-excluded, Option A) custom-kind
+    /// capture. Mirrors `GuardedConsumeIdentAndReplace` but gates on
+    /// `peek_kind == TokenKind::Custom(kind_name)` instead of the generic
+    /// `Ident`, and captures via `emit_push_token` (→ `ActionArg::Token`)
+    /// instead of `emit_push_ident`. Pass → allocate the child like
+    /// `ForkActionKind::ConsumeIdentAndReplace` (branch carries the symbol /
+    /// new_state); Fail (kind mismatch) → no child allocated, the cursor dies,
+    /// correct siblings survive (Guarded* fanout-survival). The one non-compiler-
+    /// forced walker construction is the item→action lowering that emits this.
+    GuardedConsumeTokenKindAndReplace { kind_name: String },
 
     /// L12 follow-up B2 (2026-05-07) — closure for BinderListLoop's
     /// separator branch. Mirrors `WpdaStepAction::Consume` but gated on
@@ -16596,6 +16619,11 @@ where
                     WpdaStepAction::ConsumeIdentAndReplace { symbol, new_state, .. } => {
                         format!("ConsumeIdentAndReplace(sym={symbol:?}, st={new_state:?})")
                     },
+                    WpdaStepAction::ConsumeTokenKindAndReplace {
+                        symbol, new_state, kind_name, ..
+                    } => format!(
+                        "ConsumeTokenKindAndReplace(sym={symbol:?}, st={new_state:?}, kind={kind_name})"
+                    ),
                     WpdaStepAction::ConsumeAndReplace { symbol, new_state, .. } => {
                         format!("ConsumeAndReplace(sym={symbol:?}, st={new_state:?})")
                     },
@@ -18352,6 +18380,17 @@ where
                     ..d.clone()
                 });
             },
+            WpdaStepAction::ConsumeTokenKindAndReplace { .. } => {
+                // L9-3 STAGE 2 implements the pure-apply consumption here (mirror
+                // the ConsumeIdentAndReplace arm below, gating on
+                // peek_kind == Custom(kind_name) + emit_push_token → ActionArg::Token).
+                // INERT in STAGE 1: unconstructable from source (no RD→action
+                // lowering and no DSL front-end yet), so this is never reached.
+                unreachable!(
+                    "L9-3 STAGE 1: WpdaStepAction::ConsumeTokenKindAndReplace is unconstructable \
+                     until the STAGE 2 lowering + STAGE 3 front-end land"
+                );
+            },
             WpdaStepAction::ConsumeIdentAndReplace { symbol, weight: _, new_state, start_scope } => {
                 // Ident-Terminal leaf fold into the FRAME's `w` (the binder
                 // ident is a child of the current rule — classic pushes
@@ -19140,6 +19179,16 @@ where
                     w,
                     ..d.clone()
                 });
+            },
+            ForkActionKind::GuardedConsumeTokenKindAndReplace { .. } => {
+                // L9-3 STAGE 2 implements this (mirror the GuardedConsumeIdentAndReplace
+                // arm below: gate on peek_kind == Custom(kind_name), then capture via
+                // emit_push_token → ActionArg::Token and allocate the child like
+                // ConsumeIdentAndReplace). INERT in STAGE 1 — unconstructable from source.
+                unreachable!(
+                    "L9-3 STAGE 1: ForkActionKind::GuardedConsumeTokenKindAndReplace is \
+                     unconstructable until the STAGE 2 lowering + STAGE 3 front-end land"
+                );
             },
             ForkActionKind::GuardedConsumeIdentAndReplace { start_scope } => {
                 if tokens.peek_kind(pos_after) != Some(TokenKind::Ident) {

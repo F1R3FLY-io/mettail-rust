@@ -1121,6 +1121,8 @@ fn is_collection_mirror_infix(rule: &GrammarRule, language: &LanguageDef) -> boo
             // Sep/Zip/Map/Opt/Var: this rule is itself a collection/complex
             // form, not a bare binary infix.
             SyntaxExpr::Op(_) => return false,
+            // L9-3: a token-kind consumption is not a bare binary infix operator.
+            SyntaxExpr::TokenKind { .. } => return false,
         }
     }
     let Some(operator) = operator else {
@@ -2167,6 +2169,11 @@ fn generate_engine_syntax_pattern_arm(
                     }
                 }
             },
+            SyntaxExpr::TokenKind { .. } => {
+                // L9-3: STAGE 3 renders the captured token's text into
+                // `forward_ops`. INERT in STAGE 1 — a `TokenKind` item is
+                // unconstructable from source, so this arm is never reached.
+            },
             SyntaxExpr::Op(op) => {
                 // Stage 3.3 (2026-04-30): pass outer-adjacent Param flags so
                 // PatternOp::Opt can apply the same word-literal spacing rules
@@ -2558,6 +2565,9 @@ fn generate_engine_pattern_op(
                                 #trailing
                             }
                         },
+                        // L9-3: STAGE 3 renders a captured token's text inside an
+                        // optional group. INERT in STAGE 1 (unconstructable).
+                        SyntaxExpr::TokenKind { .. } => quote! {},
                         SyntaxExpr::Op(PatternOp::Sep { collection, separator, source: None }) => {
                             // Phase 4 #3 (2026-05-12): Sep inside *opt.
                             // Iterate `__opt_<coll_name>` joining elements
@@ -2723,6 +2733,9 @@ fn generate_engine_map_body_format(params: &[syn::Ident], body: &[SyntaxExpr]) -
                 }
             },
             SyntaxExpr::Op(_) => {},
+            // L9-3: STAGE 3 implements the token-text render; INERT here
+            // (unconstructable from source, so this map body never sees one).
+            SyntaxExpr::TokenKind { .. } => {},
         }
     }
 

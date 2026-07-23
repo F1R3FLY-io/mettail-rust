@@ -703,6 +703,12 @@ fn item_to_term(
             TermExpr::Var(idx)
         },
 
+        crate::SyntaxItemSpec::TokenKindCapture { param_name, .. } => {
+            let next = param_index.len();
+            let idx = *param_index.entry(param_name.clone()).or_insert(next);
+            TermExpr::Var(idx)
+        },
+
         crate::SyntaxItemSpec::Binder { param_name, .. } => {
             let next = param_index.len();
             let idx = *param_index.entry(param_name.clone()).or_insert(next);

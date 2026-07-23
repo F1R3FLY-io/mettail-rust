@@ -160,6 +160,7 @@ fn has_nonterminal(item: &SyntaxItemSpec, cat_names: &[String]) -> bool {
         SyntaxItemSpec::Optional { inner } => inner.iter().any(|i| has_nonterminal(i, cat_names)),
         SyntaxItemSpec::Terminal(_)
         | SyntaxItemSpec::IdentCapture { .. }
+        | SyntaxItemSpec::TokenKindCapture { .. }
         | SyntaxItemSpec::Binder { .. }
         | SyntaxItemSpec::BinderCollection { .. }
         | SyntaxItemSpec::GuardExpression { .. } => false,
@@ -260,9 +261,9 @@ fn rule_to_leaf_strategy(rule: &RuleSpec) -> BoxedStrategy<String> {
         .iter()
         .filter_map(|item| match item {
             SyntaxItemSpec::Terminal(t) => Some(t.clone()),
-            SyntaxItemSpec::IdentCapture { .. } | SyntaxItemSpec::Binder { .. } => {
-                Some(fallback_ident())
-            },
+            SyntaxItemSpec::IdentCapture { .. }
+            | SyntaxItemSpec::TokenKindCapture { .. }
+            | SyntaxItemSpec::Binder { .. } => Some(fallback_ident()),
             _ => None,
         })
         .collect();
@@ -374,6 +375,10 @@ fn syntax_item_strategy(
         },
 
         SyntaxItemSpec::IdentCapture { .. } => arb_ident(),
+
+        // L9-3: a custom-kind capture is a text leaf for property generation
+        // (INERT until the front-end lands; no modal grammar reaches here yet).
+        SyntaxItemSpec::TokenKindCapture { .. } => arb_ident(),
 
         SyntaxItemSpec::Binder { .. } => arb_binder(),
 
@@ -506,6 +511,7 @@ fn is_leaf_rule_owned(rule: &RuleSpecOwned, _cat_names: &[String]) -> bool {
                 item,
                 SyntaxItemSpec::Terminal(_)
                     | SyntaxItemSpec::IdentCapture { .. }
+                    | SyntaxItemSpec::TokenKindCapture { .. }
                     | SyntaxItemSpec::Binder { .. }
             )
         })
@@ -534,9 +540,9 @@ fn rule_to_leaf_strategy_owned(rule: &RuleSpecOwned) -> BoxedStrategy<String> {
         .iter()
         .filter_map(|item| match item {
             SyntaxItemSpec::Terminal(t) => Some(t.clone()),
-            SyntaxItemSpec::IdentCapture { .. } | SyntaxItemSpec::Binder { .. } => {
-                Some(fallback_ident())
-            },
+            SyntaxItemSpec::IdentCapture { .. }
+            | SyntaxItemSpec::TokenKindCapture { .. }
+            | SyntaxItemSpec::Binder { .. } => Some(fallback_ident()),
             _ => None,
         })
         .collect();

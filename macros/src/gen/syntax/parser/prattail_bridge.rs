@@ -700,6 +700,17 @@ fn convert_syntax_pattern(
                 // Pattern operations are handled as collections or special items
                 convert_pattern_op(op, context, cat_names, &mut items);
             },
+            SyntaxExpr::TokenKind { name, bind } => {
+                // L9-3: consume ONE token of the declared custom KIND, binding
+                // its text. An @-less capture gets a synthesized `__tok_<name>`
+                // slot so the arg still reaches the semantic action (D-5).
+                let kind_name = name.to_string();
+                let param_name = bind
+                    .as_ref()
+                    .map(|b| b.to_string())
+                    .unwrap_or_else(|| format!("__tok_{}", kind_name));
+                items.push(SyntaxItemSpec::TokenKindCapture { kind_name, param_name });
+            },
         }
     }
 
@@ -840,6 +851,14 @@ fn convert_pattern_op(
                     SyntaxExpr::Op(inner_op) => {
                         convert_pattern_op(inner_op, context, cat_names, items);
                     },
+                    SyntaxExpr::TokenKind { name, bind } => {
+                        let kind_name = name.to_string();
+                        let param_name = bind
+                            .as_ref()
+                            .map(|b| b.to_string())
+                            .unwrap_or_else(|| format!("__tok_{}", kind_name));
+                        items.push(SyntaxItemSpec::TokenKindCapture { kind_name, param_name });
+                    },
                 }
             }
         },
@@ -858,6 +877,14 @@ fn convert_pattern_op(
                     },
                     SyntaxExpr::Op(inner_op) => {
                         convert_pattern_op(inner_op, context, cat_names, &mut opt_items);
+                    },
+                    SyntaxExpr::TokenKind { name, bind } => {
+                        let kind_name = name.to_string();
+                        let param_name = bind
+                            .as_ref()
+                            .map(|b| b.to_string())
+                            .unwrap_or_else(|| format!("__tok_{}", kind_name));
+                        opt_items.push(SyntaxItemSpec::TokenKindCapture { kind_name, param_name });
                     },
                 }
             }
@@ -922,6 +949,14 @@ fn convert_chained_sep(
                                 SyntaxItemSpec::IdentCapture {
                                     param_name: "__nested_op__".to_string(),
                                 }
+                            },
+                            SyntaxExpr::TokenKind { name, bind } => {
+                                let kind_name = name.to_string();
+                                let param_name = bind
+                                    .as_ref()
+                                    .map(|b| b.to_string())
+                                    .unwrap_or_else(|| format!("__tok_{}", kind_name));
+                                SyntaxItemSpec::TokenKindCapture { kind_name, param_name }
                             },
                         })
                         .collect();

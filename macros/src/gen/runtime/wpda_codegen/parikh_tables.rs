@@ -198,6 +198,9 @@ fn expr_must(
     match expr {
         // A literal always consumes its own token: non-nullable, owns its class.
         SyntaxExpr::Literal(text) => (false, alpha.mask_of_terminal(text)),
+        // L9-3: a custom-kind capture consumes exactly one token (non-nullable),
+        // owning the class of that kind's variant name.
+        SyntaxExpr::TokenKind { name, .. } => (false, alpha.mask_of_terminal(&name.to_string())),
         // A parameter reference parses its declared category.
         SyntaxExpr::Param(id) => {
             let name = id.to_string();

@@ -363,6 +363,7 @@ pub(crate) fn extract_from_spec(spec: &LanguageSpec) -> (LexerBundle, ParserBund
                         }
                     },
                     SyntaxItemSpec::IdentCapture { .. }
+                    | SyntaxItemSpec::TokenKindCapture { .. }
                     | SyntaxItemSpec::Binder { .. }
                     | SyntaxItemSpec::BinderCollection { .. }
                     | SyntaxItemSpec::Collection { .. }

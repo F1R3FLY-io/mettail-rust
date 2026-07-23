@@ -576,6 +576,13 @@ fn first_of_suffix(
                     break;
                 }
             },
+            crate::SyntaxItemSpec::TokenKindCapture { kind_name, .. } => {
+                // L9-3: a specific custom token kind — FIRST is that kind's
+                // variant name; a required token is not nullable.
+                result.insert(kind_name);
+                nullable = false;
+                break;
+            },
             crate::SyntaxItemSpec::IdentCapture { .. } | crate::SyntaxItemSpec::Binder { .. } => {
                 result.insert("Ident");
                 nullable = false;
@@ -675,6 +682,11 @@ pub fn first_of_rd_suffix(
             },
             RDSyntaxItem::IdentCapture { .. } => {
                 result.insert("Ident");
+                nullable = false;
+                break;
+            },
+            RDSyntaxItem::TokenKindCapture { kind_name, .. } => {
+                result.insert(kind_name);
                 nullable = false;
                 break;
             },

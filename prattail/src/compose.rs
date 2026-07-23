@@ -352,6 +352,7 @@ fn validate_category_refs(
         match item {
             SyntaxItemSpec::Terminal(_)
             | SyntaxItemSpec::IdentCapture { .. }
+            | SyntaxItemSpec::TokenKindCapture { .. }
             | SyntaxItemSpec::BinderCollection { .. }
             | SyntaxItemSpec::GuardExpression { .. } => {},
 

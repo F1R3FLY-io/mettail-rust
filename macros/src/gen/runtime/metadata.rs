@@ -280,6 +280,13 @@ fn syntax_pattern_to_string(pattern: &[SyntaxExpr], term_ctx: Option<&Vec<TermPa
             SyntaxExpr::Literal(s) => result.push_str(s),
             SyntaxExpr::Param(id) => result.push_str(&id.to_string()),
             SyntaxExpr::Op(op) => result.push_str(&pattern_op_to_string(op, term_ctx)),
+            SyntaxExpr::TokenKind { name, bind } => {
+                if let Some(b) = bind {
+                    result.push_str(&b.to_string());
+                    result.push('@');
+                }
+                result.push_str(&name.to_string());
+            },
         }
     }
 
@@ -903,6 +910,7 @@ fn apply_args_to_syntax(
     for expr in syntax_pattern {
         match expr {
             SyntaxExpr::Literal(s) => result.push_str(s),
+            SyntaxExpr::TokenKind { name, .. } => result.push_str(&name.to_string()),
             SyntaxExpr::Param(id) => {
                 let id_str = id.to_string();
 
@@ -1192,6 +1200,10 @@ fn syntax_expr_to_display(expr: &SyntaxExpr) -> String {
         SyntaxExpr::Literal(s) => format!("\"{}\"", s),
         SyntaxExpr::Param(id) => id.to_string(),
         SyntaxExpr::Op(_) => "#op".to_string(),
+        SyntaxExpr::TokenKind { name, bind } => match bind {
+            Some(b) => format!("{}@{}", b, name),
+            None => name.to_string(),
+        },
     }
 }
 

@@ -219,6 +219,9 @@ fn syntax_item_to_node(item: &SyntaxItemSpec) -> RailroadNode {
         SyntaxItemSpec::IdentCapture { .. } => {
             RailroadNode::NonTerminal { text: "ident".to_string() }
         },
+        SyntaxItemSpec::TokenKindCapture { kind_name, .. } => {
+            RailroadNode::NonTerminal { text: kind_name.clone() }
+        },
         SyntaxItemSpec::Binder { category, .. } => {
             RailroadNode::NonTerminal { text: format!("binder:{}", category) }
         },

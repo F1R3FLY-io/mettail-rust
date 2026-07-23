@@ -515,6 +515,10 @@ pub(crate) fn classify_binder_in(
             SyntaxExpr::Literal(text) => {
                 positions.push(BinderPosition::Literal(text.clone()));
             },
+            // L9-3 (§2b): a binder rule that also consumes a custom token KIND is
+            // not a recognized binder pattern — bail to generic (non-binder) rule
+            // codegen. INERT in STAGE 1 (unconstructable from source).
+            SyntaxExpr::TokenKind { .. } => return None,
             SyntaxExpr::Param(name) => {
                 let n = name.to_string();
                 let kind = param_map.get(&n)?;
@@ -712,6 +716,7 @@ pub(crate) fn classify_binder_in(
                         SyntaxExpr::Literal(text) => {
                             inner_positions.push(BinderPosition::Literal(text.clone()));
                         },
+                        SyntaxExpr::TokenKind { .. } => return None,
                         SyntaxExpr::Param(p_name) => {
                             let pn = p_name.to_string();
                             if pn == map_param_n {
@@ -816,6 +821,7 @@ pub(crate) fn classify_binder_in(
                         SyntaxExpr::Literal(text) => {
                             inner_positions.push(BinderPosition::Literal(text.clone()));
                         },
+                        SyntaxExpr::TokenKind { .. } => return None,
                         SyntaxExpr::Param(name) => {
                             let n = name.to_string();
                             let kind = param_map.get(&n)?;

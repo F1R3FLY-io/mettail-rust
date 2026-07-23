@@ -542,6 +542,11 @@ pub(crate) fn construct_test_expression(
                 SyntaxExpr::Literal(lit) => {
                     parts.push(lit.clone());
                 },
+                // L9-3: a custom-kind capture — INERT placeholder for simulation
+                // input generation (unconstructable from source in STAGE 1).
+                SyntaxExpr::TokenKind { name, .. } => {
+                    parts.push(format!("<{}>", name));
+                },
                 SyntaxExpr::Param(param_name) => {
                     // S3: spec-derived. If the param category is found
                     // in the term_context, route through

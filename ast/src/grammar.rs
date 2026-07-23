@@ -168,6 +168,14 @@ pub enum SyntaxExpr {
     Param(Ident),
     /// Pattern operation: #sep, #zip, #map, #opt
     Op(PatternOp),
+    /// L9-3: reference a custom token KIND declared in a `tokens {}` block (or a
+    /// named mode). `name` is the declared kind; `bind` is `Some(v)` for the
+    /// `v@Tok` capture form (bind the matched token's text to `v`), or `None` to
+    /// match the kind without capturing. Produced ONLY by the `@` bind-form
+    /// parser and by parse-time classification (a bare `Param(x)` whose `x` is a
+    /// declared token name and NOT a term-context param) — never written as a
+    /// bare literal.
+    TokenKind { name: Ident, bind: Option<Ident> },
 }
 
 /// Pattern operation (compile-time meta-syntax)

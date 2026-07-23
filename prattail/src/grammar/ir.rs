@@ -53,6 +53,11 @@ pub enum RDSyntaxItem {
     NonTerminal { category: String, param_name: String },
     /// An identifier to capture (not a category — a raw identifier).
     IdentCapture { param_name: String },
+    /// L9-3: consume ONE token of a specific custom KIND, binding its text.
+    /// The RD-IR mirror of [`crate::SyntaxItemSpec::TokenKindCapture`]; lowered
+    /// to the walker's `GuardedConsumeTokenKindAndReplace` / recovery
+    /// `SegmentCapture::Ident` (the captured value is just text, per L9-3 D-4).
+    TokenKindCapture { param_name: String, kind_name: String },
     /// A binder position.
     Binder {
         param_name: String,

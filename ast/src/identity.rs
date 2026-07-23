@@ -617,6 +617,18 @@ fn write_syntax_expr(expr: &SyntaxExpr, out: &mut String) {
             out.push(')');
         },
         SyntaxExpr::Op(op) => write_pattern_op(op, out),
+        SyntaxExpr::TokenKind { name, bind } => {
+            // L9-3: fold the kind name + optional @-bind into the langdef
+            // fingerprint so a rule that consumes a token KIND is distinct from
+            // one that references a like-named nonterminal/param.
+            out.push_str("tokenkind(");
+            push_ident(out, name);
+            if let Some(b) = bind {
+                out.push('@');
+                push_ident(out, b);
+            }
+            out.push(')');
+        },
     }
 }
 

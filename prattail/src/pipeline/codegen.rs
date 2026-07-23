@@ -1891,6 +1891,12 @@ pub(crate) fn convert_syntax_item_to_rd(item: &SyntaxItemSpec) -> RDSyntaxItem {
         SyntaxItemSpec::IdentCapture { param_name } => {
             RDSyntaxItem::IdentCapture { param_name: param_name.clone() }
         },
+        SyntaxItemSpec::TokenKindCapture { param_name, kind_name } => {
+            RDSyntaxItem::TokenKindCapture {
+                param_name: param_name.clone(),
+                kind_name: kind_name.clone(),
+            }
+        },
         SyntaxItemSpec::Binder { param_name, category, .. } => RDSyntaxItem::Binder {
             param_name: param_name.clone(),
             binder_category: category.clone(),

@@ -1239,6 +1239,9 @@ fn category_produces_delim_at_depth0(language: &LanguageDef, cat: &str, delim: &
             let mut depth: i32 = 0;
             for expr in sp {
                 match expr {
+                    // L9-3: a custom-kind capture consumes one token but is never a
+                    // structural bracket and never equals `delim` — no depth effect.
+                    SyntaxExpr::TokenKind { .. } => {},
                     SyntaxExpr::Literal(l) => {
                         // A non-bracket literal EQUAL to `delim` seen while depth==0
                         // ⇒ `cat` produces `delim` at depth 0.

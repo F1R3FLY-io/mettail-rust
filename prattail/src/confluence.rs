@@ -969,6 +969,9 @@ pub fn syntax_to_rewrite_rules(
                 crate::SyntaxItemSpec::IdentCapture { param_name } => {
                     Term::var(format!("{}_{}", param_name, idx))
                 },
+                crate::SyntaxItemSpec::TokenKindCapture { param_name, .. } => {
+                    Term::var(format!("{}_{}", param_name, idx))
+                },
                 crate::SyntaxItemSpec::Binder { param_name, .. } => {
                     Term::var(format!("{}_{}", param_name, idx))
                 },

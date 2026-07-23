@@ -996,6 +996,13 @@ pub enum SyntaxItemSpec {
     NonTerminal { category: String, param_name: String },
     /// An identifier to capture.
     IdentCapture { param_name: String },
+    /// L9-3: consume ONE token of a specific custom KIND, binding its text.
+    /// `kind_name` is the declared token kind (matched via `token_to_kind ==
+    /// TokenKind::Custom(kind_name)`); `param_name` is the capture slot (a
+    /// synthesized `__tok_<name>` when the source had no `@`-bind). Parallel to
+    /// `IdentCapture` (a terminal-ish leaf — no nonterminal target, no field
+    /// sort), but gated on a specific kind rather than the generic `Ident`.
+    TokenKindCapture { param_name: String, kind_name: String },
     /// A binder position.
     Binder {
         param_name: String,

@@ -377,6 +377,7 @@ fn collect_binding_sort_categories(item: &SyntaxItemSpec, out: &mut HashSet<Stri
         SyntaxItemSpec::Terminal(_)
         | SyntaxItemSpec::NonTerminal { .. }
         | SyntaxItemSpec::IdentCapture { .. }
+        | SyntaxItemSpec::TokenKindCapture { .. }
         | SyntaxItemSpec::BinderCollection { .. }
         | SyntaxItemSpec::Collection { .. }
         | SyntaxItemSpec::GuardExpression { .. } => {},
@@ -507,6 +508,9 @@ fn syntax_signature(syntax: &[SyntaxItemSpec]) -> String {
             SyntaxItemSpec::Terminal(t) => parts.push(format!("T({})", t)),
             SyntaxItemSpec::NonTerminal { category, .. } => parts.push(format!("NT({})", category)),
             SyntaxItemSpec::IdentCapture { .. } => parts.push("IDENT".to_string()),
+            SyntaxItemSpec::TokenKindCapture { kind_name, .. } => {
+                parts.push(format!("TK({})", kind_name))
+            },
             SyntaxItemSpec::Binder { category, is_multi, .. } => {
                 parts.push(format!("BIND({},{})", category, is_multi))
             },
@@ -672,6 +676,13 @@ fn encode_syntax_item(item: &SyntaxItemSpec, env: &mut DebruijnEnv, buf: &mut Ve
         SyntaxItemSpec::IdentCapture { param_name } => {
             buf.push(env.resolve(param_name));
             buf.push(0x04); // IdentCapture tag
+        },
+        SyntaxItemSpec::TokenKindCapture { param_name, kind_name } => {
+            buf.push(env.resolve(param_name));
+            buf.push(0x0B); // TokenKindCapture tag (L9-3)
+            let k = kind_name.as_bytes();
+            buf.push(k.len() as u8);
+            buf.extend_from_slice(k);
         },
         SyntaxItemSpec::Binder { param_name, category, is_multi } => {
             buf.push(env.resolve(param_name));
@@ -997,6 +1008,7 @@ fn add_g08_syntax_value_edges<'a>(
         },
         SyntaxItemSpec::Terminal(_)
         | SyntaxItemSpec::IdentCapture { .. }
+        | SyntaxItemSpec::TokenKindCapture { .. }
         | SyntaxItemSpec::Binder { .. }
         | SyntaxItemSpec::BinderCollection { .. }
         | SyntaxItemSpec::GuardExpression { .. } => {},

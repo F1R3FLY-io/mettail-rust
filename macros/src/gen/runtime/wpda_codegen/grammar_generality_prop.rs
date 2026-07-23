@@ -629,6 +629,9 @@ fn allowed_vocab(lang: &LanguageDef, per_cat: &[Vec<GrammarRule>]) -> BTreeSet<S
                 }
                 SyntaxExpr::Op(op) => walk_op(op, v),
                 SyntaxExpr::Param(_) => {}
+                // L9-3: a custom-kind capture matches variable token text — it
+                // contributes no FIXED terminal to the allowed vocabulary.
+                SyntaxExpr::TokenKind { .. } => {}
             }
         }
     }

@@ -191,8 +191,10 @@ pub fn build_wpds<W: Semiring>(
                         }
                     },
                     SyntaxItemSpec::IdentCapture { .. }
+                    | SyntaxItemSpec::TokenKindCapture { .. }
                     | SyntaxItemSpec::BinderCollection { .. } => {
-                        // These consume an identifier token — intraprocedural
+                        // These consume a single token (ident / custom kind) —
+                        // intraprocedural (Replace, one GSS position forward).
                         let next = StackSymbol::rule_position(cat, label, next_pos);
                         wpds.ensure_symbol(next.clone());
                         wpds.add_rule(WpdsRule::Replace {
@@ -367,6 +369,7 @@ fn collect_cross_category_refs(
         },
         SyntaxItemSpec::Terminal(_)
         | SyntaxItemSpec::IdentCapture { .. }
+        | SyntaxItemSpec::TokenKindCapture { .. }
         | SyntaxItemSpec::BinderCollection { .. }
         | SyntaxItemSpec::GuardExpression { .. } => {},
     }

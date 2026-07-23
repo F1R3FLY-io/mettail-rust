@@ -134,9 +134,15 @@ fn group_rd_by_dispatch_token<'a>(
             continue;
         }
 
+        // L9-3 Option A: a rule LEADING with a custom-kind capture has no fixed
+        // dispatch byte (like IdentCapture / NonTerminal), so exclude it from the
+        // terminal-prefix decision tree; the walker's kind gate resolves it by
+        // trial (fanout-survival).
         let starts_with_nonterminal = matches!(
             rd_rule.items.first(),
-            Some(RDSyntaxItem::NonTerminal { .. }) | Some(RDSyntaxItem::IdentCapture { .. })
+            Some(RDSyntaxItem::NonTerminal { .. })
+                | Some(RDSyntaxItem::IdentCapture { .. })
+                | Some(RDSyntaxItem::TokenKindCapture { .. })
         );
 
         if starts_with_nonterminal {
@@ -315,6 +321,12 @@ pub fn split_rd_handler(rule: &RDRuleInfo) -> Vec<HandlerSegment> {
                 current_inline.push(item.clone());
                 accumulated_captures.push(SegmentCapture::Ident { name: param_name.clone() });
             },
+            RDSyntaxItem::TokenKindCapture { param_name, .. } => {
+                // L9-3 D-4: the captured value is just text, so reuse
+                // SegmentCapture::Ident (the recovery layer only needs the name).
+                current_inline.push(item.clone());
+                accumulated_captures.push(SegmentCapture::Ident { name: param_name.clone() });
+            },
             RDSyntaxItem::Binder { param_name, .. } => {
                 current_inline.push(item.clone());
                 accumulated_captures.push(SegmentCapture::Binder { name: param_name.clone() });
@@ -453,6 +465,9 @@ fn collect_referenced_names(item: &RDSyntaxItem, names: &mut std::collections::H
         RDSyntaxItem::IdentCapture { param_name } => {
             names.insert(param_name.clone());
         },
+        RDSyntaxItem::TokenKindCapture { param_name, .. } => {
+            names.insert(param_name.clone());
+        },
         RDSyntaxItem::Binder { param_name, .. } => {
             names.insert(param_name.clone());
         },
@@ -491,6 +506,9 @@ pub fn constructor_capture_names(rule: &RDRuleInfo) -> std::collections::HashSet
                 names.insert(param_name.clone());
             },
             RDSyntaxItem::IdentCapture { param_name } => {
+                names.insert(param_name.clone());
+            },
+            RDSyntaxItem::TokenKindCapture { param_name, .. } => {
                 names.insert(param_name.clone());
             },
             RDSyntaxItem::Binder { param_name, .. } => {

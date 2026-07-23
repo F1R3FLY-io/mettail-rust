@@ -1076,6 +1076,9 @@ fn extract_item_label(item: &crate::SyntaxItemSpec) -> String {
         crate::SyntaxItemSpec::Terminal(t) => format!("T:{}", t),
         crate::SyntaxItemSpec::NonTerminal { category, .. } => format!("NT:{}", category),
         crate::SyntaxItemSpec::IdentCapture { param_name } => format!("ID:{}", param_name),
+        crate::SyntaxItemSpec::TokenKindCapture { param_name, kind_name } => {
+            format!("TK:{}:{}", kind_name, param_name)
+        },
         crate::SyntaxItemSpec::Binder { param_name, category, .. } => {
             format!("BIND:{}:{}", param_name, category)
         },

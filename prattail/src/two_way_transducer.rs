@@ -932,6 +932,7 @@ fn collect_syntax_dependencies(item: &crate::SyntaxItemSpec, out: &mut HashSet<S
         },
         crate::SyntaxItemSpec::Terminal(_)
         | crate::SyntaxItemSpec::IdentCapture { .. }
+        | crate::SyntaxItemSpec::TokenKindCapture { .. }
         | crate::SyntaxItemSpec::BinderCollection { .. }
         | crate::SyntaxItemSpec::GuardExpression { .. } => {},
     }
