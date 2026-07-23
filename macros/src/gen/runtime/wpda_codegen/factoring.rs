@@ -542,9 +542,12 @@ fn binder_items(
                     .unwrap_or(0u8);
                 items.push(SpineItem::ParamParse { cat_src_idx, cur_bp });
             },
-            // Collection ParamParse / binder-list / guard / optional-group:
-            // terminates mergeability (leaf-side only, plan §2).
+            // Collection ParamParse / binder-list / guard / optional-group /
+            // L9-3 token-kind capture: terminate mergeability (leaf-side only,
+            // plan §2). A custom-kind capture consumes a distinct kind, so a
+            // rule carrying one does not merge into the shared spine trie.
             BinderPosition::ParamParse { collection: Some(_), .. }
+            | BinderPosition::TokenKindCapture { .. }
             | BinderPosition::BinderIdent
             | BinderPosition::BinderListLoop { .. }
             | BinderPosition::GuardSlot

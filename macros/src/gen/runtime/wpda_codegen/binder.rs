@@ -95,6 +95,11 @@ pub struct BinderShape {
 pub enum BinderPosition {
     /// `Literal("text")` — consume + advance position.
     Literal(String),
+    /// L9-3: `w@Word` — consume ONE token of the custom KIND `kind_name`
+    /// (a single-branch Fork carrying `GuardedConsumeTokenKindAndReplace`,
+    /// structural clone of the `Literal` position), binding its text as the
+    /// `param_name` action arg (`ActionArgKind::TokenText`). No binder scope.
+    TokenKindCapture { kind_name: String, param_name: String },
     /// `Param(binder_name)` — capture single Ident, start_binder_scope,
     /// advance position.
     BinderIdent,
@@ -232,6 +237,10 @@ pub struct CollectionSepInfo {
 pub enum ActionArgKind {
     /// `ActionArg::Ident { name }` — single binder name.
     BinderName,
+    /// L9-3: `ActionArg::Token { text, .. }` — a captured custom-kind token's
+    /// text, extracted via `as_token_text()` (the proven native-literal path)
+    /// and bound as a `String` action arg / AST field.
+    TokenText { param_name: String },
     /// `ActionArg::Term { value, .. }` of a specific category.
     Term(String),
     /// `ActionArg::Predicate` — parsed predicate.
@@ -996,6 +1005,7 @@ fn first_param_cat_from_positions(positions: &[BinderPosition]) -> Option<&str> 
                 }
             },
             BinderPosition::Literal(_)
+            | BinderPosition::TokenKindCapture { .. }
             | BinderPosition::BinderIdent
             | BinderPosition::GuardSlot => {},
         }
@@ -1271,6 +1281,15 @@ pub(crate) fn emit_binder_rule_body(
                 let pos = (idx + 1) as u8;
                 let next_pos = pos + 1;
                 let arm = match position {
+                    BinderPosition::TokenKindCapture { .. } => {
+                        // L9-3 S2.2 fills this with the real mid-rule emission
+                        // (a single-branch Fork + GuardedConsumeTokenKindAndReplace,
+                        // a structural clone of the Literal arm below). INERT in
+                        // S2.1 — no BinderPosition::TokenKindCapture is constructed
+                        // until S2.2 wires the classification, so this arm is
+                        // unreachable and contributes no parser dispatch.
+                        quote! {}
+                    },
                     BinderPosition::Literal(text) => {
                         let previous_position = if idx > 0 {
                             shape.positions.get(idx - 1)
@@ -2636,6 +2655,11 @@ pub(crate) fn emit_optional_group_body(
                     let sp = (i + 1) as u8;
                     let next_sp = sp + 1;
                     let inner_arm = match ipos {
+                        // L9-3: a custom-kind capture INSIDE an optional group is
+                        // not exercised by any current grammar (the toy uses only
+                        // top-level captures). INERT — no such position is
+                        // constructed, so this contributes no dispatch arm.
+                        BinderPosition::TokenKindCapture { .. } => quote! {},
                         BinderPosition::Literal(text) => quote! {
                             (#result_src_idx, #rule_idx, #group_idx_byte, #sp) => {
                                 // Stage 3.20 / L12 Commit F (2026-05-06):
@@ -2903,6 +2927,20 @@ pub(crate) fn emit_binder_action_entry(
                 });
                 binder_name_holders.push(var.clone());
             },
+            ActionArgKind::TokenText { .. } => {
+                // L9-3: the captured custom-kind token arrives as
+                // ActionArg::Token; bind its text as a `String` via
+                // as_token_text() (the proven native-literal path,
+                // semantic_actions.rs:918-921). Bare String field — no
+                // Arc/Box wrapping (a token capture is plain text).
+                extracts.push(quote! {
+                    let #var: String = match iter.next() {
+                        Some(a) => a.as_token_text().map(|s| s.to_string()).unwrap_or_default(),
+                        None => return,
+                    };
+                });
+                field_names.push(quote! { #var });
+            },
             ActionArgKind::Term(cat) => {
                 let cat_id = format_ident!("{}", cat);
                 extracts.push(quote! {
@@ -2998,6 +3036,15 @@ pub(crate) fn emit_binder_action_entry(
                     let inner_var = format_ident!("inner_{}_{}", i, j);
                     inner_idents.push(inner_var.clone());
                     let extract_inner = match k {
+                        ActionArgKind::TokenText { .. } => quote! {
+                            let #inner_var: Option<String> =
+                                match #opt_var.as_mut() {
+                                    Some(inner_iter) => inner_iter
+                                        .next()
+                                        .and_then(|a| a.as_token_text().map(|s| s.to_string())),
+                                    None => None,
+                                };
+                        },
                         ActionArgKind::Term(cat) => {
                             let cat_id = format_ident!("{}", cat);
                             quote! {
