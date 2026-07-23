@@ -42,14 +42,17 @@
 //!   `${x}` syntax GENERATES this same shape through a public reflector API in phase-2.
 #![cfg(feature = "lambda-runtime")]
 
+use std::collections::BTreeMap;
+
 use mettail_languages::lambda::LambdaLanguage;
 use mettail_rholang_codegen::{
-    lower_language_def, plan_rho_default_backend, reconstruct_language_def,
-    reflect_ground_term_par, reflected_tag_string, rho_net_drive_call_par,
+    ground_marker_tag_par, lower_language_def, plan_rho_default_backend, reconstruct_language_def,
+    reflect_flt_construction, reflect_ground_term_par, reflected_tag_string, rho_net_drive_call_par,
     rho_net_drive_call_par_with_fuel, suggest_rejected_rule_dispositions, GroundTerm,
     RhoCoverageEvidence, RhoDefaultBackendRequirements, RhoGuardCoverageEvidence,
-    BOUND_VAR_REFLECT_LABEL, DRIVE_DEFAULT_FUEL, DRIVE_RESERVED_LABEL, LAMBDA_REFLECT_LABEL,
-    NONGROUND_MARK_REFLECT_LABEL, PEANO_SUCC_REFLECT_LABEL, PEANO_ZERO_REFLECT_LABEL,
+    BOUND_VAR_REFLECT_LABEL, DRIVE_DEFAULT_FUEL, DRIVE_RESERVED_LABEL, FREE_VAR_REFLECT_LABEL,
+    LAMBDA_REFLECT_LABEL, NONGROUND_MARK_REFLECT_LABEL, PEANO_SUCC_REFLECT_LABEL,
+    PEANO_ZERO_REFLECT_LABEL,
 };
 use mettail_rholang_runtime::{
     binder_apply_redex_present, drive_cross_check, par_as_runtime_observation_value,
@@ -144,6 +147,11 @@ fn g_k() -> GroundTerm {
 }
 fn g_app(fun: GroundTerm, arg: GroundTerm) -> GroundTerm {
     g_node("App", vec![fun, arg])
+}
+/// A `^free(name)` hole/free leaf — exactly as the guest `Term → GroundTerm` reflector emits it
+/// (and as the public `reflect_flt_*` reflectors consume it).
+fn g_free(name: &str) -> GroundTerm {
+    g_node(FREE_VAR_REFLECT_LABEL, vec![GroundTerm::nullary(name)])
 }
 
 /// The Lambda NF-scan for the always-on drive cross-check: `true` iff an `App(^lambda(_), _)`
@@ -562,6 +570,145 @@ async fn beat4_requote_from_holes_drives_to_konst_in_rho() {
     assert!(set.fuel_data.is_empty(), "the drive terminated by quiescence, not fuel");
     drive_cross_check(&set, &channels, true, DRIVE_DEFAULT_FUEL, &lambda_redex_scan)
         .expect("the always-on drive cross-check is green");
+}
+
+// ── Beat 4 (P2 construction) — reflect_flt_construction drives β: the C2 forced-^nog, on RSpace ──
+//
+// The Phase-2 PUBLIC construction reflector `reflect_flt_construction` GENERATES the same
+// hole-filled App value the hand-built Beat-4 re-quote staples by hand — but with the E-2-D marker
+// RECOMPUTED (C2) from the FILLED subtree's own ground bit, never a template `^gnd`. Both fills
+// (⟦id⟧, ⟦K⟧) carry `^bound`, so the App marker recomputes to `⌜^nog⌝` and the subject is
+// byte-for-byte the direct-seed `⟦App(id, K)⟧`, so it drives β to the β-NF ⟦K⟧. The negative probe
+// staples the stale `⌜^gnd⌝` back over the SAME children and shows the drive no longer reaches ⟦K⟧ —
+// the operational proof that recompute is NECESSARY, not cosmetic.
+
+/// Beat 4 (P2) — `reflect_flt_construction(App(${f}, ${k}), {f: ⟦id⟧, k: ⟦K⟧})` recomputes the App
+/// marker to `⌜^nog⌝` and drives to β-NF `K = λ.λ.1` fully in-Rho, `^fired = ["Beta"]`, both
+/// fail-close channels empty — the public reflector reproducing the direct-seed Beat-4 core.
+#[tokio::test]
+async fn beat4_flt_construction_forces_nog_and_drives_beta() {
+    mettail_runtime::clear_var_cache();
+    let (backend, fp) = lambda_backend();
+
+    let fills: BTreeMap<String, Par> = [
+        ("f".to_string(), reflect_ground_term_par(&g_id(), &fp)),
+        ("k".to_string(), reflect_ground_term_par(&g_k(), &fp)),
+    ]
+    .into_iter()
+    .collect();
+    let template = g_node("App", vec![g_free("f"), g_free("k")]);
+    let subject =
+        reflect_flt_construction(&template, &fills, &fp).expect("the FLT App construction reflects");
+
+    // C2: the RECOMPUTED App marker is ⌜^nog⌝ (both fills carry ^bound).
+    match subject.exprs.first().and_then(|e| e.expr_instance.as_ref()) {
+        Some(ExprInstance::EListBody(list)) => assert_eq!(
+            list.ps[1],
+            ground_marker_tag_par(&fp, false),
+            "the constructed App marker must be recomputed ⌜^nog⌝, not a stale ⌜^gnd⌝"
+        ),
+        other => panic!("the constructed App must be a 4-element EList, got {other:?}"),
+    }
+    // Byte-for-byte the direct-seed subject (the Stage-2 round-trip, asserted on the reducer side).
+    assert_eq!(
+        subject,
+        reflect_ground_term_par(&g_app(g_id(), g_k()), &fp),
+        "the FLT construction is byte-identical to ⟦App(id, K)⟧"
+    );
+
+    let seed = rho_net_drive_call_par(&fp, subject, "OUT");
+    let channels = DriveObservationChannels::for_fingerprint(&fp, "OUT");
+    let set = backend
+        .run_rho_net_with_call_and_read_observation_set(&seed, &channels)
+        .await
+        .expect("the FLT-constructed App drives to quiescence on the reducer");
+
+    assert_eq!(set.out_values, vec![okonst()], "the ⌜^nog⌝ construction drives to K = λ.λ.1");
+    assert_eq!(
+        set.fired_labels().expect("ledger decodes"),
+        vec!["Beta".to_string()],
+        "exactly one Beta firing — the recomputed ⌜^nog⌝ App matched the marked redex arm and fired"
+    );
+    assert!(set.err_data.is_empty(), "no unrecognized head — the construction is well-formed v2");
+    assert!(set.fuel_data.is_empty(), "the drive terminated by quiescence, not fuel");
+    drive_cross_check(&set, &channels, true, DRIVE_DEFAULT_FUEL, &lambda_redex_scan)
+        .expect("the always-on drive cross-check is green");
+}
+
+/// Beat 4 (P2, C2 NECESSITY) — the reducer mechanism C2's recompute guards against, on RSpace.
+///
+/// A `^gnd`/`^nog` marker only GOVERNS a reduction when its node is a `^subst`/`^shift` TARGET —
+/// i.e. a marked node NESTED inside a β-redex's lambda body (a TOP-LEVEL redex node's marker is
+/// wildcarded by the driver's redex arm and is inert). The minimal such witness:
+/// `App(^lambda(App(^bound(0), K)), id)` — the outer β substitutes `id` into the inner body
+/// `App(^bound(0), K)`, whose marker MUST be `^nog` (it carries `^bound`) for the substitution to
+/// reach the `^bound(0)`.
+///
+///   * CORRECT (`^nog` inner App, what `reflect_flt_construction` recomputes): the substitution
+///     replaces `^bound(0)` with `id`, giving `App(id, K)`, which re-drives to β-NF `K`.
+///   * STALE `^gnd` inner App (the C2 bug the recompute prevents): the hereditary-ground guard
+///     short-circuits `^subst` to the IDENTITY, so `^bound(0)` is NOT replaced — the drive rests at
+///     the dangling `App(^bound(0), K)`, never `K`.
+///
+/// `reflect_flt_construction` recomputes exactly these `^nog` markers (proven `^nog` +
+/// β-firing in [`beat4_flt_construction_forces_nog_and_drives_beta`] and structurally in the
+/// codegen `reflect_flt_construction_recomputes_marker_from_the_fill` test), so it never emits the
+/// stale-`^gnd` term whose divergence this test pins.
+#[tokio::test]
+async fn beat4_flt_construction_c2_marker_governs_nested_beta() {
+    mettail_runtime::clear_var_cache();
+    let (backend, fp) = lambda_backend();
+
+    // `App(^lambda(App(^bound(0), K)), id)` — all markers correct (^nog wherever ^bound occurs).
+    let nested = g_app(g_lambda(g_app(g_bound(0), g_k())), g_id());
+    let correct = reflect_ground_term_par(&nested, &fp);
+
+    let correct_set = backend
+        .run_rho_net_with_call_and_read_observation_set(
+            &rho_net_drive_call_par(&fp, correct.clone(), "OUT"),
+            &DriveObservationChannels::for_fingerprint(&fp, "OUT"),
+        )
+        .await
+        .expect("the correct nested term drives to quiescence");
+    assert_eq!(
+        correct_set.out_values,
+        vec![okonst()],
+        "the ^nog inner App lets the outer β reach ^bound(0): App(id, K) → K = λ.λ.1"
+    );
+
+    // The SAME term with the inner body App's marker stapled back to the stale ⌜^gnd⌝.
+    let mut corrupted = correct;
+    *nested_marker_mut(&mut corrupted, &[2, 2]) = ground_marker_tag_par(&fp, true);
+
+    let corrupted_set = backend
+        .run_rho_net_with_call_and_read_observation_set(
+            &rho_net_drive_call_par(&fp, corrupted, "OUT"),
+            &DriveObservationChannels::for_fingerprint(&fp, "OUT"),
+        )
+        .await
+        .expect("the stale-^gnd term drives to rest");
+    assert_ne!(
+        corrupted_set.out_values,
+        vec![okonst()],
+        "a stale ⌜^gnd⌝ on the substitution-target App short-circuits ^subst — β never reaches K"
+    );
+}
+
+/// Descend a reflected-object `Par` along `path` of child indices into its `EList.ps`, returning a
+/// mutable handle to the DEEPEST node's index-1 E-2-D marker slot. `path` names the child index at
+/// each level (index 0 = head tag, 1 = marker, ≥2 = children).
+fn nested_marker_mut<'a>(par: &'a mut Par, path: &[usize]) -> &'a mut Par {
+    fn ps_mut(par: &mut Par) -> &mut Vec<Par> {
+        match par.exprs.first_mut().and_then(|e| e.expr_instance.as_mut()) {
+            Some(ExprInstance::EListBody(list)) => &mut list.ps,
+            other => panic!("expected a reflected EList node, got {other:?}"),
+        }
+    }
+    let mut node = par;
+    for &index in path {
+        node = &mut ps_mut(node)[index];
+    }
+    &mut ps_mut(node)[1]
 }
 
 // ── Beat 5 (positive) — the same-language inter-FLT re-ship: NF produced by one FLT, matched by ──

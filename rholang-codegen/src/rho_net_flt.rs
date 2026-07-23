@@ -38,7 +38,9 @@ use models::rust::utils::{
 };
 
 use crate::rho_net_lower::{
-    is_marked_object_label, reflect_ground_term_par, reflect_tag, GroundTerm, FREE_VAR_REFLECT_LABEL,
+    ground_marker_tag_par, is_marked_object_label, par_carries_ground_marker,
+    reflect_ground_term_par, reflect_tag, GroundTerm, BOUND_VAR_REFLECT_LABEL,
+    FREE_VAR_REFLECT_LABEL,
 };
 
 // ── Public types ────────────────────────────────────────────────────────────────────────────
@@ -370,6 +372,93 @@ fn flt_receive_condition(
     Some(combined)
 }
 
+// ── P2 — reflect_flt_construction ───────────────────────────────────────────────────────────
+
+/// Reflect an FLT template [`GroundTerm`] into a CONSTRUCTION value (P2), splicing each hole with
+/// its typed `Par` fill.
+///
+/// A bottom-up walk mirroring [`reflect_ground_term_par`]'s marked reflection, diverging at exactly
+/// one point: a `^free(name)` leaf is replaced by the typed reflected-`Par` fill `fills[name]`
+/// (NEVER text — the No-Injection substrate). The critical correctness constraint is **C2**: EVERY
+/// ancestor's E-2-D marker is RECOMPUTED from its FILLED children's own ground bits
+/// ([`par_carries_ground_marker`] on a fill, threaded recursively otherwise) — never keeping a
+/// template `^gnd`. A fill only makes a node LESS ground (`InRhoCreeperTrace.oground`), so recompute
+/// is conservatively sound; a stale `^gnd` over a `^bound`-carrying fill would let the reducer's
+/// hereditary-ground guard short-circuit `^subst` to the identity, silently skipping the required β.
+///
+/// Round-trips: for a hole-free-after-fill closed term,
+/// `reflect_flt_construction(App(^free(f), K), {f: ⟦id⟧}, fp)` is byte-for-byte
+/// `reflect_ground_term_par(App(id, K), fp)`.
+pub fn reflect_flt_construction(
+    term: &GroundTerm,
+    fills: &BTreeMap<String, Par>,
+    fingerprint: &str,
+) -> Result<Par, FltReflectError> {
+    Ok(reflect_construction_node(term, fills, fingerprint)?.0)
+}
+
+/// Reflect one construction node, returning `(par, is_ground)` — the E-2-D hereditary-ground bit
+/// threaded bottom-up (C2), so a parent recomputes its marker without re-traversing.
+fn reflect_construction_node(
+    term: &GroundTerm,
+    fills: &BTreeMap<String, Par>,
+    fingerprint: &str,
+) -> Result<(Par, bool), FltReflectError> {
+    // A `^free(name)` hole → splice the typed fill. Its ground bit is read from the fill's OWN
+    // marker (`^gnd` at index 1) — a non-marked / `^bound`-carrying / `^nog` fill reads false, the
+    // conservative under-approximation C2 relies on.
+    if term.constructor == FREE_VAR_REFLECT_LABEL {
+        let name = free_var_name(term)?;
+        let fill = fills
+            .get(&name)
+            .ok_or(FltReflectError::UnknownHole { hole: name })?;
+        let is_ground = par_carries_ground_marker(fill, fingerprint);
+        return Ok((fill.clone(), is_ground));
+    }
+
+    // An AC-collection carrier: a hole-free collection reflects as its ground carrier
+    // ([`reflect_ground_term_par`], conservatively NOT ground for a parent's marker, matching
+    // `reflect_ground_term_marked`); a hole INSIDE a collection has no flat image in the v1 subset.
+    if term.coll_type.is_some() {
+        if let Some(hole) = first_fill_hole_in(term, fills) {
+            return Err(FltReflectError::ArityMismatch { hole });
+        }
+        return Ok((reflect_ground_term_par(term, fingerprint), false));
+    }
+
+    // An object / constructor node: reflect children (recomputing their ground bits), then
+    // interpose the RECOMPUTED marker at index 1 for a marked-object label. Byte-for-byte
+    // `reflect_ground_term_marked` when no fill is spliced under this node.
+    let tag = GPrivateBuilder::new_par_from_string(reflect_tag(fingerprint, &term.constructor));
+    let mut elements = Vec::with_capacity(term.children.len() + 2);
+    let mut locally_free = tag.locally_free.clone();
+    elements.push(tag);
+    let marker_slot = is_marked_object_label(&term.constructor).then(|| {
+        elements.push(Par::default());
+        elements.len() - 1
+    });
+    let mut children_ground = true;
+    for child in &term.children {
+        let (child_par, child_ground) = reflect_construction_node(child, fills, fingerprint)?;
+        children_ground &= child_ground;
+        locally_free = union(locally_free, child_par.locally_free.clone());
+        elements.push(child_par);
+    }
+    let is_ground = match term.constructor.as_str() {
+        BOUND_VAR_REFLECT_LABEL => false,
+        FREE_VAR_REFLECT_LABEL => true,
+        _ => children_ground,
+    };
+    if let Some(index) = marker_slot {
+        // C2: the RECOMPUTED marker over the FILLED subtree, never a stale template `^gnd`.
+        elements[index] = ground_marker_tag_par(fingerprint, is_ground);
+    }
+    Ok((
+        new_elist_par(elements, locally_free.clone(), false, None, locally_free, false),
+        is_ground,
+    ))
+}
+
 // ── Shared helpers ──────────────────────────────────────────────────────────────────────────
 
 /// Wrap one `Expr` in a `Par` carrying `free` as its `locally_free` bitset (empty → empty vec, so a
@@ -427,6 +516,22 @@ fn ground_term_contains_hole(term: &GroundTerm, holes: &[FltHole]) -> bool {
     term.children
         .iter()
         .any(|child| ground_term_contains_hole(child, holes))
+}
+
+/// The first (pre-order) `^free(name)` leaf whose `name` is a key of `fills`, for error reporting
+/// on the construction side.
+fn first_fill_hole_in(term: &GroundTerm, fills: &BTreeMap<String, Par>) -> Option<String> {
+    if term.constructor == FREE_VAR_REFLECT_LABEL {
+        if let Some(name_node) = term.children.first() {
+            if fills.contains_key(&name_node.constructor) {
+                return Some(name_node.constructor.clone());
+            }
+        }
+        return None;
+    }
+    term.children
+        .iter()
+        .find_map(|child| first_fill_hole_in(child, fills))
 }
 
 /// The first (pre-order) hole name occurring in `term`, for error reporting.
@@ -645,5 +750,98 @@ mod tests {
             ),
             "the condition is an EEq over the two captured occurrences"
         );
+    }
+
+    // ── P2 — construction ────────────────────────────────────────────────────────────────────
+
+    /// `id = lam x. x` — non-ground (contains `^bound`).
+    fn g_id() -> GroundTerm {
+        g_lambda(g_bound(0))
+    }
+    /// A nullary user constructor `A` — hereditarily ground.
+    fn g_nullary(label: &str) -> GroundTerm {
+        GroundTerm::nullary(label)
+    }
+
+    /// THE Stage-2 round-trip gate: `reflect_flt_construction(App(^free(f), K), {f: ⟦id⟧}, fp)` is
+    /// BYTE-FOR-BYTE `reflect_ground_term_par(App(id, K), fp)`.
+    #[test]
+    fn reflect_flt_construction_round_trips_to_the_ground_reflection() {
+        let template = GroundTerm::new("App", vec![g_free("f"), g_k()]);
+        let fills: BTreeMap<String, Par> =
+            [("f".to_string(), reflect_ground_term_par(&g_id(), FP))].into_iter().collect();
+
+        let constructed = reflect_flt_construction(&template, &fills, FP).expect("constructs");
+        let ground = reflect_ground_term_par(&GroundTerm::new("App", vec![g_id(), g_k()]), FP);
+        assert_eq!(
+            constructed, ground,
+            "filling ${{f}} with ⟦id⟧ must round-trip byte-for-byte to ⟦App(id, K)⟧"
+        );
+
+        // The recomputed App marker is ^nog (id + K both carry ^bound ⟹ non-ground).
+        let ExprInstance::EListBody(list) = constructed
+            .exprs
+            .first()
+            .and_then(|e| e.expr_instance.as_ref())
+            .expect("EList")
+        else {
+            panic!("EList");
+        };
+        assert_eq!(
+            list.ps[1],
+            ground_marker_tag_par(FP, false),
+            "the App marker is recomputed ^nog over the non-ground fill"
+        );
+    }
+
+    /// C2 NECESSITY (structural): the SAME template node's marker is recomputed from the FILL's
+    /// ground bit — `^gnd` when the fill is a ground nullary, `^nog` when the fill carries `^bound`.
+    /// A stale template marker would be wrong in one of the two cases.
+    #[test]
+    fn reflect_flt_construction_recomputes_marker_from_the_fill() {
+        // `Foo(^free(x))` — Foo is a user constructor (marked object).
+        let template = GroundTerm::new("Foo", vec![g_free("x")]);
+
+        // (a) fill x with a GROUND nullary ⟦A⟧ ⟹ Foo is hereditarily ground ⟹ ^gnd.
+        let ground_fill: BTreeMap<String, Par> =
+            [("x".to_string(), reflect_ground_term_par(&g_nullary("A"), FP))].into_iter().collect();
+        let with_ground = reflect_flt_construction(&template, &ground_fill, FP).expect("constructs");
+        assert_eq!(
+            marker_of(&with_ground),
+            ground_marker_tag_par(FP, true),
+            "a ground fill ⟹ Foo marker recomputed to ^gnd"
+        );
+
+        // (b) fill x with a `^bound`-carrying reflected term ⟹ Foo is NOT ground ⟹ ^nog.
+        //     (A stale template ^gnd here would let the reducer short-circuit subst — the C2 hazard.)
+        let bound_fill: BTreeMap<String, Par> =
+            [("x".to_string(), reflect_ground_term_par(&g_bound(0), FP))].into_iter().collect();
+        let with_bound = reflect_flt_construction(&template, &bound_fill, FP).expect("constructs");
+        assert_eq!(
+            marker_of(&with_bound),
+            ground_marker_tag_par(FP, false),
+            "a ^bound-carrying fill ⟹ Foo marker recomputed to ^nog (C2 — not a stale ^gnd)"
+        );
+    }
+
+    /// An unfilled hole fails closed as `UnknownHole`.
+    #[test]
+    fn reflect_flt_construction_unfilled_hole_is_rejected() {
+        let template = GroundTerm::new("App", vec![g_free("f"), g_k()]);
+        let err = reflect_flt_construction(&template, &BTreeMap::new(), FP).expect_err("must reject");
+        assert_eq!(err, FltReflectError::UnknownHole { hole: "f".to_string() });
+    }
+
+    /// The index-1 E-2-D marker of a reflected object `Par`.
+    fn marker_of(par: &Par) -> Par {
+        let ExprInstance::EListBody(list) = par
+            .exprs
+            .first()
+            .and_then(|e| e.expr_instance.as_ref())
+            .expect("EList")
+        else {
+            panic!("EList");
+        };
+        list.ps[1].clone()
     }
 }
