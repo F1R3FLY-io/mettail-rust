@@ -18380,16 +18380,35 @@ where
                     ..d.clone()
                 });
             },
-            WpdaStepAction::ConsumeTokenKindAndReplace { .. } => {
-                // L9-3 STAGE 2 implements the pure-apply consumption here (mirror
-                // the ConsumeIdentAndReplace arm below, gating on
-                // peek_kind == Custom(kind_name) + emit_push_token → ActionArg::Token).
-                // INERT in STAGE 1: unconstructable from source (no RD→action
-                // lowering and no DSL front-end yet), so this is never reached.
-                unreachable!(
-                    "L9-3 STAGE 1: WpdaStepAction::ConsumeTokenKindAndReplace is unconstructable \
-                     until the STAGE 2 lowering + STAGE 3 front-end land"
-                );
+            WpdaStepAction::ConsumeTokenKindAndReplace {
+                symbol,
+                weight: _,
+                new_state,
+                kind_name,
+            } => {
+                // L9-3: deterministic (non-Fork) mid-rule consume of a specific
+                // custom KIND. On a kind match, fold the token as an
+                // ActionArg::Token leaf (intern with pushed_via_push_ident=false)
+                // and advance; on a mismatch, push NO successor so this cursor
+                // dies (the rule fails at this position).
+                if tokens.peek_kind(d.pos) == Some(TokenKind::Custom(kind_name.clone())) {
+                    let text = tokens.peek_text(d.pos).unwrap_or("");
+                    let leaf = self.sppf.intern_terminal(
+                        TokenKind::Custom(kind_name.clone()),
+                        crate::sppf::PosOrSynth::Real(d.pos as u32),
+                        Some(text),
+                        false,
+                    );
+                    let slot = Self::cgll_pure_slot_hash(&d.cur_sym, &d.state);
+                    let w = self.cgll_pure_fold(slot, d.w, leaf, d.pos, W::one_ref());
+                    run.worklist.push_back(CgllPureDescriptor {
+                        state: new_state,
+                        cur_sym: symbol,
+                        pos: next_of(d.pos),
+                        w,
+                        ..d.clone()
+                    });
+                }
             },
             WpdaStepAction::ConsumeIdentAndReplace { symbol, weight: _, new_state, start_scope } => {
                 // Ident-Terminal leaf fold into the FRAME's `w` (the binder
@@ -19180,15 +19199,33 @@ where
                     ..d.clone()
                 });
             },
-            ForkActionKind::GuardedConsumeTokenKindAndReplace { .. } => {
-                // L9-3 STAGE 2 implements this (mirror the GuardedConsumeIdentAndReplace
-                // arm below: gate on peek_kind == Custom(kind_name), then capture via
-                // emit_push_token → ActionArg::Token and allocate the child like
-                // ConsumeIdentAndReplace). INERT in STAGE 1 — unconstructable from source.
-                unreachable!(
-                    "L9-3 STAGE 1: ForkActionKind::GuardedConsumeTokenKindAndReplace is \
-                     unconstructable until the STAGE 2 lowering + STAGE 3 front-end land"
+            ForkActionKind::GuardedConsumeTokenKindAndReplace { kind_name } => {
+                // L9-3: leading (dispatch-excluded, Option A) custom-kind capture.
+                // Gate on the specific kind — a mismatch allocates NO child (the
+                // cursor dies; correct siblings survive, fanout-survival). On a
+                // match, intern the token as an ActionArg::Token leaf
+                // (pushed_via_push_ident=false) and continue with the branch's
+                // symbol/state at the next position.
+                if tokens.peek_kind(pos_after) != Some(TokenKind::Custom(kind_name.clone())) {
+                    return;
+                }
+                let text = tokens.peek_text(pos_after).unwrap_or("");
+                let leaf = self.sppf.intern_terminal(
+                    TokenKind::Custom(kind_name.clone()),
+                    crate::sppf::PosOrSynth::Real(pos_after as u32),
+                    Some(text),
+                    false,
                 );
+                let slot = Self::cgll_pure_slot_hash(&d.cur_sym, &d.state);
+                let w = self.cgll_pure_fold(slot, d.w, leaf, pos_after, W::one_ref());
+                let w = self.cgll_pure_carry_scan_weight(run, d, w, pos_after, &br_weight);
+                run.worklist.push_back(CgllPureDescriptor {
+                    state: br_state,
+                    cur_sym: br_symbol,
+                    pos: next_of(pos_after),
+                    w,
+                    ..d.clone()
+                });
             },
             ForkActionKind::GuardedConsumeIdentAndReplace { start_scope } => {
                 if tokens.peek_kind(pos_after) != Some(TokenKind::Ident) {
