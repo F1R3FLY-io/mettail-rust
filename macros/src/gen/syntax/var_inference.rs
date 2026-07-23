@@ -4,6 +4,7 @@ use mettail_ast::language::LanguageDef;
 use proc_macro2::TokenStream;
 use quote::quote;
 
+use crate::gen::capture::capture_layout;
 use crate::gen::{generate_var_label, is_var_rule};
 use mettail_ast::{
     grammar::{GrammarItem, GrammarRule, TermParam},
@@ -396,6 +397,17 @@ fn generate_var_inference_arm(
         return None;
     }
 
+    // L9-3: a capture-bearing rule's fields are token-text `String` leaves (plus
+    // any simple params); a captured token introduces no inferable host-category
+    // free variable, so bind all fields with `..` and infer nothing. (A
+    // var-bearing simple param interleaved with a capture is used by no grammar;
+    // inference conservatively returns None there.)
+    if let Some(sp) = rule.syntax_pattern.as_deref() {
+        if capture_layout(rule.term_context.as_deref().unwrap_or(&[]), sp).is_some() {
+            return Some(quote! { #category::#label(..) => None });
+        }
+    }
+
     // Get field info from term_context or bindings.
     //
     // Phase 3A-C4 (predicated types): variable bind names use the
@@ -640,6 +652,15 @@ fn generate_var_type_inference_arm(
     // Skip Var rules (handled separately)
     if is_var_rule(rule) {
         return None;
+    }
+
+    // L9-3: a capture-bearing rule holds token-text leaves (no inferable free
+    // variable); bind all fields with `..` and infer nothing (twin of the arm
+    // in `generate_var_inference_arm`; arity-safe against the tuple variant).
+    if let Some(sp) = rule.syntax_pattern.as_deref() {
+        if capture_layout(rule.term_context.as_deref().unwrap_or(&[]), sp).is_some() {
+            return Some(quote! { #category::#label(..) => None });
+        }
     }
 
     // Get field info from term_context or bindings

@@ -951,7 +951,9 @@ fn field_child_expr(
     }
 
     if field.is_optional {
-        if field.is_predicate {
+        if field.is_predicate || field.is_token_text {
+            // L9-3: an optional token-text capture (`Option<String>`) → present
+            // text is an opaque leaf, absence a distinct nullary leaf.
             let leaf = opaque_leaf_expr(quote! { #opaque_label }, quote! { __pred });
             return quote! {
                 match #field_var.as_ref() {
@@ -990,7 +992,10 @@ fn field_child_expr(
         };
     }
 
-    if field.is_predicate {
+    if field.is_predicate || field.is_token_text {
+        // L9-3: a token-text capture (`String`) lowers to an opaque e-graph leaf
+        // — a token's text is atomic data, never a recursible subterm (mirrors
+        // the predicate leaf; branch BEFORE reading `category`).
         let leaf = opaque_leaf_expr(quote! { #opaque_label }, quote! { #field_var });
         return quote! { #leaf };
     }

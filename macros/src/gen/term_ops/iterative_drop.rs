@@ -337,7 +337,9 @@ fn generate_regular_push_arm(
             // parent is dropped. No DropTask, no dummy needed. Bind
             // the field name with `_` prefix to suppress unused-var
             // warnings while keeping destructure arity correct.
-            if field.is_predicate {
+            // L9-3: a token-text capture (`String`) drops in place identically
+            // — no DropTask, no dummy `String` category exists.
+            if field.is_predicate || field.is_token_text {
                 return quote! {
                     let _ = #name;
                 };

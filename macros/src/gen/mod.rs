@@ -20,6 +20,7 @@
 #![allow(clippy::cmp_owned, clippy::single_match)]
 
 pub mod blockly;
+pub(crate) mod capture;
 pub mod compose_gen;
 pub mod native;
 pub mod runtime;

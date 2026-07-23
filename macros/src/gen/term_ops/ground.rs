@@ -111,7 +111,9 @@ fn field_ground_check(field: &FieldInfo, name: &Ident) -> TokenStream {
     // pattern-bound `y`) are bound by the parent's `MatchBindings`,
     // not by host-category `FreeVar<String>`s.
     let _ = name;
-    if field.is_predicate {
+    // L9-3: a token-text capture (`String`) is a ground leaf — a token's text
+    // contains no host-category free variables (mirrors the predicate leaf).
+    if field.is_predicate || field.is_token_text {
         return quote! { true };
     }
     let _ = name;

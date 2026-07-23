@@ -41,5 +41,8 @@ pub mod ambiguity;
 pub mod classify;
 #[cfg(test)]
 pub mod grammar_walk;
-#[cfg(test)]
+// L9-3: ungated so `compile_pattern` / `deterministic_sample` (regex-valid
+// capture-text sampling, decision F.2) are available to the production term
+// generators. `emit_pattern_sampler` remains test-only and is
+// `#[allow(dead_code)]` inside the module.
 pub mod nfa_walk;

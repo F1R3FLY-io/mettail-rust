@@ -2262,11 +2262,14 @@ fn emit_unified_arm(
                 // L9-3: leading custom-kind capture — never S1-grouped (it
                 // terminates mergeability), so it always reaches the singleton
                 // path. Emit a single-branch Fork carrying
-                // GuardedConsumeTokenKindAndReplace (a ForkActionKind — hence a
+                // GuardedConsumeTokenKindAndPush (a ForkActionKind — hence a
                 // Fork rather than the non-capturing ConsumeAndPush the Literal
                 // trigger uses): the walker gates peek_kind == Custom(kind_name),
-                // captures the token as an ActionArg::Token leaf, pushes
-                // RuleAt(slot=1), and enters BinderRule for the mid-rule positions.
+                // captures the token as an ActionArg::Token leaf, PUSHES
+                // RuleAt(slot=1) (the leading token is the trigger — there is no
+                // prior literal trigger to push the frame, unlike the mid-rule
+                // capture which only replaces cur_sym), and enters BinderRule for
+                // the remaining mid-rule positions.
                 assert!(
                     s1_dispositions.get(&rule_idx).is_none(),
                     "S1-FACTORING F1: grouped rule (cat {category_src_idx}, rule {rule_idx}) \
@@ -2290,7 +2293,7 @@ fn emit_unified_arm(
                                     outer_bp: _outer_bp,
                                 },
                                 action_kind:
-                                    mettail_prattail::wpda_walker::ForkActionKind::GuardedConsumeTokenKindAndReplace {
+                                    mettail_prattail::wpda_walker::ForkActionKind::GuardedConsumeTokenKindAndPush {
                                         kind_name: #kind_name.to_string(),
                                     },
                             }],
@@ -2572,9 +2575,11 @@ fn emit_unified_arm(
                     // L9-3: leading custom-kind capture in a Fork bucket (a
                     // co-bucketed same-kind sibling, or shared with other
                     // descriptors on the same (pat,guard)). Never S1-grouped ⇒
-                    // a plain row + a capturing branch
-                    // (GuardedConsumeTokenKindAndReplace instead of the
-                    // non-capturing ConsumeAsTriggerOnly the Literal trigger uses).
+                    // a plain row + a capturing branch. Uses
+                    // GuardedConsumeTokenKindAndPush (PUSHES the RuleAt frame —
+                    // the leading token IS the trigger, so no prior push exists;
+                    // mirrors the singleton path above) instead of the
+                    // non-capturing ConsumeAsTriggerOnly the Literal trigger uses.
                     record_initiating_rule_rows(
                         fork_rows,
                         category_src_idx,
@@ -2597,7 +2602,7 @@ fn emit_unified_arm(
                                 outer_bp: _outer_bp,
                             },
                             action_kind:
-                                mettail_prattail::wpda_walker::ForkActionKind::GuardedConsumeTokenKindAndReplace {
+                                mettail_prattail::wpda_walker::ForkActionKind::GuardedConsumeTokenKindAndPush {
                                     kind_name: #kind_name.to_string(),
                                 },
                         });

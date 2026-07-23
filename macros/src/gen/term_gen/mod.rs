@@ -8,12 +8,63 @@ mod random;
 pub use exhaustive::*;
 pub use random::*;
 
-use mettail_ast::grammar::TermParam;
+use mettail_ast::grammar::{SyntaxExpr, TermParam};
 use mettail_ast::language::LanguageDef;
+use proc_macro2::TokenStream;
+use quote::quote;
 use syn::Ident;
 
 pub fn is_lang_type(cat: &Ident, language: &LanguageDef) -> bool {
     language.types.iter().any(|t| &t.name == cat)
+}
+
+/// L9-3: build a constructor literal for a CAPTURES-ONLY rule (`Cat::Label(
+/// "<sample>".to_string(), ...)`), synthesizing each `v@Tok` capture's text via
+/// a deterministic, regex-valid DFA sample of the token kind's effective
+/// pattern (decision F.2 — the sampled text re-lexes to the same token, so
+/// `parse(display(t)) == t` holds). Returns `None` unless the rule is
+/// captures-only: no interleaved `Param`/`Op` fields, no binder `Scope`, and an
+/// empty term context. Such rules (the FLT surface, the L9-3 toy) are the only
+/// capture rules the term generators need to synthesize; a capture interleaved
+/// with terms/binders is not produced (its structural fields have their own
+/// generators, and no grammar mixes them).
+pub fn capture_only_construction(
+    rule: &mettail_ast::grammar::GrammarRule,
+    language: &LanguageDef,
+    cat_name: &Ident,
+    label: &Ident,
+) -> Option<TokenStream> {
+    use crate::gen::test_gen::automaton_walk::classify::effective_pattern_for;
+    use crate::gen::test_gen::automaton_walk::nfa_walk::deterministic_sample;
+
+    let sp = rule.syntax_pattern.as_deref()?;
+    if !sp.iter().any(|e| matches!(e, SyntaxExpr::TokenKind { .. })) {
+        return None;
+    }
+    // Captures-only: reject interleaved params / meta-ops / a non-empty context.
+    if sp
+        .iter()
+        .any(|e| matches!(e, SyntaxExpr::Param(_) | SyntaxExpr::Op(_)))
+    {
+        return None;
+    }
+    if rule
+        .term_context
+        .as_deref()
+        .is_some_and(|c| !c.is_empty())
+    {
+        return None;
+    }
+
+    let mut args: Vec<TokenStream> = Vec::new();
+    for e in sp {
+        if let SyntaxExpr::TokenKind { name, .. } = e {
+            let pattern = effective_pattern_for(language, &name.to_string());
+            let sample = deterministic_sample(&pattern).unwrap_or_default();
+            args.push(quote! { #sample.to_string() });
+        }
+    }
+    Some(quote! { #cat_name::#label(#(#args),*) })
 }
 
 /// Task #14 (Option<Guard>): count a term context's Optional positions,

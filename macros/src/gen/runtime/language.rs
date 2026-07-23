@@ -1223,6 +1223,22 @@ fn generate_var_collection_impl(
             continue;
         }
 
+        // L9-3: a capture-bearing rule's fields are token-text `String` leaves
+        // (plus any simple params); a captured token holds no free variable, so
+        // bind all fields with `..` and collect nothing (matches the
+        // var_inference conservative arm; arity-safe against the tuple variant).
+        if let Some(sp) = rule.syntax_pattern.as_deref() {
+            if crate::gen::capture::capture_layout(
+                rule.term_context.as_deref().unwrap_or(&[]),
+                sp,
+            )
+            .is_some()
+            {
+                constructor_arms.push(quote! { #primary_type::#label(..) => {} });
+                continue;
+            }
+        }
+
         // Use term_context if available for accurate field count.
         // Each TermParam becomes one field (abstractions become Scope fields).
         // Opt-Group: an Optional contributes `inner.len()` fields (each

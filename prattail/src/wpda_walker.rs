@@ -2810,6 +2810,21 @@ pub enum ForkActionKind {
     /// forced walker construction is the item→action lowering that emits this.
     GuardedConsumeTokenKindAndReplace { kind_name: String },
 
+    /// L9-3 — closure for a LEADING (dispatch-excluded, Option A) custom-kind
+    /// capture whose token is the rule's FIRST syntax position (e.g. `b@Word "!"`).
+    /// Identical kind-gate + `ActionArg::Token` capture to
+    /// [`Self::GuardedConsumeTokenKindAndReplace`], but it DESCENDS (pushes the
+    /// `RuleAt` frame via `cgll_pure_descend`) instead of merely replacing
+    /// `cur_sym`. The mid-rule twin can replace because the rule's literal
+    /// trigger already pushed the frame; a LEADING capture has no prior trigger,
+    /// so it must push here — otherwise the rule's completion `Pop` finds no
+    /// `RuleAt` frame on the GSS and the parse yields "no realizable readings"
+    /// at end of input (the frame it pops is the caller/root frame). Pass →
+    /// intern the token, fold it as the new frame's first action arg, descend
+    /// to the mid-rule positions at the next input position. Fail (kind
+    /// mismatch) → no child (cursor dies, siblings survive: fanout-survival).
+    GuardedConsumeTokenKindAndPush { kind_name: String },
+
     /// L12 follow-up B2 (2026-05-07) — closure for BinderListLoop's
     /// separator branch. Mirrors `WpdaStepAction::Consume` but gated on
     /// a `peek_text == expected_text` check. Pass → consume one token,
@@ -19179,6 +19194,40 @@ where
                     w,
                     ..d.clone()
                 });
+            },
+            ForkActionKind::GuardedConsumeTokenKindAndPush { kind_name } => {
+                // L9-3: LEADING custom-kind capture — gate the kind, capture the
+                // token as an `ActionArg::Token` leaf, and DESCEND (push the
+                // `RuleAt` frame) so the rule's completion `Pop` has its own
+                // frame. Mirrors `PushWithTriggerTerminal`'s push, but with the
+                // `GuardedConsumeTokenKindAndReplace` kind-gate + `ActionArg::
+                // Token` intern, and it ADVANCES past the consumed token.
+                if tokens.peek_kind(pos_after) != Some(TokenKind::Custom(kind_name.clone())) {
+                    return;
+                }
+                let text = tokens.peek_text(pos_after).unwrap_or("");
+                let leaf = self.sppf.intern_terminal(
+                    TokenKind::Custom(kind_name.clone()),
+                    crate::sppf::PosOrSynth::Real(pos_after as u32),
+                    Some(text),
+                    false,
+                );
+                let child_pos = next_of(pos_after);
+                let child_slot = Self::cgll_pure_slot_hash(&br_symbol, &br_state);
+                let w0 =
+                    self.cgll_pure_weight_carrier(run, child_slot, leaf, child_pos, &br_weight);
+                self.cgll_pure_descend(
+                    run,
+                    d,
+                    d.cur_sym,
+                    br_symbol,
+                    br_state,
+                    child_pos,
+                    class_by_state,
+                    w0,
+                    0,
+                    None,
+                );
             },
             ForkActionKind::GuardedConsumeIdentAndReplace { start_scope } => {
                 if tokens.peek_kind(pos_after) != Some(TokenKind::Ident) {

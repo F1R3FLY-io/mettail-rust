@@ -132,6 +132,16 @@ fn generate_random_depth_0(
             continue;
         }
 
+        // L9-3: a captures-only rule (the FLT surface / the L9-3 toy) is not a
+        // nullary/var/literal shape — construct it with a deterministic
+        // regex-valid sample per `v@Tok` capture (decision F.2).
+        if let Some(construction) =
+            crate::gen::term_gen::capture_only_construction(rule, language, cat_name, label)
+        {
+            cases.push(construction);
+            continue;
+        }
+
         let non_terminals: Vec<_> = rule
             .items
             .iter()

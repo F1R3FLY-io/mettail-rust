@@ -1,9 +1,10 @@
 #![allow(clippy::single_match)]
 
+use crate::gen::capture::{capture_layout, CaptureFieldKind};
 use crate::gen::native::NativeType;
 use crate::gen::{generate_literal_label, generate_var_label, is_literal_rule, is_var_rule};
 use mettail_ast::{
-    grammar::{GrammarItem, GrammarRule, NonTerminalKind, TermParam},
+    grammar::{GrammarItem, GrammarRule, NonTerminalKind, SyntaxExpr, TermParam},
     language::LanguageDef,
     types::{CollectionType, TypeExpr},
 };
@@ -253,7 +254,13 @@ fn generate_variant(rule: &GrammarRule, language: &LanguageDef) -> TokenStream {
 
     // Check if this rule uses new syntax (term_context)
     if let Some(ref term_context) = rule.term_context {
-        return generate_variant_from_term_context(label, term_context, language, &rule.category);
+        return generate_variant_from_term_context(
+            label,
+            term_context,
+            rule.syntax_pattern.as_deref(),
+            language,
+            &rule.category,
+        );
     }
 
     // Check if this rule has bindings (old syntax)
@@ -352,9 +359,74 @@ fn generate_variant(rule: &GrammarRule, language: &LanguageDef) -> TokenStream {
 fn generate_variant_from_term_context(
     label: &syn::Ident,
     term_context: &[TermParam],
+    syntax_pattern: Option<&[SyntaxExpr]>,
     language: &LanguageDef,
     category: &syn::Ident,
 ) -> TokenStream {
+    // L9-3 (token-kind capture): when the syntax pattern contains one or more
+    // `v@Tok` captures (`SyntaxExpr::TokenKind`), the variant gains a
+    // `std::string::String` field per capture — the matched token's text,
+    // extracted by the walker via `as_token_text()` and constructed by
+    // `binder.rs`'s `TokenText` action arm. The field ORDER must equal the
+    // walker's `action_args` order (leading capture first, then syntax-pattern
+    // order) so the generated `Cat::Label(field_names…)` construction matches
+    // this definition positionally. We therefore build the whole field list by
+    // walking the syntax pattern in order: a `TokenKind` yields a `String`, a
+    // `Param` yields its `term_context` Simple-param field type. Literals /
+    // meta-ops contribute no field. Capture-free rules skip this branch and use
+    // the byte-identical term_context walk below.
+    if let Some(sp) = syntax_pattern {
+        if let Some(layout) = capture_layout(term_context, sp) {
+            // F.1 FULL SUPPORT: non-scope fields in syntax-pattern order (a
+            // capture next to a same-typed StringLiteral param never swaps —
+            // both come from the SAME sp walk), then the binder `Scope` LAST
+            // (matching binder.rs:3004-3011/:3338). Every seam derives its
+            // order from this same `capture_layout`, so definition, FieldInfo,
+            // and every walker stay positionally aligned.
+            let mut fields: Vec<TokenStream> = Vec::new();
+            for f in &layout.non_scope {
+                let base = match &f.kind {
+                    CaptureFieldKind::TokenText => quote! { std::string::String },
+                    CaptureFieldKind::Term(ty) => {
+                        type_expr_to_field_type(ty, Some((language, category)))
+                    },
+                    CaptureFieldKind::Predicate => quote! { mettail_runtime::BehavioralPred },
+                };
+                if f.optional {
+                    // Mirror the top-level Optional field convention: bare
+                    // container types stay bare inside Option; everything else
+                    // is Arc-wrapped already (Term) or a plain leaf (String /
+                    // BehavioralPred).
+                    fields.push(quote! { Option<#base> });
+                } else {
+                    fields.push(base);
+                }
+            }
+            if let Some(scope) = &layout.scope {
+                if let TypeExpr::Arrow { codomain, .. } = scope.ty {
+                    let body_type = type_expr_to_rust_type(codomain);
+                    if scope.multi {
+                        fields.push(quote! {
+                            mettail_runtime::Scope<Vec<mettail_runtime::Binder<String>>, std::sync::Arc<#body_type>>
+                        });
+                    } else {
+                        fields.push(quote! {
+                            mettail_runtime::Scope<mettail_runtime::Binder<String>, std::sync::Arc<#body_type>>
+                        });
+                    }
+                }
+            }
+            return if fields.is_empty() {
+                quote! { #label }
+            } else if fields.len() == 1 {
+                let field = &fields[0];
+                quote! { #label(#field) }
+            } else {
+                quote! { #label(#(#fields),*) }
+            };
+        }
+    }
+
     let mut fields: Vec<TokenStream> = Vec::new();
 
     for param in term_context {

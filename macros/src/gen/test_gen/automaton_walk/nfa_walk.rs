@@ -14,6 +14,13 @@
 //! a runtime crate; this keeps the walker self-contained, avoids
 //! new runtime API surface, and lets the codegen specialise the
 //! table to exactly this pattern's shape.
+//!
+//! L9-3: this module was previously `#[cfg(test)]`-gated (its only consumer was
+//! test generation). It is now ungated so the production term generators can
+//! call `compile_pattern` / `deterministic_sample` for regex-valid capture-text
+//! sampling (decision F.2). `emit_pattern_sampler` and its `TapeReader` remain
+//! test-only, hence the blanket `dead_code` allow below.
+#![allow(dead_code)]
 
 use mettail_prattail::automata::minimize::minimize_dfa;
 use mettail_prattail::automata::partition::compute_equivalence_classes;
@@ -86,6 +93,47 @@ pub fn compile_pattern(pattern: &str) -> Option<CompiledPattern> {
         accepts,
         representative_byte,
     })
+}
+
+/// L9-3: a DETERMINISTIC, regex-valid sample string for `pattern` — the
+/// shortest byte string the compiled DFA accepts, found by breadth-first
+/// search from the start state to the nearest accepting state, emitting each
+/// chosen class's representative byte. Used by the term generators
+/// (`term_gen/random.rs`, `term_gen/exhaustive.rs`) to synthesize a `v@Tok`
+/// capture's text so that `parse(display(t)) == t` holds in property tests
+/// (decision F.2). Returns `None` if the regex fails to compile or no
+/// accepting state is reachable (an ill-formed token pattern).
+pub fn deterministic_sample(pattern: &str) -> Option<String> {
+    use std::collections::VecDeque;
+    let cp = compile_pattern(pattern)?;
+    let start = cp.start as usize;
+    if start >= cp.num_states {
+        return None;
+    }
+    let mut visited = vec![false; cp.num_states];
+    visited[start] = true;
+    let mut queue: VecDeque<(usize, Vec<u8>)> = VecDeque::new();
+    queue.push_back((start, Vec::new()));
+    while let Some((state, path)) = queue.pop_front() {
+        if cp.accepts[state] {
+            return Some(String::from_utf8_lossy(&path).into_owned());
+        }
+        for class in 0..cp.num_classes {
+            let tgt = cp.transitions[state * cp.num_classes + class];
+            if tgt == DEAD_STATE {
+                continue;
+            }
+            let tgt = tgt as usize;
+            if tgt >= cp.num_states || visited[tgt] {
+                continue;
+            }
+            visited[tgt] = true;
+            let mut next_path = path.clone();
+            next_path.push(cp.representative_byte[class]);
+            queue.push_back((tgt, next_path));
+        }
+    }
+    None
 }
 
 /// Emit a Rust function body that walks a pattern's DFA driven by a

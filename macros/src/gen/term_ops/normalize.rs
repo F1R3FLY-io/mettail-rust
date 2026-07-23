@@ -447,6 +447,16 @@ fn optional_collection_field_type(field: &FieldInfo) -> TokenStream {
 /// at Visit time via `.normalize()` (calls the native per-category PDA)
 /// rather than pushing a Visit task.
 fn emit_reg_field_decl(i: usize, field: &FieldInfo) -> TokenStream {
+    if field.is_token_text {
+        // L9-3: token-text captures are OPAQUE to normalization — cloned
+        // through as a bare `String` carrier (a token's text is not a term;
+        // it never β-reduces or α-renames). Mirrors the predicate carrier.
+        let text_name = format_ident!("f{}_text", i);
+        if field.is_optional {
+            return quote! { #text_name: Option<std::string::String> };
+        }
+        return quote! { #text_name: std::string::String };
+    }
     if field.is_predicate {
         let pred_name = format_ident!("f{}_pred", i);
         // Task #14 (Option<Guard>): a guard inside `#opt(...)` lowers to an
@@ -809,6 +819,17 @@ fn emit_reg_field_visit_alloc(
 
     for (i, field) in fields.iter().enumerate() {
         let name = &field_names[i];
+
+        if field.is_token_text {
+            // L9-3: clone the token-text `String` into the Assemble carrier;
+            // no Visit/descent (mirrors the predicate leaf below).
+            let text_name = format_ident!("f{}_text", i);
+            alloc_stmts.push(quote! {
+                let #text_name = #name.clone();
+            });
+            assemble_fields.push(quote! { #text_name });
+            continue;
+        }
 
         if field.is_predicate {
             let pred_name = format_ident!("f{}_pred", i);
@@ -1506,6 +1527,21 @@ fn generate_regular_assemble_arm(
     let mut decl_flat: Vec<TokenStream> = Vec::new();
     let mut call_flat: Vec<TokenStream> = Vec::new();
     for (i, field) in fields.iter().enumerate() {
+        if field.is_token_text {
+            // L9-3: the token-text carrier rides the frame as `f{i}_text`
+            // (declared by `emit_reg_field_decl`, cloned in the Visit arm);
+            // extract is a no-op and construct passes it through unchanged.
+            let text_name = format_ident!("f{}_text", i);
+            let text_ty = if field.is_optional {
+                quote! { Option<std::string::String> }
+            } else {
+                quote! { std::string::String }
+            };
+            pat_flat.push(quote! { #text_name });
+            decl_flat.push(quote! { #text_name: #text_ty });
+            call_flat.push(quote! { #text_name });
+            continue;
+        }
         if field.is_predicate {
             // Task #14 (Option<Guard>): predicate-FIRST, mirroring the
             // Binder pre-scope precedent (`emit_pre_field_decl_list` /
@@ -1619,8 +1655,8 @@ fn generate_regular_assemble_arm(
 }
 
 fn emit_reg_field_extract(i: usize, field: &FieldInfo) -> TokenStream {
-    if field.is_predicate {
-        // Already in scope as f{i}_pred
+    if field.is_predicate || field.is_token_text {
+        // Already in scope as f{i}_pred / f{i}_text — nothing to extract.
         return quote! {};
     }
     let result_ident = format_ident!("field_{}", i);
@@ -1749,6 +1785,11 @@ fn emit_reg_field_extract(i: usize, field: &FieldInfo) -> TokenStream {
 }
 
 fn emit_reg_field_construct(i: usize, field: &FieldInfo) -> TokenStream {
+    if field.is_token_text {
+        // L9-3: pass the bare `String` carrier through (never Arc-wrapped).
+        let text_name = format_ident!("f{}_text", i);
+        return quote! { #text_name };
+    }
     if field.is_predicate {
         let pred_name = format_ident!("f{}_pred", i);
         return quote! { #pred_name };
@@ -2602,6 +2643,7 @@ mod tests {
             coll_type: None,
             is_predicate: true,
             is_optional: optional,
+            is_token_text: false,
         }
     }
 
@@ -2612,6 +2654,7 @@ mod tests {
             coll_type: None,
             is_predicate: false,
             is_optional: false,
+            is_token_text: false,
         }
     }
 

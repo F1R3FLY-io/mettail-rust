@@ -871,12 +871,19 @@ pub(crate) fn parse_syntax_expr(input: ParseStream) -> SynResult<SyntaxExpr> {
         let id = input.parse::<Ident>()?;
 
         // L9-3: `v@Tok` bind form — `v` binds the text of a token of the custom
-        // KIND `Tok`. `@` is unused elsewhere in syntax patterns, so this is
-        // unambiguous (decision D-1; `v:Tok` is NOT supported — a colon collides
-        // with the `:Category` rule terminator). A bare `Tok` (no bind) is parsed
-        // as `Param(Tok)` below and reclassified to `TokenKind{bind:None}` by the
-        // post-parse pass when `Tok` is a declared token name.
-        if input.peek(Token![@]) {
+        // KIND `Tok`. A bare `Tok` (no bind) is parsed as `Param(Tok)` below and
+        // reclassified to `TokenKind{bind:None}` by the post-parse pass when
+        // `Tok` is a declared token name (decision D-1; `v:Tok` is NOT supported
+        // — a colon collides with the `:Category` rule terminator).
+        //
+        // The `peek2(Ident)` guard is LOAD-BEARING: the guards block's
+        // per-predicate annotation form `<pattern> @[selectivity(..), cost(..)]`
+        // ALSO follows a param with `@`, but with a `[` (not an identifier).
+        // Without the guard, `y @[...]` consumed the `@` as a capture start and
+        // then failed with "expected identifier" on the `[`. Requiring an
+        // identifier after `@` keeps `v@Tok` a capture while leaving `@[...]`
+        // for the annotation parser (the pre-L9-3 behavior).
+        if input.peek(Token![@]) && input.peek2(Ident) {
             let _ = input.parse::<Token![@]>()?;
             let tok = input.parse::<Ident>()?;
             return Ok(SyntaxExpr::TokenKind { name: tok, bind: Some(id) });

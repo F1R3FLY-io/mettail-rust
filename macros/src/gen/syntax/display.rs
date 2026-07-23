@@ -12,6 +12,7 @@
 
 #![allow(clippy::cmp_owned)]
 
+use crate::gen::capture::{capture_layout, CaptureFieldKind};
 use crate::gen::native::has_native_type;
 use crate::gen::syntax::parser::prattail_bridge::language_def_to_spec;
 use crate::gen::{generate_literal_label, generate_var_label, is_literal_rule, is_var_rule};
@@ -1660,6 +1661,98 @@ fn generate_engine_binder_arm(rule: &GrammarRule, _language: &LanguageDef) -> To
 ///
 /// Precedence-aware: for infix/postfix/prefix operators, wraps the output in
 /// parentheses when the inherited `min_bp` exceeds the operator's own binding power.
+/// L9-3: linear Display arm for a capture-bearing rule. Fields are bound in
+/// `capture_layout` order (identical to the enum definition and the walker
+/// constructor), and each syntax position prints in encounter order separated
+/// by a single space — a token's captured text prints verbatim, so re-lexing
+/// the printed form yields the same tokens (`parse(display(t)) == t`).
+fn generate_capture_display_arm(
+    rule: &GrammarRule,
+    syntax_pattern: &[SyntaxExpr],
+    term_context: &[TermParam],
+) -> TokenStream {
+    let category = &rule.category;
+    let label = &rule.label;
+    let layout = capture_layout(term_context, syntax_pattern)
+        .expect("generate_capture_display_arm requires a capture-bearing rule");
+
+    // Pattern bindings in variant-field order (non-scope fields, then Scope).
+    let mut pats: Vec<TokenStream> = Vec::new();
+    for f in &layout.non_scope {
+        let name = format_ident!("{}", f.name);
+        pats.push(quote! { #name });
+    }
+    if layout.scope.is_some() {
+        pats.push(quote! { _scope });
+    }
+
+    // Resolve a simple param's base category (for a Display recursion task).
+    let simple_cat = |name: &str| -> Option<syn::Ident> {
+        term_context.iter().find_map(|p| match p {
+            TermParam::Simple { name: n, ty: TypeExpr::Base(cat) } if n.to_string() == name => {
+                Some(cat.clone())
+            },
+            _ => None,
+        })
+    };
+
+    let mut forward_ops: Vec<TokenStream> = Vec::new();
+    let mut emitted = false;
+    for expr in syntax_pattern {
+        // A single separating space between adjacent printed positions.
+        let space = if emitted {
+            quote! { stack.push(DisplayTask::WriteString(" ".to_string())); }
+        } else {
+            quote! {}
+        };
+        match expr {
+            SyntaxExpr::Literal(s) => {
+                forward_ops.push(space);
+                forward_ops.push(quote! {
+                    stack.push(DisplayTask::WriteString(#s.to_string()));
+                });
+                emitted = true;
+            },
+            SyntaxExpr::TokenKind { name, bind } => {
+                forward_ops.push(space);
+                let ident = bind
+                    .as_ref()
+                    .map(|b| format_ident!("{}", b.to_string()))
+                    .unwrap_or_else(|| format_ident!("__tok_{}", name));
+                // The captured token's text prints verbatim (bound `&String`).
+                forward_ops.push(quote! {
+                    stack.push(DisplayTask::WriteString(#ident.clone()));
+                });
+                emitted = true;
+            },
+            SyntaxExpr::Param(id) => {
+                if let Some(cat) = simple_cat(&id.to_string()) {
+                    forward_ops.push(space);
+                    let task = format_ident!("Display{}", cat);
+                    let field = format_ident!("{}", id.to_string());
+                    forward_ops.push(quote! {
+                        stack.push(DisplayTask::#task(&**#field as *const _, 0));
+                    });
+                    emitted = true;
+                }
+                // Abstraction binder/body params fold into the trailing Scope
+                // (bound `_scope`); a capture+binder rule is not exercised by
+                // any grammar, and its Scope body render is deferred.
+            },
+            SyntaxExpr::Op(_) => {
+                // Sep/Zip/Map/Opt never co-occur with a capture in one rule.
+            },
+        }
+    }
+
+    forward_ops.reverse();
+    quote! {
+        #category::#label(#(#pats),*) => {
+            #(#forward_ops)*
+        }
+    }
+}
+
 fn generate_engine_syntax_pattern_arm(
     rule: &GrammarRule,
     syntax_pattern: &[SyntaxExpr],
@@ -1670,6 +1763,15 @@ fn generate_engine_syntax_pattern_arm(
     let category = &rule.category;
     let label = &rule.label;
     let label_str = label.to_string();
+
+    // L9-3 (ROUND-TRIP-CRITICAL): a rule with a `v@Tok` capture is never an
+    // infix Pratt operator — it renders LINEARLY. Bind fields in
+    // `capture_layout` order (matching the enum) and print each syntax
+    // position (literal / captured token text / param) left-to-right, space
+    // separated, so `parse(display(t)) == t`.
+    if capture_layout(term_context, syntax_pattern).is_some() {
+        return generate_capture_display_arm(rule, syntax_pattern, term_context);
+    }
 
     // Check if this rule is an infix/postfix/mixfix operator
     let infix_info = bp_lookup.infix.get(&label_str);

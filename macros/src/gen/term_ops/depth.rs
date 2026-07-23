@@ -112,7 +112,9 @@ fn field_depth_expr(field: &FieldInfo, name: &Ident) -> TokenStream {
     // Phase 3A-C2 (predicated types): a `BehavioralPred` field is a
     // constant-size payload, not part of host term nesting depth.
     // A-RT05 convergence checks count host-term nesting only.
-    if field.is_predicate {
+    // L9-3: a token-text capture (`String`) is a constant-size leaf that adds
+    // no host-term nesting depth (mirrors the predicate leaf).
+    if field.is_predicate || field.is_token_text {
         let _ = name;
         return quote! { 0 };
     }

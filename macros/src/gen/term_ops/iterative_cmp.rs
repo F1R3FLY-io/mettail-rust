@@ -350,8 +350,9 @@ fn generate_eq_regular_arm(
         .map(|(field, (lname, rname))| {
             // Phase 3A-B2: predicate fields use direct PartialEq.
             // BehavioralPred derives Eq, so the bare value comparison
-            // is sound.
-            if field.is_predicate {
+            // is sound. L9-3: token-text captures are bare `String` leaves —
+            // the identical direct-Eq (String: Eq), no CmpTask descent.
+            if field.is_predicate || field.is_token_text {
                 return quote! {
                     if #lname != #rname { return false; }
                 };
@@ -894,7 +895,8 @@ fn generate_cmp_regular_arm(
         let rname = &right_names[i];
         // Phase 3A-B2: predicate fields use direct cmp.
         // BehavioralPred derives Ord, so the bare value comparison is sound.
-        if field.is_predicate {
+        // L9-3: token-text captures (bare `String`) compare identically.
+        if field.is_predicate || field.is_token_text {
             stmts.push(quote! {
                 {
                     let ord = #lname.cmp(#rname);
@@ -1009,7 +1011,8 @@ fn generate_cmp_regular_arm(
         let lname = &left_names[i];
         let rname = &right_names[i];
         // Phase 3A-B2: predicate fields use direct cmp inline.
-        if field.is_predicate {
+        // L9-3: token-text captures (bare `String`) compare identically.
+        if field.is_predicate || field.is_token_text {
             stmts.push(quote! {
                 {
                     let ord = #lname.cmp(#rname);

@@ -176,6 +176,16 @@ fn generate_depth_0_cases(
     for rule in rules {
         let label = &rule.label;
 
+        // L9-3: a captures-only rule (FLT surface / toy) is NOT nullary — its
+        // fields are token-text `String`s; construct it with a deterministic
+        // regex-valid sample per capture (decision F.2).
+        if let Some(construction) =
+            crate::gen::term_gen::capture_only_construction(rule, language, cat_name, label)
+        {
+            cases.push(quote! { terms.push(#construction); });
+            continue;
+        }
+
         // Check if this is a nullary constructor
         let non_terminals: Vec<_> = rule
             .items
@@ -352,6 +362,18 @@ fn generate_simple_constructor_case(
         .unwrap_or(false);
     if has_top_level_guard_slot {
         return quote! {};
+    }
+
+    // L9-3: a captures-only rule (FLT surface / toy) contributes ONE
+    // representative term with a deterministic regex-valid sample per capture.
+    // A capture's text ranges over an infinite regex-valid set, so full
+    // exhaustive enumeration is undefined; the randomized generator supplies
+    // variation, and this one representative keeps the term present in the
+    // exhaustive corpus (decision F.2).
+    if let Some(construction) =
+        crate::gen::term_gen::capture_only_construction(rule, language, cat_name, label)
+    {
+        return quote! { terms.push(#construction); };
     }
 
     // Get argument categories

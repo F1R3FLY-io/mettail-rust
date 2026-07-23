@@ -4,6 +4,7 @@ use quote::{format_ident, quote};
 use crate::gen::native::lossless_coercion::build_lossless_coercion;
 use crate::gen::native::{native_type_to_string, NativeType};
 use crate::gen::runtime::wpda_codegen::builtin_metadata::classify_simple_projection_shape;
+use crate::gen::capture::{capture_layout, CaptureFieldKind};
 use crate::gen::{
     generate_literal_label, generate_var_label, is_literal_rule, literal_rule_nonterminal,
 };
@@ -563,6 +564,91 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
                 }
                 // HOL syntax: rule with Rust code block - generate eval from rust_code
                 else if let Some(ref rust_code_block) = rule.rust_code {
+                    // L9-3: a capture-bearing rule binds its capture `String`
+                    // fields (and any interleaved simple params) in
+                    // `capture_layout` order — captures bind as `&String`,
+                    // directly usable in the `![...]` body (e.g. `w.len()`).
+                    // Such rules are not PDA-eligible (a token's text is a leaf
+                    // with no same-category recursion), so we emit only the
+                    // recursive `match_arm` + `try_eval` arm and skip the PDA
+                    // frame build below.
+                    if let Some(layout) = capture_layout(
+                        rule.term_context.as_deref().unwrap_or(&[]),
+                        rule.syntax_pattern.as_deref().unwrap_or(&[]),
+                    ) {
+                        let rust_code = &rust_code_block.code;
+                        let mut pats: Vec<TokenStream> = Vec::new();
+                        let mut bindings: Vec<TokenStream> = Vec::new();
+                        let mut try_bindings: Vec<TokenStream> = Vec::new();
+                        for f in &layout.non_scope {
+                            match &f.kind {
+                                CaptureFieldKind::TokenText => {
+                                    let name = format_ident!("{}", f.name);
+                                    pats.push(quote! { #name });
+                                },
+                                CaptureFieldKind::Term(ty) => {
+                                    let name = format_ident!("{}", f.name);
+                                    pats.push(quote! { #name });
+                                    if type_has_native_eval(ty, language) {
+                                        bindings.push(
+                                            quote! { let #name = #name.as_ref().eval(); },
+                                        );
+                                        try_bindings.push(
+                                            quote! { let #name = #name.as_ref().try_eval()?; },
+                                        );
+                                    } else {
+                                        let b = quote! { let #name = #name.as_ref(); };
+                                        bindings.push(b.clone());
+                                        try_bindings.push(b);
+                                    }
+                                },
+                                CaptureFieldKind::Predicate => {
+                                    // Guards are opaque to eval — bind under an
+                                    // underscore for arity, no `let`.
+                                    let uname = format_ident!("_{}", f.name);
+                                    pats.push(quote! { #uname });
+                                },
+                            }
+                        }
+                        if layout.scope.is_some() {
+                            pats.push(quote! { _scope });
+                        }
+                        match_arms.push(quote! {
+                            #category::#label(#(#pats),*) => {
+                                #(#bindings)*
+                                #rust_code
+                            },
+                        });
+                        let rust_code_expr: syn::Expr = syn::parse_quote!({ #rust_code });
+                        let safe_closure_call =
+                            crate::gen::native::rust_code_rewrite::safeify_and_wrap(
+                                &rust_code_expr,
+                            );
+                        try_eval_arms.push(quote! {
+                            #category::#label(#(#pats),*) => {
+                                #(#try_bindings)*
+                                #safe_closure_call
+                            },
+                        });
+                        // The PRODUCTION `try_eval` is the stack-safe PDA
+                        // trampoline; the recursive arm above is only used when
+                        // the category is not PDA-supported. A capture rule is a
+                        // LEAF value producer (its `String` fields are not
+                        // same-category children, so it needs no Reduce frame):
+                        // its PDA Visit arm computes the value from the captures
+                        // and pushes it, exactly like the literal arm
+                        // (`Num::NumLit(n) => values.push(n)`).
+                        pda_visit_arms.push(quote! {
+                            #category::#label(#(#pats),*) => {
+                                #(#try_bindings)*
+                                match #safe_closure_call {
+                                    ::std::option::Option::Some(__v) => values.push(__v),
+                                    ::std::option::Option::None => return None,
+                                }
+                            }
+                        });
+                        continue;
+                    }
                     // Resolve `(name, use_eval)` per param: native-typed categories
                     // bind via `.eval()`; collection / non-native categories bind
                     // via `.clone()` (cannot be `.eval()`'d).

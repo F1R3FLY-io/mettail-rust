@@ -407,9 +407,11 @@ fn generate_hash_regular_arm(
                 });
                 continue;
             }
-            if field.is_predicate {
+            if field.is_predicate || field.is_token_text {
                 // Task #14 (Option<Guard>): deferred twin of the eager arm
                 // — 0/1 discriminant + direct `__b` hash (no Arc deref).
+                // L9-3: an optional token-text capture (`Option<String>`) hashes
+                // by the same 0/1-tag + inline-value shape.
                 final_stmts.push(quote! {
                     match #name.as_ref() {
                         None => std::hash::Hash::hash(&0u8, state),
@@ -432,10 +434,13 @@ fn generate_hash_regular_arm(
                     }
                 }
             });
-        } else if field.is_predicate {
+        } else if field.is_predicate || field.is_token_text {
             // Phase 3A-B4: predicate fields hash inline regardless of
             // position; pushed in reverse order means we need to emit
-            // the hash now since they don't go on the stack.
+            // the hash now since they don't go on the stack. L9-3: token-text
+            // captures (bare `String`) hash inline identically — discriminant
+            // is hashed first (hash-cons identity holds: Tagged("a") shares,
+            // Tagged("a")≠Tagged("b"), Tagged≠Flt via distinct discriminant).
             final_stmts.push(quote! {
                 std::hash::Hash::hash(#name, state);
             });
@@ -635,6 +640,7 @@ mod tests {
             coll_type: None,
             is_predicate: true,
             is_optional: true,
+            is_token_text: false,
         }];
         let arm = generate_hash_regular_arm(&cat, &label, &fields, &language).to_string();
         assert!(
