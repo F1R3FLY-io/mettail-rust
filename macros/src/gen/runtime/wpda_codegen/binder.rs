@@ -524,10 +524,23 @@ pub(crate) fn classify_binder_in(
             SyntaxExpr::Literal(text) => {
                 positions.push(BinderPosition::Literal(text.clone()));
             },
-            // L9-3 (§2b): a binder rule that also consumes a custom token KIND is
-            // not a recognized binder pattern — bail to generic (non-binder) rule
-            // codegen. INERT in STAGE 1 (unconstructable from source).
-            SyntaxExpr::TokenKind { .. } => return None,
+            // L9-3: a `w@Word` custom-kind capture — push a TokenKindCapture
+            // position + a paired TokenText action arg (mirrors the Param→
+            // position+arg pairing). An @-less capture synthesizes __tok_<name>
+            // (D-5). S2.2 makes any rule containing a TokenKind a multi-step
+            // ("binder") rule so it routes through this position machinery.
+            SyntaxExpr::TokenKind { name, bind } => {
+                let kind_name = name.to_string();
+                let param_name = bind
+                    .as_ref()
+                    .map(|b| b.to_string())
+                    .unwrap_or_else(|| format!("__tok_{}", kind_name));
+                positions.push(BinderPosition::TokenKindCapture {
+                    kind_name: kind_name.clone(),
+                    param_name: param_name.clone(),
+                });
+                action_args.push(ActionArgKind::TokenText { param_name });
+            },
             SyntaxExpr::Param(name) => {
                 let n = name.to_string();
                 let kind = param_map.get(&n)?;
@@ -1281,14 +1294,37 @@ pub(crate) fn emit_binder_rule_body(
                 let pos = (idx + 1) as u8;
                 let next_pos = pos + 1;
                 let arm = match position {
-                    BinderPosition::TokenKindCapture { .. } => {
-                        // L9-3 S2.2 fills this with the real mid-rule emission
-                        // (a single-branch Fork + GuardedConsumeTokenKindAndReplace,
-                        // a structural clone of the Literal arm below). INERT in
-                        // S2.1 — no BinderPosition::TokenKindCapture is constructed
-                        // until S2.2 wires the classification, so this arm is
-                        // unreachable and contributes no parser dispatch.
-                        quote! {}
+                    BinderPosition::TokenKindCapture { kind_name, .. } => {
+                        // L9-3: mid-rule custom-kind capture — a structural clone
+                        // of the Literal arm below, swapping the peek_text guard
+                        // (GuardedConsumeAndReplace) for the peek_kind==Custom(K)
+                        // guard (GuardedConsumeTokenKindAndReplace). The walker's
+                        // kind gate runs inside the branch; a miss produces no
+                        // child (cursor dies via step_fanout's empty-children
+                        // pathway), and a hit interns an ActionArg::Token leaf.
+                        quote! {
+                            (#result_src_idx, #rule_idx, #pos) => {
+                                return WpdaStepAction::Fork {
+                                    branches: vec![mettail_prattail::wpda_walker::ForkBranch {
+                                        symbol: StackSymbolV2::rule_at(
+                                            #result_src_idx, #rule_idx, #next_pos, Some(*outer_bp),
+                                        ),
+                                        weight: lex_one(),
+                                        new_state: WpdaState::BinderRule {
+                                            result_src_idx: #result_src_idx,
+                                            rule_idx: #rule_idx,
+                                            body_src_idx: *_body_src_idx,
+                                            outer_bp: *outer_bp,
+                                        },
+                                        action_kind:
+                                            mettail_prattail::wpda_walker::ForkActionKind::GuardedConsumeTokenKindAndReplace {
+                                                kind_name: #kind_name.to_string(),
+                                            },
+                                    }],
+                                    consume_trigger: false,
+                                };
+                            }
+                        }
                     },
                     BinderPosition::Literal(text) => {
                         let previous_position = if idx > 0 {
