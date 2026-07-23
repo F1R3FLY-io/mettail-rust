@@ -3131,9 +3131,18 @@ fn write_mode_dispatch_shims(buf: &mut String, mode_results: &[crate::lexer::Mod
     }
     buf.push_str("_ => false } }");
 
-    // No mode is RAW until L9-4 threads the per-mode raw flag; a constant-false
-    // shim keeps the whitespace-skip behavior identical to today for now.
-    buf.push_str("#[allow(dead_code)] fn m_is_raw(mode: u8) -> bool { let _ = mode; false }");
+    // L9-4: `m_is_raw(mode_id)` reports whether a mode is RAW (whitespace is
+    // content, not skipped). Mode 0 (host default) is never raw; each named mode
+    // reports its declared `raw` flag. `compute_mode_map` and the modal DAG
+    // cores gate the inter-token whitespace skip on `!is_raw(mode)`. Grammars
+    // with no `raw mode` (every pre-L9-4 grammar) emit all-`false` arms ⇒ the
+    // constant-false behavior is preserved byte-for-byte.
+    buf.push_str("#[allow(dead_code)] fn m_is_raw(mode: u8) -> bool { match mode {");
+    for mode in mode_results {
+        write!(buf, "{}u8 => {},", mode.mode_id, mode.raw)
+            .expect("codegen: write into in-memory String is infallible");
+    }
+    buf.push_str("_ => false } }");
 }
 
 /// Write the modal DAG/WFST interface — `lex_weighted`, `lex_lattice`,
@@ -5099,6 +5108,7 @@ mod tests {
             partition: mode_partition,
             token_kinds: vec![TokenKind::Custom("HexLit".into())],
             custom_tokens: vec![mode_spec.clone()],
+            raw: false,
         }];
 
         let output = generate_modal_lexer_string(

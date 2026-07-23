@@ -617,6 +617,9 @@ pub struct LexerModeSpec {
     pub name: String,
     /// Token specs within this mode.
     pub token_specs: Vec<CustomTokenSpec>,
+    /// L9-4: RAW guest mode — the lexer does not skip inter-token whitespace
+    /// inside this mode (whitespace is `GuestChunk` content). Default `false`.
+    pub raw: bool,
 }
 
 /// Result of multi-stream lexing.

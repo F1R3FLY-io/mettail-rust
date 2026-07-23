@@ -45,6 +45,7 @@ pub(crate) fn generate_lexer_code_with_map(
         .map(|m| crate::lexer::LexerModeInput {
             name: m.name.clone(),
             custom_tokens: m.token_specs.clone(),
+            raw: m.raw,
         })
         .collect();
 

@@ -736,9 +736,13 @@ fn merge_mode_defs(
         if let Some(&idx) = by_name.get(&name) {
             // Same-named mode: merge token definitions within
             let merged_tokens = merge_token_defs(&result[idx].token_defs, &md.token_defs, strategy);
+            // L9-4: a merged mode is RAW if either contributor declared it raw
+            // (same-named modes should agree; OR is the conservative union).
+            let merged_raw = result[idx].raw || md.raw;
             result[idx] = ModeDef {
                 name: md.name.clone(),
                 token_defs: merged_tokens,
+                raw: merged_raw,
             };
         } else {
             by_name.insert(name, result.len());

@@ -362,6 +362,7 @@ pub fn language_def_to_spec(language: &LanguageDef) -> LanguageSpec {
                     }
                 })
                 .collect(),
+            raw: md.raw,
         })
         .collect();
 

@@ -1713,6 +1713,12 @@ pub struct ModeDef {
     pub name: Ident,
     /// Token definitions within this mode.
     pub token_defs: Vec<TokenDef>,
+    /// L9-4: RAW guest mode (`raw mode name { … }`). When true the lexer does
+    /// NOT skip inter-token whitespace inside this mode — whitespace is content
+    /// (a `GuestChunk` character) — so FLT guest bodies and empty / ws-only
+    /// bodies lex cleanly (decision D-4). Default `false` ⇒ non-raw modes and
+    /// every pre-L9-4 grammar are byte-identical.
+    pub raw: bool,
 }
 
 /// A cross-stream synchronization constraint from `sync { ... }`.

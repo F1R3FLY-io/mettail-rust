@@ -1110,7 +1110,7 @@ fn parse_mode_def(input: ParseStream) -> SynResult<ModeDef> {
         token_defs.push(parse_token_def(&content)?);
     }
 
-    Ok(ModeDef { name, token_defs })
+    Ok(ModeDef { name, token_defs, raw: false })
 }
 
 /// Parse `sync { ... }` block with cross-stream synchronization constraints.
@@ -1358,6 +1358,21 @@ fn parse_tokens(
             match kw_str.as_str() {
                 "mode" => {
                     mode_defs.push(parse_mode_def(&content)?);
+                },
+                "raw" => {
+                    // L9-4: `raw mode name { … }` — a RAW guest mode (whitespace
+                    // is GuestChunk content, not skipped between tokens).
+                    let _ = content.parse::<Ident>()?; // consume "raw"
+                    let peeked = content.fork().parse::<Ident>()?;
+                    if peeked != "mode" {
+                        return Err(syn::Error::new(
+                            peeked.span(),
+                            "expected 'mode' after 'raw' (raw guest mode: `raw mode NAME { … }`)",
+                        ));
+                    }
+                    let mut md = parse_mode_def(&content)?;
+                    md.raw = true;
+                    mode_defs.push(md);
                 },
                 "sync" => {
                     sync_constraints = parse_sync_block(&content)?;

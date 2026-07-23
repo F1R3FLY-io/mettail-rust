@@ -51,6 +51,8 @@ pub struct LexerModeInput {
     pub name: String,
     /// Custom token definitions within this mode.
     pub custom_tokens: Vec<CustomTokenSpec>,
+    /// L9-4: RAW guest mode — no inter-token whitespace skip inside this mode.
+    pub raw: bool,
 }
 
 /// Result of the NFA-to-DFA pipeline for a single named lexer mode.
@@ -68,6 +70,9 @@ pub struct ModeDfaResult {
     pub token_kinds: Vec<TokenKind>,
     /// Custom tokens in this mode (for codegen payload resolution).
     pub custom_tokens: Vec<CustomTokenSpec>,
+    /// L9-4: RAW guest mode — the generated `m_is_raw(mode_id)` returns this so
+    /// `compute_mode_map` / the modal DAG cores skip no whitespace inside it.
+    pub raw: bool,
 }
 
 /// Statistics from the lexer generation pipeline (for diagnostics).
@@ -439,6 +444,7 @@ pub fn generate_lexer_as_string_hybrid(
                     partition: mode_partition,
                     token_kinds: mode_token_kinds,
                     custom_tokens: mode_input.custom_tokens.clone(),
+                    raw: mode_input.raw,
                 }
             })
             .collect();
@@ -955,6 +961,7 @@ mod dui_tests {
             modes: vec![LexerModeInput {
                 name: "inner".to_string(),
                 custom_tokens: vec![dui_spec("CloseInner", "!", None, true)],
+                raw: false,
             }],
             reserved_kinds: ReservedKeywords::default(),
         };

@@ -3155,6 +3155,7 @@ mod tests {
                 is_pop: true,
                 stream: None,
             }],
+            raw: false,
         }];
 
         let alphabet = build_vpa_alphabet_from_modes(&default_tokens, &modes);
