@@ -800,7 +800,11 @@ pub(crate) struct CanonicalGssState<W> {
     /// `(target, operand_w)`.
     edges: FxHashMap<GssNodeId, Vec<CanonicalGllEdge>>,
     /// `node → its recorded pops P`, deduped by `(pos, result_w, rule_id)`
-    /// (P is a SET over the identity triple; the weight rides the entry).
+    /// (P is a SET over the identity triple; the weight rides the entry and is
+    /// ⊕-MERGED across same-identity duplicates — lex-min for the lex-tropical
+    /// `W`, mirroring the SPPF packing-node dedup re-intern in `sppf.rs`; see
+    /// [`WpdaGss::gll_pop`] for the policy and the probe-P2 write-only
+    /// rationale).
     recorded_pops: FxHashMap<GssNodeId, Vec<RecordedPop<W>>>,
 }
 
@@ -1370,18 +1374,35 @@ impl<W: SemiringRef> WpdaGss<W> {
     /// `{ slot: L_u, caller, at_pos: i, operand_w: w, result_w: z }` — where
     /// `L_u` is `u`'s own label symbol (the return slot).
     ///
-    /// Task #10 item 3 — duplicate-pop weight policy: FIRST-WINS. A
-    /// duplicate returns BEFORE any packing intern happens today (this very
-    /// early-return), so the first recorded weight is the counterfactually
-    /// faithful one; an ⊕-merge would mint `min(w1, w2)` — a weight no
-    /// original intern ever carried (red-team amendment 5, refuting the
-    /// earlier ⊕-merge rationale). With `rule_id` in the identity triple
-    /// (F5-2), "duplicate" means SAME-IDENTITY duplicates only: two pops at
-    /// the same `(pos, z)` under DIFFERENT rule identities are separate P
-    /// entries, each carrying its own weight. The `debug_assert` below
-    /// checks that same-identity duplicates carry EQUAL weights (probe P2:
-    /// if it ever fires, the first-wins choice is materially lossy — stop
-    /// and re-derive).
+    /// Task #10 item 3 / probe P2 — duplicate-pop weight policy: ⊕-MERGE
+    /// (lex-min). On a same-identity duplicate the stored weight is combined
+    /// with the incoming one via the semiring sum
+    /// (`existing.pop_action_weight = existing.pop_action_weight.plus_ref(w)`),
+    /// exactly mirroring the SPPF packing-node dedup re-intern (see
+    /// [`crate::sppf::SppfNode::Packing`]'s `weight`:
+    /// `self.weight := self.weight.plus_ref(&new_weight)`). NO returns are
+    /// emitted and NO second P entry is created (still `return Vec::new()`),
+    /// so the replay count and the emitted-return set are UNCHANGED — the
+    /// merge only refines the pop weight, which is structurally WRITE-ONLY
+    /// here: its sole consumer is the D2 create-after-pop replay, and the
+    /// observed fire is a D1 fire-pop whose GSS node can never subsequently
+    /// receive a D2 edge (probe P2 derivation). The former equal-weight
+    /// `debug_assert` was therefore OVER-STRONG; ⊕-merge is the
+    /// set-semantics-preserving generalization.
+    ///
+    /// For the lex-tropical weight, `⊕` is [`LexicographicWeight::plus`]
+    /// (`rigail/src/lex_weight.rs`), an ARGMIN that returns one of the two
+    /// ORIGINAL operands — `*self` when `self ≤ other` under `lex_cmp`, else
+    /// `*other` — never a freshly-constructed value. So the earlier "⊕ mints
+    /// a fake `min(w1, w2)`" objection (former amendment 5) does not hold. On
+    /// EQUAL weights (the common case) the merge is a bit-for-bit no-op.
+    ///
+    /// [`LexicographicWeight::plus`]: crate::automata::lex_weight::LexicographicWeight
+    ///
+    /// With `rule_id` in the identity triple (F5-2), "duplicate" means
+    /// SAME-IDENTITY duplicates only: two pops at the same `(pos, z)` under
+    /// DIFFERENT rule identities are separate P entries, each carrying its
+    /// own weight.
     pub(crate) fn gll_pop(
         &mut self,
         node: GssNodeId,
@@ -1401,18 +1422,20 @@ impl<W: SemiringRef> WpdaGss<W> {
             let pops = st.recorded_pops.entry(node).or_default();
             // P is a set: skip a duplicate pop (idempotent; no double-emit and no
             // duplicate P entry that a later `gll_create` would over-replay).
-            // FIRST-WINS on the stored weight (see the method doc).
+            // ⊕-MERGE the write-only stored weight (see the method doc).
             if let Some(existing) = pops
-                .iter()
+                .iter_mut()
                 .find(|p| p.pos == pos && p.result_w == result_w && p.rule_id == rule_id)
             {
-                debug_assert!(
-                    existing.pop_action_weight == *pop_action_weight,
-                    "same-identity duplicate pop carries a DIFFERENT weight \
-                     (node={node}, pos={pos}, result_w={result_w}, rule_id={rule_id:#x}) — \
-                     first-wins would be lossy; re-derive the duplicate-pop policy (task #10 \
-                     item 3 amendment 5 / probe P2)"
-                );
+                // ⊕-merge (lex-min for the lex-tropical `W`): a bit-for-bit
+                // no-op on equal weights (the common case), otherwise an argmin
+                // SELECTION of one ORIGINAL operand (never a minted value;
+                // `LexicographicWeight::plus`). The pop weight is write-only
+                // here (probe P2 — sole consumer is the D2 replay, which a
+                // D1-recorded node never reaches), so this preserves set
+                // semantics: no second P entry, no returns.
+                existing.pop_action_weight =
+                    existing.pop_action_weight.plus_ref(pop_action_weight);
                 return Vec::new();
             }
             pops.push(RecordedPop {
@@ -2052,13 +2075,15 @@ mod tests {
     }
 
     /// Task #10 item 3: P entries record the pop-action weight; the
-    /// duplicate-pop policy is FIRST-WINS over the `(pos, result_w,
-    /// rule_id)` identity triple (same-identity duplicates must carry
-    /// EQUAL weights — the `debug_assert` in `gll_pop`; this test
-    /// re-passes the SAME weight accordingly). A pop at the same
-    /// `(pos, z)` under a DIFFERENT rule identity is a DISTINCT P entry
-    /// carrying its own weight (the F5-2 identity-carry interaction), and
-    /// a later `gll_create` replays BOTH entries.
+    /// duplicate-pop policy is ⊕-MERGE over the `(pos, result_w, rule_id)`
+    /// identity triple. This test exercises the EQUAL-weight case (the
+    /// duplicate re-passes the SAME weight), where ⊕ is a bit-for-bit no-op
+    /// so the stored weight is unchanged; the strictly-lex-smaller case (⊕
+    /// selects the incoming operand) is covered by the sibling
+    /// `test_canonical_gll_pop_duplicate_same_identity_oplus_merges`. A pop
+    /// at the same `(pos, z)` under a DIFFERENT rule identity is a DISTINCT P
+    /// entry carrying its own weight (the F5-2 identity-carry interaction),
+    /// and a later `gll_create` replays BOTH entries.
     #[test]
     fn test_canonical_gll_pop_records_action_weight_first_wins() {
         let mut g: WpdaGss<LexicographicWeight> = WpdaGss::new();
@@ -2092,8 +2117,8 @@ mod tests {
             "the accessor returns the recorded pop-action weight"
         );
 
-        // Same-identity duplicate (same weight per the equal-weight
-        // invariant): FIRST-WINS — no returns, no new entry, stored weight
+        // Same-identity duplicate re-passing the SAME weight: ⊕-merge is a
+        // bit-for-bit no-op — no returns, no new entry, stored weight
         // unchanged.
         let dup = g.gll_pop(v, 8, z, 5, &w_rule5);
         assert!(dup.is_empty(), "same-identity duplicate ⇒ no double-emit");
@@ -2101,7 +2126,7 @@ mod tests {
         assert_eq!(
             g.gll_recorded_pop_action_weight(v, 8, z, 5),
             Some(&w_rule5),
-            "first-wins: the stored weight is the FIRST pop's"
+            "equal-weight ⊕ is a no-op: the stored weight is unchanged"
         );
 
         // DIFFERENT rule identity at the same (pos, z): a separate P entry
@@ -2133,5 +2158,79 @@ mod tests {
         let mut replay_rule_ids: Vec<u32> = replays.iter().map(|r| r.rule_id).collect();
         replay_rule_ids.sort_unstable();
         assert_eq!(replay_rule_ids, vec![5, 6], "replays carry the recorded identities");
+    }
+
+    /// Task #10 item 3 / probe P2 — the ⊕-MERGE duplicate-pop policy on
+    /// DIFFERING weights. This is the exact shape that formerly tripped the
+    /// equal-weight `debug_assert`: a D1 fire-pop (`rule_id == u32::MAX`) whose
+    /// same-identity duplicate carries a lex-SMALLER weight. The stored weight
+    /// must become the semiring ⊕ (lex-min) of the two — one of the ORIGINAL
+    /// operands, never a minted value — and the outcome must be
+    /// ORDER-INDEPENDENT (⊕ is commutative). Set semantics are preserved: the
+    /// duplicate emits no returns and creates no second P entry.
+    #[test]
+    fn test_canonical_gll_pop_duplicate_same_identity_oplus_merges() {
+        // Two lex-comparable weights: w_lo is strictly lex-smaller (cheaper
+        // primary), so ⊕ (lex-min) must select w_lo in EITHER arrival order.
+        let w_hi = lex(0.5, 0, 0);
+        let w_lo = lex(0.1, 0, 0);
+        assert_eq!(
+            w_lo.lex_cmp(&w_hi),
+            std::cmp::Ordering::Less,
+            "sanity: w_lo is the strict lex-min operand",
+        );
+        // ⊕ is an ARGMIN returning an ORIGINAL operand (refutes "⊕ mints a
+        // fake min"): plus_ref of the two, in EITHER order, IS w_lo bit-for-bit.
+        assert_eq!(w_hi.plus_ref(&w_lo), w_lo, "⊕ selects the original w_lo (hi⊕lo)");
+        assert_eq!(w_lo.plus_ref(&w_hi), w_lo, "⊕ is commutative — same w_lo (lo⊕hi)");
+
+        // Node v with EXACTLY ONE incoming edge (caller c1): the panicking
+        // shape is a single-edge fire-pop. `first`/`second` are the arrival
+        // order of the two same-identity pops; returns the merged stored weight.
+        let run = |first: &LexicographicWeight, second: &LexicographicWeight| {
+            let mut g: WpdaGss<LexicographicWeight> = WpdaGss::new();
+            let c1 = g.get_or_create_node(WpdaGssNode {
+                pos: 0,
+                symbol: StackSymbolV2::category_entry(0),
+            });
+            let l = slot_sym(1, 0, 1);
+            let (v, _) = g.gll_create(
+                c1,
+                l,
+                3,
+                10,
+                crate::path_tree_arena::STACK_ID_ROOT,
+                crate::path_tree_arena::STACK_ID_ROOT,
+            );
+            let z: SppfId = 8;
+            // First pop under identity (pos=8, z, rule_id=u32::MAX).
+            let r1 = g.gll_pop(v, 8, z, u32::MAX, first);
+            assert_eq!(r1.len(), 1, "one return per edge on the genuinely-new pop");
+            // Same-identity duplicate carrying the OTHER weight — formerly the
+            // debug_assert panic; now a silent ⊕-merge.
+            let dup = g.gll_pop(v, 8, z, u32::MAX, second);
+            // (a) set semantics preserved: no returns, no second P entry.
+            assert!(dup.is_empty(), "(a) same-identity duplicate ⇒ no returns");
+            assert_eq!(
+                g.gll_recorded_pops(v).len(),
+                1,
+                "(a) no second P entry — P stays a set over the identity triple",
+            );
+            g.gll_recorded_pop_action_weight(v, 8, z, u32::MAX).copied()
+        };
+
+        // (b) stored weight = the ⊕-min. hi→lo is the panicking arrival order
+        // (a recorded hi, then a strictly-smaller lo replay).
+        assert_eq!(
+            run(&w_hi, &w_lo),
+            Some(w_lo),
+            "(b) hi→lo: stored weight is the ⊕-min (w_lo)",
+        );
+        // (c) order-independence: lo→hi yields the SAME ⊕-min.
+        assert_eq!(
+            run(&w_lo, &w_hi),
+            Some(w_lo),
+            "(c) lo→hi: ⊕ order-independent — same ⊕-min (w_lo)",
+        );
     }
 }
