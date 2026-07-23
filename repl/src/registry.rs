@@ -93,18 +93,33 @@ impl Default for LanguageRegistry {
 pub struct FltResolver<'a> {
     registry: &'a LanguageRegistry,
     tag_aliases: HashMap<String, String>,
+    /// Tag → the guest FLT reflector (`Box<dyn FltReflect>`, a raw `language!` value that reflects a
+    /// guest FLT template body into a [`GroundTerm`](mettail_rholang_codegen::GroundTerm) with
+    /// stable `^free(name)` holes). Because `FltReflect: Language`, this SAME value also yields the
+    /// guest's `name()`/fingerprint, so the reflection and the reflected-tag fingerprint stay
+    /// coherent (design §Stage-4). Present only when the codegen reflector surface is linked.
+    #[cfg(feature = "rho-languages")]
+    guests: HashMap<String, Box<dyn mettail_rholang_codegen::FltReflect>>,
 }
 
 impl<'a> FltResolver<'a> {
     /// A resolver over `registry` with no tag aliases (every tag resolves as a language name).
     pub fn new(registry: &'a LanguageRegistry) -> Self {
-        Self { registry, tag_aliases: HashMap::new() }
+        Self {
+            registry,
+            tag_aliases: HashMap::new(),
+            #[cfg(feature = "rho-languages")]
+            guests: HashMap::new(),
+        }
     }
 
-    /// A resolver pre-seeded with the bundled FLT surface-tag aliases (the demo's `lam` → `Lambda`).
+    /// A resolver pre-seeded with the bundled FLT surface-tag aliases (the demo's `lam` → `Lambda`)
+    /// and — where the codegen reflector surface is linked — the matching guest reflectors.
     pub fn with_default_aliases(registry: &'a LanguageRegistry) -> Self {
         let mut resolver = Self::new(registry);
         resolver.register_tag("lam", "Lambda");
+        #[cfg(feature = "rho-languages")]
+        resolver.register_guest("lam", Box::new(mettail_languages::lambda::LambdaLanguage));
         resolver
     }
 
@@ -134,6 +149,51 @@ impl<'a> FltResolver<'a> {
             )
         })?;
         Ok((language, fingerprint))
+    }
+}
+
+/// The FLT guest-reflection surface — present only when the codegen reflector
+/// ([`mettail_rholang_codegen::FltReflect`]) is linked (`rho-languages`).
+#[cfg(feature = "rho-languages")]
+impl<'a> FltResolver<'a> {
+    /// Register a guest FLT `reflector` (a raw `language!` value) under a surface `tag`
+    /// (case-insensitive). The reflector reflects a guest FLT template body into a
+    /// [`GroundTerm`](mettail_rholang_codegen::GroundTerm) and — via its
+    /// [`Language`](mettail_runtime::Language) supertrait — advertises the guest fingerprint the
+    /// reflection is keyed on.
+    pub fn register_guest(
+        &mut self,
+        tag: impl Into<String>,
+        reflector: Box<dyn mettail_rholang_codegen::FltReflect>,
+    ) {
+        self.guests.insert(tag.into().to_lowercase(), reflector);
+    }
+
+    /// Parse `body` in the guest surface named by FLT `tag` and reflect it into the guest
+    /// [`GroundTerm`](mettail_rholang_codegen::GroundTerm) (holes as stable `^free(name)` leaves),
+    /// returning it paired with the guest's definition fingerprint — the `fp` the public FLT
+    /// reflectors ([`reflect_flt_pattern`](mettail_rholang_codegen::reflect_flt_pattern) /
+    /// [`reflect_flt_construction`](mettail_rholang_codegen::reflect_flt_construction)) key their
+    /// unforgeable reflected tags on.
+    ///
+    /// Dispatches through the registered `&dyn FltReflect` guest; fails closed when no guest is
+    /// registered for the tag, the guest advertises no fingerprint, or the body does not reflect.
+    pub fn parse_and_reflect_flt(
+        &self,
+        tag: &str,
+        body: &str,
+    ) -> Result<(mettail_rholang_codegen::GroundTerm, &'static str)> {
+        let guest = self.guests.get(&tag.to_lowercase()).ok_or_else(|| {
+            anyhow::anyhow!("no FLT guest reflector registered for tag '{tag}'")
+        })?;
+        // `FltReflect: Language`, so the reflector value also carries the guest fingerprint.
+        let fingerprint = guest.metadata().definition_fingerprint().ok_or_else(|| {
+            anyhow::anyhow!("FLT guest for tag '{tag}' advertises no definition fingerprint")
+        })?;
+        let ground = guest
+            .parse_and_reflect_flt(body)
+            .map_err(|err| anyhow::anyhow!("FLT reflection for tag '{tag}' failed: {err}"))?;
+        Ok((ground, fingerprint))
     }
 }
 
@@ -229,5 +289,47 @@ mod flt_resolver_tests {
 
         // An unknown tag fails closed.
         assert!(resolver.resolve("not-a-language").is_err(), "an unknown FLT tag fails closed");
+    }
+
+    /// THE Stage-4 gate: `parse_and_reflect_flt("lam", "(f, lam a. lam b. a)")` — the guest surface
+    /// of `App($f, K)` — reflects to `App(^free(f), K)` with a STABLE `^free(f)` hole leaf (the
+    /// moniker `pretty_name` "f", NOT the reflector's `format!("{:?}", fv)` debug string), paired
+    /// with the Lambda definition fingerprint.
+    #[test]
+    fn flt_resolver_parses_and_reflects_the_lambda_app_template() {
+        use mettail_rholang_codegen::{
+            GroundTerm, BOUND_VAR_REFLECT_LABEL, FREE_VAR_REFLECT_LABEL, LAMBDA_REFLECT_LABEL,
+            PEANO_SUCC_REFLECT_LABEL, PEANO_ZERO_REFLECT_LABEL,
+        };
+        mettail_runtime::clear_var_cache();
+        let registry = build_registry().expect("the production registry builds");
+        let resolver = FltResolver::with_default_aliases(&registry);
+
+        let (ground, fingerprint) = resolver
+            .parse_and_reflect_flt("lam", "(f, lam a. lam b. a)")
+            .expect("the `lam` FLT template `App($f, K)` reflects");
+        assert_eq!(
+            fingerprint, "mettail-langdef-v1:6ef0c40636bb0bca",
+            "the reflection is paired with the Lambda definition fingerprint"
+        );
+
+        // Expected `App(^free(f), K)` with `K = lam a. lam b. a = Lam(Lam(^bound(1)))`.
+        let n = GroundTerm::nullary;
+        let node = GroundTerm::new;
+        let g_free_f = node(FREE_VAR_REFLECT_LABEL, vec![n("f")]);
+        let peano1 = node(PEANO_SUCC_REFLECT_LABEL, vec![n(PEANO_ZERO_REFLECT_LABEL)]);
+        let g_bound1 = node(BOUND_VAR_REFLECT_LABEL, vec![peano1]);
+        let g_k = node(LAMBDA_REFLECT_LABEL, vec![node(LAMBDA_REFLECT_LABEL, vec![g_bound1])]);
+        let expected = node("App", vec![g_free_f, g_k]);
+        assert_eq!(
+            ground, expected,
+            "App($f, K) reflects to App(^free(f), K) with a stable ^free(f) hole leaf"
+        );
+
+        // The hole leaf name is the STABLE pretty_name "f", never a `FreeVar { … }` debug string.
+        assert_eq!(
+            ground.children[0].children[0].constructor, "f",
+            "the ^free hole leaf carries the stable pretty_name, not a Debug string"
+        );
     }
 }

@@ -17,6 +17,13 @@ name = "mettail_rholang_codegen"
 
 [dependencies]
 mettail-ast = { package = "ast", path = "../ast" }
+# The runtime `Language`/`Term` trait surface. codegen → runtime is ACYCLIC (runtime
+# does not depend on rholang-codegen — the one-way direction BridgeInertness.v records
+# for the GroundTerm/Language split), so the FLT public reflector trait
+# (`FltReflect: mettail_runtime::Language`, rho_net_flt.rs) can name `Language` here —
+# the home `mettail_runtime::Language` itself CANNOT be, since it may not name the
+# codegen-owned `GroundTerm` (that reverse edge would cycle).
+mettail-runtime = { package = "runtime", path = "../runtime" }
 syn = { workspace = true }
 models = { workspace = true }
 # The set automaton (positional matcher) whose interned pattern DAG the Stage 1

@@ -71,6 +71,14 @@ pub fn generate_language_impl(language: &LanguageDef) -> TokenStream {
         "rho_scalar_invocation",
         crate::gen::runtime::rho_invocation::generate_rho_scalar_invocation(language),
     );
+    // Stage-4 FLT: the per-guest `FltReflect` impl (feature `rho-codegen`) — an ADDITIVE reuse of
+    // the same `Term → GroundTerm` reflection the in-Rho invocations emit, plus the stable
+    // hole-name post-pass. No existing reflection/lowering output changes.
+    let flt_reflect_include = crate::logic::writer::spill_and_include(
+        &lang_key,
+        "flt_reflect",
+        crate::gen::runtime::rho_invocation::generate_flt_reflect(language),
+    );
     let rho_fold_dataflow_include = crate::logic::writer::spill_and_include(
         &lang_key,
         "rho_fold_dataflow",
@@ -97,6 +105,7 @@ pub fn generate_language_impl(language: &LanguageDef) -> TokenStream {
         #language_struct_include
         #language_trait_impl_include
         #rho_scalar_invocation_include
+        #flt_reflect_include
         #rho_fold_dataflow_include
         #rho_net_invocation_include
         #dovetail_report_include

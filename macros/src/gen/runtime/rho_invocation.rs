@@ -878,6 +878,50 @@ fn reflect_subject_binding_inner(language: &LanguageDef, canonicalize: bool) -> 
     }
 }
 
+/// Generate the per-guest [`FltReflect`](mettail_rholang_codegen::FltReflect) impl (feature
+/// `rho-codegen`) — the Stage-4 public FLT reflection hinge that lets a resolver reflect a guest
+/// FLT template `` L`…` `` body into the [`GroundTerm`](mettail_rholang_codegen::GroundTerm) the
+/// public FLT reflectors consume.
+///
+/// It is deliberately THIN and ADDITIVE: it REUSES [`reflect_subject_binding`] VERBATIM — the exact
+/// `Term → GroundTerm` reflection the in-Rho match/drive invocation bodies emit (so an FLT template
+/// reflects byte-identically to how the same term reflects for driving, `coll_type` and
+/// `^bound(peano)` binder leaves included) — and applies the pure
+/// [`flt_normalize_hole_names`](mettail_rholang_codegen::flt_normalize_hole_names) post-pass so a
+/// hole `${f}` reflects to the STABLE `^free(f)` leaf (the moniker `pretty_name`) rather than the
+/// reflector's unstable `format!("{:?}", fv)` debug string. Existing reflection/lowering codegen is
+/// untouched.
+pub fn generate_flt_reflect(language: &LanguageDef) -> TokenStream {
+    let name = &language.name;
+    let language_struct = format_ident!("{}Language", name);
+    // The SAME reflect-fn group + `let __subject = …;` binding the match/drive invocation bodies
+    // use (reads the `term: &dyn Term` local; produces `__subject: GroundTerm`). No boundary
+    // canonicalization — an FLT template reflects exactly as written.
+    let reflect_subject = reflect_subject_binding(language);
+    quote! {
+        #[cfg(feature = "rho-codegen")]
+        impl ::mettail_rholang_codegen::FltReflect for #language_struct {
+            fn parse_and_reflect_flt(
+                &self,
+                body: &str,
+            ) -> ::core::result::Result<
+                ::mettail_rholang_codegen::GroundTerm,
+                ::std::string::String,
+            > {
+                // Parse the guest body in the guest's own surface (holes are ordinary guest free
+                // variables); `parse_term_for_env` does NOT clear the var cache, so the caller's
+                // interning is undisturbed when a lowering pass reflects several FLTs in a row.
+                let __parsed = mettail_runtime::Language::parse_term_for_env(self, body)?;
+                let term: &dyn mettail_runtime::Term = __parsed.as_ref();
+                #reflect_subject
+                ::core::result::Result::Ok(
+                    ::mettail_rholang_codegen::flt_normalize_hole_names(__subject),
+                )
+            }
+        }
+    }
+}
+
 /// A-S3: the native-scalar types whose LITERAL-LEAF ground tags (`"{Lit}({:?})"`, the
 /// [`reflect_category_fn`] literal arm's format) parse back FAITHFULLY via `FromStr` — the
 /// registrability whitelist for machine-side native handlers. For each of these,
