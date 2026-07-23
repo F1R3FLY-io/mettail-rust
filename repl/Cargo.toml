@@ -23,6 +23,9 @@ rho-languages = [
     "dep:mettail-rholang-runtime",
     "dep:mettail-rholang-codegen",
     "dep:mettail-ast",
+    # The `flt_demo` bin hand-builds FLT receive patterns (typed holes + marker-wildcard slots)
+    # with the `models` Par builders — the honest phase-now bridge the pinning twin uses.
+    "dep:models",
 ]
 
 # The `repl` binary is auto-detected from `src/main.rs`. The canonical `mettail` binary is owned
@@ -52,6 +55,10 @@ mettail-rholang-runtime = { package = "rholang-runtime", path = "../rholang-runt
 mettail-rholang-codegen = { package = "rholang-codegen", path = "../rholang-codegen", optional = true }
 # A-S5.6 (F6): the grammar model behind the observation-surface de-reflection renderer.
 mettail-ast = { package = "ast", path = "../ast", optional = true }
+# The `flt_demo` bin's `rhoapi::Par` builders (typed-hole receive patterns, marker-wildcard slots,
+# re-quote constructions) — the SAME honest hand-built technique as the pinning twin. Optional +
+# gated on `rho-languages`; a `--no-default-features` Dovetail-only build never pulls f1r3node models.
+models = { workspace = true, optional = true }
 
 moniker = {workspace = true}
 

@@ -7,29 +7,39 @@
 //! in-Rho by the generated `^drive` receiver family): the reflected-term ABI, the drive seed,
 //! and the four observation channels ([`DriveObservationChannels`]).
 //!
-//! ── What is SOLID here (asserted as fact) ────────────────────────────────────────────────
+//! ── What is SOLID here (asserted as fact) — every PRIMARY beat RUNS + is pinned ─────────────
 //!   * Beat 0 — the wire format: the reflected tagged-EList forms of `id` / `K` round-trip
 //!     through `par_as_runtime_observation_value`, and the per-language tag string is the
 //!     `mettail.term.{fp}.{label}` unforgeable-`GPrivate` name (rho_net_lower.rs:1710-1715).
-//!   * Beat 4 (core) — fill-holes-and-RUN: the subject `App(id, K)` drives to β-NF `K` in-Rho,
-//!     the `^fired` ledger records exactly `["Beta"]`, and `^drive-err`/`^drive-fuel` stay
-//!     empty. (Byte-for-byte the shape of `single_beta_drives_to_nf_in_rho`.)
+//!   * Beats 1/2/3 — the typed-hole FLT receive (see the matcher-contract note below): the hole
+//!     binds ⟦id⟧ (Beat 1), the ground `⟦K⟧` subpattern vetoes a foreign argument (Beat 2, the D2
+//!     marker-wildcarded form), and the unforgeable `⌜App⌝` tag rejects a 4-element GString-tagged
+//!     counterfeit that differs ONLY at the head (Beat 3 — pure No-Injection).
+//!   * Beat 4 (core) — fill-holes-and-RUN, direct seed: the subject `App(id, K)` drives to β-NF
+//!     `K` in-Rho, the `^fired` ledger records exactly `["Beta"]`, and `^drive-err`/`^drive-fuel`
+//!     stay empty. (Byte-for-byte the shape of `single_beta_drives_to_nf_in_rho`.)
+//!   * Beat 4 (re-quote from holes) — the SAME NF, but the drive seed is BUILT FROM THE CAPTURED
+//!     HOLES: a receiver captures `f`,`k`, re-quotes `[⌜App⌝, ⌜^nog⌝, f, k]` (marker forced ⌜^nog⌝,
+//!     the C2 semantic fix), seeds `^drive`, and drives to ⟦K⟧ with `^fired = ["Beta"]`.
+//!   * Beat 5 (positive) — the same-language inter-FLT re-ship: `⟦App(id, K)⟧` driven to its λ-NF
+//!     and re-shipped, then destructured + re-wrapped by a second consumer — OUT rests at ⟦K⟧.
 //!   * Beat 5 (Ω) — fuel exhaustion is typed and fail-closed: Ω fires exactly per-path-fuel
 //!     times, the stuck redex rests on `^drive-fuel`, and OUT never claims an NF.
 //!
-//! ── The typed-hole FLT receive (Beats 1/2/3), hand-built against the matcher contract ──────
-//!   The FLT receive-with-typed-hole (`for( @[⌜App⌝, ${f}, ⟦K⟧] <- @"fltX" ){…}`) needs a
-//!   receive whose `BindPattern` is a reflected EList carrying a `FreeVar` at the hole and a
-//!   GROUND reflected subterm elsewhere. No PUBLIC reflector emits such a pattern —
-//!   `reflect_ground_term_par` is ground-only, and `reflect_term_par_env` (rho_net_lower.rs:3607)
-//!   is private and emits σ-slot `BoundVar`s, not receive `FreeVar`s. But the pattern is
-//!   realizable TEST-SIDE with the `models` builders (mirroring the proven in-tree
-//!   `e6a_support::discovery_call_par` receive shape): a reflected tagged-EList whose head is the
-//!   unforgeable `GPrivate` tag (from the public `reflect_ground_term_par`), whose function
-//!   position is `EVar(FreeVar(0))`, and whose argument position is a ground reflected subterm.
-//!   This lands all three beats on the reducer with ZERO production change (no reflector API is
-//!   exposed) — validated below: the hole binds ⟦id⟧, the ground subpattern discriminates a
-//!   foreign argument, and the unforgeable tag rejects a GString-tagged counterfeit.
+//! ── The typed-hole FLT receive, hand-built against the matcher contract ─────────────────────
+//!   The FLT receive-with-typed-hole (`for( @[⌜App⌝, _, ${f}, ⟦K⟧] <- @"fltX" ){…}`, E-2-D v2 —
+//!   the `_` wildcards the index-1 groundness marker) needs a receive whose `BindPattern` is a
+//!   reflected EList carrying a `FreeVar` at the hole and a GROUND reflected subterm elsewhere. No
+//!   PUBLIC reflector emits such a pattern — `reflect_ground_term_par` is ground-only, and
+//!   `reflect_term_par_env` (rho_net_lower.rs:3607) is private and emits σ-slot `BoundVar`s, not
+//!   receive `FreeVar`s. But the pattern is realizable TEST-SIDE with the `models` builders
+//!   (mirroring the proven in-tree `e6a_support::discovery_call_par` receive shape): a reflected
+//!   tagged-EList whose head is the unforgeable `GPrivate` tag (built via [`reserved_tag_par`], the
+//!   production `tag_par` construction reached through the public `reflected_tag_string`), whose
+//!   marker slot is a `Wildcard`, whose hole positions are `EVar(FreeVar(_))`, and whose ground
+//!   positions are ground reflected subterms. This lands every beat on the reducer with ZERO
+//!   production change (no reflector API is exposed) — the honest phase-now bridge; the refined
+//!   `${x}` syntax GENERATES this same shape through a public reflector API in phase-2.
 #![cfg(feature = "lambda-runtime")]
 
 use mettail_languages::lambda::LambdaLanguage;
@@ -38,8 +48,8 @@ use mettail_rholang_codegen::{
     reflect_ground_term_par, reflected_tag_string, rho_net_drive_call_par,
     rho_net_drive_call_par_with_fuel, suggest_rejected_rule_dispositions, GroundTerm,
     RhoCoverageEvidence, RhoDefaultBackendRequirements, RhoGuardCoverageEvidence,
-    BOUND_VAR_REFLECT_LABEL, DRIVE_DEFAULT_FUEL, LAMBDA_REFLECT_LABEL, PEANO_SUCC_REFLECT_LABEL,
-    PEANO_ZERO_REFLECT_LABEL,
+    BOUND_VAR_REFLECT_LABEL, DRIVE_DEFAULT_FUEL, DRIVE_RESERVED_LABEL, LAMBDA_REFLECT_LABEL,
+    NONGROUND_MARK_REFLECT_LABEL, PEANO_SUCC_REFLECT_LABEL, PEANO_ZERO_REFLECT_LABEL,
 };
 use mettail_rholang_runtime::{
     binder_apply_redex_present, drive_cross_check, par_as_runtime_observation_value,
@@ -50,9 +60,10 @@ use mettail_runtime::{Language, RuntimeObservationValue};
 use models::create_bit_vector;
 use models::rhoapi::expr::ExprInstance;
 use models::rhoapi::{Par, ReceiveBind};
+use models::rust::rholang::implicits::GPrivateBuilder;
 use models::rust::utils::{
-    new_boundvar_par, new_elist_par, new_freevar_par, new_gstring_par, new_receive_par,
-    new_send_par,
+    new_boundvar_par, new_elist_par, new_freevar_par, new_gint_par, new_gstring_par,
+    new_receive_par, new_send_par, new_wildcard_par,
 };
 
 // ── the shared Lambda Rho-default backend (identical derivation to rho_net_lambda_firing.rs) ──
@@ -262,18 +273,33 @@ async fn beat5_omega_exhausts_fuel_with_the_typed_datum() {
 //   * Beat 3 — the counterfeit is rejected: a GString-tagged `["App", ⟦id⟧, ⟦K⟧]` fake carries the
 //     ground string head, not the `GPrivate` tag, so it never matches; OUT stays empty.
 
-/// The reflected `(⌜App⌝, ⟦id⟧, ⟦K⟧)` triple decomposed from `⟦App(id, K)⟧`
-/// (`EList[GPrivate(⌜App⌝), ⟦id⟧, ⟦K⟧]`) — the unforgeable head tag, plus the two ground children.
-fn reflected_app_parts(fp: &str) -> (Par, Par, Par) {
+/// The reflected `(⌜App⌝, ⌜^nog⌝, ⟦id⟧, ⟦K⟧)` quadruple decomposed from `⟦App(id, K)⟧`
+/// (`EList[GPrivate(⌜App⌝), GPrivate(⌜^nog⌝), ⟦id⟧, ⟦K⟧]`) — the unforgeable head tag, the E-2-D
+/// index-1 hereditary-ground MARKER (`⌜^nog⌝`, since `App(id, K)` is a closed λ-term), and the two
+/// ground children.
+fn reflected_app_parts(fp: &str) -> (Par, Par, Par, Par) {
     let subject = reflect_ground_term_par(&g_app(g_id(), g_k()), fp);
     match subject.exprs.first().and_then(|e| e.expr_instance.as_ref()) {
         // E-2-D (reflected-ABI v2): ⟦App(id, K)⟧ = [App_tag, ^nog, ⟦id⟧, ⟦K⟧] — the hereditary-
-        // ground marker sits at index 1, so the head tag / id / K are ps[0] / ps[2] / ps[3].
-        Some(ExprInstance::EListBody(list)) => {
-            (list.ps[0].clone(), list.ps[2].clone(), list.ps[3].clone())
-        },
+        // ground marker sits at index 1, so the head tag / marker / id / K are ps[0..4].
+        Some(ExprInstance::EListBody(list)) => (
+            list.ps[0].clone(),
+            list.ps[1].clone(),
+            list.ps[2].clone(),
+            list.ps[3].clone(),
+        ),
         other => panic!("⟦App(id, K)⟧ must reflect to a 4-element EList (marker at 1), got {other:?}"),
     }
+}
+
+/// The reserved unforgeable `GPrivate` tag `⌜label⌝` for fingerprint `fp` — assembled the SAME way
+/// the production emitter does (`rho_net_subst_trs::tag_par` =
+/// `GPrivateBuilder::new_par_from_string(reflect_tag(fp, label))`), reached here through the PUBLIC
+/// [`reflected_tag_string`]. This is the honest phase-now hand-build of the tags a `${x}`-syntax
+/// reflector emits in phase-2 — `⌜App⌝`, `⌜^lambda⌝`, the `⌜^nog⌝` marker, and the `⌜^drive⌝`
+/// rendezvous — byte-identical to what the installed driver family matches and seeds on.
+fn reserved_tag_par(fp: &str, label: &str) -> Par {
+    GPrivateBuilder::new_par_from_string(reflected_tag_string(fp, label))
 }
 
 fn quoted_name(name: &str) -> Par {
@@ -346,7 +372,7 @@ async fn out_values(program: &Par) -> Vec<RuntimeObservationValue> {
 async fn beat1_typed_hole_binds_the_function_position() {
     mettail_runtime::clear_var_cache();
     let (_backend, fp) = lambda_backend();
-    let (tag, _id_reflected, k_reflected) = reflected_app_parts(&fp);
+    let (tag, _marker, _id_reflected, k_reflected) = reflected_app_parts(&fp);
 
     let subject = reflect_ground_term_par(&g_app(g_id(), g_k()), &fp);
     let fired = out_values(&hole_rendezvous_program(subject, tag.clone(), k_reflected.clone())).await;
@@ -366,7 +392,7 @@ async fn beat1_typed_hole_binds_the_function_position() {
 async fn beat2_where_guard_vetoes_on_foreign_subterm() {
     mettail_runtime::clear_var_cache();
     let (_backend, fp) = lambda_backend();
-    let (tag, _id_reflected, k_reflected) = reflected_app_parts(&fp);
+    let (tag, _marker, _id_reflected, k_reflected) = reflected_app_parts(&fp);
 
     let matches = out_values(&hole_rendezvous_program(
         reflect_ground_term_par(&g_app(g_id(), g_k()), &fp),
@@ -385,19 +411,26 @@ async fn beat2_where_guard_vetoes_on_foreign_subterm() {
     assert!(vetoed.is_empty(), "⟦App(id, id)⟧ has ⟦id⟧ ≠ ⟦K⟧ at the argument — veto, OUT empty, rests");
 }
 
-/// Beat 3 — the counterfeit is rejected: a `GString`-tagged fake `["App", ⟦id⟧, ⟦K⟧]` carries the
-/// ground string head instead of the unforgeable `GPrivate` tag, so it never matches the
-/// `[⌜App⌝, ${f}, ⟦K⟧]` pattern — the runtime face of the FIP No-Injection property (no surface
-/// syntax spells a `GPrivate`, so a term claiming to be Lambda by NAME cannot match).
+/// Beat 3 — the counterfeit is rejected: a 4-element `GString`-tagged fake
+/// `["App", ⌜^nog⌝, ⟦id⟧, ⟦K⟧]` is byte-for-byte the genuine `⟦App(id, K)⟧` EXCEPT the head — a
+/// ground string `"App"` where the real subject carries the unforgeable `⌜App⌝` `GPrivate`. It
+/// matches the marked pattern's 4-element arity, its wildcarded marker slot (index 1), and the
+/// ground `⟦K⟧` at the argument, so the ONLY discriminant is the head tag: the rejection is a PURE
+/// unforgeable-tag failure, not an incidental arity/shape mismatch — the runtime face of the FIP
+/// No-Injection property (no surface syntax spells a `GPrivate`, so a term claiming to be Lambda by
+/// NAME cannot match).
 #[tokio::test]
 async fn beat3_counterfeit_tag_rejected() {
     mettail_runtime::clear_var_cache();
     let (_backend, fp) = lambda_backend();
-    let (tag, id_reflected, k_reflected) = reflected_app_parts(&fp);
+    let (tag, marker, id_reflected, k_reflected) = reflected_app_parts(&fp);
 
-    // Counterfeit datum: a ground-string head where the genuine subject carries the GPrivate tag.
+    // The 4-element counterfeit `["App", ⌜^nog⌝, ⟦id⟧, ⟦K⟧]`: the genuine `⌜^nog⌝` marker (so the
+    // wildcarded marker slot matches), the ground `⟦id⟧`/`⟦K⟧` children, and a GString `"App"` head
+    // in place of the `GPrivate` `⌜App⌝`. Everything but index 0 is byte-identical to the real
+    // subject, isolating the rejection to the unforgeable tag.
     let counterfeit = new_elist_par(
-        vec![quoted_name("App"), id_reflected, k_reflected.clone()],
+        vec![quoted_name("App"), marker, id_reflected, k_reflected.clone()],
         Vec::new(),
         false,
         None,
@@ -406,4 +439,264 @@ async fn beat3_counterfeit_tag_rejected() {
     );
     let rested = out_values(&hole_rendezvous_program(counterfeit, tag, k_reflected)).await;
     assert!(rested.is_empty(), "the GString-tagged counterfeit ≠ the GPrivate ⌜App⌝ tag — no match");
+}
+
+// ── Beat 4 (re-quote from holes) — fill the holes and RUN: capture f,k, re-quote, drive to β-NF ──
+//
+// The FULL run-sheet Beat 4 wired end-to-end: a receiver captures the two App holes `f`,`k` (the
+// marker slot wildcarded), RE-QUOTES `[⌜App⌝, ⌜^nog⌝, f, k]` at CONSTRUCTION position, then seeds
+// the installed `^drive` quiescence driver, which fires β and re-drives the contractum to the β-NF
+// ⟦K⟧. Two E-2-D correctness constraints make the re-quote SEMANTIC, not cosmetic (RUN-SHEET §Beat
+// 4 / design §6 C2): (1) a 3-element `[⌜App⌝, f, k]` omitting the index-1 marker slot would not
+// match the driver's marked App redex arm (`pat_tagged`, which expects `[tag, marker, args…]`), so
+// β never fires; (2) hard-coding `⌜^gnd⌝` over the holes would let the hereditary-ground guard
+// short-circuit subst to the identity, so β silently would not fire on a binder-carrying fill.
+// Forcing `⌜^nog⌝` is both necessary and conservatively sound (a fill only makes a node LESS
+// ground — `InRhoCreeperTrace.oground`). The direct-seed `beat4_app_id_k_drives_to_konst_in_rho`
+// proves the SAME NF from a hand-built seed; here the seed is BUILT FROM THE CAPTURED HOLES.
+
+/// Assemble `@"fltX"!(⟦App(id, K)⟧) | for( @[⌜App⌝, _, ${f}, ${k}] <- @"fltX" ){
+/// ⌜^drive⌝!( [⌜App⌝, ⌜^nog⌝, f, k], fuel, "OUT" ) }`. The receive binds two holes — `${f}` =
+/// `FreeVar(0)` (index 2), `${k}` = `FreeVar(1)` (index 3), the marker slot (index 1) absorbed by a
+/// wildcard — so in the continuation `f` = `BoundVar(1)` and `k` = `BoundVar(0)` (the innermost free
+/// var is `BoundVar(0)`: the [`Env::root`] convention the codegen drivers share with the reducer).
+/// The body re-quotes the App with the marker slot forced to `⌜^nog⌝` and seeds `⌜^drive⌝` with the
+/// production per-path fuel and the "OUT" return label.
+fn requote_and_drive_program(fp: &str) -> Par {
+    let app_tag = reserved_tag_par(fp, "App");
+    let nog = reserved_tag_par(fp, NONGROUND_MARK_REFLECT_LABEL);
+    let drive_chan = reserved_tag_par(fp, DRIVE_RESERVED_LABEL);
+    let subject = reflect_ground_term_par(&g_app(g_id(), g_k()), fp);
+
+    let producer =
+        new_send_par(quoted_name("fltX"), vec![subject], false, Vec::new(), false, Vec::new(), false);
+
+    // Pattern `[⌜App⌝, _, ${f}, ${k}]` — wildcard the E-2-D marker (index 1); FreeVar(0)=f at index
+    // 2, FreeVar(1)=k at index 3. The wildcard + FreeVars make the EList (and its Par) connective-used.
+    let pattern = new_elist_par(
+        vec![
+            app_tag.clone(),
+            new_wildcard_par(Vec::new(), true),
+            new_freevar_par(0, Vec::new()),
+            new_freevar_par(1, Vec::new()),
+        ],
+        Vec::new(),
+        true,
+        None,
+        Vec::new(),
+        true,
+    );
+    // Re-quote `[⌜App⌝, ⌜^nog⌝, f, k]` — a CONSTRUCTION (not a pattern): `f`=BoundVar(1),
+    // `k`=BoundVar(0), so its free-set is {0, 1}; no connective.
+    let requote = new_elist_par(
+        vec![
+            app_tag,
+            nog,
+            new_boundvar_par(1, create_bit_vector(&[1]), false),
+            new_boundvar_par(0, create_bit_vector(&[0]), false),
+        ],
+        create_bit_vector(&[0, 1]),
+        false,
+        None,
+        create_bit_vector(&[0, 1]),
+        false,
+    );
+    // Body `⌜^drive⌝!( <re-quote>, fuel, "OUT" )` — the SAME seed shape as
+    // `rho_net_drive_call_par(fp, ⟦App(id, K)⟧, "OUT")`, but its subject is built from the holes.
+    let body = new_send_par(
+        drive_chan,
+        vec![
+            requote,
+            new_gint_par(DRIVE_DEFAULT_FUEL, Vec::new(), false),
+            new_gstring_par("OUT".to_string(), Vec::new(), false),
+        ],
+        false,
+        create_bit_vector(&[0, 1]),
+        false,
+        create_bit_vector(&[0, 1]),
+        false,
+    );
+    let receive = new_receive_par(
+        vec![ReceiveBind {
+            patterns: vec![pattern],
+            source: Some(quoted_name("fltX")),
+            remainder: None,
+            free_count: 2,
+        }],
+        body,
+        false,
+        false,
+        2,
+        Vec::new(),
+        false,
+        Vec::new(),
+        false,
+    );
+    producer.append(receive)
+}
+
+/// Beat 4 (re-quote from holes) — the FLT rendezvous fills the holes and RUNS: a receiver captures
+/// `f`,`k` from `⟦App(id, K)⟧`, re-quotes `[⌜App⌝, ⌜^nog⌝, f, k]`, and seeds the installed driver,
+/// which fires β and re-drives the contractum to β-NF `⟦K⟧` — `^fired` records exactly `["Beta"]`
+/// and both fail-close channels stay empty. Composed as the dynamic `call` on the backend's
+/// installed `^drive` receiver family, exactly like the direct-seed Beat-4 core.
+#[tokio::test]
+async fn beat4_requote_from_holes_drives_to_konst_in_rho() {
+    mettail_runtime::clear_var_cache();
+    let (backend, fp) = lambda_backend();
+
+    let program = requote_and_drive_program(&fp);
+    let channels = DriveObservationChannels::for_fingerprint(&fp, "OUT");
+    let set = backend
+        .run_rho_net_with_call_and_read_observation_set(&program, &channels)
+        .await
+        .expect("the re-quote-from-holes rendezvous drives to quiescence on the reducer");
+
+    assert_eq!(set.out_values, vec![okonst()], "the hole-filled App re-quote drives to K = λ.λ.1");
+    assert_eq!(
+        set.fired_labels().expect("ledger decodes"),
+        vec!["Beta".to_string()],
+        "exactly one Beta firing — the re-quote matched the marked App redex arm and fired"
+    );
+    assert!(set.err_data.is_empty(), "no unrecognized head — the ⌜^nog⌝ re-quote is well-formed v2");
+    assert!(set.fuel_data.is_empty(), "the drive terminated by quiescence, not fuel");
+    drive_cross_check(&set, &channels, true, DRIVE_DEFAULT_FUEL, &lambda_redex_scan)
+        .expect("the always-on drive cross-check is green");
+}
+
+// ── Beat 5 (positive) — the same-language inter-FLT re-ship: NF produced by one FLT, matched by ──
+//   another. Producer ships `⟦App(id, K)⟧`; consumer 1 drives it to its λ-NF and RE-SHIPS on `nf`;
+//   consumer 2 destructures the λ (marker wildcarded), RE-WRAPS it (marker forced `⌜^nog⌝` — the
+//   same E-2-D physics as Beat 4: a 3-element `[⌜^lambda⌝, b]` neither matches the marked `^lambda`
+//   layout nor re-ships as a well-formed reflected λ), and publishes to `OUT`. Honest scope: this
+//   is a same-language, same-binder-depth identity re-wrap; the hard cross-language binder hole is
+//   the phase-3 co-install spike, not this beat.
+
+/// Assemble `@"fltX"!(⟦App(id, K)⟧) | for(@${t} <- @"fltX"){ ⌜^drive⌝!(t, fuel, "nf") } |
+/// for(@[⌜^lambda⌝, _, ${b}] <- @"nf"){ @"OUT"!([⌜^lambda⌝, ⌜^nog⌝, b]) }`. Consumer 1's whole-term
+/// hole `${t}` = `FreeVar(0)` ⟹ `BoundVar(0)` in its body; the driver publishes the NF to the GString
+/// `@"nf"` (its "nf" return label). Consumer 2's `${b}` = `FreeVar(0)` (the λ body) ⟹ `BoundVar(0)`.
+fn inter_flt_reship_program(fp: &str) -> Par {
+    let lambda_tag = reserved_tag_par(fp, LAMBDA_REFLECT_LABEL);
+    let nog = reserved_tag_par(fp, NONGROUND_MARK_REFLECT_LABEL);
+    let drive_chan = reserved_tag_par(fp, DRIVE_RESERVED_LABEL);
+    let subject = reflect_ground_term_par(&g_app(g_id(), g_k()), fp);
+
+    // Producer: @"fltX"!(⟦App(id, K)⟧).
+    let producer =
+        new_send_par(quoted_name("fltX"), vec![subject], false, Vec::new(), false, Vec::new(), false);
+
+    // Consumer 1: for(@${t} <- @"fltX"){ ⌜^drive⌝!(t, fuel, "nf") } — capture the WHOLE FLT (a bare
+    // FreeVar(0)), then seed the driver with the "nf" return label. In the body t = BoundVar(0).
+    let consumer1 = {
+        let drive_seed = new_send_par(
+            drive_chan,
+            vec![
+                new_boundvar_par(0, create_bit_vector(&[0]), false),
+                new_gint_par(DRIVE_DEFAULT_FUEL, Vec::new(), false),
+                new_gstring_par("nf".to_string(), Vec::new(), false),
+            ],
+            false,
+            create_bit_vector(&[0]),
+            false,
+            create_bit_vector(&[0]),
+            false,
+        );
+        new_receive_par(
+            vec![ReceiveBind {
+                patterns: vec![new_freevar_par(0, Vec::new())],
+                source: Some(quoted_name("fltX")),
+                remainder: None,
+                free_count: 1,
+            }],
+            drive_seed,
+            false,
+            false,
+            1,
+            Vec::new(),
+            false,
+            Vec::new(),
+            false,
+        )
+    };
+
+    // Consumer 2: for(@[⌜^lambda⌝, _, ${b}] <- @"nf"){ @"OUT"!([⌜^lambda⌝, ⌜^nog⌝, b]) } — match the
+    // λ NF (marker wildcarded at index 1, ${b}=FreeVar(0) the body at index 2), re-wrap with the
+    // marker forced ⌜^nog⌝, publish to OUT. In the body b = BoundVar(0).
+    let consumer2 = {
+        let pattern = new_elist_par(
+            vec![
+                lambda_tag.clone(),
+                new_wildcard_par(Vec::new(), true),
+                new_freevar_par(0, Vec::new()),
+            ],
+            Vec::new(),
+            true,
+            None,
+            Vec::new(),
+            true,
+        );
+        let rewrap = new_elist_par(
+            vec![lambda_tag, nog, new_boundvar_par(0, create_bit_vector(&[0]), false)],
+            create_bit_vector(&[0]),
+            false,
+            None,
+            create_bit_vector(&[0]),
+            false,
+        );
+        let body = new_send_par(
+            quoted_name("OUT"),
+            vec![rewrap],
+            false,
+            create_bit_vector(&[0]),
+            false,
+            create_bit_vector(&[0]),
+            false,
+        );
+        new_receive_par(
+            vec![ReceiveBind {
+                patterns: vec![pattern],
+                source: Some(quoted_name("nf")),
+                remainder: None,
+                free_count: 1,
+            }],
+            body,
+            false,
+            false,
+            1,
+            Vec::new(),
+            false,
+            Vec::new(),
+            false,
+        )
+    };
+
+    producer.append(consumer1).append(consumer2)
+}
+
+/// Beat 5 (positive) — the SAME-LANGUAGE inter-FLT re-ship: `⟦App(id, K)⟧` shipped on `fltX`, driven
+/// to its λ-NF and re-shipped on `nf` by consumer 1, then destructured, re-wrapped, and published to
+/// `OUT` by consumer 2. OUT rests at `⟦K⟧` — a normal form produced by one FLT interaction, matched
+/// and re-emitted by another (the runtime-mandate's inter-FLT communication, live). Consumer 1's
+/// drive fires exactly one Beta with both fail-close channels empty.
+#[tokio::test]
+async fn beat5_inter_flt_reship_positive() {
+    mettail_runtime::clear_var_cache();
+    let (backend, fp) = lambda_backend();
+
+    let program = inter_flt_reship_program(&fp);
+    let channels = DriveObservationChannels::for_fingerprint(&fp, "OUT");
+    let set = backend
+        .run_rho_net_with_call_and_read_observation_set(&program, &channels)
+        .await
+        .expect("the inter-FLT re-ship runs to rest on the reducer");
+
+    assert_eq!(set.out_values, vec![okonst()], "the re-shipped λ-NF rests at K = λ.λ.1 on OUT");
+    assert_eq!(
+        set.fired_labels().expect("ledger decodes"),
+        vec!["Beta".to_string()],
+        "consumer 1's drive fired exactly one Beta"
+    );
+    assert!(set.err_data.is_empty(), "no unrecognized head on consumer 1's drive");
+    assert!(set.fuel_data.is_empty(), "consumer 1's drive terminated by quiescence, not fuel");
 }
