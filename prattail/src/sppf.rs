@@ -256,6 +256,15 @@ pub enum SppfNode<W: SemiringRef> {
         handle: u32,
     },
 
+    /// L9-4: an assembled FLT guest body (`ActionArg::GuestBody`). The
+    /// `Arc<FltNode>` payload is owned by the walker's `sppf_guest_body_arena`;
+    /// this node references it by index. Realization clones the Arc into
+    /// `ActionArg::GuestBody`. Mirrors `Predicate`.
+    GuestBody {
+        /// Index into `WpdaWalker::sppf_guest_body_arena`.
+        handle: u32,
+    },
+
     /// Bug N fix (Phase 3.1.5, 2026-05-15): completed binder scope —
     /// produced when `apply_effect_to_cursor` processes a
     /// `BuilderDelta::EndBinderScope` effect. The walker side pops the
@@ -434,6 +443,8 @@ pub struct Sppf<W: SemiringRef> {
     dedup_collection_id: FxHashMap<(u32, Vec<SppfId>), SppfId>,
     dedup_opt_absent: FxHashMap<u32, SppfId>,
     dedup_predicate: FxHashMap<u32, SppfId>,
+    /// L9-4: dedup for `GuestBody` leaves, keyed by arena handle.
+    dedup_guest_body: FxHashMap<u32, SppfId>,
     /// Bug N (Phase 3.1.5): dedup BinderScope by `(depth, names_hash)`.
     /// Two cursors emitting the same scope contents at the same depth
     /// collapse to the same SppfId.
@@ -481,6 +492,7 @@ impl<W: SemiringRef> Default for Sppf<W> {
             dedup_collection_id: FxHashMap::default(),
             dedup_opt_absent: FxHashMap::default(),
             dedup_predicate: FxHashMap::default(),
+            dedup_guest_body: FxHashMap::default(),
             dedup_binder_scope: FxHashMap::default(),
             dedup_trigger_terminal: FxHashMap::default(),
             dedup_intermediate: FxHashMap::default(),
@@ -729,6 +741,18 @@ impl<W: SemiringRef> Sppf<W> {
         id
     }
 
+    /// L9-4: intern a `GuestBody` payload reference. Dedup'd by `handle`.
+    /// Mirrors `intern_predicate`.
+    pub fn intern_guest_body(&mut self, handle: u32) -> SppfId {
+        if let Some(&id) = self.dedup_guest_body.get(&handle) {
+            return id;
+        }
+        let id = self.nodes.len() as SppfId;
+        self.nodes.push(SppfNode::GuestBody { handle });
+        self.dedup_guest_body.insert(handle, id);
+        id
+    }
+
     /// Intern a `BinderScope` leaf (Bug N fix). Names are interned via
     /// `intern_text`; the returned SppfId references a `SppfNode::BinderScope`
     /// containing `Vec<TextHandle>` + depth. Dedup'd by `(depth, hash(names))`.
@@ -963,6 +987,7 @@ impl<W: SemiringRef> Sppf<W> {
                 // references / metadata without an intrinsic span.
                 SppfNode::CollectionId { .. }
                 | SppfNode::Predicate { .. }
+                | SppfNode::GuestBody { .. }
                 | SppfNode::BinderScope { .. } => return None,
             }
         }
@@ -999,6 +1024,7 @@ impl<W: SemiringRef> Sppf<W> {
                 },
                 SppfNode::CollectionId { .. }
                 | SppfNode::Predicate { .. }
+                | SppfNode::GuestBody { .. }
                 | SppfNode::BinderScope { .. } => return None,
             }
         }
@@ -1065,6 +1091,7 @@ impl<W: SemiringRef> Sppf<W> {
         self.dedup_collection_id.retain(|_, &mut id| id < n);
         self.dedup_opt_absent.retain(|_, &mut id| id < n);
         self.dedup_predicate.retain(|_, &mut id| id < n);
+        self.dedup_guest_body.retain(|_, &mut id| id < n);
         self.dedup_binder_scope.retain(|_, &mut id| id < n);
         self.dedup_trigger_terminal.retain(|_, &mut id| id < n);
 
@@ -1222,6 +1249,7 @@ impl<W: SemiringRef> Sppf<W> {
                 | Some(SppfNode::Epsilon { .. })
                 | Some(SppfNode::OptAbsent { .. })
                 | Some(SppfNode::Predicate { .. })
+                | Some(SppfNode::GuestBody { .. })
                 | Some(SppfNode::BinderScope { .. })
                 // ROOT-P Stage E1: Intermediate is canonical-only; the classic
                 // Tarjan-SCC graph never contains one — treat as a leaf.

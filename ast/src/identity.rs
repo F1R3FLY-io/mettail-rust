@@ -629,6 +629,17 @@ fn write_syntax_expr(expr: &SyntaxExpr, out: &mut String) {
             }
             out.push(')');
         },
+        SyntaxExpr::GuestBody { open, close, bind } => {
+            // L9-4: fold the guest-body capture (opener/closer kinds + bind) into
+            // the langdef fingerprint.
+            out.push_str("guestbody(");
+            push_ident(out, bind);
+            out.push(',');
+            push_ident(out, open);
+            out.push(',');
+            push_ident(out, close);
+            out.push(')');
+        },
     }
 }
 

@@ -339,7 +339,7 @@ fn generate_regular_push_arm(
             // warnings while keeping destructure arity correct.
             // L9-3: a token-text capture (`String`) drops in place identically
             // — no DropTask, no dummy `String` category exists.
-            if field.is_predicate || field.is_token_text {
+            if field.is_predicate || field.is_opaque_leaf() {
                 return quote! {
                     let _ = #name;
                 };

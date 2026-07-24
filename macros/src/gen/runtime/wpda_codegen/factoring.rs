@@ -548,6 +548,7 @@ fn binder_items(
             // rule carrying one does not merge into the shared spine trie.
             BinderPosition::ParamParse { collection: Some(_), .. }
             | BinderPosition::TokenKindCapture { .. }
+            | BinderPosition::GuestBodyCapture { .. }
             | BinderPosition::BinderIdent
             | BinderPosition::BinderListLoop { .. }
             | BinderPosition::GuardSlot

@@ -535,7 +535,7 @@ fn generate_iterative_regular_arm(
             // L9-3: token-text captures compare structurally (String: Eq) — a
             // ground COMM guard/pattern requires byte-equal token text; no
             // MatchTask descent (mirrors the predicate leaf).
-            if field.is_predicate || field.is_token_text {
+            if field.is_predicate || field.is_opaque_leaf() {
                 return quote! {
                     if #gname != #pname { return None; }
                 };
@@ -732,7 +732,7 @@ fn generate_binder_match_arm_inline(
             // iff the two predicates are structurally equal. Variables
             // inside a predicate are NOT FreeVars of the host category
             // and do not need binding.
-            if field.is_predicate || field.is_token_text {
+            if field.is_predicate || field.is_opaque_leaf() {
                 return quote! {
                     if #gname != #pname {
                         return None;
@@ -813,7 +813,7 @@ fn generate_multi_binder_match_arm_inline(
             let gname = &g_fields[i];
             let pname = &p_fields[i];
             // Phase 3A: predicate slots compare via structural equality.
-            if field.is_predicate || field.is_token_text {
+            if field.is_predicate || field.is_opaque_leaf() {
                 return quote! {
                     if #gname != #pname {
                         return None;
@@ -960,7 +960,7 @@ mod tests {
                 coll_type: None,
                 is_predicate: false,
                 is_optional: false,
-                is_token_text: false,
+                opaque_leaf: None,
             },
             FieldInfo {
                 category: format_ident!("Guard"),
@@ -968,7 +968,7 @@ mod tests {
                 coll_type: None,
                 is_predicate: true,
                 is_optional: true,
-                is_token_text: false,
+                opaque_leaf: None,
             },
         ];
         let arm = generate_iterative_regular_arm(&cat, &label, &fields, &language).to_string();

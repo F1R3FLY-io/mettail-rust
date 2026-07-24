@@ -582,7 +582,10 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
                         let mut try_bindings: Vec<TokenStream> = Vec::new();
                         for f in &layout.non_scope {
                             match &f.kind {
-                                CaptureFieldKind::TokenText => {
+                                CaptureFieldKind::TokenText
+                                | CaptureFieldKind::GuestBody { .. } => {
+                                    // Opaque capture leaf (`&String` / `&Arc<FltNode>`)
+                                    // — bound directly, usable in `![…]` (no eval).
                                     let name = format_ident!("{}", f.name);
                                     pats.push(quote! { #name });
                                 },

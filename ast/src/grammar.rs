@@ -176,6 +176,16 @@ pub enum SyntaxExpr {
     /// declared token name and NOT a term-context param) — never written as a
     /// bare literal.
     TokenKind { name: Ident, bind: Option<Ident> },
+    /// L9-4: a guest-body FLT capture, written `*flt(bind, open, close)`. The
+    /// walker consumes the `open` opener token (a mode-pushing `FltOpen*` kind
+    /// carrying the tag), then the guest body (`GuestChunk` / `${…}` `Hole`
+    /// tokens), then the `close` closer token (a `pop` `FltClose*` kind), and
+    /// ASSEMBLES a `mettail_runtime::FltNode` (tag, ONE verbatim `body_src`
+    /// slice, holes, position) bound to `bind` as an `Arc<FltNode>` opaque
+    /// leaf. Its variant field rides the L9-3 capture machinery
+    /// (`capture_layout` → `OpaqueLeafKind::GuestBody`), NOT a term-context
+    /// param — `bind` is bound by `*flt`, not declared before `|-`.
+    GuestBody { open: Ident, close: Ident, bind: Ident },
 }
 
 /// Pattern operation (compile-time meta-syntax)
@@ -861,8 +871,16 @@ fn is_end_of_syntax_pattern(input: ParseStream) -> bool {
 
 /// Parse a single syntax expression (literal, param, or pattern op)
 pub(crate) fn parse_syntax_expr(input: ParseStream) -> SynResult<SyntaxExpr> {
-    // Check for pattern operation: #name(...)
+    // Check for pattern operation: *name(...)
     if input.peek(Token![*]) {
+        // L9-4: `*flt(bind, open, close)` routes to `SyntaxExpr::GuestBody`
+        // (a guest-body capture), NOT the generic `SyntaxExpr::Op` wrapper the
+        // other `*` meta-ops produce.
+        let fork = input.fork();
+        let _ = fork.parse::<Token![*]>();
+        if fork.parse::<Ident>().map(|n| n == "flt").unwrap_or(false) {
+            return parse_flt_op(input);
+        }
         return parse_pattern_op_expr(input);
     }
 
@@ -1017,6 +1035,22 @@ fn parse_sep_op(content: ParseStream) -> SynResult<PatternOp> {
     let _ = content.parse::<Token![,]>()?;
     let separator = content.parse::<syn::LitStr>()?.value();
     Ok(PatternOp::Sep { collection, separator, source: None })
+}
+
+/// L9-4: parse `*flt(bind, open, close)` → [`SyntaxExpr::GuestBody`]. `bind` is
+/// the FltNode capture name; `open`/`close` are the opener/closer token KINDS
+/// (e.g. `FltOpenBacktick` / `FltCloseBacktick`).
+fn parse_flt_op(input: ParseStream) -> SynResult<SyntaxExpr> {
+    let _ = input.parse::<Token![*]>()?; // *
+    let _ = input.parse::<Ident>()?; // flt
+    let content;
+    syn::parenthesized!(content in input);
+    let bind = content.parse::<Ident>()?;
+    let _ = content.parse::<Token![,]>()?;
+    let open = content.parse::<Ident>()?;
+    let _ = content.parse::<Token![,]>()?;
+    let close = content.parse::<Ident>()?;
+    Ok(SyntaxExpr::GuestBody { open, close, bind })
 }
 
 /// Parse #zip(a, b)

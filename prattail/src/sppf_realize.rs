@@ -89,6 +89,12 @@ pub trait ActionResolver {
         panic!("ActionResolver::resolve_predicate called with handle={} but resolver does not support predicates", handle);
     }
 
+    /// L9-4: resolve a `GuestBody` payload reference. The handle is into the
+    /// walker's `sppf_guest_body_arena`.
+    fn resolve_guest_body(&self, handle: u32) -> Self::Out {
+        panic!("ActionResolver::resolve_guest_body called with handle={} but resolver does not support guest bodies", handle);
+    }
+
     /// Resolve a `BinderScope` leaf. The user AST gets an
     /// `ActionArg::BinderScope(BinderHandle{names, depth})`-shaped value.
     fn resolve_binder_scope(&self, names: Vec<String>, depth: u16) -> Self::Out {
@@ -173,6 +179,7 @@ pub fn realize_into<W: SemiringRef, R: ActionResolver>(
                     | Some(SppfNode::CollectionId { .. })
                     | Some(SppfNode::OptAbsent { .. })
                     | Some(SppfNode::Predicate { .. })
+                    | Some(SppfNode::GuestBody { .. })
                     // ROOT-P Stage E1: Intermediate is canonical-only; this
                     // classic resolver-realize never sees one. Treat as a leaf.
                     | Some(SppfNode::Intermediate { .. })
@@ -233,6 +240,9 @@ pub fn realize_into<W: SemiringRef, R: ActionResolver>(
                     },
                     Some(SppfNode::Predicate { handle }) => {
                         vec![resolver.resolve_predicate(*handle)]
+                    },
+                    Some(SppfNode::GuestBody { handle }) => {
+                        vec![resolver.resolve_guest_body(*handle)]
                     },
                     Some(SppfNode::BinderScope { names_text, depth }) => {
                         let names: Vec<String> = names_text

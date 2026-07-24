@@ -2164,6 +2164,12 @@ pub struct WpdaWalker<W: SemiringRef, E: WpdaEngine<W>> {
     ///
     /// Append-only.
     sppf_predicate_arena: Vec<Arc<dyn Any + Send + Sync>>,
+    /// L9-4: assembled FLT guest-body payloads. The
+    /// `ConsumeGuestBodyAndReplace` action assembles an `FltNode`, interns it
+    /// here, and pushes a `SppfNode::GuestBody { handle }` leaf; realization
+    /// clones the Arc into `ActionArg::GuestBody`. Mirrors
+    /// `sppf_predicate_arena`. Append-only.
+    sppf_guest_body_arena: Vec<Arc<crate::wpda_runtime::GuestBodyData>>,
     /// Phase F.13 chain_10000 Plan D E3 Substage 2 (2026-05-26):
     /// walker-global SPPF-stack path-tree arena. Each `BranchCursor`
     /// holds a `StackId` (Copy `u32`) into this arena; push/pop are
@@ -2824,6 +2830,21 @@ pub enum ForkActionKind {
     /// to the mid-rule positions at the next input position. Fail (kind
     /// mismatch) → no child (cursor dies, siblings survive: fanout-survival).
     GuardedConsumeTokenKindAndPush { kind_name: String },
+
+    /// L9-4 — assemble an FLT guest body and PUSH the RuleAt frame (LEADING
+    /// form: the `open` opener token IS the rule's trigger, e.g.
+    /// `PFlt . |- *flt(node, FltOpenBacktick, FltCloseBacktick) : Proc`). The
+    /// walker gates `peek_kind == Custom(open)`, scans the `GuestChunk`/`Hole`
+    /// run to the `Custom(close)` closer assembling an `FltNode` (verbatim
+    /// `body_src` via `source_slice`), interns it into `sppf_guest_body_arena`
+    /// as a `SppfNode::GuestBody` leaf, and DESCENDS at the post-closer
+    /// position. Fail (opener kind mismatch / malformed run) → no child.
+    ConsumeGuestBodyAndPush { open_kind: String, close_kind: String },
+
+    /// L9-4 — mid-rule twin of [`Self::ConsumeGuestBodyAndPush`]: assemble the
+    /// guest body and REPLACE `cur_sym` (used when a literal trigger already
+    /// pushed the RuleAt frame, e.g. `Foo . |- "pre" *flt(node, …) : Proc`).
+    ConsumeGuestBodyAndReplace { open_kind: String, close_kind: String },
 
     /// L12 follow-up B2 (2026-05-07) — closure for BinderListLoop's
     /// separator branch. Mirrors `WpdaStepAction::Consume` but gated on
@@ -5564,6 +5585,7 @@ where
             // Option C / C2: fresh empty SPPF arena.
             sppf: crate::sppf::Sppf::new(),
             sppf_predicate_arena: Vec::new(),
+            sppf_guest_body_arena: Vec::new(),
             // Phase F.13 H1 (2026-05-20): walker-global memo, lazy init.
             sppf_symbol_terms: std::collections::HashMap::new(),
             // Phase F.13 walker-stats (2026-05-20): zero-cost when feature off.
@@ -5671,6 +5693,7 @@ where
             // Option C / C2: fresh empty SPPF arena.
             sppf: crate::sppf::Sppf::new(),
             sppf_predicate_arena: Vec::new(),
+            sppf_guest_body_arena: Vec::new(),
             // Phase F.13 H1 (2026-05-20): walker-global memo, lazy init.
             sppf_symbol_terms: std::collections::HashMap::new(),
             // Phase F.13 walker-stats (2026-05-20): zero-cost when feature off.
@@ -8306,6 +8329,13 @@ where
                     Vec::new()
                 }
             },
+            Some(crate::sppf::SppfNode::GuestBody { handle }) => {
+                if let Some(node) = self.sppf_guest_body_arena.get(*handle as usize) {
+                    vec![(ActionArg::GuestBody(Arc::clone(node)), W::one_ref())]
+                } else {
+                    Vec::new()
+                }
+            },
             Some(crate::sppf::SppfNode::CollectionId { id: cid, .. }) => {
                 // The CollectionId marker is consumed by the action
                 // alongside the collected items. The realization yields
@@ -8903,9 +8933,10 @@ where
                     },
                     ActionArg::Optional(_)
                     | ActionArg::Collection { .. }
-                    | ActionArg::BinderScope(_) => {
-                        // BinderScope / Collection / Optional arrive via
-                        // dedicated push pathways in the walker. For
+                    | ActionArg::BinderScope(_)
+                    | ActionArg::GuestBody(_) => {
+                        // BinderScope / Collection / Optional / GuestBody arrive
+                        // via dedicated push pathways in the walker. For
                         // realization, push as the corresponding direct
                         // ActionArg via a small helper that bypasses
                         // typed-push.
@@ -8937,6 +8968,7 @@ where
                     ActionArg::CollectionId(_) => "CollectionId",
                     ActionArg::Predicate(_) => "Predicate",
                     ActionArg::Optional(_) => "Optional",
+                    ActionArg::GuestBody(_) => "GuestBody",
                 })
                 .collect();
             (action_fn)(&mut sb, popped);
@@ -10365,6 +10397,7 @@ where
                                     | Some(crate::sppf::SppfNode::Epsilon { .. })
                                     | Some(crate::sppf::SppfNode::OptAbsent { .. })
                                     | Some(crate::sppf::SppfNode::Predicate { .. })
+                                    | Some(crate::sppf::SppfNode::GuestBody { .. })
                                     | Some(crate::sppf::SppfNode::BinderScope { .. })
                                     // CollectionId: memoize the NODE
                                     // (realize_node_leave yields
@@ -18698,6 +18731,88 @@ where
         }
     }
 
+    /// L9-4: scan a delimited FLT guest region starting at the opener token
+    /// (`open_pos`, kind `open_kind`) and assemble its [`GuestBodyData`].
+    /// Returns the interned `SppfNode::GuestBody` leaf id and the input position
+    /// AFTER the `close_kind` closer, or `None` if the opener kind mismatches or
+    /// the run is malformed (the balanced mode stack should prevent the latter).
+    ///
+    /// `tag` = the opener text's leading identifier prefix (`lam` from `` lam` ``
+    /// / `lam{` / ``` lam``` ```). `body_src` = the concatenation of the
+    /// `GuestChunk`/`Hole` token TEXTS. In a RAW guest mode these tokens tile
+    /// the region EXACTLY — no inter-token whitespace is skipped (that is
+    /// precisely what `raw mode` buys, L9-4) — so the concatenation is
+    /// byte-for-byte the verbatim `input[open.end..close.start]` slice: the
+    /// No-Injection guarantee holds (the body is guest-parsed once; no host
+    /// token re-enters it). Concatenation (rather than `source_slice`) is used
+    /// because the walker's `&dyn WpdaTokenSource` (base trait) exposes only
+    /// `peek_text`, not the mutable subtrait's byte-span accessors. `holes` =
+    /// each `${name}`/`${name:Cat}` token, `offset` = its byte position within
+    /// `body_src` (the running length — identical to `hole.start - open.end`).
+    fn assemble_guest_body(
+        &mut self,
+        tokens: &dyn WpdaTokenSource,
+        open_pos: usize,
+        open_kind: &str,
+        close_kind: &str,
+    ) -> Option<(crate::sppf::SppfId, usize)> {
+        let next_of = |p: usize| tokens.next_pos(p, 0).unwrap_or(p + 1);
+        if tokens.peek_kind(open_pos) != Some(TokenKind::Custom(open_kind.to_string())) {
+            return None;
+        }
+        let open_text = tokens.peek_text(open_pos).unwrap_or("");
+        let tag: String = open_text
+            .chars()
+            .take_while(|c| c.is_alphanumeric() || *c == '_')
+            .collect();
+        // Opener byte start (for `position`), best-effort via the end byte minus
+        // the opener text length; falls back to the token index.
+        let position = tokens
+            .end_byte(open_pos, 0)
+            .map(|e| e.saturating_sub(open_text.len()))
+            .unwrap_or(open_pos);
+
+        let mut cur = next_of(open_pos);
+        let mut body_src = String::new();
+        let mut holes: Vec<crate::wpda_runtime::GuestBodyHole> = Vec::new();
+        loop {
+            match tokens.peek_kind(cur) {
+                Some(TokenKind::Custom(ref k)) if k == close_kind => break,
+                Some(TokenKind::Custom(_)) => {
+                    let text = tokens.peek_text(cur).unwrap_or("");
+                    if text.len() >= 3 && text.starts_with("${") && text.ends_with('}') {
+                        // `${name}` or `${name:Cat}`.
+                        let inner = &text[2..text.len() - 1];
+                        let (name, category) = match inner.split_once(':') {
+                            Some((n, c)) => (n.trim().to_string(), Some(c.trim().to_string())),
+                            None => (inner.trim().to_string(), None),
+                        };
+                        holes.push(crate::wpda_runtime::GuestBodyHole {
+                            name,
+                            category,
+                            offset: body_src.len(),
+                        });
+                    }
+                    body_src.push_str(text);
+                    cur = next_of(cur);
+                },
+                // A non-Custom token (or EOF) inside a guest region is
+                // malformed; the balanced mode stack normally prevents it.
+                _ => return None,
+            }
+        }
+        let node = std::sync::Arc::new(crate::wpda_runtime::GuestBodyData {
+            tag,
+            body_src,
+            holes,
+            position,
+        });
+        let handle = self.sppf_guest_body_arena.len() as u32;
+        self.sppf_guest_body_arena.push(node);
+        let leaf = self.sppf.intern_guest_body(handle);
+        Some((leaf, next_of(cur)))
+    }
+
     /// Dispatch ONE Fork branch (plan §2 ForkActionKind sub-table, B0
     /// subset). `pos_after` = the fork-level trigger-consume position
     /// (`consume_trigger` handled by the caller); guard kinds are token-text
@@ -19228,6 +19343,51 @@ where
                     0,
                     None,
                 );
+            },
+            ForkActionKind::ConsumeGuestBodyAndPush { open_kind, close_kind } => {
+                // L9-4: LEADING guest-body capture — the opener IS the rule's
+                // trigger, so assemble the `FltNode` and DESCEND (push the
+                // `RuleAt` frame). Mirrors `GuardedConsumeTokenKindAndPush`.
+                let Some((leaf, child_pos)) =
+                    self.assemble_guest_body(tokens, pos_after, &open_kind, &close_kind)
+                else {
+                    return;
+                };
+                let child_slot = Self::cgll_pure_slot_hash(&br_symbol, &br_state);
+                let w0 =
+                    self.cgll_pure_weight_carrier(run, child_slot, leaf, child_pos, &br_weight);
+                self.cgll_pure_descend(
+                    run,
+                    d,
+                    d.cur_sym,
+                    br_symbol,
+                    br_state,
+                    child_pos,
+                    class_by_state,
+                    w0,
+                    0,
+                    None,
+                );
+            },
+            ForkActionKind::ConsumeGuestBodyAndReplace { open_kind, close_kind } => {
+                // L9-4: mid-rule guest-body capture — the `RuleAt` frame was
+                // already pushed by a prior literal trigger, so REPLACE
+                // `cur_sym`. Mirrors `GuardedConsumeTokenKindAndReplace`.
+                let Some((leaf, next)) =
+                    self.assemble_guest_body(tokens, pos_after, &open_kind, &close_kind)
+                else {
+                    return;
+                };
+                let slot = Self::cgll_pure_slot_hash(&d.cur_sym, &d.state);
+                let w = self.cgll_pure_fold(slot, d.w, leaf, pos_after, W::one_ref());
+                let w = self.cgll_pure_carry_scan_weight(run, d, w, pos_after, &br_weight);
+                run.worklist.push_back(CgllPureDescriptor {
+                    state: br_state,
+                    cur_sym: br_symbol,
+                    pos: next,
+                    w,
+                    ..d.clone()
+                });
             },
             ForkActionKind::GuardedConsumeIdentAndReplace { start_scope } => {
                 if tokens.peek_kind(pos_after) != Some(TokenKind::Ident) {
@@ -20379,6 +20539,10 @@ where
                 .sppf_predicate_arena
                 .get(*handle as usize)
                 .map(|p| ActionArg::Predicate(Arc::clone(p))),
+            SppfNode::GuestBody { handle } => self
+                .sppf_guest_body_arena
+                .get(*handle as usize)
+                .map(|node| ActionArg::GuestBody(Arc::clone(node))),
             SppfNode::BinderScope { names_text, depth } => {
                 let names: Vec<String> = names_text
                     .iter()
@@ -20528,7 +20692,8 @@ where
                 },
                 ActionArg::Optional(_)
                 | ActionArg::Collection { .. }
-                | ActionArg::BinderScope(_) => {
+                | ActionArg::BinderScope(_)
+                | ActionArg::GuestBody(_) => {
                     sb.push_raw_arg(arg.clone());
                 },
             }
@@ -20838,7 +21003,8 @@ where
                 },
                 ActionArg::Optional(_)
                 | ActionArg::Collection { .. }
-                | ActionArg::BinderScope(_) => {
+                | ActionArg::BinderScope(_)
+                | ActionArg::GuestBody(_) => {
                     sb.push_raw_arg(arg.clone());
                 },
             }

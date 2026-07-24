@@ -100,6 +100,11 @@ pub enum BinderPosition {
     /// structural clone of the `Literal` position), binding its text as the
     /// `param_name` action arg (`ActionArgKind::TokenText`). No binder scope.
     TokenKindCapture { kind_name: String, param_name: String },
+    /// L9-4: `*flt(node, open, close)` — consume a whole guest region (opener →
+    /// GuestChunk/Hole run → closer) in one action (`ConsumeGuestBodyAndReplace`
+    /// mid-rule / `ConsumeGuestBodyAndPush` leading), binding the assembled
+    /// `Arc<FltNode>` as the `param_name` action arg (`ActionArgKind::GuestBody`).
+    GuestBodyCapture { open_kind: String, close_kind: String, param_name: String },
     /// `Param(binder_name)` — capture single Ident, start_binder_scope,
     /// advance position.
     BinderIdent,
@@ -241,6 +246,10 @@ pub enum ActionArgKind {
     /// text, extracted via `as_token_text()` (the proven native-literal path)
     /// and bound as a `String` action arg / AST field.
     TokenText { param_name: String },
+    /// L9-4: `ActionArg::GuestBody(GuestBodyData)` — an assembled FLT guest
+    /// body, extracted via `as_guest_body()` and lowered to an
+    /// `Arc<mettail_runtime::FltNode>` action arg / AST field.
+    GuestBody { param_name: String },
     /// `ActionArg::Term { value, .. }` of a specific category.
     Term(String),
     /// `ActionArg::Predicate` — parsed predicate.
@@ -292,12 +301,16 @@ pub(crate) fn classify_binder_in(
         .and_then(|t| t.collection_kind.as_ref())
         .map(|c| c.delimiters());
     // Position 0 must be a Literal trigger — OR (L9-3) a LEADING custom-kind
-    // capture (`b@GuestChunk …`), whose consume is emitted by the prefix
-    // dispatch (UnifiedDescriptor::LeadingTokenKindCapture). The `.skip(1)`
-    // position loop below treats sp[0] as the trigger either way, so positions
-    // start at slot 1 (= sp[1]). Otherwise it's an infix/prefix Pratt rule
-    // handled by Phase 3.
-    if !matches!(&sp[0], SyntaxExpr::Literal(_) | SyntaxExpr::TokenKind { .. }) {
+    // capture (`b@GuestChunk …`) / (L9-4) a LEADING guest body (`*flt(node,…)`),
+    // whose consume is emitted by the prefix dispatch
+    // (UnifiedDescriptor::LeadingTokenKindCapture / LeadingGuestBody). The
+    // `.skip(1)` position loop below treats sp[0] as the trigger either way, so
+    // positions start at slot 1 (= sp[1]). Otherwise it's an infix/prefix Pratt
+    // rule handled by Phase 3.
+    if !matches!(
+        &sp[0],
+        SyntaxExpr::Literal(_) | SyntaxExpr::TokenKind { .. } | SyntaxExpr::GuestBody { .. }
+    ) {
         return None;
     }
 
@@ -523,6 +536,12 @@ pub(crate) fn classify_binder_in(
             .unwrap_or_else(|| format!("__tok_{}", name));
         action_args.push(ActionArgKind::TokenText { param_name });
     }
+    // L9-4: a LEADING guest body (sp[0] is `*flt(node,…)`) is consumed by the
+    // prefix dispatch, which interns its ActionArg::GuestBody FIRST — prepend
+    // its arg here (same off-by-one reasoning as the leading token capture).
+    if let SyntaxExpr::GuestBody { bind, .. } = &sp[0] {
+        action_args.push(ActionArgKind::GuestBody { param_name: bind.to_string() });
+    }
     let mut skip_next: bool = false;
     // Phase 4 #1.B (2026-05-11): track collection-slot index. Each
     // SimpleCollection / Class-3 BinderListLoop push increments.
@@ -556,6 +575,16 @@ pub(crate) fn classify_binder_in(
                     param_name: param_name.clone(),
                 });
                 action_args.push(ActionArgKind::TokenText { param_name });
+            },
+            // L9-4: a mid-rule `*flt(node, open, close)` guest body — push a
+            // GuestBodyCapture position + a paired GuestBody action arg.
+            SyntaxExpr::GuestBody { open, close, bind } => {
+                positions.push(BinderPosition::GuestBodyCapture {
+                    open_kind: open.to_string(),
+                    close_kind: close.to_string(),
+                    param_name: bind.to_string(),
+                });
+                action_args.push(ActionArgKind::GuestBody { param_name: bind.to_string() });
             },
             SyntaxExpr::Param(name) => {
                 let n = name.to_string();
@@ -754,7 +783,9 @@ pub(crate) fn classify_binder_in(
                         SyntaxExpr::Literal(text) => {
                             inner_positions.push(BinderPosition::Literal(text.clone()));
                         },
-                        SyntaxExpr::TokenKind { .. } => return None,
+                        SyntaxExpr::TokenKind { .. } | SyntaxExpr::GuestBody { .. } => {
+                            return None
+                        },
                         SyntaxExpr::Param(p_name) => {
                             let pn = p_name.to_string();
                             if pn == map_param_n {
@@ -859,7 +890,9 @@ pub(crate) fn classify_binder_in(
                         SyntaxExpr::Literal(text) => {
                             inner_positions.push(BinderPosition::Literal(text.clone()));
                         },
-                        SyntaxExpr::TokenKind { .. } => return None,
+                        SyntaxExpr::TokenKind { .. } | SyntaxExpr::GuestBody { .. } => {
+                            return None
+                        },
                         SyntaxExpr::Param(name) => {
                             let n = name.to_string();
                             let kind = param_map.get(&n)?;
@@ -969,7 +1002,21 @@ pub(crate) fn classify_binder_in(
 
     // Skip rules with no parsed positions (they're trivial and likely not
     // multi-step — let the atomic / TerminalKeyword classifier handle them).
-    if positions.is_empty() {
+    //
+    // EXCEPTION (L9-3/L9-4): a rule whose ONLY syntax element is a leading
+    // opaque-leaf capture — `b@Tok` (TokenKind) or `*flt(node, open, close)`
+    // (GuestBody) — parses as a complete multi-step rule via the prefix
+    // dispatch (LeadingTokenKindCapture / LeadingGuestBody), which consumes the
+    // capture, pushes RuleAt(slot=1), and reduces immediately (no trailing
+    // positions). Such a rule has empty `positions` yet MUST classify as a
+    // binder-shape so the leading-capture fork is emitted. It always carries a
+    // leading capture action arg (pushed above), so the `action_args.is_empty()`
+    // guard below still filters pure-literal rules.
+    let has_leading_capture = matches!(
+        &sp[0],
+        SyntaxExpr::TokenKind { .. } | SyntaxExpr::GuestBody { .. }
+    );
+    if positions.is_empty() && !has_leading_capture {
         return None;
     }
     // Skip pure-literal rules (no params, no binder, no guard) — those are
@@ -1035,6 +1082,7 @@ fn first_param_cat_from_positions(positions: &[BinderPosition]) -> Option<&str> 
             },
             BinderPosition::Literal(_)
             | BinderPosition::TokenKindCapture { .. }
+            | BinderPosition::GuestBodyCapture { .. }
             | BinderPosition::BinderIdent
             | BinderPosition::GuardSlot => {},
         }
@@ -1335,6 +1383,37 @@ pub(crate) fn emit_binder_rule_body(
                                         action_kind:
                                             mettail_prattail::wpda_walker::ForkActionKind::GuardedConsumeTokenKindAndReplace {
                                                 kind_name: #kind_name.to_string(),
+                                            },
+                                    }],
+                                    consume_trigger: false,
+                                };
+                            }
+                        }
+                    },
+                    BinderPosition::GuestBodyCapture { open_kind, close_kind, .. } => {
+                        // L9-4: mid-rule guest body — a single-branch Fork whose
+                        // ConsumeGuestBodyAndReplace action scans the whole
+                        // opener→body→closer region, assembles the FltNode, and
+                        // advances past the closer (No-Injection via raw-mode
+                        // tiling). Structural twin of the TokenKindCapture arm.
+                        quote! {
+                            (#result_src_idx, #rule_idx, #pos) => {
+                                return WpdaStepAction::Fork {
+                                    branches: vec![mettail_prattail::wpda_walker::ForkBranch {
+                                        symbol: StackSymbolV2::rule_at(
+                                            #result_src_idx, #rule_idx, #next_pos, Some(*outer_bp),
+                                        ),
+                                        weight: lex_one(),
+                                        new_state: WpdaState::BinderRule {
+                                            result_src_idx: #result_src_idx,
+                                            rule_idx: #rule_idx,
+                                            body_src_idx: *_body_src_idx,
+                                            outer_bp: *outer_bp,
+                                        },
+                                        action_kind:
+                                            mettail_prattail::wpda_walker::ForkActionKind::ConsumeGuestBodyAndReplace {
+                                                open_kind: #open_kind.to_string(),
+                                                close_kind: #close_kind.to_string(),
                                             },
                                     }],
                                     consume_trigger: false,
@@ -2711,7 +2790,8 @@ pub(crate) fn emit_optional_group_body(
                         // not exercised by any current grammar (the toy uses only
                         // top-level captures). INERT — no such position is
                         // constructed, so this contributes no dispatch arm.
-                        BinderPosition::TokenKindCapture { .. } => quote! {},
+                        BinderPosition::TokenKindCapture { .. }
+                        | BinderPosition::GuestBodyCapture { .. } => quote! {},
                         BinderPosition::Literal(text) => quote! {
                             (#result_src_idx, #rule_idx, #group_idx_byte, #sp) => {
                                 // Stage 3.20 / L12 Commit F (2026-05-06):
@@ -2993,6 +3073,31 @@ pub(crate) fn emit_binder_action_entry(
                 });
                 field_names.push(quote! { #var });
             },
+            ActionArgKind::GuestBody { .. } => {
+                // L9-4: the assembled guest body arrives as
+                // `ActionArg::GuestBody(GuestBodyData)` (prattail primitives);
+                // lower it to `Arc<FltNode>` here (the generated crate depends on
+                // `mettail_runtime`; prattail does not). 1:1 field map.
+                extracts.push(quote! {
+                    let #var: std::sync::Arc<mettail_runtime::FltNode> = match iter.next() {
+                        Some(a) => match a.as_guest_body() {
+                            Some(gb) => std::sync::Arc::new(mettail_runtime::FltNode {
+                                tag: gb.tag.clone(),
+                                body_src: gb.body_src.clone(),
+                                holes: gb.holes.iter().map(|h| mettail_runtime::FltHole {
+                                    name: h.name.clone(),
+                                    category: h.category.clone(),
+                                    offset: h.offset,
+                                }).collect(),
+                                position: gb.position,
+                            }),
+                            None => return,
+                        },
+                        None => return,
+                    };
+                });
+                field_names.push(quote! { #var });
+            },
             ActionArgKind::Term(cat) => {
                 let cat_id = format_ident!("{}", cat);
                 extracts.push(quote! {
@@ -3094,6 +3199,26 @@ pub(crate) fn emit_binder_action_entry(
                                     Some(inner_iter) => inner_iter
                                         .next()
                                         .and_then(|a| a.as_token_text().map(|s| s.to_string())),
+                                    None => None,
+                                };
+                        },
+                        ActionArgKind::GuestBody { .. } => quote! {
+                            let #inner_var: Option<std::sync::Arc<mettail_runtime::FltNode>> =
+                                match #opt_var.as_mut() {
+                                    Some(inner_iter) => inner_iter.next().and_then(|a| {
+                                        a.as_guest_body().map(|gb| std::sync::Arc::new(
+                                            mettail_runtime::FltNode {
+                                                tag: gb.tag.clone(),
+                                                body_src: gb.body_src.clone(),
+                                                holes: gb.holes.iter().map(|h| mettail_runtime::FltHole {
+                                                    name: h.name.clone(),
+                                                    category: h.category.clone(),
+                                                    offset: h.offset,
+                                                }).collect(),
+                                                position: gb.position,
+                                            }
+                                        ))
+                                    }),
                                     None => None,
                                 };
                         },

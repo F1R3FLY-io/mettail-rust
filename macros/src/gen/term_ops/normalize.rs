@@ -447,15 +447,14 @@ fn optional_collection_field_type(field: &FieldInfo) -> TokenStream {
 /// at Visit time via `.normalize()` (calls the native per-category PDA)
 /// rather than pushing a Visit task.
 fn emit_reg_field_decl(i: usize, field: &FieldInfo) -> TokenStream {
-    if field.is_token_text {
-        // L9-3: token-text captures are OPAQUE to normalization — cloned
-        // through as a bare `String` carrier (a token's text is not a term;
-        // it never β-reduces or α-renames). Mirrors the predicate carrier.
+    if field.is_opaque_leaf() {
+        // L9-3/L9-4: opaque capture leaves (token-text `String` / guest-body
+        // `Arc<FltNode>`) are OPAQUE to normalization — cloned through as a bare
+        // carrier (not a host term; never β-reduces or α-renames). Mirrors the
+        // predicate carrier; the field type is the leaf kind's own type.
         let text_name = format_ident!("f{}_text", i);
-        if field.is_optional {
-            return quote! { #text_name: Option<std::string::String> };
-        }
-        return quote! { #text_name: std::string::String };
+        let ty = field.opaque_leaf_type();
+        return quote! { #text_name: #ty };
     }
     if field.is_predicate {
         let pred_name = format_ident!("f{}_pred", i);
@@ -820,7 +819,7 @@ fn emit_reg_field_visit_alloc(
     for (i, field) in fields.iter().enumerate() {
         let name = &field_names[i];
 
-        if field.is_token_text {
+        if field.is_opaque_leaf() {
             // L9-3: clone the token-text `String` into the Assemble carrier;
             // no Visit/descent (mirrors the predicate leaf below).
             let text_name = format_ident!("f{}_text", i);
@@ -1527,16 +1526,12 @@ fn generate_regular_assemble_arm(
     let mut decl_flat: Vec<TokenStream> = Vec::new();
     let mut call_flat: Vec<TokenStream> = Vec::new();
     for (i, field) in fields.iter().enumerate() {
-        if field.is_token_text {
-            // L9-3: the token-text carrier rides the frame as `f{i}_text`
+        if field.is_opaque_leaf() {
+            // L9-3/L9-4: the opaque-leaf carrier rides the frame as `f{i}_text`
             // (declared by `emit_reg_field_decl`, cloned in the Visit arm);
             // extract is a no-op and construct passes it through unchanged.
             let text_name = format_ident!("f{}_text", i);
-            let text_ty = if field.is_optional {
-                quote! { Option<std::string::String> }
-            } else {
-                quote! { std::string::String }
-            };
+            let text_ty = field.opaque_leaf_type();
             pat_flat.push(quote! { #text_name });
             decl_flat.push(quote! { #text_name: #text_ty });
             call_flat.push(quote! { #text_name });
@@ -1655,7 +1650,7 @@ fn generate_regular_assemble_arm(
 }
 
 fn emit_reg_field_extract(i: usize, field: &FieldInfo) -> TokenStream {
-    if field.is_predicate || field.is_token_text {
+    if field.is_predicate || field.is_opaque_leaf() {
         // Already in scope as f{i}_pred / f{i}_text — nothing to extract.
         return quote! {};
     }
@@ -1785,7 +1780,7 @@ fn emit_reg_field_extract(i: usize, field: &FieldInfo) -> TokenStream {
 }
 
 fn emit_reg_field_construct(i: usize, field: &FieldInfo) -> TokenStream {
-    if field.is_token_text {
+    if field.is_opaque_leaf() {
         // L9-3: pass the bare `String` carrier through (never Arc-wrapped).
         let text_name = format_ident!("f{}_text", i);
         return quote! { #text_name };
@@ -2643,7 +2638,7 @@ mod tests {
             coll_type: None,
             is_predicate: true,
             is_optional: optional,
-            is_token_text: false,
+            opaque_leaf: None,
         }
     }
 
@@ -2654,7 +2649,7 @@ mod tests {
             coll_type: None,
             is_predicate: false,
             is_optional: false,
-            is_token_text: false,
+            opaque_leaf: None,
         }
     }
 

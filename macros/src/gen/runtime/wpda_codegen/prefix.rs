@@ -1709,6 +1709,26 @@ pub fn emit_prefix_arms_for_category(
                         },
                     );
                 },
+                // L9-4: a LEADING guest body (`*flt(node, open, close)`) — the
+                // opener kind IS the trigger; dispatch on it (guard-based, like
+                // the TokenKind path) into a `LeadingGuestBody` descriptor whose
+                // emission PUSHES the RuleAt frame + assembles the FltNode.
+                Some(mettail_ast::grammar::SyntaxExpr::GuestBody { open, close, .. }) => {
+                    let open_kind = open.to_string();
+                    let close_kind = close.to_string();
+                    insert_unified_descriptor(
+                        &mut unified_buckets,
+                        &mut unified_order,
+                        quote! { Some(mettail_prattail::automata::TokenKind::Custom(ref __k)) },
+                        Some(quote! { __k == #open_kind }),
+                        UnifiedDescriptor::LeadingGuestBody {
+                            rule_idx,
+                            body_src_idx,
+                            open_kind,
+                            close_kind,
+                        },
+                    );
+                },
                 _ => continue,
             }
         }
@@ -2008,6 +2028,13 @@ enum UnifiedDescriptor {
     /// leading capture's `ActionArg::Token` is prepended to the action args by
     /// `classify_binder_in`.
     LeadingTokenKindCapture { rule_idx: u16, body_src_idx: u16, kind_name: String },
+    /// L9-4: a LEADING guest-body rule (`PFlt . |- *flt(node, open, close) :
+    /// Cat`). Mirrors `LeadingTokenKindCapture` but the emitted Fork carries
+    /// `ConsumeGuestBodyAndPush` (scan opener→body→closer, assemble the FltNode,
+    /// PUSH `RuleAt(slot=1)`, enter `BinderRule`). The assembled
+    /// `ActionArg::GuestBody` is prepended to the action args by
+    /// `classify_binder_in`'s leading-prepend.
+    LeadingGuestBody { rule_idx: u16, body_src_idx: u16, open_kind: String, close_kind: String },
     /// Cross-category prefix-unary rule. Consumes its own trigger token,
     /// pushes the wrapper Return frame, and delegates the operand to the
     /// source category at that source's prefix floor.
@@ -2295,6 +2322,49 @@ fn emit_unified_arm(
                                 action_kind:
                                     mettail_prattail::wpda_walker::ForkActionKind::GuardedConsumeTokenKindAndPush {
                                         kind_name: #kind_name.to_string(),
+                                    },
+                            }],
+                            consume_trigger: false,
+                        };
+                        }
+                    },
+                )
+            },
+            UnifiedDescriptor::LeadingGuestBody { rule_idx, body_src_idx, open_kind, close_kind } => {
+                let rule_idx = *rule_idx;
+                let body_src_idx = *body_src_idx;
+                // L9-4: leading guest body — never S1-grouped (a guest body
+                // terminates mergeability), so always the singleton path. Emit a
+                // single-branch Fork carrying ConsumeGuestBodyAndPush: the walker
+                // gates peek_kind == Custom(open_kind), scans the whole
+                // opener→body→closer region assembling the FltNode, PUSHES
+                // RuleAt(slot=1), and enters BinderRule.
+                assert!(
+                    s1_dispositions.get(&rule_idx).is_none(),
+                    "S1-FACTORING F1: grouped rule (cat {category_src_idx}, rule {rule_idx}) \
+                     reached the singleton LeadingGuestBody emission",
+                );
+                fork_rows.record_site2_row(category_src_idx, rule_idx, 0, &fork_bucket_tag);
+                (
+                    quote! { #pat if #guard },
+                    quote! {
+                        {
+                        return WpdaStepAction::Fork {
+                            branches: vec![mettail_prattail::wpda_walker::ForkBranch {
+                                symbol: StackSymbolV2::rule_at(
+                                    #category_src_idx, #rule_idx, 1u8, Some(_outer_bp),
+                                ),
+                                weight: lex_w(0.0, #category_src_idx, #rule_idx),
+                                new_state: WpdaState::BinderRule {
+                                    result_src_idx: #category_src_idx,
+                                    rule_idx: #rule_idx,
+                                    body_src_idx: #body_src_idx,
+                                    outer_bp: _outer_bp,
+                                },
+                                action_kind:
+                                    mettail_prattail::wpda_walker::ForkActionKind::ConsumeGuestBodyAndPush {
+                                        open_kind: #open_kind.to_string(),
+                                        close_kind: #close_kind.to_string(),
                                     },
                             }],
                             consume_trigger: false,
@@ -2604,6 +2674,40 @@ fn emit_unified_arm(
                             action_kind:
                                 mettail_prattail::wpda_walker::ForkActionKind::GuardedConsumeTokenKindAndPush {
                                     kind_name: #kind_name.to_string(),
+                                },
+                        });
+                    }
+                }
+                UnifiedDescriptor::LeadingGuestBody { rule_idx, body_src_idx, open_kind, close_kind } => {
+                    let rule_idx = *rule_idx;
+                    let body_src_idx = *body_src_idx;
+                    // L9-4: leading guest body in a Fork bucket — the ConsumeGuestBodyAndPush
+                    // twin of the singleton path (PUSHES the RuleAt frame).
+                    record_initiating_rule_rows(
+                        fork_rows,
+                        category_src_idx,
+                        rule_idx,
+                        branch_position as u16,
+                        s1_dispositions,
+                        s1_group_members,
+                        &fork_bucket_tag,
+                    );
+                    quote! {
+                        __pd_branches.push(mettail_prattail::wpda_walker::ForkBranch {
+                            symbol: StackSymbolV2::rule_at(
+                                #category_src_idx, #rule_idx, 1u8, Some(_outer_bp),
+                            ),
+                            weight: lex_w(0.0, #category_src_idx, #rule_idx),
+                            new_state: WpdaState::BinderRule {
+                                result_src_idx: #category_src_idx,
+                                rule_idx: #rule_idx,
+                                body_src_idx: #body_src_idx,
+                                outer_bp: _outer_bp,
+                            },
+                            action_kind:
+                                mettail_prattail::wpda_walker::ForkActionKind::ConsumeGuestBodyAndPush {
+                                    open_kind: #open_kind.to_string(),
+                                    close_kind: #close_kind.to_string(),
                                 },
                         });
                     }

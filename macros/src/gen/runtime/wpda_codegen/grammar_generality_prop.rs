@@ -629,9 +629,12 @@ fn allowed_vocab(lang: &LanguageDef, per_cat: &[Vec<GrammarRule>]) -> BTreeSet<S
                 }
                 SyntaxExpr::Op(op) => walk_op(op, v),
                 SyntaxExpr::Param(_) => {}
-                // L9-3: a custom-kind capture matches variable token text — it
-                // contributes no FIXED terminal to the allowed vocabulary.
-                SyntaxExpr::TokenKind { .. } => {}
+                // L9-3/L9-4: a custom-kind capture (`b@Tok`) / a guest-body
+                // capture (`*flt(node, open, close)`) matches variable token
+                // text delimited by CUSTOM token kinds (the FLT opener/closer),
+                // not FIXED literal terminals — neither contributes to the
+                // allowed vocabulary.
+                SyntaxExpr::TokenKind { .. } | SyntaxExpr::GuestBody { .. } => {}
             }
         }
     }

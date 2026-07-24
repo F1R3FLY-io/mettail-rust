@@ -972,6 +972,71 @@ pub(crate) fn emit_lex_fork_at_prefix_dispatch(
                                 __primary_survived = true;
                             }
                         }
+                        // L9-4 — a LEADING `*flt(node, open, close)` GuestBody
+                        // capture triggered by its opener kind. The opener is
+                        // ALWAYS the longest-match PRIMARY reading (its delimiter
+                        // makes it strictly longer than any competing lex-alt such
+                        // as a bare `Ident`), so it can only appear here, never as
+                        // a secondary. Emit the SAME branch as the singleton
+                        // `UnifiedDescriptor::LeadingGuestBody` peek-arm — push
+                        // `RuleAt(1)`, enter `BinderRule`, carry
+                        // `ConsumeGuestBodyAndPush`. Because this branch is now in
+                        // `__branches`, the FLT reading is explored alongside the
+                        // opener's `Ident -> Var` secondary instead of being
+                        // dropped when the legacy fall-through is suppressed.
+                        mettail_prattail::wpda_runtime::LexAltRuleKind::LeadingGuestBody {
+                            body_src_idx,
+                            open_kind,
+                            close_kind,
+                        } => {
+                            let sym = StackSymbolV2::rule_at(
+                                primary_src, info.rule_idx, 1u8, Some(*cur_bp),
+                            );
+                            __branches.push(mettail_prattail::wpda_walker::ForkBranch {
+                                symbol: sym,
+                                weight: lex_w(0.0, primary_src, info.rule_idx),
+                                new_state: WpdaState::BinderRule {
+                                    result_src_idx: primary_src,
+                                    rule_idx: info.rule_idx,
+                                    body_src_idx,
+                                    outer_bp: *cur_bp,
+                                },
+                                action_kind:
+                                    mettail_prattail::wpda_walker::ForkActionKind::ConsumeGuestBodyAndPush {
+                                        open_kind: open_kind.to_string(),
+                                        close_kind: close_kind.to_string(),
+                                    },
+                            });
+                            __primary_survived = true;
+                        }
+                        // L9-3 — a LEADING `b@Tok` custom-kind capture triggered
+                        // by its token kind (same PRIMARY-only rationale as
+                        // LeadingGuestBody). Emit the singleton
+                        // `LeadingTokenKindCapture` branch:
+                        // `GuardedConsumeTokenKindAndPush`.
+                        mettail_prattail::wpda_runtime::LexAltRuleKind::LeadingTokenKindCapture {
+                            body_src_idx,
+                            kind_name,
+                        } => {
+                            let sym = StackSymbolV2::rule_at(
+                                primary_src, info.rule_idx, 1u8, Some(*cur_bp),
+                            );
+                            __branches.push(mettail_prattail::wpda_walker::ForkBranch {
+                                symbol: sym,
+                                weight: lex_w(0.0, primary_src, info.rule_idx),
+                                new_state: WpdaState::BinderRule {
+                                    result_src_idx: primary_src,
+                                    rule_idx: info.rule_idx,
+                                    body_src_idx,
+                                    outer_bp: *cur_bp,
+                                },
+                                action_kind:
+                                    mettail_prattail::wpda_walker::ForkActionKind::GuardedConsumeTokenKindAndPush {
+                                        kind_name: kind_name.to_string(),
+                                    },
+                            });
+                            __primary_survived = true;
+                        }
                         // Other variants are InfixLoop-site only;
                         // shouldn't appear here.
                         _ => {}

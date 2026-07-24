@@ -57,6 +57,10 @@ pub(crate) struct CaptureField<'a> {
 pub(crate) enum CaptureFieldKind<'a> {
     /// A `v@Tok` capture → a bare `std::string::String` leaf.
     TokenText,
+    /// L9-4: a `*flt(bind, open, close)` guest-body capture → an
+    /// `Arc<FltNode>` opaque leaf. Carries the opener/closer token KIND names
+    /// so the WPDA codegen knows which delimiters bound the guest region.
+    GuestBody { open: &'a syn::Ident, close: &'a syn::Ident },
     /// A `Simple` term-param at this syntax position → its declared type.
     Term(&'a TypeExpr),
     /// A `?guard:Guard` predicate slot → a `BehavioralPred` leaf.
@@ -85,9 +89,9 @@ pub(crate) fn capture_layout<'a>(
     term_context: &'a [TermParam],
     syntax_pattern: &'a [SyntaxExpr],
 ) -> Option<CaptureLayout<'a>> {
-    let has_capture = syntax_pattern
-        .iter()
-        .any(|e| matches!(e, SyntaxExpr::TokenKind { .. }));
+    let has_capture = syntax_pattern.iter().any(|e| {
+        matches!(e, SyntaxExpr::TokenKind { .. } | SyntaxExpr::GuestBody { .. })
+    });
     if !has_capture {
         return None;
     }
@@ -189,6 +193,15 @@ fn walk_pattern<'a>(
                     _ => {},
                 }
             },
+            SyntaxExpr::GuestBody { open, close, bind } => {
+                // L9-4: a `*flt(bind, open, close)` guest-body capture → an
+                // `Arc<FltNode>` leaf named `bind`.
+                out.push(CaptureField {
+                    name: bind.to_string(),
+                    kind: CaptureFieldKind::GuestBody { open, close },
+                    optional,
+                });
+            },
             SyntaxExpr::Op(PatternOp::Opt { inner }) => {
                 walk_pattern(inner, term_context, abstraction_names, true, out);
             },
@@ -253,6 +266,28 @@ mod tests {
         assert!(matches!(layout.non_scope[0].kind, CaptureFieldKind::TokenText));
         assert_eq!(layout.non_scope[1].name, "s");
         assert!(matches!(layout.non_scope[1].kind, CaptureFieldKind::Term(_)));
+    }
+
+    #[test]
+    fn guest_body_is_an_opaque_capture_leaf() {
+        // L9-4: `*flt(node, FltOpenBacktick, FltCloseBacktick)` → one GuestBody
+        // field named `node`, carrying the opener/closer kinds.
+        let sp = vec![SyntaxExpr::GuestBody {
+            open: id("FltOpenBacktick"),
+            close: id("FltCloseBacktick"),
+            bind: id("node"),
+        }];
+        let layout = capture_layout(&[], &sp).expect("has a capture");
+        assert!(layout.scope.is_none());
+        assert_eq!(layout.non_scope.len(), 1);
+        assert_eq!(layout.non_scope[0].name, "node");
+        match &layout.non_scope[0].kind {
+            CaptureFieldKind::GuestBody { open, close } => {
+                assert_eq!(open.to_string(), "FltOpenBacktick");
+                assert_eq!(close.to_string(), "FltCloseBacktick");
+            },
+            _ => panic!("expected GuestBody kind"),
+        }
     }
 
     #[test]

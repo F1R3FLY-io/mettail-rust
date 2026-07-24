@@ -38,7 +38,13 @@ pub fn capture_only_construction(
     use crate::gen::test_gen::automaton_walk::nfa_walk::deterministic_sample;
 
     let sp = rule.syntax_pattern.as_deref()?;
-    if !sp.iter().any(|e| matches!(e, SyntaxExpr::TokenKind { .. })) {
+    // A captures-only rule carries at least one opaque-leaf capture: a
+    // `v@Tok` TokenKind (→ token-text `String`) or a `*flt(v, open, close)`
+    // GuestBody (→ `Arc<FltNode>`, L9-4).
+    if !sp
+        .iter()
+        .any(|e| matches!(e, SyntaxExpr::TokenKind { .. } | SyntaxExpr::GuestBody { .. }))
+    {
         return None;
     }
     // Captures-only: reject interleaved params / meta-ops / a non-empty context.
@@ -58,10 +64,42 @@ pub fn capture_only_construction(
 
     let mut args: Vec<TokenStream> = Vec::new();
     for e in sp {
-        if let SyntaxExpr::TokenKind { name, .. } = e {
-            let pattern = effective_pattern_for(language, &name.to_string());
-            let sample = deterministic_sample(&pattern).unwrap_or_default();
-            args.push(quote! { #sample.to_string() });
+        match e {
+            SyntaxExpr::TokenKind { name, .. } => {
+                let pattern = effective_pattern_for(language, &name.to_string());
+                let sample = deterministic_sample(&pattern).unwrap_or_default();
+                args.push(quote! { #sample.to_string() });
+            },
+            SyntaxExpr::GuestBody { open, close, .. } => {
+                // L9-4: synthesize a minimal, roundtrip-valid `Arc<FltNode>`.
+                // Display renders `<tag><open_delim><body_src><close_delim>`
+                // (see `generate_capture_display_arm`); with an EMPTY body and
+                // no holes the printed form is `<tag><open_delim><close_delim>`,
+                // which re-lexes to the same opener/closer kinds and re-parses
+                // to this exact node (position 0 at the top level). The `tag` is
+                // the deterministic opener sample minus its delimiter suffix, so
+                // it satisfies the opener token's pattern (e.g. `[a-z]+` for the
+                // backtick form, the literal `box` for the reserved-tag brace).
+                let open_pattern = effective_pattern_for(language, &open.to_string());
+                let opener_sample = deterministic_sample(&open_pattern).unwrap_or_default();
+                let (open_delim, _close_delim) = crate::gen::syntax::display::flt_delimiters_for(
+                    &open.to_string(),
+                    &close.to_string(),
+                );
+                let tag = opener_sample
+                    .strip_suffix(open_delim)
+                    .unwrap_or(&opener_sample)
+                    .to_string();
+                args.push(quote! {
+                    std::sync::Arc::new(mettail_runtime::FltNode::new(
+                        #tag.to_string(),
+                        String::new(),
+                        Vec::new(),
+                        0,
+                    ))
+                });
+            },
+            _ => {},
         }
     }
     Some(quote! { #cat_name::#label(#(#args),*) })

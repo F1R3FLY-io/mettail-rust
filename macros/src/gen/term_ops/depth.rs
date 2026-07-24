@@ -114,7 +114,7 @@ fn field_depth_expr(field: &FieldInfo, name: &Ident) -> TokenStream {
     // A-RT05 convergence checks count host-term nesting only.
     // L9-3: a token-text capture (`String`) is a constant-size leaf that adds
     // no host-term nesting depth (mirrors the predicate leaf).
-    if field.is_predicate || field.is_token_text {
+    if field.is_predicate || field.is_opaque_leaf() {
         let _ = name;
         return quote! { 0 };
     }

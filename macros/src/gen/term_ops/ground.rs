@@ -113,7 +113,7 @@ fn field_ground_check(field: &FieldInfo, name: &Ident) -> TokenStream {
     let _ = name;
     // L9-3: a token-text capture (`String`) is a ground leaf — a token's text
     // contains no host-category free variables (mirrors the predicate leaf).
-    if field.is_predicate || field.is_token_text {
+    if field.is_predicate || field.is_opaque_leaf() {
         return quote! { true };
     }
     let _ = name;

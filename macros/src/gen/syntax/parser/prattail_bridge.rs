@@ -712,6 +712,18 @@ fn convert_syntax_pattern(
                     .unwrap_or_else(|| format!("__tok_{}", kind_name));
                 items.push(SyntaxItemSpec::TokenKindCapture { kind_name, param_name });
             },
+            SyntaxExpr::GuestBody { open, bind, .. } => {
+                // L9-4: for the prattail ANALYSIS (binding powers / Parikh /
+                // spine mergeability) a guest body behaves like a leading
+                // token-kind capture — the opener kind triggers, and the whole
+                // region is consumed atomically (non-mergeable). The actual
+                // FltNode assembly is emitted by `binder.rs`'s
+                // `GuestBodyCapture` position, not from this spec.
+                items.push(SyntaxItemSpec::TokenKindCapture {
+                    kind_name: open.to_string(),
+                    param_name: bind.to_string(),
+                });
+            },
         }
     }
 
@@ -860,6 +872,12 @@ fn convert_pattern_op(
                             .unwrap_or_else(|| format!("__tok_{}", kind_name));
                         items.push(SyntaxItemSpec::TokenKindCapture { kind_name, param_name });
                     },
+                    SyntaxExpr::GuestBody { open, bind, .. } => {
+                        items.push(SyntaxItemSpec::TokenKindCapture {
+                            kind_name: open.to_string(),
+                            param_name: bind.to_string(),
+                        });
+                    },
                 }
             }
         },
@@ -886,6 +904,12 @@ fn convert_pattern_op(
                             .map(|b| b.to_string())
                             .unwrap_or_else(|| format!("__tok_{}", kind_name));
                         opt_items.push(SyntaxItemSpec::TokenKindCapture { kind_name, param_name });
+                    },
+                    SyntaxExpr::GuestBody { open, bind, .. } => {
+                        opt_items.push(SyntaxItemSpec::TokenKindCapture {
+                            kind_name: open.to_string(),
+                            param_name: bind.to_string(),
+                        });
                     },
                 }
             }
@@ -958,6 +982,12 @@ fn convert_chained_sep(
                                     .map(|b| b.to_string())
                                     .unwrap_or_else(|| format!("__tok_{}", kind_name));
                                 SyntaxItemSpec::TokenKindCapture { kind_name, param_name }
+                            },
+                            SyntaxExpr::GuestBody { open, bind, .. } => {
+                                SyntaxItemSpec::TokenKindCapture {
+                                    kind_name: open.to_string(),
+                                    param_name: bind.to_string(),
+                                }
                             },
                         })
                         .collect();

@@ -981,7 +981,7 @@ fn generate_semantic_regular_arm(
             label_str,
         );
         let field = &fields[0];
-        if field.is_predicate || field.is_collection || field.is_optional || field.is_token_text {
+        if field.is_predicate || field.is_collection || field.is_optional || field.is_opaque_leaf() {
             // Shouldn't happen for transparent rules (would fail
             // classify_simple_projection_shape), but be defensive.
             // Fall back to non-transparent behavior.
@@ -1036,7 +1036,7 @@ fn generate_semantic_regular_arm(
                         }
                     }
                 });
-            } else if field.is_optional && (field.is_predicate || field.is_token_text) {
+            } else if field.is_optional && (field.is_predicate || field.is_opaque_leaf()) {
                 // Task #14 (Option<Guard>): 0/1 discriminant + structural
                 // Hash of the inner predicate (no Arc deref — the Option
                 // payload is a bare BehavioralPred). Predicates carry no
@@ -1065,7 +1065,7 @@ fn generate_semantic_regular_arm(
                         }
                     }
                 });
-            } else if field.is_predicate || field.is_token_text {
+            } else if field.is_predicate || field.is_opaque_leaf() {
                 // Predicate fields hash inline via standard Hash. L9-3:
                 // token-text captures (bare `String`) hash inline identically —
                 // a token's text carries no host-term α-structure, so structural
@@ -1117,7 +1117,7 @@ fn generate_semantic_regular_arm(
                         }
                     }
                 });
-            } else if field.is_optional && (field.is_predicate || field.is_token_text) {
+            } else if field.is_optional && (field.is_predicate || field.is_opaque_leaf()) {
                 // Task #14 (Option<Guard>): deferred twin of the eager arm
                 // — 0/1 discriminant + structural Hash, no Arc deref.
                 final_stmts.push(quote! {
@@ -1139,7 +1139,7 @@ fn generate_semantic_regular_arm(
                         }
                     }
                 });
-            } else if field.is_predicate || field.is_token_text {
+            } else if field.is_predicate || field.is_opaque_leaf() {
                 // L9-3: deferred twin — token-text captures hash inline.
                 final_stmts.push(quote! {
                     std::hash::Hash::hash(#name, state);
@@ -1418,7 +1418,7 @@ mod task14_tests {
             coll_type: None,
             is_predicate: true,
             is_optional: true,
-            is_token_text: false,
+            opaque_leaf: None,
         }];
         let arm = generate_semantic_regular_arm(
             &cat,

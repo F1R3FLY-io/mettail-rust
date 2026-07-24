@@ -283,7 +283,10 @@ fn add_term_param_requirements(param: &TermParam, out: &mut BTreeSet<Requirement
 
 fn add_syntax_expr_requirements(expr: &SyntaxExpr, out: &mut BTreeSet<Requirement>) {
     match expr {
-        SyntaxExpr::Literal(_) | SyntaxExpr::Param(_) | SyntaxExpr::TokenKind { .. } => {},
+        SyntaxExpr::Literal(_)
+        | SyntaxExpr::Param(_)
+        | SyntaxExpr::TokenKind { .. }
+        | SyntaxExpr::GuestBody { .. } => {},
         SyntaxExpr::Op(op) => add_pattern_op_requirements(op, out),
     }
 }

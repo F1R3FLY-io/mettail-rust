@@ -1123,7 +1123,7 @@ fn is_collection_mirror_infix(rule: &GrammarRule, language: &LanguageDef) -> boo
             // form, not a bare binary infix.
             SyntaxExpr::Op(_) => return false,
             // L9-3: a token-kind consumption is not a bare binary infix operator.
-            SyntaxExpr::TokenKind { .. } => return false,
+            SyntaxExpr::TokenKind { .. } | SyntaxExpr::GuestBody { .. } => return false,
         }
     }
     let Some(operator) = operator else {
@@ -1661,6 +1661,34 @@ fn generate_engine_binder_arm(rule: &GrammarRule, _language: &LanguageDef) -> To
 ///
 /// Precedence-aware: for infix/postfix/prefix operators, wraps the output in
 /// parentheses when the inherited `min_bp` exceeds the operator's own binding power.
+/// L9-4: the opener/closer DELIMITER strings for a guest-body's `open`/`close`
+/// token KIND names, so `Display` can reconstruct `<tag><open><body><close>`.
+/// Derived from the FLT naming convention (`FltOpen{Backtick,Brace,Fence}` /
+/// `FltClose*`): a `Backtick`-suffixed kind uses `` ` ``, `Brace` uses `{`/`}`,
+/// `Fence` uses ```` ``` ````. A kind that matches none prints no delimiter
+/// (the tag+body still round-trips when the body itself is self-delimiting).
+pub(crate) fn flt_delimiters_for(open_name: &str, close_name: &str) -> (&'static str, &'static str) {
+    let open = if open_name.contains("Backtick") {
+        "`"
+    } else if open_name.contains("Brace") {
+        "{"
+    } else if open_name.contains("Fence") {
+        "```"
+    } else {
+        ""
+    };
+    let close = if close_name.contains("Backtick") {
+        "`"
+    } else if close_name.contains("Brace") {
+        "}"
+    } else if close_name.contains("Fence") {
+        "```"
+    } else {
+        ""
+    };
+    (open, close)
+}
+
 /// L9-3: linear Display arm for a capture-bearing rule. Fields are bound in
 /// `capture_layout` order (identical to the enum definition and the walker
 /// constructor), and each syntax position prints in encounter order separated
@@ -1722,6 +1750,24 @@ fn generate_capture_display_arm(
                 // The captured token's text prints verbatim (bound `&String`).
                 forward_ops.push(quote! {
                     stack.push(DisplayTask::WriteString(#ident.clone()));
+                });
+                emitted = true;
+            },
+            SyntaxExpr::GuestBody { open, close, bind } => {
+                forward_ops.push(space);
+                let field = format_ident!("{}", bind.to_string());
+                // Reconstruct the guest region: `<tag><open_delim><body_src>
+                // <close_delim>`. `body_src` already carries the `${…}` holes
+                // verbatim; the delimiters (derived from the FLT opener/closer
+                // kind names) re-lex to the same opener/closer kinds, so the
+                // printed form round-trips.
+                let (open_delim, close_delim) =
+                    flt_delimiters_for(&open.to_string(), &close.to_string());
+                forward_ops.push(quote! {
+                    stack.push(DisplayTask::WriteString(format!(
+                        "{}{}{}{}",
+                        #field.tag, #open_delim, #field.body_src, #close_delim,
+                    )));
                 });
                 emitted = true;
             },
@@ -2271,10 +2317,11 @@ fn generate_engine_syntax_pattern_arm(
                     }
                 }
             },
-            SyntaxExpr::TokenKind { .. } => {
-                // L9-3: STAGE 3 renders the captured token's text into
-                // `forward_ops`. INERT in STAGE 1 — a `TokenKind` item is
-                // unconstructable from source, so this arm is never reached.
+            SyntaxExpr::TokenKind { .. } | SyntaxExpr::GuestBody { .. } => {
+                // L9-3/L9-4: capture positions render via the dedicated
+                // `generate_capture_display_arm` (a capture-bearing rule is
+                // routed there before this general renderer), so this arm is
+                // never reached for them.
             },
             SyntaxExpr::Op(op) => {
                 // Stage 3.3 (2026-04-30): pass outer-adjacent Param flags so
@@ -2669,7 +2716,7 @@ fn generate_engine_pattern_op(
                         },
                         // L9-3: STAGE 3 renders a captured token's text inside an
                         // optional group. INERT in STAGE 1 (unconstructable).
-                        SyntaxExpr::TokenKind { .. } => quote! {},
+                        SyntaxExpr::TokenKind { .. } | SyntaxExpr::GuestBody { .. } => quote! {},
                         SyntaxExpr::Op(PatternOp::Sep { collection, separator, source: None }) => {
                             // Phase 4 #3 (2026-05-12): Sep inside *opt.
                             // Iterate `__opt_<coll_name>` joining elements
@@ -2837,7 +2884,7 @@ fn generate_engine_map_body_format(params: &[syn::Ident], body: &[SyntaxExpr]) -
             SyntaxExpr::Op(_) => {},
             // L9-3: STAGE 3 implements the token-text render; INERT here
             // (unconstructable from source, so this map body never sees one).
-            SyntaxExpr::TokenKind { .. } => {},
+            SyntaxExpr::TokenKind { .. } | SyntaxExpr::GuestBody { .. } => {},
         }
     }
 

@@ -118,18 +118,65 @@ pub(crate) struct FieldInfo {
     /// `__inner` to a borrow of the inner type. Nested Optional
     /// flattens — the parser-walker never produces `Some(Some(...))`.
     pub(crate) is_optional: bool,
-    /// L9-3 (token-kind capture): if true, this field's runtime type is a bare
-    /// `std::string::String` — the matched text of a `v@Tok` custom-kind
-    /// capture (`SyntaxExpr::TokenKind`), extracted by the walker via
-    /// `as_token_text()`. Like `is_predicate`, it is an OPAQUE LEAF: a plain
-    /// non-Arc value that derives `Clone`/`Hash`/`Eq`/`Ord`, carried through
-    /// substitution/normalization UNCHANGED (a token's text is not a term, has
-    /// no free variables, and does not participate in α-conversion or β/shift).
-    /// The `category` field holds the placeholder ident `String` (never a real
-    /// category — gate #7 verifies no language declares a `String` category);
-    /// every consumer MUST branch on `is_token_text` BEFORE reading `category`,
-    /// exactly as it branches on `is_predicate`.
-    pub(crate) is_token_text: bool,
+    /// OPAQUE CAPTURE LEAF (L9-3 token-text, L9-4 guest-body): `Some(kind)` iff
+    /// this field is a non-category leaf produced by a syntax-pattern capture —
+    /// a `v@Tok` token text (`OpaqueLeafKind::TokenText` → `String`) or a `*flt`
+    /// guest body (`OpaqueLeafKind::GuestBody` → `Arc<FltNode>`). Both are
+    /// handled IDENTICALLY by every term op — like `is_predicate`, they are
+    /// plain values that derive `Clone`/`Hash`/`Eq`/`Ord`, carried through
+    /// substitution/normalization UNCHANGED (a captured token/body is not a host
+    /// term: no free variables, no α-conversion, no β/shift, no descent). The
+    /// ONLY per-kind difference is the emitted field TYPE ([`OpaqueLeafKind::
+    /// field_type`]); every behavioral site branches on [`FieldInfo::
+    /// is_opaque_leaf`] (which never reads the placeholder `category`), so
+    /// token-text and guest-body share ONE mechanism with zero duplication.
+    pub(crate) opaque_leaf: Option<OpaqueLeafKind>,
+}
+
+/// The two opaque capture-leaf field kinds (see [`FieldInfo::opaque_leaf`]).
+/// They differ ONLY in the emitted Rust field type; every term op treats them
+/// the same (inline hash/cmp, clone-through subst/normalize, no descent).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum OpaqueLeafKind {
+    /// L9-3: a `v@Tok` token-text capture → `std::string::String`.
+    TokenText,
+    /// L9-4: a `*flt(node, …)` guest-body capture → `Arc<FltNode>`.
+    GuestBody,
+}
+
+impl OpaqueLeafKind {
+    /// The bare (non-optional) Rust field type for this leaf kind.
+    pub(crate) fn field_type(self) -> TokenStream {
+        match self {
+            OpaqueLeafKind::TokenText => quote! { std::string::String },
+            OpaqueLeafKind::GuestBody => {
+                quote! { std::sync::Arc<mettail_runtime::FltNode> }
+            },
+        }
+    }
+}
+
+impl FieldInfo {
+    /// True iff this field is an opaque capture leaf (token-text or guest-body)
+    /// — the shared predicate every behavioral term-op branch uses BEFORE
+    /// reading `category` (whose value is a placeholder for leaf fields).
+    pub(crate) fn is_opaque_leaf(&self) -> bool {
+        self.opaque_leaf.is_some()
+    }
+
+    /// The Rust field type for an opaque-leaf field (bare, or `Option<…>` when
+    /// `is_optional`). Panics if called on a non-leaf field.
+    pub(crate) fn opaque_leaf_type(&self) -> TokenStream {
+        let base = self
+            .opaque_leaf
+            .expect("opaque_leaf_type on a non-leaf field")
+            .field_type();
+        if self.is_optional {
+            quote! { Option<#base> }
+        } else {
+            base
+        }
+    }
 }
 
 // =============================================================================
@@ -586,15 +633,14 @@ fn generate_assemble_variant_decl(
                 .iter()
                 .enumerate()
                 .map(|(i, field)| {
-                    if field.is_token_text {
-                        // L9-3: token-text captures ride the Assemble variant as
-                        // a cloned `String` carrier (subst never descends into a
-                        // token's text — it is not a term). Mirrors is_predicate.
+                    if field.is_opaque_leaf() {
+                        // L9-3/L9-4: opaque capture leaves (token-text `String` /
+                        // guest-body `Arc<FltNode>`) ride the Assemble variant as
+                        // a cloned carrier (subst never descends — not a host
+                        // term). Mirrors is_predicate; type is the leaf's own.
                         let text_name = format_ident!("f{}_text", i);
-                        if field.is_optional {
-                            return quote! { #text_name: Option<std::string::String> };
-                        }
-                        return quote! { #text_name: std::string::String };
+                        let ty = field.opaque_leaf_type();
+                        return quote! { #text_name: #ty };
                     }
                     if field.is_predicate {
                         // Task #14 (Option<Guard>): predicate-FIRST — the
@@ -1243,7 +1289,7 @@ fn generate_regular_visit_arm(cat: &Ident, label: &Ident, fields: &[FieldInfo]) 
         let name = &field_names[i];
         let visit_task = format_ident!("Visit{}", field.category);
 
-        if field.is_token_text {
+        if field.is_opaque_leaf() {
             // L9-3: token-text captures are opaque `String` leaves — a token's
             // text is not a term, has no free variables, and never descends.
             // Clone the whole value into the Assemble carrier; no Visit task
@@ -2026,15 +2072,11 @@ fn generate_regular_assemble_arm(cat: &Ident, label: &Ident, fields: &[FieldInfo
     let mut decl_flat: Vec<TokenStream> = Vec::new();
     let mut call_flat: Vec<TokenStream> = Vec::new();
     for (i, field) in fields.iter().enumerate() {
-        if field.is_token_text {
-            // L9-3: token-text carrier `f{i}_text` (declared `String` /
-            // `Option<String>` in `generate_subst_task_variant`); pass-through.
+        if field.is_opaque_leaf() {
+            // L9-3/L9-4: opaque-leaf carrier `f{i}_text` (declared with the
+            // leaf's own type in `generate_subst_task_variant`); pass-through.
             let text_name = format_ident!("f{}_text", i);
-            let text_ty = if field.is_optional {
-                quote! { Option<std::string::String> }
-            } else {
-                quote! { std::string::String }
-            };
+            let text_ty = field.opaque_leaf_type();
             pat_flat.push(quote! { #text_name });
             decl_flat.push(quote! { #text_name: #text_ty });
             call_flat.push(quote! { #text_name });
@@ -2114,7 +2156,7 @@ fn generate_regular_assemble_arm(cat: &Ident, label: &Ident, fields: &[FieldInfo
         .iter()
         .enumerate()
         .map(|(i, field)| {
-            if field.is_token_text {
+            if field.is_opaque_leaf() {
                 // L9-3: token-text carrier is in scope by frame name; pass the
                 // bare `String` through unwrapped (never Arc-wrapped).
                 let text_name = format_ident!("f{}_text", i);
@@ -2175,7 +2217,7 @@ fn optional_collection_field_type_subst(field: &FieldInfo) -> TokenStream {
 /// Predicate fields are already in scope as `f{i}_pred` — no extract needed
 /// (mirrors `emit_pre_field_extracts`' predicate arm).
 fn emit_field_extract(i: usize, field: &FieldInfo) -> TokenStream {
-    if field.is_predicate || field.is_token_text {
+    if field.is_predicate || field.is_opaque_leaf() {
         // L9-3: token-text carrier `f{i}_text` is already in scope (no slot,
         // no Wrap) — nothing to extract (mirrors the predicate no-op).
         return quote! {};
@@ -2998,7 +3040,7 @@ pub(crate) fn collect_category_variants(
                     coll_type: None,
                     is_predicate: false,
                     is_optional: false,
-                    is_token_text: false,
+                    opaque_leaf: None,
                 },
                 FieldInfo {
                     category: domain_name.clone(),
@@ -3006,7 +3048,7 @@ pub(crate) fn collect_category_variants(
                     coll_type: None,
                     is_predicate: false,
                     is_optional: false,
-                    is_token_text: false,
+                    opaque_leaf: None,
                 },
             ],
         });
@@ -3023,7 +3065,7 @@ pub(crate) fn collect_category_variants(
                     coll_type: None,
                     is_predicate: false,
                     is_optional: false,
-                    is_token_text: false,
+                    opaque_leaf: None,
                 },
                 FieldInfo {
                     category: domain_name.clone(),
@@ -3031,7 +3073,7 @@ pub(crate) fn collect_category_variants(
                     coll_type: Some(CollectionType::Vec),
                     is_predicate: false,
                     is_optional: false,
-                    is_token_text: false,
+                    opaque_leaf: None,
                 },
             ],
         });
@@ -3081,6 +3123,9 @@ pub(crate) fn variant_kind_from_term_context(
                     let mut info = match &f.kind {
                         crate::gen::capture::CaptureFieldKind::TokenText => {
                             field_info_for_token_capture()
+                        },
+                        crate::gen::capture::CaptureFieldKind::GuestBody { .. } => {
+                            field_info_for_guest_body()
                         },
                         crate::gen::capture::CaptureFieldKind::Term(ty) => {
                             field_info_from_type_expr(ty)
@@ -3264,7 +3309,7 @@ pub(crate) fn variant_kind_from_items(
                         coll_type: None,
                         is_predicate: false,
                         is_optional: false,
-                        is_token_text: false,
+                        opaque_leaf: None,
                     })
                 },
                 GrammarItem::Collection { element_type, coll_type, .. } => Some(FieldInfo {
@@ -3273,7 +3318,7 @@ pub(crate) fn variant_kind_from_items(
                     coll_type: Some(coll_type.clone()),
                     is_predicate: false,
                     is_optional: false,
-                    is_token_text: false,
+                    opaque_leaf: None,
                 }),
                 _ => None,
             })
@@ -3297,7 +3342,7 @@ pub(crate) fn variant_kind_from_items(
                     coll_type: None,
                     is_predicate: false,
                     is_optional: false,
-                    is_token_text: false,
+                    opaque_leaf: None,
                 })
             },
             GrammarItem::Collection { element_type, coll_type, .. } => Some(FieldInfo {
@@ -3306,7 +3351,7 @@ pub(crate) fn variant_kind_from_items(
                 coll_type: Some(coll_type.clone()),
                 is_predicate: false,
                 is_optional: false,
-                is_token_text: false,
+                opaque_leaf: None,
             }),
             _ => None,
         })
@@ -3352,7 +3397,7 @@ fn field_info_from_type_expr(ty: &TypeExpr) -> FieldInfo {
             coll_type: None,
             is_predicate: false,
             is_optional: false,
-            is_token_text: false,
+            opaque_leaf: None,
         },
         TypeExpr::Collection { coll_type, element } => FieldInfo {
             category: extract_base_category(element),
@@ -3360,7 +3405,7 @@ fn field_info_from_type_expr(ty: &TypeExpr) -> FieldInfo {
             coll_type: Some(coll_type.clone()),
             is_predicate: false,
             is_optional: false,
-            is_token_text: false,
+            opaque_leaf: None,
         },
         // Phase 4 #5b (2026-05-12): HashMap(K, V) Map type. Lower to a
         // collection field with `coll_type: HashMap` mirroring the K==V
@@ -3374,7 +3419,7 @@ fn field_info_from_type_expr(ty: &TypeExpr) -> FieldInfo {
             coll_type: Some(CollectionType::HashMap),
             is_predicate: false,
             is_optional: false,
-            is_token_text: false,
+            opaque_leaf: None,
         },
         _ => FieldInfo {
             category: format_ident!("Unknown"),
@@ -3382,7 +3427,7 @@ fn field_info_from_type_expr(ty: &TypeExpr) -> FieldInfo {
             coll_type: None,
             is_predicate: false,
             is_optional: false,
-            is_token_text: false,
+            opaque_leaf: None,
         },
     }
 }
@@ -3395,14 +3440,14 @@ pub(crate) fn field_info_for_guard_slot() -> FieldInfo {
         coll_type: None,
         is_predicate: true,
         is_optional: false,
-        is_token_text: false,
+        opaque_leaf: None,
     }
 }
 
 /// L9-3: create a synthetic FieldInfo for a `v@Tok` token-kind capture — a
-/// bare `std::string::String` leaf carrying the matched token text. The
+/// bare `std::string::String` opaque leaf carrying the matched token text. The
 /// `category` is the placeholder ident `String` (never dereferenced: every
-/// consumer branches on `is_token_text` first). Mirrors
+/// consumer branches on `is_opaque_leaf()` first). Mirrors
 /// `field_info_for_guard_slot` for the predicate leaf.
 pub(crate) fn field_info_for_token_capture() -> FieldInfo {
     FieldInfo {
@@ -3411,7 +3456,23 @@ pub(crate) fn field_info_for_token_capture() -> FieldInfo {
         coll_type: None,
         is_predicate: false,
         is_optional: false,
-        is_token_text: true,
+        opaque_leaf: Some(OpaqueLeafKind::TokenText),
+    }
+}
+
+/// L9-4: create a synthetic FieldInfo for a `*flt(node, …)` guest-body capture —
+/// an `Arc<FltNode>` opaque leaf. Same shared leaf handling as the token-text
+/// capture (inline hash/cmp, clone-through subst/normalize, no descent); only
+/// the emitted field type differs (`OpaqueLeafKind::field_type`). The
+/// `category` is the placeholder ident `FltNode` (never dereferenced).
+pub(crate) fn field_info_for_guest_body() -> FieldInfo {
+    FieldInfo {
+        category: format_ident!("FltNode"),
+        is_collection: false,
+        coll_type: None,
+        is_predicate: false,
+        is_optional: false,
+        opaque_leaf: Some(OpaqueLeafKind::GuestBody),
     }
 }
 
@@ -3450,7 +3511,7 @@ pub(crate) fn field_infos_from_term_param(param: &TermParam, in_optional: bool) 
                 coll_type: None,
                 is_predicate: false,
                 is_optional: true,
-                is_token_text: false,
+                opaque_leaf: None,
             }]
         },
         TermParam::Abstraction { .. } | TermParam::MultiAbstraction { .. } => vec![],
@@ -3468,7 +3529,7 @@ mod task14_tests {
             coll_type: None,
             is_predicate: true,
             is_optional: optional,
-            is_token_text: false,
+            opaque_leaf: None,
         }
     }
 
@@ -3479,7 +3540,7 @@ mod task14_tests {
             coll_type: None,
             is_predicate: false,
             is_optional: false,
-            is_token_text: false,
+            opaque_leaf: None,
         }
     }
 

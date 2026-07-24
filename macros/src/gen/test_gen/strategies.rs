@@ -2005,7 +2005,7 @@ mod tests {
             coll_type: None,
             is_predicate: true,
             is_optional: true,
-            is_token_text: false,
+            opaque_leaf: None,
         };
         let code =
             generate_binder_direct_build("Proc", "PFoo", &[opt_pred], "Proc", false, &language);
@@ -2024,7 +2024,7 @@ mod tests {
             coll_type: None,
             is_predicate: true,
             is_optional: false,
-            is_token_text: false,
+            opaque_leaf: None,
         };
         let code = generate_binder_direct_build(
             "Proc",

@@ -387,6 +387,9 @@ fn generate_variant_from_term_context(
             for f in &layout.non_scope {
                 let base = match &f.kind {
                     CaptureFieldKind::TokenText => quote! { std::string::String },
+                    CaptureFieldKind::GuestBody { .. } => {
+                        quote! { std::sync::Arc<mettail_runtime::FltNode> }
+                    },
                     CaptureFieldKind::Term(ty) => {
                         type_expr_to_field_type(ty, Some((language, category)))
                     },

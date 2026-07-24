@@ -515,7 +515,7 @@ fn is_structural_category_field(field: &FieldInfo) -> bool {
         // L9-3: a token-text capture (`String`) has no positional ground image,
         // so its host variant fails reflection closed → σ-replay (branch on the
         // flag BEFORE reading `category`, whose placeholder is `String`).
-        && !field.is_token_text
+        && !field.is_opaque_leaf()
         && !NonTerminalKind::classify(&field.category.to_string()).is_builtin()
 }
 

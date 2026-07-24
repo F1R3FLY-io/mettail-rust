@@ -547,6 +547,9 @@ pub(crate) fn construct_test_expression(
                 SyntaxExpr::TokenKind { name, .. } => {
                     parts.push(format!("<{}>", name));
                 },
+                SyntaxExpr::GuestBody { open, close, bind } => {
+                    parts.push(format!("*flt({},{},{})", bind, open, close));
+                },
                 SyntaxExpr::Param(param_name) => {
                     // S3: spec-derived. If the param category is found
                     // in the term_context, route through

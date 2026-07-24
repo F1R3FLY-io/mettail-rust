@@ -287,6 +287,9 @@ fn syntax_pattern_to_string(pattern: &[SyntaxExpr], term_ctx: Option<&Vec<TermPa
                 }
                 result.push_str(&name.to_string());
             },
+            SyntaxExpr::GuestBody { open, close, bind } => {
+                result.push_str(&format!("*flt({},{},{})", bind, open, close));
+            },
         }
     }
 
@@ -911,6 +914,7 @@ fn apply_args_to_syntax(
         match expr {
             SyntaxExpr::Literal(s) => result.push_str(s),
             SyntaxExpr::TokenKind { name, .. } => result.push_str(&name.to_string()),
+            SyntaxExpr::GuestBody { open, .. } => result.push_str(&open.to_string()),
             SyntaxExpr::Param(id) => {
                 let id_str = id.to_string();
 
@@ -1203,6 +1207,9 @@ fn syntax_expr_to_display(expr: &SyntaxExpr) -> String {
         SyntaxExpr::TokenKind { name, bind } => match bind {
             Some(b) => format!("{}@{}", b, name),
             None => name.to_string(),
+        },
+        SyntaxExpr::GuestBody { open, close, bind } => {
+            format!("*flt({},{},{})", bind, open, close)
         },
     }
 }

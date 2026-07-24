@@ -342,7 +342,11 @@ fn reclassify_token_kinds(
                 }
             },
             SyntaxExpr::Op(op) => reclassify_op_token_kinds(op, declared_kinds, ctx_names),
-            SyntaxExpr::Literal(_) | SyntaxExpr::TokenKind { .. } => {},
+            // L9-4: a GuestBody's open/close are already token KINDS (written
+            // explicitly in `*flt(bind, open, close)`); no reclassification.
+            SyntaxExpr::Literal(_)
+            | SyntaxExpr::TokenKind { .. }
+            | SyntaxExpr::GuestBody { .. } => {},
         }
     }
 }

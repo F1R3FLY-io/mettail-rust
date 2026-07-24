@@ -1350,6 +1350,31 @@ pub enum LexAltRuleKind {
     /// the singleton/unified-Fork prefix dispatch uses for non-lattice
     /// triggers. `rule_idx` is carried by the enclosing `LexAltRuleInfo`.
     NullaryPrefixRun,
+    /// L9-4 — a LEADING `*flt(node, open, close)` GuestBody capture whose
+    /// OPENER token kind (`Custom(open_kind)`) is the PrefixDispatch trigger.
+    /// Registering it in `lex_alt_rules_for_prefix` (rather than only in the
+    /// legacy peek-match fall-through) makes the FLT reading a FIRST-CLASS
+    /// prefix branch that is explored ALONGSIDE any lex-ambiguous alternative
+    /// of the opener (e.g. `` lam` `` also lexing as `Ident("lam") -> Var`),
+    /// preserving disambiguation instead of dropping the FLT reading. The
+    /// walker apply (`forks.rs`) emits the SAME branch as the singleton
+    /// `UnifiedDescriptor::LeadingGuestBody` dispatch: push `RuleAt(1)`, enter
+    /// `BinderRule`, carry `ConsumeGuestBodyAndPush { open_kind, close_kind }`.
+    LeadingGuestBody {
+        body_src_idx: u16,
+        open_kind: &'static str,
+        close_kind: &'static str,
+    },
+    /// L9-3 — a LEADING `b@Tok` custom-kind capture whose token kind
+    /// (`Custom(kind_name)`) is the PrefixDispatch trigger. The lattice-safe
+    /// twin of the legacy `UnifiedDescriptor::LeadingTokenKindCapture` peek-arm
+    /// (see `LeadingGuestBody` for why registration here is required). The
+    /// walker apply emits: push `RuleAt(1)`, enter `BinderRule`, carry
+    /// `GuardedConsumeTokenKindAndPush { kind_name }`.
+    LeadingTokenKindCapture {
+        body_src_idx: u16,
+        kind_name: &'static str,
+    },
 }
 
 /// M6c.6.4: dispatch-site discriminator for `lex_alt_rule_for_*`
@@ -2714,6 +2739,38 @@ pub enum ActionArg {
     /// never produces `Some(Some(...))`; nested groups contribute their
     /// inner args directly to the outer group's inner_args list.
     Optional(Option<Vec<ActionArg>>),
+    /// L9-4: a fully-assembled FLT guest body, produced by the walker's
+    /// `ConsumeGuestBody*` action (which scans opener → GuestChunk/Hole run →
+    /// closer, using the verbatim `source_slice` for `body_src` — No-Injection).
+    /// Carries PRIMITIVES ([`GuestBodyData`]) — prattail's lib does NOT depend
+    /// on `runtime`, so it cannot name `FltNode`; the generated `PFlt`-style
+    /// action reads this via [`ActionArg::as_guest_body`] and builds the
+    /// `Arc<FltNode>` variant field itself.
+    GuestBody(Arc<GuestBodyData>),
+}
+
+/// L9-4: the primitive contents of an assembled FLT guest body, carried by
+/// [`ActionArg::GuestBody`]. The generated action lowers this to a
+/// `mettail_runtime::FltNode` (a 1:1 field map — `holes` → `FltHole`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GuestBodyData {
+    /// The opener's tag (`lam` from `` lam` `` / `lam{` / ``` lam``` ```).
+    pub tag: String,
+    /// The verbatim guest-body source `source_slice(open.end, close.start)`.
+    pub body_src: String,
+    /// The `${…}` holes, in source order, offset into `body_src`.
+    pub holes: Vec<GuestBodyHole>,
+    /// The opener's start position in the original source.
+    pub position: usize,
+}
+
+/// L9-4: one `${name}` / `${name:Cat}` hole (see [`GuestBodyData`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GuestBodyHole {
+    pub name: String,
+    pub category: Option<String>,
+    /// Byte offset into `GuestBodyData::body_src` (`hole.start - open.end`).
+    pub offset: usize,
 }
 
 impl fmt::Debug for ActionArg {
@@ -2749,6 +2806,12 @@ impl fmt::Debug for ActionArg {
             ActionArg::Optional(None) => {
                 f.debug_struct("Optional").field("present", &false).finish()
             },
+            ActionArg::GuestBody(node) => f
+                .debug_struct("GuestBody")
+                .field("tag", &node.tag)
+                .field("body_src", &node.body_src)
+                .field("holes", &node.holes.len())
+                .finish(),
         }
     }
 }
@@ -2772,6 +2835,13 @@ impl ActionArg {
     pub fn as_token_text(&self) -> Option<&str> {
         match self {
             ActionArg::Token { text, .. } => Some(text.as_str()),
+            _ => None,
+        }
+    }
+    /// L9-4: extract an assembled FLT guest body's primitive [`GuestBodyData`].
+    pub fn as_guest_body(&self) -> Option<&GuestBodyData> {
+        match self {
+            ActionArg::GuestBody(data) => Some(data),
             _ => None,
         }
     }

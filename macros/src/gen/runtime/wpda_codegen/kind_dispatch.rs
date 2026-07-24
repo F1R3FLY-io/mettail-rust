@@ -1873,33 +1873,80 @@ fn emit_binder_prefix_pushes_for_rule(
     let Some(shape) = classify_binder_in(rule, language) else {
         return;
     };
-    let Some(SyntaxExpr::Literal(trigger)) = rule.syntax_pattern.as_ref().and_then(|sp| sp.first())
-    else {
-        return;
-    };
-    // `(`-triggered binders are handled by the paren-prefix fork, matching
-    // `emit_binder_prefix_arms`; do not synthesize an extra lex-alt path here.
-    if trigger == "(" {
-        return;
-    }
     let body_src_idx = binder_initial_body_cat(&shape)
         .and_then(|name| categories.iter().position(|c| c == name).map(|i| i as u16))
         .unwrap_or(result_src_idx);
-    let trigger_lit = trigger.as_str();
-    prefix_pushes.push(quote! {
-        match (cat_src_idx, kind) {
-            (#result_src_idx, mettail_prattail::automata::TokenKind::Fixed(__t))
-                if __t == #trigger_lit => out.push(
-                    mettail_prattail::wpda_runtime::LexAltRuleInfo {
-                        rule_idx: #rule_idx,
-                        kind: mettail_prattail::wpda_runtime::LexAltRuleKind::PrefixOp {
-                            body_src_idx: #body_src_idx,
-                        },
-                    }
-                ),
-            _ => {},
-        }
-    });
+    match rule.syntax_pattern.as_ref().and_then(|sp| sp.first()) {
+        Some(SyntaxExpr::Literal(trigger)) => {
+            // `(`-triggered binders are handled by the paren-prefix fork, matching
+            // `emit_binder_prefix_arms`; do not synthesize an extra lex-alt path here.
+            if trigger == "(" {
+                return;
+            }
+            let trigger_lit = trigger.as_str();
+            prefix_pushes.push(quote! {
+                match (cat_src_idx, kind) {
+                    (#result_src_idx, mettail_prattail::automata::TokenKind::Fixed(__t))
+                        if __t == #trigger_lit => out.push(
+                            mettail_prattail::wpda_runtime::LexAltRuleInfo {
+                                rule_idx: #rule_idx,
+                                kind: mettail_prattail::wpda_runtime::LexAltRuleKind::PrefixOp {
+                                    body_src_idx: #body_src_idx,
+                                },
+                            }
+                        ),
+                    _ => {},
+                }
+            });
+        },
+        // L9-3 — a LEADING `b@Tok` custom-kind capture. The opener kind IS the
+        // trigger; register it so the modern lattice prefix dispatch explores
+        // the capture reading (the legacy peek-arm only fires on fall-through,
+        // which a lex-ambiguous opener suppresses).
+        Some(SyntaxExpr::TokenKind { name, .. }) => {
+            let kind_name = name.to_string();
+            prefix_pushes.push(quote! {
+                match (cat_src_idx, kind) {
+                    (#result_src_idx, mettail_prattail::automata::TokenKind::Custom(ref __k))
+                        if __k == #kind_name => out.push(
+                            mettail_prattail::wpda_runtime::LexAltRuleInfo {
+                                rule_idx: #rule_idx,
+                                kind: mettail_prattail::wpda_runtime::LexAltRuleKind::LeadingTokenKindCapture {
+                                    body_src_idx: #body_src_idx,
+                                    kind_name: #kind_name,
+                                },
+                            }
+                        ),
+                    _ => {},
+                }
+            });
+        },
+        // L9-4 — a LEADING `*flt(node, open, close)` GuestBody capture. The
+        // opener kind is the trigger; register it (same rationale as the
+        // TokenKind capture) so the FLT reading survives lex ambiguity of the
+        // opener (e.g. `` lam` `` also lexing as `Ident`).
+        Some(SyntaxExpr::GuestBody { open, close, .. }) => {
+            let open_kind = open.to_string();
+            let close_kind = close.to_string();
+            prefix_pushes.push(quote! {
+                match (cat_src_idx, kind) {
+                    (#result_src_idx, mettail_prattail::automata::TokenKind::Custom(ref __k))
+                        if __k == #open_kind => out.push(
+                            mettail_prattail::wpda_runtime::LexAltRuleInfo {
+                                rule_idx: #rule_idx,
+                                kind: mettail_prattail::wpda_runtime::LexAltRuleKind::LeadingGuestBody {
+                                    body_src_idx: #body_src_idx,
+                                    open_kind: #open_kind,
+                                    close_kind: #close_kind,
+                                },
+                            }
+                        ),
+                    _ => {},
+                }
+            });
+        },
+        _ => {},
+    }
 }
 
 fn emit_cross_cat_projection_prefix_pushes(

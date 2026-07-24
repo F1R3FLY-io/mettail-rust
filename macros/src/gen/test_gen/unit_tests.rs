@@ -510,7 +510,7 @@ mod tests {
             coll_type: None,
             is_predicate: true,
             is_optional: optional,
-            is_token_text: false,
+            opaque_leaf: None,
         }
     }
 
