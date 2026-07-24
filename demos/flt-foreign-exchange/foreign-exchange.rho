@@ -1,0 +1,42 @@
+// ════════════════════════════════════════════════════════════════════════════════════════════
+//  The Foreign Exchange — a RhoCalc program that ships a λ-calculus Foreign Language Term,
+//  destructures it with typed holes, and reconstructs it, all on the f1r3node Rholang reducer.
+//
+//  Run me with the RhoCalc interpreter:
+//    rhocalc demos/flt-foreign-exchange/foreign-exchange.rho
+//
+//  FOREIGN LANGUAGE TERMS ARE A RHOCALC GRAMMAR FEATURE
+//  ────────────────────────────────────────────────────
+//  RhoCalc (MeTTaIL's Rholang-1.4 surface) can carry a term of ANOTHER language verbatim. The
+//  opener `lam`…`` embeds a guest term written in the untyped λ-calculus; the text between the
+//  back-ticks is the guest's OWN concrete syntax, which RhoCalc hands to the guest's reflector
+//  (secure by construction — No-Injection). The interpreter bundles the `lam` guest, so this is
+//  ordinary RhoCalc — nothing about the interpreter is FLT-specific.
+//
+//  THE PROGRAM
+//  ───────────
+//        @"fltX"!( lam`(lam x. x, lam a. lam b. a)` )                    // ship App(I, K) on fltX
+//        | for( @lam`(${f}, ${k})` <- @"fltX" ){ @"OUT"!( lam`(${f}, ${k})` ) }
+//
+//  The FLT `lam`(fun, arg)`` reflects to the guest application node App(fun, arg), with:
+//        fun = lam x. x           — the identity combinator  I  (= λ.0 in de-Bruijn form)
+//        arg = lam a. lam b. a    — the constant  combinator  K  (= λ.λ.1)
+//  so the shipped term is App(I, K).
+//
+//  THE TYPED HOLES
+//  ───────────────
+//  The receive pattern is itself an FLT, `lam`(${f}, ${k})``, carrying two TYPED HOLES:
+//        ${f}  binds the function position   ⟶   ⟦I⟧ = λ.0
+//        ${k}  binds the argument position   ⟶   ⟦K⟧ = λ.λ.1
+//  A `${x}` hole is a secure typed-AST hole: it matches a reflected sub-term by SHAPE, never by
+//  string splicing. On the reducer the send and receive rendezvous in ONE COMM (a real RhoCalc
+//  reduction): the holes capture the two foreign sub-terms, the body RE-QUOTES `lam`(${f}, ${k})``
+//  filling the holes, and the reconstructed application is published to @"OUT".
+//
+//  EXPECT
+//  ──────
+//        @"OUT"  =  ⟦(λ.0 λ.λ.1)⟧          (App(I, K), rebuilt from the two captured holes)
+// ════════════════════════════════════════════════════════════════════════════════════════════
+
+@"fltX"!( lam`(lam x. x, lam a. lam b. a)` )
+| for( @lam`(${f}, ${k})` <- @"fltX" ){ @"OUT"!( lam`(${f}, ${k})` ) }

@@ -594,3 +594,21 @@ required-features = ["source-oracle"]
 name = "rho_guard_oracle"
 path = "tests/rho_guard_oracle.rs"
 required-features = ["source-oracle"]
+
+# The `rhocalc` interpreter binary. It parses RhoCalc (Rholang 1.4) source with the GENERATED
+# parser, lowers it (`lower_rhocalc_proc_with_resolver`), and evaluates on the f1r3node reducer.
+# The RhoCalc grammar supports Foreign Language Terms, so the interpreter bundles the `lam` guest
+# (the production LambdaLanguage) to lower programs that embed λ-terms — hence `lambda-runtime`;
+# `rhocalc-runtime` provides the generated `Proc` parser.
+[[bin]]
+name = "rhocalc"
+path = "src/bin/rhocalc.rs"
+required-features = ["rhocalc-runtime", "lambda-runtime"]
+
+# CI gate for the `rhocalc` binary: runs it on the committed demo `.rho` file and asserts the
+# RhoCalc program (which exercises the grammar's FLT feature) reduces on the reducer — the COMM
+# fires, the typed `${x}` holes bind, and the re-quote reconstructs App(I, K) = (λ.0 λ.λ.1) on OUT.
+[[test]]
+name = "rhocalc_bin"
+path = "tests/rhocalc_bin.rs"
+required-features = ["rhocalc-runtime", "lambda-runtime"]
