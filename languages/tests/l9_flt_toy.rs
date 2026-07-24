@@ -48,6 +48,11 @@ language! {
             GuestChunk = "[^`$]+" ;
         }
         raw mode flt_body_brace {
+            // #13: a bare `{` inside the brace body self-pushes the guest mode, so
+            // the mode stack depth-counts nesting and the FLT closes at the DEPTH-0
+            // `}`. The `GuestBody` body-scan depth-counts these (text == the opener
+            // delimiter `{`); inner `{`/`}` are body content.
+            FltBraceOpen = "\\{" push(flt_body_brace) ;
             FltCloseBrace = "\\}" pop ;
             Hole = "\\$\\{[^}]*\\}" ;
             GuestChunk = "[^{}$]+" ;
@@ -135,6 +140,21 @@ fn l9_flt_brace_assembles_node() {
     assert_eq!(n.body_src, " App(${f}) ");
     assert_eq!(n.holes.len(), 1);
     assert_eq!(n.holes[0].name, "f");
+}
+
+#[test]
+fn l9_flt_nested_brace_depth_counts_to_zero_close() {
+    // #13: BALANCED nested braces `box{ App(box{ ${f} }, K) }` — the body spans to
+    // the DEPTH-0 `}` (the inner `box{ … }` is content), so `body_src` includes the
+    // nested braces verbatim and the hole is still recorded.
+    mettail_runtime::clear_var_cache();
+    let term = Num::parse("box{ App(box{ ${f} }, K) }").expect("nested-brace FLT parse");
+    let n = node_of(&term);
+    assert_eq!(n.tag, "box");
+    assert_eq!(n.body_src, " App(box{ ${f} }, K) ");
+    assert_eq!(n.holes.len(), 1);
+    assert_eq!(n.holes[0].name, "f");
+    assert_eq!(&n.body_src[n.holes[0].offset..n.holes[0].offset + 4], "${f}");
 }
 
 #[test]

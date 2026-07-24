@@ -18772,15 +18772,38 @@ where
             .map(|e| e.saturating_sub(open_text.len()))
             .unwrap_or(open_pos);
 
+        // #13: the opener's DELIMITER — the suffix of the opener text after its
+        // alphanumeric tag (`{` for `box{`, `` ` `` for `` lam` ``, ` ``` ` for the
+        // fence). A guest body may contain BALANCED nested opener-delimiters: for a
+        // depth-counted brace (`box{ … box{ … } … }`) the lexer's raw guest mode emits
+        // a bare `{` as its own token (a self-push into the same mode) and every `}`
+        // as `close_kind`, so the token stream carries one `close_kind` per `}`. The
+        // FLT region ends at the DEPTH-0 `close_kind`; the inner ones are body content.
+        // Backtick/fence bodies never carry a token whose text is their delimiter
+        // (their `GuestChunk` excludes it, and the delimiter only ever appears as the
+        // closer), so `depth` stays 0 and the scan is single-level — unchanged.
+        let open_delim = &open_text[tag.len()..];
         let mut cur = next_of(open_pos);
         let mut body_src = String::new();
         let mut holes: Vec<crate::wpda_runtime::GuestBodyHole> = Vec::new();
+        let mut depth = 0usize;
         loop {
             match tokens.peek_kind(cur) {
-                Some(TokenKind::Custom(ref k)) if k == close_kind => break,
+                Some(TokenKind::Custom(ref k)) if k == close_kind => {
+                    if depth == 0 {
+                        break;
+                    }
+                    // A nested close: descend one level; its `}` is body content.
+                    depth -= 1;
+                    body_src.push_str(tokens.peek_text(cur).unwrap_or(""));
+                    cur = next_of(cur);
+                },
                 Some(TokenKind::Custom(_)) => {
                     let text = tokens.peek_text(cur).unwrap_or("");
-                    if text.len() >= 3 && text.starts_with("${") && text.ends_with('}') {
+                    if !open_delim.is_empty() && text == open_delim {
+                        // A nested opener-delimiter (a bare `{` in a brace body).
+                        depth += 1;
+                    } else if text.len() >= 3 && text.starts_with("${") && text.ends_with('}') {
                         // `${name}` or `${name:Cat}`.
                         let inner = &text[2..text.len() - 1];
                         let (name, category) = match inner.split_once(':') {

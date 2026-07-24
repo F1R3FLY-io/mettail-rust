@@ -144,6 +144,10 @@ language! {
             GuestChunk = "[^`$]+" ;
         }
         raw mode flt_body_brace {
+            // #13: a bare `{` inside the brace body self-pushes the guest mode so the
+            // mode stack depth-counts nesting; the FLT closes at the DEPTH-0 `}` (the
+            // GuestBody body-scan depth-counts tokens whose text is the `{` delimiter).
+            FltBraceOpen = "\\{" push(flt_body_brace) ;
             FltCloseBrace = "\\}" pop ;
             Hole = "\\$\\{[^}]*\\}" ;
             GuestChunk = "[^{}$]+" ;
