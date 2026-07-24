@@ -275,6 +275,16 @@ impl SurfaceRenderer {
                                         rule.label
                                     ));
                                 },
+                                // L9-3/L9-4: a token-text (`b@Tok`) / guest-body
+                                // (`*flt(…)`) capture is opaque foreign data with no
+                                // host-side de-reflection surface.
+                                SyntaxExpr::TokenKind { .. } | SyntaxExpr::GuestBody { .. } => {
+                                    return Err(format!(
+                                        "binder production {} uses a token/guest-body capture — \
+                                         unsupported for de-reflection",
+                                        rule.label
+                                    ));
+                                },
                             }
                         }
                         Ok(tokens.join(" "))
@@ -379,6 +389,14 @@ impl SurfaceRenderer {
                     SyntaxExpr::Op(_) => {
                         return Err(format!(
                             "{constructor} uses pattern ops — unsupported for de-reflection"
+                        ));
+                    },
+                    // L9-3/L9-4: opaque token-text / guest-body captures have no
+                    // host-side de-reflection surface.
+                    SyntaxExpr::TokenKind { .. } | SyntaxExpr::GuestBody { .. } => {
+                        return Err(format!(
+                            "{constructor} uses a token/guest-body capture — unsupported for \
+                             de-reflection"
                         ));
                     },
                 }

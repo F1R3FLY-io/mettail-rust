@@ -116,6 +116,40 @@ language! {
         }
     },
 
+    // L9-5: RhoCalc goes MODAL for FLT (foreign-language template) guest bodies.
+    // Each `FltOpen*` opener pushes a RAW guest mode whose closer POPs back to
+    // the host; the mode stack is a purely LEXICAL balancer resolved before the
+    // parser runs (the parser sees an already-bracketed FltOpen…FltClose kind
+    // sequence). ZERO-REGRESSION rationale: an opener is the longest maximal-munch
+    // accept at its start (its delimiter makes it strictly longer than the bare
+    // `Ident`/keyword it collides with — `lam\`` @4 beats `lam` @3), so under the
+    // Delimiter-Unambiguity Invariant the host mode-0 tokenization of every
+    // existing RhoCalc input is byte-identical (no host source contains
+    // `IDENT\``, ` ``` `, or the reserved `box{`). Backtick/fence tags are any
+    // lowercase IDENT; the brace tag is the reserved keyword `box` (D-1), so it
+    // never collides with PPar's `{ … }`.
+    tokens {
+        FltOpenBacktick = "[a-z]+`" push(flt_body_backtick) ;
+        FltOpenFence = "[a-z]+```" push(flt_body_fence) ;
+        FltOpenBrace = "box\\{" push(flt_body_brace) ;
+
+        raw mode flt_body_backtick {
+            FltCloseBacktick = "`" pop ;
+            Hole = "\\$\\{[^}]*\\}" ;
+            GuestChunk = "[^`$]+" ;
+        }
+        raw mode flt_body_fence {
+            FltCloseFence = "```" pop ;
+            Hole = "\\$\\{[^}]*\\}" ;
+            GuestChunk = "[^`$]+" ;
+        }
+        raw mode flt_body_brace {
+            FltCloseBrace = "\\}" pop ;
+            Hole = "\\$\\{[^}]*\\}" ;
+            GuestChunk = "[^{}$]+" ;
+        }
+    },
+
     terms {
         PZero .
         |- "Nil" : Proc;
@@ -1961,7 +1995,19 @@ language! {
             }}
         ] fold;
 
-
+        // L9-5: FLT guest-body captures. Each `*flt(node, open, close)` consumes a
+        // delimited foreign-language region and assembles an opaque native
+        // `FltNode { tag, body_src, holes[{name,category,offset}], position }` (an
+        // inert BoundTerm leaf). The three forms differ ONLY in surface delimiter;
+        // all carry the same `Arc<FltNode>` payload. Reduction is deferred to L9-6
+        // (`lower_proc`'s `PFlt` arm → `FltResolver`); until an FLT resolver is
+        // installed a `PFlt` is inert (empty-resolver default = zero behavior
+        // change), so no `eval` disposition is declared. Declared LAST so the
+        // existing Proc rule indices (and the pinned @/mixfix cohort structure)
+        // are unperturbed — a leading-capture rule joins no infix/mixfix cohort.
+        PFlt . |- *flt(node, FltOpenBacktick, FltCloseBacktick) : Proc;
+        PFltFence . |- *flt(node, FltOpenFence, FltCloseFence) : Proc;
+        PFltBrace . |- *flt(node, FltOpenBrace, FltCloseBrace) : Proc;
     },
 
     equations {

@@ -79,7 +79,11 @@ fn field_child_expr_typed(
     }
 
     if field.is_optional {
-        if field.is_predicate {
+        if field.is_predicate || field.is_opaque_leaf() {
+            // L9-3/L9-4: an optional token-text (`Option<String>`) / guest-body
+            // (`Option<Arc<FltNode>>`) capture — the present payload is an opaque
+            // e-graph leaf (atomic data, never a recursible subterm), absence a
+            // distinct nullary leaf. Mirrors the string-path `field_child_expr`.
             let leaf = opaque_leaf_typed(enum_id, quote! { __pred });
             let none = field_none_typed(enum_id, field_index);
             return quote! {
@@ -108,7 +112,12 @@ fn field_child_expr_typed(
         };
     }
 
-    if field.is_predicate {
+    if field.is_predicate || field.is_opaque_leaf() {
+        // L9-3/L9-4: a token-text (`String`) / guest-body (`Arc<FltNode>`)
+        // capture lowers to an opaque e-graph leaf — atomic data, never a
+        // recursible category child (there is no `__mettail_dovetail_add_flt_node`
+        // to call). Mirrors the string-path `field_child_expr`; branch BEFORE the
+        // `child_fn` fall-through.
         return opaque_leaf_typed(enum_id, quote! { #field_var });
     }
 

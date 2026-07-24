@@ -2771,7 +2771,17 @@ pub fn write_token_variant_id(
 
     buf.push_str(
         "/// Map a Token variant to a compact ordinal for BP array indexing.\n\
-         #[allow(dead_code)]\n\
+         // L9-5: `#[allow(unreachable_patterns)]` covers the catch-all below —\n\
+         // for a NON-modal grammar `variant_map` enumerates every `Token` variant\n\
+         // so the arm is unreachable; for a MODAL grammar the guest-mode tokens\n\
+         // (`FltClose*`/`Hole`/`GuestChunk`) are NOT in `variant_map` (they never\n\
+         // reach binding-power dispatch — they are consumed wholesale by the\n\
+         // GuestBody assembly), so the catch-all makes the `match` exhaustive by\n\
+         // mapping them to ordinal 0 (the `Eof` slot: a valid index with a\n\
+         // no-operator BP). Adding them to `variant_map` instead would renumber\n\
+         // every existing ordinal and resize the BP arrays — a needless\n\
+         // perturbation — so the catch-all is the zero-regression choice.\n\
+         #[allow(dead_code, unreachable_patterns)]\n\
          #[inline(always)]\n\
          fn token_variant_id(token: &Token) -> u8 { match token {",
     );
@@ -2796,7 +2806,7 @@ pub fn write_token_variant_id(
         }
     }
 
-    buf.push_str("} }");
+    buf.push_str("_ => 0u8, } }");
 }
 
 // ══════════════════════════════════════════════════════════════════════════════

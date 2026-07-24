@@ -61,11 +61,22 @@ pub(crate) fn build_fn(category: &Ident) -> Ident {
 }
 
 /// Whether a field is a plain category child (recursively reconstructable): a single
-/// non-optional, non-collection, non-predicate child of an object (non-builtin) category.
+/// non-optional, non-collection, non-predicate, non-opaque-leaf child of an object
+/// (non-builtin) category.
+///
+/// L9-3/L9-4: an opaque-leaf capture (token-text `String` / guest-body
+/// `Arc<FltNode>`) is NOT plainly invertible — it was lowered to a LOSSY e-graph
+/// leaf (`format!("{}::{:?}", …)`, see `opaque_leaf_expr`), which cannot be
+/// parsed back into the payload, and it has no `__mettail_dovetail_build_<leaf>_d`
+/// reconstruction fn. A variant carrying one is therefore not structurally
+/// invertible; `category_reconstruct` skips it (falls through to `_ => None`).
+/// This is sound: such variants (e.g. RhoCalc's inert `PFlt`) never participate in
+/// a Dovetail rewrite, so they are never reached for reconstruction.
 fn is_plain_category_field(field: &FieldInfo) -> bool {
     !field.is_optional
         && !field.is_collection
         && !field.is_predicate
+        && !field.is_opaque_leaf()
         && !NonTerminalKind::classify(&field.category.to_string()).is_builtin()
 }
 

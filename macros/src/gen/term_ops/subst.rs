@@ -3094,6 +3094,30 @@ pub(crate) fn rule_to_variant_kind(rule: &GrammarRule, _language: &LanguageDef) 
         return VariantKind::Literal { label };
     }
 
+    // L9-3/L9-4: a capture-bearing rule (`b@Tok` / `*flt(node, open, close)`)
+    // must go through the capture-aware builder so its opaque-leaf field
+    // (token-text `String` / `Arc<FltNode>`) is stamped `opaque_leaf` — checked
+    // FIRST, so it fires whether the term context is empty (`Some([])`), absent
+    // (`None`), or non-empty. `capture_layout` reads only the syntax pattern.
+    // Without this a bare `Label . |- *flt(…) : Cat` (empty/absent context)
+    // falls to `variant_kind_from_items`, which yields a plain NonTerminal
+    // `FieldInfo { category: FltNode, opaque_leaf: None }`; every term-op emitter
+    // that recurses by category — notably the Dovetail e-graph add/build, which
+    // synthesizes `__mettail_dovetail_{add,build}_flt_node…` for a real category
+    // — then fails to resolve, since an opaque leaf has no such recursion fns.
+    if let Some(sp) = rule.syntax_pattern.as_deref() {
+        if sp.iter().any(|e| {
+            matches!(
+                e,
+                mettail_ast::grammar::SyntaxExpr::TokenKind { .. }
+                    | mettail_ast::grammar::SyntaxExpr::GuestBody { .. }
+            )
+        }) {
+            let ctx = rule.term_context.as_deref().unwrap_or(&[]);
+            return variant_kind_from_term_context(&label, ctx, Some(sp));
+        }
+    }
+
     if let Some(ctx) = &rule.term_context {
         return variant_kind_from_term_context(&label, ctx, rule.syntax_pattern.as_deref());
     }
