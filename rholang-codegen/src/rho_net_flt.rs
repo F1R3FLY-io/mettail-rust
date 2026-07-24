@@ -639,6 +639,63 @@ pub trait FltReflect: mettail_runtime::Language {
     fn parse_and_reflect_flt(&self, body: &str) -> Result<GroundTerm, String>;
 }
 
+// ── FltResolve — the FLT tag → guest-reflector registry (L9-6) ─────────────────────────────────
+
+/// The registry a Rho lowering's `PFlt` arm consults to elaborate a foreign-language template. A
+/// `PFlt` node's `tag` (the opener payload, e.g. `"lam"`) selects the [`FltReflect`] guest that
+/// parses and reflects its body; the resolver maps that tag to the guest.
+///
+/// Behind a trait so a lowering threads a `&dyn FltResolve` (or an `Arc<dyn FltResolve>`) without
+/// naming a concrete registry, and so the EMPTY default ([`EmptyFltResolver`]) can resolve nothing:
+/// with it installed, every FLT-free program lowers byte-identically to the pre-L9-6 lowering (there
+/// is no guest for any tag, so a `PFlt` never elaborates), and a `PFlt` bearing an unregistered tag
+/// fails closed rather than fabricating a term.
+pub trait FltResolve {
+    /// Resolve the guest reflector registered under `tag`, or `None` for the empty-default and
+    /// unregistered-tag cases.
+    fn resolve(&self, tag: &str) -> Option<&dyn FltReflect>;
+}
+
+/// The EMPTY [`FltResolve`] — resolves no tag. THE zero-behavior-change default: a lowering carrying
+/// it never elaborates a `PFlt`, so a program that constructs none lowers byte-identically to the
+/// pre-L9-6 pipeline.
+pub struct EmptyFltResolver;
+
+impl FltResolve for EmptyFltResolver {
+    fn resolve(&self, _tag: &str) -> Option<&dyn FltReflect> {
+        None
+    }
+}
+
+/// A concrete growable [`FltResolve`] registry: a `tag → Box<dyn FltReflect>` map. The guest
+/// reflectors are the per-language `impl FltReflect for <Guest>Language` values (macro-generated
+/// under feature `rho-codegen`); a caller registers each guest under the surface tag its FLT openers
+/// carry (e.g. `"lam"` → `LambdaLanguage`).
+#[derive(Default)]
+pub struct FltRegistry {
+    guests: std::collections::HashMap<String, Box<dyn FltReflect>>,
+}
+
+impl FltRegistry {
+    /// A registry with no guests (equivalent to [`EmptyFltResolver`], but growable).
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Register `guest` under the surface `tag` its FLT openers carry; returns `self` for builder
+    /// chaining.
+    pub fn with_guest(mut self, tag: impl Into<String>, guest: Box<dyn FltReflect>) -> Self {
+        self.guests.insert(tag.into(), guest);
+        self
+    }
+}
+
+impl FltResolve for FltRegistry {
+    fn resolve(&self, tag: &str) -> Option<&dyn FltReflect> {
+        self.guests.get(tag).map(|guest| guest.as_ref())
+    }
+}
+
 /// Rewrite every `^free(<debug>)` leaf of a freshly-reflected FLT template so its name is the
 /// moniker `pretty_name` (`^free(f)`) rather than the generated reflector's unstable
 /// `format!("{:?}", fv)` string (`^free("FreeVar { unique_id: UniqueId(7), pretty_name: Some(\"f\") }")`).

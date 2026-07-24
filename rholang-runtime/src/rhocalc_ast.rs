@@ -16,7 +16,8 @@ use mettail_languages::rhocalc::{
 };
 use mettail_rholang_codegen::{
     lower_language_def, plan_rho_default_backend, suggest_rejected_rule_dispositions,
-    RhoCoverageEvidence, RhoDefaultBackendRequirements, RhoGuardCoverageEvidence,
+    EmptyFltResolver, FltResolve, RhoCoverageEvidence, RhoDefaultBackendRequirements,
+    RhoGuardCoverageEvidence,
 };
 use mettail_runtime::{
     Binder, FramedSemanticKeyHasher, FreeVar, Language, LanguageMetadata, OrdVar,
@@ -39,7 +40,34 @@ use models::rust::utils::{
 const FREE_NAME_PREFIX: &str = "mtl:";
 const FREE_PROC_OUTPUT: &str = "mtl#out";
 
-type BoundEnv = HashMap<FreeVar<String>, usize>;
+/// L9-6: the read-only lowering environment — the de-Bruijn binder map PLUS the
+/// FLT resolver ([`FltResolve`]). The resolver rides INSIDE the env (as an
+/// `Arc<dyn FltResolve>`, so `BoundEnv` carries no lifetime) precisely so it
+/// threads through the entire recursive lowering without touching a single one of
+/// the ~90 `lower_*` call sites — every one already passes `&BoundEnv`.
+/// [`BoundEnv::new`] installs the EMPTY resolver ([`EmptyFltResolver`]), so an
+/// FLT-free lowering is byte-identical to the pre-L9-6 pipeline; the resolver is
+/// consulted ONLY by the `PFlt` arm (L9-6b).
+#[derive(Clone)]
+struct BoundEnv {
+    binders: HashMap<FreeVar<String>, usize>,
+    resolver: Arc<dyn FltResolve>,
+}
+
+impl BoundEnv {
+    /// The empty environment with the empty (no-guest) resolver — the
+    /// zero-behavior-change default used by every existing lowering entry point.
+    fn new() -> Self {
+        BoundEnv { binders: HashMap::new(), resolver: Arc::new(EmptyFltResolver) }
+    }
+
+    /// The empty binder environment carrying `resolver` — the L9-6b entry that
+    /// installs a populated FLT registry so `PFlt` arms can elaborate.
+    #[allow(dead_code)]
+    fn with_resolver(resolver: Arc<dyn FltResolve>) -> Self {
+        BoundEnv { binders: HashMap::new(), resolver }
+    }
+}
 
 /// Reconstruct the REAL `RhoCalcLanguage` augmented `LanguageDef` from the
 /// generated metadata's `definition_source()`.
@@ -1958,7 +1986,7 @@ fn lower_name(name: &Name, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> 
 fn lower_name_var(var: &OrdVar, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> {
     match &var.0 {
         Var::Free(free_var) => {
-            if let Some(index) = env.get(free_var) {
+            if let Some(index) = env.binders.get(free_var) {
                 Ok(new_boundvar_par(*index as i32, Vec::new(), false))
             } else {
                 let name = pretty_var_name(free_var)?;
@@ -1972,7 +2000,7 @@ fn lower_name_var(var: &OrdVar, env: &BoundEnv) -> Result<Par, RhocalcAstLowerEr
 fn lower_proc_var(var: &OrdVar, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> {
     match &var.0 {
         Var::Free(free_var) => {
-            if let Some(index) = env.get(free_var) {
+            if let Some(index) = env.binders.get(free_var) {
                 Ok(new_boundvar_par(*index as i32, Vec::new(), false))
             } else {
                 let name = pretty_var_name(free_var)?;
@@ -1996,16 +2024,19 @@ fn pretty_var_name(var: &FreeVar<String>) -> Result<&str, RhocalcAstLowerError> 
 
 fn extend_env(env: &BoundEnv, binders: &[Binder<String>]) -> BoundEnv {
     let width = binders.len();
-    let mut extended = env
+    let mut binder_map = env
+        .binders
         .iter()
         .map(|(var, index)| (var.clone(), index + width))
-        .collect::<BoundEnv>();
+        .collect::<HashMap<FreeVar<String>, usize>>();
 
     for (formal_index, binder) in binders.iter().enumerate() {
-        extended.insert(binder.0.clone(), width - 1 - formal_index);
+        binder_map.insert(binder.0.clone(), width - 1 - formal_index);
     }
 
-    extended
+    // L9-6: the extended scope inherits the SAME resolver — the FLT registry is a
+    // whole-lowering constant, unaffected by binder depth.
+    BoundEnv { binders: binder_map, resolver: Arc::clone(&env.resolver) }
 }
 
 fn send_par(channel: Par, data: Vec<Par>) -> Par {
