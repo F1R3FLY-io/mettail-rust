@@ -88,12 +88,16 @@ impl BoundEnv {
         self.hole_binders.get(name).copied()
     }
 
-    /// L9-6b: derive the scope extended by `width` fresh INNERMOST FLT-hole binders
-    /// (`hole_bindings`, each a `(name, level)` with `level < width`), shifting the
-    /// existing binder/hole levels up by `width`. Mirrors [`extend_env`]'s moniker
-    /// binder handling but for name-keyed FLT holes.
-    fn extend_holes(&self, width: usize, hole_bindings: &[(String, usize)]) -> BoundEnv {
-        let binders = self
+    /// L9-6b/#14: derive the continuation scope of a receive whose `slots` are its
+    /// binders IN BIND ORDER — each either a moniker [`Binder`] (a `PVar` binder) or a
+    /// name-keyed FLT hole ([`ReceiveSlot`]). Existing binder/hole levels shift up by
+    /// the slot width; the new slot at formal index `i` binds at de-Bruijn level
+    /// `width - 1 - i` — the SAME convention [`extend_env`] uses for moniker joins, so
+    /// an FLT hole and a moniker binder that co-occur in a `&`-join share one coherent
+    /// level space (fixes the L9-6b `&`-join fail-closed).
+    fn extend_slots(&self, slots: &[ReceiveSlot]) -> BoundEnv {
+        let width = slots.len();
+        let mut binders = self
             .binders
             .iter()
             .map(|(var, index)| (var.clone(), index + width))
@@ -103,11 +107,27 @@ impl BoundEnv {
             .iter()
             .map(|(name, index)| (name.clone(), index + width))
             .collect::<HashMap<String, usize>>();
-        for (name, level) in hole_bindings {
-            hole_binders.insert(name.clone(), *level);
+        for (formal_index, slot) in slots.iter().enumerate() {
+            let level = width - 1 - formal_index;
+            match slot {
+                ReceiveSlot::Moniker(binder) => {
+                    binders.insert(binder.0.clone(), level);
+                },
+                ReceiveSlot::Hole(name) => {
+                    hole_binders.insert(name.clone(), level);
+                },
+            }
         }
         BoundEnv { binders, hole_binders, resolver: Arc::clone(&self.resolver) }
     }
+}
+
+/// #14: one binder slot of a receive, IN BIND ORDER — a moniker `PVar` binder or a
+/// name-keyed FLT hole. Unifying the two into a single ordered list lets an FLT hole
+/// and a moniker binder co-occur in a `&`-join with one coherent de-Bruijn numbering.
+enum ReceiveSlot {
+    Moniker(Binder<String>),
+    Hole(String),
 }
 
 /// Reconstruct the REAL `RhoCalcLanguage` augmented `LanguageDef` from the
@@ -1640,24 +1660,23 @@ fn lower_pfor_user(
     }
 
     // Lower each bind: source channel (OUTER env) + pattern `Par`(s) + the bind's local binders.
+    // #14: binders accumulate as `ReceiveSlot`s IN BIND ORDER — a moniker `PVar` binder or a
+    // name-keyed FLT hole — so an FLT hole and a moniker binder that co-occur in a `&`-join share
+    // one coherent de-Bruijn numbering (a hole's global level then follows from its slot position,
+    // not the FLT bind's local `FreeVar` numbering).
     let mut binds_rho: Vec<ReceiveBind> = Vec::with_capacity(binds.len());
-    let mut all_binders: Vec<Binder<String>> = Vec::new();
-    // L9-6b: an FLT receive pattern binds its holes by NAME (not moniker `Binder`s),
-    // so its continuation bindings ride alongside `all_binders`. It must be the sole
-    // bind of its row (a `&`-join mixing an FLT hole scope with moniker binders would
-    // need cross-bind FreeVar-level offsetting the demo never exercises — fail closed).
-    let mut flt_context: Option<(i32, Vec<(String, usize)>)> = None;
+    let mut slots: Vec<ReceiveSlot> = Vec::new();
     for bind in &binds {
         let channel = bind_channel_name(bind)
             .ok_or(RhocalcAstLowerError::UnsupportedProc("for-row channel"))?;
         let source = lower_name(channel, env)?;
 
         if let Some(node) = bind_flt_node(bind) {
-            if binds.len() != 1 {
-                return Err(RhocalcAstLowerError::UnsupportedProc("FLT receive pattern in a &-join"));
+            let (pattern, free_count, hole_names) = lower_flt_pattern(node.as_ref(), env)?;
+            // The FLT bind contributes one hole slot per `FreeVar`, in `FreeVar` order.
+            for name in hole_names {
+                slots.push(ReceiveSlot::Hole(name));
             }
-            let (pattern, free_count, hole_bindings) = lower_flt_pattern(node.as_ref(), env)?;
-            flt_context = Some((free_count, hole_bindings));
             binds_rho.push(ReceiveBind {
                 patterns: vec![pattern],
                 source: Some(source),
@@ -1667,7 +1686,7 @@ fn lower_pfor_user(
             continue;
         }
 
-        let (patterns, mut bind_binders) = if is_empty_bind(bind) {
+        let (patterns, bind_binders) = if is_empty_bind(bind) {
             // `for(_ <- c)` — match (and discard) any single message; no bound variables.
             (vec![new_wildcard_par(Vec::new(), false)], Vec::new())
         } else {
@@ -1680,7 +1699,9 @@ fn lower_pfor_user(
         };
 
         let free_count = bind_binders.len() as i32;
-        all_binders.append(&mut bind_binders);
+        for binder in bind_binders {
+            slots.push(ReceiveSlot::Moniker(binder));
+        }
         binds_rho.push(ReceiveBind {
             patterns,
             source: Some(source),
@@ -1689,15 +1710,12 @@ fn lower_pfor_user(
         });
     }
 
-    // L9-6b: the continuation scope is either the FLT hole scope (name-keyed) or the
-    // ordinary moniker binder scope. `receive_binder_count` is the receive's total
-    // bound-var width used by the `locally_free` accounting below.
-    let (extended_env, receive_binder_count) = match &flt_context {
-        Some((free_count, hole_bindings)) => {
-            (env.extend_holes(*free_count as usize, hole_bindings), *free_count as usize)
-        },
-        None => (extend_env(env, &all_binders), all_binders.len()),
-    };
+    // #14: ONE unified continuation scope over the receive's binder slots (moniker + FLT holes
+    // interleaved in bind order). `receive_binder_count` is the receive's total bound-var width
+    // used by the `locally_free` accounting below. For a moniker-only receive this is byte-identical
+    // to the former `extend_env(env, &all_binders)` (same slot order, same `width - 1 - i` levels).
+    let receive_binder_count = slots.len();
+    let extended_env = env.extend_slots(&slots);
 
     // The continuation is lowered under the extended env: a nested row recurses; otherwise this is
     // the innermost user body, where held folds are lifted into Dovetail trampolines.
@@ -2271,32 +2289,28 @@ fn lower_flt_construction(node: &FltNode, env: &BoundEnv) -> Result<Par, Rhocalc
         .map_err(|error| RhocalcAstLowerError::FltReflect(error.to_string()))
 }
 
-/// L9-6b PATTERN arm: reflect a `PFlt` receive pattern to its marked `Par` pattern
-/// plus the `(hole name, de-Bruijn level)` continuation bindings. Each hole becomes
-/// a receive match `FreeVar` ([`reflect_flt_pattern`]); the returned bindings map a
-/// hole name to the continuation `^bound` level `free_count - 1 - freevar_level`
-/// (the innermost hole is `BoundVar(0)`), so `lower_pfor_user` can register them in
-/// the continuation's env (`extend_holes`) and a body reference to the hole name
-/// resolves through the [`BoundEnv::flt_hole_level`] fallback.
+/// L9-6b/#14 PATTERN arm: reflect a `PFlt` receive pattern to its marked `Par`
+/// pattern, its `free_count` (the receive-bind `FreeVar` count), and its hole names
+/// ORDERED BY FreeVar level (`hole_names[j]` is the hole bound at this bind's
+/// `FreeVar(j)`). Each hole becomes a receive match `FreeVar` ([`reflect_flt_pattern`]);
+/// the CALLER interleaves `hole_names` (in FreeVar order) with any moniker binders as
+/// [`ReceiveSlot`]s, so the global de-Bruijn level of each hole is assigned by
+/// `extend_slots` — correct whether the FLT bind stands alone or joins moniker binders.
 fn lower_flt_pattern(
     node: &FltNode,
     env: &BoundEnv,
-) -> Result<(Par, i32, Vec<(String, usize)>), RhocalcAstLowerError> {
+) -> Result<(Par, i32, Vec<String>), RhocalcAstLowerError> {
     let (ground, fingerprint) = flt_resolve_and_reflect(node, env)?;
     let holes = flt_holes_of(node);
-    let FltPatternReflection { pattern, free_count, hole_bindings, .. } =
+    let FltPatternReflection { pattern, free_count, mut hole_bindings, .. } =
         reflect_flt_pattern(&ground, &holes, &fingerprint)
             .map_err(|error| RhocalcAstLowerError::FltReflect(error.to_string()))?;
-    // FreeVar level `i` (left-to-right first appearance) binds to continuation
-    // `BoundVar(free_count - 1 - i)` — the receive's de-Bruijn convention (mirrors
-    // `extend_env`'s `width - 1 - formal_index`).
-    let continuation_bindings = hole_bindings
-        .into_iter()
-        .map(|(name, freevar_level)| {
-            (name, (free_count - 1 - freevar_level) as usize)
-        })
-        .collect::<Vec<(String, usize)>>();
-    Ok((pattern, free_count, continuation_bindings))
+    // `hole_bindings` is `(name, FreeVar level)` in first-appearance order; sort by
+    // level to index it positionally (defensive — first-appearance already IS level
+    // order), then project to the names.
+    hole_bindings.sort_by_key(|(_, level)| *level);
+    let hole_names = hole_bindings.into_iter().map(|(name, _)| name).collect::<Vec<String>>();
+    Ok((pattern, free_count, hole_names))
 }
 
 fn pretty_var_name(var: &FreeVar<String>) -> Result<&str, RhocalcAstLowerError> {

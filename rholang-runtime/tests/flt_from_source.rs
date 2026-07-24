@@ -312,3 +312,28 @@ async fn beat3_from_source_pattern_rejects_counterfeit() {
         "the GString-tagged counterfeit ≠ the GPrivate ⌜App⌝ tag — no match, OUT empty"
     );
 }
+
+// ── #14 (from source) — an FLT hole and a moniker binder co-bind in one `&`-join ────────────────
+
+/// A `&`-join whose FIRST bind is an FLT typed-hole pattern (`@lam`(${f}, K)` <- fltX`) and whose
+/// SECOND is an ordinary moniker binder (`@g <- other`): the FLT hole `f` (bound by NAME) and the
+/// moniker `g` (bound by its `FreeVar`) share ONE coherent de-Bruijn numbering, so the body's `f`
+/// and `g` BOTH resolve — `f ← ⟦id⟧` (from the FLT), `g ← ⟦K⟧` (from `@"other"`). Closes the L9-6b
+/// `&`-join deferral (was fail-closed). Order on OUT is nondeterministic, so assert as a set.
+#[tokio::test]
+async fn join14_from_source_flt_hole_and_moniker_binder_co_bind() {
+    mettail_runtime::clear_var_cache();
+    let mut out = out_values_from_source(
+        "@\"fltX\"!(lam`(lam x. x, lam a. lam b. a)`) | @\"other\"!(lam`lam a. lam b. a`) | \
+         for( @lam`(${f}, lam a. lam b. a)` <- @\"fltX\" & @g <- @\"other\" ){ \
+         @\"OUT\"!(f) | @\"OUT\"!(g) }",
+    )
+    .await;
+    out.sort_by_key(|value| format!("{value:?}"));
+    let mut expected = vec![oid(), okonst()];
+    expected.sort_by_key(|value| format!("{value:?}"));
+    assert_eq!(
+        out, expected,
+        "the FLT hole f binds ⟦id⟧ and the moniker g binds ⟦K⟧ — both resolve in the join body"
+    );
+}
