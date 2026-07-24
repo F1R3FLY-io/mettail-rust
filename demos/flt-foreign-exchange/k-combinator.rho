@@ -1,0 +1,35 @@
+// ════════════════════════════════════════════════════════════════════════════════════════════
+//  The Foreign Exchange — genuinely EVALUATE a λ-calculus Foreign Language Term: β-reduce it on
+//  the f1r3node reducer and read back its normal form.
+//
+//  Run me with the RhoCalc interpreter:
+//    rhocalc demos/flt-foreign-exchange/k-combinator.rho
+//
+//  A BARE TERM EVALUATES TO ITS NORMAL FORM
+//  ────────────────────────────────────────
+//  This program is a single λ-calculus Foreign Language Term (an `App` node — no send/receive), so
+//  the interpreter EVALUATES it to its normal form: it seeds the term into the Lambda guest's own
+//  in-Rho reduction engine and lets the β-reduction run to completion on the reducer, then reads
+//  the resulting normal form off @"OUT" (and the ^fired ledger of rewrite firings).
+//
+//  THE COMPUTATION — the K combinator discards its second argument
+//  ───────────────────────────────────────────────────────────────
+//  `lam`(fun, arg)`` reflects to the guest application node App(fun, arg). Here we build
+//        App( App(K, I), K )
+//  with the two standard combinators
+//        K = lam a. lam b. a      — the constant combinator  (= λ.λ.1)   "keep the first argument"
+//        I = lam x. x             — the identity combinator   (= λ.0)
+//  so the whole term is the redex  (K I) K  =  "apply K to I, then apply the result to K".
+//
+//  It β-reduces in two steps, entirely in-Rho:
+//        (K I) K   ⟶β   (λb. I) K   ⟶β   I
+//  K takes two arguments and returns the FIRST (I), discarding the SECOND (K). The result is the
+//  identity combinator.
+//
+//  EXPECT
+//  ──────
+//        normal form on @"OUT"  =  ⟦λ.0⟧          (the identity I — K kept its first argument)
+//        ^fired ledger contains the "Beta" firings that performed the reduction
+// ════════════════════════════════════════════════════════════════════════════════════════════
+
+lam`((lam a. lam b. a, lam x. x), lam a. lam b. a)`
