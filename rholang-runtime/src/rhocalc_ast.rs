@@ -15,12 +15,13 @@ use mettail_languages::rhocalc::{
     Pathmap, Proc, RhoCalcLanguage, RhoCalcTerm, RhoCalcTermInner, Set, Str, UInt32,
 };
 use mettail_rholang_codegen::{
-    lower_language_def, plan_rho_default_backend, suggest_rejected_rule_dispositions,
-    EmptyFltResolver, FltResolve, RhoCoverageEvidence, RhoDefaultBackendRequirements,
+    lower_language_def, plan_rho_default_backend, reflect_flt_construction, reflect_flt_pattern,
+    suggest_rejected_rule_dispositions, EmptyFltResolver, FltHole, FltPatternReflection,
+    FltResolve, GroundTerm, RhoCoverageEvidence, RhoDefaultBackendRequirements,
     RhoGuardCoverageEvidence,
 };
 use mettail_runtime::{
-    Binder, FramedSemanticKeyHasher, FreeVar, Language, LanguageMetadata, OrdVar,
+    Binder, FltNode, FramedSemanticKeyHasher, FreeVar, Language, LanguageMetadata, OrdVar,
     RuntimeDovetailRunReport, Term, TermType, Var, VarTypeInfo, WeightedRewriteSeed,
     WeightedSeedId,
 };
@@ -29,6 +30,7 @@ use models::rhoapi::{
     EAnd, EDiv, EEq, EGt, EGte, ELt, ELte, EMinus, EMod, EMult, ENeg, ENeq, ENot, EOr, EPlus,
     EPlusPlus, Expr, Par, ReceiveBind,
 };
+use models::create_bit_vector;
 use models::rust::rholang::implicits::GPrivateBuilder;
 use models::rust::utils::{
     new_boundvar_par, new_elist_par, new_emap_par, new_eset_par, new_freevar_par, new_gbigint_expr,
@@ -51,6 +53,15 @@ const FREE_PROC_OUTPUT: &str = "mtl#out";
 #[derive(Clone)]
 struct BoundEnv {
     binders: HashMap<FreeVar<String>, usize>,
+    /// L9-6b: FLT hole name → de-Bruijn level. A `${name}` hole captured by an FLT
+    /// receive pattern ([`reflect_flt_pattern`]) is a receive binder, but — unlike
+    /// a RhoCalc `PVar` binder — it is a STRING metavar, not a moniker `FreeVar`
+    /// shared with the continuation's `name` reference (whose `FreeVar` carries a
+    /// distinct `unique_id`). So the continuation's reference resolves by NAME
+    /// through this map (`lower_proc_var`/`lower_name_var` fall back to it when the
+    /// `FreeVar`-keyed lookup misses), and a construction-position `${name}` reads
+    /// its fill's `^bound` level from here too.
+    hole_binders: HashMap<String, usize>,
     resolver: Arc<dyn FltResolve>,
 }
 
@@ -58,14 +69,44 @@ impl BoundEnv {
     /// The empty environment with the empty (no-guest) resolver — the
     /// zero-behavior-change default used by every existing lowering entry point.
     fn new() -> Self {
-        BoundEnv { binders: HashMap::new(), resolver: Arc::new(EmptyFltResolver) }
+        BoundEnv {
+            binders: HashMap::new(),
+            hole_binders: HashMap::new(),
+            resolver: Arc::new(EmptyFltResolver),
+        }
     }
 
     /// The empty binder environment carrying `resolver` — the L9-6b entry that
     /// installs a populated FLT registry so `PFlt` arms can elaborate.
-    #[allow(dead_code)]
     fn with_resolver(resolver: Arc<dyn FltResolve>) -> Self {
-        BoundEnv { binders: HashMap::new(), resolver }
+        BoundEnv { binders: HashMap::new(), hole_binders: HashMap::new(), resolver }
+    }
+
+    /// L9-6b: the de-Bruijn level a `${name}` FLT hole binds to (via the receive
+    /// pattern that introduced it), or `None` when `name` names no FLT hole.
+    fn flt_hole_level(&self, name: &str) -> Option<usize> {
+        self.hole_binders.get(name).copied()
+    }
+
+    /// L9-6b: derive the scope extended by `width` fresh INNERMOST FLT-hole binders
+    /// (`hole_bindings`, each a `(name, level)` with `level < width`), shifting the
+    /// existing binder/hole levels up by `width`. Mirrors [`extend_env`]'s moniker
+    /// binder handling but for name-keyed FLT holes.
+    fn extend_holes(&self, width: usize, hole_bindings: &[(String, usize)]) -> BoundEnv {
+        let binders = self
+            .binders
+            .iter()
+            .map(|(var, index)| (var.clone(), index + width))
+            .collect::<HashMap<FreeVar<String>, usize>>();
+        let mut hole_binders = self
+            .hole_binders
+            .iter()
+            .map(|(name, index)| (name.clone(), index + width))
+            .collect::<HashMap<String, usize>>();
+        for (name, level) in hole_bindings {
+            hole_binders.insert(name.clone(), *level);
+        }
+        BoundEnv { binders, hole_binders, resolver: Arc::clone(&self.resolver) }
     }
 }
 
@@ -113,6 +154,17 @@ pub enum RhocalcAstLowerError {
     FreeVarWithoutName,
     EmptyInputJoin,
     InputArityMismatch { names: usize, binders: usize },
+    /// L9-6: a `PFlt` node's `tag` resolves to no guest in the installed
+    /// [`FltResolve`] registry (the empty-resolver default, or an unregistered
+    /// tag). A `PFlt` cannot elaborate without its guest reflector — fail closed.
+    UnresolvedFltTag(String),
+    /// L9-6: the resolved guest exposes no `definition_fingerprint` (a guest with
+    /// no lowered/planned identity), so its reflected tags cannot be minted.
+    FltGuestHasNoFingerprint(String),
+    /// L9-6: the guest reflector failed to parse-and-reflect the FLT body, or the
+    /// pattern/construction admission gate rejected it (a category mismatch, a
+    /// malformed hole envelope, or an unfilled construction hole).
+    FltReflect(String),
 }
 
 /// RhoCalc language adapter for the AST-first Rho machine runtime path.
@@ -585,6 +637,20 @@ pub fn lower_rhocalc_proc(proc: &Proc) -> Result<Par, RhocalcAstLowerError> {
     lower_body_lifting_folds(proc, &BoundEnv::new())
 }
 
+/// L9-6b: lower a RhoCalc `Proc` under an installed FLT resolver, so `PFlt` nodes
+/// elaborate (construction position → [`reflect_flt_construction`]; receive-pattern
+/// position → [`reflect_flt_pattern`]) via the guest each opener `tag` selects. With
+/// the empty ([`EmptyFltResolver`]) default this is byte-identical to
+/// [`lower_rhocalc_proc`]; a populated [`mettail_rholang_codegen::FltRegistry`]
+/// (`"lam"` → `LambdaLanguage`, …) is what drives the Foreign-Exchange demo from
+/// source.
+pub fn lower_rhocalc_proc_with_resolver(
+    proc: &Proc,
+    resolver: Arc<dyn FltResolve>,
+) -> Result<Par, RhocalcAstLowerError> {
+    lower_body_lifting_folds(proc, &BoundEnv::with_resolver(resolver))
+}
+
 /// Lower a parsed `RhoCalcLanguage` term into normalized Rholang `Par`.
 ///
 /// Ambiguous generated terms are preserved as parallel branches after exact
@@ -673,6 +739,13 @@ fn lower_proc(proc: &Proc, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> 
     match proc {
         Proc::PZero => Ok(Par::default()),
         Proc::PDrop(name) => lower_drop(name.as_ref(), env),
+        // L9-6b CONSTRUCTION arm: a `PFlt*` in VALUE position (a send payload, a
+        // re-quote) elaborates to the reflected foreign term via the guest
+        // reflector selected by its `tag`. The three delimiter forms are identical
+        // at this level — same `Arc<FltNode>` payload.
+        Proc::PFlt(node) | Proc::PFltFence(node) | Proc::PFltBrace(node) => {
+            lower_flt_construction(node.as_ref(), env)
+        },
         Proc::PPar(parts) => parts
             .iter_elements()
             .try_fold(Par::default(), |acc, part| Ok(acc.append(lower_proc(part, env)?))),
@@ -1569,10 +1642,30 @@ fn lower_pfor_user(
     // Lower each bind: source channel (OUTER env) + pattern `Par`(s) + the bind's local binders.
     let mut binds_rho: Vec<ReceiveBind> = Vec::with_capacity(binds.len());
     let mut all_binders: Vec<Binder<String>> = Vec::new();
+    // L9-6b: an FLT receive pattern binds its holes by NAME (not moniker `Binder`s),
+    // so its continuation bindings ride alongside `all_binders`. It must be the sole
+    // bind of its row (a `&`-join mixing an FLT hole scope with moniker binders would
+    // need cross-bind FreeVar-level offsetting the demo never exercises — fail closed).
+    let mut flt_context: Option<(i32, Vec<(String, usize)>)> = None;
     for bind in &binds {
         let channel = bind_channel_name(bind)
             .ok_or(RhocalcAstLowerError::UnsupportedProc("for-row channel"))?;
         let source = lower_name(channel, env)?;
+
+        if let Some(node) = bind_flt_node(bind) {
+            if binds.len() != 1 {
+                return Err(RhocalcAstLowerError::UnsupportedProc("FLT receive pattern in a &-join"));
+            }
+            let (pattern, free_count, hole_bindings) = lower_flt_pattern(node.as_ref(), env)?;
+            flt_context = Some((free_count, hole_bindings));
+            binds_rho.push(ReceiveBind {
+                patterns: vec![pattern],
+                source: Some(source),
+                remainder: None,
+                free_count,
+            });
+            continue;
+        }
 
         let (patterns, mut bind_binders) = if is_empty_bind(bind) {
             // `for(_ <- c)` — match (and discard) any single message; no bound variables.
@@ -1596,7 +1689,15 @@ fn lower_pfor_user(
         });
     }
 
-    let extended_env = extend_env(env, &all_binders);
+    // L9-6b: the continuation scope is either the FLT hole scope (name-keyed) or the
+    // ordinary moniker binder scope. `receive_binder_count` is the receive's total
+    // bound-var width used by the `locally_free` accounting below.
+    let (extended_env, receive_binder_count) = match &flt_context {
+        Some((free_count, hole_bindings)) => {
+            (env.extend_holes(*free_count as usize, hole_bindings), *free_count as usize)
+        },
+        None => (extend_env(env, &all_binders), all_binders.len()),
+    };
 
     // The continuation is lowered under the extended env: a nested row recurses; otherwise this is
     // the innermost user body, where held folds are lifted into Dovetail trampolines.
@@ -1613,14 +1714,14 @@ fn lower_pfor_user(
         None => None,
     };
 
-    let bind_count = all_binders.len() as i32;
-    let mut locally_free = receive_locally_free(&binds_rho, &lowered_body, all_binders.len());
+    let bind_count = receive_binder_count as i32;
+    let mut locally_free = receive_locally_free(&binds_rho, &lowered_body, receive_binder_count);
     if let Some(cond_par) = &condition {
         // The guard is lowered in the same extended env as the body, so adjust its `locally_free`
         // the same way (drop this receive's own bound vars, shift outer references down).
         locally_free = union(
             locally_free,
-            filter_and_adjust_bitset(&cond_par.locally_free, all_binders.len()),
+            filter_and_adjust_bitset(&cond_par.locally_free, receive_binder_count),
         );
     }
 
@@ -1881,6 +1982,38 @@ fn canonicalize_arity_pattern(pattern: &Proc) -> Proc {
 }
 
 /// The bind's pattern as a `Proc` whose `Proc::PVar` leaves mark the bound positions.
+/// L9-6b: the `FltNode` of an FLT RECEIVE pattern (`for(@lam`…` <- c)`), or `None`
+/// for a non-FLT bind. The FLT surface `@lam`…`` is a quoted `PFlt*` process
+/// (`NQuote`/`NQuoteShort`); a `PFlt*` written directly as a quoted pattern rides
+/// the `InputBindQuoted` family. Intercepting here (before [`bind_pattern_proc`]'s
+/// arity-list wrapping) keeps the reflected FLT pattern the receive's SOLE pattern,
+/// matching the single reflected datum a `@c!(⟦…⟧)` send carries.
+fn bind_flt_node(bind: &InputBind) -> Option<Arc<FltNode>> {
+    fn flt_of_proc(proc: &Proc) -> Option<Arc<FltNode>> {
+        match proc {
+            Proc::PFlt(node) | Proc::PFltFence(node) | Proc::PFltBrace(node) => {
+                Some(Arc::clone(node))
+            },
+            _ => None,
+        }
+    }
+    fn flt_of_name(name: &Name) -> Option<Arc<FltNode>> {
+        match name {
+            Name::NQuote(proc) | Name::NQuoteShort(proc) => flt_of_proc(proc.as_ref()),
+            _ => None,
+        }
+    }
+    match bind {
+        InputBind::InputBind(lhs, _)
+        | InputBind::InputBindPersistent(lhs, _)
+        | InputBind::InputBindQuery(lhs, _, _) => flt_of_name(lhs.as_ref()),
+        InputBind::InputBindQuoted(pat, _)
+        | InputBind::InputBindQuotedPersistent(pat, _)
+        | InputBind::InputBindQuotedQuery(pat, _, _) => flt_of_proc(pat.as_ref()),
+        _ => None,
+    }
+}
+
 fn bind_pattern_proc(bind: &InputBind) -> Option<Proc> {
     match bind {
         InputBind::InputBind(lhs, _)
@@ -1988,6 +2121,9 @@ fn lower_name_var(var: &OrdVar, env: &BoundEnv) -> Result<Par, RhocalcAstLowerEr
         Var::Free(free_var) => {
             if let Some(index) = env.binders.get(free_var) {
                 Ok(new_boundvar_par(*index as i32, Vec::new(), false))
+            } else if let Some(index) = flt_hole_bound_level(free_var, env) {
+                // L9-6b: an FLT hole captured by an enclosing FLT receive pattern.
+                Ok(new_boundvar_par(index as i32, Vec::new(), false))
             } else {
                 let name = pretty_var_name(free_var)?;
                 Ok(new_gstring_par(format!("{FREE_NAME_PREFIX}{name}"), Vec::new(), false))
@@ -2002,6 +2138,11 @@ fn lower_proc_var(var: &OrdVar, env: &BoundEnv) -> Result<Par, RhocalcAstLowerEr
         Var::Free(free_var) => {
             if let Some(index) = env.binders.get(free_var) {
                 Ok(new_boundvar_par(*index as i32, Vec::new(), false))
+            } else if let Some(index) = flt_hole_bound_level(free_var, env) {
+                // L9-6b: an FLT hole captured by an enclosing FLT receive pattern —
+                // bound by NAME (the hole is a string metavar, so it never shares a
+                // moniker `FreeVar` with this reference).
+                Ok(new_boundvar_par(index as i32, Vec::new(), false))
             } else {
                 let name = pretty_var_name(free_var)?;
                 Ok(send_par(
@@ -2014,6 +2155,148 @@ fn lower_proc_var(var: &OrdVar, env: &BoundEnv) -> Result<Par, RhocalcAstLowerEr
             Err(RhocalcAstLowerError::UnsupportedProc("unopened bound process variable"))
         },
     }
+}
+
+/// L9-6b: the de-Bruijn level a free `var` binds to as an FLT hole captured by an
+/// enclosing FLT receive pattern, or `None` when it names no such hole. Consulted
+/// AFTER the moniker-`FreeVar` binder map misses (an FLT hole is a string metavar,
+/// never a shared moniker `FreeVar`), so a genuine free variable with a colliding
+/// pretty-name is never shadowed by a same-named hole in an unrelated scope — the
+/// hole map only carries names introduced by an enclosing FLT pattern.
+fn flt_hole_bound_level(free_var: &FreeVar<String>, env: &BoundEnv) -> Option<usize> {
+    pretty_var_name(free_var).ok().and_then(|name| env.flt_hole_level(name))
+}
+
+// ── L9-6b: FLT `PFlt` elaboration (construction + pattern) ─────────────────────────────────────
+
+/// Rewrite an FLT body's `${name}` / `${name:Cat}` metavariables to the bare guest
+/// free variable `name`, so the guest parser (which knows nothing of the `${…}`
+/// host hole syntax) reads each hole as an ordinary guest free variable. ONLY the
+/// declared `${…}` spans are rewritten; every other byte — a spelled-out guest
+/// subterm like a `lam a. lam b. a` combinator — is copied verbatim and so
+/// reflects GROUND. Balanced by the lexer's raw guest mode, a `${` always closes
+/// at the next `}` (a hole cannot nest), so a single left-to-right scan suffices.
+fn flt_body_to_guest_syntax(body_src: &str) -> String {
+    let mut out = String::with_capacity(body_src.len());
+    let mut rest = body_src;
+    while let Some(start) = rest.find("${") {
+        out.push_str(&rest[..start]);
+        let after = &rest[start + 2..];
+        match after.find('}') {
+            Some(end) => {
+                let inner = &after[..end];
+                // `name` or `name:Cat` — the guest free variable is the bare name.
+                let name = inner.split(':').next().unwrap_or(inner).trim();
+                out.push_str(name);
+                rest = &after[end + 1..];
+            },
+            None => {
+                // Malformed (no closing `}`): copy verbatim and stop (the assembler
+                // guarantees balanced holes, so this is unreachable in practice).
+                out.push_str(&rest[start..]);
+                rest = "";
+            },
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+/// The [`FltHole`] admission descriptors for a node's declared holes (name +
+/// optional `:Cat`), in first-declaration order — the reflectors' hole input.
+fn flt_holes_of(node: &FltNode) -> Vec<FltHole> {
+    node.holes
+        .iter()
+        .map(|hole| match &hole.category {
+            Some(category) => FltHole::typed(hole.name.clone(), category.clone()),
+            None => FltHole::new(hole.name.clone()),
+        })
+        .collect()
+}
+
+/// Resolve a `PFlt` node's guest reflector + definition fingerprint, then reflect
+/// its (hole-rewritten) body to a guest [`GroundTerm`] whose holes are `^free(name)`
+/// leaves — the shared front half of both the construction and the pattern arm.
+fn flt_resolve_and_reflect(
+    node: &FltNode,
+    env: &BoundEnv,
+) -> Result<(GroundTerm, String), RhocalcAstLowerError> {
+    let guest = env
+        .resolver
+        .resolve(&node.tag)
+        .ok_or_else(|| RhocalcAstLowerError::UnresolvedFltTag(node.tag.clone()))?;
+    let fingerprint = guest
+        .metadata()
+        .definition_fingerprint()
+        .ok_or_else(|| RhocalcAstLowerError::FltGuestHasNoFingerprint(node.tag.clone()))?
+        .to_string();
+    let guest_body = flt_body_to_guest_syntax(&node.body_src);
+    let ground = guest
+        .parse_and_reflect_flt(&guest_body)
+        .map_err(RhocalcAstLowerError::FltReflect)?;
+    Ok((ground, fingerprint))
+}
+
+/// L9-6b CONSTRUCTION arm: lower a `PFlt` in a VALUE (send / re-quote) position.
+/// Each declared hole `${name}` is FILLED with its in-scope binding — the reflected
+/// `^bound(peano(level))` image (E-2-D-opaque to the host binder machinery, so a
+/// captured hole survives the RhoCalc boundary), read by NAME from the enclosing
+/// FLT pattern's hole bindings. `reflect_flt_construction` (C2) then recomputes each
+/// hole-bearing node's `⌜^nog⌝` marker from the FILLED subtree — never a stale
+/// `⌜^gnd⌝` — so a binder-carrying fill drives β. A hole-FREE `PFlt` (a spelled-out
+/// subject) has an empty fill map and reflects to its exact ground image.
+fn lower_flt_construction(node: &FltNode, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> {
+    let (ground, fingerprint) = flt_resolve_and_reflect(node, env)?;
+    let mut fills: BTreeMap<String, Par> = BTreeMap::new();
+    for hole in &node.holes {
+        let level = env.flt_hole_level(&hole.name).ok_or_else(|| {
+            RhocalcAstLowerError::FltReflect(format!(
+                "construction hole ${{{}}} is not bound by an enclosing FLT pattern",
+                hole.name
+            ))
+        })?;
+        // The fill is a HOST `BoundVar` (not a reflected `⟦^bound⟧`, which is opaque
+        // to the reducer): so when the enclosing receive's COMM commits, the matcher
+        // SUBSTITUTES the captured value for this var INSIDE the reflected EList. Its
+        // `locally_free` bit (`level`) rides up through `reflect_flt_construction`'s
+        // child-`locally_free` union into the EList, marking the var for descent. Its
+        // absent `^gnd` marker is read as non-ground by C2, so the hole-bearing node's
+        // recomputed marker is `⌜^nog⌝` (a fill only ever makes a node LESS ground).
+        fills.insert(
+            hole.name.clone(),
+            new_boundvar_par(level as i32, create_bit_vector(&[level]), false),
+        );
+    }
+    reflect_flt_construction(&ground, &fills, &fingerprint)
+        .map_err(|error| RhocalcAstLowerError::FltReflect(error.to_string()))
+}
+
+/// L9-6b PATTERN arm: reflect a `PFlt` receive pattern to its marked `Par` pattern
+/// plus the `(hole name, de-Bruijn level)` continuation bindings. Each hole becomes
+/// a receive match `FreeVar` ([`reflect_flt_pattern`]); the returned bindings map a
+/// hole name to the continuation `^bound` level `free_count - 1 - freevar_level`
+/// (the innermost hole is `BoundVar(0)`), so `lower_pfor_user` can register them in
+/// the continuation's env (`extend_holes`) and a body reference to the hole name
+/// resolves through the [`BoundEnv::flt_hole_level`] fallback.
+fn lower_flt_pattern(
+    node: &FltNode,
+    env: &BoundEnv,
+) -> Result<(Par, i32, Vec<(String, usize)>), RhocalcAstLowerError> {
+    let (ground, fingerprint) = flt_resolve_and_reflect(node, env)?;
+    let holes = flt_holes_of(node);
+    let FltPatternReflection { pattern, free_count, hole_bindings, .. } =
+        reflect_flt_pattern(&ground, &holes, &fingerprint)
+            .map_err(|error| RhocalcAstLowerError::FltReflect(error.to_string()))?;
+    // FreeVar level `i` (left-to-right first appearance) binds to continuation
+    // `BoundVar(free_count - 1 - i)` — the receive's de-Bruijn convention (mirrors
+    // `extend_env`'s `width - 1 - formal_index`).
+    let continuation_bindings = hole_bindings
+        .into_iter()
+        .map(|(name, freevar_level)| {
+            (name, (free_count - 1 - freevar_level) as usize)
+        })
+        .collect::<Vec<(String, usize)>>();
+    Ok((pattern, free_count, continuation_bindings))
 }
 
 fn pretty_var_name(var: &FreeVar<String>) -> Result<&str, RhocalcAstLowerError> {
@@ -2034,9 +2317,17 @@ fn extend_env(env: &BoundEnv, binders: &[Binder<String>]) -> BoundEnv {
         binder_map.insert(binder.0.clone(), width - 1 - formal_index);
     }
 
-    // L9-6: the extended scope inherits the SAME resolver — the FLT registry is a
-    // whole-lowering constant, unaffected by binder depth.
-    BoundEnv { binders: binder_map, resolver: Arc::clone(&env.resolver) }
+    // L9-6b: FLT-hole binder levels shift up by the same `width` as the moniker
+    // binders (they share the receive's de-Bruijn scope), and the extended scope
+    // inherits the SAME resolver — the FLT registry is a whole-lowering constant,
+    // unaffected by binder depth.
+    let hole_binders = env
+        .hole_binders
+        .iter()
+        .map(|(name, index)| (name.clone(), index + width))
+        .collect::<HashMap<String, usize>>();
+
+    BoundEnv { binders: binder_map, hole_binders, resolver: Arc::clone(&env.resolver) }
 }
 
 fn send_par(channel: Par, data: Vec<Par>) -> Par {

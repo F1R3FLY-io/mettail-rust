@@ -112,7 +112,8 @@ pub use native_contract::{
 };
 #[cfg(feature = "rhocalc-runtime")]
 pub use rhocalc_ast::{
-    dovetail_rho_backed_rhocalc, lower_rhocalc_name, lower_rhocalc_proc, lower_rhocalc_term,
+    dovetail_rho_backed_rhocalc, lower_rhocalc_name, lower_rhocalc_proc,
+    lower_rhocalc_proc_with_resolver, lower_rhocalc_term,
     lower_rhocalc_term_with_folds, rho_runtime_backed_rhocalc_ints, rho_runtime_backed_rhocalc_strings,
     rho_runtime_backed_rhocalc_values, rhocalc_ast_runtime_def, rhocalc_observe_ints_invocation,
     rhocalc_observe_strings_invocation, rhocalc_observe_values_invocation,
