@@ -3782,6 +3782,71 @@ pub const PEANO_SUCC_REFLECT_LABEL: &str = "S";
 pub const GROUND_MARK_REFLECT_LABEL: &str = "^gnd";
 pub const NONGROUND_MARK_REFLECT_LABEL: &str = "^nog";
 
+/// S2 — EVERY reserved reflect label, enumerated in ONE place.
+///
+/// The families were previously enumerated three times and never together:
+/// [`crate::rho_net_subst_trs::reserved_subst_trs_labels`] (19, the C2
+/// object-congruence exclusion set), [`crate::rho_net_naive_kt::respread_reserved_labels`]
+/// (3, the R3 walker), and a scatter of loose constants (the markers, the `^cmp`
+/// results, the float family, the Peano numerals) that no list contained. Nothing
+/// ever asserted that the union satisfies the namespace rule
+/// [`mettail_ast::validation::is_reserved_reflect_label`] the whole safety
+/// argument rests on — and two members do not.
+///
+/// This is the census that makes that assertion possible. Adding a reserved label
+/// without adding it here is caught by
+/// `every_reserved_label_is_in_the_reserved_namespace`.
+pub fn all_reserved_reflect_labels() -> Vec<&'static str> {
+    let mut labels: Vec<&'static str> = Vec::with_capacity(32);
+    labels.extend(crate::rho_net_subst_trs::reserved_subst_trs_labels());
+    // The `^respread` family lives in the bench-quarantined Track-B module, so it
+    // is only enumerable when that feature is on. The CI gate runs
+    // `--all-features`, so the census the namespace assertion sees in CI is always
+    // the complete one; a default build simply has fewer reserved labels to check
+    // because three of them do not exist in it.
+    #[cfg(feature = "bench-naive-baseline")]
+    labels.extend(crate::rho_net_naive_kt::respread_reserved_labels());
+    labels.extend([
+        GROUND_MARK_REFLECT_LABEL,
+        NONGROUND_MARK_REFLECT_LABEL,
+        DRIVE_AC_RESERVED_LABEL,
+        FLOAT_RESERVED_LABEL,
+        FLOAT_HOIST_RESERVED_LABEL,
+        FLOAT_MERGE_RESERVED_LABEL,
+        PEANO_ZERO_REFLECT_LABEL,
+        PEANO_SUCC_REFLECT_LABEL,
+    ]);
+    labels.sort_unstable();
+    labels.dedup();
+    labels
+}
+
+/// ★ THE KNOWN VIOLATORS of the reserved-namespace rule, named rather than omitted.
+///
+/// [`all_reserved_reflect_labels`] is complete, and every member of it MUST satisfy
+/// [`mettail_ast::validation::is_reserved_reflect_label`] — except these two, which
+/// are the bare identifiers `Z` and `S`. They are reserved in fact (the `^cmp` /
+/// `^pred` / `^shiftk` receivers and the `^bound` payload read them as the Peano
+/// numeral encoding of a de Bruijn scope offset) but they are NOT `^`-prefixed, so
+/// the namespace rule does not cover them.
+///
+/// That is a live defect, not a theoretical one: `S . x:Proc |- "s" "(" x ")" : Proc`
+/// already appears as a fixture in four places in this tree, and a language
+/// declaring natural-number constructors named `S`/`Z` collides from the macro
+/// frontend with no attacker involved. Traced, the collision is fail-closed rather
+/// than wrong-answer — `shift_reflected_ground_term` declines any σ value carrying
+/// an `S`/`Z` node under a binder, and the `^gnd` short-circuit is permanently lost
+/// on such subtrees — but "a language that names its successor `Succ` reduces and
+/// one that names it `S` does not" is a name-dependent semantic difference.
+///
+/// This list exists so the gap is VISIBLE IN CODE rather than expressed as an
+/// omission from the census. S3 renames the two constants to `^Z`/`^S` and empties
+/// this list; that rename moves emitted bytes, so it is staged separately behind
+/// its own golden-diff review.
+pub fn reserved_labels_outside_the_namespace() -> [&'static str; 2] {
+    [PEANO_ZERO_REFLECT_LABEL, PEANO_SUCC_REFLECT_LABEL]
+}
+
 /// The reserved reduction-channel / rule tags for the generated de-Bruijn substitution
 /// term-rewriting system (Stage 4 S-binder SLICE 2a — the in-Rho β cascade). Each names one
 /// reserved TRS receiver's rendezvous channel (`GPrivate(reflect_tag(fp, LABEL))`, unforgeable
@@ -8558,6 +8623,78 @@ mod tests {
                      ({fingerprint:?}, {label:?}); tag was {tag:?}"
                 );
             }
+        }
+    }
+
+    /// S2 — the reserved-namespace claim, ASSERTED for the first time.
+    ///
+    /// Three places in this tree justify their safety by the sentence "a user
+    /// constructor is a Rust `Ident`, so it cannot contain `^`", and one of them is
+    /// a stated adequacy premise of `BinderReflectionTotalOrReject.v`. The sentence
+    /// only means anything if every reserved label is in fact `^`-prefixed. Nothing
+    /// checked that, and two labels are not.
+    ///
+    /// This test is the check. The exception list is closed and named, so S3 empties
+    /// it by construction: rename the two Peano constants and this test tightens on
+    /// its own.
+    #[test]
+    fn every_reserved_label_is_in_the_reserved_namespace() {
+        use mettail_ast::validation::is_reserved_reflect_label;
+
+        // The census is sorted, so compare against a sorted exception list — the
+        // claim is about the SET, not the declaration order.
+        let mut exceptions = reserved_labels_outside_the_namespace();
+        exceptions.sort_unstable();
+        let violators: Vec<&str> = all_reserved_reflect_labels()
+            .into_iter()
+            .filter(|label| !is_reserved_reflect_label(label))
+            .collect();
+
+        assert_eq!(
+            violators,
+            exceptions.to_vec(),
+            "the reserved-label census must satisfy the namespace rule except for the \
+             two NAMED violators. A new name here means a reserved label was added \
+             without a `^` prefix — which silently voids the unforgeability argument \
+             the substitution TRS and BinderReflectionTotalOrReject.v both rest on."
+        );
+
+        // And the exceptions are genuinely reserved — they are not a licence to
+        // drop a label from the census.
+        for exception in exceptions {
+            assert!(
+                all_reserved_reflect_labels().contains(&exception),
+                "{exception:?} is listed as a namespace exception but is not in the census"
+            );
+        }
+    }
+
+    /// The census is a SUPERSET of every family list, so a family can grow without
+    /// silently escaping the namespace assertion above.
+    #[test]
+    fn the_reserved_census_covers_every_family() {
+        let census = all_reserved_reflect_labels();
+        #[cfg(feature = "bench-naive-baseline")]
+        let families: [&[&str]; 2] = [
+            &crate::rho_net_subst_trs::reserved_subst_trs_labels()[..],
+            &crate::rho_net_naive_kt::respread_reserved_labels()[..],
+        ];
+        #[cfg(not(feature = "bench-naive-baseline"))]
+        let families: [&[&str]; 1] = [&crate::rho_net_subst_trs::reserved_subst_trs_labels()[..]];
+        for family in families {
+            for label in family {
+                assert!(census.contains(label), "census is missing the reserved label {label:?}");
+            }
+        }
+        for loose in [
+            GROUND_MARK_REFLECT_LABEL,
+            NONGROUND_MARK_REFLECT_LABEL,
+            DRIVE_AC_RESERVED_LABEL,
+            FLOAT_RESERVED_LABEL,
+            FLOAT_HOIST_RESERVED_LABEL,
+            FLOAT_MERGE_RESERVED_LABEL,
+        ] {
+            assert!(census.contains(&loose), "census is missing the reserved label {loose:?}");
         }
     }
 

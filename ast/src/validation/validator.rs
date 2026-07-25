@@ -21,7 +21,134 @@ use crate::{
 };
 use std::collections::HashSet;
 
+
+/// S2 — THE reserved-reflect-namespace predicate, defined once.
+///
+/// The in-Rho runtime mints an unforgeable ABI tag `mettail.term.{fp}.{label}`
+/// per constructor, and reserves a family of machinery labels in that same space:
+/// the substitution TRS (`^subst`, `^shift`, `^shiftk`, `^cmp`, `^pred`, `^sb`,
+/// `^shb`, `^lambda`, `^multilambda`, `^bound`, `^free`), the quiescence driver
+/// (`^drive`, `^drive-err`, `^drive-fuel`, `^fired`, `^drive-ac:{Rule}`), the
+/// respread walker (`^respread*`), the scope-extrusion float (`^float*`), the
+/// hereditary-ground markers (`^gnd`, `^nog`), and the Peano numerals.
+///
+/// The whole reserved-namespace safety argument in this tree is one sentence,
+/// asserted verbatim in `rho_net_lower.rs`, in `rho_net_subst_trs.rs`, and as a
+/// stated adequacy premise of `formal/rocq/rho_bridge/theories/
+/// BinderReflectionTotalOrReject.v`: *a user constructor is a Rust `Ident`, so it
+/// cannot contain `^`.* Before S2 that sentence was asserted in three places and
+/// EVALUATED IN NONE — `ast/src/validation/` contained no occurrence of the word
+/// "reserved" at all.
+///
+/// This function is that sentence, executable. Deliberately, it is the ONLY
+/// definition: the alternative — reserving a hand-written list of bare
+/// identifiers — would make the rule "starts with `^`, *or* is one of these
+/// magic words", a permanent special case in every future safety argument. The
+/// namespace is a prefix, and it is checkable as one.
+pub fn is_reserved_reflect_label(label: &str) -> bool {
+    label.starts_with('^')
+}
+
+/// Reject any declared name that lands in the reserved reflect namespace.
+///
+/// Vacuous for names that reached the model as a `syn::Ident`, which is exactly
+/// the intent: it costs nothing on the macro path and it fails loudly the moment
+/// a name arrives from anywhere else.
+pub fn validate_reserved_reflect_names(language: &LanguageDef) -> Result<(), ValidationError> {
+    for ty in &language.types {
+        let name = ty.name.to_string();
+        if is_reserved_reflect_label(&name) {
+            return Err(ValidationError::ReservedReflectLabel {
+                label: name,
+                kind: "category",
+                span: ty.name.span(),
+            });
+        }
+    }
+    for rule in &language.terms {
+        let label = rule.label.to_string();
+        if is_reserved_reflect_label(&label) {
+            return Err(ValidationError::ReservedReflectLabel {
+                label,
+                kind: "constructor",
+                span: rule.label.span(),
+            });
+        }
+    }
+    for rewrite in &language.rewrites {
+        let label = rewrite.name.to_string();
+        if is_reserved_reflect_label(&label) {
+            return Err(ValidationError::ReservedReflectLabel {
+                label,
+                kind: "rewrite rule",
+                span: rewrite.name.span(),
+            });
+        }
+    }
+    // Every OTHER declaration that contributes a name. A partial sweep would be
+    // worse than none: it would read as a complete fence while leaving the
+    // uncovered clauses as the obvious way in.
+    for equation in &language.equations {
+        let label = equation.name.to_string();
+        if is_reserved_reflect_label(&label) {
+            return Err(ValidationError::ReservedReflectLabel {
+                label,
+                kind: "equation",
+                span: equation.name.span(),
+            });
+        }
+    }
+    for refinement in &language.refinement_types {
+        let label = refinement.name.to_string();
+        if is_reserved_reflect_label(&label) {
+            return Err(ValidationError::ReservedReflectLabel {
+                label,
+                kind: "refinement type",
+                span: refinement.name.span(),
+            });
+        }
+    }
+    for relation in language.logic.iter().flat_map(|logic| logic.relations.iter()) {
+        let label = relation.name.to_string();
+        if is_reserved_reflect_label(&label) {
+            return Err(ValidationError::ReservedReflectLabel {
+                label,
+                kind: "relation",
+                span: relation.name.span(),
+            });
+        }
+    }
+    // Token and mode names, including the token defs nested inside each mode —
+    // a mode-local token is as capable of naming a category as a top-level one.
+    let nested_tokens = language.mode_defs.iter().flat_map(|mode| mode.token_defs.iter());
+    for token in language.token_defs.iter().chain(nested_tokens) {
+        let label = token.name.to_string();
+        if is_reserved_reflect_label(&label) {
+            return Err(ValidationError::ReservedReflectLabel {
+                label,
+                kind: "token",
+                span: token.name.span(),
+            });
+        }
+    }
+    for mode in &language.mode_defs {
+        let label = mode.name.to_string();
+        if is_reserved_reflect_label(&label) {
+            return Err(ValidationError::ReservedReflectLabel {
+                label,
+                kind: "lexer mode",
+                span: mode.name.span(),
+            });
+        }
+    }
+    Ok(())
+}
+
 pub fn validate_language(language: &LanguageDef) -> Result<(), ValidationError> {
+    // S2: the reserved reflect namespace, checked before anything else — a name
+    // that can shadow runtime machinery must never reach codegen.
+    validate_reserved_reflect_names(language)?;
+
     // Build set of exported categories. Refinement types declared in the
     // types block (e.g. `PosInt = { x: Int | x > 0 }`) are also added to
     // `language.types` by the parser, so they're picked up here too.

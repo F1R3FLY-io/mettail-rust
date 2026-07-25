@@ -104,6 +104,30 @@ pub enum ValidationError {
         label: String,
         span: Span,
     },
+
+    /// S2: a declared name collides with the RESERVED REFLECT NAMESPACE.
+    ///
+    /// The in-Rho runtime mints an unforgeable tag `mettail.term.{fp}.{label}`
+    /// for every constructor, and reserves a family of machinery labels
+    /// (`^subst`, `^shift`, `^drive`, `^gnd`, the Peano numerals, …) in the same
+    /// space. Every reserved-namespace safety argument in the tree — including a
+    /// stated adequacy premise of `BinderReflectionTotalOrReject.v` — is the
+    /// sentence "a user constructor is a Rust `Ident`, so it cannot contain `^`".
+    /// That sentence was asserted in three places and evaluated in none.
+    ///
+    /// This variant is that sentence made executable. It is VACUOUS for any name
+    /// that reached the model as a `syn::Ident` (an `Ident` genuinely cannot hold
+    /// a `^`), and that is precisely the point: it costs nothing on the macro
+    /// path and it fails loudly the moment a name arrives from anywhere else — a
+    /// value-authored specification, a fragment, or a synthesized label.
+    ReservedReflectLabel {
+        /// The offending name, verbatim.
+        label: String,
+        /// What kind of declaration it was: `"constructor"`, `"category"`, or
+        /// `"rewrite rule"` — so the diagnostic points at the right clause.
+        kind: &'static str,
+        span: Span,
+    },
 }
 
 impl ValidationError {
@@ -126,6 +150,7 @@ impl ValidationError {
             ValidationError::UndeclaredChannelReference { span, .. } => *span,
             ValidationError::SingleChannelJoin { span, .. } => *span,
             ValidationError::JoinPatternUnknownConstructor { span, .. } => *span,
+            ValidationError::ReservedReflectLabel { span, .. } => *span,
         }
     }
 
@@ -231,6 +256,12 @@ impl ValidationError {
                     label
                 )
             },
+            ValidationError::ReservedReflectLabel { label, kind, .. } => format!(
+                "the {kind} name '{label}' is in the RESERVED reflect namespace: a `^`-prefixed \
+                 name is reserved for in-Rho runtime machinery (substitution, shifting, the \
+                 quiescence driver, the ground marker, the Peano numerals) and a language may \
+                 not declare one. Rename it without the leading '^'."
+            ),
         }
     }
 

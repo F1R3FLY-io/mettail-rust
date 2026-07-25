@@ -143,6 +143,25 @@ pub fn reconstruct_language_def(raw_source: &str) -> syn::Result<LanguageDef> {
     def.terms.extend(out.terms);
     def.rewrites.extend(out.rewrites);
 
+    // S2 — the reserved-reflect-namespace gate, at the SECOND entry point.
+    //
+    // `macros/src/lib.rs` calls `validate_language` after composition settles, so
+    // a macro-authored language is gated. This function is the OTHER way a
+    // `LanguageDef` reaches codegen — `planned_rho_backend_for` and the FLT demo
+    // both build one here, with no proc-macro anywhere — and it did not validate
+    // at all. A definition that never passed the macro gate could therefore reach
+    // the lowering, which is exactly the hole the namespace check exists to close.
+    //
+    // Only the namespace check is applied, not full `validate_language`: this is a
+    // RE-PARSE of a definition that already compiled, so re-running the whole
+    // validator would be redundant work on the runtime path, and any disagreement
+    // would be a defect in the round trip rather than in the language. The
+    // namespace rule is the one property that must hold no matter which door the
+    // definition came through, because the tags it protects are unforgeability
+    // primitives.
+    crate::validation::validate_reserved_reflect_names(&def)
+        .map_err(|err| syn::Error::new(span, err.message()))?;
+
     Ok(def)
 }
 

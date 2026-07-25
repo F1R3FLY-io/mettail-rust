@@ -264,7 +264,8 @@ pub use rho_net_drive::{
 };
 pub use rho_net_float::language_is_float_bearing;
 pub use rho_net_lower::{
-    parse_reflected_tag, reflected_tag_string, DRIVE_AC_RESERVED_LABEL, DRIVE_ERR_RESERVED_LABEL,
+    all_reserved_reflect_labels, parse_reflected_tag, reflected_tag_string,
+    reserved_labels_outside_the_namespace, DRIVE_AC_RESERVED_LABEL, DRIVE_ERR_RESERVED_LABEL,
     DRIVE_FUEL_RESERVED_LABEL, DRIVE_RESERVED_LABEL, FIRED_RESERVED_LABEL,
     FLOAT_HOIST_RESERVED_LABEL, FLOAT_MERGE_RESERVED_LABEL, FLOAT_RESERVED_LABEL,
 };
