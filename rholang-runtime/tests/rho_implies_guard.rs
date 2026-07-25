@@ -70,7 +70,8 @@ use mettail_rholang_runtime::fold_contract::fold_definitions_for;
 use mettail_rholang_runtime::rhocalc_ast::{clear_held_fold_sites, take_held_fold_sites};
 use mettail_rholang_runtime::run::run_installed_program_with_call_definitions_and_read_runtime_values;
 use mettail_rholang_runtime::{
-    lower_rhocalc_proc, run_normalized_par_for_oracle_and_read_runtime_value_channels,
+    lower_rhocalc_proc, lower_rhocalc_proc_with_options,
+    run_normalized_par_for_oracle_and_read_runtime_value_channels, LoweringOptions,
 };
 use mettail_runtime::{clear_var_cache, RuntimeObservationValue};
 use models::rhoapi::expr::ExprInstance;
@@ -116,8 +117,29 @@ async fn run_with_folds(source: &str) -> (usize, Vec<RuntimeObservationValue>) {
 /// observed by sending it to `@"OUT"` and reading the resting value.
 ///
 /// `lower_rhocalc_proc` does NOT normalize, so a `![…]` host constant fold never
-/// runs on this path: the `EOrBody`/`ENotBody` tree really is evaluated by
-/// `rho_pure_eval`.
+/// runs on this path: the `EOrBody`/`ENotBody` tree really is evaluated by the
+/// machine.
+///
+/// ★ CORRECTED 2026-07-25 (S-RB). This doc said the tree "really is evaluated by
+/// `rho_pure_eval`". It is not — and the distinction is the whole subject of this
+/// suite. `formula` rides here as a SEND PAYLOAD (`@"OUT"!(φ)`), and a send's data
+/// is evaluated by the REDUCER's own `Reduce::eval_expr` (`reduce.rs`).
+/// `rho_pure_eval` is reached at exactly two places, both of them GUARDS:
+/// `guard_passes` (the `for … where` cross-bind guard, via `check_commit`) and
+/// `Reduce::eval_match` (the `match … where` case guard) — see the module comment
+/// on `SpatialMatcherOracle` in `matcher/match.rs`, which names them.
+///
+/// So this file drives BOTH machine evaluators, and the split is by SECTION:
+///
+/// | section | position | evaluator |
+/// |---|---|---|
+/// | 1–4 (`machine_verdict`, folds) | send payload | `Reduce::eval_expr` (`reduce.rs`) |
+/// | 5–6 (`guarded_receive`) | `Receive.condition` | `rho_pure_eval::eval_with` |
+///
+/// That is not a defect of the suite — driving both is exactly what makes it a
+/// two-evaluator agreement obligation — but the doc must say which is which, since
+/// the two do differ in the small (the divergence-A residual: `reduce.rs`'s
+/// `wrapping_add` against `rho-pure-eval`'s `checked_add`).
 async fn machine_verdict(formula: &str) -> bool {
     let (_folds, observed) = run_with_folds(&format!(r#"@"OUT"!({formula})"#)).await;
     match observed.as_slice() {
@@ -126,13 +148,54 @@ async fn machine_verdict(formula: &str) -> bool {
     }
 }
 
+/// The guarded-receive program this suite's section-5/6 rows drive.
+fn guarded_source(guard: &str, datum: &str) -> String {
+    format!(r#"{{ for(@x <- @"c" where {guard}) {{ @"OUT"!(x) }} | @"c"!({datum}) }}"#)
+}
+
 /// Run a guarded receive against one datum and report BOTH observables of the
 /// same quiescent store: what landed on `@"OUT"`, and what is still resting on
 /// `@"c"`.
+///
+/// Uses the PRODUCTION lowering, so a binder-closed guard may be discharged at
+/// compile time (S-D0). Every row here asserts an OBSERVABLE — what fired and what
+/// rests — and discharge preserves those exactly (the no-loss differential), so the
+/// rows hold either way. A row that must additionally exercise the RUNTIME guard
+/// evaluator uses [`guarded_receive_without_discharge`].
 async fn guarded_receive(guard: &str, datum: &str) -> (Vec<String>, Vec<String>) {
-    let source =
-        format!(r#"{{ for(@x <- @"c" where {guard}) {{ @"OUT"!(x) }} | @"c"!({datum}) }}"#);
+    let source = guarded_source(guard, datum);
     let par = parse_lower(&source);
+    let observed = run_normalized_par_for_oracle_and_read_runtime_value_channels(&par, &["OUT", "c"])
+        .await
+        .unwrap_or_else(|err| panic!("guarded receive failed for {source:?}: {err}"));
+    (rendered(&observed, "OUT"), rendered(&observed, "c"))
+}
+
+/// [`guarded_receive`] with compile-time guard discharge switched OFF, so the guard
+/// is emitted verbatim and `rho_pure_eval` decides it at COMM time.
+///
+/// ★ WHY THIS EXISTS (S-RB). Discharge is sound precisely because an omitted guard
+/// and a `true` guard drive `check_commit` to the same verdict — which means a row
+/// whose guard discharges keeps PASSING while no longer testing the thing it was
+/// written to test. Two of this file's guards are binder-closed
+/// (`true implies false`, `false implies false`), and the second of them discharges.
+/// Running that row on both arms keeps the runtime evaluator under test AND pins the
+/// equivalence.
+async fn guarded_receive_without_discharge(
+    guard: &str,
+    datum: &str,
+) -> (Vec<String>, Vec<String>) {
+    let source = guarded_source(guard, datum);
+    clear_var_cache();
+    let proc = Proc::parse_via_wpda(&source)
+        .unwrap_or_else(|err| panic!("rhocalc parse failed for {source:?}: {err:?}"));
+    let par = lower_rhocalc_proc_with_options(&proc, LoweringOptions::NO_DISCHARGE)
+        .unwrap_or_else(|err| panic!("rhocalc lowering failed for {source:?}: {err:?}"));
+    assert!(
+        par.receives.first().is_some_and(|receive| receive.condition.is_some()),
+        "discharge-OFF must emit the guard verbatim, so the runtime evaluator decides it: \
+         {guard:?}"
+    );
     let observed = run_normalized_par_for_oracle_and_read_runtime_value_channels(&par, &["OUT", "c"])
         .await
         .unwrap_or_else(|err| panic!("guarded receive failed for {source:?}: {err}"));
@@ -372,6 +435,92 @@ async fn a_closed_false_implication_guard_leaves_the_datum_resting() {
     let (fired, resting) = guarded_receive("false implies false", r#""a""#).await;
     assert_eq!(fired, vec![r#""a""#.to_string()], "a closed true implication must commit");
     assert!(resting.is_empty(), "a committed receive consumes its datum");
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// 5b. S-RB — the same two closed rows with compile-time discharge switched OFF
+// ══════════════════════════════════════════════════════════════════════════════
+//
+// ★ The rows above are the CLOSED ones, and `false implies false` DISCHARGES under
+// the production lowering: its `Receive.condition` is not emitted at all, so
+// `check_commit` short-circuits and `rho_pure_eval` never sees the `EOrBody`/
+// `ENotBody` tree. The row still passes — that is exactly what discharge soundness
+// says — but it stops testing the runtime evaluator it was written for.
+//
+// So the closed rows run on BOTH arms. Together the two tests say:
+//   · discharge-OFF — `rho_pure_eval` decides the tree and reaches the stated verdict;
+//   · discharge-ON  — the observables are IDENTICAL (the no-loss property, here at
+//                     the level of this suite's own fired/resting pair).
+
+#[tokio::test]
+async fn the_closed_implication_guards_decide_identically_with_discharge_off() {
+    // `true implies false` — refuted at compile time, so it is emitted verbatim
+    // either way; `rho_pure_eval` decides it and the receive fails SHUT.
+    let (fired_off, resting_off) =
+        guarded_receive_without_discharge("true implies false", r#""a""#).await;
+    assert!(fired_off.is_empty(), "the runtime evaluator must reject T ⇒ F");
+    assert_eq!(resting_off, vec![r#""a""#.to_string()], "and leave the datum resting");
+
+    // `false implies false` — this is the row that DISCHARGES in production. With
+    // the switch off, `rho_pure_eval` evaluates `EOr(ENot false, false)` and commits.
+    let (fired_off, resting_off) =
+        guarded_receive_without_discharge("false implies false", r#""a""#).await;
+    assert_eq!(
+        fired_off,
+        vec![r#""a""#.to_string()],
+        "the runtime evaluator must accept the vacuous F ⇒ F"
+    );
+    assert!(resting_off.is_empty(), "a committed receive consumes its datum");
+
+    // …and the production (discharge-ON) arm observes exactly the same pair.
+    let (fired_on, resting_on) = guarded_receive("false implies false", r#""a""#).await;
+    assert_eq!(fired_on, fired_off, "discharge must not change what fires");
+    assert_eq!(resting_on, resting_off, "discharge must not change what rests");
+}
+
+/// ★ WHICH of this suite's guards the compiler decides statically — pinned, so a
+/// change in the classifier shows up HERE rather than as a silently hollowed-out
+/// test elsewhere.
+///
+/// PHLO DELTA (recorded, accepted). A discharged guard skips one
+/// `substitute_and_charge` per receive-eval (`reduce.rs`: the `Some(c) if c !=
+/// &Par::default()` arm that substitutes the condition at depth 1). A program's
+/// price therefore depends on the compiler version that produced its artifact. This
+/// is sound for consensus because the ARTIFACT is fixed: every validator replays the
+/// same bytes and charges the same amount. Exactly one guard in this file is
+/// affected — the one row asserted below.
+#[test]
+fn the_discharge_classification_of_every_guard_in_this_suite_is_pinned() {
+    fn condition_survives(guard: &str) -> bool {
+        let source = guarded_source(guard, r#""a""#);
+        clear_var_cache();
+        let proc = Proc::parse_via_wpda(&source).expect("parse");
+        let par = lower_rhocalc_proc_with_options(&proc, LoweringOptions::PRODUCTION)
+            .expect("lower");
+        par.receives.first().is_some_and(|receive| receive.condition.is_some())
+    }
+
+    // DISCHARGED — the condition is omitted (the only row in this file).
+    assert!(
+        !condition_survives("false implies false"),
+        "`false implies false` is binder-closed and true: it must discharge"
+    );
+
+    // EMITTED VERBATIM — everything else this suite drives in guard position.
+    for guard in [
+        ORDERED_GUARD,          // payload-dependent
+        "true implies false",   // closed but FALSE ⇒ refuted, artifact untouched
+        "1 implies 2",          // closed but not a boolean ⇒ the machine declines
+        "x > 0",                // payload-dependent
+        "x > 100",              // payload-dependent
+        "x > 0 implies x > 10", // payload-dependent
+        "x > 0n",               // payload-dependent
+    ] {
+        assert!(
+            condition_survives(guard),
+            "{guard:?} must be emitted verbatim for the runtime evaluator to decide"
+        );
+    }
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
