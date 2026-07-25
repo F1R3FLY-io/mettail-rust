@@ -998,6 +998,22 @@ fn unit_rhocalc_proc_castfloat() {
 }
 
 #[test]
+fn unit_rhocalc_proc_castint() {
+    mettail_runtime::clear_var_cache();
+    let term = Proc::CastInt(std::sync::Arc::new(Int::NumLit(0i64)));
+    let displayed = format!("{}", term);
+    assert!(!displayed.is_empty(), "Display should produce non-empty output for CastInt");
+    if let Ok(parsed) = Proc::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for CastInt: {} != {}",
+            displayed, re_displayed
+        );
+    }
+}
+
+#[test]
 fn unit_rhocalc_proc_castbigint() {
     mettail_runtime::clear_var_cache();
     let term = Proc::CastBigInt(std::sync::Arc::new(BigInt::NumLit(
@@ -1026,22 +1042,6 @@ fn unit_rhocalc_proc_castuint32() {
         assert_eq!(
             displayed, re_displayed,
             "Roundtrip failed for CastUInt32: {} != {}",
-            displayed, re_displayed
-        );
-    }
-}
-
-#[test]
-fn unit_rhocalc_proc_castint() {
-    mettail_runtime::clear_var_cache();
-    let term = Proc::CastInt(std::sync::Arc::new(Int::NumLit(0i64)));
-    let displayed = format!("{}", term);
-    assert!(!displayed.is_empty(), "Display should produce non-empty output for CastInt");
-    if let Ok(parsed) = Proc::parse(&displayed) {
-        let re_displayed = format!("{}", parsed);
-        assert_eq!(
-            displayed, re_displayed,
-            "Roundtrip failed for CastInt: {} != {}",
             displayed, re_displayed
         );
     }

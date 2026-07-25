@@ -561,10 +561,28 @@ fn generate_display_visit_helper(
                 .iter()
                 .find(|t| &t.name == category)
                 .and_then(|t| t.collection_kind.as_ref());
+            // Divergence I / Stage C: the mandatory literal tail declared by this
+            // category's own `literals { }` pattern (`BigInt`'s `…n`), derived from
+            // the grammar rather than hardcoded per language.
+            let payload_is_signed = !matches!(
+                crate::gen::native::NativeType::from_syn_type(native_type),
+                crate::gen::native::NativeType::UInt8
+                    | crate::gen::native::NativeType::UInt16
+                    | crate::gen::native::NativeType::UInt32
+                    | crate::gen::native::NativeType::UInt64
+                    | crate::gen::native::NativeType::UInt128
+                    | crate::gen::native::NativeType::Usize
+            );
+            let mandatory_literal_tail = language
+                .token_defs
+                .iter()
+                .find(|td| td.from_literals && td.category.as_ref().is_some_and(|c| c == category))
+                .and_then(|td| mandatory_literal_tail_of_pattern(&td.pattern, payload_is_signed));
             variant_arms.push(generate_engine_auto_literal_arm(
                 category,
                 native_type,
                 collection_kind,
+                mandatory_literal_tail,
             ));
         }
     }
@@ -3286,10 +3304,15 @@ fn extract_map_value_ident(native_type: &syn::Type) -> Option<syn::Ident> {
 }
 
 /// Generate engine arm for auto-generated literal variant (NumLit, FloatLit, etc.)
+///
+/// `mandatory_literal_tail` (divergence I / Stage C) is the literal suffix the
+/// category's declared `literals { }` pattern forces onto every word it accepts,
+/// if any — see [`mandatory_literal_tail_of_pattern`].
 fn generate_engine_auto_literal_arm(
     category: &syn::Ident,
     native_type: &syn::Type,
     collection_kind: Option<&mettail_ast::language::CollectionCategory>,
+    mandatory_literal_tail: Option<String>,
 ) -> TokenStream {
     let literal_label = generate_literal_label(native_type);
     let nt = crate::gen::native::NativeType::from_syn_type(native_type);
@@ -3536,16 +3559,97 @@ fn generate_engine_auto_literal_arm(
                 }
             },
         }
+    } else if let Some(tail) = mandatory_literal_tail {
+        // ── Divergence I / Stage C (2026-07-25): MANDATORY LITERAL TAIL ──────────
+        //
+        // A `literals { }` pattern whose language forces every accepted word to end
+        // with a fixed literal — RhoCalc/Calculator's `BigInt` (`…n`) is the case in
+        // point — must have that tail in its Display, or Display emits a word its own
+        // category cannot read back.
+        //
+        // It used to be harmless: while `BigInt`'s eval was a universal acceptor,
+        // the tail-less `3` was re-read as a `BigInt` anyway. Closing that acceptor
+        // (so a numeral's carrier is a function of its text — divergence I) makes
+        // `3` an `Int`, and the omission becomes a real display→parse fixpoint break:
+        // `Display(BigInt::NumLit(3)) = "3"`, `Parse("3") = Int`. `parse_structured`
+        // feels it first — it prefers the raw derivation whose Display equals the
+        // input, so without the tail NO derivation of `3n` is surface-exact.
+        //
+        // The tail is DERIVED from the declared pattern (see
+        // [`mandatory_literal_tail_of_pattern`]), never hardcoded per language, so any
+        // grammar that declares a suffix-terminated literal category gets it.
+        quote! {
+            #category::#literal_label(v) => {
+                stack.push(DisplayTask::WriteString(format!(concat!("{}", #tail), v)));
+            }
+        }
     } else {
         // Bare value display for all numeric types (matches main). Suffixes
-        // like `n` / `r` / `u32` / `i32` are accepted at parse via optional
-        // regex fragments and explicit tokens, not required in display.
+        // like `u32` / `i32` are accepted at parse via OPTIONAL regex fragments,
+        // so they are not required in display; a MANDATORY tail is handled above.
         quote! {
             #category::#literal_label(v) => {
                 stack.push(DisplayTask::WriteString(format!("{}", v)));
             }
         }
     }
+}
+
+/// The literal suffix that EVERY word of `pattern`'s language must end with, or
+/// `None` when the pattern forces no such suffix.
+///
+/// Grammar-derived Stage-C input (divergence I): a `literals { }` category whose
+/// declared pattern ends in unquantified literal characters — `BigInt`'s
+/// `-?(…)n`, `BigRat`'s `(…)r` — can only ever be *written* with that tail, so
+/// Display must *emit* it.
+///
+/// The scan walks the pattern backwards over characters that are plain literals
+/// (ASCII alphanumeric, never a regex metacharacter) and stops at the first
+/// character that is not. Two stop conditions are conservative refusals:
+///
+/// - stopping on `|` means the accumulated run is only ONE branch of an
+///   alternation (`yeap|nope|true|false` would otherwise "prove" every boolean
+///   ends in `false`), and
+/// - stopping on `\` means the run's first character was escaped, so it is not a
+///   literal at all.
+///
+/// Stopping on `)`, `]`, `?`, `*`, `+` or `}` is SAFE: those close a group, class
+/// or quantifier that precedes the run, and a quantifier binds only what is to
+/// its left — the run itself remains mandatory. Consuming the ENTIRE pattern is
+/// also a refusal: a wholly-literal pattern has no value part for the tail to
+/// follow.
+///
+/// ## Display must stay TOTAL — the sign-coverage side condition
+///
+/// A tail is only usable if the pattern's language covers EVERY value the native
+/// type can render. A signed payload renders a leading `-`, so a pattern that does
+/// not admit one (RhoCalc/Calculator `BigRat`: `(…)r`, versus `BigInt`: `-?(…)r`)
+/// covers only the non-negative half. Appending its tail anyway would emit
+/// `-823154820r` — a MINUS followed by a rational literal, which those grammars
+/// have no unary-minus rule to read at the `BigRat` category. Refusing the tail in
+/// that case keeps Display total and byte-identical to its pre-Stage-C output for
+/// such categories; giving them a tail is a separate grammar change (their pattern
+/// would have to gain `-?`, as `BigInt`'s already has).
+fn mandatory_literal_tail_of_pattern(pattern: &str, payload_is_signed: bool) -> Option<String> {
+    let bytes = pattern.as_bytes();
+    let mut i = bytes.len();
+    while i > 0 && bytes[i - 1].is_ascii_alphanumeric() {
+        i -= 1;
+    }
+    if i == bytes.len() || i == 0 {
+        // No trailing literal run, or the pattern is nothing but one.
+        return None;
+    }
+    match bytes[i - 1] {
+        // One branch of an alternation, or an escape sequence: not mandatory.
+        b'|' | b'\\' => return None,
+        _ => {},
+    }
+    if payload_is_signed && !pattern.starts_with('-') {
+        // The pattern cannot spell a negative value as one token; see above.
+        return None;
+    }
+    Some(pattern[i..].to_string())
 }
 
 // =============================================================================

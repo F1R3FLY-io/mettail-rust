@@ -504,9 +504,13 @@ fn gint_par_needle(value: i64) -> Vec<u8> {
     new_gint_par(value, Vec::new(), false).encode_to_vec()
 }
 
-/// The `GBigInt` twin of [`gint_par_needle`]: plain rhocalc integer literals lex to `BigInt`
-/// (the Rholang 1.4 arbitrary-precision default), so raw arithmetic operands ride the call as
-/// `GBigInt` value leaves (signed big-endian two's-complement bytes).
+/// The `GBigInt` twin of [`gint_par_needle`] — signed big-endian two's-complement bytes.
+///
+/// ★ CORRECTED 2026-07-25 (divergence I). The comment that stood here said "plain rhocalc integer
+/// literals lex to `BigInt` (the Rholang 1.4 arbitrary-precision default)". That was FALSE:
+/// f1r3node's `normalize_ground` maps a bare numeral to `GInt`, and only the `…n` spelling to
+/// `GBigInt`. RhoCalc's grammar now agrees, so plain operands ride as `GInt` and this needle is
+/// used for the `…n` spelling.
 fn gbigint_par_needle(value: i64) -> Vec<u8> {
     Par::default()
         .with_exprs(vec![models::rust::utils::new_gbigint_expr(
@@ -523,11 +527,11 @@ fn gbigint_par_needle(value: i64) -> Vec<u8> {
 async fn a_s4_raw_arithmetic_lowers_to_metered_exprs_and_the_machine_computes_the_value() {
     let par = parse_lower(r#"@("OUT")!(1 + 2 * 3)"#);
 
-    // Value absence: the call embeds 1, 2, 3 (the operands, `GBigInt` literals) and not 7 (the
-    // result) in either ground encoding.
-    assert!(par_bytes_contain(&par, &gbigint_par_needle(1)), "operand 1 rides the call");
-    assert!(par_bytes_contain(&par, &gbigint_par_needle(2)), "operand 2 rides the call");
-    assert!(par_bytes_contain(&par, &gbigint_par_needle(3)), "operand 3 rides the call");
+    // Value absence: the call embeds 1, 2, 3 (the operands, `GInt` literals — divergence I) and
+    // not 7 (the result) in either ground encoding.
+    assert!(par_bytes_contain(&par, &gint_par_needle(1)), "operand 1 rides the call");
+    assert!(par_bytes_contain(&par, &gint_par_needle(2)), "operand 2 rides the call");
+    assert!(par_bytes_contain(&par, &gint_par_needle(3)), "operand 3 rides the call");
     assert!(
         !par_bytes_contain(&par, &gbigint_par_needle(7))
             && !par_bytes_contain(&par, &gint_par_needle(7)),
@@ -537,20 +541,25 @@ async fn a_s4_raw_arithmetic_lowers_to_metered_exprs_and_the_machine_computes_th
     // probe is sensitive.
     let literal_par = parse_lower(r#"@("OUT")!(7)"#);
     assert!(
-        par_bytes_contain(&literal_par, &gbigint_par_needle(7)),
+        par_bytes_contain(&literal_par, &gint_par_needle(7)),
         "the needle detects an embedded literal (control)"
+    );
+    // The `GBigInt` needle is still live — it is what the `…n` spelling produces. Asserting it
+    // here keeps BOTH needles proven-sensitive, so the switch above cannot be a silent weakening.
+    let bigint_par = parse_lower(r#"@("OUT")!(7n)"#);
+    assert!(
+        par_bytes_contain(&bigint_par, &gbigint_par_needle(7)),
+        "the GBigInt needle detects the `…n` spelling (control)"
     );
 
     // The MACHINE computes: the metered send-data evaluation reduces `1 + 2 * 3` to 7 on OUT
-    // (a `GBigInt` value — plain literals are arbitrary-precision).
+    // (a `GInt` value — plain literals are `normalize_ground`'s `GInt`, divergence I).
     let values = run_normalized_par_for_oracle_and_read_runtime_values(&par, "OUT")
         .await
         .expect("the metered expression call executes on the Rho machine");
     assert_eq!(
         values,
-        vec![RuntimeObservationValue::BigIntBytes(
-            num_bigint::BigInt::from(7).to_signed_bytes_be()
-        )],
+        vec![RuntimeObservationValue::Int(7)],
         "1 + 2 * 3 = 7, machine-computed"
     );
 }
@@ -586,10 +595,10 @@ async fn a_s4_ground_width_fold_value_is_computed_by_the_fold_contract_at_comm_t
     assert_eq!(specs[0].width, 8);
 
     // (1) Value absence + operand presence, with the contrastive control. The operands are
-    // `GBigInt` literals; the folded result would be a `GInt` (the `int(·, w)` class) — assert
+    // `GInt` literals (divergence I), as is the folded result (the `int(·, w)` class) — assert
     // the value 5 is absent in BOTH ground encodings.
-    assert!(par_bytes_contain(&par, &gbigint_par_needle(2)), "operand 2 rides the call");
-    assert!(par_bytes_contain(&par, &gbigint_par_needle(3)), "operand 3 rides the call");
+    assert!(par_bytes_contain(&par, &gint_par_needle(2)), "operand 2 rides the call");
+    assert!(par_bytes_contain(&par, &gint_par_needle(3)), "operand 3 rides the call");
     assert!(
         !par_bytes_contain(&par, &gint_par_needle(5))
             && !par_bytes_contain(&par, &gbigint_par_needle(5)),
@@ -597,7 +606,7 @@ async fn a_s4_ground_width_fold_value_is_computed_by_the_fold_contract_at_comm_t
     );
     let control = parse_lower(r#"@("OUT")!(5)"#);
     assert!(
-        par_bytes_contain(&control, &gbigint_par_needle(5)),
+        par_bytes_contain(&control, &gint_par_needle(5)),
         "the needle detects an embedded folded value (control)"
     );
 

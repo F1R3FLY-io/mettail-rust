@@ -43,7 +43,30 @@ language! {
             // Leading `-?` retained for BigInt (matches main's BigInt regex).
             pattern: r"-?(0b[01](_?[01])*|0o[0-7](_?[0-7])*|0x[0-9A-Fa-f](_?[0-9A-Fa-f])*|[0-9](_?[0-9])*)n";
             eval: ![ {
-                mettail_prattail::parse_int_lit(text, None).map_err(|_| ())
+                // ★ Divergence I, Stage A (2026-07-25). The comment above says "bare
+                // `1` is not a BigInt" — but `parse_int_lit(text, None)` accepted EVERY
+                // integer spelling, so bare `1` WAS a BigInt and the declared `n` was
+                // decorative. That contradiction is the defect itself: it made
+                // `BigInt::parse("0")` succeed, so once Display started emitting the
+                // mandatory `n` tail (Stage C) `Display(Parse("0")) = "0n" ≠ "0"` and
+                // the roundtrip lost its fixpoint (caught by
+                // `gen_calculator_unit::unit_calculator_bigint_{inttobigint,uint32tobigint}`).
+                //
+                // The eval now accepts EXACTLY its declared `…n` domain, plus the
+                // unsuffixed numerals too large for `Int`'s `i32` carrier — the same
+                // priority-ordered superset RhoCalc uses, and what kept a bare
+                // `3_000_000_000` readable before.
+                let __lit = mettail_prattail::parse_int_lit(text, None).map_err(|_| ())?;
+                let __declared_bigint = text.ends_with('n');
+                let __unsuffixed_overflow = matches!(
+                    mettail_prattail::IntSuffix::from_text(text),
+                    mettail_prattail::IntSuffix::Unsuffixed
+                ) && __lit.as_i64().and_then(|v| i32::try_from(v).ok()).is_none();
+                if __declared_bigint || __unsuffixed_overflow {
+                    Ok(__lit)
+                } else {
+                    Err(())
+                }
             } ]
         }
         // BigRat sugar: `<int>r` (whole) or `<int>r/<int>r` (composite).

@@ -271,11 +271,15 @@ pub enum Suffix {
     BigInt,
 }
 
-/// Explicit-suffix tag carried on `Token::Integer` so the parser's native
-/// literal arms can reject suffix/category mismatches. Bare digits (`42`)
-/// produce `Unsuffixed`, which is compatible with every integer category
-/// — preserving Ambiguous preservation on unsuffixed literals while
-/// rejecting e.g. `1u32` in an Int-typed position.
+/// Explicit-suffix tag carried on `Token::Integer`, so a consumer can tell an
+/// UNSUFFIXED numeral from a width-suffixed one. Bare digits (`42`) produce
+/// `Unsuffixed`.
+///
+/// ⚠ This tag does NOT by itself decide which category a literal belongs to.
+/// It once carried a `matches_i8` … `matches_usize` family that looked like it
+/// did; that family had zero callers and was retired in 2026-07 (see the note in
+/// the `impl` below). A category's literal domain is decided by that category's
+/// own `eval`, which must accept exactly what its `pattern` declares.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum IntSuffix {
     Unsuffixed,
@@ -321,42 +325,28 @@ impl IntSuffix {
         IntSuffix::Unsuffixed
     }
 
-    pub fn matches_i8(&self) -> bool {
-        matches!(self, IntSuffix::Unsuffixed | IntSuffix::I8)
-    }
-    pub fn matches_i16(&self) -> bool {
-        matches!(self, IntSuffix::Unsuffixed | IntSuffix::I16)
-    }
-    pub fn matches_i32(&self) -> bool {
-        matches!(self, IntSuffix::Unsuffixed | IntSuffix::I32)
-    }
-    pub fn matches_i64(&self) -> bool {
-        matches!(self, IntSuffix::Unsuffixed | IntSuffix::I64 | IntSuffix::Isize)
-    }
-    pub fn matches_i128(&self) -> bool {
-        matches!(self, IntSuffix::Unsuffixed | IntSuffix::I128)
-    }
-    pub fn matches_isize(&self) -> bool {
-        matches!(self, IntSuffix::Unsuffixed | IntSuffix::Isize | IntSuffix::I64)
-    }
-    pub fn matches_u8(&self) -> bool {
-        matches!(self, IntSuffix::Unsuffixed | IntSuffix::U8)
-    }
-    pub fn matches_u16(&self) -> bool {
-        matches!(self, IntSuffix::Unsuffixed | IntSuffix::U16)
-    }
-    pub fn matches_u32(&self) -> bool {
-        matches!(self, IntSuffix::Unsuffixed | IntSuffix::U32)
-    }
-    pub fn matches_u64(&self) -> bool {
-        matches!(self, IntSuffix::Unsuffixed | IntSuffix::U64 | IntSuffix::Usize)
-    }
-    pub fn matches_u128(&self) -> bool {
-        matches!(self, IntSuffix::Unsuffixed | IntSuffix::U128)
-    }
-    pub fn matches_usize(&self) -> bool {
-        matches!(self, IntSuffix::Unsuffixed | IntSuffix::Usize | IntSuffix::U64)
-    }
+    // ── ★ RETIRED 2026-07-25 (divergence I, Stage E) ────────────────────────────
+    //
+    // The `matches_i8` … `matches_usize` family lived here for two months with
+    // **zero callers**. It was written as the guard that would keep a suffix out
+    // of the wrong category ("rejecting e.g. `1u32` in an Int-typed position",
+    // per this enum's own doc), and the only place that idea was ever wired in is
+    // the doc comment at `macros/.../wpda_codegen/prefix.rs:381`, which describes
+    // a trampoline arm the WPDA path does not emit.
+    //
+    // That is not a tidy-up: it is the reason divergence I was invisible. Reading
+    // the code, a suffix/category guard APPEARED to exist, so `BigInt`'s eval —
+    // `parse_int_lit(text, None)`, a universal acceptor contradicting its own
+    // declared `…n` pattern — read as "the guard is elsewhere" rather than as the
+    // hole it was. A documented-but-unread guard family is worse than no guard:
+    // it is a false negative for every reviewer.
+    //
+    // The real guard is now where it can be neither bypassed nor overlooked — in
+    // each category's own `eval`, which accepts EXACTLY the domain its `pattern`
+    // declares (`languages/src/rhocalc.rs`, `languages/src/calculator.rs`).
+    // `from_text` above is RETAINED: it is live (the lexer tags every
+    // `Token::Integer` with it, and `BigInt`'s eval reads it to distinguish an
+    // unsuffixed overflow from a width-suffixed one).
 }
 
 fn split_suffix(s: &str) -> (&str, Option<Suffix>) {

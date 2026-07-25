@@ -376,10 +376,14 @@ pub fn classify_atomic(rule: &GrammarRule, language: &LanguageDef) -> AtomicShap
 ///       carries the user's `eval: ![ { ... } ]` block body in `rust_code`.
 ///   (b) Implicit native-type — `LangType.native_type` is `Some(_)` but no
 ///       explicit literals block. We fabricate a default eval body matching
-///       the trampoline's auto-generated atomic-literal arm (e.g., for
-///       `![i32] as Num`, the trampoline emits a
-///       `Token::Integer(v, suffix) if suffix.matches_i32()` arm; we mirror
-///       it with `parse_int_lit(text, Some(Suffix::I32))`).
+///       the trampoline's auto-generated atomic-literal arm: for `![i32] as Num`
+///       we emit `parse_int_lit(text, Some(Suffix::I32))`.
+///
+///       (This paragraph used to describe a `Token::Integer(v, suffix) if
+///       suffix.matches_i32()` guard. `IntSuffix::matches_*` was retired in
+///       2026-07 with zero callers — divergence I, Stage E: a documented-but-
+///       unread guard family is what made a universal-acceptor `eval` look
+///       guarded. A category's literal domain is decided by its own `eval`.)
 fn classify_literal_patterned(cat_ident: &Ident, language: &LanguageDef) -> Option<AtomicShape> {
     let cat_name = cat_ident.to_string();
     // Find the LangType for the category to get the native Rust type.
@@ -1143,17 +1147,55 @@ pub fn emit_paren_dispatch_arms(
             vec![result_src_idx]
         };
         for grouping_src_idx in &grouping_source_indices {
-            let action_kind = if *grouping_src_idx == result_src_idx {
-                quote! { mettail_prattail::wpda_walker::ForkActionKind::Push }
-            } else {
+            let is_cross_cat = *grouping_src_idx != result_src_idx;
+            let action_kind = if is_cross_cat {
                 quote! { mettail_prattail::wpda_walker::ForkActionKind::PushCrossCatLhs }
+            } else {
+                quote! { mettail_prattail::wpda_walker::ForkActionKind::Push }
+            };
+            // ── Divergence I / Stage D (2026-07-25): PAY FOR THE PROJECTION HERE ──
+            //
+            // A grouping branch whose source category differs from the result category
+            // WILL owe a cross-category projection to get from `grouping_src_idx` back
+            // to `result_src_idx`; the `(` merely defers the bill. Charging `lex_one()`
+            // — the multiplicative identity — made that route FREE, so the same
+            // projection was charged on two different ledgers depending on whether a
+            // `(` was in the way: `BP_TIER_CROSSCAT_PROJECTION` (0.025) on `primary` at
+            // a bare prefix dispatch, versus 0.0 here. With `CgllKTuple::lt` comparing
+            // `lateness` first and weight second, a tie in lateness let `0.0 < 0.025`
+            // decide, so a PARENTHESISED operand could elect a different reading than
+            // the identical bare one — which is how `"{(1) | 2}"` came to parse as
+            // `PPar({CastInt(1), CastBigInt(2)})`.
+            //
+            // Charging the tier the branch will owe removes the free route AT ITS
+            // SOURCE, without touching the `lateness`-before-weight ordering (a
+            // deliberate, separately pinned decision — see
+            // `kbest_w_vs_ktuple_order_keys_differ`). SAME-category grouping branches
+            // are untouched: they owe no projection, so `lex_one()` is their honest
+            // price and every pure-grouping parse keeps its exact prior weight.
+            //
+            // This is PROPHYLAXIS, not the correctness fix. Divergence I is closed in
+            // the grammar (partitioned literal domains); after that there is only ONE
+            // carrier per numeral for the election to find, so no ledger argument is
+            // load-bearing. This makes the two ledgers agree anyway, so a FUTURE
+            // grammar with genuinely co-existing readings cannot be decided by a
+            // parenthesis.
+            let grouping_weight = if is_cross_cat {
+                quote! {
+                    lex_w(
+                        mettail_prattail::automata::lex_weight::BP_TIER_CROSSCAT_PROJECTION,
+                        #grouping_src_idx, 0u16,
+                    )
+                }
+            } else {
+                quote! { lex_one() }
             };
             branches.push(quote! {
                 mettail_prattail::wpda_walker::ForkBranch {
                     symbol: StackSymbolV2::grouping_marker(
                         #grouping_src_idx, *cur_bp,
                     ),
-                    weight: lex_one(),
+                    weight: #grouping_weight,
                     new_state: WpdaState::PrefixDispatch {
                         pos: tokens.next_pos(*pos, 0).unwrap_or(*pos + 1),
                         cur_bp: 0,

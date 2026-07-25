@@ -40,17 +40,21 @@
 //! 2. **Guard position** (`for(@x <- @"c" where φ)`) — the *operational*
 //!    contract: commit, or fail SHUT leaving the datum resting (§18.5).
 //!
-//! ## ⚠ Why the guard-position tests compare STRINGS, not integers
+//! ## Why the guard-position tests compare STRINGS, not integers
 //!
-//! A plain RhoCalc integer literal is arbitrary-precision — that is Rholang 1.4's
-//! default — so it lowers to `GBigInt`, and `rho-pure-eval`'s `cmp_binop`
-//! (`eval.rs`) admits only `(GInt,GInt)`, `(GString,GString)` and
-//! `(GBool,GBool)`. A `GBigInt` comparison therefore raises `EvalError` and
-//! §18.5 collapses that to guard-fail. This is **pre-existing and entirely
-//! independent of `implies`** — `x > 0` alone already fails shut this way — and
-//! it is pinned below by `a_bigint_comparison_guard_fails_shut_pre_existing`
-//! rather than papered over. The ordered-`Str` guards used for the operational
-//! tests have exactly the same shape and drive exactly the same machine arms.
+//! ★ HISTORICAL as of 2026-07-25 (divergence I). A plain RhoCalc integer literal
+//! used to lower to `GBigInt`, and `rho-pure-eval`'s `cmp_binop` (`eval.rs`)
+//! admits only `(GInt,GInt)`, `(GString,GString)` and `(GBool,GBool)` — so a
+//! `GBigInt` comparison raised `EvalError`, §18.5 collapsed that to guard-fail,
+//! and EVERY numeric guard in the language failed shut. The ordered-`Str` guards
+//! were chosen to route around it; they have exactly the same shape and drive
+//! exactly the same machine arms, so they are kept as-is.
+//!
+//! A plain literal is now `GInt` (`normalize_ground`'s carrier), so numeric
+//! guards work; the inverted pin is
+//! `a_plain_integer_comparison_guard_now_fires_and_the_bigint_one_still_fails_shut`,
+//! which also keeps the surviving `GBigInt` half so a future `cmp_binop`
+//! widening cannot pass silently.
 //!
 //! The HOST twin of the same truth table (`eval_guard_bool`, reached through the
 //! Dovetail/oracle receive path) lives in
@@ -390,28 +394,52 @@ async fn implies_over_a_non_boolean_operand_fabricates_nothing() {
     );
 }
 
-/// `RuntimeObservationValue::BigIntBytes` renders as signed big-endian hex, so
-/// the RhoCalc literal `11` observes as `BigInt(0x0b)` — direct evidence for the
-/// claim below that a plain integer literal rides as `GBigInt`, not `GInt`.
+/// `RuntimeObservationValue::BigIntBytes` renders as signed big-endian hex, so a
+/// RhoCalc **`…n`** literal `11n` observes as `BigInt(0x0b)`. A PLAIN `11` now
+/// observes as the `GInt` `11` (divergence I).
 const BIGINT_ELEVEN: &str = "BigInt(0x0b)";
 
+/// ★ INVERTED 2026-07-25 (divergence I). This test was
+/// `a_bigint_comparison_guard_fails_shut_pre_existing`, and it pinned a REAL
+/// defect that this suite's ordered-`Str` guards existed to route around: a plain
+/// RhoCalc integer literal lowered to `GBigInt`, `rho-pure-eval`'s `cmp_binop`
+/// (`eval.rs`) admits only `(GInt,GInt)`, `(GString,GString)`, `(GBool,GBool)`,
+/// so a numeric guard as ordinary as `where x > 0` raised `EvalError` and §18.5
+/// collapsed that to guard-FAIL. Every numeric guard in the language failed shut.
+///
+/// A plain literal is now `GInt` — its `normalize_ground` carrier — so numeric
+/// guards WORK. The `GBigInt` half of the pin survives below, because
+/// `cmp_binop` still does not admit `GBigInt`: the `…n` spelling still fails
+/// shut, and a future widening of `cmp_binop` must fail this test loudly rather
+/// than change consensus-visible guard behaviour silently.
 #[tokio::test]
-async fn a_bigint_comparison_guard_fails_shut_pre_existing() {
-    // ⚠ PRE-EXISTING, and deliberately pinned here so the ordered-`Str` choice
-    // above is documented rather than mysterious.
-    //
-    // A plain RhoCalc integer literal is arbitrary-precision (Rholang 1.4's
-    // default) and lowers to `GBigInt`; `rho-pure-eval`'s `cmp_binop` admits only
-    // `(GInt,GInt)`, `(GString,GString)`, `(GBool,GBool)`. So `x > 0` raises
-    // `EvalError` and fails SHUT — with or without `implies`. Both spellings are
-    // asserted so a future widening of `cmp_binop` fails this test loudly and
-    // gets the ordered-`Str` guards revisited, instead of silently changing
-    // consensus-visible guard behaviour.
+async fn a_plain_integer_comparison_guard_now_fires_and_the_bigint_one_still_fails_shut() {
+    // ── the INVERTED half: a plain numeric guard fires. ──
     let (fired, resting) = guarded_receive("x > 0", "11").await;
-    assert!(fired.is_empty(), "a GBigInt comparison guard fails shut TODAY (no `implies` involved)");
-    assert_eq!(resting, vec![BIGINT_ELEVEN.to_string()], "and leaves the datum resting");
+    assert_eq!(
+        fired,
+        vec!["11".to_string()],
+        "a plain (GInt) comparison guard now FIRES — this was the defect divergence I closed"
+    );
+    assert!(resting.is_empty(), "and consumes the datum");
 
-    let (fired, resting) = guarded_receive("x > 0 implies x > 10", "11").await;
-    assert!(fired.is_empty(), "`implies` neither creates nor repairs the GBigInt gap");
+    let (fired, _resting) = guarded_receive("x > 0 implies x > 10", "11").await;
+    assert_eq!(
+        fired,
+        vec!["11".to_string()],
+        "`implies` over plain numeric comparisons composes: `11 > 0 ⇒ 11 > 10` is true"
+    );
+
+    // …and the guard can still answer FALSE, so the firing above is not vacuous.
+    let (fired, resting) = guarded_receive("x > 100", "11").await;
+    assert!(fired.is_empty(), "a false numeric guard still fails shut");
+    assert_eq!(resting, vec!["11".to_string()], "and leaves the datum resting");
+
+    // ── the SURVIVING half: `cmp_binop` still has no `GBigInt` arm. ──
+    let (fired, resting) = guarded_receive("x > 0n", "11n").await;
+    assert!(
+        fired.is_empty(),
+        "a GBigInt comparison guard still fails shut — `cmp_binop` has no `(GBigInt,GBigInt)` arm"
+    );
     assert_eq!(resting, vec![BIGINT_ELEVEN.to_string()], "and leaves the datum resting");
 }

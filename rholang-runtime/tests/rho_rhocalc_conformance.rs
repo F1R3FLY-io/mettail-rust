@@ -73,7 +73,7 @@
 //! | **F** | `.toByteArray()` | a hex `GString` — and unreachable from source | a real `GByteArray` | C2 | ★ CLOSED |
 //! | **G** | `Pathmap` / zippers | own carriers + 20+ methods | `EPathmapBody`/`EZipperBody` exist, unused | C4 | open |
 //! | **H** | `==` / `!=` on **`Bool`** | `Bool` (was: `error`, no fold arm) | `Bool(true)` | — | ★ CLOSED |
-//! | **I** | a numeral's **carrier** depends on syntax (`@(1)`:`Int` vs `@1`:`BigInt`, `5u32`:`BigInt`) | `*(@(1)) + 2` ⟹ `error` | Rholang has ONE integer | WPDA projection fix | open |
+//! | **I** | a numeral's **carrier** depends on syntax (`@(1)`:`Int` vs `@1`:`BigInt`, `5u32`:`BigInt`) | `*(@(1)) + 2` ⟹ `error` | Rholang has ONE integer | the GRAMMAR (partitioned literal domains), NOT the WPDA projection | ★ CLOSED |
 //! | **J** | `x!()` satisfies `for(@y <- x)` | fires, `y = []` | arity-checked COMM: rests | C1 | open |
 //!
 //! `H` was **discovered by this suite**; `I` and `J` were discovered by the burndown described
@@ -285,12 +285,18 @@ fn lower_error_message(err: &RhocalcAstLowerError) -> String {
 /// carrier can never be silently accepted as conformant.
 fn render_as_rhocalc(value: &RuntimeObservationValue) -> String {
     match value {
-        // `int(a, w)` — the fixed-width `Int` category ⟷ `ExprInstance::GInt`.
+        // The `Int` category ⟷ `ExprInstance::GInt`. ★ CORRECTED 2026-07-25 (divergence I):
+        // this is the carrier of a PLAIN RhoCalc integer literal — `1`, `1i32`, `1i64`, `1u32`
+        // — exactly as f1r3node's `normalize_ground` maps them, as well as of `int(a, w)`.
         RuntimeObservationValue::Int(literal) => literal.to_string(),
-        // A plain RhoCalc integer literal is arbitrary-precision (Rholang 1.4's default), so it
-        // rides as `GBigInt` — signed big-endian two's-complement bytes.
+        // ⚠ The comment that stood here — "a plain RhoCalc integer literal is arbitrary-precision
+        // (Rholang 1.4's default), so it rides as `GBigInt`" — was FACTUALLY WRONG, and stating
+        // it in the conformance suite is part of why divergence I survived so long.
+        // `normalize_ground` sends a bare numeral to `GInt`; only the `…n` spelling is `GBigInt`.
+        // `GBigInt` is therefore rendered with the `n` tail its own grammar requires, which is
+        // also what the fold's `Display` now emits (Stage C).
         RuntimeObservationValue::BigIntBytes(bytes) => {
-            num_bigint::BigInt::from_signed_bytes_be(bytes).to_string()
+            format!("{}n", num_bigint::BigInt::from_signed_bytes_be(bytes))
         },
         RuntimeObservationValue::Bool(literal) => literal.to_string(),
         // RhoCalc `Str` displays quoted; `{:?}` on `&str` is the same escaping RhoCalc's generated
@@ -408,11 +414,12 @@ async fn assert_conformant(source: &str, expected: &str) {
 // PART 1 — the conformant surface (these MUST stay green through every refactor stage)
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
-/// Arbitrary-precision integer arithmetic. A plain RhoCalc integer literal is `BigInt`
-/// (Rholang 1.4's default), so these ride `GBigInt` on the machine and `CanonicalBigInt` in the
-/// fold — different carriers, one value.
+/// Integer arithmetic on the two integer carriers. ★ CORRECTED 2026-07-25 (divergence I): a plain
+/// RhoCalc integer literal is **`Int`**, riding `GInt` on the machine and `i64` in the fold, exactly
+/// as f1r3node's `normalize_ground` maps it. Only the `…n` spelling is arbitrary-precision, riding
+/// `GBigInt` / `CanonicalBigInt` and displaying with its mandatory `n` tail.
 #[tokio::test(flavor = "multi_thread")]
-async fn conformance_bigint_arithmetic() {
+async fn conformance_int_arithmetic() {
     assert_conformant("1 + 2", "3").await;
     assert_conformant("5 - 3", "2").await;
     assert_conformant("3 * 4", "12").await;
@@ -420,7 +427,16 @@ async fn conformance_bigint_arithmetic() {
     assert_conformant("10 % 3", "1").await;
     assert_conformant("-7", "-7").await;
     assert_conformant("0 - 2", "-2").await;
-    assert_conformant("1n + 2n", "3").await;
+}
+
+/// The arbitrary-precision carrier, reached ONLY through the `…n` spelling.
+#[tokio::test(flavor = "multi_thread")]
+async fn conformance_bigint_arithmetic() {
+    assert_conformant("1n + 2n", "3n").await;
+    assert_conformant("5n - 3n", "2n").await;
+    assert_conformant("3n * 4n", "12n").await;
+    // Beyond `i64`, where the carrier is the whole point.
+    assert_conformant("9223372036854775807n + 1n", "9223372036854775808n").await;
 }
 
 /// Fixed-width integer arithmetic (`int(a, w)` ⟷ `GInt`), inside the non-overflowing range.
@@ -929,11 +945,21 @@ async fn divergence_d_target_fixed_scale_policy_is_the_reducers() {
 /// | 2 | it sorted set/map members by raw **protobuf byte order** (`wire.rs:19-25`, `sort_by_key(encode_to_vec)`) | disagrees with Rholang's **`ScoredTerm` value order** (`models/src/rust/sorted_par_hash_set.rs:22`) on negative integers — divergence **E** |
 /// | 3 | it returned a **hex `GString`**, not a `GByteArray` (`wire.rs:136-139`) | the wrong Rholang carrier — divergence **F** |
 ///
-/// The old goldens (`2a15a201120a042a0210020a042a0210040a042a021006` for `[1,2,3]`) therefore
-/// encoded a **different Rholang term** than RhoCalc means: `GInt` elements (`sint64` zigzag
-/// `02 04 06` = 1, 2, 3) where the real term carries `GBigInt` elements. The bytes asserted below
-/// are the machine's, and they carry `9a 02 01 0N` — the `GBigInt` leaves — exactly as
-/// `lower_list` emits them.
+/// ### ★ RE-MEASURED 2026-07-25 after divergence I closed
+///
+/// The C2 goldens were re-baselined onto `GBigInt` leaves (`9a 02 01 0N`) because a plain RhoCalc
+/// numeral was then a `CastBigInt`. **It should never have been**: `normalize_ground` maps a bare
+/// numeral to `GInt`, and divergence I fixed the grammar accordingly. So these goldens are measured
+/// again, deliberately — a carrier change moves the wire bytes, and rubber-stamping them would have
+/// hidden exactly the thing this suite exists to catch.
+///
+/// The new bytes for `[1,2,3]`, `2a15a201120a042a0210020a042a0210040a042a021006`, are **byte-
+/// identical to the goldens the RETIRED FORK produced** (`GInt` elements, `sint64` zigzag
+/// `02 04 06` = 1, 2, 3). That is a receipt, not a coincidence: defect #1 in the table above was
+/// that the fork's `.proto` had no `g_big_int` field — the fork was encoding what Rholang actually
+/// means, and only *looked* wrong because RhoCalc's literals were landing in the wrong carrier.
+/// The `GBigInt` encoding is now reached by exactly the spelling that asks for it, `[1n, 2n, 3n]`
+/// (pinned below).
 ///
 /// (The five golden-hex tests that pinned the fork lived in
 /// `languages/tests/rhocalc_tests.rs::native_ops::collection_wire`. They were retired rather than
@@ -942,38 +968,34 @@ async fn divergence_d_target_fixed_scale_policy_is_the_reducers() {
 #[tokio::test(flavor = "multi_thread")]
 async fn c2_closed_to_byte_array_is_the_reducers_own_encoding() {
     for (source, expected) in [
-        // A list of three arbitrary-precision integers: `EList` (field 20 ⟹ `a2 01`) of three
-        // `Par`s each carrying one `GBigInt` (`9a 02`) leaf.
+        // A list of three PLAIN integers: `EList` (field 20 ⟹ `a2 01`) of three `Par`s each
+        // carrying one `GInt` (`2a 02 10`) leaf, `sint64` zigzag `02 04 06` = 1, 2, 3.
+        ("[1, 2, 3].toByteArray()", "2a15a201120a042a0210020a042a0210040a042a021006"),
+        // The `…n` spelling — and ONLY it — reaches `GBigInt` (`9a 02`).
         (
-            "[1, 2, 3].toByteArray()",
+            "[1n, 2n, 3n].toByteArray()",
             "2a1ba201180a062a049a0201010a062a049a0201020a062a049a020103",
         ),
         // `ESet` (field 22 ⟹ `b2 01`). Source order is irrelevant — the machine canonicalizes
         // through `SortedParHashSet`, so both spellings give byte-identical output.
-        (
-            "Set(1, 2, 3).toByteArray()",
-            "2a1bb201180a062a049a0201010a062a049a0201020a062a049a020103",
-        ),
-        (
-            "Set(3, 2, 1).toByteArray()",
-            "2a1bb201180a062a049a0201010a062a049a0201020a062a049a020103",
-        ),
+        ("Set(1, 2, 3).toByteArray()", "2a15b201120a042a0210020a042a0210040a042a021006"),
+        ("Set(3, 2, 1).toByteArray()", "2a15b201120a042a0210020a042a0210040a042a021006"),
         // `EMap` (field 23 ⟹ `ba 01`), likewise order-independent.
         (
             "{1: 10, 2: 20}.toByteArray()",
-            "2a27ba01240a100a062a049a02010112062a049a02010a0a100a062a049a02010212062a049a020114",
+            "2a1fba011c0a0c0a042a02100212042a0210140a0c0a042a02100412042a021028",
         ),
         (
             "{2: 20, 1: 10}.toByteArray()",
-            "2a27ba01240a100a062a049a02010112062a049a02010a0a100a062a049a02010212062a049a020114",
+            "2a1fba011c0a0c0a042a02100212042a0210140a0c0a042a02100412042a021028",
         ),
         // Nesting rides through unchanged.
         (
             "[[1, 2], [3]].toByteArray()",
-            "2a29a201260a152a13a201100a062a049a0201010a062a049a0201020a0d2a0ba201080a062a049a020103",
+            "2a23a201200a112a0fa2010c0a042a0210020a042a0210040a0b2a09a201060a042a021006",
         ),
         // The empty list — the one case the retired fork also got right, since it has no elements
-        // to mis-type. Byte-identical to the old golden `2a03a20100`.
+        // to mis-type. Byte-identical across every re-baseline: `2a03a20100`.
         ("[].toByteArray()", "2a03a20100"),
     ] {
         let observed = reduce(&parse(source)).await.unwrap_or_else(|err| {
@@ -988,11 +1010,17 @@ async fn c2_closed_to_byte_array_is_the_reducers_own_encoding() {
 
 /// **Divergence E — CLOSED by C2: the canonical order is the machine's, not protobuf byte order.**
 ///
-/// `Set(0 - 2, 1)` is the discriminating case. Rholang's `ScoredTerm` order is by **value**, so
-/// `-2` precedes `1`… but the observed encoding lists `GBigInt(01)` before `GBigInt(fe)`, because
-/// `GBigInt` is scored on its signed big-endian **bytes**. Either way the answer is now produced
-/// by exactly one implementation — the machine's `SortedParHashSet` — instead of by a second,
-/// independently-sorted host encoder that could (and for negative members did) disagree.
+/// `Set(0 - 2, 1)` is the discriminating case, and ★ RE-MEASURED 2026-07-25: it now lands on
+/// Rholang's `ScoredTerm` **value** order, `-2` before `1`.
+///
+/// That is a second-order effect of divergence I, and it is worth stating precisely. While a plain
+/// numeral was a `CastBigInt`, the members rode as `GBigInt` — which `ScoredTerm` scores on its
+/// signed big-endian **bytes**, so `01` (=1) sorted before `fe` (=-2) and the *observed* order was
+/// `1, -2`, agreeing with neither the value order nor with intuition. With the members now riding
+/// as `GInt` (their `normalize_ground` carrier) the machine scores them by value and answers
+/// `-2, 1`. Either way there is exactly ONE implementation of the order — the machine's
+/// `SortedParHashSet` — rather than a second, independently-sorted host encoder; that is what C2
+/// closed. What divergence I added is that the one implementation is now fed the right carrier.
 #[tokio::test(flavor = "multi_thread")]
 async fn c2_closed_to_byte_array_uses_the_machines_canonical_order() {
     let observed = reduce(&parse("Set(0 - 2, 1).toByteArray()"))
@@ -1003,8 +1031,9 @@ async fn c2_closed_to_byte_array_uses_the_machines_canonical_order() {
     };
     assert_eq!(
         hex_of(bytes),
-        "2a13b201100a062a049a0201010a062a049a0201fe",
-        "E: the member order is the machine's own (`01` then `fe` = 1 then -2)"
+        // `b2 01` ESet of two `GInt` leaves: zigzag `03` = -2, then zigzag `02` = 1.
+        "2a0fb2010c0a042a0210030a042a021002",
+        "E: the member order is the machine's own — by VALUE, `-2` then `1`"
     );
 }
 
@@ -1032,9 +1061,11 @@ async fn c2_closed_bag_to_byte_array_keeps_the_bag_abi_tag() {
     );
     assert_eq!(
         encoded,
-        "2a54a201510a1e3a1c0a1a0a180a166d65747461696c2e72686f63616c632e6261672e76310a2f2a2d\
-         a2012a0a132a11a2010e0a062a049a0201010a042a0210020a132a11a2010e0a062a049a0201020a04\
-         2a021004"
+        // ★ RE-MEASURED 2026-07-25 (divergence I): the ELEMENT leaves are now `GInt` (`2a 02 10`)
+        // rather than `GBigInt` (`9a 02`); the `(element, count)` pair structure and the ABI tag
+        // are unchanged. The counts were always `GInt`, so each pair is now homogeneous.
+        "2a50a2014d0a1e3a1c0a1a0a180a166d65747461696c2e72686f63616c632e6261672e76310a2b2a29\
+         a201260a112a0fa2010c0a042a0210020a042a0210020a112a0fa2010c0a042a0210040a042a021004"
     );
 }
 
@@ -1140,78 +1171,90 @@ async fn divergence_h_target_boolean_equality_agrees() {
 
 // ── I — the numeric-literal CARRIER depends on syntax (discovered 2026-07-25) ─────────────────────
 
-/// **Divergence I (witness) — the same numeral lands in a different numeric carrier depending on
-/// where it is written.**
+/// **Divergence I — ★ CLOSED 2026-07-25 in the GRAMMAR (`languages/src/rhocalc.rs`).**
 ///
 /// Rholang has ONE integer type. MeTTaIL offers several carriers for it (`Int` = `i64` ▸ `GInt`,
 /// `BigInt` = arbitrary precision ▸ `GBigInt`, `UInt32`), which is fine as long as the carrier is
-/// a function of the SOURCE. It is not:
+/// a function of the SOURCE. It was not. The retired witness recorded:
 ///
 /// | source | parsed | carrier |
 /// |---|---|---|
 /// | `*(@1) + 2` | `Add(PDrop(NParen(NQuoteShort(CastBigInt(1)))), CastBigInt(2))` | both arbitrary precision |
 /// | `*(@(1)) + 2` | `Add(PDrop(NParen(NQuoteShort(**CastInt**(1)))), CastBigInt(2))` | MIXED |
-/// | `5u32` | `CastBigInt(5)` | the `u32` suffix is DISCARDED |
+/// | `5u32` | `CastBigInt(5)` | the `u32` suffix reached no `UInt32` |
 ///
-/// The operators are carrier-EXACT — and so is the consensus reducer, whose `combine_plus`
-/// (`reduce.rs:3112`) likewise has no mixed `GInt`/`GBigInt` arm — so the asymmetry becomes a
-/// semantic difference: one pair of parentheses turns `3` into `error`. It also breaks COMM: a
-/// receive PATTERN and a send PAYLOAD written from IDENTICAL source text can land in different
-/// carriers and fail to unify (`for(@*(@(0)) <- c){1} | c!(*(@(0)))` never fires).
+/// Both this grammar's operators and the consensus reducer are carrier-EXACT, so the asymmetry was
+/// a semantic difference: one pair of parentheses turned `3` into `error`, and `[1,2,3].length() ==
+/// 3` was false (a computed length is an `Int`; a literal `3` was a `BigInt`).
 ///
-/// Discovered while burning down `languages/tests/rhocalc_tests.rs`'s vacuous assertions, where it
-/// was tripping four tests. Pinned on the MeTTaIL side by
-/// `languages/tests/rhocalc_tests.rs::carrier_asymmetry`.
+/// ### The attribution was HALF WRONG, and that is the lesson
 ///
-/// ⚠ The fix belongs in the WPDA cross-category projection (`macros/src/gen/runtime/wpda_codegen/`,
-/// `prattail/src/wpda_walker.rs`) — a formally-verified, repeatedly red-teamed subsystem whose
-/// disambiguation must not be adjusted by a local heuristic (`feedback_use_wpds_disambiguation_
-/// not_heuristics`, `feedback_never_disambiguate_early`). It is recorded, not improvised.
-/// **Note on where this witness lives.** The carrier a numeral receives depends on the parse ENTRY
-/// POINT as well as on parentheses: `Proc::parse_via_wpda` (what [`parse`] here uses, and what the
-/// production AST-first lowering uses) reads `*(@(1))` as arbitrary precision, while
-/// `Language::parse_term` (the ambiguity-preserving box the Dovetail test oracle consumes) reads
-/// the same source as fixed width. The AST-level pin therefore lives with the parser, in
-/// `languages/tests/rhocalc_tests.rs::carrier_asymmetry`. What is asserted HERE is the part that
-/// is a statement about the two EVALUATORS: because MeTTaIL splits Rholang's single integer across
-/// carriers and both evaluators are carrier-exact, a MeTTaIL program's meaning depends on a choice
-/// Rholang does not have.
+/// The witness said "the fix belongs in the WPDA cross-category projection". The election machinery
+/// behaved exactly as specified — what it was electing *between* was a set of readings **the
+/// grammar should never have admitted**: `BigInt`'s eval was `parse_int_lit(text, None)`, a
+/// universal acceptor of every integer spelling, flatly contradicting its own declared mandatory
+/// `…n` tail. Respecting never-disambiguate-early did NOT require touching the tiebreak; it
+/// required making the evidence discriminate. Once the literal domains PARTITION, exactly one
+/// carrier survives at every election site and no ledger argument is needed at all.
+///
+/// The normative source settles which carrier: f1r3node's `normalize_ground`
+/// (`ground_normalize_matcher.rs:14-50`) maps a bare numeral, `…i32`, `…i64` and `…u32` (≤
+/// `i64::MAX`) to `GInt`, and only `…n` to `GBigInt`.
+///
+/// The MeTTaIL-side pins are `languages/tests/rhocalc_tests.rs::numeral_carrier_is_context_
+/// independent`.
 #[tokio::test(flavor = "multi_thread")]
-async fn divergence_i_witness_numeral_carrier_depends_on_parentheses() {
-    // ONE carrier ⇒ both evaluators compute.
+async fn divergence_i_closed_numeral_carrier_is_syntax_independent() {
+    assert_conformant("int(1, 64) + 2", "3").await;
+    // (`5u32 bitand 3u32` is pinned on the MeTTaIL side only — `bitand` is a MeTTaIL-only
+    // operation with no Rholang `Expr`, so it is C3 residue and cannot be asserted CONFORMANT.
+    // Its carrier claim lives in `languages/tests/rhocalc_tests.rs::
+    // numeral_carrier_is_context_independent::u32_suffix_is_an_i64_literal`.)
+    assert_conformant("5u32 + 3u32", "8").await;
+    // The parenthesis witness itself: one pair of parentheses used to change the carrier.
+    assert_conformant("*(@1) + 2", "3").await;
+    assert_conformant("*(@(1)) + 2", "3").await;
+    // The computed-vs-literal witness. `.length()` is C1 residue (no Rholang list method — see
+    // `c1_inventory_witness_collection_methods_are_not_lowered`), so only the FOLD side can be
+    // asserted; what matters here is that a COMPUTED integer and a LITERAL one are now the same
+    // carrier. Before divergence I closed, every computed integer was an `Int` and every literal
+    // was a `BigInt`, so this answered `error`.
     assert_eq!(
-        fold(&parse("int(1, 64) + int(2, 64)")).expect("the fold converges"),
-        "3",
-        "I: fixed width on both sides"
+        fold(&parse("[1, 2, 3].length() == 3")).expect("the fold converges"),
+        "true",
+        "a computed integer and a literal one share one carrier"
     );
-    assert_eq!(fold(&parse("1 + 2")).expect("the fold converges"), "3", "I: arbitrary precision");
+}
 
-    // MIXED carriers ⇒ BOTH evaluators refuse the very same addition. Rholang, which has one
-    // integer type, has nothing to refuse: `1 + 2` is `3` however it was written.
-    let mixed = parse("int(1, 64) + 2");
+/// **The f1r3node fact divergence I rested on, kept as a standalone pin.**
+///
+/// The retired witness ended by asserting it, and it is the reason the grammar-side fix had to make
+/// the carriers agree rather than teach the fold to mix them: the consensus reducer's `combine_plus`
+/// (`reduce.rs:3112`) has **no mixed `GInt`/`GBigInt` arm**. MeTTaIL cannot be more permissive than
+/// the machine it compiles to, so a mixed-carrier addition must stay refused on BOTH sides — and the
+/// only conforming way to make `1 + 2` compute is for both operands to be the SAME carrier.
+///
+/// (Recorded, not requested: whether f1r3node should grow such an arm is an upstream question. No
+/// f1r3node change was made for divergence I.)
+#[tokio::test(flavor = "multi_thread")]
+async fn f1r3node_combine_plus_has_no_mixed_gint_gbigint_arm() {
+    let mixed = parse("int(1, 64) + 2n");
     assert_eq!(
         fold(&mixed).expect("the fold converges"),
         "error",
-        "I: the fold's `+` is carrier-exact"
+        "the fold's `+` is carrier-exact"
     );
     let machine = reduce(&mixed).await;
     assert!(
         machine.is_err(),
-        "I: the consensus reducer's `combine_plus` (reduce.rs:3112) has no mixed \
+        "the consensus reducer's `combine_plus` (reduce.rs:3112) has no mixed \
          `GInt`/`GBigInt` arm either — got {machine:?}"
     );
-}
-
-/// **Divergence I (target) — a numeral's carrier is a function of the numeral.**
-///
-/// Closed by a WPDA cross-category-projection fix (not attempted here — see the witness).
-#[tokio::test(flavor = "multi_thread")]
-#[ignore = "divergence I: MeTTaIL splits Rholang's single integer across carriers and both \
-            evaluators are carrier-exact, so `int(1,64) + 2` is refused; closed by a WPDA \
-            projection fix (one carrier per numeral) or by C1"]
-async fn divergence_i_target_numeral_carrier_is_syntax_independent() {
-    assert_conformant("int(1, 64) + 2", "3").await;
-    assert_conformant("5u32 bitand 3u32", "1").await;
+    // …and each carrier on its own computes, on both evaluators, so the refusal above is about
+    // MIXING and not about either carrier being broken.
+    assert_conformant("int(1, 64) + int(2, 64)", "3").await;
+    assert_conformant("1n + 2n", "3n").await;
+    assert_conformant("1 + 2", "3").await;
 }
 
 // ── J — an EMPTY send satisfies an arity-1 receive (discovered 2026-07-25) ────────────────────────
@@ -1412,9 +1455,11 @@ fn render_fixed_point_matches_the_rhocalc_surface_form() {
 #[test]
 fn render_as_rhocalc_matches_the_rhocalc_surface_form() {
     assert_eq!(render_as_rhocalc(&RuntimeObservationValue::Int(-3)), "-3");
+    // ★ The `n` tail (divergence I, Stage C): `GBigInt`'s RhoCalc surface form REQUIRES it —
+    // `-7` is the surface form of the `Int` `-7`, a different carrier.
     assert_eq!(
         render_as_rhocalc(&RuntimeObservationValue::BigIntBytes(vec![249])),
-        "-7"
+        "-7n"
     );
     assert_eq!(render_as_rhocalc(&RuntimeObservationValue::Bool(false)), "false");
     assert_eq!(
@@ -1427,15 +1472,22 @@ fn render_as_rhocalc_matches_the_rhocalc_surface_form() {
     );
     assert_eq!(
         render_as_rhocalc(&RuntimeObservationValue::List(vec![
-            RuntimeObservationValue::BigIntBytes(vec![1]),
-            RuntimeObservationValue::BigIntBytes(vec![2]),
+            RuntimeObservationValue::Int(1),
+            RuntimeObservationValue::Int(2),
         ])),
         "[1, 2]"
     );
     assert_eq!(
-        render_as_rhocalc(&RuntimeObservationValue::Map(vec![(
+        render_as_rhocalc(&RuntimeObservationValue::List(vec![
             RuntimeObservationValue::BigIntBytes(vec![1]),
-            RuntimeObservationValue::BigIntBytes(vec![10]),
+            RuntimeObservationValue::BigIntBytes(vec![2]),
+        ])),
+        "[1n, 2n]"
+    );
+    assert_eq!(
+        render_as_rhocalc(&RuntimeObservationValue::Map(vec![(
+            RuntimeObservationValue::Int(1),
+            RuntimeObservationValue::Int(10),
         )])),
         "{1:10}"
     );

@@ -64,9 +64,12 @@ fn rho_nf_displays(input: &str) -> Vec<String> {
 
 #[test]
 fn calc_bigint_sub_neg_literal_huge() {
-    calc_normal_form("1n - 2n", "-1");
-    calc_normal_form("-1n", "-1");
-    calc_normal_form("32478132567813256718n", "32478132567813256718");
+    // ★ The `n` tails are new (divergence I, Stage C, 2026-07-25). A `BigInt`'s declared pattern
+    // makes the `n` MANDATORY, so its Display must emit it; the tail-less `-1` was a word that
+    // read back as an `Int`, not a `BigInt`. The VALUES are unchanged.
+    calc_normal_form("1n - 2n", "-1n");
+    calc_normal_form("-1n", "-1n");
+    calc_normal_form("32478132567813256718n", "32478132567813256718n");
 }
 
 #[test]

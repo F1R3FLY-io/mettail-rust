@@ -14,7 +14,15 @@ use std::ops::Neg;
 /// there is ONE classification and the two consumers cannot drift apart.
 pub mod formula;
 pub(crate) mod pathmap;
-pub(crate) mod receive;
+/// The HOST receive semantics — including [`receive::eval_guard_bool`], the host `where`-guard
+/// evaluator.
+///
+/// `pub`, not `pub(crate)`, since S-D0: `rholang-runtime::guard_discharge` uses
+/// `eval_guard_bool` as the HOST leg of its anti-divergence fence. Compile-time guard discharge
+/// acts only when the host evaluator and the MACHINE evaluator (`rho_pure_eval` under the
+/// reducer's own `SpatialMatcherOracle`) agree; the host leg is a free redundancy check that
+/// turns any divergence between the two into a loud warning rather than an unsound elision.
+pub mod receive;
 pub(crate) mod runtime;
 mod type_inference;
 pub(crate) mod zipper;
@@ -85,23 +93,76 @@ language! {
         ![std::sync::Arc<crate::rhocalc::zipper::WriteZipperLit>] as WriteZipper
     },
 
+    // ── Divergence I (2026-07-25): the integer-literal DOMAINS PARTITION ────────────
+    //
+    // f1r3node's `normalize_ground` (`ground_normalize_matcher.rs:14-50`) is a TOTAL
+    // function from a Rholang numeral to exactly ONE ground carrier:
+    //
+    //     bare digits ▸ GInt        `…i32` / `…i64` ▸ GInt
+    //     `…u32` (≤ i64::MAX) ▸ GInt        `…n` ▸ GBigInt
+    //
+    // so **`Int` is THE ≤64-bit literal carrier** and **`UInt32` has NO literal
+    // surface** — the 32-bit wraparound carrier is reachable ONLY through the
+    // MeTTaIL-only `uint(x, 32)` cast. Each `eval` below therefore accepts EXACTLY
+    // the spellings its own `pattern` declares, and the three accepted domains are
+    // pairwise DISJOINT, so a numeral's carrier is a function of the numeral TEXT
+    // and of nothing else — no election, no context, no parentheses.
+    //
+    // What this replaced: `BigInt`'s eval used to be `parse_int_lit(text, None)`, a
+    // **universal acceptor of every integer spelling**, flatly contradicting its own
+    // declared mandatory `…n` tail. Because `home_polymorphic_token_arm` gives every
+    // Integer-family category a bare `TokenKind::Integer` arm, `CastBigInt` was a
+    // live reading of EVERY numeral and won the lex-min tiebreak by grammar
+    // DECLARATION ORDER — while a `(`-grouped numeral reached `CastInt` through a
+    // free grouping route. One numeral, two carriers, chosen by parentheses:
+    // `"{(1) | 2}"` parsed as `PPar({CastInt(1), CastBigInt(2)})`. Since both this
+    // grammar's operators and the consensus reducer's `combine_plus` are
+    // carrier-EXACT, that made `int(1,64) + 2` an `error` and `[1,2,3].length() == 3`
+    // false. Fixing the ELECTION would have been fixing the wrong layer: the readings
+    // it was electing between were ones the grammar should never have admitted.
+    //
+    // The one deliberate MeTTaIL SUPERSET: an UNSUFFIXED numeral too large for `i64`
+    // falls through to `BigInt` (`32478132567813256718` — no Rholang program can
+    // express it, so no Rholang-expressible program changes meaning).
+    //
+    // An explicitly width-suffixed numeral whose value overflows that width
+    // (`5000000000u32`) is REJECTED by every category, exactly as Rust rejects it.
+    // That is fail-closed and text-determined — it can never yield a divergent
+    // *value* — and it is deliberately NOT part of divergence I.
     literals {
-        UInt32 {
-            pattern: r"(0b[01](_?[01])*|0o[0-7](_?[0-7])*|0x[0-9A-Fa-f](_?[0-9A-Fa-f])*|[0-9](_?[0-9])*)u32";
-            eval: ![ {
-                mettail_prattail::parse_int_lit(text, None).map_err(|_| ())
-            } ]
-        }
         Int {
-            pattern: r"(0b[01](_?[01])*|0o[0-7](_?[0-7])*|0x[0-9A-Fa-f](_?[0-9A-Fa-f])*|[0-9](_?[0-9])*)(i64)?";
+            // The full `normalize_ground` ≤64-bit suffix set. `(i64)?` alone left
+            // `5i32`/`5u32` un-lexable as a single `Int` token even though both are
+            // `GInt` upstream.
+            pattern: r"(0b[01](_?[01])*|0o[0-7](_?[0-7])*|0x[0-9A-Fa-f](_?[0-9A-Fa-f])*|[0-9](_?[0-9])*)(i32|i64|u32)?";
             eval: ![ {
-                mettail_prattail::parse_int_lit(text, Some(mettail_prattail::Suffix::I64)).map_err(|_| ())
+                // The `…n` tail is BigInt's ALONE; every other spelling that fits i64
+                // is Int's. The generated `as_i64()` conversion rejects the rest, which
+                // then falls through to `BigInt`'s overflow clause.
+                if text.ends_with('n') {
+                    Err(())
+                } else {
+                    mettail_prattail::parse_int_lit(text, None).map_err(|_| ())
+                }
             } ]
         }
         BigInt {
             pattern: r"-?(0b[01](_?[01])*|0o[0-7](_?[0-7])*|0x[0-9A-Fa-f](_?[0-9A-Fa-f])*|[0-9](_?[0-9])*)n";
             eval: ![ {
-                mettail_prattail::parse_int_lit(text, None).map_err(|_| ())
+                // EXACTLY the declared `…n` domain, plus the unsuffixed-overflow
+                // superset. Both clauses are decided by the token text alone, and
+                // both are disjoint from `Int`'s domain (`¬ends_n ∧ fits_i64`).
+                let __lit = mettail_prattail::parse_int_lit(text, None).map_err(|_| ())?;
+                let __declared_bigint = text.ends_with('n');
+                let __unsuffixed_overflow = matches!(
+                    mettail_prattail::IntSuffix::from_text(text),
+                    mettail_prattail::IntSuffix::Unsuffixed
+                ) && __lit.as_i64().is_none();
+                if __declared_bigint || __unsuffixed_overflow {
+                    Ok(__lit)
+                } else {
+                    Err(())
+                }
             } ]
         }
         BigRat {
@@ -669,14 +730,40 @@ language! {
         Err . |- "error" : Proc;
 
         // cast rust-native types as processes
-        // Order matters for literals: more specific integer kinds (u32, BigInt) before i64 Int
-        // so tokens like `1n` / `1u32` are not rejected by the Int prefix arm.
+        //
+        // ★ Divergence I: `CastInt` is declared FIRST among the integer projections.
+        //
+        // The literal DOMAINS (see the `literals` block) already decide which integer
+        // CATEGORY a numeral lands in, so this order can no longer route `1n`/`1u32`
+        // anywhere — `Int`'s eval refuses `1n` and `BigInt`'s refuses `1u32` whatever
+        // the declaration order is. (The obsolete rationale that used to sit here —
+        // "more specific integer kinds before i64 Int so tokens like `1n` / `1u32` are
+        // not rejected by the Int prefix arm" — was true only while `BigInt`'s eval was
+        // a universal acceptor.)
+        //
+        // What the order DOES decide is which of the two equally-valid *Proc-level*
+        // readings of an `Int`-domain literal is canonical: the direct projection
+        // `Int ▸ Proc` (`CastInt`), or the promote-then-project chain
+        // `Int ▸ BigInt ▸ Proc` (`IntToBigInt` — auto-injected from
+        // `NativeKind::lossless_targets`, which puts `TokenKind::Integer` back into
+        // `FIRST(BigInt)` — followed by `CastBigInt`). Both are live at every election
+        // site, but they are not equally reachable at all of them: the collection-
+        // ELEMENT sites (`[…]`, `{…}`, `Set(…)`, `#{…}#`, `{| |}`) realize only the
+        // chain reading, while the top-level and operand sites realize only the direct
+        // one. With `CastBigInt` first, that made `1` a `GInt` at top level and a
+        // `GBigInt` inside a list *in the same program* — the very context-dependence
+        // divergence I is about, merely displaced from the literal layer to the
+        // projection layer. Declaring `CastInt` first makes the DIRECT reading
+        // canonical at every site, so `{1: 10}.get(1)` and `x!(1) ≡ x!([1])` hold.
+        //
+        // `CastUInt32` is retained for the `uint(x, 32)` cast's result (the `UInt32`
+        // category has no literal surface); its position is immaterial.
         CastBigRat . r:BigRat |- r : Proc;
         CastFixed . x:Fixed |- x : Proc;
         CastFloat . k:Float |- k : Proc;
+        CastInt . k:Int |- k : Proc;
         CastBigInt . n:BigInt |- n : Proc;
         CastUInt32 . u:UInt32 |- u : Proc;
-        CastInt . k:Int |- k : Proc;
         CastBool . k:Bool |- k : Proc;
         CastStr . s:Str |- s : Proc;
         CastBytes . b:Bytes |- b : Proc;
@@ -715,6 +802,23 @@ language! {
         // `fold` (not `step`): `step` HOL rules are skipped for non-native categories like Proc.
         FractionProc . a:Proc, b:Proc |- "fraction" "(" a "," b ")" : Proc ![
             { match (&a, &b) {
+                // ★ Divergence I: the `Int` arm. A bare numeral is a `CastInt` (the
+                // `normalize_ground` carrier), so WITHOUT this arm `fraction(1, 2)` — the
+                // only spelling of a rational the conformance suite's C3 residue exercises
+                // — folds to `error`. The `BigInt` arm below keeps `fraction(1n, 2n)`
+                // working; the two carriers are not mixed, matching every other operator.
+                (Proc::CastInt(a), Proc::CastInt(b)) => match (&**a, &**b) {
+                    (Int::NumLit(na), Int::NumLit(nb)) => {
+                        match mettail_runtime::CanonicalBigRat::try_from_nd(
+                            num_bigint::BigInt::from(*na),
+                            num_bigint::BigInt::from(*nb),
+                        ) {
+                            Some(r) => Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(r))),
+                            None => Proc::Err,
+                        }
+                    }
+                    _ => Proc::Err,
+                },
                 (Proc::CastBigInt(a), Proc::CastBigInt(b)) => match (&**a, &**b) {
                     (BigInt::NumLit(na), BigInt::NumLit(nb)) => {
                         match mettail_runtime::CanonicalBigRat::try_from_nd(na.get().clone(), nb.get().clone()) {

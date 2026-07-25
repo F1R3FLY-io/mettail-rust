@@ -878,47 +878,60 @@ fn bag_multiset_eq(a: &str, b: &str) -> bool {
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
-// ⚠ Numeric-literal CARRIER asymmetry (discovered 2026-07-25) — OPEN DEFECT, pinned here
+// Numeric-literal CARRIER — ★ divergence I, CLOSED 2026-07-25
 // ════════════════════════════════════════════════════════════════════════════════
 
-/// The `Proc`-level cast that the WPDA picks for a numeric literal is **not a function of the
-/// literal**: it depends on the literal's syntactic context.
+/// The `Proc`-level cast the WPDA picks for a numeric literal is **a function of the literal**,
+/// and of nothing else — not of parentheses, not of the enclosing collection, not of the parse
+/// entry point.
 ///
-/// | source | parsed `Proc` | carrier |
+/// ### What this module used to pin (`mod carrier_asymmetry`)
+///
+/// | source | parsed `Proc` (BEFORE) | carrier |
 /// |---|---|---|
-/// | `@1` | `NQuoteShort(CastBigInt(NumLit(1)))` | arbitrary precision (the Rholang 1.4 default) |
+/// | `@1` | `NQuoteShort(CastBigInt(NumLit(1)))` | arbitrary precision |
 /// | `@(1)` | `NQuoteShort(CastInt(NumLit(1)))` | fixed width `i64` |
-/// | `5u32` | `CastBigInt(NumLit(5))` | arbitrary precision — the `u32` suffix is DISCARDED |
+/// | `5u32` | `CastBigInt(NumLit(5))` | arbitrary precision — the `u32` suffix reached no `UInt32` |
 ///
 /// Because `+`, `==`, … are carrier-EXACT (and so is f1r3node's `combine_plus`,
-/// `rholang/src/rust/interpreter/reduce.rs:3112` — no mixed `GInt`/`GBigInt` arm), the asymmetry
-/// leaks into semantics: `*(@(1)) + 2` answers `error`, and a receive PATTERN and a send PAYLOAD
-/// written from *identical* source text can land in different carriers and fail to unify.
-///
-/// This module is the WITNESS: it pins today's behaviour with `assert_eq!` on the parsed AST's
-/// `Debug`, so the defect is actively observed and cannot silently change. Four tests that only
-/// ever "passed" because `assert_reduces_to` was vacuous were tripping over it:
-/// `congruence::add_cong`, `congruence::comparison_cong`,
+/// `rholang/src/rust/interpreter/reduce.rs:3112` — no mixed `GInt`/`GBigInt` arm), that asymmetry
+/// leaked into semantics: `*(@(1)) + 2` answered `error`, `[1,2,3].length() == 3` was false, and a
+/// receive PATTERN and a send PAYLOAD written from *identical* source text could land in different
+/// carriers and fail to unify. Four tests that only ever "passed" because `assert_reduces_to` was
+/// vacuous were tripping over it: `congruence::add_cong`, `congruence::comparison_cong`,
 /// `comm::pattern_comm_exact_constructor_pattern_matches`, `native_ops::bitwise::u32_and_or_not`.
 ///
-/// ⚠ The fix belongs in the WPDA cross-category projection (`macros/src/gen/runtime/
-/// wpda_codegen/`, `prattail/src/wpda_walker.rs`) — a formally-verified, repeatedly red-teamed
-/// subsystem whose disambiguation must not be adjusted by a local heuristic. It is recorded here
-/// and in `rholang-runtime/tests/rho_rhocalc_conformance.rs`, not improvised.
-mod carrier_asymmetry {
+/// ### Why the old ⚠ ("the fix belongs in the WPDA cross-category projection") was half wrong
+///
+/// The election machinery behaved exactly as specified. What it was electing *between* was a set of
+/// readings **the grammar should never have admitted**: `BigInt`'s `eval` was
+/// `parse_int_lit(text, None)`, a universal acceptor of every integer spelling, contradicting its
+/// own declared mandatory `…n` tail — so `CastBigInt` was a live reading of EVERY numeral and won
+/// the lex-min tiebreak by grammar DECLARATION ORDER. Honouring never-disambiguate-early did not
+/// require touching the tiebreak; it required making the evidence discriminate. The fix is in
+/// `languages/src/rhocalc.rs`: the integer literal domains now PARTITION (`Int` = every ≤`i64`
+/// spelling without an `n`; `BigInt` = exactly `…n`, plus unsuffixed values too big for `i64`;
+/// `UInt32` = no literal surface at all), and `CastInt` is declared before `CastBigInt` so the
+/// direct `Int ▸ Proc` projection — rather than the auto-injected `Int ▸ BigInt ▸ Proc` promotion
+/// chain — is canonical at every election site.
+///
+/// The carrier assignment is f1r3node's: `normalize_ground` (`ground_normalize_matcher.rs:14-50`)
+/// maps a bare numeral, `…i32`, `…i64` and `…u32` (≤ `i64::MAX`) to `GInt`, and only `…n` to
+/// `GBigInt`.
+mod numeral_carrier_is_context_independent {
     use super::*;
 
-    /// Parenthesizing a numeral changes which numeric category it lands in.
+    /// Parenthesizing a numeral does not change which numeric category it lands in.
     #[test]
-    fn quoted_paren_numeral_changes_carrier() {
+    fn numeral_carrier_is_independent_of_parentheses() {
         // Pinned through `parse_term` (the ambiguity-preserving box the reduction oracle and
         // the production AST-first lowering both consume), on the two spellings that differ by
         // exactly one pair of parentheses.
         fresh();
         assert_eq!(
             format!("{:?}", RhoCalcLanguage.parse_term("*(@1) + 2").expect("`*(@1) + 2` parses")),
-            "Add(PDrop(NParen(NQuoteShort(CastBigInt(NumLit(1))))), CastBigInt(NumLit(2)))",
-            "a bare numeral takes RhoCalc's default arbitrary-precision carrier"
+            "Add(PDrop(NParen(NQuoteShort(CastInt(NumLit(1))))), CastInt(NumLit(2)))",
+            "a bare numeral takes the `GInt` carrier `normalize_ground` gives it"
         );
         fresh();
         assert_eq!(
@@ -926,36 +939,90 @@ mod carrier_asymmetry {
                 "{:?}",
                 RhoCalcLanguage.parse_term("*(@(1)) + 2").expect("`*(@(1)) + 2` parses")
             ),
-            "Add(PDrop(NParen(NQuoteShort(CastInt(NumLit(1))))), CastBigInt(NumLit(2)))",
-            "⚠ the SAME numeral inside parentheses takes the fixed-width i64 carrier instead"
+            // `NQuote`, not `NQuoteShort`: `@(1)` now elects the rule that LITERALLY spells
+            // `"@" "(" p ")"`, which is what `NQuoteShort`'s own doc says should happen ("more
+            // specific rules above continue to win where applicable"). Before Stage D charged the
+            // cross-category grouping fork the projection tier it owes, the `(` offered a FREE
+            // route that let the general `@ p` rule beat the specific one. The two are
+            // semantically identical — `NQuoteShort` is a `fold` whose body is
+            // `Name::NQuote(p)` — so this is a structural-faithfulness change, not a meaning
+            // change; what matters HERE is that the carrier is `CastInt` either way.
+            "Add(PDrop(NParen(NQuote(CastInt(NumLit(1))))), CastInt(NumLit(2)))",
+            "the SAME numeral inside parentheses takes the SAME carrier"
         );
     }
 
-    /// …and the carrier difference is observable in the reduction, because the operators are
-    /// carrier-exact (as is the consensus reducer).
+    /// The context-independence is not limited to parentheses: a COLLECTION element used to take
+    /// the `BigInt` carrier while the identical numeral at top level took `Int` (via the
+    /// auto-injected `IntToBigInt` promotion), which is why `{1: 10}.get(1)` answered `error`.
     #[test]
-    fn mixed_carrier_arithmetic_is_error_on_both_sides() {
-        // The mixed cases. `int(1, 64)` is `CastInt`; a bare `2` is `CastBigInt`.
-        assert_reduces_to("int(1, 64) + 2", "error");
-        assert_reduces_to("*(@(1)) + 2", "error");
-        // The carrier-consistent cases compute.
+    fn numeral_carrier_is_independent_of_the_enclosing_collection() {
+        for (source, expected) in [
+            ("1", "CastInt(NumLit(1))"),
+            ("(1)", "CastInt(NumLit(1))"),
+            ("[1]", "CastList(ListLit([CastInt(NumLit(1))]))"),
+            ("Set(1)", "CastSet(SetLit(HashSetLit({CastInt(NumLit(1))})))"),
+            ("{1: 1}", "CastMap(MapLit(HashMapLit({CastInt(NumLit(1)): CastInt(NumLit(1))})))"),
+        ] {
+            fresh();
+            assert_eq!(
+                format!("{:?}", parse(source)),
+                expected,
+                "`{source}` must carry `Int`, like every other spelling of `1`"
+            );
+        }
+        // The observable consequence, which was `error` before.
+        assert_reduces_to("{1: 10}.get(1)", "10");
+        assert_reduces_to("[1, 2, 3].length() == 3", "true");
+    }
+
+    /// Only the `…n` spelling reaches the arbitrary-precision carrier — and it does so in every
+    /// context, including the ones that used to force `BigInt` on everything.
+    #[test]
+    fn only_the_n_spelling_reaches_bigint() {
+        for (source, expected) in [
+            ("3n", "CastBigInt(NumLit(3))"),
+            ("(3n)", "CastBigInt(NumLit(3))"),
+            ("[3n]", "CastList(ListLit([CastBigInt(NumLit(3))]))"),
+            // Unsuffixed and past `i64`: the deliberate MeTTaIL superset (no Rholang program can
+            // express this numeral, so no Rholang-expressible program changes meaning).
+            ("32478132567813256718", "CastBigInt(NumLit(32478132567813256718))"),
+        ] {
+            fresh();
+            assert_eq!(format!("{:?}", parse(source)), expected, "`{source}`");
+        }
+        assert_reduces_to("1n + 2n", "3n");
+    }
+
+    /// Mixed-carrier arithmetic stays refused — the fold and f1r3node's `combine_plus` agree —
+    /// but it is no longer REACHABLE from source text that means one integer.
+    #[test]
+    fn mixed_carrier_arithmetic_is_error_and_is_no_longer_reachable_by_accident() {
+        // Genuinely mixed: an explicit fixed-width cast plus an explicit `…n` literal.
+        assert_reduces_to("int(1, 64) + 2n", "error");
+        // What used to be "mixed" purely because of how it was written now computes.
+        assert_reduces_to("int(1, 64) + 2", "3");
+        assert_reduces_to("*(@(1)) + 2", "3");
+        // The carrier-consistent cases still compute.
         assert_reduces_to("int(1, 64) + int(2, 64)", "3");
         assert_reduces_to("1 + 2", "3");
     }
 
-    /// A `u32`-suffixed literal never reaches the `UInt32` carrier in `Proc` position, so
-    /// `bitnot 0u32` is the i64/BigInt `-1` rather than the 32-bit all-ones `4294967295`. The
-    /// `uint(_, 32)` cast spelling does reach it.
+    /// A `u32`-suffixed literal IS an `i64` literal written with a `u32` suffix — exactly what
+    /// `normalize_ground` says (`bits <= 64 && value <= i64::MAX ⟹ GInt`) — so `bitnot 0u32` is
+    /// `-1`, not the 32-bit all-ones `4294967295`. The 32-bit wraparound carrier is reached only
+    /// through the MeTTaIL-only `uint(_, 32)` cast.
     #[test]
-    fn u32_suffix_does_not_reach_uint32() {
+    fn u32_suffix_is_an_i64_literal() {
         fresh();
         assert_eq!(
             format!("{:?}", parse("5u32")),
-            "CastBigInt(NumLit(5))",
-            "⚠ the `u32` suffix is discarded when the literal is projected into `Proc`"
+            "CastInt(NumLit(5))",
+            "the `u32` suffix is a SPELLING of a `GInt`, not a different carrier"
         );
         // `-1` has no source spelling that parses back to itself (`-1` is `NegProc(1)`), so the
-        // display is asserted directly.
+        // display is asserted directly. The ANSWER is unchanged from the pre-fix pin; what
+        // changed is that it is now correct BY CONSTRUCTION rather than by accident.
         assert_normal_form_display("bitnot 0u32", "-1");
         assert_reduces_to("bitnot uint(0, 32)", "4294967295");
     }
@@ -1662,12 +1729,16 @@ mod comm {
 
     #[test]
     fn pattern_comm_exact_constructor_pattern_matches() {
-        // Spelled `@0`, not `@(0)`: a parenthesized numeral takes the `Int` carrier while a bare
-        // one takes `BigInt`, and the parser applies that choice ASYMMETRICALLY to a receive
-        // PATTERN (`BigInt`) and a send PAYLOAD (`Int`) written from identical source text — so
-        // `for(@*(@(0)) <- c){1} | c!(*(@(0)))` could not unify with itself. That defect is
-        // pinned by `carrier_asymmetry::quoted_paren_numeral_changes_carrier`; this test is about
-        // the exact-CONSTRUCTOR pattern, which it now actually exercises.
+        // Spelled `@0`, not `@(0)`, for a reason that is now HISTORICAL: a parenthesized numeral
+        // used to take the `Int` carrier while a bare one took `BigInt`, and the parser applied
+        // that choice ASYMMETRICALLY to a receive PATTERN and a send PAYLOAD written from
+        // identical source text, so `for(@*(@(0)) <- c){1} | c!(*(@(0)))` could not unify with
+        // itself. Divergence I closed the CARRIER half of that — both occurrences of `0` are now
+        // `CastInt` — but the parenthesized spelling still does not fire, for a DIFFERENT and
+        // pre-existing reason: normalization keeps a redundant `NParen` wrapper asymmetrically
+        // between pattern and payload position (`for(@*@0 …) | c!(*(@0))` is the residual normal
+        // form). That is a redundant-quote/paren normalization gap, not a carrier gap, and it is
+        // out of divergence I's scope. This test's own subject is the exact-CONSTRUCTOR pattern.
         assert_reduces_to("for(@*@0 <- c){1} | c!(*@0)", "1");
     }
 
@@ -1905,24 +1976,32 @@ mod congruence {
     fn add_cong() {
         // Congruence through Add: the `*@…` operand must reduce before `+` can fold.
         //
-        // Asserted in BOTH numeric carriers, because RhoCalc's `+` is carrier-exact (and so is
-        // f1r3node's `combine_plus`, `reduce.rs:3112` — it has no mixed `GInt`/`GBigInt` arm):
-        //   * arbitrary precision — `*@1` is `CastBigInt`, `2` is `CastBigInt`;
-        //   * fixed width — `*(@(1))` is `CastInt` (see `carrier_asymmetry` below), `int(2, 64)`
-        //     is `CastInt`.
-        // The previous single case `*(@(1)) + 2` mixed the two carriers, so `error` was the
-        // CORRECT answer for it and the test measured nothing about congruence. That mixing is
-        // pinned as its own defect in `carrier_asymmetry::quoted_paren_numeral_changes_carrier`.
+        // ★ COMMENT REWRITTEN 2026-07-25 (divergence I). These three assertions survive, but for
+        // a NEW reason. They were written when a numeral's carrier depended on parentheses, so
+        // each case had to be spelled to keep BOTH operands in the SAME carrier — `*@1 + 2` in
+        // arbitrary precision, `*(@(1)) + int(2, 64)` in fixed width — because RhoCalc's `+` is
+        // carrier-exact (and so is f1r3node's `combine_plus`, `reduce.rs:3112`: no mixed
+        // `GInt`/`GBigInt` arm). The earlier single case `*(@(1)) + 2` mixed the carriers, so
+        // `error` was the CORRECT answer for it and the test measured nothing about congruence.
+        //
+        // Now every numeral below is a `CastInt` — the carrier does not depend on the spelling at
+        // all — so what these cases exercise is purely the CONGRUENCE they are named for: the
+        // `*@…` operand must reduce before `+` can fold. `int(2, 64)` is retained in the third
+        // case because it is `CastInt` too, which is precisely the point.
         assert_reduces_to("*@1 + 2", "3");
         assert_reduces_to("*(@1) + 2", "3");
         assert_reduces_to("*(@(1)) + int(2, 64)", "3");
+        // Formerly `error` (mixed carriers); now the same one integer on both sides.
+        assert_reduces_to("*(@(1)) + 2", "3");
     }
 
     #[test]
     fn comparison_cong() {
-        // `*@…` reduces, then `==` compares. Carrier-exact, for the same reason as `add_cong`.
+        // `*@…` reduces, then `==` compares. Carrier-exact, for the same reason as `add_cong` —
+        // and, since divergence I, every spelling of `1` below is the SAME carrier.
         assert_reduces_to("*(@1) == 1", "true");
         assert_reduces_to("*(@(1)) == int(1, 64)", "true");
+        assert_reduces_to("*(@(1)) == 1", "true");
     }
 }
 
@@ -2283,11 +2362,13 @@ mod native_ops {
 
         #[test]
         fn u32_and_or_not() {
-            // Spelled through the `uint(_, 32)` cast. A `u32`-SUFFIXED literal does not reach
-            // the `UInt32` carrier at all — `0u32` parses as `CastBigInt(0)`, so `bitnot 0u32`
-            // answers `-1` instead of `4294967295`. That is the same literal-carrier defect
-            // `carrier_asymmetry::quoted_paren_numeral_changes_carrier` pins, in its `u32` guise;
-            // it is pinned separately by `carrier_asymmetry::u32_suffix_does_not_reach_uint32`.
+            // ★ COMMENT REWRITTEN 2026-07-25 (divergence I). The assertions survive, but for a
+            // NEW reason. They are spelled through the `uint(_, 32)` cast because that is the ONLY
+            // way to reach the 32-bit wraparound carrier — not, as the old comment had it, because
+            // a `u32`-suffixed literal was being mis-carried. `0u32` is an `i64` literal written
+            // with a `u32` suffix (f1r3node's `normalize_ground`: `bits <= 64 && value <=
+            // i64::MAX ⟹ GInt`), so `bitnot 0u32` is `-1` BY CONSTRUCTION; that is pinned by
+            // `numeral_carrier_is_context_independent::u32_suffix_is_an_i64_literal`.
             assert_reduces_to("uint(5, 32) bitand uint(3, 32)", "1");
             assert_reduces_to("uint(5, 32) bitor uint(3, 32)", "7");
             assert_reduces_to("bitnot uint(0, 32)", "4294967295");
@@ -4395,7 +4476,10 @@ fn rhocalc_casts_from_numeric_strings() {
     assert_reduces_to(r#"int("10i32", 32)"#, "10");
     assert_reduces_to(r#"int("false", 32)"#, "0");
     assert_reduces_to(r#"int("true", 32)"#, "1");
-    assert_reduces_to(r#"bigint("123n")"#, "123");
+    // ★ `123n`, not `123`: the `BigInt` display now carries the mandatory `n` tail its own
+    // declared pattern requires (divergence I, Stage C) — without it a `BigInt` displayed as a
+    // word that reads back as an `Int`.
+    assert_reduces_to(r#"bigint("123n")"#, "123n");
     assert_normal_form_display(r#"bigrat("1r/2r")"#, "1/2");
 }
 

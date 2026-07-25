@@ -452,10 +452,13 @@ fn a_s4_admitted_rhocalc_arithmetic_exec_computes_on_machine_with_no_dovetail_re
         .expect("an OUT observation");
     assert_eq!(
         out.values,
-        vec![RuntimeObservationValue::BigIntBytes(
-            num_bigint::BigInt::from(3).to_signed_bytes_be()
-        )],
-        "1 + 2 computes 3 on the Rho machine (arbitrary-precision literals)"
+        vec![RuntimeObservationValue::Int(3)],
+        // ★ `Int`, not `BigIntBytes` (divergence I, 2026-07-25). A plain RhoCalc numeral is
+        // f1r3node's `GInt` — `normalize_ground` says so — and RhoCalc's grammar now agrees, so
+        // bare literals ride the wire as `GInt`. This is a DELIBERATE wire re-baseline; no
+        // persisted rspace state exists on this branch (the demos build in-memory runtimes per
+        // invocation).
+        "1 + 2 computes 3 on the Rho machine (plain literals are GInt)"
     );
 }
 

@@ -587,16 +587,16 @@ fn build_proc_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Proc {
             Proc::CastFloat(f0)
         },
         33 => {
+            let f0 = std::sync::Arc::new(build_int_from_tape(reader, child_depth));
+            Proc::CastInt(f0)
+        },
+        34 => {
             let f0 = std::sync::Arc::new(build_bigint_from_tape(reader, child_depth));
             Proc::CastBigInt(f0)
         },
-        34 => {
+        35 => {
             let f0 = std::sync::Arc::new(build_uint32_from_tape(reader, child_depth));
             Proc::CastUInt32(f0)
-        },
-        35 => {
-            let f0 = std::sync::Arc::new(build_int_from_tape(reader, child_depth));
-            Proc::CastInt(f0)
         },
         36 => {
             let f0 = std::sync::Arc::new(build_bool_from_tape(reader, child_depth));
