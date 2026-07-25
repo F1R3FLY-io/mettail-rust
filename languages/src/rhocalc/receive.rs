@@ -201,7 +201,18 @@ fn eval_cmp_order(lhs: &Proc, rhs: &Proc) -> Option<Ordering> {
     }
 }
 
-fn eval_guard_bool(cond: &Proc) -> Option<bool> {
+/// The HOST `where`-guard evaluator: `Some(b)` iff this guard decides to the ground boolean
+/// `b`, `None` if the host declines the fragment (the fail-CLOSED disposition — see the
+/// `matches` arm below).
+///
+/// `pub` since S-D0. Besides its own eager COMM sites, it is the HOST leg of
+/// `rholang-runtime::guard_discharge`'s anti-divergence fence: compile-time discharge of a
+/// binder-closed guard requires this evaluator AND the machine's (`rho_pure_eval` under the
+/// reducer's `SpatialMatcherOracle`) to return the same verdict. The machine leg is the
+/// authority — it is what runs — so this one costs nothing and buys a loud warning wherever the
+/// two readings of the same surface guard would have diverged. A `None` here can never license
+/// a discharge; it falls to `Residual` and the machine decides at COMM time, as today.
+pub fn eval_guard_bool(cond: &Proc) -> Option<bool> {
     match cond {
         Proc::CastBool(b) => match b.as_ref() {
             Bool::BoolLit(v) => Some(*v),

@@ -317,6 +317,11 @@ prost = "0.14"
 rholang = { workspace = true }
 rho-pure-eval = { workspace = true }
 rspace_plus_plus = { workspace = true }
+# Guard-discharge diagnostics (`guard_discharge`): the `mettail.lowering.guard` target carrying
+# the `W1 GuardStaticallyFalse` refutation event and the evaluator-DISAGREEMENT warning. Same
+# facade f1r3node's own guard path logs through (`f1r3fly.rholang.guard` in
+# `matcher/match.rs`), so a single subscriber sees both sides of the fence.
+tracing = "0.1"
 crypto = { workspace = true }
 tokio = { workspace = true }
 mettail-languages = { package = "languages", path = "../languages", optional = true, default-features = false }

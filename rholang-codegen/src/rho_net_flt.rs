@@ -298,6 +298,26 @@ pub fn flt_receive_par(
     let free_count = reflection.free_count;
     let condition = flt_receive_condition(&reflection.linearity_guards, guard, free_count);
 
+    // ★ COMPILE-TIME GUARD DISCHARGE — ASSERT ONLY, NEVER BRANCH.
+    //
+    // A linearity guard is an `EEq(BoundVar_i, BoundVar_j)` conjunction over the receive's OWN
+    // hole slots: payload-dependent by construction, so it is 0% dischargeable and this site
+    // must stay wired to the machine's `check_commit`. The assertion pins that fact where the
+    // guard is BUILT, so a future change that made a linearity guard variable-free would fail
+    // here rather than silently become eligible for elision. See
+    // `mettail_rholang_runtime::guard_discharge` for the decision this refuses to make, and
+    // `rholang-runtime/tests/guard_discharge_corpus.rs::the_three_codegen_guard_sites_are_all_residual`
+    // for the full `classify(..) == Residual` verdict (which additionally needs the evaluator).
+    debug_assert!(
+        reflection.linearity_guards.is_empty()
+            || condition
+                .as_ref()
+                .is_some_and(|cond| !crate::guard_closure::is_binder_closed(cond)),
+        "an FLT linearity guard is EEq over the receive's own hole slots and can never be \
+         binder-closed; {} guard(s) produced a variable-free condition",
+        reflection.linearity_guards.len(),
+    );
+
     // The source is evaluated in the OUTER scope (its frees are the receive's frees); the
     // continuation is under `free_count` binders (its frees < free_count are bound, ≥ free_count
     // shift down to the outer frame); the case-closed condition references only bound holes, so it

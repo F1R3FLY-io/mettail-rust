@@ -4341,6 +4341,15 @@ fn ac_nonlinear_condition(element_vars: &[Ident], free_count: usize) -> Option<P
             },
         });
     }
+    // ★ COMPILE-TIME GUARD DISCHARGE — ASSERT ONLY, NEVER BRANCH. Every conjunct is an
+    // `EEq(BoundVar_i, BoundVar_j)` over the AC receiver's OWN element slots: payload-dependent
+    // by construction, 0% dischargeable. See `crate::guard_closure` and
+    // `mettail_rholang_runtime::guard_discharge`.
+    debug_assert!(
+        condition.as_ref().is_none_or(|cond| !crate::guard_closure::is_binder_closed(cond)),
+        "an AC non-linear consistency guard is EEq over the receiver's own element slots and \
+         can never be binder-closed"
+    );
     condition
 }
 
@@ -4952,6 +4961,16 @@ pub(crate) fn nonlinear_consistency_condition(occurrence_levels: &[usize], free_
         guard = expr_par_with(and, &union_free);
         free = union_free;
     }
+    // ★ COMPILE-TIME GUARD DISCHARGE — ASSERT ONLY, NEVER BRANCH. The conjunction is
+    // `EEq(BoundVar_i, BoundVar_j)` over the receive's (or match case's) OWN formals:
+    // payload-dependent by construction, 0% dischargeable, so this guard always stays wired to
+    // the machine's own evaluator. See `crate::guard_closure` and
+    // `mettail_rholang_runtime::guard_discharge`.
+    debug_assert!(
+        !crate::guard_closure::is_binder_closed(&guard),
+        "a non-linear consistency guard is EEq over the frame's own formals and can never be \
+         binder-closed"
+    );
     guard
 }
 

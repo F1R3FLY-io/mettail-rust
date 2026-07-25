@@ -56,6 +56,11 @@ pub mod e6a_support;
 /// Tier-3 held-fold trampoline: Dovetail-backed fold contracts for folds over COMM-received values.
 #[cfg(feature = "rhocalc-runtime")]
 pub mod fold_contract;
+/// COMPILE-TIME GUARD DISCHARGE (D0): deciding a binder-closed `where`-guard at lowering and
+/// recording the decision by OMITTING `Receive.condition` — which f1r3node's `check_commit`
+/// already short-circuits on. Front-end independent (the host redundancy leg is supplied by the
+/// caller), so it is available in every feature configuration.
+pub mod guard_discharge;
 /// A-S3 registered native-handler contracts: the machine-invoked trusted evaluator `Definition`s
 /// for admitted `fold` native rules (the held-fold trampoline generalized — same
 /// `extra_system_processes` seam, reserved `[0xF1, rule]` band).
@@ -115,10 +120,17 @@ pub use mettail_rholang_codegen::{REFLECTED_TERM_ABI_PREFIX, RHOCALC_BAG_ABI_TAG
 pub use native_contract::{
     native_definition, native_definitions_for, par_to_ground_term, NativeContractError,
 };
+pub use guard_discharge::{
+    all_operands_ground, classify as classify_guard_discharge, is_binder_closed, machine_verdict,
+    GuardDischarge, GuardDischargeReport, GuardRouting, GuardStaticallyFalse, LoweringOptions,
+    GUARD_DISCHARGE_TARGET,
+};
 #[cfg(feature = "rhocalc-runtime")]
 pub use rhocalc_ast::{
-    dovetail_rho_backed_rhocalc, lower_rhocalc_name, lower_rhocalc_proc,
-    lower_rhocalc_proc_with_resolver, lower_rhocalc_term,
+    clear_guard_discharge_report, dovetail_rho_backed_rhocalc, lower_rhocalc_name,
+    lower_rhocalc_proc, lower_rhocalc_proc_with_options, lower_rhocalc_proc_with_resolver,
+    lower_rhocalc_proc_with_resolver_and_options, lower_rhocalc_term,
+    take_guard_discharge_report,
     lower_rhocalc_term_with_folds, rho_runtime_backed_rhocalc_ints, rho_runtime_backed_rhocalc_strings,
     rho_runtime_backed_rhocalc_values, rhocalc_ast_runtime_def, rhocalc_observe_ints_invocation,
     rhocalc_observe_strings_invocation, rhocalc_observe_values_invocation,

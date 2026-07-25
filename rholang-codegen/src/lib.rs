@@ -91,6 +91,11 @@ pub mod backend;
 pub mod dataflow;
 pub mod deadlock;
 pub mod flip;
+/// Guard CLOSEDNESS — the two pure `Par` predicates (`is_binder_closed`, `all_operands_ground`)
+/// that gate compile-time guard discharge. They live here, at the bottom of the one-way crate
+/// graph, so both the guard-CONSTRUCTING sites in this crate and the discharge DECISION in
+/// `mettail_rholang_runtime::guard_discharge` share one implementation.
+pub mod guard_closure;
 pub mod guard_quality;
 pub mod invocation;
 pub mod lower;
@@ -169,6 +174,7 @@ pub use deadlock::{
     ContractFlow,
 };
 pub use flip::{decide_rho_flip, RhoFlipBlocker, RhoFlipDecision, RhoFlipGates};
+pub use guard_closure::{all_operands_ground, is_binder_closed};
 pub use invocation::{
     plan_scalar_invocations, RhoScalarContractInvocation, RhoScalarInvocationOperand,
     RhoScalarInvocationPlan, RhoScalarInvocationPlanError,

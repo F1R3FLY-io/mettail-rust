@@ -6,10 +6,13 @@
 //! annotations only; they are never parsed on this execution path.
 
 use std::any::Any;
+use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
 
 use crate::fold_contract::{fold_channel, FoldKind, FoldSpec};
+use crate::guard_discharge::{self, GuardDischargeReport, LoweringOptions};
+use mettail_languages::rhocalc::receive::eval_guard_bool;
 use mettail_languages::rhocalc::{
     Bag, BigInt, BigRat, Bool, Bytes, Fixed, Float, ForRow, InputBind, Int, List, Map, Name,
     Pathmap, Proc, RhoCalcLanguage, RhoCalcTerm, RhoCalcTermInner, Set, Str, UInt32,
@@ -58,6 +61,21 @@ const FREE_PROC_OUTPUT: &str = "mtl#out";
 /// through.
 #[derive(Clone)]
 pub struct BoundEnv {
+    /// The compilation OPTIONS in force for this lowering — today just
+    /// [`LoweringOptions::guard_discharge`] (S-D0).
+    ///
+    /// It rides here rather than in a global or an environment variable because the emitted
+    /// artifact must be a function of the DECLARED inputs alone: two builds of the same source
+    /// under the same options are byte-identical, and a validator can reproduce them. It rides
+    /// on `BoundEnv` specifically because `BoundEnv` is already the lowering CONTEXT rather
+    /// than a pure binder scope — it likewise carries the FLT `resolver`, which is also a
+    /// compilation input — so every lowering function already receives it, with no new
+    /// parameter threaded through the ~50 `lower_proc` call sites.
+    ///
+    /// It is scope-INVARIANT: `extend_slots`, `extend_env`, `in_pattern_position` and
+    /// `with_resolver` all carry it through unchanged, so the option a caller declares at the
+    /// entry point is the option every nested `for` sees.
+    options: LoweringOptions,
     binders: HashMap<FreeVar<String>, usize>,
     /// L9-6b: FLT hole name → de-Bruijn level. A `${name}` hole captured by an FLT
     /// receive pattern ([`reflect_flt_pattern`]) is a receive binder, but — unlike
@@ -101,10 +119,22 @@ pub struct BoundEnv {
 }
 
 impl BoundEnv {
-    /// The empty environment with the empty (no-guest) resolver — the
-    /// zero-behavior-change default used by every existing lowering entry point.
+    /// The empty environment with the empty (no-guest) resolver, under the PRODUCTION
+    /// lowering options (guard discharge ON) — the default used by every existing lowering
+    /// entry point.
     pub fn new() -> Self {
+        Self::with_options(LoweringOptions::PRODUCTION)
+    }
+
+    /// The empty environment under explicit [`LoweringOptions`].
+    ///
+    /// `LoweringOptions::NO_DISCHARGE` reproduces the pre-S-D0 compiler exactly: every `where`
+    /// guard is emitted verbatim, so the emitted `Par` is byte-identical to what the previous
+    /// compiler produced (pinned by the S-D0 byte-identity gate). The guard test harnesses use
+    /// it so the ~100 tests that exist to exercise the RUNTIME guard evaluator keep doing so.
+    pub fn with_options(options: LoweringOptions) -> Self {
         BoundEnv {
+            options,
             binders: HashMap::new(),
             hole_binders: HashMap::new(),
             resolver: Arc::new(EmptyFltResolver),
@@ -126,7 +156,16 @@ impl BoundEnv {
     /// The empty binder environment carrying `resolver` — the L9-6b entry that
     /// installs a populated FLT registry so `PFlt` arms can elaborate.
     fn with_resolver(resolver: Arc<dyn FltResolve>) -> Self {
+        Self::with_resolver_and_options(resolver, LoweringOptions::PRODUCTION)
+    }
+
+    /// [`BoundEnv::with_resolver`] under explicit [`LoweringOptions`].
+    fn with_resolver_and_options(
+        resolver: Arc<dyn FltResolve>,
+        options: LoweringOptions,
+    ) -> Self {
         BoundEnv {
+            options,
             binders: HashMap::new(),
             hole_binders: HashMap::new(),
             resolver,
@@ -171,6 +210,7 @@ impl BoundEnv {
             }
         }
         BoundEnv {
+            options: self.options,
             binders,
             hole_binders,
             resolver: Arc::clone(&self.resolver),
@@ -522,14 +562,40 @@ fn rhocalc_dovetail_step_graph(term: &dyn Term) -> Result<RuntimeDovetailRunRepo
 /// The RhoCalc F-stage lowering shared by the report-free compile and the report-carrying
 /// fallback.
 ///
-/// A-S4 (lowering purity): the lowering is PURE structural translation — the host computes no
-/// values. COMM (send/receive/`new`) lowers directly; arithmetic/comparison/logic lower to the
-/// machine's own metered `Expr` algebra (`EPlus`/`EMinus`/…); width/precision folds lift into
-/// fold-contract trampolines the MACHINE drives at COMM time (ground operands included — the
-/// former Tier-1 in-place `try_eval` fold is deleted); a construct with no machine algebra fails
-/// CLOSED with the typed lowering error naming it. The pre-A-S4 E2 fallback (fold-normalize via
+/// A-S4 (lowering purity), AS AMENDED BY S-D0: the lowering is PURE structural translation —
+/// **the host computes no values that enter the program; it may decide a binder-closed guard
+/// using the machine's own guard evaluator and record that decision by omitting the check.**
+/// COMM (send/receive/`new`) lowers directly; arithmetic/comparison/logic lower to the machine's
+/// own metered `Expr` algebra (`EPlus`/`EMinus`/…); width/precision folds lift into fold-contract
+/// trampolines the MACHINE drives at COMM time (ground operands included — the former Tier-1
+/// in-place `try_eval` fold is deleted); a construct with no machine algebra fails CLOSED with
+/// the typed lowering error naming it. The pre-A-S4 E2 fallback (fold-normalize via
 /// `dovetail_normal_term`, then lower the host-computed normal form) is DELETED: it was the last
 /// host-evaluation lane on the admitted exec path.
+///
+/// ## Why the amendment preserves A-S4's substance (rationale, S-D0)
+///
+/// A-S4's letter said "the host computes no values"; its *substantive* rationales are
+/// **single-source semantics** (one definition of what a construct means) and **no host/machine
+/// divergence** (the answer the host would give and the answer the machine gives can never
+/// differ). Compile-time guard discharge satisfies both, so only A-S4's letter needed widening:
+///
+/// 1. **It computes no value that enters the program.** The discharged guard's verdict is never
+///    materialized as a `Par`, never sent, never bound. It is *forgotten* — the artifact simply
+///    lacks a `Receive.condition`, and f1r3node's `check_commit` short-circuits an absent guard
+///    to `true`, which is exactly what evaluating it would have returned. Contrast the deleted
+///    E2 fallback, whose host-computed normal form WAS spliced into the emitted program.
+/// 2. **It uses the machine's own evaluator.** The compile-time call is
+///    `rho_pure_eval::eval_with(⟦φ⟧, Env::new(), SpatialMatcherOracle)` — the identical function,
+///    on the identical `Par`, under the identical oracle, that `guard_passes` calls at COMM time.
+///    For a binder-closed condition the `Env` is never read, so it is the same function on the
+///    same input; there is no second semantics to diverge from. (`T-GD-5`.)
+/// 3. **Divergence is fenced, not assumed away.** Discharge additionally requires the FRONT-END
+///    evaluator (`eval_guard_bool`) to agree; a disagreement is a `WARN` diagnostic and a
+///    `Residual`, never a silent elision. See [`crate::guard_discharge`].
+///
+/// The switch is a compilation INPUT ([`LoweringOptions`]), never an environment variable, so
+/// the artifact stays a function of declared inputs alone.
 ///
 /// Pure VALUE terms (no machine effects — `1 + 2`, `int(5,8)`, `"hi"`) are wrapped as
 /// `@("OUT")!(term)` BEFORE lowering ([`wrap_pure_value_term`]), so the observable result is
@@ -711,7 +777,22 @@ fn observe_pure_value_call(value: Par, out_channel: &str) -> Par {
 /// result must register the recorded fold `Definition`s (the `clear_held_fold_sites` /
 /// `take_held_fold_sites` bracket, or [`lower_rhocalc_term_with_folds`]).
 pub fn lower_rhocalc_proc(proc: &Proc) -> Result<Par, RhocalcAstLowerError> {
-    lower_body_lifting_folds(proc, &BoundEnv::new())
+    lower_rhocalc_proc_with_options(proc, LoweringOptions::PRODUCTION)
+}
+
+/// [`lower_rhocalc_proc`] under explicit compilation [`LoweringOptions`] (S-D0).
+///
+/// The only option today is `guard_discharge`. With
+/// [`LoweringOptions::NO_DISCHARGE`](crate::guard_discharge::LoweringOptions::NO_DISCHARGE) the
+/// emitted `Par` is BYTE-IDENTICAL to the pre-discharge compiler's on the whole corpus, which
+/// is what the guard test harnesses rely on: they exist to exercise the RUNTIME guard
+/// evaluator, and a discharged guard is one the runtime never sees. The discharge-ON arm is
+/// covered by the parallel differential suite (`guard_discharge_corpus.rs`).
+pub fn lower_rhocalc_proc_with_options(
+    proc: &Proc,
+    options: LoweringOptions,
+) -> Result<Par, RhocalcAstLowerError> {
+    lower_body_lifting_folds(proc, &BoundEnv::with_options(options))
 }
 
 /// L9-6b: lower a RhoCalc `Proc` under an installed FLT resolver, so `PFlt` nodes
@@ -726,6 +807,15 @@ pub fn lower_rhocalc_proc_with_resolver(
     resolver: Arc<dyn FltResolve>,
 ) -> Result<Par, RhocalcAstLowerError> {
     lower_body_lifting_folds(proc, &BoundEnv::with_resolver(resolver))
+}
+
+/// [`lower_rhocalc_proc_with_resolver`] under explicit compilation [`LoweringOptions`] (S-D0).
+pub fn lower_rhocalc_proc_with_resolver_and_options(
+    proc: &Proc,
+    resolver: Arc<dyn FltResolve>,
+    options: LoweringOptions,
+) -> Result<Par, RhocalcAstLowerError> {
+    lower_body_lifting_folds(proc, &BoundEnv::with_resolver_and_options(resolver, options))
 }
 
 /// Lower a parsed `RhoCalcLanguage` term into normalized Rholang `Par`.
@@ -1778,6 +1868,42 @@ pub fn take_held_fold_sites() -> Vec<FoldSpec> {
     HELD_FOLD_SITES.with(|sites| std::mem::take(&mut *sites.borrow_mut()))
 }
 
+// ── S-D0/S-D0R: the guard-discharge lowering report ──────────────────────────────────────────
+//
+// OBSERVABILITY ONLY. Nothing here can change the emitted `Par`: the report is written, never
+// read, by the lowering. It rides in thread-local session state for exactly the reason
+// `HELD_FOLD_SITES` does — `lower_pfor_user` is reached through ~50 `lower_proc` call sites and
+// has no accumulator to thread — and it is likewise cleared per lowering session.
+
+thread_local! {
+    /// Guard-discharge outcomes recorded during ONE lowering.
+    static GUARD_DISCHARGE_REPORT: std::cell::RefCell<GuardDischargeReport> =
+        RefCell::new(GuardDischargeReport::default());
+}
+
+/// Clear the guard-discharge session state. Call before a lowering whose guard report you
+/// intend to collect with [`take_guard_discharge_report`].
+pub fn clear_guard_discharge_report() {
+    GUARD_DISCHARGE_REPORT.with(|report| *report.borrow_mut() = GuardDischargeReport::default());
+}
+
+/// Take (and clear) the guard outcomes recorded since the last clear: how many guard sites were
+/// discharged, refuted (with their `W1 GuardStaticallyFalse` events) and left residual.
+///
+/// A `Refuted` count is informational — the artifact is byte-identical either way. A non-zero
+/// `disagreements` count is a divergence-A-shaped defect that has already been logged at `WARN`.
+pub fn take_guard_discharge_report() -> GuardDischargeReport {
+    GUARD_DISCHARGE_REPORT.with(|report| std::mem::take(&mut *report.borrow_mut()))
+}
+
+/// Record one guard site's outcome on the session report (and emit its `W1` diagnostic if it
+/// was refuted). `guard` is rendered lazily — only a refutation pays for the string.
+fn record_guard_outcome(outcome: guard_discharge::GuardDischarge, guard: &Proc) {
+    GUARD_DISCHARGE_REPORT.with(|report| {
+        report.borrow_mut().record(outcome, || format!("{guard:?}"));
+    });
+}
+
 fn lower_bag(bag: &Bag, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> {
     match bag {
         Bag::BagLit(entries) => {
@@ -2053,6 +2179,47 @@ fn lower_pfor_user(
     let condition = match &cond {
         Some(guard) => Some(lower_proc(guard, &extended_env)?),
         None => None,
+    };
+
+    // ════════════════════════════════════════════════════════════════════════════════════════
+    // S-D0 — COMPILE-TIME GUARD DISCHARGE (the decision site)
+    // ════════════════════════════════════════════════════════════════════════════════════════
+    //
+    // ★ POSITION IS LOAD-BEARING. The discharge happens HERE — after the guard is lowered, and
+    // BEFORE the `locally_free` union below. Discharging *after* the union would leave the
+    // receive carrying bits contributed by a condition that is no longer in the emitted `Par`:
+    // a bitset inconsistent with its own term, i.e. a latent scoping bug in every downstream
+    // consumer of `locally_free` (substitution, `connective_used` derivation, sorting).
+    //
+    // The decision is recorded by simply NOT populating `Receive.condition` — f1r3node's
+    // `check_commit` short-circuits `None` to `true`, which is exactly what the guard would
+    // have answered. `None`, never `Some(Par::default())`: the empty-`Par` form is a *different*
+    // artifact that `reduce.rs` happens to collapse, and an artifact difference is a consensus
+    // difference. See `crate::guard_discharge` for the soundness argument and the fence.
+    let condition = match (&cond, condition) {
+        (Some(guard), Some(cond_par)) if env.options.guard_discharge => {
+            // The routing is CONSULTED, not derived (the ROUTE-SITE INVARIANT): a populated
+            // `Receive.condition` is by construction what the Rho machine's `check_commit`
+            // reads, so this guard is `MachineEvaluated` as a structural fact about the
+            // artifact being emitted. When the wiring plan's `GuardPlan` lands, the plan's
+            // recorded route is passed here instead — `classify` still decides no routing.
+            let host_verdict = eval_guard_bool(guard);
+            let outcome = guard_discharge::classify(
+                host_verdict,
+                &cond_par,
+                guard_discharge::GuardRouting::MachineEvaluated,
+            );
+            record_guard_outcome(outcome, guard);
+            match outcome.omits_condition() {
+                true => None,
+                // Residual AND Refuted both emit the condition verbatim: a `for` that can never
+                // fire is a RESTING, OBSERVABLE continuation (it is in the normal form, the
+                // state hash and storage), so folding it away would be unsound. Refutation is
+                // diagnostic only — the artifact is byte-identical.
+                false => Some(cond_par),
+            }
+        },
+        (_, condition) => condition,
     };
 
     let bind_count = receive_binder_count as i32;
@@ -2696,6 +2863,9 @@ fn extend_env(env: &BoundEnv, binders: &[Binder<String>]) -> BoundEnv {
         .collect::<HashMap<String, usize>>();
 
     BoundEnv {
+        // Compilation options are scope-INVARIANT: a nested binder scope compiles under the
+        // same declared options as its parent (S-D0).
+        options: env.options,
         binders: binder_map,
         hole_binders,
         resolver: Arc::clone(&env.resolver),
