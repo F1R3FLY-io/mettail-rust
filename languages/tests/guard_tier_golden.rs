@@ -150,10 +150,18 @@ fn calculator_guard_tiers() {
 /// `check_guard_decidability` tuple is `(510, 227, 283, 0, 0, T2)`, and the in-test cross-check
 /// (`assert_tier_tuple`) independently confirms 227 == structural fields and 283 == conditions +
 /// congruence premises + binders against the raw metadata.
+///
+/// Semantic-predicate surface (2026-07-25, M-0): the `implies` connective
+/// (`Implies . a:Proc, b:Proc`) adds exactly **2** structural fields ⇒ T1 227 → 229,
+/// total 510 → 512. T2 is unchanged (283): `implies` declares no binder, no rewrite
+/// condition and no congruence premise — it is one more propositional operator over
+/// the same two `Proc` operand positions `And`/`Or` already contribute. T3/T4 stay 0,
+/// so `worst` stays T2. Both numbers were HARVESTED from a failing run of this test
+/// and then justified by the field count above, never the other way round.
 #[test]
 fn rhocalc_guard_tiers() {
     let meta = mettail_languages::rhocalc::RhoCalcLanguage.metadata();
-    assert_tier_tuple(meta, 510, 227, 283, 0, 0, T2);
+    assert_tier_tuple(meta, 512, 229, 283, 0, 0, T2);
 }
 
 /// **Ambient** — mobile ambients over `Proc`/`Name` (both non-scalar; no native

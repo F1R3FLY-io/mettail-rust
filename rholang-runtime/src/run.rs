@@ -1578,6 +1578,39 @@ pub async fn run_normalized_par_for_oracle_and_read_string_channels(
 
 /// Build an in-memory `RhoRuntime`, inject normalized `program` for an
 /// oracle/debug test, and return every closed Rho ground value left resting on
+/// each requested quoted channel — from ONE execution.
+///
+/// The multi-channel twin of
+/// [`run_normalized_par_for_oracle_and_read_runtime_values`], and the
+/// `RuntimeObservationValue` twin of
+/// [`run_normalized_par_for_oracle_and_read_string_channels`]. It reads the full
+/// typed observation rather than one ground carrier, so a single call can report
+/// a `Bool` verdict on one channel and a `Text`/`BigIntBytes` datum on another.
+///
+/// Reading SEVERAL channels from ONE execution is what makes a guard-FAILURE
+/// assertion possible at all: "the body did not fire" (`@"OUT"` empty) and "the
+/// rejected datum is still resting" (`@"c"` still holds it) are two facts about
+/// the SAME quiescent store. Observing them in two separate runs would establish
+/// each separately but never that they hold TOGETHER — which is precisely the
+/// content of the fail-shut contract (`GuardedCommSoundness.v`).
+#[cfg(feature = "runtime-report")]
+pub async fn run_normalized_par_for_oracle_and_read_runtime_value_channels(
+    program: &Par,
+    out_channels: &[&str],
+) -> Result<HashMap<String, Vec<RuntimeObservationValue>>, String> {
+    let runtime = evaluate_par(program).await?;
+    let mut result = HashMap::with_capacity(out_channels.len());
+    for channel in out_channels {
+        result.insert(
+            (*channel).to_string(),
+            read_ground_from_runtime(&runtime, channel, par_as_runtime_observation_value).await,
+        );
+    }
+    Ok(result)
+}
+
+/// Build an in-memory `RhoRuntime`, inject normalized `program` for an
+/// oracle/debug test, and return every closed Rho ground value left resting on
 /// the quoted channel `@"<out_channel>"`.
 #[cfg(feature = "runtime-report")]
 pub async fn run_normalized_par_for_oracle_and_read_runtime_values(

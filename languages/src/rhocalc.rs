@@ -730,7 +730,48 @@ language! {
         }] fold;
 
         // Infix precedence (declaration order = loosest → tightest for PraTTaIL):
-        // or/and, then comparisons, then arithmetic — so `a/b == c/d` and `x==y and z==w` parse correctly.
+        // implies, or/and, then comparisons, then arithmetic — so `a/b == c/d` and
+        // `x==y and z==w` parse correctly.
+        //
+        // M-0 — material implication, the paper's `φ ⇒ ψ` (notation delta N2: the word
+        // `implies`, because `=>` and `⇒` are unavailable in this grammar). Declared
+        // IMMEDIATELY BEFORE `Or` because declaration order is loosest → tightest in
+        // PraTTaIL and `⇒` is looser than `∨`, so
+        //
+        //     a or b implies c and d   ⇒   (a or b) implies (c and d)
+        //
+        // which is the standard reading. ⚠ Associativity: PraTTaIL derives associativity
+        // from the binding-power pair it assigns from declaration order, and every
+        // same-category infix rule declared this way is LEFT-associative
+        // (`prattail/src/binding_power.rs::InfixOperator::associativity`, `left_bp < right_bp`).
+        // So a chain `a implies b implies c` reads `(a implies b) implies c`, not the
+        // classical right-associative `a implies (b implies c)`. Parenthesize a chain that
+        // means the latter. (The paper's rubric guards contain no implication chain.)
+        //
+        // Semantics: `a implies b ≡ (not a) or b` — material implication on the two-valued
+        // Boolean algebra RhoCalc's `bool` inhabits, which is exactly where the Heyting `⇒`
+        // of `prattail::algebra_tower::HeytingAlgebra::implies` lands on a Boolean lattice.
+        // The `![…]` fold answers a VALUE only for two ground `bool` operands. Two ground
+        // NON-bool operands mean the operator is genuinely undefined at those types ⇒ the
+        // `error` term; anything else rebuilds the redex so congruence reduces the operand
+        // first and the fold re-fires on the value (`runtime::binary_fallback`). A failed
+        // operator must never invent a value (cf. `817ae380`) — hence `Proc::Err`, never a
+        // fabricated `BoolLit`. This mirrors `Or`/`And` arm for arm.
+        Implies . a:Proc, b:Proc |- a "implies" b : Proc ![
+            { match (&a, &b) {
+                (Proc::CastBool(a), Proc::CastBool(b)) => match (&**a, &**b) {
+                    (Bool::BoolLit(x), Bool::BoolLit(y)) => Proc::CastBool(std::sync::Arc::new(Bool::BoolLit(!*x || *y))),
+                    _ => Proc::Err,
+                },
+                // Not two ground operands: `error` only when the operands ARE data
+                // (the operator is undefined at those types); otherwise rebuild the redex so
+                // congruence can reduce the operand first. See `runtime::is_ground_operand`.
+                _ => crate::rhocalc::runtime::binary_fallback(a, b, || {
+                    Proc::Implies(std::sync::Arc::new(a.clone()), std::sync::Arc::new(b.clone()))
+                }),
+            }}
+        ] fold;
+
         Or . a:Proc, b:Proc |- a "or" b : Proc ![
             { match (&a, &b) {
                 (Proc::CastBool(a), Proc::CastBool(b)) => match (&**a, &**b) {

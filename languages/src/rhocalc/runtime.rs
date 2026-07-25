@@ -453,6 +453,9 @@ fn normalize_send_sugar_canon(p: &Proc) -> Proc {
         // ═══ Proc operators (the projection-surface operand positions) — recurse ═══
         Proc::Or(a, b) => Proc::Or(rc(a), rc(b)),
         Proc::And(a, b) => Proc::And(rc(a), rc(b)),
+        // M-0: `implies` recurses like its propositional siblings so send-sugar inside either
+        // operand canonicalizes (otherwise the identity arm would freeze the sugar in place).
+        Proc::Implies(a, b) => Proc::Implies(rc(a), rc(b)),
         Proc::BitOr(a, b) => Proc::BitOr(rc(a), rc(b)),
         Proc::BitAnd(a, b) => Proc::BitAnd(rc(a), rc(b)),
         Proc::BitNot(a) => Proc::BitNot(rc(a)),

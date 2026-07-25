@@ -1273,6 +1273,110 @@ mod comm {
         );
     }
 
+    // ════════════════════════════════════════════════════════════════════════════
+    // M-0 — the `implies` connective, HOST side (`receive::eval_guard_bool`)
+    // ════════════════════════════════════════════════════════════════════════════
+    //
+    // `implies` is the paper's `φ ⇒ ψ`. It has TWO evaluators, and the standing
+    // obligation on the design is that they agree:
+    //
+    //   • the HOST twin   — `eval_guard_bool`'s `Implies` arm
+    //                       (`languages/src/rhocalc/receive.rs`), reached through
+    //                       the Dovetail/oracle receive path exercised HERE;
+    //   • the MACHINE     — `EOrBody(ENotBody ⟦a⟧, ⟦b⟧)` decided by
+    //                       `rho_pure_eval` under `guard_passes`, exercised in
+    //                       `rholang-runtime/tests/rho_implies_guard.rs`.
+    //
+    // Both suites enumerate the SAME four rows of `⇒`, in the same order, with
+    // the same expected verdicts, so a divergence between the two evaluators
+    // shows up as one suite red and the other green rather than as a silent
+    // semantic fork.
+    //
+    // A guarded receive is the only public entry to `eval_guard_bool` (the
+    // function itself is private, by design: a guard verdict is meaningful only
+    // as part of a COMM decision), so each row is stated as a receive whose
+    // firing IS the verdict.
+
+    /// One row of the host truth table: `for(x <- c where <guard>){*x} | c!(2)`
+    /// fires iff `guard` is true. On a true guard the reduct `*@(2)` appears; on
+    /// a false guard the receive AND the send both remain (fail shut — nothing
+    /// consumed, nothing fabricated).
+    fn assert_host_guard(guard: &str, expected: bool) {
+        let program = format!("for(x <- c where {guard}){{*x}} | c!(2)");
+        let results = run(&program);
+        let displays: Vec<String> = results
+            .all_terms
+            .iter()
+            .map(|t| canon_display(&t.display))
+            .collect();
+        let fired = displays.iter().any(|d| d.contains("*@(2)"));
+        // A blocked guard leaves the WHOLE redex intact: the guarded receive
+        // (recognizable by its `where` clause) and the unconsumed send `c!(2)`,
+        // in the same normal form. The guard itself is compared only by the
+        // presence of `where`, not verbatim: a guard displays through the
+        // projection surface (`true` rides as `@Nil!(true)`), and `canon_display`
+        // restores only the NUMERIC projections.
+        let blocked = displays
+            .iter()
+            .any(|d| d.contains("where") && d.contains("c!(2)"));
+        assert_eq!(
+            fired, expected,
+            "host guard {guard:?} must evaluate to {expected}; normal forms {displays:?}"
+        );
+        if !expected {
+            assert!(
+                blocked,
+                "a false host guard must leave BOTH the receive and the send resting; \
+                 normal forms {displays:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn implies_truth_table_on_the_host_guard_evaluator() {
+        // `p ⇒ q` ≡ `¬p ∨ q`, all four ground rows, none sampled.
+        assert_host_guard("false implies false", true);
+        assert_host_guard("false implies true", true);
+        assert_host_guard("true implies false", false);
+        assert_host_guard("true implies true", true);
+    }
+
+    #[test]
+    fn implies_truth_table_on_the_host_guard_evaluator_via_comparisons() {
+        // The same four rows with each operand a COMPARISON rather than a `bool`
+        // literal, so the `Implies` arm recurses into `eval_guard_bool` on both
+        // sides instead of reading two `CastBool` leaves.
+        assert_host_guard("2 > 3 implies 2 > 3", true);
+        assert_host_guard("2 > 3 implies 3 > 2", true);
+        assert_host_guard("3 > 2 implies 2 > 3", false);
+        assert_host_guard("3 > 2 implies 3 > 2", true);
+    }
+
+    #[test]
+    fn implies_guard_over_the_bound_variable_fires_and_blocks() {
+        // The operational shape: an implication ABOUT the received value.
+        // `x = 2`, so `x > 0 implies x > 10` is `T ⇒ F` = false ⇒ blocked, and
+        // `x > 0 implies x > 1` is `T ⇒ T` = true ⇒ fires. The vacuous row
+        // `x > 10 implies x > 100` is `F ⇒ F` = true ⇒ fires.
+        assert_host_guard("x > 0 implies x > 10", false);
+        assert_host_guard("x > 0 implies x > 1", true);
+        assert_host_guard("x > 10 implies x > 100", true);
+    }
+
+    #[test]
+    fn implies_is_looser_than_or_and_and_on_the_host() {
+        // `Implies` is declared immediately BEFORE `Or`, and declaration order is
+        // loosest → tightest, so `false or false implies false and false` must
+        // group as `(false or false) implies (false and false)` = F ⇒ F = TRUE.
+        // The competing reading `false or ((false implies false) and false)`
+        // is F ∨ (T ∧ F) = FALSE, so this single row pins the precedence — and it
+        // pins it identically to the machine-side twin
+        // (`rho_implies_guard::implies_is_looser_than_or_and_and`).
+        assert_host_guard("false or false implies false and false", true);
+        assert_host_guard("true and true implies false or true", true);
+        assert_host_guard("true implies false or false", false);
+    }
+
     #[test]
     fn empty_persistent_receive_consumes_payload_and_stays() {
         let results = run("for(<= c){ok} | c!(payload)");

@@ -209,6 +209,13 @@ fn eval_guard_bool(cond: &Proc) -> Option<bool> {
         },
         Proc::And(a, b) => Some(eval_guard_bool(a)? && eval_guard_bool(b)?),
         Proc::Or(a, b) => Some(eval_guard_bool(a)? || eval_guard_bool(b)?),
+        // M-0: material implication `a implies b ≡ (not a) or b`. Written with `||` so it
+        // inherits the SAME evaluation discipline as the `Or`/`And`/`Not` arms above (Rust's
+        // `||` short-circuits its right operand exactly as the `Or` arm does); the machine
+        // twin is `EOrBody(ENotBody ⟦a⟧, ⟦b⟧)` in `rhocalc_ast::lower_proc`. On the four
+        // ground-boolean rows the two paths agree by construction (see the truth table in
+        // `rholang-runtime/tests/rho_implies_guard.rs`, which drives both).
+        Proc::Implies(a, b) => Some(!eval_guard_bool(a)? || eval_guard_bool(b)?),
         Proc::Not(a) => Some(!eval_guard_bool(a)?),
         Proc::Eq(a, b) => {
             if let Some(v) = crate::rhocalc::runtime::compare_collection_equality(a, b) {

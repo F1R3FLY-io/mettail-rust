@@ -982,6 +982,27 @@ fn lower_proc(proc: &Proc, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> 
         Proc::Or(a, b) => {
             lower_binary_expr(a.as_ref(), b.as_ref(), env, |p1, p2| ExprInstance::EOrBody(EOr { p1, p2 }))
         },
+        // M-0 — material implication. Rholang's expression algebra has no `EImplies`, and it
+        // needs none: `a implies b ≡ (not a) or b`, and BOTH halves of that identity are
+        // already emitted on this very path (`ENotBody` two arms below, `EOrBody` one arm
+        // above) and both are already decided by `rho-pure-eval`
+        // (`eval.rs::ENotBody`/`EOrBody` → `bool_binop("||", …)`). So `implies` costs the
+        // machine exactly zero new surface: no new `ExprInstance`, no new evaluator arm, no
+        // consensus-visible wire change.
+        //
+        // Built from the two shared assemblers rather than `lower_binary_expr` because the
+        // negation must wrap ONLY the antecedent: `unary_expr_par` propagates the
+        // antecedent's `locally_free`/`connective_used` onto the `ENot`, and
+        // `binary_expr_par` then unions that with the consequent's — so the resulting `Par`
+        // carries exactly the free-variable footprint of `a` ∪ `b`, as `Or` would.
+        Proc::Implies(a, b) => {
+            let antecedent = lower_proc(a.as_ref(), env)?;
+            let consequent = lower_proc(b.as_ref(), env)?;
+            let negated = unary_expr_par(antecedent, |p| ExprInstance::ENotBody(ENot { p }));
+            Ok(binary_expr_par(negated, consequent, |p1, p2| {
+                ExprInstance::EOrBody(EOr { p1, p2 })
+            }))
+        },
         Proc::Not(a) => {
             let operand = lower_proc(a.as_ref(), env)?;
             Ok(unary_expr_par(operand, |p| ExprInstance::ENotBody(ENot { p })))
@@ -1324,7 +1345,12 @@ fn find_fold(proc: &Proc) -> Option<(Proc, FoldKind, i64)> {
         | Proc::LtEq(a, b)
         | Proc::GtEq(a, b)
         | Proc::And(a, b)
-        | Proc::Or(a, b) => find_fold(a.as_ref()).or_else(|| find_fold(b.as_ref())),
+        | Proc::Or(a, b)
+        // M-0: `implies` is an ordinary binary expression operand position. Omitting it here
+        // would SILENTLY DROP a `fold` nested inside an implication (the fold would never be
+        // found, so never lifted, so never trampolined) — the same class of defect this
+        // three-helper traversal exists to prevent. See `replace_fold`/`rebuild_binary`.
+        | Proc::Implies(a, b) => find_fold(a.as_ref()).or_else(|| find_fold(b.as_ref())),
         Proc::NegProc(a) | Proc::Not(a) => find_fold(a.as_ref()),
         // `*(@(P))` inlines `P` — folds inside it lift at this scope.
         Proc::PDrop(name) => find_fold_in_name(name.as_ref()),
@@ -1433,6 +1459,8 @@ fn replace_fold(proc: &Proc, r_drop: &Proc, replaced: &mut bool) -> Proc {
         Proc::GtEq(a, b) => rebuild_binary(proc, a, b, r_drop, replaced),
         Proc::And(a, b) => rebuild_binary(proc, a, b, r_drop, replaced),
         Proc::Or(a, b) => rebuild_binary(proc, a, b, r_drop, replaced),
+        // M-0 — mirrors the `Implies` arm of `find_fold`.
+        Proc::Implies(a, b) => rebuild_binary(proc, a, b, r_drop, replaced),
         Proc::NegProc(a) => {
             Proc::NegProc(Arc::new(replace_fold(a.as_ref(), r_drop, replaced)))
         },
@@ -1478,6 +1506,10 @@ fn rebuild_binary(
         Proc::GtEq(..) => Proc::GtEq(new_a, new_b),
         Proc::And(..) => Proc::And(new_a, new_b),
         Proc::Or(..) => Proc::Or(new_a, new_b),
+        // M-0 — the third of the three fold-traversal helpers. `replace_fold` routes
+        // `Implies` here, and without this arm the `_` fallback would return the ORIGINAL
+        // node, discarding the `*r` substitution `replace_fold` just computed.
+        Proc::Implies(..) => Proc::Implies(new_a, new_b),
         _ => orig.clone(),
     }
 }

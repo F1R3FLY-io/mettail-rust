@@ -125,6 +125,7 @@ pub use run::{
     binder_apply_redex_present, drive_cross_check, flatten_observation_value,
     par_as_runtime_observation_value,
     run_installed_program_with_call_and_read_observation_set,
+    run_normalized_par_for_oracle_and_read_runtime_value_channels,
     run_normalized_par_for_oracle_and_read_runtime_values,
     run_validated_program_and_read_runtime_values,
     run_validated_program_with_call_and_read_runtime_values, DriveCrossCheckError,

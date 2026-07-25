@@ -605,6 +605,14 @@ name = "rho_guard_oracle"
 path = "tests/rho_guard_oracle.rs"
 required-features = ["source-oracle"]
 
+# M-0: the `implies` connective end-to-end on the real reducer. Needs the GENERATED
+# RhoCalc parser + `lower_rhocalc_proc` (`rhocalc-runtime`), not the source oracle:
+# `implies` is RhoCalc surface syntax that f1r3node's own Rholang parser does not know.
+[[test]]
+name = "rho_implies_guard"
+path = "tests/rho_implies_guard.rs"
+required-features = ["rhocalc-runtime"]
+
 # The `rhocalc` interpreter binary. It parses RhoCalc (Rholang 1.4) source with the GENERATED
 # parser, lowers it (`lower_rhocalc_proc_with_resolver`), and evaluates on the f1r3node reducer.
 # The RhoCalc grammar supports Foreign Language Terms, so the interpreter bundles the `lam` guest
