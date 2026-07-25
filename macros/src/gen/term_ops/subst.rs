@@ -61,6 +61,23 @@ use syn::Ident;
 // iterative_cmp.rs, iterative_hash.rs, etc. via `pub(crate)`)
 // =============================================================================
 
+/// COLLECTION_LITERAL_KIND_GATE — kill-switch for the
+/// [`VariantKind::CollectionLiteral`] discriminant (2026-07-25).
+///
+/// When `false`, [`collect_category_variants`] never constructs the variant, so
+/// collection-literal categories fall back to [`VariantKind::Literal`] exactly
+/// as they did before this change and every generator emits its pre-change
+/// token stream — the generated tree under `target/generated/**` is BYTE-
+/// IDENTICAL to the pre-change baseline. The `CollectionLiteral` arms elsewhere
+/// remain compiled but unreachable.
+///
+/// When `true` (SHIP DEFAULT): the discriminant is produced, and each consumer
+/// takes the branch it declared. As of Stage 0 every consumer still delegates to
+/// its `Literal` behaviour, so `true` is ALSO byte-identical — that identity is
+/// the Stage 0 acceptance gate, and it is what makes the subsequent per-consumer
+/// moves auditable one at a time.
+pub(crate) const COLLECTION_LITERAL_KIND_GATE: bool = true;
+
 /// Represents a variant of an AST enum for substitution purposes.
 /// Abstracts over both old (BNFC) and new (judgement) syntax.
 #[derive(Debug, Clone)]
@@ -75,6 +92,39 @@ pub(crate) enum VariantKind {
     Regular { label: Ident, fields: Vec<FieldInfo> },
     /// Collection constructor: PPar(HashBag<Proc>)
     Collection {
+        label: Ident,
+        element_cat: Ident,
+        coll_type: CollectionType,
+    },
+    /// Native COLLECTION-LITERAL variant: `List(Vec<Proc>)`, `Bag(HashBag<Proc>)`,
+    /// `Set(HashSetLit<Proc>)`, `Map(HashMapLit<Proc,Proc>)`, `Pathmap(PathMapLit<Proc,Proc>)`.
+    ///
+    /// Distinguished from its two neighbours — the distinction IS the point:
+    ///
+    /// - vs [`VariantKind::Literal`]: a `Literal` is an OPAQUE native leaf
+    ///   (`NumLit(i32)`, `StrLit(String)`) with no sub-terms. A
+    ///   `CollectionLiteral` is a native wrapper that CONTAINS element terms of
+    ///   `element_cat`. Treating one as the other is the defect this variant
+    ///   exists to make unrepresentable: every term op that clones a `Literal`
+    ///   payload whole (`subst`, `is_ground`, `term_depth`, `matches`, …) is
+    ///   silently WRONG on a collection literal, because it never recurses into
+    ///   the elements.
+    /// - vs [`VariantKind::Collection`]: a `Collection` is a category-DIRECT
+    ///   collection FIELD declared by a grammar rule (`PPar . ps:HashBag(Proc)`),
+    ///   so its payload is the bare container. A `CollectionLiteral` is a
+    ///   CATEGORY declared as a native-type alias (`![Vec<Proc>] as List`) with
+    ///   NO grammar rule, so its payload is the *literal wrapper* type
+    ///   (`HashSetLit`, not the iterable `HashSet`). The two need different
+    ///   iterator/rebuild shapes — reusing `Collection`'s arms for these
+    ///   categories does not compile for Set/Bag (see the note on
+    ///   [`collect_category_variants`]).
+    ///
+    /// Introduced as a distinct discriminant (rather than a predicate over
+    /// `Literal`) so that the exhaustiveness checker performs the census: every
+    /// present and FUTURE consumer of `VariantKind` is forced to state, at
+    /// compile time, which of the two behaviours it wants. A predicate would
+    /// leave every existing site free to keep the wrong behaviour silently.
+    CollectionLiteral {
         label: Ident,
         element_cat: Ident,
         coll_type: CollectionType,
@@ -603,7 +653,10 @@ fn generate_assemble_variant_decl(
     match variant {
         VariantKind::Var { .. } | VariantKind::Nullary { .. } => None,
 
-        VariantKind::Literal { label } => {
+        // Stage 0 identity: `CollectionLiteral` delegates to the `Literal` body,
+        // which already re-derives `collection_literal_info` itself (returning
+        // `None` — a leaf — for opaque literals). Byte-identical either way.
+        VariantKind::Literal { label } | VariantKind::CollectionLiteral { label, .. } => {
             let (coll_type, _element_cat) = collection_literal_info(category, language)?;
             let variant_name = format_ident!("Assemble{}_{}Lit", category, label);
             match coll_type {
@@ -938,7 +991,11 @@ fn generate_visit_variant_arm(
 ) -> TokenStream {
     match variant {
         VariantKind::Var { label } => generate_var_visit_arm(cat, label, language),
-        VariantKind::Literal { label } => generate_literal_visit_arm(cat, label, language),
+        // Stage 0 identity: `generate_literal_visit_arm` already re-derives
+        // `collection_literal_info` and routes to the recursing arm itself.
+        VariantKind::Literal { label } | VariantKind::CollectionLiteral { label, .. } => {
+            generate_literal_visit_arm(cat, label, language)
+        },
         VariantKind::Nullary { label } => generate_nullary_visit_arm(cat, label),
         VariantKind::Regular { label, fields } => generate_regular_visit_arm(cat, label, fields),
         VariantKind::Collection { label, element_cat, coll_type } => {
@@ -980,7 +1037,26 @@ fn generate_visit_variant_arm(
 /// `element_cat` is the category of the element terms (e.g. `Proc`). Returns
 /// `None` for opaque native literals (Int/Bool/Str/Float/Fixed/BigInt/BigRat/
 /// ReadZipper/WriteZipper), which keep their byte-identical `v.clone()` body.
-fn collection_literal_info(cat: &Ident, language: &LanguageDef) -> Option<(CollectionType, Ident)> {
+///
+/// Hoisted to `pub(crate)` (2026-07-25) because it is now also the SOLE producer
+/// predicate for [`VariantKind::CollectionLiteral`] in
+/// [`collect_category_variants`], and the sibling term-op generators consume the
+/// resulting discriminant.
+///
+/// ⚠ KNOWN GAP (pinned, fixed separately — see
+/// `arm_integrity::readzipper_writezipper_collection_literal_gap`): this
+/// resolves through `LanguageDef::collection_element_type_for_category`, whose
+/// first branch is hardcoded to the category NAMES
+/// `"List" | "Bag" | "Map" | "Set" | "Pathmap"` (`ast/src/language/model.rs`).
+/// `ReadZipper`/`WriteZipper` genuinely contain `Proc`s
+/// (`ReadZipperLit(PathMapLit<Proc, Proc>, Vec<u8>)`) but are named otherwise,
+/// so they return `None` here and are treated as opaque leaves. The landed
+/// `subst` fix does not cover them either; this is a pre-existing gap that the
+/// new discriminant INHERITS rather than introduces.
+pub(crate) fn collection_literal_info(
+    cat: &Ident,
+    language: &LanguageDef,
+) -> Option<(CollectionType, Ident)> {
     let coll_type = language.get_type(cat).and_then(|t| t.collection_kind.as_ref())?.coll_type();
     let element_cat = language.collection_element_type_for_category(cat)?;
     Some((coll_type, element_cat))
@@ -1866,7 +1942,8 @@ fn generate_assemble_arm_for_variant(
 ) -> Option<TokenStream> {
     match variant {
         VariantKind::Var { .. } | VariantKind::Nullary { .. } => None,
-        VariantKind::Literal { label } => {
+        // Stage 0 identity: same body for both discriminants.
+        VariantKind::Literal { label } | VariantKind::CollectionLiteral { label, .. } => {
             let (coll_type, element_cat) = collection_literal_info(cat, language)?;
             Some(generate_collection_literal_assemble_arm(cat, label, &element_cat, &coll_type))
         },
@@ -2967,30 +3044,64 @@ pub(crate) fn collect_category_variants(
 
     // Auto-generated Literal variant (for native types).
     //
-    // NOTE (GROUP B, 2026-06-30): collection-literal categories (List/Bag/Set/
-    // Map/Pathmap) are classified `Literal` here, so `subst`/`normalize`/etc.
-    // CLONE the wrapper whole and do NOT recurse into the element terms — i.e.
-    // `subst([a,b,c], a:=1,b:=2,c:=3)` returns `[a,b,c]` unchanged (a real
-    // semantic no-op bug). The natural fix (reclassify them to
-    // `VariantKind::Collection` so the term ops recurse) was attempted and
-    // REVERTED: the existing `generate_collection_visit_arm`/`_assemble_arm`
-    // branches were authored for CATEGORY-DIRECT collection fields (e.g.
-    // `PPar . ps:HashBag(Proc)`), NOT for the literal wrappers — Set/Bag fail to
-    // compile (`HashSetLit` is not the iterable `HashSet`; no `insert_into_baglit`),
-    // and even List (`Vec`) compiles but changes List's depth/ground/normalize/
-    // semantic-hash semantics, regressing zipper/map tests while NOT fixing the
-    // polyadic target. A correct fix needs literal-wrapper-aware collection arms
-    // (a dedicated `VariantKind` for native collection literals); deferred to a
-    // re-designed GROUP B. See [[empty-receiver-polyadic-cluster-roots]].
+    // COLLECTION LITERALS (record corrected 2026-07-25; supersedes the
+    // 2026-06-30 "GROUP B deferred" note that stood here).
+    //
+    // Collection-literal categories (List/Bag/Set/Map/Pathmap) are declared as
+    // native-type aliases (`![Vec<Proc>] as List`) with NO grammar rule, so they
+    // reach this fallback. They are NOT opaque leaves: their payload contains
+    // element terms. Classifying them `Literal` makes every term op clone the
+    // wrapper whole and never recurse — e.g. `subst([a,b,c], a:=1,b:=2,c:=3)`
+    // returns `[a,b,c]` unchanged.
+    //
+    // History, so the reverted attempt is not re-attempted:
+    //
+    //  * ATTEMPT #1 (2026-06-30) reclassified these categories to
+    //    `VariantKind::Collection` and REVERTED. Two independent causes:
+    //    (i) `Collection`'s arms were authored for category-DIRECT collection
+    //    FIELDS (`PPar . ps:HashBag(Proc)`), whose payload is the bare iterable
+    //    container — against the literal wrappers they produced 15 compile
+    //    errors (`HashSetLit` is not `HashSet`; no `insert_into_baglit`);
+    //    (ii) for `List` (`Vec`) it compiled but was NET-NEGATIVE, because
+    //    flipping an EXISTING discriminant silently re-routed ~13 consumers at
+    //    once, changing depth/ground/normalize/semantic-hash semantics and
+    //    regressing zipper/map tests without fixing the polyadic target.
+    //
+    //  * SOLVED FOR `subst` (2026-06-30, in tree and green): rather than flip
+    //    the shared discriminant, `subst` detects these categories LOCALLY via
+    //    [`collection_literal_info`] and emits recursing Visit/Assemble arms
+    //    ([`generate_collection_literal_visit_arm`],
+    //    [`generate_collection_literal_assemble_arm`]) with the correct
+    //    per-wrapper constructors. The hard part — the assemble side that
+    //    defeated attempt #1 — is therefore already solved and validated.
+    //
+    //  * THE ROOT FIX (this change): promote that local classification to a
+    //    first-class discriminant, [`VariantKind::CollectionLiteral`]. It has NO
+    //    pre-existing arm anywhere, so it cannot silently re-route anybody the
+    //    way attempt #1 did; instead the exhaustiveness checker forces every
+    //    consumer to declare its intent. Consumers that must keep leaf
+    //    behaviour stay on the `Literal` arm PERMANENTLY and deliberately —
+    //    that set is exactly the one whose implicit flip caused attempt #1's
+    //    regressions.
+    //
+    // See [[empty-receiver-polyadic-cluster-roots]].
     if let Some(lang_type) = language.get_type(category) {
         if let Some(native_type) = &lang_type.native_type {
-            let has_lit = variants
-                .iter()
-                .any(|v| matches!(v, VariantKind::Literal { .. }));
+            let has_lit = variants.iter().any(|v| {
+                matches!(v, VariantKind::Literal { .. } | VariantKind::CollectionLiteral { .. })
+            });
             if !has_lit {
-                variants.push(VariantKind::Literal {
-                    label: generate_literal_label(native_type),
-                });
+                let label = generate_literal_label(native_type);
+                match collection_literal_info(category, language) {
+                    Some((coll_type, element_cat)) if COLLECTION_LITERAL_KIND_GATE => {
+                        variants.push(VariantKind::CollectionLiteral {
+                            label,
+                            element_cat,
+                            coll_type,
+                        });
+                    },
+                    _ => variants.push(VariantKind::Literal { label }),
+                }
             }
         }
     }

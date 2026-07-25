@@ -320,7 +320,10 @@ fn generate_assemble_variant_decl(
     cat_str: &str,
 ) -> Option<TokenStream> {
     match variant {
-        VariantKind::Var { .. } | VariantKind::Literal { .. } | VariantKind::Nullary { .. } => None,
+        VariantKind::Var { .. }
+        | VariantKind::Literal { .. }
+        | VariantKind::CollectionLiteral { .. }
+        | VariantKind::Nullary { .. } => None,
 
         VariantKind::Regular { label, fields } => {
             let label_str = label.to_string();
@@ -728,7 +731,9 @@ fn generate_visit_variant_arm(
                 }
             }
         },
-        VariantKind::Literal { label } => {
+        // Stage 0 identity — MOVES in Stage 5 (normalize must recurse into
+        // collection-literal elements).
+        VariantKind::Literal { label } | VariantKind::CollectionLiteral { label, .. } => {
             // Conservative: clone (works for both Copy and non-Copy).
             quote! {
                 #cat::#label(v) => {
@@ -1440,7 +1445,10 @@ fn generate_assemble_arm(
     is_native: bool,
 ) -> Option<TokenStream> {
     match variant {
-        VariantKind::Var { .. } | VariantKind::Literal { .. } | VariantKind::Nullary { .. } => None,
+        VariantKind::Var { .. }
+        | VariantKind::Literal { .. }
+        | VariantKind::CollectionLiteral { .. }
+        | VariantKind::Nullary { .. } => None,
 
         VariantKind::Regular { label, fields } => {
             let label_str = label.to_string();

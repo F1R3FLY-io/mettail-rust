@@ -2157,3 +2157,117 @@ pub(crate) fn empty_language_for_tests() -> mettail_ast::language::LanguageDef {
         guard_config: None,
     }
 }
+
+/// A `LanguageDef` that actually DECLARES collection-literal categories
+/// (2026-07-25).
+///
+/// ## Why this fixture has to exist
+///
+/// [`empty_language_for_tests`] has `types: Vec::new()`. Every generator path
+/// that classifies a collection literal is reached through
+/// `LanguageDef::get_type(category)` and
+/// `LanguageDef::collection_element_type_for_category(category)`, both of which
+/// scan `language.types`. With an EMPTY `types` vector both return `None`
+/// unconditionally, so `collection_literal_info` returns `None`, so
+/// `VariantKind::CollectionLiteral` is never constructed and the
+/// collection-literal branch of every generator is UNREACHABLE.
+///
+/// That is precisely why the pre-existing emitter unit tests could never have
+/// caught the collection-literal defects: they were structurally incapable of
+/// reaching the branch. Any test that means to exercise collection-literal
+/// behaviour must use THIS fixture, not the empty one.
+///
+/// ## Shape
+///
+/// - `Proc`      — the element category (no native type; the "host" category).
+/// - `List`      — `![Vec<Proc>]`               → `ListLit`,    `CollectionType::Vec`
+/// - `Bag`       — `![HashBag<Proc>]`           → `BagLit`,     `CollectionType::HashBag`
+/// - `Set`       — `![HashSetLit<Proc>]`        → `SetLit`,     `CollectionType::HashSet`
+/// - `Map`       — `![HashMapLit<Proc, Proc>]`  → `MapLit`,     `CollectionType::HashMap`
+/// - `Pathmap`   — `![PathMapLit<Proc, Proc>]`  → `PathmapLit`, `CollectionType::PathMap`
+/// - `Int`       — `![i32]` with NO `collection_kind` → the OPAQUE CONTROL.
+///
+/// `Int` is load-bearing: it is what makes a passing test evidence of
+/// DISCRIMINATION rather than of blanket reclassification. A change that
+/// wrongly treats every native literal as a collection would still satisfy every
+/// collection assertion, and is caught only by the `Int` control.
+#[cfg(test)]
+pub(crate) fn collection_literal_language_for_tests() -> mettail_ast::language::LanguageDef {
+    use mettail_ast::language::{CollectionCategory, CollectionDelimiters, LangType};
+
+    fn delims(open: &str, close: &str, sep: &str, kv: Option<&str>) -> CollectionDelimiters {
+        CollectionDelimiters {
+            open: open.to_string(),
+            close: close.to_string(),
+            sep: sep.to_string(),
+            key_val_sep: kv.map(|s| s.to_string()),
+        }
+    }
+    fn native(ty: &str) -> Option<syn::Type> {
+        Some(syn::parse_str::<syn::Type>(ty).expect("fixture native type must parse"))
+    }
+
+    let mut language = empty_language_for_tests();
+    language.name = quote::format_ident!("CollLitTestLang");
+    language.types = vec![
+        LangType {
+            name: quote::format_ident!("Proc"),
+            native_type: None,
+            collection_kind: None,
+        },
+        LangType {
+            name: quote::format_ident!("List"),
+            native_type: native("Vec<Proc>"),
+            collection_kind: Some(CollectionCategory::List(delims("[", "]", ",", None))),
+        },
+        LangType {
+            name: quote::format_ident!("Bag"),
+            native_type: native("mettail_runtime::HashBag<Proc>"),
+            collection_kind: Some(CollectionCategory::Bag(delims("{|", "|}", ",", None))),
+        },
+        LangType {
+            name: quote::format_ident!("Set"),
+            native_type: native("mettail_runtime::HashSetLit<Proc>"),
+            collection_kind: Some(CollectionCategory::Set(delims("Set(", ")", ",", None))),
+        },
+        LangType {
+            name: quote::format_ident!("Map"),
+            native_type: native("mettail_runtime::HashMapLit<Proc, Proc>"),
+            collection_kind: Some(CollectionCategory::Map(delims("{", "}", ",", Some(":")))),
+        },
+        LangType {
+            name: quote::format_ident!("Pathmap"),
+            native_type: native("mettail_runtime::PathMapLit<Proc, Proc>"),
+            collection_kind: Some(CollectionCategory::Pathmap(delims(
+                "pathmap(",
+                ")",
+                ",",
+                Some(":"),
+            ))),
+        },
+        // THE OPAQUE CONTROL — native literal, no collection_kind.
+        LangType {
+            name: quote::format_ident!("Int"),
+            native_type: native("i32"),
+            collection_kind: None,
+        },
+    ];
+    language
+}
+
+/// The collection-literal categories declared by
+/// [`collection_literal_language_for_tests`], paired with the variant label
+/// `generate_literal_label` assigns to each. Shared by the arm-integrity
+/// meta-test and the per-op unit tests so the two cannot drift.
+#[cfg(test)]
+pub(crate) const COLLECTION_LITERAL_TEST_CATEGORIES: &[(&str, &str)] = &[
+    ("List", "ListLit"),
+    ("Bag", "BagLit"),
+    ("Set", "SetLit"),
+    ("Map", "MapLit"),
+    ("Pathmap", "PathmapLit"),
+];
+
+/// The OPAQUE control category from [`collection_literal_language_for_tests`].
+#[cfg(test)]
+pub(crate) const OPAQUE_LITERAL_TEST_CATEGORY: (&str, &str) = ("Int", "NumLit");

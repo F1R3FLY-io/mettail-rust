@@ -580,7 +580,9 @@ fn reflect_category_fn(language: &LanguageDef, category: &Ident) -> TokenStream 
             // only GATE the located native dispatch; the native VALUE stays the trusted handler's
             // payload (the firing's contractum), so an internally-consistent tag suffices — a Var
             // leaf still matches it. The tag format matters only for the spread's own coherence.
-            VariantKind::Literal { label } => {
+            // Stage 0 identity — STAYS (spread leaf tagging; the tag format
+            // matters only for the spread's own coherence).
+            VariantKind::Literal { label } | VariantKind::CollectionLiteral { label, .. } => {
                 let label_lit = lit(&label.to_string());
                 quote! {
                     #category::#label(__value) => ::core::result::Result::Ok(

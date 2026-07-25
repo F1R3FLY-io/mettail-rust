@@ -211,7 +211,9 @@ fn generate_arm(
         VariantKind::Var { label } => {
             quote! { #category::#label(_) => {} }
         },
-        VariantKind::Literal { label } => {
+        // Stage 0 identity — STAYS. This asks "is this alternative a native
+        // literal reading?", which is true of a collection literal as well.
+        VariantKind::Literal { label } | VariantKind::CollectionLiteral { label, .. } => {
             quote! { #category::#label(_) => { *has_native_lit = true; } }
         },
         VariantKind::Nullary { label } => {

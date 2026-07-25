@@ -65,7 +65,9 @@ fn generate_depth_arm(category: &Ident, variant: &VariantKind) -> TokenStream {
         VariantKind::Var { label } => {
             quote! { #category::#label(_) => 0 }
         },
-        VariantKind::Literal { label } => {
+        // Stage 0 identity — MOVES in Stage 2 (`term_depth` must descend into
+        // collection-literal elements; depth([1,[2]]) is not 0).
+        VariantKind::Literal { label } | VariantKind::CollectionLiteral { label, .. } => {
             quote! { #category::#label(_) => 0 }
         },
         VariantKind::Nullary { label } => {

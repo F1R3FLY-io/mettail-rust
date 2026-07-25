@@ -352,7 +352,9 @@ fn classify_variants(category: &syn::Ident, language: &LanguageDef) -> VariantCl
                     format!("AnyTerm::Wrap{}({}::{})", cat, cat, label_str),
                 ));
             },
-            VariantKind::Literal { label } => {
+            // Stage 0 identity — STAYS (see `unit_tests.rs`: test_gen has its
+            // own collector, so this arm is unreachable for `CollectionLiteral`).
+            VariantKind::Literal { label } | VariantKind::CollectionLiteral { label, .. } => {
                 let label_str = label.to_string();
                 // F1: spec-derived — `category_emits_parseable_auto_literal`
                 // gates this site, so `native_type` MUST be present.

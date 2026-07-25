@@ -171,6 +171,7 @@ fn variant_wildcard_pattern(category: &Ident, variant: &VariantKind) -> TokenStr
             quote! { #category::#label }
         },
         VariantKind::Literal { label }
+        | VariantKind::CollectionLiteral { label, .. }
         | VariantKind::Var { label }
         | VariantKind::Collection { label, .. } => {
             quote! { #category::#label(..) }
@@ -292,7 +293,8 @@ fn generate_eq_variant_arm(
             }
         },
 
-        VariantKind::Literal { label } => {
+        // Stage 0 identity — STAYS. `PartialEq` on the wrapper is structural.
+        VariantKind::Literal { label } | VariantKind::CollectionLiteral { label, .. } => {
             // Literal: compare payloads directly
             quote! {
                 (#category::#label(a), #category::#label(b)) => {
@@ -634,7 +636,8 @@ fn generate_cmp_variant_arm(
             }
         },
 
-        VariantKind::Literal { label } => {
+        // Stage 0 identity — STAYS. `Ord` on the wrapper is structural.
+        VariantKind::Literal { label } | VariantKind::CollectionLiteral { label, .. } => {
             // Literal: compare payloads with Ord
             quote! {
                 (#category::#label(a), #category::#label(b)) => {

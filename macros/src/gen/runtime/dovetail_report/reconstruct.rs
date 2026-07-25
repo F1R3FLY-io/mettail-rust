@@ -88,7 +88,9 @@ pub(crate) fn category_reconstruct(language: &LanguageDef, category: &Ident) -> 
     let mut arms: Vec<TokenStream> = Vec::new();
     for variant in collect_category_variants(category, language) {
         match variant {
-            VariantKind::Var { label } | VariantKind::Literal { label } => {
+            VariantKind::Var { label }
+            | VariantKind::Literal { label }
+            | VariantKind::CollectionLiteral { label, .. } => {
                 let v = op_variant_ident(category, &label);
                 arms.push(quote! {
                     #enum_id::#v(__p) => ::core::option::Option::Some(#category::#label(__p.clone())),

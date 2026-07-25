@@ -209,7 +209,9 @@ fn generate_hash_variant_arm(
             }
         },
 
-        VariantKind::Literal { label } => {
+        // Stage 0 identity — STAYS. The wrapper's own `Hash` recurses into the
+        // elements, so structural hashing is already correct.
+        VariantKind::Literal { label } | VariantKind::CollectionLiteral { label, .. } => {
             // Literal: hash payload
             quote! {
                 #category::#label(v) => {

@@ -210,7 +210,8 @@ fn collect_op_variants(language: &LanguageDef) -> Vec<OpVariant> {
                         display,
                     );
                 },
-                VariantKind::Literal { label } => {
+                // Stage 0 identity — STAYS.
+                VariantKind::Literal { label } | VariantKind::CollectionLiteral { label, .. } => {
                     let ident = op_variant_ident(category, &label);
                     let payload = literal_payload_type(language, category);
                     let write_payload = literal_payload_write_content(language, category);

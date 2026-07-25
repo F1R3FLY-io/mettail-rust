@@ -172,7 +172,10 @@ fn generate_dummy_fn(category: &Ident, language: &LanguageDef) -> TokenStream {
 
     // Strategy 2: Find a Literal variant (one allocation for String, zero for numeric)
     for v in &variants {
-        if let VariantKind::Literal { label } = v {
+        // Stage 0 identity: this `if let` is NOT exhaustiveness-checked, so the
+        // new discriminant had to be added by hand or the default-term search
+        // would have silently skipped collection-literal categories.
+        if let VariantKind::Literal { label } | VariantKind::CollectionLiteral { label, .. } = v {
             let default_value = generate_literal_default(category, language);
             return quote! {
                 #[inline]
@@ -279,7 +282,9 @@ fn generate_push_children_arm(
         },
 
         // Literal: leaf value, no children to extract
-        VariantKind::Literal { label } => {
+        // Stage 0 identity — STAYS (child extraction for the iterative drop;
+        // the wrapper's own `Drop` frees the elements).
+        VariantKind::Literal { label } | VariantKind::CollectionLiteral { label, .. } => {
             quote! {
                 #category::#label(_) => {}
             }

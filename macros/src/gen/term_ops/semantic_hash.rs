@@ -717,6 +717,7 @@ fn variant_label(variant: &VariantKind) -> &Ident {
     match variant {
         VariantKind::Var { label }
         | VariantKind::Literal { label }
+        | VariantKind::CollectionLiteral { label, .. }
         | VariantKind::Nullary { label }
         | VariantKind::Regular { label, .. }
         | VariantKind::Collection { label, .. }
@@ -847,7 +848,9 @@ fn generate_semantic_variant_arm(
             }
         },
 
-        VariantKind::Literal { label } => {
+        // Stage 0 identity — STAYS. Numeric-family canonicalisation does not
+        // apply to collection wrappers; they fall to the structural default.
+        VariantKind::Literal { label } | VariantKind::CollectionLiteral { label, .. } => {
             // NUMERIC leaves (integer / rational families) get a family-tagged
             // canonical-value hash so cast-promotion-tower reps of one value
             // collapse (see `semantic_hash_numeric_literal_body`). Non-numeric

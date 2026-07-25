@@ -64,7 +64,9 @@ fn generate_is_ground_arm(category: &Ident, variant: &VariantKind) -> TokenStrea
         VariantKind::Var { label } => {
             quote! { #category::#label(_) => false }
         },
-        VariantKind::Literal { label } => {
+        // Stage 0 identity — MOVES in Stage 2 (`is_ground` must descend; today
+        // `[1, v]` reports ground even though `v` is a free variable).
+        VariantKind::Literal { label } | VariantKind::CollectionLiteral { label, .. } => {
             quote! { #category::#label(_) => true }
         },
         VariantKind::Nullary { label } => {

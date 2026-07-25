@@ -201,7 +201,9 @@ pub(crate) fn category_lowering_typed(language: &LanguageDef, category: &Ident) 
     let arms: Vec<TokenStream> = collect_category_variants(category, language)
         .into_iter()
         .map(|variant| match variant {
-            VariantKind::Var { label } | VariantKind::Literal { label } => {
+            VariantKind::Var { label }
+            | VariantKind::Literal { label }
+            | VariantKind::CollectionLiteral { label, .. } => {
                 let v = op_variant_ident(category, &label);
                 quote! {
                     #category::#label(value) => {

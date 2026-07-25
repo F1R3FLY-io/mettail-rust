@@ -1263,7 +1263,8 @@ fn category_lowering(language: &LanguageDef, category: &Ident) -> TokenStream {
                     }
                 }
             },
-            VariantKind::Literal { label } => {
+            // Stage 0 identity — STAYS.
+            VariantKind::Literal { label } | VariantKind::CollectionLiteral { label, .. } => {
                 let owner = lit(&format!("{}::{}::{}", language.name, category, label));
                 quote! {
                     #category::#label(value) => {

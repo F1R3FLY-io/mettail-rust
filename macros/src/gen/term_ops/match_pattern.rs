@@ -435,7 +435,9 @@ fn generate_iterative_variant_arm(
             }
         },
 
-        VariantKind::Literal { label } => {
+        // Stage 0 identity — MOVES in Stage 4 (equality on the wrapper cannot
+        // bind pattern variables inside a collection literal).
+        VariantKind::Literal { label } | VariantKind::CollectionLiteral { label, .. } => {
             quote! {
                 (#category::#label(v1), #category::#label(v2)) if v1 == v2 => {}
             }

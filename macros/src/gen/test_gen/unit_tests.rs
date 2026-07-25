@@ -51,7 +51,10 @@ pub fn generate_unit_tests(language: &LanguageDef, _pipeline: &PipelineAnalysis)
                     cat, lbl_str, lbl_str, cat, lbl_str
                 ))
             },
-            VariantKind::Literal { label: lbl } => {
+            // Stage 0 identity — STAYS. test_gen builds its OWN variant list
+            // (it does not call `collect_category_variants`), so this arm is
+            // unreachable for `CollectionLiteral`; it exists for exhaustiveness.
+            VariantKind::Literal { label: lbl } | VariantKind::CollectionLiteral { label: lbl, .. } => {
                 let lbl_str = lbl.to_string();
                 // U1: spec-derived — Literal variants are emitted only
                 // for categories with native_type per the spec, so

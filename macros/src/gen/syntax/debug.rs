@@ -245,7 +245,9 @@ fn generate_debug_variant_arm(
             }
         },
 
-        VariantKind::Literal { label } => {
+        // Stage 0 identity: Debug prints the payload via its own `Debug`, which
+        // is correct for a collection wrapper too (it recurses structurally).
+        VariantKind::Literal { label } | VariantKind::CollectionLiteral { label, .. } => {
             let label_str = label.to_string();
             // Pattern destructures owned term, val is owned. Debug::fmt takes &self.
             quote! {
