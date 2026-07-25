@@ -98,6 +98,49 @@ Expected: `OUT: [42] (1 value(s))` — the 55 offer is never consumed; it stays 
 `check_commit` evaluates it purely — COMM-free — and a failed guard leaves the consume
 uncommitted and the datum resting. Fail-closed veto, zero partial effects.
 
+## Beat 3b — The guard the machine never sees (1.5 min, optional)
+
+Every guard so far is *payload-dependent*: it mentions `px`, so it cannot be decided until the
+offer arrives. Ask what happens when a guard mentions nothing at all.
+
+```
+RhoCalc> exec { for(@px <- @("offer") where false implies false){@("OUT")!(px)} | @("offer")!(42u32) }
+```
+
+Expected: `OUT: [42] (1 value(s))` — `F ⇒ F` is vacuously true, so the receive commits.
+
+The interesting part is not the answer, it is the **artifact**. `false implies false` mentions no
+variable, so the compiler runs the machine's *own* guard evaluator on it at lowering time, gets
+`true`, and records that by **not emitting `Receive.condition` at all**. The `where` clause is
+simply absent from the compiled program: the matcher's
+
+```rust
+let Some(guard) = k.guard.as_ref() else { return true; };
+```
+
+short-circuit then answers `true` with no work, on every node, on play and on replay alike.
+
+Contrast the mirror case:
+
+```
+RhoCalc> exec { for(@px <- @("offer") where true implies false){@("OUT")!(px)} | @("offer")!(42u32) }
+```
+
+Expected: `OUT: [] (0 value(s))` — and the guard is **still in the artifact, verbatim**. A guard
+that is statically FALSE is only *reported* (`W1 GuardStaticallyFalse`, at DEBUG on
+`mettail.lowering.guard`); it is never removed. A `for` that can never fire is not dead code — it
+is a resting, observable continuation, present in the normal form, in the state hash, and in
+storage. Removing it would change what a validator sees.
+
+**Proves**: compile-time guard discharge (S-D0) is *one-sided* and *observationally inert*.
+Only a provably-`true` binder-closed guard is elided, and eliding it is sound because an omitted
+guard and a `true` guard drive `check_commit` to the identical verdict — mechanized as
+`GuardDischargeSoundness.v`'s `discharge_preserves_the_fired_set`.
+
+> "The compiler is allowed to answer a question the runtime was going to ask, but only when it
+> can use the runtime's own evaluator to answer it, and only when the answer is yes. A 'no' it
+> merely tells you about — because a receive that never fires is still part of the state."
+
 > "The guard is not an if-statement in the body — the body never starts. The veto happens inside
 > the machine's matcher, before the COMM commits, and the rejected offer is still on the book
 > for anyone else."

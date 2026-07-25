@@ -176,6 +176,12 @@ const GUARD_CORPUS: &[GuardRow] = &[
     ("true and x > 0", Residual),
     ("x > 0 and false", Residual),
     ("false or x > 0", Residual),
+    // ── ★ THE DEMO GUARDS, VERBATIM (decision U-7: the demos are unchanged by S-D0).
+    //    Taken from `demos/rhocalc-settlement/settlement.env` and `RUN-SHEET.md`. All three
+    //    are payload-dependent, so all three are Residual and every demo beat behaves
+    //    exactly as it did — asserted here rather than argued. ──────────────────────────────
+    ("x < 46u32", Residual),          // settlement.env `desk`  (`px <= 45u32`, RUN-SHEET §fallback)
+    ("100u32 / x >= 1u32", Residual), // RUN-SHEET:131,138 — the divide-by-zero beat
 ];
 
 /// The cross-bind (`&`-join) corpus: guards over TWO binds. Kept separate because they need a
@@ -188,11 +194,13 @@ const JOIN_GUARD_CORPUS: &[GuardRow] = &[
     ("x > 1 and y > 3", Residual),     // rhocalc_tests.rs:1827
     ("x == y", Residual),              // rhocalc_tests.rs:3845
     ("x > 1", Residual),               // rhocalc_tests.rs:1795
-    // The three DEMO settlement guards (all payload-dependent ⇒ all Residual; the demos are
-    // unchanged by S-D0, decision U-7).
-    (r#"(x > 1) and (y == "lemon")"#, Residual),
+    (r#"(x > 1) and (y == "lemon")"#, Residual), // rhocalc_tests.rs:1851
     ("x >= y", Residual),
     ("x != y", Residual),
+    // ★ The cross-bind DEMO guard, verbatim from `demos/rhocalc-settlement/settlement.env`'s
+    // `settle` row (`px * qty <= 500u32`, in the RUN-SHEET's `<`-fallback spelling). Payload-
+    // dependent ⇒ Residual ⇒ the demo is unchanged (decision U-7).
+    ("x * y < 501u32", Residual),
 ];
 
 // ════════════════════════════════════════════════════════════════════════════════════════════
@@ -646,6 +654,111 @@ fn the_three_codegen_guard_sites_are_all_residual() {
             GuardDischarge::Residual,
             "{name}: a constructed non-linearity guard must be Residual even if a host leg \
              claimed `true`"
+        );
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════════════════════
+// Demo fidelity (decisions U-7 and the optional Beat 3b)
+// ════════════════════════════════════════════════════════════════════════════════════════════
+
+/// ★ The RUN-SHEET's **Beat 3b** claims, VERIFIED rather than asserted on paper.
+///
+/// The two programs are copied verbatim from
+/// `demos/rhocalc-settlement/RUN-SHEET.md`. Beat 3b tells the audience three things, and all
+/// three are checked here: the vacuous guard fires, its `where` clause is ABSENT from the
+/// compiled artifact, and the statically-false mirror neither fires nor loses its guard.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_run_sheets_beat_3b_is_exactly_what_the_compiler_does() {
+    // ── Claim 1: `false implies false` is vacuously true, so the receive commits … ──────────
+    let vacuous = r#"{ for(@px <- @("offer") where false implies false){@("OUT")!(px)}
+                       | @("offer")!(42u32) }"#;
+    let (on, off) = lower_both(vacuous);
+
+    // ── Claim 2: … and its `where` clause is not in the artifact at all. ────────────────────
+    assert!(
+        receive_condition(&on).is_none(),
+        "Beat 3b: the vacuous guard must be DISCHARGED — no `Receive.condition` is emitted"
+    );
+    assert!(
+        receive_condition(&off).is_some(),
+        "…and the switch-off arm must still carry it, so the two arms are comparable"
+    );
+
+    let on_values =
+        run_normalized_par_for_oracle_and_read_runtime_value_channels(&on, &["OUT", "offer"])
+            .await
+            .expect("Beat 3b vacuous-guard run (discharge ON)");
+    let off_values =
+        run_normalized_par_for_oracle_and_read_runtime_value_channels(&off, &["OUT", "offer"])
+            .await
+            .expect("Beat 3b vacuous-guard run (discharge OFF)");
+    assert_eq!(
+        on_values.get("OUT").map(Vec::len),
+        Some(1),
+        "Beat 3b: `OUT: [42] (1 value(s))` — the vacuous guard commits; got {on_values:?}"
+    );
+    assert_eq!(
+        on_values, off_values,
+        "Beat 3b: discharging the guard must not change a single observation"
+    );
+
+    // ── Claim 3: the statically-FALSE mirror does not fire, and KEEPS its guard. ────────────
+    let refuted = r#"{ for(@px <- @("offer") where true implies false){@("OUT")!(px)}
+                       | @("offer")!(42u32) }"#;
+    let (on, off) = lower_both(refuted);
+    assert!(
+        receive_condition(&on).is_some(),
+        "Beat 3b: a statically-FALSE guard is REPORTED, never removed — a `for` that can \
+         never fire is a resting observable"
+    );
+    assert_eq!(
+        on.encode_to_vec(),
+        off.encode_to_vec(),
+        "Beat 3b: refutation leaves the artifact byte-identical"
+    );
+    let observed =
+        run_normalized_par_for_oracle_and_read_runtime_value_channels(&on, &["OUT", "offer"])
+            .await
+            .expect("Beat 3b refuted-guard run");
+    assert_eq!(
+        observed.get("OUT").map(Vec::len).unwrap_or(0),
+        0,
+        "Beat 3b: `OUT: [] (0 value(s))` — the refuted guard never commits; got {observed:?}"
+    );
+    assert_eq!(
+        observed.get("offer").map(Vec::len),
+        Some(1),
+        "…and the offer is STILL RESTING, which is why the receive may not be folded away"
+    );
+}
+
+/// ★ Decision U-7: the demos are UNCHANGED by S-D0. Every settlement guard, taken verbatim
+/// from `demos/rhocalc-settlement/settlement.env` and its RUN-SHEET, is payload-dependent and
+/// therefore Residual — the compiled demo is byte-identical with the switch either way.
+#[test]
+fn every_settlement_demo_guard_is_residual_so_the_demo_is_unchanged() {
+    let demo_guards = [
+        ("x < 46u32", "the `desk` limit order"),
+        ("x * y < 501u32", "the `settle` cross-channel budget"),
+        ("100u32 / x >= 1u32", "the SafeArith divide-by-zero veto"),
+        ("x + y < 60u32", "the RUN-SHEET's Beat-4 budget fallback"),
+    ];
+    for (guard, what) in demo_guards {
+        let program = match guard.contains('y') {
+            true => join_program(guard),
+            false => single_bind_program(guard),
+        };
+        assert_eq!(
+            outcome_from_artifact(&program),
+            GuardDischarge::Residual,
+            "{what} ({guard:?}) is payload-dependent and must stay on the machine"
+        );
+        let (on, off) = lower_both(&program);
+        assert_eq!(
+            on.encode_to_vec(),
+            off.encode_to_vec(),
+            "{what}: the demo artifact must be byte-identical under both switch positions"
         );
     }
 }
