@@ -169,6 +169,30 @@ pub fn guard_then(cond: &Proc, body: &Proc) -> Proc {
 
 fn eval_cmp_order(lhs: &Proc, rhs: &Proc) -> Option<Ordering> {
     match (lhs, rhs) {
+        // ★ #33 / divergence H, SECOND HALF. Divergence H — "Rholang's `==` is STRUCTURAL
+        // equality on the whole `Par` (`reduce.rs::combine_eq`), which answers `true` for two
+        // `GBool`s; RhoCalc conforms DOWN to Rholang" — was closed in the FOLD lane
+        // (`rhocalc.rs`'s `Eq` arm) and NOT here, in the GUARD lane. There are two `Eq`
+        // implementations and only one got the arm.
+        //
+        // The asymmetry is what made it survive: in the fold lane an unhandled shape yields
+        // `Proc::Err`, which is LOUD and was caught same-day by the conformance differential.
+        // Here an unhandled shape yields `None`, which the eager COMM sites treat identically
+        // to a decided `false` — so the identical gap is SILENT. `_ => None` is a bug
+        // concealer, which is the deeper point of #33.
+        //
+        // Concretely: `for(x <- c where x == true){*x} | c!(true)` built a `sub_cond` of
+        // `Eq(CastBool(true), CastBool(true))`, `eval_cmp_order` had no `CastBool` arm,
+        // `compare_collection_equality` declines when neither side is a collection, so the
+        // guard evaluated to `None` and the host BLOCKED a COMM the machine fires. And because
+        // `sub_cond` is a local value never registered as an Ascent `proc(…)` fact, the fold
+        // lane's fix could not reach it.
+        (Proc::CastBool(a), Proc::CastBool(b)) => match (a.as_ref(), b.as_ref()) {
+            // `false < true`, matching `bool`'s own `Ord`, so `<`/`<=` on booleans agree with
+            // Rust and with the structural comparison the machine performs.
+            (Bool::BoolLit(x), Bool::BoolLit(y)) => Some(x.cmp(y)),
+            _ => None,
+        },
         (Proc::CastInt(a), Proc::CastInt(b)) => match (a.as_ref(), b.as_ref()) {
             (Int::NumLit(x), Int::NumLit(y)) => Some(x.cmp(y)),
             _ => None,

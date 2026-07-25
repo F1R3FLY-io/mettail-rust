@@ -1411,7 +1411,49 @@ mod comm {
         }
     }
 
-    #[test]
+    /// ★ #33 / divergence H, SECOND HALF — the guard lane's `==` must decide two
+/// booleans, exactly as the fold lane's already does.
+///
+/// Divergence H is "Rholang's `==` is STRUCTURAL equality on the whole `Par`
+/// (`reduce.rs::combine_eq`), which answers `true` for two `GBool`s; RhoCalc
+/// conforms DOWN to Rholang." It was closed in the FOLD lane and NOT in the GUARD
+/// lane — there are two `Eq` implementations and only one got the `CastBool` arm.
+///
+/// The asymmetry is why it survived. In the fold lane an unhandled shape yields
+/// `Proc::Err`, which is LOUD and was caught same-day by the conformance
+/// differential. In the guard lane the identical gap yielded `None`, which the
+/// eager COMM sites treat identically to a decided `false` — so it was SILENT, and
+/// the host BLOCKED a COMM the machine fires.
+///
+/// And it could not be reached by the fold-lane fix: the guard is evaluated on a
+/// freshly substituted local value that is never registered as an Ascent
+/// `proc(…)` fact, so no grammar fold runs on it.
+#[test]
+fn a_boolean_equality_guard_decides_on_the_host() {
+    // The datum/reduct pair is `"hi"` / `*@("hi")`, the same one `assert_host_matches`
+    // uses, and the choice is load-bearing. The harness detects firing by SUBSTRING,
+    // so a reduct that also occurs in the blocked normal form is a false positive in
+    // BOTH directions — a numeric datum `1` with reduct `1` reads as fired even
+    // though the un-fired `c!(1)` is what contains it. `*@("hi")` is the DEREFERENCED
+    // rendering and cannot appear in the resting send `c!("hi")`, so the signal is
+    // real. The guard is a CONSTANT boolean comparison, so the datum is free to be
+    // whatever discriminates while the guard still exercises the `CastBool` arm.
+    fn guard(g: &str, expected: bool) {
+        assert_host_guard_on(g, "\"hi\"", "*@(\"hi\")", expected)
+    }
+    guard("true == true", true);
+    guard("false == false", true);
+    // And it genuinely decides FALSE rather than declining — a fix that made every
+    // boolean comparison fire would pass the rows above and fail these.
+    guard("true == false", false);
+    guard("false == true", false);
+    // The ORDER is `false < true`, matching `bool`'s own `Ord` and the machine's
+    // structural comparison, so the relational operators agree too.
+    guard("false < true", true);
+    guard("true < false", false);
+}
+
+#[test]
     fn implies_truth_table_on_the_host_guard_evaluator() {
         // `p ⇒ q` ≡ `¬p ∨ q`, all four ground rows, none sampled.
         assert_host_guard("false implies false", true);
