@@ -63,6 +63,85 @@ use syn::Ident;
 /// false-positive family is landed before the false-negative family.
 pub(crate) const COLL_MATCH_CARDINALITY_GATE: bool = true;
 
+/// BINDER_COLL_FIELD_MATCH_GATE — kill-switch for the D1 fix, 2026-07-25.
+///
+/// A collection FIELD in Binder / MultiBinder PRE-SCOPE position was compared by
+/// LENGTH ONLY — `if (**g0).len() != (**p0).len() { return None; }` — so two
+/// collections of equal length but entirely different contents MATCHED, and no
+/// element ever bound a pattern variable. When `false`, the length-only compare
+/// is restored and the emission is byte-identical to the pre-fix baseline.
+///
+/// Blast radius, measured rather than estimated: exactly THREE generated sites
+/// in TWO languages — `class3multi::TaggedInputs` (`Vec<Proc>` and `Vec<Name>`)
+/// and `class3opt::PInputsOptTagged` (`Vec<Name>`). All three are `Vec`, so the
+/// fix needs only positional element-wise matching; no unordered-collection
+/// algorithm is pulled forward from Stage 4.
+///
+/// (An earlier estimate of ~721 sites came from grepping `len() != ` across the
+/// generated tree, which also matches the LEGITIMATE `Vec` collection-arm
+/// cardinality checks and the binder-ARITY checks
+/// `g_inner.unsafe_pattern.len() != p_inner.unsafe_pattern.len()`. Those are
+/// correct and untouched.)
+pub(crate) const BINDER_COLL_FIELD_MATCH_GATE: bool = true;
+
+/// D1 — the shared comparison for a category-direct COLLECTION FIELD.
+///
+/// `gaccess` / `paccess` are the already-dereferenced accessor expressions for
+/// the two containers (e.g. `(**g0)`).
+///
+/// `Vec` is matched POSITIONALLY: cardinality, then element-wise
+/// `match_pattern`, merging witnesses — identical in shape to the `Vec` branch
+/// of [`generate_collection_match_arm`], which is the verified one.
+///
+/// Every other collection kind falls back to STRUCTURAL EQUALITY on the whole
+/// container. That is deliberately conservative and is not a stub:
+///
+///  * it is strictly STRONGER than the length-only compare it replaces, so it
+///    moves in the false-positive-removing direction that Stage 1 requires;
+///  * it is trivially type-correct for every wrapper (derived `PartialEq`),
+///    which the existing optional-collection path already relies on;
+///  * no language instantiates it today (all three live sites are `Vec`), so
+///    writing speculative per-wrapper iteration here would be exactly the
+///    mistake that `generate_collection_match_arm` already embodies — three of
+///    its four branches have never been compiled and its `HashMap` branch does
+///    not type-check. Element-variable binding inside an UNORDERED collection
+///    field is owned by Stage 4, which introduces one verified implementation.
+fn collection_field_match_tokens(
+    field: &FieldInfo,
+    gaccess: &TokenStream,
+    paccess: &TokenStream,
+) -> TokenStream {
+    if !BINDER_COLL_FIELD_MATCH_GATE {
+        return quote! {
+            if #gaccess.len() != #paccess.len() {
+                return None;
+            }
+        };
+    }
+    match field.coll_type {
+        Some(mettail_ast::types::CollectionType::Vec) => quote! {
+            {
+                let __g_coll = &#gaccess;
+                let __p_coll = &#paccess;
+                if __g_coll.len() != __p_coll.len() {
+                    return None;
+                }
+                for (__g_elem, __p_elem) in __g_coll.iter().zip(__p_coll.iter()) {
+                    match __g_elem.match_pattern(__p_elem) {
+                        Some(b) => bindings.merge(b),
+                        None => return None,
+                    }
+                }
+            }
+        },
+        _ => quote! {
+            if #gaccess != #paccess {
+                return None;
+            }
+        },
+    }
+}
+
 // =============================================================================
 // Main Entry Point
 // =============================================================================
@@ -807,11 +886,10 @@ fn generate_binder_match_arm_inline(
                 };
             }
             if field.is_collection {
-                quote! {
-                    if (**#gname).len() != (**#pname).len() {
-                        return None;
-                    }
-                }
+                // D1 (2026-07-25): was LENGTH-ONLY, so two equal-length
+                // collections with different contents matched and no element
+                // ever bound a pattern variable.
+                collection_field_match_tokens(field, &quote! { (**#gname) }, &quote! { (**#pname) })
             } else {
                 // Re-enter iterative engine for pre-scope field matching
                 quote! {
@@ -885,11 +963,8 @@ fn generate_multi_binder_match_arm_inline(
                 };
             }
             if field.is_collection {
-                quote! {
-                    if (**#gname).len() != (**#pname).len() {
-                        return None;
-                    }
-                }
+                // D1 — same defect and same fix as the single-Binder arm above.
+                collection_field_match_tokens(field, &quote! { (**#gname) }, &quote! { (**#pname) })
             } else {
                 quote! {
                     {
