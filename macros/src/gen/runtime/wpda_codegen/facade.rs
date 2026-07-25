@@ -959,6 +959,28 @@ fn emit_sep_isolation(cat_ident: &proc_macro2::Ident, shape: &SepCombineShape) -
                 Vec::with_capacity(__seg_ranges.len());
             for &(__s, __e) in &__seg_ranges {
                 let __seg = input[__s..__e].trim();
+                // ── SIBLING-EMPTINESS AUDIT (2026-07-25, G1 degenerate-tail pass) ──
+                // This is the P2 sep isolator's per-ELEMENT emptiness rule. It is the
+                // COUNTERPART of the P1 projection arm's per-element rule
+                // (`emit_proj_variant_arm`, `OpKind::Sep`), and it is CORRECT for the
+                // same grammatical reason: `.*sep(s)` derives `elem (s elem)*`, so an
+                // empty element means a dangling separator, which is not in the
+                // language. AUDITED AND DELIBERATELY UNCHANGED.
+                //
+                // The DIVERGENCE from the projection arm is the REGION-level case, and
+                // it is a divergence in REACHABILITY, not in policy:
+                //   • the projection arm receives a `.*sep` region carved out of a
+                //     FRAME (`… "," bs.*sep(",") ")"`), so a ZERO-element list is a
+                //     reachable, in-language surface (`n!(a,)`) — hence the G1 fix that
+                //     binds the empty list there;
+                //   • this isolator only ever engages on a whole-domain list that
+                //     already has ≥2 depth-0 segments (`__seg_ranges.len() < 2 ⇒
+                //     return None` above, modulo the single-element-twin seam), so the
+                //     ZERO-element region never reaches this loop. There is no
+                //     region-emptiness case to get wrong.
+                // Additionally, every decline here is a plain whole-helper `return
+                // None`; unlike the projection arm it feeds no authoritative-reject
+                // bookkeeping, so a decline can never be escalated to `Err`.
                 if __seg.is_empty() {
                     return None;
                 }
@@ -1792,9 +1814,71 @@ fn emit_proj_variant_arm(
                     let #pairs_id: Vec<(Vec<#ecat>, __W)> = {
                         let (__s, __e) = __ops[#oi];
                         let __region = input[__s..__e].trim();
-                        // ROOT-1 (a9fbeefe): empty SepList region is STRUCTURAL, NOT a
-                        // parse-Err ⇒ mark incomplete so the reject falls to the walker.
-                        if __region.is_empty() { #set_cap_hit break '__variant; }
+                        // ── G1 DEGENERATE-TAIL FIX (2026-07-25) ──
+                        // An EMPTY `.*sep` region is the ZERO-ELEMENT list, which is
+                        // IN THE LANGUAGE: `.*sep` is zero-or-more, so a rule like
+                        // `n "!" "(" a "," bs.*sep(",") ")"` derives `n!(a,)` with
+                        // `bs = []`, and `Display` renders exactly that surface. The
+                        // isolation helper CAN represent it: the cartesian fold below
+                        // is seeded with `vec![(Vec::new(), one())]`, so ZERO
+                        // `__per_seg` entries already ARE the one-element combo
+                        // carrying the empty `Vec`. Binding it here is therefore not a
+                        // new semantics — it is the fold's own identity, reached by
+                        // short-circuit instead of by declining.
+                        //
+                        // The PRE-FIX code bailed here (`__cap_hit = true; break`) on
+                        // the premise, stated in the sibling comment below, that "the
+                        // walker (the authoritative/complete parser)" would cover the
+                        // shape. STAGE-0 MEASUREMENT REFUTED THAT PREMISE: with
+                        // `PRATTAIL_NO_PROJ_ISOLATION=1` the walker alone REJECTS
+                        // `@(Nil.set(a!(Nil) , Nil))!(Nil,Nil)` and
+                        // `@(Nil.set(a!(Nil) , Nil))!(Nil)` — a σ-led frame whose
+                        // channel operand is a grouped method frame containing a nested
+                        // channel-first send. Those inputs parse in production ONLY
+                        // because this facade handles them. So on the intersection
+                        // (degenerate tail ∧ method-frame channel) the decline landed on
+                        // a walker gap and the input died. `ProjectionIsolation.v`
+                        // `T13_fallthrough_is_not_completeness` states the general
+                        // principle: fall-through is a REFINEMENT of the facade to the
+                        // monolithic body, NEVER a guarantee that the monolithic body
+                        // succeeds.
+                        //
+                        // Note the ASYMMETRY with the per-ELEMENT emptiness rule below:
+                        // an empty ELEMENT (an intra-list trailing/consecutive
+                        // separator, `@Nil!(0,1,)`) is NOT in the language — `.*sep`
+                        // derives `elem (sep elem)*`, never a dangling separator — and
+                        // Stage-0 confirms the walker rejects it. An empty REGION is a
+                        // different thing entirely: it is the list itself being empty.
+                        //
+                        // This ADDS a reading and prunes nothing (the pre-fix arm
+                        // produced NO candidate for this tiling), so it cannot
+                        // disambiguate early.
+                        //
+                        // ── STAGE-3 REJECT AUDIT: `__cap_hit` IS DELIBERATELY STILL
+                        // SET HERE (conservative policy) ──
+                        // `__cap_hit` is now PURE REJECT BOOKKEEPING at this site, not a
+                        // decline: we bind the reading AND mark the enumeration
+                        // "not provably complete". Its ONLY consumer is the ROOT-1
+                        // authoritative-reject decline, where it can solely SUPPRESS a
+                        // reject — never fabricate one. Keeping it set means an input
+                        // that reaches a degenerate tail and still yields NO candidate
+                        // (e.g. `@Nil!(<unparseable>,)`) keeps falling through to the
+                        // walker and keeps TODAY'S error message, instead of flipping to
+                        // the `__proj_sigil_reject` surface. Sharpening that message is a
+                        // separate, deliberate improvement; it is not part of this fix,
+                        // and bundling it would have made the diff's blast radius the
+                        // error surface of every σ-led language.
+                        //
+                        // Net effect on the two monotone quantities:
+                        //   candidate set  — STRICTLY GROWS (the empty-list reading is
+                        //                    now produced where nothing was before);
+                        //   reject firing  — UNCHANGED-OR-NARROWER (this site sets
+                        //                    `__cap_hit` exactly as often as before).
+                        // So neither disambiguation nor diagnostics can regress.
+                        if __region.is_empty() {
+                            #set_cap_hit
+                            vec![(Vec::new(), <__W as Semiring>::one())]
+                        } else {
                         let __rb = __region.as_bytes();
                         let __rn = __rb.len();
                         // Split the region at depth-0 `sep_byte` (bracket-aware).
@@ -1822,13 +1906,28 @@ fn emit_proj_variant_arm(
                             Vec::with_capacity(__seg_ranges.len());
                         for &(__rs, __re) in &__seg_ranges {
                             let __eseg = __region[__rs..__re].trim();
-                            // ROOT-1 (a9fbeefe): an empty ELEMENT segment is STRUCTURAL
-                            // (a trailing/consecutive separator — `@Nil!(0,)` splits
-                            // `"0,"` into `["0",""]`; the grammar's `args.*sep(",")`
-                            // ACCEPTS a trailing separator and the walker parses it),
-                            // NOT a genuine operand parse-Err. Mark incomplete so the
-                            // authoritative-reject never escalates it to `Err` and it
-                            // falls to the walker (the authoritative/complete parser).
+                            // An empty ELEMENT segment is an intra-list dangling
+                            // separator (`@Nil!(0,1,)` splits the region `"1,"` into
+                            // `["1", ""]`). This is a STRUCTURAL decline, NOT a genuine
+                            // operand parse-Err ⇒ mark the enumeration incomplete so the
+                            // authoritative-reject never escalates it to `Err`.
+                            //
+                            // ⚠ CORRECTED 2026-07-25 (Stage-0 evidence gate). The
+                            // pre-fix comment here asserted that "the grammar's
+                            // `args.*sep(",")` ACCEPTS a trailing separator and the
+                            // walker parses it". THAT IS FALSE. `.*sep(s)` derives
+                            // `elem (s elem)*` — a dangling separator is NOT derivable —
+                            // and MEASUREMENT confirms the walker rejects `@Nil!(0,1,)`
+                            // in BOTH legs (proj-iso ON and OFF): "no accepting branch
+                            // reached end of input". The decline is therefore CORRECT
+                            // and is deliberately KEPT; only the false rationale is
+                            // removed. Do not "fix" this by binding an empty element —
+                            // that would fabricate a reading outside the language.
+                            //
+                            // Contrast the REGION-emptiness rule above: an empty region
+                            // is the zero-element list (`bs = []`), which IS derivable,
+                            // so that one binds instead of declining. The two rules look
+                            // symmetric and are not; the asymmetry is grammatical.
                             if __eseg.is_empty() { #set_cap_hit break '__variant; }
                             // SINGLE-RESULT seam (bug 2318): per-element single-winner
                             // (see the scalar-operand note above). Keeps the framed-
@@ -1880,6 +1979,7 @@ fn emit_proj_variant_arm(
                             __combos = __next;
                         }
                         __combos
+                        } // ← closes the `else` of the G1 empty-region short-circuit
                     };
                 });
             }
@@ -2339,6 +2439,17 @@ fn emit_projection_isolation(cat_ident: &proc_macro2::Ident, shape: &ProjIsoShap
             }
             #run_anchor_helper
             #matcher_def
+
+            // `@`-PROJECTION ISOLATION KILL-SWITCH (2026-07-25): decline BEFORE any
+            // work when `PRATTAIL_NO_PROJ_ISOLATION` is set, so the facade runs the
+            // UNMODIFIED monolithic body — the `combine_run = None` fall-through of
+            // `ProjectionIsolation.v` `T7_fallthrough_is_monolithic`. Note that
+            // fall-through is a REFINEMENT statement, NOT a completeness guarantee
+            // (`T13_fallthrough_is_not_completeness`): OFF is the WALKER-ONLY reading
+            // set, which may be strictly SMALLER than ON.
+            if __proj_iso_disabled() {
+                return None;
+            }
 
             let input = input.trim();
             let __bytes = input.as_bytes();
@@ -2876,6 +2987,59 @@ fn emit_proj_memo_preamble() -> TokenStream {
             fn drop(&mut self) {
                 __PROJ_MEMO_DEPTH.with(|__d| __d.set(__d.get().saturating_sub(1)));
             }
+        }
+    }
+}
+
+/// The name of the process-wide `@`-projection-isolation KILL-SWITCH environment
+/// variable. Setting it to any value (e.g. `PRATTAIL_NO_PROJ_ISOLATION=1`) makes
+/// every emitted `__mettail_wpda_proj_isolate_all_<Cat>` helper decline
+/// immediately, so the facade falls through to the UNMODIFIED monolithic walker
+/// body — the `combine_run = None` fall-through of `ProjectionIsolation.v`
+/// `T7_fallthrough_is_monolithic`.
+///
+/// This switch is PERMANENT and COMMITTED, not a debugging scaffold. Its absence
+/// is what let the G1 degenerate-tail defect (2026-07-25) hide: without an
+/// ON ≡ OFF A/B seam there is no way to tell a facade-only decline from a genuine
+/// language-level reject, so a facade decline that lands on a walker gap looks
+/// exactly like "the input is not in the language". `T13_fallthrough_is_not_completeness`
+/// states the same fact in Rocq; this switch is the executable half of it.
+pub(crate) const PROJ_ISO_KILL_SWITCH_ENV: &str = "PRATTAIL_NO_PROJ_ISOLATION";
+
+/// `@`-PROJECTION ISOLATION KILL-SWITCH (2026-07-25) — the module-scope
+/// `__proj_iso_disabled()` predicate emitted ONCE per language module (in
+/// [`emit_parse_fns`]), gated by ≥1 `@`-projection-eligible category, exactly
+/// like [`emit_proj_sigil_reject_preamble`].
+///
+/// The environment is read EXACTLY ONCE per process into a `OnceLock<bool>` — the
+/// helpers sit on the parse hot path, so a per-call `std::env::var_os` (which takes
+/// the environment lock and scans) would be a measurable parse-time regression, and
+/// a value that could change mid-process would break the memoized best-parse cache
+/// (`__PROJ_MEMO_<Cat>` entries computed under one setting must never be served
+/// under the other). Process-constant ⇒ the memo stays coherent.
+///
+/// A/B harnesses therefore run the OFF leg in a SUBPROCESS (see
+/// `languages/tests/proj_iso_ab_soundness.rs`), which is also the only honest A/B:
+/// it exercises the real end-to-end binary rather than a re-entrant flag flip.
+fn emit_proj_iso_kill_switch_preamble() -> TokenStream {
+    let env_name = PROJ_ISO_KILL_SWITCH_ENV;
+    quote! {
+        /// Process-wide `@`-projection-isolation kill switch, read ONCE from
+        /// `PRATTAIL_NO_PROJ_ISOLATION`. `true` ⇒ every projection-isolation
+        /// helper declines immediately and the facade runs the UNMODIFIED
+        /// monolithic body (`ProjectionIsolation.v` `T7_fallthrough_is_monolithic`).
+        ///
+        /// Read once (not per call): the helpers are on the parse hot path, and a
+        /// value that changed mid-process would poison the `__PROJ_MEMO_<Cat>`
+        /// best-parse memo (entries computed under one setting served under the
+        /// other).
+        #[inline]
+        #[allow(dead_code)]
+        fn __proj_iso_disabled() -> bool {
+            static __PROJ_ISO_DISABLED: std::sync::OnceLock<bool> =
+                std::sync::OnceLock::new();
+            *__PROJ_ISO_DISABLED
+                .get_or_init(|| std::env::var_os(#env_name).is_some())
         }
     }
 }
@@ -4377,6 +4541,15 @@ pub(crate) fn emit_parse_fns(
     } else {
         quote! {}
     };
+    // ── `@`-PROJECTION ISOLATION KILL-SWITCH shared preamble (2026-07-25) ──
+    // The `__proj_iso_disabled()` process-constant predicate, emitted ONCE per
+    // module under the SAME gate as the reject preamble. No proj-eligible category
+    // ⇒ empty ⇒ byte-identical.
+    let proj_iso_kill_switch_preamble = if any_proj_eligible {
+        emit_proj_iso_kill_switch_preamble()
+    } else {
+        quote! {}
+    };
     quote! {
         // ROOT-P MEMOIZED BEST-PARSE (design af7680e2): shared epoch/depth
         // thread-local preamble + `__ProjMemoGuard`. Empty when OFF / no
@@ -4385,6 +4558,10 @@ pub(crate) fn emit_parse_fns(
         // ROOT-1 AUTHORITATIVE-REJECT (design a9fbeefe): shared thread-local reject
         // flag + accessors. Empty when OFF / no proj-eligible category (byte-identical).
         #sigil_reject_preamble
+        // `@`-PROJECTION ISOLATION KILL-SWITCH (2026-07-25): the process-constant
+        // `__proj_iso_disabled()` predicate every isolation helper consults at entry.
+        // Empty when no proj-eligible category (byte-identical).
+        #proj_iso_kill_switch_preamble
 
         /// One round of WPDS-facade recovery — captures the message that
         /// triggered the round, the token position where it surfaced, and

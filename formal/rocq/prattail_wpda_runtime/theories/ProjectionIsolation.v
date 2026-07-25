@@ -88,6 +88,29 @@
  *                                         reading while the SINGLE seam is a
  *                                         singleton.
  *
+ * ── G1 DEGENERATE-TAIL ADDITIONS (2026-07-25; see the section banner below) ──
+ * ★ T11 empty_seplist_is_unit          — a ZERO-element `.*sep` region is in the
+ *                                         language, the emitted scan manufactures a
+ *                                         PHANTOM empty segment for it, and the
+ *                                         value the fixed arm binds is the cartesian
+ *                                         fold's own UNIT (weight `one`, so it
+ *                                         perturbs no other operand).
+ * ★ T12 degenerate_tail_complete       — appending a degenerate (empty) tail to a
+ *                                         frame is a BIJECTION on the combine set
+ *                                         (count-preserving, nothing fabricated);
+ *                                         hence whenever the frame's other operands
+ *                                         parse, the degenerate-tail frame HAS a
+ *                                         reading and declining LOSES it.
+ * ★ T13 fallthrough_is_not_completeness — T7 is a REFINEMENT statement, never a
+ *                                         completeness guarantee: it fixes the
+ *                                         declined facade's VALUE, not its SUCCESS.
+ *                                         Declining is safe on an input IFF the
+ *                                         monolithic body is complete THERE — an
+ *                                         empirical premise that must be MEASURED
+ *                                         (the `PRATTAIL_NO_PROJ_ISOLATION` kill
+ *                                         switch), never assumed. Misreading T7 as
+ *                                         a licence is what enabled G1.
+ *
  * Rocq 9.1 compatible. No Admitted, no Axioms, no Assumptions (Section
  * Variables/Hypotheses are discharged; every theorem closes under the global
  * context). Model style follows SepReconvergence.v / AtQuotedBindGate.v.
@@ -741,6 +764,337 @@ Proof.
   - reflexivity.
 Qed.
 
+(* ════════════════════════════════════════════════════════════════════════
+   G1 DEGENERATE-TAIL (2026-07-25) — the ZERO-ELEMENT `.*sep` operand.
+
+   THE DEFECT. `emit_proj_variant_arm`'s `OpKind::Sep` arm opened with
+
+       if __region.is_empty() { __cap_hit = true; break '__variant; }
+
+   so the `@`-projection isolation helper DECLINED whenever a frame's `.*sep`
+   operand region was empty. But a zero-element list is IN THE LANGUAGE: `.*sep`
+   is zero-or-more, so `POutput2Plus . n:Name, a:Proc, bs:Vec(Proc) |- n "!" "("
+   a "," bs.*sep(",") ")"` derives `n!(a,)` with `bs = []`, and `Display` renders
+   exactly that surface. Two independent facts, each individually survivable,
+   composed into a hard parse failure:
+
+     G1 the isolation helper cannot REPRESENT the zero-element list (it declines);
+     G2 the monolithic walker cannot PARSE a σ-led frame whose channel operand is
+        a grouped method frame containing a nested channel-first send.
+
+   On the INTERSECTION the decline lands on the walker gap and the input dies.
+   Measured 2026-07-25 with the committed `PRATTAIL_NO_PROJ_ISOLATION` kill switch
+   (`languages/tests/proj_iso_ab_soundness.rs`):
+
+     `@(Nil.set(a!(Nil) , Nil))!(Nil,Nil)`   facade ON → ACCEPT   walker only → REJECT
+     `@(Nil.set(a!(Nil) , Nil))!(Nil)`       facade ON → ACCEPT   walker only → REJECT
+     `@(Nil.set(a!(Nil) , Nil))!(Nil,)`      facade ON → REJECT   walker only → REJECT  ★
+     `@(Nil.set(Nil , Nil))!(Nil,)`          facade ON → ACCEPT   walker only → ACCEPT
+
+   The first two rows REFUTE the codegen comment's premise that the walker is
+   "the authoritative/complete parser"; the third row is the composition.
+
+   THE FIX. Bind the empty list instead of bailing. This is not new semantics: the
+   cartesian fold is already SEEDED with the one-element combo carrying the empty
+   tuple, so zero segments already denote it. T11 proves the seed IS the unit,
+   T12 proves appending a degenerate tail to a frame is a completeness-preserving
+   bijection, and T13 removes the misreading of T7 that licensed the bail.
+   ════════════════════════════════════════════════════════════════════════ *)
+
+Section DegenerateTail.
+
+  (* ── The SEGMENTATION model. A `.*sep` region is a token string over a
+     distinguished separator `TSep` and element characters `TCh`. This is exactly
+     the alphabet the emitted depth-0 scan sees: it only ever tests "is this byte
+     the separator at bracket depth 0?", and every other byte is opaque to it. ── *)
+  Inductive Tok : Type := TSep | TCh.
+
+  (* The EMITTED split (`__seg_ranges`): scan left to right, close a segment at
+     every depth-0 separator, and ALWAYS push a final segment after the loop
+     (`__seg_ranges.push((__start, __rn))`). Transcribed faithfully. *)
+  Fixpoint split_aux (r : list Tok) (cur : list Tok) : list (list Tok) :=
+    match r with
+    | []          => [ rev cur ]
+    | TSep :: rest => rev cur :: split_aux rest []
+    | TCh  :: rest => split_aux rest (TCh :: cur)
+    end.
+
+  Definition split_emitted (r : list Tok) : list (list Tok) := split_aux r [].
+
+  (* An ELEMENT is a NON-EMPTY run of element characters — the smallest thing the
+     element category's string entry can consume. *)
+  Definition chunk (e : list Tok) : Prop := e <> [] /\ Forall (fun t => t = TCh) e.
+
+  (* The LANGUAGE of `bs.*sep(",")` — Kleene star over `elem (sep elem)*`, indexed
+     by the ELEMENT COUNT. `SLnil` is the whole point: zero elements is derivable,
+     and its surface is the EMPTY region. *)
+  Inductive sep_list : list Tok -> nat -> Prop :=
+  | SLnil  : sep_list [] 0
+  | SLone  : forall e, chunk e -> sep_list e 1
+  | SLcons : forall e r n,
+      chunk e -> sep_list r (S n) -> sep_list (e ++ TSep :: r) (S (S n)).
+
+  (* ── T11 (a): the EMPTY region is in the language, with ZERO elements. This is
+     the grammatical fact the bail denied. ── *)
+  Theorem T11_empty_region_is_in_the_language : sep_list [] 0.
+  Proof. exact SLnil. Qed.
+
+  (* ── T11 (b): the emitted scan maps the empty region to ONE EMPTY SEGMENT, not
+     to zero segments. That phantom segment is what the per-element emptiness rule
+     then (correctly, on its own terms) refuses — which is exactly why the arm
+     needs the empty region handled BEFORE the scan runs. ── *)
+  Theorem T11_emitted_split_of_empty_is_one_phantom_segment :
+    split_emitted [] = [ [] ].
+  Proof. reflexivity. Qed.
+
+  Theorem T11_phantom_segment_is_not_an_element :
+    forall e, In e (split_emitted []) -> ~ chunk e.
+  Proof.
+    intros e Hin. simpl in Hin. destruct Hin as [Heq | []]. subst e.
+    intros [Hne _]. apply Hne. reflexivity.
+  Qed.
+
+  (* ── T11 (c) ★ THE UNIT LAW: zero operand-alternative lists denote EXACTLY ONE
+     combo — the empty tuple. So `vec![(Vec::new(), one())]`, the value the fixed
+     arm binds, is not an invention: it is the cartesian fold's own seed, i.e. the
+     unit of the combine monoid, reached by short-circuit instead of by iteration.
+     (`cartesian` is the emitted `__combos` fold; see T1.) ── *)
+  Theorem T11_empty_seplist_is_unit :
+    forall (Reading : Type), cartesian Reading [] = [ [] ].
+  Proof. intro Reading. reflexivity. Qed.
+
+  (* The unit is a LEFT and RIGHT identity for the combine's append action, which
+     is what makes "bind the empty list" compositional with the other operands. *)
+  Theorem T11_unit_is_neutral :
+    forall (Reading : Type) (tup : list Reading), [] ++ tup = tup /\ tup ++ [] = tup.
+  Proof.
+    intros Reading tup. split; [reflexivity |]. induction tup as [| x t IH]; simpl.
+    - reflexivity.
+    - rewrite IH. reflexivity.
+  Qed.
+
+  (* ── T11 (d): the BAIL is not the unit. Declining contributes the EMPTY
+     candidate list; the correct value is the SINGLETON containing the empty
+     tuple. `[] <> [[]]` — one reading was lost, not zero. ── *)
+  Theorem T11_bail_loses_the_unit :
+    forall (Reading : Type), (@nil (list Reading)) <> cartesian Reading [].
+  Proof. intros Reading H. rewrite T11_empty_seplist_is_unit in H. discriminate. Qed.
+
+  (* ── The ⊗-WEIGHT of the bound unit. The arm binds weight `one()`; in the
+     tropical semiring `one = 0` and `⊗ = +`, so the empty tail contributes
+     NOTHING to the frame's weight and cannot perturb which reading wins. ── *)
+  Theorem T11_unit_weight_is_identity :
+    forall (Reading : Type) (w : Reading -> nat),
+      tuple_weight Reading w [] = 0.
+  Proof. intros Reading w. reflexivity. Qed.
+
+  Theorem T11_unit_weight_absorbs :
+    forall (Reading : Type) (w : Reading -> nat) (tup : list Reading),
+      tuple_weight Reading w tup + tuple_weight Reading w [] = tuple_weight Reading w tup.
+  Proof. intros Reading w tup. simpl. lia. Qed.
+
+  (* ── T12 ★ DEGENERATE-TAIL COMPLETENESS. A frame with a degenerate (empty)
+     `.*sep` tail has an operand-alternative profile `ops ++ [[u]]`, where `ops`
+     are the frame's other operands and `u` is the ONE alternative the empty tail
+     admits (the empty list). Appending a SINGLETON alternative list is a
+     BIJECTION on the combine set: every reading of the tail-less frame extends
+     uniquely, nothing is fabricated, nothing is lost. ── *)
+  Theorem T12_degenerate_tail_bijection :
+    forall (Reading : Type) (ops : list (list Reading)) (u : Reading) tup,
+      In tup (cartesian Reading (ops ++ [[u]]))
+      <-> (exists t, In t (cartesian Reading ops) /\ tup = t ++ [u]).
+  Proof.
+    intros Reading ops u.
+    induction ops as [| s rest IH]; intros tup.
+    - (* BASE: `[] ++ [[u]] = [[u]]`, whose combine is the single tuple `[u]`, and
+         `cartesian []` is the single tuple `[]` — so the bijection is `[] ↦ [u]`. *)
+      split.
+      + intro H. simpl in H. destruct H as [Heq | []].
+        exists []. split.
+        * simpl. left. reflexivity.
+        * simpl. symmetry. exact Heq.
+      + intros [t [Ht Heq]]. simpl in Ht. destruct Ht as [Heq2 | []].
+        rewrite <- Heq2 in Heq. simpl in Heq. rewrite Heq. simpl. left. reflexivity.
+    - (* STEP: peel operand `s`. `(s :: rest) ++ [[u]] = s :: (rest ++ [[u]])`, so
+         both sides fan out over the SAME `s` and the IH transports the suffix. *)
+      split.
+      + intro H. simpl in H. rewrite in_flat_map in H.
+        destruct H as [r [Hr Hmap]]. rewrite in_map_iff in Hmap.
+        destruct Hmap as [t0 [Heq Ht0]].
+        apply IH in Ht0. destruct Ht0 as [t [Ht Heq2]].
+        exists (r :: t). split.
+        * simpl. rewrite in_flat_map. exists r. split; [exact Hr |].
+          rewrite in_map_iff. exists t. split; [reflexivity | exact Ht].
+        * rewrite <- Heq, Heq2. reflexivity.
+      + intros [t [Ht Heq]]. simpl in Ht. rewrite in_flat_map in Ht.
+        destruct Ht as [r [Hr Hmap]]. rewrite in_map_iff in Hmap.
+        destruct Hmap as [t' [Heq' Ht']].
+        simpl. rewrite in_flat_map. exists r. split; [exact Hr |].
+        rewrite in_map_iff. exists (t' ++ [u]). split.
+        * rewrite Heq, <- Heq'. reflexivity.
+        * apply IH. exists t'. split; [exact Ht' | reflexivity].
+  Qed.
+
+  (* Version-robust `map` / `fold_right` helpers (same self-containment policy as
+     `len_app` / `len_map` at the top of this file — no dependence on Stdlib
+     renames). *)
+  Lemma map_app_local :
+    forall (A B : Type) (f : A -> B) (l l' : list A),
+      map f (l ++ l') = map f l ++ map f l'.
+  Proof.
+    intros A B f l l'. induction l as [| x l IH]; simpl;
+      [reflexivity | rewrite IH; reflexivity].
+  Qed.
+
+  Lemma fold_mul_snoc_one :
+    forall l, fold_right Nat.mul 1 (l ++ [1]) = fold_right Nat.mul 1 l.
+  Proof.
+    induction l as [| n l IH]; simpl; [reflexivity | rewrite IH; reflexivity].
+  Qed.
+
+  (* Cardinality form: the degenerate tail changes NO count — it multiplies the
+     product of the per-operand alternative counts (T6) by the SINGLE alternative
+     the empty tail admits, i.e. by 1. *)
+  Theorem T12_degenerate_tail_preserves_count :
+    forall (Reading : Type) (ops : list (list Reading)) (u : Reading),
+      length (cartesian Reading (ops ++ [[u]])) = length (cartesian Reading ops).
+  Proof.
+    intros Reading ops u.
+    rewrite (T6_cardinality_is_product Reading (ops ++ [[u]])).
+    rewrite (T6_cardinality_is_product Reading ops).
+    rewrite map_app_local. simpl. apply fold_mul_snoc_one.
+  Qed.
+
+  (* ── T12 ★ THE DEFECT, STATED: whenever the frame's other operands parse, the
+     degenerate-tail frame HAS at least one reading. Declining therefore LOSES a
+     reading — it is not a neutral "let someone else handle it". ── *)
+  Theorem T12_degenerate_tail_complete :
+    forall (Reading : Type) (ops : list (list Reading)) (u : Reading),
+      cartesian Reading ops <> [] -> cartesian Reading (ops ++ [[u]]) <> [].
+  Proof.
+    intros Reading ops u Hne Hcontra.
+    apply Hne.
+    assert (Hlen : length (cartesian Reading ops) = 0).
+    { rewrite <- (T12_degenerate_tail_preserves_count Reading ops u), Hcontra. reflexivity. }
+    destruct (cartesian Reading ops); [reflexivity | simpl in Hlen; discriminate].
+  Qed.
+
+  (* The bail's cost, made explicit: the arm CONTRIBUTED `[]` where completeness
+     demanded a non-empty set. *)
+  Theorem T12_bail_is_incomplete :
+    forall (Reading : Type) (ops : list (list Reading)) (u : Reading),
+      cartesian Reading ops <> [] ->
+      (@nil (list Reading)) <> cartesian Reading (ops ++ [[u]]).
+  Proof.
+    intros Reading ops u Hne H.
+    apply (T12_degenerate_tail_complete Reading ops u Hne).
+    symmetry. exact H.
+  Qed.
+
+End DegenerateTail.
+
+(* ════════════════════════════════════════════════════════════════════════
+   T13 — FALL-THROUGH IS NOT COMPLETENESS (documentation-by-proof).
+
+   THE ROOT ENABLER of the G1 defect was not a coding slip; it was a MISREADING of
+   T7. `T7_fallthrough_is_monolithic` says
+
+       combine_run ops = None  ->  facade ops = mono ops,
+
+   i.e. declining is a REFINEMENT: the facade transfers the monolithic body's
+   answer verbatim. The codegen comment read it as a SAFETY LICENCE — "the walker
+   (the authoritative/complete parser) parses it" — and on that basis declined a
+   shape that is in the language. T7 does not, and cannot, say that: it quantifies
+   over `mono`'s VALUE, never over `mono`'s SUCCESS.
+
+   The theorems below make the gap unmisreadable. T13a restates the refinement.
+   T13b exhibits a model in which T7 holds everywhere and the facade nevertheless
+   accepts nothing — so "declining is safe" is independent of T7. T13c gives the
+   exact missing side condition: declining is safe on an input IFF the monolithic
+   body is complete on that input, which is an EMPIRICAL fact that must be
+   MEASURED (that is what the `PRATTAIL_NO_PROJ_ISOLATION` kill switch is for),
+   never assumed. T13d records the measurement that refuted the assumption.
+   ════════════════════════════════════════════════════════════════════════ *)
+Section FallthroughIsNotCompleteness.
+
+  Variable Reading : Type.
+  Variable Result : Type.
+
+  Variable combine_run : list (list Reading) -> option Result.
+  Variable mono : list (list Reading) -> Result.
+
+  (* `ok r` — "this result is an ACCEPT" (a non-empty reading set). The facade's
+     user cares about `ok (facade ops)`, not about `facade ops = mono ops`. *)
+  Variable ok : Result -> Prop.
+
+  Definition facade_ok (ops : list (list Reading)) : Result :=
+    match combine_run ops with
+    | Some r => r
+    | None   => mono ops
+    end.
+
+  (* ── T13 (a): the refinement, restated on this section's facade. Declining
+     transfers the monolithic ANSWER — nothing more. ── *)
+  Theorem T13_fallthrough_transfers :
+    forall ops, combine_run ops = None -> facade_ok ops = mono ops.
+  Proof. intros ops H. unfold facade_ok. rewrite H. reflexivity. Qed.
+
+  (* ── T13 (c) ★ THE MISSING SIDE CONDITION. On a declined input the facade
+     accepts IFF the monolithic body accepts. So "it is safe to decline here" is
+     EXACTLY the claim "mono is complete here" — a separate, empirical premise.
+     T7 supplies the left-to-right transfer; it supplies no evidence for `ok`. ── *)
+  Theorem T13_safety_needs_mono_completeness :
+    forall ops, combine_run ops = None -> (ok (facade_ok ops) <-> ok (mono ops)).
+  Proof.
+    intros ops H. rewrite (T13_fallthrough_transfers ops H). reflexivity.
+  Qed.
+
+  (* Contrapositive, in the form the defect took: if the monolithic body REJECTS a
+     declined input, the facade rejects it too. A decline onto a monolithic gap is
+     a parse failure, full stop. *)
+  Theorem T13_decline_onto_a_gap_rejects :
+    forall ops, combine_run ops = None -> ~ ok (mono ops) -> ~ ok (facade_ok ops).
+  Proof.
+    intros ops Hnone Hbad Hok.
+    apply Hbad. apply (T13_safety_needs_mono_completeness ops Hnone). exact Hok.
+  Qed.
+
+End FallthroughIsNotCompleteness.
+
+(* ── T13 (b) ★ INDEPENDENCE. A concrete model in which the T7 fall-through
+   equation holds at EVERY input and the facade nevertheless accepts NOTHING.
+   `Result := bool`, `ok b := b = true`, the isolation always declines, and the
+   monolithic body always rejects. T7's conclusion is satisfied everywhere, so no
+   amount of T7 can rule this model out: "fall-through" ⊬ "accepts".
+   This is precisely the situation the G1 comment assumed away. ── *)
+Theorem T13_fallthrough_is_not_completeness :
+  exists (cr : list (list nat) -> option bool) (m : list (list nat) -> bool),
+    (forall ops, cr ops = None)
+    /\ (forall ops, facade_ok nat bool cr m ops = m ops)
+    /\ (forall ops, ~ (fun b => b = true) (facade_ok nat bool cr m ops)).
+Proof.
+  exists (fun _ => None), (fun _ => false).
+  refine (conj (fun _ => eq_refl) (conj _ _)).
+  - intro ops. reflexivity.
+  - intro ops. simpl. discriminate.
+Qed.
+
+(* ── T13 (d) NON-VACUITY, tied to the 2026-07-25 measurement. The kill-switch A/B
+   measured, on `@(Nil.set(a!(Nil) , Nil))!(Nil,Nil)`:
+       facade ENGAGED  → ACCEPT      (`combine_run ops = Some true`)
+       facade DECLINED → REJECT      (`mono ops = false`)
+   so on THIS input the engaged facade and the declined facade differ in `ok`.
+   That is the empirical refutation of "the walker parses it", and it is why the
+   G1 arm must bind the empty list rather than decline. ── *)
+Example T13_measured_witness :
+  let cr_engaged := (fun _ : list (list nat) => Some true) in
+  let cr_declined := (fun _ : list (list nat) => @None bool) in
+  let m := (fun _ : list (list nat) => false) in
+  facade_ok nat bool cr_engaged m [] = true
+  /\ facade_ok nat bool cr_declined m [] = false
+  /\ facade_ok nat bool cr_engaged m [] <> facade_ok nat bool cr_declined m [].
+Proof. refine (conj eq_refl (conj eq_refl _)). discriminate. Qed.
+
 (* ══════════════ Non-vacuity witnesses (concrete finite instantiations for the
    key theorems — the models are inhabited and the statements are not vacuous). ══════════════ *)
 
@@ -824,3 +1178,21 @@ Print Assumptions LRA5_never_worse.
 Print Assumptions LRA6_recovers_when_single_fails.
 Print Assumptions LRA_strict_gain_witness.
 Print Assumptions LRA_passing_identical_witness.
+(* G1 degenerate-tail (2026-07-25). *)
+Print Assumptions T11_empty_region_is_in_the_language.
+Print Assumptions T11_emitted_split_of_empty_is_one_phantom_segment.
+Print Assumptions T11_phantom_segment_is_not_an_element.
+Print Assumptions T11_empty_seplist_is_unit.
+Print Assumptions T11_unit_is_neutral.
+Print Assumptions T11_bail_loses_the_unit.
+Print Assumptions T11_unit_weight_is_identity.
+Print Assumptions T11_unit_weight_absorbs.
+Print Assumptions T12_degenerate_tail_bijection.
+Print Assumptions T12_degenerate_tail_preserves_count.
+Print Assumptions T12_degenerate_tail_complete.
+Print Assumptions T12_bail_is_incomplete.
+Print Assumptions T13_fallthrough_transfers.
+Print Assumptions T13_safety_needs_mono_completeness.
+Print Assumptions T13_decline_onto_a_gap_rejects.
+Print Assumptions T13_fallthrough_is_not_completeness.
+Print Assumptions T13_measured_witness.
