@@ -334,6 +334,43 @@ async fn implies_is_looser_than_or_and_and() {
         !machine_verdict("true implies false or false").await,
         "a true antecedent with a false disjunctive consequent must be false"
     );
+
+    // ★ ASSOCIATIVITY, pinned by TRUTH VALUE (#30). `implies` is declared `right`
+    // (`languages/src/rhocalc.rs`), so a chain reads `a ⇒ (b ⇒ c)` — classical
+    // material implication, and the reading the Heyting `⇒` of
+    // `prattail::algebra_tower::HeytingAlgebra::implies` has.
+    //
+    // It previously omitted the annotation and inherited the infix default, LEFT
+    // associativity. That was recorded as a divergence from the paper rather than
+    // fixed, on the reasoning that an author could parenthesize. The two readings
+    // are not notational variants — this formula is exactly where they disagree,
+    // and neither is a weakening of the other:
+    //
+    //   right  `false ⇒ (false ⇒ false)` = `false ⇒ true`  = TRUE
+    //   left   `(false ⇒ false) ⇒ false` = `true  ⇒ false` = FALSE
+    //
+    // So under the old shape a three-term chain could evaluate to the OPPOSITE
+    // truth value from the one its author wrote, silently, with no diagnostic.
+    //
+    // The parse-shape companion is
+    // `languages/tests/rhocalc_semantic_predicate_ambiguity.rs::a_chained_implies_elects_the_right_associative_reading`.
+    // Shape alone is not enough: it would still pass if the fold ever disagreed
+    // with the parse. This row closes the loop from surface to value ON THE MACHINE.
+    assert!(
+        machine_verdict("false implies false implies false").await,
+        "`implies` must be RIGHT-associative: `false ⇒ (false ⇒ false)` is TRUE. \
+         A false verdict here means the chain re-associated left, which is the \
+         defect the rule's `right` annotation exists to prevent."
+    );
+    // The mirror: right-associated, a false CONSEQUENT chain is still driven by the
+    // innermost implication, so `true ⇒ (true ⇒ false)` = `true ⇒ false` = FALSE.
+    // Read left this would be `(true ⇒ true) ⇒ false` = `true ⇒ false` = FALSE too,
+    // so this row does NOT discriminate — it is here to show the fix did not simply
+    // invert the operator.
+    assert!(
+        !machine_verdict("true implies true implies false").await,
+        "`true ⇒ (true ⇒ false)` must be FALSE"
+    );
 }
 
 #[tokio::test]

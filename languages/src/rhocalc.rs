@@ -853,9 +853,24 @@ language! {
         // from the binding-power pair it assigns from declaration order, and every
         // same-category infix rule declared this way is LEFT-associative
         // (`prattail/src/binding_power.rs::InfixOperator::associativity`, `left_bp < right_bp`).
-        // So a chain `a implies b implies c` reads `(a implies b) implies c`, not the
-        // classical right-associative `a implies (b implies c)`. Parenthesize a chain that
-        // means the latter. (The paper's rubric guards contain no implication chain.)
+        // ★ FIXED: `implies` is declared `right`, so a chain `a implies b implies c` reads
+        // `a implies (b implies c)` — classical material implication, and the reading the
+        // Heyting `⇒` of `prattail::algebra_tower::HeytingAlgebra::implies` has.
+        //
+        // It previously omitted the annotation and therefore inherited the infix default,
+        // left-associativity, so the chain read `(a implies b) implies c`. That is not a
+        // harmless notational choice: the two readings are SEMANTICALLY DIFFERENT, and the
+        // left one is not even weaker — it is unrelated. Take `a = false, b = false,
+        // c = false`. Right: `false implies (false implies false)` = `true`. Left:
+        // `(false implies false) implies false` = `true implies false` = `false`. So a
+        // three-term chain could evaluate to the opposite truth value from the one its
+        // author wrote, silently, with no diagnostic.
+        //
+        // The old comment said to "parenthesize a chain that means the latter", which put
+        // the burden on every author of every guard forever to work around a one-word
+        // omission. `right` is the annotation the macro already supports (`ast/src/grammar.rs`
+        // parses it after the eval mode; Calculator's `PowInt`/`PowFloat`/`Tern` use it), so
+        // the fix costs one keyword and makes the operator mean what its name means.
         //
         // Semantics: `a implies b ≡ (not a) or b` — material implication on the two-valued
         // Boolean algebra RhoCalc's `bool` inhabits, which is exactly where the Heyting `⇒`
@@ -879,7 +894,7 @@ language! {
                     Proc::Implies(std::sync::Arc::new(a.clone()), std::sync::Arc::new(b.clone()))
                 }),
             }}
-        ] fold;
+        ] fold right;
 
         Or . a:Proc, b:Proc |- a "or" b : Proc ![
             { match (&a, &b) {

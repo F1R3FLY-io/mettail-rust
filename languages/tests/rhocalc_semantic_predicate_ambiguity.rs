@@ -217,31 +217,43 @@ fn the_elected_implies_parse_has_the_declared_precedence() {
 }
 
 #[test]
-fn a_chained_implies_elects_the_left_associative_reading() {
-    // ⚠ Recorded, not merely observed. PraTTaIL derives associativity from the
-    // binding-power pair it assigns in declaration order, and every same-category
-    // infix rule declared this way is LEFT-associative
-    // (`prattail/src/binding_power.rs::InfixOperator::associativity`,
-    // `left_bp < right_bp`). Classical `⇒` is RIGHT-associative, so a chain reads
-    // differently here than in the paper; the divergence is pinned so it is a
-    // decision on the record rather than a surprise.
+fn a_chained_implies_elects_the_right_associative_reading() {
+    // `implies` is declared `right`, so a chain reads `a implies (b implies c)` —
+    // classical material implication, and the reading the Heyting `⇒` of
+    // `prattail::algebra_tower::HeytingAlgebra::implies` has.
     //
-    // `a implies b implies c`  ⇒  `(a implies b) implies c`.
+    // This row previously pinned the LEFT-associative reading, which the rule
+    // inherited by omitting the annotation. That was recorded as a divergence from
+    // the paper rather than fixed, on the reasoning that an author could
+    // parenthesize. The two readings are not notational variants — they disagree on
+    // the VALUE. `false implies false implies false` is `true` read right and
+    // `false` read left (`(false ⇒ false) ⇒ false` = `true ⇒ false` = `false`). So
+    // the old shape let a three-term chain evaluate to the opposite truth value
+    // from the one its author wrote, with no diagnostic. `right` costs one keyword.
+    //
+    // `a implies b implies c`  ⇒  `a implies (b implies c)`.
+    //
+    // This row pins the SHAPE only. The parse layer has no evaluator — `normalize()`
+    // is the host PDA normalizer and does not run a `fold`, which is a machine
+    // rewrite. The companion TRUTH-VALUE pin, on the reading where the two
+    // associativities actually disagree, lives with the evaluator:
+    // `rholang-runtime/tests/rho_implies_guard.rs::a_right_associative_chain_is_true`.
     let elected = assert_parse_count("true implies false implies true", 1);
     match &elected {
         Proc::Implies(antecedent, consequent) => {
             assert!(
-                matches!(antecedent.as_ref(), Proc::Implies(..)),
-                "left-associative: the LEFT operand must be the nested implication, got {antecedent:?}"
+                matches!(antecedent.as_ref(), Proc::CastBool(..)),
+                "right-associative: the LEFT operand must be the leading atom, got {antecedent:?}"
             );
             assert!(
-                matches!(consequent.as_ref(), Proc::CastBool(..)),
-                "left-associative: the RIGHT operand must be the final atom, got {consequent:?}"
+                matches!(consequent.as_ref(), Proc::Implies(..)),
+                "right-associative: the RIGHT operand must be the nested implication, got {consequent:?}"
             );
         },
         other => panic!("a chained `implies` must elect an `Implies` root, got {other:?}"),
     }
 }
+
 
 #[test]
 fn implies_parses_deterministically_across_repeated_parses() {
