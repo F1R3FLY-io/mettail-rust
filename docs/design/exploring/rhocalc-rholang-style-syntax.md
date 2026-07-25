@@ -97,7 +97,7 @@ PPar . ps:HashBag(Proc) |- "__ppar" "(" ps.*sep(",") ")" : Proc;
 `{}` is therefore reserved exclusively for:
 
 - The empty `Map` literal at expression position.
-- The body of `for(...) { P }`, `new(x) in { P }`, and (future) `contract`.
+- The body of `for(...) { P }`, `new x in { P }`, and (future) `contract`.
 
 ### 3.3 Brace-delimited `Map` literal
 
@@ -331,7 +331,7 @@ an expression position is the `Map` literal. Disambiguation is therefore not
 required at parse time — `{` always begins a `Map` literal.
 
 The body braces of `for`/`new`/`contract` are matched as part of those rules'
-own grammar (`for(…) { p }`, `new(…) in { p }`) and never participate in the
+own grammar (`for(…) { p }`, `new … in { p }`) and never participate in the
 expression-level `{` dispatch.
 
 A single-process body group (`{ P }` at expression position, e.g. inside a

@@ -3873,10 +3873,24 @@ mod tests {
         }
     }
 
-    /// RhoCalc `PNew` (`new ( xs... ) in { p }`): its mergeable prefix is
-    /// the lone `(` literal — the binder-list at position 2 terminates
-    /// mergeability — and no sibling shares the `new` trigger, so it stays
-    /// an unfactored LoneRootChild singleton (today's emission).
+    /// RhoCalc `PNew` (`new xs... in { p }` — the official-Rholang paren-free
+    /// declaration list, 2026-07-24): it stays an UNFACTORED SINGLETON in the
+    /// `new` bucket, exactly as before the paren-drop. No sibling shares the
+    /// `new` trigger, so it never factors.
+    ///
+    /// ★ The singleton REASON moved, and the move is the paren-drop's direct
+    /// consequence:
+    ///
+    /// | production | post-trigger items | mergeable prefix | reason |
+    /// |---|---|---|---|
+    /// | before | `"(" · xs.*sep · ")" · "in" · "{" · p · "}"` | the lone `"("`, then the binder-list terminates mergeability | [`SingletonReason::LoneRootChild`] |
+    /// | after | `xs.*sep · "in" · "{" · p · "}"` | EMPTY — the binder-list is now item 0 | [`SingletonReason::EmptySequence`] |
+    ///
+    /// [`SingletonReason::EmptySequence`]'s own doc names this exact case ("its
+    /// first item already terminates mergeability — e.g. RhoCalc `PNew`'s
+    /// leading binder-list"), so the new label is the semantically correct one
+    /// rather than a weakened assertion. The EMISSION is unchanged: still a
+    /// singleton, still committing at the trigger, still zero groups.
     #[test]
     fn rhocalc_pnew_stays_a_singleton() {
         let def = rhocalc();
@@ -3890,7 +3904,12 @@ mod tests {
             .iter()
             .find(|s| s.rule_idx == pnew)
             .expect("PNew is a singleton");
-        assert_eq!(s.reason, SingletonReason::LoneRootChild);
+        assert_eq!(
+            s.reason,
+            SingletonReason::EmptySequence,
+            "the paren-free `new` puts the binder-list at post-trigger item 0, so the \
+             mergeable prefix is empty",
+        );
     }
 
     /// The emission-effective partition under the SHIPPED const

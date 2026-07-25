@@ -48,7 +48,7 @@ Adding `PNew . ^[xs].p:[Name* -> Proc] |- "new" xs.*sep(",") "in" "{" p "}" : Pr
 
 ### Symptom
 
-After the compilation fixes above, `NewCong . | S ~> T |- (PNew ^[xs].S) ~> (PNew ^[xs].T)` compiled but produced 0 rewrites at runtime — e.g. `step new (x) in { { a!(0) | (a?z).{*(z)} } }` reported "already a normal form" even though the body should reduce via Comm.
+After the compilation fixes above, `NewCong . | S ~> T |- (PNew ^[xs].S) ~> (PNew ^[xs].T)` compiled but produced 0 rewrites at runtime — e.g. `step new x in { { a!(0) | (a?z).{*(z)} } }` reported "already a normal form" even though the body should reduce via Comm.
 
 ### Root cause
 

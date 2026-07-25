@@ -389,7 +389,7 @@ async fn drop_of_quoted_process_executes_without_source_generation() {
 
 #[tokio::test]
 async fn new_name_scope_lowers_to_private_rho_binding() {
-    let source = r#"new(x)in{x!(@("OUT")!("private"))}"#;
+    let source = r#"new x in {x!(@("OUT")!("private"))}"#;
     let par = parse_lower(source);
 
     run_normalized_par_for_oracle(&par)

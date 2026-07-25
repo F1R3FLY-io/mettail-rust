@@ -33,7 +33,7 @@
  *     ~24705-24726: `span_hi > at_pos` refuse + `z_lo < w_hi` overlap refuse)
  *     and `cgll_pure_resume_replace` (~24757-24761) — a mis-paired pop/replay
  *     is refused instead of interning span-inflated/cyclic Intermediates
- *     (receipt: the PNew `new(x) in { x!(0) }` full-term Symbol replay-folded
+ *     (receipt: the PNew `new x in { x!(0) }` full-term Symbol replay-folded
  *     into its own rule frame's spine ⇒ flatten diverged at 1 GiB stack).
  *   - The ALWAYS-ON publish cycle fence: `cgll_pure_find_cycle` (~23537,
  *     iterative DFS) applied per accepting root in `step_canonical_pure`

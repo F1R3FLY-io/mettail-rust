@@ -3854,8 +3854,8 @@ for each position. Length must match.
 Binder variants match under the binder by opening both scopes via `inner()`
 (structural access — NO freshening) and matching bodies via `unsafe_body`.
 The key insight is that `inner()` preserves De Bruijn indices (`BoundVar`s),
-making the comparison alpha-invariant: `new(x) in { x!(P) }` and
-`new(y) in { y!(P) }` both have `BoundVar(0)` at the binder position after
+making the comparison alpha-invariant: `new x in { x!(P) }` and
+`new y in { y!(P) }` both have `BoundVar(0)` at the binder position after
 scope opening, so they match structurally. This is the standard
 alpha-equivalence check via De Bruijn representation (de Bruijn, 1972).
 
@@ -3891,8 +3891,8 @@ extracts them into `MatchBindings`. The variable-catches-all arm handles
 free variables, not scope binders.
 
 **Alpha-equivalence.** Because `inner()` preserves `BoundVar`s (de Bruijn
-indices) rather than freshening, `new(x) in { x!(P) }` correctly matches
-`new(y) in { y!(P) }` — both have the same `BoundVar` structure after scope
+indices) rather than freshening, `new x in { x!(P) }` correctly matches
+`new y in { y!(P) }` — both have the same `BoundVar` structure after scope
 opening.
 
 **Single Binder (e.g., ambient PNew).**

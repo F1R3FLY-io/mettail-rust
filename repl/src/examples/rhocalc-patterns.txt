@@ -78,9 +78,9 @@ exec for({1:x, 3:4} <- c & [1,2,y] <- c2 where x>1 and y>1; z <- c3 where z > 11
 // =============================================================================
 // New + extrusion interactions
 // =============================================================================
-exec new(x) in { for(z <- a){*(z)} } | a!(0)
-exec new(a) in { for(z <- a){*(z)} } | a!(0)
-exec new(x) in { for(z <- a){*(z)} | a!(0) }
+exec new x in { for(z <- a){*(z)} } | a!(0)
+exec new a in { for(z <- a){*(z)} } | a!(0)
+exec new x in { for(z <- a){*(z)} | a!(0) }
 
 // =============================================================================
 // REPL env compatibility samples (legacy examples adapted to for-syntax)
@@ -88,7 +88,7 @@ exec new(x) in { for(z <- a){*(z)} | a!(0) }
 exec a!(2) | b!(3) | for(x <- a & y <- b){ *(x) + *(y) }
 exec a!(0) | for(x <- a){*(x)}
 exec a!(p) | b!(q) | c!(r) | for(x <- a & y <- b & z <- c){*(x) | *(y) | *(z)}
-exec a!(0) | new (x) in { for(z <- a){*(z)} }
+exec a!(0) | new x in { for(z <- a){*(z)} }
 exec a!([ 1, 2 ]) | b!([ 3, 4 ]) | for(x <- a & y <- b){ (*(x)).concat(*(y)) }
 exec a!(#{ 1 | 2 }#) | b!(#{ 2 | 3 }#) | for(x <- a & y <- b){ (*(x)).union(*(y)) }
 
@@ -97,7 +97,7 @@ exec a!(#{ 1 | 2 }#) | b!(#{ 2 | 3 }#) | for(x <- a & y <- b){ (*(x)).union(*(y)
 // =============================================================================
 exec { a!(0) | for(x <- a){*(x)}}
 exec {a!(p) | b!(q) | c!(r) | for(x <- a & y <- b & z <- c){{*(x) | *(y) | *(z)}}}
-exec {a!(0) | new (x) in { for(z <- a){*(z)}} }
+exec {a!(0) | new x in { for(z <- a){*(z)} } }
 exec { a!( [ 1, 2 ] ) | b!( [ 3, 4 ] ) | for(x <- a & y <- b){ (*(x)).concat(*(y)) } }
 
 // =============================================================================

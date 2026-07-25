@@ -152,7 +152,7 @@ calculator and rhocalc, two layers:
    eager `LatticeTokenSource` and the lazy source; assert the realized term
    (`Debug`) and final cursor `pos` are identical (or, when eager hard-fails to
    lex, that lazy also fails to accept). Corpus = full-parse (`1 + 2 * 3`,
-   `int(3) == 3`, `{0 | 1 | 2}`, `new(x,y) in { {x!(0) | y!(1)} }`, 20-term
+   `int(3) == 3`, `{0 | 1 | 2}`, `new x, y in { {x!(0) | y!(1)} }`, 20-term
    chains, …) **and** early-failure (long inputs with an error near the start:
    `1 + + + …`, `} } } …`, `int( …`, `* 1 + …`, `{0 | | | …`, `new new new …`).
 2. **Per-position observation equivalence:** over a *fully-materialized* lazy

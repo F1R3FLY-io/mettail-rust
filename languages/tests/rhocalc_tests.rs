@@ -251,8 +251,8 @@ mod oracle {
     }
 
     /// One NON-COMM normalize move (folds/casts/drop), `PNew`-aware: recurse into the body and
-    /// preserve the ORIGINAL binders — so the result displays as `new(x) in { … }` rather than
-    /// Dovetail's freshly-reconstructed `new(_) in { … }` (FIX-A erases binder identity).
+    /// preserve the ORIGINAL binders — so the result displays as `new x in { … }` rather than
+    /// Dovetail's freshly-reconstructed `new _ in { … }` (FIX-A erases binder identity).
     fn normalize_anywhere(p: &Proc) -> Option<Proc> {
         if let Proc::PNew(scope) = p {
             let (binders, body) = scope.clone().unbind();
@@ -1327,50 +1327,50 @@ mod new_and_extrusion {
 
     #[test]
     fn new_parses() {
-        let _p = parse("new(x) in { x!(0) }");
+        let _p = parse("new x in { x!(0) }");
     }
 
     #[test]
     fn new_multi_binder_parses() {
-        let _p = parse("new(x, y) in {x!(0) | y!(1)}");
+        let _p = parse("new x, y in {x!(0) | y!(1)}");
     }
 
     #[test]
     fn new_is_normal_when_body_is() {
-        assert_no_rewrites("new(x) in { x!(0) }");
+        assert_no_rewrites("new x in { x!(0) }");
     }
 
     #[test]
     fn new_congruence_propagates_body_rewrite() {
-        // new(x) in {for(z <- a){*(z)} | a!(0)} → new(x) in {*(@(0))} → ...
-        assert_min_rewrites("new(x) in {for(z <- a){*(z)} | a!(0)}", 1);
+        // new x in {for(z <- a){*(z)} | a!(0)} → new x in {*(@(0))} → ...
+        assert_min_rewrites("new x in {for(z <- a){*(z)} | a!(0)}", 1);
     }
 
     #[test]
     fn new_congruence_reaches_normal_form() {
-        assert_reduces_to("new(x) in {for(z <- a){*(z)} | a!(0)}", "new(x) in { 0 }");
+        assert_reduces_to("new x in {for(z <- a){*(z)} | a!(0)}", "new x in { 0 }");
     }
 
     #[test]
     fn extrusion_forward() {
-        // {new(x) in {p} | a!(0)} = new(x) in {p | a!(0)}
+        // {new x in {p} | a!(0)} = new x in {p | a!(0)}
         // The initial PPar should connect to a rewrite (via equation + congruence).
-        assert_initial_rewrites("new(x) in { for(z <- a){*(z)} } | a!(0)");
+        assert_initial_rewrites("new x in { for(z <- a){*(z)} } | a!(0)");
     }
 
     #[test]
     fn extrusion_reaches_result() {
-        // {new(x) in {for(z <- a){*(z)}} | a!(0)}
-        //  =extrude= new(x) in {{for(z <- a){*(z)} | a!(0)}}
-        //  →comm→ new(x) in {*(@(0))} →exec→ new(x) in {0}
-        assert_reduces_to("new(x) in { for(z <- a){*(z)} } | a!(0)", "new(x) in { 0 }");
+        // {new x in {for(z <- a){*(z)}} | a!(0)}
+        //  =extrude= new x in {{for(z <- a){*(z)} | a!(0)}}
+        //  →comm→ new x in {*(@(0))} →exec→ new x in {0}
+        assert_reduces_to("new x in { for(z <- a){*(z)} } | a!(0)", "new x in { 0 }");
     }
 
     #[test]
     fn extrusion_blocked_when_not_fresh() {
-        // {new(a) in {for(z <- a){*(z)}} | a!(0)} — x=a is NOT fresh in a!(0),
+        // {new a in {for(z <- a){*(z)}} | a!(0)} — x=a is NOT fresh in a!(0),
         // so extrusion should not apply. The term is stuck.
-        let results = run("new(a) in { for(z <- a){*(z)} } | a!(0)");
+        let results = run("new a in { for(z <- a){*(z)} } | a!(0)");
         let nfs = normal_form_displays(&results);
         // Should be a normal form as-is (no extrusion possible)
         assert!(!nfs.is_empty(), "blocked extrusion should still have normal forms");
@@ -1403,8 +1403,8 @@ mod congruence {
 
     #[test]
     fn new_cong() {
-        // NewCong: new(x) in { *(@(0)) } → new(x) in { 0 }
-        assert_reduces_to("new(x) in { *(@(0)) }", "new(x) in { 0 }");
+        // NewCong: new x in { *(@(0)) } → new x in { 0 }
+        assert_reduces_to("new x in { *(@(0)) }", "new x in { 0 }");
     }
 
     #[test]
@@ -3150,7 +3150,7 @@ mod parsing {
     fn query_receive_sugar_single() {
         assert_query_desugars(
             "for(p <- x!?(a, b)){p}",
-            "new(r) in { x!(*r, a, b) | for(p <- r){p} }",
+            "new r in { x!(*r, a, b) | for(p <- r){p} }",
             "expected `!?` to desugar to `new` + send + receive",
         );
     }
@@ -3159,7 +3159,7 @@ mod parsing {
     fn query_receive_sugar_zero_args() {
         assert_query_desugars(
             "for(p <- x!?()){p}",
-            "new(r) in { x!(*r) | for(p <- r){p} }",
+            "new r in { x!(*r) | for(p <- r){p} }",
             "expected zero-arg `!?` to pass only return channel",
         );
     }
@@ -3168,7 +3168,7 @@ mod parsing {
     fn query_receive_sugar_empty_receiver() {
         assert_query_desugars(
             "for(<- x!?(a, b)){p}",
-            "new(r) in { x!(*r, a, b) | for(<- r){p} }",
+            "new r in { x!(*r, a, b) | for(<- r){p} }",
             "expected empty receiver query bind to desugar via private return channel",
         );
     }
@@ -3177,7 +3177,7 @@ mod parsing {
     fn query_receive_sugar_single_with_where() {
         assert_query_desugars(
             "for(p <- x!?(a, b) where p == ok){p}",
-            "new(r) in { x!(*r, a, b) | for(p <- r where p == ok){p} }",
+            "new r in { x!(*r, a, b) | for(p <- r where p == ok){p} }",
             "expected `!?` bind with where-guard to desugar through private return channel",
         );
     }
@@ -3186,7 +3186,7 @@ mod parsing {
     fn query_receive_sugar_multiple_joins() {
         assert_query_desugars(
             "for(p <- x1!?(a1) & q <- x2!?(a2) & z <- c){z}",
-            "new(r1, r2) in { x1!(*r1, a1) | x2!(*r2, a2) | for(p <- r1 & q <- r2 & z <- c){z} }",
+            "new r1, r2 in { x1!(*r1, a1) | x2!(*r2, a2) | for(p <- r1 & q <- r2 & z <- c){z} }",
             "expected multiple `!?` binds to desugar to multiple return channels",
         );
     }
@@ -3195,7 +3195,7 @@ mod parsing {
     fn query_receive_sugar_mixed_join_with_plain_bind() {
         assert_query_desugars(
             "for(p <- x!?(a) & q <- c){q}",
-            "new(r) in { x!(*r, a) | for(p <- r & q <- c){q} }",
+            "new r in { x!(*r, a) | for(p <- r & q <- c){q} }",
             "expected `!?` bind to compose with plain join binds",
         );
     }
@@ -3204,7 +3204,7 @@ mod parsing {
     fn query_receive_sugar_mixed_rows_with_plain_bind() {
         assert_query_desugars(
             "for(p <- x!?(a); q <- c){q}",
-            "new(r) in { x!(*r, a) | for(p <- r; q <- c){q} }",
+            "new r in { x!(*r, a) | for(p <- r; q <- c){q} }",
             "expected `!?` bind to compose with semicolon-separated rows",
         );
     }
@@ -3213,7 +3213,7 @@ mod parsing {
     fn query_receive_sugar_one_arg() {
         assert_query_desugars(
             "for(p <- x!?(a)){p}",
-            "new(r) in { x!(*r, a) | for(p <- r){p} }",
+            "new r in { x!(*r, a) | for(p <- r){p} }",
             "expected one-arg `!?` to include return channel then arg",
         );
     }
@@ -3222,7 +3222,7 @@ mod parsing {
     fn query_receive_sugar_three_args() {
         assert_query_desugars(
             "for(p <- x!?(a, b, c)){p}",
-            "new(r) in { x!(*r, a, b, c) | for(p <- r){p} }",
+            "new r in { x!(*r, a, b, c) | for(p <- r){p} }",
             "expected three-arg `!?` to preserve argument order",
         );
     }
@@ -3246,7 +3246,7 @@ mod parsing {
     fn query_receive_sugar_quoted_name_lhs() {
         assert_query_desugars(
             "for(p <- x!?(a)){*(@(p))}",
-            "new(r) in { x!(*r, a) | for(p <- r){*(@(p))} }",
+            "new r in { x!(*r, a) | for(p <- r){*(@(p))} }",
             "expected quoted name use in body to survive query desugaring",
         );
     }
@@ -3255,7 +3255,7 @@ mod parsing {
     fn query_receive_sugar_two_queries_and_plain_join() {
         assert_query_desugars(
             "for(p <- x1!?(a1) & q <- x2!?(a2) & z <- c){z}",
-            "new(r1, r2) in { x1!(*r1, a1) | x2!(*r2, a2) | for(p <- r1 & q <- r2 & z <- c){z} }",
+            "new r1, r2 in { x1!(*r1, a1) | x2!(*r2, a2) | for(p <- r1 & q <- r2 & z <- c){z} }",
             "expected multiple query binds to coexist with plain joins",
         );
     }
@@ -3264,7 +3264,7 @@ mod parsing {
     fn query_receive_sugar_two_queries_with_where() {
         assert_query_desugars(
             "for(p <- x1!?(a1) & q <- x2!?(a2) where p == q){p}",
-            "new(r1, r2) in { x1!(*r1, a1) | x2!(*r2, a2) | for(p <- r1 & q <- r2 where p == q){p} }",
+            "new r1, r2 in { x1!(*r1, a1) | x2!(*r2, a2) | for(p <- r1 & q <- r2 where p == q){p} }",
             "expected where guard to remain attached after query desugaring",
         );
     }
@@ -3273,7 +3273,7 @@ mod parsing {
     fn query_receive_sugar_three_queries_join() {
         assert_query_desugars(
             "for(p <- x1!?(a1) & q <- x2!?(a2) & t <- x3!?(a3)){t}",
-            "new(r1, r2, r3) in { x1!(*r1, a1) | x2!(*r2, a2) | x3!(*r3, a3) | for(p <- r1 & q <- r2 & t <- r3){t} }",
+            "new r1, r2, r3 in { x1!(*r1, a1) | x2!(*r2, a2) | x3!(*r3, a3) | for(p <- r1 & q <- r2 & t <- r3){t} }",
             "expected three query binds to produce three private return channels",
         );
     }
@@ -3282,7 +3282,7 @@ mod parsing {
     fn query_receive_sugar_join_row_then_plain_row() {
         assert_query_desugars(
             "for(p <- x1!?(a1) & q <- x2!?(a2); z <- c){z}",
-            "new(r1, r2) in { x1!(*r1, a1) | x2!(*r2, a2) | for(p <- r1 & q <- r2; z <- c){z} }",
+            "new r1, r2 in { x1!(*r1, a1) | x2!(*r2, a2) | for(p <- r1 & q <- r2; z <- c){z} }",
             "expected semicolon rows to remain in order after query desugaring",
         );
     }
@@ -3291,7 +3291,7 @@ mod parsing {
     fn query_receive_sugar_plain_row_then_join_row() {
         assert_query_desugars(
             "for(z <- c; p <- x1!?(a1) & q <- x2!?(a2)){z}",
-            "new(r1, r2) in { x1!(*r1, a1) | x2!(*r2, a2) | for(z <- c; p <- r1 & q <- r2){z} }",
+            "new r1, r2 in { x1!(*r1, a1) | x2!(*r2, a2) | for(z <- c; p <- r1 & q <- r2){z} }",
             "expected query desugaring in later row to preserve earlier plain row",
         );
     }
@@ -3300,7 +3300,7 @@ mod parsing {
     fn query_receive_sugar_two_query_rows() {
         assert_query_desugars(
             "for(p <- x1!?(a1); q <- x2!?(a2)){q}",
-            "new(r1, r2) in { x1!(*r1, a1) | x2!(*r2, a2) | for(p <- r1; q <- r2){q} }",
+            "new r1, r2 in { x1!(*r1, a1) | x2!(*r2, a2) | for(p <- r1; q <- r2){q} }",
             "expected query binds across rows to allocate independent return channels",
         );
     }
@@ -3309,7 +3309,7 @@ mod parsing {
     fn query_receive_sugar_zero_args_in_join() {
         assert_query_desugars(
             "for(p <- x!?() & q <- c){q}",
-            "new(r) in { x!(*r) | for(p <- r & q <- c){q} }",
+            "new r in { x!(*r) | for(p <- r & q <- c){q} }",
             "expected zero-arg query bind to compose with join rows",
         );
     }
@@ -3318,7 +3318,7 @@ mod parsing {
     fn query_receive_sugar_two_zero_arg_queries() {
         assert_query_desugars(
             "for(p <- x1!?() & q <- x2!?()){p}",
-            "new(r1, r2) in { x1!(*r1) | x2!(*r2) | for(p <- r1 & q <- r2){p} }",
+            "new r1, r2 in { x1!(*r1) | x2!(*r2) | for(p <- r1 & q <- r2){p} }",
             "expected each zero-arg query bind to allocate return channel",
         );
     }
@@ -3327,7 +3327,7 @@ mod parsing {
     fn query_receive_sugar_zero_args_with_where() {
         assert_query_desugars(
             "for(p <- x!?() where p == ok){p}",
-            "new(r) in { x!(*r) | for(p <- r where p == ok){p} }",
+            "new r in { x!(*r) | for(p <- r where p == ok){p} }",
             "expected where guard to work with zero-arg query bind",
         );
     }
@@ -3336,7 +3336,7 @@ mod parsing {
     fn query_receive_sugar_with_arithmetic_guard() {
         assert_query_desugars(
             "for(p <- x!?(a) where p + 1 > 0){p}",
-            "new(r) in { x!(*r, a) | for(p <- r where p + 1 > 0){p} }",
+            "new r in { x!(*r, a) | for(p <- r where p + 1 > 0){p} }",
             "expected arithmetic guard to be preserved after desugaring",
         );
     }
@@ -3345,7 +3345,7 @@ mod parsing {
     fn query_receive_sugar_with_boolean_guard() {
         assert_query_desugars(
             "for(p <- x!?(a) where p == ok and true){p}",
-            "new(r) in { x!(*r, a) | for(p <- r where p == ok and true){p} }",
+            "new r in { x!(*r, a) | for(p <- r where p == ok and true){p} }",
             "expected boolean guard structure to be preserved",
         );
     }
@@ -3354,7 +3354,7 @@ mod parsing {
     fn query_receive_sugar_with_string_guard() {
         assert_query_desugars(
             "for(p <- x!?(a) where p == \"ok\"){p}",
-            "new(r) in { x!(*r, a) | for(p <- r where p == \"ok\"){p} }",
+            "new r in { x!(*r, a) | for(p <- r where p == \"ok\"){p} }",
             "expected string equality guard to survive desugaring",
         );
     }
@@ -3363,7 +3363,7 @@ mod parsing {
     fn query_receive_sugar_with_list_arg() {
         assert_query_desugars(
             "for(p <- x!?([1,2,3])){p}",
-            "new(r) in { x!(*r, [1,2,3]) | for(p <- r){p} }",
+            "new r in { x!(*r, [1,2,3]) | for(p <- r){p} }",
             "expected list argument to remain unchanged in query send",
         );
     }
@@ -3372,7 +3372,7 @@ mod parsing {
     fn query_receive_sugar_with_map_arg() {
         assert_query_desugars(
             "for(p <- x!?({1:2, 3:4})){p}",
-            "new(r) in { x!(*r, {1:2, 3:4}) | for(p <- r){p} }",
+            "new r in { x!(*r, {1:2, 3:4}) | for(p <- r){p} }",
             "expected map argument to remain unchanged in query send",
         );
     }
@@ -3381,7 +3381,7 @@ mod parsing {
     fn query_receive_sugar_with_bag_arg() {
         assert_query_desugars(
             "for(p <- x!?(#{1|2}#)){p}",
-            "new(r) in { x!(*r, #{1|2}#) | for(p <- r){p} }",
+            "new r in { x!(*r, #{1|2}#) | for(p <- r){p} }",
             "expected bag argument to remain unchanged in query send",
         );
     }
@@ -3390,7 +3390,7 @@ mod parsing {
     fn query_receive_sugar_body_uses_bound_name() {
         assert_query_desugars(
             "for(p <- x!?(a)){*p}",
-            "new(r) in { x!(*r, a) | for(p <- r){*p} }",
+            "new r in { x!(*r, a) | for(p <- r){*p} }",
             "expected body to keep bound name usage after desugaring",
         );
     }
@@ -3399,7 +3399,7 @@ mod parsing {
     fn query_receive_sugar_body_parallel_structure() {
         assert_query_desugars(
             "for(p <- x!?(a)){*p | ok}",
-            "new(r) in { x!(*r, a) | for(p <- r){*p | ok} }",
+            "new r in { x!(*r, a) | for(p <- r){*p | ok} }",
             "expected body parallel structure to be preserved",
         );
     }
@@ -3407,8 +3407,8 @@ mod parsing {
     #[test]
     fn query_receive_sugar_with_new_in_body() {
         assert_query_desugars(
-            "for(p <- x!?(a)){new(k) in {k!(0)}}",
-            "new(r) in { x!(*r, a) | for(p <- r){new(k) in {k!(0)}} }",
+            "for(p <- x!?(a)){new k in {k!(0)}}",
+            "new r in { x!(*r, a) | for(p <- r){new k in {k!(0)}} }",
             "expected nested new in body to be preserved",
         );
     }
@@ -3417,7 +3417,7 @@ mod parsing {
     fn query_receive_sugar_rows_with_where_and_plain_followup() {
         assert_query_desugars(
             "for(p <- x!?(a) & q <- y!?(b) where p == q; z <- c){z}",
-            "new(r1, r2) in { x!(*r1, a) | y!(*r2, b) | for(p <- r1 & q <- r2 where p == q; z <- c){z} }",
+            "new r1, r2 in { x!(*r1, a) | y!(*r2, b) | for(p <- r1 & q <- r2 where p == q; z <- c){z} }",
             "expected mixed where+row composition to survive desugaring",
         );
     }
@@ -3426,7 +3426,7 @@ mod parsing {
     fn query_receive_sugar_plain_then_query_with_where() {
         assert_query_desugars(
             "for(z <- c; p <- x!?(a) where p == ok){z}",
-            "new(r) in { x!(*r, a) | for(z <- c; p <- r where p == ok){z} }",
+            "new r in { x!(*r, a) | for(z <- c; p <- r where p == ok){z} }",
             "expected where guard in later query row to be preserved",
         );
     }
@@ -3435,7 +3435,7 @@ mod parsing {
     fn query_receive_sugar_three_rows_two_queries_one_plain() {
         assert_query_desugars(
             "for(p <- x!?(a); q <- c; r <- y!?(b)){q}",
-            "new(r1, r2) in { x!(*r1, a) | y!(*r2, b) | for(p <- r1; q <- c; r <- r2){q} }",
+            "new r1, r2 in { x!(*r1, a) | y!(*r2, b) | for(p <- r1; q <- c; r <- r2){q} }",
             "expected multi-row ordering with two queries to be preserved",
         );
     }
@@ -3444,7 +3444,7 @@ mod parsing {
     fn query_receive_sugar_empty_receiver_in_join() {
         assert_query_desugars(
             "for(<- x!?(a) & q <- c){q}",
-            "new(r) in { x!(*r, a) | for(<- r & q <- c){q} }",
+            "new r in { x!(*r, a) | for(<- r & q <- c){q} }",
             "expected empty receiver query bind to compose with join binds",
         );
     }
@@ -3453,7 +3453,7 @@ mod parsing {
     fn query_receive_sugar_empty_receiver_later_row() {
         assert_query_desugars(
             "for(z <- c; <- x!?()){z}",
-            "new(r) in { x!(*r) | for(z <- c; <- r){z} }",
+            "new r in { x!(*r) | for(z <- c; <- r){z} }",
             "expected empty receiver query bind in later row to preserve row order",
         );
     }
@@ -3462,7 +3462,7 @@ mod parsing {
     fn query_receive_sugar_empty_receiver_where_uses_other_bind() {
         assert_query_desugars(
             "for(<- x!?(a) & q <- c where q == ok){q}",
-            "new(r) in { x!(*r, a) | for(<- r & q <- c where q == ok){q} }",
+            "new r in { x!(*r, a) | for(<- r & q <- c where q == ok){q} }",
             "expected where guard with other bind to remain after empty receiver desugar",
         );
     }
@@ -3750,11 +3750,11 @@ mod parsing {
     }
     #[test]
     fn new_single() {
-        let _ = run("new(x) in { x!(0) }");
+        let _ = run("new x in { x!(0) }");
     }
     #[test]
     fn new_multi() {
-        let _ = run("new(x, y) in {x!(0) | y!(1)}");
+        let _ = run("new x, y in {x!(0) | y!(1)}");
     }
 
     #[test]

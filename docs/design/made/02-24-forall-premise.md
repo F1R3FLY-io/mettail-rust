@@ -91,10 +91,10 @@ This is a no-op when `eq` only has reflexive entries (the common case without us
 ## Example: scope extrusion in action
 
 ```
-Input:  { new(x) in { (a?z).{*(z)} } | a!(0) }
-  =extrude=  new(x) in { { (a?z).{*(z)} | a!(0) } }
-  →comm→     new(x) in { { *(@(0)) } }
-  →exec→     new(x) in { 0 }
+Input:  { new x in { (a?z).{*(z)} } | a!(0) }
+  =extrude=  new x in { { (a?z).{*(z)} | a!(0) } }
+  →comm→     new x in { { *(@(0)) } }
+  →exec→     new x in { 0 }
 ```
 
 The freshness check passes because `x` does not appear free in `a!(0)`. If the bound name were `a` instead of `x`, extrusion would be blocked — `a` appears free in `a!(0)`.

@@ -862,7 +862,7 @@ fn collect_first_set(
                     // these rules, so e.g. Proc's FIRST set was missing
                     // Ident (via Name's synthetic Var rule), which broke
                     // PNew-body Ident-dispatch tests like
-                    // `new(x) in { x!(0) }`.
+                    // `new x in { x!(0) }`.
                     if let Some(sp) = rule.syntax_pattern.as_ref() {
                         match sp.first() {
                             Some(mettail_ast::grammar::SyntaxExpr::Literal(text)) => {

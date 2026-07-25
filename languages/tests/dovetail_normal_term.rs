@@ -6,7 +6,7 @@
 //!   1. `@("OUT")!(int(1+2,8))`        → Ok, formats `@("OUT")!(3)` (Regular reconstruction)
 //!   2. `{ @("OUT")!(int(1+2,8)) }`    → Ok                          (PPar HashBag/Collection arm)
 //!   3. `{ int(1,8) | int(1,8) }`      → Ok, 2-element bag           (multiplicity preserved)
-//!   4. `new(x)in{x!(int(1+2,8))}`     → Ok, ≡α `new(x)in{x!(3)}`    (PNew MultiBinder arm)
+//!   4. `new x in {x!(int(1+2,8))}`     → Ok, ≡α `new x in {x!(3)}`    (PNew MultiBinder arm)
 //!
 //! See `docs/design/dovetail-rho-macro-extensions/00-design-and-ledger.md` (E2).
 
@@ -74,18 +74,31 @@ fn collection_multiplicity_is_preserved() {
 
 #[test]
 fn reconstructs_pnew_binder_alpha_equivalently() {
-    // (4) `new(x)in{x!(int(1+2,8))}` → PNew binder reconstruction; the body fold reduces
+    // (4) `new x in {x!(int(1+2,8))}` → PNew binder reconstruction; the body fold reduces
     //     `int(1+2,8)` to `3` (a width-8 `CastInt`). The reconstructed binder is FRESH (FIX-A
     //     erased the original binder identity), so the result is α-equivalent to
-    //     `new(x)in{x!(3)}`, rendered with the fresh binder as `_`: `new(_)in{x!(3)}`.
+    //     `new x in {x!(3)}`, rendered with the fresh binder as `_`: `new _ in{x!(3)}`.
+    //
+    //     GOLDEN MOVE (2026-07-24, official-Rholang paren-drop): this string was
+    //     `new(_)in{x!(3)}` while `PNew`'s syntax pattern still carried the grouping
+    //     parens. Dropping them changes the RENDERING mechanically and only there:
+    //       * `"new"` is now immediately followed by the `xs.*sep(",")` repetition, so
+    //         Display emits a trailing space (`new ` not `new`) — without it the output
+    //         re-lexes as the single Ident `new_` and the roundtrip breaks;
+    //       * `"in"` is now immediately preceded by that repetition, so Display emits a
+    //         leading space (` in`) for the same anti-glom reason;
+    //       * the `(` / `)` literals are simply gone.
+    //     `in{` keeps no space because `{` is not an identifier character, so it cannot
+    //     glom. The rendered term is unchanged (same `PNew` / same body); only its
+    //     spelling moved. Roundtrip is pinned in `rhocalc_new_official_syntax.rs`.
     //
     //     Comparison method: the generated `<Lang>Term::term_eq` is plain field-wise `PartialEq`
     //     (binder pretty-name + `FreeVar` unique_id), NOT moniker's α-aware `Scope::term_eq`, so a
     //     fresh-binder reconstruction never `==` a named-binder term. We use the `format_term`
     //     round-trip the E2 spec offers, PLUS a rigorous α-equivalence cross-check: reducing the
-    //     already-folded sibling `new(x)in{x!(int(3,8))}` must yield the IDENTICAL normal form
+    //     already-folded sibling `new x in {x!(int(3,8))}` must yield the IDENTICAL normal form
     //     (identical NFs ⇒ the same α-class).
-    let src = "new(x)in{x!(int(1+2,8))}";
+    let src = "new x in {x!(int(1+2,8))}";
     let lang = RhoCalcLanguage;
     let term = lang.parse_term(src).expect("parse PNew");
     let nf = RhoCalcLanguage::dovetail_normal_term(term.as_ref(), MAX_ITERS, MAX_NODES)
@@ -94,7 +107,7 @@ fn reconstructs_pnew_binder_alpha_equivalently() {
 
     // (4a) PNew binder arm fired and the body fold reduced; fresh binder renders as `_`.
     assert_eq!(
-        nf_fmt, "new(_)in{x!(3)}",
+        nf_fmt, "new _ in{x!(3)}",
         "PNew reconstruction must fold the body and render the fresh binder as `_`"
     );
 
@@ -109,7 +122,7 @@ fn reconstructs_pnew_binder_alpha_equivalently() {
     );
 
     // (4c) Rigorous α-equivalence: the already-folded sibling reduces to the SAME normal form.
-    let sibling_src = "new(x)in{x!(int(3,8))}";
+    let sibling_src = "new x in {x!(int(3,8))}";
     let sibling = lang.parse_term(sibling_src).expect("parse sibling");
     let sibling_nf = RhoCalcLanguage::dovetail_normal_term(sibling.as_ref(), MAX_ITERS, MAX_NODES)
         .expect("reduce sibling");

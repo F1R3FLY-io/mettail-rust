@@ -610,8 +610,55 @@ language! {
         NParen . n:Name
         |- "(" n ")" : Name ![{ n.clone() }] fold;
 
+        // `new` — OFFICIAL RHOLANG SURFACE (tree-sitter `grammar.js:89-93`,
+        // BNFC `rholang_mercury.cf:72`):
+        //
+        //     new:        prec(1, seq('new', $.name_decls, 'in', $._proc))
+        //     name_decls: commaSep1($.name_decl)
+        //     PNew.       Proc1 ::= "new" [NameDecl] "in" Proc1 ;
+        //
+        // RhoCalc IS Rholang, so the declaration list carries NO GROUPING
+        // PARENTHESES: `new x, y in { P }`. The pre-2026-07-24 RhoCalc-only
+        // shape `"new" "(" xs ")" "in" "{" p "}"` was a historical divergence
+        // and is GONE — there is exactly ONE `new` surface, so no rule pair
+        // accepts one string (cf. the ROOT-P Layer-F enclosing-rule-redundancy
+        // blowup documented on `ForRow*` above).
+        //
+        // BINDER-LIST TERMINATOR: the `.*sep(",")` binder loop closes on the
+        // FOLLOWING literal, which is now `"in"` instead of `")"` (see
+        // `wpda_codegen/binder.rs` `Op(Sep)` ⇒ `close = sp[i+1]`). `in` is a
+        // reserved keyword (`reserved_keywords: auto`), so it can never be
+        // mistaken for a declared name and the list end is unambiguous.
+        //
+        // BODY BRACES — the ONE remaining divergence, deliberate and measured.
+        // Official Rholang's body is `$._proc` / `Proc1`, i.e. any process, so
+        // `new x in stdout!("hi")` is legal there and is a parse error here.
+        // Making the body a bare trailing `Proc` was IMPLEMENTED AND MEASURED
+        // on 2026-07-24 and REJECTED on evidence:
+        //
+        //   * A trailing OPEN-ENDED same-category `ParamParse` stops at the
+        //     FIRST infix operator, so `new x in 1 + 2` realized
+        //     `(new x in 1) + 2` and `new x in a or b` realized
+        //     `(new x in a) or b`. Official Rholang puts `+` (Proc8) and `or`
+        //     (Proc4) INSIDE the body (Proc1) — a SILENT mis-scope, strictly
+        //     worse than rejecting the input.
+        //   * It is not fixable with a binding-power annotation: `prefix(3)`
+        //     changed only the `|`-inside-a-collection case; `+`/`or` still
+        //     escaped the body at every `cur_bp` tried (0 and 3).
+        //   * It ADDED ambiguity. Parse counts doubled versus the identical
+        //     un-wrapped control: `for(z <- a){*(z)}` 1 → `new x in
+        //     for(z <- a){*(z)}` 2; `*(@(0))` 1 → `new x in *(@(0))` 2.
+        //   * With the body braced the `|` scope is context-INDEPENDENT and
+        //     matches official Rholang: `{ new x in { 0 } | 0 }` is a
+        //     two-member par, because the `}` closes the body before the `|`.
+        //
+        // The delimited body needs no binding-power floor and preserves every
+        // pre-change parse count exactly. Reproducing Rholang's `Proc1`-level
+        // undelimited body needs real work in the walker's trailing-operand
+        // path; tracked as convergence item §17.10-B1. Pins:
+        // `languages/tests/rhocalc_new_official_syntax.rs`.
         PNew . ^[xs].p:[Name* -> Proc]
-        |- "new" "(" xs.*sep(",") ")" "in" "{" p "}" : Proc;
+        |- "new" xs.*sep(",") "in" "{" p "}" : Proc;
 
         // customize error handling
         // (e.g. filter results by =/= Err)

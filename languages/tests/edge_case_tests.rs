@@ -442,7 +442,7 @@ mod rhocalc_edge_cases {
 
     #[test]
     fn comm_under_new() {
-        rhocalc_parses("new(x) in { {for(y <- x){*(y)} | x!(42)} }");
+        rhocalc_parses("new x in { {for(y <- x){*(y)} | x!(42)} }");
     }
 
     #[test]

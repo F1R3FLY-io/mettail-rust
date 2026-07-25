@@ -14598,7 +14598,7 @@ where
             // its tokens) and is how the PNew cyclic forest arose: the
             // full-term Symbol replay-folded into its own rule frame's
             // spine ⇒ `Symbol(0,n)` became its own descendant ⇒ the
-            // flatten recursion diverged (receipt: `new(x) in { x!(0) }`
+            // flatten recursion diverged (receipt: `new x in { x!(0) }`
             // stack overflow at 1 GiB, `new_diag.log`). True GLL states
             // this as "every edge into `(A, i)` carries an operand ending
             // exactly at `i`"; the fence enforces the non-overlap half

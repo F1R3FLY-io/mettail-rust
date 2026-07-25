@@ -76,5 +76,5 @@ fn l9_5_rhocalc_default_mode_unperturbed() {
     let _ = Proc::parse("Nil").expect("Nil still parses");
     let _ = Proc::parse("@Nil!(0)").expect("send still parses");
     let _ = Proc::parse("{ Nil | Nil }").expect("par still parses");
-    let _ = Proc::parse("new(x) in { Nil }").expect("new still parses");
+    let _ = Proc::parse("new x in { Nil }").expect("new still parses");
 }

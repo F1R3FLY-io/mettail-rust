@@ -143,7 +143,7 @@ the default crate surface.
 | parallel process bag `PPar` | `Par::append` over members |
 | output `n!(p)` | `Send` with lowered channel and payload |
 | input join `(n₁?x₁,...,nₖ?xₖ).{p}` | one `Receive` with `k` `ReceiveBind` values |
-| new scope `new(x₁,...,xₖ)in{p}` | `New` with adjusted local-free metadata |
+| new scope `new x₁,...,xₖ in {p}` | `New` with adjusted local-free metadata |
 | quote/drop `@(...)` and `*(...)` | direct `Par` embedding of the quoted process |
 | ground scalar literals: `Int`, `Bool`, `Str` | corresponding `ExprInstance::GInt`, `ExprInstance::GBool`, or `ExprInstance::GString` ground node |
 | `List::ListLit` | `ExprInstance::EListBody` |

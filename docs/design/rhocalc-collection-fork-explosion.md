@@ -485,7 +485,7 @@ gate regresses, without reverting the carrier plumbing.
 | `rhocalc_tests` + `gen_rhocalc_{unit,analytical,rewrite,prop}` | rhocalc parse/eval correctness | `cargo test -p languages --test rhocalc_tests` (+ the `gen_rhocalc_*`) |
 | `wpda_parity_rhocalc_collections` | `{error}`, `{error\|error}`, `{error\|error\|error}`, `{}` collection shapes (`tests/wpda_parity_rhocalc_collections.rs`) | `cargo test -p languages --test wpda_parity_rhocalc_collections` |
 | `gen_guardedrho_*` proc display, incl. chained output `@a!(Nil)!(Nil)` (S3) | the `sppf_stack_id` chained-output distinction | `cargo test -p languages --test gen_guardedrho_unit` (+ analytical/prop) |
-| `lazy_lex_equivalence` full corpus | lazy ≡ eager *and* parse-result equality on `{0\|1\|2}`, `{0..19}`, `new(x,y) in {…}` | `cargo test -p languages --test lazy_lex_equivalence` |
+| `lazy_lex_equivalence` full corpus | lazy ≡ eager *and* parse-result equality on `{0\|1\|2}`, `{0..19}`, `new x, y in {…}` | `cargo test -p languages --test lazy_lex_equivalence` |
 | full gauntlet (calc-op, edge, ledtest, ambient) | no cross-language regression | the standard battery |
 
 ### 6.3 New tests to add

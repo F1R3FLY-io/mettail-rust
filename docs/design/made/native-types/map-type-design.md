@@ -70,7 +70,7 @@ explicit `Map()` alias is provided for chained method calls
 
 This override is possible because the rhocalc grammar reserves `{` `}` for
 the empty `Map` literal at expression position; the body braces of
-`for(…) { P }` and `new(…) in { P }` are absorbed by those keyword-prefixed
+`for(…) { P }` and `new … in { P }` are absorbed by those keyword-prefixed
 rules and never participate in the expression-level `{` dispatch. The
 previously-existing braced parallel-composition rule `{ P | Q }` was
 **removed**; bare infix `P | Q` (`PParInfix`, folding into `Proc::PPar`) is

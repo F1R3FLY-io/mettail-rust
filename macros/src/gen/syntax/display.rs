@@ -1429,20 +1429,27 @@ fn generate_engine_regular_arm(
                     // (e.g. Class-2 binder rule with Vec<Proc> slot or a
                     // Class-5 collection rule with Vec element type).
                     let items_expr = match coll_type {
+                        // 2026-07-24 separator-capture grouping — see the
+                        // `PatternOp::Sep` arm below and
+                        // `runtime/src/display_grouping.rs`. No-op unless an
+                        // element's own text carries `sep` at bracket depth 0.
                         mettail_ast::types::CollectionType::Vec => quote! {
                             let items: Vec<String> = #field_name.iter()
-                                .map(|elem| elem.to_string())
+                                .map(|elem| mettail_runtime::group_if_bare_sep(&elem.to_string(), #sep))
                                 .collect();
                         },
                         mettail_ast::types::CollectionType::HashSet => quote! {
                             let mut items: Vec<String> = #field_name.iter()
-                                .map(|elem| elem.to_string())
+                                .map(|elem| mettail_runtime::group_if_bare_sep(&elem.to_string(), #sep))
                                 .collect();
                             items.sort();
                         },
                         mettail_ast::types::CollectionType::HashBag => quote! {
                             let mut items: Vec<String> = #field_name.iter().map(|(elem, count)| {
-                                (0..count).map(|_| elem.to_string()).collect::<Vec<_>>().join(&format!(" {} ", #sep))
+                                (0..count)
+                                    .map(|_| mettail_runtime::group_if_bare_sep(&elem.to_string(), #sep))
+                                    .collect::<Vec<_>>()
+                                    .join(&format!(" {} ", #sep))
                             }).collect();
                             items.sort();
                         },
@@ -2131,6 +2138,11 @@ fn generate_engine_syntax_pattern_arm(
                 // bug; the suffix side stays as the pre-existing behavior.
                 let prev_op_adjacent = i > 0
                     && matches!(syntax_pattern.get(i - 1), Some(SyntaxExpr::Op(_)));
+                // 2026-07-24: the SUFFIX twin of `prev_op_adjacent` — a
+                // word-literal immediately FOLLOWED by an `Op` (see the
+                // `is_word && (prev_op_adjacent || next_op_adjacent)` arm below).
+                let next_op_adjacent =
+                    matches!(syntax_pattern.get(i + 1), Some(SyntaxExpr::Op(_)));
                 // Stage 3.3 (2026-04-30): broaden `is_word` to mirror the
                 // lexer's keyword-recognition rule
                 // (`prattail/src/lexer.rs:523`): `is_alphanumeric() || '_'`,
@@ -2154,12 +2166,32 @@ fn generate_engine_syntax_pattern_arm(
                     // adds a space (never removes one) between an identifier-
                     // emitting Op and a following keyword.
                     if prev_op_adjacent { (" ", " ") } else { ("", " ") }
-                } else if is_word && prev_op_adjacent {
-                    // Word-literal keyword directly after an `Op` (no following
-                    // param, e.g. a trailing keyword): add the leading space so
-                    // the keyword cannot glom with the Op's last emitted
-                    // identifier.
-                    (" ", "")
+                } else if is_word && (prev_op_adjacent || next_op_adjacent) {
+                    // Word-literal keyword ABUTTING an `Op` on either side. An
+                    // `Op` emits PARAM VALUES, which can be identifiers, so a
+                    // word-literal touching one gloms exactly as it would touch
+                    // a bare `Param`.
+                    //
+                    // - PREFIX half (`prev_op_adjacent`, 2026-07-01): a trailing
+                    //   keyword after a list, e.g. ForRow's
+                    //   `bs.*sep("&") "where" cond` → `…&a where …`, not
+                    //   `…&awhere …`.
+                    // - SUFFIX half (`next_op_adjacent`, 2026-07-24): a LEADING
+                    //   keyword before a list, e.g. PNew's
+                    //   `"new" xs.*sep(",") "in" p` → `new x in …`, not
+                    //   `newx in …` (which re-lexes as the single Ident `newx`
+                    //   and breaks the Display→parse roundtrip). This completes
+                    //   the symmetry the 2026-07-01 fix deliberately deferred as
+                    //   "rare"; `PNew` is the only word-literal-before-`Op`
+                    //   production in the repo, so no other rule's canonical
+                    //   display moves.
+                    //
+                    // Byte-identical to the previous `(" ", "")` whenever
+                    // `next_op_adjacent` is false; it only ever ADDS a space.
+                    (
+                        if prev_op_adjacent { " " } else { "" },
+                        if next_op_adjacent { " " } else { "" },
+                    )
                 } else {
                     ("", "")
                 };
@@ -2522,16 +2554,31 @@ fn generate_engine_pattern_op(
                     }
                 });
                 let coll_ident = syn::Ident::new(&coll_name, proc_macro2::Span::call_site());
+                // Roundtrip fix (2026-07-24) — SEPARATOR CAPTURE. The joined text
+                // only re-parses if no ELEMENT contains `separator` at bracket
+                // depth 0; otherwise the parser splits the list at the element's
+                // OWN separator and both halves become garbage. `group_if_bare_sep`
+                // wraps such an element in PraTTaIL's transparent `( … )` grouping
+                // (term-preserving: `(P)` parses to `P`, no wrapper node).
+                //
+                // Reachable since the official-Rholang `new` alignment made
+                // `new x, y in { P }` the first `Proc` whose surface carries a
+                // depth-0 comma: `@Nil!(0 , new a , b in{Nil})` re-parsed as FOUR
+                // operands. It is a no-op for every element without a depth-0
+                // separator — i.e. for every pre-2026-07-24 display — so it can
+                // only repair a broken roundtrip, never break a working one.
+                // See `runtime/src/display_grouping.rs`.
+                let sep_lit = separator.clone();
                 let iter_body = match coll_kind {
                     Some(mettail_ast::types::CollectionType::Vec) => quote! {
                         for item in #coll_ident.iter() {
-                            parts.push(item.to_string());
+                            parts.push(mettail_runtime::group_if_bare_sep(&item.to_string(), #sep_lit));
                         }
                         // Vec preserves insertion order — no sort.
                     },
                     Some(mettail_ast::types::CollectionType::HashSet) => quote! {
                         for item in #coll_ident.iter() {
-                            parts.push(item.to_string());
+                            parts.push(mettail_runtime::group_if_bare_sep(&item.to_string(), #sep_lit));
                         }
                         parts.sort();
                     },
@@ -2541,7 +2588,11 @@ fn generate_engine_pattern_op(
                         // K and V — matches the parse-side `:` consumption
                         // in walker phase 1 (`emit_collection_loop_arm`).
                         for (k, v) in #coll_ident.iter() {
-                            parts.push(format!("{} : {}", k, v));
+                            parts.push(format!(
+                                "{} : {}",
+                                mettail_runtime::group_if_bare_sep(&k.to_string(), #sep_lit),
+                                mettail_runtime::group_if_bare_sep(&v.to_string(), #sep_lit),
+                            ));
                         }
                         parts.sort();
                     },
@@ -2549,7 +2600,7 @@ fn generate_engine_pattern_op(
                     Some(mettail_ast::types::CollectionType::HashBag) | None => quote! {
                         for (item, count) in #coll_ident.iter() {
                             for _ in 0..count {
-                                parts.push(item.to_string());
+                                parts.push(mettail_runtime::group_if_bare_sep(&item.to_string(), #sep_lit));
                             }
                         }
                         parts.sort();

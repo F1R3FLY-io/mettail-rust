@@ -15,8 +15,8 @@
 //
 //  THE PROGRAM
 //  ───────────
-//        @"fltX"!( lam`(lam x. x, lam a. lam b. a)` )                    // ship App(I, K) on fltX
-//        | for( @lam`(${f}, ${k})` <- @"fltX" ){ @"OUT"!( lam`(${f}, ${k})` ) }
+//        flt!( lam`(lam x. x, lam a. lam b. a)` )                    // ship App(I, K) on flt
+//        | for( @lam`(${f}, ${k})` <- flt ){ @"OUT"!( lam`(${f}, ${k})` ) }
 //
 //  The FLT `lam`(fun, arg)`` reflects to the guest application node App(fun, arg), with:
 //        fun = lam x. x           — the identity combinator  I  (= λ.0 in de-Bruijn form)
@@ -38,5 +38,9 @@
 //        @"OUT"  =  ⟦(λ.0 λ.λ.1)⟧          (App(I, K), rebuilt from the two captured holes)
 // ════════════════════════════════════════════════════════════════════════════════════════════
 
-@"fltX"!( lam`(lam x. x, lam a. lam b. a)` )
-| for( @lam`(${f}, ${k})` <- @"fltX" ){ @"OUT"!( lam`(${f}, ${k})` ) }
+new flt in {
+  flt!(lam`(lam x. x, lam a. lam b. a)`) |
+  for(@lam`(${f}, ${k})` <- flt) {
+    @"OUT"!(lam`(${f}, ${k})`)
+  }
+}

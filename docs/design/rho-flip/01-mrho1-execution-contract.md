@@ -115,7 +115,7 @@ extending `rholang-codegen/src/lower.rs` (today: `lower_language_def` iterates `
 | `PPar` (:72) | `{ p \| q \| … }` (HashBag) | **structural** | renders `p \| q \| …`; the ambient `Par`. Maximal parallelism is `eval_par`'s spawn-per-member. NEVER fork host-side. |
 | `POutput` (:74) | `n!(q)` | **COMM (send half)** | renders `⟦n⟧!(⟦q⟧)` — linear send. |
 | `PInputs` (:77) | `(n1?x1,…,nk?xk).{p}` | **COMM (receive half)** | builds the k-bind join AST equivalent to `for(x1 <- ⟦n1⟧ & … & xk <- ⟦nk⟧){ ⟦p⟧ }` — atomic all-or-nothing rendezvous, the host's native polyadic join. Distinct receive channels are green. Lower-level RSpace `consume` supports duplicate channel groups; the historical source parser rejects duplicate receives with `Receiving on the same channels is currently not allowed`, so source-text tests keep that as a negative regression while AST/RSpace evidence owns the positive runtime claim. |
-| `PNew` (:83) | `new(xs) in {p}` | **structural-binder** | renders `new x1,…,xj in { ⟦p⟧ }`; RSpace ν-semantics gives unforgeable disjointness; fingerprints ν-quotient `GPrivate`s (D5). |
+| `PNew` (:83) | `new xs in {p}` | **structural-binder** | renders `new x1,…,xj in { ⟦p⟧ }`; RSpace ν-semantics gives unforgeable disjointness; fingerprints ν-quotient `GPrivate`s (D5). |
 | `NQuote` (:80) | `@(p)` | **injection (name)** | renders `@{⟦p⟧}` (conservative bracing). A name IS a quoted process. |
 | `PDrop` (:70) | `*(n)` | **injection (drop)** | renders `*⟦n⟧`; `*(@(P))→P` is canonicalized statically by D5's ExecEq pass where it occurs under a name position, and is the host's eval where dynamic. |
 | `Err` (:88) | `error` | **injection (sentinel)** | NOT in any .1.0 corpus member; renderer treats it as out-of-fragment (loud harness error if encountered) — recorded `Rejected` at term level. |
@@ -227,14 +227,14 @@ The smallest end-to-end green, walked concretely:
 | 6 | `comm::comm_with_body_using_channel` (`{(c?x).{x!(0)} \| c!(p)}`) | `p!(0)` | datum `0` at the RECEIVED-name channel — exercises D5's data-as-channel identity |
 | 7 | `comm::comm_with_remaining_parallel` | `{p \| q}` | sentinel data |
 | 8 | `comm::join_pattern_same_channel` | `{a \| b}` (multiset-singleton) | **source-text excluded today**: the host parser rejects duplicate receive channels (`ReceiveOnSameChannelsError`); covered by a negative runtime regression until direct ADT lowering or a parser-supported encoding lands. |
-| 9 | `new_and_extrusion::new_is_normal_when_body_is`: `new(x) in { x!(0) }` (NF = itself) | resting datum `0` at a `GPrivate` channel | forces the ν-quotient mechanism early (single-ν per §0-REVISION v3) |
+| 9 | `new_and_extrusion::new_is_normal_when_body_is`: `new x in { x!(0) }` (NF = itself) | resting datum `0` at a `GPrivate` channel | forces the ν-quotient mechanism early (single-ν per §0-REVISION v3) |
 | 10 | `exec::exec_basic` (`{*(@(0))}`) | `0` | the ≡_N canonicalizer (static ExecEq) + quiescence |
 | 11 | `exec::exec_with_process` (`{*(@(a!(0)))}`) | `a!(0)` | datum `0` at `@"mtl:a"` — datum-shaped Exec result |
 | 12 | `congruence::par_cong_exec` (`{*(@(0)) \| q}`) | `{0 \| q}` | sentinel datum + canonicalized Exec under par |
-| 13 | `congruence::new_cong` (`new(x) in { *(@(0)) }`) | `new(x) in { 0 }` | Exec under ν; quiescence both sides |
-| 14 | `new_and_extrusion::new_congruence_reaches_normal_form` (`new(x) in { {(a?z).{*(z)} \| a!(0)} }`) | `new(x) in { 0 }` | COMM under the ν-binder (NewCong territory); quiescence |
-| 15 | `new_and_extrusion::extrusion_reaches_result` (`{new(x) in { (a?z).{*(z)} } \| a!(0)}`) | `new(x) in { 0 }` | scope extrusion — operationally NATIVE on the host (the receive registers at the free channel from inside ν; no Extrude step) |
-| 16 | `new_and_extrusion::extrusion_blocked_when_not_fresh` (`{new(a) in { (a?z).{*(z)} } \| a!(0)}`) | itself (stuck) | ν-SHADOWING aligns natively: the bound `a` is a fresh `GPrivate` ≠ the free `@"mtl:a"` — no COMM either side; parked receive + resting datum discriminate |
+| 13 | `congruence::new_cong` (`new x in { *(@(0)) }`) | `new x in { 0 }` | Exec under ν; quiescence both sides |
+| 14 | `new_and_extrusion::new_congruence_reaches_normal_form` (`new x in { {(a?z).{*(z)} \| a!(0)} }`) | `new x in { 0 }` | COMM under the ν-binder (NewCong territory); quiescence |
+| 15 | `new_and_extrusion::extrusion_reaches_result` (`{new x in { (a?z).{*(z)} } \| a!(0)}`) | `new x in { 0 }` | scope extrusion — operationally NATIVE on the host (the receive registers at the free channel from inside ν; no Extrude step) |
+| 16 | `new_and_extrusion::extrusion_blocked_when_not_fresh` (`{new a in { (a?z).{*(z)} } \| a!(0)}`) | itself (stuck) | ν-SHADOWING aligns natively: the bound `a` is a fresh `GPrivate` ≠ the free `@"mtl:a"` — no COMM either side; parked receive + resting datum discriminate |
 
 **Excluded with reason (the M-RHO.2 acceptance bridge):** `cast_under_send` (:1033-1040, fold `IntBinProc`), `native_ops::bag::remove_comm` (:683-688, `fold_proc`+`RemoveBag`), `native_ops::bag::count_comm` (:692-694, `CountBag`→Int), `congruence::add_cong` (:274, Exec+`Add` fold), `congruence::comparison_cong` (:280, Exec+`Eq` fold). *(Naming note: v1's "FULL comm family" phrasing is replaced by this exact-path table; renderer-fidelity note — members 10–13 verify the D5 canonicalizer (static ≡_N cancellation), while DYNAMIC drop through a COMM-bound name is verified by members 1/3/4/5.)*
 

@@ -3,7 +3,7 @@ add = a!(2) | b!(3) | for(x <- a & y <- b){ *(x) + *(y) }
 comm = a!(0) | for(x <- a){*(x)}
 multi_comm = a!(p) | b!(q) | c!(r) | for(x <- a & y <- b & z <- c){*(x) | *(y) | *(z)}
 
-new_test = a!(0) | new (x) in { for(z <- a){*(z)} }
+new_test = a!(0) | new x in { for(z <- a){*(z)} }
 
 // duplication and replication
 dup = ^l.{for(x <- l){*(x)|l!(*(x))}}

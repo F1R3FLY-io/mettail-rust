@@ -39,6 +39,11 @@ pub mod float_lit;
 pub use fixed_lit::parse_fixed_lit;
 pub use float_lit::parse_float_lit;
 
+// Display-side separator-capture grouping; generated `Display` impls call
+// `mettail_runtime::group_if_bare_sep` when joining a `.*sep(S)` repetition.
+pub mod display_grouping;
+pub use display_grouping::{group_if_bare_sep, has_bare_sep};
+
 mod numeric_cast;
 mod numeric_cast_dispatch;
 pub use numeric_cast::{

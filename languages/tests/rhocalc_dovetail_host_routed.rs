@@ -31,7 +31,7 @@ fn rhocalc_try_direct_eval_has_no_in_engine_binder_handler() {
     // A scope-extrusion-shaped redex still has no in-engine float either — rhocalc
     // keeps `new`/COMM behind the RhoNativeJoin boundary, so a `new`-bearing process is not floated.
     let new_bag = lang
-        .parse_term("{ new(x) in { 0 } | 0 }")
+        .parse_term("{ new x in { 0 } | 0 }")
         .expect("rhocalc parses a new-in-parallel redex");
     assert!(
         lang.try_direct_eval(new_bag.as_ref()).is_none(),

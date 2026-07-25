@@ -104,10 +104,10 @@ fn rhocalc_for_join_bind_via_wpds() {
 
 #[test]
 fn rhocalc_pnew_single_binder_via_wpds() {
-    // PNew . ^[xs].p:[Name* -> Proc] |- "new" "(" xs.*sep(",") ")" "in" "{" p "}" : Proc;
-    // Single: `new(x) in {*(x)}`.
+    // PNew . ^[xs].p:[Name* -> Proc] |- "new" xs.*sep(",") "in" "{" p "}" : Proc;
+    // Single: `new x in {*(x)}`.
     let result =
-        rhocalc::Proc::parse_via_wpda("new(x) in {*(x)}").expect("single-binder PNew parses");
+        rhocalc::Proc::parse_via_wpda("new x in {*(x)}").expect("single-binder PNew parses");
     match &result {
         rhocalc::Proc::PNew(_scope) => {},
         other => panic!("expected Proc::PNew(_), got {:?}", other),
@@ -116,9 +116,9 @@ fn rhocalc_pnew_single_binder_via_wpds() {
 
 #[test]
 fn rhocalc_pnew_multi_binder_via_wpds() {
-    // Multi-binder: `new(x, y) in {*(x)}`.
+    // Multi-binder: `new x, y in {*(x)}`.
     let result =
-        rhocalc::Proc::parse_via_wpda("new(x, y) in {*(x)}").expect("multi-binder PNew parses");
+        rhocalc::Proc::parse_via_wpda("new x, y in {*(x)}").expect("multi-binder PNew parses");
     match &result {
         rhocalc::Proc::PNew(_scope) => {},
         other => panic!("expected Proc::PNew(_), got {:?}", other),
