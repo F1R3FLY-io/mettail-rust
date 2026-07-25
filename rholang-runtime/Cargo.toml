@@ -364,6 +364,16 @@ name = "rho_rhocalc_ast"
 path = "tests/rho_rhocalc_ast.rs"
 required-features = ["rhocalc-runtime"]
 
+# The RhoCalc ⟷ Rholang DIFFERENTIAL CONFORMANCE suite (option C, Stage 0): asserts
+# `fold(e) ≡ reduce(lower(e))` across the ground-data algebra, and carries the divergence
+# ledger (A–H) as witness/target test pairs. Needs both evaluators — the generated RhoCalc
+# language with its Dovetail fold bodies AND the real f1r3node reducer — which is exactly the
+# `rhocalc-runtime` surface (it forwards `mettail-languages/{rhocalc,dovetail-codegen}`).
+[[test]]
+name = "rho_rhocalc_conformance"
+path = "tests/rho_rhocalc_conformance.rs"
+required-features = ["rhocalc-runtime"]
+
 [[test]]
 name = "rho_structured_ast_send"
 path = "tests/rho_structured_ast_send.rs"
