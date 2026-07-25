@@ -59,6 +59,28 @@ theories/DovetailRhoLanguageBackendWrapper.v
 theories/GeneratedLanguageInstallation.v
 theories/OracleQuotientEquivalence.v
 theories/RhoGuardedCommSoundness.v
+
+# S-FV — COMPILE-TIME GUARD DISCHARGE (GuardDischargeSoundness). D0 = the BINDER-CLOSED guard:
+# `rho_pure_eval` reads its Env at exactly one place (`resolve_var`, reached only from the
+# `EVarBody` arm), so a condition mentioning no variable evaluates identically under every
+# environment — T-GD-5 `env_independence_of_closed_conditions`, the workhorse induction, with the
+# spatial-match oracle's env-independence enforced BY TYPING. Hence T-GD-1
+# `discharged_guard_would_have_held` (the elided check would have succeeded at EVERY env — exactly
+# the premise that keeps RhoGuardedCommSoundness's `comm_fires_implies_true_guard` true after the
+# elision, composed here as `discharged_comm_still_implies_true_guard`, INSTANTIATED not
+# re-proved); T-GD-2 `discharge_preserves_the_fired_set` (`check_commit` answers identically
+# before and after — discharge changes no COMM's fate); T-GD-3 `refutation_changes_nothing` (a
+# statically-FALSE guard is emitted verbatim: a never-firing `for` is a RESTING OBSERVABLE);
+# T-GD-4 `discharge_is_one_sided` + the anti-divergence fence
+# (`evaluator_disagreement_never_discharges`); ★T-GD-6 `discharge_is_replay_stable`, which
+# REPLACES the UNPROVABLE `T-R-2 replay_does_not_re-evaluate_guards` (§18.6) and `T-D-5` (wiring
+# plan §7) — both DELETED, because replay DOES re-evaluate (`replay_rspace.rs:1328` reaches
+# `check_commit` via `extract_first_match`); the true obligation is DETERMINISM, and after
+# discharge every node reaches the same verdict `true` at ZERO evaluation cost; T-GD-7
+# `only_exact_may_discharge` (ExactDecidable + machine routing + closed + ground operands are each
+# necessary; the other six qualities never discharge). Mirrors `rholang-runtime/src/guard_discharge.rs`
+# and `rholang-codegen/src/guard_closure.rs`.
+theories/GuardDischargeSoundness.v
 theories/HeldFoldContractSound.v
 # FV (ix) — the Stage 3 in-Rho matching encoder is total-or-reject + persistence-preserving
 # (InRhoEncoderTotalOrReject): the encoder partitions every rewrite into a matched-in-Rho
