@@ -36,7 +36,7 @@
 //!     | awk '/warning\[D02\] \(RhoCalc\)/,/= hint: this is an inherent/'
 //! ```
 //!
-//! ★ GOLDEN — **verified byte-identical before M-0, after M-0, and after M-1b**:
+//! ★ GOLDEN — **verified before M-0, after M-0, after M-1b, and after divergence I**:
 //! **9 unresolvable ambiguities in 1 category**, all pre-existing and all in
 //! `Proc`:
 //!
@@ -45,12 +45,39 @@
 //!   2  [At,     Tok_21_21]   PPersistOutput vs PPersistOutputEmpty
 //!   3  [Ident,  Bang]        POutput        vs POutputEmpty
 //!   4  [Ident,  Tok_21_21]   PPersistOutput vs PPersistOutputEmpty
-//!   5  [Integer]             CastUInt32     vs CastInt
+//!   5  [Integer]             CastInt        vs CastUInt32
 //!   6  [LParen, Bang]        POutput        vs POutputEmpty
 //!   7  [LParen, Tok_21_21]   PPersistOutput vs PPersistOutputEmpty
-//!   8  [Minus]               CastBigRat     vs CastBigInt vs CastInt
+//!   8  [Minus]               CastBigRat     vs CastInt vs CastBigInt
 //!   9  [StringLit]           CastStr        vs CastBytes
 //! ```
+//!
+//! ### The divergence-I delta, and why it is not a regression
+//!
+//! Divergence I (`12704fc1`) REORDERED the integer projections so the DIRECT
+//! reading `Int ▸ Proc` is elected over the promote-then-project chain:
+//!
+//! ```text
+//!   before (54531931)  CastBigRat  CastBigInt  CastUInt32  CastInt   CastStr CastBytes
+//!   after  (HEAD)      CastBigRat  CastInt     CastBigInt  CastUInt32  CastStr CastBytes
+//! ```
+//!
+//! `D02` enumerates a row's alternatives in DECLARATION ORDER, so rows 5 and 8 —
+//! the only two rows whose alternatives are integer projections — re-order with
+//! it, and nothing else moves. The measurement that matters is invariant:
+//!
+//! | quantity | before | after |
+//! |---|---|---|
+//! | unresolvable ambiguities | 9 | 9 |
+//! | categories | 1 (`Proc`) | 1 (`Proc`) |
+//! | conflict PREFIXES | `[At,Bang] [At,Tok_21_21] [Ident,Bang] [Ident,Tok_21_21] [Integer] [LParen,Bang] [LParen,Tok_21_21] [Minus] [StringLit]` | identical |
+//! | constructor SET per prefix | — | identical at all 9 |
+//!
+//! So divergence I introduced no new grammar conflict and resolved none: it
+//! permuted the alternatives WITHIN two existing conflicts, which is precisely
+//! the intentional election change and is invisible to the conflict structure.
+//! Compare SETS per prefix, not the printed sequence, when re-deriving this
+//! golden — the sequence is a declaration-order artifact.
 //!
 //! `implies` and `matches` cannot add a row: `D02` reports conflicts at
 //! TRIE-DISPATCH prefixes, and an infix operator declared `a "op" b` contributes
