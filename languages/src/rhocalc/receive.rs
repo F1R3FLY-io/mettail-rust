@@ -693,7 +693,22 @@ fn collect_input_bindings(
         Some(p) => p,
         None => return false,
     };
-    if is_simple_var_bind(ib) {
+    // A WHOLE-MESSAGE binder — `x <- c` (a `Name` variable) or `@x <- c` (a bare process
+    // variable) — binds the message itself, so the arity-1 payload list is unwrapped exactly as
+    // the single-row path does (`receive_apply`, which special-cases a bare `Proc::PVar` for the
+    // same reason). Anything structured (`@[a, b] <- c`, `@0 <- c`, a polyadic row) matches
+    // against the arity-normalized payload list.
+    //
+    // Before 2026-07-25 only `is_simple_var_bind` (the `Name`-variable form) unwrapped here, so a
+    // QUOTED binder inside a `&`-join bound the payload LIST: measured,
+    // `for(@x <- c1 & @y <- c2){x} | c1!(p) | c2!(q)` answered `[p]` while its single-row twin
+    // `for(@x <- c){x} | c!(p)` answered `p`, and the `Name`-binder join
+    // `for(x <- c1 & y <- c2){*x} | …` also answered `p`. One receive, two binding rules — this
+    // makes the join path agree with the row path (`languages/tests/rhocalc_tests.rs::comm::
+    // quoted_name_binder_form_is_equivalent`, whose very name asserts the equivalence).
+    let binds_whole_message =
+        is_simple_var_bind(ib) || matches!(pat, Proc::PVar(OrdVar(Var::Free(_))));
+    if binds_whole_message {
         collect_pattern_bindings(&pat, &payload_for_simple_var_bind(q), env)
     } else {
         let q_norm = canonicalize_arity_payload(q);

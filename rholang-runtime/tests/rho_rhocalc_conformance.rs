@@ -67,25 +67,36 @@
 //! | **A** | `Int` overflow | the **`error`** term (was: silently **`0`**) | wraps (`i64::MIN`) | C1 | open (fabrication fixed) |
 //! | **A2** | `Int` division / remainder by zero | the **`error`** term (was: silently **`0`**) | `ReduceError("Division by zero")` | — | ★ CLOSED |
 //! | **B** | `+` on a **runtime-bound** string | rests unreduced | `OperatorNotDefined { op: "+", other_type: "string" }` | C1 | open |
-//! | **C** | `l.nth(i)` out of bounds, and `nth` on a plain (`BigInt`) index | **process abort** / `error` | recoverable `ReduceError` | C1 | open |
+//! | **C** | `l.nth(i)` out of bounds, and `nth` on a plain (`BigInt`) index | the `error` term, all carriers (was: **process abort** / `error`) | recoverable `ReduceError` | C1 | open (fold half CLOSED) |
 //! | **D** | `Fixed` arithmetic on **mismatched scales** | rescales | `OperatorExpectedError` | C1 | open |
 //! | **E** | canonical **collection order** for `toByteArray` | protobuf byte order | `ScoredTerm` value order | C2 | ★ CLOSED |
 //! | **F** | `.toByteArray()` | a hex `GString` — and unreachable from source | a real `GByteArray` | C2 | ★ CLOSED |
 //! | **G** | `Pathmap` / zippers | own carriers + 20+ methods | `EPathmapBody`/`EZipperBody` exist, unused | C4 | open |
-//! | **H** | `==` / `!=` on **`Bool`** | `error` (no fold arm) | `Bool(true)` | C1 | open |
+//! | **H** | `==` / `!=` on **`Bool`** | `Bool` (was: `error`, no fold arm) | `Bool(true)` | — | ★ CLOSED |
+//! | **I** | a numeral's **carrier** depends on syntax (`@(1)`:`Int` vs `@1`:`BigInt`, `5u32`:`BigInt`) | `*(@(1)) + 2` ⟹ `error` | Rholang has ONE integer | WPDA projection fix | open |
+//! | **J** | `x!()` satisfies `for(@y <- x)` | fires, `y = []` | arity-checked COMM: rests | C1 | open |
 //!
-//! `H` was **discovered by this suite** — it is not in the original `§17.11` inventory.
+//! `H` was **discovered by this suite**; `I` and `J` were discovered by the burndown described
+//! immediately below. None of the three is in the original `§17.11` inventory.
 //!
-//! ### ⚠ The pins this suite replaces did not pin anything
+//! ### ⚠ The pins this suite replaced did not pin anything — now FIXED
 //!
 //! `languages/tests/rhocalc_tests.rs::assert_reduces_to` — the helper behind most of that file's
-//! RhoCalc semantics tests — reaches its verdict through a disjunction that ends in
-//! `bag_multiset_eq(nf, expected)`, and `bag_multiset_eq` returns
+//! RhoCalc semantics tests — reached its verdict through a disjunction ending in
+//! `bag_multiset_eq(nf, expected)`, and `bag_multiset_eq` returned
 //! `to_sorted_bag_elements(a) == to_sorted_bag_elements(b)`, i.e. `None == None` ⟹ **`true`**,
-//! whenever neither side is a `#{…}#` bag literal. Measured 2026-07-25:
-//! `assert_reduces_to("1 + 2", "999")` **passes**. Guarding the comparator turns **39 of that
-//! file's 412 tests** red. That is why this suite compares with `assert_eq!` on an explicitly
-//! written expected value and never through a fuzzy helper.
+//! whenever neither side was a `#{…}#` bag literal. Measured 2026-07-25:
+//! `assert_reduces_to("1 + 2", "999")` **passed**.
+//!
+//! The comparator is now guarded (an inapplicable comparator answers `false`, never `true`) and
+//! the resulting 34 red tests were burned down to zero. That burndown is what surfaced divergences
+//! `I` and `J`, the `nth` panic + index-carrier halves of `C`, the fold-vs-redex `error` poisoning
+//! (`*(@(1)) == 1` ⟹ `error`), the never-lowered nullary folds (`Map()` never became `{}`), and
+//! the join-row whole-message binder (`for(@x <- c1 & …)` bound the payload LIST). The vacuity
+//! guarantee itself is pinned by `rhocalc_tests.rs::comparator_integrity`.
+//!
+//! This suite still compares with `assert_eq!` on an explicitly written expected value and never
+//! through a fuzzy helper.
 //!
 //! ### ⚠ Divergence A is NOT fixed here, and must not be
 //!
@@ -111,9 +122,10 @@
 //! `catch_unwind` cannot contain a panic raised inside a Dovetail fold in this workspace: the
 //! unwinder crosses Cranelift-compiled frames (`[profile.dev] codegen-backend = "cranelift"`,
 //! workspace `Cargo.toml:79`) and dies with `fatal runtime error: failed to initiate panic,
-//! error 5, aborting`. Divergence C's panic is therefore proven by **re-executing this test binary
-//! as a child process** and asserting the child's death — see
-//! [`divergence_c_witness_out_of_bounds_nth_aborts_the_process`].
+//! error 5, aborting`. That is why every fold-side failure disposition in RhoCalc is a VALUE
+//! (`Proc::Err`) and never a panic, and why
+//! [`divergence_c_closed_nth_is_total_and_carrier_agnostic`] can assert an out-of-range `nth`
+//! in-process: if the panic were back, the test binary would die instead of failing.
 
 use std::sync::Arc;
 
@@ -769,87 +781,49 @@ async fn divergence_b_target_string_add_is_position_independent() {
 
 // ── C — `nth` error discipline ───────────────────────────────────────────────────────────────────
 
-/// The environment variable that arms [`zz_divergence_c_out_of_bounds_nth_probe`]. Without it the
-/// probe is inert, so even `cargo nextest run --run-ignored all` cannot trip the abort.
-const DIVERGENCE_C_PROBE_ARMED: &str = "MTL_DIVERGENCE_C_PROBE";
-
-/// **Divergence C (witness, part 1) — out-of-bounds `nth` ABORTS the process.**
+/// **Divergence C (parts 1 + 2) — ★ CLOSED 2026-07-25 on the FOLD side.**
 ///
-/// `languages/src/rhocalc.rs` `LNth` body ends in `v.get(*n as usize).cloned().expect("at: index
-/// out of bounds")` — a Rust panic. Rholang instead returns a recoverable
-/// `InterpreterError::ReduceError("Error: index out of bound: N")`
-/// (`rholang/src/rust/interpreter/reduce.rs:4073-4081`).
+/// Two of C's three symptoms were defects in `languages/src/rhocalc.rs`'s `LNth` body, and both
+/// are fixed:
 ///
-/// The panic cannot be caught in-process (see the module header: unwinding across this workspace's
-/// Cranelift frames aborts with `failed to initiate panic, error 5`), so it is proven by
-/// re-executing THIS test binary for the armed probe below and asserting the child's death.
+/// | symptom | before | now |
+/// |---|---|---|
+/// | out-of-range index | `v.get(n).cloned().expect("at: index out of bounds")` — a panic, which **aborts the process** here (unwinding across this workspace's Cranelift frames dies with `failed to initiate panic, error 5`) | the `error` term |
+/// | index carrier | the arm matched only `(CastList, CastInt)`, so a PLAIN RhoCalc integer — which is `BigInt` — was rejected and `[1,2,3].nth(0)` answered `error` | `Int`, `BigInt` and `UInt32` indices all accepted |
 ///
-/// *Delete when C1 lands* (the fold body is gone; `nth` becomes `EMethod("nth")`).
-#[test]
-fn divergence_c_witness_out_of_bounds_nth_aborts_the_process() {
-    let binary = std::env::current_exe().expect("the running test binary path");
-    let output = std::process::Command::new(binary)
-        .args([
-            "--exact",
-            "zz_divergence_c_out_of_bounds_nth_probe",
-            "--ignored",
-            "--nocapture",
-            "--test-threads",
-            "1",
-        ])
-        .env(DIVERGENCE_C_PROBE_ARMED, "1")
-        .output()
-        .expect("re-execute this test binary for the armed out-of-bounds probe");
-
-    assert!(
-        !output.status.success(),
-        "C: `[1,2,3].nth(int(10,64))` must still be observed to kill the process \
-         (status {:?}); if it no longer does, C1 has landed and this witness must be deleted",
-        output.status
-    );
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("index out of bounds"),
-        "C: the child must die on the RhoCalc fold's `.expect(\"at: index out of bounds\")`, \
-         got stderr:\n{stderr}"
-    );
-}
-
-/// The armed probe re-executed by [`divergence_c_witness_out_of_bounds_nth_aborts_the_process`].
-/// Inert unless [`DIVERGENCE_C_PROBE_ARMED`] is set, so it is safe under `--run-ignored all`.
-#[test]
-#[ignore = "divergence C probe: ABORTS the process when armed; driven as a child process by \
-            divergence_c_witness_out_of_bounds_nth_aborts_the_process"]
-fn zz_divergence_c_out_of_bounds_nth_probe() {
-    if std::env::var_os(DIVERGENCE_C_PROBE_ARMED).is_none() {
-        return;
-    }
-    let proc = parse("[1, 2, 3].nth(int(10, 64))");
-    let _ = fold(&proc);
-    unreachable!("the RhoCalc `nth` fold must have aborted the process");
-}
-
-/// **Divergence C (witness, part 2) — `nth` does not even accept RhoCalc's own default integer.**
+/// This test is now a REGRESSION PIN, and it proves the panic is gone by construction: it calls
+/// the out-of-range fold **in-process**. A panic would take the whole binary with it, so the test
+/// cannot pass unless the fold returns.
 ///
-/// `LNth`'s fold body matches `(Proc::CastList(_), Proc::CastInt(_))`, but a plain RhoCalc integer
-/// literal is `BigInt` — so `[1,2,3].nth(0)` folds to `error` while `[1,2,3].nth(int(0,64))`
-/// folds to `1`. The machine has no such carrier restriction: `reduce.rs:4106-4118` accepts
-/// `EList`, `ETuple` **and** `GByteArray` receivers with an `eval_to_i64` index.
+/// The deleted machinery is worth naming: this used to be
+/// `divergence_c_witness_out_of_bounds_nth_aborts_the_process`, which re-executed THIS test binary
+/// as a child (armed by `MTL_DIVERGENCE_C_PROBE`) and asserted the child's death, because the abort
+/// could not be observed any other way. With the panic gone there is nothing to survive.
 ///
-/// *Delete when C1 lands.*
+/// What remains of C is the LOWERING gap (`nth` is not routed to the machine at all) — see
+/// [`divergence_c_target_nth_is_the_reducers_nth`], still C1's to close.
 #[tokio::test(flavor = "multi_thread")]
-async fn divergence_c_witness_nth_rejects_a_plain_integer_index() {
-    assert_eq!(
-        fold(&parse("[1, 2, 3].nth(0)")).expect("the fold converges"),
-        "error",
-        "C: the fold's `nth` requires the fixed-width `Int` carrier, not RhoCalc's default BigInt"
-    );
-    assert_eq!(
-        fold(&parse("[1, 2, 3].nth(int(0, 64))")).expect("the fold converges"),
-        "1",
-        "C: the same index, cast to the fixed-width carrier, works — proving it is a CARRIER \
-         restriction, not a bounds check"
-    );
+async fn divergence_c_closed_nth_is_total_and_carrier_agnostic() {
+    // Out of range: the `error` term, IN PROCESS (a panic here would abort the binary).
+    for source in ["[1, 2, 3].nth(10)", "[1, 2, 3].nth(int(10, 64))", "[].nth(0)"] {
+        assert_eq!(
+            fold(&parse(source)).unwrap_or_else(|err| panic!("{source:?}: {err}")),
+            "error",
+            "C: {source:?} — an out-of-range `nth` is a value, never a panic"
+        );
+    }
+    // Every integer carrier RhoCalc can write is accepted, and they agree.
+    for source in ["[1, 2, 3].nth(0)", "[1, 2, 3].nth(int(0, 64))", "[1, 2, 3].nth(uint(0, 32))"] {
+        assert_eq!(
+            fold(&parse(source)).unwrap_or_else(|err| panic!("{source:?}: {err}")),
+            "1",
+            "C: {source:?} — `nth` does not care which integer carrier the index rode in on"
+        );
+    }
+    // A NON-integer index is still refused, as a value.
+    assert_eq!(fold(&parse(r#"[1, 2, 3].nth("0")"#)).expect("the fold converges"), "error");
+
+    // ⚠ STILL OPEN: the machine never sees `nth` — the lowering rejects the construct.
     let err = reduce(&parse("[1, 2, 3].nth(0)"))
         .await
         .expect_err("the method is not lowered at all today");
@@ -858,11 +832,13 @@ async fn divergence_c_witness_nth_rejects_a_plain_integer_index() {
 
 /// **Divergence C (target) — `nth` is Rholang's `nth`: total on the carrier, recoverable on error.**
 ///
-/// Closed by **C1** (`EMethodBody(EMethod { method_name: "nth", … })` against the reducer's own
-/// method table, `reduce.rs:8197-8256`).
+/// The FOLD half is closed (see [`divergence_c_closed_nth_is_total_and_carrier_agnostic`]); this
+/// target additionally requires the machine to be the one answering, which is **C1**
+/// (`EMethodBody(EMethod { method_name: "nth", … })` against the reducer's own method table,
+/// `reduce.rs:8197-8256`).
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "divergence C: `l.nth(i)` is UnsupportedProc on the machine and panics in the fold; \
-            closed by C1 (route `nth` to EMethod)"]
+#[ignore = "divergence C (residual): `l.nth(i)` is still UnsupportedProc on the machine; the fold \
+            half (panic + index carrier) is CLOSED. Closed by C1 (route `nth` to EMethod)"]
 async fn divergence_c_target_nth_is_the_reducers_nth() {
     // A plain (BigInt) index works, on both sides.
     assert_conformant("[1, 2, 3].nth(0)", "1").await;
@@ -1124,42 +1100,167 @@ async fn divergence_g_target_pathmap_and_zippers_use_their_native_carriers() {
 
 // ── H — boolean equality (discovered by this suite) ──────────────────────────────────────────────
 
-/// **Divergence H (witness) — `==` / `!=` on `Bool` folds to `error`.**
+/// **Divergence H — ★ CLOSED 2026-07-25.**
 ///
-/// Discovered by this suite; not in the `§17.11` inventory. `languages/src/rhocalc.rs`'s `Eq`/`Ne`
-/// fold bodies have no `Bool` arm, so `true == true` folds to `Proc::Err`, while the machine's
-/// `relopb` (`reduce.rs:2755-2766`) answers `true`. The fold is *less* capable than the reducer
-/// here, which is the benign direction — but it is still two implementations disagreeing.
+/// H was discovered by this suite: `languages/src/rhocalc.rs`'s `Eq`/`Ne` fold bodies had arms for
+/// every ground type EXCEPT `Bool`, so `true == true` fell through to the collection-equality
+/// fallback and answered `Proc::Err`, while the machine answered `true`.
 ///
-/// *Delete when C1 lands.*
+/// Rholang is normative and Rholang's `==` is STRUCTURAL equality on the whole `Par`
+/// (`reduce.rs::combine_eq`, `sv1 == sv2` after substitution — not `relopb`, which serves only
+/// `<`/`<=`/`>`/`>=`), so two `GBool`s compare by value. RhoCalc now has the matching `Bool` arm
+/// in both `Eq` and `Ne`, and its target twin
+/// [`divergence_h_target_boolean_equality_agrees`] is GREEN.
+///
+/// This test keeps the FOLD side pinned so the arm cannot be lost again.
 #[tokio::test(flavor = "multi_thread")]
-async fn divergence_h_witness_boolean_equality_folds_to_error() {
-    for (source, machine_answer) in [("true == true", "true"), ("true != false", "true")] {
-        let proc = parse(source);
+async fn divergence_h_closed_boolean_equality_folds_to_a_boolean() {
+    for (source, answer) in [
+        ("true == true", "true"),
+        ("true != false", "true"),
+        ("true == false", "false"),
+        ("false != false", "false"),
+    ] {
         assert_eq!(
-            fold(&proc).expect("the fold converges"),
-            "error",
-            "H: {source:?} — the fold has no Bool arm for `==`/`!=`"
-        );
-        let observed = reduce(&proc).await.expect("the machine compares booleans");
-        assert_eq!(
-            observed.iter().map(render_as_rhocalc).collect::<Vec<_>>(),
-            vec![machine_answer.to_string()],
-            "H: {source:?} — reduce.rs's `relopb` answers it"
+            fold(&parse(source)).expect("the fold converges"),
+            answer,
+            "H: {source:?} — the fold decides boolean equality by value, as `combine_eq` does"
         );
     }
 }
 
-/// **Divergence H (target) — boolean equality agrees.**
-///
-/// Closed by **C1**.
+/// **Divergence H (target) — boolean equality agrees. ★ CLOSED 2026-07-25** (the `#[ignore]` is
+/// removed).
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "divergence H: `true == true` folds to `error` while the reducer answers `true`; \
-            closed by C1"]
 async fn divergence_h_target_boolean_equality_agrees() {
     assert_conformant("true == true", "true").await;
     assert_conformant("true != false", "true").await;
     assert_conformant("true == false", "false").await;
+}
+
+// ── I — the numeric-literal CARRIER depends on syntax (discovered 2026-07-25) ─────────────────────
+
+/// **Divergence I (witness) — the same numeral lands in a different numeric carrier depending on
+/// where it is written.**
+///
+/// Rholang has ONE integer type. MeTTaIL offers several carriers for it (`Int` = `i64` ▸ `GInt`,
+/// `BigInt` = arbitrary precision ▸ `GBigInt`, `UInt32`), which is fine as long as the carrier is
+/// a function of the SOURCE. It is not:
+///
+/// | source | parsed | carrier |
+/// |---|---|---|
+/// | `*(@1) + 2` | `Add(PDrop(NParen(NQuoteShort(CastBigInt(1)))), CastBigInt(2))` | both arbitrary precision |
+/// | `*(@(1)) + 2` | `Add(PDrop(NParen(NQuoteShort(**CastInt**(1)))), CastBigInt(2))` | MIXED |
+/// | `5u32` | `CastBigInt(5)` | the `u32` suffix is DISCARDED |
+///
+/// The operators are carrier-EXACT — and so is the consensus reducer, whose `combine_plus`
+/// (`reduce.rs:3112`) likewise has no mixed `GInt`/`GBigInt` arm — so the asymmetry becomes a
+/// semantic difference: one pair of parentheses turns `3` into `error`. It also breaks COMM: a
+/// receive PATTERN and a send PAYLOAD written from IDENTICAL source text can land in different
+/// carriers and fail to unify (`for(@*(@(0)) <- c){1} | c!(*(@(0)))` never fires).
+///
+/// Discovered while burning down `languages/tests/rhocalc_tests.rs`'s vacuous assertions, where it
+/// was tripping four tests. Pinned on the MeTTaIL side by
+/// `languages/tests/rhocalc_tests.rs::carrier_asymmetry`.
+///
+/// ⚠ The fix belongs in the WPDA cross-category projection (`macros/src/gen/runtime/wpda_codegen/`,
+/// `prattail/src/wpda_walker.rs`) — a formally-verified, repeatedly red-teamed subsystem whose
+/// disambiguation must not be adjusted by a local heuristic (`feedback_use_wpds_disambiguation_
+/// not_heuristics`, `feedback_never_disambiguate_early`). It is recorded, not improvised.
+/// **Note on where this witness lives.** The carrier a numeral receives depends on the parse ENTRY
+/// POINT as well as on parentheses: `Proc::parse_via_wpda` (what [`parse`] here uses, and what the
+/// production AST-first lowering uses) reads `*(@(1))` as arbitrary precision, while
+/// `Language::parse_term` (the ambiguity-preserving box the Dovetail test oracle consumes) reads
+/// the same source as fixed width. The AST-level pin therefore lives with the parser, in
+/// `languages/tests/rhocalc_tests.rs::carrier_asymmetry`. What is asserted HERE is the part that
+/// is a statement about the two EVALUATORS: because MeTTaIL splits Rholang's single integer across
+/// carriers and both evaluators are carrier-exact, a MeTTaIL program's meaning depends on a choice
+/// Rholang does not have.
+#[tokio::test(flavor = "multi_thread")]
+async fn divergence_i_witness_numeral_carrier_depends_on_parentheses() {
+    // ONE carrier ⇒ both evaluators compute.
+    assert_eq!(
+        fold(&parse("int(1, 64) + int(2, 64)")).expect("the fold converges"),
+        "3",
+        "I: fixed width on both sides"
+    );
+    assert_eq!(fold(&parse("1 + 2")).expect("the fold converges"), "3", "I: arbitrary precision");
+
+    // MIXED carriers ⇒ BOTH evaluators refuse the very same addition. Rholang, which has one
+    // integer type, has nothing to refuse: `1 + 2` is `3` however it was written.
+    let mixed = parse("int(1, 64) + 2");
+    assert_eq!(
+        fold(&mixed).expect("the fold converges"),
+        "error",
+        "I: the fold's `+` is carrier-exact"
+    );
+    let machine = reduce(&mixed).await;
+    assert!(
+        machine.is_err(),
+        "I: the consensus reducer's `combine_plus` (reduce.rs:3112) has no mixed \
+         `GInt`/`GBigInt` arm either — got {machine:?}"
+    );
+}
+
+/// **Divergence I (target) — a numeral's carrier is a function of the numeral.**
+///
+/// Closed by a WPDA cross-category-projection fix (not attempted here — see the witness).
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "divergence I: MeTTaIL splits Rholang's single integer across carriers and both \
+            evaluators are carrier-exact, so `int(1,64) + 2` is refused; closed by a WPDA \
+            projection fix (one carrier per numeral) or by C1"]
+async fn divergence_i_target_numeral_carrier_is_syntax_independent() {
+    assert_conformant("int(1, 64) + 2", "3").await;
+    assert_conformant("5u32 bitand 3u32", "1").await;
+}
+
+// ── J — an EMPTY send satisfies an arity-1 receive (discovered 2026-07-25) ────────────────────────
+
+/// **Divergence J (witness) — `x!()` fires against `for(@y <- x)` and delivers the empty list.**
+///
+/// RhoCalc canonicalizes every send payload to a LIST (`x!(p)` ≡ `x!([p])`, `x!()` ≡ `x!([])` —
+/// pinned by `languages/tests/rhocalc_tests.rs::parsing::{send_unary_is_list_sugar,
+/// send_empty_is_list_sugar}`), and a whole-message binder receives that payload. So the 0-arity
+/// send `x!()` satisfies the 1-arity receive `for(@y <- x)` and binds `y = []`.
+///
+/// Rholang's COMM is ARITY-CHECKED: `x!()` produces a `Send` with an empty `data` vector, and a
+/// `Receive` whose single `ReceiveBind` has one pattern never matches it, so the program rests.
+/// (RhoCalc agrees for multi-binder rows — `x!(1,2) | for(a,b,c <- x){…}` blocks — so the
+/// divergence is specific to the whole-message binder against the EMPTY payload.)
+///
+/// Discovered while burning down `languages/tests/rhocalc_tests.rs`, where
+/// `send_empty_payload_quoted_bind_emits_empty_proc` had an expectation that contradicted both its
+/// own name and the sugar pins, and only "passed" because `assert_reduces_to` was vacuous.
+#[tokio::test(flavor = "multi_thread")]
+async fn divergence_j_witness_empty_send_satisfies_an_arity_one_receive() {
+    assert_eq!(
+        fold_program(&parse("for(@y <- x){y} | x!()")).expect("the fold fixpoint settles"),
+        "{[]}",
+        "J: the empty send's payload IS `[]`, and the whole-message binder receives it"
+    );
+    // The multi-binder row is arity-checked, so the divergence is not "RhoCalc ignores arity".
+    let blocked = fold_program(&parse("x!(1,2) | for(a, b, c <- x){[a,b,c]}"))
+        .expect("the fold fixpoint settles");
+    assert!(
+        blocked.contains("for("),
+        "J: a polyadic arity mismatch DOES block, got {blocked:?}"
+    );
+}
+
+/// **Divergence J (target) — the empty send does not satisfy an arity-1 receive.**
+///
+/// Closed by making the fold's COMM arity-check the whole-message binder the way Rholang's
+/// `ReceiveBind` does (or by C1, which deletes the fold's COMM entirely).
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "divergence J: `for(@y <- x){y} | x!()` fires and yields `[]`; Rholang's arity-checked \
+            COMM leaves it at rest"]
+async fn divergence_j_target_empty_send_does_not_satisfy_an_arity_one_receive() {
+    let source = "for(@y <- x){y} | x!()";
+    let folded = fold_program(&parse(source)).expect("the fold fixpoint settles");
+    assert!(
+        folded.contains("for("),
+        "J: the receive must still be waiting, got {folded:?}"
+    );
 }
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════

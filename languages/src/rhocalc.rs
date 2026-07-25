@@ -737,7 +737,12 @@ language! {
                     (Bool::BoolLit(x), Bool::BoolLit(y)) => Proc::CastBool(std::sync::Arc::new(Bool::BoolLit(*x || *y))),
                     _ => Proc::Err,
                 },
-                _ => Proc::Err,
+                // Not two ground operands: `error` only when the operands ARE data
+                // (the operator is undefined at those types); otherwise rebuild the redex so
+                // congruence can reduce the operand first. See `runtime::is_ground_operand`.
+                _ => crate::rhocalc::runtime::binary_fallback(a, b, || {
+                    Proc::Or(std::sync::Arc::new(a.clone()), std::sync::Arc::new(b.clone()))
+                }),
             }}
         ] fold;
 
@@ -747,7 +752,12 @@ language! {
                     (Bool::BoolLit(x), Bool::BoolLit(y)) => Proc::CastBool(std::sync::Arc::new(Bool::BoolLit(*x && *y))),
                     _ => Proc::Err,
                 },
-                _ => Proc::Err,
+                // Not two ground operands: `error` only when the operands ARE data
+                // (the operator is undefined at those types); otherwise rebuild the redex so
+                // congruence can reduce the operand first. See `runtime::is_ground_operand`.
+                _ => crate::rhocalc::runtime::binary_fallback(a, b, || {
+                    Proc::And(std::sync::Arc::new(a.clone()), std::sync::Arc::new(b.clone()))
+                }),
             }}
         ] fold;
 
@@ -775,7 +785,12 @@ language! {
                     (BigRat::RatLit(x), BigRat::RatLit(y)) => Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(x.bitor_aligned(*y)))),
                     _ => Proc::Err,
                 },
-                _ => Proc::Err,
+                // Not two ground operands: `error` only when the operands ARE data
+                // (the operator is undefined at those types); otherwise rebuild the redex so
+                // congruence can reduce the operand first. See `runtime::is_ground_operand`.
+                _ => crate::rhocalc::runtime::binary_fallback(a, b, || {
+                    Proc::BitOr(std::sync::Arc::new(a.clone()), std::sync::Arc::new(b.clone()))
+                }),
             }}
         ] fold;
 
@@ -801,7 +816,12 @@ language! {
                     (BigRat::RatLit(x), BigRat::RatLit(y)) => Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(x.bitand_aligned(*y)))),
                     _ => Proc::Err,
                 },
-                _ => Proc::Err,
+                // Not two ground operands: `error` only when the operands ARE data
+                // (the operator is undefined at those types); otherwise rebuild the redex so
+                // congruence can reduce the operand first. See `runtime::is_ground_operand`.
+                _ => crate::rhocalc::runtime::binary_fallback(a, b, || {
+                    Proc::BitAnd(std::sync::Arc::new(a.clone()), std::sync::Arc::new(b.clone()))
+                }),
             }}
         ] fold;
 
@@ -829,7 +849,10 @@ language! {
                     ))),
                     _ => Proc::Err,
                 },
-                _ => Proc::Err,
+                // See `runtime::is_ground_operand`: `error` only for a ground operand.
+                _ => crate::rhocalc::runtime::unary_fallback(a, || {
+                    Proc::BitNot(std::sync::Arc::new(a.clone()))
+                }),
             }}
         ] fold;
 
@@ -863,8 +886,23 @@ language! {
                     (Str::StringLit(x), Str::StringLit(y)) => Proc::CastBool(std::sync::Arc::new(Bool::BoolLit(x == y))),
                     _ => Proc::Err,
                 },
+                // Divergence H (closed 2026-07-25): `true == true` used to fall through to the
+                // collection fallback and answer `error`, because `Eq` had no `Bool` arm — while
+                // Rholang's `==` is STRUCTURAL equality on the whole `Par`
+                // (`reduce.rs::combine_eq`, `sv1 == sv2`), which answers `true` for two `GBool`s.
+                // RhoCalc conforms DOWN to Rholang.
+                (Proc::CastBool(a), Proc::CastBool(b)) => match (&**a, &**b) {
+                    (Bool::BoolLit(x), Bool::BoolLit(y)) => Proc::CastBool(std::sync::Arc::new(Bool::BoolLit(x == y))),
+                    _ => Proc::Err,
+                },
                 _ => {
-                    if let Some(v) = crate::rhocalc::runtime::compare_collection_equality(&a, &b) {
+                    // Cross-kind comparison. An operand that is still a REDEX rebuilds the `==`
+                    // so congruence reduces it first; `error` is reserved for two ground operands
+                    // the collection comparator cannot decide (see `runtime::is_ground_operand`
+                    // — without this, `*(@(1)) == 1` answers `error`).
+                    if !crate::rhocalc::runtime::both_ground(a, b) {
+                        Proc::Eq(std::sync::Arc::new(a.clone()), std::sync::Arc::new(b.clone()))
+                    } else if let Some(v) = crate::rhocalc::runtime::compare_collection_equality(&a, &b) {
                         Proc::CastBool(std::sync::Arc::new(Bool::BoolLit(v)))
                     } else {
                         Proc::Err
@@ -903,8 +941,16 @@ language! {
                     (Str::StringLit(x), Str::StringLit(y)) => Proc::CastBool(std::sync::Arc::new(Bool::BoolLit(x != y))),
                     _ => Proc::Err,
                 },
+                // Divergence H (closed 2026-07-25) — the `!=` twin of the `Eq` `Bool` arm above.
+                (Proc::CastBool(a), Proc::CastBool(b)) => match (&**a, &**b) {
+                    (Bool::BoolLit(x), Bool::BoolLit(y)) => Proc::CastBool(std::sync::Arc::new(Bool::BoolLit(x != y))),
+                    _ => Proc::Err,
+                },
                 _ => {
-                    if let Some(v) = crate::rhocalc::runtime::compare_collection_equality(&a, &b) {
+                    // The `!=` twin of the `Eq` cross-kind arm above.
+                    if !crate::rhocalc::runtime::both_ground(a, b) {
+                        Proc::Ne(std::sync::Arc::new(a.clone()), std::sync::Arc::new(b.clone()))
+                    } else if let Some(v) = crate::rhocalc::runtime::compare_collection_equality(&a, &b) {
                         Proc::CastBool(std::sync::Arc::new(Bool::BoolLit(!v)))
                     } else {
                         Proc::Err
@@ -943,7 +989,12 @@ language! {
                     (Str::StringLit(x), Str::StringLit(y)) => Proc::CastBool(std::sync::Arc::new(Bool::BoolLit(x > y))),
                     _ => Proc::Err,
                 },
-                _ => Proc::Err,
+                // Not two ground operands: `error` only when the operands ARE data
+                // (the operator is undefined at those types); otherwise rebuild the redex so
+                // congruence can reduce the operand first. See `runtime::is_ground_operand`.
+                _ => crate::rhocalc::runtime::binary_fallback(a, b, || {
+                    Proc::Gt(std::sync::Arc::new(a.clone()), std::sync::Arc::new(b.clone()))
+                }),
             }}
         ] fold;
 
@@ -977,7 +1028,12 @@ language! {
                     (Str::StringLit(x), Str::StringLit(y)) => Proc::CastBool(std::sync::Arc::new(Bool::BoolLit(x < y))),
                     _ => Proc::Err,
                 },
-                _ => Proc::Err,
+                // Not two ground operands: `error` only when the operands ARE data
+                // (the operator is undefined at those types); otherwise rebuild the redex so
+                // congruence can reduce the operand first. See `runtime::is_ground_operand`.
+                _ => crate::rhocalc::runtime::binary_fallback(a, b, || {
+                    Proc::Lt(std::sync::Arc::new(a.clone()), std::sync::Arc::new(b.clone()))
+                }),
             }}
         ] fold;
 
@@ -1011,7 +1067,12 @@ language! {
                     (Str::StringLit(x), Str::StringLit(y)) => Proc::CastBool(std::sync::Arc::new(Bool::BoolLit(x >= y))),
                     _ => Proc::Err,
                 },
-                _ => Proc::Err,
+                // Not two ground operands: `error` only when the operands ARE data
+                // (the operator is undefined at those types); otherwise rebuild the redex so
+                // congruence can reduce the operand first. See `runtime::is_ground_operand`.
+                _ => crate::rhocalc::runtime::binary_fallback(a, b, || {
+                    Proc::GtEq(std::sync::Arc::new(a.clone()), std::sync::Arc::new(b.clone()))
+                }),
             }}
         ] fold;
 
@@ -1045,7 +1106,12 @@ language! {
                     (Str::StringLit(x), Str::StringLit(y)) => Proc::CastBool(std::sync::Arc::new(Bool::BoolLit(x <= y))),
                     _ => Proc::Err,
                 },
-                _ => Proc::Err,
+                // Not two ground operands: `error` only when the operands ARE data
+                // (the operator is undefined at those types); otherwise rebuild the redex so
+                // congruence can reduce the operand first. See `runtime::is_ground_operand`.
+                _ => crate::rhocalc::runtime::binary_fallback(a, b, || {
+                    Proc::LtEq(std::sync::Arc::new(a.clone()), std::sync::Arc::new(b.clone()))
+                }),
             }}
         ] fold;
 
@@ -1113,7 +1179,12 @@ language! {
                     (Str::StringLit(x), Str::StringLit(y)) => Proc::CastStr(std::sync::Arc::new(Str::StringLit(format!("{}{}", x, y)))),
                     _ => Proc::Err,
                 },
-                _ => Proc::Err,
+                // Not two ground operands: `error` only when the operands ARE data
+                // (the operator is undefined at those types); otherwise rebuild the redex so
+                // congruence can reduce the operand first. See `runtime::is_ground_operand`.
+                _ => crate::rhocalc::runtime::binary_fallback(a, b, || {
+                    Proc::Add(std::sync::Arc::new(a.clone()), std::sync::Arc::new(b.clone()))
+                }),
             }}
         ] fold;
 
@@ -1159,7 +1230,12 @@ language! {
                     (Fixed::FixedLit(x), Fixed::FixedLit(y)) => Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(*x - *y))),
                     _ => Proc::Err,
                 },
-                _ => Proc::Err,
+                // Not two ground operands: `error` only when the operands ARE data
+                // (the operator is undefined at those types); otherwise rebuild the redex so
+                // congruence can reduce the operand first. See `runtime::is_ground_operand`.
+                _ => crate::rhocalc::runtime::binary_fallback(a, b, || {
+                    Proc::Sub(std::sync::Arc::new(a.clone()), std::sync::Arc::new(b.clone()))
+                }),
             }}
         ] fold;
 
@@ -1204,7 +1280,12 @@ language! {
                     (Fixed::FixedLit(x), Fixed::FixedLit(y)) => Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(*x * *y))),
                     _ => Proc::Err,
                 },
-                _ => Proc::Err,
+                // Not two ground operands: `error` only when the operands ARE data
+                // (the operator is undefined at those types); otherwise rebuild the redex so
+                // congruence can reduce the operand first. See `runtime::is_ground_operand`.
+                _ => crate::rhocalc::runtime::binary_fallback(a, b, || {
+                    Proc::Mul(std::sync::Arc::new(a.clone()), std::sync::Arc::new(b.clone()))
+                }),
             }}
         ] fold;
 
@@ -1264,7 +1345,12 @@ language! {
                     }
                     _ => Proc::Err,
                 },
-                _ => Proc::Err,
+                // Not two ground operands: `error` only when the operands ARE data
+                // (the operator is undefined at those types); otherwise rebuild the redex so
+                // congruence can reduce the operand first. See `runtime::is_ground_operand`.
+                _ => crate::rhocalc::runtime::binary_fallback(a, b, || {
+                    Proc::Div(std::sync::Arc::new(a.clone()), std::sync::Arc::new(b.clone()))
+                }),
             }}
         ] fold;
 
@@ -1301,7 +1387,12 @@ language! {
                     }
                     _ => Proc::Err,
                 },
-                _ => Proc::Err,
+                // Not two ground operands: `error` only when the operands ARE data
+                // (the operator is undefined at those types); otherwise rebuild the redex so
+                // congruence can reduce the operand first. See `runtime::is_ground_operand`.
+                _ => crate::rhocalc::runtime::binary_fallback(a, b, || {
+                    Proc::Mod(std::sync::Arc::new(a.clone()), std::sync::Arc::new(b.clone()))
+                }),
             }}
         ] fold;
 
@@ -1335,7 +1426,10 @@ language! {
                     Fixed::FixedLit(fp) => Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(fp.clone().neg()))),
                     _ => Proc::Err,
                 },
-                _ => Proc::Err,
+                // See `runtime::is_ground_operand`: `error` only for a ground operand.
+                _ => crate::rhocalc::runtime::unary_fallback(a, || {
+                    Proc::NegProc(std::sync::Arc::new(a.clone()))
+                }),
             }}
         ] fold;
 
@@ -1585,12 +1679,47 @@ language! {
             crate::rhocalc::runtime::fold_proc_length(&l)
         }] fold;
 
+        // `l.nth(i)` — Rholang's `nth` (`reduce.rs::method_table`), which is TOTAL on the
+        // carrier: it is defined for every index the language can write, and an out-of-range
+        // index is a recoverable failure, never a crash.
+        //
+        // Divergence **C**, closed 2026-07-25 (was pinned by
+        // `rholang-runtime/tests/rho_rhocalc_conformance.rs`):
+        //
+        //   1. the index arm accepted only `Proc::CastInt` (a fixed-width `int(i, w)`), so the
+        //      DEFAULT RhoCalc integer literal — which is arbitrary-precision `BigInt` — was
+        //      rejected and `[10, 20, 30].nth(1)` answered `error`. Rholang has ONE integer, so
+        //      `nth` must accept the one a plain literal produces. Both carriers are accepted
+        //      here; a `BigInt` index outside `usize` simply misses the list.
+        //   2. an out-of-range index ran `.expect("at: index out of bounds")` INSIDE a fold body.
+        //      A panic there cannot be contained in this workspace (unwinding across the
+        //      Cranelift-compiled frames of `[profile.dev] codegen-backend = "cranelift"` aborts
+        //      the process), so `[1].nth(9)` killed the test binary. It is now the `error` term —
+        //      the same fail-closed value every other out-of-domain collection access answers.
         LNth . l:Proc, i:Proc
         |- l "." "nth" "(" i ")" : Proc ![{
-            match (&l, &i) {
-                (Proc::CastList(lit), Proc::CastInt(ii)) => match (lit.as_ref(), &**ii) {
-                    (List::ListLit(v), Int::NumLit(n)) => {
-                        v.get(*n as usize).cloned().expect("at: index out of bounds")
+            fn nth_index(i: &Proc) -> Option<usize> {
+                match i {
+                    Proc::CastInt(ii) => match &**ii {
+                        Int::NumLit(n) => usize::try_from(*n).ok(),
+                        _ => None,
+                    },
+                    Proc::CastBigInt(ii) => match &**ii {
+                        BigInt::NumLit(n) => usize::try_from(n.get()).ok(),
+                        _ => None,
+                    },
+                    Proc::CastUInt32(ii) => match &**ii {
+                        UInt32::NumLit(n) => Some(*n as usize),
+                        _ => None,
+                    },
+                    _ => None,
+                }
+            }
+            match &l {
+                Proc::CastList(lit) => match lit.as_ref() {
+                    List::ListLit(v) => match nth_index(&i) {
+                        Some(n) => v.get(n).cloned().unwrap_or(Proc::Err),
+                        None => Proc::Err,
                     },
                     _ => Proc::Err,
                 },
@@ -2111,7 +2240,10 @@ language! {
                     Bool::BoolLit(v) => Proc::CastBool(std::sync::Arc::new(Bool::BoolLit(!v))),
                     _ => Proc::Err,
                 },
-                _ => Proc::Err,
+                // See `runtime::is_ground_operand`: `error` only for a ground operand.
+                _ => crate::rhocalc::runtime::unary_fallback(a, || {
+                    Proc::Not(std::sync::Arc::new(a.clone()))
+                }),
             }}
         ] fold;
 

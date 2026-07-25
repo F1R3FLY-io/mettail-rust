@@ -236,7 +236,8 @@ mod oracle {
     }
 
     /// One COMM step anywhere: top-level `PPar`, else recurse into a `PNew` body (the `NewCong`
-    /// congruence rule), rebuilding the binder so COMM under `new` fires while the scope is kept.
+    /// congruence rule), rebuilding the binder so COMM under `new` fires while the scope is kept;
+    /// else SCOPE-EXTRUDE and retry (the `Extrude` equation).
     fn try_comm_anywhere(p: &Proc) -> Option<Proc> {
         if let Some(c) = p.try_comm_once() {
             return Some(c);
@@ -245,6 +246,73 @@ mod oracle {
             let (binders, body) = scope.clone().unbind();
             if let Some(b2) = try_comm_anywhere(&body) {
                 return Some(Proc::PNew(mettail_runtime::Scope::new(binders, Arc::new(b2))));
+            }
+        }
+        try_extruded_comm(p)
+    }
+
+    /// The `Extrude` EQUATION, applied left-to-right when — and only when — it unblocks a COMM:
+    ///
+    /// ```text
+    /// Extrude . xs.*map(|x| x # ...rest)
+    ///     |- (PPar {(PNew ^[xs].p), ...rest}) = (PNew ^[xs].(PPar {p, ...rest})) ;
+    /// ```
+    ///
+    /// `try_comm_once` only inspects the top-level `PPar`, so a receive nested under a `new` can
+    /// never meet a send that sits OUTSIDE that `new` unless the scope is extruded first —
+    /// `new x in { for(z <- a){*z} } | a!(0)` rested as a normal form even though `a` is free on
+    /// both sides. Dovetail *does* carry the equation, but it only ever reports ONE extracted
+    /// normal form and COMM is not one of its rules, so the extruded form was never handed back
+    /// to the COMM step. This closes that gap in the oracle rather than in the language.
+    ///
+    /// The freshness side condition `xs # rest` is checked, not assumed: `Scope::new` BINDS every
+    /// free occurrence of a binder inside the term it closes, and `unbind` re-opens bound
+    /// variables as FRESH free variables. So closing `rest` over `binders` and re-opening it is
+    /// the identity **iff** nothing was captured. `new a in { for(z <- a){*z} } | a!(0)` (the
+    /// `extrusion_blocked_when_not_fresh` pin) fails that check and is left alone.
+    fn try_extruded_comm(p: &Proc) -> Option<Proc> {
+        // The surface `P | Q` parses as `PParInfix`, which only becomes a `PPar` bag once its
+        // `merge_pp_parallel` fold has fired; accept both spellings so extrusion does not depend
+        // on which one the extractor happened to surface.
+        let bag = match p {
+            Proc::PPar(bag) => bag.clone(),
+            Proc::PParInfix(left, right) => {
+                let mut bag = mettail_runtime::HashBag::new();
+                Proc::insert_into_ppar(&mut bag, (**left).clone());
+                Proc::insert_into_ppar(&mut bag, (**right).clone());
+                bag
+            },
+            _ => return None,
+        };
+        let bag = &bag;
+        for (target, _) in bag.iter() {
+            let Proc::PNew(scope) = target else {
+                continue;
+            };
+            // `rest` = the par with ONE occurrence of this `new` removed.
+            let mut rest_bag = mettail_runtime::HashBag::new();
+            for (element, count) in bag.iter() {
+                let keep = if element.term_eq(target) { count - 1 } else { count };
+                for _ in 0..keep {
+                    Proc::insert_into_ppar(&mut rest_bag, element.clone());
+                }
+            }
+            if rest_bag.is_empty() {
+                continue;
+            }
+            let rest = canon(&Proc::PPar(rest_bag.clone()));
+            let (binders, body) = scope.clone().unbind();
+            // Freshness: closing `rest` over the binders must capture nothing.
+            let probe = mettail_runtime::Scope::new(binders.clone(), Arc::new(rest.clone()));
+            let (_, reopened) = probe.unbind();
+            if !reopened.term_eq(&rest) {
+                continue;
+            }
+            let mut inner = rest_bag;
+            Proc::insert_into_ppar(&mut inner, (*body).clone());
+            let extruded = canon(&Proc::PPar(inner));
+            if let Some(next) = try_comm_anywhere(&extruded) {
+                return Some(Proc::PNew(mettail_runtime::Scope::new(binders, Arc::new(next))));
             }
         }
         None
@@ -548,6 +616,10 @@ fn reachable_normal_form_displays(
 
 /// Assert that running `input` produces at least one normal form matching `expected`.
 /// Comparison is by display string, handling PPar multiset ordering.
+///
+/// Every disjunct below must be a *decidable* comparison that answers `false` when it does not
+/// apply — see the ⚠ note on [`bag_multiset_eq`] for the vacuity this helper used to inherit, and
+/// [`comparator_integrity`] for the tests that pin the guarantee.
 fn assert_reduces_to(input: &str, expected: &str) {
     let (results, initial_id) = run_with_initial(input);
     let nfs = reachable_normal_form_displays(&results, initial_id);
@@ -580,8 +652,44 @@ fn assert_reduces_to(input: &str, expected: &str) {
 
     assert!(
         found,
-        "Expected `{}` to reduce to `{}`\n  Normal forms: {:?}",
-        input, expected_display, nfs
+        "Expected `{input}` to reduce to `{expected}`\n  \
+         expected (parsed, rendered): `{expected_display}`\n  \
+         reachable normal forms ({}): {nfs:#?}",
+        nfs.len(),
+    );
+}
+
+/// Assert that `input` has a reachable normal form whose DISPLAY is EXACTLY `expected_display`
+/// (whitespace-insensitively, and modulo the singleton-`{…}` par wrapper the oracle may keep).
+///
+/// # When to use this instead of [`assert_reduces_to`]
+///
+/// [`assert_reduces_to`] PARSES its `expected` argument and compares against the parsed term's
+/// display. That is the right thing whenever the value has a RhoCalc source spelling that parses
+/// back to itself — but a few normal forms do NOT:
+///
+/// | value | canonical display | what that string PARSES to |
+/// |---|---|---|
+/// | the rational ⅔ | `2/3` | `Div(BigInt 2, BigInt 3)` — a redex (`BigRat` literals are whole-number-only: `[0-9]+r`) |
+/// | the fixed-point −10.0 at scale 1 | `-10.0p1` | `NegProc(Fixed 10.0p1)` — a redex |
+///
+/// For those, this helper asserts the display EXACTLY, which is strictly stronger than
+/// `assert_reduces_to`'s disjunction (no multiset/bag tolerance, no parse round-trip). The
+/// display/parse asymmetry itself is a separate, real defect — recorded, not papered over.
+fn assert_normal_form_display(input: &str, expected_display: &str) {
+    let (results, initial_id) = run_with_initial(input);
+    let nfs = reachable_normal_form_displays(&results, initial_id);
+    let want: String = expected_display.chars().filter(|c| !c.is_whitespace()).collect();
+    let want_singleton_par = format!("{{{}}}", want);
+    let found = nfs.iter().any(|nf| {
+        let got: String = nf.chars().filter(|c| !c.is_whitespace()).collect();
+        got == want || got == want_singleton_par
+    });
+    assert!(
+        found,
+        "Expected `{input}` to have a normal form displaying exactly as `{expected_display}`\n  \
+         reachable normal forms ({}): {nfs:#?}",
+        nfs.len(),
     );
 }
 
@@ -727,7 +835,21 @@ fn multiset_eq(a: &str, b: &str) -> bool {
     }
 }
 
-/// Compare bag literal displays as multisets (handles HashBag ordering), including singleton-par wrappers.
+/// Compare bag literal displays as multisets (handles HashBag ordering), including singleton-par
+/// wrappers.
+///
+/// # ⚠ This comparator was VACUOUS until 2026-07-25
+///
+/// The body used to be `to_sorted_bag_elements(a) == to_sorted_bag_elements(b)`. Both sides return
+/// `None` whenever the string is not a `#{…}#` bag literal, and `None == None` is **`true`** — so
+/// for every pair in which neither side is a bag literal (i.e. the overwhelming majority of this
+/// file's assertions) the comparator answered `true` unconditionally. Because
+/// [`assert_reduces_to`] reaches its verdict through a *disjunction* that ends in this call, the
+/// whole assertion collapsed to `true`. Measured: `assert_reduces_to("1 + 2", "999")` **passed**.
+///
+/// The guarded form below is the same shape [`multiset_eq`] already used: a comparator that is not
+/// *applicable* to its arguments must answer `false` (defer to the earlier disjuncts), never
+/// `true` (assert nothing).
 fn bag_multiset_eq(a: &str, b: &str) -> bool {
     fn unwrap_singleton_par(s: &str) -> &str {
         let t = s.trim();
@@ -747,7 +869,153 @@ fn bag_multiset_eq(a: &str, b: &str) -> bool {
         elems.sort();
         Some(elems)
     }
-    to_sorted_bag_elements(a) == to_sorted_bag_elements(b)
+    match (to_sorted_bag_elements(a), to_sorted_bag_elements(b)) {
+        (Some(a), Some(b)) => a == b,
+        // Not a bag on both sides ⇒ this comparator is INAPPLICABLE, which is not the same thing
+        // as "equal". Answering `true` here is what made every non-bag assertion vacuous.
+        _ => false,
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// ⚠ Numeric-literal CARRIER asymmetry (discovered 2026-07-25) — OPEN DEFECT, pinned here
+// ════════════════════════════════════════════════════════════════════════════════
+
+/// The `Proc`-level cast that the WPDA picks for a numeric literal is **not a function of the
+/// literal**: it depends on the literal's syntactic context.
+///
+/// | source | parsed `Proc` | carrier |
+/// |---|---|---|
+/// | `@1` | `NQuoteShort(CastBigInt(NumLit(1)))` | arbitrary precision (the Rholang 1.4 default) |
+/// | `@(1)` | `NQuoteShort(CastInt(NumLit(1)))` | fixed width `i64` |
+/// | `5u32` | `CastBigInt(NumLit(5))` | arbitrary precision — the `u32` suffix is DISCARDED |
+///
+/// Because `+`, `==`, … are carrier-EXACT (and so is f1r3node's `combine_plus`,
+/// `rholang/src/rust/interpreter/reduce.rs:3112` — no mixed `GInt`/`GBigInt` arm), the asymmetry
+/// leaks into semantics: `*(@(1)) + 2` answers `error`, and a receive PATTERN and a send PAYLOAD
+/// written from *identical* source text can land in different carriers and fail to unify.
+///
+/// This module is the WITNESS: it pins today's behaviour with `assert_eq!` on the parsed AST's
+/// `Debug`, so the defect is actively observed and cannot silently change. Four tests that only
+/// ever "passed" because `assert_reduces_to` was vacuous were tripping over it:
+/// `congruence::add_cong`, `congruence::comparison_cong`,
+/// `comm::pattern_comm_exact_constructor_pattern_matches`, `native_ops::bitwise::u32_and_or_not`.
+///
+/// ⚠ The fix belongs in the WPDA cross-category projection (`macros/src/gen/runtime/
+/// wpda_codegen/`, `prattail/src/wpda_walker.rs`) — a formally-verified, repeatedly red-teamed
+/// subsystem whose disambiguation must not be adjusted by a local heuristic. It is recorded here
+/// and in `rholang-runtime/tests/rho_rhocalc_conformance.rs`, not improvised.
+mod carrier_asymmetry {
+    use super::*;
+
+    /// Parenthesizing a numeral changes which numeric category it lands in.
+    #[test]
+    fn quoted_paren_numeral_changes_carrier() {
+        // Pinned through `parse_term` (the ambiguity-preserving box the reduction oracle and
+        // the production AST-first lowering both consume), on the two spellings that differ by
+        // exactly one pair of parentheses.
+        fresh();
+        assert_eq!(
+            format!("{:?}", RhoCalcLanguage.parse_term("*(@1) + 2").expect("`*(@1) + 2` parses")),
+            "Add(PDrop(NParen(NQuoteShort(CastBigInt(NumLit(1))))), CastBigInt(NumLit(2)))",
+            "a bare numeral takes RhoCalc's default arbitrary-precision carrier"
+        );
+        fresh();
+        assert_eq!(
+            format!(
+                "{:?}",
+                RhoCalcLanguage.parse_term("*(@(1)) + 2").expect("`*(@(1)) + 2` parses")
+            ),
+            "Add(PDrop(NParen(NQuoteShort(CastInt(NumLit(1))))), CastBigInt(NumLit(2)))",
+            "⚠ the SAME numeral inside parentheses takes the fixed-width i64 carrier instead"
+        );
+    }
+
+    /// …and the carrier difference is observable in the reduction, because the operators are
+    /// carrier-exact (as is the consensus reducer).
+    #[test]
+    fn mixed_carrier_arithmetic_is_error_on_both_sides() {
+        // The mixed cases. `int(1, 64)` is `CastInt`; a bare `2` is `CastBigInt`.
+        assert_reduces_to("int(1, 64) + 2", "error");
+        assert_reduces_to("*(@(1)) + 2", "error");
+        // The carrier-consistent cases compute.
+        assert_reduces_to("int(1, 64) + int(2, 64)", "3");
+        assert_reduces_to("1 + 2", "3");
+    }
+
+    /// A `u32`-suffixed literal never reaches the `UInt32` carrier in `Proc` position, so
+    /// `bitnot 0u32` is the i64/BigInt `-1` rather than the 32-bit all-ones `4294967295`. The
+    /// `uint(_, 32)` cast spelling does reach it.
+    #[test]
+    fn u32_suffix_does_not_reach_uint32() {
+        fresh();
+        assert_eq!(
+            format!("{:?}", parse("5u32")),
+            "CastBigInt(NumLit(5))",
+            "⚠ the `u32` suffix is discarded when the literal is projected into `Proc`"
+        );
+        // `-1` has no source spelling that parses back to itself (`-1` is `NegProc(1)`), so the
+        // display is asserted directly.
+        assert_normal_form_display("bitnot 0u32", "-1");
+        assert_reduces_to("bitnot uint(0, 32)", "4294967295");
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// Comparator integrity — the assertion helpers must be able to FAIL
+// ════════════════════════════════════════════════════════════════════════════════
+
+/// These tests assert the *assertions*. Until 2026-07-25 [`bag_multiset_eq`] compared
+/// `Option<Vec<String>>` values directly, so `None == None` made it answer `true` for every pair
+/// in which neither side is a `#{…}#` bag literal — and since [`assert_reduces_to`] ORs it in
+/// last, the entire helper became vacuous: `assert_reduces_to("1 + 2", "999")` passed. 39 of this
+/// file's tests were asserting nothing.
+///
+/// A comparator that cannot answer `false` is not a comparator, so the guarantee is pinned here
+/// directly rather than being left implicit in the tests that use it.
+mod comparator_integrity {
+    use super::*;
+
+    /// The exact measured vacuity witness: a false claim must FAIL.
+    #[test]
+    #[should_panic(expected = "Expected `1 + 2` to reduce to `999`")]
+    fn assert_reduces_to_rejects_a_false_expectation() {
+        assert_reduces_to("1 + 2", "999");
+    }
+
+    /// A second witness in a different shape (collection vs. scalar), so a fix that only
+    /// special-cases integers cannot pass this module.
+    #[test]
+    #[should_panic(expected = "Expected `[1, 2, 3]` to reduce to")]
+    fn assert_reduces_to_rejects_a_false_collection_expectation() {
+        assert_reduces_to("[1, 2, 3]", "Set(9)");
+    }
+
+    /// `bag_multiset_eq` is INAPPLICABLE unless both sides are bag literals, and inapplicable
+    /// must mean `false`.
+    #[test]
+    fn bag_multiset_eq_is_false_when_it_does_not_apply() {
+        assert!(!bag_multiset_eq("3", "999"), "two non-bags are not 'equal bags'");
+        assert!(!bag_multiset_eq("error", "0"), "two non-bags are not 'equal bags'");
+        assert!(!bag_multiset_eq("#{1 | 2}#", "3"), "one-sided bag is not 'equal bags'");
+        assert!(!bag_multiset_eq("3", "#{1 | 2}#"), "one-sided bag is not 'equal bags'");
+    }
+
+    /// …and it still does its real job when it DOES apply.
+    #[test]
+    fn bag_multiset_eq_is_order_insensitive_on_real_bags() {
+        assert!(bag_multiset_eq("#{1 | 2}#", "#{2 | 1}#"));
+        assert!(bag_multiset_eq("{#{1 | 2}#}", "#{2 | 1}#"), "singleton-par wrapper is unwrapped");
+        assert!(!bag_multiset_eq("#{1 | 2}#", "#{1 | 3}#"));
+    }
+
+    /// The sibling comparator was already guarded; pinned so the two stay in the same shape.
+    #[test]
+    fn multiset_eq_is_false_when_it_does_not_apply() {
+        assert!(!multiset_eq("3", "999"));
+        assert!(!multiset_eq("{a | b}", "b"));
+        assert!(multiset_eq("{a | b}", "{b | a}"));
+    }
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
@@ -770,7 +1038,7 @@ mod comm {
 
     #[test]
     fn comm_with_body_using_channel() {
-        assert_reduces_to("for(x <- c){x!(0)} | c!(p)", "@(p)!(0)");
+        assert_reduces_to("for(x <- c){x!(0)} | c!(p)", "@(p)!([0])");
     }
 
     #[test]
@@ -1109,7 +1377,7 @@ mod comm {
     fn polyadic_receive_arity_mismatch_blocks() {
         assert_reduces_to(
             "x!(1,2) | for(a, b, c <- x){[a,b,c]}",
-            "x!([1,2]) | for(a,b , c<-x){[a,b,c]}",
+            "x!(1,2) | for(a,b , c<-x){[a,b,c]}",
         );
     }
 
@@ -1174,7 +1442,13 @@ mod comm {
 
     #[test]
     fn pattern_comm_exact_constructor_pattern_matches() {
-        assert_reduces_to("for(@*(@(0)) <- c){1} | c!(*(@(0)))", "1");
+        // Spelled `@0`, not `@(0)`: a parenthesized numeral takes the `Int` carrier while a bare
+        // one takes `BigInt`, and the parser applies that choice ASYMMETRICALLY to a receive
+        // PATTERN (`BigInt`) and a send PAYLOAD (`Int`) written from identical source text — so
+        // `for(@*(@(0)) <- c){1} | c!(*(@(0)))` could not unify with itself. That defect is
+        // pinned by `carrier_asymmetry::quoted_paren_numeral_changes_carrier`; this test is about
+        // the exact-CONSTRUCTOR pattern, which it now actually exercises.
+        assert_reduces_to("for(@*@0 <- c){1} | c!(*@0)", "1");
     }
 
     #[test]
@@ -1409,14 +1683,26 @@ mod congruence {
 
     #[test]
     fn add_cong() {
-        // Congruence through Add: *(@(1)) + 2 → 1 + 2 → 3
-        assert_reduces_to("*(@(1)) + 2", "3");
+        // Congruence through Add: the `*@…` operand must reduce before `+` can fold.
+        //
+        // Asserted in BOTH numeric carriers, because RhoCalc's `+` is carrier-exact (and so is
+        // f1r3node's `combine_plus`, `reduce.rs:3112` — it has no mixed `GInt`/`GBigInt` arm):
+        //   * arbitrary precision — `*@1` is `CastBigInt`, `2` is `CastBigInt`;
+        //   * fixed width — `*(@(1))` is `CastInt` (see `carrier_asymmetry` below), `int(2, 64)`
+        //     is `CastInt`.
+        // The previous single case `*(@(1)) + 2` mixed the two carriers, so `error` was the
+        // CORRECT answer for it and the test measured nothing about congruence. That mixing is
+        // pinned as its own defect in `carrier_asymmetry::quoted_paren_numeral_changes_carrier`.
+        assert_reduces_to("*@1 + 2", "3");
+        assert_reduces_to("*(@1) + 2", "3");
+        assert_reduces_to("*(@(1)) + int(2, 64)", "3");
     }
 
     #[test]
     fn comparison_cong() {
-        // *(@(1)) == 1 → 1 == 1 → true
-        assert_reduces_to("*(@(1)) == 1", "true");
+        // `*@…` reduces, then `==` compares. Carrier-exact, for the same reason as `add_cong`.
+        assert_reduces_to("*(@1) == 1", "true");
+        assert_reduces_to("*(@(1)) == int(1, 64)", "true");
     }
 }
 
@@ -1511,7 +1797,7 @@ mod exec {
         // Inner `*y` is `Proc::PDrop(NVar(y))`; quoting it yields
         // `NQuote(PDrop(NVar(y)))` which the QuoteDrop equation rewrites to
         // `NVar(y)`, so `*@*y` reduces to `*y` (just the original drop).
-        assert_reduces_to("*@*y", "*(y)");
+        assert_reduces_to("*@*y", "*y");
     }
 
     #[test]
@@ -1664,17 +1950,17 @@ mod native_ops {
             assert_reduces_to("1p0 + 0.5p1", "1.5p1");
             assert_reduces_to("2.0p1 - 0.5p1", "1.5p1");
             assert_reduces_to("3p0 * 2p0", "6p0");
-            assert_reduces_to("-10p1", "-10.0p1");
+            assert_normal_form_display("-10p1", "-10.0p1");
         }
 
         #[test]
         fn fixed_div_by_zero_is_error() {
-            assert_reduces_to("10p1 / 0p0", "10.0p1 / 0p0");
+            assert_reduces_to("10p1 / 0p0", "error");
         }
 
         #[test]
         fn fixed_mod_by_zero_is_error() {
-            assert_reduces_to("10p1 % 0p0", "10.0p1 % 0p0");
+            assert_reduces_to("10p1 % 0p0", "error");
         }
 
         #[test]
@@ -1749,13 +2035,13 @@ mod native_ops {
         /// Regression: `fraction` must use `fold` on Proc (not `step`), or Ascent never emits rw_proc.
         #[test]
         fn fraction_at_top_level_reduces() {
-            assert_reduces_to("fraction(2n, 3n)", "2r/3r");
-            assert_reduces_to("fraction(2n, 3n) + fraction(1n, 2n)", "7r/6r");
+            assert_normal_form_display("fraction(2n, 3n)", "2/3");
+            assert_normal_form_display("fraction(2n, 3n) + fraction(1n, 2n)", "7/6");
         }
 
         #[test]
         fn bigint_div_by_zero_is_error() {
-            assert_reduces_to("1n / 0n", "1 / 0");
+            assert_reduces_to("1n / 0n", "error");
         }
     }
 
@@ -1777,9 +2063,14 @@ mod native_ops {
 
         #[test]
         fn u32_and_or_not() {
-            assert_reduces_to("5u32 bitand 3u32", "1u32");
-            assert_reduces_to("5u32 bitor 3u32", "7u32");
-            assert_reduces_to("bitnot 0u32", "4294967295u32");
+            // Spelled through the `uint(_, 32)` cast. A `u32`-SUFFIXED literal does not reach
+            // the `UInt32` carrier at all — `0u32` parses as `CastBigInt(0)`, so `bitnot 0u32`
+            // answers `-1` instead of `4294967295`. That is the same literal-carrier defect
+            // `carrier_asymmetry::quoted_paren_numeral_changes_carrier` pins, in its `u32` guise;
+            // it is pinned separately by `carrier_asymmetry::u32_suffix_does_not_reach_uint32`.
+            assert_reduces_to("uint(5, 32) bitand uint(3, 32)", "1");
+            assert_reduces_to("uint(5, 32) bitor uint(3, 32)", "7");
+            assert_reduces_to("bitnot uint(0, 32)", "4294967295");
         }
 
         #[test]
@@ -1797,8 +2088,8 @@ mod native_ops {
 
         #[test]
         fn bigrat_and_or_not() {
-            assert_reduces_to("3r/4r bitand 1r/4r", "1/4");
-            assert_reduces_to("1r/2r bitand 1r/3r", "1/3");
+            assert_normal_form_display("3r/4r bitand 1r/4r", "1/4");
+            assert_normal_form_display("1r/2r bitand 1r/3r", "1/3");
             let results = run("bitnot 0r");
             let nfs = normal_form_displays(&results);
             assert!(
@@ -1810,19 +2101,19 @@ mod native_ops {
 
         #[test]
         fn fixed_and_or_not() {
-            assert_reduces_to("bitnot 0p0", "-1p0");
+            assert_normal_form_display("bitnot 0p0", "-1p0");
             assert_reduces_to("15p0 bitand 14p1", "13.2p1");
         }
 
         #[test]
         fn type_mismatch_bitand_is_error() {
-            assert_reduces_to("1 bitand 1.0", "1 bitand 1.0");
-            assert_reduces_to("1 bitand true", "1 bitand true");
+            assert_reduces_to("1 bitand 1.0", "error");
+            assert_reduces_to("1 bitand true", "error");
         }
 
         #[test]
         fn type_mismatch_bitnot_is_error() {
-            assert_reduces_to("bitnot true", "bitnot true");
+            assert_reduces_to("bitnot true", "error");
         }
 
         #[test]
@@ -2726,9 +3017,13 @@ mod native_ops {
             #[test]
             fn zipper_navigation_child_count_and_moves() {
                 let db = users_age_db();
-                assert_reduces_to(&format!("{{{}.readZipperAt([1]).childCount()}}", db), "2");
+                assert_reduces_to(&format!("{{{}.readZipperAt([1]).childCount()}}", db), "3");
+                // `readZipperAt([1])` then a RELATIVE `descendTo([1,1,1])` lands on the key
+                // `[1,1,1,1]`. The previous relative path `[1,1]` lands on `[1,1,1]`, which is
+                // not a key of `users_age_db()`, so `getLeaf()` was correctly stuck — the test
+                // asserted a successful navigation while navigating nowhere.
                 assert_reduces_to(
-                    &format!("{{{}.readZipperAt([1]).descendTo([1,1]).getLeaf()}}", db),
+                    &format!("{{{}.readZipperAt([1]).descendTo([1,1,1]).getLeaf()}}", db),
                     "[1,1,1,1]",
                 );
             }
@@ -2984,7 +3279,7 @@ mod parsing {
 
     #[test]
     fn fraction_zero_denominator_is_error() {
-        assert_reduces_to("fraction(1n, 0n)", "fraction(1, 0)");
+        assert_reduces_to("fraction(1n, 0n)", "error");
     }
 
     #[test]
@@ -3037,7 +3332,13 @@ mod parsing {
 
     #[test]
     fn send_empty_payload_quoted_bind_emits_empty_proc() {
-        assert_reduces_to("for(@y <- x){y} | x!()", "for(@y <- x){y} | x!()");
+        // `x!()` IS `x!([])` — pinned by `send_empty_is_list_sugar` below — so the COMM fires and
+        // the whole-message binder `@y` receives the empty payload `[]`, which is what this
+        // test's name says happens. The previous expectation (the term unchanged) contradicted
+        // both the name and the sugar pin, and only "passed" because `assert_reduces_to` was
+        // vacuous. ⚠ Rholang would NOT fire here (its COMM is arity-checked, 0 ≠ 1); that
+        // divergence is recorded in `rholang-runtime/tests/rho_rhocalc_conformance.rs`.
+        assert_reduces_to("for(@y <- x){y} | x!()", "[]");
     }
 
     #[test]
@@ -3875,7 +4176,7 @@ fn rhocalc_casts_from_numeric_strings() {
     assert_reduces_to(r#"int("false", 32)"#, "0");
     assert_reduces_to(r#"int("true", 32)"#, "1");
     assert_reduces_to(r#"bigint("123n")"#, "123");
-    assert_reduces_to(r#"bigrat("1r/2r")"#, "1/2");
+    assert_normal_form_display(r#"bigrat("1r/2r")"#, "1/2");
 }
 
 #[test]
@@ -3904,7 +4205,7 @@ fn rhocalc_cast_fixed_floor() {
 
 #[test]
 fn rhocalc_cast_int_congruence_through_add() {
-    assert_reduces_to("int(1 + 2, 8)", "error");
+    assert_reduces_to("int(1 + 2, 8)", "3");
 }
 
 #[test]

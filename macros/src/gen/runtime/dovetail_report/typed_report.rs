@@ -115,7 +115,18 @@ fn collect_fold_rules(language: &LanguageDef) -> Vec<FoldRule<'_>> {
         // with native-scalar output is `is_pure_native_arith`; the dispatcher binds its operands
         // via `try_eval()` and `safeify`s the body. Mixed / object / collection folds keep the
         // existing `&Cat` + `body_returns_option` path unchanged.
-        if !all_simple || params.is_empty() {
+        //
+        // NULLARY folds are lowered too (2026-07-25). A rule such as
+        // `MapEmpty . |- "Map" "(" ")" : Proc ![{ …empty map… }] fold;` has an EMPTY
+        // `term_context`, and the previous `params.is_empty()` guard silently dropped it, so
+        // `Map()` never folded to `{}` and every method chain on it (`Map().set(1,10).get(1)`)
+        // answered `error`. Nothing downstream needs a non-empty param list: the LHS becomes the
+        // nullary `Pattern::app(op, vec![])`, the extractor block degenerates to `let () = { () }`
+        // (already templated for, see `extract` below), and there are no operand bindings — the
+        // body is a closed expression. Verified against `languages/tests/rhocalc_tests.rs`
+        // (`map_size_empty`, `map_set_chain_reduces_to_literal`, …), whose comments record the
+        // symptom this guard caused.
+        if !all_simple {
             continue;
         }
         let out_lt = language.get_type(&rule.category);
@@ -378,6 +389,27 @@ fn generate_helpers(
             redex_heads.push(quote! { #enum_id::#v });
         }
     }
+    // ── MEASURED AND REJECTED (2026-07-25): plain-rewrite LHS heads must NOT join this set ──────
+    //
+    // `Exec . |- (PDrop (NQuote P)) ~> P;` CONSUMES its `PDrop` head, so by the same
+    // set-difference reasoning the nested structural-AC arm above uses, `PDrop` looks like it
+    // belongs here. Adding every non-congruence rewrite whose LHS head does not reappear on its
+    // RHS was implemented and measured against `languages/tests/rhocalc_tests.rs`: it took the
+    // suite from 9 failures to **104**.
+    //
+    // Why it is wrong: unlike a fold redex or a β-redex, a `PDrop` is NOT guaranteed to be
+    // reducible. `Exec` fires only under `NQuote`/`NQuoteShort`/`NParen NQuote`; `*x` for a free
+    // Name `x` is IRREDUCIBLE and is a perfectly good value. Classifying `PDrop` as a redex head
+    // therefore (a) makes `__class_is_fold_value` reject `*x` forever, freezing every fold that
+    // takes it as an operand, and (b) gives `__weigh` a 100× penalty that pushes funded 1-best
+    // extraction away from the very terms those tests pin.
+    //
+    // The `redex_heads` invariant is consequently NARROWER than "consumed head": a head belongs
+    // here only when its presence PROVES an un-fired reduction (a fold's constructor, a
+    // substitution/β redex head, a COMM binder, an AC element that the firing consumes). The
+    // fold-vs-redex operand problem this was written for is fixed where the type information
+    // actually lives — in the language's own `![…]` body, see `languages/src/rhocalc.rs`
+    // `is_ground_operand`.
     let var_pats: Vec<TokenStream> = language
         .types
         .iter()

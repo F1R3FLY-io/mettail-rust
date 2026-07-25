@@ -5,6 +5,92 @@ fn is_collection_cast(proc: &Proc) -> bool {
     matches!(proc, Proc::CastList(_) | Proc::CastBag(_) | Proc::CastMap(_) | Proc::CastSet(_))
 }
 
+/// Is `proc` a GROUND OPERAND — a datum an operator can decide about right now?
+///
+/// # Why the operator fold bodies need this
+///
+/// An `![…]` fold body for a binary operator ends in a `_ => Proc::Err` fallback meaning "these
+/// operands have no arm". That conflates two very different situations:
+///
+/// | situation | example | right disposition |
+/// |---|---|---|
+/// | the operands ARE data, and the operator is undefined on them | `1 bitand 1.0` | the `error` term |
+/// | an operand is still a REDEX | `*@1 + 2` | contribute nothing; let congruence reduce it first |
+///
+/// The second row is not academic. Dovetail's e-graph puts a redex and its contractum in ONE
+/// class, so an `error` produced from the un-reduced operand lands in the *same* class as the real
+/// answer produced from the reduced one — and `__weigh` costs the nullary `Err` node (1.0) below
+/// `CastBigInt(NumLit(3))` (2.0), so funded 1-best extraction reports **`error`** as the normal
+/// form. Measured 2026-07-25: `*(@(1)) + 2` ⇒ `error`, `*(@(1)) == 1` ⇒ `error`
+/// (`languages/tests/rhocalc_tests.rs::congruence::{add_cong, comparison_cong}`; both only ever
+/// "passed" because `assert_reduces_to` was vacuous).
+///
+/// Fixing this in the macro instead — by adding the `Exec`/`ExecQuoteShort`/`ExecParenQuote` LHS
+/// head `PDrop` to the generated redex-head set so the fold-readiness gate defers — was
+/// implemented and MEASURED: it took the same suite from 9 failures to 104, because `*x` for a
+/// free Name `x` is irreducible and must stay a value. The rationale is recorded at the rejection
+/// site (`macros/src/gen/runtime/dovetail_report/typed_report.rs`, `generate_helpers`). The
+/// distinction is a LANGUAGE fact — which constructors of `Proc` are data — so it lives here.
+///
+/// The predicate is deliberately *positive*: every ground-data constructor is listed, and
+/// everything else (an operator node, a method-call chain, a `*n` drop, a send, a receive, a
+/// `new`, a variable) is treated as "not decidable yet".
+pub(crate) fn is_ground_operand(proc: &Proc) -> bool {
+    matches!(
+        proc,
+        Proc::CastInt(_)
+            | Proc::CastUInt32(_)
+            | Proc::CastBigInt(_)
+            | Proc::CastBigRat(_)
+            | Proc::CastFixed(_)
+            | Proc::CastFloat(_)
+            | Proc::CastBool(_)
+            | Proc::CastStr(_)
+            | Proc::CastBytes(_)
+            | Proc::CastList(_)
+            | Proc::CastBag(_)
+            | Proc::CastMap(_)
+            | Proc::CastSet(_)
+            | Proc::CastPathmap(_)
+            | Proc::CastReadZipper(_)
+            | Proc::CastWriteZipper(_)
+            // `error` is itself data: it must PROPAGATE through an operator, not block it.
+            | Proc::Err
+            // `Nil` is the unit process — irreducible data for operator purposes.
+            | Proc::PZero
+    )
+}
+
+/// Both operands of a binary operator are ground ⇒ a `_` fallback may legitimately answer the
+/// `error` term. See [`is_ground_operand`].
+pub(crate) fn both_ground(a: &Proc, b: &Proc) -> bool {
+    is_ground_operand(a) && is_ground_operand(b)
+}
+
+/// The `_`-fallback disposition for a BINARY operator's `![…]` fold body.
+///
+/// * both operands ground ⇒ the operator is genuinely undefined at these types ⇒ [`Proc::Err`]
+///   (the `error` term), exactly as before;
+/// * otherwise ⇒ the redex rebuilt by `redex`. Returning the redex unchanged contributes nothing
+///   to its own e-class (a self-union), so congruence gets to reduce the operand and the fold
+///   re-fires on the value. See [`is_ground_operand`] for the measurement behind this.
+pub(crate) fn binary_fallback(a: &Proc, b: &Proc, redex: impl FnOnce() -> Proc) -> Proc {
+    if both_ground(a, b) {
+        Proc::Err
+    } else {
+        redex()
+    }
+}
+
+/// The unary twin of [`binary_fallback`].
+pub(crate) fn unary_fallback(a: &Proc, redex: impl FnOnce() -> Proc) -> Proc {
+    if is_ground_operand(a) {
+        Proc::Err
+    } else {
+        redex()
+    }
+}
+
 fn compare_same_kind_collection_equality(lhs: &Proc, rhs: &Proc) -> Option<bool> {
     match (lhs, rhs) {
         (Proc::CastList(la), Proc::CastList(lb)) => match (la.as_ref(), lb.as_ref()) {
