@@ -30,8 +30,19 @@ enum Requirement {
 }
 
 fn language_files() -> Vec<PathBuf> {
-    let root = repo_root().join("languages/src");
-    let mut pending = vec![root];
+    // Task #11: language definitions live in TWO places by role — `languages/src/`
+    // (production, library modules) and `languages/tests/definitions/` (test
+    // definitions, declared `options { hosted_in: … }`). Both are scanned so that
+    // relocating a definition can never remove it from the formal inventory; see the
+    // matching `language_definition_roots` note in
+    // `dovetail/tests/language_inventory.rs` for why that totality is load-bearing.
+    let mut pending: Vec<PathBuf> = [
+        repo_root().join("languages/src"),
+        repo_root().join("languages/tests/definitions"),
+    ]
+    .into_iter()
+    .filter(|root| root.exists())
+    .collect();
     let mut files = Vec::new();
 
     while let Some(path) = pending.pop() {

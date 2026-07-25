@@ -174,9 +174,16 @@ pub fn language(input: TokenStream) -> TokenStream {
             _ => None,
         })
         .unwrap_or(true);
-    if emit_tests {
-        gen::test_gen::write_test_file(&language_def, &pipeline_analysis);
-    }
+    // For a library-hosted language this writes `languages/tests/gen_{lang}_*.rs`
+    // and returns nothing. For a TEST-hosted one (`options { hosted_in: … }`) it
+    // returns the opt-in `{lang}_generated_tests!` wrapper, which must be spliced
+    // into the expansion — the generated suite has no other way to reach a
+    // definition that no longer lives in `mettail_languages`.
+    let generated_test_suite = if emit_tests {
+        gen::test_gen::write_test_file(&language_def, &pipeline_analysis)
+    } else {
+        proc_macro2::TokenStream::new()
+    };
 
     // Generate per-language simulation CLI binary.
     // Gated by `options { emit_simulator: true }` (default: true).
@@ -238,6 +245,10 @@ pub fn language(input: TokenStream) -> TokenStream {
             use proptest::strategy::BoxedStrategy;
             #strategies_include
         }
+
+        // Empty for a library-hosted language; the opt-in
+        // `{lang}_generated_tests!` wrapper for a test-hosted one.
+        #generated_test_suite
     };
 
     TokenStream::from(combined)

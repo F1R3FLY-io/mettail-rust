@@ -1,7 +1,7 @@
 //! Opt-Group smoke tests (2026-04-29).
 //!
 //! Validates the WPDS Opt-Group runtime end-to-end via a synthetic
-//! grammar (`mettail_languages::optsmoke`) that exercises:
+//! grammar (`tests/definitions/optsmoke.rs`) that exercises:
 //!   - The take path: `if true then 1 else 2` — Optional present.
 //!   - The skip path: `if true then 1` — Optional absent.
 //!   - Both branches of the `if` with each Optional state.
@@ -13,7 +13,10 @@
 //! Codegen emits `Int::IfElse(Box<Bool>, Box<Int>, Option<Box<Int>>)` and
 //! the user-action body `if cond { t } else { e.unwrap_or(0) }`.
 
-use mettail_languages::optsmoke::{Bool, Int};
+// Task #11: OptSmoke is test-hosted (see tests/definitions/optsmoke.rs).
+#[path = "definitions/optsmoke.rs"]
+mod optsmoke;
+use optsmoke::{Bool, Int};
 
 fn parse_int(input: &str) -> Result<Int, String> {
     Int::parse(input).map_err(|e| format!("{}", e))

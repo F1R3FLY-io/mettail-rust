@@ -89,11 +89,41 @@ fn generate_simulation_binary(language: &LanguageDef) -> String {
     out.push_str("use mettail_simulation::invariant::{\n");
     out.push_str("    AlwaysParseable, BoundedDepth, BoundedSize, NormalFormReachable,\n");
     out.push_str("};\n");
-    out.push_str(&format!("use mettail_languages::{}::{};\n", lang_lower, lang_struct));
-    out.push_str(&format!(
-        "use mettail_languages::{}::strategies::arb_{};\n",
-        lang_lower, primary_cat_lower
-    ));
+    // How the CLI reaches its language depends on where the definition lives.
+    //
+    // LIBRARY-hosted (the historical case): import it from the library.
+    //
+    // TEST-hosted (`options { hosted_in: "tests/definitions/<lang>.rs" }`): the
+    // definition is NOT in the library, so `mettail_languages::<lang>` does not
+    // resolve (E0433/E0432). The binary instead `#[path]`-includes the definition
+    // file directly — an intra-package reference from `languages/src/bin/` to
+    // `languages/tests/definitions/`, which is why the CLI survives the move at all.
+    // Verified end-to-end: the binary builds AND runs its campaign, resolving both
+    // the language struct and the feature-gated `strategies` submodule.
+    //
+    // The binary keeps its existing `[[bin]] … required-features = ["strategies"]`
+    // stanza in `languages/Cargo.toml`; nothing about the target changes, only how
+    // it names the language.
+    match super::hosted_in(language) {
+        None => {
+            out.push_str(&format!("use mettail_languages::{}::{};\n", lang_lower, lang_struct));
+            out.push_str(&format!(
+                "use mettail_languages::{}::strategies::arb_{};\n",
+                lang_lower, primary_cat_lower
+            ));
+        },
+        Some(definition_path) => {
+            // `definition_path` is relative to the `languages` package root; the
+            // binary lives in `languages/src/bin/`, hence the `../../` prefix.
+            out.push_str(&format!("#[path = \"../../{}\"]\n", definition_path));
+            out.push_str(&format!("mod {};\n", lang_lower));
+            out.push_str(&format!("use {}::{};\n", lang_lower, lang_struct));
+            out.push_str(&format!(
+                "use {}::strategies::arb_{};\n",
+                lang_lower, primary_cat_lower
+            ));
+        },
+    }
     out.push_str("use mettail_runtime::Language;\n");
     out.push_str("use proptest::strategy::Strategy;\n");
     out.push_str("use std::path::PathBuf;\n\n");

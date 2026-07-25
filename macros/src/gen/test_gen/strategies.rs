@@ -1440,7 +1440,10 @@ fn generate_arb_strategy(category: &syn::Ident, _language: &LanguageDef, out: &m
 /// Generate proptest blocks that exercise the generated strategies.
 fn generate_proptest_blocks(language: &LanguageDef, out: &mut String) {
     out.push_str("proptest! {\n");
-    out.push_str("    #![proptest_config(ProptestConfig::with_cases(100))]\n\n");
+    out.push_str(&format!(
+        "    #![proptest_config({})]\n\n",
+        super::proptest_config_expr(language, 100)
+    ));
 
     for lang_type in &language.types {
         let cat = lang_type.name.to_string();

@@ -3,13 +3,15 @@
 // Run with: cargo run --bin simulate_optsmoke -- [OPTIONS]
 
 use clap::Parser;
-use mettail_languages::optsmoke::strategies::arb_int;
-use mettail_languages::optsmoke::OptSmokeLanguage;
-use mettail_runtime::Language;
 use mettail_simulation::invariant::{
     AlwaysParseable, BoundedDepth, BoundedSize, NormalFormReachable,
 };
 use mettail_simulation::runner::{SimulationConfig, SimulationRunner, TraceOutputFormat};
+#[path = "../../tests/definitions/optsmoke.rs"]
+mod optsmoke;
+use mettail_runtime::Language;
+use optsmoke::strategies::arb_int;
+use optsmoke::OptSmokeLanguage;
 use proptest::strategy::Strategy;
 use std::path::PathBuf;
 

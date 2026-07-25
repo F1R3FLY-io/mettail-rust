@@ -49,7 +49,6 @@ all-languages = [
     "led-test",
     "native-demo",
     "native-fold-demo",
-    "optsmoke",
     "refinementsmoke",
     "rhocalc",
     "swap-demo",
@@ -90,7 +89,10 @@ lambda-demo = []
 led-test = []
 native-demo = []
 native-fold-demo = []
-optsmoke = []
+# Task #11: `OptSmoke` moved to `tests/definitions/optsmoke.rs`. A TEST-HOSTED
+# definition is not a library module, so it needs no library feature; its
+# consumers `#[path]`-include the definition file directly.
+# optsmoke = []
 refinementsmoke = []
 rhocalc = []
 swap-demo = []

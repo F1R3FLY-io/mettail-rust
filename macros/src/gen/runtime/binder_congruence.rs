@@ -518,7 +518,13 @@ mod tests {
         ("nativedemo", include_str!("../../../../languages/src/nativedemo.rs")),
         ("nativefolddemo", include_str!("../../../../languages/src/nativefolddemo.rs")),
         ("nlacdemo", include_str!("../../../../languages/src/nlacdemo.rs")),
-        ("optsmoke", include_str!("../../../../languages/src/optsmoke.rs")),
+        // Task #11: TEST-HOSTED — this definition lives in `languages/tests/definitions/`,
+        // not in the library (`options { hosted_in: … }`). `include_str!` needs a LITERAL
+        // path, so this table cannot derive the location from the definition's own
+        // `hosted_in`; it is hand-maintained on purpose. The enforcement is that a
+        // definition which moves without its entry being updated fails the `macros` build
+        // immediately and by name — loud and unmissable, never silent drift.
+        ("optsmoke", include_str!("../../../../languages/tests/definitions/optsmoke.rs")),
         ("refinementsmoke", include_str!("../../../../languages/src/refinementsmoke.rs")),
         ("reserved_model", include_str!("../../../../languages/src/reserved_model.rs")),
         ("rhocalc", include_str!("../../../../languages/src/rhocalc.rs")),

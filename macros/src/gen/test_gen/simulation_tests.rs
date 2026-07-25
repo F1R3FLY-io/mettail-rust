@@ -315,7 +315,7 @@ fn sim_{lang_lower}_eval_determinism() {{
     // unconditionally generated in the test file and proptest is a dev-dependency.
     out.push_str(&format!(
         r#"proptest! {{
-    #![proptest_config(ProptestConfig::with_cases(50))]
+    #![proptest_config({proptest_config})]
 
     #[test]
     fn sim_{lang_lower}_proptest_campaign(term in arb_{primary_cat_lower}(3u32)) {{
@@ -377,6 +377,7 @@ fn sim_{lang_lower}_eval_determinism() {{
         lang_name = lang_name,
         lang_struct = lang_struct,
         primary_cat_lower = primary_cat_lower,
+        proptest_config = super::proptest_config_expr(language, 50),
     ));
 
     out

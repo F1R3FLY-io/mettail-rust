@@ -29,6 +29,15 @@ use mettail_macros::language;
 language! {
     name: OptSmoke,
 
+    options {
+        // Task #11: this is a TEST language definition, not production, so it
+        // lives in `languages/tests/definitions/` rather than in the library.
+        // The key tells the macro to emit the generated suite inline (an opt-in
+        // `optsmoke_generated_tests!` wrapper) and to give the simulation CLI a
+        // `#[path]` prologue instead of a `mettail_languages::optsmoke` import.
+        hosted_in: "tests/definitions/optsmoke.rs",
+    },
+
     types {
         ![i32] as Int
         ![bool] as Bool

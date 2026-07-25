@@ -18,7 +18,10 @@
 
 #![allow(unused_imports, dead_code)]
 
-use mettail_languages::optsmoke::*;
+// Task #11: OptSmoke is test-hosted (see tests/definitions/optsmoke.rs).
+#[path = "definitions/optsmoke.rs"]
+mod optsmoke;
+use optsmoke::*;
 use mettail_runtime::{Language, LanguageMetadata};
 
 #[test]

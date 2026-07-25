@@ -49,9 +49,73 @@ pub mod pratt_bp_boundaries;
 
 use mettail_ast::language::LanguageDef;
 use mettail_prattail::PipelineAnalysis;
+use proc_macro2::TokenStream;
+use quote::{format_ident, quote};
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
+
+/// The `options { hosted_in: "tests/definitions/<lang>.rs" }` declaration, if present.
+///
+/// `Some(path)` means the `language!` is **test-hosted**: its definition lives in
+/// `languages/tests/definitions/`, not in the `languages` library, so nothing may
+/// reference it as `mettail_languages::<lang>`. `None` means library-hosted — the
+/// historical case, whose emission is bit-for-bit unchanged.
+///
+/// The path is relative to the `languages` package root. See the `hosted_in`
+/// documentation in `ast/src/language/parse.rs` for the full contract.
+pub fn hosted_in(language: &LanguageDef) -> Option<String> {
+    language.options.get("hosted_in").and_then(|v| match v {
+        mettail_ast::language::AttributeValue::Str(s) => Some(s.clone()),
+        _ => None,
+    })
+}
+
+/// The `#![proptest_config(…)]` expression for a generated `proptest!` block.
+///
+/// # Why this is not just `ProptestConfig::with_cases(n)` everywhere
+///
+/// proptest's default [`FileFailurePersistence::SourceParallel`] derives the
+/// counterexample-corpus path from `file!()` at the `proptest!` invocation. For a
+/// library-hosted language that resolves to `languages/tests/gen_{lang}_prop.rs`,
+/// so the corpus lands next to it as
+/// `languages/tests/gen_{lang}_prop.proptest-regressions` — a COMMITTED file that
+/// replays previously-found failing seeds on every run. Nine such corpora exist.
+///
+/// A test-hosted language's prop section is `include!`d from
+/// `target/generated/{lang}/tests_prop.rs`, and `file!()` reports the INCLUDED
+/// file. The corpus would silently relocate into `target/` — wiped by
+/// `cargo clean`, never committed — so those seeds would quietly stop being
+/// replayed. Nothing would fail; coverage would just evaporate.
+///
+/// Pinning `FileFailurePersistence::Direct` at the corpus's existing committed
+/// path keeps the nine corpora exactly where they are and exactly as effective.
+/// Library-hosted languages keep the literal `ProptestConfig::with_cases(n)` they
+/// have always emitted, byte-for-byte.
+pub fn proptest_config_expr(language: &LanguageDef, cases: u32) -> String {
+    match hosted_in(language) {
+        None => format!("ProptestConfig::with_cases({})", cases),
+        Some(_) => {
+            let lang_lower = language.name.to_string().to_lowercase();
+            let corpus = format!("gen_{}_prop.proptest-regressions", lang_lower);
+            match get_test_output_path(&corpus) {
+                Ok(path) => format!(
+                    "ProptestConfig {{ failure_persistence: \
+                     Some(Box::new(proptest::test_runner::FileFailurePersistence::Direct({:?}))), \
+                     ..ProptestConfig::with_cases({}) }}",
+                    path.to_string_lossy().into_owned(),
+                    cases
+                ),
+                // Fail LOUD rather than silently degrading to a target/-local corpus.
+                Err(e) => panic!(
+                    "cannot resolve the committed proptest corpus path for test-hosted \
+                     language {}: {}",
+                    language.name, e
+                ),
+            }
+        },
+    }
+}
 
 /// Format generated Rust source before comparing/writing generated files.
 ///
@@ -118,56 +182,190 @@ fn format_generated_rust_source(content: &str) -> String {
 ///
 /// Stale `gen_{lang}.rs` (monolithic) is deleted on first run to avoid
 /// duplicate #[test] symbols across old and new binaries.
-pub fn write_test_file(language: &LanguageDef, pipeline: &PipelineAnalysis) {
+/// # Two emission paths, deliberately kept apart
+///
+/// A **library-hosted** language (no `hosted_in`) takes the historical path
+/// above: one file per section under `languages/tests/`, auto-discovered by
+/// cargo as separate test binaries.
+///
+/// A **test-hosted** language (`options { hosted_in: "tests/definitions/X.rs" }`)
+/// cannot use that path at all: every emitted file opens with
+/// `use mettail_languages::<lang>::*;`, and once the definition leaves the
+/// library that module does not exist (E0432). Its sections are therefore
+/// spilled *without* a header into `target/generated/<lang>/tests_<section>.rs`
+/// and re-exposed through an opt-in `<lang>_generated_tests!` wrapper that the
+/// designated host binary invokes.
+///
+/// ## Do NOT "simplify" these two paths back into one
+///
+/// The per-section split exists because of a MEASURED incident: the original
+/// monolithic `gen_{lang}.rs` (24,000+ lines for Calculator) peaked at **96 GB
+/// RSS on a 125 GB machine**, because rustc holds one file's full AST, type
+/// info, and codegen IR in a single process. Splitting bounded each binary's
+/// memory to O(file size) (see the `# Why split?` note above).
+///
+/// The test-hosted path puts all of a language's sections back into ONE binary,
+/// which is superficially the shape that blew up. It is safe here for a reason
+/// that must stay true: only test-hosted languages take it, and their suites are
+/// small (the largest, LedTest, is ~35 KB). The production languages whose suites
+/// are large — Calculator (~324 KB) and RhoCalc (~360 KB) — are library-hosted
+/// and keep the split path untouched. Merging the paths, or moving a large
+/// language to `hosted_in`, re-arms the 96 GB failure.
+pub fn write_test_file(language: &LanguageDef, pipeline: &PipelineAnalysis) -> TokenStream {
     let lang_name = language.name.to_string();
 
     // Group H: WFST static verification — emit warnings at codegen time
     verify_display_parseability(language, pipeline);
 
-    // Delete the stale monolithic file if it exists (pre-split artifact).
-    delete_stale_monolithic_file(&lang_name);
-
-    // Emit each section as a separate test-binary file.
-    let unit_content = generate_unit_section(language, pipeline);
-    write_test_section(&lang_name, "unit", &unit_content);
-
-    let prop_content = generate_prop_section(language, pipeline);
-    write_test_section(&lang_name, "prop", &prop_content);
-
+    // Build every section once; where each one LANDS depends on the host.
+    let mut sections: Vec<(&'static str, String)> = Vec::with_capacity(4);
+    sections.push(("unit", generate_unit_section(language, pipeline)));
+    sections.push(("prop", generate_prop_section(language, pipeline)));
     if !language.equations.is_empty() || !language.rewrites.is_empty() {
-        let rewrite_content = generate_rewrite_section(language, pipeline);
-        write_test_section(&lang_name, "rewrite", &rewrite_content);
+        sections.push(("rewrite", generate_rewrite_section(language, pipeline)));
     }
-
     let analytical_content = generate_analytical_section(language, pipeline);
     if !analytical_content.is_empty() {
-        write_test_section(&lang_name, "analytical", &analytical_content);
+        sections.push(("analytical", analytical_content));
     }
 
-    // Stage 10.1 (2026-05-04): parity-section emission deleted alongside
-    // `parity` module. The dual-codegen comparison was tautological after
-    // Stage 10b's parse_preserving_vars rewrite (both routes Walker-driven).
+    match hosted_in(language) {
+        // ── Library-hosted: the historical path, byte-for-byte ──────────────
+        None => {
+            // Delete the stale monolithic file if it exists (pre-split artifact).
+            delete_stale_monolithic_file(&lang_name);
+            for (section, content) in &sections {
+                write_test_section(&lang_name, section, content);
+            }
+            // Stage 10.1 (2026-05-04): parity-section emission deleted alongside
+            // `parity` module. The dual-codegen comparison was tautological after
+            // Stage 10b's parse_preserving_vars rewrite (both routes Walker-driven).
+            TokenStream::new()
+        },
+        // ── Test-hosted: spill header-less sections + an opt-in wrapper ─────
+        Some(_) => emit_inline_test_suite(&lang_name, &sections),
+    }
+}
+
+/// Build the opt-in `<lang>_generated_tests!` wrapper for a test-hosted language.
+///
+/// Each section is spilled (header-less) to `target/generated/<lang>/` and pulled
+/// back in by an absolute-path `include!`, so the wrapper itself stays a handful
+/// of tokens. That matters: a test-hosted definition is `#[path]`-included by
+/// SEVERAL binaries (its host, other consumers, and its `simulate_*` CLI), and
+/// every one of them must parse this expansion even when it never invokes it.
+///
+/// # Why the suite is opt-in rather than unconditional
+///
+/// Emitting the `#[test]` functions directly into the expansion would give a copy
+/// to every binary that includes the definition. `languages/tests/set_automaton_size_optimal.rs`
+/// alone includes 15 test-hosted definitions, so it would acquire ~1050 duplicated
+/// tests and the suite total would stop meaning anything. Exactly ONE designated
+/// host binary invokes the wrapper; every other consumer simply does not.
+///
+/// # Invocation
+///
+/// ```ignore
+/// #[path = "definitions/acdemo.rs"]
+/// mod acdemo;
+/// acdemo::acdemo_generated_tests!(crate::acdemo);
+/// ```
+///
+/// The definition's module path is a parameter rather than a baked `crate::<lang>`
+/// so the wrapper does not silently re-bind `crate::` to whichever crate root it
+/// happens to expand in — the trap that already constrains
+/// `languages/src/composition/composed_lang.rs`. It is matched as a `tt` sequence,
+/// not `$spec:path`: a `path` fragment is an opaque AST node and cannot be used in
+/// a `use` declaration, whereas a `tt` sequence interpolates literally.
+fn emit_inline_test_suite(lang_name: &str, sections: &[(&'static str, String)]) -> TokenStream {
+    let lang_lower = lang_name.to_lowercase();
+    let macro_ident = format_ident!("{}_generated_tests", lang_lower);
+
+    let mut section_mods = Vec::with_capacity(sections.len());
+    for (section, content) in sections {
+        let formatted = format_generated_rust_source(content);
+        let path = match crate::logic::writer::write_lang_module(
+            lang_name,
+            &format!("tests_{}", section),
+            &formatted,
+        ) {
+            Ok(path) => path,
+            Err(e) => {
+                eprintln!(
+                    "Warning: Failed to spill test section for {} ({}): {}",
+                    lang_name, section, e
+                );
+                continue;
+            },
+        };
+        let include = crate::logic::writer::include_stmt(&path);
+        let mod_ident = format_ident!("gen_{}_{}", lang_lower, section);
+        section_mods.push(quote! {
+            #[allow(unused_imports, dead_code)]
+            mod #mod_ident {
+                use $($definition)*::*;
+                use mettail_runtime::BehavioralPred;
+                use mettail_runtime::Language;
+                #include
+            }
+        });
+    }
+
+    let doc = format!(
+        "Opt-in generated test suite for the test-hosted `{}` language definition.\n\n\
+         Invoke ONCE, from the crate root of the designated host test binary:\n\
+         `{}::{}_generated_tests!(crate::{});`",
+        lang_name, lang_lower, lang_lower, lang_lower
+    );
+
+    quote! {
+        #[doc = #doc]
+        #[macro_export]
+        macro_rules! #macro_ident {
+            ($($definition:tt)*) => {
+                #(#section_mods)*
+            };
+        }
+        pub use #macro_ident;
+    }
 }
 
 /// Emit a standard test-file header (imports and allow directives)
 /// shared by every per-section file.
+///
+/// `hosted` selects which of the two emission paths this section is bound for
+/// (see [`write_test_file`]). A library-hosted section is a standalone test
+/// binary, so it carries a crate-level `#![allow(…)]` and imports the definition
+/// from the library. A test-hosted section is `include!`d into a `mod` the
+/// wrapper generates, so it must carry NEITHER: an inner attribute is illegal
+/// once `include!` has placed content mid-module, and the definition's import is
+/// supplied by the wrapper (which alone knows the module path it was invoked
+/// with). Emitting them here would be a hard compile error, not a style wart.
 fn emit_test_file_header(
     out: &mut String,
     lang_name: &str,
     lang_name_lower: &str,
     section: &str,
     dead_rules_note: Option<&str>,
+    hosted: bool,
 ) {
     out.push_str(&format!(
         "// AUTO-GENERATED by language! macro for {} ({}) — do not edit\n",
         lang_name, section
     ));
     out.push_str("// Regenerated on each compilation of the language definition.\n");
-    out.push_str("// Run with: cargo test -p mettail-languages\n\n");
-    out.push_str("#![allow(unused_imports, dead_code)]\n\n");
-    out.push_str(&format!("use mettail_languages::{}::*;\n", lang_name_lower));
-    out.push_str("use mettail_runtime::Language;\n");
-    out.push_str("use mettail_runtime::BehavioralPred;\n\n");
+    if hosted {
+        out.push_str(&format!(
+            "// Test-hosted: included by the `{}_generated_tests!` wrapper.\n\n",
+            lang_name_lower
+        ));
+    } else {
+        out.push_str("// Run with: cargo test -p mettail-languages\n\n");
+        out.push_str("#![allow(unused_imports, dead_code)]\n\n");
+        out.push_str(&format!("use mettail_languages::{}::*;\n", lang_name_lower));
+        out.push_str("use mettail_runtime::Language;\n");
+        out.push_str("use mettail_runtime::BehavioralPred;\n\n");
+    }
 
     if let Some(rules) = dead_rules_note {
         out.push_str(&format!("// Dead rules detected by WFST analysis: {}\n\n", rules));
@@ -239,6 +437,7 @@ fn generate_unit_section(language: &LanguageDef, pipeline: &PipelineAnalysis) ->
         &lang_name_lower,
         "unit",
         dead_rules_str.as_deref(),
+        hosted_in(language).is_some(),
     );
 
     out.push_str("// ═══════════════════════════════════════════════════════════\n");
@@ -276,7 +475,8 @@ fn generate_prop_section(language: &LanguageDef, pipeline: &PipelineAnalysis) ->
     let lang_name = language.name.to_string();
     let lang_name_lower = lang_name.to_lowercase();
     let mut out = String::with_capacity(32768);
-    emit_test_file_header(&mut out, &lang_name, &lang_name_lower, "prop", None);
+    emit_test_file_header(&mut out, &lang_name, &lang_name_lower, "prop", None,
+        hosted_in(language).is_some());
 
     out.push_str("// ═══════════════════════════════════════════════════════════\n");
     out.push_str("// Proptest strategies + property tests (tape-based)\n");
@@ -295,7 +495,8 @@ fn generate_rewrite_section(language: &LanguageDef, pipeline: &PipelineAnalysis)
     let lang_name = language.name.to_string();
     let lang_name_lower = lang_name.to_lowercase();
     let mut out = String::with_capacity(8192);
-    emit_test_file_header(&mut out, &lang_name, &lang_name_lower, "rewrite", None);
+    emit_test_file_header(&mut out, &lang_name, &lang_name_lower, "rewrite", None,
+        hosted_in(language).is_some());
 
     if !language.equations.is_empty() {
         out.push_str("// ═══════════════════════════════════════════════════════════\n");
@@ -348,7 +549,8 @@ fn generate_analytical_section(language: &LanguageDef, pipeline: &PipelineAnalys
             + pratt_bp.len()
             + 1024,
     );
-    emit_test_file_header(&mut out, &lang_name, &lang_name_lower, "analytical", None);
+    emit_test_file_header(&mut out, &lang_name, &lang_name_lower, "analytical", None,
+        hosted_in(language).is_some());
     push_analytical_subsection(&mut out, "__mettail_analytical", &a);
     push_analytical_subsection(&mut out, "__mettail_user_tests", &u);
     push_analytical_subsection(&mut out, "__mettail_program_tests", &p);

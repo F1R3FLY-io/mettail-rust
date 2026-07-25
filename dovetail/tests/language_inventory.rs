@@ -206,8 +206,34 @@ fn discover_rust_files(root: &Path) -> Vec<PathBuf> {
     files
 }
 
+/// Every directory that may hold a `language!` definition.
+///
+/// Task #11 split language definitions by role: `languages/src/` holds PRODUCTION
+/// languages (they are library modules), and `languages/tests/definitions/` holds
+/// TEST definitions (declared `options { hosted_in: … }`, reachable only by the test
+/// binaries that `#[path]`-include them).
+///
+/// BOTH are scanned, and that is load-bearing. This inventory's whole purpose is that
+/// every `language!` in the repo carries a formal requirements entry — the `parse_only`
+/// anti-loophole guard below says so outright: "a real reduction language cannot hide
+/// behind the flag to escape the formal rewrite inventory". If relocation dropped a
+/// definition from discovery, MOVING A FILE would become exactly that escape hatch, and
+/// a language's reduction semantics could leave formal inventory without any test
+/// failing. Scanning both directories keeps the guard total: where a definition lives is
+/// a packaging decision, never a formal-coverage decision.
+fn language_definition_roots() -> Vec<std::path::PathBuf> {
+    vec![
+        repo_root().join("languages/src"),
+        repo_root().join("languages/tests/definitions"),
+    ]
+}
+
 fn discover_language_sources() -> Vec<DiscoveredLanguage> {
-    discover_rust_files(&repo_root().join("languages/src"))
+    language_definition_roots()
+        .iter()
+        .filter(|root| root.exists())
+        .flat_map(|root| discover_rust_files(root))
+        .collect::<Vec<_>>()
         .into_iter()
         .flat_map(|path| {
             let source = fs::read_to_string(&path)

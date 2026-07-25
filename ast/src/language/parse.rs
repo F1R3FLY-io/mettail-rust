@@ -2062,6 +2062,40 @@ fn parse_options(input: ParseStream) -> SynResult<HashMap<String, AttributeValue
                     ));
                 },
             },
+            // `hosted_in: "tests/definitions/<lang>.rs"` declares that this
+            // `language!` is TEST-HOSTED: the definition does not live in the
+            // `languages` LIBRARY (`languages/src/`) but in a file under
+            // `languages/tests/definitions/`, which consuming test binaries pull in
+            // with `#[path = "definitions/<lang>.rs"] mod <lang>;`.
+            //
+            // The value is the path to THE FILE CONTAINING THIS `language!`
+            // INVOCATION, relative to the `languages` package root (the directory
+            // holding `languages/Cargo.toml`). Two facts are derived from it, so a
+            // single key cannot get them inconsistent:
+            //
+            //   1. the generated test suite is emitted INLINE (an opt-in
+            //      `<lang>_generated_tests!` wrapper) instead of being written to
+            //      `languages/tests/gen_<lang>_*.rs`, whose
+            //      `use mettail_languages::<lang>::*;` header cannot resolve once
+            //      the definition has left the library; and
+            //   2. the generated simulation CLI's prologue becomes
+            //      `#[path = "../../<hosted_in>"] mod <lang>;` (relative to
+            //      `languages/src/bin/`) instead of that same library `use`.
+            //
+            // ABSENT this key every emission path is bit-for-bit what it was
+            // before the key existed, so library-hosted (production) languages are
+            // untouched by construction rather than by review.
+            "hosted_in" => match &value {
+                AttributeValue::Str(_) => {},
+                _ => {
+                    return Err(syn::Error::new(
+                        key_ident.span(),
+                        "hosted_in must be a string: the path of the file containing this \
+                         `language!`, relative to the `languages` package root \
+                         (e.g. \"tests/definitions/acdemo.rs\")",
+                    ));
+                },
+            },
             // L11 (2026-04-28): case_insensitive triggers ASCII case-folding
             // in NFA construction. Non-ASCII case folding requires per-locale
             // tables (Turkish dotless i, German ß) and emits compile_error!
@@ -2134,7 +2168,7 @@ fn parse_options(input: ParseStream) -> SynResult<HashMap<String, AttributeValue
                 return Err(syn::Error::new(
                     key_ident.span(),
                     format!(
-                        "unknown option '{}'. Valid options are: beam_width, log_semiring_model_path, dispatch, emit_tests, emit_blockly, emit_simulator, case_insensitive, unicode_normalization, reserved_keywords, parse_only",
+                        "unknown option '{}'. Valid options are: beam_width, log_semiring_model_path, dispatch, emit_tests, emit_blockly, emit_simulator, hosted_in, case_insensitive, unicode_normalization, reserved_keywords, parse_only",
                         unknown
                     ),
                 ));

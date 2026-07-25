@@ -75,8 +75,10 @@ pub mod lambda;
 pub mod led_test;
 #[cfg(feature = "guardoptsmoke")]
 pub mod guardoptsmoke;
-#[cfg(feature = "optsmoke")]
-pub mod optsmoke;
+// Task #11: `OptSmoke` is a TEST language definition; it moved to
+// `languages/tests/definitions/optsmoke.rs`. `languages/src/` is production-only.
+// #[cfg(feature = "optsmoke")]
+// pub mod optsmoke;
 #[cfg(feature = "refinementsmoke")]
 pub mod refinementsmoke;
 #[cfg(feature = "reserved_model")]
