@@ -4586,13 +4586,29 @@ pub(crate) struct CommElement {
     pub nonlinear_index: usize,
 }
 
+/// (D10) One fixed element of a Comm rule's AC bag REDUCT, in RHS order. The reduct admits `m ≥ 1`
+/// elements: EXACTLY ONE host-computed substitution plus `m - 1` σ-delivered LHS variables. `m = 1`
+/// is the ASYNCHRONOUS communication (RhoCalc / `CommDemo`); `m = 2` is the omnibus's SYNCHRONOUS π
+/// `Comm`, whose output `n!m.q` carries a continuation that runs in parallel with the substituted
+/// receive continuation. The Rho mirror of `dovetail_report::CommReductElement`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum CommReduct {
+    /// The HOST-COMPUTED substitution `(eval scope arg)` = `cont[Q/y]`, delivered at its own
+    /// receive-bind slot (the receiver FORWARDS it, never fabricates it).
+    Substitution,
+    /// A σ-DELIVERED reduct element: a bare LHS-element argument recovered directly from the
+    /// firing's σ, exactly as [`StructuralAcShape::reduct_vars`].
+    Var(Ident),
+}
+
 /// The recognized shape of the canonical single-receive Rholang COMMUNICATION rule
-/// `op{ E0, E1, ...rest } ~> op{ (eval scope arg), ...rest }`: two STRUCTURED constructor elements
+/// `op{ E0, E1, ...rest } ~> op{ r_0, …, r_{m-1}, ...rest }`: two STRUCTURED constructor elements
 /// `E0`/`E1` sharing exactly one NON-LINEAR channel variable `N` (each occurrence a distinct slot),
-/// a with-rest remainder, and an RHS whose sole fixed element is a substitution `(eval scope arg)`
-/// over LHS variables (the receive continuation `scope` and the sent name `arg`). Returned only for
-/// this precise shape; every other structured / non-linear AC rewrite (e.g. Ambient's `OpenRule`,
-/// whose RHS is structural, not a substitution) declines and stays on its existing path.
+/// a with-rest remainder, and an RHS whose `m ≥ 1` fixed elements are EXACTLY ONE substitution
+/// `(eval scope arg)` over LHS variables (the receive continuation `scope` and the sent name `arg`)
+/// plus `m - 1` bare LHS variables. Returned only for this shape; every other structured /
+/// non-linear AC rewrite (e.g. Ambient's `OpenRule`, whose RHS is PURELY structural — no
+/// substitution at all) declines and stays on its existing path.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct CommShape {
     pub op: String,
@@ -4601,6 +4617,8 @@ pub(crate) struct CommShape {
     pub nonlinear_var: Ident,
     pub scope_var: Ident,
     pub arg_var: Ident,
+    /// (D10) The `m ≥ 1` reduct elements, in RHS order.
+    pub reducts: Vec<CommReduct>,
 }
 
 /// Extract `op{ elements, ...rest }` from a constructor applied to a SINGLE with-rest HashBag
@@ -4642,6 +4660,51 @@ fn structured_element(pattern: &Pattern) -> Option<CommElement> {
         args: vars,
         nonlinear_index: 0,
     })
+}
+
+/// (D10) A structured element for the COMM lane specifically: [`structured_element`], but the LAST
+/// argument may ALSO be an EXPLICIT single binder abstraction `^x.body` whose body is a bare
+/// variable — the omnibus π spelling `(PIn n ^x.p)` (`omnibus.tex:1988`) of the element the
+/// RhoCalc/`CommDemo` rules write as a bare scope variable `(PFor N cont)`. The abstraction
+/// contributes its BODY variable, so `args.last()` is the scope under either spelling and the
+/// emitted [`comm_element_pattern`] (whose non-channel positions are wildcards) is IDENTICAL.
+///
+/// The second element of the pair is `true` when the abstraction spelling was used.
+/// [`comm_rule_shape`] then requires that element's scope to be the RHS substitution's `scope_var`
+/// — tying every abstraction to the ONE sound way to consume a scope, which is why this needs no
+/// `LanguageDef` binder lookup. `structural_ac_rule_shape` deliberately keeps the strict
+/// [`structured_element`]: a PURELY structural reduct has no substitution to consume a scope with,
+/// so an abstraction there could only be spliced open (letting the bound variable escape).
+fn comm_structured_element(pattern: &Pattern) -> Option<(CommElement, bool)> {
+    if let Some(element) = structured_element(pattern) {
+        return Some((element, false));
+    }
+    let Pattern::Term(PatternTerm::Apply { constructor, args }) = pattern else {
+        return None;
+    };
+    let mut vars: Vec<Ident> = Vec::with_capacity(args.len());
+    let mut explicit_lambda_scope = false;
+    for (index, arg) in args.iter().enumerate() {
+        match arg {
+            Pattern::Term(PatternTerm::Var(name)) => vars.push(name.clone()),
+            Pattern::Term(PatternTerm::Lambda { body, .. }) if index + 1 == args.len() => {
+                let Pattern::Term(PatternTerm::Var(body_var)) = body.as_ref() else {
+                    return None;
+                };
+                vars.push(body_var.clone());
+                explicit_lambda_scope = true;
+            },
+            _ => return None,
+        }
+    }
+    Some((
+        CommElement {
+            constructor: constructor.to_string(),
+            args: vars,
+            nonlinear_index: 0,
+        },
+        explicit_lambda_scope,
+    ))
 }
 
 /// The unique variable shared across ALL elements, each occurrence exactly once per element — the
@@ -4687,10 +4750,20 @@ fn subst_element(pattern: &Pattern) -> Option<(Ident, Ident)> {
 }
 
 /// Recognize the canonical single-receive Rholang COMMUNICATION rule
-/// `op{ E0, E1, ...rest } ~> op{ (eval scope arg), ...rest }` — see [`CommShape`]. Fail-closed on
+/// `op{ E0, E1, ...rest } ~> op{ r_0, …, r_{m-1}, ...rest }` — see [`CommShape`]. Fail-closed on
 /// every other shape (a non-HashBag collection, an element that is not a constructor over bare
-/// variables, 0 or ≥2 shared variables, or an RHS that is not a single-substitution with-rest bag
-/// over the SAME op and rest).
+/// variables — modulo the [`comm_structured_element`] abstraction spelling — 0 or ≥2 shared
+/// variables, an RHS that is not a with-rest bag over the SAME op and rest, an RHS with ≠1
+/// substitution element, an RHS non-substitution element that is not a bare LHS variable or that is
+/// the substitution's own scope, or an abstraction-spelled element whose scope the substitution does
+/// not consume).
+///
+/// (D10) The reduct admits `m ≥ 1` fixed elements — exactly ONE substitution plus `m - 1` bare LHS
+/// variables — so the omnibus's SYNCHRONOUS π `Comm` (`omnibus.tex:1988-1989`), whose output
+/// `n!m.q` carries a continuation, is realized in Rho as a `CommRewrite` instead of failing closed
+/// to `Unsupported`. This is the exact mirror of `dovetail_report::is_comm_rewrite`'s generalization,
+/// so the host lane and the Rho lane cannot drift: a rule the host fires is a rule the backend
+/// realizes, which is what the modality generator's realization fence reads.
 pub(crate) fn comm_rule_shape(
     left: &Pattern,
     right: &Pattern,
@@ -4704,8 +4777,13 @@ pub(crate) fn comm_rule_shape(
     let rest = rest?;
 
     let mut elements: Vec<CommElement> = Vec::with_capacity(lhs_elements.len());
+    let mut abstraction_scopes: Vec<Ident> = Vec::new();
     for element in lhs_elements {
-        elements.push(structured_element(element)?);
+        let (info, explicit_lambda_scope) = comm_structured_element(element)?;
+        if explicit_lambda_scope {
+            abstraction_scopes.push(info.args.last()?.clone());
+        }
+        elements.push(info);
     }
 
     // The shared non-linear channel variable, and each element's occurrence index of it.
@@ -4714,14 +4792,39 @@ pub(crate) fn comm_rule_shape(
         element.nonlinear_index = element.args.iter().position(|v| v == &nonlinear_var)?;
     }
 
-    // RHS: op{ (eval scope arg), ...rest } — the SAME op + rest, a single substitution element.
+    // RHS: op{ r_0, …, r_{m-1}, ...rest } — the SAME op + rest, `m ≥ 1` fixed elements of which
+    // EXACTLY ONE is a substitution and the rest are bare variables.
     let (rhs_op, rhs_elements, rhs_rest) = collection_apply(right, resolved_kind)?;
-    if rhs_op != op || rhs_elements.len() != 1 || rhs_rest.as_ref() != Some(&rest) {
+    if rhs_op != op || rhs_elements.is_empty() || rhs_rest.as_ref() != Some(&rest) {
         return None;
     }
-    let (scope_var, arg_var) = subst_element(&rhs_elements[0])?;
+    let mut subst_slot: Option<(Ident, Ident)> = None;
+    let mut reducts: Vec<CommReduct> = Vec::with_capacity(rhs_elements.len());
+    for element in rhs_elements {
+        match subst_element(element) {
+            Some(pair) => {
+                if subst_slot.replace(pair).is_some() {
+                    return None; // ≥2 substitutions — an ambiguous host-computed reduct slot.
+                }
+                reducts.push(CommReduct::Substitution);
+            },
+            None => match element {
+                Pattern::Term(PatternTerm::Var(name)) => reducts.push(CommReduct::Var(name.clone())),
+                _ => return None,
+            },
+        }
+    }
+    // No substitution at all ⇒ a PURELY structural AC rewrite, not a Comm (mutual exclusion).
+    let (scope_var, arg_var) = subst_slot?;
 
-    // The substitution's scope + arg must be LHS variables (supplied by the AC match's σ).
+    // Every abstraction-spelled element's scope must be the substitution's scope: the substitution
+    // is the ONLY sound consumer of a binder scope (see `comm_structured_element`).
+    if abstraction_scopes.iter().any(|scope| scope != &scope_var) {
+        return None;
+    }
+
+    // The substitution's scope + arg, and every σ-delivered reduct element, must be LHS variables
+    // (supplied by the AC match's σ).
     let lhs_vars: HashSet<String> = elements
         .iter()
         .flat_map(|element| element.args.iter())
@@ -4729,6 +4832,16 @@ pub(crate) fn comm_rule_shape(
         .collect();
     if !lhs_vars.contains(&scope_var.to_string()) || !lhs_vars.contains(&arg_var.to_string()) {
         return None;
+    }
+    // A σ-delivered reduct element may never be the substitution's SCOPE — splicing the raw binder
+    // body beside the substitution would let its bound variable escape.
+    for reduct in &reducts {
+        let CommReduct::Var(var) = reduct else {
+            continue;
+        };
+        if !lhs_vars.contains(&var.to_string()) || var == &scope_var {
+            return None;
+        }
     }
 
     Some(CommShape {
@@ -4738,14 +4851,19 @@ pub(crate) fn comm_rule_shape(
         nonlinear_var,
         scope_var,
         arg_var,
+        reducts,
     })
 }
 
-/// The Comm receiver's σ-slot frame (a single polyadic `ReceiveBind`, free-var levels): the two
-/// structured elements' non-linear channel slots come first (`0` = first element = `N_recv`, `1` =
-/// second = `N_send`), then the bag remainder `rest` (`2`), the host-delivered reduct (`3`), and
-/// the dynamic out channel (`4`). `free_count = 5`. Body/condition read these back as
-/// `BoundVar(free_count - 1 - level)`.
+/// The Comm receiver's σ-slot frame for the ASYNCHRONOUS `m = 1` reduct (a single polyadic
+/// `ReceiveBind`, free-var levels): the two structured elements' non-linear channel slots come first
+/// (`0` = first element = `N_recv`, `1` = second = `N_send`), then the bag remainder `rest` (`2`),
+/// the host-delivered reduct (`3`), and the dynamic out channel (`4`). `free_count = 5`.
+/// Body/condition read these back as `BoundVar(free_count - 1 - level)`.
+///
+/// (D10) [`comm_receiver_par`] computes the frame as `k + 1 + m + 1` for `k` structured elements and
+/// `m` reduct slots, which is exactly this constant at `k = 2, m = 1` (asserted there), so the
+/// asynchronous receiver stays BYTE-IDENTICAL while a synchronous `m = 2` rule gets its extra slot.
 const COMM_FREE_COUNT: usize = 5;
 
 /// The reflected pattern for one structured Comm element `C(v_0, …)`: a tagged `EList`
@@ -4848,33 +4966,44 @@ fn expr_par_with(instance: Expr, free: &[usize]) -> Par {
     }
 }
 
-/// Build the Comm σ-receiver for `op{ E0, E1, ...rest } ~> op{ (eval scope arg), ...rest }`
+/// Build the Comm σ-receiver for `op{ E0, E1, ...rest } ~> op{ r_0, …, r_{m-1}, ...rest }`
 /// ([`CommShape`]): a persistent
 ///
 /// ```text
-/// for( < rest_rem | @"ac:op"!(⟦E0⟧) | @"ac:op"!(⟦E1⟧) >, reduct, out <- source )
+/// for( < rest_rem | @"ac:op"!(⟦E0⟧) | @"ac:op"!(⟦E1⟧) >, r_0, …, r_{m-1}, out <- source )
 ///   where ( N_recv == N_send )
-///   { out!( @"ac:op"!(reduct) | rest_rem ) }
+///   { out!( @"ac:op"!(r_0) | … | @"ac:op"!(r_{m-1}) | rest_rem ) }
 /// ```
 ///
 /// The connective process-soup pattern (element 0) matches the reflected operand bag carrier
 /// ORDER-INDEPENDENTLY (native `sub_pars`/`MaximumBipartiteMatch`), binding the two elements' channel
 /// σ slots (`FreeVar(0)`/`FreeVar(1)`) — via the structured [`comm_element_pattern`]s, whose tags
 /// route each pattern to its like-tagged send — and the residual soup to the remainder `rest`
-/// (`FreeVar(2)`). The `reduct` (`FreeVar(3)`) is the host-computed contractum `cont[Q/y]`; `out`
-/// (`FreeVar(4)`) is the dynamic out channel. The `condition` fires the COMM only when the two
-/// channel slots are name-equal ([`comm_consistency_condition`]); the body emits the bag RHS
-/// `@"ac:op"!(reduct) | rest` on `out`.
+/// (`FreeVar(2)`). The `m` reduct slots (`FreeVar(3 .. 3+m)`) carry the RHS elements in order; `out`
+/// (`FreeVar(3+m)`) is the dynamic out channel. The `condition` fires the COMM only when the two
+/// channel slots are name-equal ([`nonlinear_consistency_condition`]); the body emits the bag RHS
+/// `@"ac:op"!(r_0) | … | rest` on `out`.
+///
+/// (D10) The receiver does not distinguish a HOST-COMPUTED reduct slot from a σ-DELIVERED one — it
+/// FORWARDS whatever the injection sends at each slot — so the arity generalization is entirely in
+/// the slot COUNT. At `m = 1` (`free_count = 2 + 1 + 1 + 1 = COMM_FREE_COUNT`) every emitted byte is
+/// unchanged, which is the asynchronous receiver `CommDemo`/RhoCalc install. This is the same frame
+/// [`structural_ac_receiver_par`] uses for its `m` σ-delivered reducts; the two receivers now differ
+/// only in WHERE the injection sources each slot's value.
 fn comm_receiver_par(shape: &CommShape, source: Par, language_fingerprint: &str) -> Par {
     let element_channel = format!("ac:{}", shape.op);
-    let rest_level = shape.elements.len(); // 2
-    let reduct_level = rest_level + 1; // 3
-    let out_level = reduct_level + 1; // 4
-    debug_assert_eq!(out_level + 1, COMM_FREE_COUNT);
+    let k = shape.elements.len(); // 2
+    let m = shape.reducts.len(); // 1 (asynchronous) or ≥2 (synchronous)
+    let rest_level = k;
+    let first_reduct_level = k + 1;
+    let out_level = k + 1 + m;
+    let free_count = out_level + 1;
+    debug_assert!(m >= 1, "a Comm reduct has at least the substitution element");
+    debug_assert!(m > 1 || free_count == COMM_FREE_COUNT, "m = 1 keeps the async frame");
 
     // Element 0 of the receive bind: the structured with-rest process-soup pattern.
     let mut bag_pattern = new_freevar_par(rest_level as i32, Vec::new()); // the `rest` remainder
-    let mut occurrence_levels = Vec::with_capacity(shape.elements.len());
+    let mut occurrence_levels = Vec::with_capacity(k);
     for (nl_level, element) in shape.elements.iter().enumerate() {
         occurrence_levels.push(nl_level);
         let element_pattern = comm_element_pattern(element, nl_level, language_fingerprint);
@@ -4891,25 +5020,36 @@ fn comm_receiver_par(shape: &CommShape, source: Par, language_fingerprint: &str)
     }
 
     // The non-linear consistency guard `EEq(N_recv, N_send)`.
-    let condition = comm_consistency_condition(&occurrence_levels);
+    let condition = nonlinear_consistency_condition(&occurrence_levels, free_count);
 
-    // Body: `out!( @"ac:op"!(reduct) | rest )`.
-    let reduct_bv_index = COMM_FREE_COUNT - 1 - reduct_level; // 1
-    let rest_bv_index = COMM_FREE_COUNT - 1 - rest_level; // 2
-    let out_bv_index = COMM_FREE_COUNT - 1 - out_level; // 0
-    let reduct_free = create_bit_vector(&[reduct_bv_index]);
-    let reduct_send = new_send_par(
-        new_gstring_par(element_channel.clone(), Vec::new(), false),
-        vec![new_boundvar_par(reduct_bv_index as i32, reduct_free.clone(), false)],
-        false,
-        reduct_free.clone(),
-        false,
-        reduct_free.clone(),
-        false,
-    );
+    // Body: `out!( @"ac:op"!(r_0) | … | @"ac:op"!(r_{m-1}) | rest )`.
+    let rest_bv_index = free_count - 1 - rest_level;
+    let out_bv_index = free_count - 1 - out_level; // 0
+    let mut body_soup: Option<Par> = None;
+    for j in 0..m {
+        let reduct_bv_index = free_count - 1 - (first_reduct_level + j);
+        let reduct_free = create_bit_vector(&[reduct_bv_index]);
+        let reduct_send = new_send_par(
+            new_gstring_par(element_channel.clone(), Vec::new(), false),
+            vec![new_boundvar_par(reduct_bv_index as i32, reduct_free.clone(), false)],
+            false,
+            reduct_free.clone(),
+            false,
+            reduct_free,
+            false,
+        );
+        body_soup = Some(match body_soup {
+            None => reduct_send,
+            Some(soup) => soup.append(reduct_send),
+        });
+    }
     let rest_bv =
         new_boundvar_par(rest_bv_index as i32, create_bit_vector(&[rest_bv_index]), false);
-    let body_soup = reduct_send.append(rest_bv); // `@"ac:op"!(reduct) | rest`
+    // `m ≥ 1` (a Comm reduct always carries the substitution), so `body_soup` is always `Some`.
+    let body_soup = match body_soup {
+        Some(soup) => soup.append(rest_bv),
+        None => rest_bv,
+    };
     let body_free = union(body_soup.locally_free.clone(), create_bit_vector(&[out_bv_index]));
     let body = new_send_par(
         new_boundvar_par(out_bv_index as i32, create_bit_vector(&[out_bv_index]), false),
@@ -4921,21 +5061,25 @@ fn comm_receiver_par(shape: &CommShape, source: Par, language_fingerprint: &str)
         false,
     );
 
+    // Receive-bind patterns: [bag_pattern, FreeVar(r_0), …, FreeVar(r_{m-1}), FreeVar(out)].
+    let mut patterns = Vec::with_capacity(m + 2);
+    patterns.push(bag_pattern);
+    for j in 0..m {
+        patterns.push(new_freevar_par((first_reduct_level + j) as i32, Vec::new()));
+    }
+    patterns.push(new_freevar_par(out_level as i32, Vec::new()));
+
     let receive = Receive {
         binds: vec![ReceiveBind {
-            patterns: vec![
-                bag_pattern,
-                new_freevar_par(reduct_level as i32, Vec::new()),
-                new_freevar_par(out_level as i32, Vec::new()),
-            ],
+            patterns,
             source: Some(source),
             remainder: None,
-            free_count: COMM_FREE_COUNT as i32,
+            free_count: free_count as i32,
         }],
         body: Some(body),
         persistent: true,
         peek: false,
-        bind_count: COMM_FREE_COUNT as i32,
+        bind_count: free_count as i32,
         locally_free: Vec::new(),
         connective_used: false,
         condition: Some(condition),
@@ -4959,27 +5103,35 @@ pub fn comm_rule_receiver(
     Some(comm_receiver_par(&shape, source, language_fingerprint))
 }
 
-/// The Comm injection `call` for an un-skipped Comm rewrite: `channel!(⟦whole_bag⟧, ⟦reduct⟧, @out)`,
-/// where `⟦whole_bag⟧` is the operand bag's process-soup carrier ([`reflect_ground_term_par`] routes
-/// a HashBag to the soup) and `⟦reduct⟧` is the host-computed contractum `cont[Q/y]`. This is the
-/// exact 3-value message the Comm receiver ([`comm_receiver_par`]) consumes: the connective bag
-/// pattern matches the soup (binding the two channel slots + the remainder and enforcing the
-/// non-linear guard), the reduct fills the dedicated slot, and the out formal binds `@out`.
-/// `channel` MUST be the Comm receiver's SOURCE (the rule's trace channel), so the accept triad
-/// (receiver source ≡ injection channel) holds by symmetric derivation, exactly as
-/// [`ac_contract_call`].
+/// The Comm injection `call` for an un-skipped Comm rewrite:
+/// `channel!(⟦whole_bag⟧, ⟦r_0⟧, …, ⟦r_{m-1}⟧, @out)`, where `⟦whole_bag⟧` is the operand bag's
+/// process-soup carrier ([`reflect_ground_term_par`] routes a HashBag to the soup) and each `⟦r_j⟧`
+/// is one reduct element in RHS order — the host-computed contractum `cont[Q/y]` at the substitution
+/// slot, a σ-recovered LHS-element argument at every other. This is the exact `(m + 2)`-value message
+/// the Comm receiver ([`comm_receiver_par`]) consumes: the connective bag pattern matches the soup
+/// (binding the two channel slots + the remainder and enforcing the non-linear guard), the `m`
+/// reduct values fill the dedicated slots, and the out formal binds `@out`. `channel` MUST be the
+/// Comm receiver's SOURCE (the rule's trace channel), so the accept triad (receiver source ≡
+/// injection channel) holds by symmetric derivation, exactly as [`ac_contract_call`].
+///
+/// (D10) `reducts.len()` is `1` for the ASYNCHRONOUS communication — byte-identical to the
+/// pre-generalization 3-value call — and `≥2` for the SYNCHRONOUS one.
 pub fn comm_contract_call(
     channel_name: &str,
     whole_bag: &GroundTerm,
-    reduct: &GroundTerm,
+    reducts: &[GroundTerm],
     fingerprint: &str,
     out_channel: &str,
 ) -> Par {
-    let soup = reflect_ground_term_par(whole_bag, fingerprint);
-    let reduct_par = reflect_ground_term_par(reduct, fingerprint);
+    let mut values = Vec::with_capacity(reducts.len() + 2);
+    values.push(reflect_ground_term_par(whole_bag, fingerprint));
+    for reduct in reducts {
+        values.push(reflect_ground_term_par(reduct, fingerprint));
+    }
+    values.push(new_gstring_par(out_channel.to_string(), Vec::new(), false));
     new_send_par(
         new_gstring_par(channel_name.to_string(), Vec::new(), false),
-        vec![soup, reduct_par, new_gstring_par(out_channel.to_string(), Vec::new(), false)],
+        values,
         false,
         Vec::new(),
         false,
@@ -5027,6 +5179,12 @@ pub struct RhoNetCommInjectionSite {
     pub scope_var: String,
     /// The RHS substitution's argument variable (the sent name `Q`).
     pub arg_var: String,
+    /// (D10) The `m ≥ 1` reduct slots, in RHS order: `None` marks the ONE host-computed substitution
+    /// slot (`cont[Q/y]`, recovered from the firing's contractum), `Some(var)` a σ-delivered
+    /// LHS-element argument the injection reads straight out of σ. `[None]` is the ASYNCHRONOUS
+    /// communication; `[None, Some("q")]` is the omnibus's SYNCHRONOUS π `Comm`, whose output
+    /// continuation runs in parallel with the substituted receive continuation.
+    pub reduct_slots: Vec<Option<String>>,
 }
 
 /// Derive every Comm-rewrite σ-injection site for a language — the sites a Comm σ-injection targets.
@@ -5095,6 +5253,14 @@ pub fn rho_net_comm_injection_sites(def: &LanguageDef) -> Vec<RhoNetCommInjectio
             rest_var: shape.rest.to_string(),
             scope_var: shape.scope_var.to_string(),
             arg_var: shape.arg_var.to_string(),
+            reduct_slots: shape
+                .reducts
+                .iter()
+                .map(|reduct| match reduct {
+                    CommReduct::Substitution => None,
+                    CommReduct::Var(var) => Some(var.to_string()),
+                })
+                .collect(),
         });
     }
     sites
@@ -9620,7 +9786,201 @@ mod tests {
                 vec!["N".to_string(), "Q".to_string()],
             ]
         );
+        // (D10) The ASYNCHRONOUS reduct is the single host-computed substitution slot.
+        assert_eq!(site.reduct_slots, vec![None]);
         assert!(!site.channel.is_empty(), "the Comm receiver has a source channel");
+    }
+
+    // ─── D10: the SYNCHRONOUS π `Comm` — an arity-2 reduct + an explicit `^x.p` scope ────────────
+
+    /// The GSLT omnibus's SYNCHRONOUS π communication (`omnibus.tex:1988-1989`): the receive scope
+    /// is an EXPLICIT abstraction `^x.p` and the output `n!m.q` carries a continuation, so the
+    /// reduct is the TWO-element bag `{(eval ^x.p m), q, ...rest}` — the parallel composition
+    /// `p[m/x] | q`. Both were rejected before D10 closed.
+    const MINIPI_SYNC_FRAGMENT: &str = r#"
+        name: RhoNetLowerMiniPiSync,
+        options {
+            emit_simulator: false,
+            emit_blockly: false,
+        },
+        types {
+            Proc
+            Name
+        },
+        terms {
+            PZero . |- "0" : Proc ;
+
+            PPar . ps:HashBag(Proc)
+                |- "{" ps.*sep("|") "}" : Proc ;
+
+            POut . n:Name, m:Name, p:Proc
+                |- n "!" m "." p : Proc ;
+
+            PIn . n:Name, ^x.p:[Name -> Proc]
+                |- "in" "(" n "," x ")" "." p : Proc ;
+        },
+        equations {},
+        rewrites {
+            Comm . |- (PPar {(PIn n ^x.p), (POut n m q), ...rest})
+                ~> (PPar {(eval ^x.p m), q, ...rest});
+
+            ParCong . | S ~> T
+                |- (PPar {S, ...rest}) ~> (PPar {T, ...rest});
+        }
+    "#;
+
+    /// (D10) The SYNCHRONOUS π `Comm` is recognized as a Comm shape: the `^x.p` abstraction
+    /// contributes its body variable `p` as the receive element's scope, and the reduct carries the
+    /// substitution AND the σ-delivered continuation `q`.
+    #[test]
+    fn synchronous_pi_comm_is_a_comm_shape_with_a_two_element_reduct() {
+        let def = syn::parse_str::<LanguageDef>(MINIPI_SYNC_FRAGMENT).expect("fragment must parse");
+        let comm_rewrite = def
+            .rewrites
+            .iter()
+            .find(|rewrite| rewrite.name.to_string() == "Comm")
+            .expect("MiniPiSync has a Comm rewrite");
+        let shape = comm_rule_shape(
+            &comm_rewrite.left,
+            &comm_rewrite.right,
+            Some(&CollectionType::HashBag),
+        )
+        .expect("the synchronous Comm must be recognized as a Comm shape");
+        assert_eq!(shape.op, "PPar");
+        assert_eq!(shape.nonlinear_var.to_string(), "n");
+        assert_eq!(shape.rest.to_string(), "rest");
+        assert_eq!(shape.scope_var.to_string(), "p", "`^x.p` contributes its body variable");
+        assert_eq!(shape.arg_var.to_string(), "m");
+        assert_eq!(
+            shape.elements.iter().map(|e| e.constructor.clone()).collect::<Vec<_>>(),
+            vec!["PIn".to_string(), "POut".to_string()]
+        );
+        assert_eq!(
+            shape.reducts,
+            vec![CommReduct::Substitution, CommReduct::Var(ident("q"))],
+            "the synchronous reduct is `(eval ^x.p m) | q`"
+        );
+    }
+
+    /// (D10) The synchronous receiver gets ONE MORE receive-bind slot than the asynchronous one:
+    /// `free_count = k + 1 + m + 1 = 2 + 1 + 2 + 1 = 6`, four bind patterns
+    /// (`[bag, r_0, r_1, out]`), and a body that splices BOTH reduct sends with `rest`. The
+    /// asynchronous receiver is unchanged at `COMM_FREE_COUNT = 5` / three patterns.
+    #[test]
+    fn synchronous_comm_receiver_carries_one_slot_per_reduct_element() {
+        let def = syn::parse_str::<LanguageDef>(MINIPI_SYNC_FRAGMENT).expect("fragment must parse");
+        let comm_rewrite = def
+            .rewrites
+            .iter()
+            .find(|rewrite| rewrite.name.to_string() == "Comm")
+            .expect("MiniPiSync has a Comm rewrite");
+        let receiver = comm_rule_receiver(
+            &comm_rewrite.left,
+            &comm_rewrite.right,
+            new_gstring_par("c(root)".to_string(), Vec::new(), false),
+            "fp",
+            Some(CollectionType::HashBag),
+        )
+        .expect("the synchronous Comm must materialize a receiver");
+        let receive = receiver
+            .receives
+            .first()
+            .expect("the Comm receiver is a single Receive");
+        assert!(receive.persistent);
+        assert_eq!(receive.bind_count, 6, "k=2 channels + rest + 2 reducts + out");
+        assert_eq!(receive.binds.len(), 1);
+        assert_eq!(
+            receive.binds[0].patterns.len(),
+            4,
+            "[bag-soup, r_0, r_1, out] — one pattern per reduct element"
+        );
+        assert_eq!(receive.binds[0].free_count, 6);
+        // The non-linear guard still compares the two channel slots, in the WIDER frame:
+        // `BoundVar(free_count - 1 - level)` = 5 and 4.
+        let condition = receive.condition.as_ref().expect("non-linear condition");
+        let expr = condition.exprs.first().expect("a single condition expression");
+        let ExprInstance::EEqBody(eq) = expr.expr_instance.as_ref().expect("condition expr") else {
+            panic!("the Comm consistency condition must be an EEq, got {expr:?}");
+        };
+        assert_eq!(boundvar_index(eq.p1.as_ref().expect("EEq p1")), Some(5));
+        assert_eq!(boundvar_index(eq.p2.as_ref().expect("EEq p2")), Some(4));
+        // The body emits BOTH reduct sends plus the `rest` remainder.
+        let body = receive.body.as_ref().expect("the receiver has a body");
+        let soup = body.sends[0].data.first().expect("the out-send carries the bag soup");
+        assert_eq!(soup.sends.len(), 2, "one `@\"ac:PPar\"!(r_j)` send per reduct element");
+    }
+
+    /// (D10) The synchronous injection site names its reduct slots: `None` for the ONE
+    /// host-computed substitution, `Some("q")` for the σ-delivered output continuation.
+    #[test]
+    fn synchronous_comm_injection_site_names_its_reduct_slots() {
+        let def = syn::parse_str::<LanguageDef>(MINIPI_SYNC_FRAGMENT).expect("fragment must parse");
+        let sites = rho_net_comm_injection_sites(&def);
+        assert_eq!(sites.len(), 1, "MiniPiSync has exactly one Comm rewrite");
+        let site = &sites[0];
+        assert_eq!(site.rule_label, "Comm");
+        assert_eq!(site.scope_var, "p");
+        assert_eq!(site.arg_var, "m");
+        assert_eq!(
+            site.reduct_slots,
+            vec![None, Some("q".to_string())],
+            "slot 0 is the host-computed substitution, slot 1 the σ-delivered continuation"
+        );
+        assert_eq!(
+            site.element_arg_vars,
+            vec![
+                vec!["n".to_string(), "p".to_string()],
+                vec!["n".to_string(), "m".to_string(), "q".to_string()],
+            ]
+        );
+    }
+
+    /// (D10, fail-closed) An abstraction-spelled element whose scope the substitution does NOT
+    /// consume is rejected: the substitution is the only sound consumer of a binder scope, so a
+    /// reduct that splices the raw body would let the bound variable escape.
+    #[test]
+    fn an_unconsumed_abstraction_scope_is_not_a_comm_shape() {
+        // `{(PIn n ^x.p), (POut n m q), ...rest} ~> {(eval q m), p, ...rest}` — the substitution
+        // consumes `q` (not the scope `p`), and `p` would be spliced raw.
+        let left = apply(
+            "PPar",
+            vec![Pattern::Collection {
+                coll_type: Some(CollectionType::HashBag),
+                elements: vec![
+                    apply(
+                        "PIn",
+                        vec![
+                            var_pattern("n"),
+                            Pattern::Term(PatternTerm::Lambda {
+                                binder: ident("x"),
+                                body: Box::new(var_pattern("p")),
+                            }),
+                        ],
+                    ),
+                    apply("POut", vec![var_pattern("n"), var_pattern("m"), var_pattern("q")]),
+                ],
+                rest: Some(ident("rest")),
+            }],
+        );
+        let right = apply(
+            "PPar",
+            vec![Pattern::Collection {
+                coll_type: Some(CollectionType::HashBag),
+                elements: vec![
+                    Pattern::Term(PatternTerm::Subst {
+                        term: Box::new(var_pattern("q")),
+                        var: ident("x"),
+                        replacement: Box::new(var_pattern("m")),
+                    }),
+                    var_pattern("p"),
+                ],
+                rest: Some(ident("rest")),
+            }],
+        );
+        assert!(
+            comm_rule_shape(&left, &right, Some(&CollectionType::HashBag)).is_none(),
+            "an abstraction scope the substitution does not consume must fail closed"
+        );
     }
 
     /// Ambient's structural `OpenRule` (`{(POpen N P), (PAmb N Q), ...rest} ~> {P, Q, ...rest}`) is

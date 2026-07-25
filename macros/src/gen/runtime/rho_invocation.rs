@@ -1574,10 +1574,17 @@ pub fn generate_rho_net_invocation(language: &LanguageDef) -> TokenStream {
         // Comm-rewrite arms (Stage 3b / A-4): COMPOSE the AC-site whole-bag reconstruction with the
         // subst-site contractum read. Reconstruct the operand bag from σ — each structured element
         // `C(σ[a_0], …)` (from `element_constructors` ∥ `element_arg_vars`) followed by the `rest`
-        // sub-term's children — and pass the host-computed reduct `cont[Q/y]` (recovered from the
-        // firing's CONTRACTUM, the communicated bag, minus the residual `rest`) to
-        // `comm_contract_call`, which sends `channel!(⟦bag⟧, ⟦reduct⟧, @out)` for the installed Comm
-        // receiver (which re-does the non-linear AC match `N ≡ N` and splices `reduct | rest`).
+        // sub-term's children — and pass the `m` reduct elements to `comm_contract_call`, which
+        // sends `channel!(⟦bag⟧, ⟦r_0⟧, …, ⟦r_{m-1}⟧, @out)` for the installed Comm receiver (which
+        // re-does the non-linear AC match `N ≡ N` and splices `r_0 | … | rest`).
+        //
+        // (D10) `reduct_slots` says where each element comes from, in RHS order: `Some(var)` is a
+        // σ-DELIVERED LHS-element argument (read straight out of σ, exactly as the structural-AC
+        // arm); `None` is the ONE HOST-COMPUTED substitution `cont[Q/y]`, recovered from the
+        // firing's CONTRACTUM (the communicated bag) minus the residual `rest` AND minus the
+        // σ-delivered elements — a multiset difference that leaves exactly the substitution. For the
+        // ASYNCHRONOUS `m = 1` shape there are no σ-delivered elements, so the subtraction and the
+        // emitted call are byte-identical to the pre-generalization form.
         let comm_site_arms: Vec<TokenStream> = comm_sites
             .iter()
             .map(|site| {
@@ -1608,6 +1615,34 @@ pub fn generate_rho_net_invocation(language: &LanguageDef) -> TokenStream {
                         }
                     })
                     .collect();
+                let reduct_count = site.reduct_slots.len();
+                // The σ-delivered slots, bound BEFORE the contractum subtraction (which must remove
+                // them along with `rest` to isolate the host-computed substitution).
+                let sigma_reduct_lits: Vec<LitStr> = site
+                    .reduct_slots
+                    .iter()
+                    .flatten()
+                    .map(|var| lit(var))
+                    .collect();
+                let sigma_reduct_count = sigma_reduct_lits.len();
+                // One push per reduct slot, in RHS order.
+                let mut sigma_cursor = 0usize;
+                let reduct_pushes: Vec<TokenStream> = site
+                    .reduct_slots
+                    .iter()
+                    .map(|slot| match slot {
+                        ::core::option::Option::None => quote! {
+                            __reducts.push(__subst_reduct.clone());
+                        },
+                        ::core::option::Option::Some(_) => {
+                            let index = sigma_cursor;
+                            sigma_cursor += 1;
+                            quote! {
+                                __reducts.push(__sigma_reducts[#index].clone());
+                            }
+                        },
+                    })
+                    .collect();
                 quote! {
                     #label => {
                         // Reconstruct the operand bag: the k structured elements ⊎ the residual bag.
@@ -1622,17 +1657,27 @@ pub fn generate_rho_net_invocation(language: &LanguageDef) -> TokenStream {
                             #op,
                             __elements,
                         );
-                        // The reduct `cont[Q/y]` = the communicated bag (the firing's CONTRACTUM)
-                        // minus the residual `rest` (multiset difference — exactly one element left).
+                        // The σ-DELIVERED reduct elements (RHS order among themselves).
+                        let mut __sigma_reducts =
+                            ::std::vec::Vec::with_capacity(#sigma_reduct_count);
+                        #(
+                            __sigma_reducts.push(__mettail_rho_net_to_ground(
+                                __mettail_rho_net_find_sigma(__justification, #sigma_reduct_lits)?,
+                            ));
+                        )*
+                        // The HOST-COMPUTED substitution `cont[Q/y]` = the communicated bag (the
+                        // firing's CONTRACTUM) minus the residual `rest` and minus the σ-delivered
+                        // elements (multiset difference — exactly one element left).
                         let __contractum = __justification.contractum.as_ref().ok_or_else(|| {
                             ::std::format!(
                                 "Rho-net Comm injection for language {} has no contractum for fired rule {}",
                                 #language_lit, #label,
                             )
                         })?;
-                        let __reduct = __mettail_rho_net_comm_reduct(
+                        let __subst_reduct = __mettail_rho_net_comm_reduct(
                             &__mettail_rho_net_to_ground(__contractum),
                             &__rest.children,
+                            &__sigma_reducts,
                         )
                         .ok_or_else(|| {
                             ::std::format!(
@@ -1640,8 +1685,11 @@ pub fn generate_rho_net_invocation(language: &LanguageDef) -> TokenStream {
                                 #language_lit, #label,
                             )
                         })?;
+                        // The m reduct values, in RHS order.
+                        let mut __reducts = ::std::vec::Vec::with_capacity(#reduct_count);
+                        #(#reduct_pushes)*
                         ::mettail_rholang_codegen::comm_contract_call(
-                            #channel, &__whole_bag, &__reduct, __fingerprint, out_channel,
+                            #channel, &__whole_bag, &__reducts, __fingerprint, out_channel,
                         )
                     },
                 }
@@ -1785,17 +1833,23 @@ pub fn generate_rho_net_invocation(language: &LanguageDef) -> TokenStream {
             quote! {}
         } else {
             quote! {
-                // The firing's CONTRACTUM is the communicated bag `op{ cont[Q/y], ...rest }`. Remove
-                // ONE occurrence of each residual `rest` child (multiset difference); the single
-                // remaining element is the reduct `cont[Q/y]` the Comm receiver splices back with
-                // `rest`. `None` when the shape is unexpected (fail-closed).
+                // The firing's CONTRACTUM is the communicated bag
+                // `op{ cont[Q/y], r_1, …, r_{m-1}, ...rest }`. Remove ONE occurrence of each
+                // residual `rest` child AND of each σ-DELIVERED reduct element (multiset
+                // difference); the single remaining element is the HOST-COMPUTED substitution
+                // `cont[Q/y]` the Comm receiver splices back with the others and `rest`. `None` when
+                // the shape is unexpected (fail-closed).
+                //
+                // (D10) `__sigma_reducts` is EMPTY for the asynchronous arity-1 reduct, so the
+                // recovery reduces exactly to the original "contractum minus rest" difference.
                 fn __mettail_rho_net_comm_reduct(
                     __contractum: &::mettail_rholang_codegen::GroundTerm,
                     __rest_children: &[::mettail_rholang_codegen::GroundTerm],
+                    __sigma_reducts: &[::mettail_rholang_codegen::GroundTerm],
                 ) -> ::core::option::Option<::mettail_rholang_codegen::GroundTerm> {
                     let mut __remaining: ::std::vec::Vec<::mettail_rholang_codegen::GroundTerm> =
                         __contractum.children.clone();
-                    for __r in __rest_children {
+                    for __r in __rest_children.iter().chain(__sigma_reducts.iter()) {
                         if let ::core::option::Option::Some(__pos) =
                             __remaining.iter().position(|__c| __c == __r)
                         {

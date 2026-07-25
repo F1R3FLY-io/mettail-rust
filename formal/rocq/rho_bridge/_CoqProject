@@ -93,6 +93,17 @@ theories/CommRuleFiring.v
 # of Comm's single `insert_exact`). Specializes AcNonLinearConsistency's guard to the two-element
 # OpenRule selection; generalizes CommRuleFiring's single-reduct emit to m structural reducts.
 theories/AmbientOpenFiring.v
+# D10 — the COMMUNICATION rule fires for a reduct of ARITY m ≥ 1 (SynchronousCommFiring), so the GSLT
+# omnibus's SYNCHRONOUS π `Comm` `{(PIn n ^x.p), (POut n m q), ...rest} ~> {(eval ^x.p m), q, ...rest}`
+# — whose output carries a CONTINUATION, hence a two-element reduct — is realized, not only the
+# asynchronous one CommRuleFiring models. COMPOSES two landed pieces and adds no primitive: the guard
+# is CommRuleFiring's VERBATIM `comm_guard` (the reduct arity never touches the non-linear channel
+# gate) and the emit is AmbientOpenFiring's ATOMIC m-reduct `struct_attempt`/`insert_all`. What is new
+# is the SPLIT of the reduct list into the ONE HOST-COMPUTED substitution (recovered from the firing's
+# contractum) and the m-1 σ-DELIVERED elements — the distinction `RhoNetCommInjectionSite::reduct_slots`
+# makes — with no-fabrication for both kinds, and CONSERVATIVITY: at m = 1 the fired bag is EXACTLY
+# CommRuleFiring's `insert_exact` bag (mirroring the byte-identical emitted receiver/injection).
+theories/SynchronousCommFiring.v
 # Stage 4 S-binder SLICE 3 — the Ambient In/Out rules fire as ONE DEPTH-2 NESTED structural non-linear
 # AC COMM (AmbientInOutFiring): the DEPTH-2 analogue of AmbientOpenFiring. REUSES AmbientOpenFiring's
 # atomic m-reduct struct_attempt at the OUTER bag level, gates it by the CROSS-LEVEL guard

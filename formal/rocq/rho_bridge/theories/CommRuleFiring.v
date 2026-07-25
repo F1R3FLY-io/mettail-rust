@@ -2,6 +2,17 @@
  * CommRuleFiring: FV (Stage 3b) — the canonical single-receive Rholang COMMUNICATION rule fires
  * as ONE non-linear AC COMM.
  *
+ * SCOPE (D10): this theory models the ASYNCHRONOUS communication, whose reduct is the SINGLE
+ * host-computed substitution. That is the shape RhoCalc / `CommDemo` declare and the shape the typed
+ * COMM lane was first written for. The lane now admits a reduct of ARITY m >= 1 — one substitution
+ * plus m-1 sigma-delivered elements — so that the GSLT omnibus's SYNCHRONOUS pi `Comm`
+ * (omnibus.tex:1988-1989), whose output `n!m.q` carries a continuation, is realized too. The
+ * m-reduct firing is proved in `SynchronousCommFiring.v`, which reuses this file's `comm_guard`
+ * VERBATIM (the reduct arity never touches the non-linear channel gate) and proves the two models
+ * AGREE at m = 1 (`sync_comm_generalizes_the_asynchronous_comm`,
+ * `sync_comm_agrees_with_the_asynchronous_model`). Everything below therefore remains exactly true
+ * of the code — as the m = 1 instance, which the generator still emits byte-identically.
+ *
  * The Comm rule
  *
  *     {(PFor N cont), (POutput N Q), ...rest} ~> {(cont[Q/y]), ...rest}
