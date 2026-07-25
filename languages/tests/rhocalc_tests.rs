@@ -1302,14 +1302,26 @@ mod comm {
     /// a false guard the receive AND the send both remain (fail shut — nothing
     /// consumed, nothing fabricated).
     fn assert_host_guard(guard: &str, expected: bool) {
-        let program = format!("for(x <- c where {guard}){{*x}} | c!(2)");
+        assert_host_guard_on(guard, "2", "*@(2)", expected)
+    }
+
+    /// [`assert_host_guard`] with the datum chosen by the caller.
+    ///
+    /// M-1b needs this because a SPATIAL guard is about the SHAPE of the received
+    /// term, so the datum has to be a term with a shape (`c!(p)`, `c!({p|q})`)
+    /// rather than the numeric `2` the propositional rows use. `reduct` is the
+    /// display fragment the body `*x` produces once `x` is bound — the witness
+    /// that the receive fired.
+    fn assert_host_guard_on(guard: &str, datum: &str, reduct: &str, expected: bool) {
+        let program = format!("for(x <- c where {guard}){{*x}} | c!({datum})");
         let results = run(&program);
         let displays: Vec<String> = results
             .all_terms
             .iter()
             .map(|t| canon_display(&t.display))
             .collect();
-        let fired = displays.iter().any(|d| d.contains("*@(2)"));
+        let fired = displays.iter().any(|d| d.contains(reduct));
+        let send = format!("c!({datum})");
         // A blocked guard leaves the WHOLE redex intact: the guarded receive
         // (recognizable by its `where` clause) and the unconsumed send `c!(2)`,
         // in the same normal form. The guard itself is compared only by the
@@ -1318,7 +1330,7 @@ mod comm {
         // restores only the NUMERIC projections.
         let blocked = displays
             .iter()
-            .any(|d| d.contains("where") && d.contains("c!(2)"));
+            .any(|d| d.contains("where") && d.contains(&send));
         assert_eq!(
             fired, expected,
             "host guard {guard:?} must evaluate to {expected}; normal forms {displays:?}"
@@ -1375,6 +1387,110 @@ mod comm {
         assert_host_guard("false or false implies false and false", true);
         assert_host_guard("true and true implies false or true", true);
         assert_host_guard("true implies false or false", false);
+    }
+
+    // ════════════════════════════════════════════════════════════════════════════
+    // M-1b — `matches`, HOST side (`formula::host_matches_verdict`)
+    // ════════════════════════════════════════════════════════════════════════════
+    //
+    // The host decides `t matches φ` on the fragment for which the generated
+    // first-order `Proc::match_pattern` is a faithful model of the reducer's
+    // spatial matcher: the logical constants, the propositional connectives, and a
+    // concrete term pattern. It DECLINES (`None`) on the separating conjunction,
+    // whose AC-with-remainder semantics is the reducer's alone — and a declined
+    // guard leaves a `CommWhere` marker, so the receive simply does not fire
+    // host-side and the decision is deferred to the machine.
+    //
+    // The machine-side twin of these rows lives in
+    // `rholang-runtime/tests/rho_matches_guard.rs`, and the two are locked
+    // together by `rholang-runtime/tests/rho_matches_differential.rs`.
+
+    /// The M-1b host rows all use the same shaped datum `p` (an ordinary process
+    /// variable), so `x` binds `p` and the formula is compared against it.
+    ///
+    /// ⚠ `expected` here is the OBSERVABLE outcome (did the guarded receive fire
+    /// host-side?), not the formula's truth value. The host's term arm is
+    /// POSITIVE-ONLY — it reports `Some(true)` for a proved match and `None`
+    /// otherwise, never `Some(false)` — because the generated first-order matcher
+    /// is not a faithful model of the reducer's spatial matcher in the FAILURE
+    /// direction (see `formula::host_matches_verdict`). `Some(false)` and `None`
+    /// are operationally identical at every call site: neither fires the COMM, and
+    /// both leave the whole redex resting. So a row that reads `false` below means
+    /// "the host does not fire", which is either a decided falsity or a deferral —
+    /// and which of the two it is, is asserted precisely (on the verdict itself,
+    /// not on the observation) in `rho_matches_differential.rs`.
+    fn assert_host_matches(guard: &str, expected: bool) {
+        assert_host_guard_on(guard, "\"hi\"", "*@(\"hi\")", expected)
+    }
+
+    #[test]
+    fn matches_decides_a_term_pattern_on_the_host() {
+        // ⚠ GROUND patterns. A bare identifier is a free VARIABLE — a placeholder
+        // that matches anything — so `x matches q` would fire, which says nothing
+        // about term matching. Ground literals are what exercise the term arm.
+        assert_host_matches(r#"x matches "hi""#, true);
+        assert_host_matches(r#"x matches "bye""#, false);
+        assert_host_matches("x matches Nil", false);
+        // The placeholder row, stated explicitly rather than left as a trap: a free
+        // variable in pattern position matches ANY target, host and machine alike.
+        assert_host_matches("x matches q", true);
+    }
+
+    #[test]
+    fn matches_decides_the_logical_constants_on_the_host() {
+        // `⊤` and `⊥` need no matcher at all, so these ARE decided verdicts.
+        assert_host_matches("x matches true", true);
+        assert_host_matches("x matches false", false);
+    }
+
+    #[test]
+    fn matches_decides_the_propositional_connectives_on_the_host() {
+        // Pattern-level `and`/`or`/`not`/`implies`. The COMBINATION is the Boolean
+        // algebra of the operands' verdicts — no matcher is involved in it, which
+        // is why the host can evaluate it without owning a second matcher.
+        assert_host_matches(r#"x matches ("hi" and true)"#, true);
+        assert_host_matches(r#"x matches ("hi" and "bye")"#, false);
+        assert_host_matches(r#"x matches ("bye" or "hi")"#, true);
+        assert_host_matches(r#"x matches ("bye" or Nil)"#, false);
+        assert_host_matches(r#"x matches (not "hi")"#, false);
+        // ⚠ `not "bye"` is TRUE (the target is not `"bye"`), but the host's inner
+        // verdict is UNKNOWN, and Kleene negation of unknown is unknown — so the
+        // host does not fire and the machine decides it
+        // (`rho_matches_differential`'s `(not @"z"!(9))` row). Recorded, not
+        // glossed: this is the price of the positive-only term arm.
+        assert_host_matches(r#"x matches (not "bye")"#, false);
+        assert_host_matches(r#"x matches ("hi" implies "hi")"#, true);
+        assert_host_matches(r#"x matches ("hi" implies "bye")"#, false);
+        assert_host_matches(r#"x matches ("bye" implies "bye")"#, false);
+    }
+
+    #[test]
+    fn a_separating_formula_is_deferred_not_guessed_on_the_host() {
+        // `host_matches_verdict` answers `None` for a separating conjunction, so
+        // `eval_guard_bool` answers `None`, so `eval_where_comm_single` declines
+        // and `comm_pforwhere_subst` keeps the `CommWhere` marker. Observationally:
+        // the receive does not fire and the send is untouched — the fail-closed
+        // disposition (the host never commits on a guard it cannot decide).
+        //
+        // ⚠ DEFERRAL, not falsity. The machine decides the same guard, and
+        // `rho_matches_guard::the_separating_conjunction_splits_the_term` shows it
+        // deciding it TRUE for a satisfied split. The two are consistent because
+        // declining only ever removes host-side reduction; it never produces a
+        // verdict.
+        assert_host_matches(r#"x matches { "hi" | true }"#, false);
+        assert_host_matches("x matches PPar(true, true)", false);
+    }
+
+    #[test]
+    fn matches_binds_tighter_than_and_on_the_host() {
+        // `a matches P and b matches Q` ⇒ `(a matches P) and (b matches Q)`.
+        // With `x` bound to `"hi"`: `(x matches "hi") and (x matches "bye")` does
+        // not fire, and `(x matches "hi") and (x matches true)` does. A looser
+        // `matches` would instead read `x matches ("hi" and (x matches "bye"))`,
+        // which is a different formula — so these two rows pin the precedence
+        // host-side exactly as the machine-side twin does.
+        assert_host_matches(r#"x matches "hi" and x matches "bye""#, false);
+        assert_host_matches(r#"x matches "hi" and x matches true"#, true);
     }
 
     #[test]

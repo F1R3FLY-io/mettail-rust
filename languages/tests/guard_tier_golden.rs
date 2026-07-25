@@ -158,10 +158,19 @@ fn calculator_guard_tiers() {
 /// the same two `Proc` operand positions `And`/`Or` already contribute. T3/T4 stay 0,
 /// so `worst` stays T2. Both numbers were HARVESTED from a failing run of this test
 /// and then justified by the field count above, never the other way round.
+///
+/// Semantic-predicate surface (2026-07-25, M-1b): `matches`
+/// (`Matches . a:Proc, p:Proc`) and the paper's spatial connective
+/// (`SpatialPPar . a:Proc, b:Proc`) add **2 + 2 = 4** more structural fields ⇒
+/// T1 229 → 233, total 512 → 516. T2 is again unchanged (283): both are pure
+/// constructors with no binder, no rewrite condition, and no congruence premise —
+/// `matches` is decided post-match (in guard position) and `PPar(φ,ψ)` is a
+/// pattern former, so neither participates in the reduction relation at all.
+/// T3/T4 stay 0 and `worst` stays T2.
 #[test]
 fn rhocalc_guard_tiers() {
     let meta = mettail_languages::rhocalc::RhoCalcLanguage.metadata();
-    assert_tier_tuple(meta, 512, 229, 283, 0, 0, T2);
+    assert_tier_tuple(meta, 516, 233, 283, 0, 0, T2);
 }
 
 /// **Ambient** — mobile ambients over `Proc`/`Name` (both non-scalar; no native

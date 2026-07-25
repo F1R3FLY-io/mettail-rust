@@ -216,6 +216,24 @@ fn eval_guard_bool(cond: &Proc) -> Option<bool> {
         // ground-boolean rows the two paths agree by construction (see the truth table in
         // `rholang-runtime/tests/rho_implies_guard.rs`, which drives both).
         Proc::Implies(a, b) => Some(!eval_guard_bool(a)? || eval_guard_bool(b)?),
+        // M-1b: the SPATIAL satisfaction operator `t matches φ`.
+        //
+        // Delegated to `formula::host_matches_verdict`, which decides the fragment
+        // for which the generated first-order `Proc::match_pattern` is a faithful
+        // model of the reducer's spatial matcher (the logical constants, the
+        // propositional connectives, and a concrete term pattern) and answers
+        // `None` for the SEPARATING conjunction, whose AC-with-remainder semantics
+        // belongs to the reducer alone.
+        //
+        // `None` here is the fail-CLOSED disposition, not an error: it flows out
+        // of `eval_guard_bool` to `eval_where_comm_single`, whose `_ => None` arm
+        // declines the host COMM and leaves a `CommWhere` marker. The guard is
+        // then decided where it can be decided soundly — on the machine, by
+        // `rho_pure_eval` through the `SpatialMatch` oracle. Nothing is guessed
+        // and nothing is fabricated.
+        Proc::Matches(target, formula) => {
+            crate::rhocalc::formula::host_matches_verdict(target, formula)
+        },
         Proc::Not(a) => Some(!eval_guard_bool(a)?),
         Proc::Eq(a, b) => {
             if let Some(v) = crate::rhocalc::runtime::compare_collection_equality(a, b) {

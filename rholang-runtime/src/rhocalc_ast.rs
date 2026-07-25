@@ -27,8 +27,8 @@ use mettail_runtime::{
 };
 use models::rhoapi::expr::ExprInstance;
 use models::rhoapi::{
-    EAnd, EDiv, EEq, EGt, EGte, ELt, ELte, EMethod, EMinus, EMod, EMult, ENeg, ENeq, ENot, EOr,
-    EPlus, EPlusPlus, Expr, Par, ReceiveBind,
+    EAnd, EDiv, EEq, EGt, EGte, ELt, ELte, EMatches, EMethod, EMinus, EMod, EMult, ENeg, ENeq,
+    ENot, EOr, EPlus, EPlusPlus, Expr, Par, ReceiveBind,
 };
 use models::create_bit_vector;
 use models::rust::rholang::implicits::GPrivateBuilder;
@@ -50,8 +50,14 @@ const FREE_PROC_OUTPUT: &str = "mtl#out";
 /// [`BoundEnv::new`] installs the EMPTY resolver ([`EmptyFltResolver`]), so an
 /// FLT-free lowering is byte-identical to the pre-L9-6 pipeline; the resolver is
 /// consulted ONLY by the `PFlt` arm (L9-6b).
+///
+/// `pub(crate)` since M-1b: the formula compiler ([`crate::rhocalc_formula`])
+/// lowers a formula's sub-TERMS with [`lower_proc_in_env`], which needs the same
+/// live binder environment the surrounding term lowering is using. The fields
+/// stay private to this module — `rhocalc_formula` only ever threads the value
+/// through.
 #[derive(Clone)]
-struct BoundEnv {
+pub struct BoundEnv {
     binders: HashMap<FreeVar<String>, usize>,
     /// L9-6b: FLT hole name → de-Bruijn level. A `${name}` hole captured by an FLT
     /// receive pattern ([`reflect_flt_pattern`]) is a receive binder, but — unlike
@@ -63,23 +69,69 @@ struct BoundEnv {
     /// its fill's `^bound` level from here too.
     hole_binders: HashMap<String, usize>,
     resolver: Arc<dyn FltResolve>,
+    /// M-1b: are unbound free variables being lowered in PATTERN position?
+    ///
+    /// `false` everywhere except inside a `matches` formula, so every pre-existing
+    /// lowering path is byte-identical. Inside a formula it is `true`, and
+    /// [`lower_proc_var`] / [`lower_name_var`] answer `Wildcard` instead of the
+    /// free-variable MARKER (`@"mtl#out"!("mtl:v")` / `"mtl:v"`).
+    ///
+    /// ## Why the marker is wrong in a formula, and why `Wildcard` is right
+    ///
+    /// The marker is a TERM-position convention: it represents "a process
+    /// reference we cannot resolve" as a distinguishable ground datum. In PATTERN
+    /// position that reading is not merely unhelpful, it is a trap — it would make
+    /// `x matches @"a"!(v)` mean *"x is a send on `@"a"` of the marker for `v`"*
+    /// rather than the *"…of anything"* every reader (and official Rholang, and
+    /// the host matcher) understands.
+    ///
+    /// `Wildcard` is right rather than a Rholang `FreeVar` because the guard
+    /// oracle DISCARDS bindings — `SpatialMatcherOracle::matches` answers
+    /// `spatial_match_result(...).is_some()` — so a pattern variable can only ever
+    /// contribute "matches anything", never a usable binding. That is exactly
+    /// `Wildcard`, and it needs no de-Bruijn numbering.
+    ///
+    /// It also makes the two evaluators agree on the nose. The generated host
+    /// matcher binds a free pattern variable and merges the binding with
+    /// `MatchBindings::merge`, which EXTENDS (it never rejects a conflict), so a
+    /// repeated pattern variable imposes no equality constraint host-side either:
+    /// host free-variable ≡ `Wildcard`, non-linear occurrences included. Pinned by
+    /// `rho_matches_differential.rs`.
+    free_vars_are_patterns: bool,
 }
 
 impl BoundEnv {
     /// The empty environment with the empty (no-guest) resolver — the
     /// zero-behavior-change default used by every existing lowering entry point.
-    fn new() -> Self {
+    pub fn new() -> Self {
         BoundEnv {
             binders: HashMap::new(),
             hole_binders: HashMap::new(),
             resolver: Arc::new(EmptyFltResolver),
+            free_vars_are_patterns: false,
         }
+    }
+
+    /// M-1b: this environment, switched into PATTERN mode.
+    ///
+    /// The ONLY caller is `rhocalc_formula::lower_formula_in_env`'s
+    /// `FormulaShape::Term` arm. Binders and FLT holes are carried over unchanged —
+    /// a formula may legitimately reference the receive's bound variables, and
+    /// those must still resolve to their `BoundVar`s; it is only the UNBOUND
+    /// residue whose reading changes. See [`BoundEnv::free_vars_are_patterns`].
+    pub fn in_pattern_position(&self) -> BoundEnv {
+        BoundEnv { free_vars_are_patterns: true, ..self.clone() }
     }
 
     /// The empty binder environment carrying `resolver` — the L9-6b entry that
     /// installs a populated FLT registry so `PFlt` arms can elaborate.
     fn with_resolver(resolver: Arc<dyn FltResolve>) -> Self {
-        BoundEnv { binders: HashMap::new(), hole_binders: HashMap::new(), resolver }
+        BoundEnv {
+            binders: HashMap::new(),
+            hole_binders: HashMap::new(),
+            resolver,
+            free_vars_are_patterns: false,
+        }
     }
 
     /// L9-6b: the de-Bruijn level a `${name}` FLT hole binds to (via the receive
@@ -118,7 +170,12 @@ impl BoundEnv {
                 },
             }
         }
-        BoundEnv { binders, hole_binders, resolver: Arc::clone(&self.resolver) }
+        BoundEnv {
+            binders,
+            hole_binders,
+            resolver: Arc::clone(&self.resolver),
+            free_vars_are_patterns: self.free_vars_are_patterns,
+        }
     }
 }
 
@@ -748,6 +805,18 @@ fn rhocalc_proc_semantic_key(proc: &Proc) -> Vec<u8> {
     hasher.into_key()
 }
 
+/// M-1b: the crate-visible alias the formula compiler
+/// ([`crate::rhocalc_formula::lower_formula_in_env`]) calls for a
+/// [`mettail_languages::rhocalc::formula::FormulaShape::Term`] — an ordinary term
+/// read as a pattern.
+///
+/// Delegating rather than duplicating is the whole point: a pattern and the term
+/// it is meant to match are then lowered by literally the same code, so
+/// `t matches t` cannot fail through a lowering asymmetry.
+pub fn lower_proc_in_env(proc: &Proc, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> {
+    lower_proc(proc, env)
+}
+
 fn lower_proc(proc: &Proc, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> {
     // A-S4: exec submits the RAW parse tree (no pre-normalization), so the send-sugar nodes
     // (`x!()`, `c!(a,b)`, `@Nil!(q)`, `@n!(…)`, …) arrive unfolded. Desugar the HEAD node to its
@@ -814,6 +883,7 @@ fn lower_proc(proc: &Proc, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> 
             let body = lower_body_lifting_folds(body.as_ref(), &extended_env)?;
             let locally_free = filter_and_adjust_bitset(&body.locally_free, binders.len());
 
+            let connective_used = body.connective_used;
             Ok(new_new_par(
                 binders.len() as i32,
                 body,
@@ -821,7 +891,7 @@ fn lower_proc(proc: &Proc, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> 
                 BTreeMap::new(),
                 locally_free.clone(),
                 locally_free,
-                false,
+                connective_used,
             ))
         },
         // ── A-S4 cast purity: casts lower STRUCTURALLY ─────────────────────────────────────
@@ -1007,6 +1077,63 @@ fn lower_proc(proc: &Proc, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> 
             let operand = lower_proc(a.as_ref(), env)?;
             Ok(unary_expr_par(operand, |p| ExprInstance::ENotBody(ENot { p })))
         },
+        // M-1b — the SPATIAL satisfaction operator `t matches φ`.
+        //
+        // The TARGET is an ordinary term, lowered by `lower_proc`; the FORMULA is
+        // compiled to a Rholang PATTERN by `rhocalc_formula::lower_formula_in_env`
+        // (§18.1). The two are packed into ONE
+        // `EMatchesBody(EMatches{target, pattern})`, which `rho-pure-eval` decides
+        // through the caller-injected `SpatialMatch` oracle (M-1a, f1r3node
+        // `99b7b1c4`) using the reducer's OWN spatial matcher. MeTTaIL never
+        // matches anything itself on this path.
+        //
+        // ★ §18.1's static-`false` fold. When the formula is unsatisfiable by
+        // construction, `t matches φ` is `false` for EVERY `t`, so the whole guard
+        // collapses to `GBool(false)` and the matcher is never invoked. The
+        // judgement (`formula::is_statically_false`) is syntactic and conservative
+        // — it answers `true` only where the formula's own shape forces it — so
+        // the fold can only ever be a missed optimization, never a wrong verdict.
+        // The TARGET is still lowered, and its typed lowering error still
+        // propagates: folding must not turn an ill-formed program into a
+        // well-formed `false`.
+        Proc::Matches(target, formula) => {
+            let target = lower_proc(target.as_ref(), env)?;
+            if mettail_languages::rhocalc::formula::is_statically_false(formula.as_ref()) {
+                let mut folded = new_gbool_par(false, Vec::new(), false);
+                folded.locally_free = target.locally_free;
+                return Ok(folded);
+            }
+            let pattern = crate::rhocalc_formula::lower_formula_in_env(formula.as_ref(), env)?;
+            // `connective_used` is NOT propagated from the pattern. The result of
+            // `matches` is a BOOLEAN expression, not a pattern: it is the one place
+            // in the lowering where a connective legitimately appears inside a Par
+            // that is itself not a pattern. This mirrors f1r3node's own
+            // `normalize_p_matches`, which builds the `EMatches` from a target
+            // normalized in the OUTER scope and a pattern normalized in a PUSHED
+            // scope with a fresh free map, and returns the LEFT operand's free map.
+            let locally_free = union(target.locally_free.clone(), pattern.locally_free.clone());
+            let mut par = Par::default().with_exprs(vec![Expr {
+                expr_instance: Some(ExprInstance::EMatchesBody(EMatches {
+                    target: Some(target),
+                    pattern: Some(pattern),
+                })),
+            }]);
+            par.locally_free = locally_free;
+            par.connective_used = false;
+            Ok(par)
+        },
+        // M-1b — `PPar(φ, ψ)` is a PATTERN former, not a term former. It denotes
+        // the separating conjunction, which is meaningful only as the right operand
+        // of `matches` (where `rhocalc_formula` compiles it to a par-pattern). In
+        // TERM position it has no denotation at all, so it fails CLOSED with a
+        // typed error rather than being silently lowered as an ordinary parallel
+        // composition — which would look like it worked while meaning something
+        // different (`a | b` builds a process; `PPar(a,b)` asserts a split).
+        // A program that wants parallel composition writes `{ a | b }` or `a | b`.
+        Proc::SpatialPPar(..) => Err(RhocalcAstLowerError::UnsupportedProc(
+            "PPar(a, b) outside a `matches` formula (the spatial connective is a pattern former, \
+             not a term former; write `{ a | b }` for parallel composition)",
+        )),
         // ── Methods routed to the reducer's OWN method table (option C, C1/C2) ───────────────
         //
         // Every name below is a key of `reduce.rs::method_table` (8197-8256). Dispatch is on the
@@ -1351,6 +1478,16 @@ fn find_fold(proc: &Proc) -> Option<(Proc, FoldKind, i64)> {
         // found, so never lifted, so never trampolined) — the same class of defect this
         // three-helper traversal exists to prevent. See `replace_fold`/`rebuild_binary`.
         | Proc::Implies(a, b) => find_fold(a.as_ref()).or_else(|| find_fold(b.as_ref())),
+        // M-1b: `matches` descends into its TARGET only. The target is an ordinary
+        // term, so a fold there lifts exactly as it would anywhere else. The
+        // FORMULA is a PATTERN: lifting a fold out of a pattern would replace a
+        // sub-pattern with `*r`, a runtime value that arrives only after the
+        // trampoline COMM — i.e. it would silently turn "match this shape" into
+        // "match whatever this evaluates to", which is not the same predicate.
+        // A fold inside a formula therefore stays put and, having no pattern
+        // denotation, is rejected by `lower_proc`'s typed fold-position error.
+        // Fail closed, never silently re-interpret.
+        Proc::Matches(target, _formula) => find_fold(target.as_ref()),
         Proc::NegProc(a) | Proc::Not(a) => find_fold(a.as_ref()),
         // `*(@(P))` inlines `P` — folds inside it lift at this scope.
         Proc::PDrop(name) => find_fold_in_name(name.as_ref()),
@@ -1461,6 +1598,14 @@ fn replace_fold(proc: &Proc, r_drop: &Proc, replaced: &mut bool) -> Proc {
         Proc::Or(a, b) => rebuild_binary(proc, a, b, r_drop, replaced),
         // M-0 — mirrors the `Implies` arm of `find_fold`.
         Proc::Implies(a, b) => rebuild_binary(proc, a, b, r_drop, replaced),
+        // M-1b — mirrors `find_fold`'s `Matches` arm EXACTLY: the target is
+        // descended into, the formula is copied verbatim. The asymmetry is
+        // deliberate and the two helpers must stay in step, or a fold would be
+        // FOUND in the target and REPLACED somewhere else.
+        Proc::Matches(target, formula) => Proc::Matches(
+            Arc::new(replace_fold(target.as_ref(), r_drop, replaced)),
+            formula.clone(),
+        ),
         Proc::NegProc(a) => {
             Proc::NegProc(Arc::new(replace_fold(a.as_ref(), r_drop, replaced)))
         },
@@ -1510,6 +1655,10 @@ fn rebuild_binary(
         // `Implies` here, and without this arm the `_` fallback would return the ORIGINAL
         // node, discarding the `*r` substitution `replace_fold` just computed.
         Proc::Implies(..) => Proc::Implies(new_a, new_b),
+        // ⚠ `Proc::Matches` is deliberately ABSENT. `rebuild_binary` descends into
+        // BOTH operands, which is wrong for `matches`: its right operand is a
+        // pattern that must never have a fold lifted out of it. `replace_fold`
+        // therefore handles `Matches` with its own arm and never routes it here.
         _ => orig.clone(),
     }
 }
@@ -1644,35 +1793,38 @@ fn lower_bag(bag: &Bag, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> {
                 let count = new_gint_par(count, Vec::new(), false);
                 let pair_locally_free =
                     union(item.locally_free.clone(), count.locally_free.clone());
+                let pair_connective = item.connective_used || count.connective_used;
                 pairs.push(new_elist_par(
                     vec![item, count],
                     pair_locally_free.clone(),
-                    false,
+                    pair_connective,
                     None,
                     pair_locally_free,
-                    false,
+                    pair_connective,
                 ));
             }
 
             let pairs_locally_free = locally_free_union(&pairs);
+            let pairs_connective = any_connective_used(&pairs);
             let pairs = new_elist_par(
                 pairs,
                 pairs_locally_free.clone(),
-                false,
+                pairs_connective,
                 None,
                 pairs_locally_free,
-                false,
+                pairs_connective,
             );
             let tag = GPrivateBuilder::new_par_from_string(crate::RHOCALC_BAG_ABI_TAG.to_string());
             let locally_free = union(tag.locally_free.clone(), pairs.locally_free.clone());
 
+            let connective_used = tag.connective_used || pairs.connective_used;
             Ok(new_elist_par(
                 vec![tag, pairs],
                 locally_free.clone(),
-                false,
+                connective_used,
                 None,
                 locally_free,
-                false,
+                connective_used,
             ))
         },
         _ => Err(RhocalcAstLowerError::UnsupportedProc("computed bag process")),
@@ -1687,7 +1839,15 @@ fn lower_list(list: &List, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> 
                 .map(|item| lower_proc(item, env))
                 .collect::<Result<Vec<_>, _>>()?;
             let locally_free = locally_free_union(&items);
-            Ok(new_elist_par(items, locally_free.clone(), false, None, locally_free, false))
+            let connective_used = any_connective_used(&items);
+            Ok(new_elist_par(
+                items,
+                locally_free.clone(),
+                connective_used,
+                None,
+                locally_free,
+                connective_used,
+            ))
         },
         _ => Err(RhocalcAstLowerError::UnsupportedProc("computed list process")),
     }
@@ -1699,6 +1859,8 @@ fn lower_map(map: &Map, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> {
             let mut pairs = Vec::with_capacity(entries.len());
             let mut locally_free = Vec::new();
 
+            let mut connective_used = false;
+
             for (key, value) in entries.iter() {
                 let key = lower_proc(key, env)?;
                 let value = lower_proc(value, env)?;
@@ -1706,10 +1868,18 @@ fn lower_map(map: &Map, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> {
                     locally_free,
                     union(key.locally_free.clone(), value.locally_free.clone()),
                 );
+                connective_used |= key.connective_used || value.connective_used;
                 pairs.push(new_key_value_pair(key, value));
             }
 
-            Ok(new_emap_par(pairs, locally_free.clone(), false, None, locally_free, false))
+            Ok(new_emap_par(
+                pairs,
+                locally_free.clone(),
+                connective_used,
+                None,
+                locally_free,
+                connective_used,
+            ))
         },
         _ => Err(RhocalcAstLowerError::UnsupportedProc("computed map process")),
     }
@@ -1727,7 +1897,15 @@ fn lower_set(set: &Set, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> {
                 .map(|item| lower_proc(item, env))
                 .collect::<Result<Vec<_>, _>>()?;
             let locally_free = locally_free_union(&elements);
-            Ok(new_eset_par(elements, locally_free.clone(), false, None, locally_free, false))
+            let connective_used = any_connective_used(&elements);
+            Ok(new_eset_par(
+                elements,
+                locally_free.clone(),
+                connective_used,
+                None,
+                locally_free,
+                connective_used,
+            ))
         },
         _ => Err(RhocalcAstLowerError::UnsupportedProc("computed set process")),
     }
@@ -1743,6 +1921,7 @@ fn lower_pathmap(pathmap: &Pathmap, env: &BoundEnv) -> Result<Par, RhocalcAstLow
 
             let mut pairs = Vec::with_capacity(entries.len());
             let mut locally_free = Vec::new();
+            let mut connective_used = false;
             for (key, value) in entries {
                 let key = lower_proc(key, env)?;
                 let value = lower_proc(value, env)?;
@@ -1750,10 +1929,18 @@ fn lower_pathmap(pathmap: &Pathmap, env: &BoundEnv) -> Result<Par, RhocalcAstLow
                     locally_free,
                     union(key.locally_free.clone(), value.locally_free.clone()),
                 );
+                connective_used |= key.connective_used || value.connective_used;
                 pairs.push(new_key_value_pair(key, value));
             }
 
-            Ok(new_emap_par(pairs, locally_free.clone(), false, None, locally_free, false))
+            Ok(new_emap_par(
+                pairs,
+                locally_free.clone(),
+                connective_used,
+                None,
+                locally_free,
+                connective_used,
+            ))
         },
         _ => Err(RhocalcAstLowerError::UnsupportedProc("computed pathmap process")),
     }
@@ -1879,6 +2066,18 @@ fn lower_pfor_user(
         );
     }
 
+    // M-1b: `connective_used` is DERIVED, not asserted. For a receive it is the
+    // connective-ness of the SOURCES (the channels being listened on) and of the
+    // BODY — never of the bind PATTERNS, whose free variables are the receive's own
+    // binders and therefore make it no less concrete
+    // (`HasLocallyFree<ReceiveBind>::connective_used(rb) = connective_used(rb.source)`).
+    // Every term-position receive lowers concrete sources and a concrete body, so
+    // this is `false` there and the emitted `Par` is byte-identical; it becomes
+    // load-bearing only for a receive appearing inside a `matches` formula.
+    let connective_used = binds_rho
+        .iter()
+        .any(|bind| bind.source.as_ref().is_some_and(|source| source.connective_used))
+        || lowered_body.connective_used;
     let mut receive_par = new_receive_par(
         binds_rho,
         lowered_body,
@@ -1886,9 +2085,9 @@ fn lower_pfor_user(
         false,
         bind_count,
         locally_free.clone(),
-        false,
+        connective_used,
         locally_free,
-        false,
+        connective_used,
     );
 
     if let Some(cond_par) = condition {
@@ -2052,7 +2251,16 @@ fn send_par_persistent(channel: Par, data: Vec<Par>) -> Par {
     let locally_free = data
         .iter()
         .fold(channel.locally_free.clone(), |acc, item| union(acc, item.locally_free.clone()));
-    new_send_par(channel, data, true, locally_free.clone(), false, locally_free, false)
+    let connective_used = channel.connective_used || any_connective_used(&data);
+    new_send_par(
+        channel,
+        data,
+        true,
+        locally_free.clone(),
+        connective_used,
+        locally_free,
+        connective_used,
+    )
 }
 
 // ── Receive-bind helpers (replicated from `mettail_languages::rhocalc::receive`) ───────────────────
@@ -2278,6 +2486,11 @@ fn lower_name_var(var: &OrdVar, env: &BoundEnv) -> Result<Par, RhocalcAstLowerEr
             } else if let Some(index) = flt_hole_bound_level(free_var, env) {
                 // L9-6b: an FLT hole captured by an enclosing FLT receive pattern.
                 Ok(new_boundvar_par(index as i32, Vec::new(), false))
+            } else if env.free_vars_are_patterns {
+                // M-1b: inside a `matches` formula an unbound NAME variable is a
+                // pattern placeholder, not a marker. See
+                // `BoundEnv::free_vars_are_patterns`.
+                Ok(new_wildcard_par(Vec::new(), true))
             } else {
                 let name = pretty_var_name(free_var)?;
                 Ok(new_gstring_par(format!("{FREE_NAME_PREFIX}{name}"), Vec::new(), false))
@@ -2297,6 +2510,11 @@ fn lower_proc_var(var: &OrdVar, env: &BoundEnv) -> Result<Par, RhocalcAstLowerEr
                 // bound by NAME (the hole is a string metavar, so it never shares a
                 // moniker `FreeVar` with this reference).
                 Ok(new_boundvar_par(index as i32, Vec::new(), false))
+            } else if env.free_vars_are_patterns {
+                // M-1b: inside a `matches` formula an unbound PROCESS variable is a
+                // pattern placeholder, not a marker. See
+                // `BoundEnv::free_vars_are_patterns`.
+                Ok(new_wildcard_par(Vec::new(), true))
             } else {
                 let name = pretty_var_name(free_var)?;
                 Ok(send_par(
@@ -2477,20 +2695,54 @@ fn extend_env(env: &BoundEnv, binders: &[Binder<String>]) -> BoundEnv {
         .map(|(name, index)| (name.clone(), index + width))
         .collect::<HashMap<String, usize>>();
 
-    BoundEnv { binders: binder_map, hole_binders, resolver: Arc::clone(&env.resolver) }
+    BoundEnv {
+        binders: binder_map,
+        hole_binders,
+        resolver: Arc::clone(&env.resolver),
+        free_vars_are_patterns: env.free_vars_are_patterns,
+    }
 }
 
 fn send_par(channel: Par, data: Vec<Par>) -> Par {
     let locally_free = data
         .iter()
         .fold(channel.locally_free.clone(), |acc, item| union(acc, item.locally_free.clone()));
-    new_send_par(channel, data, false, locally_free.clone(), false, locally_free, false)
+    let connective_used = channel.connective_used || any_connective_used(&data);
+    new_send_par(
+        channel,
+        data,
+        false,
+        locally_free.clone(),
+        connective_used,
+        locally_free,
+        connective_used,
+    )
 }
 
 fn locally_free_union(parts: &[Par]) -> Vec<u8> {
     parts
         .iter()
         .fold(Vec::new(), |acc, part| union(acc, part.locally_free.clone()))
+}
+
+/// M-1b: does any of `parts` carry a connective (a Rholang connective, a free
+/// variable, or a wildcard) — i.e. is the composite they build NON-CONCRETE?
+///
+/// ★ `connective_used` must be DERIVED, exactly as `locally_free` already is, and
+/// for the same reason: it is a cached summary of the subtree, and a composite
+/// that ASSERTS `false` over a non-concrete operand is simply wrong. Understating
+/// it is not a cosmetic defect — `SpatialMatcher<Par,Par>::spatial_match` and
+/// `spatial_match_par_ref` both short-circuit to structural EQUALITY when
+/// `!pattern.connective_used`, so a pattern whose flag is understated is compared
+/// for equality and a wildcard nested inside it never gets to match anything.
+///
+/// Every existing (term-position) call site lowers operands that are all
+/// concrete, so this derivation returns `false` there and the emitted `Par` is
+/// byte-identical to the pre-M-1b output. It becomes load-bearing only inside a
+/// `matches` formula, where [`BoundEnv::free_vars_are_patterns`] turns an unbound
+/// variable into a wildcard.
+fn any_connective_used(parts: &[Par]) -> bool {
+    parts.iter().any(|part| part.connective_used)
 }
 
 fn expr_par(expr: Expr) -> Par {

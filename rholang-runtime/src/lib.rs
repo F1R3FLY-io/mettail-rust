@@ -62,6 +62,11 @@ pub mod fold_contract;
 pub mod native_contract;
 #[cfg(feature = "rhocalc-runtime")]
 pub mod rhocalc_ast;
+/// M-1b: the FORMULA compiler — a RhoCalc `Proc` read as a Rholang PATTERN
+/// (§18.1). The right operand of `matches` goes through here; the left operand
+/// and everything else goes through [`rhocalc_ast`].
+#[cfg(feature = "rhocalc-runtime")]
+pub mod rhocalc_formula;
 pub mod run;
 /// Reactive single-step COMM stepper (the `step` command's live Rho-machine evidence).
 #[cfg(feature = "runtime-report")]
@@ -134,6 +139,7 @@ pub use run::{
 pub use run::{
     run_normalized_par_for_oracle, run_normalized_par_for_oracle_and_read_bools,
     run_normalized_par_for_oracle_and_read_ints,
+    run_normalized_par_for_oracle_and_read_par_channels,
     run_normalized_par_for_oracle_and_read_string_channels,
     run_normalized_par_for_oracle_and_read_string_tuples,
     run_normalized_par_for_oracle_and_read_strings, run_validated_program,

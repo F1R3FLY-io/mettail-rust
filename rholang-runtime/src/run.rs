@@ -1610,6 +1610,35 @@ pub async fn run_normalized_par_for_oracle_and_read_runtime_value_channels(
 }
 
 /// Build an in-memory `RhoRuntime`, inject normalized `program` for an
+/// oracle/debug test, and return every datum resting on each requested quoted
+/// channel VERBATIM, as the `Par` it is — from ONE execution.
+///
+/// The most general of the multi-channel readers, and the only one adequate to a
+/// **fail-shut** assertion over an arbitrary datum. The typed readers
+/// (`par_as_i64`, `par_as_string`, `par_as_runtime_observation_value`) all FILTER:
+/// a datum they cannot decode is dropped, so an empty result means "nothing
+/// readable rests here", which is indistinguishable from "nothing rests here".
+/// That distinction is exactly what a spatial guard test needs, because the
+/// interesting datum for a spatial match is a PROCESS (`{ @"a"!(1) | @"b"!(2) }`),
+/// which no ground reader decodes. Reading verbatim `Par`s makes "the rejected
+/// datum is still resting" checkable for every datum shape, and lets the test
+/// compare against the lowered datum for identity rather than for a projection.
+pub async fn run_normalized_par_for_oracle_and_read_par_channels(
+    program: &Par,
+    out_channels: &[&str],
+) -> Result<HashMap<String, Vec<Par>>, String> {
+    let runtime = evaluate_par(program).await?;
+    let mut result = HashMap::with_capacity(out_channels.len());
+    for channel in out_channels {
+        result.insert(
+            (*channel).to_string(),
+            read_ground_from_runtime(&runtime, channel, par_verbatim).await,
+        );
+    }
+    Ok(result)
+}
+
+/// Build an in-memory `RhoRuntime`, inject normalized `program` for an
 /// oracle/debug test, and return every closed Rho ground value left resting on
 /// the quoted channel `@"<out_channel>"`.
 #[cfg(feature = "runtime-report")]

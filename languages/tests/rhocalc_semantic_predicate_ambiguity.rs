@@ -36,8 +36,9 @@
 //!     | awk '/warning\[D02\] \(RhoCalc\)/,/= hint: this is an inherent/'
 //! ```
 //!
-//! ★ GOLDEN (unchanged by M-0, and by M-1b): **9 unresolvable ambiguities in 1
-//! category**, all pre-existing and all in `Proc`:
+//! ★ GOLDEN — **verified byte-identical before M-0, after M-0, and after M-1b**:
+//! **9 unresolvable ambiguities in 1 category**, all pre-existing and all in
+//! `Proc`:
 //!
 //! ```text
 //!   1  [At,     Bang]        POutput        vs POutputEmpty
@@ -51,11 +52,14 @@
 //!   9  [StringLit]           CastStr        vs CastBytes
 //! ```
 //!
-//! `implies` cannot add a row: `D02` reports conflicts at TRIE-DISPATCH prefixes,
-//! and an infix operator declared `a "implies" b` contributes no leading
-//! terminal — it is handled by the Pratt LED loop, not the decision trie. That is
-//! a structural argument, and the byte-identical `D02` block before and after
-//! M-0 is its confirmation.
+//! `implies` and `matches` cannot add a row: `D02` reports conflicts at
+//! TRIE-DISPATCH prefixes, and an infix operator declared `a "op" b` contributes
+//! no leading terminal — it is handled by the Pratt LED loop, not the decision
+//! trie. `PPar` DOES contribute a leading terminal, but as a RESERVED word
+//! (`options { reserved_keywords: auto }`), so its `Ident` co-accept is dropped
+//! and it cannot fork against the lowercase call-forms. Those are structural
+//! arguments; the byte-identical `D02` block measured before M-0, after M-0 and
+//! after M-1b is their confirmation.
 
 use std::time::{Duration, Instant};
 
@@ -217,6 +221,156 @@ fn implies_parses_deterministically_across_repeated_parses() {
     // Determinism of the ELECTION, not just of the count: a weight tie broken by
     // iteration order would show up as two different winners for one source.
     for source in ["true implies false", "false or false implies false and false"] {
+        let first = assert_parse_count(source, 1);
+        let second = assert_parse_count(source, 1);
+        assert_eq!(
+            normalize_var_ids(&format!("{first:?}")),
+            normalize_var_ids(&format!("{second:?}")),
+            "repeated parses of {source:?} must elect the same AST"
+        );
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// M-1b — `matches` and `PPar`
+// ══════════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn matches_forms_are_unambiguous() {
+    // `matches` is an infix operator, so like `implies` it contributes no
+    // trie-dispatch prefix. Every form has exactly ONE derivation.
+    for source in [
+        "x matches true",
+        "x matches false",
+        r#"x matches @"a"!(1)"#,
+        r#"x matches { @"a"!(1) | true }"#,
+        r#"x matches (not @"a"!(1))"#,
+        r#"x matches (@"a"!(1) and true)"#,
+        r#"x matches (@"a"!(1) implies true)"#,
+        "x matches true and y matches false",
+        r#"not (x matches @"a"!(1))"#,
+        r#"for(@x <- @"c" where x matches { @"a"!(1) | true }) { @"OUT"!(x) }"#,
+    ] {
+        assert_parse_count(source, 1);
+    }
+}
+
+#[test]
+fn ppar_forms_are_unambiguous() {
+    // ★ `PPar` is the interesting case for ambiguity: unlike `implies`/`matches`
+    // it is a LEADING LITERAL, so it does enter the decision trie. It cannot fork
+    // against the lowercase call-forms (`int(…)`, `bool(…)`, a method call)
+    // because RhoCalc runs `options { reserved_keywords: auto }`, which reserves
+    // every identifier-shaped literal terminal — so `PPar` is a keyword and can
+    // no longer co-accept as an `Ident`. These goldens are the executable check on
+    // that reasoning.
+    for source in [
+        "PPar(true, true)",
+        "t matches PPar(true, true)",
+        r#"t matches PPar(@"a"!(1), true)"#,
+        r#"t matches PPar(@"a"!(1), @"b"!(2))"#,
+        "t matches PPar(PPar(true, true), true)",
+        r#"for(@x <- @"c" where x matches PPar(true, true)) { @"OUT"!(x) }"#,
+    ] {
+        assert_parse_count(source, 1);
+    }
+}
+
+#[test]
+fn the_pre_existing_call_forms_keep_their_parse_counts_after_ppar_is_reserved() {
+    // The control arm for the reservation. `PPar` joining the keyword set must not
+    // perturb the parenthesized call-forms it sits next to in the trie, nor the
+    // ordinary identifier and method surfaces.
+    for source in [
+        "int(3, 8)",
+        "uint(3, 8)",
+        "bool(true)",
+        "str(1)",
+        "float(1, 32)",
+        "PPar",
+        "PParX",
+        "xPPar",
+    ] {
+        // `PPar` alone is now a bare keyword in operand position and no longer
+        // parses as a variable; the two neighbouring identifiers still do. Both
+        // outcomes are pinned by the parse-count contract below rather than
+        // asserted informally.
+        match mettail_runtime::clear_var_cache() {
+            () => {},
+        }
+        let parsed = Proc::parse_via_wpda_all(source);
+        match source {
+            "PPar" => assert!(
+                parsed.is_err() || parsed.as_ref().map(Vec::len).unwrap_or(0) == 0,
+                "the reserved keyword `PPar` must not parse as a bare variable, got {parsed:?}"
+            ),
+            _ => {
+                let alternatives = parsed
+                    .unwrap_or_else(|err| panic!("{source:?} must still parse: {err:?}"))
+                    .len();
+                assert_eq!(alternatives, 1, "parse-forest size for {source:?} changed");
+            },
+        }
+    }
+}
+
+#[test]
+fn the_elected_matches_parse_has_the_declared_precedence() {
+    // `matches` sits at the loose edge of the comparison block — TIGHTER than
+    // `and`/`or`/`implies`, which is the reading the paper's multi-subject guards
+    // need and the same relative order official Rholang gives
+    // (`rholang-tree-sitter/grammar.js`: `matches` prec 6 > `and` 5 > `or` 4).
+    let elected = assert_parse_count("x matches true and y matches false", 1);
+    match &elected {
+        Proc::And(left, right) => {
+            assert!(
+                matches!(left.as_ref(), Proc::Matches(..)),
+                "the left conjunct must be a whole `matches`, got {left:?}"
+            );
+            assert!(
+                matches!(right.as_ref(), Proc::Matches(..)),
+                "the right conjunct must be a whole `matches`, got {right:?}"
+            );
+        },
+        other => panic!("`and` must be the ROOT of the elected parse, got {other:?}"),
+    }
+
+    // And looser than `implies`, so an implication of two matches groups the way
+    // a reader expects.
+    let elected = assert_parse_count("x matches true implies y matches false", 1);
+    assert!(
+        matches!(&elected, Proc::Implies(..)),
+        "`implies` must be looser than `matches`, got {elected:?}"
+    );
+}
+
+#[test]
+fn ppar_and_the_braced_spelling_elect_their_own_constructors() {
+    // Same parse count, different constructor is a SILENT regression a count
+    // golden cannot see: `PPar(φ,ψ)` must elect `SpatialPPar` (the connective) and
+    // `{ φ | ψ }` must elect `PPar` (the multiset literal). They compile to the
+    // same pattern, but they are not the same node, and conflating them at parse
+    // time would make `PPar(a, b)` silently lowerable in term position.
+    let elected = assert_parse_count("PPar(true, true)", 1);
+    assert!(
+        matches!(&elected, Proc::SpatialPPar(..)),
+        "`PPar(φ,ψ)` must elect the spatial connective, got {elected:?}"
+    );
+
+    let elected = assert_parse_count(r#"{ @"a"!(1) | true }"#, 1);
+    assert!(
+        matches!(&elected, Proc::PPar(_)),
+        "`{{ φ | ψ }}` must elect the multiset literal, got {elected:?}"
+    );
+}
+
+#[test]
+fn matches_and_ppar_parse_deterministically_across_repeated_parses() {
+    for source in [
+        r#"x matches { @"a"!(1) | true }"#,
+        "t matches PPar(true, true)",
+        "x matches true and y matches false",
+    ] {
         let first = assert_parse_count(source, 1);
         let second = assert_parse_count(source, 1);
         assert_eq!(

@@ -8,6 +8,11 @@ use mettail_macros::language;
 use num_traits::Zero;
 use std::ops::Neg;
 
+/// M-1b — the FORMULA reading of a `Proc` (§18.1), shared by the host guard
+/// evaluator (`receive::eval_guard_bool`) and the pattern compiler
+/// (`rholang-runtime::rhocalc_formula`). `pub`, not `pub(crate)`, precisely so
+/// there is ONE classification and the two consumers cannot drift apart.
+pub mod formula;
 pub(crate) mod pathmap;
 pub(crate) mod receive;
 pub(crate) mod runtime;
@@ -896,6 +901,71 @@ language! {
                 }),
             }}
         ] fold;
+
+        // M-1b — the SPATIAL satisfaction operator: `t matches φ` is true iff the
+        // term `t` satisfies the formula `φ`, where `φ` is read as a Rholang
+        // PATTERN (§18.1: "a formula is a `Proc` sub-tree that the lowering
+        // interprets as a pattern"). It compiles to ONE
+        // `ExprInstance::EMatchesBody(EMatches{target, pattern})` — an ordinary
+        // boolean `Proc` that composes with the rest of the guard language for
+        // free — and is decided by the reducer's OWN spatial matcher through the
+        // `SpatialMatch` seam (`rho-pure-eval/src/oracle.rs`, M-1a). MeTTaIL
+        // contributes the pattern COMPILER (`rholang-runtime/src/rhocalc_formula.rs`),
+        // never a second matcher.
+        //
+        // ★ CONVERGENCE, not divergence: official Rholang already has `matches`
+        // as a globally reserved keyword and an infix `_proc 'matches' _proc`
+        // production at precedence 6 — TIGHTER than `and` (5) and `or` (4), at
+        // the level of `==`/`!=` (`rholang-tree-sitter/grammar.js`:33, :275). It
+        // is declared here at the loose edge of the comparison block, so
+        //
+        //     a matches P and b matches Q   ⇒   (a matches P) and (b matches Q)
+        //
+        // which is the reading the paper's multi-subject guards need, and it is
+        // the same relative order official Rholang gives. (RhoCalc assigns ONE
+        // precedence level per declaration, so "the same level as `==`" is not
+        // expressible; one step looser is the closest reachable placement, and it
+        // differs only on the pathological `a matches b == c`, which reads
+        // `a matches (b == c)` here.)
+        //
+        // ⚠ NON-`fold`, deliberately. Every other operator in this block carries a
+        // `![…]` host constant-folding body; `matches` carries none, because there
+        // is no host constant fold for a SPATIAL match: deciding it means running
+        // AC/separating matching with a remainder, which is the reducer's
+        // `list_match_single_` + `sub_pars` + `MaximumBipartiteMatch`, and
+        // re-implementing that host-side would be exactly the second, divergent
+        // matcher this design exists to avoid. The node therefore stays inert
+        // under host normalization; it is decided in guard position by
+        // `receive::eval_guard_bool` (which delegates to the generated
+        // `Proc::match_pattern` on the fragment it can decide SOUNDLY, and answers
+        // "undecided" otherwise) and on the machine by `rho_pure_eval`.
+        Matches . a:Proc, p:Proc |- a "matches" p : Proc ;
+
+        // M-1b — the paper's SPATIAL connective `PPar(φ, ψ)` (omnibus :2010),
+        // spelled VERBATIM (notation delta N6 is retired for this form). It is
+        // the separating conjunction: `t ⊨ PPar(φ,ψ)` iff `t` splits into two
+        // parallel parts, one satisfying `φ` and the other `ψ`. The lowering
+        // compiles it to the Rholang par-pattern `⟦φ⟧ | ⟦ψ⟧`, whose separating
+        // semantics is the reducer's own (`spatial_matcher.rs`'s
+        // `list_match_single_` + `sub_pars` + `MaximumBipartiteMatch`) — again, no
+        // second matcher.
+        //
+        // A self-delimiting parenthesized mixfix in the shape of `int(a, w)`, so
+        // it takes a PREFIX binding power (`max_infix_bp + PREFIX_BP_OFFSET`) and
+        // consumes no infix precedence slot: it cannot perturb the relative order
+        // of any existing operator.
+        //
+        // ⚠ `"PPar"` becomes a RESERVED word. RhoCalc sets
+        // `options { reserved_keywords: auto }` (above), which reserves every
+        // identifier-shaped literal terminal, so after this declaration `PPar` can
+        // no longer name a variable. That is the whole point — reservation is what
+        // makes the leading literal unable to fork against the lowercase call-forms
+        // (`int(…)`, `bool(…)`, a user method) — and it is affordable because the
+        // name is unused: no `.rho` demo, corpus program, or RhoCalc test binds
+        // `PPar`. The idiomatic host spelling `{ φ | ψ }` (an ordinary `PPar`
+        // literal) remains available and compiles to the SAME par-pattern, so a
+        // program that wants the connective without the keyword still has it.
+        SpatialPPar . a:Proc, b:Proc |- "PPar" "(" a "," b ")" : Proc ;
 
         Eq . a:Proc, b:Proc |- a "==" b : Proc ![
             { match (&a, &b) {

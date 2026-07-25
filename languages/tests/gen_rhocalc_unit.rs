@@ -8,7 +8,7 @@ use mettail_languages::rhocalc::*;
 use mettail_runtime::BehavioralPred;
 use mettail_runtime::Language;
 
-// Dead rules detected by WFST analysis: ["Bag::BagLit", "BigInt::BoolToBigInt", "BigInt::IntToBigInt", "BigInt::UInt32ToBigInt", "BigRat::BigIntToBigRat", "BigRat::BoolToBigRat", "BigRat::FixedToBigRat", "BigRat::FloatToBigRat", "BigRat::IntToBigRat", "BigRat::UInt32ToBigRat", "ForRow::ForRowNoWhere", "ForRow::ForRowSingleWhere", "ForRow::ForRowWhere", "InputBind::InputBind", "InputBind::InputBindEmptyQuery", "InputBind::InputBindPersistent", "InputBind::InputBindPersistentPolyadic", "InputBind::InputBindPolyadic", "InputBind::InputBindQuery", "InputBind::InputBindQuoted", "InputBind::InputBindQuotedPersistent", "InputBind::InputBindQuotedQuery", "Int::BoolToInt", "Int::NegInt", "Int::UInt32ToInt", "List::ListLit", "Map::MapLit", "Name::NParen", "Name::NQuote", "Name::NQuoteNil", "Name::NQuoteShort", "PFlt", "PFltBrace", "PFltFence", "Pathmap::PathmapLit", "Proc::Add", "Proc::And", "Proc::BCount", "Proc::BDiff", "Proc::BRemove", "Proc::BigintCastProc", "Proc::BigratCastProc", "Proc::BitAnd", "Proc::BitNot", "Proc::BitOr", "Proc::CommWhere", "Proc::Div", "Proc::Eq", "Proc::FixedBinProc", "Proc::FloatBinProc", "Proc::FractionProc", "Proc::Gt", "Proc::GtEq", "Proc::GuardThen", "Proc::Implies", "Proc::IntBinProc", "Proc::LConcat", "Proc::LLength", "Proc::LNth", "Proc::Lt", "Proc::LtEq", "Proc::MContains", "Proc::MDelete", "Proc::MGet", "Proc::MKeys", "Proc::MSet", "Proc::MSize", "Proc::MToByteArray", "Proc::MUnion", "Proc::MValues", "Proc::MapEmpty", "Proc::Mod", "Proc::Mul", "Proc::Ne", "Proc::NegProc", "Proc::Not", "Proc::Or", "Proc::PDrop", "Proc::PFlt", "Proc::PFltBrace", "Proc::PFltFence", "Proc::PForUser", "Proc::PGetSubtrie", "Proc::PGetSubtrieAt", "Proc::PMeet", "Proc::PNew", "Proc::POutput", "Proc::POutput2Plus", "Proc::POutputEmpty", "Proc::POutputNil", "Proc::POutputNil2Plus", "Proc::POutputNilEmpty", "Proc::POutputQuoted", "Proc::POutputQuoted2Plus", "Proc::POutputQuotedEmpty", "Proc::POutputShort", "Proc::POutputShort2Plus", "Proc::POutputShortEmpty", "Proc::PPar", "Proc::PParInfix", "Proc::PParInternal", "Proc::PPersistOutput", "Proc::PPersistOutput2Plus", "Proc::PPersistOutputEmpty", "Proc::PPersistOutputNil", "Proc::PPersistOutputNil2Plus", "Proc::PPersistOutputNilEmpty", "Proc::PPersistOutputShort", "Proc::PPersistOutputShort2Plus", "Proc::PPersistOutputShortEmpty", "Proc::PReadZipper", "Proc::PReadZipperAt", "Proc::PRestrict", "Proc::PSubtract", "Proc::PWriteZipper", "Proc::PWriteZipperAt", "Proc::PathmapEmpty", "Proc::RZAscend", "Proc::RZAscendOne", "Proc::RZChildCount", "Proc::RZDescendFirst", "Proc::RZDescendIndexedBranch", "Proc::RZDescendTo", "Proc::RZGetLeaf", "Proc::RZToNextSibling", "Proc::RZToPrevSibling", "Proc::SAdd", "Proc::Sub", "Proc::ToBool", "Proc::ToStr", "Proc::UIntBinProc", "Proc::WZGraft", "Proc::WZJoinInto", "Proc::WZRemoveBranches", "Proc::WZRemoveLeaf", "Proc::WZSetLeaf", "Proc::WZSetSubtrie", "Set::SetLit", "UInt32::BoolToUInt32"]
+// Dead rules detected by WFST analysis: ["Bag::BagLit", "BigInt::BoolToBigInt", "BigInt::IntToBigInt", "BigInt::UInt32ToBigInt", "BigRat::BigIntToBigRat", "BigRat::BoolToBigRat", "BigRat::FixedToBigRat", "BigRat::FloatToBigRat", "BigRat::IntToBigRat", "BigRat::UInt32ToBigRat", "ForRow::ForRowNoWhere", "ForRow::ForRowSingleWhere", "ForRow::ForRowWhere", "InputBind::InputBind", "InputBind::InputBindEmptyQuery", "InputBind::InputBindPersistent", "InputBind::InputBindPersistentPolyadic", "InputBind::InputBindPolyadic", "InputBind::InputBindQuery", "InputBind::InputBindQuoted", "InputBind::InputBindQuotedPersistent", "InputBind::InputBindQuotedQuery", "Int::BoolToInt", "Int::NegInt", "Int::UInt32ToInt", "List::ListLit", "Map::MapLit", "Name::NParen", "Name::NQuote", "Name::NQuoteNil", "Name::NQuoteShort", "PFlt", "PFltBrace", "PFltFence", "Pathmap::PathmapLit", "Proc::Add", "Proc::And", "Proc::BCount", "Proc::BDiff", "Proc::BRemove", "Proc::BigintCastProc", "Proc::BigratCastProc", "Proc::BitAnd", "Proc::BitNot", "Proc::BitOr", "Proc::CommWhere", "Proc::Div", "Proc::Eq", "Proc::FixedBinProc", "Proc::FloatBinProc", "Proc::FractionProc", "Proc::Gt", "Proc::GtEq", "Proc::GuardThen", "Proc::Implies", "Proc::IntBinProc", "Proc::LConcat", "Proc::LLength", "Proc::LNth", "Proc::Lt", "Proc::LtEq", "Proc::MContains", "Proc::MDelete", "Proc::MGet", "Proc::MKeys", "Proc::MSet", "Proc::MSize", "Proc::MToByteArray", "Proc::MUnion", "Proc::MValues", "Proc::MapEmpty", "Proc::Matches", "Proc::Mod", "Proc::Mul", "Proc::Ne", "Proc::NegProc", "Proc::Not", "Proc::Or", "Proc::PDrop", "Proc::PFlt", "Proc::PFltBrace", "Proc::PFltFence", "Proc::PForUser", "Proc::PGetSubtrie", "Proc::PGetSubtrieAt", "Proc::PMeet", "Proc::PNew", "Proc::POutput", "Proc::POutput2Plus", "Proc::POutputEmpty", "Proc::POutputNil", "Proc::POutputNil2Plus", "Proc::POutputNilEmpty", "Proc::POutputQuoted", "Proc::POutputQuoted2Plus", "Proc::POutputQuotedEmpty", "Proc::POutputShort", "Proc::POutputShort2Plus", "Proc::POutputShortEmpty", "Proc::PPar", "Proc::PParInfix", "Proc::PParInternal", "Proc::PPersistOutput", "Proc::PPersistOutput2Plus", "Proc::PPersistOutputEmpty", "Proc::PPersistOutputNil", "Proc::PPersistOutputNil2Plus", "Proc::PPersistOutputNilEmpty", "Proc::PPersistOutputShort", "Proc::PPersistOutputShort2Plus", "Proc::PPersistOutputShortEmpty", "Proc::PReadZipper", "Proc::PReadZipperAt", "Proc::PRestrict", "Proc::PSubtract", "Proc::PWriteZipper", "Proc::PWriteZipperAt", "Proc::PathmapEmpty", "Proc::RZAscend", "Proc::RZAscendOne", "Proc::RZChildCount", "Proc::RZDescendFirst", "Proc::RZDescendIndexedBranch", "Proc::RZDescendTo", "Proc::RZGetLeaf", "Proc::RZToNextSibling", "Proc::RZToPrevSibling", "Proc::SAdd", "Proc::SpatialPPar", "Proc::Sub", "Proc::ToBool", "Proc::ToStr", "Proc::UIntBinProc", "Proc::WZGraft", "Proc::WZJoinInto", "Proc::WZRemoveBranches", "Proc::WZRemoveLeaf", "Proc::WZSetLeaf", "Proc::WZSetSubtrie", "Set::SetLit", "UInt32::BoolToUInt32"]
 
 // ═══════════════════════════════════════════════════════════
 // Unit tests (one per constructor)
@@ -1472,6 +1472,39 @@ fn unit_rhocalc_proc_bitnot() {
         assert_eq!(
             displayed, re_displayed,
             "Roundtrip failed for BitNot: {} != {}",
+            displayed, re_displayed
+        );
+    }
+}
+
+#[test]
+fn unit_rhocalc_proc_matches() {
+    mettail_runtime::clear_var_cache();
+    let term = Proc::Matches(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
+    let displayed = format!("{}", term);
+    assert!(!displayed.is_empty(), "Display should produce non-empty output for Matches");
+    if let Ok(parsed) = Proc::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for Matches: {} != {}",
+            displayed, re_displayed
+        );
+    }
+}
+
+#[test]
+fn unit_rhocalc_proc_spatialppar() {
+    mettail_runtime::clear_var_cache();
+    let term =
+        Proc::SpatialPPar(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
+    let displayed = format!("{}", term);
+    assert!(!displayed.is_empty(), "Display should produce non-empty output for SpatialPPar");
+    if let Ok(parsed) = Proc::parse(&displayed) {
+        let re_displayed = format!("{}", parsed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for SpatialPPar: {} != {}",
             displayed, re_displayed
         );
     }

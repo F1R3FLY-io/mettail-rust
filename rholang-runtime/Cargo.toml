@@ -613,6 +613,22 @@ name = "rho_implies_guard"
 path = "tests/rho_implies_guard.rs"
 required-features = ["rhocalc-runtime"]
 
+# M-1b: the spatial surface (`matches`, `PPar`) + the formula compiler, on the real
+# reducer. Same feature gate as `rho_implies_guard`: `matches`/`PPar` are RhoCalc
+# surface syntax that f1r3node's own Rholang parser does not know, so the test needs
+# the GENERATED parser + `lower_rhocalc_proc` (`rhocalc-runtime`).
+[[test]]
+name = "rho_matches_guard"
+path = "tests/rho_matches_guard.rs"
+required-features = ["rhocalc-runtime"]
+
+# M-1b: the host-vs-machine agreement lock for `matches` — the standing obligation
+# on the two-evaluator design.
+[[test]]
+name = "rho_matches_differential"
+path = "tests/rho_matches_differential.rs"
+required-features = ["rhocalc-runtime"]
+
 # The `rhocalc` interpreter binary. It parses RhoCalc (Rholang 1.4) source with the GENERATED
 # parser, lowers it (`lower_rhocalc_proc_with_resolver`), and evaluates on the f1r3node reducer.
 # The RhoCalc grammar supports Foreign Language Terms, so the interpreter bundles the `lam` guest

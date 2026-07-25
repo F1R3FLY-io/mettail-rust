@@ -269,6 +269,18 @@ fn normalize_query_send_sugar_proc(p: &Proc) -> Proc {
     normalize_send_sugar_canon(p)
 }
 
+/// M-1b: the same `@`-send-sugar canonicalization, exposed to the formula module.
+///
+/// `formula::host_matches_verdict` compares a ground pattern with a ground target
+/// using the generated structural matcher, which does NOT unify the eval-equal
+/// `@`-send spellings — while the Rholang lowering does (they all lower to the
+/// same `Par`). Routing both operands through the canon that rhocalc's own
+/// term-equality path already uses is what keeps the host and the machine from
+/// disagreeing on a purely notational difference.
+pub(crate) fn canon_for_term_equality(p: &Proc) -> Proc {
+    normalize_send_sugar_canon(p)
+}
+
 // ── canonical channel Name for a send: lower @Nil/@P name sugar, recurse the quoted proc ──
 fn canon_channel_name(n: &Name) -> Name {
     // `Name` implements `Drop`; match by reference so we don't move a field out.
@@ -456,6 +468,14 @@ fn normalize_send_sugar_canon(p: &Proc) -> Proc {
         // M-0: `implies` recurses like its propositional siblings so send-sugar inside either
         // operand canonicalizes (otherwise the identity arm would freeze the sugar in place).
         Proc::Implies(a, b) => Proc::Implies(rc(a), rc(b)),
+        // M-1b: the spatial surface. `matches` canonicalizes BOTH operands — the
+        // target because it is an ordinary term, and the FORMULA because a formula
+        // is a `Proc` sub-tree read as a pattern, so a send-sugar spelling inside it
+        // must reach the same canonical form the term it is meant to match does.
+        // Canonicalizing only one side would make `@Nil!(1) matches @Nil!(1)` depend
+        // on which sugar each side happened to be written in.
+        Proc::Matches(a, b) => Proc::Matches(rc(a), rc(b)),
+        Proc::SpatialPPar(a, b) => Proc::SpatialPPar(rc(a), rc(b)),
         Proc::BitOr(a, b) => Proc::BitOr(rc(a), rc(b)),
         Proc::BitAnd(a, b) => Proc::BitAnd(rc(a), rc(b)),
         Proc::BitNot(a) => Proc::BitNot(rc(a)),
