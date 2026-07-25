@@ -771,7 +771,7 @@ fn the_shipped_guard_spellings_parse_and_lower() {
 }
 
 // ════════════════════════════════════════════════════════════════════════════════════════════
-// ⚠ Defect D1 — pinned deterministically
+// ⚠ Defect D1 — pinned as a repetition experiment over one fixed program
 // ════════════════════════════════════════════════════════════════════════════════════════════
 
 /// ⚠ The witness for defect D1 (module docs): a `where`-guard rejection does not backtrack to
