@@ -146,8 +146,6 @@ num-traits = "0.2"
 moniker = { workspace = true }
 rand = { workspace = true }
 indexmap = { workspace = true }
-prost = "0.13"
-hex = "0.4"
 
 # Optional: exposed via the `strategies` feature for public proptest strategies.
 proptest = { version = "1", optional = true }
@@ -163,17 +161,10 @@ clap = { version = "4.5", features = ["derive"] }
 # PathMap trie (M-RHO) — backs the RhoCalc pathmap/zipper submodules; pin matches f1r3node `models` 0.2.2.
 pathmap = { workspace = true }
 
-[build-dependencies]
-# Compile proto/rhocalc_wire.proto for the RhoCalc `Par` wire encoder.
-prost-build = "0.13"
-protoc-bin-vendored = "3.2"
-
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
 proptest = "1"
 rand_distr = "0.4"
-# Hex encoding for golden-byte wire-format tests.
-hex = "0.4"
 mettail-testkit = { package = "testkit", path = "../testkit" }
 # Lets the GuardedRho Rho-default backend test (guarded_rho_rho_backend.rs) name
 # `LanguageDef` directly when reconstructing the real augmented definition. It is

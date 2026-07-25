@@ -27,8 +27,8 @@ use mettail_runtime::{
 };
 use models::rhoapi::expr::ExprInstance;
 use models::rhoapi::{
-    EAnd, EDiv, EEq, EGt, EGte, ELt, ELte, EMinus, EMod, EMult, ENeg, ENeq, ENot, EOr, EPlus,
-    EPlusPlus, Expr, Par, ReceiveBind,
+    EAnd, EDiv, EEq, EGt, EGte, ELt, ELte, EMethod, EMinus, EMod, EMult, ENeg, ENeq, ENot, EOr,
+    EPlus, EPlusPlus, Expr, Par, ReceiveBind,
 };
 use models::create_bit_vector;
 use models::rust::rholang::implicits::GPrivateBuilder;
@@ -986,6 +986,14 @@ fn lower_proc(proc: &Proc, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> 
             let operand = lower_proc(a.as_ref(), env)?;
             Ok(unary_expr_par(operand, |p| ExprInstance::ENotBody(ENot { p })))
         },
+        // ── Methods routed to the reducer's OWN method table (option C, C2) ──────────────────
+        // `.toByteArray()` is Rholang's `toByteArray` (`reduce.rs:4137-4160`: `eval_expr` +
+        // `substitute`, then `p.encode_to_vec()`), returning a real `GByteArray` in the machine's
+        // own `ScoredTerm` canonical order. It replaces the retired hand-maintained `rhoapi`
+        // schema fork (`languages/proto/rhocalc_wire.proto` + `languages/src/rhocalc/wire.rs`),
+        // which encoded a hex `GString` in protobuf BYTE order and could not encode any
+        // collection the RhoCalc grammar actually produces.
+        Proc::MToByteArray(m) => lower_method("toByteArray", m.as_ref(), &[], env),
         // A-S4 fail-closed: every remaining construct has no machine algebra (bitwise ops,
         // cross-type conversions, collection/zipper methods, lambda forms, internal gates). The
         // typed error NAMES the construct; nothing silently host-evaluates.
@@ -1013,7 +1021,6 @@ fn unsupported_construct_name(proc: &Proc) -> &'static str {
         Proc::MDelete(..) => "m.delete(k) map method",
         Proc::MUnion(..) => "m.union(n) map method",
         Proc::MSize(..) => "m.size() map method",
-        Proc::MToByteArray(..) => "m.toByteArray() map method",
         Proc::MKeys(..) => "m.keys() map method",
         Proc::MValues(..) => "m.values() map method",
         Proc::LLength(..) => "l.length() list method",
@@ -1086,6 +1093,58 @@ fn binary_expr_par(
     par.locally_free = locally_free;
     par.connective_used = connective_used;
     par
+}
+
+/// Lower a RhoCalc **method call** to Rholang's own `EMethod` — the single-evaluator seam.
+///
+/// This is the mechanism of "option C — different carriers, ONE evaluator". Instead of RhoCalc
+/// carrying a second implementation of a method Rholang already has, the method name is handed to
+/// the reducer's own method table (`rholang/src/rust/interpreter/reduce.rs::method_table`,
+/// 8197-8256), which dispatches on the *evaluated* receiver. Consequences that matter:
+///
+/// * the semantics are the consensus semantics, by construction — there is nothing left to
+///   diverge from;
+/// * dispatch is dynamic, so a COMM-bound receiver works exactly like a literal one (the class of
+///   bug that divergence B is an instance of); and
+/// * receivers Rholang supports but RhoCalc's fold bodies did not (e.g. `nth` over `ETuple` and
+///   `GByteArray`, `reduce.rs:4106-4118`) come for free.
+///
+/// `locally_free`/`connective_used` are unioned over the receiver and every argument, exactly as
+/// [`binary_expr_par`] does for operators, so a method call over bound/free variables stays
+/// correctly tracked. `EMethod` carries its own copy of both (proto fields 5 and 6) in addition to
+/// the enclosing `Par`'s, and the reducer reads the `EMethod`'s copy when it substitutes
+/// (`reduce.rs:466`), so both are set.
+fn lower_method(
+    method_name: &str,
+    target: &Proc,
+    arguments: &[&Proc],
+    env: &BoundEnv,
+) -> Result<Par, RhocalcAstLowerError> {
+    let target_par = lower_proc(target, env)?;
+    let mut argument_pars = Vec::with_capacity(arguments.len());
+    for argument in arguments {
+        argument_pars.push(lower_proc(argument, env)?);
+    }
+
+    let mut locally_free = target_par.locally_free.clone();
+    let mut connective_used = target_par.connective_used;
+    for argument in &argument_pars {
+        locally_free = union(locally_free, argument.locally_free.clone());
+        connective_used = connective_used || argument.connective_used;
+    }
+
+    let mut par = Par::default().with_exprs(vec![Expr {
+        expr_instance: Some(ExprInstance::EMethodBody(EMethod {
+            method_name: method_name.to_string(),
+            target: Some(target_par),
+            arguments: argument_pars,
+            locally_free: locally_free.clone(),
+            connective_used,
+        })),
+    }]);
+    par.locally_free = locally_free;
+    par.connective_used = connective_used;
+    Ok(par)
 }
 
 /// Assemble a unary Rholang `Expr` `Par` from an already-lowered operand `Par` (the `ENeg`/`ENot`

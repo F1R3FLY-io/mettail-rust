@@ -2902,56 +2902,33 @@ mod native_ops {
         }
     }
 
+    // ── `collection_wire` RETIRED (option C, C2 — 2026-07-25) ────────────────────────────────
+    //
+    // The six golden-hex tests that lived here pinned `languages/src/rhocalc/wire.rs`, a
+    // hand-maintained FORK of f1r3node's `rhoapi` protobuf schema. Both the encoder and its
+    // goldens have been retired; `.toByteArray()` is now f1r3node's own method, reached by
+    // lowering to `EMethod("toByteArray")`.
+    //
+    // The assertions did not simply move — they were REPLACED, for two independent reasons:
+    //
+    //  1. They asserted nothing. `assert_reduces_to` reaches its verdict through a disjunction
+    //     that includes `bag_multiset_eq`, and `bag_multiset_eq` compares
+    //     `to_sorted_bag_elements(a) == to_sorted_bag_elements(b)` — which is `None == None`,
+    //     i.e. TRUE, whenever neither side is a `#{…}#` bag literal. Measured 2026-07-25:
+    //     `assert_reduces_to("[1, 2, 3].toByteArray()", <any string literal>)` passes, and so does
+    //     `assert_reduces_to("1 + 2", "999")`. The real fold result here was `error`.
+    //  2. The goldens encoded the WRONG Rholang term. They spelled the list elements as `GInt`
+    //     (`sint64` zigzag: `…100210041006` = 1, 2, 3), but a plain RhoCalc integer literal is
+    //     arbitrary-precision, so the term RhoCalc actually means carries `GBigInt` elements.
+    //
+    // The replacements live in `rholang-runtime/tests/rho_rhocalc_conformance.rs`
+    // (`c2_closed_to_byte_array_is_the_reducers_own_encoding`), where the real reducer is
+    // available and the bytes are asserted with `assert_eq!` against the machine's output.
+    //
+    // `unsupported_receiver_errors` is kept below: it uses `assert_never_reaches`, which compares
+    // displays exactly and is therefore a real assertion.
     mod collection_wire {
         use super::*;
-
-        #[test]
-        fn list_to_byte_array_folds_to_hex() {
-            assert_reduces_to(
-                "[1, 2, 3].toByteArray()",
-                r#""2a15a201120a042a0210020a042a0210040a042a021006""#,
-            );
-        }
-
-        #[test]
-        fn set_to_byte_array_is_order_independent() {
-            assert_reduces_to(
-                "Set(1, 2, 3).toByteArray()",
-                r#""2a15b201120a042a0210020a042a0210040a042a021006""#,
-            );
-            assert_reduces_to(
-                "Set(3, 2, 1).toByteArray()",
-                r#""2a15b201120a042a0210020a042a0210040a042a021006""#,
-            );
-        }
-
-        #[test]
-        fn map_to_byte_array_is_order_independent() {
-            assert_reduces_to(
-                "{1: 10, 2: 20}.toByteArray()",
-                r#""2a1fba011c0a0c0a042a02100212042a0210140a0c0a042a02100412042a021028""#,
-            );
-            assert_reduces_to(
-                "{2: 20, 1: 10}.toByteArray()",
-                r#""2a1fba011c0a0c0a042a02100212042a0210140a0c0a042a02100412042a021028""#,
-            );
-        }
-
-        #[test]
-        fn nested_list_to_byte_array() {
-            assert_reduces_to(
-                "[[1, 2], [3]].toByteArray()",
-                r#""2a23a201200a112a0fa2010c0a042a0210020a042a0210040a0b2a09a201060a042a021006""#,
-            );
-        }
-
-        #[test]
-        fn bag_to_byte_array_expands_multiset() {
-            assert_reduces_to(
-                "#{1 | 2 | 2}#.toByteArray()",
-                r#""2a15a201120a042a0210020a042a0210040a042a021004""#,
-            );
-        }
 
         #[test]
         fn unsupported_receiver_errors() {

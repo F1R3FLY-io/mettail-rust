@@ -62,18 +62,29 @@
 //!
 //! ## The divergence ledger (measured 2026-07-25, not hypothesized)
 //!
-//! | ID | Subject | RhoCalc fold ① | Rholang reducer ② | Closed by |
-//! |---|---|---|---|---|
-//! | **A** | `Int` overflow / `Int` division by zero | silently **`0`** | wraps (`i64::MIN`) / `ReduceError("Division by zero")` | C1 |
-//! | **B** | `+` on a **runtime-bound** string | concatenates | `OperatorNotDefined { op: "+", other_type: "string" }` | C1 |
-//! | **C** | `l.nth(i)` out of bounds, and `nth` on a plain (`BigInt`) index | **process abort** / `error` | recoverable `ReduceError` | C1 |
-//! | **D** | `Fixed` arithmetic on **mismatched scales** | rescales | `OperatorExpectedError` | C1 |
-//! | **E** | canonical **collection order** for `toByteArray` | protobuf byte order | `ScoredTerm` value order | C2 |
-//! | **F** | `.toByteArray()` | a hex `GString` — and unreachable from source | a real `GByteArray` | C2 |
-//! | **G** | `Pathmap` / zippers | own carriers + 20+ methods | `EPathmapBody`/`EZipperBody` exist, unused | C4 |
-//! | **H** | `==` / `!=` on **`Bool`** | `error` (no fold arm) | `Bool(true)` | C1 |
+//! | ID | Subject | RhoCalc fold ① | Rholang reducer ② | Closed by | Status |
+//! |---|---|---|---|---|---|
+//! | **A** | `Int` overflow / `Int` division by zero | silently **`0`** | wraps (`i64::MIN`) / `ReduceError("Division by zero")` | C1 | open |
+//! | **B** | `+` on a **runtime-bound** string | rests unreduced | `OperatorNotDefined { op: "+", other_type: "string" }` | C1 | open |
+//! | **C** | `l.nth(i)` out of bounds, and `nth` on a plain (`BigInt`) index | **process abort** / `error` | recoverable `ReduceError` | C1 | open |
+//! | **D** | `Fixed` arithmetic on **mismatched scales** | rescales | `OperatorExpectedError` | C1 | open |
+//! | **E** | canonical **collection order** for `toByteArray` | protobuf byte order | `ScoredTerm` value order | C2 | ★ CLOSED |
+//! | **F** | `.toByteArray()` | a hex `GString` — and unreachable from source | a real `GByteArray` | C2 | ★ CLOSED |
+//! | **G** | `Pathmap` / zippers | own carriers + 20+ methods | `EPathmapBody`/`EZipperBody` exist, unused | C4 | open |
+//! | **H** | `==` / `!=` on **`Bool`** | `error` (no fold arm) | `Bool(true)` | C1 | open |
 //!
 //! `H` was **discovered by this suite** — it is not in the original `§17.11` inventory.
+//!
+//! ### ⚠ The pins this suite replaces did not pin anything
+//!
+//! `languages/tests/rhocalc_tests.rs::assert_reduces_to` — the helper behind most of that file's
+//! RhoCalc semantics tests — reaches its verdict through a disjunction that ends in
+//! `bag_multiset_eq(nf, expected)`, and `bag_multiset_eq` returns
+//! `to_sorted_bag_elements(a) == to_sorted_bag_elements(b)`, i.e. `None == None` ⟹ **`true`**,
+//! whenever neither side is a `#{…}#` bag literal. Measured 2026-07-25:
+//! `assert_reduces_to("1 + 2", "999")` **passes**. Guarding the comparator turns **39 of that
+//! file's 412 tests** red. That is why this suite compares with `assert_eq!` on an explicitly
+//! written expected value and never through a fuzzy helper.
 //!
 //! ### ⚠ Divergence A is NOT fixed here, and must not be
 //!
@@ -106,7 +117,7 @@ use mettail_languages::rhocalc::{Name, Proc, RhoCalcLanguage, RhoCalcTerm, RhoCa
 use mettail_rholang_runtime::fold_contract::fold_definitions_for;
 use mettail_rholang_runtime::rhocalc_ast::{clear_held_fold_sites, take_held_fold_sites};
 use mettail_rholang_runtime::run::run_installed_program_with_call_definitions_and_read_runtime_values;
-use mettail_rholang_runtime::{lower_rhocalc_proc, RhocalcAstLowerError};
+use mettail_rholang_runtime::{lower_rhocalc_proc, RhocalcAstLowerError, RHOCALC_BAG_ABI_TAG};
 use mettail_runtime::{clear_var_cache, RuntimeObservationValue};
 use models::rhoapi::Par;
 
@@ -310,6 +321,13 @@ fn render_as_rhocalc(value: &RuntimeObservationValue) -> String {
 
 fn render_all(values: &[RuntimeObservationValue]) -> Vec<String> {
     values.iter().map(render_as_rhocalc).collect()
+}
+
+/// Lowercase hex of a byte slice — the readable form of a `GByteArray` observation. (`languages`
+/// carried a `hex` dependency solely for the retired wire fork's goldens; this suite does not
+/// reintroduce one for six lines.)
+fn hex_of(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 /// RhoCalc's `Fixed` surface form: the unscaled integer with a decimal point `scale` digits from
@@ -868,79 +886,132 @@ async fn divergence_d_target_fixed_scale_policy_is_the_reducers() {
 
 // ── E / F — the forked wire schema and `.toByteArray()` ──────────────────────────────────────────
 
-/// **Divergence F (witness) — `.toByteArray()` is UNREACHABLE from RhoCalc source.**
+/// **Divergences E + F — CLOSED by C2 (2026-07-25).**
 ///
-/// `languages/src/rhocalc/wire.rs` compiles a hand-mirrored **fork** of f1r3node's `rhoapi`
-/// schema (`languages/proto/rhocalc_wire.proto`, 7 messages, built by `languages/build.rs`), and
-/// `proc_to_par` can only encode `Proc::CastInt(Int::NumLit(_))` among the numerics. But a plain
-/// RhoCalc integer literal parses to **`CastBigInt`** (measured: `[1, 2]` folds to
-/// `CastList(ListLit([CastBigInt(NumLit(1)), CastBigInt(NumLit(2))]))`), and the fork's `.proto`
-/// has no `g_big_int` field at all — so every surface-syntax `.toByteArray()` folds to `error`.
+/// `.toByteArray()` is now f1r3node's own `toByteArray`: the lowering emits
+/// `EMethod("toByteArray")` (`rholang-runtime/src/rhocalc_ast.rs::lower_method`) and the reducer
+/// evaluates it (`reduce.rs:4137-4160` — `eval_expr` + `substitute`, then `p.encode_to_vec()`),
+/// returning a real `GByteArray`.
 ///
-/// The fork's five golden-hex unit tests (`wire.rs:147-217`) pass only because they hand-construct
-/// `Proc::CastInt` values the grammar never produces. That makes the whole fork dead weight and is
-/// the empirical justification for **C2**.
+/// ### What was retired, and why the goldens changed
 ///
-/// On the machine side the method is not lowered at all (`UnsupportedProc`), where Rholang's own
-/// `toByteArray` returns a real `GByteArray` (`reduce.rs:4137-4160`, `p.encode_to_vec()` after
-/// `eval_expr` + `substitute`) rather than RhoCalc's hex `GString` (`wire.rs:136-139`).
+/// `languages/src/rhocalc/wire.rs` + `languages/proto/rhocalc_wire.proto` + `languages/build.rs`
+/// were a hand-maintained **fork** of f1r3node's `rhoapi` schema (7 of its 62 messages), compiled
+/// by `protoc` into a *second* `rhoapi::Par` type in the same workspace. Three independent defects
+/// made it unsalvageable rather than merely redundant:
 ///
-/// *Delete when C2 lands.*
+/// | # | Defect | Consequence |
+/// |---|---|---|
+/// | 1 | the fork's `.proto` had **no `g_big_int` field**, and `proc_to_par` matched only `Proc::CastInt(Int::NumLit(_))` | a plain RhoCalc integer literal is arbitrary-precision (`CastBigInt`), so `.toByteArray()` folded to `error` for every collection the grammar produces |
+/// | 2 | it sorted set/map members by raw **protobuf byte order** (`wire.rs:19-25`, `sort_by_key(encode_to_vec)`) | disagrees with Rholang's **`ScoredTerm` value order** (`models/src/rust/sorted_par_hash_set.rs:22`) on negative integers — divergence **E** |
+/// | 3 | it returned a **hex `GString`**, not a `GByteArray` (`wire.rs:136-139`) | the wrong Rholang carrier — divergence **F** |
+///
+/// The old goldens (`2a15a201120a042a0210020a042a0210040a042a021006` for `[1,2,3]`) therefore
+/// encoded a **different Rholang term** than RhoCalc means: `GInt` elements (`sint64` zigzag
+/// `02 04 06` = 1, 2, 3) where the real term carries `GBigInt` elements. The bytes asserted below
+/// are the machine's, and they carry `9a 02 01 0N` — the `GBigInt` leaves — exactly as
+/// `lower_list` emits them.
+///
+/// (The five golden-hex tests that pinned the fork lived in
+/// `languages/tests/rhocalc_tests.rs::native_ops::collection_wire`. They were retired rather than
+/// migrated because they asserted nothing: see that module's replacement comment for the measured
+/// `assert_reduces_to` vacuity.)
 #[tokio::test(flavor = "multi_thread")]
-async fn divergence_f_witness_to_byte_array_is_unreachable_from_source() {
-    for source in [
-        "[1, 2, 3].toByteArray()",
-        "[int(1, 64), int(2, 64), int(3, 64)].toByteArray()",
-        "Set(int(1, 64), int(2, 64)).toByteArray()",
-        "{int(1, 64) : int(10, 64)}.toByteArray()",
+async fn c2_closed_to_byte_array_is_the_reducers_own_encoding() {
+    for (source, expected) in [
+        // A list of three arbitrary-precision integers: `EList` (field 20 ⟹ `a2 01`) of three
+        // `Par`s each carrying one `GBigInt` (`9a 02`) leaf.
+        (
+            "[1, 2, 3].toByteArray()",
+            "2a1ba201180a062a049a0201010a062a049a0201020a062a049a020103",
+        ),
+        // `ESet` (field 22 ⟹ `b2 01`). Source order is irrelevant — the machine canonicalizes
+        // through `SortedParHashSet`, so both spellings give byte-identical output.
+        (
+            "Set(1, 2, 3).toByteArray()",
+            "2a1bb201180a062a049a0201010a062a049a0201020a062a049a020103",
+        ),
+        (
+            "Set(3, 2, 1).toByteArray()",
+            "2a1bb201180a062a049a0201010a062a049a0201020a062a049a020103",
+        ),
+        // `EMap` (field 23 ⟹ `ba 01`), likewise order-independent.
+        (
+            "{1: 10, 2: 20}.toByteArray()",
+            "2a27ba01240a100a062a049a02010112062a049a02010a0a100a062a049a02010212062a049a020114",
+        ),
+        (
+            "{2: 20, 1: 10}.toByteArray()",
+            "2a27ba01240a100a062a049a02010112062a049a02010a0a100a062a049a02010212062a049a020114",
+        ),
+        // Nesting rides through unchanged.
+        (
+            "[[1, 2], [3]].toByteArray()",
+            "2a29a201260a152a13a201100a062a049a0201010a062a049a0201020a0d2a0ba201080a062a049a020103",
+        ),
+        // The empty list — the one case the retired fork also got right, since it has no elements
+        // to mis-type. Byte-identical to the old golden `2a03a20100`.
+        ("[].toByteArray()", "2a03a20100"),
     ] {
-        let proc = parse(source);
-        assert_eq!(
-            fold(&proc).expect("the fold converges"),
-            "error",
-            "F: {source:?} — the forked wire encoder cannot encode any collection the RhoCalc \
-             grammar actually produces"
-        );
-        assert_eq!(
-            reduce(&proc).await.expect_err("the method is not lowered"),
-            "unsupported: m.toByteArray() map method",
-            "F: {source:?} — the machine never sees the method"
-        );
+        let observed = reduce(&parse(source)).await.unwrap_or_else(|err| {
+            panic!("{source:?}: the machine must own toByteArray: {err}")
+        });
+        let [RuntimeObservationValue::Bytes(bytes)] = observed.as_slice() else {
+            panic!("{source:?}: `toByteArray` must return a GByteArray, got {observed:?}");
+        };
+        assert_eq!(hex_of(bytes), expected, "{source:?}");
     }
 }
 
-/// **Divergence F (target) — `.toByteArray()` is f1r3node's `toByteArray`, returning `GByteArray`.**
+/// **Divergence E — CLOSED by C2: the canonical order is the machine's, not protobuf byte order.**
 ///
-/// Also closes **E**: once the bytes come from `models::rhoapi::Par::encode_to_vec` after the
-/// machine's own `SortedParHashSet`/`ScoredTerm` normalization, the "three canonical orders"
-/// problem disappears by construction. The negative-integer set below is precisely the case where
-/// the fork's protobuf **byte** order (`sint64` zigzag: `-1 ↦ 1, 1 ↦ 2, -2 ↦ 3, 2 ↦ 4`) disagrees
-/// with Rholang's **value** order (`models/src/rust/sorted_par_hash_set.rs:22`
-/// `Ordering::sort_pars`).
-///
-/// Closed by **C2**.
+/// `Set(0 - 2, 1)` is the discriminating case. Rholang's `ScoredTerm` order is by **value**, so
+/// `-2` precedes `1`… but the observed encoding lists `GBigInt(01)` before `GBigInt(fe)`, because
+/// `GBigInt` is scored on its signed big-endian **bytes**. Either way the answer is now produced
+/// by exactly one implementation — the machine's `SortedParHashSet` — instead of by a second,
+/// independently-sorted host encoder that could (and for negative members did) disagree.
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "divergences E+F: `.toByteArray()` folds to `error` (forked schema, no GBigInt) and is \
-            UnsupportedProc on the machine; closed by C2 (retire the fork, lower to EMethod)"]
-async fn divergence_ef_target_to_byte_array_is_a_real_gbytearray_in_scored_term_order() {
-    let observed = reduce(&parse("[1, 2, 3].toByteArray()"))
-        .await
-        .expect("F: the machine must own toByteArray");
-    let [value] = observed.as_slice() else {
-        panic!("F: expected one observation, got {observed:?}");
-    };
-    let RuntimeObservationValue::Bytes(bytes) = value else {
-        panic!("F: `toByteArray` must return a GByteArray, not {value:?}");
-    };
-    assert!(!bytes.is_empty(), "F: the encoding must be non-empty");
-
-    // E: the negative-integer set — where byte order and ScoredTerm value order disagree.
-    let negative = reduce(&parse("Set(0 - 2, 1).toByteArray()"))
+async fn c2_closed_to_byte_array_uses_the_machines_canonical_order() {
+    let observed = reduce(&parse("Set(0 - 2, 1).toByteArray()"))
         .await
         .expect("E: the machine encodes a set with a negative member");
+    let [RuntimeObservationValue::Bytes(bytes)] = observed.as_slice() else {
+        panic!("E: expected a GByteArray, got {observed:?}");
+    };
+    assert_eq!(
+        hex_of(bytes),
+        "2a13b201100a062a049a0201010a062a049a0201fe",
+        "E: the member order is the machine's own (`01` then `fe` = 1 then -2)"
+    );
+}
+
+/// **The `Bag` carrier survives `.toByteArray()` — a C2 side-benefit worth pinning.**
+///
+/// `Bag` is a MeTTaIL-only category (no Rholang analog), so `lower_bag`
+/// (`rholang-runtime/src/rhocalc_ast.rs`) represents it as an `EList` tagged with
+/// `RHOCALC_BAG_ABI_TAG` (`mettail.rhocalc.bag.v1`, visible in the bytes below) carrying
+/// `(element, count)` pairs. The retired fork instead **expanded the multiset** into a bare
+/// `EList` of repeated elements, discarding both the tag and the count structure — so its bytes
+/// decoded back to a *list*, not a bag. Routing through `EMethod` means the bytes are the encoding
+/// of the term RhoCalc actually lowers.
+#[tokio::test(flavor = "multi_thread")]
+async fn c2_closed_bag_to_byte_array_keeps_the_bag_abi_tag() {
+    let observed = reduce(&parse("#{1 | 2 | 2}#.toByteArray()"))
+        .await
+        .expect("the machine encodes the lowered bag");
+    let [RuntimeObservationValue::Bytes(bytes)] = observed.as_slice() else {
+        panic!("expected a GByteArray, got {observed:?}");
+    };
+    let encoded = hex_of(bytes);
     assert!(
-        matches!(negative.as_slice(), [RuntimeObservationValue::Bytes(_)]),
-        "E: the bytes must come from the machine's own canonical order, got {negative:?}"
+        encoded.contains(&hex_of(RHOCALC_BAG_ABI_TAG.as_bytes())),
+        "the bag ABI tag must ride the encoding, got {encoded}"
+    );
+    assert_eq!(
+        encoded,
+        "2a54a201510a1e3a1c0a1a0a180a166d65747461696c2e72686f63616c632e6261672e76310a2f2a2d\
+         a2012a0a132a11a2010e0a062a049a0201010a042a0210020a132a11a2010e0a062a049a0201020a04\
+         2a021004"
     );
 }
 

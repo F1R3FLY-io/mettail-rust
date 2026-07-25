@@ -12,7 +12,6 @@ pub(crate) mod pathmap;
 pub(crate) mod receive;
 pub(crate) mod runtime;
 mod type_inference;
-pub(crate) mod wire;
 pub(crate) mod zipper;
 
 language! {
@@ -1424,16 +1423,22 @@ language! {
             }
         }] fold;
 
+        // `.toByteArray()` is a PURE CONSTRUCTOR — it carries no `![{…}]` fold body, because its
+        // semantics belong to the ONE evaluator that owns them: f1r3node's reducer
+        // (`rholang/src/rust/interpreter/reduce.rs:4137-4160` — `eval_expr` + `substitute`, then
+        // `p.encode_to_vec()`), reached by lowering to `EMethod("toByteArray")`
+        // (`rholang-runtime/src/rhocalc_ast.rs::lower_method`).
+        //
+        // It previously folded host-side through a hand-maintained FORK of f1r3node's `rhoapi`
+        // protobuf schema (`languages/proto/rhocalc_wire.proto` + `languages/src/rhocalc/wire.rs`),
+        // which was retired because it encoded a DIFFERENT Rholang term than RhoCalc means:
+        // its 7-message schema had no `g_big_int` field, while a plain RhoCalc integer literal is
+        // arbitrary-precision, so `proc_to_par` rejected every collection the grammar produces and
+        // `.toByteArray()` folded to `error` on the production parse. It also sorted set/map
+        // members by raw protobuf BYTE order where Rholang sorts by `ScoredTerm` VALUE order
+        // (`models/src/rust/sorted_par_hash_set.rs:22`) — the two disagree on negative integers.
         MToByteArray . m:Proc
-        |- m "." "toByteArray" "(" ")" : Proc ![{
-            match &m {
-                Proc::CastList(_) | Proc::CastMap(_) | Proc::CastSet(_) | Proc::CastBag(_) => {
-                    crate::rhocalc::wire::collection_to_byte_array_proc(m)
-                        .unwrap_or(Proc::Err)
-                },
-                _ => Proc::Err,
-            }
-        }] fold;
+        |- m "." "toByteArray" "(" ")" : Proc;
 
         MKeys . m:Proc
         |- m "." "keys" "(" ")" : Proc ![{

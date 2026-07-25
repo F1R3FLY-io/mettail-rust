@@ -274,11 +274,17 @@ comparison. See
 
 ### 3.5.2 Collection wire (`toByteArray()`)
 
-Collection casts support zero-argument `.toByteArray()`, which folds to
-`CastBytes` with a lowercase hex encoding of the f1r3node `Par` protobuf bytes
-for the corresponding Rholang collection kind. Bag literals use the Rhocalc
-extension rule (multiset expanded to `EList`). See
-[rhocalc-collection-wire.md](../../design/made/rhocalc-collection-wire.md).
+Collection casts support zero-argument `.toByteArray()`. It is a **pure
+constructor** — it carries no `![{…}]` fold body — and lowers to Rholang's own
+`EMethod("toByteArray")`, so the bytes are produced by the f1r3node reducer
+(`reduce.rs:4137-4160`) and returned as a real `GByteArray`. Set/map members are
+canonicalized by the machine's `SortedParHashSet`, and a bag rides its
+`mettail.rhocalc.bag.v1` ABI tag.
+
+Before 2026-07-25 it folded host-side to a hex `GString` through a forked copy of
+f1r3node's `rhoapi` protobuf schema; that fork is retired. See
+[rhocalc-collection-wire.md](../../design/made/rhocalc-collection-wire.md) §7 for
+the three defects that made the fork unsalvageable.
 
 ### 3.6 Unary Prefix with Fold
 
