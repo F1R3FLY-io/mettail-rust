@@ -1135,6 +1135,14 @@ async fn divergence_h_target_boolean_equality_agrees() {
 async fn c3_residue_mettail_only_operations_fail_closed_and_named() {
     for (source, fold_answer, machine_error) in [
         ("fraction(1, 2)", "1/2", "unsupported: fraction(a, b) rational constructor"),
+        // `reduce.rs::method_table` provides `keys` but NOT `values` — a Map's values are
+        // reachable in Rholang only via `toList`/`get`. So `.values()` is a RhoCalc extension
+        // with no Rholang counterpart, and it stays MeTTaIL-only under C3.
+        (
+            "{1 : 10}.values()",
+            "[10]",
+            "unsupported: m.values() map method (no Rholang analog; C3 residue)",
+        ),
         ("5 bitand 3", "1", "unsupported: bitand bitwise-and (no Rholang bitwise Expr)"),
         ("bool(1p0)", "true", "unsupported: bool(a) boolean conversion"),
         (r#"str(1.5p1)"#, r#""1.5p1""#, "unsupported: str(a) string conversion"),
@@ -1188,7 +1196,7 @@ async fn c1_inventory_witness_collection_methods_are_not_lowered() {
         ("{1 : 10}.contains(1)", "true", "unsupported: m.contains(k) map method"),
         ("{1 : 10}.size()", "1", "unsupported: m.size() map method"),
         ("{1 : 10}.keys()", "Set(1)", "unsupported: m.keys() map method"),
-        ("{1 : 10}.values()", "[10]", "unsupported: m.values() map method"),
+        // `.values()` is NOT a C1 row — Rholang has no `values` method, so it is C3 residue.
         ("{1 : 10}.delete(1)", "{}", "unsupported: m.delete(k) map method"),
         ("{1 : 10}.union({2 : 20})", "{1:10, 2:20}", "unsupported: m.union(n) map method"),
     ] {
@@ -1229,8 +1237,10 @@ async fn c1_target_collection_methods_route_to_the_reducer() {
     assert_conformant("{1 : 10}.contains(1)", "true").await;
     assert_conformant("{1 : 10}.size()", "1").await;
     assert_conformant("{1 : 10}.keys()", "Set(1)").await;
-    assert_conformant("{1 : 10}.values()", "[10]").await;
     assert_conformant("{1 : 10}.union({2 : 20})", "{1:10, 2:20}").await;
+    // `.values()` is NOT here: `reduce.rs::method_table` has `keys` but no `values`, so it is
+    // MeTTaIL-only residue and belongs to C3 — see
+    // `c3_residue_mettail_only_operations_fail_closed_and_named`.
 }
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════

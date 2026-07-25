@@ -986,14 +986,55 @@ fn lower_proc(proc: &Proc, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> 
             let operand = lower_proc(a.as_ref(), env)?;
             Ok(unary_expr_par(operand, |p| ExprInstance::ENotBody(ENot { p })))
         },
-        // ── Methods routed to the reducer's OWN method table (option C, C2) ──────────────────
-        // `.toByteArray()` is Rholang's `toByteArray` (`reduce.rs:4137-4160`: `eval_expr` +
-        // `substitute`, then `p.encode_to_vec()`), returning a real `GByteArray` in the machine's
-        // own `ScoredTerm` canonical order. It replaces the retired hand-maintained `rhoapi`
-        // schema fork (`languages/proto/rhocalc_wire.proto` + `languages/src/rhocalc/wire.rs`),
-        // which encoded a hex `GString` in protobuf BYTE order and could not encode any
-        // collection the RhoCalc grammar actually produces.
+        // ── Methods routed to the reducer's OWN method table (option C, C1/C2) ───────────────
+        //
+        // Every name below is a key of `reduce.rs::method_table` (8197-8256). Dispatch is on the
+        // EVALUATED receiver, so one arm covers every receiver type Rholang supports — `size` on
+        // a Map and on a Set, `length` on a List and on a String, `nth` on an `EList`, an
+        // `ETuple` AND a `GByteArray` (`reduce.rs:4106-4118`) — and a COMM-bound receiver works
+        // exactly like a literal one. See [`lower_method`].
+        //
+        // `.toByteArray()` (C2) replaces the retired `rhoapi` schema fork
+        // (`languages/proto/rhocalc_wire.proto` + `languages/src/rhocalc/wire.rs`), which encoded
+        // a hex `GString` in protobuf BYTE order and could not encode any collection the RhoCalc
+        // grammar actually produces.
         Proc::MToByteArray(m) => lower_method("toByteArray", m.as_ref(), &[], env),
+        //
+        // ⚠ C1 (the remaining 30+ methods) is DESIGNED BUT NOT LANDED — it is blocked on C4 and
+        // on a USER decision. The obstruction, found by measurement 2026-07-25:
+        //
+        // A RhoCalc method RULE is one grammar production, but its `![{…}]` fold body dispatches
+        // over SEVERAL receiver carriers, and for most methods that set MIXES Rholang-owned
+        // carriers with MeTTaIL-only ones:
+        //
+        //   MGet / MSet          Map, **Pathmap**
+        //   MContains            Map, Set, **Pathmap**
+        //   MUnion               Map, Set, **Bag**, **Pathmap**
+        //   MSize / LLength      Map, Set, List, Str, **Bag**
+        //   MDelete              Map, Set, **List** (list-delete is a RhoCalc extension)
+        //   MValues              Map (no Rholang `values` at all)
+        //
+        // `Bag` has no Rholang analog and lowers to an `EList` tagged `RHOCALC_BAG_ABI_TAG`;
+        // `Pathmap` currently lowers to `EMap`, discarding the trie (divergence G). So emitting
+        // `EMethod("size")` unconditionally would make `#{1|2|2}#.size()` answer the tagged
+        // list's pair count instead of the multiset cardinality — a SILENTLY WRONG answer where
+        // there is a hard fail-closed error today. That trades one divergence for a worse one.
+        //
+        // A static receiver gate does not rescue it: the receiver may be COMM-bound, which is
+        // precisely the shape divergence B is an instance of. The fold body cannot be split
+        // per-receiver either — `![{…}] fold` is attached to the RULE, so a rule either folds or
+        // does not.
+        //
+        // Consequences for sequencing:
+        //   * **C4 must precede C1b** — Pathmap/Zipper need their native `EPathmapBody`/
+        //     `EZipperBody` carriers before the pathmap arms of these fold bodies can be deleted.
+        //   * The Rholang-less extensions (`values`, list-`delete`, every `Bag` method, `count`,
+        //     `remove`) need **C3** first, so deleting a fold body does not delete the only
+        //     implementation of an operation Rholang cannot perform.
+        //
+        // Everything else is ready: [`lower_method`] is the seam, and
+        // `rholang-runtime/tests/rho_rhocalc_conformance.rs::c1_target_collection_methods_route_to_the_reducer`
+        // is the acceptance test (it passes when the arms are added — verified locally).
         // A-S4 fail-closed: every remaining construct has no machine algebra (bitwise ops,
         // cross-type conversions, collection/zipper methods, lambda forms, internal gates). The
         // typed error NAMES the construct; nothing silently host-evaluates.
@@ -1022,10 +1063,15 @@ fn unsupported_construct_name(proc: &Proc) -> &'static str {
         Proc::MUnion(..) => "m.union(n) map method",
         Proc::MSize(..) => "m.size() map method",
         Proc::MKeys(..) => "m.keys() map method",
-        Proc::MValues(..) => "m.values() map method",
         Proc::LLength(..) => "l.length() list method",
         Proc::LNth(..) => "l.nth(i) list method",
         Proc::LConcat(..) => "l.concat(m) list method",
+        Proc::SAdd(..) => "s.add(e) set method",
+        // `.values()` has NO Rholang analog: `reduce.rs::method_table` provides `keys` but not
+        // `values` (a Map's values are reachable only via `toList`/`get`). It is therefore
+        // MeTTaIL-only residue and stays fail-closed until C3 injects its single implementation
+        // as a system-process `Definition`.
+        Proc::MValues(..) => "m.values() map method (no Rholang analog; C3 residue)",
         Proc::BCount(..) => "b.count(e) bag method",
         Proc::BDiff(..) => "b.diff(c) bag method",
         Proc::BRemove(..) => "b.remove(e) bag method",
@@ -1053,7 +1099,6 @@ fn unsupported_construct_name(proc: &Proc) -> &'static str {
         Proc::WZRemoveBranches(..) => "z.removeBranches() write-zipper method",
         Proc::WZGraft(..) => "z.graft(…) write-zipper method",
         Proc::WZJoinInto(..) => "z.joinInto(…) write-zipper method",
-        Proc::SAdd(..) => "s.add(e) set method",
         Proc::ToBool(..) => "bool(a) boolean conversion",
         Proc::ToStr(..) => "str(a) string conversion",
         Proc::CastReadZipper(..) => "read-zipper literal",
