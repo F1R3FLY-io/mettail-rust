@@ -1343,11 +1343,66 @@ When named modes are present, each mode gets its own independent pipeline:
 Each mode produces suffixed tables: `CHAR_CLASS_{MODE}`, `dfa_next_{mode}()`,
 `accept_token_{mode}()`, `push_target_{mode}()`, `should_pop_{mode}()`.
 
-### 10.3 Stream Routing
+### 10.3 Stream Routing — alternative token channels
 
-When `-> stream_name` annotations are present, per-mode `stream_id_{mode}(state)`
-dispatch functions route accepted tokens to named output streams. Stream 0 is always
-"main"; auxiliary streams (comments, whitespace, etc.) use indices 1+.
+A token declared `Name = /regex/ -> CHANNEL ;` in a `tokens { … }` block is routed to
+an alternative **channel**. Per-mode `stream_id_{mode}(state)` dispatch functions map
+each accepting state to its channel index: channel `0` is always `DEFAULT` (spelled
+`"main"` in `STREAM_NAMES`) — the parse stream, the only stream the parser and the
+running program observe — and each name a `-> CHANNEL` annotation introduces takes an
+index `1+`. The tables are emitted for every modal grammar; with no annotation each
+degenerates to `match state { _ => 0u8 }`, so the constant-`DEFAULT` behavior of a
+grammar that uses no channels is preserved byte-for-byte.
+
+**A channel-routed token is TRIVIA.** The scanner resolves it by the same MAXIMAL
+MUNCH rule as every other token; when it wins, its span is *consumed* but never
+delivered to the parse stream — structurally identical to the inter-token whitespace
+skip that already sits at the same place in every scanner. Concretely, in
+`expand_lex_node_impl` and the `*_core_modal` scanners
+(`prattail/src/runtime_types.rs`):
+
+1. accepts occur at strictly increasing end offsets, so the maximal-munch accept at a
+   position is unique. If `stream_id` routes it off `DEFAULT`, the scan advances past
+   its span and restarts — the node's `byte_start` moves past the trivia exactly as it
+   moves past a leading whitespace run;
+2. otherwise, channel-routed accepts at *shorter* lengths are dropped, since a channel
+   token can never be a parser token and so must never become a DAG edge.
+
+Because trivia only ever REMOVES a span from the scan and never contributes an
+alternative, the lex DAG over a source containing trivia is the DAG of that source
+with the trivia bytes elided. The parse forest, the elected term, and the parse COUNT
+are therefore unchanged — routing a token to a channel cannot introduce ambiguity.
+
+`crate::lexer::check_channel_soundness` rejects, at grammar-compile time, any DFA
+state whose co-accepting kinds disagree on their channel: one span cannot be both
+trivia and a parse token. This is the channel analogue of the DUI check
+(`check_dui_soundness`) and, like it, fails closed rather than silently picking one.
+
+**Retention.** `lex()` and the DAG/lattice/stream/weighted entries return the
+`DEFAULT` channel alone. The opt-in `lex_with_streams()` /
+`lex_streams_with_file_id()` entries — generated whenever a grammar declares at least
+one channel — return `LexResult { tokens, streams }`, where `streams[CHANNEL]` holds
+every routed token *with its source `Range`*. Because both paths consult the same
+`stream_id` tables under the same maximal-munch rule, the retained spans are exactly
+the spans the parse path consumed as trivia.
+
+**The channel boundary.** Alternative channels are compile-time / tooling-facing
+apparatus. The backend — interpreter, LSP, formatter, doc-comment or
+compiler-directive extractor, linter — reads them through the ANTLR4-parity accessors
+on `LexResult` (`tokens_on_channel`, `hidden_tokens_to_left`,
+`hidden_tokens_to_right`, `channels`). There is no path by which a channel token
+reaches the parser or a running program. `COMMENTS` carries no engine-level privilege:
+it is an ordinary channel name a language conventionally uses for comments, treated
+identically to `PRAGMAS`, `DOCTESTS`, or any other name.
+
+*Worked instance*: RhoCalc (`languages/src/rhocalc.rs`) declares
+`LineComment = "//[^\n]*" -> COMMENTS ;` and
+`BlockComment = "/\*([^*]|\*+[^*/])*\*+/" -> COMMENTS ;`. Maximal munch settles `//`
+against the one-byte `Div` terminal `"/"`; a marker inside a `"…"` string literal is
+never at a token-start position (the literal is one maximal-munch span); and because
+the comment tokens are declared only in the default mode, a marker inside a RAW FLT
+guest body is verbatim guest text. This replaced a pre-parse string strip in the
+`rhocalc` interpreter binary.
 
 ### 10.4 VPA Delimiter Grouping (feature = "vpa")
 

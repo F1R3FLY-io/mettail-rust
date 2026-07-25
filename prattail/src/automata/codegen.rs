@@ -3153,6 +3153,23 @@ fn write_mode_dispatch_shims(buf: &mut String, mode_results: &[crate::lexer::Mod
             .expect("codegen: write into in-memory String is infallible");
     }
     buf.push_str("_ => false } }");
+
+    // Task #18: `m_stream_id(mode, accept_state)` reports the token CHANNEL an
+    // accepting state routes to — `0` = `DEFAULT` (the parse stream), non-zero =
+    // an alternative named channel declared with `-> CHANNEL` in the `tokens {}`
+    // block. The `*_core_modal` scanners consult it to treat a channel-routed
+    // maximal munch as TRIVIA (consumed, never delivered to the parser), exactly
+    // as they already treat inter-token whitespace. `write_stream_tables` emits
+    // an all-`0` `stream_id_*` per mode for every grammar with no `-> CHANNEL`
+    // annotation, so the constant-`DEFAULT` behavior of every pre-#18 grammar is
+    // preserved byte-for-byte.
+    buf.push_str("#[allow(dead_code)] fn m_stream_id(mode: u8, state: u32) -> u8 { match mode {");
+    buf.push_str("0u8 => stream_id_default(state),");
+    for mode in mode_results {
+        write!(buf, "{}u8 => stream_id_{}(state),", mode.mode_id, mode.name.to_lowercase())
+            .expect("codegen: write into in-memory String is infallible");
+    }
+    buf.push_str("_ => 0u8 } }");
 }
 
 /// Write the modal DAG/WFST interface — `lex_weighted`, `lex_lattice`,
@@ -3170,7 +3187,7 @@ fn write_modal_dag_functions(buf: &mut String, _mode_results: &[crate::lexer::Mo
          pub fn lex_weighted_with_file_id<'a>(input: &'a str, file_id: Option<u32>) -> Result<Vec<(Token<'a>, Range, f64)>, String> { \
          let mode_at = mettail_prattail::runtime_types::compute_mode_map(input, m_char_class, m_dfa_next, m_is_accepting, m_push_target, m_should_pop, m_is_raw)?; \
          let (mut tokens, eof_pos) = mettail_prattail::runtime_types::lex_weighted_core_modal( \
-         input, file_id, &mode_at, m_char_class, m_dfa_next, m_is_accepting, m_accept_alternatives, m_is_raw)?; \
+         input, file_id, &mode_at, m_char_class, m_dfa_next, m_is_accepting, m_accept_alternatives, m_is_raw, m_stream_id)?; \
          tokens.push((Token::Eof, Range { start: eof_pos, end: eof_pos, file_id }, 0.0_f64)); \
          Ok(tokens) }",
     );
@@ -3185,7 +3202,7 @@ fn write_modal_dag_functions(buf: &mut String, _mode_results: &[crate::lexer::Mo
          -> Result<(mettail_prattail::lattice::TokenSource<Token<'a>, Range>, Range), String> { \
          let mode_at = mettail_prattail::runtime_types::compute_mode_map(input, m_char_class, m_dfa_next, m_is_accepting, m_push_target, m_should_pop, m_is_raw)?; \
          let (source, eof_pos) = mettail_prattail::runtime_types::lex_lattice_core_modal( \
-         input, file_id, &mode_at, m_char_class, m_dfa_next, m_is_accepting, m_accept_alternatives, m_is_raw)?; \
+         input, file_id, &mode_at, m_char_class, m_dfa_next, m_is_accepting, m_accept_alternatives, m_is_raw, m_stream_id)?; \
          let eof_range = Range { start: eof_pos, end: eof_pos, file_id }; \
          match source { \
          mettail_prattail::lattice::TokenSource::Linear(mut tokens) => { \
@@ -3206,7 +3223,7 @@ fn write_modal_dag_functions(buf: &mut String, _mode_results: &[crate::lexer::Mo
          -> Result<mettail_prattail::lexer_types::LexStream, String> { \
          let mode_at = mettail_prattail::runtime_types::compute_mode_map(input, m_char_class, m_dfa_next, m_is_accepting, m_push_target, m_should_pop, m_is_raw)?; \
          let (mut stream, eof_pos) = mettail_prattail::runtime_types::lex_stream_core_modal( \
-         input, file_id, &mode_at, m_char_class, m_dfa_next, m_is_accepting, m_accept_alternatives, token_to_kind, m_is_raw)?; \
+         input, file_id, &mode_at, m_char_class, m_dfa_next, m_is_accepting, m_accept_alternatives, token_to_kind, m_is_raw, m_stream_id)?; \
          stream.entries.push(mettail_prattail::lexer_types::LexEntry { \
              byte_start: eof_pos.byte_offset, \
              alternatives: vec![mettail_prattail::lexer_types::LexAlternative { \
@@ -3221,7 +3238,7 @@ fn write_modal_dag_functions(buf: &mut String, _mode_results: &[crate::lexer::Mo
          -> Result<mettail_prattail::lexer_types::LexDag, String> { \
          let mode_at = mettail_prattail::runtime_types::compute_mode_map(input, m_char_class, m_dfa_next, m_is_accepting, m_push_target, m_should_pop, m_is_raw)?; \
          mettail_prattail::runtime_types::lex_dag_core_modal( \
-         input, None, &mode_at, m_char_class, m_dfa_next, m_is_accepting, m_accept_alternatives, token_to_kind, m_is_raw) \
+         input, None, &mode_at, m_char_class, m_dfa_next, m_is_accepting, m_accept_alternatives, token_to_kind, m_is_raw, m_stream_id) \
          }\n\
          // L9-1: LAZY modal lattice token source. The byte→mode map is computed \n\
          // ONCE up front (deterministic per position under the DUI) and captured \n\
@@ -3239,7 +3256,7 @@ fn write_modal_dag_functions(buf: &mut String, _mode_results: &[crate::lexer::Mo
          match &mode_at_result { \
          Ok(mode_at) => mettail_prattail::runtime_types::expand_lex_node_modal( \
          expander_input.as_str(), start, mode_at, &m_char_class, &m_dfa_next, &m_is_accepting, \
-         &m_accept_alternatives, &token_to_kind, &m_is_raw, start_is_primary), \
+         &m_accept_alternatives, &token_to_kind, &m_is_raw, &m_stream_id, start_is_primary), \
          Err(e) => Err(e.clone()), \
          } }); \
          mettail_prattail::wpda_runtime::LazyLatticeTokenSource::from_expander( \
@@ -3404,12 +3421,26 @@ fn write_modal_lex_functions(buf: &mut String, mode_results: &[crate::lexer::Mod
     }
     buf.push_str("_ => false };");
 
-    // Emit token with range
+    // ★ Task #18: the token CHANNEL. `lex()` returns the DEFAULT (parse) stream
+    // only, so a token routed to an alternative channel (`-> CHANNEL`) is TRIVIA
+    // here: it is consumed — the mode push/pop it declares still applies — but it
+    // is never appended to `tokens`. `stream_id_*` is all-`0` for every grammar
+    // without a `-> CHANNEL` annotation, so this is a no-op for them. Callers
+    // that need the retained trivia use `lex_with_streams()`.
+    buf.push_str("let stream_id = match mode {");
+    buf.push_str("0u8 => stream_id_default(accept_state),");
+    for mode in mode_results {
+        write!(buf, "{}u8 => stream_id_{}(accept_state),", mode.mode_id, mode.name.to_lowercase())
+            .expect("codegen: write into in-memory String is infallible");
+    }
+    buf.push_str("_ => 0u8 };");
+
+    // Emit token with range (DEFAULT channel only)
     buf.push_str(
-        "tokens.push((token, Range { \
+        "if stream_id == 0 { tokens.push((token, Range { \
          start: Position { byte_offset: start_pos, line: start_line, column: start_col }, \
          end: Position { byte_offset: end, line: end_line, column: end_col }, \
-         file_id }));",
+         file_id })); }",
     );
 
     // Execute push/pop transitions
@@ -3442,8 +3473,20 @@ fn write_modal_lex_functions(buf: &mut String, mode_results: &[crate::lexer::Mod
 
 /// Write stream routing table for a single mode.
 ///
-/// Emits `fn stream_id_{suffix}(state: u32) -> u8` that returns the stream index
-/// for each accepting state. Stream 0 = "main" (default), 1+ = named streams.
+/// Emits `fn stream_id_{suffix}(state: u32) -> u8` that returns the CHANNEL index
+/// for each accepting state. Channel 0 = `DEFAULT`/"main" (the parse stream), 1+ =
+/// the named channels a `-> CHANNEL` annotation declares, indexed by their
+/// position in `stream_names`.
+///
+/// Task #18: this table is emitted for EVERY modal grammar, not only those using
+/// `-> CHANNEL`. With `stream_names` empty no arm is written, so the body reduces
+/// to `match state { _ => 0u8 }` — a constant `DEFAULT` that the optimizer folds
+/// away, and that keeps `m_stream_id`'s signature uniform across grammars.
+///
+/// Keying on `state.accept` (the PRIMARY kind) alone is sound because
+/// `check_channel_soundness` (`crate::lexer`) rejects, at grammar-compile time,
+/// any state whose co-accepts disagree on their channel — so every accepting kind
+/// at a state routes to the same place and the primary is a faithful witness.
 fn write_stream_tables(
     buf: &mut String,
     dfa: &Dfa,
@@ -3453,7 +3496,7 @@ fn write_stream_tables(
 ) {
     write!(
         buf,
-        "fn stream_id_{}(state: u32) -> u8 {{ match state {{",
+        "#[allow(dead_code)] fn stream_id_{}(state: u32) -> u8 {{ match state {{",
         suffix.to_lowercase()
     )
     .expect("codegen: write into in-memory String is infallible");
@@ -3662,6 +3705,19 @@ fn write_modal_lex_with_streams(buf: &mut String, mode_results: &[crate::lexer::
 
     buf.push_str("}"); // end while
 
+    // Unterminated-region check (task #18). The DEFAULT parse path gets this for
+    // free from `compute_mode_map`, whose contract is that the mode stack must
+    // return to `[0]` at end of input. The retention entry runs its OWN mode
+    // stack, so it must perform the same check or a source the parser rejects
+    // (an opener whose closer never arrived — an unterminated guest region, or an
+    // unterminated block comment lexed via a `COMMENTS` mode) would silently
+    // succeed here and hand tooling a truncated token stream.
+    buf.push_str(
+        "if mode_stack != vec![0u8] { \
+         return Err(format!(\"unterminated region: mode stack {:?} at end of input (expected [0]) \
+         — an opener has no matching closer\", mode_stack)); }",
+    );
+
     // Eof
     buf.push_str("let eof_pos = Position { byte_offset: pos, line, column: col };");
     buf.push_str("tokens.push((Token::Eof, Range { start: eof_pos, end: eof_pos, file_id }));");
@@ -3746,42 +3802,48 @@ pub fn generate_modal_lexer_string(
         write_push_pop_tables(&mut buf, &mode.min_dfa, &mode.custom_tokens, mode_results, &suffix);
     }
 
-    // 6. Check if any custom token uses stream routing (-> stream_name)
-    let has_streams = all_custom_tokens.iter().any(|s| s.stream.is_some());
-
-    if has_streams {
-        // Collect unique stream names (excluding "main" which is the default)
-        let mut stream_names: Vec<String> = Vec::new();
-        for spec in all_custom_tokens {
-            if let Some(ref stream) = spec.stream {
-                if stream != "main" && !stream_names.contains(stream) {
-                    stream_names.push(stream.clone());
-                }
+    // 6. Token CHANNEL routing (task #18). Collect the unique channel names any
+    //    `-> CHANNEL` annotation declares ("main"/`DEFAULT` is index 0 and is
+    //    never listed). The per-mode `stream_id_*` tables are emitted
+    //    UNCONDITIONALLY — with no annotations the list is empty and each table
+    //    degenerates to the constant `0` — so `m_stream_id` (and therefore the
+    //    `*_core_modal` trivia rule) has a uniform signature on every modal
+    //    grammar. Only the channel-name constants, the `STREAM_NAMES` table and
+    //    the retention entry `lex_with_streams()` remain gated on `has_streams`,
+    //    since they exist solely to serve retained channels.
+    let mut stream_names: Vec<String> = Vec::new();
+    for spec in all_custom_tokens {
+        if let Some(ref stream) = spec.stream {
+            if stream != "main" && !stream_names.contains(stream) {
+                stream_names.push(stream.clone());
             }
         }
+    }
+    let has_streams = !stream_names.is_empty();
 
-        // Stream ID constants (0 = main, 1+ = named streams)
+    if has_streams {
+        // Channel ID constants (0 = main/DEFAULT, 1+ = named channels)
         for (i, name) in stream_names.iter().enumerate() {
-            write!(buf, "const STREAM_{}: u8 = {};", name.to_uppercase(), i + 1)
+            write!(buf, "#[allow(dead_code)] const STREAM_{}: u8 = {};", name.to_uppercase(), i + 1)
                 .expect("codegen: write into in-memory String is infallible");
         }
+    }
 
-        // Per-mode stream routing tables
-        write_stream_tables(&mut buf, default_dfa, default_custom_tokens, &stream_names, "DEFAULT");
-        for mode in mode_results {
-            let suffix = mode.name.to_uppercase();
-            write_stream_tables(
-                &mut buf,
-                &mode.min_dfa,
-                &mode.custom_tokens,
-                &stream_names,
-                &suffix,
-            );
-        }
+    // Per-mode channel routing tables (always emitted — see above).
+    write_stream_tables(&mut buf, default_dfa, default_custom_tokens, &stream_names, "DEFAULT");
+    for mode in mode_results {
+        let suffix = mode.name.to_uppercase();
+        write_stream_tables(&mut buf, &mode.min_dfa, &mode.custom_tokens, &stream_names, &suffix);
+    }
 
-        // Generate stream name array for runtime
-        write!(buf, "static STREAM_NAMES: [&str; {}] = [\"main\"", stream_names.len() + 1)
-            .expect("codegen: write into in-memory String is infallible");
+    if has_streams {
+        // Channel name array for the runtime `LexResult.streams` keys.
+        write!(
+            buf,
+            "#[allow(dead_code)] static STREAM_NAMES: [&str; {}] = [\"main\"",
+            stream_names.len() + 1
+        )
+        .expect("codegen: write into in-memory String is infallible");
         for name in &stream_names {
             write!(buf, ",\"{}\"", name)
                 .expect("codegen: write into in-memory String is infallible");

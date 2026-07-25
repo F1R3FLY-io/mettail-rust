@@ -630,12 +630,109 @@ pub struct LexerModeSpec {
 /// formatter whitespace preservation, etc.).
 ///
 /// When no `-> stream` annotations exist, `streams` is empty (zero allocation).
+///
+/// ## ★ The channel boundary (task #18)
+///
+/// Only `DEFAULT` (`tokens`) is special: it is the parse stream, and it is the
+/// only stream a running program can ever observe. An alternative channel is
+/// **compile-time / tooling-facing apparatus**: the backend (interpreter, LSP,
+/// formatter, doc-comment or compiler-directive extractor, linter) reads it
+/// through the accessors below; there is no path by which a channel token
+/// reaches the parser or the running program. `COMMENTS` carries no engine-level
+/// privilege — it is an ordinary channel NAME a language conventionally uses for
+/// comments, treated identically to `PRAGMAS`, `DOCTESTS`, or any other name.
 #[derive(Debug, Clone)]
 pub struct LexResult<T> {
     /// Main token stream (consumed by the parser). Includes the Eof token.
     pub tokens: Vec<(T, runtime_types::Range)>,
     /// Auxiliary streams (comments, whitespace, etc.), keyed by stream name.
     pub streams: std::collections::HashMap<String, Vec<(T, runtime_types::Range)>>,
+}
+
+/// The channel-filtered token-stream reader — the BACKEND/TOOLING view of the
+/// retained alternative channels, modeled on ANTLR4's `CommonTokenStream`
+/// (`getHiddenTokensToLeft` / `getHiddenTokensToRight` / channel filtering) so
+/// tool authors meet a familiar surface.
+///
+/// Every accessor is generic over the channel NAME — there is no registry and no
+/// privileged channel. Tokens on a channel are buffered in source order, each
+/// with the `Range` (byte offset + line/column) the scanner recorded, which is
+/// what lets a formatter or LSP re-attach a comment to the code it annotates.
+impl<T> LexResult<T> {
+    /// Every retained token on `channel`, in source order. An unknown or empty
+    /// channel yields an empty slice (never an error) — a source with no
+    /// comments is not a failure.
+    pub fn tokens_on_channel(&self, channel: &str) -> &[(T, runtime_types::Range)] {
+        self.streams.get(channel).map(Vec::as_slice).unwrap_or(&[])
+    }
+
+    /// The names of every channel that retained at least one token.
+    pub fn channels(&self) -> impl Iterator<Item = &str> + '_ {
+        self.streams.keys().map(String::as_str)
+    }
+
+    /// The channel tokens lying immediately to the LEFT of `DEFAULT` token
+    /// `default_index` — i.e. those whose span starts at or after the end of the
+    /// previous `DEFAULT` token and before the start of `tokens[default_index]`.
+    /// ANTLR4's `getHiddenTokensToLeft`. For `default_index == 0` the left
+    /// boundary is the start of input, so a leading file header comment attaches
+    /// to the first real token.
+    ///
+    /// Returns an empty slice when `default_index` is out of range or nothing on
+    /// `channel` falls in the gap.
+    pub fn hidden_tokens_to_left(
+        &self,
+        default_index: usize,
+        channel: &str,
+    ) -> &[(T, runtime_types::Range)] {
+        let Some((_, range)) = self.tokens.get(default_index) else {
+            return &[];
+        };
+        let lower = if default_index == 0 {
+            0
+        } else {
+            self.tokens[default_index - 1].1.end.byte_offset
+        };
+        self.channel_slice_in(channel, lower, range.start.byte_offset)
+    }
+
+    /// The channel tokens lying immediately to the RIGHT of `DEFAULT` token
+    /// `default_index` — i.e. those whose span starts at or after the end of
+    /// `tokens[default_index]` and before the start of the next `DEFAULT` token.
+    /// ANTLR4's `getHiddenTokensToRight`. For the LAST `DEFAULT` token the upper
+    /// boundary is the end of input, so a trailing comment attaches to it.
+    pub fn hidden_tokens_to_right(
+        &self,
+        default_index: usize,
+        channel: &str,
+    ) -> &[(T, runtime_types::Range)] {
+        let Some((_, range)) = self.tokens.get(default_index) else {
+            return &[];
+        };
+        let upper = match self.tokens.get(default_index + 1) {
+            Some((_, next)) => next.start.byte_offset,
+            None => usize::MAX,
+        };
+        self.channel_slice_in(channel, range.end.byte_offset, upper)
+    }
+
+    /// The contiguous run of `channel` tokens whose span STARTS in
+    /// `[lower, upper)`. The per-channel buffer is already in source order, so
+    /// the run is located by two binary searches and returned as a borrowed
+    /// slice — no allocation, no copying.
+    fn channel_slice_in(
+        &self,
+        channel: &str,
+        lower: usize,
+        upper: usize,
+    ) -> &[(T, runtime_types::Range)] {
+        let buffer = self.tokens_on_channel(channel);
+        let first =
+            buffer.partition_point(|(_, range)| range.start.byte_offset < lower);
+        let last =
+            buffer.partition_point(|(_, range)| range.start.byte_offset < upper);
+        &buffer[first..last]
+    }
 }
 
 /// Specification for cross-stream synchronization constraints.

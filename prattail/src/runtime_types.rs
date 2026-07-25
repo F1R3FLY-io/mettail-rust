@@ -1042,6 +1042,11 @@ pub fn expand_lex_node<'a, T: Clone>(
         |_mode, s| is_accepting(s),
         |_mode, s, text| accept_alternatives(s, text),
         |t| token_to_kind(t),
+        // Task #18: no non-modal grammar can route a token to an alternative
+        // channel — `-> stream` forces the MODAL codegen path (`lexer.rs`
+        // `has_streams` gate), so every accept here is on `DEFAULT` (id 0) and
+        // the trivia branch is statically dead.
+        |_mode, _state| 0u8,
         start_is_primary,
     )
 }
@@ -1060,11 +1065,41 @@ pub fn expand_lex_node<'a, T: Clone>(
 /// - `char_class(mode, byte)`, `dfa_next(mode, state, class)`,
 ///   `is_accepting(mode, state)`, `accept_alternatives(mode, state, text)`: the
 ///   per-mode DFA tables. The non-modal wrapper ignores `mode`.
+/// - `stream_id(mode, accept_state) -> u8`: the token CHANNEL an accepting state
+///   routes to — `0` = `DEFAULT` (the parse stream), non-zero = an alternative
+///   named channel declared by `-> CHANNEL` in the grammar's `tokens {}` block
+///   (task #18). See the trivia rule below. The non-modal wrapper passes a
+///   constant `0`.
 ///
 /// A whole token is lexed in ONE mode (the DFA never changes mode mid-token) and
 /// a whitespace run never crosses a push/pop boundary, so the mode is resolved
 /// once and the inner DFA walk / edge discovery are structurally identical to
 /// the single-DFA body.
+///
+/// ## ★ Task #18 — the trivia rule for alternative token channels
+///
+/// A token routed to a non-`DEFAULT` channel (comments, and any other class a
+/// grammar declares with `-> CHANNEL`) is **TRIVIA**: it is lexical apparatus
+/// that the parser must not see. It is resolved by exactly the rule that already
+/// governs every other token — **maximal munch** — and NOT by any new
+/// disambiguation:
+///
+/// 1. Accepts occur at strictly increasing end offsets, so the maximal-munch
+///    accept at a position is UNIQUE. If its state routes to a non-`DEFAULT`
+///    channel, the span is trivia: `pos` advances past it and the scan restarts
+///    — structurally identical to the leading-whitespace skip immediately above,
+///    which is the discard this generalizes from a hard-coded byte class to a
+///    DECLARED token class.
+/// 2. Otherwise, channel-routed accepts at SHORTER lengths are dropped: a
+///    channel token can never be a parser token, so it must never become a DAG
+///    edge.
+///
+/// Because trivia only ever REMOVES a span from the scan (never adds an
+/// alternative), the resulting lex DAG over a source containing trivia is the
+/// DAG of that source with the trivia bytes elided — so the parse forest, the
+/// elected term, and the parse COUNT are all unchanged. Retention happens
+/// beside the parser (`lex_with_streams` → `LexResult.streams`), never inside
+/// it.
 #[inline]
 #[allow(clippy::too_many_arguments)]
 fn expand_lex_node_impl<'a, T: Clone>(
@@ -1077,97 +1112,125 @@ fn expand_lex_node_impl<'a, T: Clone>(
     is_accepting: impl Fn(u8, u32) -> bool,
     accept_alternatives: impl Fn(u8, u32, &'a str) -> Vec<(T, f64)>,
     token_to_kind: impl Fn(&T) -> crate::automata::TokenKind,
+    stream_id: impl Fn(u8, u32) -> u8,
     start_is_primary: bool,
 ) -> Result<ExpandedLexNode, String> {
     use crate::automata::semiring::TropicalWeight;
 
     let bytes = input.as_bytes();
 
-    // Skip whitespace at this position (unless the mode active at `start` is a
-    // RAW guest mode); the resulting `pos` becomes the node's byte_start. This
-    // keeps the DAG aligned with `lex_stream_core` (whitespace is non-token).
-    // A whitespace run never crosses a push/pop boundary, so the mode at
-    // `start` equals the mode at the post-skip token start. line/col tracking is
-    // not needed here — the DAG only carries byte positions.
+    // Skip leading TRIVIA at this position: interleaved whitespace runs and
+    // maximal-munch tokens routed to an alternative channel (task #18). The
+    // resulting `pos` becomes the node's byte_start, exactly as the pure
+    // whitespace skip did before — this keeps the DAG aligned with
+    // `lex_stream_core` (trivia is non-token). Whitespace is skipped only when
+    // the mode active at the position is not a RAW guest mode; a whitespace run
+    // never crosses a push/pop boundary, so the mode at `start` equals the mode
+    // at the post-skip token start. line/col tracking is not needed here — the
+    // DAG only carries byte positions.
     let mut pos = start;
-    if start < bytes.len() && !is_raw(resolve_mode(start)) {
-        {
-            let result = skip_whitespace_simd(bytes, pos, 0, 0);
-            pos = result.pos;
-        }
-        while pos < bytes.len() && bytes[pos] >= 0x80 {
-            match decode_char_at(input, pos) {
-                Some((ch, ch_len)) if ch.is_whitespace() => {
-                    pos += ch_len;
-                },
-                _ => break,
+    let (mode, mut accepts) = loop {
+        if pos < bytes.len() && !is_raw(resolve_mode(pos)) {
+            {
+                let result = skip_whitespace_simd(bytes, pos, 0, 0);
+                pos = result.pos;
+            }
+            while pos < bytes.len() && bytes[pos] >= 0x80 {
+                match decode_char_at(input, pos) {
+                    Some((ch, ch_len)) if ch.is_whitespace() => {
+                        pos += ch_len;
+                    },
+                    _ => break,
+                }
             }
         }
-    }
 
-    if pos >= bytes.len() {
-        // EOF sentinel: no edges, no successors. M6c.8.1: the caller
-        // captures the EOF index when it allocates this node.
-        return Ok(ExpandedLexNode {
-            byte_start: pos,
-            edges: Vec::new(),
-            successors: Vec::new(),
-            is_eof: true,
-        });
-    }
-
-    // The mode governing the token that starts at `pos`.
-    let mode = resolve_mode(pos);
-
-    // Walk the DFA from `pos`, recording every accepting state.
-    let mut walk_pos = pos;
-    let mut state: u32 = 0;
-    let mut accepts: Vec<(u32, usize)> = Vec::new();
-    if is_accepting(mode, 0) {
-        accepts.push((0, walk_pos));
-    }
-    while walk_pos < bytes.len() {
-        let class = char_class(mode, bytes[walk_pos]);
-        let next = dfa_next(mode, state, class);
-        if next == u32::MAX {
-            break;
-        }
-        state = next;
-        walk_pos += 1;
-        if is_accepting(mode, state) {
-            accepts.push((state, walk_pos));
-        }
-    }
-
-    if accepts.is_empty() {
-        // M6c.7.1 (2026-05-14): soft-fail for secondary-alt dead-ends.
-        // If this position is reachable ONLY via a non-primary
-        // (shorter-than-maximal-munch) alt's downstream, the failure is
-        // structural rule-out by evidence: the alt cannot contribute to any
-        // valid parse, so the corresponding lex-Fork branch in the walker
-        // spawns a cursor that lands at the orphan node (empty edges →
-        // peek_kind = Eof), fails to dispatch, dies naturally.
-        //
-        // If `start` IS on the primary maximal-munch chain (reachable via
-        // the longest-end accept of some node), this is a true input error
-        // that `lex` would ALSO fail on. Preserve the hard-fail surface.
-        if !start_is_primary {
-            // Orphan node: empty edges, no successors.
+        if pos >= bytes.len() {
+            // EOF sentinel: no edges, no successors. M6c.8.1: the caller
+            // captures the EOF index when it allocates this node.
             return Ok(ExpandedLexNode {
                 byte_start: pos,
                 edges: Vec::new(),
                 successors: Vec::new(),
-                is_eof: false,
+                is_eof: true,
             });
         }
-        let (ch, _ch_len) = decode_char_at(input, pos).unwrap_or(('\u{FFFD}', 1));
-        return Err(format!("unexpected character '{}' at byte {}", ch.escape_debug(), pos));
-    }
 
-    // For each accept, emit an edge (target resolved later). Order by
-    // end_byte DESCENDING (longest-first) so edges[0] is the canonical
-    // primary.
-    accepts.sort_by(|a, b| b.1.cmp(&a.1));
+        // The mode governing the token that starts at `pos`.
+        let mode = resolve_mode(pos);
+
+        // Walk the DFA from `pos`, recording every accepting state.
+        let mut walk_pos = pos;
+        let mut state: u32 = 0;
+        let mut accepts: Vec<(u32, usize)> = Vec::new();
+        if is_accepting(mode, 0) {
+            accepts.push((0, walk_pos));
+        }
+        while walk_pos < bytes.len() {
+            let class = char_class(mode, bytes[walk_pos]);
+            let next = dfa_next(mode, state, class);
+            if next == u32::MAX {
+                break;
+            }
+            state = next;
+            walk_pos += 1;
+            if is_accepting(mode, state) {
+                accepts.push((state, walk_pos));
+            }
+        }
+
+        if accepts.is_empty() {
+            // M6c.7.1 (2026-05-14): soft-fail for secondary-alt dead-ends.
+            // If this position is reachable ONLY via a non-primary
+            // (shorter-than-maximal-munch) alt's downstream, the failure is
+            // structural rule-out by evidence: the alt cannot contribute to any
+            // valid parse, so the corresponding lex-Fork branch in the walker
+            // spawns a cursor that lands at the orphan node (empty edges →
+            // peek_kind = Eof), fails to dispatch, dies naturally.
+            //
+            // If `start` IS on the primary maximal-munch chain (reachable via
+            // the longest-end accept of some node), this is a true input error
+            // that `lex` would ALSO fail on. Preserve the hard-fail surface.
+            if !start_is_primary {
+                // Orphan node: empty edges, no successors.
+                return Ok(ExpandedLexNode {
+                    byte_start: pos,
+                    edges: Vec::new(),
+                    successors: Vec::new(),
+                    is_eof: false,
+                });
+            }
+            let (ch, _ch_len) = decode_char_at(input, pos).unwrap_or(('\u{FFFD}', 1));
+            return Err(format!("unexpected character '{}' at byte {}", ch.escape_debug(), pos));
+        }
+
+        // For each accept, emit an edge (target resolved later). Order by
+        // end_byte DESCENDING (longest-first) so edges[0] is the canonical
+        // primary.
+        accepts.sort_by(|a, b| b.1.cmp(&a.1));
+
+        // ★ Task #18 trivia rule (step 1): the maximal-munch accept is unique
+        // (accepts sit at strictly increasing end offsets). If it routes to an
+        // alternative channel the whole span is trivia — advance and re-scan,
+        // exactly as the whitespace skip above does. The `end > pos` guard makes
+        // a (malformed) zero-width channel token fall through to the normal path
+        // instead of spinning forever.
+        let (primary_state, primary_end) = accepts[0];
+        if stream_id(mode, primary_state) != 0 && primary_end > pos {
+            pos = primary_end;
+            continue;
+        }
+
+        break (mode, accepts);
+    };
+
+    // ★ Task #18 trivia rule (step 2): a channel-routed accept SHORTER than the
+    // maximal munch is dropped outright. It is not trivia (the span the scan
+    // consumes here is the DEFAULT maximal munch, not the channel token), and it
+    // can never be a parser token, so it must never become a DAG edge. This is
+    // pure removal — it can only shrink the alternative set, never add to it.
+    accepts.retain(|(accept_state, _)| stream_id(mode, *accept_state) == 0);
+
     // M6c.4-bugfix (2026-05-14): apply longest-match-per-kind filtering HERE
     // (during edge collection) so node ids stay dense and aligned with token
     // positions. Without this, the DAG gets ORPHAN intermediate nodes for
@@ -1231,10 +1294,12 @@ fn expand_lex_node_impl<'a, T: Clone>(
 /// position under the Delimiter Unambiguity Invariant). `char_class`,
 /// `dfa_next`, `is_accepting`, `accept_alternatives` are the mode-dispatched
 /// lexer shims (their first parameter is the mode id); `is_raw` reports whether
-/// a mode suppresses the leading-whitespace skip. All other semantics —
-/// soft-fail on a secondary-only dead-end, longest-per-kind edge survival,
-/// successor ordering — are shared verbatim with the non-modal path via
-/// [`expand_lex_node_impl`].
+/// a mode suppresses the leading-whitespace skip; `stream_id` reports the token
+/// CHANNEL an accepting state routes to (`0` = `DEFAULT`, non-zero = an
+/// alternative channel declared `-> CHANNEL`, whose tokens are TRIVIA — task
+/// #18). All other semantics — soft-fail on a secondary-only dead-end,
+/// longest-per-kind edge survival, successor ordering — are shared verbatim with
+/// the non-modal path via [`expand_lex_node_impl`].
 #[allow(clippy::too_many_arguments)]
 pub fn expand_lex_node_modal<'a, T: Clone>(
     input: &'a str,
@@ -1246,6 +1311,7 @@ pub fn expand_lex_node_modal<'a, T: Clone>(
     accept_alternatives: &impl Fn(u8, u32, &'a str) -> Vec<(T, f64)>,
     token_to_kind: &impl Fn(&T) -> crate::automata::TokenKind,
     is_raw: &impl Fn(u8) -> bool,
+    stream_id: &impl Fn(u8, u32) -> u8,
     start_is_primary: bool,
 ) -> Result<ExpandedLexNode, String> {
     expand_lex_node_impl(
@@ -1258,6 +1324,7 @@ pub fn expand_lex_node_modal<'a, T: Clone>(
         |mode, s| is_accepting(mode, s),
         |mode, s, text| accept_alternatives(mode, s, text),
         |t| token_to_kind(t),
+        |mode, s| stream_id(mode, s),
         start_is_primary,
     )
 }
@@ -1289,6 +1356,7 @@ pub fn lex_dag_core<'a, T: Clone>(
     })
 }
 
+
 /// Multi-mode (L9) analogue of [`lex_dag_core`]: builds a [`crate::lexer_types::LexDag`]
 /// over `input` where each byte position is expanded with the DFA of its mode
 /// (from `mode_at`, a pure function of position under the Delimiter Unambiguity
@@ -1307,6 +1375,7 @@ pub fn lex_dag_core_modal<'a, T: Clone>(
     accept_alternatives: impl Fn(u8, u32, &'a str) -> Vec<(T, f64)>,
     token_to_kind: impl Fn(&T) -> crate::automata::TokenKind,
     is_raw: impl Fn(u8) -> bool,
+    stream_id: impl Fn(u8, u32) -> u8,
 ) -> Result<crate::lexer_types::LexDag, String> {
     let _ = file_id;
     lex_dag_build(|start, start_is_primary| {
@@ -1320,6 +1389,7 @@ pub fn lex_dag_core_modal<'a, T: Clone>(
             &accept_alternatives,
             &token_to_kind,
             &is_raw,
+            &stream_id,
             start_is_primary,
         )
     })
@@ -1662,6 +1732,7 @@ pub fn lex_weighted_core_modal<'a, T: Clone>(
     is_accepting: impl Fn(u8, u32) -> bool,
     accept_alternatives: impl Fn(u8, u32, &'a str) -> Vec<(T, f64)>,
     is_raw: impl Fn(u8) -> bool,
+    stream_id: impl Fn(u8, u32) -> u8,
 ) -> Result<(Vec<(T, Range, f64)>, Position), String> {
     let bytes = input.as_bytes();
     let mut pos: usize = 0;
@@ -1724,6 +1795,11 @@ pub fn lex_weighted_core_modal<'a, T: Clone>(
                 pos = end;
                 line = end_line;
                 col = end_col;
+                // ★ Task #18: the maximal munch routed to an alternative channel
+                // is TRIVIA — consumed, but never delivered to the parse stream.
+                if stream_id(mode, accept_state) != 0 && end > start {
+                    continue;
+                }
                 let text = &input[start..end];
                 if let Some((token, weight)) =
                     accept_alternatives(mode, accept_state, text).into_iter().next()
@@ -1772,6 +1848,7 @@ pub fn lex_lattice_core_modal<'a, T: Clone>(
     is_accepting: impl Fn(u8, u32) -> bool,
     accept_alternatives: impl Fn(u8, u32, &'a str) -> Vec<(T, f64)>,
     is_raw: impl Fn(u8) -> bool,
+    stream_id: impl Fn(u8, u32) -> u8,
 ) -> Result<(crate::lattice::TokenSource<T, Range>, Position), String> {
     use crate::automata::semiring::TropicalWeight;
     use crate::lattice::{TokenLattice, TokenSource};
@@ -1843,6 +1920,11 @@ pub fn lex_lattice_core_modal<'a, T: Clone>(
                 pos = end;
                 line = end_line;
                 col = end_col;
+                // ★ Task #18: the maximal munch routed to an alternative channel
+                // is TRIVIA — consumed, but never delivered to the parse stream.
+                if stream_id(mode, accept_state) != 0 && end > start {
+                    continue;
+                }
                 let text = &input[start..end];
                 let alts = accept_alternatives(mode, accept_state, text);
                 if alts.is_empty() {
@@ -1904,6 +1986,7 @@ pub fn lex_stream_core_modal<'a, T: Clone>(
     accept_alternatives: impl Fn(u8, u32, &'a str) -> Vec<(T, f64)>,
     token_to_kind: impl Fn(&T) -> crate::automata::TokenKind,
     is_raw: impl Fn(u8) -> bool,
+    stream_id: impl Fn(u8, u32) -> u8,
 ) -> Result<(crate::lexer_types::LexStream, Position), String> {
     use crate::automata::semiring::TropicalWeight;
     use crate::lexer_types::{LexAlternative, LexEntry, LexStream};
@@ -1977,8 +2060,28 @@ pub fn lex_stream_core_modal<'a, T: Clone>(
             ));
         }
 
+        // ★ Task #18 trivia rule (step 1): `accepts` is ordered by strictly
+        // increasing end offset, so `.last()` IS the unique maximal munch. When
+        // it routes to an alternative channel the whole span is TRIVIA —
+        // consumed, but contributing no entry to the parse stream.
+        {
+            let (longest_state, longest_end, longest_line, longest_col) =
+                *accepts.last().expect("accepts non-empty above");
+            if stream_id(mode, longest_state) != 0 && longest_end > start {
+                pos = longest_end;
+                line = longest_line;
+                col = longest_col;
+                continue;
+            }
+        }
+
         let mut alternatives: Vec<LexAlternative> = Vec::with_capacity(accepts.len() * 2);
         for &(accept_state, accept_end, _, _) in accepts.iter().rev() {
+            // ★ Task #18 trivia rule (step 2): a channel-routed accept shorter
+            // than the maximal munch can never be a parser token — drop it.
+            if stream_id(mode, accept_state) != 0 {
+                continue;
+            }
             let alt_text = &input[start..accept_end];
             let alt_tokens = accept_alternatives(mode, accept_state, alt_text);
             for (token, weight) in alt_tokens {
@@ -2911,6 +3014,24 @@ mod tests {
         false
     }
 
+    /// Task #18: every accept on the `DEFAULT` channel — the shape of EVERY grammar that declares
+    /// no `-> CHANNEL` annotation, and the fixture the pre-#18 modal tests are re-driven with, so
+    /// their expectations are unchanged by construction.
+    fn toy_stream_none(_mode: u8, _state: u32) -> u8 {
+        0
+    }
+
+    /// Task #18: routes the guest-mode `GuestChunk` accept (mode 1, state 2) to channel 1, leaving
+    /// every other accept on `DEFAULT`. Exercises the trivia rule directly on the core, independent
+    /// of any generated grammar: the chunk's span must be CONSUMED and contribute no edge/token,
+    /// while the surrounding opener/closer are untouched.
+    fn toy_stream_chunk(mode: u8, state: u32) -> u8 {
+        match (mode, state) {
+            (1, 2) => 1,
+            _ => 0,
+        }
+    }
+
     fn toy_to_kind(t: &crate::automata::TokenKind) -> crate::automata::TokenKind {
         t.clone()
     }
@@ -2980,7 +3101,7 @@ mod tests {
         assert_eq!(map, vec![0, 0, 0, 0, 1, 1]);
         let node = expand_lex_node_modal(
             "lam`x`", 0, &map, &toy_cc, &toy_dnext, &toy_isacc, &toy_alts, &toy_to_kind,
-            &toy_israw, true,
+            &toy_israw, &toy_stream_none, true,
         )
         .expect("expand ok");
         assert_eq!(node.edges.len(), 2, "opener + ident co-accepts survive");
@@ -3007,7 +3128,7 @@ mod tests {
         .expect("balanced");
         let orphan = expand_lex_node_modal(
             "lam`x`", 3, &map, &toy_cc, &toy_dnext, &toy_isacc, &toy_alts, &toy_to_kind,
-            &toy_israw, false,
+            &toy_israw, &toy_stream_none, false,
         )
         .expect("secondary dead-end is a soft-fail (Ok orphan)");
         assert!(orphan.edges.is_empty());
@@ -3016,7 +3137,7 @@ mod tests {
         // The SAME dead-end on the primary chain is a hard input error.
         let hard = expand_lex_node_modal(
             "lam`x`", 3, &map, &toy_cc, &toy_dnext, &toy_isacc, &toy_alts, &toy_to_kind,
-            &toy_israw, true,
+            &toy_israw, &toy_stream_none, true,
         );
         assert!(hard.is_err(), "primary-chain dead-end must hard-fail");
     }
@@ -3031,6 +3152,7 @@ mod tests {
         .expect("balanced");
         let dag = lex_dag_core_modal(
             "lam`hi`", None, &map, toy_cc, toy_dnext, toy_isacc, toy_alts, toy_to_kind, toy_israw,
+            toy_stream_none,
         )
         .expect("modal dag builds");
         assert!(dag.has_ambiguity(), "opener vs ident is genuine intra-mode ambiguity");
@@ -3049,7 +3171,7 @@ mod tests {
         )
         .expect("balanced");
         let (tokens, _eof) = lex_weighted_core_modal(
-            "lam`hi`", None, &map, toy_cc, toy_dnext, toy_isacc, toy_alts, toy_israw,
+            "lam`hi`", None, &map, toy_cc, toy_dnext, toy_isacc, toy_alts, toy_israw, toy_stream_none,
         )
         .expect("modal weighted lex");
         let kinds: Vec<_> = tokens.iter().map(|(k, _, _)| k.clone()).collect();
@@ -3057,5 +3179,85 @@ mod tests {
             kinds,
             vec![tk("FltOpenBacktick"), tk("GuestChunk"), tk("FltCloseBacktick")]
         );
+    }
+
+    // ── Task #18: the alternative-token-channel trivia rule, gated on the CORE ──────────────
+    //
+    // These drive the `*_core_modal` scanners with a `stream_id` that routes ONE accept off
+    // `DEFAULT`, so the rule is proven independently of any generated grammar: a channel-routed
+    // maximal munch is CONSUMED (its span advances the scan) but contributes no token and no DAG
+    // edge, exactly as a whitespace run does — while every neighbouring token is untouched.
+
+    #[test]
+    fn channel_routed_accept_is_skipped_as_trivia_by_the_weighted_scanner() {
+        let map = compute_mode_map(
+            "lam`hi`", toy_cc, toy_dnext, toy_isacc, toy_push, toy_pop, toy_israw,
+        )
+        .expect("balanced");
+        let (tokens, _eof) = lex_weighted_core_modal(
+            "lam`hi`", None, &map, toy_cc, toy_dnext, toy_isacc, toy_alts, toy_israw,
+            toy_stream_chunk,
+        )
+        .expect("modal weighted lex with a routed chunk");
+        let kinds: Vec<_> = tokens.iter().map(|(k, _, _)| k.clone()).collect();
+        assert_eq!(
+            kinds,
+            vec![tk("FltOpenBacktick"), tk("FltCloseBacktick")],
+            "the routed GuestChunk must be consumed as TRIVIA — present in the scan, absent from \
+             the DEFAULT stream — while the opener and closer are untouched"
+        );
+    }
+
+    #[test]
+    fn channel_routed_accept_produces_no_dag_edge() {
+        let map = compute_mode_map(
+            "lam`hi`", toy_cc, toy_dnext, toy_isacc, toy_push, toy_pop, toy_israw,
+        )
+        .expect("balanced");
+        let dag = lex_dag_core_modal(
+            "lam`hi`", None, &map, toy_cc, toy_dnext, toy_isacc, toy_alts, toy_to_kind, toy_israw,
+            toy_stream_chunk,
+        )
+        .expect("modal dag builds with a routed chunk");
+        for node in &dag.nodes {
+            for edge in &node.edges {
+                assert_ne!(
+                    edge.kind,
+                    tk("GuestChunk"),
+                    "a channel-routed token must never become a DAG edge — the parser would see it"
+                );
+            }
+        }
+        let kinds: Vec<_> = dag.linear_path().iter().map(|(k, _)| k.clone()).collect();
+        assert_eq!(kinds, vec![tk("FltOpenBacktick"), tk("FltCloseBacktick")]);
+    }
+
+    #[test]
+    fn channel_routed_trivia_advances_the_node_start_like_whitespace() {
+        // Expanding the node at byte 4 (the `hi` chunk): with the chunk routed, the trivia is
+        // consumed and the node BEGINS at byte 6 — precisely the way a leading whitespace run
+        // already moves `byte_start` past itself.
+        let map = compute_mode_map(
+            "lam`hi`", toy_cc, toy_dnext, toy_isacc, toy_push, toy_pop, toy_israw,
+        )
+        .expect("balanced");
+        let node = expand_lex_node_modal(
+            "lam`hi`", 4, &map, &toy_cc, &toy_dnext, &toy_isacc, &toy_alts, &toy_to_kind,
+            &toy_israw, &toy_stream_chunk, true,
+        )
+        .expect("expand ok");
+        assert_eq!(node.byte_start, 6, "the routed chunk's span is consumed before the node starts");
+        assert_eq!(node.edges.len(), 1);
+        assert_eq!(node.edges[0].kind, tk("FltCloseBacktick"));
+
+        // …and with NOTHING routed, the very same position yields the chunk as an ordinary token,
+        // so the difference is attributable to the routing alone.
+        let plain = expand_lex_node_modal(
+            "lam`hi`", 4, &map, &toy_cc, &toy_dnext, &toy_isacc, &toy_alts, &toy_to_kind,
+            &toy_israw, &toy_stream_none, true,
+        )
+        .expect("expand ok");
+        assert_eq!(plain.byte_start, 4);
+        assert_eq!(plain.edges[0].kind, tk("GuestChunk"));
     }
 }

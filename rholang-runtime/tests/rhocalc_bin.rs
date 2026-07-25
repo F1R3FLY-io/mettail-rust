@@ -26,8 +26,14 @@ fn demo_path(file_name: &str) -> PathBuf {
 
 /// Run the built `rhocalc` binary on a demo file, capturing its output.
 fn run_interpreter(demo_file: &str) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_rhocalc"))
-        .arg(demo_path(demo_file))
+    run_interpreter_with(demo_file, &[])
+}
+
+/// Run the built `rhocalc` binary on a demo file with extra flags.
+fn run_interpreter_with(demo_file: &str, flags: &[&str]) -> Output {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_rhocalc"));
+    command.args(flags).arg(demo_path(demo_file));
+    command
         .env("RUST_MIN_STACK", "8388608")
         .output()
         .expect("the rhocalc binary must run")
@@ -73,5 +79,47 @@ fn foreign_exchange_demo_binds_typed_holes_and_reconstructs() {
     assert!(
         stdout.contains("(λ.0 λ.λ.1)"),
         "expected the reconstructed App(I, K) = (λ.0 λ.λ.1) on @\"OUT\"\nstdout:\n{stdout}"
+    );
+}
+
+// ── Task #18 — comments are LEXED and RETAINED, not stripped ─────────────────────────────────────
+
+/// Both demos carry large explanatory comment headers — including prose that MENTIONS FLT openers
+/// with unbalanced back-ticks and `${…}` holes. Under the retired `strip_comments` preprocessor
+/// those bytes were deleted before the parser ever ran; they are now lexed as tokens routed to the
+/// `COMMENTS` channel, consumed as trivia by the parse, and retained with their source positions.
+///
+/// That the demos still evaluate (the two tests above) proves NON-PERTURBATION on real programs;
+/// that the interpreter reports a non-zero retained count proves RETENTION is live end-to-end.
+#[test]
+fn demos_retain_their_comments_on_the_comments_channel() {
+    for demo in ["k-combinator.rho", "foreign-exchange.rho"] {
+        let output = run_interpreter(demo);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            output.status.success(),
+            "rhocalc exited non-zero on {demo}\nstdout:\n{stdout}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            stdout.contains("retained on the COMMENTS channel"),
+            "expected {demo}'s comment header to be RETAINED, not stripped\nstdout:\n{stdout}"
+        );
+    }
+}
+
+/// `--emit-comments` dumps the retained channel with source positions. This is an out-of-band
+/// BACKEND diagnostic; it is never data on a program-observable channel (no `@"COMMENTS"`, no
+/// injected send), which is why the comment TEXT is printed only under the explicit flag.
+#[test]
+fn emit_comments_dumps_the_retained_channel_with_positions() {
+    let output = run_interpreter_with("k-combinator.rho", &["--emit-comments"]);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(output.status.success(), "rhocalc --emit-comments exited non-zero\nstdout:\n{stdout}");
+    // The demo's header opens on line 1, column 1 with a box-drawing rule — proof that the
+    // position is the TRUE source position and that non-ASCII comment text survives intact.
+    assert!(
+        stdout.contains("  1:1: // ═══"),
+        "expected the line-1 header comment dumped at its true position\nstdout:\n{stdout}"
     );
 }

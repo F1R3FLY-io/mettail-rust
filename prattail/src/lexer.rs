@@ -473,6 +473,24 @@ pub fn generate_lexer_as_string_hybrid(
             }
         }
 
+        // Task #18: the analogous CHANNEL soundness check. A DFA state whose
+        // co-accepts disagree on their token channel cannot be routed (the same
+        // span would be both trivia and a parse token), so reject the grammar at
+        // COMPILE time rather than silently picking one. A no-op for every
+        // grammar with no `-> CHANNEL` annotation.
+        if let Err(msg) = check_channel_soundness("default", &min_dfa, &input.custom_tokens) {
+            panic!("{}", msg);
+        }
+        for mode_result in &mode_results {
+            if let Err(msg) = check_channel_soundness(
+                &mode_result.name,
+                &mode_result.min_dfa,
+                &mode_result.custom_tokens,
+            ) {
+                panic!("{}", msg);
+            }
+        }
+
         // Merge all mode token kinds into a combined list for the Token enum
         let mut all_custom_tokens = input.custom_tokens.clone();
         for mode in &input.modes {
@@ -531,6 +549,105 @@ fn token_mode_effect(kind: &TokenKind, custom_tokens: &[CustomTokenSpec]) -> Mod
         }
     }
     ModeEffect::None
+}
+
+/// Resolve the token CHANNEL a kind routes to (task #18): `None` = `DEFAULT`
+/// (the parse stream), `Some(name)` = the alternative channel its `-> CHANNEL`
+/// annotation declares. Only `Custom` tokens can carry a channel; a built-in
+/// kind is always `DEFAULT`. `-> main` is spelled out as `DEFAULT` so the two
+/// spellings of the parse stream compare equal.
+fn token_channel<'a>(
+    kind: &TokenKind,
+    custom_tokens: &'a [CustomTokenSpec],
+) -> Option<&'a str> {
+    if let TokenKind::Custom(name) = kind {
+        if let Some(spec) = custom_tokens.iter().find(|s| s.name == *name) {
+            return spec.stream.as_deref().filter(|stream| *stream != "main");
+        }
+    }
+    None
+}
+
+/// Task #18: enforce CHANNEL soundness for ONE mode's DFA.
+///
+/// A token routed to an alternative channel is TRIVIA — the scanner consumes its
+/// span and delivers nothing to the parser. The routing decision is made per
+/// ACCEPTING STATE (`stream_id_*`), so every co-accepting kind at a state must
+/// agree on its channel. A state that accepts a channel-routed token alongside a
+/// `DEFAULT` one (or alongside a token on a DIFFERENT channel) is a grammar the
+/// mechanism cannot express: the identical span would have to be simultaneously
+/// discarded-as-trivia and delivered-as-a-token, and which happened would depend
+/// on which accept the scanner happened to consult.
+///
+/// This is the exact analogue of [`check_dui_soundness`] for channels, and it
+/// fails CLOSED at compile time for the same reason: silently picking one is a
+/// latent, position-dependent bug. Ordinary intra-channel ambiguity (all
+/// co-accepts on the same channel — including the overwhelmingly common
+/// all-`DEFAULT` case) is sound and accepted, so the check is a no-op for every
+/// grammar with no `-> CHANNEL` annotation.
+///
+/// Returns `Err(diagnostic)` describing the first violating state, else `Ok(())`.
+fn check_channel_soundness(
+    mode_label: &str,
+    dfa: &crate::automata::Dfa,
+    custom_tokens: &[CustomTokenSpec],
+) -> Result<(), String> {
+    for (state_idx, state) in dfa.states.iter().enumerate() {
+        // Gather the DISTINCT accepting kinds at this state — same union as
+        // `check_dui_soundness` (`alt_accepts` already includes the primary
+        // winner when non-empty, so union with `accept` and dedupe).
+        let mut kinds: Vec<TokenKind> = Vec::new();
+        if let Some(k) = &state.accept {
+            if !kinds.contains(k) {
+                kinds.push(k.clone());
+            }
+        }
+        for (k, _w) in &state.alt_accepts {
+            if !kinds.contains(k) {
+                kinds.push(k.clone());
+            }
+        }
+        if kinds.len() < 2 {
+            continue; // a single accepting kind cannot conflict with itself
+        }
+
+        let mut distinct: Vec<Option<&str>> = Vec::new();
+        for k in &kinds {
+            let channel = token_channel(k, custom_tokens);
+            if !distinct.contains(&channel) {
+                distinct.push(channel);
+            }
+        }
+        if distinct.len() < 2 {
+            continue; // every co-accept agrees on its channel
+        }
+
+        let mut parts: Vec<String> = Vec::with_capacity(kinds.len());
+        for k in &kinds {
+            let name = match k {
+                TokenKind::Custom(n) => n.clone(),
+                TokenKind::Ident => "<identifier>".to_string(),
+                TokenKind::Fixed(t) => format!("\"{}\"", t),
+                other => format!("{:?}", other),
+            };
+            let channel = match token_channel(k, custom_tokens) {
+                Some(stream) => format!("-> {}", stream),
+                None => "DEFAULT".to_string(),
+            };
+            parts.push(format!("`{}` [{}]", name, channel));
+        }
+        return Err(format!(
+            "channel violation in mode `{}`: DFA state {} accepts {} at the SAME position on \
+             DIFFERENT token channels. A channel-routed token is TRIVIA — its span is consumed \
+             and never delivered to the parser — so one span cannot be both trivia and a parse \
+             token. Hint: make the channel-routed pattern strictly distinguishable (e.g. a longer \
+             or disjoint delimiter) so maximal munch selects a unique channel at this position.",
+            mode_label,
+            state_idx,
+            parts.join(" vs "),
+        ));
+    }
+    Ok(())
 }
 
 /// L9-2: enforce the Delimiter Unambiguity Invariant for ONE mode's DFA.

@@ -25,13 +25,23 @@
 //! that guest's reduction engine. A program with no FLT never touches the registry; a program
 //! whose FLT opener is unregistered fails closed with a clear `unknown guest language ⌜tag⌝`.
 //!
-//! ## Comments
-//! The interpreter strips `//` line comments and `/* … */` block comments (outside `"`-strings and
-//! `` ` ``-delimited guest bodies) before handing the source to the generated parser. This is an
-//! interim measure: the RhoCalc grammar exposes a per-token output-`stream` annotation, but that
-//! channel routing is only wired into the opt-in `lex_with_streams` entry, not the default
-//! `Proc::parse` path — so comments cannot yet be routed off the parser's token stream at the
-//! grammar level. Stripping keeps them out of the parse without affecting interpretation.
+//! ## Comments are LEXED and RETAINED on the `COMMENTS` channel (task #18)
+//! Comments are no longer removed before parsing. `//` line comments and `/* … */` block comments
+//! are declared as ordinary tokens in the RhoCalc grammar's `tokens {}` block, routed to the
+//! alternative channel `COMMENTS` (`languages/src/rhocalc.rs`). A `-> CHANNEL` token is TRIVIA: the
+//! lexer resolves it by the same maximal-munch rule as every other token, and when it wins the span
+//! is consumed but never delivered to the parse stream — exactly how inter-token whitespace is
+//! already consumed. So the parser sees precisely the token sequence it saw under the old
+//! pre-parse strip, while the comment TEXT and its source `Range` survive in
+//! `LexResult.streams["COMMENTS"]`.
+//!
+//! The interpreter reads them back with [`comments_on_channel`] (`rhocalc::lex_with_streams` →
+//! [`mettail_prattail::LexResult::tokens_on_channel`]) and reports the count, which is the proof
+//! that retention is live end-to-end. `--emit-comments` dumps them with their positions.
+//!
+//! **The channel boundary is hard**: `COMMENTS` is compile-time / tooling-facing apparatus. Only
+//! `DEFAULT` feeds the parser AND the running program. There is no `@"COMMENTS"` rho channel, no
+//! injected send, and no way for a running RhoCalc program to observe a comment.
 //!
 //! ## Exit codes (sysexits-style)
 //!   0  success · 64 usage · 66 cannot read input · 65 parse/lower error · 70 reduce/driver/stuck.
@@ -60,8 +70,13 @@ const USAGE: &str = "\
 rhocalc — RhoCalc (Rholang 1.4) interpreter over the f1r3node reducer
 
 USAGE:
-    rhocalc <SOURCE.rho>
+    rhocalc [--emit-comments] <SOURCE.rho>
     rhocalc --help
+
+OPTIONS:
+    --emit-comments   dump every comment retained on the COMMENTS channel with its source position.
+                      Comments are LEXED (not stripped) and routed off the parser's DEFAULT stream;
+                      this is a backend diagnostic, never data a running program can observe.
 
 It parses the RhoCalc source with the generated parser, lowers it to a normalized Rholang term,
 and evaluates it on the f1r3node reducer:
@@ -183,71 +198,137 @@ fn report_lower(err: &RhocalcAstLowerError) -> ExitCode {
     }
 }
 
-// ── comment stripping (UTF-8-safe; preserves string + guest-body literals) ──────────────────────
+// ── comments: LEXED to the retained `COMMENTS` channel (task #18) ───────────────────────────────
 
-/// Strip `//` line comments and `/* … */` block comments, preserving text inside `"`-delimited
-/// strings and `` ` ``-delimited FLT guest bodies (a `//` or `/*` there is never a comment).
-/// Newlines are preserved so the parser's reported line numbers still track the source.
-fn strip_comments(source: &str) -> String {
-    enum State {
-        Code,
-        Str,
-        Guest,
-    }
-    let mut out = String::with_capacity(source.len());
-    let mut chars = source.chars().peekable();
-    let mut state = State::Code;
-    while let Some(c) = chars.next() {
-        match state {
-            State::Code => match c {
-                '"' => {
-                    out.push('"');
-                    state = State::Str;
-                }
-                '`' => {
-                    out.push('`');
-                    state = State::Guest;
-                }
-                '/' if chars.peek() == Some(&'/') => {
-                    chars.next(); // consume the second '/'
-                    for next in chars.by_ref() {
-                        if next == '\n' {
-                            out.push('\n');
-                            break;
-                        }
-                    }
-                }
-                '/' if chars.peek() == Some(&'*') => {
-                    chars.next(); // consume the '*'
-                    let mut prev = '\0';
-                    for next in chars.by_ref() {
-                        if prev == '*' && next == '/' {
-                            break;
-                        }
-                        if next == '\n' {
-                            out.push('\n');
-                        }
-                        prev = next;
-                    }
-                }
-                _ => out.push(c),
-            },
-            State::Str => {
-                out.push(c);
-                if c == '"' {
-                    state = State::Code;
-                }
-            }
-            State::Guest => {
-                out.push(c);
-                if c == '`' {
-                    state = State::Code;
-                }
-            }
-        }
-    }
-    out
+/// Every comment the lexer retained on the `COMMENTS` channel, as
+/// `(text, line, column)` with 1-based line/column, in source order.
+///
+/// This is the BACKEND view of the channel: `lex_with_streams()` runs the same DFA tables and the
+/// same maximal-munch rule the parse path runs, so the comments reported here are exactly the spans
+/// the parse path consumed as trivia. Reading them is what makes the round trip observable —
+/// `Proc::parse` cannot re-emit a comment, because a comment is off-`DEFAULT` and therefore has no
+/// AST node to `Display`.
+///
+/// Failing to lex is NOT an error here: the caller's `Proc::parse` reports parse failures with a
+/// far better message, so an unlexable source simply yields no comments.
+fn comments_on_channel(source: &str) -> Vec<(&str, usize, usize)> {
+    let Ok(lexed) = mettail_languages::rhocalc::lex_with_streams(source) else {
+        return Vec::new();
+    };
+    lexed
+        .tokens_on_channel(COMMENTS_CHANNEL)
+        .iter()
+        .map(|(_token, range)| {
+            // The retained `Range` indexes the ORIGINAL source, so the verbatim comment text is a
+            // borrow of it — the precise thing the pre-parse strip destroyed.
+            (
+                &source[range.start.byte_offset..range.end.byte_offset],
+                range.start.line + 1,
+                range.start.column + 1,
+            )
+        })
+        .collect()
 }
+
+/// The conventional channel name RhoCalc's `tokens {}` block routes its comment tokens to. It
+/// carries no engine-level privilege — it is an ordinary channel name, treated exactly as
+/// `PRAGMAS` or `DOCTESTS` would be.
+const COMMENTS_CHANNEL: &str = "COMMENTS";
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────────
+// RETIRED (task #18, 2026-07-25) — `fn strip_comments(source: &str) -> String`
+//
+// This was a PRE-PARSE STRING PREPROCESSOR: a 3-state (`Code`/`Str`/`Guest`) scanner that deleted
+// comment bytes from the source before `Proc::parse` ever saw it, replacing them with nothing (and
+// their newlines with newlines, so line numbers still tracked). It was lossy and unprincipled —
+// column positions shifted, comments could never round-trip, and no downstream consumer could ever
+// observe them.
+//
+// WHAT REPLACED IT: the comment tokens now declared in the RhoCalc grammar's `tokens {}` block,
+// routed to the retained `COMMENTS` channel —
+//     LineComment  = "//[^\n]*"                  -> COMMENTS ;
+//     BlockComment = "/\*([^*]|\*+[^*/])*\*+/"   -> COMMENTS ;
+// (`languages/src/rhocalc.rs`). The lexer resolves them by maximal munch like every other token and
+// treats a channel-routed win as TRIVIA (consumed, never handed to the parser — `expand_lex_node_impl`
+// and the `*_core_modal` scanners in `prattail/src/runtime_types.rs`), while `lex_with_streams()`
+// retains them with their source `Range` for the backend (`comments_on_channel` above).
+//
+// Each hand-rolled state maps to a mechanism the lexer already had, which is why none of it is
+// needed any more:
+//   * `State::Str`   ⟶  `StringLit` is a single maximal-munch span, so a `//` inside `"…"` is
+//                       string bytes and never sits at a token-start position.
+//   * `State::Guest` ⟶  the FLT guest modes are RAW and declare their own tokens; the comment
+//                       tokens exist only in the DEFAULT mode, so a marker inside a guest body is
+//                       verbatim guest text.
+//   * `//` vs `/`    ⟶  maximal munch, the same rule that already separates every other token pair.
+//
+// ONE DELIBERATE BEHAVIOUR CHANGE: an unterminated `/*` used to be swallowed silently to EOF. It is
+// now a hard lex error (no accept ⇒ the modal core's unterminated-region surface), reported through
+// the existing exit code 65. That is strictly better and is pinned by a test.
+//
+// Retained here (commented, not deleted) as the record of what the channel mechanism subsumed.
+//
+// fn strip_comments(source: &str) -> String {
+//     enum State {
+//         Code,
+//         Str,
+//         Guest,
+//     }
+//     let mut out = String::with_capacity(source.len());
+//     let mut chars = source.chars().peekable();
+//     let mut state = State::Code;
+//     while let Some(c) = chars.next() {
+//         match state {
+//             State::Code => match c {
+//                 '"' => {
+//                     out.push('"');
+//                     state = State::Str;
+//                 }
+//                 '`' => {
+//                     out.push('`');
+//                     state = State::Guest;
+//                 }
+//                 '/' if chars.peek() == Some(&'/') => {
+//                     chars.next(); // consume the second '/'
+//                     for next in chars.by_ref() {
+//                         if next == '\n' {
+//                             out.push('\n');
+//                             break;
+//                         }
+//                     }
+//                 }
+//                 '/' if chars.peek() == Some(&'*') => {
+//                     chars.next(); // consume the '*'
+//                     let mut prev = '\0';
+//                     for next in chars.by_ref() {
+//                         if prev == '*' && next == '/' {
+//                             break;
+//                         }
+//                         if next == '\n' {
+//                             out.push('\n');
+//                         }
+//                         prev = next;
+//                     }
+//                 }
+//                 _ => out.push(c),
+//             },
+//             State::Str => {
+//                 out.push(c);
+//                 if c == '"' {
+//                     state = State::Code;
+//                 }
+//             }
+//             State::Guest => {
+//                 out.push(c);
+//                 if c == '`' {
+//                     state = State::Code;
+//                 }
+//             }
+//         }
+//     }
+//     out
+// }
+// ─────────────────────────────────────────────────────────────────────────────────────────────────
 
 // ── legible rendering of decoded observations (λ-calculus aware) ────────────────────────────────
 
@@ -370,17 +451,33 @@ async fn run_process_to_rest(program: &Par) -> Result<(), InterpError> {
 // ── driver ──────────────────────────────────────────────────────────────────────────────────────
 
 /// Parse, lower, and evaluate the RhoCalc source at `path`.
-async fn interpret(path: &Path) -> Result<(), InterpError> {
+///
+/// `emit_comments` dumps the retained `COMMENTS` channel (an out-of-band diagnostic artifact of the
+/// BACKEND — never data on any program-observable channel).
+async fn interpret(path: &Path, emit_comments: bool) -> Result<(), InterpError> {
     let source = std::fs::read_to_string(path)
         .map_err(|source| InterpError::Io { path: path.to_path_buf(), source })?;
 
     println!("rhocalc — RhoCalc (Rholang 1.4) interpreter");
     println!("source: {}", path.display());
 
+    // Task #18: comments are LEXED, not stripped. They are routed to the `COMMENTS` channel, kept
+    // off `DEFAULT` (so the parse below is byte-for-byte the parse of the comment-free program),
+    // and RETAINED with their source positions for the backend. `interpret` reads them purely as a
+    // diagnostic; nothing downstream — least of all the running program — can observe them.
+    let comments = comments_on_channel(&source);
+    if !comments.is_empty() {
+        println!("comments: {} retained on the COMMENTS channel", comments.len());
+    }
+    if emit_comments {
+        for (text, line, column) in &comments {
+            println!("  {line}:{column}: {text}");
+        }
+    }
+
     // Fresh binder interning before the parse (mirrors every from-source beat).
     clear_var_cache();
-    let program_source = strip_comments(&source);
-    let proc = Proc::parse(&program_source).map_err(InterpError::Parse)?;
+    let proc = Proc::parse(&source).map_err(InterpError::Parse)?;
     let program =
         lower_rhocalc_proc_with_resolver(&proc, guest_resolver()).map_err(InterpError::Lower)?;
 
@@ -395,21 +492,25 @@ async fn interpret(path: &Path) -> Result<(), InterpError> {
 
 #[tokio::main]
 async fn main() -> ExitCode {
-    let mut args = std::env::args_os().skip(1);
-    let first = match args.next() {
-        Some(first) => first,
-        None => return InterpError::Usage.report(),
-    };
-    if matches!(first.to_str(), Some("-h") | Some("--help")) {
-        println!("{USAGE}");
-        return ExitCode::SUCCESS;
+    // Exactly one positional argument (the source path), plus the optional `--emit-comments` flag
+    // in either order.
+    let mut path: Option<PathBuf> = None;
+    let mut emit_comments = false;
+    for argument in std::env::args_os().skip(1) {
+        match argument.to_str() {
+            Some("-h") | Some("--help") => {
+                println!("{USAGE}");
+                return ExitCode::SUCCESS;
+            }
+            Some("--emit-comments") => emit_comments = true,
+            _ if path.is_none() => path = Some(PathBuf::from(argument)),
+            _ => return InterpError::Usage.report(),
+        }
     }
-    if args.next().is_some() {
-        // Exactly one positional argument (the source path) is accepted.
+    let Some(path) = path else {
         return InterpError::Usage.report();
-    }
-    let path = PathBuf::from(first);
-    match interpret(&path).await {
+    };
+    match interpret(&path, emit_comments).await {
         Ok(()) => ExitCode::SUCCESS,
         Err(err) => err.report(),
     }

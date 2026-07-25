@@ -143,6 +143,54 @@ of distinct token kinds in one mode (typically < 50), making it constant time.
 
 ---
 
+## 4.4 A routed token is TRIVIA on every parse path (task #18, 2026-07-25)
+
+Routing decides *where a token goes*; it does not change *how the scanner picks
+it*. A routed token competes for the position under the SAME maximal-munch rule
+as every other token. When it wins, its span is **consumed** and it is delivered
+to its channel instead of to the parse stream — structurally identical to the
+inter-token whitespace skip that already sits at the same place in every scanner.
+
+This applies uniformly to every entry point, not just `lex_with_streams`:
+
+| Entry | Routed token |
+|---|---|
+| `lex` / `lex_with_file_id` | consumed; not appended to `tokens` |
+| `lex_dag` / `lex_dag_lazy` (the parse path) | consumed; produces **no DAG edge** |
+| `lex_weighted`, `lex_lattice`, `lex_stream` | consumed; produces no token/entry |
+| `lex_with_streams` / `lex_streams_with_file_id` | consumed **and retained** in `streams[name]` with its `Range` |
+
+Two rules implement this in `expand_lex_node_impl` and the `*_core_modal`
+scanners (`prattail/src/runtime_types.rs`):
+
+1. Accepts occur at strictly increasing end offsets, so the maximal-munch accept
+   at a position is unique. If `stream_id` routes it off `DEFAULT`, the scan
+   advances past its span and restarts — a DAG node's `byte_start` moves past
+   the trivia exactly as it moves past a leading whitespace run.
+2. Otherwise, routed accepts at *shorter* lengths are dropped: a routed token can
+   never be a parser token, so it must never become a DAG edge.
+
+**Consequence — routing cannot introduce ambiguity.** Trivia only ever REMOVES a
+span from the scan; it never contributes an alternative. So the lex DAG over a
+source containing trivia is the DAG of that source with the trivia bytes elided,
+and the parse forest, the elected term, and the parse COUNT are unchanged. This
+is what makes it safe to route `//…` in a grammar that also has a `/` division
+terminal: maximal munch — not a new disambiguation — settles the two.
+
+**Compile-time soundness gate.** `crate::lexer::check_channel_soundness` rejects
+any DFA state whose co-accepting kinds disagree on their channel, since one span
+cannot be both trivia and a parse token. It is the channel analogue of the DUI
+check and fails closed rather than silently picking one.
+
+**The channel boundary.** Auxiliary channels are compile-time / tooling-facing
+apparatus. Only `main`/`DEFAULT` feeds the parser AND any running program; there
+is no path by which a routed token reaches either. Backends read channels through
+the ANTLR4-parity accessors on `LexResult` — `tokens_on_channel`,
+`hidden_tokens_to_left`, `hidden_tokens_to_right`, `channels` (§3) — which are
+generic over the channel name: no registry, no privileged name.
+
+---
+
 ## 5. Backward Compatibility
 
 When no `-> stream` annotations exist, PraTTaIL generates the standard
@@ -155,9 +203,18 @@ pub fn lex_with_file_id<'a>(input: &'a str, file_id: Option<u32>)
     -> Result<Vec<(Token<'a>, Range)>, String> { ... }
 ```
 
+The per-mode `stream_id_{mode}` tables themselves ARE emitted for every modal
+grammar, so the `m_stream_id` dispatch shim has a uniform signature; with no
+annotation each table degenerates to `match state { _ => 0u8 }`, a constant the
+optimizer folds away. What remains gated on the presence of an annotation is
+everything that exists only to SERVE a channel: the `STREAM_{NAME}` constants,
+the `STREAM_NAMES` array, and the `lex_with_streams` /
+`lex_streams_with_file_id` retention entries.
+
 When at least one annotation is present, `lex_with_streams` and
-`lex_streams_with_file_id` are emitted alongside the standard functions.
-The standard functions continue to work but discard auxiliary tokens.
+`lex_streams_with_file_id` are emitted alongside the standard functions. The
+standard functions continue to work; per §4.4 they consume a routed token's span
+and deliver nothing for it.
 
 ---
 
@@ -327,9 +384,50 @@ pub fn lex_streams_with_file_id<'a>(input: &'a str, file_id: Option<u32>)
 }
 ```
 
+`lex_streams_with_file_id` runs its own mode stack, so — like
+`compute_mode_map` on the parse path — it verifies the stack has returned to
+`[0]` at end of input and reports `unterminated region: …` otherwise. Without
+that check a source the parser rejects (an opener whose closer never arrived)
+would silently succeed here and hand tooling a truncated token stream.
+
 ### 10.2 Stream ID Function
 
-The `stream_id_{mode}` function is the only codegen addition beyond the
-standard modal tables. Its presence signals that multi-stream routing is
-active. When absent (no `-> stream` annotations), the entire stream routing
-path is elided from generated code.
+The `stream_id_{mode}` functions map each accept state to its channel index and
+are emitted for every modal grammar (§5): with no `-> stream` annotation each
+reduces to the constant `0`, which is what lets the `m_stream_id` shim and the
+`*_core_modal` trivia rule share one signature across all grammars. A non-trivial
+arm is what signals that multi-stream routing is active for a state; the
+`STREAM_NAMES` table, the `STREAM_{NAME}` constants, and the `lex_with_streams`
+retention entries are emitted only when at least one such arm exists.
+
+---
+
+## 11. Worked Instance — RhoCalc comments (task #18, 2026-07-25)
+
+RhoCalc's comments were originally removed by a **pre-parse string strip** in the
+`rhocalc` interpreter binary — a hand-rolled `{Code, Str, Guest}` scanner that
+deleted the bytes before the lexer ran. That was lossy: columns shifted, the text
+was unrecoverable, and no consumer could observe a comment. It is now expressed
+in the mechanism this document describes (`languages/src/rhocalc.rs`):
+
+```
+tokens {
+    LineComment  = "//[^\n]*"                   -> COMMENTS ;
+    BlockComment = "/\\*([^*]|\\*+[^*/])*\\*+/" -> COMMENTS ;
+    …
+}
+```
+
+Each hand-rolled state of the strip maps onto a mechanism the lexer already had,
+which is why none of it survives:
+
+| Strip state | Replaced by |
+|---|---|
+| `State::Str` — a marker inside `"…"` is string bytes | `StringLit` is one maximal-munch span, so an interior marker is never at a token-start position |
+| `State::Guest` — a marker inside `` `…` `` is guest text | the FLT guest modes are RAW and declare their own tokens; the comment tokens exist only in the default mode |
+| `//` beats `/` (the `Div` terminal) | maximal munch — the same rule that separates every other token pair |
+
+One deliberate behaviour change: an unterminated `/*` used to be swallowed
+silently to EOF. `BlockComment` requires its closing marker, so the maximal munch
+at `/` falls back to `Div`, the tail lexes as ordinary tokens, and the program
+now fails closed at the parse instead of running with a silently truncated tail.

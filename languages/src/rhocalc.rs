@@ -194,6 +194,40 @@ language! {
     // lowercase IDENT; the brace tag is the reserved keyword `box` (D-1), so it
     // never collides with PPar's `{ … }`.
     tokens {
+        // ── Comments — routed to the retained `COMMENTS` channel (task #18) ──────────────
+        //
+        // A `-> CHANNEL` token is TRIVIA: the lexer resolves it by the same MAXIMAL MUNCH
+        // rule as every other token, and when it wins it is consumed but never delivered to
+        // the parse stream — exactly how inter-token whitespace is already consumed. It is
+        // RETAINED (with its source `Range`) in `LexResult.streams["COMMENTS"]`, readable by
+        // the backend through `lex_with_streams()` + `LexResult::tokens_on_channel` /
+        // `hidden_tokens_to_left/right`. It is NOT observable by a running RhoCalc program:
+        // only `DEFAULT` feeds the parser and the program.
+        //
+        // This REPLACES the `rhocalc` binary's pre-parse `strip_comments` preprocessor, which
+        // deleted the bytes before the lexer ever ran (shifting positions and losing the text
+        // irrecoverably). The accepted comment language is deliberately IDENTICAL to what the
+        // strip removed, so no program changes meaning:
+        //
+        //   * `LineComment`  — `//` to the end of the line (or end of input).
+        //   * `BlockComment` — `/*` to the FIRST `*/` (flat, C-style, NOT nested), spanning
+        //     newlines. Rholang tradition; the strip closed at the first `*/` too.
+        //
+        // Why the three edge cases the strip hand-coded need no code here:
+        //   * `"a // b"`  — `StringLit` is one maximal-munch span from `"` to `"`, so the
+        //     `//` inside is consumed as string bytes and is never at a token-start position.
+        //   * ``lam`a // b` `` — the FLT guest modes are RAW and declare their own tokens;
+        //     `LineComment`/`BlockComment` exist ONLY in the default mode, so a comment marker
+        //     inside a guest body is verbatim GUEST TEXT.
+        //   * `a / b` vs `a // b` — maximal munch: `//` (2 bytes) beats `Div` (1 byte), so the
+        //     comment wins, precisely as the strip decided. Nothing is added to the forest, so
+        //     the parse count is unchanged.
+        // Both classes are byte-level negations, which `complement_ranges` complements over the
+        // FULL 0..=255 byte range — so UTF-8 lead/continuation bytes are members and a comment
+        // may contain any text (the demos' box-drawing rules, `λ`, `⟦…⟧`) without truncating.
+        LineComment = "//[^\\n]*" -> COMMENTS ;
+        BlockComment = "/\\*([^*]|\\*+[^*/])*\\*+/" -> COMMENTS ;
+
         FltOpenBacktick = "[a-z]+`" push(flt_body_backtick) ;
         FltOpenFence = "[a-z]+```" push(flt_body_fence) ;
         FltOpenBrace = "box\\{" push(flt_body_brace) ;
