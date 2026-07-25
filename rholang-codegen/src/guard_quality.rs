@@ -64,16 +64,83 @@ pub enum RhoGuardQuality {
 /// The decidability tier of a guard's decision procedure — the predicate-substrate
 /// classification (prattail `DecidabilityTier` / macros `GuardTier` / Coq
 /// `GuardTierCertificate.Tier`). T1/T2 are exact, T3 is bounded, T4 is asserted.
+///
+/// ★ THIS IS A PER-OBLIGATION-**KIND** COVERAGE CLASSIFIER, NOT A PER-SITE VERDICT.
+/// [`default_classification`] assigns a tier from the [`RhoGuardObligationKind`] alone; it
+/// never inspects an individual guard instance, and it must not be made instance-aware — a
+/// coverage classifier answers *"what class of decision procedure covers obligations of this
+/// kind?"*, which is a property of the language, not of any one `where` clause. The per-SITE
+/// axis is [`RhoGuardSiteTier`]; the two are orthogonal and both are recorded.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum RhoGuardTier {
-    /// Static-constant decision (compile-time).
+    /// **Exactly decided by a structural/shape decision procedure** — Dovetail's core matcher
+    /// for a [`RhoGuardObligationKind::StructuralPattern`]. Classical, complete, no bound and
+    /// no approximation.
+    ///
+    /// ⚠ This tier does NOT mean "this guard is a compile-time constant". It once read
+    /// "static-constant decision (compile-time)", which described a per-SITE property that
+    /// [`default_classification`] has never computed — it derives `T1Exact` from the
+    /// obligation KIND being `StructuralPattern`. The static-constant reading now lives where
+    /// it belongs, on [`RhoGuardSiteTier::StaticConstant`].
     T1Exact,
-    /// Decidable at runtime (exact).
+    /// Decidable at runtime (exact) — a registered theory's effective Boolean algebra, an SFT,
+    /// or a Rho-native join contract. Complete, but the decision happens at COMM time.
     T2Decidable,
     /// Sound+complete only under a bound.
     T3Bounded,
     /// Trusted assertion site (no static guarantee).
     T4Asserted,
+}
+
+/// The decision tier of **ONE guard site** — the per-instance axis, orthogonal to
+/// [`RhoGuardTier`]'s per-obligation-kind coverage classification.
+///
+/// A language may cover its `StructuralPattern` obligations at `T1Exact` (a fact about the
+/// language) while a particular `where` clause in a particular program is a binder-closed
+/// constant, an ordinary payload-dependent guard, or routed to another substrate (three facts
+/// about three sites). Conflating the two is what made `T1Exact`'s old doc comment wrong.
+///
+/// ★ ROUTE-SITE INVARIANT. This is the per-site tier the wiring plan's route table will carry:
+/// **one routing decision per guard, computed once at lowering, consulted by every decider.**
+/// It is *recorded* here, never re-derived — `mettail_rholang_runtime::guard_discharge`
+/// produces it (`GuardDischarge::site_tier`) as a by-product of the decision it already makes,
+/// and any later consumer reads it rather than recomputing a route of its own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum RhoGuardSiteTier {
+    /// ★ **Static-constant decision (compile time).** This individual guard is binder-closed
+    /// and both the machine and the host evaluator decided it, so its verdict is fixed in the
+    /// artifact. A `true` verdict is recorded by OMITTING `Receive.condition` (S-D0's
+    /// `Discharged`); a `false` verdict is recorded only as the `W1 GuardStaticallyFalse`
+    /// diagnostic (`Refuted`), because a never-firing `for` is a resting observable.
+    StaticConstant,
+    /// Decided by the Rho machine's own guard evaluator at COMM time — the condition rides in
+    /// the artifact and `check_commit` reads it. The overwhelming majority of sites: a guard
+    /// that mentions a bind variable cannot be decided before the payload arrives.
+    MachineEvaluated,
+    /// Decided by a substrate other than the Rho machine's guard evaluator (a Dovetail native
+    /// fold, an EBA/SFT decision procedure, a native handler). Never eligible for
+    /// compile-time folding by the guard-discharge path, which is not that substrate.
+    SubstrateDecided,
+    /// No route recorded for this site. Fail-closed: a consumer must treat it as
+    /// undecided rather than assuming a default.
+    Unrouted,
+}
+
+impl RhoGuardSiteTier {
+    /// Whether this site's verdict is fixed in the artifact (i.e. settled at compile time).
+    pub fn is_static_constant(self) -> bool {
+        matches!(self, RhoGuardSiteTier::StaticConstant)
+    }
+
+    /// A short stable tag for diagnostics and route tables.
+    pub fn tag(self) -> &'static str {
+        match self {
+            RhoGuardSiteTier::StaticConstant => "StaticConstant",
+            RhoGuardSiteTier::MachineEvaluated => "MachineEvaluated",
+            RhoGuardSiteTier::SubstrateDecided => "SubstrateDecided",
+            RhoGuardSiteTier::Unrouted => "Unrouted",
+        }
+    }
 }
 
 /// The substrate's findings for one guard obligation: the covering mechanism, the
@@ -408,5 +475,70 @@ mod tests {
         ] {
             assert_ne!(q(o), Q::Unknown);
         }
+    }
+
+    // ── S-Q: the two axes are orthogonal and stay that way ──────────────────────────────────
+
+    /// ★ `RhoGuardTier` is a per-obligation-KIND COVERAGE classifier: it is a function of the
+    /// obligation kind ALONE. This test is the guard against re-introducing the confusion that
+    /// made `T1Exact`'s old doc comment ("static-constant decision (compile-time)") wrong —
+    /// `default_classification` has never inspected a guard instance, and must not start.
+    #[test]
+    fn the_tier_is_a_function_of_the_obligation_kind_alone() {
+        // Determinism: the same kind always yields the same tier, with no instance input to
+        // vary. `default_classification`'s signature is itself the proof — it takes only a
+        // `RhoGuardObligationKind` — so this pins the intended reading of each arm.
+        assert_eq!(
+            default_classification(RhoGuardObligationKind::StructuralPattern).tier,
+            T1Exact,
+            "T1Exact denotes `decided exactly by Dovetail's structural core`, NOT `this \
+             particular guard is a compile-time constant`"
+        );
+        assert_eq!(
+            default_classification(RhoGuardObligationKind::TheoryRegistration).tier,
+            T2Decidable
+        );
+        assert_eq!(
+            default_classification(RhoGuardObligationKind::BehavioralPredicate).tier,
+            T2Decidable
+        );
+        assert_eq!(default_classification(RhoGuardObligationKind::RhoNativeJoin).tier, T2Decidable);
+        for kind in [
+            RhoGuardObligationKind::StructuralPattern,
+            RhoGuardObligationKind::TheoryRegistration,
+            RhoGuardObligationKind::BehavioralPredicate,
+            RhoGuardObligationKind::RhoNativeJoin,
+        ] {
+            assert_eq!(
+                default_classification(kind),
+                default_classification(kind),
+                "a coverage classifier must be a pure function of the obligation kind"
+            );
+        }
+    }
+
+    /// The static-constant reading now lives on the PER-SITE tier, where the compile-time
+    /// verdict of one individual `where` clause actually belongs.
+    #[test]
+    fn only_the_per_site_tier_carries_the_static_constant_reading() {
+        assert!(RhoGuardSiteTier::StaticConstant.is_static_constant());
+        for tier in [
+            RhoGuardSiteTier::MachineEvaluated,
+            RhoGuardSiteTier::SubstrateDecided,
+            RhoGuardSiteTier::Unrouted,
+        ] {
+            assert!(!tier.is_static_constant(), "{tier:?} is not a compile-time verdict");
+        }
+        // Tags are stable and distinct (they are route-table keys).
+        let tags = [
+            RhoGuardSiteTier::StaticConstant.tag(),
+            RhoGuardSiteTier::MachineEvaluated.tag(),
+            RhoGuardSiteTier::SubstrateDecided.tag(),
+            RhoGuardSiteTier::Unrouted.tag(),
+        ];
+        let mut unique = tags.to_vec();
+        unique.sort_unstable();
+        unique.dedup();
+        assert_eq!(unique.len(), tags.len(), "site-tier tags must be distinct");
     }
 }

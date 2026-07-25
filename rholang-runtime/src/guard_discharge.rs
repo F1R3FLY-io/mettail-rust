@@ -95,6 +95,7 @@ use rho_pure_eval::Env as PureEnv;
 use rholang::rust::interpreter::matcher::r#match::SpatialMatcherOracle;
 
 pub use mettail_rholang_codegen::guard_closure::{all_operands_ground, is_binder_closed};
+pub use mettail_rholang_codegen::guard_quality::RhoGuardSiteTier;
 
 /// The verdict for one guard site.
 ///
@@ -140,6 +141,29 @@ impl GuardDischarge {
             GuardDischarge::Discharged => "Discharged",
             GuardDischarge::Refuted => "Refuted",
             GuardDischarge::Residual => "Residual",
+        }
+    }
+
+    /// This outcome as the PER-SITE decision tier the route table records (S-Q).
+    ///
+    /// ★ ROUTE-SITE INVARIANT: the tier is *produced* here, as a by-product of the decision
+    /// this module already made, so a later consumer READS the site's route instead of
+    /// re-deriving one. `Discharged` and `Refuted` are both
+    /// [`RhoGuardSiteTier::StaticConstant`] — the verdict is fixed in the artifact either way;
+    /// they differ only in how that verdict is RECORDED (an omitted condition vs a `W1`
+    /// diagnostic). `Residual` is [`RhoGuardSiteTier::MachineEvaluated`]: the condition rides
+    /// in the artifact and `check_commit` reads it.
+    ///
+    /// Note the tier this never produces: [`RhoGuardSiteTier::SubstrateDecided`]. A guard
+    /// routed to another substrate is refused at the top of [`classify`] and never reaches an
+    /// outcome, precisely because deciding it here would be this module deciding a routing
+    /// question it has no standing to decide.
+    pub fn site_tier(self) -> RhoGuardSiteTier {
+        match self {
+            GuardDischarge::Discharged | GuardDischarge::Refuted => {
+                RhoGuardSiteTier::StaticConstant
+            },
+            GuardDischarge::Residual => RhoGuardSiteTier::MachineEvaluated,
         }
     }
 }
@@ -616,6 +640,21 @@ mod tests {
         assert_eq!(report.refuted.len(), 1);
         assert_eq!(report.refuted[0].guard, "false");
         assert_eq!(report.total(), 3);
+    }
+
+    /// S-Q: every outcome maps to a per-SITE tier, and `SubstrateDecided` is unreachable from
+    /// here by construction (a substrate-routed guard is refused before it can get an outcome).
+    #[test]
+    fn every_outcome_carries_its_per_site_tier() {
+        assert_eq!(GuardDischarge::Discharged.site_tier(), RhoGuardSiteTier::StaticConstant);
+        assert_eq!(GuardDischarge::Refuted.site_tier(), RhoGuardSiteTier::StaticConstant);
+        assert_eq!(GuardDischarge::Residual.site_tier(), RhoGuardSiteTier::MachineEvaluated);
+        // A guard on another substrate never reaches an outcome, so this path can never
+        // report `SubstrateDecided` — it reports the safe `Residual`/`MachineEvaluated` pair.
+        assert_eq!(
+            classify(Some(true), &gbool(true), GuardRouting::OtherSubstrate).site_tier(),
+            RhoGuardSiteTier::MachineEvaluated
+        );
     }
 
     #[test]
