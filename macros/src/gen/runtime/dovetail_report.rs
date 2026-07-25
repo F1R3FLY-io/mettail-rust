@@ -368,26 +368,59 @@ pub(crate) struct CommElementInfo {
     pub(crate) constructor: Ident,
     /// The category the constructor builds (e.g. `Proc`).
     pub(crate) category: Ident,
-    /// The bare-variable arguments, in LHS order.
+    /// The bare-variable arguments, in LHS order. A trailing `^x.body` binder-scope argument
+    /// contributes its BODY variable (see [`comm_structured_element`]), so `args.last()` is the
+    /// scope variable under either spelling.
     pub(crate) args: Vec<Ident>,
+    /// Whether the LAST argument was written as an EXPLICIT binder abstraction `^x.body` (the
+    /// omnibus π spelling `(PIn n ^x.p)`) rather than a bare scope variable (`(PFor N cont)`).
+    /// Both lower to the SAME `[pre…, BinderArity(1), body]` element pattern — the pattern binder
+    /// name `x` is α-irrelevant because the dispatch arm rebuilds a FRESH binder before
+    /// substituting — so this only records the surface form (and marks the argument as a binder
+    /// SCOPE, which may never be spliced raw into a reduct).
+    pub(crate) scope_is_explicit_lambda: bool,
     /// Whether this element is a single `Binder` constructor whose SCOPE (last arg) is the
     /// substitution scope var (the receive continuation `cont`).
     pub(crate) is_binder: bool,
+}
+
+/// (A-3 / D10) One fixed element of a Comm rule's AC bag REDUCT, in RHS order.
+///
+/// The reduct is a bag `op{ r_0, …, r_{m-1}, ...rest }` with `m ≥ 1` elements, EXACTLY ONE of which
+/// is the host-computed substitution; the others are σ-delivered LHS variables. `m = 1` is the
+/// ASYNCHRONOUS communication `op{ (eval cont Q), ...rest }` (RhoCalc/`CommDemo`); `m = 2` is the
+/// SYNCHRONOUS π communication `op{ (eval ^x.p m), q, ...rest }` — the output's continuation `q`
+/// runs in parallel with the substituted receive continuation (`c!x.P | c?y.Q ⇒ P | Q{x/y}`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum CommReductElement {
+    /// The HOST-COMPUTED substitution element `(eval scope arg)` — `cont[Q/y]`. Exactly one reduct
+    /// element is of this kind (the lane's defining feature); the dispatch arm binds it to the
+    /// reserved `__comm_reduct` σ slot.
+    Substitution,
+    /// A σ-DELIVERED reduct element: a bare LHS-element argument variable, spliced straight from the
+    /// AC match's σ (never host-computed) — exactly as [`StructuralAcRewrite::reduct_vars`]. It may
+    /// never be a binder SCOPE (splicing an open body would let the bound variable escape), which
+    /// [`is_comm_rewrite`] enforces.
+    Var(Ident),
 }
 
 /// (A-3) The canonical single-receive Rholang COMMUNICATION rule, classified for typed-native
 /// lowering:
 ///
 /// ```text
-/// op{ (Recv N cont), (Send N Q), ...rest }  ~>  op{ (eval cont Q), ...rest }
+/// op{ (Recv N cont), (Send N Q), ...rest }  ~>  op{ (eval cont Q), ...rest }              (m = 1)
+/// op{ (Recv N ^y.cont), (Send N Q P), ...rest }  ~>  op{ (eval ^y.cont Q), P, ...rest }   (m = 2)
 /// ```
 ///
-/// i.e. `for(y <- N){ cont } | N!(Q) ~> cont[Q/y]`, spliced back into the residual bag. The two
-/// structured elements share the NON-LINEAR channel var `N` (once each); one element is a single
-/// `Binder` whose scope is `cont`; and the RHS is a single-argument substitution `(eval cont Q)`
-/// over the SAME `op` + `rest`. This is the shape the shared `comm_rule_shape` un-skips to a
-/// `CommRewrite` σ-receiver; classifying it here routes it onto the TYPED native lane so
-/// `dovetail_report_for` produces the Comm justification (σ + contractum) the injection reads.
+/// i.e. `for(y <- N){ cont } | N!(Q) ~> cont[Q/y]` (asynchronous output) and its SYNCHRONOUS dual
+/// `N?y.cont | N!Q.P ~> cont[Q/y] | P` (the omnibus π `Comm`, `omnibus.tex:1988-1989`), spliced back
+/// into the residual bag. The two structured elements share the NON-LINEAR channel var `N` (once
+/// each); one element is a single `Binder` whose scope is `cont` (written either as a bare scope
+/// variable or as an explicit `^y.cont` abstraction); and the RHS is a with-rest bag over the SAME
+/// `op` + `rest` whose `m ≥ 1` fixed elements are EXACTLY ONE single-argument substitution
+/// `(eval cont Q)` plus `m - 1` bare LHS variables. This is the shape the shared `comm_rule_shape`
+/// un-skips to a `CommRewrite` σ-receiver; classifying it here routes it onto the TYPED native lane
+/// so `dovetail_report_for` produces the Comm justification (σ + contractum) the injection reads.
 /// Everything is derived from `LanguageDef` (no per-language hardcoding); it fail-closes on every
 /// other shape (verified to REJECT the β `is_substitution_rewrite` shape and any structural AC).
 #[derive(Debug, Clone)]
@@ -410,6 +443,11 @@ pub(crate) struct CommRewrite {
     pub(crate) scope_var: Ident,
     /// The substitution replacement variable (= the sent name `Q`).
     pub(crate) arg_var: Ident,
+    /// (D10) The `m ≥ 1` reduct elements in RHS order — exactly one
+    /// [`CommReductElement::Substitution`] plus `m - 1` σ-delivered
+    /// [`CommReductElement::Var`]s. `[Substitution]` is the asynchronous single-element reduct the
+    /// lane originally admitted; `[Substitution, Var(q)]` is the omnibus π synchronous reduct.
+    pub(crate) reduct_elements: Vec<CommReductElement>,
     /// The bound-variable (domain) category of the binder element (e.g. `Name`) — selects the
     /// generated `substitute_<binder_var_cat>` and the `build_<binder_var_cat>_d` for the arg.
     pub(crate) binder_var_cat: Ident,
@@ -440,6 +478,18 @@ fn comm_collection_apply(
 
 /// A structured element `C(v_0, …, v_{m-1})` — a constructor applied to bare variables. Returns
 /// `None` for a bare variable or any non-variable argument.
+///
+/// (D10) The LAST argument may ALSO be an EXPLICIT single binder abstraction `^x.body` whose body is
+/// a bare variable — the omnibus π spelling `(PIn n ^x.p)` (`omnibus.tex:1988`) of the same element
+/// the RhoCalc/`CommDemo` rules write as a bare scope variable `(PFor N cont)`. It is admitted ONLY
+/// when `C` is a single `VariantKind::Binder` of its category, i.e. only where the element really
+/// does lower to the FIX-A `[pre-scope children…, BinderArity(1), body]` node whose LAST child is
+/// the binder BODY. Under that condition the two spellings produce the SAME element pattern
+/// ([`typed_report::comm_element_pattern`] binds the last arg to the BODY class either way) and the
+/// SAME reduct (the dispatch arm rebuilds a FRESH binder before substituting, so the pattern's
+/// binder name `x` is α-irrelevant — it never reaches the generated code). A `^x.body` in any other
+/// position, a `^[xs].body` multi-binder, a non-variable body, or a non-`Binder` constructor all
+/// fail closed.
 fn comm_structured_element(
     language: &LanguageDef,
     pattern: &AstPattern,
@@ -447,20 +497,46 @@ fn comm_structured_element(
     let AstPattern::Term(PatternTerm::Apply { constructor, args }) = pattern else {
         return None;
     };
-    let mut vars: Vec<Ident> = Vec::with_capacity(args.len());
-    for arg in args {
-        let AstPattern::Term(PatternTerm::Var(v)) = arg else {
-            return None;
-        };
-        vars.push(v.clone());
-    }
     let category = language.category_of_constructor(constructor)?.clone();
+    let mut vars: Vec<Ident> = Vec::with_capacity(args.len());
+    let mut scope_is_explicit_lambda = false;
+    for (index, arg) in args.iter().enumerate() {
+        match arg {
+            AstPattern::Term(PatternTerm::Var(v)) => vars.push(v.clone()),
+            // `^x.body` — admitted only as the LAST argument of a single-`Binder` constructor.
+            AstPattern::Term(PatternTerm::Lambda { body, .. })
+                if index + 1 == args.len() && constructor_is_single_binder(language, &category, constructor) =>
+            {
+                let AstPattern::Term(PatternTerm::Var(body_var)) = body.as_ref() else {
+                    return None;
+                };
+                vars.push(body_var.clone());
+                scope_is_explicit_lambda = true;
+            },
+            _ => return None,
+        }
+    }
     Some(CommElementInfo {
         constructor: constructor.clone(),
         category,
         args: vars,
+        scope_is_explicit_lambda,
         is_binder: false,
     })
+}
+
+/// Whether `constructor` is a single [`VariantKind::Binder`] (NOT a `MultiBinder`) of `category` —
+/// the gate that admits an explicit `^x.body` scope argument in [`comm_structured_element`] and the
+/// same predicate the binder-element selection in [`is_comm_rewrite`] re-derives (with its binder /
+/// body categories).
+fn constructor_is_single_binder(
+    language: &LanguageDef,
+    category: &Ident,
+    constructor: &Ident,
+) -> bool {
+    collect_category_variants(category, language)
+        .into_iter()
+        .any(|variant| matches!(variant, VariantKind::Binder { label, .. } if &label == constructor))
 }
 
 /// The unique variable shared by EVERY element, exactly once in each — the non-linear channel
@@ -502,10 +578,33 @@ fn comm_subst_element(pattern: &AstPattern) -> Option<(Ident, Ident)> {
     }
 }
 
-/// (A-3) Classify a rewrite as the canonical single-receive Rholang COMMUNICATION rule
+/// (A-3 / D10) Classify a rewrite as the canonical single-receive Rholang COMMUNICATION rule
 /// ([`CommRewrite`]), or `None`. Fail-closed on every other shape: a non-HashBag collection, ≠2
-/// structured elements, 0/≥2 shared variables, an RHS that is not a single-substitution with-rest
-/// bag over the SAME op + rest, or a scope that is not the last arg of a single `Binder` element.
+/// structured elements, 0/≥2 shared variables, an RHS that is not a with-rest bag over the SAME op +
+/// rest, an RHS with ≠1 substitution element, an RHS non-substitution element that is not a bare LHS
+/// variable or that is a binder SCOPE, or a scope that is not the last arg of a single `Binder`
+/// element.
+///
+/// # (D10) Reduct arity
+///
+/// The reduct bag admits `m ≥ 1` fixed elements: EXACTLY ONE substitution `(eval scope arg)` plus
+/// `m - 1` bare LHS variables delivered straight from the AC match's σ. `m = 1` is the ASYNCHRONOUS
+/// output (RhoCalc / `CommDemo`: `op{ (eval cont Q), ...rest }`); `m = 2` is the omnibus's
+/// SYNCHRONOUS π `Comm` (`omnibus.tex:1988-1989`)
+///
+/// ```text
+/// (PPar {(PIn n ^x.p), (POut n m q), ...rest})  ~>  (PPar {(eval ^x.p m), q, ...rest})
+/// ```
+///
+/// whose output `n!m.q` carries the continuation `q`, so the contractum is the PARALLEL COMPOSITION
+/// `p[m/x] | q` — which is exactly what the reduct bag `op{…}` means, `op` being the AC (HashBag)
+/// parallel operator the LHS already matched over. The arity-1 restriction was never a semantic
+/// constraint on the contractum: it was the shape the lane was first written for.
+///
+/// A σ-delivered reduct element may NOT be a binder SCOPE (the last argument of an element whose
+/// constructor is a `Binder`/`MultiBinder`): splicing a raw binder body into the reduct would let
+/// the bound variable escape its binder. That is the ONE genuinely semantic side condition the
+/// generalization adds, and it fails closed.
 pub(crate) fn is_comm_rewrite(language: &LanguageDef, rw: &RewriteRule) -> Option<CommRewrite> {
     // Premises: congruence-only (same gate as the structural lowering).
     if !rw.premises.iter().all(premise_supported) {
@@ -526,17 +625,45 @@ pub(crate) fn is_comm_rewrite(language: &LanguageDef, rw: &RewriteRule) -> Optio
     // The shared non-linear channel variable.
     let nonlinear_var = comm_unique_shared_var(&elements)?;
 
-    // RHS: op{ (eval scope arg), ...rest } — the SAME op + rest, a single substitution element.
+    // RHS: op{ r_0, …, r_{m-1}, ...rest } — the SAME op + rest, `m ≥ 1` fixed elements.
     let (rhs_op, rhs_elements, rhs_rest) = comm_collection_apply(&rw.right)?;
     let rhs_rest = rhs_rest?;
-    if rhs_op != op_label || rhs_elements.len() != 1 || rhs_rest != &rest_var {
+    if rhs_op != op_label || rhs_elements.is_empty() || rhs_rest != &rest_var {
         return None;
     }
-    let (scope_var, arg_var) = comm_subst_element(&rhs_elements[0])?;
 
-    // The substitution's scope + arg must be LHS variables.
-    let is_lhs_var = |name: &Ident| elements.iter().any(|e| e.args.iter().any(|v| v == name));
-    if !is_lhs_var(&scope_var) || !is_lhs_var(&arg_var) {
+    // EXACTLY ONE substitution element; every other fixed element is a bare variable.
+    let mut subst_slot: Option<(Ident, Ident)> = None;
+    let mut reduct_elements: Vec<CommReductElement> = Vec::with_capacity(rhs_elements.len());
+    for element in rhs_elements {
+        match comm_subst_element(element) {
+            Some(pair) => {
+                if subst_slot.replace(pair).is_some() {
+                    return None; // ≥2 substitutions — an ambiguous host-computed reduct.
+                }
+                reduct_elements.push(CommReductElement::Substitution);
+            },
+            // Not a substitution ⇒ it must be a bare variable (the structural, σ-delivered case).
+            None => match element {
+                AstPattern::Term(PatternTerm::Var(var)) => {
+                    reduct_elements.push(CommReductElement::Var(var.clone()))
+                },
+                _ => return None,
+            },
+        }
+    }
+    // No substitution at all ⇒ this is a STRUCTURAL AC rewrite, not a Comm (mutual exclusion).
+    let (scope_var, arg_var) = subst_slot?;
+
+    // The substitution's scope + arg, and every σ-delivered reduct element, must be LHS variables
+    // (supplied by the AC match's σ). Materialized up front so the binder marking below may take
+    // `elements` mutably.
+    let lhs_vars: HashSet<String> = elements
+        .iter()
+        .flat_map(|element| element.args.iter())
+        .map(|var| var.to_string())
+        .collect();
+    if !lhs_vars.contains(&scope_var.to_string()) || !lhs_vars.contains(&arg_var.to_string()) {
         return None;
     }
 
@@ -559,6 +686,34 @@ pub(crate) fn is_comm_rewrite(language: &LanguageDef, rw: &RewriteRule) -> Optio
     let (binder_element_index, binder_var_cat, body_cat) = binder_info?;
     elements[binder_element_index].is_binder = true;
 
+    // A σ-delivered reduct element must be an LHS variable that is NOT a binder SCOPE — splicing a
+    // raw binder body into the reduct would let its bound variable escape (the substitution element
+    // is the ONLY sound way to consume a scope).
+    let binder_scope_vars: HashSet<String> = elements
+        .iter()
+        .filter(|element| {
+            element.scope_is_explicit_lambda
+                || collect_category_variants(&element.category, language)
+                    .into_iter()
+                    .any(|variant| match variant {
+                        VariantKind::Binder { label, .. } | VariantKind::MultiBinder { label, .. } => {
+                            label == element.constructor
+                        },
+                        _ => false,
+                    })
+        })
+        .filter_map(|element| element.args.last())
+        .map(|scope| scope.to_string())
+        .collect();
+    for reduct in &reduct_elements {
+        let CommReductElement::Var(var) = reduct else {
+            continue;
+        };
+        if !lhs_vars.contains(&var.to_string()) || binder_scope_vars.contains(&var.to_string()) {
+            return None;
+        }
+    }
+
     let op_cat = language.category_of_constructor(op_label)?.clone();
 
     Some(CommRewrite {
@@ -571,6 +726,7 @@ pub(crate) fn is_comm_rewrite(language: &LanguageDef, rw: &RewriteRule) -> Optio
         rest_var,
         scope_var,
         arg_var,
+        reduct_elements,
         binder_var_cat,
         body_cat,
     })
@@ -2486,5 +2642,196 @@ mod tests {
             vec!["a"]
         );
         assert_eq!(sr.head_label.to_string(), "Send");
+    }
+
+    // ─── D10: the SYNCHRONOUS π `Comm` — an arity-2 reduct + an explicit `^x.p` scope ────────────
+
+    /// The GSLT omnibus's synchronous π communication (`omnibus.tex:1988-1989`)
+    ///
+    /// ```text
+    /// Comm . |- (PPar {(PIn n ^x.p), (POut n m q), ...rest}) ~> (PPar {(eval ^x.p m), q, ...rest})
+    /// ```
+    ///
+    /// is a Comm rewrite. It exercises BOTH halves of the D10 generalization at once: the receive
+    /// element carries an EXPLICIT binder abstraction `^x.p` (not a bare scope variable), and the
+    /// reduct has TWO elements — the host-computed substitution `p[m/x]` AND the output's
+    /// continuation `q`, whose parallel composition is exactly `c!x.P | c?y.Q ⇒ P | Q{x/y}`.
+    #[test]
+    fn is_comm_rewrite_detects_the_synchronous_pi_comm() {
+        let language = parse(
+            r#"
+                name: SyncCommClassify,
+                types { Proc Name }
+                terms {
+                    PZero . |- "0" : Proc ;
+                    Na . |- "na" : Name ;
+                    Nb . |- "nb" : Name ;
+                    PPar . ps:HashBag(Proc) |- "{" ps.*sep("|") "}" : Proc ;
+                    POut . n:Name, m:Name, p:Proc |- n "!" m "." p : Proc ;
+                    PIn . n:Name, ^x.p:[Name -> Proc]
+                        |- "in" "(" n "," x ")" "." p : Proc ;
+                }
+                equations {}
+                rewrites {
+                    Comm . |- (PPar {(PIn n ^x.p), (POut n m q), ...rest})
+                        ~> (PPar {(eval ^x.p m), q, ...rest}) ;
+                }
+            "#,
+        );
+        let cr = is_comm_rewrite(&language, rewrite(&language, "Comm"))
+            .expect("the synchronous π Comm must be detected as a Comm rewrite");
+        assert_eq!(cr.op_label.to_string(), "PPar");
+        assert_eq!(cr.nonlinear_var.to_string(), "n", "the shared channel is `n`");
+        assert_eq!(cr.rest_var.to_string(), "rest");
+        // The explicit `^x.p` scope contributes its BODY variable `p`.
+        assert_eq!(cr.scope_var.to_string(), "p");
+        assert_eq!(cr.arg_var.to_string(), "m");
+        assert_eq!(cr.binder_var_cat.to_string(), "Name");
+        assert_eq!(cr.body_cat.to_string(), "Proc");
+        let binder = &cr.elements[cr.binder_element_index];
+        assert_eq!(binder.constructor.to_string(), "PIn");
+        assert!(binder.is_binder);
+        assert!(binder.scope_is_explicit_lambda, "`^x.p` is the explicit binder spelling");
+        assert_eq!(
+            binder.args.iter().map(|v| v.to_string()).collect::<Vec<_>>(),
+            vec!["n".to_string(), "p".to_string()],
+            "the `^x.p` argument contributes the body variable `p`"
+        );
+        // ★ The D10 property: a TWO-element reduct — the substitution ∥ the output continuation.
+        assert_eq!(
+            cr.reduct_elements,
+            vec![
+                CommReductElement::Substitution,
+                CommReductElement::Var(Ident::new("q", Span::call_site())),
+            ],
+            "the synchronous reduct is `(eval ^x.p m) | q`"
+        );
+        // It is NOT a structural AC rewrite (mutually exclusive: it carries a substitution).
+        assert!(is_structural_ac_rewrite(&language, rewrite(&language, "Comm")).is_none());
+        // And it routes the language to the typed native lane.
+        assert!(needs_typed_dovetail_path(&language));
+    }
+
+    /// (D10, fail-closed) A reduct with TWO substitution elements is ambiguous — there is exactly
+    /// one host-computed contractum slot (`__comm_reduct`) — so the classifier declines.
+    #[test]
+    fn is_comm_rewrite_rejects_two_substitution_reducts() {
+        let language = parse(
+            r#"
+                name: TwoSubstReduct,
+                types { Proc Name }
+                terms {
+                    PZero . |- "0" : Proc ;
+                    Na . |- "na" : Name ;
+                    PPar . ps:HashBag(Proc) |- "{" ps.*sep("|") "}" : Proc ;
+                    POut . n:Name, m:Name, p:Proc |- n "!" m "." p : Proc ;
+                    PIn . n:Name, ^x.p:[Name -> Proc]
+                        |- "in" "(" n "," x ")" "." p : Proc ;
+                }
+                equations {}
+                rewrites {
+                    Comm . |- (PPar {(PIn n ^x.p), (POut n m q), ...rest})
+                        ~> (PPar {(eval ^x.p m), (eval ^x.p m), ...rest}) ;
+                }
+            "#,
+        );
+        assert!(
+            is_comm_rewrite(&language, rewrite(&language, "Comm")).is_none(),
+            "a reduct with two substitutions has no unambiguous host-computed contractum slot"
+        );
+    }
+
+    /// (D10, fail-closed — the ONE semantic side condition the generalization adds) A σ-delivered
+    /// reduct element may not be a binder SCOPE: splicing the raw body `p` of `^x.p` beside the
+    /// substitution would let the bound variable `x` escape its binder.
+    #[test]
+    fn is_comm_rewrite_rejects_a_binder_scope_as_a_bare_reduct_element() {
+        let language = parse(
+            r#"
+                name: EscapingScopeReduct,
+                types { Proc Name }
+                terms {
+                    PZero . |- "0" : Proc ;
+                    Na . |- "na" : Name ;
+                    PPar . ps:HashBag(Proc) |- "{" ps.*sep("|") "}" : Proc ;
+                    POut . n:Name, m:Name, p:Proc |- n "!" m "." p : Proc ;
+                    PIn . n:Name, ^x.c:[Name -> Proc]
+                        |- "in" "(" n "," x ")" "." c : Proc ;
+                }
+                equations {}
+                rewrites {
+                    Comm . |- (PPar {(PIn n ^x.c), (POut n m q), ...rest})
+                        ~> (PPar {(eval ^x.c m), c, ...rest}) ;
+                }
+            "#,
+        );
+        assert!(
+            is_comm_rewrite(&language, rewrite(&language, "Comm")).is_none(),
+            "a raw binder body may not be spliced into the reduct (the bound variable would escape)"
+        );
+    }
+
+    /// (D10, fail-closed) A `^x.p` abstraction is admitted ONLY as the LAST argument of a single
+    /// `Binder` constructor. Here `POut` is a plain (non-binder) constructor, so writing its last
+    /// argument as an abstraction must fail closed rather than silently drop the binder.
+    #[test]
+    fn is_comm_rewrite_rejects_a_lambda_argument_of_a_non_binder_element() {
+        let language = parse(
+            r#"
+                name: LambdaOnNonBinder,
+                types { Proc Name }
+                terms {
+                    PZero . |- "0" : Proc ;
+                    Na . |- "na" : Name ;
+                    PPar . ps:HashBag(Proc) |- "{" ps.*sep("|") "}" : Proc ;
+                    POut . n:Name, m:Name, p:Proc |- n "!" m "." p : Proc ;
+                    PIn . n:Name, ^x.p:[Name -> Proc]
+                        |- "in" "(" n "," x ")" "." p : Proc ;
+                }
+                equations {}
+                rewrites {
+                    Comm . |- (PPar {(PIn n ^x.p), (POut n m ^z.q), ...rest})
+                        ~> (PPar {(eval ^x.p m), q, ...rest}) ;
+                }
+            "#,
+        );
+        assert!(
+            is_comm_rewrite(&language, rewrite(&language, "Comm")).is_none(),
+            "an abstraction argument of a non-binder constructor must fail closed"
+        );
+    }
+
+    /// (D10 regression) The ASYNCHRONOUS single-element reduct — the shape the lane was written for
+    /// — still classifies EXACTLY as before, with `reduct_elements == [Substitution]`.
+    #[test]
+    fn is_comm_rewrite_keeps_the_asynchronous_single_element_reduct() {
+        let language = parse(
+            r#"
+                name: AsyncCommClassify,
+                types { Proc Name }
+                terms {
+                    PZero . |- "0" : Proc ;
+                    Na . |- "na" : Name ;
+                    Nb . |- "nb" : Name ;
+                    PPar . ps:HashBag(Proc) |- "{" ps.*sep("|") "}" : Proc ;
+                    POutput . n:Name, q:Name |- n "!" "(" q ")" : Proc ;
+                    PFor . n:Name, ^x.p:[Name -> Proc]
+                        |- "for" "(" x "<-" n ")" "{" p "}" : Proc ;
+                }
+                equations {}
+                rewrites {
+                    Comm . |- (PPar {(PFor N cont), (POutput N Q), ...rest})
+                        ~> (PPar {(eval cont Q), ...rest}) ;
+                }
+            "#,
+        );
+        let cr = is_comm_rewrite(&language, rewrite(&language, "Comm"))
+            .expect("the asynchronous Comm must still be detected");
+        assert_eq!(cr.reduct_elements, vec![CommReductElement::Substitution]);
+        let binder = &cr.elements[cr.binder_element_index];
+        assert!(
+            !binder.scope_is_explicit_lambda,
+            "the bare scope-variable spelling is unchanged"
+        );
     }
 }

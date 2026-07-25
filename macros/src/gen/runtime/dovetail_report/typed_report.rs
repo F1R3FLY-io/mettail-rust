@@ -24,8 +24,8 @@ use super::reconstruct::{self, build_fn};
 use super::{
     category_lowering_fn, is_comm_rewrite, is_nested_structural_ac_rewrite,
     is_structural_ac_rewrite, is_substitution_rewrite, lit, pattern_to_dovetail, rule_block,
-    subst_rewrite_native_lhs, to_snake, typed_lowering, CommElementInfo, CommRewrite,
-    NestedStructuralAcRewrite, StructuralAcRewrite, SubstRewrite,
+    subst_rewrite_native_lhs, to_snake, typed_lowering, CommElementInfo, CommReductElement,
+    CommRewrite, NestedStructuralAcRewrite, StructuralAcRewrite, SubstRewrite,
 };
 use crate::gen::term_ops::subst::{collect_category_variants, VariantKind};
 
@@ -989,11 +989,20 @@ fn comm_native_rule(c: &CommRule, enum_id: &Ident) -> Result<TokenStream, String
 ///     `Binder` arm — α-equivalent), `unbind` to freshen the bound variable, and reconstruct `Q`;
 ///  4. `cont[Q/y]` = `body.substitute_<binder_var_cat>(&binder.0, &Q)` — the host-computed
 ///     capture-avoiding substitution (model-b, exactly the Stage 3c binder reduct);
-///  5. lower the reduct and splice `op{ reduct, ...rest }` into ONE flat canonical bag via
+///  5. lower the reduct and splice `op{ r_0, …, r_{m-1}, ...rest }` into ONE flat canonical bag via
 ///     `instantiate` (whose `AcApp` RHS handling flattens the `rest` bag into the parallel), and
 ///     return the reduced bag's e-class — the contractum the engine merges with the redex bag, from
 ///     which `resolve_rewrite_justifications` reports the communicated bag and the Comm σ-injection
 ///     recovers `cont[Q/y]`.
+///
+/// (D10) Step 5 is arity-general: the reduct bag carries the `m ≥ 1` fixed elements
+/// [`CommRewrite::reduct_elements`] describes, in RHS order — the host-computed substitution at the
+/// reserved `__comm_reduct` σ slot, and every other element re-referenced DIRECTLY from `__subst`
+/// (a bare LHS-element argument the AC match already bound), exactly as
+/// [`structural_ac_dispatch_arm`] splices its σ-delivered reducts. For the asynchronous `m = 1`
+/// shape this emits the byte-identical single-element `vec![Pattern::var("__comm_reduct")]`; for the
+/// omnibus π synchronous `m = 2` shape it emits `vec![var("__comm_reduct"), var("q")]`, i.e. the
+/// parallel composition `p[m/x] | q` the rule's AC operator denotes.
 fn comm_dispatch_arm(c: &CommRule, enum_id: &Ident) -> TokenStream {
     let op_id = c.op_id;
     let cr = &c.rewrite;
@@ -1005,6 +1014,21 @@ fn comm_dispatch_arm(c: &CommRule, enum_id: &Ident) -> TokenStream {
     let body_add = category_lowering_fn(&cr.body_cat);
     let single_subst = format_ident!("substitute_{}", to_snake(&cr.binder_var_cat.to_string()));
     let op_variant = op_variant_ident(&cr.op_cat, &cr.op_label);
+    // (D10) The `m ≥ 1` reduct element patterns, in RHS order: the reserved `__comm_reduct` slot for
+    // the host-computed substitution, a plain σ variable for every other element.
+    let reduct_pats: Vec<TokenStream> = cr
+        .reduct_elements
+        .iter()
+        .map(|element| match element {
+            CommReductElement::Substitution => {
+                quote! { ::dovetail::rules::Pattern::var("__comm_reduct") }
+            },
+            CommReductElement::Var(var) => {
+                let name = lit(&var.to_string());
+                quote! { ::dovetail::rules::Pattern::var(#name) }
+            },
+        })
+        .collect();
     quote! {
         #op_id => {
             // 1. Bind + gate the operand classes.
@@ -1035,13 +1059,14 @@ fn comm_dispatch_arm(c: &CommRule, enum_id: &Ident) -> TokenStream {
             let __arg = #arg_build(&__q_d)?;
             // 4. cont[Q/y] — host-computed capture-avoiding substitution (model-b).
             let __reduct = (*__open_body).#single_subst(&__b.0, &__arg);
-            // 5. Splice op{ reduct, ...rest } into one flat canonical bag and return its class.
+            // 5. Splice op{ r_0, …, r_{m-1}, ...rest } into one flat canonical bag and return its
+            //    class. The substitution slot is `__comm_reduct`; every other element comes from σ.
             let __reduct_class = #body_add(__eg, &__reduct);
             let mut __rhs_subst = __subst.clone();
             __rhs_subst.insert(::std::string::String::from("__comm_reduct"), __reduct_class);
             let __rhs_pat = ::dovetail::rules::Pattern::ac(
                 #enum_id::#op_variant,
-                ::std::vec![::dovetail::rules::Pattern::var("__comm_reduct")],
+                ::std::vec![#(#reduct_pats),*],
                 ::core::option::Option::Some(#rest_var.to_string()),
             );
             __eg.instantiate(&__rhs_pat, &__rhs_subst)

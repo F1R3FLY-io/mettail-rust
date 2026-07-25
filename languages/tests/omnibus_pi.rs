@@ -52,35 +52,65 @@
 //! `subst` has no special case and would be rejected as an unknown constructor.
 //! Same operator, same clause, one keyword.
 //!
-//! ## ★ The paper's synchronous `Comm` is DECLARED but not LOWERED
+//! ## ★★ The paper's synchronous `Comm` FIRES (delta D10 — CLOSED)
 //!
 //! `Comm` is present verbatim (it is in `metadata().rewrites()` under its own
-//! name, with the paper's LHS and RHS), but the engine does not lower it, so it
-//! does not fire. This is an engine limitation, stated rather than hidden:
+//! name, with the paper's LHS and RHS) and it **reduces**:
+//! `pi_comm_fires_verbatim` saturates the omnibus's own redex
+//! `{ in(c,y).0 | c!c.0 }` and asserts the report names the rule `Comm`.
 //!
-//! * the untyped `EGraph<String>` lane rejects it — `pattern_to_dovetail`
-//!   (`macros/src/gen/runtime/dovetail_report.rs:1239-1244`) fails closed on a
-//!   `Subst`/`MultiSubst` RHS node and on `Lambda` LHS patterns;
-//! * the typed β-substitution lane rejects it — `is_substitution_rewrite`
-//!   (`:196-243`) requires the substitution to be the WHOLE RHS and the LHS to
-//!   contain NO collection metapattern;
-//! * the typed COMM lane rejects it — `is_comm_rewrite` (`:509-541`) requires the
-//!   reduct to be `op{ (eval scope arg), ...rest }`, i.e. exactly ONE element
-//!   besides the remainder. The paper's π output is SYNCHRONOUS (`n!m.p` carries
-//!   a continuation `p`), so its reduct has TWO elements — the substituted
-//!   continuation AND `q`. RhoCalc's output, for which the lane was built, is
-//!   asynchronous and has no continuation;
-//! * the structural-AC lane rejects it — `is_structural_ac_rewrite` (`:611-…`)
-//!   admits only reducts whose elements are bare LHS variables (no substitution).
+//! It did not always. When this file was first written the typed COMM lane
+//! (`is_comm_rewrite`, `macros/src/gen/runtime/dovetail_report.rs`) rejected the
+//! clause on two counts, recorded as delta **D10**:
 //!
-//! So the reduct arity is the whole obstacle. To keep the demonstration honest
-//! AND executable, this file adds two ➕ EXTRA clauses — an asynchronous output
-//! `POutAsync . n:Name, m:Name |- n "!" m : Proc ;` and the corresponding
-//! `CommAsync` — which express the same interaction in the shape the engine
-//! recognizes, and `pi_comm_async_fires` proves the interaction really reduces.
-//! The synchronous `Comm` clause is NOT dropped, weakened, or renamed; closing
-//! the gap for it is a typed-lane extension (a reduct of arity ≥ 2), reported
-//! rather than undertaken here.
+//! 1. **reduct arity** — the lane required the reduct to be
+//!    `op{ (eval scope arg), ...rest }`, i.e. exactly ONE element besides the
+//!    remainder. The paper's π output is SYNCHRONOUS (`n!m.q` carries a
+//!    continuation `q`), so its reduct has TWO: the substituted receive
+//!    continuation AND `q`. RhoCalc's output — the shape the lane was first
+//!    written for — is asynchronous and has no continuation;
+//! 2. **binder spelling** — the lane required every structured LHS element
+//!    argument to be a bare variable, while the paper writes the receive's scope
+//!    as an EXPLICIT abstraction `(PIn n ^x.p)`.
+//!
+//! Neither was a semantic constraint. The reduct bag `op{…}` IS the AC parallel
+//! operator the LHS matched over, so an `m`-element reduct simply denotes the
+//! parallel composition `p[m/x] | q` — exactly π's `c!x.P | c?y.Q ⇒ P | Q{x/y}`;
+//! and `^x.p` lowers to the same `[…, BinderArity(1), body]` element pattern a
+//! bare scope variable does (the dispatch arm rebuilds a FRESH binder before
+//! substituting, so the pattern's binder name is α-irrelevant). The lane now
+//! admits reducts of arity `m ≥ 1` — exactly one host-computed substitution plus
+//! `m - 1` σ-delivered LHS variables — and the explicit abstraction spelling in
+//! the scope position of a single-`Binder` constructor. Both fail closed
+//! otherwise; in particular a σ-delivered reduct element may never be a binder
+//! SCOPE, which would let the bound variable escape.
+//!
+//! The other three lanes still decline, and correctly so — each has its own
+//! family, and the COMM lane is the one that owns this shape:
+//!
+//! * the untyped `EGraph<String>` lane — `pattern_to_dovetail` fails closed on a
+//!   `Subst`/`MultiSubst` RHS node and on `Lambda` LHS patterns (a Comm rewrite
+//!   never reaches it: `needs_typed_dovetail_path` routes the language typed);
+//! * the typed β-substitution lane — `is_substitution_rewrite` requires the
+//!   substitution to be the WHOLE RHS and the LHS to contain NO collection
+//!   metapattern;
+//! * the structural-AC lane — `is_structural_ac_rewrite` admits only reducts
+//!   whose elements are ALL bare LHS variables (no substitution), which is the
+//!   exact complement of the COMM lane's "exactly one substitution".
+//!
+//! ## ➕ The asynchronous clauses `POutAsync` / `CommAsync` are KEPT
+//!
+//! This file also declares an asynchronous output `POutAsync . n:Name, m:Name |-
+//! n "!" m : Proc ;` and its `CommAsync`. They were originally added because the
+//! synchronous rule could not fire; they are **retained now that it can**,
+//! deliberately, because asynchronous π is a calculus in its own right
+//! (Honda–Tokoro 1991, <https://doi.org/10.1007/BFb0057019>; Boudol, INRIA
+//! RR-1702, 1992) and a conformance spec is allowed to be a SUPERSET of the
+//! paper's listing — which is precisely what the containment table above claims
+//! ("13/13 + 2 extra"). Retiring them would shrink the demonstrated coverage and
+//! delete the only in-tree exemplar of the arity-1 reduct in an omnibus spec.
+//! `pi_comm_async_fires` continues to pin them; they are no longer a workaround,
+//! and nothing in the synchronous path depends on them.
 //!
 //! ## ★ `RepUnfold` and saturation safety
 //!
@@ -146,8 +176,10 @@ language! {
         // ➕ (ours, EXTRA) Asynchronous output — the standard π sublanguage in
         // which an output carries no continuation (Honda–Tokoro 1991,
         // <https://doi.org/10.1007/BFb0057019>; Boudol, INRIA RR-1702, 1992).
-        // It exists so the interaction can be EXERCISED: see the ★ COMM-lowering
-        // note in the module header.
+        // A deliberate SUPERSET clause, kept on its own merits: asynchronous π
+        // is a calculus in its own right. (It predates D10's closure, when it
+        // was also the only executable spelling; that is no longer why it is
+        // here — see the ➕ note in the module header.)
         POutAsync . n:Name, m:Name |- n "!" m : Proc ;
         PPar . ps:HashBag(Proc) |- "{" ps.*sep("|") "}" : Proc ;
         PRep . p:Proc |- "!" p : Proc ;
@@ -164,11 +196,12 @@ language! {
         Comm . |- (PPar {(PIn n ^x.p), (POut n m q), ...rest})
                   ~> (PPar {(eval ^x.p m), q, ...rest}) ;
 
-        // ➕ (ours, EXTRA) The asynchronous COMM — the same interaction as the
-        // paper's `Comm`, over `POutAsync`. Its reduct has ONE element plus the
-        // remainder, which is the shape the engine's typed COMM lane recognizes
-        // (`macros/src/gen/runtime/dovetail_report.rs:509-577`), so THIS rule
-        // actually fires. See the ★ note in the module header.
+        // ➕ (ours, EXTRA) The asynchronous COMM — the interaction of the
+        // asynchronous π sublanguage, over `POutAsync`. Its reduct is the
+        // ARITY-1 bag `{(eval cont m), ...rest}` (no output continuation to run
+        // in parallel), the complementary case to the paper's synchronous
+        // arity-2 `Comm` above; both are the SAME typed COMM lane, which admits
+        // `m ≥ 1` reduct elements. Pinned by `pi_comm_async_fires`.
         CommAsync . |- (PPar {(PIn n cont), (POutAsync n m), ...rest})
                   ~> (PPar {(eval cont m), ...rest}) ;
 
@@ -208,6 +241,27 @@ fn report_summary(src: &str) -> String {
         ),
         Err(e) => format!("Err({e})"),
     }
+}
+
+/// The BARE rule names the saturation of `src` fired, in report order. Firing
+/// labels are `<Lang>::rewrite::<name>`, so the bare tail is what the paper's
+/// clause names are compared against — `"Comm"` and `"CommAsync"` are then
+/// DISTINCT, which a substring test over the rendered summary could not tell
+/// apart.
+fn firing_names(src: &str) -> Vec<String> {
+    let lang = PiLanguage;
+    mettail_runtime::clear_var_cache();
+    let term = lang
+        .parse_term(src)
+        .unwrap_or_else(|e| panic!("parse {src:?} failed: {e}"));
+    let report = PiLanguage::dovetail_report_for(term.as_ref(), MAX_ITERS, MAX_NODES)
+        .unwrap_or_else(|e| panic!("saturation of {src:?} failed: {e}"));
+    report
+        .rule_firings
+        .iter()
+        .filter_map(|firing| firing.label.as_deref())
+        .map(|label| label.rsplit("::").next().unwrap_or(label).to_string())
+        .collect()
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -311,9 +365,8 @@ fn pi_paper_program_round_trips() {
 }
 
 /// `Comm` (:1988-1989) — the paper's SYNCHRONOUS interaction rule is present
-/// verbatim in the metadata (name, LHS, RHS). It is declared but not lowered by
-/// the current engine (see the ★ COMM note in the module header), so this test
-/// pins the CLAUSE, and `pi_comm_async_fires` below pins the BEHAVIOUR.
+/// verbatim in the metadata (name, LHS, RHS). This test pins the CLAUSE;
+/// `pi_comm_fires_verbatim` below pins the BEHAVIOUR of that same clause.
 #[test]
 fn pi_comm_clause_is_declared_verbatim() {
     let lang = PiLanguage;
@@ -341,7 +394,7 @@ fn pi_comm_clause_is_declared_verbatim() {
 }
 
 /// The paper's `Comm` redex parses and saturates to a COMPLETE report under
-/// budget (the declarative clause is inert, not destructive).
+/// budget.
 #[test]
 fn pi_comm_redex_saturates_completely() {
     let got = report_summary("{ in(c,y).0 | c!c.0 }");
@@ -351,15 +404,68 @@ fn pi_comm_redex_saturates_completely() {
     );
 }
 
-/// ★ `CommAsync` (ours) — THE interaction actually reduces: an input prefix and
-/// an asynchronous output on the same channel meet in the AC bag and fire,
-/// substituting the sent name into the input's continuation.
+/// ★★ **D10 CLOSED** — the paper's own SYNCHRONOUS `Comm` (:1988-1989) FIRES.
+///
+/// `{ in(c,y).0 | c!c.0 }` is the omnibus's π redex `c?y.0 | c!c.0`: an input
+/// prefix and a *synchronous* output prefix on the same channel `c`. The rule
+///
+/// ```text
+/// Comm . |- (PPar {(PIn n ^x.p), (POut n m q), ...rest})
+///           ~> (PPar {(eval ^x.p m), q, ...rest})
+/// ```
+///
+/// has a TWO-element reduct (the substituted continuation `p[m/x]` in parallel
+/// with the output's own continuation `q`), which the typed COMM lane rejected
+/// until the arity-≥2 generalization of `is_comm_rewrite` /
+/// `comm_dispatch_arm`. The firing must be the VERBATIM clause `Comm` — not the
+/// asynchronous `CommAsync` extra — so this asserts on the bare rule NAME.
+#[test]
+fn pi_comm_fires_verbatim() {
+    let fired = firing_names("{ in(c,y).0 | c!c.0 }");
+    assert!(
+        fired.iter().any(|name| name == "Comm"),
+        "the paper's SYNCHRONOUS Comm must fire on `{{ in(c,y).0 | c!c.0 }}`; fired {fired:?} \
+         (report: {})",
+        report_summary("{ in(c,y).0 | c!c.0 }")
+    );
+}
+
+/// The verbatim synchronous `Comm` leaves `...rest` alone: a non-participating
+/// parallel component survives the interaction — the paper's "a rule about a
+/// site of interaction rather than about whole terms" (:547-548), now shown on
+/// the paper's own clause rather than only on the asynchronous variant.
+#[test]
+fn pi_comm_verbatim_preserves_the_remainder() {
+    let fired = firing_names("{ in(c,y).0 | c!c.0 | in(d,z).0 }");
+    assert!(
+        fired.iter().any(|name| name == "Comm"),
+        "the synchronous Comm must fire with a remainder present; fired {fired:?}"
+    );
+}
+
+/// The synchronous `Comm` is CHANNEL-SENSITIVE: an input on `c` and an output
+/// on `d` share no channel, so the non-linear guard `n ≡ n` has no solution and
+/// the rule does not fire (reject-safe — the term simply rests).
+#[test]
+fn pi_comm_does_not_fire_on_mismatched_channels() {
+    let fired = firing_names("{ in(c,y).0 | d!d.0 }");
+    assert!(
+        !fired.iter().any(|name| name == "Comm"),
+        "Comm must NOT fire when the input and output channels differ; fired {fired:?}"
+    );
+}
+
+/// ➕ `CommAsync` (ours, EXTRA) — the ASYNCHRONOUS interaction reduces too: an
+/// input prefix and a continuation-free output on the same channel meet in the
+/// AC bag and fire, substituting the sent name into the input's continuation.
+/// This is the arity-1 reduct, the complement of `pi_comm_fires_verbatim`'s
+/// arity-2 synchronous one; both ride the same typed COMM lane.
 #[test]
 fn pi_comm_async_fires() {
-    let got = report_summary("{ in(c,y).0 | c!c }");
+    let fired = firing_names("{ in(c,y).0 | c!c }");
     assert!(
-        got.contains("CommAsync"),
-        "the asynchronous COMM must fire on `{{ in(c,y).0 | c!c }}`; got {got}"
+        fired.iter().any(|name| name == "CommAsync"),
+        "the asynchronous COMM must fire on `{{ in(c,y).0 | c!c }}`; fired {fired:?}"
     );
 }
 
