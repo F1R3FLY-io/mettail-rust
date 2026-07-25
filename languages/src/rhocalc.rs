@@ -1050,11 +1050,42 @@ language! {
         ] fold;
 
         // Arithmetic (tighter than == and and/or)
+        // ── Arithmetic: a failed operation answers the `error` term, never a value ──────────
+        //
+        // Every numeric arm below runs its operation through `mettail_runtime::SafeArith`
+        // (integers ▸ stdlib `checked_*`; floats ▸ NaN-rejecting IEEE) and maps the `None`
+        // — overflow, division by zero, `Inf - Inf` — onto `Proc::Err`, the `error` term
+        // declared above (`Err . |- "error" : Proc`).
+        //
+        // Until 2026-07-25 the `Int` and `Float` arms instead wrote `(**a).clone() + (**b).clone()`,
+        // reaching a macro-emitted `impl std::ops::Add for Int` whose failure path FABRICATED
+        // `Int::NumLit(Default::default())`: `int(i64::MAX,64) + int(1,64)` folded to `0` and
+        // `int(1,64) / int(0,64)` folded to `0` — silent wrong VALUES. That emitter fallback is
+        // deleted (`macros/src/gen/native/eval.rs`), so the fabrication is no longer expressible;
+        // these arms now match the disposition the `UInt32` / `BigInt` / `BigRat` / `Fixed` arms
+        // have always used for ÷0. Pinned by `rholang-runtime/tests/rho_rhocalc_conformance.rs`
+        // (divergences A / A2).
         Add . a:Proc, b:Proc |- a "+" b : Proc ![
             { match (&a, &b) {
-                (Proc::CastInt(a), Proc::CastInt(b)) => Proc::CastInt(std::sync::Arc::new((**a).clone() + (**b).clone())),
+                (Proc::CastInt(a), Proc::CastInt(b)) => match (&**a, &**b) {
+                    (Int::NumLit(x), Int::NumLit(y)) => {
+                        match <i64 as mettail_runtime::SafeArith>::safe_add(*x, *y) {
+                            Some(v) => Proc::CastInt(std::sync::Arc::new(Int::NumLit(v))),
+                            None => Proc::Err,
+                        }
+                    }
+                    _ => Proc::Err,
+                },
+                // Raw `x + y` on `u32` PANICS on overflow, and a panic raised inside a fold body
+                // aborts the process here (unwinding across Cranelift frames — see the
+                // conformance suite's module header), so this arm is checked too.
                 (Proc::CastUInt32(a), Proc::CastUInt32(b)) => match (&**a, &**b) {
-                    (UInt32::NumLit(x), UInt32::NumLit(y)) => Proc::CastUInt32(std::sync::Arc::new(UInt32::NumLit(x + y))),
+                    (UInt32::NumLit(x), UInt32::NumLit(y)) => {
+                        match <u32 as mettail_runtime::SafeArith>::safe_add(*x, *y) {
+                            Some(v) => Proc::CastUInt32(std::sync::Arc::new(UInt32::NumLit(v))),
+                            None => Proc::Err,
+                        }
+                    }
                     _ => Proc::Err,
                 },
                 (Proc::CastBigInt(a), Proc::CastBigInt(b)) => match (&**a, &**b) {
@@ -1065,7 +1096,15 @@ language! {
                     (BigRat::RatLit(x), BigRat::RatLit(y)) => Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(*x + *y))),
                     _ => Proc::Err,
                 },
-                (Proc::CastFloat(a), Proc::CastFloat(b)) => Proc::CastFloat(std::sync::Arc::new((**a).clone() + (**b).clone())),
+                (Proc::CastFloat(a), Proc::CastFloat(b)) => match (&**a, &**b) {
+                    (Float::FloatLit(x), Float::FloatLit(y)) => {
+                        match <mettail_runtime::CanonicalFloat64 as mettail_runtime::SafeArith>::safe_add(*x, *y) {
+                            Some(v) => Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(v))),
+                            None => Proc::Err,
+                        }
+                    }
+                    _ => Proc::Err,
+                },
                 (Proc::CastFixed(a), Proc::CastFixed(b)) => match (&**a, &**b) {
                     (Fixed::FixedLit(x), Fixed::FixedLit(y)) => Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(*x + *y))),
                     _ => Proc::Err,
@@ -1080,9 +1119,23 @@ language! {
 
         Sub . a:Proc, b:Proc |- a "-" b : Proc ![
             { match (&a, &b) {
-                (Proc::CastInt(a), Proc::CastInt(b)) => Proc::CastInt(std::sync::Arc::new((**a).clone() - (**b).clone())),
+                (Proc::CastInt(a), Proc::CastInt(b)) => match (&**a, &**b) {
+                    (Int::NumLit(x), Int::NumLit(y)) => {
+                        match <i64 as mettail_runtime::SafeArith>::safe_sub(*x, *y) {
+                            Some(v) => Proc::CastInt(std::sync::Arc::new(Int::NumLit(v))),
+                            None => Proc::Err,
+                        }
+                    }
+                    _ => Proc::Err,
+                },
+                // `u32` subtraction underflows (and panics) whenever `x < y`; checked here.
                 (Proc::CastUInt32(a), Proc::CastUInt32(b)) => match (&**a, &**b) {
-                    (UInt32::NumLit(x), UInt32::NumLit(y)) => Proc::CastUInt32(std::sync::Arc::new(UInt32::NumLit(x - y))),
+                    (UInt32::NumLit(x), UInt32::NumLit(y)) => {
+                        match <u32 as mettail_runtime::SafeArith>::safe_sub(*x, *y) {
+                            Some(v) => Proc::CastUInt32(std::sync::Arc::new(UInt32::NumLit(v))),
+                            None => Proc::Err,
+                        }
+                    }
                     _ => Proc::Err,
                 },
                 (Proc::CastBigInt(a), Proc::CastBigInt(b)) => match (&**a, &**b) {
@@ -1093,7 +1146,15 @@ language! {
                     (BigRat::RatLit(x), BigRat::RatLit(y)) => Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(*x - *y))),
                     _ => Proc::Err,
                 },
-                (Proc::CastFloat(a), Proc::CastFloat(b)) => Proc::CastFloat(std::sync::Arc::new((**a).clone() - (**b).clone())),
+                (Proc::CastFloat(a), Proc::CastFloat(b)) => match (&**a, &**b) {
+                    (Float::FloatLit(x), Float::FloatLit(y)) => {
+                        match <mettail_runtime::CanonicalFloat64 as mettail_runtime::SafeArith>::safe_sub(*x, *y) {
+                            Some(v) => Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(v))),
+                            None => Proc::Err,
+                        }
+                    }
+                    _ => Proc::Err,
+                },
                 (Proc::CastFixed(a), Proc::CastFixed(b)) => match (&**a, &**b) {
                     (Fixed::FixedLit(x), Fixed::FixedLit(y)) => Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(*x - *y))),
                     _ => Proc::Err,
@@ -1104,9 +1165,22 @@ language! {
 
         Mul . a:Proc, b:Proc |- a "*" b : Proc ![
             { match (&a, &b) {
-                (Proc::CastInt(a), Proc::CastInt(b)) => Proc::CastInt(std::sync::Arc::new((**a).clone() * (**b).clone())),
+                (Proc::CastInt(a), Proc::CastInt(b)) => match (&**a, &**b) {
+                    (Int::NumLit(x), Int::NumLit(y)) => {
+                        match <i64 as mettail_runtime::SafeArith>::safe_mul(*x, *y) {
+                            Some(v) => Proc::CastInt(std::sync::Arc::new(Int::NumLit(v))),
+                            None => Proc::Err,
+                        }
+                    }
+                    _ => Proc::Err,
+                },
                 (Proc::CastUInt32(a), Proc::CastUInt32(b)) => match (&**a, &**b) {
-                    (UInt32::NumLit(x), UInt32::NumLit(y)) => Proc::CastUInt32(std::sync::Arc::new(UInt32::NumLit(x * y))),
+                    (UInt32::NumLit(x), UInt32::NumLit(y)) => {
+                        match <u32 as mettail_runtime::SafeArith>::safe_mul(*x, *y) {
+                            Some(v) => Proc::CastUInt32(std::sync::Arc::new(UInt32::NumLit(v))),
+                            None => Proc::Err,
+                        }
+                    }
                     _ => Proc::Err,
                 },
                 (Proc::CastBigInt(a), Proc::CastBigInt(b)) => match (&**a, &**b) {
@@ -1117,7 +1191,15 @@ language! {
                     (BigRat::RatLit(x), BigRat::RatLit(y)) => Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(*x * *y))),
                     _ => Proc::Err,
                 },
-                (Proc::CastFloat(a), Proc::CastFloat(b)) => Proc::CastFloat(std::sync::Arc::new((**a).clone() * (**b).clone())),
+                (Proc::CastFloat(a), Proc::CastFloat(b)) => match (&**a, &**b) {
+                    (Float::FloatLit(x), Float::FloatLit(y)) => {
+                        match <mettail_runtime::CanonicalFloat64 as mettail_runtime::SafeArith>::safe_mul(*x, *y) {
+                            Some(v) => Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(v))),
+                            None => Proc::Err,
+                        }
+                    }
+                    _ => Proc::Err,
+                },
                 (Proc::CastFixed(a), Proc::CastFixed(b)) => match (&**a, &**b) {
                     (Fixed::FixedLit(x), Fixed::FixedLit(y)) => Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(*x * *y))),
                     _ => Proc::Err,
@@ -1128,7 +1210,17 @@ language! {
 
         Div . a:Proc, b:Proc |- a "/" b : Proc ![
             { match (&a, &b) {
-                (Proc::CastInt(a), Proc::CastInt(b)) => Proc::CastInt(std::sync::Arc::new((**a).clone() / (**b).clone())),
+                // `safe_div` is `i64::checked_div`: `None` for BOTH `y == 0` and the single
+                // overflowing quotient `i64::MIN / -1`.
+                (Proc::CastInt(a), Proc::CastInt(b)) => match (&**a, &**b) {
+                    (Int::NumLit(x), Int::NumLit(y)) => {
+                        match <i64 as mettail_runtime::SafeArith>::safe_div(*x, *y) {
+                            Some(v) => Proc::CastInt(std::sync::Arc::new(Int::NumLit(v))),
+                            None => Proc::Err,
+                        }
+                    }
+                    _ => Proc::Err,
+                },
                 (Proc::CastUInt32(a), Proc::CastUInt32(b)) => match (&**a, &**b) {
                     (UInt32::NumLit(x), UInt32::NumLit(y)) => {
                         if *y == 0 { Proc::Err } else { Proc::CastUInt32(std::sync::Arc::new(UInt32::NumLit(x / y))) }
@@ -1149,9 +1241,17 @@ language! {
                 },
                 (Proc::CastFloat(a), Proc::CastFloat(b)) => match (&**a, &**b) {
                     // Division by zero is an error (consistent with the integer/rational/fixed
-                    // arms below); without this guard `0.0 / 0.0` canonicalizes its NaN to `0`.
-                    (Float::FloatLit(_), Float::FloatLit(y)) => {
-                        if y.get() == 0.0 { Proc::Err } else { Proc::CastFloat(std::sync::Arc::new((**a).clone() / (**b).clone())) }
+                    // arms); `safe_div` alone would answer `±Inf` for `x / 0.0` (it preserves
+                    // infinities and rejects only NaN), so the explicit zero guard stays.
+                    (Float::FloatLit(x), Float::FloatLit(y)) => {
+                        if y.get() == 0.0 {
+                            Proc::Err
+                        } else {
+                            match <mettail_runtime::CanonicalFloat64 as mettail_runtime::SafeArith>::safe_div(*x, *y) {
+                                Some(v) => Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(v))),
+                                None => Proc::Err,
+                            }
+                        }
                     }
                     _ => Proc::Err,
                 },
@@ -1170,7 +1270,16 @@ language! {
 
         Mod . a:Proc, b:Proc |- a "%" b : Proc ![
             { match (&a, &b) {
-                (Proc::CastInt(a), Proc::CastInt(b)) => Proc::CastInt(std::sync::Arc::new((**a).clone() % (**b).clone())),
+                // `safe_rem` is `i64::checked_rem`: `None` for `y == 0` and for `i64::MIN % -1`.
+                (Proc::CastInt(a), Proc::CastInt(b)) => match (&**a, &**b) {
+                    (Int::NumLit(x), Int::NumLit(y)) => {
+                        match <i64 as mettail_runtime::SafeArith>::safe_rem(*x, *y) {
+                            Some(v) => Proc::CastInt(std::sync::Arc::new(Int::NumLit(v))),
+                            None => Proc::Err,
+                        }
+                    }
+                    _ => Proc::Err,
+                },
                 (Proc::CastUInt32(a), Proc::CastUInt32(b)) => match (&**a, &**b) {
                     (UInt32::NumLit(x), UInt32::NumLit(y)) => {
                         if *y == 0 { Proc::Err } else { Proc::CastUInt32(std::sync::Arc::new(UInt32::NumLit(x % y))) }
@@ -1198,8 +1307,12 @@ language! {
 
         NegProc . a:Proc |- "-" a : Proc ![
             { match &a {
+                // `-i64::MIN` overflows (and panics); `safe_neg` is `checked_neg`.
                 Proc::CastInt(x) => match &**x {
-                    Int::NumLit(n) => Proc::CastInt(std::sync::Arc::new(Int::NumLit(-n))),
+                    Int::NumLit(n) => match <i64 as mettail_runtime::SafeArith>::safe_neg(*n) {
+                        Some(v) => Proc::CastInt(std::sync::Arc::new(Int::NumLit(v))),
+                        None => Proc::Err,
+                    },
                     _ => Proc::Err,
                 },
                 Proc::CastUInt32(x) => match &**x {

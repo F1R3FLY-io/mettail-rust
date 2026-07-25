@@ -64,7 +64,8 @@
 //!
 //! | ID | Subject | RhoCalc fold ① | Rholang reducer ② | Closed by | Status |
 //! |---|---|---|---|---|---|
-//! | **A** | `Int` overflow / `Int` division by zero | silently **`0`** | wraps (`i64::MIN`) / `ReduceError("Division by zero")` | C1 | open |
+//! | **A** | `Int` overflow | the **`error`** term (was: silently **`0`**) | wraps (`i64::MIN`) | C1 | open (fabrication fixed) |
+//! | **A2** | `Int` division / remainder by zero | the **`error`** term (was: silently **`0`**) | `ReduceError("Division by zero")` | — | ★ CLOSED |
 //! | **B** | `+` on a **runtime-bound** string | rests unreduced | `OperatorNotDefined { op: "+", other_type: "string" }` | C1 | open |
 //! | **C** | `l.nth(i)` out of bounds, and `nth` on a plain (`BigInt`) index | **process abort** / `error` | recoverable `ReduceError` | C1 | open |
 //! | **D** | `Fixed` arithmetic on **mismatched scales** | rescales | `OperatorExpectedError` | C1 | open |
@@ -97,9 +98,12 @@
 //!
 //! Reconciling those two is an **upstream f1r3node / consensus decision the USER has not made**,
 //! and it is out of scope for MeTTaIL. What this suite *does* assert is the part that is
-//! unambiguously MeTTaIL's problem: RhoCalc must stop contributing a **third** behaviour (a silent
-//! `0`) and must instead inherit whichever f1r3node evaluator its lowering routes to — process
-//! position ⟶ `reduce.rs`, guard position ⟶ `rho-pure-eval`. The residual f1r3node-internal
+//! unambiguously MeTTaIL's problem: RhoCalc must not contribute a **third arithmetic answer**, and
+//! must eventually inherit whichever f1r3node evaluator its lowering routes to — process position
+//! ⟶ `reduce.rs`, guard position ⟶ `rho-pure-eval`. The 2026-07-25 fix removes the part that was
+//! indefensible on its own terms — a *checked* operation FABRICATING `Default::default()` and
+//! presenting it as the answer — leaving `error`, which is the absence of an answer rather than a
+//! competing one. Inheriting the machine's answer is still C1's. The residual f1r3node-internal
 //! inconsistency is recorded, not resolved.
 //!
 //! ## Operational note: fold panics ABORT the process here
@@ -510,33 +514,39 @@ async fn conformance_runtime_bound_integer_add_after_comm() {
 
 // ── A — integer overflow and integer division by zero ────────────────────────────────────────────
 
-/// **Divergence A (witness) — RhoCalc's fold answers `0`.**
+/// **Divergence A (witness) — RhoCalc's fold FAILS CLOSED; it no longer fabricates a value.**
 ///
-/// Three implementations, three behaviours, for `int(i64::MAX, 64) + int(1, 64)`:
+/// For `int(i64::MAX, 64) + int(1, 64)`:
 ///
 /// | Implementation | Answer | Site |
 /// |---|---|---|
 /// | f1r3node consensus reducer | `i64::MIN` (wraps) | `rholang/src/rust/interpreter/reduce.rs:3106` `lhs.wrapping_add(rhs)` |
 /// | f1r3node guard evaluator | an error | `rho-pure-eval/src/eval.rs:144-146` `int_binop_checked` |
-/// | MeTTaIL RhoCalc fold | **`0`** | `languages/src/rhocalc.rs` `Add` body ▸ `safeify` ▸ `SafeArith::safe_add` ▸ `None` ▸ the macro-emitted `impl Add for Int` fallback `.unwrap_or_else(\|\| Int::NumLit(Default::default()))`, `macros/src/gen/native/eval.rs:1270-1284` |
+/// | MeTTaIL RhoCalc fold | the **`error`** term | `languages/src/rhocalc.rs` `Add` body ▸ `SafeArith::safe_add` ▸ `None` ▸ `Proc::Err` |
 ///
-/// The `§17.11-A` inventory predicted the fold would go **stuck** (the rule would not fire).
-/// Measurement refutes that: the value is silently replaced by the category's `Default`, i.e. `0`.
-/// A silent wrong answer is strictly worse than a stuck term, so this witness exists to keep that
-/// fact visible until C1 deletes the fold body.
+/// **Amended 2026-07-25.** Until then the fold answered a silent **`0`**: its `Int` arm wrote
+/// `(**a).clone() + (**b).clone()`, which reached a macro-emitted `impl std::ops::Add for Int`
+/// whose failure path was `.unwrap_or_else(|| Int::NumLit(Default::default()))` — a *checked*
+/// operation FABRICATING the category's `Default` on failure. That emitter fallback has been
+/// deleted (`macros/src/gen/native/eval.rs`; no `std::ops::{Add,Sub,Mul,Div,Rem}` impl is emitted
+/// for a category any more, so the fabrication is not expressible), and the fold arms now map
+/// `SafeArith`'s `None` onto `Proc::Err` — the disposition the `UInt32`/`BigInt`/`BigRat`/`Fixed`
+/// arms already used for ÷0.
 ///
-/// *Amend when C1 lands:* the fold body is gone, so both arms answer whatever `reduce.rs` answers —
-/// see `divergence_a_target_int_overflow_inherits_the_f1r3node_evaluator`.
+/// A **wrong value** is therefore gone. A divergence remains, and it is the one this suite always
+/// said it was: the fold does not INHERIT the evaluator its lowering routes to. That is still C1's
+/// to close — see `divergence_a_target_int_overflow_inherits_the_f1r3node_evaluator`.
+///
+/// *Amend when C1 lands:* the fold body is gone, so both arms answer whatever `reduce.rs` answers.
 #[tokio::test(flavor = "multi_thread")]
-async fn divergence_a_witness_int_overflow_folds_to_a_silent_zero() {
+async fn divergence_a_witness_int_overflow_folds_to_the_error_term() {
     let source = "int(9223372036854775807, 64) + int(1, 64)";
     let proc = parse(source);
 
     assert_eq!(
         fold(&proc).expect("the fold converges"),
-        "0",
-        "A: RhoCalc's fold silently answers 0 on i64 overflow (a THIRD behaviour, neither \
-         f1r3node evaluator's)"
+        "error",
+        "A: RhoCalc's fold fails CLOSED on i64 overflow — never a fabricated value"
     );
 
     let observed = reduce(&proc).await.expect("the machine evaluates the sum");
@@ -547,21 +557,23 @@ async fn divergence_a_witness_int_overflow_folds_to_a_silent_zero() {
     );
 }
 
-/// **Divergence A2 (witness) — the same silent-`0` hazard on `Int` division by zero.**
+/// **Divergence A2 — CLOSED 2026-07-25: `Int` division by zero fails closed.**
 ///
-/// `int(1, 64) / int(0, 64)` folds to `0` while the reducer raises
-/// `ReduceError("Division by zero")`. Same root as A (the `Default::default()` fallback), and the
-/// same fix (delete the fold body). Note the arbitrary-precision twin `1 / 0` does NOT share it —
-/// that one folds to `error`, a `Proc::Err` value.
+/// `int(1, 64) / int(0, 64)` folded to a silent **`0`** (same root as A: the fabricating
+/// `impl Div for Int` fallback). It now folds to the `error` term, matching (a) its own
+/// arbitrary-precision twin `1 / 0`, which always did, and (b) every other numeric arm of `Div`.
+/// The reducer still raises `ReduceError("Division by zero")` — a *recoverable error* rather than
+/// an error VALUE — so the two answers are not identical, but neither is a number: the silent
+/// wrong-value hazard this witness existed for is gone.
 ///
-/// *Delete when C1 lands.*
+/// Its target twin [`divergence_a2_target_int_division_by_zero_fails_closed`] is now GREEN.
 #[tokio::test(flavor = "multi_thread")]
-async fn divergence_a2_witness_int_division_by_zero_folds_to_a_silent_zero() {
+async fn divergence_a2_closed_int_division_by_zero_fails_closed() {
     let proc = parse("int(1, 64) / int(0, 64)");
     assert_eq!(
         fold(&proc).expect("the fold converges"),
-        "0",
-        "A2: RhoCalc's fold silently answers 0 on Int division by zero"
+        "error",
+        "A2: `Int` ÷0 is the `error` term, not a fabricated 0"
     );
     let err = reduce(&proc).await.expect_err("the reducer refuses to divide by zero");
     assert!(
@@ -569,9 +581,45 @@ async fn divergence_a2_witness_int_division_by_zero_folds_to_a_silent_zero() {
         "A2: the consensus reducer raises a recoverable error, got {err:?}"
     );
 
-    // The BigInt twin fails closed as a value instead of silently zeroing.
+    // The BigInt twin, unchanged — the two carriers now agree.
     let big = parse("1 / 0");
     assert_eq!(fold(&big).expect("the fold converges"), "error");
+
+    // `%` by zero and the modulo-overflow corner share the disposition.
+    assert_eq!(fold(&parse("int(1, 64) % int(0, 64)")).expect("the fold converges"), "error");
+}
+
+/// **Regression pin for the FABRICATION class itself (2026-07-25).**
+///
+/// The defect A/A2 recorded was not "the wrong number for overflow"; it was that a *checked*
+/// operation, on failure, manufactured `Default::default()` and presented it as the answer. Every
+/// arithmetic operator that could reach that emitter fallback is pinned here: none of them may
+/// ever again produce a NUMBER for an operation that has no result.
+#[tokio::test(flavor = "multi_thread")]
+async fn no_arithmetic_failure_ever_fabricates_a_value() {
+    for source in [
+        // i64 overflow, every operator that can overflow.
+        "int(9223372036854775807, 64) + int(1, 64)",
+        "int(-9223372036854775808, 64) - int(1, 64)",
+        "int(9223372036854775807, 64) * int(2, 64)",
+        "-int(-9223372036854775808, 64)",
+        // division and remainder by zero, both carriers.
+        "int(1, 64) / int(0, 64)",
+        "int(1, 64) % int(0, 64)",
+        "1 / 0",
+        "1 % 0",
+        // u32 underflow / overflow (raw `u32` arithmetic PANICS, which aborts a fold here).
+        "uint(0, 32) - uint(1, 32)",
+        "uint(4294967295, 32) + uint(1, 32)",
+        // IEEE: `Inf - Inf` is NaN, which `SafeArith` declines.
+        "float(1.0, 64) / float(0.0, 64)",
+    ] {
+        let folded = fold(&parse(source)).unwrap_or_else(|err| panic!("{source:?}: {err}"));
+        assert_eq!(
+            folded, "error",
+            "{source:?} must fail CLOSED; a failed checked operation may never fabricate a value"
+        );
+    }
 }
 
 /// **Divergence A (target) — RhoCalc must INHERIT f1r3node's answer, never invent a third.**
@@ -606,11 +654,10 @@ async fn divergence_a_target_int_overflow_inherits_the_f1r3node_evaluator() {
     }
 }
 
-/// **Divergence A2 (target) — `Int` division by zero must fail closed, not answer `0`.**
-///
-/// Closed by **C1**.
+/// **Divergence A2 (target) — ★ CLOSED 2026-07-25.** `Int` division by zero must fail closed,
+/// never answer `0`. The `#[ignore]` is removed: the emitter no longer has a fabricating fallback
+/// for it to trip over.
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "divergence A2: `int(1,64) / int(0,64)` folds to a silent 0; closed by C1"]
 async fn divergence_a2_target_int_division_by_zero_fails_closed() {
     let proc = parse("int(1, 64) / int(0, 64)");
     let folded = fold(&proc).expect("the fold converges");

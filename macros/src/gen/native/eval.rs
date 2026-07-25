@@ -1235,54 +1235,55 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
                 "i32" | "i64" | "u32" | "u64" | "isize" | "usize" | "f32" | "f64"
             );
             if is_numeric {
-                // These `std::ops::*` impls exist so user `![...]` code that has
-                // *not* been routed through `rust_code_rewrite::safeify` (e.g. a
-                // direct `a + b` written by a manual caller that bypassed the
-                // rewrite pass) still compiles. The bodies delegate to the
-                // `SafeArith` impl below — which uses `try_eval` + stdlib
-                // `checked_*` — and swap a `None` result for the literal's
-                // `Default` value rather than panicking. Silent saturation is
-                // wrong for a hot path, but every hot path in generated code
-                // *is* safeified; this path is a fallback for unknown callers
-                // and must never abort (see #radiant-pondering-kahan plan).
-                let ops_impl = quote! {
-                    impl std::ops::Add for #category {
-                        type Output = #category;
-                        fn add(self, rhs: #category) -> #category {
-                            <Self as ::mettail_runtime::SafeArith>::safe_add(self, rhs)
-                                .unwrap_or_else(|| #category::#literal_label(Default::default()))
-                        }
-                    }
-                    impl std::ops::Sub for #category {
-                        type Output = #category;
-                        fn sub(self, rhs: #category) -> #category {
-                            <Self as ::mettail_runtime::SafeArith>::safe_sub(self, rhs)
-                                .unwrap_or_else(|| #category::#literal_label(Default::default()))
-                        }
-                    }
-                    impl std::ops::Mul for #category {
-                        type Output = #category;
-                        fn mul(self, rhs: #category) -> #category {
-                            <Self as ::mettail_runtime::SafeArith>::safe_mul(self, rhs)
-                                .unwrap_or_else(|| #category::#literal_label(Default::default()))
-                        }
-                    }
-                    impl std::ops::Div for #category {
-                        type Output = #category;
-                        fn div(self, rhs: #category) -> #category {
-                            <Self as ::mettail_runtime::SafeArith>::safe_div(self, rhs)
-                                .unwrap_or_else(|| #category::#literal_label(Default::default()))
-                        }
-                    }
-                    impl std::ops::Rem for #category {
-                        type Output = #category;
-                        fn rem(self, rhs: #category) -> #category {
-                            <Self as ::mettail_runtime::SafeArith>::safe_rem(self, rhs)
-                                .unwrap_or_else(|| #category::#literal_label(Default::default()))
-                        }
-                    }
-                };
-                impls.push(ops_impl);
+                // ── NO `std::ops::{Add,Sub,Mul,Div,Rem}` IMPLS ARE EMITTED ──────────────
+                //
+                // Until 2026-07-25 this block emitted `impl std::ops::Add for #category`
+                // (and the four siblings) whose body was
+                //
+                //     <Self as SafeArith>::safe_add(self, rhs)
+                //         .unwrap_or_else(|| #category::#literal_label(Default::default()))
+                //
+                // i.e. a *checked* operation whose failure path FABRICATED the category's
+                // `Default` value. Measured consequences in RhoCalc (whose `Add`/`Div`/`Mod`
+                // fold bodies are object-output, hence NOT routed through
+                // `rust_code_rewrite::safeify`, hence reaching these impls):
+                //
+                //   `int(i64::MAX, 64) + int(1, 64)`  folded to  `0`   (overflow)
+                //   `int(1, 64) / int(0, 64)`         folded to  `0`   (division by zero)
+                //   `1e308f64 * 1e308f64` → Inf, and `Inf - Inf` → NaN → `0.0`
+                //
+                // A silent wrong VALUE is strictly worse than a stuck term or an error term:
+                // it is indistinguishable from a correct answer downstream.
+                //
+                // The operator signature `fn add(self, rhs: Self) -> Self` cannot report
+                // failure — for a category over `i64` there is no `Int` value that means
+                // "not representable". Three dispositions were considered:
+                //
+                //   * panic — rejected: a panic raised inside a Dovetail fold body cannot be
+                //     contained in this workspace (unwinding across the Cranelift-compiled
+                //     frames of `[profile.dev] codegen-backend = "cranelift"` dies with
+                //     `fatal runtime error: failed to initiate panic, error 5, aborting`,
+                //     documented in `rholang-runtime/tests/rho_rhocalc_conformance.rs`
+                //     divergence C). A process abort is worse than a wrong value.
+                //   * `type Output = Option<Self>` — rejected: it leaves TWO spellings of the
+                //     same fallible operation (`a + b` and `SafeArith::safe_add(a, b)`), and
+                //     `safeify` already rewrites every in-body `+` to the latter, so the
+                //     operator spelling would be dead syntax that only invites the mistake.
+                //   * NOT EMITTING THE OPERATOR — chosen. Fabrication becomes unrepresentable
+                //     because the fabricating operation no longer exists: `a + b` on a
+                //     category value is a COMPILE error, and every call site must consume the
+                //     `Option` returned by the `SafeArith` impl below and map `None` onto the
+                //     language's own failure disposition (for RhoCalc: `Proc::Err`, the
+                //     `error` term — see `languages/src/rhocalc.rs` `Add`/`Sub`/`Mul`/`Div`/
+                //     `Mod`, whose `UInt32`/`BigInt`/`BigRat`/`Fixed` arms already answered
+                //     `Proc::Err` on ÷0 before this change; the `Int`/`Float` arms were the
+                //     only fabricating ones).
+                //
+                // The `SafeArith` impl immediately below is therefore the SOLE arithmetic
+                // surface on a category value, and `None` is its sole failure report:
+                // "blocked by semantic predicate / defer to the machine", the same meaning it
+                // carries in `macros/src/gen/runtime/rho_dataflow.rs`'s
+                // `RhoFoldDataflowPredicateBlock::SafeEvaluationDeclined` gate.
 
                 // `SafeArith` for the category wrapper: delegates to `try_eval` to
                 // get the underlying native value, then delegates to the native
