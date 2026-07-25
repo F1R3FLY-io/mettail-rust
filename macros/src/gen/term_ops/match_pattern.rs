@@ -43,6 +43,26 @@ use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::Ident;
 
+/// COLL_MATCH_CARDINALITY_GATE — kill-switch for the ★D11 cardinality guard on
+/// the UNORDERED collection match arms (`HashBag`, `HashSet`), 2026-07-25.
+///
+/// A collection pattern must account for every ground element. The unordered
+/// arms claimed one ground element per pattern element and never compared
+/// cardinalities, so a pattern that is a strict sub-multiset of the ground
+/// MATCHED. The ordered `Vec` arm has always had the guard.
+///
+/// When `false` the guard is omitted ENTIRELY from the emission (the
+/// `AT_QUOTED_BIND_GATE` convention), so the generated `match_pattern.rs` is
+/// textually byte-identical to the pre-fix baseline. `true` is the SHIP DEFAULT
+/// — this IS the fix.
+///
+/// Direction of change: strictly REMOVES matches, so it can only move a host
+/// verdict `Some(true) → None`. Because the host's term arm is positive-only, a
+/// removed match becomes a DECLINE and never a `Some(false)`, so differential
+/// property (3) cannot break and `declined` may only rise. That is why the
+/// false-positive family is landed before the false-negative family.
+pub(crate) const COLL_MATCH_CARDINALITY_GATE: bool = true;
+
 // =============================================================================
 // Main Entry Point
 // =============================================================================
@@ -599,6 +619,34 @@ fn generate_collection_match_arm(
 ) -> TokenStream {
     let var_label = generate_var_label(category);
 
+    // ★D11 (2026-07-25): the unordered branches claim one ground element per
+    // PATTERN element and then stop, so every LEFTOVER ground element was
+    // silently ignored and `pattern ⊆ ground` MATCHED. The sibling `Vec` branch
+    // below has always compared lengths, so this was an asymmetry rather than a
+    // considered choice.
+    //
+    // CONFIRMED LIVE by direct construction (`languages/tests/
+    // collection_cardinality_probe.rs`): a canonical `Proc::PPar` over the bag
+    // {1,2,3} matched the pattern bag {1,2}. ⚠ It is NOT reachable from surface
+    // syntax — `1 | 2 | 3` parses to the binary infix tree
+    // `PParInfix(PParInfix(1,2),3)`, a `Regular` variant whose cardinality is
+    // enforced by the tree shape — so it is reachable only through the CANONICAL
+    // par form that normalization produces, and the `rho_matches_differential`
+    // MATRIX cannot witness it (the host declines that route).
+    //
+    // A collection pattern must ACCOUNT FOR every ground element. For `HashBag`
+    // both sides are flattened by multiplicity first, so this compares MULTISET
+    // cardinality, not distinct-element count.
+    let cardinality_guard = if COLL_MATCH_CARDINALITY_GATE {
+        quote! {
+            if g_elems.len() != p_elems.len() {
+                return None;
+            }
+        }
+    } else {
+        quote! {}
+    };
+
     match coll_type {
         mettail_ast::types::CollectionType::HashBag
         | mettail_ast::types::CollectionType::HashMap
@@ -611,6 +659,8 @@ fn generate_collection_match_arm(
                     let p_elems: Vec<_> = p_bag.iter()
                         .flat_map(|(elem, count)| std::iter::repeat(elem.clone()).take(count))
                         .collect();
+
+                    #cardinality_guard
 
                     let mut claimed = vec![false; g_elems.len()];
 
@@ -681,6 +731,9 @@ fn generate_collection_match_arm(
                 (#category::#label(g_set), #category::#label(p_set)) => {
                     let g_elems: Vec<_> = g_set.iter().cloned().collect();
                     let p_elems: Vec<_> = p_set.iter().cloned().collect();
+
+                    #cardinality_guard
+
                     let mut claimed = vec![false; g_elems.len()];
 
                     for p_elem in &p_elems {

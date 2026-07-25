@@ -184,6 +184,25 @@ const MATRIX: &[(&str, &str, bool)] = &[
     (r#"{ @"a"!(1) | @"b"!(2) }"#, r#"{ @"a"!(v) | @"b"!(9) }"#, false),
     (r#"@"a"!(@"b"!(@"c"!(1)))"#, r#"@"a"!(@"b"!(@"c"!(v)))"#, true),
     (r#"@"a"!(@"b"!(@"c"!(1)))"#, r#"@"a"!(@"b"!(@"z"!(v)))"#, false),
+    // ── ★ D11 — CARDINALITY of a par payload (2026-07-25) ─────────────────────
+    //
+    // A par is a MULTISET, and a pattern must account for EVERY element of the
+    // ground: `1 | 2` does not match the pattern `1`. The generated `HashBag`
+    // collection arm claimed one ground element per PATTERN element and never
+    // compared cardinalities, so every leftover ground element was silently
+    // ignored and `pattern ⊆ ground` MATCHED. The sibling `Vec` arm has always
+    // had the guard (`g_vec.len() != p_vec.len()`), so the omission was an
+    // asymmetry rather than a considered choice.
+    //
+    // This row is a WRONG-ANSWER witness, not a coverage gap: it is reachable
+    // through `host_matches_verdict` because `classify` sees a send at the top
+    // (a `Term`, not a `Separation`), so the term arm fires and descends into
+    // the payload par. The host answered `Some(true)` where the machine answers
+    // false — a live violation of property (1).
+    (r#"@"a"!({1 | 2})"#, r#"@"a"!({1})"#, false),
+    (r#"@"a"!({1 | 2 | 3})"#, r#"@"a"!({1 | 2})"#, false),
+    // The satisfied companion, so the guard is not merely "reject everything".
+    (r#"@"a"!({1 | 2})"#, r#"@"a"!({1 | 2})"#, true),
 ];
 
 // ══════════════════════════════════════════════════════════════════════════════
