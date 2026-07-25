@@ -17683,17 +17683,52 @@ where
                 continue; // seed frame — no push edge, chain ends
             };
             let caller = run.v_parent.get(&u).copied();
-            // Stop test (edge-kind precedence — see the stamp-site note):
-            // a NON-crosscat push from a stop-kind caller ends this chain.
-            if slot.xcat == 0 {
-                if let Some((csym, _, _, _)) = caller {
-                    let stop = matches!(
-                        csym.kind,
-                        SymbolKind::MixfixMarker | SymbolKind::CollectionMarker
-                    ) || matches!(csym.kind, SymbolKind::RuleAt(k) if k > 0);
-                    if stop {
-                        continue; // this chain dies without a boundary
-                    }
+            // Stop test: a push from a SCOPE-RESETTING caller ends this chain.
+            //
+            // ★ #35. This test had two defects, and together they were the root of the
+            // nested-`@`/grouped-receiver family. Both are divergences from this walk's
+            // OWN VERIFIED MODEL — `formal/rocq/prattail_wpda_runtime/theories/
+            // CollectionElementProjectionBoundary.v:112-117` walks the caller chain with
+            // `| Grouping :: _ => None_`, proved as `grouping_stops_walk` — and from the
+            // two SIBLING walks in this same file, `cgll_pure_enclosing_receiver`
+            // (:17345) and `cgll_pure_enclosing_collection_sep` (:17427), both of which
+            // list `GroupingMarker`.
+            //
+            //   1. `GroupingMarker` was absent from the kind list.
+            //   2. The whole test was gated on `slot.xcat == 0`, which exempted every
+            //      frame whose push carried a cross-category edge — and that is exactly
+            //      how the `(`-open fan stamps its per-category grouping frames
+            //      (`CrossCatLhsReentry` ⇒ `xcat = 3`, :18199).
+            //
+            // So a `(`-delimited group did not shield its interior from an outer
+            // `@`-projection floor: the walk passed straight through it, found the
+            // `prefix(220)` projection, and `suppress_projection_source_action` deleted
+            // the branch that would have consumed the interior `!`. The reading was
+            // destroyed before the forest ever saw it.
+            //
+            // Measured, single-variable, walker-only — only the delimiter changes:
+            //
+            //   @{@@Nil!().subtract(a!(Nil))}!(Nil)   boundary_suppressed=0  unwind=1  ok
+            //   @(@@Nil!().subtract(a!(Nil)))!(Nil)   boundary_suppressed=1  unwind=0  FAIL
+            //
+            // `{}` is a `CollectionMarker` — in the list. `()` is a `GroupingMarker` —
+            // was not. Every accepted shape's innermost enclosing frame is a stop-kind;
+            // every rejected one's is a grouping.
+            //
+            // The criterion the list approximates is stated in the Rocq file: a frame
+            // that RE-SCOPES its content behind a SELF-DELIMITING close cannot hand its
+            // interior operators to anything outside it. A grouping does exactly that,
+            // which is why it belongs here and why the `xcat` gate was never part of the
+            // criterion.
+            if let Some((csym, _, _, _)) = caller {
+                let stop = matches!(
+                    csym.kind,
+                    SymbolKind::MixfixMarker
+                        | SymbolKind::CollectionMarker
+                        | SymbolKind::GroupingMarker
+                ) || matches!(csym.kind, SymbolKind::RuleAt(k) if k > 0);
+                if stop {
+                    continue; // this chain dies without a boundary
                 }
             }
             // Boundary mapping for THIS hop.

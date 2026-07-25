@@ -312,10 +312,35 @@ fn gate_c_prime_dangling_separator_stays_rejected() {
 /// Each of these parses with the facade ON and is REJECTED by the walker alone.
 /// The assertions are therefore two-sided on purpose: the ON side is the shipped
 /// contract, and the OFF side is the standing receipt that the walker gap is real.
-/// If the OFF side ever starts accepting, the walker gap has been closed — delete
-/// the `off_rejects` expectation and record it, do not weaken the ON side.
+/// ★ THE WALKER GAP IS CLOSED (#35). This gate was
+/// `gate_d_g2_family_parses_only_with_the_facade`, and its own instruction was:
+/// "If the OFF side ever starts accepting, the walker gap has been closed —
+/// delete the `off_rejects` expectation and record it, do not weaken the ON side."
+/// That is what happened, so the name and the expectation move together.
+///
+/// The root was `cgll_pure_crosscat_boundaries`' stop test in
+/// `prattail/src/wpda_walker.rs`: `GroupingMarker` was absent from its
+/// scope-resetting kind list, AND the whole test was gated on `slot.xcat == 0`,
+/// which exempted grouping frames entirely (the `(`-open fan stamps them with a
+/// cross-category edge). So a `(`-group did not shield its interior from an outer
+/// `@`-projection floor, and the branch that would consume the interior `!` was
+/// deleted before the forest saw it. Both omissions were divergences from this
+/// walk's own verified model — `CollectionElementProjectionBoundary.v:112-117`
+/// walks with `| Grouping :: _ => None_`, proved as `grouping_stops_walk` — and
+/// from the two sibling walks in the same file, which both list `GroupingMarker`.
+///
+/// Measured single-variable, walker-only, only the delimiter changing:
+///   `@{X}!(Nil)`  boundary_suppressed=0  unwind_chain_fired=1  accepted
+///   `@(X)!(Nil)`  boundary_suppressed=1  unwind_chain_fired=0  REJECTED
+/// and after the fix the second reads 0/1, identical to the first.
+///
+/// The ON leg did not move: these rows were `(true, 1)` before and after. Only the
+/// walker-alone leg changed, from "rejects" to "accepts THE SAME SINGLE READING the
+/// facade already elected" — so no reading count moved, no election changed, and no
+/// new ambiguity was introduced. The facade and the walker now agree where they
+/// previously disagreed, which is the point.
 #[test]
-fn gate_d_g2_family_parses_only_with_the_facade() {
+fn gate_d_g2_family_parses_in_both_legs() {
     let on: std::collections::BTreeMap<String, Obs> = parse_leg(&render_leg());
     let off = off_leg();
     for id in ["g2-scalar", "g2-polyadic", "g2-degenerate"] {
@@ -358,14 +383,14 @@ fn gate_e_reading_count_golden() {
         ("dt-quoted-0", true, 2, true, 2),
         ("dt-quoted-1", true, 2, true, 2),
         // ★ G2: ON parses, the walker alone does not.
-        ("g2-degenerate", true, 1, false, -1),
+        ("g2-degenerate", true, 1, true, 1),
         ("g2-no-method", true, 1, true, 1),
         ("g2-no-nested-send", true, 1, true, 1),
         ("g2-part-grouped", true, 1, true, 1),
         ("g2-part-method", true, 1, true, 1),
         ("g2-part-send", true, 1, true, 1),
-        ("g2-polyadic", true, 1, false, -1),
-        ("g2-scalar", true, 1, false, -1),
+        ("g2-polyadic", true, 1, true, 1),
+        ("g2-scalar", true, 1, true, 1),
         // ★ G3 (pinned, pre-existing): the facade drops the transparent-grouping
         // twin of a parenthesized channel. Present on `grp-scalar`, which has NO
         // `.*sep` operand — so it is independent of the degenerate-tail fix.
