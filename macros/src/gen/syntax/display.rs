@@ -31,6 +31,117 @@ use quote::{format_ident, quote};
 use std::collections::{HashMap, HashSet, VecDeque};
 
 // =============================================================================
+// FENCE CAPTURE — the delimiter analogue of precedence parenthesization
+// =============================================================================
+//
+// A rule's surface template is a sequence of LITERAL tokens and CHILD slots.
+// When the parser reaches a slot that is not an outermost Pratt operand it
+// locates the slot's right edge LEXICALLY: it scans for the literal that
+// follows the slot in the template — the slot's RIGHT FENCE. If the child's
+// rendered text carries that fence at bracket depth 0, the parser stops inside
+// the child and every token after that point is mis-assigned.
+//
+// `Display` therefore wraps such a child in PraTTaIL's TRANSPARENT `( … )`
+// grouping. The full statement of the invariant, the proof that `(…)` is
+// term-preserving and that the wrapped form is a canonical fixed point, and the
+// two RhoCalc failures that motivated it live in
+// `runtime/src/display_grouping.rs`.
+//
+// The helpers below derive each slot's fence set from the template alone — no
+// per-rule or per-language special cases — and encode the two exclusions:
+//
+//   * PRECEDENCE-GOVERNED OPERANDS. In a rule that PraTTaIL registers as an
+//     infix / prefix / postfix / mixfix operator, the LEADING slot's left edge
+//     is owned by the Pratt loop, not by a lexical scan; Display already
+//     parenthesizes it with `own_left_bp < min_bp`. Adding fence parentheses
+//     there would be precedence-redundant, the next parse would drop them, and
+//     the canonical form would oscillate — breaking one-cycle Display
+//     idempotence. A slot with no literal immediately to its RIGHT has no fence
+//     at all, which covers the trailing operand.
+//
+//     ⚠ The exclusion keys on BP REGISTRATION, not on template position alone.
+//     A rule may start with a slot and still be fence-delimited: RhoCalc's
+//     `InputBindPolyadic` is `lhs "," lhss.*sep(",") "<-" n` with no binding
+//     power at all, and an `@`-quoted two-binder `new` in `lhs` rendered
+//     `@new a0 , a1 in{…},a , a<-@Nil`, which does not parse. Excluding every
+//     template-leading slot missed exactly that family
+//     (`gen_rhocalc_prop::inputbind_display_parse_roundtrip`, 2026-07-25).
+//
+//   * VACUOUS BRACKET FENCES. The depth scan consumes `(`, `[`, `{` as depth
+//     increments and `)`, `]`, `}` as decrements, so a bracket character is
+//     never TESTED as a fence; on the balanced text Display always emits, a
+//     bracket-initial fence can never match at depth 0. Skipping it statically
+//     avoids materializing the child to a `String` for a guard that is a
+//     constant `false`.
+
+/// True when a depth-0 occurrence of `lit` is impossible in any balanced
+/// rendered surface, so the fence guard would be a constant `false`.
+fn fence_is_vacuous(lit: &str) -> bool {
+    matches!(lit.chars().next(), None | Some('(' | ')' | '[' | ']' | '{' | '}'))
+}
+
+/// The right fence of the new-style syntax-pattern slot at index `i`, or `None`
+/// when the slot needs no guard.
+///
+/// `rule_is_pratt` is `infix_info.is_some() || prefix_info.is_some()` for the
+/// enclosing rule — the signal that its leading slot is an operand whose left
+/// edge binding power owns (see the FENCE CAPTURE header).
+fn syntax_fence_after(
+    syntax_pattern: &[SyntaxExpr],
+    i: usize,
+    rule_is_pratt: bool,
+) -> Option<String> {
+    let template_leading = !syntax_pattern[..i]
+        .iter()
+        .any(|e| matches!(e, SyntaxExpr::Literal(_)));
+    if rule_is_pratt && template_leading {
+        return None;
+    }
+    match syntax_pattern.get(i + 1) {
+        // Trailing-operand exclusion is implicit: no following element, or a
+        // following non-literal, yields no fence.
+        Some(SyntaxExpr::Literal(lit)) if !fence_is_vacuous(lit) => Some(lit.clone()),
+        _ => None,
+    }
+}
+
+/// The right fence of the old-style `GrammarItem` slot at index `i`. Same rule
+/// as [`syntax_fence_after`], over `rule.items` instead of a syntax pattern.
+fn item_fence_after(items: &[GrammarItem], i: usize, rule_is_pratt: bool) -> Option<String> {
+    let template_leading = !items[..i]
+        .iter()
+        .any(|it| matches!(it, GrammarItem::Terminal(_)));
+    if rule_is_pratt && template_leading {
+        return None;
+    }
+    match items.get(i + 1) {
+        Some(GrammarItem::Terminal(term)) if !fence_is_vacuous(term) => Some(term.clone()),
+        _ => None,
+    }
+}
+
+/// The `&[…]` slice literal of fence strings a generated `group_if_bare_delims`
+/// call takes, or `None` when the fence set is empty (emit no guard).
+///
+/// `separator` is the `.*sep(S)` continuation fence — present only for
+/// repetition elements, whose loop either CONTINUES on `S` or TERMINATES on the
+/// following literal.
+fn fence_slice_expr(separator: Option<&str>, fence: Option<&str>) -> Option<TokenStream> {
+    let mut delims: Vec<String> = Vec::with_capacity(2);
+    if let Some(sep) = separator {
+        delims.push(sep.to_string());
+    }
+    match fence {
+        Some(f) if !delims.iter().any(|d| d == f) => delims.push(f.to_string()),
+        _ => {},
+    }
+    match delims.is_empty() {
+        true => None,
+        false => Some(quote! { &[#(#delims),*] }),
+    }
+}
+
+// =============================================================================
 // Main Entry Point
 // =============================================================================
 
@@ -1341,6 +1452,9 @@ fn generate_engine_regular_arm(
     let infix_info = bp_lookup.infix.get(&label_str);
     // Check if this rule is a unary prefix operator
     let prefix_info = bp_lookup.prefix.get(&label_str);
+    // FENCE CAPTURE: a Pratt-registered rule's LEADING slot is an operand whose
+    // left edge binding power owns — see the header of this file.
+    let rule_is_pratt = infix_info.is_some() || prefix_info.is_some();
 
     // Determine child min_bp values for each NonTerminal field
     // For infix: first NT gets left_bp, last NT gets right_bp
@@ -1358,7 +1472,7 @@ fn generate_engine_regular_arm(
     let mut field_iter = fields.iter().zip(field_names.iter());
     let mut nt_idx: usize = 0;
 
-    for item in &rule.items {
+    for (item_idx, item) in rule.items.iter().enumerate() {
         match item {
             GrammarItem::Terminal(term) => {
                 let escaped = term.clone();
@@ -1399,6 +1513,15 @@ fn generate_engine_regular_arm(
                         0
                     };
 
+                    // FENCE CAPTURE (2026-07-25): the guard materializes the
+                    // child at `min_bp == 0`, which is faithful ONLY when the
+                    // slot's inherited threshold is statically zero — i.e. when
+                    // the slot is not precedence-governed. Both disqualifiers
+                    // (a non-zero operand bp, a projection that forwards the
+                    // parent's `min_bp`) are checked here rather than assumed
+                    // from the leading/trailing exclusion in `item_fence_after`.
+                    let fence_slot_is_bare = child_min_bp == 0 && !forwards_projection_min_bp;
+
                     let child_min_bp = if forwards_projection_min_bp {
                         if nt_str == category_str {
                             quote! { min_bp }
@@ -1410,14 +1533,42 @@ fn generate_engine_regular_arm(
                         quote! { #child_min_bp }
                     };
 
-                    forward_ops.push(quote! {
-                        stack.push(DisplayTask::#task_variant(&**#field_name as *const _, #child_min_bp));
-                    });
+                    let fence_delims = match fence_slot_is_bare {
+                        true => item_fence_after(&rule.items, item_idx, rule_is_pratt)
+                            .and_then(|f| fence_slice_expr(None, Some(&f))),
+                        false => None,
+                    };
+                    match fence_delims {
+                        Some(delims) => forward_ops.push(quote! {
+                            stack.push(DisplayTask::WriteString(
+                                mettail_runtime::group_if_bare_delims(
+                                    &#field_name.to_string(), #delims,
+                                ),
+                            ));
+                        }),
+                        None => forward_ops.push(quote! {
+                            stack.push(DisplayTask::#task_variant(&**#field_name as *const _, #child_min_bp));
+                        }),
+                    }
                     nt_idx += 1;
                 }
             },
             GrammarItem::Collection { coll_type, separator, delimiters, .. } => {
                 if let Some(((_, _), field_name)) = field_iter.next() {
+                    // A repetition element's fence set is `{ S }` plus the
+                    // literal that TERMINATES the loop. When the collection
+                    // carries its OWN delimiters the terminator is `close`
+                    // (normally a bracket, hence vacuous) and the enclosing
+                    // template literal is unreachable from inside them.
+                    let loop_terminator: Option<String> = match delimiters {
+                        Some((_, close)) => Some(close.clone()),
+                        None => item_fence_after(&rule.items, item_idx, rule_is_pratt),
+                    };
+                    let elem_delims = fence_slice_expr(
+                        Some(separator),
+                        loop_terminator.as_deref().filter(|t| !fence_is_vacuous(t)),
+                    )
+                    .unwrap_or_else(|| quote! { &[] });
                     // Collection fields write inline (elements may not be deeply nested)
                     let sep = separator.clone();
                     // B9 / Class 2 (2026-05-08): branch on coll_type. Vec
@@ -1429,25 +1580,26 @@ fn generate_engine_regular_arm(
                     // (e.g. Class-2 binder rule with Vec<Proc> slot or a
                     // Class-5 collection rule with Vec element type).
                     let items_expr = match coll_type {
-                        // 2026-07-24 separator-capture grouping — see the
+                        // FENCE-CAPTURE grouping (separator half 2026-07-24,
+                        // loop-terminator half 2026-07-25) — see the
                         // `PatternOp::Sep` arm below and
                         // `runtime/src/display_grouping.rs`. No-op unless an
-                        // element's own text carries `sep` at bracket depth 0.
+                        // element's own text carries a fence at bracket depth 0.
                         mettail_ast::types::CollectionType::Vec => quote! {
                             let items: Vec<String> = #field_name.iter()
-                                .map(|elem| mettail_runtime::group_if_bare_sep(&elem.to_string(), #sep))
+                                .map(|elem| mettail_runtime::group_if_bare_delims(&elem.to_string(), #elem_delims))
                                 .collect();
                         },
                         mettail_ast::types::CollectionType::HashSet => quote! {
                             let mut items: Vec<String> = #field_name.iter()
-                                .map(|elem| mettail_runtime::group_if_bare_sep(&elem.to_string(), #sep))
+                                .map(|elem| mettail_runtime::group_if_bare_delims(&elem.to_string(), #elem_delims))
                                 .collect();
                             items.sort();
                         },
                         mettail_ast::types::CollectionType::HashBag => quote! {
                             let mut items: Vec<String> = #field_name.iter().map(|(elem, count)| {
                                 (0..count)
-                                    .map(|_| mettail_runtime::group_if_bare_sep(&elem.to_string(), #sep))
+                                    .map(|_| mettail_runtime::group_if_bare_delims(&elem.to_string(), #elem_delims))
                                     .collect::<Vec<_>>()
                                     .join(&format!(" {} ", #sep))
                             }).collect();
@@ -1635,9 +1787,26 @@ fn generate_engine_binder_arm(rule: &GrammarRule, _language: &LanguageDef) -> To
                         syn::Ident::new(field_name_str, proc_macro2::Span::call_site());
                     let nt_str = nt.to_string();
                     let task_variant = format_ident!("Display{}", nt_str);
-                    forward_ops.push(quote! {
-                        stack.push(DisplayTask::#task_variant(&**#field_name as *const _, 0));
-                    });
+                    // FENCE CAPTURE — the slot renders at min_bp 0 here by
+                    // construction ("non-binder context resets precedence"), so
+                    // the materialized text is faithful.
+                    // Binder rules are never Pratt operators (see the
+                    // `has_abstraction` arms: "Abstraction rules are never
+                    // infix, no parenthesization needed").
+                    match item_fence_after(&rule.items, i, false)
+                        .and_then(|f| fence_slice_expr(None, Some(&f)))
+                    {
+                        Some(delims) => forward_ops.push(quote! {
+                            stack.push(DisplayTask::WriteString(
+                                mettail_runtime::group_if_bare_delims(
+                                    &#field_name.to_string(), #delims,
+                                ),
+                            ));
+                        }),
+                        None => forward_ops.push(quote! {
+                            stack.push(DisplayTask::#task_variant(&**#field_name as *const _, 0));
+                        }),
+                    }
                 }
             },
             GrammarItem::Binder { .. } if i == *binder_idx => {
@@ -1830,6 +1999,9 @@ fn generate_engine_syntax_pattern_arm(
     let infix_info = bp_lookup.infix.get(&label_str);
     // Check if this rule is a unary prefix operator
     let prefix_info = bp_lookup.prefix.get(&label_str);
+    // FENCE CAPTURE: a Pratt-registered rule's LEADING slot is an operand whose
+    // left edge binding power owns — see the header of this file.
+    let rule_is_pratt = infix_info.is_some() || prefix_info.is_some();
 
     // W3 (Neg-zero display canonicalization): if this rule is a unary-prefix
     // `"-" a` operator over a numeric native-type category, we emit a runtime
@@ -2301,9 +2473,76 @@ fn generate_engine_syntax_pattern_arm(
                                 } else {
                                     quote! { #child_bp }
                                 };
-                                if AT_QUOTE_DISAMBIGUATION
-                                    && is_sigil_prefix_operand(rule, &name)
-                                {
+                                // FENCE CAPTURE (2026-07-25) — see the header of
+                                // this file and `runtime/src/display_grouping.rs`.
+                                //
+                                // THE BUG THIS FIXES: `POutput2Plus`'s surface is
+                                // `"@" n "!" "(" a "," bs.*sep(",") ")"`. The
+                                // 2026-07-24 pass guarded the `bs` ELEMENTS but
+                                // not `a`, whose right fence is the LITERAL `","`
+                                // one position later. A two-binder `new` in `a`
+                                // then rendered `@@Nil!(new a0 , a1 in{Nil},)`,
+                                // which does not parse. Pinned by
+                                // `languages/tests/rhocalc_new_official_syntax.rs`.
+                                //
+                                // Emitted only where the child's inherited
+                                // threshold is statically 0 — the guard renders
+                                // it via `to_string()` (min_bp 0), so a
+                                // precedence-governed slot would be materialized
+                                // at the wrong threshold. `child_bp_map` holds a
+                                // non-zero entry exactly for the outermost
+                                // operands of infix/prefix/postfix rules, which
+                                // `syntax_fence_after` already excludes
+                                // structurally; the check makes that agreement
+                                // explicit rather than assumed.
+                                //
+                                // A sigil-prefix operand keeps its own
+                                // grammar-derived `__at_sigil_operand_needs_wrap`
+                                // wrapper; the two COMPOSE rather than compete.
+                                // When that predicate fires, the operand's text
+                                // is already inside `( … )` so every fence sits
+                                // at depth ≥ 1 and the fence guard is a proven
+                                // no-op — hence the guard goes in the ELSE arm,
+                                // where it catches fences the sigil predicate
+                                // (which asks a different question: does the
+                                // operand lose its TAIL to the prefix bp cap?)
+                                // does not cover. Never double-wraps.
+                                let fence_slot_is_bare =
+                                    child_bp_map.get(&name).copied().unwrap_or(0u8) == 0
+                                        && forwards_projection_param.as_deref()
+                                            != Some(name.as_str());
+                                let fence_delims = match fence_slot_is_bare {
+                                    true => syntax_fence_after(syntax_pattern, i, rule_is_pratt)
+                                        .and_then(|f| fence_slice_expr(None, Some(&f))),
+                                    false => None,
+                                };
+                                // The emission for this slot when no `@`-wrap is
+                                // in play. `sigil_fallback` is the same guard at
+                                // the sigil path's own threshold (`0u8`, NOT
+                                // `child_bp` — a sigil operand of a `prefix(n)`
+                                // rule carries `n` in `child_bp_map`, and the
+                                // 2026-06 `@`-disambiguation deliberately renders
+                                // it bare).
+                                let fence_guarded = fence_delims.as_ref().map(|delims| {
+                                    quote! {
+                                        stack.push(DisplayTask::WriteString(
+                                            mettail_runtime::group_if_bare_delims(
+                                                &#field_ident.to_string(), #delims,
+                                            ),
+                                        ));
+                                    }
+                                });
+                                let bare_push = fence_guarded.clone().unwrap_or_else(|| {
+                                    quote! {
+                                        stack.push(DisplayTask::#task_variant(&**#field_ident as *const _, #child_bp));
+                                    }
+                                });
+                                let sigil_fallback = fence_guarded.unwrap_or_else(|| {
+                                    quote! {
+                                        stack.push(DisplayTask::#task_variant(&**#field_ident as *const _, 0u8));
+                                    }
+                                });
+                                if AT_QUOTE_DISAMBIGUATION && is_sigil_prefix_operand(rule, &name) {
                                     // Cross-category sigil-prefix operand (the `@`-operand of
                                     // NQuoteShort / POutputShort / PPersistOutputShort). The
                                     // operand is rendered BARE (min_bp == 0, so a cast stays bare
@@ -2321,13 +2560,11 @@ fn generate_engine_syntax_pattern_arm(
                                             stack.push(DisplayTask::#task_variant(&**#field_ident as *const _, 0u8));
                                             stack.push(DisplayTask::WriteString("(".to_string()));
                                         } else {
-                                            stack.push(DisplayTask::#task_variant(&**#field_ident as *const _, 0u8));
+                                            #sigil_fallback
                                         }
                                     });
                                 } else {
-                                    forward_ops.push(quote! {
-                                        stack.push(DisplayTask::#task_variant(&**#field_ident as *const _, #child_bp));
-                                    });
+                                    forward_ops.push(bare_push);
                                 }
                             },
                             TypeExpr::Collection { .. } => {
@@ -2366,6 +2603,12 @@ fn generate_engine_syntax_pattern_arm(
                     i > 0 && matches!(syntax_pattern.get(i - 1), Some(SyntaxExpr::Param(_)));
                 let next_outer_is_param =
                     matches!(syntax_pattern.get(i + 1), Some(SyntaxExpr::Param(_)));
+                // FENCE CAPTURE: the literal that TERMINATES this op's loop.
+                // For a `.*sep(S)` repetition an element must be grouped when it
+                // carries `S` (loop continues) OR this terminator (loop ends) at
+                // depth 0. `syntax_fence_after` applies the same leading-operand
+                // and vacuous-bracket exclusions used for plain params.
+                let outer_fence = syntax_fence_after(syntax_pattern, i, rule_is_pratt);
                 let op_code = generate_engine_pattern_op(
                     op,
                     &abstraction_binder,
@@ -2375,6 +2618,7 @@ fn generate_engine_syntax_pattern_arm(
                     &guard_params,
                     prev_outer_is_param,
                     next_outer_is_param,
+                    outer_fence.as_deref(),
                 );
                 forward_ops.push(op_code);
             },
@@ -2500,6 +2744,10 @@ fn generate_engine_syntax_pattern_arm(
 /// (not pushed as a separate `WriteLiteral` task) so it's atomically gated
 /// on the optional-group's Some/None discriminant — emitting outer-side
 /// would produce trailing whitespace when the group is absent.
+///
+/// `outer_fence` (2026-07-25): the literal that terminates this op in the
+/// enclosing template, if any — the second half of a repetition element's fence
+/// set. See the FENCE CAPTURE header of this file.
 fn generate_engine_pattern_op(
     op: &PatternOp,
     abstraction_binder: &Option<String>,
@@ -2509,6 +2757,7 @@ fn generate_engine_pattern_op(
     guard_params: &HashSet<String>,
     prev_outer_is_param: bool,
     next_outer_is_param: bool,
+    outer_fence: Option<&str>,
 ) -> TokenStream {
     // Sep / Var ignore the outer flags; their emission already produces
     // self-contained spacing or atomic ident formatting.
@@ -2554,31 +2803,34 @@ fn generate_engine_pattern_op(
                     }
                 });
                 let coll_ident = syn::Ident::new(&coll_name, proc_macro2::Span::call_site());
-                // Roundtrip fix (2026-07-24) — SEPARATOR CAPTURE. The joined text
-                // only re-parses if no ELEMENT contains `separator` at bracket
-                // depth 0; otherwise the parser splits the list at the element's
-                // OWN separator and both halves become garbage. `group_if_bare_sep`
-                // wraps such an element in PraTTaIL's transparent `( … )` grouping
+                // Roundtrip fix — FENCE CAPTURE (separator half 2026-07-24,
+                // loop-terminator half 2026-07-25). The joined text only
+                // re-parses if no ELEMENT carries, at bracket depth 0, either
+                // `separator` (the parser would CONTINUE the list inside the
+                // element) or the literal that terminates the list (it would END
+                // the list inside the element). `group_if_bare_delims` wraps such
+                // an element in PraTTaIL's transparent `( … )` grouping
                 // (term-preserving: `(P)` parses to `P`, no wrapper node).
                 //
                 // Reachable since the official-Rholang `new` alignment made
                 // `new x, y in { P }` the first `Proc` whose surface carries a
                 // depth-0 comma: `@Nil!(0 , new a , b in{Nil})` re-parsed as FOUR
                 // operands. It is a no-op for every element without a depth-0
-                // separator — i.e. for every pre-2026-07-24 display — so it can
+                // fence — i.e. for every pre-2026-07-24 display — so it can
                 // only repair a broken roundtrip, never break a working one.
                 // See `runtime/src/display_grouping.rs`.
-                let sep_lit = separator.clone();
+                let elem_delims = fence_slice_expr(Some(separator), outer_fence)
+                    .unwrap_or_else(|| quote! { &[] });
                 let iter_body = match coll_kind {
                     Some(mettail_ast::types::CollectionType::Vec) => quote! {
                         for item in #coll_ident.iter() {
-                            parts.push(mettail_runtime::group_if_bare_sep(&item.to_string(), #sep_lit));
+                            parts.push(mettail_runtime::group_if_bare_delims(&item.to_string(), #elem_delims));
                         }
                         // Vec preserves insertion order — no sort.
                     },
                     Some(mettail_ast::types::CollectionType::HashSet) => quote! {
                         for item in #coll_ident.iter() {
-                            parts.push(mettail_runtime::group_if_bare_sep(&item.to_string(), #sep_lit));
+                            parts.push(mettail_runtime::group_if_bare_delims(&item.to_string(), #elem_delims));
                         }
                         parts.sort();
                     },
@@ -2590,8 +2842,8 @@ fn generate_engine_pattern_op(
                         for (k, v) in #coll_ident.iter() {
                             parts.push(format!(
                                 "{} : {}",
-                                mettail_runtime::group_if_bare_sep(&k.to_string(), #sep_lit),
-                                mettail_runtime::group_if_bare_sep(&v.to_string(), #sep_lit),
+                                mettail_runtime::group_if_bare_delims(&k.to_string(), #elem_delims),
+                                mettail_runtime::group_if_bare_delims(&v.to_string(), #elem_delims),
                             ));
                         }
                         parts.sort();
@@ -2600,7 +2852,7 @@ fn generate_engine_pattern_op(
                     Some(mettail_ast::types::CollectionType::HashBag) | None => quote! {
                         for (item, count) in #coll_ident.iter() {
                             for _ in 0..count {
-                                parts.push(mettail_runtime::group_if_bare_sep(&item.to_string(), #sep_lit));
+                                parts.push(mettail_runtime::group_if_bare_delims(&item.to_string(), #elem_delims));
                             }
                         }
                         parts.sort();
@@ -2729,6 +2981,25 @@ fn generate_engine_pattern_op(
                         inner.get(j + 1).map(|e| matches!(e, SyntaxExpr::Param(_)));
                     let is_first = j == 0;
                     let is_last = j + 1 == inner.len();
+                    // FENCE CAPTURE inside an optional group: the terminator is
+                    // the next INNER literal, or — at the group's last position
+                    // — the literal that follows the group in the outer
+                    // template. Only interior inner positions qualify (a literal
+                    // must precede them inside the group), which is the same
+                    // leading-operand exclusion `syntax_fence_after` applies.
+                    let inner_fence: Option<String> = match inner[..j]
+                        .iter()
+                        .any(|e| matches!(e, SyntaxExpr::Literal(_)))
+                    {
+                        false => None,
+                        true => match inner.get(j + 1) {
+                            Some(SyntaxExpr::Literal(lit)) if !fence_is_vacuous(lit) => {
+                                Some(lit.clone())
+                            },
+                            None => outer_fence.map(|f| f.to_string()),
+                            _ => None,
+                        },
+                    };
                     match expr {
                         SyntaxExpr::Literal(s) => {
                             let is_word = !s.is_empty()
@@ -2759,9 +3030,22 @@ fn generate_engine_pattern_op(
                             } else {
                                 quote! {}
                             };
+                            let body = match inner_fence
+                                .as_deref()
+                                .and_then(|f| fence_slice_expr(None, Some(f)))
+                            {
+                                Some(delims) => quote! {
+                                    result.push_str(&mettail_runtime::group_if_bare_delims(
+                                        &format!("{}", #inner_var), #delims,
+                                    ));
+                                },
+                                None => quote! {
+                                    result.push_str(&format!("{}", #inner_var));
+                                },
+                            };
                             quote! {
                                 #leading
-                                result.push_str(&format!("{}", #inner_var));
+                                #body
                                 #trailing
                             }
                         },
@@ -2790,15 +3074,22 @@ fn generate_engine_pattern_op(
                                     None
                                 }
                             });
+                            // FENCE CAPTURE — same fence set as a top-level
+                            // repetition: the separator plus the loop's
+                            // terminating literal (inner, or the outer one when
+                            // the list closes the optional group).
+                            let elem_delims =
+                                fence_slice_expr(Some(separator), inner_fence.as_deref())
+                                    .unwrap_or_else(|| quote! { &[] });
                             let iter_body = match coll_kind {
                                 Some(mettail_ast::types::CollectionType::Vec) => quote! {
                                     for item in #inner_var.iter() {
-                                        parts.push(item.to_string());
+                                        parts.push(mettail_runtime::group_if_bare_delims(&item.to_string(), #elem_delims));
                                     }
                                 },
                                 Some(mettail_ast::types::CollectionType::HashSet) => quote! {
                                     for item in #inner_var.iter() {
-                                        parts.push(item.to_string());
+                                        parts.push(mettail_runtime::group_if_bare_delims(&item.to_string(), #elem_delims));
                                     }
                                     parts.sort();
                                 },
@@ -2813,7 +3104,7 @@ fn generate_engine_pattern_op(
                                     quote! {
                                         for (item, count) in #inner_var.iter() {
                                             for _ in 0..count {
-                                                parts.push(item.to_string());
+                                                parts.push(mettail_runtime::group_if_bare_delims(&item.to_string(), #elem_delims));
                                             }
                                         }
                                         parts.sort();

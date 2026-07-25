@@ -35,7 +35,7 @@
 //! 3. **AMBIGUITY** — every `new` surface realizes exactly ONE parse, and
 //!    wrapping a process in `new x in { … }` never multiplies its parse count.
 
-use mettail_languages::rhocalc::Proc;
+use mettail_languages::rhocalc::{Name, Proc};
 
 /// Number of realized parses for `src` (the ambiguity-preserving count).
 fn parse_count(src: &str) -> usize {
@@ -309,4 +309,209 @@ fn uri_declarations_are_not_yet_supported() {
         Proc::parse("new stdout(`rho:io:stdout`) in { stdout!(\"hi\") }").is_err(),
         "URI name-declarations are not implemented yet (§17.10-C1)",
     );
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// 5. FENCE CAPTURE — `new x, y in { P }` is the repo's first depth-0 comma
+// ══════════════════════════════════════════════════════════════════════════
+//
+// Dropping the grouping parens made a multi-binder `new` the first RhoCalc
+// `Proc` whose SURFACE carries a comma at bracket depth 0. Any enclosing rule
+// that locates a child's right edge by scanning for a literal — a `.*sep(",")`
+// separator, or a plain `","` between two slots — then splits INSIDE the `new`.
+//
+// `Display` closes this with the fence-capture invariant
+// (`runtime/src/display_grouping.rs`): a child is wrapped in PraTTaIL's
+// TRANSPARENT `( … )` grouping exactly when its rendered text carries one of
+// its right fences at depth 0. Two independent halves, both pinned here:
+//
+//   2026-07-24  ELEMENTS of a `.*sep(S)` repetition, fence `S`.
+//   2026-07-25  PLAIN INTERIOR SLOTS, fence = the literal that follows the slot
+//               in the template. Found by `gen_rhocalc_prop`, which is seeded
+//               and therefore only reproduces the case on the seed that
+//               generates it — hence these deterministic pins.
+
+/// A `new a0, a1 in { <body> }` — two binders, so its surface carries a
+/// depth-0 comma and every enclosing fence must group it.
+fn two_binder_new(body: Proc) -> Proc {
+    let binders: Vec<mettail_runtime::Binder<String>> = (0..2)
+        .map(|j| mettail_runtime::Binder(mettail_runtime::get_or_create_var(&format!("a{j}"))))
+        .collect();
+    Proc::PNew(mettail_runtime::Scope::new(binders, std::sync::Arc::new(body)))
+}
+
+/// `Display → parse → Display` must reach a fixed point, and every string along
+/// the way must parse. Evaluates to the canonical form.
+///
+/// A macro, not a generic fn: `parse` is an INHERENT method on each generated
+/// category (`Proc::parse`, `Name::parse`), not a trait method, so there is no
+/// bound to write. This is exactly the shape of the property the proptest
+/// checks — `Parse(Display(Parse(s))) ≡ Parse(s)` — evaluated on a fixed term.
+macro_rules! assert_display_parse_fixed_point {
+    ($cat:ty, $term:expr, $what:expr) => {{
+        let what: &str = $what;
+        mettail_runtime::clear_var_cache();
+        let displayed = format!("{}", $term);
+        let parsed = <$cat>::parse(&displayed)
+            .unwrap_or_else(|e| panic!("{what}: display {displayed:?} must parse: {e:?}"));
+        let canonical = format!("{parsed}");
+        mettail_runtime::clear_var_cache();
+        let reparsed = <$cat>::parse(&canonical)
+            .unwrap_or_else(|e| panic!("{what}: canonical {canonical:?} must parse: {e:?}"));
+        assert_eq!(
+            canonical,
+            format!("{reparsed}"),
+            "{}: Display must be idempotent after canonicalization",
+            what,
+        );
+        canonical
+    }};
+}
+
+#[test]
+fn a_new_in_a_plain_comma_fenced_slot_is_grouped() {
+    // ★ THE MINIMIZED PROPTEST FAILURE (2026-07-25).
+    //
+    //   gen_rhocalc_prop::name_display_parse_roundtrip
+    //   term = NQuote(POutput2Plus(NParen(NQuoteNil), PNew([a0,a1], PZero), []))
+    //
+    // `POutput2Plus`'s surface is `"@" n "!" "(" a "," bs.*sep(",") ")"`. The
+    // hazardous slot is `a` — a PLAIN child whose right fence is the LITERAL
+    // `","`, NOT an element of the `bs` repetition the 2026-07-24 pass guarded.
+    // So Display emitted, and could not re-read,
+    //
+    //     @@Nil!(new a0 , a1 in{Nil},)   ⟶  parse error at the leading `@`
+    //
+    // Grouping `a` restores the boundary.
+    let term = Name::NQuote(std::sync::Arc::new(Proc::POutput2Plus(
+        std::sync::Arc::new(Name::NParen(std::sync::Arc::new(Name::NQuoteNil))),
+        std::sync::Arc::new(two_binder_new(Proc::PZero)),
+        vec![],
+    )));
+    let canonical = assert_display_parse_fixed_point!(Name, &term, "POutput2Plus first operand");
+    assert!(
+        canonical.contains("(new a0 , a1 in{Nil})"),
+        "the `new` must be parenthesized inside the comma-fenced slot; got {canonical:?}",
+    );
+}
+
+#[test]
+fn every_2plus_send_family_groups_a_comma_carrying_first_operand() {
+    // The `a "," bs.*sep(",")` shape is shared by every `2Plus` send family
+    // (plain / persistent × channel-first / `@`-led / `@Nil` / quoted). One
+    // fence rule covers them all; a per-rule patch would have missed five.
+    for src in [
+        "@Nil!((new a0 , a1 in{Nil}), Nil)",
+        "@Nil!!((new a0 , a1 in{Nil}), Nil)",
+        "@(Nil)!((new a0 , a1 in{Nil}), Nil)",
+        "x!((new a0 , a1 in{Nil}), Nil)",
+        "x!!((new a0 , a1 in{Nil}), Nil)",
+    ] {
+        let canonical = assert_display_parse_fixed_point!(Proc, &parse(src), src);
+        assert!(
+            canonical.contains("(new a0 , a1 in{Nil})"),
+            "`{src}` must keep its `new` grouped; got {canonical:?}",
+        );
+    }
+}
+
+#[test]
+fn the_fence_rule_is_not_send_specific() {
+    // The invariant is stated over the TEMPLATE, not over sends: any rule with
+    // a `<slot> "," <slot>` shape inherits it. `int(a, w)` and `fraction(a, b)`
+    // are the non-send witnesses.
+    for src in ["int((new a0 , a1 in{Nil}), 32)", "fraction((new a0 , a1 in{Nil}), 1)"] {
+        let canonical = assert_display_parse_fixed_point!(Proc, &parse(src), src);
+        assert!(
+            canonical.contains("(new a0 , a1 in{Nil})"),
+            "`{src}` must keep its `new` grouped; got {canonical:?}",
+        );
+    }
+}
+
+#[test]
+fn a_new_in_a_sep_joined_element_is_grouped() {
+    // The 2026-07-24 half, kept as a pin: an ELEMENT of a `.*sep(",")` list.
+    for src in ["@Nil!(0 , (new a0 , a1 in{Nil}))", "@Nil!(0 , (new a0 , a1 in{Nil}) , 1)"] {
+        let canonical = assert_display_parse_fixed_point!(Proc, &parse(src), src);
+        assert!(
+            canonical.contains("(new a0 , a1 in{Nil})"),
+            "`{src}` must keep its `new` grouped; got {canonical:?}",
+        );
+    }
+}
+
+#[test]
+fn a_native_collection_literal_recovers_without_grouping() {
+    // CONTRAST, and the reason the invariant is stated over RULE TEMPLATES
+    // rather than "every comma-joined thing". A native collection LITERAL
+    // (`[…]`, `#{…}#`, `Set(…)`) is not a rule template with a fence — its
+    // elements are read by the ordinary GLL collection loop, which FORKS at
+    // every comma and keeps only the realizable tilings. The three-element
+    // reading of `[new a0 , a1 in{Nil}, Nil]` dies (`new a0` alone is not a
+    // `Proc`), so the two-element reading survives and the roundtrip is stable
+    // WITHOUT parentheses. Only the hand-rolled sigil-led send tiler cannot
+    // re-merge, which is why the send families need the guard and this does not.
+    //
+    // Pinned so that a future change which DOES start grouping here is a
+    // deliberate decision, and so the "no spurious parentheses" property of the
+    // fence rule stays visible.
+    let canonical =
+        assert_display_parse_fixed_point!(Proc, &parse("[(new a0 , a1 in{Nil}), Nil]"), "list");
+    assert_eq!(canonical, "[new a0 , a1 in{Nil}, Nil]");
+    match &parse(&canonical) {
+        Proc::CastList(l) => match &**l {
+            mettail_languages::rhocalc::List::ListLit(items) => assert_eq!(
+                items.len(),
+                2,
+                "the depth-0 comma inside the `new` must NOT split the list: {canonical:?}",
+            ),
+            other => panic!("expected a list literal, got {other:?}"),
+        },
+        other => panic!("expected Proc::CastList, got {other:?}"),
+    }
+}
+
+#[test]
+fn grouping_is_emitted_only_when_a_fence_is_actually_captured() {
+    // The invariant must not degenerate into "always parenthesize": a
+    // SINGLE-binder `new` carries no depth-0 comma, so it stays bare. This is
+    // what makes the fix a no-op for every pre-2026-07-24 display, and what
+    // keeps the canonical form parenthesis-minimal.
+    for src in [
+        "@Nil!(new a0 in{Nil}, Nil)",
+        "@Nil!(0 , new a0 in{Nil})",
+        "int(new a0 in{Nil}, 32)",
+    ] {
+        let canonical = assert_display_parse_fixed_point!(Proc, &parse(src), src);
+        assert!(
+            canonical.contains("new a0 in{Nil}") && !canonical.contains("(new a0 in{Nil})"),
+            "a one-binder `new` needs no grouping; got {canonical:?}",
+        );
+    }
+}
+
+#[test]
+fn grouping_preserves_the_term() {
+    // `( P )` is PraTTaIL's TRANSPARENT grouping — it must yield the SAME term
+    // as the bare form, otherwise the fix would trade a parse failure for a
+    // semantic one. Checked against the ungrouped ONE-binder control, which is
+    // the only version of this comparison that can be made: the two-binder form
+    // does not parse bare, which is the whole point.
+    //
+    // Compared through `Display`, not `Debug`: each parse allocates FRESH
+    // `UniqueId`s for its binders, so the debug forms differ in binder identity
+    // even for terms that are alpha-equal and print identically.
+    mettail_runtime::clear_var_cache();
+    let bare = format!("{}", parse("@Nil!(new a0 in{Nil}, Nil)"));
+    mettail_runtime::clear_var_cache();
+    let grouped = format!("{}", parse("@Nil!((new a0 in{Nil}), Nil)"));
+    assert_eq!(bare, grouped, "transparent grouping must not change the term");
+
+    // The same for a `.*sep` element, where the bare form also parses.
+    mettail_runtime::clear_var_cache();
+    let bare_elem = format!("{}", parse("@Nil!(0 , new a0 in{Nil})"));
+    mettail_runtime::clear_var_cache();
+    let grouped_elem = format!("{}", parse("@Nil!(0 , (new a0 in{Nil}))"));
+    assert_eq!(bare_elem, grouped_elem, "transparent grouping must not change the term");
 }

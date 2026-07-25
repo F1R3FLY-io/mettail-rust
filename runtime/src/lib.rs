@@ -39,10 +39,12 @@ pub mod float_lit;
 pub use fixed_lit::parse_fixed_lit;
 pub use float_lit::parse_float_lit;
 
-// Display-side separator-capture grouping; generated `Display` impls call
-// `mettail_runtime::group_if_bare_sep` when joining a `.*sep(S)` repetition.
+// Display-side fence-capture grouping; generated `Display` impls call
+// `mettail_runtime::group_if_bare_delims` for any child slot whose rendered
+// text could otherwise be split at one of the enclosing rule's own delimiters
+// (a `.*sep(S)` separator, or the literal that terminates the slot).
 pub mod display_grouping;
-pub use display_grouping::{group_if_bare_sep, has_bare_sep};
+pub use display_grouping::{group_if_bare_delims, group_if_bare_sep, has_bare_any, has_bare_sep};
 
 mod numeric_cast;
 mod numeric_cast_dispatch;
