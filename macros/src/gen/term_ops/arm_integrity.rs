@@ -114,22 +114,20 @@ mod tests {
     /// [`print_actual_wildcard_payload_set`]; each row is a live defect with a
     /// named owner stage.
     const WILDCARD_PAYLOAD_RATCHET: &[(&str, &str)] = &[
-        // ── OWNER: Stage 2 — REAL DEFECTS, scheduled for repair ──────────────
+        // ── Stage 2 CLOSED (#29) — the ten `depth`/`ground` rows are RETIRED ──
         //
-        // `term_depth` reports 0 and `is_ground` reports true for EVERY
-        // collection literal, however deep and however many free variables it
-        // contains: `depth([1, [2, 3]])` is 0, and `[1, v].is_ground()` is true
-        // with `v` free. Both must descend into the element terms.
-        ("depth", "Bag"),
-        ("depth", "List"),
-        ("depth", "Map"),
-        ("depth", "Pathmap"),
-        ("depth", "Set"),
-        ("ground", "Bag"),
-        ("ground", "List"),
-        ("ground", "Map"),
-        ("ground", "Pathmap"),
-        ("ground", "Set"),
+        // `term_depth` reported 0 and `is_ground` reported true for EVERY collection
+        // literal, however deep and however many free variables it contained:
+        // `depth([1, [2, 3]])` was 0, and `[1, v].is_ground()` was true with `v` free.
+        // Both arms shared the SCALAR-literal arm, which is correct for a scalar (a
+        // native payload has no term structure) and wrong for a container OF TERMS.
+        //
+        // Both now descend, through the same `collection_max_depth` /
+        // `collection_all_ground` helpers every non-literal collection already used —
+        // so a literal container and a non-literal one no longer disagree about the
+        // same shape. `is_ground` was the urgent half: it is consulted to decide
+        // whether a term may be treated as a finished value, so a false `true`
+        // silently licensed downstream code to skip required work.
         // ── PERMANENT — leaf treatment is CORRECT here ───────────────────────
         //
         // `iterative_drop`: the arm extracts CHILDREN for the trampolined drop.

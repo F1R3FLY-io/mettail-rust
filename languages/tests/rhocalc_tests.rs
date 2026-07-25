@@ -5125,3 +5125,69 @@ mod branch_b_send_normalization_pins {
         );
     }
 }
+
+/// #29 — `is_ground` must DESCEND into a collection literal.
+///
+/// `is_ground` is consulted to decide whether a term may be treated as a finished
+/// value, so the two error directions are not symmetric. A false `false` costs a
+/// redundant descent. A false `true` LICENSES DOWNSTREAM CODE TO SKIP WORK THAT WAS
+/// REQUIRED, silently — which is what the generated matcher did: the
+/// `CollectionLiteral` arm shared the scalar-literal arm and answered `true`
+/// unconditionally, without looking at its elements.
+///
+/// A scalar literal genuinely is ground — its payload is a native value with no term
+/// structure. A collection literal is a container OF TERMS, each of which may be a
+/// free variable. These rows pin the distinction in the failure direction.
+#[cfg(test)]
+mod is_ground_descends_into_collection_literals {
+    use mettail_languages::rhocalc::Proc;
+
+    fn parse(src: &str) -> Proc {
+        Proc::parse_via_wpda(src).unwrap_or_else(|err| panic!("{src:?} must parse: {err:?}"))
+    }
+
+    #[test]
+    fn a_closed_list_literal_is_ground() {
+        // The control. If this ever fails the descent has become unfaithful in the
+        // harmless direction, which is still a defect worth seeing.
+        assert!(
+            parse("[1, 2, 3]").is_ground(),
+            "a list of ground elements must report ground"
+        );
+    }
+
+    #[test]
+    fn an_empty_list_literal_is_ground() {
+        // Vacuous truth over the elements — `all` on an empty iterator. Pinned
+        // because a descent written with `any` instead of `all` would invert here
+        // and nowhere else.
+        assert!(parse("[]").is_ground(), "an empty list must report ground");
+    }
+
+    #[test]
+    fn a_list_literal_containing_a_free_variable_is_not_ground() {
+        // ★ THE ROW THAT WAS FAILING. Before the fix this returned `true`: the arm
+        // matched `CollectionLiteral(_)` and answered without descending, so a free
+        // `v` inside the container was invisible.
+        assert!(
+            !parse("[1, v]").is_ground(),
+            "a list containing the free variable `v` must NOT report ground — this is \
+             the failure direction, where a wrong answer silently licenses downstream \
+             code to skip work"
+        );
+    }
+
+    #[test]
+    fn a_nested_list_literal_hides_nothing() {
+        // The descent must be recursive, not one level deep: `is_ground` on the inner
+        // list is itself the descending arm.
+        assert!(
+            !parse("[1, [2, v]]").is_ground(),
+            "a free variable nested two containers deep must still defeat groundness"
+        );
+        assert!(
+            parse("[1, [2, 3]]").is_ground(),
+            "a fully closed nested list must still report ground"
+        );
+    }
+}

@@ -65,10 +65,22 @@ fn generate_depth_arm(category: &Ident, variant: &VariantKind) -> TokenStream {
         VariantKind::Var { label } => {
             quote! { #category::#label(_) => 0 }
         },
-        // Stage 0 identity — MOVES in Stage 2 (`term_depth` must descend into
-        // collection-literal elements; depth([1,[2]]) is not 0).
-        VariantKind::Literal { label } | VariantKind::CollectionLiteral { label, .. } => {
+        // A SCALAR literal has depth 0: its payload is a native value with no
+        // term structure, so there is nothing below it to measure.
+        VariantKind::Literal { label } => {
             quote! { #category::#label(_) => 0 }
+        },
+        // ★ #29 (collection-literal Stage 2). A COLLECTION literal is a container OF
+        // TERMS, so its depth is one level for the container plus the deepest element.
+        // This arm previously shared the scalar arm and answered 0 unconditionally, so
+        // `depth([1, [2, 3]])` was 0 — a term visibly two levels deep measured as a leaf.
+        //
+        // The `1 +` matches `VariantKind::Collection`: a literal container is still a
+        // node, exactly as a non-literal one is. Answering 0 made the two disagree about
+        // the same shape depending only on whether the collection arrived as a literal.
+        VariantKind::CollectionLiteral { label, coll_type, .. } => {
+            let max_elem = collection_max_depth(quote! { coll }, coll_type);
+            quote! { #category::#label(coll) => 1 + #max_elem }
         },
         VariantKind::Nullary { label } => {
             quote! { #category::#label => 0 }

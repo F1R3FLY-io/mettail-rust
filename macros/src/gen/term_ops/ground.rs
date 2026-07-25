@@ -64,10 +64,29 @@ fn generate_is_ground_arm(category: &Ident, variant: &VariantKind) -> TokenStrea
         VariantKind::Var { label } => {
             quote! { #category::#label(_) => false }
         },
-        // Stage 0 identity — MOVES in Stage 2 (`is_ground` must descend; today
-        // `[1, v]` reports ground even though `v` is a free variable).
-        VariantKind::Literal { label } | VariantKind::CollectionLiteral { label, .. } => {
+        // A SCALAR literal is ground by construction: its payload is a native value
+        // (`i64`, `String`, `CanonicalBigRat`, …) with no term structure, so there is
+        // nothing to descend into and no position a free variable could occupy.
+        VariantKind::Literal { label } => {
             quote! { #category::#label(_) => true }
+        },
+        // ★ #29 (collection-literal Stage 2). A COLLECTION literal is NOT ground by
+        // construction — its payload is a container OF TERMS, each of which may be a
+        // free variable. This arm previously shared the scalar arm and answered `true`
+        // unconditionally, so `[1, v]` reported ground with `v` free.
+        //
+        // That is a contract violation in the FAILURE direction, which is the dangerous
+        // one: `is_ground` is consulted to decide whether a term may be treated as a
+        // finished value, so a false `true` licenses downstream code to skip work that
+        // was actually required, and it does so silently. A false `false` would merely
+        // cost a redundant descent.
+        //
+        // The descent is the same `collection_all_ground` every non-literal collection
+        // field already uses, so this arm now agrees with `VariantKind::Collection` and
+        // with `field_ground_check`'s collection branch rather than contradicting them.
+        VariantKind::CollectionLiteral { label, coll_type, .. } => {
+            let check = collection_all_ground(quote! { coll }, coll_type);
+            quote! { #category::#label(coll) => #check }
         },
         VariantKind::Nullary { label } => {
             quote! { #category::#label => true }
