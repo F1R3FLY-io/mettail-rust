@@ -1737,8 +1737,63 @@ pub(crate) fn lower_rhs(
 /// `(language_fingerprint, constructor_label)`. Being carried by a `GPrivate`
 /// unforgeable (not a `GString`), it is collision-free with any user `GString`
 /// term data. Mirrors the rhocalc bag ABI tag ([`crate::RHOCALC_BAG_ABI_TAG`]).
+///
+/// ## The parse invariant, stated once (S1)
+///
+/// The tag is `{prefix}{fingerprint}.{label}` with NO length prefix and NO escaping,
+/// so it is unambiguously decomposable **iff the fingerprint contains no `.`** — and
+/// then only by splitting at the FIRST `.` after the prefix, because a LABEL may
+/// legitimately contain dots: [`crate::REFLECTED_TERM_ABI_PREFIX`] tags are minted for
+/// synthesized literal-leaf labels of the form `{Label}({value:?})`, and a
+/// `FloatLit(8.5)` / `RatLit(…)` / `StringLit("a.b")` label is dotted by construction
+/// (`macros/src/gen/runtime/rho_invocation.rs` `format!("{}({:?})", …)`).
+///
+/// The invariant is NOT "the fingerprint has a fixed length" — the parse is entirely
+/// length-agnostic, so a future wider fingerprint scheme is free to change it. What the
+/// parse depends on is only dot-freedom, which [`ast::language_definition_fingerprint`]'s
+/// `mettail-langdef-v1:{:016x}` form satisfies. The `debug_assert!` below is the single
+/// place a scheme that broke it would fail loudly, instead of silently mis-splitting at
+/// five hand-rolled reader sites.
+///
+/// [`parse_reflected_tag`] is the sole inverse. Do not hand-roll another.
 pub(crate) fn reflect_tag(language_fingerprint: &str, constructor_label: &str) -> String {
+    debug_assert!(
+        !language_fingerprint.contains('.'),
+        "reflected-tag ABI: the fingerprint must be dot-free so `parse_reflected_tag` can split \
+         at the FIRST `.` and leave a dotted literal-leaf label intact; got {language_fingerprint:?}"
+    );
     format!("{}{language_fingerprint}.{constructor_label}", crate::REFLECTED_TERM_ABI_PREFIX)
+}
+
+/// The SOLE inverse of [`reflect_tag`]: split a reflected-term ABI tag into its
+/// `(fingerprint, label)` halves, or `None` if `tag` is not one.
+///
+/// ## Why this exists (S1)
+///
+/// Before this function the tree held ONE writer and FIVE independently hand-rolled
+/// readers, and they did not agree: `native_contract::par_to_ground_term` split at the
+/// first `.` (correct) while `run::decode_reflected_term` and the three
+/// `bench_support::is_*_channel_tag` classifiers split at the LAST `.` (wrong for any
+/// dotted label). The two sites' doc comments asserted contradictory invariants — one
+/// said a label "may itself contain dots", the other that "a constructor label is a
+/// dot-free identifier" — and nothing enforced either.
+///
+/// The consequence of the `rsplit` form on a `FloatLit(8.5)` label is silent corruption
+/// rather than an error: the split yields `fingerprint = "…:XXXX.FloatLit(8"` and
+/// `label = "5)"`, the corrupted fingerprint then fails
+/// [`crate::is_ground_marker_par`], so the hereditary-ground marker is NOT skipped and
+/// leaks into the decoded term as a phantom child. No rho-backed language declares a
+/// dot-producing carrier today (all fifteen carry `![i64] as Int` or
+/// `![HashBag<Proc>] as Bag`), so the defect is LATENT — but it is armed the moment a
+/// float, rational, fixed-point, or string category joins a rho-backed language.
+///
+/// Splitting at the first `.` is correct exactly because of [`reflect_tag`]'s asserted
+/// invariant: the fingerprint is dot-free, so the first `.` after the prefix is the
+/// separator, and everything after it — dots and all — is the label.
+pub fn parse_reflected_tag(tag: &str) -> Option<(&str, &str)> {
+    let suffix = tag.strip_prefix(crate::REFLECTED_TERM_ABI_PREFIX)?;
+    let (fingerprint, label) = suffix.split_once('.')?;
+    (!label.is_empty()).then_some((fingerprint, label))
 }
 
 /// The PUBLIC read surface of [`reflect_tag`] (A-S5.6): the deterministic reflect-tag
@@ -8443,6 +8498,84 @@ mod tests {
     use super::*;
     use crate::lower::lower_language_def;
     use mettail_ast::language::{Equation, FreshnessCondition, FreshnessTarget};
+
+    /// S1 — the reflected-tag ABI has ONE writer and ONE reader, and they are
+    /// mutual inverses on every label the tree can mint, INCLUDING dotted ones.
+    ///
+    /// This is the test the tree did not have. Before S1 there were five
+    /// hand-rolled readers over one writer; four split at the LAST `.` and one at
+    /// the FIRST, and their doc comments asserted contradictory invariants about
+    /// whether a label may contain a dot. It may: synthesized literal leaves are
+    /// `format!("{}({:?})", label, value)`, so a `Float32`/`Float64` category
+    /// yields `FloatLit(8.5)` and a rational yields `RatLit(…)`.
+    ///
+    /// The dotted rows are the point. Under the old `rsplit_once` form
+    /// `FloatLit(8.5)` split as `fingerprint = "…:0000.FloatLit(8"`,
+    /// `label = "5)"` — no error, just a corrupted fingerprint that then failed
+    /// the ground-marker check, leaking the marker into the decoded term as a
+    /// phantom child.
+    #[test]
+    fn reflected_tag_round_trips_through_the_single_shared_inverse() {
+        // Real fingerprints are `mettail-langdef-v1:{:016x}` — dot-free, which is
+        // exactly the invariant `reflect_tag` asserts and the parse relies on.
+        // The parse is LENGTH-agnostic, so a wider future scheme still round-trips;
+        // the short and long rows below pin that.
+        let fingerprints =
+            ["mettail-langdef-v1:0123456789abcdef", "mettail-langdef-v1:0", "x", &"f".repeat(83)];
+
+        let mut labels: Vec<String> = vec![
+            // Ordinary constructor labels (`syn::Ident`s — dot-free by construction).
+            "Lam".into(),
+            "App".into(),
+            "NumLit(8)".into(),
+            // ★ The dotted literal leaves that the `rsplit` form corrupted.
+            "FloatLit(8.5)".into(),
+            "FloatLit(-0.0)".into(),
+            "RatLit(1.5)".into(),
+            "FixedLit(2.25)".into(),
+            r#"StringLit("a.b.c")"#.into(),
+            // Pathological: a label that is nothing but dots and one that ends in one.
+            "...".into(),
+            "Weird.".into(),
+        ];
+        // Every reserved label, so a future addition to any reserved family is
+        // automatically covered by this round trip.
+        labels.extend(crate::rho_net_subst_trs::reserved_subst_trs_labels().iter().map(|l| (*l).to_string()));
+        labels.extend(crate::rho_net_naive_kt::respread_reserved_labels().iter().map(|l| (*l).to_string()));
+        labels.push(DRIVE_RESERVED_LABEL.to_string());
+        labels.push(GROUND_MARK_REFLECT_LABEL.to_string());
+        labels.push(NONGROUND_MARK_REFLECT_LABEL.to_string());
+        // The per-rule AC-carrier family, which carries a `:` and must survive intact.
+        labels.push(format!("{DRIVE_RESERVED_LABEL}-ac:SomeRule"));
+
+        for fingerprint in fingerprints {
+            for label in &labels {
+                let tag = reflect_tag(fingerprint, label);
+                assert_eq!(
+                    parse_reflected_tag(&tag),
+                    Some((fingerprint, label.as_str())),
+                    "reflect_tag/parse_reflected_tag must be mutual inverses on \
+                     ({fingerprint:?}, {label:?}); tag was {tag:?}"
+                );
+            }
+        }
+    }
+
+    /// The inverse REJECTS anything that is not a reflected tag, so a classifier
+    /// built on it cannot mistake foreign traffic for a reserved rendezvous.
+    #[test]
+    fn parse_reflected_tag_rejects_non_tags() {
+        for bad in [
+            "",
+            "mettail.term.",                       // prefix only — no separator
+            "mettail.term.fingerprint",            // no separator after the fingerprint
+            "mettail.term.fingerprint.",           // empty label
+            "sa:pattern/lhs:0123",                 // a different channel family entirely
+            "mettail.bag.fingerprint.Label",       // adjacent ABI, wrong prefix
+        ] {
+            assert_eq!(parse_reflected_tag(bad), None, "must reject {bad:?}");
+        }
+    }
     use models::rhoapi::expr::ExprInstance;
     use models::rhoapi::var::VarInstance;
 

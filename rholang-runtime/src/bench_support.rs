@@ -437,10 +437,10 @@ fn private_channel_tag(channel: &Par) -> Option<String> {
 /// labels but have NO standalone channel — their dispatch arms are inlined in
 /// the `^subst`/`^shift` receivers — so they are deliberately not listed).
 fn is_subst_trs_channel_tag(tag: &str) -> bool {
-    let Some(suffix) = tag.strip_prefix(crate::REFLECTED_TERM_ABI_PREFIX) else {
-        return false;
-    };
-    let Some((_fingerprint, label)) = suffix.rsplit_once('.') else {
+    // S1: the SOLE shared inverse of `reflect_tag`. Was a hand-rolled
+    // `rsplit_once`, which splits a DOTTED literal-leaf label (`FloatLit(8.5)`)
+    // in the wrong place and silently misclassifies the channel.
+    let Some((_fingerprint, label)) = mettail_rholang_codegen::parse_reflected_tag(tag) else {
         return false;
     };
     matches!(
@@ -460,10 +460,10 @@ fn is_subst_trs_channel_tag(tag: &str) -> bool {
 /// walker family; `^respread-err` has no receiver on any sound run, so a COMM
 /// classifying through it would itself be diagnostic).
 fn is_respread_channel_tag(tag: &str) -> bool {
-    let Some(suffix) = tag.strip_prefix(crate::REFLECTED_TERM_ABI_PREFIX) else {
-        return false;
-    };
-    let Some((_fingerprint, label)) = suffix.rsplit_once('.') else {
+    // S1: the SOLE shared inverse of `reflect_tag`. Was a hand-rolled
+    // `rsplit_once`, which splits a DOTTED literal-leaf label (`FloatLit(8.5)`)
+    // in the wrong place and silently misclassifies the channel.
+    let Some((_fingerprint, label)) = mettail_rholang_codegen::parse_reflected_tag(tag) else {
         return false;
     };
     respread_reserved_labels().contains(&label)
@@ -472,18 +472,17 @@ fn is_respread_channel_tag(tag: &str) -> bool {
 /// Whether a decoded `GPrivate` tag names the reserved in-Rho quiescence-driver
 /// rendezvous channel `mettail.term.{fp}.^drive` (E-1 leg 0). Matches the base
 /// [`DRIVE_RESERVED_LABEL`] EXACTLY — the per-rule AC-carrier family
-/// (`^drive-ac:{RuleLabel}`, whose full label survives the last-`.` split intact
-/// because it carries no `.`) is DELIBERATELY not matched here: it is AC firing
+/// (`^drive-ac:{RuleLabel}`) is DELIBERATELY not matched here: it is AC firing
 /// traffic re-pinned with the W-D Ambient cells (A-S5.5), not the structural
 /// `^drive` descent the L2 cells measure, so it stays `Other` until that leg
 /// classifies it. The GString observation channels (`^drive-err:`/`^drive-fuel:`/
 /// `^fired:`) are NOT `GPrivate` and never reach this helper — they are resting
 /// produces read back by peek, never COMM channels.
 fn is_drive_channel_tag(tag: &str) -> bool {
-    let Some(suffix) = tag.strip_prefix(crate::REFLECTED_TERM_ABI_PREFIX) else {
-        return false;
-    };
-    let Some((_fingerprint, label)) = suffix.rsplit_once('.') else {
+    // S1: the SOLE shared inverse of `reflect_tag`. Was a hand-rolled
+    // `rsplit_once`, which splits a DOTTED literal-leaf label (`FloatLit(8.5)`)
+    // in the wrong place and silently misclassifies the channel.
+    let Some((_fingerprint, label)) = mettail_rholang_codegen::parse_reflected_tag(tag) else {
         return false;
     };
     label == DRIVE_RESERVED_LABEL

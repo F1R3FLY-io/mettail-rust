@@ -302,21 +302,28 @@ fn private_name_tag(par: &Par) -> Option<String> {
 /// The reflected-term ABI (codegen `reflect_ground_term_par` / the RHS reflector)
 /// is `EList[GPrivate("mettail.term.{fingerprint}.{label}"), children…]`. This
 /// returns `None` unless the list's head is a private name whose tag carries the
-/// shared [`crate::REFLECTED_TERM_ABI_PREFIX`]. The fingerprint
-/// (`mettail-langdef-v1:<hex>`) contains no `.` and a constructor label is a
-/// dot-free identifier, so the final `.` of the remainder separates fingerprint
-/// from label. Each child is decoded through the same
-/// [`par_as_runtime_observation_value`] entry point, so a nested reflected term
-/// (a σ argument that is itself a constructor) decodes recursively.
+/// shared [`crate::REFLECTED_TERM_ABI_PREFIX`]. Each child is decoded through the
+/// same [`par_as_runtime_observation_value`] entry point, so a nested reflected
+/// term (a σ argument that is itself a constructor) decodes recursively.
+///
+/// ★ CORRECTED (S1). This doc previously asserted that "a constructor label is a
+/// dot-free identifier, so the FINAL `.` of the remainder separates fingerprint
+/// from label", and the code split accordingly with `rsplit_once`. Both were
+/// wrong, and they contradicted `native_contract::par_to_ground_term`, which
+/// documented the opposite invariant and split at the FIRST `.`. Labels are NOT
+/// dot-free: synthesized literal leaves bake the value into the label, so
+/// `FloatLit(8.5)` is producible. Under `rsplit_once` that yielded
+/// `fingerprint = "…:XXXX.FloatLit(8"`, `label = "5)"` — and because the
+/// corrupted fingerprint then failed `is_ground_marker_par`, the marker was not
+/// skipped and leaked into the decoded term as a phantom child. Silent, not an
+/// error. The split now goes through the single shared inverse
+/// [`mettail_rholang_codegen::parse_reflected_tag`], whose correctness rests on
+/// the one invariant the writer asserts: the fingerprint is dot-free.
 #[cfg(feature = "runtime-report")]
 fn decode_reflected_term(list: &models::rhoapi::EList) -> Option<RuntimeObservationValue> {
     let (head, children) = list.ps.split_first()?;
     let tag = private_name_tag(head)?;
-    let suffix = tag.strip_prefix(crate::REFLECTED_TERM_ABI_PREFIX)?;
-    let (fingerprint, label) = suffix.rsplit_once('.')?;
-    if label.is_empty() {
-        return None;
-    }
+    let (fingerprint, label) = mettail_rholang_codegen::parse_reflected_tag(&tag)?;
     // E-2-D (reflected-ABI v2): a marked-object node carries the `^gnd`/`^nog` hereditary-ground
     // marker at index 1 — skip it so the DECODED term is byte-identical to the pre-D observation
     // (the marker is codegen metadata, never an observable child). A bare marker GPrivate never

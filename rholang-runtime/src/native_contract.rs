@@ -86,10 +86,15 @@ fn private_name_tag(par: &Par) -> Option<String> {
 /// [`reflect_ground_term_par`], and to the spread's collapse values the accept σ slots carry)
 /// back to its [`GroundTerm`], checking every node's fingerprint against `expected_fingerprint`.
 ///
-/// The tag layout is `{prefix}{fingerprint}.{label}`: the fingerprint
-/// (`mettail-langdef-v1:<hex>`) contains no `.`, so the FIRST `.` after the prefix separates it
-/// from the label — which may itself contain dots (a literal leaf like `NumLit(8.5)` bakes the
-/// value into the label), hence `split_once`, not `rsplit_once`.
+/// The tag layout is `{prefix}{fingerprint}.{label}`: the fingerprint contains no `.`, so the
+/// FIRST `.` after the prefix separates it from the label — which may itself contain dots (a
+/// literal leaf like `NumLit(8.5)` bakes the value into the label).
+///
+/// ★ S1: this reader was CORRECT and the other four in the tree were not, but it was still a
+/// hand-rolled split. It now calls the single shared inverse
+/// [`mettail_rholang_codegen::parse_reflected_tag`], so the ABI has exactly one writer and one
+/// reader and the two can no longer drift apart. The invariant that licenses the first-`.` split
+/// is asserted at the writer, not restated here.
 ///
 /// Fails typed on anything that is not a positionally reflected term of THIS definition: the
 /// handler must never guess at a drifted or foreign operand.
@@ -120,15 +125,8 @@ pub fn par_to_ground_term(
         return Err(NativeContractError::OperandNotReflectedTerm);
     };
     let tag = private_name_tag(head).ok_or(NativeContractError::OperandNotReflectedTerm)?;
-    let suffix = tag
-        .strip_prefix(REFLECTED_TERM_ABI_PREFIX)
+    let (fingerprint, label) = mettail_rholang_codegen::parse_reflected_tag(&tag)
         .ok_or(NativeContractError::OperandNotReflectedTerm)?;
-    let (fingerprint, label) = suffix
-        .split_once('.')
-        .ok_or(NativeContractError::OperandNotReflectedTerm)?;
-    if label.is_empty() {
-        return Err(NativeContractError::OperandNotReflectedTerm);
-    }
     if fingerprint != expected_fingerprint {
         return Err(NativeContractError::FingerprintMismatch {
             expected: expected_fingerprint.to_string(),
