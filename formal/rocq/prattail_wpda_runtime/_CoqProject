@@ -81,3 +81,6 @@ theories/ReplayIdentityIntegrity.v
 theories/MixfixTriggerVacuity.v
 
 theories/KBestExtractionSound.v
+
+# Divergence I (2026-07-25): the numeral-carrier partition.
+theories/LiteralCarrierContextIndependence.v

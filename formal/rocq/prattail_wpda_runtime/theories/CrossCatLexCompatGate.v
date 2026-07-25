@@ -51,7 +51,7 @@
  *       category `R` has its OWN home Var reading [`result_has_home_var_reading`].
  *       ⇒ the 16 casts leave the `Some(Ident)` bucket (18 → 2 branches:
  *       CrossCatLhs + PVar). Every LITERAL-first bucket KEEPS its cast (`@1` →
- *       CastBigInt on `Integer`, `@[1]` → CastList on `[`, `@{k:v}` → CastMap on
+ *       CastInt on `Integer`, `@[1]` → CastList on `[`, `@{k:v}` → CastMap on
  *       `{`, `@Set(1)` → CastSet on the `Set` keyword — none is a var
  *       contribution). BYTE-IDENTICAL when the kill-switch const is off.
  *   (B) at runtime, a backstop `crosscat_proj_lex_compatible(source, tokens,
@@ -64,7 +64,17 @@
  *                    (t ∉ LITERAL-FIRST(S)), and R has a home Var reading (the
  *                    OVER-GENERATION scenario — `@a<-c`, the 16 casts).
  *   - LiteralFirst : t ∈ LITERAL-FIRST(S) (S literally begins with t, e.g. an
- *                    Integer/`[`/`{`/`Set`-keyword — `@1`→CastBigInt, KEPT).
+ *                    Integer/`[`/`{`/`Set`-keyword — `@1`→CastInt, KEPT).
+ *                    ★ AMENDED 2026-07-25 (divergence I): this illustration used
+ *                    to read `@1`→CastBigInt, because `BigInt`'s eval was a
+ *                    UNIVERSAL ACCEPTOR of every integer spelling and so won the
+ *                    lex-min tiebreak on a bare `1` by grammar declaration order.
+ *                    The literal domains now PARTITION
+ *                    (`LiteralCarrierContextIndependence.T_DomainsPartition`), so
+ *                    an unsuffixed `1` is an `Int` and `@1` is `CastInt`. The
+ *                    GATE itself is unaffected — it keys on whether the token is
+ *                    a var-contribution, never on which numeric category the cast
+ *                    targets — so only the illustration changes, no theorem.
  *   - NoHomeVar    : t = Ident var-only for S but R has NO home Var reading
  *                    (the projection is the ONLY source→result path — KEEP,
  *                    fail-safe, so no reading is lost even absent a home var).
@@ -80,7 +90,7 @@
  *      branches ⇒ the REALIZED reading set is EQUAL (every parse-realizing
  *      branch preserved), and every legit LiteralFirst / NoHomeVar reading kept.
  *   T-GatePreservesLiteralCast — a BProj in a LiteralFirst context (`@1` →
- *      CastBigInt) is KEPT.
+ *      CastInt) is KEPT.
  *   T-SmallerExponentialBase (was mislabeled "T-LinearFrontier"; CORRECTED
  *      2026-07-04) — after the gate the per-segment branch multiplier at a
  *      VarOnlyIdent dispatch drops from the ungated (2 + N) to the residual base
@@ -124,7 +134,7 @@ Section CrossCatLexCompatGate.
                            var-projections; R has a home Var reading — the
                            over-generation (the 16 casts on `@a<-c`) *)
     | LiteralFirst      (* t ∈ LITERAL-FIRST(S): S literally begins with t
-                           (`@1`→CastBigInt on Integer — KEEP) *)
+                           (`@1`→CastInt on Integer — KEEP) *)
     | StructuralSource  (* t = Ident, but S is IDENT-LED via a STRUCTURAL rule
                            (a leading NT followed by MORE consuming items, e.g.
                            `InputBind . lhs:Name "<-" n`; `ForRow . b:InputBind`).
@@ -316,7 +326,7 @@ Section CrossCatLexCompatGate.
   Qed.
 
   (* ═══════════ T-GatePreservesLiteralCast ═══════════ *)
-  (* A literal-first cast projection (`@1` → CastBigInt on an Integer token) is
+  (* A literal-first cast projection (`@1` → CastInt on an Integer token) is
      KEPT by the gate (its token is not a var-contribution). *)
   Theorem gate_preserves_literal_cast :
     In BProj (branches_gated LiteralFirst).

@@ -114,6 +114,18 @@
  * Rocq 9.1 compatible. No Admitted, no Axioms, no Assumptions (Section
  * Variables/Hypotheses are discharged; every theorem closes under the global
  * context). Model style follows SepReconvergence.v / AtQuotedBindGate.v.
+ *
+ * ★ DIVERGENCE-I RE-CHECK (2026-07-25). Closing divergence I partitioned
+ * RhoCalc's/Calculator's integer LITERAL domains (`BigInt`'s eval was a
+ * universal acceptor of every integer spelling). That STRICTLY SHRINKS the
+ * literal cohort at every token shape — proved, not assumed, as
+ * `LiteralCarrierContextIndependence.T_CohortShrinks`, with the a-fortiori step
+ * for any cohort-size-monotone bound as `T_CohortBoundsHoldAFortiori`. The
+ * bounds below are cohort-size monotone, so they hold A FORTIORI; nothing in
+ * this file needed to change. ⚠ Note what does NOT hold and is deliberately not
+ * claimed: per-CATEGORY containment. The new `Int` domain accepts `5u32`, which
+ * the old one refused outright (`parse_int_lit(text, Some(I64))` rejects a
+ * mismatched fixed suffix); it is the cohort's SIZE that is non-increasing.
  *)
 
 From Stdlib Require Import PeanoNat.
