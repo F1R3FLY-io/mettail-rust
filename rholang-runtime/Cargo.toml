@@ -740,6 +740,18 @@ name = "rhocalc"
 path = "src/bin/rhocalc.rs"
 required-features = ["rhocalc-runtime", "lambda-runtime", "calculator-runtime"]
 
+# CI gate for the CHURCH DESK demo (`demos/flt-church-desk/`): drives the built `rhocalc` binary
+# with the run sheet's own command lines and asserts, per beat, what the audience sees — the
+# Calculator guest's `14`, the Church numeral 12 and its 21-firing ^fired ledger, Omega's fuel
+# report, the two `where` desks (one changed token, a different answer, the refused numerals left
+# resting), and the NESTED-hole receive pattern that binds a foreign sub-term out into Rholang. It
+# also parses RUN-SHEET.md and compares every printed transcript against a live run, so the
+# presenter's page cannot drift from the binary.
+[[test]]
+name = "church_desk_demo"
+path = "tests/church_desk_demo.rs"
+required-features = ["rhocalc-runtime", "lambda-runtime", "calculator-runtime"]
+
 # CI gate for the `rhocalc` binary: runs it on the committed demo `.rho` file and asserts the
 # RhoCalc program (which exercises the grammar's FLT feature) reduces on the reducer — the COMM
 # fires, the typed `${x}` holes bind, and the re-quote reconstructs App(I, K) = (λ.0 λ.λ.1) on OUT.
