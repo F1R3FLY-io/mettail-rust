@@ -28,7 +28,12 @@ use mettail_prattail::binding_power::{
 use mettail_prattail::SyntaxItemSpec;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
-use std::collections::{HashMap, HashSet, VecDeque};
+// `VecDeque` was imported solely for `display_projection_reaches`'s BFS queue; that
+// function is disabled with the rest of the projection-surface wrapper election
+// (DEFECT 1, 2026-07-26 — see the block comment before its retained body). Dropped
+// from the import list so the disabled block does not leave an unused import behind;
+// restore it if that block is ever revived.
+use std::collections::{HashMap, HashSet};
 
 // =============================================================================
 // FENCE CAPTURE — the delimiter analogue of precedence parenthesization
@@ -857,7 +862,25 @@ fn generate_engine_var_fields_arm(
 /// surrounding parse context.  They must therefore forward the inherited
 /// binding-power threshold instead of resetting it to zero.
 fn is_syntaxless_single_child_projection(rule: &GrammarRule) -> bool {
-    simple_projection_shape_for_display(rule).is_some()
+    if simple_projection_shape_for_display(rule).is_some() {
+        return true;
+    }
+    // DEFECT 1 (2026-07-26): `simple_projection_shape_for_display` excludes
+    // AUTO-INJECTED rules, because the projection-SURFACE arm (now disabled — see
+    // the block comment above `find_projection_surface_wrapper`) used to claim them
+    // before this path was ever consulted. With that arm gone an auto-injected
+    // cross-category projection must take the SAME `atomic_child_bp` route as an
+    // explicit one, or it would render its source bare at every threshold and lose
+    // its bracketing in operand position.
+    //
+    // Every auto-injected projection `auto_inject.rs` emits carries a
+    // `syntax_pattern`, so it is routed to `generate_engine_syntax_pattern_arm`
+    // (whose own `forwards_projection_param` path already covers it) rather than
+    // here. This arm closes the corresponding hole on the OLD-STYLE, items-only
+    // path so the two generators agree by construction instead of by coincidence.
+    rule.is_auto_injected
+        && classify_simple_projection_shape(rule)
+            .is_some_and(|shape| shape.source_category != shape.target_category)
 }
 
 fn simple_projection_shape_for_display(rule: &GrammarRule) -> Option<(String, String)> {
@@ -879,99 +902,158 @@ fn simple_projection_shape_for_display(rule: &GrammarRule) -> Option<(String, St
     None
 }
 
-fn single_base_param(rule: &GrammarRule) -> Option<(String, String)> {
-    let tc = rule.term_context.as_ref()?;
-    if tc.len() != 1 {
-        return None;
-    }
-    let TermParam::Simple { name, ty } = &tc[0] else {
-        return None;
-    };
-    let TypeExpr::Base(cat) = ty else {
-        return None;
-    };
-    Some((name.to_string(), cat.to_string()))
-}
+// DISABLED 2026-07-26 (DEFECT 1) — `single_base_param` had exactly one caller,
+// `find_projection_surface_wrapper`, where it read the borrowed rule's sole base
+// parameter. With that election disabled it has no remaining use. Retained verbatim,
+// not deleted, so the disabled block below reads as written.
+//
+// fn single_base_param(rule: &GrammarRule) -> Option<(String, String)> {
+//     let tc = rule.term_context.as_ref()?;
+//     if tc.len() != 1 {
+//         return None;
+//     }
+//     let TermParam::Simple { name, ty } = &tc[0] else {
+//         return None;
+//     };
+//     let TypeExpr::Base(cat) = ty else {
+//         return None;
+//     };
+//     Some((name.to_string(), cat.to_string()))
+// }
 
-fn display_projection_reaches(language: &LanguageDef, source_cat: &str, target_cat: &str) -> bool {
-    if source_cat == target_cat {
-        return true;
-    }
-
-    let mut seen: HashSet<String> = HashSet::new();
-    let mut queue: VecDeque<String> = VecDeque::new();
-    seen.insert(source_cat.to_string());
-    queue.push_back(source_cat.to_string());
-
-    while let Some(cat) = queue.pop_front() {
-        for rule in &language.terms {
-            let Some((next_source, next_target)) = simple_projection_shape_for_display(rule) else {
-                continue;
-            };
-            if next_source != cat || !seen.insert(next_target.clone()) {
-                continue;
-            }
-            if next_target == target_cat {
-                return true;
-            }
-            queue.push_back(next_target);
-        }
-    }
-
-    false
-}
-
-fn find_projection_surface_wrapper<'a>(
-    language: &'a LanguageDef,
-    source_cat: &str,
-    target_cat: &str,
-) -> Option<(&'a GrammarRule, String)> {
-    language.terms.iter().find_map(|rule| {
-        if rule.is_auto_injected || rule.category.to_string() != target_cat {
-            return None;
-        }
-        let syntax_pattern = rule.syntax_pattern.as_ref()?;
-        let (param_name, param_cat) = single_base_param(rule)?;
-        let param_occurrences = syntax_pattern
-            .iter()
-            .filter(|expr| matches!(expr, SyntaxExpr::Param(id) if id.to_string() == param_name))
-            .count();
-        let has_literal = syntax_pattern
-            .iter()
-            .any(|expr| matches!(expr, SyntaxExpr::Literal(_)));
-        if param_occurrences != 1 || !has_literal {
-            return None;
-        }
-        if !is_delimited_projection_surface_pattern(syntax_pattern, &param_name) {
-            return None;
-        }
-        if !display_projection_reaches(language, source_cat, &param_cat) {
-            return None;
-        }
-        Some((rule, param_name))
-    })
-}
-
-fn is_delimited_projection_surface_pattern(
-    syntax_pattern: &[SyntaxExpr],
-    param_name: &str,
-) -> bool {
-    let Some(param_idx) = syntax_pattern
-        .iter()
-        .position(|expr| matches!(expr, SyntaxExpr::Param(id) if id.to_string() == param_name))
-    else {
-        return false;
-    };
-
-    let has_left_literal = syntax_pattern[..param_idx]
-        .iter()
-        .any(|expr| matches!(expr, SyntaxExpr::Literal(s) if !s.is_empty()));
-    let has_right_literal = syntax_pattern[param_idx + 1..]
-        .iter()
-        .any(|expr| matches!(expr, SyntaxExpr::Literal(s) if !s.is_empty()));
-
-    has_left_literal && has_right_literal
-}
+// ════════════════════════════════════════════════════════════════════════════
+// DISABLED 2026-07-26 — THE PROJECTION-SURFACE WRAPPER ELECTION (DEFECT 1)
+// ════════════════════════════════════════════════════════════════════════════
+//
+// The block below (`display_projection_reaches`, `find_projection_surface_wrapper`,
+// `is_delimited_projection_surface_pattern`, `simple_literal_param_pattern_ops`, and
+// the three arm builders that consumed them) rendered a CROSS-CATEGORY PROJECTION
+// operand at `min_bp > 0` by BORROWING the first delimited single-base-param rule of
+// the target category and re-emitting that rule's own surface around the source term.
+//
+// The intent was legitimate and is recorded in the commit that introduced it
+// (`641caeb5`, "projection-shadowed operands parenthesize"): a projection is
+// display-transparent, so an operator-rooted source term placed bare in an operand
+// slot fuses with the surrounding operator and the bracketing is lost.
+//
+// THE DEFECT: the borrowed rule is a REAL CONSTRUCTOR, so the rendered text does not
+// denote the term. Measured on rhocalc, where the election lands on
+// `POutputNil . q:Proc |- "@" "Nil" "!" "(" q ")"` — a SEND:
+//
+//     Add(CastInt 1, CastInt 2)  ─display→  "@Nil!(1) + @Nil!(2)"
+//                                ─parse──→  Add(POutputNil 1, POutputNil 2)
+//
+// Two integers went in; two sends on the null-process channel came out. The same
+// election on calculator lands on `BigratCast . a:Proc |- "bigrat" "(" a ")"`, so
+// `IntToBigRat(AddInt(1,2))` rendered `bigrat(1 + 2)` and reparsed as a `BigratCast`
+// over `Proc`. Neither language's display was term-preserving in operand position.
+//
+// It also could not be repaired in place: no rule of the target category can serve as
+// a pure bracket, because every rule of the target category MEANS something.
+//
+// THE REPLACEMENT is the mechanism this file already had, one layer down — the
+// `forwards_projection_min_bp` / `forwards_projection_param` path, which renders the
+// source at `BpLookup::atomic_child_bp(source_cat) = max_bp(source_cat) + 1`. That
+// threshold is above every operator of the source category, so the SOURCE's own
+// precedence logic emits `WriteLiteral("(")` / `WriteLiteral(")")` — the language's
+// pure, inert grouping form, which carries no rule of its own and therefore denotes
+// nothing (`languages/tests/calculator_grouping_is_inert.rs` pins
+// `C::parse(E).is_ok() ⟺ C::parse("(" ++ E ++ ")").is_ok()` for every category, and
+// `emit_paren_dispatch_arms` in `macros/src/gen/runtime/wpda_codegen/prefix.rs` emits
+// the `(`-grouping dispatch for every category, so no category lacks the form).
+//
+// Because the threshold is consulted per-term rather than applied blanketly, a
+// SELF-DELIMITING source (an atom, a variable, a bracketed collection literal, a
+// keyword-led call such as `Set( … )` or `int(a, 32)`) emits no parentheses at all —
+// so `Add(CastInt 1, CastInt 2)` now displays as `1 + 2`, while
+// `AddBigRat(IntToBigRat(AddInt(1,2)), Err)` displays as `(1 + 2) + error`. The
+// existing comment above `generate_engine_regular_arm`'s infix branch already named
+// this path as the one responsible for "the genuinely necessary disambiguation
+// parentheses for a syntaxless-projection node used AS an operand"; the wrapper
+// election was a second, competing mechanism layered over it. Removing it leaves one.
+//
+// Retained verbatim below rather than deleted, so the borrowed-surface approach is
+// recoverable and its failure mode stays on the record.
+//
+// fn display_projection_reaches(language: &LanguageDef, source_cat: &str, target_cat: &str) -> bool {
+//     if source_cat == target_cat {
+//         return true;
+//     }
+//
+//     let mut seen: HashSet<String> = HashSet::new();
+//     let mut queue: VecDeque<String> = VecDeque::new();
+//     seen.insert(source_cat.to_string());
+//     queue.push_back(source_cat.to_string());
+//
+//     while let Some(cat) = queue.pop_front() {
+//         for rule in &language.terms {
+//             let Some((next_source, next_target)) = simple_projection_shape_for_display(rule) else {
+//                 continue;
+//             };
+//             if next_source != cat || !seen.insert(next_target.clone()) {
+//                 continue;
+//             }
+//             if next_target == target_cat {
+//                 return true;
+//             }
+//             queue.push_back(next_target);
+//         }
+//     }
+//
+//     false
+// }
+//
+// fn find_projection_surface_wrapper<'a>(
+//     language: &'a LanguageDef,
+//     source_cat: &str,
+//     target_cat: &str,
+// ) -> Option<(&'a GrammarRule, String)> {
+//     language.terms.iter().find_map(|rule| {
+//         if rule.is_auto_injected || rule.category.to_string() != target_cat {
+//             return None;
+//         }
+//         let syntax_pattern = rule.syntax_pattern.as_ref()?;
+//         let (param_name, param_cat) = single_base_param(rule)?;
+//         let param_occurrences = syntax_pattern
+//             .iter()
+//             .filter(|expr| matches!(expr, SyntaxExpr::Param(id) if id.to_string() == param_name))
+//             .count();
+//         let has_literal = syntax_pattern
+//             .iter()
+//             .any(|expr| matches!(expr, SyntaxExpr::Literal(_)));
+//         if param_occurrences != 1 || !has_literal {
+//             return None;
+//         }
+//         if !is_delimited_projection_surface_pattern(syntax_pattern, &param_name) {
+//             return None;
+//         }
+//         if !display_projection_reaches(language, source_cat, &param_cat) {
+//             return None;
+//         }
+//         Some((rule, param_name))
+//     })
+// }
+//
+// fn is_delimited_projection_surface_pattern(
+//     syntax_pattern: &[SyntaxExpr],
+//     param_name: &str,
+// ) -> bool {
+//     let Some(param_idx) = syntax_pattern
+//         .iter()
+//         .position(|expr| matches!(expr, SyntaxExpr::Param(id) if id.to_string() == param_name))
+//     else {
+//         return false;
+//     };
+//
+//     let has_left_literal = syntax_pattern[..param_idx]
+//         .iter()
+//         .any(|expr| matches!(expr, SyntaxExpr::Literal(s) if !s.is_empty()));
+//     let has_right_literal = syntax_pattern[param_idx + 1..]
+//         .iter()
+//         .any(|expr| matches!(expr, SyntaxExpr::Literal(s) if !s.is_empty()));
+//
+//     has_left_literal && has_right_literal
+// }
 
 /// Element category of a collection-typed `Simple` param `param` on `rule`
 /// (e.g. `Proc` for `ps:HashBag(Proc)`), read from the rule's term context.
@@ -1302,130 +1384,143 @@ fn is_collection_mirror_infix(rule: &GrammarRule, language: &LanguageDef) -> boo
     })
 }
 
-fn simple_literal_param_pattern_ops(
-    syntax_pattern: &[SyntaxExpr],
-    param_name: &str,
-    task_variant: &syn::Ident,
-    field_ident: &syn::Ident,
-) -> Option<Vec<TokenStream>> {
-    let mut forward_ops: Vec<TokenStream> = Vec::new();
-    for (i, expr) in syntax_pattern.iter().enumerate() {
-        match expr {
-            SyntaxExpr::Literal(s) => {
-                let next_param = syntax_pattern
-                    .get(i + 1)
-                    .map(|e| matches!(e, SyntaxExpr::Param(_)));
-                let prev_param =
-                    i > 0 && matches!(syntax_pattern.get(i - 1), Some(SyntaxExpr::Param(_)));
-                let is_word = !s.is_empty()
-                    && s.chars().all(|c| c.is_alphanumeric() || c == '_')
-                    && !s.chars().next().unwrap().is_numeric();
-                let (prefix, suffix) = if prev_param && next_param.unwrap_or(false) {
-                    (" ", " ")
-                } else if next_param == Some(true) && is_word {
-                    ("", " ")
-                } else {
-                    ("", "")
-                };
-                let raw = format!("{}{}{}", prefix, s, suffix);
-                forward_ops.push(quote! {
-                    stack.push(DisplayTask::WriteString(#raw.to_string()));
-                });
-            },
-            SyntaxExpr::Param(id) if id.to_string() == param_name => {
-                forward_ops.push(quote! {
-                    stack.push(DisplayTask::#task_variant(&**#field_ident as *const _, 0u8));
-                });
-            },
-            _ => return None,
-        }
-    }
-    forward_ops.reverse();
-    Some(forward_ops)
-}
-
-fn generate_projection_surface_display_arm_for_field(
-    rule: &GrammarRule,
-    field_name: &syn::Ident,
-    language: &LanguageDef,
-) -> Option<TokenStream> {
-    if !rule.is_auto_injected {
-        return None;
-    }
-    let shape = classify_simple_projection_shape(rule)?;
-    if shape.source_category == shape.target_category {
-        return None;
-    }
-    let source_task_variant = format_ident!("Display{}", shape.source_category);
-    let (wrapper, param_name) =
-        find_projection_surface_wrapper(language, &shape.source_category, &shape.target_category)?;
-    let syntax_pattern = wrapper.syntax_pattern.as_ref()?;
-    let forward_ops = simple_literal_param_pattern_ops(
-        syntax_pattern,
-        &param_name,
-        &source_task_variant,
-        field_name,
-    )?;
-    let category = &rule.category;
-    let label = &rule.label;
-    Some(quote! {
-        #category::#label(#field_name) => {
-            if min_bp == 0 {
-                stack.push(DisplayTask::#source_task_variant(&**#field_name as *const _, 0u8));
-            } else {
-                #(#forward_ops)*
-            }
-        }
-    })
-}
-
-fn contextual_projection_surface_ops_for_field(
-    rule: &GrammarRule,
-    field_name: &syn::Ident,
-    language: &LanguageDef,
-) -> Option<Vec<TokenStream>> {
-    let shape = classify_simple_projection_shape(rule)?;
-    if shape.source_category == shape.target_category {
-        return None;
-    }
-    let source_task_variant = format_ident!("Display{}", shape.source_category);
-    let (wrapper, param_name) =
-        find_projection_surface_wrapper(language, &shape.source_category, &shape.target_category)?;
-    let syntax_pattern = wrapper.syntax_pattern.as_ref()?;
-    simple_literal_param_pattern_ops(syntax_pattern, &param_name, &source_task_variant, field_name)
-}
-
-fn generate_contextual_projection_surface_display_arm_for_field(
-    rule: &GrammarRule,
-    field_name: &syn::Ident,
-    language: &LanguageDef,
-) -> Option<TokenStream> {
-    let shape = classify_simple_projection_shape(rule)?;
-    if shape.source_category == shape.target_category {
-        return None;
-    }
-    let category = &rule.category;
-    let label = &rule.label;
-    let source_task_variant = format_ident!("Display{}", shape.source_category);
-    let wrapper_ops = contextual_projection_surface_ops_for_field(rule, field_name, language)?;
-    Some(quote! {
-        #category::#label(#field_name) => {
-            if min_bp == 0 {
-                stack.push(DisplayTask::#source_task_variant(&**#field_name as *const _, 0u8));
-            } else {
-                #(#wrapper_ops)*
-            }
-        }
-    })
-}
-
-fn generate_projection_surface_display_arm(
-    rule: &GrammarRule,
-    field_names: &[syn::Ident],
-    language: &LanguageDef,
-) -> Option<TokenStream> {
-    generate_projection_surface_display_arm_for_field(rule, field_names.first()?, language)
-}
+// ════════════════════════════════════════════════════════════════════════════
+// DISABLED 2026-07-26 — the four arm builders that consumed the borrowed wrapper.
+// See the DEFECT 1 block comment above the (also disabled)
+// `find_projection_surface_wrapper`. Retained verbatim; not deleted.
+//
+// Each arm rendered the source BARE at `min_bp == 0` and, at `min_bp > 0`, emitted
+// the BORROWED rule's literal surface around it. The `min_bp == 0` half survives —
+// it is exactly what `forwards_projection_{min_bp,param}` emits via
+// `if min_bp == 0 { 0 } else { atomic_bp }` — so disabling these arms changes the
+// `min_bp == 0` rendering NOT AT ALL and replaces only the `min_bp > 0` half:
+// a borrowed constructor's surface becomes the source category's own
+// precedence-driven `(` … `)`.
+//
+// fn simple_literal_param_pattern_ops(
+//     syntax_pattern: &[SyntaxExpr],
+//     param_name: &str,
+//     task_variant: &syn::Ident,
+//     field_ident: &syn::Ident,
+// ) -> Option<Vec<TokenStream>> {
+//     let mut forward_ops: Vec<TokenStream> = Vec::new();
+//     for (i, expr) in syntax_pattern.iter().enumerate() {
+//         match expr {
+//             SyntaxExpr::Literal(s) => {
+//                 let next_param = syntax_pattern
+//                     .get(i + 1)
+//                     .map(|e| matches!(e, SyntaxExpr::Param(_)));
+//                 let prev_param =
+//                     i > 0 && matches!(syntax_pattern.get(i - 1), Some(SyntaxExpr::Param(_)));
+//                 let is_word = !s.is_empty()
+//                     && s.chars().all(|c| c.is_alphanumeric() || c == '_')
+//                     && !s.chars().next().unwrap().is_numeric();
+//                 let (prefix, suffix) = if prev_param && next_param.unwrap_or(false) {
+//                     (" ", " ")
+//                 } else if next_param == Some(true) && is_word {
+//                     ("", " ")
+//                 } else {
+//                     ("", "")
+//                 };
+//                 let raw = format!("{}{}{}", prefix, s, suffix);
+//                 forward_ops.push(quote! {
+//                     stack.push(DisplayTask::WriteString(#raw.to_string()));
+//                 });
+//             },
+//             SyntaxExpr::Param(id) if id.to_string() == param_name => {
+//                 forward_ops.push(quote! {
+//                     stack.push(DisplayTask::#task_variant(&**#field_ident as *const _, 0u8));
+//                 });
+//             },
+//             _ => return None,
+//         }
+//     }
+//     forward_ops.reverse();
+//     Some(forward_ops)
+// }
+//
+// fn generate_projection_surface_display_arm_for_field(
+//     rule: &GrammarRule,
+//     field_name: &syn::Ident,
+//     language: &LanguageDef,
+// ) -> Option<TokenStream> {
+//     if !rule.is_auto_injected {
+//         return None;
+//     }
+//     let shape = classify_simple_projection_shape(rule)?;
+//     if shape.source_category == shape.target_category {
+//         return None;
+//     }
+//     let source_task_variant = format_ident!("Display{}", shape.source_category);
+//     let (wrapper, param_name) =
+//         find_projection_surface_wrapper(language, &shape.source_category, &shape.target_category)?;
+//     let syntax_pattern = wrapper.syntax_pattern.as_ref()?;
+//     let forward_ops = simple_literal_param_pattern_ops(
+//         syntax_pattern,
+//         &param_name,
+//         &source_task_variant,
+//         field_name,
+//     )?;
+//     let category = &rule.category;
+//     let label = &rule.label;
+//     Some(quote! {
+//         #category::#label(#field_name) => {
+//             if min_bp == 0 {
+//                 stack.push(DisplayTask::#source_task_variant(&**#field_name as *const _, 0u8));
+//             } else {
+//                 #(#forward_ops)*
+//             }
+//         }
+//     })
+// }
+//
+// fn contextual_projection_surface_ops_for_field(
+//     rule: &GrammarRule,
+//     field_name: &syn::Ident,
+//     language: &LanguageDef,
+// ) -> Option<Vec<TokenStream>> {
+//     let shape = classify_simple_projection_shape(rule)?;
+//     if shape.source_category == shape.target_category {
+//         return None;
+//     }
+//     let source_task_variant = format_ident!("Display{}", shape.source_category);
+//     let (wrapper, param_name) =
+//         find_projection_surface_wrapper(language, &shape.source_category, &shape.target_category)?;
+//     let syntax_pattern = wrapper.syntax_pattern.as_ref()?;
+//     simple_literal_param_pattern_ops(syntax_pattern, &param_name, &source_task_variant, field_name)
+// }
+//
+// fn generate_contextual_projection_surface_display_arm_for_field(
+//     rule: &GrammarRule,
+//     field_name: &syn::Ident,
+//     language: &LanguageDef,
+// ) -> Option<TokenStream> {
+//     let shape = classify_simple_projection_shape(rule)?;
+//     if shape.source_category == shape.target_category {
+//         return None;
+//     }
+//     let category = &rule.category;
+//     let label = &rule.label;
+//     let source_task_variant = format_ident!("Display{}", shape.source_category);
+//     let wrapper_ops = contextual_projection_surface_ops_for_field(rule, field_name, language)?;
+//     Some(quote! {
+//         #category::#label(#field_name) => {
+//             if min_bp == 0 {
+//                 stack.push(DisplayTask::#source_task_variant(&**#field_name as *const _, 0u8));
+//             } else {
+//                 #(#wrapper_ops)*
+//             }
+//         }
+//     })
+// }
+//
+// fn generate_projection_surface_display_arm(
+//     rule: &GrammarRule,
+//     field_names: &[syn::Ident],
+//     language: &LanguageDef,
+// ) -> Option<TokenStream> {
+//     generate_projection_surface_display_arm_for_field(rule, field_names.first()?, language)
+// }
 
 /// Generate arm for regular rules (no Var fields, no binders, no syntax_pattern).
 ///
@@ -1448,22 +1543,29 @@ fn generate_engine_regular_arm(
     let label = &rule.label;
     let label_str = label.to_string();
     let category_str = category.to_string();
-    if let Some(auto_projection_arm) =
-        generate_projection_surface_display_arm(rule, field_names, _language)
-    {
-        return auto_projection_arm;
-    }
-    if field_names.len() == 1 {
-        if let Some(contextual_projection_arm) =
-            generate_contextual_projection_surface_display_arm_for_field(
-                rule,
-                &field_names[0],
-                _language,
-            )
-        {
-            return contextual_projection_arm;
-        }
-    }
+    // DISABLED 2026-07-26 (DEFECT 1) — the projection-surface wrapper election.
+    // Falling through to `forwards_projection_min_bp` below routes a cross-category
+    // projection's source through `atomic_child_bp`, so the SOURCE's own precedence
+    // logic emits the language's pure `(` … `)` grouping instead of a borrowed
+    // constructor's surface. See the block comment above the disabled
+    // `find_projection_surface_wrapper`.
+    //
+    // if let Some(auto_projection_arm) =
+    //     generate_projection_surface_display_arm(rule, field_names, _language)
+    // {
+    //     return auto_projection_arm;
+    // }
+    // if field_names.len() == 1 {
+    //     if let Some(contextual_projection_arm) =
+    //         generate_contextual_projection_surface_display_arm_for_field(
+    //             rule,
+    //             &field_names[0],
+    //             _language,
+    //         )
+    //     {
+    //         return contextual_projection_arm;
+    //     }
+    // }
     let forwards_projection_min_bp = is_syntaxless_single_child_projection(rule);
 
     // Check if this rule is an infix/postfix/mixfix operator
@@ -2167,23 +2269,33 @@ fn generate_engine_syntax_pattern_arm(
         }
     }
 
-    if !has_abstraction && param_names.len() == 1 {
-        let field_ident = syn::Ident::new(&param_names[0], proc_macro2::Span::call_site());
-        if let Some(surface_projection_arm) =
-            generate_projection_surface_display_arm_for_field(rule, &field_ident, _language)
-        {
-            return surface_projection_arm;
-        }
-        if let Some(contextual_projection_arm) =
-            generate_contextual_projection_surface_display_arm_for_field(
-                rule,
-                &field_ident,
-                _language,
-            )
-        {
-            return contextual_projection_arm;
-        }
-    }
+    // DISABLED 2026-07-26 (DEFECT 1) — the projection-surface wrapper election.
+    // This is the LIVE site for every shipped grammar: `auto_inject.rs` always emits
+    // a `syntax_pattern` for the projections it synthesizes, and every hand-written
+    // cast (`CastInt . k:Int |- k : Proc`) has one too, so `generate_engine_rule_arm`
+    // routes them all here rather than to `generate_engine_regular_arm`. Falling
+    // through leaves them to `forwards_projection_param` below, which renders the
+    // source at `atomic_child_bp` and so gets the source category's own
+    // `WriteLiteral("(")` / `WriteLiteral(")")` — nothing borrowed, nothing denoted.
+    // See the block comment above the disabled `find_projection_surface_wrapper`.
+    //
+    // if !has_abstraction && param_names.len() == 1 {
+    //     let field_ident = syn::Ident::new(&param_names[0], proc_macro2::Span::call_site());
+    //     if let Some(surface_projection_arm) =
+    //         generate_projection_surface_display_arm_for_field(rule, &field_ident, _language)
+    //     {
+    //         return surface_projection_arm;
+    //     }
+    //     if let Some(contextual_projection_arm) =
+    //         generate_contextual_projection_surface_display_arm_for_field(
+    //             rule,
+    //             &field_ident,
+    //             _language,
+    //         )
+    //     {
+    //         return contextual_projection_arm;
+    //     }
+    // }
 
     let forwards_projection_param = if !has_abstraction && syntax_pattern.len() == 1 {
         if let SyntaxExpr::Param(id) = &syntax_pattern[0] {
@@ -3780,6 +3892,11 @@ mod tests {
         }
     }
 
+    /// Retained for the disabled projection-surface tests below (DEFECT 1,
+    /// 2026-07-26). Their successors work on single `GrammarRule`s and on a
+    /// hand-built `BpLookup`, so nothing live needs a whole `LanguageDef` — but
+    /// deleting the builder would make the retained tests unreadable.
+    #[allow(dead_code)]
     fn language(terms: Vec<GrammarRule>) -> LanguageDef {
         LanguageDef {
             name: ident("DisplayProjectionTest"),
@@ -3801,10 +3918,160 @@ mod tests {
         }
     }
 
+    // ════════════════════════════════════════════════════════════════════════
+    // DISABLED 2026-07-26 (DEFECT 1) — the four unit tests that pinned the
+    // borrowed-wrapper election. Each asserted a PROPERTY OF THE DEFECT, not of the
+    // intent: `projection_wrapper_search_rejects_unary_operators` asserted the
+    // election lands on `BigintCast` (a real `Proc → BigInt` constructor), and
+    // `auto_syntaxless_projection_is_contextual_not_always_wrapped` asserted the
+    // emitted arm literally contains the token `bigint`. With the election disabled
+    // those properties are gone by design; their successors are the four
+    // `projection_operand_*` tests directly below, which pin the REPLACEMENT
+    // (`atomic_child_bp` routing → the source category's own `(` … `)`).
+    // Retained verbatim; not deleted.
+    //
+    // #[test]
+    // fn projection_wrapper_search_rejects_unary_operators() {
+    //     let projection = syntaxless_projection("BoolToBigInt", "Bool", "BigInt", true);
+    //     let proc_bool = syntaxless_projection("ProcBool", "Bool", "Proc", false);
+    //     let neg_bigint = rule(
+    //         "NegBigInt",
+    //         "BigInt",
+    //         vec![simple_param("a", "BigInt")],
+    //         vec![SyntaxExpr::Literal("-".to_string()), SyntaxExpr::Param(ident("a"))],
+    //         false,
+    //     );
+    //     let bigint_cast = rule(
+    //         "BigintCast",
+    //         "BigInt",
+    //         vec![simple_param("a", "Proc")],
+    //         vec![
+    //             SyntaxExpr::Literal("bigint".to_string()),
+    //             SyntaxExpr::Literal("(".to_string()),
+    //             SyntaxExpr::Param(ident("a")),
+    //             SyntaxExpr::Literal(")".to_string()),
+    //         ],
+    //         false,
+    //     );
+    //     let lang = language(vec![projection, proc_bool, neg_bigint, bigint_cast]);
+    //
+    //     let (wrapper, param_name) =
+    //         find_projection_surface_wrapper(&lang, "Bool", "BigInt").unwrap();
+    //
+    //     assert_eq!(wrapper.label.to_string(), "BigintCast");
+    //     assert_eq!(param_name, "a");
+    // }
+    //
+    // #[test]
+    // fn explicit_syntaxless_projection_stays_transparent() {
+    //     let projection = syntaxless_projection("IntToBigInt", "Int", "BigInt", false);
+    //     let bigint_cast = rule(
+    //         "BigintCast",
+    //         "BigInt",
+    //         vec![simple_param("a", "Proc")],
+    //         vec![
+    //             SyntaxExpr::Literal("bigint".to_string()),
+    //             SyntaxExpr::Literal("(".to_string()),
+    //             SyntaxExpr::Param(ident("a")),
+    //             SyntaxExpr::Literal(")".to_string()),
+    //         ],
+    //         false,
+    //     );
+    //     let lang = language(vec![projection.clone(), bigint_cast]);
+    //
+    //     assert!(
+    //         generate_projection_surface_display_arm_for_field(&projection, &ident("v"), &lang)
+    //             .is_none()
+    //     );
+    // }
+    //
+    // #[test]
+    // fn auto_syntaxless_projection_is_contextual_not_always_wrapped() {
+    //     let projection = syntaxless_projection("BoolToBigInt", "Bool", "BigInt", true);
+    //     let proc_bool = syntaxless_projection("ProcBool", "Bool", "Proc", false);
+    //     let bigint_cast = rule(
+    //         "BigintCast",
+    //         "BigInt",
+    //         vec![simple_param("a", "Proc")],
+    //         vec![
+    //             SyntaxExpr::Literal("bigint".to_string()),
+    //             SyntaxExpr::Literal("(".to_string()),
+    //             SyntaxExpr::Param(ident("a")),
+    //             SyntaxExpr::Literal(")".to_string()),
+    //         ],
+    //         false,
+    //     );
+    //     let lang = language(vec![projection.clone(), proc_bool, bigint_cast]);
+    //
+    //     let arm =
+    //         generate_projection_surface_display_arm_for_field(&projection, &ident("v"), &lang)
+    //             .expect("auto projection should borrow a wrapper in operand context");
+    //     let rendered = arm.to_string();
+    //
+    //     assert!(rendered.contains("if min_bp == 0"));
+    //     assert!(rendered.contains("DisplayBool"));
+    //     assert!(rendered.contains("bigint"));
+    // }
+    //
+    // #[test]
+    // fn explicit_syntaxless_projection_can_use_wrapper_in_operand_context() {
+    //     let projection = syntaxless_projection("IntToBigInt", "Int", "BigInt", false);
+    //     let proc_int = syntaxless_projection("ProcInt", "Int", "Proc", false);
+    //     let bigint_cast = rule(
+    //         "BigintCast",
+    //         "BigInt",
+    //         vec![simple_param("a", "Proc")],
+    //         vec![
+    //             SyntaxExpr::Literal("bigint".to_string()),
+    //             SyntaxExpr::Literal("(".to_string()),
+    //             SyntaxExpr::Param(ident("a")),
+    //             SyntaxExpr::Literal(")".to_string()),
+    //         ],
+    //         false,
+    //     );
+    //     let lang = language(vec![projection.clone(), proc_int, bigint_cast]);
+    //
+    //     assert!(generate_contextual_projection_surface_display_arm_for_field(
+    //         &projection,
+    //         &ident("v"),
+    //         &lang
+    //     )
+    //     .is_some());
+    // }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // SUCCESSORS — the replacement mechanism (DEFECT 1 fix, 2026-07-26)
+    // ════════════════════════════════════════════════════════════════════════
+
+    /// An EXPLICIT cross-category projection routes through the transparent-wrapper
+    /// path, whose child threshold is `atomic_child_bp` — so the source's own
+    /// precedence logic supplies the bracket.
     #[test]
-    fn projection_wrapper_search_rejects_unary_operators() {
+    fn projection_operand_explicit_projection_forwards_min_bp() {
+        let projection = syntaxless_projection("IntToBigInt", "Int", "BigInt", false);
+        assert!(
+            is_syntaxless_single_child_projection(&projection),
+            "an explicit cross-category projection must take the atomic_child_bp route"
+        );
+    }
+
+    /// An AUTO-INJECTED cross-category projection must take the SAME route. Before
+    /// the fix `simple_projection_shape_for_display` returned `None` for
+    /// `is_auto_injected` rules, because the (now disabled) surface arm claimed them
+    /// first; leaving that exclusion in place would have rendered an auto-injected
+    /// projection's source bare at every threshold and lost its bracketing.
+    #[test]
+    fn projection_operand_auto_injected_projection_also_forwards_min_bp() {
         let projection = syntaxless_projection("BoolToBigInt", "Bool", "BigInt", true);
-        let proc_bool = syntaxless_projection("ProcBool", "Bool", "Proc", false);
+        assert!(
+            is_syntaxless_single_child_projection(&projection),
+            "an auto-injected cross-category projection must take the atomic_child_bp route"
+        );
+    }
+
+    /// A SAME-category rule is not a projection and must keep its own thresholds.
+    #[test]
+    fn projection_operand_same_category_rule_is_not_a_projection() {
         let neg_bigint = rule(
             "NegBigInt",
             "BigInt",
@@ -3812,101 +4079,29 @@ mod tests {
             vec![SyntaxExpr::Literal("-".to_string()), SyntaxExpr::Param(ident("a"))],
             false,
         );
-        let bigint_cast = rule(
-            "BigintCast",
-            "BigInt",
-            vec![simple_param("a", "Proc")],
-            vec![
-                SyntaxExpr::Literal("bigint".to_string()),
-                SyntaxExpr::Literal("(".to_string()),
-                SyntaxExpr::Param(ident("a")),
-                SyntaxExpr::Literal(")".to_string()),
-            ],
-            false,
-        );
-        let lang = language(vec![projection, proc_bool, neg_bigint, bigint_cast]);
-
-        let (wrapper, param_name) =
-            find_projection_surface_wrapper(&lang, "Bool", "BigInt").unwrap();
-
-        assert_eq!(wrapper.label.to_string(), "BigintCast");
-        assert_eq!(param_name, "a");
-    }
-
-    #[test]
-    fn explicit_syntaxless_projection_stays_transparent() {
-        let projection = syntaxless_projection("IntToBigInt", "Int", "BigInt", false);
-        let bigint_cast = rule(
-            "BigintCast",
-            "BigInt",
-            vec![simple_param("a", "Proc")],
-            vec![
-                SyntaxExpr::Literal("bigint".to_string()),
-                SyntaxExpr::Literal("(".to_string()),
-                SyntaxExpr::Param(ident("a")),
-                SyntaxExpr::Literal(")".to_string()),
-            ],
-            false,
-        );
-        let lang = language(vec![projection.clone(), bigint_cast]);
-
         assert!(
-            generate_projection_surface_display_arm_for_field(&projection, &ident("v"), &lang)
-                .is_none()
+            !is_syntaxless_single_child_projection(&neg_bigint),
+            "a unary operator is not a transparent projection"
         );
     }
 
+    /// The threshold the projection forwards is strictly ABOVE every binding power
+    /// of the source category, which is what makes an operator-rooted source
+    /// parenthesize while an atom stays bare. Pins the arithmetic of
+    /// `BpLookup::atomic_child_bp` rather than trusting it.
     #[test]
-    fn auto_syntaxless_projection_is_contextual_not_always_wrapped() {
-        let projection = syntaxless_projection("BoolToBigInt", "Bool", "BigInt", true);
-        let proc_bool = syntaxless_projection("ProcBool", "Bool", "Proc", false);
-        let bigint_cast = rule(
-            "BigintCast",
-            "BigInt",
-            vec![simple_param("a", "Proc")],
-            vec![
-                SyntaxExpr::Literal("bigint".to_string()),
-                SyntaxExpr::Literal("(".to_string()),
-                SyntaxExpr::Param(ident("a")),
-                SyntaxExpr::Literal(")".to_string()),
-            ],
-            false,
+    fn projection_operand_atomic_child_bp_exceeds_every_source_bp() {
+        let mut lookup = BpLookup::empty();
+        lookup.max_bp_by_category.insert("Int".to_string(), 40);
+        assert_eq!(
+            lookup.atomic_child_bp("Int"),
+            41,
+            "the projection child threshold must exceed the source category's max bp"
         );
-        let lang = language(vec![projection.clone(), proc_bool, bigint_cast]);
-
-        let arm =
-            generate_projection_surface_display_arm_for_field(&projection, &ident("v"), &lang)
-                .expect("auto projection should borrow a wrapper in operand context");
-        let rendered = arm.to_string();
-
-        assert!(rendered.contains("if min_bp == 0"));
-        assert!(rendered.contains("DisplayBool"));
-        assert!(rendered.contains("bigint"));
-    }
-
-    #[test]
-    fn explicit_syntaxless_projection_can_use_wrapper_in_operand_context() {
-        let projection = syntaxless_projection("IntToBigInt", "Int", "BigInt", false);
-        let proc_int = syntaxless_projection("ProcInt", "Int", "Proc", false);
-        let bigint_cast = rule(
-            "BigintCast",
-            "BigInt",
-            vec![simple_param("a", "Proc")],
-            vec![
-                SyntaxExpr::Literal("bigint".to_string()),
-                SyntaxExpr::Literal("(".to_string()),
-                SyntaxExpr::Param(ident("a")),
-                SyntaxExpr::Literal(")".to_string()),
-            ],
-            false,
+        assert_eq!(
+            lookup.atomic_child_bp("CategoryWithNoOperators"),
+            1,
+            "a source category with no operators still gets a non-zero threshold"
         );
-        let lang = language(vec![projection.clone(), proc_int, bigint_cast]);
-
-        assert!(generate_contextual_projection_surface_display_arm_for_field(
-            &projection,
-            &ident("v"),
-            &lang
-        )
-        .is_some());
     }
 }

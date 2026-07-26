@@ -546,6 +546,27 @@ fn test_p2_9_expr_display_groups_transparent_cast_pred_operand() {
 }
 
 /// P2.10: Display keeps transparent PredToNum grouped under a Pred comparison
+///
+/// ★ VALUE RE-DERIVED 2026-07-26. The old expectation was
+/// `2065782020 != to_num(65396207 == to_num(a) * -1426318814)`, which was NOT
+/// term-preserving: `Num::PredToNum` is auto-injected and surface-less, so display
+/// borrowed `ExprToNum . s:Expr |- "to_num" "(" s ")" : Num` — a REAL CONSTRUCTOR —
+/// as a bracketing device, and the borrowed surface read back as the two-node
+/// fabrication `ExprToNum(CastPred(x))` rather than `PredToNum(x)`. Measured:
+/// `Pred::parse` of the old string yields
+/// `NeNum(NumLit(2065782020), ExprToNum(CastPred(EqNum(…))))` — a DIFFERENT term.
+///
+/// The new value follows from the mechanism rather than being chosen: a
+/// syntax-less projection renders its source through
+/// `BpLookup::atomic_child_bp("Pred") = max_bp(Pred) + 1 = 4`, and `EqNum` sits at
+/// `l_bp 2 < 4`, so `Pred`'s OWN precedence logic emits the language's plain,
+/// inert grouping parens. Nothing is borrowed and nothing is denoted.
+///
+/// The `assert_eq!` on the string is therefore a convenience pin, not the
+/// property; the property is the term-preservation assertion below it, which the
+/// old value FAILED and the new one PASSES. Re-derive, never relax: if this string
+/// moves again, check the invariant first — a value that still preserves the term
+/// is a re-derivation, one that does not is a regression.
 #[test]
 fn test_p2_10_pred_display_groups_transparent_pred_to_num_operand() {
     mettail_runtime::clear_var_cache();
@@ -563,11 +584,26 @@ fn test_p2_10_pred_display_groups_transparent_pred_to_num_operand() {
         )))),
     );
     let displayed = format!("{}", term);
-    assert_eq!(displayed, "2065782020 != to_num(65396207 == to_num(a) * -1426318814)");
-    lt::Pred::parse(&displayed).expect("displayed Pred should parse");
+    assert_eq!(displayed, "2065782020 != (65396207 == to_num(a) * -1426318814)");
+    let reparsed = lt::Pred::parse(&displayed).expect("displayed Pred should parse");
+    // THE PROPERTY. Structural (`{:?}`) equality, per the convention established in
+    // `display_parse_term_preservation.rs`: `PartialEq` on these enums is
+    // eval-equality, under which a borrowed-constructor surface can compare EQUAL to
+    // the term it fabricates — exactly the defect this pins.
+    assert_eq!(
+        format!("{:?}", reparsed),
+        format!("{:?}", term),
+        "display must be term-preserving: parse(display(t)) != t"
+    );
 }
 
 /// P2.11: Display keeps transparent PredToNum grouped under Num prefix
+///
+/// ★ VALUE RE-DERIVED 2026-07-26, same mechanism as P2.10. The old expectation
+/// `-to_num(true and false)` read back as
+/// `NegNum(ExprToNum(CastPred(AndPred(true, false))))` — not the term displayed.
+/// `AndPred` sits at `l_bp 2`, below `atomic_child_bp("Pred") = 4`, so the source
+/// category's own precedence emits `(` … `)` and the operand stays inert.
 #[test]
 fn test_p2_11_num_display_groups_transparent_pred_to_num_operand() {
     mettail_runtime::clear_var_cache();
@@ -576,8 +612,13 @@ fn test_p2_11_num_display_groups_transparent_pred_to_num_operand() {
         Arc::new(lt::Pred::BoolLit(false)),
     )))));
     let displayed = format!("{}", term);
-    assert_eq!(displayed, "-to_num(true and false)");
-    Num::parse(&displayed).expect("displayed Num should parse");
+    assert_eq!(displayed, "-(true and false)");
+    let reparsed = Num::parse(&displayed).expect("displayed Num should parse");
+    assert_eq!(
+        format!("{:?}", reparsed),
+        format!("{:?}", term),
+        "display must be term-preserving: parse(display(t)) != t"
+    );
 }
 
 /// P2.12: Parenthesized Pred comparison accepts a postfix Num LHS

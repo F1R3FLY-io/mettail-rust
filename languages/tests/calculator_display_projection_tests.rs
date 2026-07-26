@@ -103,12 +103,63 @@ fn calculator_bigrat_int_projection_add_display_is_idempotent() {
     );
 
     let displayed = format!("{}", term);
+
+    // ── GOLDEN MOVED 2026-07-26 (display DEFECT 1). The PROPERTY changed, not the value. ──
+    //
+    // WAS:  assert!(displayed.contains("bigrat("),
+    //           "cross-category projection used as an operand should preserve its source
+    //            syntax with an explicit wrapper: {displayed:?}");
+    //       ⇒ measured surface `bigrat(353703189 + 353703189) + error`
+    //
+    // The old assertion demanded that the operand be delimited by `bigrat( … )`. That
+    // surface belongs to `BigratCast . a:Proc |- "bigrat" "(" a ")" : BigRat` — a REAL
+    // CONSTRUCTOR, which `macros/src/gen/syntax/display.rs::find_projection_surface_wrapper`
+    // BORROWED as a bracketing device for any cross-category projection operand. It
+    // bracketed correctly and denoted wrongly: the emitted text reparses as a `BigratCast`
+    // over `Proc`, a node the term never contained. (The same election on rhocalc landed on
+    // `POutputNil . q:Proc |- "@" "Nil" "!" "(" q ")"`, so `Add(CastInt 1, CastInt 2)`
+    // displayed as `@Nil!(1) + @Nil!(2)` — two SENDS.)
+    //
+    // NOW: the operand is delimited by the language's PURE grouping `(` … `)`, which carries
+    // no rule of its own and therefore denotes nothing
+    // (`languages/tests/calculator_grouping_is_inert.rs` pins
+    // `C::parse(E).is_ok() ⟺ C::parse("(" ++ E ++ ")").is_ok()` for every category).
+    //
+    // RE-DERIVED FROM THE CODE, NOT RELAXED. `IntToBigRat` is a transparent projection, so
+    // `generate_engine_syntax_pattern_arm`'s `forwards_projection_param` path hands its child
+    // `if min_bp == 0 { 0 } else { BpLookup::atomic_child_bp("Int") }`, and
+    // `atomic_child_bp(c) = max_bp(c) + 1` is by construction strictly above every `Int`
+    // binding power. This operand is `AddBigRat`'s LEFT slot, whose inherited `min_bp` is
+    // non-zero, so the child renders at that threshold; `AddInt`'s own bp is below it, so
+    // `generate_engine_regular_arm`'s infix branch emits `WriteLiteral("(")` / `")"` around
+    // it. Hence exactly `(353703189 + 353703189) + error` — no other value is consistent
+    // with the generator. The INTENT the old assertion expressed, "a projection operand
+    // keeps its own source reading rather than being absorbed by the enclosing operator",
+    // is preserved and strengthened; only the device changed.
+    assert_eq!(
+        displayed, "(353703189 + 353703189) + error",
+        "a cross-category projection operand must be GROUPED by the pure `(` … `)` form"
+    );
     assert!(
-        displayed.contains("bigrat("),
-        "cross-category projection used as an operand should preserve its source syntax with an explicit wrapper: {displayed:?}"
+        !displayed.contains("bigrat("),
+        "the bracket must denote nothing, and `bigrat( … )` IS a `BigratCast`: {displayed:?}"
+    );
+    // The group is load-bearing, so this is not a vacuous assertion: dropping it changes
+    // the reading, because `353703189 + 353703189 + error` associates wholly at `BigRat`.
+    let grouped = BigRat::parse(&displayed).expect("displayed BigRat should parse");
+    let ungrouped = BigRat::parse("353703189 + 353703189 + error")
+        .expect("the ungrouped surface should also parse");
+    assert_ne!(
+        format!("{grouped:?}"),
+        format!("{ungrouped:?}"),
+        "if the grouping were inert here the assertion above would be pinning nothing"
+    );
+    assert!(
+        format!("{grouped:?}").contains("AddInt(NumLit(353703189), NumLit(353703189))"),
+        "the grouped reading must keep the Int-level sum the term carries: {grouped:?}"
     );
 
-    let parsed = BigRat::parse(&displayed).expect("displayed BigRat should parse");
+    let parsed = grouped;
     let canonical = format!("{}", parsed);
     let reparsed = BigRat::parse(&canonical).expect("canonical BigRat display should parse");
     let recanonical = format!("{}", reparsed);
