@@ -37,6 +37,5 @@
 @"assay"!(lam`(lam x. x, lam a. lam b. a)`) |
 
 for(@lam`${r}` <- @"assay" where lam`${r}` == lam`lam a. lam b. a`) {
-  @"OUT"!(lam`${r}`) |
-  @"OUT"!("ACCEPTED: this must never appear — the arrival was never reduced")
+  @"OUT"!(lam`${r}`)
 }

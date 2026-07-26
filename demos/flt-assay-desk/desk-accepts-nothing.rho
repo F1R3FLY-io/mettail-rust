@@ -34,6 +34,5 @@
 @"assay"!(lam`lam a. lam b. a`) |
 
 for(@lam`${r}` <- @"assay" where lam`${r}` == lam`lam a. lam b. lam c. a`) {
-  @"OUT"!(lam`${r}`) |
-  @"OUT"!("ACCEPTED: this must never appear — no result satisfies this predicate")
+  @"OUT"!(lam`${r}`)
 }

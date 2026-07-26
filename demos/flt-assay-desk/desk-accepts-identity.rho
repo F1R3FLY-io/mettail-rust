@@ -20,7 +20,6 @@
 //  EXPECT
 //  ──────
 //        @"OUT"  =  ⟦λ.0⟧                         contract A's result — the identity combinator
-//                   ⟦Text("ACCEPTED: …")⟧         the desk's own note
 //        left behind on @"assay": ⟦λ.λ.0⟧ and ⟦λ.λ.1⟧
 // ════════════════════════════════════════════════════════════════════════════════════════════
 
@@ -29,6 +28,5 @@
 @"assay"!(lam`lam a. lam b. a`) |
 
 for(@lam`${r}` <- @"assay" where lam`${r}` == lam`lam x. x`) {
-  @"OUT"!(lam`${r}`) |
-  @"OUT"!("ACCEPTED: this result is the identity combinator I = lam x. x")
+  @"OUT"!(lam`${r}`)
 }

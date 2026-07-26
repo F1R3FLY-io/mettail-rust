@@ -39,10 +39,17 @@
 //  (`rholang-runtime/tests/assay_desk_demo.rs`) reads @"assay" back directly and asserts both
 //  rejected results are still on it.
 //
+//  ONE DATUM ON @"OUT", DELIBERATELY
+//  ─────────────────────────────────
+//  The accept continuation publishes the accepted result and NOTHING ELSE. An earlier draft also
+//  published a human-readable label alongside it; two data resting on one channel come back in an
+//  order the scheduler decides, and under load the two swapped (caught by
+//  `every_demo_file_is_byte_identical_over_consecutive_runs`). One observation per channel cannot
+//  be misordered, so the transcript in the run sheet is the transcript every time.
+//
 //  EXPECT
 //  ──────
 //        @"OUT"  =  ⟦λ.λ.1⟧                       contract C's result — the constant combinator
-//                   ⟦Text("ACCEPTED: …")⟧         the desk's own note, so the term has a label
 // ════════════════════════════════════════════════════════════════════════════════════════════
 
 @"assay"!(lam`lam x. x`) |
@@ -50,6 +57,5 @@
 @"assay"!(lam`lam a. lam b. a`) |
 
 for(@lam`${r}` <- @"assay" where lam`${r}` == lam`lam a. lam b. a`) {
-  @"OUT"!(lam`${r}`) |
-  @"OUT"!("ACCEPTED: this result is the constant combinator K = lam a. lam b. a")
+  @"OUT"!(lam`${r}`)
 }

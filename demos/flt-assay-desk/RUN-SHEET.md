@@ -203,10 +203,10 @@ Three contracts, three distinct results:
 
 ## Beat 3 — The desk: three results rest, a `where` guard picks one (3 min — THE POINT)
 
-**Show the program.** It is eight lines.
+**Show the program.** It is seven lines.
 
 ```
-$ tail -8 demos/flt-assay-desk/desk-accepts-constant.rho
+$ tail -7 demos/flt-assay-desk/desk-accepts-constant.rho
 ```
 
 ```
@@ -215,8 +215,7 @@ $ tail -8 demos/flt-assay-desk/desk-accepts-constant.rho
 @"assay"!(lam`lam a. lam b. a`) |
 
 for(@lam`${r}` <- @"assay" where lam`${r}` == lam`lam a. lam b. a`) {
-  @"OUT"!(lam`${r}`) |
-  @"OUT"!("ACCEPTED: this result is the constant combinator K = lam a. lam b. a")
+  @"OUT"!(lam`${r}`)
 }
 ```
 
@@ -239,11 +238,10 @@ $ target/debug/rhocalc demos/flt-assay-desk/desk-accepts-constant.rho
 ```
 rhocalc — RhoCalc (Rholang 1.4) interpreter
 source: demos/flt-assay-desk/desk-accepts-constant.rho
-comments: 46 retained on the COMMENTS channel
+comments: 53 retained on the COMMENTS channel
 mode: process → running to rest on the f1r3node reducer (observing @"OUT")
-  @"OUT" observations (2):
+  @"OUT" observations (1):
     [0] ⟦λ.λ.1⟧
-    [1] ⟦Text("ACCEPTED: this result is the constant combinator K = lam a. lam b. a")⟧
 ```
 
 **Point at:** `⟦λ.λ.1⟧` — Contract C's result, and *only* that one. `⟦λ.0⟧` and `⟦λ.λ.0⟧` were
@@ -274,11 +272,10 @@ $ target/debug/rhocalc demos/flt-assay-desk/desk-accepts-identity.rho
 ```
 rhocalc — RhoCalc (Rholang 1.4) interpreter
 source: demos/flt-assay-desk/desk-accepts-identity.rho
-comments: 25 retained on the COMMENTS channel
+comments: 24 retained on the COMMENTS channel
 mode: process → running to rest on the f1r3node reducer (observing @"OUT")
-  @"OUT" observations (2):
+  @"OUT" observations (1):
     [0] ⟦λ.0⟧
-    [1] ⟦Text("ACCEPTED: this result is the identity combinator I = lam x. x")⟧
 ```
 
 **Point at:** `⟦λ.0⟧`. Two things follow immediately, and neither is arguable.
@@ -374,8 +371,8 @@ file through the same parse-and-lower path the interpreter uses, runs it to rest
 
 | file | `@"OUT"` | resting on `@"assay"` |
 |---|---|---|
-| `desk-accepts-constant.rho` | the constant combinator + its label | the identity **and** the mirror |
-| `desk-accepts-identity.rho` | the identity combinator + its label | the mirror **and the constant** |
+| `desk-accepts-constant.rho` | the constant combinator | the identity **and** the mirror |
+| `desk-accepts-identity.rho` | the identity combinator | the mirror **and the constant** |
 | `desk-refuses-the-unreduced-arrival.rho` | *empty* | the un-reduced arrival `(I K)` |
 | `desk-accepts-nothing.rho` | *empty* | all three |
 
@@ -451,11 +448,19 @@ expected outputs, and their tests are agnostic to the provenance of the resting 
   filters the collection. Results are separate resting data and the filter is a guarded receive —
   which is both the shape that works today and the sharper demonstration, since the guarded search
   over resting data is the mechanism that was repaired this morning.
-* **The label is a second datum, not a field.** `` @"OUT"!(lam`${r}`) | @"OUT"!("ACCEPTED: …") ``
-  publishes two data rather than one labelled pair, because a polyadic send whose payload includes
-  an FLT does not lower today (it fails closed with `unknown guest language ⌜lam⌝`). Two sends on
-  one channel is the shape that works, and its observation order is stable across every run
-  measured.
+* **No labels on `@"OUT"` — one datum per accept, deliberately.** An earlier draft had each accept
+  publish the result *and* a human-readable label, `` @"OUT"!(lam`${r}`) | @"OUT"!("ACCEPTED: …") ``.
+  That is two data resting on one channel, and they come back in an order the scheduler decides:
+  nine sequential hand-runs all put the term first, and the first run under parallel load swapped
+  them. The demo's own determinism gate
+  (`every_demo_file_is_byte_identical_over_consecutive_runs`) caught it, and the label was cut
+  rather than hoped over — a run sheet promising one ordering and a live run printing the other is
+  the one failure that cannot be recovered from in front of an audience. **One observation per
+  channel cannot be misordered.** (Folding the label into a single datum was the other option and
+  is worse: a list payload `["ACCEPTED", …]` renders its reflected element structure raw, and a
+  polyadic send whose payload includes an FLT does not lower at all today — it fails closed with
+  `unknown guest language ⌜lam⌝`.) The labelling therefore lives in this page and in each file's
+  header comment, where it belongs.
 
 ---
 
