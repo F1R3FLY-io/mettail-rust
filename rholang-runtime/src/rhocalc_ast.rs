@@ -1342,11 +1342,61 @@ fn lower_proc(proc: &Proc, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> 
         // These are routed for the same reason as the rest — the reducer owns the semantics — but
         // every one of them requires an `EPathmapBody` or `EZipperBody` receiver, and RhoCalc's
         // `Pathmap` still lowers to `EMap` (divergence G). So on the machine they all fail closed
-        // at REDUCE time with `MethodNotDefined { other_type: "Map" }` rather than at LOWER time.
+        // at REDUCE time with `MethodNotDefined { other_type: "map" }` rather than at LOWER time.
         // That is strictly more informative (it names the carrier that is actually wrong, which
         // is the thing C4 fixes) and it is still fail-closed — measured by
-        // `c1b_pathmap_zipper_family_is_c4_blocked_at_the_carrier`. When C4 gives `Pathmap` its
-        // native carrier these arms start working with no further change here.
+        // `c1b_pathmap_zipper_family_is_c4_blocked_at_the_carrier`.
+        //
+        // ★★ CORRECTION (C4 investigation, 2026-07-26 — MEASURED). The sentence that stood here,
+        // "when C4 gives `Pathmap` its native carrier these arms start working with no further
+        // change here", is FALSE, and the reason is worth more than the sentence.
+        //
+        // C4 is not a plumbing change, because **RhoCalc's `Pathmap` and Rholang's `EPathMap` are
+        // different types**:
+        //
+        //   RhoCalc   `PathMapLit<Proc, Proc>`  a KEY→VALUE map. `{| 1 : 10 |}` is well formed and
+        //                                       `pathmap_get` reads a value out at a key.
+        //   Rholang   `EPathMap { ps }`         a SET OF PATHS. An element is its own key AND its
+        //                                       own value.
+        //
+        // The second is measured three independent ways, not read off a comment:
+        //
+        //   1. the reducer answers `getPath() == getLeaf()` ▸ `true` at every leaf, and `atPath(k)`
+        //      returns `k` itself
+        //      (`rho_rhocalc_conformance.rs::c4_the_native_carrier_has_no_value_slot`);
+        //   2. `models/.../pathmap_crate_type_mapper.rs::rholang_pathmap_to_e_pathmap` keeps only
+        //      the trie's VALUES and discards its keys, so a key that is not its own value cannot
+        //      survive one round trip through the mapper; and
+        //   3. decisively, the GROUND WIRE. Since f1r3node `f34c2d7e` a ground `EPathMap`
+        //      serialises as `bytes serialized_paths = 8` — the uncompressed trie-ordered KEY
+        //      STREAM — and `merge_field` rebuilds `ps` by `decode_trie_path` of each key. Proto
+        //      fields 6 and 7, RESERVED by that same commit, were "a retired value_form/
+        //      value_entries experiment". A value distinct from its key is not merely unrepresented
+        //      in the carrier: it is unrepresentable on the consensus wire, and that wire is the
+        //      hash preimage.
+        //
+        // Two further measured consequences, both of which a naive flip would hit immediately:
+        //
+        //   * the native carrier REFUSES the Map surface — `get`/`set`/`contains`/`delete`/`keys`/
+        //     `size`/`length` all answer `MethodNotDefined { other_type: "pathmap" }` on an
+        //     `EPathmapBody` receiver. Five of them work on a `Pathmap` receiver TODAY only because
+        //     this file emits an `EMap` (`c1_pathmap_methods_answer_through_the_emap_encoding`), so
+        //     the flip trades twenty-two dead methods for seven newly dead ones unless each is
+        //     re-expressed. Measured by `c4_the_native_carrier_refuses_the_map_method_surface`.
+        //   * ⚠ and a RhoCalc pathmap key is BARE by default (`{| 1 : 10 |}` has key `1`), which is
+        //     the element shape whose trie key the interpreter inserts WITHOUT the `0x00`
+        //     terminator its readers unconditionally append. Every value read then misses and
+        //     answers `Nil`, and `toNextLeaf` becomes a FIXED POINT — a walk-until-`Nil` over
+        //     `{| 1, 2, 3 |}` does not terminate. Measured by
+        //     `c4_defect_a_bare_element_reads_back_as_nil` and
+        //     `c4_defect_a_bare_element_walk_never_advances`. Pointing `lower_pathmap` at
+        //     `EPathmapBody` today would therefore make the very enumeration surface C4 exists to
+        //     unlock HANG rather than work.
+        //
+        // So C4 requires DECIDING what RhoCalc's value slot becomes — drop it, fuse it into the key
+        // path (which changes what `getPath`/`getLeaf` mean), or add a value arm to the consensus
+        // wire — and every answer costs something that is not a lowering's to spend. The decision
+        // is presented, not taken here; `lower_pathmap` keeps emitting `EMap` until it is made.
         //
         // ★ `toNextLeaf` carries a DELIBERATE CROSS-ENDPOINT CONVENTION MISMATCH, and
         // mistranslating it does not error — it LOOPS FOREVER. The reducer reports an exhausted
@@ -1392,17 +1442,40 @@ fn lower_proc(proc: &Proc, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> 
         //                                  `pm.set_val_at(encode_proc_path_entry(full), v)`
         //                                  (`languages/src/rhocalc/zipper.rs:529`). The zipper's
         //                                  focus is not consulted at all.
-        //   Rholang  `z.setLeaf(v)`        writes at the zipper's CURRENT FOCUS, one argument
-        //                                  (`reduce.rs::set_leaf_method`, "set value at current
-        //                                  position"; it rejects any other argument count).
+        //   Rholang  `z.setLeaf(v)`        APPENDS `v` to the map as a new element, at the path `v`
+        //                                  derives for ITSELF. One argument. The zipper's focus is
+        //                                  not consulted either — see the correction below.
         //
         // Emitting `EMethod("setLeaf")` with RhoCalc's two arguments would raise
         // `MethodArgumentNumberMismatch` — fail-closed, but for the WRONG reason, and it would
         // leave a mapping that becomes silently incorrect the moment anyone "fixes" the arity by
-        // dropping `full`. Expressing RhoCalc's meaning on the machine is
-        // `writeZipperAt(full).setLeaf(v)`, which is a REWRITE, not a routing, and it cannot be
-        // measured while `Pathmap` lowers to `EMap`. So it stays fail-closed and named, exactly
-        // like `restrict`/`meet`/`getSubtrieAt`.
+        // dropping `full`.
+        //
+        // ★★ CORRECTION (C4 investigation, 2026-07-26 — MEASURED). This note used to say Rholang's
+        // `setLeaf` "writes at the zipper's CURRENT FOCUS", and to name `writeZipperAt(full)
+        // .setLeaf(v)` as the rewrite that would express RhoCalc's meaning on the machine. **Both
+        // halves were wrong, and the second was a trap.**
+        //
+        // `reduce.rs::set_leaf_method` does `pathmap.ps_make_mut().push(value)` on BOTH of its arms
+        // and never reads `zipper.current_path`. Its doc comment still reads "set value at current
+        // position" — a leftover from the retired value-arm experiment (proto fields 6/7, RESERVED
+        // by `f34c2d7e`) — and that stale comment is what the old note was written from. Measured
+        // by `rho_rhocalc_conformance.rs::c4_set_leaf_appends_an_element_and_ignores_the_focus`:
+        // the map GROWS by one, the focused entry SURVIVES, the new element lands at its own path,
+        // and `writeZipperAt("b").setLeaf(v)`, `writeZipperAt("c").setLeaf(v)` and
+        // `writeZipper().setLeaf(v)` all produce the SAME map. `writeZipperAt(p)` is inert in front
+        // of `setLeaf`.
+        //
+        // So the proposed rewrite would have written at the wrong place while looking correct in
+        // review — the same "fix the arity by dropping the path" failure this note exists to
+        // prevent, wearing a different hat.
+        //
+        // The REAL reason `setLeaf` cannot be routed is the C4 carrier fact above: a path-addressed
+        // write needs a value slot, and `EPathMap` has none. `setLeaf(v)` is the only write the
+        // carrier can express — *insert the element `v`*, whose key is derived from `v` — and
+        // RhoCalc's `setLeaf(full, v)` is simply not that operation. It stays fail-closed and
+        // named, and it will still be fail-closed after a naive carrier flip, because the obstacle
+        // is the missing value slot rather than the argument count.
         //
         // The arity of every other routed zipper method was checked against the interpreter's own
         // `expected:` counts, and `setLeaf` is the only mismatch.
@@ -1449,27 +1522,65 @@ fn unsupported_construct_name(proc: &Proc) -> &'static str {
         Proc::BRemove(..) => "b.remove(e) bag method (no Rholang analog; C3 residue)",
         // `.subtract(q)` — no `subtract` key at all.
         Proc::PSubtract(..) => "p.subtract(q) pathmap method (no Rholang analog; C3 residue)",
-        // `.restrict(q)` / `.meet(q)` — the table has `restriction` (reduce.rs:4666) and
-        // `intersection` (4589), which are PLAUSIBLE but not verified counterparts. Both accept
-        // only `EPathmapBody`, and RhoCalc's `Pathmap` lowers to `EMap` (divergence G), so a
-        // rename could not be exercised against the reducer even once — it would be an UNTESTED
-        // semantic claim shipped as code. They are routed when C4 lands the native carrier and
-        // the mapping can actually be measured; until then, fail closed.
-        Proc::PRestrict(..) => "p.restrict(q) pathmap method (candidate `restriction`; \
-                                unverifiable until C4 — see rhocalc_ast C1b)",
-        Proc::PMeet(..) => "p.meet(q) pathmap method (candidate `intersection`; \
-                            unverifiable until C4 — see rhocalc_ast C1b)",
-        // `.getSubtrieAt(p)` — the table has `getSubtrie` (whole-subtrie at the focus) and
-        // `atPath`, but no single `getSubtrieAt`. Composing them is a semantic claim of the same
-        // untestable kind as `restrict`/`meet` above; fail closed until C4 makes it measurable.
-        Proc::PGetSubtrieAt(..) => "p.getSubtrieAt(q) pathmap method (no single-method analog; \
-                                    unverifiable until C4 — see rhocalc_ast C1b)",
+        // `.restrict(q)` / `.meet(q)` / `.getSubtrieAt(p)`
+        //
+        // ★★ CORRECTION (C4 investigation, 2026-07-26 — MEASURED). These three used to be recorded
+        // as carrying "PLAUSIBLE but not verified" candidates that "could not be exercised against
+        // the reducer even once" while `Pathmap` lowers to `EMap`. **That premise was false**: a
+        // real `EPathMap` is constructible in the conformance harness independently of what
+        // `lower_pathmap` emits — that is exactly what
+        // `c1b_routed_zipper_family_matches_the_interpreter_arity` already did for the other 22 —
+        // so the mappings were measurable all along. They have now been measured, and one of the
+        // two guesses was WRONG.
+        //
+        //   RhoCalc (`runtime/src/pathmap_bridge.rs`)   keys kept                        values
+        //   ─────────────────────────────────────────   ──────────────────────────────   ────────
+        //   restrict(base, mask)  `trie_restrict_lit`   base keys EXACTLY in mask        base's
+        //   meet(left, right)     `trie_meet_lit`       left keys EXACTLY in right       right's
+        //
+        //   Rholang (`reduce.rs`)                       keys kept
+        //   ─────────────────────────────────────────   ──────────────────────────────────────────
+        //   restriction (4666)                          base keys under a PREFIX in other
+        //   intersection (4589)                         base keys EXACTLY in other
+        //
+        // So `restrict ↦ restriction` — the candidate that stood here — is a MIS-MAPPING: it would
+        // silently widen exact membership into prefix containment. Measured by
+        // `c4_restrict_is_not_restriction_and_meet_is_intersection`, whose discriminating fixture
+        // is a mask holding a strict PREFIX of two base entries and an exact match for none:
+        // `restriction` keeps 2, `intersection` keeps 0. An exact-only fixture — the obvious one to
+        // reach for — cannot tell them apart, which is why the guess looked safe.
+        //
+        // `restrict` and `meet` BOTH mean key-level `intersection`. They differ only in whose
+        // VALUES survive, and the target carrier has no value slot (see the C1b block), so on the
+        // machine they would coincide. ⚠ Routing them to one name is therefore not a free rename:
+        // it would BAKE IN the key-≡-value carrier decision that C4 must present rather than take.
+        // They stay fail-closed until that decision is made, now for a measured reason.
+        //
+        // `.getSubtrieAt(p)` is `readZipperAt(p).getSubtrie()` — measured by
+        // `c4_get_subtrie_at_is_read_zipper_at_then_get_subtrie`, including that the result keeps
+        // ABSOLUTE paths (a caller assuming relative ones would index one segment short on every
+        // entry) and that a miss is the EMPTY pathmap rather than an error. The composition is with
+        // `readZipperAt`, a focus move — NOT with `atPath`, a value lookup, which is what the old
+        // note guessed. It is a two-method REWRITE rather than a routing, and it is held with
+        // `restrict`/`meet` because it inherits the same carrier decision.
+        Proc::PRestrict(..) => "p.restrict(q) pathmap method (MEASURED: `restriction` is PREFIX \
+                                containment, this is EXACT — the key-level target is \
+                                `intersection`, held on the C4 carrier decision)",
+        Proc::PMeet(..) => "p.meet(q) pathmap method (MEASURED: key-level `intersection`; differs \
+                            from `restrict` only in value provenance, which the target carrier \
+                            cannot express — held on the C4 carrier decision)",
+        Proc::PGetSubtrieAt(..) => "p.getSubtrieAt(q) pathmap method (MEASURED: \
+                                    `readZipperAt(q).getSubtrie()`, absolute paths — a rewrite, \
+                                    held on the C4 carrier decision)",
         // `setLeaf` shares a NAME with `reduce.rs::set_leaf_method` and not an operation: RhoCalc's
-        // takes an absolute path argument, Rholang's writes at the zipper's focus and accepts one
-        // argument. See the C1b block in `lower_proc` for the full comparison.
-        Proc::WZSetLeaf(..) => "z.setLeaf(path, v) write-zipper method (Rholang's `setLeaf` writes \
-                                at the FOCUS and takes 1 argument; this takes an absolute path — \
-                                same name, different operation)",
+        // writes a value at an absolute path argument; Rholang's APPENDS its one argument to the
+        // map as a new element and never consults the zipper's focus (MEASURED — see the C1b block
+        // in `lower_proc`, which also records why the once-proposed `writeZipperAt(full).setLeaf(v)`
+        // rewrite is a silent no-op on the path).
+        Proc::WZSetLeaf(..) => "z.setLeaf(path, v) write-zipper method (Rholang's `setLeaf` APPENDS \
+                                an element and takes 1 argument; this writes a value at an absolute \
+                                path — same name, different operation, and the carrier has no value \
+                                slot to write into)",
         //
         // ── DISABLED, not deleted: the arms C1 superseded ───────────────────────────────────
         //
@@ -1721,21 +1832,25 @@ fn is_single_gstring_value(par: &Par) -> bool {
 /// metered `ENeg`; the macro-injected conversion constructors (`BoolToInt`/`UInt32ToInt`), an
 /// unsubstituted `IVar`, and lambdas have no machine algebra and fail closed, named.
 ///
-/// ══ ⚠ OPEN DIVERGENCE — SIGN-ABUTTED NUMERIC LITERALS (measured 2026-07-26) ════════════════════
+/// ══ ✅ CLOSED DIVERGENCE — SIGN-ABUTTED NUMERIC LITERALS (measured + closed 2026-07-26) ═════════
 ///
-/// ★ THIS NOTE WAS CORRECTED ON 2026-07-26. Its first version named the wrong mechanism and drew
-/// the wrong conclusion from it; both are recorded below under "REFUTED" so the same reasoning is
-/// not re-derived. The fix does NOT belong in this file — see "WHERE THE FIX GOES".
+/// ★ THIS NOTE WAS CORRECTED TWICE ON 2026-07-26. Its first version named the wrong mechanism and
+/// drew the wrong conclusion from it; its second still named the k-best election as defect (B).
+/// Both are recorded below under "REFUTED" / the ⚠ note so the same reasoning is not re-derived.
+/// The fix does NOT belong in this file — see "WHERE THE FIX WENT". The history is kept because
+/// this function is exactly where the next reader will be tempted to put the repair.
 ///
 /// A negated numeral lowers to an unevaluated `ENeg`, and the two positions a `Par` can occupy
 /// treat that differently: SEND DATA are evaluated by `eval_send` (`eval_expr` then
-/// `substitute_and_charge`) before they are stored, PATTERNS are never evaluated. So
+/// `substitute_and_charge`) before they are stored, PATTERNS are never evaluated. So, while the
+/// front end still built a negation node for a sign-abutted numeral,
 ///
-///     `@"c"!(-7)`          stores  `GInt(-7)`          (the `ENeg` was evaluated)
-///     `for(@-7 <- @"c")`   matches `ENeg(GInt(7))`     (the `ENeg` was NOT evaluated)
+///     `@"c"!(-7)`          stored  `GInt(-7)`          (the `ENeg` was evaluated)
+///     `for(@-7 <- @"c")`   matched `ENeg(GInt(7))`     (the `ENeg` was NOT evaluated)
 ///
-/// and the two never match: `for(@-7 <- @"c"){…} | @"c"!(-7)` produces NO COMM — silently, with
-/// no error. Consensus Rholang DOES commit it.
+/// and the two never matched: `for(@-7 <- @"c"){…} | @"c"!(-7)` produced NO COMM — silently, with
+/// no error, where consensus Rholang DOES commit it. Both sides now emit `GInt(-7)`, because no
+/// negation node is built for a sign-abutted numeral in either implementation.
 ///
 /// ── THE MECHANISM (established, not inferred) ──────────────────────────────────────────────────
 ///
