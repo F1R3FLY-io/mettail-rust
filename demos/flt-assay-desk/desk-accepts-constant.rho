@@ -1,0 +1,55 @@
+// ════════════════════════════════════════════════════════════════════════════════════════════
+//  THE ASSAY DESK — three foreign results rest on one channel; a `where` guard picks ONE.
+//
+//  Run me with the RhoCalc interpreter:
+//    target/debug/rhocalc demos/flt-assay-desk/desk-accepts-constant.rho
+//
+//  WHAT RESTS ON @"assay"
+//  ──────────────────────
+//  Three data, one per contract — each is the NORMAL FORM the Rholang machine computed in
+//  `contract-a.rho`, `contract-b.rho`, `contract-c.rho`:
+//
+//        contract-a.rho   ((K I) K)   ⟶β⟶β   lam x. x            = ⟦λ.0⟧     the IDENTITY  I
+//        contract-b.rho   ((C I) C)   ⟶β⟶β   lam a. lam b. b     = ⟦λ.λ.0⟧   the MIRROR    C
+//        contract-c.rho   (I K)       ⟶β      lam a. lam b. a     = ⟦λ.λ.1⟧   the CONSTANT  K
+//
+//  THE DESK'S PREDICATE
+//  ────────────────────
+//        for( @lam`${r}` <- @"assay" where lam`${r}` == lam`lam a. lam b. a` ) { … }
+//
+//  Two filters, stacked, and they do different jobs:
+//    * the PATTERN `@lam`${r}`` is itself a Foreign Language Term carrying one typed hole. It
+//      matches a reflected guest term by SHAPE and binds the whole λ-term to `r`. This is the
+//      EXTRACTION: the foreign result is now a value the RhoCalc program holds.
+//    * the `where` clause is the FILTER: it re-quotes the captured term and decides it against
+//      the constant combinator K. The decision is made by the substrate, not by the pattern.
+//
+//  THE SEARCH IS THE POINT
+//  ───────────────────────
+//  Three data are resting when the guarded receive is offered, and only ONE satisfies the
+//  guard. A guarded receive must therefore SEARCH the resting data rather than test the first
+//  one and give up. (Until 2026-07-26 it did give up — defect D1, repaired in f1r3node by
+//  `6bc58743` / `5d37f67e`. This program is a live demonstration of that repair.)
+//
+//  WHAT IS LEFT BEHIND
+//  ───────────────────
+//  ⟦λ.0⟧ and ⟦λ.λ.0⟧ are NOT consumed and NOT destroyed — they are still resting on @"assay"
+//  when the program comes to rest. `desk-accepts-identity.rho` is this same program with one
+//  changed predicate, and it settles ⟦λ.0⟧ out of the very same set; the integration test
+//  (`rholang-runtime/tests/assay_desk_demo.rs`) reads @"assay" back directly and asserts both
+//  rejected results are still on it.
+//
+//  EXPECT
+//  ──────
+//        @"OUT"  =  ⟦λ.λ.1⟧                       contract C's result — the constant combinator
+//                   ⟦Text("ACCEPTED: …")⟧         the desk's own note, so the term has a label
+// ════════════════════════════════════════════════════════════════════════════════════════════
+
+@"assay"!(lam`lam x. x`) |
+@"assay"!(lam`lam a. lam b. b`) |
+@"assay"!(lam`lam a. lam b. a`) |
+
+for(@lam`${r}` <- @"assay" where lam`${r}` == lam`lam a. lam b. a`) {
+  @"OUT"!(lam`${r}`) |
+  @"OUT"!("ACCEPTED: this result is the constant combinator K = lam a. lam b. a")
+}

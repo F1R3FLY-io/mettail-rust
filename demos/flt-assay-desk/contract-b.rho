@@ -1,0 +1,27 @@
+// ════════════════════════════════════════════════════════════════════════════════════════════
+//  CONTRACT B — a second foreign-language term, driven to a DIFFERENT normal form.
+//
+//  Run me with the RhoCalc interpreter:
+//    target/debug/rhocalc demos/flt-assay-desk/contract-b.rho
+//
+//  THE TERM — the mirror combinator discards its FIRST argument
+//  ────────────────────────────────────────────────────────────
+//        C = lam a. lam b. b      the MIRROR   combinator (= λ.λ.0)  "keep the SECOND argument"
+//        I = lam x. x             the IDENTITY combinator (= λ.0)
+//
+//  This file is the redex
+//        (C I) C
+//  the exact mirror image of Contract A's `(K I) K`, and it takes the same two β steps —
+//        (C I) C   ⟶β   (λb. b) C   ⟶β   C
+//  — but lands somewhere else, because C keeps its SECOND argument where K keeps its first.
+//  Same shape, same cost, different answer: that is what makes the desk's filter in
+//  `desk-accepts-constant.rho` a real decision rather than a formality.
+//
+//  EXPECT
+//  ──────
+//        normal form on @"OUT"  =  ⟦λ.λ.0⟧                the mirror combinator C
+//        ^fired ledger          =  ["Beta", "Beta"]       2 in-Rho rewrite firings
+//        ^drive-err / ^drive-fuel empty                   ⟹ it terminated by QUIESCENCE
+// ════════════════════════════════════════════════════════════════════════════════════════════
+
+lam`((lam a. lam b. b, lam x. x), lam a. lam b. b)`

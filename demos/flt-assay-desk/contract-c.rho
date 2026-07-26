@@ -1,0 +1,29 @@
+// ════════════════════════════════════════════════════════════════════════════════════════════
+//  CONTRACT C — a third foreign-language term. One β step; it is the one the desk will accept.
+//
+//  Run me with the RhoCalc interpreter:
+//    target/debug/rhocalc demos/flt-assay-desk/contract-c.rho
+//
+//  THE TERM — feed the constant combinator to the identity
+//  ───────────────────────────────────────────────────────
+//        I = lam x. x             the IDENTITY combinator (= λ.0)
+//        K = lam a. lam b. a      the CONSTANT combinator (= λ.λ.1)
+//
+//  This file is the redex
+//        I K
+//  which β-reduces in a SINGLE step, because the identity just hands back what it was given:
+//        I K   ⟶β   K
+//
+//  Note what this means for the assay desk: Contract C ARRIVES as `(lam x. x, lam a. lam b. a)`,
+//  which is not the constant combinator — it only BECOMES the constant combinator after the
+//  machine reduces it. The desk's predicate is over the RESULT, so the reduction has to have
+//  actually happened for C to be accepted.
+//
+//  EXPECT
+//  ──────
+//        normal form on @"OUT"  =  ⟦λ.λ.1⟧                the constant combinator K
+//        ^fired ledger          =  ["Beta"]               1 in-Rho rewrite firing
+//        ^drive-err / ^drive-fuel empty                   ⟹ it terminated by QUIESCENCE
+// ════════════════════════════════════════════════════════════════════════════════════════════
+
+lam`(lam x. x, lam a. lam b. a)`

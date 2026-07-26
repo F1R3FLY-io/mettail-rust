@@ -1,0 +1,39 @@
+// ════════════════════════════════════════════════════════════════════════════════════════════
+//  THE NEGATIVE CONTROL — a predicate no result satisfies. The search exhausts and everything
+//  rests.
+//
+//  Run me with the RhoCalc interpreter:
+//    target/debug/rhocalc demos/flt-assay-desk/desk-accepts-nothing.rho
+//
+//  Same three resting results, same pattern, same channel. The only change is the term the
+//  `where` clause compares against: the THREE-argument constant combinator
+//        lam a. lam b. lam c. a       (= λ.λ.λ.2)
+//  which is not the normal form of any of the three contracts.
+//
+//  WHY THIS BEAT EXISTS
+//  ────────────────────
+//  Without it, "the desk accepted exactly one" is compatible with a broken guard that happens
+//  to admit the first datum it is handed. With it, the three outcomes are separated:
+//
+//        desk-accepts-constant.rho   selects ⟦λ.λ.1⟧      the guard admits exactly one
+//        desk-accepts-identity.rho   selects ⟦λ.0⟧        a DIFFERENT one, same set
+//        desk-accepts-nothing.rho    selects nothing      the guard can refuse ALL of them
+//
+//  No single defect produces all three. A vacuous guard would settle something in all three; a
+//  fail-closed guard would settle nothing in all three; a guard that stops at the first datum
+//  could not have produced two different answers from one set.
+//
+//  EXPECT
+//  ──────
+//        @"OUT": (the program rested without publishing any observation)
+//        all three results still resting on @"assay"
+// ════════════════════════════════════════════════════════════════════════════════════════════
+
+@"assay"!(lam`lam x. x`) |
+@"assay"!(lam`lam a. lam b. b`) |
+@"assay"!(lam`lam a. lam b. a`) |
+
+for(@lam`${r}` <- @"assay" where lam`${r}` == lam`lam a. lam b. lam c. a`) {
+  @"OUT"!(lam`${r}`) |
+  @"OUT"!("ACCEPTED: this must never appear — no result satisfies this predicate")
+}

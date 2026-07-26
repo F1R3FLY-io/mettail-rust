@@ -1,0 +1,38 @@
+// ════════════════════════════════════════════════════════════════════════════════════════════
+//  CONTRACT A — a foreign-language term, driven to its normal form BY THE RHOLANG MACHINE.
+//
+//  Run me with the RhoCalc interpreter:
+//    target/debug/rhocalc demos/flt-assay-desk/contract-a.rho
+//
+//  WHAT THIS FILE IS
+//  ─────────────────
+//  One Foreign Language Term (FLT) and nothing else. `lam`…`` is RhoCalc's opener for a guest
+//  term written in the untyped λ-calculus — the text between the back-ticks is the GUEST's own
+//  concrete syntax, handed to the guest's reflector, never string-spliced (No-Injection).
+//
+//  Because the program is a bare TERM (no send, no receive, no new), the interpreter EVALUATES
+//  it: it seeds the term into the λ-guest's own in-Rho reduction engine and lets β-reduction run
+//  to completion ON THE F1R3NODE REDUCER. Nothing about this reduction happens in the host
+//  language — every β step is a committed communication on RSpace.
+//
+//  THE TERM — the K combinator discards its second argument
+//  ────────────────────────────────────────────────────────
+//  In the guest, `(f, a)` is the application `App(f, a)`. Writing the two standard combinators
+//        K = lam a. lam b. a      the CONSTANT  combinator (= λ.λ.1)  "keep the first argument"
+//        I = lam x. x             the IDENTITY  combinator (= λ.0)
+//  this file is the redex
+//        (K I) K
+//  which β-reduces in two steps, entirely in-Rho:
+//        (K I) K   ⟶β   (λb. I) K   ⟶β   I
+//
+//  EXPECT
+//  ──────
+//        normal form on @"OUT"  =  ⟦λ.0⟧                  the identity I
+//        ^fired ledger          =  ["Beta", "Beta"]       2 in-Rho rewrite firings
+//        ^drive-err / ^drive-fuel empty                   ⟹ it terminated by QUIESCENCE
+//
+//  This normal form is the first of the three results the assay desk filters over
+//  (`desk-accepts-constant.rho`).
+// ════════════════════════════════════════════════════════════════════════════════════════════
+
+lam`((lam a. lam b. a, lam x. x), lam a. lam b. a)`
