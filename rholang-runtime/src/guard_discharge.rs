@@ -38,22 +38,43 @@
 //! * **Refutation** (`Discharge`'s mirror: a guard that is statically FALSE) is **diagnostic
 //!   only** — see [`GuardDischarge::Refuted`]. The artifact is byte-identical.
 //!
-//! # The anti-divergence fence
+//! # ★ THE AUTHORITY IS THE DOVETAIL/SFT SUBSTRATE
 //!
-//! [`classify`] requires **both** guard evaluators in the tree to agree before it will act:
+//! *If it is in a `where` clause, it is a semantic predicate, and semantic predicates are
+//! evaluated by Dovetail/SFT — at compile time where they can be statically evaluated, at run
+//! time otherwise.* This module is the **compile-time** half of that rule for a lowered guard.
+//!
+//! [`classify`] asks [`crate::guard_par_substrate::substrate_verdict`] first, and a `None`
+//! there is `Residual` whatever any other leg says:
 //!
 //! ```text
-//!   Discharged ⟸ host_verdict == Some(true)  ∧ machine_verdict(⟦φ⟧) == Some(true)
-//!   Refuted    ⟸ host_verdict == Some(false) ∧ machine_verdict(⟦φ⟧) == Some(false)
+//!   Discharged ⟸ substrate_verdict(⟦φ⟧) == Some(true)  ∧ machine_verdict(⟦φ⟧) == Some(true)
+//!   Refuted    ⟸ substrate_verdict(⟦φ⟧) == Some(false) ∧ machine_verdict(⟦φ⟧) == Some(false)
 //!   otherwise  ⟹ Residual                    (and a DISAGREEMENT emits a hard diagnostic)
 //! ```
 //!
-//! The MACHINE leg is the authority — it is what actually runs. The HOST leg
-//! (`mettail_languages::rhocalc::receive::eval_guard_bool`, the Dovetail/oracle receive path)
-//! is a free redundancy check: it costs nothing at a site where the guard was already lowered,
-//! and it converts any divergence-A-shaped hazard (two evaluators of the same surface language
-//! disagreeing) into a loud warning instead of an unsound elision. A disagreement is
-//! [`GuardDischarge::Residual`] *and* a `WARN`-level event — never a silent Residual.
+//! ## ⚠ The machine leg is a SOUNDNESS fence, not a redundancy check
+//!
+//! The substrate's static verdict is relative to a **bounded** integer domain (the Presburger
+//! automata run over `2^bit_width`), and over a bounded domain neither `valid over 2^w ⇒ valid
+//! over ℤ` nor `unsat over 2^w ⇒ unsat over ℤ` holds — `x < 40000` refutes the first,
+//! `x > 40000` the second. So a substrate verdict alone cannot license omitting a
+//! `Receive.condition`. [`machine_verdict`] evaluates the very `Par` the artifact would carry,
+//! with `i64` semantics, through the reducer's own evaluator; requiring agreement makes the
+//! discharge set exactly the intersection, which is sound by construction.
+//!
+//! The substrate's *extra* reach is therefore recorded and NOT acted upon: it settles OPEN
+//! guards (`x < x + 1` is Presburger-VALID; `x == 1 and x == 2` UNSATISFIABLE), which
+//! `rho_pure_eval` cannot touch at all because it requires a binder-closed condition. Those
+//! land as a `DEBUG` diagnostic and stay `Residual`. Widening the discharge set on a
+//! bounded-domain verdict is a separate, deliberate decision this module does not take.
+//!
+//! ## The front-end leg is RETIRED from the decision
+//!
+//! `host_verdict` (for RhoCalc, `mettail_languages::rhocalc::receive::eval_guard_bool`) used to
+//! be a *gate*. It is now purely advisory: consumed only by
+//! `report_front_end_divergence`, which turns a drift between two readings of the same surface
+//! guard language into a loud `WARN` without letting it change any outcome.
 //!
 //! # ★ THE ROUTE-SITE INVARIANT
 //!
@@ -179,17 +200,42 @@ pub enum GuardRouting {
     /// a populated condition *is* what `check_commit` reads. Discharge is licensed here
     /// because the compile-time evaluator is literally the same function.
     MachineEvaluated,
-    /// The guard is decided by some other substrate (a Dovetail native fold, an SFT/EBA
-    /// decision procedure, a native handler). Discharge is REFUSED: the compile-time evaluator
-    /// is not that substrate, so folding here would be `classify` deciding a routing question
-    /// it has no standing to decide.
+    /// The guard is decided by the Dovetail/SFT substrate (a Presburger decision procedure, an
+    /// SFT/EBA algebra, a Dovetail native fold, a native handler) rather than by a
+    /// `Receive.condition` the reducer reads.
+    ///
+    /// # ★ Why this route now PERMITS a compile-time decision (it used to refuse)
+    ///
+    /// The refusal was justified, in as many words, by *"the compile-time evaluator is not that
+    /// substrate, so folding here would be `classify` deciding a routing question it has no
+    /// standing to decide."* THE WIRE removes that premise: [`classify`]'s authority leg **is**
+    /// the substrate ([`crate::guard_par_substrate::substrate_verdict`]). Deciding a
+    /// substrate-routed guard with the substrate's own procedure is not a routing decision at
+    /// all — it is the route being honoured.
+    ///
+    /// The soundness of acting on it is a separate question, and it is answered separately: the
+    /// substrate's verdict is relative to a bounded integer domain, so [`classify`] still
+    /// requires the concrete-semantics evaluator to agree before any artifact changes. See the
+    /// fence in [`classify`].
     OtherSubstrate,
 }
 
 impl GuardRouting {
-    /// `true` iff a guard on this route may be decided by *this* module's evaluator.
+    /// `true` iff a guard on this route may be decided at compile time.
+    ///
+    /// Both routes now permit it, for the same reason and by two different arguments:
+    ///
+    /// * [`MachineEvaluated`](GuardRouting::MachineEvaluated) — a populated `Receive.condition`
+    ///   *is* what `check_commit` reads, and the compile-time fence includes that very
+    ///   evaluator.
+    /// * [`OtherSubstrate`](GuardRouting::OtherSubstrate) — the compile-time authority is the
+    ///   substrate itself (see that variant's docs).
+    ///
+    /// The method is retained rather than deleted because it is the *place* the question is
+    /// asked: a future third route (a native handler with no compile-time image, say) must
+    /// answer it, and it should have to answer it here.
     fn permits_compile_time_decision(self) -> bool {
-        matches!(self, GuardRouting::MachineEvaluated)
+        matches!(self, GuardRouting::MachineEvaluated | GuardRouting::OtherSubstrate)
     }
 }
 
@@ -223,12 +269,45 @@ impl Default for LoweringOptions {
 /// The tracing target every guard-discharge diagnostic is emitted on.
 pub const GUARD_DISCHARGE_TARGET: &str = "mettail.lowering.guard";
 
-/// Decide a lowered guard.
+/// Decide a lowered guard. ★ **The authority is the Dovetail/SFT substrate.**
 ///
-/// * `host_verdict` — the FRONT-END evaluator's answer for the same guard, or `None` if it
-///   declined. For RhoCalc this is `mettail_languages::rhocalc::receive::eval_guard_bool(φ)`,
-///   applied at the call site so that this module carries no front-end dependency (and so any
-///   other front end can supply its own leg). It is a redundancy check, never the authority.
+/// # The three legs, and which one decides
+///
+/// | leg | what it is | role |
+/// |---|---|---|
+/// | **substrate** | [`crate::guard_par_substrate::substrate_verdict`] — the guard encoded into `GuardFormula` and decided by Presburger automata / the propositional algebra / a scalar sort's effective Boolean algebra | ★ **THE AUTHORITY.** A `None` here is `Residual`, whatever the other legs say. |
+/// | **machine** | [`machine_verdict`] — `rho_pure_eval` under the reducer's own `SpatialMatcherOracle` | the CONCRETE-SEMANTICS fence (see below) |
+/// | **front end** | `host_verdict`, e.g. `mettail_languages::rhocalc::receive::eval_guard_bool` | ADVISORY ONLY since THE WIRE — see below |
+///
+/// # ⚠ Why the machine leg is still required — it is a SOUNDNESS fence, not hygiene
+///
+/// The substrate's static verdict is relative to a **bounded** integer domain
+/// (`SubstrateConfig::bit_width`), and over a bounded domain neither
+///
+/// ```text
+///    valid over 2^w  ⟹  valid over ℤ          (counterexample: x < 40000)
+///    unsat over 2^w  ⟹  unsat over ℤ          (counterexample: x > 40000)
+/// ```
+///
+/// holds. So a substrate verdict alone **cannot** license omitting a `Receive.condition`.
+/// [`machine_verdict`] evaluates the very `Par` the artifact would carry, with `i64` semantics,
+/// through the reducer's own evaluator — so requiring the two to agree makes the discharge set
+/// exactly the intersection, which is sound by construction. The substrate's *extra* reach
+/// (open formulas: `x < x + 1` is Presburger-VALID, and `rho_pure_eval` cannot touch a
+/// condition that mentions a binder at all) is therefore recorded as a diagnostic here and
+/// **not acted upon**; widening the discharge set on the strength of a bounded-domain verdict
+/// is a separate, deliberate decision that this change does not take.
+///
+/// # The front-end leg is RETIRED from the decision
+///
+/// It used to be a *gate*: `Discharged` required `host_verdict == Some(true)`. It is now purely
+/// advisory — consumed only to emit the divergence warning. That is THE WIRE's "retire the Rust
+/// fold from guard decisions": the parameter is kept so the one production caller needs no edit
+/// and so a front-end disagreement stays loud, but it can no longer decide anything.
+///
+/// # Arguments
+///
+/// * `host_verdict` — the FRONT-END evaluator's answer, or `None` if it declined. Advisory.
 /// * `cond_par` — the lowered condition, exactly the `Par` that would be stored in
 ///   `Receive.condition`.
 /// * `routing` — the guard's already-decided route (see [`GuardRouting`] and the ROUTE-SITE
@@ -240,14 +319,33 @@ pub fn classify(
     cond_par: &Par,
     routing: GuardRouting,
 ) -> GuardDischarge {
-    // Routing is CONSULTED, never derived. A guard the machine does not evaluate is not this
-    // module's to decide.
+    // Routing is CONSULTED, never derived.
     if !routing.permits_compile_time_decision() {
         return GuardDischarge::Residual;
     }
 
-    // D0. No variable mentioned anywhere ⇒ `eval_with` never reads its `Env`.
+    // ★ THE AUTHORITY. Asked FIRST, and asked unconditionally — including on guards that
+    // mention a binder, which is where it can say something no other leg can.
+    let substrate = crate::guard_par_substrate::substrate_verdict(cond_par);
+
+    // D0. No variable mentioned anywhere ⇒ `eval_with` never reads its `Env`, so the fence's
+    // concrete-semantics leg is available. An OPEN guard has no such leg.
     if !is_binder_closed(cond_par) {
+        if substrate.is_some() {
+            // The capability gain, recorded but NOT acted upon. See the bounded-domain caveat
+            // in this function's docs: a substrate verdict on an open formula has no
+            // concrete-semantics witness, so acting on it would be exactly the unsound widening
+            // the fence exists to prevent.
+            tracing::debug!(
+                target: GUARD_DISCHARGE_TARGET,
+                substrate_verdict = ?substrate,
+                condition = ?cond_par,
+                "SUBSTRATE settled an OPEN guard (one that mentions a binder) — a verdict no \
+                 other leg can produce. NOT acted upon: the verdict is relative to a bounded \
+                 integer domain and has no concrete-semantics witness here, so the guard is \
+                 left Residual and the reducer decides it at COMM time."
+            );
+        }
         return GuardDischarge::Residual;
     }
 
@@ -256,11 +354,13 @@ pub fn classify(
         return GuardDischarge::Residual;
     }
 
-    // The authority: the machine's own evaluator, on the machine's own oracle, under the empty
-    // environment (sound precisely because the condition is binder-closed).
+    // The fence: the same condition, under the concrete semantics that will actually run.
     let machine = machine_verdict(cond_par);
 
-    match (machine, host_verdict) {
+    // The front-end leg, advisory: reported when it disagrees, never consulted for the verdict.
+    report_front_end_divergence(host_verdict, substrate, cond_par);
+
+    match (substrate, machine) {
         (Some(true), Some(true)) => {
             debug_assert!(
                 all_operands_ground(cond_par),
@@ -270,37 +370,67 @@ pub fn classify(
         },
         (Some(false), Some(false)) => GuardDischarge::Refuted,
 
-        // ★ DISAGREEMENT. Two evaluators of the same surface guard language reached different
-        // conclusions on a condition with no free variables — a divergence-A-shaped finding.
-        // The safe action is Residual (the machine decides at COMM time, as it does today), but
-        // it must NEVER be silent: this is precisely the class of defect the fence exists for.
-        (Some(m), Some(h)) => {
+        // ★ THE DIVERGENCE DETECTOR, retargeted from (machine, front end) to
+        // (SUBSTRATE, machine). Two deciders of the same binder-closed condition reached
+        // different conclusions — a divergence-A-shaped finding, and here also the shape a
+        // bounded-domain artifact would take. The safe action is Residual (the reducer decides
+        // at COMM time, as before), but it must NEVER be silent.
+        (Some(s), Some(m)) => {
             tracing::warn!(
                 target: GUARD_DISCHARGE_TARGET,
+                substrate_verdict = s,
                 machine_verdict = m,
-                host_verdict = h,
                 condition = ?cond_par,
-                "GUARD EVALUATOR DISAGREEMENT on a binder-closed condition: the machine \
-                 (rho_pure_eval + SpatialMatcherOracle) and the host front-end evaluator \
-                 reached different verdicts. Falling back to Residual (the machine decides at \
-                 COMM time). This is a divergence-A-shaped defect; the two evaluators must be \
-                 reconciled."
+                "GUARD DECIDER DISAGREEMENT on a binder-closed condition: the Dovetail/SFT \
+                 substrate and the concrete-semantics evaluator (rho_pure_eval + \
+                 SpatialMatcherOracle) reached different verdicts. Falling back to Residual. \
+                 This is either a divergence-A-shaped defect or a bounded-domain artifact \
+                 (the substrate decides over 2^bit_width, the evaluator over i64); the two \
+                 must be reconciled."
             );
             GuardDischarge::Residual
         },
 
-        // One leg declined. Not a disagreement — one evaluator simply does not cover this
-        // fragment (e.g. the host declines `FormulaShape::Separation`, or the machine answers
+        // One leg declined. Not a disagreement — one decider simply does not cover this
+        // fragment (the substrate declines a spatial atom; the machine answers
         // `UnsupportedExpression`). Residual, at DEBUG.
-        (machine, host) => {
+        (substrate, machine) => {
             tracing::debug!(
                 target: GUARD_DISCHARGE_TARGET,
+                substrate_verdict = ?substrate,
                 machine_verdict = ?machine,
-                host_verdict = ?host,
-                "binder-closed guard not decided by both evaluators; left residual"
+                "binder-closed guard not decided by both the substrate and the \
+                 concrete-semantics evaluator; left residual"
             );
             GuardDischarge::Residual
         },
+    }
+}
+
+/// Emit a diagnostic when the ADVISORY front-end leg disagrees with the authority.
+///
+/// Separated from [`classify`]'s verdict `match` on purpose: it is the one thing the front-end
+/// leg is still for, and keeping it out of the decision path makes "the front end cannot decide
+/// anything" a structural property rather than a comment.
+fn report_front_end_divergence(
+    host_verdict: Option<bool>,
+    substrate: Option<bool>,
+    cond_par: &Par,
+) {
+    if let (Some(host), Some(substrate)) = (host_verdict, substrate) {
+        if host != substrate {
+            tracing::warn!(
+                target: GUARD_DISCHARGE_TARGET,
+                substrate_verdict = substrate,
+                host_verdict = host,
+                condition = ?cond_par,
+                "FRONT-END GUARD DIVERGENCE: the front end's own guard evaluator and the \
+                 Dovetail/SFT substrate reached different verdicts on the same binder-closed \
+                 condition. The front-end leg is ADVISORY and decides nothing, so this does \
+                 not change the outcome — but two readings of one surface guard language have \
+                 drifted and must be reconciled."
+            );
+        }
     }
 }
 

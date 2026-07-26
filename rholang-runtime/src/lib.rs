@@ -61,6 +61,14 @@ pub mod fold_contract;
 /// already short-circuits on. Front-end independent (the host redundancy leg is supplied by the
 /// caller), so it is available in every feature configuration.
 pub mod guard_discharge;
+/// ★ THE `where` → Dovetail/SFT WIRE, lowered half: the `rhoapi::Par` →
+/// [`mettail_prattail::guard_formula::GuardFormula`] encoder and the substrate's compile-time
+/// verdict — the AUTHORITY leg of [`guard_discharge::classify`].
+///
+/// A second *encoder*, deliberately not a second *decider*: it targets the same substrate
+/// vocabulary the surface encoder (`mettail_languages::rhocalc::guard_substrate`) does, so both
+/// legs of a guard's life ask the same procedures.
+pub mod guard_par_substrate;
 /// A-S3 registered native-handler contracts: the machine-invoked trusted evaluator `Definition`s
 /// for admitted `fold` native rules (the held-fold trampoline generalized — same
 /// `extra_system_processes` seam, reserved `[0xF1, rule]` band).

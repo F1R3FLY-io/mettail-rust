@@ -40,7 +40,7 @@ default = [
 ]
 # Conversion from typed Rho observation reports into mettail_runtime::RuntimeBackendReport
 # plus the generic Language backend installer wrappers.
-runtime-report = ["dep:mettail-runtime", "dep:mettail-prattail"]
+runtime-report = ["dep:mettail-runtime"]
 # A-S2 test-only instrumentation: exposes `backend::dstage_instrumentation` (a process-global
 # counter of `checked_complete_dovetail_report` invocations) so downstream integration tests
 # (e.g. the REPL's zero-D-stage exec suite) can assert that an ADMITTED exec builds no Dovetail
@@ -326,7 +326,12 @@ crypto = { workspace = true }
 tokio = { workspace = true }
 mettail-languages = { package = "languages", path = "../languages", optional = true, default-features = false }
 mettail-runtime = { package = "runtime", path = "../runtime", optional = true }
-mettail-prattail = { package = "prattail", path = "../prattail", optional = true }
+# NON-OPTIONAL since THE WIRE: `guard_discharge` is available in every feature
+# configuration, and its compile-time authority leg is the Dovetail/SFT substrate
+# (`mettail_prattail::guard_formula`). Gating the substrate behind a feature would give
+# `classify` two decision paths — one substrate-authoritative, one not — which is precisely
+# the dual-path shape this tree forbids.
+mettail-prattail = { package = "prattail", path = "../prattail" }
 mettail-ast = { package = "ast", path = "../ast", optional = true }
 syn = { workspace = true, optional = true }
 # Reactive single-step COMM stepper (step.rs): a lock-free bounded channel carries the RAW COMM
@@ -650,4 +655,21 @@ required-features = ["rhocalc-runtime", "lambda-runtime"]
 [[test]]
 name = "rhocalc_bin"
 path = "tests/rhocalc_bin.rs"
+required-features = ["rhocalc-runtime", "lambda-runtime"]
+
+# `where`-guard expression lowering + the monadic receive arity, through the production parse and
+# lowering path. Pins BOTH directions of the guard matrix (a true guard fires, a false guard does
+# not and leaves its datum resting), the send-position diagnostics that share the root, and the
+# structural invariant that no `Receive.condition` operand carries process structure.
+[[test]]
+name = "rhocalc_guard_lowering"
+path = "tests/rhocalc_guard_lowering.rs"
+required-features = ["rhocalc-runtime"]
+
+# The same matrix through the `rhocalc` BINARY. A library test cannot catch a regression of the
+# binary's PARSE ENTRY (`parse_via_wpda`, never `Proc::parse` — whose display round-trip is not
+# term-preserving for a projection operand), because it never goes through it.
+[[test]]
+name = "rhocalc_bin_guards"
+path = "tests/rhocalc_bin_guards.rs"
 required-features = ["rhocalc-runtime", "lambda-runtime"]
