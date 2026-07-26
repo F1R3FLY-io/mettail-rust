@@ -17721,13 +17721,50 @@ where
             // which is why it belongs here and why the `xcat` gate was never part of the
             // criterion.
             if let Some((csym, _, _, _)) = caller {
-                let stop = matches!(
+                let caller_is_stop = matches!(
                     csym.kind,
                     SymbolKind::MixfixMarker
                         | SymbolKind::CollectionMarker
                         | SymbolKind::GroupingMarker
                 ) || matches!(csym.kind, SymbolKind::RuleAt(k) if k > 0);
-                if stop {
+                // ── 2026-07-26: RESTORE THE MISSING CONJUNCT ──
+                //
+                // `cgll_pure_descend` states the mirror this walk is supposed
+                // to implement, verbatim: "hop i STOPS iff `slot_i.xcat == 0
+                // ∧ caller_i.kind ∈ stop set`", because "an edge with an
+                // EXPLICIT CrossCat* kind is never a stop regardless of its
+                // pusher (`edge_kind_for_push_transition` assigns
+                // CrossCatProjection from `new_state` alone)". The walk had
+                // only the caller-kind conjunct, so a hop carrying EXPLICIT
+                // cross-category evidence died at its pusher.
+                //
+                // The evidence predicate is the SAME `explicit_wrap` this
+                // function already computes below to admit same-cat
+                // boundaries, so the two tests cannot drift apart. It is
+                // `xcat == 4` — the CrossCatProjection stamp — and NOT the
+                // INFERRED rows: `xcat ∈ {1,2}` read their target OFF THE
+                // CALLER, and `xcat == 3` (CrossCatLhsReentry) is how the
+                // `(`-open fan stamps its per-category grouping frames. Those
+                // must keep stopping at a grouping, which is what the
+                // `GroupingMarker` entry in the stop set was added for
+                // (nested-`@`/grouped-receiver: `@(…!(…))!(Nil)`); an
+                // `xcat == 3` hop has `xcat_wrap == u16::MAX` today, so it is
+                // NOT explicit and is unaffected.
+                //
+                // An `xcat == 4` hop's target is `slot.pushed_cat` — intrinsic
+                // to the hop (the projection's own result category), read from
+                // neither the caller nor anything outside the grouping — so
+                // consuming it hands nothing across the re-scoping boundary.
+                // Suppressing it merely deleted the projection's operand
+                // reading: `0 + bigrat(a)` parsed while `(0 + bigrat(a))`
+                // reported "no realizable readings", because inside a group
+                // `IntToBigRat`'s Int operand frame never got the boundary
+                // that turns its `IterativeChainAbsorb` into a Fork, hence
+                // never offered the SHORT constituent that `AddBigRat` needs
+                // as its LHS.
+                let explicit_wrap_evidence =
+                    slot.xcat == 4 || (slot.xcat == 3 && slot.xcat_wrap != u16::MAX);
+                if caller_is_stop && !explicit_wrap_evidence {
                     continue; // this chain dies without a boundary
                 }
             }
