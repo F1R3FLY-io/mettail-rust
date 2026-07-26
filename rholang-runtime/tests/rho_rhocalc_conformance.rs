@@ -1170,16 +1170,50 @@ async fn divergence_g_witness_pathmap_lowers_to_emap_and_zippers_are_unsupported
 /// Closed by **C4**. This is the divergence with the most strategic weight: the in-flight EPathMap
 /// wire-model campaign needs RhoCalc pathmaps to land on the *real* `EPathMap` carrier, not on an
 /// `EMap` that has already thrown the trie structure away.
+///
+/// ★★ AMENDED (C4 investigation, 2026-07-26 — MEASURED). The middle assertion used to be
+///
+/// ```ignore
+///     reduce(&parse("{|1:2|}.get(1)"))
+///         .await
+///         .expect("G: pathmap methods must reach the reducer's own pathmap method table");
+/// ```
+///
+/// and it encoded a **target that can never be reached**: `get` accepts `EMapBody` and nothing
+/// else, so on the native carrier it answers `MethodNotDefined { other_type: "pathmap" }` — pinned
+/// by [`c4_the_native_carrier_refuses_the_map_method_surface`]. A target test whose assertion is
+/// unsatisfiable is worse than no target test: flipping the carrier would turn this from
+/// `#[ignore]`d-and-red into red, and the natural repair — "make `get` work on a pathmap" — invents
+/// consensus semantics.
+///
+/// The replacement is `getSubtrie()`, chosen because it satisfies both sides of the constraint: the
+/// interpreter's `getSubtrie` accepts an `EPathmapBody` receiver (`reduce.rs:5322`), and RhoCalc
+/// HAS the method (`Proc::PGetSubtrie`, routed by C1b). The carrier's own key lookup, `atPath`, is
+/// the semantically closer counterpart to `get` but is NOT reachable from RhoCalc source — RhoCalc
+/// has no `atPath` production at all — so it cannot appear in a test that parses RhoCalc.
+///
+/// The `#[ignore]` reason has been corrected too. G is NOT blocked on a lowering that simply has
+/// not been written; it is blocked on a semantic decision, because `EPathMap` has no value slot for
+/// RhoCalc's `{| k : v |}` to land in, and because RhoCalc's keys are BARE — the element shape over
+/// which the interpreter's own walk does not terminate. See the C1b block in
+/// `rholang-runtime/src/rhocalc_ast.rs`, and `c4_defect_a_bare_element_walk_never_advances`.
+///
+/// ⚠ Note also what this test can and cannot say about VALUES. Under a key-≡-value carrier
+/// `{|1:2|}` cannot round-trip: the value `2` has nowhere to live. So a future version of this test
+/// must assert whatever the carrier decision settles on, and asserting a value readout today would
+/// be pre-judging it. It therefore asserts only that the calls REACH the pathmap surface.
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "divergence G: Pathmap lowers to EMap and zippers are UnsupportedProc despite \
-            e_pathmap_body=32 / e_zipper_body=33 existing; closed by C4"]
+#[ignore = "divergence G: blocked on the C4 CARRIER DECISION, not on unwritten plumbing — \
+            EPathMap has no value slot for RhoCalc's `{| k : v |}` (proto fields 6/7 were the \
+            retired value_form/value_entries experiment; the ground wire is a KEY stream), and \
+            RhoCalc keys are BARE, the shape whose walk does not terminate on the interpreter"]
 async fn divergence_g_target_pathmap_and_zippers_use_their_native_carriers() {
     let observed = reduce(&parse("{|1:2|}")).await.expect("the pathmap literal lowers");
     assert!(
         !matches!(observed.as_slice(), [RuntimeObservationValue::Map(_)]),
         "G: a Pathmap must not observe as an EMap — the trie carrier must survive lowering"
     );
-    reduce(&parse("{|1:2|}.get(1)"))
+    reduce(&parse("{|1:2|}.getSubtrie()"))
         .await
         .expect("G: pathmap methods must reach the reducer's own pathmap method table");
     reduce(&parse("{|1:2|}.readZipper()"))
