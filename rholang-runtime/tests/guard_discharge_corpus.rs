@@ -24,6 +24,14 @@
 //!  │   predicate in `rholang-codegen/src/guard_closure.rs`                                │
 //!  │   (`a_new_rhoapi_constructor_cannot_silently_become_closed`), because that is where  │
 //!  │   the match arms it must break are; asserted here by reference, not duplicated.      │
+//!  ├──────────────────────────────────────────────────────────────────────────────────────┤
+//!  │ GATE 5  ★ THE RUN-TIME DIFFERENTIAL                                                  │
+//!  │   every corpus guard, decided at COMM time by BOTH deciders — f1r3node's `Matcher`   │
+//!  │   (rho_pure_eval) and mettail's `SubstrateGuardMatcher` (Dovetail/SFT) — over a      │
+//!  │   battery of payloads, through the real `Match::check_commit`. Disagreement in the   │
+//!  │   FIRING direction (the substrate commits a COMM the reducer rests on) is a hard     │
+//!  │   failure; disagreement in the resting direction is fail-closed and is REPORTED with │
+//!  │   its cause, in full, rather than merely counted.                                    │
 //!  └──────────────────────────────────────────────────────────────────────────────────────┘
 //! ```
 //!
@@ -766,6 +774,207 @@ fn every_settlement_demo_guard_is_residual_so_the_demo_is_unchanged() {
 // ════════════════════════════════════════════════════════════════════════════════════════════
 // GATE 4 — exhaustiveness (asserted by reference)
 // ════════════════════════════════════════════════════════════════════════════════════════════
+
+// ════════════════════════════════════════════════════════════════════════════════════════════
+// GATE 5 — ★ THE RUN-TIME DIFFERENTIAL: the two COMM-time guard deciders, over the corpus
+// ════════════════════════════════════════════════════════════════════════════════════════════
+
+/// The payload battery a single-bind corpus guard is decided against.
+///
+/// The corpus programs bind `x` to `2`, but a differential over one payload measures almost
+/// nothing: the interesting rows are the ones where an operand leaves the decidable fragment
+/// (a sort mismatch, an overflow, a process-shaped value). Each row is therefore decided against
+/// every payload below, and a payload that makes the guard nonsense is *kept* — "both deciders
+/// refuse it" is exactly what has to be shown.
+fn single_bind_payload_battery() -> Vec<(&'static str, Vec<Par>)> {
+    use models::rhoapi::{EList, Send};
+    use models::rust::utils::{new_gbool_par, new_gint_par, new_gstring_par};
+    let int = |n: i64| new_gint_par(n, Vec::new(), false);
+    let list = Par::default().with_exprs(vec![models::rhoapi::Expr {
+        expr_instance: Some(models::rhoapi::expr::ExprInstance::EListBody(EList {
+            ps: vec![int(1), int(2)],
+            locally_free: Vec::new(),
+            connective_used: false,
+            remainder: None,
+        })),
+    }]);
+    let process = Par::default().with_sends(vec![Send {
+        chan: Some(new_gstring_par("a".to_string(), Vec::new(), false)),
+        data: vec![int(1)],
+        persistent: false,
+        locally_free: Vec::new(),
+        connective_used: false,
+    }]);
+    let double = Par::default()
+        .with_exprs(vec![models::rust::utils::new_gdouble_expr(1.5)]);
+    let bigint = Par::default()
+        .with_exprs(vec![models::rust::utils::new_gbigint_expr(vec![0x00])]);
+    vec![
+        ("x=2 (the program's own payload)", vec![int(2)]),
+        ("x=0", vec![int(0)]),
+        ("x=-1", vec![int(-1)]),
+        ("x=101", vec![int(101)]),
+        ("x=40000 (past the substrate's 16-bit static domain)", vec![int(40_000)]),
+        ("x=i64::MAX", vec![int(i64::MAX)]),
+        ("x=i64::MIN", vec![int(i64::MIN)]),
+        ("x=true", vec![new_gbool_par(true, Vec::new(), false)]),
+        ("x=false", vec![new_gbool_par(false, Vec::new(), false)]),
+        ("x=\"ok\"", vec![new_gstring_par("ok".to_string(), Vec::new(), false)]),
+        ("x=\"OK\" (case differs)", vec![new_gstring_par("OK".to_string(), Vec::new(), false)]),
+        ("x=\"\" (empty)", vec![new_gstring_par(String::new(), Vec::new(), false)]),
+        ("x=1.5 (double)", vec![double]),
+        ("x=0n (big integer)", vec![bigint]),
+        ("x=[1,2]", vec![list]),
+        ("x=@\"a\"!(1) (process-shaped)", vec![process]),
+        ("x=<no payload at all>", vec![]),
+    ]
+}
+
+/// The cross-bind battery: the two binds' payloads, concatenated in receive-bind order.
+fn join_payload_battery() -> Vec<(&'static str, Vec<Par>)> {
+    use models::rust::utils::{new_gbool_par, new_gint_par, new_gstring_par};
+    let int = |n: i64| new_gint_par(n, Vec::new(), false);
+    vec![
+        ("x=2, y=3 (the program's own payloads)", vec![int(2), int(3)]),
+        ("x=3, y=2", vec![int(3), int(2)]),
+        ("x=0, y=0", vec![int(0), int(0)]),
+        ("x=i64::MAX, y=1", vec![int(i64::MAX), int(1)]),
+        ("x=1, y=i64::MIN", vec![int(1), int(i64::MIN)]),
+        ("x=\"lemon\", y=\"lemon\"", vec![
+            new_gstring_par("lemon".to_string(), Vec::new(), false),
+            new_gstring_par("lemon".to_string(), Vec::new(), false),
+        ]),
+        ("x=true, y=false", vec![
+            new_gbool_par(true, Vec::new(), false),
+            new_gbool_par(false, Vec::new(), false),
+        ]),
+        ("x=2, y=\"lemon\" (mixed sorts)", vec![
+            int(2),
+            new_gstring_par("lemon".to_string(), Vec::new(), false),
+        ]),
+        ("x=2 (only ONE bind arrived)", vec![int(2)]),
+    ]
+}
+
+/// Drive one decider through the REAL `Match::check_commit` entry point.
+fn commit_verdict(
+    matcher: &dyn Match<
+        models::rhoapi::BindPattern,
+        models::rhoapi::ListParWithRandom,
+        models::rhoapi::TaggedContinuation,
+    >,
+    condition: &Par,
+    payloads: &[Par],
+) -> bool {
+    let matched = models::rhoapi::ListParWithRandom {
+        pars: payloads.to_vec(),
+        random_state: Vec::new(),
+    };
+    matcher.check_commit(&guard_as_tagged_continuation(condition), &[&matched])
+}
+
+/// Why the substrate could not decide a guard, read off the encoding rather than guessed.
+///
+/// The three causes are the three refusals in
+/// `guard_par_substrate::substrate_guard_verdict`, in the order it applies them.
+fn undecided_cause(condition: &Par, payloads: &[Par]) -> String {
+    use mettail_rholang_runtime::guard_par_substrate::{encode_par_guard, substitute_bound_pars};
+    let substituted = substitute_bound_pars(condition, payloads);
+    let encoding = encode_par_guard(&substituted);
+    match encoding.vars.is_empty() {
+        false => return format!(
+            "RESIDUAL BINDER — {} slot(s) the substitution could not reach",
+            encoding.vars.len()
+        ),
+        true => {},
+    }
+    for (index, fragment) in encoding.opaque.iter().enumerate() {
+        if machine_verdict(fragment).is_none() {
+            let kind = encoding
+                .formula
+                .atoms()
+                .into_iter()
+                .find(|atom| atom.id as usize == index)
+                .map(|atom| format!("{:?}", atom.kind))
+                .unwrap_or_else(|| "collapsed out of the formula".to_string());
+            return format!("UNDECIDABLE FRAGMENT #{index} ({kind})");
+        }
+    }
+    "SUBSTRATE-UNDECIDED LEAF (outside the decided fragment)".to_string()
+}
+
+/// ★ **GATE 5 — THE RUN-TIME DIFFERENTIAL.**
+///
+/// Every corpus guard, at COMM time, decided by both deciders over the payload battery. The
+/// substrate is allowed to be *more* conservative than the reducer — an undecided guard fails
+/// closed, leaving the datum resting and observable — but it may **never** commit a COMM the
+/// reducer rests on. The first direction is reported in full; the second fails the gate.
+#[test]
+fn the_two_comm_time_deciders_agree_on_the_whole_corpus() {
+    let reducer = rholang::rust::interpreter::matcher::r#match::Matcher;
+    let substrate = mettail_rholang_runtime::guard_par_substrate::SubstrateGuardMatcher::new();
+
+    let mut comparisons = 0usize;
+    let mut fail_closed = Vec::new();
+    let mut fires_where_reducer_rests = Vec::new();
+
+    let rows = GUARD_CORPUS
+        .iter()
+        .map(|(guard, _)| (*guard, single_bind_program(guard), single_bind_payload_battery()))
+        .chain(
+            JOIN_GUARD_CORPUS
+                .iter()
+                .map(|(guard, _)| (*guard, join_program(guard), join_payload_battery())),
+        );
+
+    for (guard, program, battery) in rows {
+        let lowered = lower(&program, LoweringOptions::NO_DISCHARGE);
+        let condition = receive_condition(&lowered)
+            .unwrap_or_else(|| panic!("discharge-OFF lowering of {program:?} lost its guard"));
+        for (payload_label, payloads) in battery {
+            comparisons += 1;
+            let reducer_says = commit_verdict(&reducer, &condition, &payloads);
+            let substrate_says = commit_verdict(&substrate, &condition, &payloads);
+            match (reducer_says, substrate_says) {
+                (true, true) | (false, false) => {},
+                (true, false) => fail_closed.push(format!(
+                    "  {guard:?} [{payload_label}]: reducer=true substrate=false — {}",
+                    undecided_cause(&condition, &payloads)
+                )),
+                (false, true) => fires_where_reducer_rests.push(format!(
+                    "  {guard:?} [{payload_label}]: reducer=false substrate=TRUE"
+                )),
+            }
+        }
+    }
+
+    println!(
+        "★ GATE 5 run-time differential: {comparisons} (guard × payload) comparisons, \
+         {} fail-closed disagreement(s), {} firing-direction disagreement(s)",
+        fail_closed.len(),
+        fires_where_reducer_rests.len()
+    );
+    for row in &fail_closed {
+        println!("{row}");
+    }
+
+    assert!(
+        fires_where_reducer_rests.is_empty(),
+        "★ NOT FAIL-CLOSED — the substrate commits a COMM the reducer rests on, in {} \
+         comparison(s):\n{}",
+        fires_where_reducer_rests.len(),
+        fires_where_reducer_rests.join("\n")
+    );
+    assert_eq!(
+        fail_closed.len(),
+        0,
+        "the substrate refused {} guard(s) the reducer commits. Each is fail-closed and \
+         therefore safe, but the set is PINNED so a widening is visible here rather than only \
+         in behaviour:\n{}",
+        fail_closed.len(),
+        fail_closed.join("\n")
+    );
+}
 
 /// Gate 4 lives with the predicate it protects, in
 /// `rholang-codegen/src/guard_closure.rs::a_new_rhoapi_constructor_cannot_silently_become_closed`
