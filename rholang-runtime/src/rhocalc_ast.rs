@@ -1474,7 +1474,11 @@ fn is_single_gstring_value(par: &Par) -> bool {
 /// metered `ENeg`; the macro-injected conversion constructors (`BoolToInt`/`UInt32ToInt`), an
 /// unsubstituted `IVar`, and lambdas have no machine algebra and fail closed, named.
 ///
-/// ══ ⚠ OPEN DIVERGENCE — NEGATIVE LITERALS IN PATTERN POSITION (measured 2026-07-26) ═══════════
+/// ══ ⚠ OPEN DIVERGENCE — SIGN-ABUTTED NUMERIC LITERALS (measured 2026-07-26) ════════════════════
+///
+/// ★ THIS NOTE WAS CORRECTED ON 2026-07-26. Its first version named the wrong mechanism and drew
+/// the wrong conclusion from it; both are recorded below under "REFUTED" so the same reasoning is
+/// not re-derived. The fix does NOT belong in this file — see "WHERE THE FIX GOES".
 ///
 /// A negated numeral lowers to an unevaluated `ENeg`, and the two positions a `Par` can occupy
 /// treat that differently: SEND DATA are evaluated by `eval_send` (`eval_expr` then
@@ -1484,29 +1488,64 @@ fn is_single_gstring_value(par: &Par) -> bool {
 ///     `for(@-7 <- @"c")`   matches `ENeg(GInt(7))`     (the `ENeg` was NOT evaluated)
 ///
 /// and the two never match: `for(@-7 <- @"c"){…} | @"c"!(-7)` produces NO COMM — silently, with
-/// no error, exactly the failure mode this file's regression suite exists to catch. Consensus
-/// Rholang DOES commit it: measured directly against f1r3node's own normalizer and reducer,
-/// `for (@-7 <- @"c") { @"OUT"!(1) } | @"c"!(-7)` leaves `1` on `@"OUT"` and `@"c"` empty
-/// (its parser makes a signed numeral a single ground literal, so the pattern is `GInt(-7)`).
-/// The same applies to a negative literal anywhere inside a pattern — a list element, a map key,
-/// a `match` case.
+/// no error. Consensus Rholang DOES commit it.
 ///
-/// ★ NOT FIXED HERE, DELIBERATELY. `-7` parses as `Proc::NegProc(CastInt(NumLit(7)))` — the
-/// PROC-level unary minus (`NegProc . a:Proc |- "-" a : Proc`), not the Int-category `NegInt` —
-/// and `NegProc`'s operand is an arbitrary `Proc`, so the fix is a decision about A-S4 lowering
-/// purity, not a local repair:
+/// ── THE MECHANISM (established, not inferred) ──────────────────────────────────────────────────
 ///
-///   * folding `-<literal>` at lowering time removes one metered `ENeg` primitive from the
-///     machine's cost accounting for every negated numeral in DATA position, which is
-///     consensus-visible (cost is F1r3node's, not MeTTaIL's, to change); and
-///   * folding it only in PATTERN position would make one source text lower two different ways,
-///     which is precisely the lowering asymmetry [`lower_proc_in_env`] exists to prevent
-///     ("a pattern and the term it is meant to match are lowered by literally the same code, so
-///     `t matches t` cannot fail through a lowering asymmetry").
+/// f1r3node folds nothing. Its normalizer's `UnaryExpOp::Neg` arm (`compiler/normalize.rs:185`)
+/// is a plain `ENeg` constructor (`unary_exp`, :89-105), and its matcher calls `eval` only for
+/// `where`-guards (`matcher/match.rs:304`). The conformance comes from **its LEXER**: every
+/// signed numeric literal token carries the sign INSIDE the token, so for a sign-abutted numeral
+/// no negation node is ever built. Verified on the built grammar (`rholang-tree-sitter`
+/// `grammar.js`, rev `9718ab2`): `for (@-7 <- @"c") …` yields `(long_literal [0,6]-[0,8])` — one
+/// token spanning the sign. The discriminator is ADJACENCY: `- 7` and `-(7)` DO build an `ENeg`
+/// on both sides, and MeTTaIL already agrees with f1r3node on those.
 ///
-/// Both arms of that choice belong to the A-S4 / metering owner. It is recorded here, pinned as a
-/// characterization test (`rhocalc_guard_lowering.rs::negative_literal_patterns_are_an_open_
-/// divergence`), and reported — not silently patched.
+/// The divergent family is therefore EXACTLY the sign-abutted numerals — `-7`, `-0`, `-7i32`,
+/// `-7i64`, `-7n`, `-7r`, `-1.5f64`, `-1.5p2`, and any collection containing one. `not true`,
+/// `1 + 1`, the boolean and relational connectives, and the casts are all ALREADY conformant:
+/// f1r3node leaves them unevaluated in pattern position too, so their non-matching is Rholang's
+/// own semantics rather than a defect. Measured end-to-end in
+/// `rhocalc_ground_literal_conformance.rs` against f1r3node's own `Compiler::source_to_adt`.
+///
+/// ── ⚠ WHY IT MUST NOT BE FIXED HERE ────────────────────────────────────────────────────────────
+///
+/// Folding `NegProc(<ground literal>)` in this function is the obvious-looking repair and it is
+/// WRONG, by measurement: by lowering time the adjacency is already gone — `-7`, `- 7` and `-(7)`
+/// all parse to the identical `NegProc(CastInt(NumLit(7)))`. A fold here would fix the abutted
+/// spellings and simultaneously BREAK `- 7` / `-(7)` / `- 7n` / `- 1.5f64`, which conform today.
+/// That trades one divergence for another; `rhocalc_ground_literal_conformance.rs::
+/// adjacency_is_honoured` is the guard that makes the mistake fail loudly.
+///
+/// ── WHERE THE FIX GOES (two defects; NEITHER alone is sufficient) ──────────────────────────────
+///
+///  (A) `languages/src/rhocalc.rs` — the `Int` and `BigRat` token patterns lack the leading `-?`
+///      that `BigInt`, `Fixed` and `Float` already carry, so for `-7`/`-7i32`/`-7i64`/`-7r` no
+///      folded reading is generated at all. Mirror f1r3node's token set, which signs
+///      `long`/`signed_int`/`bigint`/`bigrat`/`float`/`fixed_point` but NOT `unsigned_int`.
+///  (B) the single-winner election — `Proc::parse_via_wpda_all(r#"@"OUT"!(-7n)"#)` returns
+///      `[0] CastBigInt(-7)`, `[1] NegProc(CastBigInt(7))`, and `Proc::parse_via_wpda` of the
+///      same source elects `[1]`. The seam is `wpda_walker.rs`'s
+///      `RealizeRequestMode::SingleResultElection`, which disagrees with the ordering
+///      `__all_with_weights_monolithic` reports.
+///
+/// (A) alone is provably insufficient: `BigInt`, `Float` and `Fixed` ALREADY carry `-?` and
+/// diverge anyway.
+///
+/// ── REFUTED (the original note's two grounds for declining the fix) ────────────────────────────
+///
+///   * "folding `-<literal>` removes a metered `ENeg` from consensus cost accounting, which is
+///     F1r3node's to change" — REFUTED TWICE OVER. A pattern is matched, never evaluated, so in
+///     pattern position there is no metered operation to remove; and in TERM position f1r3node
+///     emits no `ENeg` for `-7` either, so MeTTaIL's `ENeg` is itself the cost divergence.
+///     Conforming REMOVES a charge f1r3node never levies rather than dropping one it does.
+///   * "folding only in pattern position would introduce the pattern-vs-term asymmetry
+///     [`lower_proc_in_env`] exists to prevent" — REFUTED as inapplicable. The conforming fix is
+///     LEXICAL and therefore position-independent: `-7` is one literal token in both positions,
+///     so no asymmetry arises and `lower_proc_in_env`'s single-lowering invariant is untouched.
+///
+/// Pinned per row and per position (bare / send / pattern) in
+/// `rholang-runtime/tests/rhocalc_ground_literal_conformance.rs`.
 fn lower_int_value(value: &Int, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> {
     match value {
         Int::NumLit(literal) => Ok(new_gint_par(*literal, Vec::new(), false)),
