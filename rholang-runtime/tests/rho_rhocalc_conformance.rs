@@ -1417,7 +1417,23 @@ async fn divergence_j_target_empty_send_does_not_satisfy_an_arity_one_receive() 
 #[tokio::test(flavor = "multi_thread")]
 async fn c3_residue_mettail_only_operations_fail_closed_and_named() {
     for (source, fold_answer, machine_error) in [
-        ("fraction(1, 2)", "1/2", "unsupported: fraction(a, b) rational constructor"),
+        // ★ GOLDEN RE-DERIVED, NOT RELAXED (2026-07-26). This read `"1/2"` and had been red since
+        // `98d861a3` gave `BigRat`'s token pattern the leading `-?` that mirrors consensus
+        // Rholang's `bigrat_literal /-?\d+r/`. `mandatory_literal_tail_of_pattern`
+        // (`macros/src/gen/syntax/display.rs`) grants a mandatory literal tail only when the
+        // pattern's language covers EVERY value the native type can render, and its sign
+        // side-condition — *"a signed payload renders a leading `-`, so a pattern that does not
+        // accept one cannot be given a tail"* — was the ONLY reason `BigRat` had no `r` tail while
+        // `BigInt` has had its `n` tail since Stage C. With `-?` in place the tail is emitted, so a
+        // rational renders `1/2r`. `98d861a3` re-baselined the three `rhocalc_tests.rs` goldens
+        // this moved and MISSED this fourth one, in a different file.
+        //
+        // ⚠ The tail is appended to `Ratio`'s own `n/d` rendering, so `1/2r` reads BACK as
+        // `Div(CastInt(1), CastBigRat(2))`, not as `CastBigRat(1/2)`; the only surface that spells
+        // the composite value is `1r/2r`. That display→parse asymmetry is pre-existing, is
+        // recorded in `98d861a3`'s message as a changed PROPERTY, and belongs to `display.rs`'s
+        // composite half — it is not this pin's subject.
+        ("fraction(1, 2)", "1/2r", "unsupported: fraction(a, b) rational constructor"),
         // `reduce.rs::method_table` provides `keys` but NOT `values` — a Map's values are
         // reachable in Rholang only via `toList`/`get`. So `.values()` is a RhoCalc extension
         // with no Rholang counterpart, and it stays MeTTaIL-only under C3.
