@@ -3920,6 +3920,13 @@ struct CgllPureStats {
     /// (yield-any vs suppress-all tension) — >0 on any green suite is a
     /// stage-blocking receipt before suppression-ON.
     boundary_mixed_verdicts: u64,
+    /// 2026-07-26: chains ended by the RE-SCOPING stop AFTER the hop's own
+    /// boundary mapping ran (the `walk (Proj t :: Grouping :: _) = Found t`
+    /// half of `grouping_stops_walk` — the hop reports its own target and the
+    /// walk goes no further). Distinct from the pre-existing silent
+    /// `continue` for hops with no explicit wrap evidence, which end before
+    /// any mapping runs and are not counted anywhere.
+    boundary_rescope_stops: u64,
     /// A2(c): xcat stamps whose caller was a walk stop-kind (expected 0).
     xcat_stop_conflicts: u64,
     /// R-C: member-1′ operand early-stop twins enqueued.
@@ -17188,7 +17195,7 @@ where
                  opt_group_absent={} out_of_scope={} engine_errors={} prefix_pos_desyncs={} \
                  accept_action_hits={} prefix_seed_pops={} xcat4_stamps={} \
                  boundary_walks={} boundary_yields={} boundary_suppressed={} \
-                 boundary_mixed={} xcat_stop_conflicts={} rc_operand_yields={} \
+                 boundary_mixed={} boundary_rescope_stops={} xcat_stop_conflicts={} rc_operand_yields={} \
                  pred_parses={} \
                  pred_memo_hits={} pred_refutes={} repair_parked={} \
                  repair_reseeded={} repair_rounds={} repair_named_drops={} \
@@ -17259,6 +17266,7 @@ where
                 s.boundary_yields,
                 s.boundary_suppressed,
                 s.boundary_mixed_verdicts,
+                s.boundary_rescope_stops,
                 s.xcat_stop_conflicts,
                 s.rc_operand_yields,
                 s.pred_parses,
@@ -17714,6 +17722,11 @@ where
                 continue; // seed frame — no push edge, chain ends
             };
             let caller = run.v_parent.get(&u).copied();
+            // Set when this hop's caller is a re-scoping frame AND the hop
+            // carries explicit wrap evidence: the hop's own boundary mapping
+            // still runs, but the chain must not ascend past the re-scoping
+            // frame afterwards. See the rationale below the stop test.
+            let mut chain_stops_after_this_hop = false;
             // Stop test: a push from a SCOPE-RESETTING caller ends this chain.
             //
             // ★ #35. This test had two defects, and together they were the root of the
@@ -17798,6 +17811,59 @@ where
                 if caller_is_stop && !explicit_wrap_evidence {
                     continue; // this chain dies without a boundary
                 }
+                // ── 2026-07-26: THE EXEMPTION IS PER-HOP, NOT PER-CHAIN ──
+                //
+                // The conjunct restored above admits an EXPLICIT-wrap hop whose
+                // caller is a re-scoping frame, so that the hop's OWN boundary
+                // mapping runs. `5ec9f20f`'s own message states the intended
+                // scope of that admission verbatim: the pre-fix walk was
+                // "discarding the hop's own evidence RATHER THAN MERELY REFUSING
+                // TO ASCEND PAST IT". Only the first half landed — the hop also
+                // gained permission to ASCEND, and everything above a re-scoping
+                // frame is, by the criterion this stop set encodes, outside the
+                // scope the hop is allowed to consult.
+                //
+                // That divergence is visible directly in the walk's OWN VERIFIED
+                // MODEL. `CollectionElementProjectionBoundary.v` evaluates the
+                // caller chain as a list whose HEAD is this hop's edge and whose
+                // TAIL begins at the caller frame:
+                //
+                //     walk (Proj t   :: _)    = Found t      ← this hop's own evidence
+                //     walk (Pass :: Grouping :: _) = None_   ← `grouping_stops_walk`
+                //
+                // so `walk (Proj t :: Grouping :: rest) = Found t` — the hop
+                // reports ITS target and the walk goes no further. There is no
+                // derivation in that model in which a chain reads a target from
+                // BEYOND a `Grouping`/`RuleSlot`/`CollElem` edge. Ascending gave
+                // us exactly that, and the target it found was the ENCLOSING
+                // context's floor — the one thing a self-delimiting group is
+                // defined to shield its interior from.
+                //
+                // Measured, single-variable, walker-only (LedTest, `Pred` goal;
+                // `and` is a Pred-own operator at bp 3, `==` is `Num "==" Num :
+                // Pred`, `PredToNum` the transparent projection):
+                //
+                //   1 == (2 == 3)          ok    interior rooted at a CROSS-cat op
+                //   1 == (true and true)   FAIL  interior rooted at a SAME-cat op
+                //
+                // In the failing shape the walk left the `PredToNum` operand
+                // frame at floor 0 INSIDE the parens, passed two `GroupingMarker`
+                // callers on `xcat == 4` hops, and landed on the `EqNum` Return
+                // frame OUTSIDE them, yielding target `(Pred, floor 3)`. `and`
+                // binds at 3, so `target_accepts_at_projection_floor = false` and
+                // `suppress_projection_source_action` deleted the
+                // `IterativeChainAbsorb` that builds `AndPred` — the reading was
+                // destroyed before the forest saw it (`boundary_suppressed=2`
+                // versus `0` for the identical interior at a `Num` goal, which
+                // has no enclosing projection floor to find).
+                //
+                // Stopping AFTER the hop's own mapping keeps `5ec9f20f`'s receipt
+                // — `(0 + bigrat(a))` needs the `IntToBigRat` hop's own boundary,
+                // which is emitted here and not above — while restoring
+                // `grouping_stops_walk`.
+                if caller_is_stop {
+                    chain_stops_after_this_hop = true;
+                }
             }
             // Boundary mapping for THIS hop.
             let target: Option<(u16, u16)> = match slot.xcat {
@@ -17851,6 +17917,15 @@ where
                     continue; // classic returns at the first boundary per chain
                 }
                 // Target does not recognize the token — continue the walk.
+            }
+            if chain_stops_after_this_hop {
+                // The hop's own boundary mapping has run (and either emitted, in
+                // which case the `continue` above already took this branch, or
+                // found no recognizing target). Either way the frame above is
+                // re-scoping, so `walk (… :: Grouping :: _) = None_`: this chain
+                // ends here rather than reading a target from outside the scope.
+                run.stats.boundary_rescope_stops += 1;
+                continue;
             }
             // Ascend to ALL callers (the GSS fan).
             for e in self.gss.gll_edges(u) {
