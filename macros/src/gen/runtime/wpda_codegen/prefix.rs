@@ -1180,6 +1180,60 @@ pub fn emit_paren_dispatch_arms(
             // load-bearing. This makes the two ledgers agree anyway, so a FUTURE
             // grammar with genuinely co-existing readings cannot be decided by a
             // parenthesis.
+            //
+            // ⚠ OPEN DEFECT (2026-07-26) — THIS WEIGHT ERASES THE SUB-DERIVATION'S
+            //   TIEBREAK. Read before changing the line below.
+            //
+            //   `LexicographicWeight` is (open_len, primary, lex_alt_idx, src_idx,
+            //   rule_idx). `Semiring::times` (`rigail/src/lex_weight.rs:496-526`)
+            //   short-circuits on the ⊗ identity and OTHERWISE LEFT-PROJECTS the
+            //   three tiebreak components; `is_one()` (:536-538) keys PURELY on
+            //   `primary.is_one()` — i.e. on tropical cost 0.0, nothing else.
+            //
+            //   `lex_w(BP_TIER_CROSSCAT_PROJECTION, …)` has primary = 0.025, so it
+            //   is NOT the identity. The walker composes a branch weight as the
+            //   RIGHT operand (`cursor.weight.times(&branch.weight)`), and at a
+            //   fresh group-open the cursor weight IS the identity — so the cursor
+            //   becomes exactly this weight, and every subsequent `times` inside
+            //   the group left-projects ITS triple `(lex_alt_idx = 0,
+            //   src_idx = grouping_src_idx, rule_idx = 0)` over the whole
+            //   parenthesised sub-derivation. The real tiebreak of everything
+            //   inside the group is discarded and replaced by a constant that also
+            //   FABRICATES a specific bias (`rule_idx = 0` is a real rule index,
+            //   not a sentinel). `times`'s own doc-comment names this hazard:
+            //   "without it, `1.times(a)` would project `1.src_idx = u16::MAX` and
+            //   lose `a`'s real tiebreak".
+            //
+            //   NOT the cause of the grouped-cross-category-operand parse failure
+            //   (`(0 + bigrat(a))` → "no realizable readings"). That was REFUTED by
+            //   single-variable experiment: restoring `lex_one()` here, regenerating
+            //   (charge verified absent from `target/generated/*/wpda.rs`) and
+            //   re-running a 19-string A/B gave a BYTE-IDENTICAL table — same 8
+            //   failures, same elected displays. The real root was the missing
+            //   `slot.xcat == 0` conjunct in `cgll_pure_crosscat_boundaries`' stop
+            //   test; fixed separately.
+            //
+            //   So this is LATENT, not benign: on the corpus measured it changed no
+            //   election, but it silently destroys tiebreak information, so any
+            //   future grouped sub-derivation whose readings tie on `primary` and
+            //   are separated only by `(src_idx, rule_idx)` will be decided by the
+            //   parenthesis — the very thing Stage D was written to prevent.
+            //
+            //   NO SMALL CORRECT FIX EXISTS IN THE CURRENT SEMIRING: charging a cost
+            //   without owning a tiebreak is not expressible, because `is_one` is a
+            //   predicate on `primary` alone. The two real options are
+            //     (a) revert this branch to `lex_one()` — E1 says that is
+            //         behaviour-neutral on Calculator, but Stage D is a deliberate
+            //         documented prophylaxis and 19 strings in one language is not
+            //         grounds to drop it; or
+            //     (b) give the type a tiebreak-transparent element (an explicit
+            //         "carries no tiebreak" flag, or make `is_one` structural), which
+            //         requires re-proving associativity of `times` and distributivity
+            //         over the lex-min `plus` — the axioms `lex_weight.rs` documents.
+            //   A discriminating case is found by looking for two readings of one
+            //   grouped span with equal `primary` and different `(src_idx, rule_idx)`;
+            //   `PRATTAIL_CGLL_PURE_FDUMP` prints `weight_sum` per Symbol, so an
+            //   A/B of this line against `lex_one()` shows the divergence directly.
             let grouping_weight = if is_cross_cat {
                 quote! {
                     lex_w(
