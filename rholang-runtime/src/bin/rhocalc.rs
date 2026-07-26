@@ -477,7 +477,37 @@ async fn interpret(path: &Path, emit_comments: bool) -> Result<(), InterpError> 
 
     // Fresh binder interning before the parse (mirrors every from-source beat).
     clear_var_cache();
-    let proc = Proc::parse(&source).map_err(InterpError::Parse)?;
+    // ★ `parse_via_wpda`, NOT `Proc::parse` — the PRODUCTION parse entry.
+    //
+    // `Proc::parse` is `parse_structured`, which starts from `parse_via_wpda(input)` (the correct
+    // term) and then, whenever `display(parsed) != input`, REPLACES the returned representative
+    // with the reparse of its own DISPLAY, accepting it as soon as the display is a fixpoint
+    // (`redisplay == display`). Display stability is not term preservation, and RhoCalc's display
+    // is not term-preserving for a projection operand of an arithmetic/relational/boolean
+    // operator: a scalar literal there is rendered through a PROJECTION SURFACE — the first
+    // delimited single-param `Proc` rule reachable from the literal's category, which is
+    // `POutputNil . q:Proc |- "@" "Nil" "!" "(" q ")"` (`macros/src/gen/syntax/display.rs`,
+    // `find_projection_surface_wrapper`). So
+    //
+    //     parse_via_wpda("1 + 2")  =  Add(CastInt 1, CastInt 2)          ← correct
+    //     display(that)            =  "@Nil!(1) + @Nil!(2)"              ← NOT term-preserving
+    //     Proc::parse("1 + 2")     =  Add(POutputNil 1, POutputNil 2)    ← a pair of SENDS
+    //
+    // and every downstream symptom follows mechanically: the operand of `+`/`<`/`==`/`and`/`not`
+    // is a PROCESS, not an expression, so arithmetic and comparison raise "parallel or non
+    // expression found where expression expected", boolean connectives raise "Multiple
+    // expressions given", and — silently — `where x == 42` becomes `EEq(BoundVar 0, Send)`, which
+    // the STRUCTURAL `EEq` decides `false` while `x != 43` decides `true`. Guards over bound data
+    // then never fire, and `match.rs::guard_passes` deliberately collapses "false" / "not a
+    // boolean" / "eval failed" into one verdict, so the lowering artifact is invisible.
+    //
+    // Every other production caller of the RhoCalc parser already uses `parse_via_wpda` (it is
+    // "the disambiguated best-parse entry the production AST-first lowering path uses" —
+    // `rho_rhocalc_conformance.rs`); this binary was the sole outlier. The display defect itself
+    // is upstream in the display codegen and is reported separately; using the production entry
+    // removes it from this path entirely rather than compensating for it downstream.
+    let proc = Proc::parse_via_wpda(&source)
+        .map_err(|err| InterpError::Parse(err.to_string()))?;
     let program =
         lower_rhocalc_proc_with_resolver(&proc, guest_resolver()).map_err(InterpError::Lower)?;
 

@@ -1466,6 +1466,40 @@ fn is_single_gstring_value(par: &Par) -> bool {
 /// grammar-reachable structural Int shape, unary minus). A literal is data; `-a` is the machine's
 /// metered `ENeg`; the macro-injected conversion constructors (`BoolToInt`/`UInt32ToInt`), an
 /// unsubstituted `IVar`, and lambdas have no machine algebra and fail closed, named.
+///
+/// ══ ⚠ OPEN DIVERGENCE — NEGATIVE LITERALS IN PATTERN POSITION (measured 2026-07-26) ═══════════
+///
+/// A negated numeral lowers to an unevaluated `ENeg`, and the two positions a `Par` can occupy
+/// treat that differently: SEND DATA are evaluated by `eval_send` (`eval_expr` then
+/// `substitute_and_charge`) before they are stored, PATTERNS are never evaluated. So
+///
+///     `@"c"!(-7)`          stores  `GInt(-7)`          (the `ENeg` was evaluated)
+///     `for(@-7 <- @"c")`   matches `ENeg(GInt(7))`     (the `ENeg` was NOT evaluated)
+///
+/// and the two never match: `for(@-7 <- @"c"){…} | @"c"!(-7)` produces NO COMM — silently, with
+/// no error, exactly the failure mode this file's regression suite exists to catch. Consensus
+/// Rholang DOES commit it: measured directly against f1r3node's own normalizer and reducer,
+/// `for (@-7 <- @"c") { @"OUT"!(1) } | @"c"!(-7)` leaves `1` on `@"OUT"` and `@"c"` empty
+/// (its parser makes a signed numeral a single ground literal, so the pattern is `GInt(-7)`).
+/// The same applies to a negative literal anywhere inside a pattern — a list element, a map key,
+/// a `match` case.
+///
+/// ★ NOT FIXED HERE, DELIBERATELY. `-7` parses as `Proc::NegProc(CastInt(NumLit(7)))` — the
+/// PROC-level unary minus (`NegProc . a:Proc |- "-" a : Proc`), not the Int-category `NegInt` —
+/// and `NegProc`'s operand is an arbitrary `Proc`, so the fix is a decision about A-S4 lowering
+/// purity, not a local repair:
+///
+///   * folding `-<literal>` at lowering time removes one metered `ENeg` primitive from the
+///     machine's cost accounting for every negated numeral in DATA position, which is
+///     consensus-visible (cost is F1r3node's, not MeTTaIL's, to change); and
+///   * folding it only in PATTERN position would make one source text lower two different ways,
+///     which is precisely the lowering asymmetry [`lower_proc_in_env`] exists to prevent
+///     ("a pattern and the term it is meant to match are lowered by literally the same code, so
+///     `t matches t` cannot fail through a lowering asymmetry").
+///
+/// Both arms of that choice belong to the A-S4 / metering owner. It is recorded here, pinned as a
+/// characterization test (`rhocalc_guard_lowering.rs::negative_literal_patterns_are_an_open_
+/// divergence`), and reported — not silently patched.
 fn lower_int_value(value: &Int, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> {
     match value {
         Int::NumLit(literal) => Ok(new_gint_par(*literal, Vec::new(), false)),
@@ -2526,22 +2560,59 @@ fn name_pattern_to_proc(name_pat: &Name) -> Proc {
     }
 }
 
-/// Normalize a quoted pattern to the canonical arity shape (`CastList`/`PVar` pass through; anything
-/// else is wrapped in a one-element list, matching scalar-send arity normalization).
+/// Normalize a MONADIC bind's quoted pattern to the canonical arity shape.
+///
+/// The arity convention is fixed by the SEND side and this function's only job is to mirror it.
+/// `lower_proc`'s `POutput` arm emits `send_par(chan, vec![payload])` — a send always carries
+/// EXACTLY ONE datum `Par` — and [`desugar_send_node`] encodes the non-scalar arities INTO that one
+/// datum as a list:
+///
+/// | send form   | datum                | matching bind form   | pattern              |
+/// |-------------|----------------------|----------------------|----------------------|
+/// | `c!(p)`     | `⟦p⟧`                | `for(@p <- c)`       | `⟦p⟧`  (**verbatim**)|
+/// | `c!()`      | `⟦[]⟧`               | `for(<- c)`          | `⟦[]⟧`               |
+/// | `c!(a,b,…)` | `⟦[a,b,…]⟧`          | `for(@a, @b… <- c)`  | `⟦[a,b,…]⟧`          |
+///
+/// So a MONADIC pattern is the payload pattern VERBATIM: the arity list is the encoding for the
+/// EMPTY and POLYADIC forms only, and those are produced by [`bind_pattern_proc`]'s own
+/// `InputBindEmpty*` / `InputBind*Polyadic` arms. There is no monadic shape that needs a wrap —
+/// which is why this is the identity. It is kept as a named function so the convention lives in
+/// ONE place next to the table that justifies it, rather than being an unexplained `.clone()` at
+/// the call site.
+///
+/// ⚠ ARITY FIX (2026-07-26). The previous body wrapped every pattern EXCEPT `CastList`/`PVar`:
+///
+/// ```ignore
+/// // fn canonicalize_arity_pattern(pattern: &Proc) -> Proc {
+/// //     match pattern {
+/// //         Proc::CastList(_) | Proc::PVar(_) => pattern.clone(),
+/// //         _ => mk_proc_list(vec![pattern.clone()]),
+/// //     }
+/// // }
+/// ```
+///
+/// That made NO scalar ground pattern able to match a scalar send — silently, with no error and
+/// no COMM: `for(@42 <- c)` did not match `c!(42)` but DID match `c!([42])`, and likewise for
+/// `@"hi"`, `@true`, `@{1:2}`, `@Set(1,2)`, `@#{1|2}#` and `@{|1:2|}`. The two exempted shapes
+/// were precisely the two whose breakage would have been visible: `PVar` (a binder — wrapping it
+/// would stop `for(@x <- c)` matching anything at all) and `CastList` (wrapping it would have
+/// produced `[[…]]`). The exemption list, not the wrap, was carrying the correctness — so every
+/// shape nobody had written a test for was broken.
 fn canonicalize_arity_pattern(pattern: &Proc) -> Proc {
-    match pattern {
-        Proc::CastList(_) | Proc::PVar(_) => pattern.clone(),
-        _ => mk_proc_list(vec![pattern.clone()]),
-    }
+    pattern.clone()
 }
 
 /// The bind's pattern as a `Proc` whose `Proc::PVar` leaves mark the bound positions.
 /// L9-6b: the `FltNode` of an FLT RECEIVE pattern (`for(@lam`…` <- c)`), or `None`
 /// for a non-FLT bind. The FLT surface `@lam`…`` is a quoted `PFlt*` process
 /// (`NQuote`/`NQuoteShort`); a `PFlt*` written directly as a quoted pattern rides
-/// the `InputBindQuoted` family. Intercepting here (before [`bind_pattern_proc`]'s
-/// arity-list wrapping) keeps the reflected FLT pattern the receive's SOLE pattern,
-/// matching the single reflected datum a `@c!(⟦…⟧)` send carries.
+/// the `InputBindQuoted` family. It is intercepted here, ahead of
+/// [`bind_pattern_proc`], because an FLT pattern is REFLECTED (its holes become
+/// match `FreeVar`s) rather than lowered as an ordinary term — the reflected FLT
+/// pattern is then the receive's SOLE pattern, matching the single reflected datum a
+/// `@c!(⟦…⟧)` send carries. (Before the 2026-07-26 arity fix this interception was
+/// ALSO what kept the FLT pattern clear of `bind_pattern_proc`'s spurious
+/// one-element-list wrap; that wrap is gone, so only the reflection reason remains.)
 fn bind_flt_node(bind: &InputBind) -> Option<Arc<FltNode>> {
     fn flt_of_proc(proc: &Proc) -> Option<Arc<FltNode>> {
         match proc {
@@ -2570,14 +2641,15 @@ fn bind_flt_node(bind: &InputBind) -> Option<Arc<FltNode>> {
 
 fn bind_pattern_proc(bind: &InputBind) -> Option<Proc> {
     match bind {
+        // Monadic binds, name-shaped LHS (`for(x <- c)`, `for(@P <- c)`). ONE datum, so the
+        // pattern is the payload pattern verbatim — see [`canonicalize_arity_pattern`] for the
+        // send/receive arity table. The former `NVar`-only exemption (everything else wrapped in
+        // a one-element list) is the arity bug fixed there: it is now ONE rule for every shape,
+        // so a binder and a ground pattern cannot disagree about arity.
         InputBind::InputBind(lhs, _)
         | InputBind::InputBindPersistent(lhs, _)
         | InputBind::InputBindQuery(lhs, _, _) => {
-            if matches!(lhs.as_ref(), Name::NVar(_)) {
-                Some(name_pattern_to_proc(lhs.as_ref()))
-            } else {
-                Some(mk_proc_list(vec![name_pattern_to_proc(lhs.as_ref())]))
-            }
+            Some(canonicalize_arity_pattern(&name_pattern_to_proc(lhs.as_ref())))
         },
         InputBind::InputBindPolyadic(lhs, lhss, _)
         | InputBind::InputBindPersistentPolyadic(lhs, lhss, _) => {
