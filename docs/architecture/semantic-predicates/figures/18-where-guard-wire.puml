@@ -1,0 +1,89 @@
+@startuml 18-where-guard-wire
+' The `where`-guard substrate wire: one guard, two encoders, one vocabulary,
+' three decision legs.
+skinparam backgroundColor #FFFFFF
+skinparam defaultFontName "DejaVu Sans"
+skinparam shadowing false
+skinparam ArrowColor #37474F
+skinparam ArrowFontColor #263238
+skinparam RectangleBorderThickness 1.4
+
+skinparam rectangle {
+  BorderColor<<surface>>   #1565C0
+  BackgroundColor<<surface>> #E3F2FD
+  FontColor<<surface>>     #0D47A1
+  BorderColor<<ir>>        #6A1B9A
+  BackgroundColor<<ir>>    #F3E5F5
+  FontColor<<ir>>          #4A148C
+  BorderColor<<static>>    #2E7D32
+  BackgroundColor<<static>> #E8F5E9
+  FontColor<<static>>      #1B5E20
+  BorderColor<<ground>>    #EF6C00
+  BackgroundColor<<ground>> #FFF3E0
+  FontColor<<ground>>      #E65100
+  BorderColor<<fence>>     #C62828
+  BackgroundColor<<fence>> #FFEBEE
+  FontColor<<fence>>       #B71C1C
+  BorderColor<<external>>  #455A64
+  BackgroundColor<<external>> #ECEFF1
+  FontColor<<external>>    #263238
+}
+
+title <b>THE `where`-GUARD WIRE</b>\n<i>one guard · two encoders · one substrate vocabulary · three decision legs</i>
+
+rectangle "SURFACE\n<b>for (x <- c where φ)</b>\n<size:11>the guard is an ordinary `Proc`</size>" as SRC <<surface>>
+
+package "ENCODERS — two representations, one target" {
+  rectangle "<b>Proc → GuardFormula</b>\nrhocalc::guard_substrate\n<size:11>surface half</size>" as ENCP <<surface>>
+  rectangle "<b>Par → GuardFormula</b>\nrholang-runtime::guard_par_substrate\n<size:11>lowered half</size>" as ENCR <<surface>>
+}
+
+rectangle "<b>GuardFormula</b>  <size:11>(prattail::guard_formula)</size>\n----\n<b>Linear</b>   <latex>\Sigma a_i x_i \bowtie b</latex>  → PresburgerPred\n<b>Prop</b>     → BooleanTest / KAT\n<b>Scalar</b>   → StrPred and the scalar EBAs\n<b>ScalarRel</b> → exact at run time\n<b>Atom</b>     → <i>never decided here</i>" as IR <<ir>>
+
+rectangle "<b>STATIC leg</b> — static_verdict\n----\nis φ <b>Valid</b> / <b>Unsatisfiable</b>\nover <i>every</i> binder assignment?\n<size:11>Büchi automata; KAT; the scalar EBAs</size>" as STATIC <<static>>
+
+rectangle "<b>GROUND leg</b> — ground_verdict_with\n----\ndoes φ hold under <i>this</i> payload?\n<size:11>exact on i64 / String / bool</size>\n<size:11>connectives are LEFT-STRICT, not Kleene</size>" as GROUND <<ground>>
+
+rectangle "<b>FENCE</b> — machine_verdict\nrho_pure_eval + SpatialMatcherOracle\n----\n<size:11>concrete i64 semantics</size>" as FENCE <<fence>>
+
+rectangle "<b>STRUCTURAL core</b>\nhost_matches_verdict ·\ncompare_collection_equality\n<size:11>the ONLY decider of a Spatial atom</size>" as STRUCT <<external>>
+
+rectangle "<b>artifact</b>\nReceive.condition omitted\n<size:11>check_commit short-circuits</size>" as ART <<static>>
+rectangle "<b>COMM decision</b>\nFires / Blocks / Declines" as COMM <<ground>>
+
+SRC --> ENCP
+SRC --> ENCR : lowering
+ENCP --> IR
+ENCR --> IR
+
+IR --> STATIC : compile time
+IR --> GROUND : COMM time
+
+STATIC --> FENCE : <b>must agree</b>\n<size:10>bounded domain ⇒ a substrate\nverdict alone cannot change bytes</size>
+FENCE --> ART : Discharged / Refuted
+
+GROUND --> COMM
+GROUND ..> STRUCT : <b>delegates</b> Spatial\n<size:10>no second matcher</size>
+STRUCT ..> GROUND : verdict
+
+note right of IR
+  <b>ONE vocabulary, so a divergence is a
+  statement about ONE data type</b> rather
+  than about two unrelated code paths.
+end note
+
+note bottom of STATIC
+  <b><latex>\bot</latex> BOUNDED DOMAIN.</b> Verdicts hold over
+  <latex>[-2^{w-1},\, 2^{w-1})</latex>. Neither
+  <latex>\mathrm{valid}_{2^w} \Rightarrow \mathrm{valid}_{\mathbb{Z}}</latex> nor
+  <latex>\mathrm{unsat}_{2^w} \Rightarrow \mathrm{unsat}_{\mathbb{Z}}</latex> holds,
+  which is why the fence is required.
+end note
+
+note bottom of GROUND
+  <b>DontKnow</b> is reproducible: the budget
+  is a fixed <b>consensus parameter</b>, so every
+  node reaches the same verdict.
+end note
+
+@enduml

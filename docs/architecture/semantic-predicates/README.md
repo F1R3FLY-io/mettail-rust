@@ -30,7 +30,8 @@ facts, each given its own document:
 
 | Misconception | Reality | Where |
 |---|---|---|
-| "Rholang evaluates the semantic predicate at COMM time." | The substrate runs **at compile time** and is **classify-only**. At run time the surviving predicate is enforced by RSpace structural matching, a host `where` boolean guard, or a host-routed native join — the EBA/SFT is never re-evaluated. | [08 — Runtime COMM Enforcement](08-runtime-comm-enforcement.md) |
+| "Rholang evaluates the semantic predicate at COMM time." | Partly, and the split is per lane. In the **reducer** lane a residual guard rides as `Receive.condition` and the reducer decides it. In the **in-tree eager-COMM lane** the substrate itself decides it, through the ground leg of the `where`-guard wire. On **both** lanes the compile-time discharge decision's authority is the substrate. | [18 — The `where`-Guard Substrate Wire](18-the-where-guard-substrate-wire.md), reconciling [08 — Runtime COMM Enforcement](08-runtime-comm-enforcement.md) |
+| "A `where` guard has to be written in the predicate sublanguage to be a semantic predicate." | No. A language whose guard sublanguage *is* its own expression language declares the slot instead (`guards { guard_slots { … } }`), inducing the identical obligation while keeping arithmetic, comparison and spatial guards writable — none of which the `BehavioralPred` grammar can express. | [18 §4](18-the-where-guard-substrate-wire.md) |
 | "The predicate framework and the funding discipline are the same thing." | They are **two distinct effective theories that compose**: a guarded COMM fires iff `guard-satisfied ∧ funded`. They share a fail-closed, tier-decidable, evidence-carrying design but answer different questions (enabled? vs. funded?). | [09 — Funding Composition](09-funding-composition.md) |
 
 ## Reading Paths
@@ -58,6 +59,7 @@ For implementers:
 11. [Constraint-Theory Engine (LogicT)](13-constraint-theory-engine.md)
 12. [Quantification](14-quantification.md)
 13. [Modal μ-Calculus](15-mu-calculus.md)
+14. [The `where`-Guard Substrate Wire](18-the-where-guard-substrate-wire.md)
 14. [Worked Example](11-worked-example.md)
 
 For reviewers checking claims:
