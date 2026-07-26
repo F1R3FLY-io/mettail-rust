@@ -253,6 +253,37 @@
 //!
 //! Branching/BFS, the `PathMap` assembly, the `[*]` surface syntax, the demo.
 //! Those are later stages by design, not by omission.
+//!
+//! ## ★ Stage 2 — where the rest of it lives
+//!
+//! Stage 2 removed the branching pin. The mechanism above is unchanged; two
+//! sibling modules build on it, and they are separate because they answer
+//! separate questions and must not be able to constrain one another:
+//!
+//! | module | what it is |
+//! |---|---|
+//! | [`search`] | the **branching engine**: BFS over `E(S)` with an explicit preallocated frontier, the `[n]`/`[*]` bracket as a first-class mode, the three-outcome classification, and resumption for beam search. It builds no `Par`, so the search cannot depend on the shape of a leaf. |
+//! | [`delivery`] | **result assembly**: a configuration reified as a process, and the three collections a receiving program reads (`ESet` of `EList`, the FIPS's own entry shape). It runs no reduction, so the delivery cannot depend on how a leaf was found. |
+//!
+//! The entry points are [`search::Explorer::explore`] (`x!(P)[n]`),
+//! [`search::Explorer::resume`] (beam search's second half),
+//! [`delivery::deliver`] (the three collections) and
+//! [`search::Explorer::charge_host`] (the metering mirror of
+//! [`SpeculativeSandbox::fund_from`]).
+
+/// **Stage 2 — the branching engine.** BFS over `E(S)`: the `[n]`/`[*]`
+/// bracket, the three outcomes, trace-vs-configuration modes, resumption.
+pub mod search;
+
+/// **Stage 2 — result assembly.** A configuration reified as a process, and the
+/// three collections `x!(P)[n]` places on `x`.
+pub mod delivery;
+
+/// **Stage 2 — the engine's side of the `[*]` / `[n]` ABI.** Takes a request's
+/// operands, runs a real branching exploration, and hands back exactly the
+/// values [`crate::lookahead`]'s report channels carry. The wire names no
+/// search; the search names no channel.
+pub mod service;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};

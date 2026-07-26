@@ -571,6 +571,41 @@ name = "rho_net_ambient_full"
 path = "tests/rho_net_ambient_full.rs"
 required-features = ["ambient-runtime"]
 
+# Stage 2 — what the AMBIENT LOWERINGS expose to `[*]`. The open race
+# `{open(n,a[0]) | n[b[0]] | open(n,c[0])}` has exactly two normal forms as a REWRITE
+# SYSTEM, but the measurement here is that not one of the three in-Rho lowerings presents
+# that choice to the tuplespace: each resolves the pairing inside the matcher and hands the
+# reducer a single admissible rendezvous, so `max_conflict_class == 1` throughout and `[*]`
+# returns ONE. The engine's ability to return every outcome is gated separately, on a
+# genuine tuplespace conflict, by `s2_speculative_branching`. Needs the PRODUCTION
+# `Ambient` language and its in-Rho quiescence driver — `rho_net_ambient_full`'s surface.
+[[test]]
+name = "s2_ambient_open_race"
+path = "tests/s2_ambient_open_race.rs"
+required-features = ["ambient-runtime"]
+
+# ★★ THE Stage 2 GATE: the branching engine returns EVERY outcome of a guest with a
+# genuine tuplespace CONFLICT — `c!(1) | c!(2) | for(@x <- c){ OUT!(x) }` has two, and
+# `[*]` must deliver `Int(1)` on one branch and `Int(2)` on the other. λ is confluent, so a
+# single-path implementation returns the right answer for every λ term and looks perfect;
+# a conflict is what separates a real enumerator from that. Also carries the soundness gate
+# for the partial-order reduction (reduced vs unreduced outcomes over a six-cell corpus),
+# the `[n]` bracket, truncation + resumption, metering, and the delivery shape. Hand-built
+# `Par`s only, so it runs on the default feature surface.
+[[test]]
+name = "s2_speculative_branching"
+path = "tests/s2_speculative_branching.rs"
+required-features = ["runtime-report"]
+
+# Stage 2 — WHERE a guest's non-determinism becomes a tuplespace conflict: the plain
+# Rholang controls (one receive racing two data; two independent COMMs) beside `AmbDemo`'s
+# structural-AC `OpenRule` receiver, which is the smallest in-Rho lowering of the Ambient
+# rule. The cell that showed the Ambient lowerings make no choice.
+[[test]]
+name = "s2_conflict_probe"
+path = "tests/s2_conflict_probe.rs"
+required-features = ["amb-demo-runtime"]
+
 # The COMMITTED randomized PROPERTY floor for `DeBruijnSubstTRS.v`'s NF theorem
 # (`NF(subst(0, a, b)) = b[a/0]`): a proptest that cross-checks the live in-Rho
 # β-substitution cascade (and an independent pure-Rust operational TRS) against a
@@ -776,3 +811,12 @@ required-features = ["rhocalc-runtime"]
 name = "rhocalc_bin_guards"
 path = "tests/rhocalc_bin_guards.rs"
 required-features = ["rhocalc-runtime", "lambda-runtime", "calculator-runtime"]
+
+# Diagnostic probe for the Stage 2 branching engine: the SHAPE of the speculative
+# reduction graph (per-level frontier sizes, out-degrees, configuration merges, wall
+# time). Not a gate — it exists so "the exploration did not finish" can be diagnosed with
+# numbers instead of guesses. Same feature surface as the acceptance gate.
+[[test]]
+name = "s2_graph_shape_probe"
+path = "tests/s2_graph_shape_probe.rs"
+required-features = ["ambient-runtime"]
