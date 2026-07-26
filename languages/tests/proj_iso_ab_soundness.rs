@@ -33,22 +33,47 @@
 //! | **D** | the G2 witnesses parse ON | pins the family whose production correctness rests *entirely* on the facade |
 //! | **E** | reading-count table | a golden over both legs, so any drift in either direction is caught |
 //!
-//! # Known, pinned divergence (NOT introduced here) — "G3"
+//! # "G3" — ★ CLOSED 2026-07-25 (#28)
 //!
-//! Gate E records that the facade returns FEWER readings than the walker for a
-//! channel written as a *parenthesized grouping*: `Name::parse_via_wpda_all("(a)")`
-//! yields `[NParen(NVar a)]` with the facade ON and `[NParen(NVar a), NVar a]` with
+//! Gate E used to record that the facade returned FEWER readings than the walker for
+//! a channel written as a *parenthesized grouping*: `Name::parse_via_wpda_all("(a)")`
+//! yielded `[NParen(NVar a)]` with the facade ON and `[NParen(NVar a), NVar a]` with
 //! it OFF. The walker treats `NParen . n:Name |- "(" n ")"` as a **transparent**
 //! grouping and emits both the wrapped and the unwrapped reading; the projection
-//! helper matches it as an ordinary frame, produces only the wrapped one, and then
-//! short-circuits with `return Ok(..)` instead of unioning with the walker.
+//! helper matched it as an ordinary frame, produced only the wrapped one, and then
+//! short-circuited with `return Ok(..)` instead of unioning with the walker.
 //!
-//! This is *independent of the degenerate tail*: it is observable on `@(a)!(0)`,
-//! which contains no `.*sep` operand at all and whose emitted code the G1 fix does
-//! not touch. It is pinned here with its minimal witness so it cannot silently
-//! grow, and it is deliberately NOT fixed in this pass: the repair would change the
-//! facade's short-circuit semantics and therefore the USER-APPROVED reading-count
-//! goldens in `rhocalc_tests.rs::branch_b_send_normalization_pins`.
+//! It was *independent of the degenerate tail*: observable on `@(a)!(0)`, which
+//! contains no `.*sep` operand at all and whose emitted code the G1 fix does not
+//! touch.
+//!
+//! The `SepSeam::All` prologue now UNIONS with the monolithic walker
+//! (`facade.rs::emit_projection_isolation_prologue`), so the four rows below moved
+//! ON→OFF-equal and are re-pinned at their measured values. ONLY the enumeration
+//! seam changed; the `SepSeam::Single` election seam is deliberately untouched.
+//!
+//! ## ⚠ THE HAZARD NOTE THAT STOOD HERE WAS WRONG, and is corrected rather than
+//! ## deleted, because being wrong is the useful part
+//!
+//! It read: *"the repair would change the facade's short-circuit semantics and
+//! therefore the USER-APPROVED reading-count goldens in
+//! `rhocalc_tests.rs::branch_b_send_normalization_pins`."* **Measured 2026-07-25:
+//! every one of those eight inputs moves by +0.** None has a `(`-grouped channel, so
+//! no transparent twin arises for them. The grouped-channel multiset pins
+//! (`bitnot (a)!(…)`, `bitnot ((a))!(false)`) are +0 as well — `bitnot …` is a
+//! prefix-op frame, not a σ-led projection, so the projection helper never engages.
+//!
+//! The note had never been measured; it was inferred from "the repair touches the
+//! facade, and those goldens are about the facade". That inference cost the change a
+//! deferral. **Do not record a blast radius that has not been measured** — and when
+//! a measurement contradicts a standing note, correct the note in place.
+//!
+//! What the repair actually rests on: the USER-APPROVED `realize_mode_contract_pins`
+//! (2026-07-14, `rhocalc_tests.rs`) ALREADY requires both readings of
+//! `@Nil!(@(@Nil)!())` to be enumerable, and passes only because it enters through
+//! `parse_*_with_source`, where this prologue is not wired. The facade therefore
+//! already contradicted an approved contract at the STRING entry; unioning makes the
+//! string entry AGREE with that golden rather than break one.
 
 use mettail_languages::rhocalc::*;
 
@@ -94,10 +119,26 @@ fn corpus() -> Vec<(&'static str, &'static str)> {
         ("g2-part-method", "Nil.set(a!(Nil), Nil)"),
         ("g2-part-grouped", "(Nil.set(a!(Nil), Nil))"),
         ("g2-part-send", "a!(Nil)"),
-        // ── G3: parenthesized-grouping channel (pinned divergence) ──
+        // ── G3: parenthesized-grouping channel (the CLOSED divergence) ──
         ("grp-scalar", "@(a)!(0)"),
         ("grp-polyadic", "@(a)!(0,1)"),
         ("grp-degenerate", "@(a)!(0,)"),
+        // ── cov-*: the rows where the two legs elect DIFFERENT REPRESENTATIVES of the
+        //    same semantic reading. Post-G3 these are what keep gate A able to fail.
+        //
+        //    ⚠ A measurement correction worth keeping. These rows were added believing
+        //    `*(@(1)) + 2` was a row where the facade contributes a reading the walker
+        //    never produces (ON=3 vs OFF=2, ON ⊄ OFF). That came from counting DEBUG
+        //    strings, and Debug is a STRUCTURAL key: `semantic_hash` folds the
+        //    sugar≡canonical alias `NQuoteShort` ≡ `NQuote`, so the facade's
+        //    `NParen(NQuote(1))` and the walker's `NParen(NQuoteShort(1))` are ONE
+        //    semantic key. Measured post-fix, both legs answer 2. The facade adds no
+        //    semantically-new reading here; what differs is which SPELLING represents
+        //    the class, which is exactly what `elected` below observes.
+        ("cov-drop-paren-numeral", "*(@(1)) + 2"),
+        ("cov-drop-numeral", "*(@1) + 2"),
+        //    (The cleanest discriminator, `Name "(@Nil)"`, is a NAME and so rides in
+        //    `render_leg` beside `name-paren` rather than in this `Proc` corpus.)
         // ── controls ──
         ("ctl-scalar-nil", "@Nil!(0)"),
         ("ctl-bare-scalar", "a!(0)"),
@@ -113,18 +154,58 @@ struct Obs {
     accepts: bool,
     /// Number of distinct-semantic-key readings, or `None` when `parse_all` erred.
     readings: Option<usize>,
+    /// ★ The ELECTED representative (#28, 2026-07-25) — the single-result parse's
+    /// structure, with the per-process fresh-variable counter normalised away.
+    ///
+    /// Added because closing G3 made the two legs agree on every reading COUNT in this
+    /// corpus, which left gate A with nothing to discriminate on. The switch is still
+    /// plainly effective; what it now changes is WHICH SPELLING of a semantic class each
+    /// leg elects — `@Nil!(0)` elects the specific `POutputNil` with the facade ON and
+    /// the generic `POutputShort(PZero, ..)` with it OFF, and the two display
+    /// identically, so only structure reveals it.
+    ///
+    /// Counted separately from `readings` on purpose: gate E's golden compares
+    /// `(accepts, readings)` and is deliberately NOT sensitive to the representative,
+    /// because a representative change is not a disambiguation change.
+    elected: String,
+}
+
+/// Strip the process-local fresh-variable counter out of a structural key.
+///
+/// ★ ESSENTIAL, not cosmetic. `UniqueId(N)` comes from a per-process counter, so the ON
+/// leg (which has parsed the rows above it in THIS process) and the OFF leg (a fresh
+/// child) stamp the same variable with different `N`. Without this every row would differ
+/// between legs and gate A would pass vacuously — the exact failure mode it exists to
+/// prevent.
+fn canon(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(i) = rest.find("UniqueId(") {
+        out.push_str(&rest[..i]);
+        out.push_str("UniqueId(_");
+        let after = &rest[i + "UniqueId(".len()..];
+        let j = after.find(')').expect("UniqueId( is always closed");
+        rest = &after[j..];
+    }
+    out.push_str(rest);
+    out
 }
 
 fn observe(src: &str) -> Obs {
     mettail_runtime::clear_var_cache();
     let accepts = Proc::parse_via_wpda(src).is_ok();
     let readings = Proc::parse_via_wpda_all(src).ok().map(|v| v.len());
-    Obs { accepts, readings }
+    mettail_runtime::clear_var_cache();
+    let elected = match Proc::parse_via_wpda(src) {
+        Ok(t) => canon(&format!("{t:?}")),
+        Err(_) => "<ERR>".to_string(),
+    };
+    Obs { accepts, readings, elected }
 }
 
-/// Serialize one leg as `id\taccepts\treadings` lines (readings `-1` = Err).
+/// Serialize one leg as `id\taccepts\treadings\telected` lines (readings `-1` = Err).
 fn render_leg() -> String {
-    let mut out = String::with_capacity(corpus().len() * 24);
+    let mut out = String::with_capacity(corpus().len() * 64);
     for (id, src) in corpus() {
         let o = observe(src);
         out.push_str(id);
@@ -132,20 +213,31 @@ fn render_leg() -> String {
         out.push_str(if o.accepts { "1" } else { "0" });
         out.push('\t');
         out.push_str(&o.readings.map(|n| n as i64).unwrap_or(-1).to_string());
+        out.push('\t');
+        out.push_str(&o.elected);
         out.push('\n');
     }
-    // The G3 minimal witness: the OPERAND-category sub-parse the projection helper
-    // composes. Carried in the same stream so both legs report it.
-    let n = Name::parse_via_wpda_all("(a)").map(|v| v.len()).unwrap_or(0);
-    out.push_str(&format!("name-paren\t1\t{n}\n"));
+    // The G3 minimal witnesses at the OPERAND category the projection helper composes.
+    // Carried in the same stream so both legs report them.
+    for (id, src) in [("name-paren", "(a)"), ("cov-name-paren-nil", "(@Nil)")] {
+        mettail_runtime::clear_var_cache();
+        let n = Name::parse_via_wpda_all(src).map(|v| v.len()).unwrap_or(0);
+        mettail_runtime::clear_var_cache();
+        let elected = match Name::parse_via_wpda(src) {
+            Ok(t) => canon(&format!("{t:?}")),
+            Err(_) => "<ERR>".to_string(),
+        };
+        out.push_str(&format!("{id}\t1\t{n}\t{elected}\n"));
+    }
     out
 }
 
 fn parse_leg(text: &str) -> std::collections::BTreeMap<String, Obs> {
     let mut m = std::collections::BTreeMap::new();
     for line in text.lines() {
-        let mut it = line.split('\t');
-        let (Some(id), Some(a), Some(r)) = (it.next(), it.next(), it.next()) else {
+        let mut it = line.splitn(4, '\t');
+        let (Some(id), Some(a), Some(r), Some(e)) = (it.next(), it.next(), it.next(), it.next())
+        else {
             continue;
         };
         let r: i64 = r.parse().expect("reading count is an integer");
@@ -154,6 +246,7 @@ fn parse_leg(text: &str) -> std::collections::BTreeMap<String, Obs> {
             Obs {
                 accepts: a == "1",
                 readings: if r < 0 { None } else { Some(r as usize) },
+                elected: e.to_string(),
             },
         );
     }
@@ -210,9 +303,22 @@ fn proj_iso_ab_off_leg_child() {
 
 /// ── Gate A: the kill switch is EFFECTIVE ──
 ///
-/// If ON and OFF ever agree on everything, this whole file is decoration. The
-/// `grp-*` rows are the standing proof of effectiveness: the facade returns fewer
-/// readings there than the walker (see the "G3" note in the module docs).
+/// If ON and OFF ever agree on everything, this whole file is decoration.
+///
+/// ★ THE DISCRIMINATING ROW MOVED (#28, 2026-07-25). It used to be the `grp-*`
+/// family, where the facade returned FEWER readings than the walker. Closing G3
+/// made those rows agree, and this gate failed — exactly as its own instruction
+/// says it should: *"Either the switch stopped being wired into the emitted
+/// helpers, or the corpus no longer contains a row that discriminates them. A gate
+/// that cannot fail is not a gate — fix the switch or extend the corpus."* The
+/// corpus was extended.
+///
+/// The standing proof of effectiveness is now `cov-drop-paren-numeral`
+/// (`*(@(1)) + 2`), where the facade returns MORE readings than the walker: it
+/// contributes `Add(PDrop(NParen(NQuote(1))), 2)`, a reading the walker alone never
+/// produces. That is a strictly better witness than the old one, because it
+/// discriminates in the direction that shows the facade EARNING its place rather
+/// than merely diverging from the walker.
 #[test]
 fn gate_a_kill_switch_is_effective() {
     let on: std::collections::BTreeMap<String, Obs> = parse_leg(&render_leg());
@@ -391,14 +497,35 @@ fn gate_e_reading_count_golden() {
         ("g2-part-send", true, 1, true, 1),
         ("g2-polyadic", true, 1, true, 1),
         ("g2-scalar", true, 1, true, 1),
-        // ★ G3 (pinned, pre-existing): the facade drops the transparent-grouping
-        // twin of a parenthesized channel. Present on `grp-scalar`, which has NO
-        // `.*sep` operand — so it is independent of the degenerate-tail fix.
-        ("grp-degenerate", true, 2, true, 3),
-        ("grp-polyadic", true, 2, true, 3),
-        ("grp-scalar", true, 2, true, 3),
-        // ★ G3 minimal witness, at the operand category the helper composes.
-        ("name-paren", true, 1, true, 2),
+        // ★ G3 CLOSED (#28, 2026-07-25) — RE-BASELINED, each row with its reason.
+        //
+        // The ON leg GAINED the transparent-grouping twin the facade used to drop, so
+        // every row now equals its OFF leg. An INCREASE in the ON leg is the recovery
+        // direction (a decrease would be the disambiguation-preservation violation),
+        // and each new value was PREDICTED from the ON/OFF reading sets before the
+        // change and then observed exactly:
+        //
+        //   grp-*      2 → 3   ON gains `POutputQuoted(NVar a, ..)`, the unwrapped
+        //                      channel reading, alongside the two `NParen`/`Short`
+        //                      spellings it already had.
+        //   name-paren 1 → 2   ON gains `NVar a` alongside `NParen(NVar a)` — the
+        //                      minimal witness, at the operand category the helper
+        //                      composes.
+        ("grp-degenerate", true, 3, true, 3),
+        ("grp-polyadic", true, 3, true, 3),
+        ("grp-scalar", true, 3, true, 3),
+        ("name-paren", true, 2, true, 2),
+        // ★ The representative-discriminating rows. Both legs answer 2 — the facade adds
+        // no semantically-NEW reading here (see the measurement correction on the corpus
+        // rows). They earn their place through `Obs::elected`, not through these counts:
+        // ON elects `NParen(NQuote(1))` where OFF elects `NParen(NQuoteShort(1))`.
+        ("cov-drop-paren-numeral", true, 2, true, 2),
+        ("cov-drop-numeral", true, 2, true, 2),
+        // ★ The cleanest discriminator, and the one `gen_rhocalc_unit::
+        // unit_rhocalc_name_nparen` round-trips: ON elects `NParen(NQuoteShort(PZero))`
+        // (displaying `(@Nil)`, reproducing the source) and OFF elects the transparent
+        // `NQuoteShort(PZero)` (displaying `@Nil`). Counts agree; structure does not.
+        ("cov-name-paren-nil", true, 2, true, 2),
     ];
     let on: std::collections::BTreeMap<String, Obs> = parse_leg(&render_leg());
     let off = off_leg();

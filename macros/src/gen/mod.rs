@@ -326,6 +326,7 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
             let proj_prologue_single = if proj_enabled {
                 runtime::wpda_codegen::facade::emit_projection_isolation_prologue(
                     &proj_helper_ident,
+                    cat,
                     runtime::wpda_codegen::facade::SepSeam::Single,
                 )
             } else {
@@ -334,6 +335,7 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
             let proj_prologue_all = if proj_enabled {
                 runtime::wpda_codegen::facade::emit_projection_isolation_prologue(
                     &proj_helper_ident,
+                    cat,
                     runtime::wpda_codegen::facade::SepSeam::All,
                 )
             } else {
@@ -922,6 +924,34 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                     #proj_prologue_all
                     #sep_prologue_all
                     #infix_prologue_all
+                    Self::__all_with_weights_monolithic(input)
+                }
+
+                /// The MONOLITHIC `_all` body — the plain canonical-GLL walker over the
+                /// whole input, with NO isolation prologue in front of it.
+                ///
+                /// ★ EXTRACTED (#28 / G3, 2026-07-25) and otherwise VERBATIM. It was the
+                /// tail of `parse_via_wpda_all_with_weights`; it is now a named function
+                /// because that entry is no longer its only caller. The `@`-projection
+                /// isolation prologue calls it too, so that the facade can UNION its
+                /// reading set with the walker's instead of short-circuiting past it (see
+                /// `emit_projection_isolation_prologue`, `SepSeam::All`).
+                ///
+                /// Splitting it does not duplicate it: there is exactly one monolithic
+                /// `_all` body and both callers share it, so the two can never drift.
+                ///
+                /// It deliberately does NOT re-run the prologues, which is what makes the
+                /// prologue's call to it terminate rather than recurse.
+                #[doc(hidden)]
+                pub fn __all_with_weights_monolithic(
+                    input: &str,
+                ) -> Result<
+                    (
+                        Vec<#cat>,
+                        Vec<mettail_prattail::automata::lex_weight::LexicographicWeight>,
+                    ),
+                    ParseError,
+                > {
                     // M6c.4 + M6c.7.2 (2026-05-14): route through
                     // LatticeTokenSource when dag.has_ambiguity().
                     // Post-M6c.7.1 (lex_dag soft-fail), `lex_dag(input)?`

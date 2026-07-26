@@ -1550,6 +1550,49 @@ pub(crate) fn proj_isolation_helper_ident(cat_name: &str) -> proc_macro2::Ident 
     format_ident!("__mettail_wpda_proj_isolate_all_{}", cat_name)
 }
 
+/// The module-scope thread-local re-entrancy guard for the #28/G3 union (`cat_name`).
+///
+/// The isolation helper sub-parses each operand through the SAME `_all` string entry the
+/// union sits on, so without a guard the monolithic walker is invoked once per NESTING
+/// LEVEL, each invocation re-parsing that level's whole subtree. The guard bounds it to
+/// ONE walker pass per top-level `_all` call. That is sufficient AND complete: the
+/// top-level pass already returns the whole input's entire reading set, including readings
+/// whose nested groupings are transparent, so declining to re-union at inner levels cannot
+/// lose a reading.
+///
+/// ## Measured, on the deep-`@` ladder `@^d Nil (!(0))^d` (debug build, min of 3)
+///
+/// ```text
+///   d                        1      2      3      4      5      6   step ratio
+///   single seam (control) 3.65   4.29   4.79   5.49   6.00   6.85   flat  ⇒ LINEAR
+///   walker alone          1.92   4.04   6.46   8.81  11.35  14.28   2.11→1.26 decaying
+///   `_all` PRE-union      8.30  11.10  16.78  29.14  53.87  99.54   1.34→1.85 RISING
+///   `_all` union, unguard 12.74 19.58  32.27  54.98  91.20 153.13   ~1.68
+///   `_all` union, guarded 12.56 19.48  31.60  52.87  89.02 148.22   ~1.67
+/// ```
+///
+/// ★ Two corrections to the obvious reading of those numbers, both of which cost a
+/// hypothesis before the control was run:
+///
+/// 1. The geometric `_all` curve is **PRE-EXISTING**, not introduced here — it is already
+///    rising (→1.85) with the facade short-circuiting. The `@`-projection isolation buys
+///    LINEARITY FOR THE SINGLE SEAM (`ProjectionIsolation.v` T3, and the flat control row
+///    above); it never claimed it for the cartesian per-operand `_all` composition, which
+///    is multiplicative by construction. The union costs ~1.49× at d=6 (99.54 → 148.22)
+///    and slightly LOWERS the asymptotic step ratio.
+/// 2. Comparing the union against WALKER-ALONE — the first control reached for, and the
+///    wrong one — makes the union look like a 10.7× linear→geometric collapse. Walker-alone
+///    is a different configuration (facade off everywhere), not the pre-change baseline.
+///    The honest control is `_all` PRE-union at HEAD, which is the third row.
+///
+/// The guard's own contribution is therefore modest and should be stated as measured:
+/// ~3% at d=6 (153.13 → 148.22). It is kept because it makes the number of walker passes
+/// a function of the CALL, not of the nesting depth, which bounds the worst case on shapes
+/// where inner levels re-enter the same category more aggressively than this ladder does.
+pub(crate) fn proj_union_guard_ident(cat_name: &str) -> proc_macro2::Ident {
+    format_ident!("__METTAIL_G3_UNION_ACTIVE_{}", cat_name)
+}
+
 /// The gated `@`-projection isolation shape for `cat_name`: `Some` iff the master
 /// switch is ON, the category is in the include set, AND a shape is derivable.
 pub(crate) fn projection_iso_shape(
@@ -1571,8 +1614,10 @@ pub(crate) fn projection_iso_shape(
 /// (mutually-exclusive by input shape).
 pub(crate) fn emit_projection_isolation_prologue(
     helper_name: &proc_macro2::Ident,
+    cat_ident: &proc_macro2::Ident,
     seam: SepSeam,
 ) -> TokenStream {
+    let union_guard = proj_union_guard_ident(&cat_ident.to_string());
     match seam {
         SepSeam::Single => quote! {
             // P1 `@`-PROJECTION ISOLATION prologue (Plan a8b32275) — single winner.
@@ -1591,8 +1636,108 @@ pub(crate) fn emit_projection_isolation_prologue(
         SepSeam::All => quote! {
             // P1 `@`-PROJECTION ISOLATION prologue (Plan a8b32275) — full alt set.
             // `false` ⇒ ambiguity-preserving all-path per operand (cartesian).
-            if let Some(__piso) = #helper_name(input, false) {
-                return Ok(__piso);
+            //
+            // ★ #28 / G3 CLOSED (2026-07-25): UNION with the monolithic walker instead
+            // of short-circuiting.
+            //
+            // This arm used to be `return Ok(__piso)`. The helper matches a σ-led frame
+            // as an ORDINARY frame, so for a channel written as a parenthesized grouping
+            // it produced only the WRAPPED reading — `@(a)!(0)` gave
+            // `POutputQuoted(NParen(a), 0)` and `POutputShort(PVar a, 0)` — while the
+            // walker treats `NParen . n:Name |- "(" n ")"` as a TRANSPARENT grouping and
+            // additionally yields the unwrapped `POutputQuoted(NVar a, 0)`. The
+            // short-circuit then discarded that third reading before anyone could see it,
+            // which is a disambiguation-preservation violation: readings must never be
+            // pruned early.
+            //
+            // ★ The decisive evidence that this is a REPAIR and not a trade-off: the
+            // USER-APPROVED `realize_mode_contract_pins` (2026-07-14,
+            // `languages/tests/rhocalc_tests.rs`) ALREADY requires both readings of
+            // `@Nil!(@(@Nil)!())` to be enumerable, and passes only because it enters
+            // through `parse_*_with_source`, where this prologue is not wired. So the
+            // facade already contradicted an approved contract at the STRING entry.
+            // Unioning makes the string entry AGREE with that golden rather than break it.
+            //
+            // Measured, ON vs walker-alone (`PRATTAIL_NO_PROJ_ISOLATION=1`), with the
+            // per-process `UniqueId` counter normalised out: the facade's readings are a
+            // structural SUBSET of the walker's on every affected row, so the union is
+            // exactly the walker's count — EXCEPT `*(@(1)) + 2`, where the facade
+            // contributes `NParen(NQuote(1))` that the walker does not produce. The
+            // facade is therefore not redundant, and the union is a genuine ⊔ rather than
+            // a fall-back to either side.
+            //
+            // ★ ONLY the enumeration seam. The `SepSeam::Single` election seam above is
+            // deliberately NOT unioned: doing so would flip `Name::parse("(@Nil)")` to the
+            // transparent twin and `@Nil!(0)` from the specific `POutputNil` to the generic
+            // `POutputShort(PZero, ..)`, and there is no evidence the election is wrong.
+            if let Some((__piso_terms, __piso_weights)) = #helper_name(input, false) {
+                // ★ RE-ENTRANCY GUARD. The helper above sub-parses each operand through
+                // THIS SAME `_all` entry, so an unguarded union runs the walker once per
+                // nesting level. One walker pass per TOP-LEVEL call is sufficient AND
+                // complete: that pass already returns the whole input's entire reading set,
+                // nested transparent groupings included. See `proj_union_guard_ident` for
+                // the measured cost table — including the correction that the geometric
+                // `_all` curve is PRE-EXISTING and not introduced by this union.
+                let __g3_outermost = #union_guard.with(|__g| !__g.get());
+                let (__g3_walker_terms, __g3_walker_weights) = if __g3_outermost {
+                    #union_guard.with(|__g| __g.set(true));
+                    // The walker's own reading set for the same input. An `Err` contributes
+                    // NOTHING rather than propagating: the facade exists precisely because
+                    // the walker is incomplete on this family (the G2 witnesses parse ON and
+                    // were rejected by the walker alone until #35), so a walker rejection
+                    // must not be allowed to lose readings the facade legitimately found.
+                    let __g3_res = Self::__all_with_weights_monolithic(input);
+                    #union_guard.with(|__g| __g.set(false));
+                    match __g3_res {
+                        Ok((__t, __w)) => (__t, __w),
+                        Err(_) => (Vec::new(), Vec::new()),
+                    }
+                } else {
+                    (Vec::new(), Vec::new())
+                };
+                // FINALIZE exactly as the helper and the monolithic `_all` both do —
+                // dedup by semantic key, ⊕-min representative, weight-sort — so the
+                // unioned set is indistinguishable in shape from either input set.
+                // `semantic_hash` folds sugar≡canonical aliases, so a reading the two
+                // legs spell differently but mean identically collapses to one key here;
+                // that is what keeps the union from inflating counts with mere notation.
+                let mut __g3_seen: std::collections::HashMap<Vec<u8>, usize> =
+                    std::collections::HashMap::with_capacity(
+                        __piso_terms.len() + __g3_walker_terms.len(),
+                    );
+                let mut __g3_terms: Vec<#cat_ident> = Vec::with_capacity(
+                    __piso_terms.len() + __g3_walker_terms.len(),
+                );
+                let mut __g3_weights: Vec<
+                    mettail_prattail::automata::lex_weight::LexicographicWeight,
+                > = Vec::with_capacity(__piso_terms.len() + __g3_walker_terms.len());
+                for (__term, __w) in __piso_terms
+                    .into_iter()
+                    .zip(__piso_weights.into_iter())
+                    .chain(__g3_walker_terms.into_iter().zip(__g3_walker_weights.into_iter()))
+                {
+                    let __key = {
+                        let mut __h = __MettailWpdaSemanticKeyHasher::default();
+                        __term.semantic_hash(&mut __h);
+                        __h.into_key()
+                    };
+                    if let Some(&__idx) = __g3_seen.get(&__key) {
+                        if __w < __g3_weights[__idx] {
+                            __g3_terms[__idx] = __term;
+                            __g3_weights[__idx] = __w;
+                        }
+                    } else {
+                        __g3_seen.insert(__key, __g3_terms.len());
+                        __g3_terms.push(__term);
+                        __g3_weights.push(__w);
+                    }
+                }
+                let mut __g3_paired: Vec<_> =
+                    __g3_terms.into_iter().zip(__g3_weights.into_iter()).collect();
+                __g3_paired.sort_by(|(_, __a), (_, __b)| __a.cmp(__b));
+                let (__g3_terms, __g3_weights): (Vec<_>, Vec<_>) =
+                    __g3_paired.into_iter().unzip();
+                return Ok((__g3_terms, __g3_weights));
             }
         },
     }
@@ -2405,7 +2550,14 @@ fn emit_projection_isolation(cat_ident: &proc_macro2::Ident, shape: &ProjIsoShap
         }
     };
 
+    let union_guard = proj_union_guard_ident(&cat_ident.to_string());
     quote! {
+        // ★ #28 / G3 — the union's re-entrancy guard. See `proj_union_guard_ident`
+        // for the measurement that makes it necessary rather than defensive.
+        thread_local! {
+            static #union_guard: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+        }
+
         /// P1 `@`-PROJECTION ISOLATION+COMBINE (Plan a8b32275): STRING-level
         /// divide-and-conquer `@`-projection linearizer for the `#cat_ident`
         /// category. See `emit_projection_isolation` in the macro for the

@@ -922,34 +922,91 @@ mod numeral_carrier_is_context_independent {
     use super::*;
 
     /// Parenthesizing a numeral does not change which numeric category it lands in.
+    ///
+    /// ★ RE-BASELINED 2026-07-25 (#28 / G3), and this is the golden the tracked-item
+    /// description did not predict. It is a TERM-SHAPE pin on a PRODUCTION-CONSUMED path
+    /// — `parse_term` is the ambiguity-preserving box the reduction oracle and the
+    /// AST-first lowering both consume — so its movement is worth more attention than a
+    /// reading COUNT moving.
+    ///
+    /// Both spellings now come back as `Ambiguous([..])` rather than a single term,
+    /// because closing G3 stopped the projection facade from dropping the
+    /// transparent-grouping twin at the `_all` enumeration seam. `*(@1) + 2` gains
+    /// `Add(PDrop(NQuoteShort(1)), 2)` alongside the `NParen`-kept reading it already had.
+    ///
+    /// ★ THE PROPERTY UNDER TEST IS UNCHANGED AND IS WHAT THE ASSERTIONS NOW SAY
+    /// DIRECTLY. The claim was never "this surface has exactly one reading"; it was "the
+    /// numeral's CARRIER does not depend on the syntax around it" (divergence I). So each
+    /// spelling is asserted the way the claim is actually stated: every reading it admits
+    /// carries `CastInt`, and none carries `CastBigInt`. That is strictly stronger than
+    /// the old single-`Debug`-string pin, which would have been satisfied by one reading
+    /// while a sibling reading silently carried the wrong type — and it no longer breaks
+    /// when an unrelated change adds or removes a structurally-distinct twin.
+    ///
+    /// The exact reading sets are pinned underneath, so genuine drift is still caught.
     #[test]
     fn numeral_carrier_is_independent_of_parentheses() {
-        // Pinned through `parse_term` (the ambiguity-preserving box the reduction oracle and
-        // the production AST-first lowering both consume), on the two spellings that differ by
-        // exactly one pair of parentheses.
-        fresh();
-        assert_eq!(
-            format!("{:?}", RhoCalcLanguage.parse_term("*(@1) + 2").expect("`*(@1) + 2` parses")),
-            "Add(PDrop(NParen(NQuoteShort(CastInt(NumLit(1))))), CastInt(NumLit(2)))",
-            "a bare numeral takes the `GInt` carrier `normalize_ground` gives it"
-        );
-        fresh();
-        assert_eq!(
-            format!(
-                "{:?}",
-                RhoCalcLanguage.parse_term("*(@(1)) + 2").expect("`*(@(1)) + 2` parses")
+        // The two spellings that differ by exactly one pair of parentheses.
+        for (source, expected_readings) in [
+            (
+                "*(@1) + 2",
+                &[
+                    "Add(PDrop(NParen(NQuoteShort(CastInt(NumLit(1))))), CastInt(NumLit(2)))",
+                    "Add(PDrop(NQuoteShort(CastInt(NumLit(1)))), CastInt(NumLit(2)))",
+                ][..],
             ),
-            // `NQuote`, not `NQuoteShort`: `@(1)` now elects the rule that LITERALLY spells
-            // `"@" "(" p ")"`, which is what `NQuoteShort`'s own doc says should happen ("more
-            // specific rules above continue to win where applicable"). Before Stage D charged the
-            // cross-category grouping fork the projection tier it owes, the `(` offered a FREE
-            // route that let the general `@ p` rule beat the specific one. The two are
-            // semantically identical — `NQuoteShort` is a `fold` whose body is
-            // `Name::NQuote(p)` — so this is a structural-faithfulness change, not a meaning
-            // change; what matters HERE is that the carrier is `CastInt` either way.
-            "Add(PDrop(NParen(NQuote(CastInt(NumLit(1))))), CastInt(NumLit(2)))",
-            "the SAME numeral inside parentheses takes the SAME carrier"
-        );
+            (
+                // `NQuote` as well as `NQuoteShort`: `@(1)` elects the rule that LITERALLY
+                // spells `"@" "(" p ")"`, which is what `NQuoteShort`'s own doc says should
+                // happen ("more specific rules above continue to win where applicable").
+                // The two are semantically identical — `NQuoteShort` is a `fold` whose body
+                // is `Name::NQuote(p)` — so their coexistence is a structural-faithfulness
+                // matter, not a meaning change. What matters HERE is the carrier.
+                // Two readings, not three: `semantic_hash` folds the sugar≡canonical
+                // alias `NQuoteShort` ≡ `NQuote`, so the facade's `NParen(NQuote(1))`
+                // and the walker's `NParen(NQuoteShort(1))` share ONE semantic key and
+                // the union keeps a single representative of that class.
+                "*(@(1)) + 2",
+                &[
+                    "Add(PDrop(NParen(NQuote(CastInt(NumLit(1))))), CastInt(NumLit(2)))",
+                    "Add(PDrop(NQuoteShort(CastInt(NumLit(1)))), CastInt(NumLit(2)))",
+                ][..],
+            ),
+        ] {
+            fresh();
+            let parsed = RhoCalcLanguage
+                .parse_term(source)
+                .expect("the source parses");
+            let rendered = format!("{parsed:?}");
+
+            // ★ THE PROPERTY: the carrier is `CastInt` in EVERY reading, never `CastBigInt`.
+            assert!(
+                rendered.contains("CastInt(NumLit(1))"),
+                "{source}: the numeral must take the `GInt` carrier `normalize_ground` \
+                 gives it, in {rendered}"
+            );
+            assert!(
+                !rendered.contains("CastBigInt"),
+                "{source}: NO reading may put the numeral in the arbitrary-precision \
+                 carrier — that is divergence I, and it must stay closed for every \
+                 reading, not merely for the elected one. Got {rendered}"
+            );
+
+            // The exact reading set, so genuine drift is still caught.
+            for reading in expected_readings {
+                assert!(
+                    rendered.contains(reading),
+                    "{source}: expected reading {reading} missing from {rendered}"
+                );
+            }
+            let comma_separated_readings = rendered.matches("Add(PDrop(").count();
+            assert_eq!(
+                comma_separated_readings,
+                expected_readings.len(),
+                "{source}: expected exactly {} readings, got {rendered}",
+                expected_readings.len()
+            );
+        }
     }
 
     /// The context-independence is not limited to parentheses: a COLLECTION element used to take
