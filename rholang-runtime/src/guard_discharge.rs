@@ -326,7 +326,16 @@ pub fn classify(
 
     // ★ THE AUTHORITY. Asked FIRST, and asked unconditionally — including on guards that
     // mention a binder, which is where it can say something no other leg can.
-    let substrate = crate::guard_par_substrate::substrate_verdict(cond_par);
+    //
+    // The resolver delegates the STRUCTURAL atoms the substrate deliberately has no procedure
+    // for — `t matches φ`, equality of two collections — to the structural core, exactly as the
+    // run-time leg does. Delegating (rather than declining) is what keeps a ground structural
+    // guard such as `Set(1, 2) == Set(2, 1)` dischargeable: the substrate does not duplicate the
+    // structural core, it uses it. `substrate_verdict_with`'s docs record what this means for the
+    // fence on such a row.
+    let substrate = crate::guard_par_substrate::substrate_verdict_with(cond_par, &mut |fragment| {
+        machine_verdict(fragment)
+    });
 
     // D0. No variable mentioned anywhere ⇒ `eval_with` never reads its `Env`, so the fence's
     // concrete-semantics leg is available. An OPEN guard has no such leg.

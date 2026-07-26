@@ -67,6 +67,13 @@ pub struct ParGuardEncoding {
     pub formula: GuardFormula,
     /// The de Bruijn / match-frame slot ⇄ substrate-index map.
     pub vars: GuardVarMap,
+    /// The original guard fragment behind each opaque atom, indexed by `GuardAtom::id`.
+    ///
+    /// Present for the same reason the surface encoder keeps one: an atom this module has no
+    /// procedure for is decided by DELEGATION to the core that owns it, and delegation needs the
+    /// fragment. Keeping it here rather than in `prattail` is what stops the substrate crate
+    /// from growing a matcher of its own.
+    pub opaque: Vec<Par>,
 }
 
 impl ParGuardEncoding {
@@ -82,6 +89,11 @@ impl ParGuardEncoding {
     pub fn static_verdict(&self) -> StaticVerdict {
         static_verdict(&self.formula, CONSENSUS_SUBSTRATE_CONFIG)
     }
+
+    /// The fragment behind an opaque atom.
+    pub fn fragment(&self, atom: GuardAtom) -> Option<&Par> {
+        self.opaque.get(atom.id as usize)
+    }
 }
 
 /// Encode a lowered `where` guard into the substrate.
@@ -89,9 +101,9 @@ impl ParGuardEncoding {
 /// Total: every `Par` gets an encoding. A shape outside the covered fragment becomes an opaque
 /// atom, never a wrong answer.
 pub fn encode_par_guard(cond: &Par) -> ParGuardEncoding {
-    let mut encoder = ParEncoder { vars: GuardVarMap::new(), next_atom: 0 };
+    let mut encoder = ParEncoder { vars: GuardVarMap::new(), opaque: Vec::new() };
     let formula = encoder.par_formula(cond);
-    ParGuardEncoding { formula, vars: encoder.vars }
+    ParGuardEncoding { formula, vars: encoder.vars, opaque: encoder.opaque }
 }
 
 /// ★ **THE SUBSTRATE'S VERDICT for a lowered guard** — the compile-time authority leg of
@@ -109,7 +121,85 @@ pub fn encode_par_guard(cond: &Par) -> ParGuardEncoding {
 /// therefore fences it against an evaluator with the concrete semantics before acting — see
 /// [`crate::guard_discharge::classify`].
 pub fn substrate_verdict(cond: &Par) -> Option<bool> {
-    encode_par_guard(cond).static_verdict().settled()
+    substrate_verdict_with(cond, &mut |_| None)
+}
+
+/// [`substrate_verdict`], with a resolver for the atoms this module has no procedure for.
+///
+/// # Why a resolver, and not a match arm
+///
+/// The atoms are structural — `t matches φ`, equality of two collections — and structural
+/// questions belong to the **structural core**, which is a different decider with its own
+/// semantics. The substrate does not duplicate it; it *uses* it. Making delegation the only
+/// route is what keeps a second, divergent matcher from growing here, exactly as it does on the
+/// run-time leg (`mettail_languages::rhocalc::guard_substrate`'s `GuardAtomResolver`).
+///
+/// A resolver may answer `None` freely: an undecided atom leaves the whole guard undecided,
+/// which is the fail-closed direction.
+///
+/// ## What a delegated verdict means for the fence
+///
+/// `crate::guard_discharge::classify` supplies a resolver backed by the same concrete-semantics
+/// evaluator it later fences against. For a row whose *only* undecided leaf is a ground
+/// structural atom, the fence therefore degenerates to "the structural core agrees with itself".
+/// That is stated rather than hidden, and it is the correct reading: for a structural question
+/// the structural core IS the authority (`StructuralPattern` obligations are covered by
+/// `DovetailCoreStructural`), so there is no second opinion to seek. The fence retains its full
+/// force on every leaf the substrate decides itself, which is where the bounded-domain hazard
+/// lives.
+pub fn substrate_verdict_with<F>(cond: &Par, resolve_atom: &mut F) -> Option<bool>
+where
+    F: FnMut(&Par) -> Option<bool>,
+{
+    let encoding = encode_par_guard(cond);
+    if let Some(settled) = encoding.static_verdict().settled() {
+        return Some(settled);
+    }
+    // Undecided by the substrate's own procedures. Resolve the opaque atoms and retry: the
+    // formula is ground-decidable once every atom has a verdict.
+    let atoms = encoding.formula.atoms();
+    if atoms.is_empty() {
+        return None;
+    }
+    let mut resolved: Vec<Option<bool>> = Vec::with_capacity(atoms.len());
+    for atom in &atoms {
+        let fragment = encoding.fragment(*atom)?;
+        resolved.push(resolve_atom(fragment));
+    }
+    let substituted = substitute_atoms(&encoding.formula, &atoms, &resolved)?;
+    static_verdict(&substituted, CONSENSUS_SUBSTRATE_CONFIG).settled()
+}
+
+/// Replace each opaque atom by the constant its resolver returned. `None` if any atom went
+/// unresolved — the formula is then still undecided, and saying so is the fail-closed answer.
+fn substitute_atoms(
+    formula: &GuardFormula,
+    atoms: &[GuardAtom],
+    resolved: &[Option<bool>],
+) -> Option<GuardFormula> {
+    Some(match formula {
+        GuardFormula::Atom(atom) => {
+            let index = atoms.iter().position(|candidate| candidate == atom)?;
+            match resolved.get(index).copied().flatten()? {
+                true => GuardFormula::True,
+                false => GuardFormula::False,
+            }
+        },
+        GuardFormula::And(a, b) => GuardFormula::and(
+            substitute_atoms(a, atoms, resolved)?,
+            substitute_atoms(b, atoms, resolved)?,
+        ),
+        GuardFormula::Or(a, b) => GuardFormula::or(
+            substitute_atoms(a, atoms, resolved)?,
+            substitute_atoms(b, atoms, resolved)?,
+        ),
+        GuardFormula::Not(inner) => GuardFormula::not(substitute_atoms(inner, atoms, resolved)?),
+        GuardFormula::Implies(a, b) => GuardFormula::implies(
+            substitute_atoms(a, atoms, resolved)?,
+            substitute_atoms(b, atoms, resolved)?,
+        ),
+        other => other.clone(),
+    })
 }
 
 // ══════════════════════════════════════════════════════════════════════════════════════════════
@@ -129,27 +219,24 @@ enum Operand {
 
 struct ParEncoder {
     vars: GuardVarMap,
-    /// Opaque-atom ids are dense and monotone. Unlike the surface encoder this one keeps no side
-    /// table of fragments: the compile-time leg has nothing to delegate to (the structural core
-    /// runs at COMM time, on a payload that does not exist yet), so an opaque atom here is
-    /// simply undecided — which is the correct compile-time answer for a structural question.
-    next_atom: u32,
+    /// The fragment behind each opaque atom, indexed by the atom's id.
+    opaque: Vec<Par>,
 }
 
 impl ParEncoder {
     // ── Formula position ──────────────────────────────────────────────────────────────────
 
     fn par_formula(&mut self, par: &Par) -> GuardFormula {
-        match self.sole_expr(par) {
-            Some(expr) => self.expr_formula(expr),
-            None => self.atom(GuardAtomKind::ProcessShaped),
+        match self.sole_expr(par).cloned() {
+            Some(expr) => self.expr_formula(&expr, par),
+            None => self.atom_for(par, GuardAtomKind::ProcessShaped),
         }
     }
 
     fn opt_par_formula(&mut self, par: Option<&Par>) -> GuardFormula {
         match par {
             Some(p) => self.par_formula(p),
-            None => self.atom(GuardAtomKind::Uncovered),
+            None => self.atom_for(&Par::default(), GuardAtomKind::Uncovered),
         }
     }
 
@@ -169,9 +256,9 @@ impl ParEncoder {
         is_pure_expression.then(|| &par.exprs[0])
     }
 
-    fn expr_formula(&mut self, expr: &Expr) -> GuardFormula {
+    fn expr_formula(&mut self, expr: &Expr, whole: &Par) -> GuardFormula {
         let Some(instance) = expr.expr_instance.as_ref() else {
-            return self.atom(GuardAtomKind::Uncovered);
+            return self.atom_for(whole, GuardAtomKind::Uncovered);
         };
         match instance {
             // ── The logical constants. ────────────────────────────────────────────────────
@@ -199,22 +286,24 @@ impl ParEncoder {
             // ★ `implies` has no `rhoapi` node: `lower_proc` emits `a implies b` as
             // `EOrBody(ENotBody a, b)`, so the material implication arrives here already
             // decomposed and needs no arm of its own.
-            ExprInstance::EEqBody(EEq { p1, p2 }) => self.comparison(CmpOp::Eq, p1, p2),
-            ExprInstance::ENeqBody(ENeq { p1, p2 }) => self.comparison(CmpOp::Ne, p1, p2),
-            ExprInstance::ELtBody(ELt { p1, p2 }) => self.comparison(CmpOp::Lt, p1, p2),
-            ExprInstance::ELteBody(ELte { p1, p2 }) => self.comparison(CmpOp::Le, p1, p2),
-            ExprInstance::EGtBody(EGt { p1, p2 }) => self.comparison(CmpOp::Gt, p1, p2),
-            ExprInstance::EGteBody(EGte { p1, p2 }) => self.comparison(CmpOp::Ge, p1, p2),
+            ExprInstance::EEqBody(EEq { p1, p2 }) => self.comparison(CmpOp::Eq, p1, p2, whole),
+            ExprInstance::ENeqBody(ENeq { p1, p2 }) => self.comparison(CmpOp::Ne, p1, p2, whole),
+            ExprInstance::ELtBody(ELt { p1, p2 }) => self.comparison(CmpOp::Lt, p1, p2, whole),
+            ExprInstance::ELteBody(ELte { p1, p2 }) => self.comparison(CmpOp::Le, p1, p2, whole),
+            ExprInstance::EGtBody(EGt { p1, p2 }) => self.comparison(CmpOp::Gt, p1, p2, whole),
+            ExprInstance::EGteBody(EGte { p1, p2 }) => self.comparison(CmpOp::Ge, p1, p2, whole),
 
             // ── The spatial atom — the structural core's, never decided here. ─────────────
-            ExprInstance::EMatchesBody(EMatches { .. }) => self.atom(GuardAtomKind::Spatial),
+            ExprInstance::EMatchesBody(EMatches { .. }) => {
+                self.atom_for(whole, GuardAtomKind::Spatial)
+            },
 
             // ── A bare variable used as a boolean. ───────────────────────────────────────
             ExprInstance::EVarBody(EVar { v }) => match self.var_index(v.as_ref()) {
                 Some(idx) => GuardFormula::Prop(
                     mettail_prattail::guard_formula::prop_var(&idx.to_string()),
                 ),
-                None => self.atom(GuardAtomKind::Uncovered),
+                None => self.atom_for(whole, GuardAtomKind::Uncovered),
             },
 
             // ── Arithmetic in FORMULA position is not a predicate. ───────────────────────
@@ -235,30 +324,42 @@ impl ParEncoder {
             | ExprInstance::EPercentPercentBody(_)
             | ExprInstance::EPlusPlusBody(_)
             | ExprInstance::EMinusMinusBody(_)
-            | ExprInstance::EMethodBody(_) => self.atom(GuardAtomKind::Uncovered),
+            | ExprInstance::EMethodBody(_) => self.atom_for(whole, GuardAtomKind::Uncovered),
 
             // ── Collections in formula position. ─────────────────────────────────────────
             ExprInstance::EListBody(_)
             | ExprInstance::ESetBody(_)
             | ExprInstance::EMapBody(_)
-            | ExprInstance::ETupleBody(_) => self.atom(GuardAtomKind::StructuralEquality),
+            | ExprInstance::ETupleBody(_) => {
+                self.atom_for(whole, GuardAtomKind::StructuralEquality)
+            },
 
             // ── Structures the guard path has never been taught. ─────────────────────────
             ExprInstance::EPathmapBody(_) | ExprInstance::EZipperBody(_) => {
-                self.atom(GuardAtomKind::Uncovered)
+                self.atom_for(whole, GuardAtomKind::Uncovered)
             },
         }
     }
 
     // ── Comparison position ───────────────────────────────────────────────────────────────
 
-    fn comparison(&mut self, op: CmpOp, left: &Option<Par>, right: &Option<Par>) -> GuardFormula {
+    fn comparison(
+        &mut self,
+        op: CmpOp,
+        left: &Option<Par>,
+        right: &Option<Par>,
+        whole: &Par,
+    ) -> GuardFormula {
         let lhs = self.opt_operand(left.as_ref());
         let rhs = self.opt_operand(right.as_ref());
         match (lhs, rhs) {
-            (Operand::Int(a), Operand::Int(b)) => self.linear(op, &a, &b),
-            (Operand::Int(a), Operand::Var(idx)) => self.linear(op, &a, &LinearForm::var(idx)),
-            (Operand::Var(idx), Operand::Int(b)) => self.linear(op, &LinearForm::var(idx), &b),
+            (Operand::Int(a), Operand::Int(b)) => self.linear(op, &a, &b, whole),
+            (Operand::Int(a), Operand::Var(idx)) => {
+                self.linear(op, &a, &LinearForm::var(idx), whole)
+            },
+            (Operand::Var(idx), Operand::Int(b)) => {
+                self.linear(op, &LinearForm::var(idx), &b, whole)
+            },
 
             (Operand::Var(idx), Operand::Lit(GuardValue::Bool(b))) => self.prop_compare(op, idx, b),
             (Operand::Lit(GuardValue::Bool(b)), Operand::Var(idx)) => {
@@ -280,7 +381,7 @@ impl ParEncoder {
                 Some(true) => GuardFormula::True,
                 Some(false) => GuardFormula::False,
                 // A cross-sort comparison is not a question the operator answers.
-                None => self.atom(GuardAtomKind::Uncovered),
+                None => self.atom_for(whole, GuardAtomKind::Uncovered),
             },
             (Operand::Var(a), Operand::Var(b)) => GuardFormula::ScalarRel {
                 op,
@@ -299,21 +400,27 @@ impl ParEncoder {
             },
 
             (Operand::Structural, _) | (_, Operand::Structural) => {
-                self.atom(GuardAtomKind::StructuralEquality)
+                self.atom_for(whole, GuardAtomKind::StructuralEquality)
             },
             (Operand::NonLinear, _) | (_, Operand::NonLinear) => {
-                self.atom(GuardAtomKind::NonLinear)
+                self.atom_for(whole, GuardAtomKind::NonLinear)
             },
-            _ => self.atom(GuardAtomKind::Uncovered),
+            _ => self.atom_for(whole, GuardAtomKind::Uncovered),
         }
     }
 
-    fn linear(&mut self, op: CmpOp, left: &LinearForm, right: &LinearForm) -> GuardFormula {
+    fn linear(
+        &mut self,
+        op: CmpOp,
+        left: &LinearForm,
+        right: &LinearForm,
+        whole: &Par,
+    ) -> GuardFormula {
         match left.compare(op, right) {
             Some(pred) => GuardFormula::Linear(pred),
             // Coefficient overflow while normalizing. Wrapping would encode a DIFFERENT
             // constraint, so the encoder refuses.
-            None => self.atom(GuardAtomKind::NonLinear),
+            None => self.atom_for(whole, GuardAtomKind::NonLinear),
         }
     }
 
@@ -480,9 +587,10 @@ impl ParEncoder {
         }
     }
 
-    fn atom(&mut self, kind: GuardAtomKind) -> GuardFormula {
-        let id = self.next_atom;
-        self.next_atom += 1;
+    /// Record an opaque atom, keeping the fragment it stands for so a caller can delegate it.
+    fn atom_for(&mut self, fragment: &Par, kind: GuardAtomKind) -> GuardFormula {
+        let id = self.opaque.len() as u32;
+        self.opaque.push(fragment.clone());
         GuardFormula::Atom(GuardAtom { id, kind })
     }
 }

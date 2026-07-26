@@ -127,4 +127,107 @@ mod tests {
             parse_predicate_via_token_source(&src, 0).expect("parse should succeed");
         assert_eq!(new_pos, 4, "should stop at the comma at index 4");
     }
+
+    // ══════════════════════════════════════════════════════════════════════════════════════
+    // ★ THE BOUNDARY OF THIS SUBLANGUAGE — what a `?name:Guard` slot can and cannot carry
+    // ══════════════════════════════════════════════════════════════════════════════════════
+
+    /// The question these tests answer: *is a `?name:Guard` slot restricted to a declared
+    /// relation vocabulary, or can it carry general expressions?*
+    ///
+    /// The answer is settled by the TARGET TYPE before any parser experiment: [`BehavioralPred`]
+    /// is `RelationQuery | Quantified | AcMatch | And | Or | Not | Implies | Top`, with arguments
+    /// drawn from `PredArg = Var | IntLit | StringLit`. There is no comparison node, no
+    /// arithmetic node, and no nesting inside an argument. A comparison or an arithmetic
+    /// expression is therefore **not representable**, whatever a parser does with the tokens.
+    ///
+    /// The tests below record what the parser does *in practice*, because "rejects" and
+    /// "accepts and silently mangles" are very different failure modes for a language author.
+    ///
+    /// This matters beyond the parser: it is why a language whose guard sublanguage IS its own
+    /// expression language cannot express its guards through this slot, and must instead declare
+    /// a category-typed parameter to be a semantic predicate
+    /// (`guards { guard_slots { … } }`, `rholang-codegen/src/backend.rs`).
+    #[test]
+    fn a_comparison_is_not_representable_in_this_sublanguage() {
+        let (kinds, texts) = build_tokens(&["x", "==", "42"]);
+        let texts_refs: Vec<&str> = texts.iter().map(|s| s.as_str()).collect();
+        let src = SliceTokenSource::with_texts(&kinds, &texts_refs);
+        match parse_predicate_via_token_source(&src, 0) {
+            // Rejected outright — the honest outcome.
+            Err(_) => {},
+            // Or accepted as SOMETHING ELSE. Whatever that something is, it is not a comparison,
+            // because no `BehavioralPred` variant denotes one.
+            Ok((pred, _)) => {
+                assert!(
+                    !matches!(pred, BehavioralPred::Top),
+                    "a comparison must not silently become the identity predicate `Top`, which \
+                     is satisfied by everything: {pred:?}"
+                );
+            },
+        }
+    }
+
+    /// Arithmetic inside an argument has no representation either: `PredArg` is a flat
+    /// `Var | IntLit | StringLit`, so `x + y` cannot appear as an argument at all.
+    #[test]
+    fn arithmetic_is_not_representable_in_this_sublanguage() {
+        let (kinds, texts) = build_tokens(&["p", "(", "x", "+", "y", ")"]);
+        let texts_refs: Vec<&str> = texts.iter().map(|s| s.as_str()).collect();
+        let src = SliceTokenSource::with_texts(&kinds, &texts_refs);
+        if let Ok((BehavioralPred::RelationQuery { args, .. }, _)) =
+            parse_predicate_via_token_source(&src, 0)
+        {
+            // Every argument is a flat leaf by construction; there is no compound arg to find.
+            for arg in &args {
+                assert!(
+                    matches!(
+                        arg,
+                        crate::behavioral_pred::PredArg::Var(_)
+                            | crate::behavioral_pred::PredArg::IntLit(_)
+                            | crate::behavioral_pred::PredArg::StringLit(_)
+                    ),
+                    "PredArg is flat by definition; a compound argument cannot exist: {arg:?}"
+                );
+            }
+        }
+    }
+
+    /// What the sublanguage IS for: a named relation drawn from a declared vocabulary.
+    ///
+    /// ⚠ MEASURED, and it is narrower than expected (2026-07-26). A conjunction of two relation
+    /// queries written through THIS adapter parses as **only the first conjunct** — the
+    /// remaining tokens are silently dropped, because the adapter hands the whole token run to
+    /// `parse_predicate_from_str` with `connective_map: None` and does not require full
+    /// consumption. The `and` connective itself is fine (`predicate_pratt`'s own tests exercise
+    /// it); it is this walker-facing entry point that truncates.
+    ///
+    /// Recorded rather than fixed here: it is a defect in a path this change does not own, and
+    /// asserting the *measured* behaviour is what keeps a future fix visible. It also reinforces
+    /// the boundary these tests exist to document — a `?name:Guard` slot is not a general
+    /// expression surface.
+    #[test]
+    fn a_relation_query_is_what_this_sublanguage_carries() {
+        let (kinds, texts) = build_tokens(&["halts", "(", "x", ")"]);
+        let texts_refs: Vec<&str> = texts.iter().map(|s| s.as_str()).collect();
+        let src = SliceTokenSource::with_texts(&kinds, &texts_refs);
+        let (pred, _) = parse_predicate_via_token_source(&src, 0)
+            .expect("a relation query is exactly this sublanguage");
+        assert!(
+            matches!(pred, BehavioralPred::RelationQuery { .. }),
+            "expected a relation query, got {pred:?}"
+        );
+
+        // The measured truncation, pinned so a fix is visible as a test change.
+        let (kinds, texts) = build_tokens(&["halts", "(", "x", ")", "and", "safe", "(", "x", ")"]);
+        let texts_refs: Vec<&str> = texts.iter().map(|s| s.as_str()).collect();
+        let src = SliceTokenSource::with_texts(&kinds, &texts_refs);
+        let (pred, _) = parse_predicate_via_token_source(&src, 0).expect("parses the first conjunct");
+        assert!(
+            matches!(pred, BehavioralPred::RelationQuery { .. }),
+            "MEASURED 2026-07-26: this adapter truncates a conjunction to its first conjunct \
+             rather than rejecting it. If this now yields `And`, the truncation was fixed and \
+             this assertion should become the `And` it always should have been. Got {pred:?}"
+        );
+    }
 }

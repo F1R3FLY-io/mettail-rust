@@ -379,8 +379,31 @@ fn collect_rewrite_guard_obligations(
     collect_premise_guard_obligations("rewrite", &rewrite.name.to_string(), &rewrite.premises, out);
 }
 
+/// `true` iff the language can actually reach the built-in predicate vocabulary.
+///
+/// The vocabulary is consumed by the **predicate sublanguage**, and the only way into that
+/// sublanguage is a `?name:Guard` term parameter — a `TermParam::GuardBody`, which lowers to the
+/// parser's `GuardExpression` item. A language with no such slot never parses a predicate, so
+/// there is no built-in-predicate work to induce an obligation for.
+fn language_reaches_the_builtin_predicate_vocabulary(def: &LanguageDef) -> bool {
+    fn params_have_guard_body(params: &[TermParam]) -> bool {
+        params.iter().any(|param| match param {
+            TermParam::GuardBody { .. } => true,
+            TermParam::Optional { params } => params_have_guard_body(params),
+            TermParam::Simple { .. }
+            | TermParam::Abstraction { .. }
+            | TermParam::MultiAbstraction { .. } => false,
+        })
+    }
+    def.terms
+        .iter()
+        .filter_map(|rule| rule.term_context.as_ref())
+        .any(|params| params_have_guard_body(params))
+}
+
 fn collect_guard_config_obligations(
     guard_config: &GuardConfig,
+    reaches_builtin_vocabulary: bool,
     out: &mut BTreeSet<RhoGuardObligation>,
 ) {
     match guard_config.builtin_predicates.as_ref() {
@@ -392,12 +415,25 @@ fn collect_guard_config_obligations(
                 ));
             }
         },
-        None => {
+        // ★ OPEN-WORLD built-ins — but only where they are REACHABLE (2026-07-26).
+        //
+        // The `None` arm means "the standard built-in predicates are available to the predicate
+        // sublanguage", and that is a claim about the sublanguage, not about the `guards { }`
+        // block. Firing it for the mere PRESENCE of a block conflated two different facts, and
+        // the conflation surfaced the moment a language declared a `guards { }` block for
+        // something else: RhoCalc's `guard_slots` declaration induced an uncovered
+        // `predicate:standard-builtins` obligation for a vocabulary it cannot reach, because it
+        // has no `?name:Guard` slot and therefore never enters the predicate sublanguage.
+        //
+        // Every language that DOES have such a slot is unaffected — GuardedRho still induces it —
+        // and every language with explicit built-ins takes the `Some` arm above.
+        None if reaches_builtin_vocabulary => {
             out.insert(RhoGuardObligation::new(
                 "predicate:standard-builtins",
                 RhoGuardObligationKind::BehavioralPredicate,
             ));
         },
+        None => {},
     }
 
     for theory in &guard_config.theories {
@@ -429,7 +465,11 @@ pub fn collect_guard_obligations(def: &LanguageDef) -> Vec<RhoGuardObligation> {
     let mut obligations = BTreeSet::new();
 
     if let Some(guard_config) = def.guard_config.as_ref() {
-        collect_guard_config_obligations(guard_config, &mut obligations);
+        collect_guard_config_obligations(
+            guard_config,
+            language_reaches_the_builtin_predicate_vocabulary(def),
+            &mut obligations,
+        );
     }
 
     let declared_guard_slots: &[GuardSlotDecl] = def
