@@ -80,6 +80,12 @@ pub mod rhocalc_ast;
 /// and everything else goes through [`rhocalc_ast`].
 #[cfg(feature = "rhocalc-runtime")]
 pub mod rhocalc_formula;
+/// **Stage 1 of the `[*]` speculation space fork** — `SpeculativeSandbox`: a fresh in-memory
+/// tuplespace whose reducer STAGES every produce/consume so nothing fires until a rendezvous is
+/// named, plus `E(S)` (the enabled rendezvous set), the named firing, and the exact state install.
+/// Branching is pinned to 1: this is the mechanism, not the search. See the module header for the
+/// four measured corrections it is built around and for what the on-chain decision fixed.
+pub mod speculation;
 pub mod run;
 /// Reactive single-step COMM stepper (the `step` command's live Rho-machine evidence).
 #[cfg(feature = "runtime-report")]
