@@ -313,6 +313,37 @@ point [06 §1](06-guard-syntax-and-extensions.md) already makes about the typed 
 parameter *name* is load-bearing. Recognition by spelling is the drift this tree forbids, and the
 rule is stated in the code it governs: *"Recognition is by CONSTRUCTOR, never by spelling."*
 
+### 4.3 The declaration survives into `LanguageDef`
+
+This matters for two standing requirements — that backends need only the *specification* and not
+the Rust macro front end, and that specifications are moving into Rholang as data. A guard
+mechanism that lived only in the macro would have to be redesigned when specs move.
+
+It does not. The measured round trip is
+`definition_source() → reconstruct_language_def → LanguageDef`, and the obligations induced from
+the reconstructed definition are exactly the declared ones
+(`languages/tests/rhocalc_guard_slot_obligations.rs`, which reads the *generated* language value
+rather than the macro input). The declaration is therefore spec-level data, as is the
+`?name:Guard` slot itself (`TermParam::GuardBody`, in the `ast` crate).
+
+### 4.4 Coverage evidence must be derived, not asserted
+
+The obligation set is only half the story: the admission gate ([07 §5](07-language-to-rholang-integration.md))
+requires a *disposition* for each obligation, and the caller supplies it. A caller that asserts
+"this language induces no guard obligations" is making a claim about the language which becomes
+false the moment the language declares a slot — and the gate then fails at a call site with no
+local explanation.
+
+`guard_quality::substrate_guard_coverage(def)` makes the evidence a function of the definition:
+each induced obligation gets the substrate's own default disposition for its kind, which is
+gate-compatible by construction. A language that induces no obligations yields an empty
+collection, so the derived form subsumes the asserted one rather than replacing it.
+
+> **Measured.** Declaring RhoCalc's two `where` slots while the four production planner sites
+> still asserted "no obligations" broke every consumer of the production language registry — the
+> flip gate failed coverage, and about eighty tests across five suites fell over at once. The
+> derived form is what makes the declaration composable with the gate.
+
 ## 5. The structural leg is delegated, never re-implemented
 
 `t matches {φ | ψ}` — the **separating conjunction** — has associative-commutative-with-remainder
@@ -401,7 +432,22 @@ What the wire *does* establish for the reducer lane is the compile-time half of 
 the artifact that the reducer runs is produced by a discharge decision whose authority is the
 substrate.
 
-## 8. Evidence
+## 8. On GuardedRho
+
+`languages/src/guarded_rho.rs` is a **prototype** — the smallest language that proved the
+`?guard:Guard` mechanism works — and not a reference implementation. Its fixed relation
+vocabulary (`logic { relation halts(Proc); relation safe(Proc); }`) is the shape a spike takes,
+not a design to generalize from: a *finite, declared* set of named relations cannot serve a guard
+language that must be expressive, because the predicates a guard wants are not enumerable in
+advance.
+
+Nothing in this document derives from it. The wire is derived from the rule (§0) and from the
+substrate's own structure (§2), and it neither preserves nor breaks the prototype: GuardedRho's
+typed slot still induces its obligation, still parses through the predicate sublanguage, and is
+used here only as the *comparison* that shows a declared slot and a typed slot induce the same
+obligation shape (§4).
+
+## 9. Evidence
 
 | property | where it is checked |
 |---|---|
