@@ -297,6 +297,12 @@ pub mod symbolic;
 /// automaton/transducer can guard predicates of any supported data type.
 pub mod any_algebra;
 
+/// The `where`-guard substrate IR: the single vocabulary both guard front ends
+/// (the surface `Proc` and the lowered `rhoapi::Par`) encode into, plus the
+/// static (validity/unsatisfiability) and ground (COMM-time evaluation) decision
+/// procedures and the `Sat3::DontKnow` policy seam.
+pub mod guard_formula;
+
 /// The algebra tower (`RejectSafeAlgebra` ⊃ `HeytingAlgebra` ⊃ classical
 /// `BooleanAlgebra`): keeps semi-decidable (behavioral) algebras from being used
 /// where classical complement is required. `Sat3`, `Classical<A>` bridge.
