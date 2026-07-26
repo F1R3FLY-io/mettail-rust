@@ -51,7 +51,12 @@ fn rho_default_coverage_requirements(def: &LanguageDef) -> RhoDefaultBackendRequ
     let dispositions = suggest_rejected_rule_dispositions(def, &lowering);
     RhoDefaultBackendRequirements {
         coverage: RhoCoverageEvidence::CoveredRejectedRules(dispositions),
-        guard_coverage: RhoGuardCoverageEvidence::NoGuardObligations,
+        // DERIVED, mirroring the production planner (`rhocalc_ast::rho_default_coverage_requirements`).
+        // `NoGuardObligations` asserts the language induces none, which stopped being true when
+        // RhoCalc declared its `where` slots as semantic predicates.
+        guard_coverage: RhoGuardCoverageEvidence::CoveredGuardObligations(
+            mettail_rholang_codegen::guard_quality::substrate_guard_coverage(def),
+        ),
     }
 }
 
