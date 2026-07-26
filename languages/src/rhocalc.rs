@@ -2772,6 +2772,43 @@ language! {
         PFlt . |- *flt(node, FltOpenBacktick, FltCloseBacktick) : Proc;
         PFltFence . |- *flt(node, FltOpenFence, FltCloseFence) : Proc;
         PFltBrace . |- *flt(node, FltOpenBrace, FltCloseBrace) : Proc;
+
+        // ★ THE LOOKAHEAD SUFFIX — `P[n]` and `P[*]` (FIPS `2026-01-08-Lookahead`).
+        //
+        // `x!(P)[*]` evaluates `P` speculatively along ALL execution paths, gathers each
+        // branch's terminal state into a `success` map keyed by the TRACE (the sequence of
+        // scheduling choices), aborted paths into `failure`, and truncated-but-resumable
+        // paths into `truncated`; `x!(P)[n]` is the same exploration bounded to `n` steps,
+        // where a step is one COMM. Both deliver their maps on `x`.
+        //
+        // ## Why two rules and not one with an optional operand
+        //
+        // `*` is a LITERAL here, not a parameter: `p "[" "*" "]"` and `p "[" n "]"` are
+        // distinct surfaces, and the spec's `terms` block has no category-less production
+        // (every rule ends `: Category`), so a shared `LookaheadSuffix` nonterminal is not
+        // expressible. Two `: Proc` rules is the spec-conformant encoding.
+        //
+        // ## Why the operand is `p:Proc` and not a dedicated `Send` category
+        //
+        // The ~20 send sugars are all `: Proc` — there is no shared `Send` nonterminal to
+        // attach a suffix to. Taking `p:Proc` attaches the suffix uniformly to every send
+        // form at once, and the LOWERING (`rhocalc_ast.rs`) is where a non-send operand is
+        // rejected — with a typed error naming what it got, never silently.
+        //
+        // ## Ambiguity: measured, not assumed
+        //
+        // `"["`/`"]"` are otherwise ONLY the `List` type's `open_parts`/`close_parts`, so
+        // these rules share a surface with list literals and with an indexing-shaped read.
+        // `languages/tests/x2_lookahead_bracket_probe.rs` is the regression net: over 17
+        // inputs it establishes that both rules parse unambiguously, that `[1]` still reads
+        // as a list, that `[*x]` still reads as a list of a dereference, and that no
+        // previously-accepted string changes meaning — with a TEETH control (a deliberately
+        // duplicated production) proving the reading counter can see ambiguity at all.
+        //
+        // Declared LAST, after the FLT captures, so the existing Proc rule indices and the
+        // pinned @/mixfix cohort structure ahead of them are unperturbed.
+        PLookahead . p:Proc, n:Proc |- p "[" n "]" : Proc;
+        PLookaheadAll . p:Proc |- p "[" "*" "]" : Proc;
     },
 
     equations {

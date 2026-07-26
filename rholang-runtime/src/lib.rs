@@ -73,6 +73,14 @@ pub mod guard_par_substrate;
 /// for admitted `fold` native rules (the held-fold trampoline generalized — same
 /// `extra_system_processes` seam, reserved `[0xF1, rule]` band).
 pub mod native_contract;
+/// The `[*]` / `[n]` lookahead **ABI** — the seam between the lowered surface (`rhocalc_ast`'s
+/// `PLookahead*` arms) and the branching engine ([`speculation`]). Owns the reserved request /
+/// result channel names, the two request-seed builders, and the fail-closed unserved-request
+/// readback that makes a missing engine loud instead of silent.
+///
+/// ⚠ Deliberately does NOT lower `[*]` onto the `^drive` quiescence driver: λ is confluent, so a
+/// single-path drive returns the right answer for every λ term while being wrong in principle.
+pub mod lookahead;
 #[cfg(feature = "rhocalc-runtime")]
 pub mod rhocalc_ast;
 /// M-1b: the FORMULA compiler — a RhoCalc `Proc` read as a Rholang PATTERN

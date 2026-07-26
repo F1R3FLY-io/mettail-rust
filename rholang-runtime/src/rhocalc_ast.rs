@@ -282,6 +282,20 @@ pub enum RhocalcAstLowerError {
     /// pattern/construction admission gate rejected it (a category mismatch, a
     /// malformed hole envelope, or an unfilled construction hole).
     FltReflect(String),
+    /// A lookahead suffix (`P[*]` / `P[n]`) was written over an operand that is not a send.
+    ///
+    /// The grammar takes `p:Proc` because RhoCalc's ~20 send sugars are all `: Proc` and there is
+    /// no shared `Send` nonterminal to attach a suffix to, so "the operand must be a send" is a
+    /// LOWERING obligation rather than a parsing one. It is discharged here, loudly, naming the
+    /// constructor that was found — never by silently treating the lookahead as a no-op.
+    LookaheadOperandNotASend(&'static str),
+    /// The bound of a `P[n]` lookahead is not a ground non-negative integer literal.
+    ///
+    /// The step bound is consumed by the speculation engine BEFORE any reduction happens, so it
+    /// has to be known at lowering time; a computed bound (`P[k + 1]`, or a bound read off a
+    /// channel) would require the engine to reduce an expression to a number first. That is a
+    /// named follow-on, not a silent coercion — an unusable bound fails closed here.
+    LookaheadBoundNotAGroundNonNegativeInt(String),
 }
 
 /// RhoCalc language adapter for the AST-first Rho machine runtime path.
@@ -947,6 +961,21 @@ fn lower_proc(proc: &Proc, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> 
             let channel = lower_name(channel.as_ref(), env)?;
             let payload = lower_proc(payload.as_ref(), env)?;
             Ok(send_par(channel, vec![payload]))
+        },
+        // ★ THE LOOKAHEAD ARMS — `x!(P)[*]` and `x!(P)[n]`.
+        //
+        // These do NOT lower to a send. `x!(P)[*]` is not "send P on x, and also explore": it is
+        // an EXPLORATION whose results are delivered on `x`. So the lowering emits a speculation
+        // REQUEST and no send at all; the data that eventually rest on `x` are the terminal terms
+        // the engine computed.
+        Proc::PLookaheadAll(subject) => {
+            let (channel, payload) = lower_lookahead_operand(subject.as_ref(), env)?;
+            Ok(crate::lookahead::spec_all_request(payload, channel))
+        },
+        Proc::PLookahead(subject, bound) => {
+            let (channel, payload) = lower_lookahead_operand(subject.as_ref(), env)?;
+            let bound = lookahead_bound(bound.as_ref())?;
+            Ok(crate::lookahead::spec_n_request(payload, bound, channel))
         },
         // `for(...)` receive. Each `;`-separated row nests as the continuation of the previous one;
         // each row may be a single bind, a `&`-join, persistent (`<=`), empty (`<- n`), and may
@@ -1735,20 +1764,40 @@ fn is_single_gstring_value(par: &Par) -> bool {
 /// That trades one divergence for another; `rhocalc_ground_literal_conformance.rs::
 /// adjacency_is_honoured` is the guard that makes the mistake fail loudly.
 ///
-/// ── WHERE THE FIX GOES (two defects; NEITHER alone is sufficient) ──────────────────────────────
+/// ── WHERE THE FIX WENT (two defects; NEITHER alone was sufficient) ─────────────────────────────
 ///
-///  (A) `languages/src/rhocalc.rs` — the `Int` and `BigRat` token patterns lack the leading `-?`
-///      that `BigInt`, `Fixed` and `Float` already carry, so for `-7`/`-7i32`/`-7i64`/`-7r` no
-///      folded reading is generated at all. Mirror f1r3node's token set, which signs
-///      `long`/`signed_int`/`bigint`/`bigrat`/`float`/`fixed_point` but NOT `unsigned_int`.
-///  (B) the single-winner election — `Proc::parse_via_wpda_all(r#"@"OUT"!(-7n)"#)` returns
-///      `[0] CastBigInt(-7)`, `[1] NegProc(CastBigInt(7))`, and `Proc::parse_via_wpda` of the
-///      same source elects `[1]`. The seam is `wpda_walker.rs`'s
-///      `RealizeRequestMode::SingleResultElection`, which disagrees with the ordering
-///      `__all_with_weights_monolithic` reports.
+///  (A) ✅ CLOSED `98d861a3`. `languages/src/rhocalc.rs` — the `Int` and `BigRat` token patterns
+///      lacked the leading `-?` that `BigInt`, `Fixed` and `Float` already carried, so for
+///      `-7`/`-7i32`/`-7i64`/`-7r` no folded reading was generated at all. Both now mirror
+///      f1r3node's token set, which signs `long`/`signed_int`/`bigint`/`bigrat`/`float`/
+///      `fixed_point` but NOT `unsigned_int`. This closed every EMBEDDED and collection-element
+///      position; it left the whole-input positions open, which is (B).
+///  (B) ✅ CLOSED. **The projection-isolation helper's `Lit` matcher enforced a token boundary
+///      only for IDENT-SHAPED literals.** `emit_projection_isolation_prologue(…,
+///      SepSeam::Single)` (`macros/src/gen/runtime/wpda_codegen/facade.rs`) short-circuits —
+///      `return Ok(__t)` — as soon as the helper matches, and `NegProc . a:Proc |- "-" a : Proc`
+///      is a sigil-led projection shape, so for a whole-input `-7n` the helper framed the RAW
+///      STRING as `- ⟨7n⟩`, sub-parsed the operand and wrapped it, destroying the adjacency the
+///      lexer had preserved. The repair is
+///      `macros/src/gen/runtime/wpda_codegen/lit_boundary.rs`: the matcher now derives each
+///      literal's TOKEN-BOUNDARY ALPHABET from the grammar's own token patterns, so a `-`
+///      abutting a digit is recognised as a proper prefix of the signed numeral and the helper
+///      declines to the (authoritative) monolithic walker.
 ///
-/// (A) alone is provably insufficient: `BigInt`, `Float` and `Fixed` ALREADY carry `-?` and
-/// diverge anyway.
+/// ⚠ (B) IS NOT THE k-BEST ELECTION, and an earlier version of this note said it was — recorded
+/// so the refuted seam is not re-investigated. That version read: *"the seam is `wpda_walker.rs`'s
+/// `RealizeRequestMode::SingleResultElection`, which disagrees with the ordering
+/// `__all_with_weights_monolithic` reports."* Measured with `PRATTAIL_CGLL_DIAG` +
+/// `PRATTAIL_KBEST_CAND_DIAG` on `-7n`, the single-result walker's accepting root carries a
+/// packing family of exactly `{ CastBigInt, CastBigRat }` — there is no `NegProc` candidate in it
+/// at all — and `[k-elect]` picks `CastBigInt`, the CONFORMING reading. The election was right and
+/// the facade discarded its answer before ever asking. The decisive single-variable A/B was the
+/// committed kill switch: `PRATTAIL_NO_PROJ_ISOLATION=1` made `Proc::parse_via_wpda("-7n")` return
+/// the conforming `CastBigInt(NumLit(-7))` while the same call without it returned
+/// `NegProc(CastBigInt(NumLit(7)))`.
+///
+/// (A) alone was provably insufficient: `BigInt`, `Float` and `Fixed` ALREADY carried `-?` and
+/// diverged anyway, because (B) pre-empted the walker before the lexer's fork could be elected.
 ///
 /// ── REFUTED (the original note's two grounds for declining the fix) ────────────────────────────
 ///
@@ -2770,6 +2819,71 @@ fn mk_proc_list(items: Vec<Proc>) -> Proc {
 /// fold` body performs (`languages/src/rhocalc.rs`) — a pure structural rearrangement, no value
 /// computation — so lowering the desugared node is byte-identical to lowering the eval-time fold
 /// target. Exec submits the RAW parse tree post-A-S4, so these nodes reach the lowering unfolded.
+// ── the lookahead suffix: operand admission + bound admission ───────────────────────────────
+
+/// Split a lookahead's operand into `(reply channel, reflected subject)`.
+///
+/// The operand must be a **send**. Every send SUGAR is admitted, because the operand is first run
+/// through [`desugar_send_node`] — the same canonicalization `lower_proc` performs on its head
+/// node — so `@"r"!(P)[*]`, `r!(P)[*]`, `@Nil!(P)[*]` and the polyadic forms all reach the same
+/// two arms rather than only the one shape the demo happens to use.
+///
+/// A **persistent** send (`x!!(P)[*]`) is deliberately NOT admitted: `!!` means "serve this datum
+/// to every taker, forever", and there is no such thing as a persistent *exploration* — the
+/// request is answered once, and repeating it would re-run the whole search per consumer. It
+/// fails closed here rather than being silently demoted to a linear send.
+fn lower_lookahead_operand(
+    operand: &Proc,
+    env: &BoundEnv,
+) -> Result<(Par, Par), RhocalcAstLowerError> {
+    if let Some(desugared) = desugar_send_node(operand) {
+        return lower_lookahead_operand(&desugared, env);
+    }
+    match operand {
+        Proc::POutput(channel, payload) => {
+            Ok((lower_name(channel.as_ref(), env)?, lower_proc(payload.as_ref(), env)?))
+        },
+        // `@P!(q)` — the channel is the quote of `P`, i.e. `lower_proc(P)`.
+        Proc::POutputShort(channel_proc, payload) => {
+            Ok((lower_proc(channel_proc.as_ref(), env)?, lower_proc(payload.as_ref(), env)?))
+        },
+        Proc::PPersistOutput(..) | Proc::PPersistOutputShort(..) => {
+            Err(RhocalcAstLowerError::LookaheadOperandNotASend("a persistent send (`!!`)"))
+        },
+        Proc::PZero => Err(RhocalcAstLowerError::LookaheadOperandNotASend("Nil")),
+        Proc::PForUser(..) => Err(RhocalcAstLowerError::LookaheadOperandNotASend("a receive")),
+        Proc::PPar(..) | Proc::PParInfix(..) => {
+            Err(RhocalcAstLowerError::LookaheadOperandNotASend("a parallel composition"))
+        },
+        Proc::CastList(..) => Err(RhocalcAstLowerError::LookaheadOperandNotASend("a list literal")),
+        _ => Err(RhocalcAstLowerError::LookaheadOperandNotASend("a non-send process")),
+    }
+}
+
+/// Admit a `P[n]` step bound: a ground, non-negative integer literal.
+///
+/// Non-negative because `n` counts COMMs and a negative count denotes nothing; `0` is admitted
+/// and is meaningful — it explores nothing and truncates immediately, which is the identity of
+/// the bounded family and a useful probe.
+fn lookahead_bound(bound: &Proc) -> Result<i64, RhocalcAstLowerError> {
+    match bound {
+        Proc::CastInt(value) => match value.as_ref() {
+            Int::NumLit(literal) if *literal >= 0 => Ok(*literal),
+            Int::NumLit(literal) => Err(
+                RhocalcAstLowerError::LookaheadBoundNotAGroundNonNegativeInt(format!(
+                    "negative bound {literal}"
+                )),
+            ),
+            other => Err(RhocalcAstLowerError::LookaheadBoundNotAGroundNonNegativeInt(format!(
+                "{other:?}"
+            ))),
+        },
+        other => Err(RhocalcAstLowerError::LookaheadBoundNotAGroundNonNegativeInt(format!(
+            "{other:?}"
+        ))),
+    }
+}
+
 fn desugar_send_node(proc: &Proc) -> Option<Proc> {
     let quote = |p: &Arc<Proc>| Arc::new(Name::NQuote(p.clone()));
     let quote_nil = || Arc::new(Name::NQuote(Arc::new(Proc::PZero)));
