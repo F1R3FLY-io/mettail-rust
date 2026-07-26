@@ -4,4 +4,4 @@
 //
 // EXPECT   14
 
-calc`2 + 3 * 4`
+calculator`2 + 3 * 4`

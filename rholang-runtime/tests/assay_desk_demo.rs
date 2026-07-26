@@ -71,7 +71,7 @@ const DEMO_DIR: &str = "demos/flt-assay-desk";
 /// `rhocalc` bin target actually requires, so the sheet cannot tell a presenter to build
 /// something that will not produce this test's binary.
 const BUILD_COMMAND: &str =
-    "cargo build -p rholang-runtime --bin rhocalc --features \"rhocalc-runtime lambda-runtime\"";
+    "cargo build -p rholang-runtime --bin rhocalc --features \"rhocalc-runtime lambda-runtime calculator-runtime\"";
 
 const BEAT_1_SHOW_A: &str = "tail -1 demos/flt-assay-desk/contract-a.rho";
 const BEAT_1_RUN_A: &str = "target/debug/rhocalc demos/flt-assay-desk/contract-a.rho";

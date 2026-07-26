@@ -77,7 +77,7 @@ Two mechanisms are stacked in that one receive, and they do different jobs:
 ## Setup (do this before the audience arrives)
 
 ```
-$ cargo build -p rholang-runtime --bin rhocalc --features "rhocalc-runtime lambda-runtime"
+$ cargo build -p rholang-runtime --bin rhocalc --features "rhocalc-runtime lambda-runtime calculator-runtime"
 ```
 
 Both features are required by the `rhocalc` bin target: `rhocalc-runtime` pulls in the generated

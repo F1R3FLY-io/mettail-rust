@@ -20,9 +20,8 @@
 //! The RhoCalc grammar supports Foreign Language Terms (FLT): the opener `tag`…`` embeds a term of
 //! a guest language written in the guest's own concrete syntax. The interpreter is NOT
 //! FLT-specific — it just interprets RhoCalc — but it supplies an [`FltResolve`] registry of the
-//! guest languages it bundles (`calc`, the production `CalculatorLanguage`; `lambda`, the untyped
-//! λ-calculus `LambdaLanguage`) so that
-//! programs USING the FLT feature lower, and so a bare guest term can be reduced to normal form by
+//! guest languages it bundles (`calculator`, the production `CalculatorLanguage`; `lambda`, the
+//! untyped λ-calculus `LambdaLanguage`) so that programs USING the FLT feature lower, and so a bare guest term can be reduced to normal form by
 //! that guest's reduction engine. A program with no FLT never touches the registry; a program
 //! whose FLT opener is unregistered fails closed with a clear `unknown guest language ⌜tag⌝`.
 //!
@@ -56,7 +55,7 @@ use mettail_languages::lambda::LambdaLanguage;
 use mettail_languages::rhocalc::Proc;
 use mettail_rholang_codegen::{
     lower_language_def, plan_rho_default_backend, reconstruct_language_def, rho_net_drive_call_par,
-    suggest_rejected_rule_dispositions, FltRegistry, FltResolve, RhoCoverageEvidence,
+    suggest_rejected_rule_dispositions, FltReflect, FltRegistry, FltResolve, RhoCoverageEvidence,
     RhoDefaultBackendRequirements, RhoFoldDataflowDisposition, RhoGuardCoverageEvidence,
     RhoScalarType, BOUND_VAR_REFLECT_LABEL, LAMBDA_REFLECT_LABEL, PEANO_SUCC_REFLECT_LABEL,
 };
@@ -86,25 +85,42 @@ and evaluates it on the f1r3node reducer:
     reduction engine), printed with the ^fired rewrite ledger;
   * a process (sends/receives) runs to rest and its @\"OUT\" observations are reported.
 
-The RhoCalc grammar supports Foreign Language Terms (`tag`…``); the interpreter bundles two guests:
-  * `calc`   — the production Calculator grammar (arithmetic, comparison, boolean, string). A bare
-               `calc`…`` term EVALUATES to a value through the E3 fold-dataflow: every operator
-               becomes a real metered Rholang arithmetic expression on the f1r3node reducer.
-  * `lambda` — the untyped λ-calculus, reduced to normal form by its in-Rho quiescence driver.";
+The RhoCalc grammar supports Foreign Language Terms (`tag`…``). An opener IS the lower-cased name
+of the guest grammar, so the tag is never a nickname to memorize. The interpreter bundles two:
+  * `calculator` — the production Calculator grammar (arithmetic, comparison, boolean, string). A
+                   bare `calculator`…`` term EVALUATES to a value through the E3 fold-dataflow:
+                   every operator becomes a real metered Rholang expression on the reducer.
+  * `lambda`     — the untyped λ-calculus, reduced to normal form by its in-Rho quiescence driver.";
+
+/// THE opener a guest is registered under: the lower-cased form of the grammar's OWN name, read off
+/// the guest itself ([`mettail_runtime::Language::name`], which the `language!` macro emits from the
+/// `LanguageDef`'s `name:` field). `CalculatorLanguage` ⟶ `calculator`; `LambdaLanguage` ⟶ `lambda`.
+///
+/// Derived rather than passed, because every hand-typed opener this interpreter has carried was an
+/// arbitrary abbreviation that had to be corrected afterwards (`lam`, then `calc`). A registration
+/// site that cannot name its own tag cannot invent a third one: adding a guest now yields exactly
+/// one legal opener, and it is the one a reader would guess from the grammar's name.
+fn derived_opener(guest: &dyn FltReflect) -> String {
+    guest.name().to_lowercase()
+}
 
 /// The guest registry the interpreter installs so RhoCalc's Foreign Language Term feature can
-/// lower and reduce.
-///
-/// Two guests are registered, under the FULL SPELLING of the language each names — `calc` for the
-/// production `CalculatorLanguage`, `lambda` for the production `LambdaLanguage`. (The tag was
-/// historically abbreviated `lam`; nothing derived the abbreviation, and it collided visually with
-/// the λ-guest's OWN binder keyword `lam x. x`, which is guest-body syntax and is unchanged.)
+/// lower and reduce. Each guest is registered under [`derived_opener`].
 fn guest_resolver() -> Arc<dyn FltResolve> {
-    Arc::new(
-        FltRegistry::new()
-            .with_guest("calc", Box::new(CalculatorLanguage))
-            .with_guest("lambda", Box::new(LambdaLanguage)),
-    )
+    let guests: Vec<Box<dyn FltReflect>> =
+        vec![Box::new(CalculatorLanguage), Box::new(LambdaLanguage)];
+    let registry = guests.into_iter().fold(FltRegistry::new(), |registry, guest| {
+        registry.with_guest(derived_opener(guest.as_ref()), guest)
+    });
+    Arc::new(registry)
+}
+
+/// The openers the registry accepts, in registration order — one derivation, so the `--help` text
+/// and the unknown-guest diagnostic can never drift from what is actually registered.
+fn registered_openers() -> Vec<String> {
+    let guests: Vec<Box<dyn FltReflect>> =
+        vec![Box::new(CalculatorLanguage), Box::new(LambdaLanguage)];
+    guests.iter().map(|guest| derived_opener(guest.as_ref())).collect()
 }
 
 /// The registered `lambda` guest's Rho-default reduction backend + its definition fingerprint
@@ -131,7 +147,7 @@ fn lambda_backend() -> (PlannedRhoBackend, String) {
     (PlannedRhoBackend::from_plan(plan), fingerprint)
 }
 
-/// The registered `calc` guest's Rho-default backend: the installed program carries one Rholang
+/// The registered `calculator` guest's Rho-default backend: the installed program carries one Rholang
 /// CONTRACT per lowerable Calculator scalar operator (`AddInt`, `MulInt`, `GtInt`, …), each body a
 /// real metered arithmetic/relational expression on the reducer. The E3 fold dataflow wires an
 /// expression TREE through those contracts, one call per node, so `2 + 3 * 4` executes as two
@@ -215,8 +231,8 @@ fn report_lower(err: &RhocalcAstLowerError) -> ExitCode {
         RhocalcAstLowerError::UnresolvedFltTag(tag) => {
             eprintln!("error: unknown guest language ⌜{tag}⌝");
             eprintln!("  the RhoCalc program embeds a Foreign Language Term with opener `{tag}`,");
-            eprintln!("  but no guest is registered for it. registered guests:");
-            eprintln!("    calc   (CalculatorLanguage)   lambda (LambdaLanguage)");
+            eprintln!("  but no guest is registered for it. an opener is the LOWER-CASED name of");
+            eprintln!("  the guest grammar; registered: {}", registered_openers().join(", "));
             ExitCode::from(65)
         }
         RhocalcAstLowerError::FltGuestHasNoFingerprint(tag) => {
@@ -453,11 +469,11 @@ fn church_reading(value: &RuntimeObservationValue) -> Option<String> {
         cursor = arg;
     }
     match (bound_index(cursor)?, applications) {
-        // λf.λx.x — the numeral zero, which is also Church FALSE (`λt.λf.f`).
-        (0, 0) => Some("Church numeral 0   (the same shape as Church FALSE)".to_string()),
-        (0, n) => Some(format!("Church numeral {n}")),
-        // λt.λf.t — Church TRUE. (Not a numeral: a numeral's spine ends at `x`, not at `f`.)
-        (1, 0) => Some("Church TRUE".to_string()),
+        (0, n) if n > 0 => Some(format!("Church numeral {n}")),
+        // DELIBERATELY unannotated: the zero-application shapes `λf.λx.x` and `λt.λf.t` are the
+        // Church booleans as much as they are the numeral zero, so a single name would be a
+        // guess. They are also the very combinators the `flt-assay-desk` demo publishes, whose
+        // transcripts are pinned byte-for-byte — an annotation there would be noise AND churn.
         _ => None,
     }
 }
@@ -509,7 +525,7 @@ fn render_pars(pars: &[Par]) -> String {
 
 // ── the evaluation modes ────────────────────────────────────────────────────────────────────────
 
-/// Evaluate a bare `calc`…`` TERM to a VALUE on the reducer, through the E3 fold dataflow.
+/// Evaluate a bare `calculator`…`` TERM to a VALUE on the reducer, through the E3 fold dataflow.
 ///
 /// The guest body is parsed by the production `CalculatorLanguage`'s own parser, its expression
 /// tree is lowered to a Rholang DATAFLOW (one contract call per operator node, wired through
@@ -522,10 +538,10 @@ fn render_pars(pars: &[Par]) -> String {
 /// `BlockedBySemanticPredicate` means the term IS lowerable but a semantic predicate declined it
 /// (`5 / 0` — the guard that stops an unguarded `EDiv` hard-erroring inside the reducer).
 async fn evaluate_calculator_term(body: &str) -> Result<(), InterpError> {
-    println!("mode: term → evaluating on the f1r3node reducer (guest `calc`, E3 fold dataflow)");
+    println!("mode: term → evaluating on the f1r3node reducer (guest `calculator`, E3 fold dataflow)");
     let parsed = CalculatorLanguage
         .parse_term_for_env(body)
-        .map_err(|err| InterpError::Parse(format!("guest `calc` body ⌜{body}⌝: {err}")))?;
+        .map_err(|err| InterpError::Parse(format!("guest `calculator` body ⌜{body}⌝: {err}")))?;
     let disposition =
         CalculatorLanguage::rho_fold_dataflow_invocation_to(parsed.as_ref(), "OUT")
             .map_err(InterpError::Reduce)?;
@@ -533,13 +549,13 @@ async fn evaluate_calculator_term(body: &str) -> Result<(), InterpError> {
         RhoFoldDataflowDisposition::Run(invocation) => invocation,
         RhoFoldDataflowDisposition::Defer => {
             return Err(InterpError::Reduce(format!(
-                "the `calc` term ⌜{body}⌝ has no Rholang dataflow image (its operators lower to \
+                "the `calculator` term ⌜{body}⌝ has no Rholang dataflow image (its operators lower to \
                  native folds, not to Rho contracts) — it cannot be evaluated on the reducer"
             )))
         },
         RhoFoldDataflowDisposition::BlockedBySemanticPredicate(block) => {
             return Err(InterpError::Reduce(format!(
-                "the `calc` term ⌜{body}⌝ is blocked by a semantic predicate ({block:?}) — the \
+                "the `calculator` term ⌜{body}⌝ is blocked by a semantic predicate ({block:?}) — the \
                  machine declines it rather than emitting an operation that would hard-error"
             )))
         },
@@ -605,10 +621,7 @@ async fn evaluate_term_to_normal_form(term: Par) -> Result<(), InterpError> {
             }
         }
     }
-    println!(
-        "  ^fired ledger: {} in-Rho rewrite firing(s) — {fired:?}",
-        fired.len()
-    );
+    println!("  ^fired ledger: {fired:?}   ({} in-Rho rewrite firing(s))", fired.len());
     println!(
         "  ^drive-err: {} datum(a) · ^drive-fuel: {} datum(a)   (both empty ⟹ terminated by quiescence)",
         set.err_data.len(),
@@ -702,8 +715,8 @@ async fn interpret(path: &Path, emit_comments: bool) -> Result<(), InterpError> 
     // A WHOLE-PROGRAM bare FLT (the file is one `tag`…`` and nothing else) is evaluated by THAT
     // GUEST'S OWN engine, so the tag is read off the AST before lowering reflects it away. Each
     // registered guest brings its own reduction mechanism, and both run on the reducer:
-    //   `calc`   → the E3 fold dataflow (metered Rholang arithmetic contracts);
-    //   `lambda` → the in-Rho quiescence driver (β as committed communications).
+    //   `calculator` → the E3 fold dataflow (metered Rholang arithmetic contracts);
+    //   `lambda`     → the in-Rho quiescence driver (β as committed communications).
     let bare_guest = match &proc {
         Proc::PFlt(node) | Proc::PFltFence(node) | Proc::PFltBrace(node) => {
             Some((node.tag.clone(), node.body_src.clone()))
@@ -711,7 +724,7 @@ async fn interpret(path: &Path, emit_comments: bool) -> Result<(), InterpError> 
         _ => None,
     };
     if let Some((tag, body)) = &bare_guest {
-        if tag == "calc" {
+        if tag == &derived_opener(&CalculatorLanguage) {
             return evaluate_calculator_term(body).await;
         }
     }
