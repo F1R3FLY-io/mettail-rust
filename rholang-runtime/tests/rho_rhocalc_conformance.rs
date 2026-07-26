@@ -76,6 +76,14 @@
 //! | **I** | a numeral's **carrier** depends on syntax (`@(1)`:`Int` vs `@1`:`BigInt`, `5u32`:`BigInt`) | `*(@(1)) + 2` ⟹ `error` | Rholang has ONE integer | the GRAMMAR (partitioned literal domains), NOT the WPDA projection | ★ CLOSED |
 //! | **J** | `x!()` satisfies `for(@y <- x)` | fires, `y = []` | arity-checked COMM: rests | C1 | open |
 //! | **K** | a `where` guard the host CANNOT DECIDE | the COMM **rests** (decline read as `false`) | decides it and **fires** | #33 stage C | open |
+//! | **L** | canonical **`Set`/`Map` order** | **lexicographic** by rendered element (`Set(10, 2)`) | `ScoredTerm` **value** order (`Set(2, 10)`) | — | open |
+//!
+//! `L` was **discovered by C1's canonical-order check (2026-07-26)** and is the same lesson as
+//! `H`: it survived because every fixture in the suite used single-digit integers, where
+//! lexicographic and value order coincide. It is a LITERAL-level divergence, not a method-level
+//! one — `Set(10, 2)`, with no method call in it at all, already renders differently on the two
+//! sides — so C1 neither caused it nor can close it. See
+//! `divergence_l_witness_collection_order_is_lexicographic_in_the_fold`.
 //!
 //! `H` was **discovered by this suite**; `I` and `J` were discovered by the burndown described
 //! immediately below; **`K` was discovered by pointing this suite at a `where` guard for the
@@ -846,8 +854,9 @@ async fn divergence_b_target_string_add_is_position_independent() {
 /// as a child (armed by `MTL_DIVERGENCE_C_PROBE`) and asserted the child's death, because the abort
 /// could not be observed any other way. With the panic gone there is nothing to survive.
 ///
-/// What remains of C is the LOWERING gap (`nth` is not routed to the machine at all) — see
-/// [`divergence_c_target_nth_is_the_reducers_nth`], still C1's to close.
+/// The LOWERING half — `nth` never reaching the machine — was the remainder of C, and **C1 closed
+/// it on 2026-07-26**: `nth` now routes to the reducer's own `nth`. See
+/// [`divergence_c_target_nth_is_the_reducers_nth`], which is no longer `#[ignore]`d.
 #[tokio::test(flavor = "multi_thread")]
 async fn divergence_c_closed_nth_is_total_and_carrier_agnostic() {
     // Out of range: the `error` term, IN PROCESS (a panic here would abort the binary).
@@ -869,22 +878,26 @@ async fn divergence_c_closed_nth_is_total_and_carrier_agnostic() {
     // A NON-integer index is still refused, as a value.
     assert_eq!(fold(&parse(r#"[1, 2, 3].nth("0")"#)).expect("the fold converges"), "error");
 
-    // ⚠ STILL OPEN: the machine never sees `nth` — the lowering rejects the construct.
-    let err = reduce(&parse("[1, 2, 3].nth(0)"))
-        .await
-        .expect_err("the method is not lowered at all today");
-    assert_eq!(err, "unsupported: l.nth(i) list method");
+    // ★ CLOSED by C1 (2026-07-26). The tail that stood here asserted the lowering gap:
+    //
+    //     // ⚠ STILL OPEN: the machine never sees `nth` — the lowering rejects the construct.
+    //     let err = reduce(&parse("[1, 2, 3].nth(0)"))
+    //         .await
+    //         .expect_err("the method is not lowered at all today");
+    //     assert_eq!(err, "unsupported: l.nth(i) list method");
+    //
+    // `nth` now routes to `EMethod("nth")`, so the machine answers and the assertion that it
+    // could not has moved to `divergence_c_target_nth_is_the_reducers_nth` — inverted, and live.
 }
 
-/// **Divergence C (target) — `nth` is Rholang's `nth`: total on the carrier, recoverable on error.**
+/// **★ Divergence C — FULLY CLOSED (C1, 2026-07-26). `nth` IS Rholang's `nth`.**
 ///
-/// The FOLD half is closed (see [`divergence_c_closed_nth_is_total_and_carrier_agnostic`]); this
-/// target additionally requires the machine to be the one answering, which is **C1**
-/// (`EMethodBody(EMethod { method_name: "nth", … })` against the reducer's own method table,
-/// `reduce.rs:8197-8256`).
+/// The FOLD half closed earlier (see [`divergence_c_closed_nth_is_total_and_carrier_agnostic`]);
+/// the remaining half required the machine to be the one answering, and that is what **C1** did:
+/// `EMethodBody(EMethod { method_name: "nth", … })` against the reducer's own method table
+/// (`reduce.rs:8464`). Out-of-bounds is now the reducer's recoverable error rather than a
+/// MeTTaIL-side `error` term, which is the normative behaviour.
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "divergence C (residual): `l.nth(i)` is still UnsupportedProc on the machine; the fold \
-            half (panic + index carrier) is CLOSED. Closed by C1 (route `nth` to EMethod)"]
 async fn divergence_c_target_nth_is_the_reducers_nth() {
     // A plain (BigInt) index works, on both sides.
     assert_conformant("[1, 2, 3].nth(0)", "1").await;
@@ -1101,15 +1114,30 @@ async fn c2_closed_bag_to_byte_array_keeps_the_bag_abi_tag() {
 
 // ── G — Pathmap and zipper carriers ──────────────────────────────────────────────────────────────
 
-/// **Divergence G (witness) — `Pathmap` lowers to `EMap`, and every zipper method is unsupported.**
+/// **Divergence G (witness) — `Pathmap` lowers to `EMap`, so the trie carrier is discarded.**
 ///
 /// `rhoapi` already declares `e_pathmap_body = 32` and `e_zipper_body = 33`, and
 /// `rholang/src/rust/interpreter/reduce.rs` already implements
 /// `readZipper/writeZipper/descendTo/getLeaf/getSubtrie/graft/joinInto/ascend/childCount/…`. But
-/// `rholang-runtime/src/rhocalc_ast.rs:1600-1624` lowers `Pathmap` to **`EMap`** — discarding the
-/// trie structure — and `:1030-1048` marks every zipper method `UnsupportedProc`. So ~8 pathmap
-/// and ~15 zipper methods are implemented twice MeTTaIL-side
-/// (`languages/src/rhocalc/{pathmap,zipper}.rs`) and never reach their native counterpart.
+/// `rholang-runtime/src/rhocalc_ast.rs::lower_pathmap` (line 2317) lowers `Pathmap` to **`EMap`**,
+/// discarding the trie structure, so the ~8 pathmap and ~15 zipper methods implemented MeTTaIL-side
+/// (`languages/src/rhocalc/{pathmap,zipper}.rs`) never reach their native counterpart.
+///
+/// ★ AMENDED by C1 (2026-07-26). The second half of this witness used to assert that pathmap and
+/// zipper methods "never reach the machine at all", i.e. that they were rejected at the LOWERING:
+///
+///     for (source, expected_error) in [
+///         ("{|1:2|}.get(1)", "unsupported: m.get(k) map method"),
+///         ("{|1:2|}.union({|3:4|})", "unsupported: m.union(n) map method"),
+///         ("{|1:2|}.readZipper()", "unsupported: p.readZipper() zipper method"),
+///     ] { … }
+///
+/// That is no longer the shape of G. C1 routes all three, so they now reach the reducer and are
+/// refused at the CARRIER instead — which is a strictly better statement of the same divergence,
+/// because the carrier is the thing C4 fixes. The two live halves below are the amended assertions;
+/// the full method-by-method picture is
+/// [`c1_pathmap_methods_answer_through_the_emap_encoding`] and
+/// [`c1b_pathmap_zipper_family_is_c4_blocked_at_the_carrier`].
 ///
 /// *Delete when C4 lands.*
 #[tokio::test(flavor = "multi_thread")]
@@ -1123,18 +1151,18 @@ async fn divergence_g_witness_pathmap_lowers_to_emap_and_zippers_are_unsupported
         "G: the trie carrier is discarded — the machine observes an EMap, got {observed:?}"
     );
 
-    // Pathmap and zipper METHODS never reach the machine at all.
-    for (source, expected_error) in [
-        ("{|1:2|}.get(1)", "unsupported: m.get(k) map method"),
-        ("{|1:2|}.union({|3:4|})", "unsupported: m.union(n) map method"),
-        ("{|1:2|}.readZipper()", "unsupported: p.readZipper() zipper method"),
-    ] {
-        assert_eq!(
-            reduce(&parse(source)).await.expect_err("not lowered"),
-            expected_error,
-            "G: {source:?}"
-        );
-    }
+    // ① A method Rholang defines on a Map now ANSWERS, through the encoding, because the encoding
+    //    happens to be key-faithful. The value is right; it is the carrier that was lost.
+    let observed = reduce(&parse("{|1:2|}.get(1)")).await.expect("get routes and answers");
+    assert_eq!(observed.iter().map(render_as_rhocalc).collect::<Vec<_>>(), vec!["2".to_string()]);
+
+    // ② A method that needs the TRIE cannot be rescued by a key-faithful encoding: it reaches the
+    //    reducer and is refused at the carrier. This is G, stated where it actually bites.
+    assert_eq!(
+        reduce(&parse("{|1:2|}.readZipper()")).await.expect_err("no EPathmapBody exists yet"),
+        r#"reduce: inj: MethodNotDefined { method: "readZipper", other_type: "map" }"#,
+        "G: a zipper cannot be built over an EMap — this is exactly what C4 closes"
+    );
 }
 
 /// **Divergence G (target) — `Pathmap` is `EPathmapBody` and zippers are `EZipperBody`.**
@@ -1386,82 +1414,442 @@ async fn c3_residue_mettail_only_operations_fail_closed_and_named() {
 // PART 4 — the C1 work list: every collection method the machine cannot see today
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
-/// **The C1 inventory (witness).** Every one of these methods is implemented *twice* — once as a
-/// `![{…}]` fold body in `languages/src/rhocalc.rs` and once in `reduce.rs`'s method table
-/// (`reduce.rs:8197-8256`) — yet the machine never sees them, because the lowering rejects the
-/// construct. The fold answers are the current MeTTaIL semantics; the machine errors are the
-/// current lowering gap.
+/// **★ The `Bag` ENCODING is rejected by every routed method that could see it — MEASURED.**
 ///
-/// This test IS the C1 work list: closing C1 means every row here lowers, and
-/// [`c1_target_collection_methods_route_to_the_reducer`] replaces it.
+/// This test exists because the design note that held C1 back asserted the opposite. It claimed
+/// that routing would make `#{1|2|2}#.size()` "answer the tagged list's pair count instead of the
+/// multiset cardinality — a SILENTLY WRONG answer". Measured 2026-07-26, that is **false**:
+/// `size_method` (`reduce.rs:7829`) accepts only `EMapBody`/`ESetBody`, so the lowered bag —
+/// `EList[GPrivate(RHOCALC_BAG_ABI_TAG), EList[pairs]]` — is refused by name and type.
 ///
-/// *Delete when C1 lands.*
+/// The hazard the note was reaching for is real, but it lives on the two routed methods that DO
+/// accept `EListBody` (`length`, `nth`), and those are gated at the lowering; see
+/// [`c1_bag_length_and_nth_are_gated_at_lowering`] and the residue witness
+/// [`c1_bag_length_residue_when_the_carrier_is_only_known_at_runtime`].
+///
+/// Every row here is a method whose fold body accepts a `Bag`. The machine must fail CLOSED —
+/// never answer about the encoding.
 #[tokio::test(flavor = "multi_thread")]
-async fn c1_inventory_witness_collection_methods_are_not_lowered() {
+async fn c1_bag_encoding_is_rejected_by_every_routed_method() {
     for (source, fold_answer, machine_error) in [
-        // list
-        ("[1, 2, 3].length()", "3", "unsupported: l.length() list method"),
-        ("[1, 2, 3].concat([4])", "[1, 2, 3, 4]", "unsupported: l.concat(m) list method"),
-        // string (routed through the LIST method arms today)
-        (r#""abc".length()"#, "3", "unsupported: l.length() list method"),
-        (r#""con".concat("cat")"#, r#""concat""#, "unsupported: l.concat(m) list method"),
-        // set
-        ("Set(1, 2).add(3)", "Set(1, 2, 3)", "unsupported: s.add(e) set method"),
-        ("Set(1, 2).contains(1)", "true", "unsupported: m.contains(k) map method"),
-        ("Set(1, 2).size()", "2", "unsupported: m.size() map method"),
-        ("Set(1, 2).union(Set(3))", "Set(1, 2, 3)", "unsupported: m.union(n) map method"),
-        ("Set(1, 2).delete(1)", "Set(2)", "unsupported: m.delete(k) map method"),
-        // map
-        ("{1 : 10}.get(1)", "10", "unsupported: m.get(k) map method"),
-        ("{1 : 10}.set(2, 20)", "{1:10, 2:20}", "unsupported: m.set(k, v) map method"),
-        ("{1 : 10}.contains(1)", "true", "unsupported: m.contains(k) map method"),
-        ("{1 : 10}.size()", "1", "unsupported: m.size() map method"),
-        ("{1 : 10}.keys()", "Set(1)", "unsupported: m.keys() map method"),
-        // `.values()` is NOT a C1 row — Rholang has no `values` method, so it is C3 residue.
-        ("{1 : 10}.delete(1)", "{}", "unsupported: m.delete(k) map method"),
-        ("{1 : 10}.union({2 : 20})", "{1:10, 2:20}", "unsupported: m.union(n) map method"),
+        (
+            "#{1 | 2 | 2}#.size()",
+            "3",
+            r#"reduce: inj: MethodNotDefined { method: "size", other_type: "list" }"#,
+        ),
+        (
+            "#{1 | 2 | 2}#.union(#{3}#)",
+            "#{1| 2| 2| 3}#",
+            r#"reduce: inj: MethodNotDefined { method: "union", other_type: "list" }"#,
+        ),
+        (
+            "#{1 | 2 | 2}#.diff(#{2}#)",
+            "#{1| 2}#",
+            r#"reduce: inj: MethodNotDefined { method: "diff", other_type: "list" }"#,
+        ),
     ] {
         let proc = parse(source);
         assert_eq!(
             fold(&proc).expect("the fold converges"),
             fold_answer,
-            "C1: {source:?} — the duplicate MeTTaIL-side implementation"
+            "C1: {source:?} — the MeTTaIL-side multiset answer"
         );
         assert_eq!(
-            reduce(&proc).await.expect_err("the method is not lowered today"),
+            reduce(&proc).await.expect_err("the bag encoding must be refused"),
             machine_error,
-            "C1: {source:?} — the machine never sees the method"
+            "C1: {source:?} — the machine must REFUSE the bag encoding, not measure it"
         );
     }
 }
 
-/// **The C1 target — every collection method is evaluated by the reducer's own method table.**
+/// **`length`, `nth` and `concat` are gated at the lowering, because the reducer WOULD answer.**
 ///
-/// Closed by **C1** (`EMethodBody` emission + deleting the corresponding fold bodies). The values
-/// asserted here are the ones both sides already agree on today, so a green run proves the
-/// deletion preserved semantics rather than merely removing them.
+/// These are exactly the routed operations whose interpreter implementation accepts `EListBody`,
+/// and therefore exactly the ones that could measure the 2-element bag ABI encoding and return
+/// something plausible instead of failing:
+///
+/// | operation | interpreter | accepts `EList`? | ungated answer for a bag |
+/// |---|---|---|---|
+/// | `length` | `length_method` (7893) | **yes** | `2` — tag + pairs — not the cardinality `3` |
+/// | `nth` | `nth_method` (4078) | **yes** | the ABI tag, or the pairs list |
+/// | `concat` | `combine_plus_plus` | **yes** | a 4-element list carrying TWO ABI tags |
+///
+/// Every other routed method accepts only `EMapBody`/`ESetBody`/`EPathmapBody` and so refuses the
+/// encoding by itself — measured in [`c1_bag_encoding_is_rejected_by_every_routed_method`]. The
+/// gate ([`receiver_is_literal_bag`] in `rhocalc_ast.rs`) covers the case decidable at lowering
+/// time; `concat` checks BOTH operands, since either position can supply the bag.
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "C1: the 30+ collection/string methods are UnsupportedProc on the machine; closed by C1 \
-            (route them to EMethodBody against reduce.rs's method table)"]
+async fn c1_bag_length_and_nth_are_gated_at_lowering() {
+    for (source, expected_error) in [
+        ("#{1 | 2 | 2}#.length()", "bag cardinality"),
+        ("#{1 | 2 | 2}#.nth(0)", "bag indexing"),
+        ("#{1 | 2 | 2}#.concat(#{3}#)", "bag concatenation"),
+        // the bag in the RIGHT operand only — the gate is not left-biased
+        ("[1, 2].concat(#{3}#)", "bag concatenation"),
+    ] {
+        let proc = parse(source);
+        let error = reduce(&proc).await.expect_err("the bag gate must fire");
+        assert!(
+            error.starts_with("unsupported: ") && error.contains(expected_error),
+            "C1: {source:?} — expected a fail-closed LOWERING error naming the bag, got {error:?}"
+        );
+        assert!(
+            error.contains("C3 residue"),
+            "C1: {source:?} — the error must name the stage that closes it, got {error:?}"
+        );
+    }
+}
+
+/// **⚠ THE MEASURED RESIDUE: the bag gate cannot see a carrier that is only known at run time.**
+///
+/// `[#{1|2|2}#].nth(0)` has receiver type `Bag`, but its *syntax* is `LNth`, not `CastBag`, so no
+/// shape check at the lowering can refuse it — and neither can one refuse a COMM-bound variable.
+/// The reducer then measures the bag ABI encoding: **2**, where the fold answers the multiset
+/// cardinality **3**.
+///
+/// This is a NEW divergence introduced by C1 (before routing, the whole program failed to lower)
+/// and it is recorded here rather than hidden. It is narrow — it needs a bag to reach `length` or
+/// `nth` through a value whose carrier the lowering cannot name — and it is NOT closeable by
+/// changing `lower_bag`, because the 2-element tagged-`EList` shape is the wire ABI decoded by
+/// `run.rs:166`. It closes with **C3**, which gives the machine a real bag algebra instead of an
+/// encoding.
+///
+/// If this test ever starts failing because the machine answers `3`, C3 landed and this witness
+/// should be replaced by a conformance row.
+#[tokio::test(flavor = "multi_thread")]
+async fn c1_bag_length_residue_when_the_carrier_is_only_known_at_runtime() {
+    let source = "[#{1 | 2 | 2}#].nth(0).length()";
+    let proc = parse(source);
+    assert_eq!(
+        fold(&proc).expect("the fold converges"),
+        "3",
+        "the fold measures the MULTISET"
+    );
+    let observed = reduce(&proc).await.expect("the machine reduces");
+    assert_eq!(
+        observed.iter().map(render_as_rhocalc).collect::<Vec<_>>(),
+        vec!["2".to_string()],
+        "C1 residue: the machine measures the 2-element bag ABI ENCODING. If this is now 3, C3 \
+         landed — promote this witness to a conformance row"
+    );
+}
+
+/// **C1b — the Pathmap/Zipper family is routed, and blocked at the CARRIER by C4.**
+///
+/// Every one of these methods requires an `EPathmapBody` or `EZipperBody` receiver
+/// (`reduce.rs:4926` `readZipper`, `5322` `getSubtrie`, …), and RhoCalc's `Pathmap` still lowers
+/// to a plain `EMap` — divergence **G**. So the routing is correct and inert: the machine names
+/// the carrier that is wrong, which is exactly what C4 fixes.
+///
+/// ★ This is the answer to "is C4 still a blocker for C1?": **yes, but only for this family.** The
+/// ordinary list/string/set/map surface routes and agrees today, with no dependency on C4 at all.
+#[tokio::test(flavor = "multi_thread")]
+async fn c1b_pathmap_zipper_family_is_c4_blocked_at_the_carrier() {
+    for (source, method) in [
+        ("{| 1 : 10, 2 : 20 |}.readZipper().leafCount()", "readZipper"),
+        ("{| 1 : 10, 2 : 20 |}.readZipper().toNextLeaf().getPath()", "readZipper"),
+        ("{| 1 : 10, 2 : 20 |}.readZipper().childCount()", "readZipper"),
+        ("{| 1 : 10 |}.getSubtrie()", "getSubtrie"),
+    ] {
+        let proc = parse(source);
+        let error = reduce(&proc).await.expect_err("the EMap carrier must be refused");
+        assert_eq!(
+            error,
+            format!(r#"reduce: inj: MethodNotDefined {{ method: "{method}", other_type: "map" }}"#),
+            "C1b: {source:?} — the method must reach the reducer and be refused at the CARRIER \
+             (divergence G / C4), not rejected at the lowering"
+        );
+    }
+}
+
+/// **Divergence G, sharpened by C1: a routed Pathmap method answers through the `EMap` encoding.**
+///
+/// Because `lower_pathmap` emits a plain `EMap`, a routed method sees a Map. That splits three
+/// ways, and all three are measured here rather than assumed:
+///
+/// 1. **key-faithful and AGREEING** — `get`/`contains` read the same key/value relation the fold
+///    reads, so both sides answer identically;
+/// 2. **the machine is MORE DEFINED than the fold** — `size`/`keys`/`delete` answer on the machine
+///    where RhoCalc's fold bodies have no `Pathmap` arm and reduce to `error`. Under "the reducer
+///    is normative" the machine is right and the fold is incomplete;
+/// 3. **⚠ the CARRIER of the result differs** — `set`/`union` return a `Pathmap` from the fold and
+///    a `Map` from the machine. The VALUE is the same relation; the type is not, and a `Pathmap`
+///    method applied to that result would then fail. This is the concrete cost of divergence G and
+///    it closes with C4.
+#[tokio::test(flavor = "multi_thread")]
+async fn c1_pathmap_methods_answer_through_the_emap_encoding() {
+    // ① key-faithful: the two sides agree outright.
+    assert_conformant("{| 1 : 10, 2 : 20 |}.get(1)", "10").await;
+    assert_conformant("{| 1 : 10, 2 : 20 |}.contains(1)", "true").await;
+
+    // ② the machine is more defined than the fold.
+    for (source, machine_answer) in [
+        ("{| 1 : 10, 2 : 20 |}.size()", "2"),
+        ("{| 1 : 10, 2 : 20 |}.keys()", "Set(1, 2)"),
+        ("{| 1 : 10, 2 : 20 |}.delete(1)", "{2:20}"),
+    ] {
+        let proc = parse(source);
+        assert_eq!(
+            fold(&proc).expect("the fold converges"),
+            "error",
+            "G: {source:?} — RhoCalc's fold body has no Pathmap arm"
+        );
+        let observed = reduce(&proc).await.expect("the machine reduces");
+        assert_eq!(
+            observed.iter().map(render_as_rhocalc).collect::<Vec<_>>(),
+            vec![machine_answer.to_string()],
+            "G: {source:?} — the machine answers through the EMap encoding"
+        );
+    }
+
+    // ③ ⚠ same value, different CARRIER: `{|…|}` from the fold, `{…}` from the machine.
+    for (source, fold_answer, machine_answer) in [
+        (
+            "{| 1 : 10, 2 : 20 |}.set(3, 30)",
+            "{|1:10, 2:20, 3:30|}",
+            "{1:10, 2:20, 3:30}",
+        ),
+        (
+            "{| 1 : 10, 2 : 20 |}.union({| 3 : 30 |})",
+            "{|1:10, 2:20, 3:30|}",
+            "{1:10, 2:20, 3:30}",
+        ),
+    ] {
+        let proc = parse(source);
+        assert_eq!(fold(&proc).expect("the fold converges"), fold_answer);
+        let observed = reduce(&proc).await.expect("the machine reduces");
+        assert_eq!(
+            observed.iter().map(render_as_rhocalc).collect::<Vec<_>>(),
+            vec![machine_answer.to_string()],
+            "G: {source:?} — the machine cannot return a Pathmap it has no carrier for"
+        );
+    }
+}
+
+/// **`length` on a Map/Set: RhoCalc's fold body is MORE PERMISSIVE than Rholang.**
+///
+/// `fold_proc_length` (`languages/src/rhocalc/runtime.rs:217`) answers for `CastMap` and
+/// `CastSet`; Rholang's `length` (`reduce.rs:7893`) accepts only `EList`/`GString`/`GByteArray`
+/// and spells map/set cardinality `size`. Since the reducer is normative, the fold is the side
+/// that is wrong, and routing makes the machine fail closed rather than inventing an answer.
+#[tokio::test(flavor = "multi_thread")]
+async fn c1_length_on_a_map_is_fold_only() {
+    for (source, fold_answer, other_type) in
+        [("{1 : 10}.length()", "1", "map"), ("Set(1, 2).length()", "2", "set")]
+    {
+        let proc = parse(source);
+        assert_eq!(fold(&proc).expect("the fold converges"), fold_answer);
+        assert_eq!(
+            reduce(&proc).await.expect_err("Rholang spells this `size`"),
+            format!(
+                r#"reduce: inj: MethodNotDefined {{ method: "length", other_type: "{other_type}" }}"#
+            ),
+            "C1: {source:?} — Rholang has no `length` for this carrier"
+        );
+    }
+}
+
+/// **The C1 residue: methods with NO key in `reduce.rs::method_table`, fail-closed and NAMED.**
+///
+/// There is nothing to route these to — routing would have to *invent* an implementation, which is
+/// the one thing option C exists to prevent. `values`/`count`/`remove`/`subtract` have no key at
+/// all; `restrict`/`meet`/`getSubtrieAt` have plausible but UNVERIFIED candidates (`restriction`,
+/// `intersection`, `getSubtrie`+`atPath`) which cannot be exercised even once while `Pathmap`
+/// lowers to `EMap`, so shipping the rename would be an untested semantic claim. Each error names
+/// the construct and the stage that closes it.
+#[tokio::test(flavor = "multi_thread")]
+async fn c1_residue_without_an_interpreter_counterpart_fails_closed_and_named() {
+    for (source, expected_error) in [
+        ("{1 : 10}.values()", "unsupported: m.values() map method (no Rholang analog; C3 residue)"),
+        (
+            "#{1 | 2 | 2}#.count(2)",
+            "unsupported: b.count(e) bag method (no Rholang analog; C3 residue)",
+        ),
+        (
+            "#{1 | 2 | 2}#.remove(2)",
+            "unsupported: b.remove(e) bag method (no Rholang analog; C3 residue)",
+        ),
+        (
+            "{| 1 : 10 |}.subtract({| 1 : 10 |})",
+            "unsupported: p.subtract(q) pathmap method (no Rholang analog; C3 residue)",
+        ),
+    ] {
+        let proc = parse(source);
+        assert_eq!(
+            reduce(&proc).await.expect_err("no counterpart exists"),
+            expected_error,
+            "C1: {source:?} — must fail closed, NAMING the construct"
+        );
+    }
+    // The three whose candidate mapping is unverifiable until C4 makes it measurable.
+    for (source, candidate) in [
+        ("{| 1 : 10 |}.restrict({| 1 : 10 |})", "restriction"),
+        ("{| 1 : 10 |}.meet({| 1 : 10 |})", "intersection"),
+        ("{| 1 : 10 |}.getSubtrieAt(1)", "no single-method analog"),
+    ] {
+        let proc = parse(source);
+        let error = reduce(&proc).await.expect_err("no verified counterpart exists");
+        assert!(
+            error.contains(candidate) && error.contains("until C4"),
+            "C1: {source:?} — the error must name the candidate and the stage, got {error:?}"
+        );
+    }
+}
+
+/// **★ C1, LANDED — every routed collection method is evaluated by the reducer's own method
+/// table, and agrees with the fold body it now shares the surface with.**
+///
+/// Each row is a DIFFERENTIAL: the same parsed `Proc` is folded by MeTTaIL's Dovetail saturation
+/// and lowered to the real reducer, and the two observable values must match. Both paths still
+/// exist — C1 routed the LOWERING; it did not delete the `![{…}]` fold bodies (that is C1's
+/// sequel, and it needs C3/C4 first, since some fold bodies are the only implementation of an
+/// operation Rholang cannot perform). So this suite is exactly the instrument that proves the two
+/// implementations agree wherever both are defined.
+///
+/// `assert_conformant` compares the RhoCalc-rendered values, so a row passing here also pins the
+/// **canonical order** question: a set/map result flowing back from the reducer has been through
+/// `ScoredTerm` sorting (`models/src/rust/sorted_par_hash_set.rs`), and `Set(1, 2).union(Set(3))`
+/// rendering as `Set(1, 2, 3)` on both sides is the evidence that the two orders coincide for
+/// these values — see `c1_routed_results_carry_the_reducer_canonical_order` for the case built to
+/// separate them.
+#[tokio::test(flavor = "multi_thread")]
 async fn c1_target_collection_methods_route_to_the_reducer() {
+    // list / string — `length`, `nth`, and `concat`
     assert_conformant("[1, 2, 3].length()", "3").await;
+    assert_conformant("[10, 20, 30].nth(1)", "20").await;
     assert_conformant("[1, 2, 3].concat([4])", "[1, 2, 3, 4]").await;
     assert_conformant(r#""abc".length()"#, "3").await;
     assert_conformant(r#""con".concat("cat")"#, r#""concat""#).await;
+    // set
     assert_conformant("Set(1, 2).add(3)", "Set(1, 2, 3)").await;
     assert_conformant("Set(1, 2).contains(1)", "true").await;
     assert_conformant("Set(1, 2).size()", "2").await;
     assert_conformant("Set(1, 2).union(Set(3))", "Set(1, 2, 3)").await;
     assert_conformant("Set(1, 2).delete(1)", "Set(2)").await;
+    assert_conformant("Set(1, 2).diff(Set(1))", "Set(2)").await;
+    // map
     assert_conformant("{1 : 10}.get(1)", "10").await;
     assert_conformant("{1 : 10}.set(2, 20)", "{1:10, 2:20}").await;
     assert_conformant("{1 : 10}.contains(1)", "true").await;
     assert_conformant("{1 : 10}.size()", "1").await;
     assert_conformant("{1 : 10}.keys()", "Set(1)").await;
+    assert_conformant("{1 : 10}.delete(1)", "{}").await;
     assert_conformant("{1 : 10}.union({2 : 20})", "{1:10, 2:20}").await;
     // `.values()` is NOT here: `reduce.rs::method_table` has `keys` but no `values`, so it is
     // MeTTaIL-only residue and belongs to C3 — see
     // `c3_residue_mettail_only_operations_fail_closed_and_named`.
+}
+
+/// **The whole point of routing: a COMM-BOUND receiver works exactly like a literal one.**
+///
+/// This is the capability the demo's value-level filtering needs, and it is the class of bug
+/// divergence B is an instance of. It is possible only because `EMethod` dispatches on the
+/// *evaluated* receiver — a host-side fold body cannot see through a rendezvous at all.
+///
+/// The payloads are DELIBERATELY DISTINCTIVE (`424242`, not `3`): the observation is compared as
+/// a whole rendered value, but a bare `3` would also appear inside the program text and inside
+/// unrelated sends, so a distinctive payload is what makes a green run mean something.
+#[tokio::test(flavor = "multi_thread")]
+async fn c1_routed_methods_see_through_a_comm() {
+    for (program, expected) in [
+        (
+            r#"@("c")!([424242, 7, 7]) | for (@x <- @("c")) { @("OUT")!(x.length()) }"#,
+            "3",
+        ),
+        (
+            r#"@("c")!([424242, 7, 7]) | for (@x <- @("c")) { @("OUT")!(x.nth(0)) }"#,
+            "424242",
+        ),
+        (
+            r#"@("c")!({424242 : 99}) | for (@x <- @("c")) { @("OUT")!(x.get(424242)) }"#,
+            "99",
+        ),
+        (
+            r#"@("c")!(Set(424242)) | for (@x <- @("c")) { @("OUT")!(x.contains(424242)) }"#,
+            "true",
+        ),
+    ] {
+        let proc = parse(program);
+        let observed = reduce_program(&proc).await.expect("the machine reduces");
+        assert_eq!(
+            observed.iter().map(render_as_rhocalc).collect::<Vec<_>>(),
+            vec![expected.to_string()],
+            "C1: {program:?} — a COMM-bound receiver must dispatch exactly like a literal one"
+        );
+    }
+}
+
+/// **★ Divergence L (NEW, discovered by C1's ordering check 2026-07-26) — RhoCalc sorts a
+/// `Set`/`Map` LEXICOGRAPHICALLY by rendered element; Rholang sorts by `ScoredTerm` VALUE.**
+///
+/// The two orders coincide on every fixture the suite had before today, which is why this survived
+/// unmeasured: they differ only when the rendered forms compare differently from the values, and
+/// the smallest such case is **integers of unequal digit count**. `"10" < "2"` as text, `2 < 10`
+/// as numbers.
+///
+/// ⚠ **This is NOT caused by C1, and the first row proves it.** `Set(10, 2)` is a bare literal
+/// with no method call anywhere in it — nothing C1 touched can be involved — and it already
+/// renders differently on the two sides. The divergence lives in the collection LITERAL: RhoCalc's
+/// own `Set`/`Map` carrier orders its elements one way and `lower_set`/`lower_map` hand the
+/// reducer a collection it then sorts its own way (`models/src/rust/sorted_par_hash_set.rs`).
+///
+/// What C1 owes here is therefore *consistency, not agreement*: a routed method must return its
+/// result in the SAME order the literal already lands in, so routing introduces no NEW ordering
+/// behaviour. That is what the second half asserts.
+///
+/// The reducer is normative, so `Set(2, 10)` is the right answer and RhoCalc's rendering is the
+/// side that is wrong.
+///
+/// ⚠ A negative literal would be the sharper discriminator — it is where protobuf BYTE order and
+/// `ScoredTerm` VALUE order part company, and what made divergence E real for `.toByteArray()`.
+/// It is NOT usable here: `Set(3, 1, 2).union(Set(-5))` folds to `Set(-@Nil!(5), 1, 2, 3)`,
+/// because a sign-abutted numeric literal is a known LEXER divergence (commit `41f74955`), not a
+/// lowering one. Using it would test the lexer, not the ordering.
+#[tokio::test(flavor = "multi_thread")]
+async fn divergence_l_witness_collection_order_is_lexicographic_in_the_fold() {
+    // ① The LITERAL already diverges — no method involved, so this predates C1 entirely.
+    for (source, fold_order, machine_order) in [
+        ("Set(10, 2)", "Set(10, 2)", "Set(2, 10)"),
+        // Insertion order is irrelevant on both sides: both SORT, they just sort differently.
+        ("Set(2, 10)", "Set(10, 2)", "Set(2, 10)"),
+        ("{10 : 1, 2 : 1}", "{10:1, 2:1}", "{2:1, 10:1}"),
+    ] {
+        let proc = parse(source);
+        assert_eq!(
+            fold(&proc).expect("the fold converges"),
+            fold_order,
+            "L: {source:?} — RhoCalc orders by the RENDERED element"
+        );
+        let observed = reduce(&proc).await.expect("the literal lowers");
+        assert_eq!(
+            observed.iter().map(render_as_rhocalc).collect::<Vec<_>>(),
+            vec![machine_order.to_string()],
+            "L: {source:?} — the reducer orders by ScoredTerm VALUE"
+        );
+    }
+
+    // ② A ROUTED method's result lands in the reducer's order — the SAME order the literal lands
+    //    in above. C1 adds no ordering behaviour of its own; it inherits the carrier's.
+    for (source, machine_order) in [
+        ("Set(10, 2).union(Set(3))", "Set(2, 3, 10)"),
+        ("Set(10, 2).add(3)", "Set(2, 3, 10)"),
+        ("{10 : 1, 2 : 1}.set(3, 1)", "{2:1, 3:1, 10:1}"),
+        ("{10 : 1, 2 : 1}.keys()", "Set(2, 10)"),
+    ] {
+        let observed = reduce(&parse(source)).await.expect("the routed method reduces");
+        assert_eq!(
+            observed.iter().map(render_as_rhocalc).collect::<Vec<_>>(),
+            vec![machine_order.to_string()],
+            "L: {source:?} — a routed result carries the reducer's canonical order"
+        );
+    }
+
+    // ③ Where the two orders COINCIDE, the routed method and the fold agree outright — so the
+    //    divergence really is about ordering and not about the values themselves.
+    assert_conformant("Set(3, 2, 1).add(4)", "Set(1, 2, 3, 4)").await;
+    assert_conformant(r#"Set("b", "a").add("c")"#, r#"Set("a", "b", "c")"#).await;
+    // A List is ordered, not sorted, so it is order-stable on both sides by construction.
+    assert_conformant("[10, 2].concat([3])", "[10, 2, 3]").await;
 }
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
@@ -1882,4 +2270,345 @@ async fn formula_level_disjunction_agrees_where_the_guard_level_or_diverges() {
         "divergence K: the MACHINE fires the guard-level twin, which is what makes the host's \
          decline a divergence rather than a shared abstention"
     );
+}
+
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// PART 6 — ★ the zipper-exhaustion CROSS-ENDPOINT CONTRACT
+//
+// The two runtimes report an exhausted `toNextLeaf()` walk DIFFERENTLY, on purpose:
+//
+//   | runtime                          | exhausted `toNextLeaf`          |
+//   |----------------------------------|---------------------------------|
+//   | the Rholang interpreter (f1r3node) | `Ok(Par::default())` = **Nil**  |
+//   | mettail / RhoCalc                | `Err(())` = **stuck**           |
+//
+// Mistranslating this does not raise an error — it LOOPS FOREVER. `pathmap`'s `to_next_val()`
+// RESETS the zipper to the root when the walk finishes (`pathmap/src/zipper.rs:546`), so the
+// position handed back on exhaustion is a perfectly valid ROOT zipper. Anything that surfaced it
+// as a usable `ReadZipper` would silently restart the counted walk from the first leaf and never
+// terminate, with nothing anywhere reporting a fault.
+//
+// The contract is pinned on both sides by tests that name each other:
+//   * f1r3node: `rholang/tests/zipper_enumeration_spec.rs::to_next_leaf_returns_nil_when_exhausted`
+//   * mettail:  `languages/src/rhocalc/zipper.rs::exhausted_walk_is_stuck_here_and_nil_on_the_reducer`
+//     (and the surface-level `languages/tests/rhocalc_tests.rs::zipper_leaf_walk_exhaustion_stays_stuck`)
+//
+// This section is C1's half: it proves the property END-TO-END against the REAL reducer, over the
+// exact `EMethod` chain the C1b lowering emits, and BOUNDED so a violation FAILS instead of
+// hanging the suite.
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+
+use models::rhoapi::expr::ExprInstance as ZExprInstance;
+use models::rhoapi::{EEq as ZEEq, EList as ZEList, EMethod as ZEMethod, EPathMap as ZEPathMap};
+use models::rhoapi::Expr as ZExpr;
+
+fn zipper_expr_par(instance: ZExprInstance) -> Par {
+    Par::default().with_exprs(vec![ZExpr { expr_instance: Some(instance) }])
+}
+
+/// A ground `EPathMap` over the given elements. In Rholang a PathMap element is BOTH the key and
+/// the value it stores, which is why `getLeaf()` at a leaf returns the same list `getPath()` does.
+///
+/// ★ This is the C4 STAND-IN. RhoCalc source cannot produce an `EPathmapBody` today — a `Pathmap`
+/// literal lowers to `EMap` (divergence G), which is exactly what
+/// [`c1b_pathmap_zipper_family_is_c4_blocked_at_the_carrier`] measures. Building the carrier here
+/// exercises the routed method names against the real reducer NOW, so that when C4 lands the
+/// contract is already proved rather than discovered.
+fn zipper_epathmap(elements: Vec<Par>) -> Par {
+    zipper_expr_par(ZExprInstance::EPathmapBody(ZEPathMap::new(
+        elements,
+        Vec::new(),
+        false,
+        None,
+    )))
+}
+
+fn zipper_gstring(text: &str) -> Par {
+    zipper_expr_par(ZExprInstance::GString(text.to_string()))
+}
+
+fn zipper_elist(items: Vec<Par>) -> Par {
+    zipper_expr_par(ZExprInstance::EListBody(ZEList {
+        ps: items,
+        locally_free: Vec::new(),
+        connective_used: false,
+        remainder: None,
+    }))
+}
+
+/// `target.name(arguments)` as the reducer sees it — byte-identical in shape to what
+/// `rhocalc_ast.rs::lower_method` emits for the routed zipper family.
+fn zipper_method(name: &str, target: Par, arguments: Vec<Par>) -> Par {
+    zipper_expr_par(ZExprInstance::EMethodBody(ZEMethod {
+        method_name: name.to_string(),
+        target: Some(target),
+        arguments,
+        locally_free: Vec::new(),
+        connective_used: false,
+    }))
+}
+
+/// Evaluate a hand-built EXPRESSION on the real reducer by grafting it into the payload slot of a
+/// lowered `@("OUT")!(Nil)`, so the send/observe scaffolding is mettail's production one and only
+/// the expression under test is synthetic.
+async fn reduce_expression(expression: Par) -> Result<Vec<RuntimeObservationValue>, String> {
+    clear_held_fold_sites();
+    let scaffold = parse(r#"@("OUT")!(Nil)"#);
+    let mut par = lower_rhocalc_proc(&scaffold).expect("the @(\"OUT\")!(Nil) scaffold lowers");
+    assert_eq!(par.sends.len(), 1, "the scaffold must lower to exactly one send");
+    par.sends[0].data = vec![expression];
+    let definitions =
+        fold_definitions_for(&take_held_fold_sites()).expect("the scaffold records no fold sites");
+    run_installed_program_with_call_definitions_and_read_runtime_values(
+        &Par::default(),
+        &par,
+        definitions,
+        "OUT",
+    )
+    .await
+    .map_err(|err| format!("reduce: {err}"))
+}
+
+/// Four entries. Byte-lex order over the first segment is `"a" < "b" < "c"`, so the depth-first
+/// LEAF order is `["a","x"]`, `["a","y"]`, `["b"]`, `["c","z"]` — the same fixture, and the same
+/// documented order, as the f1r3node twin spec's `MAP`.
+fn four_leaf_pathmap() -> Par {
+    zipper_epathmap(vec![
+        zipper_elist(vec![zipper_gstring("a"), zipper_gstring("x")]),
+        zipper_elist(vec![zipper_gstring("a"), zipper_gstring("y")]),
+        zipper_elist(vec![zipper_gstring("b")]),
+        zipper_elist(vec![zipper_gstring("c"), zipper_gstring("z")]),
+    ])
+}
+
+/// `m.readZipper()` followed by `steps` × `.toNextLeaf()`.
+fn leaf_walk(steps: usize) -> Par {
+    let mut zipper = zipper_method("readZipper", four_leaf_pathmap(), Vec::new());
+    for _ in 0..steps {
+        zipper = zipper_method("toNextLeaf", zipper, Vec::new());
+    }
+    zipper
+}
+
+/// `walk == Nil` — the reducer's own exhaustion test, as a `GBool`.
+fn walk_is_nil(steps: usize) -> Par {
+    zipper_expr_par(ZExprInstance::EEqBody(ZEEq {
+        p1: Some(leaf_walk(steps)),
+        p2: Some(Par::default()),
+    }))
+}
+
+/// **★ THE EXHAUSTION TEETH-TEST — the walk terminates within `leafCount()` + 1 steps.**
+///
+/// This is the test that would loop forever if the translation were wrong, made BOUNDED so that it
+/// fails instead. It searches for the first step at which the walk becomes `Nil`, scanning only as
+/// far as `leafCount() + 1`. If exhaustion were surfaced as a usable zipper, `to_next_val`'s
+/// reset-to-root would make the walk restart, no step in range would ever be `Nil`, the search
+/// would run off the end, and the assertion below FAILS — loudly, in bounded time.
+///
+/// The `Nil` must land at exactly `leafCount() + 1`: `leafCount()` steps to visit the four leaves,
+/// and one more to fall off the end.
+#[tokio::test(flavor = "multi_thread")]
+async fn c1_zipper_walk_exhaustion_terminates_within_leaf_count() {
+    // The DECIDABLE BOUND. A stuck term is not an end-test, which is precisely why `leafCount()`
+    // exists and why it — not a "did it fail?" probe — is what terminates a counted walk.
+    let counted = reduce_expression(zipper_method("leafCount", leaf_walk(0), Vec::new()))
+        .await
+        .expect("leafCount() at the root reduces");
+    assert_eq!(
+        counted.iter().map(render_as_rhocalc).collect::<Vec<_>>(),
+        vec!["4".to_string()],
+        "leafCount() at the root is the map's cardinality"
+    );
+    let leaf_count = 4usize;
+
+    // Bounded search for the first exhausted step. `+ 1` is the whole budget: one step per leaf,
+    // plus the step that falls off the end.
+    let mut first_nil_at = None;
+    for steps in 1..=(leaf_count + 1) {
+        let observed = reduce_expression(walk_is_nil(steps))
+            .await
+            .expect("`walk == Nil` reduces to a Bool at every step in range");
+        let rendered = observed.iter().map(render_as_rhocalc).collect::<Vec<_>>();
+        assert_eq!(rendered.len(), 1, "step {steps}: expected exactly one Bool observation");
+        match rendered[0].as_str() {
+            "true" => {
+                first_nil_at = Some(steps);
+                break;
+            },
+            "false" => continue,
+            other => panic!("step {steps}: `walk == Nil` must be a Bool, got {other:?}"),
+        }
+    }
+
+    assert_eq!(
+        first_nil_at,
+        Some(leaf_count + 1),
+        "★ EXHAUSTION CONTRACT VIOLATED. The walk must become Nil at exactly leafCount()+1 = {}. \
+         `None` here means it never exhausted within the bound — i.e. the walk RESTARTED, which is \
+         the infinite loop this test exists to catch (`to_next_val` resets to the root on \
+         exhaustion). A smaller value means the walk ended early and entries were skipped.",
+        leaf_count + 1
+    );
+}
+
+/// **The walk visits every entry exactly once, in depth-first order, and BOTH accessors answer.**
+///
+/// The counterpart to the bound: it is not enough that the walk stops: it must stop having seen
+/// everything, exactly once, in the documented order. `getPath()` answering at every stop is what
+/// makes a separate "is there a value here?" predicate unnecessary.
+#[tokio::test(flavor = "multi_thread")]
+async fn c1_zipper_counted_walk_visits_every_leaf_once_in_order() {
+    for (steps, expected_path) in [
+        (1usize, r#"["a", "x"]"#),
+        (2, r#"["a", "y"]"#),
+        (3, r#"["b"]"#),
+        (4, r#"["c", "z"]"#),
+    ] {
+        let observed = reduce_expression(zipper_method("getPath", leaf_walk(steps), Vec::new()))
+            .await
+            .unwrap_or_else(|err| panic!("getPath() after {steps} steps must reduce: {err}"));
+        assert_eq!(
+            observed.iter().map(render_as_rhocalc).collect::<Vec<_>>(),
+            vec![expected_path.to_string()],
+            "step {steps}: the depth-first leaf order is a documented part of the contract"
+        );
+    }
+}
+
+/// **★ A walk CANNOT continue on the exhausted `Nil` — the second half of the translation.**
+///
+/// "Never surface `Nil` as a usable `ReadZipper`; never let a walk continue on it." On this side
+/// the guarantee is structural rather than defensive, and that is stronger than a check: `Nil` is
+/// `Par::default()`, which carries no `EZipperBody`, so the reducer's own zipper methods cannot
+/// accept it. Stepping past exhaustion is a hard error, NOT a silent restart from the first leaf.
+///
+/// Both probes below are one step beyond where [`c1_zipper_walk_exhaustion_terminates_within_leaf_count`]
+/// found the `Nil`.
+#[tokio::test(flavor = "multi_thread")]
+async fn c1_zipper_walk_cannot_continue_past_exhaustion() {
+    let leaf_count = 4usize;
+
+    // `toNextLeaf()` ON the exhausted Nil.
+    let stepped = reduce_expression(leaf_walk(leaf_count + 2)).await;
+    assert!(
+        stepped.is_err(),
+        "★ stepping past exhaustion must FAIL. Getting a value here means the walk restarted from \
+         the root — the infinite loop. Got {stepped:?}"
+    );
+
+    // `getPath()` ON the exhausted Nil — the accessor a walk body would call.
+    let path = reduce_expression(zipper_method("getPath", leaf_walk(leaf_count + 1), Vec::new()))
+        .await;
+    assert!(
+        path.is_err(),
+        "★ reading a path out of the exhausted Nil must FAIL, not answer the first leaf. Got {path:?}"
+    );
+}
+
+/// **The RhoCalc side of the same fixture still reports exhaustion as STUCK — the two conventions,
+/// measured side by side.**
+///
+/// The fold path is unchanged by C1, and this pins that the mismatch documented in
+/// `languages/src/rhocalc/zipper.rs` is still exactly what it says it is: where the reducer
+/// answers `Nil`, RhoCalc's `.toNextLeaf()` leaves the term unreduced. A stuck term still DISPLAYS
+/// the method call, which is how "stuck" is observed here.
+#[tokio::test(flavor = "multi_thread")]
+async fn c1_rhocalc_side_still_reports_exhaustion_as_stuck() {
+    // Two entries, so the third step is one past the end.
+    let source = "{| 1 : 10, 2 : 20 |}.readZipper().toNextLeaf().toNextLeaf().toNextLeaf()";
+    let residue = fold(&parse(source)).expect("the fold converges");
+    assert!(
+        residue.contains("toNextLeaf"),
+        "the exhausted RhoCalc walk must stay STUCK (the call survives in the normal form), which \
+         is the convention the reducer's Nil has to be translated FROM. Got {residue:?}"
+    );
+}
+
+
+/// **★ Every routed zipper/pathmap method is exercised against a REAL `EPathMap` — the check that
+/// caught `setLeaf`.**
+///
+/// A shared method NAME is not a shared operation, and this family is the one place where that
+/// cannot be checked by the ordinary conformance rows: `Pathmap` lowers to `EMap`, so none of these
+/// calls can reach their carrier from RhoCalc source until C4
+/// ([`c1b_pathmap_zipper_family_is_c4_blocked_at_the_carrier`]). Without this test the entire
+/// family would be routed on the strength of name matching alone.
+///
+/// It already earned its keep. `setLeaf` is **not** in the list below because this check found that
+/// RhoCalc's `w.setLeaf(full, v)` writes at an ABSOLUTE PATH ARGUMENT while Rholang's
+/// `z.setLeaf(v)` writes at the zipper's FOCUS and takes one argument — the same name, a different
+/// operation, and an arity mismatch that would otherwise have shipped as a latent bug. It is left
+/// fail-closed and named in `rhocalc_ast.rs::unsupported_construct_name`.
+///
+/// Each row uses EXACTLY the arity `lower_proc` emits, so a future edit that changes an argument
+/// list fails here rather than in someone's program. Rows that answer an observable value assert
+/// it; rows whose result is a zipper or pathmap have no `RuntimeObservationValue` variant and are
+/// asserted only to REDUCE (an arity or carrier fault is an `Err`, never an empty `Ok`).
+#[tokio::test(flavor = "multi_thread")]
+async fn c1b_routed_zipper_family_matches_the_interpreter_arity() {
+    let pathmap = four_leaf_pathmap;
+    let read_zipper = || zipper_method("readZipper", pathmap(), Vec::new());
+    let write_zipper = || zipper_method("writeZipper", pathmap(), Vec::new());
+    let segment = || zipper_elist(vec![zipper_gstring("b")]);
+    let one = || zipper_expr_par(ZExprInstance::GInt(1));
+
+    // ① Rows with an OBSERVABLE answer — arity *and* meaning are pinned.
+    for (label, call, expected) in [
+        ("leafCount/0", zipper_method("leafCount", read_zipper(), vec![]), "4"),
+        // The root's children are the distinct first segments "a", "b", "c".
+        ("childCount/0", zipper_method("childCount", read_zipper(), vec![]), "3"),
+        // Leaf 3 of the documented depth-first order is `["b"]`, and a PathMap element is both key
+        // and value, so `getLeaf` answers the same list `getPath` does.
+        ("getLeaf/0", zipper_method("getLeaf", leaf_walk(3), vec![]), r#"["b"]"#),
+        ("getPath/0", zipper_method("getPath", leaf_walk(1), vec![]), r#"["a", "x"]"#),
+    ] {
+        let observed = reduce_expression(call)
+            .await
+            .unwrap_or_else(|err| panic!("C1b {label}: must reduce, got {err}"));
+        assert_eq!(
+            observed.iter().map(render_as_rhocalc).collect::<Vec<_>>(),
+            vec![expected.to_string()],
+            "C1b {label}: the routed name/arity must reach the interpreter's own implementation"
+        );
+    }
+
+    // ② Rows whose result is a zipper or a pathmap — no observation variant exists for either, so
+    //    the assertion is that the call REDUCES. An arity fault
+    //    (`MethodArgumentNumberMismatch`) or a carrier fault (`MethodNotDefined`) is an `Err`.
+    for (label, call) in [
+        ("getSubtrie/0(pathmap)", zipper_method("getSubtrie", pathmap(), vec![])),
+        ("getSubtrie/0(zipper)", zipper_method("getSubtrie", read_zipper(), vec![])),
+        ("readZipper/0", zipper_method("readZipper", pathmap(), vec![])),
+        ("readZipperAt/1", zipper_method("readZipperAt", pathmap(), vec![segment()])),
+        ("writeZipper/0", zipper_method("writeZipper", pathmap(), vec![])),
+        ("writeZipperAt/1", zipper_method("writeZipperAt", pathmap(), vec![segment()])),
+        ("descendTo/1", zipper_method("descendTo", read_zipper(), vec![segment()])),
+        ("descendFirst/0", zipper_method("descendFirst", read_zipper(), vec![])),
+        (
+            "descendIndexedBranch/1",
+            zipper_method("descendIndexedBranch", read_zipper(), vec![one()]),
+        ),
+        ("ascendOne/0", zipper_method("ascendOne", leaf_walk(3), vec![])),
+        ("ascend/1", zipper_method("ascend", leaf_walk(3), vec![one()])),
+        ("toNextLeaf/0", zipper_method("toNextLeaf", read_zipper(), vec![])),
+        ("setSubtrie/1", zipper_method("setSubtrie", write_zipper(), vec![pathmap()])),
+        ("removeLeaf/0", zipper_method("removeLeaf", write_zipper(), vec![])),
+        ("removeBranches/0", zipper_method("removeBranches", write_zipper(), vec![])),
+        ("graft/1", zipper_method("graft", write_zipper(), vec![read_zipper()])),
+        ("joinInto/1", zipper_method("joinInto", write_zipper(), vec![read_zipper()])),
+        // At the ROOT there is no sibling to move to; both are routed at arity 0 and answer
+        // fail-soft rather than erroring. Recorded because that is the interpreter's choice, not
+        // this lowering's, and it differs from `toNextLeaf`'s `Nil`.
+        ("toNextSibling/0", zipper_method("toNextSibling", read_zipper(), vec![])),
+        ("toPrevSibling/0", zipper_method("toPrevSibling", read_zipper(), vec![])),
+    ] {
+        let result = reduce_expression(call).await;
+        assert!(
+            result.is_ok(),
+            "C1b {label}: the routed name/arity must be accepted by the interpreter. An \
+             `ArgumentNumberMismatch` here means `lower_proc` emits the wrong argument list; a \
+             `MethodNotDefined` means the name is not this operation's name. Got {result:?}"
+        );
+    }
 }

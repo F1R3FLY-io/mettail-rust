@@ -117,7 +117,16 @@ const BEAT_5_DIVIDES: &str =
     r#"exec { for(@q <- @("qty") where 100u32 / q >= 1u32){@("OUT")!(q)} | @("qty")!(4u32) }"#;
 const BEAT_6_STEP_FIRES: &str = r#"step { desk | @("offer")!(42u32) }"#;
 const BEAT_6_STEP_VETOED: &str = r#"step { desk | @("offer")!(55u32) }"#;
-const BEAT_7_LIST_METHOD: &str = "exec [1, 2].length()";
+// ★ CHANGED by C1 (2026-07-26). This beat used to be:
+//
+//     const BEAT_7_LIST_METHOD: &str = "exec [1, 2].length()";
+//
+// `.length()` is no longer a valid subject for "the machine cannot run this": C1 routes it to the
+// reducer's own `length` method, so it now ANSWERS `2`. The beat needs a construct that is still
+// genuinely unroutable, and `.values()` is the closest one — the same shape (a collection method
+// on a literal), but `reduce.rs::method_table` has `keys` and no `values`, so there is nothing to
+// route it TO. It is C3 residue, and the typed refusal now names that.
+const BEAT_7_MAP_VALUES: &str = "exec {1 : 10}.values()";
 const CAMEO_A_LANG: &str = "lang lambda";
 const CAMEO_A_STEP: &str = "step --taus (lam x. x, lam a. lam b. a)";
 const CAMEO_B_LANG: &str = "lang calculator";
@@ -155,7 +164,7 @@ fn driven_commands() -> Vec<String> {
             BEAT_5_DIVIDES,
             BEAT_6_STEP_FIRES,
             BEAT_6_STEP_VETOED,
-            BEAT_7_LIST_METHOD,
+            BEAT_7_MAP_VALUES,
             CAMEO_A_LANG,
             CAMEO_A_STEP,
             CAMEO_B_LANG,
@@ -632,13 +641,16 @@ fn beat_6_a_vetoed_guard_produces_no_committed_comm_at_all() {
 /// silent host-side fold.
 #[test]
 fn beat_7_a_construct_the_machine_cannot_run_is_a_typed_refusal() {
-    let transcript = run_repl(&[BEAT_7_LIST_METHOD]);
+    let transcript = run_repl(&[BEAT_7_MAP_VALUES]);
     assert_shows(
         &transcript,
         "could not be lowered to the Rho machine (A-S4 fail-closed lowering; \
          no host fold-normalization fallback)",
     );
-    assert_shows(&transcript, r#"UnsupportedProc("l.length() list method")"#);
+    assert_shows(
+        &transcript,
+        r#"UnsupportedProc("m.values() map method (no Rholang analog; C3 residue)")"#,
+    );
     assert_absent(&transcript, "OUT: [");
 }
 

@@ -335,7 +335,7 @@ deterministic seed); guard evaluation emitted no COMM.
 ## Beat 7 — The universal mandate, fail-closed (1 min)
 
 ```
-RhoCalc> exec [1, 2].length()
+RhoCalc> exec {1 : 10}.values()
 ```
 
 Expected — a typed error naming the construct, verbatim:
@@ -343,9 +343,17 @@ Expected — a typed error naming the construct, verbatim:
 ```
 Error: RhoMachine backend for language RhoCalc could not build an AST invocation from the
 checked Dovetail report: RhoCalc term could not be lowered to the Rho machine (A-S4
-fail-closed lowering; no host fold-normalization fallback): UnsupportedProc("l.length() list
-method")
+fail-closed lowering; no host fold-normalization fallback): UnsupportedProc("m.values() map
+method (no Rholang analog; C3 residue)")
 ```
+
+> **⚠ Changed 2026-07-26 (C1).** This beat used to run `exec [1, 2].length()`. That is no longer
+> a refusal: **C1** routes the collection methods to the Rholang interpreter's own method table,
+> so `[1, 2].length()` now answers `2` **on the reducer** — which is the mandate working, not
+> failing. The beat needs an operation the machine genuinely cannot perform, and `.values()` is
+> the nearest one: `reduce.rs::method_table` provides `keys` but not `values`, so there is nothing
+> to route it to. If you want to show BOTH halves, run `exec [1, 2].length()` first (it answers
+> `OUT: [2]`) and then `exec {1 : 10}.values()` — the contrast is the point of the beat.
 
 (One line on the terminal; wrapped here. It is printed on stderr, so a piped recording shows it
 interleaved with the trailing `Running RhoMachine backend...` from stdout — harmless.)
