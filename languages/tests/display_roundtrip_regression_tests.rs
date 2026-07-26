@@ -17,6 +17,8 @@ mod class2multi;
 mod class3multi;
 #[path = "definitions/class3opt.rs"]
 mod class3opt;
+#[path = "definitions/led_test.rs"]
+mod ledtest;
 
 macro_rules! assert_wpda_display_roundtrip {
     ($ty:ty, $term:expr) => {{
@@ -127,10 +129,9 @@ fn guardedrho_parallel_and_quote_display_roundtrip() {
     assert_wpda_display_roundtrip!(Name, Name::NQuote(Arc::new(var)));
 }
 
-#[cfg(feature = "led-test")]
 #[test]
 fn ledtest_unary_and_cross_category_display_roundtrips() {
-    use mettail_languages::ledtest::{Expr, Num, Pred};
+    use crate::ledtest::{Expr, Num, Pred};
     use std::sync::Arc;
 
     assert_wpda_display_roundtrip!(Num, Num::NegNum(Arc::new(Num::NumLit(1_296_911_694))));

@@ -40,6 +40,15 @@
 //! tuple changes and the test fails loudly — it must be re-derived from the code,
 //! never relaxed.
 
+// Task #11 (extended 2026-07-26): the FIXTURE grammars whose golden tier tuples are pinned
+// here are not production languages, so their definitions live in
+// `languages/tests/definitions/` and are `#[path]`-included rather than named through
+// `mettail_languages::<lang>`. This binary is a CONSUMER of each: it deliberately does NOT
+// invoke any `<lang>_generated_tests!` wrapper, because each definition's DESIGNATED HOST
+// binary is the sole invoker, so the generated suites stay single-instanced.
+#[path = "definitions/led_test.rs"]
+mod ledtest;
+
 use mettail_runtime::{Language, LanguageMetadata};
 use mettail_testkit::analytical::guards::check_guard_decidability;
 
@@ -225,7 +234,7 @@ fn guardedrho_guard_tiers() {
 /// worst = T2.
 #[test]
 fn ledtest_guard_tiers() {
-    let meta = mettail_languages::ledtest::LedTestLanguage.metadata();
+    let meta = crate::ledtest::LedTestLanguage.metadata();
     assert_tier_tuple(meta, 54, 18, 36, 0, 0, T2);
 }
 

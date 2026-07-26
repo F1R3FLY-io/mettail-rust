@@ -19,7 +19,15 @@
 
 #![allow(clippy::bool_assert_comparison)]
 
-use mettail_languages::fortran_model::*;
+// Task #11 (extended 2026-07-26): `FortranModel` is a keyword-reservation OPT-OUT FIXTURE whose definition lives in
+// `languages/tests/definitions/fortran_model.rs`, not in the `languages` library, so it is
+// `#[path]`-included here. This binary is a CONSUMER, not a wrapper host
+// (no host exists — `emit_tests: false`, so no wrapper is emitted is), so it deliberately does NOT invoke the
+// `fortran_model_generated_tests!` wrapper — the generated suite stays single-instanced.
+#[path = "definitions/fortran_model.rs"]
+mod fortran_model;
+
+use fortran_model::*;
 
 /// The readings of `@<chan>!(x)` as a `Stmt`.
 fn send_readings(chan: &str) -> Vec<Stmt> {

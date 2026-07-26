@@ -29,8 +29,11 @@ pub mod ambnewdemo;
 pub mod inoutdemo;
 #[cfg(feature = "ambient")]
 pub mod ambient;
-#[cfg(feature = "appsubst")]
-pub mod appsubst;
+// Task #11 (extended 2026-07-26): `AppSubst` is a binder-calculus FIXTURE (the generality
+// gate for macro-codegen extension E1), not a production language, so it moved to
+// `languages/tests/definitions/appsubst.rs`. `languages/src/` is production-only.
+// #[cfg(feature = "appsubst")]
+// pub mod appsubst;
 #[cfg(feature = "calculator")]
 pub mod calculator;
 // Task #11 (extended 2026-07-26): the Class-2 / Class-3 collection FIXTURE grammars are
@@ -71,25 +74,34 @@ pub mod nativedemo;
 // #[cfg(feature = "native-fold-demo")]
 // pub mod nativefolddemo;
 // PIECE 3: keyword-reservation OPT-OUT fixture (Fortran-style full ambiguity).
-#[cfg(feature = "fortran_model")]
-pub mod fortran_model;
-// PIECE 3: keyword-reservation ENABLED (`auto`) twin of fortran_model.
+// Task #11 (extended 2026-07-26): a keyword-reservation FIXTURE, not a production language;
+// it moved to `languages/tests/definitions/fortran_model.rs`.
+// #[cfg(feature = "fortran_model")]
+// pub mod fortran_model;
 #[cfg(feature = "guarded-rho")]
 pub mod guarded_rho;
 #[cfg(feature = "lambda")]
 pub mod lambda;
-#[cfg(feature = "led-test")]
-pub mod led_test;
-#[cfg(feature = "guardoptsmoke")]
-pub mod guardoptsmoke;
+// Task #11 (extended 2026-07-26): `LedTest` is the LED-delegation FIXTURE grammar; it moved
+// to `languages/tests/definitions/led_test.rs`.
+// #[cfg(feature = "led-test")]
+// pub mod led_test;
+// Task #11 (extended 2026-07-26): `GuardOptSmoke` is the A-11 site-2 ParsePredicate FIXTURE;
+// it moved to `languages/tests/definitions/guardoptsmoke.rs`.
+// #[cfg(feature = "guardoptsmoke")]
+// pub mod guardoptsmoke;
 // Task #11: `OptSmoke` is a TEST language definition; it moved to
 // `languages/tests/definitions/optsmoke.rs`. `languages/src/` is production-only.
 // #[cfg(feature = "optsmoke")]
 // pub mod optsmoke;
-#[cfg(feature = "refinementsmoke")]
-pub mod refinementsmoke;
-#[cfg(feature = "reserved_model")]
-pub mod reserved_model;
+// Task #11 (extended 2026-07-26): `RefinementSmoke` is the refinement-predicate codegen
+// FIXTURE; it moved to `languages/tests/definitions/refinementsmoke.rs`.
+// #[cfg(feature = "refinementsmoke")]
+// pub mod refinementsmoke;
+// Task #11 (extended 2026-07-26): the keyword-reservation ENABLED (`auto`) twin of
+// `FortranModel`; it moved to `languages/tests/definitions/reserved_model.rs`.
+// #[cfg(feature = "reserved_model")]
+// pub mod reserved_model;
 #[cfg(feature = "rhocalc")]
 pub mod rhocalc;
 #[cfg(feature = "swap-demo")]
@@ -112,8 +124,12 @@ pub use composition::grammar_import_lang as importedmath;
 pub use composition::mixed_lang as mixedmath;
 #[cfg(feature = "guarded-rho")]
 pub use guarded_rho as guardedrho;
-#[cfg(feature = "led-test")]
-pub use led_test as ledtest;
+// Task #11 (extended 2026-07-26): `LedTest` is test-hosted now, so there is no library
+// module to alias. Consumers `#[path]`-include `tests/definitions/led_test.rs` and name the
+// module `ledtest` at the include site (the macro derives the alias from the language NAME,
+// which is what the generated `simulate_ledtest` binary and the wrapper both use).
+// #[cfg(feature = "led-test")]
+// pub use led_test as ledtest;
 
 // Note: Different languages may export types with the same names (e.g., Proc, Term)
 // Users should import from specific modules to avoid ambiguity:

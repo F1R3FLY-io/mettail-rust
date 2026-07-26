@@ -11,9 +11,27 @@
 //! macro emits a crate-coupled `src/bin/simulate_<lang>.rs` for every invocation, so a test-local
 //! invocation would write a bin referencing a nonexistent `mettail_languages::appsubst` module and
 //! break `cargo build -p languages`. See the fixture's module doc.
-#![cfg(all(feature = "appsubst", feature = "dovetail-codegen"))]
+// Task #11 (extended 2026-07-26): the `appsubst` LIBRARY FEATURE is gone (the definition
+// is test-hosted now), so naming it in this gate would make the gate unsatisfiable and
+// SILENTLY delete the whole generality suite. Only the `dovetail-codegen` half remains a
+// real condition; the definition itself is `#[path]`-included unconditionally below.
+#![cfg(feature = "dovetail-codegen")]
 
-use mettail_languages::appsubst::AppSubstLanguage;
+// Task #11 (extended 2026-07-26): `AppSubst` is a binder-calculus FIXTURE (the E1 generality gate), not a production language, so its
+// definition lives in `languages/tests/definitions/appsubst.rs` rather than in the `languages`
+// library (`languages/src/` is production-only).
+//
+// This file is its DESIGNATED HOST: it declares the definition module and is the one and only
+// invoker of the opt-in `appsubst_generated_tests!` wrapper, which materializes the
+// macro-generated sections that used to be written to `languages/tests/gen_appsubst_*.rs`.
+// Other consumers `#[path]`-include the same definition WITHOUT invoking the wrapper, so the
+// generated tests exist exactly once across the whole suite.
+#[path = "definitions/appsubst.rs"]
+mod appsubst;
+
+appsubst::appsubst_generated_tests!(crate::appsubst);
+
+use appsubst::AppSubstLanguage;
 use mettail_runtime::Language;
 
 const MAX_ITERS: usize = 64;

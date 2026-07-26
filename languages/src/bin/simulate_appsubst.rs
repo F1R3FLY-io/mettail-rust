@@ -3,13 +3,15 @@
 // Run with: cargo run --bin simulate_appsubst -- [OPTIONS]
 
 use clap::Parser;
-use mettail_languages::appsubst::strategies::arb_t;
-use mettail_languages::appsubst::AppSubstLanguage;
-use mettail_runtime::Language;
 use mettail_simulation::invariant::{
     AlwaysParseable, BoundedDepth, BoundedSize, NormalFormReachable,
 };
 use mettail_simulation::runner::{SimulationConfig, SimulationRunner, TraceOutputFormat};
+#[path = "../../tests/definitions/appsubst.rs"]
+mod appsubst;
+use appsubst::strategies::arb_t;
+use appsubst::AppSubstLanguage;
+use mettail_runtime::Language;
 use proptest::strategy::Strategy;
 use std::path::PathBuf;
 

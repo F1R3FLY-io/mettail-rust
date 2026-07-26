@@ -3,13 +3,15 @@
 // Run with: cargo run --bin simulate_ledtest -- [OPTIONS]
 
 use clap::Parser;
-use mettail_languages::ledtest::strategies::arb_num;
-use mettail_languages::ledtest::LedTestLanguage;
-use mettail_runtime::Language;
 use mettail_simulation::invariant::{
     AlwaysParseable, BoundedDepth, BoundedSize, NormalFormReachable,
 };
 use mettail_simulation::runner::{SimulationConfig, SimulationRunner, TraceOutputFormat};
+#[path = "../../tests/definitions/led_test.rs"]
+mod ledtest;
+use ledtest::strategies::arb_num;
+use ledtest::LedTestLanguage;
+use mettail_runtime::Language;
 use proptest::strategy::Strategy;
 use std::path::PathBuf;
 

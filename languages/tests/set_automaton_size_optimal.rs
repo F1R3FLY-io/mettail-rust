@@ -62,6 +62,8 @@
 // sole invoker, so the generated suites exist exactly once across the whole suite.
 #[path = "definitions/nativefolddemo.rs"]
 mod nativefolddemo;
+#[path = "definitions/appsubst.rs"]
+mod appsubst;
 
 use dovetail::rules::Pattern;
 use dovetail::set_automaton::{AutomatonNode, PatternId, SetAutomaton, SetAutomatonView, StateId};
@@ -178,7 +180,7 @@ fn per_language_in_rho_automaton_is_size_optimal() {
     check!("RhoCalc", mettail_languages::rhocalc::RhoCalcLanguage, 130);
     check!("Calculator", mettail_languages::calculator::CalculatorLanguage, 78);
     check!("Ambient", mettail_languages::ambient::AmbientLanguage, 0);
-    check!("AppSubst", mettail_languages::appsubst::AppSubstLanguage, 4);
+    check!("AppSubst", crate::appsubst::AppSubstLanguage, 4);
     check!("Lambda", mettail_languages::lambda::LambdaLanguage, 4);
     check!("GuardedRho", mettail_languages::guardedrho::GuardedRhoLanguage, 0);
 }

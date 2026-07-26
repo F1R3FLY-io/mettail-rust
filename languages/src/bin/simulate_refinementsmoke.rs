@@ -3,14 +3,16 @@
 // Run with: cargo run --bin simulate_refinementsmoke -- [OPTIONS]
 
 use clap::Parser;
-use mettail_languages::refinementsmoke::strategies::arb_int;
-use mettail_languages::refinementsmoke::RefinementSmokeLanguage;
-use mettail_runtime::Language;
 use mettail_simulation::invariant::{
     AlwaysParseable, BoundedDepth, BoundedSize, NormalFormReachable,
 };
 use mettail_simulation::runner::{SimulationConfig, SimulationRunner, TraceOutputFormat};
+#[path = "../../tests/definitions/refinementsmoke.rs"]
+mod refinementsmoke;
+use mettail_runtime::Language;
 use proptest::strategy::Strategy;
+use refinementsmoke::strategies::arb_int;
+use refinementsmoke::RefinementSmokeLanguage;
 use std::path::PathBuf;
 
 #[derive(Parser)]

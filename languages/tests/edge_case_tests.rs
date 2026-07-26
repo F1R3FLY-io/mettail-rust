@@ -494,9 +494,16 @@ mod composition_edge_cases {
 // Category 18: LedTest Edge Cases (~9 tests)
 // ════════════════════════════════════════════════════════════════════════════════
 
-#[cfg(feature = "led-test")]
+// Task #11 (extended 2026-07-26): `LedTest` is a LED-delegation FIXTURE grammar whose definition lives in
+// `languages/tests/definitions/led_test.rs`, not in the `languages` library, so it is
+// `#[path]`-included here. This binary is a CONSUMER, not the definition's designated host
+// (languages/tests/led_delegation_tests.rs is), so it deliberately does NOT invoke the
+// `ledtest_generated_tests!` wrapper — the generated suite stays single-instanced.
+#[path = "definitions/led_test.rs"]
+mod ledtest;
+
 mod led_test_edge_cases {
-    use mettail_languages::led_test::LedTestLanguage;
+    use crate::ledtest::LedTestLanguage;
     use mettail_runtime::Language;
 
     fn led_parses(input: &str) {

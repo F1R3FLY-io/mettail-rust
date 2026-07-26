@@ -29,20 +29,15 @@ all-languages = [
     "amb-new-demo",
     "in-out-demo",
     "ambient",
-    "appsubst",
     "calculator",
     "comm-demo",
     "composition",
     "ctx-demo",
     "bicong-demo",
-    "fortran_model",
-    "reserved_model",
     "guarded-rho",
     "lambda",
     "lambda-demo",
-    "led-test",
     "native-demo",
-    "refinementsmoke",
     "rhocalc",
     "swap-demo",
 ]
@@ -53,7 +48,10 @@ amb-demo = []
 amb-new-demo = []
 in-out-demo = []
 ambient = []
-appsubst = []
+# Task #11 (extended 2026-07-26): `AppSubst` moved to `tests/definitions/`. A TEST-HOSTED
+# definition is not a library module, so it needs no library feature; its consumers
+# `#[path]`-include the definition file directly.
+# appsubst = []
 calculator = []
 # Task #11 (extended 2026-07-26): the Class-2 / Class-3 collection FIXTURE grammars moved
 # to `tests/definitions/`. A TEST-HOSTED definition is not a library module, so it needs no
@@ -68,8 +66,10 @@ comm-demo = []
 composition = ["calculator", "lambda"]
 ctx-demo = []
 bicong-demo = []
-fortran_model = []
-reserved_model = []
+# Task #11 (extended 2026-07-26): the keyword-reservation FIXTURE twins moved to
+# `tests/definitions/`; their consumers `#[path]`-include the definition files directly.
+# fortran_model = []
+# reserved_model = []
 guarded-rho = []
 # A-11 (P3.d/F1) site-2 smoke. Task #14 (2026-07-13) closed the historical
 # compile blockers (15 term-ops codegen errors across 8 generated files +
@@ -79,10 +79,17 @@ guarded-rho = []
 # all-languages — promotion is a separate decision. The generated
 # gen_guardoptsmoke_* test files are gated via [[test]] required-features
 # below (regeneration-proof), not via in-file cfg.
-guardoptsmoke = []
+# Task #11 (extended 2026-07-26): `GuardOptSmoke` moved to `tests/definitions/`, so the
+# feature is gone and with it the regeneration hazard the note above describes: the macro
+# no longer writes `tests/gen_guardoptsmoke_*.rs` at all (a test-hosted language's suite is
+# spilled to `target/generated/` and pulled in by the `guardoptsmoke_generated_tests!`
+# wrapper), so there is nothing left to clobber and nothing left to gate. The three
+# `[[test]]` stanzas that gated those files are removed below for the same reason.
+# guardoptsmoke = []
 lambda = []
 lambda-demo = []
-led-test = []
+# Task #11 (extended 2026-07-26): `LedTest` moved to `tests/definitions/`.
+# led-test = []
 native-demo = []
 # Task #11 (extended 2026-07-26): `NativeFoldDemo` moved to
 # `tests/definitions/nativefolddemo.rs`. A TEST-HOSTED definition is not a library
@@ -93,7 +100,8 @@ native-demo = []
 # definition is not a library module, so it needs no library feature; its
 # consumers `#[path]`-include the definition file directly.
 # optsmoke = []
-refinementsmoke = []
+# Task #11 (extended 2026-07-26): `RefinementSmoke` moved to `tests/definitions/`.
+# refinementsmoke = []
 rhocalc = []
 swap-demo = []
 ## Expose public proptest strategies for generating random well-formed terms.
@@ -282,31 +290,34 @@ name = "simulate_class3opt"
 path = "src/bin/simulate_class3opt.rs"
 required-features = ["strategies"]
 
-# Task #14 (Option<Guard>) regeneration-hazard mitigation: the language!
-# macro REWRITES tests/gen_guardoptsmoke_*.rs on every feature-enabled
-# compile, silently dropping any hand-prepended `#![cfg(...)]` header —
-# after which a default (featureless) build would fail on
-# `use mettail_languages::guardoptsmoke::*`. These explicit test targets
-# gate the files declaratively: default `cargo test` SKIPS them (verified:
-# required-features unmet ⇒ target not built), `--features guardoptsmoke`
-# builds each EXACTLY ONCE, and autodiscovery of the other tests/*.rs is
-# unaffected. guardopt_smoke.rs (hand-written, never regenerated) keeps
-# its in-file cfg instead.
-
-[[test]]
-name = "gen_guardoptsmoke_unit"
-path = "tests/gen_guardoptsmoke_unit.rs"
-required-features = ["guardoptsmoke"]
-
-[[test]]
-name = "gen_guardoptsmoke_prop"
-path = "tests/gen_guardoptsmoke_prop.rs"
-required-features = ["guardoptsmoke"]
-
-[[test]]
-name = "gen_guardoptsmoke_analytical"
-path = "tests/gen_guardoptsmoke_analytical.rs"
-required-features = ["guardoptsmoke"]
+# Task #14 (Option<Guard>) regeneration-hazard mitigation — RETIRED by Task #11
+# (extended 2026-07-26), not weakened. The hazard was that the `language!` macro REWROTE
+# `tests/gen_guardoptsmoke_*.rs` on every feature-enabled compile, silently dropping any
+# hand-prepended `#![cfg(...)]` header, after which a default (featureless) build failed on
+# `use mettail_languages::guardoptsmoke::*`. These three `[[test]]` stanzas gated those
+# files declaratively instead.
+#
+# `GuardOptSmoke` is TEST-HOSTED now: its suite is spilled to `target/generated/` and pulled
+# into ONE binary (`tests/guardopt_smoke.rs`, its designated host) by the
+# `guardoptsmoke_generated_tests!` wrapper. No `tests/gen_guardoptsmoke_*.rs` file is
+# written, none is committed, and no `use mettail_languages::guardoptsmoke::*;` header
+# exists to break — so there is nothing left to gate. The stanzas are removed rather than
+# repointed because their targets no longer exist.
+#
+# [[test]]
+# name = "gen_guardoptsmoke_unit"
+# path = "tests/gen_guardoptsmoke_unit.rs"
+# required-features = ["guardoptsmoke"]
+#
+# [[test]]
+# name = "gen_guardoptsmoke_prop"
+# path = "tests/gen_guardoptsmoke_prop.rs"
+# required-features = ["guardoptsmoke"]
+#
+# [[test]]
+# name = "gen_guardoptsmoke_analytical"
+# path = "tests/gen_guardoptsmoke_analytical.rs"
+# required-features = ["guardoptsmoke"]
 
 [[bench]]
 name = "parse_bench"

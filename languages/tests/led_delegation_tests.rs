@@ -17,7 +17,21 @@
 //!
 //! Run with: `cargo test -p mettail-languages --features led-test`
 
-use mettail_languages::led_test::{self as lt, Expr, Num};
+// Task #11 (extended 2026-07-26): `LedTest` is a LED-delegation FIXTURE grammar, not a production language, so its
+// definition lives in `languages/tests/definitions/led_test.rs` rather than in the `languages`
+// library (`languages/src/` is production-only).
+//
+// This file is its DESIGNATED HOST: it declares the definition module and is the one and only
+// invoker of the opt-in `ledtest_generated_tests!` wrapper, which materializes the
+// macro-generated sections that used to be written to `languages/tests/gen_ledtest_*.rs`.
+// Other consumers `#[path]`-include the same definition WITHOUT invoking the wrapper, so the
+// generated tests exist exactly once across the whole suite.
+#[path = "definitions/led_test.rs"]
+mod ledtest;
+
+ledtest::ledtest_generated_tests!(crate::ledtest);
+
+use ledtest::{self as lt, Expr, Num};
 use std::sync::Arc;
 
 // ============================================================================

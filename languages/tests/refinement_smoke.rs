@@ -16,7 +16,21 @@
 //! separately. The tests below exercise the closure body via the public
 //! registry surface, which is the principal B8 deliverable.
 
-use mettail_languages::refinementsmoke::register_refinements;
+// Task #11 (extended 2026-07-26): `RefinementSmoke` is a refinement-predicate codegen FIXTURE, not a production language, so its
+// definition lives in `languages/tests/definitions/refinementsmoke.rs` rather than in the `languages`
+// library (`languages/src/` is production-only).
+//
+// This file is its DESIGNATED HOST: it declares the definition module and is the one and only
+// invoker of the opt-in `refinementsmoke_generated_tests!` wrapper, which materializes the
+// macro-generated sections that used to be written to `languages/tests/gen_refinementsmoke_*.rs`.
+// Other consumers `#[path]`-include the same definition WITHOUT invoking the wrapper, so the
+// generated tests exist exactly once across the whole suite.
+#[path = "definitions/refinementsmoke.rs"]
+mod refinementsmoke;
+
+refinementsmoke::refinementsmoke_generated_tests!(crate::refinementsmoke);
+
+use refinementsmoke::register_refinements;
 use mettail_runtime::{clear_refinement_registry, evaluate_refinement_predicate};
 
 #[test]

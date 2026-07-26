@@ -17,9 +17,27 @@
 //! into `all-languages` is a separate decision). Nothing here was ever
 //! parser-blocked: binder.rs emits the GuardSlot for optional-group inner
 //! positions at both sites, and the pure arm is payload-driven.
-#![cfg(feature = "guardoptsmoke")]
+// Task #11 (extended 2026-07-26): the `guardoptsmoke` LIBRARY FEATURE is gone (the
+// definition is test-hosted now), so this file-level gate would evaluate FALSE and
+// silently delete the LIVE site-2 gate. The definition is `#[path]`-included
+// unconditionally below instead, which makes the site-2 pair unconditional.
+// #![cfg(feature = "guardoptsmoke")]
 
-use mettail_languages::guardoptsmoke::Int;
+// Task #11 (extended 2026-07-26): `GuardOptSmoke` is a site-2 ParsePredicate FIXTURE, not a production language, so its
+// definition lives in `languages/tests/definitions/guardoptsmoke.rs` rather than in the `languages`
+// library (`languages/src/` is production-only).
+//
+// This file is its DESIGNATED HOST: it declares the definition module and is the one and only
+// invoker of the opt-in `guardoptsmoke_generated_tests!` wrapper, which materializes the
+// macro-generated sections that used to be written to `languages/tests/gen_guardoptsmoke_*.rs`.
+// Other consumers `#[path]`-include the same definition WITHOUT invoking the wrapper, so the
+// generated tests exist exactly once across the whole suite.
+#[path = "definitions/guardoptsmoke.rs"]
+mod guardoptsmoke;
+
+guardoptsmoke::guardoptsmoke_generated_tests!(crate::guardoptsmoke);
+
+use guardoptsmoke::Int;
 
 #[test]
 fn guardopt_present_parses_predicate_in_group() {

@@ -506,7 +506,10 @@ mod tests {
         ("ambdemo", include_str!("../../../../languages/src/ambdemo.rs")),
         ("ambient", include_str!("../../../../languages/src/ambient.rs")),
         ("ambnewdemo", include_str!("../../../../languages/src/ambnewdemo.rs")),
-        ("appsubst", include_str!("../../../../languages/src/appsubst.rs")),
+        (
+            "appsubst",
+            include_str!("../../../../languages/tests/definitions/appsubst.rs"),
+        ),
         ("bicongdemo", include_str!("../../../../languages/src/bicongdemo.rs")),
         ("calculator", include_str!("../../../../languages/src/calculator.rs")),
         (
@@ -535,13 +538,22 @@ mod tests {
         ),
         ("commdemo", include_str!("../../../../languages/src/commdemo.rs")),
         ("ctxdemo", include_str!("../../../../languages/src/ctxdemo.rs")),
-        ("fortran_model", include_str!("../../../../languages/src/fortran_model.rs")),
+        (
+            "fortran_model",
+            include_str!("../../../../languages/tests/definitions/fortran_model.rs"),
+        ),
         ("guarded_rho", include_str!("../../../../languages/src/guarded_rho.rs")),
-        ("guardoptsmoke", include_str!("../../../../languages/src/guardoptsmoke.rs")),
+        (
+            "guardoptsmoke",
+            include_str!("../../../../languages/tests/definitions/guardoptsmoke.rs"),
+        ),
         ("inoutdemo", include_str!("../../../../languages/src/inoutdemo.rs")),
         ("lambdademo", include_str!("../../../../languages/src/lambdademo.rs")),
         ("lambda", include_str!("../../../../languages/src/lambda.rs")),
-        ("led_test", include_str!("../../../../languages/src/led_test.rs")),
+        (
+            "led_test",
+            include_str!("../../../../languages/tests/definitions/led_test.rs"),
+        ),
         ("nativedemo", include_str!("../../../../languages/src/nativedemo.rs")),
         (
             "nativefolddemo",
@@ -549,8 +561,14 @@ mod tests {
         ),
         ("nlacdemo", include_str!("../../../../languages/src/nlacdemo.rs")),
         ("optsmoke", include_str!("../../../../languages/tests/definitions/optsmoke.rs")),
-        ("refinementsmoke", include_str!("../../../../languages/src/refinementsmoke.rs")),
-        ("reserved_model", include_str!("../../../../languages/src/reserved_model.rs")),
+        (
+            "refinementsmoke",
+            include_str!("../../../../languages/tests/definitions/refinementsmoke.rs"),
+        ),
+        (
+            "reserved_model",
+            include_str!("../../../../languages/tests/definitions/reserved_model.rs"),
+        ),
         ("rhocalc", include_str!("../../../../languages/src/rhocalc.rs")),
         ("swapdemo", include_str!("../../../../languages/src/swapdemo.rs")),
     ];

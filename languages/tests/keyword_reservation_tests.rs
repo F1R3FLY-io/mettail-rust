@@ -21,9 +21,22 @@
 // PART A — WITH reservation (`ReservedModel`, `auto`)
 // ─────────────────────────────────────────────────────────────────────────────
 
-#[cfg(feature = "reserved_model")]
+// Task #11 (extended 2026-07-26): the keyword-reservation FIXTURE twins are test-hosted
+// (`languages/tests/definitions/`), so they are `#[path]`-included here rather than named
+// through `mettail_languages::<lang>`, and the `#[cfg(feature = …)]` gates that used to
+// guard each part are removed WITH the features: an unsatisfiable gate deletes the test
+// silently, which is precisely the failure mode this relocation must not introduce.
+//
+// Neither definition emits a generated suite (`options { emit_tests: false }` — Part B is
+// the HAND-WRITTEN `gen_fortran_model_prop.rs`), so no `_generated_tests!` wrapper exists
+// and no designated host is needed for either.
+#[path = "definitions/reserved_model.rs"]
+mod reserved_model;
+#[path = "definitions/fortran_model.rs"]
+mod fortran_model;
+
 mod with_reserve {
-    use mettail_languages::reserved_model::*;
+    use crate::reserved_model::*;
 
     fn send_readings() -> Vec<Stmt> {
         Stmt::parse_via_wpda_all("@IF!(x)")
@@ -86,10 +99,10 @@ mod with_reserve {
 
 /// C.1 — the materialized alternative set is deterministic across repeated
 /// parses in the RESERVED mode (one reading, stable).
-#[cfg(feature = "reserved_model")]
+
 #[test]
 fn alt_set_deterministic_reserved() {
-    use mettail_languages::reserved_model as rm;
+    use crate::reserved_model as rm;
     let a = rm::Stmt::parse_via_wpda_all("@IF!(x)").expect("parse a").len();
     let b = rm::Stmt::parse_via_wpda_all("@IF!(x)").expect("parse b").len();
     assert_eq!(a, b, "reserved alt-set size must be deterministic");
@@ -98,10 +111,10 @@ fn alt_set_deterministic_reserved() {
 
 /// C.2 — the materialized alternative set is deterministic across repeated
 /// parses in the UNRESERVED mode (two readings, stable — full ambiguity kept).
-#[cfg(feature = "fortran_model")]
+
 #[test]
 fn alt_set_deterministic_fortran() {
-    use mettail_languages::fortran_model as f;
+    use crate::fortran_model as f;
     let a = f::Stmt::parse_via_wpda_all("@IF!(x)").expect("parse a").len();
     let b = f::Stmt::parse_via_wpda_all("@IF!(x)").expect("parse b").len();
     assert_eq!(a, b, "unreserved alt-set size must be deterministic");
@@ -119,8 +132,8 @@ fn alt_set_deterministic_fortran() {
 #[cfg(all(feature = "reserved_model", feature = "fortran_model"))]
 #[test]
 fn mode_switch_toggles_readings() {
-    use mettail_languages::fortran_model as none_lang;
-    use mettail_languages::reserved_model as auto_lang;
+    use crate::fortran_model as none_lang;
+    use crate::reserved_model as auto_lang;
 
     let reserved = auto_lang::Stmt::parse_via_wpda_all("@IF!(x)")
         .expect("auto: `@IF!(x)` parses")
